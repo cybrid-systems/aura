@@ -125,7 +125,7 @@ def load_manifest(issue: int | str) -> dict:
     return data
 
 
-def run_issue(issue: int | str) -> int:
+def run_issue(issue: int | str, *, silent: bool = False) -> int:
     try:
         data = load_manifest(issue)
     except (FileNotFoundError, ValueError, json.JSONDecodeError) as e:
@@ -135,22 +135,43 @@ def run_issue(issue: int | str) -> int:
     if fails:
         for f in fails:
             print(f"FAIL: {f}", file=sys.stderr)
-        print(f"\n{len(fails)} contract row(s) failed", file=sys.stderr)
+        print(f"\n{len(fails)} contract row(s) failed (#{issue})", file=sys.stderr)
         return 1
-    ok = data.get("ok") or (f"OK: Issue #{data['issue']} {data.get('title', '')} — all AC rows satisfied")
-    print(ok)
+    if not silent:
+        ok = data.get("ok") or (f"OK: Issue #{data['issue']} {data.get('title', '')} — all AC rows satisfied")
+        print(ok)
     return 0
 
 
-def list_manifests() -> list[int]:
+def _skip_ids() -> set[int]:
+    p = Path(__file__).resolve().parent / "manifest_skip.txt"
+    if not p.is_file():
+        return set()
+    out: set[int] = set()
+    for ln in p.read_text(encoding="utf-8").splitlines():
+        ln = ln.strip()
+        if not ln or ln.startswith("#"):
+            continue
+        try:
+            out.add(int(ln))
+        except ValueError:
+            continue
+    return out
+
+
+def list_manifests(*, include_skip: bool = False) -> list[int]:
     out: list[int] = []
     if not MANIFEST_DIR.is_dir():
         return out
+    skip = set() if include_skip else _skip_ids()
     for p in sorted(MANIFEST_DIR.glob("*.json")):
         try:
-            out.append(int(p.stem))
+            n = int(p.stem)
         except ValueError:
             continue
+        if n in skip:
+            continue
+        out.append(n)
     return out
 
 
@@ -256,15 +277,17 @@ def run_many(ids: list[int], label: str) -> int:
     if not ids:
         print(f"OK: {label} — no related coverage manifests (skip)")
         return 0
-    rc = 0
-    for i in ids:
-        print(f"── coverage manifest #{i} ──")
-        r = run_issue(i)
-        if r != 0:
-            rc = r
-    if rc == 0:
-        print(f"OK: {label} — {len(ids)} coverage manifest(s) clean")
-    return rc
+    failed = 0
+    for i, issue in enumerate(ids, 1):
+        if run_issue(issue, silent=True) != 0:
+            failed += 1
+        elif i % 50 == 0 or i == len(ids):
+            print(f"  … manifests {i}/{len(ids)}", flush=True)
+    if failed:
+        print(f"FAIL: {label} — {failed}/{len(ids)} coverage manifest(s) failed", file=sys.stderr)
+        return 1
+    print(f"OK: {label} — {len(ids)} coverage manifest(s) clean")
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:

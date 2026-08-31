@@ -1,0 +1,21 @@
+# Manifests that are stale vs current source (needles drifted).
+# Kept on disk because some check_*.py still cite the JSON path.
+# runner.py --all/--changed skip these. Do not add new ids — fix or delete.
+3125
+3126
+3128
+3132
+3135
+3136
+3138
+3139
+3140
+3142
+3143
+3179
+3180
+3373
+3375
+3376
+3377
+3378

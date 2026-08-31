@@ -130,13 +130,6 @@
     },
     {
       "ac": "AC6",
-      "path": "scripts/coverage/checks/check_castop_typed_meta_2624.py",
-      "contains": [
-        "Issue #2624"
-      ]
-    },
-    {
-      "ac": "AC6",
       "forbid": [
         "docs/design/castop_typed_meta_2624.md",
         "docs/castop_typed_meta_2624.md",

@@ -5,6 +5,9 @@
 Issue numbers belong in comments (`// Issue #NNNN`) and coverage manifests —
 **not** in filenames. Do not create `test_foo_2622.cpp` or `test_issue_2622.cpp`.
 
+**Coverage (runtime vs manifest vs check_*.py):** [`COVERAGE.md`](COVERAGE.md).
+Do not add a substring-only `check_*.py` per issue.
+
 ## Decision tree (hard)
 
 ```

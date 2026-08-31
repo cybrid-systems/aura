@@ -98,6 +98,25 @@ SCRIPTS = ROOT / "scripts"
 COVERAGE_CHECKS = SCRIPTS / "coverage" / "checks"
 COVERAGE_RUNNER = SCRIPTS / "coverage" / "runner.py"
 COVERAGE_RUN_CHECKS = SCRIPTS / "coverage" / "run_checks.py"
+COVERAGE_MANIFESTS = SCRIPTS / "coverage" / "manifests"
+
+
+def _coverage_run(script: Path) -> subprocess.CompletedProcess:
+    """Run a check_*.py, or its folded manifest if the script was removed."""
+    if script.exists():
+        return subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    stem = Path(script).stem
+    issue = None
+    for part in reversed(stem.replace("-", "_").split("_")):
+        if part.isdigit() and 3 <= len(part) <= 5:
+            issue = part
+            break
+    if issue and (COVERAGE_MANIFESTS / f"{issue}.json").is_file():
+        return subprocess.run([sys.executable, str(COVERAGE_RUNNER), "--issue", issue], cwd=ROOT)
+    fail(f"missing {script}")
+    return subprocess.CompletedProcess(args=[], returncode=1)
+
+
 TOOLS = SCRIPTS / "tools"
 AUDIT = SCRIPTS / "audit"
 BENCH = ROOT / "tests" / "benchmark.py"  # thin entry → tests/bench/benchmark.py
@@ -9436,10 +9455,7 @@ def cmd_test_binding():
     # (scripts/ audit wave 9). check_test_binding.py covers the same surface
     # (production primitive sources must have tests/).
     script = COVERAGE_CHECKS / "check_test_binding.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("test binding failed — production primitive sources changed without tests/")
         return 1
@@ -9470,10 +9486,7 @@ def cmd_naming_convention():
     """Issue #1886: naming_convention.md sections + example template keys."""
     print(f"{B}═══ Naming convention doc (#1886) ═══{N}")
     script = COVERAGE_CHECKS / "check_naming_convention.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("naming convention check failed — see docs/naming_convention.md")
         return 1
@@ -9574,10 +9587,7 @@ def cmd_workflow_failure_policy_2756_coverage():
     """Issue #2756: WorkflowFailurePolicy composition (batch + AgentScope + residual)."""
     print(f"{B}=== workflow FailurePolicy composition (#2756) coverage ==={N}")
     script = COVERAGE_CHECKS / "check_workflow_failure_policy_2756.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("workflow FailurePolicy composition (#2756) coverage contract rows failed")
         return 1
@@ -9589,10 +9599,7 @@ def cmd_workflow_compose_aura_2843_coverage():
     """Issue #2843: Aura orch:compose-workflow surface for #2756 WorkflowFailurePolicy."""
     print(f"{B}=== workflow compose Aura surface (#2843) coverage ==={N}")
     script = COVERAGE_CHECKS / "check_workflow_compose_aura_2843.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("workflow compose Aura surface (#2843) coverage contract rows failed")
         return 1
@@ -9604,10 +9611,7 @@ def cmd_workflow_run_2974_coverage():
     """Issue #2974: multi-stage workflow primitive (ordered DAG stages)."""
     print(f"{B}=== workflow run multi-stage (#2974) coverage ==={N}")
     script = COVERAGE_CHECKS / "check_workflow_run_2974.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("workflow run multi-stage (#2974) coverage contract rows failed")
         return 1
@@ -9790,10 +9794,7 @@ def cmd_arena_compact_hook_stats_coverage():
     """
     print(f"{B}=== arena compact_hook stats coverage (#2381) ==={N}")
     script = COVERAGE_CHECKS / "check_arena_compact_hook_stats_2381.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("arena compact_hook stats (#2381) coverage contract rows failed")
         return 1
@@ -9810,10 +9811,7 @@ def cmd_arena_dtor_clears_hooks_coverage():
     """
     print(f"{B}=== arena dtor clears hooks coverage (#2382) ==={N}")
     script = COVERAGE_CHECKS / "check_arena_dtor_clears_hooks_2382.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("arena dtor clears hooks (#2382) coverage contract rows failed")
         return 1
@@ -9829,10 +9827,7 @@ def cmd_has_on_compact_hook_lock_coverage():
     """
     print(f"{B}=== has_on_compact_hook lock coverage (#2383) ==={N}")
     script = COVERAGE_CHECKS / "check_has_on_compact_hook_lock_2383.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("has_on_compact_hook lock (#2383) coverage contract rows failed")
         return 1
@@ -9848,10 +9843,7 @@ def cmd_require_effect_live_mid_coverage():
     """
     print(f"{B}=== require_effect live mid coverage (#2384) ==={N}")
     script = COVERAGE_CHECKS / "check_require_effect_live_mid_2384.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("require_effect live mid (#2384) coverage contract rows failed")
         return 1
@@ -9869,10 +9861,7 @@ def cmd_mid_join_fail_closed_2707_coverage():
     """
     print(f"{B}=== mid-join fail-closed coverage (#2707) ==={N}")
     script = COVERAGE_CHECKS / "check_mid_join_fail_closed_2707.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("mid-join fail-closed (#2707) coverage contract rows failed")
         return 1
@@ -9889,10 +9878,7 @@ def cmd_provenance_contributing_mid_3333():
     """
     print(f"{B}=== provenance contributing mid (#3333) ==={N}")
     script = COVERAGE_CHECKS / "check_provenance_contributing_mid_3333.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("provenance contributing mid (#3333) coverage contract rows failed")
         return 1
@@ -9911,10 +9897,7 @@ def cmd_require_effect_auto_isolation_2490_coverage():
     """
     print(f"{B}=== require_effect auto-isolation coverage (#2490) ==={N}")
     script = COVERAGE_CHECKS / "check_require_effect_auto_isolation_2490.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("require_effect auto-isolation (#2490) coverage contract rows failed")
         return 1
@@ -9932,10 +9915,7 @@ def cmd_tenant_scope_fiber_mandate_2491_coverage():
     """
     print(f"{B}=== tenant scope fiber mandate coverage (#2491) ==={N}")
     script = COVERAGE_CHECKS / "check_tenant_scope_fiber_mandate_2491.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("tenant scope fiber mandate (#2491) coverage contract rows failed")
         return 1
@@ -9955,10 +9935,7 @@ def cmd_security_audit_wal_force_restricted_2492_coverage():
     """
     print(f"{B}=== security audit WAL force restricted coverage (#2492) ==={N}")
     script = COVERAGE_CHECKS / "check_security_audit_wal_force_restricted_2492.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("security audit WAL force restricted (#2492) coverage contract rows failed")
         return 1
@@ -9978,10 +9955,7 @@ def cmd_audit_mutation_id_unify_2493_coverage():
     """
     print(f"{B}=== audit mutation_id unify coverage (#2493) ==={N}")
     script = COVERAGE_CHECKS / "check_audit_mutation_id_unify_2493.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("audit mutation_id unify (#2493) coverage contract rows failed")
         return 1
@@ -9998,10 +9972,7 @@ def cmd_side_effect_security_gate_hardfail_2494_coverage():
     """
     print(f"{B}=== side-effect security gate hard-fail coverage (#2494) ==={N}")
     script = COVERAGE_CHECKS / "check_side_effect_security_gate_hardfail_2494.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("side-effect security gate hard-fail (#2494) coverage contract rows failed")
         return 1
@@ -10020,10 +9991,7 @@ def cmd_moving_densify_fail_closed_2495_coverage():
     """
     print(f"{B}=== moving densify fail-closed coverage (#2495) ==={N}")
     script = COVERAGE_CHECKS / "check_moving_densify_fail_closed_2495.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("moving densify fail-closed (#2495) coverage contract rows failed")
         return 1
@@ -10044,10 +10012,7 @@ def cmd_densify_ownership_scan_fail_gate_2497_coverage():
     """
     print(f"{B}=== Densify ownership scan fail gate coverage (#2497) ==={N}")
     script = COVERAGE_CHECKS / "check_densify_ownership_scan_fail_gate_2497.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("Densify ownership scan fail gate (#2497) coverage contract rows failed")
         return 1
@@ -10069,10 +10034,7 @@ def cmd_fiber_reclaim_orphan_release_2498_coverage():
     """
     print(f"{B}=== Fiber reclaim orphan release coverage (#2498) ==={N}")
     script = COVERAGE_CHECKS / "check_fiber_reclaim_orphan_release_2498.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("Fiber reclaim orphan release (#2498) coverage contract rows failed")
         return 1
@@ -10084,10 +10046,7 @@ def cmd_check_2529_coverage():
     """Issue #2529: Restricted grant_epoch_retain K=16."""
     print(f"{B}=== grant epoch retain Restricted coverage (#2529) ==={N}")
     script = COVERAGE_CHECKS / "check_2529.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("grant epoch retain Restricted (#2529) coverage failed")
         return 1
@@ -10099,10 +10058,7 @@ def cmd_check_2530_coverage():
     """Issue #2530: audit ring 1024 + Isolation publish_seq."""
     print(f"{B}=== audit ring publish coverage (#2530) ==={N}")
     script = COVERAGE_CHECKS / "check_2530.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("audit ring publish (#2530) coverage failed")
         return 1
@@ -10114,10 +10070,7 @@ def cmd_check_2531_coverage():
     """Issue #2531: force non-zero bound_mutation_id."""
     print(f"{B}=== grant bound mid force coverage (#2531) ==={N}")
     script = COVERAGE_CHECKS / "check_2531.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("grant bound mid force (#2531) coverage failed")
         return 1
@@ -10129,10 +10082,7 @@ def cmd_check_2532_coverage():
     """Issue #2532: write caps into Effect matrix."""
     print(f"{B}=== cap write effect matrix coverage (#2532) ==={N}")
     script = COVERAGE_CHECKS / "check_2532.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("cap write effect matrix (#2532) coverage failed")
         return 1
@@ -10144,10 +10094,7 @@ def cmd_check_2533_coverage():
     """Issue #2533: residual force safepoint."""
     print(f"{B}=== residual force safepoint coverage (#2533) ==={N}")
     script = COVERAGE_CHECKS / "check_2533.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("residual force safepoint (#2533) coverage failed")
         return 1
@@ -10159,10 +10106,7 @@ def cmd_check_2536_coverage():
     """Issue #2536: Restricted hard-fiber optional policy."""
     print(f"{B}=== hard-fiber Restricted policy coverage (#2536) ==={N}")
     script = COVERAGE_CHECKS / "check_2536.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("hard-fiber Restricted policy (#2536) coverage failed")
         return 1
@@ -10174,10 +10118,7 @@ def cmd_check_2535_coverage():
     """Issue #2535: production default mild mailbox BP admit (threshold=32)."""
     print(f"{B}=== mailbox BP admit default-on coverage (#2535) ==={N}")
     script = COVERAGE_CHECKS / "check_2535.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("mailbox BP admit default-on (#2535) coverage failed")
         return 1
@@ -10189,10 +10130,7 @@ def cmd_check_2534_coverage():
     """Issue #2534: security-posture + correlated-trail."""
     print(f"{B}=== security posture trail coverage (#2534) ==={N}")
     script = COVERAGE_CHECKS / "check_2534.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("security posture trail (#2534) coverage failed")
         return 1
@@ -10215,10 +10153,7 @@ def cmd_root_remap_pin_contract_unified_2499_coverage():
     """
     print(f"{B}=== RootRemap pin_contract unified coverage (#2499) ==={N}")
     script = COVERAGE_CHECKS / "check_root_remap_pin_contract_unified_2499.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("RootRemap pin_contract unified (#2499) coverage contract rows failed")
         return 1
@@ -10242,10 +10177,7 @@ def cmd_orch_soft_boundary_unified_2515_coverage():
     """
     print(f"{B}=== Orch soft boundary unified coverage (#2515) ==={N}")
     script = COVERAGE_CHECKS / "check_orch_soft_boundary_unified_2515.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("Orch soft boundary unified (#2515) coverage contract rows failed")
         return 1
@@ -10269,10 +10201,7 @@ def cmd_restamp_sla_observability_2528_coverage():
     """
     print(f"{B}=== Restamp SLA observability coverage (#2528) ==={N}")
     script = COVERAGE_CHECKS / "check_restamp_sla_observability_2528.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("Restamp SLA observability (#2528) coverage contract rows failed")
         return 1
@@ -10292,10 +10221,7 @@ def cmd_general_object_pin_coverage_gate_2496_coverage():
     """
     print(f"{B}=== GeneralObjectPin coverage gate coverage (#2496) ==={N}")
     script = COVERAGE_CHECKS / "check_general_object_pin_coverage_gate_2496.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("GeneralObjectPin coverage gate (#2496) coverage contract rows failed")
         return 1
@@ -10311,10 +10237,7 @@ def cmd_restricted_unset_principal_coverage():
     """
     print(f"{B}=== Restricted unset principal coverage (#2385) ==={N}")
     script = COVERAGE_CHECKS / "check_restricted_unset_principal_2385.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("Restricted unset principal (#2385) coverage contract rows failed")
         return 1
@@ -10329,10 +10252,7 @@ def cmd_grant_macro_self_evo_stamp_coverage():
     """
     print(f"{B}=== grant_macro_self_evo stamp coverage (#2386) ==={N}")
     script = COVERAGE_CHECKS / "check_grant_macro_self_evo_stamp_2386.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("grant_macro_self_evo stamp (#2386) coverage contract rows failed")
         return 1
@@ -10348,10 +10268,7 @@ def cmd_capability_string_matrix_unify_coverage():
     """
     print(f"{B}=== capability string/matrix unify coverage (#2387) ==={N}")
     script = COVERAGE_CHECKS / "check_capability_string_matrix_unify_2387.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("capability string/matrix unify (#2387) coverage contract rows failed")
         return 1
@@ -10369,10 +10286,7 @@ def cmd_capability_high_risk_promote_2489_coverage():
     """
     print(f"{B}=== capability high-risk promote coverage (#2489) ==={N}")
     script = COVERAGE_CHECKS / "check_capability_high_risk_promote_2489.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("capability high-risk promote (#2489) coverage contract rows failed")
         return 1
@@ -10388,10 +10302,7 @@ def cmd_security_audit_fold_coverage():
     """
     print(f"{B}=== security audit fold coverage (#2388) ==={N}")
     script = COVERAGE_CHECKS / "check_security_audit_fold_2388.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("security audit fold (#2388) coverage contract rows failed")
         return 1
@@ -10407,10 +10318,7 @@ def cmd_security_health_coverage():
     """
     print(f"{B}=== security-health coverage (#2389) ==={N}")
     script = COVERAGE_CHECKS / "check_security_health_2389.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("security-health (#2389) coverage contract rows failed")
         return 1
@@ -10426,10 +10334,7 @@ def cmd_validate_node_no_abort_coverage():
     """
     print(f"{B}=== validate_node no-abort coverage (#2390) ==={N}")
     script = COVERAGE_CHECKS / "check_validate_node_no_abort_2390.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("validate_node no-abort (#2390) coverage contract rows failed")
         return 1
@@ -10445,10 +10350,7 @@ def cmd_validate_post_restore_soa_coverage():
     """
     print(f"{B}=== validate_post_restore SoA coverage (#2391) ==={N}")
     script = COVERAGE_CHECKS / "check_validate_post_restore_soa_2391.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("validate_post_restore SoA (#2391) coverage contract rows failed")
         return 1
@@ -10464,10 +10366,7 @@ def cmd_fixup_deltas_coverage():
     """
     print(f"{B}=== fixup_deltas coverage (#2392) ==={N}")
     script = COVERAGE_CHECKS / "check_fixup_deltas_2392.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("fixup_deltas (#2392) coverage contract rows failed")
         return 1
@@ -10483,10 +10382,7 @@ def cmd_last_validated_generation_atomic_coverage():
     """
     print(f"{B}=== last_validated_generation atomic coverage (#2394) ==={N}")
     script = COVERAGE_CHECKS / "check_last_validated_generation_atomic_2394.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("last_validated_generation atomic (#2394) coverage contract rows failed")
         return 1
@@ -10502,10 +10398,7 @@ def cmd_stable_ref_wire_endian_coverage():
     """
     print(f"{B}=== StableNodeRef wire endian coverage (#2395) ==={N}")
     script = COVERAGE_CHECKS / "check_stable_ref_wire_endian_2395.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("StableNodeRef wire endian (#2395) coverage contract rows failed")
         return 1
@@ -10521,10 +10414,7 @@ def cmd_orphan_reap_tick_coverage():
     """
     print(f"{B}=== orphan reap tick coverage (#2396) ==={N}")
     script = COVERAGE_CHECKS / "check_orphan_reap_tick_2396.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("orphan reap tick (#2396) coverage contract rows failed")
         return 1
@@ -10544,10 +10434,7 @@ def cmd_storm_clear_health_pass_coverage():
     """
     print(f"{B}=== storm-clear health pass coverage (#2639) ==={N}")
     script = COVERAGE_CHECKS / "check_storm_clear_health_pass_coverage.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("storm-clear health pass (#2639) coverage contract rows failed")
         return 1
@@ -10571,10 +10458,7 @@ def cmd_storm_clear_drive_body_coverage():
     """
     print(f"{B}=== storm-clear drive body coverage (#2669) ==={N}")
     script = COVERAGE_CHECKS / "check_storm_clear_drive_body_coverage.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("storm-clear drive body (#2669) coverage contract rows failed")
         return 1
@@ -10593,10 +10477,7 @@ def cmd_residual_sid0_cap_coverage():
     """
     print(f"{B}=== residual sid0 cap coverage (#2638) ==={N}")
     script = COVERAGE_CHECKS / "check_residual_sid0_cap_coverage.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("residual sid0 cap (#2638) coverage contract rows failed")
         return 1
@@ -10614,10 +10495,7 @@ def cmd_sync_remount_anon_coverage():
     """
     print(f"{B}=== sync remount anon coverage (#2637) ==={N}")
     script = COVERAGE_CHECKS / "check_sync_remount_anon_coverage.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("sync remount anon (#2637) coverage contract rows failed")
         return 1
@@ -10633,10 +10511,7 @@ def cmd_join_drain_reclaim_still_running_coverage():
     """
     print(f"{B}=== join-drain reclaim still-running coverage (#2397) ==={N}")
     script = COVERAGE_CHECKS / "check_join_drain_reclaim_still_running_2397.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("join-drain reclaim still-running (#2397) coverage contract rows failed")
         return 1
@@ -10655,10 +10530,7 @@ def cmd_residual_body_age_coverage():
     """
     print(f"{B}=== residual body-age coverage (#2636) ==={N}")
     script = COVERAGE_CHECKS / "check_residual_body_age_coverage.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("residual body-age (#2636) coverage contract rows failed")
         return 1
@@ -10674,10 +10546,7 @@ def cmd_mailbox_bp_recent_window_coverage():
     """
     print(f"{B}=== mailbox BP recent window coverage (#2398) ==={N}")
     script = COVERAGE_CHECKS / "check_mailbox_bp_recent_window_2398.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("mailbox BP recent window (#2398) coverage contract rows failed")
         return 1
@@ -10693,10 +10562,7 @@ def cmd_agent_scope_concurrent_coverage():
     """
     print(f"{B}=== AgentScope concurrent detect coverage (#2399) ==={N}")
     script = COVERAGE_CHECKS / "check_agent_scope_concurrent_2399.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("AgentScope concurrent detect (#2399) coverage contract rows failed")
         return 1
@@ -10708,10 +10574,7 @@ def cmd_agent_scope_concurrency_2976_coverage():
     """Issue #2976: AgentScope SingleOwner (default) vs MutexGuarded."""
     print(f"{B}=== AgentScope concurrency modes (#2976) ==={N}")
     script = COVERAGE_CHECKS / "check_agent_scope_concurrency_2976.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("AgentScope concurrency modes (#2976) coverage contract rows failed")
         return 1
@@ -10728,10 +10591,7 @@ def cmd_agent_scope_concurrent_hard_deny_2946_coverage():
     """
     print(f"{B}=== AgentScope concurrent hard deny coverage (#2946) ==={N}")
     script = COVERAGE_CHECKS / "check_agent_scope_concurrent_hard_deny_2946.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("AgentScope concurrent hard deny (#2946) coverage contract rows failed")
         return 1
@@ -10747,10 +10607,7 @@ def cmd_mailbox_hold_slo_security_schedule_2947_coverage():
     """
     print(f"{B}=== mailbox hold SLO security-schedule coverage (#2947) ==={N}")
     script = COVERAGE_CHECKS / "check_mailbox_hold_slo_security_schedule_2947.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("mailbox hold SLO security-schedule (#2947) coverage contract rows failed")
         return 1
@@ -10762,10 +10619,7 @@ def cmd_wal_append_fail_schedule_3211_coverage():
     """Issue #3211: production WAL append-fail SLO → schedule deny (static)."""
     print(f"{B}=== wal append-fail schedule coverage (#3211) ==={N}")
     script = COVERAGE_CHECKS / "check_wal_append_fail_schedule_3211.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("wal append-fail schedule (#3211) coverage contract rows failed")
         return 1
@@ -10787,10 +10641,7 @@ def cmd_wal_fail_closed_force_wal_3302_coverage():
     """Issue #3302: force_wal default-arms WAL fail-closed (static)."""
     print(f"{B}=== wal fail-closed force_wal coverage (#3302) ==={N}")
     script = COVERAGE_CHECKS / "check_wal_fail_closed_force_wal_3302.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("wal fail-closed force_wal (#3302) coverage contract rows failed")
         return 1
@@ -10813,10 +10664,7 @@ def cmd_atomic_batch_macro_audit_3301_coverage():
     """Issue #3301: atomic-batch batch-level MacroIntroduced audit (static)."""
     print(f"{B}=== atomic-batch macro audit coverage (#3301) ==={N}")
     script = COVERAGE_CHECKS / "check_atomic_batch_macro_audit_3301.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("atomic-batch macro audit (#3301) coverage contract rows failed")
         return 1
@@ -10847,10 +10695,7 @@ def cmd_bp_threshold_ssot_2948_coverage():
     """
     print(f"{B}=== BP threshold SSOT coverage (#2948) ==={N}")
     script = COVERAGE_CHECKS / "check_bp_threshold_ssot_2948.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("BP threshold SSOT (#2948) coverage contract rows failed")
         return 1
@@ -10866,10 +10711,7 @@ def cmd_force_jit_repromote_only_covered_default_2949_coverage():
     """
     print(f"{B}=== force_jit only_covered default coverage (#2949) ==={N}")
     script = COVERAGE_CHECKS / "check_force_jit_repromote_only_covered_default_2949.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("force_jit only_covered default (#2949) coverage contract rows failed")
         return 1
@@ -10885,10 +10727,7 @@ def cmd_pure_anon_bg_remount_2950_coverage():
     """
     print(f"{B}=== pure-anon bg remount coverage (#2950) ==={N}")
     script = COVERAGE_CHECKS / "check_pure_anon_bg_remount_2950.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("pure-anon bg remount (#2950) coverage contract rows failed")
         return 1
@@ -10905,10 +10744,7 @@ def cmd_coverage_verify_min_dirty_2952_coverage():
     """
     print(f"{B}=== coverage-verify min-dirty coverage (#2952) ==={N}")
     script = COVERAGE_CHECKS / "check_coverage_verify_min_dirty_2952.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("coverage-verify min-dirty (#2952) coverage contract rows failed")
         return 1
@@ -10924,10 +10760,7 @@ def cmd_reload_recovery_playbook_2953_coverage():
     """
     print(f"{B}=== reload recovery playbook coverage (#2953) ==={N}")
     script = COVERAGE_CHECKS / "check_reload_recovery_playbook_2953.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("reload recovery playbook (#2953) coverage contract rows failed")
         return 1
@@ -10943,10 +10776,7 @@ def cmd_parallel_isolation_level_coverage():
     """
     print(f"{B}=== parallel isolation-level coverage (#2400) ==={N}")
     script = COVERAGE_CHECKS / "check_parallel_isolation_level_2400.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("parallel isolation-level (#2400) coverage contract rows failed")
         return 1
@@ -10967,10 +10797,7 @@ def cmd_pure_parallel_isolation_wording_coverage():
     """
     print(f"{B}=== pure parallel isolation wording-drift coverage (#2593) ==={N}")
     script = COVERAGE_CHECKS / "check_pure_parallel_isolation_wording.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("pure parallel isolation wording (#2593) drift detected")
         return 1
@@ -10988,10 +10815,7 @@ def cmd_audit_mid_fallback_slo_2594_coverage():
     """
     print(f"{B}=== audit mid-fallback SLO coverage (#2594) ==={N}")
     script = COVERAGE_CHECKS / "check_audit_mid_fallback_slo_2594.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("audit mid-fallback SLO (#2594) coverage contract rows failed")
         return 1
@@ -11012,10 +10836,7 @@ def cmd_densify_unified_gate_2595_coverage():
     """
     print(f"{B}=== densify unified gate coverage (#2595) ==={N}")
     script = COVERAGE_CHECKS / "check_densify_unified_gate_2595.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("densify unified gate (#2595) coverage contract rows failed")
         return 1
@@ -11035,10 +10856,7 @@ def cmd_moving_untracked_production_hard_2596_coverage():
     """
     print(f"{B}=== moving untracked production hard coverage (#2596) ==={N}")
     script = COVERAGE_CHECKS / "check_moving_untracked_production_hard_2596.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("moving untracked production hard (#2596) coverage contract rows failed")
         return 1
@@ -11059,10 +10877,7 @@ def cmd_general_object_pin_auto_wire_2597_coverage():
     """
     print(f"{B}=== general object pin auto wire coverage (#2597) ==={N}")
     script = COVERAGE_CHECKS / "check_general_object_pin_auto_wire_2597.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("general object pin auto wire (#2597) coverage contract rows failed")
         return 1
@@ -11082,10 +10897,7 @@ def cmd_general_object_pin_auto_wire_2709_coverage():
     """
     print(f"{B}=== general object pin mandatory coverage (#2709) ==={N}")
     script = ROOT / "scripts" / "check_general_object_pin_auto_wire_2709.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("general object pin mandatory coverage (#2709) contract rows failed")
         return 1
@@ -11105,10 +10917,7 @@ def cmd_panic_checkpoint_steal_hard_2710_coverage():
     """
     print(f"{B}=== panic checkpoint steal hard (#2710) ==={N}")
     script = ROOT / "scripts" / "check_panic_checkpoint_steal_hard_2710.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("panic checkpoint steal hard (#2710) contract rows failed")
         return 1
@@ -11129,10 +10938,7 @@ def cmd_envframe_lifetime_proof_2711_coverage():
     """
     print(f"{B}=== envframe lifetime proof (#2711) ==={N}")
     script = ROOT / "scripts" / "check_envframe_lifetime_proof_2711.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("envframe lifetime proof (#2711) contract rows failed")
         return 1
@@ -11152,10 +10958,7 @@ def cmd_epoch_invariant_soft_fuse_heal_2712_coverage():
     """
     print(f"{B}=== epoch invariant soft fuse heal (#2712) ==={N}")
     script = ROOT / "scripts" / "check_epoch_invariant_soft_fuse_heal_2712.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("epoch invariant soft fuse heal (#2712) contract rows failed")
         return 1
@@ -11176,10 +10979,7 @@ def cmd_cross_eval_epoch_bump_2713_coverage():
     """
     print(f"{B}=== cross eval epoch bump (#2713) ==={N}")
     script = ROOT / "scripts" / "check_cross_eval_epoch_bump_2713.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("cross eval epoch bump (#2713) contract rows failed")
         return 1
@@ -11200,10 +11000,7 @@ def cmd_captured_anon_sync_remount_prod_default_2714_coverage():
     """
     print(f"{B}=== captured anon sync remount prod default (#2714) ==={N}")
     script = ROOT / "scripts" / "check_captured_anon_sync_remount_prod_default_2714.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("captured anon sync remount prod default (#2714) contract rows failed")
         return 1
@@ -11702,10 +11499,7 @@ def cmd_concurrent_clone_prod_zero_half_tree_3321_coverage():
     """
     print(f"{B}=== concurrent clone prod zero half-tree (#3321) ==={N}")
     script = COVERAGE_CHECKS / "check_concurrent_clone_prod_zero_half_tree_3321.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("concurrent clone prod zero half-tree (#3321) linter failed")
         return 1
@@ -11727,10 +11521,7 @@ def cmd_deferred_reemit_steal_sticky_2715_coverage():
     """
     print(f"{B}=== deferred reemit steal sticky (#2715) ==={N}")
     script = ROOT / "scripts" / "check_deferred_reemit_steal_sticky_2715.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("deferred reemit steal sticky (#2715) contract rows failed")
         return 1
@@ -11742,10 +11533,7 @@ def cmd_cone_truncate_force_closure_2909_coverage():
     """Issue #2909: force recover/reject on cone truncate + outside drop (static)."""
     print(f"{B}=== cone truncate force-closure coverage (#2909) ==={N}")
     script = COVERAGE_CHECKS / "check_cone_truncate_force_closure_2909.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("cone truncate force-closure (#2909) coverage contract rows failed")
         return 1
@@ -11761,10 +11549,7 @@ def cmd_cone_outside_goal_drop_recover_reject_2962_coverage():
     """
     print(f"{B}=== cone-outside-goal-drop recover-reject coverage (#2962) ==={N}")
     script = COVERAGE_CHECKS / "check_cone_outside_goal_drop_recover_reject_2962.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("cone-outside-goal-drop recover-reject (#2962) coverage contract rows failed")
         return 1
@@ -11798,10 +11583,7 @@ def cmd_occurrence_hard_face_commit_2716_coverage():
     """
     print(f"{B}=== occurrence hard face commit (#2716) ==={N}")
     script = ROOT / "scripts" / "check_occurrence_hard_face_commit_2716.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("occurrence hard face commit (#2716) contract rows failed")
         return 1
@@ -11813,10 +11595,7 @@ def cmd_type_linear_commit_proof_counts_2758_coverage():
     """Issue #2758: fill TypeLinearCommitProof root/goal counts from real walks."""
     print(f"{B}=== type linear commit proof counts (#2758) ==={N}")
     script = COVERAGE_CHECKS / "check_type_linear_commit_proof_counts_2758.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("type linear commit proof counts (#2758) contract rows failed")
         return 1
@@ -11833,10 +11612,7 @@ def cmd_type_linear_commit_proof_goal_truth_2842_coverage():
     """
     print(f"{B}=== type linear commit proof goal truth (#2842) ==={N}")
     script = COVERAGE_CHECKS / "check_type_linear_commit_proof_goal_truth_2842.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("type linear commit proof goal truth (#2842) contract rows failed")
         return 1
@@ -11859,10 +11635,7 @@ def cmd_type_linear_commit_proof_stamp_2717_coverage():
     """
     print(f"{B}=== type linear commit proof stamp (#2717) ==={N}")
     script = ROOT / "scripts" / "check_type_linear_commit_proof_stamp_2717.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("type linear commit proof stamp (#2717) contract rows failed")
         return 1
@@ -11884,10 +11657,7 @@ def cmd_panic_residual_densify_hard_2598_coverage():
     """
     print(f"{B}=== panic residual densify hard coverage (#2598) ==={N}")
     script = COVERAGE_CHECKS / "check_panic_residual_densify_hard_2598.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("panic residual densify hard (#2598) coverage contract rows failed")
         return 1
@@ -11907,10 +11677,7 @@ def cmd_envframe_densify_scan_commit_barrier_2599_coverage():
     """
     print(f"{B}=== envframe densify scan commit barrier coverage (#2599) ==={N}")
     script = COVERAGE_CHECKS / "check_envframe_densify_scan_commit_barrier_2599.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("envframe densify scan commit barrier (#2599) coverage contract rows failed")
         return 1
@@ -11931,10 +11698,7 @@ def cmd_mutation_boundary_shared_exit_2600_coverage():
     """
     print(f"{B}=== mutation boundary shared exit coverage (#2600) ==={N}")
     script = COVERAGE_CHECKS / "check_mutation_boundary_shared_exit_2600.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("mutation boundary shared exit (#2600) coverage contract rows failed")
         return 1
@@ -11950,10 +11714,7 @@ def cmd_agent_reply_coverage():
     """
     print(f"{B}=== agent-reply coverage (#2401) ==={N}")
     script = COVERAGE_CHECKS / "check_agent_reply_2401.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("agent-reply (#2401) coverage contract rows failed")
         return 1
@@ -11969,10 +11730,7 @@ def cmd_restamp_incremental_coverage():
     """
     print(f"{B}=== restamp incremental coverage (#2402) ==={N}")
     script = COVERAGE_CHECKS / "check_restamp_incremental_2402.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("restamp incremental (#2402) coverage contract rows failed")
         return 1
@@ -11988,10 +11746,7 @@ def cmd_query_index_composite_coverage():
     """
     print(f"{B}=== query-index composite coverage (#2403) ==={N}")
     script = COVERAGE_CHECKS / "check_query_index_composite_2403.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("query-index composite (#2403) coverage contract rows failed")
         return 1
@@ -12007,10 +11762,7 @@ def cmd_stable_ref_export_coverage():
     """
     print(f"{B}=== stable-ref export validate coverage (#2404) ==={N}")
     script = COVERAGE_CHECKS / "check_stable_ref_export_2404.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("stable-ref export validate (#2404) coverage contract rows failed")
         return 1
@@ -12127,10 +11879,7 @@ def cmd_envframe_ownership_transfer_coverage():
     """
     print(f"{B}=== EnvFrame ownership transfer coverage (#2295) ==={N}")
     script = COVERAGE_CHECKS / "check_envframe_ownership_transfer_2295.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("EnvFrame ownership transfer coverage contract rows failed")
         return 1
@@ -12146,10 +11895,7 @@ def cmd_residual_gc_defer_multi_eval_coverage():
     """
     print(f"{B}=== residual multi-eval Clear harden coverage (#2296) ==={N}")
     script = COVERAGE_CHECKS / "check_residual_gc_defer_multi_eval_2296.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("residual multi-eval Clear harden coverage contract rows failed")
         return 1
@@ -12165,10 +11911,7 @@ def cmd_residual_defer_after_exit_coverage():
     """
     print(f"{B}=== residual-defer-after-exit closed loop (#2846) ==={N}")
     script = COVERAGE_CHECKS / "check_residual_defer_after_exit_2846.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail(
             "Issue #2846 residual-defer-after-exit linter failed — run "
@@ -12183,10 +11926,7 @@ def cmd_outermost_exit_residual_pin_2975_coverage():
     """Issue #2975: outermost-exit residual + pin_contract production hard gate."""
     print(f"{B}=== outermost-exit residual+pin hard gate (#2975) ==={N}")
     script = COVERAGE_CHECKS / "check_outermost_exit_residual_pin_2975.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail(
             "Issue #2975 outermost-exit residual+pin linter failed — run "
@@ -12205,10 +11945,7 @@ def cmd_capture_cell_remap_coverage():
     """
     print(f"{B}=== structural capture-cell remount coverage (#2297) ==={N}")
     script = COVERAGE_CHECKS / "check_capture_cell_remap_2297.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("structural capture-cell remount coverage contract rows failed")
         return 1
@@ -12224,10 +11961,7 @@ def cmd_general_object_pin_coverage():
     """
     print(f"{B}=== general object pin-or-remap coverage (#2298) ==={N}")
     script = COVERAGE_CHECKS / "check_general_object_pin_2298.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("general object pin-or-remap coverage contract rows failed")
         return 1
@@ -12243,10 +11977,7 @@ def cmd_aot_per_eval_slot_invalidate_coverage():
     """
     print(f"{B}=== per-eval AOT slot invalidate coverage (#2299) ==={N}")
     script = COVERAGE_CHECKS / "check_aot_per_eval_slot_invalidate_2299.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("per-eval AOT slot invalidate coverage contract rows failed")
         return 1
@@ -12265,10 +11996,7 @@ def cmd_aot_exhausted_min_dirty_retry_2601_coverage():
     """
     print(f"{B}=== exhausted min-dirty retry closed-loop coverage (#2601) ==={N}")
     script = COVERAGE_CHECKS / "check_aot_exhausted_min_dirty_retry_2601.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("exhausted min-dirty retry coverage contract rows failed")
         return 1
@@ -12284,10 +12012,7 @@ def cmd_lifetime_contract_snapshot_coverage():
     """
     print(f"{B}=== lifetime-contract-snapshot coverage (#2300) ==={N}")
     script = COVERAGE_CHECKS / "check_lifetime_contract_snapshot_2300.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("lifetime-contract-snapshot coverage contract rows failed")
         return 1
@@ -12303,10 +12028,7 @@ def cmd_type_timeout_repair_graph_coverage():
     """
     print(f"{B}=== type-timeout-repair graph coverage (#2343) ==={N}")
     script = COVERAGE_CHECKS / "check_type_timeout_repair_graph_2343.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("type-timeout-repair graph coverage contract rows failed")
         return 1
@@ -12322,10 +12044,7 @@ def cmd_escape_gate_key_contract_coverage():
     """
     print(f"{B}=== escape-gate key contract coverage (#2344) ==={N}")
     script = COVERAGE_CHECKS / "check_escape_gate_key_contract_2344.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("escape-gate key contract coverage contract rows failed")
         return 1
@@ -12341,10 +12060,7 @@ def cmd_composite_empty_cs_hard_coverage():
     """
     print(f"{B}=== composite empty-CS hard-reject coverage (#2345) ==={N}")
     script = COVERAGE_CHECKS / "check_composite_empty_cs_hard_2345.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("composite empty-CS hard-reject coverage contract rows failed")
         return 1
@@ -12360,10 +12076,7 @@ def cmd_composite_cs_signature_matrix_coverage():
     """
     print(f"{B}=== composite CS signature matrix coverage (#2509) ==={N}")
     script = COVERAGE_CHECKS / "check_composite_cs_signature_matrix_2509.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("composite CS signature matrix coverage contract rows failed")
         return 1
@@ -12379,10 +12092,7 @@ def cmd_steal_snapshot_hard_invariant_coverage():
     """
     print(f"{B}=== steal-snapshot hard-invariant coverage (#2346) ==={N}")
     script = COVERAGE_CHECKS / "check_steal_snapshot_hard_invariant_2346.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("steal-snapshot hard-invariant coverage contract rows failed")
         return 1
@@ -12398,10 +12108,7 @@ def cmd_steal_safety_ticket_coverage():
     """
     print(f"{B}=== steal safety ticket coverage (#2518) ==={N}")
     script = COVERAGE_CHECKS / "check_steal_safety_ticket_2518.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("steal safety ticket (#2518) coverage contract rows failed")
         return 1
@@ -12417,10 +12124,7 @@ def cmd_steal_snapshot_soft_production_lock_coverage():
     """
     print(f"{B}=== steal-snapshot Soft production lock coverage (#2372) ==={N}")
     script = COVERAGE_CHECKS / "check_steal_snapshot_soft_production_lock_2372.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("steal-snapshot Soft production lock coverage contract rows failed")
         return 1
@@ -12436,10 +12140,7 @@ def cmd_render_deopt_throttle_race_coverage():
     """
     print(f"{B}=== render deopt throttle CAS race coverage (#2373) ==={N}")
     script = COVERAGE_CHECKS / "check_render_deopt_throttle_race_2373.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("render deopt throttle CAS race coverage contract rows failed")
         return 1
@@ -12456,10 +12157,7 @@ def cmd_legacy_pin_registry_cleanup_coverage():
     """
     print(f"{B}=== legacy pin_registry cleanup coverage (#2374) ==={N}")
     script = COVERAGE_CHECKS / "check_legacy_pin_registry_cleanup_2374.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("legacy pin_registry cleanup coverage contract rows failed")
         return 1
@@ -12475,10 +12173,7 @@ def cmd_pin_bulk_all_shards_coverage():
     """
     print(f"{B}=== pin bulk all-shard walk coverage (#2375) ==={N}")
     script = COVERAGE_CHECKS / "check_pin_bulk_all_shards_2375.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("pin bulk all-shard walk coverage contract rows failed")
         return 1
@@ -12494,10 +12189,7 @@ def cmd_steal_complete_strong_entry_coverage():
     """
     print(f"{B}=== steal-complete strong entry coverage (#2377) ==={N}")
     script = COVERAGE_CHECKS / "check_steal_complete_strong_entry_2377.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("steal-complete strong entry (#2377) coverage contract rows failed")
         return 1
@@ -12513,10 +12205,7 @@ def cmd_mutate_mailbox_strict_coverage():
     """
     print(f"{B}=== mutate-mailbox Strict hard audit coverage (#2347) ==={N}")
     script = COVERAGE_CHECKS / "check_mutate_mailbox_strict_2347.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("mutate-mailbox Strict hard audit coverage contract rows failed")
         return 1
@@ -12532,10 +12221,7 @@ def cmd_mailbox_defer_drain_sla_coverage():
     """
     print(f"{B}=== mailbox defer drain SLA coverage (#2378) ==={N}")
     script = COVERAGE_CHECKS / "check_mailbox_defer_drain_sla_2378.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("mailbox defer drain SLA (#2378) coverage contract rows failed")
         return 1
@@ -12551,10 +12237,7 @@ def cmd_mailbox_hold_exit_drain_coverage():
     """
     print(f"{B}=== mailbox hold-exit drain coverage (#2511) ==={N}")
     script = COVERAGE_CHECKS / "check_mailbox_hold_exit_drain_2511.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("mailbox hold-exit drain (#2511) coverage contract rows failed")
         return 1
@@ -12566,10 +12249,7 @@ def cmd_mailbox_under_boundary_wait_2903_coverage():
     """Issue #2903: deferred-under-boundary wait histogram (static contract)."""
     print(f"{B}=== mailbox under-boundary wait coverage (#2903) ==={N}")
     script = COVERAGE_CHECKS / "check_mailbox_under_boundary_wait_2903.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("mailbox under-boundary wait (#2903) coverage contract rows failed")
         return 1
@@ -12597,10 +12277,7 @@ def cmd_bidirectional_match_coverage():
     """
     print(f"{B}=== bidirectional match check-mode coverage (#2348) ==={N}")
     script = COVERAGE_CHECKS / "check_bidirectional_match_2348.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("bidirectional match check-mode coverage contract rows failed")
         return 1
@@ -12620,10 +12297,7 @@ def cmd_empty_pair_no_dynamic_3432_coverage():
     """
     print(f"{B}=== empty Pair no-Dynamic coverage (#3432) ==={N}")
     script = COVERAGE_CHECKS / "check_empty_pair_no_dynamic_3432.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("empty Pair no-Dynamic (#3432) coverage contract rows failed")
         return 1
@@ -12639,10 +12313,7 @@ def cmd_mutation_hold_slo_coverage():
     """
     print(f"{B}=== mutation hold SLO circuit-breaker coverage (#2349) ==={N}")
     script = COVERAGE_CHECKS / "check_mutation_hold_slo_2349.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("mutation hold SLO circuit-breaker coverage contract rows failed")
         return 1
@@ -12658,10 +12329,7 @@ def cmd_mutation_hold_estimate_coverage():
     """
     print(f"{B}=== mutation hold estimate coverage (#2405) ==={N}")
     script = COVERAGE_CHECKS / "check_mutation_hold_estimate_2405.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("mutation hold estimate (#2405) coverage contract rows failed")
         return 1
@@ -12677,10 +12345,7 @@ def cmd_mutation_hold_live_coverage():
     """
     print(f"{B}=== mutation hold live coverage (#2517) ==={N}")
     script = COVERAGE_CHECKS / "check_mutation_hold_live_2517.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("mutation hold live (#2517) coverage contract rows failed")
         return 1
@@ -12696,10 +12361,7 @@ def cmd_pcv_tls_scratch_coverage():
     """
     print(f"{B}=== pcv TLS scratch coverage (#2406) ==={N}")
     script = COVERAGE_CHECKS / "check_pcv_tls_scratch_2406.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("pcv TLS scratch (#2406) coverage contract rows failed")
         return 1
@@ -12714,10 +12376,7 @@ def cmd_pcv_tls_default_on_coverage():
     """
     print(f"{B}=== pcv TLS default-on coverage (#2521) ==={N}")
     script = COVERAGE_CHECKS / "check_pcv_tls_default_on_2521.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("pcv TLS default-on (#2521) coverage contract rows failed")
         return 1
@@ -12729,10 +12388,7 @@ def cmd_pcv_flatast_locked_exclusive_2906_coverage():
     """Issue #2906: FlatAST locked mutate forces exclusive PCV via move-out (static)."""
     print(f"{B}=== pcv flatast locked exclusive coverage (#2906) ==={N}")
     script = COVERAGE_CHECKS / "check_pcv_flatast_locked_exclusive_2906.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("pcv flatast locked exclusive (#2906) coverage contract rows failed")
         return 1
@@ -12752,10 +12408,7 @@ def cmd_pcv_shared_cow_tls_3429_coverage():
     """
     print(f"{B}=== pcv shared-COW TLS coverage (#3429) ==={N}")
     script = COVERAGE_CHECKS / "check_pcv_shared_cow_tls_3429.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("pcv shared-COW TLS (#3429) coverage contract rows failed")
         return 1
@@ -12788,10 +12441,7 @@ def cmd_pcv_span_stale_coverage_3167():
     """
     print(f"{B}=== pcv span stale coverage (#3167) ==={N}")
     script = COVERAGE_CHECKS / "check_pcv_span_stale_coverage_3167.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("pcv span stale (#3167) coverage contract rows failed")
         return 1
@@ -12831,10 +12481,7 @@ def cmd_cascade_rearm_new_edge_only_3168():
     """
     print(f"{B}=== cascade rearm new-edge-only (#3168) ==={N}")
     script = COVERAGE_CHECKS / "check_cascade_rearm_new_edge_only_3168.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("cascade rearm new-edge-only (#3168) coverage contract rows failed")
         return 1
@@ -12849,10 +12496,7 @@ def cmd_batch_dirty_cascade_coverage():
     """
     print(f"{B}=== batch dirty cascade coverage (#2522) ==={N}")
     script = COVERAGE_CHECKS / "check_batch_dirty_cascade_2522.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("batch dirty cascade (#2522) coverage contract rows failed")
         return 1
@@ -12867,10 +12511,7 @@ def cmd_batch_dirty_discipline_coverage():
     """
     print(f"{B}=== batch dirty cascade discipline coverage (#2615) ==={N}")
     script = COVERAGE_CHECKS / "check_batch_dirty_discipline_2615.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("batch dirty cascade discipline (#2615) coverage contract rows failed")
         return 1
@@ -12882,10 +12523,7 @@ def cmd_batch_dirty_production_multi_only_2936_coverage():
     """Issue #2936: production multi-block IR dirty must use batch API only (static)."""
     print(f"{B}=== batch dirty production multi-only coverage (#2936) ==={N}")
     script = COVERAGE_CHECKS / "check_batch_dirty_production_multi_only_2936.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("batch dirty production multi-only (#2936) coverage contract rows failed")
         return 1
@@ -12921,10 +12559,7 @@ def cmd_moving_unified_success_2682_coverage():
     """
     print(f"{B}=== moving densify unified success gate coverage (#2682) ==={N}")
     script = COVERAGE_CHECKS / "check_moving_unified_success_2682.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("moving densify unified success gate (#2682) coverage contract rows failed")
         return 1
@@ -12936,10 +12571,7 @@ def cmd_moving_sticky_densify_off_2905_coverage():
     """Issue #2905: sticky densify-off auto-clear + Agent visibility (static)."""
     print(f"{B}=== moving sticky densify-off coverage (#2905) ==={N}")
     script = COVERAGE_CHECKS / "check_moving_sticky_densify_off_2905.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("moving sticky densify-off (#2905) coverage contract rows failed")
         return 1
@@ -12962,10 +12594,7 @@ def cmd_moving_known_roots_sticky_recovery_2935_coverage():
     """Issue #2935: known-root inventory + sticky densify-off Agent recovery (static)."""
     print(f"{B}=== moving known-roots sticky recovery coverage (#2935) ==={N}")
     script = COVERAGE_CHECKS / "check_moving_known_roots_sticky_recovery_2935.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("moving known-roots sticky recovery (#2935) coverage contract rows failed")
         return 1
@@ -12990,10 +12619,7 @@ def cmd_general_object_pin_create_densify_2971_coverage():
     """Issue #2971: production-required create auto-wire + pre-move densify gate (static)."""
     print(f"{B}=== general-object-pin create densify coverage (#2971) ==={N}")
     script = COVERAGE_CHECKS / "check_general_object_pin_create_densify_2971.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("general-object-pin create densify (#2971) coverage contract rows failed")
         return 1
@@ -13018,10 +12644,7 @@ def cmd_general_object_pin_allocate_3053_coverage():
     """Issue #3053: allocate / pool+flat residual on required pin cover (static)."""
     print(f"{B}=== general-object-pin allocate residual coverage (#3053) ==={N}")
     script = COVERAGE_CHECKS / "check_general_object_pin_allocate_3053.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("general-object-pin allocate residual (#3053) coverage contract rows failed")
         return 1
@@ -13045,10 +12668,7 @@ def cmd_mid_fallback_refuse_se_3054_coverage():
     """Issue #3054: mid-fallback refuse joinable SecurityEvent (static)."""
     print(f"{B}=== mid-fallback refuse SE coverage (#3054) ==={N}")
     script = COVERAGE_CHECKS / "check_mid_fallback_refuse_se_3054.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("mid-fallback refuse SE (#3054) coverage contract rows failed")
         return 1
@@ -13071,10 +12691,7 @@ def cmd_wal_append_fail_slo_3056_coverage():
     """Issue #3056: production WAL append_fail posture arm (static)."""
     print(f"{B}=== WAL append_fail SLO coverage (#3056) ==={N}")
     script = COVERAGE_CHECKS / "check_wal_append_fail_slo_3056.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("WAL append_fail SLO (#3056) coverage contract rows failed")
         return 1
@@ -13097,10 +12714,7 @@ def cmd_moving_pre_densify_completeness_2973_coverage():
     """Issue #2973: production hard pre-densify external-root completeness (static)."""
     print(f"{B}=== moving pre-densify completeness coverage (#2973) ==={N}")
     script = COVERAGE_CHECKS / "check_moving_pre_densify_completeness_2973.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("moving pre-densify completeness (#2973) coverage contract rows failed")
         return 1
@@ -13123,10 +12737,7 @@ def cmd_moving_incomplete_remap_3017_coverage():
     """Issue #3017: value-only / un-slotted incomplete-remap residual (static)."""
     print(f"{B}=== moving incomplete-remap residual coverage (#3017) ==={N}")
     script = COVERAGE_CHECKS / "check_moving_incomplete_remap_3017.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("moving incomplete-remap residual (#3017) coverage contract rows failed")
         return 1
@@ -13149,10 +12760,7 @@ def cmd_moving_post_moving_stale_3055_coverage():
     """Issue #3055: post-Moving last_object_remap_ residual (static)."""
     print(f"{B}=== moving post-Moving stale coverage (#3055) ==={N}")
     script = COVERAGE_CHECKS / "check_moving_post_moving_stale_3055.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("moving post-Moving stale (#3055) coverage contract rows failed")
         return 1
@@ -13175,10 +12783,7 @@ def cmd_moving_temporary_canary_3210_coverage():
     """Issue #3210: temporary EnvFrame/Closure/JIT/FFI live-ptr canary (static)."""
     print(f"{B}=== moving temporary canary coverage (#3210) ==={N}")
     script = COVERAGE_CHECKS / "check_moving_temporary_canary_3210.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("moving temporary canary (#3210) coverage contract rows failed")
         return 1
@@ -13202,10 +12807,7 @@ def cmd_engine_metrics_hash_overflow_3018_coverage():
     """Issue #3018: engine:metrics hash overflow fail-soft (static)."""
     print(f"{B}=== engine:metrics hash overflow coverage (#3018) ==={N}")
     script = COVERAGE_CHECKS / "check_engine_metrics_hash_overflow_3018.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("engine:metrics hash overflow (#3018) coverage contract rows failed")
         return 1
@@ -13227,10 +12829,7 @@ def cmd_unified_restamp_3019_coverage():
     """Issue #3019: unified restamp after boundary/abort/steal/densify (static)."""
     print(f"{B}=== unified restamp coverage (#3019) ==={N}")
     script = COVERAGE_CHECKS / "check_unified_restamp_3019.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("unified restamp (#3019) coverage contract rows failed")
         return 1
@@ -13252,10 +12851,7 @@ def cmd_unified_restamp_query_visible_3058_coverage():
     """Issue #3058: query:*-stable over-budget torn visible (static)."""
     print(f"{B}=== unified restamp query-visible coverage (#3058) ==={N}")
     script = COVERAGE_CHECKS / "check_unified_restamp_query_visible_3058.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("unified restamp query-visible (#3058) coverage contract rows failed")
         return 1
@@ -13278,10 +12874,7 @@ def cmd_hot_update_decide_and_reemit_3059_coverage():
     """Issue #3059: decide_and_reemit production facade (static)."""
     print(f"{B}=== hot-update decide_and_reemit coverage (#3059) ==={N}")
     script = COVERAGE_CHECKS / "check_hot_update_decide_and_reemit_3059.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("hot-update decide_and_reemit (#3059) coverage contract rows failed")
         return 1
@@ -13303,10 +12896,7 @@ def cmd_query_hash_overflow_3020_coverage():
     """Issue #3020: domain query:* hash overflow fail-soft (static)."""
     print(f"{B}=== query hash overflow coverage (#3020) ==={N}")
     script = COVERAGE_CHECKS / "check_query_hash_overflow_3020.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("query hash overflow (#3020) coverage contract rows failed")
         return 1
@@ -13328,10 +12918,7 @@ def cmd_envframe_closure_apply_protocol_3021_coverage():
     """Issue #3021: EnvFrame/Closure apply/use-site protocol (static)."""
     print(f"{B}=== EnvFrame/Closure apply protocol coverage (#3021) ==={N}")
     script = COVERAGE_CHECKS / "check_envframe_closure_apply_protocol_3021.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("EnvFrame/Closure apply protocol (#3021) coverage contract rows failed")
         return 1
@@ -13353,10 +12940,7 @@ def cmd_ffi_opaque_pin_or_remap_3022_coverage():
     """Issue #3022: FFI opaque/native pin-or-remap (static)."""
     print(f"{B}=== FFI opaque pin-or-remap coverage (#3022) ==={N}")
     script = COVERAGE_CHECKS / "check_ffi_opaque_pin_or_remap_3022.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("FFI opaque pin-or-remap (#3022) coverage contract rows failed")
         return 1
@@ -13378,10 +12962,7 @@ def cmd_ffi_opaque_pin_or_remap_3057_coverage():
     """Issue #3057: FFI opaque slot cover residual of #3022 (static)."""
     print(f"{B}=== FFI opaque slot-cover residual coverage (#3057) ==={N}")
     script = COVERAGE_CHECKS / "check_ffi_opaque_pin_or_remap_3057.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("FFI opaque slot-cover residual (#3057) coverage contract rows failed")
         return 1
@@ -13404,10 +12985,7 @@ def cmd_linear_root_abort_release_3023_coverage():
     """Issue #3023: leftover linear_roots unpin on abort/reclaim (static)."""
     print(f"{B}=== linear_roots abort/reclaim coverage (#3023) ==={N}")
     script = COVERAGE_CHECKS / "check_linear_root_abort_release_3023.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("linear_roots abort/reclaim (#3023) coverage contract rows failed")
         return 1
@@ -13419,10 +12997,7 @@ def cmd_hold_budget_noncoop_force_edge_3254_coverage():
     """Issue #3254: non-cooperative inbody force-edge (production)."""
     print(f"{B}=== hold-budget noncoop force-edge (#3254) ==={N}")
     script = COVERAGE_CHECKS / "check_hold_budget_noncoop_force_edge_3254.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("hold-budget noncoop force-edge (#3254) coverage contract rows failed")
         return 1
@@ -13434,10 +13009,7 @@ def cmd_dual_dep_graph_soft_parity_partial_3255_coverage():
     """Issue #3255: Soft dual-graph parity fail fail-closed before partial peel."""
     print(f"{B}=== dual-dep-graph Soft parity partial (#3255) ==={N}")
     script = COVERAGE_CHECKS / "check_dual_dep_graph_soft_parity_partial_3255.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("dual-dep-graph Soft parity partial (#3255) coverage contract rows failed")
         return 1
@@ -13449,10 +13021,7 @@ def cmd_mailbox_defer_slo_hold_unify_3256_coverage():
     """Issue #3256: mailbox SLO unifies with hold-budget force path."""
     print(f"{B}=== mailbox defer-SLO hold unify (#3256) ==={N}")
     script = COVERAGE_CHECKS / "check_mailbox_defer_slo_hold_unify_3256.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("mailbox defer-SLO hold unify (#3256) coverage contract rows failed")
         return 1
@@ -13464,10 +13033,7 @@ def cmd_deferred_hybrid_rearm_last_look_3257_coverage():
     """Issue #3257: deferred_hybrid re-arm last-look before partial peel."""
     print(f"{B}=== deferred-hybrid re-arm last-look (#3257) ==={N}")
     script = COVERAGE_CHECKS / "check_deferred_hybrid_rearm_last_look_3257.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("deferred-hybrid re-arm last-look (#3257) coverage contract rows failed")
         return 1
@@ -13479,10 +13045,7 @@ def cmd_abort_force_lookup_reject_3258_coverage():
     """Issue #3258: abort fence rejects concurrent lookup until walk done."""
     print(f"{B}=== abort-force lookup reject (#3258) ==={N}")
     script = COVERAGE_CHECKS / "check_abort_force_lookup_reject_3258.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("abort-force lookup reject (#3258) coverage contract rows failed")
         return 1
@@ -13494,10 +13057,7 @@ def cmd_restamp_hot_cone_budget_3259_coverage():
     """Issue #3259: production over-budget restamp eager-restamps hot cone."""
     print(f"{B}=== restamp hot-cone budget (#3259) ==={N}")
     script = COVERAGE_CHECKS / "check_restamp_hot_cone_budget_3259.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("restamp hot-cone budget (#3259) coverage contract rows failed")
         return 1
@@ -13518,10 +13078,7 @@ def cmd_restamp_hot_cone_held_overflow_3426_coverage():
     """
     print(f"{B}=== restamp hot-cone held overflow (#3426) ==={N}")
     script = COVERAGE_CHECKS / "check_restamp_hot_cone_held_overflow_3426.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("restamp hot-cone held overflow (#3426) coverage contract rows failed")
         return 1
@@ -13533,10 +13090,7 @@ def cmd_macro_provenance_counter_unify_3260_coverage():
     """Issue #3260: reconcile #1908 file-level vs per-eval provenance counters."""
     print(f"{B}=== macro-provenance counter unify (#3260) ==={N}")
     script = COVERAGE_CHECKS / "check_macro_provenance_counter_unify_3260.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("macro-provenance counter unify (#3260) coverage contract rows failed")
         return 1
@@ -13548,10 +13102,7 @@ def cmd_flush_mutation_boundary_toctou_3261_coverage():
     """Issue #3261: flush outermost TOCTOU + hygiene hoist."""
     print(f"{B}=== flush-mutation-boundary TOCTOU (#3261) ==={N}")
     script = COVERAGE_CHECKS / "check_flush_mutation_boundary_toctou_3261.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("flush-mutation-boundary TOCTOU (#3261) coverage contract rows failed")
         return 1
@@ -13563,10 +13114,7 @@ def cmd_gc_safepoint_restamp_lock_3262_coverage():
     """Issue #3262: GC safepoint restamp-after-unlock + audit acquire."""
     print(f"{B}=== GC safepoint restamp-lock (#3262) ==={N}")
     script = COVERAGE_CHECKS / "check_gc_safepoint_restamp_lock_3262.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("GC safepoint restamp-lock (#3262) coverage contract rows failed")
         return 1
@@ -13578,10 +13126,7 @@ def cmd_quote_lambda_marker_once_3263_coverage():
     """Issue #3263: quote_lambda marker sample-once + drop dead stripped bump."""
     print(f"{B}=== quote-lambda marker-once (#3263) ==={N}")
     script = COVERAGE_CHECKS / "check_quote_lambda_marker_once_3263.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("quote-lambda marker-once (#3263) coverage contract rows failed")
         return 1
@@ -13593,10 +13138,7 @@ def cmd_cascade_dep_graph_atomic_3264_coverage():
     """Issue #3264: cascade dep-graph atomic + mutex + dropped-roots counter."""
     print(f"{B}=== cascade dep-graph atomic (#3264) ==={N}")
     script = COVERAGE_CHECKS / "check_cascade_dep_graph_atomic_3264.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("cascade dep-graph atomic (#3264) coverage contract rows failed")
         return 1
@@ -13608,10 +13150,7 @@ def cmd_jit_fn_marker_atomic_3265_coverage():
     """Issue #3265: atomic JIT fn marker tables + arena mark stack."""
     print(f"{B}=== JIT fn-marker atomic (#3265) ==={N}")
     script = COVERAGE_CHECKS / "check_jit_fn_marker_atomic_3265.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("JIT fn-marker atomic (#3265) coverage contract rows failed")
         return 1
@@ -13623,10 +13162,7 @@ def cmd_module_realpath_toctou_3266_coverage():
     """Issue #3266: module-loader realpath-then-lstat + lock granularity."""
     print(f"{B}=== module realpath-TOCTOU (#3266) ==={N}")
     script = COVERAGE_CHECKS / "check_module_realpath_toctou_3266.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("module realpath-TOCTOU (#3266) coverage contract rows failed")
         return 1
@@ -13638,10 +13174,7 @@ def cmd_env_publish_lock_3267_coverage():
     """Issue #3267: publish env_frames_ lock + combined live bridge-state."""
     print(f"{B}=== env publish lock (#3267) ==={N}")
     script = COVERAGE_CHECKS / "check_env_publish_lock_3267.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("env publish lock (#3267) coverage contract rows failed")
         return 1
@@ -13653,10 +13186,7 @@ def cmd_guard_flag_atomic_ref_3268_coverage():
     """Issue #3268: Guard flag_ atomic_ref fail-close + region_lock_ move."""
     print(f"{B}=== guard flag atomic_ref (#3268) ==={N}")
     script = COVERAGE_CHECKS / "check_guard_flag_atomic_ref_3268.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("guard flag atomic_ref (#3268) coverage contract rows failed")
         return 1
@@ -13668,10 +13198,7 @@ def cmd_arena_compact_toctou_3269_coverage():
     """Issue #3269: arena compact/defrag TOCTOU unique workspace after TLS skip."""
     print(f"{B}=== arena compact TOCTOU (#3269) ==={N}")
     script = COVERAGE_CHECKS / "check_arena_compact_toctou_3269.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("arena compact TOCTOU (#3269) coverage contract rows failed")
         return 1
@@ -13683,10 +13210,7 @@ def cmd_primid_drift_3270_coverage():
     """Issue #3270: exhaustive PrimId drift asserts + OpGuardShape probe i1."""
     print(f"{B}=== PrimId drift (#3270) ==={N}")
     script = COVERAGE_CHECKS / "check_primid_drift_3270.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("PrimId drift (#3270) coverage contract rows failed")
         return 1
@@ -13698,10 +13222,7 @@ def cmd_shape_dirty_hook_no_std_function_3271_coverage():
     """Issue #3271: ShapeProfiler dirty hook fn ptr (no std::function)."""
     print(f"{B}=== shape dirty hook no std::function (#3271) ==={N}")
     script = COVERAGE_CHECKS / "check_shape_dirty_hook_no_std_function_3271.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("shape dirty hook no std::function (#3271) coverage contract rows failed")
         return 1
@@ -13713,10 +13234,7 @@ def cmd_repair_solved_residual_3253_coverage():
     """Issue #3253: repair SOLVED residual dirty drain (production)."""
     print(f"{B}=== repair SOLVED residual drain (#3253) ==={N}")
     script = COVERAGE_CHECKS / "check_repair_solved_residual_3253.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("repair SOLVED residual (#3253) coverage contract rows failed")
         return 1
@@ -13728,10 +13246,7 @@ def cmd_hygiene_checkpoint_gen_drift_3252_coverage():
     """Issue #3252: gen-drift refuse restamps MacroIntroduced (production)."""
     print(f"{B}=== hygiene checkpoint gen-drift restamp (#3252) ==={N}")
     script = COVERAGE_CHECKS / "check_hygiene_checkpoint_gen_drift_3252.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("hygiene checkpoint gen-drift (#3252) coverage contract rows failed")
         return 1
@@ -13743,10 +13258,7 @@ def cmd_agent_deny_class_3251_coverage():
     """Issue #3251: unified deny-class on Aura spawn/join/send fail hashes."""
     print(f"{B}=== agent deny-class coverage (#3251) ==={N}")
     script = COVERAGE_CHECKS / "check_agent_deny_class_3251.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("agent deny-class (#3251) coverage contract rows failed")
         return 1
@@ -13762,10 +13274,7 @@ def cmd_restart_n_spec_boundary_3250_coverage():
     """
     print(f"{B}=== RestartN spec-boundary coverage (#3250) ==={N}")
     script = COVERAGE_CHECKS / "check_restart_n_spec_boundary_3250.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("RestartN spec-boundary (#3250) coverage contract rows failed")
         return 1
@@ -13781,10 +13290,7 @@ def cmd_linear_nested_abort_drain_3249_coverage():
     """
     print(f"{B}=== nested abort linear drain coverage (#3249) ==={N}")
     script = COVERAGE_CHECKS / "check_linear_nested_abort_drain_3249.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("nested abort linear drain (#3249) coverage contract rows failed")
         return 1
@@ -13800,10 +13306,7 @@ def cmd_linear_root_moving_remap_3350_coverage():
     """
     print(f"{B}=== linear_roots densify rewrite coverage (#3350) ==={N}")
     script = COVERAGE_CHECKS / "check_linear_root_moving_remap_3350.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("linear_roots densify rewrite (#3350) coverage contract rows failed")
         return 1
@@ -13819,10 +13322,7 @@ def cmd_peer_ir_name_soft_stale_3351_coverage():
     """
     print(f"{B}=== peer IR-cache owner-scoped soft-stale coverage (#3351) ==={N}")
     script = COVERAGE_CHECKS / "check_peer_ir_name_soft_stale_3351.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("peer IR-cache owner-scoped soft-stale (#3351) coverage contract rows failed")
         return 1
@@ -13844,10 +13344,7 @@ def cmd_pure_anon_bg_overflow_must_deopt_3024_coverage():
     """Issue #3024: production overflow MustDeopt (static)."""
     print(f"{B}=== production overflow MustDeopt coverage (#3024) ==={N}")
     script = COVERAGE_CHECKS / "check_pure_anon_bg_overflow_must_deopt_3024.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("production overflow MustDeopt (#3024) coverage contract rows failed")
         return 1
@@ -13868,10 +13365,7 @@ def cmd_pure_anon_pressure_force_leave_3060_coverage():
     """Issue #3060: production residual budget_skip force-leave (static)."""
     print(f"{B}=== pure-anon pressure force-leave coverage (#3060) ==={N}")
     script = COVERAGE_CHECKS / "check_pure_anon_pressure_force_leave_3060.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("pure-anon pressure force-leave (#3060) coverage contract rows failed")
         return 1
@@ -13893,10 +13387,7 @@ def cmd_reemit_owner_required_prod_multi_3025_coverage():
     """Issue #3025: production C-ABI reemit owner required (static)."""
     print(f"{B}=== production C-ABI reemit owner coverage (#3025) ==={N}")
     script = COVERAGE_CHECKS / "check_reemit_owner_required_prod_multi_3025.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("production C-ABI reemit owner (#3025) coverage contract rows failed")
         return 1
@@ -13917,10 +13408,7 @@ def cmd_residual_force_agent_actionable_3026_coverage():
     """Issue #3026: residual force agent-actionable (static)."""
     print(f"{B}=== residual force agent-actionable coverage (#3026) ==={N}")
     script = COVERAGE_CHECKS / "check_residual_force_agent_actionable_3026.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("residual force agent-actionable (#3026) coverage contract rows failed")
         return 1
@@ -13936,10 +13424,7 @@ def cmd_residual_force_fail_exit_age_3248_coverage():
     """
     print(f"{B}=== residual-force fail-exit age coverage (#3248) ==={N}")
     script = COVERAGE_CHECKS / "check_residual_force_fail_exit_age_3248.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("residual-force fail-exit age (#3248) coverage contract rows failed")
         return 1
@@ -13969,10 +13454,7 @@ def cmd_shape_storm_isolation_2683_coverage():
     """
     print(f"{B}=== shape storm PerEval isolation coverage (#2683) ==={N}")
     script = COVERAGE_CHECKS / "check_shape_storm_isolation_2683.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("shape storm PerEval isolation (#2683) coverage contract rows failed")
         return 1
@@ -13994,10 +13476,7 @@ def cmd_evaluator_capture_tenant_2687_coverage():
     """
     print(f"{B}=== evaluator capture tenant coverage (#2687) ==={N}")
     script = COVERAGE_CHECKS / "check_evaluator_capture_tenant_2687.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("evaluator capture tenant (#2687) coverage contract rows failed")
         return 1
@@ -14016,10 +13495,7 @@ def cmd_hard_capture_tenant_2705_coverage():
     """
     print(f"{B}=== hard capture tenant hard-close coverage (#2705) ==={N}")
     script = COVERAGE_CHECKS / "check_hard_capture_tenant_2705.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("hard capture tenant (#2705) coverage contract rows failed")
         return 1
@@ -14038,10 +13514,7 @@ def cmd_evaluator_stamp_sole_authority_2759_coverage():
     """
     print(f"{B}=== evaluator stamp sole authority coverage (#2759) ==={N}")
     script = COVERAGE_CHECKS / "check_evaluator_stamp_sole_authority_2759.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("evaluator stamp sole authority (#2759) coverage contract rows failed")
         return 1
@@ -14063,10 +13536,7 @@ def cmd_capability_production_default_2688_coverage():
     """
     print(f"{B}=== capability production default armed coverage (#2688) ==={N}")
     script = COVERAGE_CHECKS / "check_capability_production_default_2688.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("capability production default armed (#2688) coverage contract rows failed")
         return 1
@@ -14088,10 +13558,7 @@ def cmd_closure_anon_captured_remount_2691_coverage():
     """
     print(f"{B}=== closure anon captured remount coverage (#2691) ==={N}")
     script = COVERAGE_CHECKS / "check_closure_anon_captured_remount_2691.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("closure anon captured remount (#2691) coverage contract rows failed")
         return 1
@@ -14109,10 +13576,7 @@ def cmd_pure_anon_sync_remount_budget_2850_coverage():
     """
     print(f"{B}=== pure-anon sync remount budget coverage (#2850) ==={N}")
     script = COVERAGE_CHECKS / "check_pure_anon_sync_remount_budget_2850.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("pure-anon sync remount budget (#2850) coverage contract rows failed")
         return 1
@@ -14132,10 +13596,7 @@ def cmd_pure_anon_adaptive_budget_2893_coverage():
     """
     print(f"{B}=== pure-anon adaptive budget + pressure coverage (#2893) ==={N}")
     script = COVERAGE_CHECKS / "check_pure_anon_adaptive_budget_2893.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("pure-anon adaptive budget (#2893) coverage contract rows failed")
         return 1
@@ -14151,10 +13612,7 @@ def cmd_residual_remount_round_robin_2928_coverage():
     """
     print(f"{B}=== residual remount round-robin coverage (#2928) ==={N}")
     script = COVERAGE_CHECKS / "check_residual_remount_round_robin_2928.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("residual remount round-robin (#2928) coverage contract rows failed")
         return 1
@@ -14166,10 +13624,7 @@ def cmd_residual_remount_prefer_force_jit_2977_coverage():
     """Issue #2977: residual remount prefer force_jit / last_success."""
     print(f"{B}=== residual remount prefer force_jit coverage (#2977) ==={N}")
     script = COVERAGE_CHECKS / "check_residual_remount_prefer_force_jit_2977.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("residual remount prefer force_jit (#2977) coverage contract rows failed")
         return 1
@@ -14181,10 +13636,7 @@ def cmd_epoch_residual_merged_heal_2980_coverage():
     """Issue #2980: event-walk + residual remount merged heal."""
     print(f"{B}=== epoch+residual merged heal coverage (#2980) ==={N}")
     script = COVERAGE_CHECKS / "check_epoch_residual_merged_heal_2980.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("epoch+residual merged heal (#2980) coverage contract rows failed")
         return 1
@@ -14196,10 +13648,7 @@ def cmd_reemit_success_sync_covered_remount_2978_coverage():
     """Issue #2978: reemit-success sync covered-named remount."""
     print(f"{B}=== reemit-success sync covered remount coverage (#2978) ==={N}")
     script = COVERAGE_CHECKS / "check_reemit_success_sync_covered_remount_2978.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("reemit-success sync covered remount (#2978) coverage contract rows failed")
         return 1
@@ -14220,10 +13669,7 @@ def cmd_aot_slot_owner_consistency_2692_coverage():
     """
     print(f"{B}=== aot slot owner consistency coverage (#2692) ==={N}")
     script = COVERAGE_CHECKS / "check_aot_slot_owner_consistency_2692.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("aot slot owner consistency (#2692) coverage contract rows failed")
         return 1
@@ -14243,10 +13689,7 @@ def cmd_require_effect_on_ref_2689_coverage():
     """
     print(f"{B}=== require_effect_on_ref coverage (#2689) ==={N}")
     script = COVERAGE_CHECKS / "check_require_effect_on_ref_2689.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("require_effect_on_ref coverage (#2689) contract rows failed")
         return 1
@@ -14266,10 +13709,7 @@ def cmd_sole_require_effect_2706_coverage():
     """
     print(f"{B}=== sole require_effect gate coverage (#2706) ==={N}")
     script = COVERAGE_CHECKS / "check_sole_require_effect_2706.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("sole require_effect gate (#2706) coverage contract rows failed")
         return 1
@@ -14292,10 +13732,7 @@ def cmd_pending_recovery_drain_2690_coverage():
     """
     print(f"{B}=== pending recovery drain coverage (#2690) ==={N}")
     script = COVERAGE_CHECKS / "check_pending_recovery_drain_2690.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("pending recovery drain coverage (#2690) contract rows failed")
         return 1
@@ -14310,10 +13747,7 @@ def cmd_workspace_mtx_contention_coverage():
     """
     print(f"{B}=== workspace_mtx contention residual coverage (#2523) ==={N}")
     script = COVERAGE_CHECKS / "check_workspace_mtx_contention_2523.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("workspace_mtx contention residual (#2523) coverage contract rows failed")
         return 1
@@ -14328,10 +13762,7 @@ def cmd_module_partition_map_coverage():
     """
     print(f"{B}=== module partition map coverage (#2524) ==={N}")
     script = COVERAGE_CHECKS / "check_module_partition_map_2524.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("module partition map (#2524) coverage contract rows failed")
         return 1
@@ -14346,10 +13777,7 @@ def cmd_query_hygiene_default_coverage():
     """
     print(f"{B}=== query hygiene residual default coverage (#2525) ==={N}")
     script = COVERAGE_CHECKS / "check_query_hygiene_default_2525.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("query hygiene residual default (#2525) coverage contract rows failed")
         return 1
@@ -14364,10 +13792,7 @@ def cmd_shape_storm_adaptive_coverage():
     """
     print(f"{B}=== shape storm adaptive coverage (#2526) ==={N}")
     script = COVERAGE_CHECKS / "check_shape_storm_adaptive_2526.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("shape storm adaptive (#2526) coverage contract rows failed")
         return 1
@@ -14383,10 +13808,7 @@ def cmd_aot_linear_literal_noop_coverage():
     """
     print(f"{B}=== AOT linear literal no-op coverage (#2407) ==={N}")
     script = COVERAGE_CHECKS / "check_aot_linear_literal_noop_2407.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("AOT linear literal no-op (#2407) coverage contract rows failed")
         return 1
@@ -14401,10 +13823,7 @@ def cmd_stringpool_bytes_total_lock_coverage():
     """
     print(f"{B}=== stringpool string_bytes_total lock coverage (#2408) ==={N}")
     script = COVERAGE_CHECKS / "check_stringpool_bytes_total_lock_2408.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("stringpool string_bytes_total lock (#2408) coverage contract rows failed")
         return 1
@@ -14419,10 +13838,7 @@ def cmd_stringpool_buf_fragmentation_lock_coverage():
     """
     print(f"{B}=== stringpool buf_fragmentation lock coverage (#2409) ==={N}")
     script = COVERAGE_CHECKS / "check_stringpool_buf_fragmentation_lock_2409.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("stringpool buf_fragmentation lock (#2409) coverage contract rows failed")
         return 1
@@ -14437,10 +13853,7 @@ def cmd_node_meta_bounds_coverage():
     """
     print(f"{B}=== node meta bounds coverage (#2410) ==={N}")
     script = COVERAGE_CHECKS / "check_node_meta_bounds_2410.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("node meta bounds (#2410) coverage contract rows failed")
         return 1
@@ -14455,10 +13868,7 @@ def cmd_node_meta_gap_coverage():
     """
     print(f"{B}=== node meta gap coverage (#2411) ==={N}")
     script = COVERAGE_CHECKS / "check_node_meta_gap_2411.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("node meta gap (#2411) coverage contract rows failed")
         return 1
@@ -14473,10 +13883,7 @@ def cmd_reset_slot_parent_edges_coverage():
     """
     print(f"{B}=== reset slot parent edges coverage (#2412) ==={N}")
     script = COVERAGE_CHECKS / "check_reset_slot_parent_edges_2412.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("reset slot parent edges (#2412) coverage contract rows failed")
         return 1
@@ -14491,10 +13898,7 @@ def cmd_flatast_add_node_lock_coverage():
     """
     print(f"{B}=== flatast add_node lock coverage (#2413) ==={N}")
     script = COVERAGE_CHECKS / "check_flatast_add_node_lock_2413.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("flatast add_node lock (#2413) coverage contract rows failed")
         return 1
@@ -14509,10 +13913,7 @@ def cmd_summary_recompute_sym_coverage():
     """
     print(f"{B}=== summary_recompute sym coverage (#2414) ==={N}")
     script = COVERAGE_CHECKS / "check_summary_recompute_sym_2414.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("summary_recompute sym (#2414) coverage contract rows failed")
         return 1
@@ -14527,10 +13928,7 @@ def cmd_summary_flags_guard_coverage():
     """
     print(f"{B}=== summary_flags guard coverage (#2415) ==={N}")
     script = COVERAGE_CHECKS / "check_summary_flags_guard_2415.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("summary_flags guard (#2415) coverage contract rows failed")
         return 1
@@ -14545,10 +13943,7 @@ def cmd_incoming_parent_dirty_atomic_coverage():
     """
     print(f"{B}=== incoming_parent dirty atomic coverage (#2416) ==={N}")
     script = COVERAGE_CHECKS / "check_incoming_parent_dirty_atomic_2416.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("incoming_parent dirty atomic (#2416) coverage contract rows failed")
         return 1
@@ -14563,10 +13958,7 @@ def cmd_binding_gens_atomic_coverage():
     """
     print(f"{B}=== binding_gens atomic coverage (#2417) ==={N}")
     script = COVERAGE_CHECKS / "check_binding_gens_atomic_2417.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("binding_gens atomic (#2417) coverage contract rows failed")
         return 1
@@ -14581,10 +13973,7 @@ def cmd_structural_metadata_lock_order_coverage():
     """
     print(f"{B}=== structural/metadata lock order coverage (#2418) ==={N}")
     script = COVERAGE_CHECKS / "check_structural_metadata_lock_order_2418.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("structural/metadata lock order (#2418) coverage contract rows failed")
         return 1
@@ -14599,10 +13988,7 @@ def cmd_tag_arity_index_lock_coverage():
     """
     print(f"{B}=== tag_arity_index lock coverage (#2419) ==={N}")
     script = COVERAGE_CHECKS / "check_tag_arity_index_lock_2419.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("tag_arity_index lock (#2419) coverage contract rows failed")
         return 1
@@ -14617,10 +14003,7 @@ def cmd_tag_arity_key_hash_coverage():
     """
     print(f"{B}=== tag_arity key hash coverage (#2420) ==={N}")
     script = COVERAGE_CHECKS / "check_tag_arity_key_hash_2420.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("tag_arity key hash (#2420) coverage contract rows failed")
         return 1
@@ -14635,10 +14018,7 @@ def cmd_restamp_lazy_align_atomic_coverage():
     """
     print(f"{B}=== restamp_lazy_align atomic coverage (#2421) ==={N}")
     script = COVERAGE_CHECKS / "check_restamp_lazy_align_atomic_2421.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("restamp_lazy_align atomic (#2421) coverage contract rows failed")
         return 1
@@ -14653,10 +14033,7 @@ def cmd_subtree_gen_atomic_coverage():
     """
     print(f"{B}=== subtree_gen atomic coverage (#2422) ==={N}")
     script = COVERAGE_CHECKS / "check_subtree_gen_atomic_2422.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("subtree_gen atomic (#2422) coverage contract rows failed")
         return 1
@@ -14671,10 +14048,7 @@ def cmd_dirty_column_lock_coverage():
     """
     print(f"{B}=== dirty_column lock coverage (#2423) ==={N}")
     script = COVERAGE_CHECKS / "check_dirty_column_lock_2423.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("dirty_column lock (#2423) coverage contract rows failed")
         return 1
@@ -14686,10 +14060,7 @@ def cmd_dirty_columnar_2904_coverage():
     """Issue #2904: FlatAST dirty → columnar bitmask + ImpactScope (static)."""
     print(f"{B}=== dirty columnar + ImpactScope coverage (#2904) ==={N}")
     script = COVERAGE_CHECKS / "check_dirty_columnar_2904.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("dirty columnar (#2904) coverage contract rows failed")
         return 1
@@ -14715,10 +14086,7 @@ def cmd_subtree_dirty_bounds_coverage():
     """
     print(f"{B}=== subtree dirty bounds coverage (#2424) ==={N}")
     script = COVERAGE_CHECKS / "check_subtree_dirty_bounds_2424.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("subtree dirty bounds (#2424) coverage contract rows failed")
         return 1
@@ -14733,10 +14101,7 @@ def cmd_capability_audit_publish_coverage():
     """
     print(f"{B}=== capability audit publish coverage (#2425) ==={N}")
     script = COVERAGE_CHECKS / "check_capability_audit_publish_2425.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("capability audit publish (#2425) coverage contract rows failed")
         return 1
@@ -14751,10 +14116,7 @@ def cmd_capability_registry_snapshot_coverage():
     """
     print(f"{B}=== capability registry snapshot coverage (#2426) ==={N}")
     script = COVERAGE_CHECKS / "check_capability_registry_snapshot_2426.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("capability registry snapshot (#2426) coverage contract rows failed")
         return 1
@@ -14769,10 +14131,7 @@ def cmd_sandbox_mode_atomic_coverage():
     """
     print(f"{B}=== sandbox_mode atomic coverage (#2427) ==={N}")
     script = COVERAGE_CHECKS / "check_sandbox_mode_atomic_2427.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("sandbox_mode atomic (#2427) coverage contract rows failed")
         return 1
@@ -14787,10 +14146,7 @@ def cmd_gc_defer_arm_fetch_or_coverage():
     """
     print(f"{B}=== gc defer arm fetch_or coverage (#2428) ==={N}")
     script = COVERAGE_CHECKS / "check_gc_defer_arm_fetch_or_2428.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("gc defer arm fetch_or (#2428) coverage contract rows failed")
         return 1
@@ -14805,10 +14161,7 @@ def cmd_gc_defer_overflow_policy_atomic_coverage():
     """
     print(f"{B}=== gc defer overflow policy atomic coverage (#2429) ==={N}")
     script = COVERAGE_CHECKS / "check_gc_defer_overflow_policy_atomic_2429.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("gc defer overflow policy atomic (#2429) coverage contract rows failed")
         return 1
@@ -14823,10 +14176,7 @@ def cmd_capability_effect_stats_snapshot_coverage():
     """
     print(f"{B}=== capability effect stats snapshot coverage (#2430) ==={N}")
     script = COVERAGE_CHECKS / "check_capability_effect_stats_snapshot_2430.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("capability effect stats snapshot (#2430) coverage contract rows failed")
         return 1
@@ -14841,10 +14191,7 @@ def cmd_dead_coercion_columnar_coverage():
     """
     print(f"{B}=== dead coercion columnar coverage (#2431) ==={N}")
     script = COVERAGE_CHECKS / "check_dead_coercion_columnar_2431.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("dead coercion columnar (#2431) coverage contract rows failed")
         return 1
@@ -14859,10 +14206,7 @@ def cmd_ir_soa_layout_stamp_coverage():
     """
     print(f"{B}=== ir soa layout stamp coverage (#2432) ==={N}")
     script = COVERAGE_CHECKS / "check_ir_soa_layout_stamp_2432.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("ir soa layout stamp (#2432) coverage contract rows failed")
         return 1
@@ -14878,10 +14222,7 @@ def cmd_soa_ban_residual_aos_bridge_coverage():
     """
     print(f"{B}=== soa ban residual aos bridge coverage (#2520) ==={N}")
     script = COVERAGE_CHECKS / "check_soa_ban_residual_aos_bridge_2520.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("soa ban residual aos bridge (#2520) coverage contract rows failed")
         return 1
@@ -14893,10 +14234,7 @@ def cmd_soa_sunset_bridge_2907_coverage():
     """Issue #2907: sunset SoAtoAoSBridgePass; production SoA dirty hot pack (static)."""
     print(f"{B}=== soa sunset bridge coverage (#2907) ==={N}")
     script = COVERAGE_CHECKS / "check_soa_sunset_bridge_2907.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("soa sunset bridge (#2907) coverage contract rows failed")
         return 1
@@ -14925,10 +14263,7 @@ def cmd_soa_residual_production_smoke_coverage():
     """
     print(f"{B}=== soa residual production smoke coverage (#2618) ==={N}")
     script = COVERAGE_CHECKS / "check_soa_residual_production_smoke_2618.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("soa residual production smoke (#2618) coverage contract rows failed")
         return 1
@@ -14944,10 +14279,7 @@ def cmd_arena_moving_densify_health_coverage():
     """
     print(f"{B}=== arena moving densify health coverage (#2619) ==={N}")
     script = COVERAGE_CHECKS / "check_arena_moving_densify_health_2619.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("arena moving densify health (#2619) coverage contract rows failed")
         return 1
@@ -14962,10 +14294,7 @@ def cmd_coercion_unify_incomplete_skip_coverage():
     """
     print(f"{B}=== coercion unify incomplete skip coverage (#2620) ==={N}")
     script = COVERAGE_CHECKS / "check_coercion_unify_incomplete_skip_2620.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("coercion unify incomplete skip (#2620) coverage contract rows failed")
         return 1
@@ -14981,10 +14310,7 @@ def cmd_coercion_evidence_loss_slo_coverage():
     """
     print(f"{B}=== coercion evidence-loss SLO coverage (#2648) ==={N}")
     script = COVERAGE_CHECKS / "check_coercion_evidence_loss_slo_2648.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("coercion evidence-loss SLO (#2648) coverage contract rows failed")
         return 1
@@ -14999,10 +14325,7 @@ def cmd_fiber_eval_depth_isolation_coverage():
     """
     print(f"{B}=== fiber eval depth isolation coverage (#2650/#2649) ==={N}")
     script = COVERAGE_CHECKS / "check_fiber_eval_depth_isolation_2650.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("fiber eval depth isolation (#2650) coverage contract rows failed")
         return 1
@@ -15018,10 +14341,7 @@ def cmd_module_path_refuse_coverage():
     """
     print(f"{B}=== module path refuse coverage (#2653/#2649) ==={N}")
     script = COVERAGE_CHECKS / "check_module_path_refuse_2653.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("module path refuse (#2653) coverage contract rows failed")
         return 1
@@ -15037,10 +14357,7 @@ def cmd_pmr_alloc_fiber_safe_coverage():
     """
     print(f"{B}=== PMR alloc fiber-safe coverage (#2651/#2649) ==={N}")
     script = COVERAGE_CHECKS / "check_pmr_alloc_fiber_safe_2651.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("PMR alloc fiber-safe (#2651) coverage contract rows failed")
         return 1
@@ -15057,10 +14374,7 @@ def cmd_string_heap_corruption_guard_coverage():
     """
     print(f"{B}=== string heap corruption guard coverage (#2652/#2649) ==={N}")
     script = COVERAGE_CHECKS / "check_string_heap_corruption_guard_2652.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("string heap corruption guard (#2652) coverage contract rows failed")
         return 1
@@ -15076,10 +14390,7 @@ def cmd_hash_table_grow_coverage():
     """
     print(f"{B}=== language hash table grow coverage (#2654) ==={N}")
     script = COVERAGE_CHECKS / "check_hash_table_grow_2654.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("language hash table grow (#2654) coverage contract rows failed")
         return 1
@@ -15095,10 +14406,7 @@ def cmd_subsecond_clock_coverage():
     """
     print(f"{B}=== sub-second denseness clock coverage (#2655) ==={N}")
     script = COVERAGE_CHECKS / "check_subsecond_clock_2655.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("sub-second denseness clock (#2655) coverage contract rows failed")
         return 1
@@ -15115,10 +14423,7 @@ def cmd_fiber_spawn_cli_coverage():
     """
     print(f"{B}=== CLI denseness fiber:spawn coverage (#2656) ==={N}")
     script = COVERAGE_CHECKS / "check_fiber_spawn_cli_2656.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("CLI denseness fiber:spawn (#2656) coverage contract rows failed")
         return 1
@@ -15135,10 +14440,7 @@ def cmd_fiber_spawn_cli_dtor_drain_coverage():
     """
     print(f"{B}=== thread-fiber dtor drain coverage (#3394) ==={N}")
     script = COVERAGE_CHECKS / "check_fiber_spawn_cli_dtor_drain_3394.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("thread-fiber dtor drain (#3394) coverage contract rows failed")
         return 1
@@ -15160,10 +14462,7 @@ def cmd_query_default_stamped_coverage():
     """
     print(f"{B}=== query-default-stamped coverage (#3395) ==={N}")
     script = COVERAGE_CHECKS / "check_query_default_stamped_3395.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("query-default-stamped (#3395) coverage contract rows failed")
         return 1
@@ -15183,10 +14482,7 @@ def cmd_query_default_schema2_export_3449_coverage():
     """
     print(f"{B}=== query_default_schema2_export coverage (#3449) ==={N}")
     script = COVERAGE_CHECKS / "check_query_default_schema2_export_3449.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("query_default_schema2_export (#3449) coverage contract rows failed")
         return 1
@@ -15203,10 +14499,7 @@ def cmd_nested_gap_query_epoch_stale_3451_coverage():
     """
     print(f"{B}=== nested_gap_query_epoch_stale coverage (#3451) ==={N}")
     script = COVERAGE_CHECKS / "check_nested_gap_query_epoch_stale_3451.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("nested_gap_query_epoch_stale (#3451) coverage contract rows failed")
         return 1
@@ -15223,10 +14516,7 @@ def cmd_add_mutate_read_only_fence_3450_coverage():
     """
     print(f"{B}=== add_mutate_read_only_fence coverage (#3450) ==={N}")
     script = COVERAGE_CHECKS / "check_add_mutate_read_only_fence_3450.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("add_mutate_read_only_fence (#3450) coverage contract rows failed")
         return 1
@@ -15245,10 +14535,7 @@ def cmd_query_find_prod_no_scan_coverage():
     """
     print(f"{B}=== query-find production no-scan coverage (#3427) ==={N}")
     script = COVERAGE_CHECKS / "check_query_find_prod_no_scan_3427.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("query-find production no-scan (#3427) coverage contract rows failed")
         return 1
@@ -15272,10 +14559,7 @@ def cmd_query_children_stable_no_tls_coverage():
     """
     print(f"{B}=== query-children-stable no-TLS-span coverage (#3397) ==={N}")
     script = COVERAGE_CHECKS / "check_query_children_stable_no_tls_3397.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("query-children-stable no-TLS-span (#3397) coverage contract rows failed")
         return 1
@@ -15300,10 +14584,7 @@ def cmd_unpack_stable_ref_arg_v2_coverage():
     """
     print(f"{B}=== unpack_stable_ref_arg v2 contract coverage (#3396) ==={N}")
     script = COVERAGE_CHECKS / "check_unpack_stable_ref_arg_v2_3396.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("unpack_stable_ref_arg v2 (#3396) coverage contract rows failed")
         return 1
@@ -15329,10 +14610,7 @@ def cmd_structural_mutate_resolve_helper_coverage():
     """
     print(f"{B}=== structural mutate:resolve_mutate_node_arg call-site coverage (#3399) ==={N}")
     script = COVERAGE_CHECKS / "check_structural_mutate_resolve_helper_3399.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("structural mutate:resolve_mutate_node_arg call-site (#3399) coverage contract rows failed")
         return 1
@@ -15354,10 +14632,7 @@ def cmd_query_result_hash_resolve_coverage():
     """
     print(f"{B}=== query-result hash resolve coverage (#3424) ==={N}")
     script = COVERAGE_CHECKS / "check_query_result_hash_resolve_3424.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("query-result hash resolve (#3424) coverage contract rows failed")
         return 1
@@ -15380,10 +14655,7 @@ def cmd_as_stable_ref_v2_coverage():
     """
     print(f"{B}=== as-stable-ref v2 spine contract coverage (#3398) ==={N}")
     script = COVERAGE_CHECKS / "check_as_stable_ref_v2_3398.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("as-stable-ref v2 (#3398) coverage contract rows failed")
         return 1
@@ -15404,10 +14676,7 @@ def cmd_as_stable_ref_prod_int_reject_coverage():
     """
     print(f"{B}=== as-stable-ref production int reject coverage (#3425) ==={N}")
     script = COVERAGE_CHECKS / "check_as_stable_ref_prod_int_reject_3425.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("as-stable-ref production int reject (#3425) coverage contract rows failed")
         return 1
@@ -15431,10 +14700,7 @@ def cmd_stable_ref_probe_3400_coverage():
     """
     print(f"{B}=== check-stable-ref node-gen domain probe (#3400) ==={N}")
     script = COVERAGE_CHECKS / "check_stable_ref_probe_3400.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("check-stable-ref node-gen domain probe (#3400) coverage contract rows failed")
         return 1
@@ -15442,10 +14708,7 @@ def cmd_stable_ref_probe_3400_coverage():
 
     print(f"{B}=== grant lifetime alignment probe (#3436) ==={N}")
     script = COVERAGE_CHECKS / "check_grant_lifetime_alignment_3436.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("grant lifetime alignment (#3436) coverage contract rows failed")
         return 1
@@ -15462,10 +14725,7 @@ def cmd_query_result_soft_prod_transition_coverage():
     """
     print(f"{B}=== query-result Soft→Production transition (#3311) ==={N}")
     script = COVERAGE_CHECKS / "check_query_result_soft_prod_transition_3311.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("query-result Soft→Production transition (#3311) coverage rows failed")
         return 1
@@ -15480,10 +14740,7 @@ def cmd_partial_cone_commit_gate_coverage():
     """
     print(f"{B}=== partial cone commit gate coverage (#2621) ==={N}")
     script = COVERAGE_CHECKS / "check_partial_cone_commit_gate_2621.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("partial cone commit gate (#2621) coverage contract rows failed")
         return 1
@@ -15498,10 +14755,7 @@ def cmd_occurrence_dirty_key_authority_coverage():
     """
     print(f"{B}=== occurrence dirty-key authority coverage (#2622) ==={N}")
     script = COVERAGE_CHECKS / "check_occurrence_dirty_key_authority_2622.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("occurrence dirty-key authority (#2622) coverage contract rows failed")
         return 1
@@ -15517,10 +14771,7 @@ def cmd_layout_stamp_equality_8field_coverage():
     """
     print(f"{B}=== layout stamp equality 8-field coverage (#2519) ==={N}")
     script = COVERAGE_CHECKS / "check_layout_stamp_equality_8field_2519.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("layout stamp equality 8-field (#2519) coverage contract rows failed")
         return 1
@@ -15535,10 +14786,7 @@ def cmd_shape_high_mutation_storm_coverage():
     """
     print(f"{B}=== shape high mutation storm coverage (#2433) ==={N}")
     script = COVERAGE_CHECKS / "check_shape_high_mutation_storm_2433.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("shape high mutation storm (#2433) coverage contract rows failed")
         return 1
@@ -15553,10 +14801,7 @@ def cmd_hot_pass_hard_dod_coverage():
     """
     print(f"{B}=== hot pass hard dod coverage (#2434) ==={N}")
     script = COVERAGE_CHECKS / "check_hot_pass_hard_dod_2434.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("hot pass hard dod (#2434) coverage contract rows failed")
         return 1
@@ -15581,10 +14826,7 @@ def cmd_hot_children_columnar_coverage():
     """
     print(f"{B}=== hot children columnar coverage (#2614) ==={N}")
     script = COVERAGE_CHECKS / "check_hot_children_columnar_2614.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("hot children columnar (#2614) coverage contract rows failed")
         return 1
@@ -15599,10 +14841,7 @@ def cmd_value_tag_hotpath_ban_coverage():
     """
     print(f"{B}=== value-tag hotpath ban coverage (#2616) ==={N}")
     script = COVERAGE_CHECKS / "check_value_tag_hotpath_ban_2616.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("value-tag hotpath ban (#2616) coverage contract rows failed")
         return 1
@@ -15614,10 +14853,7 @@ def cmd_shape_compact_no_global_bump_2908_coverage():
     """Issue #2908: PerEval compact never bumps process-global shape_version (static)."""
     print(f"{B}=== shape compact no-global-bump coverage (#2908) ==={N}")
     script = COVERAGE_CHECKS / "check_shape_compact_no_global_bump_2908.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("shape compact no-global-bump (#2908) coverage contract rows failed")
         return 1
@@ -15650,10 +14886,7 @@ def cmd_eval_flat_hot_path_3401_coverage():
     """
     print(f"{B}=== eval_flat hot-path intern coverage (#3401) ==={N}")
     script = SCRIPTS / "check_eval_flat_hot_path_3401.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("eval_flat hot-path intern (#3401) coverage contract rows failed")
         return 1
@@ -15670,10 +14903,7 @@ def cmd_eval_flat_sym_intern_3457_coverage():
     """
     print(f"{B}=== eval_flat SymId intern coverage (#3457) ==={N}")
     script = COVERAGE_CHECKS / "check_eval_flat_sym_intern_3457.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("eval_flat SymId intern (#3457) coverage contract rows failed")
         return 1
@@ -15707,10 +14937,7 @@ def cmd_dense_children_columns_3402_coverage():
     """
     print(f"{B}=== dense children columns coverage (#3402) ==={N}")
     script = SCRIPTS / "check_dense_children_columns_3402.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("dense children columns (#3402) coverage contract rows failed")
         return 1
@@ -15726,10 +14953,7 @@ def cmd_set_child_locked_dense_inplace_3453_coverage():
     """
     print(f"{B}=== set_child_locked dense inplace coverage (#3453) ==={N}")
     script = COVERAGE_CHECKS / "check_set_child_locked_dense_inplace_3453.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("set_child_locked dense inplace (#3453) coverage contract rows failed")
         return 1
@@ -15762,10 +14986,7 @@ def cmd_inline_pass_soa_3403_coverage():
     """
     print(f"{B}=== InlinePass SoA hot entry coverage (#3403) ==={N}")
     script = SCRIPTS / "check_inline_pass_soa_3403.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("InlinePass SoA hot entry (#3403) coverage contract rows failed")
         return 1
@@ -15798,10 +15019,7 @@ def cmd_arena_auto_arm_soft_fallback_3404_coverage():
     """
     print(f"{B}=== arena auto-arm Soft fallback coverage (#3404) ==={N}")
     script = SCRIPTS / "check_arena_auto_arm_soft_fallback_3404.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("arena auto-arm Soft fallback (#3404) coverage contract rows failed")
         return 1
@@ -15834,10 +15052,7 @@ def cmd_pure_wrap_dirty_entry_3405_coverage():
     """
     print(f"{B}=== PureWrapPass concept tightening coverage (#3405) ==={N}")
     script = SCRIPTS / "check_pure_wrap_dirty_entry_3405.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("PureWrapPass concept tightening (#3405) coverage contract rows failed")
         return 1
@@ -15865,10 +15080,7 @@ def cmd_production_pure_wrap_soa_3454_coverage():
     """
     print(f"{B}=== ProductionPureWrapPass SoA dirty entry coverage (#3454) ==={N}")
     script = COVERAGE_CHECKS / "check_production_pure_wrap_soa_3454.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("ProductionPureWrapPass SoA dirty entry (#3454) coverage contract rows failed")
         return 1
@@ -15885,10 +15097,7 @@ def cmd_destroy_dtor_index_3456_coverage():
     """
     print(f"{B}=== destroy dtor-index coverage (#3456) ==={N}")
     script = COVERAGE_CHECKS / "check_destroy_dtor_index_3456.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("destroy dtor-index (#3456) coverage contract rows failed")
         return 1
@@ -15931,10 +15140,7 @@ def cmd_recover_fail_clear_persist_3406_coverage():
     """
     print(f"{B}=== recover-fail clear persist coverage (#3406) ==={N}")
     script = SCRIPTS / "check_recover_fail_clear_persist_3406.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("recover-fail clear persist (#3406) coverage contract rows failed")
         return 1
@@ -15975,10 +15181,7 @@ def cmd_synthesize_set_walks_rhs_3407_coverage():
     """
     print(f"{B}=== synthesize_set_walks_rhs coverage (#3407) ==={N}")
     script = SCRIPTS / "check_synthesize_set_walks_rhs_3407.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("synthesize_set_walks_rhs (#3407) coverage contract rows failed")
         return 1
@@ -16027,10 +15230,7 @@ def cmd_set_assignment_hygiene_3408_coverage():
     """
     print(f"{B}=== set_assignment_hygiene coverage (#3408) ==={N}")
     script = SCRIPTS / "check_set_assignment_hygiene_3408.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("set_assignment_hygiene (#3408) coverage contract rows failed")
         return 1
@@ -16064,10 +15264,7 @@ def cmd_grant_ssot_ta_fence_3409_coverage():
     """
     print(f"{B}=== grant_ssot_ta_fence coverage (#3409) ==={N}")
     script = SCRIPTS / "check_grant_ssot_ta_fence_3409.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("grant_ssot_ta_fence (#3409) coverage contract rows failed")
         return 1
@@ -16103,10 +15300,7 @@ def cmd_dual_fresh_mutate_soft_migrate_3410_coverage():
     """
     print(f"{B}=== dual_fresh_mutate_soft_migrate coverage (#3410) ==={N}")
     script = SCRIPTS / "check_dual_fresh_mutate_soft_migrate_3410.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("dual_fresh_mutate_soft_migrate (#3410) coverage contract rows failed")
         return 1
@@ -16138,10 +15332,7 @@ def cmd_wildcard_ta_string_gate_3411_coverage():
     """
     print(f"{B}=== wildcard_ta_string_gate coverage (#3411) ==={N}")
     script = SCRIPTS / "check_wildcard_ta_string_gate_3411.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("wildcard_ta_string_gate (#3411) coverage contract rows failed")
         return 1
@@ -16182,10 +15373,7 @@ def cmd_deopt_pending_closure_call_3412_coverage():
     """
     print(f"{B}=== deopt_pending_closure_call coverage (#3412) ==={N}")
     script = SCRIPTS / "check_deopt_pending_closure_call_3412.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("deopt_pending_closure_call (#3412) coverage contract rows failed")
         return 1
@@ -16203,10 +15391,7 @@ def cmd_deopt_pending_fast_path_3441_coverage():
     """
     print(f"{B}=== deopt_pending_fast_path coverage (#3441) ==={N}")
     script = COVERAGE_CHECKS / "check_deopt_pending_fast_path_3441.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("deopt_pending_fast_path (#3441) coverage contract rows failed")
         return 1
@@ -16225,10 +15410,7 @@ def cmd_ffi_jit_live_ptr_inventory_3443_coverage():
     """
     print(f"{B}=== ffi_jit_live_ptr_inventory coverage (#3443) ==={N}")
     script = COVERAGE_CHECKS / "check_ffi_jit_live_ptr_inventory_3443.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("ffi_jit_live_ptr_inventory (#3443) coverage contract rows failed")
         return 1
@@ -16247,10 +15429,7 @@ def cmd_scope_message_resolve_3442_coverage():
     """
     print(f"{B}=== scope_message_resolve coverage (#3442) ==={N}")
     script = COVERAGE_CHECKS / "check_scope_message_resolve_3442.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("scope_message_resolve (#3442) coverage contract rows failed")
         return 1
@@ -16267,10 +15446,7 @@ def cmd_scope_child_address_3444_coverage():
     """
     print(f"{B}=== scope_child_address coverage (#3444) ==={N}")
     script = COVERAGE_CHECKS / "check_scope_child_address_3444.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("scope_child_address (#3444) coverage contract rows failed")
         return 1
@@ -16288,10 +15464,7 @@ def cmd_jit_dual_fresh_c_bridge_3447_coverage():
     """
     print(f"{B}=== jit_dual_fresh_c_bridge coverage (#3447) ==={N}")
     script = COVERAGE_CHECKS / "check_jit_dual_fresh_c_bridge_3447.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("jit_dual_fresh_c_bridge (#3447) coverage contract rows failed")
         return 1
@@ -16309,10 +15482,7 @@ def cmd_linear_zero_root_green_face_drop_3448_coverage():
     """
     print(f"{B}=== linear_zero_root_green_face_drop coverage (#3448) ==={N}")
     script = COVERAGE_CHECKS / "check_linear_zero_root_green_face_drop_3448.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("linear_zero_root_green_face_drop (#3448) coverage contract rows failed")
         return 1
@@ -16330,10 +15500,7 @@ def cmd_linear_epoch_fence_elision_typed_3446_coverage():
     """
     print(f"{B}=== linear_epoch_fence_elision_typed coverage (#3446) ==={N}")
     script = COVERAGE_CHECKS / "check_linear_epoch_fence_elision_typed_3446.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("linear_epoch_fence_elision_typed (#3446) coverage contract rows failed")
         return 1
@@ -16352,10 +15519,7 @@ def cmd_reemit_pipeline_reason_coverage_3445_coverage():
     """
     print(f"{B}=== reemit_pipeline_reason_coverage coverage (#3445) ==={N}")
     script = COVERAGE_CHECKS / "check_reemit_pipeline_reason_coverage_3445.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("reemit_pipeline_reason_coverage (#3445) coverage contract rows failed")
         return 1
@@ -16390,10 +15554,7 @@ def cmd_partial_reemit_success_coverage_3413_coverage():
     """
     print(f"{B}=== partial_reemit_success_coverage coverage (#3413) ==={N}")
     script = SCRIPTS / "check_partial_reemit_success_coverage_3413.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("partial_reemit_success_coverage (#3413) coverage contract rows failed")
         return 1
@@ -16417,10 +15578,7 @@ def cmd_shape_profiler_shard_2937_coverage():
     """Issue #2937: ShapeProfiler FnKey lock sharding (static)."""
     print(f"{B}=== shape profiler shard coverage (#2937) ==={N}")
     script = COVERAGE_CHECKS / "check_shape_profiler_shard_2937.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("shape profiler shard (#2937) coverage contract rows failed")
         return 1
@@ -16447,10 +15605,7 @@ def cmd_shape_compact_storm_isolation_coverage():
     """
     print(f"{B}=== shape compact storm isolation coverage (#2617) ==={N}")
     script = COVERAGE_CHECKS / "check_shape_compact_storm_isolation_2617.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("shape compact storm isolation (#2617) coverage contract rows failed")
         return 1
@@ -16467,10 +15622,7 @@ def cmd_shape_compact_dirty_fnkey_3455_coverage():
     """
     print(f"{B}=== shape compact dirty-FnKey coverage (#3455) ==={N}")
     script = COVERAGE_CHECKS / "check_shape_compact_dirty_fnkey_3455.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("shape compact dirty-FnKey (#3455) coverage contract rows failed")
         return 1
@@ -16485,10 +15637,7 @@ def cmd_hot_contract_placement_coverage():
     """
     print(f"{B}=== hot contract placement coverage (#2435) ==={N}")
     script = COVERAGE_CHECKS / "check_hot_contract_placement_2435.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("hot contract placement (#2435) coverage contract rows failed")
         return 1
@@ -16508,10 +15657,7 @@ def cmd_hot_contract_view_at_harden_3428_coverage():
     """
     print(f"{B}=== hot contract view_at harden coverage (#3428) ==={N}")
     script = COVERAGE_CHECKS / "check_hot_contract_view_at_harden_3428.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("hot contract view_at harden (#3428) coverage contract rows failed")
         return 1
@@ -16526,10 +15672,7 @@ def cmd_post_compact_lifecycle_coverage():
     """
     print(f"{B}=== post compact lifecycle coverage (#2436) ==={N}")
     script = COVERAGE_CHECKS / "check_post_compact_lifecycle_2436.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("post compact lifecycle (#2436) coverage contract rows failed")
         return 1
@@ -16544,10 +15687,7 @@ def cmd_gc_defer_reconcile_cas_coverage():
     """
     print(f"{B}=== gc defer reconcile cas coverage (#2437) ==={N}")
     script = COVERAGE_CHECKS / "check_gc_defer_reconcile_cas_2437.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("gc defer reconcile cas (#2437) coverage contract rows failed")
         return 1
@@ -16562,10 +15702,7 @@ def cmd_arena_compact_notify_lifecycle_coverage():
     """
     print(f"{B}=== arena compact notify lifecycle coverage (#2438) ==={N}")
     script = COVERAGE_CHECKS / "check_arena_compact_notify_lifecycle_2438.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("arena compact notify lifecycle (#2438) coverage contract rows failed")
         return 1
@@ -16580,10 +15717,7 @@ def cmd_verification_dirty_bits_lock_coverage():
     """
     print(f"{B}=== verification dirty bits lock coverage (#2439) ==={N}")
     script = COVERAGE_CHECKS / "check_verification_dirty_bits_lock_2439.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("verification dirty bits lock (#2439) coverage contract rows failed")
         return 1
@@ -16598,10 +15732,7 @@ def cmd_soa_column_atomic_coverage():
     """
     print(f"{B}=== SoA column atomic coverage (#2440) ==={N}")
     script = COVERAGE_CHECKS / "check_soa_column_atomic_2440.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("SoA column atomic (#2440) coverage contract rows failed")
         return 1
@@ -16616,10 +15747,7 @@ def cmd_macro_dirty_bits_lock_coverage():
     """
     print(f"{B}=== macro dirty bits lock coverage (#2441) ==={N}")
     script = COVERAGE_CHECKS / "check_macro_dirty_bits_lock_2441.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("macro dirty bits lock (#2441) coverage contract rows failed")
         return 1
@@ -16634,10 +15762,7 @@ def cmd_clear_macro_dirty_concurrent_coverage():
     """
     print(f"{B}=== clear_macro_dirty concurrent coverage (#2442) ==={N}")
     script = COVERAGE_CHECKS / "check_clear_macro_dirty_concurrent_2442.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("clear_macro_dirty concurrent (#2442) coverage contract rows failed")
         return 1
@@ -16652,10 +15777,7 @@ def cmd_region_dense_atomic_coverage():
     """
     print(f"{B}=== region dense atomic coverage (#2443) ==={N}")
     script = COVERAGE_CHECKS / "check_region_dense_atomic_2443.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("region dense atomic (#2443) coverage contract rows failed")
         return 1
@@ -16670,10 +15792,7 @@ def cmd_region_sym_dense_race_coverage():
     """
     print(f"{B}=== region_by_sym_dense race coverage (#2444) ==={N}")
     script = COVERAGE_CHECKS / "check_region_sym_dense_race_2444.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("region_by_sym_dense race (#2444) coverage contract rows failed")
         return 1
@@ -16688,10 +15807,7 @@ def cmd_add_node_builder_contract_coverage():
     """
     print(f"{B}=== add_node builder contract coverage (#2445) ==={N}")
     script = COVERAGE_CHECKS / "check_add_node_builder_contract_2445.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("add_node builder contract (#2445) coverage contract rows failed")
         return 1
@@ -16706,10 +15822,7 @@ def cmd_region_lambda_dense_race_coverage():
     """
     print(f"{B}=== region_by_lambda_dense race coverage (#2446) ==={N}")
     script = COVERAGE_CHECKS / "check_region_lambda_dense_race_2446.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("region_by_lambda_dense race (#2446) coverage contract rows failed")
         return 1
@@ -16724,10 +15837,7 @@ def cmd_region_sym_map_race_coverage():
     """
     print(f"{B}=== region_by_sym_ map race coverage (#2447) ==={N}")
     script = COVERAGE_CHECKS / "check_region_sym_map_race_2447.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("region_by_sym_ map race (#2447) coverage contract rows failed")
         return 1
@@ -16742,10 +15852,7 @@ def cmd_defines_referencing_sym_coverage():
     """
     print(f"{B}=== defines_referencing_sym coverage (#2448) ==={N}")
     script = COVERAGE_CHECKS / "check_defines_referencing_sym_2448.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("defines_referencing_sym (#2448) coverage contract rows failed")
         return 1
@@ -16760,10 +15867,7 @@ def cmd_param_data_mutation_contract_coverage():
     """
     print(f"{B}=== param_data_ mutation contract coverage (#2449) ==={N}")
     script = COVERAGE_CHECKS / "check_param_data_mutation_contract_2449.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("param_data_ mutation contract (#2449) coverage contract rows failed")
         return 1
@@ -16778,10 +15882,7 @@ def cmd_param_annot_mutation_contract_coverage():
     """
     print(f"{B}=== param_annot_data_ mutation contract coverage (#2450) ==={N}")
     script = COVERAGE_CHECKS / "check_param_annot_mutation_contract_2450.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("param_annot_data_ mutation contract (#2450) coverage contract rows failed")
         return 1
@@ -16796,10 +15897,7 @@ def cmd_param_begin_count_publish_coverage():
     """
     print(f"{B}=== param_begin_count publish coverage (#2451) ==={N}")
     script = COVERAGE_CHECKS / "check_param_begin_count_publish_2451.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("param_begin_count publish (#2451) coverage contract rows failed")
         return 1
@@ -16814,10 +15912,7 @@ def cmd_incoming_parent_dirty_atomic_2452_coverage():
     """
     print(f"{B}=== incoming_parent_dirty atomic coverage (#2452) ==={N}")
     script = COVERAGE_CHECKS / "check_incoming_parent_dirty_atomic_2452.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("incoming_parent_dirty atomic (#2452) coverage contract rows failed")
         return 1
@@ -16832,10 +15927,7 @@ def cmd_get_nodeview_snapshot_coverage():
     """
     print(f"{B}=== get NodeView snapshot coverage (#2453) ==={N}")
     script = COVERAGE_CHECKS / "check_get_nodeview_snapshot_2453.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("get NodeView snapshot (#2453) coverage contract rows failed")
         return 1
@@ -16850,10 +15942,7 @@ def cmd_raii_guard_flatast_lifetime_coverage():
     """
     print(f"{B}=== RAII guard FlatAST lifetime coverage (#2454) ==={N}")
     script = COVERAGE_CHECKS / "check_raii_guard_flatast_lifetime_2454.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("RAII guard FlatAST lifetime (#2454) coverage contract rows failed")
         return 1
@@ -16868,10 +15957,7 @@ def cmd_restore_children_structural_lock_coverage():
     """
     print(f"{B}=== restore_children structural lock coverage (#2455) ==={N}")
     script = COVERAGE_CHECKS / "check_restore_children_structural_lock_2455.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("restore_children structural lock (#2455) coverage contract rows failed")
         return 1
@@ -16886,10 +15972,7 @@ def cmd_subtree_uses_sym_template_bloat_coverage():
     """
     print(f"{B}=== subtree_uses_sym single-TU template hoist coverage (#2456) ==={N}")
     script = COVERAGE_CHECKS / "check_subtree_uses_sym_template_bloat_2456.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("subtree_uses_sym single-TU template hoist (#2456) coverage contract rows failed")
         return 1
@@ -16904,10 +15987,7 @@ def cmd_mutation_log_cow_copy_coverage():
     """
     print(f"{B}=== mutation_log COW copy coverage (#2457) ==={N}")
     script = COVERAGE_CHECKS / "check_mutation_log_cow_copy_2457.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("mutation_log COW copy (#2457) coverage contract rows failed")
         return 1
@@ -16922,10 +16002,7 @@ def cmd_truncate_commit_gate_coverage():
     """
     print(f"{B}=== truncate-commit gate coverage (#2458) ==={N}")
     script = COVERAGE_CHECKS / "check_truncate_commit_gate_2458.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("truncate-commit gate (#2458) coverage contract rows failed")
         return 1
@@ -16941,10 +16018,7 @@ def cmd_type_system_health_coverage():
     """
     print(f"{B}=== type-system-health coverage (#2350) ==={N}")
     script = COVERAGE_CHECKS / "check_type_system_health_2350.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("type-system-health coverage contract rows failed")
         return 1
@@ -16960,10 +16034,7 @@ def cmd_type_system_health_next_action_coverage():
     """
     print(f"{B}=== type-system-health next-action coverage (#2462) ==={N}")
     script = COVERAGE_CHECKS / "check_type_system_health_next_action_2462.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("type-system-health next-action (#2462) coverage contract rows failed")
         return 1
@@ -16978,10 +16049,7 @@ def cmd_ir_optimize_type_info_chain_coverage():
     """
     print(f"{B}=== IR optimize_type_info chain-walk coverage (#2471) ==={N}")
     script = COVERAGE_CHECKS / "check_ir_optimize_type_info_chain_2471.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("IR optimize_type_info chain-walk (#2471) coverage contract rows failed")
         return 1
@@ -16997,10 +16065,7 @@ def cmd_closure_call_must_deopt_toctou_coverage():
     """
     print(f"{B}=== closure_call MustDeopt TOCTOU coverage (#2472) ==={N}")
     script = COVERAGE_CHECKS / "check_closure_call_must_deopt_toctou_2472.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("closure_call MustDeopt TOCTOU (#2472) coverage contract rows failed")
         return 1
@@ -17018,10 +16083,7 @@ def cmd_must_deopt_getter_sticky_3247_coverage():
     """
     print(f"{B}=== must_deopt getter sticky coverage (#3247) ==={N}")
     script = COVERAGE_CHECKS / "check_must_deopt_getter_sticky_3247.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("must_deopt getter sticky (#3247) coverage contract rows failed")
         return 1
@@ -17037,10 +16099,7 @@ def cmd_gc_closures_mtx_flush_sweep_coverage():
     """
     print(f"{B}=== GC flush/sweep closures_mtx_ coverage (#2473) ==={N}")
     script = COVERAGE_CHECKS / "check_gc_closures_mtx_flush_sweep_2473.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("GC flush/sweep closures_mtx_ (#2473) coverage contract rows failed")
         return 1
@@ -17056,10 +16115,7 @@ def cmd_ffi_hot_path_cache_toctou_coverage():
     """
     print(f"{B}=== FFI hot-path cache TOCTOU coverage (#2474) ==={N}")
     script = COVERAGE_CHECKS / "check_ffi_hot_path_cache_toctou_2474.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("FFI hot-path cache TOCTOU (#2474) coverage contract rows failed")
         return 1
@@ -17075,10 +16131,7 @@ def cmd_aura_jit_unused_fn_lock_coverage():
     """
     print(f"{B}=== AuraJIT unused fn_lock coverage (#2475) ==={N}")
     script = COVERAGE_CHECKS / "check_aura_jit_unused_fn_lock_2475.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("AuraJIT unused fn_lock (#2475) coverage contract rows failed")
         return 1
@@ -17093,10 +16146,7 @@ def cmd_partial_recompile_single_evict_coverage():
     """
     print(f"{B}=== partial_recompile single-pass eviction coverage (#2476) ==={N}")
     script = COVERAGE_CHECKS / "check_partial_recompile_single_evict_2476.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("partial_recompile single-pass eviction (#2476) coverage contract rows failed")
         return 1
@@ -17111,10 +16161,7 @@ def cmd_emit_object_deprecated_coverage():
     """
     print(f"{B}=== emit_object fail-closed deprecation coverage (#2477) ==={N}")
     script = COVERAGE_CHECKS / "check_emit_object_deprecated_2477.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("emit_object fail-closed deprecation (#2477) coverage contract rows failed")
         return 1
@@ -17129,10 +16176,7 @@ def cmd_command_line_cap_io_read_coverage():
     """
     print(f"{B}=== command-line kCapIoRead coverage (#2478) ==={N}")
     script = COVERAGE_CHECKS / "check_command_line_cap_io_read_2478.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("command-line kCapIoRead (#2478) coverage contract rows failed")
         return 1
@@ -17147,10 +16191,7 @@ def cmd_regex_redos_timeout_coverage():
     """
     print(f"{B}=== regex ReDoS timeout coverage (#2479) ==={N}")
     script = COVERAGE_CHECKS / "check_regex_redos_timeout_2479.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("regex ReDoS timeout (#2479) coverage contract rows failed")
         return 1
@@ -17165,10 +16206,7 @@ def cmd_json_parse_number_exception_coverage():
     """
     print(f"{B}=== json-parse number exception coverage (#2480) ==={N}")
     script = COVERAGE_CHECKS / "check_json_parse_number_exception_2480.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("json-parse number exception (#2480) coverage contract rows failed")
         return 1
@@ -17183,10 +16221,7 @@ def cmd_json_parse_object_grow_coverage():
     """
     print(f"{B}=== json-parse object grow coverage (#2481) ==={N}")
     script = COVERAGE_CHECKS / "check_json_parse_object_grow_2481.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("json-parse object grow (#2481) coverage contract rows failed")
         return 1
@@ -17201,10 +16236,7 @@ def cmd_list_end_of_list_void_coverage():
     """
     print(f"{B}=== list end-of-list void-only coverage (#2482) ==={N}")
     script = COVERAGE_CHECKS / "check_list_end_of_list_void_2482.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("list end-of-list void-only (#2482) coverage contract rows failed")
         return 1
@@ -17219,10 +16251,7 @@ def cmd_channel_rendezvous_coverage():
     """
     print(f"{B}=== channel rendezvous coverage (#2483) ==={N}")
     script = COVERAGE_CHECKS / "check_channel_rendezvous_2483.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("channel rendezvous (#2483) coverage contract rows failed")
         return 1
@@ -17237,10 +16266,7 @@ def cmd_eval_current_no_auto_fix_coverage():
     """
     print(f"{B}=== eval-current no auto-fix coverage (#2484) ==={N}")
     script = COVERAGE_CHECKS / "check_eval_current_no_auto_fix_2484.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("eval-current no auto-fix (#2484) coverage contract rows failed")
         return 1
@@ -17255,10 +16281,7 @@ def cmd_load_cap_io_read_coverage():
     """
     print(f"{B}=== load kCapIoRead coverage (#2485) ==={N}")
     script = COVERAGE_CHECKS / "check_load_cap_io_read_2485.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("load kCapIoRead (#2485) coverage contract rows failed")
         return 1
@@ -17273,10 +16296,7 @@ def cmd_gc_heap_cells_clear_coverage():
     """
     print(f"{B}=== gc-heap cells clear coverage (#2486) ==={N}")
     script = COVERAGE_CHECKS / "check_gc_heap_cells_clear_2486.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("gc-heap cells clear (#2486) coverage contract rows failed")
         return 1
@@ -17292,10 +16312,7 @@ def cmd_mutation_concurrency_health_coverage():
     """
     print(f"{B}=== mutation-concurrency-health coverage (#2379) ==={N}")
     script = COVERAGE_CHECKS / "check_mutation_concurrency_health_2379.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("mutation-concurrency-health coverage contract rows failed")
         return 1
@@ -17311,10 +16328,7 @@ def cmd_steal_layout_stamp_coverage():
     """
     print(f"{B}=== steal LayoutStamp dual-check coverage (#2351) ==={N}")
     script = COVERAGE_CHECKS / "check_steal_layout_stamp_2351.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("steal LayoutStamp dual-check coverage contract rows failed")
         return 1
@@ -17330,10 +16344,7 @@ def cmd_steal_complete_restamp_txn_coverage():
     """
     print(f"{B}=== steal-complete restamp transaction coverage (#2510) ==={N}")
     script = COVERAGE_CHECKS / "check_steal_complete_restamp_txn_2510.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("steal-complete restamp transaction coverage contract rows failed")
         return 1
@@ -17350,10 +16361,7 @@ def cmd_residual_defer_steal_hard_and_coverage():
     """
     print(f"{B}=== residual defer steal hard-AND coverage (#2546) ==={N}")
     script = COVERAGE_CHECKS / "check_residual_defer_steal_hard_and_2546.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("residual defer steal hard-AND (#2546) coverage contract rows failed")
         return 1
@@ -17369,10 +16377,7 @@ def cmd_is_stealable_snapshot_gate_coverage():
     """
     print(f"{B}=== is_stealable snapshot gate coverage (#2549) ==={N}")
     script = COVERAGE_CHECKS / "check_is_stealable_snapshot_gate_2549.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("is_stealable snapshot gate (#2549) coverage contract rows failed")
         return 1
@@ -17387,10 +16392,7 @@ def cmd_named_closure_stable_id_at_create_coverage():
     """
     print(f"{B}=== named closure stable_id at create coverage (#2550) ==={N}")
     script = COVERAGE_CHECKS / "check_named_closure_stable_id_at_create_2550.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("named closure stable_id at create (#2550) coverage contract rows failed")
         return 1
@@ -17410,10 +16412,7 @@ def cmd_stable_func_id_eval_namespace_coverage():
     """
     print(f"{B}=== stable_func_id eval namespace coverage (#2670) ==={N}")
     script = COVERAGE_CHECKS / "check_stable_func_id_eval_namespace_coverage.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("stable_func_id eval namespace (#2670) coverage contract rows failed")
         return 1
@@ -17434,10 +16433,7 @@ def cmd_composite_drift_inject_2671_coverage():
     """
     print(f"{B}=== composite drift inject (#2671) coverage ==={N}")
     script = COVERAGE_CHECKS / "check_composite_drift_inject_2671.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("composite drift inject (#2671) coverage contract rows failed")
         return 1
@@ -17459,10 +16455,7 @@ def cmd_occurrence_cone_truncate_drift_2672_coverage():
     """
     print(f"{B}=== occurrence cone truncate drift (#2672) coverage ==={N}")
     script = COVERAGE_CHECKS / "check_occurrence_cone_truncate_drift_2672.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("occurrence cone truncate drift (#2672) coverage contract rows failed")
         return 1
@@ -17478,10 +16471,7 @@ def cmd_anonymous_residual_stable_id_policy_coverage():
     """
     print(f"{B}=== anonymous residual stable_id policy coverage (#2605) ==={N}")
     script = COVERAGE_CHECKS / "check_anonymous_residual_stable_id_policy_2605.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("anonymous residual stable_id policy (#2605) coverage contract rows failed")
         return 1
@@ -17497,10 +16487,7 @@ def cmd_pereval_reemit_region_independence_coverage():
     """
     print(f"{B}=== PerEval reemit region independence coverage (#2606) ==={N}")
     script = COVERAGE_CHECKS / "check_pereval_reemit_region_independence_2606.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("PerEval reemit region independence (#2606) coverage contract rows failed")
         return 1
@@ -17516,10 +16503,7 @@ def cmd_instance_constraint_depth_cap_coverage():
     """
     print(f"{B}=== INSTANCE constraint depth-cap coverage (#2607) ==={N}")
     script = COVERAGE_CHECKS / "check_instance_constraint_depth_cap_2607.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("INSTANCE constraint depth-cap (#2607) coverage contract rows failed")
         return 1
@@ -17535,10 +16519,7 @@ def cmd_occurrence_goal_persist_rehydrate_coverage():
     """
     print(f"{B}=== OccurrenceGoal persist/rehydrate coverage (#2608) ==={N}")
     script = COVERAGE_CHECKS / "check_occurrence_goal_persist_rehydrate_2608.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("OccurrenceGoal persist/rehydrate (#2608) coverage contract rows failed")
         return 1
@@ -17550,10 +16531,7 @@ def cmd_occurrence_persist_production_2910_coverage():
     """Issue #2910: production always-on persist + densify/steal stamp after rehydrate."""
     print(f"{B}=== OccurrenceGoal production persist + stamp-after-rehydrate (#2910) ==={N}")
     script = COVERAGE_CHECKS / "check_occurrence_persist_production_2910.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("OccurrenceGoal production persist #2910 coverage contract rows failed")
         return 1
@@ -17565,10 +16543,7 @@ def cmd_refined_consistency_commit_gate_2911_coverage():
     """Issue #2911: refined-consistency hard gate on commit_readiness (static)."""
     print(f"{B}=== refined-consistency commit gate coverage (#2911) ==={N}")
     script = COVERAGE_CHECKS / "check_refined_consistency_commit_gate_2911.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("refined-consistency commit gate (#2911) coverage contract rows failed")
         return 1
@@ -17592,10 +16567,7 @@ def cmd_occurrence_commit_snapshot_2938_coverage():
     """Issue #2938: outermost success freezes Occurrence commit snapshot (static)."""
     print(f"{B}=== occurrence commit snapshot coverage (#2938) ==={N}")
     script = COVERAGE_CHECKS / "check_occurrence_commit_snapshot_2938.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("occurrence commit snapshot (#2938) coverage contract rows failed")
         return 1
@@ -17611,10 +16583,7 @@ def cmd_occurrence_persist_audit_atomic_3004_coverage():
     """
     print(f"{B}=== occurrence persist-audit atomic coverage (#3004) ==={N}")
     script = COVERAGE_CHECKS / "check_occurrence_persist_audit_atomic_3004.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("occurrence persist-audit atomic (#3004) coverage contract rows failed")
         return 1
@@ -17653,10 +16622,7 @@ def cmd_occurrence_persist_production_default_2896_coverage():
     """
     print(f"{B}=== OccurrenceGoal production-default persist coverage (#2896) ==={N}")
     script = COVERAGE_CHECKS / "check_occurrence_persist_production_default_2896.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("OccurrenceGoal production-default persist (#2896) coverage contract rows failed")
         return 1
@@ -17672,10 +16638,7 @@ def cmd_occurrence_goal_vacuous_solve_prevent_coverage():
     """
     print(f"{B}=== occurrence goal vacuous-solve prevent coverage (#2647) ==={N}")
     script = COVERAGE_CHECKS / "check_occurrence_goal_vacuous_solve_prevent_2647.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("occurrence goal vacuous-solve prevent (#2647) coverage contract rows failed")
         return 1
@@ -17691,10 +16654,7 @@ def cmd_steal_densify_linear_type_hard_and_coverage():
     """
     print(f"{B}=== steal/densify linear+type hard-AND coverage (#2609) ==={N}")
     script = COVERAGE_CHECKS / "check_steal_densify_linear_type_hard_and_2609.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("steal/densify linear+type hard-AND (#2609) coverage contract rows failed")
         return 1
@@ -17710,10 +16670,7 @@ def cmd_composite_auto_partial_from_cone_coverage():
     """
     print(f"{B}=== composite auto-partial from cone coverage (#2610) ==={N}")
     script = COVERAGE_CHECKS / "check_composite_auto_partial_from_cone_2610.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("composite auto-partial from cone (#2610) coverage contract rows failed")
         return 1
@@ -17729,10 +16686,7 @@ def cmd_dce_elided_deopt_meta_coverage():
     """
     print(f"{B}=== dce elided cast deopt meta coverage (#2611) ==={N}")
     script = COVERAGE_CHECKS / "check_dce_elided_deopt_meta_2611.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("dce elided cast deopt meta (#2611) coverage contract rows failed")
         return 1
@@ -17747,10 +16701,7 @@ def cmd_castop_typed_meta_coverage():
     """
     print(f"{B}=== castop typed meta Phase A coverage (#2624) ==={N}")
     script = COVERAGE_CHECKS / "check_castop_typed_meta_2624.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("castop typed meta (#2624) coverage contract rows failed")
         return 1
@@ -17792,10 +16743,7 @@ def cmd_type_linear_commit_health_coverage():
     """
     print(f"{B}=== type-linear-commit-health coverage (#2613) ==={N}")
     script = COVERAGE_CHECKS / "check_type_linear_commit_health_2613.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("type-linear-commit-health (#2613) coverage contract rows failed")
         return 1
@@ -17811,10 +16759,7 @@ def cmd_type_linear_evolution_snapshot_2897_coverage():
     """
     print(f"{B}=== type-linear-evolution-snapshot coverage (#2897) ==={N}")
     script = COVERAGE_CHECKS / "check_type_linear_evolution_snapshot_2897.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("type-linear-evolution-snapshot (#2897) coverage contract rows failed")
         return 1
@@ -17830,10 +16775,7 @@ def cmd_composite_required_type_2898_coverage():
     """
     print(f"{B}=== composite required TypeId coverage (#2898) ==={N}")
     script = COVERAGE_CHECKS / "check_composite_required_type_2898.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("composite required TypeId (#2898) coverage contract rows failed")
         return 1
@@ -17845,10 +16787,7 @@ def cmd_composite_required_type_default_2983_coverage():
     """Issue #2983: production default required TypeId set."""
     print(f"{B}=== composite required TypeId default coverage (#2983) ==={N}")
     script = COVERAGE_CHECKS / "check_composite_required_type_default_2983.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("composite required TypeId default (#2983) coverage contract rows failed")
         return 1
@@ -17860,10 +16799,7 @@ def cmd_linear_compact_root_consistency_2984_coverage():
     """Issue #2984: arena compact vs TypeLinearCommitProof.linear_root_count."""
     print(f"{B}=== linear compact root consistency coverage (#2984) ==={N}")
     script = COVERAGE_CHECKS / "check_linear_compact_root_consistency_2984.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("linear compact root consistency (#2984) coverage contract rows failed")
         return 1
@@ -17875,10 +16811,7 @@ def cmd_mutation_concurrency_health_admit_2985_coverage():
     """Issue #2985: production concurrency-health admit reject."""
     print(f"{B}=== mutation-concurrency-health admit coverage (#2985) ==={N}")
     script = COVERAGE_CHECKS / "check_mutation_concurrency_health_admit_2985.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("mutation-concurrency-health admit (#2985) coverage contract rows failed")
         return 1
@@ -17890,10 +16823,7 @@ def cmd_mutate_guard_coverage_2986_coverage():
     """Issue #2986: every mutate:* Guard-wrapped or GUARD_EXEMPT."""
     print(f"{B}=== mutate Guard coverage (#2986) ==={N}")
     script = COVERAGE_CHECKS / "check_mutate_guard_coverage.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("mutate Guard coverage (#2986) coverage contract rows failed")
         return 1
@@ -17905,10 +16835,7 @@ def cmd_mailbox_delivery_safety_2987_coverage():
     """Issue #2987: mailbox delivery residual hard-AND."""
     print(f"{B}=== mailbox delivery safety coverage (#2987) ==={N}")
     script = COVERAGE_CHECKS / "check_mailbox_delivery_safety_2987.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("mailbox delivery safety (#2987) coverage contract rows failed")
         return 1
@@ -17920,10 +16847,7 @@ def cmd_mailbox_residual_hard_reject_3036_coverage():
     """Issue #3036: production mailbox residual RejectHard fail-closed."""
     print(f"{B}=== mailbox residual hard-reject coverage (#3036) ==={N}")
     script = COVERAGE_CHECKS / "check_mailbox_residual_hard_reject_3036.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("mailbox residual hard-reject (#3036) coverage contract rows failed")
         return 1
@@ -17940,10 +16864,7 @@ def cmd_mutate_invalidate_incremental_2988_coverage():
     """Issue #2988: mutate success DefUse/IR/JIT invalidate close-loop."""
     print(f"{B}=== mutate invalidate incremental coverage (#2988) ==={N}")
     script = COVERAGE_CHECKS / "check_mutate_invalidate_incremental_2988.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("mutate invalidate incremental (#2988) coverage contract rows failed")
         return 1
@@ -17955,10 +16876,7 @@ def cmd_query_concurrent_hygiene_safe_span_2989_coverage():
     """Issue #2989: query concurrent SafePCVSpan + hygiene default."""
     print(f"{B}=== query concurrent hygiene SafePCVSpan coverage (#2989) ==={N}")
     script = COVERAGE_CHECKS / "check_query_concurrent_hygiene_safe_span_2989.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("query concurrent hygiene SafePCVSpan (#2989) coverage contract rows failed")
         return 1
@@ -17970,10 +16888,7 @@ def cmd_workspace_concurrent_policy_2990_coverage():
     """Issue #2990: ConcurrentMutationPolicy SingleWriter / ScopedParallel."""
     print(f"{B}=== workspace ConcurrentMutationPolicy coverage (#2990) ==={N}")
     script = COVERAGE_CHECKS / "check_workspace_concurrent_policy_2990.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("workspace ConcurrentMutationPolicy (#2990) coverage contract rows failed")
         return 1
@@ -17985,10 +16900,7 @@ def cmd_scoped_parallel_overlap_hard_reject_3039_coverage():
     """Issue #3039: production ScopedParallel overlap hard-reject."""
     print(f"{B}=== ScopedParallel overlap hard-reject coverage (#3039) ==={N}")
     script = COVERAGE_CHECKS / "check_scoped_parallel_overlap_hard_reject_3039.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("ScopedParallel overlap hard-reject (#3039) coverage contract rows failed")
         return 1
@@ -18005,10 +16917,7 @@ def cmd_coercion_provenance_hf_mutate_2991_coverage():
     """Issue #2991: coercion provenance completeness under hf mutate."""
     print(f"{B}=== coercion provenance hf-mutate coverage (#2991) ==={N}")
     script = COVERAGE_CHECKS / "check_coercion_provenance_hf_mutate_2991.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("coercion provenance hf-mutate (#2991) coverage contract rows failed")
         return 1
@@ -18020,10 +16929,7 @@ def cmd_coercion_hf_lag_hot_residual_3046_coverage():
     """Issue #3046: session-mid always-stamp + residual CastOp density keep."""
     print(f"{B}=== coercion hf-lag / hot residual coverage (#3046) ==={N}")
     script = COVERAGE_CHECKS / "check_coercion_hf_lag_hot_residual_3046.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("coercion hf-lag / hot residual (#3046) coverage contract rows failed")
         return 1
@@ -18035,10 +16941,7 @@ def cmd_hot_residual_soft_must_deopt_3084_coverage():
     """Issue #3084: Soft residual CastOp MustDeopt (static)."""
     print(f"{B}=== Soft residual CastOp MustDeopt coverage (#3084) ==={N}")
     script = COVERAGE_CHECKS / "check_hot_residual_soft_must_deopt_3084.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("Soft residual CastOp MustDeopt (#3084) coverage contract rows failed")
         return 1
@@ -18060,10 +16963,7 @@ def cmd_gradual_permissiveness_2992_coverage():
     """Issue #2992: non-strict ground-type Warning + AURA_GRADUAL_PERMISSIVENESS."""
     print(f"{B}=== gradual permissiveness coverage (#2992) ==={N}")
     script = COVERAGE_CHECKS / "check_gradual_permissiveness_2992.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("gradual permissiveness (#2992) coverage contract rows failed")
         return 1
@@ -18083,10 +16983,7 @@ def cmd_production_defaults_force_strict_unify_3430_coverage():
     """
     print(f"{B}=== production_defaults force-Strict unify coverage (#3430) ==={N}")
     script = COVERAGE_CHECKS / "check_production_defaults_force_strict_unify_3430.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("production_defaults force-Strict unify (#3430) coverage contract rows failed")
         return 1
@@ -18098,10 +16995,7 @@ def cmd_typecheck_metrics_tier_2993_coverage():
     """Issue #2993: type-check metrics tier minimal default."""
     print(f"{B}=== typecheck metrics tier coverage (#2993) ==={N}")
     script = COVERAGE_CHECKS / "check_typecheck_metrics_tier_2993.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("typecheck metrics tier (#2993) coverage contract rows failed")
         return 1
@@ -18113,10 +17007,7 @@ def cmd_occurrence_commit_health_2995_coverage():
     """Issue #2995: unified OccurrenceCommitHealth + single-shot recover."""
     print(f"{B}=== OccurrenceCommitHealth coverage (#2995) ==={N}")
     script = COVERAGE_CHECKS / "check_occurrence_commit_health_2995.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("OccurrenceCommitHealth (#2995) coverage contract rows failed")
         return 1
@@ -18134,10 +17025,7 @@ def cmd_solve_delta_locality_budget_2994_coverage():
     """Issue #2994: Agent locality residual budget."""
     print(f"{B}=== locality residual budget coverage (#2994) ==={N}")
     script = COVERAGE_CHECKS / "check_solve_delta_locality_budget_2994.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("locality residual budget (#2994) coverage contract rows failed")
         return 1
@@ -18153,10 +17041,7 @@ def cmd_solve_delta_timeout_fail_closed_3003_coverage():
     """
     print(f"{B}=== solve_delta timeout fail-closed coverage (#3003) ==={N}")
     script = COVERAGE_CHECKS / "check_solve_delta_timeout_fail_closed_3003.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("solve_delta timeout fail-closed (#3003) coverage contract rows failed")
         return 1
@@ -18184,10 +17069,7 @@ def cmd_occurrence_persist_fingerprint_3170():
     """
     print(f"{B}=== occurrence persist fingerprint (#3170) ==={N}")
     script = COVERAGE_CHECKS / "check_occurrence_persist_fingerprint_3170.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("occurrence persist fingerprint (#3170) coverage contract rows failed")
         return r
@@ -18206,10 +17088,7 @@ def cmd_occurrence_unstaged_expected_fp_3431_coverage():
     """
     print(f"{B}=== occurrence unstaged expected_fp (#3431) ==={N}")
     script = COVERAGE_CHECKS / "check_occurrence_unstaged_expected_fp_3431.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("occurrence unstaged expected_fp (#3431) coverage contract rows failed")
         return 1
@@ -18228,10 +17107,7 @@ def cmd_outermost_persist_reject_restore_3440_coverage():
     """
     print(f"{B}=== outermost persist-reject restore (#3440) ==={N}")
     script = COVERAGE_CHECKS / "check_outermost_persist_reject_restore_3440.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("outermost persist-reject restore (#3440) coverage contract rows failed")
         return 1
@@ -18263,10 +17139,7 @@ def cmd_solve_delta_partial_cleared_3169():
     """
     print(f"{B}=== solve_delta partial cleared (#3169) ==={N}")
     script = COVERAGE_CHECKS / "check_solve_delta_partial_cleared_3169.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("solve_delta partial cleared (#3169) coverage contract rows failed")
         return 1
@@ -18283,10 +17156,7 @@ def cmd_soft_timeout_quarantine_3331():
     """
     print(f"{B}=== soft TIMEOUT quarantine (#3331) ==={N}")
     script = COVERAGE_CHECKS / "check_soft_timeout_quarantine_3331.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("soft TIMEOUT quarantine (#3331) coverage contract rows failed")
         return 1
@@ -18302,10 +17172,7 @@ def cmd_adt_exhaust_dirty_cone_3005_coverage():
     """
     print(f"{B}=== ADT exhaust dirty-cone coverage (#3005) ==={N}")
     script = COVERAGE_CHECKS / "check_adt_exhaust_dirty_cone_3005.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("ADT exhaust dirty-cone (#3005) coverage contract rows failed")
         return 1
@@ -18322,10 +17189,7 @@ def cmd_adt_exhaust_undermark_cone_3045_coverage():
     """
     print(f"{B}=== ADT exhaust under-mark cone coverage (#3045) ==={N}")
     script = COVERAGE_CHECKS / "check_adt_exhaust_undermark_cone_3045.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("ADT exhaust under-mark cone (#3045) coverage contract rows failed")
         return 1
@@ -18337,10 +17201,7 @@ def cmd_adt_exhaust_complete_seed_3083_coverage():
     """Issue #3083: ADT exhaust complete seed after mutate (static)."""
     print(f"{B}=== ADT exhaust complete seed coverage (#3083) ==={N}")
     script = COVERAGE_CHECKS / "check_adt_exhaust_complete_seed_3083.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("ADT exhaust complete seed (#3083) coverage contract rows failed")
         return 1
@@ -18366,10 +17227,7 @@ def cmd_linear_ir_fastpath_2899_coverage():
     """
     print(f"{B}=== linear IR fast-path coverage (#2899) ==={N}")
     script = COVERAGE_CHECKS / "check_linear_ir_fastpath_2899.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("linear IR fast-path (#2899) coverage contract rows failed")
         return 1
@@ -18385,10 +17243,7 @@ def cmd_linear_fast_path_unified_2964_coverage():
     """
     print(f"{B}=== linear fast-path unified coverage (#2964) ==={N}")
     script = COVERAGE_CHECKS / "check_linear_fast_path_unified_2964.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("linear fast-path unified (#2964) coverage contract rows failed")
         return 1
@@ -18404,10 +17259,7 @@ def cmd_linear_fast_path_dirty_revalidate_3006_coverage():
     """
     print(f"{B}=== linear fast-path dirty-revalidate coverage (#3006) ==={N}")
     script = COVERAGE_CHECKS / "check_linear_fast_path_dirty_revalidate_3006.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("linear fast-path dirty-revalidate (#3006) coverage contract rows failed")
         return 1
@@ -18424,10 +17276,7 @@ def cmd_type_linear_proof_clear_on_abort_3030_coverage():
     """
     print(f"{B}=== type-linear proof-clear-on-abort coverage (#3030) ==={N}")
     script = COVERAGE_CHECKS / "check_type_linear_proof_clear_on_abort_3030.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("type-linear proof-clear-on-abort (#3030) coverage contract rows failed")
         return 1
@@ -18448,10 +17297,7 @@ def cmd_pending_full_solve_residual_3031_coverage():
     """
     print(f"{B}=== pending_full_solve residual coverage (#3031) ==={N}")
     script = COVERAGE_CHECKS / "check_pending_full_solve_residual_3031.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("pending_full_solve residual (#3031) coverage contract rows failed")
         return 1
@@ -18472,10 +17318,7 @@ def cmd_rehydrate_miss_invalidate_3032_coverage():
     """
     print(f"{B}=== rehydrate-miss invalidate coverage (#3032) ==={N}")
     script = COVERAGE_CHECKS / "check_rehydrate_miss_invalidate_3032.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("rehydrate-miss invalidate (#3032) coverage contract rows failed")
         return 1
@@ -18492,10 +17335,7 @@ def cmd_half_green_ir_steal_densify_3063_coverage():
     """Issue #3063: steal/densify success invalidate-before-restamp (static)."""
     print(f"{B}=== half-green IR steal/densify coverage (#3063) ==={N}")
     script = COVERAGE_CHECKS / "check_half_green_ir_steal_densify_3063.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("half-green IR steal/densify (#3063) coverage contract rows failed")
         return 1
@@ -18507,10 +17347,7 @@ def cmd_rehydrate_miss_lowering_elision_3085_coverage():
     """Issue #3085: densify/steal miss blocks lowering elision (static)."""
     print(f"{B}=== rehydrate-miss lowering elision coverage (#3085) ==={N}")
     script = COVERAGE_CHECKS / "check_rehydrate_miss_lowering_elision_3085.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("rehydrate-miss lowering elision (#3085) coverage contract rows failed")
         return 1
@@ -18541,10 +17378,7 @@ def cmd_linear_fast_path_clear_on_restamp_3171_coverage():
     """Issue #3171: steal/densify restamp complete-clear (static)."""
     print(f"{B}=== linear-fast-path restamp complete-clear coverage (#3171) ==={N}")
     script = COVERAGE_CHECKS / "check_linear_fast_path_clear_on_restamp_3171.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("linear-fast-path restamp complete-clear (#3171) coverage contract rows failed")
         return 1
@@ -18566,10 +17400,7 @@ def cmd_compile_surface_3172_coverage():
     """Issue #3172: sink fine-grained compile: dirty primitives (static)."""
     print(f"{B}=== compile: surface reduction coverage (#3172) ==={N}")
     script = COVERAGE_CHECKS / "check_compile_surface_3172.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("compile: surface reduction (#3172) coverage contract rows failed")
         return 1
@@ -18590,10 +17421,7 @@ def cmd_arena_surface_3173_coverage():
     """Issue #3173: sink fine-grained arena: compact/defrag knobs (static)."""
     print(f"{B}=== arena: surface reduction coverage (#3173) ==={N}")
     script = COVERAGE_CHECKS / "check_arena_surface_3173.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("arena: surface reduction (#3173) coverage contract rows failed")
         return 1
@@ -18614,10 +17442,7 @@ def cmd_io_net_git_surface_3174_coverage():
     """Issue #3174: demote IO/Net/Git/process prims off core boot (static)."""
     print(f"{B}=== IO/Net/Git surface reduction coverage (#3174) ==={N}")
     script = COVERAGE_CHECKS / "check_io_net_git_surface_3174.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("IO/Net/Git surface reduction (#3174) coverage contract rows failed")
         return 1
@@ -18638,10 +17463,7 @@ def cmd_query_surface_3175_coverage():
     """Issue #3175: prune diagnostic / low-frequency query: prims (static)."""
     print(f"{B}=== query: surface reduction coverage (#3175) ==={N}")
     script = COVERAGE_CHECKS / "check_query_surface_3175.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("query: surface reduction (#3175) coverage contract rows failed")
         return 1
@@ -18662,10 +17484,7 @@ def cmd_ffi_surface_3176_coverage():
     """Issue #3176: demote C FFI c-* prims off core boot (static)."""
     print(f"{B}=== C FFI surface reduction coverage (#3176) ==={N}")
     script = COVERAGE_CHECKS / "check_ffi_surface_3176.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("C FFI surface reduction (#3176) coverage contract rows failed")
         return 1
@@ -18686,10 +17505,7 @@ def cmd_inline_macro_body_marker_3064_coverage():
     """Issue #3064: InlinePass refuses MacroIntroduced body (static)."""
     print(f"{B}=== InlinePass MacroIntroduced body coverage (#3064) ==={N}")
     script = COVERAGE_CHECKS / "check_inline_macro_body_marker_3064.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("InlinePass MacroIntroduced body (#3064) coverage contract rows failed")
         return 1
@@ -18710,10 +17526,7 @@ def cmd_dead_coercion_elim_cone_3065_coverage():
     """Issue #3065: DeadCoercion elim remirror into type∪IR cone (static)."""
     print(f"{B}=== DeadCoercion elim cone remirror coverage (#3065) ==={N}")
     script = COVERAGE_CHECKS / "check_dead_coercion_elim_cone_3065.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("DeadCoercion elim cone remirror (#3065) coverage contract rows failed")
         return 1
@@ -18734,10 +17547,7 @@ def cmd_composite_audit_mid_se_join_3066_coverage():
     """Issue #3066: composite/batch typed↔SE join mid (static)."""
     print(f"{B}=== composite audit mid SE join coverage (#3066) ==={N}")
     script = COVERAGE_CHECKS / "check_composite_audit_mid_se_join_3066.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("composite audit mid SE join (#3066) coverage contract rows failed")
         return 1
@@ -18758,10 +17568,7 @@ def cmd_hybrid_deferred_cascade_3067_coverage():
     """Issue #3067: stale-reject deferred hybrid cascade (static)."""
     print(f"{B}=== hybrid deferred cascade coverage (#3067) ==={N}")
     script = COVERAGE_CHECKS / "check_hybrid_deferred_cascade_3067.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("hybrid deferred cascade (#3067) coverage contract rows failed")
         return 1
@@ -18782,10 +17589,7 @@ def cmd_partial_map_ensure_3068_coverage():
     """Issue #3068: map ensure + impact_ub snapshot before partial (static)."""
     print(f"{B}=== partial map ensure coverage (#3068) ==={N}")
     script = COVERAGE_CHECKS / "check_partial_map_ensure_3068.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("partial map ensure (#3068) coverage contract rows failed")
         return 1
@@ -18806,10 +17610,7 @@ def cmd_abort_force_generation_fence_3069_coverage():
     """Issue #3069: abort-force generation fence (static)."""
     print(f"{B}=== abort-force generation fence coverage (#3069) ==={N}")
     script = COVERAGE_CHECKS / "check_abort_force_generation_fence_3069.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("abort-force generation fence (#3069) coverage contract rows failed")
         return 1
@@ -18830,10 +17631,7 @@ def cmd_storm_exit_hysteresis_peer_soft_stale_3070_coverage():
     """Issue #3070: storm-exit hysteresis + peer soft-stale (static)."""
     print(f"{B}=== storm-exit hysteresis + peer soft-stale coverage (#3070) ==={N}")
     script = COVERAGE_CHECKS / "check_storm_exit_hysteresis_peer_soft_stale_3070.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("storm-exit hysteresis + peer soft-stale (#3070) coverage contract rows failed")
         return 1
@@ -18854,10 +17652,7 @@ def cmd_hold_budget_inbody_window_3071_coverage():
     """Issue #3071: in-body cancel window watchdog (static)."""
     print(f"{B}=== hold-budget in-body window coverage (#3071) ==={N}")
     script = COVERAGE_CHECKS / "check_hold_budget_inbody_window_3071.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("hold-budget in-body window (#3071) coverage contract rows failed")
         return 1
@@ -18878,10 +17673,7 @@ def cmd_chaos_production_readiness_3073_coverage():
     """Issue #3073: production soak readiness gate (static)."""
     print(f"{B}=== chaos production readiness coverage (#3073) ==={N}")
     script = COVERAGE_CHECKS / "check_chaos_production_readiness_3073.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("chaos production readiness (#3073) coverage contract rows failed")
         return 1
@@ -18902,10 +17694,7 @@ def cmd_mutate_dispatch_sole_guard_3074_coverage():
     """Issue #3074: mutate_dispatch sole Guard acquire (static)."""
     print(f"{B}=== mutate_dispatch sole-guard coverage (#3074) ==={N}")
     script = COVERAGE_CHECKS / "check_mutate_dispatch_sole_guard_3074.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("mutate_dispatch sole-guard (#3074) coverage contract rows failed")
         return 1
@@ -18930,10 +17719,7 @@ def cmd_mutate_reg_kind_3452_coverage():
     """
     print(f"{B}=== mutate_reg_kind coverage (#3452) ==={N}")
     script = COVERAGE_CHECKS / "check_mutate_reg_kind_3452.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("mutate_reg_kind (#3452) coverage contract rows failed")
         return 1
@@ -18949,10 +17735,7 @@ def cmd_transform_engine_guard_3352_coverage():
     """
     print(f"{B}=== TransformEngine Guard wrap coverage (#3352) ==={N}")
     script = COVERAGE_CHECKS / "check_transform_engine_guard_3352.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("TransformEngine Guard wrap (#3352) coverage contract rows failed")
         return 1
@@ -18964,10 +17747,7 @@ def cmd_query_epoch_production_strict_3075_coverage():
     """Issue #3075: production defaults arm QueryEpoch strict (static)."""
     print(f"{B}=== query-epoch production strict coverage (#3075) ==={N}")
     script = COVERAGE_CHECKS / "check_query_epoch_production_strict_3075.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("query-epoch production strict (#3075) coverage contract rows failed")
         return 1
@@ -18988,10 +17768,7 @@ def cmd_soft_observe_not_hard_3076_coverage():
     """Issue #3076: Soft-observe is not a Hard production guarantee (static)."""
     print(f"{B}=== soft-observe not Hard coverage (#3076) ==={N}")
     script = COVERAGE_CHECKS / "check_soft_observe_not_hard_3076.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("soft-observe not Hard (#3076) coverage contract rows failed")
         return 1
@@ -19012,10 +17789,7 @@ def cmd_soft_timeout_export_non_authoritative_3081_coverage():
     """Issue #3081: Soft TIMEOUT export is not query:type authority (static)."""
     print(f"{B}=== soft TIMEOUT export non-authoritative coverage (#3081) ==={N}")
     script = COVERAGE_CHECKS / "check_soft_timeout_export_non_authoritative_3081.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("soft TIMEOUT export non-authoritative (#3081) coverage contract rows failed")
         return 1
@@ -19036,10 +17810,7 @@ def cmd_nested_occurrence_provisional_3082_coverage():
     """Issue #3082: mid/nested MutationBoundary occurrence is provisional (static)."""
     print(f"{B}=== nested occurrence provisional coverage (#3082) ==={N}")
     script = COVERAGE_CHECKS / "check_nested_occurrence_provisional_3082.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("nested occurrence provisional (#3082) coverage contract rows failed")
         return 1
@@ -19065,10 +17836,7 @@ def cmd_solver_budget_2900_coverage():
     """
     print(f"{B}=== SolverBudget coverage (#2900) ==={N}")
     script = COVERAGE_CHECKS / "check_solver_budget_2900.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("SolverBudget (#2900) coverage contract rows failed")
         return 1
@@ -19084,10 +17852,7 @@ def cmd_instance_repair_before_full_2963_coverage():
     """
     print(f"{B}=== instance-repair-before-full coverage (#2963) ==={N}")
     script = COVERAGE_CHECKS / "check_instance_repair_before_full_2963.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("instance-repair-before-full (#2963) coverage contract rows failed")
         return 1
@@ -19099,10 +17864,7 @@ def cmd_solve_delta_dep_closure_2939_coverage():
     """Issue #2939: solve_delta reverify dep-closure (static)."""
     print(f"{B}=== solve_delta dep-closure reverify coverage (#2939) ==={N}")
     script = COVERAGE_CHECKS / "check_solve_delta_dep_closure_2939.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("solve_delta dep-closure (#2939) coverage contract rows failed")
         return 1
@@ -19128,10 +17890,7 @@ def cmd_solve_delta_locality_slo_2913_coverage():
     """
     print(f"{B}=== solve_delta locality SLO coverage (#2913) ==={N}")
     script = COVERAGE_CHECKS / "check_solve_delta_locality_slo_2913.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("solve_delta locality SLO (#2913) coverage contract rows failed")
         return 1
@@ -19143,10 +17902,7 @@ def cmd_prim_error_convention_2998_coverage():
     """Issue #2998: residual silent sentinels on core primitives."""
     print(f"{B}=== prim error convention coverage (#2998) ==={N}")
     script = COVERAGE_CHECKS / "check_prim_error_convention_2998.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("prim error convention (#2998) coverage contract rows failed")
         return 1
@@ -19161,10 +17917,7 @@ def cmd_query_primitives_split_2914_coverage():
     """
     print(f"{B}=== query primitives split coverage (#2914) ==={N}")
     script = COVERAGE_CHECKS / "check_query_primitives_split_2914.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("query primitives split (#2914) coverage contract rows failed")
         return 1
@@ -19176,10 +17929,7 @@ def cmd_prim_register_core_2996_coverage():
     """Issue #2996: core TUs migrated to register_prim + PrimSpec."""
     print(f"{B}=== core register_prim migration coverage (#2996) ==={N}")
     script = COVERAGE_CHECKS / "check_prim_register_core_2996.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("core register_prim migration (#2996) coverage contract rows failed")
         return 1
@@ -19200,10 +17950,7 @@ def cmd_prim_registrar_scaffold_2915_coverage():
     """
     print(f"{B}=== prim registrar scaffold coverage (#2915) ==={N}")
     script = COVERAGE_CHECKS / "check_prim_registrar_scaffold_2915.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("prim registrar scaffold (#2915) coverage contract rows failed")
         return 1
@@ -19215,10 +17962,7 @@ def cmd_list_ctor_hotpath_2997_coverage():
     """Issue #2997: list/json constructor lock SLO + unlimited/small fast-path."""
     print(f"{B}=== list ctor hot-path coverage (#2997) ==={N}")
     script = COVERAGE_CHECKS / "check_list_ctor_hotpath_2997.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("list ctor hot-path (#2997) coverage contract rows failed")
         return 1
@@ -19234,10 +17978,7 @@ def cmd_prim_heap_quota_2916_coverage():
     """
     print(f"{B}=== prim heap quota coverage (#2916) ==={N}")
     script = COVERAGE_CHECKS / "check_prim_heap_quota_2916.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("prim heap quota (#2916) coverage contract rows failed")
         return 1
@@ -19252,10 +17993,7 @@ def cmd_agent_recovery_2917_coverage():
     """
     print(f"{B}=== agent recovery coverage (#2917) ==={N}")
     script = COVERAGE_CHECKS / "check_agent_recovery_2917.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("agent recovery (#2917) coverage contract rows failed")
         return 1
@@ -19270,10 +18008,7 @@ def cmd_ast_snapshot_workspace_2918_coverage():
     """
     print(f"{B}=== ast snapshot workspace coverage (#2918) ==={N}")
     script = COVERAGE_CHECKS / "check_ast_snapshot_workspace_2918.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("ast snapshot workspace (#2918) coverage contract rows failed")
         return 1
@@ -19288,10 +18023,7 @@ def cmd_ast_snapshot_fail_reason_2966_coverage():
     """
     print(f"{B}=== ast snapshot fail-reason coverage (#2966) ==={N}")
     script = COVERAGE_CHECKS / "check_ast_snapshot_fail_reason_2966.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("ast snapshot fail-reason (#2966) coverage contract rows failed")
         return 1
@@ -19306,10 +18038,7 @@ def cmd_current_source_unparse_2919_coverage():
     """
     print(f"{B}=== current-source unparse coverage (#2919) ==={N}")
     script = COVERAGE_CHECKS / "check_current_source_unparse_2919.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("current-source unparse (#2919) coverage contract rows failed")
         return 1
@@ -19324,10 +18053,7 @@ def cmd_workspace_source_ssot_2920_coverage():
     """
     print(f"{B}=== workspace source SSOT coverage (#2920) ==={N}")
     script = COVERAGE_CHECKS / "check_workspace_source_ssot_2920.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("workspace source SSOT (#2920) coverage contract rows failed")
         return 1
@@ -19342,10 +18068,7 @@ def cmd_current_source_roundtrip_2921_coverage():
     """
     print(f"{B}=== current-source roundtrip coverage (#2921) ==={N}")
     script = COVERAGE_CHECKS / "check_current_source_roundtrip_2921.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("current-source roundtrip (#2921) coverage contract rows failed")
         return 1
@@ -19360,10 +18083,7 @@ def cmd_ast_unparse_2922_coverage():
     """
     print(f"{B}=== ast_unparse extract coverage (#2922) ==={N}")
     script = COVERAGE_CHECKS / "check_ast_unparse_2922.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("ast_unparse (#2922) coverage contract rows failed")
         return 1
@@ -19378,10 +18098,7 @@ def cmd_isolation_decide_2923_coverage():
     """
     print(f"{B}=== isolation decide coverage (#2923) ==={N}")
     script = COVERAGE_CHECKS / "check_isolation_decide_2923.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("isolation decide (#2923) coverage contract rows failed")
         return 1
@@ -19396,10 +18113,7 @@ def cmd_parallel_mutate_region_keys_prod_deny_3353_coverage():
     """
     print(f"{B}=== production mutate region-keys deny coverage (#3353) ==={N}")
     script = COVERAGE_CHECKS / "check_parallel_mutate_region_keys_prod_deny_3353.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("production mutate region-keys deny (#3353) coverage contract rows failed")
         return 1
@@ -19414,10 +18128,7 @@ def cmd_wait_reclaimed_2924_coverage():
     """
     print(f"{B}=== wait_reclaimed_body coverage (#2924) ==={N}")
     script = COVERAGE_CHECKS / "check_wait_reclaimed_2924.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("wait_reclaimed (#2924) coverage contract rows failed")
         return 1
@@ -19432,10 +18143,7 @@ def cmd_producer_bp_budget_2925_coverage():
     """
     print(f"{B}=== producer BP budget coverage (#2925) ==={N}")
     script = COVERAGE_CHECKS / "check_producer_bp_budget_2925.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("producer BP budget (#2925) coverage contract rows failed")
         return 1
@@ -19451,10 +18159,7 @@ def cmd_mailbox_credit_inflight_2972_coverage():
     """
     print(f"{B}=== mailbox credit inflight coverage (#2972) ==={N}")
     script = COVERAGE_CHECKS / "check_mailbox_credit_inflight_2972.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("mailbox credit inflight (#2972) coverage contract rows failed")
         return 1
@@ -19469,10 +18174,7 @@ def cmd_scope_resolve_2926_coverage():
     """
     print(f"{B}=== scope-resolve coverage (#2926) ==={N}")
     script = COVERAGE_CHECKS / "check_scope_resolve_2926.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("scope-resolve (#2926) coverage contract rows failed")
         return 1
@@ -19488,10 +18190,7 @@ def cmd_force_jit_reason_bit_map_2927_coverage():
     """
     print(f"{B}=== force-JIT reason→bit map coverage (#2927) ==={N}")
     script = COVERAGE_CHECKS / "check_force_jit_reason_bit_map_2927.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("force-JIT reason→bit map (#2927) coverage contract rows failed")
         return 1
@@ -19503,10 +18202,7 @@ def cmd_staging_dlopen_ops_recovery_2982_coverage():
     """Issue #2982: Staging/Dlopen ops recovery surface."""
     print(f"{B}=== Staging/Dlopen ops recovery coverage (#2982) ==={N}")
     script = COVERAGE_CHECKS / "check_staging_dlopen_ops_recovery_2982.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("Staging/Dlopen ops recovery (#2982) coverage contract rows failed")
         return 1
@@ -19522,10 +18218,7 @@ def cmd_steal_decision_per_fiber_2954_coverage():
     """
     print(f"{B}=== steal decision per-fiber coverage (#2954) ==={N}")
     script = COVERAGE_CHECKS / "check_steal_decision_per_fiber_2954.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("steal decision per-fiber (#2954) coverage contract rows failed")
         return 1
@@ -19542,10 +18235,7 @@ def cmd_production_abi_selfcheck_2955_coverage():
     """
     print(f"{B}=== production ABI self-check coverage (#2955) ==={N}")
     script = COVERAGE_CHECKS / "check_production_abi_selfcheck_2955.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("production ABI self-check (#2955) coverage contract rows failed")
         return 1
@@ -19561,10 +18251,7 @@ def cmd_mutation_mirror_canary_2956_coverage():
     """
     print(f"{B}=== mutation mirror canary coverage (#2956) ==={N}")
     script = COVERAGE_CHECKS / "check_mutation_mirror_canary_2956.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("mutation mirror canary (#2956) coverage contract rows failed")
         return 1
@@ -19580,10 +18267,7 @@ def cmd_steal_lifetime_proof_residual_2957_coverage():
     """
     print(f"{B}=== steal lifetime-proof residual coverage (#2957) ==={N}")
     script = COVERAGE_CHECKS / "check_steal_lifetime_proof_residual_2957.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("steal lifetime-proof residual (#2957) coverage contract rows failed")
         return 1
@@ -19599,10 +18283,7 @@ def cmd_mailbox_defer_slo_hold_cancel_2958_coverage():
     """
     print(f"{B}=== mailbox defer-SLO hold-cancel coverage (#2958) ==={N}")
     script = COVERAGE_CHECKS / "check_mailbox_defer_slo_hold_cancel_2958.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("mailbox defer-SLO hold-cancel (#2958) coverage contract rows failed")
         return 1
@@ -19619,10 +18300,7 @@ def cmd_mailbox_hold_slo_ssot_soak_3002_coverage():
     """
     print(f"{B}=== mailbox hold SLO SSOT soak coverage (#3002) ==={N}")
     script = COVERAGE_CHECKS / "check_mailbox_hold_slo_ssot_soak_3002.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("mailbox hold SLO SSOT soak (#3002) coverage contract rows failed")
         return 1
@@ -19638,10 +18316,7 @@ def cmd_topology_dual_restore_2959_coverage():
     """
     print(f"{B}=== topology dual restore coverage (#2959) ==={N}")
     script = COVERAGE_CHECKS / "check_topology_dual_restore_2959.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("topology dual restore (#2959) coverage contract rows failed")
         return 1
@@ -19658,10 +18333,7 @@ def cmd_query_stable_ref_stamp_2960_coverage():
     """
     print(f"{B}=== query stable-ref stamp coverage (#2960) ==={N}")
     script = COVERAGE_CHECKS / "check_query_stable_ref_stamp_2960.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("query stable-ref stamp (#2960) coverage contract rows failed")
         return 1
@@ -19678,10 +18350,7 @@ def cmd_query_stable_ref_restamp_lag_3000_coverage():
     """
     print(f"{B}=== query stable-ref restamp-lag coverage (#3000) ==={N}")
     script = COVERAGE_CHECKS / "check_query_stable_ref_restamp_lag_3000.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("query stable-ref restamp-lag (#3000) coverage contract rows failed")
         return 1
@@ -19698,10 +18367,7 @@ def cmd_restamp_over_budget_export_3037_coverage():
     """
     print(f"{B}=== restamp over-budget export coverage (#3037) ==={N}")
     script = COVERAGE_CHECKS / "check_restamp_over_budget_export_3037.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("restamp over-budget export (#3037) coverage contract rows failed")
         return 1
@@ -19722,10 +18388,7 @@ def cmd_rename_replace_hygiene_restamp_2961_coverage():
     """
     print(f"{B}=== rename/replace hygiene restamp coverage (#2961) ==={N}")
     script = COVERAGE_CHECKS / "check_rename_replace_hygiene_restamp_2961.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("rename/replace hygiene restamp (#2961) coverage contract rows failed")
         return 1
@@ -19737,10 +18400,7 @@ def cmd_structural_macro_hygiene_3027_coverage():
     """Issue #3027: residual structural MacroIntroduced gates (static)."""
     print(f"{B}=== structural MacroIntroduced hygiene coverage (#3027) ==={N}")
     script = COVERAGE_CHECKS / "check_structural_macro_hygiene_3027.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("structural MacroIntroduced hygiene (#3027) coverage contract rows failed")
         return 1
@@ -19758,10 +18418,7 @@ def cmd_move_replace_allow_macro_3061_coverage():
     """Issue #3061: move-node / replace-subtree :allow-macro? (static)."""
     print(f"{B}=== move/replace :allow-macro? coverage (#3061) ==={N}")
     script = COVERAGE_CHECKS / "check_move_replace_allow_macro_3061.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("move/replace :allow-macro? (#3061) coverage contract rows failed")
         return 1
@@ -19782,10 +18439,7 @@ def cmd_macro_expand_noboundary_limit_3062_coverage():
     """Issue #3062: no-boundary expand pass-limit refuse-partial (static)."""
     print(f"{B}=== no-boundary expand limit coverage (#3062) ==={N}")
     script = COVERAGE_CHECKS / "check_macro_expand_noboundary_limit_3062.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("no-boundary expand limit (#3062) coverage contract rows failed")
         return 1
@@ -19806,10 +18460,7 @@ def cmd_tls_depth_same_flat_clone_3028_coverage():
     """Issue #3028: TLS depth not authority; same-FlatAST clone reject (static)."""
     print(f"{B}=== TLS depth / same-FlatAST clone coverage (#3028) ==={N}")
     script = COVERAGE_CHECKS / "check_tls_depth_same_flat_clone_3028.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("TLS depth / same-FlatAST clone (#3028) coverage contract rows failed")
         return 1
@@ -19827,10 +18478,7 @@ def cmd_macro_self_evo_grant_fence_3029_coverage():
     """Issue #3029: grant_macro_self_evo TenantAdmin fence (static)."""
     print(f"{B}=== MacroSelfEvo grant fence coverage (#3029) ==={N}")
     script = COVERAGE_CHECKS / "check_macro_self_evo_grant_fence_3029.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("MacroSelfEvo grant fence (#3029) coverage contract rows failed")
         return 1
@@ -19852,10 +18500,7 @@ def cmd_steal_residual_rearm_race_2901_coverage():
     """
     print(f"{B}=== steal residual re-arm race coverage (#2901) ==={N}")
     script = COVERAGE_CHECKS / "check_steal_residual_rearm_race_2901.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("steal residual re-arm race (#2901) coverage contract rows failed")
         return 1
@@ -19871,10 +18516,7 @@ def cmd_steal_residual_rearm_resample_3038_coverage():
     """
     print(f"{B}=== steal residual re-arm re-sample coverage (#3038) ==={N}")
     script = COVERAGE_CHECKS / "check_steal_residual_rearm_resample_3038.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("steal residual re-arm re-sample (#3038) coverage contract rows failed")
         return 1
@@ -19895,10 +18537,7 @@ def cmd_steal_invariant_table_2929_coverage():
     """
     print(f"{B}=== steal invariant table coverage (#2929) ==={N}")
     script = COVERAGE_CHECKS / "check_steal_invariant_table_2929.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("steal invariant table (#2929) coverage contract rows failed")
         return 1
@@ -19910,10 +18549,7 @@ def cmd_steal_enqueue_sole_gate_3072_coverage():
     """Issue #3072: stolen-fiber enqueue sole-gate static proof."""
     print(f"{B}=== steal enqueue sole-gate coverage (#3072) ==={N}")
     script = COVERAGE_CHECKS / "check_steal_enqueue_sole_gate_3072.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("steal enqueue sole-gate (#3072) coverage contract rows failed")
         return 1
@@ -19938,10 +18574,7 @@ def cmd_bridge_epoch_zero_stale_2930_coverage():
     """
     print(f"{B}=== bridge_epoch zero stale coverage (#2930) ==={N}")
     script = COVERAGE_CHECKS / "check_bridge_epoch_zero_stale_2930.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("bridge_epoch zero stale (#2930) coverage contract rows failed")
         return 1
@@ -19958,10 +18591,7 @@ def cmd_chaos_steal_gc_nightly_2931_coverage():
     """
     print(f"{B}=== chaos steal-gc nightly hard gate coverage (#2931) ==={N}")
     script = COVERAGE_CHECKS / "check_chaos_steal_gc_nightly_2931.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("chaos steal-gc nightly (#2931) coverage contract rows failed")
         return 1
@@ -19977,10 +18607,7 @@ def cmd_chaos_steal_lifetime_envframe_3001_coverage():
     """
     print(f"{B}=== chaos steal lifetime/envframe soak fail-closed (#3001) ==={N}")
     script = COVERAGE_CHECKS / "check_chaos_steal_lifetime_envframe_3001.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("chaos steal lifetime/envframe (#3001) coverage contract rows failed")
         return 1
@@ -19992,10 +18619,7 @@ def cmd_hold_budget_dtor_consume_2999_coverage():
     """Issue #2999: outermost Guard dtor consume of hold-budget cancel."""
     print(f"{B}=== hold-budget dtor consume coverage (#2999) ==={N}")
     script = COVERAGE_CHECKS / "check_hold_budget_dtor_consume_2999.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("hold-budget dtor consume (#2999) coverage contract rows failed")
         return 1
@@ -20011,10 +18635,7 @@ def cmd_hold_budget_forced_fail_closed_2932_coverage():
     """
     print(f"{B}=== hold-budget forced fail-closed coverage (#2932) ==={N}")
     script = COVERAGE_CHECKS / "check_hold_budget_forced_fail_closed_2932.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("hold-budget forced fail-closed (#2932) coverage contract rows failed")
         return 1
@@ -20030,10 +18651,7 @@ def cmd_query_result_binding_2933_coverage():
     """
     print(f"{B}=== query result binding coverage (#2933) ==={N}")
     script = COVERAGE_CHECKS / "check_query_result_binding_2933.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("query result binding (#2933) coverage contract rows failed")
         return 1
@@ -20049,10 +18667,7 @@ def cmd_restamp_budget_2934_coverage():
     """
     print(f"{B}=== restamp budget coverage (#2934) ==={N}")
     script = COVERAGE_CHECKS / "check_restamp_budget_2934.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("restamp budget (#2934) coverage contract rows failed")
         return 1
@@ -20144,10 +18759,7 @@ def cmd_chaos_release_blocker_2902_coverage():
     """Issue #2902: static contract for chaos hard release blocker."""
     print(f"{B}=== chaos hard release blocker coverage (#2902) ==={N}")
     script = COVERAGE_CHECKS / "check_chaos_release_blocker_2902.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("chaos hard release blocker (#2902) coverage contract rows failed")
         return 1
@@ -20255,10 +18867,7 @@ def cmd_mailbox_hold_starvation_hard_coverage():
     """
     print(f"{B}=== mailbox hold starvation hard coverage (#2551) ==={N}")
     script = COVERAGE_CHECKS / "check_mailbox_hold_starvation_hard_2551.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("mailbox hold starvation hard (#2551) coverage contract rows failed")
         return 1
@@ -20274,10 +18883,7 @@ def cmd_type_freshness_steal_densify_coverage():
     """
     print(f"{B}=== type freshness steal/densify coverage (#2552) ==={N}")
     script = COVERAGE_CHECKS / "check_type_freshness_steal_densify_2552.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("type freshness steal/densify (#2552) coverage contract rows failed")
         return 1
@@ -20293,10 +18899,7 @@ def cmd_commit_readiness_score_coverage():
     """
     print(f"{B}=== commit-readiness score coverage (#2553) ==={N}")
     script = COVERAGE_CHECKS / "check_commit_readiness_score_2553.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("commit-readiness score (#2553) coverage contract rows failed")
         return 1
@@ -20312,10 +18915,7 @@ def cmd_transaction_guard_migration_coverage():
     """
     print(f"{B}=== TransactionGuard migration coverage (#2555) ==={N}")
     script = COVERAGE_CHECKS / "check_transaction_guard_migration_2555.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("TransactionGuard migration (#2555) coverage contract rows failed")
         return 1
@@ -20331,10 +18931,7 @@ def cmd_dead_coercion_dirty_cone_coverage():
     """
     print(f"{B}=== DCE dirty-cone scan limit coverage (#2556) ==={N}")
     script = COVERAGE_CHECKS / "check_dead_coercion_dirty_cone_2556.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("DCE dirty-cone scan limit (#2556) coverage contract rows failed")
         return 1
@@ -20349,10 +18946,7 @@ def cmd_dead_coercion_hot_residual_3007_coverage():
     """
     print(f"{B}=== DCE hot residual CastOp coverage (#3007) ==={N}")
     script = COVERAGE_CHECKS / "check_dead_coercion_hot_residual_3007.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("DCE hot residual CastOp (#3007) coverage contract rows failed")
         return 1
@@ -20367,10 +18961,7 @@ def cmd_lock_order_production_soft_coverage():
     """
     print(f"{B}=== production soft lock-order audit coverage (#2557) ==={N}")
     script = COVERAGE_CHECKS / "check_lock_order_production_soft_2557.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("production soft lock-order audit (#2557) coverage contract rows failed")
         return 1
@@ -20386,10 +18977,7 @@ def cmd_coercion_prov_slo_coverage():
     """
     print(f"{B}=== coercion provenance SLO coverage (#2558) ==={N}")
     script = COVERAGE_CHECKS / "check_coercion_prov_slo_2558.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("coercion provenance SLO (#2558) coverage contract rows failed")
         return 1
@@ -20406,10 +18994,7 @@ def cmd_blame_soft_recover_coverage():
     """
     print(f"{B}=== Soft blame recover/escalate coverage (#2561) ==={N}")
     script = COVERAGE_CHECKS / "check_blame_soft_recover_2561.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("Soft blame recover/escalate (#2561) coverage contract rows failed")
         return 1
@@ -20425,10 +19010,7 @@ def cmd_coercion_dual_require_coverage():
     """
     print(f"{B}=== dual-field require-or-drop coverage (#2562) ==={N}")
     script = COVERAGE_CHECKS / "check_coercion_dual_require_2562.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("dual-field require-or-drop (#2562) coverage contract rows failed")
         return 1
@@ -20444,10 +19026,7 @@ def cmd_linear_cross_closure_escape_coverage():
     """
     print(f"{B}=== cross-closure linear escape coverage (#2563) ==={N}")
     script = COVERAGE_CHECKS / "check_linear_cross_closure_escape_2563.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("cross-closure linear escape (#2563) coverage contract rows failed")
         return 1
@@ -20462,10 +19041,7 @@ def cmd_linear_cross_closure_depth2_coverage():
     """
     print(f"{B}=== cross-closure depth-2 free-capture coverage (#2612) ==={N}")
     script = COVERAGE_CHECKS / "check_linear_cross_closure_depth2_2612.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("cross-closure depth-2 free-capture (#2612) coverage contract rows failed")
         return 1
@@ -20481,10 +19057,7 @@ def cmd_linear_cross_closure_depth_trunc_coverage():
     """
     print(f"{B}=== cross-closure depth + trunc fail-closed coverage (#2623) ==={N}")
     script = COVERAGE_CHECKS / "check_linear_cross_closure_depth_trunc_2623.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("cross-closure depth+trunc (#2623) coverage contract rows failed")
         return 1
@@ -20500,10 +19073,7 @@ def cmd_adt_match_goal_table_coverage():
     """
     print(f"{B}=== ADT match goal table coverage (#2564) ==={N}")
     script = COVERAGE_CHECKS / "check_adt_match_goal_table_2564.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("ADT match goal table (#2564) coverage contract rows failed")
         return 1
@@ -20519,10 +19089,7 @@ def cmd_module_require_freevar_coverage():
     """
     print(f"{B}=== module require free-var coverage (#2566) ==={N}")
     script = COVERAGE_CHECKS / "check_module_require_freevar_2566.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("module require free-var (#2566) coverage contract rows failed")
         return 1
@@ -20538,10 +19105,7 @@ def cmd_try_catch_bind_coverage():
     """
     print(f"{B}=== try/catch bind coverage (#2567) ==={N}")
     script = COVERAGE_CHECKS / "check_try_catch_bind_2567.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("try/catch bind (#2567) coverage contract rows failed")
         return 1
@@ -20557,10 +19121,7 @@ def cmd_symbol_eq_coverage():
     """
     print(f"{B}=== symbol eq? coverage (#2568) ==={N}")
     script = COVERAGE_CHECKS / "check_symbol_eq_2568.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("symbol eq? (#2568) coverage contract rows failed")
         return 1
@@ -20576,10 +19137,7 @@ def cmd_setcode_rebind_coverage():
     """
     print(f"{B}=== set-code/rebind survival coverage (#2569) ==={N}")
     script = COVERAGE_CHECKS / "check_setcode_rebind_2569.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("set-code/rebind (#2569) coverage contract rows failed")
         return 1
@@ -20595,10 +19153,7 @@ def cmd_aether_denseness_coverage():
     """
     print(f"{B}=== Aether denseness residual coverage (#2578) ==={N}")
     script = COVERAGE_CHECKS / "check_aether_denseness_2578.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("Aether denseness (#2578) coverage contract rows failed")
         return 1
@@ -20614,10 +19169,7 @@ def cmd_module_rebind_residual_coverage():
     """
     print(f"{B}=== module rebind residual coverage (#2579) ==={N}")
     script = COVERAGE_CHECKS / "check_module_rebind_2579.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("module rebind residual (#2579) coverage contract rows failed")
         return 1
@@ -20633,10 +19185,7 @@ def cmd_hot_strategy_coverage():
     """
     print(f"{B}=== pure-Aura hot strategy coverage (#2582) ==={N}")
     script = COVERAGE_CHECKS / "check_hot_strategy_2582.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("hot strategy (#2582) coverage contract rows failed")
         return 1
@@ -20652,10 +19201,7 @@ def cmd_module_load_tail_coverage():
     """
     print(f"{B}=== module load tail export coverage (#2570) ==={N}")
     script = COVERAGE_CHECKS / "check_module_load_tail_2570.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("module load tail (#2570) coverage contract rows failed")
         return 1
@@ -20671,10 +19217,7 @@ def cmd_while_define_oneshot_coverage():
     """
     print(f"{B}=== while+define oneshot coverage (#2571) ==={N}")
     script = COVERAGE_CHECKS / "check_while_define_oneshot_2571.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("while+define oneshot (#2571) coverage contract rows failed")
         return 1
@@ -20690,10 +19233,7 @@ def cmd_module_export_display_coverage():
     """
     print(f"{B}=== module export multi-display coverage (#2572) ==={N}")
     script = COVERAGE_CHECKS / "check_module_export_display_2572.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("module export multi-display (#2572) coverage contract rows failed")
         return 1
@@ -20709,10 +19249,7 @@ def cmd_ir_const_string_intern_coverage():
     """
     print(f"{B}=== IR ConstString intern coverage (#2573) ==={N}")
     script = COVERAGE_CHECKS / "check_ir_const_string_intern_2573.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("IR ConstString intern (#2573) coverage contract rows failed")
         return 1
@@ -20728,10 +19265,7 @@ def cmd_write_string_escape_coverage():
     """
     print(f"{B}=== write string escape coverage (#2574) ==={N}")
     script = COVERAGE_CHECKS / "check_write_string_escape_2574.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("write string escape (#2574) coverage contract rows failed")
         return 1
@@ -20748,10 +19282,7 @@ def cmd_jit_dual_string_heap_coverage():
     """
     print(f"{B}=== dual string heap PrimCall coverage (#2575) ==={N}")
     script = COVERAGE_CHECKS / "check_jit_dual_string_heap_2575.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("dual string heap (#2575) coverage contract rows failed")
         return 1
@@ -20767,10 +19298,7 @@ def cmd_primcall_narg_coverage():
     """
     print(f"{B}=== PrimCall N-arg coverage (#2576) ==={N}")
     script = COVERAGE_CHECKS / "check_primcall_narg_2576.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("PrimCall N-arg (#2576) coverage contract rows failed")
         return 1
@@ -20786,10 +19314,7 @@ def cmd_primcall_str_intern_coverage():
     """
     print(f"{B}=== PrimCall str intern coverage (#2577) ==={N}")
     script = COVERAGE_CHECKS / "check_primcall_str_intern_2577.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("PrimCall str intern (#2577) coverage contract rows failed")
         return 1
@@ -20806,10 +19331,7 @@ def cmd_linear_three_layer_wire_coverage():
     """
     print(f"{B}=== three-layer linear wire inventory coverage (#2559) ==={N}")
     script = COVERAGE_CHECKS / "check_linear_three_layer_wire_2559.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("three-layer linear wire inventory (#2559) coverage contract rows failed")
         return 1
@@ -20825,10 +19347,7 @@ def cmd_partial_cone_cap_coverage():
     """
     print(f"{B}=== partial cone soft/hard cap coverage (#2560) ==={N}")
     script = COVERAGE_CHECKS / "check_partial_cone_cap_2560.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("partial cone soft/hard cap (#2560) coverage contract rows failed")
         return 1
@@ -20844,10 +19363,7 @@ def cmd_post_densify_linear_type_revalidate_coverage():
     """
     print(f"{B}=== post-densify Linear+Type revalidate coverage (#2353) ==={N}")
     script = COVERAGE_CHECKS / "check_post_densify_linear_type_revalidate_2353.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("post-densify Linear+Type revalidate coverage contract rows failed")
         return 1
@@ -20863,10 +19379,7 @@ def cmd_lock_order_audit_2354_coverage():
     """
     print(f"{B}=== lock-order audit coverage (#2354) ==={N}")
     script = COVERAGE_CHECKS / "check_lock_order_audit_2354.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("lock-order audit (#2354) coverage contract rows failed")
         return 1
@@ -20882,10 +19395,7 @@ def cmd_type_dep_epoch_prune_coverage():
     """
     print(f"{B}=== type_dep epoch prune coverage (#2355) ==={N}")
     script = COVERAGE_CHECKS / "check_type_dep_epoch_prune_2355.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("type_dep epoch prune (#2355) coverage contract rows failed")
         return 1
@@ -20901,10 +19411,7 @@ def cmd_reverify_expand_coverage():
     """
     print(f"{B}=== reverify expand coverage (#2356) ==={N}")
     script = COVERAGE_CHECKS / "check_reverify_expand_2356.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("reverify expand (#2356) coverage contract rows failed")
         return 1
@@ -20921,10 +19428,7 @@ def cmd_linear_synth_violation_coverage():
     """
     print(f"{B}=== linear synth violation coverage (#2357) ==={N}")
     script = COVERAGE_CHECKS / "check_linear_synth_violation_2357.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("linear synth violation (#2357) coverage contract rows failed")
         return 1
@@ -20940,10 +19444,7 @@ def cmd_linear_synth_boundary_authority_coverage():
     """
     print(f"{B}=== linear synth boundary authority coverage (#2514) ==={N}")
     script = COVERAGE_CHECKS / "check_linear_synth_boundary_authority_2514.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("linear synth boundary authority (#2514) coverage contract rows failed")
         return 1
@@ -20960,10 +19461,7 @@ def cmd_linear_force_unified_coverage():
     """
     print(f"{B}=== linear force unified entry coverage (#2545) ==={N}")
     script = COVERAGE_CHECKS / "check_linear_force_unified_2545.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("linear force unified (#2545) coverage contract rows failed")
         return 1
@@ -20979,10 +19477,7 @@ def cmd_type_dirty_txn_order_coverage():
     """
     print(f"{B}=== type dirty txn order coverage (#2516) ==={N}")
     script = COVERAGE_CHECKS / "check_type_dirty_txn_order_2516.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("type dirty txn order (#2516) coverage contract rows failed")
         return 1
@@ -20998,10 +19493,7 @@ def cmd_linear_partial_revalidate_coverage():
     """
     print(f"{B}=== linear partial revalidate coverage (#2460) ==={N}")
     script = COVERAGE_CHECKS / "check_linear_partial_revalidate_2460.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("linear partial revalidate (#2460) coverage contract rows failed")
         return 1
@@ -21017,10 +19509,7 @@ def cmd_occurrence_cache_key_coverage():
     """
     print(f"{B}=== occurrence cache key coverage (#2461) ==={N}")
     script = COVERAGE_CHECKS / "check_occurrence_cache_key_2461.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("occurrence cache key (#2461) coverage contract rows failed")
         return 1
@@ -21036,10 +19525,7 @@ def cmd_castop_density_hard_coverage():
     """
     print(f"{B}=== castop density HARD policy coverage (#2358) ==={N}")
     script = COVERAGE_CHECKS / "check_castop_density_hard_2358.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("castop density HARD (#2358) coverage contract rows failed")
         return 1
@@ -21055,10 +19541,7 @@ def cmd_castop_density_closed_loop_coverage():
     """
     print(f"{B}=== castop density closed-loop coverage (#2459) ==={N}")
     script = COVERAGE_CHECKS / "check_castop_density_closed_loop_2459.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("castop density closed-loop (#2459) coverage contract rows failed")
         return 1
@@ -21074,10 +19557,7 @@ def cmd_memo_goal_epoch_health_coverage():
     """
     print(f"{B}=== memo-goal epoch health coverage (#2359) ==={N}")
     script = COVERAGE_CHECKS / "check_memo_goal_epoch_health_2359.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("memo-goal epoch health (#2359) coverage contract rows failed")
         return 1
@@ -21093,10 +19573,7 @@ def cmd_densify_envframe_ok_coverage():
     """
     print(f"{B}=== densify envframe_ok coverage (#2361) ==={N}")
     script = COVERAGE_CHECKS / "check_densify_envframe_ok_2361.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("densify envframe_ok (#2361) coverage contract rows failed")
         return 1
@@ -21112,10 +19589,7 @@ def cmd_densify_last_call_axes_coverage():
     """
     print(f"{B}=== densify last-call axes coverage (#2376) ==={N}")
     script = COVERAGE_CHECKS / "check_densify_last_call_axes_2376.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("densify last-call axes (#2376) coverage contract rows failed")
         return 1
@@ -21131,10 +19605,7 @@ def cmd_envframe_ownership_steal_densify_coverage():
     """
     print(f"{B}=== envframe ownership steal+densify coverage (#2362) ==={N}")
     script = COVERAGE_CHECKS / "check_envframe_ownership_steal_densify_2362.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("envframe ownership steal+densify (#2362) coverage contract rows failed")
         return 1
@@ -21150,10 +19621,7 @@ def cmd_general_object_pin_adopt_coverage():
     """
     print(f"{B}=== general object pin adopt coverage (#2363) ==={N}")
     script = COVERAGE_CHECKS / "check_general_object_pin_adopt_2363.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("general object pin adopt (#2363) coverage contract rows failed")
         return 1
@@ -21169,10 +19637,7 @@ def cmd_panic_defer_after_densify_coverage():
     """
     print(f"{B}=== panic defer after densify coverage (#2364) ==={N}")
     script = COVERAGE_CHECKS / "check_panic_defer_after_densify_2364.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("panic defer after densify (#2364) coverage contract rows failed")
         return 1
@@ -21188,10 +19653,7 @@ def cmd_densify_root_closure_closed_loop_coverage():
     """
     print(f"{B}=== densify root+closure closed-loop coverage (#2365) ==={N}")
     script = COVERAGE_CHECKS / "check_densify_root_closure_closed_loop_2365.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("densify root+closure closed-loop (#2365) coverage contract rows failed")
         return 1
@@ -21207,10 +19669,7 @@ def cmd_epoch_invariant_walk_coverage():
     """
     print(f"{B}=== epoch invariant walk coverage (#2366) ==={N}")
     script = COVERAGE_CHECKS / "check_epoch_invariant_walk_2366.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("epoch invariant walk (#2366) coverage contract rows failed")
         return 1
@@ -21227,10 +19686,7 @@ def cmd_epoch_invariant_periodic_coverage():
     """
     print(f"{B}=== epoch invariant periodic coverage (#2640) ==={N}")
     script = COVERAGE_CHECKS / "check_epoch_invariant_periodic_coverage.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("epoch invariant periodic (#2640) coverage contract rows failed")
         return 1
@@ -21246,10 +19702,7 @@ def cmd_reload_recovery_query_coverage():
     """
     print(f"{B}=== reload recovery query coverage (#2367) ==={N}")
     script = COVERAGE_CHECKS / "check_reload_recovery_query_2367.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("reload recovery query (#2367) coverage contract rows failed")
         return 1
@@ -21265,10 +19718,7 @@ def cmd_densify_remap_pairing_coverage():
     """
     print(f"{B}=== densify remap pairing coverage (#2368) ==={N}")
     script = COVERAGE_CHECKS / "check_densify_remap_pairing_2368.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("densify remap pairing (#2368) coverage contract rows failed")
         return 1
@@ -21284,10 +19734,7 @@ def cmd_live_closure_stable_id_only_coverage():
     """
     print(f"{B}=== live-closure stable_func_id only coverage (#2369) ==={N}")
     script = COVERAGE_CHECKS / "check_live_closure_stable_id_only_2369.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("live-closure stable_func_id only (#2369) coverage contract rows failed")
         return 1
@@ -21303,10 +19750,7 @@ def cmd_specjit_per_eval_storm_isolation_coverage():
     """
     print(f"{B}=== SpecJIT PerEval storm isolation coverage (#2370) ==={N}")
     script = COVERAGE_CHECKS / "check_specjit_per_eval_storm_isolation_2370.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("SpecJIT PerEval storm isolation (#2370) coverage contract rows failed")
         return 1
@@ -21322,10 +19766,7 @@ def cmd_specjit_pereval_storm_e2e_coverage():
     """
     print(f"{B}=== SpecJIT PerEval storm e2e isolation coverage (#2504) ==={N}")
     script = COVERAGE_CHECKS / "check_specjit_pereval_storm_e2e_2504.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("SpecJIT PerEval storm e2e isolation (#2504) coverage contract rows failed")
         return 1
@@ -21341,10 +19782,7 @@ def cmd_cross_cow_soft_migrate_coverage():
     """
     print(f"{B}=== cross-COW soft migrate coverage (#2371) ==={N}")
     script = COVERAGE_CHECKS / "check_cross_cow_soft_migrate_2371.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("cross-COW soft migrate (#2371) coverage contract rows failed")
         return 1
@@ -21360,10 +19798,7 @@ def cmd_cross_cow_drift_contract_coverage():
     """
     print(f"{B}=== cross-COW drift contract coverage (#2505) ==={N}")
     script = COVERAGE_CHECKS / "check_cross_cow_drift_contract_2505.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("cross-COW drift contract (#2505) coverage contract rows failed")
         return 1
@@ -21380,10 +19815,7 @@ def cmd_chaos_mutate_steal_gc_mailbox_coverage():
     """
     print(f"{B}=== chaos mutate×steal×GC×mailbox coverage (#2352) ==={N}")
     script = COVERAGE_CHECKS / "check_chaos_mutate_steal_gc_mailbox_2352.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("chaos mutate×steal×GC×mailbox coverage contract rows failed")
         return 1
@@ -21400,10 +19832,7 @@ def cmd_production_concurrency_coverage():
     """
     print(f"{B}=== production-concurrency coverage (#2380) ==={N}")
     script = COVERAGE_CHECKS / "check_production_concurrency_gate_2380.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("production-concurrency coverage contract rows failed")
         return 1
@@ -21416,10 +19845,7 @@ def cmd_production_concurrency_soak_coverage():
     """Issue #2513: multi-fiber soak extension static AC contract rows."""
     print(f"{B}=== production-concurrency soak coverage (#2513) ==={N}")
     script = COVERAGE_CHECKS / "check_production_concurrency_soak_2513.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("production-concurrency soak (#2513) coverage contract rows failed")
         return 1
@@ -21431,10 +19857,7 @@ def cmd_chaos_pr_hard_fail_coverage():
     """Issue #2554: static contract for PR chaos hard-fail deployment gate."""
     print(f"{B}=== chaos PR hard-fail gate coverage (#2554) ==={N}")
     script = COVERAGE_CHECKS / "check_chaos_pr_hard_fail_gate_2554.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("chaos PR hard-fail gate (#2554) coverage contract rows failed")
         return 1
@@ -21807,10 +20230,7 @@ def cmd_chaos_soak_hard_gate_2722_coverage():
     """
     print(f"{B}=== chaos SOAK hard gate (#2722) coverage ==={N}")
     script = COVERAGE_CHECKS / "check_chaos_soak_hard_gate_2722.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("chaos SOAK hard gate (#2722) coverage contract rows failed")
         return 1
@@ -21825,10 +20245,7 @@ def cmd_chaos_soak_residual_zero_2755_coverage():
     """
     print(f"{B}=== chaos SOAK residual-zero (#2755) coverage ==={N}")
     script = COVERAGE_CHECKS / "check_chaos_soak_residual_zero_2755.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("chaos SOAK residual-zero (#2755) coverage contract rows failed")
         return 1
@@ -22010,10 +20427,7 @@ def cmd_closure_sync_remount_2602_coverage():
     """
     print(f"{B}=== closure sync remount coverage (#2602) ==={N}")
     script = COVERAGE_CHECKS / "check_closure_sync_remount_2602.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("closure sync remount coverage contract rows failed")
         return 1
@@ -22044,10 +20458,7 @@ def cmd_orch_scope_child_2631_coverage():
     """
     print(f"{B}=== orch:scope-child hierarchical AgentScope coverage (#2631) ==={N}")
     script = COVERAGE_CHECKS / "check_orch_scope_child_2631.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("orch:scope-child coverage contract rows failed")
         return 1
@@ -22076,10 +20487,7 @@ def cmd_security_schedule_mutate_admit_2630_coverage():
     """
     print(f"{B}=== security-schedule mutate-admit coverage (#2630) ==={N}")
     script = COVERAGE_CHECKS / "check_security_schedule_mutate_admit_2630.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("security-schedule mutate-admit coverage contract rows failed")
         return 1
@@ -22105,10 +20513,7 @@ def cmd_reemit_auto_drain_boundary_2604_coverage():
     """
     print(f"{B}=== reemit auto-drain boundary coverage (#2604) ==={N}")
     script = COVERAGE_CHECKS / "check_reemit_auto_drain_boundary_2604.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("reemit auto-drain boundary coverage contract rows failed")
         return 1
@@ -22136,10 +20541,7 @@ def cmd_cross_cow_soft_migrate_obs_2603_coverage():
     """
     print(f"{B}=== cross-COW soft-migrate observability coverage (#2603) ==={N}")
     script = COVERAGE_CHECKS / "check_cross_cow_soft_migrate_obs_2603.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("cross-COW soft-migrate observability coverage contract rows failed")
         return 1
@@ -22332,8 +20734,8 @@ def cmd_gate():
     """Fast static checks for CI / pre-push.
 
     Core: docs + ruff + clang-format + fixtures + surface audits.
-    Coverage: scripts/coverage/run_checks.py — parallel check_*.py with
-    nested cascade suppression (AURA_COVERAGE_NO_CASCADE=1).
+    Coverage: scripts/coverage/run_checks.py — parallel custom check_*.py
+    plus declarative manifests (runner.py). See tests/COVERAGE.md.
 
     Flags:
       --fix          auto-regen docs/registry/inventory; lint/format fix
@@ -23211,10 +21613,7 @@ def cmd_occurrence_densify_root_scan_2642_coverage():
     """
     print(f"{B}=== densify root scan (#2642) ==={N}")
     script = COVERAGE_CHECKS / "check_occurrence_densify_root_scan_2642.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("occurrence densify root scan (#2642) coverage failed")
         return 1
@@ -23231,10 +21630,7 @@ def cmd_instance_depth_repair_hint_2643_coverage():
     """
     print(f"{B}=== instance depth repair hint (#2643) ==={N}")
     script = COVERAGE_CHECKS / "check_instance_depth_repair_hint_2643.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script)
     if r.returncode != 0:
         fail("instance depth repair hint (#2643) coverage failed")
         return 1
