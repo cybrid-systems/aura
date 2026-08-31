@@ -89,18 +89,22 @@ def main() -> int:
             fails.append(f"AC6: docs/design/{f.name} present (forbidden per #1655)")
 
     # Cross-check #2665 / #2597 still green
-    for linter in (
-        "check_2665_coverage.py",
-        "check_general_object_pin_auto_wire_2597.py",
-    ):
-        r = subprocess.run(
-            [sys.executable, str(ROOT / "scripts" / "coverage" / "checks" / linter)],
-            cwd=ROOT,
-            capture_output=True,
-            text=True,
-        )
-        if r.returncode != 0:
-            fails.append(f"{linter} regression:\n{r.stdout}\n{r.stderr}")
+    r = subprocess.run(
+        [sys.executable, str(ROOT / "scripts" / "coverage" / "checks" / "check_2665_coverage.py")],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+    )
+    if r.returncode != 0:
+        fails.append(f"check_2665_coverage regression:\n{r.stdout}\n{r.stderr}")
+    r = subprocess.run(
+        [sys.executable, str(ROOT / "scripts" / "coverage" / "runner.py"), "--issue", "2597"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+    )
+    if r.returncode != 0:
+        fails.append(f"manifest #2597 regression:\n{r.stdout}\n{r.stderr}")
 
     if fails:
         for f in fails:

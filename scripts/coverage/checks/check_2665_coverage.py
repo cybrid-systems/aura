@@ -95,7 +95,9 @@ def main() -> int:
     r2 = subprocess.run(
         [
             sys.executable,
-            str(ROOT / "scripts" / "coverage" / "checks" / "check_general_object_pin_auto_wire_2597.py"),
+            str(ROOT / "scripts" / "coverage" / "runner.py"),
+            "--issue",
+            "2597",
         ],
         cwd=ROOT,
         capture_output=True,

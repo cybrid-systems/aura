@@ -104,7 +104,9 @@ def main() -> int:
     r1 = subprocess.run(
         [
             sys.executable,
-            str(ROOT / "scripts" / "coverage" / "checks" / "check_epoch_invariant_periodic_coverage.py"),
+            str(ROOT / "scripts" / "coverage" / "runner.py"),
+            "--issue",
+            "2640",
         ],
         cwd=ROOT,
         capture_output=True,
