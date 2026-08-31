@@ -45,7 +45,7 @@ def main() -> int:
     must("macro-self-evo-grant-needs-tenant-admin", "AC1 reason", cap)
     must("capability_macro_self_evo_grant_deny_total", "AC1 counter", cap)
     must("TenantAdmin", "AC1 admin", cap)
-    gpos = cap.find("void grant_macro_self_evo")
+    gpos = cap.find("bool grant_macro_self_evo")
     gwin = cap[gpos : gpos + 3500] if gpos >= 0 else ""
     must("sandbox_mode", "AC1 mode", gwin)
     must("has_admin", "AC1 helper", gwin)

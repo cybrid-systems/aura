@@ -739,7 +739,7 @@ bool Evaluator::security_event_wal_enabled() const noexcept {
     return aura::core::security_event_wal::g_security_event_wal().is_enabled();
 }
 
-void Evaluator::grant_effect_capability(std::uint64_t tenant_id, std::string_view name,
+bool Evaluator::grant_effect_capability(std::uint64_t tenant_id, std::string_view name,
                                         std::uint16_t effect_bits,
                                         std::uint64_t provenance_mutation_id,
                                         bool single_use) noexcept {
@@ -787,6 +787,9 @@ void Evaluator::grant_effect_capability(std::uint64_t tenant_id, std::string_vie
     const auto self_tenant = static_cast<std::uint64_t>(capability_tenant_id_);
     const bool foreign_target = tenant_id != 0 && tenant_id != self_tenant;
     auto& reg = g_capability_registry();
+    // Issue #3459: report landed-ness to the caller (prim / tests) — no
+    // more unconditional #t after a refused grant.
+    bool landed = true;
     if (force_bind && foreign_target) {
         using ::aura::core::capability::Effect;
         // Issue #3126: take the registry mtx + use effects_for_locked so a
@@ -812,15 +815,15 @@ void Evaluator::grant_effect_capability(std::uint64_t tenant_id, std::string_vie
             emit_security_event_durable(SecurityEventKind::EffectDeny, tenant_id, mid, epoch,
                                         effect_bits, name, "cross-tenant-grant-needs-tenant-admin",
                                         /*denied=*/true, fid);
-            return; // deny — no registry grant, no allow-counter bump
+            return false; // deny — no registry grant, no allow-counter bump
         }
         // Issue #3126: act via grant_locked (caller holds mtx); no nested lock.
         // Issue #3436: pass capability_tenant_id_ as caller_principal so the
         // #3409 SSOT fence inside grant_locked evaluates the TA check on the
         // granting Evaluator's principal, not the default_tenant fallback.
-        reg.grant_locked(tenant_id, name, static_cast<Effect>(effect_bits), prov, single_use,
-                         /*session_bound=*/false,
-                         static_cast<std::uint64_t>(capability_tenant_id_));
+        landed = reg.grant_locked(
+            tenant_id, name, static_cast<Effect>(effect_bits), prov, single_use,
+            /*session_bound=*/false, static_cast<std::uint64_t>(capability_tenant_id_));
     } else {
         // Issue #3362: same-tenant self-grant still requires an admin fence
         // for high-risk bits (TenantAdmin | MacroSelfEvo | Syscall | Mutate)
@@ -848,7 +851,7 @@ void Evaluator::grant_effect_capability(std::uint64_t tenant_id, std::string_vie
                                             effect_bits, name,
                                             "grant-effect-needs-explicit-tenant-admin",
                                             /*denied=*/true, fid);
-                return; // deny — no registry write, no allow-counter bump
+                return false; // deny — no registry write, no allow-counter bump
             }
             // String fence MUST run BEFORE the registry write for high-risk
             // bits so a deny at the #3141 string-path layer does not leave
@@ -856,17 +859,18 @@ void Evaluator::grant_effect_capability(std::uint64_t tenant_id, std::string_vie
             // registry" ordering).
             if (!try_grant_capability_string_path_privileged_locked(
                     self_tenant, name, static_cast<std::uint16_t>(effect_bits))) {
-                return; // string fence denied — no registry write
+                return false; // string fence denied — no registry write
             }
             // Issue #3436: caller_principal = granting Evaluator's tenant.
-            reg.grant_locked(tenant_id, name, static_cast<Effect>(effect_bits), prov, single_use,
-                             /*session_bound=*/false,
-                             static_cast<std::uint64_t>(capability_tenant_id_));
+            landed = reg.grant_locked(
+                tenant_id, name, static_cast<Effect>(effect_bits), prov, single_use,
+                /*session_bound=*/false, static_cast<std::uint64_t>(capability_tenant_id_));
         } else {
             // Same-tenant low-risk (or Soft/Off): no fence, plain grant().
             // Issue #3436: explicit session_bound + caller_principal.
-            reg.grant(tenant_id, name, static_cast<Effect>(effect_bits), prov, single_use,
-                      /*session_bound=*/false, static_cast<std::uint64_t>(capability_tenant_id_));
+            landed = reg.grant(tenant_id, name, static_cast<Effect>(effect_bits), prov, single_use,
+                               /*session_bound=*/false,
+                               static_cast<std::uint64_t>(capability_tenant_id_));
         }
     }
     // Issue #2136: count Render grants (effect-only path when name empty;
@@ -881,6 +885,7 @@ void Evaluator::grant_effect_capability(std::uint64_t tenant_id, std::string_vie
     if (!name.empty())
         grant_capability(std::string(name), single_use, /*session_bound=*/false,
                          provenance_mutation_id);
+    return landed;
 }
 
 // Issue #2882: explicit durable admin path for high-risk grants. Bypasses

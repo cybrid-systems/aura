@@ -1,0 +1,77 @@
+{
+  "issue": 3459,
+  "title": "Issue #3459: [P0][security][self-evo] grant_macro_self_evo synthesizes mid=epoch|1; security:grant-effect! dual-writes and returns #t after #3090 refuse",
+  "ok": "OK: Issue #3459 P0 security residual closed — grant_macro_self_evo now refuses prov.mutation_id == 0 under production (Restricted/Strict) BEFORE any write (SE grant-mid-refused + capability_grant_mid_refused_total, same refuse policy as grant() #3090); phantom mid = epoch|1 synthesis is Soft/Off-only contract; grant() / grant_locked() / grant_effect_capability() / grant_macro_self_evo() report landed-ness (bool); security:grant-effect! returns primitive_error on a dropped base grant or refused MSE seed and only then #t; security:grant-capability! hygiene (error when the write did not land; dedup-already-held stays #t). AC1: production mid==0 refuse; AC2: live epoch M lands bound_mutation_id==M; AC3: TA fence deny preserved; AC4: Soft/Off synthesis + zero-cost unchanged; AC5: grant() #3090 refuse path unchanged; AC6: extends tests/compiler/test_macro_self_evo_capability.cpp with ac3459_1..5 (no docs/design/, no tests/issues/test_issue_3459.cpp per #81967/#1655); scripts/coverage/checks/check_grant_mse_mid_refuse_3459.py + manifest 3459.json; build.py wires the linter after the #3458 block.",
+  "source_script": "scripts/coverage/checks/check_grant_mse_mid_refuse_3459.py",
+  "checks": [
+    {
+      "ac": "AC1-3459-refuse",
+      "path": "src/core/capability_model.hh",
+      "contains": [
+        "Issue #3459",
+        "Soft/Off-only contract",
+        "bool grant_macro_self_evo",
+        "grant-mid-refused"
+      ]
+    },
+    {
+      "ac": "AC4-3459-bool",
+      "path": "src/core/capability_model.hh",
+      "contains": [
+        "bool grant(",
+        "bool grant_locked("
+      ]
+    },
+    {
+      "ac": "AC4-3459-evaluator",
+      "path": "src/compiler/evaluator.ixx",
+      "contains": [
+        "bool grant_effect_capability"
+      ]
+    },
+    {
+      "ac": "AC4-3459-eval-def",
+      "path": "src/compiler/evaluator_security.cpp",
+      "contains": [
+        "bool Evaluator::grant_effect_capability",
+        "return landed;"
+      ]
+    },
+    {
+      "ac": "AC3-3459-prim",
+      "path": "src/compiler/evaluator_primitives_security.cpp",
+      "contains": [
+        "Issue #3459",
+        "security:grant-effect!: grant refused",
+        "macro-self-evo grant refused",
+        "security:grant-capability!: grant did not land"
+      ]
+    },
+    {
+      "ac": "AC6-3459-test",
+      "path": "tests/compiler/test_macro_self_evo_capability.cpp",
+      "contains": [
+        "ac3459_1_production_mid_refuse",
+        "ac3459_2_live_mid_lands_with_m",
+        "ac3459_3_no_explicit_ta_denied",
+        "ac3459_4_off_synthesis_contract",
+        "ac3459_5_source_cite_no_new_key"
+      ]
+    },
+    {
+      "ac": "Linter-3459",
+      "path": "scripts/coverage/checks/check_grant_mse_mid_refuse_3459.py",
+      "contains": [
+        "Issue #3459",
+        "AC1 refuse reporter"
+      ]
+    },
+    {
+      "ac": "Build-3459",
+      "path": "build.py",
+      "contains": [
+        "check_grant_mse_mid_refuse_3459.py"
+      ]
+    }
+  ]
+}

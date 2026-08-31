@@ -172,7 +172,17 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
         const auto tenant = a.size() >= 3 && is_int(a[2]) ? static_cast<std::uint64_t>(as_int(a[2]))
                                                           : ev.capability_tenant_id();
         const auto& name = ev.string_heap_[sidx];
-        ev.grant_effect_capability(tenant, name, bits, 0);
+        const bool granted = ev.grant_effect_capability(tenant, name, bits, 0);
+        // Issue #3459: report refusal — no MSE seed on a dropped base
+        // grant, no unconditional #t after a #3090 mid-refuse / policy
+        // deny. Dedup-already-held stays #t (the bits are still held →
+        // granted=true).
+        if (!granted)
+            return make_primitive_error(
+                ev.string_heap_, ev.error_values_,
+                "security:grant-effect!: grant refused (grant-mid-refused or "
+                "policy deny)",
+                ev.primitive_error_counter_ptr());
         // Issue #2023 / #2386: MacroSelfEvo bit / name seeds default policy
         // limits + stamps grant_epoch / fiber via make_grant_provenance.
         if ((bits & aura::compiler::security::kEffectMacroSelfEvo) != 0 ||
@@ -190,8 +200,13 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             // explicit caller so the #3029 admin fence resolves the real
             // per-Evaluator principal instead of the process-global
             // default_tenant (almost always 0 under multi-Evaluator).
-            g_capability_registry().grant_macro_self_evo(tenant, MacroSelfEvoPolicy{}, prov,
-                                                         ev.capability_tenant_id());
+            // Issue #3459: propagate MSE refusal — the Agent must see the
+            // refuse, not a #t after a dead write.
+            if (!g_capability_registry().grant_macro_self_evo(tenant, MacroSelfEvoPolicy{}, prov,
+                                                              ev.capability_tenant_id()))
+                return make_primitive_error(ev.string_heap_, ev.error_values_,
+                                            "security:grant-effect!: macro-self-evo grant refused",
+                                            ev.primitive_error_counter_ptr());
         }
         return make_bool(true);
     });
@@ -252,6 +267,12 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
         if (idx >= ev.string_heap_.size())
             return make_void();
         ev.grant_capability(ev.string_heap_[idx]);
+        // Issue #3459 hygiene: report a dropped write. Dedup-already-held
+        // still reads held → #t.
+        if (!ev.has_capability(ev.string_heap_[idx]))
+            return make_primitive_error(ev.string_heap_, ev.error_values_,
+                                        "security:grant-capability!: grant did not land",
+                                        ev.primitive_error_counter_ptr());
         return make_bool(true);
     });
 

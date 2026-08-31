@@ -941,6 +941,18 @@ def cmd_lint():
             "Issue #3458 TenantScope release key linter failed — run python3 scripts/coverage/checks/check_tenant_scope_release_key_3458.py"
         )
         return r
+    # Issue #3459: grant_macro_self_evo refuses mid==0 under production
+    # (one refuse policy with grant() #3090); prims report refusal.
+    gmr3459_script = COVERAGE_CHECKS / "check_grant_mse_mid_refuse_3459.py"
+    if not gmr3459_script.exists():
+        fail(f"missing {gmr3459_script}")
+        return 1
+    r = run([sys.executable, str(gmr3459_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3459 grant MSE mid-refuse linter failed — run python3 scripts/coverage/checks/check_grant_mse_mid_refuse_3459.py"
+        )
+        return r
     # Issue #3279: session_bound orphan fail-closed sweep. The orphan
     # counter was metric-only (declared, never bumped); under production
     # long-run a lost Guard / abort-without-mid-clear / dual-Evaluator race

@@ -609,7 +609,7 @@ struct CapabilityRegistry {
     // reason="grant-mid-refused" with mid=0 so Agent joins via reason +
     // mid=0 across grant ↔ trail ↔ effect-check surfaces. Soft/Off keeps
     // the legacy synthesis (zero-cost contract, AC5) for session_bound.
-    void grant(TenantId tenant, std::string_view name, Effect effects,
+    bool grant(TenantId tenant, std::string_view name, Effect effects,
                const EffectProvenance& prov = {}, bool single_use = false,
                bool session_bound = false, TenantId caller_principal = 0) {
         // Pre-lock refuse (Issue #3090). Reads only sandbox_mode atomic +
@@ -628,11 +628,12 @@ struct CapabilityRegistry {
                     SecurityEventKind::EffectDeny, tenant,
                     /*mid=*/0, /*epoch=*/prov.epoch, static_cast<std::uint16_t>(effects), name,
                     "grant-mid-refused", /*denied=*/true, static_cast<std::int64_t>(prov.fiber_id));
-                return;
+                return false;
             }
         }
         std::lock_guard<std::mutex> lock(mtx);
-        grant_locked(tenant, name, effects, prov, single_use, session_bound, caller_principal);
+        return grant_locked(tenant, name, effects, prov, single_use, session_bound,
+                            caller_principal);
     }
 
     // Issue #3126: caller MUST hold `mtx`. Body is the post-refuse
@@ -643,7 +644,7 @@ struct CapabilityRegistry {
     // concurrent revoke from another Evaluator / fiber. Pre-lock refuse
     // (Issue #3090) is the caller's responsibility (atomic only, OK to
     // run without the lock).
-    void grant_locked(TenantId tenant, std::string_view name, Effect effects,
+    bool grant_locked(TenantId tenant, std::string_view name, Effect effects,
                       const EffectProvenance& prov = {}, bool single_use = false,
                       bool session_bound = false, TenantId caller_principal = 0) {
         // Issue #3409: push the #3086/#3029 TenantAdmin fence shape into
@@ -684,7 +685,7 @@ struct CapabilityRegistry {
                             static_cast<std::uint16_t>(effects), name,
                             "grant-ssot-needs-tenant-admin", /*denied=*/true,
                             static_cast<std::int64_t>(prov.fiber_id));
-                        return;
+                        return false;
                     }
                 }
             }
@@ -732,7 +733,7 @@ struct CapabilityRegistry {
         for (auto& g : vec) {
             if (g.name == name) {
                 apply(g);
-                return;
+                return true;
             }
         }
         CapabilityGrant g;
@@ -743,6 +744,7 @@ struct CapabilityRegistry {
         // was_session=false and correctly bumps live residual (#2944).
         apply(g);
         vec.push_back(std::move(g));
+        return true;
     }
 
     // Issue #2586: single-use grant sugar — auto-revoke after first successful
@@ -1528,7 +1530,7 @@ struct CapabilityRegistry {
     // The check already runs under `mtx`, so no additional lock is needed
     // (TOCTOU closure is implicit — the read is atomic w.r.t. concurrent
     // grant/revoke).
-    void grant_macro_self_evo(TenantId tenant, MacroSelfEvoPolicy policy = {},
+    bool grant_macro_self_evo(TenantId tenant, MacroSelfEvoPolicy policy = {},
                               const EffectProvenance& prov_in = {}, TenantId caller_principal = 0) {
         EffectProvenance prov = prov_in;
         // Always ensure non-zero epoch stamp (parity with make_grant_provenance).
@@ -1536,8 +1538,18 @@ struct CapabilityRegistry {
             const auto me = ::aura::core::current_mutation_epoch();
             prov.epoch = me != 0 ? me : 1;
         }
-        if (prov.mutation_id == 0)
-            prov.mutation_id = prov.epoch;
+        // Issue #3459: phantom mid synthesis is Soft/Off-only contract
+        // (#2531 parity). Production (Restricted/Strict) refuses mid==0
+        // below — one refuse policy with grant() (#3090); no epoch|1
+        // phantom rows (they cannot join the Typed trail while the SE
+        // says mid=0 refused).
+        {
+            const auto mode_pre = sandbox_mode.load(std::memory_order_acquire);
+            const bool fail_closed_pre = (mode_pre == EffectSandboxMode::Restricted ||
+                                          mode_pre == EffectSandboxMode::Strict);
+            if (!fail_closed_pre && prov.mutation_id == 0)
+                prov.mutation_id = prov.epoch;
+        }
         if (prov.fiber_id == 0)
             prov.fiber_id = effect_fiber_id_or(0);
 
@@ -1577,8 +1589,31 @@ struct CapabilityRegistry {
                         static_cast<std::uint16_t>(Effect::MacroSelfEvo), "macro-self-evo",
                         "macro-self-evo-grant-needs-tenant-admin", /*denied=*/true,
                         static_cast<std::int64_t>(prov.fiber_id));
-                    return;
+                    return false;
                 }
+            }
+        }
+        // Issue #3459: one refuse policy with grant() (#3090) — production
+        // refuses prov.mutation_id == 0 BEFORE any write. The old front
+        // synthesis (mid = epoch|1) made the in-apply refuse dead and
+        // stamped phantom bound_mid rows that cannot join the Typed trail.
+        {
+            const auto mode_refuse = sandbox_mode.load(std::memory_order_acquire);
+            const bool fail_closed = (mode_refuse == EffectSandboxMode::Restricted ||
+                                      mode_refuse == EffectSandboxMode::Strict);
+            if (fail_closed && prov.mutation_id == 0) {
+                auto& met_refuse = g_capability_effect_metrics();
+                met_refuse.capability_grant_mid_refused_total.fetch_add(1,
+                                                                        std::memory_order_relaxed);
+                using ::aura::core::security_event::SecurityEventKind;
+                using ::aura::core::security_event_wal::emit_security_event_durable;
+                emit_security_event_durable(SecurityEventKind::EffectDeny, tenant,
+                                            /*mid=*/0, /*epoch=*/prov.epoch,
+                                            static_cast<std::uint16_t>(Effect::MacroSelfEvo),
+                                            "macro-self-evo", "grant-mid-refused",
+                                            /*denied=*/true,
+                                            static_cast<std::int64_t>(prov.fiber_id));
+                return false;
             }
         }
         auto& vec = by_tenant[tenant];
@@ -1632,7 +1667,7 @@ struct CapabilityRegistry {
             if (g.name == "macro-self-evo") {
                 apply(g);
                 macro_self_evo_by_tenant[tenant] = policy;
-                return;
+                return true;
             }
         }
         CapabilityGrant g;
@@ -1642,6 +1677,7 @@ struct CapabilityRegistry {
         apply(g);
         vec.push_back(std::move(g));
         macro_self_evo_by_tenant[tenant] = policy;
+        return true;
     }
 
     // Issue #2023 / #2386: revoke MacroSelfEvo + stamp revoke_epoch (#2055).

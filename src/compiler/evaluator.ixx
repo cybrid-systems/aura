@@ -6663,7 +6663,7 @@ public:
                                      std::uint16_t actual_effect_bits, std::string_view op,
                                      ast::NodeId target_node = 0, std::uint64_t tenant_id = 0,
                                      std::uint64_t provenance_mutation_id = 0) noexcept;
-    void grant_effect_capability(std::uint64_t tenant_id, std::string_view name,
+    bool grant_effect_capability(std::uint64_t tenant_id, std::string_view name,
                                  std::uint16_t effect_bits,
                                  std::uint64_t provenance_mutation_id = 0,
                                  bool single_use = false) noexcept;
