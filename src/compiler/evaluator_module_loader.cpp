@@ -281,6 +281,28 @@ types::EvalValue Evaluator::load_module_file(const std::string& path) {
         return types::make_void();
     }
     std::lock_guard interlock(compact_env_frames_lock_);
+    // Issue #3457-fix: string_intern_by_sym_ / keyword_intern_by_sym_ are
+    // keyed by POOL-LOCAL SymIds. Each module load swaps in its own pool
+    // (own SymId space), so entries cached under another module's pool
+    // poison later lookups (observed: (require std/list) inside a module
+    // resolved as the CURRENT module's name -> circular dependency ->
+    // module-load-failed). The tables are caches: clearing at module-eval
+    // entry/exit is always correct and keeps #3457's dense SymId probe
+    // hot within a single module's eval.
+    struct SymInternPoolReset {
+        Evaluator& ev;
+        explicit SymInternPoolReset(Evaluator& e) noexcept
+            : ev(e) {
+            ev.string_intern_by_sym_.clear();
+            ev.keyword_intern_by_sym_.clear();
+        }
+        ~SymInternPoolReset() noexcept {
+            ev.string_intern_by_sym_.clear();
+            ev.keyword_intern_by_sym_.clear();
+        }
+        SymInternPoolReset(const SymInternPoolReset&) = delete;
+        SymInternPoolReset& operator=(const SymInternPoolReset&) = delete;
+    } sym_intern_pool_reset(*this);
     // 1. Resolve path
     auto resolved = resolve_module_path(path);
     if (resolved.empty()) {
