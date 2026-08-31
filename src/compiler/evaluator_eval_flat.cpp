@@ -3769,6 +3769,9 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
         while (true) {
             current_flat_ = f;
             current_pool_ = p;
+            // Issue #3457: SymId intern is pool-local. TCO / nested
+            // eval / a fresh CompilerService::eval snippet swap `p`.
+            bind_sym_intern_pool(p);
             // Save the eval environment before any tail_env.emplace could corrupt current_env
             const Env& eval_env = *current_env;
             if (current_id == aura::ast::NULL_NODE)
@@ -3837,6 +3840,18 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                     if (!name.empty() && name[0] == ':') {
                         if (const auto* e = keyword_intern_by_sym_.get(v.sym_id))
                             return *e;
+                        // keyword_table_ is Evaluator-global. Primitives
+                        // (ast:snapshot-fail-reason, query keys) may have
+                        // already pushed the same name. Reuse that index so
+                        // (eq? fr :no-workspace) is identity, not a second
+                        // slot. SymId cache still avoids the scan on hits.
+                        for (std::size_t ki = 0; ki < keyword_table_.size(); ++ki) {
+                            if (keyword_table_[ki] == name) {
+                                auto val = make_keyword(static_cast<std::uint64_t>(ki));
+                                keyword_intern_by_sym_.set(v.sym_id, val);
+                                return val;
+                            }
+                        }
                         auto kidx = static_cast<std::uint64_t>(keyword_table_.size());
                         keyword_table_.push_back(std::string(name));
                         auto val = make_keyword(kidx);
