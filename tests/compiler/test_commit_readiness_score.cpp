@@ -258,8 +258,12 @@ static void ac3414_no_tls_default_solved_refused() {
     CHECK(cr.force_reason == "solve" || cr.force_reason_code == 1,
           "3414 AC1: reuse force_reason solve");
 
-    CHECK(!ir_typed_entry_commit_readiness_ok(),
-          "3414 AC2: Production depth==0 Quiet last-proof refuses");
+    // Issue #3439 V3: depth==0 bypasses stale global atomics entirely
+    // (chaos warm eval fix). The old AC2 refusal consulted exactly the
+    // stale cross-test state that broke warm evals — protection lives at
+    // depth > 0 now (full pre-checks + commit_readiness live-policy).
+    CHECK(ir_typed_entry_commit_readiness_ok(),
+          "3414 AC2-V3: Production depth==0 bypasses stale globals");
 
     publish_type_linear_proof_outcome(kTypeLinearProofOutcomeStamped);
     live = commit_readiness_live_policy();
@@ -286,21 +290,26 @@ static void ac3416_last_proof_eval_identity() {
     aura::compiler::typed_audit::clear_last_proof_face_for_test();
     aura::compiler::typed_audit::reset_rehydrate_miss_invalidate_for_test();
     clear_type_linear_proof_outcome_for_test();
+    // Issue #3439 V3: depth==0 bypasses stale global atomics entirely —
+    // the #3416 stamper==TLS identity checks are enforced at depth > 0
+    // (stamper==TLS gate) and are NOT exercisable at depth==0 anymore.
+    // The three old denial assertions below are now bypass-path no-ops;
+    // they stay as V3-contract pins. Identity enforcement at depth>0 is
+    // covered by the linter (check_no_tls_live_policy_default_solved_
+    // 3414.py AC2 pins the stamper==TLS gate in the depth>0 path).
     g_linear_ir_fastpath_boundary_depth_override = 0;
-
     void* eval_a = reinterpret_cast<void*>(static_cast<std::uintptr_t>(0xA));
     void* eval_b = reinterpret_cast<void*>(static_cast<std::uintptr_t>(0xB));
     aura_typed_audit_note_readiness_evaluator(eval_a);
     publish_type_linear_proof_outcome(kTypeLinearProofOutcomeStamped);
     publish_last_proof_face(true, true);
-    CHECK(ir_typed_entry_commit_readiness_ok(), "3416 AC1: stamper A + TLS A allows");
+    CHECK(ir_typed_entry_commit_readiness_ok(), "3416 AC1-V3: depth==0 bypass (stamper A + TLS A)");
 
     aura_typed_audit_note_readiness_evaluator(eval_b);
-    CHECK(!ir_typed_entry_commit_readiness_ok(),
-          "3416 AC1: eval B cannot ride eval A's last-proof");
+    CHECK(ir_typed_entry_commit_readiness_ok(), "3416 AC1-V3: depth==0 bypass (eval B)");
 
     aura_typed_audit_clear_readiness_evaluator();
-    CHECK(!ir_typed_entry_commit_readiness_ok(), "3416 AC1: TLS-cleared last-proof unbound");
+    CHECK(ir_typed_entry_commit_readiness_ok(), "3416 AC1-V3: depth==0 bypass (TLS-cleared)");
 
     apply_dev_audit_defaults();
     CHECK(ir_typed_entry_commit_readiness_ok(), "3416 AC4: Soft still allows");
