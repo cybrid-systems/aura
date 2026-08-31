@@ -141,14 +141,17 @@ int run_test_hot_update_relower_success_coverage() {
         // 1b. The cascade restamp sites in service_dirty.cpp use the
         //     helper, not std::hash<std::string_view>.
         const auto cascade_body =
-            find_fn_body(sd, "void CompilerService::notify_hot_update_after_cascade_", 1500);
+            find_fn_body(sd, "void CompilerService::notify_hot_update_after_cascade_", 16000);
         CHECK(!cascade_body.empty(), "AC1: notify_hot_update_after_cascade_ body found");
         if (!cascade_body.empty()) {
             CHECK(cascade_body.find("relower_success_region_bit(name)") != std::string::npos,
                   "AC1: root restamp uses relower_success_region_bit helper");
             CHECK(cascade_body.find("relower_success_region_bit(d)") != std::string::npos,
                   "AC1: dependent restamp uses relower_success_region_bit helper");
-            CHECK(cascade_body.find("std::hash<std::string_view>") == std::string::npos,
+            // Comments still name the old std::hash split; the call site
+            // must not instantiate it.
+            CHECK(cascade_body.find("std::hash<std::string_view>{}") == std::string::npos &&
+                      cascade_body.find("std::hash<std::string_view>(") == std::string::npos,
                   "AC1: std::hash<std::string_view> removed from cascade path");
         }
         // 1c. The store_define_v2 sites in service.ixx keep using fnv1a_64
@@ -190,7 +193,7 @@ int run_test_hot_update_relower_success_coverage() {
               "AC2: store_define_v2 site computes the same bit shape");
         // The cascade restamp sites now use the helper (same shape).
         const auto cascade_body =
-            find_fn_body(sd, "void CompilerService::notify_hot_update_after_cascade_", 1500);
+            find_fn_body(sd, "void CompilerService::notify_hot_update_after_cascade_", 16000);
         if (!cascade_body.empty()) {
             CHECK(cascade_body.find("relower_success_region_bit") != std::string::npos,
                   "AC2: cascade restamp computes the same bit as store");
@@ -209,7 +212,7 @@ int run_test_hot_update_relower_success_coverage() {
         CHECK(hur.find("relower_success_define_id") != std::string::npos,
               "AC3: #3229 define-id side set kept (collision insurance)");
         const auto cascade_body =
-            find_fn_body(sd, "void CompilerService::notify_hot_update_after_cascade_", 1500);
+            find_fn_body(sd, "void CompilerService::notify_hot_update_after_cascade_", 16000);
         if (!cascade_body.empty()) {
             CHECK(cascade_body.find("relower_success_define_id(name)") != std::string::npos,
                   "AC3: root restamp still bumps define-id (peer collision insurance)");
@@ -227,7 +230,7 @@ int run_test_hot_update_relower_success_coverage() {
         // production gate needed inside it. Soft zero-cost contract
         // preserved.
         const auto cascade_body =
-            find_fn_body(sd, "void CompilerService::notify_hot_update_after_cascade_", 1500);
+            find_fn_body(sd, "void CompilerService::notify_hot_update_after_cascade_", 16000);
         if (!cascade_body.empty()) {
             // Both note sites must still be inside the production probe.
             const auto root_pos = cascade_body.find("relower_success_region_bit(name)");
@@ -239,10 +242,11 @@ int run_test_hot_update_relower_success_coverage() {
                   "AC4: cascade restamp notes still gated on production probe");
         }
         const auto helper_body =
-            find_fn_body(hur, "relower_success_region_bit(std::string_view name)", 1500);
+            find_fn_body(hur, "relower_success_region_bit(std::string_view name)", 400);
         // The helper is a pure compute — no production gate inside
         // (the gate is at the caller site, which is unchanged).
-        CHECK(helper_body.find("production") == std::string::npos,
+        CHECK(helper_body.find("production") == std::string::npos &&
+                  helper_body.find("aura_production_defaults") == std::string::npos,
               "AC4: helper has no internal production gate (gate is at caller)");
     }
 
@@ -260,7 +264,7 @@ int run_test_hot_update_relower_success_coverage() {
         // 5c. The helper itself is pure compute — no counter / no
         // observability surface.
         const auto helper_body =
-            find_fn_body(hur, "relower_success_region_bit(std::string_view name)", 1500);
+            find_fn_body(hur, "relower_success_region_bit(std::string_view name)", 400);
         CHECK(helper_body.find("fetch_add") == std::string::npos,
               "AC5: helper does not bump any counter");
         CHECK(helper_body.find("fetch_or") == std::string::npos,
@@ -272,10 +276,9 @@ int run_test_hot_update_relower_success_coverage() {
         // 5e. No test_issue_3383_* (per MEMORY 2026-07-24: tests go to
         //     src/-aligned suite; this file uses the thematic
         //     test_hot_update_relower_success_coverage prefix).
-        const auto self_path = "tests/compiler/test_hot_update_relower_success_coverage.cpp";
-        auto self = read_file(self_path);
-        CHECK(self.find("test_issue_3383") == std::string::npos,
-              "AC5: this test file does not invent test_issue_3383_*");
+        CHECK(read_file("tests/issues/test_issue_3383.cpp").empty() &&
+                  read_file("tests/compiler/test_issue_3383.cpp").empty(),
+              "AC5: no tests/issues/test_issue_3383.cpp per #81967");
     }
 
     std::println("\n=== Issue #3383 done ===");

@@ -3267,7 +3267,15 @@ inline void cancel_and_drain_fibers(std::span<serve::Fiber* const> fibers,
             a.wait_reclaimed_used = true;
             a.wait_reclaimed_timeout = (wr.status == serve::JoinStatus::Timeout);
         }
-        a.last_join_status = local.status; // Issue #3052: per-handle (not batch jr)
+        // Issue #3052: cleanup may remap a Done body to Ok (#3433), but a
+        // timed-out / cancelled join is still join-fail fuel for RestartN.
+        // Keep Timeout/Cancelled when the aggregate join was non-Ok and
+        // the body is no longer Reclaimed-live.
+        if (local.status == serve::JoinStatus::Ok &&
+            (jr.status == serve::JoinStatus::Timeout || jr.status == serve::JoinStatus::Cancelled))
+            a.last_join_status = jr.status;
+        else
+            a.last_join_status = local.status; // Issue #3052: per-handle (not batch jr)
     }
     return jr;
 }

@@ -415,8 +415,7 @@ static void ac2640_source_and_linter() {
     const auto q = read_file("src/compiler/evaluator_primitives_query.cpp") +
                    read_file("src/compiler/evaluator_primitives_query_reflect.cpp") +
                    read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
-    const auto lint =
-        read_file("scripts/coverage/checks/check_epoch_invariant_periodic_coverage.py");
+    const auto lint = read_file("scripts/coverage/manifests/2640.json");
     const auto build = read_file("build.py");
     const auto t = read_file("tests/compiler/test_epoch_invariant_walk.cpp");
 

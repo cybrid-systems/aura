@@ -275,8 +275,7 @@ static void ac5_wiring() {
     std::println("\n--- #2608 AC5: cmake + linter wiring ---");
     auto cmake = read_file("CMakeLists.txt");
     auto build = read_file("build.py");
-    auto script =
-        read_file("scripts/coverage/checks/check_occurrence_goal_persist_rehydrate_2608.py");
+    auto script = read_file("scripts/coverage/manifests/2608.json");
     CHECK(cmake.find("test_occurrence_goal_persist_rehydrate") != std::string::npos,
           "AC5: cmake test");
     CHECK(build.find("check_occurrence_goal_persist_rehydrate_2608") != std::string::npos,

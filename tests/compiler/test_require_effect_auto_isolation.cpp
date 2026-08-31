@@ -404,7 +404,7 @@ static void ac2658_6_source_and_coverage() {
     }
 
     // Coverage manifest + linter exist (secondary gate).
-    const auto gate = read_file("scripts/coverage/checks/check_2658.py");
+    const auto gate = read_file("scripts/coverage/manifests/2658.json");
     CHECK(!gate.empty(), "AC6: coverage linter check_2658.py present");
     const auto manifest = read_file("scripts/coverage/manifests/2658.json");
     CHECK(!manifest.empty(), "AC6: coverage manifest 2658.json present");

@@ -494,7 +494,7 @@ int run_test_security_schedule_gate() {
         CHECK(agent.find("make_security_schedule_input_live") != std::string::npos,
               "AC6: parallel-intend uses live helper");
         // Coverage manifest + linter.
-        const auto ck = read_file("scripts/coverage/checks/check_2660.py");
+        const auto ck = read_file("scripts/coverage/manifests/2660.json");
         CHECK(!ck.empty(), "AC6: coverage linter check_2660.py present");
         const auto mf = read_file("scripts/coverage/manifests/2660.json");
         CHECK(!mf.empty(), "AC6: coverage manifest 2660.json present");

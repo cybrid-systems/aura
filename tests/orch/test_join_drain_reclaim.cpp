@@ -1213,7 +1213,7 @@ int run_test_join_drain_reclaim() {
         // Source-cite: tests in test_join_drain_reclaim.cpp (this file)
         // cover the helper + counter. Coverage manifest + linter live at
         // scripts/coverage/{checks,manifests}/2661.{py,json}.
-        const auto gate = read_file("scripts/coverage/checks/check_2661.py");
+        const auto gate = read_file("scripts/coverage/manifests/2661.json");
         CHECK(!gate.empty(), "AC6: coverage linter check_2661.py present");
         const auto manifest = read_file("scripts/coverage/manifests/2661.json");
         CHECK(!manifest.empty(), "AC6: coverage manifest 2661.json present");

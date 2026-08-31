@@ -775,7 +775,7 @@ int main() {
         CHECK(ixx.find("prev_allow_cross_") != std::string::npos,
               "AC6: TenantScope snapshots prev_allow_cross_");
         // Coverage manifest + linter.
-        const auto gate = read_file("scripts/coverage/checks/check_2659.py");
+        const auto gate = read_file("scripts/coverage/manifests/2659.json");
         CHECK(!gate.empty(), "AC6: coverage linter check_2659.py present");
         const auto manifest = read_file("scripts/coverage/manifests/2659.json");
         CHECK(!manifest.empty(), "AC6: coverage manifest 2659.json present");

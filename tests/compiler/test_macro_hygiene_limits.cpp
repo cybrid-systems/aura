@@ -14,6 +14,7 @@
 #include "test_harness.hpp"
 
 #include "compiler/aura_jit_bridge.h"
+#include "compiler/grant_test_support.hh"
 #include "compiler/security_capabilities.h"
 #include "core/capability_model.hh"
 #include "core/sandbox.hh"
@@ -201,17 +202,25 @@ static void ac3_capability_tightens_only() {
     std::println("\n--- AC3: MacroSelfEvo can only tighten further ---");
     reset_all();
     // Runtime cap=20; capability grant max_depth=8 → effective=8.
+    // Bind a live Evaluator so tenant_for_macro_self_evo_check (#3378)
+    // reads this principal (tenant 0) instead of a leftover TLS evaluator.
     CHECK(set_hygiene_depth_cap(20), "runtime 20");
-    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Strict);
-    set_mode(SandboxMode::Strict);
-    g_capability_registry().grant(0, "tenant-admin", Effect::TenantAdmin,
-                                  make_grant_provenance(0, true, 0, 0));
+    CompilerService cs;
+    // Grant while Off (#3409: production grant of TenantAdmin/MacroSelfEvo
+    // high bits requires an existing TenantAdmin — chicken-and-egg). Arm
+    // Strict after the grants so check_macro_self_evo consults the policy.
     MacroSelfEvoPolicy pol;
     pol.max_expansion_passes = 2;
     pol.max_depth = 8;
     pol.allow_rest_hygiene = true;
     pol.allow_concurrent_fiber = true;
-    g_capability_registry().grant_macro_self_evo(0, pol);
+    CHECK(g_capability_registry().grant(0, "tenant-admin", Effect::TenantAdmin,
+                                        aura_test_grant_prov()),
+          "TenantAdmin grant under Off");
+    CHECK(g_capability_registry().grant_macro_self_evo(0, pol, aura_test_grant_prov()),
+          "MacroSelfEvo grant under Off");
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Strict);
+    set_mode(SandboxMode::Strict);
 
     CHECK(effective_hygiene_depth_limit() == 8, "capability 8 tightens under runtime 20");
     CHECK(effective_hygiene_pass_cap() == 2, "pass effective=2 (capability)");
@@ -219,7 +228,7 @@ static void ac3_capability_tightens_only() {
     // Capability tries to "loosen" with max_depth=100 but runtime is 20 → 20.
     pol.max_depth = 100;
     pol.max_expansion_passes = 50;
-    g_capability_registry().grant_macro_self_evo(0, pol);
+    g_capability_registry().grant_macro_self_evo(0, pol, aura_test_grant_prov());
     CHECK(effective_hygiene_depth_limit() == 20, "capability 100 cannot exceed runtime 20");
     // Pass: runtime 0 (cleared) + capability 50 → 50; set runtime 10 → min=10.
     CHECK(set_hygiene_pass_cap(10), "runtime pass 10");
@@ -461,16 +470,16 @@ static std::vector<std::uint32_t> tree_fp(const FlatAST& flat, aura::ast::NodeId
 }
 
 static void grant_self_evo_production() {
-    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
-    set_mode(SandboxMode::Restricted);
-    g_capability_registry().grant(0, "tenant-admin", Effect::TenantAdmin,
-                                  make_grant_provenance(0, true, 0, 0));
     MacroSelfEvoPolicy pol;
     pol.max_expansion_passes = 32;
     pol.max_depth = 256;
     pol.allow_rest_hygiene = true;
     pol.allow_concurrent_fiber = true;
-    g_capability_registry().grant_macro_self_evo(0, pol);
+    (void)g_capability_registry().grant(0, "tenant-admin", Effect::TenantAdmin,
+                                        aura_test_grant_prov());
+    (void)g_capability_registry().grant_macro_self_evo(0, pol, aura_test_grant_prov());
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+    set_mode(SandboxMode::Restricted);
 }
 
 static void ac3062_no_boundary_refuse_partial() {

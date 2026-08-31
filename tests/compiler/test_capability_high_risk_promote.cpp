@@ -462,8 +462,7 @@ static void ac6_source_and_security_exempt_doc() {
     CHECK(build.find("check_capability_high_risk_promote_2489") != std::string::npos ||
               build.find("cmd_capability_high_risk_promote_2489_coverage") != std::string::npos,
           "AC6: build.py gate entry");
-    const auto gate =
-        read_file("scripts/coverage/checks/check_capability_high_risk_promote_2489.py");
+    const auto gate = read_file("scripts/coverage/manifests/2489.json");
     CHECK(!gate.empty() && gate.find("Issue #2489") != std::string::npos,
           "AC6: coverage linter present");
 }

@@ -75,9 +75,9 @@ namespace aura::compiler::macro_exp {
 // `MacroSelfEvo provenance fence` / `MacroSelfEvo policy missing`.
 [[nodiscard]] static std::uint16_t tenant_for_macro_self_evo_check() noexcept {
     if (void* ev = aura_evaluator_resolve_current_for_macro()) {
-        const auto tid = aura_evaluator_capability_tenant_id_for_macro(ev);
-        if (tid != 0)
-            return tid;
+        // Tenant 0 is a real principal (default tenant grants live there).
+        // Only fall back to process default_tenant when no Evaluator is wired.
+        return aura_evaluator_capability_tenant_id_for_macro(ev);
     }
     using aura::core::capability::g_capability_registry;
     return g_capability_registry().default_tenant.load();
