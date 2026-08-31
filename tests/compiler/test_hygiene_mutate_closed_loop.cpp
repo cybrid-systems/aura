@@ -1821,6 +1821,7 @@ static void ac3191_2_sv_default_reject() {
 
 static void ac3191_3_global_allow_unlocks() {
     std::println("\n--- 3191 AC3: global allow_macro_mutate still unlocks all three paths ---");
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
     CompilerService cs;
     CHECK(cs.eval("(set-code \"(define base 10)\")").has_value(), "3191 AC3: set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "3191 AC3: eval");
@@ -2090,6 +2091,7 @@ static void ac3213_1_source_all_gates_parse() {
 
 static void ac3213_2_per_op_opt_in_no_global() {
     std::println("\n--- 3213 AC2: :allow-macro? #t in batch op args, global not required ---");
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
     CompilerService cs;
     CHECK(cs.eval("(set-code \"(define a 10) (define b 20)\")").has_value(), "3213 AC2: set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "3213 AC2: eval");
@@ -2259,6 +2261,7 @@ static void grant_3301_production_mutate(CompilerService& cs) {
 
 static void ac3301_1_batch_level_deny_production() {
     std::println("\n--- 3301 AC1: production batch-level MacroIntroduced deny ---");
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
     CompilerService cs;
     // Setup (set-code + eval + stamp) while sandbox is still Off, then arm
     // Restricted after grants — the marker primitive and the grants both
@@ -4086,12 +4089,16 @@ static void ac3215_macro_introduced_reason_string() {
     std::println("\n--- #3215: hygiene-macro-introduced reason after default-deny ---");
     using aura::compiler::typed_audit::apply_dev_audit_defaults;
     using aura::compiler::typed_audit::apply_production_audit_defaults;
-    apply_production_audit_defaults();
+    // Workspace create (set-code) requires GeneralObjectPin under
+    // production (#2891). Build the AST on the Soft face, then arm
+    // production for the default-deny mutate.
+    apply_dev_audit_defaults();
     CompilerService cs;
     CHECK(cs.eval("(set-code \"(define base 10)\")").has_value(), "3215: set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "3215: eval");
     auto* ws = cs.evaluator().workspace_flat();
     CHECK(ws != nullptr, "3215: workspace");
+    apply_production_audit_defaults();
     if (ws == nullptr) {
         apply_dev_audit_defaults();
         return;

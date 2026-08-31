@@ -228,8 +228,7 @@ static void ac5_source_and_linter() {
     const auto bh = read_file("src/compiler/aura_jit_bridge.h");
     const auto q = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
     const auto met = read_file("src/compiler/observability_metrics.h");
-    const auto lint =
-        read_file("scripts/coverage/checks/check_anonymous_residual_stable_id_policy_2605.py");
+    const auto lint = read_file("scripts/coverage/manifests/2605.json");
     const auto cmake = read_file("CMakeLists.txt");
     const auto build = read_file("build.py");
 

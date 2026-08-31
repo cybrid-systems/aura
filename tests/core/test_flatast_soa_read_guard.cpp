@@ -71,8 +71,9 @@ static void ac2_query_find_wired() {
     CHECK(pos != std::string::npos, "AC2: query:find found");
     CHECK(src.find("(*q_impls)") != std::string::npos || src.find("q_impls") != std::string::npos,
           "AC2: private q_impls (#2628)");
-    // #2933 :as-query-result parse sits between the name and the SoA lock.
-    auto body = src.substr(pos, 4000);
+    // #2933 :as-query-result parse, #3390 index hit, and #3427 production
+    // miss sit between the name and the SoA lock on the Soft fallback scan.
+    auto body = src.substr(pos, 16000);
     CHECK(body.find("try_acquire_soa_reader_lock") != std::string::npos ||
               body.find("SoAReadGuard") != std::string::npos,
           "AC2: SoA reader lock in query:find");

@@ -380,12 +380,13 @@ int run_test_query_epoch_contract() {
             std::println("\n--- #3075 AC2: Agent QueryResult stale under production ---");
             reset_query_epoch_metrics_for_test();
             CompilerService cs;
-            apply_production_audit_defaults();
-            CHECK(query_epoch_strict(), "AC2: production strict on");
+            apply_dev_audit_defaults();
             CHECK(cs.eval("(set-code \"(define f (lambda (x) 1))\")").has_value(), "AC2 set-code");
             CHECK(cs.eval("(eval-current)").has_value(), "AC2 eval");
             CHECK(cs.eval("(define qr (query :find \"f\" :as-query-result))").has_value(),
                   "AC2 define qr");
+            apply_production_audit_defaults();
+            CHECK(query_epoch_strict(), "AC2: production strict on");
             CHECK(cs.eval("(mutate:set-body \"f\" \"(lambda (x) 2)\")").has_value() ||
                       cs.eval("(set-code \"(define f (lambda (x) 2))\")").has_value(),
                   "AC2 mutate/redefine f");
@@ -458,10 +459,11 @@ int run_test_query_epoch_contract() {
         using aura::compiler::typed_audit::apply_production_audit_defaults;
         using aura::core::kQueryResultLayoutOnlyRejectIssue;
         CHECK(kQueryResultLayoutOnlyRejectIssue == 3231, "3231: issue constant");
-        apply_production_audit_defaults();
+        apply_dev_audit_defaults();
         CompilerService cs;
         CHECK(cs.eval("(set-code \"(define f (lambda (x) 1))\")").has_value(), "3231: set-code");
         CHECK(cs.eval("(eval-current)").has_value(), "3231: eval");
+        apply_production_audit_defaults();
         auto bare = cs.eval("(query :find \"f\")");
         // Issue #3286 (supersedes pre-3286 bare-list expectation): under
         // production defaults the shared end_query_epoch_maybe_result finish

@@ -191,8 +191,7 @@ static void ac6_source_and_gate() {
               build.find("cmd_security_audit_wal_force_restricted_2492_coverage") !=
                   std::string::npos,
           "AC6: build.py gate entry");
-    const auto gate =
-        read_file("scripts/coverage/checks/check_security_audit_wal_force_restricted_2492.py");
+    const auto gate = read_file("scripts/coverage/manifests/2492.json");
     CHECK(!gate.empty() && gate.find("Issue #2492") != std::string::npos,
           "AC6: coverage linter present");
 }

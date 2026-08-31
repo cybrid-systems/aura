@@ -788,7 +788,11 @@ int run_test_agent_failure_policy() {
                 g_orch_module_stats.agent_restart_exhausted_total.load(std::memory_order_relaxed);
             JoinPolicy jp{};
             jp.primary_ms = 1;
-            jp.drain_ms = 0;
+            // Drain so the cancellable sleep-loop can exit. Timeout +
+            // still-running is re-derived as Reclaimed (#3433) and
+            // RestartN is skipped (#2661 AC2). Cooperative drain leaves
+            // Timeout/Cancelled join-fail fuel with a Done body.
+            jp.drain_ms = 500;
             AgentFailurePolicy pol;
             pol.on_join_fail = AgentFailureAction::RestartN;
             pol.max_restarts = 1;

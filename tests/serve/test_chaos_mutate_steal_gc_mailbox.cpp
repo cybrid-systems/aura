@@ -931,8 +931,7 @@ static void ac4_ac5_docs_and_source() {
     CHECK(build.find("check_chaos_mutate_steal_gc_mailbox_2352") != std::string::npos ||
               build.find("cmd_chaos_mutate_steal_gc_mailbox") != std::string::npos,
           "build.py gate entry");
-    const auto gate =
-        read_file("scripts/coverage/checks/check_chaos_mutate_steal_gc_mailbox_2352.py");
+    const auto gate = read_file("scripts/coverage/manifests/2352.json");
     CHECK(!gate.empty(), "coverage linter present");
     CHECK(gate.find("Issue #2352") != std::string::npos, "linter cites #2352");
 }
@@ -1100,8 +1099,7 @@ static void ac2513_docs_and_source() {
               build.find("AURA_CHAOS_SOAK") != std::string::npos,
           "AC5: soak gate / knobs registered");
 
-    const auto gate =
-        read_file("scripts/coverage/checks/check_production_concurrency_soak_2513.py");
+    const auto gate = read_file("scripts/coverage/manifests/2513.json");
     CHECK(!gate.empty(), "AC4: coverage linter present");
     CHECK(gate.find("Issue #2513") != std::string::npos, "AC4: linter cites #2513");
 

@@ -618,10 +618,11 @@ static void ac3354_1_production_find_skip() {
     CHECK(qws.find("include_macro_introduced = query_hygiene_allow_macro") != std::string::npos,
           "AC1: pattern reuses query_hygiene_allow_macro");
 
-    apply_production_audit_defaults();
-    CHECK(production_defaults_active(), "AC1: production_defaults_active");
+    apply_dev_audit_defaults();
     CompilerService cs;
     CHECK(setup_macro_ws(cs), "AC1: macro workspace");
+    apply_production_audit_defaults();
+    CHECK(production_defaults_active(), "AC1: production_defaults_active");
     const auto macro_n = query_match_count(cs, "(query:by-marker \"MacroIntroduced\")");
     CHECK(macro_n >= 1, "AC1: MacroIntroduced nodes present");
     auto skips0 = cs.evaluator().get_macro_introduced_skipped_in_query();
@@ -640,9 +641,10 @@ static void ac3354_1_production_find_skip() {
 
 static void ac3354_2_allow_macro_unlock() {
     std::println("\n--- #3354 AC2: :allow-macro? unlocks macro nodes ---");
-    apply_production_audit_defaults();
+    apply_dev_audit_defaults();
     CompilerService cs;
     CHECK(setup_macro_ws(cs), "AC2: macro workspace");
+    apply_production_audit_defaults();
     CHECK(cs.eval("(query:pattern \"*\" :allow-macro? #t)").has_value(),
           "AC2: query:pattern :allow-macro? accepted");
     CHECK(cs.eval("(query :find \"base\" :allow-macro? #t)").has_value(),

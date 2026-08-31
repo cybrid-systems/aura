@@ -123,18 +123,18 @@ int run_test_macro_self_evo_check_evaluator_principal() {
         // Evaluator class forward-declared in aura::compiler namespace.
         CHECK(contains(me, "namespace aura::compiler {"), "AC2: aura::compiler namespace used");
         CHECK(contains(me, "class Evaluator;"), "AC2: Evaluator class forward-declared");
-        // Helper casts void* to aura::compiler::Evaluator*.
+        // Helper resolves tenant via the C bridge (gcc 26 rejects a
+        // method call on the forward-declared Evaluator type).
         const auto helper_pos = me.find("tenant_for_macro_self_evo_check");
         const auto me_after_helper =
             (helper_pos == std::string::npos) ? std::string{} : me.substr(helper_pos);
-        CHECK(contains(me_after_helper, "static_cast<aura::compiler::Evaluator*>(ev)"),
-              "AC2: helper casts void* to aura::compiler::Evaluator*");
-        CHECK(contains(me_after_helper, "tid != 0"), "AC2: helper checks for non-zero tenant id");
-        // default_tenant fallback present.
-        CHECK(contains(me_after_helper, "if (tid != 0)\n            return tid;"),
-              "AC2: non-zero tenant id returned directly");
+        CHECK(contains(me_after_helper, "aura_evaluator_capability_tenant_id_for_macro(ev)"),
+              "AC2: helper reads tenant id via C bridge (Evaluator-free TU)");
+        CHECK(
+            contains(me_after_helper, "return aura_evaluator_capability_tenant_id_for_macro(ev);"),
+            "AC2: live Evaluator tenant used even when 0 (default-tenant grants)");
         CHECK(contains(me_after_helper, "return g_capability_registry().default_tenant.load();"),
-              "AC2: default_tenant fallback when no Evaluator / zero tenant id");
+              "AC2: default_tenant fallback only when no Evaluator is wired");
     }
 
     // \u2500\u2500 AC3: bridge reuse \u2014 aura_evaluator_resolve_current_for_macro already used

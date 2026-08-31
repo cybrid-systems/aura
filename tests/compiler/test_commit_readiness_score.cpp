@@ -192,7 +192,7 @@ static void ac5_source_schema_live() {
     const auto th = read_file("src/compiler/typed_mutation_audit.h");
     const auto q = read_file("src/compiler/evaluator_primitives_query.cpp") +
                    read_file("src/compiler/evaluator_primitives_query_type_stats.cpp");
-    const auto lint = read_file("scripts/coverage/checks/check_commit_readiness_score_2553.py");
+    const auto lint = read_file("scripts/coverage/manifests/2553.json");
     const auto cmake = read_file("CMakeLists.txt");
     const auto build = read_file("build.py");
 
