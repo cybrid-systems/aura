@@ -170,17 +170,21 @@ static void ac3_strict_deny_without_grant() {
 static void ac4_grant_reduced_limits() {
     std::println("\n--- AC4: Strict + reduced limits → clamp ---");
     reset_all();
-    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Strict);
-    set_mode(SandboxMode::Strict);
-    // #3090: Restricted/Strict refuse mid==0 TenantAdmin grants.
+    // Issue #3409 bootstrap: seed TenantAdmin while the registry is Off —
+    // a production bootstrap grant from a non-admin caller is denied by
+    // the SSOT fence. Then flip to Strict for the policy checks.
     g_capability_registry().grant(0, "tenant-admin", Effect::TenantAdmin,
                                   make_grant_provenance(1, true, 0, 0));
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Strict);
+    set_mode(SandboxMode::Strict);
     MacroSelfEvoPolicy pol;
     pol.max_expansion_passes = 2;
     pol.max_depth = 8;
     pol.allow_rest_hygiene = true;
     pol.allow_concurrent_fiber = true;
-    g_capability_registry().grant_macro_self_evo(0, pol);
+    // Issue #3459: production callers must supply a real mid — the old
+    // phantom synthesis (mid = epoch|1) is gone (#3090 one-refuse-policy).
+    g_capability_registry().grant_macro_self_evo(0, pol, make_grant_provenance(1, true, 0, 0));
 
     auto chk = check_macro_self_evo(0, true, false);
     CHECK(chk.allowed, "granted → allowed");
@@ -199,14 +203,16 @@ static void ac4_grant_reduced_limits() {
 static void ac5_zero_limits_deny() {
     std::println("\n--- AC5: zero limits → deny ---");
     reset_all();
-    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Strict);
-    set_mode(SandboxMode::Strict);
+    // Issue #3409 bootstrap: seed TenantAdmin while Off (see AC4).
     g_capability_registry().grant(0, "tenant-admin", Effect::TenantAdmin,
                                   make_grant_provenance(1, true, 0, 0));
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Strict);
+    set_mode(SandboxMode::Strict);
     MacroSelfEvoPolicy pol;
     pol.max_expansion_passes = 0;
     pol.max_depth = 0;
-    g_capability_registry().grant_macro_self_evo(0, pol);
+    // Issue #3459: real mid under production (phantom synthesis removed).
+    g_capability_registry().grant_macro_self_evo(0, pol, make_grant_provenance(1, true, 0, 0));
     auto chk = check_macro_self_evo(0, true, false);
     CHECK(!chk.allowed, "zero limits deny");
     CHECK(chk.deny_reason != nullptr &&
@@ -287,6 +293,173 @@ static void ac7_concurrent_strict_deny() {
     CHECK(snap.macro_self_evo_denied > 0, "snapshot denied > 0 after stress");
 }
 
+// ── Issue #3459: grant_macro_self_evo must refuse mid==0 under
+// production (one refuse policy with grant() #3090) instead of
+// synthesizing mid = epoch|1; security:grant-effect! must report
+// refusal, not #t after a dead write.
+
+static void ac3459_1_production_mid_refuse() {
+    std::println("\n--- #3459 AC1: production mid==0 → refuse, no MSE bit ---");
+    reset_all();
+    constexpr std::uint64_t tenant = 3459;
+    // Seed explicit TenantAdmin while the registry is Off (no fences), then
+    // flip to production — the refuse under test must fire on mid==0, not
+    // on a setup-time TA denial.
+    aura::core::capability::EffectProvenance prov_ta{};
+    prov_ta.epoch = 1;
+    prov_ta.mutation_id = 1;
+    g_capability_registry().grant(tenant, "ta-3459", aura::core::capability::Effect::TenantAdmin,
+                                  prov_ta);
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Strict);
+    set_mode(SandboxMode::Strict);
+    aura::core::bump_mutation_epoch(1);
+    const auto m = aura::core::current_mutation_epoch();
+    const auto refused0 = aura::core::capability::g_capability_effect_metrics()
+                              .capability_grant_mid_refused_total.load();
+    aura::core::capability::EffectProvenance prov0{};
+    prov0.epoch = m;
+    prov0.mutation_id = 0;
+    const bool landed =
+        g_capability_registry().grant_macro_self_evo(tenant, MacroSelfEvoPolicy{}, prov0, tenant);
+    CHECK(!landed, "AC1: production mid==0 → grant_macro_self_evo refuses");
+    bool saw_mse = false;
+    {
+        std::lock_guard<std::mutex> lock(g_capability_registry().mtx);
+        const auto it = g_capability_registry().by_tenant.find(tenant);
+        if (it != g_capability_registry().by_tenant.end())
+            for (const auto& g : it->second)
+                if ((static_cast<std::uint16_t>(g.effects) &
+                     static_cast<std::uint16_t>(aura::core::capability::Effect::MacroSelfEvo)) != 0)
+                    saw_mse = true;
+    }
+    CHECK(!saw_mse, "AC1: no MSE bit in effects_for after refuse");
+    CHECK(aura::core::capability::g_capability_effect_metrics()
+                  .capability_grant_mid_refused_total.load() > refused0,
+          "AC1: capability_grant_mid_refused_total bumped");
+}
+
+static void ac3459_2_live_mid_lands_with_m() {
+    std::println("\n--- #3459 AC2: live epoch M + explicit TA → lands bound_mutation_id==M ---");
+    reset_all();
+    constexpr std::uint64_t tenant = 3460;
+    // Seed explicit TenantAdmin while the registry is Off (no fences), then
+    // flip to production for the live-mid grant.
+    aura::core::capability::EffectProvenance prov_ta{};
+    prov_ta.epoch = 1;
+    prov_ta.mutation_id = 1;
+    g_capability_registry().grant(tenant, "ta-3460", aura::core::capability::Effect::TenantAdmin,
+                                  prov_ta);
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Strict);
+    set_mode(SandboxMode::Strict);
+    aura::core::bump_mutation_epoch(7);
+    const auto m = aura::core::current_mutation_epoch();
+    aura::core::capability::EffectProvenance prov{};
+    prov.epoch = m;
+    prov.mutation_id = m;
+    const bool landed =
+        g_capability_registry().grant_macro_self_evo(tenant, MacroSelfEvoPolicy{}, prov, tenant);
+    CHECK(landed, "AC2: live mid M + explicit TA lands");
+    bool found = false;
+    {
+        std::lock_guard<std::mutex> lock(g_capability_registry().mtx);
+        const auto it = g_capability_registry().by_tenant.find(tenant);
+        if (it != g_capability_registry().by_tenant.end())
+            for (const auto& g : it->second)
+                if (g.name == "macro-self-evo") {
+                    found = true;
+                    CHECK(g.bound_mutation_id == m, "AC2: bound_mutation_id == M (not phantom 1)");
+                }
+    }
+    CHECK(found, "AC2: macro-self-evo row found");
+}
+
+static void ac3459_3_no_explicit_ta_denied() {
+    std::println("\n--- #3459 AC3: caller without explicit TA → TA fence deny, no write ---");
+    reset_all();
+    constexpr std::uint64_t caller_t = 3461;
+    constexpr std::uint64_t target_t = 3462;
+    // Seed the caller with a plain (non-TA) effect while the registry is
+    // Off, then flip to production — the deny under test must come from the
+    // #3029 macro fence, not a setup-time grant denial.
+    aura::core::capability::EffectProvenance prov_caller{};
+    prov_caller.epoch = 1;
+    prov_caller.mutation_id = 1;
+    g_capability_registry().grant(caller_t, "mut-caller", aura::core::capability::Effect::Mutate,
+                                  prov_caller);
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Strict);
+    set_mode(SandboxMode::Strict);
+    aura::core::bump_mutation_epoch(1);
+    const auto m = aura::core::current_mutation_epoch();
+    const auto denies0 = aura::core::capability::g_capability_effect_metrics()
+                             .capability_macro_self_evo_grant_deny_total.load();
+    aura::core::capability::EffectProvenance prov{};
+    prov.epoch = m;
+    prov.mutation_id = m;
+    const bool landed = g_capability_registry().grant_macro_self_evo(target_t, MacroSelfEvoPolicy{},
+                                                                     prov, caller_t);
+    CHECK(!landed, "AC3: no explicit TA → denied");
+    bool saw_mse = false;
+    {
+        std::lock_guard<std::mutex> lock(g_capability_registry().mtx);
+        const auto it = g_capability_registry().by_tenant.find(target_t);
+        if (it != g_capability_registry().by_tenant.end())
+            for (const auto& g : it->second)
+                if ((static_cast<std::uint16_t>(g.effects) &
+                     static_cast<std::uint16_t>(aura::core::capability::Effect::MacroSelfEvo)) != 0)
+                    saw_mse = true;
+    }
+    CHECK(!saw_mse, "AC3: no registry write on target");
+    CHECK(aura::core::capability::g_capability_effect_metrics()
+                  .capability_macro_self_evo_grant_deny_total.load() > denies0,
+          "AC3: macro-self-evo-grant-needs-tenant-admin deny counter bumped");
+}
+
+static void ac3459_4_off_synthesis_contract() {
+    std::println("\n--- #3459 AC4: Soft/Off mid synthesis stays (contract) ---");
+    reset_all();
+    constexpr std::uint64_t tenant = 3463;
+    aura::core::capability::EffectProvenance prov{};
+    prov.epoch = 0;
+    prov.mutation_id = 0;
+    const bool landed =
+        g_capability_registry().grant_macro_self_evo(tenant, MacroSelfEvoPolicy{}, prov, tenant);
+    CHECK(landed, "AC4: Off grants without TA fence");
+    bool saw_nonzero_mid = false;
+    {
+        std::lock_guard<std::mutex> lock(g_capability_registry().mtx);
+        const auto it = g_capability_registry().by_tenant.find(tenant);
+        if (it != g_capability_registry().by_tenant.end())
+            for (const auto& g : it->second)
+                if (g.name == "macro-self-evo")
+                    saw_nonzero_mid = g.bound_mutation_id != 0;
+    }
+    CHECK(saw_nonzero_mid, "AC4: Off mid synthesis kept (epoch|1 contract)");
+}
+
+static void ac3459_5_source_cite_no_new_key() {
+    std::println("\n--- #3459 AC5/AC6: source-cite, grant() refuse unchanged, no new key ---");
+    const auto cap = read_file("src/core/capability_model.hh");
+    CHECK(cap.find("Issue #3459") != std::string::npos, "AC5: capability_model.hh cites #3459");
+    CHECK(cap.find("Soft/Off-only contract") != std::string::npos,
+          "AC5: phantom synthesis gated to Soft/Off");
+    CHECK(cap.find("bool grant_macro_self_evo") != std::string::npos,
+          "AC5: MSE grant reports landed");
+    CHECK(cap.find("grant-mid-refused") != std::string::npos,
+          "AC5: grant-mid-refused reason stays (grant() + MSE refuse)");
+    const auto sec = read_file("src/compiler/evaluator_primitives_security.cpp");
+    CHECK(sec.find("Issue #3459") != std::string::npos, "AC6: prim cites #3459");
+    CHECK(sec.find("security:grant-effect!: grant refused") != std::string::npos,
+          "AC6: grant-effect! reports refusal");
+    CHECK(sec.find("macro-self-evo grant refused") != std::string::npos,
+          "AC6: MSE seed refusal reported");
+    CHECK(sec.find("security:grant-capability!: grant did not land") != std::string::npos,
+          "AC6: grant-capability! hygiene");
+    CHECK(read_file("docs/design/3459-grant-mse-mid-refuse.md").empty(),
+          "AC6: no docs/design/3459-*.md");
+    CHECK(read_file("tests/issues/test_issue_3459.cpp").empty(),
+          "AC6: no tests/issues/test_issue_3459.cpp");
+}
+
 } // namespace
 
 int main() {
@@ -297,6 +470,11 @@ int main() {
     ac5_zero_limits_deny();
     ac6_query_keys();
     ac7_concurrent_strict_deny();
+    ac3459_1_production_mid_refuse();
+    ac3459_2_live_mid_lands_with_m();
+    ac3459_3_no_explicit_ta_denied();
+    ac3459_4_off_synthesis_contract();
+    ac3459_5_source_cite_no_new_key();
     reset_all();
     if (g_failed)
         return 1;

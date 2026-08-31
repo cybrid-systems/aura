@@ -70,7 +70,7 @@ def main() -> int:
     must("[[nodiscard]] bool provenance_ok(TenantId tenant, const EffectProvenance& prov", "AC1", cm)
 
     # AC2 — grant_effect_capability fence locks + uses locked variants.
-    cap_pos = es.find("void Evaluator::grant_effect_capability(")
+    cap_pos = es.find("bool Evaluator::grant_effect_capability(")
     durable_pos = es.find("void Evaluator::grant_effect_durable(", cap_pos)
     cap_block = es[cap_pos:durable_pos] if durable_pos > cap_pos else es[cap_pos:]
     must("std::lock_guard<std::mutex> lock(reg.mtx)", "AC2", cap_block)

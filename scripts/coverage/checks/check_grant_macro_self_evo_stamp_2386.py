@@ -41,11 +41,13 @@ def main() -> int:
 
     # AC1 grant_macro_self_evo stamps
     must("Issue #2386", "AC1", cap)
-    gms = cap.find("void grant_macro_self_evo")
+    gms = cap.find("bool grant_macro_self_evo")
     if gms < 0:
         fails.append("AC1: grant_macro_self_evo definition missing")
     else:
-        body = cap[gms : gms + 5000]
+        # Issue #3459: the Soft/Off-only synthesis gating + the production
+        # mid-refuse grew the function past the old 5000-char window.
+        body = cap[gms : gms + 9000]
         for needle in ("grant_epoch", "grant_fiber_id", "bound_mutation_id", "EffectProvenance"):
             if needle not in body:
                 fails.append(f"AC1: grant_macro_self_evo body missing {needle!r}")

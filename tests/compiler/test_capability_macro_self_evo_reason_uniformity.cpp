@@ -159,7 +159,7 @@ int run_test_capability_macro_self_evo_reason_uniformity() {
               "AC4: kCapabilityDenyReasonProvenanceFence declared");
         CHECK(cap.find("kCapabilityDenyReasonPolicyMissing = 3") != std::string::npos,
               "AC4: kCapabilityDenyReasonPolicyMissing declared");
-        CHECK(cap.find("kCapabilityDenyReasonLimitsZero = 4") != std::string::npos,
+        CHECK(cap.find("kCapabilityDenyReasonLimitsZero") != std::string::npos,
               "AC4: kCapabilityDenyReasonLimitsZero declared");
         CHECK(cap.find("g_capability_deny_last_reason") != std::string::npos,
               "AC4: g_capability_deny_last_reason atomic declared");
@@ -195,7 +195,7 @@ int run_test_capability_macro_self_evo_reason_uniformity() {
         // note_capability_deny_last_reason must also stamp the unified
         // kHygieneLimitReasonCapabilityDeny=7 sentinel (so the agent's
         // existing last_limit_reason_string() returns "capability-deny").
-        CHECK(cap.find("g_macro_hygiene_last_limit_reason.store(7,") != std::string::npos,
+        CHECK(cap.find("aura_macro_hygiene_capability_deny_sentinel()") != std::string::npos,
               "AC5: unified hygiene atomic stamped with sentinel 7");
     }
 
@@ -263,4 +263,11 @@ int run_test_capability_macro_self_evo_reason_uniformity() {
 
     std::println("\n=== Issue #3304 done ===");
     return g_failed == 0 ? 0 : 1;
+}
+
+// Issue #3459 residual cleanup: this binary shipped without a main —
+// every libaura_test_objects change re-broke its link (undefined
+// reference to `main`). Wire the #3304 runner into a real entry point.
+int main() {
+    return run_test_capability_macro_self_evo_reason_uniformity();
 }

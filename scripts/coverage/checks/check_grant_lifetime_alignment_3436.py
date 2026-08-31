@@ -87,10 +87,10 @@ def main() -> int:
     CALLER = "static_cast<std::uint64_t>(capability_tenant_id_)"
 
     # ---- AC3 + AC4: per-wrapper spans ----
-    cap_span = span("void Evaluator::grant_effect_capability(", "void Evaluator::grant_effect_durable(", "AC3-span-cap")
+    cap_span = span("bool Evaluator::grant_effect_capability(", "void Evaluator::grant_effect_durable(", "AC3-span-cap")
     if cap_span:
         at_least(3, CALLER, cap_span, "AC3-cap")
-        must("grant_locked(tenant_id, name, static_cast<Effect>(effect_bits)", "AC3-cap-locked", cap_span)
+        must("landed = reg.grant_locked(", "AC3-cap-locked", cap_span)  # Issue #3459: landed propagation
         must("reg.grant(tenant_id, name, static_cast<Effect>(effect_bits)", "AC3-cap-else", cap_span)
         must("grant_capability(std::string(name), single_use, /*session_bound=*/false,", "AC4-cap-mirror", cap_span)
 
