@@ -1446,8 +1446,17 @@ Evaluator::TenantScope::TenantScope(Evaluator& ev, std::uint64_t tenant_id, std:
     : ev_(&ev)
     , prev_tenant_(ev.capability_tenant_id())
     , prev_allow_cross_(ev.allow_cross_tenant_)
+    , scope_tenant_(tenant_id)
+    , scope_mid_(aura::serve::current_fiber_session_mid())
     , fiber_id_(static_cast<std::uint32_t>(aura_fiber_current_id()))
     , active_(true) {
+    // Issue #3458: bind the cascade-revoke key at enter — the principal
+    // being entered (scope_tenant_) and the session mid live at enter
+    // (fiber session mid if a boundary stamped one, else the current
+    // Mutation epoch). The epoch may bump inside the scope
+    // (M_live != M_enter); release must key M_enter, not M_live.
+    if (scope_mid_ == 0)
+        scope_mid_ = ::aura::core::current_mutation_epoch();
     ev.set_tenant_principal(tenant_id, name, allow_cross);
 }
 
@@ -1458,10 +1467,14 @@ Evaluator::TenantScope::~TenantScope() noexcept {
 void Evaluator::TenantScope::release() noexcept {
     if (!active_ || !ev_)
         return;
-    // Issue #3142 AC1: cascade-revoke SessionBound grants bound to
-    // (prev_tenant_, current mid, this fiber) before restoring prior
-    // principal. Prevents orphan SessionBound grants on nested scope
-    // abort / early-return. fiber_id_ captured at ctor.
+    // Issue #3458: cascade-revoke SessionBound grants bound to the SCOPE
+    // principal (scope_tenant_) keyed at the mid captured at enter
+    // (scope_mid_) — not (prev_tenant_, live epoch). Issue #3142 froze the
+    // wrong tuple as AC1: it missed grants issued for the entered tenant
+    // and keyed the live Mutation epoch (which may have bumped inside the
+    // scope), leaving the scope tenant's Mutate sticky past scope exit
+    // and risking collateral revoke of the previous principal's
+    // unrelated session grants. fiber_id_ captured at ctor.
     // Issue #3207: Restricted/Strict always take registry mtx and restore
     // principal under that same lock so a concurrent Evaluator cannot
     // consume a grant after this scope's principal is visible again.
@@ -1469,16 +1482,15 @@ void Evaluator::TenantScope::release() noexcept {
     // Use _locked sibling — std::mutex is non-recursive (nested lock_guard
     // on the public wrapper deadlocked the live-residual path).
     using namespace ::aura::core::capability;
-    const auto mid = ::aura::core::current_mutation_epoch();
     auto& reg = g_capability_registry();
     auto& met = g_capability_effect_metrics();
     const auto mode = reg.sandbox_mode.load(std::memory_order_acquire);
     const bool production =
         mode == EffectSandboxMode::Restricted || mode == EffectSandboxMode::Strict;
     const bool have_live = met.capability_live_session_grants.load(std::memory_order_relaxed) != 0;
-    if (mid != 0 && (production || have_live)) {
+    if (scope_mid_ != 0 && (production || have_live)) {
         std::lock_guard<std::mutex> lock(reg.mtx);
-        (void)reg.revoke_session_grants_for_locked(prev_tenant_, mid, fiber_id_,
+        (void)reg.revoke_session_grants_for_locked(scope_tenant_, scope_mid_, fiber_id_,
                                                    "scope-dtor-cascade");
         // Restore prior principal under the same lock (#3207 happens-before).
         ev_->set_capability_tenant_id(prev_tenant_);

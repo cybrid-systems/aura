@@ -451,6 +451,116 @@ static void ac3207_4_source_cite_and_linter() {
           "AC5: no docs/design/3207-*.md");
 }
 
+// ── Issue #3458: TenantScope::release must revoke (scope tenant, mid at
+// enter) — not (prev tenant, live epoch). #3142 froze the wrong tuple as
+// AC1: foreign-tenant scope exit left the entered tenant's session Mutate
+// sticky past scope exit and risked collateral revoke of the previous
+// principal's unrelated grants at the live Mutation epoch.
+
+static void ac3458_1_scope_tenant_revoked_prev_untouched() {
+    std::println(
+        "\n--- #3458 AC1: enter TenantScope(B) from A → release revokes B, A untouched ---");
+    reset_all();
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+    aura::core::bump_mutation_epoch(1);
+    const auto mid_enter = aura::core::current_mutation_epoch();
+
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_effect_sandbox_mode(1);
+    constexpr std::uint64_t tenant_a = 3458;
+    constexpr std::uint64_t tenant_b = 3459;
+
+    // A pre-existing session grant at the same live mid — the tuple the
+    // pre-fix code revoked as (prev_tenant_, M_live) collateral.
+    EffectProvenance prov_a{};
+    prov_a.epoch = mid_enter;
+    prov_a.mutation_id = mid_enter;
+    prov_a.fiber_id = 0;
+    g_capability_registry().grant_session(tenant_a, "mut-3458-a", Effect::Mutate, prov_a,
+                                          /*single_use=*/false);
+
+    {
+        Evaluator::TenantScope scope(ev, tenant_b);
+        EffectProvenance prov_b{};
+        prov_b.epoch = mid_enter;
+        prov_b.mutation_id = mid_enter;
+        prov_b.fiber_id = 0;
+        g_capability_registry().grant_session(tenant_b, "mut-3458-b", Effect::Mutate, prov_b,
+                                              /*single_use=*/false);
+        CHECK(g_capability_registry().session_bound_entries_alive(tenant_b) == 1,
+              "AC1 pre: B has 1 live session grant inside scope");
+    } // ~TenantScope → cascade keyed (scope_tenant_=B, scope_mid_=mid_enter)
+
+    CHECK(g_capability_registry().session_bound_entries_alive(tenant_b) == 0,
+          "AC1: B's session Mutate row gone after scope release");
+    CHECK(g_capability_registry().session_bound_entries_alive(tenant_a) == 1,
+          "AC1: A's pre-existing session grant untouched");
+    ev.set_capability_tenant_id(tenant_b);
+    CHECK(!ev.require_effect(kEffectMutate, "3458-b-consume"),
+          "AC1: require_effect(Mutate) on B denies after scope release");
+    ev.set_capability_tenant_id(tenant_a);
+}
+
+static void ac3458_2_epoch_bump_keys_enter_mid() {
+    std::println(
+        "\n--- #3458 AC2: epoch bumps inside scope → release keys M_enter, not M_live ---");
+    reset_all();
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+    aura::core::bump_mutation_epoch(1);
+    const auto mid_enter = aura::core::current_mutation_epoch();
+
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_effect_sandbox_mode(1);
+    constexpr std::uint64_t tenant_b = 3460;
+
+    {
+        Evaluator::TenantScope scope(ev, tenant_b);
+        EffectProvenance prov_b{};
+        prov_b.epoch = mid_enter;
+        prov_b.mutation_id = mid_enter;
+        prov_b.fiber_id = 0;
+        g_capability_registry().grant_session(tenant_b, "mut-3458-bump", Effect::Mutate, prov_b,
+                                              /*single_use=*/false);
+        // M_live != M_enter: pre-fix release revoked (prev_tenant_, M_live)
+        // and missed the grant bound at M_enter.
+        aura::core::bump_mutation_epoch(5);
+        CHECK(aura::core::current_mutation_epoch() != mid_enter, "AC2 pre: M_live != M_enter");
+    } // ~TenantScope → keyed M_enter
+
+    CHECK(g_capability_registry().session_bound_entries_alive(tenant_b) == 0,
+          "AC2: grant bound at M_enter revoked by scope release");
+}
+
+static void ac3458_3_source_cite_ssot_callers_intact() {
+    std::println("\n--- #3458 AC3/AC4/AC5/AC6: source-cite, SSOT callers intact, no new key ---");
+    const auto sec = read_file("src/compiler/evaluator_security.cpp");
+    CHECK(sec.find("Issue #3458") != std::string::npos, "AC5: evaluator_security.cpp cites #3458");
+    CHECK(sec.find("scope_tenant_") != std::string::npos, "AC5: ctor captures scope principal");
+    CHECK(sec.find("scope_mid_") != std::string::npos, "AC5: ctor captures enter mid");
+    CHECK(sec.find("revoke_session_grants_for_locked(scope_tenant_, scope_mid_, fiber_id_") !=
+              std::string::npos,
+          "AC5: release revokes (scope_tenant_, scope_mid_, fiber)");
+    CHECK(sec.find("revoke_session_grants_for_locked(prev_tenant_") == std::string::npos,
+          "AC5: wrong tuple (prev_tenant_, live epoch) gone");
+    CHECK(sec.find("scope-dtor-cascade") != std::string::npos, "AC5: reason string stays");
+
+    // AC3: outermost MutationBoundary mid-exit revoke unchanged (#2944).
+    const auto boundary = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    CHECK(boundary.find("revoke_session_grants_for_mid_locked") != std::string::npos,
+          "AC3: outermost dtor still revokes session_mid_at_enter_ (#2944)");
+    // AC4: steal-ticket resume revoke unchanged (#3048/#3320).
+    const auto fiber_mut = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+    CHECK(fiber_mut.find("revoke_session_grants_on_steal_or_abort_locked") != std::string::npos,
+          "AC4: steal-ticket resume still revokes fiber session mid");
+    // AC6: no docs/design/, no tests/issues/.
+    CHECK(!std::filesystem::exists("docs/design/3458-tenant-scope-release-key.md"),
+          "AC6: no docs/design/3458-*.md");
+    CHECK(!std::filesystem::exists("tests/issues/test_issue_3458.cpp"),
+          "AC6: no tests/issues/test_issue_3458.cpp");
+}
+
 // ── Issue #3209: nested abort × steal × resume session-grant quiesce ──
 
 static void ac3209_grant(std::uint64_t tenant, std::uint64_t mid, bool single_use) {
@@ -2176,6 +2286,9 @@ int run_test_capability_single_use_consume() {
         ac3207_2_dual_evaluator_concurrent_chaos();
         ac3207_3_soft_off_zero_cost();
         ac3207_4_source_cite_and_linter();
+        ac3458_1_scope_tenant_revoked_prev_untouched();
+        ac3458_2_epoch_bump_keys_enter_mid();
+        ac3458_3_source_cite_ssot_callers_intact();
         ac3209_1_outermost_exit_success_and_fail();
         ac3209_2_nested_abort_then_outermost();
         ac3209_3_steal_no_double_consume();

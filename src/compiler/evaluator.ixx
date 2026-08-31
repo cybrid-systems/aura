@@ -6762,6 +6762,8 @@ public:
             : ev_(o.ev_)
             , prev_tenant_(o.prev_tenant_)
             , prev_allow_cross_(o.prev_allow_cross_)
+            , scope_tenant_(o.scope_tenant_)
+            , scope_mid_(o.scope_mid_)
             , fiber_id_(o.fiber_id_)
             , active_(o.active_) {
             o.active_ = false;
@@ -6778,6 +6780,11 @@ public:
         // Issue #2659: snapshot of Evaluator::allow_cross_tenant_ before
         // the TenantScope ctor rewrote it.
         bool prev_allow_cross_ = false;
+        // Issue #3458: the principal being entered + the session mid live
+        // at enter — the cascade-revoke key. Release must key these, not
+        // (prev_tenant_, live epoch).
+        std::uint64_t scope_tenant_ = 0;
+        std::uint64_t scope_mid_ = 0;
         std::uint32_t fiber_id_ = 0;
         bool active_ = false;
     };
