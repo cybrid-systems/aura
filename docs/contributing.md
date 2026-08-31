@@ -6,6 +6,7 @@ Entry points for humans and AI Agents working in this repository.
 
 - Test layout and how to run suites: [tests/README.md](../tests/README.md)
 - Strategy and prioritization: [tests/STRATEGY.md](../tests/STRATEGY.md)
+- Issue contracts (do not add a grep `check_*.py` per ticket): [tests/COVERAGE.md](../tests/COVERAGE.md)
 
 ## Engine primitives (C++)
 

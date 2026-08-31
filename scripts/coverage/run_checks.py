@@ -55,6 +55,20 @@ def _truthy(name: str, default: str = "0") -> bool:
     return os.environ.get(name, default).strip().lower() in ("1", "true", "yes", "on")
 
 
+def _is_thin_wrapper(path: Path) -> bool:
+    """Manifest-backed `runner.py --issue N` shims — run_checks drives runner.py."""
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+    return (
+        "runner.py" in text
+        and "--issue" in text
+        and text.count("def ") <= 3
+        and "must(" not in text.replace("_must(", "_X(")
+    )
+
+
 def discover_checks() -> list[Path]:
     """All static coverage check scripts gate should run."""
     out: list[Path] = []
@@ -71,6 +85,8 @@ def discover_checks() -> list[Path]:
         if rp in seen:
             continue
         seen.add(rp)
+        if _is_thin_wrapper(p):
+            continue
         uniq.append(p)
     return uniq
 
@@ -170,6 +186,17 @@ def default_jobs() -> int:
         return int(env)
     nproc = os.cpu_count() or 4
     return max(1, min(16, nproc))
+
+
+def _run_manifests(extra: list[str]) -> int:
+    """Run declarative manifests in-process via runner.py (no check_*.py spawn)."""
+    runner = ROOT / "scripts" / "coverage" / "runner.py"
+    if not runner.is_file():
+        print("FAIL: missing scripts/coverage/runner.py", file=sys.stderr)
+        return 1
+    print(f"coverage manifests: python3 {runner.name} {' '.join(extra)}", flush=True)
+    r = subprocess.run([sys.executable, str(runner), *extra], cwd=ROOT)
+    return r.returncode
 
 
 def run_one(script: Path, *, no_cascade: bool) -> tuple[str, int, float, str]:
@@ -308,9 +335,13 @@ def main(argv: list[str] | None = None) -> int:
         print(f"--changed base={args.base!r} files={len(changed)}")
         selected, reason = select_checks_for_changed(checks, changed)
         print(f"  select: {reason}")
-        return run_checks(selected, jobs=jobs, no_cascade=no_cascade, label="coverage --changed")
+        rc = run_checks(selected, jobs=jobs, no_cascade=no_cascade, label="coverage --changed")
+        rc2 = _run_manifests(["--changed", "--base", args.base])
+        return rc or rc2
 
-    return run_checks(checks, jobs=jobs, no_cascade=no_cascade, label="coverage --all")
+    rc = run_checks(checks, jobs=jobs, no_cascade=no_cascade, label="coverage --all")
+    rc2 = _run_manifests(["--all"])
+    return rc or rc2
 
 
 if __name__ == "__main__":

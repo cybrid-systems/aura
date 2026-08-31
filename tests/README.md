@@ -3,6 +3,7 @@
 How and where to add tests in Aura.
 
 **Strategy & hot-path coverage:** [`STRATEGY.md`](STRATEGY.md) (#1887).
+**Issue contracts (runtime / manifest / check_*.py):** [`COVERAGE.md`](COVERAGE.md).
 **Live layout detail:** [`legacy_test_inventory.md`](legacy_test_inventory.md) (#1957).
 **Fixture shard format:** [`fixtures/README.md`](fixtures/README.md).
 

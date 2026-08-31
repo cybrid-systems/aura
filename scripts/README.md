@@ -27,5 +27,9 @@ python3 scripts/tools/gen_docs.py
 python3 scripts/tools/inventory_legacy_tests.py --check
 ```
 
-**Policy:** new issues add `scripts/coverage/manifests/<N>.json`. Reserve a
-full `checks/check_*.py` only when the contract needs custom Python logic.
+**Policy (SSOT):** [tests/COVERAGE.md](../tests/COVERAGE.md). New issues add
+`scripts/coverage/manifests/<N>.json`. Reserve `checks/check_*.py` for custom
+logic (window / regex / AST). Gate (`run_checks.py`) runs remaining Python
+checks **and** all manifests. `fold_simple_checks.py` folds leftover
+substring scripts. `check_coverage_policy.py` rejects new substring-only
+scripts and thin wrappers.
