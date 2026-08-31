@@ -59,6 +59,13 @@ def main() -> int:
     must("keyword_intern_by_sym_.get(v.sym_id)", "AC2 get", flat)
     must("keyword_intern_by_sym_.set(v.sym_id", "AC2 set", flat)
     must("Issue #3457", "AC1 cite", flat)
+    must("bind_sym_intern_pool(p)", "AC1 pool bind", flat)
+    must("bind_sym_intern_pool", "AC1 bind helper", ev)
+    must("clear_sym_intern", "AC1 clear helper", ev)
+    must("sym_intern_pool_", "AC1 pool stamp", ev)
+    must("test_sym_intern_pool_isolation", "AC1 cross-pool fixture", tir)
+    must("test_keyword_intern_reuses_table_slot", "AC2 table reuse fixture", tir)
+    must("keyword_table_[ki] == name", "AC2 reuse existing keyword slot", flat)
 
     lit = flat.find("// Issue #3401: happy-path string intern")
     lwin = flat[lit : lit + 1600] if lit >= 0 else ""

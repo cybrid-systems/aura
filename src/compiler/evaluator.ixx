@@ -6197,6 +6197,11 @@ private:
     // compact-dangle). string_view maps removed — grep showed only the
     // two eval_flat arms.
     // Stamp: kEvalFlatSymInternIssue = 3457
+    //
+    // SymId is pool-local. eval_flat rebinds these tables whenever `p`
+    // changes (TCO / nested eval / CompilerService::eval snippets).
+    // Caching across pools poisoned later lookups (set-code source,
+    // :workspace, hash-ref keys, mutate:set-body).
     struct SymIdIntern {
         std::vector<types::EvalValue> vals;
         std::vector<std::uint8_t> hit;
@@ -6225,6 +6230,19 @@ private:
     // Issue #3401 / #3457: :foo intern by SymId. keyword_table_ still
     // stores the leading ':' payload for existing readers.
     SymIdIntern keyword_intern_by_sym_;
+    const ast::StringPool* sym_intern_pool_ = nullptr;
+    void bind_sym_intern_pool(const ast::StringPool* p) noexcept {
+        if (sym_intern_pool_ == p)
+            return;
+        string_intern_by_sym_.clear();
+        keyword_intern_by_sym_.clear();
+        sym_intern_pool_ = p;
+    }
+    void clear_sym_intern() noexcept {
+        string_intern_by_sym_.clear();
+        keyword_intern_by_sym_.clear();
+        sym_intern_pool_ = nullptr;
+    }
     std::vector<std::string> keyword_table_; // keyword name strings (indexed by KeywordRef)
     std::size_t eval_depth_ = 0;             // recursion counter for friendly stack overflow
     static constexpr std::size_t MAX_EVAL_DEPTH = 50000;

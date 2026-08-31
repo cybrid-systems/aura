@@ -1115,6 +1115,10 @@ static void ac3401_eval_flat_hot_path_intern() {
           "AC5/#3457: Evaluator class declares keyword_intern_by_sym_");
     CHECK(evaluator_ixx.find("kEvalFlatSymInternIssue = 3457") != std::string::npos,
           "3457: issue stamp");
+    CHECK(evaluator_ixx.find("bind_sym_intern_pool") != std::string::npos,
+          "3457: pool-local intern bind");
+    CHECK(eval_flat.find("bind_sym_intern_pool(p)") != std::string::npos,
+          "3457: eval_flat rebinds intern on pool change");
 
     // AC6: no test_issue_3401.cpp, no docs/design/3401-*.md, no
     // classify_eval_value_tag reintroduction (#2616 invariant).

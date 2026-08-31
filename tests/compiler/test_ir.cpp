@@ -325,6 +325,98 @@ bool test_literal_string_sym_intern() {
     return true;
 }
 
+// Issue #3457: SymId is pool-local. Two sequential eval_flat calls on
+// independent StringPools that intern a first string at the same id
+// must not share intern hits (set-code / :workspace / hash-ref poison).
+bool test_sym_intern_pool_isolation() {
+    aura::ast::ASTArena arena(4096);
+    auto a = arena.allocator();
+    aura::ast::FlatAST flat1(a);
+    aura::ast::FlatAST flat2(a);
+    aura::ast::StringPool pool1(a);
+    aura::ast::StringPool pool2(a);
+    aura::compiler::Evaluator eval;
+
+    auto sid1 = pool1.intern("alpha-3457-pool-a");
+    auto n1 = flat1.add_literalstring(sid1);
+    auto r1 = eval.eval_flat(flat1, pool1, n1, eval.top_env());
+    if (!r1 || !aura::compiler::types::is_string(*r1)) {
+        std::println(std::cerr, "FAIL: pool-a LiteralString intern expected string");
+        return false;
+    }
+
+    auto sid2 = pool2.intern("beta-3457-pool-b");
+    auto n2 = flat2.add_literalstring(sid2);
+    auto r2 = eval.eval_flat(flat2, pool2, n2, eval.top_env());
+    if (!r2 || !aura::compiler::types::is_string(*r2)) {
+        std::println(std::cerr, "FAIL: pool-b LiteralString intern expected string");
+        return false;
+    }
+
+    const auto i1 = aura::compiler::types::as_string_idx(*r1);
+    const auto i2 = aura::compiler::types::as_string_idx(*r2);
+    auto& heap = eval.string_heap_mut();
+    if (i1 >= heap.size() || i2 >= heap.size()) {
+        std::println(std::cerr, "FAIL: interned string idx OOB");
+        return false;
+    }
+    if (heap[i1] != "alpha-3457-pool-a" || heap[i2] != "beta-3457-pool-b") {
+        std::println(std::cerr, "FAIL: cross-pool intern collision: '{}' / '{}'", heap[i1],
+                     heap[i2]);
+        return false;
+    }
+
+    auto kw1 = pool1.intern(":workspace-3457");
+    auto v1 = flat1.add_variable(kw1);
+    auto k1 = eval.eval_flat(flat1, pool1, v1, eval.top_env());
+    auto kw2 = pool2.intern(":other-3457");
+    auto v2 = flat2.add_variable(kw2);
+    auto k2 = eval.eval_flat(flat2, pool2, v2, eval.top_env());
+    if (!k1 || !k2 || !aura::compiler::types::is_keyword(*k1) ||
+        !aura::compiler::types::is_keyword(*k2)) {
+        std::println(std::cerr, "FAIL: cross-pool keyword intern");
+        return false;
+    }
+    const auto& kt = eval.keyword_table();
+    auto ki1 = aura::compiler::types::as_keyword_idx(*k1);
+    auto ki2 = aura::compiler::types::as_keyword_idx(*k2);
+    if (ki1 >= kt.size() || ki2 >= kt.size() || kt[ki1] == kt[ki2]) {
+        std::println(std::cerr, "FAIL: cross-pool keyword intern collision");
+        return false;
+    }
+    std::println("SymId intern pool isolation: OK");
+    return true;
+}
+
+// Issue #3457: intern miss reuses a keyword_table_ slot that a primitive
+// already pushed (eq? identity for :no-workspace / query keys).
+bool test_keyword_intern_reuses_table_slot() {
+    aura::ast::ASTArena arena(4096);
+    auto a = arena.allocator();
+    aura::ast::FlatAST flat(a);
+    aura::ast::StringPool pool(a);
+    aura::compiler::Evaluator eval;
+
+    eval.keyword_table().push_back(":no-workspace");
+    auto sid = pool.intern(":no-workspace");
+    auto var = flat.add_variable(sid);
+    auto r = eval.eval_flat(flat, pool, var, eval.top_env());
+    if (!r || !aura::compiler::types::is_keyword(*r)) {
+        std::println(std::cerr, "FAIL: keyword intern expected keyword");
+        return false;
+    }
+    if (aura::compiler::types::as_keyword_idx(*r) != 0) {
+        std::println(std::cerr, "FAIL: keyword intern did not reuse existing table slot");
+        return false;
+    }
+    if (eval.keyword_table().size() != 1) {
+        std::println(std::cerr, "FAIL: keyword intern pushed a duplicate table slot");
+        return false;
+    }
+    std::println("Keyword intern reuses table slot: OK");
+    return true;
+}
+
 int main() {
     // Full is the cold-start default (#2818). IR execute refuses unstamped
     // depth-0 under Full (#3224/#3414), so `(+ 1 2)` becomes
@@ -339,6 +431,10 @@ int main() {
     if (!test_quote())
         return 1;
     if (!test_literal_string_sym_intern())
+        return 1;
+    if (!test_sym_intern_pool_isolation())
+        return 1;
+    if (!test_keyword_intern_reuses_table_slot())
         return 1;
 
     // Test cases: (input, expected_string)

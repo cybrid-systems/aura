@@ -286,20 +286,18 @@ types::EvalValue Evaluator::load_module_file(const std::string& path) {
     // (own SymId space), so entries cached under another module's pool
     // poison later lookups (observed: (require std/list) inside a module
     // resolved as the CURRENT module's name -> circular dependency ->
-    // module-load-failed). The tables are caches: clearing at module-eval
+    // module-load-failed). eval_flat also rebinds on `p` change; this
+    // RAII still fences the load-module window (parse / require before
+    // the TCO loop). The tables are caches: clearing at module-eval
     // entry/exit is always correct and keeps #3457's dense SymId probe
     // hot within a single module's eval.
     struct SymInternPoolReset {
         Evaluator& ev;
         explicit SymInternPoolReset(Evaluator& e) noexcept
             : ev(e) {
-            ev.string_intern_by_sym_.clear();
-            ev.keyword_intern_by_sym_.clear();
+            ev.clear_sym_intern();
         }
-        ~SymInternPoolReset() noexcept {
-            ev.string_intern_by_sym_.clear();
-            ev.keyword_intern_by_sym_.clear();
-        }
+        ~SymInternPoolReset() noexcept { ev.clear_sym_intern(); }
         SymInternPoolReset(const SymInternPoolReset&) = delete;
         SymInternPoolReset& operator=(const SymInternPoolReset&) = delete;
     } sym_intern_pool_reset(*this);
