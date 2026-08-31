@@ -929,6 +929,18 @@ def cmd_lint():
             "Issue #3142 SessionBound revoke cascade linter failed — run python3 scripts/coverage/checks/check_session_bound_dtor_cascade.py"
         )
         return r
+    # Issue #3458: TenantScope::release revokes (scope tenant, mid at
+    # enter) — not (prev tenant, live epoch). #3142/#2944 residual.
+    tsk3458_script = COVERAGE_CHECKS / "check_tenant_scope_release_key_3458.py"
+    if not tsk3458_script.exists():
+        fail(f"missing {tsk3458_script}")
+        return 1
+    r = run([sys.executable, str(tsk3458_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3458 TenantScope release key linter failed — run python3 scripts/coverage/checks/check_tenant_scope_release_key_3458.py"
+        )
+        return r
     # Issue #3279: session_bound orphan fail-closed sweep. The orphan
     # counter was metric-only (declared, never bumped); under production
     # long-run a lost Guard / abort-without-mid-clear / dual-Evaluator race

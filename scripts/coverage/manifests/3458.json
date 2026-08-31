@@ -1,0 +1,75 @@
+{
+  "issue": 3458,
+  "title": "Issue #3458: [P0][security][area:capability] TenantScope::release revokes (prev_tenant, live epoch) not (scope tenant, session_mid) — #3142/#2944 residual",
+  "ok": "OK: Issue #3458 P0 security residual closed — TenantScope ctor now captures (scope_tenant_=tenant_id, scope_mid_=fiber session mid ?: current Mutation epoch) and release() cascade-revokes SessionBound grants bound to (scope_tenant_, scope_mid_, fiber_id) via the same SSOT revoke_session_grants_for_locked with reason 'scope-dtor-cascade' BEFORE restoring prior principal (#3207 lock discipline unchanged); wrong tuple (prev_tenant_, live epoch) gone — the scope tenant's Mutate no longer stays sticky past scope exit and the previous principal's unrelated grants are not collateral. AC1: enter TenantScope(B) from A → B's row gone, A's untouched, require_effect(Mutate) on B denies; AC2: epoch bump inside scope (M_live != M_enter) → revoke keys M_enter; AC3: outermost MutationBoundary mid-exit (#2944) + steal resume (#3048/#3320) SSOT callers untouched; AC5: Soft/Off + live==0 zero-cost short-circuit unchanged; AC6: extends tests/core/test_capability_single_use_consume.cpp with ac3458_1..3 (no docs/design/, no tests/issues/test_issue_3458.cpp per #81967/#1655); scripts/coverage/checks/check_tenant_scope_release_key_3458.py + manifest 3458.json; build.py wires tsk3458_script into gate stage after the #3142 block.",
+  "source_script": "scripts/coverage/checks/check_tenant_scope_release_key_3458.py",
+  "checks": [
+    {
+      "ac": "AC1-3458-ctor",
+      "path": "src/compiler/evaluator_security.cpp",
+      "contains": [
+        "Issue #3458",
+        "scope_tenant_(tenant_id)",
+        "scope_mid_(aura::serve::current_fiber_session_mid())",
+        "scope_mid_ = ::aura::core::current_mutation_epoch()"
+      ]
+    },
+    {
+      "ac": "AC2-3458-release",
+      "path": "src/compiler/evaluator_security.cpp",
+      "contains": [
+        "revoke_session_grants_for_locked(scope_tenant_, scope_mid_, fiber_id_",
+        "scope-dtor-cascade",
+        "scope_mid_ != 0 && (production || have_live)"
+      ]
+    },
+    {
+      "ac": "AC1-3458-members",
+      "path": "src/compiler/evaluator.ixx",
+      "contains": [
+        "std::uint64_t scope_tenant_ = 0;",
+        "std::uint64_t scope_mid_ = 0;",
+        "scope_tenant_(o.scope_tenant_)",
+        "scope_mid_(o.scope_mid_)"
+      ]
+    },
+    {
+      "ac": "AC3-3458-boundary",
+      "path": "src/compiler/evaluator_mutation_boundary.cpp",
+      "contains": [
+        "revoke_session_grants_for_mid_locked"
+      ]
+    },
+    {
+      "ac": "AC4-3458-steal",
+      "path": "src/compiler/evaluator_fiber_mutation.cpp",
+      "contains": [
+        "revoke_session_grants_on_steal_or_abort_locked"
+      ]
+    },
+    {
+      "ac": "AC5-3458-test",
+      "path": "tests/core/test_capability_single_use_consume.cpp",
+      "contains": [
+        "ac3458_1_scope_tenant_revoked_prev_untouched",
+        "ac3458_2_epoch_bump_keys_enter_mid",
+        "ac3458_3_source_cite_ssot_callers_intact"
+      ]
+    },
+    {
+      "ac": "Linter-3458",
+      "path": "scripts/coverage/checks/check_tenant_scope_release_key_3458.py",
+      "contains": [
+        "Issue #3458",
+        "AC2 revoke key"
+      ]
+    },
+    {
+      "ac": "Build-3458",
+      "path": "build.py",
+      "contains": [
+        "check_tenant_scope_release_key_3458.py"
+      ]
+    }
+  ]
+}
