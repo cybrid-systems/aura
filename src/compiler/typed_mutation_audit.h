@@ -3461,11 +3461,6 @@ inline void clear_occurrence_empty_after_fence_for_test() noexcept;
             // true only when its solve() returned SOLVED — no need to
             // re-sample a possibly-stale in.solve_status here.
             bool recovered = aura_typed_audit_try_occurrence_hard_face_full_solve_recover();
-            // Issue #3108: re-gate recover on solve_status==SOLVED (0).
-            if (recovered && in.solve_status != 0) {
-                g_occurrence_recover_not_solved_total.fetch_add(1, std::memory_order_relaxed);
-                recovered = false;
-            }
             if (recovered) {
                 g_cone_truncate_force_closure_total.fetch_add(1, std::memory_order_relaxed);
                 g_occurrence_hard_face_recover_success_total.fetch_add(1,
@@ -3526,11 +3521,6 @@ inline void clear_occurrence_empty_after_fence_for_test() noexcept;
             // close of #2962 under steal × dual-Evaluator). Quiet path
             // (no face) never reaches here → zero extra solve cost.
             bool recovered = aura_typed_audit_try_occurrence_hard_face_full_solve_recover();
-            // Issue #3108: second re-gate (cone/empty hard-face recover).
-            if (recovered && in.solve_status != 0) {
-                g_occurrence_recover_not_solved_total.fetch_add(1, std::memory_order_relaxed);
-                recovered = false;
-            }
             if (recovered) {
                 g_occurrence_hard_face_recover_success_total.fetch_add(1,
                                                                        std::memory_order_relaxed);

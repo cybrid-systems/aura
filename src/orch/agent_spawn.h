@@ -2107,7 +2107,8 @@ inline void finalize_spawn_quota_reject(AgentHandle& h) noexcept {
     // is the host/kernel principal. Require a non-zero stamp only when
     // the process is actually multi-tenant (Restricted+MT or Strict+MT).
     const bool tenant_required_gate =
-        production_defaults_active() && aura::core::provenance::multi_tenant_env_active();
+        production_defaults_active() &&
+        (aura::core::provenance::multi_tenant_env_active() || aura::core::sandbox::is_strict());
     if (tenant_required_gate && spawn_tenant == 0) {
         g_orch_module_stats.spawn_failures.fetch_add(1, std::memory_order_relaxed);
         g_orch_module_stats.spawn_tenant_required_total.fetch_add(1, std::memory_order_relaxed);
