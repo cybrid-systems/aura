@@ -1497,7 +1497,8 @@ struct AgentHandle {
         , must_wait_reclaimed(o.must_wait_reclaimed)
         , last_join_status(o.last_join_status)
         , body_acquire_rejected_slot(std::move(o.body_acquire_rejected_slot))
-        , deny_class(o.deny_class) {
+        , deny_class(o.deny_class)
+        , bp_scope_id(std::move(o.bp_scope_id)) {
         // Issue #3245: hold-path signal when a still-pending handle is
         // stored (vector / another component). Soft: pending=false.
         note_reclaimed_pending_hold(o.must_wait_reclaimed);
@@ -1525,6 +1526,14 @@ struct AgentHandle {
         o.must_wait_reclaimed = false;
         o.last_join_status = serve::JoinStatus::Invalid;
         o.deny_class = AgentDenyClass::None;
+        // Issue #3461: move is a complete field transfer. bp_scope_id was
+        // appended at END (#2906) after deny_class and was missing from
+        // both move lists — AgentNameTable::put / AgentScope::spawn
+        // emplace then defaulted it to "{}" and agent_send routed BP back
+        // to the process bucket (#3147/#3179 bypass). Checklist: any
+        // field appended at END of AgentHandle must appear in BOTH move
+        // lists AND this reset block.
+        o.bp_scope_id.clear();
     }
 
     AgentHandle& operator=(AgentHandle&& o) noexcept {
@@ -1564,6 +1573,9 @@ struct AgentHandle {
             last_join_status = o.last_join_status;
             body_acquire_rejected_slot = std::move(o.body_acquire_rejected_slot);
             deny_class = o.deny_class;
+            // Issue #3461: complete field transfer (see move ctor
+            // checklist — END-appended fields must appear here).
+            bp_scope_id = std::move(o.bp_scope_id);
             note_reclaimed_pending_hold(o.must_wait_reclaimed);
             o.id = 0;
             o.fiber = nullptr;
@@ -1590,6 +1602,7 @@ struct AgentHandle {
             o.last_join_status = serve::JoinStatus::Invalid;
             o.body_acquire_rejected_slot.reset();
             o.deny_class = AgentDenyClass::None;
+            o.bp_scope_id.clear(); // #3461: move is a complete field transfer
         }
         return *this;
     }
