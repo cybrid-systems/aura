@@ -8,6 +8,8 @@
 #include "compiler/lock_order_audit.h"
 #include "compiler/pipeline_policy.hh"
 #include "compiler/typed_mutation_audit.h"
+#include "core/capability_model.hh"
+#include "core/sandbox.hh"
 
 #include <cstdlib>
 #include <print>
@@ -23,7 +25,13 @@ static void reset_member_face() {
     aura::compiler::typed_audit::apply_dev_audit_defaults();
     aura::compiler::reset_coercion_provenance_miss_policy_for_test();
     aura::compiler::lock_order::force_audit_mode_for_test(1);
+    aura::core::capability::reset_capability_effects_for_test();
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
     ::setenv("AURA_IR_DIRTY_BATCH_ONLY", "0", 1);
+    ::unsetenv("AURA_SANDBOX");
+    ::unsetenv("AURA_COMMERCIAL_TENANT");
+    ::unsetenv("AURA_MULTI_TENANT");
+    ::unsetenv("AURA_HARD_FIBER_ISOLATION");
 }
 
 extern int run_test_aether_denseness_residual();

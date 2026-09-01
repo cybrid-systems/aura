@@ -6,6 +6,8 @@
 #include "compiler/coercion_provenance_policy.hh"
 #include "compiler/pipeline_policy.hh"
 #include "compiler/typed_mutation_audit.h"
+#include "core/capability_model.hh"
+#include "core/sandbox.hh"
 
 #include <print>
 
@@ -16,6 +18,8 @@ static void reset_member_face() {
     aura::compiler::typed_audit::reset_for_test();
     aura::compiler::typed_audit::apply_dev_audit_defaults();
     aura::compiler::reset_coercion_provenance_miss_policy_for_test();
+    aura::core::capability::reset_capability_effects_for_test();
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
 }
 
 extern int run_test_effect_epoch_mutation_unify();

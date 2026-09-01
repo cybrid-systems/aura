@@ -121,9 +121,9 @@ static void ac1_effect_stamps_mutation() {
 
     CompilerService cs;
     auto& ev = cs.evaluator();
-    ev.set_effect_sandbox_mode(1); // Restricted
     ev.set_capability_tenant_id(100);
     seed_tenant_admin(100);
+    ev.set_effect_sandbox_mode(1); // Restricted after TA bootstrap (#3409)
     ev.grant_effect_capability(100, "mutate-2149", kEffectMutate, /*prov=*/0);
 
     CapabilityGrant g{};
@@ -160,9 +160,9 @@ static void ac2_bridge_bump_no_flip() {
     bump_mutation_epoch(5);
     CompilerService cs;
     auto& ev = cs.evaluator();
-    ev.set_effect_sandbox_mode(1);
     ev.set_capability_tenant_id(200);
     seed_tenant_admin(200);
+    ev.set_effect_sandbox_mode(1); // Restricted after TA bootstrap (#3409)
     ev.grant_effect_capability(200, "bridge-iso", kEffectMutate, 0);
     CapabilityGrant g{};
     CHECK(g_capability_registry().find_grant(200, "bridge-iso", g), "grant");
@@ -194,9 +194,9 @@ static void ac3_min_valid_fence() {
     bump_mutation_epoch(10);
     CompilerService cs;
     auto& ev = cs.evaluator();
-    ev.set_effect_sandbox_mode(2); // Strict
     ev.set_capability_tenant_id(300);
     seed_tenant_admin(300);
+    ev.set_effect_sandbox_mode(2); // Strict after TA bootstrap (#3409)
     ev.grant_effect_capability(300, "fence-2149", kEffectMutate, 0);
     CapabilityGrant g{};
     CHECK(g_capability_registry().find_grant(300, "fence-2149", g), "granted");
@@ -224,9 +224,9 @@ static void ac4_schema_2055() {
     bump_mutation_epoch(2);
     CompilerService cs;
     auto& ev = cs.evaluator();
-    ev.set_effect_sandbox_mode(1);
     ev.set_capability_tenant_id(400);
     seed_tenant_admin(400);
+    ev.set_effect_sandbox_mode(1); // Restricted after TA bootstrap (#3409)
     const auto grants0 = g_capability_effect_metrics().capability_grant_epoch_bound_total.load();
     ev.grant_effect_capability(400, "ac4-g", kEffectMutate, 0);
     CHECK(g_capability_effect_metrics().capability_grant_epoch_bound_total.load() > grants0,
@@ -244,9 +244,9 @@ static void ac5_security_event_schema() {
     const auto me = current_mutation_epoch();
     CompilerService cs;
     auto& ev = cs.evaluator();
-    ev.set_effect_sandbox_mode(1);
     ev.set_capability_tenant_id(500);
     seed_tenant_admin(500, 42);
+    ev.set_effect_sandbox_mode(1); // Restricted after TA bootstrap (#3409)
     ev.grant_effect_capability(500, "ac5-g", kEffectMutate, /*prov=*/42);
     CHECK(ev.check_and_record_effect_for_test(kEffectMutate, kEffectMutate, "ac5-op", 0, 500, 42),
           "effect allow");
@@ -323,9 +323,9 @@ static void ac3335_2_bridge_bump_no_ring_flip() {
     bump_mutation_epoch(5);
     CompilerService cs;
     auto& ev = cs.evaluator();
-    ev.set_effect_sandbox_mode(1);
     ev.set_capability_tenant_id(210);
     seed_tenant_admin(210);
+    ev.set_effect_sandbox_mode(1); // Restricted after TA bootstrap (#3409)
     ev.grant_effect_capability(210, "3335-bridge-iso", kEffectMutate, 0);
     CapabilityGrant g{};
     CHECK(g_capability_registry().find_grant(210, "3335-bridge-iso", g), "3335 AC2: grant");
@@ -361,9 +361,9 @@ static void ac3335_3_grant_mutate_ring_epoch() {
 
     CompilerService cs;
     auto& ev = cs.evaluator();
-    ev.set_effect_sandbox_mode(1);
     ev.set_capability_tenant_id(410);
     seed_tenant_admin(410);
+    ev.set_effect_sandbox_mode(1); // Restricted after TA bootstrap (#3409)
     ev.grant_effect_capability(410, "3335-ac3", kEffectMutate, 0);
     CapabilityGrant g{};
     CHECK(g_capability_registry().find_grant(410, "3335-ac3", g), "3335 AC3: grant");
@@ -421,9 +421,9 @@ static void ac3335_5_agent_join_vocab() {
     const auto me = current_mutation_epoch();
     CompilerService cs;
     auto& ev = cs.evaluator();
-    ev.set_effect_sandbox_mode(1);
     ev.set_capability_tenant_id(510);
     seed_tenant_admin(510, 42);
+    ev.set_effect_sandbox_mode(1); // Restricted after TA bootstrap (#3409)
     ev.grant_effect_capability(510, "3335-join", kEffectMutate, /*prov=*/42);
     CapabilityGrant g{};
     CHECK(g_capability_registry().find_grant(510, "3335-join", g), "3335 AC5: grant");

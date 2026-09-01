@@ -452,8 +452,10 @@ std::optional<EvalValue> Env::lookup_binding(std::string_view n) const {
 // unblocks let/letrec-bound lambdas (tree-walker path) — CI
 // gradual/suite/integ/bash regressions ("unbound variable: x").
 void Env::set_pool(const aura::ast::StringPool* p) {
-    if (p == pool_)
+    const auto gen = p ? p->intern_epoch() : 0;
+    if (p == pool_ && pool_epoch_ == gen)
         return;
+    pool_epoch_ = gen;
     // Issue #2868: SymIds are pool-local. set-code allocates a fresh
     // StringPool per install; without re-key, lookup_by_symid /
     // lookup_cell_index SymId paths treat `intern("prom_leaf_a")` in

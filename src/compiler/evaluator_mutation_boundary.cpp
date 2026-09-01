@@ -2899,6 +2899,11 @@ Evaluator::MutationBoundaryGuard::MutationBoundaryGuard(
     }
     bool outermost = (prev == 1);
     is_outermost_ = outermost;
+    // Issue #3440: persist-reject TLS must not leak across outermost
+    // boundaries. A prior production persist-reject that was not
+    // consumed would roll back the next successful rebind (#t + old body).
+    if (outermost)
+        typed_audit::g_tls_outermost_persist_reject_needs_restore = false;
     // Issue #3082: mid/nested enter marks occurrence provisional so
     // query:type cannot observe live goals as committed while depth>1.
     // Outermost enter is unchanged (Soft observe / persist-on-success).

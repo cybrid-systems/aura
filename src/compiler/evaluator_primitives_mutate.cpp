@@ -3246,15 +3246,22 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         // (introduced at the function entry; lock site TBD).
 
         // Find old Define node by name (skip free-list ghosts — #1685 / #2730).
+        // Last live match wins. SymId compare can miss after pool reset /
+        // intern_epoch (same spelling, new id) — resolve-by-name is the
+        // fallback so we rebind in place instead of the add-path duplicate.
         aura::ast::NodeId old_define = aura::ast::NULL_NODE;
         for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
             if (flat.is_free_slot(id))
                 continue;
             auto v = flat.get(id);
-            if (v.tag == aura::ast::NodeTag::Define && v.sym_id == sym) {
+            if (v.tag != aura::ast::NodeTag::Define)
+                continue;
+            if (v.sym_id == sym) {
                 old_define = id;
-                break;
+                continue;
             }
+            if (v.sym_id != aura::ast::INVALID_SYM && ev.workspace_pool_->resolve(v.sym_id) == name)
+                old_define = id;
         }
         // Issue #373: hygiene guard. If old_define is a
         // MacroIntroduced node (produced by clone_macro_body
@@ -3712,6 +3719,11 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             }
         }
 
+        // Env refresh / nested eval_flat must not fail-close a rebind
+        // that already passed finish_mutate_hard_gate. Nested Guard
+        // fail (#3423) would otherwise flip ok and the dtor would
+        // restore the old body while the primitive still returns #t.
+        ok = true;
         return make_bool(true);
     });
 

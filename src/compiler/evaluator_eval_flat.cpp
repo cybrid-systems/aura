@@ -2152,11 +2152,17 @@ EvalResult Evaluator::eval_flat_apply_mutate_rebind(std::span<const types::EvalV
     auto sym = canonical_pool()->intern(name);
     aura::ast::NodeId old_define = aura::ast::NULL_NODE;
     for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
+        if (flat.is_free_slot(id))
+            continue;
         auto v = flat.get(id);
-        if (v.tag == aura::ast::NodeTag::Define && v.sym_id == sym) {
+        if (v.tag != aura::ast::NodeTag::Define)
+            continue;
+        if (v.sym_id == sym) {
             old_define = id;
-            break;
+            continue;
         }
+        if (v.sym_id != aura::ast::INVALID_SYM && workspace_pool_->resolve(v.sym_id) == name)
+            old_define = id;
     }
     if (old_define == aura::ast::NULL_NODE)
         return std::unexpected(aura::diag::Diagnostic{

@@ -272,7 +272,8 @@ export class StringPool {
 public:
     explicit StringPool(std::pmr::polymorphic_allocator<std::byte> alloc = {})
         : buf_(alloc)
-        , hash_tbl_(alloc) {
+        , hash_tbl_(alloc)
+        , intern_epoch_(next_intern_epoch()) {
         // Reserve 0 as invalid sentinel
         buf_.push_back('\0');
         // Initialize hash table (power of 2, start small)
@@ -486,8 +487,14 @@ public:
         hash_tbl_.clear();
         hash_capacity_ = 0;
         entry_count_ = 0;
+        intern_epoch_ = next_intern_epoch();
         rehash(64);
     }
+
+    // Issue #3457: pool-local SymId intern cache identity. Recycled
+    // StringPool objects at the same address get a new epoch so
+    // Evaluator intern tables cannot HIT a stale heap index.
+    [[nodiscard]] std::uint64_t intern_epoch() const noexcept { return intern_epoch_; }
 
 private:
     static std::uint64_t hash_str(std::string_view s) {
@@ -537,6 +544,11 @@ private:
     // resolve() / find_by_name() take get() (shared_lock). Concurrent intern
     // is serialized; concurrent resolve/find_by_name is parallel.
     mutable OwnedSharedMutex mtx_;
+    std::uint64_t intern_epoch_ = 0;
+    static std::uint64_t next_intern_epoch() noexcept {
+        static std::atomic<std::uint64_t> src{1};
+        return src.fetch_add(1, std::memory_order_relaxed);
+    }
 };
 
 // ── Node metadata (constexpr table for reflection/validation) ──

@@ -3404,7 +3404,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             spec.tenant_id = tenant_id != 0 ? tenant_id : ev.capability_tenant_id();
             auto handle = aura::orch::spawn_agent_with_mailbox(*orch_sched.sched, std::move(spec));
             // Issue #2009: move-only handle; snapshot then put on success.
-            const bool ok = handle.ok;
+            bool ok = handle.ok;
             const bool quota_exceeded = handle.quota_exceeded;
             const auto id = handle.id;
             const std::string out_name = handle.name.empty() ? name : handle.name;
@@ -3416,8 +3416,10 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             const std::uint64_t qretry = handle.retry_after_ms;
             // Issue #2079 / #2155: put ONLY on ok. Quota-reject must never
             // register into agent_names_ (no leaked name-table slots).
-            if (ok)
-                ev.agent_names_->put(std::move(handle));
+            // Issue #3467: put is non-consuming on deny — if the name is
+            // still Reclaimed-pending, keep the handle and report !ok.
+            if (ok && ev.agent_names_->put(std::move(handle)) == nullptr)
+                ok = false;
 
             // Issue #2011 / #2079: quota reject returns a structured hash (not
             // primitive-error) so Agent frameworks can branch on quota-dimension /
@@ -6532,7 +6534,8 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
         h.name = new_name;
         if (!ev.agent_names_)
             return types::make_string(0);
-        ev.agent_names_->put(std::move(h));
+        if (ev.agent_names_->put(std::move(h)) == nullptr)
+            return types::make_string(0);
         const auto idx = ev.string_heap_.size();
         ev.string_heap_.push_back(new_name);
         return types::make_string(idx);
