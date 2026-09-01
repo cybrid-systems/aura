@@ -592,10 +592,11 @@ static void ac3193_2_no_mixed_green_residual() {
     CHECK(u.cs.occurrence_goals_size() == 0, "3193 AC2: live empty");
     {
         typed_audit::AbortAuthorityHold hold;
-        // Green face still published until proof clear, but rehydrate cannot
-        // restore persist into live CS — no mixed query/IR face.
-        CHECK(typed_audit::last_proof_would_allow_commit_v_read() == 1,
-              "3193 AC2: green until clear");
+        // Issue #3359: abort-hold enter drops the grant face so identity
+        // CastOp cannot re-arm would_allow while abort × densify is live.
+        // Rehydrate is also refused — no mixed green + residual persist.
+        CHECK(typed_audit::last_proof_would_allow_commit_v_read() == 0,
+              "3193 AC2: abort hold drops grant face (no mixed green)");
         CHECK(u.cs.rehydrate_occurrence_from_persist(10) == 0, "3193 AC2: no residual restore");
         CHECK(u.cs.occurrence_goals_size() == 0, "3193 AC2: live stays empty");
         typed_audit::clear_type_linear_commit_proof_on_abort();
@@ -2554,8 +2555,8 @@ static void ac3224_ir_typed_entry_commit_readiness() {
         aura_typed_audit_test_clear_recover_override();
         typed_audit::g_linear_ir_fastpath_boundary_depth_override = 0;
         typed_audit::clear_type_linear_proof_outcome_for_test();
-        CHECK(!typed_audit::ir_typed_entry_commit_readiness_ok(),
-              "3414 AC2: Quiet depth==0 refuses (no stamp for this eval)");
+        CHECK(typed_audit::ir_typed_entry_commit_readiness_ok(),
+              "3414 AC2: Quiet depth==0 bypasses stale last-proof (#3439 V3)");
         typed_audit::publish_type_linear_proof_outcome(typed_audit::kTypeLinearProofOutcomeStamped);
         CHECK(typed_audit::ir_typed_entry_commit_readiness_ok(),
               "3224 AC3: Stamped depth==0 allows (no extra commit_readiness)");
@@ -2720,9 +2721,12 @@ static void ac3419_jit_typed_entry_every_function() {
               "3419 AC3: Soft omit via hard gate");
         apply_production_audit_defaults();
         typed_audit::clear_type_linear_proof_outcome_for_test();
-        typed_audit::g_linear_ir_fastpath_boundary_depth_override = 0;
+        typed_audit::g_linear_ir_fastpath_boundary_depth_override = 1;
         CHECK(!typed_audit::ir_typed_entry_commit_readiness_ok(),
               "3419: production Quiet last-proof refuses typed execute");
+        typed_audit::g_linear_ir_fastpath_boundary_depth_override = 0;
+        CHECK(typed_audit::ir_typed_entry_commit_readiness_ok(),
+              "3419: depth==0 V3 does not poison warm eval");
         typed_audit::g_linear_ir_fastpath_boundary_depth_override = -1;
         apply_dev_audit_defaults();
     }

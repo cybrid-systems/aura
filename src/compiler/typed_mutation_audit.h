@@ -67,6 +67,7 @@ extern "C" void aura_evaluator_enforce_linear_on_densify(void* ev) noexcept;
 // evaluator_fiber_mutation.cpp / typed_mutation_audit_hooks.cpp.
 extern "C" std::size_t aura_evaluator_mutation_boundary_depth();
 extern "C" int aura_escape_move_gate_active() noexcept;
+extern "C" void aura_escape_move_gate_clear() noexcept;
 extern "C" std::uint32_t aura_process_mutation_boundary_held_count() noexcept;
 // Issue #3170: TypeChecker-using bodies live in evaluator_mutation_boundary.cpp
 // (module TU, C linkage). This header stays TypeChecker-free so
@@ -85,6 +86,7 @@ extern "C" int aura_stamp_last_look_cs_matches(void* tc_handle, std::uint64_t ex
 // test_concurrent_stubs.cpp returns 0 (no persist in light-link).
 extern "C" std::size_t aura_force_residual_castop_undermark_into_cone() noexcept;
 extern "C" int aura_residual_castop_undermark_pending() noexcept;
+extern "C" void aura_reset_residual_castop_persist_for_test() noexcept;
 // Issue #3379: TLS slot for the current commit-readiness Evaluator.
 // Caller (boundary enter / outermost Guard) sets it; the fill bridge
 // reads it. Forward declarations for the bridges live further down
@@ -1105,8 +1107,15 @@ inline void apply_dev_audit_defaults() noexcept {
     aura::core::set_query_epoch_strict(false);
     clear_mid_fallback_refuse_se_tls();
     aura_pcv_set_stale_span_exclusive(0);
+    // Dev face is sandbox=off. A prior Strict leftover would force-linear
+    // rollback an admitted mutate:rebind and deny mutate capability before
+    // hygiene could stamp.
+    ::aura::core::sandbox::set_mode(::aura::core::sandbox::SandboxMode::Off);
     // Issue #3302: Soft / sandbox=off never default-arms fail-closed.
     ::aura::core::wal_slo::set_wal_fail_closed_defaulted_by_force_wal(false);
+    // Leftover Full persist / undermark pending from a prior member
+    // must not follow apply_dev into Quiet grant (#3294 / #3347).
+    aura_reset_residual_castop_persist_for_test();
 }
 
 // Issue #2818: one-shot warn when Sampled under-samples without apply_dev
@@ -2333,6 +2342,9 @@ inline constexpr int kNoTlsLivePolicyDefaultSolvedIssue = 3414;
     else
         depth = aura_evaluator_mutation_boundary_depth();
     if (depth == 0) {
+        // Issue #3439 V3: depth==0 bypasses stale global atomics
+        // (chaos leftover last-proof, including leftover Reject).
+        // Warm eval / engine:metrics must not refuse.
         return true;
     }
     // Issue #3359: re-sample mid-abort outstanding before granting
@@ -2943,6 +2955,12 @@ inline void reject_stamper_live_goal_linear_root_mismatch(TypeLinearCommitProof&
         return;
     if (!p.would_allow_commit)
         return;
+    // Occurrence goals and linear dirty-roots are different walks.
+    // Last-look (#3346) already validated each against live CS / collect;
+    // a non-linear stamp (1 goal, 0 roots) is consistent. Equality is a
+    // torn-stamper signal only when last-look could not consult CS.
+    if (g_tls_stamp_last_look_tc != nullptr)
+        return;
     if (p.live_goal_count == p.linear_root_count)
         return;
     p.would_allow_commit = false;
@@ -3442,7 +3460,12 @@ inline void clear_occurrence_empty_after_fence_for_test() noexcept;
             // gate: try_occurrence_hard_face_full_solve_recover() returns
             // true only when its solve() returned SOLVED — no need to
             // re-sample a possibly-stale in.solve_status here.
-            const bool recovered = aura_typed_audit_try_occurrence_hard_face_full_solve_recover();
+            bool recovered = aura_typed_audit_try_occurrence_hard_face_full_solve_recover();
+            // Issue #3108: re-gate recover on solve_status==SOLVED (0).
+            if (recovered && in.solve_status != 0) {
+                g_occurrence_recover_not_solved_total.fetch_add(1, std::memory_order_relaxed);
+                recovered = false;
+            }
             if (recovered) {
                 g_cone_truncate_force_closure_total.fetch_add(1, std::memory_order_relaxed);
                 g_occurrence_hard_face_recover_success_total.fetch_add(1,
@@ -3502,7 +3525,12 @@ inline void clear_occurrence_empty_after_fence_for_test() noexcept;
             // process-global fn/ctx slot; last-TC-wins was a half-green
             // close of #2962 under steal × dual-Evaluator). Quiet path
             // (no face) never reaches here → zero extra solve cost.
-            const bool recovered = aura_typed_audit_try_occurrence_hard_face_full_solve_recover();
+            bool recovered = aura_typed_audit_try_occurrence_hard_face_full_solve_recover();
+            // Issue #3108: second re-gate (cone/empty hard-face recover).
+            if (recovered && in.solve_status != 0) {
+                g_occurrence_recover_not_solved_total.fetch_add(1, std::memory_order_relaxed);
+                recovered = false;
+            }
             if (recovered) {
                 g_occurrence_hard_face_recover_success_total.fetch_add(1,
                                                                        std::memory_order_relaxed);
@@ -4859,6 +4887,16 @@ inline void reset_for_test() noexcept {
         2, std::memory_order_relaxed);
     reset_linear_compact_root_consistency_for_test();
     set_last_proof_linear_root_count_for_test(0);
+    reset_linear_ir_fastpath_counters_for_test();
+    clear_type_linear_proof_outcome_for_test();
+    clear_cone_outside_goal_drop_for_test();
+    clear_occurrence_empty_after_fence_for_test();
+    reset_abort_authority_hold_for_test();
+    g_typed_mutation_audit_counters.linear_densify_scan_mismatch_inject_pending.store(
+        0, std::memory_order_relaxed);
+    aura_escape_move_gate_clear();
+    reset_pending_full_solve_residual_for_test();
+    reset_occurrence_persist_seq_for_test();
     apply_dev_audit_defaults(); // Sampled/4 + dev_audit_opt_in; clears production
     std::lock_guard lock(g_trail().mu);
     for (auto& e : g_trail().ring)

@@ -3702,11 +3702,19 @@ public:
         // single-boundary success cannot stamp query:type over an
         // under-marked empty cone. Soft / empty persist → 0 extra.
         (void)aura_force_residual_castop_undermark_into_cone();
+        // Issue #3237 / #3316: leftover Full residual face / odd persist
+        // seq / undermark pending are production/Full grant-blocks.
+        // Quiet SOLVED (Sampled/Off) already typechecked — copy_infer(true)
+        // at depth 0 must still grant (#3294 AC4). Production AC1 still
+        // refuses over a live residual face.
+        const bool hard_export = aura::compiler::typed_audit::production_defaults_active() ||
+                                 aura::compiler::typed_audit::get_strategy() ==
+                                     aura::compiler::typed_audit::AuditStrategy::Full;
         if (!last_type_solve_solved_ ||
-            !aura::compiler::typed_audit::type_export_residual_faces_clear() ||
-            aura::compiler::typed_audit::pending_full_solve_residual_face_hit() ||
-            !aura::compiler::typed_audit::type_export_residual_faces_stable() ||
-            aura_residual_castop_undermark_pending()) {
+            (hard_export && (!aura::compiler::typed_audit::type_export_residual_faces_clear() ||
+                             aura::compiler::typed_audit::pending_full_solve_residual_face_hit() ||
+                             !aura::compiler::typed_audit::type_export_residual_faces_stable() ||
+                             aura_residual_castop_undermark_pending()))) {
             type_export_authoritative_ = false;
             type_export_inflight_ = false;
             type_export_outermost_success_face_ = false;
@@ -3736,9 +3744,21 @@ public:
     // as today (one extra bool + slot load on typecheck, not on query).
     void copy_infer_type_export_authority(bool infer_authoritative) noexcept {
         last_type_solve_solved_ = infer_authoritative;
-        if (type_export_inflight_ || mutation_boundary_depth_slot_value() > 1) {
+        // In-flight at depth 0 is leftover from a finished typecheck /
+        // nested exit. Quiet outermost SOLVED must still grant (#3294).
+        const auto depth = mutation_boundary_depth_slot_value();
+        if (depth > 1 || (type_export_inflight_ && depth != 0)) {
             note_type_export_inflight();
             return;
+        }
+        if (type_export_inflight_ && depth == 0) {
+            // Leftover inflight from a finished nested typecheck. Soft
+            // TIMEOUT clears inflight (copy_infer(false)); this is not
+            // that path. Restore the Quiet outermost face so SOLVED
+            // grants instead of observing a stale nested drop.
+            type_export_inflight_ = false;
+            if (infer_authoritative)
+                type_export_outermost_success_face_ = true;
         }
         if (infer_authoritative) {
             // Issue #3294: Soft local SOLVED must not re-open durable

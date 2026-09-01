@@ -375,6 +375,16 @@ void note_hygiene_last_limit_reason_for_fiber(std::uint32_t fiber_id, std::uint8
     // path). Global atomic stays for aggregate dashboards (last-writer-wins);
     // per-fiber FiberHygieneStats.last_limit_reason is the Agent-correlation
     // surface under concurrent expand / mutate.
+    // Expand ceiling reasons (pass / depth / gensym) must not clobber a
+    // mutate default-deny. Agents key on hygiene-macro-introduced (4)
+    // and hygiene-rest-unmarked (5); a later half-expand pass-limit is
+    // a follow-on of the same deny, not a new reason.
+    if (code == kHygieneLimitReasonPassLimit || code == kHygieneLimitReasonDepthLimit ||
+        code == kHygieneLimitReasonGensymCeiling) {
+        const auto cur = g_macro_hygiene_last_limit_reason.load(std::memory_order_relaxed);
+        if (cur == kHygieneLimitReasonMacroIntroduced || cur == kHygieneLimitReasonRestUnmarked)
+            return;
+    }
     g_macro_hygiene_last_limit_reason.store(code, std::memory_order_relaxed);
     stamp_fiber_last_limit_reason(fiber_id, code);
 }

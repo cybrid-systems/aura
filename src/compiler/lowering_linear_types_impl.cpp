@@ -110,17 +110,12 @@ std::optional<std::uint32_t> try_lower_linear_type(LoweringState& state,
                 ++state.linear_move_elided;
                 return inner;
             }
-            // Issue #3006: depth!=0 / densify_pending remain hard blockers
-            // for Move elision even after IR emission. Escape-blocked names
-            // stay on the keyed path below (#2263 clean bindings may elide).
-            // Issue #3085 / #3171: rehydrate-miss / steal-densify
-            // invalidate_gen also blocks elision until a fresh green bind
-            // (same helper). #3171 closes remaining densify-success /
-            // restamp sites that feed that gen.
-            if (aura_linear_fast_path_depth_or_densify_block() != 0) {
-                // Fall through: emit MoveOp (no elision under mid-boundary /
-                // densify-pending).
-            } else if (escape_move_elision_gate_active()) {
+            // Issue #2263 / #3006: an active escape summary is the elision
+            // authority even mid-boundary / densify-pending. Depth and
+            // densify only block the un-gated Quiet #2899 path — they must
+            // not skip the keyed #2263 counters (leftover TLS depth from a
+            // prior eval used to emit MoveOp with no blocked/elided bump).
+            if (escape_move_elision_gate_active()) {
                 g_linear_lowering_escape_summary_hit_total.fetch_add(1, std::memory_order_relaxed);
                 // Issue #2286: keyed lookup reads thread-local current key
                 // (set by Evaluator before lower_to_ir). Legacy
@@ -140,6 +135,10 @@ std::optional<std::uint32_t> try_lower_linear_type(LoweringState& state,
                     return inner;
                 }
                 // Non-variable under active gate: conservative emit.
+            } else if (aura_linear_fast_path_depth_or_densify_block() != 0) {
+                // Issue #3085 / #3171: rehydrate-miss / steal-densify
+                // invalidate_gen still blocks Quiet elision until a
+                // fresh green bind. Fall through: emit MoveOp.
             }
             auto slot = state.alloc_local();
             const auto narrow = state.current_narrowing_evidence;

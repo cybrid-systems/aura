@@ -27,6 +27,13 @@ static void reset_member_face() {
     // abort on residual multi-via-single. Issue members that need the
     // hard abort setenv 1 themselves (test_batch_dirty_discipline).
     ::setenv("AURA_IR_DIRTY_BATCH_ONLY", "0", 1);
+    // Unset AURA_SANDBOX makes CompilerService::apply_env_sandbox re-arm
+    // Restricted + Full + Hard lock-order, undoing apply_dev above.
+    // Align env with the Off face (same as misc/hold fold batches).
+    ::setenv("AURA_SANDBOX", "off", 1);
+    ::unsetenv("AURA_COMMERCIAL_TENANT");
+    ::unsetenv("AURA_MULTI_TENANT");
+    ::unsetenv("AURA_HARD_FIBER_ISOLATION");
 }
 
 extern int run_test_adt_exhaustiveness_audit();

@@ -734,6 +734,10 @@ private:
     std::size_t last_reverify_limit_used_ = kReverifyCleanScanLimit;
     // Issue #2107: one-shot test hook (see force_next_delta_timeout_for_test).
     bool force_next_delta_timeout_ = false;
+    // Issue #2260: sticky truncated_reverify for inject / Agent tests.
+    // Survives solve_delta's per-call marker clear so the boundary
+    // hard-gate cannot silent-green after anti-starve full-solve.
+    bool force_truncated_reverify_sticky_ = false;
     // Issue #3003: force-timeout this call stays raw TIMEOUT so #2107/#2963
     // can inject then escalate themselves. Natural TIMEOUT still escalates.
     bool forced_timeout_this_call_ = false;
@@ -952,6 +956,16 @@ public:
     // (0 = use adaptive effective_reverify_limit). Production leaves 0.
     void force_reverify_limit_for_test(std::size_t lim = 0) noexcept {
         force_reverify_limit_ = lim;
+    }
+    // Issue #2260: pin truncated_reverify through the next solve_delta
+    // calls (inject / boundary hard-gate). Production leaves false.
+    void force_truncated_reverify_for_test() noexcept {
+        force_truncated_reverify_sticky_ = true;
+        last_reverify_truncated_ = true;
+        last_blame_chain_.truncated_reverify = true;
+        last_blame_chain_.partial = true;
+        if (last_reverify_unscanned_ == 0)
+            last_reverify_unscanned_ = 1;
     }
     // Issue #2508: shared gate body. Reads metrics_ (void*) when non-null.
     // Returns true if caller should replace prior result with out_result.
@@ -3128,12 +3142,11 @@ export struct TypeChecker {
         }
         return false;
     }
-    // Issue #3380: removed occurrence_full_solve_recover_trampoline —
-    // recover is invoked directly on the commit TC bound to the live
-    // Evaluator (C ABI aura_typed_audit_try_occurrence_hard_face_full_solve_recover
-    // in evaluator_mutation_boundary.cpp). The trampoline + the
-    // process-global install_occurrence_full_solve_recover fn/ctx slot
-    // were last-TC-wins and are superseded by the live-TC lookup.
+    // Issue #3380: recover is invoked directly on the commit TC bound
+    // to the live Evaluator (C ABI
+    // aura_typed_audit_try_occurrence_hard_face_full_solve_recover in
+    // evaluator_mutation_boundary.cpp). No process-global fn/ctx slot
+    // (last-TC-wins is closed).
 
     // Issue #2995: pure health snapshot. Soft + empty goals / no faces
     // is loads only (no persist write, no recover, counters stable).

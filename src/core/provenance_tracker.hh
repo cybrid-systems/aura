@@ -982,6 +982,12 @@ inline void reset_provenance_enforcement_for_test() noexcept {
     g_provenance_tracker().last_stamped_node_tenant = 0;
 }
 
+// Soft-mode + last_hygiene isolation for Strict incomplete walks.
+inline void reset_linear_enforce_and_hygiene_for_test() noexcept {
+    reset_linear_enforce_mode_for_test();
+    g_provenance_tracker().last_hygiene = {};
+}
+
 } // namespace aura::core::provenance
 
 #endif // AURA_CORE_PROVENANCE_TRACKER_HH

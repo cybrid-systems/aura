@@ -1426,6 +1426,7 @@ int run_solve_delta_roots() {
     test_merge_binding_conflict();
     test_reverify_and_detected_counters();
     test_conflict_matrix();
+    aura::compiler::typed_audit::reset_for_test();
     aura::compiler::CompilerService cs;
     run_integration_matrix(cs);
     return RUN_ALL_TESTS();

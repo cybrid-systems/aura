@@ -4,9 +4,23 @@
 #pragma once
 
 #include <cstdint>
+#include <limits>
 #include <string_view>
 
 namespace aura::compiler::primitives_detail {
+
+// Query hash values are Aura fixnums. A leftover production harden
+// must not abort engine:metrics when a counter is INT64_MIN / untagged
+// bits — clamp to the representable range (kFixnumShift==1).
+[[nodiscard]] inline std::int64_t saturate_query_fixnum(std::int64_t v) noexcept {
+    constexpr auto kMin = std::numeric_limits<std::int64_t>::min() / 2;
+    constexpr auto kMax = std::numeric_limits<std::int64_t>::max() / 2;
+    if (v < kMin)
+        return kMin;
+    if (v > kMax)
+        return kMax;
+    return v;
+}
 
 struct ReflectRuntimeValidateResult {
     bool ok = false;

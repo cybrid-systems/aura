@@ -1361,6 +1361,17 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             if (aura::compiler::typed_audit::production_defaults_active()) {
                 *ok = false;
                 ev.bump_raw_nodeid_usage_in_primitives_count();
+                // Issue #3215: occupancy reject of a live MacroIntroduced
+                // node is still a default-deny mutate. Stamp the Agent
+                // reason before returning so later expand pass-limit
+                // cannot leave last_limit_reason empty.
+                const auto node = static_cast<aura::ast::NodeId>(as_int(arg));
+                if (node < flat.size() && flat.is_live_node(node) &&
+                    flat.is_macro_introduced(node) && !ev.get_allow_macro_mutate()) {
+                    ev.record_hygiene_violation_attempt();
+                    aura::compiler::macro_exp::note_hygiene_last_limit_reason(
+                        aura::compiler::macro_exp::kHygieneLimitReasonMacroIntroduced);
+                }
                 return mev("stale-ref",
                            std::string(op) +
                                ": raw node-id rejected under production; "
@@ -5642,8 +5653,11 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             sizeof(kAtomicBatchLocklessOps) / sizeof(kAtomicBatchLocklessOps[0]);
         static_assert(kAtomicBatchLocklessOpCount == 13, "atomic-batch lockless table size drift");
         {
-            const bool prod_sandbox =
-                aura::core::sandbox::is_sandbox_active() || ev.effect_sandbox_mode() != 0;
+            // Restricted on this Evaluator (sandbox_mode_) is enough:
+            // a process-wide Off leftover after apply_dev must not skip
+            // the fail-closed walk once the Agent armed Restricted.
+            const bool prod_sandbox = aura::core::sandbox::is_sandbox_active() ||
+                                      ev.effect_sandbox_mode() != 0 || ev.sandbox_mode();
             if (prod_sandbox && !ev.get_allow_macro_mutate() && !batch_allow_macro) {
                 EvalValue audit_list = op_list;
                 while (is_pair(audit_list)) {
@@ -5783,6 +5797,27 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 }
             }
             if (!sub_result) {
+                // Lockless MacroIntroduced deny used to surface as
+                // batch-failed (generic unexpected). Agents key on
+                // kind=hygiene + hygiene-macro-introduced; keep that
+                // face even if the pre-walk was skipped (Soft leftover
+                // process-wide sandbox with this Evaluator Restricted).
+                const auto& diag = sub_result.error();
+                if (diag.message.find("MacroIntroduced") != std::string::npos) {
+                    ev.record_hygiene_violation_attempt();
+                    aura::compiler::macro_exp::note_hygiene_last_limit_reason(
+                        aura::compiler::macro_exp::kHygieneLimitReasonMacroIntroduced);
+                    ev.bump_atomic_batch_hygiene_violation();
+                    abort_batch_workspace();
+                    ev.atomic_batch_domain_.rollbacks++;
+                    ev.bump_edsl_nested_atomic_rollback();
+                    if (batch_snap_id >= 0 && ev.restore_workspace_snapshot_under_lock(
+                                                  static_cast<std::size_t>(batch_snap_id)))
+                        ev.bump_atomic_batch_snapshot_rollback();
+                    ev.rollback_atomic_batch_pinning();
+                    guard_ok = false;
+                    return ev.make_merr("hygiene", diag.message.c_str());
+                }
                 // Issue #2790: unexpected / EvalResult error — flip both flags
                 // immediately (do not rely solely on post-loop guard_ok assign).
                 mark_sub_op_failed();

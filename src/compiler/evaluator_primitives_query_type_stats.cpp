@@ -323,7 +323,7 @@ void register_query_type_stats_primitives(PrimRegistrar add, std::pmr::vector<Pa
                         auto kidx = string_heap.size();
                         string_heap.push_back(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                        vals[idx] = make_int(v).val;
+                        vals[idx] = make_int(saturate_query_fixnum(v)).val;
                         ht->size++;
                         return;
                     }
@@ -3278,7 +3278,7 @@ void register_query_type_stats_primitives(PrimRegistrar add, std::pmr::vector<Pa
                         auto kidx = string_heap.size();
                         string_heap.push_back(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                        vals[idx] = make_int(v).val;
+                        vals[idx] = make_int(saturate_query_fixnum(v)).val;
                         ht->size++;
                         return;
                     }
@@ -3406,7 +3406,7 @@ void register_query_type_stats_primitives(PrimRegistrar add, std::pmr::vector<Pa
                         auto kidx = string_heap.size();
                         string_heap.push_back(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                        vals[idx] = make_int(v).val;
+                        vals[idx] = make_int(saturate_query_fixnum(v)).val;
                         ht->size++;
                         return;
                     }
@@ -3693,7 +3693,7 @@ void register_query_type_stats_primitives(PrimRegistrar add, std::pmr::vector<Pa
                         auto kidx = string_heap.size();
                         string_heap.push_back(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                        vals[idx] = make_int(v).val;
+                        vals[idx] = make_int(saturate_query_fixnum(v)).val;
                         ht->size++;
                         return;
                     }
@@ -3979,7 +3979,7 @@ void register_query_type_stats_primitives(PrimRegistrar add, std::pmr::vector<Pa
                         auto kidx = string_heap.size();
                         string_heap.push_back(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                        vals[idx] = make_int(v).val;
+                        vals[idx] = make_int(saturate_query_fixnum(v)).val;
                         ht->size++;
                         return;
                     }
@@ -4053,7 +4053,7 @@ void register_query_type_stats_primitives(PrimRegistrar add, std::pmr::vector<Pa
                         auto kidx = string_heap.size();
                         string_heap.push_back(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                        vals[idx] = make_int(v).val;
+                        vals[idx] = make_int(saturate_query_fixnum(v)).val;
                         ht->size++;
                         return;
                     }
@@ -4358,7 +4358,7 @@ void register_query_type_stats_primitives(PrimRegistrar add, std::pmr::vector<Pa
                         auto kidx = string_heap.size();
                         string_heap.push_back(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                        vals[idx] = make_int(v).val;
+                        vals[idx] = make_int(saturate_query_fixnum(v)).val;
                         ht->size++;
                         return;
                     }
@@ -4477,7 +4477,7 @@ void register_query_type_stats_primitives(PrimRegistrar add, std::pmr::vector<Pa
                         auto kidx = string_heap.size();
                         string_heap.push_back(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                        vals[idx] = make_int(v).val;
+                        vals[idx] = make_int(saturate_query_fixnum(v)).val;
                         ht->size++;
                         return;
                     }

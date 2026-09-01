@@ -2103,9 +2103,11 @@ inline void finalize_spawn_quota_reject(AgentHandle& h) noexcept {
         spawn_tenant = serve::g_current_fiber->assigned_tenant_id();
     if (spawn_tenant == 0)
         spawn_tenant = orch_tenant;
+    // Strict without AURA_MULTI_TENANT is still single-tenant: tenant 0
+    // is the host/kernel principal. Require a non-zero stamp only when
+    // the process is actually multi-tenant (Restricted+MT or Strict+MT).
     const bool tenant_required_gate =
-        production_defaults_active() &&
-        (aura::core::provenance::multi_tenant_env_active() || aura::core::sandbox::is_strict());
+        production_defaults_active() && aura::core::provenance::multi_tenant_env_active();
     if (tenant_required_gate && spawn_tenant == 0) {
         g_orch_module_stats.spawn_failures.fetch_add(1, std::memory_order_relaxed);
         g_orch_module_stats.spawn_tenant_required_total.fetch_add(1, std::memory_order_relaxed);
@@ -2555,6 +2557,11 @@ inline void complete_agent_join_cleanup(AgentHandle& h, serve::JoinResult jr) no
         h.mailbox->detach(h.fiber);
     release_agent_memory_reservation(h);
     h.reclaimed_deferred_cleanup = false; // Issue #2924: Done path completed
+    // Issue #3467: Done-path cleanup is the name-reuse gate. Hosts
+    // check must_wait_reclaimed || reclaimed_deferred_cleanup before
+    // put; leaving must_wait set after wait_reclaimed_body completed
+    // blocked same-name put after cleanup.
+    h.must_wait_reclaimed = false;
     // Name-table drop: deferred to ~AgentHandle / scope dtor
     // (idempotent with this helper).
 }
@@ -3280,11 +3287,17 @@ inline void cancel_and_drain_fibers(std::span<serve::Fiber* const> fibers,
             a.wait_reclaimed_used = true;
             a.wait_reclaimed_timeout = (wr.status == serve::JoinStatus::Timeout);
         }
-        // Issue #3052: cleanup may remap a Done body to Ok (#3433), but a
-        // timed-out / cancelled join is still join-fail fuel for RestartN.
-        // Keep Timeout/Cancelled when the aggregate join was non-Ok and
-        // the body is no longer Reclaimed-live.
-        if (local.status == serve::JoinStatus::Ok &&
+        // Issue #3052 / #3208: cleanup may remap a Done body to Ok (#3433)
+        // or a still-running Timeout body to Reclaimed (#3433 defer, do not
+        // free the stack). Join-fail fuel is the aggregate Timeout/Cancelled
+        // unless the handle is truly reclaimed-live (#2661 / #3208 AC3
+        // mark_reclaimed is not fuel). A still-running Timeout that is
+        // not is_reclaimed() must keep Timeout so production Cancel /
+        // RestartN fire instead of looking like a quiet Ok/Reclaimed skip.
+        const bool reclaimed_live_fuel =
+            a.reclaimed_deferred_cleanup ||
+            (a.fiber && a.fiber->is_reclaimed() && !a.fiber->is_done());
+        if (!reclaimed_live_fuel &&
             (jr.status == serve::JoinStatus::Timeout || jr.status == serve::JoinStatus::Cancelled))
             a.last_join_status = jr.status;
         else

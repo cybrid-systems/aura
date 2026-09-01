@@ -1384,7 +1384,9 @@ static void ac3446_1_fence_or_skips_move_body() {
     clear_type_linear_commit_proof_for_test();
     reset_linear_ir_fastpath_counters_for_test();
     reset_linear_fast_path_dirty_revalidate_for_test();
-    g_linear_ir_fastpath_boundary_depth_override = 0;
+    // Depth>0: #3439 V3 depth==0 bypasses leftover last-proof so warm
+    // eval is not refused. Reject is still IR/JIT authority mid-boundary.
+    g_linear_ir_fastpath_boundary_depth_override = 1;
     auto save =
         g_typed_mutation_audit_counters.production_defaults_active.load(std::memory_order_relaxed);
     g_typed_mutation_audit_counters.production_defaults_active.store(1, std::memory_order_relaxed);
@@ -1400,6 +1402,7 @@ static void ac3446_1_fence_or_skips_move_body() {
     g_typed_mutation_audit_counters.production_defaults_active.store(save,
                                                                      std::memory_order_relaxed);
     clear_type_linear_commit_proof_for_test();
+    clear_type_linear_proof_outcome_for_test();
     g_linear_ir_fastpath_boundary_depth_override = -1;
 }
 

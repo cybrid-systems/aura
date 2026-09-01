@@ -3418,8 +3418,10 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             // register into agent_names_ (no leaked name-table slots).
             // Issue #3467: put is non-consuming on deny — if the name is
             // still Reclaimed-pending, keep the handle and report !ok.
-            if (ok && ev.agent_names_->put(std::move(handle)) == nullptr)
-                ok = false;
+            if (ok) {
+                if (ev.agent_names_->put(std::move(handle)) == nullptr)
+                    ok = false;
+            }
 
             // Issue #2011 / #2079: quota reject returns a structured hash (not
             // primitive-error) so Agent frameworks can branch on quota-dimension /

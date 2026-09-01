@@ -12,6 +12,7 @@
 #include "test_harness.hpp"
 #include "compiler/observability_metrics.h"
 #include "compiler/coercion_provenance_policy.hh"
+#include "compiler/lock_order_audit.h"
 #include "core/provenance_tracker.hh"
 
 #include <cstdint>
@@ -44,7 +45,7 @@ using aura::compiler::types::make_int;
 using aura::core::provenance::linear_enforce_mode;
 using aura::core::provenance::linear_enforce_require_complete;
 using aura::core::provenance::LinearEnforceMode;
-using aura::core::provenance::reset_linear_enforce_mode_for_test;
+using aura::core::provenance::reset_linear_enforce_and_hygiene_for_test;
 using aura::core::provenance::set_linear_enforce_mode;
 using aura::test::g_failed;
 using aura::test::g_passed;
@@ -100,8 +101,9 @@ static std::pair<std::uint64_t, std::uint64_t> make_owned_incomplete_linear(Eval
 }
 
 static void reset_modes() {
-    reset_linear_enforce_mode_for_test();
+    reset_linear_enforce_and_hygiene_for_test();
     (void)consume_provenance_miss_for_boundary();
+    aura::compiler::lock_order::force_audit_mode_for_test(1);
 }
 
 // ── AC1: Strict hard fail + force-audit ─────────────────────

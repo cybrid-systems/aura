@@ -1901,6 +1901,13 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
                     // partial recover did not succeed.
                     if (!inv_ok && (composite || hard_gate)) {
                         if (!recovered) {
+                            // add_mutate holds an outermost wrapper Guard; the
+                            // primitive's try_acquire is nested → composite.
+                            // Nested success must not dual-restore here: that
+                            // undoes mutate:rebind after it returned #t.
+                            // Outermost owns commit / Full fail-closed restore.
+                            if (nested_boundary && success)
+                                goto skip_nested_success_composite_restore;
                             auto& ac = typed_audit::g_typed_mutation_audit_counters;
                             const bool linear_forced = force_linear_rollback(
                                 composite ? "composite-linear-force" : "linear-force-rollback",
@@ -2091,6 +2098,7 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
                             return cp;
                         }
                     }
+                skip_nested_success_composite_restore:
                     // Success path: record outcome when audit passed / recovered.
                     // Enforcement already linked via record_invariant_audit_result.
                     if (inv_ok || recovered) {
@@ -2902,8 +2910,16 @@ Evaluator::MutationBoundaryGuard::MutationBoundaryGuard(
     // Issue #3440: persist-reject TLS must not leak across outermost
     // boundaries. A prior production persist-reject that was not
     // consumed would roll back the next successful rebind (#t + old body).
-    if (outermost)
+    if (outermost) {
         typed_audit::g_tls_outermost_persist_reject_needs_restore = false;
+        // A prior boundary's synth/post-mutate/escape sticky must not
+        // restore this boundary's children after a #t return.
+        ev_->clear_linear_synth_hard_fail_pending();
+        ev_->clear_post_mutate_linear_fail();
+        ev_->clear_cross_batch_escape_fail();
+        ev_->clear_cross_closure_escape_fail();
+        ev_->clear_adt_non_exhaustive_fail();
+    }
     // Issue #3082: mid/nested enter marks occurrence provisional so
     // query:type cannot observe live goals as committed while depth>1.
     // Outermost enter is unchanged (Soft observe / persist-on-success).
@@ -3367,9 +3383,11 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
     // Issue #3423: nested Guard fail must flip the outermost success
     // flag. add_mutate now holds the outermost Guard; a body that
     // sets its nested ok=false still has to abort-restore via the
-    // wrapper dtor (sole restore path). Soft / outermost: no extra
-    // store (this arm is nested-fail only).
-    if (!is_outermost_ && !success && ev_)
+    // wrapper dtor (sole restore path). Soft / Off: no extra store
+    // (#3082 AC5 — nested fail stays in-flight, outer may still commit).
+    if (!is_outermost_ && !success && ev_ &&
+        (typed_audit::production_defaults_active() ||
+         typed_audit::get_strategy() == typed_audit::AuditStrategy::Full))
         ev_->mark_outermost_mutation_failed();
     // Issue #2944: outermost MutationBoundary exit revokes mutation-session
     // grants bound to session_mid_at_enter_ (success or fail). Nested

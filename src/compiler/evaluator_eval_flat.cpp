@@ -2277,6 +2277,7 @@ EvalResult Evaluator::eval_flat_apply_mutate_replace_value(std::span<const types
     if (flat.is_macro_introduced(node) &&
         !(get_allow_macro_mutate() || parse_allow_macro_opt_out(a))) {
         record_hygiene_violation_attempt();
+        note_hygiene_last_limit_reason(kHygieneLimitReasonMacroIntroduced);
         return std::unexpected(
             aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
                                    "batch :replace-value: cannot replace-value MacroIntroduced "

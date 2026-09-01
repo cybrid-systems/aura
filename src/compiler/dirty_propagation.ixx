@@ -1128,3 +1128,7 @@ extern "C" std::size_t aura_force_residual_castop_undermark_into_cone() noexcept
 extern "C" int aura_residual_castop_undermark_pending() noexcept {
     return aura::compiler::dirty::residual_castop_undermark_pending() ? 1 : 0;
 }
+
+extern "C" void aura_reset_residual_castop_persist_for_test() noexcept {
+    aura::compiler::dirty::reset_residual_castop_persist_for_test();
+}

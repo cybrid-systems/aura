@@ -571,7 +571,19 @@ std::size_t Scheduler::reap_orphans_now() noexcept {
         // (CI batch). The worker drops reclaimed fibers on pop; the
         // object stays in owned_fibers_ until scheduler teardown
         // (same lifecycle as normally-completed fibers).
-        if (!f->is_queued()) {
+        //
+        // Issue #2397: when workers are not live, the deque will never
+        // pop this pointer — destroy now so hard-reap pairs the
+        // still-running gauge in ~Fiber. When a worker still holds it,
+        // pair the gauge here (abandon) without destroying.
+        bool workers_live = false;
+        for (auto& w : workers_) {
+            if (w && w->is_running()) {
+                workers_live = true;
+                break;
+            }
+        }
+        if (!f->is_queued() || !workers_live) {
             ::aura::compiler::lock_order::AuditedMutexLock ol(
                 owned_fibers_mutex_, ::aura::compiler::lock_order::Level::OwnedFibers);
             for (auto oit = owned_fibers_.begin(); oit != owned_fibers_.end(); ++oit) {
@@ -580,6 +592,8 @@ std::size_t Scheduler::reap_orphans_now() noexcept {
                     break;
                 }
             }
+        } else {
+            f->abandon_join_drain_still_running();
         }
         // Release process fiber quota (paired with spawn). Always:
         // the fiber is logically reclaimed (maps/joiners cleaned,

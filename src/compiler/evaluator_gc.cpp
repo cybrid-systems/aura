@@ -360,12 +360,11 @@ void Evaluator::probe_linear_ownership_at_gc_safepoint() noexcept {
                 }
             }
             if (frame_has_linear) {
-                // Hygiene stamp provides weak mutation/provenance when present.
-                const auto& hy = aura::core::provenance::g_provenance_tracker().last_hygiene;
+                // Per-slot trail only (last_hygiene is not this binding).
                 const auto pr = validate_linear_provenance(
-                    linear_rt::Owned, static_cast<std::uint32_t>(cl.env_id), hy.node_id,
-                    hy.source_mutation_id, fr.version_, current_ver, cl.bridge_epoch,
-                    current_bridge, /*require_complete=*/false);
+                    linear_rt::Owned, static_cast<std::uint32_t>(cl.env_id), /*provenance_id=*/0,
+                    /*mutation_id=*/0, fr.version_, current_ver, cl.bridge_epoch, current_bridge,
+                    /*require_complete=*/false);
                 if (!pr.ok ||
                     !validate_linear_ownership_state(1, fr.version_, current_ver, cl.bridge_epoch,
                                                      current_bridge, drift_ctr)) {
@@ -659,7 +658,11 @@ Evaluator::enforce_linear_boundary_consistency(std::uint8_t path, bool mark_all_
         using aura::core::provenance::validate_linear_provenance;
         const auto current_ver = defuse_version_snapshot();
         const auto current_bridge = current_bridge_epoch();
-        const auto& hy = aura::core::provenance::g_provenance_tracker().last_hygiene;
+        // last_hygiene is the last MacroIntroduced stamp (process-wide),
+        // not this EnvFrame slot. Feeding it as provenance_id made a
+        // leftover expand stamp silent-complete every Owned root
+        // (#2197 Strict incomplete must hard-fail; matches
+        // validate_linear_ownership_state which already passes 0,0).
         std::shared_lock<std::shared_mutex> cl_lock(closures_mtx_);
         std::shared_lock<std::shared_mutex> env_lock(env_frames_mtx_);
         for (const auto& [id, cl] : closures_) {
@@ -671,8 +674,8 @@ Evaluator::enforce_linear_boundary_consistency(std::uint8_t path, bool mark_all_
                 if (s == linear_rt::Untracked)
                     continue;
                 const auto pr = validate_linear_provenance(
-                    s, static_cast<std::uint32_t>(cl.env_id), hy.node_id, hy.source_mutation_id,
-                    fr.version_, current_ver, cl.bridge_epoch, current_bridge,
+                    s, static_cast<std::uint32_t>(cl.env_id), /*provenance_id=*/0,
+                    /*mutation_id=*/0, fr.version_, current_ver, cl.bridge_epoch, current_bridge,
                     linear_enforce_require_complete());
                 if (!pr.ok && pr.force_deopt) {
                     out.all_safe = false;
@@ -835,7 +838,6 @@ bool Evaluator::revalidate_linear_type_provenance_after_migration(std::uint8_t p
     if (strict && !hard_fail) {
         const auto current_ver = defuse_version_snapshot();
         const auto current_bridge = current_bridge_epoch();
-        const auto& hy = aura::core::provenance::g_provenance_tracker().last_hygiene;
         std::shared_lock<std::shared_mutex> cl_lock(closures_mtx_);
         std::shared_lock<std::shared_mutex> env_lock(env_frames_mtx_);
         for (const auto& [id, cl] : closures_) {
@@ -847,8 +849,8 @@ bool Evaluator::revalidate_linear_type_provenance_after_migration(std::uint8_t p
                 if (s == linear_rt::Untracked)
                     continue;
                 const auto pr = validate_linear_provenance(
-                    s, static_cast<std::uint32_t>(cl.env_id), hy.node_id, hy.source_mutation_id,
-                    fr.version_, current_ver, cl.bridge_epoch, current_bridge,
+                    s, static_cast<std::uint32_t>(cl.env_id), /*provenance_id=*/0,
+                    /*mutation_id=*/0, fr.version_, current_ver, cl.bridge_epoch, current_bridge,
                     /*require_complete=*/true);
                 if (!pr.ok && pr.force_deopt) {
                     hard_fail = true;

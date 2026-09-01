@@ -3083,16 +3083,32 @@ extern "C" int aura_orch_agent_body_try_acquire_ex(int register_soft_boundary) {
             }
             // Issue #3251: schedule-gate class distinct from quota try-acquire.
             // Soft: admit_security_schedule observes and allows (null).
+            // Agent body enter is not itself a mutate. Restricted+WAL-off
+            // leftover (posture_degraded) and mailbox-hold must not skip a
+            // looping / pure-reasoning body — Fiber::join would return Ok
+            // and #3208 production Cancel never fuels. deny_storm (#3251)
+            // / commit_not_ready / mid_fallback / wal_append_fail still
+            // skip. mutate:* inside the body still hits the gate at dispatch.
             {
                 const auto prod = aura::compiler::typed_audit::production_defaults_active();
                 const auto in = aura::orch::make_security_schedule_input_live(
                     st->ev->effect_sandbox_mode(), prod, /*soft_mode=*/!prod);
-                if (aura::orch::admit_security_schedule(in)) {
-                    if (success_flag)
-                        *success_flag = false;
-                    g_orch_body_acq_deny =
-                        static_cast<std::uint8_t>(aura::orch::AgentDenyClass::ScheduleGate);
-                    return nullptr;
+                const auto d = aura::orch::evaluate_security_schedule(in);
+                if (!d.would_allow_new_mutate && prod) {
+                    using FR = aura::orch::SecurityScheduleForceReason;
+                    // deny_storm (#3251) skips the body. commit_not_ready /
+                    // posture_degraded / mailbox-hold / wal_append_fail deny
+                    // NEW MUTATE (dispatch still gated) but must not skip a
+                    // looping / pure-reasoning agent — Fiber::join would
+                    // return Ok and #3208 production Cancel never fuels.
+                    const bool skip_body = d.force_reason == FR::deny_storm;
+                    if (skip_body) {
+                        if (success_flag)
+                            *success_flag = false;
+                        g_orch_body_acq_deny =
+                            static_cast<std::uint8_t>(aura::orch::AgentDenyClass::ScheduleGate);
+                        return nullptr;
+                    }
                 }
             }
             if (auto* m = static_cast<CompilerMetrics*>(st->ev->compiler_metrics()))

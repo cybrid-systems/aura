@@ -51,10 +51,12 @@ using aura::compiler::types::as_pair_idx;
 using aura::compiler::types::as_string_idx;
 using aura::compiler::types::EvalValue;
 using aura::compiler::types::is_bool;
+using aura::compiler::types::is_error;
 using aura::compiler::types::is_hash;
 using aura::compiler::types::is_int;
 using aura::compiler::types::is_pair;
 using aura::compiler::types::is_string;
+using aura::compiler::types::is_void;
 using aura::test::g_failed;
 using aura::test::g_passed;
 
@@ -2232,6 +2234,7 @@ static void grant_3301_production_mutate(CompilerService& cs) {
     // (#3141 fence blocks wildcard string pushes under Restricted), then
     // arm Restricted via the Evaluator setter.
     auto& ev = cs.evaluator();
+    aura::core::capability::reset_capability_effects_for_test();
     ev.set_capability_tenant_id(1);
     aura::core::workspace_isolation::g_workspace_isolation().set_current_tenant(1, "3301-tenant");
     // The grant's bound_mutation_id must equal require_effect's mid under
@@ -2253,10 +2256,16 @@ static void grant_3301_production_mutate(CompilerService& cs) {
     // the mutation epoch; require_effect's fail-closed mid join then reads
     // the NEW epoch. Re-grant after arming so bound_mutation_id matches the
     // mid the batch wrapper will compute (provenance_ok_locked).
+    // caller_principal=1: grant_locked #3409 high-bits fence (Mutate/TA)
+    // requires TenantAdmin on the caller under Restricted. Direct
+    // registry.grant defaults caller=0 (default_tenant) and refuses.
+    aura::core::capability::g_capability_registry().grant(
+        1, "tenant-admin", aura::core::capability::Effect::TenantAdmin, aura_test_grant_prov(),
+        false, false, /*caller_principal=*/1);
     aura::core::capability::g_capability_registry().grant(
         1, aura::compiler::security::kCapWildcard,
         aura::core::capability::effect_for_cap_name(aura::compiler::security::kCapWildcard),
-        aura_test_grant_prov());
+        aura_test_grant_prov(), false, false, /*caller_principal=*/1);
 }
 
 static void ac3301_1_batch_level_deny_production() {

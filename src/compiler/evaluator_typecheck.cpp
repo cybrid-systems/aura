@@ -1905,6 +1905,12 @@ bool Evaluator::run_typed_mutation_invariant_audit(std::uint64_t mutation_id,
     return r.all_ok();
 }
 
+namespace {
+    // Issue #2260: inject stamps a same-TU face so the hard-gate cannot
+    // silent-green when solve_delta recovers the CS markers.
+    thread_local bool g_commit_cs_truncated_inject_pending = false;
+} // namespace
+
 // ── Issue #2260: MutationBoundary type-proof (SOLVED / !truncated) ───────
 //
 // Extends composite commit's SOLVED requirement (#2180) to every hard-gate
@@ -1925,9 +1931,26 @@ bool Evaluator::boundary_solve_proof_gate(bool hard_gate, bool linear_ops_presen
     if (hard_gate)
         ac.boundary_solve_hard_gate_total.fetch_add(1, std::memory_order_relaxed);
 
-    // No type system / no workspace → proof N/A (treat as ok).
-    if (!workspace_flat_ || !type_registry_)
+    const bool inject_trunc = g_commit_cs_truncated_inject_pending;
+    if (inject_trunc) {
+        g_commit_cs_truncated_inject_pending = false;
+        ac.boundary_solve_truncated_seen_total.fetch_add(1, std::memory_order_relaxed);
+        if (out_truncated)
+            *out_truncated = true;
+    }
+
+    // No type system / no workspace → proof N/A (treat as ok),
+    // except an inject truncated face under hard-gate must still
+    // force-fail (never silent continue).
+    if (!workspace_flat_ || !type_registry_) {
+        if (inject_trunc && hard_gate) {
+            ac.boundary_solve_force_rollback_total.fetch_add(1, std::memory_order_relaxed);
+            if (out_force_fail)
+                *out_force_fail = true;
+            return false;
+        }
         return true;
+    }
 
     auto run_sdo =
         [&](ConstraintSystem& cs,
@@ -1959,13 +1982,23 @@ bool Evaluator::boundary_solve_proof_gate(bool hard_gate, bool linear_ops_presen
     bool truncated = false;
     bool has_unresolved_nodes = false;
 
+    if (inject_trunc)
+        truncated = true;
+
     if (cs_ptr) {
+        if (!truncated && cs_ptr->last_reverify_truncated()) {
+            truncated = true;
+            ac.boundary_solve_truncated_seen_total.fetch_add(1, std::memory_order_relaxed);
+            if (out_truncated)
+                *out_truncated = true;
+        }
         auto sdo = run_sdo(*cs_ptr, occ_span);
         solved = (sdo.status == SolveResult::SOLVED);
-        truncated = sdo.truncated_reverify;
         has_unresolved_nodes = !sdo.unresolved_affected_nodes.empty() || !sdo.unresolved.empty();
-        if (truncated) {
-            ac.boundary_solve_truncated_seen_total.fetch_add(1, std::memory_order_relaxed);
+        if (sdo.truncated_reverify) {
+            if (!truncated)
+                ac.boundary_solve_truncated_seen_total.fetch_add(1, std::memory_order_relaxed);
+            truncated = true;
             if (out_truncated)
                 *out_truncated = true;
         }
@@ -2188,17 +2221,23 @@ Evaluator::classify_linear_force(const void* precomputed_invariant_result) const
     // Soft Warning never sets the sticky flag (#2514 / #2357).
     if (linear_synth_hard_fail_pending())
         return LinearForceAuthority::SynthHardFail;
+    const bool linear_hard = typed_audit::production_defaults_active() ||
+                             typed_audit::get_strategy() == typed_audit::AuditStrategy::Full ||
+                             aura::core::sandbox::is_strict();
     const bool adt_hard = typed_audit::production_defaults_active() ||
                           typed_audit::get_strategy() == typed_audit::AuditStrategy::Full;
     // Optional precomputed audit result (avoids re-running linear walk).
     if (precomputed_invariant_result) {
         const auto* r =
             static_cast<const typed_audit::InvariantAuditResult*>(precomputed_invariant_result);
-        if (r->cross_closure_linear_escape)
+        // Soft/Sampled: discovery already bumped observe counters. Forcing
+        // here undoes an admitted mutate:rebind (#t + old body) on the
+        // success-path exit_mutation_boundary walk.
+        if (linear_hard && r->cross_closure_linear_escape)
             return LinearForceAuthority::CrossClosureEscape;
-        if (r->cross_batch_linear_escape)
+        if (linear_hard && r->cross_batch_linear_escape)
             return LinearForceAuthority::CrossBatchEscape;
-        if (!r->linear_ok)
+        if (linear_hard && !r->linear_ok)
             return LinearForceAuthority::PostMutateLinear;
         // Issue #3358: production/Full adt_ok=false uses the unified force
         // entry. Soft classify stays None (observe-only).
@@ -2206,11 +2245,11 @@ Evaluator::classify_linear_force(const void* precomputed_invariant_result) const
             return LinearForceAuthority::AdtNonExhaustive;
     }
     // Sticky post-mutate / escape axes (set by audit; pure peek).
-    if (last_cross_closure_escape_fail())
+    if (linear_hard && last_cross_closure_escape_fail())
         return LinearForceAuthority::CrossClosureEscape;
-    if (last_cross_batch_escape_fail())
+    if (linear_hard && last_cross_batch_escape_fail())
         return LinearForceAuthority::CrossBatchEscape;
-    if (last_post_mutate_linear_fail())
+    if (linear_hard && last_post_mutate_linear_fail())
         return LinearForceAuthority::PostMutateLinear;
     if (adt_hard && last_adt_non_exhaustive_fail())
         return LinearForceAuthority::AdtNonExhaustive;
@@ -3087,8 +3126,12 @@ void Evaluator::inject_commit_cs_truncated_reverify_for_test() noexcept {
         }
         auto* tc = static_cast<TypeChecker*>(commit_type_checker_opaque_);
         auto& cs = tc->constraint_system();
-        // Pin reverify limit low so clean fan-out truncates.
+        // Pin reverify limit low so clean fan-out truncates, and stamp
+        // a sticky truncated face so anti-starve full-solve cannot
+        // silent-green the #2260 hard-gate.
         cs.force_reverify_limit_for_test(8);
+        cs.force_truncated_reverify_for_test();
+        g_commit_cs_truncated_inject_pending = true;
         auto shared = cs.fresh_var();
         cs.mark_touched_on_delta(shared, /*occurrence_narrow=*/false);
         for (int i = 0; i < 40; ++i) {
@@ -3258,8 +3301,10 @@ void Evaluator::refresh_occurrence_on_guard_exit(std::size_t mutation_log_begin,
         for (const auto& n : defuse_affected_syms_)
             note_var(n);
 
-        if (nodes_changed == 0)
-            collect_existing_stale();
+        // Always fold leftover stale Ifs (old bodies after rebind, ghost
+        // arena nodes). Gating on nodes_changed==0 skipped them on the
+        // mutate:rebind path so reanalyze could bump while stale_ifs>0.
+        collect_existing_stale();
 
         // AC4: happy-path mutate without if-predicates / dirty names does
         // not pay reanalyze. Selective invalidate alone only runs when a

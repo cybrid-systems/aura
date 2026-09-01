@@ -8,6 +8,7 @@
 #include "compiler/lock_order_audit.h"
 #include "compiler/pipeline_policy.hh"
 #include "compiler/typed_mutation_audit.h"
+#include "compiler/ownership_escape_lowering_gate.h"
 #include "core/capability_model.hh"
 #include "core/sandbox.hh"
 
@@ -27,8 +28,11 @@ static void reset_member_face() {
     aura::compiler::lock_order::force_audit_mode_for_test(1);
     aura::core::capability::reset_capability_effects_for_test();
     aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+    aura::compiler::clear_escape_move_elision_gate();
     ::setenv("AURA_IR_DIRTY_BATCH_ONLY", "0", 1);
-    ::unsetenv("AURA_SANDBOX");
+    // Unset means apply_env_sandbox re-arms Restricted (production default)
+    // and Hard lock-order. Keep the env aligned with the Off face.
+    ::setenv("AURA_SANDBOX", "off", 1);
     ::unsetenv("AURA_COMMERCIAL_TENANT");
     ::unsetenv("AURA_MULTI_TENANT");
     ::unsetenv("AURA_HARD_FIBER_ISOLATION");

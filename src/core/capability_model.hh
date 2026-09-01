@@ -663,9 +663,18 @@ struct CapabilityRegistry {
         {
             const auto mode = sandbox_mode.load(std::memory_order_acquire);
             if (mode != EffectSandboxMode::Off) {
+                // Session-bound Mutate is the Restricted mutation-session
+                // path (#2944). A same-tenant session grant is not a
+                // high-bits admin act — requiring TA here made every
+                // Restricted session Mutate need TenantAdmin (steal-resume
+                // tests and Agent mutate loops could not grant). Foreign
+                // tenant still needs TA. caller=0 + session_bound uses
+                // the grant tenant as self-principal.
                 const auto caller = caller_principal != 0
                                         ? caller_principal
-                                        : default_tenant.load(std::memory_order_acquire);
+                                        : (session_bound && tenant != 0
+                                               ? tenant
+                                               : default_tenant.load(std::memory_order_acquire));
                 constexpr std::uint16_t kHighBits =
                     static_cast<std::uint16_t>(Effect::TenantAdmin) |
                     static_cast<std::uint16_t>(Effect::MacroSelfEvo) |
@@ -673,7 +682,7 @@ struct CapabilityRegistry {
                     static_cast<std::uint16_t>(Effect::Syscall);
                 const bool foreign_tenant = (tenant != 0 && tenant != caller);
                 const bool high_bits = (static_cast<std::uint16_t>(effects) & kHighBits) != 0;
-                if (foreign_tenant || high_bits) {
+                if (foreign_tenant || (high_bits && !session_bound)) {
                     if (!has_effect(effects_for_locked(caller), Effect::TenantAdmin)) {
                         auto& met = g_capability_effect_metrics();
                         met.capability_macro_self_evo_grant_deny_total.fetch_add(
