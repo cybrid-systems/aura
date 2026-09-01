@@ -416,9 +416,9 @@ static void run_chaos_matrix() {
     std::println(
         "  [schema-2846] residual-defer-after-exit-wired: {}",
         hash_int(cs, "query:mutation-boundary-hold-stats", "residual-defer-after-exit-wired"));
-    std::println("  steal-outermost-mutation-boundary-total: {}",
-                 hash_int(cs, "query:orchestration-steal-outermost-stats",
-                          "steal-outermost-mutation-boundary-total"));
+    std::println(
+        "  steal-outermost-mutation-boundary-total: {}",
+        hash_int(cs, "query:orchestration-steal-outermost-stats", "outermost-steal-total"));
     std::println("  resume_fence_fail_total: {}  ticket_mismatch: {}", resume_fence1, ticket1);
     // Issue #3001: schema-2957 / schema-2745 / schema-2901 residual-arm snapshot.
     std::println("  [schema-2957] steal-safety-residual-lifetime-proof-reject-total: {}",

@@ -8,6 +8,7 @@
 #define AURA_COMPILER_OBSERVABILITY_METRICS_H
 
 #include <algorithm>
+#include "core/atomic_fence_port.h"
 #include <array>
 #include <atomic>
 #include <cstdint>
@@ -6654,7 +6655,7 @@ struct CompilerMetrics {
                 // leaked memory is ≤ 2× final capacity. For Aura's
                 // ~200-slot stdlib + extension kit, the leak is
                 // ≤ 4096 atomic<uint64_t> ≈ 32 KiB. Negligible.
-                std::atomic_thread_fence(std::memory_order_release);
+                aura::util::thread_fence(std::memory_order_release);
                 primitive_fastpath_hits_per_prim_ = new_arr;
                 primitive_fastpath_per_prim_capacity_ = new_cap;
             }

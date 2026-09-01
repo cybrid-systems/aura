@@ -76,7 +76,7 @@ def main() -> int:
     # odd writer / even stable
     if "& 1" not in thin and "& 1u" not in thin:
         fails.append("AC2: seqlock odd-phase check missing")
-    must("atomic_thread_fence", "AC2", thin)
+    must("thread_fence", "AC2", thin)  # ported call: aura::util::thread_fence (#2931)
 
     # AC3 — snapshot reader
     must("load_aot_reload_consistency_proof_snapshot", "AC3", thin)

@@ -2,6 +2,7 @@
 // These are compiled as regular C++ and registered in the ORC JIT as symbols.
 
 #include <atomic> // std::memory_order_relaxed — lifetime_pin.hh uses std::atomic but doesn't include <atomic> itself (relies on transitive include from consumer TUs like render_primitives.cpp; we explicitly include it here since aura_jit_runtime.cpp doesn't pull it transitively).
+#include "core/atomic_fence_port.h"
 
 #include "compiler/typed_mutation_audit.h" // #2666 production_defaults_active for residual remount default
 #include "core/lifetime_pin.hh" // Issue #2293: aura::core::lifetime::pin_linear_root / unpin_linear_root
@@ -2571,7 +2572,7 @@ static void pure_anon_bg_overflow_force_leave_native(std::int64_t closure_id) no
         g_closure_bridge_epochs.resize(g_closure_func_ids.size(), 0);
     g_closure_bridge_epochs[cid] = 0;
     invalidate_closure_cache_for(closure_id);
-    std::atomic_thread_fence(std::memory_order_release);
+    aura::util::thread_fence(std::memory_order_release);
     g_pure_anon_overflow_epoch.fetch_add(1, std::memory_order_release);
 }
 

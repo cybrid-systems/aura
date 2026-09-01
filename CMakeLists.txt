@@ -1,7 +1,20 @@
 cmake_minimum_required(VERSION 4.3)
-# CMake 4.4+ gate UUID (was 451f2fe2… on 4.3).
-set(CMAKE_EXPERIMENTAL_CXX_IMPORT_STD
-    "f35a9ac6-8463-4d38-8eec-5d6008153e7d")
+# Experimental `import std` gate UUID is CMake-version-specific: 4.3
+# shipped 451f2fe2-a8a2-47c3-bc32-94786d8fc91b, 4.4+ ships
+# f35a9ac6-8463-4d38-8eec-5d6008153e7d. Select by the RUNNING version
+# (CMAKE_VERSION is available before project()) — nightly sanitizer
+# images (aura-ci:v1.0.1) carry a different CMake than the main CI
+# image, and a mismatched hard-coded UUID is silently ignored at
+# toolchain detection, then every CXX_MODULE_STD target fails at
+# generate time ("Experimental import std support not enabled when
+# detecting toolchain") — the tsan-smoke nightly failure mode.
+if(CMAKE_VERSION VERSION_GREATER_EQUAL 4.4)
+    set(CMAKE_EXPERIMENTAL_CXX_IMPORT_STD
+        "f35a9ac6-8463-4d38-8eec-5d6008153e7d")
+else()
+    set(CMAKE_EXPERIMENTAL_CXX_IMPORT_STD
+        "451f2fe2-a8a2-47c3-bc32-94786d8fc91b")
+endif()
 project(aura LANGUAGES CXX C)
 # P2: shared test libs (libaura_*.so) live in the build tree; every
 # test executable must find them without LD_LIBRARY_PATH.

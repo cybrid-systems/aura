@@ -115,7 +115,7 @@ def main() -> int:
         body = aud[hs:end] if end > hs else ""
         if "g_occurrence_persist_seq" not in body:
             fails.append("3316: stable helper must sample g_occurrence_persist_seq")
-        if "atomic_thread_fence" not in body:
+        if "thread_fence" not in body:  # ported call: aura::util::thread_fence (#2931)
             fails.append("3316: stable helper must acquire-fence before resample")
         if "g_pending_full_solve_residual_face" not in body:
             fails.append("3316: stable helper must re-sample residual face")

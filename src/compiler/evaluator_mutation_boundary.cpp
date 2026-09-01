@@ -4226,16 +4226,14 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
                     }
                 } else {
                     // Soft (sandbox / unit tests): no clear, no abort —
-                    // residual metric bump above (legacy #2211). Issue
-                    // #2846: Soft observe residual-after-exit so Agents
-                    // can detect permanent GC-starvation risk under denseness.
-                    const auto after = aura::gc_hooks::close_residual_defer_after_exit(
+                    // residual metric bump above (legacy #2211) covers
+                    // observe visibility. Issue #2931: Soft exits do NOT
+                    // bump residual_defer_after_exit (helper or metrics
+                    // twin) — the #2846 detection counter is
+                    // production-only so every detection is matched by a
+                    // clear invocation in the soak gate.
+                    (void)aura::gc_hooks::close_residual_defer_after_exit(
                         static_cast<void*>(ev_), /*production_force=*/false);
-                    if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics_)) {
-                        if (after.residual_seen)
-                            m->residual_defer_after_exit_total.fetch_add(1,
-                                                                         std::memory_order_relaxed);
-                    }
                 }
             }
         } else {
@@ -4266,7 +4264,9 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
                             m->mutation_boundary_residual_defer_forced_clear_total.fetch_add(
                                 n, std::memory_order_relaxed);
                         }
-                        if (after.residual_seen)
+                        // #2931: production-only detection (Soft observe
+                        // covered by the legacy #2211 metric above).
+                        if (production_force && after.residual_seen)
                             m->residual_defer_after_exit_total.fetch_add(1,
                                                                          std::memory_order_relaxed);
                     }
@@ -4815,8 +4815,18 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
                 const auto gate = aura::gc_hooks::gate_outermost_exit_residual_and_pin(
                     static_cast<void*>(ev_), residual_force, pin_ok, incomplete, fail_closed);
                 if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics_)) {
-                    if (gate.residual.residual_seen)
+                    if (residual_force && gate.residual.residual_seen) {
                         m->residual_defer_after_exit_total.fetch_add(1, std::memory_order_relaxed);
+                        // Matched clear invocation (#2931): the gate's
+                        // production close must land in forced_clear too,
+                        // even when the policy block above saw residual==0
+                        // (concurrent re-arm between the two snapshots).
+                        const auto n = (gate.residual.clear.panic_depth_cleared > 0)
+                                           ? gate.residual.clear.panic_depth_cleared
+                                           : 1u;
+                        m->mutation_boundary_residual_defer_forced_clear_total.fetch_add(
+                            n, std::memory_order_relaxed);
+                    }
                     if (gate.hard_fail)
                         m->residual_after_exit_hard_fail_total.fetch_add(1,
                                                                          std::memory_order_relaxed);

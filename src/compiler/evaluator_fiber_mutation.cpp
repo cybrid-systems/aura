@@ -10,6 +10,7 @@
 module;
 
 #include "messaging_bridge.h"
+#include "core/atomic_fence_port.h"
 #include "serve/fiber.h"
 #include "serve/metrics.h"
 #include "observability_metrics.h"
@@ -2374,7 +2375,7 @@ bool Evaluator::transfer_and_revalidate_panic_checkpoint(void* fiber_void) noexc
     }
 
     // Dual-epoch revalidation under acquire fence (consistent probe).
-    std::atomic_thread_fence(std::memory_order_acquire);
+    aura::util::thread_fence(std::memory_order_acquire);
     const auto defuse_v = defuse_version_snapshot();
     const auto bridge_e = current_bridge_epoch();
     if (aura_aot_probe_checkpoint_version(defuse_v, bridge_e)) {
@@ -3483,7 +3484,7 @@ extern "C" void aura_evaluator_probe_linear_on_steal() {
     ev->bump_steal_linear_probe_on_success();
     ev->bump_concurrent_safety_steal_boundary_success();
     // Issue #1127: paired snapshot under acquire fence.
-    std::atomic_thread_fence(std::memory_order_acquire);
+    aura::util::thread_fence(std::memory_order_acquire);
     const auto defuse_v = ev->defuse_version_snapshot();
     const auto bridge_e = ev->current_bridge_epoch();
     if (aura_aot_probe_checkpoint_version(defuse_v, bridge_e)) {
@@ -3831,13 +3832,20 @@ extern "C" void aura_evaluator_on_steal_complete(void* fiber_ptr) noexcept {
                 // Issue #2975: leftover predicate shared with outermost exit.
                 const auto after =
                     aura::gc_hooks::close_residual_defer_after_exit(clear_id, production_force);
-                if (after.residual_seen) {
+                // #2931: after-exit detections are production-only (Soft
+                // observe lands in residual_defer_steal_soft_leftover_total
+                // in the re-check below).
+                if (production_force && after.residual_seen) {
                     if (auto* m = static_cast<CompilerMetrics*>(ev->compiler_metrics()))
                         m->residual_defer_after_exit_total.fetch_add(1, std::memory_order_relaxed);
                 }
-                // Preserve #2546 residual_defer_cleared_on_steal when clear did work.
-                if (after.clear.panic_depth_cleared > 0 || after.clear.bits_reconciled > 0 ||
-                    after.clear.hold_released) {
+                // #2546 / #2931 closed loop: count the clear when the
+                // production clear RAN, not only when it did work — a
+                // concurrent drain between the residual snapshot and the
+                // force-clear would otherwise leave a production detection
+                // unmatched by any clear (soak-gate flake). Did-work
+                // sub-accounting stays keyed on the individual fields.
+                if (production_force) {
                     aura::gc_hooks::g_residual_defer_cleared_on_steal_total.fetch_add(
                         1, std::memory_order_relaxed);
                     if (auto* m = static_cast<CompilerMetrics*>(ev->compiler_metrics())) {

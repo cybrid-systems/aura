@@ -23,6 +23,7 @@
 #define AURA_SERVE_WS_DEQUE_H
 
 #include <atomic>
+#include "core/atomic_fence_port.h"
 #include <cstdint>
 #include <cstdlib>
 #include <vector>
@@ -58,7 +59,7 @@ public:
 
         buffer_[static_cast<size_t>(b) & mask_] = item;
         // Release fence: item write visible before bottom_ increment.
-        std::atomic_thread_fence(std::memory_order_release);
+        aura::util::thread_fence(std::memory_order_release);
         bottom_.store(b + 1, std::memory_order_relaxed);
     }
 
@@ -68,7 +69,7 @@ public:
         bottom_.store(b, std::memory_order_relaxed);
 
         // Seq_cst fence: synchronizes with stealers' seq_cst fence.
-        std::atomic_thread_fence(std::memory_order_seq_cst);
+        aura::util::thread_fence(std::memory_order_seq_cst);
         int64_t t = top_.load(std::memory_order_acquire);
         T item = nullptr;
 
@@ -94,7 +95,7 @@ public:
     T steal() {
         int64_t t = top_.load(std::memory_order_acquire);
         // Seq_cst fence: pairs with owner's fence in pop().
-        std::atomic_thread_fence(std::memory_order_seq_cst);
+        aura::util::thread_fence(std::memory_order_seq_cst);
         int64_t b = bottom_.load(std::memory_order_acquire);
 
         T item = nullptr;

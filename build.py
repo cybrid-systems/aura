@@ -7988,9 +7988,11 @@ def _phase(label: str, t0: float) -> None:
 
 def _cmake_configure_args() -> list[str]:
     args = ["cmake", "-B", str(BUILD), "-G", "Ninja", "-Wno-author"]
-    # CMake 4.4+ experimental gate for `import std` (must be set before
-    # project()/toolchain detection). UUID from CMake binary (CxxImportStd).
-    args.append("-DCMAKE_EXPERIMENTAL_CXX_IMPORT_STD=f35a9ac6-8463-4d38-8eec-5d6008153e7d")
+    # `import std` gate UUID is owned by CMakeLists.txt (version-selected
+    # before project(); the 4.3 / 4.4+ UUIDs differ). Never hard-code a -D
+    # here: a wrong UUID is silently ignored at toolchain detection and
+    # every CXX_MODULE_STD target then fails at generate time
+    # (tsan-smoke nightly failure mode).
     build_type = os.environ.get("AURA_BUILD_TYPE", "").strip()
     if build_type:
         args.append(f"-DCMAKE_BUILD_TYPE={build_type}")

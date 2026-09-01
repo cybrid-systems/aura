@@ -4,6 +4,7 @@
 module;
 
 #include "runtime_shared.h"
+#include "core/atomic_fence_port.h"
 #include "observability_metrics.h"
 #include "gc_coord_scope.h"  // Issue #2131: pin → cascade → audit
 #include "aura_jit_bridge.h" // Issue #2091 / #3267: live env/linear + combined bridge state
@@ -2620,7 +2621,7 @@ std::optional<types::EvalValue> Evaluator::lookup_by_symid_chain(
                 // concurrent cell store is visible; re-check size so we
                 // never index past a concurrent shrink (push-only today).
                 auto idx = as_cell_id(val);
-                std::atomic_thread_fence(std::memory_order_acquire);
+                aura::util::thread_fence(std::memory_order_acquire);
                 const auto n = cells_.size();
                 if (idx < n)
                     result = cells_[idx]; // EvalValue is int64 POD copy

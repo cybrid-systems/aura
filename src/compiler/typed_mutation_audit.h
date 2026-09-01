@@ -19,6 +19,7 @@
 #define AURA_COMPILER_TYPED_MUTATION_AUDIT_H
 
 #include "core/provenance_tracker.hh"
+#include "core/atomic_fence_port.h"
 #include "core/resource_quota.hh"     // process_resource_quota_manager (#2493 mid resolve)
 #include "core/security_event_wal.hh" // #3054 emit_security_event_durable on refuse
 #include "core/workspace_epoch.hh"    // current_mutation_epoch (#2493 mid resolve)
@@ -3329,7 +3330,7 @@ inline constexpr int kTypeExportAuthorityRaceIssue = 3316;
     if ((s0 & 1ull) != 0)
         return false;
     const auto f0 = g_pending_full_solve_residual_face.load(std::memory_order_acquire);
-    std::atomic_thread_fence(std::memory_order_acquire);
+    aura::util::thread_fence(std::memory_order_acquire);
     const auto f1 = g_pending_full_solve_residual_face.load(std::memory_order_acquire);
     const auto s1 = g_occurrence_persist_seq.load(std::memory_order_acquire);
     if (s0 != s1 || (s1 & 1ull) != 0)
