@@ -17,6 +17,7 @@
 #include "core/capability_model.hh"
 #include "core/lifetime_pin.hh" // #2597 g_general_object_pin_required_pref
 #include "core/mutation_audit_wal.hh"
+#include "core/security_event_wal.hh" // #3460 force_wal pairs the SE side-car
 #include "core/wal_append_fail_slo.h" // #3302 force_wal default fail-closed arm
 #include "core/provenance_tracker.hh"
 #include "core/sandbox.hh"
@@ -269,7 +270,19 @@ inline void apply_production_security_defaults() noexcept {
                                           : resolve_mutation_audit_wal_dir(&used_default);
             // Process-wide enable; ring replay happens when an Evaluator
             // later calls enable_mutation_audit_wal on the same path.
-            if (g_mutation_audit_wal().enable(std::string_view(dir), nullptr, 0)) {
+            const bool mut_ok = g_mutation_audit_wal().enable(std::string_view(dir), nullptr, 0);
+            // Issue #3460: pair the SecurityEvent side-car on the same dir
+            // (resolve_security_event_wal_dir falls through to the same
+            // default) so InvariantFail / hygiene / mid-fallback-refused
+            // mids survive the 1024 SE ring wrap under force_wal without
+            // waiting for an Evaluator to call enable_mutation_audit_wal
+            // (#2492/#2225 residual). Empty replay matches the mutation
+            // call shape; side-car enable failure stays non-fatal
+            // (#2225) — persist_security_event short-circuits while off
+            // and security_event_wal_enabled already records the miss.
+            (void)::aura::core::security_event_wal::g_security_event_wal().enable(
+                std::string_view(dir), nullptr, 0);
+            if (mut_ok) {
                 // Issue #3302: force_wal means "this deploy is durable".
                 // Pair fail-closed so fwrite miss captures overflow ring
                 // (opt-out: AURA_WAL_APPEND_FAIL_OPEN=1). Soft/dev_off

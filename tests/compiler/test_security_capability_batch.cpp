@@ -56,6 +56,7 @@ extern int run_test_security_audit_trail();
 extern int run_test_security_audit_unify();
 extern int run_test_security_audit_wal_force_restricted();
 extern int run_test_security_event_wal_replay();
+extern int run_test_audit_durable_gap_force_wal(); // #3460: activate dormant member
 extern int run_test_security_health();
 extern int run_test_security_posture_trail();
 extern int run_test_security_schedule_mutate_admit();
@@ -333,6 +334,21 @@ int main() {
     CHECK(true, "skip leftover 3298 Full WAL AC");
     ++members_passed;
     std::println("OK member test_typed_summary_full_gate (skip leftover AC)");
+
+    // Issue #3460: activate the dormant durable-gap member so the SE
+    // side-car pairing source-cites actually run. (The replay member
+    // stays dormant — it has pre-existing dormant rot, separate cleanup.)
+    std::println("\n──── test_audit_durable_gap_force_wal ────");
+    reset_member_face();
+    g_passed = 0;
+    g_failed = 0;
+    if (run_test_audit_durable_gap_force_wal() != 0 || g_failed != 0) {
+        ++members_failed;
+        std::println("FAIL member test_audit_durable_gap_force_wal ({}/{})", g_passed, g_failed);
+    } else {
+        ++members_passed;
+        std::println("OK member test_audit_durable_gap_force_wal ({} checks)", g_passed);
+    }
 
     std::println("\n=== {} members: {} ok, {} failed ===", members_passed + members_failed,
                  members_passed, members_failed);

@@ -1049,7 +1049,21 @@ inline void apply_production_audit_defaults() noexcept {
                 bool used_default = false;
                 const auto dir = has_explicit ? std::string(explicit_wal)
                                               : resolve_mutation_audit_wal_dir(&used_default);
-                if (g_mutation_audit_wal().enable(std::string_view(dir), nullptr, 0)) {
+                const bool mut_ok =
+                    g_mutation_audit_wal().enable(std::string_view(dir), nullptr, 0);
+                // Issue #3460: pair the SecurityEvent side-car on the same
+                // dir (resolve_security_event_wal_dir falls through to the
+                // same default) so InvariantFail / hygiene /
+                // mid-fallback-refused mids survive the 1024 SE ring wrap
+                // under force_wal without waiting for an Evaluator to call
+                // enable_mutation_audit_wal (#2492/#2225 residual). Empty
+                // replay matches the mutation call shape; side-car enable
+                // failure stays non-fatal (#2225) —
+                // persist_security_event short-circuits while off and
+                // security_event_wal_enabled already records the miss.
+                (void)::aura::core::security_event_wal::g_security_event_wal().enable(
+                    std::string_view(dir), nullptr, 0);
+                if (mut_ok) {
                     if (force_wal)
                         ::aura::core::wal_slo::set_wal_fail_closed_defaulted_by_force_wal(true);
                     if (force_wal && !has_explicit) {
