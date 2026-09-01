@@ -4804,7 +4804,11 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             const auto want_fiber = filt_fiber ? as_int(a[2]) : 0;
             const bool filt_since = a.size() >= 4 && is_int(a[3]) && as_int(a[3]) > 0;
             const auto since_seq = filt_since ? static_cast<std::uint64_t>(as_int(a[3])) : 0;
-            const bool filt_mid = a.size() >= 5 && is_int(a[4]) && as_int(a[4]) != 0;
+            // Issue #3462 AC5: an explicit mutation-id argument (including 0)
+            // filters on it — mid=0 selects the refuse rows
+            // ("mid-fallback-refused"). Omitted / non-int keeps the legacy
+            // unfiltered behavior (additive only).
+            const bool filt_mid = a.size() >= 5 && is_int(a[4]);
             const auto want_mid = filt_mid ? static_cast<std::uint64_t>(as_int(a[4])) : 0;
             // Issue #3054: optional reason contains-filter (string).
             const bool filt_reason = a.size() >= 6 && is_string(a[5]);

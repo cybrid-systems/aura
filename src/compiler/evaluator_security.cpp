@@ -207,6 +207,29 @@ void Evaluator::grant_capability(std::string cap, bool single_use, bool session_
 void Evaluator::emit_mutation_audit(std::uint32_t nodes_changed, std::uint32_t epoch_delta,
                                     std::string_view op, ast::NodeId target_node) noexcept {
     using namespace ::aura::core::audit_wal;
+    // Issue #3462: production/Full must not stamp phantom mid|epoch=1 — such
+    // rows can never join resolve/grant refuse (both mid=0). Join the SSOT
+    // (composite pin / boundary mid / noted TypedMid / epoch) BEFORE any ring
+    // write; when everything is unset the resolve refuse already emitted the
+    // joinable mid=0 SE ("mid-fallback-refused") — emit nothing here.
+    // Soft / Off keeps the last-resort non-zero observe stamp (#2493 AC4).
+    const auto me = ::aura::core::current_mutation_epoch();
+    const bool production_or_full = typed_audit::production_defaults_active() ||
+                                    typed_audit::get_strategy() == typed_audit::AuditStrategy::Full;
+    std::uint64_t mid = 0;
+    std::uint64_t epoch = me;
+    if (production_or_full) {
+        mid = typed_audit::join_audit_and_se_mid(0);
+        if (mid == 0)
+            return; // refuse SE (mid=0) is the evidence; no ring/WAL row
+    } else {
+        epoch = me != 0 ? me : 1;
+        // Issue #3296 / #3335: prefer TypedMid then Mutation so structural
+        // audits are not permanently mid=0. Soft/Off: relaxed loads only.
+        mid = typed_audit::last_type_linear_commit_proof_stamp_v_read();
+        if (mid == 0)
+            mid = epoch;
+    }
     const auto seq = mutation_audit_seq_.fetch_add(1, std::memory_order_relaxed);
     auto& slot = mutation_audit_ring_[seq % kMutationAuditRingSize];
     slot.seq = seq;
@@ -227,16 +250,11 @@ void Evaluator::emit_mutation_audit(std::uint32_t nodes_changed, std::uint32_t e
     slot.effect_denied = false;
     // Issue #3335: ring.epoch is WorkspaceEpoch Mutation (same vocabulary
     // as grant.bound_mutation_id / SE.mutation_id / TypedMid). Bridge is
-    // AOT/JIT/closure only — never the audit join key. Pre-#3335 this
-    // stamped Evaluator::current_bridge_epoch() and split from #2149.
-    const auto me = ::aura::core::current_mutation_epoch();
-    slot.epoch = me != 0 ? me : 1;
+    // AOT/JIT/closure only — never the audit join key. #3462: production
+    // epoch stays raw (0 legal — never coerced to a phantom 1); Soft/Off
+    // keeps the non-zero observe stamp decided above.
+    slot.epoch = epoch;
     slot.bridge_epoch = ::aura::core::current_bridge_epoch();
-    // Issue #3296 / #3335: prefer TypedMid then Mutation so structural
-    // audits are not permanently mid=0. Soft/Off: relaxed loads only.
-    std::uint64_t mid = typed_audit::last_type_linear_commit_proof_stamp_v_read();
-    if (mid == 0)
-        mid = slot.epoch;
     slot.provenance_mutation_id = mid;
     mutation_audit_total_.fetch_add(1, std::memory_order_relaxed);
     // #1567: WAL append (optional; no-op when disabled)
@@ -301,9 +319,19 @@ bool Evaluator::check_and_record_effect(std::uint16_t required_effect_bits,
                 using ::aura::core::security_event::SecurityEventKind;
                 using ::aura::core::security_event_wal::emit_security_event_durable;
                 const auto epoch = ::aura::core::current_mutation_epoch();
-                const auto mid = provenance_mutation_id != 0
-                                     ? provenance_mutation_id
-                                     : (epoch != 0 ? epoch : static_cast<std::uint64_t>(1));
+                auto mid = provenance_mutation_id != 0
+                               ? provenance_mutation_id
+                               : (epoch != 0 ? epoch : static_cast<std::uint64_t>(1));
+                // Issue #3462: production/Full never stamps phantom mid=1 —
+                // join the SSOT instead; when everything is unset the resolve
+                // refuse SE ("mid-fallback-refused", mid=0) is the joinable
+                // evidence, so this site emits no SE at all.
+                if (typed_audit::production_defaults_active() ||
+                    typed_audit::get_strategy() == typed_audit::AuditStrategy::Full) {
+                    mid = typed_audit::join_audit_and_se_mid(provenance_mutation_id);
+                    if (mid == 0)
+                        return false; // hard deny stands; refuse row is mid=0
+                }
                 const auto fid = static_cast<std::int64_t>(f->id());
                 // Tenant: prefer caller's tenant_id; fall back to evaluator ambient.
                 const auto tenant =

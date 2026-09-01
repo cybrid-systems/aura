@@ -480,7 +480,11 @@ namespace {
                     m->macro_hygiene_provenance_hits_total.fetch_add(1, std::memory_order_relaxed);
                     // Metrics-local stamp for truncation blame auto-pull (#1877).
                     m->last_hygiene_blame_node = static_cast<std::uint32_t>(id);
-                    m->last_hygiene_blame_mutation = 0;
+                    // Issue #3462: keep the join mid (composite / boundary /
+                    // noted TypedMid / epoch) so hygiene blame stays joinable
+                    // with ring / SE / trail rows; 0 under production refuse —
+                    // same as the previous hard 0.
+                    m->last_hygiene_blame_mutation = typed_audit::join_audit_and_se_mid(0);
                 }
                 return mev("hygiene-protected",
                            "target node " + std::to_string(id) +

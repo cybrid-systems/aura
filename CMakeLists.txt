@@ -3124,6 +3124,7 @@ endif()
 add_executable(test_security_capability_batch
     tests/compiler/test_security_capability_batch.cpp
     tests/compiler/test_audit_mid_fallback_slo.cpp
+    tests/compiler/test_isolation_audit_mid.cpp
     tests/compiler/test_audit_mutation_id_unify.cpp
     tests/compiler/test_audit_ring_publish.cpp
     tests/compiler/test_cap_write_effect_matrix.cpp
@@ -4014,7 +4015,6 @@ add_executable(test_misc_issue_fold_batch
     tests/compiler/test_dual_path_desync_hard_fail.cpp
     tests/compiler/test_escape_move_elision_gate.cpp
     tests/compiler/test_incremental_soundness_oracle.cpp
-    tests/compiler/test_isolation_audit_mid.cpp
     tests/compiler/test_mutate_capability_force.cpp
     tests/compiler/test_orch_scope_child.cpp
     tests/compiler/test_post_compact_lifecycle.cpp

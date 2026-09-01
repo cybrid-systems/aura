@@ -48,6 +48,7 @@ extern int run_test_grant_epoch_retain_restricted();
 extern int run_test_grant_epoch_retain_window();
 extern int run_test_grant_macro_self_evo_stamp();
 extern int run_test_hard_fiber_isolation();
+extern int run_test_isolation_audit_mid();
 extern int run_test_hard_fiber_restricted();
 extern int run_test_require_effect_auto_isolation();
 extern int run_test_require_effect_live_mid();
@@ -89,6 +90,18 @@ int main() {
     } else {
         ++members_passed;
         std::println("OK member test_audit_mid_fallback_slo ({} checks)", g_passed);
+    }
+
+    std::println("\n──── test_isolation_audit_mid ────");
+    reset_member_face();
+    g_passed = 0;
+    g_failed = 0;
+    if (run_test_isolation_audit_mid() != 0 || g_failed != 0) {
+        ++members_failed;
+        std::println("FAIL member test_isolation_audit_mid ({}/{})", g_passed, g_failed);
+    } else {
+        ++members_passed;
+        std::println("OK member test_isolation_audit_mid ({} checks)", g_passed);
     }
 
     std::println("\n──── test_audit_mutation_id_unify ────");
