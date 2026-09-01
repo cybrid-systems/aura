@@ -71,6 +71,16 @@ void reset_all() {
     clear_env("AURA_COMMERCIAL_TENANT");
 }
 
+// #3409: seed TA + Mutate while Off, then Restricted. Mid 1 so
+// Restricted provenance_ok is not a vacuous mid-0 deny.
+EffectProvenance seed_mutate_share_grants() {
+    g_capability_registry().grant(0, "tenant-admin", Effect::TenantAdmin,
+                                  make_grant_provenance(1, true, 0, 0));
+    auto prov = make_grant_provenance(1, true, 0, 1);
+    g_capability_registry().grant(10, "mutate", Effect::Mutate, prov);
+    return prov;
+}
+
 std::int64_t posture(CompilerService& cs, std::string_view key) {
     auto r =
         cs.eval(std::format("(hash-ref (engine:metrics \"query:security-posture\") \"{}\")", key));
@@ -99,6 +109,8 @@ int run_test_commercial_tenant_profile() {
     {
         std::println("\n--- AC1: Restricted default soft (#2536 regression) ---");
         reset_all();
+        set_effect_fiber_id_override(1);
+        auto prov = seed_mutate_share_grants();
         set_env("AURA_SANDBOX", "restricted");
         apply_production_security_defaults();
         CHECK(!g_capability_registry().hard_fiber_isolation(), "AC1: Restricted soft default");
@@ -106,10 +118,6 @@ int run_test_commercial_tenant_profile() {
 
         // Fiber A holds a Mutate grant on tenant 10; fiber B (same tenant,
         // different fiber id) is allowed (soft share) and bumps mismatch metric.
-        set_effect_fiber_id_override(1);
-        auto prov = make_grant_provenance(/*mutation_id=*/0, /*force_bind=*/true,
-                                          /*node_id=*/0, /*fiber_id=*/1);
-        g_capability_registry().grant(/*tenant=*/10, "mutate", Effect::Mutate, prov);
         const auto m0 = g_capability_effect_metrics().capability_fiber_mismatch_total.load();
         const auto d0 = g_capability_effect_metrics().capability_fiber_hard_deny_total.load();
         set_effect_fiber_id_override(2);
@@ -130,15 +138,13 @@ int run_test_commercial_tenant_profile() {
     {
         std::println("\n--- AC2: commercial profile forces hard under Restricted ---");
         reset_all();
+        set_effect_fiber_id_override(1);
+        auto prov = seed_mutate_share_grants();
         set_env("AURA_SANDBOX", "restricted");
         set_env("AURA_COMMERCIAL_TENANT", "1");
         apply_production_security_defaults();
         CHECK(g_capability_registry().hard_fiber_isolation(), "AC2: commercial profile sets hard");
         CHECK(is_commercial_tenant_profile(), "AC2: profile flag on (cached)");
-
-        set_effect_fiber_id_override(1);
-        auto prov = make_grant_provenance(0, true, 0, 1);
-        g_capability_registry().grant(10, "mutate", Effect::Mutate, prov);
         const auto m0 = g_capability_effect_metrics().capability_fiber_mismatch_total.load();
         const auto d0 = g_capability_effect_metrics().capability_fiber_hard_deny_total.load();
         set_effect_fiber_id_override(2);
@@ -157,6 +163,8 @@ int run_test_commercial_tenant_profile() {
     {
         std::println("\n--- AC3: explicit off overrides commercial profile ---");
         reset_all();
+        set_effect_fiber_id_override(1);
+        auto prov = seed_mutate_share_grants();
         set_env("AURA_SANDBOX", "restricted");
         set_env("AURA_COMMERCIAL_TENANT", "1");
         set_env("AURA_HARD_FIBER_ISOLATION", "0");
@@ -167,9 +175,6 @@ int run_test_commercial_tenant_profile() {
               "AC3: commercial profile flag still on (env-only override, not a parse failure)");
 
         // Fiber B must be allowed under soft despite commercial flag set.
-        set_effect_fiber_id_override(1);
-        auto prov = make_grant_provenance(0, true, 0, 1);
-        g_capability_registry().grant(10, "mutate", Effect::Mutate, prov);
         const auto d0 = g_capability_effect_metrics().capability_fiber_hard_deny_total.load();
         set_effect_fiber_id_override(2);
         EffectProvenance caller{};

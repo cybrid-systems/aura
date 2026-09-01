@@ -42,6 +42,7 @@ using aura::core::audit_wal::kAuditWalForceMultiTenantIssue;
 using aura::core::audit_wal::MutationAuditWal;
 using aura::core::audit_wal::reset_audit_wal_for_test;
 using aura::core::audit_wal::snapshot_audit_wal_stats;
+using aura::core::capability::g_capability_registry;
 using aura::core::capability::reset_capability_effects_for_test;
 using aura::core::sandbox::SandboxMode;
 using aura::core::sandbox::set_mode;
@@ -143,8 +144,11 @@ static void ac3_replay_security_events() {
         CompilerService cs;
         auto& ev = cs.evaluator();
         CHECK(ev.enable_mutation_audit_wal(dir.string()), "enable WAL dir");
-        ev.set_effect_sandbox_mode(1);
         ev.set_capability_tenant_id(77);
+        g_capability_registry().grant(
+            77, "tenant-admin", aura::core::capability::Effect::TenantAdmin,
+            aura::core::capability::make_grant_provenance(22, true, 0, 0));
+        ev.set_effect_sandbox_mode(1); // Restricted after TA bootstrap (#3409)
         // Deny un-granted mutate.
         CHECK(!ev.check_and_record_effect_for_test(kEffectMutate, kEffectMutate, "ac3-deny", 0, 77,
                                                    11),

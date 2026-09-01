@@ -319,6 +319,13 @@ export struct BasicBlockSoA;
 // later). Today: std::vector for simplicity, defer arena
 // migration to Phase 3.
 export struct IRFunctionSoA {
+    IRFunctionSoA() = default;
+    IRFunctionSoA(const IRFunctionSoA&) = default;
+    IRFunctionSoA& operator=(const IRFunctionSoA&) = default;
+    IRFunctionSoA(IRFunctionSoA&&) noexcept = default;
+    IRFunctionSoA& operator=(IRFunctionSoA&&) noexcept = default;
+    ~IRFunctionSoA() noexcept;
+
     // Issue #463: function identity. Mirrors the AoS
     // IRFunction's name + local_count fields. Needed for
     // SoA→AoS view conversion in the SoAtoAoSBridgePass.
@@ -741,6 +748,12 @@ namespace detail {
         }
     }
 } // namespace detail
+
+inline IRFunctionSoA::~IRFunctionSoA() noexcept {
+    // Heap-reuse of this address must not continue a prior streak
+    // (#2774 residual / #2936 abort across batch members).
+    detail::clear_single_mark_residual(this);
+}
 
 inline void IRFunctionSoA::mark_block_dirty(std::uint32_t block_id) {
     // Issue #3355: Soft/test single-mark body. Production TUs must not

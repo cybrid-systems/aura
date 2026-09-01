@@ -3,6 +3,7 @@
 // Prefer adding a section here over a new tests/mutation binary.
 
 #include "test_harness.hpp"
+#include "compiler/typed_mutation_audit.h"
 #ifndef TEST_LOG
 #define TEST_LOG(...) std::println(__VA_ARGS__)
 #endif
@@ -448,6 +449,8 @@ namespace aura_639_detail {
 
     static void test_no_wrong_narrow_after_cond_mutate() {
         std::println("\n--- AC6: no wrong narrow after cond mutate ---");
+        aura::compiler::typed_audit::reset_for_test();
+        aura::compiler::typed_audit::apply_dev_audit_defaults();
         CompilerService cs;
         CHECK(load_if_workspace(cs), "load if workspace");
         (void)cs.eval("(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (+ x 10) 0))\" "

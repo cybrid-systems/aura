@@ -309,7 +309,15 @@ inline void reset_orch_security_schedule_counters_for_test() noexcept {
 // true when the gate flipped to a non-ok reason (force_reason_code != 0
 // == "ok" sentinel — see commit_readiness_reason_code).
 inline std::pair<bool, bool> commit_readiness_live_signals() noexcept {
-    const auto in = aura::compiler::typed_audit::commit_readiness_live_policy();
+    auto in = aura::compiler::typed_audit::commit_readiness_live_policy();
+    // #3414 no-TC TIMEOUT is IR/JIT commit authority, not first-mutate
+    // admit. Quiet last-proof on a fresh Evaluator must not shadow
+    // health / region overlap as the first relevant deny.
+    using aura::compiler::typed_audit::g_last_type_linear_proof_outcome;
+    using aura::compiler::typed_audit::kTypeLinearProofOutcomeStamped;
+    if (in.solve_status == 2 && g_last_type_linear_proof_outcome.load(std::memory_order_relaxed) !=
+                                    kTypeLinearProofOutcomeStamped)
+        in.solve_status = 0;
     const auto r = aura::compiler::typed_audit::commit_readiness(in);
     return {r.would_allow_commit, r.force_reason_code != 0};
 }

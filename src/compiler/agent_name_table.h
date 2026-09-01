@@ -74,21 +74,21 @@ struct AgentNameTable {
     // are never touched). Clean / done slots still replace — prior
     // behavior preserved (#2078 "same-name spawn overrides prior").
     // Cost when both flags are false: two bool loads, no atomic (AC2).
-    aura::orch::AgentHandle* put(aura::orch::AgentHandle h) {
+    aura::orch::AgentHandle* put(aura::orch::AgentHandle&& h) {
         std::lock_guard<std::mutex> lock(impl_->mu_);
         auto name = h.name.empty() ? ("agent-" + std::to_string(h.id)) : h.name;
         h.name = name;
-        auto [it, inserted] = impl_->agents_.try_emplace(name, std::move(h));
-        if (!inserted) {
+        auto it = impl_->agents_.find(name);
+        if (it != impl_->agents_.end()) {
             // Issue #3467: typed deny — do not move-assign over a slot
-            // that still owes Reclaimed cleanup.
+            // that still owes Reclaimed cleanup. Caller keeps `h`.
             if (it->second.must_wait_reclaimed || it->second.reclaimed_deferred_cleanup)
                 return nullptr;
-            // Same-name spawn overrides prior handle. The replaced
-            // AgentHandle destructor releases its arena reservation.
             it->second = std::move(h);
+            return &it->second;
         }
-        return &it->second;
+        auto [ins, _] = impl_->agents_.emplace(std::move(name), std::move(h));
+        return &ins->second;
     }
 
     aura::orch::AgentHandle* find(const std::string& name) {

@@ -3,6 +3,7 @@
 // Prefer adding a section here over a new tests/mutation binary.
 
 #include "test_harness.hpp"
+#include "compiler/typed_mutation_audit.h"
 #include <fstream>
 #include <print>
 #include <string>
@@ -1899,6 +1900,8 @@ static bool setup_typed(CompilerService& cs) {
 }
 int run_1457_type_prop_dce_smoke() {
     std::println("\n=== #1457: type-propagation + cast zero-overhead smoke ===");
+    aura::compiler::typed_audit::reset_for_test();
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
     CompilerService cs;
     const auto runs0 = cs.get_type_propagation_runs();
     CHECK(setup_typed(cs), "setup typed");

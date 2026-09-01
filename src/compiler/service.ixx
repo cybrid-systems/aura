@@ -2118,7 +2118,13 @@ public:
             auto* ws_flat = evaluator_.workspace_flat();
             auto* ws_pool = evaluator_.workspace_pool();
             if (is_bare) {
+                // Last live Define wins: mutate:rebind may intern a new
+                // SymId and take the add-path, leaving the original
+                // Define earlier in the table.
+                aura::ast::NodeId found_body = aura::ast::NULL_NODE;
                 for (aura::ast::NodeId id = 0; id < ws_flat->size(); ++id) {
+                    if (ws_flat->is_free_slot(id))
+                        continue;
                     auto v = ws_flat->get(id);
                     if (v.tag != aura::ast::NodeTag::Define)
                         continue;
@@ -2129,9 +2135,11 @@ public:
                     auto name = std::string(ws_pool->resolve(v.sym_id));
                     if (name != trimmed)
                         continue;
-                    auto body_id = v.child(0);
-                    return evaluator_.eval_flat(*ws_flat, *ws_pool, body_id, evaluator_.top_env());
+                    found_body = v.child(0);
                 }
+                if (found_body != aura::ast::NULL_NODE)
+                    return evaluator_.eval_flat(*ws_flat, *ws_pool, found_body,
+                                                evaluator_.top_env());
                 // Not in workspace — fall through to the normal
                 // pipeline (which will return an "undefined variable"
                 // diagnostic just as it would without the workspace).
@@ -2161,11 +2169,14 @@ public:
                         }
                     }
                     if (head_is_bare) {
-                        // Look up head_name in workspace defines.
+                        // Last live Lambda Define wins (rebind add-path /
+                        // intern SymId mismatch must not keep the old body).
                         aura::ast::NodeId def_body = aura::ast::NULL_NODE;
                         std::vector<aura::ast::SymId> fn_params;
                         bool dotted = false;
                         for (aura::ast::NodeId id = 0; id < ws_flat->size(); ++id) {
+                            if (ws_flat->is_free_slot(id))
+                                continue;
                             auto v = ws_flat->get(id);
                             if (v.tag != aura::ast::NodeTag::Define)
                                 continue;
@@ -2188,7 +2199,6 @@ public:
                             // Dotted flag is bit 0 of int_value (see ast.ixx
                             // add_lambda encoding).
                             dotted = (body_v.int_value & 1) != 0;
-                            break;
                         }
                         if (def_body != aura::ast::NULL_NODE) {
                             // Tokenize the args between head_end and close.
@@ -10840,6 +10850,7 @@ public:
         metrics_.shape_stability_post_compact_preserved_total.store(
             shape::shape_stability_post_compact_preserved.load(std::memory_order_relaxed),
             std::memory_order_relaxed);
+        evaluator_.clear_sym_intern_after_compact();
         metrics_.deopt_from_arena_compact_total.store(
             shape::deopt_from_arena_compact_total.load(std::memory_order_relaxed),
             std::memory_order_relaxed);

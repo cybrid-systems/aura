@@ -679,6 +679,7 @@ private:
     // drop (the original goal) removes this field after the
     // migration completes; see cpp26_guide.md §2.7.7.
     const aura::ast::StringPool* pool_ = nullptr; // Issue #145
+    std::uint64_t pool_epoch_ = 0;
     // P0 step 2: cells_ pointer removed (was used for cell deref in
     // lookups). Bindings now always return the raw value (cell
     // sentinel if applicable); deref centralized via Evaluator
@@ -6231,17 +6232,21 @@ private:
     // stores the leading ':' payload for existing readers.
     SymIdIntern keyword_intern_by_sym_;
     const ast::StringPool* sym_intern_pool_ = nullptr;
+    std::uint64_t intern_pool_gen_ = 0;
     void bind_sym_intern_pool(const ast::StringPool* p) noexcept {
-        if (sym_intern_pool_ == p)
+        const auto gen = p ? p->intern_epoch() : 0;
+        if (sym_intern_pool_ == p && intern_pool_gen_ == gen)
             return;
         string_intern_by_sym_.clear();
         keyword_intern_by_sym_.clear();
         sym_intern_pool_ = p;
+        intern_pool_gen_ = gen;
     }
     void clear_sym_intern() noexcept {
         string_intern_by_sym_.clear();
         keyword_intern_by_sym_.clear();
         sym_intern_pool_ = nullptr;
+        intern_pool_gen_ = 0;
     }
     std::vector<std::string> keyword_table_; // keyword name strings (indexed by KeywordRef)
     std::size_t eval_depth_ = 0;             // recursion counter for friendly stack overflow
@@ -6325,6 +6330,9 @@ private:
     bool allow_cross_tenant_ = false;
 
 public:
+    // Issue #3457: CompilerService arena compact cannot reach the private
+    // intern tables. Same clear as on_arena_compact_hook / module-load.
+    void clear_sym_intern_after_compact() noexcept { clear_sym_intern(); }
     // Issue #2078: per-Evaluator orch agent name table. Replaces the
     // TU-local static OrchAgentNameTable that lived in
     // evaluator_primitives_agent.cpp — multiple CompilerService

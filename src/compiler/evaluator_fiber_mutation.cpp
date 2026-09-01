@@ -1019,6 +1019,7 @@ void aura::compiler::Evaluator::on_arena_known_roots_hook_thunk(void* ctx) noexc
 }
 
 void aura::compiler::Evaluator::on_arena_compact_hook() {
+    clear_sym_intern();
     re_pin_cow_children_from_snapshot();
     // Issue #1612: GC compact path — MacroIntroduced marker/provenance repin.
     (void)refresh_stale_macro_frames(0, 0);

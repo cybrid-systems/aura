@@ -696,6 +696,7 @@ static void ac3467_name_reuse_fail_closed() {
     CHECK(h2.ok, "3467 AC1: second spawn ok");
     const auto id_new = h2.id;
     CHECK(table.put(std::move(h2)) == nullptr, "3467 AC1: put over pending slot denied (nullptr)");
+    CHECK(h2.ok && h2.fiber, "3467 AC1: denied handle still owned by caller");
     auto* p = table.find("3467-pending");
     CHECK(p != nullptr && p->id != id_new, "3467 AC1: pending handle NOT replaced");
     CHECK(p->reclaimed_deferred_cleanup, "3467 AC1: pending flags intact");
@@ -720,6 +721,20 @@ static void ac3467_name_reuse_fail_closed() {
     auto* accepted = table.put(std::move(h3));
     CHECK(accepted != nullptr && accepted->id == id3,
           "3467 AC5: put allowed after cleanup (flags cleared)");
+
+    // Drain leftover live fibers before table/scheduler dtors (mailbox
+    // attach must not outlive the Scheduler).
+    auto finish = [](aura::orch::AgentHandle& hh) {
+        if (hh.fiber) {
+            hh.fiber->request_cancel();
+            hh.fiber->set_state(FiberState::Done);
+            hh.fiber->note_body_exit_if_reclaimed();
+            hh.finish_reclaimed_cleanup_on_dtor();
+        }
+    };
+    finish(h2);
+    if (accepted)
+        finish(*accepted);
 
     apply_dev_audit_defaults();
     if (!prev_sb_s.empty())

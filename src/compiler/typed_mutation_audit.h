@@ -4586,6 +4586,7 @@ inline void snapshot_global(std::uint64_t& considered, std::uint64_t& skipped,
 // unit tests keep the fast-iteration path; cold-start process default is
 // Full (#2818) until this or apply_dev is called.
 inline void reset_for_test() noexcept {
+    reset_outermost_persist_reject_needs_restore_for_test();
     g_last_stamped_audit_mid.store(0, std::memory_order_relaxed);
     g_last_composite_batch_join_mid.store(0, std::memory_order_relaxed);
     g_composite_batch_join_pin_total.store(0, std::memory_order_relaxed);

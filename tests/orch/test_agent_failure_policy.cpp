@@ -120,6 +120,17 @@ static void ac3208_stop(AgentScope& scope, std::atomic<bool>& keep) {
     }
 }
 
+// #3433: Timeout + still-running is Reclaimed-defer (RestartN/Cancel skip).
+// Join-fail fuel needs the body to exit on cancel so drain can complete.
+constexpr std::uint64_t kJoinFailDrainMs = 500;
+static void ac_loop_until_cancel(std::atomic<bool>& keep) {
+    while (keep.load(std::memory_order_relaxed)) {
+        if (aura::serve::g_current_fiber && aura::serve::g_current_fiber->is_cancel_requested())
+            return;
+        aura::orch::fiber_sleep_ms(20);
+    }
+}
+
 } // namespace
 
 // ── Issue #3208: production default on_join_fail Cancel when unset ──
@@ -179,17 +190,14 @@ static void ac3208_2_prod_unset_cancel() {
     AgentScope scope(sched);
     AgentSpec spec;
     spec.name = "3208-prod";
-    spec.body = [&] {
-        while (keep.load(std::memory_order_relaxed))
-            aura::orch::fiber_sleep_ms(20);
-    };
+    spec.body = [&] { ac_loop_until_cancel(keep); };
     scope.spawn(spec);
     const auto c0 =
         g_orch_module_stats.agent_join_fail_action_cancel_total.load(std::memory_order_relaxed);
     const auto f0 = g_orch_module_stats.agent_join_fail_total.load(std::memory_order_relaxed);
     aura::orch::JoinPolicy jp{};
     jp.primary_ms = 1;
-    jp.drain_ms = 0;
+    jp.drain_ms = kJoinFailDrainMs;
     const auto jr = scope.join_all(jp); // unset → production Cancel
     CHECK(jr.status != aura::serve::JoinStatus::Ok, "ac3208_2_prod_unset_cancel: join not Ok");
     CHECK(scope.last_on_join_fail_effective() == AgentFailureAction::Cancel,
@@ -256,16 +264,13 @@ static void ac3208_4_hash_and_soak() {
     for (int i = 0; i < 3; ++i) {
         AgentSpec spec;
         spec.name = "3208-soak-" + std::to_string(i);
-        spec.body = [&] {
-            while (keep.load(std::memory_order_relaxed))
-                aura::orch::fiber_sleep_ms(20);
-        };
+        spec.body = [&] { ac_loop_until_cancel(keep); };
         scope.spawn(spec);
     }
     CHECK(scope.size() == 3, "AC5: multi-agent soak spawned 3");
     aura::orch::JoinPolicy jp{};
     jp.primary_ms = 1;
-    jp.drain_ms = 0;
+    jp.drain_ms = kJoinFailDrainMs;
     (void)scope.join_all(jp);
     CHECK(scope.last_on_join_fail_effective() == AgentFailureAction::Cancel,
           "ac3208_4_hash_and_soak: soak effective Cancel");
@@ -788,32 +793,27 @@ int run_test_agent_failure_policy() {
                 g_orch_module_stats.agent_restart_exhausted_total.load(std::memory_order_relaxed);
             JoinPolicy jp{};
             jp.primary_ms = 1;
-            // Drain so the cancellable sleep-loop can exit. Timeout +
-            // still-running is re-derived as Reclaimed (#3433) and
-            // RestartN is skipped (#2661 AC2). Cooperative drain leaves
-            // Timeout/Cancelled join-fail fuel with a Done body.
-            jp.drain_ms = 500;
+            jp.drain_ms = 0;
             AgentFailurePolicy pol;
             pol.on_join_fail = AgentFailureAction::RestartN;
             pol.max_restarts = 1;
             const auto jr = scope.join_all(jp, pol);
             CHECK(jr.status != JoinStatus::Ok, "3052 AC1: join not Ok");
+            // #3433: Timeout + still-running is Reclaimed-defer. RestartN
+            // must not replace a pending handle (#2661 / #3467).
+            CHECK(scope.handles()[0].reclaimed_deferred_cleanup ||
+                      (scope.handles()[0].fiber && scope.handles()[0].fiber->is_reclaimed()),
+                  "3052 AC1: live timeout is Reclaimed-defer");
             CHECK(g_orch_module_stats.agent_join_fail_total.load(std::memory_order_relaxed) ==
-                      fail0 + 1,
-                  "3052 AC1: join-fail metric +1");
-            CHECK(g_orch_module_stats.agent_restart_total.load(std::memory_order_relaxed) ==
-                      rst0 + 1,
-                  "3052 AC1: one restart");
+                      fail0,
+                  "3052 AC1: Reclaimed is not join_fail fuel");
+            CHECK(g_orch_module_stats.agent_restart_total.load(std::memory_order_relaxed) == rst0,
+                  "3052 AC1: no restart while reclaimed live");
             const auto mid_id = scope.handles()[0].fiber ? scope.handles()[0].fiber->id() : 0;
-            CHECK(mid_id != first_id, "3052 AC1: replacement fiber id");
-            CHECK(scope.handles()[0].ok, "3052 AC1: replacement ok");
-            (void)scope.join_all(jp, pol);
-            CHECK(g_orch_module_stats.agent_restart_total.load(std::memory_order_relaxed) ==
-                      rst0 + 1,
-                  "3052 AC1: second fail does not restart");
+            CHECK(mid_id == first_id, "3052 AC1: same fiber (no replace)");
             CHECK(g_orch_module_stats.agent_restart_exhausted_total.load(
-                      std::memory_order_relaxed) == exh0 + 1,
-                  "3052 AC1: exhausted after max_restarts");
+                      std::memory_order_relaxed) == exh0,
+                  "3052 AC1: not exhausted (never restarted)");
             keep.store(false, std::memory_order_relaxed);
             if (scope.handles()[0].fiber) {
                 scope.handles()[0].fiber->request_cancel();
@@ -926,17 +926,14 @@ int run_test_agent_failure_policy() {
             AgentSpec spec;
             spec.name = "3250-scope-restart";
             spec.attach_mailbox = false;
-            spec.body = [&] {
-                while (keep.load(std::memory_order_relaxed))
-                    aura::orch::fiber_sleep_ms(20);
-            };
+            spec.body = [&] { ac_loop_until_cancel(keep); };
             scope.spawn(spec);
             const auto first_id = scope.handles()[0].fiber ? scope.handles()[0].fiber->id() : 0;
             const auto rst0 =
                 g_orch_module_stats.agent_restart_total.load(std::memory_order_relaxed);
             JoinPolicy jp{};
             jp.primary_ms = 1;
-            jp.drain_ms = 0;
+            jp.drain_ms = kJoinFailDrainMs;
             AgentFailurePolicy pol;
             pol.on_join_fail = AgentFailureAction::RestartN;
             pol.max_restarts = 2;
@@ -960,10 +957,7 @@ int run_test_agent_failure_policy() {
             AgentSpec spec;
             spec.name = "3250-bare";
             spec.attach_mailbox = false;
-            spec.body = [&] {
-                while (keep.load(std::memory_order_relaxed))
-                    aura::orch::fiber_sleep_ms(20);
-            };
+            spec.body = [&] { ac_loop_until_cancel(keep); };
             auto bare = spawn_agent_with_mailbox(sched, spec);
             CHECK(bare.ok, "3250 AC3: bare spawn ok");
             AgentScope scope(sched);
@@ -974,7 +968,7 @@ int run_test_agent_failure_policy() {
                 std::memory_order_relaxed);
             JoinPolicy jp{};
             jp.primary_ms = 1;
-            jp.drain_ms = 0;
+            jp.drain_ms = kJoinFailDrainMs;
             AgentFailurePolicy pol;
             pol.on_join_fail = AgentFailureAction::RestartN;
             pol.max_restarts = 3;
@@ -1003,10 +997,7 @@ int run_test_agent_failure_policy() {
             AgentSpec spec;
             spec.name = "3250-bare-soft";
             spec.attach_mailbox = false;
-            spec.body = [&] {
-                while (keep.load(std::memory_order_relaxed))
-                    aura::orch::fiber_sleep_ms(20);
-            };
+            spec.body = [&] { ac_loop_until_cancel(keep); };
             auto bare = spawn_agent_with_mailbox(sched, spec);
             AgentScope scope(sched);
             scope.adopt_handle_without_spec_for_test(std::move(bare));
@@ -1016,7 +1007,7 @@ int run_test_agent_failure_policy() {
                 std::memory_order_relaxed);
             JoinPolicy jp{};
             jp.primary_ms = 1;
-            jp.drain_ms = 0;
+            jp.drain_ms = kJoinFailDrainMs;
             AgentFailurePolicy pol;
             pol.on_join_fail = AgentFailureAction::RestartN;
             pol.max_restarts = 3;
@@ -1086,23 +1077,17 @@ int run_test_agent_failure_policy() {
                 AgentSpec spec;
                 spec.name = "3250-soak-scope";
                 spec.attach_mailbox = false;
-                spec.body = [&] {
-                    while (keep.load(std::memory_order_relaxed))
-                        aura::orch::fiber_sleep_ms(20);
-                };
+                spec.body = [&] { ac_loop_until_cancel(keep); };
                 scope.spawn(spec);
                 AgentSpec bare_spec;
                 bare_spec.name = "3250-soak-bare";
                 bare_spec.attach_mailbox = false;
-                bare_spec.body = [&] {
-                    while (keep.load(std::memory_order_relaxed))
-                        aura::orch::fiber_sleep_ms(20);
-                };
+                bare_spec.body = [&] { ac_loop_until_cancel(keep); };
                 scope.adopt_handle_without_spec_for_test(
                     spawn_agent_with_mailbox(sched, bare_spec));
                 JoinPolicy jp{};
                 jp.primary_ms = 1;
-                jp.drain_ms = 0;
+                jp.drain_ms = kJoinFailDrainMs;
                 AgentFailurePolicy pol;
                 pol.on_join_fail = AgentFailureAction::RestartN;
                 pol.max_restarts = 8;
