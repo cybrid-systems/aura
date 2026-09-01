@@ -4,9 +4,11 @@
 #include "test_harness.hpp"
 
 #include "compiler/coercion_provenance_policy.hh"
+#include "compiler/lock_order_audit.h"
 #include "compiler/pipeline_policy.hh"
 #include "compiler/typed_mutation_audit.h"
 #include "core/capability_model.hh"
+#include "core/provenance_tracker.hh"
 #include "core/sandbox.hh"
 
 #include <print>
@@ -20,6 +22,11 @@ static void reset_member_face() {
     aura::compiler::reset_coercion_provenance_miss_policy_for_test();
     aura::core::capability::reset_capability_effects_for_test();
     aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+    aura::core::provenance::reset_linear_enforce_and_hygiene_for_test();
+    // Soft lock-order: a prior member's apply_production Hard leftover
+    // must not abort a later Soft revalidate on inversion.
+    aura::compiler::lock_order::force_audit_mode_for_test(1);
+    ::setenv("AURA_SANDBOX", "off", 1);
 }
 
 extern int run_test_effect_epoch_mutation_unify();

@@ -1162,6 +1162,14 @@ void Fiber::note_body_exit_if_reclaimed() noexcept {
         aura_orch_note_join_drain_reclaim_body_retired();
 }
 
+void Fiber::abandon_join_drain_still_running() noexcept {
+    if (still_running_after_reclaim_counted_.exchange(false, std::memory_order_acq_rel)) {
+        still_running_dec_one(join_drain_residual_still_running_);
+        if (aura_orch_note_join_drain_reclaim_still_running_drop)
+            aura_orch_note_join_drain_reclaim_still_running_drop();
+    }
+}
+
 std::uint64_t Fiber::join_drain_residual_still_running() noexcept {
     return join_drain_residual_still_running_.load(std::memory_order_relaxed);
 }
@@ -1207,11 +1215,7 @@ Fiber::~Fiber() {
     // Issue #2397: reaper destroyed Fiber while body never returned
     // (or body never started). Drop still-running gauge without
     // bumping retired — body did not exit cleanly after reclaim.
-    if (still_running_after_reclaim_counted_.exchange(false, std::memory_order_acq_rel)) {
-        still_running_dec_one(join_drain_residual_still_running_);
-        if (aura_orch_note_join_drain_reclaim_still_running_drop)
-            aura_orch_note_join_drain_reclaim_still_running_drop();
-    }
+    abandon_join_drain_still_running();
     // Issue #2498: safety-net release. If the Fiber reaches dtor
     // without ever being joined (test fixture dropped the pointer,
     // scheduler owning_fibers_.clear path, etc.), any pending orphan
@@ -1399,6 +1403,17 @@ namespace {
 
     // why: 1 = held flag, 2 = depth>0 (defense in depth)
     [[nodiscard]] bool yield_blocked_by_mutation_boundary(std::uint8_t* why_out) noexcept {
+        // Soft orch agent-body window (#2118 / #1881) does not hold
+        // workspace_mtx_. Steal/GC still see depth via fiber mirrors.
+        // Blocking yield here busy-loops keepalive / join-fail bodies
+        // (#3208 / #2161) and starves cancel.
+        if (g_current_fiber && g_current_fiber->orch_agent_boundary_active()) {
+            const bool hard_held = (aura::messaging::g_mutation_boundary_held &&
+                                    aura::messaging::g_mutation_boundary_held()) ||
+                                   aura_evaluator_mutation_boundary_held() != 0;
+            if (!hard_held)
+                return false;
+        }
         // Prefer messaging bridge (set while Evaluator yield-hook is live).
         if (aura::messaging::g_mutation_boundary_held &&
             aura::messaging::g_mutation_boundary_held()) {

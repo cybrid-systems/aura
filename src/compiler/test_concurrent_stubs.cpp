@@ -39,6 +39,7 @@ extern "C" __attribute__((weak)) void aura_clear_partial_relower_threshold_force
 extern "C" __attribute__((weak)) int aura_escape_move_gate_active() noexcept {
     return 0; // stub: no escape gate in the concurrent-fiber binary
 }
+extern "C" __attribute__((weak)) void aura_escape_move_gate_clear() noexcept {}
 
 // typed_mutation_audit.h inlines call these. Strong defs live in
 // ownership_rebind.cpp / typed_mutation_audit_hooks.cpp (full-module
@@ -78,6 +79,7 @@ aura_force_residual_castop_undermark_into_cone() noexcept {
 extern "C" __attribute__((weak)) int aura_residual_castop_undermark_pending() noexcept {
     return 0;
 }
+extern "C" __attribute__((weak)) void aura_reset_residual_castop_persist_for_test() noexcept {}
 
 // Stamp builders also instantiate commit_readiness_live_policy /
 // commit_readiness (header-inline). Strong defs live in

@@ -304,6 +304,8 @@ ConstraintSystem::ConstraintSystem(TypeRegistry& reg)
     : reg_(reg) {}
 
 void ConstraintSystem::add(Constraint c) {
+    const auto lhs = c.lhs;
+    const auto rhs = c.rhs;
     const auto new_idx = constraints_.size();
     constraints_.push_back(std::move(c));
     // Issue #148: keep constraint_dirty_ in sync with constraints_.
@@ -312,19 +314,15 @@ void ConstraintSystem::add(Constraint c) {
     // the entry point for incremental callers.
     if (constraint_dirty_.size() < constraints_.size())
         constraint_dirty_.resize(constraints_.size(), false);
-    // Issue #409: maintain the var → constraints reverse
-    // map. Use find() to normalize the var to its
-    // Union-Find rep (the rep is what unify produces and
-    // what downstream var_to_constraints_ lookups should
-    // key on). The append-only vec can have stale entries
-    // for constraints that are no longer dirty — those are
-    // filtered at lookup time by the dirty bit check.
-    if (c.lhs.valid()) {
-        auto rep = find(c.lhs).index;
+    // Issue #409: maintain the var → constraints reverse map. Snapshot
+    // lhs/rhs before move (parity with add_delta). Key by find().index
+    // — same as add_delta / existing reverse-map readers.
+    if (lhs.valid()) {
+        auto rep = find(lhs).index;
         var_to_constraints_[rep].push_back(new_idx);
     }
-    if (c.rhs.valid()) {
-        auto rep = find(c.rhs).index;
+    if (rhs.valid()) {
+        auto rep = find(rhs).index;
         var_to_constraints_[rep].push_back(new_idx);
     }
 }

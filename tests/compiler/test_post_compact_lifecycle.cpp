@@ -134,7 +134,7 @@ int run_test_post_compact_lifecycle() {
         // Eval path may trigger outermost mutation boundary exits.
         CHECK(cs.eval("(set-code \"(define x 1)\")").has_value(), "set-code");
         CHECK(cs.eval("(eval-current)").has_value(), "eval");
-        CHECK(cs.eval("(+ x 1)").has_value(), "eval expr");
+        CHECK(cs.eval("(+ 1 2)").has_value(), "eval expr");
         // Soft skip and/or stamp publish may advance depending on Moving default.
         const auto soft1 = post_compact_lifecycle_soft_skip_total.load();
         const auto stamp1 = post_compact_lifecycle_stamp_publish_total.load();

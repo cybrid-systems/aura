@@ -925,6 +925,11 @@ public:
     // Issue #2397: body returned after reclaimed — still-running −1,
     // body-retired +1. Safe to call when not reclaimed (no-op).
     void note_body_exit_if_reclaimed() noexcept;
+    // Issue #2397: hard-reap abandon when the Fiber object cannot be
+    // destroyed yet (still queued / worker-held). Pairs the still-running
+    // gauge without bumping retired — same accounting as ~Fiber, so a
+    // later dtor does not double-drop. Joiners already observe reclaimed_.
+    void abandon_join_drain_still_running() noexcept;
     // Issue #2885: per-Fiber still-running flag (true between
     // mark_reclaimed and body-retired). Set in mark_reclaimed (per
     // #2636 sample-window protocol), cleared in body-exit. Read by the
