@@ -73,7 +73,7 @@ def main() -> int:
     must("run_test_tcp_listen_accept", "AC3", _read("tests/compiler/test_json_io_cap_batch.cpp"))
 
     # AC4
-    must('tcp-": 14', "AC4", surface)
+    must('tcp-": 15', "AC4", surface)  # #3461 gate refresh
     must("#2771", "AC4", surface)
 
     # AC5

@@ -61,8 +61,6 @@ REQUIRED: dict[str, tuple[str, ...]] = {
         "3460 AC2: SE side-car enabled by audit defaults",
         "3460 AC4: SE side-car off",
         "3460 AC5: SE side-car off",
-    ),
-    TEST_REPLAY: (
         "3460 AC3: side-car holds the deny mid",
         "3460 AC3: wrap does not lose the mid while WAL is on",
     ),
