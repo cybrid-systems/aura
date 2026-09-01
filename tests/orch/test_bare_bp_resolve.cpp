@@ -31,6 +31,7 @@
 
 #include "test_harness.hpp"
 
+#include "compiler/agent_name_table.h"
 #include "compiler/typed_mutation_audit.h"
 #include "orch/agent_scope.h"
 #include "orch/agent_spawn.h"
@@ -48,6 +49,7 @@ import std;
 
 namespace {
 
+using aura::compiler::AgentNameTable;
 using aura::compiler::typed_audit::apply_dev_audit_defaults;
 using aura::compiler::typed_audit::apply_production_audit_defaults;
 using aura::orch::AgentSpec;
@@ -154,6 +156,45 @@ int run_test_bare_bp_resolve_3179() {
         CHECK(spawn_src.find("h.bp_scope_id = resolve_bare_bp_scope_id(spec.bp_scope_id);") !=
                   std::string::npos,
               "AC4: spawn_agent_with_mailbox calls the bare resolver (single wire point)");
+    }
+
+    // ── #3461: move is a complete field transfer — put survives ──────
+    {
+        std::println("\n--- #3461 AC1: put(std::move(h)) keeps bp_scope_id ---");
+        apply_production_audit_defaults();
+        Scheduler sched;
+        AgentSpec spec;
+        spec.name = "agent-3461-put";
+        spec.attach_mailbox = true;
+        spec.body = [] {};
+        auto h = aura::orch::spawn_agent_with_mailbox(sched, std::move(spec));
+        CHECK(h.ok, "3461 AC1 setup: spawn admits");
+        const auto pre = h.bp_scope_id;
+        CHECK(!pre.empty(), "3461 AC1 setup: bare resolver non-empty on spawn return");
+        aura::compiler::AgentNameTable table;
+        (void)table.put(std::move(h));
+        auto* stored = table.find("agent-3461-put");
+        CHECK(stored != nullptr, "3461 AC1: put registered the handle");
+        CHECK(stored != nullptr && stored->bp_scope_id == pre,
+              "3461 AC1: post-move bp_scope_id == pre-move value (put survives)");
+    }
+
+    {
+        std::println("\n--- #3461 AC3: Soft empty id survives move (process bucket) ---");
+        apply_dev_audit_defaults();
+        Scheduler sched;
+        AgentSpec spec;
+        spec.name = "agent-3461-soft";
+        spec.attach_mailbox = true;
+        spec.body = [] {};
+        auto h = aura::orch::spawn_agent_with_mailbox(sched, std::move(spec));
+        CHECK(h.ok, "3461 AC3 setup: Soft spawn admits");
+        CHECK(h.bp_scope_id.empty(), "3461 AC3: Soft spawn leaves bp_scope_id empty");
+        aura::compiler::AgentNameTable table;
+        (void)table.put(std::move(h));
+        auto* stored = table.find("agent-3461-soft");
+        CHECK(stored != nullptr && stored->bp_scope_id.empty(),
+              "3461 AC3: empty id survives move (process bucket unchanged)");
     }
 
     // ── Source-cite ──────────────────────────────────────────────────

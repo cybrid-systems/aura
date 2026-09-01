@@ -57,6 +57,7 @@ import std;
 
 namespace {
 
+using aura::compiler::typed_audit::apply_production_audit_defaults;
 using aura::orch::AgentScope;
 using aura::orch::AgentSpec;
 using aura::orch::g_orch_module_stats;
@@ -669,6 +670,41 @@ int run_test_per_scope_bp_admit() {
         const auto spawn = read_file("src/orch/agent_spawn.h");
         CHECK(spawn.find("kMailboxBpScopeOverflowTeardownIssue = 3337") != std::string::npos,
               "3337 AC5: stamp in agent_spawn.h");
+    }
+
+    // ── #3461: move is a complete field transfer — scope.spawn survives ──
+    {
+        std::println("\n--- #3461 AC2/AC4: scope.spawn bp_scope_id survives move ---");
+        apply_production_audit_defaults();
+        Scheduler sched;
+        AgentScope scope_a(sched);
+        AgentScope scope_b(sched);
+        AgentSpec spec_a;
+        spec_a.name = "agent-3461-a";
+        spec_a.attach_mailbox = true;
+        spec_a.body = [] {};
+        auto& h_a = scope_a.spawn(std::move(spec_a));
+        AgentSpec spec_b;
+        spec_b.name = "agent-3461-b";
+        spec_b.attach_mailbox = true;
+        spec_b.body = [] {};
+        auto& h_b = scope_b.spawn(std::move(spec_b));
+        CHECK(h_a.ok, "3461 AC2 setup: scope A spawn admits");
+        CHECK(h_b.ok, "3461 AC2 setup: scope B spawn admits");
+        CHECK(h_a.bp_scope_id == scope_a.bp_scope_id(),
+              "3461 AC2: post-emplace bp_scope_id == scope inherit (move complete)");
+        CHECK(h_b.bp_scope_id == scope_b.bp_scope_id(), "3461 AC2: scope B same (move complete)");
+        CHECK(!h_a.bp_scope_id.empty() && h_a.bp_scope_id != std::string("-"),
+              "3461 AC2: inherited id is a named gauge (not process bucket)");
+        // AC4: BP storm on A (post-move send path) bumps A's gauge only;
+        // B's gauge and the process bucket stay untouched (no pre-fix
+        // routing regression through the emplace move).
+        for (int i = 0; i < 5; ++i)
+            note_mailbox_bp_recent_event(h_a.bp_scope_id);
+        CHECK(load_mailbox_bp_recent(h_a.bp_scope_id) >= 5, "3461 AC4: storm on A bumps A's gauge");
+        CHECK(load_mailbox_bp_recent(h_b.bp_scope_id) == 0, "3461 AC4: B's gauge untouched");
+        CHECK(load_mailbox_bp_recent(std::string_view{}) == 0,
+              "3461 AC4: process bucket untouched");
     }
 
     std::println("\n=== #2591/#2948/#3015/#3147/#3337: {}/{} checks passed ===", g_passed,

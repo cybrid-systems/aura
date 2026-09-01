@@ -65,6 +65,11 @@ int main() {
         }
     };
 
+    // Issue #3461: BP routing members first — light unit tests; later
+    // integration-heavy members carry the pre-existing spawn cascade
+    // that can segfault the process (run order must not gate them).
+    run("test_per_scope_bp_admit", run_test_per_scope_bp_admit);
+    run("test_bare_bp_resolve", run_test_bare_bp_resolve_3179);
     run("test_agent_apply_mutex", run_test_agent_apply_mutex);
     run("test_agent_ask", run_test_agent_ask);
     run("test_agent_ask_typed_corr", run_test_agent_ask_typed_corr);
@@ -78,8 +83,6 @@ int main() {
     run("test_orch_scope", run_test_orch_scope);
     run("test_parallel_intend_pure", run_test_parallel_intend_pure);
     run("test_parallel_intend_pure_contract", run_test_parallel_intend_pure_contract);
-    run("test_per_scope_bp_admit", run_test_per_scope_bp_admit);
-    run("test_bare_bp_resolve", run_test_bare_bp_resolve_3179);
     run("test_security_schedule_gate", run_test_security_schedule_gate);
 
     std::println("\n=== {} members: {} ok, {} failed ===", members_passed + members_failed,
