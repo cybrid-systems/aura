@@ -3713,7 +3713,17 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             aura::orch::AgentHandle* hp = nullptr;
             if (types::is_string(a[0])) {
                 auto name = heap_str_from(ev.string_heap_, a[0]);
-                hp = ev.agent_names_->find(name);
+                // Issue #3463: route the second-wait through
+                // resolve_aura_agent (already exists from #3442) so a
+                // scope-spawn agent (plane B) is reachable by name after
+                // join → Reclaimed / cleanup-pending. Name-table still
+                // wins on same-name (per #3442 AC5); Soft/Off is a
+                // pointer walk (zero new atomic on miss). No new query
+                // key — reuse wait_reclaimed_* / reclaimed_abandon_total
+                // / cleanup-pending. C++ hosts holding AgentScope::
+                // handles_mut() still call ensure_reclaimed_cleanup /
+                // wait_reclaimed_body directly.
+                hp = resolve_aura_agent(ev, name);
             }
             if (!hp) {
                 auto sidx = ev.string_heap_.size();

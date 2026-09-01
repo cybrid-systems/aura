@@ -743,6 +743,131 @@ static void ac3467_name_reuse_fail_closed() {
         ::unsetenv("AURA_SANDBOX");
 }
 
+// Issue #3463: orch:agent-wait-reclaimed (and its :abandon arm) must
+// reach scope-spawn agents through resolve_aura_agent — not
+// agent_names_->find only. The #3442 resolve is name-table first, then
+// AgentScope::find on the same Evaluator; #3463 just routes the
+// second-wait through it so a host that followed the documented
+// scope-spawn path (cleanup-pending → must_wait_reclaimed) can finally
+// call ensure_reclaimed_cleanup / wait_reclaimed_body by name from
+// Aura. C++ hosts holding AgentScope::handles_mut() are unchanged.
+// AC1+AC2 are source-cite (the change is a 1-line swap); AC3 is a
+// negative-path Aura smoke test (unknown name → invalid hash); AC4
+// verifies the resolve helper itself is unchanged from #3442.
+static void ac3463_1_source_cite_routes_through_resolve_aura_agent() {
+    std::println(
+        "\n--- #3463 AC1: orch:agent-wait-reclaimed routes through resolve_aura_agent ---");
+    const auto prim = read_file("src/compiler/evaluator_primitives_agent.cpp");
+    // The second-wait lookup (name argument) must call resolve_aura_agent,
+    // not the direct name-table find.
+    CHECK(prim.find("resolve_aura_agent(ev, name)") != std::string::npos,
+          "3463 AC1: orch:agent-wait-reclaimed uses resolve_aura_agent");
+    // The name-table-only find must be gone from this prim.
+    // Allow it elsewhere (resolve_aura_agent itself, orch:agent-send /
+    // recv / ask / join which already use resolve_aura_agent from #3442,
+    // orch:scope-resolve which is scope-only).
+    const auto prim_size = prim.size();
+    const auto name_only_needle = "hp = ev.agent_names_->find(name);";
+    const auto pos = prim.find(name_only_needle);
+    if (pos != std::string::npos) {
+        // The only allowed site for the raw find is inside resolve_aura_agent
+        // itself — anything else is the regression #3463 closes.
+        const auto fn_pos = prim.find("resolve_aura_agent(Evaluator& ev, const std::string& name)");
+        if (fn_pos == std::string::npos || pos < fn_pos || pos > prim.find("}\n", fn_pos)) {
+            CHECK(false, "3463 AC1: raw agent_names_->find outside resolve_aura_agent");
+        }
+    }
+    CHECK(prim.find("Issue #3463") != std::string::npos, "3463 AC1: stamp in prim file");
+    (void)prim_size;
+}
+
+static void ac3463_2_resolve_aura_agent_unchanged() {
+    std::println(
+        "\n--- #3463 AC2: resolve_aura_agent keeps #3442 shape (name-table first, then scope) ---");
+    const auto prim = read_file("src/compiler/evaluator_primitives_agent.cpp");
+    const auto scopeh = read_file("src/orch/agent_scope.h");
+    // #3442 resolve_aura_agent body: name-table check first, then find_agent_scope
+    // pointer walk, then scope->find. No new atomic on miss.
+    CHECK(prim.find("aura::orch::AgentHandle* resolve_aura_agent(Evaluator& ev, "
+                    "const std::string& name)") != std::string::npos,
+          "3463 AC2: resolve_aura_agent signature retained");
+    CHECK(prim.find("if (auto* h = ev.agent_names_->find(name))") != std::string::npos,
+          "3463 AC2: name-table check first");
+    CHECK(prim.find("if (auto* scope = aura::orch::find_agent_scope(static_cast<void*>(&ev)))") !=
+              std::string::npos,
+          "3463 AC2: scope pointer walk via find_agent_scope");
+    CHECK(prim.find("return scope->find(name);") != std::string::npos,
+          "3463 AC2: scope->find returns the handle");
+    // Same-name resolution contract from #3442 AC5: name-table wins.
+    // Verify ordering of the two checks (name-table first).
+    const auto nt_pos = prim.find("if (auto* h = ev.agent_names_->find(name))");
+    const auto sc_pos = prim.find("return scope->find(name);");
+    CHECK(nt_pos != std::string::npos && sc_pos != std::string::npos && nt_pos < sc_pos,
+          "3463 AC2: name-table check before scope (same-name wins = name-table)");
+    // AgentScope::find retained on the scope plane (per #3463 body: "find
+    // still returns the handle after join_all").
+    CHECK(scopeh.find("find(") != std::string::npos, "3463 AC2: AgentScope::find retained");
+}
+
+static void ac3463_3_aura_negative_path_unknown_name() {
+    std::println("\n--- #3463 AC3: Aura orch:agent-wait-reclaimed unknown name → invalid ---");
+    apply_dev_audit_defaults();
+    CompilerService cs;
+    // Aura side: scope-spawn agent is NOT registered in the name table.
+    // An orch:agent-wait-reclaimed call for a name that has neither a
+    // name-table entry nor an AgentScope entry must return status=invalid
+    // (negative path proves the prim still routes through resolve_aura_agent).
+    auto r = cs.eval(R"(
+      (let* ((w (orch:agent-wait-reclaimed "3463-no-such-agent"))
+             (h (if (hash? w) w #f)))
+        (if h
+          (list (hash-ref w "ok")
+                (hash-ref w "status")
+                (if (hash-has-key? w "agent-wait-reclaimed-wired") 1 0))
+          '(#f #f 0))))");
+    CHECK(r.has_value(), "3463 AC3: orch:agent-wait-reclaimed returned a hash");
+    // Aura-list result: (ok, status, wired).
+    CHECK(r && is_int(r->at(2)) && as_int(r->at(2)) == 1,
+          "3463 AC3: agent-wait-reclaimed-wired sentinel present (prim executed)");
+    CHECK(r && is_string(r->at(1)) && as_string(r->at(1)) == std::string("invalid"),
+          "3463 AC3: unknown name → status=invalid");
+    CHECK(r && is_bool(r->at(0)) && as_bool(r->at(0)) == false, "3463 AC3: ok=#f for invalid");
+}
+
+static void ac3463_4_no_new_query_key_and_no_invent() {
+    std::println("\n--- #3463 AC4: no new query key + no invent + no docs/design ---");
+    const auto prim = read_file("src/compiler/evaluator_primitives_agent.cpp");
+    // AC6: no new query:* primitive. The only allowed additions in the
+    // second-wait prim are the source-cite comment + the resolve_aura_agent
+    // call site. Existing keys reused: wait_reclaimed_total /
+    // wait_reclaimed_timeout_total / reclaimed_abandon_total / cleanup-pending.
+    CHECK(prim.find("query:agent-wait-reclaimed") == std::string::npos &&
+              prim.find("query:orch-agent-wait-reclaimed") == std::string::npos &&
+              prim.find("query:reclaimed-wait") == std::string::npos,
+          "3463 AC4: no new query:* key (AC6)");
+    // Reuse existing wait_reclaimed_total counter (set by wait_reclaimed_body).
+    CHECK(prim.find("wait-reclaimed-total") != std::string::npos,
+          "3463 AC4: wait_reclaimed_total reused");
+    // Reuse reclaimed_abandon_total counter (set by abandon_reclaimed).
+    CHECK(prim.find("reclaimed-abandon-total") != std::string::npos,
+          "3463 AC4: reclaimed_abandon_total reused");
+    // AC7: tests live in src-aligned suites (#81967).
+    CHECK(read_file("tests/orch/test_issue_3463.cpp").empty() &&
+              read_file("tests/issues/test_issue_3463.cpp").empty(),
+          "3463 AC4: no test_issue_3463.cpp per #81967");
+    // No docs/design/3463-* per #1655.
+    CHECK(read_file("docs/design/3463-agent-wait-reclaimed-scope-resolve.md").empty(),
+          "3463 AC4: no docs/design/3463-* per #1655");
+    // No process-global AgentRegistry reintroduced (per issue non-goals).
+    CHECK(read_file("src/orch/agent_spawn.h").find("class AgentRegistry") == std::string::npos &&
+              read_file("src/orch/agent_scope.h").find("class AgentRegistry") == std::string::npos,
+          "3463 AC4: no process-global AgentRegistry (non-goal)");
+    // build.py wires the linter.
+    CHECK(read_file("build.py").find("check_agent_wait_reclaimed_scope_resolve_3463") !=
+              std::string::npos,
+          "3463 AC4: build.py wires linter");
+}
+
 } // namespace
 
 int run_test_join_drain_reclaim() {
@@ -4321,6 +4446,13 @@ int run_test_join_drain_reclaim() {
 
     std::println("\n=== Issue #3467: name-reuse fail-closed over reclaimed-pending slot ===");
     ac3467_name_reuse_fail_closed();
+
+    std::println(
+        "\n=== Issue #3463: orch:agent-wait-reclaimed routes through resolve_aura_agent ===");
+    ac3463_1_source_cite_routes_through_resolve_aura_agent();
+    ac3463_2_resolve_aura_agent_unchanged();
+    ac3463_3_aura_negative_path_unknown_name();
+    ac3463_4_no_new_query_key_and_no_invent();
 
     std::println("\n=== Results: {} passed, {} failed ===", aura::test::g_passed,
                  aura::test::g_failed);
