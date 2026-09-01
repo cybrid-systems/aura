@@ -2797,6 +2797,25 @@ def cmd_lint():
             "Issue #3437 scope session drop linter failed — run python3 scripts/coverage/checks/check_scope_session_drop_3437.py"
         )
         return r
+    # Issue #3463: orch:agent-wait-reclaimed (and :abandon arm) routes
+    # through resolve_aura_agent (name-table first, then AgentScope::
+    # find on the same Evaluator) so scope-spawn agents are reachable
+    # by name after join → Reclaimed / cleanup-pending. Closes the
+    # residual where the documented scope-spawn fail-closed follow-up
+    # (cleanup-pending → ensure_reclaimed_cleanup) was unreachable
+    # from Aura. No new query:* key; reuse wait_reclaimed_* /
+    # reclaimed_abandon_total / cleanup-pending. Extends
+    # tests/orch/test_join_drain_reclaim.cpp (#81967); no docs/design/.
+    aws3463_script = COVERAGE_CHECKS / "check_agent_wait_reclaimed_scope_resolve_3463.py"
+    if not aws3463_script.exists():
+        fail(f"missing {aws3463_script}")
+        return 1
+    r = run([sys.executable, str(aws3463_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3463 wait-reclaimed scope-resolve linter failed — run python3 scripts/coverage/checks/check_agent_wait_reclaimed_scope_resolve_3463.py"
+        )
+        return r
     # Issue #3438: unpin_all_linear_roots is process-wide at the three
     # live-fiber drain faces (post-join reclaim / outermost fail /
     # steal hard-fail) — wipes sibling fibers' live linear roots
