@@ -146,6 +146,28 @@ int run_test_audit_durable_gap_force_wal() {
               "AC5: no tests/issues/test_issue_3375.cpp (R1 abandoned scheme)");
     }
 
+    // ── #3460: force_wal pairs the SE side-car at both defaults sites ──
+    {
+        std::println("\n--- #3460: SE side-car paired at both force_wal sites ---");
+        const auto sec = read_file("src/compiler/security_defaults.hh");
+        const auto tma = read_file("src/compiler/typed_mutation_audit.h");
+        CHECK(contains(sec, "Issue #3460"), "3460 AC1: security_defaults cites #3460");
+        CHECK(contains(sec, "g_security_event_wal().enable"),
+              "3460 AC1: SE pair in security_defaults step 4");
+        CHECK(contains(sec, "core/security_event_wal.hh"),
+              "3460 AC1: security_defaults includes the side-car header");
+        CHECK(contains(tma, "Issue #3460"), "3460 AC2: typed_mutation_audit cites #3460");
+        CHECK(contains(tma, "g_security_event_wal().enable"),
+              "3460 AC2: SE pair in the #3375 force_wal block");
+        const auto esec = read_file("src/compiler/evaluator_security.cpp");
+        CHECK(contains(esec, "g_mutation_audit_wal().disable()") &&
+                  contains(esec, "g_security_event_wal().disable()"),
+              "3460 AC5: disable_mutation_audit_wal still disables both");
+        CHECK(read_file("tests/compiler/test_issue_3460.cpp").empty() &&
+                  read_file("tests/issues/test_issue_3460.cpp").empty(),
+              "3460 AC6: no test_issue_3460.cpp (src-aligned suites only)");
+    }
+
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

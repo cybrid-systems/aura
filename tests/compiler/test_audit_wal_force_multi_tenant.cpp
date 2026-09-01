@@ -16,6 +16,7 @@
 #include "core/mutation_audit_wal.hh"
 #include "core/sandbox.hh"
 #include "core/security_event.hh"
+#include "core/security_event_wal.hh" // #3460 SE side-car pairing
 
 #include <cstdlib>
 #include <cstdint>
@@ -35,6 +36,7 @@ namespace {
 using aura::compiler::CompilerService;
 using aura::compiler::security::apply_production_security_defaults;
 using aura::compiler::security::kEffectMutate;
+using aura::compiler::typed_audit::apply_production_audit_defaults;
 using aura::compiler::types::as_int;
 using aura::compiler::types::is_int;
 using aura::core::audit_wal::g_mutation_audit_wal;
@@ -48,6 +50,7 @@ using aura::core::sandbox::SandboxMode;
 using aura::core::sandbox::set_mode;
 using aura::core::security_event::g_security_event_ring;
 using aura::core::security_event::reset_security_event_ring_for_test;
+using aura::core::security_event_wal::g_security_event_wal;
 using aura::test::g_failed;
 using aura::test::g_passed;
 
@@ -248,6 +251,106 @@ static void ac5_flush_and_schema() {
     clear_env("AURA_MULTI_TENANT");
 }
 
+// ── #3460: force_wal pairs the SecurityEvent side-car ────────────
+// Residual: apply_production_*_defaults enabled only the mutation WAL;
+// InvariantFail / hygiene / mid-fallback-refused mids lived only in the
+// 1024 SE ring until some Evaluator called enable_mutation_audit_wal —
+// after wrap they looked like "never audited".
+static void ac3460_se_sidecar_pairs_force_wal() {
+    std::println("\n--- #3460 AC1: security defaults pair the SE side-car ---");
+    reset_process();
+    set_mode(SandboxMode::Restricted);
+    apply_production_security_defaults();
+    CHECK(g_mutation_audit_wal().is_enabled(), "3460 AC1: mutation WAL enabled");
+    CHECK(g_security_event_wal().is_enabled(),
+          "3460 AC1: SE side-car enabled by security defaults (no Evaluator)");
+    CHECK(g_security_event_wal().directory() == g_mutation_audit_wal().directory(),
+          "3460 AC1: both WALs on the same dir");
+    g_mutation_audit_wal().disable();
+    g_security_event_wal().disable();
+    reset_process();
+
+    std::println("\n--- #3460 AC2: audit defaults pair the SE side-car ---");
+    reset_process();
+    set_mode(SandboxMode::Restricted);
+    apply_production_audit_defaults();
+    CHECK(g_mutation_audit_wal().is_enabled(), "3460 AC2: mutation WAL enabled");
+    CHECK(g_security_event_wal().is_enabled(), "3460 AC2: SE side-car enabled by audit defaults");
+    g_mutation_audit_wal().disable();
+    g_security_event_wal().disable();
+    reset_process();
+
+    std::println("\n--- #3460 AC4: Soft / sandbox=off never arms either WAL ---");
+    reset_process();
+    set_env("AURA_SANDBOX", "off");
+    set_env("AURA_MULTI_TENANT", "1"); // must not force under off
+    set_mode(SandboxMode::Off);
+    apply_production_security_defaults();
+    apply_production_audit_defaults();
+    CHECK(!g_mutation_audit_wal().is_enabled(), "3460 AC4: mutation WAL off");
+    CHECK(!g_security_event_wal().is_enabled(), "3460 AC4: SE side-car off");
+    reset_process();
+
+    std::println("\n--- #3460 AC5: disable_mutation_audit_wal still disables both ---");
+    reset_process();
+    set_mode(SandboxMode::Restricted);
+    apply_production_security_defaults();
+    CHECK(g_security_event_wal().is_enabled(), "3460 AC5: side-car on before disable");
+    {
+        CompilerService cs;
+        cs.evaluator().disable_mutation_audit_wal();
+    }
+    CHECK(!g_mutation_audit_wal().is_enabled(), "3460 AC5: mutation WAL off");
+    CHECK(!g_security_event_wal().is_enabled(), "3460 AC5: SE side-car off");
+    reset_process();
+
+    std::println("\n--- #3460 AC3: deny mid survives SE ring wrap under force_wal ---");
+    reset_process();
+    auto dir_3460 = std::filesystem::temp_directory_path() / "aura-3460-sidecar";
+    std::error_code ec_3460;
+    std::filesystem::remove_all(dir_3460, ec_3460);
+    std::filesystem::create_directories(dir_3460, ec_3460);
+    set_env("AURA_MUTATION_AUDIT_WAL", dir_3460.string().c_str());
+    set_mode(SandboxMode::Restricted);
+    apply_production_security_defaults();
+    CHECK(g_mutation_audit_wal().is_enabled(), "3460 AC3: mutation WAL on via defaults");
+    CHECK(g_security_event_wal().is_enabled(),
+          "3460 AC3: SE side-car on via defaults (no Evaluator)");
+    constexpr std::uint64_t kMid3460 = 3460001;
+    aura::compiler::typed_audit::emit_invariant_deny_se(kMid3460, /*tenant_id=*/9, /*fiber_id=*/3,
+                                                        /*epoch=*/1, "op-3460", "invariant-denied");
+    int segs_3460 = 0;
+    for (const auto& ent : std::filesystem::directory_iterator(dir_3460, ec_3460)) {
+        const auto nm = ent.path().filename().string();
+        if (nm.rfind("security-event-", 0) == 0 && ent.path().extension() == ".wal")
+            ++segs_3460;
+    }
+    CHECK(segs_3460 >= 1, "3460 AC3: side-car segment present in the same dir");
+    auto hit_3460 = g_security_event_wal().find_recent_by_mutation_id(kMid3460);
+    CHECK(hit_3460.has_value(), "3460 AC3: side-car holds the deny mid");
+    if (hit_3460)
+        CHECK(hit_3460->mutation_id == kMid3460, "3460 AC3: rec mid matches");
+    // Ring wrap: fill the 1024-ring with unrelated appends; the mid is
+    // gone from the live ring but still found via the side-car.
+    for (std::uint64_t i = 0; i < aura::core::security_event::kSecurityEventRingSize + 10; ++i) {
+        (void)aura::core::security_event_wal::persist_security_event(
+            aura::core::security_event::SecurityEventKind::EffectAllow, 9, 900000 + i, 1,
+            kEffectMutate, "fill-3460", "fill", false, 3, 0);
+    }
+    auto& ring_3460 = g_security_event_ring();
+    (void)ring_3460; // ring wrap semantics covered by #2225 AC1 (wrap counter)
+    hit_3460 = g_security_event_wal().find_recent_by_mutation_id(
+        kMid3460, aura::core::wal_slo::wal_mid_lookup_segments());
+    CHECK(hit_3460.has_value(), "3460 AC3: wrap does not lose the mid while WAL is on");
+    if (hit_3460)
+        CHECK(hit_3460->mutation_id == kMid3460, "3460 AC3: rec mid still matches after wrap");
+    g_mutation_audit_wal().disable();
+    g_security_event_wal().disable();
+    clear_env("AURA_MUTATION_AUDIT_WAL");
+    std::filesystem::remove_all(dir_3460, ec_3460);
+    reset_process();
+}
+
 } // namespace
 
 int run_test_audit_wal_force_multi_tenant() {
@@ -260,6 +363,7 @@ int run_test_audit_wal_force_multi_tenant() {
     ac3_replay_security_events();
     ac4_explicit_path_wins();
     ac5_flush_and_schema();
+    ac3460_se_sidecar_pairs_force_wal();
 
     reset_process();
     std::println("\n=== #2150 audit WAL force: {} passed, {} failed ===", g_passed, g_failed);
