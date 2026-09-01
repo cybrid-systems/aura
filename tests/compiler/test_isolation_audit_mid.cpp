@@ -17,6 +17,7 @@
 #include "core/sandbox.hh"
 #include "core/security_event.hh"
 #include "core/workspace_epoch.hh"
+#include "serve/fiber.h"
 #include "core/workspace_isolation.hh"
 
 #include <cstdint>
@@ -218,6 +219,114 @@ int run_test_isolation_audit_mid() {
         // Isolation dual-write uses Mutation epoch as mid (#2156).
         CHECK(iso.find("current_mutation_epoch") != std::string::npos,
               "AC3: isolation record_audit mid from Mutation epoch");
+    }
+
+    // ── Issue #3462: production audit mid never phantom 1; refuse joins mid=0 ──
+    {
+        std::println("\n--- #3462 AC1/AC2/AC3/AC5: production mid join + refuse ---");
+        namespace ta = aura::compiler::typed_audit;
+        using aura::core::store_workspace_epoch;
+        using aura::core::WorkspaceEpochKind;
+        auto& counters = ta::g_typed_mutation_audit_counters;
+        reset_all();
+        const auto prod_saved = counters.production_defaults_active.load(std::memory_order_relaxed);
+        const auto epoch_saved = current_mutation_epoch();
+        counters.production_defaults_active.store(1, std::memory_order_relaxed);
+        ta::clear_boundary_audit_mid();
+        store_workspace_epoch(WorkspaceEpochKind::Mutation, 0);
+        CHECK(current_mutation_epoch() == 0, "3462 setup: epoch forced 0");
+
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.set_effect_sandbox_mode(2);  // arm the fiber-principal branch
+        ev.set_capability_tenant_id(7); // ambient worker principal 7 (≠ fiber 42)
+
+        // AC1: production refuse → no ring row (seq not consumed).
+        const auto seq0 = ev.mutation_audit_seq();
+        ev.emit_mutation_audit(1, 0, "ac3462-refuse", 0);
+        CHECK(ev.mutation_audit_seq() == seq0,
+              "AC1: production refuse writes no mutation ring row");
+        bool refuse_seen = false;
+        {
+            auto& ring = g_security_event_ring();
+            const auto total = ring.total.load(std::memory_order_relaxed);
+            for (std::size_t i = 0; i < total && i < kSecurityEventRingSize; ++i) {
+                const auto& e = ring.ring[(total - 1 - i) % kSecurityEventRingSize];
+                if (e.mutation_id == 0 && std::string_view(e.reason).find("mid-fallback-refused") !=
+                                              std::string_view::npos) {
+                    refuse_seen = true;
+                    break;
+                }
+            }
+        }
+        CHECK(refuse_seen, "AC1: mid-fallback-refused SE (mid=0) is the evidence");
+
+        // Non-zero-mid deny row (tenant=0, fiber=0, mid=0x3462): the
+        // mid=0 filter must exclude it (AC5 distinguishing setup).
+        (void)ev.check_and_record_effect_for_test(kEffectMutate, kEffectMutate, "ac3462-nonzero", 0,
+                                                  0,
+                                                  /*provenance_mutation_id=*/0x3462);
+
+        // AC3: live boundary mid joins the ring row; epoch stays raw 0.
+        // (The nonzero deny above consumes its own ring row, so scan the
+        // new rows for the join op instead of assuming an exact offset.)
+        const auto seq_before_join = ev.mutation_audit_seq();
+        ta::note_boundary_audit_mid(0x3462ull);
+        ev.emit_mutation_audit(1, 0, "ac3462-join", 0);
+        CHECK(ev.mutation_audit_seq() > seq_before_join, "AC3: joined ring row written");
+        bool join_row_ok = false;
+        for (auto s = seq_before_join; s < ev.mutation_audit_seq(); ++s) {
+            const auto& r = ev.mutation_audit_entry_at(s);
+            if (std::string_view(r.op) == "ac3462-join") {
+                CHECK(r.provenance_mutation_id == 0x3462ull,
+                      "AC3: ring row mid == boundary mid (join SSOT)");
+                CHECK(r.epoch == 0, "AC3: ring epoch raw 0 (never coerced to 1)");
+                join_row_ok = true;
+            }
+        }
+        CHECK(join_row_ok, "AC3: join row present with raw epoch");
+        ta::clear_boundary_audit_mid();
+
+        // AC5: explicit mid=0 selects only the refuse rows.
+        auto eval_int = [&cs](std::string_view src) -> std::int64_t {
+            auto r = cs.eval(std::string(src));
+            if (!r || !is_int(*r))
+                return -1;
+            return as_int(*r);
+        };
+        // query:security-audit is a stats-impl primitive — dispatched via
+        // (engine:metrics "query:security-audit" ...), never a direct call.
+        const auto n_zero =
+            eval_int("(length (engine:metrics \"query:security-audit\" 50 0 0 0 0))");
+        const auto n_zero_reason = eval_int("(length (engine:metrics \"query:security-audit\" 50 0 "
+                                            "0 0 0 \"mid-fallback-refused\"))");
+        CHECK(n_zero >= 1, "AC5: explicit mid=0 selects the refuse row(s)");
+        CHECK(n_zero == n_zero_reason, "AC5: every mid=0 row is the mid-fallback-refused evidence");
+
+        // AC2: fiber-principal-mismatch deny emits no phantom mid=1 SE.
+        {
+            auto fiber_owned = std::make_unique<aura::serve::Fiber>([] {});
+            fiber_owned->set_assigned_tenant_id(42);
+            aura_fiber_install_tenant_scope_for_resume(fiber_owned.get());
+            CHECK(fiber_owned->resume_had_mismatch(), "AC2 setup: mismatch flag set");
+            auto& ring = g_security_event_ring();
+            const auto se_before = ring.total.load(std::memory_order_relaxed);
+            const bool ok = ev.check_and_record_effect_for_test(kEffectMutate, kEffectMutate,
+                                                                "ac3462-fiber", 0, 0,
+                                                                /*provenance_mutation_id=*/0);
+            CHECK(!ok, "AC2: hard deny stands under production refuse");
+            const auto se_after = ring.total.load(std::memory_order_relaxed);
+            bool phantom = false;
+            for (auto i = se_before; i < se_after; ++i) {
+                const auto& e = ring.ring[i % kSecurityEventRingSize];
+                if (e.mutation_id == 1)
+                    phantom = true;
+            }
+            CHECK(!phantom, "AC2: fiber-principal-mismatch emits no mid=1 SE");
+        }
+
+        counters.production_defaults_active.store(prod_saved, std::memory_order_relaxed);
+        store_workspace_epoch(WorkspaceEpochKind::Mutation, epoch_saved);
     }
 
     // ── Query surface ──

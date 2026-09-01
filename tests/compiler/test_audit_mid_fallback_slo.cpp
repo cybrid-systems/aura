@@ -657,6 +657,23 @@ int run_test_audit_mid_fallback_slo() {
         apply_dev_audit_defaults();
     }
 
+    // ── Issue #3462: residual phantom mid=1 writers closed ──
+    {
+        std::println("\n--- #3462: phantom mid=1 residual writers closed ---");
+        const auto sec = read_repo_file("src/compiler/evaluator_security.cpp");
+        CHECK(sec.find("join_audit_and_se_mid(0)") != std::string::npos,
+              "3462: emit_mutation_audit joins SSOT (no mid=1 ring row)");
+        CHECK(sec.find("join_audit_and_se_mid(provenance_mutation_id)") != std::string::npos,
+              "3462: fiber-principal-mismatch joins SSOT (no mid=1 SE)");
+        const auto mut = read_repo_file("src/compiler/evaluator_primitives_mutate.cpp");
+        CHECK(mut.find("last_hygiene_blame_mutation") != std::string::npos &&
+                  mut.find("join_audit_and_se_mid(0)") != std::string::npos,
+              "3462: hygiene blame keeps the join mid");
+        const auto secq = read_repo_file("src/compiler/evaluator_primitives_security.cpp");
+        CHECK(secq.find("explicit mutation-id argument (including 0)") != std::string::npos,
+              "3462: query:security-audit explicit mid=0 filter wired");
+    }
+
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

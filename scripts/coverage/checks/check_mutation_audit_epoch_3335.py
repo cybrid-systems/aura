@@ -8,6 +8,9 @@ not join grant.bound_mutation_id / SE.mutation_id / TypedMid.
 
 Contract (one row per AC):
   AC1  emit_mutation_audit slot.epoch from current_mutation_epoch()
+       (#3462 update: production/Full refuse (mid==0) writes NO row at
+       all and slot.epoch stays raw (never coerced to 1); Soft/Off
+       keeps the legacy last-resort non-zero stamp)
   AC2  Bridge-only bump does not change ring epoch vs grant
   AC3  schema-2055 / audit stay green; ring epoch == Mutation after grant+mutate
   AC4  Soft/Off ring write still happens (epoch source only)
@@ -60,8 +63,14 @@ def main() -> int:
     must("Issue #3335", "AC1 cite", emit_body)
     if "slot.epoch = current_bridge_epoch()" in emit_body:
         fails.append("AC1: emit_mutation_audit still stamps Bridge as slot.epoch")
-    if "slot.epoch = me != 0 ? me : 1" not in emit_body:
-        fails.append("AC1: slot.epoch must be Mutation ?: 1")
+    # Issue #3462: production refuse joins the mid SSOT and writes no row
+    # (no phantom mid|epoch=1); the coercion literal survives ONLY in the
+    # Soft/Off legacy stamp branch, never on slot.epoch directly.
+    must("join_audit_and_se_mid(0)", "AC1 production mid SSOT", emit_body)
+    if "slot.epoch = me != 0 ? me : 1" in emit_body:
+        fails.append("AC1: slot.epoch coerced to 1 (#3462: raw epoch under production)")
+    if "epoch = me != 0 ? me : 1" not in emit_body:
+        fails.append("AC1: Soft/Off legacy stamp missing (#3462)")
 
     must("ac3335_1_emit_stamps_mutation", "AC1 test", test)
     must("kMutationAuditEpochUnifyIssue = 3335", "AC1 stamp", cap)

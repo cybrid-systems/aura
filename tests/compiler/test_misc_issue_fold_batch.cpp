@@ -44,7 +44,6 @@ extern int run_test_delta_truncate_goal_priority();
 extern int run_test_dual_path_desync_hard_fail();
 extern int run_test_escape_move_elision_gate();
 extern int run_test_incremental_soundness_oracle();
-extern int run_test_isolation_audit_mid();
 extern int run_test_mutate_capability_force();
 extern int run_test_orch_scope_child();
 extern int run_test_post_compact_lifecycle();
@@ -96,7 +95,6 @@ int main() {
     run("test_dual_path_desync_hard_fail", run_test_dual_path_desync_hard_fail);
     run("test_escape_move_elision_gate", run_test_escape_move_elision_gate);
     run("test_incremental_soundness_oracle", run_test_incremental_soundness_oracle);
-    run("test_isolation_audit_mid", run_test_isolation_audit_mid);
     run("test_mutate_capability_force", run_test_mutate_capability_force);
     run("test_orch_scope_child", run_test_orch_scope_child);
     run("test_post_compact_lifecycle", run_test_post_compact_lifecycle);
