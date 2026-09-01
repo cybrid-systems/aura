@@ -1426,7 +1426,7 @@ static void ac3323_5_source_and_linter() {
     CHECK(rt.find("g_pure_anon_overflow_epoch") != std::string::npos, "3323 AC5: overflow epoch");
     CHECK(rt.find("invalidate_closure_cache_for(closure_id)") != std::string::npos,
           "3323 AC5: cache invalidate on overflow");
-    CHECK(rt.find("std::atomic_thread_fence(std::memory_order_release)") != std::string::npos,
+    CHECK(rt.find("aura::util::thread_fence(std::memory_order_release)") != std::string::npos,
           "3323 AC5: release fence");
     CHECK(rt.find("last-look MustDeopt before any native dispatch") != std::string::npos,
           "3323 AC5: last-look");

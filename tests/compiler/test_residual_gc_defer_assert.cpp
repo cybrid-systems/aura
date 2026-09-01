@@ -554,7 +554,7 @@ static void ac2846_1_success_clear_drains_residual() {
 }
 
 static void ac2846_2_soft_observes_after_exit() {
-    std::println("\n--- #2846 AC2: Soft residual-after-exit observe (no clear) ---");
+    std::println("\n--- #2846 AC2: Soft observe — no clear, no detection bump (#2931) ---");
     drain_known_defer();
     ::setenv("AURA_SANDBOX", "off", 1);
     ::unsetenv("AURA_RESIDUAL_DEFER_POLICY");
@@ -564,18 +564,21 @@ static void ac2846_2_soft_observes_after_exit() {
     const auto after0 = m->residual_defer_after_exit_total.load(std::memory_order_relaxed);
     const auto fc0 =
         m->mutation_boundary_residual_defer_forced_clear_total.load(std::memory_order_relaxed);
+    const auto g0 = aura::gc_hooks::residual_defer_after_exit_total();
     bool ok = true;
     {
         Evaluator::MutationBoundaryGuard g(ev, &ok);
         aura::gc_hooks::arm_mutation_hold_defer();
     }
-    CHECK(m->residual_defer_after_exit_total.load(std::memory_order_relaxed) > after0,
-          "AC2: Soft bumps residual_defer_after_exit_total");
+    CHECK(m->residual_defer_after_exit_total.load(std::memory_order_relaxed) == after0,
+          "AC2: Soft does not bump residual_defer_after_exit_total (production-only, #2931)");
+    CHECK(aura::gc_hooks::residual_defer_after_exit_total() == g0,
+          "AC2: process residual_defer_after_exit_total unchanged under Soft");
     CHECK(m->mutation_boundary_residual_defer_forced_clear_total.load(std::memory_order_relaxed) ==
               fc0,
           "AC2: Soft does not force-clear");
-    // Soft leaves residual armed — closed-loop detection, not silent.
-    // Drain for next tests.
+    // Soft leaves residual armed; visibility comes from the legacy #2211
+    // metric. Drain for next tests.
     ::unsetenv("AURA_SANDBOX");
     drain_known_defer();
 }
@@ -714,8 +717,8 @@ static void ac2975_2_soft_observe_no_fail() {
                                                         /*fail_closed=*/false);
     CHECK(g.residual.residual_seen, "AC2: Soft residual_seen");
     CHECK(!g.hard_fail, "AC2: Soft never hard-fails");
-    CHECK(aura::gc_hooks::residual_defer_after_exit_total() > after0,
-          "AC2: Soft bumps residual_after_exit");
+    CHECK(aura::gc_hooks::residual_defer_after_exit_total() == after0,
+          "AC2: Soft observe does not bump residual_after_exit (production-only, #2931)");
     CHECK(aura::gc_hooks::residual_after_exit_hard_fail_total() == hf0,
           "AC2: Soft does not bump hard-fail");
     CHECK(aura::gc_hooks::mutation_hold_defer_active(), "AC2: Soft does not force-clear residual");

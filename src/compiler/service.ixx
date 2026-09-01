@@ -1,5 +1,6 @@
 module;
 #include <algorithm>
+#include "core/atomic_fence_port.h"
 #include <atomic>
 #include <chrono>
 #include <cstddef>
@@ -1267,7 +1268,7 @@ public:
         // hot-swap so concurrent invalidate_function / mutate cannot
         // tear bridge_epoch vs mutation_epoch observations.
         const std::uint64_t epoch_at_entry = aura::core::current_mutation_epoch();
-        std::atomic_thread_fence(std::memory_order_acq_rel);
+        aura::util::thread_fence(std::memory_order_acq_rel);
         // Issue #1262: stamp AOT emit defuse_version for versioned mangle
         // so subsequent AOT reloads enforce current epoch in symbol names.
         aura_set_aot_defuse_version(evaluator_.defuse_version());
@@ -1322,7 +1323,7 @@ public:
         const std::uint64_t epoch_now = aura::core::current_mutation_epoch();
         if (epoch_now != epoch_at_entry) {
             metrics_.hot_update_race_detected.fetch_add(1, std::memory_order_relaxed);
-            std::atomic_thread_fence(std::memory_order_acq_rel);
+            aura::util::thread_fence(std::memory_order_acq_rel);
             return false;
         }
 
@@ -5465,7 +5466,7 @@ public:
             metrics_.abort_ir_cache_force_dirty_total.fetch_add(static_cast<std::uint64_t>(forced),
                                                                 std::memory_order_relaxed);
         abort_force_in_progress_.store(0, std::memory_order_release);
-        std::atomic_thread_fence(std::memory_order_release);
+        aura::util::thread_fence(std::memory_order_release);
     }
 
     // Issue #2181: hard-require SoA block↔instr dirty sync before any
@@ -12094,7 +12095,7 @@ private:
         // Issue #2131: PostAudit phase — close GcCoordScope if active.
         gc_coord::note_post_audit_if_active();
         // Publish complete linear+GC window to concurrent apply / fiber steal.
-        std::atomic_thread_fence(std::memory_order_release);
+        aura::util::thread_fence(std::memory_order_release);
     }
 
     // Issue #1385: CountingMR — wraps new_delete_resource and
@@ -13266,7 +13267,7 @@ public:
         // Issue #1496: release fence before publishing new epochs so
         // concurrent apply_closure readers that acquire-load either
         // domain cannot observe half-updated bridge tables.
-        std::atomic_thread_fence(std::memory_order_release);
+        aura::util::thread_fence(std::memory_order_release);
         // bridge_epoch FIRST (release ordering on mutation_epoch_).
         bump_bridge_epoch();
         // Issue #1476: defuse_version_ in lockstep (acq_rel) for #1475 readers.
@@ -13354,7 +13355,7 @@ public:
             OrderedUniqueLock<std::shared_mutex>::acquire_if_needed(mutate_mtx_, Level::Mutate);
         sync_lock_order_metrics_();
         metrics_.unified_invalidation_protocol_total.fetch_add(1, std::memory_order_relaxed);
-        std::atomic_thread_fence(std::memory_order_release);
+        aura::util::thread_fence(std::memory_order_release);
         bump_bridge_epoch();
         evaluator_.bump_defuse_version_for_test();
         metrics_.dep_graph_defuse_version_bumps.fetch_add(1, std::memory_order_relaxed);

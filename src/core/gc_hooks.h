@@ -1050,8 +1050,10 @@ inline ResidualClearResult force_clear_residual_defer_for_evaluator(void* evalua
 //   production_force=true  → force_clear_residual_defer_for_evaluator +
 //                            reconcile; bump residual_defer_after_exit when
 //                            residual was non-zero at entry (detected).
-//   production_force=false → Soft observe only: bump residual_defer_after_exit
-//                            when residual non-zero; do NOT clear (Soft metric).
+//   production_force=false → Soft observe only: do NOT clear, do NOT bump
+//                            residual_defer_after_exit (Soft visibility via
+//                            the legacy #2211 metric +
+//                            g_residual_defer_steal_soft_leftover_total).
 // Happy path (residual already 0): single relaxed load, zero clear work.
 // Idempotent under multi-fiber (force_clear is CAS-based).
 struct ResidualAfterExitResult {
@@ -1075,10 +1077,17 @@ inline ResidualAfterExitResult close_residual_defer_after_exit(void* evaluator_i
             out.clear.bits_reconciled += reconcile_gc_defer_bits_after_clear();
     }
     out.residual_after = (defer_reasons_snapshot() != 0);
-    // Closed-loop detection: residual was present at the exit boundary
-    // (Soft leftover OR production residual that required force-clear).
-    // Agents alert on residual-defer-after-exit-total growth under denseness.
-    g_residual_defer_after_exit_total.fetch_add(1, std::memory_order_relaxed);
+    // Closed-loop detection (#2846, tightened for the #2931 soak gate):
+    // count a detection ONLY when the production force-clear path ran, so
+    // every residual_defer_after_exit bump is matched by exactly one clear
+    // invocation (mutation_boundary_residual_defer_forced_clear_total on
+    // outermost exits / residual_defer_cleared_on_steal_total on
+    // steal-complete). Soft observe-only exits must NOT land here — the
+    // #2931 gate (d_after_exit <= matching_clears) treats an unmatched
+    // detection as unbounded residual growth, and Soft observe by design
+    // never clears.
+    if (production_force)
+        g_residual_defer_after_exit_total.fetch_add(1, std::memory_order_relaxed);
     return out;
 }
 

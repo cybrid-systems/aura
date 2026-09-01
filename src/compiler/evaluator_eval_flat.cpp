@@ -4,6 +4,7 @@
 module;
 
 #include "runtime_shared.h"
+#include "core/atomic_fence_port.h"
 #include "observability_metrics.h"
 #include "reflect/hygiene_validate.hh" // Issue #1611: MutationReflectHealth
 #include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
@@ -139,7 +140,7 @@ static std::string closest_match(std::string_view name, std::span<const std::str
 // Issue #739: acquire fence before epoch load so invalidate_function's
 // release bump is visible to fibers executing stolen closure work.
 std::uint64_t Evaluator::current_bridge_epoch() const noexcept {
-    std::atomic_thread_fence(std::memory_order_acquire);
+    aura::util::thread_fence(std::memory_order_acquire);
     if (compiler_metrics_) {
         auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
         m->closure_epoch_fence_enforced_total.fetch_add(1, std::memory_order_relaxed);

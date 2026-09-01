@@ -8,6 +8,7 @@
 // map across mutation epochs (see docs/hot-update.md).
 
 #include "aura_jit.h"
+#include "core/atomic_fence_port.h"
 #include "aura_jit_bridge.h"
 #include "aot_mangle.h"                       // mangle_aot_name (Issue #136)
 #include "aot_reload_consistency_proof.h"     // Issue #2753: AotReloadConsistencyProof
@@ -3059,7 +3060,7 @@ extern "C" void aura_aot_record_deopt_on_steal() {
 }
 
 extern "C" void aura_jit_epoch_acquire_fence(void) {
-    std::atomic_thread_fence(std::memory_order_acquire);
+    aura::util::thread_fence(std::memory_order_acquire);
     if (aot_metrics())
         aot_metrics()->closure_epoch_fence_enforced_total.fetch_add(1, std::memory_order_relaxed);
 }

@@ -18,6 +18,7 @@
 #define AURA_COMPILER_AOT_RELOAD_CONSISTENCY_PROOF_H
 
 #include <atomic>
+#include "core/atomic_fence_port.h"
 #include <cstdint>
 
 // Keep AotReloadFail values as raw uint8_t here to avoid including the
@@ -71,7 +72,7 @@ load_aot_reload_consistency_proof_snapshot() noexcept {
             continue;
         }
         // Fence so field loads cannot hoist before s1 / sink after s2.
-        std::atomic_thread_fence(std::memory_order_acquire);
+        aura::util::thread_fence(std::memory_order_acquire);
         p.table_epoch = g_aot_reload_proof_table_epoch.load(std::memory_order_relaxed);
         p.bridge_epoch = g_aot_reload_proof_bridge_epoch.load(std::memory_order_relaxed);
         p.defuse_version = g_aot_reload_proof_defuse_version.load(std::memory_order_relaxed);
@@ -83,7 +84,7 @@ load_aot_reload_consistency_proof_snapshot() noexcept {
             g_aot_reload_proof_would_allow_native.load(std::memory_order_relaxed) != 0;
         p.stamp_epoch = g_aot_reload_proof_stamp_epoch.load(std::memory_order_relaxed);
         p.schema = kAotReloadConsistencyProofIssue;
-        std::atomic_thread_fence(std::memory_order_acquire);
+        aura::util::thread_fence(std::memory_order_acquire);
         const auto s2 = g_aot_reload_proof_seq.load(std::memory_order_relaxed);
         if (s1 == s2 && (s2 & 1u) == 0)
             return p;
