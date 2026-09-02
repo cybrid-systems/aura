@@ -649,3 +649,5 @@ int main() {
     return members_failed ? 1 : 0;
 }
 // ci-rebuild-trigger 2026-09-02 11:46 — force CI to rebuild d6d12c6f5 binary
+// ci-rebuild-trigger 2026-09-02 — force CI to rebuild d6d12c6f5 binary (binary mtime Sep 1, FAIL
+// line 812 > current file 650 lines → stale build)
