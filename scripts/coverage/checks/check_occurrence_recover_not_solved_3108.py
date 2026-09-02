@@ -19,18 +19,6 @@ Contract (one row per AC):
        test_solve_delta_unresolved_export.cpp (#81967); no
        docs/design/3108-* (#1655); no test_issue_3108.cpp
 
-#3380 supersedes the re-gate path: recover is now bound to the live
-commit TypeChecker (C ABI in evaluator_mutation_boundary.cpp walks
-g_tls_audit_commit_readiness_evaluator → commit_type_checker_handle →
-TypeChecker::try_occurrence_hard_face_full_solve_recover). The live TC's
-recover returns true ONLY when solve() returned SOLVED — it cannot lie,
-so the `if (recovered && in.solve_status != 0)` re-gate (and its
-g_occurrence_recover_not_solved_total bump sites) are dead code and
-have been removed. The counter itself stays defined (additive, no new
-query key per #3380 spec); the re-gate check is gone. This linter now
-asserts the supersession: re-gate absent, bump sites absent, counter
-still present + wired flag still present.
-
 Exit 0 = all rows satisfied.
 """
 
@@ -61,30 +49,18 @@ def main() -> int:
     _read("scripts/coverage/checks/check_solve_delta_fail_closed_3031.py")
 
     # ── AC1: post-recover re-gate wired (single check, both blocks bump) ──
-    # #3380 supersedes the re-gate path: live commit TC recover can't lie
-    # (returns true only when solve() returned SOLVED), so the
-    # `if (recovered && in.solve_status != 0)` re-gate + its bump sites
-    # are dead code and have been removed. Counter + wired flag stay
-    # defined (additive, no new query key).
     must("kOccurrenceRecoverNotSolvedIssue = 3108", "AC1 issue stamp", h)
     must("g_occurrence_recover_not_solved_total", "AC1 additive counter", h)
     must("g_occurrence_recover_not_solved_wired{1}", "AC1 wired flag", h)
-    # Re-gate check is GONE (superseded by #3380 live TC binding).
-    # Strip line comments before searching — the pattern is referenced
-    # in documentation comments explaining the old behavior, but only
-    # the active-code occurrence counts.
-    h_stripped = "\n".join(line for line in h.split("\n") if not line.lstrip().startswith("//"))
-    if "if (recovered && in.solve_status != 0)" in h_stripped:
-        fails.append("AC1: stale re-gate check present (#3380 superseded — live TC recover can't lie)")
-    # Bump sites are GONE (re-gate is gone, bumps were inside the gate branch).
+    # Single re-gate check (must be present at least once)
+    must("if (recovered && in.solve_status != 0)", "AC1 re-gate check", h)
+    # Two bump sites (block 1 + block 2)
     bump_positions = [
         m.start()
-        for m in re.finditer(
-            r"g_occurrence_recover_not_solved_total\.fetch_add\(1,\s*std::memory_order_relaxed\)", h_stripped
-        )
+        for m in re.finditer(r"g_occurrence_recover_not_solved_total\.fetch_add\(1,\s*std::memory_order_relaxed\)", h)
     ]
-    if len(bump_positions) != 0:
-        fails.append(f"AC1: expected 0 bump sites (#3380 superseded re-gate), found {len(bump_positions)}")
+    if len(bump_positions) < 2:
+        fails.append(f"AC1: expected ≥2 bump sites (block 1 + block 2), found {len(bump_positions)}")
     # No third direct-if fall-through (line 2406 direct-if usage must NOT
     # bump the new counter without the re-gate) — the existing #2750 reject
     # site at line 2413-2415 handles the non-SOLVED case there.
