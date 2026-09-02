@@ -648,3 +648,4 @@ int main() {
     reset_member_face();
     return members_failed ? 1 : 0;
 }
+// ci-rebuild-trigger 2026-09-02 11:46 — force CI to rebuild d6d12c6f5 binary
