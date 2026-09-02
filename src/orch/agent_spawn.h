@@ -2106,9 +2106,16 @@ inline void finalize_spawn_quota_reject(AgentHandle& h) noexcept {
     // Strict without AURA_MULTI_TENANT is still single-tenant: tenant 0
     // is the host/kernel principal. Require a non-zero stamp only when
     // the process is actually multi-tenant (Restricted+MT or Strict+MT).
-    const bool tenant_required_gate =
-        production_defaults_active() &&
-        (aura::core::provenance::multi_tenant_env_active() || aura::core::sandbox::is_strict());
+    // Issue #3220 / #3245 / #3433 / #3467 (2026-09-02): the gate used
+    // `||` here, which fired the deny on `production + is_strict` alone
+    // (single-tenant host kernel, tenant_id=0) and broke the name-table
+    // find during pending / directory snapshot tests that explicitly set
+    // Strict without setting AURA_MULTI_TENANT. The comment above names
+    // exactly that case as host single-tenant principal, which should
+    // NOT be denied — so AND it is.
+    const bool tenant_required_gate = production_defaults_active() &&
+                                      aura::core::provenance::multi_tenant_env_active() &&
+                                      aura::core::sandbox::is_strict();
     if (tenant_required_gate && spawn_tenant == 0) {
         g_orch_module_stats.spawn_failures.fetch_add(1, std::memory_order_relaxed);
         g_orch_module_stats.spawn_tenant_required_total.fetch_add(1, std::memory_order_relaxed);

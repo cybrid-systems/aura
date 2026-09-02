@@ -762,23 +762,38 @@ static void ac3463_1_source_cite_routes_through_resolve_aura_agent() {
     // not the direct name-table find.
     CHECK(prim.find("resolve_aura_agent(ev, name)") != std::string::npos,
           "3463 AC1: orch:agent-wait-reclaimed uses resolve_aura_agent");
-    // The name-table-only find must be gone from this prim.
-    // Allow it elsewhere (resolve_aura_agent itself, orch:agent-send /
-    // recv / ask / join which already use resolve_aura_agent from #3442,
-    // orch:scope-resolve which is scope-only).
-    const auto prim_size = prim.size();
-    const auto name_only_needle = "hp = ev.agent_names_->find(name);";
-    const auto pos = prim.find(name_only_needle);
-    if (pos != std::string::npos) {
-        // The only allowed site for the raw find is inside resolve_aura_agent
-        // itself — anything else is the regression #3463 closes.
-        const auto fn_pos = prim.find("resolve_aura_agent(Evaluator& ev, const std::string& name)");
-        if (fn_pos == std::string::npos || pos < fn_pos || pos > prim.find("}\n", fn_pos)) {
-            CHECK(false, "3463 AC1: raw agent_names_->find outside resolve_aura_agent");
+    // The name-table-only find must be gone from this prim body. Window
+    // the check inside the orch:agent-wait-reclaimed prim only — other
+    // prims (orch:agent-touch / orch:agent-poll / orch:agent-export-via-token)
+    // legitimately keep the raw find by contract, so a file-wide grep
+    // would false-positive on those sites.
+    const auto start = prim.find("add(\"orch:agent-wait-reclaimed\"");
+    CHECK(start != std::string::npos, "3463 AC1: orch:agent-wait-reclaimed prim located");
+    if (start != std::string::npos) {
+        // Find the matching close of the add( lambda — track brace depth
+        // from the first `{` after the start.
+        std::size_t depth = 0;
+        std::size_t end = start;
+        bool saw_open = false;
+        for (std::size_t i = start; i < std::min(start + 6000, prim.size()); ++i) {
+            if (prim[i] == '{') {
+                ++depth;
+                saw_open = true;
+            } else if (prim[i] == '}') {
+                --depth;
+                if (saw_open && depth == 0) {
+                    end = i + 1;
+                    break;
+                }
+            }
         }
+        const std::string body = prim.substr(start, end - start);
+        CHECK(body.find("hp = ev.agent_names_->find(name);") == std::string::npos,
+              "3463 AC1: raw agent_names_->find absent inside prim body");
+        CHECK(body.find("resolve_aura_agent(ev, name)") != std::string::npos,
+              "3463 AC1: resolve_aura_agent(ev, name) call present inside prim body");
     }
     CHECK(prim.find("Issue #3463") != std::string::npos, "3463 AC1: stamp in prim file");
-    (void)prim_size;
 }
 
 static void ac3463_2_resolve_aura_agent_unchanged() {
@@ -817,21 +832,30 @@ static void ac3463_3_aura_negative_path_unknown_name() {
     // An orch:agent-wait-reclaimed call for a name that has neither a
     // name-table entry nor an AgentScope entry must return status=invalid
     // (negative path proves the prim still routes through resolve_aura_agent).
-    auto r = cs.eval(R"(
-      (let* ((w (orch:agent-wait-reclaimed "3463-no-such-agent"))
-             (h (if (hash? w) w #f)))
-        (if h
-          (list (hash-ref w "ok")
-                (hash-ref w "status")
-                (if (hash-has-key? w "agent-wait-reclaimed-wired") 1 0))
-          '(#f #f 0))))");
-    CHECK(r.has_value(), "3463 AC3: orch:agent-wait-reclaimed returned a hash");
-    // Aura-list result: (ok, status, wired).
-    CHECK(r && is_int(r->at(2)) && as_int(r->at(2)) == 1,
-          "3463 AC3: agent-wait-reclaimed-wired sentinel present (prim executed)");
-    CHECK(r && is_string(r->at(1)) && as_string(r->at(1)) == std::string("invalid"),
-          "3463 AC3: unknown name → status=invalid");
-    CHECK(r && is_bool(r->at(0)) && as_bool(r->at(0)) == false, "3463 AC3: ok=#f for invalid");
+    // Three separate evals (one per check) — cs.eval() returns a single
+    // EvalValue, not a list (matches the existing test pattern in this
+    // file at the #3273 AC3 block).
+    // Note: the `agent-wait-reclaimed-wired` sentinel is only stamped on
+    // the prim success path; the invalid path omits it. Don't assert
+    // it here (negative path proves the prim routes through
+    // resolve_aura_agent → both planes miss → status=invalid is enough).
+    auto status =
+        cs.eval(R"((hash-ref (orch:agent-wait-reclaimed "3463-no-such-agent") "status"))");
+    CHECK(status.has_value(), "3463 AC3: status eval returned");
+    CHECK(status && is_string(*status), "3463 AC3: status key is a string");
+    if (status && is_string(*status)) {
+        const auto idx = as_string_idx(*status);
+        // string_heap_ is private — probe via a fresh eval that compares
+        // the value to a literal.
+        auto status_lit = cs.eval(
+            R"((if (string=? (hash-ref (orch:agent-wait-reclaimed "3463-no-such-agent") "status") "invalid") 1 0))");
+        CHECK(status_lit && is_int(*status_lit) && as_int(*status_lit) == 1,
+              "3463 AC3: unknown name → status=\"invalid\"");
+        (void)idx;
+    }
+    auto ok_val = cs.eval(R"((hash-ref (orch:agent-wait-reclaimed "3463-no-such-agent") "ok"))");
+    CHECK(ok_val.has_value(), "3463 AC3: ok eval returned");
+    CHECK(ok_val && is_bool(*ok_val) && as_bool(*ok_val) == false, "3463 AC3: ok=#f for invalid");
 }
 
 static void ac3463_4_no_new_query_key_and_no_invent() {
@@ -3765,6 +3789,21 @@ int run_test_join_drain_reclaim() {
 
         std::println("\n--- #3220 AC1: join hash + directory lifecycle=reclaimed-pending ---");
         {
+            // #3220 AC1 fix (2026-09-02): drop SandboxMode::Strict that
+            // the parent block set for the Aura eval above
+            // (apply_production_audit_defaults + set_mode(Strict)). Without
+            // this, the production tenant_required_gate
+            // (production_defaults_active && (multi_tenant_env_active ||
+            // is_strict)) fires with prod=1 && is_strict=1 && spawn_tenant=0
+            // (host single-tenant kernel principal) and returns a failed
+            // handle (h.fiber=null, h.ok=false). The subsequent CHECK
+            // records failure without bailing, and the null deref on
+            // `h.fiber->mark_reclaimed()` segfaults the binary
+            // (heap corruption + stack smashing). Drop only the
+            // SandboxMode::Strict (keep production_audit so the directory
+            // lifecycle check below still gets the production semantics
+            // that surface lifecycle=reclaimed-pending).
+            set_mode(SandboxMode::Off);
             const auto risk0 = g_orch_module_stats.host_forget_reclaimed_risk_total.load(
                 std::memory_order_relaxed);
             Scheduler sched(1);
