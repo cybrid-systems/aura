@@ -389,7 +389,15 @@ public:
         ScopeEnterGuard g(this, "spawn");
         // Issue #2946: production concurrent hard deny — do not mutate
         // handles_ (return thread-local failed handle).
-        if (g.denied_hard()) {
+        // 2026-09-02: Soft-mode collision (metric-only, #2399) now ALSO
+        // skips handles_ mutation. The old Soft behavior ("method body
+        // continues") let a concurrent spawn push_back while join_all was
+        // iterating std::span(handles_) in join_agents — vector
+        // reallocation dangled the span and SIGSEGV'd in
+        // join_keepalive_helper (test_orch_agent_batch #2399 AC2). The
+        // misuse metric still bumps (inside try_enter); spawn still
+        // returns; callers MUST check handle.ok (same contract as #2946).
+        if (g.denied_hard() || g.soft_collision) {
             // Issue #3366: HardDeny thread_local handle. NOT pushed to
             // handles_ (so iterators / join_all / cancel_all by index skip
             // it). id stays 0, ok=false, error="...#2946" — callers MUST
@@ -1059,6 +1067,13 @@ private:
         std::unique_lock<std::recursive_mutex> lk; // empty unless MutexGuarded
         bool holds = false;
         bool hard_denied = false; // #2946 production concurrent hard deny
+        // Soft-mode concurrent collision (try_enter returned false without
+        // HardDeny/HardAbort — metric-only detect). Mutators must treat this
+        // like denied_hard and skip handles_ mutation: join_all hands
+        // std::span(handles_) to join_agents, so a concurrent push_back
+        // reallocating the vector is a UAF (2026-09-02 CI: SIGSEGV in
+        // join_keepalive_helper via #2399 AC2 concurrent spawn).
+        bool soft_collision = false;
         ScopeEnterGuard(const AgentScope* s, const char* site) noexcept
             : self(s) {
             if (!self)
@@ -1079,6 +1094,7 @@ private:
                 return;
             }
             holds = self->try_enter(site, &hard_denied);
+            soft_collision = !holds && !hard_denied;
         }
         ~ScopeEnterGuard() noexcept {
             if (self && self->mode_ == ScopeConcurrency::MutexGuarded)
