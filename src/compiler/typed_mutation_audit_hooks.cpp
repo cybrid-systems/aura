@@ -13,6 +13,7 @@
 #include "core/mutation_audit_wal.hh"
 #include "core/persistent_child_vector.hh"
 #include "compiler/ownership_escape_lowering_gate.h"
+#include "core/lifetime_pin.hh" // #3294 CI: disarm GeneralObjectPin required pref on dev reset
 
 #include <atomic>
 #include <cstdint>
@@ -24,6 +25,18 @@
 
 extern "C" void aura_pcv_set_stale_span_exclusive(int on) noexcept {
     aura::ast::pcv_set_stale_span_exclusive_enabled(on != 0);
+}
+
+// Issue #3294 CI: dev/test face reset. A prior member that called
+// apply_production_security_defaults() armed g_general_object_pin_required_pref
+// process-wide (one-way latch, security_defaults.hh step 15 #2597). Without a
+// disarm here, every later (set-code) in the same process fails closed at the
+// GeneralObjectPin wire (#2891) -> workspace never created -> typecheck/query
+// no-op -> #3294 AC4 / dirty-cone batch failures. Restore observe-only (-1)
+// + clear the sticky densify breach.
+extern "C" void aura_reset_general_object_pin_required_for_test() noexcept {
+    aura::core::lifetime::g_general_object_pin_required_pref.store(-1, std::memory_order_release);
+    aura::core::lifetime::g_general_object_pin_required_breach.store(0, std::memory_order_release);
 }
 
 namespace aura::compiler::typed_audit {
