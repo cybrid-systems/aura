@@ -3253,6 +3253,35 @@ static void ac3294_5_source_and_linter() {
           "3294 AC5: no docs/design");
 }
 
+// Issue #3294 AC4b: trivial typecheck in svc.eval does not flip face.
+// (define f 1) is a trivial define — pure infer_flat has no actual solve
+// to authorize (last_type_export_authoritative_=false). Calling
+// copy_infer(false) inside typecheck-current would clear face; gating on
+// tc.last_type_export_authoritative() preserves face for the quiet SOLVED
+// path. The original AC4 covered the end-to-end grant; this AC4b pins
+// the *typecheck-current* site specifically (issue #1453 binding).
+static void ac3294_4b_trivial_typecheck_preserves_face() {
+    std::println("\n--- #3294 AC4b: trivial typecheck does not flip face ---");
+    using aura::compiler::typed_audit::g_type_export_soft_refuse_observe_total;
+    using aura::compiler::typed_audit::reset_type_export_soft_refuse_for_test;
+    apply_dev_audit_defaults();
+    reset_type_export_soft_refuse_for_test();
+    CompilerService svc;
+    CHECK(svc.eval("(+ 1 1)").has_value(), "3294 AC4b: warm");
+    (void)svc.eval("(set-code \"(define f 1)\")");
+    (void)svc.eval("(eval-current)");
+    (void)svc.eval("(typecheck-current)"); // trivial typecheck → no face flip
+    // After the trivial typecheck-current call, soft_refuse counter must
+    // still be zero (no copy_infer(false) bump inside the typecheck body).
+    CHECK(g_type_export_soft_refuse_observe_total.load(std::memory_order_relaxed) == 0,
+          "ac3294_4b_trivial_typecheck_preserves_face: zero extra after trivial typecheck");
+    // Final grant via copy_infer(true) must succeed (face preserved
+    // through trivial typecheck; AC4 would have failed here before fix).
+    svc.evaluator().copy_infer_type_export_authority(true);
+    CHECK(svc.evaluator().type_export_is_authoritative(),
+          "3294 AC4b: face preserved through trivial typecheck → final grant");
+}
+
 // ── #3108: commit_readiness recover must re-gate on solve_status==SOLVED ─
 //
 // Closes the half-green residual of #2750 / #2909 / #2962 / #2911 /
@@ -3785,6 +3814,7 @@ int run_test_solve_delta_unresolved_export() {
     ac3294_3_outermost_grant_rearms();
     ac3294_4_quiet_solved_zero_extra();
     ac3294_5_source_and_linter();
+    ac3294_4b_trivial_typecheck_preserves_face();
     std::println("\n=== Issue #3108: commit_readiness recover re-gate ===");
     ac3108_1_recover_regate_wired();
     ac3108_2_production_rejects_via_existing_path();
