@@ -2107,12 +2107,20 @@ bool ConstraintSystem::try_goal_priority_reverify_before_full() noexcept {
     // #2278 / #2307 — same filter as solve_delta_occurrence).
     if (have_goals) {
         const auto cur_epoch = current_epoch();
-        for (const auto& goal : occurrence_goals_) {
-            if (!goal.var.valid())
+        // Index-based re-read: mark_touched_on_delta → note_occurrence_goal
+        // may push_back into occurrence_goals_, reallocating the vector and
+        // invalidating a live reference/iterator (ASAN heap-use-after-free,
+        // 2026-09-02 batch run — same family as the solve_delta_occurrence
+        // replay loop). Snapshot the size; fresh element reads per index.
+        const auto goal_count = occurrence_goals_.size();
+        for (std::size_t gi = 0; gi < goal_count; ++gi) {
+            const auto var = occurrence_goals_[gi].var;
+            const auto epoch = occurrence_goals_[gi].epoch;
+            if (!var.valid())
                 continue;
-            if (goal.epoch > 0 && goal.epoch < cur_epoch)
+            if (epoch > 0 && epoch < cur_epoch)
                 continue;
-            mark_touched_on_delta(goal.var, /*occurrence_narrow=*/true);
+            mark_touched_on_delta(var, /*occurrence_narrow=*/true);
         }
     }
     // Also seed pending full-solve backlog into touched so reverify
@@ -10944,8 +10952,14 @@ namespace {
                 refined_str = std::string(name);
         }
         std::string pred_src = "match:";
-        for (const auto& ctor : mi->used_constructors)
-            pred_src += ctor + ",";
+        for (const auto& ctor : mi->used_constructors) {
+            // used_constructors is SymId (ast.ixx MatchClauseInfo) — resolve
+            // through the pool. The previous `pred_src += ctor + ","` was
+            // SymId + string-literal = pointer arithmetic on the literal
+            // (ASAN global-buffer-overflow at ","+SymId, 2026-09-02),
+            // poisoning NarrowingRecord::predicate_src with garbage.
+            pred_src += std::string(pool.resolve(ctor)) + ",";
+        }
         if (mi->has_wildcard)
             pred_src.push_back('_');
         NarrowingRecord rec;
@@ -12093,7 +12107,12 @@ SolveDeltaOccurrenceResult solve_delta_occurrence(ConstraintSystem& cs,
     // isn't double-recorded; we just re-inject occurrence_priority_roots_.
     std::size_t drifted_goals = 0;
     {
-        const auto& goals = cs.occurrence_goals_for_test();
+        // Copy: mark_touched_on_delta → note_occurrence_goal may push_back
+        // into occurrence_goals_, reallocating the vector and invalidating a
+        // live reference/iterator (ASAN heap-use-after-free in the replay
+        // loop, 2026-09-02 batch run — stale goal reads poisoned drift
+        // detection + priority replay).
+        const auto goals = cs.occurrence_goals_for_test();
         std::size_t replayed = 0;
         std::size_t drifted = 0;
         const auto cur_epoch = cs.current_epoch();
