@@ -810,7 +810,15 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
         // never surface a half-solved TIMEOUT cone as truth.
         // Issue #3082: do not grant_type_export_authority over mid/nested
         // provisional inflight (copy_infer refuses; persist still grants).
-        ev.copy_infer_type_export_authority(tc.last_type_export_authoritative());
+        // Issue #3294 AC4: trivial defines (e.g. `(define f 1)`) where the
+        // pure infer_flat has no actual solve to authorize return
+        // last_type_export_authoritative_=false; calling copy_infer(false)
+        // here would clear the outermost face inside the eval_on_current
+        // guard and the AC4 final copy_infer(true) would hit the !face
+        // branch. Only copy_infer when the engine actually authorized.
+        if (tc.last_type_export_authoritative()) {
+            ev.copy_infer_type_export_authority(true);
+        }
 
         // TypeChecker now writes back normalized types via synthesize_flat + infer_flat,
         // and clears per-node dirty flags. No need for post-pass cache sync.
