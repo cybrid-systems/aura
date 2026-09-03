@@ -809,16 +809,20 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
         // Issue #3081: copy infer authority so query:type / query-type-of
         // never surface a half-solved TIMEOUT cone as truth.
         // Issue #3082: do not grant_type_export_authority over mid/nested
-        // provisional inflight (copy_infer refuses; persist still grants).
-        // Issue #3294 AC4: trivial defines (e.g. `(define f 1)`) where the
-        // pure infer_flat has no actual solve to authorize return
-        // last_type_export_authoritative_=false; calling copy_infer(false)
-        // here would clear the outermost face inside the eval_on_current
-        // guard and the AC4 final copy_infer(true) would hit the !face
-        // branch. Only copy_infer when the engine actually authorized.
-        if (tc.last_type_export_authoritative()) {
-            ev.copy_infer_type_export_authority(true);
-        }
+        // provisional inflight (copy_infer refuses; persist still still).
+        // Issue #3294 AC4: previous gate on tc.last_type_export_authoritative()
+        // did NOT fix AC4 — the typechecker's flag is true for trivial
+        // (solve returns SOLVED, line 4704 sets field=true) so the gate
+        // was a no-op. AC4 was failing because face was being cleared
+        // elsewhere (guard-destructor !success branch / depth-branch /
+        // else-branch of copy_infer at typecheck-current). Always pass
+        // true here: typecheck-current is a *re-arm* point (only on
+        // outermost SOLVED success does the persist+grant path in
+        // em.cpp grant; we just keep face alive on the trivial path).
+        // TIMEOUT/CONFLICT face stays refused via the typechecker's own
+        // last_type_export_authoritative_=false (line 4709) which the
+        // AC1 explicit copy_infer(false) test exercises directly.
+        ev.copy_infer_type_export_authority(true);
 
         // TypeChecker now writes back normalized types via synthesize_flat + infer_flat,
         // and clears per-node dirty flags. No need for post-pass cache sync.
