@@ -6,13 +6,19 @@
 #include "test_harness.hpp"
 
 #include "compiler/security_capabilities.h"
+#include "compiler/typed_mutation_audit.h"
 #include "core/mutation_audit_wal.hh"
+#include "core/security_event.hh"
+#include "core/security_event_wal.hh"
 
 #include <chrono>
 #include <cstdint>
+#include <cstdio>
+#include <cstring>
 #include <filesystem>
 #include <print>
 #include <string>
+#include <vector>
 
 import std;
 import aura.compiler.evaluator;
@@ -21,16 +27,30 @@ import aura.compiler.value;
 
 using aura::compiler::CompilerService;
 using aura::compiler::security::kEffectMutate;
+using aura::compiler::typed_audit::apply_dev_audit_defaults;
+using aura::compiler::typed_audit::apply_production_audit_defaults;
 using aura::compiler::types::as_bool;
 using aura::compiler::types::as_int;
+using aura::compiler::types::as_string_idx;
 using aura::compiler::types::is_bool;
 using aura::compiler::types::is_hash;
 using aura::compiler::types::is_int;
 using aura::compiler::types::is_pair;
 using aura::compiler::types::is_string;
+using aura::core::audit_wal::AuditWalRecord;
 using aura::core::audit_wal::g_mutation_audit_wal;
+using aura::core::audit_wal::kAuditWalMagic;
+using aura::core::audit_wal::kAuditWalRecordV1Size;
+using aura::core::audit_wal::kAuditWalVersion;
+using aura::core::audit_wal::make_record;
 using aura::core::audit_wal::reset_audit_wal_for_test;
 using aura::core::audit_wal::snapshot_audit_wal_stats;
+using aura::core::security_event::g_security_event_ring;
+using aura::core::security_event::kSecurityEventRingSize;
+using aura::core::security_event::reset_security_event_ring_for_test;
+using aura::core::security_event::SecurityEventKind;
+using aura::core::security_event_wal::emit_security_event_durable;
+using aura::core::security_event_wal::reset_security_event_wal_for_test;
 using aura::test::g_failed;
 using aura::test::g_passed;
 
@@ -56,6 +76,48 @@ std::int64_t href_m(CompilerService& cs, std::string_view key) {
 
 void reset_all() {
     reset_audit_wal_for_test();
+    reset_security_event_wal_for_test();
+    reset_security_event_ring_for_test();
+}
+
+std::string href_evol_reason(CompilerService& cs, std::uint64_t mid) {
+    auto r = cs.eval(std::format(
+        "(hash-ref (engine:metrics \"query:evolution-audit-decision\" {}) \"last-se-reason\")",
+        mid));
+    if (!r || !is_string(*r))
+        return {};
+    const auto idx = as_string_idx(*r);
+    const auto heap = cs.evaluator().string_heap();
+    if (idx >= heap.size())
+        return {};
+    return std::string(heap[idx]);
+}
+
+const aura::core::security_event::SecurityEvent* find_se_by_mid(std::uint64_t mid) {
+    auto& ring = g_security_event_ring();
+    const auto seq = ring.seq.load(std::memory_order_relaxed);
+    for (std::uint64_t i = 0; i < seq && i < kSecurityEventRingSize; ++i) {
+        const auto& e = ring.ring[i % kSecurityEventRingSize];
+        if (e.mutation_id == mid)
+            return &e;
+    }
+    return nullptr;
+}
+
+void write_v1_audit_segment(const fs::path& dir, const std::vector<AuditWalRecord>& recs) {
+    fs::create_directories(dir);
+    const auto path = dir / "audit-0.wal";
+    std::FILE* f = std::fopen(path.c_str(), "wb");
+    CHECK(f != nullptr, "3465: open v1 audit segment");
+    if (!f)
+        return;
+    (void)std::fwrite(kAuditWalMagic, 1, 8, f);
+    const std::uint32_t ver = kAuditWalVersion;
+    (void)std::fwrite(&ver, sizeof(ver), 1, f);
+    for (const auto& rec : recs) {
+        (void)std::fwrite(&rec, 1, kAuditWalRecordV1Size, f);
+    }
+    std::fclose(f);
 }
 
 } // namespace
@@ -244,6 +306,102 @@ int main() {
         auto d = cs.eval("(security:set-audit-persist-dir! \"\")");
         CHECK(d && is_bool(*d) && as_bool(*d), "empty disables");
         CHECK(!cs.evaluator().mutation_audit_wal_enabled(), "disabled via EDSL");
+    }
+
+    // ── Issue #3465: mutation WAL → SE rebuild reason stability ──
+    {
+        using aura::core::security_event_wal::persist_security_event;
+        std::println("\n--- #3465 AC1/AC5: sidecar keeps original reason ---");
+        reset_all();
+        apply_production_audit_defaults();
+        const auto dir_ac1 = dir + "-3465-ac1";
+        fs::remove_all(dir_ac1);
+        fs::create_directories(dir_ac1);
+        CompilerService cs;
+        CHECK(cs.evaluator().enable_mutation_audit_wal(dir_ac1), "3465 AC1: enable WAL");
+        constexpr std::uint64_t kMid = 3465101;
+        constexpr const char* kReason = "mid-fallback-refused";
+        emit_security_event_durable(SecurityEventKind::EffectDeny, 11, kMid, 7, kEffectMutate,
+                                    "resolve-audit-mid", kReason, true, 3);
+        CHECK(href_evol_reason(cs, kMid) == kReason, "3465 AC1: live last-se-reason");
+        cs.evaluator().disable_mutation_audit_wal();
+        reset_security_event_ring_for_test();
+        reset_audit_wal_for_test();
+        reset_security_event_wal_for_test();
+        CompilerService cs2;
+        CHECK(cs2.evaluator().enable_mutation_audit_wal(dir_ac1), "3465 AC1: replay");
+        const auto* hit = find_se_by_mid(kMid);
+        CHECK(hit && std::string_view(hit->reason) == kReason,
+              "3465 AC1: sidecar reason unchanged");
+        CHECK(href_evol_reason(cs2, kMid) == kReason,
+              "3465 AC5: last-se-reason matches pre-restart");
+        cs2.evaluator().disable_mutation_audit_wal();
+        fs::remove_all(dir_ac1);
+        apply_dev_audit_defaults();
+
+        std::println("--- #3465 AC2/AC3: v1 mutation-only, no phantom mid ---");
+        reset_all();
+        const auto dir_ac2 = dir + "-3465-ac2";
+        fs::remove_all(dir_ac2);
+        AuditWalRecord zero{};
+        zero.seq = 5;
+        zero.effect_denied = 1;
+        std::memcpy(zero.op, "zero-mid", 8);
+        AuditWalRecord stored{};
+        stored.seq = 1;
+        stored.provenance_mutation_id = 3465102;
+        stored.effect_denied = 1;
+        stored.epoch = 4;
+        std::memcpy(stored.op, "stored-mid", 10);
+        write_v1_audit_segment(dir_ac2, {zero, stored});
+        CompilerService cs_v1;
+        CHECK(cs_v1.evaluator().enable_mutation_audit_wal(dir_ac2),
+              "3465 AC2: enable mutation-only v1");
+        CHECK(find_se_by_mid(5) == nullptr, "3465 AC2: seq not used as mid");
+        CHECK(find_se_by_mid(1) == nullptr, "3465 AC2: no phantom mid=1");
+        const auto* legacy = find_se_by_mid(3465102);
+        CHECK(legacy && std::string_view(legacy->reason) == "wal-replay-legacy",
+              "3465 AC3: empty tail → wal-replay-legacy");
+        cs_v1.evaluator().disable_mutation_audit_wal();
+        fs::remove_all(dir_ac2);
+
+        std::println("--- #3465 AC3: stored reason tail round-trip ---");
+        reset_all();
+        const auto dir_ac3 = dir + "-3465-ac3";
+        fs::remove_all(dir_ac3);
+        fs::create_directories(dir_ac3);
+        CompilerService cs3;
+        CHECK(cs3.evaluator().enable_mutation_audit_wal(dir_ac3), "3465 AC3: enable");
+        constexpr std::uint64_t kStoredMid = 3465103;
+        constexpr const char* kStoredReason = "invariant-denied: type-proof tenant=9 op=mutate";
+        CHECK(g_mutation_audit_wal().append(make_record(3, 0, 2, 0, 0, 0, "mutate", kEffectMutate,
+                                                        9, kStoredMid, 4, true, kStoredReason)),
+              "3465 AC3: append reason tail");
+        cs3.evaluator().disable_mutation_audit_wal();
+        for (auto& ent : fs::directory_iterator(dir_ac3)) {
+            if (ent.path().filename().string().rfind("security-event-", 0) == 0)
+                fs::remove(ent.path());
+        }
+        reset_security_event_ring_for_test();
+        reset_audit_wal_for_test();
+        reset_security_event_wal_for_test();
+        CompilerService cs4;
+        CHECK(cs4.evaluator().enable_mutation_audit_wal(dir_ac3), "3465 AC3: replay stored");
+        const auto* stored_hit = find_se_by_mid(kStoredMid);
+        CHECK(stored_hit && std::string_view(stored_hit->reason) == kStoredReason,
+              "3465 AC3: stored reason restored");
+        cs4.evaluator().disable_mutation_audit_wal();
+        fs::remove_all(dir_ac3);
+
+        std::println("--- #3465 AC4: WAL-off no replay I/O ---");
+        reset_all();
+        apply_dev_audit_defaults();
+        CompilerService cs_off;
+        CHECK(!cs_off.evaluator().mutation_audit_wal_enabled(), "3465 AC4: WAL off");
+        CHECK(!persist_security_event(SecurityEventKind::EffectDeny, 1, 3465104, 1, 0, "off", "off",
+                                      true, 0, 0),
+              "3465 AC4: persist short-circuits");
+        CHECK(snapshot_audit_wal_stats().replay_count == 0, "3465 AC4: no replay");
     }
 
     // Cleanup temp

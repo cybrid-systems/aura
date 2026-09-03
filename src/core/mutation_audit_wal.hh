@@ -7,6 +7,7 @@
 
 #include <atomic>
 #include <cerrno>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -28,8 +29,21 @@ inline constexpr std::uint32_t kAuditWalVersion = 1;
 // Default rotate after ~1 MiB of records (keeps segments small).
 inline constexpr std::uint64_t kDefaultRotateBytes = 1ull << 20;
 
+// Issue #3465: v1 body (pre-reason tail). Readers of old segments
+// consume this many bytes and leave reason[] empty → wal-replay-legacy.
+// reserved0 stays 0 on those records. New writers stamp
+// kAuditWalReasonTailMarker so mixed-size files never happen (open
+// rotates off a v1 body before appending the tail-bearing layout).
+inline constexpr std::size_t kAuditWalRecordV1Size =
+    8 + 8 + 8 + 4 + 4 + 4 + 48 + 2 + 2 + 8 + 8 + 8 + 1 + 7;
+inline constexpr std::size_t kAuditWalReserved0Offset =
+    8 + 8 + 8 + 4 + 4 + 4 + 48 + 2; // seq..op + effect_bits
+inline constexpr std::uint16_t kAuditWalReasonTailMarker = 0x3465;
+inline constexpr std::size_t kAuditWalReasonSize = 64;
+
 // On-disk / replay record — POD, fixed size for O(1) append + mmap-friendly layout.
 // Mirrors MutationAuditEntry fields + epoch for full provenance chain.
+// Issue #3465: reason[64] is an additive tail only (version stays 1).
 #pragma pack(push, 1)
 struct AuditWalRecord {
     std::uint64_t seq = 0;
@@ -46,11 +60,16 @@ struct AuditWalRecord {
     std::uint64_t epoch = 0; // Mutation epoch at emit (#3335; was Bridge)
     std::uint8_t effect_denied = 0;
     std::uint8_t reserved1[7]{};
+    char reason[kAuditWalReasonSize]{}; // #3465 additive tail
 };
 #pragma pack(pop)
 
-static_assert(sizeof(AuditWalRecord) == 8 + 8 + 8 + 4 + 4 + 4 + 48 + 2 + 2 + 8 + 8 + 8 + 1 + 7,
-              "AuditWalRecord size stable for WAL format");
+static_assert(kAuditWalRecordV1Size == 8 + 8 + 8 + 4 + 4 + 4 + 48 + 2 + 2 + 8 + 8 + 8 + 1 + 7,
+              "v1 prefix size stable for old-segment replay");
+static_assert(sizeof(AuditWalRecord) == kAuditWalRecordV1Size + kAuditWalReasonSize,
+              "AuditWalRecord v1 prefix + reason[64] tail (#3465)");
+static_assert(offsetof(AuditWalRecord, reason) == kAuditWalRecordV1Size,
+              "reason tail must append at struct end only");
 
 // Issue #3242: additive typed-summary sidecar. Own magic/version so
 // AuditWalRecord replay (kAuditWalMagic / version 1) ignores these files.
@@ -184,6 +203,20 @@ struct MutationAuditWal {
             }
             current_bytes = 8 + sizeof(ver);
             std::fflush(fp);
+        }
+        // Issue #3465: never append tail-bearing records into a v1 body.
+        // Old segments keep reserved0==0; new writers stamp the marker.
+        if (current_bytes > 8 + sizeof(std::uint32_t)) {
+            std::uint16_t marker = 0;
+            const long off =
+                static_cast<long>(8 + sizeof(std::uint32_t) + kAuditWalReserved0Offset);
+            if (std::fseek(fp, off, SEEK_SET) == 0)
+                (void)std::fread(&marker, sizeof(marker), 1, fp);
+            (void)std::fseek(fp, 0, SEEK_END);
+            if (marker != kAuditWalReasonTailMarker) {
+                close_unlocked();
+                return open_segment_unlocked(seg + 1);
+            }
         }
         segment_index = seg;
         g_audit_wal_metrics().audit_wal_segments.store(seg + 1, std::memory_order_relaxed);
@@ -362,8 +395,12 @@ struct MutationAuditWal {
             ::aura::core::wal_slo::note_wal_append_fail();
             return false;
         }
-        const auto n = std::fwrite(&rec, 1, sizeof(rec), fp);
-        if (n != sizeof(rec)) {
+        // Issue #3465: stamp the tail marker so readers pick the new size
+        // even when callers zero-init AuditWalRecord and skip make_record.
+        AuditWalRecord out = rec;
+        out.reserved0 = kAuditWalReasonTailMarker;
+        const auto n = std::fwrite(&out, 1, sizeof(out), fp);
+        if (n != sizeof(out)) {
             g_audit_wal_metrics().audit_wal_append_fail_total.fetch_add(1,
                                                                         std::memory_order_relaxed);
             ::aura::core::wal_slo::note_wal_append_fail();
@@ -503,9 +540,25 @@ struct MutationAuditWal {
             std::fclose(f);
             return out;
         }
+        // Issue #3465: version stays 1. Size is selected from reserved0 of
+        // the first record — marker means reason tail is present; missing
+        // tail (old segments) is left empty → wal-replay-legacy.
+        std::uint16_t marker = 0;
+        const auto data_start = std::ftell(f);
+        if (data_start >= 0 &&
+            std::fseek(f, data_start + static_cast<long>(kAuditWalReserved0Offset), SEEK_SET) == 0)
+            (void)std::fread(&marker, sizeof(marker), 1, f);
+        if (data_start >= 0)
+            (void)std::fseek(f, data_start, SEEK_SET);
+        const bool has_reason_tail = marker == kAuditWalReasonTailMarker;
+        const std::size_t rec_size =
+            has_reason_tail ? sizeof(AuditWalRecord) : kAuditWalRecordV1Size;
         AuditWalRecord rec{};
-        while (std::fread(&rec, 1, sizeof(rec), f) == sizeof(rec)) {
+        while (std::fread(&rec, 1, rec_size, f) == rec_size) {
+            if (!has_reason_tail)
+                rec.reason[0] = '\0';
             out.push_back(rec);
+            rec = AuditWalRecord{};
         }
         std::fclose(f);
         return out;
@@ -623,7 +676,8 @@ inline AuditWalRecord make_record(std::uint64_t seq, std::uint64_t timestamp_ms,
                                   std::uint32_t epoch_delta, std::uint32_t target_node,
                                   std::string_view op, std::uint16_t effect_bits,
                                   std::uint64_t tenant_id, std::uint64_t provenance_mutation_id,
-                                  std::uint64_t epoch, bool effect_denied) noexcept {
+                                  std::uint64_t epoch, bool effect_denied,
+                                  std::string_view reason = {}) noexcept {
     AuditWalRecord r{};
     r.seq = seq;
     r.timestamp_ms = timestamp_ms;
@@ -635,10 +689,16 @@ inline AuditWalRecord make_record(std::uint64_t seq, std::uint64_t timestamp_ms,
     std::memcpy(r.op, op.data(), n);
     r.op[n] = '\0';
     r.effect_bits = effect_bits;
+    r.reserved0 = kAuditWalReasonTailMarker;
     r.tenant_id = tenant_id;
     r.provenance_mutation_id = provenance_mutation_id;
     r.epoch = epoch;
     r.effect_denied = effect_denied ? 1 : 0;
+    if (!reason.empty()) {
+        const auto rn = std::min(reason.size(), sizeof(r.reason) - 1);
+        std::memcpy(r.reason, reason.data(), rn);
+        r.reason[rn] = '\0';
+    }
     return r;
 }
 

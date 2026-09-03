@@ -417,19 +417,21 @@ int run_test_security_audit_unify() {
         CHECK(seq_replay >= 2, "WAL replay rebuilt both security events");
         bool saw_deny = false;
         bool saw_allow = false;
-        bool saw_replay_reason = false;
+        bool saw_invented_replay_tag = false;
         for (std::size_t i = 0; i < kSecurityEventRingSize && i < seq_replay; ++i) {
             const auto& e = g_security_event_ring().ring[i % kSecurityEventRingSize];
             if (e.kind == SecurityEventKind::EffectDeny)
                 saw_deny = true;
             if (e.kind == SecurityEventKind::EffectAllow)
                 saw_allow = true;
-            if (std::string_view(e.reason).find("wal-replay") != std::string_view::npos)
-                saw_replay_reason = true;
+            const auto rs = std::string_view(e.reason);
+            if (rs == "wal-replay-deny" || rs == "wal-replay-allow")
+                saw_invented_replay_tag = true;
         }
         CHECK(saw_allow, "replayed allow event");
         CHECK(saw_deny, "replayed deny event");
-        CHECK(saw_replay_reason, "replay stamps wal-replay reason");
+        CHECK(!saw_invented_replay_tag,
+              "3465: sidecar replay keeps original reason (no invented tag)");
         fs::remove_all(dir, ec);
         (void)kCapWildcard;
     }

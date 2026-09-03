@@ -92,7 +92,11 @@ def main() -> int:
     must("ac3335_3_grant_mutate_ring_epoch", "AC3 test", test)
     must("schema-2055", "AC3 schema-2055 retained", prim)
     must("schema-3335", "AC3 additive schema", prim)
-    must("sizeof(AuditWalRecord) == 8 + 8 + 8 + 4 + 4 + 4 + 48 + 2 + 2 + 8 + 8 + 8 + 1 + 7", "AC3 WAL size stable", wal)
+    must(
+        "kAuditWalRecordV1Size == 8 + 8 + 8 + 4 + 4 + 4 + 48 + 2 + 2 + 8 + 8 + 8 + 1 + 7",
+        "AC3 WAL v1 prefix stable",
+        wal,
+    )
 
     must("ac3335_4_soft_off_write", "AC4 test", test)
     must("Soft/Off: relaxed loads only", "AC4 zero extra cost", emit_body)
