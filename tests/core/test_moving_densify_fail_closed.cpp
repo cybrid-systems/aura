@@ -3212,6 +3212,67 @@ static void ac3435_5_source_and_linter() {
     }
 }
 
+// Issue #3464 AC5: ≥2 densify-tracked small-pool objects of overlapping
+// tier + alloc-fail inject → dtors_ stays unique. Without the
+// collision check, a later pending's try_allocate can return an
+// earlier pending's recycled slot, then a subsequent !neu would
+// write a second DtorEntry at that same address → alias. Fix: drop
+// the duplicate in relocate_tracked_objects_for_moving_ when the
+// same-window kept or remap table already owns p.old.
+static void ac3464_5_collision_avoided_dtors_unique() {
+    std::println("\n--- #3464 AC5: ≥2 overlapping small-pool + inject → dtors_ unique ---");
+    MovingFlagGuard on(1);
+    aura::ast::g_moving_untracked_hard_abort_pref.store(0,
+                                                        std::memory_order_relaxed); // Soft observe
+    aura::ast::reset_relocate_alloc_fail_inject_for_test();
+    g_3435_dtor_count.store(0, std::memory_order_relaxed);
+    {
+        ASTArena arena(64 * 1024);
+        // 3 densify-tracked small-pool objects of overlapping tier
+        // (same DtorCount3435 size class). On ascending-size allocate,
+        // a later pending's try_allocate is likely to return an
+        // earlier pending's recycled slot.
+        auto* p0 = arena.create<DtorCount3435>(1);
+        auto* p1 = arena.create<DtorCount3435>(2);
+        auto* p2 = arena.create<DtorCount3435>(3);
+        CHECK(p0 && p1 && p2, "3464 AC5: create ok");
+        // Arm inject: the first post-recycle allocation fails. The
+        // earlier pending's p.old may then be returned as a later
+        // pending's neu; without the fix, a subsequent !neu would
+        // write a second DtorEntry at the colliding address.
+        aura::ast::g_relocate_alloc_fail_inject_remaining.store(1, std::memory_order_relaxed);
+        const auto r = arena.live_compact(LiveCompactMode::Moving);
+        CHECK(r.untracked_kept_count >= 1, "3464 AC5: failed relocate bumped untracked_kept_count");
+        CHECK(r.moving_incomplete_remap, "3464 AC5: moving_incomplete_remap set");
+        CHECK(r.pin_contract_held == false, "3464 AC5: pin_contract_held false (fail-closed)");
+    } // ~ASTArena runs all dtors_ entries
+    // Counter == 3 (no double-dtor → no aliasing). Without the fix,
+    // two DtorEntry at the same address would destroy the same
+    // object twice, bumping the counter past 3.
+    CHECK(g_3435_dtor_count.load(std::memory_order_relaxed) == 3,
+          "3464 AC5: 3 objects destroyed exactly once — no dtors_ alias");
+
+    // Source-cite: arena.ixx !neu branch has the collision check.
+    const auto arena3464 = read_file("src/core/arena.ixx");
+    CHECK(arena3464.find("Issue #3464") != std::string::npos, "3464 AC5: arena.ixx cites #3464");
+    CHECK(arena3464.find("collided") != std::string::npos,
+          "3464 AC5: arena.ixx has collision check");
+    // #81967 (no invent) + #1655 (no docs/design/) still hold.
+    std::ifstream invent3464("tests/core/test_issue_3464.cpp");
+    if (!invent3464.good())
+        invent3464.open("../tests/core/test_issue_3464.cpp");
+    CHECK(!invent3464.good(), "3464 AC5: no test_issue_3464.cpp (per #81967)");
+    const std::filesystem::path docs_design_3464 = "docs/design";
+    std::error_code ec_3464;
+    if (std::filesystem::is_directory(docs_design_3464, ec_3464)) {
+        for (const auto& entry : std::filesystem::directory_iterator(docs_design_3464, ec_3464)) {
+            const auto name = entry.path().filename().string();
+            CHECK(name.find("3464-") == std::string::npos,
+                  std::string("3464 AC5: no docs/design/") + name + " per #1655");
+        }
+    }
+}
+
 int run_test_moving_densify_fail_closed() {
     std::println("=== Issue #2495: Moving densify fail-closed on untracked external roots ===");
     std::println(
@@ -3890,6 +3951,9 @@ int run_test_moving_densify_fail_closed() {
     ac3435_3_success_remap_only_moved();
     ac3435_4_soft_zero_extra();
     ac3435_5_source_and_linter();
+
+    std::println("\n=== Issue #3464: relocate !neu collision avoids dtors_ alias ===");
+    ac3464_5_collision_avoided_dtors_unique();
 
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
