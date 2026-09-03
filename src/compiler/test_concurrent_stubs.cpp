@@ -80,6 +80,8 @@ extern "C" __attribute__((weak)) int aura_residual_castop_undermark_pending() no
     return 0;
 }
 extern "C" __attribute__((weak)) void aura_reset_residual_castop_persist_for_test() noexcept {}
+// Issue #3294 CI: light-link has no lifetime pin state to disarm.
+extern "C" __attribute__((weak)) void aura_reset_general_object_pin_required_for_test() noexcept {}
 
 // Stamp builders also instantiate commit_readiness_live_policy /
 // commit_readiness (header-inline). Strong defs live in

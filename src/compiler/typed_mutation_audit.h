@@ -87,6 +87,13 @@ extern "C" int aura_stamp_last_look_cs_matches(void* tc_handle, std::uint64_t ex
 extern "C" std::size_t aura_force_residual_castop_undermark_into_cone() noexcept;
 extern "C" int aura_residual_castop_undermark_pending() noexcept;
 extern "C" void aura_reset_residual_castop_persist_for_test() noexcept;
+// Issue #3294 CI: production-defaults members arm the one-way process-wide
+// GeneralObjectPin required pref (security_defaults.hh step 15, #2597). The
+// dev/test face reset must disarm it again, or every later (set-code) in the
+// same process fails closed (no workspace -> typecheck/query no-op -> AC4 /
+// dirty-cone failures). Strong def in typed_mutation_audit_hooks.cpp; weak
+// stub in test_concurrent_stubs.cpp (light-link).
+extern "C" void aura_reset_general_object_pin_required_for_test() noexcept;
 // Issue #3379: TLS slot for the current commit-readiness Evaluator.
 // Caller (boundary enter / outermost Guard) sets it; the fill bridge
 // reads it. Forward declarations for the bridges live further down
@@ -1116,6 +1123,11 @@ inline void apply_dev_audit_defaults() noexcept {
     // Leftover Full persist / undermark pending from a prior member
     // must not follow apply_dev into Quiet grant (#3294 / #3347).
     aura_reset_residual_castop_persist_for_test();
+    // Issue #3294 CI: a prior member that applied production security
+    // defaults leaves GeneralObjectPin required mode armed process-wide
+    // (one-way latch). Dev face must restore observe-only (-1) or every
+    // later (set-code) create fails closed -> workspace never populated.
+    aura_reset_general_object_pin_required_for_test();
 }
 
 // Issue #2818: one-shot warn when Sampled under-samples without apply_dev
