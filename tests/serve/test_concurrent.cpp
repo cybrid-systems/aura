@@ -37,17 +37,23 @@ static int g_failed = 0;
 //
 // Why: the previous pattern used a fixed `sleep_for(2000ms)`
 // followed by `CHECK(completed == N, ...)`. Under heavy CPU
-// load (or on slow CI runners), the 2s budget is not always
+// load (or on slow CI runners), the 2s budget was not always
 // enough — the fiber-spawn overhead + scheduler wakeup can
 // push completion past 2s, causing intermittent flakes.
 //
-// Fix: poll every 10ms with a generous 5s deadline. On timeout
+// Fix: poll every 10ms with a generous deadline. On timeout
 // we still fail (correctly), but we don't fail spuriously under
 // brief system-load spikes. The CHECK message includes the
 // actual count vs. expected so flakes are diagnosable.
+//
+// Budget history (issue #3461 + ci/concurrent 17.3s follow-up):
+//   2s fixed sleep → 5s poll (Issue #217) → 15s poll (#3461) →
+//   30s poll (#3294 follow-up): CI stress + 200-fiber spawn
+//   observed at ~17.3s exit (15s timeout + ~2s startup). 30s
+//   leaves 2x headroom on the slowest observed CI runner.
 template <typename T>
 bool wait_for_atomic(const std::atomic<T>& counter, T expected,
-                     std::chrono::milliseconds timeout = std::chrono::seconds(15)) {
+                     std::chrono::milliseconds timeout = std::chrono::seconds(30)) {
     auto deadline = std::chrono::steady_clock::now() + timeout;
     while (counter.load() < expected && std::chrono::steady_clock::now() < deadline) {
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
