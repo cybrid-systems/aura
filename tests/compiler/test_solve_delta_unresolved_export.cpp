@@ -3260,6 +3260,13 @@ static void ac3294_5_source_and_linter() {
 // tc.last_type_export_authoritative() preserves face for the quiet SOLVED
 // path. The original AC4 covered the end-to-end grant; this AC4b pins
 // the *typecheck-current* site specifically (issue #1453 binding).
+//
+// Updated: typecheck-current now always passes true to copy_infer (not
+// gated on tc.last_type_export_authoritative — see commit e519dfd90 /
+// 02594ac0f). The else-branch of copy_infer (infer=false) is the right
+// channel for TIMEOUT/CONFLICT face-clearing, exercised directly by AC1
+// (ac3294_1_soft_recovered_solved_refuses) via an explicit
+// copy_infer(false) call.
 static void ac3294_4b_trivial_typecheck_preserves_face() {
     std::println("\n--- #3294 AC4b: trivial typecheck does not flip face ---");
     using aura::compiler::typed_audit::g_type_export_soft_refuse_observe_total;
