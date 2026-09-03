@@ -8840,7 +8840,17 @@ def test_concurrent():
     # the 5258-test stress run (occasionally >180s under
     # system load, causing false-positive "1/N test suites
     # failed" in CI). 600s gives comfortable headroom.
-    r = subprocess.run([str(bin_path)], timeout=600)
+    #
+    # ci/concurrent (GitHub-only, ~17.3s rc=1): the binary dies by
+    # signal mid-run with zero FAIL lines / zero Results line — the
+    # block-buffered stdout tail (last test + crash context) is lost
+    # on signal death, so the failing test is invisible in CI logs.
+    # Run through stdbuf line-buffering so every line flushes
+    # immediately and the next failure pins the exact test.
+    cmd: list[str] = [str(bin_path)]
+    if shutil.which("stdbuf"):
+        cmd = ["stdbuf", "-oL", "-eL", str(bin_path)]
+    r = subprocess.run(cmd, timeout=600)
     if r.returncode != 0 and r.stderr:
         print(r.stderr[:500], file=sys.stderr)
     return r.returncode
