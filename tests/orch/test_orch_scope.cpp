@@ -958,7 +958,7 @@ int run_test_orch_scope() {
         {
             CompilerService cs3;
             const auto ok = cs3.eval(
-                R"((let ((r (orch:scope-spawn \"leak-3437"))) (if (hash-ref r \"ok\") 1 0)))");
+                R"((let ((r (orch:scope-spawn "leak-3437"))) (if (hash-ref r "ok") 1 0)))");
             CHECK(ok && is_int(*ok) && as_int(*ok) == 1, "3437 AC1: scope-spawn ok (no join-all)");
             auto* scope = aura::orch::find_agent_scope(static_cast<void*>(&cs3.evaluator()));
             CHECK(scope != nullptr, "3437 AC1: scope exists before dtor");
@@ -974,7 +974,7 @@ int run_test_orch_scope() {
         {
             auto* cs_a = ::new (static_cast<void*>(buf)) CompilerService();
             const auto ok_a = cs_a->eval(
-                R"((let ((r (orch:scope-spawn \"addr-a-3437"))) (if (hash-ref r \"ok\") 1 0)))");
+                R"((let ((r (orch:scope-spawn "addr-a-3437"))) (if (hash-ref r "ok") 1 0)))");
             CHECK(ok_a && is_int(*ok_a) && as_int(*ok_a) == 1, "3437 AC2: spawn at storage slot A");
             CHECK(aura::orch::find_agent_scope(static_cast<void*>(&cs_a->evaluator())) != nullptr,
                   "3437 AC2: slot A scope present");
@@ -986,7 +986,7 @@ int run_test_orch_scope() {
             CHECK(aura::orch::find_agent_scope(const_cast<void*>(key_b)) == nullptr,
                   "3437 AC2: recycled address inherits no foreign scope");
             const auto ok_b = cs_b->eval(
-                R"((let ((r (orch:scope-spawn \"addr-b-3437"))) (if (hash-ref r \"ok\") 1 0)))");
+                R"((let ((r (orch:scope-spawn "addr-b-3437"))) (if (hash-ref r "ok") 1 0)))");
             CHECK(ok_b && is_int(*ok_b) && as_int(*ok_b) == 1,
                   "3437 AC2: fresh scope spawn at recycled address");
             auto* scope_b = aura::orch::find_agent_scope(const_cast<void*>(key_b));
