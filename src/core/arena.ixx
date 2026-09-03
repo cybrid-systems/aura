@@ -2885,11 +2885,34 @@ private:
                 // above). Do NOT drop it from dtors_ — restore tracking at the
                 // old address so no hole is committed (UAF / lost-object
                 // bypass: external pin / slot / canary may still hold old).
-                // The caller folds untracked_kept_count > 0 into
-                // moving_incomplete_remap + pin_contract_held=false +
-                // production sticky-off (#2495 face), so Phase-5 cannot
-                // publish a green Moving window after a partial relocate.
-                kept.push_back(DtorEntry{p.old, p.dtor, p.size, p.align});
+                // Issue #3464: but if a *different* pending already reused
+                // p.old (small_pool_.try_allocate returned another pending's
+                // old), adding a second DtorEntry at the colliding address
+                // would alias the arena table — two live objects sharing one
+                // pointer. Detect same-window collision: p.old is already
+                // owned by `kept` (a prior pending's committed neu) or
+                // remapped in last_object_remap_. If yes, drop this identity
+                // from dtors_ (bytes stay in Pending); the colliding owner
+                // already tracks the live object. The caller folds
+                // untracked_kept_count > 0 into moving_incomplete_remap +
+                // pin_contract_held=false + production sticky-off (#2495
+                // face), so Phase-5 cannot publish a green Moving window
+                // after a partial relocate.
+                bool collided = false;
+                for (const auto& ke : kept) {
+                    if (ke.ptr == p.old) {
+                        collided = true;
+                        break;
+                    }
+                }
+                if (!collided && last_object_remap_.find(p.old) != last_object_remap_.end()) {
+                    collided = true;
+                }
+                if (!collided) {
+                    kept.push_back(DtorEntry{p.old, p.dtor, p.size, p.align});
+                }
+                // else: drop this identity from dtors_; bytes already
+                // copied in Pending.
                 if (out_untracked_kept_count)
                     ++*out_untracked_kept_count;
                 continue;
