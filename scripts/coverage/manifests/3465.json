@@ -1,0 +1,64 @@
+{
+  "issue": 3465,
+  "title": "Issue #3465: mutation WAL → SE ring replay must not rewrite Agent-stable deny reason",
+  "ok": "OK: Issue #3465 WAL replay reason stability — sidecar wins; fallback uses stored reason or wal-replay-legacy; never seq/1 as mid",
+  "checks": [
+    {
+      "ac": "AC1-sidecar-first",
+      "path": "src/compiler/evaluator_security.cpp",
+      "contains": [
+        "Issue #3465",
+        "sidecar_replayed_nonempty",
+        "wal-replay-legacy"
+      ]
+    },
+    {
+      "ac": "AC2-no-phantom-mid",
+      "path": "src/compiler/evaluator_security.cpp",
+      "contains": [
+        "const auto mid = rec.provenance_mutation_id",
+        "if (mid == 0)",
+        "continue"
+      ]
+    },
+    {
+      "ac": "AC3-reason-tail",
+      "path": "src/core/mutation_audit_wal.hh",
+      "contains": [
+        "kAuditWalReasonTailMarker",
+        "kAuditWalRecordV1Size",
+        "char reason[kAuditWalReasonSize]{}",
+        "kAuditWalVersion = 1"
+      ]
+    },
+    {
+      "ac": "AC6-tests",
+      "path": "tests/compiler/test_security_event_wal_replay.cpp",
+      "contains": [
+        "3465 AC1: sidecar restored the deny mid",
+        "3465 AC2: seq is never used as mutation_id",
+        "3465 AC3: v1 empty tail → wal-replay-legacy",
+        "3465 AC4: persist short-circuits when WAL off",
+        "3465 AC5: last-se-reason equals pre-restart reason"
+      ]
+    },
+    {
+      "ac": "AC6-mutation-wal-test",
+      "path": "tests/compiler/test_mutation_audit_wal.cpp",
+      "contains": [
+        "3465 AC1: sidecar reason unchanged",
+        "3465 AC2: seq not used as mid",
+        "3465 AC3: stored reason restored",
+        "3465 AC4: persist short-circuits"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "forbid": [
+        "tests/compiler/test_issue_3465.cpp",
+        "tests/issues/test_issue_3465.cpp",
+        "docs/design/3465-wal-replay-reason.md"
+      ]
+    }
+  ]
+}

@@ -269,6 +269,22 @@ void Evaluator::emit_mutation_audit(std::uint32_t nodes_changed, std::uint32_t e
     }
 }
 
+namespace {
+    // Issue #3465: copy the just-appended SE reason into the mutation WAL
+    // record so a sidecar-empty rebuild can restore Agent-stable deny class
+    // (mid-fallback-refused / invariant-denied: …) instead of inventing a
+    // replay tag. Ring peek is the same-thread append; empty is fine.
+    [[nodiscard]] std::string_view peek_last_security_event_reason() noexcept {
+        using ::aura::core::security_event::g_security_event_ring;
+        using ::aura::core::security_event::kSecurityEventRingSize;
+        auto& ring = g_security_event_ring();
+        const auto s = ring.seq.load(std::memory_order_relaxed);
+        if (s == 0)
+            return {};
+        return ring.ring[(s - 1) % kSecurityEventRingSize].reason;
+    }
+} // namespace
+
 // Issue #1565 / #1876 / #2706: private capability effect check + audit.
 // Production entry is require_effect / require_effect_on_ref only (#2706).
 // #1876: under sandbox, also validate/record StableNodeRef provenance and
@@ -405,10 +421,11 @@ bool Evaluator::check_and_record_effect(std::uint16_t required_effect_bits,
     {
         using namespace ::aura::core::audit_wal;
         if (g_mutation_audit_wal().is_enabled()) {
-            const auto rec = make_record(
-                slot.seq, slot.timestamp_ms, slot.fiber_id, slot.nodes_changed, slot.epoch_delta,
-                slot.target_node, slot.op, slot.effect_bits, slot.tenant_id,
-                slot.provenance_mutation_id, slot.epoch, slot.effect_denied);
+            const auto rec =
+                make_record(slot.seq, slot.timestamp_ms, slot.fiber_id, slot.nodes_changed,
+                            slot.epoch_delta, slot.target_node, slot.op, slot.effect_bits,
+                            slot.tenant_id, slot.provenance_mutation_id, slot.epoch,
+                            slot.effect_denied, peek_last_security_event_reason());
             // Issue #3056: fail-open (AC3) — same as emit_mutation_audit.
             (void)g_mutation_audit_wal().append(rec);
         }
@@ -671,9 +688,23 @@ bool Evaluator::enable_mutation_audit_wal(std::string_view persist_dir) noexcept
         // total reflects recovered + future; seed with recovered count.
         mutation_audit_total_.store(replayed.size(), std::memory_order_relaxed);
     }
-    // Issue #2054: rebuild unified SecurityEvent ring from WAL so Agents
-    // see the same chronological trail after restart (durable backend =
-    // mutation_audit_wal). Clear then re-append in seq order.
+    // Issue #2225 / #3465: auto-pair the side-car FIRST so a non-empty
+    // sidecar is Agent-facing truth (original reason + kind). Mutation
+    // WAL → SE rebuild is fallback only when sidecar replayed nothing
+    // (old mutation-only dir / empty sidecar). Side-car enable failure
+    // is non-fatal: the mutation WAL stays enabled.
+    const auto se_recov_before =
+        ::aura::core::security_event_wal::snapshot_security_event_wal_stats()
+            .crash_recovery_success;
+    (void)enable_security_event_wal(persist_dir);
+    const auto se_recov_after =
+        ::aura::core::security_event_wal::snapshot_security_event_wal_stats()
+            .crash_recovery_success;
+    const bool sidecar_replayed_nonempty = se_recov_after > se_recov_before;
+    if (sidecar_replayed_nonempty)
+        return true;
+    // Issue #3465: fallback rebuild. Never invent mid from seq/1; skip
+    // mid==0. Stored reason if the tail is present, else wal-replay-legacy.
     {
         using ::aura::core::security_event::append_security_event;
         using ::aura::core::security_event::g_security_event_ring;
@@ -681,27 +712,19 @@ bool Evaluator::enable_mutation_audit_wal(std::string_view persist_dir) noexcept
         using ::aura::core::security_event::SecurityEventKind;
         reset_security_event_ring_for_test();
         for (const auto& rec : replayed) {
+            const auto mid = rec.provenance_mutation_id;
+            if (mid == 0)
+                continue;
             const bool denied = rec.effect_denied != 0;
             const auto kind =
                 denied ? SecurityEventKind::EffectDeny : SecurityEventKind::EffectAllow;
-            const char* reason = denied ? "wal-replay-deny" : "wal-replay-allow";
-            const auto mid = rec.provenance_mutation_id != 0 ? rec.provenance_mutation_id
-                                                             : (rec.seq == 0 ? 1 : rec.seq);
+            const char* reason = rec.reason[0] != '\0' ? rec.reason : "wal-replay-legacy";
             append_security_event(g_security_event_ring(), kind, rec.tenant_id, mid, rec.epoch,
                                   rec.effect_bits,
                                   std::string_view(rec.op, strnlen(rec.op, sizeof(rec.op))), reason,
                                   denied, rec.fiber_id);
         }
     }
-    // Issue #2225: auto-pair with the side-car SecurityEventWAL so
-    // production defaults under multi-tenant / Strict / #2150 cover
-    // both durable paths. The side-car has full SecurityEvent fidelity
-    // (all 5 kinds: EffectDeny/Allow + IsolationDeny + InvariantFail +
-    // MacroHygiene); the mutation-derived rebuild above is the fallback
-    // for old WAL files that pre-date the side-car. Side-car enable
-    // failure is non-fatal: the mutation WAL stays enabled, hot-path
-    // persist_security_event short-circuits when the side-car is off.
-    (void)enable_security_event_wal(persist_dir);
     return true;
 }
 
@@ -726,9 +749,9 @@ bool Evaluator::mutation_audit_wal_enabled() const noexcept {
 // repopulate in disk-seq order. ring.seq is set to max+1 so
 // subsequent appends do not collide with the replayed range —
 // monotonic seq across restart is preserved. When the side-car is
-// empty (fresh dir or old-format-only WAL), the existing mutation-
-// derived rebuild (if mutation_audit_wal was also enabled) stays in
-// the ring as the source of truth (backward-compat fallback).
+// empty (fresh dir or old-format-only WAL), enable_mutation_audit_wal
+// falls back to a mutation-WAL rebuild (#3465: stored reason or
+// wal-replay-legacy; never seq/1 as mid).
 bool Evaluator::enable_security_event_wal(std::string_view persist_dir) noexcept {
     using namespace ::aura::core::security_event_wal;
     std::vector<SecurityEventWalRecord> replayed;

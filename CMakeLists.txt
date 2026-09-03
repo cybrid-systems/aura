@@ -2072,6 +2072,10 @@ aura_add_issue_test(test_should_audit_sampled_default)
 aura_issue_test_link_light(test_should_audit_sampled_default)
 aura_add_issue_test(test_audit_trail_lockfree)
 aura_issue_test_link_light(test_audit_trail_lockfree)
+# Issue #3465: mutation WAL → SE rebuild reason stability (standalone;
+# also covered in test_security_event_wal_replay).
+aura_add_issue_test(test_mutation_audit_wal)
+aura_issue_test_link_light(test_mutation_audit_wal)
 aura_add_issue_test(test_alloc_block_seal_last)
 aura_issue_test_link_light(test_alloc_block_seal_last)
 aura_add_issue_test(test_enable_soa_dual_emit_no_reset)
