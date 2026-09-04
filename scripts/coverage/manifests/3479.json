@@ -1,0 +1,34 @@
+{
+  "issue": 3479,
+  "title": "Issue #3479: FiberSteal EnvFrame cell/closure elevation (dummy handoff_ref gone)",
+  "ok": "OK: Issue #3479 steal EnvFrame elevation — dummy gone; slot XOR canary",
+  "checks": [
+    {
+      "ac": "AC1-walk",
+      "path": "src/compiler/evaluator_fiber_mutation.cpp",
+      "contains": [
+        "Issue #3479",
+        "is_closure",
+        "is_cell",
+        "note_ffi_opaque_alias_densify_cover",
+        "handoff_ref(make_stamped_ref"
+      ]
+    },
+    {
+      "ac": "AC5-tests",
+      "path": "tests/serve/test_fiber_migration_refresh.cpp",
+      "contains": [
+        "3479 AC1: dummy StableNodeRef gone",
+        "3479 AC5: apply after steal refresh uses live identity or refuses cleanly"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "forbid": [
+        "tests/compiler/test_issue_3479.cpp",
+        "tests/issues/test_issue_3479.cpp",
+        "docs/design/3479-steal-handoff-elevation.md"
+      ]
+    }
+  ]
+}
