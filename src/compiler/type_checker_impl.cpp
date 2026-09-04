@@ -2233,7 +2233,28 @@ SolveResult ConstraintSystem::solve_delta(std::vector<Constraint>* unresolved_ou
     // returned raw TIMEOUT (no leftover-worklist path). Soft no-op.
     if (result == SolveResult::TIMEOUT && !production_escalated_ && !forced_timeout_this_call_)
         result = escalate_if_production(result, unresolved_out);
-    return escalate_locality_slo_if_production(result, unresolved_out);
+    result = escalate_locality_slo_if_production(result, unresolved_out);
+    // Issue #3477: dirty-skip / cap-truncate leftover after local SOLVED
+    // must latch the #3031 pending residual face BEFORE IR typed-entry can
+    // ride the previous outermost Stamped proof. Persist #3190 drain remains
+    // stamp authority. Soft: observe via note(..., hard=false) — do not drop
+    // last-proof. Quiet clean local: three member reads, zero extra stores.
+    if (last_reverify_truncated_ || dirty_count_ != 0 || !pending_full_solve_roots_.empty()) {
+        using namespace aura::compiler::typed_audit;
+        const auto n = static_cast<std::uint64_t>(pending_full_solve_roots_.size()) +
+                       static_cast<std::uint64_t>(dirty_count_) +
+                       (last_reverify_truncated_ ? 1ull : 0ull);
+        const bool hard = production_defaults_active() || get_strategy() == AuditStrategy::Full;
+        if (hard) {
+            note_pending_full_solve_residual(n > 0 ? n : 1, /*hard=*/true);
+            if (g_last_type_linear_proof_outcome.load(std::memory_order_relaxed) ==
+                kTypeLinearProofOutcomeStamped)
+                clear_type_linear_commit_proof_on_abort();
+        } else {
+            note_pending_full_solve_residual(n > 0 ? n : 1, /*hard=*/false);
+        }
+    }
+    return result;
 }
 
 // Issue #258: solve_delta() body split out so the timer wrapper

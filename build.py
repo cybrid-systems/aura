@@ -2334,6 +2334,21 @@ def cmd_lint():
             "Issue #3190 residual drain outermost stamp linter failed — run python3 scripts/coverage/checks/check_residual_drain_outermost_stamp_3190.py"
         )
         return r
+    # Issue #3477: dirty-skip / cap-truncate leftover after solve_delta
+    # latches the #3031 residual face before IR can ride the last green
+    # stamp. Persist #3190 drain remains stamp authority. Extends
+    # test_type_linear_commit_health + occurrence-priority heavy mutate
+    # (#81967); no docs/design / invent / new query key.
+    sddsr3477_script = COVERAGE_CHECKS / "check_solve_delta_dirty_skip_residual_3477.py"
+    if not sddsr3477_script.exists():
+        fail(f"missing {sddsr3477_script}")
+        return 1
+    r = run([sys.executable, str(sddsr3477_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3477 solve_delta dirty-skip residual linter failed — run python3 scripts/coverage/checks/check_solve_delta_dirty_skip_residual_3477.py"
+        )
+        return r
     # Issue #3191: post-#3131 default-deny residual on lockless tweak-literal.
     # Issue #3239 retired the SV mutate prims; this linter now covers
     # tweak-literal only. Global allow still unlocks. Soft/Off: zero extra
