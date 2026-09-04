@@ -19,6 +19,7 @@
 
 #include "test_harness.hpp"
 #include "compiler/jit_typed_mutation_stats.h"
+#include "compiler/typed_mutation_audit.h"
 
 #include <cstdint>
 #include <fstream>
@@ -37,6 +38,7 @@ import aura.compiler.value;
 
 namespace {
 
+using aura::compiler::BlockDirtyPred;
 using aura::compiler::ComputeKindWrap;
 using aura::compiler::ConstantFoldingWrap;
 using aura::compiler::DeadCoercionEliminationPass;
@@ -411,7 +413,45 @@ int run_test_soa_dirty_aware_pipeline() {
         CHECK(impls.find("schema-3488") == std::string::npos, "3488 AC5: no new query key");
     }
 
-    std::println("\n=== #2143/#2907/#3488 results: {} passed, {} failed ===", g_passed, g_failed);
+    // ── Issue #3502: production unwired pred ≠ DefaultAllDirty ──
+    {
+        std::println("\n=== Issue #3502: production unwired BlockDirtyPred ===");
+        aura::compiler::typed_audit::apply_dev_audit_defaults();
+        BlockDirtyPred soft{};
+        CHECK(!soft.wired(), "3502: default pred unwired");
+        CHECK(soft(0) == true, "3502 AC3: Soft DefaultAllDirty");
+        CHECK(!soft.skip_if_none_dirty(), "3502 AC3: Soft unwired still runs all");
+
+        aura::compiler::typed_audit::apply_production_audit_defaults();
+        BlockDirtyPred prod{};
+        CHECK(prod(0) == false, "3502 AC1: production unwired selects none");
+        CHECK(prod.skip_if_none_dirty(), "3502 AC1: production skips full walk");
+
+        ComputeKindWrap ck;
+        aura::ir::IRFunction fn;
+        fn.blocks.resize(2);
+        const auto n0 = ck.results().size();
+        ck.run_on_dirty_blocks_only(fn);
+        CHECK(ck.results().size() == n0, "3502 AC2: production CK does not walk unwired");
+
+        const auto core = read_file("src/compiler/pass_pipeline_core.ixx");
+        const auto impls = read_file("src/compiler/pass_impls.ixx");
+        CHECK(core.find("skip_if_none_dirty") != std::string::npos, "3502 AC2: pred helper");
+        CHECK(core.find("aura_production_defaults_active_probe") != std::string::npos,
+              "3502 AC2: production probe on unwired pred");
+        CHECK(impls.find("skip_if_none_dirty") != std::string::npos, "3502 AC2: wraps honor skip");
+        CHECK(core.find("kUnwiredPredProductionIssue") != std::string::npos, "3502 AC5: stamp");
+        CHECK(core.find("\"query:unwired-pred\"") == std::string::npos,
+              "3502 AC5: no new query key");
+        CHECK(read_file("tests/compiler/test_issue_3502.cpp").empty(),
+              "3502 AC5: no test_issue_3502.cpp");
+        CHECK(read_file("docs/design/3502-unwired-pred.md").empty(),
+              "3502 AC5: no docs/design/3502-*");
+        aura::compiler::typed_audit::apply_dev_audit_defaults();
+    }
+
+    std::println("\n=== #2143/#2907/#3488/#3502 results: {} passed, {} failed ===", g_passed,
+                 g_failed);
     return g_failed ? 1 : 0;
 }
 
