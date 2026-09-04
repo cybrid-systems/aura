@@ -15,6 +15,7 @@
 
 #include <chrono>
 #include <cstdint>
+#include <fstream>
 #include <numeric>
 #include <print>
 #include <string>
@@ -42,6 +43,17 @@ PCV make_n(std::size_t n) {
     std::vector<NodeId> v(n);
     std::iota(v.begin(), v.end(), 0u);
     return PCV(v.begin(), v.end());
+}
+
+static std::string read_file(const char* path) {
+    for (const auto& p :
+         {std::string(path), std::string("../") + path, std::string("../../") + path}) {
+        std::ifstream in(p);
+        if (!in)
+            continue;
+        return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    }
+    return {};
 }
 
 } // namespace
@@ -212,6 +224,88 @@ int run_test_pcv_unique_hotpath() {
         CHECK(b.use_count() == 1, "other sole on old");
         CHECK(g_pcv_hotpath_metrics().ensure_unique_clone_total.load() > c0, "clone metric");
         CHECK(!a.ensure_unique(), "second ensure no-op");
+    }
+
+    // ── #3491: production unique path zero RMW; Soft/unit notes stay ──
+    {
+        std::println("\n--- #3491 AC1: unique cow_set / exclusive with_set use AURA_PCV_NOTE ---");
+        CHECK(aura::ast::kPcvUniqueZeroAtomicIssue == 3491, "3491 AC1: issue stamp");
+        const auto hh = read_file("src/core/persistent_child_vector.hh");
+        CHECK(hh.find("kPcvUniqueZeroAtomicIssue = 3491") != std::string::npos, "3491 AC1: stamp");
+        CHECK(hh.find("#define AURA_PCV_NOTE") != std::string::npos, "3491 AC1: note macro");
+        CHECK(hh.find("AURA_PRODUCTION_PACK") != std::string::npos &&
+                  hh.find("AURA_PCV_METRICS") != std::string::npos,
+              "3491 AC1: production NDEBUG pack no-ops notes");
+        const auto cs = hh.find("void cow_set(");
+        const auto cp = hh.find("void cow_push_back(");
+        const auto cow =
+            (cs != std::string::npos && cp > cs) ? hh.substr(cs, cp - cs) : std::string{};
+        CHECK(cow.find("AURA_PCV_NOTE(cow_set_total)") != std::string::npos,
+              "3491 AC1: cow_set_total noted");
+        CHECK(cow.find("AURA_PCV_NOTE(unique_inplace_total)") != std::string::npos,
+              "3491 AC1: unique_inplace noted");
+        CHECK(cow.find(".fetch_add(") == std::string::npos,
+              "3491 AC1: unique cow_set no raw fetch_add");
+        const auto ws = hh.find("PersistentChildVector with_set(");
+        const auto wend = hh.find("void cow_set(", ws);
+        const auto wwin =
+            (ws != std::string::npos && wend > ws) ? hh.substr(ws, wend - ws) : std::string{};
+        const auto ex = wwin.find("data_.use_count() == 1");
+        const auto sh = wwin.find("tls_pcv_acquire");
+        const auto exclusive =
+            (ex != std::string::npos && sh > ex) ? wwin.substr(ex, sh - ex) : std::string{};
+        CHECK(exclusive.find("AURA_PCV_NOTE(unique_inplace_total)") != std::string::npos,
+              "3491 AC1: exclusive with_set noted");
+        CHECK(exclusive.find("AURA_PCV_NOTE(with_set_exclusive_total)") != std::string::npos,
+              "3491 AC1: with_set_exclusive noted");
+        CHECK(exclusive.find(".fetch_add(") == std::string::npos,
+              "3491 AC1: exclusive with_set no raw fetch_add");
+
+        std::println("\n--- #3491 AC2: shared TLS-then-heap + Snapshot COW ---");
+        CHECK(wwin.find("tls_pcv_acquire") != std::string::npos &&
+                  wwin.find("heap_pcv_allocate") != std::string::npos &&
+                  wwin.find("tls_pcv_acquire") < wwin.find("heap_pcv_allocate"),
+              "3491 AC2: TLS before heap");
+        CHECK(cow.find("*this = with_set") != std::string::npos,
+              "3491 AC2: shared cow_set delegates");
+        const auto ast = read_file("src/core/ast.ixx");
+        CHECK(ast.find("auto kids = std::move(children_[id]);") != std::string::npos,
+              "3491 AC5: locked move-out pattern");
+
+        std::println("\n--- #3491 AC3: Soft/unit counters still move ---");
+        reset_pcv_hotpath_metrics_for_test();
+        auto p = make_n(8);
+        const auto up0 = g_pcv_hotpath_metrics().unique_inplace_total.load();
+        const auto cs0 = g_pcv_hotpath_metrics().cow_set_total.load();
+        p.cow_set(0, 7);
+        CHECK(p[0] == 7, "3491 AC3: unique write");
+        CHECK(g_pcv_hotpath_metrics().unique_inplace_total.load() > up0,
+              "3491 AC3: unique_inplace");
+        CHECK(g_pcv_hotpath_metrics().cow_set_total.load() > cs0, "3491 AC3: cow_set_total");
+        auto q = p;
+        const auto cow0 = g_pcv_hotpath_metrics().with_set_cow_total.load();
+        q.cow_set(1, 8);
+        CHECK(q[1] == 8 && p[1] == 1, "3491 AC3: shared COW");
+        CHECK(g_pcv_hotpath_metrics().with_set_cow_total.load() > cow0, "3491 AC3: with_set_cow");
+
+        std::println("\n--- #3491 AC4/AC5: suite + linter, no invent ---");
+        const auto build = read_file("build.py");
+        CHECK(build.find("check_pcv_unique_zero_atomic_3491") != std::string::npos,
+              "3491 AC4: build.py");
+        const auto p3429 = build.find("check_pcv_shared_cow_tls_3429");
+        const auto p3491 = build.find("check_pcv_unique_zero_atomic_3491");
+        CHECK(p3429 != std::string::npos && p3491 != std::string::npos && p3491 > p3429,
+              "3491 AC4: linter AFTER #3429");
+        CHECK(hh.find("sizeof(PcvHotpathMetrics) == 136") != std::string::npos,
+              "3491 AC5: metrics size unchanged");
+        CHECK(hh.find("g_3491_") == std::string::npos, "3491 AC5: no g_3491_*");
+        const auto qsrc = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
+        CHECK(qsrc.find("schema-3491") == std::string::npos, "3491 AC5: no schema-3491");
+        CHECK(qsrc.find("unique-inplace-total") != std::string::npos,
+              "3491 AC5: reuse unique-inplace");
+        CHECK(read_file("docs/design/3491-pcv-unique-zero-atomic.md").empty(),
+              "3491 AC4: no docs/design");
+        CHECK(read_file("tests/core/test_issue_3491.cpp").empty(), "3491 AC4: no invent");
     }
 
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
