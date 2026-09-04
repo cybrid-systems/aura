@@ -282,6 +282,9 @@ extern "C" __attribute__((weak)) std::uint64_t peer_ir_name_soft_stale_mark_tota
 extern "C" __attribute__((weak)) std::uint32_t peer_ir_name_soft_stale_live_v_read(void) {
     return 0;
 }
+extern "C" __attribute__((weak)) int aura_aot_peer_name_stale_overflow(void) {
+    return 0;
+}
 extern "C" __attribute__((weak)) bool
 aura_is_jit_closure_fresh(std::uint64_t captured_bridge_epoch,
                           std::uint64_t captured_defuse_or_env_version,

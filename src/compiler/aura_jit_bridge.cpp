@@ -2132,6 +2132,10 @@ std::uint64_t peer_jit_name_hash(const char* name) noexcept {
 }
 } // namespace
 
+// Issue #3514: table-full must fail-closed (not drop). Shared by JIT + IR
+// name tables. Probe / lookup treat overflow as stale until live==0.
+static std::atomic<std::uint8_t> g_peer_name_stale_overflow{0};
+
 // Issue #3300: arm name-level peer soft-stale. Only acts when multi-eval
 // live (>1) — single-eval / Soft / Off stay zero-cost. Called on the
 // owner-scoped hard invalidate path (production facade) after the bump
@@ -2161,14 +2165,17 @@ extern "C" void aura_aot_mark_peer_jit_name_soft_stale(const char* name) {
                 return;
             }
         }
-        // Table full (kPeerJitNameSoftStaleCap distinct stale names):
-        // drop the mark (observability only, never correctness).
+        // Issue #3514: table full must fail-closed (not drop).
+        g_peer_name_stale_overflow.store(1, std::memory_order_release);
         g_peer_jit_name_soft_stale_mark_total.fetch_add(1, std::memory_order_relaxed);
     }
 }
 
 // Issue #3300: lock-free probe. Zero-cost when the table is empty.
 extern "C" int aura_aot_peer_jit_name_is_soft_stale(const char* name) {
+    // Issue #3514: overflow fail-closed (including anonymous nullptr).
+    if (g_peer_name_stale_overflow.load(std::memory_order_acquire) != 0)
+        return 1;
     if (!name || !*name)
         return 0;
     if (g_peer_jit_name_soft_stale_live.load(std::memory_order_acquire) == 0)
@@ -2201,8 +2208,11 @@ extern "C" void aura_aot_clear_peer_jit_name_soft_stale(const char* name) {
             return;
         if (cur == h) {
             if (slot.stale.exchange(0, std::memory_order_acq_rel) != 0) {
-                g_peer_jit_name_soft_stale_live.fetch_sub(1, std::memory_order_relaxed);
+                const auto live =
+                    g_peer_jit_name_soft_stale_live.fetch_sub(1, std::memory_order_relaxed);
                 g_peer_jit_name_soft_stale_clear_total.fetch_add(1, std::memory_order_relaxed);
+                if (live <= 1)
+                    g_peer_name_stale_overflow.store(0, std::memory_order_release);
             }
             return;
         }
@@ -2225,6 +2235,9 @@ extern "C" std::uint64_t peer_jit_name_soft_stale_deopt_total_v_read(void) {
 }
 extern "C" std::uint32_t peer_jit_name_soft_stale_live_v_read(void) {
     return g_peer_jit_name_soft_stale_live.load(std::memory_order_relaxed);
+}
+extern "C" int aura_aot_peer_name_stale_overflow(void) {
+    return g_peer_name_stale_overflow.load(std::memory_order_acquire) != 0 ? 1 : 0;
 }
 
 // ── Issue #3351: name-level peer IR-cache soft-stale generation ──────
@@ -2269,10 +2282,15 @@ extern "C" void aura_aot_mark_peer_ir_name_soft_stale(const char* name) {
             return;
         }
     }
+    g_peer_name_stale_overflow.store(1, std::memory_order_release);
     g_peer_ir_name_soft_stale_mark_total.fetch_add(1, std::memory_order_relaxed);
 }
 
 extern "C" std::uint64_t aura_aot_peer_ir_name_stale_gen(const char* name) {
+    // Issue #3514: overflow → gen that no ack can match until restamp
+    // writes ~0 (then this entry is locally recovered; others stay stale).
+    if (g_peer_name_stale_overflow.load(std::memory_order_acquire) != 0)
+        return ~std::uint64_t{0};
     if (!name || !*name)
         return 0;
     if (g_peer_ir_name_soft_stale_live.load(std::memory_order_acquire) == 0)

@@ -819,6 +819,8 @@ std::uint64_t aura_aot_peer_ir_name_stale_gen(const char* name);
 int aura_aot_peer_ir_name_is_soft_stale(const char* name);
 std::uint64_t peer_ir_name_soft_stale_mark_total_v_read(void);
 std::uint32_t peer_ir_name_soft_stale_live_v_read(void);
+// Issue #3514: cap-full fail-closed. 1 → probe/lookup must treat as stale.
+int aura_aot_peer_name_stale_overflow(void);
 
 // Issue #2304 / #2366: epoch invariant mode (process-level).
 //   0 = off (production default; single relaxed load, zero walk cost)

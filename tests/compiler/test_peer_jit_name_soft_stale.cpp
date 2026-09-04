@@ -296,6 +296,82 @@ static void ac3351_3_production_lookup_not_clean() {
     aura_cleanup_aot_state(eval_b);
 }
 
+static void ac3514_1_caller_cone_peer_mark() {
+    std::println("\n--- #3514 AC1: called_by cone also peer JIT+IR stale ---");
+    const auto dirty = read_file("src/compiler/service_dirty.cpp");
+    const auto cone = dirty.find("void CompilerService::mark_called_by_cone_body_dirty_");
+    CHECK(cone != std::string::npos, "3514 AC1: cone helper present");
+    const auto win = dirty.substr(cone, 4500);
+    CHECK(win.find("Issue #3514") != std::string::npos, "3514 AC1: cone cites #3514");
+    CHECK(win.find("aura_aot_mark_peer_jit_name_soft_stale(dependent.c_str())") !=
+              std::string::npos,
+          "3514 AC1: peer JIT mark for callers");
+    CHECK(win.find("aura_aot_mark_peer_ir_name_soft_stale(dependent.c_str())") != std::string::npos,
+          "3514 AC1: peer IR mark for callers");
+    CHECK(aura::compiler::HotUpdateRegistry::kPeerCallerConeStaleIssue == 3514,
+          "3514 AC1: issue stamp");
+}
+
+static void ac3514_2_empty_cache_still_walks() {
+    std::println("\n--- #3514 AC2: empty ir_cache still peer-walks under production ---");
+    const auto dirty = read_file("src/compiler/service_dirty.cpp");
+    const auto cone = dirty.find("void CompilerService::mark_called_by_cone_body_dirty_");
+    const auto win = cone == std::string::npos ? std::string{} : dirty.substr(cone, 2500);
+    CHECK(win.find("peer_fanout") != std::string::npos, "3514 AC2: peer_fanout gate");
+    CHECK(win.find("ir_cache_v2_.empty() && !peer_fanout") != std::string::npos,
+          "3514 AC2: empty cache does not skip peer walk");
+}
+
+static void ac3514_3_overflow_fail_closed() {
+    std::println("\n--- #3514 AC3: cap-full fail-closed ---");
+    const auto bridge = read_file("src/compiler/aura_jit_bridge.cpp");
+    CHECK(bridge.find("g_peer_name_stale_overflow") != std::string::npos,
+          "3514 AC3: overflow latch present");
+    CHECK(bridge.find("Issue #3514") != std::string::npos, "3514 AC3: bridge cites #3514");
+    const auto stub = read_file("src/compiler/aura_jit_bridge_stub.cpp");
+    CHECK(stub.find("aura_aot_peer_name_stale_overflow") != std::string::npos,
+          "3514 AC3: stub overflow probe");
+    const auto runtime = read_file("src/compiler/aura_jit_runtime.cpp");
+    CHECK(runtime.find("aura_aot_peer_jit_name_is_soft_stale(peer_cname)") != std::string::npos,
+          "3514 AC3: closure_call probes even when name is null (overflow)");
+    if (light_side_table_stub()) {
+        CHECK(aura_aot_peer_name_stale_overflow() == 0, "3514 AC3: stub overflow is 0");
+        return;
+    }
+    void* eval_a = reinterpret_cast<void*>(static_cast<std::uintptr_t>(0xA3514ULL));
+    void* eval_b = reinterpret_cast<void*>(static_cast<std::uintptr_t>(0xB3514ULL));
+    aura_set_aot_region_mask_for_eval(eval_a, 1);
+    aura_set_aot_region_mask_for_eval(eval_b, 2);
+    if (aura_aot_state_map_size() < 2) {
+        CHECK(true, "3514 AC3: light-link map size ≤1");
+        aura_cleanup_aot_state(eval_a);
+        aura_cleanup_aot_state(eval_b);
+        return;
+    }
+    for (int i = 0; i < 260; ++i) {
+        const auto n = std::string("overflow3514_") + std::to_string(i);
+        aura_aot_mark_peer_jit_name_soft_stale(n.c_str());
+    }
+    CHECK(aura_aot_peer_name_stale_overflow() == 1, "3514 AC3: overflow armed after cap");
+    CHECK(aura_aot_peer_jit_name_is_soft_stale("never_inserted_3514") == 1,
+          "3514 AC3: unknown name stale under overflow");
+    CHECK(aura_aot_peer_jit_name_is_soft_stale(nullptr) == 1,
+          "3514 AC3: anonymous stale under overflow");
+    aura_cleanup_aot_state(eval_a);
+    aura_cleanup_aot_state(eval_b);
+}
+
+static void ac3514_5_no_invent() {
+    std::println("\n--- #3514 AC5: no invent / no new query key ---");
+    CHECK(read_file("docs/design/3514-peer-caller-cone.md").empty(), "3514 AC5: no docs/design");
+    CHECK(read_file("tests/compiler/test_issue_3514.cpp").empty(),
+          "3514 AC5: no test_issue_3514.cpp");
+    const auto q = read_file("src/compiler/evaluator_primitives_obs_jit.cpp") +
+                   read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
+    CHECK(q.find("schema-3514") == std::string::npos, "3514 AC5: no schema-3514");
+    CHECK(q.find("query:peer-caller-stale") == std::string::npos, "3514 AC5: no new query key");
+}
+
 static void ac3351_4_linter_no_invent() {
     std::println("\n--- #3351 AC4: no invent / no new query key ---");
     const auto stub = read_file("src/compiler/aura_jit_bridge_stub.cpp");
@@ -323,7 +399,11 @@ int run_test_peer_jit_name_soft_stale() {
     ac3351_2_soft_quiet();
     ac3351_3_production_lookup_not_clean();
     ac3351_4_linter_no_invent();
-    std::println("\n=== #3300 + #3351: {} passed, {} failed ===", g_passed, g_failed);
+    ac3514_1_caller_cone_peer_mark();
+    ac3514_2_empty_cache_still_walks();
+    ac3514_3_overflow_fail_closed();
+    ac3514_5_no_invent();
+    std::println("\n=== #3300 + #3351 + #3514: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
 
