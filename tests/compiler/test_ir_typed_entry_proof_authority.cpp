@@ -67,7 +67,7 @@ int run_test_ir_typed_entry_proof_authority() {
         if (fn_pos == std::string::npos) {
             CHECK(false, "AC1: ir_typed_entry_commit_readiness_ok not found");
         } else {
-            const std::string scope = h.substr(fn_pos, 3500);
+            const std::string scope = h.substr(fn_pos, 5000);
             CHECK(scope.find("g_last_type_linear_proof_outcome") != std::string::npos,
                   "AC1: ir_typed_entry_commit_readiness_ok consults "
                   "g_last_type_linear_proof_outcome");
@@ -111,7 +111,7 @@ int run_test_ir_typed_entry_proof_authority() {
         std::println("\n--- AC3: production guard + depth==0 short-circuit preserved ---");
         const auto fn_pos = h.find("inline bool ir_typed_entry_commit_readiness_ok() noexcept");
         if (fn_pos != std::string::npos) {
-            const std::string scope = h.substr(fn_pos, 3500);
+            const std::string scope = h.substr(fn_pos, 4500);
             // Soft path: !production_defaults && !Full → return true (zero extra work)
             CHECK(scope.find("if (!(production_defaults_active() || get_strategy() == "
                              "AuditStrategy::Full))") != std::string::npos,
@@ -119,9 +119,11 @@ int run_test_ir_typed_entry_proof_authority() {
             // depth==0 short-circuit
             CHECK(scope.find("if (depth == 0)") != std::string::npos,
                   "AC3: depth==0 short-circuit preserved");
-            // Issue #3414: Quiet / unbound last-proof is not authority at depth==0
-            CHECK(scope.find("kTypeLinearProofOutcomeStamped") != std::string::npos,
-                  "AC3/#3414: depth==0 requires Stamped last-proof (Quiet/unbound refuse)");
+            // Issue #3510: negative authority at depth==0 (Reject), Quiet still allows
+            CHECK(scope.find("kTypeLinearProofOutcomeReject") != std::string::npos,
+                  "AC3/#3510: depth==0 consults Reject");
+            CHECK(h.find("kTypeLinearProofOutcomeStamped") != std::string::npos,
+                  "AC3/#3414: Stamped outcome still in typed_audit SSOT");
         }
     }
 
@@ -130,7 +132,7 @@ int run_test_ir_typed_entry_proof_authority() {
         std::println("\n--- AC4: existing counter reused, no new query key ---");
         const auto fn_pos = h.find("inline bool ir_typed_entry_commit_readiness_ok() noexcept");
         if (fn_pos != std::string::npos) {
-            const std::string scope = h.substr(fn_pos, 3500);
+            const std::string scope = h.substr(fn_pos, 4500);
             // Verify the existing counter is bumped in the new reject paths.
             const auto bump_count = [&]() -> std::size_t {
                 std::size_t count = 0;

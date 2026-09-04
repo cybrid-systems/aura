@@ -27,15 +27,20 @@ namespace {
 using aura::compiler::CompilerService;
 using aura::compiler::typed_audit::apply_dev_audit_defaults;
 using aura::compiler::typed_audit::apply_production_audit_defaults;
+using aura::compiler::typed_audit::clear_type_linear_commit_proof_for_test;
 using aura::compiler::typed_audit::clear_type_linear_proof_outcome_for_test;
 using aura::compiler::typed_audit::commit_readiness;
 using aura::compiler::typed_audit::commit_readiness_live_policy;
 using aura::compiler::typed_audit::CommitReadinessInput;
 using aura::compiler::typed_audit::g_linear_ir_fastpath_boundary_depth_override;
 using aura::compiler::typed_audit::ir_typed_entry_commit_readiness_ok;
+using aura::compiler::typed_audit::kTypeLinearProofOutcomeReject;
 using aura::compiler::typed_audit::kTypeLinearProofOutcomeStamped;
+using aura::compiler::typed_audit::note_pending_full_solve_residual;
 using aura::compiler::typed_audit::publish_last_proof_face;
 using aura::compiler::typed_audit::publish_type_linear_proof_outcome;
+using aura::compiler::typed_audit::reset_pending_full_solve_residual_for_test;
+using aura::compiler::typed_audit::stamp_type_linear_commit_proof;
 using aura::compiler::types::as_int;
 using aura::compiler::types::is_int;
 using aura::test::g_failed;
@@ -258,12 +263,13 @@ static void ac3414_no_tls_default_solved_refused() {
     CHECK(cr.force_reason == "solve" || cr.force_reason_code == 1,
           "3414 AC1: reuse force_reason solve");
 
-    // Issue #3439 V3: depth==0 bypasses stale global atomics entirely
-    // (chaos warm eval fix). The old AC2 refusal consulted exactly the
-    // stale cross-test state that broke warm evals — protection lives at
-    // depth > 0 now (full pre-checks + commit_readiness live-policy).
+    // Issue #3439 V3 / #3510: Quiet depth==0 still allows warm eval.
+    // Negative authority (Reject / stamp+would_allow=0 / pending) is
+    // refused at depth==0 under Production — see ac3510.
+    clear_type_linear_commit_proof_for_test();
+    clear_type_linear_proof_outcome_for_test();
     CHECK(ir_typed_entry_commit_readiness_ok(),
-          "3414 AC2-V3: Production depth==0 bypasses stale globals");
+          "3414 AC2-V3: Production Quiet depth==0 allows warm eval");
 
     publish_type_linear_proof_outcome(kTypeLinearProofOutcomeStamped);
     live = commit_readiness_live_policy();
@@ -303,7 +309,7 @@ static void ac3416_last_proof_eval_identity() {
     aura_typed_audit_note_readiness_evaluator(eval_a);
     publish_type_linear_proof_outcome(kTypeLinearProofOutcomeStamped);
     publish_last_proof_face(true, true);
-    CHECK(ir_typed_entry_commit_readiness_ok(), "3416 AC1-V3: depth==0 bypass (stamper A + TLS A)");
+    CHECK(ir_typed_entry_commit_readiness_ok(), "3416 AC1-V3: depth==0 green Stamped allows");
 
     aura_typed_audit_note_readiness_evaluator(eval_b);
     CHECK(ir_typed_entry_commit_readiness_ok(), "3416 AC1-V3: depth==0 bypass (eval B)");
@@ -318,6 +324,49 @@ static void ac3416_last_proof_eval_identity() {
     aura_typed_audit_clear_readiness_evaluator();
 }
 
+// ── #3510: depth==0 refuses negative type/linear authority ──
+static void ac3510_depth_zero_negative_authority() {
+    std::println("\n--- #3510: depth==0 Reject / would_allow=0 / pending residual refuse ---");
+    apply_production_audit_defaults();
+    clear_type_linear_commit_proof_for_test();
+    clear_type_linear_proof_outcome_for_test();
+    reset_pending_full_solve_residual_for_test();
+    g_linear_ir_fastpath_boundary_depth_override = 0;
+
+    CHECK(ir_typed_entry_commit_readiness_ok(), "3510 AC4: Quiet depth==0 allows");
+
+    publish_type_linear_proof_outcome(kTypeLinearProofOutcomeReject);
+    CHECK(!ir_typed_entry_commit_readiness_ok(), "3510 AC1: Reject at depth==0 refuses");
+    clear_type_linear_proof_outcome_for_test();
+
+    stamp_type_linear_commit_proof(42);
+    publish_last_proof_face(false, false);
+    CHECK(!ir_typed_entry_commit_readiness_ok(),
+          "3510 AC2: stamp!=0 + would_allow==0 at depth==0 refuses");
+    clear_type_linear_commit_proof_for_test();
+
+    note_pending_full_solve_residual(1, /*hard=*/true);
+    CHECK(!ir_typed_entry_commit_readiness_ok(),
+          "3510 AC3: pending residual face at depth==0 refuses");
+    reset_pending_full_solve_residual_for_test();
+    CHECK(ir_typed_entry_commit_readiness_ok(), "3510 AC4: face clear restores Quiet allow");
+
+    apply_dev_audit_defaults();
+    publish_type_linear_proof_outcome(kTypeLinearProofOutcomeReject);
+    CHECK(ir_typed_entry_commit_readiness_ok(), "3510 AC4: Soft Reject still allows");
+    clear_type_linear_proof_outcome_for_test();
+    g_linear_ir_fastpath_boundary_depth_override = -1;
+
+    const auto h = read_file("src/compiler/typed_mutation_audit.h");
+    CHECK(h.find("kDepthZeroTypedEntryNegativeAuthorityIssue = 3510") != std::string::npos,
+          "3510 AC5: issue stamp");
+    CHECK(h.find("pending_full_solve_residual_face_hit()") != std::string::npos,
+          "3510 AC5: pending face consult");
+    CHECK(read_file("docs/design/3510-depth-zero-typed-entry.md").empty(),
+          "3510 AC5: no docs/design");
+    CHECK(read_file("tests/compiler/test_issue_3510.cpp").empty(), "3510 AC5: no invent");
+}
+
 } // namespace
 
 int run_test_commit_readiness_score() {
@@ -330,6 +379,7 @@ int run_test_commit_readiness_score() {
     ac5_source_schema_live();
     ac3414_no_tls_default_solved_refused();
     ac3416_last_proof_eval_identity();
+    ac3510_depth_zero_negative_authority();
     apply_dev_audit_defaults();
     std::println("\n=== #2553: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
