@@ -1,0 +1,33 @@
+{
+  "issue": 3473,
+  "title": "Issue #3473: note_ffi_opaque_alias_densify_cover registers the slot, not metric-only",
+  "ok": "OK: Issue #3473 FFI alias slot cover — register-or-canary; #3368 XOR; Soft exempt",
+  "checks": [
+    {
+      "ac": "AC1-register",
+      "path": "src/core/arena.ixx",
+      "contains": [
+        "Issue #3473",
+        "register_external_root_slot_for_densify(slot)",
+        "snapshot_ffi_alias_slots_for_densify"
+      ]
+    },
+    {
+      "ac": "AC5-tests",
+      "path": "tests/core/test_moving_densify_fail_closed.cpp",
+      "contains": [
+        "3473 AC1: *slot rewritten to remapped address",
+        "3473 AC2: slotted path does not canary (#3368 XOR)",
+        "3473 AC4: no slot-cover bump"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "forbid": [
+        "tests/core/test_issue_3473.cpp",
+        "tests/compiler/test_issue_3473.cpp",
+        "docs/design/3473-ffi-alias-slot-register.md"
+      ]
+    }
+  ]
+}
