@@ -1476,7 +1476,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/orch/test_agent_failure_policy.cpp` (—) [large, domain_suite, theme_orch] — AC1: AgentFailurePolicy available under aura::orch; StallPolicy
 - `tests/orch/test_agent_max_no_yield.cpp` (—) [domain_suite, theme_orch] — Issue #2585 — production default + opt-out (AURA_AGENT_MAX_NO_YIELD_MS=0).
 - `tests/orch/test_agent_scope.cpp` (—) [large, domain_suite, theme_orch] — test_agent_scope.cpp — Issue #2083 AgentScope + #2161 watch_all
-- `tests/orch/test_agent_scope_hierarchy.cpp` (—) [domain_suite, theme_orch] — AC1: parent / children links via spawn_child (unique_ptr, not static table)
+- `tests/orch/test_agent_scope_hierarchy.cpp` (—) [large, domain_suite, theme_orch] — AC1: parent / children links via spawn_child (unique_ptr, not static table)
 - `tests/compiler/test_aot_bridge_checkpoint_version_steal.cpp` (—) [domain_suite, theme_compiler] — test_aot_bridge_checkpoint_version_steal.cpp — Issue #653:
 - `tests/serve/test_boundary_yield_steal_metrics.cpp` (—) [domain_suite, theme_serve] — AC1: high-frequency MB yield → yield_mutation_boundary_total + hold_ns
 - `tests/compiler/test_capability_high_risk_promote.cpp` (—) [domain_suite, theme_compiler] — AC1: Registry-only grant self-evo → has_capability true without relying

@@ -4447,15 +4447,12 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             // abandon_reclaimed / body exit. Issue #3444: only drop the
             // Evaluator slot when joining the root. Joining a child must
             // not discard the parent tree.
+            // Issue #3496: settled means the TREE (root + descendants),
+            // not only this layer's handles_ — empty root + live child
+            // used to drop_agent_scope and ~AgentScope tore down the
+            // child fibers. join_all stays local; drop sees tree_settled.
             if (scope == root) {
-                bool all_settled = true;
-                for (const auto& hp : scope->handles()) {
-                    if ((hp.fiber && !hp.fiber->is_done()) || hp.must_wait_reclaimed ||
-                        hp.reclaimed_deferred_cleanup) {
-                        all_settled = false;
-                        break;
-                    }
-                }
+                const bool all_settled = scope->tree_settled();
                 if (all_settled)
                     aura::orch::drop_agent_scope(static_cast<void*>(&ev));
             }

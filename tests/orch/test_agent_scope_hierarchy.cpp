@@ -532,6 +532,32 @@ static void ac3444_hard_deny_stub() {
     set_prod(false);
 }
 
+// ── Issue #3496: tree_settled sees descendant handles ──
+static void ac3496_tree_settled() {
+    std::println("\n--- #3496: tree_settled descendant gate ---");
+    CHECK(aura::orch::kJoinAllTreeSettledIssue == 3496, "3496: issue stamp");
+    Scheduler sched(2);
+    SchedRunner runner(sched);
+    AgentScope root(sched);
+    auto& c0 = root.spawn_child();
+    CHECK(root.tree_settled(), "3496 AC: empty tree is settled");
+    std::atomic<bool> hold{true};
+    auto& h = c0.spawn(hold_body(hold));
+    CHECK(h.ok && h.fiber, "3496 AC: child spawn ok");
+    CHECK(!root.tree_settled(), "3496 AC1: root tree_settled false while child live");
+    CHECK(c0.tree_settled() == false, "3496 AC1: child tree_settled false");
+    hold.store(false, std::memory_order_relaxed);
+    (void)c0.join_all(std::optional<std::uint64_t>{3000});
+    CHECK(root.tree_settled(), "3496 AC2: tree_settled after child join");
+    const auto header = read_file("src/orch/agent_scope.h");
+    const auto prim = read_file("src/compiler/evaluator_primitives_agent.cpp");
+    CHECK(header.find("tree_settled_unlocked_") != std::string::npos,
+          "3496 AC5: unlocked walk of children_");
+    CHECK(prim.find("scope->tree_settled()") != std::string::npos,
+          "3496 AC5: Aura drop uses tree_settled");
+    CHECK(read_file("tests/orch/test_issue_3496.cpp").empty(), "3496 AC5: no test_issue_3496.cpp");
+}
+
 } // namespace
 
 int run_test_agent_scope_hierarchy() {
@@ -551,6 +577,7 @@ int run_test_agent_scope_hierarchy() {
     std::println("\n=== Issue #3444: scope-path addressing ===");
     ac3444_scope_path_address();
     ac3444_hard_deny_stub();
+    ac3496_tree_settled();
 
     std::println("\n=== #2537 + #2781 + #3444 results: {} passed, {} failed ===", g_passed,
                  g_failed);

@@ -36,6 +36,7 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 
 NAME_TABLE = "src/compiler/agent_name_table.h"
 AGENT_PRIMS = "src/compiler/evaluator_primitives_agent.cpp"
+AGENT_SCOPE = "src/orch/agent_scope.h"
 TEST_NAME_TABLE = "tests/orch/test_agent_name_table_isolation.cpp"
 TEST_JOIN_DRAIN = "tests/orch/test_join_drain_reclaim.cpp"
 TEST_ORCH_SCOPE = "tests/orch/test_orch_scope.cpp"
@@ -58,13 +59,22 @@ AGENT_PRIMS_REQUIRED: tuple[str, ...] = (
     "AgentDenyClass::Other",
     "add_reclaimed_pending_lifecycle(rkv, /*pending=*/true)",
     "host_forget_reclaimed_risk_total",
-    # Scope-join-all B1 guarded drop (AC3): root only; live-fiber gate +
-    # both pending flags; drop only when all_settled.
+    # Scope-join-all B1 guarded drop (AC3): root only; drop only when
+    # all_settled. Issue #3496: settled is the TREE via tree_settled()
+    # (live-fiber + pending flags live in agent_scope.h).
     "all_settled",
+    "tree_settled()",
+    "if (scope == root)",
+)
+
+# Issue #3496: the live-fiber + both-pending-flag walk is tree_settled
+# (join_all stays local; drop sees descendants).
+AGENT_SCOPE_REQUIRED: tuple[str, ...] = (
+    "kJoinAllTreeSettledIssue = 3496",
+    "tree_settled_unlocked_",
     "(hp.fiber && !hp.fiber->is_done())",
     "hp.must_wait_reclaimed",
     "hp.reclaimed_deferred_cleanup",
-    "if (scope == root)",
 )
 
 # The old unguarded drop must be gone (comment-vs-code mismatch that
@@ -89,6 +99,7 @@ TEST_REQUIRED: dict[str, tuple[str, ...]] = {
         "3467 AC4: directory empty after settled join-all (slot dropped)",
         "3467 AC4: scope-resolve misses after settled join-all",
         "3467 AC4: drop gate checks both pending flags",
+        "3467 AC4 / #3496: drop uses tree_settled (descendants)",
     ),
 }
 
@@ -116,6 +127,7 @@ def run_checks() -> list[str]:
     problems: list[str] = []
     problems += check_file(NAME_TABLE, NAME_TABLE_REQUIRED)
     problems += check_file(AGENT_PRIMS, AGENT_PRIMS_REQUIRED, AGENT_PRIMS_FORBIDDEN)
+    problems += check_file(AGENT_SCOPE, AGENT_SCOPE_REQUIRED)
     for path, required in TEST_REQUIRED.items():
         problems += check_file(path, required)
     # AC4: tests live in src-aligned suites — no test_issue_3467.cpp.
