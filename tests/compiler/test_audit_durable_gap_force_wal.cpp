@@ -21,10 +21,20 @@
 
 #include "test_harness.hpp"
 
+#include "compiler/security_capabilities.h"
+#include "compiler/security_defaults.hh"
+#include "compiler/typed_mutation_audit.h"
+#include "core/sandbox.hh"
+#include "core/security_event_wal.hh"
+#include "core/wal_append_fail_slo.h"
+
+#include <cstdlib>
 #include <fstream>
 #include <print>
 #include <string>
 #include <string_view>
+
+import aura.compiler.service;
 
 namespace {
 
@@ -166,6 +176,56 @@ int run_test_audit_durable_gap_force_wal() {
         CHECK(read_file("tests/compiler/test_issue_3460.cpp").empty() &&
                   read_file("tests/issues/test_issue_3460.cpp").empty(),
               "3460 AC6: no test_issue_3460.cpp (src-aligned suites only)");
+    }
+
+    // ── #3493: Restricted + overflow full → require_effect deny ──
+    // Live member (this suite runs in test_security_capability_batch).
+    // Overflow deny is the first conjunct in require_effect; Restricted
+    // must not keep mutating while the overflow ring is full.
+    {
+        using aura::compiler::CompilerService;
+        using aura::compiler::security::apply_production_security_defaults;
+        using aura::compiler::security::kEffectMutate;
+        using aura::compiler::typed_audit::apply_dev_audit_defaults;
+        using aura::compiler::typed_audit::apply_production_audit_defaults;
+        std::println("\n--- #3493: Restricted overflow-full require_effect deny ---");
+        const char* prev_sb = std::getenv("AURA_SANDBOX");
+        std::string prev_sb_s = prev_sb ? prev_sb : "";
+        const char* prev_open = std::getenv("AURA_WAL_APPEND_FAIL_OPEN");
+        std::string prev_open_s = prev_open ? prev_open : "";
+        ::unsetenv("AURA_WAL_APPEND_FAIL_OPEN");
+        ::setenv("AURA_SANDBOX", "restricted", 1);
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+        apply_production_audit_defaults();
+        apply_production_security_defaults();
+        aura::core::security_event_wal::wal_overflow_ring_clear_for_test();
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.set_effect_sandbox_mode(1);
+        CHECK(aura::core::wal_slo::wal_append_fail_closed_active(),
+              "3493 live: fail-closed active under Restricted");
+        for (std::uint32_t i = 0; i < aura::core::security_event_wal::kWalOverflowRingCapacity;
+             ++i) {
+            aura::core::security_event_wal::WalOverflowRecord rec{};
+            rec.mid = i + 1;
+            rec.reason = "test:3493-fill";
+            aura::core::security_event_wal::wal_overflow_ring_push(rec);
+        }
+        CHECK(aura::core::security_event_wal::wal_overflow_ring_full(),
+              "3493 live: overflow ring full");
+        CHECK(!ev.require_effect(kEffectMutate, "test:3493-full", 0),
+              "3493 live: Restricted + overflow full → deny");
+        aura::core::security_event_wal::wal_overflow_ring_clear_for_test();
+        apply_dev_audit_defaults();
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+        if (!prev_sb_s.empty())
+            ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+        else
+            ::unsetenv("AURA_SANDBOX");
+        if (!prev_open_s.empty())
+            ::setenv("AURA_WAL_APPEND_FAIL_OPEN", prev_open_s.c_str(), 1);
+        else
+            ::unsetenv("AURA_WAL_APPEND_FAIL_OPEN");
     }
 
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
