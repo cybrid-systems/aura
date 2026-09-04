@@ -50,6 +50,7 @@ using aura::compiler::CompilerService;
 using aura::compiler::security::apply_production_security_defaults;
 using aura::compiler::security::kCapWildcard;
 using aura::compiler::security::kEffectMutate;
+using aura::compiler::typed_audit::apply_dev_audit_defaults;
 using aura::compiler::typed_audit::apply_production_audit_defaults;
 using aura::compiler::typed_audit::AuditOutcome;
 using aura::compiler::typed_audit::capture_audit_event_forced;
@@ -1268,6 +1269,107 @@ int run_test_security_audit_unify() {
         CHECK(read_file("tests/compiler/test_issue_3338.cpp").empty(), "ac3338_5_no_invent");
         CHECK(read_file("docs/design/3338-wal-mid-lookup-window.md").empty(),
               "3338 AC5: no docs/design/3338-*");
+    }
+
+    // ── Issue #3498: typed-trail-miss fills full SE WAL row (reason/op) ──
+    {
+        std::println("\n--- #3498 AC1: typed wrap keeps reason from ring or WAL ---");
+        reset_process();
+        apply_production_audit_defaults();
+        CompilerService cs;
+        apply_production_audit_defaults();
+        namespace fs = std::filesystem;
+        const auto dir = fs::temp_directory_path() / "aura-3498-se-wal";
+        std::error_code ec;
+        fs::remove_all(dir, ec);
+        fs::create_directories(dir, ec);
+        CHECK(cs.evaluator().enable_security_event_wal(dir.string()), "3498 AC1: enable SE WAL");
+        const std::uint64_t mid = 3498001;
+        emit_security_event_durable(SecurityEventKind::EffectDeny, /*tenant=*/77, mid, /*epoch=*/11,
+                                    kEffectMutate, "test:3498", "3498-wal-reason", /*denied=*/true,
+                                    /*fiber=*/9);
+        aura::compiler::typed_audit::capture_security_correlated_audit(mid, "test:3498", 11, true,
+                                                                       0, 9);
+        for (std::size_t i = 0; i < kTypedMutationAuditTrailSize; ++i) {
+            capture_audit_event_forced(97000 + i, "wrap-fill-3498", MutationKind::Other, 1, 1,
+                                       AuditOutcome::Success);
+        }
+        TypedMutationAuditEvent te_miss{};
+        CHECK(!trail_find_by_mutation_id(mid, te_miss), "3498 AC1: mid wrapped out of typed trail");
+        auto q_ring = cs.eval(R"((engine:metrics "query:security-audit" 8 77 9 0 3498001))");
+        CHECK(q_ring.has_value(), "3498 AC1: query ok while ring still holds row");
+        bool saw_ring = false;
+        if (q_ring) {
+            for (const auto& ln : list_string_lines(cs, *q_ring)) {
+                if (ln.find("mutation_id=3498001") != std::string::npos &&
+                    ln.find("typed-trail-miss=1") != std::string::npos &&
+                    ln.find("reason=\"3498-wal-reason\"") != std::string::npos)
+                    saw_ring = true;
+            }
+        }
+        CHECK(saw_ring, "3498 AC1: ring row still carries reason + typed-trail-miss=1");
+
+        reset_security_event_ring_for_test();
+        CHECK(g_security_event_ring().seq.load(std::memory_order_relaxed) == 0,
+              "3498 AC1: ring empty (wrap / restart sim)");
+        auto q_wal = cs.eval(R"((engine:metrics "query:security-audit" 8 77 9 0 3498001))");
+        CHECK(q_wal.has_value(), "3498 AC1: query ok after ring miss");
+        bool saw_wal = false;
+        if (q_wal) {
+            for (const auto& ln : list_string_lines(cs, *q_wal)) {
+                std::println("  wal-miss: {}", ln);
+                if (ln.find("mutation_id=3498001") != std::string::npos &&
+                    ln.find("typed-trail-miss=1") != std::string::npos &&
+                    ln.find("reason=\"3498-wal-reason\"") != std::string::npos &&
+                    ln.find("op=\"test:3498\"") != std::string::npos &&
+                    ln.find("wal-replay-hint=1") != std::string::npos)
+                    saw_wal = true;
+            }
+        }
+        CHECK(saw_wal, "3498 AC1: WAL-backed line fills reason/op; typed-trail-miss stays 1");
+        cs.evaluator().disable_security_event_wal();
+        fs::remove_all(dir, ec);
+    }
+    {
+        std::println("\n--- #3498 AC2: Soft / WAL-off no find_recent_by_mutation_id ---");
+        reset_process();
+        apply_dev_audit_defaults();
+        CompilerService cs;
+        apply_dev_audit_defaults();
+        namespace fs = std::filesystem;
+        const auto dir = fs::temp_directory_path() / "aura-3498-soft";
+        std::error_code ec;
+        fs::remove_all(dir, ec);
+        fs::create_directories(dir, ec);
+        CHECK(cs.evaluator().enable_security_event_wal(dir.string()), "3498 AC2: Soft WAL enable");
+        emit_security_event_durable(SecurityEventKind::EffectDeny, 1, 3498002, 1, kEffectMutate,
+                                    "test:3498-soft", "soft-reason", true, 1);
+        reset_security_event_ring_for_test();
+        auto q_soft = cs.eval(R"((engine:metrics "query:security-audit" 8 1 1 0 3498002))");
+        CHECK(q_soft.has_value(), "3498 AC2: Soft query ok");
+        bool saw_soft_wal = false;
+        if (q_soft) {
+            for (const auto& ln : list_string_lines(cs, *q_soft)) {
+                if (ln.find("mutation_id=3498002") != std::string::npos)
+                    saw_soft_wal = true;
+            }
+        }
+        CHECK(!saw_soft_wal, "3498 AC2: Soft does not emit WAL-backed security-audit line");
+        cs.evaluator().disable_security_event_wal();
+        fs::remove_all(dir, ec);
+        const auto sec = read_file("src/compiler/evaluator_primitives_security.cpp");
+        CHECK(sec.find("Issue #3498") != std::string::npos, "3498 AC4: security.cpp cites");
+        CHECK(sec.find("find_recent_by_mutation_id") != std::string::npos,
+              "3498 AC4: SE WAL full-row lookup");
+        CHECK(sec.find("summary_scan_ok &&") != std::string::npos &&
+                  sec.find("g_security_event_wal().is_enabled()") != std::string::npos,
+              "3498 AC2: WAL scan gated on production/Full");
+        CHECK(sec.find("\"query:security-audit-3498\"") == std::string::npos,
+              "3498 AC5: no new query key");
+        CHECK(read_file("tests/compiler/test_issue_3498.cpp").empty(),
+              "3498 AC5: no test_issue_3498.cpp");
+        CHECK(read_file("docs/design/3498-typed-miss-se-wal.md").empty(),
+              "3498 AC5: no docs/design/3498-*");
     }
 
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);

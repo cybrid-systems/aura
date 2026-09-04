@@ -4878,6 +4878,10 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             const auto head = ring.seq.load(std::memory_order_relaxed);
             EvalValue result = make_void();
             std::size_t emitted = 0;
+            // Issue #3298 / #3498: Full hard face + production. Soft /
+            // Sampled never scan WAL on this default path.
+            const bool summary_scan_ok =
+                production_defaults_active() || get_strategy() == AuditStrategy::Full;
             for (std::size_t i = 0; i < kSecurityEventRingSize && emitted < limit; ++i) {
                 if (head <= i)
                     break;
@@ -4918,11 +4922,6 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 int typed_summary_from_wal = 0;
                 const char* typed_outcome_wal = "-";
                 const char* typed_kind_wal = "-";
-                // Issue #3298: gate matches the Full hard face — Full-only /
-                // embed deployments (strategy=Full, production_defaults=0)
-                // must also recover the sidecar on typed miss.
-                const bool summary_scan_ok =
-                    production_defaults_active() || get_strategy() == AuditStrategy::Full;
                 if (typed_miss && summary_scan_ok && g_mutation_audit_wal().is_enabled()) {
                     if (auto ts = g_mutation_audit_wal().find_recent_typed_summary_by_mid(
                             e.mutation_id, ::aura::core::wal_slo::wal_mid_lookup_segments())) {
@@ -4930,6 +4929,30 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                         typed_outcome_wal =
                             typed_outcome_name(static_cast<AuditOutcome>(ts->outcome));
                         typed_kind_wal = typed_kind_name(static_cast<MutationKind>(ts->kind));
+                    }
+                }
+                // Issue #3498: typed-trail-miss + production/Full + SE WAL
+                // fills reason/op from the full SecurityEventWalRecord when
+                // the ring row is missing those fields. Soft / WAL-off: no
+                // disk scan. typed-trail-miss stays 1 (do not rewrite as a
+                // typed hit). Prefer SE WAL over the typed-summary sidecar
+                // for reason/op.
+                char reason_buf[64]{};
+                char op_buf[40]{};
+                const char* reason_out = e.reason;
+                const char* op_out = e.op;
+                if (typed_miss && summary_scan_ok && g_security_event_wal().is_enabled() &&
+                    (e.reason[0] == '\0' || e.op[0] == '\0')) {
+                    if (auto rec = g_security_event_wal().find_recent_by_mutation_id(
+                            e.mutation_id, ::aura::core::wal_slo::wal_mid_lookup_segments())) {
+                        if (e.reason[0] == '\0' && rec->reason[0] != '\0') {
+                            std::memcpy(reason_buf, rec->reason, sizeof(reason_buf) - 1);
+                            reason_out = reason_buf;
+                        }
+                        if (e.op[0] == '\0' && rec->op[0] != '\0') {
+                            std::memcpy(op_buf, rec->op, sizeof(op_buf) - 1);
+                            op_out = op_buf;
+                        }
                     }
                 }
 
@@ -4940,7 +4963,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                     "se-ring-size={} wal-replay-hint={} typed-summary-from-wal={} "
                     "typed-outcome-wal={} typed-kind-wal={}",
                     e.seq, kind_name(e.kind), e.tenant_id, e.fiber_id, e.mutation_id, e.epoch,
-                    e.effect_bits, e.op, e.reason, e.denied ? 1 : 0, typed_seq, typed_kind,
+                    e.effect_bits, op_out, reason_out, e.denied ? 1 : 0, typed_seq, typed_kind,
                     typed_outcome, kSecurityAuditUnifyIssue, typed_miss,
                     static_cast<unsigned>(kTypedMutationAuditTrailSize),
                     static_cast<unsigned>(kSecurityEventRingSize), wal_hint, typed_summary_from_wal,
@@ -4951,6 +4974,53 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 ev.pairs_.push_back({make_string(sidx), result});
                 result = make_pair(pid);
                 ++emitted;
+            }
+            // Issue #3498: explicit mid filter missed the SE ring (typed
+            // 256 + SE 1024 wrap, or restart without hydrate) → one
+            // WAL-backed line under production/Full. Soft / WAL-off: no
+            // I/O. typed-trail-miss=1 — WAL is not the typed trail.
+            if (emitted == 0 && filt_mid && want_mid != 0 && summary_scan_ok &&
+                g_security_event_wal().is_enabled()) {
+                if (auto rec = g_security_event_wal().find_recent_by_mutation_id(
+                        want_mid, ::aura::core::wal_slo::wal_mid_lookup_segments())) {
+                    if ((!filt_tenant || rec->tenant_id == want_tenant) &&
+                        (!filt_fiber || rec->fiber_id == want_fiber) &&
+                        (!filt_reason || std::string_view(rec->reason).find(want_reason) !=
+                                             std::string_view::npos)) {
+                        int typed_summary_from_wal = 0;
+                        const char* typed_outcome_wal = "-";
+                        const char* typed_kind_wal = "-";
+                        if (g_mutation_audit_wal().is_enabled()) {
+                            if (auto ts = g_mutation_audit_wal().find_recent_typed_summary_by_mid(
+                                    want_mid, ::aura::core::wal_slo::wal_mid_lookup_segments())) {
+                                typed_summary_from_wal = 1;
+                                typed_outcome_wal =
+                                    typed_outcome_name(static_cast<AuditOutcome>(ts->outcome));
+                                typed_kind_wal =
+                                    typed_kind_name(static_cast<MutationKind>(ts->kind));
+                            }
+                        }
+                        const auto kind = static_cast<SecurityEventKind>(rec->kind);
+                        auto line = std::format(
+                            "seq={} kind={} tenant={} fiber={} mutation_id={} epoch={} "
+                            "effect={} "
+                            "op=\"{}\" reason=\"{}\" denied={} typed_seq={} typed_kind={} "
+                            "typed_outcome={} schema={} typed-trail-miss={} typed-trail-size={} "
+                            "se-ring-size={} wal-replay-hint={} typed-summary-from-wal={} "
+                            "typed-outcome-wal={} typed-kind-wal={}",
+                            rec->seq, kind_name(kind), rec->tenant_id, rec->fiber_id,
+                            rec->mutation_id, rec->epoch, rec->effect_bits, rec->op, rec->reason,
+                            rec->denied ? 1 : 0, 0, "-", "-", kSecurityAuditUnifyIssue, 1,
+                            static_cast<unsigned>(kTypedMutationAuditTrailSize),
+                            static_cast<unsigned>(kSecurityEventRingSize), 1,
+                            typed_summary_from_wal, typed_outcome_wal, typed_kind_wal);
+                        auto sidx = ev.string_heap_.size();
+                        ev.string_heap_.push_back(std::move(line));
+                        auto pid = ev.pairs_.size();
+                        ev.pairs_.push_back({make_string(sidx), result});
+                        result = make_pair(pid);
+                    }
+                }
             }
             return result;
         });
