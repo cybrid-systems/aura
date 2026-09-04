@@ -159,7 +159,18 @@ bool test_multi_fiber_parallel() {
 }
 
 // ── Test 4: Fiber eventfd wakeup ──────────────────────
-// Fiber goes Waiting on eventfd, IO thread wakes it
+// Fiber goes Waiting on eventfd, IO thread wakes it.
+//
+// Wait-for-completion discipline (ci/concurrent 17.3s death fix):
+// this test used to park a fiber in Waiting and never wake it — it
+// slept 200ms then called sched.stop() with a permanent Waiting
+// zombie fiber, which crashed the stop/teardown path on x86_64 CI.
+// Every other test waits for its fiber(s) to complete before stop.
+// We DO have wake access: spawn() returns Fiber*, and eventfd() /
+// is_queued() are public. So this test waits until the fiber has
+// genuinely parked (Waiting + dropped by its worker), writes 1 to the
+// fiber's eventfd (the same wake path serve-async / Mailbox use for
+// real IO), and only then — after the fiber reaches stage 2 — stops.
 
 bool test_eventfd_wakeup() {
     std::println("\n--- Test: Eventfd wakeup ---");
@@ -168,33 +179,51 @@ bool test_eventfd_wakeup() {
 
     aura::serve::Scheduler sched(2);
 
-    sched.spawn([&stage]() {
+    aura::serve::Fiber* fb = sched.spawn([&stage]() {
         // Stage 1: running
         stage.store(1);
 
-        // Go waiting
+        // Go waiting — park on the eventfd (IO thread wakes us)
         aura::serve::g_current_fiber->set_state(aura::serve::FiberState::Waiting);
         aura::serve::Fiber::yield();
 
         // Stage 2: woken up
         stage.store(2);
     });
+    CHECK(fb != nullptr, "spawn returned a fiber");
 
     // Run scheduler in background
     std::thread t([&sched]() { sched.run(); });
 
-    // Wait for fiber to reach waiting state
-    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    // Wait until the fiber has actually parked: state == Waiting AND the
+    // worker has dropped it (is_queued() == false). Writing the eventfd
+    // earlier could re-enqueue a fiber that is still running on a worker.
+    bool parked = false;
+    auto park_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+    while (fb && std::chrono::steady_clock::now() < park_deadline) {
+        if (fb->state() == aura::serve::FiberState::Waiting && !fb->is_queued()) {
+            parked = true;
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    CHECK(parked, "fiber reached Waiting and was dropped by its worker");
 
-    // The fiber goes Waiting, then IO thread needs to wake it.
-    // We need to trigger an event on the fiber's eventfd.
-    // But we don't have direct access to the eventfd from here.
-    // For now: stop and check stage = 1 (fiber ran, then waited)
+    // Wake it: write 1 to the fiber's eventfd. The scheduler's IO thread
+    // (epoll) picks this up, drains it and re-enqueues the fiber to a
+    // worker — the same wake path used for real IO in serve-async.
+    if (parked) {
+        const uint64_t one = 1;
+        ssize_t w = ::write(fb->eventfd(), &one, sizeof(one));
+        CHECK(w == static_cast<ssize_t>(sizeof(one)), "eventfd write woke the fiber");
+    }
 
+    // Wait for completion before stop (never stop with a Waiting fiber).
+    bool finished = wait_for_atomic(stage, 2);
     sched.stop();
     t.join();
 
-    CHECK(stage.load() >= 1, "fiber started and reached waiting");
+    CHECK(finished && stage.load() == 2, "fiber completed after eventfd wake (stage 1 -> 2)");
     return true;
 }
 
