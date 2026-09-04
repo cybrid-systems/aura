@@ -735,6 +735,37 @@ int run_test_moving_compact() {
         reset_linear_roots_for_test();
     }
 
+    // ── Issue #3469: two Moving windows keep window-1 keys ──
+    {
+        std::println("\n--- #3469: A→B then B→C still resolves A ---");
+        MovingFlagGuard on(1);
+        ASTArena arena(64 * 1024);
+        auto* p0 = arena.create<Pod16>(1, 2, 3, 4);
+        auto* p1 = arena.create<Pod16>(5, 6, 7, 8);
+        auto* p2 = arena.create<Pod16>(9, 10, 11, 12);
+        CHECK(p0 && p1 && p2, "3469: create");
+        void* A = p0;
+        const auto r1 = arena.live_compact(LiveCompactMode::Moving);
+        CHECK(!r1.moving_blocked_precondition, "3469: window 1 not blocked");
+        CHECK(r1.objects_moved > 0, "3469: window 1 moved");
+        void* B = arena.resolve_object_remap(A);
+        CHECK(B != nullptr, "3469: window 1 remapped A");
+        const auto r2 = arena.live_compact(LiveCompactMode::Moving);
+        CHECK(!r2.moving_blocked_precondition, "3469: window 2 not blocked");
+        CHECK(r2.objects_moved > 0, "3469: window 2 moved");
+        void* still_A = arena.resolve_object_remap(A);
+        CHECK(still_A != nullptr, "3469: A still a remap key after window 2");
+        CHECK(arena.resolve_object_remap(B) != nullptr, "3469: B is last-window key (#3421)");
+        const auto ar = read_file("src/core/arena.ixx");
+        CHECK(ar.find("Issue #3469") != std::string::npos, "3469: arena cites #3469");
+        CHECK(ar.find("prev_remap") != std::string::npos, "3469: fold previous map");
+        CHECK(read_file("docs/design/3469-multi-window-remap.md").empty(),
+              "3469: no docs/design/3469-* per #1655");
+        CHECK(read_file("tests/core/test_issue_3469.cpp").empty() &&
+                  read_file("tests/compiler/test_issue_3469.cpp").empty(),
+              "3469: no test_issue_3469.cpp per #81967");
+    }
+
     // ── Source contract ──
     {
         const auto ar = read_file("src/core/arena.ixx");

@@ -2591,6 +2591,7 @@ public:
 
     // Issue #2166: resolve old create-object address after Moving densify.
     // Returns nullptr if unknown (not remapped / Soft-Force path).
+    // Issue #3469: previous-window keys stay (A after A→B then B→C).
     [[nodiscard]] void* resolve_object_remap(void* old_ptr) const noexcept {
         if (!old_ptr)
             return nullptr;
@@ -2804,9 +2805,16 @@ private:
     // against false safety under production Moving default).
     [[nodiscard]] std::size_t
     relocate_tracked_objects_for_moving_(std::size_t* out_untracked_kept_count = nullptr) noexcept {
+        // Issue #3469: keep previous-window keys across relocate so
+        // resolve_object_remap(A) still hits after A→B then B→C.
+        // Same map type — not a second pin/GC registry. Empty dtors
+        // still preserve tombstones (no extra Soft walk).
+        auto prev_remap = std::move(last_object_remap_);
         last_object_remap_.clear();
-        if (dtors_.empty())
+        if (dtors_.empty()) {
+            last_object_remap_ = std::move(prev_remap);
             return 0;
+        }
 
         struct Pending {
             void* old = nullptr;
@@ -2925,6 +2933,31 @@ private:
         }
         dtors_ = std::move(kept);
         rebuild_dtor_index_(); // Issue #3456: pointers moved; rebuild ptr→slot
+        // Issue #3469: fold previous-window keys. Skip addresses that
+        // are live this window (new-map key or value) — those are
+        // post-move identities, not tombstones. Chase one hop through
+        // the current map so A→B then B→C becomes A→C.
+        if (!prev_remap.empty()) {
+            std::unordered_set<void*> live_new;
+            live_new.reserve(last_object_remap_.size() * 2);
+            for (const auto& [old_ptr, new_ptr] : last_object_remap_) {
+                if (old_ptr)
+                    live_new.insert(old_ptr);
+                if (new_ptr)
+                    live_new.insert(new_ptr);
+            }
+            for (const auto& [old_ptr, dest] : prev_remap) {
+                if (!old_ptr || live_new.contains(old_ptr))
+                    continue;
+                void* latest = dest;
+                if (latest) {
+                    auto it = last_object_remap_.find(latest);
+                    if (it != last_object_remap_.end() && it->second)
+                        latest = it->second;
+                }
+                last_object_remap_[old_ptr] = latest;
+            }
+        }
         return moved;
     }
 
@@ -3597,7 +3630,8 @@ public:
     // falls back to a one-shot linear walk. Rebuilt after Moving remap.
     std::unordered_map<void*, std::size_t> dtor_index_;
     // Issue #2166: old→new create-object addresses from last Moving densify.
-    // Cleared/rebuilt each Moving call; Soft/Force leave it empty.
+    // Issue #3469: previous-window keys are folded (A→B then B→C keeps A)
+    // so resolve_object_remap(A) still hits. Soft/Force leave it empty.
     std::unordered_map<void*, void*> last_object_remap_;
     // Issue #2775 / #3017: external roots registered by callers via
     // register_external_root_for_densify(void*) / batch span before a
