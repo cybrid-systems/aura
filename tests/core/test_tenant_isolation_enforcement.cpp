@@ -3354,6 +3354,61 @@ int main() {
               "3411 AC6: no test_issue_3411.cpp per #81934 (extend existing test)");
     }
 
+    // ── #3492: EDSL set-tenant-principal! shares grant-effect TA face ──
+    // Wildcard-only must not elevate principal or set allow_cross.
+    {
+        std::println("\n--- #3492 AC1: wildcard-only cannot elevate tenant ---");
+        reset_all();
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.set_capability_tenant_id(7);
+        ev.grant_capability("*"); // Off: host can seed wildcard-only
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+        ev.set_effect_sandbox_mode(1);
+        {
+            auto& reg = aura::core::capability::g_capability_registry();
+            std::lock_guard<std::mutex> lock(reg.mtx);
+            CHECK(reg.holds_wildcard_only_locked(7), "3492 AC1: tenant holds wildcard-only");
+        }
+        const auto deny_before = ev.capability_denial_count();
+        auto edsl = cs.eval("(security:set-tenant-principal! 10)");
+        CHECK(edsl && is_bool(*edsl) && !as_bool(*edsl),
+              "3492 AC1: wildcard-only elevate returns #f");
+        CHECK(ev.capability_tenant_id() == 7, "3492 AC1: principal unchanged");
+        CHECK(ev.capability_denial_count() > deny_before, "3492 AC1: denial bumped");
+    }
+
+    {
+        std::println("\n--- #3492 AC2: wildcard-only cannot set allow_cross ---");
+        reset_all();
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.set_capability_tenant_id(7);
+        ev.grant_capability("*");
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+        ev.set_effect_sandbox_mode(1);
+        const auto deny_before = aura::core::workspace_isolation::g_tenant_isolation_metrics()
+                                     .allow_cross_tenant_deny_total.load(std::memory_order_relaxed);
+        auto edsl = cs.eval("(security:set-tenant-principal! 7 #t)");
+        CHECK(edsl && is_bool(*edsl) && !as_bool(*edsl),
+              "3492 AC2: wildcard-only same-tenant #t returns #f");
+        CHECK(!ev.allow_cross_tenant(), "3492 AC2: flag stays false");
+        CHECK(ev.capability_tenant_id() == 7, "3492 AC2: principal unchanged");
+        const auto deny_after = aura::core::workspace_isolation::g_tenant_isolation_metrics()
+                                    .allow_cross_tenant_deny_total.load(std::memory_order_relaxed);
+        CHECK(deny_after == deny_before + 1, "3492 AC2: allow_cross_tenant_deny_total bumps");
+        const auto prim = read_file("src/compiler/evaluator_primitives_security.cpp");
+        CHECK(prim.find("holds_wildcard_only_locked") != std::string::npos,
+              "3492 AC2: prim uses holds_wildcard_only_locked");
+        const auto stp = prim.find("security:set-tenant-principal!");
+        CHECK(stp != std::string::npos, "3492 AC2: prim present");
+        const auto block = prim.substr(stp, 2200);
+        CHECK(block.find("has_capability(kCapWildcard)") == std::string::npos &&
+                  block.find("has_capability(aura::compiler::security::kCapWildcard)") ==
+                      std::string::npos,
+              "3492 AC2: prim no longer treats wildcard as elevate/allow_cross");
+    }
+
     reset_all();
     std::println("\n=== test_tenant_isolation_enforcement: {} passed, {} failed ===", g_passed,
                  g_failed);

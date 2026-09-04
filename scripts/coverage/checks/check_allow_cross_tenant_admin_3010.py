@@ -4,13 +4,14 @@
 Contract (one row per AC):
   AC1  Under production (Restricted/Strict: sandbox_mode_ != 0 ||
        effect_sandbox_mode() != 0), security:set-tenant-principal! with
-       allow_cross=#t requires TenantAdmin or wildcard (or "capability"
-       meta-priv). Missing → #f + SE EffectDeny reason
+       allow_cross=#t requires explicit TenantAdmin via
+       effects_for_locked (#3492: wildcard-only is not privilege).
+       Missing → #f + SE EffectDeny reason
        'allow-cross-needs-tenant-admin' + deny counter
        (allow_cross_tenant_deny_total). Flag stays false.
-  AC2  Restricted + TenantAdmin (or wildcard) can set the flag.
-       Subsequent isolation bypass is the flag's job; #2968 grant-write
-       remains independently gated.
+  AC2  Restricted + TenantAdmin can set the flag. Wildcard-only
+       cannot (#3492 / #3411). Subsequent isolation bypass is the
+       flag's job; #2968 grant-write remains independently gated.
   AC3  Soft / Off (sandbox_mode_ == 0 && effect_sandbox_mode() == 0)
        short-circuits: zero added cost, no privilege lookup, flag can
        still be set.
@@ -58,8 +59,9 @@ def main() -> int:
     must("allow-cross-needs-tenant-admin", "AC1", posture)
     must("allow_cross_tenant_deny_total", "AC1", posture)
     must("force_bind", "AC1", posture)
-    must("has_capability(kCapTenantAdmin)", "AC1", posture)
-    must("kCapWildcard", "AC1", posture)
+    must("effects_for_locked", "AC1 locked TA face", posture)
+    must("holds_wildcard_only_locked", "AC1 wildcard-only deny (#3492)", posture)
+    must("kEffectTenantAdmin", "AC1", posture)
     must("kCapTenantAdmin", "AC1", sec_caps)
     must("kCapWildcard", "AC1", sec_caps)
     prim_mark = posture.find('add("security:set-tenant-principal!"')
@@ -68,19 +70,24 @@ def main() -> int:
     if not prim_body:
         fails.append("AC1: security:set-tenant-principal! prim body not found")
     else:
-        priv_p = prim_body.find("has_capability(kCapTenantAdmin)")
+        priv_p = prim_body.find("effects_for_locked")
+        wild_p = prim_body.find("holds_wildcard_only_locked")
         set_p = prim_body.find("ev.set_tenant_principal(")
         deny_p = prim_body.find("allow-cross-needs-tenant-admin")
         if priv_p < 0 or set_p < 0 or priv_p > set_p:
             fails.append("AC1: prim privilege test must precede ev.set_tenant_principal")
+        if wild_p < 0 or set_p < 0 or wild_p > set_p:
+            fails.append("AC1: holds_wildcard_only_locked must precede ev.set_tenant_principal")
         if deny_p < 0 or set_p < 0 or deny_p > set_p:
             fails.append("AC1: prim SE reason allow-cross-needs-tenant-admin must precede set")
         if "return make_bool(false)" not in prim_body:
             fails.append("AC1: prim must return #f on missing privilege")
+        if "has_capability(kCapWildcard)" in prim_body:
+            fails.append("AC1: prim must not treat kCapWildcard as elevate/allow_cross (#3492)")
 
     # ── AC2: TenantAdmin allow path still calls set_tenant_principal ─
-    must("kCapTenantAdmin", "AC2", posture)
-    must("kCapWildcard", "AC2", posture)
+    must("kEffectTenantAdmin", "AC2", posture)
+    must("holds_wildcard_only_locked", "AC2 wildcard-only closed", posture)
 
     # ── AC3: Soft/Off zero-cost short-circuit ──────────────────────
     must("force_bind", "AC3", posture)

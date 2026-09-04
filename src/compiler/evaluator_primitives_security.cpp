@@ -1083,45 +1083,49 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
     // via the grant-effect path below when bits include kEffectMacroSelfEvo.
 
     // Issue #1566: (security:set-tenant-principal! id [allow-cross?])
-    // Issue #3010: under production, allow_cross=#t requires TenantAdmin
-    // or wildcard (or "capability" meta-priv). Same-tenant self-grant of
-    // the isolation-bypass flag without meta-priv → #f + SE reason
-    // allow-cross-needs-tenant-admin. Soft/Off: zero extra cost.
+    // Issue #3010: under production, allow_cross=#t requires TenantAdmin.
+    // Issue #3492: share the grant-effect locked TA face — wildcard-only
+    // must not elevate principal or set allow_cross (#3411 C++ fence
+    // already dropped kCapWildcard from set_tenant_principal).
+    // Same-tenant rebind with allow_cross=#f stays unprivileged.
+    // Soft/Off: zero extra cost.
     add("security:set-tenant-principal!", [&ev](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !is_int(a[0]))
             return make_bool(false);
-        // Issue #3088: authority triple (bool OR effect mode != 0) so a
-        // drifted bool cannot reopen tenant-elevate under Restricted.
-        if ((ev.sandbox_mode() || ev.effect_sandbox_mode() != 0) &&
-            !ev.has_capability(aura::compiler::security::kCapWildcard)) {
-            // Elevating tenant while sandboxed requires wildcard.
-            if (static_cast<std::uint64_t>(as_int(a[0])) != ev.capability_tenant_id()) {
-                ev.bump_capability_denial();
-                return make_bool(false);
-            }
-        }
         const auto tid = static_cast<std::uint64_t>(as_int(a[0]));
         const bool allow_cross = a.size() >= 2 && is_bool(a[1]) && as_bool(a[1]);
         const bool force_bind = ev.sandbox_mode() || ev.effect_sandbox_mode() != 0;
-        if (force_bind && allow_cross) {
-            using aura::compiler::security::kCapCapability;
-            using aura::compiler::security::kCapTenantAdmin;
-            using aura::compiler::security::kCapWildcard;
-            if (!ev.has_capability(kCapTenantAdmin) && !ev.has_capability(kCapWildcard) &&
-                !ev.has_capability(kCapCapability)) {
+        if (force_bind) {
+            auto& reg = aura::core::capability::g_capability_registry();
+            std::lock_guard<std::mutex> lock(reg.mtx);
+            using aura::compiler::security::kEffectTenantAdmin;
+            const bool wildcard_only = reg.holds_wildcard_only_locked(ev.capability_tenant_id());
+            const bool has_ta =
+                (static_cast<std::uint16_t>(reg.effects_for_locked(ev.capability_tenant_id())) &
+                 static_cast<std::uint16_t>(kEffectTenantAdmin)) != 0;
+            const bool elevate = tid != ev.capability_tenant_id();
+            if ((elevate || allow_cross) && (wildcard_only || !has_ta)) {
                 using ::aura::core::security_event::SecurityEventKind;
                 using ::aura::core::security_event_wal::emit_security_event_durable;
                 using ::aura::core::workspace_isolation::g_tenant_isolation_metrics;
                 ev.bump_capability_denial();
-                g_tenant_isolation_metrics().allow_cross_tenant_deny_total.fetch_add(
-                    1, std::memory_order_relaxed);
                 const auto epoch = ::aura::core::current_mutation_epoch();
                 const auto mid = epoch != 0 ? epoch : static_cast<std::uint64_t>(1);
                 const auto fid = static_cast<std::int64_t>(aura_fiber_current_id());
-                emit_security_event_durable(SecurityEventKind::EffectDeny, tid, mid, epoch,
-                                            /*effect_bits=*/0, "set-tenant-principal",
-                                            "allow-cross-needs-tenant-admin",
-                                            /*denied=*/true, fid);
+                if (allow_cross && !elevate) {
+                    g_tenant_isolation_metrics().allow_cross_tenant_deny_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                    emit_security_event_durable(SecurityEventKind::EffectDeny, tid, mid, epoch,
+                                                /*effect_bits=*/0, "set-tenant-principal",
+                                                "allow-cross-needs-tenant-admin",
+                                                /*denied=*/true, fid);
+                } else {
+                    emit_security_event_durable(SecurityEventKind::EffectDeny,
+                                                ev.capability_tenant_id(), mid, epoch,
+                                                /*effect_bits=*/0, /*cap_name=*/"<prim>",
+                                                "grant-effect-needs-explicit-tenant-admin",
+                                                /*denied=*/true, fid);
+                }
                 return make_bool(false);
             }
         }
