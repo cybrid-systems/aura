@@ -37,9 +37,9 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 108 | 108 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 26 | 26 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 59 | 59 | P1 — domain hygiene suite exists |
-| `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 85 | 85 | P2 — link-profile heavy; migrate AC smoke first |
+| `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 86 | 86 | P2 — link-profile heavy; migrate AC smoke first |
 | `shape_soa` | Shape / SoA / column layout | 0 | 0 | 55 | 55 | P2 — small-medium; soa_batch precedent |
-| `observability` | Observability / metrics / query:*-stats | 0 | 0 | 136 | 136 | P2 — often thin schema probes; collapse into obs matrix |
+| `observability` | Observability / metrics / query:*-stats | 0 | 0 | 135 | 135 | P2 — often thin schema probes; collapse into obs matrix |
 | `uncategorized` | Uncategorized / mixed | 0 | 0 | 58 | 58 | P3 — review case-by-case |
 
 ## Patterns, harness usage, coupling
@@ -1683,13 +1683,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_symbol_eq.cpp` (—) [domain_suite, theme_compiler] — AC1: (eq? 'commit 'commit) → #t  (interned short-str cache)
 - `tests/compiler/test_unquote_splicing_hygiene.cpp` (—) [large, domain_suite, theme_compiler] — AC1: pre_scan cites #2807; unquote-splicing boundary + metric
 
-### `jit_incremental` — JIT / AOT / incremental relower (85)
+### `jit_incremental` — JIT / AOT / incremental relower (86)
 
 **Target:** domain suite for incremental_*; keep heavy JIT in issue bundles
 
 **Priority:** P2 — link-profile heavy; migrate AC smoke first
 
-#### domain/ (85)
+#### domain/ (86)
 
 - `tests/compiler/test_adaptive_cascade_depth_partial_thr.cpp` (—) [domain_suite, theme_compiler] — AC1: After enough samples, high cascade-depth raises the threshold.
 - `tests/compiler/test_adaptive_partial_relower_threshold.cpp` (—) [domain_suite, theme_compiler] — AC1: Cold-start stays at default 8 until enough samples
@@ -1708,6 +1708,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_build_kv_hash_batch.cpp` (—) [batch_driver, domain_suite, theme_compiler] — tests/compiler/test_build_kv_hash_batch.cpp — build_kv_hash pair dup-merge (R19 phase 8).
 - `tests/compiler/test_capability_gating.cpp` (—) [domain_suite, theme_compiler] — Issue #1416: Inline no-op stubs for aura::jit::AuraJIT::invalidate_prefix
 - `tests/compiler/test_cascade_incremental_pass_suite.cpp` (—) [domain_suite, theme_compiler] — Issue #2044 — Pass pipeline fully incremental on cascade re-lower
+- `tests/compiler/test_cascade_relower_silent_skip.cpp` (—) [domain_suite, theme_compiler] — AC1: cascade cites #2813; skipped/ran metrics; warn path
 - `tests/compiler/test_castop_density_hard.cpp` (—) [large, domain_suite, theme_compiler] — AC1: HARD=0 + dens>budget → no hard_action, no force-JIT side effect
 - `tests/compiler/test_castop_typed_meta.cpp` (—) [domain_suite, theme_compiler] — AC1: Non-elided Coercion/CastOp lower stamps typed meta (type ids/tags)
 - `tests/compiler/test_closure_call_must_deopt_toctou.cpp` (—) [domain_suite, theme_compiler] — AC1: multi-step free+realloc under concurrent MustDeopt callers —
@@ -1841,13 +1842,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_value_tag_hot_path.cpp` (—) [domain_suite, theme_compiler] — AC1: Pure is_* (is_fixnum_hot / is_int) match classify; single low2 path
 - `tests/compiler/test_workspace_delete_child.cpp` (—) [domain_suite, theme_compiler] — tests/compiler/test_workspace_delete_child.cpp — Issue #1770: WorkspaceTree delete_child test.
 
-### `observability` — Observability / metrics / query:*-stats (136)
+### `observability` — Observability / metrics / query:*-stats (135)
 
 **Target:** tests/compiler/test_obs_schema_matrix.cpp + tests/compiler/obs_schema_cases.hpp
 
 **Priority:** P2 — often thin schema probes; collapse into obs matrix
 
-#### domain/ (136)
+#### domain/ (135)
 
 - `tests/compiler/test_adaptive_reverify_limit.cpp` (—) [domain_suite, theme_compiler] — Issue #2939 — dep-closure reverify (BFS over var_to_constraints_) to
 - `tests/compiler/test_adt_hard_gate_exhaustiveness.cpp` (—) [domain_suite, theme_compiler] — AC1: Full hard-gate + non-exhaustive inject → adt_ok=false; suite fails;
@@ -1867,7 +1868,6 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_cascade_defuse_touch_null_define.cpp` (—) [domain_suite, theme_compiler] — AC1: cascade cites #2817; ghost skip; cascade_ghost_name_touch_total
 - `tests/compiler/test_cascade_multi_define_stale.cpp` (—) [domain_suite, theme_compiler] — AC1: cascade cites #2815; affected_defs by NodeId; multi_define metric
 - `tests/compiler/test_cascade_path2_define_index.cpp` (—) [domain_suite, theme_compiler] — AC1: path2 builds define_by_sym index; cites #2816; no nested flat scan
-- `tests/compiler/test_cascade_relower_silent_skip.cpp` (—) [domain_suite, theme_compiler] — AC1: cascade cites #2813; skipped/ran metrics; warn path
 - `tests/compiler/test_closedloop_stats_hash_cap.cpp` (—) [small, domain_suite, theme_compiler] — Issue #1795 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_closure_view_batch.cpp` (—) [batch_driver, domain_suite, theme_compiler] — tests/compiler/test_closure_view_batch.cpp — closure_view pair dup-merge (R19 phase 17).
 - `tests/core/test_compiler_metrics_ownership.cpp` (—) [small, domain_suite, theme_core] — Issue #1835 (#1978 renamed): issue# moved from filename to header.

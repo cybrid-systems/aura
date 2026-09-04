@@ -59,7 +59,9 @@ def main() -> int:
     helper_pos = svc.find("fail_closed_soft_dual_graph_parity_before_partial_")
     helper_win = svc[max(0, helper_pos - 2000) : helper_pos + 3500] if helper_pos >= 0 else ""
     rel_pos = svc.find("std::size_t relower_dirty_defines_from_workspace()")
-    rel_win = svc[rel_pos : rel_pos + 14000] if rel_pos >= 0 else ""
+    # Window expanded after #3381/#3484 grew the peel body (caller union
+    # + zero-mask fail-closed before want_partial / prepare_source_to_ir).
+    rel_win = svc[rel_pos : rel_pos + 20000] if rel_pos >= 0 else ""
     want_pos = rel_win.find("if (want_partial && dirty_n > 0)")
     want_win = rel_win[want_pos : want_pos + 2500] if want_pos >= 0 else ""
 

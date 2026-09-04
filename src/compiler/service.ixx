@@ -6340,10 +6340,27 @@ public:
                     // mutation/bridge/defuse/soa to live and do not treat
                     // coverage as content promotion (#3445).
                     ack_cache_entry_fences_live_(it->second, name);
-                    (void)flat;
-                    (void)pool;
-                    (void)expanded_root;
-                    return true;
+                    // Issue #3484: pass-only is not an AST-rooted rewrite.
+                    // Production / Full fall through to per-fn /
+                    // store_define_v2 (existing full-fallback). Soft / Off
+                    // keep the return-true peel (zero extra).
+                    const bool production_instr =
+                        aura::compiler::typed_audit::production_defaults_active() ||
+                        aura::compiler::typed_audit::get_strategy() ==
+                            aura::compiler::typed_audit::AuditStrategy::Full;
+                    if (production_instr) {
+                        it->second.mark_all_blocks_dirty();
+                        it->second.dirty = true;
+                        it->second.content_stored_this_epoch = false;
+                        metrics_.partial_forced_full_by_impact_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                        // fall through to per-fn / full
+                    } else {
+                        (void)flat;
+                        (void)pool;
+                        (void)expanded_root;
+                        return true;
+                    }
                 }
             }
         }
@@ -7371,8 +7388,26 @@ public:
             auto it = ir_cache_v2_.find(name);
             if (it == ir_cache_v2_.end())
                 continue;
-            if (!it->second.dirty && it->second.dirty_block_count() == 0)
-                continue;
+            // Issue #3484: a name that entered the peel set (root, #3381 /
+            // #3474 caller, or persist under-mark) must not silent-skip
+            // on a zero mask. Production / Full fail-closed full; Soft /
+            // Off keep the clean continue (should_partial_relower
+            // dirty_count==0 → false).
+            bool zero_mask_forced_full = false;
+            if (!it->second.dirty && it->second.dirty_block_count() == 0) {
+                const bool production_zero =
+                    aura::compiler::typed_audit::production_defaults_active() ||
+                    aura::compiler::typed_audit::get_strategy() ==
+                        aura::compiler::typed_audit::AuditStrategy::Full;
+                if (!production_zero)
+                    continue;
+                it->second.mark_all_blocks_dirty();
+                it->second.dirty = true;
+                it->second.content_stored_this_epoch = false;
+                metrics_.partial_forced_full_by_impact_total.fetch_add(1,
+                                                                       std::memory_order_relaxed);
+                zero_mask_forced_full = true;
+            }
             // Locate the Define node + Lambda body in the workspace.
             // Issue #2730: skip free-list ghosts (same as mutate:rebind find).
             aura::ast::NodeId def_id = aura::ast::NULL_NODE;
@@ -7416,8 +7451,26 @@ public:
                     dirty_n = it->second.dirty_block_count();
                 }
                 if (dirty_n == 0 && !it->second.dirty) {
-                    ++ok;
-                    continue;
+                    // Issue #3484: persist-empty / under-mark on a cone
+                    // name is not a successful peel. Production / Full
+                    // take fail-closed full (reuse
+                    // partial_forced_full_by_impact_total). Soft / Off
+                    // keep ++ok skip (genuinely clean).
+                    const bool production_zero =
+                        aura::compiler::typed_audit::production_defaults_active() ||
+                        aura::compiler::typed_audit::get_strategy() ==
+                            aura::compiler::typed_audit::AuditStrategy::Full;
+                    if (!production_zero) {
+                        ++ok;
+                        continue;
+                    }
+                    it->second.mark_all_blocks_dirty();
+                    it->second.dirty = true;
+                    it->second.content_stored_this_epoch = false;
+                    metrics_.partial_forced_full_by_impact_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                    dirty_n = it->second.dirty_block_count();
+                    zero_mask_forced_full = true;
                 }
             }
             metrics_.should_partial_relower_consult_total.fetch_add(1, std::memory_order_relaxed);
@@ -7427,6 +7480,10 @@ public:
                 total_blocks += fb.size();
             const auto adaptive = consult_workload_adaptive_partial_(dirty_n, total_blocks);
             bool want_partial = adaptive.want_partial;
+            // Issue #3484: zero-mask cone name already took fail-closed
+            // full — do not re-enter partial / skip-as-clean.
+            if (zero_mask_forced_full)
+                want_partial = false;
             // Issue #3034: cross-check ImpactScope / hybrid-cascade upper
             // bound. Monotonic — only upgrades partial → full, never lowers
             // (storm gates stay the outer envelope). Zero cost on clean /
@@ -7749,6 +7806,25 @@ public:
         if (it == ir_cache_v2_.end())
             return false;
         auto& e = it->second;
+        e.dirty = false;
+        e.clear_all_block_dirty();
+        e.clear_all_instruction_dirty();
+        return true;
+    }
+
+    // Issue #3484 test: persist-empty / body-only mark missed. Keep the
+    // cache entry so #3381 still unions the caller into dirty_names, but
+    // drop irs so mark_caller_body_dirty hits the empty-irs path and
+    // does not set dirty. Production peel must fail-closed full, not
+    // ++ok skip. Soft does not union, so this plant is a no-op there.
+    bool plant_zero_mask_caller_for_test(const std::string& name) {
+        auto it = ir_cache_v2_.find(name);
+        if (it == ir_cache_v2_.end())
+            return false;
+        auto& e = it->second;
+        e.irs.clear();
+        e.block_dirty_per_func_.clear();
+        e.instruction_dirty_per_func_.clear();
         e.dirty = false;
         e.clear_all_block_dirty();
         e.clear_all_instruction_dirty();

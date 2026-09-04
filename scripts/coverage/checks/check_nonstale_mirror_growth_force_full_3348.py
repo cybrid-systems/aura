@@ -53,7 +53,9 @@ def main() -> int:
     q = _read("src/compiler/evaluator_primitives_obs_eval.cpp") + _read("src/compiler/evaluator_primitives_query.cpp")
 
     rel_pos = svc.find("std::size_t relower_dirty_defines_from_workspace()")
-    rel = svc[rel_pos : rel_pos + 28000] if rel_pos >= 0 else ""
+    # Window expanded after #3484 zero-mask fail-closed grew the peel
+    # body (last-look node/block compares sat past 28000).
+    rel = svc[rel_pos : rel_pos + 32000] if rel_pos >= 0 else ""
 
     must("Issue #3348", "AC1 cite", rel)
     must("initial_block_mirror_edges", "AC1 block snapshot", rel)

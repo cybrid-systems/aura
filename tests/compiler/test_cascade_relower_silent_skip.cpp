@@ -6,9 +6,20 @@
 //   AC2: CompilerService wired path → cascade_relower_ran_total advances
 //   AC3: fn cleared → cascade_relower_skipped_total advances on mutate
 //   AC4: this suite + linter; no docs/design/2813-*; no test_issue_2813.cpp
+//
+// Issue #3484 — workspace peel must not count dirty_n==0 / instr-peel
+// skip as success under production (residual of #1495/#2133/#3381).
+//   AC3 (#2813) remains the unwired-hook test.
+//   AC1: production cone name cannot ++ok on dirty_n==0 skip
+//   AC2: instr peel without AST rewrite falls through (production)
+//   AC3: Soft / Off clean skip stays zero-cost
+//   AC4: existing query keys only; soak moves impact / should_relower
+//   AC5: production soak asserts IR rewrite / lookup==1, not skip-only
+//   AC6: linter; no docs/design/3484-*; no test_issue_3484.cpp
 
 #include "test_harness.hpp"
 #include "compiler/observability_metrics.h"
+#include "compiler/typed_mutation_audit.h"
 
 #include <cstdint>
 #include <fstream>
@@ -17,6 +28,7 @@
 #include <string_view>
 
 import std;
+import aura.compiler.ir_cache_pure;
 import aura.compiler.service;
 import aura.compiler.value;
 
@@ -24,6 +36,9 @@ namespace {
 
 using aura::compiler::CompilerMetrics;
 using aura::compiler::CompilerService;
+using aura::compiler::should_partial_relower;
+using aura::compiler::typed_audit::apply_dev_audit_defaults;
+using aura::compiler::typed_audit::apply_production_audit_defaults;
 using aura::compiler::types::as_int;
 using aura::compiler::types::is_hash;
 using aura::compiler::types::is_int;
@@ -160,8 +175,165 @@ int run_test_cascade_relower_silent_skip() {
         CHECK(win.find("relower_dirty_defines_fn_") != std::string::npos, "AC4: skip gated on fn");
     }
 
-    std::println("\n=== #2813 cascade relower silent skip: {} passed, {} failed ===", g_passed,
-                 g_failed);
+    // ── #3484 source: production zero-mask fail-closed; Soft ++ok stays ──
+    {
+        std::println("\n--- #3484 AC1/AC2/AC3: peel zero-mask + instr-peel source ---");
+        auto svc = read_file("src/compiler/service.ixx");
+        auto pure = read_file("src/compiler/ir_cache_pure.ixx");
+        CHECK(!svc.empty(), "3484 AC1: service.ixx readable");
+        const auto peel = svc.find("std::size_t relower_dirty_defines_from_workspace()");
+        CHECK(peel != std::string::npos, "3484 AC1: peel found");
+        const auto peel_win = svc.substr(peel, 18000);
+        CHECK(peel_win.find("Issue #3484") != std::string::npos, "3484 AC1: peel cites #3484");
+        CHECK(peel_win.find("zero_mask_forced_full") != std::string::npos,
+              "3484 AC1: zero-mask fail-closed flag");
+        CHECK(peel_win.find("partial_forced_full_by_impact_total") != std::string::npos,
+              "3484 AC1: reuses partial_forced_full_by_impact_total");
+        CHECK(peel_win.find("++ok") != std::string::npos, "3484 AC3: Soft ++ok skip retained");
+        const auto rb = svc.find("bool relower_define_blocks(");
+        CHECK(rb != std::string::npos, "3484 AC2: relower_define_blocks");
+        const auto rb_win = svc.substr(rb, 22000);
+        CHECK(rb_win.find("Issue #3484") != std::string::npos, "3484 AC2: instr peel cites #3484");
+        CHECK(rb_win.find("production_instr") != std::string::npos ||
+                  rb_win.find("pass-only is not an AST-rooted rewrite") != std::string::npos,
+              "3484 AC2: production instr peel falls through");
+        const auto ack = rb_win.find("ack_cache_entry_fences_live_");
+        const auto per_fn = rb_win.find("restamp after successful per-fn");
+        CHECK(ack != std::string::npos && per_fn != std::string::npos && ack < per_fn,
+              "3484 AC2: instr peel ack before per-fn");
+        const auto peel_arm = rb_win.substr(ack, per_fn - ack);
+        CHECK(peel_arm.find("mark_all_blocks_dirty") != std::string::npos,
+              "3484 AC2: production re-dirties after pass-only peel");
+        CHECK(peel_arm.find("return true") != std::string::npos,
+              "3484 AC3: Soft still returns true");
+        CHECK(pure.find("if (dirty_count == 0)") != std::string::npos,
+              "3484 AC3: should_partial_relower dirty_count==0 stays");
+        CHECK(should_partial_relower(0) == false, "3484 AC3: dirty_count==0 → false");
+        CHECK(svc.find("schema-3484") == std::string::npos, "3484 AC4: no schema-3484");
+        CHECK(svc.find("g_3484_") == std::string::npos, "3484 AC4: no g_3484_*");
+        CHECK(read_file("docs/design/3484-peel-zero-mask.md").empty(),
+              "3484 AC6: no docs/design/3484-*");
+        CHECK(read_file("tests/compiler/test_issue_3484.cpp").empty(),
+              "3484 AC6: no test_issue_3484.cpp");
+        CHECK(read_file("tests/issues/test_issue_3484.cpp").empty(),
+              "3484 AC6: no tests/issues/test_issue_3484.cpp");
+        auto build = read_file("build.py");
+        CHECK(build.find("check_peel_zero_mask_fail_closed_3484") != std::string::npos,
+              "3484 AC6: build.py wires linter");
+    }
+
+    // ── #3484 AC5: production soak — zero-mask caller cannot skip ──
+    {
+        std::println("\n--- #3484 AC5: production zero-mask caller soak ---");
+        apply_production_audit_defaults();
+        CompilerService cs;
+        CHECK(cs.eval(R"(
+(set-code "
+(define f (lambda () 1))
+(define g (lambda () (f)))
+")")
+                  .has_value(),
+              "3484 AC5: set-code");
+        CHECK(cs.eval("(eval-current)").has_value(), "3484 AC5: eval");
+        if (!cs.get_define_v2("f"))
+            (void)cs.eval("(compile:cache-define \"f\")");
+        if (!cs.get_define_v2("g"))
+            (void)cs.eval("(compile:cache-define \"g\")");
+        CHECK(cs.get_define_v2("f") != nullptr, "3484 AC5: f cached");
+        CHECK(cs.get_define_v2("g") != nullptr, "3484 AC5: g cached");
+        cs.public_record_dependency("g", "f");
+        CHECK(cs.public_dep_graph_has_edge("g", "f"), "3484 AC5: g calls f");
+        auto* m = metrics_of(cs);
+        CHECK(m != nullptr, "3484 AC5: metrics");
+        const auto impact0 = m->partial_forced_full_by_impact_total.load(std::memory_order_relaxed);
+        const auto should0 = m->should_relower_total.load(std::memory_order_relaxed);
+        const auto skip0 = m->relower_skipped_entirely_count.load(std::memory_order_relaxed);
+        const auto hash = cs.get_define_v2("g")->source_hash;
+        CHECK(cs.plant_zero_mask_caller_for_test("g"), "3484 AC5: plant zero-mask caller");
+        CHECK(cs.get_define_v2("g") && cs.get_define_v2("g")->irs.empty(),
+              "3484 AC5: planted empty irs");
+        cs.public_mark_define_dirty("f");
+        (void)cs.public_relower_dirty_defines_from_workspace();
+        const auto* g1 = cs.get_define_v2("g");
+        CHECK(g1 != nullptr, "3484 AC5: g still cached");
+        const int look = cs.lookup_define_v2("g", hash);
+        CHECK(!g1->irs.empty() || look == 1 || g1->dirty,
+              "3484 AC5: IR rewritten or lookup==1 (not silent skip)");
+        const auto impact1 = m->partial_forced_full_by_impact_total.load(std::memory_order_relaxed);
+        const auto should1 = m->should_relower_total.load(std::memory_order_relaxed);
+        const auto skip1 = m->relower_skipped_entirely_count.load(std::memory_order_relaxed);
+        CHECK(impact1 > impact0 || should1 > should0,
+              "3484 AC4: soak moved partial_forced_full_by_impact_total or should_relower_total");
+        CHECK(impact1 > impact0 || skip1 == skip0 || !g1->irs.empty(),
+              "3484 AC4: not skip-counter-only when IR was rewritten");
+        CHECK(href(cs, "partial_forced_full_by_impact_total") >= 0 ||
+                  href(cs, "partial-forced-full-by-impact-total") >= 0 ||
+                  href(cs, "should_relower_total") >= 0,
+              "3484 AC4: existing query keys still surface");
+        apply_dev_audit_defaults();
+    }
+
+    // ── #3484 AC5: cone type-change must not leave g on pre-mutate IR ──
+    {
+        std::println("\n--- #3484 AC5: production cone type-change soak ---");
+        apply_production_audit_defaults();
+        CompilerService cs;
+        CHECK(cs.eval(R"(
+(set-code "
+(define f (lambda () 1))
+(define g (lambda () (f)))
+")")
+                  .has_value(),
+              "3484 AC5: type-change set-code");
+        CHECK(cs.eval("(eval-current)").has_value(), "3484 AC5: type-change eval");
+        if (!cs.get_define_v2("g"))
+            (void)cs.eval("(compile:cache-define \"g\")");
+        CHECK(cs.get_define_v2("g") != nullptr, "3484 AC5: g cached before mutate");
+        cs.public_record_dependency("g", "f");
+        const auto hash = cs.get_define_v2("g")->source_hash;
+        const auto defuse0 = cs.get_define_v2("g")->version_stamp_.defuse_version;
+        auto* m = metrics_of(cs);
+        const auto impact0 = m->partial_forced_full_by_impact_total.load(std::memory_order_relaxed);
+        auto mut = cs.eval("(mutate:set-body \"f\" \"(lambda () \\\"x\\\")\" \"#3484\")");
+        CHECK(mut.has_value(), "3484 AC5: set-body type change");
+        (void)cs.public_relower_dirty_defines_from_workspace();
+        const auto* g1 = cs.get_define_v2("g");
+        CHECK(g1 != nullptr, "3484 AC5: g after type-change");
+        const int look = cs.lookup_define_v2("g", hash);
+        CHECK(look == 1 || g1->dirty || g1->version_stamp_.defuse_version != defuse0 ||
+                  !g1->content_stored_this_epoch ||
+                  m->partial_forced_full_by_impact_total.load() > impact0,
+              "3484 AC5: type-change did not silent-skip g as clean");
+        apply_dev_audit_defaults();
+    }
+
+    // ── #3484 AC3: Soft genuinely-clean skip is zero extra ──
+    {
+        std::println("\n--- #3484 AC3: Soft clean skip zero extra ---");
+        apply_dev_audit_defaults();
+        CompilerService cs;
+        CHECK(cs.eval(R"(
+(set-code "
+(define f (lambda () 1))
+(define g (lambda () (f)))
+")")
+                  .has_value(),
+              "3484 AC3: Soft set-code");
+        CHECK(cs.eval("(eval-current)").has_value(), "3484 AC3: Soft eval");
+        if (!cs.get_define_v2("g"))
+            (void)cs.eval("(compile:cache-define \"g\")");
+        CHECK(cs.get_define_v2("g") != nullptr, "3484 AC3: g cached");
+        auto* m = metrics_of(cs);
+        const auto impact0 = m->partial_forced_full_by_impact_total.load(std::memory_order_relaxed);
+        (void)cs.public_relower_dirty_defines_from_workspace();
+        const auto impact1 = m->partial_forced_full_by_impact_total.load(std::memory_order_relaxed);
+        CHECK(impact1 == impact0, "3484 AC3: Soft clean peel does not force-full");
+        CHECK(cs.get_define_v2("g") && !cs.get_define_v2("g")->dirty,
+              "3484 AC3: Soft leaves genuinely clean g unmarked");
+    }
+
+    std::println("\n=== #2813/#3484 cascade relower silent skip: {} passed, {} failed ===",
+                 g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
 

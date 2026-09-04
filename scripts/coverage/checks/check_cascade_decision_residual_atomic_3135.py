@@ -89,7 +89,9 @@ def main() -> int:
     if rel_pos == -1:
         fails.append("AC1: relower_dirty_defines_from_workspace not found")
     else:
-        rel_end = rel_pos + 16000
+        # Window expanded after #3381/#3484 grew the peel body (caller
+        # union + zero-mask fail-closed before the impact_ub consult).
+        rel_end = rel_pos + 20000
         rel_block = ixx[rel_pos:rel_end]
         must("Issue #3135", "AC1 relower cites #3135", rel_block)
         must("cascade_decision_mtx_", "AC1 relower uses cascade_decision_mtx_", rel_block)
