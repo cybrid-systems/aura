@@ -5,6 +5,7 @@
 #include "core/gc_hooks.h"
 #include "core/resource_quota.hh"
 #include "compiler/lock_order_audit.h" // Issue #2354: rank audit
+#include "runtime_production_abi.h"    // Issue #3476: Ready weld
 #include <unistd.h>
 
 import std;
@@ -815,6 +816,19 @@ void Scheduler::run() {
     // Link metrics to workers before starting
     for (size_t i = 0; i < workers_.size(); ++i) {
         workers_[i]->set_metrics(&metrics_.worker(i));
+    }
+
+    // Issue #3476: weld production Ready before WorkerThread::start so
+    // g_production_multi_worker_latched is not host-optional (I3/I6).
+    // workers_.size()>1 → aura_runtime_require_production_multi_worker
+    // (abort on Soft / sandbox=off / residual when self-check is required).
+    // Single-worker / Soft unit / light-link uses require_production_abi
+    // (#3098 AC3 — no abort). Caller of multi-worker Ready must not be
+    // tests/light-link without production defaults (function header).
+    if (workers_.size() > 1 && production_abi_selfcheck_required()) {
+        (void)aura_runtime_require_production_multi_worker();
+    } else {
+        (void)aura_runtime_require_production_abi();
     }
 
     // Start all workers

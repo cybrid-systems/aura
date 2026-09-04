@@ -3043,6 +3043,20 @@ def cmd_lint():
             "Issue #3195 production multi-worker residual-zero sticky linter failed — run python3 scripts/coverage/checks/check_production_multi_worker_residual_sticky_3195.py"
         )
         return r
+    # Issue #3476: Scheduler::run welds production Ready before
+    # WorkerThread::start so the I3/I6 latch is not host-optional.
+    # Extends test_steal_complete_strong_entry (#81967); no docs/design;
+    # no new query key.
+    srw3476_script = COVERAGE_CHECKS / "check_scheduler_production_ready_weld_3476.py"
+    if not srw3476_script.exists():
+        fail(f"missing {srw3476_script}")
+        return 1
+    r = run([sys.executable, str(srw3476_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3476 Scheduler production Ready weld linter failed — run python3 scripts/coverage/checks/check_scheduler_production_ready_weld_3476.py"
+        )
+        return r
     # Issue #3196: nested Guard success authority-gap for Agent query
     # window (I5 residual). Minimal invalidate; outermost owns triad.
     # Extends test_mutation_boundary_batch + hygiene nested Guards.
