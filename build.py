@@ -7291,6 +7291,21 @@ def cmd_lint():
             "Issue #3002 mailbox hold SLO SSOT soak linter failed — run python3 scripts/coverage/checks/check_mailbox_hold_slo_ssot_soak_3002.py"
         )
         return r
+    # Issue #3485: mailbox under-boundary p99/SLO unions into
+    # mutation_hold_budget_check so a live holder is over_budget when
+    # wait p99 is hot (duration may still be under hold SLO). Reuses
+    # #3002 mailbox_hold_slo_live_signal. Soft observe-only. Extends
+    # test_mailbox_hold_starvation_hard; no docs/design/; no new query.
+    mhb3485_script = COVERAGE_CHECKS / "check_mailbox_hold_budget_p99_union_3485.py"
+    if not mhb3485_script.exists():
+        fail(f"missing {mhb3485_script}")
+        return 1
+    r = run([sys.executable, str(mhb3485_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3485 mailbox hold-budget p99 union linter failed — run python3 scripts/coverage/checks/check_mailbox_hold_budget_p99_union_3485.py"
+        )
+        return r
     # Issue #2959: Guard abort dual topology restore (children_+parent_).
     # Extends test_restore_children_structural_lock (#81967); no docs/design.
     tdr_script = COVERAGE_CHECKS / "check_topology_dual_restore_2959.py"
