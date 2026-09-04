@@ -1,0 +1,34 @@
+{
+  "issue": 3476,
+  "title": "Issue #3476: Scheduler::run welds production Ready before WorkerThread::start",
+  "ok": "OK: Issue #3476 Scheduler Ready weld — multi-worker Ready before start; single-worker ABI",
+  "checks": [
+    {
+      "ac": "AC1-run",
+      "path": "src/serve/scheduler.cpp",
+      "contains": [
+        "Issue #3476",
+        "workers_.size() > 1",
+        "aura_runtime_require_production_multi_worker",
+        "aura_runtime_require_production_abi()"
+      ]
+    },
+    {
+      "ac": "AC5-tests",
+      "path": "tests/serve/test_steal_complete_strong_entry.cpp",
+      "contains": [
+        "3476 AC1: multi-worker Ready before WorkerThread::start",
+        "3476 AC2: Ready latched after Scheduler::run",
+        "3476 AC3: single-worker uses require_production_abi before start"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "forbid": [
+        "tests/serve/test_issue_3476.cpp",
+        "tests/issues/test_issue_3476.cpp",
+        "docs/design/3476-scheduler-ready-weld.md"
+      ]
+    }
+  ]
+}

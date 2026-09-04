@@ -7,15 +7,18 @@
 #include "core/gc_hooks.h"
 #include "serve/fiber.h"
 #include "serve/runtime_production_abi.h"
+#include "serve/scheduler.h"
 #include "serve/steal_safety.h"
 #include "compiler/typed_mutation_audit.h"
 
+#include <chrono>
 #include <cstdint>
 #include <cstdlib>
 #include <fstream>
 #include <print>
 #include <string>
 #include <string_view>
+#include <thread>
 
 import std;
 import aura.compiler.service;
@@ -340,6 +343,65 @@ int run_test_steal_complete_strong_entry() {
                       "3098 AC5: C-linkage accessor declared");
                 CHECK(read_file("tests/serve/test_issue_3098.cpp").empty(),
                       "3098 AC5: no invent test file (extend #81967 lineage)");
+            }
+        }
+
+        // ── Issue #3476: Scheduler::run welds Ready before WorkerThread::start.
+        {
+            std::println("\n=== Issue #3476: Scheduler::run production Ready weld ===");
+            const auto sched_cpp = read_file("src/serve/scheduler.cpp");
+            const auto run_pos = sched_cpp.find("void Scheduler::run()");
+            CHECK(run_pos != std::string::npos, "3476 AC6: Scheduler::run found");
+            const auto start_pos = sched_cpp.find("w->start()", run_pos);
+            const auto multi_pos =
+                sched_cpp.find("aura_runtime_require_production_multi_worker", run_pos);
+            const auto abi_pos = sched_cpp.find("aura_runtime_require_production_abi()", run_pos);
+            const auto size_pos = sched_cpp.find("workers_.size() > 1", run_pos);
+            CHECK(size_pos != std::string::npos && size_pos < start_pos,
+                  "3476 AC1: workers_.size()>1 gate before start");
+            CHECK(multi_pos != std::string::npos && multi_pos < start_pos,
+                  "3476 AC1: multi-worker Ready before WorkerThread::start");
+            CHECK(abi_pos != std::string::npos && abi_pos < start_pos,
+                  "3476 AC3: single-worker uses require_production_abi before start");
+            CHECK(sched_cpp.find("Issue #3476") != std::string::npos, "3476 AC6: scheduler cites");
+            CHECK(sched_cpp.find("g_3476_") == std::string::npos, "3476 AC4: no new g_3476_*");
+            CHECK(read_file("docs/design/3476-scheduler-ready-weld.md").empty(),
+                  "3476 AC6: no docs/design");
+            CHECK(read_file("tests/serve/test_issue_3476.cpp").empty(), "3476 AC5: no invent");
+
+            // AC3 live: single-worker Soft does not abort (require_production_abi).
+            {
+                std::println("\n--- #3476 AC3: single-worker Soft run ---");
+                aura::serve::clear_production_abi_selfcheck_for_test();
+                aura::compiler::typed_audit::apply_dev_audit_defaults();
+                aura::serve::Scheduler one(1);
+                std::thread t([&one]() { one.run(); });
+                std::this_thread::sleep_for(std::chrono::milliseconds(20));
+                CHECK(aura_runtime_multi_worker_production_latched() == 0,
+                      "3476 AC3: single-worker does not latch multi-worker");
+                one.stop();
+                t.join();
+            }
+
+            // AC2 live: production + workers>1 Ready latches for the process.
+            {
+                std::println("\n--- #3476 AC2: production multi-worker run latches ---");
+                aura::serve::clear_steal_safety_transaction_for_test();
+                aura::serve::clear_production_abi_selfcheck_for_test();
+                unsetenv("AURA_SANDBOX");
+                aura::compiler::typed_audit::apply_production_audit_defaults();
+                aura::serve::Scheduler many(2);
+                std::thread t([&many]() { many.run(); });
+                int latched = 0;
+                for (int i = 0; i < 80 && latched == 0; ++i) {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+                    latched = aura_runtime_multi_worker_production_latched();
+                }
+                CHECK(latched == 1, "3476 AC2: Ready latched after Scheduler::run");
+                many.stop();
+                t.join();
+                aura::compiler::typed_audit::apply_dev_audit_defaults();
+                aura::serve::clear_production_abi_selfcheck_for_test();
             }
         }
 
