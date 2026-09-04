@@ -89,7 +89,7 @@ public:
                 break;
             }
         }
-        if (!any && block_dirty_pred_)
+        if (!any && block_dirty_pred_.skip_if_none_dirty())
             return;
         results_.push_back(aura::compiler::compute_kind(func));
     }
@@ -98,6 +98,7 @@ public:
     }
     // Issue #2060 / #3315: DirtySoAEntryPass — function-granularity dirty
     // gate. Production passes a columnar BlockDirtyPred; setter stays tests.
+    // Issue #3502: unwired pred under production skips (missing mask ≠ all).
     void run_on_dirty_blocks_only(aura::ir::IRFunction& func, BlockDirtyPred pred = {}) {
         const BlockDirtyPred p = pred ? pred : block_dirty_pred_;
         bool any = false;
@@ -107,7 +108,7 @@ public:
                 break;
             }
         }
-        if (!any && p)
+        if (!any && p.skip_if_none_dirty())
             return;
         results_.push_back(aura::compiler::compute_kind(func));
     }
@@ -221,7 +222,7 @@ public:
                 break;
             }
         }
-        if (!any && block_dirty_pred_)
+        if (!any && block_dirty_pred_.skip_if_none_dirty())
             return;
         std::uint32_t sid = 0;
         for (const auto& blk : func.blocks) {
@@ -598,6 +599,9 @@ public:
     void run_on_dirty_blocks_only(aura::ir::IRFunction& func, BlockDirtyPred pred = {}) {
         const BlockDirtyPred p = pred ? pred : block_dirty_pred_;
         if (!p) {
+            // Issue #3502: production unwired skips; Soft DefaultAllDirty folds.
+            if (p.skip_if_none_dirty())
+                return;
             (void)fold_function(func);
             return;
         }

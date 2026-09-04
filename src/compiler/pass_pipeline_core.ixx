@@ -205,8 +205,10 @@ export struct DefineDirtyMaskView {
 };
 
 // Issue #3042: production PureWrap dirty predicates — no std::function.
-// DefaultAllDirty when unset; column view via DefineDirtyMaskView; optional
-// function-pointer hook for tests (non-capturing, no heap / type erasure).
+// Column view via DefineDirtyMaskView; optional function-pointer hook
+// for tests (non-capturing, no heap / type erasure).
+// Issue #3502: Soft / unset still DefaultAllDirty. Production
+// defaults: missing mask ≠ all-dirty (unwired selects no block).
 export struct BlockDirtyPred {
     const DefineDirtyMaskView* cache = nullptr;
     std::size_t func_idx = 0;
@@ -217,10 +219,20 @@ export struct BlockDirtyPred {
             return fn(block_id);
         if (cache && cache->block_dirty_per_func)
             return cache->is_block_dirty(func_idx, block_id);
-        return true; // DefaultAllDirty
+        // Issue #3502: production unwired → no block. Soft DefaultAllDirty.
+        if (aura_production_defaults_active_probe() != 0)
+            return false;
+        return true;
     }
     [[nodiscard]] constexpr bool wired() const noexcept {
         return fn != nullptr || (cache && cache->block_dirty_per_func);
+    }
+    // Wired clean, or production unwired: skip the full-function walk.
+    // Soft unwired: caller still DefaultAllDirty-runs.
+    [[nodiscard]] bool skip_if_none_dirty() const noexcept {
+        if (wired())
+            return true;
+        return aura_production_defaults_active_probe() != 0;
     }
     [[nodiscard]] explicit constexpr operator bool() const noexcept { return wired(); }
 };
@@ -235,10 +247,17 @@ export struct InstructionDirtyPred {
             return fn(block_id, inst_id);
         if (cache && cache->instruction_dirty_per_func)
             return cache->is_instruction_dirty(func_idx, block_id, inst_id);
+        if (aura_production_defaults_active_probe() != 0)
+            return false;
         return true;
     }
     [[nodiscard]] constexpr bool wired() const noexcept {
         return fn != nullptr || (cache && cache->instruction_dirty_per_func);
+    }
+    [[nodiscard]] bool skip_if_none_dirty() const noexcept {
+        if (wired())
+            return true;
+        return aura_production_defaults_active_probe() != 0;
     }
     [[nodiscard]] explicit constexpr operator bool() const noexcept { return wired(); }
 };
@@ -252,6 +271,9 @@ export inline std::atomic<std::uint64_t> production_dirty_soa_entry_no_pred_wire
 // Issue #3329: compile-time ProductionPipelinePass gate (no extra atomics
 // on the happy path — concepts erase; this constant is inventory only).
 export inline constexpr int kPassPurityGateIssue = 3329;
+// Issue #3502: production unwired BlockDirtyPred / InstructionDirtyPred
+// selects no block (Soft keeps DefaultAllDirty).
+export inline constexpr int kUnwiredPredProductionIssue = 3502;
 
 static_assert(std::is_trivially_copyable_v<BlockDirtyPred>,
               "BlockDirtyPred must be inlineable (no std::function) (#3042)");
