@@ -1,0 +1,34 @@
+{
+  "issue": 3480,
+  "title": "Issue #3480: add_mutate polls inbody hold-budget after fn(a)",
+  "ok": "OK: Issue #3480 add_mutate inbody poll — force-release on cancel; Soft observe",
+  "checks": [
+    {
+      "ac": "AC1-weld",
+      "path": "src/compiler/evaluator_primitives_mutate.cpp",
+      "contains": [
+        "Issue #3480",
+        "auto result = fn(a);",
+        "aura_hold_budget_cancel_armed()",
+        "aura_hold_budget_poll_inbody_window()",
+        "force_release_hold_budget_inbody"
+      ]
+    },
+    {
+      "ac": "AC5-tests",
+      "path": "tests/serve/test_hold_budget_synthetic_yield_injection.cpp",
+      "contains": [
+        "3480 AC1: workspace hold cleared after add_mutate",
+        "3480 AC3: wrapper does not force-release under Soft"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "forbid": [
+        "tests/serve/test_issue_3480.cpp",
+        "tests/issues/test_issue_3480.cpp",
+        "docs/design/3480-add-mutate-inbody-poll.md"
+      ]
+    }
+  ]
+}

@@ -33,6 +33,7 @@
 #include <format>
 #include <fstream>
 #include <print>
+#include <span>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -1428,6 +1429,172 @@ int run_test_hold_budget_no_edge_force_3325() {
     return failed == 0 ? 0 : 1;
 }
 
+// @reason: Issue #3480 — add_mutate wrapper never polled inbody hold-budget.
+//   Force-release exists (#3222/#3254); structural mutate entry did not call
+//   it. Non-coop body keeps workspace_mtx_ until safepoint/dtor.
+//   AC1: production + cancel armed → add_mutate return force-releases
+//   AC2: cross-fiber still only request_hold_budget_cancel
+//   AC3: Soft observe-only; wrapper does not force-release
+//   AC4: reuse forced_unlock_total / forced_fail_closed_total
+//   AC5/AC6: extend this suite + linter; no invent / docs/design
+
+int run_test_hold_budget_add_mutate_inbody_poll_3480() {
+    std::println("=== Issue #3480: add_mutate inbody hold-budget poll ===");
+    int saved_failed = aura::test::g_failed;
+    int saved_passed = aura::test::g_passed;
+
+    using aura::compiler::CompilerService;
+    using aura::compiler::Evaluator;
+    using aura::compiler::types::is_error;
+    using aura::compiler::types::make_string;
+    using aura::serve::Scheduler;
+
+    {
+        std::println("\n--- AC1: production add_mutate force-releases after cancel ---");
+        ::unsetenv("AURA_SANDBOX");
+        ::unsetenv("AURA_MUTATION_HOLD_BUDGET_HARD");
+        aura::compiler::typed_audit::apply_production_audit_defaults();
+        CHECK(aura::compiler::mutation_hold_budget_reject_enabled(),
+              "3480 AC1: reject_enabled under production");
+        aura::compiler::clear_mutation_hold_budget_forced_unlock_for_test();
+        aura::compiler::clear_mutation_hold_budget_forced_fail_closed_for_test();
+        aura::compiler::clear_mutation_hold_budget_inbody_window_for_test();
+        CompilerService cs;
+        cs.evaluator().set_effect_sandbox_mode(0);
+        cs.evaluator().set_sandbox_mode(false);
+        cs.evaluator().grant_capability("mutate");
+        cs.evaluator().grant_capability("*");
+        CHECK(cs.eval("(set-code \"(define x 1)\")").has_value(), "3480 AC1: set-code");
+        CHECK(cs.eval("(eval-current)").has_value(), "3480 AC1: eval");
+        Evaluator::set_query_evaluator(&cs.evaluator());
+        std::atomic<int> ran{0};
+        std::atomic<int> held_after{-1};
+        std::atomic<int> depth_after{-1};
+        std::atomic<int> err{0};
+        Scheduler sched(2);
+        sched.spawn([&]() {
+            auto* f = aura::serve::g_current_fiber;
+            CHECK(f != nullptr, "3480 AC1: fiber current");
+            f->request_hold_budget_cancel();
+            aura::compiler::mutation_hold_budget_note_cancel_armed(f->id());
+            aura::compiler::g_hold_budget_cancel_armed_ns.store(1, std::memory_order_release);
+            // Invoke add_mutate as outermost (cs.eval wraps its own Guard).
+            auto pfn = cs.evaluator().primitives().lookup("mutate:rebind");
+            CHECK(pfn.has_value(), "3480 AC1: mutate:rebind prim");
+            const auto i0 = cs.evaluator().push_string_heap("x");
+            const auto i1 = cs.evaluator().push_string_heap("2");
+            const auto i2 = cs.evaluator().push_string_heap("3480");
+            aura::compiler::types::EvalValue args[3] = {
+                make_string(static_cast<std::uint64_t>(i0)),
+                make_string(static_cast<std::uint64_t>(i1)),
+                make_string(static_cast<std::uint64_t>(i2)),
+            };
+            auto r = (*pfn)(std::span<const aura::compiler::types::EvalValue>(args, 3));
+            if (is_error(r))
+                err.store(1, std::memory_order_relaxed);
+            held_after.store(cs.evaluator().mutation_boundary_held() ? 1 : 0,
+                             std::memory_order_relaxed);
+            depth_after.store(cs.evaluator().mutation_boundary_depth_slot_value(),
+                              std::memory_order_relaxed);
+            ran.store(1, std::memory_order_relaxed);
+        });
+        std::thread io([&]() { sched.run(); });
+        for (int i = 0; i < 200 && ran.load() == 0; ++i)
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        sched.stop();
+        io.join();
+        CHECK(ran.load() == 1, "3480 AC1: fiber body ran");
+        CHECK(held_after.load() == 0, "3480 AC1: workspace hold cleared after add_mutate");
+        CHECK(depth_after.load() == 0, "3480 AC1: depth slot == 0");
+        const auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
+        const auto addp = mut.find("auto add_mutate = ");
+        const auto aw = addp == std::string::npos ? std::string{} : mut.substr(addp, 14000);
+        const auto fnp = aw.find("auto result = fn(a);");
+        const auto frp = aw.find("force_release_hold_budget_inbody");
+        CHECK(fnp != std::string::npos && frp != std::string::npos && frp > fnp,
+              "3480 AC1: force_release after fn(a) on add_mutate");
+        CHECK(aw.find("g_mutation_hold_budget_forced_unlock_total") != std::string::npos,
+              "3480 AC1: reuses forced_unlock_total");
+        CHECK(aw.find("g_mutation_hold_budget_forced_fail_closed_total") != std::string::npos,
+              "3480 AC1: reuses forced_fail_closed_total");
+        (void)err;
+        Evaluator::set_query_evaluator(nullptr);
+        aura::compiler::typed_audit::apply_dev_audit_defaults();
+        aura::compiler::clear_mutation_hold_budget_inbody_window_for_test();
+    }
+
+    {
+        std::println("\n--- AC2: cross-fiber still only request_hold_budget_cancel ---");
+        const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+        const auto rel = emb.find("aura_evaluator_force_release_outermost_holder");
+        CHECK(rel != std::string::npos, "3480 AC2: force_release helper present");
+        const auto win = emb.substr(rel, 1800);
+        CHECK(win.find("aura_fiber_request_hold_budget_cancel") != std::string::npos,
+              "3480 AC2: cross-fiber pending-cancel");
+        const auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
+        const auto add = mut.find("auto add_mutate = ");
+        CHECK(add != std::string::npos, "3480 AC2: add_mutate present");
+        const auto awin = mut.substr(add, 14000);
+        CHECK(awin.find("aura_fiber_request_hold_budget_cancel") == std::string::npos,
+              "3480 AC2: wrapper does not unlock from thief thread");
+        CHECK(awin.find("force_release_hold_budget_inbody") != std::string::npos,
+              "3480 AC2: same-fiber wrapper force-releases");
+    }
+
+    {
+        std::println("\n--- AC3: Soft observe-only ---");
+        aura::compiler::typed_audit::apply_dev_audit_defaults();
+        ::unsetenv("AURA_MUTATION_HOLD_BUDGET_HARD");
+        CHECK(!aura::compiler::mutation_hold_budget_reject_enabled(),
+              "3480 AC3: Soft reject_enabled false");
+        aura::compiler::clear_mutation_hold_budget_forced_unlock_for_test();
+        aura::compiler::clear_mutation_hold_budget_inbody_window_for_test();
+        CompilerService cs;
+        cs.evaluator().grant_capability("mutate");
+        cs.evaluator().grant_capability("*");
+        CHECK(cs.eval("(set-code \"(define y 1)\")").has_value(), "3480 AC3: set-code");
+        CHECK(cs.eval("(eval-current)").has_value(), "3480 AC3: eval");
+        aura::compiler::g_hold_budget_cancel_armed_ns.store(1, std::memory_order_release);
+        const auto u0 = aura::compiler::mutation_hold_budget_forced_unlock_total_v_read();
+        (void)cs.eval("(mutate:rebind \"y\" \"3\" \"3480-soft\")");
+        CHECK(aura::compiler::mutation_hold_budget_forced_unlock_total_v_read() == u0,
+              "3480 AC3: wrapper does not force-release under Soft");
+        const auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
+        CHECK(mut.find("mutation_hold_budget_reject_enabled()") != std::string::npos,
+              "3480 AC3: wrapper gates on reject_enabled");
+        aura::compiler::clear_mutation_hold_budget_inbody_window_for_test();
+    }
+
+    {
+        std::println("\n--- AC4/AC6: reuse counters + linter ---");
+        const auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
+        const auto t = read_file("tests/serve/test_hold_budget_synthetic_yield_injection.cpp");
+        const auto lint =
+            read_file("scripts/coverage/checks/check_hold_budget_add_mutate_inbody_poll_3480.py");
+        const auto build = read_file("build.py");
+        CHECK(mut.find("g_mutation_hold_budget_forced_unlock_total") != std::string::npos,
+              "3480 AC4: reuse forced_unlock_total");
+        CHECK(mut.find("g_mutation_hold_budget_forced_fail_closed_total") != std::string::npos,
+              "3480 AC4: reuse forced_fail_closed_total");
+        CHECK(mut.find("schema-3480") == std::string::npos, "3480 AC4: no schema-3480");
+        CHECK(mut.find("g_3480_") == std::string::npos, "3480 AC4: no g_3480_*");
+        CHECK(t.find("3480 AC1: workspace hold cleared after add_mutate") != std::string::npos,
+              "3480 AC5: AC1 in this suite");
+        CHECK(!lint.empty() && lint.find("3480") != std::string::npos, "3480 AC6: linter");
+        CHECK(build.find("check_hold_budget_add_mutate_inbody_poll_3480") != std::string::npos,
+              "3480 AC6: build.py");
+        CHECK(read_file("docs/design/3480-add-mutate-inbody-poll.md").empty(),
+              "3480 AC6: no docs/design/");
+        CHECK(read_file("tests/serve/test_issue_3480.cpp").empty(),
+              "3480 AC6: no invent test_issue_3480");
+    }
+
+    int failed = aura::test::g_failed - saved_failed;
+    int passed = aura::test::g_passed - saved_passed;
+    std::println("\n=== #3480 add_mutate inbody poll: {} passed, {} failed ===", passed, failed);
+    return failed == 0 ? 0 : 1;
+}
+
 #ifndef AURA_ISSUE_BATCH_MEMBER
 int main() {
     const int rc1 = run_test_hold_budget_synthetic_yield_injection();
@@ -1438,14 +1605,19 @@ int main() {
     const int rc6 = run_test_hold_budget_noncoop_force_edge();
     const int rc7 = run_test_hold_budget_1slo_inject_3285();
     const int rc8 = run_test_hold_budget_no_edge_force_3325();
+    const int rc9 = run_test_hold_budget_add_mutate_inbody_poll_3480();
     return rc1 != 0
                ? rc1
                : (rc2 != 0
                       ? rc2
-                      : (rc3 != 0 ? rc3
-                                  : (rc4 != 0 ? rc4
-                                              : (rc5 != 0 ? rc5
-                                                          : (rc6 != 0 ? rc6
-                                                                      : (rc7 != 0 ? rc7 : rc8))))));
+                      : (rc3 != 0
+                             ? rc3
+                             : (rc4 != 0
+                                    ? rc4
+                                    : (rc5 != 0
+                                           ? rc5
+                                           : (rc6 != 0
+                                                  ? rc6
+                                                  : (rc7 != 0 ? rc7 : (rc8 != 0 ? rc8 : rc9)))))));
 }
 #endif
