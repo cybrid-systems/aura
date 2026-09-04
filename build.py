@@ -645,6 +645,22 @@ def cmd_lint():
             "Issue #2844 steal sole enqueue gate linter failed — run python3 scripts/coverage/checks/check_steal_sole_enqueue_gate_2844.py"
         )
         return r
+    # Issue #3483: call_steal_complete must refuse weak no-op when
+    # g_production_multi_worker_latched. Weak fiber_bridge looks truthy
+    # and skipped residual steal-complete work. Latch ∧ strong marker;
+    # reuse production_abi_selfcheck_fail_total. Transaction Ok path
+    # unchanged. Extends test_steal_complete_gc_defer; no docs/design /
+    # invent / new query key.
+    sc3483_script = COVERAGE_CHECKS / "check_steal_complete_latch_strong_3483.py"
+    if not sc3483_script.exists():
+        fail(f"missing {sc3483_script}")
+        return 1
+    r = run([sys.executable, str(sc3483_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3483 steal-complete latch∧strong linter failed — run python3 scripts/coverage/checks/check_steal_complete_latch_strong_3483.py"
+        )
+        return r
     # Issue #3072: every stolen-fiber Ready enqueue in src/ must be
     # dominated by steal_safety_transaction Ok (static proof residual
     # of #2844/#2929). Scans all steal-result bindings, not just
