@@ -104,7 +104,8 @@ namespace aura::compiler::macro_exp {
 [[nodiscard]] static bool inner_expand_production_limit_deny() noexcept {
     const auto r = g_macro_hygiene_last_limit_reason.load(std::memory_order_relaxed);
     return r == kHygieneLimitReasonDepthLimit || r == kHygieneLimitReasonPassLimit ||
-           r == kHygieneLimitReasonStealAbort || r == kHygieneLimitReasonCapabilityDeny;
+           r == kHygieneLimitReasonStealAbort || r == kHygieneLimitReasonCapabilityDeny ||
+           r == kHygieneLimitReasonGensymCeiling;
 }
 
 namespace detail {
@@ -2184,6 +2185,13 @@ static aura::ast::NodeId clone_macro_body_at_depth(
                 pre_scan(c, qq_depth);
         };
         pre_scan(body_id, /*qq_depth=*/0);
+        // Issue #3506: pre_scan ignores rename_*_pre NULL_NODE; a ceiling
+        // deny already try_restore'd. Abort the clone walk so later add_*
+        // are not unguarded (checkpoint consumed). Soft/Off: continue.
+        if (production_surface && inner_expand_production_limit_deny()) {
+            expand_ckpt.try_restore();
+            return aura::ast::NULL_NODE;
+        }
     }
 
     auto rename_binding = [&](SymId sid) -> SymId {
@@ -2246,13 +2254,10 @@ static aura::ast::NodeId clone_macro_body_at_depth(
             target, target_pool, source, source_pool, cid, subst, name_map, cloned_marker,
             hygiene_depth + 1, depth_limit, local_in_quote, local_in_unquote);
         child_ids.push_back(cloned);
-        // Issue #3321: production fail-fast after nested steal-abort. Do not
-        // keep cloning siblings into a half-tree the top-level checkpoint
-        // will only roll back at function exit. Soft/Off: continue (historical
-        // half-write contract). Quiet success path: cloned != NULL_NODE.
-        if (cloned == NULL_NODE && production_surface &&
-            g_macro_hygiene_last_limit_reason.load(std::memory_order_relaxed) ==
-                kHygieneLimitReasonStealAbort) {
+        // Issue #3321: production fail-fast after nested steal-abort.
+        // Issue #3506: same restore for nested depth / gensym / cap / pass.
+        // Soft/Off: continue (historical half-write contract).
+        if (cloned == NULL_NODE && production_surface && inner_expand_production_limit_deny()) {
             expand_ckpt.try_restore();
             return NULL_NODE;
         }

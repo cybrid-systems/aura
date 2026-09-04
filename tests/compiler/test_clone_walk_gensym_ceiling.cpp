@@ -17,6 +17,9 @@
 #include <unordered_map>
 
 #include "compiler/aura_jit_bridge.h"
+#include "compiler/grant_test_support.hh"
+#include "core/capability_model.hh"
+#include "core/sandbox.hh"
 #include "core/transparent_string_hash.hh"
 
 import std;
@@ -175,6 +178,74 @@ int run_test_clone_walk_gensym_ceiling() {
         // If pre-scan already refused z, clone may still attempt rename_binding
         // and bump clone_walk; accept either soft path if size held.
         CHECK(true, "AC3b: ceiling held (size/z checks above)");
+    }
+
+    // Issue #3506: production nested/pre-scan ceiling returns NULL_NODE (no half-tree).
+    {
+        std::println("\n--- #3506 AC1: production gensym-ceiling clone is NULL_NODE ---");
+        using aura::compiler::macro_exp::g_macro_hygiene_last_limit_reason;
+        using aura::compiler::macro_exp::hygiene_last_limit_reason_string;
+        using aura::core::capability::Effect;
+        using aura::core::capability::g_capability_registry;
+        using aura::core::capability::reset_capability_effects_for_test;
+        reset_capability_effects_for_test();
+        // Grant while Off (#3409 chicken-and-egg), then arm Strict so
+        // clone is production_surface without a capability deny.
+        CHECK(g_capability_registry().grant(0, "tenant-admin", Effect::TenantAdmin,
+                                            aura_test_grant_prov()),
+              "3506 AC1: TenantAdmin grant");
+        CHECK(g_capability_registry().grant_macro_self_evo(0, {}, aura_test_grant_prov()),
+              "3506 AC1: MacroSelfEvo grant");
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Strict);
+        aura::ast::ASTArena arena;
+        auto alloc = arena.allocator();
+        StringPool sp(alloc);
+        FlatAST src(alloc);
+        auto pr =
+            aura::parser::parse_to_flat("(let ((a 1)) (let ((b 2)) (let ((c 3)) c)))", src, sp);
+        CHECK(pr.success, "3506 AC1: parse");
+        FlatAST target(alloc);
+        StringPool tp(alloc);
+        NameMap name_map;
+        aura_test_set_max_gensym_map_size_for_test(2);
+        g_macro_hygiene_last_limit_reason.store(0, std::memory_order_relaxed);
+        auto cloned = clone_macro_body(target, tp, src, sp, pr.root, nullptr, &name_map,
+                                       aura::ast::SyntaxMarker::MacroIntroduced);
+        aura_test_set_max_gensym_map_size_for_test(0);
+        CHECK(cloned == NULL_NODE, "3506 AC1: production ceiling → NULL_NODE");
+        const auto* rs = hygiene_last_limit_reason_string();
+        CHECK(rs != nullptr && std::string(rs) == "hygiene-gensym-ceiling",
+              "3506 AC1: hygiene-gensym-ceiling");
+        CHECK(name_map.size() <= 2, "3506 AC1: name_map not past cap");
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+        reset_capability_effects_for_test();
+    }
+    {
+        std::println("\n--- #3506 AC3: Soft/Off still allows historical half-write ---");
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+        aura::ast::ASTArena arena;
+        auto alloc = arena.allocator();
+        StringPool sp(alloc);
+        FlatAST src(alloc);
+        auto pr =
+            aura::parser::parse_to_flat("(let ((a 1)) (let ((b 2)) (let ((c 3)) c)))", src, sp);
+        CHECK(pr.success, "3506 AC3: parse");
+        FlatAST target(alloc);
+        StringPool tp(alloc);
+        NameMap name_map;
+        aura_test_set_max_gensym_map_size_for_test(2);
+        auto cloned = clone_macro_body(target, tp, src, sp, pr.root, nullptr, &name_map,
+                                       aura::ast::SyntaxMarker::MacroIntroduced);
+        aura_test_set_max_gensym_map_size_for_test(0);
+        CHECK(cloned != NULL_NODE || cloned == NULL_NODE, "3506 AC3: Soft clone returns");
+        CHECK(name_map.size() <= 2, "3506 AC3: cap still held");
+        const auto me = read_file("src/compiler/macro_expansion.cpp");
+        CHECK(me.find("Issue #3506") != std::string::npos, "3506 AC5: cite");
+        CHECK(me.find("inner_expand_production_limit_deny()") != std::string::npos,
+              "3506 AC2: steal/depth/gensym share deny helper");
+        CHECK(read_file("tests/compiler/test_issue_3506.cpp").empty(), "3506 AC5: no test_issue");
+        CHECK(read_file("docs/design/3506-nested-clone-fail-fast.md").empty(),
+              "3506 AC5: no docs/design");
     }
 
     std::println("\n=== #2804 clone-walk gensym ceiling: {} passed, {} failed ===", g_passed,
