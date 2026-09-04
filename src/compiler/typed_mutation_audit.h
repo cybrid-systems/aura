@@ -74,6 +74,10 @@ extern "C" std::uint32_t aura_process_mutation_boundary_held_count() noexcept;
 // contract_handler / value_tags / shape_profiler compile.
 extern "C" std::uint64_t aura_occurrence_goal_fingerprint_tc(void* tc_handle) noexcept;
 extern "C" std::uint64_t aura_clear_occurrence_persist_snapshot_tc(void* tc_handle) noexcept;
+// Issue #3482: Evaluator-backed persist clear (strong def in
+// evaluator_mutation_boundary.cpp). Steal restamp calls this after the
+// face drop so persist log cannot rehydrate pre-steal snapshot.
+extern "C" void aura_clear_occurrence_persist_buffer(void* ev_ptr) noexcept;
 // Issue #3346: last-look CS fingerprint + live_goal_count vs the values
 // about to be stamped. Strong def in evaluator_mutation_boundary.cpp
 // (TypeChecker-using). Weak stub in test_concurrent_stubs.cpp returns 1
@@ -1581,6 +1585,11 @@ inline void reset_rehydrate_miss_invalidate_for_test() noexcept {
 // Safety Class: P0 under production/Full (half-green Move/Drop residual)
 // Issue: #3063 / #3032
 // AI-Native Rationale: Agents join restamp → gen bump → deopt → next stamp
+// Issue #3482: drop Occurrence persist side-buffer on steal/densify
+// success (defined after g_tls_stamp_last_look_tc). Face drop is here;
+// persist clear reuses #3170. Do not restamp green (#2938).
+inline void clear_occurrence_persist_on_steal_densify_success_() noexcept;
+
 [[nodiscard]] inline bool invalidate_fast_path_before_steal_densify_restamp() noexcept {
     const bool hard = production_defaults_active() || get_strategy() == AuditStrategy::Full;
     if (!hard)
@@ -1590,6 +1599,9 @@ inline void reset_rehydrate_miss_invalidate_for_test() noexcept {
     g_last_proof_linear_ok.store(0, std::memory_order_relaxed);
     g_last_proof_stamper_eval.store(0, std::memory_order_relaxed);
     g_steal_densify_success_invalidate_total.fetch_add(1, std::memory_order_relaxed);
+    // Issue #3482: face bits are 0; persist log must not keep the
+    // pre-steal snapshot for rehydrate. Soft already returned above.
+    clear_occurrence_persist_on_steal_densify_success_();
     return true;
 }
 
@@ -2881,6 +2893,22 @@ inline void note_stamp_last_look_tc(void* tc_handle) noexcept {
 inline void clear_stamp_last_look_tc() noexcept {
     g_tls_stamp_last_look_tc = nullptr;
     g_tls_stamp_last_look_rejected = false;
+}
+
+// Issue #3482: steal/densify success must drop the Occurrence persist
+// side-buffer with the proof face. Reuse #3170 clear_occurrence_persist_buffer
+// (production). Full-without-production still clears the snapshot C ABI.
+// Do not restamp green here — outermost persist is sole freeze (#2938).
+// Last-proof gauges stay observe-only; face is already 0 so IR refuses.
+inline void clear_occurrence_persist_on_steal_densify_success_() noexcept {
+    void* tc = aura_typed_audit_current_commit_type_checker();
+    if (!tc)
+        tc = g_tls_stamp_last_look_tc;
+    if (!tc)
+        return;
+    (void)clear_occurrence_persist_buffer(tc);
+    if (!production_defaults_active())
+        (void)aura_clear_occurrence_persist_snapshot_tc(tc);
 }
 [[nodiscard]] inline bool stamp_last_look_rejected() noexcept {
     return g_tls_stamp_last_look_rejected;

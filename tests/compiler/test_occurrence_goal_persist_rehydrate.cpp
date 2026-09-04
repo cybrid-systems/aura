@@ -2252,6 +2252,179 @@ static void ac3171_4_source_and_linter() {
           "3171 AC4: no invent test_issue_3171");
 }
 
+// ── Issue #3482: steal/densify success drops persist buffer with the face ──
+//   AC1 production + success after green persist → persist empty AND
+//       linear_move_drop_elision_ok()==false until next outermost persist
+//   AC2 rehydrate after success steal must not freeze pre-steal fp
+//   AC3 #3225 seqlock + #3032 miss path unchanged
+//   AC4 Soft/Off: no persist-buffer clear; no new query key
+
+static void ac3482_1_prod_success_clears_persist_and_blocks_elide() {
+    std::println("\n--- #3482 AC1: production steal/densify success clears persist ---");
+    apply_production_audit_defaults();
+    typed_audit::reset_rehydrate_miss_invalidate_for_test();
+    typed_audit::reset_linear_ir_fastpath_counters_for_test();
+    typed_audit::clear_type_linear_commit_proof_for_test();
+    typed_audit::clear_type_linear_proof_outcome_for_test();
+    typed_audit::clear_stamp_last_look_tc();
+    typed_audit::g_linear_ir_fastpath_boundary_depth_override = 0;
+    typed_audit::g_typed_mutation_audit_counters.linear_densify_scan_mismatch_inject_pending.store(
+        0, std::memory_order_relaxed);
+
+    TypeRegistry reg;
+    TypeChecker tc(reg);
+    CompilerMetrics metrics{};
+    tc.set_metrics(&metrics);
+    auto& cs = tc.constraint_system();
+    cs.set_metrics(&metrics);
+    tc.set_cache_epoch(1);
+    cs.set_current_epoch(1);
+    auto v = cs.fresh_var();
+    cs.note_occurrence_goal(v, reg.int_type(), 1, 34821, /*epoch=*/1);
+    CHECK(cs.append_occurrence_snapshot(34821) == 1, "3482 AC1: persist wrote");
+    CHECK(cs.occurrence_persist_log_size() == 1, "3482 AC1: persist buffer 1");
+    typed_audit::note_stamp_last_look_tc(&tc);
+    const auto pre_fp = typed_audit::occurrence_goal_fingerprint(&tc);
+    CHECK(pre_fp != 0, "3482 AC1: pre-steal fp");
+
+    typed_audit::stamp_type_linear_commit_proof(34821);
+    typed_audit::publish_type_linear_proof_outcome(typed_audit::kTypeLinearProofOutcomeStamped);
+    typed_audit::publish_last_proof_face(true, true);
+    CHECK(typed_audit::linear_fast_path_ok(), "3482 AC1: green before steal");
+
+    CHECK(typed_audit::invalidate_fast_path_before_steal_densify_restamp(),
+          "3482 AC1: production steal/densify success");
+    CHECK(cs.occurrence_persist_log_size() == 0, "3482 AC1: persist buffer empty");
+    CHECK(!typed_audit::linear_fast_path_ok(), "3482 AC1: face dropped");
+    CHECK(!typed_audit::linear_move_drop_elision_ok(),
+          "3482 AC1: linear_move_drop_elision_ok false until next outermost persist");
+
+    apply_dev_audit_defaults();
+    typed_audit::clear_stamp_last_look_tc();
+    typed_audit::reset_rehydrate_miss_invalidate_for_test();
+    typed_audit::clear_type_linear_commit_proof_for_test();
+}
+
+static void ac3482_2_rehydrate_does_not_freeze_pre_steal_fp() {
+    std::println("\n--- #3482 AC2: rehydrate after steal-success does not freeze pre-steal fp ---");
+    apply_production_audit_defaults();
+    typed_audit::reset_rehydrate_miss_invalidate_for_test();
+    typed_audit::clear_type_linear_commit_proof_for_test();
+    typed_audit::clear_stamp_last_look_tc();
+
+    TypeRegistry reg;
+    TypeChecker tc(reg);
+    CompilerMetrics metrics{};
+    tc.set_metrics(&metrics);
+    auto& cs = tc.constraint_system();
+    cs.set_metrics(&metrics);
+    tc.set_cache_epoch(1);
+    cs.set_current_epoch(1);
+    auto v = cs.fresh_var();
+    cs.note_occurrence_goal(v, reg.int_type(), 1, 34822, /*epoch=*/1);
+    CHECK(cs.append_occurrence_snapshot(34822) == 1, "3482 AC2: persist wrote");
+    typed_audit::note_stamp_last_look_tc(&tc);
+    const auto pre_fp = typed_audit::occurrence_goal_fingerprint(&tc);
+    CHECK(pre_fp != 0, "3482 AC2: pre-steal fp");
+    CHECK(cs.prune_occurrence_goals(2) == 1, "3482 AC2: prune live");
+    CHECK(cs.occurrence_goals_size() == 0, "3482 AC2: live empty");
+    CHECK(cs.occurrence_persist_log_size() == 1, "3482 AC2: persist intact before steal");
+
+    typed_audit::publish_last_proof_face(true, true);
+    CHECK(typed_audit::invalidate_fast_path_before_steal_densify_restamp(),
+          "3482 AC2: steal-success");
+    CHECK(cs.occurrence_persist_log_size() == 0, "3482 AC2: persist dropped");
+    CHECK(cs.rehydrate_occurrence_from_persist(34822) == 0,
+          "3482 AC2: rehydrate cannot restore pre-steal snapshot");
+    CHECK(cs.occurrence_goals_size() == 0, "3482 AC2: live goals empty");
+    const auto post_fp = typed_audit::occurrence_goal_fingerprint(&tc);
+    CHECK(post_fp != pre_fp || cs.occurrence_goals_size() == 0,
+          "3482 AC2: live fp is not pre-steal F");
+
+    apply_dev_audit_defaults();
+    typed_audit::clear_stamp_last_look_tc();
+    typed_audit::reset_rehydrate_miss_invalidate_for_test();
+    typed_audit::clear_type_linear_commit_proof_for_test();
+}
+
+static void ac3482_3_seqlock_and_miss_unchanged() {
+    std::println("\n--- #3482 AC3: #3225 seqlock + #3032 miss path unchanged ---");
+    const auto tma = read_file("src/compiler/typed_mutation_audit.h");
+    CHECK(tma.find("g_occurrence_persist_seq") != std::string::npos, "3482 AC3: #3225 seqlock");
+    const auto miss = tma.find("invalidate_fast_path_on_rehydrate_miss");
+    CHECK(miss != std::string::npos, "3482 AC3: #3032 miss helper");
+    const auto miss_win = tma.substr(miss, 1800);
+    CHECK(miss_win.find("clear_occurrence_persist_buffer") == std::string::npos,
+          "3482 AC3: miss path does not clear persist (success-only)");
+    CHECK(tma.find("clear_occurrence_persist_on_steal_densify_success_") != std::string::npos,
+          "3482 AC3: success path owns persist clear");
+}
+
+static void ac3482_4_soft_no_persist_clear() {
+    std::println("\n--- #3482 AC4: Soft/Off no persist-buffer clear; no new query key ---");
+    apply_dev_audit_defaults();
+    typed_audit::set_strategy(typed_audit::AuditStrategy::Sampled);
+    typed_audit::reset_rehydrate_miss_invalidate_for_test();
+    typed_audit::clear_stamp_last_look_tc();
+
+    TypeRegistry reg;
+    TypeChecker tc(reg);
+    CompilerMetrics metrics{};
+    tc.set_metrics(&metrics);
+    auto& cs = tc.constraint_system();
+    cs.set_metrics(&metrics);
+    cs.set_current_epoch(1);
+    auto v = cs.fresh_var();
+    cs.note_occurrence_goal(v, reg.int_type(), 1, 34824, /*epoch=*/1);
+    // Soft persist may be disabled; force a log entry via snapshot then
+    // skip if append wrote 0 (Soft zero-cost is still the AC).
+    const auto wrote = cs.append_occurrence_snapshot(34824);
+    typed_audit::note_stamp_last_look_tc(&tc);
+    const auto persist0 = cs.occurrence_persist_log_size();
+    CHECK(!typed_audit::invalidate_fast_path_before_steal_densify_restamp(),
+          "3482 AC4: Soft returns false");
+    CHECK(cs.occurrence_persist_log_size() == persist0, "3482 AC4: persist not cleared");
+    (void)wrote;
+
+    const auto tma = read_file("src/compiler/typed_mutation_audit.h");
+    const auto svc = read_file("src/compiler/evaluator_primitives_obs_jit.cpp") +
+                     read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
+    CHECK(tma.find("schema-3482") == std::string::npos, "3482 AC4: no schema-3482");
+    CHECK(tma.find("g_3482_") == std::string::npos, "3482 AC4: no g_3482_*");
+    CHECK(svc.find("query:steal-densify-persist") == std::string::npos,
+          "3482 AC4: no new query key");
+    CHECK(read_file("docs/design/3482-steal-densify-persist.md").empty(),
+          "3482 AC4: no docs/design/");
+    CHECK(read_file("tests/compiler/test_issue_3482.cpp").empty(),
+          "3482 AC4: no invent test_issue_3482");
+
+    apply_dev_audit_defaults();
+    typed_audit::clear_stamp_last_look_tc();
+}
+
+static void ac3482_5_source_and_linter() {
+    std::println("\n--- #3482 AC5: source-cite + linter ---");
+    const auto tma = read_file("src/compiler/typed_mutation_audit.h");
+    const auto efm = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+    const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto t = read_file("tests/compiler/test_occurrence_goal_persist_rehydrate.cpp");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_steal_densify_persist_clear_3482.py");
+    const auto build = read_file("build.py");
+    CHECK(tma.find("Issue #3482") != std::string::npos, "3482 AC5: tma cite");
+    CHECK(tma.find("clear_occurrence_persist_buffer(tc)") != std::string::npos,
+          "3482 AC5: reuse #3170 helper");
+    CHECK(efm.find("aura_clear_occurrence_persist_buffer(this)") != std::string::npos,
+          "3482 AC5: steal site persist clear");
+    CHECK(mb.find("aura_clear_occurrence_persist_buffer(ev_)") != std::string::npos,
+          "3482 AC5: densify site persist clear");
+    CHECK(t.find("ac3482_1_prod_success_clears_persist_and_blocks_elide") != std::string::npos,
+          "3482 AC5: AC1");
+    CHECK(!lint.empty() && lint.find("3482") != std::string::npos, "3482 AC5: linter");
+    CHECK(build.find("check_steal_densify_persist_clear_3482") != std::string::npos,
+          "3482 AC5: build.py");
+}
+
 // ── Issue #3099: residual close — re-sample invalidate_gen after
 // linear_fast_path_ok() returns true inside linear_ir_fastpath_try_skip.
 // Closes the half-green linear state window where a concurrent
@@ -3260,6 +3433,12 @@ int run_test_occurrence_goal_persist_rehydrate() {
     ac3171_2_soft_zero_extra();
     ac3171_3_schema();
     ac3171_4_source_and_linter();
+    std::println("\n=== #3482 steal/densify success drops persist buffer with the face ===");
+    ac3482_1_prod_success_clears_persist_and_blocks_elide();
+    ac3482_2_rehydrate_does_not_freeze_pre_steal_fp();
+    ac3482_3_seqlock_and_miss_unchanged();
+    ac3482_4_soft_no_persist_clear();
+    ac3482_5_source_and_linter();
     std::println("\n=== #3085 densify/steal miss blocks lowering elision ===");
     ac3085_1_densify_miss_blocks_elision();
     ac3085_2_green_rebind_restores();

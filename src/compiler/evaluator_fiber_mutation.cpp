@@ -915,6 +915,9 @@ aura::compiler::Evaluator::unified_restamp_after_boundary(UnifiedRestampSite sit
         }
         if (void* m = compiler_metrics_)
             (void)aura::compiler::clear_escape_move_elision_gate_for_eval(m);
+        // Issue #3482: Evaluator-backed persist clear after #3171 escape
+        // drop. Soft helper no-ops; this C ABI is production-gated.
+        aura_clear_occurrence_persist_buffer(this);
     }
     if (ws) {
         ws->restamp_all_node_generations();

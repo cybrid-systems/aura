@@ -70,6 +70,11 @@ aura_clear_occurrence_persist_snapshot_tc(void* /*tc_handle*/) noexcept {
     return 0;
 }
 
+// Issue #3482: Evaluator persist clear. Strong def:
+// evaluator_mutation_boundary.cpp. Light-link: no persist log to drop.
+extern "C" __attribute__((weak)) void
+aura_clear_occurrence_persist_buffer(void* /*ev_ptr*/) noexcept {}
+
 // Issue #3347: live_policy / grant remirror residual CastOp persist.
 // Strong def: dirty_propagation.ixx. Light-link: no persist, no pending.
 extern "C" __attribute__((weak)) std::size_t

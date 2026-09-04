@@ -3178,6 +3178,22 @@ def cmd_lint():
             "Issue #3171 linear-fast-path restamp clear linter failed — run python3 scripts/coverage/checks/check_linear_fast_path_clear_on_restamp_3171.py"
         )
         return r
+    # Issue #3482: steal/densify success must drop Occurrence persist
+    # buffer with the proof face. Face drop (#3171) left the persist
+    # log; rehydrate could replay pre-steal snapshot. Reuse #3170
+    # clear_occurrence_persist_buffer. Soft observe-only. No new query
+    # key. Extends test_occurrence_goal_persist_rehydrate +
+    # test_type_linear_commit_health; no docs/design / invent.
+    sdp3482_script = COVERAGE_CHECKS / "check_steal_densify_persist_clear_3482.py"
+    if not sdp3482_script.exists():
+        fail(f"missing {sdp3482_script}")
+        return 1
+    r = run([sys.executable, str(sdp3482_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3482 steal/densify persist-clear linter failed — run python3 scripts/coverage/checks/check_steal_densify_persist_clear_3482.py"
+        )
+        return r
     # Issue #3172: sink fine-grained compile: dirty primitives.
     cs3172_script = COVERAGE_CHECKS / "check_compile_surface_3172.py"
     if not cs3172_script.exists():
@@ -7672,6 +7688,17 @@ def cmd_lint():
     if r != 0:
         fail(
             "Issue #3171 linear-fast-path restamp clear linter failed — run python3 scripts/coverage/checks/check_linear_fast_path_clear_on_restamp_3171.py"
+        )
+        return r
+    # Issue #3482: steal/densify success persist-buffer clear (see first site).
+    sdp3482b = COVERAGE_CHECKS / "check_steal_densify_persist_clear_3482.py"
+    if not sdp3482b.exists():
+        fail(f"missing {sdp3482b}")
+        return 1
+    r = run([sys.executable, str(sdp3482b)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3482 steal/densify persist-clear linter failed — run python3 scripts/coverage/checks/check_steal_densify_persist_clear_3482.py"
         )
         return r
     # Issue #3172: sink fine-grained compile: dirty primitives.

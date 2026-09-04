@@ -1,0 +1,40 @@
+{
+  "issue": 3482,
+  "title": "Issue #3482: steal/densify success drops persist buffer with the proof face",
+  "ok": "OK: Issue #3482 steal/densify success persist clear — buffer empty; no green restamp",
+  "checks": [
+    {
+      "ac": "AC1-helper",
+      "path": "src/compiler/typed_mutation_audit.h",
+      "contains": [
+        "Issue #3482",
+        "clear_occurrence_persist_on_steal_densify_success_",
+        "clear_occurrence_persist_buffer(tc)"
+      ]
+    },
+    {
+      "ac": "AC2-sites",
+      "path": "src/compiler/evaluator_fiber_mutation.cpp",
+      "contains": [
+        "Issue #3482",
+        "aura_clear_occurrence_persist_buffer(this)"
+      ]
+    },
+    {
+      "ac": "AC5-live",
+      "path": "tests/compiler/test_occurrence_goal_persist_rehydrate.cpp",
+      "contains": [
+        "3482 AC1: persist buffer empty",
+        "3482 AC2: rehydrate cannot restore pre-steal snapshot"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "forbid": [
+        "tests/compiler/test_issue_3482.cpp",
+        "tests/issues/test_issue_3482.cpp",
+        "docs/design/3482-steal-densify-persist.md"
+      ]
+    }
+  ]
+}

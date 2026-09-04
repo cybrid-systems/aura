@@ -4542,6 +4542,9 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
                     const auto gen = typed_audit::rehydrate_miss_invalidate_gen_v_read();
                     (void)aura_jit_walk_active_closures(gen == 0 ? 1 : gen);
                     aura_aot_record_deopt_on_steal();
+                    // Issue #3482: Evaluator persist clear with the face drop.
+                    // Do not restamp green here (#2938).
+                    aura_clear_occurrence_persist_buffer(ev_);
                 }
             }
             // Issue #2619: capture window aggregates for Agent densify-health.
