@@ -1159,7 +1159,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/core/test_has_on_compact_hook_lock.cpp` (—) [domain_suite, theme_core] — AC1: All three has_* methods take their respective mutexes (source)
 - `tests/core/test_highperf_full_hotpath_matrix.cpp` (—) [domain_suite, theme_core] — test_task4_highperf_full_hotpath_matrix.cpp — Issue #607:
 - `tests/compiler/test_hot_contract_placement.cpp` (—) [large, domain_suite, theme_compiler] — AC1: Production default: hot-loop contracts OFF (or observe)
-- `tests/compiler/test_ir.cpp` (—) [large, domain_suite, theme_compiler] — 
+- `tests/compiler/test_ir.cpp` (—) [large, domain_suite, theme_compiler] — test_ir.cpp main() is a 5000+ line dispatcher (line 420 → EOF).
 - `tests/serve/test_issue_1990.cpp` (#1990) [small, domain_suite, theme_serve] — test_issue_1990.cpp — Issue #1990 / B-009: (gc-temp) and (gc-stats)
 - `tests/serve/test_issue_1991.cpp` (#1991) [small, domain_suite, theme_serve] — test_issue_1991.cpp — Issue #1991 / B-010: (gc) primitive clears
 - `tests/serve/test_issue_1993.cpp` (#1993) [domain_suite, theme_serve] — test_issue_1993.cpp — Issue #1993 (D-001): (gc-heap) direct-clear
