@@ -14,6 +14,7 @@
 
 #include <atomic>
 #include <fstream>
+#include <functional>
 #include <print>
 #include <string>
 #include <string_view>
@@ -356,9 +357,105 @@ int run_test_concurrent_clone_hygiene_depth() {
         CHECK(!test_probe.good(), "#3094 AC5: no test_issue_3094.cpp (per #81934)");
     }
 
-    std::println(
-        "\n=== #2806 + #3028 + #3094 concurrent clone hygiene depth: {} passed, {} failed ===",
-        g_passed, g_failed);
+    // Issue #3507: Set target follows name_map (template set! capture leak).
+    std::println("\n=== Issue #3507: set! target uses name_map ===");
+    {
+        std::println("\n--- #3507 AC1: set! of gensym'd let binding ---");
+        aura::ast::ASTArena src_arena;
+        StringPool sp(src_arena.allocator());
+        FlatAST src(src_arena.allocator());
+        auto pr = aura::parser::parse_to_flat("(let ((tmp 1)) (set! tmp 2))", src, sp);
+        CHECK(pr.success, "3507 AC1: parse");
+        aura::ast::ASTArena tgt_arena;
+        StringPool tp(tgt_arena.allocator());
+        FlatAST tgt(tgt_arena.allocator());
+        NameMap nm;
+        auto cloned = clone_macro_body(tgt, tp, src, sp, pr.root, nullptr, &nm,
+                                       SyntaxMarker::MacroIntroduced);
+        CHECK(cloned != NULL_NODE, "3507 AC1: clone");
+        CHECK(nm.count("tmp") == 1, "3507 AC1: tmp gensym'd");
+        const auto gensym = nm.at("tmp");
+        aura::ast::NodeId set_id = NULL_NODE;
+        std::function<void(aura::ast::NodeId)> find_set = [&](aura::ast::NodeId id) {
+            if (id == NULL_NODE || id >= tgt.size() || set_id != NULL_NODE)
+                return;
+            auto v = tgt.get(id);
+            if (v.tag == aura::ast::NodeTag::Set)
+                set_id = id;
+            for (std::uint32_t i = 0; i < v.children.size(); ++i)
+                find_set(v.child(i));
+        };
+        find_set(cloned);
+        CHECK(set_id != NULL_NODE, "3507 AC1: Set node");
+        if (set_id != NULL_NODE) {
+            auto sv = tgt.get(set_id);
+            CHECK(std::string(tp.resolve(sv.sym_id)) == gensym,
+                  "3507 AC1: set! target is gensym not tmp");
+        }
+    }
+    {
+        std::println("\n--- #3507 AC2: set! of macro param still substs ---");
+        aura::ast::ASTArena src_arena;
+        StringPool sp(src_arena.allocator());
+        FlatAST src(src_arena.allocator());
+        auto pr = aura::parser::parse_to_flat("(set! a 1)", src, sp);
+        CHECK(pr.success, "3507 AC2: parse");
+        aura::ast::ASTArena tgt_arena;
+        StringPool tp(tgt_arena.allocator());
+        FlatAST tgt(tgt_arena.allocator());
+        auto caller = tgt.add_variable(tp.intern("x"));
+        std::unordered_map<std::string, aura::ast::NodeId, aura::core::TransparentStringHash,
+                           std::equal_to<>>
+            subst;
+        subst.emplace("a", caller);
+        NameMap nm;
+        auto cloned =
+            clone_macro_body(tgt, tp, src, sp, pr.root, &subst, &nm, SyntaxMarker::MacroIntroduced);
+        CHECK(cloned != NULL_NODE, "3507 AC2: clone");
+        auto sv = tgt.get(cloned);
+        CHECK(sv.tag == aura::ast::NodeTag::Set, "3507 AC2: Set root");
+        CHECK(std::string(tp.resolve(sv.sym_id)) == "x", "3507 AC2: set! a substs to caller x");
+    }
+    {
+        std::println("\n--- #3507 AC3: quote set! target stays verbatim ---");
+        aura::ast::ASTArena src_arena;
+        StringPool sp(src_arena.allocator());
+        FlatAST src(src_arena.allocator());
+        auto pr = aura::parser::parse_to_flat("(quote (let ((tmp 1)) (set! tmp 2)))", src, sp);
+        CHECK(pr.success, "3507 AC3: parse");
+        aura::ast::ASTArena tgt_arena;
+        StringPool tp(tgt_arena.allocator());
+        FlatAST tgt(tgt_arena.allocator());
+        NameMap nm;
+        auto cloned = clone_macro_body(tgt, tp, src, sp, pr.root, nullptr, &nm,
+                                       SyntaxMarker::MacroIntroduced);
+        CHECK(cloned != NULL_NODE, "3507 AC3: clone");
+        aura::ast::NodeId set_id = NULL_NODE;
+        std::function<void(aura::ast::NodeId)> find_set = [&](aura::ast::NodeId id) {
+            if (id == NULL_NODE || id >= tgt.size() || set_id != NULL_NODE)
+                return;
+            auto v = tgt.get(id);
+            if (v.tag == aura::ast::NodeTag::Set)
+                set_id = id;
+            for (std::uint32_t i = 0; i < v.children.size(); ++i)
+                find_set(v.child(i));
+        };
+        find_set(cloned);
+        CHECK(set_id != NULL_NODE, "3507 AC3: Set under quote");
+        if (set_id != NULL_NODE) {
+            auto sv = tgt.get(set_id);
+            CHECK(std::string(tp.resolve(sv.sym_id)) == "tmp",
+                  "3507 AC3: quoted set! target stays tmp");
+        }
+        const auto me = read_file("src/compiler/macro_expansion.cpp");
+        CHECK(me.find("Issue #3507") != std::string::npos, "3507 AC5: runtime cite");
+        CHECK(read_file("tests/compiler/test_issue_3507.cpp").empty(), "3507 AC5: no test_issue");
+        CHECK(read_file("docs/design/3507-set-name-map.md").empty(), "3507 AC5: no docs/design");
+    }
+
+    std::println("\n=== #2806 + #3028 + #3094 + #3507 concurrent clone hygiene depth: {} passed, "
+                 "{} failed ===",
+                 g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
 
