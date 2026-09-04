@@ -1949,7 +1949,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/core/test_raw_pointer_safety.cpp` (—) [domain_suite, theme_core] — Issue #1898 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_refinement_closed_loop.cpp` (—) [domain_suite, theme_compiler] — Issue #432/#467/#495/#509/#574 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_regex_redos_timeout.cpp` (—) [domain_suite, theme_compiler] — AC1: well-formed regex succeeds within budget
-- `tests/compiler/test_remount_force_deopt.cpp` (—) [domain_suite, theme_compiler] — Issue #2894 — remount fail reason code (EnvGen / DensifyCell /
+- `tests/compiler/test_remount_force_deopt.cpp` (—) [large, domain_suite, theme_compiler] — Issue #2894 — remount fail reason code (EnvGen / DensifyCell /
 - `tests/compiler/test_reverify_expand.cpp` (—) [domain_suite, theme_compiler] — occurrence / let-poly priority roots (between bounded reverify and
 - `tests/compiler/test_runtime_observability_correlated_stats.cpp` (—) [obs_named, domain_suite, theme_compiler] — test_runtime_observability_correlated_stats_673.cpp — Issue #673:
 - `tests/compiler/test_safe_snapshot_umbrella.cpp` (—) [domain_suite, theme_compiler] — Issue #1839/#1856 (#1978 renamed): issue# moved from filename to header.

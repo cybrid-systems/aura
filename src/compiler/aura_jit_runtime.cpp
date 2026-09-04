@@ -3873,6 +3873,24 @@ int64_t aura_closure_call(int64_t closure_id, int64_t* args, int64_t argc) {
                 return 0;
             }
         }
+        // Issue #3504: remount PRIMARY env_gen is not in dual-fresh.
+        // When host env-frame tracking is active, captured==0 or mismatch
+        // leaves native (same shape as dual-fresh / linear). live==0 skip.
+        {
+            const auto live_env = aura_get_aot_live_env_frame_version();
+            if (live_env != 0) {
+                const auto cap_env = cid < g_closure_env_gen.size() ? g_closure_env_gen[cid] : 0;
+                if (cap_env != live_env) {
+                    tlock.unlock();
+                    aura_unlock_workspace_read();
+                    aura_jit_closure_record_stale_deopt();
+                    aura_jit_closure_record_safe_fallback();
+                    aura_deopt_inc();
+                    invalidate_closure_cache_for(closure_id);
+                    return 0;
+                }
+            }
+        }
         // Issue #2129: linear ownership dual-check when stamp is non-zero.
         // Host tracks linear ⇒ refuse native on epoch/frame drift (#2043).
         const std::uint8_t lin =
