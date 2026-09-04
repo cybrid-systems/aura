@@ -91,7 +91,7 @@ def main() -> int:
     n_pipe = len(re.findall(r"run_production_incremental_dirty_pipeline\(\s*ir_mod,", suite))
     if n_pipe != 5:
         fails.append(f"AC3: production incremental pack length is {n_pipe}, cap is 5")
-    must("!ProductionPureWrapPass<ComputeKindWrap>", "AC3 CK not ProductionPureWrap", pass_impls)
+    must("static_assert(ProductionPureWrapPass<ComputeKindWrap>", "AC3 CK ProductionPureWrap (#3488)", pass_impls)
     must("!ProductionPureWrapPass<EscapeAnalysisWrap>", "AC3 Escape not ProductionPureWrap", service)
     must("DirtySoAEntryPass<EscapeAnalysisWrap>", "AC3 Escape stays DirtySoAEntry", service)
 

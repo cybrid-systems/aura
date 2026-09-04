@@ -2630,6 +2630,20 @@ def cmd_lint():
             "Issue #3454 ProductionPureWrapPass SoA linter failed — run python3 scripts/coverage/checks/check_production_pure_wrap_soa_3454.py"
         )
         return r
+    # Issue #3488: production DirtyAware PureWrap pack (CK/CF/TP/Shape)
+    # peels SoA dirty blocks (ProductionPureWrapPass). AoS DirtySoAEntry
+    # stays Soft/unit; Escape stays #3454 grandfather. Extends
+    # test_soa_dirty_aware_pipeline; no docs/design / invent.
+    ppw3488_script = COVERAGE_CHECKS / "check_production_pure_wrap_hot_pack_3488.py"
+    if not ppw3488_script.exists():
+        fail(f"missing {ppw3488_script}")
+        return 1
+    r = run([sys.executable, str(ppw3488_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3488 ProductionPureWrapPass hot pack linter failed — run python3 scripts/coverage/checks/check_production_pure_wrap_hot_pack_3488.py"
+        )
+        return r
     # Issue #3235: vector-set! / hash-set! / set-car! auto-acquire
     # MutationBoundaryGuard (mutate_general PrimCall). Soft/dev still
     # mutates. Extends test_hash_table_grow; no docs/design / invent.

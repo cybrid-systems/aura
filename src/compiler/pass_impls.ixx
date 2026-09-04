@@ -112,6 +112,27 @@ public:
         results_.push_back(aura::compiler::compute_kind(func));
     }
 
+    // Issue #3488: ProductionPureWrapPass SoA dirty peel. Consults
+    // opcodes_ on dirty blocks only (no AoS IRFunction walk / no
+    // run(IRModule&) on clean fns).
+    void run_on_dirty_blocks_only(IRModuleV2& mod) {
+        aura::compiler::ir_soa_migration::record_consumer_pass();
+        for (auto& func : mod.functions) {
+            auto [runs, skips] = func.for_each_block(
+                [&](std::uint32_t /*bid*/, BasicBlockSoA& block) {
+                    for (std::uint32_t i = block.start_idx; i < block.end_idx; ++i) {
+                        if (i < func.opcodes_.size())
+                            (void)func.opcodes_[i];
+                    }
+                },
+                /*dirty_only=*/true);
+            if (skips)
+                aura::compiler::ir_soa_migration::record_dirty_block_skip(skips);
+            if (runs)
+                aura::compiler::ir_soa_migration::record_dirty_block_run(runs);
+        }
+    }
+
     bool has_error() const { return false; }
     std::string_view name() const { return "compute-kind"; }
     std::span<const ComputeKindResult> results() const { return results_; }
@@ -213,6 +234,27 @@ public:
         pure_delegation_hits_.fetch_add(1, std::memory_order_relaxed);
     }
     void run(aura::ir::BasicBlock& /*block*/) {}
+
+    // Issue #3488: ProductionPureWrapPass SoA dirty peel. Reads
+    // shape_ids_ on dirty blocks only (no AoS function walk).
+    void run_on_dirty_blocks_only(IRModuleV2& mod) {
+        aura::compiler::ir_soa_migration::record_consumer_pass();
+        for (auto& func : mod.functions) {
+            auto [runs, skips] = func.for_each_block(
+                [&](std::uint32_t /*bid*/, BasicBlockSoA& block) {
+                    if (block.start_idx < func.shape_ids_.size()) {
+                        results_.push_back(func.shape_ids_[block.start_idx]);
+                        aura::compiler::ir_soa_migration::record_shape_column_consult();
+                    }
+                },
+                /*dirty_only=*/true);
+            if (skips)
+                aura::compiler::ir_soa_migration::record_dirty_block_skip(skips);
+            if (runs)
+                aura::compiler::ir_soa_migration::record_dirty_block_run(runs);
+        }
+        pure_delegation_hits_.fetch_add(1, std::memory_order_relaxed);
+    }
 
     bool has_error() const { return false; }
     std::string_view name() const { return "shape"; }
@@ -504,6 +546,10 @@ public:
 
     // Issue #2143: SoaDirtyAwarePass entry — dirty-only columnar fold.
     void run_dirty(IRModuleV2& mod) { run(mod, /*dirty_blocks_only=*/true); }
+
+    // Issue #3488: ProductionPureWrapPass SoA dirty entry (peel only
+    // dirty blocks; AoS run_on_dirty_blocks_only(IRFunction&) stays Soft).
+    void run_on_dirty_blocks_only(IRModuleV2& mod) { run_dirty(mod); }
 
     // Per-function fold — accumulates the per-function count
     // into the wrap's total. Returns the per-function delta,
@@ -2820,6 +2866,9 @@ public:
     // Issue #2143: SoaDirtyAwarePass entry — dirty-only type-id walk.
     void run_dirty(IRModuleV2& mod) { run(mod, /*dirty_blocks_only=*/true); }
 
+    // Issue #3488: ProductionPureWrapPass SoA dirty entry.
+    void run_on_dirty_blocks_only(IRModuleV2& mod) { run_dirty(mod); }
+
     bool has_error() const { return false; }
     std::string_view name() const { return "type-propagation"; }
     std::size_t propagated_count() const { return propagated_count_; }
@@ -4858,35 +4907,49 @@ consteval void check_production_soa_dirty_pack_2907() {
 }
 static_assert((check_production_soa_dirty_pack_2907(), true),
               "production SoA dirty hot pack #2907");
-// Issue #3454 AC3: grandfathered incremental-pack Wraps stay DirtySoAEntry
-// (AoS IRFunction&) and must NOT silently satisfy ProductionPureWrapPass.
-static_assert(!ProductionPureWrapPass<ComputeKindWrap>,
-              "#3454 ComputeKindWrap grandfather is DirtySoAEntry, not ProductionPureWrap");
-static_assert(!ProductionPureWrapPass<ConstantFoldingWrap>,
-              "#3454 ConstantFoldingWrap grandfather is DirtySoAEntry, not ProductionPureWrap");
-static_assert(!ProductionPureWrapPass<TypePropagationPass>,
-              "#3454 TypePropagationPass grandfather is DirtySoAEntry, not ProductionPureWrap");
-static_assert(!ProductionPureWrapPass<ShapeWrap>,
-              "#3454 ShapeWrap grandfather is DirtySoAEntry, not ProductionPureWrap");
+// Issue #3488: production DirtyAware PureWrap pack members satisfy
+// ProductionPureWrapPass via run_on_dirty_blocks_only(IRModuleV2&).
+// AoS run_on_dirty_blocks_only(IRFunction&) stays DirtySoAEntryPass
+// (Soft/unit). EscapeAnalysisWrap remains the #3454 grandfather.
+static_assert(ProductionPureWrapPass<ComputeKindWrap>,
+              "#3488 ComputeKindWrap SoA dirty entry satisfies ProductionPureWrapPass");
+static_assert(ProductionPureWrapPass<ConstantFoldingWrap>,
+              "#3488 ConstantFoldingWrap SoA dirty entry satisfies ProductionPureWrapPass");
+static_assert(ProductionPureWrapPass<TypePropagationPass>,
+              "#3488 TypePropagationPass SoA dirty entry satisfies ProductionPureWrapPass");
+static_assert(ProductionPureWrapPass<ShapeWrap>,
+              "#3488 ShapeWrap SoA dirty entry satisfies ProductionPureWrapPass");
+static_assert((check_production_pure_wrap_pack<ComputeKindWrap, ConstantFoldingWrap,
+                                               TypePropagationPass, ShapeWrap>(),
+               true),
+              "#3488 production SoA PureWrap pack instantiates");
+// AoS-only wrap fails to instantiate the ProductionPureWrapPass-constrained
+// pack (GCC treats a constrained-template call inside requires as a hard
+// error; the concept is the SFINAE-safe compile-fail fixture).
+static_assert(!ProductionPureWrapPass<pass_soa_detail::AosOnlyPureWrapStub>,
+              "#3488 AoS-only wrap fails to instantiate production SoA PureWrap pack");
 
-// Issue #2907 / #3315: production hot SoA dirty pack — CF → TP → DCE on
-// IRModuleV2 via run_dirty_pipeline (zero SoAtoAoSBridgePass / to_aos_view,
-// zero set_block_dirty_pred). Call from CompilerService when entry.soa_mod
-// is non-empty after dirty mark. type_reg optional (DCE identity/type rules;
-// nullptr keeps columnar path).
-// Issue #3454: this is the production SoA arm when ProductionPureWrapPass
-// holds. Grandfathered CK/CF/TP/Shape/Escape stay on the AoS suite
-// (DirtySoAEntryPass). InlinePass::run_on_dirty_blocks_only(IRModuleV2&)
-// remains the #3403 production dispatch target — not added to the AoS
-// incremental suite this ticket. Dual-emit abort (#3403) unchanged.
+// Issue #2907 / #3315 / #3488: production hot SoA dirty pack.
+// DirtyAware PureWrap stages (CK/CF/TP/Shape) peel via
+// ProductionPureWrapPass run_on_dirty_blocks_only(IRModuleV2&).
+// DCE stays SoaDirtyAwarePass run_dirty. Zero SoAtoAoSBridgePass /
+// to_aos_view / zero set_block_dirty_pred. Call from CompilerService when
+// entry.soa_mod is non-empty after dirty mark. type_reg optional
+// (DCE identity/type rules; nullptr keeps columnar path).
+// EscapeAnalysisWrap remains the #3454 AoS grandfather.
+// InlinePass::run_on_dirty_blocks_only(IRModuleV2&) remains the #3403
+// production dispatch target — not added to the AoS incremental suite.
 export inline bool
 run_production_soa_dirty_hot_pack(IRModuleV2& mod,
                                   const aura::core::TypeRegistry* type_reg = nullptr) {
     production_soa_dirty_hot_pack_invocations_total.fetch_add(1, std::memory_order_relaxed);
+    ComputeKindWrap ck;
     ConstantFoldingWrap cf;
     TypePropagationPass tp;
+    ShapeWrap sh;
     DeadCoercionEliminationPass dce(type_reg);
-    return run_dirty_pipeline(mod, cf, tp, dce);
+    (void)run_production_soa_pure_wrap_pack(mod, ck, cf, tp, sh);
+    return run_dirty_pipeline(mod, dce);
 }
 
 // ── ShapeAwareFoldingPass — Issue #462 / #1661 ────────────────
