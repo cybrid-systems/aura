@@ -1582,6 +1582,15 @@ static void ac3004_5_source_and_linter() {
           "AC5: no docs/design/");
     CHECK(read_file("tests/compiler/test_issue_3004.cpp").empty(),
           "AC5: no invent test_issue_3004");
+    // Issue #3517: Full audit rollback on the success-entered path drops grant.
+    const auto tma3517 = read_file("src/compiler/typed_mutation_audit.h");
+    CHECK(tma3517.find("kAuditRollbackDropsGrantIssue = 3517") != std::string::npos,
+          "3517: header stamp");
+    const auto mb3517 = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    CHECK(mb3517.find("consume_outermost_audit_rollback_needs_fail") != std::string::npos,
+          "3517: Guard consume after exit");
+    CHECK(mb3517.find("note_outermost_audit_rollback_needs_fail") != std::string::npos,
+          "3517: rollback notes fail");
 }
 
 // ── Issue #3082: mid/nested MutationBoundary occurrence is provisional ──

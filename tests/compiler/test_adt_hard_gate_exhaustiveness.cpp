@@ -21,6 +21,7 @@
 #include <string_view>
 
 import std;
+import aura.compiler.evaluator;
 import aura.compiler.service;
 import aura.compiler.value;
 
@@ -30,10 +31,13 @@ using aura::compiler::CompilerMetrics;
 using aura::compiler::CompilerService;
 using aura::compiler::typed_audit::apply_dev_audit_defaults;
 using aura::compiler::typed_audit::AuditStrategy;
+using aura::compiler::typed_audit::consume_outermost_audit_rollback_needs_fail;
 using aura::compiler::typed_audit::g_typed_mutation_audit_counters;
 using aura::compiler::typed_audit::InvariantAuditResult;
+using aura::compiler::typed_audit::note_outermost_audit_rollback_needs_fail;
 using aura::compiler::typed_audit::requires_invariant_hard_gate;
 using aura::compiler::typed_audit::reset_for_test;
+using aura::compiler::typed_audit::reset_outermost_audit_rollback_needs_fail_for_test;
 using aura::compiler::typed_audit::set_strategy;
 using aura::compiler::types::as_int;
 using aura::compiler::types::is_int;
@@ -287,6 +291,66 @@ static void ac3358_2_soft_observe_only() {
     cs.evaluator().clear_last_mutate_error();
 }
 
+// Issue #3517: persist-then-Full-audit force-rollback must drop query:type
+// grant and flip Guard success (I5 residual of persist-before-audit).
+static void ac3517_1_audit_rollback_drops_grant() {
+    std::println("\n--- #3517 AC1/AC2: Production note arms; consume flips fail ---");
+    reset_for_test();
+    set_strategy(AuditStrategy::Full);
+    const auto save =
+        g_typed_mutation_audit_counters.production_defaults_active.load(std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.production_defaults_active.store(1, std::memory_order_relaxed);
+    reset_outermost_audit_rollback_needs_fail_for_test();
+    note_outermost_audit_rollback_needs_fail();
+    CHECK(consume_outermost_audit_rollback_needs_fail(),
+          "3517 AC1: Production note arms the fail flag");
+    CHECK(!consume_outermost_audit_rollback_needs_fail(), "3517 AC2: consume is one-shot");
+    // Happy Guard path must not consume a stale note (cleared above).
+    CompilerService cs;
+    (void)cs.eval("(+ 1 1)");
+    bool ok = true;
+    auto gr = aura::compiler::Evaluator::MutationBoundaryGuard::try_acquire(cs.evaluator(), 1, &ok);
+    CHECK(gr.has_value(), "3517 AC2: Guard acquire");
+    if (gr.has_value())
+        (*gr).reset();
+    CHECK(ok, "3517 AC2: happy path does not flip success");
+    g_typed_mutation_audit_counters.production_defaults_active.store(save,
+                                                                     std::memory_order_relaxed);
+    reset_outermost_audit_rollback_needs_fail_for_test();
+    apply_dev_audit_defaults();
+}
+
+static void ac3517_4_soft_noop() {
+    std::println("\n--- #3517 AC4: Soft note is a no-op ---");
+    reset_for_test();
+    apply_dev_audit_defaults();
+    set_strategy(AuditStrategy::Sampled);
+    reset_outermost_audit_rollback_needs_fail_for_test();
+    note_outermost_audit_rollback_needs_fail();
+    CHECK(!consume_outermost_audit_rollback_needs_fail(), "3517 AC4: Soft note does not arm");
+}
+
+static void ac3517_5_source_cite() {
+    std::println("\n--- #3517 AC5: source-cite + no invent ---");
+    const auto tma = read_file("src/compiler/typed_mutation_audit.h");
+    CHECK(tma.find("kAuditRollbackDropsGrantIssue = 3517") != std::string::npos,
+          "3517 AC5: issue stamp");
+    CHECK(tma.find("note_outermost_audit_rollback_needs_fail") != std::string::npos,
+          "3517 AC5: TLS note");
+    const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    CHECK(mb.find("Issue #3517") != std::string::npos, "3517 AC5: boundary cite");
+    CHECK(mb.find("consume_outermost_audit_rollback_needs_fail") != std::string::npos,
+          "3517 AC5: dtor consume");
+    CHECK(mb.find("clear_type_export_authority();\n"
+                  "                            typed_audit::note_outermost_audit_rollback_needs_"
+                  "fail();") != std::string::npos ||
+              mb.find("note_outermost_audit_rollback_needs_fail") != std::string::npos,
+          "3517 AC5: rollback site notes fail");
+    CHECK(read_file("docs/design/3517-audit-rollback-drops-grant.md").empty(),
+          "3517 AC5: no docs/design");
+    CHECK(read_file("tests/compiler/test_issue_3517.cpp").empty(), "3517 AC5: no invent");
+}
+
 } // namespace
 
 int run_test_adt_hard_gate_exhaustiveness() {
@@ -301,6 +365,9 @@ int run_test_adt_hard_gate_exhaustiveness() {
     ac8_source_wiring();
     ac3358_1_production_force_via_authority();
     ac3358_2_soft_observe_only();
+    ac3517_1_audit_rollback_drops_grant();
+    ac3517_4_soft_noop();
+    ac3517_5_source_cite();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

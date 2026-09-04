@@ -1848,6 +1848,25 @@ inline void reset_outermost_persist_reject_needs_restore_for_test() noexcept {
     g_tls_outermost_persist_reject_needs_restore = false;
 }
 
+// Issue #3517: Full/hard-gate force-rollback entered via success-path
+// exit_mutation_boundary (persist already granted query:type). Drop
+// grant and flip Guard success after exit so the dtor `!success` tail
+// runs. Soft/Off: note is a no-op (quiet SOLVED: one TLS load).
+inline constexpr int kAuditRollbackDropsGrantIssue = 3517;
+inline thread_local bool g_tls_outermost_audit_rollback_needs_fail = false;
+inline void note_outermost_audit_rollback_needs_fail() noexcept {
+    if (production_defaults_active() || get_strategy() == AuditStrategy::Full)
+        g_tls_outermost_audit_rollback_needs_fail = true;
+}
+[[nodiscard]] inline bool consume_outermost_audit_rollback_needs_fail() noexcept {
+    const bool v = g_tls_outermost_audit_rollback_needs_fail;
+    g_tls_outermost_audit_rollback_needs_fail = false;
+    return v;
+}
+inline void reset_outermost_audit_rollback_needs_fail_for_test() noexcept {
+    g_tls_outermost_audit_rollback_needs_fail = false;
+}
+
 inline void reset_occurrence_provisional_discard_for_test() noexcept {
     g_occurrence_provisional_discard_total.store(0, std::memory_order_relaxed);
     g_occurrence_provisional_discard_goals_total.store(0, std::memory_order_relaxed);

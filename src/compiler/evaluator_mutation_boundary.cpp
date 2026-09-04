@@ -2054,6 +2054,11 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
                             dual_clear_coercion_state_on_abort();
                             // Issue #3193: persist clear before hold ends.
                             aura_clear_occurrence_persist_buffer(this);
+                            // Issue #3517: persist already granted query:type on the
+                            // success-entered path. Drop grant + flip Guard success
+                            // after this exit so the dtor `!success` tail runs.
+                            clear_type_export_authority();
+                            typed_audit::note_outermost_audit_rollback_needs_fail();
                             last_boundary_rollback_stats_ = stats;
                             defuse_index_ = nullptr;
                             // Issue #2105: leave txn_dirty set until outermost clean exit,
@@ -2214,6 +2219,10 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
                     dual_clear_coercion_state_on_abort();
                     // Issue #3193: persist clear before hold ends.
                     aura_clear_occurrence_persist_buffer(this);
+                    // Issue #3517: success-entered Strict reflect rollback
+                    // must drop query:type grant (persist already granted).
+                    clear_type_export_authority();
+                    typed_audit::note_outermost_audit_rollback_needs_fail();
                     last_boundary_rollback_stats_ = stats;
                     defuse_index_ = nullptr;
                     if (!nested_boundary)
@@ -3856,6 +3865,13 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
     }
     if (!inbody_force_exited_)
         ev_->exit_mutation_boundary(success);
+    // Issue #3517: Full/hard-gate force-rollback inside exit already
+    // restored AST; consume the TLS note so local success matches
+    // persist-reject (dtor `!success` tail drops grant / proof).
+    if (typed_audit::consume_outermost_audit_rollback_needs_fail()) {
+        success = false;
+        success_flag_store(flag_, false);
+    }
     ev_->render_fast_exit_this_boundary_ = false;
     // Issue #3118: production hold-budget cancel — lock + depth must
     // drop immediately after abort_restore_dual_topology so densify /
