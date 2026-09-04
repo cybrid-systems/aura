@@ -9,9 +9,11 @@ steal-session revoke stayed dark on the real spawn path.
 
 This issue resolves the tenant at spawn (spec.tenant_id → parent fiber
 assigned_tenant_id → quota TLS tenant), stamps it on the fiber, and
-denies spawn ("tenant-required") when production Restricted+MT / Strict
-cannot resolve a tenant. Soft/Off and Restricted single-tenant keep the
-legacy zero-cost path.
+denies spawn ("tenant-required") when production Restricted+MT /
+Strict+MT cannot resolve a tenant. Soft/Off and Restricted/Strict
+single-tenant keep the legacy zero-cost path. Issue #3494: the gate
+uses is_sandbox_active() (Restricted||Strict) so Restricted+MT is not
+skipped by an extra is_strict() conjunct.
 
 Contract:
   AC1  production orch/Scheduler spawn (Restricted+MT or Strict) writes
@@ -83,10 +85,13 @@ def main() -> int:
     must("ac3434_4_soft_zero_cost", "AC4 test", test)
 
     # AC5: Restricted single-tenant (no AURA_MULTI_TENANT) → no deny.
+    # #3494: Restricted+MT uses is_sandbox_active() (not is_strict() alone).
     must("multi_tenant_env_active()", "AC5 MT gate", spawn)
-    must("aura::core::sandbox::is_strict()", "AC5 strict gate", spawn)
+    must("aura::core::sandbox::is_sandbox_active()", "AC5 Restricted+Strict gate", spawn)
+    must("g_multi_tenant_env_flag()", "AC5 MT flag shared atom (#3494)", _read("src/core/provenance_tracker.hh"))
     must("tenant_required_gate && spawn_tenant == 0", "AC5 deny condition", spawn)
     must("ac3434_5_restricted_single_tenant_no_deny", "AC5 test", test)
+    must("ac3494_restricted_mt_tenant_required", "AC5 #3494 Restricted+MT deny test", test)
 
     # AC6: extend test_tenant_scope_fiber_mandate; linter wired; no invent.
     must("ac3434_6_source_and_linter", "AC6 test", test)

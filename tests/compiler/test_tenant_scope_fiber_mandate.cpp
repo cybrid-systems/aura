@@ -649,8 +649,9 @@ static void ac3275_4_linter_and_no_invent() {
 // resume hook returned early (assigned==0) on production orch spawn.
 // This issue resolves the tenant at spawn (spec.tenant_id → parent
 // assigned → quota TLS), stamps the fiber, denies "tenant-required"
-// under production Restricted+MT / Strict, and keeps Soft/Off + legacy
-// single-tenant zero-cost.
+// under production Restricted+MT / Strict+MT, and keeps Soft/Off +
+// legacy single-tenant zero-cost. Issue #3494: Restricted+MT is in
+// the gate (is_sandbox_active), not only is_strict().
 static void ac3434_1_production_spawn_stamps_tenant() {
     using aura::orch::AgentSpec;
     using aura::orch::spawn_agent_with_mailbox;
@@ -781,6 +782,79 @@ static void ac3434_5_restricted_single_tenant_no_deny() {
         ::unsetenv("AURA_SANDBOX");
 }
 
+static void ac3494_restricted_mt_tenant_required() {
+    using aura::orch::AgentSpec;
+    using aura::orch::spawn_agent_with_mailbox;
+    std::println("\n--- #3494 AC1: Restricted+MT tenant 0 deny + explicit tenant stamps ---");
+    reset_all();
+    const char* prev_sb = std::getenv("AURA_SANDBOX");
+    std::string prev_sb_s = prev_sb ? prev_sb : "";
+    ::setenv("AURA_SANDBOX", "restricted", 1);
+    apply_production_audit_defaults();
+    set_mode(SandboxMode::Restricted);
+    aura::core::resource_quota::set_current_quota_tenant(0);
+    aura::core::provenance::set_multi_tenant_env_active(true);
+    CHECK(aura::core::provenance::multi_tenant_env_active(),
+          "3494 AC1: MT flag round-trips (shared atom, not split statics)");
+    CHECK(aura::core::sandbox::is_sandbox_active(), "3494 AC1: Restricted is sandbox-active");
+    const auto t0 = g_orch_module_stats.spawn_tenant_required_total.load(std::memory_order_relaxed);
+
+    {
+        aura::serve::Scheduler sched(1);
+        SchedRunner runner(sched);
+        AgentSpec spec;
+        spec.name = "3494-ac1-deny";
+        spec.body = [] { aura::serve::Fiber::yield(aura::serve::YieldReason::Explicit); };
+        auto h = spawn_agent_with_mailbox(sched, std::move(spec));
+        CHECK(!h.ok, "3494 AC1: Restricted+MT tenant 0 spawn denied");
+        CHECK(h.error == "tenant-required", "3494 AC1: deny string tenant-required");
+        CHECK(g_orch_module_stats.spawn_tenant_required_total.load(std::memory_order_relaxed) ==
+                  t0 + 1,
+              "3494 AC1: spawn_tenant_required_total bumps");
+    }
+
+    {
+        aura::serve::Scheduler sched(1);
+        SchedRunner runner(sched);
+        AgentSpec spec;
+        spec.name = "3494-ac1-stamp";
+        spec.tenant_id = 7;
+        spec.body = [] { aura::serve::Fiber::yield(aura::serve::YieldReason::Explicit); };
+        auto h = spawn_agent_with_mailbox(sched, std::move(spec));
+        CHECK(h.ok && h.fiber, "3494 AC1: Restricted+MT explicit tenant spawn ok");
+        CHECK(h.fiber->assigned_tenant_id() == 7, "3494 AC1: fiber stamped from spec");
+        for (int i = 0; i < 100 && h.fiber && !h.fiber->is_done(); ++i)
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        (void)aura::orch::join_agent(h, aura::orch::JoinPolicy{.primary_ms = 500, .drain_ms = 50});
+    }
+
+    std::println("\n--- #3494 AC3: Strict without MT host kernel tenant 0 still allows ---");
+    aura::core::provenance::set_multi_tenant_env_active(false);
+    set_mode(SandboxMode::Strict);
+    const auto t1 = g_orch_module_stats.spawn_tenant_required_total.load(std::memory_order_relaxed);
+    {
+        aura::serve::Scheduler sched(1);
+        SchedRunner runner(sched);
+        AgentSpec spec;
+        spec.name = "3494-ac3-strict-st";
+        spec.body = [] { aura::serve::Fiber::yield(aura::serve::YieldReason::Explicit); };
+        auto h = spawn_agent_with_mailbox(sched, std::move(spec));
+        CHECK(h.ok, "3494 AC3: Strict single-tenant tenant 0 spawn ok (host kernel)");
+        CHECK(g_orch_module_stats.spawn_tenant_required_total.load(std::memory_order_relaxed) == t1,
+              "3494 AC3: no tenant-required deny without MT");
+        for (int i = 0; i < 100 && h.fiber && !h.fiber->is_done(); ++i)
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        (void)aura::orch::join_agent(h, aura::orch::JoinPolicy{.primary_ms = 500, .drain_ms = 50});
+    }
+
+    aura::core::provenance::set_multi_tenant_env_active(false);
+    apply_dev_audit_defaults();
+    if (!prev_sb_s.empty())
+        ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+    else
+        ::unsetenv("AURA_SANDBOX");
+}
+
 static void ac3434_6_source_and_linter() {
     std::println("\n--- #3434 AC6: source-cite + linter + no invent ---");
     const auto spawn = read_file("src/orch/agent_spawn.h");
@@ -791,6 +865,8 @@ static void ac3434_6_source_and_linter() {
           "3434 AC6: spawn stamps fiber");
     CHECK(spawn.find("spawn_tenant_required_total") != std::string::npos,
           "3434 AC6: additive deny counter");
+    CHECK(spawn.find("is_sandbox_active()") != std::string::npos,
+          "3434 AC6 / #3494: Restricted+MT in tenant_required_gate");
     CHECK(spawn.find("class AgentRegistry") == std::string::npos &&
               spawn.find("struct AgentRegistry") == std::string::npos,
           "3434 AC6: no process-global AgentRegistry");
@@ -851,6 +927,7 @@ int run_test_tenant_scope_fiber_mandate() {
     ac3434_3_session_revoke_on_resume();
     ac3434_4_soft_zero_cost();
     ac3434_5_restricted_single_tenant_no_deny();
+    ac3494_restricted_mt_tenant_required();
     ac3434_6_source_and_linter();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
