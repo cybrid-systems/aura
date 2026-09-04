@@ -96,6 +96,9 @@ inline constexpr int kAgentScopeConcurrencyIssue = 2976;
 // #2631). One per-Evaluator map; :path / :child-index walks child_at.
 // orch:scope-child returns scope-path matching directory_snapshot.
 inline constexpr int kScopeChildAddressIssue = 3444;
+// Issue #3496: Aura orch:scope-join-all root drop must see descendant
+// handles (join_all/watch_all stay local; cancel_all already recurses).
+inline constexpr int kJoinAllTreeSettledIssue = 3496;
 
 // Issue #3444: directory_snapshot encodes root as "root" and children
 // as "0" / "0/1". Same rule for orch:scope-child's returned path.
@@ -527,6 +530,17 @@ public:
     [[nodiscard]] const AgentScope& child_at(std::size_t i) const {
         ScopeEnterGuard g(this, "child_at");
         return *children_.at(i);
+    }
+
+    // Issue #3496: this layer + descendants have no live body and no
+    // Reclaimed-pending flags. Aura orch:scope-join-all uses this before
+    // drop_agent_scope on the root. join_all itself stays local (join the
+    // layer you addressed). Soft: two bool loads per handle, no intern.
+    [[nodiscard]] bool tree_settled() const noexcept {
+        ScopeEnterGuard g(this, "tree_settled");
+        if (g.denied_hard())
+            return false; // fail-closed: do not drop a contended tree
+        return tree_settled_unlocked_();
     }
 
     // Issue #3444: walk "0" / "0/1" / "root" via child_at. Empty and
@@ -1374,6 +1388,23 @@ private:
                                       const std::string& path) const {
         ScopeEnterGuard g(this, "directory_snapshot");
         collect_directory_(snap, filter, path);
+    }
+
+    // Issue #3496: caller holds ScopeEnterGuard on *this*.
+    [[nodiscard]] bool tree_settled_unlocked_() const noexcept {
+        for (const auto& hp : handles_) {
+            if ((hp.fiber && !hp.fiber->is_done()) || hp.must_wait_reclaimed ||
+                hp.reclaimed_deferred_cleanup)
+                return false;
+        }
+        for (const auto& c : children_) {
+            if (!c)
+                continue;
+            ScopeEnterGuard cg(c.get(), "tree_settled");
+            if (cg.denied_hard() || !c->tree_settled_unlocked_())
+                return false;
+        }
+        return true;
     }
 
     // Issue #2782: nullable; nulled by Scheduler observer before fiber teardown.

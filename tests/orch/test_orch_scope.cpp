@@ -40,14 +40,17 @@
 #include "orch/agent_scope.h"
 #include "compiler/typed_mutation_audit.h"
 #include "core/resource_quota.hh"
+#include "serve/fiber.h"
 #include "serve/multi_fiber_mailbox.h"
 #include "serve/scheduler.h"
 
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
+#include <thread>
 #include <new> // Issue #3437: placement-new CompilerService at a recycled address
 #include <print>
 #include <string>
@@ -318,17 +321,79 @@ int run_test_orch_scope() {
         // Source-cite: the guarded drop (root only; live-fiber + both
         // pending flags) and the spawn-side pre-deny.
         const auto src = read_file("src/compiler/evaluator_primitives_agent.cpp");
+        const auto scopeh = read_file("src/orch/agent_scope.h");
         CHECK(src.find("all_settled") != std::string::npos, "3467 AC4: guarded drop present");
-        CHECK(src.find("(hp.fiber && !hp.fiber->is_done())") != std::string::npos,
+        CHECK(src.find("tree_settled()") != std::string::npos,
+              "3467 AC4 / #3496: drop uses tree_settled (descendants)");
+        CHECK(scopeh.find("(hp.fiber && !hp.fiber->is_done())") != std::string::npos,
               "3467 AC4: drop gate checks live body fiber");
-        CHECK(src.find("hp.must_wait_reclaimed") != std::string::npos &&
-                  src.find("hp.reclaimed_deferred_cleanup") != std::string::npos,
+        CHECK(scopeh.find("hp.must_wait_reclaimed") != std::string::npos &&
+                  scopeh.find("hp.reclaimed_deferred_cleanup") != std::string::npos,
               "3467 AC4: drop gate checks both pending flags");
         CHECK(src.find("name-reuse-while-reclaimed-pending") != std::string::npos,
               "3467 AC1: spawn pre-deny deny-detail present");
         CHECK(read_file("tests/orch/test_issue_3467.cpp").empty() &&
                   read_file("tests/issues/test_issue_3467.cpp").empty(),
               "3467 AC6: no test_issue_3467.cpp (src-aligned suites only)");
+    }
+
+    // ── #3496: root join-all drop sees descendant handles ──
+    {
+        using aura::orch::AgentSpec;
+        using aura::serve::Fiber;
+        using aura::serve::YieldReason;
+        std::println("\n--- #3496 AC1: empty root + live child → join-all does not drop ---");
+        reset_all();
+        CompilerService cs;
+        const auto child_ok =
+            cs.eval(R"((let ((r (orch:scope-child "c0-3496"))) (if (hash-ref r "ok") 1 0)))");
+        CHECK(child_ok && is_int(*child_ok) && as_int(*child_ok) == 1, "3496 AC1: scope-child ok");
+        auto* root = aura::orch::find_agent_scope(static_cast<void*>(&cs.evaluator()));
+        CHECK(root != nullptr && root->child_count() >= 1, "3496 AC1: child scope exists");
+        std::atomic<bool> hold{true};
+        AgentSpec spec;
+        spec.name = "3496-live";
+        spec.attach_mailbox = false;
+        spec.body = [&hold] {
+            while (hold.load(std::memory_order_relaxed)) {
+                if (aura::serve::g_current_fiber &&
+                    aura::serve::g_current_fiber->is_cancel_requested())
+                    break;
+                Fiber::yield(YieldReason::Explicit);
+            }
+        };
+        (void)root->child_at(0).spawn(std::move(spec));
+        CHECK(!root->tree_settled(), "3496 AC1: tree_settled false while child live");
+        (void)cs.eval(R"((orch:scope-join-all :timeout-ms 20 :drain-ms 20))");
+        CHECK(aura::orch::find_agent_scope(static_cast<void*>(&cs.evaluator())) != nullptr,
+              "3496 AC1: root join-all does not drop while child fiber live");
+        CHECK(root->child_at(0).size() >= 1, "3496 AC1: child handle still in tree");
+        if (auto hs = root->child_at(0).handles(); !hs.empty() && hs[0].fiber)
+            CHECK(!hs[0].fiber->is_done(), "3496 AC1: child fiber still live");
+        hold.store(false, std::memory_order_relaxed);
+        root->cancel_all();
+        (void)root->child_at(0).join_all(
+            aura::orch::JoinPolicy{.primary_ms = 2000, .drain_ms = 200});
+        (void)cs.eval(R"((orch:scope-join-all :timeout-ms 2000 :drain-ms 200))");
+    }
+
+    {
+        std::println("\n--- #3496 AC2: settled child-only tree still drops ---");
+        reset_all();
+        CompilerService cs;
+        (void)cs.eval(R"((orch:scope-child "c0-settle"))");
+        const auto spawn_ok = cs.eval(
+            R"((let ((r (orch:scope-spawn "settle-child" :path "0"))) (if (hash-ref r "ok") 1 0)))");
+        CHECK(spawn_ok && is_int(*spawn_ok) && as_int(*spawn_ok) == 1,
+              "3496 AC2: spawn on child ok");
+        (void)cs.eval(R"((orch:scope-join-all :timeout-ms 2000 :drain-ms 2000))");
+        CHECK(aura::orch::find_agent_scope(static_cast<void*>(&cs.evaluator())) == nullptr,
+              "3496 AC2: settled tree still drops the Evaluator slot");
+        CHECK(read_file("tests/orch/test_issue_3496.cpp").empty() &&
+                  read_file("tests/issues/test_issue_3496.cpp").empty(),
+              "3496 AC5: no test_issue_3496.cpp");
+        CHECK(read_file("docs/design/3496-join-all-tree-settled.md").empty(),
+              "3496 AC5: no docs/design/3496-*");
     }
 
     // ── AC5: Docs source-cite (already covered inline above) ──────────
