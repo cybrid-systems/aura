@@ -1,0 +1,44 @@
+{
+  "issue": 3477,
+  "title": "Issue #3477: dirty-skip leftover after solve_delta latches pending residual before IR",
+  "ok": "OK: Issue #3477 solve_delta leftover latches residual face; persist drain unchanged",
+  "checks": [
+    {
+      "ac": "AC1-weld",
+      "path": "src/compiler/type_checker_impl.cpp",
+      "contains": [
+        "Issue #3477",
+        "last_reverify_truncated_",
+        "note_pending_full_solve_residual",
+        "clear_type_linear_commit_proof_on_abort",
+        "kTypeLinearProofOutcomeStamped"
+      ]
+    },
+    {
+      "ac": "AC5-tests",
+      "path": "tests/compiler/test_type_linear_commit_health.cpp",
+      "contains": [
+        "3477 AC1: residual face set before next IR typed-entry",
+        "3477 AC1: IR typed-entry refused even if previous proof was Stamped",
+        "3477 AC3: no face latch",
+        "3477 AC4: Soft no hard face"
+      ]
+    },
+    {
+      "ac": "AC5-heavy",
+      "path": "tests/compiler/test_typesystem_solve_delta_occurrence_priority_heavy_mutate.cpp",
+      "contains": [
+        "3477 AC1: residual face set before next IR typed-entry",
+        "3477 AC4: Soft no hard face"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "forbid": [
+        "tests/compiler/test_issue_3477.cpp",
+        "tests/issues/test_issue_3477.cpp",
+        "docs/design/3477-dirty-skip-residual.md"
+      ]
+    }
+  ]
+}

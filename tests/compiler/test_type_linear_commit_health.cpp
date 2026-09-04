@@ -47,9 +47,12 @@ namespace {
 using aura::compiler::capture_type_linear_evolution_snapshot;
 using aura::compiler::CompilerService;
 using aura::compiler::compute_type_linear_commit_health;
+using aura::compiler::Constraint;
+using aura::compiler::ConstraintSystem;
 using aura::compiler::Evaluator;
 using aura::compiler::kTypeLinearCommitHealthIssue;
 using aura::compiler::kTypeLinearEvolutionSnapshotIssue;
+using aura::compiler::SolveResult;
 using aura::compiler::TypeChecker;
 using aura::compiler::TypeLinearCommitHealthSnapshot;
 namespace typed_audit = aura::compiler::typed_audit;
@@ -1592,6 +1595,114 @@ static void ac3472_4_soft_no_flip() {
     CHECK(read_file("tests/compiler/test_issue_3472.cpp").empty(), "3472 AC4: no invent");
 }
 
+// ── Issue #3477: dirty-skip leftover must latch residual before IR ──
+//   AC1: Production + scan_limit=1 leftover → face set; IR refused
+//   AC2: persist #3190 drain path unchanged
+//   AC3: clean delta: no face latch; previous green may stand
+//   AC4: Soft/Off no hard face drop; no new query key
+
+static void seed_stamped_green_3477() {
+    typed_audit::reset_pending_full_solve_residual_for_test();
+    typed_audit::clear_type_linear_proof_outcome_for_test();
+    typed_audit::clear_type_linear_commit_proof_for_test();
+    typed_audit::stamp_type_linear_commit_proof(1);
+    typed_audit::publish_type_linear_proof_outcome(typed_audit::kTypeLinearProofOutcomeStamped);
+    typed_audit::publish_last_proof_face(true, true);
+}
+
+static SolveResult force_scan_limit_dirty_skip_delta_3477(ConstraintSystem& cs,
+                                                          aura::core::TypeRegistry& reg) {
+    (void)reg;
+    const auto v0 = cs.fresh_var();
+    const auto v1 = cs.fresh_var();
+    const auto v2 = cs.fresh_var();
+    const auto v3 = cs.fresh_var();
+    auto add = [&](Constraint c) {
+        cs.add_delta(std::move(c));
+        return cs.solve_delta();
+    };
+    CHECK(add({Constraint::EQUAL, v0, v1}) == SolveResult::SOLVED, "3477 clean v0~v1");
+    CHECK(add({Constraint::EQUAL, v0, v2}) == SolveResult::SOLVED, "3477 clean v0~v2");
+    CHECK(add({Constraint::EQUAL, v0, v3}) == SolveResult::SOLVED, "3477 clean v0~v3");
+    cs.force_reverify_limit_for_test(1);
+    cs.mark_touched_on_delta(v0, true);
+    const auto v4 = cs.fresh_var();
+    return add({Constraint::EQUAL, v0, v4});
+}
+
+static void ac3477_1_production_dirty_skip_refuses_ir() {
+    std::println("\n--- #3477 AC1: production dirty-skip leftover refuses IR ---");
+    reset_for_test();
+    apply_production_audit_defaults();
+    seed_stamped_green_3477();
+    aura::core::TypeRegistry reg;
+    ConstraintSystem cs(reg);
+    (void)force_scan_limit_dirty_skip_delta_3477(cs, reg);
+    CHECK(cs.last_reverify_truncated() || cs.pending_full_solve_roots_size() > 0 || cs.is_dirty(),
+          "3477 AC1: leftover truncate / pending / dirty");
+    CHECK(typed_audit::pending_full_solve_residual_face_hit(),
+          "3477 AC1: residual face set before next IR typed-entry");
+    typed_audit::g_linear_ir_fastpath_boundary_depth_override = 1;
+    CHECK(!ir_typed_entry_commit_readiness_ok(),
+          "3477 AC1: IR typed-entry refused even if previous proof was Stamped");
+    typed_audit::g_linear_ir_fastpath_boundary_depth_override = -1;
+    apply_dev_audit_defaults();
+    reset_for_test();
+}
+
+static void ac3477_2_persist_drain_unchanged() {
+    std::println("\n--- #3477 AC2: persist #3190 drain still stamp authority ---");
+    const auto impl = read_file("src/compiler/type_checker_impl.cpp");
+    const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto drain = impl.find("ConstraintSystem::drain_pending_full_solve_before_commit");
+    CHECK(drain != std::string::npos, "3477 AC2: drain helper present");
+    CHECK(impl.find("note_pending_full_solve_residual(0, true)", drain) != std::string::npos,
+          "3477 AC2: drain still clears face via note(0, true) on SOLVED");
+    CHECK(emb.find("drain_pending_full_solve_before_commit") != std::string::npos,
+          "3477 AC2: persist site still drains");
+    CHECK(emb.find("aura_outermost_success_persist_occurrence") != std::string::npos,
+          "3477 AC2: persist helper still stamp authority");
+}
+
+static void ac3477_3_clean_delta_no_latch() {
+    std::println("\n--- #3477 AC3: clean delta no face latch; previous green may stand ---");
+    reset_for_test();
+    apply_production_audit_defaults();
+    seed_stamped_green_3477();
+    aura::core::TypeRegistry reg;
+    ConstraintSystem cs(reg);
+    const auto t = cs.fresh_var();
+    cs.add_delta({Constraint::EQUAL, t, reg.int_type()});
+    CHECK(cs.solve_delta() == SolveResult::SOLVED, "3477 AC3: clean delta SOLVED");
+    CHECK(!cs.last_reverify_truncated() && cs.pending_full_solve_roots_size() == 0 &&
+              !cs.is_dirty(),
+          "3477 AC3: no leftover");
+    CHECK(!typed_audit::pending_full_solve_residual_face_hit(), "3477 AC3: no face latch");
+    CHECK(last_type_linear_proof_outcome_v_read() == typed_audit::kTypeLinearProofOutcomeStamped,
+          "3477 AC3: previous green face may stand");
+    apply_dev_audit_defaults();
+    reset_for_test();
+}
+
+static void ac3477_4_soft_no_hard_drop() {
+    std::println("\n--- #3477 AC4: Soft/Off no hard face drop; no new query key ---");
+    reset_for_test();
+    apply_dev_audit_defaults();
+    seed_stamped_green_3477();
+    aura::core::TypeRegistry reg;
+    ConstraintSystem cs(reg);
+    (void)force_scan_limit_dirty_skip_delta_3477(cs, reg);
+    CHECK(!typed_audit::pending_full_solve_residual_face_hit(), "3477 AC4: Soft no hard face");
+    CHECK(last_type_linear_proof_outcome_v_read() == typed_audit::kTypeLinearProofOutcomeStamped,
+          "3477 AC4: Soft does not drop last-proof");
+    const auto q = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
+    CHECK(q.find("schema-3477") == std::string::npos, "3477 AC4: no schema-3477");
+    CHECK(read_file("docs/design/3477-dirty-skip-residual.md").empty(), "3477 AC4: no docs/design");
+    CHECK(read_file("tests/compiler/test_issue_3477.cpp").empty(), "3477 AC4: no invent");
+    apply_dev_audit_defaults();
+    reset_for_test();
+}
+
 } // namespace
 
 int run_test_type_linear_commit_health() {
@@ -1758,6 +1869,11 @@ int run_test_type_linear_commit_health() {
     ac3472_2_persist_reject_unchanged();
     ac3472_3_happy_stamped();
     ac3472_4_soft_no_flip();
+    std::println("\n=== Issue #3477: dirty-skip leftover latches residual before IR ===");
+    ac3477_1_production_dirty_skip_refuses_ir();
+    ac3477_2_persist_drain_unchanged();
+    ac3477_3_clean_delta_no_latch();
+    ac3477_4_soft_no_hard_drop();
     std::println("\n=== #3418: fingerprint cap overflow ===");
     {
         auto cap = read_file("src/compiler/typed_mutation_audit.h");

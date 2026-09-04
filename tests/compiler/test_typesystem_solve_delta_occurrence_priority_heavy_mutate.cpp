@@ -13,6 +13,7 @@
 //   - AC7: multi-round mutate + typecheck stress (#674)
 
 #include "compiler/observability_metrics.h"
+#include "compiler/typed_mutation_audit.h"
 #include "test_harness.hpp"
 
 #include <atomic>
@@ -34,6 +35,7 @@ using aura::compiler::CompilerService;
 using aura::compiler::Constraint;
 using aura::compiler::ConstraintSystem;
 using aura::compiler::SolveResult;
+namespace typed_audit = aura::compiler::typed_audit;
 using aura::compiler::types::as_int;
 using aura::compiler::types::is_hash;
 using aura::compiler::types::is_int;
@@ -192,12 +194,96 @@ static void run_matrix(CompilerService& cs) {
     CHECK(stats7b >= stats7a, "occurrence-reverify stats monotonic over stress matrix");
 }
 
+// Issue #3477: production dirty-skip / cap-truncate leftover after
+// solve_delta must latch the pending residual face before IR typed-entry
+// can ride the previous outermost Stamped proof.
+static void seed_stamped_green_3477() {
+    typed_audit::reset_pending_full_solve_residual_for_test();
+    typed_audit::clear_type_linear_proof_outcome_for_test();
+    typed_audit::clear_type_linear_commit_proof_for_test();
+    typed_audit::stamp_type_linear_commit_proof(1);
+    typed_audit::publish_type_linear_proof_outcome(typed_audit::kTypeLinearProofOutcomeStamped);
+    typed_audit::publish_last_proof_face(true, true);
+}
+
+static SolveResult force_scan_limit_dirty_skip_delta(ConstraintSystem& cs,
+                                                     aura::core::TypeRegistry& reg) {
+    (void)reg;
+    const auto v0 = cs.fresh_var();
+    const auto v1 = cs.fresh_var();
+    const auto v2 = cs.fresh_var();
+    const auto v3 = cs.fresh_var();
+    CHECK(solve_delta_with(cs, {Constraint::EQUAL, v0, v1}) == SolveResult::SOLVED,
+          "3477 clean v0~v1");
+    CHECK(solve_delta_with(cs, {Constraint::EQUAL, v0, v2}) == SolveResult::SOLVED,
+          "3477 clean v0~v2");
+    CHECK(solve_delta_with(cs, {Constraint::EQUAL, v0, v3}) == SolveResult::SOLVED,
+          "3477 clean v0~v3");
+    cs.force_reverify_limit_for_test(1);
+    cs.mark_touched_on_delta(v0, true);
+    const auto v4 = cs.fresh_var();
+    return solve_delta_with(cs, {Constraint::EQUAL, v0, v4});
+}
+
+static void run_3477_live_face_and_typed_entry() {
+    std::println("\n--- #3477 AC1: production dirty-skip leftover latches residual before IR ---");
+    typed_audit::reset_for_test();
+    typed_audit::apply_production_audit_defaults();
+    seed_stamped_green_3477();
+    aura::core::TypeRegistry reg;
+    ConstraintSystem cs(reg);
+    const auto r = force_scan_limit_dirty_skip_delta(cs, reg);
+    (void)r;
+    CHECK(cs.last_reverify_truncated() || cs.pending_full_solve_roots_size() > 0 || cs.is_dirty(),
+          "3477 AC1: leftover truncate / pending / dirty after scan_limit=1");
+    CHECK(typed_audit::pending_full_solve_residual_face_hit(),
+          "3477 AC1: residual face set before next IR typed-entry");
+    typed_audit::g_linear_ir_fastpath_boundary_depth_override = 1;
+    CHECK(!typed_audit::ir_typed_entry_commit_readiness_ok(),
+          "3477 AC1: IR typed-entry refused even if previous proof was Stamped");
+    typed_audit::g_linear_ir_fastpath_boundary_depth_override = -1;
+
+    std::println("\n--- #3477 AC3: clean delta does not latch; previous green may stand ---");
+    typed_audit::reset_for_test();
+    typed_audit::apply_production_audit_defaults();
+    seed_stamped_green_3477();
+    aura::core::TypeRegistry reg_clean;
+    ConstraintSystem cs_clean(reg_clean);
+    const auto t = cs_clean.fresh_var();
+    CHECK(solve_delta_with(cs_clean, {Constraint::EQUAL, t, reg_clean.int_type()}) ==
+              SolveResult::SOLVED,
+          "3477 AC3: clean delta SOLVED");
+    CHECK(!cs_clean.last_reverify_truncated() && cs_clean.pending_full_solve_roots_size() == 0 &&
+              !cs_clean.is_dirty(),
+          "3477 AC3: no leftover");
+    CHECK(!typed_audit::pending_full_solve_residual_face_hit(), "3477 AC3: no face latch");
+    CHECK(typed_audit::last_type_linear_proof_outcome_v_read() ==
+              typed_audit::kTypeLinearProofOutcomeStamped,
+          "3477 AC3: previous green face may stand");
+
+    std::println("\n--- #3477 AC4: Soft leftover observes; no hard face drop ---");
+    typed_audit::reset_for_test();
+    typed_audit::apply_dev_audit_defaults();
+    seed_stamped_green_3477();
+    aura::core::TypeRegistry reg_soft;
+    ConstraintSystem cs_soft(reg_soft);
+    (void)force_scan_limit_dirty_skip_delta(cs_soft, reg_soft);
+    CHECK(!typed_audit::pending_full_solve_residual_face_hit(), "3477 AC4: Soft no hard face");
+    CHECK(typed_audit::last_type_linear_proof_outcome_v_read() ==
+              typed_audit::kTypeLinearProofOutcomeStamped,
+          "3477 AC4: Soft does not drop last-proof");
+    typed_audit::apply_dev_audit_defaults();
+    typed_audit::reset_for_test();
+    typed_audit::g_linear_ir_fastpath_boundary_depth_override = -1;
+}
+
 } // namespace aura_issue_745_detail
 
 int aura_issue_typesystem_solve_delta_occurrence_priority_heavy_mutate_run() {
     using namespace aura_issue_745_detail;
     std::println("=== Issue #745: solve_delta occurrence priority + heavy mutate ===");
     run_unit_ac2();
+    run_3477_live_face_and_typed_entry();
     CompilerService cs;
     run_matrix(cs);
     return RUN_ALL_TESTS();
