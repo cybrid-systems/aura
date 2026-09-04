@@ -2380,16 +2380,28 @@ static aura::ast::NodeId clone_macro_body_at_depth(
                 // (e.g., "a") which isn't bound in the calling env.
                 // Issue #3181: under quote, skip subst lookup — quoted
                 // data is not substituted, set! target is verbatim.
+                // Issue #3507: template-introduced bindings (let/lambda
+                // gensyms in name_map) must rename the assignment target
+                // too. Param subst still wins so swap! writes the caller.
+                // Unquote mirrors Variable: caller-scope, no name_map.
                 SymId set_name_sid = transplant(v.sym_id);
-                if (!local_in_quote && subst) {
-                    auto set_name = std::string(source_pool.resolve(v.sym_id));
-                    auto sit = subst->find(set_name);
-                    if (sit != subst->end()) {
-                        auto arg_v = target.get(sit->second);
-                        if (arg_v.tag == NodeTag::Variable) {
-                            set_name_sid = arg_v.sym_id;
+                if (local_in_quote || (local_in_unquote && name_map)) {
+                    // verbatim
+                } else {
+                    bool hit_subst = false;
+                    if (subst && v.sym_id != INVALID_SYM) {
+                        auto set_name = std::string(source_pool.resolve(v.sym_id));
+                        auto sit = subst->find(set_name);
+                        if (sit != subst->end()) {
+                            auto arg_v = target.get(sit->second);
+                            if (arg_v.tag == NodeTag::Variable) {
+                                set_name_sid = arg_v.sym_id;
+                                hit_subst = true;
+                            }
                         }
                     }
+                    if (!hit_subst && name_map)
+                        set_name_sid = target_pool.intern(resolve_name(v.sym_id));
                 }
                 new_id = target.add_set(set_name_sid, child_ids[0]);
             }
