@@ -743,6 +743,132 @@ static void ac3467_name_reuse_fail_closed() {
         ::unsetenv("AURA_SANDBOX");
 }
 
+// Issue #3497: AgentScope::spawn fail-closes production same-name
+// reclaimed-pending (name-table put already does; scope handles_
+// used to append a ghost). Soft / Off still appends.
+static void ac3497_scope_spawn_pending_name();
+static void ac3497_scope_spawn_pending_name() {
+    using aura::core::sandbox::SandboxMode;
+    using aura::core::sandbox::set_mode;
+    using aura::orch::AgentScope;
+    using aura::orch::AgentSpec;
+    using aura::orch::kScopeSpawnPendingNameIssue;
+    std::println("\n--- #3497: AgentScope::spawn same-name reclaimed-pending ---");
+    CHECK(kScopeSpawnPendingNameIssue == 3497, "3497: issue stamp");
+
+    auto make_spec = [](const char* name) {
+        AgentSpec s;
+        s.name = name;
+        s.attach_mailbox = true;
+        s.body = [] {
+            for (;;) {
+            }
+        };
+        return s;
+    };
+    auto finish = [](AgentHandle& hh) {
+        if (hh.fiber) {
+            hh.fiber->request_cancel();
+            hh.fiber->set_state(FiberState::Done);
+            hh.fiber->note_body_exit_if_reclaimed();
+            hh.finish_reclaimed_cleanup_on_dtor();
+        }
+    };
+
+    // AC1: production + pending flags → spawn same name denied, no emplace.
+    {
+        std::println("\n--- #3497 AC1: production pending → spawn denied ---");
+        const char* prev_sb = std::getenv("AURA_SANDBOX");
+        std::string prev_sb_s = prev_sb ? prev_sb : "";
+        ::setenv("AURA_SANDBOX", "restricted", 1);
+        apply_production_audit_defaults();
+        set_mode(SandboxMode::Strict);
+        Scheduler sched(1);
+        AgentScope scope(sched);
+        auto& h = scope.spawn(make_spec("3497-pending"));
+        CHECK(h.ok && h.fiber, "3497 AC1: first spawn ok");
+        const auto res0 = h.reserved_memory_bytes;
+        JoinPolicy policy;
+        policy.primary_ms = 50;
+        policy.drain_ms = 0;
+        const auto jr = join_agent(h, policy);
+        CHECK(jr.status == JoinStatus::Reclaimed, "3497 AC1: Timeout + !is_done → Reclaimed");
+        CHECK(h.reclaimed_deferred_cleanup || h.must_wait_reclaimed, "3497 AC1: pending flags");
+        const auto n0 = scope.size();
+        CHECK(n0 == 1, "3497 AC1: one handle in scope");
+        auto& h2 = scope.spawn(make_spec("3497-pending"));
+        CHECK(!h2.ok, "3497 AC1: same-name spawn ok=false");
+        CHECK(h2.error.find("name-reuse-while-reclaimed-pending") != std::string::npos,
+              "3497 AC1: typed deny error");
+        CHECK(scope.size() == n0, "3497 AC1: handles_.size() unchanged");
+        CHECK(scope.handles()[0].reserved_memory_bytes == res0,
+              "3497 AC1: pending reservation untouched");
+        auto snap = scope.directory_snapshot({});
+        CHECK(snap.entries.size() == 1, "3497 AC1: directory still one row");
+        finish(h);
+        apply_dev_audit_defaults();
+        if (!prev_sb_s.empty())
+            ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+        else
+            ::unsetenv("AURA_SANDBOX");
+    }
+
+    // AC2: clean same-name still appends (existing scope contract).
+    {
+        std::println("\n--- #3497 AC2: clean same-name still appends ---");
+        apply_production_audit_defaults();
+        Scheduler sched(1);
+        AgentScope scope(sched);
+        AgentSpec a;
+        a.name = "3497-clean";
+        a.body = [] {};
+        auto& h1 = scope.spawn(a);
+        auto& h2 = scope.spawn(a);
+        CHECK(h1.ok && h2.ok, "3497 AC2: both clean spawns ok");
+        CHECK(scope.size() == 2, "3497 AC2: appends (no silent delete)");
+        apply_dev_audit_defaults();
+    }
+
+    // AC3: Soft still emplaces even with pending flags (zero extra if
+    // not production — the walk is skipped).
+    {
+        std::println("\n--- #3497 AC3: Soft same-name still emplaces ---");
+        apply_dev_audit_defaults();
+        Scheduler sched(1);
+        AgentScope scope(sched);
+        auto& h = scope.spawn(make_spec("3497-soft"));
+        CHECK(h.ok, "3497 AC3: first spawn ok");
+        auto hs = scope.handles_mut();
+        hs[0].must_wait_reclaimed = true;
+        auto& h2 = scope.spawn(make_spec("3497-soft"));
+        CHECK(h2.ok, "3497 AC3: Soft still emplaces");
+        CHECK(scope.size() == 2, "3497 AC3: Soft size=2");
+        finish(h);
+        finish(h2);
+    }
+
+    // AC4/AC5: resolve still name-table first; no registry; no invent.
+    {
+        std::println("\n--- #3497 AC4/AC5: resolve name-table first + no invent ---");
+        const auto prim = read_file("src/compiler/evaluator_primitives_agent.cpp");
+        const auto scopeh = read_file("src/orch/agent_scope.h");
+        CHECK(prim.find("if (auto* h = ev.agent_names_->find(name))") != std::string::npos,
+              "3497 AC4: resolve_aura_agent name-table first");
+        CHECK(scopeh.find("kScopeSpawnPendingNameIssue = 3497") != std::string::npos,
+              "3497 AC4: stamp");
+        CHECK(scopeh.find("name-reuse-while-reclaimed-pending") != std::string::npos,
+              "3497 AC4: spawn deny");
+        CHECK(scopeh.find("class AgentRegistry") == std::string::npos,
+              "3497 AC4: no AgentRegistry");
+        CHECK(prim.find("query:scope-spawn-pending") == std::string::npos,
+              "3497 AC5: no new query key");
+        CHECK(read_file("tests/orch/test_issue_3497.cpp").empty(),
+              "3497 AC5: no test_issue_3497.cpp");
+        CHECK(read_file("docs/design/3497-scope-spawn-pending.md").empty(),
+              "3497 AC5: no docs/design/3497-*");
+    }
+}
+
 // Issue #3463: orch:agent-wait-reclaimed (and its :abandon arm) must
 // reach scope-spawn agents through resolve_aura_agent — not
 // agent_names_->find only. The #3442 resolve is name-table first, then
@@ -4527,6 +4653,8 @@ int run_test_join_drain_reclaim() {
 
     std::println("\n=== Issue #3467: name-reuse fail-closed over reclaimed-pending slot ===");
     ac3467_name_reuse_fail_closed();
+    // Issue #3497: AgentScope::spawn same-name pending (extend-in-place).
+    ac3497_scope_spawn_pending_name();
 
     std::println(
         "\n=== Issue #3463: orch:agent-wait-reclaimed routes through resolve_aura_agent ===");
