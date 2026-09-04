@@ -5183,7 +5183,9 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             // Issue #3338: +5 WAL window keys. Live 74. #3339: Agent
             // facade planned >= actual + 8 (keep 96). Additive insert_kv
             // must raise planned_keys; this facade forbids hash-overflow.
-            constexpr std::size_t kSecurityPosturePlannedKeys = 96;
+            // Issue #3499: +2225 WAL durability keys (ring-wrap /
+            // persisted / audit-durable-gap). Live ~93; planned 128.
+            constexpr std::size_t kSecurityPosturePlannedKeys = 128;
             auto* ht = FlatHashTable::create(query_hash_capacity_for(kSecurityPosturePlannedKeys));
             if (!ht)
                 return make_void();
@@ -5383,6 +5385,53 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 insert_kv("metrics-hash-overflow-wired", 1);
                 insert_kv("schema-3244", kSecurityScheduleMetricsHashOverflowIssue);
                 insert_kv("issue-3244", kSecurityScheduleMetricsHashOverflowIssue);
+            }
+            // Issue #3499: merge schema-2225 WAL durability keys into the
+            // production 2534 handler so last-wins does not drop
+            // ring-wrap / persisted / audit-durable-gap. Additive; do
+            // not rename security-event-wal-on / mutation-wal-on.
+            // obs_eval registration stays for slim/s0 (no security prims).
+            {
+                using ::aura::compiler::typed_audit::AuditStrategy;
+                using ::aura::compiler::typed_audit::get_strategy;
+                using ::aura::compiler::typed_audit::production_defaults_active;
+                using ::aura::core::security_event::kSecurityEventRingSize;
+                using ::aura::core::security_event_wal::snapshot_security_event_wal_stats;
+                const auto wal_snap = snapshot_security_event_wal_stats();
+                insert_kv("schema-2225", 2225);
+                insert_kv("issue-2225", 2225);
+                insert_kv("ring-size", static_cast<std::int64_t>(kSecurityEventRingSize));
+                insert_kv("ring-seq",
+                          static_cast<std::int64_t>(se_ring.seq.load(std::memory_order_relaxed)));
+                insert_kv("ring-total", static_cast<std::int64_t>(se_total));
+                insert_kv("ring-wrap-total", static_cast<std::int64_t>(se_ring.ring_wrap_total.load(
+                                                 std::memory_order_relaxed)));
+                insert_kv("wal-persisted-total", static_cast<std::int64_t>(wal_snap.persisted));
+                insert_kv("wal-replay-count", static_cast<std::int64_t>(wal_snap.replay_count));
+                insert_kv("wal-crash-recovery-success",
+                          static_cast<std::int64_t>(wal_snap.crash_recovery_success));
+                insert_kv("wal-append-fail-total", static_cast<std::int64_t>(wal_snap.append_fail));
+                insert_kv("wal-rotate-total", static_cast<std::int64_t>(wal_snap.rotate_total));
+                insert_kv("wal-bytes-written", static_cast<std::int64_t>(wal_snap.bytes_written));
+                insert_kv("wal-segments", static_cast<std::int64_t>(wal_snap.segments));
+                insert_kv(
+                    "mutation-wal-paired",
+                    static_cast<std::int64_t>(
+                        (wal_snap.enabled != 0 && g_mutation_audit_wal().is_enabled()) ? 1 : 0));
+                const char* sb = std::getenv("AURA_SANDBOX");
+                const bool sandbox_off = sb && sb[0] && (sb[0] == 'o' || sb[0] == 'O') &&
+                                         (sb[1] == 'f' || sb[1] == 'F' || sb[1] == '\0');
+                const bool prod = production_defaults_active();
+                insert_kv("audit-durable-gap",
+                          static_cast<std::int64_t>((prod && !sandbox_off &&
+                                                     get_strategy() == AuditStrategy::Full &&
+                                                     !g_mutation_audit_wal().is_enabled())
+                                                        ? 1
+                                                        : 0));
+                insert_kv("schema-3375", 3375);
+                insert_kv("issue-3375", 3375);
+                insert_kv("schema-3499", 3499);
+                insert_kv("issue-3499", 3499);
             }
             return query_hash_finish(ht, ev.string_heap_, overflowed);
         });
