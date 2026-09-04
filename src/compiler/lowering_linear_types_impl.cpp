@@ -129,10 +129,18 @@ std::optional<std::uint32_t> try_lower_linear_type(LoweringState& state,
                                                                          std::memory_order_relaxed);
                     // Fall through: emit MoveOp (escape-aware block).
                 } else if (!binding_name.empty()) {
-                    // Clean dirty binding under active summary → elide.
-                    g_linear_move_elided_total.fetch_add(1, std::memory_order_relaxed);
-                    ++state.linear_move_elided;
-                    return inner;
+                    // Issue #3519: depth / densify / rehydrate-gen must
+                    // still emit MoveOp under an active escape summary.
+                    // Pre-fix the Quiet else-if never ran while the gate
+                    // was on, so mid-boundary / densify opcode-elided
+                    // unblocked names. #2263 AC2 (no depth) still elides.
+                    if (aura_linear_fast_path_depth_or_densify_block() != 0) {
+                        // Fall through: emit MoveOp.
+                    } else {
+                        g_linear_move_elided_total.fetch_add(1, std::memory_order_relaxed);
+                        ++state.linear_move_elided;
+                        return inner;
+                    }
                 }
                 // Non-variable under active gate: conservative emit.
             } else if (aura_linear_fast_path_depth_or_densify_block() != 0) {

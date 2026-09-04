@@ -134,8 +134,16 @@ static void ac1_escape_blocks_elision() {
     clear_escape_move_elision_gate();
 }
 
+static void reset_fast_path_block_for_elision_test() {
+    aura::compiler::typed_audit::g_linear_ir_fastpath_boundary_depth_override = -1;
+    aura::compiler::typed_audit::g_typed_mutation_audit_counters
+        .linear_densify_scan_mismatch_inject_pending.store(0, std::memory_order_relaxed);
+    aura::compiler::typed_audit::reset_rehydrate_miss_invalidate_for_test();
+}
+
 static void ac2_clean_path_elides() {
     std::println("\n--- AC2: clean owned path under active summary elides MoveOp ---");
+    reset_fast_path_block_for_elision_test();
     clear_escape_move_elision_gate();
     const auto elided0 = linear_move_elided_total();
     const auto hit0 = load_u64(g_linear_lowering_escape_summary_hit_total);
@@ -444,6 +452,7 @@ static void ac14_disjoint_names_isolation() {
 
 static void ac15_happy_path_empty_blocked_elides() {
     std::println("\n--- AC15 (#2344): matching key + empty blocked → elide ---");
+    reset_fast_path_block_for_elision_test();
     FakeEval eval;
     clear_escape_move_elision_gate_for_key(&eval, 7);
     // Active summary with empty blocked set under matching key.
@@ -1543,13 +1552,57 @@ static void ac3448_4_soft_no_schema() {
           "3448 AC4: no test_issue_3448.cpp");
 }
 
+static void ac3519_escape_active_depth_emits() {
+    std::println("\n--- #3519 AC3: escape-active + depth/densify emits MoveOp ---");
+    using aura::compiler::kEscapeActiveMoveElisionDepthIssue;
+    CHECK(kEscapeActiveMoveElisionDepthIssue == 3519, "3519: stamp");
+    reset_fast_path_block_for_elision_test();
+    clear_escape_move_elision_gate();
+    aura::compiler::typed_audit::g_linear_ir_fastpath_boundary_depth_override = 1;
+    set_escape_move_elision_gate(true, {});
+    {
+        aura::ast::ASTArena arena;
+        auto alloc = arena.allocator();
+        StringPool pool(alloc);
+        FlatAST flat(alloc);
+        make_move_var_flat(arena, pool, flat, "y");
+        auto mod = lower_to_ir(flat, pool, arena);
+        CHECK(count_move_ops(mod) >= 1, "3519 AC3: depth block emits MoveOp under active gate");
+    }
+    reset_fast_path_block_for_elision_test();
+    clear_escape_move_elision_gate();
+    set_escape_move_elision_gate(true, {});
+    {
+        aura::ast::ASTArena arena;
+        auto alloc = arena.allocator();
+        StringPool pool(alloc);
+        FlatAST flat(alloc);
+        make_move_var_flat(arena, pool, flat, "y");
+        auto mod = lower_to_ir(flat, pool, arena);
+        CHECK(count_move_ops(mod) == 0, "3519 AC2: no depth still elides clean name");
+    }
+    clear_escape_move_elision_gate();
+    const auto lin = read_file("src/compiler/lowering_linear_types_impl.cpp");
+    CHECK(lin.find("Issue #3519") != std::string::npos, "3519 AC5: lowering cite");
+    CHECK(lin.find("aura_linear_fast_path_depth_or_densify_block()") != std::string::npos,
+          "3519 AC5: consults depth/densify under escape-active");
+    const auto gate = read_file("src/compiler/ownership_escape_lowering_gate.h");
+    CHECK(gate.find("kEscapeActiveMoveElisionDepthIssue = 3519") != std::string::npos,
+          "3519 AC5: header stamp");
+    CHECK(read_file("docs/design/3519-escape-active-move-elision-depth.md").empty(),
+          "3519 AC5: no docs/design");
+    CHECK(read_file("tests/compiler/test_issue_3519.cpp").empty(), "3519 AC5: no invent");
+}
+
 } // namespace
 
 int run_test_escape_move_elision_gate() {
     std::println("=== Issue #2263 / #2286: escape summary → MoveOp elision gate ===");
+    reset_fast_path_block_for_elision_test();
     ac1_escape_blocks_elision();
     ac2_clean_path_elides();
     ac3_null_summary_legacy();
+    ac3519_escape_active_depth_emits();
     ac4_schema_source();
     ac6_cross_eval_isolation();
     ac7_same_eval_parity();
