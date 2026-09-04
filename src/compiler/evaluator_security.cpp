@@ -760,28 +760,8 @@ bool Evaluator::enable_security_event_wal(std::string_view persist_dir) noexcept
     std::vector<SecurityEventWalRecord> replayed;
     if (!g_security_event_wal().enable(persist_dir, &replayed, kSecurityEventRingSize))
         return false;
-    if (replayed.empty())
-        return true; // no durable records; live ring stays as caller left it
-    using ::aura::core::security_event::append_security_event;
-    using ::aura::core::security_event::g_security_event_ring;
-    using ::aura::core::security_event::reset_security_event_ring_for_test;
-    using ::aura::core::security_event::SecurityEvent;
-    using ::aura::core::security_event::SecurityEventKind;
-    reset_security_event_ring_for_test();
-    std::uint64_t max_seq = 0;
-    for (const auto& rec : replayed) {
-        const auto kind = static_cast<SecurityEventKind>(rec.kind);
-        const bool denied = rec.denied != 0;
-        const std::string_view op_sv(rec.op, strnlen(rec.op, sizeof(rec.op)));
-        const std::string_view reason_sv(rec.reason, strnlen(rec.reason, sizeof(rec.reason)));
-        append_security_event(g_security_event_ring(), kind, rec.tenant_id, rec.mutation_id,
-                              rec.epoch, rec.effect_bits, op_sv, reason_sv, denied, rec.fiber_id);
-        if (rec.seq + 1 > max_seq)
-            max_seq = rec.seq + 1;
-    }
-    if (max_seq == 0)
-        max_seq = 1;
-    g_security_event_ring().seq.store(max_seq, std::memory_order_relaxed);
+    // Issue #3500: shared hydrate (same as force_wal process-wide enable).
+    hydrate_security_event_ring_from_wal_replay(replayed);
     return true;
 }
 

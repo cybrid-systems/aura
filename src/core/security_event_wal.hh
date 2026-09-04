@@ -538,6 +538,45 @@ inline SecurityEventWalRecord make_record(const SecurityEvent& ev,
     return r;
 }
 
+// Issue #3500: replay WAL records into the live SE ring. Shared by
+// Evaluator::enable_security_event_wal and force_wal process-wide
+// enable (security_defaults / apply_production_audit_defaults). Empty
+// replay is a no-op (live ring stays as caller left it). Soft / WAL-off
+// never calls this. Resets the ring then appends oldest→newest.
+// persist_security_event stamps rec.seq=0 (builds a transient event,
+// not a ring read-back), so max(rec.seq)+1 is 1 and must not clobber
+// the append-advanced seq — that made find-by-mid scan one slot.
+// Take max(WAL seq+1, append count) so joinable mids survive restart
+// and later appends still do not collide with a real WAL seq range.
+inline void hydrate_security_event_ring_from_wal_replay(
+    const std::vector<SecurityEventWalRecord>& replayed) noexcept {
+    if (replayed.empty())
+        return;
+    using ::aura::core::security_event::append_security_event;
+    using ::aura::core::security_event::g_security_event_ring;
+    using ::aura::core::security_event::reset_security_event_ring_for_test;
+    reset_security_event_ring_for_test();
+    std::uint64_t max_wal_seq = 0;
+    for (const auto& rec : replayed) {
+        const auto kind = static_cast<SecurityEventKind>(rec.kind);
+        const bool denied = rec.denied != 0;
+        const std::string_view op_sv(rec.op, strnlen(rec.op, sizeof(rec.op)));
+        const std::string_view reason_sv(rec.reason, strnlen(rec.reason, sizeof(rec.reason)));
+        append_security_event(g_security_event_ring(), kind, rec.tenant_id, rec.mutation_id,
+                              rec.epoch, rec.effect_bits, op_sv, reason_sv, denied, rec.fiber_id);
+        if (rec.seq + 1 > max_wal_seq)
+            max_wal_seq = rec.seq + 1;
+    }
+    auto& ring = g_security_event_ring();
+    const auto appended = ring.seq.load(std::memory_order_relaxed);
+    std::uint64_t next_seq = appended;
+    if (max_wal_seq > next_seq)
+        next_seq = max_wal_seq;
+    if (next_seq == 0)
+        next_seq = static_cast<std::uint64_t>(replayed.size());
+    ring.seq.store(next_seq, std::memory_order_relaxed);
+}
+
 // Issue #2225: hot-path persist helper. Called from check_and_record_effect
 // (allow + deny) and check_workspace_isolation (deny) immediately after the
 // ring append. Short-circuits with a single bool load when WAL is disabled

@@ -28,6 +28,7 @@
 #include "test_harness.hpp"
 
 #include "compiler/security_capabilities.h"
+#include "compiler/security_defaults.hh"
 #include "compiler/typed_mutation_audit.h"
 #include "core/capability_model.hh"
 #include "core/mutation_audit_wal.hh"
@@ -886,6 +887,68 @@ int run_test_security_event_wal_replay() {
               "3465 AC6: no docs/design/3465-* per #1655");
         CHECK(read_repo_file("tests/compiler/test_issue_3465.cpp").empty(),
               "3465 AC6: no test_issue_3465.cpp per #81967");
+        apply_dev_audit_defaults();
+    }
+
+    // Issue #3500: force_wal process-wide enable hydrates the SE ring
+    // (Evaluator::enable_security_event_wal already did; defaults did not).
+    {
+        std::println("\n--- #3500: force_wal enable hydrates SE ring ---");
+        reset_all();
+        const auto dir = fresh_wal_dir("3500");
+        CHECK(ev.enable_security_event_wal(dir.string()), "3500 AC1: seed enable");
+        const auto ts = now_ms();
+        for (std::uint64_t i = 0; i < 3; ++i) {
+            CHECK(aura::core::security_event_wal::persist_security_event(
+                      SecurityEventKind::EffectDeny, 77, 350000 + i, 11, kEffectMutate,
+                      "test:3500-hydrate", "3500-reason", true, static_cast<std::int64_t>(i), ts),
+                  "3500 AC1: persist seed");
+        }
+        ev.disable_security_event_wal();
+        reset_security_event_ring_for_test();
+        CHECK(g_security_event_ring().seq.load(std::memory_order_relaxed) == 0,
+              "3500 AC1: ring empty after restart sim");
+        ::setenv("AURA_MUTATION_AUDIT_WAL", dir.string().c_str(), 1);
+        ::unsetenv("AURA_SANDBOX");
+        set_mode(SandboxMode::Restricted);
+        aura::compiler::security::apply_production_security_defaults();
+        const auto seq = g_security_event_ring().seq.load(std::memory_order_relaxed);
+        CHECK(seq >= 3, "3500 AC1: ring.seq >= 3 after force_wal hydrate");
+        CHECK(g_security_event_ring().total.load(std::memory_order_relaxed) >= 3,
+              "3500 AC1: ring.total >= 3");
+        CHECK(find_se_by_mid(350000) != nullptr && find_se_by_mid(350002) != nullptr,
+              "3500 AC1: seed mids joinable without :durable");
+        const auto* hit = find_se_by_mid(350001);
+        CHECK(hit && std::string_view(hit->reason).find("3500-reason") != std::string::npos,
+              "3500 AC1: reason restored");
+        CHECK(g_security_event_wal().is_enabled(), "3500 AC1: SE WAL enabled");
+        ::unsetenv("AURA_MUTATION_AUDIT_WAL");
+        ev.disable_security_event_wal();
+        fs::remove_all(dir);
+
+        std::println("\n--- #3500 AC3: Soft / sandbox=off does not hydrate ---");
+        reset_all();
+        ::setenv("AURA_SANDBOX", "off", 1);
+        set_mode(SandboxMode::Off);
+        apply_dev_audit_defaults();
+        aura::compiler::security::apply_production_security_defaults();
+        CHECK(!g_security_event_wal().is_enabled(), "3500 AC3: Soft does not enable SE WAL");
+        ::unsetenv("AURA_SANDBOX");
+        reset_all();
+
+        const auto def = read_repo_file("src/compiler/security_defaults.hh");
+        const auto walh = read_repo_file("src/core/security_event_wal.hh");
+        CHECK(walh.find("hydrate_security_event_ring_from_wal_replay") != std::string::npos,
+              "3500 AC4: shared hydrate helper");
+        CHECK(def.find("hydrate_security_event_ring_from_wal_replay") != std::string::npos,
+              "3500 AC4: force_wal calls hydrate");
+        CHECK(def.find("nullptr, 0") == std::string::npos ||
+                  def.find("&replay, kSecurityEventRingSize") != std::string::npos,
+              "3500 AC4: SE enable passes replay buffer");
+        CHECK(read_repo_file("tests/compiler/test_issue_3500.cpp").empty(),
+              "3500 AC5: no test_issue_3500.cpp");
+        CHECK(read_repo_file("docs/design/3500-force-wal-hydrate.md").empty(),
+              "3500 AC5: no docs/design/3500-*");
         apply_dev_audit_defaults();
     }
 
