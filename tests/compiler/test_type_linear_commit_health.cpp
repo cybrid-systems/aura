@@ -1451,6 +1451,17 @@ static void ac3171_health_schema() {
     CHECK(href(cs, "overflow") == -1, "3171: health query not overflowed");
 }
 
+static void ac3482_health_source_cite() {
+    std::println("\n--- #3482: steal/densify success persist clear on health suite ---");
+    const auto tma = read_file("src/compiler/typed_mutation_audit.h");
+    CHECK(tma.find("clear_occurrence_persist_buffer") != std::string::npos,
+          "3482: reuse clear_occurrence_persist_buffer");
+    CHECK(tma.find("Issue #3482") != std::string::npos, "3482: helper cites #3482");
+    CHECK(tma.find("clear_occurrence_persist_on_steal_densify_success_") != std::string::npos,
+          "3482: persist drop on steal/densify success");
+    CHECK(tma.find("schema-3482") == std::string::npos, "3482: no schema-3482 on health");
+}
+
 static void ac2995_3_recover_fail_keeps_reject() {
     std::println("\n--- #2995 AC3: recover fail → existing force_reason, no silent green ---");
     apply_production_audit_defaults();
@@ -1791,6 +1802,7 @@ int run_test_type_linear_commit_health() {
     ac3032_health_schema();
     ac3063_health_schema();
     ac3171_health_schema();
+    ac3482_health_source_cite();
     // Issue #3091: TypeLinearCommitProof audit_mid for proof ↔ SE ↔ trail mid-join.
     //   AC1: struct field audit_mid appended at END (per #2906 rule).
     //   AC2: both build helpers (live + with_outcome) stamp audit_mid from
