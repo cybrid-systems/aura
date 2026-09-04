@@ -370,6 +370,21 @@ def cmd_lint():
             "export-held handoff coverage linter failed — run python3 scripts/coverage/checks/check_export_held_handoff_coverage.py"
         )
         return r
+    # Issue #3479: FiberSteal EnvFrame cell/closure elevation. Dummy
+    # handoff_ref was not cover; production walks EvalValue variants and
+    # elevates via #3274 slot XOR #3210 canary. Soft / empty: no extra
+    # walk. Extends test_fiber_migration_refresh (#81967); no docs/design;
+    # no new query key.
+    sehe3479_script = COVERAGE_CHECKS / "check_steal_envframe_handoff_elevation_3479.py"
+    if not sehe3479_script.exists():
+        fail(f"missing {sehe3479_script}")
+        return 1
+    r = run([sys.executable, str(sehe3479_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3479 steal EnvFrame handoff elevation linter failed — run python3 scripts/coverage/checks/check_steal_envframe_handoff_elevation_3479.py"
+        )
+        return r
     # Issue #2663: enforce StableNodeRef handoff_ref on mailbox push /
     # broadcast_fanout paths (MailMessage.held_ref_token + handoff_completed
     # fields + push() / broadcast_fanout() gate + counter bump). Builds on

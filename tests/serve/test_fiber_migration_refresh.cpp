@@ -11,6 +11,7 @@
 
 #include "test_harness.hpp"
 #include "compiler/observability_metrics.h"
+#include "compiler/typed_mutation_audit.h"
 #include "core/gc_hooks.h"
 
 #include <cstdint>
@@ -22,6 +23,7 @@
 import std;
 import aura.compiler.service;
 import aura.compiler.value;
+import aura.core.arena;
 
 namespace {
 
@@ -157,6 +159,67 @@ int run_test_fiber_migration_refresh() {
         // Full refresh is resume-side only (not duplicated on steal accept).
         CHECK(w.find("refresh_after_fiber_migration") == std::string::npos,
               "steal path does not call full refresh (resume owns it)");
+    }
+
+    // ── Issue #3479: FiberSteal EnvFrame cell/closure elevation ──
+    {
+        std::println("\n--- #3479 AC1: dummy handoff_ref is no longer the only cover ---");
+        auto efm = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+        const auto steal = efm.find("std::size_t Evaluator::refresh_stale_frames_after_steal");
+        CHECK(steal != std::string::npos, "3479 AC1: refresh helper");
+        const auto win = steal == std::string::npos ? std::string{} : efm.substr(steal, 9000);
+        CHECK(win.find("StableNodeRef dummy") == std::string::npos &&
+                  win.find("handoff_ref(std::move(dummy))") == std::string::npos,
+              "3479 AC1: dummy StableNodeRef gone");
+        CHECK(win.find("is_closure") != std::string::npos, "3479 AC1: walks closure variants");
+        CHECK(win.find("is_cell") != std::string::npos, "3479 AC1: walks cell variants");
+        CHECK(win.find("note_ffi_opaque_alias_densify_cover") != std::string::npos,
+              "3479 AC1: slot XOR canary elevation");
+        CHECK(win.find("handoff_ref(make_stamped_ref") != std::string::npos,
+              "3479 AC1: real body_id handoff_ref");
+
+        std::println("\n--- #3479 AC2: Soft / empty bindings no extra walk ---");
+        CHECK(win.find("production_defaults_active()") != std::string::npos,
+              "3479 AC2: production gate");
+        CHECK(win.find("bindings_symid_.empty()") != std::string::npos,
+              "3479 AC2: empty bindings skip");
+        aura::compiler::typed_audit::reset_for_test();
+        aura::compiler::typed_audit::apply_dev_audit_defaults();
+        CompilerService cs_soft;
+        CHECK(cs_soft.eval("(+ 1 1)").has_value(), "3479 AC2: warm");
+        cs_soft.evaluator().bump_defuse_version_for_test();
+        (void)cs_soft.evaluator().refresh_stale_frames_after_steal(0, 0);
+        CHECK(true, "3479 AC2: Soft refresh completes");
+
+        std::println("\n--- #3479 AC3: #3368 XOR no dual-note lasting slot ---");
+        CHECK(win.find("lasting_member_ptr") != std::string::npos ||
+                  win.find("do not dual-note") != std::string::npos,
+              "3479 AC3: XOR skip lasting member ptr");
+
+        std::println("\n--- #3479 AC4: no new query key ---");
+        CHECK(efm.find("schema-3479") == std::string::npos, "3479 AC4: no schema-3479");
+        CHECK(read_file("tests/compiler/test_issue_3479.cpp").empty(), "3479 AC4: no invent");
+        CHECK(read_file("docs/design/3479-steal-handoff-elevation.md").empty(),
+              "3479 AC4: no docs/design");
+
+        std::println("\n--- #3479 AC5: steal refresh + captured closure still applies ---");
+        aura::compiler::typed_audit::reset_for_test();
+        aura::compiler::typed_audit::apply_production_audit_defaults();
+        const auto prev_mv = aura::ast::moving_compact_enabled();
+        aura::ast::set_moving_compact_enabled(1);
+        CompilerService cs;
+        CHECK(cs.eval("(set-code \"(define captured (let ((k 3)) (lambda (x) (+ x k))))\")")
+                  .has_value(),
+              "3479 AC5: set-code captured lambda");
+        CHECK(cs.eval("(eval-current)").has_value(), "3479 AC5: eval");
+        cs.evaluator().bump_defuse_version_for_test();
+        (void)cs.evaluator().refresh_stale_frames_after_steal(0, 0);
+        auto r = cs.eval("(captured 4)");
+        CHECK(r && is_int(*r) && as_int(*r) == 7,
+              "3479 AC5: apply after steal refresh uses live identity or refuses cleanly");
+        aura::ast::set_moving_compact_enabled(prev_mv);
+        aura::compiler::typed_audit::apply_dev_audit_defaults();
+        aura::compiler::typed_audit::reset_for_test();
     }
 
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);

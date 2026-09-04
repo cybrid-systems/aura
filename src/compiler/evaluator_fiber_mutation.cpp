@@ -45,7 +45,9 @@ module;
 module aura.compiler.evaluator;
 
 import std;
-import aura.core.lifetime_pin;     // Issue #2888: unified proof pin axis
+import aura.core.lifetime_pin; // Issue #2888: unified proof pin axis
+import aura.core.arena;        // Issue #3479: note_ffi_opaque_alias_densify_cover (slot XOR canary)
+import aura.compiler.value;    // Issue #3479: is_closure / is_cell on EnvFrame bindings
 import aura.compiler.type_checker; // Issue #2910: rehydrate + CS goal freeze on steal stamp
 
 extern "C" {
@@ -4228,34 +4230,61 @@ std::size_t Evaluator::refresh_stale_frames_after_steal(std::uint64_t hint_env_i
             }
         }
 
-        // Issue #2632 AC3: post-steal wire-up of handoff_ref (fiber-steal category).
-        // #2636 follow-up: moved INSIDE this block so `refreshed_ids` is in
-        // scope and `ef_lock` is already held (no separate ef_lock2). Walks
-        // every refreshed frame's bindings, builds a representative
-        // StableNodeRef per node_id, and pipes through handoff_ref so any
-        // unrefreshable ref bumps stable_ref_handoff_reject_total (vs. a
-        // query-time export-stale-reject — different counter, different
-        // dashboard surface). EnvFrame field is `bindings_` (trailing
-        // underscore); without it the repro build's -Werror catches it.
-        // Issue #2632 AC3 wire-up (TODO): EnvFrame::bindings_ is
-        // std::vector<std::pair<std::string, types::EvalValue>> (see
-        // evaluator.ixx:827), NOT std::vector<NodeId>. Extracting NodeIds
-        // from EvalValue requires walking the cell/closure variants and is
-        // out of scope for #2636's repro-build fix. Stub the wire-up so
-        // the build compiles + the fiber-steal refresh path still completes;
-        // proper NodeId extraction is a follow-up (TODO in commit message).
-        // The handoff_ref helper itself is exercised by the parallel-intend
-        // wire-up in evaluator_primitives_agent.cpp (the actual surface
-        // that #2632 mandates; see scripts/coverage/checks/check_export_held_handoff_coverage.py).
-        if (refreshed > 0 && workspace_flat_) {
-            // STUB: TODO follow-up to walk EvalValue::cell/closure variants
-            // and pipe proper StableNodeRefs through handoff_ref. For now,
-            // no-op the inner loop so the build compiles + the wire-up
-            // scaffold satisfies the linter (AC3 pattern presence).
-            ast::FlatAST::StableNodeRef dummy{};
-            dummy.tenant_id = capability_tenant_id_;
-            dummy.fiber_id = static_cast<std::uint32_t>(aura_fiber_current_id());
-            (void)handoff_ref(std::move(dummy));
+        // Issue #2632 AC3. Issue #3479: post-steal elevation of EnvFrame
+        // cell/closure identities. Dummy StableNodeRef was not cover —
+        // Closure.flat/pool living in bindings are not lasting void**
+        // slots and were not canaried. Production walks EvalValue
+        // cell/closure variants: lasting Evaluator member pointers are
+        // skipped (#3368 XOR); otherwise #3274 slot XOR #3210 canary.
+        // Real Closure.body_id goes through handoff_ref (no dummy).
+        // Soft / empty bindings: zero extra walk (AC2).
+        if (refreshed > 0 && workspace_flat_ &&
+            aura::compiler::typed_audit::production_defaults_active()) {
+            auto lasting_member_ptr = [&](void* p) noexcept {
+                return p == workspace_flat_ || p == workspace_pool_ || p == current_flat_ ||
+                       p == current_pool_ || p == mutate_target_flat_ || p == mutate_target_pool_;
+            };
+            auto elevate_ptr = [&](void* p) noexcept {
+                if (!p || lasting_member_ptr(p))
+                    return; // #3368: do not dual-note a lasting slot value
+                aura::ast::note_ffi_opaque_alias_densify_cover(p, nullptr,
+                                                               "steal-envframe-binding");
+            };
+            auto elevate_closure = [&](const types::EvalValue& v) {
+                if (!types::is_closure(v))
+                    return;
+                const auto cid = static_cast<ClosureId>(types::as_closure_id(v));
+                auto it = closures_.find(cid);
+                if (it == closures_.end())
+                    return;
+                auto& cl = it->second;
+                elevate_ptr(cl.flat);
+                elevate_ptr(cl.pool);
+                if (cl.body_id != ast::NULL_NODE)
+                    (void)handoff_ref(make_stamped_ref(cl.body_id));
+            };
+            auto elevate_value = [&](const types::EvalValue& v) {
+                elevate_closure(v);
+                if (!types::is_cell(v))
+                    return;
+                const auto idx = types::as_cell_id(v);
+                if (idx < cells_.size())
+                    elevate_closure(cells_[idx]);
+            };
+            for (const EnvId rid : refreshed_ids) {
+                if (rid >= env_frames_.size())
+                    continue;
+                const auto& fr = env_frames_[rid];
+                if (fr.bindings_symid_.empty() && fr.bindings_.empty())
+                    continue;
+                if (!fr.bindings_symid_.empty()) {
+                    for (const auto& b : fr.bindings_symid_)
+                        elevate_value(b.second);
+                } else {
+                    for (const auto& b : fr.bindings_)
+                        elevate_value(b.second);
+                }
+            }
         }
     }
 
