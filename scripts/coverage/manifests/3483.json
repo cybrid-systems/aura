@@ -1,0 +1,33 @@
+{
+  "issue": 3483,
+  "title": "Issue #3483: call_steal_complete refuses weak no-op when multi-worker latch is set",
+  "ok": "OK: Issue #3483 steal-complete latch ∧ strong-only — weak no-op cannot skip residual",
+  "checks": [
+    {
+      "ac": "AC1-helper",
+      "path": "src/serve/worker.cpp",
+      "contains": [
+        "Issue #3483",
+        "g_production_multi_worker_latched",
+        "aura_abi_strong_steal_complete_v()",
+        "g_production_abi_selfcheck_fail_total"
+      ]
+    },
+    {
+      "ac": "AC5-live",
+      "path": "tests/serve/test_steal_complete_gc_defer.cpp",
+      "contains": [
+        "3483 AC5: this binary links strong steal-complete",
+        "aura_test_call_steal_complete"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "forbid": [
+        "tests/serve/test_issue_3483.cpp",
+        "tests/issues/test_issue_3483.cpp",
+        "docs/design/3483-steal-complete-latch.md"
+      ]
+    }
+  ]
+}

@@ -412,6 +412,13 @@ int main() {
     else
         ++members_passed;
 
+    // Issue #3483: live-isolate steal-complete gc-defer (was inside
+    // #if 0 leftover). Latch∧strong runtime ACs must actually run.
+    if (isolate("test_steal_complete_gc_defer", run_test_steal_complete_gc_defer) != 0)
+        ++members_failed;
+    else
+        ++members_passed;
+
     std::println("\n=== {} members: {} ok, {} failed ===", members_passed + members_failed,
                  members_passed, members_failed);
     return members_failed ? 1 : 0;

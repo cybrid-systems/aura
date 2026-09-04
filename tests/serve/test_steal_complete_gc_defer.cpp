@@ -18,6 +18,7 @@
 #include "core/gc_hooks.h"
 #include "serve/fiber.h"
 #include "serve/metrics.h"
+#include "serve/runtime_production_abi.h"
 #include "serve/scheduler.h"
 
 #include <atomic>
@@ -36,6 +37,8 @@ import aura.compiler.value;
 
 // Strong C ABI (evaluator_fiber_mutation.cpp).
 extern "C" void aura_evaluator_on_steal_complete(void* fiber_ptr) noexcept;
+// Issue #3483: test seam for call_steal_complete (worker.cpp).
+extern "C" void aura_test_call_steal_complete(void* stolen) noexcept;
 // Test helper: seed fiber yield-checkpoint evaluator_id then call steal-complete.
 extern "C" void aura_evaluator_test_seed_yield_cp_and_steal_complete(void* fiber_ptr,
                                                                      void* eval_id) noexcept;
@@ -381,6 +384,104 @@ static void ac2314_source_cite_rows() {
     CHECK(epoe.find("schema-2314") != std::string::npos, "AC5: obs_eval.cpp cites 2314");
 }
 
+// ── Issue #3483: call_steal_complete latch ∧ strong-only ──
+//   AC1 latch==1 refuses weak no-op (abort or strong-only)
+//   AC2 transaction Ok path still one on_steal_complete
+//   AC3 Soft / unlatched: existing light fallback + missing-entry total
+//   AC4 reuse production_abi_selfcheck_fail_total / steal-complete missing
+//   AC5 runtime strong vs weak (this binary is strong)
+//   AC6 linter latch∧strong cite on the helper
+
+static void ac3483_1_runtime_latch_strong_only() {
+    std::println("\n--- #3483 AC1/AC5: runtime latch + strong vs weak ---");
+    using aura::serve::clear_production_abi_selfcheck_for_test;
+    using aura::serve::g_production_abi_selfcheck_fail_total;
+    using aura::serve::g_production_multi_worker_latched;
+    using aura::serve::set_production_multi_worker_latched_for_test;
+
+    clear_production_abi_selfcheck_for_test();
+    CHECK(aura_abi_strong_steal_complete_v() == 1,
+          "3483 AC5: this binary links strong steal-complete (vs fiber_bridge weak=0)");
+    const auto miss0 = aura::gc_hooks::steal_complete_entry_missing_total();
+    const auto complete0 = aura::gc_hooks::steal_complete_total();
+    const auto fail0 = g_production_abi_selfcheck_fail_total.load(std::memory_order_relaxed);
+
+    set_production_multi_worker_latched_for_test(true);
+    CHECK(g_production_multi_worker_latched.load(std::memory_order_relaxed) != 0,
+          "3483 AC1: latch==1");
+    aura_test_call_steal_complete(nullptr);
+    CHECK(aura::gc_hooks::steal_complete_total() == complete0 + 1,
+          "3483 AC1: latch+strong ran on_steal_complete (not abort)");
+    CHECK(aura::gc_hooks::steal_complete_entry_missing_total() == miss0,
+          "3483 AC1: did not take light missing-entry fallback");
+    CHECK(g_production_abi_selfcheck_fail_total.load(std::memory_order_relaxed) == fail0,
+          "3483 AC1: fail_total not bumped (strong present)");
+    set_production_multi_worker_latched_for_test(false);
+    clear_production_abi_selfcheck_for_test();
+
+    const auto bridge = read_file("src/compiler/fiber_bridge.cpp");
+    CHECK(bridge.find("aura_abi_strong_steal_complete_v") != std::string::npos &&
+              bridge.find("return 0;") != std::string::npos,
+          "3483 AC5: weak marker in fiber_bridge returns 0");
+}
+
+static void ac3483_3_unlatched_light_path() {
+    std::println("\n--- #3483 AC3: unlatched Soft/light path unchanged ---");
+    using aura::serve::clear_production_abi_selfcheck_for_test;
+    using aura::serve::g_production_multi_worker_latched;
+    using aura::serve::set_production_multi_worker_latched_for_test;
+
+    set_production_multi_worker_latched_for_test(false);
+    CHECK(g_production_multi_worker_latched.load(std::memory_order_relaxed) == 0,
+          "3483 AC3: unlatched");
+    const auto miss0 = aura::gc_hooks::steal_complete_entry_missing_total();
+    const auto complete0 = aura::gc_hooks::steal_complete_total();
+    aura_test_call_steal_complete(nullptr);
+    CHECK(aura::gc_hooks::steal_complete_total() == complete0 + 1,
+          "3483 AC3: unlatched still calls on_steal_complete when symbol present");
+    CHECK(aura::gc_hooks::steal_complete_entry_missing_total() == miss0,
+          "3483 AC3: missing-entry only on null ABI (this binary has a symbol)");
+    const auto worker = read_file("src/serve/worker.cpp");
+    CHECK(worker.find("bump_steal_complete_entry_missing_total") != std::string::npos,
+          "3483 AC3: light fallback missing-entry metric retained");
+    clear_production_abi_selfcheck_for_test();
+}
+
+static void ac3483_2_4_6_source() {
+    std::println("\n--- #3483 AC2/AC4/AC6: transaction unchanged; reuse counters; linter ---");
+    const auto worker = read_file("src/serve/worker.cpp");
+    const auto ss = read_file("src/serve/steal_safety.cpp");
+    const auto t = read_file("tests/serve/test_steal_complete_gc_defer.cpp");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_steal_complete_latch_strong_3483.py");
+    const auto build = read_file("build.py");
+
+    const auto fn = worker.find("static inline void call_steal_complete");
+    CHECK(fn != std::string::npos, "3483 AC6: helper present");
+    const auto win = worker.substr(fn, 2200);
+    CHECK(win.find("g_production_multi_worker_latched") != std::string::npos,
+          "3483 AC6: latch cite on helper");
+    CHECK(win.find("aura_abi_strong_steal_complete_v()") != std::string::npos,
+          "3483 AC6: strong marker cite on helper");
+    CHECK(win.find("g_production_abi_selfcheck_fail_total") != std::string::npos,
+          "3483 AC4: reuse production_abi_selfcheck_fail_total");
+    CHECK(win.find("std::abort()") != std::string::npos, "3483 AC1: abort if weak under latch");
+    CHECK(worker.find("call_steal_complete(stolen)") == std::string::npos,
+          "3483 AC2: worker success path does not call call_steal_complete(stolen)");
+    CHECK(ss.find("aura_evaluator_on_steal_complete(stolen)") != std::string::npos,
+          "3483 AC2: transaction still owns on_steal_complete");
+    CHECK(t.find("ac3483_1_runtime_latch_strong_only") != std::string::npos,
+          "3483 AC5: runtime AC");
+    CHECK(!lint.empty() && lint.find("3483") != std::string::npos, "3483 AC6: linter");
+    CHECK(build.find("check_steal_complete_latch_strong_3483") != std::string::npos,
+          "3483 AC6: build.py");
+    CHECK(worker.find("schema-3483") == std::string::npos, "3483 AC4: no schema-3483");
+    CHECK(worker.find("g_3483_") == std::string::npos, "3483 AC4: no g_3483_*");
+    CHECK(read_file("docs/design/3483-steal-complete-latch.md").empty(),
+          "3483 AC6: no docs/design/");
+    CHECK(read_file("tests/serve/test_issue_3483.cpp").empty(), "3483 AC6: no invent");
+}
+
 } // namespace
 
 int run_test_steal_complete_gc_defer() {
@@ -399,6 +500,10 @@ int run_test_steal_complete_gc_defer() {
     ac2314_zero_cost_snapshot_zero();
     ac2314_query_keys();
     ac2314_source_cite_rows();
+    std::println("\n=== #3483: call_steal_complete latch ∧ strong-only ===");
+    ac3483_1_runtime_latch_strong_only();
+    ac3483_3_unlatched_light_path();
+    ac3483_2_4_6_source();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

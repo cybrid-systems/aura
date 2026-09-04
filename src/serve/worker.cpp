@@ -4,6 +4,7 @@
 #include "aura_platform.h"
 #include "compiler/lock_order_audit.h" // Issue #2354: FiberRegistry rank
 #include "core/gc_hooks.h"             // Issue #2377: steal-complete missing counter
+#include "runtime_production_abi.h"    // Issue #3483: latch ∧ strong steal-complete
 #include "serve/steal_safety.h" // Issue #2752/#2844: steal_safety_transaction sole enqueue gate
 
 #include <cstdio>
@@ -92,6 +93,22 @@ static inline void call_steal_complete(Fiber* stolen) noexcept {
     // Issue #2752: try_steal_from_only_uses_steal_safety_transaction
     // Issue #2844: steal_safety_transaction_is_sole_enqueue_gate_for_stolen
     // (wire-in markers — single #2699/#2752/#2844 transaction entry point).
+    // Issue #3483: latch ∧ strong-only. ELF weak fiber_bridge makes
+    // `if (aura_evaluator_on_steal_complete)` true even without the
+    // strong evaluator TU; under multi-worker latch that skip residual
+    // GcDefer / LayoutStamp / panic orphan. Do not add a second
+    // on_steal_complete on the transaction Ok path (#2752).
+    if (g_production_multi_worker_latched.load(std::memory_order_relaxed) != 0) {
+        if (aura_abi_strong_steal_complete_v() == 0) {
+            g_production_abi_selfcheck_fail_total.fetch_add(1, std::memory_order_relaxed);
+            std::fprintf(stderr, "FATAL: steal-complete weak under latch (#3483); "
+                                 "multi-worker production must link the strong "
+                                 "steal-complete ABI\n");
+            std::abort();
+        }
+        aura_evaluator_on_steal_complete(stolen);
+        return;
+    }
     if (aura_evaluator_on_steal_complete) {
         // Strong wins over weak when linked. Weak no-op under production
         // aborts inside fiber_bridge (#2377); under sandbox it bumps
@@ -110,6 +127,12 @@ static inline void call_steal_complete(Fiber* stolen) noexcept {
     aura::gc_hooks::bump_steal_complete_entry_missing_total();
     call_probe_linear_on_steal();
     call_steal_outermost_enforced();
+}
+
+// Issue #3483 test seam: invoke the helper without going through
+// steal_safety_transaction (Ok path stays one on_steal_complete).
+extern "C" void aura_test_call_steal_complete(void* stolen) noexcept {
+    call_steal_complete(static_cast<Fiber*>(stolen));
 }
 static inline void call_steal_deferred_violation() noexcept {
     if (aura_evaluator_bump_steal_deferred_violation)
