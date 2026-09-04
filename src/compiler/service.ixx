@@ -11220,14 +11220,21 @@ private:
 
         // Issue #3454 AC3 grandfather (length-capped 5): ComputeKindWrap,
         // ConstantFoldingWrap, TypePropagationPass, ShapeWrap,
-        // EscapeAnalysisWrap. AoS DirtySoAEntryPass. New pack members must
-        // satisfy ProductionPureWrapPass (IRModuleV2 / IRFunctionSoA dirty
-        // entry) — not a silent 6th AoS Wrap. InlinePass SoA stays the
-        // #3403 production dispatch target; do not add it to this AoS suite.
-        (void)run_production_incremental_dirty_pipeline(ir_mod, ck_pass, mask_ptr);
-        (void)run_production_incremental_dirty_pipeline(ir_mod, cf_pass, mask_ptr);
-        (void)run_production_incremental_dirty_pipeline(ir_mod, tp_pass, mask_ptr);
-        (void)run_production_incremental_dirty_pipeline(ir_mod, shape_pass, mask_ptr);
+        // EscapeAnalysisWrap. Soft/unit keep AoS DirtySoAEntryPass.
+        // Issue #3488: under production_defaults + soa_mod, CK/CF/TP/Shape
+        // peel SoA dirty blocks (ProductionPureWrapPass) and skip the AoS
+        // walk. EscapeAnalysisWrap stays the AoS grandfather. New pack
+        // members must satisfy ProductionPureWrapPass — not a silent 6th
+        // AoS Wrap. InlinePass SoA stays the #3403 production dispatch
+        // target; do not add it to this AoS suite.
+        const bool soa_hot = soa_mod && !soa_mod->functions.empty();
+        const bool prod_soa = soa_hot && aura::compiler::typed_audit::production_defaults_active();
+        if (!prod_soa) {
+            (void)run_production_incremental_dirty_pipeline(ir_mod, ck_pass, mask_ptr);
+            (void)run_production_incremental_dirty_pipeline(ir_mod, cf_pass, mask_ptr);
+            (void)run_production_incremental_dirty_pipeline(ir_mod, tp_pass, mask_ptr);
+            (void)run_production_incremental_dirty_pipeline(ir_mod, shape_pass, mask_ptr);
+        }
         (void)run_production_incremental_dirty_pipeline(ir_mod, escape_pass, mask_ptr);
 
         for (auto& func : ir_mod.functions) {
@@ -11237,9 +11244,10 @@ private:
             run_coercion_elim_on_function(func);
         }
 
-        // Issue #2907: force hot DirtyAware stages onto IRModuleV2 run_dirty
-        // when SoA module is present (production pack — no AoS bridge).
-        if (soa_mod && !soa_mod->functions.empty()) {
+        // Issue #2907 / #3488: force hot DirtyAware PureWrap stages onto
+        // IRModuleV2 ProductionPureWrapPass peel when SoA module is present
+        // (production pack — no AoS bridge).
+        if (soa_hot) {
             (void)aura::compiler::run_production_soa_dirty_hot_pack(*soa_mod, &type_registry_);
         }
 

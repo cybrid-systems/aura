@@ -774,8 +774,9 @@ static void ac3454_production_pure_wrap_soa() {
               service.find("ConstantFoldingWrap") != std::string::npos &&
               service.find("EscapeAnalysisWrap") != std::string::npos,
           "AC3: CK/CF/Escape remain in the incremental pack");
-    CHECK(pass_impls.find("!ProductionPureWrapPass<ComputeKindWrap>") != std::string::npos,
-          "AC3: grandfather CK does not silently satisfy ProductionPureWrapPass");
+    CHECK(pass_impls.find("static_assert(ProductionPureWrapPass<ComputeKindWrap>") !=
+              std::string::npos,
+          "AC3: CK satisfies ProductionPureWrapPass (#3488)");
     CHECK(service.find("!ProductionPureWrapPass<EscapeAnalysisWrap>") != std::string::npos,
           "AC3: grandfather Escape does not silently satisfy ProductionPureWrapPass");
 

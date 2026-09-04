@@ -36,6 +36,8 @@ inline constexpr int kPassConceptCount = 17;
 inline constexpr int kPassPurityGateIssue = 3329;
 // Issue #3454: ProductionPureWrapPass type-checks SoA dirty entry (not AoS).
 inline constexpr int kProductionPureWrapSoaIssue = 3454;
+// Issue #3488: production DirtyAware PureWrap pack peels SoA dirty blocks.
+inline constexpr int kProductionPureWrapHotPackIssue = 3488;
 
 inline std::atomic<std::uint64_t> concept_constraints_import_hits{0};
 
@@ -298,16 +300,17 @@ concept PureWrapPass =
 // from the production incremental pack. AC3 — existing CK/CF/TP/
 // Shape/Escape suites keep their legacy `run_on_dirty_blocks_only
 // (IRFunction&)` signatures and are accepted by `DirtySoAEntryPass`
-// (the legacy sibling); NEW production members must satisfy
-// `ProductionPureWrapPass` (this concept).
+// (the legacy sibling). Issue #3488: CK/CF/TP/Shape now satisfy
+// `ProductionPureWrapPass`; Escape stays DirtySoAEntryPass.
 //
 // Issue #3454: #3405 still type-checked `run_on_dirty_blocks_only
 // (aura::ir::IRFunction&)`, so an AoS-only Wrap satisfied the
 // production concept. The SoA signature is now the requires-clause
 // (IRFunctionSoA / IRModuleV2 from ir_soa.ixx — not aura::ir).
 // BlockDirtyPred stays in pass_pipeline_core.ixx; one-arg calls use
-// the Wrap's defaulted pred/mask. Grandfathered five Wraps remain
-// DirtySoAEntryPass. See pass_soa_sig.hh.
+// the Wrap's defaulted pred/mask. EscapeAnalysisWrap remains
+// DirtySoAEntryPass; CK/CF/TP/Shape satisfy ProductionPureWrapPass
+// (#3488). See pass_soa_sig.hh.
 template <typename P>
 concept ProductionPureWrapPass =
     PureWrapPass<P> && SoAViewAwarePass<P> && DirtyAwarePass<P> &&
@@ -324,9 +327,10 @@ concept ProductionPureWrapPass =
 //   void run_on_dirty_blocks_only(IRFunction&)
 // Accepted equivalent (pipeline routes via dirty peel + set_block_dirty_pred):
 //   IncrementalPass + DirtyAwarePass + SoAViewAwarePass
-// Issue #3454: this AoS arm is the grandfather path (CK/CF/TP/Shape/
-// Escape). NEW production DirtyAware PureWrap members must satisfy
-// ProductionPureWrapPass (IRFunctionSoA / IRModuleV2), not this concept.
+// Issue #3454 / #3488: this AoS arm is the Soft/unit + Escape
+// grandfather path. Production DirtyAware PureWrap members (CK/CF/TP/
+// Shape) must satisfy ProductionPureWrapPass (IRFunctionSoA /
+// IRModuleV2), not this concept.
 //
 // check_pass_dod_compliance / run_incremental_dirty_pipeline assert
 // this for DirtyAware hot stages so clean blocks never pay full
@@ -425,5 +429,8 @@ static_assert(ProductionPureWrapPass<pass_soa_detail::SoaDirtyPureWrapStub>,
 static_assert(pass_concepts::kProductionPureWrapSoaIssue == 3454, "Issue #3454 stamp");
 static_assert(pass_soa_sig::kProductionPureWrapSoaIssue == 3454,
               "Issue #3454 pass_soa_sig.hh stamp");
+static_assert(pass_soa_sig::kProductionPureWrapHotPackIssue == 3488,
+              "Issue #3488 pass_soa_sig.hh stamp");
+static_assert(pass_concepts::kProductionPureWrapHotPackIssue == 3488, "Issue #3488 stamp");
 
 } // namespace aura::compiler

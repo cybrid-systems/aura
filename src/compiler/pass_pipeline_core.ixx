@@ -64,6 +64,9 @@ export template <typename P> void note_pass_soa_enforcement(P& pass) noexcept;
 export template <typename P> consteval void check_pass_dod_compliance();
 export template <typename... Passes> consteval void check_pipeline_dod_compliance();
 export template <typename... Passes> consteval void check_production_pipeline_purity();
+export template <ProductionPureWrapPass... Passes> consteval void check_production_pure_wrap_pack();
+export template <ProductionPureWrapPass... Passes>
+bool run_production_soa_pure_wrap_pack(IRModuleV2& mod, Passes&... passes);
 
 // ── run_analysis_pipeline — fold over analysis passes ────────────
 //
@@ -424,6 +427,25 @@ export template <typename... Passes> consteval void check_production_pipeline_pu
                   "SoAViewAwarePass && DirtyPropagatorAwarePass (impure / non-SoA / "
                   "Legacy Pass rejected at compile time)");
     check_pipeline_dod_compliance<Passes...>();
+}
+
+// Issue #3488: DirtyAware PureWrap stages in the production SoA hot pack
+// must satisfy ProductionPureWrapPass (IRModuleV2 / IRFunctionSoA dirty
+// entry). AoS-only run_on_dirty_blocks_only(IRFunction&) fails to
+// instantiate. Soft / unit keep DirtySoAEntryPass + run_pipeline.
+export template <ProductionPureWrapPass... Passes>
+consteval void check_production_pure_wrap_pack() {
+    static_assert(sizeof...(Passes) > 0);
+    static_assert((ProductionPureWrapPass<std::remove_cvref_t<Passes>> && ...),
+                  "Issue #3488: production SoA PureWrap pack requires ProductionPureWrapPass "
+                  "(AoS-only DirtySoAEntryPass wrap fails to instantiate)");
+}
+
+export template <ProductionPureWrapPass... Passes>
+bool run_production_soa_pure_wrap_pack(IRModuleV2& mod, Passes&... passes) {
+    check_production_pure_wrap_pack<Passes...>();
+    (passes.run_on_dirty_blocks_only(mod), ...);
+    return true;
 }
 
 // Metric: pipeline stages that report SoAView awareness (#1241).

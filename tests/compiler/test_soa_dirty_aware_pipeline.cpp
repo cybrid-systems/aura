@@ -43,9 +43,12 @@ using aura::compiler::DeadCoercionEliminationPass;
 using aura::compiler::DirtyAwarePass;
 using aura::compiler::DirtySoAEntryPass;
 using aura::compiler::IRModuleV2;
+using aura::compiler::ProductionPureWrapPass;
 using aura::compiler::run_dirty_pipeline;
 using aura::compiler::run_pipeline;
 using aura::compiler::run_production_soa_dirty_hot_pack;
+using aura::compiler::run_production_soa_pure_wrap_pack;
+using aura::compiler::ShapeWrap;
 using aura::compiler::SoaDirtyAwarePass;
 using aura::compiler::TypePropagationPass;
 using aura::compiler::opt_registry::DeadCoercionPass;
@@ -346,7 +349,69 @@ int run_test_soa_dirty_aware_pipeline() {
               "AC5: no new test file per #81967");
     }
 
-    std::println("\n=== #2143/#2907 results: {} passed, {} failed ===", g_passed, g_failed);
+    // ── Issue #3488: production PureWrap pack peels SoA dirty blocks ──
+    {
+        std::println("\n=== Issue #3488: ProductionPureWrapPass SoA dirty hot pack ===");
+        static_assert(ProductionPureWrapPass<ComputeKindWrap>);
+        static_assert(ProductionPureWrapPass<ConstantFoldingWrap>);
+        static_assert(ProductionPureWrapPass<TypePropagationPass>);
+        static_assert(ProductionPureWrapPass<ShapeWrap>);
+        static_assert(DirtySoAEntryPass<ComputeKindWrap>);
+        static_assert(DirtySoAEntryPass<ConstantFoldingWrap>);
+        CHECK(static_cast<bool>(ProductionPureWrapPass<ComputeKindWrap>),
+              "3488 AC1: CK ProductionPureWrapPass");
+        CHECK(static_cast<bool>(ProductionPureWrapPass<ConstantFoldingWrap>),
+              "3488 AC1: CF ProductionPureWrapPass");
+        CHECK(static_cast<bool>(ProductionPureWrapPass<TypePropagationPass>),
+              "3488 AC1: TP ProductionPureWrapPass");
+        CHECK(static_cast<bool>(ProductionPureWrapPass<ShapeWrap>),
+              "3488 AC1: Shape ProductionPureWrapPass");
+        CHECK(static_cast<bool>(DirtySoAEntryPass<ComputeKindWrap>),
+              "3488 AC3: CK AoS DirtySoAEntryPass kept");
+        CHECK(static_cast<bool>(DirtySoAEntryPass<ConstantFoldingWrap>),
+              "3488 AC3: CF AoS DirtySoAEntryPass kept");
+
+        const auto impls = read_file("src/compiler/pass_impls.ixx");
+        const auto core = read_file("src/compiler/pass_pipeline_core.ixx");
+        const auto svc = read_file("src/compiler/service.ixx");
+        CHECK(core.find("run_production_soa_pure_wrap_pack") != std::string::npos,
+              "3488 AC2: production SoA PureWrap pack fold");
+        CHECK(core.find("check_production_pure_wrap_pack") != std::string::npos,
+              "3488 AC2: pack constrained by ProductionPureWrapPass");
+        CHECK(impls.find("AoS-only wrap fails to instantiate") != std::string::npos,
+              "3488 AC2: AoS-only compile-fail fixture");
+        CHECK(svc.find("prod_soa") != std::string::npos,
+              "3488 AC3: production + soa_mod skips AoS CK/CF/TP/Shape walk");
+
+        auto mod = make_sparse_dirty_mod();
+        const auto skips0 = aura::compiler::ir_soa_migration::dirty_block_driven_skips.load(
+            std::memory_order_relaxed);
+        const auto runs0 = aura::compiler::ir_soa_migration::dirty_block_driven_runs.load(
+            std::memory_order_relaxed);
+        ComputeKindWrap ck;
+        ConstantFoldingWrap cf;
+        TypePropagationPass tp;
+        ShapeWrap sh;
+        CHECK(run_production_soa_pure_wrap_pack(mod, ck, cf, tp, sh),
+              "3488 AC4: SoA PureWrap pack ok");
+        CHECK(aura::compiler::ir_soa_migration::dirty_block_driven_skips.load(
+                  std::memory_order_relaxed) > skips0,
+              "3488 AC4: clean blocks skipped (no full-function AoS rebuild)");
+        CHECK(aura::compiler::ir_soa_migration::dirty_block_driven_runs.load(
+                  std::memory_order_relaxed) > runs0,
+              "3488 AC4: dirty blocks peeled");
+
+        const auto build = read_file("build.py");
+        CHECK(build.find("check_production_pure_wrap_hot_pack_3488") != std::string::npos,
+              "3488 AC5: linter wired");
+        CHECK(read_file("docs/design/3488-production-pure-wrap-hot-pack.md").empty(),
+              "3488 AC5: no docs/design/3488-*");
+        CHECK(read_file("tests/compiler/test_issue_3488.cpp").empty(),
+              "3488 AC5: no test_issue_3488.cpp");
+        CHECK(impls.find("schema-3488") == std::string::npos, "3488 AC5: no new query key");
+    }
+
+    std::println("\n=== #2143/#2907/#3488 results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
 

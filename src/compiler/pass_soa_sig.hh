@@ -14,11 +14,13 @@
 //   void run_on_dirty_blocks_only(IRModuleV2&, const DefineDirtyMaskView* = nullptr);
 //   void run_on_dirty_blocks_only(IRFunctionSoA&, BlockDirtyPred = {});
 // AoS run_on_dirty_blocks_only(aura::ir::IRFunction&) stays DirtySoAEntryPass
-// (grandfather CK/CF/TP/Shape/Escape). NEW production members must hit
+// (Soft/unit + EscapeAnalysisWrap grandfather). Issue #3488: CK/CF/TP/Shape
+// provide run_on_dirty_blocks_only(IRModuleV2&) and satisfy
 // ProductionPureWrapPass. BlockDirtyPred remains trivially copyable (#3042).
 
 namespace aura::compiler::pass_soa_sig {
 
 inline constexpr int kProductionPureWrapSoaIssue = 3454;
+inline constexpr int kProductionPureWrapHotPackIssue = 3488;
 
 } // namespace aura::compiler::pass_soa_sig

@@ -8,6 +8,10 @@
 //   AC4: run_default_optimization_pipeline / run_pass_kind factory
 //   AC5: query:optimization-passes-stats (schema 1576) via engine:metrics
 //   AC6: sequential run of all 4 core passes on a synthetic IRModule
+//
+//   Issue #3488: production CK/CF/TP/Shape wraps satisfy
+//   ProductionPureWrapPass via SoA dirty peel (live-covered in
+//   test_soa_dirty_aware_pipeline). AoS DirtySoAEntryPass stays Soft.
 
 #include "test_harness.hpp"
 
