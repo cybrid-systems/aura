@@ -199,24 +199,13 @@ public:
     // Issue #3026: residual = force & ~last_success (agent-actionable bits).
     [[nodiscard]] std::uint64_t residual_force_mask() const noexcept;
 
-    // Issue #3136: relower-success-path bitmap coherence. After a successful
-    // partial / full relower that restamps the IR cache entry for define D,
-    // the producer (service.ixx) maps D → a region bit (e.g.,
-    // `1ULL << (fnv1a_64(D) % 64)`) and calls this hook. The hook ORs the bit
-    // into `last_reemit_success_region_mask_` so the existing
-    // `residual_force_mask() = force & ~last_success` shrinks for the
-    // covered region — closes the success-path authority split between IR
-    // cache stamp and registry residual force (orthogonal to #3129 entry-
-    // path completion). Caller is expected to gate via
-    // `production_defaults_active()` (Soft / Off path zero-cost — no work
-    // here). Lock-free: one `fetch_or`; matches the reemit-pipeline
-    // pattern in `on_reemit_pipeline_call` (hot_update_registry.cpp:161-
-    // 170). Counter surface unchanged — no new query keys.
-    void note_relower_success_coverage(std::uint64_t region_bit) noexcept {
-        if (region_bit == 0)
-            return;
-        last_reemit_success_region_mask_.fetch_or(region_bit, std::memory_order_relaxed);
-    }
+    // Issue #3136 / #3383: relower-success hook. Call sites still pass the
+    // hashed-name region bit (fnv1a_64 identity across store + cascade).
+    // Issue #3505: do **not** OR that bit into `last_reemit_success_region_mask_`
+    // — that word is the #3445/#3466 **reason-group** coverage (bits 0–4).
+    // Define coverage is the #3229 side set (`note_relower_success_define`).
+    // Soft / Off: callers already skip; this body is a no-op either way.
+    void note_relower_success_coverage(std::uint64_t region_bit) noexcept { (void)region_bit; }
     // Issue #3229: record the restamped define so a peer that collides
     // on fnv1a&63 is not treated as covered. id==0 / Soft skip. Cap
     // overflow is fail-closed (unrecorded id stays residual).

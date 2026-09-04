@@ -44,6 +44,9 @@
 
 #include "test_harness.hpp"
 
+#include "compiler/aura_jit_bridge.h"
+#include "compiler/hot_update_registry.hh"
+
 #include <fstream>
 #include <print>
 #include <string>
@@ -367,7 +370,64 @@ int run_test_hot_update_relower_success_coverage() {
               "AC4: no tests/compiler/test_issue_3229.cpp per #81967");
     }
 
-    std::println("\n=== Issue #3383 + #3229 AC tests done ===");
+    // ── Issue #3505: hashed relower bits must not enter reason-group last_success
+    {
+        std::println(
+            "\n--- #3505 AC1: note_relower_success_coverage does not fetch_or last_success ---");
+        auto hur3505 = read_file("src/compiler/hot_update_registry.hh");
+        const auto hook =
+            find_fn_body(hur3505, "note_relower_success_coverage(std::uint64_t region_bit)", 400);
+        CHECK(!hook.empty() || hur3505.find("(void)region_bit") != std::string::npos,
+              "3505 AC1: hook present");
+        CHECK(hur3505.find("Issue #3505") != std::string::npos, "3505 AC1: cite");
+        const auto fn_pos = hur3505.find("void note_relower_success_coverage");
+        const auto nxt = hur3505.find("void note_relower_success_define", fn_pos);
+        const auto win = (fn_pos != std::string::npos && nxt > fn_pos)
+                             ? hur3505.substr(fn_pos, nxt - fn_pos)
+                             : std::string{};
+        CHECK(win.find("last_reemit_success_region_mask_") == std::string::npos,
+              "3505 AC1: no last_success store/fetch_or in hook");
+        CHECK(win.find("fetch_or") == std::string::npos, "3505 AC1: no fetch_or");
+
+        std::println("\n--- #3505 AC2: hash_bit does not shrink reason residual ---");
+        auto& reg = aura::compiler::hot_update_registry();
+        reg.on_reload_success();
+        reg.reset_force_jit_repromote_for_test();
+        reg.on_force_jit_for_reason(AotReloadFail::Defuse);
+        reg.on_force_jit_for_reason(AotReloadFail::Env);
+        const auto env_bit = aot_reload_fail_to_force_jit_mask(AotReloadFail::Env);
+        const auto defuse_bit = aot_reload_fail_to_force_jit_mask(AotReloadFail::Defuse);
+        const auto r0 = reg.residual_force_mask();
+        CHECK((r0 & env_bit) != 0 && (r0 & defuse_bit) != 0, "3505 AC2: both reason bits residual");
+        const auto hash_bit = aura::compiler::relower_success_region_bit("define-D-3505");
+        reg.note_relower_success_coverage(hash_bit);
+        const auto r1 = reg.residual_force_mask();
+        CHECK((r1 & env_bit) != 0, "3505 AC2: Env residual survives hashed cover");
+        CHECK((r1 & defuse_bit) != 0, "3505 AC2: Defuse residual survives hashed cover");
+        CHECK(r1 == r0, "3505 AC2: residual_force_mask unchanged by hashed note");
+
+        std::println("\n--- #3505 AC3/AC4: pipeline reason stamp + #3229 side set kept ---");
+        CHECK(read_file("src/compiler/hot_update_registry.cpp")
+                      .find("aot_reload_fail_to_force_jit_mask(fail) & demoted") !=
+                  std::string::npos,
+              "3505 AC3: pipeline reason ∩ demoted");
+        CHECK(hur3505.find("note_relower_success_define") != std::string::npos,
+              "3505 AC4: #3229 define side set");
+        CHECK(hur3505.find("relower_success_covers_define") != std::string::npos,
+              "3505 AC4: covers_define kept");
+
+        std::println("\n--- #3505 AC5: no invent / no new query key ---");
+        CHECK(read_file("tests/compiler/test_issue_3505.cpp").empty(), "3505 AC5: no test_issue");
+        CHECK(read_file("docs/design/3505-hashed-last-success.md").empty(),
+              "3505 AC5: no docs/design");
+        CHECK(read_file("src/compiler/evaluator_primitives_obs_eval.cpp").find("schema-3505") ==
+                  std::string::npos,
+              "3505 AC5: no new query key");
+        reg.on_reload_success();
+        reg.reset_force_jit_repromote_for_test();
+    }
+
+    std::println("\n=== Issue #3383 + #3229 + #3505 AC tests done ===");
     return g_failed == 0 ? 0 : 1;
 }
 
