@@ -4276,6 +4276,20 @@ def cmd_lint():
             "Issue #3255 Soft dual-graph parity partial linter failed — run python3 scripts/coverage/checks/check_dual_dep_graph_soft_parity_partial_3255.py"
         )
         return r
+    # Issue #3486: dual DepGraph lockless/batch one-sided inject oracle.
+    # Test-only string-only / NodeId-only hooks; production peel-entry
+    # reuses #3255 fail-closed. String graph stays source of truth.
+    # Extends test_dep_graph_hybrid_cascade; no docs/design/; no new query.
+    dgi3486_script = COVERAGE_CHECKS / "check_dual_dep_graph_inject_oracle_3486.py"
+    if not dgi3486_script.exists():
+        fail(f"missing {dgi3486_script}")
+        return 1
+    r = run([sys.executable, str(dgi3486_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3486 dual DepGraph inject oracle linter failed — run python3 scripts/coverage/checks/check_dual_dep_graph_inject_oracle_3486.py"
+        )
+        return r
     # Issue #3256: mailbox under-boundary SLO unifies with hold-budget
     # force path. Extends test_mailbox_recv_mutation_boundary (#81967);
     # no docs/design/ (#1655).

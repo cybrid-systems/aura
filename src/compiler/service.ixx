@@ -7367,6 +7367,33 @@ public:
                 metrics_.partial_forced_full_by_impact_total.fetch_add(1,
                                                                        std::memory_order_relaxed);
             }
+            // Issue #3486: lockless / test inject can fork the dual graph
+            // and reach peel with want_partial already false (#3310 /
+            // threshold), so the per-entry #3255 helper never runs.
+            // Production / Full: one peel-entry consult (shared lock when
+            // consistent; exclusive rebuild + all-callers dirty on fail).
+            // Reuses fail_closed_soft_dual_graph_parity_before_partial_.
+            // Soft / Off skip (zero extra). String graph stays authority
+            // (rebuild_node_dep_graph_from_string).
+            if (!dirty_names.empty() &&
+                (aura::compiler::typed_audit::production_defaults_active() ||
+                 aura::compiler::typed_audit::get_strategy() ==
+                     aura::compiler::typed_audit::AuditStrategy::Full)) {
+                auto eit = ir_cache_v2_.find(dirty_names.front());
+                if (eit != ir_cache_v2_.end()) {
+                    bool want = true;
+                    fail_closed_soft_dual_graph_parity_before_partial_(eit->second, want);
+                    if (!want) {
+                        for (const auto& name : dirty_names) {
+                            auto cit = ir_cache_v2_.find(name);
+                            if (cit != ir_cache_v2_.end()) {
+                                cit->second.mark_all_blocks_dirty();
+                                cit->second.dirty = true;
+                            }
+                        }
+                    }
+                }
+            }
         }
         // Issue #3161: snapshot the NodeId mirror-edge counter under the
         // cascade_decision_mtx_ critical section so the mid-loop
@@ -12856,6 +12883,29 @@ public:
     // Issue #1376: test hook — route through locked record_dependency.
     void public_record_dependency(const std::string& caller, const std::string& callee) {
         record_dependency(caller, callee);
+    }
+
+    // Issue #3486: test-only one-sided writes. Do not dual-write, rebuild,
+    // or force-dirty — production peel must survive the fork. String graph
+    // remains source of truth (rebuild_node_dep_graph_from_string).
+    void inject_string_only_edge_for_test(const std::string& caller, const std::string& callee) {
+        lock_order::OrderedUniqueLock<std::shared_mutex> write(dep_graph_mtx_,
+                                                               lock_order::Level::DepGraph);
+        auto& caller_entry = dep_graph_[caller];
+        if (std::find(caller_entry.calls.begin(), caller_entry.calls.end(), callee) ==
+            caller_entry.calls.end())
+            caller_entry.calls.push_back(callee);
+        auto& callee_entry = dep_graph_[callee];
+        if (std::find(callee_entry.called_by.begin(), callee_entry.called_by.end(), caller) ==
+            callee_entry.called_by.end())
+            callee_entry.called_by.push_back(caller);
+        (void)ensure_dep_fn_slot_(caller);
+        (void)ensure_dep_fn_slot_(callee);
+    }
+    void inject_node_only_edge_for_test(const std::string& caller, const std::string& callee) {
+        lock_order::OrderedUniqueLock<std::shared_mutex> write(dep_graph_mtx_,
+                                                               lock_order::Level::DepGraph);
+        mirror_fn_dep_edge_unlocked_(caller, callee);
     }
 
     // Issue #3067: test hooks — inject stale reject, drain, fork NodeId, parity.
