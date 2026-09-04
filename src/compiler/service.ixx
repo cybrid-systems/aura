@@ -5098,6 +5098,13 @@ public:
             // Issue #3229: define-id side set so a 6-bit collision does
             // not cover a peer. Soft skipped by the probe above.
             hot_update_registry().note_relower_success_define(relower_success_define_id(name));
+            // Issue #3513: stored irs are the content epoch — drop the
+            // native-untrusted latch and reemit through the same facade
+            // so AOT/native can promote against this store, not the
+            // pre-mutate emit. Soft skipped by the probe above.
+            hot_update_registry().note_ir_content_stored_for_native();
+            (void)hot_update_registry().decide_and_reemit(aura_get_aot_defuse_version(),
+                                                          HotUpdateRegistry::ReemitReason::Cascade);
         }
         // Issue #196: rebuild the per-block dirty bitmask to
         // match the new irs layout, then mark all blocks clean.

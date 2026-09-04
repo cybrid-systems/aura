@@ -173,6 +173,23 @@ public:
     // Returns true if the facade was taken (production + reemit triggered).
     [[nodiscard]] bool hard_invalidate_via_facade(const char* name, ReemitReason reason) noexcept;
 
+    // Issue #3513: facade `decide_and_reemit` may run against pre-store
+    // `irs`. IR lookup is already latched (`content_stored_this_epoch`,
+    // #3481). Native promotion (re-promote / remount / would_allow_native
+    // / peer-stale clear) must wait until `store_define_v2`. Soft/Off
+    // never takes the facade (zero extra). Not a second stamp API —
+    // one latch the existing IR content flag already describes.
+    static constexpr int kIrContentUntrustedNativeIssue = 3513;
+    void note_ir_content_untrusted_for_native() noexcept {
+        ir_content_untrusted_for_native_.store(1, std::memory_order_release);
+    }
+    void note_ir_content_stored_for_native() noexcept {
+        ir_content_untrusted_for_native_.store(0, std::memory_order_release);
+    }
+    [[nodiscard]] bool ir_content_untrusted_for_native() const noexcept {
+        return ir_content_untrusted_for_native_.load(std::memory_order_acquire) != 0;
+    }
+
     // Issue #2012: atomic AOT reload success / rollback bookkeeping.
     void on_reload_success() noexcept;
     // Issue #2502: after force-JIT demotion, auto re-promote when a
@@ -973,6 +990,9 @@ private:
     // (distinct from prev_storm_level_ used by #2639 health pass).
     std::atomic<std::uint8_t> hysteresis_prev_storm_level_{0};
     std::atomic<std::uint32_t> storm_exit_force_full_remaining_{0};
+    // Issue #3513: 1 while facade reemit may see pre-store irs. Appended
+    // at the hysteresis cluster (not a query-key / metrics-middle insert).
+    std::atomic<std::uint8_t> ir_content_untrusted_for_native_{0};
     std::atomic<std::uint64_t> reemit_storm_clear_health_pass_total_{0};
     std::atomic<std::uint64_t> reemit_storm_clear_health_pass_success_total_{0};
     std::atomic<std::uint64_t> reemit_storm_clear_health_pass_skipped_reentered_storm_total_{0};

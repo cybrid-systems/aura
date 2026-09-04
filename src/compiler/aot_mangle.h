@@ -49,6 +49,9 @@
 // + abort-force gen only; lookup stays 1 until store_define_v2 or a
 // peel that actually rewrote AST/IR. last_reemit_success_region_mask
 // remains coverage-only (#3445) — not content promotion.
+// Issue #3513: the same pre-store emit must not promote native
+// (would_allow_native / only_covered re-promote / covered remount /
+// peer-stale clear). store_define_v2 clears the latch and reemits.
 
 #pragma once
 

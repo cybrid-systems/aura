@@ -223,6 +223,18 @@ bool HotUpdateRegistry::hard_invalidate_via_facade(const char* name, ReemitReaso
     // content_stored_this_epoch=false keep lookup_define_v2==1 until
     // store_define_v2 / true per-fn. last_reemit_success_region_mask
     // stays coverage-only (#3445) — not content promotion.
+    // Issue #3513: arm the native-untrusted latch BEFORE decide_and_reemit
+    // so coverage stamp cannot re-promote / remount / would_allow_native
+    // / clear peer stale against pre-store irs. store_define_v2 clears it.
+    // Stamp would_allow_native=false here so ABI early-exits (no candidate
+    // fn / Defer / storm) cannot leave a green proof from a prior store.
+    note_ir_content_untrusted_for_native();
+    {
+        AotReloadConsistencyProof p = load_aot_reload_consistency_proof_snapshot();
+        p.would_allow_native = false;
+        p.schema = kAotReloadConsistencyProofIssue;
+        stamp_aot_reload_consistency_proof(p);
+    }
     decide_and_reemit(aura_get_aot_defuse_version(), reason);
     // Issue #3219: C-ABI joint (bridge/defuse/table) lives here.
     // Evaluator/core dual-write is CompilerService::
@@ -265,17 +277,22 @@ void HotUpdateRegistry::on_reemit_pipeline_call(std::uint64_t candidates,
             if (covered != 0)
                 last_reemit_success_region_mask_.store(covered, std::memory_order_relaxed);
         }
-        maybe_force_jit_repromote_on_clean_success();
-        // Issue #2978: production + non-zero coverage → sync remount
-        // named closures in the just-covered region bits (budget-exempt
-        // vs residual). Soft / mask idle / cap=0 → zero extra work.
-        // Runs after coverage stamp so last_success is visible.
-        if (aura_production_defaults_active_probe() != 0) {
-            const auto cov = last_reemit_success_region_mask_.load(std::memory_order_relaxed);
-            if (cov != 0) {
-                const auto cap = aura_reemit_success_sync_covered_cap_default();
-                if (cap > 0)
-                    aura_sync_remount_covered_named_live_closures(cov, cap);
+        // Issue #3513: coverage stamp stays (#3445). Do not re-promote or
+        // remount-as-healed while the facade emit still sees pre-store irs.
+        // Soft / latch idle: existing path (one acquire).
+        if (!ir_content_untrusted_for_native()) {
+            maybe_force_jit_repromote_on_clean_success();
+            // Issue #2978: production + non-zero coverage → sync remount
+            // named closures in the just-covered region bits (budget-exempt
+            // vs residual). Soft / mask idle / cap=0 → zero extra work.
+            // Runs after coverage stamp so last_success is visible.
+            if (aura_production_defaults_active_probe() != 0) {
+                const auto cov = last_reemit_success_region_mask_.load(std::memory_order_relaxed);
+                if (cov != 0) {
+                    const auto cap = aura_reemit_success_sync_covered_cap_default();
+                    if (cap > 0)
+                        aura_sync_remount_covered_named_live_closures(cov, cap);
+                }
             }
         }
     } else if (force_jit_regions_mask_.load(std::memory_order_relaxed) != 0)

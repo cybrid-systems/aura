@@ -18,8 +18,17 @@
 //   #3481 AC4: Soft/Off no extra work; #2183 mismatch-force-relower stays
 //   #3481 AC5: abort path unchanged (zero stamp + clear map + abort_map_invalid)
 //   #3481 AC6: last_reemit_success_region_mask stays coverage-only (#3445)
+//
+//   #3513 AC1: production facade still calls decide_and_reemit; lookup 1
+//              while !content_stored_this_epoch
+//   #3513 AC2: untrusted → would_allow_native false even if force_mask==0
+//   #3513 AC3: untrusted emit does not clear peer JIT stale; coverage-only
+//   #3513 AC4: store_define_v2 clears latch + production reemit; Soft no latch
+//   #3513 AC5: extend this suite; no test_issue_3513 / docs/design / new query
 
 #include "test_harness.hpp"
+#include "compiler/aot_reload_consistency_proof.h"
+#include "compiler/hot_update_registry.hh"
 #include "compiler/observability_metrics.h"
 #include "compiler/typed_mutation_audit.h"
 
@@ -423,7 +432,120 @@ int run_test_cache_stamp_restamp_contract() {
         CHECK(svc.find("query:content-stored") == std::string::npos, "3481 AC6: no new query key");
     }
 
-    std::println("\n=== #2183/#3481 cache stamp restamp: {} passed, {} failed ===", g_passed,
+    // ── Issue #3513: facade reemit must not promote native before store ──
+    {
+        std::println("\n--- #3513 AC1: facade still decide_and_reemit; lookup latched ---");
+        const auto hur = read_file("src/compiler/hot_update_registry.cpp");
+        const auto fac = hur.find("bool HotUpdateRegistry::hard_invalidate_via_facade");
+        CHECK(fac != std::string::npos, "3513 AC1: facade present");
+        const auto fac_win = hur.substr(fac, 9000);
+        CHECK(fac_win.find("note_ir_content_untrusted_for_native()") != std::string::npos,
+              "3513 AC1: latch armed before decide_and_reemit");
+        const auto latch = fac_win.find("note_ir_content_untrusted_for_native()");
+        const auto reemit =
+            fac_win.find("decide_and_reemit(aura_get_aot_defuse_version(), reason)");
+        CHECK(latch != std::string::npos && reemit != std::string::npos && latch < reemit,
+              "3513 AC1: untrusted latch before decide_and_reemit");
+        apply_production_audit_defaults();
+        CompilerService cs;
+        CHECK(cs.eval("(set-code \"(define f3513 (lambda (x) (+ x 1))) (f3513 1)\")").has_value(),
+              "3513 AC1: set-code");
+        CHECK(cs.eval("(eval-current)").has_value(), "3513 AC1: eval");
+        if (!cs.get_define_v2("f3513"))
+            (void)cs.eval("(compile:cache-define \"f3513\")");
+        const auto* e0 = cs.get_define_v2("f3513");
+        CHECK(e0 != nullptr, "3513 AC1: cache entry");
+        const auto hash = e0->source_hash;
+        cs.public_mark_define_dirty("f3513");
+        const auto* e1 = cs.get_define_v2("f3513");
+        CHECK(e1 && !e1->content_stored_this_epoch, "3513 AC1: content latch cleared");
+        CHECK(cs.lookup_define_v2("f3513", hash) == 1, "3513 AC1: lookup stays 1");
+        CHECK(aura::compiler::hot_update_registry().ir_content_untrusted_for_native(),
+              "3513 AC1: native-untrusted latch armed after facade");
+        apply_dev_audit_defaults();
+    }
+
+    {
+        std::println("\n--- #3513 AC2: untrusted → would_allow_native false ---");
+        const auto bridge = read_file("src/compiler/aura_jit_bridge.cpp");
+        CHECK(bridge.find("ir_content_untrusted_for_native()") != std::string::npos,
+              "3513 AC2: bridge consults latch");
+        CHECK(bridge.find("p.would_allow_native = false") != std::string::npos,
+              "3513 AC2: untrusted path stamps would_allow_native=false");
+        apply_production_audit_defaults();
+        CompilerService cs;
+        CHECK(cs.eval("(set-code \"(define w3513 (lambda (x) x)) (w3513 1)\")").has_value(),
+              "3513 AC2: set-code");
+        CHECK(cs.eval("(eval-current)").has_value(), "3513 AC2: eval");
+        if (!cs.get_define_v2("w3513"))
+            (void)cs.eval("(compile:cache-define \"w3513\")");
+        cs.public_mark_define_dirty("w3513");
+        CHECK(aura::compiler::hot_update_registry().ir_content_untrusted_for_native(),
+              "3513 AC2: latch on");
+        CHECK(aura_last_aot_reload_consistency_would_allow_native() == 0,
+              "3513 AC2: would_allow_native false while untrusted");
+        apply_dev_audit_defaults();
+    }
+
+    {
+        std::println("\n--- #3513 AC3: untrusted does not clear peer stale ---");
+        const auto bridge = read_file("src/compiler/aura_jit_bridge.cpp");
+        const auto skip = bridge.find("if (content_untrusted)");
+        CHECK(skip != std::string::npos, "3513 AC3: content_untrusted skip present");
+        const auto skip_win = bridge.substr(skip, 800);
+        CHECK(skip_win.find("continue") != std::string::npos,
+              "3513 AC3: untrusted skips native install");
+        CHECK(skip_win.find("aura_aot_clear_peer_jit_name_soft_stale") == std::string::npos,
+              "3513 AC3: skip arm does not clear peer stale");
+        const auto hur = read_file("src/compiler/hot_update_registry.cpp");
+        const auto pipe = hur.find("void HotUpdateRegistry::on_reemit_pipeline_call");
+        CHECK(pipe != std::string::npos, "3513 AC3: pipeline call present");
+        const auto pipe_win = hur.substr(pipe, 2800);
+        CHECK(pipe_win.find("if (!ir_content_untrusted_for_native())") != std::string::npos,
+              "3513 AC3: re-promote/remount gated on latch");
+        CHECK(hur.find("last_reemit_success_region_mask") != std::string::npos,
+              "3513 AC3: coverage stamp remains (#3445)");
+    }
+
+    {
+        std::println("\n--- #3513 AC4: store clears latch; Soft no extra ---");
+        const auto svc = read_file("src/compiler/service.ixx");
+        const auto store = svc.find("void store_define_v2(");
+        CHECK(store != std::string::npos, "3513 AC4: store_define_v2");
+        const auto store_win = svc.substr(store, 3500);
+        CHECK(store_win.find("note_ir_content_stored_for_native()") != std::string::npos,
+              "3513 AC4: store clears latch");
+        CHECK(store_win.find("decide_and_reemit") != std::string::npos,
+              "3513 AC4: store may reemit against stored irs");
+        const auto stored = store_win.find("note_ir_content_stored_for_native()");
+        const auto content = store_win.find("content_stored_this_epoch = true");
+        CHECK(content != std::string::npos && stored != std::string::npos && content < stored,
+              "3513 AC4: content stored before latch clear");
+        apply_dev_audit_defaults();
+        CHECK(!aura::compiler::typed_audit::production_defaults_active(),
+              "3513 AC4: Soft/dev defaults");
+        const auto hur = read_file("src/compiler/hot_update_registry.cpp");
+        CHECK(hur.find("aura_production_defaults_active_probe() == 0") != std::string::npos,
+              "3513 AC4: facade Soft/Off returns false (zero extra)");
+    }
+
+    {
+        std::println("\n--- #3513 AC5: no invent test_issue / docs / query key ---");
+        CHECK(read_file("docs/design/3513-native-untrusted.md").empty(),
+              "3513 AC5: no docs/design/");
+        CHECK(read_file("tests/compiler/test_issue_3513.cpp").empty(),
+              "3513 AC5: no invent test_issue_3513");
+        CHECK(read_file("tests/issues/test_issue_3513.cpp").empty(),
+              "3513 AC5: no tests/issues/test_issue_3513");
+        const auto svc = read_file("src/compiler/service.ixx");
+        CHECK(svc.find("schema-3513") == std::string::npos, "3513 AC5: no schema-3513");
+        CHECK(svc.find("query:ir-content-untrusted") == std::string::npos,
+              "3513 AC5: no new query key");
+        CHECK(aura::compiler::HotUpdateRegistry::kIrContentUntrustedNativeIssue == 3513,
+              "3513 AC5: issue stamp");
+    }
+
+    std::println("\n=== #2183/#3481/#3513 cache stamp restamp: {} passed, {} failed ===", g_passed,
                  g_failed);
     return g_failed == 0 ? 0 : 1;
 }

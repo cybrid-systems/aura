@@ -1377,7 +1377,12 @@ void commit_func_table_swap() {
             aura_hot_update_reload_recovery_get_snapshot(&snap);
             p.force_jit_regions_mask = static_cast<std::uint64_t>(snap.force_jit_regions_mask);
         }
-        p.would_allow_native = (p.force_jit_regions_mask == 0);
+        // Issue #3513: coverage-only emit against pre-store irs must not
+        // publish would_allow_native (Agents / remount treat that as healed).
+        // force_mask==0 is necessary but not sufficient while the latch is on.
+        p.would_allow_native =
+            (p.force_jit_regions_mask == 0) &&
+            !aura::compiler::hot_update_registry().ir_content_untrusted_for_native();
         // Issue #2776: stamp_epoch assigned via fetch_add inside stamp().
         p.schema = kAotReloadConsistencyProofIssue;
         stamp_aot_reload_consistency_proof(p);
@@ -4219,6 +4224,10 @@ extern "C" std::uint64_t aura_reemit_aot_for_dirty(std::uint64_t current_defuse_
     // Default LLVM only flips return mode after at least one real emit.
     const bool host_emit_wired = (g_aot_emit_fn != nullptr);
     bool real_llvm_emit_success = false;
+    // Issue #3513: facade reemit against pre-store irs. Walk candidates
+    // (n may be >0) but do not install native / remount / clear peer stale.
+    const bool content_untrusted =
+        aura::compiler::hot_update_registry().ir_content_untrusted_for_native();
 
     // Issue #2013: collect (name, stable_id) for successful reemits so we
     // can retarget live closures after the epoch commit.
@@ -4314,6 +4323,12 @@ extern "C" std::uint64_t aura_reemit_aot_for_dirty(std::uint64_t current_defuse_
             }
         }
         ++to_re_emit;
+        if (content_untrusted) {
+            // Issue #3513: owner slot was already physically cleared
+            // (#3377). Do not refill it from pre-store irs. Candidate
+            // still counted so facade n can be >0 (#3481 AC1 comment).
+            continue;
+        }
 
         // count_emit_success: host/default LLVM success only (not skeleton).
         auto note_reemit = [&](std::uint32_t sid, int preserved, bool count_emit_success,
@@ -4397,6 +4412,28 @@ extern "C" std::uint64_t aura_reemit_aot_for_dirty(std::uint64_t current_defuse_
             }
             note_reemit(sid, preserved, /*count_emit_success=*/false, /*count_llvm=*/false);
         }
+    }
+
+    // Issue #3513: pre-store emit must not promote native. Stamp
+    // would_allow_native=false (force_mask==0 is not enough) and skip
+    // commit/remap/remount. Coverage-only last_success may still land
+    // in on_reemit_pipeline_call if success_count>0 (it stays 0 here).
+    if (content_untrusted) {
+        AotReloadConsistencyProof p{};
+        p.table_epoch = g_aot_table_epoch.load(std::memory_order_acquire);
+        p.bridge_epoch = aura_get_current_bridge_epoch();
+        p.defuse_version = aura_get_aot_defuse_version();
+        p.region_mask = aura_get_aot_region_mask();
+        p.last_fail_reason = static_cast<std::uint8_t>(AotReloadFail::Ok);
+        {
+            aura_reload_recovery_snapshot snap{};
+            aura_hot_update_reload_recovery_get_snapshot(&snap);
+            p.force_jit_regions_mask = static_cast<std::uint64_t>(snap.force_jit_regions_mask);
+        }
+        p.would_allow_native = false;
+        p.schema = kAotReloadConsistencyProofIssue;
+        stamp_aot_reload_consistency_proof(p);
+        any_re_emit = false;
     }
 
     // Atomic commit: bump func_table_epoch only if at least one
