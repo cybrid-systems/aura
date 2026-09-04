@@ -1218,6 +1218,12 @@ bool test_ws_deque_rapid_cycles() {
     aura::serve::WorkStealingDeque<void*> dq;
     constexpr int CYCLES = 5000;
 
+    // Per-cycle CHECK used to print one PASS line per iteration (5000 lines
+    // per run — ~95% of this binary's PASS output). Keep the per-cycle
+    // detection (ABA safety) but only remember the first bad cycle and
+    // report once at the end, so success is one line and a failure still
+    // names the exact cycle.
+    int first_bad_cycle = -1;
     for (int cycle = 0; cycle < CYCLES; ++cycle) {
         // Push 3 items
         for (int i = 1; i <= 3; ++i)
@@ -1234,10 +1240,17 @@ bool test_ws_deque_rapid_cycles() {
             return false;
         }
 
-        CHECK(dq.empty_approx(), "deque empty after cycle " + std::to_string(cycle));
+        if (!dq.empty_approx() && first_bad_cycle < 0)
+            first_bad_cycle = cycle;
     }
 
-    CHECK(dq.empty_approx(), "deque empty after " + std::to_string(CYCLES) + " cycles");
+    if (first_bad_cycle >= 0) {
+        std::println("  FAIL: deque non-empty after cycle {} (of {}) (line {})", first_bad_cycle,
+                     CYCLES, __LINE__);
+        return false; // run_test wrapper retries once + counts on double-fail
+    }
+    ++g_passed;
+    std::println("  PASS: deque empty after all {} rapid cycles", CYCLES);
     return true;
 }
 
