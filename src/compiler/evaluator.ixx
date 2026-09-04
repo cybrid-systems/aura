@@ -3801,6 +3801,13 @@ public:
     [[nodiscard]] std::uint64_t expected_occurrence_snapshot_fp() const noexcept {
         return expected_occurrence_fp_;
     }
+    // Issue #3512: stage live fingerprint after SOLVED infer / SDO so
+    // #3431 unstaged abort is not permanent. 0 = unstaged. Append-only
+    // setter (field already at struct end).
+    void stage_expected_occurrence_snapshot_fp(std::uint64_t fp) noexcept {
+        expected_occurrence_fp_ = fp;
+    }
+    void clear_expected_occurrence_snapshot_fp() noexcept { expected_occurrence_fp_ = 0; }
     void bump_occurrence_persist_fingerprint_mismatch() noexcept {
         if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
             m->occurrence_persist_fingerprint_mismatch_total.fetch_add(1,
@@ -15526,7 +15533,7 @@ private:
     // TIMEOUT/CONFLICT/nested/mid so a Soft local SOLVED cannot re-open
     // durable query:type authority without an outermost Full face.
     bool type_export_outermost_success_face_ = true;
-    // Issue #3170: staged occurrence-persist fingerprint (0 = unstaged).
+    // Issue #3170 / #3512: staged occurrence-persist fingerprint (0 = unstaged).
     std::uint64_t expected_occurrence_fp_ = 0;
     // Opaque std::vector<TypeId>* — stashed occurrence span for commit.
     void* commit_occurrence_vars_opaque_ = nullptr;

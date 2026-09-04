@@ -320,6 +320,10 @@ bool Evaluator::run_post_mutate_typecheck_no_lock() {
             // Issue #3237: Production stays inflight until persist + Full
             // residual faces are clear; query:type re-checks at export.
             note_infer_solve_solved(tc.last_delta_solve_status() == SolveResult::SOLVED);
+            // Issue #3512: stage expected fp after SOLVED infer so outermost
+            // persist is not permanently #3431-unstaged. Fail paths leave 0.
+            if (tc.last_delta_solve_status() == SolveResult::SOLVED)
+                stage_expected_occurrence_snapshot_fp(aura_occurrence_goal_fingerprint_tc(&tc));
             if (aura::compiler::typed_audit::production_defaults_active())
                 note_type_export_inflight();
             else
@@ -1177,6 +1181,11 @@ bool Evaluator::composite_txn_commit(std::uint64_t mutation_id, std::string_view
                         }
                     }
                 }
+                // Issue #3512: stage expected fp after SDO+drain SOLVED so
+                // outermost persist can pass #3431. Fail leaves 0 (unstaged).
+                if (cr.solve_ok)
+                    stage_expected_occurrence_snapshot_fp(
+                        aura_occurrence_goal_fingerprint_tc(commit_type_checker_opaque_));
                 // Issue #2262 / #2345: expected-partial + empty CS anti false-green.
                 // Production defaults / Full / AURA_COMPOSITE_EMPTY_CS_HARD=1 →
                 // hard-reject (solve_ok=false). Dev Sampled soft → observe only

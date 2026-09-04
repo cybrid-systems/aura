@@ -1717,6 +1717,10 @@ inline constexpr int kOccurrencePersistSeqIssue = 3225;
 // Issue #3431: unstaged expected_fp==0 skips the #3170 fingerprint
 // guard under Production (I1 residual of #3170/#3376).
 inline constexpr int kOccurrenceUnstagedExpectedFpIssue = 3431;
+// Issue #3512: residual of #3431 — expected_fp was never staged so
+// production live goals always aborted. Stage after SOLVED infer/SDO;
+// production empty-live clears the prior persist log.
+inline constexpr int kOccurrenceExpectedFpStageIssue = 3512;
 inline std::atomic<std::uint64_t> g_occurrence_persist_seq{0};
 [[nodiscard]] inline std::uint64_t occurrence_persist_seq_v_read() noexcept {
     return g_occurrence_persist_seq.load(std::memory_order_relaxed);
