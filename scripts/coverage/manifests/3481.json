@@ -1,0 +1,41 @@
+{
+  "issue": 3481,
+  "title": "Issue #3481: AOT/facade success must not restamp dirty pre-relower IR",
+  "ok": "OK: Issue #3481 content restamp gated — lookup stays 1 until store / AST peel",
+  "checks": [
+    {
+      "ac": "AC1-latch",
+      "path": "src/compiler/service.ixx",
+      "contains": [
+        "Issue #3481",
+        "content_stored_this_epoch",
+        "maybe_restamp_cache_entry_content_live_"
+      ]
+    },
+    {
+      "ac": "AC1-cascade",
+      "path": "src/compiler/service_dirty.cpp",
+      "contains": [
+        "Issue #3481",
+        "ack_peer_ir_stale_on_restamp_",
+        "content_stored_this_epoch"
+      ]
+    },
+    {
+      "ac": "AC5-live",
+      "path": "tests/compiler/test_cache_stamp_restamp_contract.cpp",
+      "contains": [
+        "3481 AC1: lookup stays 1 after dirty-clear without store",
+        "3481 AC5: abort_map_invalid"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "forbid": [
+        "tests/compiler/test_issue_3481.cpp",
+        "tests/issues/test_issue_3481.cpp",
+        "docs/design/3481-aot-restamp-dirty.md"
+      ]
+    }
+  ]
+}

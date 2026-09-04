@@ -38,10 +38,17 @@
 // (commit_func_table_swap / aura_register_fn_tracked). Until then, mixed
 // JIT+AOT workloads must not execute generation-behind AOT code.
 //
-// Issue #2183: after successful AOT reemit, CompilerService also
-// restamp_cache_entry_live_ on the corresponding IR cache entry so
+// Issue #2183: after successful AOT reemit of *stored* IR, CompilerService
+// also restamp_cache_entry_live_ on the corresponding IR cache entry so
 // CacheEntryVersionStamp (mutation/bridge/defuse/soa) stays joint with
 // AOT table_generation. See ir_cache_pure.ixx restamp_cache_entry.
+//
+// Issue #3481: facade / cascade n>0 against a still-dirty or
+// not-yet-stored entry must not restamp those domains to live (native
+// `_vN` / table epoch can advance while irs is pre-mutate). Ack peer
+// + abort-force gen only; lookup stays 1 until store_define_v2 or a
+// peel that actually rewrote AST/IR. last_reemit_success_region_mask
+// remains coverage-only (#3445) — not content promotion.
 
 #pragma once
 

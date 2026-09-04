@@ -4428,6 +4428,12 @@ public:
         // lazy-rebuild from pre-abort IR (NodeIds vs restored AST).
         // Cleared on the next successful store_define_v2.
         bool abort_map_invalid = false;
+        // Issue #3481: true only after store_define_v2 / true per-fn AST
+        // relower. Facade AOT n>0 and instruction peel (pass-only, no AST
+        // re-lower) must not restamp mutation/bridge/defuse/soa to live
+        // while this is false — lookup stays 1 after a later dirty-bit
+        // clear without a content store.
+        bool content_stored_this_epoch = false;
         // Issue #3351: last-acked peer IR soft-stale generation for this
         // define (process-wide name gen from owner-scoped invalidate).
         // lookup_define_v2 must not return clean while live gen > ack.
@@ -4827,6 +4833,8 @@ public:
             // re-bumping per block).
             (void)soa_mod.finish_dirty_sync();
             dirty = true;
+            // Issue #3481: body-dirty means cached irs is pre-mutate again.
+            content_stored_this_epoch = false;
             return n;
         }
 
@@ -4998,6 +5006,11 @@ public:
         // set the flag (force-dirty is abort-path, not production-gated).
         if (it->second.abort_map_invalid)
             return 1;
+        // Issue #3481: content latch. Facade AOT / instr peel may ack
+        // peer + abort-force gen without a content store. lookup stays
+        // needs-relower until store_define_v2 or a peel that rewrote AST.
+        if (!it->second.content_stored_this_epoch)
+            return 1;
         std::uint32_t reasons = 0;
         const bool need = should_relower(source_hash, it->second.source_hash, it->second.dirty,
                                          it->second.version_stamp_, cur_mut, cur_bridge, cur_defuse,
@@ -5067,6 +5080,11 @@ public:
         entry.strings = std::move(strings);
         entry.dirty = false;
         entry.last_used = ++ir_cache_v2_access_clock_; // #1042
+        // Issue #3117 / #3481: stored IR is the content epoch — clear abort
+        // latch and mark content stored BEFORE restamp so #3481 does not
+        // skip the live mutation/bridge/defuse/soa write.
+        entry.abort_map_invalid = false;
+        entry.content_stored_this_epoch = true;
         // Issue #2033 / #2111 / #2183: unified restamp after successful store.
         restamp_cache_entry_live_(entry);
         ack_peer_ir_stale_on_restamp_(entry, name);
@@ -5103,8 +5121,6 @@ public:
         // Issue #2045: full rebuild of source_to_ir_map after store
         // (new IR layout + dual-emit SoA); consistency check wired.
         rebuild_or_patch_source_to_ir_map_(entry, /*only_func_idx=*/std::nullopt);
-        // Issue #3117: post-abort store rebuilt the map from fresh IR.
-        entry.abort_map_invalid = false;
         // Issue #959: enforce max-size policy after store.
         maybe_evict_ir_cache_v2();
     }
@@ -5375,8 +5391,10 @@ public:
     }
 
     // Issue #2183: unified restamp for IR cache entries — every successful
-    // store / partial peel / cascade store / AOT reemit success path calls
-    // this so CacheEntryVersionStamp matches live mutation/bridge/defuse/soa.
+    // store / true per-fn AST relower / cascade store of stored content
+    // calls this so CacheEntryVersionStamp matches live mutation/bridge/
+    // defuse/soa. Issue #3481: AOT reemit / instr peel must NOT call this
+    // while dirty || abort_map_invalid || !content_stored_this_epoch.
     void restamp_cache_entry_live_(IRCacheEntry& entry) {
         const auto mut = aura::core::current_mutation_epoch();
         const auto bridge = bridge_epoch();
@@ -5389,6 +5407,26 @@ public:
             abort_force_generation_.load(std::memory_order_acquire);
         metrics_.cache_entry_version_stamp_total.fetch_add(1, std::memory_order_relaxed);
         metrics_.cache_stamp_restamp_total.fetch_add(1, std::memory_order_relaxed);
+    }
+
+    // Issue #3481: ack peer IR stale + abort-force gen without writing
+    // mutation/bridge/defuse/soa to live (content still pre-mutate).
+    void ack_cache_entry_fences_live_(IRCacheEntry& entry, const std::string& name) noexcept {
+        ack_peer_ir_stale_on_restamp_(entry, name);
+        entry.version_stamp_.abort_force_generation =
+            abort_force_generation_.load(std::memory_order_acquire);
+    }
+
+    // Issue #3481: split ack from content restamp. Returns true iff
+    // mutation/bridge/defuse/soa were restamped to live.
+    bool maybe_restamp_cache_entry_content_live_(IRCacheEntry& entry, const std::string& name,
+                                                 bool content_stored_this_epoch) {
+        // Issue #3481: ack always; content restamp only when irs is stored.
+        ack_cache_entry_fences_live_(entry, name);
+        if (entry.dirty || entry.abort_map_invalid || !content_stored_this_epoch)
+            return false;
+        restamp_cache_entry_live_(entry);
+        return true;
     }
 
     // Issue #3351: ack process-wide peer IR name gen on local restamp so
@@ -5460,6 +5498,9 @@ public:
             // ensure_source_to_ir_map_ refuses to refill until store.
             entry.source_to_ir_map.clear();
             entry.abort_map_invalid = true;
+            // Issue #3481: abort zeros stamps + invalidates the map; content
+            // is untrusted until the next store. Do not restamp-on-AOT.
+            entry.content_stored_this_epoch = false;
             ++forced;
         }
         if (forced > 0)
@@ -6250,6 +6291,7 @@ public:
         if (abort_stale_map) {
             it->second.dirty = true;
             it->second.mark_all_blocks_dirty();
+            it->second.content_stored_this_epoch = false;
         }
         // Issue #2181: hard-require SoA dirty sync before any partial peel.
         // On desync (pre or residual post-sync) skip instr/per-fn partial and
@@ -6293,17 +6335,11 @@ public:
                                                                          std::memory_order_relaxed);
                     // fall through to full
                 } else {
-                    // Issue #2183 AC1: restamp after successful partial peel.
-                    restamp_cache_entry_live_(it->second);
-                    ack_peer_ir_stale_on_restamp_(it->second, name);
-                    // Issue #3136: success-path bitmap coherence (see 4968).
-                    if (aura_production_defaults_active_probe() != 0) {
-                        hot_update_registry().note_relower_success_coverage(
-                            1ULL << (fnv1a_64(name) & 63));
-                        // Issue #3229: define-id side set (6-bit collision).
-                        hot_update_registry().note_relower_success_define(
-                            relower_success_define_id(name));
-                    }
+                    // Issue #3481 AC2: instruction peel is pass-only (no AST
+                    // re-lower). Ack peer + abort-force gen; do not restamp
+                    // mutation/bridge/defuse/soa to live and do not treat
+                    // coverage as content promotion (#3445).
+                    ack_cache_entry_fences_live_(it->second, name);
                     (void)flat;
                     (void)pool;
                     (void)expanded_root;
@@ -6331,7 +6367,11 @@ public:
                 total_blocks_seen += fb.size();
             evaluator_.bump_dirty_block_ratio(dirty_blocks, total_blocks_seen);
         }
-        if (dirty_blocks == 0 && !it->second.dirty && !it->second.irs.empty()) {
+        // Issue #3481: skip-as-clean after a facade restamp + later
+        // bit-clear would return true against pre-mutate irs. Require
+        // a content store this epoch (and no abort latch).
+        if (dirty_blocks == 0 && !it->second.dirty && !it->second.irs.empty() &&
+            !it->second.abort_map_invalid && it->second.content_stored_this_epoch) {
             metrics_.relower_skipped_entirely_count.fetch_add(1, std::memory_order_relaxed);
             metrics_.irsoa_cache_miss_reduction.fetch_add(1, std::memory_order_relaxed);
             std::size_t total_blocks_saved = 0;
@@ -6477,6 +6517,9 @@ public:
                         it->second.source_hash = fnv1a_64(it->second.source);
                     }
                     it->second.dirty = false;
+                    // Issue #3481: per-fn re-lower rewrote AST/IR for this
+                    // function — content is stored this epoch.
+                    it->second.content_stored_this_epoch = true;
                     // Issue #2181 AC2: after successful partial, desync must be 0.
                     if (it->second.soa_mod.count_block_instr_dirty_desync() != 0) {
                         metrics_.soa_dirty_desync_force_full_total.fetch_add(
@@ -7696,6 +7739,19 @@ public:
                             e.version_stamp_.defuse_version, e.version_stamp_.soa_generation);
         e.mutation_count = 0;
         e.last_seen_epoch_ = 0;
+        return true;
+    }
+
+    // Issue #3481 test: clear dirty bits without a content store / restamp
+    // so lookup must still refuse a clean hit (content latch + stamp lag).
+    bool clear_ir_cache_dirty_bits_for_test(const std::string& name) {
+        auto it = ir_cache_v2_.find(name);
+        if (it == ir_cache_v2_.end())
+            return false;
+        auto& e = it->second;
+        e.dirty = false;
+        e.clear_all_block_dirty();
+        e.clear_all_instruction_dirty();
         return true;
     }
 

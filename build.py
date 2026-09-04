@@ -4950,6 +4950,22 @@ def cmd_lint():
             "Issue #3324 abort-restore stale map/stamp linter failed — run python3 scripts/coverage/checks/check_abort_restore_stale_map_stamp_3324.py"
         )
         return r
+    # Issue #3481: AOT/facade success must not restamp dirty pre-relower
+    # IR to live. Split ack (peer/abort gen) from content restamp.
+    # Instr peel without AST re-lower does not restamp. lookup stays 1
+    # until store_define_v2 / true per-fn. Soft: no extra work. Abort
+    # path unchanged. Coverage stamp is not content promotion (#3445).
+    # Extends test_cache_stamp_restamp_contract; no docs/design / invent.
+    ars3481_script = COVERAGE_CHECKS / "check_aot_facade_content_restamp_3481.py"
+    if not ars3481_script.exists():
+        fail(f"missing {ars3481_script}")
+        return 1
+    r = run([sys.executable, str(ars3481_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3481 AOT/facade content restamp linter failed — run python3 scripts/coverage/checks/check_aot_facade_content_restamp_3481.py"
+        )
+        return r
     # Issue #3325: residual outermost hold past 2×SLO with no cooperative
     # edge. Scheduler idle / worker park under production_multi_worker_
     # latched re-injects synthetic MutationBoundary yield + force_safepoint

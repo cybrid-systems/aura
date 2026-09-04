@@ -2305,6 +2305,9 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
                 } owner_guard(static_cast<void*>(this));
                 // Issue #3059: BoundaryExit drain uses the Registry
                 // facade (decide_and_reemit → aura_reemit_aot_for_dirty).
+                // Issue #3481 / #3445: last_reemit_success_region_mask is
+                // coverage-only — not content promotion. IR cache restamp
+                // stays on store_define_v2 / true per-fn, not this drain.
                 const auto n =
                     reg.decide_and_reemit(v, HotUpdateRegistry::ReemitReason::BoundaryExit);
                 if (n > 0)

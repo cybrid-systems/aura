@@ -202,47 +202,60 @@ void CompilerService::notify_hot_update_after_cascade_(const std::string& name,
         metrics_.aot_incremental_reemit_triggered.fetch_add(1, std::memory_order_relaxed);
         if (n > 0)
             metrics_.commercial_reemits_total.fetch_add(n, std::memory_order_relaxed);
-        // Issue #2183 AC3: after successful AOT reemit, restamp IR cache
-        // entries for root + dependents so CacheEntryVersionStamp stays
-        // joint with AOT table_generation / bridge / defuse.
+        // Issue #2183 AC3 / Issue #3481: after successful AOT reemit, ack peer
+        // + abort-force gen always. Content restamp (mutation/bridge/
+        // defuse/soa) only when the cached irs was stored / AST-relowered
+        // this epoch — n>0 against still-dirty pre-mutate IR must not
+        // make should_relower(dirty=false) return false.
         if (n > 0) {
             if (auto it = ir_cache_v2_.find(name); it != ir_cache_v2_.end()) {
-                restamp_cache_entry_live_(it->second);
                 ack_peer_ir_stale_on_restamp_(it->second, name);
-                metrics_.cache_stamp_aot_restamp_total.fetch_add(1, std::memory_order_relaxed);
-                // Issue #3136: success-path bitmap coherence — root restamp
-                // (cascade-reemit path). Issue #3383: must use the SAME
-                // hash as `store_define_v2` (fnv1a_64 via
-                // relower_success_region_bit) — std::hash<std::string_view>
-                // split the 64-bit region bit between store + cascade-restamp
-                // so residual_force_mask = force & ~last_success could not
-                // clear the same define across a store + cascade-restamp
-                // pair (half-cover / sticky force-JIT / missed re-promote).
-                if (aura_production_defaults_active_probe() != 0) {
-                    hot_update_registry().note_relower_success_coverage(
-                        relower_success_region_bit(name));
-                    // Issue #3229: define-id side set (6-bit collision).
-                    hot_update_registry().note_relower_success_define(
-                        relower_success_define_id(name));
+                it->second.version_stamp_.abort_force_generation =
+                    abort_force_generation_.load(std::memory_order_acquire);
+                if (!it->second.dirty && !it->second.abort_map_invalid &&
+                    it->second.content_stored_this_epoch) {
+                    restamp_cache_entry_live_(it->second);
+                    metrics_.cache_stamp_aot_restamp_total.fetch_add(1, std::memory_order_relaxed);
+                    // Issue #3136: success-path bitmap coherence — root restamp
+                    // (cascade-reemit path). Issue #3383: must use the SAME
+                    // hash as `store_define_v2` (fnv1a_64 via
+                    // relower_success_region_bit) — std::hash<std::string_view>
+                    // split the 64-bit region bit between store + cascade-restamp
+                    // so residual_force_mask = force & ~last_success could not
+                    // clear the same define across a store + cascade-restamp
+                    // pair (half-cover / sticky force-JIT / missed re-promote).
+                    if (aura_production_defaults_active_probe() != 0) {
+                        hot_update_registry().note_relower_success_coverage(
+                            relower_success_region_bit(name));
+                        // Issue #3229: define-id side set (6-bit collision).
+                        hot_update_registry().note_relower_success_define(
+                            relower_success_define_id(name));
+                    }
                 }
             }
             for (const auto& d : dependents) {
                 if (d.empty() || d == name)
                     continue;
                 if (auto it = ir_cache_v2_.find(d); it != ir_cache_v2_.end()) {
-                    restamp_cache_entry_live_(it->second);
                     ack_peer_ir_stale_on_restamp_(it->second, d);
-                    metrics_.cache_stamp_aot_restamp_total.fetch_add(1, std::memory_order_relaxed);
-                    // Issue #3136: success-path bitmap coherence — dependent
-                    // restamp (cascade-reemit path, see root comment above).
-                    // #3383: same fnv1a_64 bit as store_define_v2 + the root
-                    // restamp above — single bitmap identity for the define.
-                    if (aura_production_defaults_active_probe() != 0) {
-                        hot_update_registry().note_relower_success_coverage(
-                            relower_success_region_bit(d));
-                        // Issue #3229: define-id side set (6-bit collision).
-                        hot_update_registry().note_relower_success_define(
-                            relower_success_define_id(d));
+                    it->second.version_stamp_.abort_force_generation =
+                        abort_force_generation_.load(std::memory_order_acquire);
+                    if (!it->second.dirty && !it->second.abort_map_invalid &&
+                        it->second.content_stored_this_epoch) {
+                        restamp_cache_entry_live_(it->second);
+                        metrics_.cache_stamp_aot_restamp_total.fetch_add(1,
+                                                                         std::memory_order_relaxed);
+                        // Issue #3136: success-path bitmap coherence — dependent
+                        // restamp (cascade-reemit path, see root comment above).
+                        // #3383: same fnv1a_64 bit as store_define_v2 + the root
+                        // restamp above — single bitmap identity for the define.
+                        if (aura_production_defaults_active_probe() != 0) {
+                            hot_update_registry().note_relower_success_coverage(
+                                relower_success_region_bit(d));
+                            // Issue #3229: define-id side set (6-bit collision).
+                            hot_update_registry().note_relower_success_define(
+                                relower_success_define_id(d));
+                        }
                     }
                 }
             }
@@ -793,6 +806,7 @@ void CompilerService::mark_all_defines_dirty() {
     for (auto& [name, entry] : ir_cache_v2_) {
         entry.dirty = true;
         entry.mark_all_blocks_dirty();
+        entry.content_stored_this_epoch = false;
         // Issue #2034: force SoA instruction_dirty_ on bulk invalidate.
         finish_cascade_soa_dirty_sync_(entry);
         dirty_names.push_back(name);
