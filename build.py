@@ -5123,6 +5123,22 @@ def cmd_lint():
             "Issue #3222 hold-budget inbody force-unlock linter failed — run python3 scripts/coverage/checks/check_hold_budget_inbody_force_unlock_3222.py"
         )
         return r
+    # Issue #3480: add_mutate polls inbody hold-budget after fn(a).
+    # Force-release exists (#3222/#3254); structural wrapper did not
+    # call it. Production + cancel armed → force-release hold + depth.
+    # Soft observe-only. Reuses forced_unlock_total +
+    # forced_fail_closed_total. Extends
+    # test_hold_budget_synthetic_yield_injection; no docs/design / invent.
+    hb3480_script = COVERAGE_CHECKS / "check_hold_budget_add_mutate_inbody_poll_3480.py"
+    if not hb3480_script.exists():
+        fail(f"missing {hb3480_script}")
+        return 1
+    r = run([sys.executable, str(hb3480_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3480 add_mutate inbody hold-budget poll linter failed — run python3 scripts/coverage/checks/check_hold_budget_add_mutate_inbody_poll_3480.py"
+        )
+        return r
     # Issue #3223: cross-fiber force_degrade nudges victim inbody poll
     # so the holder worker force-releases past 2×SLO (reuse #3222).
     # Foreign thread never unlocks. Soft observe-only. Reuses

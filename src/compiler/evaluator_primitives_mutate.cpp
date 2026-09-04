@@ -13,14 +13,15 @@ module;
 #include "hash_meta.h"            // FNV constants for stats hash
 #include "typed_mutation_audit.h" // Issue #1589
 #include "compiler/ownership_rebind.h" // Issue #2695: unified OwnershipEnv rebind API post-densify/steal/Agent
-#include "test/test_strategy.h"           // Issue #1887: hot-path / self-mod strategy metrics
-#include "render_prim_template.hh"        // Issue #1677: aura_is_render_evolution_name
-#include "core/sandbox.hh"                // Issue #1878: is_strict() for multi-tenant batch
-#include "core/provenance_tracker.hh"     // Issue #1878: last_hygiene tenant stamp
-#include "core/arena_auto_policy_stats.h" // Issue #1919: mutation pressure → auto-compact
-#include "core/security_event.hh"         // Issue #2237: MacroHygieneRollbackOnStrict audit
-#include "core/workspace_epoch.hh"        // Issue #2237: current_mutation_epoch
-#include "serve/fiber.h"                  // Issue #2237: aura_fiber_current_id
+#include "test/test_strategy.h"            // Issue #1887: hot-path / self-mod strategy metrics
+#include "render_prim_template.hh"         // Issue #1677: aura_is_render_evolution_name
+#include "core/sandbox.hh"                 // Issue #1878: is_strict() for multi-tenant batch
+#include "core/provenance_tracker.hh"      // Issue #1878: last_hygiene tenant stamp
+#include "core/arena_auto_policy_stats.h"  // Issue #1919: mutation pressure → auto-compact
+#include "core/security_event.hh"          // Issue #2237: MacroHygieneRollbackOnStrict audit
+#include "core/workspace_epoch.hh"         // Issue #2237: current_mutation_epoch
+#include "serve/fiber.h"                   // Issue #2237: aura_fiber_current_id
+#include "compiler/mutation_hold_budget.h" // Issue #3480: inbody poll + force-release counters
 
 module aura.compiler.evaluator;
 
@@ -967,6 +968,25 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                     wrapper_guard = std::move(*gr);
                 }
                 auto result = fn(a);
+                // Issue #3480: poll existing inbody on the structural
+                // wrapper. A non-coop fn(a) never hits check_gc_safepoint;
+                // cancel armed → force-release hold + depth before a green
+                // result can ride the still-held lock. Happy path: two
+                // loads (reject_enabled + cancel_armed ns==0). Soft:
+                // reject_enabled false → no force-release. Cross-fiber
+                // still only request_hold_budget_cancel (this is same-fiber).
+                if (!guard_exempt && wrapper_guard && wrapper_guard->is_outermost() &&
+                    aura::compiler::mutation_hold_budget_reject_enabled()) {
+                    if (aura::serve::aura_hold_budget_cancel_armed() != 0 ||
+                        aura::serve::aura_hold_budget_poll_inbody_window() != 0) {
+                        wrapper_guard->force_release_hold_budget_inbody();
+                        aura::compiler::g_mutation_hold_budget_forced_unlock_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                        aura::compiler::g_mutation_hold_budget_forced_fail_closed_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                        return mev("hold-budget-cancel", "outermost force-released");
+                    }
+                }
                 if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
                     const auto wraps_after =
                         m->mutation_boundary_primitives_wrapped.load(std::memory_order_relaxed);
