@@ -211,7 +211,7 @@ struct MutationAuditWal {
             const long off =
                 static_cast<long>(8 + sizeof(std::uint32_t) + kAuditWalReserved0Offset);
             if (std::fseek(fp, off, SEEK_SET) == 0)
-                (void)std::fread(&marker, sizeof(marker), 1, fp);
+                (void)!std::fread(&marker, sizeof(marker), 1, fp); // short read OK; marker stays 0
             (void)std::fseek(fp, 0, SEEK_END);
             if (marker != kAuditWalReasonTailMarker) {
                 close_unlocked();
@@ -547,7 +547,7 @@ struct MutationAuditWal {
         const auto data_start = std::ftell(f);
         if (data_start >= 0 &&
             std::fseek(f, data_start + static_cast<long>(kAuditWalReserved0Offset), SEEK_SET) == 0)
-            (void)std::fread(&marker, sizeof(marker), 1, f);
+            (void)!std::fread(&marker, sizeof(marker), 1, f); // short read OK; marker stays 0
         if (data_start >= 0)
             (void)std::fseek(f, data_start, SEEK_SET);
         const bool has_reason_tail = marker == kAuditWalReasonTailMarker;
