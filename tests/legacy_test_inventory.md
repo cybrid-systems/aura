@@ -1857,7 +1857,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/core/test_ast_ops_stats_workspace_lock.cpp` (—) [domain_suite, theme_core] — Issue #1729/#1851/#1852 (#1978 renamed): issue# moved from filename to header.
 - `tests/serve/test_atomic_mark_bitvector.cpp` (—) [domain_suite, theme_serve] — AC1: multi-thread concurrent set same/adjacent bits → all set (no lost update)
 - `tests/compiler/test_audit_trail_lockfree.cpp` (—) [domain_suite, theme_compiler] — AC1: capture_audit_event_forced cites #2819; lock-free write; no lock_guard
-- `tests/compiler/test_bidirectional_match_check.cpp` (—) [domain_suite, theme_compiler] — AC1: Match check-mode — annotated (match ...) bodies checked under
+- `tests/compiler/test_bidirectional_match_check.cpp` (—) [large, domain_suite, theme_compiler] — AC1: Match check-mode — annotated (match ...) bodies checked under
 - `tests/core/test_bidirectional_stats.cpp` (—) [domain_suite, theme_core] — tests/test_bidirectional_stats.cpp — Issue #1420 AC3:
 - `tests/compiler/test_blame_stamp_on_degrade.cpp` (—) [small, domain_suite, theme_compiler] — Issue #2064 — blame / provenance stamping on Dynamic degrade + CoercionMap
 - `tests/compiler/test_blame_tracking_typed_mutate.cpp` (—) [domain_suite, theme_compiler] — Issue #1617/#1924 (#1978 renamed): issue# moved from filename to header.
