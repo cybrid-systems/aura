@@ -411,6 +411,15 @@ extern "C" uint64_t aura_jit_macro_introduced_deopt() {
     return g_jit_macro_introduced_deopt.load(std::memory_order_relaxed);
 }
 
+// Issue #3475: production / Full fail-closed for MacroIntroduced native.
+// Soft/Off keep consult + dirty-only deopt (this returns 0).
+extern "C" int aura_macro_hygiene_production_fail_closed(void) noexcept {
+    using aura::compiler::typed_audit::AuditStrategy;
+    using aura::compiler::typed_audit::get_strategy;
+    using aura::compiler::typed_audit::production_defaults_active;
+    return (production_defaults_active() || get_strategy() == AuditStrategy::Full) ? 1 : 0;
+}
+
 // Issue #2100: register/unregister service-side AST restore after deopt.
 extern "C" void aura_jit_set_macro_deopt_restore_fn(std::uint64_t (*fn)() noexcept) {
     g_macro_deopt_restore_fn.store(fn, std::memory_order_release);

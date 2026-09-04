@@ -52,6 +52,8 @@ extern "C" void aura_jit_macro_hygiene_consult_inc();
 extern "C" void aura_jit_macro_introduced_deopt_inc();
 extern "C" uint64_t aura_jit_macro_hygiene_consults();
 extern "C" uint64_t aura_jit_macro_introduced_deopt();
+extern "C" int aura_macro_hygiene_production_fail_closed(void);
+extern "C" void aura_jit_macro_introduced_lost_inc(uint64_t n);
 // Issue #2022: native MacroIntroduced side-table + counters.
 extern "C" void aura_jit_stamp_fn_macro_marker(int64_t func_id, uint8_t marker,
                                                uint32_t provenance);
@@ -716,10 +718,23 @@ struct LLVMBuilder {
         // Consult counter always; dirty+MacroIntroduced forces deopt
         // (jit_macro_introduced_deopt) so self-evo cannot specialize
         // mutated macro-expanded code on the hot path.
-        if (inst.source_marker == 1 /*MacroIntroduced*/) {
-            aura_jit_macro_hygiene_consult_inc();
+        // Issue #3475: production / Full also refuse native when the
+        // hygiene envelope is MacroIntroduced but dirty/provenance is
+        // inconsistent (lost kMacroExpansion / generation drift). Soft/Off
+        // keep consult + dirty-only deopt.
+        if (inst.source_marker == 1 /*MacroIntroduced*/ || fn.source_marker == 1) {
+            if (inst.source_marker == 1)
+                aura_jit_macro_hygiene_consult_inc();
             if (inst.dirty != 0) {
                 aura_jit_macro_introduced_deopt_inc();
+                if (fn_deopt_inc)
+                    irb->CreateCall(fn_deopt_inc);
+                return false;
+            }
+            if (aura_macro_hygiene_production_fail_closed() != 0) {
+                aura_jit_macro_introduced_deopt_inc();
+                if (inst.provenance == 0)
+                    aura_jit_macro_introduced_lost_inc(1);
                 if (fn_deopt_inc)
                     irb->CreateCall(fn_deopt_inc);
                 return false;
@@ -3097,6 +3112,12 @@ struct AuraJIT::Impl {
                         metrics->deopt_pending_invoke_fallbacks.fetch_add(
                             1, std::memory_order_relaxed);
                     // Fall through to full recompile (hot-swap clears pending).
+                } else if (tit != fn_trackers_.end() && tit->second.source_marker == 1 &&
+                           aura_macro_hygiene_production_fail_closed() != 0) {
+                    // Issue #3475: do not serve cached native of a
+                    // MacroIntroduced envelope under production.
+                    aura_jit_macro_introduced_deopt_inc();
+                    return nullptr;
                 } else {
                     // Cache hit — return the previously compiled fn_ptr
                     // without re-running the LLVM pipeline.
@@ -3422,6 +3443,7 @@ struct AuraJIT::Impl {
             return nullptr;
         // Issue #1522: refuse native lookup when deopt_pending (stale after
         // bridge epoch bump). Caller falls back to interpreter / recompile.
+        bool hygiene_refuse = false;
         {
             std::lock_guard<std::mutex> lock(compile_mtx_);
             auto it = fn_trackers_.find(name);
@@ -3430,6 +3452,16 @@ struct AuraJIT::Impl {
                     metrics->deopt_pending_invoke_fallbacks.fetch_add(1, std::memory_order_relaxed);
                 return nullptr;
             }
+            // Issue #3475: production must not return a live native pointer
+            // for a MacroIntroduced envelope (lost dirty still looks User).
+            if (it != fn_trackers_.end() && it->second.source_marker == 1 &&
+                aura_macro_hygiene_production_fail_closed() != 0) {
+                hygiene_refuse = true;
+            }
+        }
+        if (hygiene_refuse) {
+            aura_jit_macro_introduced_deopt_inc();
+            return nullptr;
         }
         auto sym = jit->lookup(name);
         if (!sym)

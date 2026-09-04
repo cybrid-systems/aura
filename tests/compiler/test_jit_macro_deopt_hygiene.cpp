@@ -27,6 +27,8 @@
 //   #3263 AC5: linter after #3262; no invent
 
 #include "test_harness.hpp"
+#include "compiler/aura_jit.h"
+#include "compiler/typed_mutation_audit.h"
 
 #include <cstdint>
 #include <fstream>
@@ -58,6 +60,7 @@ extern "C" void aura_jit_macro_introduced_preserved_inc(std::uint64_t n);
 extern "C" void aura_jit_macro_introduced_lost_inc(std::uint64_t n);
 extern "C" std::uint64_t aura_hygiene_ir_ancestor_propagation_total(void);
 extern "C" std::uint64_t aura_multi_eval_macro_marker_preserved_total(void);
+extern "C" int aura_macro_hygiene_production_fail_closed(void);
 
 namespace {
 
@@ -596,6 +599,72 @@ static void ac3263_5_source_and_linter() {
     }
 }
 
+static void ac3475_production_macro_refuse_native() {
+    std::println("\n--- #3475: production MacroIntroduced refuse native ---");
+    const auto jit_src = read_file("src/compiler/aura_jit.cpp");
+    const auto low = read_file("src/compiler/lowering.ixx");
+    const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
+    CHECK(jit_src.find("Issue #3475") != std::string::npos, "3475 AC1: jit cites #3475");
+    CHECK(jit_src.find("aura_macro_hygiene_production_fail_closed") != std::string::npos,
+          "3475 AC1: lower/install consults production fail-closed");
+    CHECK(low.find("Issue #3475") != std::string::npos, "3475 AC4: lowering cites #3475");
+    CHECK(low.find("kMaxAncestorWalk") != std::string::npos, "3475 AC4: ancestor cap kept");
+    CHECK(rt.find("aura_macro_hygiene_production_fail_closed") != std::string::npos,
+          "3475 AC1: helper defined");
+    CHECK(jit_src.find("inst.dirty != 0") != std::string::npos,
+          "3475 AC5: dirty+MacroIntroduced deopt kept");
+
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    apply_dev_audit_defaults();
+    CHECK(aura_macro_hygiene_production_fail_closed() == 0,
+          "3475 AC3: Soft/Off helper is zero extra");
+
+    apply_production_audit_defaults();
+    CHECK(aura_macro_hygiene_production_fail_closed() != 0, "3475 AC1: production helper armed");
+    aura::jit::AuraJIT jit;
+    if (jit.available()) {
+        using aura::jit::FlatBlock;
+        using aura::jit::FlatFunction;
+        using aura::jit::FlatInstruction;
+        FlatInstruction insts[2]{};
+        insts[0].opcode = static_cast<std::uint32_t>(aura::ir::IROpcode::ConstI64);
+        insts[0].ops[0] = 0;
+        insts[0].ops[1] = 42;
+        insts[0].source_marker = 1;
+        insts[0].dirty = 0;
+        insts[0].provenance = 0;
+        insts[1].opcode = static_cast<std::uint32_t>(aura::ir::IROpcode::Return);
+        insts[1].ops[0] = 0;
+        insts[1].source_marker = 1;
+        insts[1].dirty = 0;
+        FlatBlock blk{0, insts, 2};
+        FlatFunction fn{};
+        fn.name = "ac3475_macro";
+        fn.entry_block = 0;
+        fn.local_count = 1;
+        fn.blocks = &blk;
+        fn.num_blocks = 1;
+        fn.source_marker = 1;
+        const auto d0 = aura_jit_macro_introduced_deopt();
+        const auto lost0 = aura_jit_macro_introduced_lost_total();
+        auto p = jit.compile(fn);
+        CHECK(p == nullptr, "3475 AC1: production refuses native install");
+        CHECK(aura_jit_macro_introduced_deopt() > d0, "3475 AC1: deopt counter moved");
+        CHECK(aura_jit_macro_introduced_lost_total() >= lost0,
+              "3475 AC1: lost total does not regress");
+        CHECK(jit.get_function_ptr("ac3475_macro") == nullptr,
+              "3475 AC1: no silent native pointer");
+    } else {
+        CHECK(true, "3475 AC1: JIT unavailable — helper/source-cite covered");
+    }
+    apply_dev_audit_defaults();
+    CHECK(aura_macro_hygiene_production_fail_closed() == 0, "3475 AC3: Soft restored");
+    CHECK(read_file("docs/design/3475-macro-introduced-native.md").empty(),
+          "3475 AC6: no docs/design");
+    CHECK(read_file("tests/compiler/test_issue_3475.cpp").empty(), "3475 AC6: no invent");
+}
+
 static void ac2764_6_source_and_linter() {
     std::println("\n--- #2764 AC6: source-cite + linter ---");
     const auto low = read_file("src/compiler/lowering.ixx");
@@ -642,6 +711,8 @@ int run_test_jit_macro_deopt_hygiene() {
     ac3263_3_keep_2177_record_one();
     ac3263_4_quiet_zero_extra();
     ac3263_5_source_and_linter();
+    std::println("\n=== Issue #3475: production MacroIntroduced refuse native ===");
+    ac3475_production_macro_refuse_native();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

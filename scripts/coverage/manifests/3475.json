@@ -1,0 +1,41 @@
+{
+  "issue": 3475,
+  "title": "Issue #3475: MacroIntroduced must not run as User native under production",
+  "ok": "OK: Issue #3475 production MacroIntroduced refuse native — Soft dirty-only deopt kept",
+  "checks": [
+    {
+      "ac": "AC1-jit",
+      "path": "src/compiler/aura_jit.cpp",
+      "contains": [
+        "Issue #3475",
+        "aura_macro_hygiene_production_fail_closed",
+        "fn.source_marker == 1"
+      ]
+    },
+    {
+      "ac": "AC4-cap",
+      "path": "src/compiler/lowering.ixx",
+      "contains": [
+        "Issue #3475",
+        "kMaxAncestorWalk",
+        "d == kMaxAncestorWalk"
+      ]
+    },
+    {
+      "ac": "AC6-tests",
+      "path": "tests/compiler/test_jit_macro_deopt_hygiene.cpp",
+      "contains": [
+        "3475 AC1: production refuses native install",
+        "3475 AC3: Soft/Off helper is zero extra"
+      ]
+    },
+    {
+      "ac": "AC6-forbid",
+      "forbid": [
+        "tests/compiler/test_issue_3475.cpp",
+        "tests/issues/test_issue_3475.cpp",
+        "docs/design/3475-macro-introduced-native.md"
+      ]
+    }
+  ]
+}
