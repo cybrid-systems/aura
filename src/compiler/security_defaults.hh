@@ -276,12 +276,18 @@ inline void apply_production_security_defaults() noexcept {
             // default) so InvariantFail / hygiene / mid-fallback-refused
             // mids survive the 1024 SE ring wrap under force_wal without
             // waiting for an Evaluator to call enable_mutation_audit_wal
-            // (#2492/#2225 residual). Empty replay matches the mutation
-            // call shape; side-car enable failure stays non-fatal
-            // (#2225) — persist_security_event short-circuits while off
-            // and security_event_wal_enabled already records the miss.
-            (void)::aura::core::security_event_wal::g_security_event_wal().enable(
-                std::string_view(dir), nullptr, 0);
+            // (#2492/#2225 residual). Issue #3500: replay last ring-size
+            // records into the live SE ring (mutation WAL stays empty-replay
+            // for startup latency). Side-car enable failure stays non-fatal
+            // (#2225) — persist_security_event short-circuits while off.
+            {
+                using ::aura::core::security_event::kSecurityEventRingSize;
+                using ::aura::core::security_event_wal::hydrate_security_event_ring_from_wal_replay;
+                std::vector<::aura::core::security_event_wal::SecurityEventWalRecord> replay;
+                (void)::aura::core::security_event_wal::g_security_event_wal().enable(
+                    std::string_view(dir), &replay, kSecurityEventRingSize);
+                hydrate_security_event_ring_from_wal_replay(replay);
+            }
             if (mut_ok) {
                 // Issue #3302: force_wal means "this deploy is durable".
                 // Pair fail-closed so fwrite miss captures overflow ring
