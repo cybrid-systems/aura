@@ -23,6 +23,7 @@
 #include "test_harness.hpp"
 
 #include "compiler/typed_mutation_audit.h"
+#include "orch/agent_scope.h"
 #include "orch/agent_spawn.h"
 #include "orch/orch.h"
 #include "serve/parallel_orch.h"
@@ -35,6 +36,8 @@
 #include <string>
 
 import std;
+import aura.compiler.service;
+import aura.compiler.value;
 
 namespace {
 
@@ -79,6 +82,8 @@ static void ac2843_run_added_tests();
 static void ac2974_run_added_tests();
 // Issue #3206: residual cancel / join-drain action (extend-in-place).
 static void ac3206_run_added_tests();
+// Issue #3495: Aura supervise-batch / run-workflow call apply_workflow.
+static void ac3495_run_added_tests();
 
 int run_test_failure_policy_bridge() {
     std::println("=== Issue #2539: FailurePolicy → AgentFailurePolicy bridge ===");
@@ -401,6 +406,8 @@ int run_test_failure_policy_bridge() {
     ac2974_run_added_tests();
     // Issue #3206: residual action (per #81967 extend-in-place).
     ac3206_run_added_tests();
+    // Issue #3495: Aura sugar calls apply_workflow (per #81967).
+    ac3495_run_added_tests();
 
     // Issue #3052: RetryN projects on_join_fail; explicit policy not overwritten.
     {
@@ -433,8 +440,8 @@ int run_test_failure_policy_bridge() {
               "3052 AC5: no test_issue_3052.cpp per #81967");
     }
 
-    std::println("\n=== #2539 + #2756 + #2852 + #2843 + #2974 + #3052 + #3206 results: {} passed, "
-                 "{} failed ===",
+    std::println("\n=== #2539 + #2756 + #2852 + #2843 + #2974 + #3052 + #3206 + #3495 results: {} "
+                 "passed, {} failed ===",
                  g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
@@ -1065,6 +1072,130 @@ static void ac3206_run_added_tests() {
     ac3206_2_production_cancel_on_residual();
     ac3206_3_production_join_drain();
     ac3206_4_source_linter_no_registry();
+}
+
+// ── Issue #3495: Aura orch:supervise-batch calls apply_workflow ──
+static void ac3495_1_prod_cancel_residual_action() {
+    std::println(
+        "\n--- #3495 AC1: production + Cancel + non-Ok batch → residual-action=cancel ---");
+    using aura::compiler::CompilerService;
+    using aura::compiler::types::as_int;
+    using aura::compiler::types::is_int;
+    using aura::orch::kSuperviseBatchApplyIssue;
+    using aura::orch::reset_all_agent_scopes_for_test;
+    CHECK(kSuperviseBatchApplyIssue == 3495, "3495 AC1: issue stamp");
+    reset_all_agent_scopes_for_test();
+    const auto c0 = g_orch_module_stats.workflow_residual_cancel_total.load();
+    const auto apply0 = g_orch_module_stats.workflow_apply_total.load();
+    CompilerService cs;
+    ac3206_set_prod(true); // after ctor: CompilerService may reset Soft
+    auto r = cs.eval(R"(
+        (let ((pol (orch:compose-workflow 'fail-fast :residual 'cancel))
+              (tasks (list (lambda () (error "boom")))))
+          (let ((h (orch:supervise-batch tasks pol :watch-scope #f)))
+            (if (string=? (hash-ref h "residual-action") "cancel") 1 0)))
+    )");
+    CHECK(r && is_int(*r) && as_int(*r) == 1,
+          "3495 AC1: hash residual-action is cancel not hardcoded observe");
+    CHECK(g_orch_module_stats.workflow_residual_cancel_total.load() == c0 + 1,
+          "3495 AC1: workflow_residual_cancel_total +1");
+    CHECK(g_orch_module_stats.workflow_apply_total.load() == apply0 + 1,
+          "3495 AC1: apply_workflow bumped apply-total");
+    ac3206_set_prod(false);
+    reset_all_agent_scopes_for_test();
+}
+
+static void ac3495_2_soft_observe() {
+    std::println("\n--- #3495 AC2: Soft / Report / Defer still observe ---");
+    using aura::compiler::CompilerService;
+    using aura::compiler::types::as_int;
+    using aura::compiler::types::is_int;
+    using aura::orch::reset_all_agent_scopes_for_test;
+    ac3206_set_prod(false);
+    reset_all_agent_scopes_for_test();
+    const auto c0 = g_orch_module_stats.workflow_residual_cancel_total.load();
+    CompilerService cs;
+    ac3206_set_prod(false);
+    auto r = cs.eval(R"(
+        (let ((pol (orch:compose-workflow 'fail-fast :residual 'cancel))
+              (tasks (list (lambda () (error "boom")))))
+          (let ((h (orch:supervise-batch tasks pol :watch-scope #f)))
+            (if (string=? (hash-ref h "residual-action") "observe") 1 0)))
+    )");
+    CHECK(r && is_int(*r) && as_int(*r) == 1, "3495 AC2: Soft Cancel still observe");
+    auto r2 = cs.eval(R"(
+        (let ((pol (orch:compose-workflow 'collect-all :residual 'defer))
+              (tasks (list (lambda () (error "boom")))))
+          (let ((h (orch:supervise-batch tasks pol :watch-scope #f)))
+            (if (string=? (hash-ref h "residual-action") "observe") 1 0)))
+    )");
+    CHECK(r2 && is_int(*r2) && as_int(*r2) == 1, "3495 AC2: Defer observe");
+    CHECK(g_orch_module_stats.workflow_residual_cancel_total.load() == c0,
+          "3495 AC2: zero extra cancel under Soft");
+    reset_all_agent_scopes_for_test();
+}
+
+static void ac3495_3_policy_not_dropped() {
+    std::println("\n--- #3495 AC3: policy hash reaches apply_workflow ---");
+    const auto q = read_file("src/compiler/evaluator_primitives_agent.cpp");
+    const auto header = read_file("src/orch/agent_spawn.h");
+    CHECK(q.find("apply_workflow") != std::string::npos, "3495 AC3: prim calls apply_workflow");
+    CHECK(q.find("compose_workflow_policy") != std::string::npos, "3495 AC3: compose from hash");
+    CHECK(q.find("to_parallel_policy") != std::string::npos, "3495 AC3: to_parallel_policy");
+    CHECK(q.find("to_agent_policy") != std::string::npos, "3495 AC3: to_agent_policy");
+    CHECK(q.find("r.residual_action") != std::string::npos,
+          "3495 AC3: hash residual-action from helper");
+    CHECK(header.find("kSuperviseBatchApplyIssue = 3495") != std::string::npos,
+          "3495 AC3: issue stamp");
+}
+
+static void ac3495_4_watch_scope_false() {
+    std::println("\n--- #3495 AC4: watch-scope=#f skips Phase B ---");
+    using aura::compiler::CompilerService;
+    using aura::compiler::types::as_int;
+    using aura::compiler::types::is_int;
+    using aura::orch::reset_all_agent_scopes_for_test;
+    ac3206_set_prod(false);
+    reset_all_agent_scopes_for_test();
+    CompilerService cs;
+    auto r = cs.eval(R"(
+        (let ((pol (orch:compose-workflow 'collect-all :residual 'report))
+              (tasks (list (lambda () 1))))
+          (let ((h (orch:supervise-batch tasks pol :watch-scope #f)))
+            (if (hash-ref h "scope-watch-called") 0 1)))
+    )");
+    CHECK(r && is_int(*r) && as_int(*r) == 1, "3495 AC4: watch-scope=#f → scope-watch-called=#f");
+    auto r2 = cs.eval(R"(
+        (let ((pol (orch:compose-workflow 'collect-all :residual 'report))
+              (tasks (list (lambda () 1))))
+          (let ((h (orch:supervise-batch tasks pol :watch-scope #t)))
+            (if (hash-ref h "scope-watch-called") 1 0)))
+    )");
+    CHECK(r2 && is_int(*r2) && as_int(*r2) == 1, "3495 AC4: watch-scope=#t → Phase B called");
+    reset_all_agent_scopes_for_test();
+}
+
+static void ac3495_5_extend_no_invent() {
+    std::println("\n--- #3495 AC5: extend test_failure_policy_bridge + no invent ---");
+    const auto q = read_file("src/compiler/evaluator_primitives_agent.cpp");
+    const auto t = read_file("tests/orch/test_failure_policy_bridge.cpp");
+    const auto readme = read_file("src/orch/README.md");
+    CHECK(t.find("ac3495_1_prod_cancel_residual_action") != std::string::npos,
+          "3495 AC5: AC1 test");
+    CHECK(q.find("Issue #3495") != std::string::npos, "3495 AC5: prim cites #3495");
+    CHECK(readme.find("#3495") != std::string::npos, "3495 AC5: README cites #3495");
+    CHECK(q.find("query:supervise-batch") == std::string::npos, "3495 AC5: no new query key");
+    CHECK(read_file("tests/orch/test_issue_3495.cpp").empty(), "3495 AC5: no test_issue_3495.cpp");
+    CHECK(read_file("docs/design/3495-supervise-batch-apply.md").empty(),
+          "3495 AC5: no docs/design/3495-*");
+}
+
+static void ac3495_run_added_tests() {
+    ac3495_1_prod_cancel_residual_action();
+    ac3495_2_soft_observe();
+    ac3495_3_policy_not_dropped();
+    ac3495_4_watch_scope_false();
+    ac3495_5_extend_no_invent();
 }
 
 #ifndef AURA_ISSUE_BATCH_MEMBER
