@@ -192,10 +192,10 @@ int main() {
         CHECK(hash_int(cs, "(engine:metrics \"query:evolution-audit-decision\")",
                        "last-audit-mid") >= 0,
               "3339 AC2: last-audit-mid present");
-        CHECK(hash_int(cs, "(engine:metrics \"query:security-posture\")", "schema-2534") == 2534 ||
-                  hash_int(cs, "(engine:metrics \"query:security-posture\")", "schema-2225") ==
-                      2225,
-              "3339 AC2: security-posture schema sentinel");
+        CHECK(hash_int(cs, "(engine:metrics \"query:security-posture\")", "schema-2534") == 2534,
+              "3339 AC2 / #3499: security-posture schema-2534");
+        CHECK(hash_int(cs, "(engine:metrics \"query:security-posture\")", "schema-2225") == 2225,
+              "3499 AC1: full primitives posture also has schema-2225");
         CHECK(hash_int(cs, "(engine:metrics \"query:type-linear-commit-health\")", "schema-2613") ==
                   2613,
               "3339 AC2: type-linear-commit-health schema-2613");
@@ -212,8 +212,8 @@ int main() {
         const auto sec = read_file("src/compiler/evaluator_primitives_security.cpp");
         CHECK(sec.find("kEvolutionAuditDecisionPlannedKeys = 72") != std::string::npos,
               "ac3339_3_plus20: planned 72 so +20 dummy keys without raise fails CI");
-        CHECK(sec.find("kSecurityPosturePlannedKeys = 96") != std::string::npos,
-              "3339 AC1: posture planned 96");
+        CHECK(sec.find("kSecurityPosturePlannedKeys = 128") != std::string::npos,
+              "3339 AC1 / #3499: posture planned 128 (2225 merge headroom)");
 
         reset_for_test();
         apply_dev_audit_defaults();
@@ -226,6 +226,39 @@ int main() {
         CHECK(read_file("tests/compiler/test_issue_3339.cpp").empty(), "ac3339_5_no_invent");
         CHECK(read_file("docs/design/3339-agent-decision-facade-headroom.md").empty(),
               "3339 AC5: no docs/design/3339-*");
+    }
+
+    // Issue #3499: production full-primitives posture carries both 2534
+    // decision keys and 2225 WAL durability keys (last-wins merge).
+    // Runs before :prefix — that dump is a pre-existing stack-smash on
+    // this tree (origin/main) and must not hide these ACs.
+    std::println("\n--- #3499: security-posture 2534+2225 merge ---");
+    {
+        aura_query_hash_set_force_cap(0);
+        aura_query_hash_reset_overflow_for_test();
+        CHECK(hash_int(cs, "(engine:metrics \"query:security-posture\")", "schema-2534") == 2534,
+              "3499 AC1: schema-2534");
+        CHECK(hash_int(cs, "(engine:metrics \"query:security-posture\")", "schema-2225") == 2225,
+              "3499 AC1: schema-2225 on full primitives");
+        CHECK(hash_int(cs, "(engine:metrics \"query:security-posture\")", "ring-wrap-total") >= 0,
+              "3499 AC2: ring-wrap-total");
+        CHECK(hash_int(cs, "(engine:metrics \"query:security-posture\")", "wal-persisted-total") >=
+                  0,
+              "3499 AC2: wal-persisted-total");
+        const auto gap =
+            hash_int(cs, "(engine:metrics \"query:security-posture\")", "audit-durable-gap");
+        CHECK(gap == 0 || gap == 1, "3499 AC2: audit-durable-gap is 0 or 1");
+        CHECK(hash_int(cs, "(engine:metrics \"query:security-posture\")", "overflow") != 1,
+              "3499 AC4: overflow!=1 under default cap");
+        CHECK(hash_int(cs, "(engine:metrics \"query:security-posture\")", "schema-3499") == 3499,
+              "3499 AC1: schema-3499");
+        const auto obs = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
+        CHECK(obs.find("\"query:security-posture\"") != std::string::npos,
+              "3499 AC3: obs_eval slim/s0 handler still registered");
+        CHECK(read_file("tests/compiler/test_issue_3499.cpp").empty(),
+              "3499 AC5: no test_issue_3499.cpp");
+        CHECK(read_file("docs/design/3499-security-posture-merge.md").empty(),
+              "3499 AC5: no docs/design/3499-*");
     }
 
     // ── AC2: :prefix ──

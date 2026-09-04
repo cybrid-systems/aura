@@ -11999,6 +11999,9 @@ void ObservabilityPrims::register_eval_p65(PrimRegistrar add, Evaluator& ev) {
     // filter) and query:security-audit-stats (#2054 lineage). Mirrors
     // the audit-wal-stats shape (#2150) so Agent can read
     // persisted/replay/rotate counters alongside the new side-car.
+    // Issue #3499: keep this registration for slim/s0 (no
+    // register_security_primitives). Full primitives last-wins the
+    // 2534 handler, which now additive-merges these 2225 keys.
     //
     // Fields (process-wide snapshot via
     // aura::core::security_event_wal::snapshot_security_event_wal_stats()
