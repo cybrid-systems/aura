@@ -794,11 +794,58 @@ export inline std::size_t snapshot_temporary_moving_live_ptrs(std::vector<void*>
     return out.size();
 }
 
+// Issue #3473: process-level slot queue for note_ffi_opaque_alias_densify_cover.
+// Not a pin/canary registry — drained into each arena's existing
+// external_root_slots_for_densify_ at Moving live_compact (same shape as
+// #3210 canary drain). Soft / !moving_compact_enabled: note is one load.
+namespace moving_ffi_alias_slot_detail {
+    struct Inventory {
+        std::mutex mtx;
+        std::vector<void**> slots;
+        std::atomic<std::uint32_t> live{0};
+    };
+    inline Inventory g_inventory{};
+} // namespace moving_ffi_alias_slot_detail
+
+export inline void reset_ffi_alias_slots_for_densify_for_test() noexcept {
+    auto& inv = moving_ffi_alias_slot_detail::g_inventory;
+    std::lock_guard<std::mutex> lock(inv.mtx);
+    inv.slots.clear();
+    inv.live.store(0, std::memory_order_release);
+}
+
+export inline std::size_t snapshot_ffi_alias_slots_for_densify(std::vector<void**>& out) noexcept {
+    auto& inv = moving_ffi_alias_slot_detail::g_inventory;
+    if (inv.live.load(std::memory_order_acquire) == 0) {
+        out.clear();
+        return 0;
+    }
+    std::lock_guard<std::mutex> lock(inv.mtx);
+    out.assign(inv.slots.begin(), inv.slots.end());
+    return out.size();
+}
+
+// Process-level slot register. live_compact drains into the arena slot list
+// so *slot is rewritten when it is a last_object_remap_ key.
+export inline void register_external_root_slot_for_densify(void** slot) noexcept {
+    if (slot == nullptr || *slot == nullptr)
+        return;
+    if (!moving_compact_enabled())
+        return;
+    auto& inv = moving_ffi_alias_slot_detail::g_inventory;
+    {
+        std::lock_guard<std::mutex> lock(inv.mtx);
+        inv.slots.push_back(slot);
+        inv.live.store(static_cast<std::uint32_t>(inv.slots.size()), std::memory_order_release);
+    }
+}
+
 export inline void reset_temporary_moving_live_ptrs_for_test() noexcept {
     auto& inv = moving_temp_canary_detail::g_inventory;
     std::lock_guard<std::mutex> lock(inv.mtx);
     inv.ptrs.clear();
     inv.live.store(0, std::memory_order_release);
+    reset_ffi_alias_slots_for_densify_for_test();
 }
 
 // RAII for stack/temp EnvFrame/Closure/JIT/FFI live ptrs that cannot be
@@ -847,9 +894,11 @@ export inline void note_ffi_opaque_alias_densify_cover(void* p, void** slot,
         return;
     }
     if (slot != nullptr && *slot != nullptr) {
-        // Slot-rewrite cover: next Moving densify rewrites *slot via
-        // last_object_remap_ when *slot is a key. No canary — the slot IS
-        // the cover (canary on the same pointer would false-positive stale).
+        // Issue #3473: register-or-canary. Slot path must actually
+        // register for rewrite (metric-only left *slot densify-old).
+        // No canary — #3368 XOR (canary on the same pointer would
+        // false-positive stale after a successful rewrite).
+        register_external_root_slot_for_densify(slot);
         aura::core::densify_consistency::g_ffi_opaque_alias_slot_cover_total.fetch_add(
             1, std::memory_order_relaxed);
         return;
@@ -2212,6 +2261,15 @@ public:
             // fail-closes (existing #3055/#3182 gate). Empty inventory:
             // one atomic load (Soft / no temps never take the mutex).
             note_temporary_moving_live_canaries();
+            // Issue #3473: drain process-level FFI/JIT alias slots into this
+            // arena's rewrite list before relocate. Empty inventory: one load.
+            {
+                std::vector<void**> alias_slots;
+                if (snapshot_ffi_alias_slots_for_densify(alias_slots) > 0) {
+                    for (void** s : alias_slots)
+                        this->register_external_root_slot_for_densify(s);
+                }
+            }
             result.objects_moved = relocate_tracked_objects_for_moving_(&untracked_kept_local);
             result.untracked_kept_count = untracked_kept_local;
             result.moved_live_objects = result.objects_moved > 0;
@@ -2227,8 +2285,16 @@ public:
             if (result.objects_moved > 0 && !external_root_slots_for_densify_.empty() &&
                 !last_object_remap_.empty()) {
                 slot_covered_old.reserve(external_root_slots_for_densify_.size());
+                std::unordered_set<void**> slot_seen;
                 for (void** slot : external_root_slots_for_densify_) {
                     if (slot == nullptr || *slot == nullptr)
+                        continue;
+                    // Issue #3473: helper drain + known-root walk may
+                    // register the same void** twice. A second rewrite
+                    // would look up the already-new address in
+                    // last_object_remap_ (previous-window keys) and
+                    // clobber *slot.
+                    if (!slot_seen.insert(slot).second)
                         continue;
                     auto it = last_object_remap_.find(*slot);
                     if (it == last_object_remap_.end())

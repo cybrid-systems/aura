@@ -3069,6 +3069,102 @@ static void ac3443_6_source_cite_no_invent() {
     CHECK(arena.find("schema-3443") == std::string::npos, "3443 AC6: no schema-3443 query key");
 }
 
+// ── Issue #3473: slotted FFI cover must register, not metric-only ──
+static void ac3473_1_helper_registers_non_opaque_heap_slot() {
+    std::println("\n--- #3473 AC1/AC5: helper registers a non-opaque_heap_ slot ---");
+    using aura::core::densify_consistency::ffi_opaque_alias_slot_cover_total_v_read;
+    using aura::core::densify_consistency::moving_temporary_canary_noted_total_v_read;
+    using aura::core::densify_consistency::reset_ffi_opaque_alias_slot_cover_for_test;
+    using aura::core::densify_consistency::reset_moving_post_moving_stale_for_test;
+    using aura::core::densify_consistency::reset_moving_temporary_canary_noted_for_test;
+    MovingFlagGuard on(1);
+    RequiredPinGuard req(1);
+    aura::ast::g_moving_untracked_hard_abort_pref.store(1, std::memory_order_relaxed);
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    reset_moving_post_moving_stale_for_test();
+    reset_moving_temporary_canary_noted_for_test();
+    reset_ffi_opaque_alias_slot_cover_for_test();
+    aura::ast::reset_temporary_moving_live_ptrs_for_test();
+    ASTArena arena(64 * 1024);
+    void* s0 = nullptr;
+    void* s1 = nullptr;
+    auto* p0 = arena.create_with_cover<Pod16>(&s0, nullptr, 1, 2, 3, 4);
+    auto* p1 = arena.create_with_cover<Pod16>(&s1, nullptr, 5, 6, 7, 8);
+    CHECK(p0 && p1, "3473 AC1: required create_with_cover produced objects");
+    // JIT cache field — not an opaque_heap_ element. Helper must register.
+    void* jit_cache = s0;
+    aura::ast::note_ffi_opaque_alias_densify_cover(jit_cache, &jit_cache, "jit-cache-alias");
+    CHECK(ffi_opaque_alias_slot_cover_total_v_read() == 1, "3473 AC1: slot-cover metric");
+    CHECK(moving_temporary_canary_noted_total_v_read() == 0,
+          "3473 AC2: slotted path does not canary (#3368 XOR)");
+    const auto r = arena.live_compact(LiveCompactMode::Moving);
+    if (r.objects_moved > 0) {
+        CHECK(jit_cache == s0, "3473 AC1: *slot rewritten to remapped address");
+        CHECK(static_cast<Pod16*>(jit_cache)->a == 1, "3473 AC1: remapped payload");
+        CHECK(r.post_moving_stale_count == 0, "3473 AC2: rewritten slot is not stale");
+        CHECK(r.pin_contract_held, "3473 AC5: window may be green");
+    } else {
+        CHECK(p0->a == 1 && p1->a == 5, "3473 AC1: no-move payloads intact");
+    }
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    aura::ast::reset_temporary_moving_live_ptrs_for_test();
+}
+
+static void ac3473_3_noslot_canary_unchanged() {
+    std::println("\n--- #3473 AC3: no-slot path still #3210 canary ---");
+    const auto arena = read_file("src/core/arena.ixx");
+    const auto fn = arena.find("export inline void note_ffi_opaque_alias_densify_cover");
+    CHECK(fn != std::string::npos, "3473 AC3: helper present");
+    const auto win = fn == std::string::npos ? std::string{} : arena.substr(fn, 1800);
+    CHECK(win.find("note_temporary_moving_live_ptr(p)") != std::string::npos,
+          "3473 AC3: no-slot still canaries");
+}
+
+static void ac3473_4_soft_exempt() {
+    std::println("\n--- #3473 AC4: Soft / Off / !Moving — one exempt bump ---");
+    using aura::core::densify_consistency::ffi_opaque_alias_slot_cover_total_v_read;
+    using aura::core::densify_consistency::moving_temporary_canary_noted_total_v_read;
+    using aura::core::densify_consistency::reset_ffi_opaque_alias_slot_cover_for_test;
+    using aura::core::densify_consistency::reset_moving_temporary_canary_noted_for_test;
+    RequiredPinGuard off(0);
+    reset_moving_temporary_canary_noted_for_test();
+    reset_ffi_opaque_alias_slot_cover_for_test();
+    aura::ast::reset_temporary_moving_live_ptrs_for_test();
+    {
+        MovingFlagGuard off_moving(0);
+        ASTArena arena(64 * 1024);
+        auto* p0 = arena.create<Pod16>(1, 2, 3, 4);
+        void* jit_cache = p0;
+        aura::ast::note_ffi_opaque_alias_densify_cover(jit_cache, &jit_cache, "jit-cache-alias");
+        CHECK(ffi_opaque_alias_slot_cover_total_v_read() == 0, "3473 AC4: no slot-cover bump");
+        CHECK(moving_temporary_canary_noted_total_v_read() == 0, "3473 AC4: no canary");
+        std::vector<void**> queued;
+        CHECK(aura::ast::snapshot_ffi_alias_slots_for_densify(queued) == 0,
+              "3473 AC4: no process slot queue");
+        const auto r = arena.live_compact(LiveCompactMode::Soft);
+        CHECK(r.objects_moved == 0, "3473 AC4: Soft does not relocate");
+    }
+    aura::ast::reset_temporary_moving_live_ptrs_for_test();
+}
+
+static void ac3473_5_source_cite_no_invent() {
+    std::println("\n--- #3473 AC5: source-cite + no invent ---");
+    const auto arena = read_file("src/core/arena.ixx");
+    const auto fn = arena.find("export inline void note_ffi_opaque_alias_densify_cover");
+    const auto win = fn == std::string::npos ? std::string{} : arena.substr(fn, 1800);
+    CHECK(win.find("Issue #3473") != std::string::npos, "3473 AC5: helper cites #3473");
+    CHECK(win.find("register_external_root_slot_for_densify(slot)") != std::string::npos,
+          "3473 AC5: slot path registers");
+    CHECK(arena.find("g_3473_") == std::string::npos, "3473 AC5: no g_3473_*");
+    CHECK(arena.find("schema-3473") == std::string::npos, "3473 AC5: no schema-3473");
+    CHECK(arena.find("class FfiOpaquePinRegistry") == std::string::npos,
+          "3473 AC5: no second pin registry");
+    CHECK(read_file("docs/design/3473-ffi-alias-slot-register.md").empty(),
+          "3473 AC5: no docs/design");
+    CHECK(read_file("tests/core/test_issue_3473.cpp").empty(), "3473 AC5: no invent");
+    CHECK(read_file("tests/compiler/test_issue_3473.cpp").empty(), "3473 AC5: no compiler invent");
+}
+
 // ── Issue #3435: relocate !neu after recycle must not drop tracking ──
 // recycle happens BEFORE the new slot is obtained; a try_allocate / pmr
 // failure then left the object out of kept (hole in dtors_ → UAF bypass
@@ -3869,6 +3965,11 @@ int run_test_moving_densify_fail_closed() {
     ac3443_4_modules_slot_walk();
     ac3443_5_exempt_taxonomy_unchanged();
     ac3443_6_source_cite_no_invent();
+    std::println("\n=== Issue #3473: slotted FFI cover registers for rewrite ===");
+    ac3473_1_helper_registers_non_opaque_heap_slot();
+    ac3473_3_noslot_canary_unchanged();
+    ac3473_4_soft_exempt();
+    ac3473_5_source_cite_no_invent();
 
     // clang-format off
     (void)R"(EnvFrame densify ownership scan fail enters outermost commit barrier (extends #2495 test file per #81967))";
