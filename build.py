@@ -5018,6 +5018,21 @@ def cmd_lint():
             "Issue #3345 production hybrid depth-1 fanout linter failed — run python3 scripts/coverage/checks/check_production_hybrid_depth1_fanout_3345.py"
         )
         return r
+    # Issue #3474: production FIFO called_by cone (transitive IR dirty)
+    # after facade success and at peel entry. #3345 stays depth-1.
+    # Soft invalidate teardown unchanged. Extends
+    # test_compiler_hot_update_facade + test_incremental_facade_dirty_
+    # names_snapshot; no docs/design/; no new query keys.
+    cone3474_script = COVERAGE_CHECKS / "check_production_called_by_cone_bfs_3474.py"
+    if not cone3474_script.exists():
+        fail(f"missing {cone3474_script}")
+        return 1
+    r = run([sys.executable, str(cone3474_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3474 production called_by cone FIFO linter failed — run python3 scripts/coverage/checks/check_production_called_by_cone_bfs_3474.py"
+        )
+        return r
     # Issue #3221: production mark_define_dirty / invalidate_function
     # pass Cascade into the facade, not ResidualForceHeal. Age-gated
     # auto-heal (#3096) keeps ResidualForceHeal; coverage-verify keeps

@@ -7227,15 +7227,24 @@ public:
         // Issue #3381: production facade early-return only dirties the root
         // (mark_define_dirty / invalidate_function call hard_invalidate_via_
         // facade → mark_body_only_dirty(root) + invalidate_shape(root) +
-        // return — no BFS, no hybrid drain under production). Without this
-        // union, callers stay clean (dirty=false / dirty_block_count()==0)
-        // and `should_partial_relower_impact_checked` silently skips them
-        // (dirty_count==0 → false early-exit; impact_ub never consulted).
-        // `lookup_define_v2(g)` returns 0 on the pre-mutate IR while the
-        // Call encoding still names the old `f` — miss-compile.
+        // return — no Soft invalidate BFS, no hybrid drain under production).
+        // Without this union, callers stay clean (dirty=false /
+        // dirty_block_count()==0) and `should_partial_relower_impact_checked`
+        // silently skips them (dirty_count==0 → false early-exit; impact_ub
+        // never consulted). `lookup_define_v2(g)` returns 0 on the
+        // pre-mutate IR while the Call encoding still names the old `f`
+        // — miss-compile.
+        //
+        // Issue #3474: #3381 walked one hop of dep_graph_[root].called_by.
+        // Chain f ← g ← h left h clean. Snapshot the same FIFO called_by
+        // walk Soft invalidate_function already uses (std::deque
+        // push_back/pop_front + visited) and mark_caller_body_dirty each
+        // reachable caller. Shared dep_graph_mtx_ only — Soft invalidate
+        // owns exclusive teardown. Not a second AOT path; facade still
+        // owns decide_and_reemit.
         //
         // Reuse existing bricks under the cascade_decision_mtx_ critical
-        // section: dep_graph_[root].called_by walk (shared dep_graph_mtx_),
+        // section: FIFO called_by walk (shared dep_graph_mtx_),
         // mark_caller_body_dirty (IRC entry alias for mark_body_only_dirty,
         // same call shape Soft BFS uses at service_dirty.cpp:1087), and
         // the #3283 fail-closed take-full shape (mark_all_blocks_dirty +
@@ -7250,21 +7259,23 @@ public:
             {
                 lock_order::OrderedSharedLock<std::shared_mutex> read(dep_graph_mtx_,
                                                                       lock_order::Level::DepGraph);
+                std::deque<std::string> bfs;
+                std::unordered_set<std::string> visited;
                 for (const auto& root : dirty_names) {
-                    auto dit = dep_graph_.find(root);
+                    if (visited.insert(root).second)
+                        bfs.push_back(root);
+                }
+                while (!bfs.empty()) {
+                    auto current = bfs.front();
+                    bfs.pop_front();
+                    auto dit = dep_graph_.find(current);
                     if (dit == dep_graph_.end())
                         continue;
                     for (const auto& caller : dit->second.called_by) {
-                        // Dedupe against both the existing dirty_names
-                        // snapshot AND the new caller_names batch — the
-                        // caller may already be dirty from a Soft BFS
-                        // pass or a prior production invalidate.
-                        if (std::find(dirty_names.begin(), dirty_names.end(), caller) ==
-                                dirty_names.end() &&
-                            std::find(caller_names.begin(), caller_names.end(), caller) ==
-                                caller_names.end()) {
-                            caller_names.push_back(caller);
-                        }
+                        if (!visited.insert(caller).second)
+                            continue;
+                        caller_names.push_back(caller);
+                        bfs.push_back(caller);
                     }
                 }
             }
@@ -7276,6 +7287,7 @@ public:
                 auto cit = ir_cache_v2_.find(caller);
                 if (cit != ir_cache_v2_.end()) {
                     (void)cit->second.mark_caller_body_dirty();
+                    finish_cascade_soa_dirty_sync_(cit->second);
                 }
                 dirty_names.push_back(caller);
             }
@@ -11678,6 +11690,12 @@ private:
     // after facade early-return. Soft owns full BFS. Empty IR cache
     // (never-lowered / pure-AOT with no interpreter entries) is a no-op.
     void mark_direct_hybrid_dependents_body_dirty_(const std::string& name);
+
+    // Issue #3474: production FIFO called_by cone IR dirty after facade
+    // success. Marks every reachable caller (not only direct). Shared
+    // lock only — Soft owns exclusive invalidate teardown. Empty IR
+    // cache is a no-op.
+    void mark_called_by_cone_body_dirty_(const std::string& name);
 
     void record_dependency(const std::string& caller, const std::string& callee) {
         // Issue #687: idempotent — skip if (caller, callee) is
