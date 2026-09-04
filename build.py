@@ -5140,6 +5140,21 @@ def cmd_lint():
             "Issue #3474 production called_by cone FIFO linter failed — run python3 scripts/coverage/checks/check_production_called_by_cone_bfs_3474.py"
         )
         return r
+    # Issue #3484: workspace peel must not count dirty_n==0 / instr-peel
+    # skip as success under production (persist miss / under-mark).
+    # Fail-closed full reuses partial_forced_full_by_impact_total.
+    # Soft / Off clean skip stays zero-cost. Extends
+    # test_cascade_relower_silent_skip; no docs/design/; no new query keys.
+    peel3484_script = COVERAGE_CHECKS / "check_peel_zero_mask_fail_closed_3484.py"
+    if not peel3484_script.exists():
+        fail(f"missing {peel3484_script}")
+        return 1
+    r = run([sys.executable, str(peel3484_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3484 peel zero-mask fail-closed linter failed — run python3 scripts/coverage/checks/check_peel_zero_mask_fail_closed_3484.py"
+        )
+        return r
     # Issue #3221: production mark_define_dirty / invalidate_function
     # pass Cascade into the facade, not ResidualForceHeal. Age-gated
     # auto-heal (#3096) keeps ResidualForceHeal; coverage-verify keeps
