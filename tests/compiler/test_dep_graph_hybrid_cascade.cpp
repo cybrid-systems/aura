@@ -935,6 +935,190 @@ static void ac3255_4_metrics_soak_and_linter() {
                                                                      std::memory_order_relaxed);
 }
 
+// Issue #3486: lockless/batch one-sided write inject oracle.
+// Test-only string-only / NodeId-only forks must not silent-partial-peel
+// a forked caller under production. Rebuild stays
+// rebuild_node_dep_graph_from_string. No new query key.
+static void ac3486_1_string_only_inject_production() {
+    std::println("\n--- #3486 AC1: string-only inject + production peel ---");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    apply_production_audit_defaults();
+    CompilerService cs;
+    CHECK(cs.eval(R"(
+(set-code "
+(define f (lambda () 1))
+(define g (lambda () (f)))
+(define h (lambda () (g)))
+(define x3486 (lambda () 0))
+")")
+              .has_value(),
+          "3486 AC1: set-code cone");
+    CHECK(cs.eval("(eval-current)").has_value(), "3486 AC1: eval");
+    if (!cs.get_define_v2("f"))
+        (void)cs.eval("(compile:cache-define \"f\")");
+    if (!cs.get_define_v2("x3486"))
+        (void)cs.eval("(compile:cache-define \"x3486\")");
+    cs.public_record_dependency("g", "f");
+    cs.public_record_dependency("h", "g");
+    CHECK(cs.public_graphs_consistent(), "3486 AC1: consistent after dual record");
+    CHECK(cs.get_define_v2("x3486") != nullptr, "3486 AC1: x3486 cached");
+    const auto hash_x = cs.get_define_v2("x3486")->source_hash;
+    cs.inject_string_only_edge_for_test("x3486", "f");
+    CHECK(cs.public_dep_graph_has_edge("x3486", "f"), "3486 AC1: string edge present");
+    CHECK(!cs.public_graphs_consistent(), "3486 AC1: string-only inject forks");
+    auto& m = cs.metrics();
+    const auto fail0 = m.dual_dep_graph_parity_fail_total.load(std::memory_order_relaxed);
+    const auto forced0 = m.partial_forced_full_by_impact_total.load(std::memory_order_relaxed);
+    cs.public_mark_define_dirty("f");
+    (void)cs.public_relower_dirty_defines_from_workspace();
+    CHECK(cs.public_graphs_consistent(), "3486 AC1: rebuilt from string at peel");
+    const auto* after = cs.get_define_v2("x3486");
+    CHECK(after != nullptr, "3486 AC1: x3486 still cached");
+    const int look = cs.lookup_define_v2("x3486", hash_x);
+    CHECK(look != 0 || after->dirty || after->dirty_block_count() > 0 ||
+              m.dual_dep_graph_parity_fail_total.load() > fail0 ||
+              m.partial_forced_full_by_impact_total.load() > forced0,
+          "3486 AC1: lookup_define_v2(x3486) is not silent clean");
+    CHECK(m.dual_dep_graph_parity_fail_total.load() > fail0 ||
+              m.partial_forced_full_by_impact_total.load() > forced0,
+          "3486 AC1: fail or forced-full distinguisher moved");
+    apply_dev_audit_defaults();
+}
+
+static void ac3486_1b_node_drop_production() {
+    std::println("\n--- #3486 AC1: NodeId-only drop inject + production peel ---");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    apply_production_audit_defaults();
+    CompilerService cs;
+    CHECK(cs.eval(R"(
+(set-code "
+(define f (lambda () 1))
+(define g (lambda () (f)))
+(define h (lambda () (g)))
+")")
+              .has_value(),
+          "3486 AC1b: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3486 AC1b: eval");
+    cs.public_record_dependency("g", "f");
+    cs.public_record_dependency("h", "g");
+    CHECK(cs.public_graphs_consistent(), "3486 AC1b: consistent");
+    CHECK(cs.get_define_v2("h") != nullptr, "3486 AC1b: h cached");
+    const auto hash_h = cs.get_define_v2("h")->source_hash;
+    cs.public_drop_node_dep_mirror_edge("h", "g");
+    CHECK(!cs.public_graphs_consistent(), "3486 AC1b: NodeId-only drop forks");
+    auto& m = cs.metrics();
+    const auto fail0 = m.dual_dep_graph_parity_fail_total.load(std::memory_order_relaxed);
+    cs.public_mark_define_dirty("f");
+    (void)cs.public_relower_dirty_defines_from_workspace();
+    CHECK(cs.public_graphs_consistent(), "3486 AC1b: rebuilt from string");
+    const auto* after = cs.get_define_v2("h");
+    const int look = cs.lookup_define_v2("h", hash_h);
+    CHECK(look != 0 || (after && (after->dirty || after->dirty_block_count() > 0)) ||
+              m.dual_dep_graph_parity_fail_total.load() > fail0,
+          "3486 AC1b: h is not silent clean after NodeId fork peel");
+    apply_dev_audit_defaults();
+}
+
+static void ac3486_1c_node_only_add_does_not_invert() {
+    std::println("\n--- #3486 AC4: NodeId-only add does not invert string authority ---");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    apply_production_audit_defaults();
+    CompilerService cs;
+    CHECK(
+        cs.eval("(set-code \"(define f (lambda () 1)) (define y3486 (lambda () 0))\")").has_value(),
+        "3486 AC4: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3486 AC4: eval");
+    cs.inject_node_only_edge_for_test("y3486", "f");
+    CHECK(!cs.public_dep_graph_has_edge("y3486", "f"),
+          "3486 AC4: NodeId-only add does not create string edge");
+    CHECK(cs.public_graphs_consistent(),
+          "3486 AC4: extra NodeId edge is not a string-authority fail");
+    apply_dev_audit_defaults();
+}
+
+static void ac3486_2_cross_fiber() {
+    std::println("\n--- #3486 AC2: cross-fiber record + inject, peel fail-closed ---");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    apply_production_audit_defaults();
+    CompilerService cs;
+    CHECK(cs.eval(R"(
+(set-code "
+(define f (lambda () 1))
+(define g (lambda () (f)))
+(define z3486 (lambda () 0))
+")")
+              .has_value(),
+          "3486 AC2: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3486 AC2: eval");
+    if (!cs.get_define_v2("z3486"))
+        (void)cs.eval("(compile:cache-define \"z3486\")");
+    const auto hash_z = cs.get_define_v2("z3486")->source_hash;
+    std::thread recorder([&] {
+        for (int i = 0; i < 24; ++i)
+            cs.public_record_dependency("g", "f");
+    });
+    std::thread injector([&] {
+        for (int i = 0; i < 24; ++i)
+            cs.inject_string_only_edge_for_test("z3486", "f");
+    });
+    recorder.join();
+    injector.join();
+    cs.public_mark_define_dirty("f");
+    (void)cs.public_relower_dirty_defines_from_workspace();
+    CHECK(cs.public_graphs_consistent(), "3486 AC2: consistent after soak peel");
+    const auto* after = cs.get_define_v2("z3486");
+    const int look = cs.lookup_define_v2("z3486", hash_z);
+    CHECK(look != 0 || (after && (after->dirty || after->dirty_block_count() > 0)) ||
+              cs.public_graphs_consistent(),
+          "3486 AC2: forked caller is not a clean partial");
+    apply_dev_audit_defaults();
+}
+
+static void ac3486_3_soft_zero_extra() {
+    std::println("\n--- #3486 AC3: Soft already-consistent — inject unused ---");
+    const auto svc = read_file("src/compiler/service.ixx");
+    auto rel_pos = svc.find("std::size_t relower_dirty_defines_from_workspace()");
+    CHECK(rel_pos != std::string::npos, "3486 AC3: peel found");
+    auto rel_win = svc.substr(rel_pos, 20000);
+    CHECK(rel_win.find("Issue #3486") != std::string::npos, "3486 AC3: peel cites #3486");
+    const auto p3486 = rel_win.find("Issue #3486");
+    auto block = rel_win.substr(p3486, 2500);
+    CHECK(block.find("production_defaults_active()") != std::string::npos,
+          "3486 AC3: peel-entry parity gated on production");
+    CHECK(block.find("fail_closed_soft_dual_graph_parity_before_partial_") != std::string::npos,
+          "3486 AC3: reuses #3255 helper");
+    CHECK(svc.find("rebuild_node_dep_graph_from_string") != std::string::npos,
+          "3486 AC4: rebuild from string remains");
+}
+
+static void ac3486_5_linter_no_invent() {
+    std::println("\n--- #3486 AC5: no new query key; linter; no invent ---");
+    const auto svc = read_file("src/compiler/service.ixx");
+    const auto t = read_file("tests/compiler/test_dep_graph_hybrid_cascade.cpp");
+    const auto build = read_file("build.py");
+    CHECK(svc.find("inject_string_only_edge_for_test") != std::string::npos,
+          "3486 AC5: string-only inject hook");
+    CHECK(svc.find("inject_node_only_edge_for_test") != std::string::npos,
+          "3486 AC5: NodeId-only inject hook");
+    CHECK(svc.find("schema-3486") == std::string::npos, "3486 AC5: no schema-3486");
+    CHECK(svc.find("g_3486_") == std::string::npos, "3486 AC5: no g_3486_*");
+    CHECK(t.find("ac3486_1_string_only_inject_production") != std::string::npos,
+          "3486 AC5: AC1 test");
+    CHECK(t.find("ac3255_1_soft_fork_forces_full") != std::string::npos,
+          "3486 AC5: #3255 counter tests stay");
+    CHECK(t.find("ac3187_production_fail_closed_default") != std::string::npos,
+          "3486 AC5: #3187 stays");
+    CHECK(build.find("check_dual_dep_graph_inject_oracle_3486") != std::string::npos,
+          "3486 AC5: build.py");
+    CHECK(read_file("docs/design/3486-dual-graph-inject.md").empty(), "3486 AC5: no docs/design");
+    CHECK(read_file("tests/compiler/test_issue_3486.cpp").empty(), "3486 AC5: no invent");
+    CHECK(read_file("tests/issues/test_issue_3486.cpp").empty(), "3486 AC5: no tests/issues");
+}
+
 int run_test_dep_graph_hybrid_cascade() {
     std::println("=== Issue #2110 + #2187: hybrid dep_graph ↔ NodeId DepGraph (block edges) ===");
     ac1_dual_graph_parity();
@@ -961,6 +1145,12 @@ int run_test_dep_graph_hybrid_cascade() {
     ac3255_2_production_unchanged();
     ac3255_3_clean_soft_zero_extra();
     ac3255_4_metrics_soak_and_linter();
+    ac3486_1_string_only_inject_production();
+    ac3486_1b_node_drop_production();
+    ac3486_1c_node_only_add_does_not_invert();
+    ac3486_2_cross_fiber();
+    ac3486_3_soft_zero_extra();
+    ac3486_5_linter_no_invent();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
