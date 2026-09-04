@@ -99,6 +99,11 @@ inline constexpr int kScopeChildAddressIssue = 3444;
 // Issue #3496: Aura orch:scope-join-all root drop must see descendant
 // handles (join_all/watch_all stay local; cancel_all already recurses).
 inline constexpr int kJoinAllTreeSettledIssue = 3496;
+// Issue #3497: production same-name spawn over a reclaimed-pending
+// handles_ slot is a typed deny (no emplace). Name-table put already
+// fail-closes; this is the scope-handle plane. Soft / Off: one
+// production load, existing append (zero extra scan).
+inline constexpr int kScopeSpawnPendingNameIssue = 3497;
 
 // Issue #3444: directory_snapshot encodes root as "root" and children
 // as "0" / "0/1". Same rule for orch:scope-child's returned path.
@@ -441,6 +446,23 @@ public:
             spec.bp_scope_id = bp_scope_id_;
             g_orch_module_stats.spawn_bp_scope_inherited_total.fetch_add(1,
                                                                          std::memory_order_relaxed);
+        }
+        // Issue #3497: production + same name already in handles_ with
+        // Reclaimed-pending flags → typed deny, do not emplace (ghost
+        // handle would steal first-match find). Soft / Off: skip the
+        // walk (one production_defaults load). Empty name still appends.
+        if (aura::compiler::typed_audit::production_defaults_active() && !spec.name.empty()) {
+            for (const auto& hp : handles_) {
+                if (hp.name == spec.name &&
+                    (hp.must_wait_reclaimed || hp.reclaimed_deferred_cleanup)) {
+                    thread_local AgentHandle failed;
+                    failed = AgentHandle{};
+                    failed.ok = false;
+                    failed.error = "AgentScope: name-reuse-while-reclaimed-pending (#3497)";
+                    failed.name = spec.name;
+                    return failed;
+                }
+            }
         }
         handles_.emplace_back(spawn_agent_with_mailbox(*sched_, spec));
         // Copy the spec for re-spawn. AgentSpec's body is a
