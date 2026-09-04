@@ -22,7 +22,7 @@
 #define AURA_ORCH_AGENT_SPAWN_H
 
 #include "core/resource_quota.hh"
-#include "core/sandbox.hh" // Issue #3434: is_strict() + multi_tenant_env_active() spawn gate
+#include "core/sandbox.hh" // Issue #3434/#3494: is_sandbox_active() + MT spawn gate
 #include "serve/fiber.h"
 #include "serve/multi_fiber_mailbox.h"
 #include "serve/parallel_orch.h"
@@ -1772,8 +1772,10 @@ struct AgentSpec {
     std::uint32_t producer_bp_budget = 0;
     // Issue #3434: explicit tenant for this spawn. 0 = inherit parent
     // fiber assigned_tenant_id (or Evaluator capability tenant, filled
-    // by the Aura prim). Under production Restricted+MT / Strict, a
+    // by the Aura prim). Under production Restricted+MT / Strict+MT, a
     // spawn that resolves to tenant 0 is denied ("tenant-required").
+    // Issue #3494: Restricted+MT is in the gate (is_sandbox_active),
+    // not only Strict+MT.
     std::uint64_t tenant_id = 0;
 };
 
@@ -2094,28 +2096,31 @@ inline void finalize_spawn_quota_reject(AgentHandle& h) noexcept {
     // the TenantScope resume mandate (#2491/#3275/#2883/#3320) arms on the
     // orch spawn path, not just test-stamped fibers. Resolve tenant:
     // spec.tenant_id → parent fiber assigned_tenant_id → quota TLS tenant.
-    // Under production Restricted+MT / Strict, a spawn that still resolves
-    // to 0 is denied ("tenant-required", same family as unset-principal);
-    // Soft/Off and Restricted single-tenant keep the legacy zero-cost path
-    // (AC4/AC5). Stamp happens after Scheduler::spawn succeeds below.
+    // Under production Restricted+MT / Strict+MT, a spawn that still
+    // resolves to 0 is denied ("tenant-required", same family as
+    // unset-principal); Soft/Off and Restricted/Strict single-tenant
+    // keep the legacy zero-cost path (AC4/AC5). Stamp happens after
+    // Scheduler::spawn succeeds below.
     std::uint64_t spawn_tenant = spec.tenant_id;
     if (spawn_tenant == 0 && serve::g_current_fiber)
         spawn_tenant = serve::g_current_fiber->assigned_tenant_id();
     if (spawn_tenant == 0)
         spawn_tenant = orch_tenant;
-    // Strict without AURA_MULTI_TENANT is still single-tenant: tenant 0
-    // is the host/kernel principal. Require a non-zero stamp only when
-    // the process is actually multi-tenant (Restricted+MT or Strict+MT).
-    // Issue #3220 / #3245 / #3433 / #3467 (2026-09-02): the gate used
-    // `||` here, which fired the deny on `production + is_strict` alone
-    // (single-tenant host kernel, tenant_id=0) and broke the name-table
-    // find during pending / directory snapshot tests that explicitly set
-    // Strict without setting AURA_MULTI_TENANT. The comment above names
-    // exactly that case as host single-tenant principal, which should
-    // NOT be denied — so AND it is.
+    // Strict / Restricted without AURA_MULTI_TENANT is still
+    // single-tenant: tenant 0 is the host/kernel principal. Require a
+    // non-zero stamp only when the process is actually multi-tenant
+    // (Restricted+MT or Strict+MT). Issue #3220 / #3245 / #3433 / #3467
+    // (2026-09-02): the gate used `||` here, which fired the deny on
+    // `production + is_strict` alone (single-tenant host kernel,
+    // tenant_id=0) and broke the name-table find during pending /
+    // directory snapshot tests that explicitly set Strict without
+    // setting AURA_MULTI_TENANT. Keep the MT conjunct (AND).
+    // Issue #3494: `is_strict()` skipped Restricted+MT (commercial
+    // face). `is_sandbox_active()` is Restricted||Strict so both MT
+    // production faces deny tenant 0; Soft/Off stays zero-cost.
     const bool tenant_required_gate = production_defaults_active() &&
                                       aura::core::provenance::multi_tenant_env_active() &&
-                                      aura::core::sandbox::is_strict();
+                                      aura::core::sandbox::is_sandbox_active();
     if (tenant_required_gate && spawn_tenant == 0) {
         g_orch_module_stats.spawn_failures.fetch_add(1, std::memory_order_relaxed);
         g_orch_module_stats.spawn_tenant_required_total.fetch_add(1, std::memory_order_relaxed);

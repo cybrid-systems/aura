@@ -3906,6 +3906,48 @@ int run_test_join_drain_reclaim() {
         apply_dev_audit_defaults();
     }
 
+    // ── Issue #3494: Restricted+MT spawn tenant 0 is fail-closed ──
+    // tenant_required_gate is production && MT && is_sandbox_active()
+    // (Restricted||Strict). The extra is_strict() conjunct skipped the
+    // commercial face; the MT getter/setter split statics kept the gate
+    // dark even under Strict+MT. Live suite (mailbox_fiber_batch).
+    {
+        using aura::core::sandbox::SandboxMode;
+        using aura::core::sandbox::set_mode;
+        using aura::orch::AgentSpec;
+        using aura::orch::spawn_agent_with_mailbox;
+        std::println("\n--- #3494: Restricted+MT tenant 0 deny (live spawn) ---");
+        const char* prev_sb = std::getenv("AURA_SANDBOX");
+        std::string prev_sb_s = prev_sb ? prev_sb : "";
+        ::setenv("AURA_SANDBOX", "restricted", 1);
+        apply_production_audit_defaults();
+        set_mode(SandboxMode::Restricted);
+        aura::core::resource_quota::set_current_quota_tenant(0);
+        aura::core::provenance::set_multi_tenant_env_active(true);
+        CHECK(aura::core::provenance::multi_tenant_env_active(), "3494 live: MT flag round-trips");
+        const auto t0 =
+            g_orch_module_stats.spawn_tenant_required_total.load(std::memory_order_relaxed);
+        {
+            Scheduler sched(1);
+            AgentSpec spec;
+            spec.name = "3494-live-deny";
+            spec.body = [] {};
+            auto h = spawn_agent_with_mailbox(sched, std::move(spec));
+            CHECK(!h.ok, "3494 live: Restricted+MT tenant 0 denied");
+            CHECK(h.error == "tenant-required", "3494 live: tenant-required");
+            CHECK(g_orch_module_stats.spawn_tenant_required_total.load(std::memory_order_relaxed) ==
+                      t0 + 1,
+                  "3494 live: spawn_tenant_required_total bumps");
+        }
+        aura::core::provenance::set_multi_tenant_env_active(false);
+        apply_dev_audit_defaults();
+        set_mode(SandboxMode::Off);
+        if (!prev_sb_s.empty())
+            ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+        else
+            ::unsetenv("AURA_SANDBOX");
+    }
+
     // ── Issue #3245: C++ long-lived hosts must call ensure_reclaimed_cleanup
     // after production auto-wait Timeout. Moving a still-pending handle
     // re-bumps host_forget_reclaimed_risk_total. Soft / explicit wait:

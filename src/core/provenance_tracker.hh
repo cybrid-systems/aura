@@ -376,17 +376,23 @@ inline void set_hard_capture_tenant(bool on) noexcept {
 // layout-only refs (make_ref_layout default tenant=0) cross tenant
 // boundaries under production multi-tenant default (#2835).
 inline constexpr int kMultiTenantEnvIssue = 3365;
-[[nodiscard]] inline bool multi_tenant_env_active() noexcept {
+// One process-wide flag (same pattern as g_hard_capture_tenant_pref).
+// Function-local statics in the getter / setter / reset were three
+// distinct atoms — set_multi_tenant_env_active() never armed
+// multi_tenant_env_active(), so Restricted+MT spawn / isolation
+// conjuncts stayed dark (#3494).
+inline std::atomic<std::uint32_t>& g_multi_tenant_env_flag() noexcept {
     static std::atomic<std::uint32_t> f{0};
-    return f.load(std::memory_order_acquire) != 0;
+    return f;
+}
+[[nodiscard]] inline bool multi_tenant_env_active() noexcept {
+    return g_multi_tenant_env_flag().load(std::memory_order_acquire) != 0;
 }
 inline void set_multi_tenant_env_active(bool on) noexcept {
-    static std::atomic<std::uint32_t> f{0};
-    f.store(on ? 1u : 0u, std::memory_order_release);
+    g_multi_tenant_env_flag().store(on ? 1u : 0u, std::memory_order_release);
 }
 inline void reset_multi_tenant_env_for_test() noexcept {
-    static std::atomic<std::uint32_t> f{0};
-    f.store(0u, std::memory_order_relaxed);
+    g_multi_tenant_env_flag().store(0u, std::memory_order_relaxed);
 }
 // Issue #2759: under hard-close, refuse non-zero process-global capture
 // writes (multi-eval race). Clear-to-zero always allowed (test reset /
