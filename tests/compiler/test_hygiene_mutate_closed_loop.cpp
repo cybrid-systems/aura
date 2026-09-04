@@ -22,6 +22,7 @@
 #include "core/capability_model.hh"
 #include "compiler/security_capabilities.h"
 #include "compiler/grant_test_support.hh"
+#include "serve/runtime_production_abi.h"
 
 #include <array>
 #include <cstdint>
@@ -3808,6 +3809,141 @@ static void ac3230_4_source_and_linter() {
           "3230 AC6: no docs/design");
 }
 
+static void ac3487_1_latch_torn_restamp_lag() {
+    std::println("\n--- #3487 AC1: latch==1 + torn → restamp-lag even if defaults flipped ---");
+    using aura::ast::clear_restamp_budget_nodes_override_for_test;
+    using aura::ast::kQueryStableRestampLatchExportIssue;
+    using aura::ast::kRestampLagErrorKind;
+    using aura::ast::kRestampLagReasonBudgetExceeded;
+    using aura::ast::set_restamp_budget_nodes_for_process;
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::production_defaults_active;
+    using aura::serve::set_production_multi_worker_latched_for_test;
+    CHECK(kQueryStableRestampLatchExportIssue == 3487, "3487 AC1: issue constant");
+    CHECK(std::string_view(kRestampLagErrorKind) == "restamp-lag", "3487 AC1: reuse error kind");
+    CHECK(std::string_view(kRestampLagReasonBudgetExceeded) == "budget-exceeded",
+          "3487 AC1: reuse reason");
+    aura::core::provenance::reset_provenance_enforcement_for_test();
+    apply_dev_audit_defaults();
+    set_production_multi_worker_latched_for_test(false);
+    set_restamp_budget_nodes_for_process(1);
+    CompilerService cs;
+    CHECK(setup_dense_ws(cs), "3487 AC1: dense workspace");
+    auto* ws = cs.evaluator().workspace_flat();
+    CHECK(ws != nullptr, "3487 AC1: workspace");
+    if (!ws) {
+        clear_restamp_budget_nodes_override_for_test();
+        set_production_multi_worker_latched_for_test(false);
+        return;
+    }
+    ws->bump_generation();
+    ws->restamp_all_node_generations();
+    CHECK(ws->restamp_over_budget_torn(), "3487 AC1: torn/budget flag");
+    auto lag = first_non_eager(*ws);
+    CHECK(lag != aura::ast::NULL_NODE, "3487 AC1: non-eager node");
+    CHECK(!production_defaults_active(), "3487 AC1: defaults already Soft");
+    set_production_multi_worker_latched_for_test(true);
+    CHECK(aura_runtime_multi_worker_production_latched() != 0, "3487 AC1: latch==1");
+    CHECK(!cs.evaluator().allow_query_stable_ref_export(lag),
+          "3487 AC1: latch+torn rejects even with defaults false");
+    aura::ast::FlatAST::StableNodeRef brace{};
+    brace.id = lag;
+    brace.gen = 1;
+    cs.evaluator().stamp_query_stable_ref_export(brace);
+    CHECK(brace.id == aura::ast::NULL_NODE, "3487 AC1: stamp nulls, never green lagging gen");
+    auto exported = cs.evaluator().export_ref(lag);
+    CHECK(exported.id == aura::ast::NULL_NODE, "3487 AC1: export_ref fail-closed");
+    auto sr = cs.eval(std::format("(query:stable-ref {})", lag));
+    CHECK(sr.has_value(), "3487 AC1: query:stable-ref returns");
+    CHECK(merr_kind_3027(cs, *sr) == "restamp-lag", "3487 AC1: stable-ref structured");
+    CHECK(merr_cadr_3121(cs, *sr).find("budget-exceeded") == 0, "3487 AC1: reason token");
+    auto ens = cs.eval(std::format("(query:ensure-ref {})", lag));
+    CHECK(ens.has_value() && merr_kind_3027(cs, *ens) == "restamp-lag",
+          "3487 AC1: ensure-ref structured");
+    set_production_multi_worker_latched_for_test(false);
+    apply_dev_audit_defaults();
+    clear_restamp_budget_nodes_override_for_test();
+    aura::core::provenance::reset_provenance_enforcement_for_test();
+}
+
+static void ac3487_2_soft_unlatched_under_budget() {
+    std::println("\n--- #3487 AC2: Soft + unlatched + under-budget zero extra ---");
+    using aura::ast::clear_restamp_budget_nodes_override_for_test;
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::production_defaults_active;
+    using aura::serve::set_production_multi_worker_latched_for_test;
+    apply_dev_audit_defaults();
+    set_production_multi_worker_latched_for_test(false);
+    clear_restamp_budget_nodes_override_for_test();
+    aura::core::provenance::reset_provenance_enforcement_for_test();
+    CompilerService cs;
+    CHECK(setup_dense_ws(cs), "3487 AC2: workspace");
+    auto* ws = cs.evaluator().workspace_flat();
+    CHECK(ws != nullptr, "3487 AC2: workspace");
+    aura::ast::NodeId live = aura::ast::NULL_NODE;
+    for (aura::ast::NodeId id = 1; id < ws->size(); ++id) {
+        if (ws->is_live_node(id) && !ws->is_free_slot(id)) {
+            live = id;
+            break;
+        }
+    }
+    CHECK(live != aura::ast::NULL_NODE, "3487 AC2: live node");
+    ws->bump_generation();
+    ws->restamp_all_node_generations();
+    CHECK(!ws->restamp_over_budget_torn(), "3487 AC2: not torn under unlimited");
+    CHECK(!production_defaults_active(), "3487 AC2: Soft");
+    CHECK(aura_runtime_multi_worker_production_latched() == 0, "3487 AC2: unlatched");
+    CHECK(cs.evaluator().allow_query_stable_ref_export(live), "3487 AC2: export allowed");
+    auto sr = cs.eval(std::format("(query:stable-ref {})", live));
+    CHECK(sr.has_value() && merr_kind_3027(cs, *sr) != "restamp-lag",
+          "3487 AC2: stable-ref not lag");
+}
+
+static void ac3487_5_source_and_linter() {
+    std::println("\n--- #3487 AC3/AC4/AC5/AC6: source-cite + linter + no invent ---");
+    const auto restamp = read_file("src/core/flatast_restamp.hh");
+    const auto astx = read_file("src/core/ast.ixx");
+    const auto sec = read_file("src/compiler/evaluator_security.cpp");
+    const auto ev = read_file("src/compiler/evaluator.ixx");
+    const auto qws = read_file("src/compiler/evaluator_primitives_query_workspace.cpp");
+    const auto t = read_file("tests/compiler/test_hygiene_mutate_closed_loop.cpp");
+    const auto gate = read_file("tests/compiler/test_restamp_budget_hard_gate.cpp");
+    const auto qrp = read_file("tests/compiler/test_query_result_full_provenance.cpp");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_query_stable_restamp_latch_export_3487.py");
+    const auto build = read_file("build.py");
+    CHECK(restamp.find("kQueryStableRestampLatchExportIssue = 3487") != std::string::npos,
+          "3487 AC6: issue stamp");
+    CHECK(restamp.find("restamp_over_budget_torn") != std::string::npos, "3487 AC6: helper");
+    CHECK(astx.find("kQueryStableRestampLatchExportIssue") != std::string::npos,
+          "3487 AC6: ast export");
+    CHECK(sec.find("Issue #3487") != std::string::npos, "3487 AC6: allow cites");
+    CHECK(sec.find("aura_runtime_multi_worker_production_latched() != 0") != std::string::npos,
+          "3487 AC6: allow ORs latch");
+    CHECK(ev.find("Issue #3487") != std::string::npos || ev.find("#3487") != std::string::npos,
+          "3487 AC6: evaluator comment");
+    CHECK(qws.find("Issue #3487") != std::string::npos, "3487 AC6: query:*-stable cites");
+    CHECK(qws.find("allow_query_stable_ref_export") != std::string::npos,
+          "3487 AC6: export helpers reuse allow");
+    CHECK(t.find("ac3487_1_latch_torn_restamp_lag") != std::string::npos, "3487 AC5: AC1");
+    CHECK(t.find("ac3487_2_soft_unlatched_under_budget") != std::string::npos, "3487 AC5: AC2");
+    CHECK(gate.find("3487") != std::string::npos, "3487 AC5: #3386 suite cites");
+    CHECK(qrp.find("3487") != std::string::npos, "3487 AC5: #3449 suite cites");
+    CHECK(restamp.find("kRestampHotConeHeldOverflowIssue") != std::string::npos,
+          "3487 AC4: held-cap overflow stamp kept");
+    CHECK(sec.find("restamp_hot_cone_held_overflow()") != std::string::npos,
+          "3487 AC4: allow still fail-closes overflow");
+    CHECK(!lint.empty() && lint.find("3487") != std::string::npos, "3487 AC5: linter");
+    CHECK(build.find("check_query_stable_restamp_latch_export_3487") != std::string::npos,
+          "3487 AC5: build.py");
+    CHECK(qws.find("schema-3487") == std::string::npos, "3487 AC3: no new query key");
+    CHECK(restamp.find("g_3487_") == std::string::npos, "3487 AC3: no g_3487_*");
+    CHECK(read_file("tests/compiler/test_issue_3487.cpp").empty(), "3487 AC5: no invent");
+    CHECK(read_file("tests/issues/test_issue_3487.cpp").empty(), "3487 AC5: no tests/issues");
+    CHECK(read_file("docs/design/3487-query-stable-restamp-latch.md").empty(),
+          "3487 AC5: no docs/design");
+}
+
 static void seed_over_budget_dirty_3259(aura::ast::FlatAST& ws) {
     for (aura::ast::NodeId id = 1; id < ws.size(); ++id) {
         if (ws.is_live_node(id) && !ws.is_free_slot(id))
@@ -4394,6 +4530,10 @@ int main() {
     ac3230_2_soft_and_quiet();
     ac3230_3_under_budget_green();
     ac3230_4_source_and_linter();
+    std::println("\n=== Issue #3487: query:*-stable latch ∧ torn restamp-lag export ===");
+    ac3487_1_latch_torn_restamp_lag();
+    ac3487_2_soft_unlatched_under_budget();
+    ac3487_5_source_and_linter();
     std::println("\n=== Issue #3259: production over-budget hot-cone restamp ===");
     ac3259_1_hot_cone_query_stable();
     ac3259_2_outside_cone_query_lag();

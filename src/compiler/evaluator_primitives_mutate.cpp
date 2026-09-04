@@ -2988,10 +2988,11 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
     add("query:as-stable-ref", [&ev, mev, unpack_stable_ref_arg](const auto& a) -> EvalValue {
         if (a.empty() || !ev.workspace_flat_)
             return make_void();
-        // Issue #3058 / Issue #3230 / Issue #3121: over-budget torn must
-        // not silently stamp a pre-restamp gen (same gate as query:stable-ref).
-        // Soft observe-only (allow returns true). Production: structured
-        // restamp-lag + budget-exceeded (never silent void).
+        // Issue #3058 / Issue #3230 / Issue #3121 / Issue #3487: over-budget
+        // torn must not silently stamp a pre-restamp gen (same gate as
+        // query:stable-ref). Soft + unlatched observe-only (allow returns
+        // true). Production or latch==1: structured restamp-lag +
+        // budget-exceeded (never silent void).
         auto restamp_lag = [&] {
             return mev("restamp-lag",
                        "budget-exceeded: query:as-stable-ref: restamp budget exceeded; "

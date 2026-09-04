@@ -583,7 +583,7 @@ void register_workspace_query_primitives(
                 return mev("out-of-range", std::string(op) + ": node ID " + std::to_string(node) +
                                                " >= flat size " + std::to_string(flat.size()));
             }
-            // Issue #3230: torn/budget before make_stamped_ref (lazy-align).
+            // Issue #3230 / Issue #3487: torn/budget before make_stamped_ref (lazy-align).
             if (!ev.allow_query_stable_ref_export(node)) {
                 *ok = false;
                 return mev("restamp-lag",
@@ -1021,8 +1021,9 @@ void register_workspace_query_primitives(
         if (node >= flat.size())
             return mev("out-of-range", "node ID " + std::to_string(node) + " >= flat size " +
                                            std::to_string(flat.size()));
-        // Issue #3000: gate before export_ref_safe so a skipped restamp
-        // cannot ship a stamped-green pre-mutate generation.
+        // Issue #3000 / Issue #3487: gate before export_ref_safe so a skipped
+        // restamp cannot ship a stamped-green pre-mutate generation.
+        // Latch==1 ORs the hard face inside allow (even if defaults flipped).
         if (!ev.allow_query_stable_ref_export(node))
             return mev("restamp-lag",
                        "budget-exceeded: query:stable-ref: restamp budget exceeded; "
@@ -1076,7 +1077,7 @@ void register_workspace_query_primitives(
                 layer = wt->active_idx();
             }
             const std::uint32_t cur_fiber = static_cast<std::uint32_t>(aura_fiber_current_id());
-            // Issue #3230: torn/budget before make_safe_ref_layout.
+            // Issue #3230 / Issue #3487: torn/budget before make_safe_ref_layout.
             if (!ev.allow_query_stable_ref_export(node))
                 return mev("restamp-lag",
                            "budget-exceeded: query:ensure-ref: restamp budget exceeded; "

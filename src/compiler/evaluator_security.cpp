@@ -28,8 +28,9 @@ module aura.compiler.evaluator;
 import std;
 import aura.core.ast;
 
-// Issue #3386: query_stable_hard_reject_torn consults the multi-worker
-// production latch (C ABI, aura::serve lookup). Declared here instead of
+// Issue #3386 / #3487: query_stable_hard_reject_torn and
+// allow_query_stable_ref_export consult the multi-worker production
+// latch (C ABI, aura::serve lookup). Declared here instead of
 // including steal_safety.h so this TU does not pick up that header's
 // process-wide statics.
 namespace aura::serve {
@@ -1656,10 +1657,13 @@ void Evaluator::stamp_stable_ref(ast::FlatAST::StableNodeRef& ref) const noexcep
 
 // Issue #3000 / #3037 / #3121: production query:*-stable must not export a
 // pre-mutate generation when the last outermost restamp hit
-// AURA_RESTAMP_BUDGET_NODES. Soft / sandbox=off: observe only (stamp
-// proceeds). Quiet path: last-exceeded false → one relaxed load,
+// AURA_RESTAMP_BUDGET_NODES. Soft / sandbox=off / unlatched: observe
+// only (stamp proceeds). Quiet path: last-exceeded false → one relaxed load,
 // no new atomics. Peek eager bit *before* make_ref_layout so
 // lazy-align cannot hide lag.
+// Issue #3426: held overflow still fail-closes the whole set (skip eager).
+// Issue #3487: latch ORs the hard face on the already-torn path (one extra
+// relaxed load after quiet return) so a later Soft flip cannot green-export.
 // Issue #3037: do not treat lazy-align (node_gen_==generation_) as
 // eager restamp. Over-budget marks generation torn; only nodes
 // restamp_all actually wrote may export. Peek eager bit *before*
@@ -1668,14 +1672,15 @@ bool Evaluator::allow_query_stable_ref_export(ast::NodeId id) const noexcept {
     auto* ws = workspace_flat_;
     if (!ws || id == ast::NULL_NODE)
         return true;
-    const bool ov = aura::ast::restamp_hot_cone_held_overflow(); // Issue #3426
+    const bool ov = aura::ast::restamp_hot_cone_held_overflow();
     if (!ov)
         if (ws->node_eagerly_restamped(id))
             return true;
     if (!ov && !ws->nested_authority_gap() && !ws->restamp_last_budget_exceeded() &&
         !ws->restamp_over_budget_torn())
         return true;
-    if (typed_audit::should_hard_reject_soft_sibling()) {
+    if (typed_audit::should_hard_reject_soft_sibling() ||
+        aura::serve::aura_runtime_multi_worker_production_latched() != 0) {
         ::aura::core::provenance::record_query_stable_ref_restamp_lag_prevented();
         ::aura::core::provenance::record_query_stable_ref_restamp_torn_reject();
         return false;
@@ -1724,8 +1729,9 @@ bool Evaluator::query_stable_hard_reject_torn() const noexcept {
 // Issue #3000: production restamp-lag reject (null ref; do not stamp-green).
 void Evaluator::stamp_query_stable_ref_export(ast::FlatAST::StableNodeRef& ref) const noexcept {
     if (workspace_flat_ && ref.id != ast::NULL_NODE) {
-        // Issue #3230: consult torn/budget *before* make_ref_layout so
-        // lazy-align cannot hide a pre-mutate gen. Soft allow proceeds.
+        // Issue #3230 / Issue #3487: consult torn/budget *before* make_ref_layout so
+        // lazy-align cannot hide a pre-mutate gen. Soft/unlatched allow proceeds;
+        // latch==1 keeps the hard restamp-lag face.
         // Issue #3259 / #3312: hot-cone eager bit is accepted by allow
         // (outermost over-budget cone and nested-touched cone). Lagging
         // remainder still nulls (never green a pre-mutate gen).
@@ -1792,7 +1798,8 @@ Evaluator::make_stamped_safe_ref(ast::NodeId id, std::uint32_t workspace_id,
 // before return (Agent export contract). Parity with #2152 dispatch
 // required_effects: side effects are non-bypassable; isolation should match.
 ast::FlatAST::StableNodeRef Evaluator::export_ref(ast::NodeId id) const noexcept {
-    // Issue #3198: Agent export must not bypass the torn/budget gate.
+    // Issue #3198 / Issue #3487: Agent export must not bypass the torn/budget
+    // gate (latch OR production_defaults on the already-torn path).
     if (!allow_query_stable_ref_export(id))
         return {};
     // const surface kept for #2224 call sites; finalize mutates only the
@@ -1802,7 +1809,7 @@ ast::FlatAST::StableNodeRef Evaluator::export_ref(ast::NodeId id) const noexcept
 
 ast::FlatAST::StableNodeRef Evaluator::export_ref_safe(ast::NodeId id, std::uint32_t workspace_id,
                                                        std::uint32_t fiber_id) const noexcept {
-    // Issue #3198: same gate as export_ref (query:*-stable / ensure-ref).
+    // Issue #3198 / Issue #3487: same gate as export_ref (query:*-stable / ensure-ref).
     if (!allow_query_stable_ref_export(id))
         return {};
     return const_cast<Evaluator*>(this)->finalize_agent_export(
@@ -1859,7 +1866,7 @@ Evaluator::finalize_agent_export(ast::FlatAST::StableNodeRef ref) noexcept {
 
 std::optional<ast::FlatAST::StableNodeRef>
 Evaluator::export_held_ref(ast::FlatAST::StableNodeRef ref) noexcept {
-    // Issue #3198: Agent re-export must not bypass the torn/budget gate.
+    // Issue #3198 / Issue #3487: Agent re-export must not bypass the torn/budget gate.
     if (!allow_query_stable_ref_export(ref.id))
         return std::nullopt;
     // Re-export long-held handle (mailbox / cross-fiber). finalize_agent_export
