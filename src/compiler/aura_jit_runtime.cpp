@@ -2454,10 +2454,22 @@ extern "C" void aura_sync_remount_pure_anon_live_closures(std::uint64_t budget,
             if (aura_closure_has_env_or_linear_captures_unlocked(static_cast<std::int64_t>(cid)))
                 continue;
             if (used >= budget) {
-                ++skip; // past budget — leave on touch-time MustDeopt policy
+                ++skip;
                 // Issue #2950: enqueue for background remount (cap 256).
                 if (pending_n < 256)
                     pending_bg[pending_n++] = static_cast<std::int64_t>(cid);
+                // Issue #3478: budget skip is not overflow and is not
+                // leave-native. Production stamps MustDeopt on the skipped
+                // cid BEFORE return so the next aura_closure_call cannot
+                // dispatch old native while residual tick / bg drain lag.
+                // Unnamed: no batch_deopt_for. Soft: enqueue only — no extra
+                // MustDeopt stores. Do not bump overflow counters (#3024).
+                if (aura::compiler::typed_audit::production_defaults_active()) {
+                    g_closure_must_deopt[cid] = 1;
+                    if (g_closure_bridge_epochs.size() <= cid)
+                        g_closure_bridge_epochs.resize(nslots, 0);
+                    g_closure_bridge_epochs[cid] = 0;
+                }
                 continue;
             }
             // remount_or_force_deopt: for pure anon capture remount is a
