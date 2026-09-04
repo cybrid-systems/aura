@@ -583,6 +583,65 @@ static void ac3470_inner_unwrap_depth_source() {
     reset_all();
 }
 
+static void ac3508_expand_all_splices_non_root() {
+    std::println("\n--- #3508: macro_expand_all splices non-root Calls ---");
+    reset_all();
+    StringPool pool;
+    FlatAST flat;
+    auto x = pool.intern("x");
+    auto dbl = pool.intern("dbl");
+    auto star = pool.intern("*");
+    auto xvar = flat.add_variable(x);
+    auto star_v = flat.add_variable(star);
+    auto two = flat.add_literal(2);
+    std::array<aura::ast::NodeId, 2> mul{xvar, two};
+    auto body = flat.add_call(star_v, mul);
+    auto md = flat.add_macrodef(dbl, {x}, body, false, true);
+    auto three = flat.add_literal(3);
+    auto dbl_v = flat.add_variable(dbl);
+    std::array<aura::ast::NodeId, 1> cargs{three};
+    auto call = flat.add_call(dbl_v, cargs);
+    std::array<aura::ast::NodeId, 2> kids{md, call};
+    flat.root = flat.add_begin(kids);
+    const auto orig_root = flat.root;
+    auto out = macro_expand_all(flat, pool, orig_root, 8);
+    CHECK(out != NULL_NODE, "3508 AC1: expand");
+    CHECK(out == orig_root, "3508 AC2: begin root kept (non-root splice)");
+    bool saw_dbl = false;
+    bool saw_star_parented = false;
+    std::vector<aura::ast::NodeId> st{out};
+    while (!st.empty()) {
+        auto id = st.back();
+        st.pop_back();
+        if (id == NULL_NODE || id >= flat.size())
+            continue;
+        auto v = flat.get(id);
+        if (v.tag == aura::ast::NodeTag::Call && !v.children.empty()) {
+            auto cal = flat.get(v.child(0));
+            if (cal.tag == aura::ast::NodeTag::Variable) {
+                auto nm = std::string(pool.resolve(cal.sym_id));
+                if (nm == "dbl")
+                    saw_dbl = true;
+                if (nm == "*" && flat.parent_of(id) != NULL_NODE)
+                    saw_star_parented = true;
+            }
+        }
+        std::vector<aura::ast::NodeId> ch(v.children.begin(), v.children.end());
+        for (auto c : ch)
+            st.push_back(c);
+    }
+    CHECK(!saw_dbl, "3508 AC1: nested dbl call spliced away");
+    CHECK(saw_star_parented, "3508 AC1: expansion reachable from root");
+    CHECK(g_macro_hygiene_last_limit_reason.load(std::memory_order_relaxed) != 3,
+          "3508 AC3: successful splice is not pass-limit");
+    const auto cpp = read_file("src/compiler/macro_expansion.cpp");
+    CHECK(cpp.find("Issue #3508") != std::string::npos, "3508 AC5: cite");
+    CHECK(cpp.find("expand_inner_macros(") != std::string::npos, "3508 AC4: inner expand kept");
+    CHECK(read_file("tests/compiler/test_issue_3508.cpp").empty(), "3508 AC5: no test_issue");
+    CHECK(read_file("docs/design/3508-expand-all-splice.md").empty(), "3508 AC5: no docs/design");
+    reset_all();
+}
+
 static void ac3029_query_and_linter() {
     std::println("\n--- #3029 AC: query keys + linter ---");
     CompilerService cs;
@@ -623,6 +682,8 @@ int run_test_macro_hygiene_limits() {
     ac3062_source_wiring();
     std::println("\n=== Issue #3470: inner qq-unwrap depth-limit refuse-partial ===");
     ac3470_inner_unwrap_depth_source();
+    std::println("\n=== Issue #3508: macro_expand_all splices non-root Calls ===");
+    ac3508_expand_all_splices_non_root();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

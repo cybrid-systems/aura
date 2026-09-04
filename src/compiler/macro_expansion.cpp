@@ -3086,6 +3086,12 @@ static aura::ast::NodeId macro_expand_all_body(aura::ast::FlatAST& flat,
         NodeId new_root = root;
 
         for (NodeId id = 0; id < flat.size(); ++id) {
+            // Issue #3508: spliced-away Calls stay in the flat as User
+            // orphans. Re-expanding them every pass sets expanded_any
+            // forever and hits hygiene-pass-limit (production would
+            // restore original_root and undo the splice).
+            if (id != root && flat.parent_of(id) == NULL_NODE)
+                continue;
             auto v = flat.get(id);
             if (v.tag == NodeTag::Call && !v.children.empty()) {
                 std::vector<aura::ast::NodeId> call_args(v.children.begin(), v.children.end());
@@ -3133,6 +3139,24 @@ static aura::ast::NodeId macro_expand_all_body(aura::ast::FlatAST& flat,
                         if (expanded != NULL_NODE) {
                             if (id == root)
                                 new_root = expanded;
+                            else {
+                                // Issue #3508: splice non-root expansions into
+                                // the parent (same face as expand_inner_macros).
+                                // Without set_child the clone is a MacroIntroduced
+                                // orphan and the source Call stays in the tree.
+                                const auto parent_id = flat.parent_of(id);
+                                if (parent_id != NULL_NODE && parent_id < flat.size()) {
+                                    auto pv = flat.get(parent_id);
+                                    std::vector<aura::ast::NodeId> pch(pv.children.begin(),
+                                                                       pv.children.end());
+                                    for (std::uint32_t ci = 0; ci < pch.size(); ++ci) {
+                                        if (pch[ci] == id) {
+                                            flat.set_child(parent_id, ci, expanded);
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
                             expanded_any = true;
                         }
                     }
