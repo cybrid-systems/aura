@@ -1453,6 +1453,179 @@ static void ac3323_5_source_and_linter() {
     CHECK(rt.find("g_3323_") == std::string::npos, "3323 AC5: no g_3323_*");
 }
 
+// ── Issue #3478: budget skip → MustDeopt (skip is not overflow) ──
+// Overflow (#3024/#3323) is fail-closed. In-budget skip was not: skipped
+// cids waited for residual tick / bg drain / named deopt_pending. Stamp
+// MustDeopt on the skip arm under production (same column as remount-fail).
+// AC1: budget=1, N>1 live pure-anon → skipped cids must_deopt==1 after walk
+// AC2: next aura_closure_call on skipped cid leaves native (no dummy hit)
+// AC3: overflow counters not incremented by skip (only #3277 oldest-8)
+// AC4: named + captured walks unchanged
+// AC5: Soft / budget=0: no extra MustDeopt stores
+// AC6: source-cite + linter; storm shrink still stamps skip
+
+static std::atomic<std::uint64_t> g_3478_native_hits{0};
+static std::int64_t dummy_3478_native(std::int64_t* /*locals*/, std::uint32_t /*argc*/) {
+    g_3478_native_hits.fetch_add(1, std::memory_order_relaxed);
+    return 42;
+}
+
+static void ac3478_1_skip_stamps_must_deopt() {
+    std::println("\n--- #3478 AC1: production budget skip stamps MustDeopt ---");
+    aura_test_reset_pure_anon_bg_queue();
+    auto& prod =
+        aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active;
+    const auto prev = prod.exchange(1, std::memory_order_relaxed);
+    std::int64_t cids[6];
+    for (int i = 0; i < 6; ++i) {
+        cids[i] = aura_alloc_closure(/*func_id=*/0);
+        CHECK(cids[i] >= 0, "3478 AC1: alloc pure-anon");
+        aura_closure_set_must_deopt(cids[i], 0);
+    }
+    std::uint64_t ok = 0, skip = 0;
+    aura_sync_remount_pure_anon_live_closures(/*budget=*/1, &ok, &skip);
+    CHECK(skip >= 1, "3478 AC1: budget=1 skips N>1 live pure-anon");
+    int stamped = 0;
+    for (int i = 0; i < 6; ++i) {
+        if (aura_closure_get_must_deopt(cids[i]) != 0)
+            ++stamped;
+    }
+    CHECK(stamped >= 5, "3478 AC1: skipped cids have must_deopt==1 after walk");
+    prod.store(prev, std::memory_order_relaxed);
+    aura_test_reset_pure_anon_bg_queue();
+}
+
+static void ac3478_2_skipped_call_leaves_native() {
+    std::println("\n--- #3478 AC2: skipped cid next call leaves native ---");
+    aura_test_reset_pure_anon_bg_queue();
+    g_3478_native_hits.store(0, std::memory_order_relaxed);
+    aura_register_fn(/*func_id=*/410, dummy_3478_native, /*local_count=*/16, /*arg_count=*/0,
+                     /*env_count=*/0);
+    auto& prod =
+        aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active;
+    const auto prev = prod.exchange(1, std::memory_order_relaxed);
+    std::int64_t cids[4];
+    for (int i = 0; i < 4; ++i) {
+        cids[i] = aura_alloc_closure(/*func_id=*/410);
+        CHECK(cids[i] >= 0, "3478 AC2: alloc");
+        aura_closure_set_must_deopt(cids[i], 0);
+    }
+    std::uint64_t ok = 0, skip = 0;
+    aura_sync_remount_pure_anon_live_closures(/*budget=*/1, &ok, &skip);
+    const auto hits0 = g_3478_native_hits.load(std::memory_order_relaxed);
+    int left = 0;
+    for (int i = 0; i < 4; ++i) {
+        if (aura_closure_get_must_deopt(cids[i]) == 0)
+            continue;
+        ++left;
+        CHECK(aura_closure_call(cids[i], nullptr, 0) == 0, "3478 AC2: skipped call leaves native");
+    }
+    CHECK(left >= 1, "3478 AC2: at least one skipped cid");
+    CHECK(g_3478_native_hits.load(std::memory_order_relaxed) == hits0,
+          "3478 AC2: no pre-mutate native after skip");
+    prod.store(prev, std::memory_order_relaxed);
+    aura_test_reset_pure_anon_bg_queue();
+}
+
+static void ac3478_3_skip_not_overflow() {
+    std::println("\n--- #3478 AC3: skip does not double-count as overflow ---");
+    aura_test_reset_pure_anon_bg_queue();
+    auto& prod =
+        aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active;
+    const auto prev = prod.exchange(1, std::memory_order_relaxed);
+    std::int64_t cids[20];
+    for (int i = 0; i < 20; ++i) {
+        cids[i] = aura_alloc_closure(/*func_id=*/0);
+        CHECK(cids[i] >= 0, "3478 AC3: alloc");
+        aura_closure_set_must_deopt(cids[i], 0);
+    }
+    const auto ov0 = aura_pure_anon_bg_overflow_total_v_read();
+    const auto md0 = aura_pure_anon_bg_overflow_must_deopt_total_v_read();
+    std::uint64_t ok = 0, skip = 0;
+    aura_sync_remount_pure_anon_live_closures(/*budget=*/1, &ok, &skip);
+    CHECK(skip >= 8, "3478 AC3: many skips");
+    int stamped = 0;
+    for (int i = 0; i < 20; ++i) {
+        if (aura_closure_get_must_deopt(cids[i]) != 0)
+            ++stamped;
+    }
+    CHECK(stamped >= 8, "3478 AC3: skip stamped MustDeopt on skipped cids");
+    CHECK(aura_pure_anon_bg_overflow_total_v_read() == ov0, "3478 AC3: skip is not queue overflow");
+    const auto md_delta = aura_pure_anon_bg_overflow_must_deopt_total_v_read() - md0;
+    CHECK(md_delta <= 8, "3478 AC3: skip does not bump overflow-must-deopt per skip");
+    const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
+    const auto walk = rt.find("aura_sync_remount_pure_anon_live_closures");
+    CHECK(walk != std::string::npos, "3478 AC3: walk present");
+    const auto skip_arm = rt.find("if (used >= budget)", walk);
+    const auto remount = rt.find("remount_or_force_deopt_unlocked_no_call_time_counter", walk);
+    CHECK(skip_arm != std::string::npos && remount != std::string::npos && skip_arm < remount,
+          "3478 AC3: skip arm before remount");
+    const auto arm = rt.substr(skip_arm, remount - skip_arm);
+    CHECK(arm.find("overflow_must_deopt") == std::string::npos &&
+              arm.find("pure_anon_bg_overflow_force_leave_native") == std::string::npos,
+          "3478 AC3: skip arm does not call overflow helper");
+    CHECK(rt.find("pure_anon_bg_overflow_force_leave_native") != std::string::npos,
+          "3478 AC3: overflow helper still present");
+    prod.store(prev, std::memory_order_relaxed);
+    aura_test_reset_pure_anon_bg_queue();
+}
+
+static void ac3478_4_named_captured_unchanged() {
+    std::println("\n--- #3478 AC4: named + captured walks unchanged ---");
+    const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
+    CHECK(rt.find("aura_sync_remount_named_live_closures") != std::string::npos,
+          "3478 AC4: named remount preserved");
+    CHECK(rt.find("aura_sync_remount_anon_captured_live_closures") != std::string::npos,
+          "3478 AC4: captured remount preserved");
+    CHECK(rt.find("pure-anon still never enters this named walk") != std::string::npos ||
+              rt.find("Issue #3060: pure-anon") != std::string::npos,
+          "3478 AC4: named walk still excludes sid==0");
+}
+
+static void ac3478_5_soft_no_extra() {
+    std::println("\n--- #3478 AC5: Soft / budget=0 no extra MustDeopt stores ---");
+    aura_test_reset_pure_anon_bg_queue();
+    const auto cid = aura_alloc_closure(/*func_id=*/0);
+    CHECK(cid >= 0, "3478 AC5: alloc");
+    aura_closure_set_must_deopt(cid, 0);
+    auto& prod =
+        aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active;
+    const auto prev = prod.exchange(0, std::memory_order_relaxed);
+    std::uint64_t ok = 0, skip = 0;
+    aura_sync_remount_pure_anon_live_closures(/*budget=*/1, &ok, &skip);
+    CHECK(aura_closure_get_must_deopt(cid) == 0, "3478 AC5: Soft skip does not stamp MustDeopt");
+    ok = 0;
+    skip = 0;
+    aura_sync_remount_pure_anon_live_closures(/*budget=*/0, &ok, &skip);
+    CHECK(ok == 0 && skip == 0, "3478 AC5: budget=0 zero walk");
+    CHECK(aura_closure_get_must_deopt(cid) == 0, "3478 AC5: budget=0 no MustDeopt");
+    prod.store(prev, std::memory_order_relaxed);
+    aura_test_reset_pure_anon_bg_queue();
+}
+
+static void ac3478_6_source_and_linter() {
+    std::println("\n--- #3478 AC6: source-cite + storm shrink + linter ---");
+    const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
+    const auto br = read_file("src/compiler/aura_jit_bridge.cpp");
+    const auto build = read_file("build.py");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_pure_anon_budget_skip_must_deopt_3478.py");
+    CHECK(rt.find("Issue #3478") != std::string::npos, "3478 AC6: runtime cites #3478");
+    CHECK(rt.find("budget skip is not overflow") != std::string::npos,
+          "3478 AC6: skip != overflow");
+    CHECK(br.find("pure_budget = aura_sync_remount_pure_anon_budget_base()") != std::string::npos,
+          "3478 AC6: storm shrinks to base (walk does not expand)");
+    CHECK(!lint.empty() && lint.find("Issue #3478") != std::string::npos, "3478 AC6: linter");
+    CHECK(build.find("check_pure_anon_budget_skip_must_deopt_3478") != std::string::npos,
+          "3478 AC6: build.py wires linter");
+    CHECK(read_file("docs/design/3478-pure-anon-budget-skip-must-deopt.md").empty(),
+          "3478 AC6: no docs/design/");
+    CHECK(read_file("tests/compiler/test_issue_3478.cpp").empty(),
+          "3478 AC6: no invent test per #81967");
+    CHECK(rt.find("schema-3478") == std::string::npos, "3478 AC6: no schema-3478");
+    CHECK(rt.find("g_3478_") == std::string::npos, "3478 AC6: no g_3478_*");
+}
+
 // ── Issue #3342: pure-anon recovery starvation (heal path, not #3323 race) ──
 // Success BoundaryExit remains primary drain. Outermost failure amortizes
 // residual tick + drain when pending ≥ pressure or overflow advanced.
@@ -2576,6 +2749,13 @@ int run_test_anonymous_residual_stable_id_policy() {
     ac3323_3_boundary_drain_after_overflow();
     ac3323_4_soft_zero_extra();
     ac3323_5_source_and_linter();
+    std::println("\n=== Issue #3478: budget skip stamps MustDeopt ===");
+    ac3478_1_skip_stamps_must_deopt();
+    ac3478_2_skipped_call_leaves_native();
+    ac3478_3_skip_not_overflow();
+    ac3478_4_named_captured_unchanged();
+    ac3478_5_soft_no_extra();
+    ac3478_6_source_and_linter();
     std::println("\n=== Issue #3342: pure-anon recovery starvation heal ===");
     ac3342_1_fail_exit_heals_after_overflow();
     ac3342_2_success_boundary_still_primary();
@@ -2613,7 +2793,7 @@ int run_test_anonymous_residual_stable_id_policy() {
 
     std::println("\n=== "
                  "#2605+#2637+#2638+#2666+#2691+#2714+#2850+#2893+#2928+#2977+#2978+#2980+#3024+#"
-                 "3060+#3323+#3342: "
+                 "3060+#3323+#3478+#3342: "
                  "{} "
                  "passed, {} failed ===",
                  g_passed, g_failed);

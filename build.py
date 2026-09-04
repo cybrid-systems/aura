@@ -5550,6 +5550,22 @@ def cmd_lint():
             "Issue #3323 pure-anon overflow dispatch-race linter failed — run python3 scripts/coverage/checks/check_pure_anon_overflow_dispatch_race_3323.py"
         )
         return r
+    # Issue #3478: pure-anon budget skip stamps MustDeopt (skip is not
+    # overflow). Overflow #3024/#3323 unchanged; skip arm sets
+    # g_closure_must_deopt[cid] under production before return. Soft /
+    # budget=0: no extra stores. Extends
+    # test_anonymous_residual_stable_id_policy (#81967); no docs/design;
+    # no new query key.
+    pabs3478_script = COVERAGE_CHECKS / "check_pure_anon_budget_skip_must_deopt_3478.py"
+    if not pabs3478_script.exists():
+        fail(f"missing {pabs3478_script}")
+        return 1
+    r = run([sys.executable, str(pabs3478_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3478 pure-anon budget-skip MustDeopt linter failed — run python3 scripts/coverage/checks/check_pure_anon_budget_skip_must_deopt_3478.py"
+        )
+        return r
     # Issue #3342: pure-anon recovery starvation. Overflow already
     # MustDeopt (#3024/#3323); residual tick + drain were success-
     # BoundaryExit only. Production amortizes heal on outermost failure

@@ -1,0 +1,35 @@
+{
+  "issue": 3478,
+  "title": "Issue #3478: pure-anon budget skip stamps MustDeopt (skip is not overflow)",
+  "ok": "OK: Issue #3478 budget skip MustDeopt — overflow path unchanged",
+  "checks": [
+    {
+      "ac": "AC1-skip",
+      "path": "src/compiler/aura_jit_runtime.cpp",
+      "contains": [
+        "Issue #3478",
+        "if (used >= budget)",
+        "g_closure_must_deopt[cid] = 1",
+        "production_defaults_active()"
+      ]
+    },
+    {
+      "ac": "AC5-tests",
+      "path": "tests/compiler/test_anonymous_residual_stable_id_policy.cpp",
+      "contains": [
+        "3478 AC1: skipped cids have must_deopt==1 after walk",
+        "3478 AC2: skipped call leaves native",
+        "3478 AC3: skip is not queue overflow",
+        "3478 AC5: Soft skip does not stamp MustDeopt"
+      ]
+    },
+    {
+      "ac": "AC6-forbid",
+      "forbid": [
+        "tests/compiler/test_issue_3478.cpp",
+        "tests/issues/test_issue_3478.cpp",
+        "docs/design/3478-pure-anon-budget-skip-must-deopt.md"
+      ]
+    }
+  ]
+}
