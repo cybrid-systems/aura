@@ -23,9 +23,13 @@ import std;
 import aura.compiler.evaluator;
 import aura.compiler.service;
 import aura.compiler.value;
+import aura.core.arena;
 
 namespace {
 
+using aura::ast::LiveCompactMode;
+using aura::ast::set_moving_compact_enabled;
+using aura::compiler::Closure;
 using aura::compiler::ClosureId;
 using aura::compiler::CompilerMetrics;
 using aura::compiler::CompilerService;
@@ -37,6 +41,25 @@ using aura::compiler::types::is_void;
 using aura::compiler::types::make_int;
 using aura::test::g_failed;
 using aura::test::g_passed;
+
+struct Pod16 {
+    std::int32_t a = 0, b = 0, c = 0, d = 0;
+    Pod16() = default;
+    Pod16(std::int32_t a_, std::int32_t b_, std::int32_t c_, std::int32_t d_) noexcept
+        : a(a_)
+        , b(b_)
+        , c(c_)
+        , d(d_) {}
+};
+
+struct MovingFlagGuard {
+    int prev = -1;
+    explicit MovingFlagGuard(int enable) {
+        prev = aura::ast::moving_compact_enabled();
+        set_moving_compact_enabled(enable);
+    }
+    ~MovingFlagGuard() { set_moving_compact_enabled(prev); }
+};
 
 // Issue #3421: inject production + last densify window, restore on scope exit.
 struct ProdDensifyWindowGuard {
@@ -253,6 +276,56 @@ static void ac5_3421_production_hard_refuse() {
     }
 }
 
+// Issue #3469: two Moving windows + LCP allow + closure still holding
+// window-1 flat → hard-refuse (fold keeps A as a remap key).
+static void ac6_3469_two_window_stale_flat_refuse() {
+    std::println("\n--- #3469: two-window densify stale flat hard-refuse ---");
+    const auto flat = read_file("src/compiler/evaluator_eval_flat.cpp");
+    const auto arena = read_file("src/core/arena.ixx");
+    CHECK(flat.find("Issue #3469") != std::string::npos, "3469: eval_flat cites #3469");
+    CHECK(arena.find("prev_remap") != std::string::npos, "3469: fold previous remap");
+    CHECK(flat.find("g_3469_") == std::string::npos, "3469: no invented g_3469_*");
+
+    std::array<aura::compiler::types::EvalValue, 1> args{make_int(1)};
+    CompilerService cs;
+    auto* m = metrics_of(cs);
+    const auto cid0 = make_stale_unimpacted_lambda(cs);
+    auto snap = cs.evaluator().find_active_closure(cid0);
+    CHECK(snap.has_value(), "3469: live closure");
+    if (!snap)
+        return;
+
+    MovingFlagGuard on(1);
+    auto& ar = cs.evaluator().test_arena();
+    auto* p0 = ar.create<Pod16>(1, 2, 3, 4);
+    auto* p1 = ar.create<Pod16>(5, 6, 7, 8);
+    auto* p2 = ar.create<Pod16>(9, 10, 11, 12);
+    CHECK(p0 && p1 && p2, "3469: tracked objects");
+    void* A = p0;
+    const auto r1 = ar.live_compact(LiveCompactMode::Moving);
+    CHECK(!r1.moving_blocked_precondition && r1.objects_moved > 0, "3469: window 1 moved");
+    void* B = ar.resolve_object_remap(A);
+    CHECK(B != nullptr, "3469: A remapped in window 1");
+    const auto r2 = ar.live_compact(LiveCompactMode::Moving);
+    CHECK(!r2.moving_blocked_precondition && r2.objects_moved > 0, "3469: window 2 moved");
+    CHECK(ar.resolve_object_remap(A) != nullptr, "3469: A still a remap key");
+
+    snap->flat = static_cast<decltype(snap->flat)>(A);
+    snap->must_deopt_before_next_call = true;
+    CHECK(cs.evaluator().erase_active_closure(cid0), "3469: erase original");
+    const auto cid = cs.evaluator().register_active_closure(std::move(*snap));
+    const auto restamp0 = m->live_closure_epoch_restamp_total.load(std::memory_order_relaxed);
+    const auto stale0 = m->closure_stale_returns.load(std::memory_order_relaxed);
+    // LCP allow: the residual is remap-miss after a healthy window 2.
+    ProdDensifyWindowGuard g(/*prod=*/true, /*moved=*/1, /*lcp_allow=*/true);
+    auto got = cs.evaluator().apply_closure(cid, args);
+    CHECK(!got.has_value(), "3469: apply_closure hard-refuses stale A");
+    CHECK(m->live_closure_epoch_restamp_total.load(std::memory_order_relaxed) == restamp0,
+          "3469: no #2569 restamp");
+    CHECK(m->closure_stale_returns.load(std::memory_order_relaxed) > stale0,
+          "3469: reuses closure_stale_returns");
+}
+
 } // namespace
 
 int run_test_setcode_rebind_survive() {
@@ -262,7 +335,8 @@ int run_test_setcode_rebind_survive() {
     ac3_hash_ref_default();
     ac4_source_gate();
     ac5_3421_production_hard_refuse();
-    std::println("\n=== #2569/#3421: {} passed, {} failed ===", g_passed, g_failed);
+    ac6_3469_two_window_stale_flat_refuse();
+    std::println("\n=== #2569/#3421/#3469: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
 

@@ -289,6 +289,9 @@ static bool closure_needs_safe_fallback(const Evaluator& ev, const Closure& cl,
 // flat*/pool*. Soft / no-Moving / objects_moved==0 keep #2569 recover.
 // Quiet path: one production load + one objects_moved load; remap/LCP
 // only when densify actually moved.
+// Issue #3469: last_object_remap_ folds previous-window keys, so
+// resolve_object_remap(A) still hits after A→B then B→C. This helper
+// predicate is unchanged (resolve hit ⇒ refuse).
 inline constexpr int kApplyClosureDensifyHardRefuseIssue = 3421;
 
 static bool production_apply_closure_densify_hard_refuse(ast::ASTArena* arena,

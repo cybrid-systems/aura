@@ -1,0 +1,49 @@
+{
+  "issue": 3469,
+  "title": "Issue #3469: last_object_remap_ folds previous-window keys so apply_closure still refuses A after A→B→C",
+  "ok": "OK: Issue #3469 multi-window densify remap — previous keys folded; apply_closure refuse stays resolve-hit; Soft/no-move unchanged",
+  "checks": [
+    {
+      "ac": "AC1-fold",
+      "path": "src/core/arena.ixx",
+      "contains": [
+        "Issue #3469",
+        "prev_remap",
+        "A→B then B→C"
+      ]
+    },
+    {
+      "ac": "AC2-helper-unchanged",
+      "path": "src/compiler/evaluator_eval_flat.cpp",
+      "contains": [
+        "Issue #3469",
+        "production_apply_closure_densify_hard_refuse",
+        "resolve_object_remap"
+      ]
+    },
+    {
+      "ac": "AC5-tests",
+      "path": "tests/core/test_moving_compact.cpp",
+      "contains": [
+        "3469: A still a remap key after window 2",
+        "3469: B is last-window key (#3421)"
+      ]
+    },
+    {
+      "ac": "AC5-apply",
+      "path": "tests/compiler/test_setcode_rebind_survive.cpp",
+      "contains": [
+        "ac6_3469_two_window_stale_flat_refuse",
+        "3469: apply_closure hard-refuses stale A"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "forbid": [
+        "tests/compiler/test_issue_3469.cpp",
+        "tests/core/test_issue_3469.cpp",
+        "docs/design/3469-multi-window-remap.md"
+      ]
+    }
+  ]
+}
