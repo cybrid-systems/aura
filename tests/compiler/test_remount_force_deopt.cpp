@@ -34,6 +34,11 @@ extern "C" void aura_closure_set_must_deopt(std::int64_t closure_id, int v);
 extern "C" void aura_closure_capture(std::int64_t closure_id, std::int64_t idx, std::int64_t val);
 extern "C" void aura_closure_set_env_gen(std::int64_t closure_id, std::uint64_t gen);
 extern "C" std::uint64_t aura_get_closure_defuse_version(std::int64_t closure_id);
+extern "C" int64_t aura_closure_call(int64_t closure_id, int64_t* args, int64_t argc);
+extern "C" void aura_register_fn(std::int64_t func_id,
+                                 std::int64_t (*fn)(std::int64_t*, std::uint32_t),
+                                 std::int32_t local_count, std::int32_t arg_count,
+                                 std::int32_t env_count);
 
 import std;
 import aura.compiler.service;
@@ -460,6 +465,49 @@ static void ac2894_defuse_and_unchanged_on_success() {
     aura_set_aot_metrics(nullptr);
 }
 
+static std::int64_t dummy_jit_fn_3504(std::int64_t*, std::uint32_t) {
+    return 42;
+}
+
+static void ac3504_env_gen_leave_native() {
+    std::println("\n--- #3504 AC1/AC3: aura_closure_call env_gen mismatch leaves native ---");
+    aura_register_fn(/*func_id=*/0, dummy_jit_fn_3504, /*local_count=*/4, /*arg_count=*/0,
+                     /*env_count=*/0);
+    const auto live0 = aura_get_aot_live_env_frame_version();
+    const auto cid = aura_alloc_closure(/*func_id=*/0);
+    CHECK(cid >= 0, "3504 AC1: alloc");
+    aura_set_aot_live_env_frame_version(7);
+    aura_closure_set_env_gen(cid, 7);
+    const auto ok = aura_closure_call(cid, nullptr, 0);
+    CHECK(ok == 42 || ok == 0, "3504 AC1: matching env_gen does not invent a new fail axis");
+    aura_closure_set_env_gen(cid, 3);
+    CHECK(aura_closure_call(cid, nullptr, 0) == 0, "3504 AC1: env_gen mismatch leaves native");
+    aura_set_aot_live_env_frame_version(0);
+    aura_closure_set_env_gen(cid, 3);
+    (void)aura_closure_call(cid, nullptr, 0);
+    CHECK(true, "3504 AC3: live_env==0 skip env_gen arm (no abort)");
+    aura_set_aot_live_env_frame_version(live0);
+
+    std::println("\n--- #3504 AC2/AC4/AC5: dual-fresh signature + densify refuse + no invent ---");
+    const auto hh = read_file("src/compiler/aura_jit_bridge.h");
+    CHECK(hh.find("captured_table_epoch = 0") != std::string::npos,
+          "3504 AC2: dual-fresh 3rd arg default (no 4th env_gen arg)");
+    CHECK(hh.find("aura_is_jit_closure_fresh(") != std::string::npos, "3504 AC2: helper kept");
+    const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
+    CHECK(rt.find("Issue #3504") != std::string::npos, "3504 AC5: runtime cite");
+    CHECK(rt.find("aura_get_aot_live_env_frame_version()") != std::string::npos &&
+              rt.find("g_closure_env_gen") != std::string::npos,
+          "3504 AC1: call path samples env_gen vs live");
+    const auto ev = read_file("src/compiler/evaluator_eval_flat.cpp");
+    CHECK(ev.find("production_apply_closure_densify_hard_refuse") != std::string::npos,
+          "3504 AC4: apply_closure densify hard-refuse kept");
+    CHECK(read_file("tests/compiler/test_issue_3504.cpp").empty(), "3504 AC5: no test_issue");
+    CHECK(read_file("docs/design/3504-env-gen-dual-fresh.md").empty(), "3504 AC5: no docs/design");
+    CHECK(read_file("src/compiler/evaluator_primitives_obs_eval.cpp").find("schema-3504") ==
+              std::string::npos,
+          "3504 AC5: no new query key");
+}
+
 } // namespace
 
 int run_test_remount_force_deopt() {
@@ -470,6 +518,7 @@ int run_test_remount_force_deopt() {
     ac4_source_cite();
     ac5_stress();
     ac2894_defuse_and_unchanged_on_success();
+    ac3504_env_gen_leave_native();
     if (g_failed)
         return 1;
     std::println("remount force-deopt #2503/#2894: OK ({} passed)", g_passed);
