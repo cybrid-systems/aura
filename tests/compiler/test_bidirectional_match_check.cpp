@@ -429,6 +429,104 @@ static void ac3432_empty_pair_no_dynamic() {
     apply_dev_audit_defaults();
 }
 
+static void ac3518_empty_linear_call_no_dynamic() {
+    std::println("\n--- #3518 AC1–AC5: empty Linear / Call never Dynamic ---");
+    using aura::ast::NodeTag;
+    using aura::compiler::kBidirectionalEmptyLinearCallNoDynamicIssue;
+    using aura::compiler::TypeChecker;
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    using aura::core::TypeTag;
+
+    struct ProdScope {
+        ProdScope() { apply_production_audit_defaults(); }
+        ~ProdScope() { apply_dev_audit_defaults(); }
+    };
+
+    CHECK(kBidirectionalEmptyLinearCallNoDynamicIssue == 3518, "3518: issue stamp");
+    apply_dev_audit_defaults();
+
+    aura::ast::ASTArena arena;
+    auto alloc = arena.allocator();
+    aura::ast::StringPool pool(alloc);
+    aura::ast::FlatAST flat(alloc);
+    aura::core::TypeRegistry treg;
+    aura::diag::DiagnosticCollector diag;
+
+    {
+        std::println("\n--- 3518 AC1: Production empty Linear never Dynamic ---");
+        ProdScope prod;
+        TypeChecker tc(treg);
+        diag.clear();
+        auto id = flat.add_node(NodeTag::Linear);
+        CHECK(flat.get(id).children.empty(), "3518 AC1: empty Linear");
+        auto ty = tc.infer_flat(flat, pool, id, diag);
+        CHECK(ty != treg.dynamic_type(), "3518 AC1: empty Linear never Dynamic");
+        CHECK(treg.is_var(ty) || ty == treg.void_type(), "3518 AC1: TYPE_VAR or Void");
+        CHECK(flat.type_id(id) != treg.dynamic_type().index, "3518 AC1: cache not Dynamic");
+    }
+    {
+        std::println("\n--- 3518 AC2: Production empty Call never Dynamic ---");
+        ProdScope prod;
+        TypeChecker tc(treg);
+        diag.clear();
+        auto id = flat.add_node(NodeTag::Call);
+        CHECK(flat.get(id).children.empty(), "3518 AC2: empty Call");
+        auto ty = tc.infer_flat(flat, pool, id, diag);
+        CHECK(ty != treg.dynamic_type(), "3518 AC2: empty Call never Dynamic");
+        CHECK(treg.is_var(ty) || ty == treg.void_type(), "3518 AC2: TYPE_VAR or Void");
+        CHECK(flat.type_id(id) != treg.dynamic_type().index, "3518 AC2: cache not Dynamic");
+    }
+    {
+        std::println("\n--- 3518 AC3: Linear with inner still wraps ---");
+        ProdScope prod;
+        TypeChecker tc(treg);
+        diag.clear();
+        auto inner = flat.add_literal(1);
+        auto id = flat.add_linear(inner);
+        auto ty = tc.infer_flat(flat, pool, id, diag);
+        CHECK(treg.linear_of(ty) != nullptr || treg.tag_of(ty) == TypeTag::LINEAR,
+              "3518 AC3: Linear with inner is Linear");
+        CHECK(treg.tag_of(ty) != TypeTag::DYNAMIC, "3518 AC3: not Dynamic");
+    }
+    {
+        std::println("\n--- 3518 AC4: Soft empty Linear/Call not Dynamic ---");
+        apply_dev_audit_defaults();
+        TypeChecker tc(treg);
+        diag.clear();
+        auto lin = flat.add_node(NodeTag::Linear);
+        auto ty = tc.infer_flat(flat, pool, lin, diag);
+        CHECK(ty != treg.dynamic_type(), "3518 AC4: Soft empty Linear not Dynamic");
+        auto call = flat.add_node(NodeTag::Call);
+        auto ty2 = tc.infer_flat(flat, pool, call, diag);
+        CHECK(ty2 != treg.dynamic_type(), "3518 AC4: Soft empty Call not Dynamic");
+        CHECK(aura::compiler::is_bidirectional_tag_covered(NodeTag::Linear),
+              "3518 AC4: Linear covered");
+        CHECK(aura::compiler::is_bidirectional_tag_covered(NodeTag::Call),
+              "3518 AC4: Call covered");
+    }
+    auto impl = read_file("src/compiler/type_checker_impl.cpp");
+    auto hdr = read_file("src/compiler/type_checker.ixx");
+    CHECK(hdr.find("kBidirectionalEmptyLinearCallNoDynamicIssue = 3518") != std::string::npos,
+          "3518 AC5: header stamp");
+    CHECK(impl.find("Issue #3518") != std::string::npos, "3518 AC5: impl cite");
+    CHECK(impl.find("case Tag::Linear:") != std::string::npos, "3518 AC5: Linear case");
+    const auto lin_pos = impl.find("case Tag::Linear:");
+    const auto lin_next = impl.find("case Tag::Move:", lin_pos);
+    const auto lin_body = impl.substr(lin_pos, lin_next - lin_pos);
+    CHECK(lin_body.find("cs_.fresh_var()") != std::string::npos,
+          "3518 AC1: empty Linear fresh_var");
+    CHECK(lin_body.find("result = reg_.dynamic_type()") == std::string::npos,
+          "3518 AC1: Linear arm does not cache Dynamic");
+    const auto call_fn = impl.find("TypeId InferenceEngine::synthesize_flat_call");
+    const auto call_body = impl.substr(call_fn, 400);
+    CHECK(call_body.find("cs_.fresh_var()") != std::string::npos, "3518 AC2: empty Call fresh_var");
+    CHECK(read_file("docs/design/3518-empty-linear-call-no-dynamic.md").empty(),
+          "3518 AC5: no docs/design");
+    CHECK(read_file("tests/compiler/test_issue_3518.cpp").empty(), "3518 AC5: no invent");
+    apply_dev_audit_defaults();
+}
+
 } // namespace
 
 int run_test_bidirectional_match_check() {
@@ -441,6 +539,7 @@ int run_test_bidirectional_match_check() {
     ac5_source_cite();
     ac3044_exhaustive_tag_coverage();
     ac3432_empty_pair_no_dynamic();
+    ac3518_empty_linear_call_no_dynamic();
     {
         std::println("\n--- #3516: check_flat Set stamps TypeError on unify false ---");
         CHECK(aura::compiler::kCheckFlatSetUnifyErrorIssue == 3516, "3516: stamp");

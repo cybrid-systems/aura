@@ -4912,11 +4912,13 @@ TypeId InferenceEngine::synthesize_flat(FlatAST& flat, StringPool& pool, NodeId 
         }
         case Tag::Linear:
             // (Linear e): wrap type as (Linear T) for ownership tracking
+            // Issue #3518: empty Linear is incomplete, not Any (same as
+            // empty Pair #3432). Prefer fresh_var so later unify can bind.
             if (!v.children.empty()) {
                 auto inner_type = synthesize_flat(flat, pool, v.child(0), flat.get(v.child(0)));
                 result = reg_.register_linear(inner_type);
             } else {
-                result = reg_.dynamic_type();
+                result = cs_.fresh_var();
             }
             break;
         case Tag::Move:
@@ -5499,8 +5501,9 @@ TypeId InferenceEngine::synthesize_flat_var(FlatAST& flat, StringPool& pool, Nod
 
 TypeId InferenceEngine::synthesize_flat_call(FlatAST& flat, StringPool& pool, NodeView v) {
     // v.child(0) = function, v.child(1..n) = args
+    // Issue #3518: empty Call is incomplete, not Any (same as empty Pair).
     if (v.children.empty())
-        return reg_.dynamic_type();
+        return cs_.fresh_var();
 
     auto func_id = v.child(0);
     TypeId func_type = synthesize_flat(flat, pool, func_id, flat.get(func_id));
