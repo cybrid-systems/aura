@@ -566,6 +566,23 @@ static void ac3062_source_wiring() {
     reset_all();
 }
 
+static void ac3470_inner_unwrap_depth_source() {
+    std::println("\n--- #3470: inner unwrap depth-limit source ---");
+    const auto cpp = read_file("src/compiler/macro_expansion.cpp");
+    auto pos = cpp.find("aura::ast::NodeId expand_inner_macros");
+    CHECK(pos != std::string::npos, "3470: expand_inner_macros present");
+    auto win = pos != std::string::npos ? cpp.substr(pos, 3600) : std::string{};
+    CHECK(win.find("Issue #3470") != std::string::npos, "3470: inner cites #3470");
+    CHECK(win.find("kHygieneLimitReasonDepthLimit") != std::string::npos,
+          "3470: inner stamps DepthLimit");
+    CHECK(win.find("kHygieneLimitReasonPassLimit") == std::string::npos,
+          "3470: inner depth path is not PassLimit");
+    CHECK(win.find("inner_expand_production_limit_deny") != std::string::npos,
+          "3470: unwrap restore on deny");
+    CHECK(cpp.find("g_3470_") == std::string::npos, "3470: no new metric atomic");
+    reset_all();
+}
+
 static void ac3029_query_and_linter() {
     std::println("\n--- #3029 AC: query keys + linter ---");
     CompilerService cs;
@@ -604,6 +621,8 @@ int run_test_macro_hygiene_limits() {
     ac3062_boundary_restore();
     ac3062_soft_off_half_expand();
     ac3062_source_wiring();
+    std::println("\n=== Issue #3470: inner qq-unwrap depth-limit refuse-partial ===");
+    ac3470_inner_unwrap_depth_source();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

@@ -97,6 +97,16 @@ namespace aura::compiler::macro_exp {
     return aura_evaluator_try_save_macro_expand_checkpoint();
 }
 
+// Issue #3470: inner expand deny codes that must roll back qq-unwrap
+// set_child. clone / macro_expand_all_body own the expand checkpoint;
+// expand_inner_macros only try_restore + belt-restore the parent slot
+// (no second install / no extra Soft walk).
+[[nodiscard]] static bool inner_expand_production_limit_deny() noexcept {
+    const auto r = g_macro_hygiene_last_limit_reason.load(std::memory_order_relaxed);
+    return r == kHygieneLimitReasonDepthLimit || r == kHygieneLimitReasonPassLimit ||
+           r == kHygieneLimitReasonStealAbort || r == kHygieneLimitReasonCapabilityDeny;
+}
+
 namespace detail {
 
     // Quiet by default: expected MacroSelfEvo denials under Restricted
@@ -2724,10 +2734,13 @@ aura::ast::NodeId expand_inner_macros(
     using namespace aura::ast;
     if (root == NULL_NODE)
         return root;
+    // Issue #3470: Restricted/Strict refuse qq-unwrap half-writes.
+    // Soft/Off keeps historical half-write (one sandbox load; no ckpt).
+    const bool production_surface = aura::core::sandbox::is_sandbox_active();
     if (depth >= max_depth) {
-        // Issue #3304: refactored from direct store to the public API.
-        // Issue #3029: pass/depth of inner expand — stable Agent reason.
-        note_hygiene_last_limit_reason(kHygieneLimitReasonPassLimit);
+        // Issue #3470: inner depth ceiling is DepthLimit (2), not PassLimit (3).
+        // Issue #3304 / #3029: public note API (stable Agent reason).
+        note_hygiene_last_limit_reason(kHygieneLimitReasonDepthLimit);
         return root;
     }
     // Issue #158: unwrap qq-built cons chains whose head is a
@@ -2740,6 +2753,8 @@ aura::ast::NodeId expand_inner_macros(
         // Substitute the unwrapped Call for the original cons chain
         // at the parent's child slot, then recurse.
         auto parent_id = flat->parent_of(root);
+        std::uint32_t unwrap_ci = 0;
+        bool rewrote = false;
         if (parent_id != NULL_NODE) {
             auto parent_v = flat->get(parent_id);
             std::vector<aura::ast::NodeId> parent_children(parent_v.children.begin(),
@@ -2751,13 +2766,31 @@ aura::ast::NodeId expand_inner_macros(
                     // unwrapped) — not restamp_all_node_generations
                     // (O(N) per unwrap → O(N×M) under multi-pass expand).
                     restamp_after_qq_unwrap(*flat, parent_id, ci, unwrapped);
+                    unwrap_ci = ci;
+                    rewrote = true;
                     break;
                 }
             }
         }
         // Recurse into the unwrapped Call (which is now a real
         // macro call site).
-        return expand_inner_macros(flat, pool, unwrapped, depth, max_depth, macros);
+        auto next = expand_inner_macros(flat, pool, unwrapped, depth, max_depth, macros);
+        // Issue #3470: production rolls back the unwrap edge if inner
+        // expand hit depth/pass/steal/capability deny. clone / expand_all
+        // own the checkpoint — try_restore only (no second install).
+        // Belt set_child restores the pre-unwrap NodeId when no Evaluator
+        // is wired (standalone FlatAST). Soft/Off keeps the rewrite.
+        if (production_surface && inner_expand_production_limit_deny()) {
+            (void)aura_evaluator_try_restore_macro_expand_checkpoint();
+            if (rewrote)
+                flat->set_child(parent_id, unwrap_ci, root);
+            return root;
+        }
+        // Clone/expand may set_child again; restamp parent + result so
+        // is_valid stays current (#2809 / #3388 observe-only oracle).
+        if (rewrote)
+            restamp_after_qq_unwrap(*flat, parent_id, unwrap_ci, next);
+        return next;
     }
     {
         auto v = flat->get(root);

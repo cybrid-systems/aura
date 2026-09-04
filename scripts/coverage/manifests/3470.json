@@ -1,0 +1,40 @@
+{
+  "issue": 3470,
+  "title": "Issue #3470: expand_inner_macros qq-unwrap + depth-limit refuse-partial",
+  "ok": "OK: Issue #3470 inner expander — DepthLimit stamp; production rolls back unwrap; Soft/Off half-write kept",
+  "checks": [
+    {
+      "ac": "AC1-depth-stamp",
+      "path": "src/compiler/macro_expansion.cpp",
+      "contains": [
+        "Issue #3470",
+        "kHygieneLimitReasonDepthLimit",
+        "inner_expand_production_limit_deny"
+      ]
+    },
+    {
+      "ac": "AC5-qq-test",
+      "path": "tests/compiler/test_qq_unwrap_targeted_restamp.cpp",
+      "contains": [
+        "3470: production returns pre-unwrap NodeId",
+        "3470: reason hygiene-depth-limit",
+        "3470: Soft/Off keeps unwrap (historical half-write)"
+      ]
+    },
+    {
+      "ac": "AC5-limits",
+      "path": "tests/compiler/test_macro_hygiene_limits.cpp",
+      "contains": [
+        "3470: inner stamps DepthLimit",
+        "3470: inner depth path is not PassLimit"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "forbid": [
+        "tests/compiler/test_issue_3470.cpp",
+        "docs/design/3470-inner-unwrap-depth.md"
+      ]
+    }
+  ]
+}

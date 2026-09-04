@@ -19,6 +19,9 @@
 #include <vector>
 
 #include "compiler/aura_jit_bridge.h"
+#include "compiler/grant_test_support.hh"
+#include "core/capability_model.hh"
+#include "core/sandbox.hh"
 #include "core/transparent_string_hash.hh"
 
 import std;
@@ -36,6 +39,8 @@ using aura::ast::SyntaxMarker;
 using aura::compiler::macro_exp::expand_inner_macros;
 using aura::compiler::macro_exp::g_macro_expand_full_restamp_total;
 using aura::compiler::macro_exp::g_macro_expand_targeted_restamp_total;
+using aura::compiler::macro_exp::g_macro_hygiene_last_limit_reason;
+using aura::compiler::macro_exp::hygiene_last_limit_reason_string;
 using aura::compiler::macro_exp::MacroExpansionDef;
 using aura::test::g_failed;
 using aura::test::g_passed;
@@ -217,6 +222,122 @@ int run_test_qq_unwrap_targeted_restamp() {
         CHECK(g_macro_expand_targeted_restamp_total.load() >= 1, "AC4: at least one targeted");
         CHECK(g_macro_expand_full_restamp_total.load() == 0, "AC4: still no full restamp");
         CHECK(flat.is_valid(parent), "AC4: parent still valid after multi-unwrap");
+    }
+
+    // ── Issue #3470: production inner depth-limit rolls back qq-unwrap ──
+    {
+        std::println("\n--- #3470: production unwrap + depth-limit restores cons ---");
+        using aura::core::capability::Effect;
+        using aura::core::capability::g_capability_registry;
+        using aura::core::capability::MacroSelfEvoPolicy;
+        using aura::core::sandbox::SandboxMode;
+        using aura::core::sandbox::set_mode;
+        MacroSelfEvoPolicy pol;
+        pol.max_expansion_passes = 32;
+        pol.max_depth = 256;
+        pol.allow_rest_hygiene = true;
+        pol.allow_concurrent_fiber = true;
+        (void)g_capability_registry().grant(0, "tenant-admin", Effect::TenantAdmin,
+                                            aura_test_grant_prov());
+        (void)g_capability_registry().grant_macro_self_evo(0, pol, aura_test_grant_prov());
+        set_mode(SandboxMode::Restricted);
+        aura::core::sandbox::set_mode(SandboxMode::Restricted);
+
+        FlatAST body_flat;
+        StringPool body_pool;
+        auto x_sym = body_pool.intern("x");
+        auto body = body_flat.add_variable(x_sym);
+        MacroExpansionDef md;
+        md.params = {"x"};
+        md.flat = &body_flat;
+        md.pool = &body_pool;
+        md.body_id = body;
+        std::unordered_map<std::string, MacroExpansionDef, aura::core::TransparentStringHash,
+                           std::equal_to<>>
+            macros;
+        macros.emplace("m", md);
+
+        FlatAST flat;
+        StringPool pool;
+        auto arg = flat.add_literal(static_cast<std::int64_t>(7));
+        auto cons_chain = make_qq_cons_macro_chain(flat, pool, "m", arg);
+        auto parent = flat.add_begin(std::vector<NodeId>{cons_chain});
+        flat.root = parent;
+
+        g_macro_hygiene_last_limit_reason.store(0, std::memory_order_relaxed);
+        auto out =
+            expand_inner_macros(&flat, &pool, cons_chain, /*depth=*/0, /*max_depth=*/1, macros);
+        CHECK(out == cons_chain, "3470: production returns pre-unwrap NodeId");
+        const auto* rs = hygiene_last_limit_reason_string();
+        CHECK(rs != nullptr && std::string(rs) == "hygiene-depth-limit",
+              "3470: reason hygiene-depth-limit");
+        CHECK(g_macro_hygiene_last_limit_reason.load(std::memory_order_relaxed) == 2,
+              "3470: reason enum 2 not pass-limit 3");
+        auto pv = flat.get(parent);
+        CHECK(!pv.children.empty() && pv.child(0) == cons_chain,
+              "3470: parent slot still cons (unwrap rolled back)");
+        // Unwrap head must not be reachable from root.
+        bool unwrap_reachable = false;
+        std::vector<NodeId> st{parent};
+        while (!st.empty()) {
+            auto id = st.back();
+            st.pop_back();
+            if (id == NULL_NODE || id >= flat.size())
+                continue;
+            if (id != cons_chain && flat.is_macro_introduced(id) &&
+                flat.tag(id) == aura::ast::NodeTag::Call)
+                unwrap_reachable = true;
+            auto v = flat.get(id);
+            std::vector<NodeId> kids(v.children.begin(), v.children.end());
+            for (auto c : kids)
+                st.push_back(c);
+        }
+        CHECK(!unwrap_reachable, "3470: no orphan MacroIntroduced unwrap head from root");
+        const auto me = read_file("src/compiler/macro_expansion.cpp");
+        CHECK(me.find("Issue #3470") != std::string::npos, "3470: helper cites #3470");
+        CHECK(me.find("kHygieneLimitReasonDepthLimit") != std::string::npos,
+              "3470: inner stamps DepthLimit");
+        CHECK(read_file("docs/design/3470-inner-unwrap-depth.md").empty(),
+              "3470: no docs/design/3470-* per #1655");
+        CHECK(read_file("tests/compiler/test_issue_3470.cpp").empty(),
+              "3470: no test_issue_3470.cpp per #81967");
+        set_mode(SandboxMode::Off);
+        aura::core::sandbox::set_mode(SandboxMode::Off);
+        aura::core::capability::reset_capability_effects_for_test();
+    }
+
+    {
+        std::println("\n--- #3470: Soft/Off keeps historical unwrap half-write ---");
+        using aura::core::sandbox::SandboxMode;
+        using aura::core::sandbox::set_mode;
+        set_mode(SandboxMode::Off);
+        aura::core::sandbox::set_mode(SandboxMode::Off);
+
+        FlatAST body_flat;
+        StringPool body_pool;
+        auto x_sym = body_pool.intern("x");
+        auto body = body_flat.add_variable(x_sym);
+        MacroExpansionDef md;
+        md.params = {"x"};
+        md.flat = &body_flat;
+        md.pool = &body_pool;
+        md.body_id = body;
+        std::unordered_map<std::string, MacroExpansionDef, aura::core::TransparentStringHash,
+                           std::equal_to<>>
+            macros;
+        macros.emplace("m", md);
+
+        FlatAST flat;
+        StringPool pool;
+        auto arg = flat.add_literal(static_cast<std::int64_t>(8));
+        auto cons_chain = make_qq_cons_macro_chain(flat, pool, "m", arg);
+        auto parent = flat.add_begin(std::vector<NodeId>{cons_chain});
+        flat.root = parent;
+        g_macro_hygiene_last_limit_reason.store(0, std::memory_order_relaxed);
+        (void)expand_inner_macros(&flat, &pool, cons_chain, 0, 1, macros);
+        auto pv = flat.get(parent);
+        CHECK(!pv.children.empty() && pv.child(0) != cons_chain,
+              "3470: Soft/Off keeps unwrap (historical half-write)");
     }
 
     std::println("\n=== #2809 qq-unwrap targeted restamp: {} passed, {} failed ===", g_passed,
