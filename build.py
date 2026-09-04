@@ -937,6 +937,19 @@ def cmd_lint():
             "Issue #3313 production-defaults hot-contract harden linter failed — run python3 scripts/coverage/checks/check_hot_contract_production_harden_3313.py"
         )
         return r
+    # Issue #3490: cache Harden arm so as_int / view_at do not re-enter
+    # the C ABI probe; CONSTEXPR column checks honor the same arm.
+    # Extends test_hot_contract_placement; no docs/design / invent.
+    hc3490_script = COVERAGE_CHECKS / "check_hot_contract_harden_cache_3490.py"
+    if not hc3490_script.exists():
+        fail(f"missing {hc3490_script}")
+        return 1
+    r = run([sys.executable, str(hc3490_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3490 hot-contract harden-cache linter failed — run python3 scripts/coverage/checks/check_hot_contract_harden_cache_3490.py"
+        )
+        return r
     # Issue #3140: Phase C — CastOp typed-meta JIT deopt on missing/aging
     # meta under Production only. Source-cite castop_typed_meta.h +
     # castop_density_policy.hh + lowering_impl.cpp; extends
