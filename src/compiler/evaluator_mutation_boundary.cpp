@@ -1087,6 +1087,7 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
             defuse_index_ = nullptr;
         }
     } else if (!success && workspace_flat_) {
+        clear_expected_occurrence_snapshot_fp();
         // Issue #3122: Agent-visible topology-restore is the Guard wrap
         // (run_under_mutation_guard); this path owns the Hard restore.
         // Issue #2959: dual topology abort under ONE structural exclusive —
@@ -3822,6 +3823,8 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
     if (outermost && success) {
         const auto mid = ev_->defuse_version_.load(std::memory_order_relaxed);
         aura_outermost_success_persist_occurrence(ev_, mid);
+        // Issue #3512: staging is one-shot for this outermost persist.
+        ev_->clear_expected_occurrence_snapshot_fp();
         if (typed_audit::consume_outermost_persist_reject_needs_restore()) {
             success = false;
             success_flag_store(flag_, false);

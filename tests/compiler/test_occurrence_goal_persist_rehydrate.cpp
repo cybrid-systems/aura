@@ -3344,6 +3344,59 @@ static void ac2995_7_source_cite() {
 
 } // namespace
 
+static void ac3512_stage_and_empty_live_clear() {
+    std::println("\n--- #3512: stage expected_fp + production empty-live clears log ---");
+    CHECK(typed_audit::kOccurrenceExpectedFpStageIssue == 3512, "3512 stamp");
+    const auto ev = read_file("src/compiler/evaluator_typecheck.cpp");
+    const auto ixx = read_file("src/compiler/evaluator.ixx");
+    const auto impl = read_file("src/compiler/type_checker_impl.cpp");
+    const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto tma = read_file("src/compiler/typed_mutation_audit.h");
+    CHECK(ixx.find("stage_expected_occurrence_snapshot_fp") != std::string::npos,
+          "3512 AC1: setter");
+    CHECK(ev.find("stage_expected_occurrence_snapshot_fp(aura_occurrence_goal_fingerprint_tc") !=
+              std::string::npos,
+          "3512 AC1: infer/SDO stages live fingerprint");
+    CHECK(mb.find("expected_occurrence_snapshot_fp() != 0") != std::string::npos,
+          "3512 AC3: #3170 mismatch arm kept");
+    CHECK(tma.find("kOccurrenceUnstagedExpectedFpIssue = 3431") != std::string::npos,
+          "3512 AC2: #3431 kept");
+    CHECK(mb.find("clear_expected_occurrence_snapshot_fp()") != std::string::npos,
+          "3512: persist consumes staging");
+    CHECK(read_file("docs/design/3512-expected-fp-stage.md").empty(), "3512 AC5: no docs/design");
+    CHECK(read_file("tests/compiler/test_issue_3512.cpp").empty(), "3512 AC5: no invent");
+
+    setenv("AURA_OCCURRENCE_PERSIST", "1", 1);
+    apply_production_audit_defaults();
+    UnitCs u;
+    u.cs.set_current_epoch(1);
+    auto v = u.cs.fresh_var();
+    u.cs.note_occurrence_goal(v, u.reg.int_type(), 1, 10, 1);
+    CHECK(u.cs.append_occurrence_snapshot(10) == 1, "3512 AC4: wrote 1");
+    CHECK(u.cs.occurrence_persist_log_size() == 1, "3512: log 1");
+    u.cs.set_current_epoch(2);
+    CHECK(u.cs.prune_occurrence_goals(2) >= 1, "3512: prune live");
+    CHECK(u.cs.occurrence_goals_size() == 0, "3512: live empty");
+    CHECK(u.cs.append_occurrence_snapshot(11) == 0, "3512 AC4: empty-live write 0");
+    CHECK(u.cs.occurrence_persist_log_size() == 0, "3512 AC4: production cleared prior log");
+
+    apply_dev_audit_defaults();
+    setenv("AURA_OCCURRENCE_PERSIST", "1", 1);
+    UnitCs soft;
+    soft.cs.set_current_epoch(1);
+    auto vs = soft.cs.fresh_var();
+    soft.cs.note_occurrence_goal(vs, soft.reg.int_type(), 1, 10, 1);
+    const auto sw = soft.cs.append_occurrence_snapshot(10);
+    if (sw == 1) {
+        soft.cs.set_current_epoch(2);
+        (void)soft.cs.prune_occurrence_goals(2);
+        CHECK(soft.cs.append_occurrence_snapshot(11) == 0, "3512 AC5: Soft empty write 0");
+        CHECK(soft.cs.occurrence_persist_log_size() == 1, "3512 AC5: Soft keeps observe log");
+    }
+    unsetenv("AURA_OCCURRENCE_PERSIST");
+    apply_dev_audit_defaults();
+}
+
 int run_test_occurrence_goal_persist_rehydrate() {
     std::println("=== test_occurrence_goal_persist_rehydrate ===");
     aura::compiler::lock_order::reset_tls_for_test();
@@ -3491,6 +3544,8 @@ int run_test_occurrence_goal_persist_rehydrate() {
     std::println("\n=== #3418 fingerprint cap overflow silent-green ===");
     ac3418_fingerprint_cap_overflow_rejects();
     ac3418_source_and_linter();
+    std::println("\n=== #3512 stage expected_fp + empty-live persist log ---");
+    ac3512_stage_and_empty_live_clear();
     std::println("\n=== results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

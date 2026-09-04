@@ -668,8 +668,16 @@ std::size_t ConstraintSystem::occurrence_persist_cap() noexcept {
 std::size_t ConstraintSystem::append_occurrence_snapshot(std::uint64_t mutation_id) noexcept {
     if (!occurrence_persist_enabled())
         return 0; // AC2: soft zero cost
-    if (occurrence_goals_.empty())
+    if (occurrence_goals_.empty()) {
+        // Issue #3512: production empty-live must not leave a prior mid's
+        // persist log for steal rehydrate. Soft keeps the observe log.
+        const bool hard = aura::compiler::typed_audit::production_defaults_active() ||
+                          aura::compiler::typed_audit::get_strategy() ==
+                              aura::compiler::typed_audit::AuditStrategy::Full;
+        if (hard && !occurrence_persist_log_.empty())
+            (void)clear_occurrence_persist_snapshot();
         return 0;
+    }
     // Issue #3225: production seqlock around persist write so a concurrent
     // rehydrate can detect a torn copy (odd seq / gen change). Soft: no bump.
     aura::compiler::typed_audit::occurrence_persist_seq_begin_write();
