@@ -2394,14 +2394,16 @@ static aura::ast::NodeId clone_macro_body_at_depth(
                     // verbatim
                 } else {
                     bool hit_subst = false;
-                    if (subst && v.sym_id != INVALID_SYM) {
-                        auto set_name = std::string(source_pool.resolve(v.sym_id));
-                        auto sit = subst->find(set_name);
-                        if (sit != subst->end()) {
-                            auto arg_v = target.get(sit->second);
-                            if (arg_v.tag == NodeTag::Variable) {
-                                set_name_sid = arg_v.sym_id;
-                                hit_subst = true;
+                    if (!local_in_quote && subst) {
+                        if (v.sym_id != INVALID_SYM) {
+                            auto set_name = std::string(source_pool.resolve(v.sym_id));
+                            auto sit = subst->find(set_name);
+                            if (sit != subst->end()) {
+                                auto arg_v = target.get(sit->second);
+                                if (arg_v.tag == NodeTag::Variable) {
+                                    set_name_sid = arg_v.sym_id;
+                                    hit_subst = true;
+                                }
                             }
                         }
                     }
