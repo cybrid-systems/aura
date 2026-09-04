@@ -47,6 +47,7 @@ extern "C" std::uint8_t aura_hot_update_current_storm_level(void);
 extern "C" void aura_hot_update_note_deopt(void);
 extern "C" void aura_hot_update_set_deopt_storm_threshold(std::uint64_t, std::uint64_t);
 extern "C" void aura_hot_update_reset_deopt_storm_state_for_test(void);
+extern "C" void aura_hot_update_clear_global_throttle_keep_hysteresis_for_test(void);
 extern "C" void aura_hot_update_set_shape_storm_active(int);
 
 static std::string read_file(const char* path) {
@@ -286,6 +287,64 @@ int run_test_partial_relower_storm_gate() {
               "AC6: None→non-None edge refresh wired");
         clear_storm();
         reset_partial_relower_threshold_for_test();
+    }
+
+    // ── Issue #3515: Both→Shape hysteresis + Shape→None win==0 ──
+    {
+        std::println("\n--- #3515 AC1: Both→Shape keeps force-full ---");
+        reset_partial_relower_threshold_for_test();
+        clear_storm();
+        aura_hot_update_set_shape_storm_active(1);
+        trip_global_storm();
+        CHECK((aura_hot_update_current_storm_level() & kStormLevelGlobal) != 0, "3515 AC1: Both");
+        CHECK((aura_hot_update_current_storm_level() & kStormLevelShape) != 0, "3515 AC1: Shape");
+        CHECK(!should_partial_relower_storm_aware(1), "3515 AC1: Both+1 → full");
+        aura_hot_update_clear_global_throttle_keep_hysteresis_for_test();
+        aura_hot_update_set_shape_storm_active(1);
+        CHECK((aura_hot_update_current_storm_level() & kStormLevelGlobal) == 0,
+              "3515 AC1: Global off");
+        CHECK((aura_hot_update_current_storm_level() & kStormLevelShape) != 0,
+              "3515 AC1: Shape remains");
+        CHECK(hot_update_registry().storm_exit_force_full_active(),
+              "3515 AC1: C++ Both→Shape consult is force-full");
+        CHECK(!apply_partial_relower_storm_gate(true),
+              "3515 AC1: gate still force-full under Shape after lost Global");
+        const auto hur = read_file("src/compiler/hot_update_registry.cpp");
+        auto fn_pos = hur.find("storm_exit_force_full_active() noexcept");
+        CHECK(fn_pos != std::string::npos, "3515 AC1: helper present");
+        auto fn_win = hur.substr(fn_pos, 5000);
+        CHECK(fn_win.find("Issue #3515") != std::string::npos, "3515 AC1: cites #3515");
+        CHECK(fn_win.find("lost_global") != std::string::npos, "3515 AC1: lost_global");
+        CHECK(aura::compiler::HotUpdateRegistry::kStormBothShapeHysteresisIssue == 3515,
+              "3515 AC1: issue stamp");
+        clear_storm();
+        reset_partial_relower_threshold_for_test();
+    }
+
+    {
+        std::println("\n--- #3515 AC2: Shape→None with deopt_window==0 arms cooldown ---");
+        reset_partial_relower_threshold_for_test();
+        clear_storm();
+        aura_hot_update_set_shape_storm_active(1);
+        CHECK(should_partial_relower_storm_aware(1), "3515 AC2: Shape-only still partial");
+        aura_hot_update_set_shape_storm_active(0);
+        CHECK(!apply_partial_relower_storm_gate(true),
+              "3515 AC2: Shape→None first consult force-full even if window==0");
+        clear_storm();
+        reset_partial_relower_threshold_for_test();
+    }
+
+    {
+        std::println("\n--- #3515 AC3/AC5: #3163/#3101 stay; no invent ---");
+        const auto hur = read_file("src/compiler/hot_update_registry.cpp");
+        CHECK(hur.find("Issue #3163") != std::string::npos, "3515 AC3: #3163 stays");
+        CHECK(hur.find("aura_clear_partial_relower_threshold_force") != std::string::npos,
+              "3515 AC3: #3101 stays");
+        CHECK(hur.find("now != 0 && prev == 0") != std::string::npos, "3515 AC3: entry refresh");
+        CHECK(read_file("docs/design/3515-storm-both-shape.md").empty(),
+              "3515 AC5: no docs/design");
+        CHECK(read_file("tests/compiler/test_issue_3515.cpp").empty(),
+              "3515 AC5: no test_issue_3515");
     }
 
     // ── Source wiring ──

@@ -1409,7 +1409,11 @@ apply_partial_relower_storm_gate(bool want_partial_without_storm) noexcept {
     // Issue #3070: Global bit OR storm-exit cooldown (Shape/Global → None
     // while the deopt window is still elevated) keeps force-full so
     // partial↔full cannot oscillate on the first quiet consult.
-    if (storm_level_has_global() || aura_hot_update_storm_exit_force_full_active() != 0) {
+    // Issue #3515: always sample storm_exit_force_full_active so hysteresis
+    // records Both; `||` short-circuit would leave prev=None and Both→Shape
+    // would look like None→Shape (no force-full while Shape stays).
+    const bool exit_full = aura_hot_update_storm_exit_force_full_active() != 0;
+    if (storm_level_has_global() || exit_full) {
         partial_relower_storm_forced_full_total_atomic().fetch_add(1, std::memory_order_relaxed);
         return false;
     }

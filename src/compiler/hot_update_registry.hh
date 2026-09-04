@@ -181,6 +181,7 @@ public:
     // one latch the existing IR content flag already describes.
     static constexpr int kIrContentUntrustedNativeIssue = 3513;
     static constexpr int kPeerCallerConeStaleIssue = 3514;
+    static constexpr int kStormBothShapeHysteresisIssue = 3515;
     void note_ir_content_untrusted_for_native() noexcept {
         ir_content_untrusted_for_native_.store(1, std::memory_order_release);
     }
@@ -531,6 +532,8 @@ public:
     }
     // Test / recovery: clear throttle + open a fresh window.
     void reset_deopt_storm_state_for_test() noexcept;
+    // Issue #3515: drop Global throttle without clearing hysteresis.
+    void clear_global_throttle_keep_hysteresis_for_test() noexcept;
 
     // ── Issue #2114 / #2205: reemit ↔ MutationBoundary handshake ──
     // SoftEnter (0): test / explicit opt-in only — TLS soft boundary.
@@ -991,6 +994,10 @@ private:
     // (distinct from prev_storm_level_ used by #2639 health pass).
     std::atomic<std::uint8_t> hysteresis_prev_storm_level_{0};
     std::atomic<std::uint32_t> storm_exit_force_full_remaining_{0};
+    // Issue #3515: 1 after Both→Shape (lost Global, Shape remains) so the
+    // 8-consult force-full window applies while now!=0. None→Shape keeps 0
+    // (#2212 Shape-only widen). Appended next to remaining (not metrics-middle).
+    std::atomic<std::uint8_t> storm_exit_force_full_apply_while_non_none_{0};
     // Issue #3513: 1 while facade reemit may see pre-store irs. Appended
     // at the hysteresis cluster (not a query-key / metrics-middle insert).
     std::atomic<std::uint8_t> ir_content_untrusted_for_native_{0};
@@ -1630,6 +1637,7 @@ extern "C" void aura_hot_update_set_shape_storm_active(int active);
 void aura_hot_update_set_deopt_storm_threshold(std::uint64_t deopts_per_window,
                                                std::uint64_t window_ms);
 void aura_hot_update_reset_deopt_storm_state_for_test(void);
+void aura_hot_update_clear_global_throttle_keep_hysteresis_for_test(void);
 // Issue #3070: 1 while storm-exit force-full cooldown is live (consumes one consult).
 int aura_hot_update_storm_exit_force_full_active(void);
 // Issue #2017: module-safe C entry for epoch notify (compact-env-frames etc.).

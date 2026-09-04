@@ -1357,6 +1357,8 @@ extern "C" __attribute__((weak)) void aura_reemit_keep_failed_obj(const char* /*
 extern "C" __attribute__((weak)) void
 aura_hot_update_set_deopt_storm_threshold(std::uint64_t /*d*/, std::uint64_t /*w*/) {}
 extern "C" __attribute__((weak)) void aura_hot_update_reset_deopt_storm_state_for_test(void) {}
+extern "C" __attribute__((weak)) void
+aura_hot_update_clear_global_throttle_keep_hysteresis_for_test(void) {}
 extern "C" __attribute__((weak)) int aura_hot_update_storm_exit_force_full_active(void) {
     return 0;
 }
