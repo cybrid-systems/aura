@@ -934,6 +934,10 @@ static std::vector<std::string> g_closure_names;
 // defuse_version ↔ aura_get_aot_defuse_version() (mutate / EnvFrame proxy)
 static std::vector<std::uint64_t> g_closure_bridge_epochs;
 static std::vector<std::uint64_t> g_closure_defuse_versions;
+// Issue #3471: independent table-generation stamp. Remount restamp of
+// g_closure_bridge_epochs to the C-bridge clock must not wash a table
+// miss. Stamped at alloc and on remap retarget; not on C-bridge remount.
+static std::vector<std::uint64_t> g_closure_table_epochs;
 // Issue #2092 / #2550: per-closure stable_func_id stamp (parallel to func_ids).
 // Named set_name stamps via aura_get_or_preserve_stable_func_id() so the
 // remap after reemit matches by stable id (not display name) — the
@@ -1224,6 +1228,17 @@ static std::uint64_t jit_closure_bridge_stamp_now() noexcept {
     if (c != 0)
         return c;
     return aura_aot_func_table_epoch();
+}
+
+// Issue #3471: bind the closure to the live table generation. Alloc and
+// remap-retarget only — C-bridge remount must not overwrite this stamp.
+static void stamp_closure_table_epoch_locked(size_t cid) noexcept {
+    const auto n = g_closure_func_ids.size();
+    const auto need = n > cid + 1 ? n : cid + 1;
+    if (g_closure_table_epochs.size() < need)
+        g_closure_table_epochs.resize(need, 0);
+    if (cid < g_closure_table_epochs.size())
+        g_closure_table_epochs[cid] = aura_aot_func_table_epoch();
 }
 
 // Issue #1508: stamp dual provenance (table epoch + defuse) at alloc.
@@ -1591,6 +1606,7 @@ static int64_t alloc_closure_slot_locked(int64_t func_id, std::uint8_t is_arena)
         if (cid < g_closure_linear_state.size())
             g_closure_linear_state[cid] = aura_get_aot_live_linear_state_fingerprint(); // #2129
         stamp_closure_provenance_locked(cid);
+        stamp_closure_table_epoch_locked(cid);
         invalidate_closure_cache_for(static_cast<int64_t>(cid));
         g_closure_reuse_total.fetch_add(1, std::memory_order_relaxed);
         return static_cast<int64_t>(cid);
@@ -1610,6 +1626,7 @@ static int64_t alloc_closure_slot_locked(int64_t func_id, std::uint8_t is_arena)
     g_closure_must_deopt.push_back(0); // Issue #2128
     g_closure_linear_state.push_back(aura_get_aot_live_linear_state_fingerprint()); // Issue #2129
     g_closure_cow_gens.push_back(aura_get_live_workspace_cow_gen());                // Issue #2547
+    g_closure_table_epochs.push_back(aura_aot_func_table_epoch());                  // Issue #3471
     return id;
 }
 
@@ -1666,6 +1683,8 @@ void aura_free_closure(int64_t closure_id) {
         g_closure_names[cid].clear();
     if (cid < g_closure_bridge_epochs.size())
         g_closure_bridge_epochs[cid] = 0;
+    if (cid < g_closure_table_epochs.size())
+        g_closure_table_epochs[cid] = 0; // Issue #3471
     if (cid < g_closure_defuse_versions.size())
         g_closure_defuse_versions[cid] = 0;
     if (cid < g_closure_must_deopt.size())
@@ -3438,6 +3457,7 @@ extern "C" std::uint64_t aura_remap_live_closures_after_reemit(const std::uint32
         g_closure_func_ids[cid] = static_cast<std::int64_t>(match_id);
         g_closure_stable_func_ids[cid] = match_id;
         g_closure_bridge_epochs[cid] = jit_closure_bridge_stamp_now();
+        stamp_closure_table_epoch_locked(cid); // Issue #3471: remap retargeted catalog
         // Issue #2542: restamp env_gen to live env-frame generation so
         // remount PRIMARY axis (#2272) aligns after reemit.
         g_closure_env_gen[cid] = live_env;
@@ -3775,6 +3795,8 @@ int64_t aura_closure_call(int64_t closure_id, int64_t* args, int64_t argc) {
             cid < g_closure_bridge_epochs.size() ? g_closure_bridge_epochs[cid] : 0;
         std::uint64_t cap_defuse =
             cid < g_closure_defuse_versions.size() ? g_closure_defuse_versions[cid] : 0;
+        std::uint64_t cap_table =
+            cid < g_closure_table_epochs.size() ? g_closure_table_epochs[cid] : 0;
         if (ov_samp != 0 && g_pure_anon_overflow_epoch.load(std::memory_order_acquire) != ov_samp) {
             // Overflow raced after the local sample — re-read MustDeopt /
             // poisoned epoch before dual-fresh.
@@ -3790,8 +3812,9 @@ int64_t aura_closure_call(int64_t closure_id, int64_t* args, int64_t argc) {
             cap_bridge = cid < g_closure_bridge_epochs.size() ? g_closure_bridge_epochs[cid] : 0;
             cap_defuse =
                 cid < g_closure_defuse_versions.size() ? g_closure_defuse_versions[cid] : 0;
+            cap_table = cid < g_closure_table_epochs.size() ? g_closure_table_epochs[cid] : 0;
         }
-        if (!aura_is_jit_closure_fresh(cap_bridge, cap_defuse)) {
+        if (!aura_is_jit_closure_fresh(cap_bridge, cap_defuse, cap_table)) {
             // Drop shared locks before exclusive soft migrate.
             tlock.unlock();
             aura_unlock_workspace_read();
@@ -5028,6 +5051,7 @@ void aura_reset_runtime() {
     // next alloc's assert_closure_vectors_consistent sees a desync
     // (func_ids empty while these still hold stale rows).
     g_closure_bridge_epochs.clear();   // Issue #1508
+    g_closure_table_epochs.clear();    // Issue #3471
     g_closure_defuse_versions.clear(); // Issue #1508
     g_closure_stable_func_ids.clear(); // Issue #2092
     g_closure_must_deopt.clear();      // Issue #2128

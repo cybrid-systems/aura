@@ -1,0 +1,40 @@
+{
+  "issue": 3471,
+  "title": "Issue #3471: dual-fresh table domain is an independent stamp; C-bridge equality does not wash",
+  "ok": "OK: Issue #3471 dual-fresh — independent table stamp; captured==C-bridge no longer forces table_ok",
+  "checks": [
+    {
+      "ac": "AC1-no-wash",
+      "path": "src/compiler/aura_jit_bridge.cpp",
+      "contains": [
+        "Issue #3471",
+        "captured_table_epoch",
+        "c_ok && table_ok"
+      ]
+    },
+    {
+      "ac": "AC1-column",
+      "path": "src/compiler/aura_jit_runtime.cpp",
+      "contains": [
+        "g_closure_table_epochs",
+        "stamp_closure_table_epoch_locked"
+      ]
+    },
+    {
+      "ac": "AC5-tests",
+      "path": "tests/compiler/test_aot_incremental_reemit.cpp",
+      "contains": [
+        "3471: C-bridge match does not wash table stamp miss",
+        "3471: matching independent table stamp is fresh",
+        "3471: captured==0 + C-bridge tracking still stale (#2930)"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "forbid": [
+        "tests/compiler/test_issue_3471.cpp",
+        "docs/design/3471-jit-table-stamp.md"
+      ]
+    }
+  ]
+}

@@ -2387,6 +2387,39 @@ int main() {
                   std::string::npos,
               "3447 AC6: no new query key");
 
+        std::println("\n--- #3471: C-bridge equality does not wash a table-stamp miss ---");
+        CHECK(br.find("Issue #3471") != std::string::npos, "3471: dual-fresh cites #3471");
+        CHECK(br.find("captured_table_epoch") != std::string::npos,
+              "3471: independent table stamp arg");
+        CHECK(br.find("captured_bridge_epoch == cur_c_bridge") == std::string::npos,
+              "3471: C-bridge wash removed");
+        const auto rt3471 = read_file("src/compiler/aura_jit_runtime.cpp");
+        CHECK(rt3471.find("g_closure_table_epochs") != std::string::npos,
+              "3471: per-closure table stamp column");
+        CHECK(rt3471.find("stamp_closure_table_epoch_locked") != std::string::npos,
+              "3471: stamp on alloc/remap only");
+        aura_set_current_bridge_epoch(t1 + 9);
+        const auto c_now = aura_get_current_bridge_epoch();
+        aura_aot_bump_func_table_epoch();
+        const auto t2 = aura_aot_func_table_epoch();
+        CHECK(t2 > t1, "3471: table epoch advanced");
+        CHECK(!aura_is_jit_closure_fresh(c_now, defuse, t1),
+              "3471: C-bridge match does not wash table stamp miss");
+        CHECK(aura_is_jit_closure_fresh(c_now, defuse, t2),
+              "3471: matching independent table stamp is fresh");
+        CHECK(aura_is_jit_closure_fresh(c_now, defuse, 0),
+              "3471: no table stamp skips table AND (not a wash)");
+        CHECK(!aura_is_jit_closure_fresh(0, defuse, t2),
+              "3471: captured==0 + C-bridge tracking still stale (#2930)");
+        CHECK(read_file("docs/design/3471-jit-table-stamp.md").empty(),
+              "3471: no docs/design/3471-* per #1655");
+        CHECK(read_file("tests/compiler/test_issue_3471.cpp").empty() &&
+                  read_file("tests/issues/test_issue_3471.cpp").empty(),
+              "3471: no test_issue_3471.cpp per #81967");
+        CHECK(read_file("src/compiler/evaluator_primitives_mutate.cpp").find("schema-3471") ==
+                  std::string::npos,
+              "3471: no new query key");
+
         aura_set_current_bridge_epoch(c0);
         aura_set_aot_defuse_version(d0);
     }

@@ -284,7 +284,8 @@ extern "C" __attribute__((weak)) std::uint32_t peer_ir_name_soft_stale_live_v_re
 }
 extern "C" __attribute__((weak)) bool
 aura_is_jit_closure_fresh(std::uint64_t captured_bridge_epoch,
-                          std::uint64_t captured_defuse_or_env_version) {
+                          std::uint64_t captured_defuse_or_env_version,
+                          std::uint64_t captured_table_epoch) {
     const auto cur_c = aura_get_current_bridge_epoch();
     const auto cur_b = aura_aot_func_table_epoch();
     const auto cur_d = g_aot_defuse_version_stub;
@@ -292,6 +293,7 @@ aura_is_jit_closure_fresh(std::uint64_t captured_bridge_epoch,
     // active is NOT fresh (unstamped observed during tracking), so stale
     // closures reach the cross-COW soft/hard path instead of skipping it.
     // Issue #3447: C-bridge AND table (owner-scoped table may stay frozen).
+    // Issue #3471: independent table stamp; no C-bridge wash.
     auto domain_ok = [](std::uint64_t captured, std::uint64_t current) noexcept {
         if (current == 0)
             return true; // tracking inactive for this domain
@@ -300,9 +302,11 @@ aura_is_jit_closure_fresh(std::uint64_t captured_bridge_epoch,
         return captured == current;
     };
     const bool c_ok = domain_ok(captured_bridge_epoch, cur_c);
-    bool table_ok = domain_ok(captured_bridge_epoch, cur_b);
-    if (!table_ok && cur_c != 0 && captured_bridge_epoch != 0 && captured_bridge_epoch == cur_c)
-        table_ok = true;
+    bool table_ok = true;
+    if (captured_table_epoch != 0)
+        table_ok = domain_ok(captured_table_epoch, cur_b);
+    else if (cur_c == 0)
+        table_ok = domain_ok(captured_bridge_epoch, cur_b);
     return c_ok && table_ok && domain_ok(captured_defuse_or_env_version, cur_d);
 }
 extern "C" __attribute__((weak)) void aura_jit_closure_record_dual_check(void) {}
