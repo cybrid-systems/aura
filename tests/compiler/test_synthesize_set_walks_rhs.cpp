@@ -235,6 +235,40 @@ int run_test_synthesize_set_walks_rhs() {
               "AC8: no tests/issues/test_issue_3408.cpp (R1 abandoned scheme)");
     }
 
+    // --- #3516: check_flat Set stamps TypeError on unify false ---
+    {
+        std::println("\n--- #3516 AC1: check_flat Set stamps TypeError on unify false ---");
+        const auto tci2 = read_file("src/compiler/type_checker_impl.cpp");
+        const auto check_pos = tci2.find("InferenceEngine::check_flat(");
+        CHECK(check_pos != std::string::npos, "3516 AC1: check_flat present");
+        const auto check_after = tci2.substr(check_pos);
+        const auto set_pos = check_after.find("NodeTag::Set");
+        CHECK(set_pos != std::string::npos, "3516 AC1: check_flat Set branch");
+        const auto next_else = check_after.find("} else if (v.tag == NodeTag::Define)", set_pos);
+        const auto set_branch = check_after.substr(
+            set_pos, next_else == std::string::npos ? std::string::npos : next_else - set_pos);
+        CHECK(contains(set_branch, "if (!cs_.consistent_unify(val_type, var_type))"),
+              "3516 AC1: check_flat Set tests unify return");
+        CHECK(contains(set_branch,
+                       "set_node_error(id, static_cast<std::uint8_t>(ErrorKind::TypeError))"),
+              "3516 AC1: check_flat Set stamps TypeError");
+        CHECK(contains(set_branch, "Issue #3516"), "3516 AC1: source-cite");
+        CHECK(contains(set_branch, "drop_occurrence_goals_for_var_type"),
+              "3516 AC2: hygiene still runs");
+        CHECK(contains(set_branch, "consistent_unify(val_type, expected)"),
+              "3516 AC2: expected unify unchanged");
+        const auto synth = tci2.find("TypeId InferenceEngine::synthesize_flat(");
+        const auto synth_after = tci2.substr(synth);
+        const auto synth_set = synth_after.find("case Tag::Set:");
+        const auto synth_break = synth_after.find("break;", synth_set);
+        const auto synth_body = synth_after.substr(synth_set, synth_break - synth_set);
+        CHECK(contains(synth_body, "if (!cs_.consistent_unify(val_type, var_type))"),
+              "3516 AC3: synth Set still stamps on unify false");
+        CHECK(read_file("docs/design/3516-check-flat-set-unify.md").empty(),
+              "3516 AC5: no docs/design");
+        CHECK(read_file("tests/compiler/test_issue_3516.cpp").empty(), "3516 AC5: no invent");
+    }
+
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
