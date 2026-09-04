@@ -1,3 +1,10 @@
+// test_ir.cpp main() is a 5000+ line dispatcher (line 420 → EOF).
+// -fvar-tracking-assignments (implied by -g) hits GCC's variable
+// tracking size limit on that single function and emits a diagnostic
+// that -Werror upgrades to a hard error. Disable for this TU —
+// debug-info quality loss is acceptable for a test binary.
+#pragma GCC optimize("no-var-tracking-assignments")
+
 #include "compiler/observability_metrics.h"
 #include "compiler/typed_mutation_audit.h"
 
