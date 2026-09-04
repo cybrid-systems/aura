@@ -504,9 +504,10 @@ int run_test_hot_contract_placement() {
         const auto nxt = soa.find("add_block", vat);
         const auto win =
             (vat != std::string::npos && nxt > vat) ? soa.substr(vat, nxt - vat) : std::string{};
-        CHECK(win.find("AURA_HOT_CHECK") != std::string::npos,
-              "3428 AC1: view_at body contains AURA_HOT_CHECK");
-        CHECK(win.find("AURA_HOT_RECORD") != std::string::npos, "3428 AC1: RECORD still present");
+        CHECK(win.find("AURA_HOT_CONTRACT") != std::string::npos,
+              "3428 AC1: view_at body contains AURA_HOT_CONTRACT");
+        CHECK(win.find("AURA_HOT_RECORD()") == std::string::npos,
+              "3428 AC1: RECORD folded into CONTRACT (#3501)");
         CHECK(win.find("pre(func_idx < functions.size())") != std::string::npos,
               "3428 AC1: language pre cold edge kept");
         CHECK(win.find("Issue #3428") != std::string::npos, "3428 AC1: issue cite");
@@ -648,7 +649,8 @@ int run_test_hot_contract_placement() {
         const auto addb = soa.find("add_block", vat);
         const auto vwin =
             (vat != std::string::npos && addb > vat) ? soa.substr(vat, addb - vat) : std::string{};
-        CHECK(vwin.find("AURA_HOT_CHECK") != std::string::npos, "3490 AC4: view_at CHECK kept");
+        CHECK(vwin.find("AURA_HOT_CONTRACT") != std::string::npos,
+              "3490 AC4: view_at CONTRACT kept");
         CHECK(hh.find("record_hotpath_contract_harden_trap") != std::string::npos,
               "3490 AC4: trap helper reused");
 

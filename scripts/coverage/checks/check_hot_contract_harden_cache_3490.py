@@ -10,7 +10,7 @@ Contract:
   AC1  cache load precedes probe; apply_production/apply_dev store the cache
   AC2  Soft / unarmed: expr not evaluated (armed()==false)
   AC3  CONSTEXPR runtime arm (if !consteval → AURA_HOT_CHECK); column accessors
-  AC4  view_at AURA_HOT_CHECK + trap helper retained (#3428 / #3106)
+  AC4  view_at AURA_HOT_CONTRACT + trap helper retained (#3428 / #3106 / #3501)
   AC5  no new query key / g_3490_* / docs/design / test_issue_3490.cpp;
        linter AFTER #3313
 
@@ -75,7 +75,7 @@ def main() -> int:
     start = soa.find("IRInstructionView view_at(")
     addb = soa.find("add_block", start) if start >= 0 else -1
     vwin = soa[start:addb] if start >= 0 and addb > start else ""
-    must("AURA_HOT_CHECK", "AC4 view_at CHECK", vwin)
+    must("AURA_HOT_CONTRACT", "AC4 view_at CONTRACT", vwin)
     must("record_hotpath_contract_harden_trap", "AC4 trap helper", hh)
     must("3490 AC4", "AC4 test", test)
     must("check_hot_contract_view_at_harden_3428", "AC4 3428 linter kept", build)

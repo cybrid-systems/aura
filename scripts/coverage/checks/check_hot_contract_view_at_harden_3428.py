@@ -6,8 +6,8 @@ site only AURA_HOT_RECORD()'d. Language pre is stripped under NDEBUG,
 CHECK_CONSTEXPR is Enforce-only. HARDEN armed was still Quiet OOB.
 
 Contract:
-  AC1 HARDEN + OOB view_at → trap + abort; view_at body has AURA_HOT_CHECK
-  AC2 production OFF / NDEBUG without HARDEN: no extra atomic beyond RECORD
+  AC1 HARDEN + OOB view_at → trap + abort; view_at body has AURA_HOT_CONTRACT
+  AC2 production OFF / NDEBUG without HARDEN: no extra atomic beyond armed() load
   AC3 #3106 / #3043 suites stay green; do not weaken check_hot_contract_harden_3106
   AC4 extend test_hot_contract_placement; linter after #3106;
       no docs/design/3428-*; no test_issue_3428.cpp
@@ -48,8 +48,7 @@ def main() -> int:
     nxt = soa.find("add_block", start) if start >= 0 else -1
     win = soa[start:nxt] if start >= 0 and nxt > start else ""
 
-    must("AURA_HOT_CHECK", "AC1 CHECK in view_at", win)
-    must("AURA_HOT_RECORD", "AC1 RECORD still", win)
+    must("AURA_HOT_CONTRACT", "AC1 CONTRACT in view_at", win)
     must("pre(func_idx < functions.size())", "AC1 pre cold", win)
     must("func_idx < functions.size()", "AC1 func bound", win)
     must("idx < functions[func_idx].size()", "AC1 idx bound", win)
@@ -58,7 +57,7 @@ def main() -> int:
     must("std::abort()", "AC1 abort", hh)
     must("3428 AC1", "AC1 test", test)
 
-    must("AURA_HOT_RECORD()", "AC2 RECORD", win)
+    must("AURA_HOT_CONTRACT", "AC2 CONTRACT one-liner", win)
     must("hot_contract_harden_armed()", "AC2 OFF gate", hh)
     must("expr not evaluated", "AC2 Soft skip", hh)
     must("3428 AC2", "AC2 test", test)

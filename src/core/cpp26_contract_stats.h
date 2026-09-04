@@ -31,7 +31,8 @@ extern "C" int aura_production_defaults_active_probe() noexcept;
 //
 //   AURA_HOT_RECORD()           — bump hotpath_invariant_hits_total
 //   AURA_HOT_CHECK(expr)        — enforce / observe / no-op per hot mode
-//   AURA_HOT_CONTRACT(expr)     — RECORD + CHECK (preferred one-liner)
+//   AURA_HOT_CONTRACT(expr)     — RECORD + CHECK (preferred one-liner;
+//                                 NDEBUG OFF: one armed() load, #3501)
 //   AURA_COLD_CONTRACT(expr)    — cold-edge enforce (debug/enforce only)
 //   AURA_HOT_CHECK_CONSTEXPR    — constexpr-friendly column bounds (hot)
 //
@@ -128,6 +129,9 @@ inline constexpr int kHotContractProductionHardenIssue = 3313;
 // re-enter the C ABI probe on every HOT_CHECK. apply_production /
 // apply_dev store here (defaults can flip in tests).
 inline constexpr int kHotContractHardenCacheIssue = 3490;
+// Issue #3501: NDEBUG OFF AURA_HOT_CONTRACT loads armed() once (RECORD
+// then CHECK was two relaxed loads on as_int / view_at).
+inline constexpr int kHotContractSingleLoadIssue = 3501;
 // Soft-observe RECORD sample period (power of two). Acceptable upper
 // bound vs OFF: one relaxed atomic per this many RECORD sites. Applies to
 // both plain Soft-observe (#3043) and Harden-armed Soft-observe (#3106
@@ -395,11 +399,27 @@ inline void record_hotpath_invariant_hit_sampled() noexcept {
 #endif
 
 // Preferred one-liner: record + check (both respect hot mode).
+// Issue #3501: NDEBUG OFF loads hot_contract_harden_armed() once.
+// Armed: sampled RECORD + CHECK + trap. Unarmed: one load, no expr.
+#if defined(AURA_HOT_MODE_OFF)
+#define AURA_HOT_CONTRACT(expr)                                                                    \
+    do {                                                                                           \
+        if (::aura::core::cpp26::hot_contract_harden_armed()) {                                    \
+            ::aura::core::cpp26::record_hotpath_invariant_hit_sampled();                           \
+            if (!(expr)) {                                                                         \
+                ::aura::core::cpp26::observe_hot_contract_false();                                 \
+                ::aura::core::cpp26::record_hotpath_contract_harden_trap();                        \
+                std::abort();                                                                      \
+            }                                                                                      \
+        }                                                                                          \
+    } while (0)
+#else
 #define AURA_HOT_CONTRACT(expr)                                                                    \
     do {                                                                                           \
         AURA_HOT_RECORD();                                                                         \
         AURA_HOT_CHECK(expr);                                                                      \
     } while (0)
+#endif
 
 // Issue #2435: cold-edge contract — mutation / pass / compact style edges.
 // Enforce in debug + explicit ENFORCE; no-op in production OFF (language
