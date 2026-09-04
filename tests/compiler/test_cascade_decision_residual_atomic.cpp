@@ -70,7 +70,7 @@ static void ac3257_1_last_look_source() {
     const auto ixx = read_file("src/compiler/service.ixx");
     auto pos = ixx.find("std::size_t relower_dirty_defines_from_workspace()");
     CHECK(pos != std::string::npos, "3257 AC1: relower present");
-    auto block = ixx.substr(pos, 26000);
+    auto block = ixx.substr(pos, 30000); // window covers relower growth through #3491
     CHECK(block.find("Issue #3257") != std::string::npos, "3257 AC1: relower cites #3257");
     CHECK(block.find("post_attr_armed") != std::string::npos ||
               block.find("attr_seen_size") != std::string::npos,
@@ -226,7 +226,10 @@ int run_test_cascade_decision_residual_atomic_3135() {
         // relower_dirty_defines_from_workspace: critical section + re-check.
         auto rel_pos = ixx.find("std::size_t relower_dirty_defines_from_workspace()");
         CHECK(rel_pos != std::string::npos, "AC1: relower function definition");
-        auto rel_end = rel_pos + 8000;
+        // Window covers the #3257/#3283/#3348 last-look additions inside
+        // relower (function body grew past 8KB after the #3480-#3491 P0 wave;
+        // re_armed_now now sits ~9.6KB from the signature).
+        auto rel_end = rel_pos + 12000;
         auto rel_block = ixx.substr(rel_pos, rel_end - rel_pos);
         must_inline(rel_block, "Issue #3135", "AC1 relower cites #3135");
         must_inline(rel_block, "cascade_decision_mtx_", "AC1 relower uses cascade_decision_mtx_");
@@ -550,7 +553,7 @@ static void ac3283_2_gen_recheck_fail_closed() {
     auto ixx = read_file("src/compiler/service.ixx");
     auto pos = ixx.find("std::size_t relower_dirty_defines_from_workspace()");
     CHECK(pos != std::string::npos, "3283 AC2: relower def");
-    auto rel = ixx.substr(pos, 26000);
+    auto rel = ixx.substr(pos, 30000); // window covers relower growth through #3491
     must_inline(rel, "gen0 = deferred_hybrid_gen_.load", "3283 AC2: gen0 snapshot under lock");
     must_inline(rel, "deferred_hybrid_gen_.load(std::memory_order_acquire) != gen0",
                 "3283 AC2: pre-peel gen re-check");
@@ -621,7 +624,7 @@ static void ac3348_1_last_look_source() {
     auto ixx = read_file("src/compiler/service.ixx");
     auto pos = ixx.find("std::size_t relower_dirty_defines_from_workspace()");
     CHECK(pos != std::string::npos, "3348 AC1: relower def");
-    auto rel = ixx.substr(pos, 28000);
+    auto rel = ixx.substr(pos, 32000); // relower body ends ~33.3KB; 32KB stays inside fn
     CHECK(rel.find("Issue #3348") != std::string::npos, "3348 AC1: relower cites #3348");
     must_inline(rel, "initial_block_mirror_edges", "3348 AC1: block-dep snapshot with gen0");
     must_inline(rel, "dep_graph_block_mirror_edges_total",
