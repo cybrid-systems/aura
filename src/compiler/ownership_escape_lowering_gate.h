@@ -8,6 +8,8 @@
 // + densify-pending + proof freshness). When the escape gate is active,
 // IR Move/Drop must not take the #2899 proven fast-path and outermost
 // MutationBoundary success under production forces linear revalidate.
+// Issue #3519: escape-active unblocked elide must still consult
+// aura_linear_fast_path_depth_or_densify_block (mid-boundary / densify).
 //
 // Definitions live in typed_mutation_audit_hooks.cpp (non-module TU).
 // Gate mutators used from type_checker purview go through C linkage so
@@ -79,6 +81,8 @@ extern "C" int aura_escape_blocks_move_elision_for_key(void* eval, std::uint64_t
                                                        const char* binding) noexcept;
 
 namespace aura::compiler {
+
+inline constexpr int kEscapeActiveMoveElisionDepthIssue = 3519;
 
 // Process atomics (query / tests) — defined once in typed_mutation_audit_hooks.cpp.
 extern std::atomic<std::uint64_t> g_linear_move_elision_blocked_escape_total;
