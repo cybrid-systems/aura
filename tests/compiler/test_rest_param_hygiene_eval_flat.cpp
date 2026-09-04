@@ -140,7 +140,7 @@ static void ac4_rest_spine_macro_introduced_parity() {
     CHECK(!mxcpp.empty(), "macro_expansion.cpp readable");
     CHECK(!eef.empty(), "evaluator_eval_flat.cpp readable");
     // Helper sets MacroIntroduced marker (already landed at #2808).
-    CHECK(mxcpp.find("set_marker(cur, SyntaxMarker::MacroIntroduced)") != std::string::npos,
+    CHECK(mxcpp.find("set_marker(id, SyntaxMarker::MacroIntroduced)") != std::string::npos,
           "helper sets MacroIntroduced marker (parity preserved)");
     // Both call sites now invoke the helper → parity.
     CHECK(eef.find("stamp_rest_param_hygiene(*f, *md.flat, md.body_id, list_call)") !=
@@ -153,10 +153,30 @@ static void ac4_rest_spine_macro_introduced_parity() {
     // Helper applies kMacroExpansion dirty bit (already landed).
     CHECK(mxcpp.find("MacroDirtyReason::kMacroExpansion") != std::string::npos,
           "helper applies kMacroExpansion dirty bit");
-    CHECK(mxcpp.find("set_provenance(cur, origin)") != std::string::npos,
+    CHECK(mxcpp.find("set_provenance(id, origin)") != std::string::npos,
           "helper sets provenance (parity preserved)");
-    CHECK(mxcpp.find("set_schema_cache(cur, src_schema)") != std::string::npos,
+    CHECK(mxcpp.find("set_schema_cache(id, src_schema)") != std::string::npos,
           "helper sets schema_cache (parity preserved)");
+}
+
+// Issue #3468: helper stamps spine only — remaining caller args stay User.
+static void ac3468_spine_only_no_remaining_walk() {
+    std::println("\n--- #3468: stamp spine only, not remaining args ---");
+    auto mxcpp = read_file("src/compiler/macro_expansion.cpp");
+    CHECK(!mxcpp.empty(), "macro_expansion.cpp readable");
+    CHECK(mxcpp.find("Issue #3468") != std::string::npos, "3468: helper cites #3468");
+    CHECK(mxcpp.find("stamp_one(root_v.child(0))") != std::string::npos,
+          "3468: Call path stamps list/cons head only");
+    CHECK(mxcpp.find("target.get(cdr).tag != NodeTag::Pair") != std::string::npos,
+          "3468: pair path follows cdr cells, not car");
+    auto pos = mxcpp.find("inline void stamp_rest_param_hygiene");
+    CHECK(pos != std::string::npos, "3468: helper present");
+    if (pos != std::string::npos) {
+        const auto win = mxcpp.substr(pos, 2800);
+        CHECK(win.find("stack.push_back(child)") == std::string::npos,
+              "3468: DFS remaining-child walk removed");
+    }
+    CHECK(mxcpp.find("g_3468_") == std::string::npos, "3468: no new metric atomic");
 }
 
 // AC5: g_stamp_rest_param_marker_set_total increases on eval_flat dotted
@@ -196,6 +216,7 @@ int main() {
     ac3_reexpand_call_pair_spine_call();
     ac4_rest_spine_macro_introduced_parity();
     ac5_marker_set_total_parity();
+    ac3468_spine_only_no_remaining_walk();
     if (g_failed)
         return 1;
     std::println("eval_flat rest-param-hygiene (#3153): OK ({} passed)", g_passed);

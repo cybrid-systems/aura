@@ -726,10 +726,11 @@ std::atomic<std::uint64_t> g_macro_schema_cache_dirty_stamped_total{0};
 std::atomic<std::uint64_t> g_macro_rest_param_nested_qq_hits_total{0};
 // Issue #2239: per-rest-list node stamp counter for the freshly
 // allocated `(list remaining...)` Call in expand_inner_macros +
-// macro_expand_all_body rest-param paths. Bumped once per node in the
-// new rest-list spine (the freshly allocated Call + every arg) that
-// stamp_rest_param_hygiene applied kMacroExpansion dirty bit +
+// macro_expand_all_body rest-param paths. Bumped once per spine node
+// (the freshly allocated Call + `list`/`cons` head, or pair cells)
+// that stamp_rest_param_hygiene applied kMacroExpansion dirty bit +
 // set_provenance + copied schema_cache from the source rest binding.
+// Issue #3468: remaining argument NodeIds are not spine.
 // Mirrors the g_macro_schema_cache_dirty_stamped_total pattern
 // (file-level atomic + C-linkage reader). Surfaces via
 // (query:macro-schema-cache-dirty-stamp-stats) under
@@ -2641,8 +2642,8 @@ namespace detail {
 // without this stamp the new nodes are missing kMacroExpansion +
 // provenance + schema_cache, so type checking re-infers and downstream
 // hygiene gates (MutationBoundaryGuard etc.) don't see the new
-// rest-list. Iterative walk via std::vector stack (same shape as the
-// existing clone_macro_body stamp loop at #2098).
+// rest-list. Issue #3468: stamp Call+head (or pair cells along cdr),
+// never remaining caller argument NodeIds.
 // Issue #3153: helper dropped from static inline (kept inline) so
 // evaluator_eval_flat.cpp dotted-rest + reexpand_call paths can call
 // it from a different TU via the aura.compiler.macro_expansion module
@@ -2657,34 +2658,48 @@ inline void stamp_rest_param_hygiene(aura::ast::FlatAST& target, const aura::ast
     const std::uint32_t origin =
         src_prov != 0 ? src_prov : static_cast<std::uint32_t>(src_body_id == 0 ? 1 : src_body_id);
     const std::uint64_t src_schema = source.schema_cache(src_body_id);
-    std::vector<NodeId> stack;
-    stack.push_back(list_root);
-    while (!stack.empty()) {
-        auto cur = stack.back();
-        stack.pop_back();
-        if (cur == NULL_NODE || cur >= target.size())
-            continue;
+    // Issue #2808 / #142: rest-list spine is macro-introduced. Without
+    // set_marker, is_macro_introduced() stays false and mutate gates
+    // (replace-subtree / rebind) cannot reject rest-stamped nodes.
+    // Issue #3468: stamp only the freshly allocated spine — never DFS
+    // remaining children (those are caller User NodeIds).
+    auto stamp_one = [&](NodeId id) {
+        if (id == NULL_NODE || id >= target.size())
+            return;
         target.apply_macro_dirty_bits(
-            cur, static_cast<std::uint8_t>(aura::ast::FlatAST::MacroDirtyReason::kMacroExpansion));
-        if (target.provenance(cur) == 0)
-            target.set_provenance(cur, origin);
+            id, static_cast<std::uint8_t>(aura::ast::FlatAST::MacroDirtyReason::kMacroExpansion));
+        if (target.provenance(id) == 0)
+            target.set_provenance(id, origin);
         if (src_schema != 0)
-            target.set_schema_cache(cur, src_schema);
-        // Issue #2808 / #142: rest-list spine is macro-introduced. Without
-        // set_marker, is_macro_introduced() stays false and mutate gates
-        // (replace-subtree / rebind) cannot reject rest-stamped nodes.
-        if (target.is_macro_introduced(cur)) {
+            target.set_schema_cache(id, src_schema);
+        if (target.is_macro_introduced(id)) {
             g_stamp_rest_param_marker_skipped_total.fetch_add(1, std::memory_order_relaxed);
         } else {
-            target.set_marker(cur, SyntaxMarker::MacroIntroduced);
+            target.set_marker(id, SyntaxMarker::MacroIntroduced);
             g_stamp_rest_param_marker_set_total.fetch_add(1, std::memory_order_relaxed);
         }
         g_macro_schema_cache_rest_stamped_total.fetch_add(1, std::memory_order_relaxed);
-        auto cv = target.get(cur);
-        std::vector<NodeId> walk_children(cv.children.begin(), cv.children.end());
-        for (auto child : walk_children) {
-            if (child != NULL_NODE && child < target.size())
-                stack.push_back(child);
+    };
+    stamp_one(list_root);
+    const auto root_v = target.get(list_root);
+    if (root_v.tag == NodeTag::Call) {
+        if (!root_v.children.empty())
+            stamp_one(root_v.child(0)); // Variable "list" / cons head
+        return;
+    }
+    if (root_v.tag == NodeTag::Pair) {
+        NodeId cur = list_root;
+        for (;;) {
+            const auto cv = target.get(cur);
+            if (cv.tag != NodeTag::Pair || cv.children.size() < 2)
+                break;
+            const auto cdr = cv.child(1);
+            if (cdr == NULL_NODE || cdr >= target.size())
+                break;
+            if (target.get(cdr).tag != NodeTag::Pair)
+                break;
+            stamp_one(cdr);
+            cur = cdr;
         }
     }
 }

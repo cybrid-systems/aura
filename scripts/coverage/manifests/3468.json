@@ -1,0 +1,40 @@
+{
+  "issue": 3468,
+  "title": "Issue #3468: stamp_rest_param_hygiene stamps rest spine only, not remaining caller args",
+  "ok": "OK: Issue #3468 rest-list over-stamp closed — Call+head / pair cells only; remaining User args keep pre-stamp marker",
+  "checks": [
+    {
+      "ac": "AC1-spine-only",
+      "path": "src/compiler/macro_expansion.cpp",
+      "contains": [
+        "Issue #3468",
+        "stamp_one(root_v.child(0))",
+        "NodeTag::Pair"
+      ]
+    },
+    {
+      "ac": "AC2-marker-test",
+      "path": "tests/compiler/test_stamp_rest_param_hygiene_marker.cpp",
+      "contains": [
+        "3468: remaining a1 keeps User marker",
+        "3468: remaining car a1 stays User"
+      ]
+    },
+    {
+      "ac": "AC3-mutate",
+      "path": "tests/compiler/test_hygiene_mutate_closed_loop.cpp",
+      "contains": [
+        "3468: remaining arg not hygiene-macro-introduced",
+        "3468: mutate list spine still hygiene-macro-introduced"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "forbid": [
+        "tests/compiler/test_issue_3468.cpp",
+        "tests/issues/test_issue_3468.cpp",
+        "docs/design/3468-rest-overstamp.md"
+      ]
+    }
+  ]
+}
