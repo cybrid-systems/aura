@@ -38,6 +38,7 @@ using aura::compiler::CompilerService;
 using aura::compiler::Constraint;
 using aura::compiler::ConstraintSystem;
 using aura::compiler::InferenceEngine;
+using aura::compiler::kInstanceRepairCleanReverifyIssue;
 using aura::compiler::kSolverBudgetDefault;
 using aura::compiler::kSolverBudgetIssue;
 using aura::compiler::solve_delta_occurrence;
@@ -3731,6 +3732,29 @@ static void ac3307_6_source_and_linter() {
           "3307 AC6: source-cite linter script present");
 }
 
+static void ac3511_instance_repair_clean_reverify() {
+    std::println("\n--- #3511: instance-repair reverify clean; truncated TIMEOUT ---");
+    CHECK(kInstanceRepairCleanReverifyIssue == 3511, "3511 stamp");
+    const auto impl = read_file("src/compiler/type_checker_impl.cpp");
+    const auto ixx = read_file("src/compiler/type_checker.ixx");
+    const auto repair = impl.find("ConstraintSystem::try_instance_repair_before_full");
+    CHECK(repair != std::string::npos, "3511 AC1: repair helper");
+    const auto repair_win = impl.substr(repair, 8000);
+    const auto rev = repair_win.find("reverify_clean_constraints_for_touched");
+    const auto clean = repair_win.find("mark_clean()");
+    CHECK(rev != std::string::npos && clean != std::string::npos && rev < clean,
+          "3511 AC1: reverify before mark_clean / pending clear");
+    CHECK(repair_win.find("last_reverify_truncated_") != std::string::npos,
+          "3511 AC2: truncated → TIMEOUT");
+    CHECK(impl.find("hard && last_reverify_truncated_") != std::string::npos,
+          "3511 AC3: solve_delta_impl production truncated escalate");
+    CHECK(ixx.find("kInstanceRepairCleanReverifyIssue = 3511") != std::string::npos,
+          "3511 AC5: stamp");
+    CHECK(read_file("docs/design/3511-instance-repair-reverify.md").empty(),
+          "3511 AC5: no docs/design");
+    CHECK(read_file("tests/compiler/test_issue_3511.cpp").empty(), "3511 AC5: no invent");
+}
+
 } // namespace
 
 int run_test_solve_delta_unresolved_export() {
@@ -3870,6 +3894,8 @@ int run_test_solve_delta_unresolved_export() {
     ac3307_4_drain_clears_face();
     ac3307_5_existing_surfaces_preserved();
     ac3307_6_source_and_linter();
+    std::println("\n=== Issue #3511: instance-repair clean reverify ===");
+    ac3511_instance_repair_clean_reverify();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
