@@ -814,6 +814,156 @@ static void ac3345_production_hybrid_depth1_fanout() {
           "3345 AC5: no g_3345_*");
 }
 
+// ── Issue #3474: production called_by cone is FIFO / transitive after
+// facade success and at peel entry. #3345 stays direct-only. Soft
+// invalidate BFS teardown (erase + generation) is unchanged.
+//   AC1: h in f ← g ← h is dirty before peel
+//   AC2: peel of the cone does not silent-skip
+//   AC3: Soft / Off: helper only on facade-success path
+//   AC5: non-duplicative to #3345 / #3381
+//   AC6: no new query key
+
+static void ac3474_production_called_by_cone() {
+    std::println("\n--- #3474: production FIFO called_by cone IR dirty ---");
+
+    const auto svc = read_file("src/compiler/service_dirty.cpp");
+    const auto ixx = read_file("src/compiler/service.ixx");
+    const auto build = read_file("build.py");
+
+    CHECK(ixx.find("mark_called_by_cone_body_dirty_") != std::string::npos,
+          "3474 AC1: helper declared");
+    CHECK(svc.find("void CompilerService::mark_called_by_cone_body_dirty_") != std::string::npos,
+          "3474 AC1: helper defined");
+    {
+        const auto hpos = svc.find("void CompilerService::mark_called_by_cone_body_dirty_");
+        CHECK(hpos != std::string::npos, "3474 AC1: helper body");
+        const auto hwin = svc.substr(hpos, 2800);
+        CHECK(hwin.find("std::deque<std::string> bfs") != std::string::npos,
+              "3474 AC1: FIFO deque");
+        CHECK(hwin.find("bfs.pop_front()") != std::string::npos, "3474 AC1: pop_front");
+        CHECK(hwin.find("called_by") != std::string::npos, "3474 AC1: called_by walk");
+        CHECK(hwin.find("mark_caller_body_dirty") != std::string::npos,
+              "3474 AC1: mark_caller_body_dirty");
+        CHECK(hwin.find("dep_graph_.erase(") == std::string::npos,
+              "3474 AC5: helper does not erase dep_graph_");
+        CHECK(hwin.find("dep_graph_generation_.fetch_add") == std::string::npos,
+              "3474 AC5: helper does not bump generation");
+        CHECK(hwin.find("ir_cache_v2_.empty()") != std::string::npos,
+              "3474 AC1: empty IR cache no-op");
+    }
+    {
+        const auto md_pos = svc.find("void CompilerService::mark_define_dirty");
+        const auto md_end = svc.find("\nvoid CompilerService::", md_pos + 1);
+        const auto md_win =
+            svc.substr(md_pos, (md_end == std::string::npos ? 8000 : md_end - md_pos));
+        const auto fanout = md_win.find("mark_direct_hybrid_dependents_body_dirty_(name)");
+        const auto cone = md_win.find("mark_called_by_cone_body_dirty_(name)");
+        const auto ret =
+            (cone == std::string::npos) ? std::string::npos : md_win.find("return;", cone);
+        CHECK(fanout != std::string::npos && cone != std::string::npos && fanout < cone,
+              "3474 AC5: cone mark after #3345 depth-1 helper");
+        CHECK(cone != std::string::npos && ret != std::string::npos && cone < ret,
+              "3474 AC3: cone mark on facade-success return (not Soft body)");
+    }
+    {
+        const auto if_pos = svc.find("void CompilerService::invalidate_function");
+        const auto if_end = svc.find("\nvoid CompilerService::", if_pos + 1);
+        const auto if_win =
+            svc.substr(if_pos, (if_end == std::string::npos ? 12000 : if_end - if_pos));
+        CHECK(if_win.find("mark_called_by_cone_body_dirty_(name)") != std::string::npos,
+              "3474 AC1: invalidate_function calls cone helper after facade");
+    }
+
+    {
+        apply_production_audit_defaults();
+        CompilerService cs;
+        CHECK(cs.eval(R"(
+(set-code "
+(define f (lambda () 1))
+(define g (lambda () (f)))
+(define h (lambda () (g)))
+(define k (lambda () (h)))
+")")
+                  .has_value(),
+              "3474 AC1: set-code");
+        CHECK(cs.eval("(eval-current)").has_value(), "3474 AC1: eval");
+        cs.public_record_dependency("g", "f");
+        cs.public_record_dependency("h", "g");
+        cs.public_record_dependency("k", "h");
+        CHECK(cs.public_dep_graph_has_edge("g", "f"), "3474 AC1: g calls f");
+        CHECK(cs.public_dep_graph_has_edge("h", "g"), "3474 AC1: h calls g");
+        CHECK(cs.public_dep_graph_has_edge("k", "h"), "3474 AC1: k calls h");
+        cs.public_mark_define_dirty("f");
+        const auto g_dirty = cs.ir_cache_v2_dirty_block_count("g");
+        if (g_dirty.has_value()) {
+            CHECK(*g_dirty > 0, "3474 AC5: direct g still dirty (#3345/#3381)");
+        } else {
+            CHECK(true, "3474 AC5: no IR cache for g");
+        }
+        const auto h_dirty = cs.ir_cache_v2_dirty_block_count("h");
+        if (h_dirty.has_value()) {
+            CHECK(*h_dirty > 0, "3474 AC1: transitive h dirty before peel");
+        } else {
+            const auto* he = cs.get_define_v2("h");
+            CHECK(he == nullptr, "3474 AC1: no IR cache for h (helper no-op without entries)");
+        }
+        const auto k_dirty = cs.ir_cache_v2_dirty_block_count("k");
+        if (k_dirty.has_value()) {
+            CHECK(*k_dirty > 0, "3474 AC1: cone k dirty before peel");
+        } else {
+            const auto* ke = cs.get_define_v2("k");
+            CHECK(ke == nullptr, "3474 AC1: no IR cache for k (helper no-op without entries)");
+        }
+        const auto n = cs.public_relower_dirty_defines_from_workspace();
+        CHECK(n > 0 || h_dirty.has_value() || k_dirty.has_value(),
+              "3474 AC2: peel of the cone (never silent skip of h/k)");
+        apply_dev_audit_defaults();
+    }
+
+    {
+        apply_production_audit_defaults();
+        CompilerService cs;
+        CHECK(cs.eval(R"(
+(set-code "
+(define f (lambda () 1))
+(define g (lambda () (f)))
+")")
+                  .has_value(),
+              "3474 AC5: direct-only set-code");
+        CHECK(cs.eval("(eval-current)").has_value(), "3474 AC5: direct-only eval");
+        cs.public_record_dependency("g", "f");
+        CHECK(cs.public_dep_graph_has_edge("g", "f"), "3474 AC5: g calls f");
+        cs.public_mark_define_dirty("f");
+        const auto g_dirty = cs.ir_cache_v2_dirty_block_count("g");
+        if (g_dirty.has_value()) {
+            CHECK(*g_dirty > 0, "3474 AC5: #3381 direct caller g still dirty");
+        } else {
+            CHECK(true, "3474 AC5: no IR cache for g (direct-only)");
+        }
+        apply_dev_audit_defaults();
+    }
+
+    CHECK(svc.find("hybrid_node_cascade_") != std::string::npos, "3474 AC3: Soft hybrid cascade");
+    CHECK(svc.find("drain_deferred_hybrid_cascade_") != std::string::npos,
+          "3474 AC3: Soft deferred drain");
+    CHECK(svc.find("dep_graph_generation_.fetch_add") != std::string::npos,
+          "3474 AC3: Soft still bumps generation");
+
+    CHECK(svc.find("query:called-by-cone") == std::string::npos, "3474 AC6: no new query:*");
+    CHECK(svc.find("g_3474_") == std::string::npos && ixx.find("g_3474_") == std::string::npos,
+          "3474 AC6: no g_3474_*");
+    CHECK(ixx.find("schema-3474") == std::string::npos, "3474 AC6: no schema-3474");
+    CHECK(build.find("check_production_called_by_cone_bfs_3474") != std::string::npos,
+          "3474 AC5: build.py");
+    const auto p3345 = build.find("check_production_hybrid_depth1_fanout_3345");
+    const auto p3474 = build.find("check_production_called_by_cone_bfs_3474");
+    CHECK(p3345 != std::string::npos && p3474 != std::string::npos && p3474 > p3345,
+          "3474 AC5: wired after #3345");
+    CHECK(read_file("docs/design/3474-called-by-cone.md").empty(), "3474 AC5: no docs/design");
+    CHECK(read_file("tests/compiler/test_issue_3474.cpp").empty(), "3474 AC5: no invent");
+    CHECK(read_file("tests/issues/test_issue_3474.cpp").empty(), "3474 AC5: no tests/issues");
+}
+
 } // namespace
 
 int run_test_issue_3112() {
@@ -856,6 +1006,11 @@ int run_test_issue_3112() {
     // Issue #3345: production hybrid depth-1 called_by IR dirty after
     // facade early-return. Soft BFS unchanged. Empty IR cache no-op.
     ac3345_production_hybrid_depth1_fanout();
+
+    // Issue #3474: production FIFO called_by cone (transitive IR dirty).
+    // #3345 stays depth-1. Peel union is transitive. Soft teardown
+    // unchanged.
+    ac3474_production_called_by_cone();
 
     // Issue #3227: remount ok path rebinds linear proof (densify/steal gen).
     {

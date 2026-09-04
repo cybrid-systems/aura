@@ -1,0 +1,44 @@
+{
+  "issue": 3474,
+  "title": "Issue #3474: production called_by cone is FIFO / transitive after facade and at peel",
+  "ok": "OK: Issue #3474 FIFO called_by cone — transitive IR dirty; #3345 stays direct; Soft teardown kept",
+  "checks": [
+    {
+      "ac": "AC1-helper",
+      "path": "src/compiler/service_dirty.cpp",
+      "contains": [
+        "Issue #3474",
+        "mark_called_by_cone_body_dirty_",
+        "std::deque<std::string> bfs",
+        "bfs.pop_front()"
+      ]
+    },
+    {
+      "ac": "AC1-peel",
+      "path": "src/compiler/service.ixx",
+      "contains": [
+        "Issue #3474",
+        "std::deque<std::string> bfs",
+        "dep_graph_.find(current)",
+        "mark_caller_body_dirty"
+      ]
+    },
+    {
+      "ac": "AC5-live",
+      "path": "tests/compiler/test_compiler_hot_update_facade.cpp",
+      "contains": [
+        "3474 AC1: transitive h dirty before peel",
+        "3474 AC1: cone k dirty before peel",
+        "3474 AC5: #3381 direct caller g still dirty"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "forbid": [
+        "tests/compiler/test_issue_3474.cpp",
+        "tests/issues/test_issue_3474.cpp",
+        "docs/design/3474-called-by-cone.md"
+      ]
+    }
+  ]
+}

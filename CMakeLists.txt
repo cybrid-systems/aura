@@ -2169,25 +2169,19 @@ aura_issue_test_link_light(test_edsl_concurrent_fiber_boundary_task1)
 # EDSL mutate + Guard + dirty propagation paths.
 aura_add_issue_test(test_incremental_typed_selfmod_dirty_narrowing)
 aura_issue_test_link_light(test_incremental_typed_selfmod_dirty_narrowing)
-# Issue #3381: production facade + dirty_names snapshot — caller union
-# at peel entry. After production facade early-return (mark_body_only_dirty
-# root + invalidate_shape + return), callers stay clean and the partial
-# gate (should_partial_relower_impact_checked) silently skips them —
-# miss-compile (half-green close of #3034). At peel entry under
-# production_defaults_active() || initial_armed, walk
-# dep_graph_[root].called_by under shared dep_graph_mtx_, append callers
-# to dirty_names, mark each caller's body dirty via the existing helper
-# (mark_caller_body_dirty — same call shape Soft BFS uses at
-# service_dirty.cpp:1087). If deferred_hybrid_gen moved since gen0, the
-# #3283 fail-closed shape takes full for the cone (mark_all_blocks_dirty
-# + dirty=true + partial_forced_full_by_impact_total bump). Soft/Off +
-# clean (armed==0) single-fiber skips the block entirely (zero extra
-# cost). Existing Strict force-dirty of ALL callers (#3165/#3187) at
-# fail_closed_soft_dual_graph_parity_before_partial_ remains authoritative
-# under dual-graph failure. Non-duplicative to #3345 (hybrid interpreter
-# visibility — open P1, coordinate). No new query schema; reuses
-# partial_forced_full_by_impact_total / should_relower_total /
-# incremental_soundness_mismatch_prod_total.
+# Issue #3381 / #3474: production facade + dirty_names snapshot — FIFO
+# called_by cone at peel entry (and after facade success). After
+# production facade early-return, #3345 dirties direct called_by only;
+# #3381 one-hop union left transitive h clean. #3474 snapshots the same
+# FIFO called_by walk Soft already uses and mark_caller_body_dirty each
+# reachable caller. Shared dep_graph_mtx_ only — no erase, no generation
+# bump. If deferred_hybrid_gen moved since gen0, the #3283 fail-closed
+# shape takes full for the cone. Soft/Off + clean (armed==0) skips the
+# block. Existing Strict force-dirty of ALL callers (#3165/#3187) at
+# fail_closed_soft_dual_graph_parity_before_partial_ remains
+# authoritative. Non-duplicative to #3345 (depth-1 hybrid visibility).
+# No new query schema; reuses partial_forced_full_by_impact_total /
+# should_relower_total / incremental_soundness_mismatch_prod_total.
 aura_add_issue_test(test_incremental_facade_dirty_names_snapshot)
 aura_issue_test_link_light(test_incremental_facade_dirty_names_snapshot)
 # Issue #554: query:pattern + tag_arity_index Incremental

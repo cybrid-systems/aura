@@ -111,7 +111,7 @@ int run_test_incremental_facade_dirty_names_snapshot() {
         // dirty_names snapshot and before the per-entry loop. Find the
         // body of the function and verify the union step is present.
         const auto peel_body =
-            find_fn_body(ixx, "std::size_t relower_dirty_defines_from_workspace()", 4500);
+            find_fn_body(ixx, "std::size_t relower_dirty_defines_from_workspace()", 16000);
         CHECK(!peel_body.empty(), "AC1: relower_dirty_defines_from_workspace found");
         if (!peel_body.empty()) {
             // 1a. The #3381 block is present and gated on
@@ -122,9 +122,15 @@ int run_test_incremental_facade_dirty_names_snapshot() {
                   "AC1: union gated on production_defaults_active");
             CHECK(peel_body.find("initial_armed") != std::string::npos,
                   "AC1: union also gated on initial_armed (Soft BFS parity)");
-            // 1b. Walks dep_graph_[root].called_by under shared dep_graph_mtx_.
-            CHECK(peel_body.find("dep_graph_.find(root)") != std::string::npos,
-                  "AC1: walks dep_graph_[root] for each dirty root");
+            // 1b. Issue #3474: FIFO called_by walk from each dirty root
+            //     (not a single hop). Same snapshot Soft uses.
+            CHECK(peel_body.find("Issue #3474") != std::string::npos,
+                  "AC1: #3474 FIFO cone residual cited");
+            CHECK(peel_body.find("std::deque<std::string> bfs") != std::string::npos,
+                  "AC1: FIFO deque walk (not one hop)");
+            CHECK(peel_body.find("bfs.pop_front()") != std::string::npos, "AC1: pop_front FIFO");
+            CHECK(peel_body.find("dep_graph_.find(current)") != std::string::npos,
+                  "AC1: walks dep_graph_ for each BFS current");
             CHECK(peel_body.find("dit->second.called_by") != std::string::npos,
                   "AC1: walks .called_by edges");
             CHECK(peel_body.find("OrderedSharedLock<std::shared_mutex> read") != std::string::npos,
@@ -136,17 +142,17 @@ int run_test_incremental_facade_dirty_names_snapshot() {
                   "AC1: mark_caller_body_dirty used (existing helper)");
             CHECK(peel_body.find("dirty_names.push_back(caller)") != std::string::npos,
                   "AC1: callers appended to dirty_names");
-            // 1d. Dedupe against both the existing dirty_names snapshot
-            //     AND the new caller_names batch.
-            CHECK(peel_body.find("std::find(dirty_names.begin()") != std::string::npos,
-                  "AC1: dedupe against existing dirty_names");
+            // 1d. Dedupe via visited (FIFO walk), not a one-hop std::find.
+            CHECK(peel_body.find("visited.insert(caller)") != std::string::npos,
+                  "AC1: visited-set dedupe of the cone");
+            CHECK(peel_body.find("dep_graph_.erase(") == std::string::npos ||
+                      peel_body.find("Issue #3474") < peel_body.find("dep_graph_.erase("),
+                  "AC1: peel cone does not erase dep_graph_");
         }
         // The Soft BFS still uses mark_caller_body_dirty (no behavior
-        // change for Soft path — confirmed by the call shape at
-        // service_dirty.cpp:1087).
-        const auto soft_bfs = find_fn_body(
-            dir, "void CompilerService::mark_define_dirty(const std::string& name)", 1500);
-        CHECK(soft_bfs.find("mark_caller_body_dirty") != std::string::npos,
+        // change for Soft path — confirmed by the call shape in
+        // invalidate_function).
+        CHECK(dir.find("dit->second.mark_caller_body_dirty()") != std::string::npos,
               "AC1: Soft BFS still uses mark_caller_body_dirty (unchanged)");
     }
 
@@ -156,7 +162,7 @@ int run_test_incremental_facade_dirty_names_snapshot() {
         std::println("\n--- AC2: never silent skip — non-zero dirty mask OR "
                      "take-full for the cone ---");
         const auto peel_body =
-            find_fn_body(ixx, "std::size_t relower_dirty_defines_from_workspace()", 4500);
+            find_fn_body(ixx, "std::size_t relower_dirty_defines_from_workspace()", 16000);
         CHECK(!peel_body.empty(), "AC2: relower_dirty_defines_from_workspace found");
         if (!peel_body.empty()) {
             // 2a. The caller-union appends to dirty_names BEFORE the
@@ -191,7 +197,7 @@ int run_test_incremental_facade_dirty_names_snapshot() {
     {
         std::println("\n--- AC3: Soft / Off + clean (armed==0) zero extra cost ---");
         const auto peel_body =
-            find_fn_body(ixx, "std::size_t relower_dirty_defines_from_workspace()", 4500);
+            find_fn_body(ixx, "std::size_t relower_dirty_defines_from_workspace()", 16000);
         // 3a. The #3381 block is gated on production_defaults_active()
         //     || initial_armed. Under Soft + clean single-fiber, neither
         //     is true → the union + mark step is skipped entirely (zero
@@ -203,10 +209,11 @@ int run_test_incremental_facade_dirty_names_snapshot() {
             // inside the block. Scope considered: from the block start
             // to the end of the if body (best-effort — caller passes a
             // generous length).
-            const auto block_scope = peel_body.substr(block_pos, 2500);
-            const auto gate_pos = block_scope.find("production_defaults_active()");
-            const auto walk_pos = block_scope.find("dep_graph_.find(root)");
-            const auto mark_pos = block_scope.find("mark_caller_body_dirty");
+            const auto block_scope = peel_body.substr(block_pos, 9000);
+            const auto gate_pos =
+                block_scope.find("if (aura::compiler::typed_audit::production_defaults_active()");
+            const auto walk_pos = block_scope.find("dep_graph_.find(current)");
+            const auto mark_pos = block_scope.find("mark_caller_body_dirty()");
             CHECK(gate_pos != std::string::npos && walk_pos != std::string::npos &&
                       gate_pos < walk_pos,
                   "AC3: production gate appears before dep_graph_ walk");
@@ -216,11 +223,9 @@ int run_test_incremental_facade_dirty_names_snapshot() {
         }
         // 3b. Soft path still uses the existing full BFS at
         //     service_dirty.cpp (Soft unchanged — no second BFS).
-        const auto soft_bfs = find_fn_body(
-            dir, "void CompilerService::mark_define_dirty(const std::string& name)", 1500);
-        CHECK(soft_bfs.find("hybrid_node_cascade_") != std::string::npos,
+        CHECK(dir.find("hybrid_node_cascade_") != std::string::npos,
               "AC3: Soft BFS still uses hybrid_node_cascade_ (unchanged)");
-        CHECK(soft_bfs.find("drain_deferred_hybrid_cascade_") != std::string::npos,
+        CHECK(dir.find("drain_deferred_hybrid_cascade_") != std::string::npos,
               "AC3: Soft BFS still uses drain_deferred_hybrid_cascade_ (unchanged)");
     }
 
@@ -229,7 +234,7 @@ int run_test_incremental_facade_dirty_names_snapshot() {
     {
         std::println("\n--- AC4: dual-graph Strict force-dirty preserved ---");
         const auto parity_body =
-            find_fn_body(ixx, "void fail_closed_soft_dual_graph_parity_before_partial_", 1500);
+            find_fn_body(ixx, "void fail_closed_soft_dual_graph_parity_before_partial_", 3500);
         CHECK(!parity_body.empty(),
               "AC4: fail_closed_soft_dual_graph_parity_before_partial_ found");
         if (!parity_body.empty()) {
@@ -251,16 +256,16 @@ int run_test_incremental_facade_dirty_names_snapshot() {
     {
         std::println("\n--- AC5: non-duplicative to #3345 ---");
         const auto peel_body =
-            find_fn_body(ixx, "std::size_t relower_dirty_defines_from_workspace()", 4500);
-        // The #3381 block lives in the peel (relower) path only — it
+            find_fn_body(ixx, "std::size_t relower_dirty_defines_from_workspace()", 16000);
+        // The #3381/#3474 block lives in the peel (relower) path only — it
         // touches dirty_names / dep_graph_ / mark_caller_body_dirty /
         // mark_all_blocks_dirty. It does NOT touch:
         //   - interpreter visibility (no change to ir_interpreter_* /
         //     hybrid_node_cascade_ exec paths)
-        //   - depth-1 fanout (no new "force full if depth==1" logic)
+        //   - #3345 depth-1 fanout helper (that stays in service_dirty)
         const auto block_pos = peel_body.find("Issue #3381");
         if (block_pos != std::string::npos) {
-            const auto block_scope = peel_body.substr(block_pos, 2500);
+            const auto block_scope = peel_body.substr(block_pos, 9000);
             CHECK(block_scope.find("interpreter") == std::string::npos,
                   "AC5: #3381 does not touch interpreter paths");
             CHECK(block_scope.find("depth") == std::string::npos,
@@ -285,16 +290,17 @@ int run_test_incremental_facade_dirty_names_snapshot() {
               "AC6: existing partial_forced_full_by_impact_total counter retained");
         CHECK(ixx.find("should_relower_total") != std::string::npos,
               "AC6: existing should_relower_total counter retained");
-        CHECK(ixx.find("incremental_soundness_mismatch_prod_total") != std::string::npos,
+        CHECK(ixx.find("incremental_soundness_mismatch_prod_total") != std::string::npos ||
+                  dir.find("incremental_soundness_mismatch_prod_total") != std::string::npos,
               "AC6: existing incremental_soundness_mismatch_prod_total counter retained");
         // 6c. The fix bumps partial_forced_full_by_impact_total on the
         //     gen-moved fail-closed take-full path (#3283 shape).
         const auto peel_body =
-            find_fn_body(ixx, "std::size_t relower_dirty_defines_from_workspace()", 4500);
+            find_fn_body(ixx, "std::size_t relower_dirty_defines_from_workspace()", 16000);
         if (!peel_body.empty()) {
             const auto block_pos = peel_body.find("Issue #3381");
             if (block_pos != std::string::npos) {
-                const auto block_scope = peel_body.substr(block_pos, 2500);
+                const auto block_scope = peel_body.substr(block_pos, 9000);
                 CHECK(block_scope.find("partial_forced_full_by_impact_total.fetch_add(") !=
                           std::string::npos,
                       "AC6: bump site on fail-closed take-full path");
@@ -307,22 +313,23 @@ int run_test_incremental_facade_dirty_names_snapshot() {
         // 6e. No test_issue_3381_* (per MEMORY 2026-07-24: tests go to
         //     src/-aligned suite; this file uses the thematic
         //     test_incremental_facade_dirty_names_snapshot prefix).
-        const auto self_path = "tests/compiler/test_incremental_facade_dirty_names_snapshot.cpp";
-        auto self = read_file(self_path);
-        CHECK(self.find("test_issue_3381") == std::string::npos,
-              "AC6: this test file does not invent test_issue_3381_*");
+        CHECK(read_file("tests/compiler/test_issue_3381.cpp").empty(),
+              "AC6: no tests/compiler invent file for #3381");
+        CHECK(read_file("tests/issues/test_issue_3381.cpp").empty(),
+              "AC6: no tests/issues invent file for #3381");
     }
 
-    // ── AC7: production facade + Soft path unchanged — the fix only
-    //    runs at peel entry (Soft BFS already covers callers) ────────
+    // ── AC7: production facade + Soft path unchanged — the peel union
+    //    still runs at peel entry (Soft BFS already covers callers) ──
     {
         std::println("\n--- AC7: production facade + Soft BFS unchanged ---");
-        // mark_define_dirty production branch still dirties only the root
-        // (per #3112/#3150/#3188/#3219). #3381 fix moves the caller-union
-        // to peel entry (relower_dirty_defines_from_workspace), not into
-        // mark_define_dirty — Soft BFS at service_dirty.cpp is unchanged.
+        // mark_define_dirty production branch still takes the facade
+        // (per #3112/#3150/#3188/#3219). #3381/#3474 peel union is at
+        // relower_dirty_defines_from_workspace. #3474 also marks the
+        // FIFO cone after #3345 on facade success (IR dirty only).
+        // Soft BFS at service_dirty.cpp is unchanged.
         const auto mark_def = find_fn_body(
-            dir, "void CompilerService::mark_define_dirty(const std::string& name)", 1500);
+            dir, "void CompilerService::mark_define_dirty(const std::string& name)", 8000);
         // Production branch still calls hard_invalidate_via_facade +
         // mark_body_only_dirty + invalidate_shape + return.
         CHECK(mark_def.find("hard_invalidate_via_facade") != std::string::npos,
@@ -331,6 +338,8 @@ int run_test_incremental_facade_dirty_names_snapshot() {
               "AC7: production still mark_body_only_dirty(root)");
         CHECK(mark_def.find("invalidate_shape") != std::string::npos,
               "AC7: production still invalidate_shape(root)");
+        CHECK(mark_def.find("mark_called_by_cone_body_dirty_(name)") != std::string::npos,
+              "AC7: #3474 cone mark after facade success");
         // hot_update_registry.cpp facade is the same.
         CHECK(hot.find("hard_invalidate_via_facade") != std::string::npos,
               "AC7: hot_update_registry still owns hard_invalidate_via_facade");
@@ -338,6 +347,44 @@ int run_test_incremental_facade_dirty_names_snapshot() {
               "AC7: facade still calls notify_dirty_define(root)");
     }
 
+    // ── #3474: peel FIFO cone + no Soft-invalidate teardown ────────
+    {
+        std::println("\n--- #3474: FIFO called_by cone, no dep_graph teardown ---");
+        const auto peel_body =
+            find_fn_body(ixx, "std::size_t relower_dirty_defines_from_workspace()", 16000);
+        const auto block_pos = peel_body.find("Issue #3381");
+        CHECK(block_pos != std::string::npos, "3474: #3381 peel block found");
+        if (block_pos != std::string::npos) {
+            const auto block_scope = peel_body.substr(block_pos, 9000);
+            CHECK(block_scope.find("Issue #3474") != std::string::npos,
+                  "3474 AC5: peel cites #3474");
+            CHECK(block_scope.find("std::deque<std::string> bfs") != std::string::npos,
+                  "3474 AC1: FIFO deque");
+            CHECK(block_scope.find("visited.insert") != std::string::npos, "3474 AC1: visited set");
+            CHECK(block_scope.find("dep_graph_.erase(") == std::string::npos,
+                  "3474 AC5: peel cone does not erase dep_graph_");
+            CHECK(block_scope.find("dep_graph_generation_.fetch_add") == std::string::npos,
+                  "3474 AC5: peel cone does not bump generation");
+            CHECK(block_scope.find("finish_cascade_soa_dirty_sync_") != std::string::npos,
+                  "3474 AC1: soa dirty sync after mark_caller_body_dirty");
+        }
+        CHECK(dir.find("void CompilerService::mark_called_by_cone_body_dirty_") !=
+                  std::string::npos,
+              "3474 AC1: facade cone helper defined");
+        CHECK(ixx.find("3474_total") == std::string::npos,
+              "3474 AC6: no new 3474-suffixed counter");
+        CHECK(read_file("docs/design/3474-called-by-cone.md").empty(),
+              "3474 AC6: no docs/design/3474-*");
+        CHECK(read_file("tests/compiler/test_issue_3474.cpp").empty(),
+              "3474 AC6: no test_issue_3474.cpp");
+    }
+
     std::println("\n=== Issue #3381 done ===");
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_incremental_facade_dirty_names_snapshot();
+}
+#endif
