@@ -4,6 +4,9 @@
 #include <sys/epoll.h>
 #include <sys/eventfd.h>
 #include <unistd.h>
+#include <signal.h>
+#include <execinfo.h>
+#include <cstring>
 
 #include "compiler/messaging_bridge.h"
 #include "serve/fiber.h"
@@ -2364,7 +2367,51 @@ bool test_gc_multiple_cycles();
 bool test_gc_safepoint_stress();
 bool test_gc_metrics_sanity();
 
+// ci/concurrent x86_64 death diagnostic (2026-09-04): the process dies by
+// signal ~200ms into test_eventfd_wakeup with no stdout/stderr output.
+// Install handlers that dump a backtrace to fd 2 so the next CI run pins
+// the crash site instead of dying silently.
+static void ew_fatal_handler(int sig) {
+    const char head[] = "\n[test_concurrent] fatal signal ";
+    (void)!::write(2, head, sizeof(head) - 1);
+    char buf[32];
+    int len = 0;
+    if (sig == SIGSEGV) {
+        const char s[] = "SIGSEGV";
+        len = (int)sizeof(s) - 1;
+        ::memcpy(buf, s, sizeof(s));
+    } else if (sig == SIGABRT) {
+        const char s[] = "SIGABRT";
+        len = (int)sizeof(s) - 1;
+        ::memcpy(buf, s, sizeof(s));
+    } else if (sig == SIGBUS) {
+        const char s[] = "SIGBUS";
+        len = (int)sizeof(s) - 1;
+        ::memcpy(buf, s, sizeof(s));
+    } else if (sig == SIGILL) {
+        const char s[] = "SIGILL";
+        len = (int)sizeof(s) - 1;
+        ::memcpy(buf, s, sizeof(s));
+    } else {
+        len = ::snprintf(buf, sizeof(buf), "%d", sig);
+    }
+    (void)!::write(2, buf, (size_t)len);
+    (void)!::write(2, "\n", 1);
+    void* bt[64];
+    int n = ::backtrace(bt, 64);
+    ::backtrace_symbols_fd(bt, n, 2);
+    ::_exit(128 + sig);
+}
+
+static void ew_install_fatal_handlers() {
+    ::signal(SIGSEGV, ew_fatal_handler);
+    ::signal(SIGABRT, ew_fatal_handler);
+    ::signal(SIGBUS, ew_fatal_handler);
+    ::signal(SIGILL, ew_fatal_handler);
+}
+
 int main() {
+    ew_install_fatal_handlers();
     std::println("═══ Concurrent model unit tests ═══\n");
 
     // Issue: test_concurrent flake fix. The 72 std::thread
