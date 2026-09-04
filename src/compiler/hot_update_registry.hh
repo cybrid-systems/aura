@@ -180,6 +180,7 @@ public:
     // never takes the facade (zero extra). Not a second stamp API —
     // one latch the existing IR content flag already describes.
     static constexpr int kIrContentUntrustedNativeIssue = 3513;
+    static constexpr int kPeerCallerConeStaleIssue = 3514;
     void note_ir_content_untrusted_for_native() noexcept {
         ir_content_untrusted_for_native_.store(1, std::memory_order_release);
     }

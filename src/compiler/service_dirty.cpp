@@ -1881,8 +1881,12 @@ void CompilerService::mark_called_by_cone_body_dirty_(const std::string& name) {
     // Soft invalidate_function owns exclusive BFS teardown. This walk
     // only marks IR dirty under a shared lock so lookup_define_v2 cannot
     // clean-hit a transitive caller (h in f ← g ← h) before peel. Empty
-    // IR cache → no dep_graph lock (pure-AOT never-lowered).
-    if (ir_cache_v2_.empty())
+    // IR cache → no dep_graph lock (pure-AOT never-lowered) unless
+    // Issue #3514 peer fanout (production + multi-eval) still needs the
+    // called_by names for peer JIT/IR stale marks.
+    const bool peer_fanout =
+        aura::compiler::typed_audit::production_defaults_active() && aura_aot_state_map_size() > 1;
+    if (ir_cache_v2_.empty() && !peer_fanout)
         return;
     std::vector<std::string> dependents;
     {
@@ -1907,6 +1911,20 @@ void CompilerService::mark_called_by_cone_body_dirty_(const std::string& name) {
             }
         }
     }
+    // Issue #3514: peer JIT+IR stale for the mutated name and every
+    // called_by caller (owner-scoped does not bump g_aot_table_epoch).
+    // Idempotent with the facade's root-name mark. Empty local IR cache
+    // still fans out so pure-AOT peers cannot clean-hit old caller native.
+    if (peer_fanout) {
+        aura_aot_mark_peer_jit_name_soft_stale(name.c_str());
+        aura_aot_mark_peer_ir_name_soft_stale(name.c_str());
+        for (const auto& dependent : dependents) {
+            aura_aot_mark_peer_jit_name_soft_stale(dependent.c_str());
+            aura_aot_mark_peer_ir_name_soft_stale(dependent.c_str());
+        }
+    }
+    if (ir_cache_v2_.empty())
+        return;
     for (const auto& dependent : dependents) {
         if (dependent == name)
             continue;

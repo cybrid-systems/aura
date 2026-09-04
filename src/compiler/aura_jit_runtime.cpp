@@ -3915,7 +3915,9 @@ int64_t aura_closure_call(int64_t closure_id, int64_t* args, int64_t argc) {
         const char* peer_cname = (cid < g_closure_names.size() && !g_closure_names[cid].empty())
                                      ? g_closure_names[cid].c_str()
                                      : nullptr;
-        if (peer_cname != nullptr && aura_aot_peer_jit_name_is_soft_stale(peer_cname) != 0) {
+        // Issue #3514: overflow fail-closed also covers anonymous
+        // (peer_cname==nullptr). Named callers are marked on the cone.
+        if (aura_aot_peer_jit_name_is_soft_stale(peer_cname) != 0) {
             tlock.unlock();
             aura_unlock_workspace_read();
             aura_jit_closure_record_stale_deopt();
