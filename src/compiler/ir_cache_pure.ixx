@@ -70,13 +70,18 @@ export namespace aura::compiler {
 // when dirty/source_hash look clean (high-freq AI self-mod).
 //
 // Issue #2183 unified restamp contract:
-//   Every successful store_define_v2 / partial peel / full relower /
-//   cascade store / AOT reemit success MUST call restamp_cache_entry
+//   Every successful store_define_v2 / true per-fn AST relower /
+//   cascade store MUST call restamp_cache_entry
 //   (or CompilerService::restamp_cache_entry_live_) with live atomics.
 //   lookup_define_v2 must never serve IR when should_relower reports
 //   stamp-domain drift (mutation / bridge / defuse / soa gen).
 //   AOT table_generation is joint with bridge via #2046; restamp after
 //   reemit keeps IR-cache stamp domains aligned with the joint epoch.
+//
+// Issue #3481: AOT reemit / instruction peel MUST NOT restamp
+// mutation/bridge/defuse/soa while dirty || abort_map_invalid ||
+// !content_stored_this_epoch. Ack peer IR stale + abort-force gen
+// only. Content restamp waits for store_define_v2 / true per-fn.
 struct CacheEntryVersionStamp {
     std::uint64_t mutation_count = 0; // mutation_epoch at lower/store
     std::uint64_t bridge_epoch = 0;

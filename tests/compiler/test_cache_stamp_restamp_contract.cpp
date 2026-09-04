@@ -1,6 +1,7 @@
 // @category: unit
 // @reason: Issue #2183 — unified CacheEntryVersionStamp restamp contract
-// on store / partial / AOT emit (refine #2033).
+// on store / partial / AOT emit (refine #2033). Issue #3481 — AOT/facade
+// success must not restamp dirty pre-relower IR to live.
 //
 //   AC1: restamp_cache_entry + restamp_cache_entry_live_ on store/partial
 //   AC2: lookup stamp mismatch → force re-lower + mismatch metric
@@ -8,9 +9,19 @@
 //   AC4: query schema-2183 + restamp / mismatch counters
 //   AC5: adversarial — clear dirty + old stamp → force relower; restamp
 //        monotonic under concurrent-style bumps
+//
+//   #3481 AC1: production facade n>0 on still-dirty entry; dirty-clear
+//              without store → lookup stays 1
+//   #3481 AC2: instruction peel does not restamp mutation/bridge/defuse/soa
+//   #3481 AC3: _vN / table epoch not dual-fresh via content restamp; dirty
+//              / content latch stays; #3377 / #3351 owner-scoped preserved
+//   #3481 AC4: Soft/Off no extra work; #2183 mismatch-force-relower stays
+//   #3481 AC5: abort path unchanged (zero stamp + clear map + abort_map_invalid)
+//   #3481 AC6: last_reemit_success_region_mask stays coverage-only (#3445)
 
 #include "test_harness.hpp"
 #include "compiler/observability_metrics.h"
+#include "compiler/typed_mutation_audit.h"
 
 #include <cstdint>
 #include <fstream>
@@ -33,6 +44,8 @@ using aura::compiler::kRelowerBridgeEpoch;
 using aura::compiler::kRelowerMutationDrift;
 using aura::compiler::restamp_cache_entry;
 using aura::compiler::should_relower;
+using aura::compiler::typed_audit::apply_dev_audit_defaults;
+using aura::compiler::typed_audit::apply_production_audit_defaults;
 using aura::compiler::types::as_int;
 using aura::compiler::types::is_int;
 using aura::test::g_failed;
@@ -247,7 +260,171 @@ int run_test_cache_stamp_restamp_contract() {
               "3100 AC1: existing allow_query_stable_ref_export reads over-budget flag");
     }
 
-    std::println("\n=== #2183 cache stamp restamp: {} passed, {} failed ===", g_passed, g_failed);
+    // ── Issue #3481: AOT/facade success must not restamp dirty pre-relower IR
+    {
+        std::println("\n--- #3481 AC1: facade n>0 + dirty-clear without store → lookup 1 ---");
+        apply_production_audit_defaults();
+        CompilerService cs;
+        CHECK(cs.eval("(set-code \"(define f3481 (lambda (x) (+ x 1))) (f3481 1)\")").has_value(),
+              "3481 AC1: set-code");
+        CHECK(cs.eval("(eval-current)").has_value(), "3481 AC1: eval");
+        if (!cs.get_define_v2("f3481"))
+            (void)cs.eval("(compile:cache-define \"f3481\")");
+        const auto* e0 = cs.get_define_v2("f3481");
+        CHECK(e0 != nullptr, "3481 AC1: cache entry");
+        CHECK(e0->content_stored_this_epoch, "3481 AC1: store set content latch");
+        const auto hash = e0->source_hash;
+        const auto stamp_bridge0 = e0->version_stamp_.bridge_epoch;
+        const auto stamp_defuse0 = e0->version_stamp_.defuse_version;
+        CHECK(cs.lookup_define_v2("f3481", hash) == 0, "3481 AC1: clean hit after store");
+        cs.public_mark_define_dirty("f3481");
+        const auto* e1 = cs.get_define_v2("f3481");
+        CHECK(e1 && e1->dirty, "3481 AC1: facade left dirty");
+        CHECK(e1 && !e1->content_stored_this_epoch, "3481 AC1: content latch cleared");
+        CHECK(cs.lookup_define_v2("f3481", hash) == 1, "3481 AC1: lookup 1 while dirty");
+        // Stamps must not have been restamped to the post-facade live epochs
+        // (or if bridge was 0, defuse/mutation still lag). Content restamp
+        // would write live bridge/defuse onto the pre-mutate irs.
+        const auto live_bridge = cs.bridge_epoch();
+        const auto live_defuse = cs.evaluator().defuse_version();
+        CHECK(e1->version_stamp_.bridge_epoch != live_bridge ||
+                  e1->version_stamp_.defuse_version != live_defuse ||
+                  (stamp_bridge0 == e1->version_stamp_.bridge_epoch &&
+                   stamp_defuse0 == e1->version_stamp_.defuse_version),
+              "3481 AC1: facade did not content-restamp pre-mutate irs to live");
+        CHECK(cs.clear_ir_cache_dirty_bits_for_test("f3481"), "3481 AC1: inject dirty-clear");
+        const auto* e2 = cs.get_define_v2("f3481");
+        CHECK(e2 && !e2->dirty, "3481 AC1: dirty cleared without store");
+        CHECK(e2 && !e2->content_stored_this_epoch, "3481 AC1: content latch still unset");
+        CHECK(cs.lookup_define_v2("f3481", hash) == 1,
+              "3481 AC1: lookup stays 1 after dirty-clear without store");
+        apply_dev_audit_defaults();
+    }
+
+    {
+        std::println("\n--- #3481 AC2: instr peel does not content-restamp ---");
+        const auto svc = read_file("src/compiler/service.ixx");
+        const auto peel = svc.find("bool relower_affected_instrs_");
+        CHECK(peel != std::string::npos, "3481 AC2: instr peel exists");
+        const auto relower = svc.find("bool relower_define_blocks(");
+        CHECK(relower != std::string::npos, "3481 AC2: relower_define_blocks");
+        const auto win = svc.substr(relower, 22000);
+        CHECK(win.find("ack_cache_entry_fences_live_") != std::string::npos,
+              "3481 AC2: peel acks fences");
+        CHECK(win.find("Issue #3481") != std::string::npos, "3481 AC2: relower cites #3481");
+        // The instr-peel success arm must not call restamp_cache_entry_live_
+        // (per-fn AST relower further down still does).
+        const auto instr_ack = win.find("ack_cache_entry_fences_live_");
+        const auto per_fn = win.find("restamp after successful per-fn");
+        CHECK(instr_ack != std::string::npos && per_fn != std::string::npos && instr_ack < per_fn,
+              "3481 AC2: fence ack on instr peel before per-fn restamp");
+        const auto peel_arm = win.substr(instr_ack, per_fn - instr_ack);
+        CHECK(peel_arm.find("restamp_cache_entry_live_") == std::string::npos,
+              "3481 AC2: instr peel arm does not restamp content stamps");
+    }
+
+    {
+        std::println("\n--- #3481 AC3: dirty/content latch; owner-scoped #3377/#3351 stay ---");
+        const auto hur = read_file("src/compiler/hot_update_registry.cpp");
+        const auto mangle = read_file("src/compiler/aot_mangle.h");
+        CHECK(hur.find("content_stored_this_epoch") != std::string::npos ||
+                  hur.find("IR cache is NOT restamped here") != std::string::npos,
+              "3481 AC3: facade does not content-restamp");
+        CHECK(mangle.find("3481") != std::string::npos, "3481 AC3: mangle joint contract");
+        CHECK(hur.find("aura_aot_invalidate_owner_slot_for_func_id") != std::string::npos,
+              "3481 AC3: #3377 owner slot invalidate stays");
+        CHECK(hur.find("aura_aot_mark_peer_ir_name_soft_stale") != std::string::npos,
+              "3481 AC3: #3351 peer IR soft-stale stays");
+        CHECK(hur.find("last_reemit_success_region_mask") != std::string::npos,
+              "3481 AC3: coverage stamp exists (not content)");
+    }
+
+    {
+        std::println("\n--- #3481 AC4: Soft/Off no extra; #2183 mismatch-force-relower stays ---");
+        apply_dev_audit_defaults();
+        CompilerService cs;
+        CHECK(cs.eval("(set-code \"(define s3481 (lambda (x) x)) (s3481 1)\")").has_value(),
+              "3481 AC4: set-code");
+        CHECK(cs.eval("(eval-current)").has_value(), "3481 AC4: eval");
+        if (!cs.get_define_v2("s3481"))
+            (void)cs.eval("(compile:cache-define \"s3481\")");
+        CHECK(cs.get_define_v2("s3481") != nullptr, "3481 AC4: cache entry");
+        auto* m = static_cast<CompilerMetrics*>(cs.evaluator().compiler_metrics());
+        CHECK(m != nullptr, "3481 AC4: metrics");
+        const auto miss0 = m->cache_stamp_mismatch_force_relower_total.load();
+        CHECK(cs.inject_stale_cache_stamp_for_test("s3481"), "3481 AC4: inject stale");
+        const auto hash = cs.get_define_v2("s3481")->source_hash;
+        CHECK(cs.lookup_define_v2("s3481", hash) == 1,
+              "3481 AC4: #2183 mismatch-force-relower still fires");
+        CHECK(m->cache_stamp_mismatch_force_relower_total.load() > miss0,
+              "3481 AC4: force_relower metric advanced");
+        const auto hur = read_file("src/compiler/hot_update_registry.cpp");
+        CHECK(hur.find("aura_production_defaults_active_probe() == 0") != std::string::npos,
+              "3481 AC4: facade Soft/Off returns false (zero extra)");
+    }
+
+    {
+        std::println("\n--- #3481 AC5: abort path unchanged ---");
+        CompilerService cs;
+        CHECK(cs.eval("(set-code \"(define a3481 (lambda (x) x)) (a3481 1)\")").has_value(),
+              "3481 AC5: set-code");
+        CHECK(cs.eval("(eval-current)").has_value(), "3481 AC5: eval");
+        if (!cs.get_define_v2("a3481"))
+            (void)cs.eval("(compile:cache-define \"a3481\")");
+        const auto hash = cs.get_define_v2("a3481")->source_hash;
+        cs.public_force_ir_cache_dirty_after_abort();
+        const auto* after = cs.get_define_v2("a3481");
+        CHECK(after && after->abort_map_invalid, "3481 AC5: abort_map_invalid");
+        CHECK(after && after->source_to_ir_map.empty(), "3481 AC5: map cleared");
+        CHECK(after && !after->content_stored_this_epoch, "3481 AC5: content untrusted");
+        CHECK(cs.lookup_define_v2("a3481", hash) == 1, "3481 AC5: lookup needs-relower");
+        CHECK(cs.restamp_cache_entry_for_test("a3481"), "3481 AC5: restamp live");
+        CHECK(cs.clear_ir_cache_dirty_bits_for_test("a3481"), "3481 AC5: dirty-clear");
+        const auto* peeled = cs.get_define_v2("a3481");
+        CHECK(peeled && peeled->abort_map_invalid, "3481 AC5: abort latch survives restamp");
+        CHECK(cs.lookup_define_v2("a3481", peeled->source_hash) == 1,
+              "3481 AC5: post-abort AOT/restamp must not clean-hit");
+        const auto svc = read_file("src/compiler/service.ixx");
+        const auto fd = svc.find("void force_ir_cache_dirty_after_abort()");
+        CHECK(fd != std::string::npos, "3481 AC5: abort force-dirty present");
+        const auto fd_win = svc.substr(fd, 3200);
+        CHECK(fd_win.find("source_to_ir_map.clear()") != std::string::npos,
+              "3481 AC5: still clears map");
+        CHECK(fd_win.find("abort_map_invalid = true") != std::string::npos,
+              "3481 AC5: still sets flag");
+        CHECK(fd_win.find("stamp_version(0, 0, 0, 0)") != std::string::npos,
+              "3481 AC5: still zeros stamps");
+    }
+
+    {
+        std::println("\n--- #3481 AC6: coverage stamp is not content promotion ---");
+        const auto hur = read_file("src/compiler/hot_update_registry.cpp");
+        const auto bnd = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+        const auto dirty = read_file("src/compiler/service_dirty.cpp");
+        CHECK(hur.find("last_reemit_success_region_mask") != std::string::npos,
+              "3481 AC6: coverage mask exists");
+        CHECK(bnd.find("coverage-only") != std::string::npos ||
+                  bnd.find("not content promotion") != std::string::npos,
+              "3481 AC6: BoundaryExit coverage-only");
+        CHECK(dirty.find("content_stored_this_epoch") != std::string::npos &&
+                  dirty.find("ack_peer_ir_stale_on_restamp_") != std::string::npos,
+              "3481 AC6: cascade gates content restamp");
+        CHECK(dirty.find("note_relower_success_coverage") != std::string::npos,
+              "3481 AC6: hashed-name coverage stays on content restamp");
+        CHECK(read_file("docs/design/3481-aot-restamp-dirty.md").empty(),
+              "3481 AC6: no docs/design/");
+        CHECK(read_file("tests/compiler/test_issue_3481.cpp").empty(),
+              "3481 AC6: no invent test_issue_3481");
+        CHECK(read_file("tests/issues/test_issue_3481.cpp").empty(),
+              "3481 AC6: no tests/issues/test_issue_3481");
+        const auto svc = read_file("src/compiler/service.ixx");
+        CHECK(svc.find("schema-3481") == std::string::npos, "3481 AC6: no schema-3481");
+        CHECK(svc.find("g_3481_") == std::string::npos, "3481 AC6: no g_3481_*");
+        CHECK(svc.find("query:content-stored") == std::string::npos, "3481 AC6: no new query key");
+    }
+
+    std::println("\n=== #2183/#3481 cache stamp restamp: {} passed, {} failed ===", g_passed,
+                 g_failed);
     return g_failed == 0 ? 0 : 1;
 }
 

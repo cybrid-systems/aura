@@ -218,6 +218,11 @@ bool HotUpdateRegistry::hard_invalidate_via_facade(const char* name, ReemitReaso
     // and stamps last_reemit_success_region_mask for only_covered
     // re-promote (#2895). The decide_and_reemit body never re-emits
     // when force-JIT bits are idle (early-exit at the ABI level).
+    // Issue #3481: this call may emit against pre-mutate cache irs.
+    // IR cache is NOT restamped here; mark_body_only_dirty +
+    // content_stored_this_epoch=false keep lookup_define_v2==1 until
+    // store_define_v2 / true per-fn. last_reemit_success_region_mask
+    // stays coverage-only (#3445) — not content promotion.
     decide_and_reemit(aura_get_aot_defuse_version(), reason);
     // Issue #3219: C-ABI joint (bridge/defuse/table) lives here.
     // Evaluator/core dual-write is CompilerService::
