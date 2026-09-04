@@ -695,17 +695,13 @@ for f in ["/tmp/aura-test-out", "/tmp/aura-aot-compare", "/tmp/aura-aot-runtime"
         os.remove(f)
 
 # Fixture snippets share /tmp seeds — keep serial (jobs=1).
-# Remaining skips: module free-var freezes after require/mutate.
-KNOWN_SKIP = {
-    "ast-viz-dot-mutation": "unbound free-var node-label after mutate:rebind (module capture)",
-    "colony-search": "unbound free-var output-contains-any? in colony:search (module capture)",
-}
-skipped: list[tuple[str, str]] = []
+# No skips allowed: every regression fixture must pass. The two former
+# KNOWN_SKIP cases (ast-viz-dot-mutation / colony-search) failed with
+# unbound module free vars after require/mutate; those module-capture
+# bugs were fixed in-tree (#2566 nested-require module env inject), so
+# the entries were removed 2026-09-04 and the cases run for real again.
 specs: list[SnippetSpec] = []
 for case in load_regression_cases():
-    if case.name in KNOWN_SKIP:
-        skipped.append((case.name, KNOWN_SKIP[case.name]))
-        continue
     specs.append(
         SnippetSpec(
             name=case.name,
@@ -725,7 +721,6 @@ snippet_rc = run_snippet_suite(
     aura_bin=AURA,
     env=os.environ.copy(),
     jobs=1,
-    skipped=skipped,
 )
 print(f"\nP0 snippets rc={snippet_rc}; subprocess {passed_s}/{passed_s + failed_s} passed")
 
