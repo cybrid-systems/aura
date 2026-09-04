@@ -197,6 +197,10 @@ inline constexpr int kPcvStaleSpanExclusiveIssue = 3233;
 // Issue #3429: shared-but-not-stale cow_set / with_set consumes the
 // #2406 TLS freelist before heap (I1 residual of #2521/#2906).
 inline constexpr int kPcvSharedCowTlsIssue = 3429;
+// Issue #3491: production NDEBUG unique cow_set / exclusive with_set
+// are store-to-slot only (no process-wide RMW). Soft / unit keep
+// counters. AURA_PCV_METRICS forces notes on the production pack.
+inline constexpr int kPcvUniqueZeroAtomicIssue = 3491;
 // Issue #3328: production children_stable / query re-use of a held
 // SafePCVSpan must force_refresh_pcv_span or surface structured
 // stale-span (across-guard). Soft keeps is_stale + #3167 counter only.
@@ -211,6 +215,17 @@ inline void pcv_set_stale_span_exclusive_enabled(bool on) noexcept {
     g_pcv_hotpath_metrics().stale_span_force_exclusive_enabled.store(on ? 1u : 0u,
                                                                      std::memory_order_relaxed);
 }
+
+// Issue #3491: unique / force_inplace cow_set and exclusive with_set
+// must not RMW g_pcv_hotpath_metrics under production NDEBUG (AC1).
+// Soft / unit / AURA_PCV_METRICS still bump (AC3). Shared TLS-then-heap
+// keeps its own notes.
+#if defined(AURA_PRODUCTION_PACK) && defined(NDEBUG) && !defined(AURA_PCV_METRICS)
+#define AURA_PCV_NOTE(counter) ((void)0)
+#else
+#define AURA_PCV_NOTE(counter)                                                                     \
+    ::aura::ast::g_pcv_hotpath_metrics().counter.fetch_add(1, std::memory_order_relaxed)
+#endif
 
 // Issue #3233: MutationCheckpoint children_ snapshot is a live observer
 // (must COW). Thread-local depth: enter on snapshot, exit on boundary exit.
@@ -540,9 +555,8 @@ public:
         // discipline as cow_set (#2058). Never write when use_count()>1.
         if (data_ && data_.use_count() == 1) {
             data_->data.get()[i] = v;
-            g_pcv_hotpath_metrics().unique_inplace_total.fetch_add(1, std::memory_order_relaxed);
-            g_pcv_hotpath_metrics().with_set_exclusive_total.fetch_add(1,
-                                                                       std::memory_order_relaxed);
+            AURA_PCV_NOTE(unique_inplace_total);
+            AURA_PCV_NOTE(with_set_exclusive_total);
             return *this; // same storage identity, updated element
         }
         // Shared / live snapshot / same-gen span: still COW (never write
@@ -570,7 +584,7 @@ public:
     // then move back — so the common case is unique.
 
     void cow_set(size_type i, const T& v, bool force_inplace = false) {
-        g_pcv_hotpath_metrics().cow_set_total.fetch_add(1, std::memory_order_relaxed);
+        AURA_PCV_NOTE(cow_set_total);
         if (i >= size_)
             return;
         if ((is_unique() || force_inplace) && data_) {
@@ -578,11 +592,12 @@ public:
             // on const unique_ptr still yields T* — sole owner may write.
             // Issue #3233: force_inplace = stale SafePCVSpan extra ref after
             // Guard fingerprint mismatch (Agent must re-pin; no full COW).
+            // Issue #3491: production NDEBUG unique path is store-to-slot
+            // only (AURA_PCV_NOTE no-ops the RMW).
             data_->data.get()[i] = v;
-            g_pcv_hotpath_metrics().unique_inplace_total.fetch_add(1, std::memory_order_relaxed);
+            AURA_PCV_NOTE(unique_inplace_total);
             if (force_inplace && !is_unique())
-                g_pcv_hotpath_metrics().stale_span_force_exclusive_total.fetch_add(
-                    1, std::memory_order_relaxed);
+                AURA_PCV_NOTE(stale_span_force_exclusive_total);
             return;
         }
         // Issue #3429: shared-but-not-stale — with_set TLS-acquires before heap.

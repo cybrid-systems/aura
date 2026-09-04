@@ -2589,6 +2589,19 @@ def cmd_lint():
             "Issue #3429 PCV shared-COW TLS linter failed — run python3 scripts/coverage/checks/check_pcv_shared_cow_tls_3429.py"
         )
         return r
+    # Issue #3491: production NDEBUG unique cow_set / exclusive with_set
+    # are store-to-slot only (no process-wide RMW). Soft/unit keep
+    # counters. Extends test_pcv_unique_hotpath; no docs/design / invent.
+    pcv3491_script = COVERAGE_CHECKS / "check_pcv_unique_zero_atomic_3491.py"
+    if not pcv3491_script.exists():
+        fail(f"missing {pcv3491_script}")
+        return 1
+    r = run([sys.executable, str(pcv3491_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3491 PCV unique-path zero-atomic linter failed — run python3 scripts/coverage/checks/check_pcv_unique_zero_atomic_3491.py"
+        )
+        return r
     # Issue #3453: equal-length set_child_locked patches dense children
     # in-place when !dense_dirty_. insert/remove still dirty. Extends
     # #3402 dense-columns linter + arena required-cover test.
