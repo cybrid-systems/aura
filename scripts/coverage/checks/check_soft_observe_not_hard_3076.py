@@ -62,7 +62,10 @@ def main() -> int:
     # Soft increment must not sit inside the Hard branch.
     allow = sec
     idx = allow.find("bool Evaluator::allow_query_stable_ref_export")
-    body = allow[idx : idx + 900] if idx >= 0 else ""
+    # Issue #3487: allow ORs the multi-worker latch on the already-torn
+    # path (one extra line). Keep Hard-before-Soft order; 900 chars no
+    # longer covers torn_soft_observe.
+    body = allow[idx : idx + 1400] if idx >= 0 else ""
     hard = body.find("should_hard_reject_soft_sibling")
     soft = body.find("record_query_stable_ref_restamp_torn_soft_observe")
     if hard < 0 or soft < 0 or soft < hard:

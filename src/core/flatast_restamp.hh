@@ -94,12 +94,13 @@ inline constexpr int kRestampIncrementalDefaultIssue = 2402;
 // the Agent a pre-mutate generation when last restamp exceeded and
 // the node was not eagerly restamped. Lazy-align still keeps
 // is_valid/make_ref consistent (never silent torn generation, #2934 AC2);
-// production export rejects (typed restamp-lag) instead of stamping-green
-// a lagging gen.
+// production / latched export rejects (typed restamp-lag) instead of
+// stamping-green a lagging gen.
 // Issue #3037: over-budget outermost restamp marks generation torn for
 // export. Lazy-align must not hide a pre-mutate gen (eager bit, not
-// node_gen_==generation_). Production reject_stable_ref_export; Soft
-// observe only. Happy under-budget path is identical restamp_all.
+// node_gen_==generation_). Production / latch==1 reject_stable_ref_export;
+// Soft + unlatched observe only. Happy under-budget path is identical
+// restamp_all.
 inline constexpr int kRestampBudgetIssue = 2934;
 inline constexpr int kQueryStableRefRestampLagIssue = 3000;
 inline constexpr int kRestampOverBudgetExportIssue = 3037;
@@ -128,6 +129,12 @@ inline constexpr int kQueryStableRestampExportUniformIssue = 3198;
 // Equivalent to last_budget_exceeded || generation_torn (#3037).
 // Soft/Off observe-only. No new public query key.
 inline constexpr int kQueryStableRestampLagHardRejectIssue = 3230;
+// Issue #3487: query:*-stable / ensure-ref / export_ref hard-reject
+// restamp-lag when latch==1 even if production_defaults_active() later
+// flips false. One extra relaxed load on the already-torn path
+// (restamp_over_budget_torn). Soft + unlatched + under-budget: zero extra.
+// No new public query key — reuse restamp-lag / torn counters.
+inline constexpr int kQueryStableRestampLatchExportIssue = 3487;
 // Issue #3259: production over-budget outermost restamp eager-restamps
 // a hot cone (dirty roots + parent chain) up to a fraction of the
 // restamp budget so Agent-held StableNodeRef / QueryResult on those

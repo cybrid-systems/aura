@@ -23,6 +23,9 @@
 //   (ac3198_*) plus check_query_stable_restamp_export_uniform_3198.py.
 //   Issue #3230: stamp path consults restamp_over_budget_torn before
 //   make_ref_layout so durable QueryResult cannot carry a pre-mutate gen.
+//   Issue #3487: allow_query_stable_ref_export ORs the multi-worker latch
+//   on the already-torn path so schema-2 default export cannot green a
+//   pre-mutate gen after Ready latched and defaults flipped Soft.
 
 #include "test_harness.hpp"
 
@@ -928,6 +931,20 @@ void test_3449_ac5_source_and_linter() {
     expect_true("3449 AC5: no schema-3449 in query_workspace",
                 qws.find("schema-3449") == std::string::npos);
     expect_true("3449 AC5: no schema-3449 in mutate", mut.find("schema-3449") == std::string::npos);
+    {
+#ifdef AURA_SOURCE_DIR
+        std::ifstream f_sec{std::string(AURA_SOURCE_DIR) + "/src/compiler/evaluator_security.cpp"};
+#else
+        std::ifstream f_sec("src/compiler/evaluator_security.cpp");
+#endif
+        std::string sec((std::istreambuf_iterator<char>(f_sec)), std::istreambuf_iterator<char>());
+        expect_true("3487: #3449 export still goes through allow_query_stable_ref_export",
+                    qws.find("allow_query_stable_ref_export") != std::string::npos);
+        expect_true("3487: allow ORs aura_runtime_multi_worker_production_latched",
+                    sec.find("aura_runtime_multi_worker_production_latched() != 0") !=
+                            std::string::npos &&
+                        sec.find("Issue #3487") != std::string::npos);
+    }
     {
         std::ifstream f("docs/design/3449-query-default-schema2.md");
         expect_true("3449 AC5: no docs/design/3449-*", !f.good());

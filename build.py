@@ -2508,6 +2508,21 @@ def cmd_lint():
             "Issue #3230 query-stable restamp-lag hard-reject linter failed — run python3 scripts/coverage/checks/check_query_stable_restamp_lag_hard_reject_3230.py"
         )
         return r
+    # Issue #3487: query:*-stable / ensure-ref / export_ref hard-reject
+    # restamp-lag when latch==1 even if production_defaults later flips
+    # Soft. One extra relaxed load on the already-torn path inside
+    # allow_query_stable_ref_export. Reuses restamp-lag / torn counters.
+    # Extends hygiene + #3386 gate + #3449 provenance; no docs/design.
+    qsrl3487_script = COVERAGE_CHECKS / "check_query_stable_restamp_latch_export_3487.py"
+    if not qsrl3487_script.exists():
+        fail(f"missing {qsrl3487_script}")
+        return 1
+    r = run([sys.executable, str(qsrl3487_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3487 query-stable restamp latch export linter failed — run python3 scripts/coverage/checks/check_query_stable_restamp_latch_export_3487.py"
+        )
+        return r
     # Issue #3231: production QueryResult forces schema-2; reject layout-only.
     # Soft / no :as-query-result keeps schema-1. Reuses #3103 counters.
     # Extends test_query_result_full_provenance + test_query_epoch_contract.

@@ -353,6 +353,13 @@ void test_3386_query_stable_hard_reject_torn_latch() {
         // AC5: cite + no new framework.
         expect_true("#3386 AC5: evaluator_security.cpp cites #3386",
                     sec.find("Issue #3386") != std::string::npos);
+        // Issue #3487: allow_query_stable_ref_export now ORs the same latch
+        // on the already-torn path (export face, not just the probe).
+        expect_true(
+            "#3487: allow_query_stable_ref_export ORs latch",
+            sec.find("Issue #3487") != std::string::npos &&
+                sec.find("aura::serve::aura_runtime_multi_worker_production_latched() != 0") !=
+                    std::string::npos);
     }
     // AC5: no tests/issues/test_issue_3386.cpp (#81967).
     {
@@ -548,6 +555,6 @@ int main() {
     test_3426_ac3_soft_zero_extra();
     test_3426_ac4_non_regress();
     test_3426_ac5_linter_after_3327();
-    std::print("All #3104 + #3138 + #3309 + #3386 + #3426 AC tests PASSED\n");
+    std::print("All #3104 + #3138 + #3309 + #3386 + #3426 + #3487 AC tests PASSED\n");
     return 0;
 }

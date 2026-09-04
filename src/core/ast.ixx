@@ -60,6 +60,7 @@ export using ::aura::ast::kUnifiedRestampQueryVisibleIssue;
 export using ::aura::ast::kQueryStableRestampLagStructuredIssue;
 export using ::aura::ast::kQueryStableRestampExportUniformIssue;
 export using ::aura::ast::kQueryStableRestampLagHardRejectIssue;
+export using ::aura::ast::kQueryStableRestampLatchExportIssue;
 export using ::aura::ast::kRestampHotConeBudgetIssue;
 export using ::aura::ast::kRestampHotConeAgentHeldIssue;
 export using ::aura::ast::kRestampHotConeHeldCap;
