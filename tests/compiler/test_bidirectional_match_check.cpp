@@ -441,6 +441,26 @@ int run_test_bidirectional_match_check() {
     ac5_source_cite();
     ac3044_exhaustive_tag_coverage();
     ac3432_empty_pair_no_dynamic();
+    {
+        std::println("\n--- #3516: check_flat Set stamps TypeError on unify false ---");
+        CHECK(aura::compiler::kCheckFlatSetUnifyErrorIssue == 3516, "3516: stamp");
+        auto impl = read_file("src/compiler/type_checker_impl.cpp");
+        const auto check_pos = impl.find("InferenceEngine::check_flat(");
+        CHECK(check_pos != std::string::npos, "3516: check_flat");
+        const auto check_after = impl.substr(check_pos);
+        const auto set_pos = check_after.find("NodeTag::Set");
+        const auto def_pos = check_after.find("NodeTag::Define", set_pos);
+        const auto set_branch = check_after.substr(
+            set_pos, def_pos == std::string::npos ? std::string::npos : def_pos - set_pos);
+        CHECK(set_branch.find("if (!cs_.consistent_unify(val_type, var_type))") !=
+                  std::string::npos,
+              "3516 AC1: tests unify return");
+        CHECK(set_branch.find("set_node_error") != std::string::npos,
+              "3516 AC1: stamps node error");
+        CHECK(set_branch.find("Issue #3516") != std::string::npos, "3516 AC1: cite");
+        CHECK(read_file("docs/design/3516-check-flat-set-unify.md").empty(), "3516: no design");
+        CHECK(read_file("tests/compiler/test_issue_3516.cpp").empty(), "3516: no invent");
+    }
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

@@ -7695,7 +7695,11 @@ void InferenceEngine::check_flat(FlatAST& flat, StringPool& pool, NodeId id, Typ
             auto var_name = std::string(pool.resolve(v.sym_id));
             auto var_type = env_.lookup(var_name);
             if (var_type.valid()) {
-                cs_.consistent_unify(val_type, var_type);
+                // Issue #3516: mirror synthesize_flat Set — stamp TypeError
+                // when unify fails. maybe_report skips Dynamic/var/Linear
+                // so dropping the return left check-mode set! silent.
+                if (!cs_.consistent_unify(val_type, var_type))
+                    flat.set_node_error(id, static_cast<std::uint8_t>(ErrorKind::TypeError));
                 maybe_report_ground_inconsistency(val_type, var_type);
                 // Issue #3408: assignment hygiene — clear stale
                 // refinements of the assigned name (I4 «过期窄化

@@ -55,6 +55,9 @@ export inline constexpr int kBidirectionalUncoveredNoDynamicIssue = 3330;
 // Residual of #976/#3330: Pair stays in the coverage table, but
 // synthesize_flat returned dynamic_type() when children.empty().
 export inline constexpr int kBidirectionalEmptyPairNoDynamicIssue = 3432;
+// Issue #3516: check_flat Set must stamp TypeError when consistent_unify
+// fails (mirror synthesize_flat Set). maybe_report skips Dynamic/var/Linear.
+export inline constexpr int kCheckFlatSetUnifyErrorIssue = 3516;
 
 export [[nodiscard]] constexpr bool is_bidirectional_tag_covered(aura::ast::NodeTag tag) noexcept {
     using T = aura::ast::NodeTag;
