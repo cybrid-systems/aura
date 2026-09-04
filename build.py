@@ -3037,6 +3037,19 @@ def cmd_lint():
             "Issue #3355 IR SoA single-mark production-ban linter failed — run python3 scripts/coverage/checks/check_ir_soa_single_mark_production_ban_3355.py"
         )
         return r
+    # Issue #3489: production pack deletes mark_block_dirty; batch
+    # ensure-once before the span walk. Soft/unit keep the symbol.
+    # Extends test_batch_dirty_discipline; no docs/design / invent.
+    ism3489_script = COVERAGE_CHECKS / "check_ir_soa_single_mark_deleted_3489.py"
+    if not ism3489_script.exists():
+        fail(f"missing {ism3489_script}")
+        return 1
+    r = run([sys.executable, str(ism3489_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3489 IR SoA single-mark deleted linter failed — run python3 scripts/coverage/checks/check_ir_soa_single_mark_deleted_3489.py"
+        )
+        return r
     # Issue #3202: Production + Strict ground unify hard-rejects Int~String
     # (residual of #2992). Soft / balanced / permissive stay diagnostic-only.
     # Extends test_bidirectional_annotation; no docs/design / invent.

@@ -998,6 +998,87 @@ static void ac3355_5_source_and_linter() {
           "3355 AC5: no tests/issues/test_issue_3355.cpp");
 }
 
+static void ac3489_1_production_symbol_deleted() {
+    std::println("\n--- #3489 AC1: production pack deletes mark_block_dirty ---");
+    using aura::compiler::kIrSoaSingleMarkDeleted;
+    using aura::compiler::kIrSoaSingleMarkDeletedIssue;
+    CHECK(kIrSoaSingleMarkDeletedIssue == 3489, "3489 AC1: issue stamp");
+    CHECK(!kIrSoaSingleMarkDeleted, "3489 AC1: Soft/unit test pack keeps the symbol");
+    const auto soa = read_file("src/compiler/ir_soa.ixx");
+    const auto cmake = read_file("CMakeLists.txt");
+    CHECK(soa.find("void mark_block_dirty(std::uint32_t block_id) = delete") != std::string::npos,
+          "3489 AC1: = delete under production pack");
+    CHECK(soa.find("AURA_PRODUCTION_PACK") != std::string::npos, "3489 AC1: production pack ifdef");
+    CHECK(cmake.find("AURA_PRODUCTION_PACK=1") != std::string::npos,
+          "3489 AC1: aura target sets AURA_PRODUCTION_PACK");
+    const auto fixture = read_file("tests/compiler/compile_fail_mark_block_dirty_3489.cpp");
+    CHECK(!fixture.empty(), "3489 AC1: compile-fail fixture present");
+    CHECK(fixture.find("mark_block_dirty(0)") != std::string::npos,
+          "3489 AC1: fixture calls deleted symbol");
+    CHECK(fixture.find("AURA_PRODUCTION_PACK") != std::string::npos,
+          "3489 AC1: fixture gated on production pack");
+}
+
+static void ac3489_2_batch_one_ensure() {
+    std::println("\n--- #3489 AC2: batch ensure once, no per-id resize ---");
+    const auto soa = read_file("src/compiler/ir_soa.ixx");
+    CHECK(soa.find("ensure_block_dirty_len") != std::string::npos, "3489 AC2: ensure helper");
+    CHECK(soa.find("mark_block_dirty_bit_or_cascade_no_resize") != std::string::npos,
+          "3489 AC2: no-resize cascade");
+    CHECK(soa.find("mark_block_dirty_bit_only_no_resize") != std::string::npos,
+          "3489 AC2: no-resize bit-only");
+    auto fn = make_n_block_fn(4);
+    const std::uint32_t ids[] = {0, 2, 3};
+    const auto fence0 = current_ir_soa_generation_fence();
+    fn.mark_blocks_dirty(ids);
+    CHECK(current_ir_soa_generation_fence() == fence0 + 1, "3489 AC2: one fence");
+    CHECK(fn.is_block_dirty(0) && fn.is_block_dirty(2) && fn.is_block_dirty(3),
+          "3489 AC2: selected blocks dirty");
+    CHECK(!fn.is_block_dirty(1), "3489 AC2: unlisted block stays clean");
+    const std::uint32_t bits[] = {1};
+    fn.mark_blocks_dirty_bits_only(bits);
+    CHECK(fn.is_block_dirty(1), "3489 AC2: bits-only marks id");
+}
+
+static void ac3489_3_soft_single_remains() {
+    std::println("\n--- #3489 AC3: Soft mark_block_dirty remains ---");
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    ::setenv("AURA_IR_DIRTY_BATCH_ONLY", "0", 1);
+    auto fn = make_n_block_fn(3);
+    const auto s0 = g_ir_soa_single_dirty_marks_total.load(std::memory_order_relaxed);
+    fn.mark_block_dirty(0);
+    CHECK(fn.is_block_dirty(0), "3489 AC3: single-mark still sets bit");
+    CHECK(g_ir_soa_single_dirty_marks_total.load(std::memory_order_relaxed) == s0 + 1,
+          "3489 AC3: single-mark counter");
+    CHECK(read_file("src/compiler/ir_soa.ixx").find("std::abort()") != std::string::npos,
+          "3489 AC3: residual hard-abort path retained");
+}
+
+static void ac3489_5_source_and_linter() {
+    std::println("\n--- #3489 AC4/AC5: linter + quiet + no invent ---");
+    const auto soa = read_file("src/compiler/ir_soa.ixx");
+    const auto t = read_file("tests/compiler/test_batch_dirty_discipline.cpp");
+    const auto build = read_file("build.py");
+    const auto lint = read_file("scripts/coverage/checks/check_ir_soa_single_mark_deleted_3489.py");
+    CHECK(soa.find("kIrSoaSingleMarkDeletedIssue = 3489") != std::string::npos, "3489 AC5: stamp");
+    CHECK(soa.find("empty())\n        return") != std::string::npos ||
+              soa.find("if (block_ids.empty())") != std::string::npos,
+          "3489 AC5: empty span still quiet");
+    CHECK(soa.find("g_3489_") == std::string::npos, "3489 AC5: no g_3489_*");
+    CHECK(soa.find("schema-3489") == std::string::npos, "3489 AC5: no schema-3489");
+    CHECK(!lint.empty() && lint.find("3489") != std::string::npos, "3489 AC4: linter");
+    CHECK(build.find("check_ir_soa_single_mark_deleted_3489") != std::string::npos,
+          "3489 AC4: build.py");
+    const auto p3355 = build.find("check_ir_soa_single_mark_production_ban_3355");
+    const auto p3489 = build.find("check_ir_soa_single_mark_deleted_3489");
+    CHECK(p3355 != std::string::npos && p3489 != std::string::npos && p3489 > p3355,
+          "3489 AC4: linter AFTER #3355");
+    CHECK(t.find("ac3489_1_production_symbol_deleted") != std::string::npos, "3489 AC4: AC1 test");
+    CHECK(read_file("docs/design/3489-ir-soa-single-mark-deleted.md").empty(),
+          "3489 AC4: no docs/design");
+    CHECK(read_file("tests/compiler/test_issue_3489.cpp").empty(), "3489 AC4: no invent");
+}
+
 } // namespace
 
 int run_test_batch_dirty_discipline() {
@@ -1045,8 +1126,14 @@ int run_test_batch_dirty_discipline() {
     ac3355_3_3293_fixture_retained();
     ac3355_4_linter_enumerates();
     ac3355_5_source_and_linter();
-    std::println("\n=== #2615/#2681/#2773/#2774/#2936/#3201/#3293/#3355: {} passed, {} failed ===",
-                 g_passed, g_failed);
+    std::println("\n=== Issue #3489: production pack deletes SoA single-mark ---");
+    ac3489_1_production_symbol_deleted();
+    ac3489_2_batch_one_ensure();
+    ac3489_3_soft_single_remains();
+    ac3489_5_source_and_linter();
+    std::println(
+        "\n=== #2615/#2681/#2773/#2774/#2936/#3201/#3293/#3355/#3489: {} passed, {} failed ===",
+        g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
 

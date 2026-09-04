@@ -38,6 +38,10 @@ function(aura_resolve_test_cpp NAME OUT_VAR)
 endfunction()
 
 function(aura_test_compile_options TARGET)
+    # Issue #3489: Soft/unit keep IRFunctionSoA::mark_block_dirty. The
+    # production `aura` target also calls this helper, but sets
+    # AURA_PRODUCTION_PACK which wins and deletes the symbol.
+    target_compile_definitions(${TARGET} PRIVATE AURA_ALLOW_IR_SOA_SINGLE_MARK=1)
     target_compile_options(${TARGET} PRIVATE
         -fPIC
         -Wall -Wextra -Wpedantic -Werror
