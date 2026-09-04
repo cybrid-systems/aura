@@ -918,11 +918,15 @@ export struct IRInstructionView {
     // Accessors — all O(1), one SoA column access each.
     // Issue #2435: absolute-hot column access uses AURA_HOT_CHECK_CONSTEXPR
     // (production OFF = zero cost; debug/enforce still fail-closed).
+    // Issue #3490: CONSTEXPR honors the same Harden arm as view_at at
+    // runtime (if !consteval → AURA_HOT_CHECK). Quiet OOB on opcodes_
+    // is closed when production_defaults arms.
     constexpr aura::ir::IROpcode opcode() const {
         AURA_HOT_CHECK_CONSTEXPR(func != nullptr && idx < func->opcodes_.size());
         return func->opcodes_[idx];
     }
     constexpr std::uint32_t operand(std::size_t i) const {
+        AURA_HOT_CHECK_CONSTEXPR(func != nullptr && idx < func->opcodes_.size());
         AURA_HOT_CHECK_CONSTEXPR(i < 4); // only 4 operand columns exist
         switch (i) {
             case 0:

@@ -575,8 +575,106 @@ int run_test_hot_contract_placement() {
         CHECK(href(cs3428, "hot-contract-harden-armed") >= 0, "3428 AC5: armed readable");
     }
 
-    std::println("\n=== #2435/#3043/#3106/#3139/#3313/#3428 results: {} passed, {} failed ===",
-                 g_passed, g_failed);
+    // ── #3490: cache Harden arm; CONSTEXPR honors the same flag ──────
+    {
+        std::println("\n--- #3490 AC1: armed cache, no per-CHECK C ABI probe ---");
+        CHECK(aura::core::cpp26::kHotContractHardenCacheIssue == 3490, "3490 AC1: issue stamp");
+        auto hh = read_file("src/core/cpp26_contract_stats.h");
+        auto tma = read_file("src/compiler/typed_mutation_audit.h");
+        CHECK(hh.find("kHotContractHardenCacheIssue = 3490") != std::string::npos,
+              "3490 AC1: stamp");
+        CHECK(hh.find("hot_contract_harden_armed_cache") != std::string::npos, "3490 AC1: cache");
+        CHECK(hh.find("note_hot_contract_harden_armed") != std::string::npos, "3490 AC1: note");
+        const auto fn = hh.find("[[nodiscard]] inline bool hot_contract_harden_armed()");
+        const auto nxt = hh.find("peek_hot_contracts_mode_env", fn);
+        const auto win =
+            (fn != std::string::npos && nxt > fn) ? hh.substr(fn, nxt - fn) : std::string{};
+        const auto load = win.find("hot_contract_harden_armed_cache.load");
+        const auto probe = win.find("aura_production_defaults_active_probe() != 0");
+        CHECK(load != std::string::npos && probe != std::string::npos && load < probe,
+              "3490 AC1: cache load precedes C ABI probe");
+        CHECK(win.find("if (v >= 0)") != std::string::npos, "3490 AC1: cache-hit return");
+        CHECK(tma.find("note_hot_contract_harden_armed(true)") != std::string::npos,
+              "3490 AC1: apply_production stores armed");
+        CHECK(tma.find("note_hot_contract_harden_armed(false)") != std::string::npos,
+              "3490 AC1: apply_dev stores disarmed");
+        aura::compiler::typed_audit::apply_dev_audit_defaults();
+#if defined(NDEBUG) && !defined(AURA_HOT_MODE_HARDEN) && !defined(AURA_HOT_MODE_ENFORCE)
+        CHECK(!aura::core::cpp26::hot_contract_harden_armed(), "3490 AC1: Soft cache disarmed");
+#endif
+        aura::compiler::typed_audit::apply_production_audit_defaults();
+        CHECK(aura::core::cpp26::hot_contract_harden_armed(),
+              "3490 AC1: apply_production arms via cache");
+        aura::compiler::typed_audit::apply_dev_audit_defaults();
+#if defined(AURA_HOT_MODE_HARDEN)
+        CHECK(aura::core::cpp26::hot_contract_harden_armed(),
+              "3490 AC1: compile HARDEN stays armed");
+#else
+        CHECK(!aura::core::cpp26::hot_contract_harden_armed(), "3490 AC1: Soft restores disarmed");
+#endif
+
+        std::println("\n--- #3490 AC2: Soft / unarmed expr not evaluated ---");
+        aura::compiler::typed_audit::apply_dev_audit_defaults();
+#if defined(NDEBUG) && !defined(AURA_HOT_MODE_HARDEN) && !defined(AURA_HOT_MODE_ENFORCE)
+        CHECK(!aura::core::cpp26::hot_contract_harden_armed(), "3490 AC2: Soft disarmed");
+        const auto t0 =
+            aura::core::cpp26::hotpath_contract_harden_trap_total.load(std::memory_order_relaxed);
+        AURA_HOT_CHECK(false); // must not abort
+        CHECK(aura::core::cpp26::hotpath_contract_harden_trap_total.load(
+                  std::memory_order_relaxed) == t0,
+              "3490 AC2: Soft no trap bump");
+#endif
+        CHECK(hh.find("expr not evaluated") != std::string::npos, "3490 AC2: Soft skips expr");
+
+        std::println("\n--- #3490 AC3: column CONSTEXPR honors Harden arm ---");
+        auto soa = read_file("src/compiler/ir_soa.ixx");
+        CHECK(hh.find("if !consteval") != std::string::npos, "3490 AC3: CONSTEXPR runtime arm");
+        CHECK(hh.find("AURA_HOT_CHECK(expr)") != std::string::npos,
+              "3490 AC3: CONSTEXPR uses CHECK");
+        CHECK(soa.find("AURA_HOT_CHECK_CONSTEXPR") != std::string::npos,
+              "3490 AC3: column accessors keep CONSTEXPR");
+        CHECK(soa.find("Issue #3490") != std::string::npos, "3490 AC3: ir_soa cite");
+        IRModuleV2 mod3490;
+        auto fi = mod3490.add_function("f3490", 1);
+        auto bi = mod3490.add_block(fi);
+        mod3490.add_instruction(fi, IROpcode::ConstI64, {0, 7, 0, 0}, 0, 1, 0, 0);
+        mod3490.seal_block(fi, bi);
+        auto view = mod3490.view_at(fi, 0);
+        CHECK(view.opcode() == IROpcode::ConstI64, "3490 AC3: happy-path opcode");
+        CHECK(view.operand(1) == 7, "3490 AC3: happy-path operand");
+
+        std::println("\n--- #3490 AC4: view_at Harden path retained ---");
+        const auto vat = soa.find("IRInstructionView view_at(");
+        const auto addb = soa.find("add_block", vat);
+        const auto vwin =
+            (vat != std::string::npos && addb > vat) ? soa.substr(vat, addb - vat) : std::string{};
+        CHECK(vwin.find("AURA_HOT_CHECK") != std::string::npos, "3490 AC4: view_at CHECK kept");
+        CHECK(hh.find("record_hotpath_contract_harden_trap") != std::string::npos,
+              "3490 AC4: trap helper reused");
+
+        std::println("\n--- #3490 AC5: unarmed NDEBUG no extra atomics / no invent ---");
+        auto build = read_file("build.py");
+        auto q = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
+        CHECK(build.find("check_hot_contract_harden_cache_3490") != std::string::npos,
+              "3490 AC5: build.py");
+        const auto p3313 = build.find("check_hot_contract_production_harden_3313");
+        const auto p3490 = build.find("check_hot_contract_harden_cache_3490");
+        CHECK(p3313 != std::string::npos && p3490 != std::string::npos && p3490 > p3313,
+              "3490 AC5: linter AFTER #3313");
+        CHECK(q.find("schema-3490") == std::string::npos, "3490 AC5: no schema-3490");
+        CHECK(hh.find("g_3490_") == std::string::npos && soa.find("g_3490_") == std::string::npos,
+              "3490 AC5: no g_3490_*");
+        CHECK(q.find("hot-contract-harden-trap-total") != std::string::npos,
+              "3490 AC5: reuse trap-total");
+        CHECK(read_file("docs/design/3490-hot-contract-harden-cache.md").empty(),
+              "3490 AC5: no docs/design");
+        CHECK(read_file("tests/compiler/test_issue_3490.cpp").empty(), "3490 AC5: no invent");
+        CHECK(hh.find("AURA_COLD_CONTRACT") != std::string::npos, "3490 AC5: cold unchanged");
+    }
+
+    std::println(
+        "\n=== #2435/#3043/#3106/#3139/#3313/#3428/#3490 results: {} passed, {} failed ===",
+        g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
 

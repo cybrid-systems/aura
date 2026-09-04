@@ -33,6 +33,7 @@
 #include "core/mutation_audit_wal.hh"
 #include "core/sandbox.hh"
 #include "core/wal_append_fail_slo.h"
+#include "core/cpp26_contract_stats.h" // #3490 note_hot_contract_harden_armed
 // Issue #2836: resolve-time mid-fallback hard face is absolute zero-tolerance
 // (no SLO rate check). Schedule-gate (#2630/#2594) still uses
 // audit_mid_fallback_slo.h; include removed from this header after #2836.
@@ -1026,6 +1027,9 @@ inline void apply_production_audit_defaults() noexcept {
     set_sample_ratio(1);
     g_typed_mutation_audit_counters.production_defaults_active.store(1, std::memory_order_relaxed);
     g_typed_mutation_audit_counters.dev_audit_opt_in.store(0, std::memory_order_relaxed);
+    // Issue #3490: cache Harden arm so as_int / view_at do not re-enter
+    // aura_production_defaults_active_probe() on every HOT_CHECK.
+    aura::core::cpp26::note_hot_contract_harden_armed(true);
     aura::core::set_query_epoch_strict(true);
     clear_mid_fallback_refuse_se_tls();
     aura_pcv_set_stale_span_exclusive(1);
@@ -1115,6 +1119,10 @@ inline void apply_dev_audit_defaults() noexcept {
     set_sample_ratio(4);
     g_typed_mutation_audit_counters.production_defaults_active.store(0, std::memory_order_relaxed);
     g_typed_mutation_audit_counters.dev_audit_opt_in.store(1, std::memory_order_relaxed);
+    // Issue #3490: Soft/dev restores the cached Harden arm (tests flip
+    // defaults mid-process). Env AURA_HOT_HARDEN is re-read on next miss
+    // only if the cache is reset to -1; store 0 so Soft stays unarmed.
+    aura::core::cpp26::note_hot_contract_harden_armed(false);
     aura::core::set_query_epoch_strict(false);
     clear_mid_fallback_refuse_se_tls();
     aura_pcv_set_stale_span_exclusive(0);

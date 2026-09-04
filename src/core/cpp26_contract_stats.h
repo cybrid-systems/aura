@@ -124,6 +124,10 @@ inline constexpr int kHotContractHardenIssue = 3106;
 // Issue #3313: production_defaults arms Soft-observe+Harden for the
 // NDEBUG OFF expansion (I1 residual of #2435/#3043/#3106).
 inline constexpr int kHotContractProductionHardenIssue = 3313;
+// Issue #3490: cache the armed observation so as_int / view_at do not
+// re-enter the C ABI probe on every HOT_CHECK. apply_production /
+// apply_dev store here (defaults can flip in tests).
+inline constexpr int kHotContractHardenCacheIssue = 3490;
 // Soft-observe RECORD sample period (power of two). Acceptable upper
 // bound vs OFF: one relaxed atomic per this many RECORD sites. Applies to
 // both plain Soft-observe (#3043) and Harden-armed Soft-observe (#3106
@@ -209,6 +213,13 @@ inline std::atomic<std::uint64_t> hot_contract_harden_wired{1};
 inline std::atomic<std::uint64_t> hotpath_contracts_3106_active{1};
 inline std::atomic<std::uint64_t> hotpath_contract_harden_trap_total{0};
 inline std::atomic<std::uint64_t> hotpath_contracts_3313_active{1};
+// Issue #3490: -1 unknown, 0 disarmed, 1 armed. Relaxed load on the
+// hot CHECK; store from apply_production / apply_dev / first miss.
+inline std::atomic<int> hot_contract_harden_armed_cache{-1};
+
+inline void note_hot_contract_harden_armed(bool armed) noexcept {
+    hot_contract_harden_armed_cache.store(armed ? 1 : 0, std::memory_order_relaxed);
+}
 // Issue #1466: hot-path consteval invariant hits — bumped each time a
 // new consteval invariant is added. Mirrors kConstevalChecksTotal but
 // observable at runtime via (query:cpp26-contracts-stats).
@@ -274,14 +285,10 @@ inline void record_hotpath_invariant_hit_sampled() noexcept {
 #if defined(AURA_HOT_MODE_HARDEN)
     return true;
 #else
-    // Issue #3313: production_defaults is live (not cached) so OFF macros
-    // fail-close after apply_production_audit_defaults() without
-    // -DAURA_HOT_SOFT_OBSERVE_HARDEN. Soft / unit / AURA_SANDBOX=off keep
-    // production_defaults_active()==0 (AC2 — expr not evaluated).
-    if (aura_production_defaults_active_probe() != 0)
-        return true;
-    static std::atomic<int> cached{-1};
-    int v = cached.load(std::memory_order_relaxed);
+    // Issue #3490: load cached armed state first. After the first
+    // observation (or apply_production / apply_dev store) as_int /
+    // view_at never re-enter the C ABI production-defaults probe.
+    int v = hot_contract_harden_armed_cache.load(std::memory_order_relaxed);
     if (v >= 0)
         return v != 0;
     int parsed = 0;
@@ -291,18 +298,18 @@ inline void record_hotpath_invariant_hit_sampled() noexcept {
             std::strcmp(e, "True") == 0)
             parsed = 1;
     }
-    // Issue #3139 AC4: under production_defaults_active(), the runtime
-    // probe is implicitly armed for self-modify preset binaries (no env
-    // required). production_defaults_active() is a relaxed atomic load
-    // (single observation; safe on hot path; per #3076 the policy is
-    // production-or-Full hard-face). Soft / unit / sandbox=off paths
-    // keep production_defaults_active() == 0 and stay disarmed (AC2).
+    // Issue #3139 AC4 / #3313: under production_defaults_active(), the
+    // runtime probe is implicitly armed for self-modify preset binaries
+    // (no env required). Gated by parsed==0 so env ON is not re-probed.
+    // Soft / unit / sandbox=off keep production_defaults_active() == 0
+    // and stay disarmed (AC2 — expr not evaluated).
     if (parsed == 0 && aura_production_defaults_active_probe() != 0) {
         parsed = 1;
     }
     int expected = -1;
-    cached.compare_exchange_strong(expected, parsed, std::memory_order_relaxed);
-    return cached.load(std::memory_order_relaxed) != 0;
+    hot_contract_harden_armed_cache.compare_exchange_strong(expected, parsed,
+                                                            std::memory_order_relaxed);
+    return hot_contract_harden_armed_cache.load(std::memory_order_relaxed) != 0;
 #endif
 }
 
@@ -404,12 +411,19 @@ inline void record_hotpath_invariant_hit_sampled() noexcept {
 #endif
 
 // Constexpr-friendly hot bounds check for IRInstructionView column access.
-// Production OFF / observe: no check (observe not constexpr-friendly).
 // Debug/enforce: contract_assert (constexpr-OK with contracts).
+// Issue #3490: runtime evaluation honors the same Harden arm as view_at
+// (AURA_HOT_CHECK). Constant evaluation keeps the no-op (atomics/abort
+// are not constexpr). Unarmed NDEBUG: armed() load then skip expr (AC5).
 #if defined(AURA_HOT_MODE_ENFORCE)
 #define AURA_HOT_CHECK_CONSTEXPR(expr) contract_assert(expr)
 #else
-#define AURA_HOT_CHECK_CONSTEXPR(expr) ((void)0)
+#define AURA_HOT_CHECK_CONSTEXPR(expr)                                                             \
+    do {                                                                                           \
+        if !consteval {                                                                            \
+            AURA_HOT_CHECK(expr);                                                                  \
+        }                                                                                          \
+    } while (0)
 #endif
 
 #endif // AURA_CORE_CPP26_CONTRACT_STATS_H
