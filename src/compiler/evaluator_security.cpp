@@ -520,11 +520,13 @@ bool Evaluator::check_and_record_effect(std::uint16_t required_effect_bits,
 // window after #2658 for paths outside `mutate:force`.
 bool Evaluator::require_effect(std::uint16_t req_bits, std::string_view op, ast::NodeId target_node,
                                std::uint64_t ref_tenant) noexcept {
-    // #3109: fail-closed deny at entry (Strict + overflow ring full).
+    // #3109: fail-closed deny at entry (overflow ring full).
     // #3302: fail-closed is force_wal-defaulted or AURA_WAL_APPEND_FAIL_CLOSED.
+    // #3493: do not extra-AND is_strict() — Restricted+MT already
+    // force_wal-default fail-closed; overflow-full mutate while audit
+    // is lossy is the commercial-face residual.
     if (req_bits != 0 && ::aura::core::wal_slo::wal_append_fail_closed_active() &&
-        ::aura::core::security_event_wal::wal_overflow_ring_full() &&
-        ::aura::core::sandbox::is_strict())
+        ::aura::core::security_event_wal::wal_overflow_ring_full())
         return false;
     if (req_bits != 0) {
         // Issue #3415: foreign stamped tenant is the isolation target

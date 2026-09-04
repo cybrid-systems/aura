@@ -133,10 +133,14 @@ int run_test_security_posture_trail() {
     CHECK(sew.find("wal_append_fail_closed_active()") != std::string::npos,
           "3109 AC1: append wires fail-closed check");
     const auto ev_src = read_file("src/compiler/evaluator_security.cpp");
-    CHECK(ev_src.find("wal_append_fail_closed_active()") != std::string::npos &&
-              ev_src.find("wal_overflow_ring_full()") != std::string::npos &&
-              ev_src.find("is_strict()") != std::string::npos,
-          "3109 AC2: require_effect deny path wired (Strict + fail-closed + overflow full)");
+    const auto deny_if = ev_src.find(
+        "if (req_bits != 0 && ::aura::core::wal_slo::wal_append_fail_closed_active() &&");
+    CHECK(deny_if != std::string::npos &&
+              ev_src.find("wal_overflow_ring_full()", deny_if) != std::string::npos,
+          "3109 AC2: require_effect deny path wired (fail-closed + overflow full)");
+    CHECK(deny_if != std::string::npos &&
+              ev_src.substr(deny_if, 400).find("is_strict()") == std::string::npos,
+          "3109 AC2 / #3493: deny if does not extra-AND is_strict()");
     // Build.py wires the linter
     const auto build = read_file("build.py");
     CHECK(build.find("check_wal_append_fail_closed_3109") != std::string::npos,
@@ -278,6 +282,17 @@ int run_test_security_posture_trail() {
               "3302 AC5: fail-closed active under Strict force_wal");
         CHECK(!ev.require_effect(kEffectMutate, "test:3302-ac5", 0),
               "3302 AC5: require_effect denies when overflow full");
+
+        // #3493: Restricted + overflow full also denies (not Strict-only).
+        ::setenv("AURA_SANDBOX", "restricted", 1);
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+        apply_production_security_defaults();
+        CHECK(aura::core::security_event_wal::wal_overflow_ring_full(),
+              "3493: overflow ring still full");
+        CHECK(aura::core::wal_slo::wal_append_fail_closed_active(),
+              "3493: fail-closed active under Restricted force_wal");
+        CHECK(!ev.require_effect(kEffectMutate, "test:3493-restricted", 0),
+              "3493: Restricted + overflow full → require_effect deny");
 
         CHECK(href(cs, "schema-3302") == 3302, "3302 AC6: schema-3302");
         CHECK(href(cs, "issue-3302") == 3302, "3302 AC6: issue-3302");

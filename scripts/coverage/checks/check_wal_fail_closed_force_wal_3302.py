@@ -13,7 +13,8 @@ Contract (one row per AC):
   AC3  AURA_WAL_APPEND_FAIL_OPEN=1 + force_wal: fail-open + #3056 SLO;
        no overflow push
   AC4  AURA_WAL_APPEND_FAIL_CLOSED=1 still forces on (without FAIL_OPEN)
-  AC5  Strict + overflow full: require_effect deny (reason path #3109)
+  AC5  fail-closed + overflow full: require_effect deny (Restricted and
+       Strict; #3493 drops the extra is_strict() conjunct)
   AC6  Additive query keys; #3109/#3056/#3211 linters still wired;
        no invent test_issue_3302.cpp; no docs/design/3302-*
 
@@ -72,15 +73,20 @@ def main() -> int:
     must('wal_env_flag_truthy("AURA_WAL_APPEND_FAIL_CLOSED")', "AC4 CLOSED check", slo)
     must("3302 AC4", "AC4 test marker", test)
 
-    # ── AC5 Strict overflow full deny (reuse #3109 path) ────────────────
+    # ── AC5 overflow full deny (reuse #3109 path; #3493 not Strict-only) ─
     must(
         "if (req_bits != 0 && ::aura::core::wal_slo::wal_append_fail_closed_active() &&",
         "AC5 deny precondition",
         ev,
     )
     must("wal_overflow_ring_full()", "AC5 overflow full", ev)
-    must("is_strict()", "AC5 Strict", ev)
+    deny_idx = ev.find("if (req_bits != 0 && ::aura::core::wal_slo::wal_append_fail_closed_active() &&")
+    if deny_idx < 0:
+        fails.append("AC5: require_effect deny if missing")
+    elif "is_strict()" in ev[deny_idx : deny_idx + 400]:
+        fails.append("AC5: deny if still ANDs is_strict() (#3493 Restricted+MT)")
     must("3302 AC5", "AC5 test marker", test)
+    must("3493", "AC5 #3493 Restricted overflow deny", test)
     must("kWalOverflowRingCapacity = 256", "AC5 ring capacity", sew)
 
     # ── AC6 query + lineage + no-invent ─────────────────────────────────

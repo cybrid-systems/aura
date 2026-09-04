@@ -6,7 +6,8 @@ Contract (one row per AC):
   AC1  Soft/Off / AURA_SANDBOX=off: no new cost; fail-closed env ignored;
        wal-fail-closed-active=0, wal-overflow-ring-depth=0
   AC2  Default (no env): behavior unchanged (fail-open + #3056 SLO arm);
-       require_effect deny path wired for Strict + fail-closed + overflow full
+       require_effect deny path wired for fail-closed + overflow full
+       (#3493: Restricted and Strict; not Strict-only)
   AC3  AURA_WAL_APPEND_FAIL_CLOSED=1 + production + Restricted:
        overflow ring captures events; mid can join from overflow ring
   AC4  AURA_WAL_APPEND_FAIL_CLOSED=1 + production + Strict + overflow full:
@@ -73,7 +74,16 @@ def main() -> int:
     # require_effect wires fail-closed + overflow full + Strict
     must("wal_append_fail_closed_active()", "AC2 helper call in require_effect", ev)
     must("wal_overflow_ring_full()", "AC2 overflow full check in require_effect", ev)
-    must("is_strict()", "AC2 Strict check in require_effect", ev)
+    # #3493: deny is fail-closed + overflow-full, not Strict-only.
+    deny_idx = ev.find("if (req_bits != 0 && ::aura::core::wal_slo::wal_append_fail_closed_active() &&")
+    if deny_idx < 0:
+        fails.append("AC2: require_effect deny if missing")
+    else:
+        deny_window = ev[deny_idx : deny_idx + 400]
+        if "wal_overflow_ring_full()" not in deny_window:
+            fails.append("AC2: overflow full missing from deny if")
+        if "is_strict()" in deny_window:
+            fails.append("AC2: deny if still ANDs is_strict() (#3493 Restricted+MT)")
     # #3056 SLO lineage preserved
     must("kWalAppendFailSloIssue = 3056", "AC2 #3056 lineage", slo)
     must("wal-append-fail-breach", "AC2 #3056 breach key in query surface", sec)
