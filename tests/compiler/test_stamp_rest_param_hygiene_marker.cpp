@@ -58,9 +58,9 @@ int run_test_stamp_rest_param_hygiene_marker() {
         auto ixx = read_file("src/compiler/macro_expansion.ixx");
         auto bridge = read_file("src/compiler/aura_jit_bridge.h");
         CHECK(!me.empty(), "AC1: sources readable");
-        auto pos = me.find("static inline void stamp_rest_param_hygiene");
+        auto pos = me.find("inline void stamp_rest_param_hygiene");
         CHECK(pos != std::string::npos, "AC1: stamp_rest_param_hygiene present");
-        auto win = me.substr(pos, 2000);
+        auto win = me.substr(pos, 2500);
         CHECK(win.find("Issue #2808") != std::string::npos, "AC1: cites #2808");
         CHECK(win.find("set_marker") != std::string::npos, "AC1: set_marker");
         CHECK(win.find("MacroIntroduced") != std::string::npos, "AC1: MacroIntroduced");
@@ -104,16 +104,13 @@ int run_test_stamp_rest_param_hygiene_marker() {
             static_cast<std::uint32_t>(list_call));
 
         CHECK(target.is_macro_introduced(list_call), "AC2: list_call MacroIntroduced");
-        CHECK(target.is_macro_introduced(a1), "AC2: a1 MacroIntroduced");
-        CHECK(target.is_macro_introduced(a2), "AC2: a2 MacroIntroduced");
-        CHECK(target.is_macro_introduced(list_var) || !target.is_macro_introduced(list_var),
-              "AC2: list_var walked (child of call) — soft");
-        // list_var is first child of call — yes walked
         CHECK(target.is_macro_introduced(list_var), "AC2: list_var MacroIntroduced");
+        CHECK(!target.is_macro_introduced(a1), "3468: remaining a1 keeps User marker");
+        CHECK(!target.is_macro_introduced(a2), "3468: remaining a2 keeps User marker");
         const auto set1 = g_stamp_rest_param_marker_set_total.load();
         const auto skip1 = g_stamp_rest_param_marker_skipped_total.load();
         CHECK(set1 > set0, "AC2: set metric advanced");
-        CHECK(set1 - set0 >= 3, "AC2: at least list_call + args stamped");
+        CHECK(set1 - set0 == 2, "3468: spine only (list_call + list_var)");
         CHECK(skip1 == skip0, "AC2: no skips on first stamp");
         CHECK(aura_stamp_rest_param_marker_set_total_v_read() == set1, "AC2: v_read set");
         CHECK((target.macro_dirty(list_call) &
@@ -151,6 +148,38 @@ int run_test_stamp_rest_param_hygiene_marker() {
         CHECK(skip1 > skip0, "AC3: skipped metric advanced");
         CHECK(target.is_macro_introduced(list_call), "AC3: still MacroIntroduced");
         CHECK(aura_stamp_rest_param_marker_skipped_total_v_read() == skip1, "AC3: v_read skip");
+    }
+
+    // ── #3468: pair spine stamps pair cells, never car (caller args) ──
+    {
+        std::println("\n--- #3468: pair spine does not stamp remaining cars ---");
+        FlatAST src;
+        auto body = src.add_literal(static_cast<std::int64_t>(2));
+        FlatAST target;
+        StringPool tp;
+        auto a1 = target.add_variable(tp.intern("a"));
+        auto a2 = target.add_variable(tp.intern("b"));
+        auto p0 = target.add_pair(a2, NULL_NODE);
+        auto p1 = target.add_pair(a1, p0);
+        CHECK(!target.is_macro_introduced(p1), "3468: pair root unmarked before");
+        CHECK(!target.is_macro_introduced(a1), "3468: car unmarked before");
+        aura_test_reset_stamp_rest_param_marker_totals_for_test();
+        aura_test_call_stamp_rest_param_hygiene(
+            static_cast<void*>(&target), static_cast<void*>(&src), static_cast<std::uint32_t>(body),
+            static_cast<std::uint32_t>(p1));
+        CHECK(target.is_macro_introduced(p1), "3468: pair root MacroIntroduced");
+        CHECK(target.is_macro_introduced(p0), "3468: cdr pair cell MacroIntroduced");
+        CHECK(!target.is_macro_introduced(a1), "3468: remaining car a1 stays User");
+        CHECK(!target.is_macro_introduced(a2), "3468: remaining car a2 stays User");
+        const auto me = read_file("src/compiler/macro_expansion.cpp");
+        CHECK(me.find("Issue #3468") != std::string::npos, "3468: helper cites #3468");
+        CHECK(me.find("never DFS") != std::string::npos ||
+                  me.find("never remaining caller") != std::string::npos,
+              "3468: helper refuses remaining walk");
+        CHECK(read_file("docs/design/3468-rest-overstamp.md").empty(),
+              "3468: no docs/design/3468-* per #1655");
+        CHECK(read_file("tests/compiler/test_issue_3468.cpp").empty(),
+              "3468: no test_issue_3468.cpp per #81967");
     }
 
     std::println("\n=== #2808 stamp_rest_param_hygiene marker: {} passed, {} failed ===", g_passed,

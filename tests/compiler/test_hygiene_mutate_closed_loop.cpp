@@ -23,10 +23,12 @@
 #include "compiler/security_capabilities.h"
 #include "compiler/grant_test_support.hh"
 
+#include <array>
 #include <cstdint>
 #include <format>
 #include <fstream>
 #include <print>
+#include <span>
 #include <string>
 #include <string_view>
 
@@ -4178,6 +4180,63 @@ static void ac3341_per_fiber_reason_and_steal_abort_string() {
     CHECK(read_file("tests/issues/test_issue_3341.cpp").empty(), "3341: no invent test per #81967");
 }
 
+// Issue #3468: remaining User args in a rest list are not hygiene-blocked
+// solely because they sat in the wrap; the list Call spine still rejects.
+static void ac3468_rest_remaining_not_hygiene_blocked() {
+    std::println("\n--- #3468: remaining User args not hygiene-blocked by rest wrap ---");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    apply_dev_audit_defaults();
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define base 10)\")").has_value(), "3468: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3468: eval");
+    auto* ws = cs.evaluator().workspace_flat();
+    auto* pool = cs.evaluator().canonical_pool();
+    CHECK(ws != nullptr && pool != nullptr, "3468: workspace+pool");
+    if (!ws || !pool) {
+        apply_dev_audit_defaults();
+        return;
+    }
+    aura::ast::NodeId lit = aura::ast::NULL_NODE;
+    for (aura::ast::NodeId id = 0; id < ws->size(); ++id) {
+        if (ws->is_live_node(id) && ws->tag(id) == aura::ast::NodeTag::LiteralInt) {
+            lit = id;
+            break;
+        }
+    }
+    CHECK(lit != aura::ast::NULL_NODE, "3468: LiteralInt remaining arg");
+    if (lit == aura::ast::NULL_NODE) {
+        apply_dev_audit_defaults();
+        return;
+    }
+    auto list_var = ws->add_variable(pool->intern("list"));
+    const std::array<aura::ast::NodeId, 1> remaining{lit};
+    auto list_call = ws->add_call(list_var, std::span<const aura::ast::NodeId>{remaining});
+    aura::compiler::macro_exp::stamp_rest_param_hygiene(*ws, *ws, lit, list_call);
+    CHECK(ws->is_macro_introduced(list_call), "3468: list Call spine marked");
+    CHECK(ws->is_macro_introduced(list_var), "3468: list Var spine marked");
+    CHECK(!ws->is_macro_introduced(lit), "3468: remaining literal stays User");
+    // Dev face (sandbox Off). Production leftovers at the end of this
+    // file make mutate_dispatch_try_acquire return guard-reject before
+    // reject_structural_macro_hygiene can stamp. replace-value hits
+    // that helper before the LiteralInt tag switch (#3215 / #3027).
+    aura::compiler::macro_exp::g_macro_hygiene_last_limit_reason.store(0,
+                                                                       std::memory_order_relaxed);
+    auto spine = cs.eval(std::format("(mutate:replace-value {} 99 \"3468-spine\")", list_var));
+    CHECK(spine.has_value(), "3468: replace-value spine returns");
+    CHECK(merr_kind_3027(cs, *spine) == "hygiene", "3468: spine kind hygiene");
+    const auto* rs = aura::compiler::macro_exp::hygiene_last_limit_reason_string();
+    CHECK(rs != nullptr && std::string(rs) == "hygiene-macro-introduced",
+          "3468: mutate list spine still hygiene-macro-introduced");
+    aura::compiler::macro_exp::g_macro_hygiene_last_limit_reason.store(0,
+                                                                       std::memory_order_relaxed);
+    auto ok = cs.eval(std::format("(mutate:replace-value {} 99 \"3468-remain\")", lit));
+    CHECK(ok.has_value(), "3468: replace-value remaining returns");
+    const auto* rs_ok = aura::compiler::macro_exp::hygiene_last_limit_reason_string();
+    CHECK(rs_ok == nullptr || std::string(rs_ok) != "hygiene-macro-introduced",
+          "3468: remaining arg not hygiene-macro-introduced");
+    apply_dev_audit_defaults();
+}
+
 } // namespace
 
 int main() {
@@ -4347,6 +4406,8 @@ int main() {
     std::println("\n=== Issue #3328: production children_stable / query stale-span refresh ===");
     ac3328_3_2906_3233_non_regression();
     ac3328_5_source_and_linter();
+    std::println("\n=== Issue #3468: rest remaining args not hygiene-blocked ===");
+    ac3468_rest_remaining_not_hygiene_blocked();
     std::println("\n=== {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
