@@ -24,8 +24,22 @@
 #include <string>
 #include <string_view>
 
+import std;
+import aura.compiler.service;
+import aura.compiler.evaluator;
+
 namespace {
 
+using aura::compiler::CompilerService;
+using aura::compiler::Evaluator;
+namespace typed_audit = aura::compiler::typed_audit;
+using aura::compiler::typed_audit::apply_dev_audit_defaults;
+using aura::compiler::typed_audit::apply_production_audit_defaults;
+using aura::compiler::typed_audit::ir_typed_entry_commit_readiness_ok;
+using aura::compiler::typed_audit::kTypeLinearProofOutcomeReject;
+using aura::compiler::typed_audit::last_type_linear_proof_outcome_v_read;
+using aura::compiler::typed_audit::linear_move_drop_elision_ok;
+using aura::compiler::typed_audit::reset_for_test;
 using aura::test::g_failed;
 using aura::test::g_passed;
 
@@ -292,6 +306,59 @@ int run_test_outermost_persist_fail_closed() {
         CHECK(persist_call != std::string::npos && exit_pos != std::string::npos &&
                   persist_call < exit_pos,
               "3440: persist helper runs BEFORE exit_mutation_boundary");
+    }
+
+    // ── Issue #3472: persist-green × Phase-1 linear deny (live, not only contains) ──
+    {
+        std::println("\n--- #3472 AC1 live: persist-green × pending → success false ---");
+        const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+        CHECK(contains(emb, "Issue #3472"), "3472: dtor cites #3472");
+        const auto persist_call = emb.find("aura_outermost_success_persist_occurrence(ev_");
+        const auto consume = emb.find("consume_outermost_persist_reject_needs_restore()");
+        const auto issue = emb.find("Issue #3472");
+        const auto exit_pos = emb.find("ev_->exit_mutation_boundary(success)");
+        CHECK(persist_call != std::string::npos && consume != std::string::npos &&
+                  issue != std::string::npos && exit_pos != std::string::npos &&
+                  persist_call < consume && consume < issue && issue < exit_pos,
+              "3472: persist → consume → linear deny → exit (before abort_restore)");
+        const auto win =
+            (issue == std::string::npos || exit_pos == std::string::npos || issue > exit_pos)
+                ? std::string{}
+                : emb.substr(issue, exit_pos - issue);
+        CHECK(contains(win, "enforce_linear_boundary_consistency"),
+              "3472: pre-exit enforce return is the deny signal");
+        CHECK(contains(win, "linear_synth_hard_fail_pending"), "3472: pending is a deny signal");
+        CHECK(contains(win, "clear_type_linear_commit_proof_on_abort"),
+              "3472: reuse #3030 proof clear");
+        CHECK(!contains(win, "linear_post_mutate_force_rollback_total"),
+              "3472: rollback counter is not the deny signal");
+        CHECK(emb.find("schema-3472") == std::string::npos, "3472: no new query key");
+
+        reset_for_test();
+        apply_production_audit_defaults();
+        typed_audit::clear_type_linear_proof_outcome_for_test();
+        typed_audit::clear_type_linear_commit_proof_for_test();
+        CompilerService cs;
+        CHECK(cs.eval("(+ 1 1)").has_value(), "3472 live: warm");
+        (void)cs.eval("(set-code \"(define f 1)\")");
+        (void)cs.eval("(eval-current)");
+        (void)cs.eval("(typecheck-current)");
+        bool ok = true;
+        {
+            Evaluator::MutationBoundaryGuard g(cs.evaluator(), &ok);
+            cs.evaluator().note_linear_synth_hard_fail_pending();
+        }
+        CHECK(!ok, "3472 live: success==false (not only contains(src))");
+        CHECK(last_type_linear_proof_outcome_v_read() == kTypeLinearProofOutcomeReject,
+              "3472 live: last_proof_outcome==Reject");
+        CHECK(cs.evaluator().last_boundary_rollback_stats().children_column_restored,
+              "3472 live: dual-topology restored");
+        CHECK(!linear_move_drop_elision_ok(), "3472 live: !Move/Drop elision");
+        typed_audit::g_linear_ir_fastpath_boundary_depth_override = 1;
+        CHECK(!ir_typed_entry_commit_readiness_ok(), "3472 live: IR typed-entry refused");
+        typed_audit::g_linear_ir_fastpath_boundary_depth_override = -1;
+        apply_dev_audit_defaults();
+        reset_for_test();
     }
 
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);

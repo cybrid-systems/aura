@@ -37,6 +37,7 @@
 import std;
 import aura.compiler.coercion_map;
 import aura.compiler.service;
+import aura.compiler.evaluator;
 import aura.compiler.type_checker;
 import aura.compiler.value;
 import aura.core.type;
@@ -46,8 +47,10 @@ namespace {
 using aura::compiler::capture_type_linear_evolution_snapshot;
 using aura::compiler::CompilerService;
 using aura::compiler::compute_type_linear_commit_health;
+using aura::compiler::Evaluator;
 using aura::compiler::kTypeLinearCommitHealthIssue;
 using aura::compiler::kTypeLinearEvolutionSnapshotIssue;
+using aura::compiler::TypeChecker;
 using aura::compiler::TypeLinearCommitHealthSnapshot;
 namespace typed_audit = aura::compiler::typed_audit;
 using aura::compiler::typed_audit::apply_dev_audit_defaults;
@@ -55,11 +58,14 @@ using aura::compiler::typed_audit::apply_production_audit_defaults;
 using aura::compiler::typed_audit::clear_refined_consistency_drift_for_test;
 using aura::compiler::typed_audit::commit_readiness;
 using aura::compiler::typed_audit::CommitReadinessInput;
+using aura::compiler::typed_audit::ir_typed_entry_commit_readiness_ok;
 using aura::compiler::typed_audit::kRefinedConsistencyGateIssue;
+using aura::compiler::typed_audit::kTypeLinearProofOutcomeReject;
 using aura::compiler::typed_audit::last_proof_goal_fingerprint_v_read;
 using aura::compiler::typed_audit::last_proof_linear_root_count_v_read;
 using aura::compiler::typed_audit::last_proof_live_goal_count_v_read;
 using aura::compiler::typed_audit::last_type_linear_proof_outcome_v_read;
+using aura::compiler::typed_audit::linear_move_drop_elision_ok;
 using aura::compiler::typed_audit::note_refined_consistency_drift;
 using aura::compiler::typed_audit::occurrence_empty_after_fence_total_v_read;
 using aura::compiler::typed_audit::refined_consistency_observe_total_v_read;
@@ -1486,6 +1492,106 @@ static void ac2995_6_health_query_keys() {
     CHECK(href(cs, "schema-2981") == 2981, "2995 AC6: schema-2981 preserved");
 }
 
+// ── Issue #3472: persist-green × Phase-1 linear deny flips success ──
+//   AC1: Production + persist wrote + pending → success false, Reject,
+//        persist empty, dual-topology restored, elision false, IR refused
+//   AC2: #3440 persist-reject consume still SSOT (no second restore)
+//   AC3: happy persist + linear_ok: no extra abort
+//   AC4: Soft/Off no hard flip; no new query schema
+
+static void ac3472_1_persist_green_phase1_deny() {
+    std::println("\n--- #3472 AC1: persist-green × Phase-1 pending → IR refused ---");
+    reset_for_test();
+    apply_production_audit_defaults();
+    typed_audit::clear_type_linear_proof_outcome_for_test();
+    typed_audit::clear_type_linear_commit_proof_for_test();
+    CompilerService cs;
+    CHECK(cs.eval("(+ 1 1)").has_value(), "3472 AC1: warm");
+    (void)cs.eval("(set-code \"(define f 1)\")");
+    (void)cs.eval("(eval-current)");
+    (void)cs.eval("(typecheck-current)");
+    bool ok = true;
+    {
+        Evaluator::MutationBoundaryGuard g(cs.evaluator(), &ok);
+        cs.evaluator().note_linear_synth_hard_fail_pending();
+    }
+    CHECK(!ok, "3472 AC1: success==false");
+    CHECK(last_type_linear_proof_outcome_v_read() == kTypeLinearProofOutcomeReject,
+          "3472 AC1: last_proof_outcome==Reject");
+    if (auto* tc = static_cast<TypeChecker*>(cs.evaluator().commit_type_checker_handle())) {
+        CHECK(tc->constraint_system().occurrence_persist_log_size() == 0,
+              "3472 AC1: persist buffer empty");
+    }
+    CHECK(cs.evaluator().last_boundary_rollback_stats().children_column_restored,
+          "3472 AC1: dual-topology restored");
+    CHECK(!linear_move_drop_elision_ok(), "3472 AC1: !Move/Drop elision");
+    typed_audit::g_linear_ir_fastpath_boundary_depth_override = 1;
+    CHECK(!ir_typed_entry_commit_readiness_ok(), "3472 AC1: IR typed-entry refused");
+    typed_audit::g_linear_ir_fastpath_boundary_depth_override = -1;
+    apply_dev_audit_defaults();
+    reset_for_test();
+}
+
+static void ac3472_2_persist_reject_unchanged() {
+    std::println("\n--- #3472 AC2: #3440 persist-reject still SSOT ---");
+    const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto persist_call = emb.find("aura_outermost_success_persist_occurrence(ev_");
+    const auto consume = emb.find("consume_outermost_persist_reject_needs_restore()");
+    const auto issue = emb.find("Issue #3472");
+    const auto exit_pos = emb.find("ev_->exit_mutation_boundary(success)");
+    CHECK(persist_call != std::string::npos && consume != std::string::npos &&
+              issue != std::string::npos && exit_pos != std::string::npos &&
+              persist_call < consume && consume < issue && issue < exit_pos,
+          "3472 AC2: persist → consume → #3472 check → exit");
+    CHECK(emb.find("abort_restore_dual_topology_3472") == std::string::npos &&
+              emb.find("abort_restore_dual_topology_persist_reject") == std::string::npos,
+          "3472 AC2: no second restore helper");
+    std::size_t occ_n = 0;
+    for (auto p = emb.find("restore_or_clear_occurrence_to_entry("); p != std::string::npos;
+         p = emb.find("restore_or_clear_occurrence_to_entry(", p + 1))
+        ++occ_n;
+    CHECK(occ_n == 3, "3472 AC2: still exactly 3 #3158 abort sites");
+}
+
+static void ac3472_3_happy_stamped() {
+    std::println("\n--- #3472 AC3: happy persist + linear_ok no extra abort ---");
+    reset_for_test();
+    apply_production_audit_defaults();
+    typed_audit::clear_type_linear_proof_outcome_for_test();
+    typed_audit::clear_type_linear_commit_proof_for_test();
+    CompilerService cs;
+    CHECK(cs.eval("(+ 1 1)").has_value(), "3472 AC3: warm");
+    (void)cs.eval("(typecheck-current)");
+    bool ok = true;
+    {
+        Evaluator::MutationBoundaryGuard g(cs.evaluator(), &ok);
+    }
+    CHECK(ok, "3472 AC3: success stays true");
+    CHECK(last_type_linear_proof_outcome_v_read() != kTypeLinearProofOutcomeReject,
+          "3472 AC3: proof not Reject");
+    apply_dev_audit_defaults();
+    reset_for_test();
+}
+
+static void ac3472_4_soft_no_flip() {
+    std::println("\n--- #3472 AC4: Soft/Off no hard flip; no new schema ---");
+    reset_for_test();
+    apply_dev_audit_defaults();
+    CompilerService cs;
+    CHECK(cs.eval("(+ 1 1)").has_value(), "3472 AC4: warm");
+    bool ok = true;
+    {
+        Evaluator::MutationBoundaryGuard g(cs.evaluator(), &ok);
+        cs.evaluator().note_linear_synth_hard_fail_pending();
+    }
+    CHECK(ok, "3472 AC4: Soft does not hard-flip success");
+    const auto q = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
+    CHECK(q.find("schema-3472") == std::string::npos, "3472 AC4: no schema-3472");
+    CHECK(read_file("docs/design/3472-persist-green-phase1-deny.md").empty(),
+          "3472 AC4: no docs/design");
+    CHECK(read_file("tests/compiler/test_issue_3472.cpp").empty(), "3472 AC4: no invent");
+}
+
 } // namespace
 
 int run_test_type_linear_commit_health() {
@@ -1647,6 +1753,11 @@ int run_test_type_linear_commit_health() {
         CHECK(linter_out.find("[OK]") != std::string::npos,
               "#3091 AC6: linter check_type_linear_proof_mid_3091.py stays clean");
     }
+    std::println("\n=== Issue #3472: persist-green × Phase-1 linear deny ===");
+    ac3472_1_persist_green_phase1_deny();
+    ac3472_2_persist_reject_unchanged();
+    ac3472_3_happy_stamped();
+    ac3472_4_soft_no_flip();
     std::println("\n=== #3418: fingerprint cap overflow ===");
     {
         auto cap = read_file("src/compiler/typed_mutation_audit.h");

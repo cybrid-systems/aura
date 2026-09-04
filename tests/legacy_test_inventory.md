@@ -33,9 +33,9 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | Theme | Title | Issues | Root | Domain | Total | Migration priority |
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
 | `arena_compaction` | Arena / compaction / GC | 0 | 0 | 88 | 88 | P0 — well-contained, batch drivers already exist |
-| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 262 | 262 | P0 — high volume; strong domain suite foothold |
+| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 261 | 261 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 108 | 108 | P1 — domain suite already collapses many obs gates |
-| `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 25 | 25 | P1 — small, already partially batched |
+| `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 26 | 26 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 59 | 59 | P1 — domain hygiene suite exists |
 | `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 86 | 86 | P2 — link-profile heavy; migrate AC smoke first |
 | `shape_soa` | Shape / SoA / column layout | 0 | 0 | 55 | 55 | P2 — small-medium; soa_batch precedent |
@@ -1192,13 +1192,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_type_dep_epoch_prune.cpp` (—) [domain_suite, theme_compiler] — AC1: After set_cache_epoch(e+1), edges stamped at epoch e (e>0) drop;
 - `tests/compiler/test_workspace_switch.cpp` (—) [domain_suite, theme_compiler] — AC1: switch binds flat/pool + set_workspace_cow_epoch in one block
 
-### `mutation_dirty` — Mutation / dirty propagation / provenance (262)
+### `mutation_dirty` — Mutation / dirty propagation / provenance (261)
 
 **Target:** tests/core/test_mutation_boundary_batch (domain/ pilot abandoned in R1)
 
 **Priority:** P0 — high volume; strong domain suite foothold
 
-#### domain/ (262)
+#### domain/ (261)
 
 - `tests/compiler/test_abort_ir_cache_fence_first.cpp` (—) [large, domain_suite, theme_compiler] — AC1: All 3 abort entry points in evaluator_mutation_boundary.cpp
 - `tests/core/test_add_node_builder_contract.cpp` (—) [domain_suite, theme_core] — AC1: single-threaded add_* path unchanged (builders work)
@@ -1317,7 +1317,6 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/core/test_last_validated_generation_atomic.cpp` (—) [domain_suite, theme_core] — AC1: 4 threads validate_with_provenance on same ref — no race (TSAN)
 - `tests/compiler/test_linear_batch.cpp` (—) [large, batch_driver, domain_suite, theme_compiler] — test_linear_batch.cpp
 - `tests/compiler/test_linear_enforce_boundary_align.cpp` (—) [domain_suite, theme_compiler] — AC1: Production → process Strict; sandbox-off → Soft; boundary enter
-- `tests/compiler/test_linear_enforce_production_defaults.cpp` (—) [domain_suite, theme_compiler] — AC1: Production defaults → Strict; incomplete trail → hard error
 - `tests/compiler/test_linear_enforce_strict.cpp` (—) [domain_suite, theme_compiler] — AC1: Soft + incomplete trail → incomplete metric; ok continues
 - `tests/compiler/test_linear_enforce_strict_default.cpp` (—) [domain_suite, theme_compiler] — AC1: Default mode is Strict; Soft only via set_linear_enforce_mode(Soft)
 - `tests/compiler/test_linear_force_unified.cpp` (—) [domain_suite, theme_compiler] — AC1: Production/strict synth → force-rollback; soft recovery skipped;
@@ -1580,13 +1579,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_workspace_swap_guard.cpp` (—) [domain_suite, theme_compiler] — tests/compiler/test_workspace_swap_guard.cpp — Issue #1717: synthesize:optimize swap-guard test.
 - `tests/serve/test_yield_while_mutation_held.cpp` (—) [domain_suite, theme_serve] — AC1: Under live outermost Guard, yield() / yield(reason) do not
 
-### `linear_ownership` — Linear ownership / borrow / consume (25)
+### `linear_ownership` — Linear ownership / borrow / consume (26)
 
 **Target:** tests/compiler/test_linear_ownership_batch.cpp (R1 src/-aligned)
 
 **Priority:** P1 — small, already partially batched
 
-#### domain/ (25)
+#### domain/ (26)
 
 - `tests/core/test_capability_single_use_consume.cpp` (—) [large, domain_suite, theme_core] — tests/core/test_capability_single_use_consume.cpp
 - `tests/compiler/test_commit_readiness_score.cpp` (—) [domain_suite, theme_compiler] — AC1: Clean SOLVED + linear + blame + !trunc → bp=10000, ok, allow
@@ -1597,6 +1596,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_lifetime_contract_snapshot.cpp` (—) [domain_suite, theme_compiler] — for pin / linear / EnvFrame / GC-defer / residual contract.
 - `tests/compiler/test_linear_cross_closure.cpp` (—) [large, domain_suite, theme_compiler] — tests/compiler/test_linear_cross_closure.cpp
 - `tests/compiler/test_linear_densify_immediate_revalidate.cpp` (—) [domain_suite, theme_compiler] — AC1: source cites #3361; helper signature accepts optional Evaluator*
+- `tests/compiler/test_linear_enforce_production_defaults.cpp` (—) [domain_suite, theme_compiler] — AC1: Production defaults → Strict; incomplete trail → hard error
 - `tests/compiler/test_linear_escape_commit_hardblock.cpp` (—) [domain_suite, theme_compiler] — AC1: Cross-batch escape → commit fails; blocked + escape counters
 - `tests/compiler/test_linear_misc_batch.cpp` (—) [batch_driver, domain_suite, theme_compiler] — test_linear_misc_batch.cpp — thematic multi-TU batch
 - `tests/compiler/test_linear_ownership_batch.cpp` (—) [large, batch_driver, domain_suite, theme_compiler] — test_linear_ownership_batch.cpp

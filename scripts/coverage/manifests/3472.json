@@ -1,0 +1,49 @@
+{
+  "issue": 3472,
+  "title": "Issue #3472: outermost persist green stamp must flip success on Phase-1 linear deny",
+  "ok": "OK: Issue #3472 persist-green × Phase-1 linear deny — success flips into abort_restore SSOT; Soft/Off observe-only",
+  "checks": [
+    {
+      "ac": "AC1-pre-exit",
+      "path": "src/compiler/evaluator_mutation_boundary.cpp",
+      "contains": [
+        "Issue #3472",
+        "linear_pre_exit_enforced",
+        "linear_synth_hard_fail_pending"
+      ]
+    },
+    {
+      "ac": "AC5-linear",
+      "path": "tests/compiler/test_linear_enforce_production_defaults.cpp",
+      "contains": [
+        "3472 AC1: success==false",
+        "3472 AC3: no extra abort",
+        "3472 AC4: Soft does not hard-flip success"
+      ]
+    },
+    {
+      "ac": "AC5-health",
+      "path": "tests/compiler/test_type_linear_commit_health.cpp",
+      "contains": [
+        "3472 AC1: persist-green × Phase-1 pending → IR refused",
+        "3472 AC2: persist → consume → #3472 check → exit"
+      ]
+    },
+    {
+      "ac": "AC5-persist",
+      "path": "tests/compiler/test_outermost_persist_fail_closed.cpp",
+      "contains": [
+        "3472 live: success==false (not only contains(src))",
+        "3472 live: IR typed-entry refused"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "forbid": [
+        "tests/compiler/test_issue_3472.cpp",
+        "tests/issues/test_issue_3472.cpp",
+        "docs/design/3472-persist-green-phase1-deny.md"
+      ]
+    }
+  ]
+}
