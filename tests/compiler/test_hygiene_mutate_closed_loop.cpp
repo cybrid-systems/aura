@@ -1983,6 +1983,8 @@ static void ac3344_2_existing_closed_loop_prims() {
     CHECK(t.find("mutate:extract-function") != std::string::npos, "3344 AC2: extract-function");
     CHECK(t.find("mutate:inline-call") != std::string::npos, "3344 AC2: inline-call");
     CHECK(t.find("mutate:query-and-replace") != std::string::npos, "3344 AC2: query-and-replace");
+    CHECK(t.find("mutate:query-and-replace-batch") != std::string::npos,
+          "3344 AC2: query-and-replace-batch");
     CHECK(t.find("mutate:tweak-literal") != std::string::npos, "3344 AC2: tweak-literal");
     CHECK(t.find("mutate:atomic-batch") != std::string::npos, "3344 AC2: atomic-batch");
     CHECK(t.find("mutate:record-patch") != std::string::npos, "3344 AC2: record-patch");
@@ -4373,6 +4375,66 @@ static void ac3468_rest_remaining_not_hygiene_blocked() {
     apply_dev_audit_defaults();
 }
 
+// Issue #3509: query-and-replace-batch default-denies MacroIntroduced.
+static void ac3509_batch_default_deny() {
+    std::println("\n--- #3509: query-and-replace-batch MacroIntroduced default-deny ---");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    apply_dev_audit_defaults();
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define base 10)\")").has_value(), "3509: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3509: eval");
+    auto* ws = cs.evaluator().workspace_flat();
+    CHECK(ws != nullptr, "3509: workspace");
+    if (!ws) {
+        apply_dev_audit_defaults();
+        return;
+    }
+    aura::ast::NodeId lit = aura::ast::NULL_NODE;
+    for (aura::ast::NodeId id = 0; id < ws->size(); ++id) {
+        if (ws->is_live_node(id) && ws->tag(id) == aura::ast::NodeTag::LiteralInt &&
+            ws->parent_of(id) != aura::ast::NULL_NODE) {
+            lit = id;
+            break;
+        }
+    }
+    CHECK(lit != aura::ast::NULL_NODE, "3509: parented LiteralInt");
+    if (lit == aura::ast::NULL_NODE) {
+        apply_dev_audit_defaults();
+        return;
+    }
+    ws->set_marker(lit, aura::ast::SyntaxMarker::MacroIntroduced);
+    aura::compiler::macro_exp::g_macro_hygiene_last_limit_reason.store(0,
+                                                                       std::memory_order_relaxed);
+    auto denied = cs.eval("(mutate:query-and-replace-batch "
+                          "(query:where :marker \"MacroIntroduced\") \"99\")");
+    CHECK(denied.has_value(), "3509 AC1: batch returns");
+    CHECK(merr_kind_3027(cs, *denied) == "hygiene-protected" ||
+              merr_kind_3027(cs, *denied) == "hygiene",
+          "3509 AC1: default-deny helper merr");
+    const auto* rs = aura::compiler::macro_exp::hygiene_last_limit_reason_string();
+    CHECK(rs != nullptr && std::string(rs) == "hygiene-macro-introduced",
+          "3509 AC1: hygiene-macro-introduced");
+    CHECK(ws->get(lit).tag == aura::ast::NodeTag::LiteralInt && ws->get(lit).int_value == 10,
+          "3509 AC1: no set_child");
+    aura::compiler::macro_exp::g_macro_hygiene_last_limit_reason.store(0,
+                                                                       std::memory_order_relaxed);
+    auto allowed = cs.eval("(mutate:query-and-replace-batch "
+                           "(query:where :marker \"MacroIntroduced\") \"99\" "
+                           ":allow-macro? #t)");
+    CHECK(allowed.has_value(), "3509 AC2: :allow-macro? #t returns");
+    CHECK(merr_kind_3027(cs, *allowed) != "hygiene-protected" &&
+              merr_kind_3027(cs, *allowed) != "hygiene",
+          "3509 AC2: opt-in is not hygiene deny");
+    const auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
+    CHECK(mut.find("Issue #3509") != std::string::npos, "3509 AC4: cite");
+    CHECK(mut.find("enforce_macro_hygiene_mutate_hotpath") != std::string::npos,
+          "3509 AC3: helper kept");
+    CHECK(read_file("tests/compiler/test_issue_3509.cpp").empty(), "3509 AC5: no test_issue");
+    CHECK(read_file("docs/design/3509-query-and-replace-batch-hygiene.md").empty(),
+          "3509 AC5: no docs/design");
+    apply_dev_audit_defaults();
+}
+
 } // namespace
 
 int main() {
@@ -4471,6 +4533,8 @@ int main() {
     ac3344_3_missing_gate_fails();
     ac3344_4_soft_non_macro_unchanged();
     ac3344_5_source_and_linter();
+    std::println("\n=== Issue #3509: query-and-replace-batch MacroIntroduced default-deny ===");
+    ac3509_batch_default_deny();
     std::println("\n=== Issue #3213: lockless atomic-batch dual-track :allow-macro? ===");
     ac3213_1_source_all_gates_parse();
     ac3213_2_per_op_opt_in_no_global();

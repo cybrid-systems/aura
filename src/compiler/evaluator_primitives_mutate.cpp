@@ -2270,6 +2270,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
     //     <template>                       ; replacement template string
     //     [:validate <type>]               ; optional post-batch validate
     //     [:hygiene-keep :all|:macro-introduced-only|:none]
+    //     [:allow-macro? #t]               ; Issue #3509 default-deny unlock
     //     [summary string])
     //
     // Returns hash:
@@ -2288,10 +2289,9 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
     //   - query_replace_batch_hygiene_preserved_total: bumped per match
     //     kept with MacroIntroduced marker under :hygiene-keep default
     //     (:macro-introduced-only per #2525)
-    // Issue #3344 HYGIENE_EXEMPT: #2525/#2527 :hygiene-keep default
-    // :macro-introduced-only preserves the marker on replace (not a
-    // structural default-deny rewrite). New AST-write prims must still
-    // call reject_structural_macro_hygiene / enforce_macro_hygiene_mutate_hotpath.
+    // Issue #3509 / #3344: default-deny MacroIntroduced via
+    // enforce_macro_hygiene_mutate_hotpath (same face as query-and-replace).
+    // :hygiene-keep is marker policy on the *allowed* path only.
     add_mutate(
         "mutate:query-and-replace-batch",
         [&ev, mev, destroy_defuse_index, safe_str](std::span<const EvalValue> a) -> EvalValue {
@@ -2543,6 +2543,10 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             if (aura::messaging::g_fiber_yield_mutation_boundary)
                 aura::messaging::g_fiber_yield_mutation_boundary();
 
+            // Issue #3509: same opt-in as query-and-replace. Soft extra parse
+            // skipped when global allow is already on (C++ ||).
+            const bool allow_macro_batch =
+                ev.get_allow_macro_mutate() || parse_allow_macro_opt_out(ev, a);
             // Issue #2858: explicit opt-out from auto-restamp cascade
             // (advanced callers). Default = restamp; rare opt-out.
             const bool no_auto_restamp_batch = parse_no_auto_restamp_opt_out(ev, a);
@@ -2573,12 +2577,23 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                     continue;
                 }
                 auto match_id = match_ref.id;
-                bool was_macro =
-                    (flat.marker(match_id) == aura::ast::SyntaxMarker::MacroIntroduced);
+                bool was_macro = false;
+                // Issue #3509: default-deny before :hygiene-keep :none can
+                // drop the marker (that drop is the allowed-path escape).
+                if (auto err = enforce_macro_hygiene_mutate_hotpath(ev, flat, match_id, &match_ref,
+                                                                    allow_macro_batch, false, mev,
+                                                                    &was_macro)) {
+                    flat.rollback_since(initial_log_size);
+                    flat.rollback_atomic_batch();
+                    ok = false;
+                    return *err;
+                }
+                match_id = match_ref.id;
                 if (hygiene_keep_mode == ":none" && was_macro) {
                     // Drop MacroIntroduced marker under :none (issue #2527
                     // explicit opt-out). Marker propagation is the
-                    // SAFE behavior; :none is the escape hatch.
+                    // SAFE behavior; :none is the escape hatch. Allowed path
+                    // only — default-deny already returned above.
                     flat.set_marker(match_id, aura::ast::SyntaxMarker::User);
                 }
                 auto child_idx_opt = parent_child_index_if_attached(flat, match_id);

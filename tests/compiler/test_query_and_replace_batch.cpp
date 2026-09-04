@@ -279,6 +279,27 @@ static void ac2527_8_source_doc_comment() {
     ++g_passed;
 }
 
+// Issue #3509: batch default-denies MacroIntroduced (source-cite + helper).
+static void ac3509_batch_hygiene_gate_source() {
+    std::ifstream in("src/compiler/evaluator_primitives_mutate.cpp");
+    if (!in) {
+        ++g_failed;
+        return;
+    }
+    std::string content((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    CHECK(content.find("\"mutate:query-and-replace-batch\"") != std::string::npos,
+          "3509: batch prim present");
+    CHECK(content.find("allow_macro_batch") != std::string::npos &&
+              content.find("Issue #3509") != std::string::npos,
+          "3509 AC4: batch default-deny cite + allow_macro_batch");
+    auto cite = content.find("Issue #3509");
+    CHECK(cite != std::string::npos &&
+              content.find("enforce_macro_hygiene_mutate_hotpath", cite) != std::string::npos,
+          "3509 AC4: batch hits enforce helper");
+    CHECK(content.find("\"mutate:query-and-replace\"") != std::string::npos,
+          "3509 AC3: single query-and-replace kept");
+}
+
 } // namespace
 
 int run_test_query_and_replace_batch() {
@@ -294,6 +315,7 @@ int run_test_query_and_replace_batch() {
     ac2527_6_three_counters_present();
     ac2527_7_query_surface_keys();
     ac2527_8_source_doc_comment();
+    ac3509_batch_hygiene_gate_source();
     std::print("=== Total: {} passed, {} failed ===\n", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
