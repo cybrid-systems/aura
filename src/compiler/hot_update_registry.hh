@@ -147,7 +147,8 @@ public:
     // region / provider-not-wired gates stay inside aura_reemit_aot_for_dirty
     // (low-level C ABI used only from this facade + explicit raw tests).
     // On n>0, last_reemit_success coverage matches the Registry pipeline
-    // (note_reemit_success_coverage + only_covered). n==0: no extra stamp.
+    // (override, else last_force_jit_reason group ∩ force — #3466).
+    // n==0: no extra stamp.
     enum class ReemitReason : std::uint8_t {
         Cascade = 0,
         BoundaryExit = 1,
@@ -909,7 +910,8 @@ private:
     // Issue #2895 / #2949: coverage + partial re-promote.
     //   last_reemit_success_region_mask_: force-JIT reason bits covered by
     //     the last clean reemit success (stamped when successes > 0 and
-    //     demoted != 0, or via note_reemit_success_coverage).
+    //     demoted != 0 from override or last_force_jit_reason group —
+    //     #3466; or via note_reemit_success_coverage).
     //     Issue #2977: residual remount prefer ORs this with force_jit.
     //     Issue #2978: reemit-success sync covered-named remount reads this.
     //   force_jit_repromote_only_covered_bits_: sticky value when override
@@ -921,8 +923,8 @@ private:
     //   force_jit_repromote_partial_total_: bumped when a window clear
     //     leaves a non-empty residual force mask.
     //   reemit_success_coverage_override_: when non-zero, success stamps
-    //     use this mask instead of the full demoted mask (sticky until
-    //     wholesale clear / reset — Agent / test injection).
+    //     use this mask (sticky until wholesale clear / reset). When 0,
+    //     pipeline maps last_force_jit_reason ∩ live force (#3466).
     std::atomic<std::uint64_t> last_reemit_success_region_mask_{0};
     // Issue #3229: bounded define-id side set for hashed-name coverage.
     std::atomic<std::uint32_t> relower_success_define_ids_[kRelowerSuccessDefineCap]{};

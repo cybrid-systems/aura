@@ -112,18 +112,14 @@ std::uint64_t HotUpdateRegistry::decide_and_reemit(std::uint64_t defuse_version,
             // the pipeline would have (override or full demoted mask).
             if (last_reemit_success_region_mask_.load(std::memory_order_relaxed) == 0) {
                 // Issue #3413: skip the fallback `covered = demoted` stamp.
-                // Issue #3445: on_reemit_pipeline_call stamps last_reemit_success
-                // only from Agent `reemit_success_coverage_override_`
-                // (reason-group bits), never `candidates & emit_region_mask_`
+                // Issue #3445: never stamp `candidates & emit_region_mask_`
                 // (count is not a mask) and never the full demoted mask.
+                // Issue #3466: the pipeline stamps last_success from Agent
+                // override or last_force_jit_reason's reason-group bit.
                 // If last_success is still 0 here, there were no successes
-                // to claim coverage for — stamping the full demoted mask
-                // would falsely claim all groups covered; residual_force_mask
-                // goes 0 even for groups never re-emitted, breaking
-                // only_covered re-promote + storm-clear min-dirty. AC1 AC3:
-                // residual keeps uncovered bits so production only_covered
-                // re-promote clears only the emitted bits and storm-clear
-                // min-dirty still drives for the uncovered bit.
+                // to claim coverage for — do not invent the full demoted
+                // mask (residual_force_mask would go 0 for groups never
+                // re-emitted).
             }
         }
     }
@@ -249,13 +245,18 @@ void HotUpdateRegistry::on_reemit_pipeline_call(std::uint64_t candidates,
             // `covered = candidates & emit_region_mask_` (count ∩ emit
             // can set low reason bits by accident, e.g. 3 & mask) and
             // do not fall back to the full demoted mask (same over-cover
-            // #3413 named). Stamp only Agent opt-in
-            // `reemit_success_coverage_override_` so only_covered /
-            // residual_force stay in the same domain. Relower hashed-name
-            // bits stay on the define side set (#3136 / #3229), not this
-            // reason word. Sticky override is kept until wholesale
-            // clear / reset (#2895 multi-success window).
-            const auto covered = reemit_success_coverage_override_.load(std::memory_order_relaxed);
+            // #3413 named). Relower hashed-name bits stay on the define
+            // side set (#3136 / #3229), not this reason word.
+            // Issue #3466: Agent override stays sticky opt-in and wins
+            // when set. When unset, stamp the last_force_jit_reason
+            // group bit ∩ live force mask so production only_covered
+            // can re-promote the bit this emit actually healed.
+            auto covered = reemit_success_coverage_override_.load(std::memory_order_relaxed);
+            if (covered == 0) {
+                const auto fail = static_cast<AotReloadFail>(
+                    last_force_jit_reason_.load(std::memory_order_relaxed));
+                covered = aot_reload_fail_to_force_jit_mask(fail) & demoted;
+            }
             if (covered != 0)
                 last_reemit_success_region_mask_.store(covered, std::memory_order_relaxed);
         }

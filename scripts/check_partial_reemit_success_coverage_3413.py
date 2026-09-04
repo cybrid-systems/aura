@@ -7,7 +7,8 @@
 # breaking only_covered re-promote + storm-clear min-dirty.
 #
 # AC1 — decide_and_reemit skips the fallback `covered = demoted` stamp.
-#       Pipeline reason-domain stamp is #3445 (override-only); this
+#       Pipeline reason-domain stamp is #3445/#3466 (override, else
+#       last_force_jit_reason group); this
 #       issue only closed the facade fallback. Partial success must
 #       not over-cover residual.
 # AC2 — residual_force_mask() still exposes uncovered bits so

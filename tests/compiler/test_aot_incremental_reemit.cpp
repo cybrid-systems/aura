@@ -2019,12 +2019,15 @@ int main() {
         CHECK(defuse_bit == (1ULL << 0), "3445 AC1: Defuse is reason bit 0");
         CHECK(env_bit == (1ULL << 1), "3445 AC1: Env is reason bit 1");
         // Without override, candidates=3 ∩ emit_mask(~0) == 3 would have
-        // set bits 0+1. Pipeline must leave last_success untouched.
+        // set bits 0+1. #3445: must not invent bit 0 from the count.
+        // #3466: last_force_jit_reason is Env → stamp bit 1 only.
         CHECK(reg.last_reemit_success_region_mask() == 0, "3445 AC1: last_success starts 0");
         reg.on_reemit_pipeline_call(/*candidates=*/3, /*successes=*/1);
-        CHECK(reg.last_reemit_success_region_mask() == 0,
-              "3445 AC1: 3-candidate emit does not stamp count ∩ emit (bit 0)");
-        CHECK(reg.residual_force_mask() == both, "3445 AC1: residual still Defuse+Env");
+        CHECK(reg.last_reemit_success_region_mask() == env_bit,
+              "3445 AC1: 3-candidate emit stamps last_force_jit_reason (Env), not count ∩ emit");
+        CHECK((reg.last_reemit_success_region_mask() & defuse_bit) == 0,
+              "3445 AC1: bit 0 not invented from candidates=3");
+        CHECK(reg.residual_force_mask() == defuse_bit, "3445 AC1: residual Defuse (Env covered)");
 
         // Agent opt-in covers bit 0 only; pipeline(3,1) must not OR extra bits.
         reg.note_reemit_success_coverage(defuse_bit);
@@ -2157,6 +2160,140 @@ int main() {
         CHECK(read_file("src/compiler/evaluator_primitives_mutate.cpp").find("schema-3445") ==
                   std::string::npos,
               "3445 AC6: no new query key");
+
+        ctr.production_defaults_active.store(prod_save, std::memory_order_relaxed);
+        reg.on_reload_success();
+        reg.reset_force_jit_repromote_for_test();
+    }
+
+    // ── #3466: #3445 residual — production path must stamp the reason-group
+    // this emit healed when Agent override is unset. Keep the #3445 bans
+    // (no count∩mask, no full demoted fallback).
+    {
+        using aura::compiler::hot_update_registry;
+        auto& reg = hot_update_registry();
+        auto& ctr = aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+        const auto prod_save = ctr.production_defaults_active.load(std::memory_order_relaxed);
+        const auto defuse_bit = aot_reload_fail_to_force_jit_mask(AotReloadFail::Defuse);
+        const auto env_bit = aot_reload_fail_to_force_jit_mask(AotReloadFail::Env);
+        const auto both = defuse_bit | env_bit;
+
+        std::println("\n--- #3466 AC1/AC2: success stamps last_force_jit_reason bit 0 ---");
+        reg.on_reload_success();
+        reg.reset_force_jit_repromote_for_test();
+        reg.set_force_jit_repromote_window(3);
+        reg.set_force_jit_repromote_only_covered_bits(true);
+        reg.set_force_jit_repromote_require_pending_idle(false);
+        // Env then Defuse: force {0,1}, last reason maps to bit 0.
+        reg.on_force_jit_for_reason(AotReloadFail::Env);
+        reg.on_force_jit_for_reason(AotReloadFail::Defuse);
+        CHECK((reg.force_jit_regions_mask() & both) == both, "3466 AC1: Defuse+Env demoted");
+        CHECK(reg.last_reemit_success_region_mask() == 0, "3466 AC1: last_success starts 0");
+        CHECK(reg.last_force_jit_reason() == static_cast<std::uint8_t>(AotReloadFail::Defuse),
+              "3466 AC1: last force-JIT reason is Defuse (bit 0)");
+        reg.on_reemit_pipeline_call(/*candidates=*/1, /*successes=*/1);
+        CHECK(reg.last_reemit_success_region_mask() == defuse_bit,
+              "3466 AC1: last_success has bit 0 only");
+        CHECK(reg.residual_force_mask() == env_bit, "3466 AC1: residual still bit 1");
+        CHECK(reg.last_reemit_success_region_mask() != 0,
+              "3466 AC2: success_count>0 does not leave last_success==0");
+
+        std::println("\n--- #3466 AC3: only_covered re-promote clears only stamped bit ---");
+        reg.on_reload_success();
+        reg.reset_force_jit_repromote_for_test();
+        reg.set_force_jit_repromote_window(1);
+        reg.set_force_jit_repromote_only_covered_bits(true);
+        reg.set_force_jit_repromote_require_pending_idle(false);
+        reg.on_force_jit_for_reason(AotReloadFail::Env);
+        reg.on_force_jit_for_reason(AotReloadFail::Defuse);
+        const auto part0 = reg.force_jit_repromote_partial_total();
+        reg.on_reemit_pipeline_call(1, 1); // window=1 → partial clear of bit 0
+        CHECK((reg.force_jit_regions_mask() & defuse_bit) == 0,
+              "3466 AC3: covered Defuse re-promoted");
+        CHECK((reg.force_jit_regions_mask() & env_bit) != 0,
+              "3466 AC3: uncovered Env stays force-JIT");
+        CHECK(reg.residual_force_mask() == env_bit, "3466 AC3: residual Env after only_covered");
+        CHECK(reg.force_jit_repromote_partial_total() == part0 + 1, "3466 AC3: partial_total +1");
+
+        std::println("\n--- #3466 AC4: residual drives min-dirty; playbook hint non-Idle ---");
+        ReloadRecoveryPlaybookInput pin{};
+        pin.force_jit_regions_mask = both;
+        pin.last_reemit_success_region_mask = defuse_bit;
+        pin.recovery_active = 1;
+        const auto pb = aura_reload_recovery_playbook_decide(pin);
+        CHECK(pb.residual_force_mask == env_bit, "3466 AC4: playbook residual Env");
+        CHECK(pb.playbook_hint_min_dirty_reemit == 1, "3466 AC4: hint non-Idle while residual");
+        CHECK(pb.action != ReloadRecoveryPlaybookAction::Idle,
+              "3466 AC4: playbook action not Idle (observe-only)");
+        const char* cov_save = std::getenv("AURA_COVERAGE_VERIFY_MIN_DIRTY");
+        const std::string cov_prev = cov_save ? cov_save : "";
+        const char* sb_save = std::getenv("AURA_SANDBOX");
+        const std::string sb_prev = sb_save ? sb_save : "";
+        ::setenv("AURA_COVERAGE_VERIFY_MIN_DIRTY", "1", 1);
+        ::unsetenv("AURA_SANDBOX");
+        ctr.production_defaults_active.store(1, std::memory_order_relaxed);
+        reg.reset_coverage_verify_for_test();
+        reg.reset_exhausted_min_dirty_retry_for_test();
+        reg.reset_reemit_boundary_handshake_for_test();
+        reg.set_exhausted_min_dirty_retry_cap(3);
+        CHECK(reg.residual_force_mask() == env_bit, "3466 AC4: live residual Env");
+        const auto sched0 = reg.coverage_verify_scheduled_total();
+        const bool drove = reg.maybe_coverage_verify_min_dirty();
+        CHECK(drove, "3466 AC4: residual min-dirty still drives");
+        CHECK(reg.coverage_verify_scheduled_total() == sched0 + 1, "3466 AC4: scheduled +1");
+        CHECK((reg.force_jit_regions_mask() & env_bit) != 0,
+              "3466 AC4: uncovered Env retained after min-dirty seed");
+        ctr.production_defaults_active.store(prod_save, std::memory_order_relaxed);
+        if (cov_prev.empty())
+            ::unsetenv("AURA_COVERAGE_VERIFY_MIN_DIRTY");
+        else
+            ::setenv("AURA_COVERAGE_VERIFY_MIN_DIRTY", cov_prev.c_str(), 1);
+        if (sb_prev.empty())
+            ::unsetenv("AURA_SANDBOX");
+        else
+            ::setenv("AURA_SANDBOX", sb_prev.c_str(), 1);
+
+        std::println("\n--- #3466 AC5: 3-candidate emit does not invent bit 0 from count ---");
+        reg.on_reload_success();
+        reg.reset_force_jit_repromote_for_test();
+        reg.set_force_jit_repromote_window(3);
+        reg.on_emit_region_mask_set(~0ULL);
+        reg.on_force_jit_for_reason(AotReloadFail::Defuse);
+        reg.on_force_jit_for_reason(AotReloadFail::Env); // last reason → bit 1
+        CHECK(reg.last_reemit_success_region_mask() == 0, "3466 AC5: last_success starts 0");
+        reg.on_reemit_pipeline_call(/*candidates=*/3, /*successes=*/1);
+        CHECK(reg.last_reemit_success_region_mask() == env_bit,
+              "3466 AC5: stamps Env (last reason), not candidates=3");
+        CHECK((reg.last_reemit_success_region_mask() & defuse_bit) == 0,
+              "3466 AC5: bit 0 not set because 3 & mask != 0");
+
+        std::println("\n--- #3466 AC6: Soft / Off / idle force mask → zero extra stores ---");
+        reg.on_reload_success();
+        reg.reset_force_jit_repromote_for_test();
+        CHECK(reg.force_jit_regions_mask() == 0, "3466 AC6: force mask idle");
+        const auto last0 = reg.last_reemit_success_region_mask();
+        reg.on_reemit_pipeline_call(3, 1);
+        CHECK(reg.last_reemit_success_region_mask() == last0,
+              "3466 AC6: idle mask does not stamp last_success");
+
+        std::println("\n--- #3466 AC7: non-duplicative vs closed #3445/#3413 ---");
+        const auto hot = read_file("src/compiler/hot_update_registry.cpp");
+        CHECK(hot.find("Issue #3466") != std::string::npos, "3466 AC7: pipeline cites #3466");
+        CHECK(hot.find("Issue #3445") != std::string::npos, "3466 AC7: #3445 bans kept");
+        CHECK(hot.find("Issue #3413") != std::string::npos, "3466 AC7: #3413 skip kept");
+        CHECK(hot.find("covered = candidates & emit_region_mask_.load") == std::string::npos,
+              "3466 AC7: count ∩ emit stamp still deleted");
+        CHECK(hot.find("aot_reload_fail_to_force_jit_mask(fail) & demoted") != std::string::npos,
+              "3466 AC7: reason-group stamp ∩ live force mask");
+        CHECK(read_file("docs/design/3466-pipeline-reason-heal.md").empty(),
+              "3466 AC7: no docs/design/3466-* per #1655");
+        CHECK(read_file("tests/compiler/test_issue_3466.cpp").empty() &&
+                  read_file("tests/issues/test_issue_3466.cpp").empty() &&
+                  read_file("tests/core/test_issue_3466.cpp").empty(),
+              "3466 AC7: no test_issue_3466.cpp per #81934");
+        CHECK(read_file("src/compiler/evaluator_primitives_mutate.cpp").find("schema-3466") ==
+                  std::string::npos,
+              "3466 AC7: no new query key");
 
         ctr.production_defaults_active.store(prod_save, std::memory_order_relaxed);
         reg.on_reload_success();
