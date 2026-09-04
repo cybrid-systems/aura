@@ -1774,6 +1774,47 @@ static void ac2928_1_residual_tick_clears_must_deopt() {
     aura_test_reset_residual_remount_state();
 }
 
+static void ac3503_1_stale_bridge_must_deopt_stays() {
+    std::println("\n--- #3503 AC1: remount ok + C-bridge behind → MustDeopt stays ---");
+    aura_test_reset_residual_remount_state();
+    aura_test_set_residual_remount_budget(32);
+    const auto c0 = aura_get_current_bridge_epoch();
+    aura_set_current_bridge_epoch(c0 == 0 ? 1 : c0);
+    const auto cid = aura_alloc_closure(/*func_id=*/0);
+    CHECK(cid >= 0, "3503 AC1: alloc");
+    const auto b0 = aura_get_closure_bridge_epoch(cid);
+    aura_closure_set_must_deopt(cid, 1);
+    aura_set_current_bridge_epoch(b0 + 11);
+    aura_residual_live_closure_remount_tick(32);
+    CHECK(aura_closure_get_must_deopt(cid) == 1, "3503 AC1: MustDeopt stays when C-bridge behind");
+    CHECK(aura_get_closure_bridge_epoch(cid) == b0, "3503 AC1: C-bridge stamp not restamped");
+    aura_set_current_bridge_epoch(c0);
+    aura_test_reset_residual_remount_state();
+}
+
+static void ac3503_5_source_no_invent() {
+    std::println("\n--- #3503 AC3/AC5: remap-retarget restamp kept; no invent ---");
+    const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
+    CHECK(rt.find("note_capture_remount_ok_keep_epochs_unlocked") != std::string::npos,
+          "3503 AC5: helper");
+    CHECK(rt.find("Issue #3503") != std::string::npos, "3503 AC5: cite");
+    CHECK(rt.find("stamp_closure_table_epoch_locked(cid)") != std::string::npos,
+          "3503 AC3: remap-retarget still stamps table");
+    const auto remap = rt.find("g_closure_func_ids[cid] = static_cast<std::int64_t>(match_id)");
+    CHECK(remap != std::string::npos, "3503 AC3: remap retarget");
+    if (remap != std::string::npos) {
+        const auto win = rt.substr(remap, 800);
+        CHECK(win.find("jit_closure_bridge_stamp_now()") != std::string::npos,
+              "3503 AC3: remap restamps C-bridge");
+        CHECK(win.find("g_closure_must_deopt[cid] = 0") != std::string::npos,
+              "3503 AC3: remap clears MustDeopt");
+    }
+    CHECK(read_file("tests/compiler/test_issue_3503.cpp").empty(), "3503 AC5: no test_issue_3503");
+    CHECK(read_file("docs/design/3503-remount-wash.md").empty(), "3503 AC5: no docs/design");
+    const auto q = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
+    CHECK(q.find("schema-3503") == std::string::npos, "3503 AC5: no new query key");
+}
+
 static void ac2928_2_storm_skip() {
     std::println("\n--- #2928 AC2: hard storm / throttle → residual walk skips ---");
     aura_test_reset_residual_remount_state();
@@ -2764,6 +2805,8 @@ int run_test_anonymous_residual_stable_id_policy() {
     ac3342_5_source_and_linter();
     std::println("\n=== Issue #2928: residual remount round-robin ===");
     ac2928_1_residual_tick_clears_must_deopt();
+    ac3503_1_stale_bridge_must_deopt_stays();
+    ac3503_5_source_no_invent();
     ac2928_2_storm_skip();
     ac2928_3_reemit_success_unchanged();
     ac2928_4_soft_budget_zero();
