@@ -1203,6 +1203,21 @@ def cmd_lint():
             "Issue #2764 IR/JIT MacroIntroduced enforcement linter failed — run python3 scripts/coverage/checks/check_ir_jit_macro_marker_enforcement_2764.py"
         )
         return r
+    # Issue #3475: production MacroIntroduced refuse native when dirty /
+    # generation is inconsistent with the side-table (lost kMacroExpansion).
+    # Ancestor walk cap fail-closes instead of emitting User. Soft/Off keep
+    # consult + dirty-only deopt. Extends test_jit_macro_deopt_hygiene
+    # (#81967); no docs/design/; no new query key.
+    mi3475_script = COVERAGE_CHECKS / "check_macro_introduced_native_fail_closed_3475.py"
+    if not mi3475_script.exists():
+        fail(f"missing {mi3475_script}")
+        return 1
+    r = run([sys.executable, str(mi3475_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3475 MacroIntroduced native fail-closed linter failed — run python3 scripts/coverage/checks/check_macro_introduced_native_fail_closed_3475.py"
+        )
+        return r
     # Issue #3064: InlinePass refuses MacroIntroduced body instructions.
     # Extends test_jit_macro_introduced_preserve (#81967); no docs/design.
     imb3064_script = COVERAGE_CHECKS / "check_inline_macro_body_marker_3064.py"

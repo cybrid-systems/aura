@@ -34,6 +34,7 @@ extern "C" void aura_hygiene_ir_macro_marker_inc();
 extern "C" void aura_hygiene_ir_provenance_stamped_inc();
 extern "C" void aura_hygiene_ir_ancestor_propagation_inc();
 extern "C" std::uint64_t aura_hygiene_ir_ancestor_propagation_total();
+extern "C" int aura_macro_hygiene_production_fail_closed(void);
 
 // Issue #2764: every IR emission from AST must stamp source_marker from
 // the source node OR any ancestor MacroIntroduced (hygiene envelope).
@@ -48,7 +49,8 @@ propagate_marker_from_ast(const aura::ast::FlatAST& flat, aura::ast::NodeId id) 
     if (mk == aura::ast::SyntaxMarker::MacroIntroduced)
         return mk;
     aura::ast::NodeId cur = id;
-    for (std::uint32_t d = 0; d < kMaxAncestorWalk; ++d) {
+    std::uint32_t d = 0;
+    for (; d < kMaxAncestorWalk; ++d) {
         auto p = flat.parent_of(cur);
         if (p == aura::ast::NULL_NODE || p == cur || p >= flat.size())
             break;
@@ -58,6 +60,16 @@ propagate_marker_from_ast(const aura::ast::FlatAST& flat, aura::ast::NodeId id) 
             return aura::ast::SyntaxMarker::MacroIntroduced;
         }
         cur = p;
+    }
+    // Issue #3475: walk cap with unwalked ancestors — production must
+    // not silently emit User. Soft/Off keep the prefix result (User).
+    if (d == kMaxAncestorWalk && aura_macro_hygiene_production_fail_closed() != 0) {
+        auto p = flat.parent_of(cur);
+        if (p != aura::ast::NULL_NODE && p != cur && p < flat.size()) {
+            hygiene_ir_ancestor_propagation_total.fetch_add(1, std::memory_order_relaxed);
+            aura_hygiene_ir_ancestor_propagation_inc();
+            return aura::ast::SyntaxMarker::MacroIntroduced;
+        }
     }
     return mk;
 }
