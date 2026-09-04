@@ -65,7 +65,7 @@ def main() -> int:
         if "reemit_success_coverage_override_" not in body:
             fails.append("AC1: pipeline must load reemit_success_coverage_override_")
         if "if (covered != 0)" not in body:
-            fails.append("AC1: pipeline must stamp last_success only when override != 0")
+            fails.append("AC1: pipeline must store last_success only when covered != 0")
         if "last_reemit_success_region_mask_.store(covered" not in body:
             fails.append("AC1: pipeline must store override into last_reemit_success")
         if "if (demoted != 0)" not in body:

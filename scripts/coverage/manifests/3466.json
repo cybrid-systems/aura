@@ -1,0 +1,37 @@
+{
+  "issue": 3466,
+  "title": "Issue #3466: pipeline stamps last_force_jit_reason group on reemit success",
+  "ok": "OK: Issue #3466 production only_covered has a reason-group writer — override wins; else last_force_jit_reason ∩ force; #3445 bans kept",
+  "checks": [
+    {
+      "ac": "AC1-stamp",
+      "path": "src/compiler/hot_update_registry.cpp",
+      "contains": [
+        "Issue #3466",
+        "last_force_jit_reason_",
+        "aot_reload_fail_to_force_jit_mask",
+        "reemit_success_coverage_override_"
+      ]
+    },
+    {
+      "ac": "AC7-tests",
+      "path": "tests/compiler/test_aot_incremental_reemit.cpp",
+      "contains": [
+        "3466 AC1: last_success has bit 0 only",
+        "3466 AC2: success_count>0 does not leave last_success==0",
+        "3466 AC3: uncovered Env stays force-JIT",
+        "3466 AC4: residual min-dirty still drives",
+        "3466 AC5: bit 0 not set because 3 & mask != 0",
+        "3466 AC6: idle mask does not stamp last_success"
+      ]
+    },
+    {
+      "ac": "AC7",
+      "forbid": [
+        "tests/compiler/test_issue_3466.cpp",
+        "tests/issues/test_issue_3466.cpp",
+        "docs/design/3466-pipeline-reason-heal.md"
+      ]
+    }
+  ]
+}
