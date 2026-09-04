@@ -4029,6 +4029,10 @@ struct WorkflowFailurePolicy {
 
 inline constexpr int kWorkflowFailurePolicyIssue = 2756;
 inline constexpr int kWorkflowApplySugarIssue = 2852; // #2852 supervised-batch / apply_workflow
+// Issue #3495: Aura orch:supervise-batch / run-workflow residual arm
+// call apply_workflow / apply_residual_reclaim_action (not a hardcoded
+// observe hash). Soft / Report / Defer still observe.
+inline constexpr int kSuperviseBatchApplyIssue = 3495;
 // Issue #2843: Aura language surface for WorkflowFailurePolicy (compose prim).
 inline constexpr int kWorkflowComposeAuraIssue = 2843;
 // Issue #2974: multi-stage workflow primitive (ordered stages over

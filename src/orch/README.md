@@ -447,8 +447,10 @@ Aura entry point:
 
 Defaults: `stall_timeout_ms=0`, `watch_scope=true`. Soft / sandbox=off
 never hard-denies beyond the existing `watch_all` / `parallel_intend` gates
-(AC6). Regression: `tests/orch/test_failure_policy_bridge` (extended
-in-place per #81967 — adds `ac2852_*` tests).
+(AC6). Issue #3495: the Aura prim calls `apply_workflow` (policy hash is
+not dropped; `residual-action` is the helper string). Regression:
+`tests/orch/test_failure_policy_bridge` (extended in-place per #81967 —
+adds `ac2852_*` / `ac3495_*` tests).
 
 | Compose input | Batch (`to_parallel_policy`) | Agent (`to_agent_policy`) |
 |---------------|------------------------------|---------------------------|
