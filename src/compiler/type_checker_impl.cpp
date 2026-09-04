@@ -2687,6 +2687,18 @@ SolveResult ConstraintSystem::solve_delta_impl(std::vector<Constraint>* unresolv
         clear_touched_roots();
         return SolveResult::CONFLICT;
     }
+    // Issue #3511: production/Full truncated clean reverify is not SOLVED.
+    // Soft still observe-allows (wrapper #3477 hard=false). Drain remains
+    // stamp authority for leftover pending.
+    {
+        const bool hard = aura::compiler::typed_audit::production_defaults_active() ||
+                          aura::compiler::typed_audit::get_strategy() ==
+                              aura::compiler::typed_audit::AuditStrategy::Full;
+        if (hard && last_reverify_truncated_) {
+            clear_touched_roots();
+            return escalate_if_production(SolveResult::TIMEOUT, unresolved_out);
+        }
+    }
     clear_touched_roots();
 
     // Mark dirty constraints clean. Issue #1528: when the local
@@ -2902,7 +2914,17 @@ ConstraintSystem::try_instance_repair_before_full(std::vector<Constraint>* unres
     if (unprocessed)
         return SolveResult::TIMEOUT;
 
-    // Local cone cleared — commit dirty bits and drain pending backlog.
+    // Issue #3511: local cone SOLVED is not finally SOLVED until clean
+    // dep-closure reverify. Keep pending/touched as reverify seeds.
+    // Soft: truncated reverify still SOLVED (observe). Production/Full:
+    // truncated or leftover pending → TIMEOUT so escalate_if_production
+    // full-solves. Conflict on clean EQUAL after INSTANCE unify is real.
+    if (!reverify_clean_constraints_for_touched())
+        return SolveResult::CONFLICT;
+    if (hard && (last_reverify_truncated_ || !pending_full_solve_roots_.empty()))
+        return SolveResult::TIMEOUT;
+
+    // Local cone + clean closure cleared — commit dirty bits and drain pending.
     mark_clean();
     pending_full_solve_roots_.clear();
     clear_touched_roots();

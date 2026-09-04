@@ -542,6 +542,9 @@ export inline constexpr SolverBudget kSolverBudgetDefault{};
 export inline constexpr int kSolverBudgetIssue = 2900;
 // Issue #2963: residual production prefer-instance-repair-before-full.
 export inline constexpr int kSolverBudgetInstanceRepairIssue = 2963;
+// Issue #3511: instance-repair SOLVED must reverify clean dep-closure;
+// production truncated BFS cap is TIMEOUT not SOLVED.
+export inline constexpr int kInstanceRepairCleanReverifyIssue = 3511;
 // Issue #2994: Agent-controlled locality residual budget.
 export inline constexpr int kSolverBudgetLocalityIssue = 2994;
 
