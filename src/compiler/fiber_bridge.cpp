@@ -64,6 +64,14 @@ __attribute__((weak)) std::uint64_t aura_mutation_mirror_inconsistency_soft_tota
 // Issue #2347: weak no-op when Evaluator not linked (mailbox Strict force path).
 extern "C" __attribute__((weak)) void aura_evaluator_mark_outermost_mutation_failed() noexcept {}
 
+// Issue #3485: mailbox SLO live face for hold-budget. Strong def in
+// fiber.cpp (includes mailbox). Light-link: p99 face absent → not over.
+namespace aura::compiler {
+    __attribute__((weak)) bool mutation_hold_mailbox_slo_live() noexcept {
+        return false;
+    }
+} // namespace aura::compiler
+
 // Issue #2720: P0 holder-degrade weak stub (same pattern as
 // aura_evaluator_mark_outermost_mutation_failed above — provided when
 // fiber_bridge.cpp is linked without evaluator_fiber_mutation.cpp).

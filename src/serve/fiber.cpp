@@ -12,6 +12,7 @@
 #include "../compiler/shape.h"                // Issue #570: record_shape_fiber_refresh
 #include "../compiler/typed_mutation_audit.h" // Issue #2853: production_residual_policy_locked()
 #include "../compiler/mutation_hold_budget.h" // Issue #3071: in-body cancel-arm watchdog
+#include "multi_fiber_mailbox.h"              // Issue #3485: mailbox_hold_slo_live_signal SSOT
 #include "runtime_production_abi.h"           // Issue #3325: production multi-worker latch
 #include "aura_platform.h"
 #include "core/gc_hooks.h"      // Issue #1364
@@ -30,6 +31,28 @@ import std;
 #if AURA_HAVE_EVENTFD
 #include <sys/eventfd.h>
 #endif
+
+namespace aura::compiler {
+
+// Issue #3485: mailbox p99/SLO live face for mutation_hold_budget_check.
+// p99==0: one relaxed load, no hist walk, no throttle consult (throttle
+// already denies new admit at #2587). p99 hot: #3002 SSOT signal.
+bool mutation_hold_mailbox_slo_live() noexcept {
+    using aura::serve::mf_mailbox::g_mf_mailbox_stats;
+    using aura::serve::mf_mailbox::mailbox_hold_slo_live_signal;
+    using aura::serve::mf_mailbox::sample_mailbox_hold_slo_live;
+    const auto p99 =
+        g_mf_mailbox_stats.mailbox_under_boundary_wait_us_p99.load(std::memory_order_relaxed);
+    if (p99 == 0)
+        return false;
+    std::uint64_t sampled_p99 = p99;
+    std::uint64_t slo = 0;
+    bool throttled = false;
+    sample_mailbox_hold_slo_live(sampled_p99, throttled, slo);
+    return mailbox_hold_slo_live_signal(sampled_p99, slo, throttled);
+}
+
+} // namespace aura::compiler
 
 namespace aura::serve {
 

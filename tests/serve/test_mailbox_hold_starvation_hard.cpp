@@ -2535,6 +2535,126 @@ static void ac3289_1_mailbox_slo_repoll_source() {
           "3289 AC1: no tests/issues/test_issue_3289.cpp per #81967");
 }
 
+// ── Issue #3485: mailbox p99/SLO live must OR into mutation_hold_budget_check
+//    so a holder whose duration is still under hold SLO is over_budget when
+//    mailbox wait p99 is hot. try_acquire then rejects new admit + degrades
+//    the holder (existing path). Soft observe-only. No new query key.
+static void ac3485_1_p99_hot_held_over_budget() {
+    std::println("\n--- #3485 AC1: p99 hot + held → budget over ---");
+    using aura::compiler::clear_mutation_hold_budget_reject_for_test;
+    using aura::compiler::mutation_hold_budget_check;
+    using aura::compiler::mutation_hold_budget_reject_enabled;
+    using aura::compiler::mutation_hold_budget_reject_total_v_read;
+    using aura::compiler::mutation_hold_budget_us;
+    using aura::compiler::mutation_hold_live_note_enter;
+    using aura::compiler::mutation_hold_live_note_exit;
+    using aura::compiler::mutation_hold_live_reset_for_test;
+    using aura::compiler::mutation_hold_steady_ns_now;
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+
+    mutation_hold_live_reset_for_test();
+    clear_mutation_hold_budget_reject_for_test();
+    g_mf_mailbox_stats.mailbox_under_boundary_wait_us_p99.store(0, std::memory_order_relaxed);
+    g_mf_mailbox_stats.agent_throttle_for_mailbox_starvation.store(0, std::memory_order_relaxed);
+    ::setenv("AURA_MAILBOX_UNDER_BOUNDARY_WAIT_SLO_US", "1000", 1);
+
+    constexpr std::uint64_t kHolder = 3485;
+    mutation_hold_live_note_enter(kHolder, mutation_hold_steady_ns_now(), /*depth=*/1);
+
+    apply_production_audit_defaults();
+    CHECK(mutation_hold_budget_reject_enabled(), "3485 AC1: reject_enabled under production");
+    auto quiet = mutation_hold_budget_check();
+    CHECK(!quiet.over_budget, "3485 AC4: p99==0 + short hold is not over-budget");
+    CHECK(quiet.duration_us <= mutation_hold_budget_us(),
+          "3485 AC1: duration still under hold budget");
+
+    const auto reject0 = mutation_hold_budget_reject_total_v_read();
+    g_mf_mailbox_stats.mailbox_under_boundary_wait_us_p99.store(50'000, std::memory_order_relaxed);
+    auto hot = mutation_hold_budget_check();
+    CHECK(hot.over_budget, "3485 AC1: p99 hot + held → over_budget");
+    CHECK(hot.duration_us <= mutation_hold_budget_us(),
+          "3485 AC1: duration still under hold budget (mailbox clock)");
+    CHECK(mutation_hold_budget_reject_total_v_read() > reject0,
+          "3485 AC1: production reject counter advanced");
+
+    mutation_hold_live_note_exit(kHolder);
+    g_mf_mailbox_stats.mailbox_under_boundary_wait_us_p99.store(0, std::memory_order_relaxed);
+    apply_dev_audit_defaults();
+    ::unsetenv("AURA_MAILBOX_UNDER_BOUNDARY_WAIT_SLO_US");
+    mutation_hold_live_reset_for_test();
+    clear_mutation_hold_budget_reject_for_test();
+}
+
+static void ac3485_2_soft_observe_only() {
+    std::println("\n--- #3485 AC2: Soft observe-only ---");
+    using aura::compiler::clear_mutation_hold_budget_reject_for_test;
+    using aura::compiler::mutation_hold_budget_check;
+    using aura::compiler::mutation_hold_budget_reject_enabled;
+    using aura::compiler::mutation_hold_budget_reject_total_v_read;
+    using aura::compiler::mutation_hold_budget_soft_observe_total_v_read;
+    using aura::compiler::mutation_hold_live_note_enter;
+    using aura::compiler::mutation_hold_live_note_exit;
+    using aura::compiler::mutation_hold_live_reset_for_test;
+    using aura::compiler::mutation_hold_steady_ns_now;
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+
+    mutation_hold_live_reset_for_test();
+    clear_mutation_hold_budget_reject_for_test();
+    apply_dev_audit_defaults();
+    CHECK(!mutation_hold_budget_reject_enabled(), "3485 AC2: Soft reject_enabled false");
+    ::setenv("AURA_MAILBOX_UNDER_BOUNDARY_WAIT_SLO_US", "1000", 1);
+    constexpr std::uint64_t kHolder = 34852;
+    mutation_hold_live_note_enter(kHolder, mutation_hold_steady_ns_now(), /*depth=*/1);
+    g_mf_mailbox_stats.mailbox_under_boundary_wait_us_p99.store(50'000, std::memory_order_relaxed);
+    const auto rej0 = mutation_hold_budget_reject_total_v_read();
+    const auto soft0 = mutation_hold_budget_soft_observe_total_v_read();
+    auto hot = mutation_hold_budget_check();
+    CHECK(hot.over_budget, "3485 AC2: Soft still flags over_budget");
+    CHECK(mutation_hold_budget_reject_total_v_read() == rej0, "3485 AC2: Soft does not reject");
+    CHECK(mutation_hold_budget_soft_observe_total_v_read() > soft0, "3485 AC2: Soft observes");
+    mutation_hold_live_note_exit(kHolder);
+    g_mf_mailbox_stats.mailbox_under_boundary_wait_us_p99.store(0, std::memory_order_relaxed);
+    ::unsetenv("AURA_MAILBOX_UNDER_BOUNDARY_WAIT_SLO_US");
+    mutation_hold_live_reset_for_test();
+    clear_mutation_hold_budget_reject_for_test();
+}
+
+static void ac3485_6_source_and_linter() {
+    std::println("\n--- #3485 AC6: source-cite + linter ---");
+    const auto mhb = read_file("src/compiler/mutation_hold_budget.h");
+    const auto fc = read_file("src/serve/fiber.cpp");
+    const auto mb = read_file("src/serve/multi_fiber_mailbox.h");
+    const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto t = read_file("tests/serve/test_mailbox_hold_starvation_hard.cpp");
+    const auto build = read_file("build.py");
+    CHECK(mhb.find("Issue #3485") != std::string::npos, "3485 AC6: hold-budget cites #3485");
+    CHECK(mhb.find("mutation_hold_budget_check") != std::string::npos, "3485 AC6: check");
+    CHECK(mhb.find("mailbox_hold_slo_live_signal") != std::string::npos,
+          "3485 AC6: check cites mailbox_hold_slo_live_signal");
+    CHECK(mhb.find("mutation_hold_mailbox_slo_live") != std::string::npos,
+          "3485 AC6: out-of-line mailbox face");
+    CHECK(fc.find("mailbox_hold_slo_live_signal") != std::string::npos,
+          "3485 AC6: fiber.cpp uses SSOT signal");
+    CHECK(fc.find("sample_mailbox_hold_slo_live") != std::string::npos,
+          "3485 AC6: fiber.cpp uses SSOT sample");
+    CHECK(mb.find("mailbox_hold_slo_live_signal") != std::string::npos, "3485 AC6: SSOT stays");
+    CHECK(emb.find("mutation_hold_budget_check()") != std::string::npos,
+          "3485 AC6: try_acquire still consults check");
+    CHECK(emb.find("aura_evaluator_force_degrade_outermost_holder") != std::string::npos,
+          "3485 AC6: over_budget still degrades holder");
+    CHECK(t.find("3485 AC1: p99 hot + held → over_budget") != std::string::npos,
+          "3485 AC5: runtime soak");
+    CHECK(build.find("check_mailbox_hold_budget_p99_union_3485") != std::string::npos,
+          "3485 AC6: build.py wires linter");
+    CHECK(mhb.find("schema-3485") == std::string::npos, "3485 AC3: no schema-3485");
+    CHECK(mhb.find("g_3485_") == std::string::npos, "3485 AC3: no g_3485_*");
+    CHECK(read_file("docs/design/3485-mailbox-hold-budget-p99.md").empty(),
+          "3485 AC6: no docs/design/");
+    CHECK(read_file("tests/serve/test_issue_3485.cpp").empty(), "3485 AC6: no invent");
+    CHECK(read_file("tests/issues/test_issue_3485.cpp").empty(), "3485 AC6: no tests/issues");
+}
+
 } // namespace
 
 int run_test_mailbox_hold_starvation_hard() {
@@ -2649,7 +2769,11 @@ int run_test_mailbox_hold_starvation_hard() {
     ac2847_6_source_and_linter();
     std::println("\n=== Issue #3289: mailbox under-boundary SLO re-polls hold-budget window ===");
     ac3289_1_mailbox_slo_repoll_source();
-    std::println("\n=== #2551..#2761 + #2847 + #3289: {} passed, {} failed ===", g_passed,
+    std::println("\n=== Issue #3485: mailbox p99/SLO unions into hold-budget check ===");
+    ac3485_1_p99_hot_held_over_budget();
+    ac3485_2_soft_observe_only();
+    ac3485_6_source_and_linter();
+    std::println("\n=== #2551..#2761 + #2847 + #3289 + #3485: {} passed, {} failed ===", g_passed,
                  g_failed);
     return g_failed ? 1 : 0;
 }

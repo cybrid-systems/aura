@@ -244,11 +244,26 @@ struct MutationHoldBudgetCheck {
     std::uint64_t duration_us = 0;
 };
 
+// Issue #3485: mailbox under-boundary p99 / SLO live face (SSOT #3002
+// mailbox_hold_slo_live_signal). Out-of-line in fiber.cpp so this header
+// does not include multi_fiber_mailbox.h (mailbox includes this header
+// for mutation_hold_live_snapshot). Light-link weak stub returns false.
+[[nodiscard]] bool mutation_hold_mailbox_slo_live() noexcept;
+
 [[nodiscard]] inline MutationHoldBudgetCheck mutation_hold_budget_check() noexcept {
     MutationHoldBudgetCheck r;
     const auto snap = mutation_hold_live_snapshot();
     r.duration_us = snap.duration_us;
     r.over_budget = (snap.held && snap.duration_us > mutation_hold_budget_us());
+    // Issue #3485: holder-clock union via mailbox_hold_slo_live_signal
+    // (SSOT #3002). Mailbox wait p99 ≥ SLO must trip the same
+    // over_budget arm try_acquire already uses (reject new admit +
+    // force_degrade_outermost_holder). Duration still under hold SLO
+    // is not a pass. Soft: existing reject_enabled observe-only.
+    // Happy p99==0: one extra relaxed load inside
+    // mutation_hold_mailbox_slo_live (no hist walk).
+    if (snap.held && !r.over_budget && mutation_hold_mailbox_slo_live())
+        r.over_budget = true;
     if (r.over_budget) {
         if (mutation_hold_budget_reject_enabled())
             g_mutation_hold_budget_reject_total.fetch_add(1, std::memory_order_relaxed);
