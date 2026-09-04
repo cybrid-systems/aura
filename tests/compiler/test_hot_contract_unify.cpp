@@ -11,6 +11,7 @@
 
 #include "core/cpp26_contract_stats.h"
 #include "compiler/observability_metrics.h"
+#include "compiler/typed_mutation_audit.h"
 
 #include <cstdint>
 #include <fstream>
@@ -37,6 +38,7 @@ using aura::compiler::types::make_int;
 using aura::compiler::types::make_string;
 using aura::core::cpp26::hotpath_invariant_hits_total;
 using aura::core::cpp26::kContractHotPathsShipped;
+using aura::core::cpp26::kHotContractSingleLoadIssue;
 using aura::core::cpp26::kHotContractUnifyIssue;
 using aura::ir::IROpcode;
 using aura::test::g_failed;
@@ -94,7 +96,6 @@ int run_test_hot_contract_unify() {
         // as_int should not pair bare contract_assert + record without helper
         CHECK(val.find("as_int") != std::string::npos, "as_int present");
         CHECK(soa.find("AURA_HOT_CONTRACT") != std::string::npos, "ir_soa AURA_HOT_CONTRACT");
-        CHECK(soa.find("AURA_HOT_RECORD") != std::string::npos, "ir_soa AURA_HOT_RECORD");
         CHECK(ar.find("AURA_HOT_RECORD") != std::string::npos, "arena AURA_HOT_RECORD");
         // Drift: primary make_int path must not use raw record without AURA_HOT
         const auto make_int_pos = val.find("export inline EvalValue make_int");
@@ -170,6 +171,66 @@ int run_test_hot_contract_unify() {
         CHECK(href(cs, "hotpath-contracts-2142-active") == 1, "active");
         CHECK(href(cs, "hotpath-invariant-hits") >= 0, "hits queryable");
         CHECK(href(cs, "contract-hot-paths") >= 62, "contract-hot-paths");
+    }
+
+    // ── Issue #3501: NDEBUG OFF CONTRACT is one armed() load ──
+    {
+        std::println("\n--- #3501: AURA_HOT_CONTRACT single harden load ---");
+        CHECK(kHotContractSingleLoadIssue == 3501, "3501 stamp");
+        auto hh = read_file("src/core/cpp26_contract_stats.h");
+        CHECK(hh.find("kHotContractSingleLoadIssue = 3501") != std::string::npos,
+              "3501 AC5: stamp");
+        const auto d1 = hh.find("#define AURA_HOT_CONTRACT");
+        const auto d2 = hh.find("#define AURA_HOT_CONTRACT", d1 == std::string::npos ? 0 : d1 + 1);
+        CHECK(d1 != std::string::npos && d2 != std::string::npos && d2 > d1,
+              "3501 AC1: OFF + non-OFF CONTRACT defs");
+        const auto off_body =
+            (d1 != std::string::npos && d2 > d1) ? hh.substr(d1, d2 - d1) : std::string{};
+        std::size_t armed_n = 0;
+        for (std::size_t p = 0;
+             (p = off_body.find("hot_contract_harden_armed()", p)) != std::string::npos; p += 26)
+            ++armed_n;
+        CHECK(armed_n == 1, "3501 AC1: single hot_contract_harden_armed() in OFF CONTRACT");
+        CHECK(off_body.find("AURA_HOT_RECORD()") == std::string::npos,
+              "3501 AC1: not RECORD-then-CHECK");
+        CHECK(off_body.find("AURA_HOT_CHECK(") == std::string::npos, "3501 AC1: not nested CHECK");
+
+        CHECK(off_body.find("observe_hot_contract_false") != std::string::npos,
+              "3501 AC2: armed false observes");
+        CHECK(off_body.find("record_hotpath_contract_harden_trap") != std::string::npos,
+              "3501 AC2: armed false traps");
+        CHECK(off_body.find("std::abort()") != std::string::npos, "3501 AC2: armed false abort");
+
+        aura::compiler::typed_audit::apply_dev_audit_defaults();
+#if defined(NDEBUG) && !defined(AURA_HOT_MODE_HARDEN) && !defined(AURA_HOT_MODE_ENFORCE)
+        CHECK(!aura::core::cpp26::hot_contract_harden_armed(), "3501 AC3: Soft unarmed");
+        AURA_HOT_CONTRACT(false); // must not evaluate expr / abort
+        CHECK(true, "3501 AC3: unarmed CONTRACT(false) no abort");
+#else
+        CHECK(true, "3501 AC3: unarmed skip via source (non-OFF build)");
+#endif
+        CHECK(off_body.find("if (::aura::core::cpp26::hot_contract_harden_armed())") !=
+                  std::string::npos,
+              "3501 AC3: expr gated on armed()");
+
+        auto soa = read_file("src/compiler/ir_soa.ixx");
+        const auto vat = soa.find("IRInstructionView view_at(");
+        const auto addb = soa.find("add_block", vat == std::string::npos ? 0 : vat);
+        const auto vwin =
+            (vat != std::string::npos && addb > vat) ? soa.substr(vat, addb - vat) : std::string{};
+        CHECK(vwin.find("AURA_HOT_CONTRACT") != std::string::npos,
+              "3501 AC4: view_at uses AURA_HOT_CONTRACT");
+        CHECK(vwin.find("AURA_HOT_RECORD()") == std::string::npos,
+              "3501 AC4: view_at no separate RECORD");
+        CHECK(vwin.find("AURA_HOT_CHECK(") == std::string::npos,
+              "3501 AC4: view_at no separate CHECK");
+
+        auto q = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
+        CHECK(q.find("schema-3501") == std::string::npos, "3501 AC5: no new query key");
+        CHECK(read_file("tests/compiler/test_issue_3501.cpp").empty(),
+              "3501 AC5: no test_issue_3501.cpp");
+        CHECK(read_file("docs/design/3501-hot-contract-single-load.md").empty(),
+              "3501 AC5: no docs/design/3501-*");
     }
 
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);

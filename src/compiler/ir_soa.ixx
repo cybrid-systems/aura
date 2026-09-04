@@ -1148,13 +1148,13 @@ export struct IRModuleV2 {
     // function is not modified.
     // Issue #2435: cold edge bounds via language pre; hot RECORD elided
     // under production OFF (absolute-hot view construction).
-    // Issue #3428: HARDEN-armed AURA_HOT_CHECK on the same two bounds
+    // Issue #3428: HARDEN-armed bounds on the same two checks
     // (I1 residual of #3106 — RECORD-only was Quiet OOB).
+    // Issue #3501: one-liner AURA_HOT_CONTRACT (single armed() load).
     IRInstructionView view_at(std::size_t func_idx, std::uint32_t idx) const
         pre(func_idx < functions.size()) pre(idx < functions[func_idx].size()) {
-        AURA_HOT_RECORD(); // Issue #2142 / #2435 (pre = cold enforce edge)
-        AURA_HOT_CHECK(func_idx < functions.size() &&
-                       idx < functions[func_idx].size()); // Issue #3428
+        AURA_HOT_CONTRACT(func_idx < functions.size() &&
+                          idx < functions[func_idx].size()); // Issue #3428 / #3501
         return IRInstructionView(functions[func_idx], idx);
     }
 
