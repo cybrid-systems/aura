@@ -51,6 +51,11 @@ extern "C" void aura_residual_live_closure_remount_tick(std::uint64_t budget);
 // Process-global aot_metrics getter (defined in aura_jit_bridge.cpp; the
 // file-static aot_metrics() accessor there is not externally visible).
 extern "C" void* aura_get_aot_metrics(void);
+// Issue #3503: capture remount success must consult dual-fresh before
+// clearing MustDeopt (declared in aura_jit_bridge.h; 3-arg form).
+extern "C" bool aura_is_jit_closure_fresh(std::uint64_t captured_bridge_epoch,
+                                          std::uint64_t captured_defuse_or_env_version,
+                                          std::uint64_t captured_table_epoch);
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Issue #173: stable-id type aliases (Phase 2 of #145 workstream 2)
@@ -1229,9 +1234,12 @@ extern "C" std::uint64_t aura_closure_cache_generation_mismatch_total(void) {
 }
 
 // Issue #3447: stamp the facade C-bridge clock when it is tracking so
-// aura_is_jit_closure_fresh (C-bridge AND table) restamps green after
-// owner-scoped remount. Table-only tests leave C-bridge at 0 and keep
-// stamping g_aot_table_epoch. No table force-bump.
+// aura_is_jit_closure_fresh (C-bridge AND table) is green after
+// remap-retarget (alloc / match_id path). Table-only tests leave
+// C-bridge at 0 and keep stamping g_aot_table_epoch. No table force-bump.
+// Issue #3503: capture remount (residual tick / covered named) must
+// NOT restamp this clock — that washed dual-fresh while g_jit_fns.fn
+// stayed pre-mutate.
 static std::uint64_t jit_closure_bridge_stamp_now() noexcept {
     const auto c = aura_get_current_bridge_epoch();
     if (c != 0)
@@ -1248,6 +1256,25 @@ static void stamp_closure_table_epoch_locked(size_t cid) noexcept {
         g_closure_table_epochs.resize(need, 0);
     if (cid < g_closure_table_epochs.size())
         g_closure_table_epochs[cid] = aura_aot_func_table_epoch();
+}
+
+// Issue #3503: capture remount success restamps env_gen only. Clear
+// MustDeopt iff dual-fresh already holds on the unstamped C-bridge /
+// defuse / table (otherwise residual tick would wash leave-native).
+// Caller holds exclusive g_closure_table_mtx.
+static void note_capture_remount_ok_keep_epochs_unlocked(std::size_t cid,
+                                                         std::uint64_t live_env) noexcept {
+    if (cid < g_closure_env_gen.size())
+        g_closure_env_gen[cid] = live_env;
+    const auto cap_bridge = cid < g_closure_bridge_epochs.size() ? g_closure_bridge_epochs[cid] : 0;
+    const auto cap_defuse =
+        cid < g_closure_defuse_versions.size() ? g_closure_defuse_versions[cid] : 0;
+    const auto cap_table = cid < g_closure_table_epochs.size() ? g_closure_table_epochs[cid] : 0;
+    if (aura_is_jit_closure_fresh(cap_bridge, cap_defuse, cap_table)) {
+        if (cid < g_closure_must_deopt.size())
+            g_closure_must_deopt[cid] = 0;
+    }
+    invalidate_closure_cache_for(static_cast<std::int64_t>(cid));
 }
 
 // Issue #1508: stamp dual provenance (table epoch + defuse) at alloc.
@@ -2951,7 +2978,6 @@ extern "C" void aura_residual_live_closure_remount_tick(std::uint64_t budget) {
 
         const std::uint64_t live_env = aura_get_aot_live_env_frame_version();
         const std::uint64_t table_epoch = aura_aot_func_table_epoch();
-        const std::uint64_t host_defuse = aura_get_aot_defuse_version();
         const std::uint64_t start =
             g_residual_remount_cursor.load(std::memory_order_relaxed) % nslots;
 
@@ -2967,11 +2993,8 @@ extern "C" void aura_residual_live_closure_remount_tick(std::uint64_t budget) {
             if (remount_or_force_deopt_unlocked_no_call_time_counter(
                     static_cast<std::int64_t>(cid), live_env,
                     /*linear_fp=*/0, table_epoch) != 0) {
-                g_closure_must_deopt[cid] = 0;
-                g_closure_bridge_epochs[cid] = jit_closure_bridge_stamp_now();
-                g_closure_defuse_versions[cid] = host_defuse;
-                g_closure_env_gen[cid] = live_env;
-                invalidate_closure_cache_for(static_cast<std::int64_t>(cid));
+                // Issue #3503: env_gen only; MustDeopt stays if dual-fresh miss.
+                note_capture_remount_ok_keep_epochs_unlocked(cid, live_env);
                 ++ok;
                 return true;
             }
@@ -3128,7 +3151,6 @@ extern "C" void aura_sync_remount_covered_named_live_closures(std::uint64_t mask
 
         const std::uint64_t live_env = aura_get_aot_live_env_frame_version();
         const std::uint64_t table_epoch = aura_aot_func_table_epoch();
-        const std::uint64_t host_defuse = aura_get_aot_defuse_version();
 
         std::uint64_t used = 0;
         for (std::size_t cid = 0; cid < nslots; ++cid) {
@@ -3152,11 +3174,8 @@ extern "C" void aura_sync_remount_covered_named_live_closures(std::uint64_t mask
             if (remount_or_force_deopt_unlocked_no_call_time_counter(
                     static_cast<std::int64_t>(cid), live_env,
                     /*linear_fp=*/0, table_epoch) != 0) {
-                g_closure_must_deopt[cid] = 0;
-                g_closure_bridge_epochs[cid] = jit_closure_bridge_stamp_now();
-                g_closure_defuse_versions[cid] = host_defuse;
-                g_closure_env_gen[cid] = live_env;
-                invalidate_closure_cache_for(static_cast<std::int64_t>(cid));
+                // Issue #3503: env_gen only; MustDeopt stays if dual-fresh miss.
+                note_capture_remount_ok_keep_epochs_unlocked(cid, live_env);
                 ++ok;
             } else {
                 ++fail;
