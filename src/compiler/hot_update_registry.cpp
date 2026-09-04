@@ -1556,13 +1556,13 @@ static constexpr std::uint32_t kStormExitForceFullConsults = 8;
 bool HotUpdateRegistry::storm_exit_force_full_active() noexcept {
     const auto now = static_cast<std::uint8_t>(current_storm_level());
     const auto prev = hysteresis_prev_storm_level_.exchange(now, std::memory_order_acq_rel);
+    const bool lost_global = (prev & 2u) != 0 && (now & 2u) == 0;
     if (now == 0 && prev != 0) {
-        const bool had_global = (prev & 2u) != 0;
-        const bool had_shape = (prev & 1u) != 0;
-        const auto win = deopt_window_count_.load(std::memory_order_relaxed);
-        if (had_global || (had_shape && win > 0))
-            storm_exit_force_full_remaining_.store(kStormExitForceFullConsults,
-                                                   std::memory_order_release);
+        // Issue #3515: Shape→None arms even when deopt_window_count==0
+        // (previously `had_shape && win>0` skipped the cooldown).
+        storm_exit_force_full_remaining_.store(kStormExitForceFullConsults,
+                                               std::memory_order_release);
+        storm_exit_force_full_apply_while_non_none_.store(0, std::memory_order_release);
         // Issue #3101: on storm exit (Both/Global → None or Shape → None
         // with prior window), clear the partial_relower_threshold_forced
         // flag so the adaptive threshold can re-tighten from the existing
@@ -1578,6 +1578,15 @@ bool HotUpdateRegistry::storm_exit_force_full_active() noexcept {
             // set, zero work otherwise.
             aura_clear_partial_relower_threshold_force();
         }
+    } else if (lost_global && now != 0) {
+        // Issue #3515: Both→Shape (deopt throttle drops, Shape stays)
+        // skipped #3070 because now!=0. Refresh the 8-consult force-full
+        // window and apply it while Shape is still on so partial↔full
+        // cannot flip on consecutive mutates. None→Shape (#3163) does
+        // not set apply_while_non_none — Shape-only widen stays (#2212).
+        storm_exit_force_full_remaining_.store(kStormExitForceFullConsults,
+                                               std::memory_order_release);
+        storm_exit_force_full_apply_while_non_none_.store(1, std::memory_order_release);
     } else if (now != 0 && prev == 0) {
         // Issue #3163: storm entry edge (None → non-None) refreshes the
         // hysteresis window so alternating Shape↔Global storms get a full
@@ -1589,15 +1598,22 @@ bool HotUpdateRegistry::storm_exit_force_full_active() noexcept {
         // mutates despite each individual gate being correct.
         storm_exit_force_full_remaining_.store(kStormExitForceFullConsults,
                                                std::memory_order_release);
+        storm_exit_force_full_apply_while_non_none_.store(0, std::memory_order_release);
     }
-    if (now != 0)
+    const bool apply_while_non_none =
+        storm_exit_force_full_apply_while_non_none_.load(std::memory_order_acquire) != 0;
+    if (now != 0 && !apply_while_non_none)
         return false;
     auto left = storm_exit_force_full_remaining_.load(std::memory_order_acquire);
     while (left > 0) {
         if (storm_exit_force_full_remaining_.compare_exchange_weak(
-                left, left - 1, std::memory_order_acq_rel, std::memory_order_acquire))
+                left, left - 1, std::memory_order_acq_rel, std::memory_order_acquire)) {
+            if (left == 1)
+                storm_exit_force_full_apply_while_non_none_.store(0, std::memory_order_release);
             return true;
+        }
     }
+    storm_exit_force_full_apply_while_non_none_.store(0, std::memory_order_release);
     return false;
 }
 
@@ -1813,7 +1829,16 @@ void HotUpdateRegistry::reset_deopt_storm_state_for_test() noexcept {
     // so existing None-path ACs stay partial immediately.
     hysteresis_prev_storm_level_.store(0, std::memory_order_relaxed);
     storm_exit_force_full_remaining_.store(0, std::memory_order_relaxed);
+    storm_exit_force_full_apply_while_non_none_.store(0, std::memory_order_relaxed);
     // Keep lifetime counters (detected / observed / skips / bypass) for dashboards.
+}
+
+void HotUpdateRegistry::clear_global_throttle_keep_hysteresis_for_test() noexcept {
+    // Issue #3515 soak: drop Global throttle without zeroing
+    // hysteresis_prev / remaining so Both→Shape is observable.
+    reemit_throttled_.store(false, std::memory_order_relaxed);
+    hard_storm_active_.store(false, std::memory_order_relaxed);
+    deopt_window_count_.store(0, std::memory_order_relaxed);
 }
 
 // ── Issue #2114: reemit ↔ MutationBoundary handshake ──
@@ -2778,6 +2803,10 @@ extern "C" void aura_hot_update_set_deopt_storm_threshold(std::uint64_t deopts_p
 
 extern "C" void aura_hot_update_reset_deopt_storm_state_for_test(void) {
     aura::compiler::hot_update_registry().reset_deopt_storm_state_for_test();
+}
+
+extern "C" void aura_hot_update_clear_global_throttle_keep_hysteresis_for_test(void) {
+    aura::compiler::hot_update_registry().clear_global_throttle_keep_hysteresis_for_test();
 }
 
 extern "C" int aura_hot_update_storm_exit_force_full_active(void) {
