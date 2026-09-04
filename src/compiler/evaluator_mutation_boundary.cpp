@@ -3824,6 +3824,30 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
             success_flag_store(flag_, false);
         }
     }
+    // Issue #3472: persist-green then Phase-1 linear deny must flip
+    // success into the existing abort_restore SSOT. Persist already
+    // stamped TypeLinearCommitProof + froze Occurrence + granted
+    // query:type; (void)enforce later cannot un-stamp. Production/Full
+    // walk once here (return / synth pending are the deny signal —
+    // the happy-path observability bump is not). Soft/Off: observe-only,
+    // no hard flip. Do not invent a second restore.
+    bool linear_pre_exit_enforced = false;
+    if (outermost && success &&
+        (typed_audit::production_defaults_active() ||
+         typed_audit::get_strategy() == typed_audit::AuditStrategy::Full)) {
+        const auto lin = ev_->enforce_linear_boundary_consistency(
+            Evaluator::kLinearGcRootAuditTypedMutate, /*mark_all_linear=*/false);
+        linear_pre_exit_enforced = true;
+        if (!lin.all_safe || ev_->linear_synth_hard_fail_pending()) {
+            typed_audit::clear_type_linear_commit_proof_on_abort();
+            typed_audit::publish_type_linear_proof_outcome(
+                typed_audit::kTypeLinearProofOutcomeReject);
+            aura_clear_occurrence_persist_buffer(ev_);
+            ev_->clear_type_export_authority();
+            success = false;
+            success_flag_store(flag_, false);
+        }
+    }
     if (!inbody_force_exited_)
         ev_->exit_mutation_boundary(success);
     ev_->render_fast_exit_this_boundary_ = false;
@@ -3931,8 +3955,14 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
                 }
             }
         } else {
-            (void)ev_->enforce_linear_boundary_consistency(Evaluator::kLinearGcRootAuditTypedMutate,
-                                                           /*mark_all_linear=*/false);
+            // Issue #3472: Production/Full already paid this walk (and
+            // checked the return) before exit_mutation_boundary. Skip
+            // the duplicate; still bump the happy-path observability
+            // counter (not a deny signal).
+            if (!linear_pre_exit_enforced) {
+                (void)ev_->enforce_linear_boundary_consistency(
+                    Evaluator::kLinearGcRootAuditTypedMutate, /*mark_all_linear=*/false);
+            }
             // Issue #2067: post-mutate force-rollback observability bump.
             if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics_)) {
                 m->linear_post_mutate_force_rollback_total.fetch_add(1, std::memory_order_relaxed);
@@ -5389,6 +5419,12 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
         // (uniform enforcement — no half-written state survives).
         aura_clear_occurrence_persist_buffer(ev_);
         ev_->clear_type_export_authority();
+        // Issue #3472: Phase-5 densify may re-stamp a green face after
+        // abort_restore. Re-clear so last_proof_outcome stays Reject
+        // until the next outermost green stamp (AC1). Idempotent when
+        // abort_restore already cleared (had_face false).
+        typed_audit::clear_type_linear_commit_proof_on_abort();
+        typed_audit::publish_type_linear_proof_outcome(typed_audit::kTypeLinearProofOutcomeReject);
     } else if (!outermost) {
         // Issue #3082: nested/mid success or fail never persist and never
         // grant. Occurrence stays provisional; query:type is in-flight

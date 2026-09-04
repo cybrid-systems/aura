@@ -429,6 +429,13 @@ static void ac3170_2_abort_nested_uniform_clear() {
         "        // (uniform enforcement \u2014 no half-written state survives).\n"
         "        aura_clear_occurrence_persist_buffer(ev_);\n"
         "        ev_->clear_type_export_authority();\n"
+        "        // Issue #3472: Phase-5 densify may re-stamp a green face after\n"
+        "        // abort_restore. Re-clear so last_proof_outcome stays Reject\n"
+        "        // until the next outermost green stamp (AC1). Idempotent when\n"
+        "        // abort_restore already cleared (had_face false).\n"
+        "        typed_audit::clear_type_linear_commit_proof_on_abort();\n"
+        "        typed_audit::publish_type_linear_proof_outcome("
+        "typed_audit::kTypeLinearProofOutcomeReject);\n"
         "    }");
     CHECK(second_abort != std::string::npos,
           "3170 AC2: second abort path (line 4315) calls aura_clear_occurrence_persist_buffer");

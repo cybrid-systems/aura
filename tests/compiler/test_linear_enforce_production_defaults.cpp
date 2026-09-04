@@ -29,14 +29,23 @@
 
 import std;
 import aura.compiler.service;
+import aura.compiler.evaluator;
 import aura.compiler.value;
 
 namespace {
 
 using aura::compiler::CompilerService;
 using aura::compiler::security::apply_production_security_defaults;
+namespace typed_audit = aura::compiler::typed_audit;
+using aura::compiler::Evaluator;
 using aura::compiler::security::kLinearEnforceProductionDefaultsIssue;
 using aura::compiler::typed_audit::apply_dev_audit_defaults;
+using aura::compiler::typed_audit::apply_production_audit_defaults;
+using aura::compiler::typed_audit::ir_typed_entry_commit_readiness_ok;
+using aura::compiler::typed_audit::kTypeLinearProofOutcomeReject;
+using aura::compiler::typed_audit::kTypeLinearProofOutcomeStamped;
+using aura::compiler::typed_audit::last_type_linear_proof_outcome_v_read;
+using aura::compiler::typed_audit::linear_move_drop_elision_ok;
 using aura::compiler::typed_audit::reset_for_test;
 using aura::compiler::types::as_int;
 using aura::compiler::types::is_int;
@@ -251,6 +260,72 @@ int run_test_linear_enforce_production_defaults() {
         CHECK(sd.find("AURA_LINEAR_ENFORCE") != std::string::npos, "env override");
         CHECK(!pe.empty() && pe.find("schema-2182") != std::string::npos, "post-steal schema");
         CHECK(!ps.empty() && ps.find("schema-2182") != std::string::npos, "enforcement schema");
+    }
+
+    // ── Issue #3472: persist-green × Phase-1 linear deny flips success ──
+    {
+        std::println("\n--- #3472 AC1: persist wrote + Phase-1 pending → abort_restore ---");
+        reset_process();
+        apply_production_audit_defaults();
+        typed_audit::clear_type_linear_proof_outcome_for_test();
+        typed_audit::clear_type_linear_commit_proof_for_test();
+        CompilerService cs;
+        CHECK(cs.eval("(+ 1 1)").has_value(), "3472 AC1: warm");
+        (void)cs.eval("(set-code \"(define f 1)\")");
+        (void)cs.eval("(eval-current)");
+        (void)cs.eval("(typecheck-current)");
+        bool ok = true;
+        {
+            Evaluator::MutationBoundaryGuard g(cs.evaluator(), &ok);
+            cs.evaluator().note_linear_synth_hard_fail_pending();
+        }
+        CHECK(!ok, "3472 AC1: success==false");
+        CHECK(last_type_linear_proof_outcome_v_read() == kTypeLinearProofOutcomeReject,
+              "3472 AC1: last_proof_outcome==Reject");
+        CHECK(!linear_move_drop_elision_ok(), "3472 AC1: !Move/Drop elision");
+        typed_audit::g_linear_ir_fastpath_boundary_depth_override = 1;
+        CHECK(!ir_typed_entry_commit_readiness_ok(), "3472 AC1: IR typed-entry refused");
+        typed_audit::g_linear_ir_fastpath_boundary_depth_override = -1;
+        CHECK(cs.evaluator().last_boundary_rollback_stats().children_column_restored,
+              "3472 AC1: dual-topology restored");
+        CHECK(!linear_move_drop_elision_ok(),
+              "3472 AC1: elision stays false until next outermost green");
+    }
+
+    {
+        std::println("\n--- #3472 AC3: happy persist + linear_ok stays Stamped ---");
+        reset_process();
+        apply_production_audit_defaults();
+        typed_audit::clear_type_linear_proof_outcome_for_test();
+        typed_audit::clear_type_linear_commit_proof_for_test();
+        CompilerService cs;
+        CHECK(cs.eval("(+ 1 1)").has_value(), "3472 AC3: warm");
+        (void)cs.eval("(typecheck-current)");
+        bool ok = true;
+        {
+            Evaluator::MutationBoundaryGuard g(cs.evaluator(), &ok);
+        }
+        CHECK(ok, "3472 AC3: no extra abort");
+        CHECK(last_type_linear_proof_outcome_v_read() != kTypeLinearProofOutcomeReject,
+              "3472 AC3: proof not Reject");
+        (void)kTypeLinearProofOutcomeStamped;
+    }
+
+    {
+        std::println("\n--- #3472 AC4: Soft/Off no hard flip ---");
+        reset_process();
+        apply_dev_audit_defaults();
+        CompilerService cs;
+        CHECK(cs.eval("(+ 1 1)").has_value(), "3472 AC4: warm");
+        bool ok = true;
+        {
+            Evaluator::MutationBoundaryGuard g(cs.evaluator(), &ok);
+            cs.evaluator().note_linear_synth_hard_fail_pending();
+        }
+        CHECK(ok, "3472 AC4: Soft does not hard-flip success");
+        const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+        CHECK(emb.find("Issue #3472") != std::string::npos, "3472 AC4: dtor cites #3472");
+        CHECK(emb.find("schema-3472") == std::string::npos, "3472 AC4: no new query schema");
     }
 
     // Restore Soft for any subsequent process consumers.
