@@ -2302,6 +2302,7 @@ enum class LinearFastPathExitAction : std::uint8_t {
 // #3225 persist seqlock is odd). Defined after mid-abort helpers.
 // Soft: false (observe-only, no extra bump).
 [[nodiscard]] inline bool abort_or_mid_abort_blocks_elision() noexcept;
+[[nodiscard]] inline bool pending_full_solve_residual_face_hit() noexcept;
 inline constexpr int kCastopAbortElisionInterleaveIssue = 3359;
 
 // Issue #3130: single pure predicate for IR/JIT Move/Drop elision —
@@ -2357,16 +2358,18 @@ inline constexpr int kJitTypedEntryEveryFunctionIssue = 3419;
 inline constexpr int kNoTlsLivePolicyDefaultSolvedIssue = 3414;
 // Issue #3416: last-proof last-writer across steal × dual-Evaluator.
 // Stamp carries TLS eval identity; IR/JIT refuse unless stamper == TLS.
+// Issue #3510: residual of #3439 — depth==0 still computed first (chaos
+// warm eval), but Production/Full refuse negative authority (Reject /
+// published would_allow==0 with stamp / pending-full-solve residual).
+// Quiet (no stamp, not Reject, no pending face) still returns true.
+inline constexpr int kDepthZeroTypedEntryNegativeAuthorityIssue = 3510;
 [[nodiscard]] inline bool ir_typed_entry_commit_readiness_ok() noexcept {
     if (!(production_defaults_active() || get_strategy() == AuditStrategy::Full))
         return true;
-    // Issue #3439: compute depth first and short-circuit at depth==0
-    // BEFORE any pre-checks consult stale global atomics (chaos test
-    // cross-contamination: AC2902 stamps, AC1 warm sees residual state
-    // + a different TLS, hitting the "evaluate-before-stamp" half-green
-    // at depth==0 entry). Half-green protection is enforced at depth > 0
-    // via the rest of this function + commit_readiness(live_policy) face
-    // checks downstream. Reuses
+    // Issue #3439: compute depth first BEFORE any pre-checks consult
+    // stale global atomics (chaos test cross-contamination). Issue #3510:
+    // inside depth==0, refuse negative type/linear authority; do not
+    // consult live_policy / abort-authority (reopens #3439). Reuses
     // g_linear_fast_path_elide_blocked_production_total — no new counter.
     std::size_t depth = 0;
     if (g_linear_ir_fastpath_boundary_depth_override >= 0)
@@ -2374,10 +2377,27 @@ inline constexpr int kNoTlsLivePolicyDefaultSolvedIssue = 3414;
     else
         depth = aura_evaluator_mutation_boundary_depth();
     if (depth == 0) {
-        // Issue #3439 V3: depth==0 bypasses stale global atomics
-        // (chaos leftover last-proof, including leftover Reject).
-        // Warm eval / engine:metrics must not refuse.
-        return true;
+        // Issue #3510: negative authority is not "stale chaos leftover".
+        // Persist-reject / #3477 leftover / remount #3448 publish Reject
+        // or latch pending residual; CastOp/Apply must not run.
+        if (g_last_type_linear_proof_outcome.load(std::memory_order_relaxed) ==
+            kTypeLinearProofOutcomeReject) {
+            g_linear_fast_path_elide_blocked_production_total.fetch_add(1,
+                                                                        std::memory_order_relaxed);
+            return false;
+        }
+        if (g_last_proof_would_allow_commit.load(std::memory_order_relaxed) == 0 &&
+            g_last_type_linear_commit_proof_stamp.load(std::memory_order_relaxed) != 0) {
+            g_linear_fast_path_elide_blocked_production_total.fetch_add(1,
+                                                                        std::memory_order_relaxed);
+            return false;
+        }
+        if (pending_full_solve_residual_face_hit()) {
+            g_linear_fast_path_elide_blocked_production_total.fetch_add(1,
+                                                                        std::memory_order_relaxed);
+            return false;
+        }
+        return true; // Quiet warm eval / engine:metrics
     }
     // Issue #3359: re-sample mid-abort outstanding before granting
     // IR/JIT entry at depth > 0 (stale CastOp must not ship).

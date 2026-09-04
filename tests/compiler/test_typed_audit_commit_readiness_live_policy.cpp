@@ -130,26 +130,22 @@ int run_test_typed_audit_commit_readiness_live_policy() {
         std::println("\n--- AC2: ir_typed_entry_commit_readiness_ok dual-authority close at "
                      "depth==0 ---");
         const auto fn_body =
-            find_fn_body(h, "inline bool ir_typed_entry_commit_readiness_ok() noexcept", 3600);
+            find_fn_body(h, "inline bool ir_typed_entry_commit_readiness_ok() noexcept", 5000);
         CHECK(!fn_body.empty(), "AC2: ir_typed_entry_commit_readiness_ok found");
         if (!fn_body.empty()) {
-            // 2a. The proof-outcome Reject check now appears BEFORE the depth==0
-            // short-circuit (not gated by depth). Scope considered is the full
-            // function body — the Reject branch's position relative to
-            // `if (depth == 0)` is the gate.
+            // #3439: depth computed first. #3510: Reject is consulted INSIDE
+            // the depth==0 block (negative authority), not as a pre-check.
             const auto reject_pos = fn_body.find("kTypeLinearProofOutcomeReject");
             const auto depth_pos = fn_body.find("if (depth == 0)");
             CHECK(reject_pos != std::string::npos && depth_pos != std::string::npos &&
-                      reject_pos < depth_pos,
-                  "AC2: proof-outcome Reject check appears before depth==0 short-circuit");
-            // 2b. The invalidate_gen / green_bind_gen check appears before
-            // depth==0 too.
+                      depth_pos < reject_pos,
+                  "AC2/#3510: depth computed first; Reject inside depth==0");
+            // invalidate_gen stays on the depth>0 path (chaos pre-check ban).
             const auto inv_pos = fn_body.find("g_rehydrate_miss_invalidate_gen");
             const auto gb_pos = fn_body.find("g_rehydrate_miss_green_bind_gen");
             CHECK(inv_pos != std::string::npos && gb_pos != std::string::npos &&
-                      inv_pos < depth_pos,
-                  "AC2: invalidate_gen != green_bind check appears before depth==0 "
-                  "short-circuit");
+                      inv_pos > depth_pos,
+                  "AC2/#3510: invalidate_gen stays at depth>0");
             // 2c. The existing depth==0 short-circuit is preserved (Quiet path).
             CHECK(depth_pos != std::string::npos, "AC2: depth==0 short-circuit preserved");
             // 2d. The Soft/Off early-return is preserved at the top.
@@ -259,9 +255,13 @@ int run_test_typed_audit_commit_readiness_live_policy() {
         CHECK(live_policy_body.find("else if (prod || full)") != std::string::npos,
               "3414 AC3: no-TC deny is Production/Full only (Soft unchanged)");
         const auto fn_body =
-            find_fn_body(h, "inline bool ir_typed_entry_commit_readiness_ok() noexcept", 3600);
-        CHECK(fn_body.find("kTypeLinearProofOutcomeStamped") != std::string::npos,
-              "3414 AC2: depth==0 requires Stamped (Quiet/unbound refuse)");
+            find_fn_body(h, "inline bool ir_typed_entry_commit_readiness_ok() noexcept", 4500);
+        CHECK(fn_body.find("kTypeLinearProofOutcomeReject") != std::string::npos,
+              "3414/#3510 AC2: depth==0 consults Reject (negative authority)");
+        CHECK(fn_body.find("kDepthZeroTypedEntryNegativeAuthorityIssue = 3510") !=
+                      std::string::npos ||
+                  h.find("kDepthZeroTypedEntryNegativeAuthorityIssue = 3510") != std::string::npos,
+              "3510: issue stamp");
         CHECK(h.find("g_3414_") == std::string::npos, "3414 AC4: no g_3414_* counter");
         CHECK(h.find("schema-3414") == std::string::npos, "3414 AC4: no schema-3414");
         CHECK(read_file("tests/compiler/test_issue_3414.cpp").empty(),

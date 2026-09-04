@@ -2734,10 +2734,12 @@ static void ac3224_ir_typed_entry_commit_readiness() {
         typed_audit::reset_linear_ir_fastpath_counters_for_test();
         aura_typed_audit_test_clear_recover_override();
         typed_audit::g_linear_ir_fastpath_boundary_depth_override = 0;
+        typed_audit::clear_type_linear_commit_proof_for_test();
         typed_audit::clear_type_linear_proof_outcome_for_test();
         CHECK(typed_audit::ir_typed_entry_commit_readiness_ok(),
-              "3414 AC2: Quiet depth==0 bypasses stale last-proof (#3439 V3)");
+              "3414 AC2: Quiet depth==0 allows warm eval (#3439 / #3510)");
         typed_audit::publish_type_linear_proof_outcome(typed_audit::kTypeLinearProofOutcomeStamped);
+        typed_audit::publish_last_proof_face(true, true);
         CHECK(typed_audit::ir_typed_entry_commit_readiness_ok(),
               "3224 AC3: Stamped depth==0 allows (no extra commit_readiness)");
         typed_audit::note_occurrence_empty_after_fence(/*production_hard=*/true);
@@ -2746,7 +2748,7 @@ static void ac3224_ir_typed_entry_commit_readiness() {
               "3224 AC1: production + mutation + !would_allow refuses");
         typed_audit::g_linear_ir_fastpath_boundary_depth_override = 0;
         CHECK(typed_audit::ir_typed_entry_commit_readiness_ok(),
-              "3224 AC3: Stamped depth==0 allows even with face");
+              "3224 AC3: Stamped green face depth==0 allows even with empty-fence");
         typed_audit::clear_type_linear_proof_outcome_for_test();
         typed_audit::g_linear_ir_fastpath_boundary_depth_override = -1;
         clear_occurrence_empty_after_fence_for_test();
@@ -2904,9 +2906,11 @@ static void ac3419_jit_typed_entry_every_function() {
         typed_audit::g_linear_ir_fastpath_boundary_depth_override = 1;
         CHECK(!typed_audit::ir_typed_entry_commit_readiness_ok(),
               "3419: production Quiet last-proof refuses typed execute");
+        typed_audit::clear_type_linear_commit_proof_for_test();
+        typed_audit::clear_type_linear_proof_outcome_for_test();
         typed_audit::g_linear_ir_fastpath_boundary_depth_override = 0;
         CHECK(typed_audit::ir_typed_entry_commit_readiness_ok(),
-              "3419: depth==0 V3 does not poison warm eval");
+              "3419: Quiet depth==0 does not poison warm eval (#3510)");
         typed_audit::g_linear_ir_fastpath_boundary_depth_override = -1;
         apply_dev_audit_defaults();
     }
