@@ -35,6 +35,18 @@
 #define AURA_IR_SOA_ONLY 1
 #endif
 
+// Issue #3489: production pack deletes IRFunctionSoA::mark_block_dirty
+// (compile failure, not only the #3355 path linter). Soft/unit keep the
+// symbol: test objects set AURA_ALLOW_IR_SOA_SINGLE_MARK, and Debug
+// without NDEBUG also keeps it. AURA_PRODUCTION_PACK (the `aura`
+// binary) always deletes.
+#if defined(AURA_PRODUCTION_PACK) ||                                                               \
+    (AURA_IR_SOA_ONLY && defined(NDEBUG) && !defined(AURA_ALLOW_IR_SOA_SINGLE_MARK))
+#define AURA_IR_SOA_SINGLE_MARK_DELETED 1
+#else
+#define AURA_IR_SOA_SINGLE_MARK_DELETED 0
+#endif
+
 // Issue #2045: after dual-emit / re-lower, CompilerService rebuilds
 // IRCacheEntry::source_to_ir_map from AoS irs and cross-checks SoA
 // source_node_ids_ so impact_scope cannot under-invalidate.
@@ -216,11 +228,13 @@ export inline constexpr int kIrSoaBatchOnlyProductionDefaultIssue = 3201;
 // default (machine-checked by check_ir_dirty_batch_only_production_default_
 // 3293.py; AC4 live SIGABRT fixture under production defaults).
 // Issue #3355: production TU hard-ban of the SoA single-mark *call site*
-// (compile-time / linter close of the #3293 residual). The symbol stays
-// for Soft/unit + the SIGABRT fixture; production dual-emit uses
-// mark_blocks_dirty of 1. C++ modules compile the interface once so
-// `= delete` cannot be per-TU — the linter is the Hard gate.
+// (linter enumerates one-arg SoA single-mark). Issue #3489: the
+// production pack also `= delete`s the symbol (AURA_PRODUCTION_PACK /
+// AURA_IR_SOA_ONLY+NDEBUG). Soft/unit keep the body + #3293 SIGABRT
+// fixture; production dual-emit uses mark_blocks_dirty of 1.
 export inline constexpr int kIrSoaSingleMarkProductionBanIssue = 3355;
+export inline constexpr int kIrSoaSingleMarkDeletedIssue = 3489;
+export inline constexpr bool kIrSoaSingleMarkDeleted = AURA_IR_SOA_SINGLE_MARK_DELETED != 0;
 // Issue #2936: production-smoke-wired sentinel (additive observability).
 export inline std::atomic<std::uint64_t>&
 g_ir_dirty_batch_only_production_smoke_wired_atomic() noexcept {
@@ -433,11 +447,15 @@ export struct IRFunctionSoA {
     // `block.start_idx` / `block.end_idx`.
     // Issue #2522: one generation bump (same as mark_blocks_dirty of 1).
     // Prefer mark_blocks_dirty for multi-block cascades (#2615).
-    // Issue #3355: production TU hard-ban — do not call from src/compiler
-    // production paths (linter enumerates one-arg SoA single-mark). Use
-    // mark_blocks_dirty / bits_only / mark_all_blocks_dirty. Soft/unit
-    // retain this API (AC2 metric-only; AC3 #3293 SIGABRT fixture).
+    // Issue #3355 / #3489: production pack deletes this symbol
+    // (AURA_PRODUCTION_PACK / AURA_IR_SOA_ONLY+NDEBUG). Soft/unit retain
+    // the API (metric-only; #3293 SIGABRT fixture). Production TUs use
+    // mark_blocks_dirty / bits_only / mark_all_blocks_dirty.
+#if AURA_IR_SOA_SINGLE_MARK_DELETED
+    void mark_block_dirty(std::uint32_t block_id) = delete;
+#else
     void mark_block_dirty(std::uint32_t block_id);
+#endif
 
     // Issue #2522: batch mark N blocks dirty + cascade instr ranges,
     // then **one** bump_generation() / g_ir_soa_generation_fence advance
@@ -659,34 +677,51 @@ namespace detail {
                   std::uint8_t{1});
     }
 
+    // Issue #3489: one column growth outside the per-id batch loop.
+    // New slots match prior resize(n, 1) semantics (dirty so cascade
+    // never leaves clean holes).
+    inline void ensure_block_dirty_len(IRFunctionSoA& fn, std::uint32_t n) noexcept {
+        if (n > fn.block_dirty_.size())
+            fn.block_dirty_.resize(n, std::uint8_t{1});
+    }
+    inline void ensure_instruction_dirty_len(IRFunctionSoA& fn, std::uint32_t n) noexcept {
+        if (n > fn.instruction_dirty_.size())
+            fn.instruction_dirty_.resize(n, std::uint8_t{1});
+    }
+
+    // Bit-or after ensure — no resize. Used by batch span walks.
+    inline void mark_block_dirty_bit_or_cascade_no_resize(IRFunctionSoA& fn,
+                                                          std::uint32_t block_id) noexcept {
+        if (block_id < fn.block_dirty_.size())
+            fn.block_dirty_[block_id] = 1;
+        if (block_id < fn.blocks_.size()) {
+            const auto& block = fn.blocks_[block_id];
+            fill_instruction_dirty_range(fn, block.start_idx, block.end_idx);
+        }
+    }
+    inline void mark_block_dirty_bit_only_no_resize(IRFunctionSoA& fn,
+                                                    std::uint32_t block_id) noexcept {
+        if (block_id < fn.block_dirty_.size())
+            fn.block_dirty_[block_id] = 1;
+    }
+
     // Mark one block dirty + cascade instrs; no generation bump.
+    // Soft/unit single-mark path may still grow once for this id.
     inline void mark_block_dirty_no_bump(IRFunctionSoA& fn, std::uint32_t block_id) {
         // Issue #2142 / #2435: hot-tier contract (production OFF = zero cost;
         // dirty cascade still runs; cold edges keep language pre/post).
         AURA_HOT_CONTRACT(block_id < fn.blocks_.size() || fn.block_dirty_.empty() ||
                           block_id <= fn.block_dirty_.size());
-        if (block_id >= fn.block_dirty_.size()) {
-            fn.block_dirty_.resize(block_id + 1, 1);
-        } else {
-            fn.block_dirty_[block_id] = 1;
-        }
-        // Issue #380 / #2522: cascade to all instructions in the block via
-        // bulk fill. Out-of-range block_id → no-op cascade (block bit set).
-        if (block_id < fn.blocks_.size()) {
-            const auto& block = fn.blocks_[block_id];
-            fill_instruction_dirty_range(fn, block.start_idx, block.end_idx);
-        }
+        ensure_block_dirty_len(fn, block_id + 1);
+        mark_block_dirty_bit_or_cascade_no_resize(fn, block_id);
     }
 
     // Issue #2615 / #2109: block_dirty_ bit only; no instr cascade; no bump.
     inline void mark_block_dirty_bit_only_no_bump(IRFunctionSoA& fn, std::uint32_t block_id) {
         AURA_HOT_CONTRACT(block_id < fn.blocks_.size() || fn.block_dirty_.empty() ||
                           block_id <= fn.block_dirty_.size());
-        if (block_id >= fn.block_dirty_.size()) {
-            fn.block_dirty_.resize(block_id + 1, 1);
-        } else {
-            fn.block_dirty_[block_id] = 1;
-        }
+        ensure_block_dirty_len(fn, block_id + 1);
+        mark_block_dirty_bit_only_no_resize(fn, block_id);
     }
 } // namespace detail
 
@@ -755,9 +790,10 @@ inline IRFunctionSoA::~IRFunctionSoA() noexcept {
     detail::clear_single_mark_residual(this);
 }
 
+#if !AURA_IR_SOA_SINGLE_MARK_DELETED
 inline void IRFunctionSoA::mark_block_dirty(std::uint32_t block_id) {
-    // Issue #3355: Soft/test single-mark body. Production TUs must not
-    // call this (check_ir_soa_single_mark_production_ban_3355.py).
+    // Issue #3355 / #3489: Soft/test single-mark body. Production pack
+    // deletes this symbol; production TUs use batch APIs.
     detail::mark_block_dirty_no_bump(*this, block_id);
     // Issue #2111 / #2432: generation fence on block dirty (and instr cascade).
     bump_generation();
@@ -768,13 +804,26 @@ inline void IRFunctionSoA::mark_block_dirty(std::uint32_t block_id) {
     // Issue #2774: detect multi-via-single residual on this function.
     detail::note_single_mark_for_residual(this);
 }
+#endif
 
-// Issue #2522 / #2615: batch API — N blocks, one fence.
+// Issue #2522 / #2615 / #3489: batch API — N blocks, one fence, one column
+// ensure before the span walk (no per-id resize).
 inline void IRFunctionSoA::mark_blocks_dirty(std::span<const std::uint32_t> block_ids) {
     if (block_ids.empty())
-        return; // AC3 quiet: no bump, no residual accounting
+        return; // AC3 quiet: no bump, no residual accounting, no extra atomics
+    std::uint32_t max_id = 0;
+    std::uint32_t max_end = 0;
+    for (const auto block_id : block_ids) {
+        if (block_id > max_id)
+            max_id = block_id;
+        if (block_id < blocks_.size() && blocks_[block_id].end_idx > max_end)
+            max_end = blocks_[block_id].end_idx;
+    }
+    detail::ensure_block_dirty_len(*this, max_id + 1);
+    if (max_end != 0)
+        detail::ensure_instruction_dirty_len(*this, max_end);
     for (const auto block_id : block_ids)
-        detail::mark_block_dirty_no_bump(*this, block_id);
+        detail::mark_block_dirty_bit_or_cascade_no_resize(*this, block_id);
     bump_generation(); // once regardless of block count
     g_ir_soa_batch_dirty_cascades_total.fetch_add(1, std::memory_order_relaxed);
     g_ir_soa_batch_dirty_blocks_total.fetch_add(block_ids.size(), std::memory_order_relaxed);
@@ -784,12 +833,18 @@ inline void IRFunctionSoA::mark_blocks_dirty(std::span<const std::uint32_t> bloc
     detail::clear_single_mark_residual(this);
 }
 
-// Issue #2615: multi-block bit-only + one fence (precise ImpactScope path).
+// Issue #2615 / #3489: multi-block bit-only + one fence + one ensure.
 inline void IRFunctionSoA::mark_blocks_dirty_bits_only(std::span<const std::uint32_t> block_ids) {
     if (block_ids.empty())
         return; // AC3 quiet
+    std::uint32_t max_id = 0;
+    for (const auto block_id : block_ids) {
+        if (block_id > max_id)
+            max_id = block_id;
+    }
+    detail::ensure_block_dirty_len(*this, max_id + 1);
     for (const auto block_id : block_ids)
-        detail::mark_block_dirty_bit_only_no_bump(*this, block_id);
+        detail::mark_block_dirty_bit_only_no_resize(*this, block_id);
     bump_generation(); // once
     g_ir_soa_batch_bit_only_cascades_total.fetch_add(1, std::memory_order_relaxed);
     g_ir_soa_batch_dirty_blocks_total.fetch_add(block_ids.size(), std::memory_order_relaxed);

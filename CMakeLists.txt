@@ -271,6 +271,8 @@ endif()
 
 target_include_directories(aura PRIVATE ${CMAKE_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/src)
 aura_test_compile_options(aura)
+# Issue #3489: production pack deletes IRFunctionSoA::mark_block_dirty.
+target_compile_definitions(aura PRIVATE AURA_PRODUCTION_PACK=1)
 
 # Issue #1967–#1976: per-source commercial/integration vertical flags
 # (avoids PUBLIC recompile of the entire aura_test_objects graph when a flag flips).
@@ -878,7 +880,8 @@ function(aura_add_issue_test NAME)
     # relative paths via AURA_SOURCE_DIR (std::filesystem::path(AURA_SOURCE_DIR)
     # / "src/..."). Define it for every issue test target so those
     # ACs compile regardless of build dir location.
-    target_compile_definitions(${NAME} PRIVATE AURA_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+    target_compile_definitions(${NAME} PRIVATE AURA_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+                                               AURA_ALLOW_IR_SOA_SINGLE_MARK=1)
     # Fix #2: no FILE_SET .ixx here. The prebuilt BMIs in
     # AURA_MODULE_BMI_DIR (built by aura_test_objects) are made
     # visible in the per-target dir via the launcher-installed
