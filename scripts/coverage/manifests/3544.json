@@ -1,0 +1,55 @@
+{
+  "issue": 3544,
+  "title": "Issue #3544: production concurrent top-level clone refuse + steal unwind",
+  "ok": "OK: Issue #3544 concurrent clone try_lock refuse — Soft one is_sandbox_active load; no new query:*.",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/macro_expansion.cpp",
+      "contains": [
+        "g_top_level_clone_mu",
+        "rejected_concurrent_top_level",
+        "g_clone_macro_body_concurrent_refused_total",
+        "unwind_fiber_hygiene_on_steal"
+      ]
+    },
+    {
+      "ac": "AC1-counter",
+      "path": "src/compiler/macro_expansion.ixx",
+      "contains": [
+        "kConcurrentTopLevelCloneIssue = 3544",
+        "kHygieneLimitReasonConcurrentTopLevel = 10",
+        "g_clone_macro_body_concurrent_refused_total",
+        "clone_in_flight"
+      ]
+    },
+    {
+      "ac": "AC5-query",
+      "path": "src/compiler/evaluator_primitives_query_obs_mid.cpp",
+      "contains": [
+        "schema-3544",
+        "clone-macro-body-concurrent-refused-total"
+      ]
+    },
+    {
+      "ac": "AC1-test",
+      "path": "tests/compiler/test_concurrent_clone_hygiene_depth.cpp",
+      "contains": [
+        "3544 AC1",
+        "3544 AC2",
+        "3544 AC3",
+        "3544 AC4",
+        "3544 AC5"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "forbid": [
+        "tests/compiler/test_issue_3544.cpp",
+        "tests/compiler/test_concurrent_clone_macro_body.cpp",
+        "docs/design/3544-concurrent-clone-mutex.md",
+        "scripts/coverage/checks/check_concurrent_clone_3544.py"
+      ]
+    }
+  ]
+}

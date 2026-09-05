@@ -696,6 +696,14 @@ extern "C" __attribute__((weak)) std::uint64_t
 aura_hygiene_violation_se_emit_total_v_read(void) noexcept {
     return 0;
 }
+extern "C" __attribute__((weak)) std::uint64_t
+aura_clone_macro_body_concurrent_refused_total_v_read(void) noexcept {
+    return 0;
+}
+extern "C" __attribute__((weak)) void
+aura_test_reset_clone_macro_body_concurrent_refused_total_for_test(void) noexcept {}
+extern "C" __attribute__((weak)) void
+aura_unwind_fiber_hygiene_on_steal(std::uint32_t /*fiber_id*/) noexcept {}
 extern "C" __attribute__((weak)) void
 aura_residual_live_closure_remount_tick(std::uint64_t /*budget*/) {}
 extern "C" __attribute__((weak)) void
