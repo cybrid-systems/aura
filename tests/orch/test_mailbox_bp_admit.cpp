@@ -1381,6 +1381,109 @@ int run_test_mailbox_bp_admit() {
               "3337 AC5: no docs/design/3337-*");
     }
 
+    // ── Issue #3566: named mailbox BP note/decay isolation ──────────────
+    {
+        using aura::compiler::typed_audit::apply_dev_audit_defaults;
+        using aura::compiler::typed_audit::apply_production_audit_defaults;
+        using aura::orch::load_mailbox_bp_recent;
+        using aura::orch::maybe_decay_mailbox_bp_recent;
+        using aura::orch::note_mailbox_bp_recent_event;
+        using aura::orch::reset_scope_bp_map_for_test;
+        using aura::serve::mf_mailbox::MailMessage;
+        using aura::serve::mf_mailbox::MultiFiberMailbox;
+        using aura::serve::mf_mailbox::PushStatus;
+
+        std::println("\n--- #3566 AC1: named mailbox high-water does not poison process ---");
+        apply_production_audit_defaults();
+        (void)reset_scope_bp_map_for_test();
+        const auto proc0 =
+            g_orch_module_stats.mailbox_bp_recent_total.load(std::memory_order_relaxed);
+        MultiFiberMailbox named_mb(/*high_water=*/8);
+        named_mb.set_bp_scope_id("tenant-a-3566");
+        std::uint64_t named_bp = 0;
+        for (int i = 0; i < 32; ++i) {
+            MailMessage m;
+            m.payload = "x";
+            if (named_mb.push(std::move(m)) == PushStatus::Backpressure)
+                ++named_bp;
+        }
+        CHECK(named_bp > 0, "3566 AC1: named mailbox hit BP");
+        CHECK(g_orch_module_stats.mailbox_bp_recent_total.load(std::memory_order_relaxed) == proc0,
+              "3566 AC1: process mailbox_bp_recent_total unchanged");
+        CHECK(load_mailbox_bp_recent("tenant-a-3566") > 0, "3566 AC1: named gauge incremented");
+
+        std::println("\n--- #3566 AC2: A storming does not freeze B quiet decay ---");
+        (void)reset_scope_bp_map_for_test();
+        ::setenv("AURA_ORCH_BP_WINDOW_MS", "40", 1);
+        ::setenv("AURA_ORCH_BP_ADMIT_THRESHOLD", "1", 1);
+        for (int i = 0; i < 8; ++i)
+            note_mailbox_bp_recent_event("tenant-b-3566");
+        CHECK(load_mailbox_bp_recent("tenant-b-3566") >= 8, "3566 AC2: B primed");
+        std::this_thread::sleep_for(std::chrono::milliseconds(80));
+        MultiFiberMailbox storm_a(/*high_water=*/4);
+        storm_a.set_bp_scope_id("tenant-a-3566");
+        for (int i = 0; i < 24; ++i) {
+            MailMessage m;
+            m.payload = "a";
+            (void)storm_a.push(std::move(m));
+        }
+        CHECK(load_mailbox_bp_recent("tenant-a-3566") > 0, "3566 AC2: A still hot");
+        maybe_decay_mailbox_bp_recent();
+        CHECK(load_mailbox_bp_recent("tenant-b-3566") == 0,
+              "3566 AC2: B quiet gauge decayed while A is hot");
+        Scheduler sched(1);
+        AgentSpec spec_b;
+        spec_b.name = "3566-b";
+        spec_b.body = [] {};
+        spec_b.attach_mailbox = true;
+        spec_b.bp_scope_id = "tenant-b-3566";
+        auto hb = spawn_agent_with_mailbox(sched, spec_b);
+        CHECK(hb.ok, "3566 AC2: B spawn admits after quiet decay");
+        AgentSpec spec_a;
+        spec_a.name = "3566-a";
+        spec_a.body = [] {};
+        spec_a.attach_mailbox = true;
+        spec_a.bp_scope_id = "tenant-a-3566";
+        auto ha = spawn_agent_with_mailbox(sched, spec_a);
+        CHECK(!ha.ok && ha.quota_dimension == "mailbox-bp", "3566 AC2: A spawn still BP-admits");
+
+        std::println("\n--- #3566 AC3: Soft / empty still process bucket ---");
+        apply_dev_audit_defaults();
+        const auto proc1 =
+            g_orch_module_stats.mailbox_bp_recent_total.load(std::memory_order_relaxed);
+        MultiFiberMailbox empty_mb(/*high_water=*/8);
+        std::uint64_t empty_bp = 0;
+        for (int i = 0; i < 24; ++i) {
+            MailMessage m;
+            m.payload = "e";
+            if (empty_mb.push(std::move(m)) == PushStatus::Backpressure)
+                ++empty_bp;
+        }
+        CHECK(empty_bp > 0, "3566 AC3: empty-scope mailbox BP");
+        CHECK(g_orch_module_stats.mailbox_bp_recent_total.load(std::memory_order_relaxed) > proc1,
+              "3566 AC3: process bucket still used");
+
+        std::println("\n--- #3566 AC4/AC5: agent_send still notes handle scope + no invent ---");
+        const auto spawn = read_file("src/orch/agent_spawn.h");
+        const auto mbh = read_file("src/serve/multi_fiber_mailbox.h");
+        const auto hook = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+        CHECK(spawn.find("kMailboxBpScopeNoteDecayIssue = 3566") != std::string::npos,
+              "3566 AC5: issue constant");
+        CHECK(mbh.find("note_self_backpressure") != std::string::npos, "3566 AC5: mailbox helper");
+        CHECK(hook.find("g_mf_mailbox_bp_note_scope") != std::string::npos, "3566 AC5: TLS hook");
+        CHECK(spawn.find("note_mailbox_bp_recent_event(h.bp_scope_id)") != std::string::npos,
+              "3566 AC4: agent_send still notes h.bp_scope_id");
+        CHECK(read_file("tests/orch/test_issue_3566.cpp").empty() &&
+                  read_file("tests/issues/test_issue_3566.cpp").empty(),
+              "3566 AC5: no test_issue_3566.cpp");
+        CHECK(read_file("docs/design/3566-mailbox-bp-scope.md").empty(),
+              "3566 AC5: no docs/design/3566-*");
+        ::unsetenv("AURA_ORCH_BP_WINDOW_MS");
+        ::unsetenv("AURA_ORCH_BP_ADMIT_THRESHOLD");
+        (void)reset_scope_bp_map_for_test();
+        apply_dev_audit_defaults();
+    }
+
     return aura::test::g_failed ? 1 : 0;
 }
 

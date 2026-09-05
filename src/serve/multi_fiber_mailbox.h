@@ -1072,6 +1072,12 @@ note_mailbox_delivery_safety(Fiber* target, const MutationSafetySnapshot* snap, 
     return true;
 }
 
+// Issue #3566: TLS scope for the mailbox BP orch hook. Empty / "-" =
+// process bucket. Named id routes note_mailbox_bp_recent_event to the
+// per-scope gauge. Thread-local so the existing extern "C" hook signature
+// stays (weak fiber_bridge no-op unchanged).
+inline thread_local std::string_view g_mf_mailbox_bp_note_scope{};
+
 // Backpressure accounting: process + local + optional orch dashboard mirror.
 inline void note_backpressure(MultiFiberMailboxStats* local = nullptr,
                               bool from_fanout = false) noexcept {
@@ -1124,6 +1130,17 @@ public:
     // credit so a slow consumer stops producers before the memory bound.
     void set_credit_limit(std::uint32_t n) noexcept { credit_limit_ = n; }
     [[nodiscard]] std::uint32_t credit_limit() const noexcept { return credit_limit_; }
+    // Issue #3566: spawn copies AgentHandle::bp_scope_id so high-water
+    // BP notes the named gauge instead of the process bucket.
+    void set_bp_scope_id(std::string id) noexcept { bp_scope_id_ = std::move(id); }
+    [[nodiscard]] std::string_view bp_scope_id() const noexcept { return bp_scope_id_; }
+    void note_self_backpressure(bool from_fanout = false) noexcept {
+        const std::string_view s =
+            (bp_scope_id_ == "-") ? std::string_view{} : std::string_view{bp_scope_id_};
+        g_mf_mailbox_bp_note_scope = s;
+        note_backpressure(&local_stats_, from_fanout);
+        g_mf_mailbox_bp_note_scope = {};
+    }
     [[nodiscard]] std::size_t effective_credit() const noexcept {
         return credit_limit_ == 0 ? high_water_ : static_cast<std::size_t>(credit_limit_);
     }
@@ -1306,11 +1323,11 @@ public:
         // #2535 admit + #2925 consecutive throttle see one real BP.
         if (inflight_.load(std::memory_order_relaxed) >= effective_credit()) {
             note_credit_backpressure(&local_stats_);
-            note_backpressure(&local_stats_, /*from_fanout=*/false);
+            note_self_backpressure(/*from_fanout=*/false);
             return PushStatus::Backpressure;
         }
         if (queue_.size() >= high_water_) {
-            note_backpressure(&local_stats_, /*from_fanout=*/false);
+            note_self_backpressure(/*from_fanout=*/false);
             return PushStatus::Backpressure;
         }
         g_mf_mailbox_stats.pushes.fetch_add(1, std::memory_order_relaxed);
@@ -1367,14 +1384,14 @@ public:
         // while any fiber on the shared Evaluator is mid-mutation. Same
         // sole helper as push(); production fail-closed (always BP).
         if (note_mailbox_deferred_under_boundary(&local_stats_)) {
-            note_backpressure(&local_stats_, /*from_fanout=*/true);
+            note_self_backpressure(/*from_fanout=*/true);
             return PushStatus::Backpressure;
         }
         // Issue #2987: inject residual (no target) still RejectHard the
         // entire fanout — never silent Ok.
         if (note_mailbox_delivery_safety(nullptr, nullptr, proto.held_ref_token.has_value(),
                                          &local_stats_)) {
-            note_backpressure(&local_stats_, /*from_fanout=*/true);
+            note_self_backpressure(/*from_fanout=*/true);
             return PushStatus::Backpressure;
         }
         // Issue #2312: per-attached-fiber delivery gate. If ANY attached
@@ -1391,13 +1408,13 @@ public:
                 note_mailbox_mutation_hold_defer();
                 local_stats_.mailbox_deferred_mutation_hold_total.fetch_add(
                     1, std::memory_order_relaxed);
-                note_backpressure(&local_stats_, /*from_fanout=*/true);
+                note_self_backpressure(/*from_fanout=*/true);
                 return PushStatus::Backpressure;
             }
             // Issue #2987: residual hard-AND per attacher (same table).
             if (note_mailbox_delivery_safety(a, &snap, proto.held_ref_token.has_value(),
                                              &local_stats_)) {
-                note_backpressure(&local_stats_, /*from_fanout=*/true);
+                note_self_backpressure(/*from_fanout=*/true);
                 return PushStatus::Backpressure;
             }
         }
@@ -1405,11 +1422,11 @@ public:
         // Issue #2972: reserve `need` credits before any enqueue (all-or-nothing).
         if (inflight_.load(std::memory_order_relaxed) + need > effective_credit()) {
             note_credit_backpressure(&local_stats_);
-            note_backpressure(&local_stats_, /*from_fanout=*/true);
+            note_self_backpressure(/*from_fanout=*/true);
             return PushStatus::Backpressure;
         }
         if (queue_.size() + need > high_water_) {
-            note_backpressure(&local_stats_, /*from_fanout=*/true);
+            note_self_backpressure(/*from_fanout=*/true);
             return PushStatus::Backpressure;
         }
         g_mf_mailbox_stats.broadcasts.fetch_add(1, std::memory_order_relaxed);
@@ -1696,6 +1713,7 @@ private:
     std::deque<MailMessage> queue_;
     std::vector<Fiber*> attachers_;
     std::size_t high_water_ = 1024;
+    std::string bp_scope_id_;        // Issue #3566: empty / "-" = process bucket
     std::uint32_t credit_limit_ = 0; // 0 → high_water (#2972)
     std::atomic<std::uint64_t> inflight_{0};
     std::atomic<bool> closed_{false};

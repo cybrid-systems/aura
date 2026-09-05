@@ -133,6 +133,10 @@ inline constexpr int kAgentSendSafePreferenceIssue = 3336;
 // still delivers (#3111 AC3). Reuses handoff_reject_total /
 // held_ref_stale_after_steal_total. No new query key.
 inline constexpr int kRecvHeldRefAfterStealIssue = 3565;
+// Issue #3566: mailbox BP note/decay isolation — named-scope hook must
+// not poison the process bucket or block quiet-tenant decay. Soft empty
+// / "-" stay process bucket. No new query key.
+inline constexpr int kMailboxBpScopeNoteDecayIssue = 3566;
 // Issue #2155: quota-reject spawn path — no name-table put, no arena leak.
 inline constexpr int kSpawnQuotaNoLeakIssue = 2155;
 // Issue #2159: fiber-native keepalive helper (replace detached std::thread).
@@ -1208,7 +1212,8 @@ inline void note_mailbox_bp_recent_event(std::string_view scope_id = {}) noexcep
         gauge->last_event_us.store(now_us, std::memory_order_release);
         gauge->recent.fetch_add(1, std::memory_order_relaxed);
     }
-    g_mailbox_bp_last_event_us.store(now_us, std::memory_order_release);
+    // Issue #3566: named notes must NOT advance the process last-event
+    // clock — a storm in A used to block quiet-period decay of B.
 }
 
 // Issue #2633 / #2778: lookup helper for scope-local gauge. Returns a
@@ -1292,11 +1297,9 @@ inline std::size_t scope_bp_map_size_for_test() noexcept {
 // Issue #2398: quiet-period decay of mailbox_bp_recent_total.
 // Zero-cost when window_ms==0. Admit preflight calls this only when
 // threshold>0 (zero cost when admit control is off). One CAS winner zeros.
-// Issue #2633: also decays every per-scope gauge in g_scope_bp_map under
-// the same shared window clock. The shared window check uses
-// g_mailbox_bp_last_event_us — same last-event clock as the process
-// bucket — so the per-scope + process decay fire on the same admit
-// preflight tick (no extra clock work).
+// Issue #2633 / #3566: also decays every per-scope gauge in g_scope_bp_map.
+// Named gauges use their own last_event_us (A storming does not freeze B).
+// Process bucket still keys off g_mailbox_bp_last_event_us.
 // Issue #2778: map holds shared_ptr so erase/LRU cannot UAF gauges.
 // Issue #2780: per-scope zero runs UNDER g_scope_bp_map_mtx (same lock
 // as note_mailbox_bp_recent_event's fetch_add / last_event_us). No
@@ -1312,10 +1315,12 @@ inline void maybe_decay_mailbox_bp_recent() noexcept {
         return;
     const auto now_us = orch_now_us();
     const auto last_bp = g_mailbox_bp_last_event_us.load(std::memory_order_acquire);
-    if (last_bp == 0)
-        return; // never saw a BP event
-    if (now_us - last_bp <= window_ms * 1000ULL)
-        return; // still inside quiet window after last BP
+    const auto window_us = window_ms * 1000ULL;
+    // Issue #3566: do NOT early-return when the process clock is hot.
+    // Named gauges decay from their own last_event_us (A storming must
+    // not freeze B's quiet-period zero). Process bucket still zeros
+    // only when the process clock is quiet.
+    const bool process_quiet = last_bp == 0 || now_us - last_bp > window_us;
     auto last_decay = g_mailbox_bp_last_decay_us.load(std::memory_order_acquire);
     if (!g_mailbox_bp_last_decay_us.compare_exchange_strong(last_decay, now_us,
                                                             std::memory_order_acq_rel)) {
@@ -1324,8 +1329,8 @@ inline void maybe_decay_mailbox_bp_recent() noexcept {
     // Process bucket: store(0) may race a concurrent empty-scope note
     // (#2465 — one-off admit-when-should-deny preferred over permanent
     // denial). Scope path below is race-free under the map mutex.
-    g_orch_module_stats.mailbox_bp_recent_total.store(0, std::memory_order_release);
-    const auto window_us = window_ms * 1000ULL;
+    if (process_quiet && last_bp != 0)
+        g_orch_module_stats.mailbox_bp_recent_total.store(0, std::memory_order_release);
     std::lock_guard<std::mutex> lock(g_scope_bp_map_mtx);
     for (const auto& [_, g] : g_scope_bp_map) {
         if (!g)
@@ -2279,6 +2284,8 @@ inline void finalize_spawn_quota_reject(AgentHandle& h) noexcept {
     auto mb = spec.attach_mailbox ? std::make_shared<serve::mf_mailbox::MultiFiberMailbox>(
                                         spec.mailbox_high_water, spec.mailbox_credit)
                                   : nullptr;
+    if (mb)
+        mb->set_bp_scope_id(h.bp_scope_id);
     auto body = std::move(spec.body);
     auto attach = spec.attach_mailbox;
     // Issue #2080: ProgressClock mode shares the same liveness struct + clock

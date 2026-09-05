@@ -6071,6 +6071,8 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             insert_kv("schema-2398", aura::orch::kMailboxBpRecentWindowIssue);
             insert_kv("issue-2398", aura::orch::kMailboxBpRecentWindowIssue);
             insert_kv("mailbox-bp-decay-wired", 1);
+            insert_kv("schema-3566", aura::orch::kMailboxBpScopeNoteDecayIssue);
+            insert_kv("issue-3566", aura::orch::kMailboxBpScopeNoteDecayIssue);
             // Issue #2399: AgentScope concurrent misuse detection (metric path;
             // optional AURA_AGENT_SCOPE_CONCURRENT_ABORT=1 hard abort). Additive.
             insert_kv("agent-scope-concurrent-misuse-total",
