@@ -1,0 +1,53 @@
+{
+  "issue": 3546,
+  "title": "Issue #3546: serialize composite txn audit mid for SE-typed join",
+  "ok": "OK: Issue #3546 composite txn sticky mid — reuses #3066 TLS; enter(0) no-op; no new query:*.",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/typed_mutation_audit.h",
+      "contains": [
+        "kCompositeTxnStickyMidIssue = 3546",
+        "last_stamped_or_composite_audit_mid",
+        "stamp_last_audit_mid",
+        "aura_composite_txn_enter",
+        "aura_composite_txn_exit",
+        "g_tls_composite_batch_join_mid"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/type_linear_commit_health.hh",
+      "contains": [
+        "last_stamped_or_composite_audit_mid"
+      ]
+    },
+    {
+      "ac": "AC3-query",
+      "path": "src/compiler/evaluator_primitives_query_reflect.cpp",
+      "contains": [
+        "schema-3546",
+        "composite-txn-sticky-mid-wired"
+      ]
+    },
+    {
+      "ac": "AC1-test",
+      "path": "tests/compiler/test_audit_mutation_id_unify.cpp",
+      "contains": [
+        "3546 AC1",
+        "3546 AC2",
+        "3546 AC4",
+        "3546 AC5"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "forbid": [
+        "tests/compiler/test_issue_3546.cpp",
+        "tests/issues/test_issue_3546.cpp",
+        "docs/design/3546-composite-txn-sticky.md",
+        "scripts/coverage/checks/check_composite_mid_sticky.py"
+      ]
+    }
+  ]
+}

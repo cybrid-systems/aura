@@ -4059,14 +4059,15 @@ inline void clear_boundary_audit_mid() noexcept {
     return resolve_audit_mutation_id();
 }
 
-// Issue #3066: SE + typed trail join key. Caller mid wins; else pinned
-// composite/batch mid; else non-zero boundary mid; else resolve.
-// Soft/quiet with nothing pinned → resolve (existing Sampled/Off path).
+// Issue #3066 / #3546: SE + typed trail join key. Sticky composite TLS
+// wins so inner caller mids cannot diverge last_proof_mid / SE join
+// (#3546 residual). Else caller mid; else non-zero boundary mid; else
+// resolve. Soft/quiet with nothing pinned → resolve (existing Sampled/Off).
 [[nodiscard]] inline std::uint64_t join_audit_and_se_mid(std::uint64_t caller_mid = 0) noexcept {
-    if (caller_mid != 0)
-        return caller_mid;
     if (g_tls_composite_batch_join_mid != 0)
         return g_tls_composite_batch_join_mid;
+    if (caller_mid != 0)
+        return caller_mid;
     if (g_tls_boundary_audit_noted && g_tls_boundary_audit_mid != 0)
         return g_tls_boundary_audit_mid;
     return resolve_audit_mutation_id(0);
@@ -4181,6 +4182,45 @@ inline std::uint64_t promote_sampled_force_join_mid(std::uint64_t deny_mid = 0) 
     return mid;
 }
 
+// Issue #3546: sticky composite mid for SE ↔ Typed ↔ last_proof_mid join.
+// Reuses g_tls_composite_batch_join_mid (#3066) — no second sticky model.
+// enter(0) is a no-op (Soft/Off zero-cost). note_* / capture honor sticky
+// via stamp_last_audit_mid so inner mutations do not clobber last_proof_mid.
+inline constexpr int kCompositeTxnStickyMidIssue = 3546;
+
+[[nodiscard]] inline std::uint64_t last_stamped_or_composite_audit_mid() noexcept {
+    if (g_tls_composite_batch_join_mid != 0)
+        return g_tls_composite_batch_join_mid;
+    return g_last_stamped_audit_mid.load(std::memory_order_relaxed);
+}
+
+inline void stamp_last_audit_mid(std::uint64_t mutation_id) noexcept {
+    if (g_tls_composite_batch_join_mid != 0) {
+        g_last_stamped_audit_mid.store(g_tls_composite_batch_join_mid, std::memory_order_relaxed);
+        return;
+    }
+    g_last_stamped_audit_mid.store(mutation_id, std::memory_order_relaxed);
+}
+
+inline void composite_txn_enter(std::uint64_t composite_mid) noexcept {
+    if (composite_mid == 0)
+        return;
+    (void)pin_composite_batch_join_mid(composite_mid);
+}
+
+inline void composite_txn_exit() noexcept {
+    if (g_tls_composite_batch_join_mid == 0)
+        return;
+    g_tls_composite_batch_join_mid = 0;
+}
+
+extern "C" inline void aura_composite_txn_enter(std::uint64_t composite_mid) noexcept {
+    composite_txn_enter(composite_mid);
+}
+extern "C" inline void aura_composite_txn_exit(void) noexcept {
+    composite_txn_exit();
+}
+
 // Issue #2814: mark that post_mutation_invariant suite (or equivalent)
 // ran for this mutation_id. Call before/during record_invariant_audit_result.
 inline void note_invariant_enforcement_ran(std::uint64_t mutation_id) noexcept {
@@ -4244,7 +4284,7 @@ inline void capture_audit_event_forced(std::uint64_t mutation_id, std::string_vi
         return;
     TypedMutationAuditEvent ev{};
     ev.mutation_id = mutation_id;
-    g_last_stamped_audit_mid.store(mutation_id, std::memory_order_relaxed);
+    stamp_last_audit_mid(mutation_id); // #3546 sticky composite wins last_stamped
     const auto seq =
         g_typed_mutation_audit_counters.trail_seq.fetch_add(1, std::memory_order_relaxed);
     ev.seq = seq;

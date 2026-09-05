@@ -609,7 +609,7 @@ void register_query_reflect_primitives(PrimRegistrar add, std::pmr::vector<Pair>
             const auto snap = capture_type_linear_evolution_snapshot();
             // Issue #3339: live 57 keys; planned 72 (>= 57+8). Additive
             // insert_kv must raise planned_keys; Agent facade forbids overflow.
-            constexpr std::size_t kTypeLinearEvolutionSnapshotPlannedKeys = 72;
+            constexpr std::size_t kTypeLinearEvolutionSnapshotPlannedKeys = 80;
             auto* ht = FlatHashTable::create(
                 query_hash_capacity_for(kTypeLinearEvolutionSnapshotPlannedKeys));
             if (!ht)
@@ -721,6 +721,10 @@ void register_query_reflect_primitives(PrimRegistrar add, std::pmr::vector<Pair>
                       aura::compiler::typed_audit::kConeOutsideGoalDropRecoverRejectIssue);
             insert_kv("issue-2962",
                       aura::compiler::typed_audit::kConeOutsideGoalDropRecoverRejectIssue);
+            // Issue #3546: sticky composite mid on last-proof-mid (no new query:*).
+            insert_kv("schema-3546", aura::compiler::typed_audit::kCompositeTxnStickyMidIssue);
+            insert_kv("issue-3546", aura::compiler::typed_audit::kCompositeTxnStickyMidIssue);
+            insert_kv("composite-txn-sticky-mid-wired", 1);
 
             return query_hash_finish(ht, string_heap, overflowed);
         });

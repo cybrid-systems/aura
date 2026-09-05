@@ -231,8 +231,8 @@ struct TypeLinearEvolutionSnapshot {
         static_cast<std::int64_t>(typed_audit::last_proof_linear_root_count_v_read());
     s.last_proof_stamp =
         static_cast<std::int64_t>(typed_audit::last_type_linear_commit_proof_stamp_v_read());
-    s.last_proof_mid = static_cast<std::int64_t>(
-        typed_audit::g_last_stamped_audit_mid.load(std::memory_order_relaxed));
+    s.last_proof_mid =
+        static_cast<std::int64_t>(typed_audit::last_stamped_or_composite_audit_mid());
     s.proof_stamped_after_rebind_total = static_cast<std::int64_t>(
         typed_audit::type_linear_proof_stamped_after_rebind_total_v_read());
     s.proof_reject_after_rebind_fail_total = static_cast<std::int64_t>(
