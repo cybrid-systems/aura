@@ -85,6 +85,11 @@ inline constexpr std::size_t kRelowerSuccessDefineCap = 64;
 // Issue #3351: owner-scoped peer IR-cache must not clean-hit after
 // residual_force / soft-stale. Name-level gen + per-entry ack.
 inline constexpr int kPeerIrNameSoftStaleIssue = 3351;
+// Issue #3541: partial force-mask clear is per-eval (owner TLS). Process
+// force_jit_regions_mask_ stays the aggregate fallback for nullptr owner
+// (single-workspace MVP). Bounded slots; no extra HotUpdateRegistry.
+inline constexpr int kForceMaskPeerScopeIssue = 3541;
+inline constexpr std::size_t kEvalForceSlotCap = 8;
 
 // Define-id for the #3229 side set: prefer stable_func_id, else 32-bit
 // FNV of the name (never 0). Separates defines that collide on 6 bits.
@@ -289,6 +294,14 @@ public:
     // counters stay at 0 under Soft / Off (zero-cost contract).
     [[nodiscard]] std::uint64_t residual_force_auto_heal_total() const noexcept;
     [[nodiscard]] std::uint64_t residual_force_auto_heal_last_mask() const noexcept;
+    // Issue #3541: per-eval force overlay (owner TLS). nullptr → process
+    // aggregate. Soft / no occupied slots: one live-count load.
+    [[nodiscard]] std::uint64_t force_jit_regions_mask_for_eval(void* eval_ptr) const noexcept;
+    [[nodiscard]] std::uint64_t force_mask_peer_residual_total() const noexcept;
+    // Current eval for overlay stamp/clear. Light-link TLS owner is a
+    // no-op stub; this word is the registry-side owner (same nullptr
+    // fallback as single-workspace).
+    void set_force_eval_owner(void* eval_ptr) noexcept;
     // Production-only observe: age residual bits across outermost
     // BoundaryExits (success or fail — Issue #3248). Soft / idle
     // residual==0 → one/two loads, no counter. Never reemits from
@@ -956,6 +969,27 @@ private:
     std::atomic<std::uint64_t> residual_force_auto_heal_last_mask_{0};
     std::atomic<std::uint64_t> residual_force_observe_age_{0};
     std::atomic<std::uint64_t> residual_force_observe_last_mask_{0};
+    // Issue #3541: bounded per-eval force overlay (append END per #2906).
+    // Occupied when reemit/register owner TLS is set at demotion. Process
+    // force_jit_regions_mask_ is the OR of slots once any slot is live;
+    // nullptr-owner / live==0 keeps the legacy process word.
+    struct EvalForceSlot {
+        std::atomic<std::uintptr_t> eval{0};
+        std::atomic<std::uint64_t> mask{0};
+        std::atomic<std::uint64_t> last_success{0};
+    };
+    EvalForceSlot eval_force_slots_[kEvalForceSlotCap]{};
+    std::atomic<std::uint32_t> eval_force_live_{0};
+    std::atomic<std::uint64_t> force_mask_peer_residual_total_{0};
+    std::atomic<std::uintptr_t> force_eval_owner_{0};
+    [[nodiscard]] void* force_owner_tls() noexcept;
+    EvalForceSlot* find_eval_force_slot(void* ev, bool create) noexcept;
+    void or_eval_force_bit(void* ev, std::uint64_t bit) noexcept;
+    void stamp_eval_last_success(void* ev, std::uint64_t cov) noexcept;
+    void clear_eval_force_slots() noexcept;
+    std::uint64_t rebuild_force_mask_from_slots() noexcept;
+    bool try_partial_clear_eval_force(std::uint64_t last_cov, std::uint64_t* out_residual,
+                                      std::uint64_t* out_cleared) noexcept;
     std::atomic<std::uint8_t> force_jit_repromote_only_covered_bits_{0};
     std::atomic<std::uint8_t> force_jit_repromote_only_covered_override_{0};
     std::atomic<std::uint64_t> force_jit_repromote_partial_total_{0};
@@ -1558,6 +1592,11 @@ struct aura_reload_recovery_snapshot {
     std::int64_t residual_force_auto_heal_wired; // 1 when #3096 linked
     std::int64_t schema_3096;
     std::int64_t issue_3096;
+    // Issue #3541: per-eval force overlay residual (append END).
+    std::int64_t force_mask_peer_residual_total;
+    std::int64_t force_mask_peer_scope_wired; // 1 when #3541 linked
+    std::int64_t schema_3541;
+    std::int64_t issue_3541;
 };
 void aura_hot_update_reload_recovery_get_snapshot(aura_reload_recovery_snapshot* out);
 

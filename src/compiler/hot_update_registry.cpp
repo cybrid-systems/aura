@@ -274,8 +274,10 @@ void HotUpdateRegistry::on_reemit_pipeline_call(std::uint64_t candidates,
                     last_force_jit_reason_.load(std::memory_order_relaxed));
                 covered = aot_reload_fail_to_force_jit_mask(fail) & demoted;
             }
-            if (covered != 0)
+            if (covered != 0) {
                 last_reemit_success_region_mask_.store(covered, std::memory_order_relaxed);
+                stamp_eval_last_success(force_owner_tls(), covered);
+            }
         }
         // Issue #3513: coverage stamp stays (#3445). Do not re-promote or
         // remount-as-healed while the facade emit still sees pre-store irs.
@@ -547,6 +549,7 @@ void HotUpdateRegistry::on_reload_success() noexcept {
     // Issue #2302: clear force_jit_regions_mask (wholesale — successful
     // reload un-forces all regions) + reset attempts_left to 0.
     force_jit_regions_mask_.store(0, std::memory_order_relaxed);
+    clear_eval_force_slots(); // Issue #3541: overlay follows wholesale clear
     attempts_left_.store(0, std::memory_order_relaxed);
     // Clear deferred-reemit flag too — successful reload means the
     // deferred reemit (if any) has been processed.
@@ -627,21 +630,35 @@ void HotUpdateRegistry::maybe_force_jit_repromote_on_clean_success() noexcept {
     const auto last_cov = last_reemit_success_region_mask_.load(std::memory_order_relaxed);
     const bool partial = resolve_force_jit_repromote_only_covered();
     if (partial && last_cov != 0) {
-        auto clear_bits = mask & last_cov;
         // Issue #3229: hashed-name 6-bit coverage is not define-complete.
         // Do not clear force-JIT bits while the define-id side set is
         // active (a colliding peer is still residual). Pipeline
         // note_reemit_success_coverage clears the set first.
-        if (relower_success_define_active_.load(std::memory_order_relaxed) != 0)
-            clear_bits = 0;
-        if (clear_bits == 0) {
-            // No overlap — leave mask; window already consumed so reset
-            // streak (Agent must re-cover). Keep sticky override.
+        if (relower_success_define_active_.load(std::memory_order_relaxed) != 0) {
             force_jit_stable_successes_.store(0, std::memory_order_relaxed);
             return;
         }
-        const auto residual = mask & ~clear_bits;
-        force_jit_regions_mask_.store(residual, std::memory_order_relaxed);
+        std::uint64_t residual = 0;
+        std::uint64_t scoped_cleared = 0;
+        if (try_partial_clear_eval_force(last_cov, &residual, &scoped_cleared)) {
+            // Per-eval overlay handled the store. Peer slots keep their bits
+            // even when last_cov would have cleared the same reason group
+            // on the process word.
+            if (scoped_cleared == 0) {
+                force_jit_stable_successes_.store(0, std::memory_order_relaxed);
+                return;
+            }
+        } else {
+            const auto clear_bits = mask & last_cov;
+            if (clear_bits == 0) {
+                // No overlap — leave mask; window already consumed so reset
+                // streak (Agent must re-cover). Keep sticky override.
+                force_jit_stable_successes_.store(0, std::memory_order_relaxed);
+                return;
+            }
+            residual = mask & ~clear_bits;
+            force_jit_regions_mask_.store(residual, std::memory_order_relaxed);
+        }
         force_jit_stable_successes_.store(0, std::memory_order_relaxed);
         if (residual != 0) {
             force_jit_repromote_partial_total_.fetch_add(1, std::memory_order_relaxed);
@@ -659,6 +676,7 @@ void HotUpdateRegistry::maybe_force_jit_repromote_on_clean_success() noexcept {
     // Default (#2502): wholesale clear — process-wide stability → all
     // demoted reasons eligible.
     force_jit_regions_mask_.store(0, std::memory_order_relaxed);
+    clear_eval_force_slots();
     force_jit_stable_successes_.store(0, std::memory_order_relaxed);
     reemit_success_coverage_override_.store(0, std::memory_order_relaxed);
     force_jit_repromote_total_.fetch_add(1, std::memory_order_relaxed);
@@ -709,6 +727,8 @@ void HotUpdateRegistry::reset_force_jit_repromote_for_test() noexcept {
     // Issue #2895 / #2949: coverage + partial knobs / counters.
     // Auto mode (override=0) → Soft wholesale; production injects only_covered.
     last_reemit_success_region_mask_.store(0, std::memory_order_relaxed);
+    clear_eval_force_slots();
+    force_mask_peer_residual_total_.store(0, std::memory_order_relaxed);
     clear_relower_success_defines();
     force_jit_repromote_only_covered_bits_.store(0, std::memory_order_relaxed);
     force_jit_repromote_only_covered_override_.store(0, std::memory_order_relaxed);
@@ -871,6 +891,145 @@ std::uint64_t HotUpdateRegistry::force_jit_regions_mask() const noexcept {
     return force_jit_regions_mask_.load(std::memory_order_relaxed);
 }
 
+void* HotUpdateRegistry::force_owner_tls() noexcept {
+    const auto o = force_eval_owner_.load(std::memory_order_relaxed);
+    if (o != 0)
+        return reinterpret_cast<void*>(o);
+    void* ev = aura_aot_get_reemit_owner_eval();
+    if (!ev)
+        ev = aura_aot_get_register_owner_eval();
+    return ev;
+}
+
+void HotUpdateRegistry::set_force_eval_owner(void* eval_ptr) noexcept {
+    force_eval_owner_.store(reinterpret_cast<std::uintptr_t>(eval_ptr), std::memory_order_relaxed);
+}
+
+HotUpdateRegistry::EvalForceSlot* HotUpdateRegistry::find_eval_force_slot(void* ev,
+                                                                          bool create) noexcept {
+    if (!ev)
+        return nullptr;
+    const auto key = reinterpret_cast<std::uintptr_t>(ev);
+    int empty = -1;
+    for (std::size_t i = 0; i < kEvalForceSlotCap; ++i) {
+        const auto cur = eval_force_slots_[i].eval.load(std::memory_order_relaxed);
+        if (cur == key)
+            return &eval_force_slots_[i];
+        if (cur == 0 && empty < 0)
+            empty = static_cast<int>(i);
+    }
+    if (!create || empty < 0)
+        return nullptr;
+    std::uintptr_t expected = 0;
+    if (eval_force_slots_[static_cast<std::size_t>(empty)].eval.compare_exchange_strong(
+            expected, key, std::memory_order_relaxed)) {
+        eval_force_live_.fetch_add(1, std::memory_order_relaxed);
+        return &eval_force_slots_[static_cast<std::size_t>(empty)];
+    }
+    for (std::size_t i = 0; i < kEvalForceSlotCap; ++i) {
+        if (eval_force_slots_[i].eval.load(std::memory_order_relaxed) == key)
+            return &eval_force_slots_[i];
+    }
+    return nullptr;
+}
+
+void HotUpdateRegistry::or_eval_force_bit(void* ev, std::uint64_t bit) noexcept {
+    if (!ev || bit == 0)
+        return;
+    auto* s = find_eval_force_slot(ev, /*create=*/true);
+    if (!s)
+        return; // cap full — leave process aggregate; do not steal a peer slot
+    s->mask.fetch_or(bit, std::memory_order_relaxed);
+}
+
+void HotUpdateRegistry::stamp_eval_last_success(void* ev, std::uint64_t cov) noexcept {
+    if (!ev || cov == 0)
+        return;
+    auto* s = find_eval_force_slot(ev, /*create=*/false);
+    if (!s)
+        return;
+    s->last_success.store(cov, std::memory_order_relaxed);
+}
+
+void HotUpdateRegistry::clear_eval_force_slots() noexcept {
+    force_eval_owner_.store(0, std::memory_order_relaxed);
+    if (eval_force_live_.load(std::memory_order_relaxed) == 0)
+        return;
+    for (std::size_t i = 0; i < kEvalForceSlotCap; ++i) {
+        eval_force_slots_[i].eval.store(0, std::memory_order_relaxed);
+        eval_force_slots_[i].mask.store(0, std::memory_order_relaxed);
+        eval_force_slots_[i].last_success.store(0, std::memory_order_relaxed);
+    }
+    eval_force_live_.store(0, std::memory_order_relaxed);
+}
+
+std::uint64_t HotUpdateRegistry::rebuild_force_mask_from_slots() noexcept {
+    std::uint64_t agg = 0;
+    for (std::size_t i = 0; i < kEvalForceSlotCap; ++i) {
+        if (eval_force_slots_[i].eval.load(std::memory_order_relaxed) == 0)
+            continue;
+        agg |= eval_force_slots_[i].mask.load(std::memory_order_relaxed);
+    }
+    force_jit_regions_mask_.store(agg, std::memory_order_relaxed);
+    return agg;
+}
+
+bool HotUpdateRegistry::try_partial_clear_eval_force(std::uint64_t last_cov,
+                                                     std::uint64_t* out_residual,
+                                                     std::uint64_t* out_cleared) noexcept {
+    if (out_residual)
+        *out_residual = 0;
+    if (out_cleared)
+        *out_cleared = 0;
+    // Idle overlay: one relaxed load, then the legacy process-word path.
+    if (eval_force_live_.load(std::memory_order_relaxed) == 0)
+        return false;
+    void* ev = force_owner_tls();
+    if (!ev)
+        return false;
+    auto* s = find_eval_force_slot(ev, /*create=*/false);
+    if (!s)
+        return false;
+    auto cov = s->last_success.load(std::memory_order_relaxed);
+    if (cov == 0)
+        cov = last_cov;
+    const auto smask = s->mask.load(std::memory_order_relaxed);
+    const auto clear_bits = smask & cov;
+    if (out_cleared)
+        *out_cleared = clear_bits;
+    if (clear_bits != 0)
+        s->mask.store(smask & ~clear_bits, std::memory_order_relaxed);
+    const auto key = reinterpret_cast<std::uintptr_t>(ev);
+    std::uint64_t peer = 0;
+    for (std::size_t i = 0; i < kEvalForceSlotCap; ++i) {
+        const auto slot_ev = eval_force_slots_[i].eval.load(std::memory_order_relaxed);
+        if (slot_ev == 0 || slot_ev == key)
+            continue;
+        peer |= eval_force_slots_[i].mask.load(std::memory_order_relaxed);
+    }
+    if (peer != 0)
+        force_mask_peer_residual_total_.fetch_add(1, std::memory_order_relaxed);
+    const auto agg = rebuild_force_mask_from_slots();
+    if (out_residual)
+        *out_residual = agg;
+    return true;
+}
+
+std::uint64_t HotUpdateRegistry::force_jit_regions_mask_for_eval(void* eval_ptr) const noexcept {
+    if (!eval_ptr)
+        return force_jit_regions_mask_.load(std::memory_order_relaxed);
+    const auto key = reinterpret_cast<std::uintptr_t>(eval_ptr);
+    for (std::size_t i = 0; i < kEvalForceSlotCap; ++i) {
+        if (eval_force_slots_[i].eval.load(std::memory_order_relaxed) == key)
+            return eval_force_slots_[i].mask.load(std::memory_order_relaxed);
+    }
+    return 0;
+}
+
+std::uint64_t HotUpdateRegistry::force_mask_peer_residual_total() const noexcept {
+    return force_mask_peer_residual_total_.load(std::memory_order_relaxed);
+}
+
 // Issue #2977: residual remount prefer (aura_jit_runtime.cpp) reads these
 // via C ABI so the runtime TU does not include this header.
 extern "C" std::uint64_t aura_hot_update_force_jit_regions_mask(void) {
@@ -888,6 +1047,7 @@ void HotUpdateRegistry::note_reemit_success_coverage(
     // can read last-success mask before the next pipeline call.
     reemit_success_coverage_override_.store(covered_force_jit_bits, std::memory_order_relaxed);
     last_reemit_success_region_mask_.store(covered_force_jit_bits, std::memory_order_relaxed);
+    stamp_eval_last_success(force_owner_tls(), covered_force_jit_bits);
     // Issue #3229: pipeline coverage is region-complete — drop hashed-name
     // define-id granularity so remount / re-promote stay #2978/#2895.
     clear_relower_success_defines();
@@ -1180,6 +1340,7 @@ void HotUpdateRegistry::on_force_jit_for_reason(AotReloadFail reason) noexcept {
     std::uint64_t new_mask;
     if (bit_mask != 0) {
         new_mask = force_jit_regions_mask_.fetch_or(bit_mask, std::memory_order_relaxed) | bit_mask;
+        or_eval_force_bit(force_owner_tls(), bit_mask);
     } else {
         new_mask = force_jit_regions_mask_.load(std::memory_order_relaxed);
     }
@@ -1771,6 +1932,12 @@ extern "C" void aura_hot_update_reload_recovery_get_snapshot(aura_reload_recover
     out->residual_force_auto_heal_wired = 1;
     out->schema_3096 = 3096;
     out->issue_3096 = 3096;
+    // Issue #3541: per-eval force overlay residual (additive).
+    out->force_mask_peer_residual_total =
+        static_cast<std::int64_t>(reg.force_mask_peer_residual_total());
+    out->force_mask_peer_scope_wired = 1;
+    out->schema_3541 = kForceMaskPeerScopeIssue;
+    out->issue_3541 = kForceMaskPeerScopeIssue;
     const bool active = rs.attempts_left != 0 || rs.force_jit_regions_mask != 0 ||
                         rs.pending_dirty_count != 0 || rs.deferred_reemit_pending != 0 ||
                         snap.storm_level != 0 || snap.reemit_deferred_pending != 0 ||
