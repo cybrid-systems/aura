@@ -18,6 +18,7 @@
 #include "test_harness.hpp"
 #include "compiler/typed_mutation_audit.h"
 
+#include <array>
 #include <cstring>
 #include <fstream>
 #include <print>
@@ -25,8 +26,12 @@
 #include <string_view>
 
 import std;
+import aura.core.ast;
+import aura.compiler.coercion_map;
+import aura.compiler.dirty_propagation;
 import aura.compiler.service;
 import aura.compiler.evaluator;
+import aura.compiler.value;
 
 namespace {
 
@@ -36,10 +41,15 @@ namespace typed_audit = aura::compiler::typed_audit;
 using aura::compiler::typed_audit::apply_dev_audit_defaults;
 using aura::compiler::typed_audit::apply_production_audit_defaults;
 using aura::compiler::typed_audit::ir_typed_entry_commit_readiness_ok;
+using aura::compiler::typed_audit::kCoercionMapPersistRejectUndoIssue;
 using aura::compiler::typed_audit::kTypeLinearProofOutcomeReject;
+using aura::compiler::typed_audit::last_proof_stamper_bound_v_read;
 using aura::compiler::typed_audit::last_type_linear_proof_outcome_v_read;
 using aura::compiler::typed_audit::linear_move_drop_elision_ok;
 using aura::compiler::typed_audit::reset_for_test;
+using aura::compiler::typed_audit::undo_apply_coercion_map_recent;
+using aura::compiler::types::as_int;
+using aura::compiler::types::is_int;
 using aura::test::g_failed;
 using aura::test::g_passed;
 
@@ -306,6 +316,64 @@ int run_test_outermost_persist_fail_closed() {
         CHECK(persist_call != std::string::npos && exit_pos != std::string::npos &&
                   persist_call < exit_pos,
               "3440: persist helper runs BEFORE exit_mutation_boundary");
+    }
+
+    {
+        std::println("\n--- #3545: persist-reject CoercionMap undo ---");
+        CHECK(kCoercionMapPersistRejectUndoIssue == 3545, "3545: stamp");
+        const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+        const auto fn_pos =
+            emb.find("extern \"C\" void aura_outermost_success_persist_occurrence(");
+        const auto emb_after = (fn_pos == std::string::npos) ? std::string{} : emb.substr(fn_pos);
+        CHECK(contains(emb_after, "undo_apply_coercion_map_recent"),
+              "3545 AC2: persist-reject calls undo");
+        CHECK(contains(emb, "kCoercionMapPersistRejectUndoIssue") ||
+                  contains(read_file("src/compiler/typed_mutation_audit.h"),
+                           "kCoercionMapPersistRejectUndoIssue = 3545"),
+              "3545 AC2: typed_audit stamp");
+        const auto cm = read_file("src/compiler/coercion_map.ixx");
+        CHECK(contains(cm, "unmark_eliminated"), "3545 AC1: CoercionMap unmark");
+        CHECK(contains(cm, "coercion_map_apply_journal_note_elision"),
+              "3545 AC1: apply journals elision");
+        CHECK(emb.find("schema-3545") == std::string::npos, "3545: no new query key");
+        CHECK(read_file("tests/compiler/test_issue_3545.cpp").empty(), "3545: no invent");
+        CHECK(read_file("tests/issues/test_issue_3545.cpp").empty(), "3545: no issues invent");
+        CHECK(read_file("docs/design/3545-coercion-map-undo.md").empty(), "3545: no docs/design");
+
+        reset_for_test();
+        apply_production_audit_defaults();
+        aura::compiler::dirty::reset_dead_coercion_decision_invalidate_for_test();
+        aura::compiler::clear_coercion_map_abort_rewind_for_test();
+        const auto elided0 = aura::compiler::g_dead_coercion_ast_elided_total.load();
+        const auto gen0 = aura::compiler::dirty::dead_coercion_decision_invalidate_gen();
+        aura::ast::StringPool pool;
+        aura::ast::FlatAST flat;
+        auto xv = flat.add_variable(pool.intern("x"));
+        auto lit = flat.add_literal(1);
+        flat.set_type(lit, 7);
+        auto call = flat.add_call(xv, std::array<aura::ast::NodeId, 1>{lit});
+        flat.root = call;
+        aura::compiler::CoercionMap map;
+        map.add(call, 1, lit, 1, 7, 0, 0);
+        aura::compiler::coerced_nodes_tracker_enter_boundary();
+        (void)aura::compiler::apply_coercion_map(flat, map, nullptr, &map);
+        CHECK(map.eliminated_count() >= 1, "3545 AC1: identity elision marked");
+        CHECK(aura::compiler::g_dead_coercion_ast_elided_total.load() > elided0,
+              "3545 AC1: ast-elided bumped");
+        CompilerService cs;
+        CHECK(cs.eval("(+ 1 1)").has_value(), "3545 live: warm");
+        undo_apply_coercion_map_recent(&cs.evaluator(), 3545);
+        aura::compiler::coerced_nodes_tracker_exit_boundary();
+        CHECK(aura::compiler::g_dead_coercion_ast_elided_total.load() == elided0,
+              "3545 AC1: ast-elided restored on undo");
+        CHECK(aura::compiler::dirty::dead_coercion_decision_invalidate_gen() > gen0,
+              "3545 AC1: decision invalidate gen bumped");
+        CHECK(last_proof_stamper_bound_v_read() == 0, "3545 AC4: stamper_bound=0 after undo");
+        auto snap = cs.eval("(hash-ref (engine:metrics \"query:type-linear-evolution-snapshot\") "
+                            "\"last-proof-stamper-bound\")");
+        CHECK(snap && is_int(*snap) && as_int(*snap) == 0,
+              "3545 AC4: query last-proof-stamper-bound is 0");
+        apply_dev_audit_defaults();
     }
 
     // ── Issue #3472: persist-green × Phase-1 linear deny (live, not only contains) ──
