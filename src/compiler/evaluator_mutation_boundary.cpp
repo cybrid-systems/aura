@@ -513,7 +513,14 @@ extern "C" void aura_outermost_success_persist_occurrence(void* ev_ptr,
     // (force_reason 16), publish kTypeLinearProofOutcomeReject, restore.
     // Soft/Off: skip (keeps #3431/#3512 empty-live clear behavior).
     {
+        // Issue #3556 residual: only hard-reject when live goals exist but
+        // no proof was staged (fingerprint 0 == "unstaged", mirror of the
+        // #3431 guard above). A mutate with zero occurrence goals has a
+        // legitimately empty fingerprint; rejecting it leaves a bare Reject
+        // outcome that the depth==0 typed-entry gate then applies to the
+        // NEXT unrelated warm eval (mass eval refusal after Full mutates).
         if (aura::compiler::typed_audit::production_hard_face_active() &&
+            live_truth.live_goal_count > 0 &&
             aura::compiler::typed_audit::last_proof_goal_fingerprint_v_read() == 0) {
             (void)aura::compiler::typed_audit::clear_occurrence_persist_buffer(tc);
             aura::compiler::typed_audit::bump_occurrence_persist_reject_expected_fp_zero_total();
