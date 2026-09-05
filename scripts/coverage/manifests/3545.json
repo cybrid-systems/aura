@@ -1,0 +1,50 @@
+{
+  "issue": 3545,
+  "title": "Issue #3545: persist-reject undoes apply_coercion_map elision (CoercionMap + DeadCoercion)",
+  "ok": "OK: Issue #3545 persist-reject CoercionMap undo — Soft discard; no new query:* / counter.",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/coercion_map.ixx",
+      "contains": [
+        "unmark_eliminated",
+        "coercion_map_apply_journal_note_elision",
+        "CoercionMapApplyJournal"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/typed_mutation_audit.h",
+      "contains": [
+        "kCoercionMapPersistRejectUndoIssue = 3545",
+        "undo_apply_coercion_map_recent"
+      ]
+    },
+    {
+      "ac": "AC2-call",
+      "path": "src/compiler/evaluator_mutation_boundary.cpp",
+      "contains": [
+        "undo_apply_coercion_map_recent(ev, mutation_id)",
+        "note_3440_restore"
+      ]
+    },
+    {
+      "ac": "AC1-test",
+      "path": "tests/compiler/test_outermost_persist_fail_closed.cpp",
+      "contains": [
+        "3545 AC1: CoercionMap unmark",
+        "3545 AC2: persist-reject calls undo",
+        "3545 AC4: query last-proof-stamper-bound is 0"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "forbid": [
+        "tests/compiler/test_issue_3545.cpp",
+        "tests/issues/test_issue_3545.cpp",
+        "docs/design/3545-coercion-map-undo.md",
+        "scripts/coverage/checks/check_coercion_map_persist_reject_undo_3545.py"
+      ]
+    }
+  ]
+}

@@ -360,6 +360,48 @@ extern "C" void aura_evaluator_enforce_linear_on_densify(void* ev) noexcept {
         aura::compiler::Evaluator::kLinearGcRootAuditTypedMutate, /*mark_all_linear=*/false);
 }
 
+// Issue #3545: persist-reject undo of apply_coercion_map identity /
+// Dynamic elision. Defined here (Evaluator + CoercionMap + dirty cone
+// already in this TU). Soft/Off: take-and-discard journal (zero extra
+// beyond the existing tracker take on abort).
+extern "C" void aura_undo_apply_coercion_map_recent(void* ev_ptr, std::uint64_t mid) noexcept {
+    (void)mid;
+    using aura::compiler::typed_audit::AuditStrategy;
+    using aura::compiler::typed_audit::g_last_proof_stamper_eval;
+    using aura::compiler::typed_audit::get_strategy;
+    using aura::compiler::typed_audit::production_defaults_active;
+    auto journal = ::aura::compiler::coercion_map_apply_journal_take();
+    auto coerced = ::aura::compiler::coerced_nodes_tracker_take();
+    const bool hard = production_defaults_active() || get_strategy() == AuditStrategy::Full;
+    if (!hard)
+        return;
+    auto sat_sub = [](std::atomic<std::uint64_t>& a, std::uint64_t n) noexcept {
+        if (n == 0)
+            return;
+        auto v = a.load(std::memory_order_relaxed);
+        while (v > 0) {
+            const auto dec = v < n ? v : n;
+            if (a.compare_exchange_weak(v, v - dec, std::memory_order_relaxed))
+                return;
+        }
+    };
+    sat_sub(::aura::compiler::g_dead_coercion_ast_elided_total, journal.ast_elided);
+    sat_sub(::aura::compiler::g_dead_coercion_ast_elided_with_evidence_total,
+            journal.ast_elided_with_evidence);
+    if (ev_ptr) {
+        auto* ev = static_cast<::aura::compiler::Evaluator*>(ev_ptr);
+        if (auto* tc =
+                static_cast<::aura::compiler::TypeChecker*>(ev->commit_type_checker_handle()))
+            tc->unmark_eliminated_recent(journal.eliminated);
+        if (!coerced.empty())
+            (void)::aura::compiler::dirty::force_dead_coercion_elim_into_cone(coerced);
+    }
+    ::aura::compiler::dirty::bump_dead_coercion_decision_invalidate();
+    g_last_proof_stamper_eval.store(0, std::memory_order_relaxed);
+    if ((journal.ast_elided > 0 || journal.eliminated > 0) && journal.last_narrow_evidence == 0)
+        ::aura::compiler::g_coercion_provenance_miss_total.fetch_add(1, std::memory_order_relaxed);
+}
+
 // Issue #2641 / #2938: C ABI for outermost-success OccurrenceGoal persist
 // (tests + dtor). Soft / env=0 / no type-checker / empty goals → zero cost
 // inside maybe_persist_occurrence_snapshot. Issue #2938: successful commit
@@ -378,8 +420,11 @@ extern "C" void aura_outermost_success_persist_occurrence(void* ev_ptr,
     // Issue #3440: persist-reject under outermost && success must flip
     // success so exit_mutation_boundary's existing !success abort_restore
     // stays SSOT. Soft/Off: note is a no-op (flag stays false).
-    auto note_3440_restore = []() noexcept {
+    auto note_3440_restore = [ev, mutation_id]() noexcept {
         aura::compiler::typed_audit::note_outermost_persist_reject_needs_restore();
+        // Issue #3545: CoercionMap / DeadCoercion / stamper undo on the
+        // persist-reject path (do not wait for dtor abort_restore).
+        aura::compiler::typed_audit::undo_apply_coercion_map_recent(ev, mutation_id);
     };
     // Issue #3170: outermost-success fingerprint guard (I4 from 2026-08)
     // type-system review -- 半解不得出厂). Compute the fingerprint of the

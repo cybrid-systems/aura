@@ -1024,6 +1024,14 @@ public:
     // Reset on clear(); bumped by mark_eliminated().
     [[nodiscard]] std::size_t eliminated_count() const noexcept { return eliminated_count_; }
     void mark_eliminated(std::size_t n = 1) noexcept { eliminated_count_ += n; }
+    // Issue #3545: persist-reject undo of apply_coercion_map identity /
+    // Dynamic elision. Saturating — never wraps.
+    void unmark_eliminated(std::size_t n = 1) noexcept {
+        if (n >= eliminated_count_)
+            eliminated_count_ = 0;
+        else
+            eliminated_count_ -= n;
+    }
 
     // Issue #3318: restamp every live entry whose mid is older than the
     // current epoch/session floor. Quiet empty map: zero extra.
@@ -1086,6 +1094,18 @@ export inline void coerced_nodes_tracker_push(aura::compiler::dirty::NodeId nid)
 export [[nodiscard]] inline std::vector<aura::compiler::dirty::NodeId>
 coerced_nodes_tracker_take() noexcept;
 export [[nodiscard]] inline std::size_t coerced_nodes_tracker_size() noexcept;
+// Issue #3545: per-boundary apply_coercion_map undo journal (elision
+// counts). Soft/depth-0 still records so persist-reject can sat-sub.
+export inline void coercion_map_apply_journal_reset() noexcept;
+export inline void coercion_map_apply_journal_note_elision(bool with_evidence,
+                                                           std::uint32_t evidence) noexcept;
+export struct CoercionMapApplyJournal {
+    std::size_t eliminated = 0;
+    std::size_t ast_elided = 0;
+    std::size_t ast_elided_with_evidence = 0;
+    std::uint32_t last_narrow_evidence = 0;
+};
+export [[nodiscard]] inline CoercionMapApplyJournal coercion_map_apply_journal_take() noexcept;
 
 // Issue #3106 follow-up: GCC 16.1.0 ICE on multi-line function signature
 // + default arguments in C++20 module interface unit (14th consecutive
@@ -1133,6 +1153,7 @@ export std::size_t apply_coercion_map(aura::ast::FlatAST& flat, const CoercionMa
             ++s.eliminated;
             if (map_mut)
                 map_mut->mark_eliminated();
+            coercion_map_apply_journal_note_elision(e.narrow_evidence != 0, e.narrow_evidence);
             // Issue #2025: AST elision feeds layered dead-coercion metrics.
             g_dead_coercion_ast_elided_total.fetch_add(1, std::memory_order_relaxed);
             // Issue #2611: evidence-backed AST identity elision → deopt meta
@@ -1163,6 +1184,7 @@ export std::size_t apply_coercion_map(aura::ast::FlatAST& flat, const CoercionMa
             ++s.eliminated;
             if (map_mut)
                 map_mut->mark_eliminated();
+            coercion_map_apply_journal_note_elision(e.narrow_evidence != 0, e.narrow_evidence);
             g_dead_coercion_ast_elided_total.fetch_add(1, std::memory_order_relaxed);
             // Issue #2611: Dynamic-tag elision with evidence also stamps meta.
             // Issue #2674: same evidence-backed counter bump as identity path.
@@ -1333,6 +1355,7 @@ export std::size_t apply_coercion_map(aura::ast::FlatAST& flat, const CoercionMa
 // and force-dirties the cone. Soft/Quiet → depth=0 → zero cost on push.
 inline thread_local std::vector<aura::compiler::dirty::NodeId> g_coerced_nodes_in_boundary_tls;
 inline thread_local std::uint64_t g_coerced_nodes_in_boundary_depth_tls = 0;
+inline thread_local CoercionMapApplyJournal g_tls_coercion_map_apply_journal{};
 
 // Issue #3102: AC1/AC5 — counters for the CoercionMap abort rewind path.
 // Production/Full bumps the real counters; Soft bumps the observe-only
@@ -1349,6 +1372,8 @@ export inline constexpr int kCoercionAbortDualClearIssue = 3116;
 
 export inline void coerced_nodes_tracker_enter_boundary() noexcept {
     ++g_coerced_nodes_in_boundary_depth_tls;
+    if (g_coerced_nodes_in_boundary_depth_tls == 1)
+        g_tls_coercion_map_apply_journal = {};
 }
 export inline void coerced_nodes_tracker_exit_boundary() noexcept {
     if (g_coerced_nodes_in_boundary_depth_tls > 0)
@@ -1374,6 +1399,25 @@ export [[nodiscard]] inline std::size_t coerced_nodes_tracker_size() noexcept {
     return g_coerced_nodes_in_boundary_tls.size();
 }
 
+export inline void coercion_map_apply_journal_reset() noexcept {
+    g_tls_coercion_map_apply_journal = {};
+}
+export inline void coercion_map_apply_journal_note_elision(bool with_evidence,
+                                                           std::uint32_t evidence) noexcept {
+    auto& j = g_tls_coercion_map_apply_journal;
+    ++j.eliminated;
+    ++j.ast_elided;
+    if (with_evidence) {
+        ++j.ast_elided_with_evidence;
+        j.last_narrow_evidence = evidence;
+    }
+}
+export [[nodiscard]] inline CoercionMapApplyJournal coercion_map_apply_journal_take() noexcept {
+    auto j = g_tls_coercion_map_apply_journal;
+    g_tls_coercion_map_apply_journal = {};
+    return j;
+}
+
 export inline void reset_coercion_map_abort_rewind_for_test() noexcept {
     g_coercion_map_abort_rewind_total.store(0, std::memory_order_relaxed);
     g_coercion_map_abort_rewind_observe_total.store(0, std::memory_order_relaxed);
@@ -1382,6 +1426,7 @@ export inline void reset_coercion_map_abort_rewind_for_test() noexcept {
     g_coercion_map_abort_soft_observe_total.store(0, std::memory_order_relaxed);
     g_coercion_abort_dual_clear_total.store(0, std::memory_order_relaxed);
     g_coercion_abort_dual_clear_observe_total.store(0, std::memory_order_relaxed);
+    coercion_map_apply_journal_reset();
 }
 export inline void clear_coercion_map_abort_rewind_for_test() noexcept {
     reset_coercion_map_abort_rewind_for_test();

@@ -1904,6 +1904,16 @@ inline void reset_outermost_persist_reject_needs_restore_for_test() noexcept {
     g_tls_outermost_persist_reject_needs_restore = false;
 }
 
+// Issue #3545: persist-reject undo of apply_coercion_map identity /
+// Dynamic elision (mark_eliminated + ast-elided counters + tracker).
+// Production/Full; Soft/Off discards the journal (zero extra beyond take).
+// No new query key / no new counter (reuses dead_coercion_decision_invalidate).
+inline constexpr int kCoercionMapPersistRejectUndoIssue = 3545;
+extern "C" void aura_undo_apply_coercion_map_recent(void* ev_ptr, std::uint64_t mid) noexcept;
+inline void undo_apply_coercion_map_recent(void* ev_ptr, std::uint64_t mid) noexcept {
+    aura_undo_apply_coercion_map_recent(ev_ptr, mid);
+}
+
 // Issue #3517: Full/hard-gate force-rollback entered via success-path
 // exit_mutation_boundary (persist already granted query:type). Drop
 // grant and flip Guard success after exit so the dtor `!success` tail
