@@ -686,10 +686,15 @@ int run_test_mutation_safety_snapshot_steal() {
                   efm.find("boundary_ssot_detail::boundary_depth_ssot") != std::string::npos,
               "3384 AC1: any_active_mutation_boundary routes through SSOT");
         // mutation_boundary_depth_slot_value is the second TLS-only reader fixed.
-        const auto slot_pos = efm.find("mutation_boundary_depth_slot_value(/*fiber_id=*/0)");
-        CHECK(slot_pos != std::string::npos, "3384 AC1: slot_value accessor present");
-        CHECK(efm.find("slot_value() const noexcept") != std::string::npos,
-              "3384 AC1: slot_value definition");
+        // #3552: signature now carries fiber_id; definition lives in
+        // evaluator_fiber_mutation.cpp and callers pass (/*fiber_id=*/0)
+        // from evaluator.ixx — match both so formatting/signature drift
+        // cannot fake the AC.
+        CHECK(efm.find("mutation_boundary_depth_slot_value(std::uint64_t fiber_id)") !=
+                  std::string::npos,
+              "3384 AC1: slot_value definition (fiber_id signature)");
+        CHECK(exx.find("mutation_boundary_depth_slot_value(/*fiber_id=*/0)") != std::string::npos,
+              "3384 AC1: slot_value accessor present (caller passes fiber_id=0)");
         // Static accessor already SSOT: returns active_mutation_stack_static().size().
         CHECK(exx.find("mutation_boundary_depth()") != std::string::npos &&
                   exx.find("active_mutation_stack_static().size()") != std::string::npos,

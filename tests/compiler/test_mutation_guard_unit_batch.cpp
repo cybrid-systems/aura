@@ -1476,7 +1476,9 @@ int run_depth_slot_1746() {
                   fib.find("unordered_map<uint64_t, int>") != std::string::npos,
               "map keyed by uint64_t");
         // Old address-key form must be gone from the slot body.
-        auto pos = fib.find("mutation_boundary_depth_slot(Evaluator* ev)");
+        // #3552: signature now (Evaluator* ev, std::uint64_t fiber_id),
+        // clang-format may break across lines — match the call prefix.
+        auto pos = fib.find("mutation_boundary_depth_slot(Evaluator* ev");
         CHECK(pos != std::string::npos, "found depth_slot definition");
         if (pos != std::string::npos) {
             auto win = fib.substr(pos, 900);
