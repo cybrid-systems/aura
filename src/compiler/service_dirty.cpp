@@ -1837,6 +1837,64 @@ CompilerService::hybrid_node_cascade_(const std::string& root_name,
     return marked;
 }
 
+std::size_t CompilerService::precompute_callee_cascade_for_partial(const std::string& name) {
+    using aura::compiler::dirty::cascade_mark_dirty;
+    using aura::compiler::dirty::DirtySet;
+    using aura::compiler::dirty::encode_fn_node;
+    using lock_order::Level;
+    using lock_order::OrderedSharedLock;
+
+    if (!(aura::compiler::typed_audit::production_defaults_active() ||
+          aura::compiler::typed_audit::get_strategy() ==
+              aura::compiler::typed_audit::AuditStrategy::Full)) {
+        g_partial_relower_callee_cascade_precompute_observe_total.fetch_add(
+            1, std::memory_order_relaxed);
+        return 0;
+    }
+    auto eit = ir_cache_v2_.find(name);
+    if (eit == ir_cache_v2_.end() || eit->second.source_to_ir_map.empty())
+        return 0;
+    std::vector<std::string> callees;
+    aura::compiler::dirty::DepGraph graph_snap;
+    {
+        OrderedSharedLock<std::shared_mutex> dep_read(dep_graph_mtx_, Level::DepGraph);
+        auto dit = dep_graph_.find(name);
+        if (dit == dep_graph_.end() || dit->second.calls.empty())
+            return 0;
+        callees = dit->second.calls;
+        graph_snap = node_dep_graph_;
+    }
+    DirtySet set;
+    std::size_t marked = 0;
+    for (const auto& callee : callees) {
+        if (callee == name)
+            continue;
+        auto cit = ir_cache_v2_.find(callee);
+        if (cit != ir_cache_v2_.end()) {
+            const bool already = cit->second.dirty || cit->second.dirty_block_count() > 0;
+            if (!already) {
+                cit->second.dirty = true;
+                const auto n = cit->second.mark_body_only_dirty();
+                if (n == 0)
+                    cit->second.mark_all_blocks_dirty();
+                finish_cascade_soa_dirty_sync_(cit->second);
+                ++marked;
+            }
+        }
+        std::uint32_t slot = UINT32_MAX;
+        {
+            OrderedSharedLock<std::shared_mutex> dep_read(dep_graph_mtx_, Level::DepGraph);
+            auto sit = dep_name_to_slot_.find(callee);
+            if (sit != dep_name_to_slot_.end())
+                slot = sit->second;
+        }
+        if (slot != UINT32_MAX)
+            (void)cascade_mark_dirty(set, encode_fn_node(slot), graph_snap);
+    }
+    g_partial_relower_callee_cascade_precompute_total.fetch_add(1, std::memory_order_relaxed);
+    return marked;
+}
+
 void CompilerService::mark_direct_hybrid_dependents_body_dirty_(const std::string& name) {
     // Issue #3345: production hybrid residual after facade early-return.
     // Soft owns full dep_graph BFS. Production stays AOT-authoritative
