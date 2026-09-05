@@ -1,0 +1,52 @@
+{
+  "issue": 3542,
+  "title": "Issue #3542: :allow-macro? opt-out requires MacroSelfEvo (wildcard strip)",
+  "ok": "OK: Issue #3542 macro-mutate MacroSelfEvo fence — Soft sandbox-mode one load; no new query:*.",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_primitives_mutate.cpp",
+      "contains": [
+        "deny_macro_opt_out_without_mse",
+        "macro-mutate-needs-macro-self-evo",
+        "kEffectMacroSelfEvo"
+      ]
+    },
+    {
+      "ac": "AC1-counter",
+      "path": "src/core/capability_model.hh",
+      "contains": [
+        "kMacroMutateCapabilityFenceIssue = 3542",
+        "macro_mutate_capability_deny_total{0}"
+      ]
+    },
+    {
+      "ac": "AC5-query",
+      "path": "src/compiler/evaluator_primitives_security.cpp",
+      "contains": [
+        "macro-mutate-capability-deny-total",
+        "schema-3542"
+      ]
+    },
+    {
+      "ac": "AC1-test",
+      "path": "tests/compiler/test_hygiene_mutate_closed_loop.cpp",
+      "contains": [
+        "3542 AC1",
+        "3542 AC2",
+        "3542 AC3",
+        "3542 AC4",
+        "3542 AC5"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "forbid": [
+        "tests/compiler/test_issue_3542.cpp",
+        "tests/compiler/test_allow_macro_capability_fence.cpp",
+        "docs/design/3542-allow-macro-capability.md",
+        "scripts/coverage/checks/check_allow_macro_capability_3542.py"
+      ]
+    }
+  ]
+}

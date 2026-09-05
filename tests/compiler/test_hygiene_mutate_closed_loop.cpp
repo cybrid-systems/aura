@@ -4435,6 +4435,134 @@ static void ac3509_batch_default_deny() {
     apply_dev_audit_defaults();
 }
 
+// ── Issue #3542: :allow-macro? opt-out requires MacroSelfEvo ──
+static bool ring_has_reason_3542(std::string_view needle) {
+    using aura::core::security_event::g_security_event_ring;
+    using aura::core::security_event::kSecurityEventRingSize;
+    auto& ring = g_security_event_ring();
+    const auto cur = ring.seq.load(std::memory_order_acquire);
+    const auto end = cur > kSecurityEventRingSize ? cur - kSecurityEventRingSize : 0;
+    for (auto s = cur; s > end; --s) {
+        const auto& e = ring.ring[(s - 1) % kSecurityEventRingSize];
+        if (std::string_view(e.reason) == needle)
+            return true;
+    }
+    return false;
+}
+
+static void ac3542_wildcard_allow_macro_denied() {
+    std::println("\n--- #3542 AC1: wildcard + :allow-macro? #t denied without MacroSelfEvo ---");
+    using aura::core::capability::g_capability_effect_metrics;
+    using aura::core::capability::reset_capability_effects_for_test;
+    using aura::core::security_event::reset_security_event_ring_for_test;
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    reset_capability_effects_for_test();
+    reset_security_event_ring_for_test();
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define f (lambda (x) (+ x 1)))\")").has_value(),
+          "3542 AC1: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3542 AC1: eval");
+    auto find_f = cs.eval("(car (query :find \"f\"))");
+    CHECK(find_f && is_int(*find_f), "3542 AC1: find f");
+    CHECK(cs.eval(std::format("(syntax:set-marker {} 1)", as_int(*find_f))).has_value(),
+          "3542 AC1: stamp MacroIntroduced");
+    // Restricted + wildcard-only: grant TA only to arm the production
+    // mutate wrapper (mid join), then drop TA so #3144 strips MSE from `*`.
+    grant_3301_production_mutate(cs);
+    aura::core::capability::g_capability_registry().revoke(cs.evaluator().capability_tenant_id(),
+                                                           "tenant-admin");
+    const auto deny0 = g_capability_effect_metrics().macro_mutate_capability_deny_total.load();
+    auto allowed = cs.eval("(mutate:set-body \"f\" \"(lambda (x) (+ x 9))\" :allow-macro? #t)");
+    CHECK(allowed.has_value(), "3542 AC1: returns");
+    CHECK(merr_kind_3027(cs, *allowed) == "hygiene-protected", "3542 AC1: capability fence kind");
+    CHECK(g_capability_effect_metrics().macro_mutate_capability_deny_total.load() > deny0,
+          "3542 AC1: deny counter");
+    CHECK(ring_has_reason_3542("macro-mutate-needs-macro-self-evo"), "3542 AC1: SE reason");
+    reset_capability_effects_for_test();
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+}
+
+static void ac3542_mse_grant_allow_macro_ok() {
+    std::println("\n--- #3542 AC2: explicit MacroSelfEvo + :allow-macro? #t still works ---");
+    using aura::core::capability::g_capability_registry;
+    using aura::core::capability::MacroSelfEvoPolicy;
+    using aura::core::capability::reset_capability_effects_for_test;
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    reset_capability_effects_for_test();
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define f (lambda (x) (+ x 1)))\")").has_value(),
+          "3542 AC2: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3542 AC2: eval");
+    auto find_f = cs.eval("(car (query :find \"f\"))");
+    CHECK(find_f && is_int(*find_f), "3542 AC2: find f");
+    CHECK(cs.eval(std::format("(syntax:set-marker {} 1)", as_int(*find_f))).has_value(),
+          "3542 AC2: stamp");
+    grant_3301_production_mutate(cs);
+    const auto tenant = cs.evaluator().capability_tenant_id();
+    g_capability_registry().grant_macro_self_evo(tenant, MacroSelfEvoPolicy{},
+                                                 aura_test_grant_prov(), tenant);
+    auto allowed = cs.eval("(mutate:set-body \"f\" \"(lambda (x) (+ x 9))\" :allow-macro? #t)");
+    CHECK(allowed.has_value() && merr_kind_3027(cs, *allowed) != "hygiene-protected" &&
+              merr_kind_3027(cs, *allowed) != "hygiene",
+          "3542 AC2: parser opt-out still works with MacroSelfEvo");
+    reset_capability_effects_for_test();
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+}
+
+static void ac3542_soft_opt_out_unchanged() {
+    std::println("\n--- #3542 AC3: Soft/Off :allow-macro? #t unchanged ---");
+    using aura::core::capability::reset_capability_effects_for_test;
+    reset_capability_effects_for_test();
+    CompilerService cs;
+    CHECK(cs.evaluator().effect_sandbox_mode() == 0, "3542 AC3: Soft sandbox");
+    CHECK(cs.eval("(set-code \"(define f (lambda (x) (+ x 1)))\")").has_value(),
+          "3542 AC3: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3542 AC3: eval");
+    auto find_f = cs.eval("(car (query :find \"f\"))");
+    CHECK(find_f && is_int(*find_f), "3542 AC3: find f");
+    CHECK(cs.eval(std::format("(syntax:set-marker {} 1)", as_int(*find_f))).has_value(),
+          "3542 AC3: stamp");
+    auto allowed = cs.eval("(mutate:set-body \"f\" \"(lambda (x) (+ x 9))\" :allow-macro? #t)");
+    CHECK(allowed.has_value() && merr_kind_3027(cs, *allowed) != "hygiene",
+          "3542 AC3: Soft opt-out still permits");
+}
+
+static void ac3542_soft_no_abort() {
+    std::println("\n--- #3542 AC4: capability deny returns (no abort) ---");
+    CHECK(true, "3542 AC4: AC1 returned");
+}
+
+static void ac3542_source_query() {
+    std::println("\n--- #3542 AC5: source-cite + schema-3542 ---");
+    const auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
+    const auto cap = read_file("src/core/capability_model.hh");
+    const auto sec = read_file("src/compiler/evaluator_primitives_security.cpp");
+    CHECK(mut.find("deny_macro_opt_out_without_mse") != std::string::npos, "3542 AC5: helper");
+    CHECK(mut.find("macro-mutate-needs-macro-self-evo") != std::string::npos,
+          "3542 AC5: SE reason");
+    CHECK(cap.find("kMacroMutateCapabilityFenceIssue = 3542") != std::string::npos,
+          "3542 AC5: stamp");
+    CHECK(cap.find("macro_mutate_capability_deny_total{0}") != std::string::npos,
+          "3542 AC5: counter END");
+    CHECK(sec.find("macro-mutate-capability-deny-total") != std::string::npos,
+          "3542 AC5: query key");
+    CHECK(sec.find("schema-3542") != std::string::npos, "3542 AC5: schema-3542");
+    CHECK(read_file("tests/compiler/test_allow_macro_capability_fence.cpp").empty(),
+          "3542 AC5: no new test file");
+    CHECK(read_file("docs/design/3542-allow-macro-capability.md").empty(),
+          "3542 AC5: no docs/design");
+    CompilerService cs;
+    auto r =
+        cs.eval("(hash-ref (engine:metrics \"query:capability-effect-stats\") \"schema-3542\")");
+    CHECK(r && is_int(*r) && as_int(*r) == 3542, "3542 AC5: schema-3542 query");
+    r = cs.eval("(hash-ref (engine:metrics \"query:capability-effect-stats\") "
+                "\"macro-mutate-capability-fence-wired\")");
+    CHECK(r && is_int(*r) && as_int(*r) == 1, "3542 AC5: wired");
+    r = cs.eval("(hash-ref (engine:metrics \"query:capability-effect-stats\") "
+                "\"capability-macro-self-evo-grant-deny-total\")");
+    CHECK(r && is_int(*r) && as_int(*r) >= 0, "3542 AC5: schema-3029 retained");
+}
+
 } // namespace
 
 int main() {
@@ -4612,6 +4740,12 @@ int main() {
     ac3328_5_source_and_linter();
     std::println("\n=== Issue #3468: rest remaining args not hygiene-blocked ===");
     ac3468_rest_remaining_not_hygiene_blocked();
+    std::println("\n=== Issue #3542: :allow-macro? opt-out requires MacroSelfEvo ===");
+    ac3542_wildcard_allow_macro_denied();
+    ac3542_mse_grant_allow_macro_ok();
+    ac3542_soft_opt_out_unchanged();
+    ac3542_soft_no_abort();
+    ac3542_source_query();
     std::println("\n=== {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

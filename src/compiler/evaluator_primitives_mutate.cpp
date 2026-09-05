@@ -19,6 +19,8 @@ module;
 #include "core/provenance_tracker.hh"      // Issue #1878: last_hygiene tenant stamp
 #include "core/arena_auto_policy_stats.h"  // Issue #1919: mutation pressure → auto-compact
 #include "core/security_event.hh"          // Issue #2237: MacroHygieneRollbackOnStrict audit
+#include "core/security_event_wal.hh"      // Issue #3542: macro-mutate-needs-macro-self-evo
+#include "core/capability_model.hh"        // Issue #3542: MacroSelfEvo mutate fence
 #include "core/workspace_epoch.hh"         // Issue #2237: current_mutation_epoch
 #include "serve/fiber.h"                   // Issue #2237: aura_fiber_current_id
 #include "compiler/mutation_hold_budget.h" // Issue #3480: inbody poll + force-release counters
@@ -430,6 +432,39 @@ namespace {
         return subtree_has_closure(flat, body);
     }
 
+    // Issue #3542: :allow-macro? / global opt-out still requires MacroSelfEvo
+    // under Restricted/Strict (wildcard-only is stripped by effects_for
+    // #3144). Soft / Off: effect_sandbox_mode()==0 → one load, no scan.
+    // Reuses require_effect_for_node_id (existing NodeId side-effect face).
+    static std::optional<EvalValue>
+    deny_macro_opt_out_without_mse(Evaluator& ev, aura::ast::NodeId id, const MakeErrorVal& mev) {
+        using aura::compiler::security::kEffectMacroSelfEvo;
+        if (ev.require_effect_for_node_id(kEffectMacroSelfEvo, "macro-mutate", id))
+            return std::nullopt;
+        auto& met = aura::core::capability::g_capability_effect_metrics();
+        met.macro_mutate_capability_deny_total.fetch_add(1, std::memory_order_relaxed);
+        using ::aura::core::security_event::SecurityEventKind;
+        using ::aura::core::security_event_wal::emit_security_event_durable;
+        const auto mid = typed_audit::join_audit_and_se_mid(0);
+        const auto epoch = aura::core::current_mutation_epoch();
+        emit_security_event_durable(
+            SecurityEventKind::EffectDeny, ev.capability_tenant_id(), mid, epoch,
+            kEffectMacroSelfEvo, "macro-self-evo", "macro-mutate-needs-macro-self-evo",
+            /*denied=*/true, static_cast<std::int64_t>(aura_fiber_current_id()));
+        ev.record_hygiene_violation_attempt();
+        typed_audit::capture_macro_hygiene_audit(
+            "macro-mutate-needs-macro-self-evo", typed_audit::AuditOutcome::Error,
+            static_cast<std::uint32_t>(id), static_cast<std::int64_t>(aura_fiber_current_id()),
+            ev.capability_tenant_id());
+        if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
+            m->macro_hygiene_provenance_hits_total.fetch_add(1, std::memory_order_relaxed);
+            m->last_hygiene_blame_node = static_cast<std::uint32_t>(id);
+            m->last_hygiene_blame_mutation = typed_audit::join_audit_and_se_mid(0);
+        }
+        return mev("hygiene-protected",
+                   "mutation of MacroIntroduced requires MacroSelfEvo capability");
+    }
+
     // Issue #373 / #2037: MacroIntroduced hygiene guard helper.
     //
     // mutate:* primitives call this before any structural
@@ -467,8 +502,21 @@ namespace {
     hygiene_protected_error(Evaluator& ev, const aura::ast::FlatAST& flat,
                             std::span<const aura::ast::NodeId> target_ids, bool allow_macro_mutate,
                             bool per_call_opt_out, const MakeErrorVal& mev) {
-        if (allow_macro_mutate || per_call_opt_out)
+        if (allow_macro_mutate || per_call_opt_out) {
+            // Soft / Off: one sandbox-mode load, no extra scan.
+            if (ev.effect_sandbox_mode() == 0)
+                return std::nullopt;
+            for (auto id : target_ids) {
+                if (id == aura::ast::NULL_NODE || id >= flat.size())
+                    continue;
+                if (!flat.is_macro_introduced(id))
+                    continue;
+                if (auto denied = deny_macro_opt_out_without_mse(ev, id, mev))
+                    return denied;
+                return std::nullopt;
+            }
             return std::nullopt;
+        }
         for (auto id : target_ids) {
             if (id == aura::ast::NULL_NODE || id >= flat.size())
                 continue;
@@ -544,10 +592,14 @@ namespace {
             m->last_hygiene_blame_node = static_cast<std::uint32_t>(id);
         }
 
-        // Default: fail closed (hygiene-protected).
-        if (!allow_macro_mutate && !per_call_opt_out) {
+        // Default: fail closed (hygiene-protected). Allowed opt-out still
+        // requires MacroSelfEvo under Restricted/Strict (#3542) — same
+        // helper; Soft is one sandbox-mode load inside it.
+        {
             aura::ast::NodeId probe[1] = {id};
-            return hygiene_protected_error(ev, flat, probe, /*allow=*/false, /*opt=*/false, mev);
+            if (auto err = hygiene_protected_error(ev, flat, probe, allow_macro_mutate,
+                                                   per_call_opt_out, mev))
+                return err;
         }
 
         // Allowed path: FailOnStale under Strict sandbox.
@@ -666,10 +718,13 @@ namespace {
                                                                     aura::ast::NodeId id,
                                                                     bool allow, const char* prim,
                                                                     const MakeErrorVal& mev) {
-        if (allow)
-            return std::nullopt;
         if (id == aura::ast::NULL_NODE || id >= flat.size() || !flat.is_macro_introduced(id))
             return std::nullopt;
+        if (allow) {
+            if (ev.effect_sandbox_mode() == 0)
+                return std::nullopt;
+            return deny_macro_opt_out_without_mse(ev, id, mev);
+        }
         ev.record_hygiene_violation_attempt();
         aura::compiler::macro_exp::note_hygiene_last_limit_reason(
             aura::compiler::macro_exp::kHygieneLimitReasonMacroIntroduced);
