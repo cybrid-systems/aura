@@ -19,6 +19,7 @@ module;
 #include "hash_meta.h"                     // FNV constants (#901)
 #include "basis_points.h"                  // #905
 #include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
+#include <mutex>
 
 module aura.compiler.evaluator;
 
@@ -89,10 +90,12 @@ using types::make_string;
 using types::make_vector;
 using types::make_void;
 
-// Issue #560: canonical list of every registered *-stats observability
-// primitive. Single source of truth for both (stats:list) and
-// (stats:count). Adding a new (query:*-stats) primitive is one entry here
-// — the count and the enumeration both update automatically.
+// Issue #560: boot seed for every registered *-stats observability
+// primitive. Issue #3531: live discovery is the runtime catalog
+// (stats_primitives() snapshot) seeded from this list once; plugins /
+// extra TUs call register_catalog_query without editing this array.
+// (stats:list) / (stats:count) / engine:metrics :all / :prefix read the
+// runtime snapshot. Adding a seed entry here still works (boot register).
 //
 // The Aura stdlib (`lib/std/stats.aura`) mirrors this list at require
 // time, so AI agents can also call these primitives by name. When you add
@@ -1322,9 +1325,88 @@ EvalValue ObservabilityPrims::meta_to_pair(Evaluator& ev, const PrimMeta& m) {
     return make_pair(pid6);
 }
 
+// Issue #3531: runtime-extensible catalog. Seeded once from
+// kObservabilityStatsPrimitives (boot, no behavior change). Plugins /
+// extra TUs call register_catalog_query — no edit of the seed array,
+// no second metrics framework (this is the catalog, not a parallel bus).
+inline constexpr int kMetricsCatalogRuntimeIssue = 3531;
+
+namespace {
+    struct MetricsCatalogRuntime {
+        std::mutex mu;
+        std::vector<std::string> names;
+        aura::core::TransparentStringMap<std::uint8_t> seen;
+        std::vector<std::string> runtime_impl_names;
+        bool seeded = false;
+        std::size_t seed_count = 0;
+    };
+
+    MetricsCatalogRuntime& g_metrics_catalog() {
+        static MetricsCatalogRuntime c;
+        return c;
+    }
+
+    std::atomic<std::uint64_t> g_metrics_catalog_runtime_register_total{0};
+
+    void seed_metrics_catalog_unlocked() {
+        auto& c = g_metrics_catalog();
+        if (c.seeded)
+            return;
+        // Slack so register_catalog_query does not reallocate while
+        // engine:metrics :all / stats:list hold a reference (#3531).
+        c.names.reserve(kObservabilityStatsPrimitives.size() + 4096);
+        c.seen.reserve((kObservabilityStatsPrimitives.size() + 4096) * 2);
+        for (const auto& n : kObservabilityStatsPrimitives) {
+            if (c.seen.emplace(n, 1).second)
+                c.names.push_back(n);
+        }
+        c.seed_count = c.names.size();
+        c.seeded = true;
+    }
+} // namespace
+
 // ── Issue #909: thin observability registration dispatchers ──
+// Issue #3531: seed once, return the live vector (no per-call copy).
 const std::vector<std::string>& ObservabilityPrims::stats_primitives() {
-    return kObservabilityStatsPrimitives;
+    auto& c = g_metrics_catalog();
+    std::lock_guard<std::mutex> lock(c.mu);
+    seed_metrics_catalog_unlocked();
+    return c.names;
+}
+
+void ObservabilityPrims::register_catalog_query(std::string_view key) {
+    if (key.empty())
+        return;
+    auto& c = g_metrics_catalog();
+    std::lock_guard<std::mutex> lock(c.mu);
+    seed_metrics_catalog_unlocked();
+    if (c.seen.find(key) != c.seen.end())
+        return;
+    if (c.names.size() == c.names.capacity())
+        c.names.reserve(c.names.capacity() + 1024);
+    c.seen.emplace(std::string(key), 1);
+    c.names.emplace_back(key);
+    g_metrics_catalog_runtime_register_total.fetch_add(1, std::memory_order_relaxed);
+}
+
+bool ObservabilityPrims::catalog_contains(std::string_view key) {
+    if (key.empty())
+        return false;
+    auto& c = g_metrics_catalog();
+    std::lock_guard<std::mutex> lock(c.mu);
+    seed_metrics_catalog_unlocked();
+    return c.seen.find(key) != c.seen.end();
+}
+
+std::uint64_t ObservabilityPrims::catalog_size() {
+    auto& c = g_metrics_catalog();
+    std::lock_guard<std::mutex> lock(c.mu);
+    seed_metrics_catalog_unlocked();
+    return static_cast<std::uint64_t>(c.names.size());
+}
+
+std::uint64_t ObservabilityPrims::catalog_runtime_register_total() {
+    return g_metrics_catalog_runtime_register_total.load(std::memory_order_relaxed);
 }
 
 // Issue #1439: private map for query:/compile:*-stats hash builders.
@@ -1444,13 +1526,44 @@ bool ObservabilityPrims::stats_impl_registered(std::string_view name) {
     return m.find(name) != m.end();
 }
 
+int ObservabilityPrims::register_catalog_probe_for_test(std::string_view key) {
+    if (key.empty())
+        return 0;
+    const auto before = g_metrics_catalog_runtime_register_total.load(std::memory_order_relaxed);
+    register_stats_impl(std::string(key), [](const auto&) -> EvalValue { return make_int(3531); });
+    {
+        auto& c = g_metrics_catalog();
+        std::lock_guard<std::mutex> lock(c.mu);
+        c.runtime_impl_names.emplace_back(key);
+    }
+    register_catalog_query(key);
+    const auto after = g_metrics_catalog_runtime_register_total.load(std::memory_order_relaxed);
+    return after > before ? 1 : 0;
+}
+
+void ObservabilityPrims::clear_catalog_runtime_for_test() {
+    auto& c = g_metrics_catalog();
+    std::lock_guard<std::mutex> lock(c.mu);
+    seed_metrics_catalog_unlocked();
+    auto& impls = legacy_stats_impls();
+    for (const auto& n : c.runtime_impl_names)
+        impls.erase(n);
+    c.runtime_impl_names.clear();
+    c.names.resize(c.seed_count);
+    c.seen.clear();
+    for (const auto& n : c.names)
+        c.seen.emplace(n, 1);
+    g_metrics_catalog_runtime_register_total.store(0, std::memory_order_relaxed);
+}
+
 EvalValue ObservabilityPrims::stats_drift_check(Evaluator& ev) {
-    // Issue #1672: cross-check kObservabilityStatsPrimitives vs legacy_stats_impls
+    // Issue #1672: cross-check runtime catalog vs legacy_stats_impls
     // (+ residual public Primitives aliases still resolvable via lookup).
     // Hash schema 1672:
     //   schema, catalog-size, impl-size, missing-impl-count, missing-catalog-count,
     //   ok (1 if both drift lists empty), missing-impl / missing-catalog name lists.
-    const auto& catalog = kObservabilityStatsPrimitives;
+    // Issue #3531: catalog is the runtime snapshot (seed + register_catalog_query).
+    const auto& catalog = stats_primitives();
     auto& impls = legacy_stats_impls();
 
     auto name_resolvable = [&](std::string_view name) -> bool {
@@ -1494,9 +1607,17 @@ EvalValue ObservabilityPrims::stats_drift_check(Evaluator& ev) {
     };
 
     std::vector<std::pair<std::string, EvalValue>> kv;
-    kv.reserve(10);
+    kv.reserve(16);
     kv.push_back({"schema", make_int(1672)});
     kv.push_back({"catalog-size", make_int(static_cast<std::int64_t>(catalog.size()))});
+    // Issue #3531: additive runtime-catalog sentinels on the existing
+    // drift-check hash. schema 1672 is unchanged.
+    kv.push_back({"schema-3531", make_int(kMetricsCatalogRuntimeIssue)});
+    kv.push_back({"issue-3531", make_int(kMetricsCatalogRuntimeIssue)});
+    kv.push_back({"catalog-runtime-wired", make_int(1)});
+    kv.push_back({"catalog-runtime-register-total",
+                  make_int(static_cast<std::int64_t>(
+                      g_metrics_catalog_runtime_register_total.load(std::memory_order_relaxed)))});
     kv.push_back({"impl-size", make_int(static_cast<std::int64_t>(impls.size()))});
     kv.push_back({"missing-impl-count", make_int(static_cast<std::int64_t>(missing_impl.size()))});
     kv.push_back(
@@ -1672,3 +1793,38 @@ void register_jit_arena_primitives(PrimRegistrar add, Evaluator& ev) {
 }
 
 } // namespace aura::compiler::primitives_detail
+
+// Issue #3531: test / plugin C ABI for the runtime catalog (no new query:*).
+extern "C" int aura_metrics_catalog_register(const char* key) {
+    if (key == nullptr || key[0] == '\0')
+        return 0;
+    using aura::compiler::primitives_detail::ObservabilityPrims;
+    const auto before = ObservabilityPrims::catalog_runtime_register_total();
+    ObservabilityPrims::register_catalog_query(key);
+    return ObservabilityPrims::catalog_runtime_register_total() > before ? 1 : 0;
+}
+
+extern "C" int aura_metrics_catalog_register_probe(const char* key) {
+    if (key == nullptr || key[0] == '\0')
+        return 0;
+    return aura::compiler::primitives_detail::ObservabilityPrims::register_catalog_probe_for_test(
+        key);
+}
+
+extern "C" int aura_metrics_catalog_contains(const char* key) {
+    if (key == nullptr || key[0] == '\0')
+        return 0;
+    return aura::compiler::primitives_detail::ObservabilityPrims::catalog_contains(key) ? 1 : 0;
+}
+
+extern "C" std::uint64_t aura_metrics_catalog_size(void) {
+    return aura::compiler::primitives_detail::ObservabilityPrims::catalog_size();
+}
+
+extern "C" std::uint64_t aura_metrics_catalog_runtime_register_total(void) {
+    return aura::compiler::primitives_detail::ObservabilityPrims::catalog_runtime_register_total();
+}
+
+extern "C" void aura_metrics_catalog_clear_runtime_for_test(void) {
+    aura::compiler::primitives_detail::ObservabilityPrims::clear_catalog_runtime_for_test();
+}

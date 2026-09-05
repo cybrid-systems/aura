@@ -1,0 +1,54 @@
+{
+  "issue": 3531,
+  "title": "Issue #3531: engine:metrics catalog is runtime-extensible (boot-seeded)",
+  "ok": "OK: Issue #3531 runtime catalog — seed list retained; register_catalog_query; no new query:*.",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_primitives_observability.cpp",
+      "contains": [
+        "kMetricsCatalogRuntimeIssue = 3531",
+        "register_catalog_query",
+        "seed_metrics_catalog_unlocked",
+        "g_metrics_catalog_runtime_register_total"
+      ]
+    },
+    {
+      "ac": "AC1-decl",
+      "path": "src/compiler/observability_prims_decl.inc",
+      "contains": [
+        "register_catalog_query",
+        "const std::vector<std::string>& stats_primitives()"
+      ]
+    },
+    {
+      "ac": "AC4-query",
+      "path": "src/compiler/evaluator_primitives_obs_jit.cpp",
+      "contains": [
+        "schema-3531",
+        "catalog-runtime-wired"
+      ]
+    },
+    {
+      "ac": "AC1-test",
+      "path": "tests/compiler/test_engine_metrics_facade.cpp",
+      "contains": [
+        "3531 AC1",
+        "3531 AC2",
+        "3531 AC3",
+        "3531 AC4",
+        "aura_metrics_catalog_register"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "forbid": [
+        "tests/compiler/test_issue_3531.cpp",
+        "tests/issues/test_issue_3531.cpp",
+        "tests/compiler/test_engine_metrics_catalog_runtime.cpp",
+        "docs/design/3531-metrics-catalog.md",
+        "scripts/coverage/checks/check_metrics_catalog_runtime_3531.py"
+      ]
+    }
+  ]
+}

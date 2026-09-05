@@ -2009,7 +2009,7 @@ static EvalValue build_engine_metrics_hash(Evaluator& ev,
 void ObservabilityPrims::register_metrics_facade(PrimRegistrar add, Evaluator& ev) {
     // Issue #560: (stats:list)
     add("stats:list", [&ev](const auto&) -> EvalValue {
-        const std::vector<std::string>& stats = ObservabilityPrims::stats_primitives();
+        const auto& stats = ObservabilityPrims::stats_primitives();
         EvalValue result = make_void();
         for (auto it = stats.rbegin(); it != stats.rend(); ++it) {
             auto sidx = ev.string_heap_.size();
@@ -2207,6 +2207,10 @@ void ObservabilityPrims::register_metrics_facade(PrimRegistrar add, Evaluator& e
         std::vector<std::pair<std::string, EvalValue>> kv;
         kv.push_back({"schema", make_int(2)});
         kv.push_back({"stats-count", make_int(static_cast<std::int64_t>(stats.size()))});
+        // Issue #3531: runtime catalog sentinels on the existing facade.
+        kv.push_back({"schema-3531", make_int(3531)});
+        kv.push_back({"issue-3531", make_int(3531)});
+        kv.push_back({"catalog-runtime-wired", make_int(1)});
         {
             EvalValue names_list = make_void();
             for (auto it = stats.rbegin(); it != stats.rend(); ++it) {

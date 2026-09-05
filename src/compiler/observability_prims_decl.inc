@@ -3,7 +3,21 @@
 // (single source of truth for peel tier counts).
 struct ObservabilityPrims {
     static EvalValue meta_to_pair(Evaluator& ev, const PrimMeta& m);
+    // Issue #3531: live runtime catalog (boot-seeded from
+    // kObservabilityStatsPrimitives). Returns a stable reference; the
+    // vector is reserved so plugin register_catalog_query does not
+    // reallocate under a live :all / stats:list walk.
     static const std::vector<std::string>& stats_primitives();
+    // Issue #3531: plugin / extra-TU catalog entry without editing the
+    // seed list in evaluator_primitives_observability.cpp. Does not
+    // register a handler (SlimSurface: security-audit* stay impl-only).
+    static void register_catalog_query(std::string_view key);
+    [[nodiscard]] static bool catalog_contains(std::string_view key);
+    [[nodiscard]] static std::uint64_t catalog_size();
+    [[nodiscard]] static std::uint64_t catalog_runtime_register_total();
+    // Test seam: dummy handler + catalog so :all can join the new key.
+    static int register_catalog_probe_for_test(std::string_view key);
+    static void clear_catalog_runtime_for_test();
     // Issue #1439: internal-only stats impl table (not public primitives).
     // (engine:metrics "name") / :all / :prefix resolve via lookup_stats_impl.
     static void register_stats_impl(std::string name, PrimFn fn);

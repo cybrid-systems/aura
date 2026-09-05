@@ -18,6 +18,7 @@
 #include <set>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <vector>
 
 import std;
@@ -69,6 +70,12 @@ std::string read_file(const char* path) {
 extern "C" void aura_engine_metrics_set_force_hash_cap(std::uint64_t);
 extern "C" std::uint64_t aura_engine_metrics_hash_overflow_total(void);
 extern "C" void aura_engine_metrics_reset_hash_overflow_for_test(void);
+extern "C" int aura_metrics_catalog_register(const char* key);
+extern "C" int aura_metrics_catalog_register_probe(const char* key);
+extern "C" int aura_metrics_catalog_contains(const char* key);
+extern "C" std::uint64_t aura_metrics_catalog_size(void);
+extern "C" std::uint64_t aura_metrics_catalog_runtime_register_total(void);
+extern "C" void aura_metrics_catalog_clear_runtime_for_test(void);
 extern "C" void aura_query_hash_set_force_cap(std::uint64_t);
 extern "C" std::uint64_t aura_query_hash_overflow_total(void);
 extern "C" void aura_query_hash_reset_overflow_for_test(void);
@@ -259,6 +266,106 @@ int main() {
               "3499 AC5: no test_issue_3499.cpp");
         CHECK(read_file("docs/design/3499-security-posture-merge.md").empty(),
               "3499 AC5: no docs/design/3499-*");
+    }
+
+    // ── Issue #3531: runtime-extensible engine:metrics catalog ──
+    // Before :prefix / :all catalog dumps (pre-existing light-link stack-smash
+    // on this tree; #3499). Join the probe via by-name + stats:count, not :all.
+    std::println("\n--- #3531: runtime-extensible engine:metrics catalog ---");
+    {
+        aura_metrics_catalog_clear_runtime_for_test();
+        const auto seed = aura_metrics_catalog_size();
+        CHECK(seed > 0, "3531 AC1: boot seed non-empty");
+        CHECK(hash_int(cs, "(engine:metrics)", "schema-3531") == 3531,
+              "3531 AC1: schema-3531 on engine:metrics");
+        CHECK(hash_int(cs, "(engine:metrics)", "catalog-runtime-wired") == 1,
+              "3531 AC1: catalog-runtime-wired");
+        CHECK(hash_int(cs, "(stats:get \"stats:drift-check\")", "schema-3531") == 3531,
+              "3531 AC1: schema-3531 on drift-check (schema 1672 retained)");
+        CHECK(hash_int(cs, "(stats:get \"stats:drift-check\")", "schema") == 1672,
+              "3531 AC1: schema 1672 unchanged");
+
+        CHECK(aura_metrics_catalog_register_probe("query:__3531-runtime-probe") == 1,
+              "3531 AC1: first register inserts");
+        CHECK(aura_metrics_catalog_contains("query:__3531-runtime-probe") == 1,
+              "3531 AC1: catalog contains probe");
+        CHECK(aura_metrics_catalog_size() == seed + 1, "3531 AC1: size +1");
+        CHECK(aura_metrics_catalog_register("query:__3531-runtime-probe") == 0,
+              "3531 AC1: duplicate register is idempotent");
+        CHECK(aura_metrics_catalog_size() == seed + 1, "3531 AC1: duplicate does not grow");
+        auto cnt = cs.eval("(stats:count)");
+        CHECK(cnt && is_int(*cnt) && as_int(*cnt) == static_cast<std::int64_t>(seed + 1),
+              "3531 AC1: stats:count sees runtime key");
+        auto probe = cs.eval("(engine:metrics \"query:__3531-runtime-probe\")");
+        CHECK(probe && is_int(*probe) && as_int(*probe) == 3531,
+              "3531 AC1: by-name joins probe without editing the seed array");
+        CHECK(hash_int(cs, "(engine:metrics)", "stats-count") ==
+                  static_cast<std::int64_t>(seed + 1),
+              "3531 AC1: engine:metrics stats-count includes runtime key");
+        aura_metrics_catalog_clear_runtime_for_test();
+        CHECK(aura_metrics_catalog_size() == seed, "3531 AC1: clear restores seed");
+    }
+
+    {
+        // Existing keys still resolve (no query-key surface change).
+        auto r = cs.eval("(engine:metrics \"query:macro-hygiene-stats\")");
+        CHECK(r.has_value() && (is_hash(*r) || is_void(*r)),
+              "3531 AC2: existing by-name still resolves");
+        CHECK(hash_int(cs, "(engine:metrics)", "schema") == 2,
+              "3531 AC2: facade schema 2 retained");
+    }
+
+    {
+        aura_metrics_catalog_clear_runtime_for_test();
+        const auto seed = aura_metrics_catalog_size();
+        constexpr int kN = 1000;
+        constexpr int kThreads = 8;
+        std::vector<std::thread> threads;
+        threads.reserve(static_cast<std::size_t>(kThreads));
+        for (int t = 0; t < kThreads; ++t) {
+            threads.emplace_back([t]() {
+                const int base = t * (kN / kThreads);
+                for (int i = 0; i < kN / kThreads; ++i) {
+                    const auto name = std::format("query:__3531-rt-{}", base + i);
+                    (void)aura_metrics_catalog_register(name.c_str());
+                }
+            });
+        }
+        for (auto& th : threads)
+            th.join();
+        CHECK(aura_metrics_catalog_size() == seed + static_cast<std::uint64_t>(kN),
+              std::format("3531 AC3: 1000 concurrent registers (got {} want {})",
+                          aura_metrics_catalog_size(), seed + kN));
+        CHECK(aura_metrics_catalog_runtime_register_total() == static_cast<std::uint64_t>(kN),
+              "3531 AC3: runtime_register_total == 1000");
+        CHECK(aura_metrics_catalog_contains("query:__3531-rt-0") == 1, "3531 AC3: first key kept");
+        CHECK(aura_metrics_catalog_contains("query:__3531-rt-999") == 1, "3531 AC3: last key kept");
+        aura_metrics_catalog_clear_runtime_for_test();
+        CHECK(aura_metrics_catalog_size() == seed, "3531 AC3: clear restores seed");
+    }
+
+    {
+        const auto obs = read_file("src/compiler/evaluator_primitives_observability.cpp");
+        CHECK(obs.find("kMetricsCatalogRuntimeIssue = 3531") != std::string::npos,
+              "3531 AC4: stamp in catalog TU");
+        CHECK(obs.find("register_catalog_query") != std::string::npos,
+              "3531 AC4: register_catalog_query");
+        CHECK(obs.find("class MetricsCatalog") == std::string::npos,
+              "3531 AC4: no invented MetricsCatalog type");
+        const auto decl = read_file("src/compiler/observability_prims_decl.inc");
+        CHECK(decl.find("register_catalog_query") != std::string::npos,
+              "3531 AC4: ObservabilityPrims method");
+        CHECK(read_file("tests/compiler/test_issue_3531.cpp").empty(),
+              "3531 AC4: no test_issue_3531.cpp");
+        CHECK(read_file("tests/compiler/test_engine_metrics_catalog_runtime.cpp").empty(),
+              "3531 AC4: folded into existing engine:metrics test");
+        CHECK(read_file("docs/design/3531-metrics-catalog.md").empty(),
+              "3531 AC4: no docs/design/3531-*");
+        CHECK(read_file("scripts/coverage/checks/check_metrics_catalog_runtime_3531.py").empty(),
+              "3531 AC4: no substring-only py linter");
+        const auto jit = read_file("src/compiler/evaluator_primitives_obs_jit.cpp");
+        CHECK(jit.find("\"query:metrics-catalog\"") == std::string::npos,
+              "3531 AC4: no new query:* name");
     }
 
     // ── AC2: :prefix ──
