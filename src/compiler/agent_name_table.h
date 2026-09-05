@@ -76,6 +76,12 @@ struct AgentNameTable {
     // Cost when both flags are false: two bool loads, no atomic (AC2).
     aura::orch::AgentHandle* put(aura::orch::AgentHandle&& h) {
         std::lock_guard<std::mutex> lock(impl_->mu_);
+        // Issue #3564: recycle stuck Reclaimed quota on every put so a
+        // host that forgot wait_reclaimed and spawned a *different*
+        // name still frees the old slot's reservation. Flags stay —
+        // #3467 pending deny is unchanged. Soft: helper no-ops.
+        for (auto& [_, slot] : impl_->agents_)
+            (void)aura::orch::maybe_force_release_reclaimed_quota(slot);
         auto name = h.name.empty() ? ("agent-" + std::to_string(h.id)) : h.name;
         h.name = name;
         auto it = impl_->agents_.find(name);
@@ -94,7 +100,12 @@ struct AgentNameTable {
     aura::orch::AgentHandle* find(const std::string& name) {
         std::lock_guard<std::mutex> lock(impl_->mu_);
         auto it = impl_->agents_.find(name);
-        return it == impl_->agents_.end() ? nullptr : &it->second;
+        if (it == impl_->agents_.end())
+            return nullptr;
+        // Issue #3564: non-dtor recycle when Aura resolve hits a
+        // Reclaimed-pending slot (send/recv/join/wait). Quota only.
+        (void)aura::orch::maybe_force_release_reclaimed_quota(it->second);
+        return &it->second;
     }
 
     // Snapshot for cleanup at ~Evaluator. Caller owns the returned vector;

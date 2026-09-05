@@ -6678,6 +6678,9 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             insert_kv("schema-3529", aura::orch::kReclaimedQuotaForceReleaseIssue);
             insert_kv("issue-3529", aura::orch::kReclaimedQuotaForceReleaseIssue);
             insert_kv("reclaimed-quota-force-released-wired", 1);
+            // Issue #3564: name-table / Scope find+put recycle (same counter).
+            insert_kv("schema-3564", aura::orch::kReclaimedNameTableQuotaRecycleIssue);
+            insert_kv("issue-3564", aura::orch::kReclaimedNameTableQuotaRecycleIssue);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);

@@ -119,6 +119,11 @@ inline constexpr int kReclaimedAbandonIssue = 3334;
 // AURA_RECLAIMED_QUOTA_TIMEOUT_MS (default 60s). Soft / Off stay zero-cost.
 inline constexpr int kReclaimedQuotaForceReleaseIssue = 3529;
 inline constexpr std::uint64_t kReclaimedQuotaTimeoutMsDefault = 60000;
+// Issue #3564: #3529 recycle on Aura name-table / Scope find+put (not
+// only ~AgentHandle / ensure_reclaimed_cleanup). Long-lived Evaluator
+// slots never dtor until drain; find/put is the non-dtor path. Soft /
+// Off stay zero-cost. Reuses reclaimed_quota_force_released_total.
+inline constexpr int kReclaimedNameTableQuotaRecycleIssue = 3564;
 // Issue #3336: production C++ send preference — agent_send_safe (or
 // explicit `// orch-raw-send-ok`) for non-test TUs. Raw agent_send
 // remains for zero-cost non-held_ref / already-stamped.
@@ -945,9 +950,10 @@ struct OrchModuleStats {
     // named BP gauge (map pressure drops after tenant churn). Soft /
     // empty / "-" never bump. Appended at struct END (#2906).
     std::atomic<std::uint64_t> scope_bp_gauge_teardown_erase_total{0};
-    // Issue #3529: production force-released a still-held Reclaimed
-    // reservation after reclaim-stuck ≥ timeout (dtor / ensure path).
-    // Soft / Off / body-already-exit / age < timeout: never bumped.
+    // Issue #3529 / #3564: production force-released a still-held
+    // Reclaimed reservation after reclaim-stuck ≥ timeout (dtor /
+    // ensure / AgentNameTable::find+put / AgentScope::find). Soft /
+    // Off / body-already-exit / age < timeout: never bumped.
     // Appended at struct END (#2906). Reuses query:orch-module-stats.
     std::atomic<std::uint64_t> reclaimed_quota_force_released_total{0};
 };
@@ -2621,6 +2627,29 @@ inline void complete_agent_join_cleanup(AgentHandle& h, serve::JoinResult jr) no
     return reclaimed_age_ms(f) >= reclaimed_quota_timeout_ms();
 }
 
+// Issue #3564: production Reclaimed quota recycle without ~AgentHandle.
+// Aura name-table / Scope hold the handle until Evaluator drain /
+// tree_settled drop, so #3529's dtor arm never runs. Call from find/put
+// (and keep dtor / ensure as #3529). Quota only — no body-stack free
+// (#2661), no mailbox detach while !is_done(). Pending flags stay so
+// wait_reclaimed_body still finds the name and #3467 same-name put
+// stays denied. Soft / Off: two bool loads then production gate (no
+// getenv). Live (flags false) find is two bools, no atomic.
+[[nodiscard]] inline bool maybe_force_release_reclaimed_quota(AgentHandle& h) noexcept {
+    if (!h.reclaimed_deferred_cleanup && !h.must_wait_reclaimed)
+        return false;
+    if (!aura::compiler::typed_audit::production_defaults_active())
+        return false;
+    if (!h.fiber || h.fiber->is_done() || h.reserved_memory_bytes == 0)
+        return false;
+    if (!reclaimed_quota_stuck_past_timeout(h.fiber))
+        return false;
+    g_orch_module_stats.reclaimed_quota_force_released_total.fetch_add(1,
+                                                                       std::memory_order_relaxed);
+    h.release_reservation_if_any();
+    return true;
+}
+
 // Issue #3012: ~AgentHandle / move-assign finish after Reclaimed.
 // If the body has exited, run Done-path cleanup (mailbox detach +
 // reservation). Always release reservation so a host that never
@@ -2644,13 +2673,10 @@ inline void AgentHandle::finish_reclaimed_cleanup_on_dtor() noexcept {
         aura::compiler::typed_audit::production_defaults_active()) {
         g_orch_module_stats.reclaimed_dtor_under_account_total.fetch_add(1,
                                                                          std::memory_order_relaxed);
-        // Issue #3529: recycle observation when reclaim-stuck ≥ timeout.
+        // Issue #3529 / #3564: recycle when reclaim-stuck ≥ timeout.
         // Soft skipped by the production gate (no getenv). #2661
         // body-stack is not freed; #3012 still releases quota below.
-        if (reclaimed_quota_stuck_past_timeout(fiber)) {
-            g_orch_module_stats.reclaimed_quota_force_released_total.fetch_add(
-                1, std::memory_order_relaxed);
-        }
+        (void)maybe_force_release_reclaimed_quota(*this);
     }
     release_reservation_if_any();
     must_wait_reclaimed = false;
@@ -2888,19 +2914,13 @@ struct JoinViaTokenResult {
     // sees cleanup completed). wait_reclaimed_body does not release /
     // detach on Timeout, so the flag is the only host-visible signal.
     h.must_wait_reclaimed = (wr.status == serve::JoinStatus::Timeout);
-    // Issue #3529: long-lived host recycle. After auto-wait Timeout,
-    // if production + body still alive + reclaim-stuck ≥ timeout,
-    // release quota (not body-stack). Soft / age < timeout: unchanged
-    // (#2661 no-early-free).
-    if (wr.status == serve::JoinStatus::Timeout &&
-        aura::compiler::typed_audit::production_defaults_active() && h.fiber &&
-        !h.fiber->is_done() && h.reserved_memory_bytes != 0 &&
-        reclaimed_quota_stuck_past_timeout(h.fiber)) {
-        g_orch_module_stats.reclaimed_quota_force_released_total.fetch_add(
-            1, std::memory_order_relaxed);
-        h.release_reservation_if_any();
+    // Issue #3529 / #3564: long-lived host recycle. After auto-wait
+    // Timeout, if production + body still alive + reclaim-stuck ≥
+    // timeout, release quota (not body-stack). Soft / age < timeout:
+    // unchanged (#2661 no-early-free). ensure still clears must_wait
+    // after recycle (AC3); find/put leave flags (#3564 AC1).
+    if (wr.status == serve::JoinStatus::Timeout && maybe_force_release_reclaimed_quota(h))
         h.must_wait_reclaimed = false;
-    }
     return wr;
 }
 
