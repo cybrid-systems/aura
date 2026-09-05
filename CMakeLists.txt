@@ -3300,6 +3300,7 @@ add_executable(test_mailbox_fiber_batch
     tests/serve/test_steal_safety_ticket.cpp
     tests/serve/test_steal_snapshot_hard_invariant.cpp
     tests/serve/test_steal_snapshot_soft_production_lock.cpp
+    tests/serve/chaos_soak_production_gate.cpp
 )
 set_property(TARGET test_mailbox_fiber_batch PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_mailbox_fiber_batch PRIVATE src tests)

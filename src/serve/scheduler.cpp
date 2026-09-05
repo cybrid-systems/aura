@@ -43,6 +43,39 @@ static void long_mutation_hook_trampoline(std::uint64_t fiber_id,
 // NOT inserted in metrics middle — file-scope atomic, sibling family.
 static std::atomic<std::uint64_t> g_eventfd_wake_force_safepoint_total{0};
 
+// Issue #3555: file-scope max-latency tracker for the
+// safepoint_blocked_by_long_mutation counter (relaxed CAS — p99 SLO
+// proxy: max ≤ kMailboxP99SLO_us ⇒ p99 ≤ kMailboxP99SLO_us). Bumped
+// from fiber.cpp safepoint wait path on > 1ms waits (same condition
+// as the per-GC counter).
+static std::atomic<std::int64_t> g_safepoint_blocked_by_long_mutation_max_us{0};
+
+// Issue #3555: accessor for the file-scope max-latency tracker.
+std::int64_t safepoint_blocked_by_long_mutation_max_us_v_read() noexcept {
+    return g_safepoint_blocked_by_long_mutation_max_us.load(std::memory_order_relaxed);
+}
+
+// Issue #3555: accessor for the #3553 file-scope atomic sibling of
+// safepoint_wait_while_mutation_held (fiber.h member).
+std::uint64_t eventfd_wake_force_safepoint_total_v_read() noexcept {
+    return g_eventfd_wake_force_safepoint_total.load(std::memory_order_relaxed);
+}
+
+// Issue #3555: bump the max tracker (relaxed CAS loop). Called from
+// fiber.cpp safepoint wait path on > 1ms holds (same gate as the
+// per-GC safepoint_blocked_by_long_mutation counter).
+void record_safepoint_blocked_by_long_mutation_us(std::int64_t us) noexcept {
+    if (us <= 0)
+        return;
+    auto cur = g_safepoint_blocked_by_long_mutation_max_us.load(std::memory_order_relaxed);
+    while (us > cur) {
+        if (g_safepoint_blocked_by_long_mutation_max_us.compare_exchange_weak(
+                cur, us, std::memory_order_relaxed, std::memory_order_relaxed)) {
+            break;
+        }
+    }
+}
+
 // ── Constructor ───────────────────────────────────────
 
 Scheduler::Scheduler(int num_workers) {

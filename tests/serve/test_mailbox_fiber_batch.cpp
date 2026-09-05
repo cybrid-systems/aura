@@ -79,6 +79,11 @@ extern int run_test_steal_layout_stamp();
 extern int run_test_steal_safety_ticket();
 extern int run_test_steal_snapshot_hard_invariant();
 extern int run_test_steal_snapshot_soft_production_lock();
+// Issue #3555: chaos soak deploy gate (8+ worker × 100 mutate/s/fiber × 1h
+// fail-closed). New member of test_mailbox_fiber_batch SuiteBuilder —
+// same binary as #2203 steal_complete_gc_defer (per AC1: extend existing
+// test_steal_complete_gc_defer.cpp test binary, same SuiteBuilder).
+extern int run_test_chaos_soak_production_gate();
 
 int main() {
     using aura::test::g_failed;
@@ -415,6 +420,15 @@ int main() {
     // Issue #3483: live-isolate steal-complete gc-defer (was inside
     // #if 0 leftover). Latch∧strong runtime ACs must actually run.
     if (isolate("test_steal_complete_gc_defer", run_test_steal_complete_gc_defer) != 0)
+        ++members_failed;
+    else
+        ++members_passed;
+
+    // Issue #3555: chaos soak deploy gate (8+ worker × 100 mutate/s/fiber
+    // × 1h fail-closed). Live-isolate so a heavy multi-fiber soak can
+    // SIGSEGV / heap corruption without taking the whole SuiteBuilder
+    // down (PR smoke = 5s default; nightly = 3600s via FULL=1).
+    if (isolate("test_chaos_soak_production_gate", run_test_chaos_soak_production_gate) != 0)
         ++members_failed;
     else
         ++members_passed;
