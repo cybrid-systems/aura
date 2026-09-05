@@ -1,0 +1,52 @@
+{
+  "issue": 3543,
+  "title": "Issue #3543: hygiene fail emits typed MacroHygiene SE (4 reason strings)",
+  "ok": "OK: Issue #3543 hygiene-violation SE — fail-path only; Soft one is_sandbox_active load; no new query:*.",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/macro_expansion.cpp",
+      "contains": [
+        "emit_hygiene_limit_se",
+        "SecurityEventKind::MacroHygiene",
+        "hygiene-gensym-ceiling"
+      ]
+    },
+    {
+      "ac": "AC1-counter",
+      "path": "src/compiler/macro_expansion.ixx",
+      "contains": [
+        "kHygieneViolationSeIssue = 3543",
+        "g_hygiene_violation_se_emit_total"
+      ]
+    },
+    {
+      "ac": "AC5-query",
+      "path": "src/compiler/evaluator_primitives_query_obs_mid.cpp",
+      "contains": [
+        "schema-3543",
+        "hygiene-violation-se-emit-total"
+      ]
+    },
+    {
+      "ac": "AC1-test",
+      "path": "tests/compiler/test_macro_hygiene_limits.cpp",
+      "contains": [
+        "3543 AC1",
+        "3543 AC2",
+        "3543 AC3",
+        "3543 AC4",
+        "3543 AC5"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "forbid": [
+        "tests/compiler/test_issue_3543.cpp",
+        "tests/compiler/test_hygiene_violation_se_emit.cpp",
+        "docs/design/3543-hygiene-violation-se.md",
+        "scripts/coverage/checks/check_hygiene_violation_se_3543.py"
+      ]
+    }
+  ]
+}

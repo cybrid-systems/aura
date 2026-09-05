@@ -382,6 +382,8 @@ extern "C" std::uint64_t aura_macro_hygiene_last_limit_reason_v_read(void) noexc
 extern "C" const char* aura_macro_hygiene_last_limit_reason_string(void) noexcept;
 extern "C" void aura_note_macro_hygiene_last_limit_reason(std::uint8_t code) noexcept;
 extern "C" void aura_test_reset_macro_hygiene_last_limit_reason_for_test(void) noexcept;
+// Issue #3543: typed MacroHygiene SE emit counter.
+extern "C" std::uint64_t aura_hygiene_violation_se_emit_total_v_read(void) noexcept;
 // Issue #3062: lightweight expand checkpoint (panic-checkpoint reuse).
 extern "C" int aura_evaluator_try_save_macro_expand_checkpoint(void);
 extern "C" void aura_evaluator_commit_macro_expand_checkpoint(void);

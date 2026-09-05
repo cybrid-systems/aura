@@ -6,9 +6,12 @@ module;
 #include <atomic>
 #include <cstdio>
 #include <cstdint>
-#include <cstdlib>                  // Issue #2101: getenv / strtol for runtime depth/pass caps
-#include "core/capability_model.hh" // Issue #2023: MacroSelfEvo gate
-#include "core/sandbox.hh"          // Issue #2023: is_sandbox_active
+#include <cstdlib>                    // Issue #2101: getenv / strtol for runtime depth/pass caps
+#include "core/capability_model.hh"   // Issue #2023: MacroSelfEvo gate
+#include "core/sandbox.hh"            // Issue #2023: is_sandbox_active
+#include "core/security_event.hh"     // Issue #3543: MacroHygiene SE kind
+#include "core/security_event_wal.hh" // Issue #3543: emit_security_event_durable
+#include "core/workspace_epoch.hh"    // Issue #3543: current_mutation_epoch
 #include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 #include "observability_metrics.h" // Issue #2021: CompilerMetrics snapshot
 #include "typed_mutation_audit.h" // Issue #3278: production_defaults_active() gate for cross-pool schema homology
@@ -380,33 +383,8 @@ void reset_hygiene_runtime_caps_for_test() noexcept {
 
 static void stamp_fiber_last_limit_reason(std::uint32_t fiber_id, std::uint8_t code) noexcept;
 
-void note_hygiene_last_limit_reason_for_fiber(std::uint32_t fiber_id, std::uint8_t code) noexcept {
-    // Issue #3215 / #3341: extra store only on reject/detection (callers
-    // already returned on the quiet !is_macro_introduced / rest-already-stamped
-    // path). Global atomic stays for aggregate dashboards (last-writer-wins);
-    // per-fiber FiberHygieneStats.last_limit_reason is the Agent-correlation
-    // surface under concurrent expand / mutate.
-    // Expand ceiling reasons (pass / depth / gensym) must not clobber a
-    // mutate default-deny. Agents key on hygiene-macro-introduced (4)
-    // and hygiene-rest-unmarked (5); a later half-expand pass-limit is
-    // a follow-on of the same deny, not a new reason.
-    if (code == kHygieneLimitReasonPassLimit || code == kHygieneLimitReasonDepthLimit ||
-        code == kHygieneLimitReasonGensymCeiling) {
-        const auto cur = g_macro_hygiene_last_limit_reason.load(std::memory_order_relaxed);
-        if (cur == kHygieneLimitReasonMacroIntroduced || cur == kHygieneLimitReasonRestUnmarked)
-            return;
-    }
-    g_macro_hygiene_last_limit_reason.store(code, std::memory_order_relaxed);
-    stamp_fiber_last_limit_reason(fiber_id, code);
-}
-
-void note_hygiene_last_limit_reason(std::uint8_t code) noexcept {
-    note_hygiene_last_limit_reason_for_fiber(static_cast<std::uint32_t>(aura_fiber_current_id()),
-                                             code);
-}
-
-const char* hygiene_last_limit_reason_string() noexcept {
-    switch (g_macro_hygiene_last_limit_reason.load(std::memory_order_relaxed)) {
+[[nodiscard]] static const char* hygiene_limit_reason_string_for(std::uint8_t code) noexcept {
+    switch (code) {
         case 1:
             return "hygiene-gensym-ceiling";
         case 2:
@@ -439,6 +417,61 @@ const char* hygiene_last_limit_reason_string() noexcept {
         default:
             return "";
     }
+}
+
+// Issue #3543: typed SE on hygiene fail so Agent dashboards distinguish
+// hygiene-macro-introduced / hygiene-gensym-ceiling / hygiene-depth-limit /
+// hygiene-rest-unmarked (and the other last_limit_reason strings). Reuses
+// SecurityEventKind::MacroHygiene + hygiene_limit_reason_string_for (no
+// second reason model). Soft/Off: one is_sandbox_active load, no emit.
+static void emit_hygiene_limit_se(std::uint8_t code, std::uint32_t fiber_id) noexcept {
+    if (!aura::core::sandbox::is_sandbox_active())
+        return;
+    const char* reason = hygiene_limit_reason_string_for(code);
+    if (reason == nullptr || reason[0] == '\0')
+        return;
+    using ::aura::core::security_event::SecurityEventKind;
+    using ::aura::core::security_event_wal::emit_security_event_durable;
+    auto mid = aura::compiler::typed_audit::join_audit_and_se_mid(0);
+    const auto epoch = aura::core::current_mutation_epoch();
+    if (mid == 0)
+        mid = epoch != 0 ? epoch : 1;
+    emit_security_event_durable(SecurityEventKind::MacroHygiene, tenant_for_macro_self_evo_check(),
+                                mid, epoch,
+                                /*effect_bits=*/0, "macro-hygiene", reason,
+                                /*denied=*/true, static_cast<std::int64_t>(fiber_id));
+    g_hygiene_violation_se_emit_total.fetch_add(1, std::memory_order_relaxed);
+}
+
+void note_hygiene_last_limit_reason_for_fiber(std::uint32_t fiber_id, std::uint8_t code) noexcept {
+    // Issue #3215 / #3341: extra store only on reject/detection (callers
+    // already returned on the quiet !is_macro_introduced / rest-already-stamped
+    // path). Global atomic stays for aggregate dashboards (last-writer-wins);
+    // per-fiber FiberHygieneStats.last_limit_reason is the Agent-correlation
+    // surface under concurrent expand / mutate.
+    // Expand ceiling reasons (pass / depth / gensym) must not clobber a
+    // mutate default-deny. Agents key on hygiene-macro-introduced (4)
+    // and hygiene-rest-unmarked (5); a later half-expand pass-limit is
+    // a follow-on of the same deny, not a new reason.
+    if (code == kHygieneLimitReasonPassLimit || code == kHygieneLimitReasonDepthLimit ||
+        code == kHygieneLimitReasonGensymCeiling) {
+        const auto cur = g_macro_hygiene_last_limit_reason.load(std::memory_order_relaxed);
+        if (cur == kHygieneLimitReasonMacroIntroduced || cur == kHygieneLimitReasonRestUnmarked)
+            return;
+    }
+    g_macro_hygiene_last_limit_reason.store(code, std::memory_order_relaxed);
+    stamp_fiber_last_limit_reason(fiber_id, code);
+    emit_hygiene_limit_se(code, fiber_id);
+}
+
+void note_hygiene_last_limit_reason(std::uint8_t code) noexcept {
+    note_hygiene_last_limit_reason_for_fiber(static_cast<std::uint32_t>(aura_fiber_current_id()),
+                                             code);
+}
+
+const char* hygiene_last_limit_reason_string() noexcept {
+    return hygiene_limit_reason_string_for(
+        g_macro_hygiene_last_limit_reason.load(std::memory_order_relaxed));
 }
 
 // Combine hard ceiling + process runtime + optional capability depth.
@@ -764,6 +797,9 @@ std::atomic<std::uint64_t> g_macro_expand_full_restamp_total{0};
 // file-level g_1908_repin_fallback_total so multi-tenant dashboards
 // can see per-Evaluator clone rate.
 std::atomic<std::uint64_t> g_clone_macro_provenance_per_evaluator_total{0};
+// Issue #3543: typed MacroHygiene SE emits from note_hygiene_last_limit_reason
+// (fail-path only). Append END per #2906.
+std::atomic<std::uint64_t> g_hygiene_violation_se_emit_total{0};
 // Issue #2176: selective unstamp for MacroIntroduced subtrees (Agent
 // experimental rollback path). Bumped per successful unstamp via the
 // C-linkage helper aura_unstamp_macro_introduced_with_counter below.
@@ -1049,6 +1085,10 @@ extern "C" void aura_test_reset_macro_clone_same_flat_reject_for_test(void) noex
 // Issue #3029: Agent-stable hygiene limit reason (ceiling / depth / pass).
 extern "C" std::uint64_t aura_macro_hygiene_last_limit_reason_v_read(void) noexcept {
     return g_macro_hygiene_last_limit_reason.load(std::memory_order_relaxed);
+}
+// Issue #3543: typed SE emit counter (query:macro-hygiene-stats additive).
+extern "C" std::uint64_t aura_hygiene_violation_se_emit_total_v_read(void) noexcept {
+    return g_hygiene_violation_se_emit_total.load(std::memory_order_relaxed);
 }
 extern "C" void aura_note_macro_hygiene_last_limit_reason(std::uint8_t code) noexcept {
     note_hygiene_last_limit_reason(code);

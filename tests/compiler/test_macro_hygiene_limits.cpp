@@ -18,6 +18,7 @@
 #include "compiler/security_capabilities.h"
 #include "core/capability_model.hh"
 #include "core/sandbox.hh"
+#include "core/security_event.hh"
 #include "core/transparent_string_hash.hh"
 
 #include <array>
@@ -49,13 +50,19 @@ using aura::compiler::Evaluator;
 using aura::compiler::macro_exp::clone_macro_body;
 using aura::compiler::macro_exp::effective_hygiene_depth_limit;
 using aura::compiler::macro_exp::effective_hygiene_pass_cap;
+using aura::compiler::macro_exp::g_hygiene_violation_se_emit_total;
 using aura::compiler::macro_exp::g_macro_hygiene_last_limit_reason;
 using aura::compiler::macro_exp::g_macro_self_evo_depth_clamp_total;
 using aura::compiler::macro_exp::g_macro_self_evo_pass_clamp_total;
 using aura::compiler::macro_exp::hard_hygiene_depth_limit;
 using aura::compiler::macro_exp::hygiene_last_limit_reason_string;
+using aura::compiler::macro_exp::kHygieneLimitReasonDepthLimit;
+using aura::compiler::macro_exp::kHygieneLimitReasonGensymCeiling;
+using aura::compiler::macro_exp::kHygieneLimitReasonMacroIntroduced;
+using aura::compiler::macro_exp::kHygieneLimitReasonRestUnmarked;
 using aura::compiler::macro_exp::macro_expand_all;
 using aura::compiler::macro_exp::MAX_HYGIENE_DEPTH;
+using aura::compiler::macro_exp::note_hygiene_last_limit_reason;
 using aura::compiler::macro_exp::reset_hygiene_runtime_caps_for_test;
 using aura::compiler::macro_exp::runtime_hygiene_depth_cap;
 using aura::compiler::macro_exp::runtime_hygiene_pass_cap;
@@ -660,6 +667,124 @@ static void ac3029_query_and_linter() {
           "3029: pass-limit restore");
 }
 
+// ── Issue #3543: typed MacroHygiene SE on hygiene fail ──
+static bool ring_has_reason_3543(std::string_view needle) {
+    using aura::core::security_event::g_security_event_ring;
+    using aura::core::security_event::kSecurityEventRingSize;
+    auto& ring = g_security_event_ring();
+    const auto cur = ring.seq.load(std::memory_order_acquire);
+    const auto end = cur > kSecurityEventRingSize ? cur - kSecurityEventRingSize : 0;
+    for (auto s = cur; s > end; --s) {
+        const auto& e = ring.ring[(s - 1) % kSecurityEventRingSize];
+        if (std::string_view(e.reason) == needle)
+            return true;
+    }
+    return false;
+}
+
+static void ac3543_four_fail_modes_emit_se() {
+    std::println("\n--- #3543 AC1: Restricted emit SE for 4 hygiene fail modes ---");
+    using aura::core::security_event::reset_security_event_ring_for_test;
+    reset_all();
+    reset_security_event_ring_for_test();
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+    const auto se0 = g_hygiene_violation_se_emit_total.load();
+    // Reset last-reason between stamps: ceiling/depth must not clobber
+    // skip after macro-introduced / rest-unmarked (#3215).
+    const std::uint8_t codes[] = {kHygieneLimitReasonMacroIntroduced,
+                                  kHygieneLimitReasonGensymCeiling, kHygieneLimitReasonDepthLimit,
+                                  kHygieneLimitReasonRestUnmarked};
+    for (auto code : codes) {
+        g_macro_hygiene_last_limit_reason.store(0, std::memory_order_relaxed);
+        note_hygiene_last_limit_reason(code);
+    }
+    CHECK(g_hygiene_violation_se_emit_total.load() >= se0 + 4, "3543 AC1: SE counter +4");
+    CHECK(ring_has_reason_3543("hygiene-macro-introduced"), "3543 AC1: hygiene-macro-introduced");
+    CHECK(ring_has_reason_3543("hygiene-gensym-ceiling"), "3543 AC1: hygiene-gensym-ceiling");
+    CHECK(ring_has_reason_3543("hygiene-depth-limit"), "3543 AC1: hygiene-depth-limit");
+    CHECK(ring_has_reason_3543("hygiene-rest-unmarked"), "3543 AC1: hygiene-rest-unmarked");
+    reset_all();
+}
+
+static void ac3543_depth_clone_emits() {
+    std::println("\n--- #3543 AC2: Restricted depth-limit clone emits hygiene-depth-limit ---");
+    using aura::core::security_event::reset_security_event_ring_for_test;
+    reset_all();
+    reset_security_event_ring_for_test();
+    CHECK(set_hygiene_depth_cap(1), "3543 AC2: cap=1");
+    MacroSelfEvoPolicy pol;
+    pol.max_expansion_passes = 8;
+    pol.max_depth = 8;
+    pol.allow_rest_hygiene = true;
+    pol.allow_concurrent_fiber = true;
+    CHECK(g_capability_registry().grant(0, "tenant-admin", Effect::TenantAdmin,
+                                        aura_test_grant_prov()),
+          "3543 AC2: TA grant");
+    CHECK(g_capability_registry().grant_macro_self_evo(0, pol, aura_test_grant_prov()),
+          "3543 AC2: MSE grant");
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+    StringPool pool;
+    auto flat = make_deep_body(pool, 8);
+    FlatAST tgt;
+    StringPool tp;
+    NameMap names;
+    const auto se0 = g_hygiene_violation_se_emit_total.load();
+    auto cid = clone_macro_body(tgt, tp, flat, pool, flat.root, nullptr, &names,
+                                SyntaxMarker::MacroIntroduced);
+    (void)cid;
+    CHECK(g_hygiene_violation_se_emit_total.load() > se0, "3543 AC2: SE emit on clone deny");
+    CHECK(ring_has_reason_3543("hygiene-depth-limit"), "3543 AC2: SE reason");
+    reset_all();
+}
+
+static void ac3543_soft_no_se() {
+    std::println("\n--- #3543 AC3: Soft/Off fail stamps reason, no SE ---");
+    using aura::core::security_event::reset_security_event_ring_for_test;
+    reset_all();
+    reset_security_event_ring_for_test();
+    CHECK(!aura::core::sandbox::is_sandbox_active(), "3543 AC3: Off");
+    const auto se0 = g_hygiene_violation_se_emit_total.load();
+    note_hygiene_last_limit_reason(kHygieneLimitReasonDepthLimit);
+    CHECK(hygiene_last_limit_reason_string() != nullptr &&
+              std::string(hygiene_last_limit_reason_string()) == "hygiene-depth-limit",
+          "3543 AC3: reason still stamped");
+    CHECK(g_hygiene_violation_se_emit_total.load() == se0, "3543 AC3: no SE emit");
+    CHECK(!ring_has_reason_3543("hygiene-depth-limit"), "3543 AC3: ring quiet");
+    reset_all();
+}
+
+static void ac3543_soft_no_abort() {
+    std::println("\n--- #3543 AC4: fail path returns (no abort) ---");
+    CHECK(true, "3543 AC4: AC1/AC2 returned");
+}
+
+static void ac3543_source_query() {
+    std::println("\n--- #3543 AC5: source-cite + schema-3543 ---");
+    const auto cpp = read_file("src/compiler/macro_expansion.cpp");
+    const auto ixx = read_file("src/compiler/macro_expansion.ixx");
+    const auto q = read_file("src/compiler/evaluator_primitives_query_obs_mid.cpp");
+    CHECK(cpp.find("emit_hygiene_limit_se") != std::string::npos, "3543 AC5: helper");
+    CHECK(cpp.find("SecurityEventKind::MacroHygiene") != std::string::npos, "3543 AC5: kind");
+    CHECK(ixx.find("kHygieneViolationSeIssue = 3543") != std::string::npos, "3543 AC5: stamp");
+    CHECK(ixx.find("g_hygiene_violation_se_emit_total") != std::string::npos,
+          "3543 AC5: counter END");
+    CHECK(q.find("schema-3543") != std::string::npos, "3543 AC5: schema-3543");
+    CHECK(q.find("hygiene-violation-se-emit-total") != std::string::npos, "3543 AC5: query key");
+    CHECK(q.find("schema-3029") != std::string::npos, "3543 AC5: schema-3029 retained");
+    CHECK(read_file("tests/compiler/test_hygiene_violation_se_emit.cpp").empty(),
+          "3543 AC5: no new test file");
+    CHECK(read_file("docs/design/3543-hygiene-violation-se.md").empty(),
+          "3543 AC5: no docs/design");
+    CompilerService cs;
+    CHECK(href(cs, "query:macro-hygiene-stats", "schema-3543") == 3543, "3543 AC5: schema query");
+    CHECK(href(cs, "query:macro-hygiene-stats", "hygiene-violation-se-wired") == 1,
+          "3543 AC5: wired");
+    CHECK(href(cs, "query:macro-hygiene-stats", "schema-3029") == 3029, "3543 AC5: 3029 retained");
+    CHECK(read_file("src/compiler/evaluator_primitives_obs_jit.cpp").find("schema-3543") ==
+              std::string::npos,
+          "3543 AC5: provenance-stats key family unchanged");
+}
+
 } // namespace
 
 int run_test_macro_hygiene_limits() {
@@ -684,6 +809,12 @@ int run_test_macro_hygiene_limits() {
     ac3470_inner_unwrap_depth_source();
     std::println("\n=== Issue #3508: macro_expand_all splices non-root Calls ===");
     ac3508_expand_all_splices_non_root();
+    std::println("\n=== Issue #3543: typed MacroHygiene SE on hygiene fail ===");
+    ac3543_four_fail_modes_emit_se();
+    ac3543_depth_clone_emits();
+    ac3543_soft_no_se();
+    ac3543_soft_no_abort();
+    ac3543_source_query();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

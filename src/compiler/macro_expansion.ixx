@@ -194,6 +194,10 @@ export extern std::atomic<std::uint64_t> g_macro_expand_targeted_restamp_total;
 export extern std::atomic<std::uint64_t> g_macro_expand_full_restamp_total;
 // Issue #2810: clone_macro_body MacroIntroduced repin dual-wrote per-Evaluator.
 export extern std::atomic<std::uint64_t> g_clone_macro_provenance_per_evaluator_total;
+// Issue #3543: typed MacroHygiene SE emits from note_hygiene_last_limit_reason.
+// Append END per #2906.
+export inline constexpr int kHygieneViolationSeIssue = 3543;
+export extern std::atomic<std::uint64_t> g_hygiene_violation_se_emit_total;
 
 export struct MacroExpansionDef {
     std::vector<std::string> params;

@@ -103,6 +103,7 @@ extern "C" std::uint64_t aura_macro_clone_same_flat_reject_total_v_read() noexce
 extern "C" std::uint64_t aura_macro_clone_steal_abort_total_v_read() noexcept;
 extern "C" std::uint64_t aura_macro_clone_last_reject_reason_v_read() noexcept;
 extern "C" std::uint64_t aura_macro_hygiene_last_limit_reason_v_read() noexcept;
+extern "C" std::uint64_t aura_hygiene_violation_se_emit_total_v_read() noexcept;
 extern "C" void aura_macro_hygiene_snapshot_metrics(void* metrics_ptr) noexcept;
 
 namespace aura::compiler::primitives_detail {
@@ -982,7 +983,7 @@ void register_query_obs_mid_primitives(PrimRegistrar add, std::pmr::vector<Pair>
                 return make_void();
             // Issue #2021: capacity 128 (power-of-2) — depth/concurrent keys
             // grew the dashboard past the old 48-slot open-address table.
-            auto* ht = FlatHashTable::create(query_hash_capacity_for(95));
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(104));
             if (!ht)
                 return make_void();
             bool overflowed = false;
@@ -1231,6 +1232,13 @@ void register_query_obs_mid_primitives(PrimRegistrar add, std::pmr::vector<Pair>
                 insert_kv("issue-3029", 3029);
                 insert_kv("schema-3215", 3215);
                 insert_kv("issue-3215", 3215);
+                // Issue #3543: typed SE on hygiene fail (additive keys).
+                // Existing last-hygiene-limit-reason / schema-3029 stay.
+                insert_kv("schema-3543", 3543);
+                insert_kv("issue-3543", 3543);
+                insert_kv("hygiene-violation-se-wired", 1);
+                insert_kv("hygiene-violation-se-emit-total",
+                          static_cast<std::int64_t>(aura_hygiene_violation_se_emit_total_v_read()));
             }
             insert_kv("health-score", health);
             insert_kv("hygiene-health-score", health); // AC alias
