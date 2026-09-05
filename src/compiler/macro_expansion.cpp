@@ -1244,6 +1244,10 @@ static void restamp_after_expand(aura::ast::FlatAST& flat,
         if (m > 0)
             g_macro_expand_mutate_restamp_total.fetch_add(1, std::memory_order_relaxed);
     }
+    // Issue #3523 / #2809: residual live slots lag generation_ after the
+    // expand bump. is_valid is observe-only (#3388); make_ref_layout
+    // lazy-aligns when this flag is on (same as qq-unwrap).
+    flat.enable_restamp_lazy_align();
 }
 
 // Issue #2809: targeted restamp after expand_inner_macros qq-cons unwrap.
