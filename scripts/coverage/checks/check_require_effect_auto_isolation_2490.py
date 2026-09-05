@@ -47,9 +47,9 @@ def main() -> int:
         fails.append("AC1: require_effect definition missing")
         body = ""
     else:
-        # Generous window — the function is short but the comment block
-        # ahead explains the new auto-isolation contract.
-        body = sec[req_i : req_i + 2500]
+        # Generous window — #3526 prepends a 3-arg default redirect
+        # (thread_local guard + for_node_id) before isolation / effect.
+        body = sec[req_i : req_i + 4500]
 
     # AC1/AC2: auto-isolation wired before effect check.
     must("Issue #2490", "AC1", sec)

@@ -16,12 +16,18 @@ Contract (one row per AC):
   AC4  Drift scan: bare require_effect near NodeId without mandated helpers
   AC5  Additive schema keys; #2839 / #2881 / #2689 lineage preserved
   AC6  Source-cite + tests in existing suites; no invent/design
+  AC7  Issue #3526 reverse rule: flag 3-arg require_effect(req, op, node_id)
+       (or 4-arg with literal 0 in 4th position) in a non-EXEMPT_2ARG_OPS
+       function. Suggest require_effect_for_node_id. 2-arg io/exec exempt
+       ops (write-file / git-commit / deny_sys / …) stay allowed. No new
+       query key — reuse nodeid_only_entry_prevented_total (#3040).
 
 Exit 0 = all rows satisfied.
 """
 
 from __future__ import annotations
 
+import argparse
 import re
 import subprocess
 import sys
@@ -76,6 +82,11 @@ MULTI_ARG_NODE = re.compile(
     r"\brequire_effect\s*\([^;]{0,200}?\b(?:target_node|node_id|nid)\b",
     re.DOTALL,
 )
+# Issue #3526: bare require_effect( — not on_ref / for_node_id (those have
+# a suffix before the opening paren, so this pattern does not match them).
+REQUIRE_CALL = re.compile(r"\brequire_effect\s*\(")
+LIT_ZERO = re.compile(r"^0(?:[uUlL]+)?$")
+TYPEISH = re.compile(r"\b(?:std::|ast::|uint16_t|uint32_t|uint64_t|NodeId|string_view|noexcept)\b")
 
 
 def _read(rel: str) -> str:
@@ -93,7 +104,98 @@ def _strip_comments(text: str) -> str:
     return text
 
 
+def _split_args(inner: str) -> list[str]:
+    args: list[str] = []
+    buf: list[str] = []
+    depth = 0
+    for ch in inner:
+        if ch == "(":
+            depth += 1
+            buf.append(ch)
+        elif ch == ")":
+            depth -= 1
+            buf.append(ch)
+        elif ch == "," and depth == 0:
+            args.append("".join(buf).strip())
+            buf = []
+        else:
+            buf.append(ch)
+    tail = "".join(buf).strip()
+    if tail:
+        args.append(tail)
+    return args
+
+
+def _iter_require_effect_calls(code: str) -> list[tuple[int, list[str]]]:
+    out: list[tuple[int, list[str]]] = []
+    for m in REQUIRE_CALL.finditer(code):
+        i = m.end()
+        depth = 1
+        j = i
+        n = len(code)
+        while j < n and depth:
+            if code[j] == "(":
+                depth += 1
+            elif code[j] == ")":
+                depth -= 1
+            j += 1
+        args = _split_args(code[i : j - 1])
+        line = code.count("\n", 0, m.start()) + 1
+        out.append((line, args))
+    return out
+
+
+def _is_signature(args: list[str]) -> bool:
+    return any(TYPEISH.search(a) for a in args)
+
+
+def _is_lit_zero(s: str) -> bool:
+    return bool(LIT_ZERO.match(s.strip()))
+
+
+def _op_name(args: list[str]) -> str | None:
+    if len(args) < 2:
+        return None
+    m = re.fullmatch(r'"([^"]+)"', args[1].strip())
+    return m.group(1) if m else None
+
+
+def scan_three_arg_default(code: str, rel: str) -> list[str]:
+    """Issue #3526 reverse rule: 3-arg NodeId / 4-arg literal tenant 0."""
+    fails: list[str] = []
+    for line, args in _iter_require_effect_calls(code):
+        if _is_signature(args):
+            continue
+        op = _op_name(args)
+        if op in EXEMPT_2ARG_OPS:
+            continue
+        n = len(args)
+        if n == 3 and not _is_lit_zero(args[2]):
+            fails.append(
+                f"AC7: {rel}:{line}: 3-arg require_effect(req, op, node_id) "
+                f"defaults ref_tenant=0 — use require_effect_for_node_id "
+                f"(op={op or args[1]!r})"
+            )
+        elif n >= 4 and _is_lit_zero(args[3]) and not _is_lit_zero(args[2]):
+            fails.append(
+                f"AC7: {rel}:{line}: 4-arg require_effect(..., node_id, 0) "
+                f"— use require_effect_for_node_id or pass a real tenant "
+                f"(op={op or args[1]!r})"
+            )
+    return fails
+
+
 def main() -> int:
+    ap = argparse.ArgumentParser(description=__doc__)
+    # Issue #3526: fixture TU for 3-arg require_effect (test only; CI never passes).
+    ap.add_argument(
+        "--probe",
+        action="store",
+        default=None,
+        help="extra TU to scan for 3-arg require_effect (test fixture only)",
+    )
+    args = ap.parse_args()
+
     fails: list[str] = []
 
     def must(n: str, label: str, hay: str) -> None:
@@ -222,6 +324,41 @@ def main() -> int:
         for f in sorted(docs.glob("2942-*")):
             fails.append(f"AC6: docs/design/{f.name} present (forbidden per #1655)")
 
+    # ── AC7: Issue #3526 reverse rule — 3-arg NodeId / 4-arg literal 0 ──
+    must("Issue #3526", "AC7", linter_self)
+    must("require_effect_for_node_id", "AC7", linter_self)
+    must("scan_three_arg_default", "AC7", linter_self)
+    must("Issue #3526", "AC7", sec)
+    must("Issue #3526", "AC7", evaluator_ixx)
+    must("3526", "AC7", test_re)
+    # io/exec 2-arg exempt ops stay documented (do not flag legitimate 2-arg).
+    must("git-commit", "AC7", io_cpp)
+    must("deny_sys", "AC7", io_cpp)
+    must("write-file", "AC7", io_cpp + _read("src/compiler/evaluator_primitives_file.cpp"))
+    if (ROOT / "tests" / "compiler" / "test_issue_3526.cpp").is_file():
+        fails.append("AC7: test_issue_3526.cpp present (forbidden per #81967)")
+    if docs.is_dir():
+        for f in sorted(docs.glob("3526-*")):
+            fails.append(f"AC7: docs/design/{f.name} present (forbidden per #1655)")
+    reverse_files = list(SCOPE_FILES) + [
+        "src/compiler/evaluator.ixx",
+        "src/compiler/evaluator_module_loader.cpp",
+    ]
+    if args.probe:
+        reverse_files.append(args.probe)
+    for rel in reverse_files:
+        p = Path(rel)
+        text = (
+            _read(rel)
+            if not p.is_absolute()
+            else (p.read_text(encoding="utf-8", errors="replace") if p.is_file() else "")
+        )
+        if not text:
+            if args.probe and rel == args.probe:
+                fails.append(f"AC7: --probe {rel} missing")
+            continue
+        fails.extend(scan_three_arg_default(_strip_comments(text), rel))
+
     # Cross-check #2881/#2839 residual linter still green.
     r = subprocess.run(
         [
@@ -240,7 +377,9 @@ def main() -> int:
             print(f"FAIL: {f}", file=sys.stderr)
         print(f"\n{len(fails)} contract row(s) failed", file=sys.stderr)
         return 1
-    print("OK: Issue #2942 side-effect NodeId mandate (for_node_id/on_ref; no late-isolation residual)")
+    print(
+        "OK: Issue #2942/#3526 side-effect NodeId mandate (for_node_id/on_ref; no 3-arg default ref_tenant=0 residual)"
+    )
     return 0
 
 
