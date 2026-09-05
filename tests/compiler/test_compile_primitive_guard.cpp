@@ -141,10 +141,12 @@ int main() {
             CHECK(outer.is_outermost(), "outer is outermost");
             auto r = cs.eval(R"((compile:relower-strategy "bar"))");
             CHECK(r.has_value(), "relower-strategy under outer Guard");
-            CHECK(ev.mutation_boundary_depth_slot_value() >= 1, "depth held by outer");
+            CHECK(ev.mutation_boundary_depth_slot_value(/*fiber_id=*/0) >= 1,
+                  "depth held by outer");
         }
         CHECK(ok, "outer guard_ok");
-        CHECK(ev.mutation_boundary_depth_slot_value() == 0, "depth 0 after outer dtor");
+        CHECK(ev.mutation_boundary_depth_slot_value(/*fiber_id=*/0) == 0,
+              "depth 0 after outer dtor");
     }
 
     // ── AC4: stats surface ──

@@ -686,7 +686,7 @@ int run_test_mutation_safety_snapshot_steal() {
                   efm.find("boundary_ssot_detail::boundary_depth_ssot") != std::string::npos,
               "3384 AC1: any_active_mutation_boundary routes through SSOT");
         // mutation_boundary_depth_slot_value is the second TLS-only reader fixed.
-        const auto slot_pos = efm.find("mutation_boundary_depth_slot_value()");
+        const auto slot_pos = efm.find("mutation_boundary_depth_slot_value(/*fiber_id=*/0)");
         CHECK(slot_pos != std::string::npos, "3384 AC1: slot_value accessor present");
         CHECK(efm.find("slot_value() const noexcept") != std::string::npos,
               "3384 AC1: slot_value definition");

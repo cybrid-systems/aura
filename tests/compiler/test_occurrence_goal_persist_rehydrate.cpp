@@ -1657,7 +1657,8 @@ static void ac3082_2_nested_query_inflight() {
         {
             bool inner_ok = true;
             Evaluator::MutationBoundaryGuard inner(svc.evaluator(), &inner_ok);
-            CHECK(svc.evaluator().mutation_boundary_depth_slot_value() >= 2, "AC2: nested depth");
+            CHECK(svc.evaluator().mutation_boundary_depth_slot_value(/*fiber_id=*/0) >= 2,
+                  "AC2: nested depth");
             CHECK(!svc.evaluator().type_export_authoritative(),
                   "AC2: nested open not authoritative");
             CHECK(svc.evaluator().type_export_inflight(), "AC2: nested open in-flight");
@@ -1730,7 +1731,8 @@ static void ac3082_4_soft_no_nested_zero_extra() {
     {
         bool ok = true;
         Evaluator::MutationBoundaryGuard only(svc.evaluator(), &ok);
-        CHECK(svc.evaluator().mutation_boundary_depth_slot_value() == 1, "AC4: outermost only");
+        CHECK(svc.evaluator().mutation_boundary_depth_slot_value(/*fiber_id=*/0) == 1,
+              "AC4: outermost only");
         // No nested enter — do not force inflight on depth==1.
         (void)ok;
     }

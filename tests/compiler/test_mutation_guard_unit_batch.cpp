@@ -150,17 +150,18 @@ int run_guard_dtor_1766() {
         std::println("\n--- AC4: Guard happy path depth returns to 0 ---");
         CompilerService cs;
         auto& ev = cs.evaluator();
-        CHECK(ev.mutation_boundary_depth_slot_value() == 0, "start depth 0");
+        CHECK(ev.mutation_boundary_depth_slot_value(/*fiber_id=*/0) == 0, "start depth 0");
         bool ok = true;
         {
             Evaluator::MutationBoundaryGuard g(ev, &ok);
             CHECK(ok, "guard ok");
-            CHECK(ev.mutation_boundary_depth_slot_value() == 1, "depth 1 under guard");
+            CHECK(ev.mutation_boundary_depth_slot_value(/*fiber_id=*/0) == 1,
+                  "depth 1 under guard");
             // Direct probe must not throw.
             ev.ensure_mutation_invariants();
             ev.ensure_hygiene_violation_detection();
         }
-        CHECK(ev.mutation_boundary_depth_slot_value() == 0, "depth 0 after dtor");
+        CHECK(ev.mutation_boundary_depth_slot_value(/*fiber_id=*/0) == 0, "depth 0 after dtor");
         CHECK(ok, "success flag still true");
     }
 
@@ -584,21 +585,22 @@ int run_guard_move_1767() {
         std::println("\n--- AC2/AC3: depth balance + is_outermost after move ---");
         CompilerService cs;
         auto& ev = cs.evaluator();
-        CHECK(ev.mutation_boundary_depth_slot_value() == 0, "start depth 0");
+        CHECK(ev.mutation_boundary_depth_slot_value(/*fiber_id=*/0) == 0, "start depth 0");
         bool ok = true;
         {
             Evaluator::MutationBoundaryGuard g1(ev, &ok);
             CHECK(ok, "g1 acquired");
             CHECK(g1.is_outermost(), "g1 outermost");
-            CHECK(ev.mutation_boundary_depth_slot_value() == 1, "depth 1 after g1");
+            CHECK(ev.mutation_boundary_depth_slot_value(/*fiber_id=*/0) == 1, "depth 1 after g1");
             Evaluator::MutationBoundaryGuard g2(std::move(g1));
             CHECK(g2.is_outermost(), "g2 outermost after move");
             // g1 is moved-from: not outermost, no live ev.
             CHECK(!g1.is_outermost(), "g1 cleared is_outermost");
-            CHECK(ev.mutation_boundary_depth_slot_value() == 1, "depth still 1 (not double)");
+            CHECK(ev.mutation_boundary_depth_slot_value(/*fiber_id=*/0) == 1,
+                  "depth still 1 (not double)");
             // g1 dtor no-ops (ev_ null)
         }
-        CHECK(ev.mutation_boundary_depth_slot_value() == 0, "depth 0 after g2 dtor");
+        CHECK(ev.mutation_boundary_depth_slot_value(/*fiber_id=*/0) == 0, "depth 0 after g2 dtor");
         CHECK(ok, "ok flag held");
     }
 
@@ -711,7 +713,8 @@ static void ac3268_4_stack_bool_api() {
         (*gr)->mark_failed();
         CHECK(!ok, "3268 AC4: exchange-false visible to caller");
     }
-    CHECK(ev.mutation_boundary_depth_slot_value() == 0, "3268 AC4: depth 0 after dtor");
+    CHECK(ev.mutation_boundary_depth_slot_value(/*fiber_id=*/0) == 0,
+          "3268 AC4: depth 0 after dtor");
     CHECK(true, "3268 AC4: quiet path zero extra (atomic_ref store = one word)");
 }
 
@@ -849,10 +852,12 @@ int run_clear_instr_dirty_1853() {
             CHECK(outer.is_outermost(), "outer is outermost");
             auto r = cs.eval(R"((compile:clear-instruction-dirty! "bar" 0 0 0))");
             CHECK(!r || is_error(*r), "clear under outer Guard sunk #3172");
-            CHECK(ev.mutation_boundary_depth_slot_value() >= 1, "depth held by outer");
+            CHECK(ev.mutation_boundary_depth_slot_value(/*fiber_id=*/0) >= 1,
+                  "depth held by outer");
         }
         CHECK(ok, "outer guard_ok");
-        CHECK(ev.mutation_boundary_depth_slot_value() == 0, "depth 0 after outer dtor");
+        CHECK(ev.mutation_boundary_depth_slot_value(/*fiber_id=*/0) == 0,
+              "depth 0 after outer dtor");
     }
 
     std::println("\n=== test_clear_instruction_dirty_guard_1853: {} passed, {} failed ===",
@@ -962,10 +967,12 @@ int run_hw_bitvec_guard_1850() {
             CHECK(outer.is_outermost(), "outer is outermost");
             auto r = cs.eval("(compile:hw-bitvec-register \"nested_u32\" 32 0)");
             CHECK(!r || is_error(*r), "register Lisp sunk under outer Guard #3172");
-            CHECK(ev.mutation_boundary_depth_slot_value() >= 1, "depth held by outer");
+            CHECK(ev.mutation_boundary_depth_slot_value(/*fiber_id=*/0) >= 1,
+                  "depth held by outer");
         }
         CHECK(ok, "outer guard_ok");
-        CHECK(ev.mutation_boundary_depth_slot_value() == 0, "depth 0 after outer dtor");
+        CHECK(ev.mutation_boundary_depth_slot_value(/*fiber_id=*/0) == 0,
+              "depth 0 after outer dtor");
         auto w = cs.eval("(compile:hw-bitvec-width \"nested_u32\")");
         CHECK(!w || is_error(*w), "width Lisp sunk #3172");
     }
@@ -1081,10 +1088,12 @@ int run_subtree_bump_1847() {
             // Only the Guard-wrapped mutator under outer lock.
             auto r = cs.eval(std::format("(compile:subtree-bump {})", id));
             CHECK(!r || is_error(*r), "bump Lisp sunk under outer Guard #3172");
-            CHECK(ev.mutation_boundary_depth_slot_value() >= 1, "depth held by outer");
+            CHECK(ev.mutation_boundary_depth_slot_value(/*fiber_id=*/0) >= 1,
+                  "depth held by outer");
         }
         CHECK(ok, "outer guard_ok");
-        CHECK(ev.mutation_boundary_depth_slot_value() == 0, "depth 0 after outer dtor");
+        CHECK(ev.mutation_boundary_depth_slot_value(/*fiber_id=*/0) == 0,
+              "depth 0 after outer dtor");
     }
 
     std::println("\n=== test_subtree_bump_guard_1847: {} passed, {} failed ===", g_passed,
@@ -1509,22 +1518,26 @@ int run_depth_slot_1746() {
         auto& e1 = cs1.evaluator();
         auto& e2 = cs2.evaluator();
         CHECK(e1.instance_id() != e2.instance_id(), "cs evaluators distinct ids");
-        CHECK(e1.mutation_boundary_depth_slot_value() == 0, "e1 idle depth 0");
-        CHECK(e2.mutation_boundary_depth_slot_value() == 0, "e2 idle depth 0");
+        CHECK(e1.mutation_boundary_depth_slot_value(/*fiber_id=*/0) == 0, "e1 idle depth 0");
+        CHECK(e2.mutation_boundary_depth_slot_value(/*fiber_id=*/0) == 0, "e2 idle depth 0");
 
         bool ok1 = true;
         {
             Evaluator::MutationBoundaryGuard g1(e1, &ok1);
-            CHECK(e1.mutation_boundary_depth_slot_value() == 1, "e1 depth 1 under guard");
-            CHECK(e2.mutation_boundary_depth_slot_value() == 0, "e2 still 0 while e1 held");
+            CHECK(e1.mutation_boundary_depth_slot_value(/*fiber_id=*/0) == 1,
+                  "e1 depth 1 under guard");
+            CHECK(e2.mutation_boundary_depth_slot_value(/*fiber_id=*/0) == 0,
+                  "e2 still 0 while e1 held");
 
             bool ok2 = true;
             Evaluator::MutationBoundaryGuard g2(e2, &ok2);
-            CHECK(e2.mutation_boundary_depth_slot_value() == 1, "e2 depth 1 under own guard");
-            CHECK(e1.mutation_boundary_depth_slot_value() == 1, "e1 still 1 with e2 also held");
+            CHECK(e2.mutation_boundary_depth_slot_value(/*fiber_id=*/0) == 1,
+                  "e2 depth 1 under own guard");
+            CHECK(e1.mutation_boundary_depth_slot_value(/*fiber_id=*/0) == 1,
+                  "e1 still 1 with e2 also held");
         }
-        CHECK(e1.mutation_boundary_depth_slot_value() == 0, "e1 back to 0");
-        CHECK(e2.mutation_boundary_depth_slot_value() == 0, "e2 back to 0");
+        CHECK(e1.mutation_boundary_depth_slot_value(/*fiber_id=*/0) == 0, "e1 back to 0");
+        CHECK(e2.mutation_boundary_depth_slot_value(/*fiber_id=*/0) == 0, "e2 back to 0");
     }
 
     // ── AC4: nested guards LIFO on one Evaluator ──
@@ -1533,17 +1546,18 @@ int run_depth_slot_1746() {
         CompilerService cs;
         auto& ev = cs.evaluator();
         bool ok = true;
-        CHECK(ev.mutation_boundary_depth_slot_value() == 0, "start depth 0");
+        CHECK(ev.mutation_boundary_depth_slot_value(/*fiber_id=*/0) == 0, "start depth 0");
         {
             Evaluator::MutationBoundaryGuard outer(ev, &ok);
-            CHECK(ev.mutation_boundary_depth_slot_value() == 1, "outer depth 1");
+            CHECK(ev.mutation_boundary_depth_slot_value(/*fiber_id=*/0) == 1, "outer depth 1");
             {
                 Evaluator::MutationBoundaryGuard inner(ev, &ok);
-                CHECK(ev.mutation_boundary_depth_slot_value() == 2, "inner depth 2");
+                CHECK(ev.mutation_boundary_depth_slot_value(/*fiber_id=*/0) == 2, "inner depth 2");
             }
-            CHECK(ev.mutation_boundary_depth_slot_value() == 1, "after inner, depth 1");
+            CHECK(ev.mutation_boundary_depth_slot_value(/*fiber_id=*/0) == 1,
+                  "after inner, depth 1");
         }
-        CHECK(ev.mutation_boundary_depth_slot_value() == 0, "after outer, depth 0");
+        CHECK(ev.mutation_boundary_depth_slot_value(/*fiber_id=*/0) == 0, "after outer, depth 0");
     }
 
     std::println("\n=== test_depth_slot_instance_id_1746: {} passed, {} failed ===", g_passed,

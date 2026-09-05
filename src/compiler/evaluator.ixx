@@ -3749,7 +3749,10 @@ public:
         last_type_solve_solved_ = infer_authoritative;
         // In-flight at depth 0 is leftover from a finished typecheck /
         // nested exit. Quiet outermost SOLVED must still grant (#3294).
-        const auto depth = mutation_boundary_depth_slot_value();
+        // Issue #3552: pass fiber_id=0 (no fiber context in this helper —
+        // legacy single-eval MVP path; SSOT via boundary_depth_ssot for type
+        // export authority stays correct on-fiber via active_mutation_stack).
+        const auto depth = mutation_boundary_depth_slot_value(/*fiber_id=*/0);
         if (depth > 1 || (type_export_inflight_ && depth != 0)) {
             note_type_export_inflight();
             return;
@@ -14046,13 +14049,16 @@ public:
     // Issue #236 follow-up / #1746: per-fiber (thread_local) depth
     // counter for MutationBoundaryGuard nesting. Implementation in
     // evaluator_fiber_mutation.cpp uses
-    // `thread_local std::unordered_map<std::uint64_t, int>` keyed by
-    // Evaluator::instance_id_ (not raw address — free-list reuse must
-    // not revive a dead Evaluator's depth). thread_local gives LIFO
-    // ordering on each fiber's call stack; multiple fibers on the
-    // same Evaluator are independent. Cross-fiber serialization
-    // happens at the unique_lock layer.
-    static int* mutation_boundary_depth_slot(Evaluator* ev);
+    // `thread_local std::unordered_map<std::uint64_t, std::unordered_map<std::uint64_t, int>>`
+    // keyed by (Evaluator::instance_id_, Fiber::id()). The fiber_id key prevents
+    // cross-worker hot-swap leaks: after scheduler migrates a Fiber to another
+    // worker, the new Fiber no longer reads the previous Fiber's depth count
+    // (legacy behavior was keyed by instance_id only — same instance_id across
+    // hot-swap caused nested Guard dtor under-decrement and EDEADLK).
+    // fiber_id == 0 falls back to the legacy single-slot-per-instance path
+    // (zero-cost for soft / single-eval MVP). Cross-fiber serialization happens
+    // at the unique_lock layer.
+    static int* mutation_boundary_depth_slot(Evaluator* ev, std::uint64_t fiber_id);
 
     // Issue #2686: TLS depth while (eval-current) holds a shared
     // WorkspaceFlatPin. Same-thread nested MutationBoundary unique
@@ -14961,6 +14967,10 @@ public:
         bool suppress_bump_ = false;
         // Issue #1253: outermost mutation hold-time tracking.
         bool is_outermost_ = false;
+        // Issue #3552: fiber_id captured at ctor (Fiber::id() if g_current_fiber,
+        // else 0 for legacy single-eval MVP). Used as second-level key in
+        // mutation_boundary_depth_slot to prevent cross-worker hot-swap leaks.
+        std::uint64_t fiber_id_ = 0;
         // Issue #2944: Mutation epoch mid at outermost enter — used to
         // revoke session_bound grants on exit (success or fail). Nested
         // guards leave 0 (no session revoke until outermost for that mid).
@@ -15357,8 +15367,9 @@ public:
     [[nodiscard]] std::uint64_t get_safe_yield_no_fiber_total() const noexcept {
         return safe_yield_no_fiber_total_.load(std::memory_order_relaxed);
     }
-    // Issue #1504: per-Evaluator thread-local Guard nesting (depth slot).
-    [[nodiscard]] int mutation_boundary_depth_slot_value() const noexcept;
+    // Issue #1504 / #3552: per-(Evaluator, Fiber) thread-local Guard nesting (depth slot).
+    // fiber_id == 0 → legacy single-eval MVP path (zero extra).
+    [[nodiscard]] int mutation_boundary_depth_slot_value(std::uint64_t fiber_id) const noexcept;
 
     // Issue #285: explicit mutation-boundary flush. Called from
     // MutationBoundaryGuard destructor and Fiber::yield

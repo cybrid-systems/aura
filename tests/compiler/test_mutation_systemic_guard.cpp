@@ -220,10 +220,10 @@ int main() {
             CHECK(outer.is_outermost(), "outermost");
             auto r = cs.eval("(compile:clear-macro-dirty!)");
             CHECK(r.has_value() && is_error(*r), "clear-macro-dirty sunk #3172");
-            CHECK(ev.mutation_boundary_depth_slot_value() >= 1, "depth held");
+            CHECK(ev.mutation_boundary_depth_slot_value(/*fiber_id=*/0) >= 1, "depth held");
         }
         CHECK(ok, "outer ok");
-        CHECK(ev.mutation_boundary_depth_slot_value() == 0, "depth 0");
+        CHECK(ev.mutation_boundary_depth_slot_value(/*fiber_id=*/0) == 0, "depth 0");
         (void)cs.eval("(compile:mark-narrowing-dirty! 0)");
         const auto after = load_u64(m->compile_primitive_guard_captures_total);
         CHECK(after == before, "sunk Lisp dirty! does not capture Guard");

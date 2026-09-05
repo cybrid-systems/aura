@@ -177,10 +177,10 @@ static void ac5_runtime() {
         CHECK(outer.is_outermost(), "outermost");
         auto r = cs.eval("(compile:clear-macro-dirty!)");
         CHECK(r.has_value(), "clear under outer");
-        CHECK(ev.mutation_boundary_depth_slot_value() >= 1, "depth held");
+        CHECK(ev.mutation_boundary_depth_slot_value(/*fiber_id=*/0) >= 1, "depth held");
     }
     CHECK(ok, "outer ok");
-    CHECK(ev.mutation_boundary_depth_slot_value() == 0, "depth 0");
+    CHECK(ev.mutation_boundary_depth_slot_value(/*fiber_id=*/0) == 0, "depth 0");
 }
 
 static void ac6_stress() {

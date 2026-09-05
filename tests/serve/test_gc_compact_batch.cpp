@@ -159,10 +159,10 @@ static void run_1842_nested_guard() {
         CHECK(outer.is_outermost(), "outer is outermost");
         auto r = cs.eval("(evaluator:compact-env-frames)");
         CHECK(r && is_int(*r), "compact under outer Guard returns int");
-        CHECK(ev.mutation_boundary_depth_slot_value() >= 1, "depth held by outer");
+        CHECK(ev.mutation_boundary_depth_slot_value(/*fiber_id=*/0) >= 1, "depth held by outer");
     }
     CHECK(ok, "outer guard_ok");
-    CHECK(ev.mutation_boundary_depth_slot_value() == 0, "depth 0 after outer dtor");
+    CHECK(ev.mutation_boundary_depth_slot_value(/*fiber_id=*/0) == 0, "depth 0 after outer dtor");
 }
 
 // ── Issue #1666 — compact hook replace/chain ──
