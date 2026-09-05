@@ -17,10 +17,63 @@
 #include <string>
 #include <string_view>
 
+// Issue #195: C ABI — 0 when no fiber (host thread / tests).
+extern "C" std::uint64_t aura_fiber_current_id();
+
 namespace aura::compiler::ffi_hot {
 
 inline constexpr int kFfiHotPathPhase = 3; // #2216: CellGrid ABI (was 2 for #1560)
 inline constexpr int kFfiHotPathIssue = 2216;
+inline constexpr int kFfiHotPathRequireEffectIssue = 3524;
+
+// Issue #3524: render-effect token is the mid from a preceding
+// require_effect(Render) (TypedMid / current_mutation_epoch / Soft 1).
+// TLS binds the mint to the minting fiber so a stolen non-zero mid
+// cannot dispatch on another fiber. token==0 is fail-closed skip.
+// Soft/Off: require_effect is a no-op; mint(true) still binds TLS
+// (no Full audit / capability walk). No default on dispatch_* args.
+inline thread_local std::uint64_t t_render_effect_token = 0;
+inline thread_local std::uint64_t t_render_effect_fiber = 0;
+inline thread_local std::uint64_t t_render_effect_fiber_override = 0;
+inline thread_local bool t_render_effect_fiber_override_set = false;
+
+inline void test_set_render_effect_fiber_id(std::uint64_t fid) noexcept {
+    t_render_effect_fiber_override = fid;
+    t_render_effect_fiber_override_set = true;
+}
+inline void test_clear_render_effect_fiber_id() noexcept {
+    t_render_effect_fiber_override_set = false;
+}
+
+[[nodiscard]] inline std::uint64_t render_effect_fiber_id() noexcept {
+    if (t_render_effect_fiber_override_set)
+        return t_render_effect_fiber_override;
+    return aura_fiber_current_id();
+}
+
+// `require_effect_ok` is the bool from Evaluator::require_effect.
+// `mid` defaults to 1 (same Soft/standalone join stamp as require_effect).
+[[nodiscard]] inline std::uint64_t mint_render_effect_token(bool require_effect_ok,
+                                                            std::uint64_t mid = 1) noexcept {
+    if (!require_effect_ok) {
+        t_render_effect_token = 0;
+        t_render_effect_fiber = 0;
+        return 0;
+    }
+    if (mid == 0)
+        mid = 1;
+    t_render_effect_token = mid;
+    t_render_effect_fiber = render_effect_fiber_id();
+    return mid;
+}
+
+[[nodiscard]] inline bool render_effect_token_allows(std::uint64_t token) noexcept {
+    if (token == 0)
+        return false;
+    if (token != t_render_effect_token)
+        return false;
+    return render_effect_fiber_id() == t_render_effect_fiber;
+}
 
 // Canonical render-backend ABI for hot-path batch call:
 //   ret = fn(args, argc)
@@ -200,13 +253,16 @@ struct FFIBatchHotPath {
     // `resolved_fn` / `abi` come from the slow-path resolver on miss (or known on first call).
     // On hit, uses cached ptr/abi (ignores resolved_fn unless null cache).
     //
-    // Issue #2136: `render_effect_ok` must be true (caller ran require_effect(Render)
-    // or sandbox Off). When false, no side-effect invoke occurs; counters bump.
+    // Issue #2136 / #3524: `render_effect_token` is a non-zero mint from
+    // mint_render_effect_token(require_effect(Render)). No default — omitting
+    // the arg is a compile error. token==0 / TLS mismatch / cross-fiber →
+    // skip (effect_denied_render_total + invoke_skip_total). Existing
+    // counters only; no mid-struct insert (#2906).
     [[nodiscard]] std::int64_t dispatch_batch(std::uint64_t sig_hash, void* resolved_fn,
                                               RenderFfiAbi abi, std::span<const std::int64_t> args,
-                                              bool render_effect_ok = true) noexcept {
+                                              std::uint64_t render_effect_token) noexcept {
         g_ffi_hot_path_stats().batch_dispatch_total.fetch_add(1, std::memory_order_relaxed);
-        if (!render_effect_ok) {
+        if (!render_effect_token_allows(render_effect_token)) {
             g_ffi_hot_path_stats().effect_denied_render_total.fetch_add(1,
                                                                         std::memory_order_relaxed);
             g_ffi_hot_path_stats().invoke_skip_total.fetch_add(1, std::memory_order_relaxed);
@@ -243,10 +299,10 @@ struct FFIBatchHotPath {
     [[nodiscard]] std::int64_t dispatch_cellgrid(std::uint64_t sig_hash, void* resolved_fn,
                                                  const void* cells, std::int32_t w, std::int32_t h,
                                                  const void* dirty_or_null,
-                                                 bool render_effect_ok = true) noexcept {
+                                                 std::uint64_t render_effect_token) noexcept {
         g_ffi_hot_path_stats().batch_dispatch_total.fetch_add(1, std::memory_order_relaxed);
         g_ffi_hot_path_stats().cellgrid_dispatch_total.fetch_add(1, std::memory_order_relaxed);
-        if (!render_effect_ok) {
+        if (!render_effect_token_allows(render_effect_token)) {
             g_ffi_hot_path_stats().effect_denied_render_total.fetch_add(1,
                                                                         std::memory_order_relaxed);
             g_ffi_hot_path_stats().invoke_skip_total.fetch_add(1, std::memory_order_relaxed);
@@ -280,10 +336,10 @@ struct FFIBatchHotPath {
     // Convenience: hash name+sig, dispatch.
     [[nodiscard]] std::int64_t dispatch_named(std::string_view name, std::string_view signature,
                                               void* resolved_fn, std::span<const std::int64_t> args,
-                                              bool render_effect_ok = true) noexcept {
+                                              std::uint64_t render_effect_token) noexcept {
         const auto h = ffi_sig_hash(name, signature);
         const auto abi = abi_from_signature(signature);
-        return dispatch_batch(h, resolved_fn, abi, args, render_effect_ok);
+        return dispatch_batch(h, resolved_fn, abi, args, render_effect_token);
     }
 
     void clear_cache() noexcept {
@@ -328,13 +384,13 @@ inline constexpr std::string_view kCellGridSignature =
 // Returns false when no backend is registered (caller should use ANSI path).
 [[nodiscard]] inline bool try_cellgrid_present(const void* cells, std::int32_t w, std::int32_t h,
                                                void* dirty, std::int64_t* out_ret,
-                                               bool render_effect_ok = true) noexcept {
+                                               std::uint64_t render_effect_token) noexcept {
     auto* fn = cellgrid_present_backend();
     if (!fn)
         return false;
     const auto sig_h = ffi_sig_hash(kBindCellGridPresent, kCellGridSignature);
     const auto ret = global_ffi_batch_hot_path().dispatch_cellgrid(
-        sig_h, reinterpret_cast<void*>(fn), cells, w, h, dirty, render_effect_ok);
+        sig_h, reinterpret_cast<void*>(fn), cells, w, h, dirty, render_effect_token);
     if (out_ret)
         *out_ret = ret;
     return true;
@@ -388,6 +444,9 @@ inline void reset_ffi_hot_path_for_test() noexcept {
     s.ffi_hot_path_cache_update_race_total.store(0, std::memory_order_relaxed);
     clear_cellgrid_present_backend();
     global_ffi_batch_hot_path().clear_cache();
+    t_render_effect_token = 0;
+    t_render_effect_fiber = 0;
+    test_clear_render_effect_fiber_id();
 }
 
 } // namespace aura::compiler::ffi_hot

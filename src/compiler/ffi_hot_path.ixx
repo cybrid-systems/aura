@@ -41,11 +41,16 @@ struct FFIBatchHotPath {
     void record_miss() noexcept { ++g_ffi_hot_path_stats.miss_total; }
 
     // Skeleton parity: real lock-free dispatch is in ffi_hot_path.hh
-    // (global_ffi_batch_hot_path().dispatch_batch).
+    // (global_ffi_batch_hot_path().dispatch_batch). Issue #3524: production
+    // .hh has no default token; scaffold matches the required last arg.
     [[nodiscard]] std::int64_t dispatch_batch(std::uint64_t sig_hash, void* resolved_fn,
-                                              RenderFfiAbi abi,
-                                              std::span<const std::int64_t> args) noexcept {
+                                              RenderFfiAbi abi, std::span<const std::int64_t> args,
+                                              std::uint64_t render_effect_token) noexcept {
         ++g_ffi_hot_path_stats.batch_dispatch_total;
+        if (render_effect_token == 0) {
+            ++g_ffi_hot_path_stats.invoke_skip_total;
+            return -1;
+        }
         if (cached_sig_match(sig_hash)) {
             record_hit();
             if (!cached_func_ptr)

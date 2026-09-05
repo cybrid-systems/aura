@@ -21,6 +21,14 @@ Issue #2152 strengthens the gate:
   - Bare side-effect ``add("prefix:…")`` without coverage fails under
     ``--strict`` (defense against novel prim names)
 
+Issue #3524: JIT/FFI dispatch TUs (``ffi_hot_path.hh``,
+``aura_jit_bridge.cpp``, ``aura_jit_runtime.cpp``,
+``ir_executor_impl.cpp``) are in scope. Callers of ``dispatch_batch`` /
+``dispatch_cellgrid`` / ``dispatch_named`` / ``try_cellgrid_present``
+must have a ``require_effect(`` predecessor in the local window.
+The hot-path header itself is the API/forwarder (skipped). Use
+``--dispatch-path`` for fixture TUs (CI never passes it).
+
 Also accepts per-name allowlist entries in
 ``tests/side-effect-security-allowlist.txt`` (one name per line, with
 ``# SECURITY_EXEMPT: reason`` required).
@@ -42,6 +50,17 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[3]
 PRIM_GLOB = "src/compiler/evaluator_primitives*.cpp"
 ALLOWLIST_PATH = ROOT / "tests" / "side-effect-security-allowlist.txt"
+
+# Issue #3524: FFI/JIT/ir_executor TUs that may call the hot-path dispatch.
+DISPATCH_TUS = (
+    "src/compiler/ffi_hot_path.hh",
+    "src/compiler/aura_jit_bridge.cpp",
+    "src/compiler/aura_jit_runtime.cpp",
+    "src/compiler/ir_executor_impl.cpp",
+)
+# API + token-forwarders live here; do not flag the definitions.
+DISPATCH_SKIP_FILES = frozenset({"src/compiler/ffi_hot_path.hh"})
+DISPATCH_CALL_RE = re.compile(r"\b(dispatch_batch|dispatch_cellgrid|dispatch_named|try_cellgrid_present)\s*\(")
 
 ADD_RE = re.compile(r'(?:^|[^\w.])add\(\s*"([^"]+)"')
 ADD_MUTATE_RE = re.compile(r'add_mutate\(\s*"([^"]+)"')
@@ -175,6 +194,51 @@ def scan(path_override: str | None = None) -> tuple[list[tuple[str, str, int]], 
     return violations, reason_errors
 
 
+def scan_dispatch_callers(dispatch_path: str | None = None) -> list[tuple[str, str, int]]:
+    """Issue #3524: flag dispatch_* calls without require_effect predecessor.
+
+    Returns list of (path, callee, line). Missing production TUs are
+    reported as callee='<missing-tu>' line=0.
+    """
+    violations: list[tuple[str, str, int]] = []
+    paths: list[Path] = []
+    for rel in DISPATCH_TUS:
+        p = ROOT / rel
+        if not p.is_file():
+            violations.append((rel, "<missing-tu>", 0))
+            continue
+        paths.append(p)
+    if dispatch_path:
+        extra = Path(dispatch_path)
+        if extra.is_file():
+            paths.append(extra)
+        else:
+            violations.append((str(extra), "<missing-tu>", 0))
+
+    for path in paths:
+        try:
+            rel = str(path.resolve().relative_to(ROOT.resolve()))
+        except ValueError:
+            rel = str(path)
+        if rel in DISPATCH_SKIP_FILES and not (dispatch_path and Path(dispatch_path).resolve() == path.resolve()):
+            continue
+        text = path.read_text(encoding="utf-8", errors="replace")
+        lines = text.splitlines()
+        for i, line in enumerate(lines):
+            m = DISPATCH_CALL_RE.search(line)
+            if not m:
+                continue
+            callee = m.group(1)
+            # require_effect is the mandated predecessor (#3524). PrimMeta
+            # markers do not count for dispatch_* (trust-the-caller hole).
+            start = max(0, i - 80)
+            chunk = "\n".join(lines[start : i + 1])
+            if "require_effect(" in chunk:
+                continue
+            violations.append((rel, callee, i + 1))
+    return violations
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument(
@@ -191,9 +255,17 @@ def main() -> int:
         default=None,
         help="override prim scan path (test fixture only — CI never passes this)",
     )
+    # Issue #3524: fixture TU for dispatch_batch without require_effect.
+    ap.add_argument(
+        "--dispatch-path",
+        action="store",
+        default=None,
+        help="extra TU to scan for dispatch_* calls (test fixture only)",
+    )
     args = ap.parse_args()
 
     violations, reason_errors = scan(args.path)
+    dispatch_violations = scan_dispatch_callers(args.dispatch_path)
     failed = False
 
     if reason_errors:
@@ -217,8 +289,19 @@ def main() -> int:
         )
         failed = True
 
+    if dispatch_violations:
+        print("FAIL: dispatch_* without require_effect predecessor (Issue #3524):")
+        for path, name, line in dispatch_violations:
+            print(f"  + {name}  [{path}:{line}]")
+        print(
+            "\nJIT/FFI/ir_executor callers of dispatch_batch / dispatch_cellgrid\n"
+            "must precede the call with require_effect(Render) and pass\n"
+            "mint_render_effect_token(...) — no default token (#3524)."
+        )
+        failed = True
+
     if not failed:
-        print("OK: side-effect security coverage (Issue #2057/#2152) — no uncovered effectful prims")
+        print("OK: side-effect security coverage (Issue #2057/#2152/#3524) — no uncovered effectful prims")
         return 0
 
     return 1 if args.strict else 0

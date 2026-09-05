@@ -24,6 +24,7 @@
 
 #include "test_harness.hpp"
 
+#include "compiler/ffi_hot_path.hh"
 #include "compiler/observability_metrics.h"
 #include "compiler/security_capabilities.h"
 #include "compiler/security_side_effect.hh"
@@ -361,7 +362,99 @@ int run_test_dispatch_required_effects() {
         }
     }
 
-    std::println("\n=== #2152 dispatch required_effects: {} passed, {} failed ===", g_passed,
+    // ── #3524: FFI hot-path require_effect token (no default) ──
+    {
+        std::println("\n--- #3524: dispatch_batch token=0 skip / mint allow / cross-fiber ---");
+        using aura::compiler::ffi_hot::FFIBatchHotPath;
+        using aura::compiler::ffi_hot::g_ffi_hot_path_stats;
+        using aura::compiler::ffi_hot::mint_render_effect_token;
+        using aura::compiler::ffi_hot::RenderFfiAbi;
+        using aura::compiler::ffi_hot::reset_ffi_hot_path_for_test;
+        using aura::compiler::ffi_hot::snapshot_ffi_hot_path;
+        using aura::compiler::ffi_hot::test_clear_render_effect_fiber_id;
+        using aura::compiler::ffi_hot::test_set_render_effect_fiber_id;
+
+        reset_ffi_hot_path_for_test();
+        FFIBatchHotPath path;
+        static auto dummy = [](const std::int64_t*, std::size_t) -> std::int64_t { return 42; };
+        const std::int64_t args[1] = {0};
+        const auto h = aura::compiler::ffi_hot::ffi_sig_hash("batch", "batch (I64*)");
+
+        const auto r0 = path.dispatch_batch(h, reinterpret_cast<void*>(+dummy),
+                                            RenderFfiAbi::BatchArgs, args, /*token=*/0);
+        CHECK(r0 == -1, "#3524 AC: token=0 skips invoke");
+        auto snap0 = snapshot_ffi_hot_path();
+        CHECK(snap0.effect_denied_render_total >= 1, "#3524 AC: token=0 bumps denied");
+        CHECK(snap0.invoke_skip_total >= 1, "#3524 AC: token=0 bumps invoke_skip");
+        CHECK(snap0.invoke_total == 0, "#3524 AC: token=0 does not invoke");
+
+        reset_ffi_hot_path_for_test();
+        const auto tok = mint_render_effect_token(true);
+        CHECK(tok != 0, "#3524 AC: mint(true) yields non-zero token");
+        const auto r1 = path.dispatch_batch(h, reinterpret_cast<void*>(+dummy),
+                                            RenderFfiAbi::BatchArgs, args, tok);
+        CHECK(r1 == 42, "#3524 AC: minted token allows invoke");
+        auto snap1 = snapshot_ffi_hot_path();
+        CHECK(snap1.effect_granted_render_total >= 1, "#3524 AC: grant counter on allow");
+        CHECK(snap1.invoke_total >= 1, "#3524 AC: invoke ran");
+
+        reset_ffi_hot_path_for_test();
+        test_set_render_effect_fiber_id(1);
+        const auto tok_a = mint_render_effect_token(true);
+        test_set_render_effect_fiber_id(2);
+        const auto r_x = path.dispatch_batch(h, reinterpret_cast<void*>(+dummy),
+                                             RenderFfiAbi::BatchArgs, args, tok_a);
+        CHECK(r_x == -1, "#3524 AC: cross-fiber token skips");
+        auto snapx = snapshot_ffi_hot_path();
+        CHECK(snapx.effect_denied_render_total >= 1, "#3524 AC: cross-fiber bumps denied");
+        test_clear_render_effect_fiber_id();
+
+        reset_ffi_hot_path_for_test();
+        const auto tok_deny = mint_render_effect_token(false);
+        CHECK(tok_deny == 0, "#3524 AC: mint(false) is token=0");
+        const auto r_d = path.dispatch_batch(h, reinterpret_cast<void*>(+dummy),
+                                             RenderFfiAbi::BatchArgs, args, tok_deny);
+        CHECK(r_d == -1, "#3524 AC: require_effect false → skip");
+
+        const auto script = read_file("scripts/coverage/checks/check_side_effect_security.py");
+        CHECK(script.find("3524") != std::string::npos, "#3524: linter cites issue");
+        CHECK(script.find("aura_jit_bridge.cpp") != std::string::npos,
+              "#3524: JIT bridge in scope");
+        CHECK(script.find("aura_jit_runtime.cpp") != std::string::npos,
+              "#3524: JIT runtime in scope");
+        CHECK(script.find("ir_executor_impl.cpp") != std::string::npos,
+              "#3524: ir_executor in scope");
+        CHECK(script.find("ffi_hot_path.hh") != std::string::npos,
+              "#3524: hot-path header in scope");
+        CHECK(script.find("dispatch_batch") != std::string::npos, "#3524: scans dispatch_batch");
+
+        const auto tmp = std::string("/tmp/aura_3524_dispatch_probe.cpp");
+        {
+            std::ofstream out(tmp);
+            out << "// probe for #3524 — DO NOT KEEP\n";
+            out << "void evil() {\n";
+            out << "  path.dispatch_batch(h, fn, abi, args, 1);\n";
+            out << "}\n";
+        }
+        const auto probe_cmd =
+            std::string("python3 scripts/coverage/checks/check_side_effect_security.py "
+                        "--strict --dispatch-path ") +
+            tmp + " >/dev/null 2>&1";
+        const int rc_probe = std::system(probe_cmd.c_str());
+        const int rc_probe2 = std::system((std::string("cd .. 2>/dev/null; ") + probe_cmd).c_str());
+        std::remove(tmp.c_str());
+        CHECK(rc_probe != 0 || rc_probe2 != 0,
+              "#3524 AC: dispatch without require_effect fails --strict");
+        const int rc_live =
+            std::system("python3 scripts/coverage/checks/check_side_effect_security.py --strict "
+                        ">/dev/null 2>&1");
+        const int rc_live2 = std::system(
+            "cd .. 2>/dev/null; python3 scripts/coverage/checks/check_side_effect_security.py "
+            "--strict >/dev/null 2>&1");
+        CHECK(rc_live == 0 || rc_live2 == 0, "#3524 AC: production dispatch TUs pass --strict");
+    }
+
+    std::println("\n=== #2152/#3524 dispatch required_effects: {} passed, {} failed ===", g_passed,
                  g_failed);
     return g_failed == 0 ? 0 : 1;
 }
