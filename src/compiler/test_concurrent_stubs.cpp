@@ -110,6 +110,16 @@ aura_tls_workspace_type_id(std::uint32_t /*node*/) noexcept {
     return 0;
 }
 
+// Issue #3544: aura_macro_provenance_repin_on_steal (in aura_jit_bridge.cpp)
+// unwinds per-fiber hygiene slot on steal/repin. Strong def lives in
+// aura_jit_bridge_stub.cpp (weak, no-op) for full/light JIT DSOs, and
+// macro_expansion.cpp for module-aware builds. test_concurrent does NOT
+// pull in either TU — without this stub asan-build fails to link:
+//   undefined reference to `aura_unwind_fiber_hygiene_on_steal'
+// (test_concurrent_clone_hygiene_depth.cpp exercises it directly).
+extern "C" __attribute__((weak)) void
+aura_unwind_fiber_hygiene_on_steal(std::uint32_t /*fiber_id*/) noexcept {}
+
 namespace aura::compiler::typed_audit {
 struct TypedMutationAuditEvent;
 __attribute__((weak)) void maybe_persist_typed_summary(const TypedMutationAuditEvent&) noexcept {
