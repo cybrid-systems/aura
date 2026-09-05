@@ -51,6 +51,7 @@ extern int run_test_hard_fiber_isolation();
 extern int run_test_isolation_audit_mid();
 extern int run_test_hard_fiber_restricted();
 extern int run_test_require_effect_auto_isolation();
+extern int run_test_require_effect_three_arg_default();
 extern int run_test_require_effect_live_mid();
 extern int run_test_security_audit_fold();
 extern int run_test_security_audit_trail();
@@ -79,7 +80,7 @@ int main() {
     using aura::test::g_passed;
     int members_failed = 0;
     int members_passed = 0;
-    std::println("=== test_security_capability_batch (36 members) ===");
+    std::println("=== test_security_capability_batch (37 members) ===");
 
     std::println("\n──── test_audit_mid_fallback_slo ────");
     reset_member_face();
@@ -205,6 +206,19 @@ int main() {
     CHECK(true, "skip leftover require_effect isolation AC");
     ++members_passed;
     std::println("OK member test_require_effect_auto_isolation (skip leftover AC)");
+
+    std::println("\n──── test_require_effect_three_arg_default (#3526) ────");
+    reset_member_face();
+    g_passed = 0;
+    g_failed = 0;
+    if (run_test_require_effect_three_arg_default() != 0 || g_failed != 0) {
+        ++members_failed;
+        std::println("FAIL member test_require_effect_three_arg_default ({}/{})", g_passed,
+                     g_failed);
+    } else {
+        ++members_passed;
+        std::println("OK member test_require_effect_three_arg_default ({} checks)", g_passed);
+    }
 
     std::println("\n──── test_require_effect_live_mid ────");
     CHECK(true, "skip leftover require_effect live-mid AC");

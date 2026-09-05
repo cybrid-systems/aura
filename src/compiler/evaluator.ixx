@@ -463,6 +463,9 @@ export inline constexpr std::int64_t kResidualNodeIdInventoryCount = 22;
 // (non-workspace file/io/network/exec only) and scans prim TUs for bare
 // require_effect near NodeId without the mandated helpers. Soft/Off
 // unchanged (additive schema only).
+// Issue #3526: same linter AC7 reverse-scans 3-arg require_effect
+// (and 4-arg literal ref_tenant=0) so new NodeId prims cannot silently
+// take the default. No new query key.
 export inline constexpr std::int64_t kNodeIdMandateExemptOpsCount = 5;
 export inline constexpr std::int64_t kNodeIdMandateWired = 1;
 
@@ -6683,6 +6686,11 @@ public:
     // the late isolation deny). Default ref_tenant=0 preserves the legacy
     // three-arg call shape; new code paths that hold a stamped ref should
     // pass `ref.tenant_id` (or use require_effect_on_ref below).
+    // Issue #3526: 3-arg `require_effect(req, op, node_id)` (default
+    // ref_tenant=0) re-opens that window — production NodeId targets must
+    // use require_effect_for_node_id / on_ref. The 3-arg default still
+    // compiles for 2-arg exempt ops (`target_node==0`); the #2942 linter
+    // AC7 flags residual 3-arg NodeId sites.
     [[nodiscard]] bool require_effect(std::uint16_t req_bits, std::string_view op,
                                       ast::NodeId target_node = 0,
                                       std::uint64_t ref_tenant = 0) noexcept;

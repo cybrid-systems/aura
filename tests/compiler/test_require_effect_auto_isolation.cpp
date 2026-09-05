@@ -29,6 +29,8 @@
 #include "core/workspace_isolation.hh"
 
 #include <cstdint>
+#include <cstdio>
+#include <cstdlib>
 #include <fstream>
 #include <string>
 #include <string_view>
@@ -869,6 +871,7 @@ static void ac2942_6_linter_and_no_invent() {
     CHECK(lint.find("EXEMPT_2ARG_OPS") != std::string::npos, "2942 AC6: EXEMPT inventory");
     CHECK(lint.find("require_effect_for_node_id") != std::string::npos,
           "2942 AC6: linter scans for_node_id");
+    CHECK(lint.find("3526") != std::string::npos, "2942 AC6: linter cites #3526 reverse rule");
     std::ifstream invent("tests/compiler/test_issue_2942.cpp");
     if (!invent.good())
         invent.open("../tests/compiler/test_issue_2942.cpp");
@@ -880,6 +883,149 @@ static void ac2942_6_linter_and_no_invent() {
             const auto name = entry.path().filename().string();
             CHECK(name.find("2942-") == std::string::npos,
                   std::string("2942 AC6: no docs/design/") + name + " (forbidden per #1655)");
+        }
+    }
+}
+
+// Issue #3526: reverse of #2689 / #2942 — 3-arg require_effect(req, op, node_id)
+// with default ref_tenant=0 re-opens the #2658 late-isolation window. Runtime
+// routes that shape through require_effect_for_node_id; the #2942 linter AC7
+// flags residual production 3-arg / 4-arg-literal-0 sites.
+static int run_2942_linter(const char* extra_args) {
+    const auto script = std::string(AURA_SOURCE_DIR) +
+                        "/scripts/coverage/checks/check_side_effect_node_id_mandate_2942.py";
+    auto cmd = std::string("python3 ") + script;
+    if (extra_args && extra_args[0] != '\0') {
+        cmd += " ";
+        cmd += extra_args;
+    }
+    cmd += " >/dev/null 2>&1";
+    return std::system(cmd.c_str());
+}
+
+static void ac3526_1_linter_flags_three_arg_probe() {
+    std::println("\n--- #3526 AC1: linter flags 3-arg require_effect probe ---");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_side_effect_node_id_mandate_2942.py");
+    CHECK(lint.find("Issue #3526") != std::string::npos, "3526 AC1: linter cites #3526");
+    CHECK(lint.find("scan_three_arg_default") != std::string::npos,
+          "3526 AC1: reverse-rule scanner present");
+    CHECK(lint.find("require_effect_for_node_id") != std::string::npos,
+          "3526 AC1: suggests for_node_id");
+    const auto tmp = std::string("/tmp/aura_3526_three_arg_probe.cpp");
+    {
+        std::ofstream out(tmp);
+        out << "// probe for #3526 — DO NOT KEEP\n";
+        out << "void evil(Evaluator& ev, ast::NodeId nid) {\n";
+        out << "  ev.require_effect(kEffectMutate, \"mutate:evil\", nid);\n";
+        out << "}\n";
+    }
+    const auto probe_arg = std::string("--probe ") + tmp;
+    const int rc_probe = run_2942_linter(probe_arg.c_str());
+    std::remove(tmp.c_str());
+    CHECK(rc_probe != 0, "3526 AC1: 3-arg require_effect probe fails the linter");
+}
+
+static void ac3526_2_linter_passes_for_node_id_probe_and_production() {
+    std::println("\n--- #3526 AC2: for_node_id probe + production 3-arg scan clean ---");
+    const auto tmp = std::string("/tmp/aura_3526_for_node_id_probe.cpp");
+    {
+        std::ofstream out(tmp);
+        out << "// probe for #3526 rewrite — DO NOT KEEP\n";
+        out << "void ok(Evaluator& ev, ast::NodeId nid) {\n";
+        out << "  ev.require_effect_for_node_id(kEffectMutate, \"mutate:ok\", nid);\n";
+        out << "}\n";
+    }
+    const auto probe_arg = std::string("--probe ") + tmp;
+    const int rc_ok = run_2942_linter(probe_arg.c_str());
+    std::remove(tmp.c_str());
+    CHECK(rc_ok == 0, "3526 AC2: require_effect_for_node_id rewrite passes the linter");
+    const int rc_live = run_2942_linter("");
+    CHECK(rc_live == 0, "3526 AC2: production SCOPE_FILES have no 3-arg default residual");
+}
+
+static void ac3526_3_three_arg_node_id_restricted_denies() {
+    std::println("\n--- #3526 AC3: Restricted 3-arg NodeId denies + counter ---");
+    reset_all();
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_effect_sandbox_mode(1);  // Restricted
+    ev.set_capability_tenant_id(0); // unset principal
+    const auto prev = ::aura::core::workspace_isolation::g_tenant_isolation_metrics()
+                          .nodeid_only_entry_prevented_total.load(std::memory_order_relaxed);
+    const auto seq0 = current_seq();
+    const bool ok = ev.require_effect(static_cast<std::uint16_t>(kEffectMutate), "3526-ac3-test",
+                                      /*target_node=*/1);
+    CHECK(!ok, "3526 AC3: Restricted + unset principal 3-arg NodeId denies");
+    const auto after = ::aura::core::workspace_isolation::g_tenant_isolation_metrics()
+                           .nodeid_only_entry_prevented_total.load(std::memory_order_relaxed);
+    CHECK(after >= prev + 1, "3526 AC3: nodeid_only_entry_prevented_total bumps");
+    CHECK(isolation_denies_since(seq0) >= 1, "3526 AC3: IsolationDeny SE emitted");
+}
+
+static void ac3526_4_occupancy_three_arg_denies() {
+    std::println("\n--- #3526 AC4: Restricted+MT 3-arg occupancy of foreign NodeId denies ---");
+    reset_all();
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+    aura::core::provenance::set_multi_tenant_env_active(true);
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_effect_sandbox_mode(1);
+    ev.set_capability_tenant_id(99);
+    const auto me = current_mutation_epoch();
+    ev.grant_effect_capability(99, "mut-3526-b", kEffectMutate, me == 0 ? 1 : me);
+    ev.grant_effect_capability(7, "mut-3526-a", kEffectMutate, me == 0 ? 1 : me);
+    (void)ev.make_stamped_ref(/*node_id=*/3);
+    CHECK(aura::core::provenance::existing_stamp_for_node(3) == 99,
+          "3526 AC4: B stamp slot records tenant 99");
+    ev.set_capability_tenant_id(7);
+    const auto prev = ::aura::core::workspace_isolation::g_tenant_isolation_metrics()
+                          .nodeid_only_entry_prevented_total.load(std::memory_order_relaxed);
+    const bool ok = ev.require_effect(static_cast<std::uint16_t>(kEffectMutate),
+                                      "3526-ac4-occupancy", /*target_node=*/3);
+    CHECK(!ok, "3526 AC4: 3-arg occupancy of B's NodeId IsolationDeny");
+    const auto after = ::aura::core::workspace_isolation::g_tenant_isolation_metrics()
+                           .nodeid_only_entry_prevented_total.load(std::memory_order_relaxed);
+    CHECK(after >= prev + 1, "3526 AC4: nodeid_only_entry_prevented_total bumps");
+    aura::core::provenance::set_multi_tenant_env_active(false);
+}
+
+static void ac3526_5_soft_off_three_arg_allows() {
+    std::println("\n--- #3526 AC5: Soft/Off 3-arg NodeId still allows (no prevent store) ---");
+    reset_all();
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_effect_sandbox_mode(0); // Off
+    ev.set_capability_tenant_id(0);
+    const auto prev = ::aura::core::workspace_isolation::g_tenant_isolation_metrics()
+                          .nodeid_only_entry_prevented_total.load(std::memory_order_relaxed);
+    const bool ok = ev.require_effect(static_cast<std::uint16_t>(kEffectMutate), "3526-ac5-test",
+                                      /*target_node=*/1);
+    CHECK(ok, "3526 AC5: Off sandbox 3-arg NodeId allows");
+    const auto after = ::aura::core::workspace_isolation::g_tenant_isolation_metrics()
+                           .nodeid_only_entry_prevented_total.load(std::memory_order_relaxed);
+    CHECK(after == prev, "3526 AC5: Soft/Off does not bump nodeid_only_entry_prevented_total");
+}
+
+static void ac3526_6_source_cite_and_no_invent() {
+    std::println("\n--- #3526 AC6: source-cite + no invent + no docs/design ---");
+    const auto sec = read_file("src/compiler/evaluator_security.cpp");
+    const auto ixx = read_file("src/compiler/evaluator.ixx");
+    CHECK(sec.find("Issue #3526") != std::string::npos, "3526 AC6: security cites #3526");
+    CHECK(ixx.find("Issue #3526") != std::string::npos, "3526 AC6: evaluator.ixx cites #3526");
+    CHECK(sec.find("require_effect_for_node_id") != std::string::npos,
+          "3526 AC6: 3-arg default routes through for_node_id");
+    std::ifstream invent("tests/compiler/test_issue_3526.cpp");
+    if (!invent.good())
+        invent.open("../tests/compiler/test_issue_3526.cpp");
+    CHECK(!invent.good(), "3526 AC6: no test_issue_3526.cpp (forbidden per #81967)");
+    const std::filesystem::path docs_design = "docs/design";
+    std::error_code ec;
+    if (std::filesystem::is_directory(docs_design, ec)) {
+        for (const auto& entry : std::filesystem::directory_iterator(docs_design, ec)) {
+            const auto name = entry.path().filename().string();
+            CHECK(name.find("3526-") == std::string::npos,
+                  std::string("3526 AC6: no docs/design/") + name + " (forbidden per #1655)");
         }
     }
 }
@@ -1387,6 +1533,13 @@ int run_test_require_effect_auto_isolation() {
     ac2942_4_soft_off_unchanged();
     ac2942_5_schema_and_lineage();
     ac2942_6_linter_and_no_invent();
+    std::println("\n=== Issue #3526: 3-arg require_effect default ref_tenant=0 ===");
+    ac3526_1_linter_flags_three_arg_probe();
+    ac3526_2_linter_passes_for_node_id_probe_and_production();
+    ac3526_3_three_arg_node_id_restricted_denies();
+    ac3526_4_occupancy_three_arg_denies();
+    ac3526_5_soft_off_three_arg_allows();
+    ac3526_6_source_cite_and_no_invent();
     std::println("\n=== Issue #3296: require_effect mid SSOT cascade ===");
     ac3296_1_typed_mid_ssot_first();
     ac3296_2_steal_clear_join();
@@ -1410,6 +1563,17 @@ int run_test_require_effect_auto_isolation() {
     ac3415_7_packed_resolve_keeps_stamp();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
+}
+
+int run_test_require_effect_three_arg_default() {
+    std::println("=== Issue #3526: 3-arg require_effect default ref_tenant=0 ===");
+    ac3526_1_linter_flags_three_arg_probe();
+    ac3526_2_linter_passes_for_node_id_probe_and_production();
+    ac3526_3_three_arg_node_id_restricted_denies();
+    ac3526_4_occupancy_three_arg_denies();
+    ac3526_5_soft_off_three_arg_allows();
+    ac3526_6_source_cite_and_no_invent();
+    return aura::test::g_failed ? 1 : 0;
 }
 
 #ifndef AURA_ISSUE_BATCH_MEMBER

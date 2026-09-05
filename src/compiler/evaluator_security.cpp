@@ -518,8 +518,37 @@ bool Evaluator::check_and_record_effect(std::uint16_t required_effect_bits,
 // `test_require_effect_auto_isolation.cpp` covers the foreign-tenant
 // matrix under Restricted + Strict. Closes the residual late-isolation
 // window after #2658 for paths outside `mutate:force`.
+//
+// Issue #3526: reverse of #2689 / #2942 — a NodeId target with the 3-arg
+// form `require_effect(req, op, node_id)` (or 4-arg literal `ref_tenant=0`)
+// silently takes the default and re-opens the #2658 window. Concrete
+// NodeId + default tenant routes through require_effect_for_node_id
+// (principal / existing stamp). Coverage linter
+// check_side_effect_node_id_mandate_2942.py AC7 flags residual 3-arg
+// production sites. 2-arg (EXEMPT_2ARG_OPS / no-target) and Off/Soft
+// `target_node==0` are unchanged.
 bool Evaluator::require_effect(std::uint16_t req_bits, std::string_view op, ast::NodeId target_node,
                                std::uint64_t ref_tenant) noexcept {
+    // Issue #3526: 3-arg default ref_tenant=0 with a concrete NodeId
+    // re-opens #2658. Route through for_node_id so isolation sees the
+    // principal / existing stamp before the body. Inner on_ref → this
+    // with a still-zero tenant (unset principal) must not recurse.
+    // Soft/Off: target_node==0 (2-arg / 3-arg literal 0) skips; no extra
+    // stores on the exempt path.
+    if (req_bits != 0 && target_node != 0 && ref_tenant == 0) {
+        static thread_local bool redirecting = false;
+        if (!redirecting) {
+            struct RedirectGuard {
+                bool& flag;
+                explicit RedirectGuard(bool& f)
+                    : flag(f) {
+                    flag = true;
+                }
+                ~RedirectGuard() { flag = false; }
+            } guard{redirecting};
+            return require_effect_for_node_id(req_bits, op, target_node);
+        }
+    }
     // #3109: fail-closed deny at entry (overflow ring full).
     // #3302: fail-closed is force_wal-defaulted or AURA_WAL_APPEND_FAIL_CLOSED.
     // #3493: do not extra-AND is_strict() — Restricted+MT already

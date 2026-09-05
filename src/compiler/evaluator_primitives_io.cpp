@@ -309,7 +309,7 @@ void register_git_primitives(PrimRegistrar add, Evaluator& ev) {
         using aura::compiler::security::kEffectExec;
         using aura::compiler::security::kEffectNetwork;
         if (!ev.require_effect(static_cast<std::uint16_t>(kEffectExec | kEffectNetwork),
-                               "git-commit", 0))
+                               "git-commit"))
             return make_int(-1);
         if (a.empty() || !is_string(a[0]))
             return make_int(-1);
