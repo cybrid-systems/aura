@@ -4072,6 +4072,12 @@ aura_issue_test_link_light(test_dead_coercion_elim)
 # Issue #2065: solve_delta epoch filter — skip already-processed roots in current epoch.
 aura_add_issue_test(test_solve_delta_epoch_filter)
 aura_issue_test_link_light(test_solve_delta_epoch_filter)
+# Issue #3557: production force-escalate solve_delta cap-hit to full
+# (residual #G2, type-checker x type-system). Test in tests/compiler/
+# (src/-aligned suite per #81934 / 2026-07-24 agent-repo rule).
+aura_add_issue_test(test_solve_delta_after_mutate)
+aura_issue_test_link_light(test_solve_delta_after_mutate)
+add_dependencies(all_test_issue_targets test_solve_delta_after_mutate)
 
 
 # Issue #2064: blame/provenance stamping on Dynamic degrade + CoercionMap fallback paths.

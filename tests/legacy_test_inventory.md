@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 878 | Preferred destination suites |
-| **Total scanned** | **878** | |
+| `tests/core/test_*.cpp` | 879 | Preferred destination suites |
+| **Total scanned** | **879** | |
 
 ### Related artifacts
 
@@ -33,7 +33,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | Theme | Title | Issues | Root | Domain | Total | Migration priority |
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
 | `arena_compaction` | Arena / compaction / GC | 0 | 0 | 89 | 89 | P0 — well-contained, batch drivers already exist |
-| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 263 | 263 | P0 — high volume; strong domain suite foothold |
+| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 264 | 264 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 108 | 108 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 26 | 26 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 59 | 59 | P1 — domain hygiene suite exists |
@@ -936,6 +936,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_soa_residual_production_smoke.cpp`
 - `tests/compiler/test_soa_single_entry_dirty_sync.cpp`
 - `tests/compiler/test_soa_view_enforcement.cpp`
+- `tests/compiler/test_solve_delta_after_mutate.cpp`
 - `tests/compiler/test_solve_delta_epoch_filter.cpp`
 - `tests/compiler/test_solve_delta_unresolved_export.cpp`
 - `tests/compiler/test_source_to_ir_desync_recovery.cpp`
@@ -1194,13 +1195,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_type_dep_epoch_prune.cpp` (—) [domain_suite, theme_compiler] — AC1: After set_cache_epoch(e+1), edges stamped at epoch e (e>0) drop;
 - `tests/compiler/test_workspace_switch.cpp` (—) [domain_suite, theme_compiler] — AC1: switch binds flat/pool + set_workspace_cow_epoch in one block
 
-### `mutation_dirty` — Mutation / dirty propagation / provenance (263)
+### `mutation_dirty` — Mutation / dirty propagation / provenance (264)
 
 **Target:** tests/core/test_mutation_boundary_batch (domain/ pilot abandoned in R1)
 
 **Priority:** P0 — high volume; strong domain suite foothold
 
-#### domain/ (263)
+#### domain/ (264)
 
 - `tests/compiler/test_abort_ir_cache_fence_first.cpp` (—) [large, domain_suite, theme_compiler] — AC1: All 3 abort entry points in evaluator_mutation_boundary.cpp
 - `tests/core/test_add_node_builder_contract.cpp` (—) [domain_suite, theme_core] — AC1: single-threaded add_* path unchanged (builders work)
@@ -1425,6 +1426,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_soa_cascade_instr_dirty_sync.cpp` (—) [domain_suite, theme_compiler] — AC1: source cites #2034; force_soa_instruction_dirty_sync +
 - `tests/compiler/test_soa_dirty_aware_pipeline.cpp` (—) [domain_suite, theme_compiler] — Issue #2907 — sunset SoAtoAoSBridgePass; production SoA dirty hot pack.
 - `tests/compiler/test_soa_single_entry_dirty_sync.cpp` (—) [domain_suite, theme_compiler] — AC1: production sites use finish_cascade / finish_dirty_sync; no bare
+- `tests/compiler/test_solve_delta_after_mutate.cpp` (—) [domain_suite, theme_compiler] — AC1: Production mode \u2014 cap-hit frontier push at type_checker_impl.cpp:1205-1209
 - `tests/compiler/test_source_to_ir_map_consistency.cpp` (—) [domain_suite, theme_compiler] — AC1: source cites #2045; rebuild_or_patch + pure helpers + consistency
 - `tests/compiler/test_stable_ref_batch.cpp` (—) [batch_driver, domain_suite, theme_compiler] — tests/compiler/test_stable_ref_batch.cpp
 - `tests/compiler/test_stable_ref_cow_batch.cpp` (—) [batch_driver, domain_suite, theme_compiler] — Issue #1912 (#1978 renamed): issue# moved from filename to header.
