@@ -350,6 +350,9 @@ struct TypedMutationAuditCounters {
     std::atomic<std::uint64_t> adt_exhaustiveness_audit_total{0};
     std::atomic<std::uint64_t> adt_exhaustiveness_fail_total{0};
     std::atomic<std::uint32_t> adt_exhaustiveness_hard_gate_wired{1};
+    // Issue #3559: hard-reject face — stores 1 once the production/Full
+    // path actually returns Reject (vs observe-only soft path).
+    std::atomic<std::uint32_t> adt_exhaustiveness_hard_reject_face{0};
     std::atomic<std::uint64_t> invariant_violations_caught{0};
     std::atomic<std::uint64_t> invariant_all_pass{0};
     // Issue #1894 AC metric names (aliases of invariant suite + contextual gate).

@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 880 | Preferred destination suites |
-| **Total scanned** | **880** | |
+| `tests/core/test_*.cpp` | 881 | Preferred destination suites |
+| **Total scanned** | **881** | |
 
 ### Related artifacts
 
@@ -39,7 +39,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 59 | 59 | P1 — domain hygiene suite exists |
 | `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 86 | 86 | P2 — link-profile heavy; migrate AC smoke first |
 | `shape_soa` | Shape / SoA / column layout | 0 | 0 | 55 | 55 | P2 — small-medium; soa_batch precedent |
-| `observability` | Observability / metrics / query:*-stats | 0 | 0 | 135 | 135 | P2 — often thin schema probes; collapse into obs matrix |
+| `observability` | Observability / metrics / query:*-stats | 0 | 0 | 136 | 136 | P2 — often thin schema probes; collapse into obs matrix |
 | `uncategorized` | Uncategorized / mixed | 0 | 0 | 57 | 57 | P3 — review case-by-case |
 
 ## Patterns, harness usage, coupling
@@ -191,6 +191,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_adaptive_reverify_limit.cpp`
 - `tests/core/test_add_node_builder_contract.cpp`
 - `tests/compiler/test_adt_exhaustiveness_audit.cpp`
+- `tests/compiler/test_adt_exhaustiveness_production_hard.cpp`
 - `tests/compiler/test_adt_hard_gate_exhaustiveness.cpp`
 - `tests/compiler/test_adt_match_exhaust_post_mutate_reliability.cpp`
 - `tests/compiler/test_adt_match_exhaustiveness_incremental_task2.cpp`
@@ -1849,15 +1850,16 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_value_tag_hot_path.cpp` (—) [domain_suite, theme_compiler] — AC1: Pure is_* (is_fixnum_hot / is_int) match classify; single low2 path
 - `tests/compiler/test_workspace_delete_child.cpp` (—) [domain_suite, theme_compiler] — tests/compiler/test_workspace_delete_child.cpp — Issue #1770: WorkspaceTree delete_child test.
 
-### `observability` — Observability / metrics / query:*-stats (135)
+### `observability` — Observability / metrics / query:*-stats (136)
 
 **Target:** tests/compiler/test_obs_schema_matrix.cpp + tests/compiler/obs_schema_cases.hpp
 
 **Priority:** P2 — often thin schema probes; collapse into obs matrix
 
-#### domain/ (135)
+#### domain/ (136)
 
 - `tests/compiler/test_adaptive_reverify_limit.cpp` (—) [domain_suite, theme_compiler] — Issue #2939 — dep-closure reverify (BFS over var_to_constraints_) to
+- `tests/compiler/test_adt_exhaustiveness_production_hard.cpp` (—) [domain_suite, theme_compiler] — test_adt_exhaustiveness_production_hard.cpp -- source-cite AC for Issue #3559
 - `tests/compiler/test_adt_hard_gate_exhaustiveness.cpp` (—) [domain_suite, theme_compiler] — AC1: Full hard-gate + non-exhaustive inject → adt_ok=false; suite fails;
 - `tests/orch/test_agent_ask.cpp` (—) [domain_suite, theme_orch] — AC1 (#2231/#2401): Target uses agent_reply → agent_ask returns ok +
 - `tests/compiler/test_aot_stats_null_metrics.cpp` (—) [small, domain_suite, theme_compiler] — Issue #1835/#1843 (#1978 renamed): issue# moved from filename to header.

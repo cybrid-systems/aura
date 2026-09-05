@@ -2034,6 +2034,18 @@ aura_issue_test_link_light(test_typed_audit_commit_readiness_recover_acl)
 # regression tests through the full mutate flow. Linter:
 # scripts/coverage/checks/check_linear_fast_path_or_semantics.py.
 aura_add_issue_test(test_linear_fast_path_or_semantics)
+# Issue #3559: ADT exhaustiveness production/Full hard-reject after variant
+# mutate. evaluator_eval_flat.cpp match-check path (tree-walker) consults
+# `production_hard_face_active()` (#3556 centralized hard-face gate) and
+# hard-rejects (returns error EvalValue) on non-exhaustive match under
+# Production/Full. Soft / Sampled / audit-only keeps observe-only behavior
+# (counter bumps, no reject). New `adt_exhaustiveness_hard_reject_face`
+# atomic (sibling of `adt_exhaustiveness_hard_gate_wired{1}`, NOT inserted
+# in metrics middle). Source-cite only — full runtime needs live evaluator
+# with ADT registry + match expression + soft→Production strategy switch
+# mid-eval; covered by existing #2223 ADT exhaustiveness invariant tests.
+# Linter: scripts/coverage/checks/check_adt_exhaustiveness_production_hard.py.
+aura_add_issue_test(test_adt_exhaustiveness_production_hard)
 # Issue #3382: lightweight / render abort clears type/linear + coercion +
 # occurrence persist authority. Full abort body already has the ordered
 # restore (#3281: IR force-dirty → proof clear → coercion rewind →
