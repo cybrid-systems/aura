@@ -3369,6 +3369,110 @@ static void ac3464_5_collision_avoided_dtors_unique() {
     }
 }
 
+static void ac3533_1_required_no_slot_refuses() {
+    std::println("\n--- #3533 AC1: production required + no slot refuses ---");
+    RequiredPinGuard req(1);
+    aura::core::densify_consistency::reset_opaque_heap_pin_required_fail_for_test();
+    aura::core::lifetime::clear_general_object_pin_required_breach();
+    void* p = &req;
+    CHECK(!aura::ast::opaque_heap_element_cover_or_required_fail(p, nullptr, "ffi-return-external"),
+          "3533 AC1: required + no slot refuses");
+    CHECK(aura::core::densify_consistency::opaque_heap_pin_required_fail_total_v_read() == 1,
+          "3533 AC1: opaque_heap_pin_required_fail_total");
+    CHECK(aura::core::lifetime::general_object_pin_required_breach_active(),
+          "3533 AC1: required breach sticky");
+}
+
+static void ac3533_2_required_slot_covers() {
+    std::println("\n--- #3533 AC2: required + live slot covers (no fail) ---");
+    RequiredPinGuard req(1);
+    MovingFlagGuard mv(1);
+    aura::core::densify_consistency::reset_opaque_heap_pin_required_fail_for_test();
+    aura::core::lifetime::clear_general_object_pin_required_breach();
+    ASTArena arena;
+    auto* p0 = arena.create<Pod16>(1, 2, 3, 4);
+    std::vector<void*> opaque_heap{p0};
+    CHECK(aura::ast::opaque_heap_element_cover_or_required_fail(
+              opaque_heap[0], &opaque_heap[0], "opaque-heap-element-densify-tracked"),
+          "3533 AC2: required + slot covers");
+    CHECK(aura::core::densify_consistency::opaque_heap_pin_required_fail_total_v_read() == 0,
+          "3533 AC2: fail_total stays 0");
+}
+
+static void ac3533_3_chaos_create_densify() {
+    std::println("\n--- #3533 AC3: 1000 create + Moving densify remaps slots ---");
+    RequiredPinGuard req(1);
+    MovingFlagGuard mv(1);
+    aura::core::lifetime::clear_general_object_pin_required_breach();
+    ASTArena arena;
+    std::vector<void*> opaque_heap;
+    opaque_heap.reserve(1000);
+    bool covered = true;
+    for (int i = 0; i < 1000; ++i) {
+        auto* p = arena.create<Pod16>(i, i + 1, 0, 0);
+        opaque_heap.push_back(p);
+        if (!aura::ast::opaque_heap_element_cover_or_required_fail(
+                opaque_heap.back(), &opaque_heap.back(), "opaque-heap-element-densify-tracked"))
+            covered = false;
+    }
+    CHECK(covered, "3533 AC3: 1000 creates covered");
+    for (void*& slot : opaque_heap)
+        arena.register_external_root_slot_for_densify(&slot);
+    const auto r = arena.live_compact(LiveCompactMode::Moving);
+    if (r.objects_moved > 0) {
+        CHECK(r.pin_contract_held, "3533 AC3: pin_contract_held after remap");
+        for (void* p : opaque_heap)
+            CHECK(p != nullptr, "3533 AC3: no stale null after densify");
+    }
+}
+
+static void ac3533_4_soft_zero_cost() {
+    std::println("\n--- #3533 AC4: Soft no-slot does not fail-close ---");
+    RequiredPinGuard req(0);
+    aura::core::densify_consistency::reset_opaque_heap_pin_required_fail_for_test();
+    aura::core::lifetime::clear_general_object_pin_required_breach();
+    void* p = &req;
+    CHECK(aura::ast::opaque_heap_element_cover_or_required_fail(p, nullptr, "ffi-return-external"),
+          "3533 AC4: Soft proceeds");
+    CHECK(aura::core::densify_consistency::opaque_heap_pin_required_fail_total_v_read() == 0,
+          "3533 AC4: Soft fail_total stays 0");
+    CHECK(!aura::core::lifetime::general_object_pin_required_breach_active(),
+          "3533 AC4: Soft no breach");
+}
+
+static void ac3533_5_source_cite_no_invent() {
+    std::println("\n--- #3533 AC5: source-cite + no invent ---");
+    const auto lp = read_file("src/core/lifetime_pin.hh");
+    const auto arena = read_file("src/core/arena.ixx");
+    const auto ev = read_file("src/compiler/evaluator_eval_flat.cpp");
+    const auto dc = read_file("src/core/densify_consistency_report.h");
+    const auto obs = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
+    CHECK(lp.find("kOpaqueHeapPinRequiredIssue = 3533") != std::string::npos, "3533 AC5: stamp");
+    CHECK(arena.find("opaque_heap_element_cover_or_required_fail") != std::string::npos,
+          "3533 AC5: helper");
+    CHECK(arena.find("note_ffi_opaque_alias_densify_cover") != std::string::npos,
+          "3533 AC5: reuse existing cover (LifetimePin SSOT)");
+    CHECK(ev.find("opaque_heap_element_cover_or_required_fail") != std::string::npos,
+          "3533 AC5: eval_flat create path");
+    CHECK(ev.find("note_ffi_opaque_alias_densify_cover") != std::string::npos,
+          "3533 AC5: eval_flat still cites densify cover");
+    CHECK(dc.find("g_opaque_heap_pin_required_fail_total") != std::string::npos,
+          "3533 AC5: counter END");
+    CHECK(obs.find("schema-3533") != std::string::npos, "3533 AC5: schema-3533");
+    CHECK(obs.find("opaque-heap-pin-required-fail-total") != std::string::npos,
+          "3533 AC5: additive query key");
+    CHECK(arena.find("class FfiOpaquePinRegistry") == std::string::npos,
+          "3533 AC5: no extra pin table type");
+    CHECK(read_file("tests/core/test_issue_3533.cpp").empty(), "3533 AC5: no test_issue_3533.cpp");
+    CHECK(read_file("tests/core/test_opaque_heap_pin_required.cpp").empty(),
+          "3533 AC5: folded into existing densify suite");
+    CHECK(read_file("docs/design/3533-opaque-heap-pin.md").empty(),
+          "3533 AC5: no docs/design/3533-*");
+    CHECK(read_file("scripts/coverage/checks/check_opaque_heap_pin_3057.py").empty() &&
+              read_file("scripts/coverage/checks/check_opaque_heap_pin_3533.py").empty(),
+          "3533 AC5: no substring-only py linter");
+}
+
 int run_test_moving_densify_fail_closed() {
     std::println("=== Issue #2495: Moving densify fail-closed on untracked external roots ===");
     std::println(
@@ -4055,6 +4159,13 @@ int run_test_moving_densify_fail_closed() {
 
     std::println("\n=== Issue #3464: relocate !neu collision avoids dtors_ alias ===");
     ac3464_5_collision_avoided_dtors_unique();
+
+    std::println("\n=== Issue #3533: opaque_heap_ create-time required pin/slot ---");
+    ac3533_1_required_no_slot_refuses();
+    ac3533_2_required_slot_covers();
+    ac3533_3_chaos_create_densify();
+    ac3533_4_soft_zero_cost();
+    ac3533_5_source_cite_no_invent();
 
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;

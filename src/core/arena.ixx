@@ -907,6 +907,31 @@ export inline void note_ffi_opaque_alias_densify_cover(void* p, void** slot,
     note_temporary_moving_live_ptr(p);
 }
 
+// Issue #3533: opaque_heap_ create-time pin/slot/EXEMPT. Reuses
+// note_ffi_opaque_alias_densify_cover (LifetimePin SSOT). Production
+// required without a live void** slot fail-closes (no live untracked
+// ptr). Soft / pref<=0: existing cover helper (one required-pref load).
+export inline bool opaque_heap_element_cover_or_required_fail(void* p, void** slot,
+                                                              const char* reason) noexcept {
+    if (!p)
+        return true;
+    if (!aura::core::lifetime::general_object_pin_required_active()) {
+        note_ffi_opaque_alias_densify_cover(p, slot, reason);
+        return true;
+    }
+    if (slot == nullptr || *slot == nullptr) {
+        aura::core::densify_consistency::g_opaque_heap_pin_required_fail_total.fetch_add(
+            1, std::memory_order_relaxed);
+        aura::core::lifetime::g_general_object_pin_required_enforced_total.fetch_add(
+            1, std::memory_order_relaxed);
+        aura::core::lifetime::g_general_object_pin_required_breach.store(1,
+                                                                         std::memory_order_release);
+        return false;
+    }
+    note_ffi_opaque_alias_densify_cover(p, slot, reason);
+    return true;
+}
+
 // Issue #3443: EXEMPT is legal only when would_move==false (libc-heap /
 // external-native-addr — reason-only, no arena pointer). A live pointer
 // under production required + Moving is treated as maybe-arena-tracked:

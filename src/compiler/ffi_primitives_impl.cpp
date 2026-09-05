@@ -309,14 +309,20 @@ void FFIRuntime::register_primitives(RegisterFn add, std::pmr::vector<std::strin
             std::memcpy(&ptr, base + offset, sizeof(ptr));
             auto ni = oh->size();
             oh->push_back(ptr);
-            // Issue #3022 / #3057 / #3274: opaque-struct-copy may alias an
-            // arena-tracked object (densify-tracked). Under production Moving
+            // Issue #3022 / #3057 / #3274 / #3533: opaque-struct-copy may alias
+            // an arena-tracked object (densify-tracked). Under production Moving
             // the alias joins the pin/slot/EXEMPT triad via slot-rewrite cover
             // (the opaque_heap_ element is a stable void**) + #3210 canary
             // fail-closed backstop; Soft/Off falls back to EXEMPT (zero extra).
+            // Required + no slot fail-closes at create (no live untracked ptr).
             // GENERAL_OBJECT_PIN_EXEMPT: opaque-struct-copy
-            aura::ast::note_ffi_opaque_alias_densify_cover(
-                ptr, ni < oh->size() ? &(*oh)[ni] : nullptr, "opaque-struct-copy");
+            // note_ffi_opaque_alias_densify_cover (via required helper)
+            void** slot = ni < oh->size() ? &(*oh)[ni] : nullptr;
+            if (!aura::ast::opaque_heap_element_cover_or_required_fail(ptr, slot,
+                                                                       "opaque-struct-copy")) {
+                oh->pop_back();
+                return make_int(0);
+            }
             return types::make_opaque(ni);
         }
         return make_int(0);

@@ -34,6 +34,7 @@ using ::aura::core::lifetime::kGeneralObjectPinAutoWireIssue;
 using ::aura::core::lifetime::kGeneralObjectPinCoverageGateIssue;
 using ::aura::core::lifetime::kGeneralObjectPinIssue;
 using ::aura::core::lifetime::kLifetimePinPhase;
+using ::aura::core::lifetime::kOpaqueHeapPinRequiredIssue;
 
 // Stats + process atomics
 using ::aura::core::lifetime::apply_general_object_pin_required_env;
