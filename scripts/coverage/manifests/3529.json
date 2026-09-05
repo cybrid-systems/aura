@@ -1,0 +1,52 @@
+{
+  "issue": 3529,
+  "title": "Issue #3529: production Reclaimed + body-alive quota recycle after timeout",
+  "ok": "OK: Issue #3529 timeout-gated Reclaimed quota force-release — Soft zero-cost; #2661 body-stack; #3012 dtor still releases.",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/orch/agent_spawn.h",
+      "contains": [
+        "kReclaimedQuotaForceReleaseIssue = 3529",
+        "reclaimed_quota_force_released_total{0}",
+        "AURA_RECLAIMED_QUOTA_TIMEOUT_MS",
+        "kReclaimedQuotaTimeoutMsDefault = 60000",
+        "reclaimed_quota_stuck_past_timeout"
+      ]
+    },
+    {
+      "ac": "AC3-ensure",
+      "path": "src/orch/agent_spawn.h",
+      "contains": [
+        "ensure_reclaimed_cleanup",
+        "reclaimed_quota_force_released_total.fetch_add"
+      ]
+    },
+    {
+      "ac": "AC4-query",
+      "path": "src/compiler/evaluator_primitives_agent.cpp",
+      "contains": [
+        "reclaimed-quota-force-released-total",
+        "schema-3529"
+      ]
+    },
+    {
+      "ac": "AC1-test",
+      "path": "tests/orch/test_join_drain_reclaim.cpp",
+      "contains": [
+        "ac3529_1_dtor_timeout_force_releases",
+        "ac3529_2_soft_zero_cost",
+        "ac3529_3_ensure_timeout_force_releases",
+        "ac3529_4_source_cite_and_no_invent"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "forbid": [
+        "tests/orch/test_issue_3529.cpp",
+        "tests/issues/test_issue_3529.cpp",
+        "docs/design/3529-reclaimed-quota.md"
+      ]
+    }
+  ]
+}

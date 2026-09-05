@@ -6670,6 +6670,14 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             insert_kv("schema-3334", aura::orch::kReclaimedAbandonIssue);
             insert_kv("issue-3334", aura::orch::kReclaimedAbandonIssue);
             insert_kv("reclaimed-abandon-wired", 1);
+            // Issue #3529: production reclaim-stuck quota recycle.
+            // Additive on existing query:orch-module-stats (no new query:*).
+            insert_kv("reclaimed-quota-force-released-total",
+                      static_cast<std::int64_t>(
+                          os.reclaimed_quota_force_released_total.load(std::memory_order_relaxed)));
+            insert_kv("schema-3529", aura::orch::kReclaimedQuotaForceReleaseIssue);
+            insert_kv("issue-3529", aura::orch::kReclaimedQuotaForceReleaseIssue);
+            insert_kv("reclaimed-quota-force-released-wired", 1);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
