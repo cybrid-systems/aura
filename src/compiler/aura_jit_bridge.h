@@ -779,6 +779,9 @@ void aura_aot_bump_func_table_epoch(void);
 // prefer owner-scoped under production multi-eval; true process-wide
 // recovery still notes force-bump.
 std::uint64_t cross_eval_epoch_bump_total_v_read(void);
+// Issue #3549: per-eval stable_func_id pool recycle total (sibling of
+// cross_eval_epoch_bump_total; not a new query:* key).
+std::uint64_t stable_func_id_pool_recycle_total_v_read(void);
 void* last_cross_eval_epoch_bump_owner_v_read(void);
 std::uint32_t cross_eval_epoch_bump_wired_v_read(void);
 // Issue #2744 / #2841: next aura_aot_bump_func_table_epoch() always advances

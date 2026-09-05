@@ -38,6 +38,11 @@
 // (commit_func_table_swap / aura_register_fn_tracked). Until then, mixed
 // JIT+AOT workloads must not execute generation-behind AOT code.
 //
+// Issue #3549: recycled stable_func_id (per-eval pool after owner-scoped
+// clear) samples g_aot_table_epoch into the name-map Binding as a sibling
+// of the Define name. Probe still uses slot table_generation — a recycled
+// sid with a prior generation is a cache miss (relower), not a peer hit.
+//
 // Issue #2183: after successful AOT reemit of *stored* IR, CompilerService
 // also restamp_cache_entry_live_ on the corresponding IR cache entry so
 // CacheEntryVersionStamp (mutation/bridge/defuse/soa) stays joint with

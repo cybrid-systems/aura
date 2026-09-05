@@ -502,6 +502,9 @@ extern "C" __attribute__((weak)) void aura_bump_cross_eval_sid_owner_mismatch_to
 extern "C" __attribute__((weak)) std::uint64_t cross_eval_epoch_bump_total_v_read(void) {
     return 0;
 }
+extern "C" __attribute__((weak)) std::uint64_t stable_func_id_pool_recycle_total_v_read(void) {
+    return 0;
+}
 extern "C" __attribute__((weak)) void* last_cross_eval_epoch_bump_owner_v_read(void) {
     return nullptr;
 }

@@ -32,6 +32,7 @@
 #include <fstream>
 #include <limits>
 #include <mutex>
+#include <unordered_map>
 #include <vector> // Issue #3539: deferred old-.so handle list
 #include <print>
 #include <unistd.h>                        // Issue #237 v4: readlink for /proc/self/exe lookup
@@ -963,11 +964,51 @@ static void* g_aot_emit_userdata = nullptr;
 // owner_eval() ?: nullptr → nullptr-keyed inner map = the original single-
 // workspace zero-downtime contract. Total map size is the sum of inner sizes.
 static std::mutex g_stable_func_id_mtx;
+// Issue #3549: name-map value carries mangle epoch (g_aot_table_epoch)
+// sampled at assign/recycle so a recycled sid is not the same native
+// generation. Lookup key stays name so re-emit still preserves (#1930).
+struct StableFuncIdBinding {
+    std::uint32_t id = 0;
+    std::uint64_t mangle_epoch = 0;
+};
 static std::unordered_map<void*,
-                          std::unordered_map<std::string, std::uint32_t,
+                          std::unordered_map<std::string, StableFuncIdBinding,
                                              aura::core::TransparentStringHash, std::equal_to<>>>
     g_eval_to_stable_func_id;
 static std::atomic<std::uint32_t> g_next_stable_func_id{1};
+
+// Issue #3549: per-eval recycle pool (same g_stable_func_id_mtx). Live
+// evals still take distinct sids from the process counter (#2670).
+// Owner-scoped clear retires ids; preserve prefers pop over fetch_add.
+inline constexpr int kStableFuncIdPoolRecycleIssue = 3549;
+static_assert(kStableFuncIdPoolRecycleIssue == 3549);
+struct StableFuncIdPool {
+    std::uint32_t next_id = 1;
+    std::vector<std::uint32_t> retired_ids;
+};
+static std::unordered_map<void*, StableFuncIdPool> g_eval_to_id_pool;
+static std::atomic<std::uint64_t> g_stable_func_id_pool_recycle_total{0};
+
+static std::uint32_t pop_retired_stable_func_id_locked(void* eval_ptr) noexcept {
+    auto try_pop = [](StableFuncIdPool& p) noexcept -> std::uint32_t {
+        if (p.retired_ids.empty())
+            return 0;
+        const auto id = p.retired_ids.back();
+        p.retired_ids.pop_back();
+        return id;
+    };
+    if (auto it = g_eval_to_id_pool.find(eval_ptr); it != g_eval_to_id_pool.end()) {
+        if (const auto id = try_pop(it->second))
+            return id;
+    }
+    for (auto& [e, p] : g_eval_to_id_pool) {
+        if (e == eval_ptr)
+            continue;
+        if (const auto id = try_pop(p))
+            return id;
+    }
+    return 0;
+}
 
 // Returns stable func_id for (eval_owner, name). out_preserved: 1 if map
 // already held an entry (re-emit reuse), 0 if newly assigned.
@@ -984,13 +1025,26 @@ static std::uint32_t preserve_stable_func_id_for_eval_locked(void* eval_ptr, con
         if (it != inner.end()) {
             if (out_preserved)
                 *out_preserved = 1;
-            return it->second;
+            return it->second.id;
         }
     }
     // New entry: create inner map for this eval (or reuse empty one).
     auto& inner = g_eval_to_stable_func_id[eval_ptr];
-    const std::uint32_t id = g_next_stable_func_id.fetch_add(1, std::memory_order_relaxed);
-    inner.emplace(name, id);
+    std::uint32_t id = 0;
+    // Soft/Off: pool stays empty (clear does not retire) — skip find.
+    if (!g_eval_to_id_pool.empty())
+        id = pop_retired_stable_func_id_locked(eval_ptr);
+    if (id != 0) {
+        g_stable_func_id_pool_recycle_total.fetch_add(1, std::memory_order_relaxed);
+    } else {
+        id = g_next_stable_func_id.fetch_add(1, std::memory_order_relaxed);
+        if (auto pit = g_eval_to_id_pool.find(eval_ptr); pit != g_eval_to_id_pool.end()) {
+            if (pit->second.next_id <= id)
+                pit->second.next_id = id + 1;
+        }
+    }
+    const auto epoch = g_aot_table_epoch.load(std::memory_order_relaxed);
+    inner.emplace(name, StableFuncIdBinding{id, epoch});
     return id;
 }
 
@@ -1003,7 +1057,7 @@ static std::uint32_t lookup_stable_func_id_for_eval_locked(void* eval_ptr, const
         return 0;
     const auto& inner = outer_it->second;
     auto it = inner.find(name);
-    return it == inner.end() ? 0 : it->second;
+    return it == inner.end() ? 0 : it->second.id;
 }
 
 // Total entries across all eval owners (for query surface; AC5).
@@ -1015,13 +1069,33 @@ static std::uint64_t stable_func_id_map_size_locked() {
 }
 
 // Clear entries for a single eval owner. nullptr = default single-workspace.
+// Issue #3549: production/Full retires ids into g_eval_to_id_pool[eval_ptr]
+// (same mutex). Soft/Off: erase only (zero extra pool work).
 static void clear_stable_func_id_map_for_eval_locked(void* eval_ptr) {
-    g_eval_to_stable_func_id.erase(eval_ptr);
+    auto outer_it = g_eval_to_stable_func_id.find(eval_ptr);
+    if (outer_it == g_eval_to_stable_func_id.end())
+        return;
+    const bool hard = aura::compiler::typed_audit::production_defaults_active() ||
+                      aura::compiler::typed_audit::get_strategy() ==
+                          aura::compiler::typed_audit::AuditStrategy::Full;
+    if (hard) {
+        auto& pool = g_eval_to_id_pool[eval_ptr];
+        for (const auto& [nm, binding] : outer_it->second) {
+            (void)nm;
+            if (binding.id == 0)
+                continue;
+            pool.retired_ids.push_back(binding.id);
+            if (pool.next_id <= binding.id)
+                pool.next_id = binding.id + 1;
+        }
+    }
+    g_eval_to_stable_func_id.erase(outer_it);
 }
 
 // Full clear (process teardown / tests). Resets id counter.
 static void clear_stable_func_id_map_all_locked() {
     g_eval_to_stable_func_id.clear();
+    g_eval_to_id_pool.clear();
     g_next_stable_func_id.store(1, std::memory_order_relaxed);
 }
 
@@ -2035,6 +2109,11 @@ static thread_local int g_cross_eval_hard_owner_scoped_pref = 0;
 // CompilerMetrics TU).
 extern "C" std::uint64_t cross_eval_epoch_bump_total_v_read(void) {
     return g_cross_eval_epoch_bump_total.load(std::memory_order_relaxed);
+}
+// Issue #3549: recycle total (sibling of g_cross_eval_epoch_bump_total;
+// not a CompilerMetrics middle field; no new query:* key).
+extern "C" std::uint64_t stable_func_id_pool_recycle_total_v_read(void) {
+    return g_stable_func_id_pool_recycle_total.load(std::memory_order_relaxed);
 }
 extern "C" void* last_cross_eval_epoch_bump_owner_v_read(void) {
     return g_last_cross_eval_epoch_bump_owner.load(std::memory_order_relaxed);
@@ -4336,7 +4415,7 @@ extern "C" std::uint64_t aura_reemit_aot_for_dirty(std::uint64_t current_defuse_
                     auto it = inner.find(name);
                     if (it == inner.end())
                         continue;
-                    const std::uint32_t sid = it->second;
+                    const std::uint32_t sid = it->second.id;
                     if (sid == 0 || sid >= kMaxAotFuncs)
                         continue;
                     auto& slot = g_aot_func_slots[sid];
