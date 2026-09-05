@@ -5,6 +5,7 @@ module;
 
 // Issue #2611: note_dce_narrow_hits after evidence-backed elisions.
 #include "compiler/typed_mutation_audit.h"
+#include "compiler/dce_elided_deopt_meta.h" // Issue #3547: stamper/type re-verify
 // Issue #3046: residual non-identity CastOp density-policy keep / relower.
 #include "compiler/castop_density_policy.hh"
 
@@ -69,6 +70,8 @@ inline std::atomic<std::uint64_t> dead_coercion_full_scan_runs{0};
 // decisions keyed off the pre-abort type view).
 inline std::atomic<std::uint64_t> dead_coercion_ir_decision_invalidate_total{0};
 inline std::atomic<std::uint64_t> dead_coercion_ir_decision_invalidate_observe_total{0};
+// Issue #3547: dirty-cone reuse consults stamper_bound + per-site type_id.
+inline constexpr int kDeadCoercionDecisionReverifyIssue = 3547;
 // Issue #3007: Production post-mutate / hot-fn residual identity CastOp
 // sweep. Soft keeps #2556 cone-skip + density-policy CastOps.
 inline constexpr int kDeadCoercionHotResidualIssue = 3007;
@@ -589,16 +592,7 @@ public:
     void run(aura::ir::IRModule& m) pre(valid_soa_view(m) && pipeline_epoch_consistent()) {
         note_pass_run(PassKind::DeadCoercion, false);
         dead_coercion_pipeline_runs_total.fetch_add(1, std::memory_order_relaxed);
-        // Issue #3102: AC3 — DeadCoercion decision invalidate gen. If the
-        // gen has changed since last_run_gen_, force full-scan (drops stale
-        // IR CastOp decisions keyed off the pre-abort type view). Quiet
-        // (gen unchanged) → zero cost.
-        const auto cur_gen = aura::compiler::dirty::dead_coercion_decision_invalidate_gen();
-        if (cur_gen != last_run_gen_) {
-            last_run_gen_ = cur_gen;
-            dead_coercion_ir_decision_invalidate_total.fetch_add(1, std::memory_order_relaxed);
-            block_dirty_pred_ = BlockDirtyPred{}; // force full-scan path
-        }
+        maybe_drop_stale_decision_cache(/*consult_gen=*/true);
         // Issue #2556: when a type∪IR dirty cone is wired (block_dirty_pred_),
         // peel per-function so DCE never walks cone-external CastOps on
         // large modules after local typed_mutate. No cone → full scan (AC2).
@@ -635,6 +629,7 @@ public:
             opt_contract_violations_soft_total.fetch_add(1, std::memory_order_relaxed);
     }
     void run(aura::ir::IRFunction& f) {
+        maybe_drop_stale_decision_cache(/*consult_gen=*/false);
         aura::compiler::DeadCoercionEliminationPass pass(type_reg_);
         pass.set_pipeline_epoch(impl_.pipeline_epoch_hint());
         // Issue #2133 / #3042: forward instruction-dirty peel into DCE impl.
@@ -759,6 +754,29 @@ private:
         for (const auto& block : f.blocks)
             n += count_cast_ops_in_block(block);
         return n;
+    }
+
+    void maybe_drop_stale_decision_cache(bool consult_gen) noexcept {
+        // Issue #3102: gen consult stays on run(IRModule) — tests use
+        // run(IRFunction) and leftover gen must not drop the dirty cone.
+        const auto cur_gen = aura::compiler::dirty::dead_coercion_decision_invalidate_gen();
+        bool force_full = consult_gen && (cur_gen != last_run_gen_);
+        // Issue #3547: production dirty-cone reuse also consults
+        // last_proof_stamper_bound + per-site type_id. Soft/Off: one
+        // production_defaults_active load.
+        if (::aura::compiler::typed_audit::production_defaults_active()) {
+            (void)::aura::compiler::typed_audit::last_type_linear_commit_proof_stamp_v_read();
+            if (::aura::compiler::typed_audit::last_proof_stamper_bound_v_read() == 0 &&
+                block_dirty_pred_.wired())
+                force_full = true;
+            else if (!force_full && ::aura::compiler::dce_deopt::reverify_elided_cast_deopt_sites())
+                force_full = true;
+        }
+        if (!force_full)
+            return;
+        last_run_gen_ = cur_gen;
+        dead_coercion_ir_decision_invalidate_total.fetch_add(1, std::memory_order_relaxed);
+        block_dirty_pred_ = BlockDirtyPred{}; // force full-scan path
     }
 
     aura::compiler::DeadCoercionEliminationPass impl_;

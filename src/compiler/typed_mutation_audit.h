@@ -1949,6 +1949,11 @@ inline void reset_outermost_persist_reject_needs_restore_for_test() noexcept {
 // Production/Full; Soft/Off discards the journal (zero extra beyond take).
 // No new query key / no new counter (reuses dead_coercion_decision_invalidate).
 inline constexpr int kCoercionMapPersistRejectUndoIssue = 3545;
+// Issue #3547: dirty-cone DeadCoercion re-verify (stamper_bound + type_id).
+// current_narrow_evidence lives next to the deopt-meta ring
+// (dce_elided_deopt_meta.h) — this header stays ring-free.
+inline constexpr int kDeadCoercionDecisionReverifyIssue = 3547;
+extern "C" std::uint32_t aura_tls_workspace_type_id(std::uint32_t node) noexcept;
 extern "C" void aura_undo_apply_coercion_map_recent(void* ev_ptr, std::uint64_t mid) noexcept;
 inline void undo_apply_coercion_map_recent(void* ev_ptr, std::uint64_t mid) noexcept {
     aura_undo_apply_coercion_map_recent(ev_ptr, mid);

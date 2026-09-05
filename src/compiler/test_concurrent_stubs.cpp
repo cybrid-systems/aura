@@ -104,6 +104,12 @@ extern "C" __attribute__((weak)) void* aura_typed_audit_current_commit_type_chec
     return nullptr;
 }
 
+// Issue #3547: light-link has no TLS Evaluator / workspace FlatAST.
+extern "C" __attribute__((weak)) std::uint32_t
+aura_tls_workspace_type_id(std::uint32_t /*node*/) noexcept {
+    return 0;
+}
+
 namespace aura::compiler::typed_audit {
 struct TypedMutationAuditEvent;
 __attribute__((weak)) void maybe_persist_typed_summary(const TypedMutationAuditEvent&) noexcept {

@@ -1421,7 +1421,7 @@ public:
                             block_index, static_cast<std::uint32_t>(i), ops[0]);
                         aura::compiler::dce_deopt::stamp_elided_cast_deopt_meta(
                             site, static_cast<std::uint64_t>(instr.provenance),
-                            instr.narrow_evidence, target_tag);
+                            instr.narrow_evidence, target_tag, instr.type_id);
                         block.instructions[i] = aura::ir::IRInstruction{
                             .opcode = aura::ir::IROpcode::Local,
                             .operands = {ops[0], ops[1], 0, 0},
@@ -1570,7 +1570,7 @@ public:
                                     block_index, static_cast<std::uint32_t>(i), ops[0]);
                                 aura::compiler::dce_deopt::stamp_elided_cast_deopt_meta(
                                     site, static_cast<std::uint64_t>(instr.provenance), out_ev,
-                                    target_tag);
+                                    target_tag, src_tid != 0 ? src_tid : instr.type_id);
                             }
                             block.instructions[i] = aura::ir::IRInstruction{
                                 .opcode = aura::ir::IROpcode::Local,
@@ -1771,8 +1771,8 @@ private:
                 if (evidence != 0) {
                     const auto site = aura::compiler::dce_deopt::make_site_key(
                         block.block_id, i - start, func.operand0_[i]);
-                    aura::compiler::dce_deopt::stamp_elided_cast_deopt_meta(site, /*mutation_id=*/0,
-                                                                            evidence, type_tag);
+                    aura::compiler::dce_deopt::stamp_elided_cast_deopt_meta(
+                        site, /*mutation_id=*/0, evidence, type_tag, tid);
                 }
                 func.opcodes_[i] = aura::ir::IROpcode::Local;
                 // operand0 (result) / operand1 (source) unchanged

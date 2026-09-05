@@ -1,0 +1,53 @@
+{
+  "issue": 3547,
+  "title": "Issue #3547: re-verify type_id / narrow_evidence in dirty cone DeadCoercion",
+  "ok": "OK: Issue #3547 DeadCoercion dirty-cone re-verify — stamper_bound + type_id; Soft one production_defaults load; no new query:*.",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/optimization_passes.ixx",
+      "contains": [
+        "kDeadCoercionDecisionReverifyIssue = 3547",
+        "last_proof_stamper_bound_v_read",
+        "last_type_linear_commit_proof_stamp_v_read",
+        "maybe_drop_stale_decision_cache"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/dce_elided_deopt_meta.h",
+      "contains": [
+        "invalidate_elided_cast_deopt_meta",
+        "reverify_elided_cast_deopt_site",
+        "current_narrow_evidence"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/evaluator_mutation_boundary.cpp",
+      "contains": [
+        "invalidate_elided_cast_deopt_meta(0)",
+        "aura_tls_workspace_type_id"
+      ]
+    },
+    {
+      "ac": "AC1-test",
+      "path": "tests/compiler/test_dead_coercion_dirty_cone.cpp",
+      "contains": [
+        "3547 AC1",
+        "3547 AC2",
+        "3547 AC4",
+        "3547 AC5"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "forbid": [
+        "tests/compiler/test_issue_3547.cpp",
+        "tests/issues/test_issue_3547.cpp",
+        "docs/design/3547-dead-coercion-reverify.md",
+        "scripts/coverage/checks/check_dead_coercion_decision_invalidate.py"
+      ]
+    }
+  ]
+}

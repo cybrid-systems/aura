@@ -17,6 +17,7 @@
 
 #include "test_harness.hpp"
 #include "compiler/typed_mutation_audit.h"
+#include "compiler/dce_elided_deopt_meta.h"
 
 #include <array>
 #include <cstring>
@@ -374,6 +375,31 @@ int run_test_outermost_persist_fail_closed() {
         CHECK(snap && is_int(*snap) && as_int(*snap) == 0,
               "3545 AC4: query last-proof-stamper-bound is 0");
         apply_dev_audit_defaults();
+    }
+
+    {
+        std::println("\n--- #3547: persist-reject invalidates elided CastOp deopt meta ---");
+        using aura::compiler::dce_deopt::clear_elided_cast_deopt_meta_for_test;
+        using aura::compiler::dce_deopt::lookup_elided_cast_deopt_meta;
+        using aura::compiler::dce_deopt::make_site_key;
+        using aura::compiler::dce_deopt::stamp_elided_cast_deopt_meta;
+        CHECK(typed_audit::kDeadCoercionDecisionReverifyIssue == 3547, "3547: stamp");
+        const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+        CHECK(contains(emb, "invalidate_elided_cast_deopt_meta"),
+              "3547 AC3: persist-reject invalidates deopt meta");
+        reset_for_test();
+        apply_production_audit_defaults();
+        clear_elided_cast_deopt_meta_for_test();
+        const auto site = make_site_key(0, 11, 3);
+        stamp_elided_cast_deopt_meta(site, 3547, 4, 1, 7);
+        CHECK(lookup_elided_cast_deopt_meta(site).has_value(), "3547 AC3: site live before undo");
+        CompilerService cs;
+        CHECK(cs.eval("(+ 1 1)").has_value(), "3547 live: warm");
+        undo_apply_coercion_map_recent(&cs.evaluator(), 3547);
+        CHECK(!lookup_elided_cast_deopt_meta(site).has_value(),
+              "3547 AC3: persist-reject drops deopt meta");
+        apply_dev_audit_defaults();
+        clear_elided_cast_deopt_meta_for_test();
     }
 
     // ── Issue #3472: persist-green × Phase-1 linear deny (live, not only contains) ──
