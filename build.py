@@ -9174,26 +9174,33 @@ def test_issues():
     if not run_path.exists():
         run_path = ROOT / "tests" / "run.py"
     # Full tier wall clock: serial recovery pass can double worst-case time.
-    r = subprocess.run(
-        [
-            sys.executable,
-            str(run_path),
-            cmd_name,
-            "--tier",
-            tier,
-            "--",
-            "--jobs",
-            jobs,
-            *extra_args,
-        ],
-        capture_output=True,
-        text=True,
-        timeout=1800 if tier == "full" else 300,
-    )
-    print(r.stdout)
-    if r.stderr:
-        print(r.stderr, file=sys.stderr)
-    return r.returncode
+    # Issue #3522: stream stdout/stderr (do not capture_output). Capture
+    # hid every per-binary line until exit, so a 1800s timeout printed
+    # nothing and hid which binary was running / hung.
+    timeout_s = 1800 if tier == "full" else 300
+    cmd = [
+        sys.executable,
+        str(run_path),
+        cmd_name,
+        "--tier",
+        tier,
+        "--",
+        "--jobs",
+        jobs,
+        *extra_args,
+    ]
+    try:
+        r = subprocess.run(cmd, timeout=timeout_s)
+        return r.returncode
+    except subprocess.TimeoutExpired as e:
+        fail(f"ci/issues timed out after {timeout_s}s")
+        if e.stdout:
+            out = e.stdout if isinstance(e.stdout, str) else e.stdout.decode(errors="replace")
+            print(out[-8000:])
+        if e.stderr:
+            err = e.stderr if isinstance(e.stderr, str) else e.stderr.decode(errors="replace")
+            print(err[-4000:], file=sys.stderr)
+        return 1
 
 
 def test_p0_regression():
