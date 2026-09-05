@@ -2044,7 +2044,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_production_hardening_batch.cpp` (—) [small, batch_driver, domain_suite, theme_compiler] — test_production_hardening_batch.cpp — thematic multi-TU batch
 - `tests/compiler/test_query_namespace_audit.cpp` (—) [domain_suite, theme_compiler] — test_query_namespace_audit.cpp — Issue #562:
 - `tests/compiler/test_reemit_defer_batch.cpp` (—) [small, batch_driver, domain_suite, theme_compiler] — test_reemit_defer_batch.cpp — thematic multi-TU batch
-- `tests/compiler/test_sandbox_mode_authority.cpp` (—) [domain_suite, theme_compiler] — triple-state drift). Tests verify that the SOLE writer
+- `tests/compiler/test_sandbox_mode_authority.cpp` (—) [large, domain_suite, theme_compiler] — triple-state drift). Tests verify that the SOLE writer
 - `tests/serve/test_serve_legacy_issue_batch.cpp` (—) [small, batch_driver, domain_suite, theme_serve] — test_serve_legacy_issue_batch.cpp — thematic multi-TU batch
 - `tests/compiler/test_side_effect_security_gate_hardfail.cpp` (—) [domain_suite, theme_compiler] — AC1: Intentionally broken fixture prim (side-effect name, no
 - `tests/stdlib/test_stdlib_infrastructure.cpp` (—) [domain_suite, theme_stdlib] — test_stdlib_infrastructure.cpp — Issue #565:

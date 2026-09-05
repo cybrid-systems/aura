@@ -6337,7 +6337,7 @@ private:
     std::vector<std::string> granted_capabilities_;
     // Issue #676: sandbox mode — when true, sensitive primitives
     // require matching capabilities (io/mutate/exec).
-    bool sandbox_mode_ = false;
+    bool sandbox_mode_ = false; // ctor-mirrored from process mode (#3562)
     // Issue #3174: deferred stdlib host prims (git/tcp/http/shell/sys/file-*).
     std::vector<std::pair<std::string, PrimFn>> deferred_std_prims_;
     std::uint32_t std_host_prims_mask_{0};

@@ -38,6 +38,8 @@
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <print>
 #include <string>
 #include <string_view>
@@ -69,6 +71,17 @@ using aura::test::g_passed;
 void reset_all() {
     reset_capability_effects_for_test();
     set_mode(SandboxMode::Off);
+}
+
+static std::string read_source(const char* path) {
+    for (const auto& p :
+         {std::string(path), std::string("../") + path, std::string("../../") + path}) {
+        std::ifstream in(p);
+        if (!in)
+            continue;
+        return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    }
+    return {};
 }
 
 } // namespace
@@ -381,16 +394,21 @@ int run_test_sandbox_mode_authority_2657() {
             CHECK(ev.has_capability(kCapWildcard) == false, "AC5: no wildcard");
             CHECK(ev.effect_sandbox_mode() == 1, "AC5: effect Restricted");
             CHECK(ev.sandbox_mode() == true, "AC5: bool mirrors effect");
-            // security:grant-effect! → returns #f (deny) under sandbox without wildcard.
+            // security:grant-effect! → deny under sandbox without TA / wildcard.
+            // Issue #3362 returns a primitive error (not #f); both shapes are deny.
             // Issue #3088: prim eval is on CompilerService, not Evaluator
             // (per the test_join_drain_reclaim.cpp pattern).
             const auto r1 = cs.eval(std::string("(security:grant-effect! \"mut\" 8)"));
-            CHECK(r1 && aura::compiler::types::is_bool(*r1) && !aura::compiler::types::as_bool(*r1),
+            CHECK(r1 && (aura::compiler::types::is_error(*r1) ||
+                         (aura::compiler::types::is_bool(*r1) &&
+                          !aura::compiler::types::as_bool(*r1))),
                   "AC5: security:grant-effect! denied under Restricted without wildcard");
             // security:set-sandbox-mode! false → denied (effect != 0 still triggers gate).
             const auto r2 = cs.eval(std::string("(security:set-sandbox-mode! #f)"));
-            CHECK(r2 && aura::compiler::types::is_bool(*r2) && aura::compiler::types::as_bool(*r2),
-                  "AC5: security:set-sandbox-mode! returns prior bool under deny");
+            CHECK(r2 && (aura::compiler::types::is_error(*r2) ||
+                         (aura::compiler::types::is_bool(*r2) &&
+                          aura::compiler::types::as_bool(*r2))),
+                  "AC5: security:set-sandbox-mode! deny (error or prior bool)");
             // The state must remain Restricted — adapter / SSOT would never have run.
             CHECK(ev.effect_sandbox_mode() == 1,
                   "AC5: effect still Restricted after denied set-sandbox-mode!");
@@ -430,12 +448,85 @@ int run_test_sandbox_mode_authority_2657() {
         }
     }
 
+    // ── #3562: ctor mirrors process Restricted onto sandbox_mode_ ──
+    {
+        using aura::compiler::CompilerService;
+        using aura::compiler::types::is_error;
+        using aura::compiler::types::is_void;
+
+        std::println("\n--- #3562 AC1: set_mode(Restricted) then CompilerService mirrors bool ---");
+        {
+            reset_all();
+            set_mode(SandboxMode::Restricted);
+            CompilerService cs;
+            auto& ev = cs.evaluator();
+            CHECK(ev.effect_sandbox_mode() == 1, "3562 AC1: effect Restricted");
+            CHECK(ev.sandbox_mode() == true, "3562 AC1: ctor-mirrored bool true");
+            CHECK(ev.sandbox_mode() == (ev.effect_sandbox_mode() != 0),
+                  "3562 AC1: bool == (effect != 0)");
+        }
+
+        std::println("\n--- #3562 AC2: string-gated prims deny without cap ---");
+        {
+            reset_all();
+            set_mode(SandboxMode::Restricted);
+            CompilerService cs;
+            auto& ev = cs.evaluator();
+            CHECK(ev.sandbox_mode() == true, "3562 AC2: bool armed");
+            const auto den0 = ev.capability_denial_count();
+            const auto rf = cs.eval(std::string("(read-file \"/tmp/no-such-aura-3562\")"));
+            CHECK(rf && is_error(*rf), "3562 AC2: read-file denies without io-read");
+            const auto ld = cs.eval(std::string("(load \"/tmp/no-such-aura-3562\")"));
+            CHECK(ld && is_error(*ld), "3562 AC2: load denies without io-read");
+            const auto sp = cs.eval(std::string("(fiber:spawn (lambda () 1))"));
+            CHECK(sp && is_error(*sp), "3562 AC2: fiber:spawn denies without fiber cap");
+            CHECK(ev.capability_denial_count() > den0, "3562 AC2: denial count advanced");
+        }
+
+        std::println("\n--- #3562 AC3: Off ctor leaves bool false (zero-cost) ---");
+        {
+            reset_all();
+            set_mode(SandboxMode::Off);
+            CompilerService cs;
+            auto& ev = cs.evaluator();
+            CHECK(ev.effect_sandbox_mode() == 0, "3562 AC3: effect Off");
+            CHECK(ev.sandbox_mode() == false, "3562 AC3: ctor bool false");
+            const auto den0 = ev.capability_denial_count();
+            const auto rf = cs.eval(std::string("(read-file \"/tmp/no-such-aura-3562\")"));
+            CHECK(rf && (is_void(*rf) || !is_error(*rf)),
+                  "3562 AC3: read-file not capability-denied under Off");
+            CHECK(ev.capability_denial_count() == den0, "3562 AC3: no denial bump");
+        }
+
+        std::println("\n--- #3562 AC5: source-cite ctor mirror; no test_issue / docs/design ---");
+        {
+            const auto ctor = read_source("src/compiler/evaluator_ctor.cpp");
+            CHECK(ctor.find("Issue #3562") != std::string::npos,
+                  "3562 AC5: evaluator_ctor.cpp cites #3562");
+            CHECK(ctor.find("sandbox_mode_ = (effect_sandbox_mode() != 0)") != std::string::npos,
+                  "3562 AC5: ctor mirrors without set_mode");
+            CHECK(ctor.find("set_mode(") == std::string::npos ||
+                      ctor.find("Do NOT call set_mode") != std::string::npos,
+                  "3562 AC5: ctor does not rewrite process SSOT");
+            std::ifstream invent("tests/compiler/test_issue_3562.cpp");
+            if (!invent.good())
+                invent.open("../tests/compiler/test_issue_3562.cpp");
+            CHECK(!invent.good(), "3562 AC5: no tests/compiler/test_issue_3562.cpp");
+            CHECK(!std::filesystem::exists("docs/design/3562-sandbox-ctor-mirror.md"),
+                  "3562 AC5: no docs/design/3562-*");
+        }
+    }
+
     std::println("\n=== results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
 
+int run_test_sandbox_mode_authority() {
+    return run_test_sandbox_mode_authority_2657();
+}
+
 #ifndef AURA_ISSUE_BATCH_MEMBER
 int main() {
-    return run_test_sandbox_mode_authority_2657();
+    return run_test_sandbox_mode_authority();
 }
 #endif
