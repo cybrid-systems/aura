@@ -3793,9 +3793,18 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
             // a friendly InternalError instead of aborting the test binary.
             // Callers that need the debug assertion can use f->is_valid() +
             // f->is_live_node() checks at higher layers.
+            // Issue #3523 / #3388: is_valid(NodeId) is observe-only (no
+            // write-up). Macro expand bumps generation_ and restamps
+            // MacroIntroduced only; residual live slots lag. Eval of the
+            // current tree is the layout face — refresh live current_id
+            // then re-check. Free-list tombstones stay InternalError.
             if (!f->is_valid(current_id)) {
-                return std::unexpected(
-                    Diagnostic{ErrorKind::InternalError, "stale node id (gen mismatch)"});
+                if (f->is_live_node(current_id))
+                    f->restamp_node_generation(current_id);
+                if (!f->is_valid(current_id)) {
+                    return std::unexpected(
+                        Diagnostic{ErrorKind::InternalError, "stale node id (gen mismatch)"});
+                }
             }
             if (current_id >= f->size())
                 return std::unexpected(Diagnostic{ErrorKind::InternalError, "invalid node id"});
