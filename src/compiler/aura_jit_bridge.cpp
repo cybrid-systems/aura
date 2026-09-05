@@ -2815,6 +2815,8 @@ extern "C" void aura_bump_hygiene_violation_prevented_on_boundary_total(std::uin
     g_1908_hygiene_prevented_fallback_total.fetch_add(n, std::memory_order_relaxed);
 }
 
+extern "C" std::uint64_t aura_fiber_current_id();
+
 extern "C" int aura_macro_provenance_repin_on_steal(void* ev_ptr, std::uint64_t cloned_marker,
                                                     int was_violation) {
     (void)cloned_marker; // reserved for future marker-specific routing
@@ -2823,6 +2825,9 @@ extern "C" int aura_macro_provenance_repin_on_steal(void* ev_ptr, std::uint64_t 
     aura_bump_macro_provenance_repin_on_steal_total(1);
     if (was_violation)
         aura_bump_hygiene_violation_prevented_on_boundary_total(1);
+    // Issue #3544: steal/repin also unwinds per-fiber hygiene slot
+    // (gensym_map_size / clone_in_flight). Weak no-op under light-link.
+    aura_unwind_fiber_hygiene_on_steal(static_cast<std::uint32_t>(aura_fiber_current_id()));
     // Issue #2810: dual-write per-CompilerMetrics when Evaluator is wired.
     // Contract:
     //   ev_ptr != nullptr → bump that Evaluator's

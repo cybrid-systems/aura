@@ -384,6 +384,10 @@ extern "C" void aura_note_macro_hygiene_last_limit_reason(std::uint8_t code) noe
 extern "C" void aura_test_reset_macro_hygiene_last_limit_reason_for_test(void) noexcept;
 // Issue #3543: typed MacroHygiene SE emit counter.
 extern "C" std::uint64_t aura_hygiene_violation_se_emit_total_v_read(void) noexcept;
+// Issue #3544: production concurrent top-level clone refuse + steal unwind.
+extern "C" std::uint64_t aura_clone_macro_body_concurrent_refused_total_v_read(void) noexcept;
+extern "C" void aura_test_reset_clone_macro_body_concurrent_refused_total_for_test(void) noexcept;
+extern "C" void aura_unwind_fiber_hygiene_on_steal(std::uint32_t fiber_id) noexcept;
 // Issue #3062: lightweight expand checkpoint (panic-checkpoint reuse).
 extern "C" int aura_evaluator_try_save_macro_expand_checkpoint(void);
 extern "C" void aura_evaluator_commit_macro_expand_checkpoint(void);

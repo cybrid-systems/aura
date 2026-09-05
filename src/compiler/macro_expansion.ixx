@@ -174,7 +174,10 @@ export inline constexpr std::uint8_t kHygieneLimitReasonCapabilityDeny = 7;
 // distinct stable strings. last_reject_reason 2/4 stay for #3028/#3094.
 export inline constexpr std::uint8_t kHygieneLimitReasonSameFlatReject = 8;
 export inline constexpr std::uint8_t kHygieneLimitReasonNameMapShared = 9;
+// Issue #3544: production concurrent top-level clone refuse (try_lock).
+export inline constexpr std::uint8_t kHygieneLimitReasonConcurrentTopLevel = 10;
 export inline constexpr int kConcurrentCloneProdZeroHalfTreeIssue = 3321;
+export inline constexpr int kConcurrentTopLevelCloneIssue = 3544;
 export void note_hygiene_last_limit_reason(std::uint8_t code) noexcept;
 // Issue #3341: stamp the process-global last_limit_reason AND a specific
 // fiber's FiberHygieneStats.last_limit_reason. Concurrent fibers no longer
@@ -198,6 +201,10 @@ export extern std::atomic<std::uint64_t> g_clone_macro_provenance_per_evaluator_
 // Append END per #2906.
 export inline constexpr int kHygieneViolationSeIssue = 3543;
 export extern std::atomic<std::uint64_t> g_hygiene_violation_se_emit_total;
+// Issue #3544: production concurrent top-level clone refuse (try_lock miss).
+// Append END per #2906. Observation-only g_clone_macro_body_concurrent_top_level_total
+// stays (#2806 Soft overlap).
+export extern std::atomic<std::uint64_t> g_clone_macro_body_concurrent_refused_total;
 
 export struct MacroExpansionDef {
     std::vector<std::string> params;
@@ -218,10 +225,14 @@ export struct FiberHygieneStats {
     int depth = 0;
     std::uint64_t violations = 0;
     std::size_t gensym_map_size = 0;
-    // Issue #3341: same codes as g_macro_hygiene_last_limit_reason (0–9).
+    // Issue #3341: same codes as g_macro_hygiene_last_limit_reason (0–10).
     // Process-global atomic is last-writer-wins under concurrent fibers;
     // this field is the per-fiber Agent-replay surface.
     std::uint8_t last_limit_reason = 0;
+    // Issue #3544: steal mid-clone unwind slot. 1 while this fiber holds a
+    // top-level ConcurrentCloneGuard claim. Cleared on guard dtor and on
+    // steal abort / provenance-repin unwind. Append END.
+    std::uint8_t clone_in_flight = 0;
 };
 
 // Snapshot a fiber's accumulated hygiene state. Returns a default-constructed

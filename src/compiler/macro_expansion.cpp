@@ -414,6 +414,9 @@ static void stamp_fiber_last_limit_reason(std::uint32_t fiber_id, std::uint8_t c
             return "same-flat-clone-reject";
         case 9:
             return "name-map-shared";
+        // Issue #3544: production concurrent top-level clone refuse.
+        case 10:
+            return "concurrent-top-level-clone";
         default:
             return "";
     }
@@ -678,7 +681,11 @@ std::atomic<std::uint64_t> g_hygiene_tracer_depth_max{0};
 // bump it on pre-scan entry).
 namespace {
     inline std::mutex g_fiber_hygiene_mu{};
-}
+    // Issue #3544: process-global try_lock for production top-level clone.
+    // Soft/Off never touches this (zero contention). Not a mutex registry —
+    // one lock, held by ConcurrentCloneGuard for the duration of depth==0.
+    inline std::mutex g_top_level_clone_mu{};
+} // namespace
 inline std::unordered_map<std::uint32_t, FiberHygieneStats> g_fiber_hygiene_map{};
 inline std::atomic<std::uint64_t> g_fiber_hygiene_query_total{0};
 inline std::atomic<std::uint64_t> g_fiber_hygiene_violation_per_fiber_total{0};
@@ -696,7 +703,9 @@ inline std::atomic<std::uint64_t> g_macro_self_evo_fiber_violation_deny_total{0}
 
 inline void bump_fiber_hygiene_on_enter(std::uint32_t fiber_id, int depth) noexcept {
     std::lock_guard<std::mutex> lock(g_fiber_hygiene_mu);
-    g_fiber_hygiene_map[fiber_id].depth = depth;
+    auto& slot = g_fiber_hygiene_map[fiber_id];
+    slot.depth = depth;
+    slot.clone_in_flight = 1;
 }
 // Issue #3341: per-fiber last_limit_reason (same codes as the process
 // atomic). Called from note_hygiene_last_limit_reason* on reject only —
@@ -719,8 +728,24 @@ inline void bump_fiber_hygiene_on_exit(std::uint32_t fiber_id,
     // this expand, not a placeholder zero. Bumped under the same lock
     // as depth/violations so the snapshot is consistent.
     std::lock_guard<std::mutex> lock(g_fiber_hygiene_mu);
-    g_fiber_hygiene_map[fiber_id].depth = 0;
-    g_fiber_hygiene_map[fiber_id].gensym_map_size = name_map_size_snapshot;
+    auto& slot = g_fiber_hygiene_map[fiber_id];
+    slot.depth = 0;
+    slot.gensym_map_size = name_map_size_snapshot;
+    slot.clone_in_flight = 0;
+}
+// Issue #3544: steal mid-clone / provenance-repin unwind. Reuses
+// g_fiber_hygiene_map (no second partial-clone table). Soft callers
+// still run this on steal abort — map write is already fail-path.
+inline void unwind_fiber_hygiene_on_steal(std::uint32_t fiber_id) noexcept {
+    if (fiber_id == 0)
+        return;
+    std::lock_guard<std::mutex> lock(g_fiber_hygiene_mu);
+    auto it = g_fiber_hygiene_map.find(fiber_id);
+    if (it == g_fiber_hygiene_map.end())
+        return;
+    it->second.depth = 0;
+    it->second.gensym_map_size = 0;
+    it->second.clone_in_flight = 0;
 }
 FiberHygieneStats get_fiber_hygiene_metrics(std::uint32_t fiber_id) noexcept {
     g_fiber_hygiene_query_total.fetch_add(1, std::memory_order_relaxed);
@@ -800,6 +825,8 @@ std::atomic<std::uint64_t> g_clone_macro_provenance_per_evaluator_total{0};
 // Issue #3543: typed MacroHygiene SE emits from note_hygiene_last_limit_reason
 // (fail-path only). Append END per #2906.
 std::atomic<std::uint64_t> g_hygiene_violation_se_emit_total{0};
+// Issue #3544: production concurrent top-level clone refuse (try_lock miss).
+std::atomic<std::uint64_t> g_clone_macro_body_concurrent_refused_total{0};
 // Issue #2176: selective unstamp for MacroIntroduced subtrees (Agent
 // experimental rollback path). Bumped per successful unstamp via the
 // C-linkage helper aura_unstamp_macro_introduced_with_counter below.
@@ -1089,6 +1116,16 @@ extern "C" std::uint64_t aura_macro_hygiene_last_limit_reason_v_read(void) noexc
 // Issue #3543: typed SE emit counter (query:macro-hygiene-stats additive).
 extern "C" std::uint64_t aura_hygiene_violation_se_emit_total_v_read(void) noexcept {
     return g_hygiene_violation_se_emit_total.load(std::memory_order_relaxed);
+}
+// Issue #3544: production concurrent top-level clone refuse + steal unwind.
+extern "C" std::uint64_t aura_clone_macro_body_concurrent_refused_total_v_read(void) noexcept {
+    return g_clone_macro_body_concurrent_refused_total.load(std::memory_order_relaxed);
+}
+extern "C" void aura_test_reset_clone_macro_body_concurrent_refused_total_for_test(void) noexcept {
+    g_clone_macro_body_concurrent_refused_total.store(0, std::memory_order_relaxed);
+}
+extern "C" void aura_unwind_fiber_hygiene_on_steal(std::uint32_t fiber_id) noexcept {
+    unwind_fiber_hygiene_on_steal(fiber_id);
 }
 extern "C" void aura_note_macro_hygiene_last_limit_reason(std::uint8_t code) noexcept {
     note_hygiene_last_limit_reason(code);
@@ -1546,8 +1583,10 @@ static aura::ast::NodeId clone_macro_body_at_depth(
         bool armed = false;
         bool rejected_same_flat = false;
         bool rejected_shared_name_map = false;
+        bool rejected_concurrent_top_level = false;
         bool claimed_flat = false;
         bool claimed_name_map = false;
+        bool holds_top_level_lock = false;
         std::uint32_t captured_fiber_id = 0;
         const aura::ast::FlatAST* target_ptr = nullptr;
         // Issue #2241: capture name_map* by value — dtor cannot touch
@@ -1598,6 +1637,29 @@ static aura::ast::NodeId clone_macro_body_at_depth(
                 return;
             }
             claimed_name_map = (nm != nullptr);
+            // Issue #3544: production (Restricted/Strict) serializes
+            // top-level clone via one process-global try_lock. Soft/Off:
+            // one is_sandbox_active load, no mutex. Overlap stays
+            // observation-only (#2806 concurrent_top_level_total).
+            if (aura::core::sandbox::is_sandbox_active()) {
+                if (!g_top_level_clone_mu.try_lock()) {
+                    rejected_concurrent_top_level = true;
+                    g_clone_macro_body_concurrent_refused_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                    g_clone_macro_body_concurrent_top_level_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                    g_macro_clone_last_reject_reason.store(10, std::memory_order_relaxed);
+                    note_hygiene_last_limit_reason(kHygieneLimitReasonConcurrentTopLevel);
+                    if (claimed_name_map && name_map_ptr)
+                        release_name_map_clone(name_map_ptr);
+                    claimed_name_map = false;
+                    if (claimed_flat && target_ptr)
+                        release_same_flat_clone(target_ptr);
+                    claimed_flat = false;
+                    return;
+                }
+                holds_top_level_lock = true;
+            }
             armed = true;
             const auto prev = g_macro_clone_in_flight.fetch_add(1, std::memory_order_relaxed);
             // Issue #2806: another top-level clone already in flight.
@@ -1636,11 +1698,13 @@ static aura::ast::NodeId clone_macro_body_at_depth(
                     bump_fiber_hygiene_on_exit(captured_fiber_id, nm_size);
                 }
             }
+            if (holds_top_level_lock)
+                g_top_level_clone_mu.unlock();
         }
         ConcurrentCloneGuard(const ConcurrentCloneGuard&) = delete;
         ConcurrentCloneGuard& operator=(const ConcurrentCloneGuard&) = delete;
     } concurrent_guard{name_map, hygiene_depth, &target};
-    if (concurrent_guard.rejected_same_flat)
+    if (concurrent_guard.rejected_same_flat || concurrent_guard.rejected_concurrent_top_level)
         return NULL_NODE;
     // Issue #2023: top-level clone entry also consults MacroSelfEvo so
     // direct clone_macro_body (without macro_expand_all) cannot bypass
@@ -2634,6 +2698,10 @@ static aura::ast::NodeId clone_macro_body_at_depth(
             // reject surface (last_mutate_error_). Counter-only steal-abort
             // left replay with totals but no reason string.
             aura_evaluator_note_steal_abort_mid_expand();
+            // Issue #3544: explicit fiber-hygiene unwind (gensym_map_size /
+            // clone_in_flight). NameMapCheckpoint + expand_ckpt already
+            // roll back map / FlatAST; this clears the per-fiber slot.
+            unwind_fiber_hygiene_on_steal(aura_fiber_current_id());
             // Issue #3157: roll back target FlatAST additions (target.add_*
             // allocations done by the recursive clone walk between steal0
             // and steal1). expand_ckpt.try_restore() is safe at all depths —

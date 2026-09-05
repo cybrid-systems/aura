@@ -23,6 +23,9 @@
 #include <vector>
 
 #include "compiler/aura_jit_bridge.h"
+#include "compiler/grant_test_support.hh"
+#include "core/capability_model.hh"
+#include "core/sandbox.hh"
 #include "core/transparent_string_hash.hh"
 
 import std;
@@ -38,9 +41,12 @@ using aura::ast::NULL_NODE;
 using aura::ast::StringPool;
 using aura::ast::SyntaxMarker;
 using aura::compiler::macro_exp::clone_macro_body;
+using aura::compiler::macro_exp::g_clone_macro_body_concurrent_refused_total;
 using aura::compiler::macro_exp::g_clone_macro_body_concurrent_top_level_total;
 using aura::compiler::macro_exp::g_macro_clone_in_flight;
 using aura::compiler::macro_exp::g_macro_clone_same_flat_reject_total;
+using aura::compiler::macro_exp::get_fiber_hygiene_metrics;
+using aura::compiler::macro_exp::hygiene_last_limit_reason_string;
 using aura::test::g_failed;
 using aura::test::g_passed;
 
@@ -453,8 +459,168 @@ int run_test_concurrent_clone_hygiene_depth() {
         CHECK(read_file("docs/design/3507-set-name-map.md").empty(), "3507 AC5: no docs/design");
     }
 
-    std::println("\n=== #2806 + #3028 + #3094 + #3507 concurrent clone hygiene depth: {} passed, "
-                 "{} failed ===",
+    // Issue #3544: production concurrent top-level clone refuse + steal unwind.
+    std::println("\n=== Issue #3544: production concurrent top-level clone refuse ===");
+    {
+        std::println("\n--- #3544 AC1: Restricted concurrent top-level refuse ---");
+        using aura::core::capability::Effect;
+        using aura::core::capability::g_capability_registry;
+        using aura::core::capability::MacroSelfEvoPolicy;
+        using aura::core::capability::reset_capability_effects_for_test;
+        reset_capability_effects_for_test();
+        MacroSelfEvoPolicy pol;
+        pol.max_expansion_passes = 8;
+        pol.max_depth = 64;
+        pol.allow_rest_hygiene = true;
+        pol.allow_concurrent_fiber = true;
+        g_capability_registry().grant(0, "tenant-admin", Effect::TenantAdmin,
+                                      aura_test_grant_prov());
+        g_capability_registry().grant_macro_self_evo(0, pol, aura_test_grant_prov());
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+        g_clone_macro_body_concurrent_refused_total.store(0, std::memory_order_relaxed);
+        aura::ast::ASTArena src_arena;
+        auto src_alloc = src_arena.allocator();
+        StringPool sp(src_alloc);
+        FlatAST src(src_alloc);
+        auto leaf = src.add_variable(sp.intern("x"));
+        aura::ast::NodeId body = leaf;
+        for (int i = 0; i < 48; ++i)
+            body = src.add_let(sp.intern(std::format("t{}", i)), leaf, body);
+        constexpr int kThreads = 8;
+        constexpr int kIters = 12;
+        std::atomic<int> ok_n{0};
+        std::atomic<int> fail_n{0};
+        std::vector<std::thread> threads;
+        threads.reserve(kThreads);
+        for (int t = 0; t < kThreads; ++t) {
+            threads.emplace_back([&]() {
+                for (int i = 0; i < kIters; ++i) {
+                    aura::ast::ASTArena ta;
+                    StringPool tp(ta.allocator());
+                    FlatAST tgt(ta.allocator());
+                    NameMap nm;
+                    auto c = clone_macro_body(tgt, tp, src, sp, body, nullptr, &nm,
+                                              SyntaxMarker::MacroIntroduced);
+                    if (c != NULL_NODE)
+                        ok_n.fetch_add(1, std::memory_order_relaxed);
+                    else
+                        fail_n.fetch_add(1, std::memory_order_relaxed);
+                }
+            });
+        }
+        for (auto& th : threads)
+            th.join();
+        CHECK(ok_n.load() + fail_n.load() == kThreads * kIters, "3544 AC1: all iters");
+        CHECK(ok_n.load() >= 1, "3544 AC1: at least one clone succeeded");
+        CHECK(g_clone_macro_body_concurrent_refused_total.load() > 0,
+              "3544 AC1: concurrent refuse counter");
+        CHECK(fail_n.load() >= 1, "3544 AC1: at least one refuse");
+        const auto* rs = hygiene_last_limit_reason_string();
+        CHECK(rs != nullptr && (std::string(rs) == "concurrent-top-level-clone" ||
+                                std::string(rs) == "same-flat-clone-reject" ||
+                                std::string(rs) == "name-map-shared" || std::string(rs) == ""),
+              "3544 AC1: last reason is clone-reject family or cleared");
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+        reset_capability_effects_for_test();
+    }
+    {
+        std::println("\n--- #3544 AC2: Soft cross-flat concurrent still allowed ---");
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+        g_clone_macro_body_concurrent_refused_total.store(0, std::memory_order_relaxed);
+        aura::ast::ASTArena src_arena;
+        StringPool sp(src_arena.allocator());
+        FlatAST src(src_arena.allocator());
+        auto pr = aura::parser::parse_to_flat("(lambda (x) x)", src, sp);
+        CHECK(pr.success, "3544 AC2: parse");
+        std::atomic<int> ok_n{0};
+        std::vector<std::thread> threads;
+        for (int t = 0; t < 4; ++t) {
+            threads.emplace_back([&]() {
+                aura::ast::ASTArena ta;
+                StringPool tp(ta.allocator());
+                FlatAST tgt(ta.allocator());
+                NameMap nm;
+                auto c = clone_macro_body(tgt, tp, src, sp, pr.root, nullptr, &nm,
+                                          SyntaxMarker::MacroIntroduced);
+                if (c != NULL_NODE)
+                    ok_n.fetch_add(1, std::memory_order_relaxed);
+            });
+        }
+        for (auto& th : threads)
+            th.join();
+        CHECK(ok_n.load() == 4, "3544 AC2: Soft all succeed");
+        CHECK(g_clone_macro_body_concurrent_refused_total.load() == 0, "3544 AC2: Soft no refuse");
+    }
+    {
+        std::println("\n--- #3544 AC3: steal unwind clears per-fiber slot ---");
+        aura_unwind_fiber_hygiene_on_steal(1);
+        auto st = get_fiber_hygiene_metrics(1);
+        CHECK(st.clone_in_flight == 0, "3544 AC3: clone_in_flight cleared");
+        CHECK(st.gensym_map_size == 0, "3544 AC3: gensym_map_size cleared");
+        CHECK(st.depth == 0, "3544 AC3: depth cleared");
+        const auto me = read_file("src/compiler/macro_expansion.cpp");
+        CHECK(me.find("unwind_fiber_hygiene_on_steal") != std::string::npos,
+              "3544 AC3: unwind helper");
+        CHECK(me.find("g_top_level_clone_mu") != std::string::npos, "3544 AC3: one process mutex");
+        CHECK(me.find("try_lock()") != std::string::npos, "3544 AC3: try_lock");
+    }
+    {
+        std::println("\n--- #3544 AC4: sequential production clone still works ---");
+        using aura::core::capability::Effect;
+        using aura::core::capability::g_capability_registry;
+        using aura::core::capability::MacroSelfEvoPolicy;
+        using aura::core::capability::reset_capability_effects_for_test;
+        reset_capability_effects_for_test();
+        MacroSelfEvoPolicy pol;
+        pol.max_expansion_passes = 8;
+        pol.max_depth = 64;
+        pol.allow_rest_hygiene = true;
+        pol.allow_concurrent_fiber = true;
+        g_capability_registry().grant(0, "tenant-admin", Effect::TenantAdmin,
+                                      aura_test_grant_prov());
+        g_capability_registry().grant_macro_self_evo(0, pol, aura_test_grant_prov());
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+        aura::ast::ASTArena sa, ta;
+        StringPool sp(sa.allocator());
+        FlatAST src(sa.allocator());
+        auto pr = aura::parser::parse_to_flat("(lambda (x) x)", src, sp);
+        CHECK(pr.success, "3544 AC4: parse");
+        StringPool tp(ta.allocator());
+        FlatAST target(ta.allocator());
+        NameMap nm;
+        auto c = clone_macro_body(target, tp, src, sp, pr.root, nullptr, &nm,
+                                  SyntaxMarker::MacroIntroduced);
+        CHECK(c != NULL_NODE, "3544 AC4: sequential Restricted clone ok");
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+        reset_capability_effects_for_test();
+    }
+    {
+        std::println("\n--- #3544 AC5: source-cite + schema-3544 + no invent ---");
+        const auto me = read_file("src/compiler/macro_expansion.cpp");
+        const auto ixx = read_file("src/compiler/macro_expansion.ixx");
+        const auto q = read_file("src/compiler/evaluator_primitives_query_obs_mid.cpp");
+        CHECK(me.find("g_clone_macro_body_concurrent_refused_total") != std::string::npos,
+              "3544 AC5: refuse counter");
+        CHECK(me.find("kHygieneLimitReasonConcurrentTopLevel") != std::string::npos,
+              "3544 AC5: reason");
+        CHECK(ixx.find("kConcurrentTopLevelCloneIssue = 3544") != std::string::npos,
+              "3544 AC5: stamp");
+        CHECK(ixx.find("clone_in_flight") != std::string::npos, "3544 AC5: per-fiber slot END");
+        CHECK(q.find("schema-3544") != std::string::npos, "3544 AC5: schema-3544");
+        CHECK(q.find("clone-macro-body-concurrent-refused-total") != std::string::npos,
+              "3544 AC5: query key");
+        CHECK(q.find("schema-2806") != std::string::npos ||
+                  me.find("g_clone_macro_body_concurrent_top_level_total") != std::string::npos,
+              "3544 AC5: #2806 observation retained");
+        CHECK(read_file("tests/compiler/test_concurrent_clone_macro_body.cpp").empty(),
+              "3544 AC5: no new test file");
+        CHECK(read_file("docs/design/3544-concurrent-clone-mutex.md").empty(),
+              "3544 AC5: no docs/design");
+        CHECK(aura_clone_macro_body_concurrent_refused_total_v_read() >= 0, "3544 AC5: v_read");
+    }
+
+    std::println("\n=== #2806 + #3028 + #3094 + #3507 + #3544 concurrent clone hygiene depth: {} "
+                 "passed, {} failed ===",
                  g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }

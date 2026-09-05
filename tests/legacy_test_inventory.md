@@ -1634,7 +1634,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/reflect/test_cache_header_magic_a2.cpp` (—) [small, domain_suite, theme_reflect] — Wave A2: CacheHeader::magic[8] round-trips via auto_serialize;
 - `tests/compiler/test_capability_macro_self_evo_reason_uniformity.cpp` (—) [domain_suite, theme_compiler] — Fix contract (AC1–AC8):
 - `tests/compiler/test_clone_walk_gensym_ceiling.cpp` (—) [domain_suite, theme_compiler] — AC1: rename_binding cites #2804; ceiling + clone_walk metric
-- `tests/compiler/test_concurrent_clone_hygiene_depth.cpp` (—) [domain_suite, theme_compiler] — AC1: clone_macro_body_at_depth / hygiene_depth; #2806 cites
+- `tests/compiler/test_concurrent_clone_hygiene_depth.cpp` (—) [large, domain_suite, theme_compiler] — AC1: clone_macro_body_at_depth / hygiene_depth; #2806 cites
 - `tests/compiler/test_contracts.cpp` (—) [small, domain_suite, theme_compiler] — tests/compiler/test_contracts.cpp — Issue #83: C++26 contract_assert + trailing pre/post
 - `tests/compiler/test_emit_soa_source_marker_propagation.cpp` (—) [domain_suite, theme_compiler] — AC1: add_instruction + emit pass source_marker; columns + view API
 - `tests/reflect/test_enum_name_table_c1.cpp` (—) [domain_suite, theme_reflect] — Wave C1: generic enum_name_table API across several domain enums.

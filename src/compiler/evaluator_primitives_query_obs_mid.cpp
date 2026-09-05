@@ -104,6 +104,7 @@ extern "C" std::uint64_t aura_macro_clone_steal_abort_total_v_read() noexcept;
 extern "C" std::uint64_t aura_macro_clone_last_reject_reason_v_read() noexcept;
 extern "C" std::uint64_t aura_macro_hygiene_last_limit_reason_v_read() noexcept;
 extern "C" std::uint64_t aura_hygiene_violation_se_emit_total_v_read() noexcept;
+extern "C" std::uint64_t aura_clone_macro_body_concurrent_refused_total_v_read() noexcept;
 extern "C" void aura_macro_hygiene_snapshot_metrics(void* metrics_ptr) noexcept;
 
 namespace aura::compiler::primitives_detail {
@@ -983,7 +984,7 @@ void register_query_obs_mid_primitives(PrimRegistrar add, std::pmr::vector<Pair>
                 return make_void();
             // Issue #2021: capacity 128 (power-of-2) — depth/concurrent keys
             // grew the dashboard past the old 48-slot open-address table.
-            auto* ht = FlatHashTable::create(query_hash_capacity_for(104));
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(108));
             if (!ht)
                 return make_void();
             bool overflowed = false;
@@ -1239,6 +1240,13 @@ void register_query_obs_mid_primitives(PrimRegistrar add, std::pmr::vector<Pair>
                 insert_kv("hygiene-violation-se-wired", 1);
                 insert_kv("hygiene-violation-se-emit-total",
                           static_cast<std::int64_t>(aura_hygiene_violation_se_emit_total_v_read()));
+                // Issue #3544: production concurrent top-level clone refuse.
+                insert_kv("schema-3544", 3544);
+                insert_kv("issue-3544", 3544);
+                insert_kv("concurrent-top-level-refuse-wired", 1);
+                insert_kv("clone-macro-body-concurrent-refused-total",
+                          static_cast<std::int64_t>(
+                              aura_clone_macro_body_concurrent_refused_total_v_read()));
             }
             insert_kv("health-score", health);
             insert_kv("hygiene-health-score", health); // AC alias
