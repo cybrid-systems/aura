@@ -18,6 +18,10 @@ Contract (one row per AC):
   AC4  test_join_drain_reclaim ac3220_*; this linter in build.py;
        no docs/design/3220-*; no test_issue_3220.cpp; no AgentRegistry;
        no new query:* (reuse query:orch-module-stats)
+  AC5  Issue #3527: AgentDirectoryEntry appends reclaimed_deferred +
+       must_wait_reclaimed at struct END; directory_snapshot populates
+       from the handle; status=reclaimed when deferred; orch:agent-directory
+       / orch:scope-resolve emit the same bool keys. No new query:*.
 
 Exit 0 = all rows satisfied.
 """
@@ -87,12 +91,30 @@ def main() -> int:
         for f in sorted(docs.glob("3220-*")):
             fails.append(f"AC4: docs/design/{f.name} present (forbidden #1655)")
 
+    # ── AC5: Issue #3527 three-plane Reclaimed bools ──
+    must("e.reclaimed_deferred = h.reclaimed_deferred_cleanup", "AC5 directory populate", scope)
+    must("e.must_wait_reclaimed = h.must_wait_reclaimed", "AC5 directory populate", scope)
+    must('e.status = "reclaimed"', "AC5 directory status", scope)
+    must("reclaimed-deferred", "AC5 directory hash", prim)
+    must("must-wait-reclaimed", "AC5 scope-resolve hash", prim)
+    must("ce.reclaimed_deferred = e.reclaimed_deferred", "AC5 cross-scope copy", scope)
+    must("Issue #3527", "AC5 directory struct", scope)
+    must("3527", "AC5 tests", t)
+    must("Three-plane Reclaimed (#3527)", "AC5 README", readme)
+    if "query:reclaimed-deferred" in prim or "query:must-wait-reclaimed" in prim:
+        fails.append("AC5: new query:* name (reuse query:orch-module-stats)")
+    if (ROOT / "tests" / "orch" / "test_issue_3527.cpp").is_file():
+        fails.append("AC5: tests/orch/test_issue_3527.cpp present (forbidden #81967)")
+    if docs.is_dir():
+        for f in sorted(docs.glob("3527-*")):
+            fails.append(f"AC5: docs/design/{f.name} present (forbidden #1655)")
+
     if fails:
         print("FAIL #3220 reclaimed_pending_lifecycle:")
         for f in fails:
             print(f"  - {f}")
         return 1
-    print("OK #3220 reclaimed_pending_lifecycle: all rows satisfied")
+    print("OK #3220/#3527 reclaimed_pending_lifecycle: all rows satisfied")
     return 0
 
 

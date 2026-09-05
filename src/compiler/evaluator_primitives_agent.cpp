@@ -4658,6 +4658,9 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 {"must-wait-reclaimed", make_bool(hp->must_wait_reclaimed)},
                 {"reservation-held", make_bool(hp->reserved_memory_bytes != 0)},
                 {"deferred-cleanup", make_bool(hp->reclaimed_deferred_cleanup)},
+                // Issue #3527: same bool name as directory rows so the
+                // three planes join on one key (no new query:*).
+                {"reclaimed-deferred", make_bool(hp->reclaimed_deferred_cleanup)},
                 {"schema-3050", make_int(3050)},
                 {"issue-3050", make_int(3050)},
             };
@@ -4717,6 +4720,11 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                     {"scope-path", make_string(pidx)},
                     {"ok", make_bool(e.ok)},
                     {"schema", make_int(aura::orch::kAgentDirectoryIssue)},
+                    // Issue #3527: same keys as orch:scope-resolve so
+                    // directory / scope-handle / name-table join. Bools
+                    // intern nothing (Soft/Off zero extra string).
+                    {"must-wait-reclaimed", make_bool(e.must_wait_reclaimed)},
+                    {"reclaimed-deferred", make_bool(e.reclaimed_deferred)},
                 };
                 // Issue #3220 / #3251: additive lifecycle on directory rows.
                 add_reclaimed_pending_lifecycle(ekv, e.lifecycle == "reclaimed-pending");
