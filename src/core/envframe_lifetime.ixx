@@ -40,6 +40,9 @@ export namespace aura::core::envframe_lifetime {
 // Issue #2164: Phase 3 — hold-pin (active registry + compact gate).
 // Phase 2 lineage (#2087) retained in schema-2087 query keys.
 inline constexpr int kEnvFrameLifetimePhase = 3;
+// Issue #3535: scan_skip_freed skips when expected_evaluator_id != ctx
+// (PanicCheckpoint #1393 mirror). Soft is one nullptr compare.
+inline constexpr int kEnvFrameCrossEvaluatorSkipIssue = 3535;
 
 enum class EnvFrameLifetimeSite : std::uint8_t {
     BoundaryExit = 0,
@@ -53,6 +56,10 @@ enum class EnvFrameLifetimeSite : std::uint8_t {
 // scan_skip_freed(ctx, site) when both are non-null.
 struct EnvFrameLifetimeHost {
     void* ctx = nullptr;
+    // Issue #3535: cross-Evaluator discriminator (PanicCheckpoint #1393
+    // mirror). nullptr = no verification (existing callers). When set
+    // and != ctx, Guard dtor skips scan_skip_freed (stale ctx).
+    void* expected_evaluator_id = nullptr;
     // Mandatory: scan live closures + skip freed/tombstoned slots +
     // enforce dual-path consistency. Called from guard dtor.
     // Issue #3055: steal × compact / truncate stay on this hold-depth
@@ -92,6 +99,9 @@ struct EnvFrameLifetimeStats {
     // miss, dual-path lag, or test inject). Gates
     // DensifyConsistencyReport.envframe_ok fail-closed.
     std::uint64_t densify_ownership_scan_fail_total = 0;
+    // Issue #3535: scan_skip_freed skipped — expected_evaluator_id != ctx.
+    // Append END per #2906. Soft / unset expected never increments.
+    std::uint64_t cross_evaluator_skip_total = 0;
 };
 
 inline EnvFrameLifetimeStats g_envframe_lifetime_stats{};
@@ -200,6 +210,10 @@ inline void inject_densify_ownership_scan_fail_for_test() noexcept {
     bump_envframe_lifetime_densify_ownership_scan_fail_total();
 }
 
+[[nodiscard]] inline std::uint64_t envframe_lifetime_cross_evaluator_skip_total() noexcept {
+    return g_envframe_lifetime_stats.cross_evaluator_skip_total;
+}
+
 // Build a host from raw function pointers. Use when the wire-up site
 // already has the trampoline + ctx handy (e.g. evaluator_gc.cpp).
 // Returns an empty host when scan_skip_freed is null.
@@ -207,6 +221,7 @@ inline EnvFrameLifetimeHost make_envframe_lifetime_host_with(
     void* ctx, void (*scan_skip_freed)(void* ctx, EnvFrameLifetimeSite site)) noexcept {
     EnvFrameLifetimeHost h{};
     h.ctx = ctx;
+    h.expected_evaluator_id = ctx; // Issue #3535: armed, matches at build
     h.scan_skip_freed = scan_skip_freed;
     // Default hold-generation: process compact generation (no Evaluator dep).
     h.hold_generation = [](void*) noexcept -> std::uint64_t { return compact_generation(); };
@@ -249,6 +264,13 @@ public:
                 break;
         }
         ++g_envframe_lifetime_stats.guards_destructed;
+        // Issue #3535: skip scan (and hold_generation on ctx) when the
+        // discriminator is armed and ctx is not the bound Evaluator.
+        // Soft / expected==nullptr: one compare, then existing scan.
+        if (host_.expected_evaluator_id != nullptr && host_.expected_evaluator_id != host_.ctx) {
+            ++g_envframe_lifetime_stats.cross_evaluator_skip_total;
+            return;
+        }
         // Mandatory exit scan (do not remove — #2003 / #2164 safety net).
         if (host_.scan_skip_freed && host_.ctx) {
             host_.scan_skip_freed(host_.ctx, site_);

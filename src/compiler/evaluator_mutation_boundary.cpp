@@ -5618,6 +5618,7 @@ Evaluator::MutationBoundaryGuard::MutationBoundaryGuard(MutationBoundaryGuard&& 
     , atomic_batch_active_(o.atomic_batch_active_)
     , suppress_bump_(o.suppress_bump_)
     , is_outermost_(o.is_outermost_)
+    , fiber_id_(o.fiber_id_) // Issue #3552: before session_mid (declaration order)
     , session_mid_at_enter_(o.session_mid_at_enter_) // #2944
     , region_mode_(o.region_mode_)
     , region_shard_(o.region_shard_)
@@ -5639,9 +5640,6 @@ Evaluator::MutationBoundaryGuard::MutationBoundaryGuard(MutationBoundaryGuard&& 
     , ev_(o.ev_)
     , owned_flag_(o.owned_flag_)
     , flag_(o.flag_ == &o.owned_flag_ ? &owned_flag_ : o.flag_)
-    // Issue #3552: propagate fiber_id so moved guard's dtor decrements
-    // the same slot the source ctor incremented.
-    , fiber_id_(o.fiber_id_)
     , lock_(std::move(o.lock_))
     , shared_lock_(std::move(o.shared_lock_))
     // Issue #3268: unique_lock is move-only. Copy would not compile

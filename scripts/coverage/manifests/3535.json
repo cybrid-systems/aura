@@ -1,0 +1,44 @@
+{
+  "issue": 3535,
+  "title": "Issue #3535: EnvFrameLifetimeGuard scan_skip_freed cross-Evaluator discriminator",
+  "ok": "OK: Issue #3535 EnvFrame cross-Evaluator scan skip — Soft one nullptr compare; no new query:*.",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/core/envframe_lifetime.ixx",
+      "contains": [
+        "kEnvFrameCrossEvaluatorSkipIssue = 3535",
+        "expected_evaluator_id",
+        "cross_evaluator_skip_total"
+      ]
+    },
+    {
+      "ac": "AC5-query",
+      "path": "src/compiler/evaluator_primitives_obs_eval.cpp",
+      "contains": [
+        "cross-evaluator-skip-total",
+        "schema-3535"
+      ]
+    },
+    {
+      "ac": "AC1-test",
+      "path": "tests/compiler/test_scan_skip_freed_closures.cpp",
+      "contains": [
+        "3535 AC1",
+        "3535 AC2",
+        "3535 AC3",
+        "3535 AC4",
+        "3535 AC5"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "forbid": [
+        "tests/core/test_issue_3535.cpp",
+        "tests/core/test_envframe_lifetime_discriminator.cpp",
+        "docs/design/3535-envframe-discriminator.md",
+        "scripts/coverage/checks/check_envframe_cross_evaluator_3535.py"
+      ]
+    }
+  ]
+}

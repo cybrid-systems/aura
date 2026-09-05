@@ -3536,8 +3536,9 @@ void ObservabilityPrims::register_eval_p22(PrimRegistrar add, Evaluator& ev) {
             const std::uint64_t invalidations_total =
                 m ? m->envframe_lifetime_guard_invalidations_total.load(std::memory_order_relaxed)
                   : 0;
-            // Capacity 32: schema-2003/2087 keys + #2164 hold-pin counters.
-            auto* ht = FlatHashTable::create(query_hash_capacity_for(24));
+            // Capacity 32: schema-2003/2087 keys + #2164 hold-pin counters
+            // + #3535 cross-evaluator skip (was 24).
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(32));
             if (!ht)
                 return make_void();
             bool overflowed = false;
@@ -3626,6 +3627,15 @@ void ObservabilityPrims::register_eval_p22(PrimRegistrar add, Evaluator& ev) {
                               Site::CompactSweep)));
             insert_kv("schema-2164", 2164);
             insert_kv("hold-pin-wired", 1);
+            // Issue #3535: cross-Evaluator scan skip. Additive keys on
+            // existing query:envframe-lifetime-stats. No new query:*.
+            using aura::core::envframe_lifetime::envframe_lifetime_cross_evaluator_skip_total;
+            using aura::core::envframe_lifetime::kEnvFrameCrossEvaluatorSkipIssue;
+            insert_kv("cross-evaluator-skip-total",
+                      static_cast<std::int64_t>(envframe_lifetime_cross_evaluator_skip_total()));
+            insert_kv("envframe-cross-evaluator-skip-wired", 1);
+            insert_kv("schema-3535", kEnvFrameCrossEvaluatorSkipIssue);
+            insert_kv("issue-3535", kEnvFrameCrossEvaluatorSkipIssue);
             return query_hash_finish(ht, ev.string_heap_, overflowed);
         });
 }
