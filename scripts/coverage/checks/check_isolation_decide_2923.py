@@ -8,6 +8,10 @@ AC:
   4. No second ternary in agent primitives
   5. Extend test_parallel_intend_pure_contract (no test_issue_N); build.py wire
   6. No docs/design/2923-* per #1655
+  7. Issue #3528: BatchResult appends isolation_level /
+     region_concurrent_eligible / distinct_nonzero_region_keys at
+     struct END; parallel_run stamps from decide_isolation; Aura hash
+     exposes distinct-region-keys. No new query:*.
 """
 
 from __future__ import annotations
@@ -68,6 +72,28 @@ def main() -> int:
     if docs.is_dir():
         for f in docs.glob("2923-*"):
             fails.append(f"AC6: docs/design/{f.name} forbidden per #1655")
+
+    # Issue #3528: BatchResult isolation observation (struct END).
+    must("Issue #3528" in poh, "AC7: parallel_orch cites #3528")
+    must("out.isolation_level = iso.level" in poh, "AC7: parallel_run stamps isolation_level")
+    must(
+        "out.region_concurrent_eligible = iso.region_concurrent_eligible" in poh,
+        "AC7: parallel_run stamps region_concurrent_eligible",
+    )
+    must(
+        "out.distinct_nonzero_region_keys = iso.distinct_nonzero_region_keys" in poh,
+        "AC7: parallel_run stamps distinct_nonzero_region_keys",
+    )
+    must('"distinct-region-keys"' in agent, "AC7: Aura hash distinct-region-keys")
+    must("3528" in test, "AC7: contract test extended")
+    must("query:distinct-region-keys" not in agent, "AC7: no new query:*")
+    must(
+        not (ROOT / "tests/orch/test_issue_3528.cpp").is_file(),
+        "AC7: no invent test_issue_3528",
+    )
+    if docs.is_dir():
+        for f in docs.glob("3528-*"):
+            fails.append(f"AC7: docs/design/{f.name} forbidden per #1655")
 
     if fails:
         for f in fails:

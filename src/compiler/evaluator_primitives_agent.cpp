@@ -2812,6 +2812,8 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                     {"isolation-level", make_string(iso_sidx)},
                     {"isolation-level-wired", make_int(1)},
                     {"region-concurrent-eligible", make_bool(false)},
+                    {"distinct-region-keys", make_int(static_cast<std::int64_t>(
+                                                 iso_decision.distinct_nonzero_region_keys))},
                     {"region-key-missing-serialized", make_int(1)},
                     {"serialized-reason", make_string(reason_sidx)},
                     {"schema", make_int(1587)},
@@ -3000,6 +3002,10 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                      .load(std::memory_order_relaxed)))},
             // Issue #2923: same IsolationDecision as isolation-level (no 2nd count).
             {"region-concurrent-eligible", make_bool(region_concurrent_eligible)},
+            // Issue #3528: per-batch distinct keys (not the process-global
+            // region-keys-supplied counter). Same IsolationDecision.
+            {"distinct-region-keys",
+             make_int(static_cast<std::int64_t>(iso_decision.distinct_nonzero_region_keys))},
             // Issue #3243: production missing/overlap keys stay Serialized
             // (no false concurrent) but host can see why. Soft / single /
             // pure: region-key-missing-serialized=0, serialized-reason="".

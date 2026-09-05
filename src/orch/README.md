@@ -62,6 +62,9 @@ production missing-keys batch.
 **isolation-level enum** (`isolation-level` on every batch hash, schema-2400 / #2886 / #2923):
 `serialized` | `best-effort-pure` | `region-concurrent` | `none` (C++ TaskSpec-only path that never touches Evaluator).
 SSOT: `aura::serve::parallel_orch::decide_isolation` (header-only); Aura `(parallel-intend)` does not re-derive the ternary.
+Issue #3528: C++ `BatchResult` carries `isolation_level` / `region_concurrent_eligible` /
+`distinct_nonzero_region_keys` (struct END). The Aura hash also exposes
+`distinct-region-keys` (per-batch, not the process-global counter). No new `query:*`.
 
 **Pure contract (caller guarantees + best-effort probe):**
 
