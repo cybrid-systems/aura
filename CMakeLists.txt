@@ -2387,6 +2387,12 @@ add_dependencies(all_test_issue_targets test_occurrence_abort_restore)
 aura_add_issue_test(test_outermost_persist_fail_closed)
 aura_issue_test_link_light(test_outermost_persist_fail_closed)
 add_dependencies(all_test_issue_targets test_outermost_persist_fail_closed)
+# Issue #3556: production hard-reject expected_fp==0 unstaged persist
+# (residual #G1, typed-mutation x typed-system). Test in tests/compiler/
+# (src/-aligned suite per #81934 / 2026-07-24 agent-repo rule).
+aura_add_issue_test(test_occurrence_persist_rehydrate)
+aura_issue_test_link_light(test_occurrence_persist_rehydrate)
+add_dependencies(all_test_issue_targets test_occurrence_persist_rehydrate)
 # Issue #3159: close residual half-green window where concurrent
 # lookup_define_v2 during dual-topology restore could observe pre-abort
 # IR if abort-force fence is published after topology restore starts
