@@ -25,9 +25,19 @@ import aura.core.lifetime_pin;
 
 namespace {
 
+using aura::core::lifetime::clear_general_object_pin_required_breach;
+using aura::core::lifetime::g_general_object_pin_required_pref;
+using aura::core::lifetime::g_lifetime_pin_stats;
+using aura::core::lifetime::general_object_pin_inventory_count_v_read;
+using aura::core::lifetime::GeneralObjectPin;
 using aura::core::lifetime::kGeneralObjectPinAdoptIssue;
 using aura::core::lifetime::kGeneralObjectPinAdoptSiteCount;
+using aura::core::lifetime::kGeneralObjectPinInventoryIssue;
 using aura::core::lifetime::kGeneralObjectPinIssue;
+using aura::core::lifetime::note_general_object_create_auto_wire;
+using aura::core::lifetime::note_general_object_pin_exempt;
+using aura::core::lifetime::reset_general_object_pin_inventory_for_test;
+using aura::core::lifetime::wire_general_object_create_pair_or_exempt;
 using aura::test::g_failed;
 using aura::test::g_passed;
 
@@ -592,6 +602,84 @@ static void ac3214_coverage_gate_cite() {
           "3214 AC: inventory floor not hand-bumped");
 }
 
+static void ac3534_1_exempt_and_wire_bump_inventory() {
+    std::println("\n--- #3534 AC1: EXEMPT + wire bump runtime inventory ---");
+    const int prev = g_general_object_pin_required_pref.exchange(0);
+    reset_general_object_pin_inventory_for_test();
+    const auto exempt0 = g_lifetime_pin_stats.general_object_pin_exempt_total;
+    note_general_object_pin_exempt("stable-handle");
+    CHECK(general_object_pin_inventory_count_v_read() == 1,
+          "3534 AC1: EXEMPT helper bumps inventory");
+    CHECK(g_lifetime_pin_stats.general_object_pin_exempt_total == exempt0 + 1,
+          "3534 AC1: EXEMPT helper bumps exempt_total");
+    GeneralObjectPin pa, pb;
+    // Null args do not pin (ok_a && ok_b is false) but still adopt the site.
+    (void)wire_general_object_create_pair_or_exempt(pa, pb, nullptr, nullptr, nullptr);
+    CHECK(general_object_pin_inventory_count_v_read() == 2,
+          "3534 AC1: wire_or_exempt default bumps inventory");
+    CHECK(wire_general_object_create_pair_or_exempt(pa, pb, nullptr, nullptr, "hot-path-bypass"),
+          "3534 AC1: EXEMPT reason proceeds");
+    CHECK(general_object_pin_inventory_count_v_read() == 3,
+          "3534 AC1: wire_or_exempt EXEMPT reason bumps inventory");
+    g_general_object_pin_required_pref.store(prev);
+    clear_general_object_pin_required_breach();
+}
+
+static void ac3534_2_floor_preserved() {
+    std::println("\n--- #3534 AC2: floor=7 preserved (no hand-bump) ---");
+    CHECK(kGeneralObjectPinAdoptSiteCount == 7, "3534 AC2: floor stays 7");
+    CHECK(kGeneralObjectPinInventoryIssue == 3534, "3534 AC2: stamp");
+}
+
+static void ac3534_3_chaos_create_inventory() {
+    std::println("\n--- #3534 AC3: 1000 create auto-wire inventory bumps ---");
+    reset_general_object_pin_inventory_for_test();
+    for (int i = 0; i < 1000; ++i)
+        note_general_object_create_auto_wire();
+    CHECK(general_object_pin_inventory_count_v_read() == 1000,
+          "3534 AC3: 1000 auto-wire hits inventory");
+}
+
+static void ac3534_4_soft_one_fetch_add() {
+    std::println("\n--- #3534 AC4: Soft is one inventory fetch_add ---");
+    const auto lp = read_file("src/core/lifetime_pin.hh");
+    CHECK(lp.find("note_pin_inventory_registered") != std::string::npos,
+          "3534 AC4: inventory helper");
+    CHECK(lp.find("g_general_object_pin_inventory_count.fetch_add") != std::string::npos,
+          "3534 AC4: one fetch_add");
+    CHECK(lp.find("g_general_object_pin_required_pref.load(std::memory_order_relaxed) > 0") !=
+              std::string::npos,
+          "3534 AC4: required-mode gate unchanged");
+}
+
+static void ac3534_5_source_cite_no_invent() {
+    std::println("\n--- #3534 AC5: source-cite + no invent ---");
+    const auto lp = read_file("src/core/lifetime_pin.hh");
+    const auto obs = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
+    CHECK(lp.find("kGeneralObjectPinInventoryIssue = 3534") != std::string::npos,
+          "3534 AC5: stamp");
+    CHECK(lp.find("note_general_object_pin_exempt") != std::string::npos,
+          "3534 AC5: EXEMPT is runtime (not comment-only)");
+    CHECK(lp.find("kGeneralObjectPinAdoptSiteCount = 7") != std::string::npos,
+          "3534 AC5: floor retained");
+    CHECK(obs.find("schema-3534") != std::string::npos, "3534 AC5: schema-3534");
+    CHECK(obs.find("general-object-pin-inventory-count") != std::string::npos,
+          "3534 AC5: additive query key");
+    CHECK(obs.find("query:general-object-pin-inventory") == std::string::npos,
+          "3534 AC5: no new query:*");
+    CHECK(lp.find("class FfiOpaquePinRegistry") == std::string::npos,
+          "3534 AC5: no extra pin table type");
+    CHECK(read_file("tests/core/test_issue_3534.cpp").empty(), "3534 AC5: no test_issue_3534.cpp");
+    CHECK(read_file("tests/core/test_gop_inventory_runtime.cpp").empty(),
+          "3534 AC5: folded into existing coverage-gate suite");
+    CHECK(read_file("docs/design/3534-gop-inventory.md").empty(),
+          "3534 AC5: no docs/design/3534-*");
+    CHECK(read_file("scripts/coverage/checks/check_general_object_pin_inventory_3534.py").empty(),
+          "3534 AC5: no substring-only py linter");
+    CHECK(read_file("CMakeLists.txt").find("GOP_INVENTORY_SITES") == std::string::npos,
+          "3534 AC5: no CMake site list");
+}
+
 int run_test_general_object_pin_coverage_gate() {
     std::println("=== Issue #2496: GeneralObjectPin adoption coverage gate ===");
     std::println("=== Issue #2597: production default AURA_GENERAL_OBJECT_PIN=required "
@@ -749,6 +837,12 @@ int run_test_general_object_pin_coverage_gate() {
         CHECK(!test_probe.good(),
               "#3306 AC5: no test_issue_3306.cpp (per #81934 — extend existing)");
     }
+
+    ac3534_1_exempt_and_wire_bump_inventory();
+    ac3534_2_floor_preserved();
+    ac3534_3_chaos_create_inventory();
+    ac3534_4_soft_one_fetch_add();
+    ac3534_5_source_cite_no_invent();
 
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;

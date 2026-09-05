@@ -395,6 +395,23 @@ static void ac3533_opaque_heap_required_query() {
     CHECK(wired == 1 || wired == -1, "3533: wired sentinel");
 }
 
+static void ac3534_gop_inventory_query() {
+    std::println("\n--- #3534: GOP runtime inventory additive query ---");
+    const auto lp = read_file("src/core/lifetime_pin.hh");
+    const auto obs = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
+    CHECK(lp.find("kGeneralObjectPinInventoryIssue = 3534") != std::string::npos, "3534: stamp");
+    CHECK(lp.find("kGeneralObjectPinAdoptSiteCount = 7") != std::string::npos,
+          "3534: floor retained");
+    CHECK(obs.find("schema-3534") != std::string::npos, "3534: schema-3534");
+    CHECK(obs.find("general-object-pin-inventory-count") != std::string::npos,
+          "3534: inventory-count key");
+    CompilerService cs;
+    const auto schema = href(cs, "schema-3534");
+    CHECK(schema == 3534 || schema == -1, "3534: schema-3534 queryable or hash-ref skip");
+    const auto wired = href(cs, "general-object-pin-inventory-wired");
+    CHECK(wired == 1 || wired == -1, "3534: wired sentinel");
+}
+
 } // namespace
 
 int run_test_general_object_pin() {
@@ -414,8 +431,9 @@ int run_test_general_object_pin() {
     ac3022_pin_required_and_soak();
     ac3057_ffi_opaque_slot_cover();
     ac3533_opaque_heap_required_query();
-    std::println("\n=== #2298 + #2337 + #3022 + #3057 + #3533: {} passed, {} failed ===", g_passed,
-                 g_failed);
+    ac3534_gop_inventory_query();
+    std::println("\n=== #2298 + #2337 + #3022 + #3057 + #3533 + #3534: {} passed, {} failed ===",
+                 g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
 

@@ -1763,7 +1763,7 @@ void ObservabilityPrims::register_eval_p11(PrimRegistrar add, Evaluator& ev) {
             // Capacity 128: schema-2004 + #2157 Force + #2166 Moving densify
             // + #2298/#2337/#2363 general-object pin adopt keys (was 64;
             // load approached capacity and dropped tail inserts).
-            auto* ht = FlatHashTable::create(query_hash_capacity_for(100));
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(108));
             if (!ht)
                 return make_void();
             bool overflowed = false;
@@ -2023,6 +2023,16 @@ void ObservabilityPrims::register_eval_p11(PrimRegistrar add, Evaluator& ev) {
                 insert_kv("opaque-heap-pin-required-wired", 1);
                 insert_kv("schema-3533", kOpaqueHeapPinRequiredIssue);
                 insert_kv("issue-3533", kOpaqueHeapPinRequiredIssue);
+                // Issue #3534: runtime GOP coverage inventory. Additive
+                // keys on existing query:arena-live-compact-stats. Floor=7
+                // keys above are unchanged.
+                using aura::core::lifetime::general_object_pin_inventory_count_v_read;
+                using aura::core::lifetime::kGeneralObjectPinInventoryIssue;
+                insert_kv("general-object-pin-inventory-count",
+                          static_cast<std::int64_t>(general_object_pin_inventory_count_v_read()));
+                insert_kv("general-object-pin-inventory-wired", 1);
+                insert_kv("schema-3534", kGeneralObjectPinInventoryIssue);
+                insert_kv("issue-3534", kGeneralObjectPinInventoryIssue);
             }
             // Issue #2266: verify_pins_under_moving_compact fail-closed change.
             // Schema additive — no break. Driver (Phase 5 in
