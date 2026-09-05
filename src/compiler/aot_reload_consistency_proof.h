@@ -209,4 +209,11 @@ inline std::uint64_t aura_aot_reload_proof_seqlock_retry_total(void) noexcept {
     return g_aot_reload_proof_seqlock_retry_total.load(std::memory_order_relaxed);
 }
 
+// Issue #3539: old .so staged for deferred dlclose (must_deopt walk
+// runs before close). Append END. Soft/no-reload: pending==0, one load.
+inline constexpr int kAotReloadOldSoStagedIssue = 3539;
+inline std::atomic<std::uint64_t> g_aura_reload_old_so_staged_total{0};
+inline std::atomic<std::uint32_t> g_aura_reload_old_so_staged_wired{1};
+inline std::atomic<std::uint64_t> g_aura_reload_old_so_pending{0};
+
 #endif // AURA_COMPILER_AOT_RELOAD_CONSISTENCY_PROOF_H

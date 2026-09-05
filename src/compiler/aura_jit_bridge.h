@@ -847,6 +847,10 @@ void aura_epoch_invariant_note_closure_must_deopt(std::uint64_t n) noexcept;
 // (bridge_epoch != current table epoch, not already must_deopt, not freed).
 // Returns number of closures newly marked MustDeopt.
 [[nodiscard]] std::size_t aura_epoch_invariant_must_deopt_stale_live_closures(void);
+// Issue #3539: defer dlclose of the prior AOT .so until BoundaryExit
+// (must_deopt walk already ran). pending==0 is one relaxed load.
+void aura_force_drain_old_so(void);
+std::uint64_t aura_reload_old_so_staged_total_v_read(void);
 // Test inject: live non-null slot with table_generation behind current epoch.
 void aura_aot_inject_live_stale_slot_for_test(std::int64_t func_id);
 void aura_aot_clear_slot_for_test(std::int64_t func_id);

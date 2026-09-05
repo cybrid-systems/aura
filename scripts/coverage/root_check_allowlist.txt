@@ -14,6 +14,7 @@ check_dual_track_facade_3112.py
 check_envframe_lifetime_proof_2711.py
 check_epoch_invariant_soft_fuse_heal_2712.py
 check_eval_flat_hot_path_3401.py
+check_evaluator_ctor_production_upgrade.py
 check_eventfd_wake_force_safepoint.py
 check_general_object_pin_auto_wire_2709.py
 check_grant_mid_refused_3090.py

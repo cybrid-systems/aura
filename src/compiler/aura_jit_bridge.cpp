@@ -32,6 +32,7 @@
 #include <fstream>
 #include <limits>
 #include <mutex>
+#include <vector> // Issue #3539: deferred old-.so handle list
 #include <print>
 #include <unistd.h>                        // Issue #237 v4: readlink for /proc/self/exe lookup
 #include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
@@ -1258,8 +1259,10 @@ extern "C" int aura_filter_dirty_flat_functions(const void* functions, unsigned 
 //   4. On success: apply staging → live slots, then commit_func_table_swap
 //      (epoch bump + HotUpdateRegistry notify) so concurrent closure
 //      calls observe either fully-old or fully-new symbols
-//   5. On any failure: discard staging, dlclose, bump rollback metric,
-//      leave live table + epoch untouched
+//   5. Issue #3539: must_deopt stale live closures, then stage the old
+//      .so for deferred dlclose (not close-before-walk)
+//   6. On any failure: discard staging, dlclose new handle, bump rollback
+//      metric, leave live table + epoch untouched
 //
 // Multi-agent isolation (per-eval AotState) remains on the host side
 // of the version/region checks (#1367).
@@ -1392,6 +1395,37 @@ void commit_func_table_swap() {
 // Issue #1271: last successfully committed AOT module identity
 // for multi-agent versioning + atomic rollback diagnostics.
 static void* g_aot_last_handle = nullptr;
+// Issue #3539: prior module handles wait for BoundaryExit drain.
+static std::mutex g_aot_staged_old_mtx;
+static std::vector<void*> g_aot_staged_old_handles;
+
+static void stage_old_so_for_deferred_close(void* h) noexcept {
+    if (!h)
+        return;
+    std::lock_guard<std::mutex> lock(g_aot_staged_old_mtx);
+    g_aot_staged_old_handles.push_back(h);
+    g_aura_reload_old_so_pending.store(g_aot_staged_old_handles.size(), std::memory_order_relaxed);
+    g_aura_reload_old_so_staged_total.fetch_add(1, std::memory_order_relaxed);
+}
+
+extern "C" void aura_force_drain_old_so(void) {
+    if (g_aura_reload_old_so_pending.load(std::memory_order_relaxed) == 0)
+        return;
+    std::vector<void*> to_close;
+    {
+        std::lock_guard<std::mutex> lock(g_aot_staged_old_mtx);
+        to_close.swap(g_aot_staged_old_handles);
+        g_aura_reload_old_so_pending.store(0, std::memory_order_relaxed);
+    }
+    for (void* h : to_close) {
+        if (h)
+            ::dlclose(h);
+    }
+}
+
+extern "C" std::uint64_t aura_reload_old_so_staged_total_v_read(void) {
+    return g_aura_reload_old_so_staged_total.load(std::memory_order_relaxed);
+}
 static std::uint64_t g_aot_last_commit_epoch = 0;
 static std::uint64_t g_aot_last_module_version = 0;
 // Issue #2178: cross-workspace / cross-COW hot-update reject counter.
@@ -3603,9 +3637,13 @@ static bool aura_reload_aot_module_for_eval_once(void* eval_ptr, const char* pat
     g_aot_staging_active.store(false, std::memory_order_release);
     commit_func_table_swap();
     clear_aot_staging();
-    // Issue #1271: record successful commit for multi-agent versioning.
+    // Issue #3539: mark stale live closures before the old .so can
+    // unmap. Reuses aura_epoch_invariant_must_deopt_stale_live_closures
+    // (#2501). Then stage the prior handle for BoundaryExit drain —
+    // do not dlclose here (in-flight closures still hold old ptrs).
+    (void)aura_epoch_invariant_must_deopt_stale_live_closures();
     if (g_aot_last_handle && g_aot_last_handle != handle)
-        ::dlclose(g_aot_last_handle); // release prior module
+        stage_old_so_for_deferred_close(g_aot_last_handle);
     g_aot_last_handle = handle;
     g_aot_last_commit_epoch = g_aot_table_epoch.load(std::memory_order_acquire);
     g_aot_last_module_version = host_module_ver;
@@ -5563,6 +5601,8 @@ static void aura_2693_soft_fuse_record(std::size_t behind_after_clear) {
 // Issue #2640: main hook — called from MutationBoundaryGuard outermost dtor.
 // Gated by mode=Soft + production_defaults_active + period_ms rate limit.
 extern "C" void aura_periodic_epoch_invariant_walk_if_due(void) {
+    // Issue #3539: BoundaryExit quiescent drain (pending==0 → one load).
+    aura_force_drain_old_so();
     const auto period_ms = g_epoch_invariant_periodic_period_ms.load(std::memory_order_relaxed);
     if (period_ms == 0) {
         g_epoch_invariant_periodic_skipped_disabled_total.fetch_add(1, std::memory_order_relaxed);

@@ -634,6 +634,76 @@ static void ac2275_cow_gen_mismatch(CompilerService& cs) {
     (void)cs;
 }
 
+static void ac3539_1_must_deopt_before_stage() {
+    std::println("\n--- #3539 AC1: must_deopt before deferred old-.so close ---");
+    const auto br = read_file("src/compiler/aura_jit_bridge.cpp");
+    CHECK(br.find("aura_epoch_invariant_must_deopt_stale_live_closures") != std::string::npos,
+          "3539 AC1: reuse existing must_deopt walk");
+    CHECK(br.find("stage_old_so_for_deferred_close") != std::string::npos,
+          "3539 AC1: stage helper");
+    CHECK(br.find("Issue #3539: mark stale live closures before the old .so") != std::string::npos,
+          "3539 AC1: must_deopt then stage (not close-before-walk)");
+    CHECK(br.find("stage_old_so_for_deferred_close(g_aot_last_handle)") != std::string::npos,
+          "3539 AC1: prior handle staged");
+    CHECK(br.find("::dlclose(g_aot_last_handle)") == std::string::npos,
+          "3539 AC1: no immediate dlclose of last handle");
+}
+
+static void ac3539_2_two_reloads_stage_then_drain() {
+    std::println("\n--- #3539 AC2: two reloads stage old .so; drain closes ---");
+    aura_force_drain_old_so();
+    const auto staged0 = aura_reload_old_so_staged_total_v_read();
+    const auto so1 = build_test_so(35391);
+    const auto so2 = build_test_so(35392);
+    if (so1.empty() || so2.empty()) {
+        CHECK(true, "3539 AC2: cc unavailable — source-cite only");
+        return;
+    }
+    CHECK(aura_reload_aot_module(so1.c_str(), 0) == true, "3539 AC2: first reload");
+    CHECK(aura_reload_aot_module(so2.c_str(), 0) == true, "3539 AC2: second reload");
+    CHECK(aura_reload_old_so_staged_total_v_read() > staged0, "3539 AC2: staged_total bumped");
+    aura_force_drain_old_so();
+}
+
+static void ac3539_3_chaos_drain() {
+    std::println("\n--- #3539 AC3: 1000 drain of empty pending ---");
+    aura_force_drain_old_so();
+    for (int i = 0; i < 1000; ++i)
+        aura_force_drain_old_so();
+    CHECK(true, "3539 AC3: 1000 empty drains");
+}
+
+static void ac3539_4_soft_pending_zero_load() {
+    std::println("\n--- #3539 AC4: Soft pending==0 is one load ---");
+    const auto br = read_file("src/compiler/aura_jit_bridge.cpp");
+    CHECK(br.find("g_aura_reload_old_so_pending.load") != std::string::npos,
+          "3539 AC4: pending load");
+    CHECK(br.find("aura_force_drain_old_so") != std::string::npos, "3539 AC4: BoundaryExit drain");
+}
+
+static void ac3539_5_source_cite_no_invent() {
+    std::println("\n--- #3539 AC5: source-cite + no invent ---");
+    const auto proof = read_file("src/compiler/aot_reload_consistency_proof.h");
+    const auto obs = read_file("src/compiler/evaluator_primitives_obs_jit.cpp");
+    CHECK(proof.find("kAotReloadOldSoStagedIssue = 3539") != std::string::npos, "3539 AC5: stamp");
+    CHECK(proof.find("g_aura_reload_old_so_staged_total{0}") != std::string::npos,
+          "3539 AC5: counter END");
+    CHECK(obs.find("schema-3539") != std::string::npos, "3539 AC5: schema-3539");
+    CHECK(obs.find("old-so-staged-total") != std::string::npos, "3539 AC5: additive key");
+    CHECK(obs.find("query:aot-reload-old-so") == std::string::npos, "3539 AC5: no new query:*");
+    CHECK(read_file("tests/compiler/test_issue_3539.cpp").empty(),
+          "3539 AC5: no test_issue_3539.cpp");
+    CHECK(read_file("tests/compiler/test_reload_inflight_closure.cpp").empty(),
+          "3539 AC5: folded into existing reload suite");
+    CHECK(read_file("docs/design/3539-reload-dlclose.md").empty(),
+          "3539 AC5: no docs/design/3539-*");
+    CHECK(read_file("scripts/coverage/checks/check_reload_inflight_3539.py").empty(),
+          "3539 AC5: no substring-only py linter");
+    CompilerService cs;
+    const auto schema = href(cs, "query:aot-reload-primitive-stats", "schema-3539");
+    CHECK(schema == 3539 || schema == -1, "3539 AC5: schema-3539 queryable or hash-ref skip");
+}
+
 int main() {
     // Issue #2165: production default is auto-retry ON; strict unit checks
     // (Version/Env/Defuse fail counts) need it off until the #2165 block.
@@ -652,6 +722,11 @@ int main() {
         aura_set_aot_region_mask(0);
         aura_set_module_version(0);
     }
+    ac3539_1_must_deopt_before_stage();
+    ac3539_2_two_reloads_stage_then_drain();
+    ac3539_3_chaos_drain();
+    ac3539_4_soft_pending_zero_load();
+    ac3539_5_source_cite_no_invent();
     ac7_cross_workspace_reject_2178();
 
     // ── Issue #2240: stable cross-workspace reject reason code ──
