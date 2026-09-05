@@ -344,6 +344,27 @@ inline void bump_held_ref_stale_after_steal() noexcept {
     g_mf_mailbox_stats.held_ref_stale_after_steal_total.fetch_add(1, std::memory_order_relaxed);
 }
 
+// Issue #3565: production recv/pop of held_ref_token && !handoff_completed
+// is not a successful payload delivery. Steal-complete (#3369) already
+// cleared the stamp; this is the consume-side gate the comment promised.
+// Pop already happened (queue not poisoned). Payload is cleared so a
+// careless C++ host cannot intern stale stable-ref:id:gen. Soft / Off:
+// probe==0, deliver as today. No token / already stamped: two loads, no
+// production probe (AC4 zero extra).
+inline bool maybe_clear_stale_held_ref_on_recv(MailMessage& out,
+                                               MultiFiberMailboxStats* local = nullptr) noexcept {
+    if (!out.held_ref_token.has_value() || out.handoff_completed)
+        return false;
+    if (aura_production_defaults_active_probe() == 0)
+        return false;
+    g_mf_mailbox_stats.handoff_reject_total.fetch_add(1, std::memory_order_relaxed);
+    if (local)
+        local->handoff_reject_total.fetch_add(1, std::memory_order_relaxed);
+    bump_held_ref_stale_after_steal();
+    out.payload.clear();
+    return true;
+}
+
 // Issue #2378: open-window timers for flush latency (zero when no open defer).
 // first_open_defer_ns: set on depth 0→1; cleared when depth returns to 0.
 // last_outermost_exit_ns: set on Guard outermost exit (drain opportunity).
@@ -1181,7 +1202,8 @@ public:
     // in evaluator_fiber_mutation.cpp to honor #3111 AC1: production
     // re-validate clears handoff_completed on potentially stale held_ref
     // messages so the consumer's recv() path is forced through the
-    // handoff gate instead of silently delivering a stale StableNodeRef.
+    // handoff gate instead of silently delivering a stale StableNodeRef
+    // (Issue #3565: maybe_clear_stale_held_ref_on_recv).
     template <typename Fn> void for_each_pending_held_ref_for_fiber(Fiber* fiber, Fn&& fn) {
         if (!fiber)
             return;
@@ -1424,6 +1446,7 @@ public:
         std::lock_guard lock(mu_);
         if (!try_pop_unlocked(out, /*for_fiber=*/0))
             return false;
+        (void)maybe_clear_stale_held_ref_on_recv(out, &local_stats_);
         // Issue #2592: deliver-side principal verify (TenantScope install
         // + mismatch bump). Re-call aura_fiber_install_tenant_scope_for_resume
         // from the receiving fiber; the hook is idempotent (no-op when
@@ -1476,6 +1499,10 @@ public:
                     if (g_current_fiber != nullptr && g_current_fiber->has_assigned_tenant()) {
                         aura_fiber_install_tenant_scope_for_resume(g_current_fiber);
                     }
+                    // Issue #3565: production unstamped held_ref is not a
+                    // successful payload delivery (steal-complete cleared
+                    // the stamp; push-only gate was not enough).
+                    (void)maybe_clear_stale_held_ref_on_recv(out, &local_stats_);
                     return out;
                 }
                 if (closed_.load(std::memory_order_relaxed))

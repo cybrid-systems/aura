@@ -4157,11 +4157,11 @@ extern "C" void aura_evaluator_on_steal_complete(void* fiber_ptr) noexcept {
         // pending held_ref message, and bumps held_ref_stale_after_steal_total
         // (one per cleared message). The post-steal state may have moved
         // the fiber's execution context (new worker / new Evaluator), so
-        // any pre-steal held_ref token is potentially stale. Forcing the
-        // message back through the HandoffRequired gate lets the consumer
-        // re-export via handoff_ref instead of silently consuming a stale
-        // StableNodeRef (residual of #3111). Quiet path: mailbox() null or
-        // empty queue → walk is a single lock + range-for with no body.
+        // any pre-steal held_ref token is potentially stale. Issue #3565:
+        // recv/pop now refuse a successful payload when the stamp is
+        // clear (push-only gate was not enough). Quiet path: mailbox()
+        // null or empty queue → walk is a single lock + range-for with
+        // no body.
         if (auto* mb = fiber->mailbox()) {
             mb->for_each_pending_held_ref_for_fiber(fiber, [](auto& m) {
                 if (m.handoff_completed) {
