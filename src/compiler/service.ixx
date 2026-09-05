@@ -4997,15 +4997,20 @@ public:
         // entry's abort_force_generation lagging live gen → needs-relower.
         // Do not serve pre-abort IR or consult source_to_ir_map.
         const auto abort_gen0 = abort_force_generation_.load(std::memory_order_acquire);
-        if (abort_force_rejects_clean_hit_(it->second, abort_gen0))
+        if (abort_force_rejects_clean_hit_(it->second, abort_gen0)) {
+            metrics_.should_relower_total.fetch_add(1, std::memory_order_relaxed);
             return 1;
+        }
         // Issue #3324: abort dual-topology restore cleared the map and
         // marked abort_map_invalid. lookup must not treat a later
         // dirty-cleared / live-restamped entry as a clean hit while the
         // map/IR still belong to pre-abort identity. Soft abort already
         // set the flag (force-dirty is abort-path, not production-gated).
-        if (it->second.abort_map_invalid)
+        // Issue #3551: count as should_relower (not silent serve).
+        if (it->second.abort_map_invalid) {
+            metrics_.should_relower_total.fetch_add(1, std::memory_order_relaxed);
             return 1;
+        }
         // Issue #3481: content latch. Facade AOT / instr peel may ack
         // peer + abort-force gen without a content store. lookup stays
         // needs-relower until store_define_v2 or a peel that rewrote AST.
@@ -5468,12 +5473,32 @@ public:
         abort_force_in_progress_.store(1, std::memory_order_release);
     }
 
+    // Issue #3551: drop pre-abort irs + source_to_ir_map for one define
+    // so lookup cannot serve restored-hash / pre-abort IR. Soft/Off:
+    // observe only. Production/Full: hard drop. abort_define_set is the
+    // ir_cache_v2_ key set walked by force_ir_cache_dirty_after_abort.
+    void clear_cache_v2_for_define(const std::string& name) {
+        if (!(aura::compiler::typed_audit::production_defaults_active() ||
+              aura::compiler::typed_audit::get_strategy() ==
+                  aura::compiler::typed_audit::AuditStrategy::Full)) {
+            g_phase5_abort_cache_clear_observe_total.fetch_add(1, std::memory_order_relaxed);
+            return;
+        }
+        auto it = ir_cache_v2_.find(name);
+        if (it == ir_cache_v2_.end())
+            return;
+        it->second.irs.clear();
+        it->second.source_to_ir_map.clear();
+        g_phase5_abort_cache_clear_total.fetch_add(1, std::memory_order_relaxed);
+    }
+
     // Issue #3033 / #3069 / #3117 / #3324: dual-topology abort force-dirty.
     // abort_restore_dual_topology restores AST topology but IR cache
     // stamps / source_to_ir_map can still point at pre-abort IR.
     // Force-dirty + zero-restamp every cached entry, then *clear*
     // (do not rebuild from) source_to_ir_map so ImpactScope cannot
     // under-invalidate on aborted NodeIds. Abort path only.
+    // Issue #3551: also drop entry.irs (clear_cache_v2_for_define).
     void force_ir_cache_dirty_after_abort() {
         // Issue #3069 / #3117: publish the fence before the walk. When
         // begin_abort_ir_cache_force_fence already ran (restore window),
@@ -5487,7 +5512,6 @@ public:
         }
         std::size_t forced = 0;
         for (auto& [name, entry] : ir_cache_v2_) {
-            (void)name;
             entry.dirty = true;
             entry.mark_all_blocks_dirty();
             // Zero stamps → should_relower forced true on every domain
@@ -5508,6 +5532,8 @@ public:
             // Issue #3481: abort zeros stamps + invalidates the map; content
             // is untrusted until the next store. Do not restamp-on-AOT.
             entry.content_stored_this_epoch = false;
+            // Issue #3551: drop pre-abort irs (abort_define_set = cache keys).
+            clear_cache_v2_for_define(name);
             ++forced;
         }
         if (forced > 0)

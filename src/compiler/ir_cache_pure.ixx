@@ -159,9 +159,10 @@ should_relower(std::size_t source_hash, std::size_t cached_source_hash, bool dir
     // even when dirty==false and hashes match (silent-stale under compact).
     if (current_soa_generation != 0 && stamp.soa_generation < current_soa_generation)
         reasons |= kRelowerSoaGeneration;
-    // Issue #3069: abort-force generation fence. An entry that has not
-    // yet observed the live abort gen cannot be a clean hit (mid-loop
-    // window, or a post-abort store that forgot to ack).
+    // Issue #3069 / #3551: abort-force generation fence. An entry that
+    // has not yet observed the live abort gen cannot be a clean hit
+    // (mid-loop window, abort-restore with matching source_hash, or a
+    // post-abort store that forgot to ack). Zero-cost when live gen==0.
     if (current_abort_force_generation != 0 &&
         stamp.abort_force_generation < current_abort_force_generation)
         reasons |= kRelowerAbortForce;
@@ -998,6 +999,12 @@ inline std::atomic<std::uint64_t>& partial_relower_under_shape_storm_total_atomi
 inline constexpr int kPartialRelowerCalleeCascadeIssue = 3550;
 inline std::atomic<std::uint64_t> g_partial_relower_callee_cascade_precompute_total{0};
 inline std::atomic<std::uint64_t> g_partial_relower_callee_cascade_precompute_observe_total{0};
+
+// Issue #3551: Phase-5 abort drops ir_cache V2 irs (sibling of abort
+// fence; not CompilerMetrics middle). Soft observes only.
+inline constexpr int kPhase5AbortCacheClearIssue = 3551;
+inline std::atomic<std::uint64_t> g_phase5_abort_cache_clear_total{0};
+inline std::atomic<std::uint64_t> g_phase5_abort_cache_clear_observe_total{0};
 
 [[nodiscard]] inline std::size_t get_partial_relower_threshold() noexcept {
     return partial_relower_threshold_atomic().load(std::memory_order_relaxed);
