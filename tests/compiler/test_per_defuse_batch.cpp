@@ -247,10 +247,10 @@ static void run_1845_add_guard() {
             cs.per_defuse_index_tracker().add_caller(DefUseIndex{"bar"}, Caller{3});
             CHECK(cs.per_defuse_index_tracker().size_for_index(DefUseIndex{"bar"}) >= 1,
                   "add under outer Guard ok");
-            CHECK(ev.mutation_boundary_depth_slot_value() >= 1, "depth held");
+            CHECK(ev.mutation_boundary_depth_slot_value(/*fiber_id=*/0) >= 1, "depth held");
         }
         CHECK(ok, "outer guard_ok");
-        CHECK(ev.mutation_boundary_depth_slot_value() == 0, "depth 0 after outer");
+        CHECK(ev.mutation_boundary_depth_slot_value(/*fiber_id=*/0) == 0, "depth 0 after outer");
     }
 }
 

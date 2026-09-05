@@ -458,7 +458,7 @@ int run_test_hold_budget_inbody_force_release() {
                              std::memory_order_relaxed);
                 held_after.store(cs.evaluator().mutation_boundary_held() ? 1 : 0,
                                  std::memory_order_relaxed);
-                depth_after.store(cs.evaluator().mutation_boundary_depth_slot_value(),
+                depth_after.store(cs.evaluator().mutation_boundary_depth_slot_value(/*fiber_id=*/0),
                                   std::memory_order_relaxed);
                 ran.store(1, std::memory_order_relaxed);
             }
@@ -614,7 +614,7 @@ int run_test_hold_budget_inbody_force_unlock() {
                 Fiber::check_gc_safepoint();
                 held_after.store(cs.evaluator().mutation_boundary_held() ? 1 : 0,
                                  std::memory_order_relaxed);
-                depth_after.store(cs.evaluator().mutation_boundary_depth_slot_value(),
+                depth_after.store(cs.evaluator().mutation_boundary_depth_slot_value(/*fiber_id=*/0),
                                   std::memory_order_relaxed);
                 ran.store(1, std::memory_order_relaxed);
             }
@@ -780,7 +780,7 @@ int run_test_hold_budget_cross_fiber_urgent_inbody_poll() {
                 Fiber::check_gc_safepoint();
                 held_after.store(cs.evaluator().mutation_boundary_held() ? 1 : 0,
                                  std::memory_order_relaxed);
-                depth_after.store(cs.evaluator().mutation_boundary_depth_slot_value(),
+                depth_after.store(cs.evaluator().mutation_boundary_depth_slot_value(/*fiber_id=*/0),
                                   std::memory_order_relaxed);
                 ran.store(1, std::memory_order_relaxed);
             }
@@ -938,7 +938,7 @@ int run_test_hold_budget_noncoop_force_edge() {
                              std::memory_order_relaxed);
                 held_after.store(cs.evaluator().mutation_boundary_held() ? 1 : 0,
                                  std::memory_order_relaxed);
-                depth_after.store(cs.evaluator().mutation_boundary_depth_slot_value(),
+                depth_after.store(cs.evaluator().mutation_boundary_depth_slot_value(/*fiber_id=*/0),
                                   std::memory_order_relaxed);
                 ran.store(1, std::memory_order_relaxed);
             }
@@ -1003,7 +1003,7 @@ int run_test_hold_budget_noncoop_force_edge() {
                 (void)aura::serve::aura_hold_budget_poll_inbody_window();
                 held_after.store(cs.evaluator().mutation_boundary_held() ? 1 : 0,
                                  std::memory_order_relaxed);
-                depth_after.store(cs.evaluator().mutation_boundary_depth_slot_value(),
+                depth_after.store(cs.evaluator().mutation_boundary_depth_slot_value(/*fiber_id=*/0),
                                   std::memory_order_relaxed);
                 ran.store(1, std::memory_order_relaxed);
             }
@@ -1233,7 +1233,7 @@ int run_test_hold_budget_no_edge_force_3325() {
                              std::memory_order_relaxed);
                 held_after.store(cs.evaluator().mutation_boundary_held() ? 1 : 0,
                                  std::memory_order_relaxed);
-                depth_after.store(cs.evaluator().mutation_boundary_depth_slot_value(),
+                depth_after.store(cs.evaluator().mutation_boundary_depth_slot_value(/*fiber_id=*/0),
                                   std::memory_order_relaxed);
                 ran.store(1, std::memory_order_relaxed);
             }
@@ -1301,7 +1301,7 @@ int run_test_hold_budget_no_edge_force_3325() {
                 (void)aura::serve::aura_hold_budget_poll_inbody_window();
                 held_after.store(cs.evaluator().mutation_boundary_held() ? 1 : 0,
                                  std::memory_order_relaxed);
-                depth_after.store(cs.evaluator().mutation_boundary_depth_slot_value(),
+                depth_after.store(cs.evaluator().mutation_boundary_depth_slot_value(/*fiber_id=*/0),
                                   std::memory_order_relaxed);
                 ran.store(1, std::memory_order_relaxed);
             }
@@ -1494,7 +1494,7 @@ int run_test_hold_budget_add_mutate_inbody_poll_3480() {
                 err.store(1, std::memory_order_relaxed);
             held_after.store(cs.evaluator().mutation_boundary_held() ? 1 : 0,
                              std::memory_order_relaxed);
-            depth_after.store(cs.evaluator().mutation_boundary_depth_slot_value(),
+            depth_after.store(cs.evaluator().mutation_boundary_depth_slot_value(/*fiber_id=*/0),
                               std::memory_order_relaxed);
             ran.store(1, std::memory_order_relaxed);
         });

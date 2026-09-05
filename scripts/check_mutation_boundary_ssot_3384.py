@@ -62,8 +62,8 @@ INFRA_REQUIRED: tuple[tuple[str, str, str], ...] = (
     ),
     (
         "src/compiler/evaluator_fiber_mutation.cpp",
-        r"mutation_boundary_depth_slot_value\(\)\s*const\s*noexcept[^{]*\{[\s\S]*?return\s+boundary_ssot_detail::boundary_depth_ssot",
-        "3384 AC1: mutation_boundary_depth_slot_value routes through SSOT",
+        r"mutation_boundary_depth_slot_value\([^)]*\)\s*const\s*noexcept[^{]*\{[\s\S]*?return\s+boundary_ssot_detail::boundary_depth_ssot",
+        "3384 AC1: mutation_boundary_depth_slot_value routes through SSOT (#3552: fiber_id arg added)",
     ),
     (
         "src/compiler/evaluator.ixx",
@@ -88,8 +88,8 @@ INFRA_REQUIRED: tuple[tuple[str, str, str], ...] = (
     ),
     (
         "src/compiler/evaluator_mutation_boundary.cpp",
-        r"if\s*\(\s*aura::compiler::Evaluator::g_current_fiber_void\s*==\s*nullptr\s*\)\s*\{[^}]*Evaluator::mutation_boundary_depth_slot\(ev_\)",
-        "3384 AC2: force_release_hold_after_cancel_ TLS zero gated on off-fiber",
+        r"if\s*\(\s*aura::compiler::Evaluator::g_current_fiber_void\s*==\s*nullptr\s*\)\s*\{[^}]*Evaluator::mutation_boundary_depth_slot\(ev_,\s*fiber_id_\)",
+        "3384 AC2: force_release_hold_after_cancel_ TLS zero gated on off-fiber (#3552: fiber_id_)",
     ),
     # AC3: Soft stays metric-only; production mark-failed + republish.
     (
@@ -134,10 +134,12 @@ INFRA_REQUIRED: tuple[tuple[str, str, str], ...] = (
         "3384 AC4: #2184 publish_current_fiber still wired",
     ),
     # AC5: existing APIs preserved — only internal TLS write gated.
+    # #3552: signature now accepts fiber_id_ (ctor-captured) — SSOT contract
+    # preserved (fiber stack on fiber, TLS slot keyed by fiber_id off fiber).
     (
         "src/compiler/evaluator_mutation_boundary.cpp",
-        r"mutation_boundary_depth_slot\(ev_\)",
-        "3384 AC5: existing TLS slot accessor preserved (no rename)",
+        r"mutation_boundary_depth_slot\(ev_,\s*fiber_id_\)",
+        "3384 AC5: TLS slot accessor preserved (#3552: fiber_id_ added)",
     ),
 )
 

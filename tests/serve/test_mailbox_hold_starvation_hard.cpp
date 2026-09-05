@@ -1758,7 +1758,7 @@ static void ac3118_1_force_unlock_depth_clear() {
         ok_flag.store(ok ? 1 : 0, std::memory_order_relaxed);
         held_after.store(cs.evaluator().mutation_boundary_held() ? 1 : 0,
                          std::memory_order_relaxed);
-        depth_after.store(cs.evaluator().mutation_boundary_depth_slot_value(),
+        depth_after.store(cs.evaluator().mutation_boundary_depth_slot_value(/*fiber_id=*/0),
                           std::memory_order_relaxed);
     });
     std::thread io([&]() { sched.run(); });

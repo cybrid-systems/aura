@@ -7154,7 +7154,8 @@ void ObservabilityPrims::register_eval_p41(PrimRegistrar add, Evaluator& ev) {
         insert_kv("yielded", yielded ? 1 : 0);
         insert_kv("skipped-held", skipped ? 1 : 0);
         insert_kv("boundary-depth", static_cast<std::int64_t>(ev.mutation_boundary_depth()));
-        insert_kv("depth-slot", static_cast<std::int64_t>(ev.mutation_boundary_depth_slot_value()));
+        insert_kv("depth-slot",
+                  static_cast<std::int64_t>(ev.mutation_boundary_depth_slot_value(/*fiber_id=*/0)));
         insert_kv("held-now", ev.mutation_boundary_held() ? 1 : 0);
         insert_kv("safe-yield-ok-total", static_cast<std::int64_t>(ev.get_safe_yield_ok_total()));
         insert_kv("safe-yield-skipped-held-total",
@@ -7251,8 +7252,8 @@ void ObservabilityPrims::register_eval_p41(PrimRegistrar add, Evaluator& ev) {
                 overflowed = true;
             };
             insert_kv("boundary-depth", static_cast<std::int64_t>(ev.mutation_boundary_depth()));
-            insert_kv("depth-slot",
-                      static_cast<std::int64_t>(ev.mutation_boundary_depth_slot_value()));
+            insert_kv("depth-slot", static_cast<std::int64_t>(
+                                        ev.mutation_boundary_depth_slot_value(/*fiber_id=*/0)));
             insert_kv("nested-guard-depth-max",
                       static_cast<std::int64_t>(ev.nested_guard_depth_max()));
             insert_kv("per-fiber-stack-depth-max",

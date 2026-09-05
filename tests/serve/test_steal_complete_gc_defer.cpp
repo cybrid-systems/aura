@@ -482,6 +482,57 @@ static void ac3483_2_4_6_source() {
     CHECK(read_file("tests/serve/test_issue_3483.cpp").empty(), "3483 AC6: no invent");
 }
 
+// ── #3552: fiber_id dimension isolates depth_slot across hot-swap ─────────
+// AC1: signature change `mutation_boundary_depth_slot(Evaluator*, std::uint64_t fiber_id)`
+// AC2: 3 callers (evaluator_fiber_mutation.cpp boundary_ssot /
+//     ensure_mutation_invariants / NDEBUG assert) pass current Fiber id.
+// AC3: MutationBoundaryGuard ctor captures fiber_id_ from g_current_fiber;
+//     dtor + force_release_hold_after_cancel_ + move ctor thread it through.
+// AC4: fiber_id == 0 falls back to legacy single-eval MVP (zero extra).
+static void ac3552_signature_and_callers_source_cite() {
+    const auto ixx = read_file("src/compiler/evaluator.ixx");
+    const auto efm = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+    const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    CHECK(ixx.find("mutation_boundary_depth_slot(Evaluator* ev, std::uint64_t fiber_id)") !=
+              std::string::npos,
+          "3552 AC1: signature carries fiber_id");
+    CHECK(ixx.find("fiber_id_ = 0;") != std::string::npos,
+          "3552 AC3: MutationBoundaryGuard stores fiber_id_ member");
+    CHECK(efm.find("mutation_boundary_depth_slot(ev, fid)") != std::string::npos,
+          "3552 AC2: boundary_ssot passes current Fiber id");
+    CHECK(efm.find("mutation_boundary_depth_slot(this, fid)") != std::string::npos,
+          "3552 AC2: ensure_mutation_invariants passes Fiber id");
+    CHECK(efm.find("mutation_boundary_depth_slot(this, fid)") != std::string::npos ||
+              efm.find("mutation_boundary_depth_slot(this, fid);") != std::string::npos,
+          "3552 AC2: NDEBUG assert passes Fiber id");
+    CHECK(emb.find("fiber_id_ = (aura::serve::g_current_fiber") != std::string::npos,
+          "3552 AC3: ctor captures fiber_id from g_current_fiber");
+    CHECK(emb.find("mutation_boundary_depth_slot(ev_, fiber_id_)") != std::string::npos,
+          "3552 AC3: dtor uses ctor-captured fiber_id_");
+    CHECK(emb.find(", fiber_id_(o.fiber_id_)") != std::string::npos,
+          "3552 AC3: move ctor propagates fiber_id_");
+    CHECK(ixx.find("mutation_boundary_depth_slot_value(std::uint64_t fiber_id)") !=
+              std::string::npos,
+          "3552 AC1: slot_value accessor carries fiber_id");
+}
+
+static void ac3552_fiber_id_zero_legacy_path_source_cite() {
+    const auto efm = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+    // fiber_id == 0 (legacy single-eval MVP) falls through to per-instance
+    // single-slot — the legacy callers (boundary_ssot / ensure_mutation_invariants
+    // / NDEBUG assert) all derive fid = 0 when no g_current_fiber is present.
+    CHECK(efm.find("fid = (aura::serve::g_current_fiber != nullptr)") != std::string::npos,
+          "3552 AC4: callers derive fid=0 (no fiber → legacy)");
+    CHECK(efm.find("auto& inner = slot->depths[id];") != std::string::npos,
+          "3552 AC1: nested map keyed by (instance_id, fiber_id)");
+    CHECK(efm.find("inner.emplace(fiber_id, 0)") != std::string::npos,
+          "3552 AC1: per-(instance, fiber) entry initialized to 0");
+    CHECK(read_file("docs/design/3552-*.md").empty(),
+          "3552 AC: no docs/design/ (agent repo philosophy)");
+    CHECK(read_file("tests/serve/test_issue_3552.cpp").empty(),
+          "3552 AC: no invent new test binary");
+}
+
 } // namespace
 
 int run_test_steal_complete_gc_defer() {
@@ -504,6 +555,9 @@ int run_test_steal_complete_gc_defer() {
     ac3483_1_runtime_latch_strong_only();
     ac3483_3_unlatched_light_path();
     ac3483_2_4_6_source();
+    std::println("\n=== #3552: fiber_id dimension isolates depth_slot across hot-swap ===");
+    ac3552_signature_and_callers_source_cite();
+    ac3552_fiber_id_zero_legacy_path_source_cite();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

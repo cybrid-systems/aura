@@ -2945,12 +2945,17 @@ Evaluator::MutationBoundaryGuard::MutationBoundaryGuard(
     // Issue #2162: dirty-upward is cumulative — snapshot for boundary delta.
     dirty_upward_at_enter_ =
         ev_->workspace_flat_ ? ev_->workspace_flat_->mark_dirty_upward_call_count() : 0;
-    // Issue #236 / #1746: thread_local depth counter keyed by
-    // Evaluator::instance_id_ (not address). Each fiber has its
-    // own LIFO call stack, so nested guards on a single fiber
-    // are always outermost-then-inner (destructed innermost-
-    // first). Cross-fiber synchronization happens at unique_lock.
-    int* slot = Evaluator::mutation_boundary_depth_slot(ev_);
+    // Issue #236 / #1746 / #3552: thread_local depth counter keyed by
+    // (Evaluator::instance_id_, Fiber::id()). The fiber_id key prevents
+    // cross-worker hot-swap leaks: when scheduler migrates a Fiber to
+    // another worker, the new Fiber's dtor decrements its own slot, not
+    // the previous Fiber's. Each fiber has its own LIFO call stack,
+    // so nested guards on a single fiber are always outermost-then-inner
+    // (destructed innermost-first). Cross-fiber serialization happens
+    // at unique_lock.
+    // Issue #3552: capture fiber_id for dtor / move consistency.
+    fiber_id_ = (aura::serve::g_current_fiber != nullptr) ? aura::serve::g_current_fiber->id() : 0;
+    int* slot = Evaluator::mutation_boundary_depth_slot(ev_, fiber_id_);
     int prev;
     // Issue #3384: TLS slot is SSOT only off-fiber (main-thread fallback). On-fiber,
     // SSOT is per-fiber mutation_stack_storage_.size() — TLS write is skipped here
@@ -3282,7 +3287,9 @@ void Evaluator::MutationBoundaryGuard::force_release_hold_after_cancel_() noexce
     // the cross-thread cancel visibility. Holding fiber's own dtor decrements the
     // fiber stack + (if off-fiber on its own worker) its TLS slot.
     if (aura::compiler::Evaluator::g_current_fiber_void == nullptr) {
-        if (int* ds = Evaluator::mutation_boundary_depth_slot(ev_))
+        // Issue #3552: pass ctor-captured fiber_id so cancel-force-release
+        // decrements the same slot the ctor incremented.
+        if (int* ds = Evaluator::mutation_boundary_depth_slot(ev_, fiber_id_))
             *ds = 0;
     }
     ev_->mutation_boundary_held_.store(false, std::memory_order_release);
@@ -3522,7 +3529,10 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
     // exit_mutation_boundary runs under the lock for the outermost
     // guard; lockless for nested guards (outer holds the lock).
     const bool outermost = is_outermost_;
-    int* slot = Evaluator::mutation_boundary_depth_slot(ev_);
+    // Issue #3552: pass ctor-captured fiber_id so dtor decrements the same
+    // slot the ctor incremented (Fiber::id() may differ at dtor time if
+    // guard was moved or fiber was stolen).
+    int* slot = Evaluator::mutation_boundary_depth_slot(ev_, fiber_id_);
     // Issue #1253 / #1373 / #1375 / #1747 / #1931 / #1953: outermost
     // hold-duration telemetry. Issue #1747/#1931/#1953: compute
     // BatchMutationMetrics locally, then publish with ≤6 atomic writes
@@ -5629,6 +5639,9 @@ Evaluator::MutationBoundaryGuard::MutationBoundaryGuard(MutationBoundaryGuard&& 
     , ev_(o.ev_)
     , owned_flag_(o.owned_flag_)
     , flag_(o.flag_ == &o.owned_flag_ ? &owned_flag_ : o.flag_)
+    // Issue #3552: propagate fiber_id so moved guard's dtor decrements
+    // the same slot the source ctor incremented.
+    , fiber_id_(o.fiber_id_)
     , lock_(std::move(o.lock_))
     , shared_lock_(std::move(o.shared_lock_))
     // Issue #3268: unique_lock is move-only. Copy would not compile

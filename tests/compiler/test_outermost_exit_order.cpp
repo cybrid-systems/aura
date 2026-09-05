@@ -87,7 +87,7 @@ static void ac1_no_residual_gc_defer() {
           "phase3 gc-defer counter advanced");
     CHECK(m->outermost_exit_order_complete_total.load(std::memory_order_relaxed) == done0 + 1,
           "order complete +1");
-    CHECK(ev.mutation_boundary_depth_slot_value() == 0, "depth_slot back to 0");
+    CHECK(ev.mutation_boundary_depth_slot_value(/*fiber_id=*/0) == 0, "depth_slot back to 0");
     CHECK(!ev.mutation_boundary_held(), "held flag cleared");
 }
 

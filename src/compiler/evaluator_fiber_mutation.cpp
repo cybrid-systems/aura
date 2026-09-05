@@ -391,7 +391,10 @@ namespace boundary_ssot_detail {
         if (aura::compiler::Evaluator::g_current_fiber_void != nullptr)
             return static_cast<int>(
                 aura::compiler::Evaluator::active_mutation_stack_static().size());
-        int* slot = aura::compiler::Evaluator::mutation_boundary_depth_slot(ev);
+        // Issue #3552: pass current Fiber id (0 for off-fiber main-thread fallback).
+        const std::uint64_t fid =
+            (aura::serve::g_current_fiber != nullptr) ? aura::serve::g_current_fiber->id() : 0;
+        int* slot = aura::compiler::Evaluator::mutation_boundary_depth_slot(ev, fid);
         return slot ? *slot : 0;
     }
 } // namespace boundary_ssot_detail
@@ -415,7 +418,10 @@ void aura::compiler::Evaluator::ensure_mutation_invariants() noexcept {
     auto& stack = active_mutation_stack();
     if (g_current_fiber_void != nullptr)
         return;
-    int* depth = mutation_boundary_depth_slot(this);
+    // Issue #3552: pass current Fiber id (0 for off-fiber main-thread fallback).
+    const std::uint64_t fid =
+        (aura::serve::g_current_fiber != nullptr) ? aura::serve::g_current_fiber->id() : 0;
+    int* depth = mutation_boundary_depth_slot(this, fid);
     if (!depth)
         return;
     const bool stack_empty = stack.empty();
@@ -1158,7 +1164,10 @@ bool aura::compiler::Evaluator::restore_post_yield_or_rollback() {
     // Strict assert: after restamp, stack depth vs boundary slot must agree
     // when a boundary was active at yield (production migration safety).
     if (cp.had_active_boundary) {
-        int* slot = mutation_boundary_depth_slot(this);
+        // Issue #3552: pass current Fiber id (0 for off-fiber main-thread fallback).
+        const std::uint64_t fid =
+            (aura::serve::g_current_fiber != nullptr) ? aura::serve::g_current_fiber->id() : 0;
+        int* slot = mutation_boundary_depth_slot(this, fid);
         const int depth_slot = slot ? *slot : 0;
         assert(static_cast<std::size_t>(depth_slot) == current_bdepth ||
                current_mdepth == cp.mutation_stack_depth);
@@ -1315,23 +1324,28 @@ aura::compiler::Evaluator::active_mutation_stack_static() {
     return g_main_thread_stack;
 }
 
-// Issue #236 follow-up / #1746: per-Evaluator, per-thread depth slot
-// for MutationBoundaryGuard. thread_local map keyed by
-// Evaluator::instance_id_ (not raw pointer). Address reuse after
-// free would otherwise alias a destroyed Evaluator's depth and
-// corrupt nesting (UAF / wrong outermost). Each fiber has its own
-// slot per instance_id it touches. Map entries stay after last
-// guard destructs (cheap; avoids heap churn).
+// Issue #236 follow-up / #1746 / #3552: per-(Evaluator, Fiber), per-thread
+// depth slot for MutationBoundaryGuard. thread_local nested map keyed by
+// (Evaluator::instance_id_, Fiber::id()). Address reuse after free would
+// otherwise alias a destroyed Evaluator's depth and corrupt nesting
+// (UAF / wrong outermost). Each fiber has its own slot per (instance_id,
+// fiber_id) it touches; cross-worker hot-swap (Fiber migrates to another
+// worker) no longer leaks the previous Fiber's depth count because the
+// new worker thread's TLS starts empty for this (instance_id, fiber_id)
+// pair. Map entries stay after last guard destructs (cheap; avoids heap
+// churn). fiber_id == 0 falls back to the legacy single-slot-per-instance
+// path (zero-cost for soft / single-eval MVP).
 //
-// Returns a pointer to an int initialized to 0 the first
-// time it's accessed for a given (thread, instance_id).
-int* aura::compiler::Evaluator::mutation_boundary_depth_slot(Evaluator* ev) {
+// Returns a pointer to an int initialized to 0 the first time it's
+// accessed for a given (thread, instance_id, fiber_id).
+int* aura::compiler::Evaluator::mutation_boundary_depth_slot(Evaluator* ev,
+                                                             std::uint64_t fiber_id) {
     if (!ev) {
         thread_local int null_slot = 0;
         return &null_slot;
     }
     struct Slot {
-        std::unordered_map<std::uint64_t, int> depths;
+        std::unordered_map<std::uint64_t, std::unordered_map<std::uint64_t, int>> depths;
     };
     // thread_local unique_ptr auto-deletes the Slot on thread exit;
     // the raw `Slot*` pattern leaks one Slot per thread that ever
@@ -1339,9 +1353,10 @@ int* aura::compiler::Evaluator::mutation_boundary_depth_slot(Evaluator* ev) {
     // access pattern for callers.
     thread_local std::unique_ptr<Slot> slot = std::make_unique<Slot>();
     const auto id = ev->instance_id();
-    auto it = slot->depths.find(id);
-    if (it == slot->depths.end()) {
-        it = slot->depths.emplace(id, 0).first;
+    auto& inner = slot->depths[id]; // auto-creates empty inner map if absent
+    auto it = inner.find(fiber_id);
+    if (it == inner.end()) {
+        it = inner.emplace(fiber_id, 0).first;
     }
     return &it->second;
 }
@@ -1709,7 +1724,10 @@ int Evaluator::try_safe_yield_at_boundary(std::int64_t timeout_ms) noexcept {
     return 0;
 }
 
-int Evaluator::mutation_boundary_depth_slot_value() const noexcept {
+int Evaluator::mutation_boundary_depth_slot_value(std::uint64_t fiber_id) const noexcept {
+    (void)fiber_id; // #3552: signature carries fiber_id; SSOT path below is
+    // unchanged (boundary_depth_ssot resolves on-fiber via fiber stack,
+    // off-fiber via TLS slot keyed on (instance_id, fiber_id) at ctor).
     // Issue #3384: route through SSOT. After steal, thief TLS slot != victim
     // TLS slot — returns fiber stack size on fiber, TLS slot value off fiber
     // (main-thread fallback).
