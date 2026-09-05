@@ -15357,6 +15357,14 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
             {"epoch-invariant-wired", make_int(1)},
             {"schema-2501", make_int(2501)},
             {"issue-2501", make_int(2501)},
+            // Issue #3540: sid-stale axis on the existing epoch-invariant
+            // walk (additive; no new query:*).
+            {"epoch-invariant-sid-stale-total",
+             make_int(static_cast<std::int64_t>(
+                 aura_epoch_invariant_sid_stale_total_v_read()))},
+            {"epoch-invariant-sid-stale-wired", make_int(1)},
+            {"schema-3540", make_int(3540)},
+            {"issue-3540", make_int(3540)},
             {"schema-2541", make_int(2541)},
             {"issue-2541", make_int(2541)},
             {"epoch-invariant-soft-prod-wired", make_int(1)},

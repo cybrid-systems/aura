@@ -32,12 +32,12 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 
 | Theme | Title | Issues | Root | Domain | Total | Migration priority |
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
-| `arena_compaction` | Arena / compaction / GC | 0 | 0 | 88 | 88 | P0 — well-contained, batch drivers already exist |
+| `arena_compaction` | Arena / compaction / GC | 0 | 0 | 89 | 89 | P0 — well-contained, batch drivers already exist |
 | `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 262 | 262 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 108 | 108 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 26 | 26 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 59 | 59 | P1 — domain hygiene suite exists |
-| `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 87 | 87 | P2 — link-profile heavy; migrate AC smoke first |
+| `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 86 | 86 | P2 — link-profile heavy; migrate AC smoke first |
 | `shape_soa` | Shape / SoA / column layout | 0 | 0 | 55 | 55 | P2 — small-medium; soa_batch precedent |
 | `observability` | Observability / metrics / query:*-stats | 0 | 0 | 135 | 135 | P2 — often thin schema probes; collapse into obs matrix |
 | `uncategorized` | Uncategorized / mixed | 0 | 0 | 57 | 57 | P3 — review case-by-case |
@@ -1095,13 +1095,13 @@ Suggested order starts with well-contained groups (per #1957) and leverages exis
 
 Files listed as ``location/name`` with issue id and one-line summary.
 
-### `arena_compaction` — Arena / compaction / GC (88)
+### `arena_compaction` — Arena / compaction / GC (89)
 
 **Target:** tests/core/ (extend compact/gc family; see test_arena_batch / test_hotpath_matrix_batch)
 
 **Priority:** P0 — well-contained, batch drivers already exist
 
-#### domain/ (88)
+#### domain/ (89)
 
 - `tests/compiler/test_adt_match_exhaust_post_mutate_reliability.cpp` (—) [domain_suite, theme_compiler] — test_adt_match_exhaust_post_mutate_reliability.cpp — Issue #612:
 - `tests/orch/test_agent_name_table_isolation.cpp` (—) [domain_suite, theme_orch] — AC1: source cites #2078; no process-static OrchAgentNameTable;
@@ -1134,6 +1134,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/core/test_envframe_truncate_guard_dual_epoch.cpp` (—) [domain_suite, theme_core] — Issue #1739/#1842/#1889/#1927/#1948 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_epoch_apply_batch.cpp` (—) [batch_driver, domain_suite, theme_compiler] — tests/compiler/test_epoch_apply_batch.cpp — epoch_apply pair dup-merge (R19 phase 15).
 - `tests/compiler/test_epoch_bump_invariant.cpp` (—) [domain_suite, theme_compiler] — Issue #2304 — post-bump hard invariant walk infrastructure.
+- `tests/compiler/test_epoch_invariant_complete.cpp` (—) [domain_suite, theme_compiler] — Issue #3540 — same walk ANDs stamped sid vs live name→sid
 - `tests/compiler/test_epoch_invariant_misc_batch.cpp` (—) [small, batch_driver, domain_suite, theme_compiler] — test_epoch_invariant_misc_batch.cpp — thematic multi-TU batch
 - `tests/compiler/test_epoch_invariant_soft_prod.cpp` (—) [domain_suite, theme_compiler] — AC1: production Restricted, AURA_EPOCH_INVARIANT unset → mode == 1
 - `tests/compiler/test_epoch_invariant_walk.cpp` (—) [large, domain_suite, theme_compiler] — AC1: Soft off → zero walks (single mode load)
@@ -1683,13 +1684,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_symbol_eq.cpp` (—) [domain_suite, theme_compiler] — AC1: (eq? 'commit 'commit) → #t  (interned short-str cache)
 - `tests/compiler/test_unquote_splicing_hygiene.cpp` (—) [large, domain_suite, theme_compiler] — AC1: pre_scan cites #2807; unquote-splicing boundary + metric
 
-### `jit_incremental` — JIT / AOT / incremental relower (87)
+### `jit_incremental` — JIT / AOT / incremental relower (86)
 
 **Target:** domain suite for incremental_*; keep heavy JIT in issue bundles
 
 **Priority:** P2 — link-profile heavy; migrate AC smoke first
 
-#### domain/ (87)
+#### domain/ (86)
 
 - `tests/compiler/test_adaptive_cascade_depth_partial_thr.cpp` (—) [domain_suite, theme_compiler] — AC1: After enough samples, high cascade-depth raises the threshold.
 - `tests/compiler/test_adaptive_partial_relower_threshold.cpp` (—) [domain_suite, theme_compiler] — AC1: Cold-start stays at default 8 until enough samples
@@ -1721,7 +1722,6 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_dead_coercion_pipeline_wire.cpp` (—) [domain_suite, theme_compiler] — AC1: source cites #2025; PassKind::DeadCoercion + DeadCoercionPass +
 - `tests/compiler/test_dep_graph_partial_relower_threshold.cpp` (—) [domain_suite, theme_compiler] — AC1: source cites #2032; get/set_partial_relower_threshold; reject counter
 - `tests/compiler/test_emit_object_deprecated.cpp` (—) [domain_suite, theme_compiler] — AC1: emit_object returns false
-- `tests/compiler/test_epoch_invariant_complete.cpp` (—) [domain_suite, theme_compiler] — AC1: Soft inject stale AOT slot → violation count; hard clears fn_ptr
 - `tests/compiler/test_force_jit_repromote.cpp` (—) [large, domain_suite, theme_compiler] — Issue #2895 — last success coverage + partial re-promote knobs
 - `tests/compiler/test_hot_strategy.cpp` (—) [domain_suite, theme_compiler] — Issue #2684 — rebind dirty / jit-stats observability (H7).
 - `tests/compiler/test_hot_update_cascade_dirty_reemit.cpp` (—) [large, domain_suite, theme_compiler] — AC1: source cites #2035; notify_hot_update_after_cascade_ +

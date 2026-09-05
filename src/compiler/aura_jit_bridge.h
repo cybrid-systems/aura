@@ -840,11 +840,17 @@ void aura_epoch_invariant_note_slot_stale(std::uint64_t n) noexcept;
 void aura_epoch_invariant_note_closure_must_deopt(std::uint64_t n) noexcept;
 [[nodiscard]] std::uint64_t aura_epoch_invariant_slot_stale_total_v_read(void);
 [[nodiscard]] std::uint64_t aura_epoch_invariant_closure_must_deopt_total_v_read(void);
+// Issue #3540: sid-stale marks from the same walk (name→sid miss vs
+// stamped sid; unstamped sid==0 skips). Append END per #2906.
+void aura_epoch_invariant_note_sid_stale(std::uint64_t n) noexcept;
+[[nodiscard]] std::uint64_t aura_epoch_invariant_sid_stale_total_v_read(void);
+[[nodiscard]] int aura_epoch_invariant_sid_stale_issue(void);
 // Count live generation-behind AOT slots (fn_ptr≠0 && gen≠current epoch).
 // Empty slots (fn_ptr==0) are not violations.
 [[nodiscard]] std::size_t aura_aot_count_live_generation_behind_slots(void);
-// Issue #2501: walk JIT live-closure table; set MustDeopt on gen-behind
-// (bridge_epoch != current table epoch, not already must_deopt, not freed).
+// Issue #2501 / #3540: walk JIT live-closure table; set MustDeopt on
+// gen-behind OR sid-stale (bridge_epoch != current table epoch, or
+// stamped sid != live name→sid; not already must_deopt, not freed).
 // Returns number of closures newly marked MustDeopt.
 [[nodiscard]] std::size_t aura_epoch_invariant_must_deopt_stale_live_closures(void);
 // Issue #3539: defer dlclose of the prior AOT .so until BoundaryExit
