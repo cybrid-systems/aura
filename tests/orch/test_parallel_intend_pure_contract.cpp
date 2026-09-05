@@ -1261,6 +1261,102 @@ int run_test_parallel_intend_pure_contract() {
         }
     }
 
+    // ── #3528: BatchResult isolation observation (struct END) ──
+    {
+        using aura::serve::parallel_orch::decide_isolation;
+        using aura::serve::parallel_orch::IsolationLevel;
+        using aura::serve::parallel_orch::ParallelPolicy;
+        using aura::serve::parallel_orch::sequential_run;
+        using aura::serve::parallel_orch::TaskResult;
+        using aura::serve::parallel_orch::TaskSpec;
+
+        auto make_ok = []() -> TaskResult {
+            TaskResult r;
+            r.ok = true;
+            return r;
+        };
+
+        std::println("\n--- #3528 AC1: two keys → BatchResult RegionConcurrent ---");
+        {
+            ParallelPolicy pol;
+            std::vector<TaskSpec> ts(2);
+            ts[0].body = make_ok;
+            ts[0].region_key = 1;
+            ts[1].body = make_ok;
+            ts[1].region_key = 2;
+            const auto d = decide_isolation(pol, ts, /*pure_mode=*/false);
+            auto batch = sequential_run(ts);
+            CHECK(batch.isolation_level == IsolationLevel::RegionConcurrent,
+                  "3528 AC1: BatchResult isolation_level=RegionConcurrent");
+            CHECK(batch.region_concurrent_eligible, "3528 AC1: eligible");
+            CHECK(batch.distinct_nonzero_region_keys == 2, "3528 AC1: distinct==2");
+            CHECK(batch.isolation_level == d.level, "3528 AC1: matches decide_isolation");
+            CHECK(batch.region_concurrent_eligible == d.region_concurrent_eligible,
+                  "3528 AC1: eligible matches decide_isolation");
+        }
+
+        std::println("\n--- #3528 AC2: zero keys → BatchResult Serialized ---");
+        {
+            ParallelPolicy pol;
+            std::vector<TaskSpec> ts(2);
+            ts[0].body = make_ok;
+            ts[1].body = make_ok;
+            const auto d = decide_isolation(pol, ts, /*pure_mode=*/false);
+            auto batch = sequential_run(ts);
+            CHECK(batch.isolation_level == IsolationLevel::Serialized,
+                  "3528 AC2: BatchResult isolation_level=Serialized");
+            CHECK(!batch.region_concurrent_eligible, "3528 AC2: not eligible");
+            CHECK(batch.distinct_nonzero_region_keys == 0, "3528 AC2: distinct==0");
+            CHECK(batch.isolation_level == d.level, "3528 AC2: matches decide_isolation");
+        }
+
+        std::println("\n--- #3528 AC3: Aura hash distinct-region-keys ---");
+        {
+            CompilerService cs;
+            cs.evaluator().set_effect_sandbox_mode(0);
+            auto two = cs.eval(R"(
+            (let ((h (parallel-intend (vector (lambda () 1) (lambda () 2))
+                                    :max-concurrency 2
+                                    :region-keys (vector 1 2)
+                                    :collect-errors #t
+                                    :timeout-ms 2000)))
+              (hash-ref h "distinct-region-keys"))
+        )");
+            CHECK(two.has_value() && is_int(*two) && as_int(*two) == 2,
+                  "3528 AC3: two keys → distinct-region-keys=2");
+            auto zero = cs.eval(R"(
+            (let ((h (parallel-intend (vector (lambda () 1) (lambda () 2))
+                                    :max-concurrency 2
+                                    :collect-errors #t
+                                    :timeout-ms 2000)))
+              (hash-ref h "distinct-region-keys"))
+        )");
+            CHECK(zero.has_value() && is_int(*zero) && as_int(*zero) == 0,
+                  "3528 AC3: zero keys → distinct-region-keys=0");
+        }
+
+        std::println("\n--- #3528 AC4: source-cite + no invent / no new query ---");
+        {
+            const auto poh = read_file("src/serve/parallel_orch.h");
+            const auto agent = read_file("src/compiler/evaluator_primitives_agent.cpp");
+            const auto readme = read_file("src/orch/README.md");
+            CHECK(poh.find("Issue #3528") != std::string::npos,
+                  "3528 AC4: parallel_orch cites #3528");
+            CHECK(poh.find("out.isolation_level = iso.level") != std::string::npos,
+                  "3528 AC4: parallel_run stamps isolation_level");
+            CHECK(agent.find("distinct-region-keys") != std::string::npos,
+                  "3528 AC4: Aura hash distinct-region-keys");
+            CHECK(agent.find("query:distinct-region-keys") == std::string::npos,
+                  "3528 AC4: no new query:*");
+            CHECK(readme.find("Issue #3528") != std::string::npos, "3528 AC4: README cites #3528");
+            CHECK(read_file("tests/orch/test_issue_3528.cpp").empty() &&
+                      read_file("tests/issues/test_issue_3528.cpp").empty(),
+                  "3528 AC4: no test_issue_3528.cpp per #81967");
+            CHECK(read_file("docs/design/3528-batch-isolation.md").empty(),
+                  "3528 AC4: no docs/design/3528-* per #1655");
+        }
+    }
+
     // ── #3243: production missing region_keys stay Serialized + observable ──
     {
         using aura::compiler::typed_audit::apply_production_audit_defaults;

@@ -238,6 +238,12 @@ struct BatchResult {
     // Issue #2007: policy outcome surfaces.
     std::uint32_t retries_performed = 0;
     bool circuit_opened = false;
+    // Issue #3528: per-batch isolation observation (struct END, #2906).
+    // Populated from decide_isolation so C++ hosts do not scrape
+    // process-global region_concurrent_batches_total. No new query key.
+    IsolationLevel isolation_level = IsolationLevel::Serialized;
+    bool region_concurrent_eligible = false;
+    std::uint32_t distinct_nonzero_region_keys = 0;
 };
 
 // ── Process-wide stats ─────────────────────────────────
@@ -356,6 +362,15 @@ inline void snapshot_global_ext(std::uint64_t& batches, std::uint64_t& spawned,
                                               ParallelPolicy policy = {},
                                               mf_mailbox::MultiFiberMailbox* mb = nullptr) {
     BatchResult out;
+    // Issue #3528: stamp isolation from SSOT before any early return so
+    // Invalid / empty / quota hosts still see the decision. C++ path is
+    // not :pure (Aura stamps BestEffortPure on its own hash).
+    {
+        const auto iso = decide_isolation(policy, tasks, /*pure_mode=*/false);
+        out.isolation_level = iso.level;
+        out.region_concurrent_eligible = iso.region_concurrent_eligible;
+        out.distinct_nonzero_region_keys = iso.distinct_nonzero_region_keys;
+    }
     if (!validate_policy(policy)) {
         g_parallel_orch_stats.invalid_batches.fetch_add(1, std::memory_order_relaxed);
         out.status = BatchStatus::Invalid;
@@ -785,6 +800,12 @@ inline void snapshot_global_ext(std::uint64_t& batches, std::uint64_t& spawned,
 // Sequential baseline for throughput comparisons (same TaskSpec bodies).
 [[nodiscard]] inline BatchResult sequential_run(std::span<const TaskSpec> tasks) {
     BatchResult out;
+    {
+        const auto iso = decide_isolation(ParallelPolicy{}, tasks, /*pure_mode=*/false);
+        out.isolation_level = iso.level;
+        out.region_concurrent_eligible = iso.region_concurrent_eligible;
+        out.distinct_nonzero_region_keys = iso.distinct_nonzero_region_keys;
+    }
     out.results.resize(tasks.size());
     const auto t0 = std::chrono::steady_clock::now();
     for (std::size_t i = 0; i < tasks.size(); ++i) {
