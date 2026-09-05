@@ -14429,6 +14429,7 @@ public:
     void rollback_atomic_batch_pinning() noexcept {
         atomic_batch_pinned_refs_.clear();
         last_atomic_batch_snapshot_id_ = -1;
+        typed_audit::composite_txn_exit();
     }
     void record_atomic_batch_snapshot_capture(std::int64_t snap_id) noexcept {
         last_atomic_batch_snapshot_id_ = snap_id;

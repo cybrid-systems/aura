@@ -26,6 +26,7 @@
 #include "test_harness.hpp"
 
 #include "compiler/security_capabilities.h"
+#include "compiler/type_linear_commit_health.hh"
 #include "core/capability_model.hh"
 #include "core/resource_quota.hh"
 #include "core/security_event.hh"
@@ -510,6 +511,143 @@ static void ac3367_pin_matrix_no_process_origin_mid_in_hard() {
     }
 }
 
+// Issue #3546: sticky composite mid for SE ↔ Typed ↔ last_proof_mid join.
+// Reuses #3066 g_tls_composite_batch_join_mid (no second sticky model).
+static void ac3546_1_sticky_mid_survives_inner_mutates() {
+    std::println("\n--- #3546 AC1: composite sticky mid survives 3 inner mutates ---");
+    using namespace aura::compiler::typed_audit;
+    reset_all();
+    reset_for_test();
+    g_typed_mutation_audit_counters.production_defaults_active.store(1, std::memory_order_relaxed);
+    aura::core::store_workspace_epoch(aura::core::WorkspaceEpochKind::Mutation, 0);
+    process_resource_quota_manager().provenance_mutation_id = 0;
+    clear_invariant_deny_se_tls();
+
+    constexpr std::uint64_t kComposite = 3546001;
+    constexpr std::uint64_t kInner[3] = {11, 22, 33};
+    aura_composite_txn_enter(kComposite);
+    CHECK(g_tls_composite_batch_join_mid == kComposite, "3546 AC1: enter pins TLS composite");
+    CHECK(g_last_stamped_audit_mid.load() == kComposite, "3546 AC1: pin publishes last_stamped");
+
+    for (int i = 0; i < 3; ++i) {
+        capture_audit_event_forced(kInner[i], "test:3546-inner", MutationKind::Structural, 1, 2,
+                                   AuditOutcome::Error, 0, 0, 0, 0);
+        CHECK(g_last_stamped_audit_mid.load() == kComposite,
+              "3546 AC1: inner stamp does not clobber composite last_stamped");
+        CHECK(last_stamped_or_composite_audit_mid() == kComposite,
+              "3546 AC1: last_stamped_or_composite stays composite");
+        CHECK(join_audit_and_se_mid(kInner[i]) == kComposite,
+              "3546 AC1: join(inner) returns sticky composite");
+        CHECK(g_tls_composite_batch_join_mid == kComposite, "3546 AC1: TLS sticky still set");
+        TypedMutationAuditEvent te{};
+        CHECK(trail_find_by_mutation_id(kInner[i], te), "3546 AC1: trail keeps forensic inner mid");
+        CHECK(te.mutation_id == kInner[i], "3546 AC1: trail ev.mutation_id is inner");
+    }
+
+    emit_invariant_deny_se(join_audit_and_se_mid(kInner[2]), /*tenant_id=*/0, /*fiber_id=*/0,
+                           /*epoch=*/0, "test:3546-se", "invariant");
+    CHECK(se_ring_has_mid(kComposite), "3546 AC1: SE ring joins composite mid");
+    CHECK(aura::compiler::capture_type_linear_evolution_snapshot().last_proof_mid ==
+              static_cast<std::int64_t>(kComposite),
+          "3546 AC1: last_proof_mid == composite");
+
+    aura_composite_txn_exit();
+    CHECK(g_tls_composite_batch_join_mid == 0, "3546 AC1: exit clears TLS sticky");
+    g_typed_mutation_audit_counters.production_defaults_active.store(0, std::memory_order_relaxed);
+    clear_boundary_audit_mid();
+}
+
+static void ac3546_2_abort_clear_still_prefers_tls() {
+    std::println("\n--- #3546 AC2: abort-clear of last_stamped still prefers TLS ---");
+    using namespace aura::compiler::typed_audit;
+    reset_all();
+    reset_for_test();
+    g_typed_mutation_audit_counters.production_defaults_active.store(1, std::memory_order_relaxed);
+    constexpr std::uint64_t kComposite = 3546002;
+    aura_composite_txn_enter(kComposite);
+    capture_audit_event_forced(77, "test:3546-abort", MutationKind::Structural, 1, 2,
+                               AuditOutcome::Rollback, 0, 0, 0, 0);
+    clear_type_linear_commit_proof_on_abort();
+    CHECK(g_last_stamped_audit_mid.load() == 0, "3546 AC2: abort zeros last_stamped");
+    CHECK(g_tls_composite_batch_join_mid == kComposite, "3546 AC2: TLS sticky survives abort");
+    CHECK(last_stamped_or_composite_audit_mid() == kComposite,
+          "3546 AC2: snapshot prefers TLS composite after abort-clear");
+    CHECK(aura::compiler::capture_type_linear_evolution_snapshot().last_proof_mid ==
+              static_cast<std::int64_t>(kComposite),
+          "3546 AC2: last_proof_mid prefers TLS after abort-clear");
+    CHECK(join_audit_and_se_mid(77) == kComposite, "3546 AC2: SE join still composite");
+    aura_composite_txn_exit();
+    g_typed_mutation_audit_counters.production_defaults_active.store(0, std::memory_order_relaxed);
+    clear_boundary_audit_mid();
+}
+
+static void ac3546_3_enter_zero_is_noop() {
+    std::println("\n--- #3546 AC4: enter(0) is zero-cost no-op ---");
+    using namespace aura::compiler::typed_audit;
+    reset_all();
+    reset_for_test();
+    apply_dev_audit_defaults();
+    g_typed_mutation_audit_counters.production_defaults_active.store(0, std::memory_order_relaxed);
+    aura::core::store_workspace_epoch(aura::core::WorkspaceEpochKind::Mutation, 0);
+    process_resource_quota_manager().provenance_mutation_id = 0;
+    const auto tls0 = g_tls_composite_batch_join_mid;
+    const auto last0 = g_last_stamped_audit_mid.load();
+    const auto pin0 = g_composite_batch_join_pin_total.load();
+    aura_composite_txn_enter(0);
+    CHECK(g_tls_composite_batch_join_mid == tls0, "3546 AC4: enter(0) does not pin TLS");
+    CHECK(g_last_stamped_audit_mid.load() == last0, "3546 AC4: enter(0) does not stamp");
+    CHECK(g_composite_batch_join_pin_total.load() == pin0, "3546 AC4: enter(0) no pin-total");
+    CHECK(last_stamped_or_composite_audit_mid() == last0,
+          "3546 AC4: last_stamped_or_composite unchanged");
+    aura_composite_txn_exit();
+    CHECK(g_tls_composite_batch_join_mid == 0, "3546 AC4: exit with TLS==0 is no-op");
+}
+
+static void ac3546_4_source_cite_no_invent() {
+    std::println("\n--- #3546 AC5: source-cite + no second sticky / no design ---");
+    const auto tma = read_file("src/compiler/typed_mutation_audit.h");
+    const auto health = read_file("src/compiler/type_linear_commit_health.hh");
+    const auto reflect = read_file("src/compiler/evaluator_primitives_query_reflect.cpp");
+    const auto ev = read_file("src/compiler/evaluator.ixx");
+    const auto t = read_file("tests/compiler/test_audit_mutation_id_unify.cpp");
+    CHECK(tma.find("Issue #3546") != std::string::npos, "3546 AC5: header cite");
+    CHECK(tma.find("kCompositeTxnStickyMidIssue = 3546") != std::string::npos,
+          "3546 AC5: issue constant");
+    CHECK(tma.find("last_stamped_or_composite_audit_mid") != std::string::npos,
+          "3546 AC5: last_stamped_or_composite helper");
+    CHECK(tma.find("stamp_last_audit_mid") != std::string::npos, "3546 AC5: stamp helper");
+    CHECK(tma.find("aura_composite_txn_enter") != std::string::npos, "3546 AC5: C ABI enter");
+    CHECK(tma.find("aura_composite_txn_exit") != std::string::npos, "3546 AC5: C ABI exit");
+    CHECK(tma.find("g_tls_composite_batch_join_mid") != std::string::npos,
+          "3546 AC5: reuses #3066 TLS");
+    CHECK(tma.find("g_tls_composite_txn_sticky") == std::string::npos,
+          "3546 AC5: no second sticky TLS");
+    CHECK(health.find("last_stamped_or_composite_audit_mid") != std::string::npos,
+          "3546 AC5: last_proof_mid uses helper");
+    CHECK(reflect.find("schema-3546") != std::string::npos, "3546 AC5: additive schema-3546");
+    CHECK(reflect.find("query:composite-txn") == std::string::npos, "3546 AC5: no new query key");
+    CHECK(ev.find("composite_txn_exit") != std::string::npos,
+          "3546 AC5: rollback_atomic_batch_pinning exits sticky");
+    CHECK(t.find("ac3546_1_sticky_mid_survives_inner_mutates") != std::string::npos,
+          "3546 AC5: AC1 present");
+    CHECK(read_file("tests/compiler/test_issue_3546.cpp").empty(),
+          "3546 AC5: no test_issue_3546.cpp");
+    CHECK(read_file("tests/issues/test_issue_3546.cpp").empty(),
+          "3546 AC5: no tests/issues/test_issue_3546.cpp");
+    CHECK(read_file("scripts/coverage/checks/check_composite_mid_sticky.py").empty(),
+          "3546 AC5: no check_composite_mid_sticky.py");
+    const std::filesystem::path docs_design =
+        std::filesystem::path(AURA_SOURCE_DIR) / "docs" / "design";
+    std::error_code ec;
+    if (std::filesystem::exists(docs_design, ec)) {
+        for (const auto& entry : std::filesystem::directory_iterator(docs_design, ec)) {
+            const auto name = entry.path().filename().string();
+            CHECK(name.find("3546-") == std::string::npos,
+                  std::string("3546 AC5: no docs/design/") + name + " (forbidden per #1655)");
+        }
+    }
+}
+
 // Issue #3367 source-cite + linter pass.
 static void ac3367_source_cite_and_no_invent() {
     std::println("\n--- #3367: source-cite + no docs/design/ ---");
@@ -549,6 +687,10 @@ int run_test_audit_mutation_id_unify() {
     ac3066_4_linter_no_design();
     ac3367_pin_matrix_no_process_origin_mid_in_hard();
     ac3367_source_cite_and_no_invent();
+    ac3546_1_sticky_mid_survives_inner_mutates();
+    ac3546_2_abort_clear_still_prefers_tls();
+    ac3546_3_enter_zero_is_noop();
+    ac3546_4_source_cite_no_invent();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

@@ -9146,8 +9146,7 @@ void ObservabilityPrims::register_jit_p68(PrimRegistrar add, Evaluator& ev) {
             insert_kv("issue-3016", 3016);
             insert_kv("boundary-audit-mid-wired", 1);
             insert_kv("last-stamped-audit-mid",
-                      static_cast<std::int64_t>(
-                          g_last_stamped_audit_mid.load(std::memory_order_relaxed)));
+                      static_cast<std::int64_t>(last_stamped_or_composite_audit_mid()));
             // Issue #3066: composite / lockless batch typed↔SE join mid.
             insert_kv("schema-3066", 3066);
             insert_kv("issue-3066", 3066);
