@@ -1,0 +1,49 @@
+{
+  "issue": 3566,
+  "title": "Issue #3566: mailbox BP note/decay named-scope isolation",
+  "ok": "OK: Issue #3566 named mailbox BP does not poison process bucket or freeze quiet-tenant decay. Soft empty stays process.",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/serve/multi_fiber_mailbox.h",
+      "contains": [
+        "g_mf_mailbox_bp_note_scope",
+        "note_self_backpressure",
+        "set_bp_scope_id"
+      ]
+    },
+    {
+      "ac": "AC2-decay",
+      "path": "src/orch/agent_spawn.h",
+      "contains": [
+        "kMailboxBpScopeNoteDecayIssue = 3566",
+        "do NOT early-return when the process clock is hot"
+      ]
+    },
+    {
+      "ac": "AC1-hook",
+      "path": "src/compiler/evaluator_fiber_mutation.cpp",
+      "contains": [
+        "g_mf_mailbox_bp_note_scope"
+      ]
+    },
+    {
+      "ac": "AC5-test",
+      "path": "tests/orch/test_mailbox_bp_admit.cpp",
+      "contains": [
+        "3566 AC1",
+        "3566 AC2",
+        "3566 AC3",
+        "3566 AC4"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "forbid": [
+        "tests/orch/test_issue_3566.cpp",
+        "tests/issues/test_issue_3566.cpp",
+        "docs/design/3566-mailbox-bp-scope.md"
+      ]
+    }
+  ]
+}
