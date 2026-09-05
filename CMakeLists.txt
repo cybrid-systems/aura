@@ -2046,6 +2046,19 @@ aura_add_issue_test(test_linear_fast_path_or_semantics)
 # mid-eval; covered by existing #2223 ADT exhaustiveness invariant tests.
 # Linter: scripts/coverage/checks/check_adt_exhaustiveness_production_hard.py.
 aura_add_issue_test(test_adt_exhaustiveness_production_hard)
+# Issue #3560: DeadCoercion decision cache doesn't sense type_id /
+# narrow_evidence drift. `current_narrow_evidence(NodeId)` read API in
+# castop_typed_meta.h reads from existing flat.provenance +
+# g_dead_coercion_ir_narrow_evidence_hits atomic (no new storage).
+# DeadCoercionPass::run re-verify consults the read API + bumps sibling
+# mismatch atomic on drift. coercion_map.ixx apply_coercion_map identity-
+# elision branch also writes to narrow_evidence cache (sibling, NOT in
+# metrics middle). Source-cite only — full runtime needs live evaluator +
+# typed_mutate mid-castop + ADT/type registry for type_id drift; covered
+# by existing #3102 AC4 + #3440 persist-reject regression tests through
+# the full mutate flow. Linter:
+# scripts/coverage/checks/check_dead_coercion_decision_invalidate.py.
+aura_add_issue_test(test_dead_coercion_decision_invalidate)
 # Issue #3382: lightweight / render abort clears type/linear + coercion +
 # occurrence persist authority. Full abort body already has the ordered
 # restore (#3281: IR force-dirty → proof clear → coercion rewind →

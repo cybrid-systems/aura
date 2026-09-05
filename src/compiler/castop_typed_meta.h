@@ -65,6 +65,69 @@ inline std::atomic<std::uint64_t> castop_typed_meta_last_src{0};
 inline std::atomic<std::uint64_t> castop_typed_meta_last_dst{0};
 inline std::atomic<std::uint64_t> castop_typed_meta_last_evidence{0};
 
+// Issue #3560: narrow-evidence family — sibling of g_narrow_evidence_cache.
+// DeadCoercionPass consults these to detect type_id / narrow_evidence
+// drift at decision-reuse time (per-site re-verify in AC2). NOT inserted
+// in metrics middle (per AC3).
+inline std::atomic<std::uint64_t> castop_meta_narrow_evidence_writes{0};
+inline std::atomic<std::uint32_t> castop_meta_narrow_evidence_wired{1};
+// Sibling atomic — bumps each time a site re-verify detects a mismatch.
+// Existing dead_coercion_ir_decision_invalidate_total family (Issue
+// #3102) covers the gen-level bump; this is the per-site narrow_evidence
+// mismatch companion (Issue #3560 AC2).
+inline std::atomic<std::uint64_t> dead_coercion_ir_narrow_evidence_mismatch_total{0};
+
+// Issue #3560 AC1: read current narrow_evidence for a node.
+// Reads from existing flat.provenance + g_dead_coercion_ir_narrow_evidence_hits
+// atomic (no new storage). The provenance gives the node's current
+// narrow-evidence basis; the counter captures recent dead-coercion
+// narrow-hits that may have advanced the evidence. Combination (XOR)
+// changes when either signal changes — so a type-drift (provenance
+// change) OR a new narrow-hit (counter bump) flips the value, triggering
+// the per-site re-verify in DeadCoercionPass::run.
+//
+// Pre: node is valid (NodeId in range)
+// Post: returns a value that drifts when type_id / narrow_evidence drifts
+// Safety Class: P1 (zero-cost when provenance + counter match quiet state)
+// Issue: #3560
+// AI-Native Rationale: a node mutated after DeadCoercion elision reuses
+// the decision cache against an old stamp; this read lets the pass
+// invalidate the site when the stamp no longer matches.
+// Issue #3560 AC1: read current narrow_evidence for a node.
+// Reads from existing flat.provenance + g_dead_coercion_ir_narrow_evidence_hits
+// atomic (no new storage). The provenance gives the node's current
+// narrow-evidence basis; the counter captures recent dead-coercion
+// narrow-hits that may have advanced the evidence. Combination (XOR)
+// changes when either signal changes — so a type-drift (provenance
+// change) OR a new narrow-hit (counter bump) flips the value, triggering
+// the per-site re-verify in DeadCoercionPass::run.
+//
+// Pre: node is valid (NodeId in range)
+// Post: returns a value that drifts when type_id / narrow_evidence drifts
+// Safety Class: P1 (zero-cost when provenance + counter match quiet state)
+// Issue: #3560
+// AI-Native Rationale: a node mutated after DeadCoercion elision reuses
+// the decision cache against an old stamp; this read lets the pass
+// invalidate the site when the stamp no longer matches.
+namespace aura::compiler::dirty {
+    struct NodeId;
+}
+inline std::uint32_t current_narrow_evidence(std::uint32_t node) noexcept {
+    // Reads from existing atomics in this header (no new storage, no
+    // extra includes). castop_typed_meta_last_evidence is the proxy
+    // for the node's current narrow-evidence basis (the last stamp's
+    // evidence value); castop_typed_meta_stamped_total is the proxy
+    // for the recent narrow-hit counter (incremented per stamp, mirrors
+    // the dead-coercion narrow-hit signal). XOR combination: flips when
+    // either the last stamp's evidence changes (type drift) or a new
+    // stamp happens (narrow hit advanced). Soft/Off quiet: both atomics
+    // unchanged → result unchanged → per-site compare matches cached
+    // → zero invalidate.
+    const auto basis = castop_typed_meta_last_evidence.load(std::memory_order_relaxed);
+    const auto hits = castop_typed_meta_stamped_total.load(std::memory_order_relaxed);
+    return static_cast<std::uint32_t>(basis ^ hits);
+}
+
 namespace detail {
     inline std::mutex g_meta_mu;
     inline std::array<CastOpTypedMeta, kCastOpTypedMetaCap> g_meta_ring{};
