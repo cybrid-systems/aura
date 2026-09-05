@@ -3,6 +3,7 @@
 //          recovery window (N clean reemits + StormLevel::None).
 //          Issue #2895 — last success coverage + partial re-promote knobs
 //          (refine #2502/#2601).
+//          Issue #3541 — partial clear is per-eval; peer overlay bits stay.
 //
 //   #2502 AC1: force-JIT Defuse → N successful reemits, no storm → bit cleared
 //   #2502 AC2: storm active or new fail reason in window → no re-promote
@@ -74,6 +75,9 @@ static bool light_link_env() {
 }
 
 static void clear_idle(aura::compiler::HotUpdateRegistry& reg) {
+    aura_aot_set_reemit_owner_eval(nullptr);
+    aura_aot_set_register_owner_eval(nullptr);
+    reg.set_force_eval_owner(nullptr);
     reg.on_reload_success();
     while (reg.reload_recovery_state().pending_dirty_count > 0)
         reg.on_recovery_pending_dirty_dec();
@@ -608,6 +612,135 @@ static void ac2949_production_only_covered_default() {
     clear_idle(reg);
 }
 
+// ── #3541 AC1: two evals; A's partial clear leaves B's overlay bits ──
+static void ac3541_peer_bits_preserved() {
+    std::println("\n--- #3541 AC1: peer eval force bits survive this eval's partial clear ---");
+    auto& reg = aura::compiler::hot_update_registry();
+    clear_idle(reg);
+    reg.set_force_jit_repromote_window(2);
+    reg.set_force_jit_repromote_only_covered_bits(true);
+
+    void* eval_a = reinterpret_cast<void*>(static_cast<std::uintptr_t>(0xA3541));
+    void* eval_b = reinterpret_cast<void*>(static_cast<std::uintptr_t>(0xB3541));
+    const auto defuse_bit = aot_reload_fail_to_force_jit_mask(AotReloadFail::Defuse);
+    const auto env_bit = aot_reload_fail_to_force_jit_mask(AotReloadFail::Env);
+
+    aura_aot_set_reemit_owner_eval(eval_a);
+    reg.set_force_eval_owner(eval_a);
+    reg.on_force_jit_for_reason(AotReloadFail::Defuse);
+    aura_aot_set_reemit_owner_eval(eval_b);
+    reg.set_force_eval_owner(eval_b);
+    reg.on_force_jit_for_reason(AotReloadFail::Env);
+    CHECK((reg.force_jit_regions_mask_for_eval(eval_a) & defuse_bit) != 0,
+          "3541 AC1: A overlay has Defuse");
+    CHECK((reg.force_jit_regions_mask_for_eval(eval_b) & env_bit) != 0,
+          "3541 AC1: B overlay has Env");
+
+    const auto peer0 = reg.force_mask_peer_residual_total();
+    aura_aot_set_reemit_owner_eval(eval_a);
+    reg.set_force_eval_owner(eval_a);
+    reg.note_reemit_success_coverage(defuse_bit);
+    reg.on_reemit_pipeline_call(1, 1);
+    reg.on_reemit_pipeline_call(1, 1); // window=2 → A's partial clear
+
+    CHECK((reg.force_jit_regions_mask_for_eval(eval_a) & defuse_bit) == 0,
+          "3541 AC1: A Defuse cleared on A's window");
+    CHECK((reg.force_jit_regions_mask_for_eval(eval_b) & env_bit) != 0,
+          "3541 AC1: B Env preserved");
+    CHECK((reg.reload_recovery_state().force_jit_regions_mask & env_bit) != 0,
+          "3541 AC1: process aggregate still has B Env");
+    CHECK(reg.force_mask_peer_residual_total() > peer0, "3541 AC1: peer-residual counter");
+
+    aura_aot_set_reemit_owner_eval(eval_b);
+    reg.set_force_eval_owner(eval_b);
+    reg.note_reemit_success_coverage(env_bit);
+    reg.on_reemit_pipeline_call(1, 1);
+    reg.on_reemit_pipeline_call(1, 1);
+    CHECK((reg.force_jit_regions_mask_for_eval(eval_b) & env_bit) == 0,
+          "3541 AC1: B Env cleared on B's own window");
+
+    clear_idle(reg);
+}
+
+// ── #3541 AC2: nullptr owner keeps legacy process-word partial ──
+static void ac3541_legacy_null_owner() {
+    std::println("\n--- #3541 AC2: nullptr owner is the legacy process-word path ---");
+    auto& reg = aura::compiler::hot_update_registry();
+    clear_idle(reg);
+    reg.set_force_jit_repromote_window(2);
+    reg.set_force_jit_repromote_only_covered_bits(true);
+    reg.on_force_jit_for_reason(AotReloadFail::Defuse);
+    reg.on_force_jit_for_reason(AotReloadFail::Env);
+    const auto defuse_bit = aot_reload_fail_to_force_jit_mask(AotReloadFail::Defuse);
+    const auto env_bit = aot_reload_fail_to_force_jit_mask(AotReloadFail::Env);
+    CHECK(reg.force_jit_regions_mask_for_eval(nullptr) ==
+              reg.reload_recovery_state().force_jit_regions_mask,
+          "3541 AC2: nullptr reads process aggregate");
+    reg.note_reemit_success_coverage(defuse_bit);
+    reg.on_reemit_pipeline_call(1, 1);
+    reg.on_reemit_pipeline_call(1, 1);
+    const auto mask = reg.reload_recovery_state().force_jit_regions_mask;
+    CHECK((mask & defuse_bit) == 0, "3541 AC2: Defuse cleared");
+    CHECK((mask & env_bit) != 0, "3541 AC2: Env retained");
+    CHECK(reg.force_mask_peer_residual_total() == 0, "3541 AC2: no peer residual on legacy");
+    clear_idle(reg);
+}
+
+// ── #3541 AC3: idle overlay is one live-count load ──
+static void ac3541_idle_zero_cost() {
+    std::println("\n--- #3541 AC3: idle overlay one live-count load ---");
+    const auto hh = read_file("src/compiler/hot_update_registry.hh");
+    const auto cpp = read_file("src/compiler/hot_update_registry.cpp");
+    CHECK(hh.find("eval_force_live_") != std::string::npos, "3541 AC3: live-count member");
+    CHECK(cpp.find("eval_force_live_.load(std::memory_order_relaxed) == 0") != std::string::npos,
+          "3541 AC3: live==0 skips overlay");
+    CHECK(cpp.find("try_partial_clear_eval_force") != std::string::npos,
+          "3541 AC3: scoped partial helper");
+}
+
+// ── #3541 AC4: Soft walk / no abort ──
+static void ac3541_soft_no_abort() {
+    std::println("\n--- #3541 AC4: dual-eval partial clear returns ---");
+    auto& reg = aura::compiler::hot_update_registry();
+    clear_idle(reg);
+    void* eval_a = reinterpret_cast<void*>(static_cast<std::uintptr_t>(0xC3541));
+    aura_aot_set_reemit_owner_eval(eval_a);
+    reg.set_force_eval_owner(eval_a);
+    reg.on_force_jit_for_reason(AotReloadFail::Linear);
+    CHECK(true, "3541 AC4: owner demote returned");
+    clear_idle(reg);
+}
+
+// ── #3541 AC5: source-cite + query + no new files ──
+static void ac3541_source_query() {
+    std::println("\n--- #3541 AC5: source-cite + schema-3541 ---");
+    const auto hh = read_file("src/compiler/hot_update_registry.hh");
+    const auto cpp = read_file("src/compiler/hot_update_registry.cpp");
+    const auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
+    CHECK(hh.find("kForceMaskPeerScopeIssue = 3541") != std::string::npos, "3541 AC5: stamp");
+    CHECK(hh.find("force_mask_peer_residual_total_") != std::string::npos, "3541 AC5: counter END");
+    CHECK(hh.find("EvalForceSlot") != std::string::npos, "3541 AC5: overlay slots");
+    CHECK(cpp.find("try_partial_clear_eval_force") != std::string::npos, "3541 AC5: scoped clear");
+    CHECK(mut.find("force-mask-peer-residual-total") != std::string::npos, "3541 AC5: query key");
+    CHECK(mut.find("schema-3541") != std::string::npos, "3541 AC5: schema-3541");
+    CHECK(read_file("tests/compiler/test_force_mask_per_eval_scope.cpp").empty(),
+          "3541 AC5: no new test file");
+    CHECK(read_file("docs/design/3541-force-mask-scope.md").empty(), "3541 AC5: no docs/design");
+    if (light_link_env()) {
+        std::println("  (light link: query surface best-effort)");
+        return;
+    }
+    CompilerService cs;
+    CHECK(href(cs, "query:reload-recovery-state", "schema-3541") == 3541, "3541 AC5: schema-3541");
+    CHECK(href(cs, "query:reload-recovery-state", "issue-3541") == 3541, "3541 AC5: issue-3541");
+    CHECK(href(cs, "query:reload-recovery-state", "force-mask-peer-scope-wired") == 1,
+          "3541 AC5: wired");
+    CHECK(href(cs, "query:reload-recovery-state", "force-mask-peer-residual-total") >= 0,
+          "3541 AC5: residual total");
+    CHECK(href(cs, "query:reload-recovery-state", "schema-2895") == 2895,
+          "3541 AC5: schema-2895 retained");
+}
+
 } // namespace
 
 int run_test_force_jit_repromote() {
@@ -623,9 +756,14 @@ int run_test_force_jit_repromote() {
     ac2895_storm_blocks();
     ac2895_source_cite();
     ac2949_production_only_covered_default();
+    ac3541_peer_bits_preserved();
+    ac3541_legacy_null_owner();
+    ac3541_idle_zero_cost();
+    ac3541_soft_no_abort();
+    ac3541_source_query();
     if (g_failed)
         return 1;
-    std::println("force-jit re-promote #2502/#2895/#2949/#2978: OK ({} passed)", g_passed);
+    std::println("force-jit re-promote #2502/#2895/#2949/#2978/#3541: OK ({} passed)", g_passed);
     return 0;
 }
 

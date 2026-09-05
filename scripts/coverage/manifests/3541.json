@@ -1,0 +1,53 @@
+{
+  "issue": 3541,
+  "title": "Issue #3541: partial force-mask clear is per-eval; peer overlay bits stay",
+  "ok": "OK: Issue #3541 force-mask peer scope — overlay slots; Soft live==0 one load; no new query:*.",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/hot_update_registry.cpp",
+      "contains": [
+        "try_partial_clear_eval_force",
+        "or_eval_force_bit",
+        "force_mask_peer_residual_total_"
+      ]
+    },
+    {
+      "ac": "AC1-stamp",
+      "path": "src/compiler/hot_update_registry.hh",
+      "contains": [
+        "kForceMaskPeerScopeIssue = 3541",
+        "EvalForceSlot",
+        "force_mask_peer_residual_total_{0}"
+      ]
+    },
+    {
+      "ac": "AC5-query",
+      "path": "src/compiler/evaluator_primitives_mutate.cpp",
+      "contains": [
+        "force-mask-peer-residual-total",
+        "schema-3541"
+      ]
+    },
+    {
+      "ac": "AC1-test",
+      "path": "tests/compiler/test_force_jit_repromote.cpp",
+      "contains": [
+        "3541 AC1",
+        "3541 AC2",
+        "3541 AC3",
+        "3541 AC4",
+        "3541 AC5"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "forbid": [
+        "tests/compiler/test_issue_3541.cpp",
+        "tests/compiler/test_force_mask_per_eval_scope.cpp",
+        "docs/design/3541-force-mask-scope.md",
+        "scripts/coverage/checks/check_force_mask_peer_3541.py"
+      ]
+    }
+  ]
+}

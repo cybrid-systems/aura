@@ -274,6 +274,16 @@ struct aura_reload_recovery_snapshot {
     std::int64_t residual_force_observe_wired;
     std::int64_t schema_3026;
     std::int64_t issue_3026;
+    // Issue #3096: production-only bounded auto-heal (lockstep with header)
+    std::int64_t residual_force_auto_heal_total;
+    std::int64_t residual_force_auto_heal_wired;
+    std::int64_t schema_3096;
+    std::int64_t issue_3096;
+    // Issue #3541: per-eval force overlay residual (lockstep with header)
+    std::int64_t force_mask_peer_residual_total;
+    std::int64_t force_mask_peer_scope_wired;
+    std::int64_t schema_3541;
+    std::int64_t issue_3541;
 };
 void aura_hot_update_reload_recovery_get_snapshot(aura_reload_recovery_snapshot* out);
 // Issue #2953: recovery playbook C ABI (lockstep with hot_update_registry.hh).
@@ -8980,6 +8990,11 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                           rs.force_jit_repromote_partial_total);
                 insert_kv("schema-2895", rs.schema_2895);
                 insert_kv("issue-2895", rs.issue_2895);
+                // Issue #3541: per-eval force overlay residual (additive).
+                insert_kv("force-mask-peer-residual-total", rs.force_mask_peer_residual_total);
+                insert_kv("force-mask-peer-scope-wired", rs.force_mask_peer_scope_wired);
+                insert_kv("schema-3541", rs.schema_3541);
+                insert_kv("issue-3541", rs.issue_3541);
                 // Issue #2949: production default only_covered resolve.
                 insert_kv("force-jit-repromote-only-covered-default-wired",
                           rs.force_jit_repromote_only_covered_default_wired);
@@ -9139,6 +9154,11 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             insert_kv("force-jit-repromote-partial-total", rs.force_jit_repromote_partial_total);
             insert_kv("schema-2895", rs.schema_2895);
             insert_kv("issue-2895", rs.issue_2895);
+            // Issue #3541: per-eval force overlay residual (additive).
+            insert_kv("force-mask-peer-residual-total", rs.force_mask_peer_residual_total);
+            insert_kv("force-mask-peer-scope-wired", rs.force_mask_peer_scope_wired);
+            insert_kv("schema-3541", rs.schema_3541);
+            insert_kv("issue-3541", rs.issue_3541);
             // Issue #2949: production default only_covered resolve.
             insert_kv("force-jit-repromote-only-covered-default-wired",
                       rs.force_jit_repromote_only_covered_default_wired);
