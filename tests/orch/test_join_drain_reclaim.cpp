@@ -377,6 +377,140 @@ static void ac3334_5_source_and_linter() {
     CHECK(!docs.good(), "3334 AC5: no docs/design");
 }
 
+// Issue #3529: production Reclaimed + body-alive quota recycle after
+// AURA_RECLAIMED_QUOTA_TIMEOUT_MS. Soft stays zero-cost. #2661 body-stack
+// is not freed. #3012 dtor still releases quota unconditionally.
+static void ac3529_1_dtor_timeout_force_releases() {
+    using aura::orch::AgentHandle;
+    using aura::orch::complete_agent_join_cleanup;
+    using aura::serve::Fiber;
+    using aura::serve::JoinResult;
+    using aura::serve::JoinStatus;
+    std::println("\n--- #3529 AC1: production + timeout=0 + live body dtor → force-release ---");
+    apply_production_audit_defaults();
+    const char* prev = std::getenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS");
+    std::string prev_s = prev ? prev : "";
+    ::setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", "0", 1);
+    const auto before =
+        g_orch_module_stats.reclaimed_quota_force_released_total.load(std::memory_order_relaxed);
+    auto fiber_owned = std::make_unique<Fiber>([] {});
+    fiber_owned->mark_reclaimed();
+    AgentHandle h;
+    h.ok = true;
+    h.fiber = fiber_owned.get();
+    h.reserved_memory_bytes = 4096;
+    JoinResult jr;
+    jr.status = JoinStatus::Reclaimed;
+    complete_agent_join_cleanup(h, jr);
+    CHECK(h.reclaimed_deferred_cleanup, "3529 AC1: deferred set");
+    CHECK(h.reserved_memory_bytes == 4096, "3529 AC1: reservation held before dtor");
+    CHECK(!h.fiber->is_done(), "3529 AC1: body still live");
+    h.finish_reclaimed_cleanup_on_dtor();
+    const auto after =
+        g_orch_module_stats.reclaimed_quota_force_released_total.load(std::memory_order_relaxed);
+    CHECK(after == before + 1, "3529 AC1: reclaimed_quota_force_released_total bumps");
+    CHECK(h.reserved_memory_bytes == 0, "3529 AC1: reservation released (#3012)");
+    CHECK(!h.fiber->is_done(), "3529 AC1: body-stack untouched (#2661)");
+    if (!prev_s.empty())
+        ::setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", prev_s.c_str(), 1);
+    else
+        ::unsetenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS");
+    apply_dev_audit_defaults();
+}
+
+static void ac3529_2_soft_zero_cost() {
+    using aura::orch::AgentHandle;
+    using aura::orch::complete_agent_join_cleanup;
+    using aura::serve::Fiber;
+    using aura::serve::JoinResult;
+    using aura::serve::JoinStatus;
+    std::println("\n--- #3529 AC2: Soft — no force-release counter ---");
+    apply_dev_audit_defaults();
+    const char* prev = std::getenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS");
+    std::string prev_s = prev ? prev : "";
+    ::setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", "0", 1);
+    const auto before =
+        g_orch_module_stats.reclaimed_quota_force_released_total.load(std::memory_order_relaxed);
+    auto fiber_owned = std::make_unique<Fiber>([] {});
+    fiber_owned->mark_reclaimed();
+    AgentHandle h;
+    h.ok = true;
+    h.fiber = fiber_owned.get();
+    h.reserved_memory_bytes = 4096;
+    JoinResult jr;
+    jr.status = JoinStatus::Reclaimed;
+    complete_agent_join_cleanup(h, jr);
+    h.finish_reclaimed_cleanup_on_dtor();
+    const auto after =
+        g_orch_module_stats.reclaimed_quota_force_released_total.load(std::memory_order_relaxed);
+    CHECK(after == before, "3529 AC2: Soft does not bump force-released (no getenv path)");
+    CHECK(h.reserved_memory_bytes == 0, "3529 AC2: #3012 dtor still releases quota");
+    if (!prev_s.empty())
+        ::setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", prev_s.c_str(), 1);
+    else
+        ::unsetenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS");
+}
+
+static void ac3529_3_ensure_timeout_force_releases() {
+    using aura::orch::AgentHandle;
+    using aura::orch::ensure_reclaimed_cleanup;
+    using aura::serve::Fiber;
+    std::println("\n--- #3529 AC3: ensure_reclaimed_cleanup Timeout + stuck → recycle ---");
+    apply_production_audit_defaults();
+    const char* prev = std::getenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS");
+    std::string prev_s = prev ? prev : "";
+    ::setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", "0", 1);
+    const auto before =
+        g_orch_module_stats.reclaimed_quota_force_released_total.load(std::memory_order_relaxed);
+    auto fiber_owned = std::make_unique<Fiber>([] {});
+    fiber_owned->mark_reclaimed();
+    AgentHandle h;
+    h.ok = true;
+    h.fiber = fiber_owned.get();
+    h.reserved_memory_bytes = 4096;
+    h.must_wait_reclaimed = true;
+    h.reclaimed_deferred_cleanup = true;
+    CHECK(!h.fiber->is_done(), "3529 AC3: body still live");
+    auto wr = ensure_reclaimed_cleanup(h);
+    CHECK(wr.status == aura::serve::JoinStatus::Timeout || wr.still_running,
+          "3529 AC3: ensure Timeout / still-running");
+    CHECK(h.reserved_memory_bytes == 0, "3529 AC3: reservation force-released");
+    CHECK(!h.must_wait_reclaimed, "3529 AC3: must_wait cleared after recycle");
+    CHECK(!h.fiber->is_done(), "3529 AC3: body-stack untouched (#2661)");
+    CHECK(g_orch_module_stats.reclaimed_quota_force_released_total.load(
+              std::memory_order_relaxed) == before + 1,
+          "3529 AC3: force-released counter bumps");
+    if (!prev_s.empty())
+        ::setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", prev_s.c_str(), 1);
+    else
+        ::unsetenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS");
+    apply_dev_audit_defaults();
+}
+
+static void ac3529_4_source_cite_and_no_invent() {
+    std::println("\n--- #3529 AC4: source-cite + no invent / no new query:* ---");
+    const auto spawn = read_file("src/orch/agent_spawn.h");
+    const auto prim = read_file("src/compiler/evaluator_primitives_agent.cpp");
+    CHECK(spawn.find("kReclaimedQuotaForceReleaseIssue = 3529") != std::string::npos,
+          "3529 AC4: issue constant");
+    CHECK(spawn.find("reclaimed_quota_force_released_total") != std::string::npos,
+          "3529 AC4: counter at struct END");
+    CHECK(spawn.find("AURA_RECLAIMED_QUOTA_TIMEOUT_MS") != std::string::npos,
+          "3529 AC4: env timeout");
+    CHECK(spawn.find("reclaimed_quota_stuck_past_timeout") != std::string::npos,
+          "3529 AC4: stuck helper");
+    CHECK(prim.find("reclaimed-quota-force-released-total") != std::string::npos,
+          "3529 AC4: stats key on existing query");
+    CHECK(prim.find("query:reclaimed-quota") == std::string::npos, "3529 AC4: no new query:*");
+    CHECK(read_file("scripts/coverage/manifests/3529.json").find("3529") != std::string::npos,
+          "3529 AC4: coverage manifest 3529.json");
+    CHECK(read_file("tests/orch/test_issue_3529.cpp").empty() &&
+              read_file("tests/issues/test_issue_3529.cpp").empty(),
+          "3529 AC4: no test_issue_3529.cpp per #81967");
+    CHECK(read_file("docs/design/3529-reclaimed-quota.md").empty(),
+          "3529 AC4: no docs/design/3529-* per #1655");
+}
+
 static void ac3433_1_timeout_live_defers_like_reclaimed() {
     using aura::core::sandbox::SandboxMode;
     using aura::core::sandbox::set_mode;
@@ -4754,6 +4888,11 @@ int run_test_join_drain_reclaim() {
     ac3334_3_soft_zero_cost();
     ac3334_4_cleaned_when_body_done();
     ac3334_5_source_and_linter();
+    std::println("\n=== Issue #3529: Reclaimed quota force-release ===");
+    ac3529_1_dtor_timeout_force_releases();
+    ac3529_2_soft_zero_cost();
+    ac3529_3_ensure_timeout_force_releases();
+    ac3529_4_source_cite_and_no_invent();
 
     std::println("\n=== Issue #3433: Timeout/Cancelled join defers like Reclaimed ===");
     ac3433_1_timeout_live_defers_like_reclaimed();
