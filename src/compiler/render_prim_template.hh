@@ -10,8 +10,8 @@
 //      (helper does not auto-wrap; body must open with the macro)
 //   3. Prefer frame bump arena / zero-copy / dirty short-circuit (#1559–#1675)
 //   4. Bump targeted metrics; never grow SlimSurface public add() for dashboards
-//   5. FFI batch hand-off: FFIBatchHotPath::dispatch_batch(..., render_effect_ok)
-//      after require_effect(kEffectRender) (#2136)
+//   5. FFI batch hand-off: mint_render_effect_token(require_effect(kEffectRender))
+//      then FFIBatchHotPath::dispatch_batch(..., token) — no default (#2136 / #3524)
 //   6. Present policy via RenderStrategy (render:set-strategy); kernel paths
 //      stay fixed — dirty-aabb / full / skip / auto (#2138)
 //

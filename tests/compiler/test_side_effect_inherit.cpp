@@ -162,6 +162,8 @@ int run_test_side_effect_inherit() {
         CHECK(script.find("2057") != std::string::npos, "cites #2057");
         CHECK(script.find("add_mutate") != std::string::npos, "knows add_mutate");
         CHECK(script.find("require_effect") != std::string::npos, "knows require_effect");
+        CHECK(script.find("3524") != std::string::npos, "JIT/FFI dispatch TUs in scope (#3524)");
+        CHECK(script.find("dispatch_batch") != std::string::npos, "scans dispatch_batch (#3524)");
         // Live gate must pass on current tree (run from repo root).
         const int rc = std::system("cd .. 2>/dev/null; python3 "
                                    "scripts/coverage/checks/check_side_effect_security.py --strict "
