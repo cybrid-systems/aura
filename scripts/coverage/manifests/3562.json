@@ -1,0 +1,43 @@
+{
+  "issue": 3562,
+  "title": "Issue #3562: Evaluator ctor mirrors process Restricted onto sandbox_mode_",
+  "ok": "OK: Issue #3562 ctor-mirror sandbox_mode_ — Soft Off bool false; no new query:* / linter.",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_ctor.cpp",
+      "contains": [
+        "Issue #3562",
+        "sandbox_mode_ = (effect_sandbox_mode() != 0)",
+        "Do NOT call set_mode"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/compiler/test_security_capability_batch.cpp",
+      "contains": [
+        "run_test_sandbox_mode_authority",
+        "Issue #3562"
+      ]
+    },
+    {
+      "ac": "AC1-test",
+      "path": "tests/compiler/test_sandbox_mode_authority.cpp",
+      "contains": [
+        "3562 AC1",
+        "3562 AC2",
+        "3562 AC3",
+        "3562 AC5"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "forbid": [
+        "tests/compiler/test_issue_3562.cpp",
+        "tests/issues/test_issue_3562.cpp",
+        "docs/design/3562-sandbox-ctor-mirror.md",
+        "scripts/check_sandbox_ctor_mirror.py"
+      ]
+    }
+  ]
+}

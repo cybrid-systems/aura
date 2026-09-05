@@ -64,6 +64,7 @@ extern int run_test_security_posture_trail();
 extern int run_test_security_schedule_mutate_admit();
 extern int run_test_side_effect_inherit();
 extern int run_test_side_effect_security_gate_hardfail();
+extern int run_test_sandbox_mode_authority();
 extern int run_test_tenant_scope_fiber_mandate();
 extern int run_test_fiber_assigned_tenant_inherit();
 extern int run_test_typed_summary_full_gate();
@@ -80,7 +81,7 @@ int main() {
     using aura::test::g_passed;
     int members_failed = 0;
     int members_passed = 0;
-    std::println("=== test_security_capability_batch (37 members) ===");
+    std::println("=== test_security_capability_batch (38 members) ===");
 
     std::println("\n──── test_audit_mid_fallback_slo ────");
     reset_member_face();
@@ -316,6 +317,20 @@ int main() {
     } else {
         ++members_passed;
         std::println("OK member test_side_effect_security_gate_hardfail ({} checks)", g_passed);
+    }
+
+    // Issue #3562: ctor-mirror sandbox_mode_ — member was compiled into this
+    // batch but never invoked. Run it so #3088 AC5 + #3562 ACs actually gate.
+    std::println("\n──── test_sandbox_mode_authority ────");
+    reset_member_face();
+    g_passed = 0;
+    g_failed = 0;
+    if (run_test_sandbox_mode_authority() != 0 || g_failed != 0) {
+        ++members_failed;
+        std::println("FAIL member test_sandbox_mode_authority ({}/{})", g_passed, g_failed);
+    } else {
+        ++members_passed;
+        std::println("OK member test_sandbox_mode_authority ({} checks)", g_passed);
     }
 
     std::println("\n──── test_tenant_scope_fiber_mandate ────");
