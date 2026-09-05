@@ -35,6 +35,14 @@ static void long_mutation_hook_trampoline(std::uint64_t fiber_id,
         g_scheduler->on_long_mutation_held(fiber_id, duration_us);
 }
 
+// Issue #3553: file-scope atomic sibling of safepoint_wait_while_mutation_held
+// (fiber.h). Bumped in eventfd / IO-thread wake path when the waking Fiber is
+// deferred to next cooperative edge because some other Fiber holds an
+// outermost MutationBoundaryGuard (g_process_mutation_boundary_held_count > 0).
+// Soft / Off path: zero-cost (single atomic load + branch in wake handler).
+// NOT inserted in metrics middle — file-scope atomic, sibling family.
+static std::atomic<std::uint64_t> g_eventfd_wake_force_safepoint_total{0};
+
 // ── Constructor ───────────────────────────────────────
 
 Scheduler::Scheduler(int num_workers) {
@@ -948,6 +956,23 @@ void Scheduler::run() {
                 // same Waiting fiber twice → double swapcontext SIGSEGV.
                 if (fiber->is_queued())
                     continue;
+
+                // Issue #3553: eventfd / IO-thread wake bypasses force-safepoint.
+                // If any Fiber holds an outermost Guard (process-wide held count > 0),
+                // the waking Fiber must defer resume by one cooperative edge so it
+                // hits check_gc_safepoint next and consumes force_safepoint_requested_
+                // before the held-boundary Fiber is forced off-CPU by GC compact
+                // (silent corruption: held workspace_mtx_ + active mutate). Reuses
+                // #3133 consume path: Fiber::check_gc_safepoint sees
+                // last_yield_reason_ == MutationBoundary + force_safepoint_requested_=true
+                // and force-fails closed. Single atomic load + branch — zero-cost when
+                // no Fiber holds the boundary (Soft / Off / quiescent path).
+                if (aura_process_mutation_boundary_held_count() > 0 &&
+                    fiber->last_yield_reason() != YieldReason::MutationBoundary) {
+                    fiber->request_force_safepoint();
+                    fiber->set_yield_reason(YieldReason::MutationBoundary);
+                    g_eventfd_wake_force_safepoint_total.fetch_add(1, std::memory_order_relaxed);
+                }
 
                 // Enqueue to a worker for resumption (respect affinity)
                 int wid;

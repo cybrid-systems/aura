@@ -1773,6 +1773,63 @@ static void ac3118_1_force_unlock_depth_clear() {
     Evaluator::set_query_evaluator(nullptr);
 }
 
+// ── Issue #3553 AC1: eventfd / IO-thread wake force-safepoint on outermost holder.
+// Source-cite the wake-handler wire (no Fiber::resume direct; check
+// process_mutation_boundary_held_count + force-safepoint + last_yield_reason
+// pair).
+static void ac3553_1_wake_force_safepoint_source() {
+    std::println("\n--- #3553 AC1: wake force-safepoint source ---");
+    const auto sched = read_file("src/serve/scheduler.cpp");
+    const auto fiber_h = read_file("src/serve/fiber.h");
+    // AC1: wake path checks process_mutation_boundary_held_count
+    // before enqueueing the woken Fiber.
+    CHECK(sched.find("aura_process_mutation_boundary_held_count()") != std::string::npos,
+          "3553 AC1: scheduler wake handler consults process-wide held count");
+    // AC1: when > 0 and last_yield_reason != MutationBoundary, defer resume
+    // by force-safepoint + synthetic MutationBoundary reason (reuses
+    // #3133 consume path on next check_gc_safepoint).
+    CHECK(sched.find("request_force_safepoint") != std::string::npos,
+          "3553 AC1: wake handler calls request_force_safepoint");
+    CHECK(sched.find("set_yield_reason(YieldReason::MutationBoundary)") != std::string::npos,
+          "3553 AC1: wake handler sets synthetic MutationBoundary reason");
+    // AC2: new file-scope atomic sibling of safepoint_wait_while_mutation_held,
+    // NOT inserted in metrics middle.
+    CHECK(sched.find("g_eventfd_wake_force_safepoint_total") != std::string::npos,
+          "3553 AC2: file-scope counter g_eventfd_wake_force_safepoint_total present");
+    CHECK(sched.find("fetch_add(1, std::memory_order_relaxed)") != std::string::npos,
+          "3553 AC2: counter uses relaxed fetch_add (sibling of family)");
+    // AC3: zero-cost when no holder (single atomic load + branch).
+    CHECK(sched.find("> 0 &&") != std::string::npos,
+          "3553 AC3: zero-cost early-out via atomic load > 0 check");
+    // AC4: reuses existing Fiber::request_force_safepoint + set_yield_reason
+    // pair (same as #3133 consume path).
+    CHECK(fiber_h.find("void request_force_safepoint() noexcept") != std::string::npos,
+          "3553 AC4: Fiber::request_force_safepoint helper present");
+    // Existing #3521 regression still in place.
+    CHECK(sched.find("Issue #3521: skip if already queued") != std::string::npos,
+          "3553: existing #3521 is_queued guard preserved");
+    // Insertion order: is_queued skip BEFORE force-safepoint defer
+    // (a fiber already on a worker shouldn't be deferred again).
+    const auto sched_queued_pos = sched.find("Issue #3521: skip if already queued");
+    const auto sched_defer_pos = sched.find("request_force_safepoint");
+    CHECK(sched_queued_pos != std::string::npos && sched_defer_pos != std::string::npos &&
+              sched_queued_pos < sched_defer_pos,
+          "3553 AC1: is_queued check precedes force-safepoint defer");
+}
+
+// ── Issue #3553 AC2: no docs/design/3553-* markdown + no test_issue_3553.cpp.
+// (Agent repo philosophy: docs carried in commit + close comment.)
+static void ac3553_2_no_docs_design_no_invent() {
+    std::println("\n--- #3553 AC2: no docs/design/, no invent ---");
+    CHECK(read_file("docs/design/3553-*.md").empty(),
+          "3553 AC2: no docs/design/3553-* (agent repo philosophy)");
+    CHECK(read_file("tests/serve/test_issue_3553.cpp").empty(),
+          "3553 AC2: no invent test_issue_3553.cpp");
+    // Linter exists (find any check_*.py that mentions 3553).
+    const auto scripts = read_file("scripts/check_*.py");
+    CHECK(scripts.find("3553") != std::string::npos, "3553 AC6: linter exists");
+}
+
 // ── Issue #3118 AC3: Soft — no force-release helper on observe path.
 static void ac3118_3_soft_no_force_release() {
     std::println("\n--- #3118 AC3: Soft observe-only ---");
