@@ -1,0 +1,53 @@
+{
+  "issue": 3551,
+  "title": "Issue #3551: clear ir_cache V2 entry on Phase-5 abort dual-topology restore",
+  "ok": "OK: Issue #3551 abort drops irs — Soft observe; no new query:* / linter.",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/service.ixx",
+      "contains": [
+        "clear_cache_v2_for_define",
+        "abort_define_set",
+        "Issue #3551"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/ir_cache_pure.ixx",
+      "contains": [
+        "kPhase5AbortCacheClearIssue = 3551",
+        "g_phase5_abort_cache_clear_total",
+        "g_phase5_abort_cache_clear_observe_total",
+        "stamp.abort_force_generation < current_abort_force_generation"
+      ]
+    },
+    {
+      "ac": "AC1-call",
+      "path": "src/compiler/evaluator_mutation_boundary.cpp",
+      "contains": [
+        "clear_cache_v2_for_define",
+        "Issue #3551"
+      ]
+    },
+    {
+      "ac": "AC1-test",
+      "path": "tests/compiler/test_abort_ir_cache_fence_first.cpp",
+      "contains": [
+        "3551 AC1",
+        "3551 AC2",
+        "3551 AC4",
+        "3551 AC5"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "forbid": [
+        "tests/compiler/test_issue_3551.cpp",
+        "tests/issues/test_issue_3551.cpp",
+        "docs/design/3551-phase5-abort-cache-clear.md",
+        "scripts/check_phase5_abort_cache_clear.py"
+      ]
+    }
+  ]
+}

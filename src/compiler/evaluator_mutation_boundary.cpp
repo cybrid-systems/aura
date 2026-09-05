@@ -1251,6 +1251,8 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
         // pointing at intermediate/pre-abort state — force-dirty + zero-
         // restamp every cached entry so should_relower is forced true and
         // lookup_define_v2 / eval / AOT reemit never serve stale IR.
+        // Issue #3551: force-dirty also drops entry.irs via
+        // clear_cache_v2_for_define (after restore, before success return).
         if (abort_ir_cache_force_dirty_fn_)
             abort_ir_cache_force_dirty_fn_();
         // Issue #3030: drop stale TypeLinearCommitProof / linear_fast_path
@@ -2093,8 +2095,8 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
                                     workspace_flat_->rollback_atomic_batch();
                                 suppressed_misalign_caught_.fetch_add(1, std::memory_order_relaxed);
                             }
-                            // Issue #3033: dual-topology abort → force-dirty IR cache
-                            // (stamps point at intermediate state; see exit boundary).
+                            // Issue #3033 / #3551: dual-topology abort → force-dirty
+                            // IR cache + drop pre-abort irs (clear_cache_v2_for_define).
                             if (abort_ir_cache_force_dirty_fn_)
                                 abort_ir_cache_force_dirty_fn_();
                             // Issue #3030: invariant force-rollback clears proof face.
@@ -2261,7 +2263,8 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
                         stats.sym_id_column_restored = true;
                         stats.param_columns_restored = true;
                     }
-                    // Issue #3033: dual-topology abort → force-dirty IR cache.
+                    // Issue #3033 / #3551: dual-topology abort → force-dirty
+                    // IR cache + drop pre-abort irs (clear_cache_v2_for_define).
                     if (abort_ir_cache_force_dirty_fn_)
                         abort_ir_cache_force_dirty_fn_();
                     // Issue #3030: Strict reflect-validate rollback clears proof face.

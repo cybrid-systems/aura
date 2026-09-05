@@ -50,6 +50,8 @@
 
 #include "test_harness.hpp"
 
+#include "compiler/typed_mutation_audit.h"
+
 #include <atomic>
 #include <fstream>
 #include <string>
@@ -59,6 +61,7 @@
 
 import std;
 import aura.compiler.ir;
+import aura.compiler.ir_cache_pure;
 import aura.compiler.service;
 import aura.compiler.value;
 
@@ -491,6 +494,112 @@ static void ac3324_5_source_and_linter() {
     CHECK(svc.find("g_3324_") == std::string::npos, "3324 AC5: no g_3324_*");
 }
 
+static void ac3551_1_abort_drops_irs_forces_relower() {
+    std::println("\n--- #3551 AC1: Phase-5 abort drops irs → lookup forces relower ---");
+    using namespace aura::compiler::typed_audit;
+    apply_production_audit_defaults();
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define f3551 (lambda (x) (+ x 1))) (f3551 1)\")").has_value(),
+          "3551 AC1: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3551 AC1: eval");
+    if (!cs.get_define_v2("f3551"))
+        (void)cs.eval("(compile:cache-define \"f3551\")");
+    CHECK(cs.get_define_v2("f3551") != nullptr, "3551 AC1: cached");
+    CHECK(!cs.get_define_v2("f3551")->irs.empty(), "3551 AC1: pre-abort irs present");
+    const auto hash = cs.get_define_v2("f3551")->source_hash;
+    const auto rel0 = cs.metrics().should_relower_total.load(std::memory_order_relaxed);
+    const auto clr0 =
+        aura::compiler::g_phase5_abort_cache_clear_total.load(std::memory_order_relaxed);
+    cs.public_force_ir_cache_dirty_after_abort();
+    const auto* after = cs.get_define_v2("f3551");
+    CHECK(after && after->irs.empty(), "3551 AC1: irs dropped");
+    CHECK(after && after->source_to_ir_map.empty(), "3551 AC1: map dropped");
+    CHECK(cs.lookup_define_v2("f3551", hash) == 1, "3551 AC1: lookup needs-relower");
+    CHECK(cs.metrics().should_relower_total.load(std::memory_order_relaxed) >= rel0,
+          "3551 AC1: should_relower_total non-decreasing");
+    CHECK(aura::compiler::g_phase5_abort_cache_clear_total.load(std::memory_order_relaxed) > clr0,
+          "3551 AC1: clear total bumped");
+    CHECK(aura::compiler::kPhase5AbortCacheClearIssue == 3551, "3551 AC1: issue stamp");
+    apply_dev_audit_defaults();
+}
+
+static void ac3551_2_clear_once_per_define() {
+    std::println("\n--- #3551 AC2: abort path bumps clear total once per restored define ---");
+    using namespace aura::compiler::typed_audit;
+    apply_production_audit_defaults();
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define a3551 (lambda (x) x)) (define b3551 (lambda (x) x))\")")
+              .has_value(),
+          "3551 AC2: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3551 AC2: eval");
+    if (!cs.get_define_v2("a3551"))
+        (void)cs.eval("(compile:cache-define \"a3551\")");
+    if (!cs.get_define_v2("b3551"))
+        (void)cs.eval("(compile:cache-define \"b3551\")");
+    CHECK(cs.get_define_v2("a3551") && cs.get_define_v2("b3551"), "3551 AC2: both cached");
+    const auto clr0 =
+        aura::compiler::g_phase5_abort_cache_clear_total.load(std::memory_order_relaxed);
+    cs.public_force_ir_cache_dirty_after_abort();
+    const auto clr1 =
+        aura::compiler::g_phase5_abort_cache_clear_total.load(std::memory_order_relaxed);
+    CHECK(clr1 >= clr0 + 2, "3551 AC2: at least one bump per cached define");
+    apply_dev_audit_defaults();
+}
+
+static void ac3551_3_soft_observe_only() {
+    std::println("\n--- #3551 AC4: Soft observe only, no irs drop ---");
+    using namespace aura::compiler::typed_audit;
+    apply_dev_audit_defaults();
+    g_typed_mutation_audit_counters.production_defaults_active.store(0, std::memory_order_relaxed);
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define s3551 (lambda (x) x)) (s3551 1)\")").has_value(),
+          "3551 AC4: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3551 AC4: eval");
+    if (!cs.get_define_v2("s3551"))
+        (void)cs.eval("(compile:cache-define \"s3551\")");
+    CHECK(cs.get_define_v2("s3551") && !cs.get_define_v2("s3551")->irs.empty(),
+          "3551 AC4: pre-abort irs");
+    const auto tot0 =
+        aura::compiler::g_phase5_abort_cache_clear_total.load(std::memory_order_relaxed);
+    const auto obs0 =
+        aura::compiler::g_phase5_abort_cache_clear_observe_total.load(std::memory_order_relaxed);
+    cs.public_force_ir_cache_dirty_after_abort();
+    CHECK(cs.get_define_v2("s3551") && !cs.get_define_v2("s3551")->irs.empty(),
+          "3551 AC4: Soft does not drop irs");
+    CHECK(aura::compiler::g_phase5_abort_cache_clear_total.load(std::memory_order_relaxed) == tot0,
+          "3551 AC4: Soft does not bump clear total");
+    CHECK(aura::compiler::g_phase5_abort_cache_clear_observe_total.load(std::memory_order_relaxed) >
+              obs0,
+          "3551 AC4: Soft observe via existing atomic family");
+}
+
+static void ac3551_4_source_cite_no_invent() {
+    std::println("\n--- #3551 AC5: source-cite + no invent / no new query ---");
+    const auto svc = read_file("src/compiler/service.ixx");
+    const auto pure = read_file("src/compiler/ir_cache_pure.ixx");
+    const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto t = read_file("tests/compiler/test_abort_ir_cache_fence_first.cpp");
+    CHECK(svc.find("clear_cache_v2_for_define") != std::string::npos, "3551 AC5: helper");
+    CHECK(svc.find("abort_define_set") != std::string::npos, "3551 AC5: abort_define_set");
+    CHECK(pure.find("kPhase5AbortCacheClearIssue = 3551") != std::string::npos, "3551 AC5: stamp");
+    CHECK(pure.find("g_phase5_abort_cache_clear_total") != std::string::npos, "3551 AC5: total");
+    CHECK(pure.find("g_phase5_abort_cache_clear_observe_total") != std::string::npos,
+          "3551 AC5: observe");
+    CHECK(pure.find("stamp.abort_force_generation < current_abort_force_generation") !=
+              std::string::npos,
+          "3551 AC3: should_relower abort-force");
+    CHECK(mb.find("clear_cache_v2_for_define") != std::string::npos, "3551 AC5: abort path cite");
+    CHECK(svc.find("schema-3551") == std::string::npos, "3551 AC5: no new query key");
+    CHECK(t.find("ac3551_1_abort_drops_irs_forces_relower") != std::string::npos,
+          "3551 AC5: folded");
+    CHECK(read_file("tests/compiler/test_issue_3551.cpp").empty(), "3551 AC5: no invent");
+    CHECK(read_file("tests/issues/test_issue_3551.cpp").empty(), "3551 AC5: no tests/issues");
+    CHECK(read_file("scripts/check_phase5_abort_cache_clear.py").empty(),
+          "3551 AC5: no new linter");
+    CHECK(read_file("docs/design/3551-phase5-abort-cache-clear.md").empty(),
+          "3551 AC5: no docs/design");
+}
+
 } // namespace
 
 int run_test_abort_ir_cache_fence_first() {
@@ -515,9 +624,14 @@ int run_test_abort_ir_cache_fence_first() {
     ac3324_3_relower_skips_partial();
     ac3324_4_recover_force_full();
     ac3324_5_source_and_linter();
+    std::println("\n=== Issue #3551: Phase-5 abort drops ir_cache V2 irs ===");
+    ac3551_1_abort_drops_irs_forces_relower();
+    ac3551_2_clear_once_per_define();
+    ac3551_3_soft_observe_only();
+    ac3551_4_source_cite_no_invent();
 
-    std::println("\n=== #3159+#3258+#3324 result: passed={} failed={} ===", aura::test::g_passed,
-                 aura::test::g_failed);
+    std::println("\n=== #3159+#3258+#3324+#3551 result: passed={} failed={} ===",
+                 aura::test::g_passed, aura::test::g_failed);
     return aura::test::g_failed == 0 ? 0 : 1;
 }
 
