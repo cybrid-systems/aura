@@ -1,0 +1,43 @@
+{
+  "issue": 3549,
+  "title": "Issue #3549: per-eval stable_func_id pool recycle on owner-scoped clear",
+  "ok": "OK: Issue #3549 stable_func_id pool recycle — Soft skip; no new query:* / linter.",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/aura_jit_bridge.cpp",
+      "contains": [
+        "kStableFuncIdPoolRecycleIssue = 3549",
+        "struct StableFuncIdPool",
+        "g_eval_to_id_pool",
+        "retired_ids",
+        "g_stable_func_id_pool_recycle_total"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/aot_mangle.h",
+      "contains": [
+        "Issue #3549"
+      ]
+    },
+    {
+      "ac": "AC1-test",
+      "path": "tests/compiler/test_named_closure_stable_id_at_create.cpp",
+      "contains": [
+        "3549 AC1",
+        "3549 AC2",
+        "3549 AC5"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "forbid": [
+        "tests/compiler/test_issue_3549.cpp",
+        "tests/issues/test_issue_3549.cpp",
+        "docs/design/3549-stable-func-id-pool.md",
+        "scripts/check_stable_func_id_pool_recycle.py"
+      ]
+    }
+  ]
+}

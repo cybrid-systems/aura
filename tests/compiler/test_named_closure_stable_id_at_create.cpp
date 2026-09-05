@@ -1496,6 +1496,105 @@ static void ac3025_5_source_and_linter() {
           "3025 AC5: no invent test per #81967");
 }
 
+// Issue #3549: per-eval stable_func_id pool recycle on owner-scoped clear.
+static void ac3549_1_recycle_after_owner_clear() {
+    std::println("\n--- #3549 AC1: clear A then B recycles A's sid (not N+1) ---");
+    if (light_stable_map_stub()) {
+        std::println("  (light link: stable map stub → behavioral asserts best-effort, "
+                     "source-cite kept)");
+        return;
+    }
+    using namespace aura::compiler::typed_audit;
+    apply_production_audit_defaults();
+    aura_clear_stable_func_id_map();
+    const auto rec0 = stable_func_id_pool_recycle_total_v_read();
+    const auto sid_a =
+        aura_get_or_preserve_stable_func_id_for_eval(k2670EvalA, "ac3549_foo", nullptr);
+    CHECK(sid_a != 0, "3549 AC1: eval A assigns");
+    aura_clear_stable_func_id_map_for_eval(k2670EvalA);
+    CHECK(aura_lookup_stable_func_id_for_eval(k2670EvalA, "ac3549_foo") == 0,
+          "3549 AC1: A map cleared");
+    const auto sid_b =
+        aura_get_or_preserve_stable_func_id_for_eval(k2670EvalB, "ac3549_foo", nullptr);
+    CHECK(sid_b == sid_a, "3549 AC1: B recycles A's retired sid");
+    CHECK(stable_func_id_pool_recycle_total_v_read() > rec0, "3549 AC1: recycle total bumped");
+    apply_dev_audit_defaults();
+    aura_clear_stable_func_id_map();
+}
+
+static void ac3549_2_epoch_differentiates_recycle() {
+    std::println("\n--- #3549 AC2: mangle epoch bump → recycled sid is a probe miss ---");
+    if (light_stable_map_stub()) {
+        std::println("  (light link: stable map stub → behavioral asserts best-effort, "
+                     "source-cite kept)");
+        return;
+    }
+    using namespace aura::compiler::typed_audit;
+    apply_production_audit_defaults();
+    aura_clear_stable_func_id_map();
+    const auto sid_a =
+        aura_get_or_preserve_stable_func_id_for_eval(k2670EvalA, "ac3549_epoch", nullptr);
+    CHECK(sid_a != 0, "3549 AC2: A assigns");
+    aura_clear_stable_func_id_map_for_eval(k2670EvalA);
+    aura_aot_bump_func_table_epoch();
+    const auto sid_b =
+        aura_get_or_preserve_stable_func_id_for_eval(k2670EvalB, "ac3549_epoch", nullptr);
+    CHECK(sid_b == sid_a, "3549 AC2: recycle still pops retired sid");
+    CHECK(aura_aot_probe_fn_ptr(static_cast<std::int64_t>(sid_b)) == 0,
+          "3549 AC2: probe miss (generation-behind / empty) → relower");
+    apply_dev_audit_defaults();
+    aura_clear_stable_func_id_map();
+}
+
+static void ac3549_3_soft_no_recycle() {
+    std::println("\n--- #3549 AC5: Soft/Off clear does not retire (zero extra pool) ---");
+    if (light_stable_map_stub()) {
+        std::println("  (light link: stable map stub → behavioral asserts best-effort, "
+                     "source-cite kept)");
+        return;
+    }
+    using namespace aura::compiler::typed_audit;
+    apply_dev_audit_defaults();
+    g_typed_mutation_audit_counters.production_defaults_active.store(0, std::memory_order_relaxed);
+    aura_clear_stable_func_id_map();
+    const auto rec0 = stable_func_id_pool_recycle_total_v_read();
+    const auto sid_a =
+        aura_get_or_preserve_stable_func_id_for_eval(k2670EvalA, "ac3549_soft", nullptr);
+    CHECK(sid_a != 0, "3549 AC5: Soft assign");
+    aura_clear_stable_func_id_map_for_eval(k2670EvalA);
+    const auto sid_a2 =
+        aura_get_or_preserve_stable_func_id_for_eval(k2670EvalA, "ac3549_soft", nullptr);
+    CHECK(sid_a2 != 0 && sid_a2 != sid_a, "3549 AC5: Soft does not recycle (fetch_add)");
+    CHECK(stable_func_id_pool_recycle_total_v_read() == rec0, "3549 AC5: recycle total unchanged");
+    aura_clear_stable_func_id_map();
+}
+
+static void ac3549_4_source_cite_no_invent() {
+    std::println("\n--- #3549 AC4/AC5: source-cite + no invent / no new query ---");
+    const auto cpp = read_file("src/compiler/aura_jit_bridge.cpp");
+    const auto hdr = read_file("src/compiler/aura_jit_bridge.h");
+    const auto mangle = read_file("src/compiler/aot_mangle.h");
+    const auto t = read_file("tests/compiler/test_named_closure_stable_id_at_create.cpp");
+    CHECK(cpp.find("kStableFuncIdPoolRecycleIssue = 3549") != std::string::npos,
+          "3549 AC4: issue stamp");
+    CHECK(cpp.find("struct StableFuncIdPool") != std::string::npos, "3549 AC1: pool struct");
+    CHECK(cpp.find("g_eval_to_id_pool") != std::string::npos, "3549 AC1: per-eval pool map");
+    CHECK(cpp.find("retired_ids") != std::string::npos, "3549 AC1: free list");
+    CHECK(cpp.find("g_stable_func_id_pool_recycle_total") != std::string::npos,
+          "3549 AC2: recycle counter");
+    CHECK(cpp.find("mangle_epoch") != std::string::npos, "3549 AC4: epoch sibling");
+    CHECK(mangle.find("Issue #3549") != std::string::npos, "3549 AC4: aot_mangle cites recycle");
+    CHECK(hdr.find("stable_func_id_pool_recycle_total_v_read") != std::string::npos,
+          "3549 AC2: v_read declared");
+    CHECK(cpp.find("schema-3549") == std::string::npos, "3549 AC5: no new query key");
+    CHECK(t.find("ac3549_1_recycle_after_owner_clear") != std::string::npos, "3549 AC5: folded");
+    CHECK(read_file("tests/compiler/test_issue_3549.cpp").empty(), "3549 AC5: no invent");
+    CHECK(read_file("tests/issues/test_issue_3549.cpp").empty(), "3549 AC5: no tests/issues");
+    CHECK(read_file("scripts/check_stable_func_id_pool_recycle.py").empty(),
+          "3549 AC5: no new linter");
+    CHECK(read_file("docs/design/3549-stable-func-id-pool.md").empty(), "3549 AC5: no docs/design");
+}
+
 int run_test_named_closure_stable_id_at_create() {
     std::println("=== Issue #2550 + #2670: named closure stable_func_id at create ===");
     ac1_named_create_nonzero();
@@ -1567,9 +1666,14 @@ int run_test_named_closure_stable_id_at_create() {
     ac2857_3_single_eval_legacy_behavior();
     ac2857_4_register_time_assert_preserved();
     ac2857_5_source_cite_and_no_design();
+    std::println("\n=== Issue #3549: per-eval stable_func_id pool recycle ===");
+    ac3549_1_recycle_after_owner_clear();
+    ac3549_2_epoch_differentiates_recycle();
+    ac3549_3_soft_no_recycle();
+    ac3549_4_source_cite_no_invent();
     std::println(
-        "\n=== #2550 + #2670 + #2692 + #2713 + #2744 + #2841 + #2857 + #3025: {} passed, {} "
-        "failed ===",
+        "\n=== #2550 + #2670 + #2692 + #2713 + #2744 + #2841 + #2857 + #3025 + #3549: {} passed, "
+        "{} failed ===",
         g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
