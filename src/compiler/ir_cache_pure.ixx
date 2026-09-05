@@ -993,6 +993,12 @@ inline std::atomic<std::uint64_t>& partial_relower_under_shape_storm_total_atomi
     return n;
 }
 
+// Issue #3550: callee cascade precompute before partial decision.
+// File-scope (not CompilerMetrics middle). Soft observes only.
+inline constexpr int kPartialRelowerCalleeCascadeIssue = 3550;
+inline std::atomic<std::uint64_t> g_partial_relower_callee_cascade_precompute_total{0};
+inline std::atomic<std::uint64_t> g_partial_relower_callee_cascade_precompute_observe_total{0};
+
 [[nodiscard]] inline std::size_t get_partial_relower_threshold() noexcept {
     return partial_relower_threshold_atomic().load(std::memory_order_relaxed);
 }
@@ -1210,6 +1216,16 @@ inline void reset_partial_relower_threshold_for_test() noexcept {
     if (dirty_count >= threshold)
         return static_cast<std::size_t>(-1);
     return dirty_count;
+}
+
+// Issue #3550: overload sums local dirty blocks + callee cascade dirty
+// blocks so a lockless batch cannot under-count the peel surface.
+[[nodiscard]] constexpr std::size_t estimate_relower_blocks(std::size_t dirty_count,
+                                                            std::size_t threshold,
+                                                            std::size_t callee_count) noexcept {
+    if (callee_count != 0 && dirty_count > std::numeric_limits<std::size_t>::max() - callee_count)
+        return static_cast<std::size_t>(-1);
+    return estimate_relower_blocks(dirty_count + callee_count, threshold);
 }
 
 // Issue #426: aggregate stats over many functions'

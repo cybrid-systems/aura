@@ -1,0 +1,52 @@
+{
+  "issue": 3550,
+  "title": "Issue #3550: pre-compute callee cascade dirty bit before partial decision",
+  "ok": "OK: Issue #3550 callee cascade precompute — Soft observe; no new query:* / linter.",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/service.ixx",
+      "contains": [
+        "precompute_callee_cascade_for_partial",
+        "Issue #3550"
+      ]
+    },
+    {
+      "ac": "AC1-def",
+      "path": "src/compiler/service_dirty.cpp",
+      "contains": [
+        "precompute_callee_cascade_for_partial",
+        "cascade_mark_dirty"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/ir_cache_pure.ixx",
+      "contains": [
+        "kPartialRelowerCalleeCascadeIssue = 3550",
+        "g_partial_relower_callee_cascade_precompute_total",
+        "g_partial_relower_callee_cascade_precompute_observe_total",
+        "callee_count"
+      ]
+    },
+    {
+      "ac": "AC1-test",
+      "path": "tests/compiler/test_partial_relower_cascade.cpp",
+      "contains": [
+        "3550 AC1",
+        "3550 AC2",
+        "3550 AC4",
+        "3550 AC5"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "forbid": [
+        "tests/compiler/test_issue_3550.cpp",
+        "tests/issues/test_issue_3550.cpp",
+        "docs/design/3550-partial-relower-callee-cascade.md",
+        "scripts/check_partial_relower_callee_cascade.py"
+      ]
+    }
+  ]
+}

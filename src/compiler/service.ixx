@@ -6305,6 +6305,8 @@ public:
         // fall through to full re-lower below — no under-invalidate.
         const bool allow_partial_peel =
             !abort_stale_map && gate_partial_soa_dirty_sync_(it->second);
+        // Issue #3550: callee cascade before partial peel / block count.
+        (void)precompute_callee_cascade_for_partial(name);
         // Issue #2133: when precise instruction dirty is present and under
         // partial threshold, consume ImpactScope-style instr path (pass peel
         // only; no full AST re-lower). Falls through to block/fn paths if
@@ -7508,12 +7510,18 @@ public:
                 }
             }
             metrics_.should_partial_relower_consult_total.fetch_add(1, std::memory_order_relaxed);
+            // Issue #3550: pre-cascade callees before adaptive / impact check.
+            const auto callee_n = precompute_callee_cascade_for_partial(name);
+            dirty_n = it->second.dirty_block_count();
             // Issue #2127: deopt + density adaptive threshold (base #2032/#2112).
             std::size_t total_blocks = 0;
             for (const auto& fb : it->second.block_dirty_per_func_)
                 total_blocks += fb.size();
             const auto adaptive = consult_workload_adaptive_partial_(dirty_n, total_blocks);
             bool want_partial = adaptive.want_partial;
+            if (want_partial && estimate_relower_blocks(dirty_n, get_partial_relower_threshold(),
+                                                        callee_n) == static_cast<std::size_t>(-1))
+                want_partial = false;
             // Issue #3484: zero-mask cone name already took fail-closed
             // full — do not re-enter partial / skip-as-clean.
             if (zero_mask_forced_full)
@@ -11859,6 +11867,12 @@ private:
     // marks for any caller still under-invalidated. Returns nodes marked.
     std::size_t hybrid_node_cascade_(const std::string& root_name,
                                      const std::vector<std::string>& string_dependents);
+
+    // Issue #3550: mark callees dirty before partial decision so
+    // estimate_relower_blocks / impact_checked cannot miss a lockless
+    // batch. Reuses cascade_mark_dirty + mark_body_only_dirty (no
+    // second cone). Soft/Off: observe only.
+    std::size_t precompute_callee_cascade_for_partial(const std::string& name);
 
     // Issue #3345: production hybrid depth-1 IR dirty of direct called_by
     // after facade early-return. Soft owns full BFS. Empty IR cache

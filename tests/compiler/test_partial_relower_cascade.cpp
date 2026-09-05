@@ -12,6 +12,7 @@
 #include "test_harness.hpp"
 
 #include "compiler/observability_metrics.h"
+#include "compiler/typed_mutation_audit.h"
 
 #include <chrono>
 #include <cstdint>
@@ -30,8 +31,12 @@ namespace {
 
 using aura::compiler::CompilerMetrics;
 using aura::compiler::CompilerService;
+using aura::compiler::estimate_relower_blocks;
 using aura::compiler::estimate_relower_blocks_impact_checked;
+using aura::compiler::g_partial_relower_callee_cascade_precompute_observe_total;
+using aura::compiler::g_partial_relower_callee_cascade_precompute_total;
 using aura::compiler::get_partial_relower_threshold;
+using aura::compiler::kPartialRelowerCalleeCascadeIssue;
 using aura::compiler::reset_partial_relower_threshold_for_test;
 using aura::compiler::set_partial_relower_threshold;
 using aura::compiler::should_partial_relower;
@@ -332,6 +337,93 @@ void ac9_concurrent_rearm_soak() {
         CHECK(as_int(*r) == 2, "a returns correct result (no stale IR after rearm)");
 }
 
+static void ac3550_1_precompute_before_partial() {
+    std::println("\n--- #3550 AC1: mutate A with callee B → precompute marks B ---");
+    using namespace aura::compiler::typed_audit;
+    apply_production_audit_defaults();
+    reset_partial_relower_threshold_for_test();
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \""
+                  "(define b (lambda (x) (+ x 1)))"
+                  "(define a (lambda (x) (b x)))"
+                  "\")")
+              .has_value(),
+          "3550 AC1: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3550 AC1: eval");
+    const auto t0 =
+        g_partial_relower_callee_cascade_precompute_total.load(std::memory_order_relaxed);
+    cs.public_invalidate_function("a");
+    CHECK(cs.eval("(eval-current)").has_value(), "3550 AC1: relower");
+    CHECK(g_partial_relower_callee_cascade_precompute_total.load(std::memory_order_relaxed) > t0,
+          "3550 AC1: precompute total bumped");
+    auto r = cs.eval("(a 1)");
+    CHECK(r.has_value(), "3550 AC1: a evals");
+    if (r && is_int(*r))
+        CHECK(as_int(*r) == 2, "3550 AC1: a covers callee (no silent skip)");
+    CHECK(kPartialRelowerCalleeCascadeIssue == 3550, "3550 AC1: issue stamp");
+    apply_dev_audit_defaults();
+}
+
+static void ac3550_2_estimate_callee_count() {
+    std::println("\n--- #3550 AC2: estimate_relower_blocks sums callee_count ---");
+    CHECK(estimate_relower_blocks(3, 8, 0) == 3, "3550 AC2: callee_count=0 unchanged");
+    CHECK(estimate_relower_blocks(3, 8, 2) == 5, "3550 AC2: 3+2 < thr");
+    CHECK(estimate_relower_blocks(3, 8, 6) == static_cast<std::size_t>(-1),
+          "3550 AC2: 3+6 ≥ thr → full");
+    CHECK(estimate_relower_blocks(0, 8, 2) == 2, "3550 AC2: dirty=0 still counts callees");
+}
+
+static void ac3550_3_soft_observe_only() {
+    std::println("\n--- #3550 AC4: Soft observe only, no precompute ---");
+    using namespace aura::compiler::typed_audit;
+    apply_dev_audit_defaults();
+    g_typed_mutation_audit_counters.production_defaults_active.store(0, std::memory_order_relaxed);
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define b (lambda (x) x)) (define a (lambda (x) (b x)))\")")
+              .has_value(),
+          "3550 AC4: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3550 AC4: eval");
+    const auto tot0 =
+        g_partial_relower_callee_cascade_precompute_total.load(std::memory_order_relaxed);
+    const auto obs0 =
+        g_partial_relower_callee_cascade_precompute_observe_total.load(std::memory_order_relaxed);
+    cs.public_invalidate_function("a");
+    CHECK(cs.eval("(eval-current)").has_value(), "3550 AC4: relower");
+    CHECK(g_partial_relower_callee_cascade_precompute_total.load(std::memory_order_relaxed) == tot0,
+          "3550 AC4: Soft does not bump precompute total");
+    CHECK(g_partial_relower_callee_cascade_precompute_observe_total.load(
+              std::memory_order_relaxed) > obs0,
+          "3550 AC4: Soft observe via existing atomic family");
+}
+
+static void ac3550_4_source_cite_no_invent() {
+    std::println("\n--- #3550 AC5: source-cite + no invent / no new query ---");
+    const auto svc = read_file("src/compiler/service.ixx");
+    const auto dirty = read_file("src/compiler/service_dirty.cpp");
+    const auto pure = read_file("src/compiler/ir_cache_pure.ixx");
+    const auto t = read_file("tests/compiler/test_partial_relower_cascade.cpp");
+    CHECK(svc.find("precompute_callee_cascade_for_partial") != std::string::npos,
+          "3550 AC5: helper declared");
+    CHECK(dirty.find("precompute_callee_cascade_for_partial") != std::string::npos,
+          "3550 AC5: helper defined");
+    CHECK(dirty.find("cascade_mark_dirty") != std::string::npos, "3550 AC5: reuses cascade");
+    CHECK(pure.find("kPartialRelowerCalleeCascadeIssue = 3550") != std::string::npos,
+          "3550 AC5: stamp");
+    CHECK(pure.find("g_partial_relower_callee_cascade_precompute_total") != std::string::npos,
+          "3550 AC5: total");
+    CHECK(pure.find("g_partial_relower_callee_cascade_precompute_observe_total") !=
+              std::string::npos,
+          "3550 AC5: observe");
+    CHECK(svc.find("schema-3550") == std::string::npos, "3550 AC5: no new query key");
+    CHECK(t.find("ac3550_1_precompute_before_partial") != std::string::npos, "3550 AC5: folded");
+    CHECK(read_file("tests/compiler/test_issue_3550.cpp").empty(), "3550 AC5: no invent");
+    CHECK(read_file("tests/issues/test_issue_3550.cpp").empty(), "3550 AC5: no tests/issues");
+    CHECK(read_file("scripts/check_partial_relower_callee_cascade.py").empty(),
+          "3550 AC5: no new linter");
+    CHECK(read_file("docs/design/3550-partial-relower-callee-cascade.md").empty(),
+          "3550 AC5: no docs/design");
+}
+
 } // namespace
 
 int run_test_partial_relower_cascade() {
@@ -345,9 +437,13 @@ int run_test_partial_relower_cascade() {
     ac7_impact_cross_check();
     ac8_underestimate_forces_full();
     ac9_concurrent_rearm_soak();
+    ac3550_1_precompute_before_partial();
+    ac3550_2_estimate_callee_count();
+    ac3550_3_soft_observe_only();
+    ac3550_4_source_cite_no_invent();
     if (g_failed)
         return 1;
-    std::println("partial re-lower cascade (#2041): OK ({} passed)", g_passed);
+    std::println("partial re-lower cascade (#2041/#3550): OK ({} passed)", g_passed);
     return 0;
 }
 
