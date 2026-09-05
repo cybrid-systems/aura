@@ -2022,6 +2022,18 @@ aura_issue_test_link_light(test_typed_audit_commit_readiness_live_policy)
 # hermetic tests drive recover scenarios without a real Evaluator.
 aura_add_issue_test(test_typed_audit_commit_readiness_recover_acl)
 aura_issue_test_link_light(test_typed_audit_commit_readiness_recover_acl)
+# Issue #3558: linear_fast_path_ok depth OR-semantics race-window fix.
+# Three sites (typed_mutation_audit.h linear_fast_path_ok mid-boundary arm,
+# linear_ir_fastpath_try_skip #3238 re-sample, typed_mutation_audit_hooks.cpp
+# aura_linear_fast_path_depth_or_densify_block) replace max-style pick
+# (`override >= 0 ? override : depth`) with independent OR checks. Mid-boundary
+# override=0 flip no longer lets MoveOp elision slip through while actual
+# depth > 0. Source-cite only — full runtime needs live evaluator with
+# enter_mutation_boundary() + concurrent fiber flipping override mid-boundary;
+# covered by existing #3006 (depth-or-densify block) and #3085 (rehydrate-miss)
+# regression tests through the full mutate flow. Linter:
+# scripts/coverage/checks/check_linear_fast_path_or_semantics.py.
+aura_add_issue_test(test_linear_fast_path_or_semantics)
 # Issue #3382: lightweight / render abort clears type/linear + coercion +
 # occurrence persist authority. Full abort body already has the ordered
 # restore (#3281: IR force-dirty → proof clear → coercion rewind →
