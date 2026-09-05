@@ -82,6 +82,27 @@ void Evaluator::build_primitive_slots() {
 }
 
 Evaluator::Evaluator() {
+    // Issue #3554: self-upgrade lock_order mode + hold-budget reject
+    // when host environment signals production_defaults_expected() but
+    // embedder / third-party container skipped apply_production_security_defaults()
+    // and apply_production_lock_order_default(). Embedder-skip-init leaves
+    // g_lock_order_mode at 1 (observe-only) and mutation_hold_budget_reject_enabled
+    // at false — production face silently degrades to metric-only. Without
+    // this wire, lock-order inversions are only counted (never interrupted)
+    // and hold-budget is observe-only. Soft / Off / single-eval MVP path:
+    // production_defaults_expected() returns false → single atomic load + env
+    // getenv + branch → zero-extra (no set, no upgrade, no reject enable).
+    if (aura::compiler::lock_order::production_defaults_expected()) {
+        if (aura::compiler::lock_order::g_lock_order_mode.load(std::memory_order_acquire) < 3) {
+            aura::compiler::lock_order::g_lock_order_mode.store(3, std::memory_order_release);
+            aura::compiler::lock_order::g_lock_order_canary_enabled.store(
+                1, std::memory_order_release);
+        }
+        if (!aura::compiler::mutation_hold_budget_reject_enabled()) {
+            (void)aura::compiler::mutation_hold_budget_reject_enabled_set(true);
+        }
+    }
+
     // Issue #2078: per-Evaluator orch agent name table. The unique_ptr
     // member is only forward-declared in evaluator.ixx so std::make_unique
     // here needs the full AgentNameTable definition (included above from
