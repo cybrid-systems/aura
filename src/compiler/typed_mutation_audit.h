@@ -3409,6 +3409,30 @@ inline constexpr int kLinearZeroRootGreenFaceDropIssue = 3448;
     return true;
 }
 
+// Issue #3548: remount budget spent, remounted==0 → strip green face so
+// a subsequent mutate cannot ride a prior last_proof_stamper_bound=1.
+// Reuses reject_stamp_last_look_mismatch + reject_after_rebind_fail
+// (no new metric). Soft/Off: observe via rehydrate-miss observe total
+// (existing atomic), no reject.
+inline constexpr int kRemountLastZeroStripIssue = 3548;
+inline void note_rebind_fail(std::string_view reason) noexcept {
+    (void)reason; // "remount_last_zero"
+    if (!(production_defaults_active() || get_strategy() == AuditStrategy::Full)) {
+        g_rehydrate_miss_invalidate_observe_total.fetch_add(1, std::memory_order_relaxed);
+        return;
+    }
+    g_type_linear_proof_reject_after_rebind_fail_total.fetch_add(1, std::memory_order_relaxed);
+}
+inline void strip_green_face_on_remount_last_zero() noexcept {
+    note_rebind_fail("remount_last_zero");
+    if (!(production_defaults_active() || get_strategy() == AuditStrategy::Full))
+        return;
+    TypeLinearCommitProof p{};
+    ProofGoalTruth truth{};
+    reject_stamp_last_look_mismatch(p, truth);
+    publish_type_linear_proof_outcome(kTypeLinearProofOutcomeReject);
+}
+
 [[nodiscard]] inline std::int64_t commit_readiness_reason_code(std::string_view r) noexcept {
     if (r == "cone_truncate")
         return 9; // #2621

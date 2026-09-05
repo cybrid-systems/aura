@@ -2787,8 +2787,11 @@ extern "C" void aura_pure_anon_bg_remount_drain(std::uint64_t max_n) noexcept {
     aura_bump_pure_anon_bg_totals(/*enqueue=*/0, ok, fail, /*overflow=*/0);
     // Issue #3227: successful remount may relocate linear roots.
     // Issue #3448: last==0 green face still drops on remount.
+    // Issue #3548: max_n>0 && remounted==0 strips prior green face.
     if (ok > 0)
         (void)aura::compiler::typed_audit::rebind_linear_proof_after_root_migration();
+    else
+        aura::compiler::typed_audit::strip_green_face_on_remount_last_zero();
 }
 
 // Issue #3342: production amortize heal when success BoundaryExit is
@@ -2987,96 +2990,99 @@ extern "C" void aura_residual_live_closure_remount_tick(std::uint64_t budget) {
         const std::size_t nslots = g_closure_func_ids.size();
         if (nslots == 0) {
             aura_unlock_workspace_write();
-            return; // AC4: no live closures — zero walk body
-        }
+            // Issue #3548: budget>0 && remounted==0 (empty table) still
+            // strips prior green face after the lock block.
+        } else {
 
-        if (g_closure_must_deopt.size() < nslots)
-            g_closure_must_deopt.resize(nslots, 0);
-        if (g_closure_bridge_epochs.size() < nslots)
-            g_closure_bridge_epochs.resize(nslots, 0);
-        if (g_closure_defuse_versions.size() < nslots)
-            g_closure_defuse_versions.resize(nslots, 0);
-        if (g_closure_env_gen.size() < nslots)
-            g_closure_env_gen.resize(nslots, 0);
-        if (g_closure_stable_func_ids.size() < nslots)
-            g_closure_stable_func_ids.resize(nslots, 0);
+            if (g_closure_must_deopt.size() < nslots)
+                g_closure_must_deopt.resize(nslots, 0);
+            if (g_closure_bridge_epochs.size() < nslots)
+                g_closure_bridge_epochs.resize(nslots, 0);
+            if (g_closure_defuse_versions.size() < nslots)
+                g_closure_defuse_versions.resize(nslots, 0);
+            if (g_closure_env_gen.size() < nslots)
+                g_closure_env_gen.resize(nslots, 0);
+            if (g_closure_stable_func_ids.size() < nslots)
+                g_closure_stable_func_ids.resize(nslots, 0);
 
-        const std::uint64_t live_env = aura_get_aot_live_env_frame_version();
-        const std::uint64_t table_epoch = aura_aot_func_table_epoch();
-        const std::uint64_t start =
-            g_residual_remount_cursor.load(std::memory_order_relaxed) % nslots;
+            const std::uint64_t live_env = aura_get_aot_live_env_frame_version();
+            const std::uint64_t table_epoch = aura_aot_func_table_epoch();
+            const std::uint64_t start =
+                g_residual_remount_cursor.load(std::memory_order_relaxed) % nslots;
 
-        // Issue #2977: production + non-idle coverage → prefer queue.
-        // Soft / idle → prefer_mask=0, identical to #2928 (no extra walk).
-        std::uint64_t prefer_mask = 0;
-        if (aura::compiler::typed_audit::production_defaults_active()) {
-            prefer_mask = aura_hot_update_force_jit_regions_mask() |
-                          aura_hot_update_last_reemit_success_region_mask();
-        }
-
-        auto heal_slot = [&](std::size_t cid) -> bool {
-            if (remount_or_force_deopt_unlocked_no_call_time_counter(
-                    static_cast<std::int64_t>(cid), live_env,
-                    /*linear_fp=*/0, table_epoch) != 0) {
-                // Issue #3503: env_gen only; MustDeopt stays if dual-fresh miss.
-                note_capture_remount_ok_keep_epochs_unlocked(cid, live_env);
-                ++ok;
-                return true;
+            // Issue #2977: production + non-idle coverage → prefer queue.
+            // Soft / idle → prefer_mask=0, identical to #2928 (no extra walk).
+            std::uint64_t prefer_mask = 0;
+            if (aura::compiler::typed_audit::production_defaults_active()) {
+                prefer_mask = aura_hot_update_force_jit_regions_mask() |
+                              aura_hot_update_last_reemit_success_region_mask();
             }
-            return false;
-        };
 
-        std::uint64_t used = 0;
-        std::size_t steps = 0;
-        std::size_t idx = static_cast<std::size_t>(start);
+            auto heal_slot = [&](std::size_t cid) -> bool {
+                if (remount_or_force_deopt_unlocked_no_call_time_counter(
+                        static_cast<std::int64_t>(cid), live_env,
+                        /*linear_fp=*/0, table_epoch) != 0) {
+                    // Issue #3503: env_gen only; MustDeopt stays if dual-fresh miss.
+                    note_capture_remount_ok_keep_epochs_unlocked(cid, live_env);
+                    ++ok;
+                    return true;
+                }
+                return false;
+            };
 
-        if (prefer_mask != 0) {
-            prefer_entered = true;
-            std::size_t pidx = static_cast<std::size_t>(start);
-            std::size_t psteps = 0;
-            while (used < budget && psteps < nslots) {
-                const std::size_t cid = pidx;
-                pidx = (pidx + 1) % nslots;
-                ++psteps;
+            std::uint64_t used = 0;
+            std::size_t steps = 0;
+            std::size_t idx = static_cast<std::size_t>(start);
+
+            if (prefer_mask != 0) {
+                prefer_entered = true;
+                std::size_t pidx = static_cast<std::size_t>(start);
+                std::size_t psteps = 0;
+                while (used < budget && psteps < nslots) {
+                    const std::size_t cid = pidx;
+                    pidx = (pidx + 1) % nslots;
+                    ++psteps;
+                    if (cid < g_closure_freed.size() && g_closure_freed[cid] != 0)
+                        continue;
+                    if ((residual_closure_sid_region_bits_unlocked(cid) & prefer_mask) == 0)
+                        continue;
+                    // Issue #3229: hashed-name coverage is not define-complete.
+                    if (cid < g_closure_stable_func_ids.size()) {
+                        const auto sid = g_closure_stable_func_ids[cid];
+                        if (sid != 0 && aura_hot_update_relower_success_define_active() != 0 &&
+                            aura_hot_update_relower_success_covers_define(sid) == 0)
+                            continue;
+                    }
+                    if (heal_slot(cid))
+                        ++prefer_hit;
+                    ++used;
+                }
+            }
+
+            while (used < budget && steps < nslots) {
+                const std::size_t cid = idx;
+                idx = (idx + 1) % nslots;
+                ++steps;
                 if (cid < g_closure_freed.size() && g_closure_freed[cid] != 0)
                     continue;
-                if ((residual_closure_sid_region_bits_unlocked(cid) & prefer_mask) == 0)
+                // Already considered on the prefer pass — no double remount.
+                if (prefer_mask != 0 &&
+                    (residual_closure_sid_region_bits_unlocked(cid) & prefer_mask) != 0)
                     continue;
-                // Issue #3229: hashed-name coverage is not define-complete.
-                if (cid < g_closure_stable_func_ids.size()) {
-                    const auto sid = g_closure_stable_func_ids[cid];
-                    if (sid != 0 && aura_hot_update_relower_success_define_active() != 0 &&
-                        aura_hot_update_relower_success_covers_define(sid) == 0)
-                        continue;
-                }
-                if (heal_slot(cid))
-                    ++prefer_hit;
+                (void)heal_slot(cid);
                 ++used;
             }
-        }
-
-        while (used < budget && steps < nslots) {
-            const std::size_t cid = idx;
-            idx = (idx + 1) % nslots;
-            ++steps;
-            if (cid < g_closure_freed.size() && g_closure_freed[cid] != 0)
-                continue;
-            // Already considered on the prefer pass — no double remount.
-            if (prefer_mask != 0 &&
-                (residual_closure_sid_region_bits_unlocked(cid) & prefer_mask) != 0)
-                continue;
-            (void)heal_slot(cid);
-            ++used;
-        }
-        // AC4: always rotate the global cursor. If prefer spent the
-        // whole budget, still advance so non-demoted slots are not starved.
-        if (steps == 0 && nslots != 0) {
-            const auto adv = static_cast<std::size_t>(
-                budget < static_cast<std::uint64_t>(nslots) ? budget : nslots);
-            idx = (static_cast<std::size_t>(start) + adv) % nslots;
-        }
-        g_residual_remount_cursor.store(static_cast<std::uint64_t>(idx), std::memory_order_relaxed);
-        aura_unlock_workspace_write();
+            // AC4: always rotate the global cursor. If prefer spent the
+            // whole budget, still advance so non-demoted slots are not starved.
+            if (steps == 0 && nslots != 0) {
+                const auto adv = static_cast<std::size_t>(
+                    budget < static_cast<std::uint64_t>(nslots) ? budget : nslots);
+                idx = (static_cast<std::size_t>(start) + adv) % nslots;
+            }
+            g_residual_remount_cursor.store(static_cast<std::uint64_t>(idx),
+                                            std::memory_order_relaxed);
+            aura_unlock_workspace_write();
+        } // nslots != 0
     }
 
     if (prefer_entered) {
@@ -3091,6 +3097,10 @@ extern "C" void aura_residual_live_closure_remount_tick(std::uint64_t budget) {
         // Issue #3227: remount changed live linear roots — rebind/reject.
         // Issue #3448: last==0 green face still drops.
         (void)aura::compiler::typed_audit::rebind_linear_proof_after_root_migration();
+    } else {
+        // Issue #3548: budget>0 && remounted==0 (incl. nslots==0) strips
+        // prior last_proof_stamper_bound so the next mutate is not green.
+        aura::compiler::typed_audit::strip_green_face_on_remount_last_zero();
     }
 }
 

@@ -21,6 +21,7 @@
 #include "compiler/aura_jit_bridge.h"
 #include "compiler/observability_metrics.h"
 #include "compiler/runtime_shared.h"
+#include "compiler/typed_mutation_audit.h"
 
 #include <cstdint>
 #include <fstream>
@@ -508,6 +509,101 @@ static void ac3504_env_gen_leave_native() {
           "3504 AC5: no new query key");
 }
 
+static void seed_green_face() {
+    using namespace aura::compiler::typed_audit;
+    g_last_proof_would_allow_commit.store(1, std::memory_order_relaxed);
+    g_last_proof_linear_ok.store(1, std::memory_order_relaxed);
+    g_last_proof_stamper_eval.store(1, std::memory_order_relaxed);
+}
+
+// Earlier ACs in this TU alloc live slots. Residual tick remounts those
+// (ok>0 → #3448 rebind, not #3548 last==0 strip). Free so remounted==0.
+static void free_all_live_closures() {
+    const auto n = aura_closure_slot_count();
+    for (std::size_t i = 0; i < n; ++i)
+        aura_free_closure(static_cast<std::int64_t>(i));
+}
+
+// Issue #3548: remount budget spent, remounted==0 strips prior green face.
+static void ac3548_1_tick_last0_strips_stamper() {
+    std::println("\n--- #3548 AC1: residual tick budget>0 remounted==0 strips green ---");
+    using namespace aura::compiler::typed_audit;
+    apply_production_audit_defaults();
+    aura_test_reset_residual_remount_state();
+    free_all_live_closures();
+    seed_green_face();
+    CHECK(last_proof_stamper_bound_v_read() == 1, "3548 AC1: stamper bound before tick");
+    aura_residual_live_closure_remount_tick(64);
+    CHECK(last_proof_stamper_bound_v_read() == 0, "3548 AC1: stamper unbound after last==0");
+    CHECK(last_proof_would_allow_commit_v_read() == 0, "3548 AC1: would_allow dropped");
+    CHECK(kRemountLastZeroStripIssue == 3548, "3548 AC1: issue stamp");
+    apply_dev_audit_defaults();
+}
+
+static void ac3548_2_drain_last0_strips() {
+    std::println("\n--- #3548 AC2: pure-anon drain remounted==0 strips green ---");
+    using namespace aura::compiler::typed_audit;
+    apply_production_audit_defaults();
+    aura_test_reset_pure_anon_bg_queue();
+    aura_pure_anon_bg_enqueue(99999); // not a live slot → remounted==0
+    seed_green_face();
+    aura_pure_anon_bg_remount_drain(8);
+    CHECK(last_proof_stamper_bound_v_read() == 0, "3548 AC2: drain last==0 strips stamper");
+    CHECK(last_proof_would_allow_commit_v_read() == 0, "3548 AC2: would_allow dropped");
+    apply_dev_audit_defaults();
+    aura_test_reset_pure_anon_bg_queue();
+}
+
+static void ac3548_3_budget_zero_no_strip() {
+    std::println("\n--- #3548 AC3: budget==0 / max_n==0 no strip ---");
+    using namespace aura::compiler::typed_audit;
+    apply_production_audit_defaults();
+    aura_test_reset_residual_remount_state();
+    seed_green_face();
+    aura_residual_live_closure_remount_tick(0);
+    CHECK(last_proof_stamper_bound_v_read() == 1, "3548 AC3: tick(0) keeps stamper");
+    aura_test_reset_pure_anon_bg_queue();
+    aura_pure_anon_bg_remount_drain(0);
+    CHECK(last_proof_stamper_bound_v_read() == 1, "3548 AC3: drain(0) keeps stamper");
+    apply_dev_audit_defaults();
+}
+
+static void ac3548_4_soft_observe_only() {
+    std::println("\n--- #3548 AC4: Soft observe only, no reject ---");
+    using namespace aura::compiler::typed_audit;
+    apply_dev_audit_defaults();
+    g_typed_mutation_audit_counters.production_defaults_active.store(0, std::memory_order_relaxed);
+    aura_test_reset_residual_remount_state();
+    free_all_live_closures();
+    seed_green_face();
+    const auto obs0 = g_rehydrate_miss_invalidate_observe_total.load(std::memory_order_relaxed);
+    aura_residual_live_closure_remount_tick(64);
+    CHECK(last_proof_stamper_bound_v_read() == 1, "3548 AC4: Soft does not strip stamper");
+    CHECK(last_proof_would_allow_commit_v_read() == 1, "3548 AC4: Soft face stays green");
+    CHECK(g_rehydrate_miss_invalidate_observe_total.load(std::memory_order_relaxed) > obs0,
+          "3548 AC4: Soft observe via existing atomic");
+}
+
+static void ac3548_5_source_cite_no_invent() {
+    std::println("\n--- #3548 AC5: source-cite + no invent / no new query ---");
+    const auto tma = read_file("src/compiler/typed_mutation_audit.h");
+    const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
+    const auto t = read_file("tests/compiler/test_remount_force_deopt.cpp");
+    CHECK(tma.find("kRemountLastZeroStripIssue = 3548") != std::string::npos, "3548 AC5: stamp");
+    CHECK(tma.find("strip_green_face_on_remount_last_zero") != std::string::npos,
+          "3548 AC5: helper");
+    CHECK(tma.find("note_rebind_fail") != std::string::npos, "3548 AC5: note_rebind_fail");
+    CHECK(tma.find("remount_last_zero") != std::string::npos, "3548 AC5: reason");
+    CHECK(rt.find("strip_green_face_on_remount_last_zero") != std::string::npos,
+          "3548 AC5: tick/drain wire");
+    CHECK(t.find("ac3548_1_tick_last0_strips_stamper") != std::string::npos, "3548 AC5: AC1");
+    CHECK(tma.find("schema-3548") == std::string::npos, "3548 AC5: no new query key");
+    CHECK(read_file("tests/compiler/test_issue_3548.cpp").empty(), "3548 AC5: no invent");
+    CHECK(read_file("tests/issues/test_issue_3548.cpp").empty(), "3548 AC5: no tests/issues");
+    CHECK(read_file("scripts/check_remount_last_zero_strip.py").empty(), "3548 AC5: no new linter");
+    CHECK(read_file("docs/design/3548-remount-last-zero.md").empty(), "3548 AC5: no docs/design");
+}
+
 } // namespace
 
 int run_test_remount_force_deopt() {
@@ -519,9 +615,14 @@ int run_test_remount_force_deopt() {
     ac5_stress();
     ac2894_defuse_and_unchanged_on_success();
     ac3504_env_gen_leave_native();
+    ac3548_1_tick_last0_strips_stamper();
+    ac3548_2_drain_last0_strips();
+    ac3548_3_budget_zero_no_strip();
+    ac3548_4_soft_observe_only();
+    ac3548_5_source_cite_no_invent();
     if (g_failed)
         return 1;
-    std::println("remount force-deopt #2503/#2894: OK ({} passed)", g_passed);
+    std::println("remount force-deopt #2503/#2894/#3548: OK ({} passed)", g_passed);
     return 0;
 }
 

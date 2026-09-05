@@ -1,0 +1,45 @@
+{
+  "issue": 3548,
+  "title": "Issue #3548: strip green face on remount last==0",
+  "ok": "OK: Issue #3548 remount last==0 strips stamper — Soft observe; no new query:* / counter.",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/typed_mutation_audit.h",
+      "contains": [
+        "kRemountLastZeroStripIssue = 3548",
+        "strip_green_face_on_remount_last_zero",
+        "note_rebind_fail",
+        "remount_last_zero"
+      ]
+    },
+    {
+      "ac": "AC1-call",
+      "path": "src/compiler/aura_jit_runtime.cpp",
+      "contains": [
+        "strip_green_face_on_remount_last_zero",
+        "Issue #3548"
+      ]
+    },
+    {
+      "ac": "AC1-test",
+      "path": "tests/compiler/test_remount_force_deopt.cpp",
+      "contains": [
+        "3548 AC1",
+        "3548 AC2",
+        "3548 AC3",
+        "3548 AC4",
+        "3548 AC5"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "forbid": [
+        "tests/compiler/test_issue_3548.cpp",
+        "tests/issues/test_issue_3548.cpp",
+        "docs/design/3548-remount-last-zero.md",
+        "scripts/check_remount_last_zero_strip.py"
+      ]
+    }
+  ]
+}
