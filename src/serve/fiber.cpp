@@ -982,6 +982,12 @@ void Fiber::check_gc_safepoint() {
             if (uus > 1'000) {
                 // >1ms wait while holding mutation → long-mutation GC block signal.
                 gc->safepoint_blocked_by_long_mutation.fetch_add(1, std::memory_order_relaxed);
+                // Issue #3555: also track max latency for chaos soak deploy
+                // gate p99 SLO (kMailboxP99SLO_us). Relaxed CAS — file-scope
+                // sibling of the per-GC counter; soft / sandbox=off still
+                // bumps (gate is observe-only off-production).
+                aura::serve::record_safepoint_blocked_by_long_mutation_us(
+                    static_cast<std::int64_t>(uus));
             }
         }
     }

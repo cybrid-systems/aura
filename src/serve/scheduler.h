@@ -295,4 +295,29 @@ private:
 
 } // namespace aura::serve
 
+namespace aura::serve {
+// ── Issue #3555: chaos soak deploy gate SLO + accessors ───
+//
+// kMailboxP99SLO_us: SLO ceiling for safepoint_blocked_by_long_mutation
+// event latency under the chaos soak deploy gate. 50ms — any single
+// event exceeding this fails the gate (conservative p99 proxy:
+// max ≤ SLO ⇒ p99 ≤ SLO; documented in #3555 close comment).
+inline constexpr std::int64_t kMailboxP99SLO_us = 50'000;
+
+// safepoint_blocked_by_long_mutation_max_us_v_read: file-scope max-latency
+// tracker (relaxed CAS), sibling of Fiber::safepoint_blocked_by_long_mutation
+// (per-GC count). Read by the chaos soak deploy gate to enforce the p99 SLO.
+std::int64_t safepoint_blocked_by_long_mutation_max_us_v_read() noexcept;
+
+// eventfd_wake_force_safepoint_total_v_read: file-scope atomic sibling of
+// Fiber::safepoint_wait_while_mutation_held (#3553). Read by the chaos
+// soak deploy gate as one of the 6 hard-fail counters.
+std::uint64_t eventfd_wake_force_safepoint_total_v_read() noexcept;
+
+// record_safepoint_blocked_by_long_mutation_us: bump the max tracker.
+// Called from fiber.cpp safepoint wait path (where the per-GC counter
+// is also bumped, on > 1ms waits).
+void record_safepoint_blocked_by_long_mutation_us(std::int64_t us) noexcept;
+} // namespace aura::serve
+
 #endif // AURA_SERVE_SCHEDULER_H

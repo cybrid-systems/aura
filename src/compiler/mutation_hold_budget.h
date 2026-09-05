@@ -218,6 +218,19 @@ inline constexpr int kMutationHoldBudgetRejectIssue = 2701;
     return g_mutation_hold_budget_wired.load(std::memory_order_relaxed);
 }
 
+// Issue #3554: test seam for clearing the hold-budget reject counters
+// (separate from mutation_hold_live_reset_for_test which clears the
+// live hold state). Restores default reject gate (wired=1, counters=0)
+// so the next note_enter / check sees a clean baseline. The #3554 ship
+// introduced this call site in test_mailbox_hold_starvation_hard
+// (ac3485_* ACs) but the function declaration was missed — caught by
+// #3555 ship cycle compile error.
+inline void clear_mutation_hold_budget_reject_for_test() noexcept {
+    g_mutation_hold_budget_reject_total.store(0, std::memory_order_relaxed);
+    g_mutation_hold_budget_soft_observe_total.store(0, std::memory_order_relaxed);
+    g_mutation_hold_budget_wired.store(1, std::memory_order_relaxed);
+}
+
 // Soft / hard env override (default 0 = metric-only under Soft).
 [[nodiscard]] inline int mutation_hold_budget_hard_env() noexcept {
     static const bool cached = []() noexcept -> bool {
@@ -274,11 +287,10 @@ struct MutationHoldBudgetCheck {
 }
 
 // Test reset.
-\1
-    // Issue #3554: enable / disable setter (used by Evaluator::Evaluator()
-    // ctor self-upgrade when production_defaults_expected() && hold-budget
-    // reject is still false; zero extra when called twice (idempotent)).
-    [[nodiscard]] inline bool mutation_hold_budget_reject_enabled_set(bool on) noexcept {
+// Issue #3554: enable / disable setter (used by Evaluator::Evaluator()
+// ctor self-upgrade when production_defaults_expected() && hold-budget
+// reject is still false; zero extra when called twice (idempotent)).
+[[nodiscard]] inline bool mutation_hold_budget_reject_enabled_set(bool on) noexcept {
     if (mutation_hold_budget_hard_env() ||
         aura::compiler::typed_audit::production_defaults_active())
         return false; // hard / production-active already on; setter is no-op

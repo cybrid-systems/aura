@@ -138,6 +138,12 @@ inline std::atomic<std::uint64_t> g_lock_order_violation_total{0}; // #2316 / #2
 // Legacy canary flag (kept for tests that poke it). Prefer mode atomics.
 inline std::atomic<int> g_lock_order_canary_enabled{0}; // #2316
 // Issue #2354: 0=uninit, 1=off, 2=soft (AUDIT), 3=hard (CANARY).
+// Issue #2557: 1 when production defaults applied soft audit (mode=2 via
+// apply_production_lock_order_default). Agents read this for dashboards.
+// Forward-declared here so production_defaults_expected() (#3554) can
+// reference it (the #3554 ship left the declaration after the function —
+// use-before-declaration compile error caught by #3555 ship).
+inline std::atomic<int> g_lock_order_production_soft_default{0};
 // Issue #3554: production_defaults_expected() — emits true when the
 // host environment signals Restricted / Strict production face. Source:
 // AURA_PRODUCTION_DEFAULTS=1 env OR g_lock_order_production_soft_default
@@ -160,9 +166,6 @@ inline std::atomic<int> g_lock_order_canary_enabled{0}; // #2316
 }
 
 inline std::atomic<int> g_lock_order_mode{0};
-// Issue #2557: 1 when production defaults applied soft audit (mode=2 via
-// apply_production_lock_order_default). Agents read this for dashboards.
-inline std::atomic<int> g_lock_order_production_soft_default{0};
 
 [[nodiscard]] inline const char* level_name(Level L) noexcept {
     switch (L) {
