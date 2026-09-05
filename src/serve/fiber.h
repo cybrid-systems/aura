@@ -49,6 +49,8 @@ extern "C" std::uint64_t aura_fiber_current_id();
 // module into their link unit.
 extern "C" void aura_fiber_install_tenant_scope_for_resume(void* fiber_ptr) noexcept;
 extern "C" void aura_fiber_release_tenant_scope_after_yield() noexcept;
+// Issue #3563: registry-only session revoke (Reclaimed / fiber-stack join).
+extern "C" void aura_evaluator_on_fiber_join_session_revoke(void* joined_fiber);
 
 // Issue #588: per-fiber mutation stack depth from opaque storage.
 // Used by is_at_mutation_boundary_safe() on the victim fiber

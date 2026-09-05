@@ -249,6 +249,10 @@ __attribute__((weak, used)) void aura_evaluator_bump_steal_outermost_enforced() 
 // binaries (test_concurrent, test_issue_*) link without dragging the
 // full module into their link unit.
 __attribute__((weak, used)) void aura_evaluator_on_fiber_join(void* /*joined_fiber*/) {}
+// Issue #3563: Reclaimed / fiber-stack join session revoke. Weak no-op
+// when evaluator is not linked.
+__attribute__((weak, used)) void
+aura_evaluator_on_fiber_join_session_revoke(void* /*joined_fiber*/) {}
 
 // Issue #1880 / #2118: orch agent body try_acquire (strong defs in evaluator_fiber_mutation.cpp).
 __attribute__((weak, used)) int aura_orch_agent_body_try_acquire() {

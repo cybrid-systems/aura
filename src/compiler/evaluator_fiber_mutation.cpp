@@ -2904,11 +2904,48 @@ bool Evaluator::probe_mailbox_linear_and_stable_refs(std::uint64_t /*from_fiber*
     return true;
 }
 
+// Issue #3563: session revoke on join is registry-only (no mailbox/env
+// release) so Reclaimed may call the revoke-only ABI without UAF.
+// Same SSOT as outermost dtor (`revoke_session_grants_for_mid_locked`,
+// reason session-mid-exit). Steal/abort that already ran is a no-op.
+static void revoke_session_grants_on_fiber_join(aura::serve::Fiber* f) noexcept {
+    if (!f)
+        return;
+    const auto mid = f->session_mid();
+    if (mid == 0)
+        return;
+    using ::aura::core::capability::EffectSandboxMode;
+    using ::aura::core::capability::g_capability_effect_metrics;
+    using ::aura::core::capability::g_capability_registry;
+    auto& reg = g_capability_registry();
+    auto& met = g_capability_effect_metrics();
+    const auto mode = reg.sandbox_mode.load(std::memory_order_acquire);
+    const bool production =
+        mode == EffectSandboxMode::Restricted || mode == EffectSandboxMode::Strict;
+    if (!production && met.capability_live_session_grants.load(std::memory_order_relaxed) == 0)
+        return; // Soft/Off + no live residual: zero-cost (AC4)
+    std::lock_guard<std::mutex> lock(reg.mtx);
+    (void)reg.revoke_session_grants_for_mid_locked(mid, "session-mid-exit",
+                                                   static_cast<std::uint32_t>(f->id()));
+    f->clear_session_mid();
+    if (aura::compiler::g_mutation_hold_live_session_mid.load(std::memory_order_acquire) == mid) {
+        aura::compiler::g_mutation_hold_live_session_mid.store(0, std::memory_order_release);
+    }
+}
+
 extern "C" void aura_evaluator_on_fiber_join(void* joined_fiber) {
     auto* ev = evaluator_for_scheduler_hooks();
-    if (!ev)
-        return;
-    ev->complete_post_join_linear_enforcement(joined_fiber);
+    if (ev)
+        ev->complete_post_join_linear_enforcement(joined_fiber);
+    // Issue #3563: always revoke session grants on join Done (even when
+    // no Evaluator is attached — registry-only).
+    if (auto* f = static_cast<aura::serve::Fiber*>(joined_fiber))
+        revoke_session_grants_on_fiber_join(f);
+}
+
+extern "C" void aura_evaluator_on_fiber_join_session_revoke(void* joined_fiber) {
+    if (auto* f = static_cast<aura::serve::Fiber*>(joined_fiber))
+        revoke_session_grants_on_fiber_join(f);
 }
 
 // Issue #1880 / #2118 / #2555: thread-local TransactionGuard for orch agent body
