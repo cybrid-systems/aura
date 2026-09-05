@@ -42,6 +42,31 @@ extern "C" std::size_t aura_evaluator_mutation_boundary_depth();
 #include "ownership_escape_lowering_gate.h" // Issue #2263: set_escape_move_elision_gate
 // Issue #1872: shared LRU victim helper for predicate_memo_ overflow.
 
+// Issue #3557: production force-escalate on cap-hit residual (sibling of
+// TypedMutationAuditCounters::solver_budget_full_escalate_total; file-scope
+// only — NOT inserted in CompilerMetrics or TypedMutationAuditCounters
+// per AC2). Bumped when solve_delta_impl detects production_defaults_active()
+// && last_reverify_truncated_ && !pending_full_solve_roots_.empty() (the
+// cap-hit BFS push at :1205-1209 enqueued frontier roots into the pending
+// set; under production we want immediate full-escalate, not wait for next
+// delta). Soft / Off path: keep current behavior (cap residual in
+// pending_full_solve_roots_ for next delta).
+namespace aura_test_solve_delta { // Issue #3557 file-scope atomic + accessors
+std::atomic<std::uint64_t> g_solve_delta_full_solve_force_escalate_total{0};
+[[nodiscard]] std::uint64_t g_solve_delta_full_solve_force_escalate_total_v_read() noexcept {
+    return g_solve_delta_full_solve_force_escalate_total.load(std::memory_order_relaxed);
+}
+void bump_solve_delta_full_solve_force_escalate_total() noexcept {
+    g_solve_delta_full_solve_force_escalate_total.fetch_add(1, std::memory_order_relaxed);
+}
+void bump_solve_delta_full_solve_force_escalate_total_for_test() noexcept {
+    g_solve_delta_full_solve_force_escalate_total.fetch_add(1, std::memory_order_relaxed);
+}
+void reset_solve_delta_full_solve_force_escalate_total_for_test() noexcept {
+    g_solve_delta_full_solve_force_escalate_total.store(0, std::memory_order_relaxed);
+}
+} // namespace aura_test_solve_delta
+
 // ── Issue #2560: partial re-infer cone soft/hard caps ───────────────────
 // Env: AURA_PARTIAL_CONE_SOFT (default 256), AURA_PARTIAL_CONE_HARD (2048),
 // AURA_TYPE_DEP_FANOUT_CAP (default 64 per TypeId expand step).
@@ -2694,6 +2719,19 @@ SolveResult ConstraintSystem::solve_delta_impl(std::vector<Constraint>* unresolv
         const bool hard = aura::compiler::typed_audit::production_defaults_active() ||
                           aura::compiler::typed_audit::get_strategy() ==
                               aura::compiler::typed_audit::AuditStrategy::Full;
+        // Issue #3557: production force-escalate on cap-hit residual
+        // (the cap-hit BFS push at :1205-1209 enqueued frontier roots into
+        // pending_full_solve_roots_; under strict production we want
+        // immediate full-escalate, not wait for next delta). Bump new
+        // counter; falls through to the existing #3511 hard check below
+        // when condition is broader (e.g. Full strategy, or production
+        // without cap-hit residual).
+        if (aura::compiler::typed_audit::production_defaults_active() && last_reverify_truncated_ &&
+            !pending_full_solve_roots_.empty()) {
+            aura_test_solve_delta::bump_solve_delta_full_solve_force_escalate_total();
+            clear_touched_roots();
+            return escalate_if_production(SolveResult::TIMEOUT, unresolved_out);
+        }
         if (hard && last_reverify_truncated_) {
             clear_touched_roots();
             return escalate_if_production(SolveResult::TIMEOUT, unresolved_out);
