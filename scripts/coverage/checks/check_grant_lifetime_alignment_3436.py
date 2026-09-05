@@ -17,7 +17,8 @@ clang-format rewrapping — see source-cite-lint-windowing skill):
      (mirror-outside-lock markers x2) and all four string mirrors use the
      explicit-lifetime 4-arg grant_capability form (capability keeps the
      wrapper single_use, durable keeps #3177 session_bound, sticky keeps
-     false/false, session keeps sb=true).
+     false/false, session keeps sb=true, grant_effect_capability high-risk
+     mirrors session_bound per #3561).
   AC5 source: the force gate is the evaluator-level OR (Soft/Off zero cost).
   AC6 fixture: tests/core/test_capability_single_use_consume.cpp carries the
      #3436 AC block; evaluator.ixx declares the mirror overload; no
@@ -92,7 +93,8 @@ def main() -> int:
         at_least(3, CALLER, cap_span, "AC3-cap")
         must("landed = reg.grant_locked(", "AC3-cap-locked", cap_span)  # Issue #3459: landed propagation
         must("reg.grant(tenant_id, name, static_cast<Effect>(effect_bits)", "AC3-cap-else", cap_span)
-        must("grant_capability(std::string(name), single_use, /*session_bound=*/false,", "AC4-cap-mirror", cap_span)
+        # Issue #3561: production high-risk session_bound is mirrored, not reset.
+        must("grant_capability(std::string(name), single_use, session_bound,", "AC4-cap-mirror", cap_span)
 
     dur_span = span(
         "void Evaluator::grant_effect_durable(", "void Evaluator::grant_effect_durable_sticky(", "AC3-span-dur"

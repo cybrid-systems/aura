@@ -6730,7 +6730,7 @@ public:
     bool grant_effect_capability(std::uint64_t tenant_id, std::string_view name,
                                  std::uint16_t effect_bits,
                                  std::uint64_t provenance_mutation_id = 0,
-                                 bool single_use = false) noexcept;
+                                 bool single_use = false) noexcept; // #3561 session_bound high-risk
     // Issue #2882: explicit durable admin path. Bypasses the production-
     // default single-use override for high-risk effects (Mutate /
     // MacroSelfEvo / TenantAdmin / Syscall) and bumps the durable override
