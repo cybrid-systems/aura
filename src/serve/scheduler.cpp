@@ -874,20 +874,25 @@ void Scheduler::run() {
                 if (metrics_on_) {
                     metrics_.io_stdin_events.fetch_add(1, std::memory_order_relaxed);
                 }
-                if (stdin_fiber_) {
+                // Issue #3521: never enqueue a fiber that is already on a
+                // worker (is_queued — includes in-resume). CI stdin is a
+                // readable pipe; EPOLLET fires once and used to double-resume
+                // alongside the fiber eventfd write → swapcontext SIGSEGV.
+                auto enqueue_parked = [&](Fiber* fiber) {
+                    if (!fiber || fiber->is_done() || fiber->is_queued())
+                        return;
                     int wid;
-                    if (stdin_fiber_->affinity() >= 0) {
-                        wid = std::min(stdin_fiber_->affinity(),
-                                       static_cast<int>(workers_.size()) - 1);
+                    if (fiber->affinity() >= 0) {
+                        wid = std::min(fiber->affinity(), static_cast<int>(workers_.size()) - 1);
                         if (wid < 0)
                             wid = 0;
                     } else {
                         wid = next_worker_id();
                     }
-                    workers_[wid]->enqueue(stdin_fiber_);
-                }
-                // Always wake all waiting fibers on stdin activity
-                // (they may be waiting for stdin data from the reader)
+                    workers_[wid]->enqueue(fiber);
+                };
+                enqueue_parked(stdin_fiber_);
+                // Wake parked fibers on stdin activity (REPL / serve-async).
                 {
                     ::aura::compiler::lock_order::AuditedMutexLock lock(
                         wait_map_mutex_, ::aura::compiler::lock_order::Level::WaitMap);
@@ -901,18 +906,8 @@ void Scheduler::run() {
                             continue;
                         if (!owned_fibers_end_contains(fiber))
                             continue;
-                        if (fiber->state() == FiberState::Waiting) {
-                            int wid;
-                            if (fiber->affinity() >= 0) {
-                                wid = std::min(fiber->affinity(),
-                                               static_cast<int>(workers_.size()) - 1);
-                                if (wid < 0)
-                                    wid = 0;
-                            } else {
-                                wid = next_worker_id();
-                            }
-                            workers_[wid]->enqueue(fiber);
-                        }
+                        if (fiber->state() == FiberState::Waiting)
+                            enqueue_parked(fiber);
                     }
                 }
             } else {
@@ -947,6 +942,12 @@ void Scheduler::run() {
                 if (metrics_on_) {
                     metrics_.io_events_processed.fetch_add(1, std::memory_order_relaxed);
                 }
+
+                // Issue #3521: skip if already queued / in resume. Stdin
+                // EPOLLET on a CI pipe plus this write used to enqueue the
+                // same Waiting fiber twice → double swapcontext SIGSEGV.
+                if (fiber->is_queued())
+                    continue;
 
                 // Enqueue to a worker for resumption (respect affinity)
                 int wid;

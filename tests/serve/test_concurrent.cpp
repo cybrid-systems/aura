@@ -174,6 +174,8 @@ bool test_multi_fiber_parallel() {
 // genuinely parked (Waiting + dropped by its worker), writes 1 to the
 // fiber's eventfd (the same wake path serve-async / Mailbox use for
 // real IO), and only then — after the fiber reaches stage 2 — stops.
+// Issue #3521: park via yield(BlockingIO); IO thread skips enqueue of
+// already-queued fibers so a readable CI stdin pipe cannot double-resume.
 
 bool test_eventfd_wakeup() {
     std::println("\n--- Test: Eventfd wakeup ---");
@@ -186,9 +188,12 @@ bool test_eventfd_wakeup() {
         // Stage 1: running
         stage.store(1);
 
-        // Go waiting — park on the eventfd (IO thread wakes us)
-        aura::serve::g_current_fiber->set_state(aura::serve::FiberState::Waiting);
-        aura::serve::Fiber::yield();
+        // Park on the fiber eventfd — same path as Mailbox / Fiber::join
+        // (Waiting is set inside yield(BlockingIO)). Do not pre-set Waiting
+        // then yield() Explicit: that races the IO thread (#3521).
+        if (!aura::serve::g_current_fiber)
+            return;
+        aura::serve::Fiber::yield(aura::serve::YieldReason::BlockingIO);
 
         // Stage 2: woken up
         stage.store(2);
