@@ -1,0 +1,52 @@
+{
+  "issue": 3534,
+  "title": "Issue #3534: GOP runtime inventory (floor=7 retained; EXEMPT no longer comment-only)",
+  "ok": "OK: Issue #3534 GOP runtime inventory — Soft one fetch_add; floor=7; no new query:* / registry.",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/core/lifetime_pin.hh",
+      "contains": [
+        "kGeneralObjectPinInventoryIssue = 3534",
+        "note_pin_inventory_registered",
+        "note_general_object_pin_exempt",
+        "kGeneralObjectPinAdoptSiteCount = 7"
+      ]
+    },
+    {
+      "ac": "AC1-counter",
+      "path": "src/core/lifetime_pin.hh",
+      "contains": [
+        "g_general_object_pin_inventory_count{0}"
+      ]
+    },
+    {
+      "ac": "AC5-query",
+      "path": "src/compiler/evaluator_primitives_obs_eval.cpp",
+      "contains": [
+        "general-object-pin-inventory-count",
+        "schema-3534"
+      ]
+    },
+    {
+      "ac": "AC1-test",
+      "path": "tests/core/test_general_object_pin_coverage_gate.cpp",
+      "contains": [
+        "3534 AC1",
+        "3534 AC2",
+        "3534 AC3",
+        "3534 AC4",
+        "3534 AC5"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "forbid": [
+        "tests/core/test_issue_3534.cpp",
+        "tests/core/test_gop_inventory_runtime.cpp",
+        "docs/design/3534-gop-inventory.md",
+        "scripts/coverage/checks/check_general_object_pin_inventory_3534.py"
+      ]
+    }
+  ]
+}

@@ -91,6 +91,12 @@ inline constexpr int kFfiOpaquePinOrRemapResidualIssue = 3057;
 // one required-pref load. Reuses note_ffi_opaque_alias_densify_cover
 // (no second pin registry).
 inline constexpr int kOpaqueHeapPinRequiredIssue = 3533;
+// Issue #3534: runtime GOP coverage inventory. The #2496 floor
+// kGeneralObjectPinAdoptSiteCount=7 stays so dashboards / contract
+// rows still anchor. wire / EXEMPT / auto_wire bump
+// g_general_object_pin_inventory_count (one fetch_add). Soft is
+// that one atomic. Do not bump the floor by hand; no extra pin table.
+inline constexpr int kGeneralObjectPinInventoryIssue = 3534;
 // Issue #3053: allocate_raw / try_allocate / allocate_checked (and
 // pool+flat creates that share those paths) must join the same
 // pin / slot / EXEMPT pre-move triad as ASTArena::create. Value-only
@@ -305,6 +311,34 @@ inline void reset_general_object_pin_pre_move_block_for_test() noexcept {
     g_general_object_pin_pre_move_unpinned_block_total.store(0, std::memory_order_relaxed);
 }
 
+// Issue #3534: runtime inventory of wire / EXEMPT / auto_wire cover
+// events. Appended as a standalone atomic (not mid-LifetimePinStats).
+// Soft / Off: one fetch_add on the cover path; quiet path (no wire /
+// EXEMPT / auto_wire) stays zero extra.
+inline std::atomic<std::uint64_t> g_general_object_pin_inventory_count{0};
+inline std::atomic<std::uint32_t> g_general_object_pin_inventory_wired{1};
+
+inline void note_pin_inventory_registered() noexcept {
+    g_general_object_pin_inventory_count.fetch_add(1, std::memory_order_relaxed);
+}
+
+[[nodiscard]] inline std::uint64_t general_object_pin_inventory_count_v_read() noexcept {
+    return g_general_object_pin_inventory_count.load(std::memory_order_relaxed);
+}
+
+inline void reset_general_object_pin_inventory_for_test() noexcept {
+    g_general_object_pin_inventory_count.store(0, std::memory_order_relaxed);
+}
+
+// Runtime half of GENERAL_OBJECT_PIN_EXEMPT: the macro used to be
+// static_assert(true) (comment-only). New create paths that mark
+// EXEMPT now roll into exempt_total + inventory automatically.
+inline void note_general_object_pin_exempt(const char* reason) noexcept {
+    (void)reason;
+    note_pin_inventory_registered();
+    ++g_lifetime_pin_stats.general_object_pin_exempt_total;
+}
+
 [[nodiscard]] inline bool general_object_pin_required_active() noexcept {
     return g_general_object_pin_required_pref.load(std::memory_order_relaxed) > 0;
 }
@@ -325,8 +359,11 @@ inline void clear_general_object_pin_required_breach() noexcept {
 //   // GENERAL_OBJECT_PIN_EXEMPT: <reason>
 //   //   stable-handle | RootRemap-registered | hot-path-bypass | ...
 #define GENERAL_OBJECT_PIN_EXEMPT(reason)                                                          \
-    /* GENERAL_OBJECT_PIN_EXEMPT: reason */                                                        \
-    static_assert(true, "EXEMPT site — see reason above")
+    do {                                                                                           \
+        /* GENERAL_OBJECT_PIN_EXEMPT: reason */                                                    \
+        /*   stable-handle | RootRemap-registered | hot-path-bypass | ... */                       \
+        aura::core::lifetime::note_general_object_pin_exempt(reason);                              \
+    } while (0)
 
 // Issue #2496: read AURA_GENERAL_OBJECT_PIN env var at process start
 // (called from production security defaults). Values: "required" / "1" /
@@ -1275,6 +1312,7 @@ private:
 // Issue #2337 / #2363: bump wire counter once per adopted create site.
 inline void note_general_object_pin_mutate_wire() noexcept {
     ++g_lifetime_pin_stats.general_object_pin_mutate_wire_total;
+    note_pin_inventory_registered();
 }
 
 // Issue #2971: bump auto_wire when ASTArena::create installs an
@@ -1282,6 +1320,7 @@ inline void note_general_object_pin_mutate_wire() noexcept {
 // never reach this (gated on general_object_pin_required_active()).
 inline void note_general_object_create_auto_wire() noexcept {
     ++g_lifetime_pin_stats.general_object_pin_auto_wire_total;
+    note_pin_inventory_registered();
 }
 
 // Issue #2363: pin both intermediate create buffers (typically
@@ -1352,8 +1391,10 @@ inline bool wire_general_object_create_pair_or_exempt(GeneralObjectPin& pin_a,
     if (exempt_reason != nullptr) {
         // EXEMPT path: bump counter, skip wire (return true to keep
         // call-site happy — site is documented stable-handle /
-        // RootRemap-registered / hot-path-bypass).
+        // RootRemap-registered / hot-path-bypass). Issue #3534: also
+        // rolls into runtime inventory (one fetch_add).
         ++g_lifetime_pin_stats.general_object_pin_exempt_total;
+        note_pin_inventory_registered();
         return true;
     }
     // Default-on wire path: bump auto_wire counter + delegate to the
