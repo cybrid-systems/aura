@@ -548,6 +548,125 @@ static void ac3021_freed_reapply_canary() {
           "AC3021: aura_closure_call cites use-site protocol");
 }
 
+static void ac3535_1_mismatch_skips_scan() {
+    std::println("\n--- #3535 AC1: mismatch skips scan + counter ---");
+    using namespace aura::core::envframe_lifetime;
+    reset_envframe_lifetime_stats();
+    static std::atomic<int> scans{0};
+    scans.store(0, std::memory_order_relaxed);
+    static int ctx_a = 1;
+    static int ctx_b = 2;
+    EnvFrameLifetimeHost h{};
+    h.ctx = &ctx_a;
+    h.expected_evaluator_id = &ctx_b;
+    h.scan_skip_freed = [](void*, EnvFrameLifetimeSite) {
+        scans.fetch_add(1, std::memory_order_relaxed);
+    };
+    {
+        EnvFrameLifetimeGuard guard{h, EnvFrameLifetimeSite::FiberSteal};
+        (void)guard.site();
+    }
+    CHECK(scans.load(std::memory_order_relaxed) == 0, "3535 AC1: scan skipped");
+    CHECK(envframe_lifetime_cross_evaluator_skip_total() == 1, "3535 AC1: skip_total");
+    CHECK(envframe_lifetime_scans_run() == 0, "3535 AC1: scans_run stays 0");
+}
+
+static void ac3535_2_match_runs_scan() {
+    std::println("\n--- #3535 AC2: match runs scan ---");
+    using namespace aura::core::envframe_lifetime;
+    reset_envframe_lifetime_stats();
+    static std::atomic<int> scans{0};
+    scans.store(0, std::memory_order_relaxed);
+    static int ctx = 0;
+    EnvFrameLifetimeHost h{};
+    h.ctx = &ctx;
+    h.expected_evaluator_id = &ctx;
+    h.scan_skip_freed = [](void*, EnvFrameLifetimeSite) {
+        scans.fetch_add(1, std::memory_order_relaxed);
+    };
+    {
+        EnvFrameLifetimeGuard guard{h, EnvFrameLifetimeSite::BoundaryExit};
+        (void)guard.site();
+    }
+    CHECK(scans.load(std::memory_order_relaxed) == 1, "3535 AC2: scan ran");
+    CHECK(envframe_lifetime_cross_evaluator_skip_total() == 0, "3535 AC2: skip_total stays 0");
+    CHECK(envframe_lifetime_scans_run() == 1, "3535 AC2: scans_run");
+}
+
+static void ac3535_3_chaos_mismatch() {
+    std::println("\n--- #3535 AC3: 1000 mismatch skips ---");
+    using namespace aura::core::envframe_lifetime;
+    reset_envframe_lifetime_stats();
+    static int ctx_a = 1;
+    static int ctx_b = 2;
+    static std::atomic<int> scans{0};
+    scans.store(0, std::memory_order_relaxed);
+    for (int i = 0; i < 1000; ++i) {
+        EnvFrameLifetimeHost h{};
+        h.ctx = &ctx_a;
+        h.expected_evaluator_id = &ctx_b;
+        h.scan_skip_freed = [](void*, EnvFrameLifetimeSite) {
+            scans.fetch_add(1, std::memory_order_relaxed);
+        };
+        EnvFrameLifetimeGuard guard{h, EnvFrameLifetimeSite::CompactSweep};
+        (void)guard.site();
+    }
+    CHECK(scans.load(std::memory_order_relaxed) == 0, "3535 AC3: no scans");
+    CHECK(envframe_lifetime_cross_evaluator_skip_total() == 1000, "3535 AC3: skip_total == 1000");
+}
+
+static void ac3535_4_soft_null_expected_scans() {
+    std::println("\n--- #3535 AC4: Soft nullptr expected still scans ---");
+    using namespace aura::core::envframe_lifetime;
+    reset_envframe_lifetime_stats();
+    static std::atomic<int> scans{0};
+    scans.store(0, std::memory_order_relaxed);
+    static int ctx = 0;
+    EnvFrameLifetimeHost h{};
+    h.ctx = &ctx;
+    h.expected_evaluator_id = nullptr;
+    h.scan_skip_freed = [](void*, EnvFrameLifetimeSite) {
+        scans.fetch_add(1, std::memory_order_relaxed);
+    };
+    {
+        EnvFrameLifetimeGuard guard{h, EnvFrameLifetimeSite::FiberSteal};
+        (void)guard.site();
+    }
+    CHECK(scans.load(std::memory_order_relaxed) == 1, "3535 AC4: Soft scans");
+    CHECK(envframe_lifetime_cross_evaluator_skip_total() == 0, "3535 AC4: skip_total stays 0");
+}
+
+static void ac3535_5_source_cite_no_invent() {
+    std::println("\n--- #3535 AC5: source-cite + no invent ---");
+    using namespace aura::core::envframe_lifetime;
+    CHECK(kEnvFrameCrossEvaluatorSkipIssue == 3535, "3535 AC5: stamp");
+    const auto efl = read_src("src/core/envframe_lifetime.ixx");
+    const auto panic = read_src("src/core/panic_checkpoint_raii.ixx");
+    const auto obs = read_src("src/compiler/evaluator_primitives_obs_eval.cpp");
+    CHECK(efl.find("expected_evaluator_id") != std::string::npos, "3535 AC5: host field");
+    CHECK(efl.find("cross_evaluator_skip_total") != std::string::npos, "3535 AC5: counter END");
+    CHECK(panic.find("expected_evaluator_id") != std::string::npos,
+          "3535 AC5: PanicCheckpoint #1393 mirror");
+    CHECK(obs.find("schema-3535") != std::string::npos, "3535 AC5: schema-3535");
+    CHECK(obs.find("cross-evaluator-skip-total") != std::string::npos, "3535 AC5: additive key");
+    CHECK(obs.find("query:envframe-cross-evaluator") == std::string::npos,
+          "3535 AC5: no new query:*");
+    CHECK(read_src("tests/core/test_issue_3535.cpp").empty(), "3535 AC5: no test_issue_3535.cpp");
+    CHECK(read_src("tests/core/test_envframe_lifetime_discriminator.cpp").empty(),
+          "3535 AC5: folded into existing scan_skip_freed suite");
+    CHECK(read_src("docs/design/3535-envframe-discriminator.md").empty(),
+          "3535 AC5: no docs/design/3535-*");
+    CHECK(read_src("scripts/coverage/checks/check_envframe_cross_evaluator_3535.py").empty(),
+          "3535 AC5: no substring-only py linter");
+    CompilerService cs;
+    auto schema =
+        cs.eval(R"((hash-ref (engine:metrics "query:envframe-lifetime-stats") "schema-3535"))");
+    CHECK(schema && aura::compiler::types::is_int(*schema) &&
+              (aura::compiler::types::as_int(*schema) == 3535 ||
+               aura::compiler::types::as_int(*schema) == -1),
+          "3535 AC5: schema-3535 queryable or hash-ref skip");
+}
+
 int main() {
     std::println("=== Issue #1665 / #2164 / #3021: scan_skip_freed + apply protocol ===");
     ac1_first_mark();
@@ -563,6 +682,11 @@ int main() {
     ac_h3_fiber_steal_site_stress();
     ac_h4_phase_and_schema();
     ac3021_freed_reapply_canary();
+    ac3535_1_mismatch_skips_scan();
+    ac3535_2_match_runs_scan();
+    ac3535_3_chaos_mismatch();
+    ac3535_4_soft_null_expected_scans();
+    ac3535_5_source_cite_no_invent();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
