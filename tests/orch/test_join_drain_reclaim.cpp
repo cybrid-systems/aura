@@ -4032,6 +4032,118 @@ int run_test_join_drain_reclaim() {
         apply_dev_audit_defaults();
     }
 
+    // ── Issue #3527: three-plane Reclaimed sync — directory bools +
+    // status=reclaimed match scope-resolve / name-table pending flags.
+    {
+        using aura::core::sandbox::SandboxMode;
+        using aura::core::sandbox::set_mode;
+        using aura::orch::AgentScope;
+        using aura::orch::AgentSpec;
+
+        std::println("\n--- #3527 AC1: directory bools + status=reclaimed ---");
+        {
+            apply_production_audit_defaults();
+            set_mode(SandboxMode::Off);
+            Scheduler sched(1);
+            AgentScope scope(sched);
+            AgentSpec spec;
+            spec.name = "ac3527-pending";
+            spec.body = [] {};
+            auto& h = scope.spawn(spec);
+            CHECK(h.ok && h.fiber != nullptr, "3527 AC1: spawn ok");
+            h.fiber->mark_reclaimed();
+            JoinPolicy policy{};
+            policy.primary_ms = 1;
+            policy.drain_ms = 0;
+            (void)join_agent(h, policy);
+            CHECK(h.reclaimed_deferred_cleanup || h.must_wait_reclaimed,
+                  "3527 AC1: handle pending flags");
+            auto snap = scope.directory_snapshot();
+            CHECK(!snap.entries.empty(), "3527 AC1: directory lists the name");
+            CHECK(snap.entries[0].reclaimed_deferred == h.reclaimed_deferred_cleanup,
+                  "3527 AC1: directory reclaimed_deferred matches handle");
+            CHECK(snap.entries[0].must_wait_reclaimed == h.must_wait_reclaimed,
+                  "3527 AC1: directory must_wait_reclaimed matches handle");
+            CHECK(snap.entries[0].status == "reclaimed",
+                  "3527 AC1: directory status=reclaimed (not alive)");
+            if (aura::compiler::typed_audit::production_defaults_active())
+                CHECK(snap.entries[0].lifecycle == "reclaimed-pending",
+                      "3527 AC1: production lifecycle=reclaimed-pending");
+            if (h.fiber) {
+                h.fiber->set_state(FiberState::Done);
+                h.fiber->note_body_exit_if_reclaimed();
+            }
+        }
+
+        std::println("\n--- #3527 AC2: Soft bools populate, lifecycle empty ---");
+        {
+            apply_dev_audit_defaults();
+            set_mode(SandboxMode::Off);
+            Scheduler sched(1);
+            AgentScope scope(sched);
+            AgentSpec spec;
+            spec.name = "ac3527-soft";
+            spec.body = [] {};
+            auto& h = scope.spawn(spec);
+            CHECK(h.ok && h.fiber != nullptr, "3527 AC2: spawn ok");
+            h.fiber->mark_reclaimed();
+            JoinPolicy policy{};
+            policy.primary_ms = 1;
+            policy.drain_ms = 0;
+            (void)join_agent(h, policy);
+            auto snap = scope.directory_snapshot();
+            CHECK(!snap.entries.empty(), "3527 AC2: directory lists the name");
+            CHECK(snap.entries[0].reclaimed_deferred == h.reclaimed_deferred_cleanup,
+                  "3527 AC2: Soft bools still populate (no intern)");
+            CHECK(snap.entries[0].must_wait_reclaimed == h.must_wait_reclaimed,
+                  "3527 AC2: Soft must_wait_reclaimed matches handle");
+            CHECK(snap.entries[0].lifecycle.empty(),
+                  "3527 AC2: Soft directory lifecycle empty (zero intern)");
+            if (h.reclaimed_deferred_cleanup)
+                CHECK(snap.entries[0].status == "reclaimed",
+                      "3527 AC2: Soft status=reclaimed when deferred");
+            if (h.fiber) {
+                h.fiber->set_state(FiberState::Done);
+                h.fiber->note_body_exit_if_reclaimed();
+            }
+        }
+
+        std::println("\n--- #3527 AC3: source-cite + no invent / no new query ---");
+        {
+            const auto scopeh = read_file("src/orch/agent_scope.h");
+            const auto prim = read_file("src/compiler/evaluator_primitives_agent.cpp");
+            const auto build = read_file("build.py");
+            const auto readme = read_file("src/orch/README.md");
+            CHECK(scopeh.find("e.reclaimed_deferred = h.reclaimed_deferred_cleanup") !=
+                      std::string::npos,
+                  "3527 AC3: directory populates reclaimed_deferred");
+            CHECK(scopeh.find("e.must_wait_reclaimed = h.must_wait_reclaimed") != std::string::npos,
+                  "3527 AC3: directory populates must_wait_reclaimed");
+            CHECK(scopeh.find("e.status = \"reclaimed\"") != std::string::npos,
+                  "3527 AC3: directory status=reclaimed");
+            CHECK(prim.find("reclaimed-deferred") != std::string::npos,
+                  "3527 AC3: Aura hash reclaimed-deferred");
+            CHECK(prim.find("must-wait-reclaimed") != std::string::npos,
+                  "3527 AC3: Aura hash must-wait-reclaimed");
+            CHECK(prim.find("query:reclaimed-deferred") == std::string::npos,
+                  "3527 AC3: no new query:*");
+            CHECK(scopeh.find("class AgentRegistry") == std::string::npos,
+                  "3527 AC3: no AgentRegistry");
+            CHECK(readme.find("Three-plane Reclaimed (#3527)") != std::string::npos,
+                  "3527 AC3: README three-plane note");
+            CHECK(build.find("check_reclaimed_pending_lifecycle_3220") != std::string::npos,
+                  "3527 AC3: existing 3220 linter (AC5) covers #3527");
+            CHECK(read_file("tests/orch/test_issue_3527.cpp").empty() &&
+                      read_file("tests/issues/test_issue_3527.cpp").empty(),
+                  "3527 AC3: no test_issue_3527.cpp per #81967");
+            CHECK(read_file("docs/design/3527-directory-reclaimed.md").empty(),
+                  "3527 AC3: no docs/design/3527-* per #1655");
+        }
+
+        set_mode(SandboxMode::Off);
+        apply_dev_audit_defaults();
+    }
+
     // ── Issue #3494: Restricted+MT spawn tenant 0 is fail-closed ──
     // tenant_required_gate is production && MT && is_sandbox_active()
     // (Restricted||Strict). The extra is_strict() conjunct skipped the

@@ -709,17 +709,25 @@ Semantics:
    transactional with concurrent spawn (document + AC2). Soft / sandbox never
    denies.
 3. **C++ helper** — `AgentScope::directory_snapshot(AgentDirectoryFilter)`
-   returns `AgentDirectorySnapshot` (`name` / `id` / `status` / `scope-path`).
-   Root agents use `scope-path="root"`; child indices use `"0"`, `"0/1"`, …
+   returns `AgentDirectorySnapshot` (`name` / `id` / `status` / `scope-path`
+   / `reclaimed_deferred` / `must_wait_reclaimed`). Root agents use
+   `scope-path="root"`; child indices use `"0"`, `"0/1"`, …
 4. **Not a global registry** — MVP linter still forbids `AgentRegistry` /
    `global_agent_registry` / `conduct_parallel`. No new process-static agent
    map; storage stays the existing per-Evaluator scope slot.
+5. **Three-plane Reclaimed (#3527)** — directory status is `reclaimed` when
+   the handle is deferred / fiber reclaimed-not-done (same as
+   `orch:scope-resolve`). Rows also carry `must-wait-reclaimed` /
+   `reclaimed-deferred` so a dashboard cannot show `alive` while a
+   same-name put is blocked. No new `query:*`.
 
 Hash result (AC3):
 - `{ok, agents, count, scopes-visited, schema=2751, schema-2751, schema-2588,
    schema-2537, schema-2083, issue-2751}`
-- each `agents[i]` → `{name, id, status, scope-path, ok, schema=2751}`
-  (`status` ∈ `alive` | `done` | `cancelled` | `spawn-failed` | `unknown`)
+- each `agents[i]` → `{name, id, status, scope-path, ok, schema=2751,
+   must-wait-reclaimed, reclaimed-deferred}`
+  (`status` ∈ `alive` | `done` | `cancelled` | `spawn-failed` | `unknown` |
+  `reclaimed`)
 
 ### `orch:scope-resolve` live name lookup (Issue #2926)
 
@@ -760,7 +768,7 @@ table (MVP linter still forbids `AgentRegistry` / `global_agent_registry` /
 |-------|-----------|--------------|
 | `name-table` | per-Evaluator `OrchAgentNameTable` / `agent_names_` | `orch:spawn-agent` / `orch:agent-join` |
 | `scope-handle` | `AgentScope::handles_` (supervision) | `orch:scope-resolve` |
-| `directory` | `directory_snapshot` (read-only projection) | `orch:agent-directory` |
+| `directory` | `directory_snapshot` (read-only projection; #3527 Reclaimed flags) | `orch:agent-directory` |
 
 Issue #3442: `orch:agent-send` / `recv` / `ask` / `agent-join` resolve
 **name-table first, then `AgentScope::find`** on the same Evaluator

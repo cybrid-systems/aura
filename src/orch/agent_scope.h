@@ -157,12 +157,19 @@ inline constexpr int kCrossScopeDirectoryIssue = 3125;
 struct AgentDirectoryEntry {
     std::string name;
     std::uint64_t id = 0;
-    std::string status;     // "alive" | "done" | "cancelled" | "spawn-failed" | "unknown"
+    std::string status;     // "alive" | "done" | "cancelled" | "spawn-failed" |
+                            // "unknown" | "reclaimed"
     std::string scope_path; // "" / "root" for root; "0", "0/1" for child indices
     // Issue #3220: production Timeout after auto-wait — reservation /
     // name-table still held. Empty on Soft / reclaimable handles.
     std::string lifecycle; // "" | "reclaimed-pending"
     bool ok = false;
+    // Issue #3527: three-plane Reclaimed sync. Appended at struct END
+    // (#2906). Directory / scope-resolve / name-table project the same
+    // pending flags so dashboards do not see status=alive while a
+    // same-name put is blocked. No new query key.
+    bool reclaimed_deferred = false;
+    bool must_wait_reclaimed = false;
 };
 
 // Issue #2751: read-only directory filter options.
@@ -194,6 +201,9 @@ struct CrossScopeEntry {
     std::uint64_t source_seq = 0; // input span index (0..N-1)
     std::string lifecycle;        // Issue #3220: "" | "reclaimed-pending"
     bool ok = false;
+    // Issue #3527: copied from AgentDirectoryEntry (struct END, #2906).
+    bool reclaimed_deferred = false;
+    bool must_wait_reclaimed = false;
 };
 
 // Issue #3125: read-only filter for cross-scope directory merge.
@@ -1254,10 +1264,18 @@ private:
             e.id = h.id;
             e.ok = h.ok;
             e.scope_path = path.empty() ? std::string("root") : path;
+            // Issue #3527: project handle pending flags (always; no intern).
+            e.reclaimed_deferred = h.reclaimed_deferred_cleanup;
+            e.must_wait_reclaimed = h.must_wait_reclaimed;
             if (!h.ok) {
                 e.status = "spawn-failed";
             } else if (!h.fiber) {
                 e.status = "unknown";
+            } else if (h.reclaimed_deferred_cleanup ||
+                       (h.fiber->is_reclaimed() && !h.fiber->is_done())) {
+                // Align with orch:scope-resolve (#3050): Reclaimed-but-not-
+                // done is not "alive" — name-table put is still blocked.
+                e.status = "reclaimed";
             } else if (h.fiber->is_done()) {
                 e.status = "done";
             } else if (h.fiber->is_cancel_requested()) {
@@ -1265,9 +1283,9 @@ private:
             } else {
                 e.status = "alive";
             }
-            // Issue #3220: production Timeout still holds reservation /
-            // name-table. Additive lifecycle so Agents do not reuse the
-            // name. Soft: skip string (zero intern).
+            // Issue #3220 / #3527: lifecycle whenever pending flags are
+            // set under production (not only auto-wait Timeout). Soft:
+            // skip string (zero intern). Bools above still populate.
             if ((h.must_wait_reclaimed || h.reclaimed_deferred_cleanup) &&
                 aura::compiler::typed_audit::production_defaults_active())
                 e.lifecycle = "reclaimed-pending";
@@ -1724,6 +1742,8 @@ apply_workflow(serve::Scheduler& sched, AgentScope& scope,
             ce.source_seq = i;
             ce.lifecycle = e.lifecycle;
             ce.ok = e.ok;
+            ce.reclaimed_deferred = e.reclaimed_deferred;
+            ce.must_wait_reclaimed = e.must_wait_reclaimed;
             out.entries.push_back(std::move(ce));
         }
     }
