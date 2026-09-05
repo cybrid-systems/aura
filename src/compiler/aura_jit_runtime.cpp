@@ -1020,10 +1020,15 @@ extern "C" void aura_closure_set_must_deopt(std::int64_t closure_id, int v) {
     g_closure_must_deopt[cid] = v != 0 ? 1 : 0;
 }
 
-// Issue #2501: post-bump epoch invariant — walk JIT live-closure table
-// and force MustDeopt on gen-behind survivors (not already MustDeopt,
-// not freed). Returns newly-marked count. Called from
-// CompilerService::run_epoch_invariant_if_enabled under soft+hard.
+// Issue #2501 / #3540: post-bump epoch invariant — walk JIT live-closure
+// table and force MustDeopt on gen-behind OR sid-stale survivors (not
+// already MustDeopt, not freed). Dual-fresh AND: native-fresh iff
+// bridge_epoch matches the table epoch AND the stamped sid still matches
+// the live name→sid map for that identity. sid==0 (legacy / anonymous)
+// skips like be==0. live==0 skips (no current mapping). Reuses
+// aura_lookup_stable_func_id; does not invent a process-wide current sid
+// (that would mark every closure whose sid is not the newest assigned
+// id). One extra sid load + one compare. Returns newly-marked count.
 // C ABI aura_epoch_invariant_must_deopt_stale_live_closures lives in
 // runtime_ssot.cpp and forwards here (same walk body).
 static std::size_t epoch_invariant_must_deopt_stale_live_closures_impl(void) {
@@ -1034,20 +1039,40 @@ static std::size_t epoch_invariant_must_deopt_stale_live_closures_impl(void) {
         g_closure_must_deopt.resize(n, 0);
     if (g_closure_bridge_epochs.size() < n)
         g_closure_bridge_epochs.resize(n, 0);
+    if (g_closure_stable_func_ids.size() < n)
+        g_closure_stable_func_ids.resize(n, 0);
+    if (g_closure_names.size() < n)
+        g_closure_names.resize(n);
     if (g_closure_freed.size() < n)
         g_closure_freed.resize(n, 0);
     std::size_t marked = 0;
+    std::uint64_t sid_stale_marked = 0;
     for (std::size_t cid = 0; cid < n; ++cid) {
         if (g_closure_freed[cid] != 0)
             continue; // free slot
         if (g_closure_must_deopt[cid] != 0)
             continue; // already MustDeopt
         const auto be = g_closure_bridge_epochs[cid];
-        if (be == 0 || be == cur)
-            continue; // unstamped or current
+        const bool epoch_ok = (be == 0 || be == cur);
+        // Extra read + compare vs live name→sid (existing map, MVP
+        // single-workspace lookup). Soft/Off: this walk is not invoked
+        // from run_epoch_invariant_if_enabled when mode==0.
+        bool sid_stale = false;
+        const auto sid = g_closure_stable_func_ids[cid];
+        if (sid != 0 && !g_closure_names[cid].empty()) {
+            const auto live = aura_lookup_stable_func_id(g_closure_names[cid].c_str());
+            if (live != 0 && live != sid)
+                sid_stale = true;
+        }
+        if (epoch_ok && !sid_stale)
+            continue;
         g_closure_must_deopt[cid] = 1;
         ++marked;
+        if (sid_stale)
+            ++sid_stale_marked;
     }
+    if (sid_stale_marked > 0)
+        aura_epoch_invariant_note_sid_stale(sid_stale_marked);
     return marked;
 }
 

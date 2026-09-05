@@ -1,0 +1,52 @@
+{
+  "issue": 3540,
+  "title": "Issue #3540: epoch-invariant walk ANDs stamped sid vs live name→sid",
+  "ok": "OK: Issue #3540 dual-fresh sid check — reuse name→sid map; Soft walk gated; no new query:*.",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/aura_jit_runtime.cpp",
+      "contains": [
+        "g_closure_stable_func_ids[cid]",
+        "aura_lookup_stable_func_id",
+        "sid_stale"
+      ]
+    },
+    {
+      "ac": "AC1-counter",
+      "path": "src/compiler/runtime_ssot.cpp",
+      "contains": [
+        "kEpochInvariantSidStaleIssue = 3540",
+        "g_epoch_invariant_sid_stale_total{0}"
+      ]
+    },
+    {
+      "ac": "AC5-query",
+      "path": "src/compiler/evaluator_primitives_obs_eval.cpp",
+      "contains": [
+        "epoch-invariant-sid-stale-total",
+        "schema-3540"
+      ]
+    },
+    {
+      "ac": "AC1-test",
+      "path": "tests/compiler/test_epoch_invariant_complete.cpp",
+      "contains": [
+        "3540 AC1",
+        "3540 AC2",
+        "3540 AC3",
+        "3540 AC4",
+        "3540 AC5"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "forbid": [
+        "tests/compiler/test_issue_3540.cpp",
+        "tests/compiler/test_dual_fresh_closure_stale_sid.cpp",
+        "docs/design/3540-dual-fresh-sid.md",
+        "scripts/coverage/checks/check_dual_fresh_sid_3540.py"
+      ]
+    }
+  ]
+}

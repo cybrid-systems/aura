@@ -1104,6 +1104,7 @@ static std::atomic<std::uint64_t> g_epoch_invariant_violation_total_stub{0};
 static std::atomic<std::uint64_t> g_epoch_invariant_walks_total_stub{0};
 static std::atomic<std::uint64_t> g_epoch_invariant_slot_stale_total_stub{0};
 static std::atomic<std::uint64_t> g_epoch_invariant_closure_must_deopt_total_stub{0};
+static std::atomic<std::uint64_t> g_epoch_invariant_sid_stale_total_stub{0}; // #3540
 
 extern "C" __attribute__((weak)) std::uint64_t aura_epoch_invariant_violation_total_v_read(void) {
     return g_epoch_invariant_violation_total_stub.load(std::memory_order_relaxed);
@@ -1138,6 +1139,17 @@ extern "C" __attribute__((weak)) void
 aura_epoch_invariant_note_closure_must_deopt(std::uint64_t n) noexcept {
     if (n > 0)
         g_epoch_invariant_closure_must_deopt_total_stub.fetch_add(n, std::memory_order_relaxed);
+}
+extern "C" __attribute__((weak)) std::uint64_t aura_epoch_invariant_sid_stale_total_v_read(void) {
+    return g_epoch_invariant_sid_stale_total_stub.load(std::memory_order_relaxed);
+}
+extern "C" __attribute__((weak)) void
+aura_epoch_invariant_note_sid_stale(std::uint64_t n) noexcept {
+    if (n > 0)
+        g_epoch_invariant_sid_stale_total_stub.fetch_add(n, std::memory_order_relaxed);
+}
+extern "C" __attribute__((weak)) int aura_epoch_invariant_sid_stale_issue(void) {
+    return 3540;
 }
 
 // Issue #2640: production Restricted default periodic epoch-invariant soft walk

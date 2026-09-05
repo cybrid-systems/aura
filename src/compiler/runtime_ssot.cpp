@@ -327,6 +327,10 @@ static std::atomic<std::uint64_t> g_epoch_invariant_violation_total{0};
 static std::atomic<std::uint64_t> g_epoch_invariant_walks_total{0};
 static std::atomic<std::uint64_t> g_epoch_invariant_slot_stale_total{0};
 static std::atomic<std::uint64_t> g_epoch_invariant_closure_must_deopt_total{0};
+// Issue #3540: sid-stale marks from the existing epoch-invariant walk
+// (append END per #2906). Distinct from closure-must-deopt (epoch side).
+inline constexpr int kEpochInvariantSidStaleIssue = 3540;
+static std::atomic<std::uint64_t> g_epoch_invariant_sid_stale_total{0};
 
 extern "C" void aura_epoch_invariant_note_walk(std::uint64_t violations) noexcept {
     g_epoch_invariant_walks_total.fetch_add(1, std::memory_order_relaxed);
@@ -344,6 +348,11 @@ extern "C" void aura_epoch_invariant_note_closure_must_deopt(std::uint64_t n) no
         g_epoch_invariant_closure_must_deopt_total.fetch_add(n, std::memory_order_relaxed);
 }
 
+extern "C" void aura_epoch_invariant_note_sid_stale(std::uint64_t n) noexcept {
+    if (n > 0)
+        g_epoch_invariant_sid_stale_total.fetch_add(n, std::memory_order_relaxed);
+}
+
 extern "C" std::uint64_t aura_epoch_invariant_violation_total_v_read(void) {
     return g_epoch_invariant_violation_total.load(std::memory_order_relaxed);
 }
@@ -358,6 +367,14 @@ extern "C" std::uint64_t aura_epoch_invariant_slot_stale_total_v_read(void) {
 
 extern "C" std::uint64_t aura_epoch_invariant_closure_must_deopt_total_v_read(void) {
     return g_epoch_invariant_closure_must_deopt_total.load(std::memory_order_relaxed);
+}
+
+extern "C" std::uint64_t aura_epoch_invariant_sid_stale_total_v_read(void) {
+    return g_epoch_invariant_sid_stale_total.load(std::memory_order_relaxed);
+}
+
+extern "C" int aura_epoch_invariant_sid_stale_issue(void) {
+    return kEpochInvariantSidStaleIssue;
 }
 
 static std::size_t (*g_must_deopt_stale)(void) = nullptr;
