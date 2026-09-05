@@ -192,7 +192,6 @@ static void ac3554_1_evaluator_ctor_self_upgrade_source_cite() {
     const auto ixx = read_file("src/compiler/lock_order_audit.h");
     const auto mbh = read_file("src/compiler/mutation_hold_budget.h");
     const auto ctor = read_file("src/compiler/evaluator_ctor.cpp");
-    const auto linter_dir = read_file("scripts/check_*.py");
 
     // AC1: production_defaults_expected() reads env AURA_PRODUCTION_DEFAULTS=1
     // OR g_lock_order_production_soft_default non-zero.
@@ -214,8 +213,15 @@ static void ac3554_1_evaluator_ctor_self_upgrade_source_cite() {
           "3554 AC3: ctor reads production_defaults_expected()");
     CHECK(ctor.find("g_lock_order_mode.store(3") != std::string::npos,
           "3554 AC3: ctor upgrades lock_order_mode to canary (3)");
-    CHECK(ctor.find("g_lock_order_canary_enabled.store(1") != std::string::npos,
-          "3554 AC3: ctor enables canary gate");
+    {
+        // #3554 AC3: clang-format may wrap .store( across lines; search the
+        // call then require the enabled value 1 on the same/nearby line.
+        const auto pos = ctor.find("g_lock_order_canary_enabled.store(");
+        const auto val_ok = pos != std::string::npos &&
+                            ctor.find("1, std::memory_order_release", pos) != std::string::npos &&
+                            ctor.find("1, std::memory_order_release", pos) < pos + 80;
+        CHECK(val_ok, "3554 AC3: ctor enables canary gate");
+    }
     CHECK(ctor.find("mutation_hold_budget_reject_enabled_set(true)") != std::string::npos,
           "3554 AC3: ctor enables hold-budget reject via setter");
 
@@ -227,9 +233,11 @@ static void ac3554_1_evaluator_ctor_self_upgrade_source_cite() {
               std::string::npos,
           "3554 AC4: production_defaults_expected short-circuits when soft_default == 0");
 
-    // Linter exists.
-    CHECK(linter_dir.find("3554") != std::string::npos,
-          "3554: linter scripts/check_*_3554.py exists");
+    // Linter exists: the wave named it check_evaluator_ctor_production_upgrade.py
+    // (read_file() has no glob); require it + the #3554 cite inside.
+    const auto linter_file = read_file("scripts/check_evaluator_ctor_production_upgrade.py");
+    CHECK(!linter_file.empty() && linter_file.find("3554") != std::string::npos,
+          "3554: linter scripts/check_evaluator_ctor_production_upgrade.py exists");
     CHECK(read_file("docs/design/3554-*.md").empty(),
           "3554: no docs/design/3554-* (agent repo philosophy)");
 }
