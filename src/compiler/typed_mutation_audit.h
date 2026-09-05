@@ -651,6 +651,11 @@ struct TypedMutationAuditCounters {
     // audit-skipped SecurityEvent (reason sampled-ratio-skip).
     std::atomic<std::uint64_t> production_sampled_ratio_deny_total{0};
     std::atomic<std::uint32_t> production_sampled_ratio_deny_wired{1};
+    // Issue #3532: production/Full emit with mid=0 whose reason is not a
+    // canonical refuse (mid-fallback-refused / grant-mid-refused). Append
+    // END per #2906.
+    std::atomic<std::uint64_t> audit_mid_ssot_miss_total{0};
+    std::atomic<std::uint32_t> audit_mid_ssot_miss_wired{1};
 };
 
 inline TypedMutationAuditCounters g_typed_mutation_audit_counters{};
@@ -4030,6 +4035,22 @@ inline void clear_boundary_audit_mid() noexcept {
     return resolve_audit_mutation_id(0);
 }
 
+// Issue #3532: named join for SE emit callers. join_audit_and_se_mid
+// remains the mid SSOT — this does not invent a second resolver.
+// Production/Full join-0 is the refuse path (mid-fallback-refused SE
+// already emitted by resolve). Do NOT emit audit-mid-ssot-miss-not-refuse
+// here: that would double-count refuse as caller-misuse. Misuse is
+// classified at emit_security_event_durable when mid=0 is paired with a
+// non-canonical reason. Soft/Off: join last-resort stamps; zero extra I/O.
+inline constexpr int kAuditMidSsotMissIssue = 3532;
+inline constexpr std::string_view kAuditMidSsotMissReason = "audit-mid-ssot-miss-not-refuse";
+
+[[nodiscard]] inline std::uint64_t require_audit_mid_for_emit(std::uint64_t caller_mid,
+                                                              std::string_view op) noexcept {
+    (void)op;
+    return join_audit_and_se_mid(caller_mid);
+}
+
 // Issue #3280 / #3319: dual-write SecurityEvent(InvariantFail) for
 // invariant / boundary / hygiene / hard-gate denies. Production defaults
 // (any strategy, including Sampled) OR Full always emit mid + stable
@@ -4802,6 +4823,9 @@ inline void reset_for_test() noexcept {
         0, std::memory_order_relaxed);
     g_typed_mutation_audit_counters.production_sampled_ratio_deny_wired.store(
         1, std::memory_order_relaxed);
+    // Issue #3532
+    g_typed_mutation_audit_counters.audit_mid_ssot_miss_total.store(0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.audit_mid_ssot_miss_wired.store(1, std::memory_order_relaxed);
     // Issue #2818
     g_typed_mutation_audit_counters.audit_strategy_default_warnings_total.store(
         0, std::memory_order_relaxed);
