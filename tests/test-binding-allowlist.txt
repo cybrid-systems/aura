@@ -103,3 +103,17 @@ src/compiler/evaluator_primitives_stdlib_review.cpp
 # since no new primitive surface is introduced.
 src/compiler/evaluator_primitives_io.cpp
 src/compiler/evaluator_primitives_obs_eval.cpp
+
+# Issue #3559: ADT exhaustiveness production/Full hard-reject after variant
+# mutate. evaluator_eval_flat.cpp match-check path (tree-walker) consults
+# `production_hard_face_active()` (#3556 centralized hard-face gate) and
+# hard-rejects (returns error EvalValue) on non-exhaustive match under
+# Production/Full. Source-cite only test — reads the production file via
+# std::ifstream and checks for the hard-reject wire (counter bump +
+# face release store + error EvalValue return at the match-check site).
+# Full runtime path needs live evaluator with ADT registry + match
+# expression + soft→Production strategy switch mid-eval — too heavy for
+# a quick init helper; covered by existing #2223 ADT exhaustiveness
+# invariant tests through the full typecheck + post-mutation flow.
+tests/compiler/test_adt_exhaustiveness_production_hard.cpp
+src/compiler/evaluator_eval_flat.cpp

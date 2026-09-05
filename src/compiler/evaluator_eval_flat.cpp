@@ -5368,14 +5368,35 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                                                       cname) != target_ctors->end())
                                             used_eff.push_back(std::move(cname));
                                     }
+                                    bool match_non_exhaustive = false;
                                     for (auto& expected_ctor : *target_ctors) {
                                         if (std::find(used_eff.begin(), used_eff.end(),
                                                       expected_ctor) == used_eff.end()) {
+                                            // Issue #3559: bump fail counter on every
+                                            // non-exhaustive match (observe-only under
+                                            // Soft; Production/Full additionally sets
+                                            // the hard-reject face below).
+                                            aura::compiler::typed_audit::
+                                                g_typed_mutation_audit_counters
+                                                    .adt_exhaustiveness_fail_total.fetch_add(
+                                                        1, std::memory_order_relaxed);
+                                            match_non_exhaustive = true;
                                             std::println(
                                                 std::cerr,
                                                 "match warning: unhandled constructor '{}' in {}",
                                                 expected_ctor, treg.name_of(target_tid));
                                         }
+                                    }
+                                    // Issue #3559: production/Full hard-reject
+                                    // non-exhaustive match after variant mutate.
+                                    // Soft / Sampled / audit-only fall through to the
+                                    // observe-only path (counter bumped above, no reject).
+                                    if (match_non_exhaustive && aura::compiler::typed_audit::
+                                                                    production_hard_face_active()) {
+                                        aura::compiler::typed_audit::g_typed_mutation_audit_counters
+                                            .adt_exhaustiveness_hard_reject_face.store(
+                                                1, std::memory_order_release);
+                                        return {}; // force reject; no Dynamic fallback
                                     }
                                 }
                             }
