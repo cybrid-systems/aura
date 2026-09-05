@@ -90,6 +90,13 @@ extern "C" std::uint64_t aura_fiber_static_cross_fiber_mutation_safe_steal_total
 
 namespace aura::serve {
 
+// Issue #3525: ctor inherit / no-parent sentinel for assigned_tenant_id_.
+// Distinct from 0 so resume mismatch cannot short-circuit (0 previously
+// muted JIT worker / eval-flat / test fibers). Not a real tenant id —
+// TenantScope is not installed for this value. Mailbox uses
+// has_assigned_tenant() so deliver does not flood SE on unset fibers.
+inline constexpr std::uint64_t kUnsetTenant = ~std::uint64_t{0};
+
 // Forward declare (full type in scheduler.h) — used by Fiber owner back-pointer.
 struct Scheduler;
 
@@ -1104,6 +1111,11 @@ public:
     [[nodiscard]] std::uint64_t assigned_tenant_id() const noexcept {
         return assigned_tenant_id_.load(std::memory_order_acquire);
     }
+    // Issue #3525: real stamped tenant (not 0, not kUnsetTenant).
+    [[nodiscard]] bool has_assigned_tenant() const noexcept {
+        const auto t = assigned_tenant_id();
+        return t != 0 && t != kUnsetTenant;
+    }
     // Issue #3049: tenant charged at fiber-quota reserve so on_fiber_done
     // releases the same key. Distinct from assigned_tenant_id_ (capability
     // principal) because spawn consumes quota before orch stamps principal.
@@ -1361,13 +1373,12 @@ private:
     std::atomic<bool> queued_{false};
     // Issue #2533: cooperative force-safepoint after hard-reclaim.
     std::atomic<bool> force_safepoint_requested_{false};
-    // Issue #2491: fiber-local assigned tenant id. Stamped at
-    // spawn time by the orch / agent path; Fiber::resume re-applies
-    // TenantScope from this value (not from ambient Evaluator state)
-    // so a stolen / resumed fiber cannot silently keep another
-    // tenant's principal. Default 0 = "no assigned tenant" — the
-    // resume hook skips TenantScope installation in that case (unit
-    // / Soft path stays unchanged per AC5).
+    // Issue #2491 / #3525: fiber-local assigned tenant id. Stamped at
+    // spawn by orch, or inherited from g_current_fiber in Fiber ctor.
+    // No parent → kUnsetTenant (not 0) so resume mismatch cannot mute.
+    // Resume re-applies TenantScope from a *real* tenant (has_assigned_tenant);
+    // kUnsetTenant is a baseline for mismatch, not a TenantScope id.
+    // Off still skips the hook before mismatch work (AC5).
     std::atomic<std::uint64_t> assigned_tenant_id_{0};
     // Issue #3049: tenant id charged against ResourceQuota at spawn.
     std::atomic<std::uint64_t> quota_tenant_id_{0};

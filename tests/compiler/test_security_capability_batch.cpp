@@ -64,6 +64,7 @@ extern int run_test_security_schedule_mutate_admit();
 extern int run_test_side_effect_inherit();
 extern int run_test_side_effect_security_gate_hardfail();
 extern int run_test_tenant_scope_fiber_mandate();
+extern int run_test_fiber_assigned_tenant_inherit();
 extern int run_test_typed_summary_full_gate();
 extern int run_test_capability_audit_publish();
 extern int run_test_capability_effect_stats_snapshot();
@@ -307,6 +308,18 @@ int main() {
     CHECK(true, "skip leftover same-tenant share AC");
     ++members_passed;
     std::println("OK member test_tenant_scope_fiber_mandate (skip leftover AC)");
+
+    std::println("\n──── test_fiber_assigned_tenant_inherit (#3525) ────");
+    reset_member_face();
+    g_passed = 0;
+    g_failed = 0;
+    if (run_test_fiber_assigned_tenant_inherit() != 0 || g_failed != 0) {
+        ++members_failed;
+        std::println("FAIL member test_fiber_assigned_tenant_inherit ({}/{})", g_passed, g_failed);
+    } else {
+        ++members_passed;
+        std::println("OK member test_fiber_assigned_tenant_inherit ({} checks)", g_passed);
+    }
 
     std::println("\n──── test_capability_audit_publish ────");
     CHECK(true, "skip leftover wrap-seq AC");

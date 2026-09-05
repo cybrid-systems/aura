@@ -132,8 +132,9 @@ std::atomic<std::uint64_t> Fiber::residual_force_safepoint_total_{0};
 std::atomic<std::uint64_t> Fiber::residual_cpu_budget_exceeded_total_{0};
 // Issue #1595 process-wide join-path linear enforcement attempts (even without Evaluator).
 std::atomic<std::uint64_t> Fiber::join_linear_enforcement_total_{0};
-// Issue #2491: process-wide TenantScope install mismatch counter
-// (resume detects current capability_tenant_id_ != assigned_tenant_id_).
+// Issue #2491 / #3525: process-wide TenantScope install mismatch
+// (resume detects current capability_tenant_id_ != assigned_tenant_id_;
+// kUnsetTenant is a real baseline so assigned==0 no longer mutes).
 std::atomic<std::uint64_t> Fiber::static_tenant_scope_mismatch_total_{0};
 // Issue #2839: production hard-face mismatch total.
 std::atomic<std::uint64_t> Fiber::static_tenant_scope_mismatch_hard_total_{0};
@@ -992,6 +993,13 @@ Fiber::Fiber(Func func, size_t stack_size)
     : id_(next_id_++)
     , stack_size_(stack_size)
     , func_(std::move(func)) {
+    // Issue #3525: inherit parent fiber principal, or kUnsetTenant when
+    // no parent / parent still 0. orch::spawn_agent overwrites with a
+    // real tenant when spawn_tenant != 0. Off resume still no-ops.
+    {
+        const auto parent = g_current_fiber ? g_current_fiber->assigned_tenant_id() : 0;
+        assigned_tenant_id_.store(parent == 0 ? kUnsetTenant : parent, std::memory_order_relaxed);
+    }
 
     // 1. Allocate stack via mmap with guard page
     // Guard page is the first page (PROT_NONE)

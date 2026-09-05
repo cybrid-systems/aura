@@ -1435,7 +1435,7 @@ public:
         // gate). Soft / sandbox=off path is permissive (hook no-op when
         // production sandbox inactive — see fiber.cpp #2491). AC1 / AC2
         // / AC4 verified by tests/orch/test_mailbox_tenant_principal.
-        if (g_current_fiber != nullptr && g_current_fiber->assigned_tenant_id() != 0) {
+        if (g_current_fiber != nullptr && g_current_fiber->has_assigned_tenant()) {
             aura_fiber_install_tenant_scope_for_resume(g_current_fiber);
         }
         return true;
@@ -1473,7 +1473,7 @@ public:
                     // with wait=false, timeout_ms=0). Hook is idempotent;
                     // ambient != assigned → bump tenant_scope_mismatch_total
                     // + reinstall correct TenantScope (#2491 machinery).
-                    if (g_current_fiber != nullptr && g_current_fiber->assigned_tenant_id() != 0) {
+                    if (g_current_fiber != nullptr && g_current_fiber->has_assigned_tenant()) {
                         aura_fiber_install_tenant_scope_for_resume(g_current_fiber);
                     }
                     return out;
