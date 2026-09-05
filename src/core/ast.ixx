@@ -1274,6 +1274,8 @@ private:
             marker_.resize(static_cast<std::size_t>(id) + 1, SyntaxMarker::User);
         marker_[id] = m;
         type_id_[id] = 0;
+        if (id >= dirty_.size())
+            dirty_.resize(static_cast<std::size_t>(id) + 1, 0);
         dirty_[id] = 0;
         if (id < ppa_dirty_.size())
             ppa_dirty_[id] = 0;

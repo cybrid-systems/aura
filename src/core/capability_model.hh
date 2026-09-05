@@ -25,6 +25,8 @@ namespace aura::core::capability {
 
 inline constexpr int kCapabilityModelPhase = 2; // #1565 enforcement
 inline constexpr int kCapabilityModelIssue = 1565;
+// Issue #3542: mutate MacroIntroduced opt-out requires MacroSelfEvo.
+inline constexpr int kMacroMutateCapabilityFenceIssue = 3542;
 // Issue #2055: grant/revoke bound to WorkspaceEpoch Mutation + fiber.
 inline constexpr int kGrantEpochFiberBindIssue = 2055;
 // Issue #2154: sliding grant_min_valid_epoch window on Mutation epoch bump.
@@ -378,6 +380,9 @@ struct CapabilityEffectMetrics {
     // Appended at struct END per #2906 — never insert mid-struct (stale
     // module BMIs writing at wrong offsets corrupt neighboring heap).
     std::atomic<std::uint64_t> capability_durable_session_bound_total{0};
+    // Issue #3542: mutate of MacroIntroduced with :allow-macro? / global
+    // opt-out but no MacroSelfEvo (wildcard strip #3144). Append END.
+    std::atomic<std::uint64_t> macro_mutate_capability_deny_total{0};
 };
 
 // Issue #2149: security provenance vocabulary — Mutation only.
@@ -2016,6 +2021,7 @@ inline void reset_capability_effects_for_test() noexcept {
     // (Restricted/Strict). Reset alongside the rest of the durable / session
     // lifecycle counters.
     m.capability_durable_session_bound_total.store(0, std::memory_order_relaxed);
+    m.macro_mutate_capability_deny_total.store(0, std::memory_order_relaxed);
 }
 
 struct CapabilityEffectStatsSnapshot {
@@ -2087,6 +2093,8 @@ struct CapabilityEffectStatsSnapshot {
     // counter lets Agent dashboards chart the durable→session-bound force
     // separately from #2944 explicit session grants.
     std::uint64_t capability_durable_session_bound = 0;
+    // Issue #3542: mutate MacroIntroduced opt-out without MacroSelfEvo.
+    std::uint64_t macro_mutate_capability_deny = 0;
 };
 
 // Issue #2430: multi-field consistent snapshot (#1840 / #2426 pattern).
@@ -2170,6 +2178,9 @@ struct CapabilityEffectStatsSnapshot {
         // Issue #3177: durable high-risk session_bound stamping counter.
         s.capability_durable_session_bound =
             m.capability_durable_session_bound_total.load(std::memory_order_acquire);
+        // Issue #3542: mutate MacroIntroduced opt-out without MacroSelfEvo.
+        s.macro_mutate_capability_deny =
+            m.macro_mutate_capability_deny_total.load(std::memory_order_acquire);
 
         // Double-check most-bumped counters for torn multi-field view.
         if (m.capability_effect_enforced_total.load(std::memory_order_acquire) == s.enforced &&
