@@ -593,6 +593,21 @@ public:
         note_pass_run(PassKind::DeadCoercion, false);
         dead_coercion_pipeline_runs_total.fetch_add(1, std::memory_order_relaxed);
         maybe_drop_stale_decision_cache(/*consult_gen=*/true);
+        // Issue #3560 AC2: per-site narrow_evidence re-verify at decision
+        // reuse. current_narrow_evidence(node) returns a value that drifts
+        // when type_id / narrow_evidence drifts (XOR of last stamped
+        // evidence + stamped_total counter). If the value drifts from
+        // last_run_narrow_evidence_, bump the sibling mismatch atomic
+        // and force a full-scan. Quiet (no drift) → one atomic load +
+        // compare.
+        const auto cur_narrow =
+            ::aura::compiler::castop_meta::current_narrow_evidence(std::uint32_t{0});
+        if (cur_narrow != last_run_narrow_evidence_) {
+            last_run_narrow_evidence_ = cur_narrow;
+            ::aura::compiler::castop_meta::dead_coercion_ir_narrow_evidence_mismatch_total
+                .fetch_add(1, std::memory_order_relaxed);
+            block_dirty_pred_ = BlockDirtyPred{}; // force full-scan path
+        }
         // Issue #2556: when a type∪IR dirty cone is wired (block_dirty_pred_),
         // peel per-function so DCE never walks cone-external CastOps on
         // large modules after local typed_mutate. No cone → full scan (AC2).

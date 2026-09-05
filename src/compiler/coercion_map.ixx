@@ -42,6 +42,10 @@ module;
 #include "core/sandbox.hh"                        // Issue #2147: Strict honesty
 #include "compiler/typed_mutation_audit.h"        // Issue #2147: Full vs Sampled walk cap
 #include "compiler/coercion_provenance_policy.hh" // Issue #2102 / #2185 miss policy
+// Issue #3566: narrow_evidence cache family — castop_meta namespace
+// (NOT re-exported; used internally in apply_coercion_map identity-elision
+// branch to bump castop_meta_narrow_evidence_writes per AC3).
+#include "compiler/castop_typed_meta.h"
 
 export module aura.compiler.coercion_map;
 
@@ -1161,6 +1165,12 @@ export std::size_t apply_coercion_map(aura::ast::FlatAST& flat, const CoercionMa
             // Issue #2674: also bump ast-elided-with-evidence counter so the
             // layered coherence invariant (ast_with_evidence <= ir_narrow +
             // meta_stamps) can detect layered-stats divergence.
+            // Issue #3560 AC3: also write to narrow_evidence cache (sibling
+            // of g_narrow_evidence_cache family; NOT in metrics middle).
+            // Identity-elision with evidence → dead_coercion_ir_narrow_evidence_mismatch
+            // companion counter bumps so the per-site re-verify in
+            // DeadCoercionPass::run sees a fresh narrow_evidence value on
+            // the next run.
             if (e.narrow_evidence != 0) {
                 g_dead_coercion_ast_elided_with_evidence_total.fetch_add(1,
                                                                          std::memory_order_relaxed);
@@ -1169,6 +1179,12 @@ export std::size_t apply_coercion_map(aura::ast::FlatAST& flat, const CoercionMa
                                              static_cast<std::uint32_t>(e.parent_id));
                 dce_deopt::stamp_elided_cast_deopt_meta(site, e.source_mutation_id,
                                                         e.narrow_evidence, e.type_tag, e.type_id);
+                // Issue #3560 AC3: narrow_evidence cache write (sibling,
+                // NOT metrics middle). Bumps per identity-elision with
+                // evidence — drives the per-site re-verify in
+                // DeadCoercionPass::run when the node's type drifts.
+                aura::compiler::castop_meta::castop_meta_narrow_evidence_writes.fetch_add(
+                    1, std::memory_order_relaxed);
             }
             if (persist_elim_cone) {
                 elim_ast.push_back(e.original_child);
