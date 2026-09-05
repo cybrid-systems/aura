@@ -511,6 +511,168 @@ static void ac3529_4_source_cite_and_no_invent() {
           "3529 AC4: no docs/design/3529-* per #1655");
 }
 
+// Issue #3564: Aura name-table / Scope find+put recycle Reclaimed quota
+// without ~AgentHandle. Isolated Fiber (never started) + table/scope —
+// no infinite-loop soak, no full-batch hangers.
+static aura::orch::AgentHandle
+make_pending_reclaimed_handle(aura::serve::Fiber* fiber, const char* name, std::uint64_t reserved) {
+    aura::orch::AgentHandle h;
+    h.ok = true;
+    h.name = name;
+    h.fiber = fiber;
+    h.reserved_memory_bytes = reserved;
+    h.must_wait_reclaimed = true;
+    h.reclaimed_deferred_cleanup = true;
+    return h;
+}
+
+static void ac3564_1_name_table_find_recycles() {
+    using aura::orch::AgentHandle;
+    using aura::serve::Fiber;
+    std::println("\n--- #3564 AC1: production name-table find recycles stuck quota ---");
+    apply_production_audit_defaults();
+    const char* prev = std::getenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS");
+    std::string prev_s = prev ? prev : "";
+    ::setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", "0", 1);
+    const auto before =
+        g_orch_module_stats.reclaimed_quota_force_released_total.load(std::memory_order_relaxed);
+    auto fiber_owned = std::make_unique<Fiber>([] {});
+    fiber_owned->mark_reclaimed();
+    aura::compiler::AgentNameTable table;
+    auto* slot = table.put(make_pending_reclaimed_handle(fiber_owned.get(), "nt-recycle", 4096));
+    CHECK(slot != nullptr, "3564 AC1: pending handle registered");
+    CHECK(slot->reserved_memory_bytes == 4096, "3564 AC1: reservation held before find");
+    auto* found = table.find("nt-recycle");
+    CHECK(found != nullptr, "3564 AC1: find hits pending slot");
+    CHECK(found->reserved_memory_bytes == 0, "3564 AC1: find recycled quota");
+    CHECK(found->must_wait_reclaimed, "3564 AC1: must_wait stays (wait_reclaimed still finds)");
+    CHECK(found->reclaimed_deferred_cleanup, "3564 AC1: deferred stays (#3467 deny)");
+    CHECK(!found->fiber->is_done(), "3564 AC1: body-stack untouched (#2661)");
+    CHECK(g_orch_module_stats.reclaimed_quota_force_released_total.load(
+              std::memory_order_relaxed) == before + 1,
+          "3564 AC1: force-released counter +1");
+    if (!prev_s.empty())
+        ::setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", prev_s.c_str(), 1);
+    else
+        ::unsetenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS");
+    apply_dev_audit_defaults();
+}
+
+static void ac3564_2_soft_find_zero_cost() {
+    using aura::serve::Fiber;
+    std::println("\n--- #3564 AC2: Soft find does not recycle ---");
+    apply_dev_audit_defaults();
+    const char* prev = std::getenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS");
+    std::string prev_s = prev ? prev : "";
+    ::setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", "0", 1);
+    const auto before =
+        g_orch_module_stats.reclaimed_quota_force_released_total.load(std::memory_order_relaxed);
+    auto fiber_owned = std::make_unique<Fiber>([] {});
+    fiber_owned->mark_reclaimed();
+    aura::compiler::AgentNameTable table;
+    (void)table.put(make_pending_reclaimed_handle(fiber_owned.get(), "soft-nt", 4096));
+    auto* found = table.find("soft-nt");
+    CHECK(found != nullptr, "3564 AC2: find hits");
+    CHECK(found->reserved_memory_bytes == 4096, "3564 AC2: reservation held (find is not dtor)");
+    CHECK(g_orch_module_stats.reclaimed_quota_force_released_total.load(
+              std::memory_order_relaxed) == before,
+          "3564 AC2: Soft does not bump force-released");
+    if (!prev_s.empty())
+        ::setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", prev_s.c_str(), 1);
+    else
+        ::unsetenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS");
+}
+
+static void ac3564_3_scope_find_recycles() {
+    using aura::orch::AgentScope;
+    using aura::serve::Fiber;
+    using aura::serve::Scheduler;
+    std::println("\n--- #3564 AC3: production AgentScope::find recycles stuck quota ---");
+    apply_production_audit_defaults();
+    const char* prev = std::getenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS");
+    std::string prev_s = prev ? prev : "";
+    ::setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", "0", 1);
+    const auto before =
+        g_orch_module_stats.reclaimed_quota_force_released_total.load(std::memory_order_relaxed);
+    Scheduler sched(1);
+    AgentScope scope(sched);
+    auto fiber_owned = std::make_unique<Fiber>([] {});
+    fiber_owned->mark_reclaimed();
+    scope.adopt_handle_without_spec_for_test(
+        make_pending_reclaimed_handle(fiber_owned.get(), "scope-recycle", 4096));
+    auto* found = scope.find("scope-recycle");
+    CHECK(found != nullptr, "3564 AC3: scope find hits");
+    CHECK(found->reserved_memory_bytes == 0, "3564 AC3: scope find recycled quota");
+    CHECK(found->must_wait_reclaimed, "3564 AC3: flags stay");
+    CHECK(!found->fiber->is_done(), "3564 AC3: body-stack untouched");
+    CHECK(g_orch_module_stats.reclaimed_quota_force_released_total.load(
+              std::memory_order_relaxed) == before + 1,
+          "3564 AC3: force-released +1");
+    // Steal the handle so ~AgentScope does not join a never-started fiber.
+    auto taken = std::move(scope.handles_mut()[0]);
+    taken.fiber = nullptr;
+    if (!prev_s.empty())
+        ::setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", prev_s.c_str(), 1);
+    else
+        ::unsetenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS");
+    apply_dev_audit_defaults();
+}
+
+static void ac3564_4_put_other_name_walks() {
+    using aura::serve::Fiber;
+    std::println("\n--- #3564 AC4: put of a different name walks and recycles old slot ---");
+    apply_production_audit_defaults();
+    const char* prev = std::getenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS");
+    std::string prev_s = prev ? prev : "";
+    ::setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", "0", 1);
+    auto fiber_owned = std::make_unique<Fiber>([] {});
+    fiber_owned->mark_reclaimed();
+    aura::compiler::AgentNameTable table;
+    auto* old = table.put(make_pending_reclaimed_handle(fiber_owned.get(), "old-pending", 4096));
+    CHECK(old != nullptr && old->reserved_memory_bytes == 4096, "3564 AC4: old slot held");
+    const auto before =
+        g_orch_module_stats.reclaimed_quota_force_released_total.load(std::memory_order_relaxed);
+    aura::orch::AgentHandle other;
+    other.ok = true;
+    other.name = "other-agent";
+    auto* ins = table.put(std::move(other));
+    CHECK(ins != nullptr, "3564 AC4: different-name put accepted");
+    CHECK(old->reserved_memory_bytes == 0, "3564 AC4: put walk recycled old quota");
+    CHECK(old->must_wait_reclaimed && old->reclaimed_deferred_cleanup,
+          "3564 AC4: old flags stay (#3467)");
+    CHECK(g_orch_module_stats.reclaimed_quota_force_released_total.load(
+              std::memory_order_relaxed) == before + 1,
+          "3564 AC4: force-released +1 on put walk, not find");
+    if (!prev_s.empty())
+        ::setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", prev_s.c_str(), 1);
+    else
+        ::unsetenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS");
+    apply_dev_audit_defaults();
+}
+
+static void ac3564_5_source_cite_and_no_invent() {
+    std::println("\n--- #3564 AC5: source-cite + no invent / no new query:* ---");
+    const auto spawn = read_file("src/orch/agent_spawn.h");
+    const auto names = read_file("src/compiler/agent_name_table.h");
+    const auto scopeh = read_file("src/orch/agent_scope.h");
+    const auto prim = read_file("src/compiler/evaluator_primitives_agent.cpp");
+    CHECK(spawn.find("kReclaimedNameTableQuotaRecycleIssue = 3564") != std::string::npos,
+          "3564 AC5: issue constant");
+    CHECK(spawn.find("maybe_force_release_reclaimed_quota") != std::string::npos,
+          "3564 AC5: helper");
+    CHECK(names.find("maybe_force_release_reclaimed_quota") != std::string::npos,
+          "3564 AC5: name-table find/put call helper");
+    CHECK(scopeh.find("maybe_force_release_reclaimed_quota") != std::string::npos,
+          "3564 AC5: scope find calls helper");
+    CHECK(prim.find("schema-3564") != std::string::npos, "3564 AC5: schema on existing query");
+    CHECK(prim.find("query:reclaimed-name-table") == std::string::npos, "3564 AC5: no new query:*");
+    CHECK(read_file("tests/orch/test_issue_3564.cpp").empty() &&
+              read_file("tests/issues/test_issue_3564.cpp").empty(),
+          "3564 AC5: no test_issue_3564.cpp");
+    CHECK(read_file("docs/design/3564-name-table-quota.md").empty(),
+          "3564 AC5: no docs/design/3564-*");
+}
+
 static void ac3433_1_timeout_live_defers_like_reclaimed() {
     using aura::core::sandbox::SandboxMode;
     using aura::core::sandbox::set_mode;
@@ -4893,6 +5055,12 @@ int run_test_join_drain_reclaim() {
     ac3529_2_soft_zero_cost();
     ac3529_3_ensure_timeout_force_releases();
     ac3529_4_source_cite_and_no_invent();
+    std::println("\n=== Issue #3564: name-table / Scope find+put recycle ===");
+    ac3564_1_name_table_find_recycles();
+    ac3564_2_soft_find_zero_cost();
+    ac3564_3_scope_find_recycles();
+    ac3564_4_put_other_name_walks();
+    ac3564_5_source_cite_and_no_invent();
 
     std::println("\n=== Issue #3433: Timeout/Cancelled join defers like Reclaimed ===");
     ac3433_1_timeout_live_defers_like_reclaimed();

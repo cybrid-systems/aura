@@ -1213,8 +1213,12 @@ private:
     [[nodiscard]] AgentHandle* find_unlocked_(std::string_view name,
                                               bool include_descendants) noexcept {
         for (auto& h : handles_) {
-            if (h.name == name)
+            if (h.name == name) {
+                // Issue #3564: non-dtor recycle — Scope holds the handle
+                // until tree_settled drop, so #3529 dtor never runs.
+                (void)aura::orch::maybe_force_release_reclaimed_quota(h);
                 return &h;
+            }
         }
         if (!include_descendants)
             return nullptr;

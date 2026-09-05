@@ -1,0 +1,57 @@
+{
+  "issue": 3564,
+  "title": "Issue #3564: Aura name-table / Scope find+put recycle Reclaimed quota",
+  "ok": "OK: Issue #3564 non-dtor Reclaimed quota recycle on find/put — Soft zero-cost; #2661 body-stack; #3467 flags stay.",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/orch/agent_spawn.h",
+      "contains": [
+        "kReclaimedNameTableQuotaRecycleIssue = 3564",
+        "maybe_force_release_reclaimed_quota"
+      ]
+    },
+    {
+      "ac": "AC1-find",
+      "path": "src/compiler/agent_name_table.h",
+      "contains": [
+        "maybe_force_release_reclaimed_quota"
+      ]
+    },
+    {
+      "ac": "AC3-scope",
+      "path": "src/orch/agent_scope.h",
+      "contains": [
+        "Issue #3564",
+        "maybe_force_release_reclaimed_quota"
+      ]
+    },
+    {
+      "ac": "AC5-query",
+      "path": "src/compiler/evaluator_primitives_agent.cpp",
+      "contains": [
+        "schema-3564",
+        "issue-3564"
+      ]
+    },
+    {
+      "ac": "AC5-test",
+      "path": "tests/orch/test_join_drain_reclaim.cpp",
+      "contains": [
+        "ac3564_1_name_table_find_recycles",
+        "ac3564_2_soft_find_zero_cost",
+        "ac3564_3_scope_find_recycles",
+        "ac3564_4_put_other_name_walks",
+        "ac3564_5_source_cite_and_no_invent"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "forbid": [
+        "tests/orch/test_issue_3564.cpp",
+        "tests/issues/test_issue_3564.cpp",
+        "docs/design/3564-name-table-quota.md"
+      ]
+    }
+  ]
+}
