@@ -1071,9 +1071,9 @@ int run_test_security_audit_unify() {
         std::println("\n--- #3319 AC1: production + Sampled + non-contextual deny → SE ---");
         reset_process();
         apply_production_audit_defaults();
-        aura::compiler::typed_audit::set_strategy(
-            aura::compiler::typed_audit::AuditStrategy::Sampled);
-        aura::compiler::typed_audit::set_sample_ratio(4);
+        // Issue #3530: setters refuse Sampled+ratio>1 under production.
+        // Leftover misconfig (the #3319 skip case) uses the test seam.
+        aura::compiler::typed_audit::inject_sampled_ratio_for_test(4);
         aura::compiler::typed_audit::clear_invariant_deny_se_tls();
         CHECK(aura::compiler::typed_audit::kSampledDenySeEmitIssue == 3319,
               "3319 AC1: issue stamp");
@@ -1217,9 +1217,7 @@ int run_test_security_audit_unify() {
         std::println("\n--- #3319 WAL: wrap + find_recent_by_mutation_id ---");
         reset_process();
         apply_production_audit_defaults();
-        aura::compiler::typed_audit::set_strategy(
-            aura::compiler::typed_audit::AuditStrategy::Sampled);
-        aura::compiler::typed_audit::set_sample_ratio(4);
+        aura::compiler::typed_audit::inject_sampled_ratio_for_test(4);
         aura::compiler::typed_audit::clear_invariant_deny_se_tls();
         CompilerService cs;
         namespace fs = std::filesystem;
