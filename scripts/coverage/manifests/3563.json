@@ -1,0 +1,43 @@
+{
+  "issue": 3563,
+  "title": "Issue #3563: join Done/Reclaimed revokes session grants",
+  "ok": "OK: Issue #3563 join session revoke — Reclaimed registry-only; Soft zero-cost; no new query:* / linter.",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_fiber_mutation.cpp",
+      "contains": [
+        "Issue #3563",
+        "aura_evaluator_on_fiber_join_session_revoke",
+        "revoke_session_grants_for_mid_locked",
+        "session-mid-exit"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/serve/fiber.cpp",
+      "contains": [
+        "Issue #3563",
+        "aura_evaluator_on_fiber_join_session_revoke"
+      ]
+    },
+    {
+      "ac": "AC5-test",
+      "path": "tests/serve/test_resume_session_revoke.cpp",
+      "contains": [
+        "3563 AC1",
+        "3563 AC2",
+        "3563 AC3",
+        "3563 AC4"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "forbid": [
+        "tests/serve/test_issue_3563.cpp",
+        "tests/issues/test_issue_3563.cpp",
+        "docs/design/3563-join-session-revoke.md"
+      ]
+    }
+  ]
+}

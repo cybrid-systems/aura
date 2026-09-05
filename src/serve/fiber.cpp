@@ -68,6 +68,7 @@ extern "C" void aura_evaluator_resume_fiber_migration();
 extern "C" void aura_evaluator_post_resume_refresh(); // Issue #1490
 // Issue #1595: host-side post-join linear + StableNodeRef enforcement.
 extern "C" void aura_evaluator_on_fiber_join(void* joined_fiber);
+extern "C" void aura_evaluator_on_fiber_join_session_revoke(void* joined_fiber);
 // Issue #2677: LayoutStamp resume check (C ABI shim). Strong def in
 // evaluator_fiber_mutation.cpp compares fiber-stored LayoutStamp
 // against worker-side Evaluator::current_layout_stamp() and bumps both
@@ -1866,6 +1867,10 @@ JoinResult Fiber::join(Fiber* target, std::optional<std::uint64_t> timeout_ms) {
             join_linear_enforcement_total_.fetch_add(1, std::memory_order_relaxed);
             if (g_current_fiber == nullptr)
                 aura_evaluator_on_fiber_join(static_cast<void*>(target));
+            else
+                // Issue #3563: fiber-stack join skips linear enforcement
+                // (small stacks) but still revokes session grants.
+                aura_evaluator_on_fiber_join_session_revoke(static_cast<void*>(target));
         }
         return JoinResult{st, us};
     };
@@ -1888,6 +1893,9 @@ JoinResult Fiber::join(Fiber* target, std::optional<std::uint64_t> timeout_ms) {
         // (which the body isn't directly accessing anymore) are released
         // here. Same fail-safe shape as pin_contract_held at #2266.
         target->release_orphan_roots();
+        // Issue #3563: registry-only session revoke is safe on Reclaimed
+        // (does not free mailbox/env the body may still touch).
+        aura_evaluator_on_fiber_join_session_revoke(static_cast<void*>(target));
         return finish(JoinStatus::Reclaimed);
     }
     if (target->is_done())

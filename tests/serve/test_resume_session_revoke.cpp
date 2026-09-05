@@ -41,6 +41,8 @@ import aura.compiler.service;
 import aura.compiler.value;
 
 extern "C" void aura_fiber_install_tenant_scope_for_resume(void* fiber_ptr) noexcept;
+extern "C" void aura_evaluator_on_fiber_join(void* joined_fiber);
+extern "C" void aura_evaluator_on_fiber_join_session_revoke(void* joined_fiber);
 
 namespace {
 
@@ -255,6 +257,89 @@ static void ac3320_5_source_cite() {
 
 } // namespace
 
+static void ac3563_1_join_done_revokes() {
+    std::println("\n--- #3563 AC1: join Done revokes session grants ---");
+    reset_all();
+    set_mode(SandboxMode::Restricted);
+    aura::core::bump_mutation_epoch(1);
+    const auto mid = aura::core::current_mutation_epoch();
+    constexpr std::uint64_t tenant = 56;
+    grant_session(tenant, mid, "mut-3563-join");
+    CHECK(g_capability_registry().session_bound_entries_alive(tenant) == 1, "AC1 pre: live grant");
+    Fiber f([] {});
+    f.set_assigned_tenant_id(tenant);
+    f.set_session_mid(mid);
+    CompilerService cs;
+    cs.evaluator().set_capability_tenant_id(tenant);
+    aura_evaluator_on_fiber_join(&f);
+    CHECK(g_capability_registry().session_bound_entries_alive(tenant) == 0,
+          "3563 AC1: join Done cleared session grant");
+    CHECK(f.session_mid() == 0, "3563 AC1: fiber session mid cleared");
+    CHECK(!consume(tenant, mid), "3563 AC1: check_and_record_effect denies after join revoke");
+}
+
+static void ac3563_2_reclaimed_revokes_only() {
+    std::println("\n--- #3563 AC2: Reclaimed revoke-only hook clears session rows ---");
+    reset_all();
+    set_mode(SandboxMode::Restricted);
+    aura::core::bump_mutation_epoch(1);
+    const auto mid = aura::core::current_mutation_epoch();
+    constexpr std::uint64_t tenant = 57;
+    grant_session(tenant, mid, "mut-3563-reclaim");
+    Fiber f([] {});
+    f.set_assigned_tenant_id(tenant);
+    f.set_session_mid(mid);
+    aura_evaluator_on_fiber_join_session_revoke(&f);
+    CHECK(g_capability_registry().session_bound_entries_alive(tenant) == 0,
+          "3563 AC2: Reclaimed revoke-only cleared session grant");
+    CHECK(f.session_mid() == 0, "3563 AC2: session mid cleared");
+    CHECK(!consume(tenant, mid), "3563 AC2: consume denies after Reclaimed revoke");
+}
+
+static void ac3563_3_idempotent() {
+    std::println("\n--- #3563 AC3: second join revoke is a commutative no-op ---");
+    reset_all();
+    set_mode(SandboxMode::Restricted);
+    aura::core::bump_mutation_epoch(1);
+    const auto mid = aura::core::current_mutation_epoch();
+    constexpr std::uint64_t tenant = 58;
+    grant_session(tenant, mid, "mut-3563-idem");
+    Fiber f([] {});
+    f.set_session_mid(mid);
+    aura_evaluator_on_fiber_join(&f);
+    CHECK(g_capability_registry().session_bound_entries_alive(tenant) == 0, "3563 AC3: first join");
+    aura_evaluator_on_fiber_join(&f);
+    aura_evaluator_on_fiber_join_session_revoke(&f);
+    CHECK(g_capability_registry().session_bound_entries_alive(tenant) == 0,
+          "3563 AC3: second join no-op, no residual");
+}
+
+static void ac3563_4_soft_zero_cost() {
+    std::println("\n--- #3563 AC4: Soft/Off + no live grants is zero extra lock ---");
+    reset_all();
+    set_mode(SandboxMode::Off);
+    Fiber f([] {});
+    const auto steal0 = g_capability_effect_metrics().capability_session_revoke_total.load();
+    aura_evaluator_on_fiber_join(&f);
+    aura_evaluator_on_fiber_join_session_revoke(&f);
+    CHECK(g_capability_effect_metrics().capability_session_revoke_total.load() == steal0,
+          "3563 AC4: Soft no live grants → no session_revoke bump");
+}
+
+static void ac3563_5_source_cite() {
+    std::println("\n--- #3563 AC5: source-cite join session revoke ---");
+    const auto fm = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+    CHECK(fm.find("Issue #3563") != std::string::npos, "3563 AC5: fiber_mutation cites #3563");
+    CHECK(fm.find("aura_evaluator_on_fiber_join_session_revoke") != std::string::npos,
+          "3563 AC5: revoke-only ABI");
+    CHECK(fm.find("revoke_session_grants_for_mid_locked") != std::string::npos,
+          "3563 AC5: reuses outermost mid-exit helper");
+    const auto fc = read_file("src/serve/fiber.cpp");
+    CHECK(fc.find("aura_evaluator_on_fiber_join_session_revoke") != std::string::npos,
+          "3563 AC5: Reclaimed / fiber-stack join calls revoke-only");
+    CHECK(read_file("tests/serve/test_issue_3563.cpp").empty(), "3563 AC5: no test_issue_3563.cpp");
+}
+
 int run_test_resume_session_revoke_3320() {
     std::println("=== Issue #3320: resume-host session-grant revoke (steal×resume) ===");
     ac3320_1_steal_resume_revokes();
@@ -262,6 +347,11 @@ int run_test_resume_session_revoke_3320() {
     ac3320_3_dual_evaluator_chaos();
     ac3320_4_soft_zero_cost();
     ac3320_5_source_cite();
+    ac3563_1_join_done_revokes();
+    ac3563_2_reclaimed_revokes_only();
+    ac3563_3_idempotent();
+    ac3563_4_soft_zero_cost();
+    ac3563_5_source_cite();
     return g_failed == 0 ? 0 : 1;
 }
 
