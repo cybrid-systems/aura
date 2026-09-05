@@ -714,6 +714,15 @@ inline TypedMutationAuditTrail& g_trail() {
                std::memory_order_relaxed) != 0;
 }
 
+// Issue #3556: centralized hard-face gate. Equivalent to the inline
+// production_defaults_active() || get_strategy() == AuditStrategy::Full
+// pattern used at every #3418/#3431/#3556 reject site. Centralized so
+// future production-reject paths share one definition (and linter can
+// grep a single helper name).
+[[nodiscard]] inline bool production_hard_face_active() noexcept {
+    return production_defaults_active() || get_strategy() == AuditStrategy::Full;
+}
+
 // Issue #3530: production Full contract refuses Sampled + ratio>1
 // (silent under-audit, no typed/SE/WAL row, mid unjoinable). Soft /
 // sandbox=off always allowed. Sampled + ratio<=1 is equivalent to no
@@ -1788,6 +1797,29 @@ inline std::atomic<std::uint64_t> g_occurrence_persist_seq{0};
 }
 inline void reset_occurrence_persist_seq_for_test() noexcept {
     g_occurrence_persist_seq.store(0, std::memory_order_relaxed);
+}
+
+// Issue #3556: production hard-reject expected_fp==0 unstaged persist
+// (residual #G1 — typed-mutation x typed-system). Production/Full path:
+// if last_proof_goal_fingerprint was never staged (atomic stays 0) the
+// persist buffer cannot be frozen with an empty fingerprint -- Agent
+// mutates, fingerprint fails to stage, persist would accept empty, next
+// query:type reads pre-mutate empty snapshot. Hard reject: bump counter,
+// clear persist buffer, stamp proof with would_allow_commit=false +
+// force_reason=16, publish kTypeLinearProofOutcomeReject. Soft/Off path
+// skips the precondition -- #3431/#3512 empty-live clear path remains
+// for Soft / empty-live cases (separate counter family).
+inline constexpr int kOccurrencePersistRejectExpectedFpZeroIssue = 3556;
+inline std::atomic<std::uint64_t> g_occurrence_persist_reject_expected_fp_zero_total{0};
+[[nodiscard]] inline std::uint64_t
+occurrence_persist_reject_expected_fp_zero_total_v_read() noexcept {
+    return g_occurrence_persist_reject_expected_fp_zero_total.load(std::memory_order_relaxed);
+}
+inline void reset_occurrence_persist_reject_expected_fp_zero_total_for_test() noexcept {
+    g_occurrence_persist_reject_expected_fp_zero_total.store(0, std::memory_order_relaxed);
+}
+inline void bump_occurrence_persist_reject_expected_fp_zero_total() noexcept {
+    g_occurrence_persist_reject_expected_fp_zero_total.fetch_add(1, std::memory_order_relaxed);
 }
 [[nodiscard]] inline bool occurrence_persist_seq_hard() noexcept {
     return production_defaults_active() || get_strategy() == AuditStrategy::Full;
@@ -2877,6 +2909,11 @@ inline void reset_linear_compact_root_consistency_for_test() noexcept {
 }
 [[nodiscard]] inline std::uint64_t last_proof_goal_fingerprint_v_read() noexcept {
     return g_last_proof_goal_fingerprint.load(std::memory_order_relaxed);
+}
+// Issue #3556: test reset — force g_last_proof_goal_fingerprint to 0 to
+// exercise the expected_fp==0 reject path deterministically.
+inline void reset_last_proof_goal_fingerprint_for_test() noexcept {
+    g_last_proof_goal_fingerprint.store(0, std::memory_order_relaxed);
 }
 [[nodiscard]] inline std::uint64_t type_linear_commit_proof_counts_filled_total_v_read() noexcept {
     return g_type_linear_commit_proof_counts_filled_total.load(std::memory_order_relaxed);

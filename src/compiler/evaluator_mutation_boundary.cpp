@@ -490,6 +490,34 @@ extern "C" void aura_outermost_success_persist_occurrence(void* ev_ptr,
             return;
         }
     }
+    // Issue #3556: production hard-reject expected_fp==0 unstaged persist
+    // (residual #G1). The last stamped proof goal fingerprint is the
+    // STAGED-side signal (set by build_type_linear_commit_proof_from_live).
+    // If it's still 0 under production hard face, no prior proof was
+    // stamped -- the persist buffer would be frozen with an empty
+    // fingerprint, Agent's mutation becomes invisible to query:type.
+    // Hard reject: bump counter, clear buffer, stamp reject proof
+    // (force_reason 16), publish kTypeLinearProofOutcomeReject, restore.
+    // Soft/Off: skip (keeps #3431/#3512 empty-live clear behavior).
+    {
+        if (aura::compiler::typed_audit::production_hard_face_active() &&
+            aura::compiler::typed_audit::last_proof_goal_fingerprint_v_read() == 0) {
+            (void)aura::compiler::typed_audit::clear_occurrence_persist_buffer(tc);
+            aura::compiler::typed_audit::bump_occurrence_persist_reject_expected_fp_zero_total();
+            const auto expected_fp_zero_mid = aura::compiler::typed_audit::join_audit_and_se_mid(0);
+            (void)
+                aura::compiler::typed_audit::build_type_linear_commit_proof_from_live_with_outcome(
+                    expected_fp_zero_mid, /*would_allow_commit=*/false, /*linear_ok=*/false,
+                    aura::compiler::typed_audit::kProofLiveGoalCountHintAuto,
+                    /*goal_fingerprint=*/0, /*from_cs=*/false, /*force_reason=*/16);
+            aura::compiler::typed_audit::publish_type_linear_proof_outcome(
+                aura::compiler::typed_audit::kTypeLinearProofOutcomeReject);
+            aura::compiler::typed_audit::clear_type_linear_commit_proof_on_abort();
+            ev->clear_type_export_authority();
+            note_3440_restore();
+            return;
+        }
+    }
     if (aura::compiler::typed_audit::production_defaults_active() &&
         ev->expected_occurrence_snapshot_fp() != 0 &&
         live_fp != ev->expected_occurrence_snapshot_fp()) {
