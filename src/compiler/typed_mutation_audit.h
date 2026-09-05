@@ -646,6 +646,11 @@ struct TypedMutationAuditCounters {
     // CompilerMetrics::solve_delta_soft_timeout_quarantine_total.
     // Production never bumps (uses #3169 partial_cleared instead).
     std::atomic<std::uint64_t> solve_delta_soft_timeout_quarantine_total{0};
+    // Issue #3530: production Sampled + ratio>1 refused at setters.
+    // Skip path under leftover production Sampled still emits a joinable
+    // audit-skipped SecurityEvent (reason sampled-ratio-skip).
+    std::atomic<std::uint64_t> production_sampled_ratio_deny_total{0};
+    std::atomic<std::uint32_t> production_sampled_ratio_deny_wired{1};
 };
 
 inline TypedMutationAuditCounters g_typed_mutation_audit_counters{};
@@ -695,17 +700,6 @@ inline TypedMutationAuditTrail& g_trail() {
         g_typed_mutation_audit_counters.strategy.load(std::memory_order_relaxed));
 }
 
-inline void set_strategy(AuditStrategy s) noexcept {
-    g_typed_mutation_audit_counters.strategy.store(static_cast<std::uint32_t>(s),
-                                                   std::memory_order_relaxed);
-}
-
-inline void set_sample_ratio(std::uint32_t n) noexcept {
-    if (n == 0)
-        n = 1;
-    g_typed_mutation_audit_counters.sample_ratio.store(n, std::memory_order_relaxed);
-}
-
 [[nodiscard]] inline std::uint32_t get_sample_ratio() noexcept {
     return g_typed_mutation_audit_counters.sample_ratio.load(std::memory_order_relaxed);
 }
@@ -713,6 +707,55 @@ inline void set_sample_ratio(std::uint32_t n) noexcept {
 [[nodiscard]] inline bool production_defaults_active() noexcept {
     return g_typed_mutation_audit_counters.production_defaults_active.load(
                std::memory_order_relaxed) != 0;
+}
+
+// Issue #3530: production Full contract refuses Sampled + ratio>1
+// (silent under-audit, no typed/SE/WAL row, mid unjoinable). Soft /
+// sandbox=off always allowed. Sampled + ratio<=1 is equivalent to no
+// skip and stays allowed under production.
+inline constexpr int kSampledProductionGateIssue = 3530;
+
+[[nodiscard]] inline bool production_sampled_allowed() noexcept {
+    if (!production_defaults_active())
+        return true;
+    return get_strategy() != AuditStrategy::Sampled || get_sample_ratio() <= 1;
+}
+
+[[nodiscard]] inline bool production_sampled_ratio_gt1_refused(AuditStrategy s,
+                                                               std::uint32_t ratio) noexcept {
+    return production_defaults_active() && s == AuditStrategy::Sampled && ratio > 1;
+}
+
+inline void set_strategy(AuditStrategy s) noexcept {
+    if (production_sampled_ratio_gt1_refused(s, get_sample_ratio())) {
+        g_typed_mutation_audit_counters.production_sampled_ratio_deny_total.fetch_add(
+            1, std::memory_order_relaxed);
+        return;
+    }
+    g_typed_mutation_audit_counters.strategy.store(static_cast<std::uint32_t>(s),
+                                                   std::memory_order_relaxed);
+}
+
+inline void set_sample_ratio(std::uint32_t n) noexcept {
+    if (n == 0)
+        n = 1;
+    if (production_sampled_ratio_gt1_refused(get_strategy(), n)) {
+        g_typed_mutation_audit_counters.production_sampled_ratio_deny_total.fetch_add(
+            1, std::memory_order_relaxed);
+        return;
+    }
+    g_typed_mutation_audit_counters.sample_ratio.store(n, std::memory_order_relaxed);
+}
+
+// Test seam: leftover Sampled/ratio (bypasses #3530 setter refuse) so
+// should_audit skip + #3319 deny-SE can still be exercised under
+// production_defaults_active.
+inline void inject_sampled_ratio_for_test(std::uint32_t ratio) noexcept {
+    if (ratio == 0)
+        ratio = 1;
+    g_typed_mutation_audit_counters.strategy.store(
+        static_cast<std::uint32_t>(AuditStrategy::Sampled), std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.sample_ratio.store(ratio, std::memory_order_relaxed);
 }
 
 // Issue #3076: Soft-observe faces that have a Hard sibling (restamp-lag /
@@ -1115,9 +1158,11 @@ inline void apply_production_audit_defaults() noexcept {
 // Issue #2818: marks dev_audit_opt_in so Sampled under-sample is intentional.
 // Issue #3075: Soft/dev leaves QueryEpoch strict off (zero extra finish load).
 inline void apply_dev_audit_defaults() noexcept {
+    // Issue #3530: drop production face before Sampled/ratio=4 so the
+    // setter refuse does not stick the process on Sampled/1.
+    g_typed_mutation_audit_counters.production_defaults_active.store(0, std::memory_order_relaxed);
     set_strategy(AuditStrategy::Sampled);
     set_sample_ratio(4);
-    g_typed_mutation_audit_counters.production_defaults_active.store(0, std::memory_order_relaxed);
     g_typed_mutation_audit_counters.dev_audit_opt_in.store(1, std::memory_order_relaxed);
     // Issue #3490: Soft/dev restores the cached Harden arm (tests flip
     // defaults mid-process). Env AURA_HOT_HARDEN is re-read on next miss
@@ -1186,6 +1231,17 @@ inline void maybe_warn_sampled_without_opt_in() noexcept {
         return true;
     if ((mutation_id % ratio) != 0) {
         g_typed_mutation_audit_counters.samples_skipped.fetch_add(1, std::memory_order_relaxed);
+        // Issue #3530: production leftover Sampled/ratio>1 still mutates
+        // but must leave a joinable audit-skipped SE (mid + reason).
+        // Soft / !production: zero extra (one relaxed load, no emit).
+        if (production_defaults_active()) {
+            using ::aura::core::security_event::SecurityEventKind;
+            using ::aura::core::security_event_wal::emit_security_event_durable;
+            emit_security_event_durable(SecurityEventKind::InvariantFail, /*tenant=*/0, mutation_id,
+                                        /*epoch=*/0, /*effect_bits=*/0, "audit-skipped",
+                                        "sampled-ratio-skip",
+                                        /*denied=*/false, /*fiber=*/0);
+        }
         return false;
     }
     return true;
@@ -4731,6 +4787,11 @@ inline void reset_for_test() noexcept {
     clear_boundary_audit_mid();
     g_typed_mutation_audit_counters.audits_considered.store(0, std::memory_order_relaxed);
     g_typed_mutation_audit_counters.samples_skipped.store(0, std::memory_order_relaxed);
+    // Issue #3530
+    g_typed_mutation_audit_counters.production_sampled_ratio_deny_total.store(
+        0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.production_sampled_ratio_deny_wired.store(
+        1, std::memory_order_relaxed);
     // Issue #2818
     g_typed_mutation_audit_counters.audit_strategy_default_warnings_total.store(
         0, std::memory_order_relaxed);

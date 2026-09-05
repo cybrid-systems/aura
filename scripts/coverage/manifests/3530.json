@@ -1,0 +1,56 @@
+{
+  "issue": 3530,
+  "title": "Issue #3530: production Sampled+ratio>1 skip emits joinable audit-skipped SE",
+  "ok": "OK: Issue #3530 production Sampled-ratio skip SE + setter refuse — Soft zero-cost; no new query:*.",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/typed_mutation_audit.h",
+      "contains": [
+        "kSampledProductionGateIssue = 3530",
+        "production_sampled_ratio_deny_total{0}",
+        "production_sampled_allowed",
+        "production_sampled_ratio_gt1_refused",
+        "inject_sampled_ratio_for_test"
+      ]
+    },
+    {
+      "ac": "AC3-se",
+      "path": "src/compiler/typed_mutation_audit.h",
+      "contains": [
+        "audit-skipped",
+        "sampled-ratio-skip",
+        "should_audit"
+      ]
+    },
+    {
+      "ac": "AC4-query",
+      "path": "src/compiler/evaluator_primitives_obs_jit.cpp",
+      "contains": [
+        "production-sampled-ratio-deny-total",
+        "schema-3530",
+        "sampled-ratio-skip-se-wired"
+      ]
+    },
+    {
+      "ac": "AC1-test",
+      "path": "tests/compiler/test_should_audit_sampled_default.cpp",
+      "contains": [
+        "3530 AC1",
+        "3530 AC2",
+        "3530 AC3",
+        "3530 AC4"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "forbid": [
+        "tests/compiler/test_issue_3530.cpp",
+        "tests/issues/test_issue_3530.cpp",
+        "tests/compiler/test_should_audit_sampled_skipped_se.cpp",
+        "docs/design/3530-sampled-ratio-skip.md",
+        "scripts/coverage/checks/check_sampled_production_gate.py"
+      ]
+    }
+  ]
+}

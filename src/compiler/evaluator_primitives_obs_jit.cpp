@@ -9095,6 +9095,19 @@ void ObservabilityPrims::register_jit_p68(PrimRegistrar add, Evaluator& ev) {
                     std::memory_order_relaxed)));
             insert_kv("schema-2818", 2818);
             insert_kv("issue-2818", 2818);
+            // Issue #3530: production Sampled + ratio>1 setter refuse +
+            // skip-path joinable SE. Additive keys on this query.
+            insert_kv("production-sampled-ratio-deny-total",
+                      static_cast<std::int64_t>(
+                          g_typed_mutation_audit_counters.production_sampled_ratio_deny_total.load(
+                              std::memory_order_relaxed)));
+            insert_kv("production-sampled-ratio-deny-wired",
+                      static_cast<std::int64_t>(
+                          g_typed_mutation_audit_counters.production_sampled_ratio_deny_wired.load(
+                              std::memory_order_relaxed)));
+            insert_kv("schema-3530", 3530);
+            insert_kv("issue-3530", 3530);
+            insert_kv("sampled-ratio-skip-se-wired", 1);
             // Issue #2819: lock-free audit trail publish.
             insert_kv("audit-trail-lockfree-total",
                       static_cast<std::int64_t>(
