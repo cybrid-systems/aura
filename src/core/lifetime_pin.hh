@@ -86,6 +86,11 @@ inline constexpr int kFfiOpaquePinOrRemapIssue = 3022;
 // (note_ffi_opaque_create_exempt) is not remap cover. Soft extra cost
 // remains one required-pref load. No second registry.
 inline constexpr int kFfiOpaquePinOrRemapResidualIssue = 3057;
+// Issue #3533: production required refuses opaque_heap_ create without a
+// live void** slot (create-point observe is not remap cover). Soft is
+// one required-pref load. Reuses note_ffi_opaque_alias_densify_cover
+// (no second pin registry).
+inline constexpr int kOpaqueHeapPinRequiredIssue = 3533;
 // Issue #3053: allocate_raw / try_allocate / allocate_checked (and
 // pool+flat creates that share those paths) must join the same
 // pin / slot / EXEMPT pre-move triad as ASTArena::create. Value-only

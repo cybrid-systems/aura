@@ -19,6 +19,7 @@ module;
 #include "compiler/value_tags.h"
 #include "core/cpp26_contract_stats.h"
 #include "core/arena_auto_policy_stats.h"
+#include "core/densify_consistency_report.h" // Issue #3533: opaque_heap_pin_required_fail_total
 #include "jit_typed_mutation_stats.h"
 #include "shape_jit_pass_closedloop_stats.h"
 #include "ci_build_info.h"
@@ -1762,7 +1763,7 @@ void ObservabilityPrims::register_eval_p11(PrimRegistrar add, Evaluator& ev) {
             // Capacity 128: schema-2004 + #2157 Force + #2166 Moving densify
             // + #2298/#2337/#2363 general-object pin adopt keys (was 64;
             // load approached capacity and dropped tail inserts).
-            auto* ht = FlatHashTable::create(query_hash_capacity_for(93));
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(100));
             if (!ht)
                 return make_void();
             bool overflowed = false;
@@ -2004,6 +2005,7 @@ void ObservabilityPrims::register_eval_p11(PrimRegistrar add, Evaluator& ev) {
                 // Issue #3022: FFI opaque/native pin-or-remap (or EXEMPT).
                 using aura::core::lifetime::kFfiOpaquePinOrRemapIssue;
                 using aura::core::lifetime::kFfiOpaquePinOrRemapResidualIssue;
+                using aura::core::lifetime::kOpaqueHeapPinRequiredIssue;
                 insert_kv("ffi-opaque-pin-or-remap-wired", 1);
                 insert_kv("ffi-owned-blocks-reclaim-wired", 1);
                 insert_kv("schema-3022", kFfiOpaquePinOrRemapIssue);
@@ -2013,6 +2015,14 @@ void ObservabilityPrims::register_eval_p11(PrimRegistrar add, Evaluator& ev) {
                 insert_kv("ffi-opaque-slot-cover-wired", 1);
                 insert_kv("schema-3057", kFfiOpaquePinOrRemapResidualIssue);
                 insert_kv("issue-3057", kFfiOpaquePinOrRemapResidualIssue);
+                // Issue #3533: production-required opaque_heap_ create
+                // without a live slot fail-closes. Additive keys.
+                using aura::core::densify_consistency::opaque_heap_pin_required_fail_total_v_read;
+                insert_kv("opaque-heap-pin-required-fail-total",
+                          static_cast<std::int64_t>(opaque_heap_pin_required_fail_total_v_read()));
+                insert_kv("opaque-heap-pin-required-wired", 1);
+                insert_kv("schema-3533", kOpaqueHeapPinRequiredIssue);
+                insert_kv("issue-3533", kOpaqueHeapPinRequiredIssue);
             }
             // Issue #2266: verify_pins_under_moving_compact fail-closed change.
             // Schema additive — no break. Driver (Phase 5 in

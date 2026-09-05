@@ -402,6 +402,18 @@ inline void reset_ffi_opaque_alias_slot_cover_for_test() noexcept {
 // #3210/#3368.
 inline constexpr int kFfiJitLivePtrInventoryIssue = 3443;
 
+// Issue #3533: production-required opaque_heap_ create without a live
+// void** slot. Append END per #2906. Soft / pref<=0 never increments
+// (helper returns true after one required-pref load).
+inline std::atomic<std::uint64_t> g_opaque_heap_pin_required_fail_total{0};
+inline std::atomic<std::uint32_t> g_opaque_heap_pin_required_wired{1};
+[[nodiscard]] inline std::uint64_t opaque_heap_pin_required_fail_total_v_read() noexcept {
+    return g_opaque_heap_pin_required_fail_total.load(std::memory_order_relaxed);
+}
+inline void reset_opaque_heap_pin_required_fail_for_test() noexcept {
+    g_opaque_heap_pin_required_fail_total.store(0, std::memory_order_relaxed);
+}
+
 } // namespace aura::core::densify_consistency
 
 #endif // AURA_CORE_DENSIFY_CONSISTENCY_REPORT_H

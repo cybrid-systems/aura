@@ -380,6 +380,21 @@ static void ac3057_ffi_opaque_slot_cover() {
     CHECK(schema == 3057 || schema == -1, "AC3057: schema-3057 queryable or hash-ref skip");
 }
 
+static void ac3533_opaque_heap_required_query() {
+    std::println("\n--- #3533: opaque-heap-pin-required additive query ---");
+    const auto lp = read_file("src/core/lifetime_pin.hh");
+    const auto obs = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
+    CHECK(lp.find("kOpaqueHeapPinRequiredIssue = 3533") != std::string::npos, "3533: stamp");
+    CHECK(obs.find("schema-3533") != std::string::npos, "3533: schema-3533");
+    CHECK(obs.find("opaque-heap-pin-required-fail-total") != std::string::npos,
+          "3533: fail-total key");
+    CompilerService cs;
+    const auto schema = href(cs, "schema-3533");
+    CHECK(schema == 3533 || schema == -1, "3533: schema-3533 queryable or hash-ref skip");
+    const auto wired = href(cs, "opaque-heap-pin-required-wired");
+    CHECK(wired == 1 || wired == -1, "3533: wired sentinel");
+}
+
 } // namespace
 
 int run_test_general_object_pin() {
@@ -398,7 +413,8 @@ int run_test_general_object_pin() {
     ac3022_ffi_owned_blocks_reclaim();
     ac3022_pin_required_and_soak();
     ac3057_ffi_opaque_slot_cover();
-    std::println("\n=== #2298 + #2337 + #3022 + #3057: {} passed, {} failed ===", g_passed,
+    ac3533_opaque_heap_required_query();
+    std::println("\n=== #2298 + #2337 + #3022 + #3057 + #3533: {} passed, {} failed ===", g_passed,
                  g_failed);
     return g_failed == 0 ? 0 : 1;
 }

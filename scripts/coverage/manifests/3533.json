@@ -1,0 +1,67 @@
+{
+  "issue": 3533,
+  "title": "Issue #3533: opaque_heap_ create-time required pin/slot cover (no live untracked ptr)",
+  "ok": "OK: Issue #3533 opaque_heap_ required create fail-closed — Soft one pref load; no new query:* / registry.",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/core/lifetime_pin.hh",
+      "contains": [
+        "kOpaqueHeapPinRequiredIssue = 3533"
+      ]
+    },
+    {
+      "ac": "AC1-helper",
+      "path": "src/core/arena.ixx",
+      "contains": [
+        "opaque_heap_element_cover_or_required_fail",
+        "note_ffi_opaque_alias_densify_cover"
+      ]
+    },
+    {
+      "ac": "AC1-counter",
+      "path": "src/core/densify_consistency_report.h",
+      "contains": [
+        "g_opaque_heap_pin_required_fail_total{0}"
+      ]
+    },
+    {
+      "ac": "AC1-create",
+      "path": "src/compiler/evaluator_eval_flat.cpp",
+      "contains": [
+        "opaque_heap_element_cover_or_required_fail",
+        "opaque-heap-pin-required"
+      ]
+    },
+    {
+      "ac": "AC5-query",
+      "path": "src/compiler/evaluator_primitives_obs_eval.cpp",
+      "contains": [
+        "opaque-heap-pin-required-fail-total",
+        "schema-3533"
+      ]
+    },
+    {
+      "ac": "AC1-test",
+      "path": "tests/core/test_moving_densify_fail_closed.cpp",
+      "contains": [
+        "3533 AC1",
+        "3533 AC2",
+        "3533 AC3",
+        "3533 AC4",
+        "3533 AC5"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "forbid": [
+        "tests/core/test_issue_3533.cpp",
+        "tests/compiler/test_issue_3533.cpp",
+        "tests/core/test_opaque_heap_pin_required.cpp",
+        "docs/design/3533-opaque-heap-pin.md",
+        "scripts/coverage/checks/check_opaque_heap_pin_3057.py",
+        "scripts/coverage/checks/check_opaque_heap_pin_3533.py"
+      ]
+    }
+  ]
+}
