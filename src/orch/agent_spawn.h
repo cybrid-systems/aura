@@ -128,6 +128,11 @@ inline constexpr int kReclaimedNameTableQuotaRecycleIssue = 3564;
 // explicit `// orch-raw-send-ok`) for non-test TUs. Raw agent_send
 // remains for zero-cost non-held_ref / already-stamped.
 inline constexpr int kAgentSendSafePreferenceIssue = 3336;
+// Issue #3565: production recv of held_ref with handoff_completed==false
+// (post-steal stamp clear) is not a successful payload delivery. Soft
+// still delivers (#3111 AC3). Reuses handoff_reject_total /
+// held_ref_stale_after_steal_total. No new query key.
+inline constexpr int kRecvHeldRefAfterStealIssue = 3565;
 // Issue #2155: quota-reject spawn path — no name-table put, no arena leak.
 inline constexpr int kSpawnQuotaNoLeakIssue = 2155;
 // Issue #2159: fiber-native keepalive helper (replace detached std::thread).
@@ -3601,9 +3606,14 @@ agent_recv(AgentHandle& h, bool wait = true, int timeout_ms = -1) {
         return std::nullopt;
     }
     auto m = h.mailbox->recv(wait, timeout_ms, h.id);
-    if (m)
-        g_orch_module_stats.agents_recv.fetch_add(1, std::memory_order_relaxed);
-    else
+    if (m) {
+        // Issue #3565: production unstamped held_ref is not a successful
+        // recv (mailbox already cleared payload). Soft delivers + counts.
+        const bool stale_held = m->held_ref_token.has_value() && !m->handoff_completed &&
+                                aura::compiler::typed_audit::production_defaults_active();
+        if (!stale_held)
+            g_orch_module_stats.agents_recv.fetch_add(1, std::memory_order_relaxed);
+    } else
         g_orch_module_stats.recv_empty_total.fetch_add(1, std::memory_order_relaxed);
     return m;
 }

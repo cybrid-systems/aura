@@ -5020,7 +5020,8 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
         });
 
     add("orch:agent-recv",
-        [&ev, build_orch_hash, orch_keyword_key](std::span<const EvalValue> a) -> EvalValue {
+        [&ev, build_orch_hash, orch_keyword_key,
+         add_deny_class](std::span<const EvalValue> a) -> EvalValue {
             if (a.empty() || !types::is_string(a[0])) {
                 return make_primitive_error(
                     ev.string_heap_, ev.error_values_,
@@ -5048,6 +5049,31 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             if (!wait && timeout_ms < 0)
                 timeout_ms = 0;
             auto msg = aura::orch::agent_recv(*hp, wait, timeout_ms);
+            // Issue #3565: production unstamped held_ref after steal is
+            // not a successful payload (mailbox cleared the stale
+            // stable-ref string). Typed handoff-required, reuse send-side
+            // deny-class. Soft delivers as today.
+            if (msg && msg->held_ref_token.has_value() && !msg->handoff_completed &&
+                aura::compiler::typed_audit::production_defaults_active()) {
+                auto sidx = ev.string_heap_.size();
+                ev.string_heap_.push_back("handoff-required");
+                auto pidx = ev.string_heap_.size();
+                ev.string_heap_.push_back("");
+                std::vector<std::pair<std::string, EvalValue>> kv = {
+                    {"ok", make_bool(false)},
+                    {"empty", make_bool(false)},
+                    {"status", make_string(sidx)},
+                    {"payload", make_string(pidx)},
+                    {"schema", make_int(1588)},
+                    {"schema-2011", make_int(2011)},
+                    {"schema-2848", make_int(aura::orch::kAgentSendAutoHandoffIssue)},
+                    {"schema-3565", make_int(aura::orch::kRecvHeldRefAfterStealIssue)},
+                    {"issue-3565", make_int(aura::orch::kRecvHeldRefAfterStealIssue)},
+                };
+                add_deny_class(kv, aura::orch::AgentDenyClass::Handoff, "handoff-required", 0,
+                               /*emit_retry=*/false);
+                return build_orch_hash(kv);
+            }
             if (!msg) {
                 std::vector<std::pair<std::string, EvalValue>> kv = {
                     {"ok", make_bool(false)},

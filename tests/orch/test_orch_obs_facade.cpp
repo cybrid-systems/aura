@@ -609,7 +609,104 @@ int run_test_orch_obs_facade() {
               "3336 AC5: no docs/design/3336-* (#1655)");
     }
 
-    std::println("\n=== #2589+#2636+2884+#3013+#3212+#3251+#3336: {}/{} checks passed ===",
+    // ── #3565: steal-cleared held_ref is not a successful recv ──
+    {
+        using aura::compiler::typed_audit::apply_dev_audit_defaults;
+        using aura::compiler::typed_audit::apply_production_audit_defaults;
+        using aura::orch::agent_recv;
+        using aura::orch::agent_send;
+        using aura::orch::AgentHandle;
+        using aura::orch::stamp_mail_message_handoff_completed;
+        using aura::serve::Fiber;
+        using aura::serve::mf_mailbox::g_mf_mailbox_stats;
+        using aura::serve::mf_mailbox::MailMessage;
+        using aura::serve::mf_mailbox::MultiFiberMailbox;
+        using aura::serve::mf_mailbox::PushStatus;
+
+        std::println("\n--- #3565 AC1: production recv after stamp-clear is not success ---");
+        apply_production_audit_defaults();
+        AgentHandle h;
+        h.ok = true;
+        h.mailbox = std::make_shared<MultiFiberMailbox>(/*high_water=*/64);
+        MailMessage stamped;
+        stamped.payload = "stable-ref:9:1";
+        stamp_mail_message_handoff_completed(stamped, 9);
+        CHECK(agent_send(h, std::move(stamped)) == PushStatus::Ok, "3565 AC1: stamped push Ok");
+        Fiber dummy([] {});
+        h.mailbox->for_each_pending_held_ref_for_fiber(&dummy, [](auto& m) {
+            if (m.handoff_completed) {
+                m.handoff_completed = false;
+                aura::serve::mf_mailbox::bump_held_ref_stale_after_steal();
+            }
+        });
+        const auto recv0 = g_orch_module_stats.agents_recv.load(std::memory_order_relaxed);
+        const auto reject0 =
+            g_mf_mailbox_stats.handoff_reject_total.load(std::memory_order_relaxed);
+        auto got = agent_recv(h, /*wait=*/false, /*timeout_ms=*/0);
+        CHECK(got.has_value(), "3565 AC1: popped (queue not stuck)");
+        CHECK(got->payload.empty(), "3565 AC1: stale stable-ref payload cleared");
+        CHECK(got->held_ref_token.has_value() && !got->handoff_completed,
+              "3565 AC1: flags remain for Aura typed fail");
+        CHECK(g_orch_module_stats.agents_recv.load(std::memory_order_relaxed) == recv0,
+              "3565 AC1: agents_recv not counted as success");
+        CHECK(g_mf_mailbox_stats.handoff_reject_total.load(std::memory_order_relaxed) >=
+                  reject0 + 1,
+              "3565 AC1: handoff_reject_total bumped");
+        MailMessage later;
+        later.payload = "later-plain";
+        CHECK(agent_send(h, std::move(later)) == PushStatus::Ok, "3565 AC1: later plain push");
+        auto got2 = agent_recv(h, /*wait=*/false, /*timeout_ms=*/0);
+        CHECK(got2.has_value() && got2->payload == "later-plain",
+              "3565 AC1: later message not stuck behind stale held_ref");
+
+        std::println("\n--- #3565 AC3: Soft still delivers ---");
+        apply_dev_audit_defaults();
+        AgentHandle hs;
+        hs.ok = true;
+        hs.mailbox = std::make_shared<MultiFiberMailbox>(/*high_water=*/64);
+        MailMessage soft_stamped;
+        soft_stamped.payload = "stable-ref:8:1";
+        stamp_mail_message_handoff_completed(soft_stamped, 8);
+        CHECK(agent_send(hs, std::move(soft_stamped)) == PushStatus::Ok, "3565 AC3: push");
+        Fiber dummy2([] {});
+        hs.mailbox->for_each_pending_held_ref_for_fiber(
+            &dummy2, [](auto& m) { m.handoff_completed = false; });
+        auto soft_got = agent_recv(hs, /*wait=*/false, /*timeout_ms=*/0);
+        CHECK(soft_got.has_value() && soft_got->payload == "stable-ref:8:1",
+              "3565 AC3: Soft delivers stale payload (#3111 AC3)");
+
+        std::println("\n--- #3565 AC4: ordinary string recv unchanged ---");
+        apply_production_audit_defaults();
+        AgentHandle hp;
+        hp.ok = true;
+        hp.mailbox = std::make_shared<MultiFiberMailbox>(/*high_water=*/64);
+        CHECK(agent_send(hp, MailMessage{.payload = "plain-3565"}) == PushStatus::Ok,
+              "3565 AC4: plain send");
+        auto plain = agent_recv(hp, /*wait=*/false, /*timeout_ms=*/0);
+        CHECK(plain.has_value() && plain->payload == "plain-3565",
+              "3565 AC4: no held_ref_token still delivers");
+
+        std::println("\n--- #3565 AC2/AC5: Aura typed fail + no invent ---");
+        const auto prim = read_file("src/compiler/evaluator_primitives_agent.cpp");
+        const auto mb = read_file("src/serve/multi_fiber_mailbox.h");
+        const auto spawn = read_file("src/orch/agent_spawn.h");
+        CHECK(prim.find("schema-3565") != std::string::npos, "3565 AC2: orch:agent-recv schema");
+        CHECK(prim.find("handoff-required") != std::string::npos &&
+                  prim.find("kRecvHeldRefAfterStealIssue") != std::string::npos,
+              "3565 AC2: Aura handoff-required branch");
+        CHECK(mb.find("maybe_clear_stale_held_ref_on_recv") != std::string::npos,
+              "3565 AC5: mailbox recv gate");
+        CHECK(spawn.find("kRecvHeldRefAfterStealIssue = 3565") != std::string::npos,
+              "3565 AC5: issue constant");
+        CHECK(read_file("tests/orch/test_issue_3565.cpp").empty() &&
+                  read_file("tests/issues/test_issue_3565.cpp").empty(),
+              "3565 AC5: no test_issue_3565.cpp");
+        CHECK(read_file("docs/design/3565-recv-held-ref.md").empty(),
+              "3565 AC5: no docs/design/3565-*");
+        apply_dev_audit_defaults();
+    }
+
+    std::println("\n=== #2589+#2636+2884+#3013+#3212+#3251+#3336+#3565: {}/{} checks passed ===",
                  g_passed, g_passed + g_failed);
     return g_failed == 0 ? 0 : 1;
 }

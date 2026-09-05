@@ -1,0 +1,50 @@
+{
+  "issue": 3565,
+  "title": "Issue #3565: production recv of steal-cleared held_ref is not success",
+  "ok": "OK: Issue #3565 recv gate after steal stamp-clear — Soft delivers; no new query:*.",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/serve/multi_fiber_mailbox.h",
+      "contains": [
+        "maybe_clear_stale_held_ref_on_recv",
+        "Issue #3565"
+      ]
+    },
+    {
+      "ac": "AC1-recv",
+      "path": "src/orch/agent_spawn.h",
+      "contains": [
+        "kRecvHeldRefAfterStealIssue = 3565",
+        "stale_held"
+      ]
+    },
+    {
+      "ac": "AC2-aura",
+      "path": "src/compiler/evaluator_primitives_agent.cpp",
+      "contains": [
+        "schema-3565",
+        "kRecvHeldRefAfterStealIssue",
+        "handoff-required"
+      ]
+    },
+    {
+      "ac": "AC5-test",
+      "path": "tests/orch/test_orch_obs_facade.cpp",
+      "contains": [
+        "3565 AC1",
+        "3565 AC3",
+        "3565 AC4",
+        "3565 AC2"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "forbid": [
+        "tests/orch/test_issue_3565.cpp",
+        "tests/issues/test_issue_3565.cpp",
+        "docs/design/3565-recv-held-ref.md"
+      ]
+    }
+  ]
+}
