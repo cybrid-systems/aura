@@ -805,6 +805,8 @@ private:
     // When the gen bumps on the abort path, run() forces a full-scan and
     // updates last_run_gen_ so subsequent runs use the fresh baseline.
     std::uint64_t last_run_gen_ = 0;
+    // Issue #3560: last-run narrow_evidence cache for per-site re-verify.
+    std::uint32_t last_run_narrow_evidence_ = 0;
 };
 
 static_assert(aura::compiler::Pass<DeadCoercionPass>, "DeadCoercionPass must satisfy Pass (#2025)");
