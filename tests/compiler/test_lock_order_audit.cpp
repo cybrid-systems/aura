@@ -182,6 +182,68 @@ static void ac2316_inversion_source_cite() {
     force_audit_mode_for_test(1); // restore off
 }
 
+
+// ── #3554 AC1: Evaluator ctor self-upgrade (embedder skip-init path).
+// Source-cite: production_defaults_expected() must gate the ctor's
+// lock_order mode + hold-budget reject upgrade, with zero-extra when
+// production_defaults_expected() is false (Soft / Off / single-eval MVP).
+static void ac3554_1_evaluator_ctor_self_upgrade_source_cite() {
+    std::println("\n--- #3554 AC1: Evaluator ctor self-upgrade ---");
+    const auto ixx = read_file("src/compiler/lock_order_audit.h");
+    const auto mbh = read_file("src/compiler/mutation_hold_budget.h");
+    const auto ctor = read_file("src/compiler/evaluator_ctor.cpp");
+    const auto linter_dir = read_file("scripts/check_*.py");
+
+    // AC1: production_defaults_expected() reads env AURA_PRODUCTION_DEFAULTS=1
+    // OR g_lock_order_production_soft_default non-zero.
+    CHECK(ixx.find("AURA_PRODUCTION_DEFAULTS") != std::string::npos,
+          "3554 AC1: production_defaults_expected reads AURA_PRODUCTION_DEFAULTS");
+    CHECK(ixx.find("g_lock_order_production_soft_default") != std::string::npos,
+          "3554 AC1: production_defaults_expected also reads soft_default gauge");
+    CHECK(ixx.find("production_defaults_expected") != std::string::npos,
+          "3554 AC1: helper declared in lock_order_audit.h");
+
+    // AC2: mutation_hold_budget_reject_enabled_set(bool) setter added.
+    CHECK(mbh.find("mutation_hold_budget_reject_enabled_set") != std::string::npos,
+          "3554 AC2: setter declared in mutation_hold_budget.h");
+
+    // AC3: Evaluator::Evaluator() ctor calls both upgrade paths under
+    // production_defaults_expected() && !hold-budget reject.
+    CHECK(ctor.find("Evaluator::Evaluator()") != std::string::npos, "3554 AC3: ctor located");
+    CHECK(ctor.find("production_defaults_expected") != std::string::npos,
+          "3554 AC3: ctor reads production_defaults_expected()");
+    CHECK(ctor.find("g_lock_order_mode.store(3") != std::string::npos,
+          "3554 AC3: ctor upgrades lock_order_mode to canary (3)");
+    CHECK(ctor.find("g_lock_order_canary_enabled.store(1") != std::string::npos,
+          "3554 AC3: ctor enables canary gate");
+    CHECK(ctor.find("mutation_hold_budget_reject_enabled_set(true)") != std::string::npos,
+          "3554 AC3: ctor enables hold-budget reject via setter");
+
+    // AC4: Soft / Off / single-eval MVP zero-cost (single atomic load +
+    // env getenv + branch). production_defaults_expected() returns false
+    // → no set / no upgrade / no reject enable.
+    CHECK(ixx.find(
+              "return g_lock_order_production_soft_default.load(std::memory_order_acquire) != 0") !=
+              std::string::npos,
+          "3554 AC4: production_defaults_expected short-circuits when soft_default == 0");
+
+    // Linter exists.
+    CHECK(linter_dir.find("3554") != std::string::npos,
+          "3554: linter scripts/check_*_3554.py exists");
+    CHECK(read_file("docs/design/3554-*.md").empty(),
+          "3554: no docs/design/3554-* (agent repo philosophy)");
+}
+
+// ── #3554 AC2: no docs/design/, no invent new test binary.
+// (Source-cite pattern via read_file of existing files; no new test
+//  file / docs / schema.)
+static void ac3554_2_no_docs_no_invent() {
+    std::println("\n--- #3554 AC2: no docs/, no invent ---");
+    CHECK(read_file("docs/design/3554-*.md").empty(),
+          "3554: no docs/design/3554-* (agent repo philosophy)");
+}
+
+
 } // namespace
 
 int run_test_lock_order_audit() {
@@ -192,6 +254,9 @@ int run_test_lock_order_audit() {
     ac2316_wire_sites();
     ac2314_counter_wired();
     ac2316_inversion_source_cite();
+    std::println("\n=== #3554: Evaluator ctor self-upgrade ===");
+    ac3554_1_evaluator_ctor_self_upgrade_source_cite();
+    ac3554_2_no_docs_no_invent();
     std::println("\n=== #2316 lock-order audit: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

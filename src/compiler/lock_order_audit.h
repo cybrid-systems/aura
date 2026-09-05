@@ -138,6 +138,27 @@ inline std::atomic<std::uint64_t> g_lock_order_violation_total{0}; // #2316 / #2
 // Legacy canary flag (kept for tests that poke it). Prefer mode atomics.
 inline std::atomic<int> g_lock_order_canary_enabled{0}; // #2316
 // Issue #2354: 0=uninit, 1=off, 2=soft (AUDIT), 3=hard (CANARY).
+// Issue #3554: production_defaults_expected() — emits true when the
+// host environment signals Restricted / Strict production face. Source:
+// AURA_PRODUCTION_DEFAULTS=1 env OR g_lock_order_production_soft_default
+// non-zero (set by apply_production_lock_order_default). Default false
+// (preserves dev path). Used by Evaluator::Evaluator() ctor to
+// self-upgrade lock_order mode + hold-budget reject when the host
+// intended production but skipped apply_production_security_defaults() /
+// apply_production_lock_order_default(). Zero-extra when false (single
+// atomic load + cached env getenv).
+[[nodiscard]] inline bool production_defaults_expected() noexcept {
+    if (g_lock_order_production_soft_default.load(std::memory_order_acquire) != 0)
+        return true;
+    static const int cached = []() -> int {
+        const char* e = std::getenv("AURA_PRODUCTION_DEFAULTS");
+        if (!e || e[0] == '\0')
+            return 0;
+        return (e[0] == '1') ? 1 : 0;
+    }();
+    return cached != 0;
+}
+
 inline std::atomic<int> g_lock_order_mode{0};
 // Issue #2557: 1 when production defaults applied soft audit (mode=2 via
 // apply_production_lock_order_default). Agents read this for dashboards.

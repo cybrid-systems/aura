@@ -274,9 +274,23 @@ struct MutationHoldBudgetCheck {
 }
 
 // Test reset.
-inline void clear_mutation_hold_budget_reject_for_test() noexcept {
-    g_mutation_hold_budget_reject_total.store(0, std::memory_order_relaxed);
-    g_mutation_hold_budget_soft_observe_total.store(0, std::memory_order_relaxed);
+\1
+    // Issue #3554: enable / disable setter (used by Evaluator::Evaluator()
+    // ctor self-upgrade when production_defaults_expected() && hold-budget
+    // reject is still false; zero extra when called twice (idempotent)).
+    [[nodiscard]] inline bool mutation_hold_budget_reject_enabled_set(bool on) noexcept {
+    if (mutation_hold_budget_hard_env() ||
+        aura::compiler::typed_audit::production_defaults_active())
+        return false; // hard / production-active already on; setter is no-op
+    static std::atomic<int> cached_off{0};
+    if (!on) {
+        cached_off.store(1, std::memory_order_relaxed);
+        return false;
+    }
+    if (cached_off.load(std::memory_order_relaxed) != 0)
+        return false;
+    cached_off.store(1, std::memory_order_relaxed);
+    return true;
 }
 
 // Issue #2720: P0 holder-degrade path (#2701 residual). #2701 only
