@@ -1,0 +1,35 @@
+{
+  "issue": 3561,
+  "title": "Issue #3561: grant_effect_capability production high-risk session_bound",
+  "ok": "OK: Issue #3561 grant_effect_capability session-binds high-risk; Soft Off no force; no new query:* / linter.",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_security.cpp",
+      "contains": [
+        "Issue #3561",
+        "const bool session_bound = production_defaults && is_high_risk",
+        "grant_capability(std::string(name), single_use, session_bound"
+      ]
+    },
+    {
+      "ac": "AC5-test",
+      "path": "tests/core/test_capability_single_use_consume.cpp",
+      "contains": [
+        "3561 AC1",
+        "3561 AC2",
+        "3561 AC3",
+        "3561 AC4",
+        "run_test_grant_effect_capability_session_3561"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "forbid": [
+        "tests/core/test_issue_3561.cpp",
+        "tests/issues/test_issue_3561.cpp",
+        "docs/design/3561-grant-effect-session.md"
+      ]
+    }
+  ]
+}

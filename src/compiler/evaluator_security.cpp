@@ -837,6 +837,11 @@ bool Evaluator::grant_effect_capability(std::uint64_t tenant_id, std::string_vie
         g_capability_effect_metrics().capability_high_risk_forced_single_use_total.fetch_add(
             1, std::memory_order_relaxed);
     }
+    // Issue #3561: production high-risk also session-binds (same shape as
+    // grant_effect_durable #3177) so unused Mutate dies at outermost
+    // session-mid-exit instead of surviving until first consume / retain K.
+    // Sticky remains grant_effect_durable_sticky. Soft/Off: false.
+    const bool session_bound = production_defaults && is_high_risk;
     // Issue #2586: single_use flag forwarded to registry grant (auto-revoke
     // after first successful check_and_record_effect that uses the bits).
     // Issue #2968 AC2: granting effects onto a foreign tenant id under
@@ -884,9 +889,9 @@ bool Evaluator::grant_effect_capability(std::uint64_t tenant_id, std::string_vie
         // Issue #3436: pass capability_tenant_id_ as caller_principal so the
         // #3409 SSOT fence inside grant_locked evaluates the TA check on the
         // granting Evaluator's principal, not the default_tenant fallback.
-        landed = reg.grant_locked(
-            tenant_id, name, static_cast<Effect>(effect_bits), prov, single_use,
-            /*session_bound=*/false, static_cast<std::uint64_t>(capability_tenant_id_));
+        landed =
+            reg.grant_locked(tenant_id, name, static_cast<Effect>(effect_bits), prov, single_use,
+                             session_bound, static_cast<std::uint64_t>(capability_tenant_id_));
     } else {
         // Issue #3362: same-tenant self-grant still requires an admin fence
         // for high-risk bits (TenantAdmin | MacroSelfEvo | Syscall | Mutate)
@@ -925,15 +930,15 @@ bool Evaluator::grant_effect_capability(std::uint64_t tenant_id, std::string_vie
                 return false; // string fence denied — no registry write
             }
             // Issue #3436: caller_principal = granting Evaluator's tenant.
-            landed = reg.grant_locked(
-                tenant_id, name, static_cast<Effect>(effect_bits), prov, single_use,
-                /*session_bound=*/false, static_cast<std::uint64_t>(capability_tenant_id_));
+            landed = reg.grant_locked(tenant_id, name, static_cast<Effect>(effect_bits), prov,
+                                      single_use, session_bound,
+                                      static_cast<std::uint64_t>(capability_tenant_id_));
         } else {
             // Same-tenant low-risk (or Soft/Off): no fence, plain grant().
             // Issue #3436: explicit session_bound + caller_principal.
+            // Issue #3561: session_bound is false on this arm (not high-risk).
             landed = reg.grant(tenant_id, name, static_cast<Effect>(effect_bits), prov, single_use,
-                               /*session_bound=*/false,
-                               static_cast<std::uint64_t>(capability_tenant_id_));
+                               session_bound, static_cast<std::uint64_t>(capability_tenant_id_));
         }
     }
     // Issue #2136: count Render grants (effect-only path when name empty;
@@ -946,8 +951,9 @@ bool Evaluator::grant_effect_capability(std::uint64_t tenant_id, std::string_vie
     // Issue #3436: explicit-lifetime mirror - carry the wrapper's single_use
     // (possibly #2882-forced) so the re-grant never resets it to sticky.
     if (!name.empty())
-        grant_capability(std::string(name), single_use, /*session_bound=*/false,
-                         provenance_mutation_id);
+        // Issue #3561: mirror must not reset session_bound (named high-risk
+        // row stays session-bound so outermost mid-exit revokes it).
+        grant_capability(std::string(name), single_use, session_bound, prov.mutation_id);
     return landed;
 }
 

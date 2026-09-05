@@ -1415,6 +1415,113 @@ static void ac3436_4_soft_off_and_source_cite() {
     CHECK(read_file("tests/core/test_issue_3436.cpp").empty(), "AC6: no test_issue_3436.cpp");
 }
 
+// ── Issue #3561: grant_effect_capability production high-risk session_bound ──
+
+static void seed_tenant_admin(std::uint64_t tenant, std::uint64_t mid) {
+    EffectProvenance prov{};
+    prov.mutation_id = mid;
+    prov.epoch = mid;
+    g_capability_registry().grant_session(tenant, "tenant-admin", Effect::TenantAdmin, prov);
+}
+
+static void ac3561_1_unused_session_revoked() {
+    std::println("\n--- #3561 AC1: unused high-risk grant_effect_capability is session_bound ---");
+    reset_all();
+    set_mode(SandboxMode::Restricted);
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_effect_sandbox_mode(1);
+    ev.set_capability_tenant_id(7);
+    seed_tenant_admin(7, 1);
+    CHECK(ev.grant_effect_capability(7, "mut-3561-ac1", kEffectMutate, /*mid=*/1,
+                                     /*single_use=*/false),
+          "3561 AC1: grant landed");
+    CapabilityGrant g{};
+    CHECK(g_capability_registry().find_grant(7, "mut-3561-ac1", g), "3561 AC1: row exists");
+    CHECK(g.single_use, "3561 AC1: #2882 single_use still forced");
+    CHECK(g.session_bound, "3561 AC1: session_bound forced under Restricted");
+    CHECK(g_capability_registry().session_bound_entries_alive(7) >= 1,
+          "3561 AC1: live session residual");
+    const auto n = g_capability_registry().revoke_session_grants_for_mid(1);
+    CHECK(n >= 1, "3561 AC1: session-mid-exit revokes unused grant (outermost SSOT)");
+    CHECK(g_capability_registry().session_bound_entries_alive(7) == 0,
+          "3561 AC1: no live session residual");
+    EffectProvenance call{};
+    call.mutation_id = 1;
+    call.epoch = 1;
+    CHECK(!check_and_record_effect(Effect::Mutate, Effect::Mutate, call, 7, "3561-ac1-post", false,
+                                   true),
+          "3561 AC1: require/check deny after session revoke");
+}
+
+static void ac3561_2_single_use_consume() {
+    std::println("\n--- #3561 AC2: first allow still consumes single_use ---");
+    reset_all();
+    set_mode(SandboxMode::Restricted);
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_effect_sandbox_mode(1);
+    ev.set_capability_tenant_id(8);
+    seed_tenant_admin(8, 2);
+    CHECK(ev.grant_effect_capability(8, "mut-3561-ac2", kEffectMutate, /*mid=*/2, false),
+          "3561 AC2: grant landed");
+    EffectProvenance call{};
+    call.mutation_id = 2;
+    call.epoch = 2;
+    CHECK(
+        check_and_record_effect(Effect::Mutate, Effect::Mutate, call, 8, "3561-ac2-1", false, true),
+        "3561 AC2: 1st allow");
+    CHECK(!check_and_record_effect(Effect::Mutate, Effect::Mutate, call, 8, "3561-ac2-2", false,
+                                   true),
+          "3561 AC2: 2nd deny (single_use consumed)");
+}
+
+static void ac3561_3_soft_and_durable_unchanged() {
+    std::println("\n--- #3561 AC3: Soft/Off no session force; durable sticky unchanged ---");
+    reset_all();
+    set_mode(SandboxMode::Off);
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_capability_tenant_id(9);
+    CHECK(ev.grant_effect_capability(9, "mut-3561-ac3", kEffectMutate, /*mid=*/3, false),
+          "3561 AC3: Off grant landed");
+    CapabilityGrant g{};
+    CHECK(g_capability_registry().find_grant(9, "mut-3561-ac3", g), "3561 AC3: row exists");
+    CHECK(!g.session_bound, "3561 AC3: Off does not force session_bound");
+}
+
+static void ac3561_4_string_mirror_keeps_session() {
+    std::println("\n--- #3561 AC4: string mirror does not clear session_bound ---");
+    reset_all();
+    set_mode(SandboxMode::Restricted);
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_effect_sandbox_mode(1);
+    ev.set_capability_tenant_id(10);
+    seed_tenant_admin(10, 4);
+    CHECK(ev.grant_effect_capability(10, "mutate", kEffectMutate, /*mid=*/4, false),
+          "3561 AC4: named mutate grant landed");
+    CapabilityGrant g{};
+    CHECK(g_capability_registry().find_grant(10, "mutate", g), "3561 AC4: mutate row exists");
+    CHECK(g.session_bound, "3561 AC4: named row stays session_bound after string mirror");
+    CHECK(g.single_use, "3561 AC4: named row stays single_use");
+}
+
+static void ac3561_5_source_cite() {
+    std::println("\n--- #3561 AC5: source-cite; no test_issue / docs/design ---");
+    const auto sec = read_file("src/compiler/evaluator_security.cpp");
+    CHECK(sec.find("Issue #3561") != std::string::npos, "3561 AC5: evaluator_security.cpp cites");
+    CHECK(sec.find("const bool session_bound = production_defaults && is_high_risk") !=
+              std::string::npos,
+          "3561 AC5: session_bound force");
+    CHECK(sec.find("grant_capability(std::string(name), single_use, session_bound") !=
+              std::string::npos,
+          "3561 AC5: string mirror keeps session_bound");
+    CHECK(read_file("tests/core/test_issue_3561.cpp").empty(), "3561 AC5: no test_issue_3561.cpp");
+    CHECK(!std::filesystem::exists("docs/design/3561-grant-effect-session.md"),
+          "3561 AC5: no docs/design/3561-*");
+}
+
 int run_test_capability_single_use_consume() {
     std::println("=== Issue #2586/#3142/#3144: single-use + SessionBound revoke + kCapWildcard "
                  "effects_for strip ===");
@@ -2324,6 +2431,17 @@ int run_test_capability_single_use_consume() {
         std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
         return g_failed == 0 ? 0 : 1;
     }
+}
+
+int run_test_grant_effect_capability_session_3561() {
+    std::println("=== Issue #3561: grant_effect_capability production high-risk session_bound ===");
+    ac3561_1_unused_session_revoked();
+    ac3561_2_single_use_consume();
+    ac3561_3_soft_and_durable_unchanged();
+    ac3561_4_string_mirror_keeps_session();
+    ac3561_5_source_cite();
+    std::println("\n=== #3561 results: {} passed, {} failed ===", g_passed, g_failed);
+    return g_failed == 0 ? 0 : 1;
 }
 
 #ifndef AURA_ISSUE_BATCH_MEMBER
