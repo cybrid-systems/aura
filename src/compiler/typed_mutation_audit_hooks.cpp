@@ -290,6 +290,26 @@ extern "C" int aura_production_defaults_active_probe() noexcept {
     return aura::compiler::typed_audit::production_defaults_active() ? 1 : 0;
 }
 
+// Issue #3532: classify production/Full mid=0 SE reasons. Canonical
+// refuse reasons pass through; anything else is caller-misuse and is
+// rewritten to audit-mid-ssot-miss-not-refuse. Soft/Off returns `reason`
+// unchanged (no counter bump).
+extern "C" const char* aura_classify_mid0_se_reason(const char* reason) noexcept {
+    using aura::compiler::typed_audit::AuditStrategy;
+    using aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+    using aura::compiler::typed_audit::get_strategy;
+    using aura::compiler::typed_audit::kAuditMidSsotMissReason;
+    using aura::compiler::typed_audit::production_defaults_active;
+    const std::string_view r = reason ? std::string_view{reason} : std::string_view{};
+    if (r == "mid-fallback-refused" || r == "grant-mid-refused" || r == kAuditMidSsotMissReason)
+        return reason ? reason : "";
+    if (!(production_defaults_active() || get_strategy() == AuditStrategy::Full))
+        return reason ? reason : "";
+    g_typed_mutation_audit_counters.audit_mid_ssot_miss_total.fetch_add(1,
+                                                                        std::memory_order_relaxed);
+    return kAuditMidSsotMissReason.data();
+}
+
 extern "C" void aura_typed_audit_note_predicate_memo_eviction(std::uint64_t n) {
     aura::compiler::typed_audit::note_predicate_memo_eviction(n);
 }

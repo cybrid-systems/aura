@@ -24,6 +24,7 @@
 #ifndef AURA_CORE_SECURITY_EVENT_WAL_HH
 #define AURA_CORE_SECURITY_EVENT_WAL_HH
 
+#include <algorithm>
 #include <atomic>
 #include <cerrno>
 #include <cstdint>
@@ -38,6 +39,11 @@
 
 #include "core/mutation_audit_wal.hh" // resolve_mutation_audit_wal_dir fallthrough
 #include "core/security_event.hh"
+
+// Issue #3532: compiler-provided classifier (typed_mutation_audit_hooks.cpp).
+// Weak so core-only TUs still link; null → leave reason unchanged.
+extern "C" const char* aura_classify_mid0_se_reason(const char* reason) noexcept
+    __attribute__((weak));
 #include "core/wal_append_fail_slo.h" // #3056 shared append-fail SLO
 
 namespace aura::core::security_event_wal {
@@ -629,12 +635,27 @@ inline void emit_security_event_durable(SecurityEventKind kind, std::uint64_t te
                                         std::int64_t fiber_id = 0) noexcept {
     using ::aura::core::security_event::append_security_event;
     using ::aura::core::security_event::g_security_event_ring;
+    // Issue #3532: production/Full mid=0 must carry a canonical refuse
+    // reason (mid-fallback-refused / grant-mid-refused) or be rewritten to
+    // audit-mid-ssot-miss-not-refuse so Agent joins distinguish caller
+    // misuse from resolve refuse. Hot path (mid != 0) is one compare.
+    // Soft/Off: classifier returns the original reason (zero extra I/O).
+    std::string_view use_reason = reason;
+    char reason_buf[65];
+    if (mutation_id == 0 && aura_classify_mid0_se_reason != nullptr) {
+        const auto n = std::min(reason.size(), sizeof(reason_buf) - 1);
+        if (n > 0)
+            std::memcpy(reason_buf, reason.data(), n);
+        reason_buf[n] = '\0';
+        if (const char* c = aura_classify_mid0_se_reason(reason_buf))
+            use_reason = c;
+    }
     append_security_event(g_security_event_ring(), kind, tenant_id, mutation_id, epoch, effect_bits,
-                          op, reason, denied, fiber_id);
+                          op, use_reason, denied, fiber_id);
     // Timestamp optional for forensic ordering; 0 is accepted when clock
     // not needed (WAL still stores fields). Avoid pulling <chrono> into
     // every capability include — 0 is fine for durability of content.
-    (void)persist_security_event(kind, tenant_id, mutation_id, epoch, effect_bits, op, reason,
+    (void)persist_security_event(kind, tenant_id, mutation_id, epoch, effect_bits, op, use_reason,
                                  denied, fiber_id, /*timestamp_ms=*/0);
 }
 

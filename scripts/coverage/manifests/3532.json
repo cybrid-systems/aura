@@ -1,0 +1,56 @@
+{
+  "issue": 3532,
+  "title": "Issue #3532: production mid=0 emit distinguishable from mid-fallback-refused",
+  "ok": "OK: Issue #3532 audit-mid-ssot-miss-not-refuse — Soft zero-cost; join SSOT; no new query:*.",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/typed_mutation_audit.h",
+      "contains": [
+        "kAuditMidSsotMissIssue = 3532",
+        "audit_mid_ssot_miss_total{0}",
+        "require_audit_mid_for_emit",
+        "kAuditMidSsotMissReason"
+      ]
+    },
+    {
+      "ac": "AC1-sink",
+      "path": "src/core/security_event_wal.hh",
+      "contains": [
+        "aura_classify_mid0_se_reason",
+        "audit-mid-ssot-miss-not-refuse"
+      ]
+    },
+    {
+      "ac": "AC5-query",
+      "path": "src/compiler/evaluator_primitives_security.cpp",
+      "contains": [
+        "audit-mid-ssot-miss-total",
+        "schema-3532",
+        "audit-mid-ssot-miss-not-refuse"
+      ]
+    },
+    {
+      "ac": "AC1-test",
+      "path": "tests/compiler/test_audit_mid_fallback_slo.cpp",
+      "contains": [
+        "3532 AC1",
+        "3532 AC2",
+        "3532 AC3",
+        "3532 AC4",
+        "3532 AC5",
+        "3532 AC6"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "forbid": [
+        "tests/compiler/test_issue_3532.cpp",
+        "tests/issues/test_issue_3532.cpp",
+        "tests/compiler/test_audit_mid_ssot_lint.cpp",
+        "docs/design/3532-audit-mid-ssot.md",
+        "scripts/coverage/checks/check_audit_mid_ssot.py"
+      ]
+    }
+  ]
+}

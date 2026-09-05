@@ -74,8 +74,11 @@ using aura::compiler::typed_audit::AuditStrategy;
 using aura::compiler::typed_audit::clear_boundary_audit_mid;
 using aura::compiler::typed_audit::g_typed_mutation_audit_counters;
 using aura::compiler::typed_audit::get_strategy;
+using aura::compiler::typed_audit::join_audit_and_se_mid;
+using aura::compiler::typed_audit::kAuditMidSsotMissReason;
 using aura::compiler::typed_audit::note_boundary_audit_mid;
 using aura::compiler::typed_audit::production_defaults_active;
+using aura::compiler::typed_audit::require_audit_mid_for_emit;
 using aura::compiler::typed_audit::resolve_audit_mutation_id;
 using aura::compiler::typed_audit::set_strategy;
 using aura::compiler::types::as_int;
@@ -144,6 +147,20 @@ std::size_t count_mid_fallback_refuse_se() {
         const auto& e = ring.ring[(head - 1 - i) % kSecurityEventRingSize];
         if (e.denied &&
             std::string_view(e.reason).find("mid-fallback-refused") != std::string_view::npos)
+            ++n;
+    }
+    return n;
+}
+
+std::size_t count_audit_mid_ssot_miss_se() {
+    using aura::core::security_event::g_security_event_ring;
+    using aura::core::security_event::kSecurityEventRingSize;
+    auto& ring = g_security_event_ring();
+    const auto head = ring.seq.load(std::memory_order_relaxed);
+    std::size_t n = 0;
+    for (std::size_t i = 0; i < kSecurityEventRingSize && i < head; ++i) {
+        const auto& e = ring.ring[(head - 1 - i) % kSecurityEventRingSize];
+        if (e.mutation_id == 0 && std::string_view(e.reason) == kAuditMidSsotMissReason)
             ++n;
     }
     return n;
@@ -653,6 +670,160 @@ int run_test_audit_mid_fallback_slo() {
               "3054 AC6: no test_issue_3054.cpp (#81967)");
         CHECK(read_repo_file("docs/design/3054-mid-fallback-refuse-se.md").empty(),
               "3054 AC6: no docs/design/3054-* (#1655)");
+
+        apply_dev_audit_defaults();
+    }
+
+    // ── Issue #3532: production mid=0 caller-misuse ≠ mid-fallback-refused ──
+    {
+        std::println("\n--- #3532: audit-mid-ssot-miss-not-refuse vs mid-fallback-refused ---");
+        using aura::core::security_event::g_security_event_ring;
+        using aura::core::security_event::reset_security_event_ring_for_test;
+        using aura::core::security_event::SecurityEventKind;
+        using aura::core::security_event_wal::emit_security_event_durable;
+
+        apply_production_audit_defaults();
+        force_all_upstream_mids_zero();
+        reset_security_event_ring_for_test();
+        g_typed_mutation_audit_counters.audit_mid_ssot_miss_total.store(0,
+                                                                        std::memory_order_relaxed);
+        g_typed_mutation_audit_counters.audit_mid_fallback_refuse_se_total.store(
+            0, std::memory_order_relaxed);
+
+        // AC1: raw emit mid=0 with a non-canonical reason is rewritten.
+        emit_security_event_durable(SecurityEventKind::EffectDeny, /*tenant=*/0, /*mid=*/0,
+                                    /*epoch=*/0, /*effect_bits=*/0, "caller-boot-epoch",
+                                    "caller-boot-epoch", /*denied=*/true, /*fiber=*/0);
+        CHECK(count_audit_mid_ssot_miss_se() == 1, "3532 AC1: one miss SE");
+        CHECK(g_typed_mutation_audit_counters.audit_mid_ssot_miss_total.load(
+                  std::memory_order_relaxed) == 1,
+              "3532 AC1: audit_mid_ssot_miss_total bumped");
+        {
+            auto& ring = g_security_event_ring();
+            const auto head = ring.seq.load(std::memory_order_relaxed);
+            CHECK(head > 0, "3532 AC1: ring advanced");
+            const auto& e =
+                ring.ring[(head - 1) % aura::core::security_event::kSecurityEventRingSize];
+            CHECK(e.mutation_id == 0, "3532 AC1: miss row mid=0");
+            CHECK(std::string_view(e.reason) == kAuditMidSsotMissReason,
+                  "3532 AC1: reason audit-mid-ssot-miss-not-refuse");
+            CHECK(std::string_view(e.reason) != "mid-fallback-refused",
+                  "3532 AC1: miss reason ≠ mid-fallback-refused");
+        }
+
+        // AC2: resolve refuse still emits mid-fallback-refused; miss_total stays.
+        const auto miss0 = g_typed_mutation_audit_counters.audit_mid_ssot_miss_total.load(
+            std::memory_order_relaxed);
+        const auto refuse_se0 = count_mid_fallback_refuse_se();
+        const auto mid = resolve_audit_mutation_id(0);
+        CHECK(mid == 0, "3532 AC2: resolve still returns 0");
+        CHECK(count_mid_fallback_refuse_se() == refuse_se0 + 1, "3532 AC2: one refuse SE");
+        CHECK(g_typed_mutation_audit_counters.audit_mid_ssot_miss_total.load(
+                  std::memory_order_relaxed) == miss0,
+              "3532 AC2: refuse does not bump miss_total");
+        CHECK(require_audit_mid_for_emit(0, "caller-boot-epoch") == 0,
+              "3532 AC2: require_audit_mid_for_emit is join SSOT (returns 0)");
+        CHECK(join_audit_and_se_mid(0) == 0, "3532 AC2: join SSOT still 0");
+        CHECK(g_typed_mutation_audit_counters.audit_mid_ssot_miss_total.load(
+                  std::memory_order_relaxed) == miss0,
+              "3532 AC2: require/join do not emit miss (no double-count)");
+
+        // AC3: both mid=0 rows; Agent filters independently by reason.
+        CHECK(count_audit_mid_ssot_miss_se() >= 1 && count_mid_fallback_refuse_se() >= 1,
+              "3532 AC3: both miss and refuse rows present");
+        auto q_refuse =
+            cs.eval(R"((engine:metrics "query:security-audit" 16 0 0 0 0 "mid-fallback-refused"))");
+        auto q_miss = cs.eval(
+            R"((engine:metrics "query:security-audit" 16 0 0 0 0 "audit-mid-ssot-miss-not-refuse"))");
+        CHECK(q_refuse.has_value() && q_miss.has_value(),
+              "3532 AC3: query:security-audit reason filters callable");
+        auto scan_reason = [&cs](auto& q, std::string_view needle) -> bool {
+            if (!q)
+                return false;
+            auto cur = *q;
+            int guard = 0;
+            auto& ev = cs.evaluator();
+            auto& pairs = ev.pairs();
+            auto heap = ev.string_heap();
+            while (is_pair(cur) && guard++ < 64) {
+                const auto idx = as_pair_idx(cur);
+                if (idx >= pairs.size())
+                    break;
+                if (is_string(pairs[idx].car)) {
+                    const auto sidx = as_string_idx(pairs[idx].car);
+                    if (sidx < heap.size() &&
+                        std::string(heap[sidx]).find(needle) != std::string::npos)
+                        return true;
+                }
+                cur = pairs[idx].cdr;
+            }
+            return false;
+        };
+        CHECK(scan_reason(q_refuse, "reason=\"mid-fallback-refused\""),
+              "3532 AC3: refuse filter independent");
+        CHECK(scan_reason(q_miss, "reason=\"audit-mid-ssot-miss-not-refuse\""),
+              "3532 AC3: miss filter independent");
+        CHECK(!scan_reason(q_refuse, "reason=\"audit-mid-ssot-miss-not-refuse\""),
+              "3532 AC3: refuse filter excludes miss");
+        CHECK(!scan_reason(q_miss, "reason=\"mid-fallback-refused\""),
+              "3532 AC3: miss filter excludes refuse");
+
+        // AC4: Soft raw emit mid=0 keeps caller reason; no miss bump.
+        apply_dev_audit_defaults();
+        force_all_upstream_mids_zero();
+        reset_security_event_ring_for_test();
+        g_typed_mutation_audit_counters.audit_mid_ssot_miss_total.store(0,
+                                                                        std::memory_order_relaxed);
+        emit_security_event_durable(SecurityEventKind::EffectDeny, /*tenant=*/0, /*mid=*/0,
+                                    /*epoch=*/0, /*effect_bits=*/0, "caller-boot-epoch",
+                                    "caller-boot-epoch", /*denied=*/true, /*fiber=*/0);
+        CHECK(count_audit_mid_ssot_miss_se() == 0, "3532 AC4: Soft no miss rewrite");
+        CHECK(g_typed_mutation_audit_counters.audit_mid_ssot_miss_total.load(
+                  std::memory_order_relaxed) == 0,
+              "3532 AC4: Soft miss_total stays 0");
+        {
+            auto& ring = g_security_event_ring();
+            const auto head = ring.seq.load(std::memory_order_relaxed);
+            CHECK(head > 0, "3532 AC4: Soft still emits");
+            const auto& e =
+                ring.ring[(head - 1) % aura::core::security_event::kSecurityEventRingSize];
+            CHECK(std::string_view(e.reason) == "caller-boot-epoch",
+                  "3532 AC4: Soft keeps caller reason");
+        }
+
+        // AC5: additive keys on existing query:audit-mid-fallback-slo.
+        apply_production_audit_defaults();
+        force_all_upstream_mids_zero();
+        emit_security_event_durable(SecurityEventKind::EffectDeny, /*tenant=*/0, /*mid=*/0,
+                                    /*epoch=*/0, /*effect_bits=*/0, "caller-boot-epoch",
+                                    "caller-boot-epoch", /*denied=*/true, /*fiber=*/0);
+        CHECK(href(cs, "schema-3532") == 3532, "3532 AC5: schema-3532");
+        CHECK(href(cs, "issue-3532") == 3532, "3532 AC5: issue-3532");
+        CHECK(href(cs, "audit-mid-ssot-miss-wired") == 1, "3532 AC5: wired");
+        CHECK(href(cs, "audit-mid-ssot-miss-total") >= 1, "3532 AC5: miss-total visible");
+        CHECK(href(cs, "audit-mid-ssot-miss-not-refuse") == 1, "3532 AC5: miss flag");
+        CHECK(href(cs, "schema-3054") == 3054, "3532 AC5: schema-3054 retained");
+        CHECK(href(cs, "schema-2836") == 2836, "3532 AC5: schema-2836 retained");
+
+        // AC6: source-cite; no invent.
+        const auto tma = read_repo_file("src/compiler/typed_mutation_audit.h");
+        CHECK(tma.find("kAuditMidSsotMissIssue = 3532") != std::string::npos,
+              "3532 AC6: stamp in tma");
+        CHECK(tma.find("require_audit_mid_for_emit") != std::string::npos,
+              "3532 AC6: require_audit_mid_for_emit");
+        CHECK(tma.find("join_audit_and_se_mid") != std::string::npos,
+              "3532 AC6: join remains SSOT");
+        const auto wal = read_repo_file("src/core/security_event_wal.hh");
+        CHECK(wal.find("aura_classify_mid0_se_reason") != std::string::npos,
+              "3532 AC6: emit sink classifies mid=0");
+        CHECK(read_repo_file("tests/compiler/test_issue_3532.cpp").empty(),
+              "3532 AC6: no test_issue_3532.cpp");
+        CHECK(read_repo_file("tests/compiler/test_audit_mid_ssot_lint.cpp").empty(),
+              "3532 AC6: folded into existing mid-fallback test");
+        CHECK(read_repo_file("docs/design/3532-audit-mid-ssot.md").empty(),
+              "3532 AC6: no docs/design/3532-*");
+        CHECK(read_repo_file("scripts/coverage/checks/check_audit_mid_ssot.py").empty(),
+              "3532 AC6: no substring-only py linter");
 
         apply_dev_audit_defaults();
     }

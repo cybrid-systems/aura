@@ -498,7 +498,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             const auto& c = g_audit_mid_fallback_slo_counters;
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-                auto* ht = FlatHashTable::create(query_hash_capacity_for(38));
+                auto* ht = FlatHashTable::create(query_hash_capacity_for(48));
                 if (!ht)
                     return make_void();
                 bool overflowed = false;
@@ -595,6 +595,22 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 {"mid-fallback-refuse-se-wired", make_int(1)},
                 {"schema-3054", make_int(3054)},
                 {"issue-3054", make_int(3054)},
+                // Issue #3532: caller-misuse mid=0 emit (not refuse).
+                {"audit-mid-ssot-miss-total",
+                 make_int(static_cast<std::int64_t>(
+                     g_typed_mutation_audit_counters.audit_mid_ssot_miss_total.load(
+                         std::memory_order_relaxed)))},
+                {"audit-mid-ssot-miss-wired",
+                 make_int(static_cast<std::int64_t>(
+                     g_typed_mutation_audit_counters.audit_mid_ssot_miss_wired.load(
+                         std::memory_order_relaxed)))},
+                {"audit-mid-ssot-miss-not-refuse",
+                 make_int(g_typed_mutation_audit_counters.audit_mid_ssot_miss_total.load(
+                              std::memory_order_relaxed) > 0
+                              ? 1
+                              : 0)},
+                {"schema-3532", make_int(3532)},
+                {"issue-3532", make_int(3532)},
             };
             return build_hash(kv);
         });
