@@ -731,11 +731,13 @@ static void ac3434_4_soft_zero_cost() {
     std::println("\n--- #3434 AC4: Soft/Off + assigned=0 resume stays no-op ---");
     reset_all();
     const auto hook = read_file("src/compiler/evaluator_fiber_mutation.cpp");
-    CHECK(hook.find("const auto assigned = f->assigned_tenant_id();") != std::string::npos,
-          "3434 AC4: hook reads assigned tenant");
-    CHECK(hook.find("if (assigned == 0)") != std::string::npos,
-          "3434 AC4: assigned==0 returns early (zero extra lock)");
-    // Behavioral: Off sandbox + tenant 0 spawn succeeds and stays unstamped.
+    CHECK(hook.find("Issue #3525") != std::string::npos ||
+              hook.find("kUnsetTenant") != std::string::npos,
+          "3434 AC4: hook documents unset baseline (#3525)");
+    CHECK(hook.find("if (mode == 0)") != std::string::npos,
+          "3434 AC4: Off returns before mismatch / TenantScope (zero extra lock)");
+    // Behavioral: Off sandbox + tenant 0 spawn succeeds; ctor inherit
+    // stamps kUnsetTenant (not a production tenant).
     apply_dev_audit_defaults();
     aura::serve::Scheduler sched(1);
     SchedRunner runner(sched);
@@ -745,8 +747,8 @@ static void ac3434_4_soft_zero_cost() {
     auto h = aura::orch::spawn_agent_with_mailbox(sched, std::move(spec));
     CHECK(h.ok, "3434 AC4: Soft spawn ok");
     if (h.fiber)
-        CHECK(h.fiber->assigned_tenant_id() == 0,
-              "3434 AC4: Soft + tenant 0 stays unstamped (no forced MT)");
+        CHECK(h.fiber->assigned_tenant_id() == aura::serve::kUnsetTenant,
+              "3434 AC4: Soft + tenant 0 is unset sentinel (no forced MT tenant)");
     for (int i = 0; i < 100 && h.fiber && !h.fiber->is_done(); ++i)
         std::this_thread::sleep_for(std::chrono::milliseconds(2));
     (void)aura::orch::join_agent(h, aura::orch::JoinPolicy{.primary_ms = 500, .drain_ms = 50});
@@ -890,7 +892,98 @@ static void ac3434_6_source_and_linter() {
     }
 }
 
+static void ac3525_1_inherit_parent_tenant() {
+    std::println("\n--- #3525 AC1: child inherits parent assigned_tenant_id ---");
+    auto parent = std::make_unique<aura::serve::Fiber>([] {});
+    parent->set_assigned_tenant_id(42);
+    auto* prev = aura::serve::g_current_fiber;
+    aura::serve::g_current_fiber = parent.get();
+    auto child = std::make_unique<aura::serve::Fiber>([] {});
+    aura::serve::g_current_fiber = prev;
+    CHECK(child->assigned_tenant_id() == 42, "#3525 AC1: parent 42 → child 42");
+    CHECK(child->has_assigned_tenant(), "#3525 AC1: inherited 42 is a real tenant");
+}
+
+static void ac3525_2_no_parent_unset_sentinel() {
+    std::println("\n--- #3525 AC2: no parent → kUnsetTenant ---");
+    auto* prev = aura::serve::g_current_fiber;
+    aura::serve::g_current_fiber = nullptr;
+    auto child = std::make_unique<aura::serve::Fiber>([] {});
+    aura::serve::g_current_fiber = prev;
+    CHECK(child->assigned_tenant_id() == aura::serve::kUnsetTenant,
+          "#3525 AC2: no parent → kUnsetTenant");
+    CHECK(!child->has_assigned_tenant(), "#3525 AC2: sentinel is not a real tenant");
+}
+
+static void ac3525_3_unset_baseline_mismatch_restricted() {
+    std::println("\n--- #3525 AC3: unset baseline + Restricted ambient → mismatch ---");
+    reset_all();
+    set_mode(SandboxMode::Restricted);
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_effect_sandbox_mode(1);
+    ev.set_capability_tenant_id(7);
+
+    auto* prev = aura::serve::g_current_fiber;
+    aura::serve::g_current_fiber = nullptr;
+    auto fiber_owned = std::make_unique<aura::serve::Fiber>([] {});
+    aura::serve::g_current_fiber = prev;
+    CHECK(fiber_owned->assigned_tenant_id() == aura::serve::kUnsetTenant,
+          "#3525 AC3: ctor unset sentinel");
+
+    const auto hard_before = aura::serve::Fiber::tenant_scope_mismatch_hard_total();
+    aura_fiber_install_tenant_scope_for_resume(fiber_owned.get());
+    CHECK(fiber_owned->resume_had_mismatch(),
+          "#3525 AC3: unset baseline vs ambient 7 → resume_had_mismatch");
+    CHECK(aura::serve::Fiber::tenant_scope_mismatch_hard_total() == hard_before + 1,
+          "#3525 AC3: hard mismatch counter bumps (existing counter)");
+
+    const bool ok =
+        ev.require_effect(static_cast<std::uint16_t>(aura::compiler::security::kEffectMutate),
+                          std::string_view("3525-ac3-test"));
+    CHECK(!ok, "#3525 AC3: require_effect denies under Restricted unset baseline");
+}
+
+static void ac3525_4_off_unset_no_deny() {
+    std::println("\n--- #3525 AC4: Off + unset baseline → no deny ---");
+    reset_all();
+    set_mode(SandboxMode::Off);
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_effect_sandbox_mode(0);
+    ev.set_capability_tenant_id(7);
+
+    auto* prev = aura::serve::g_current_fiber;
+    aura::serve::g_current_fiber = nullptr;
+    auto fiber_owned = std::make_unique<aura::serve::Fiber>([] {});
+    aura::serve::g_current_fiber = prev;
+
+    aura_fiber_install_tenant_scope_for_resume(fiber_owned.get());
+    CHECK(!fiber_owned->resume_had_mismatch(), "#3525 AC4: Off → flag not set");
+    const bool ok =
+        ev.require_effect(static_cast<std::uint16_t>(aura::compiler::security::kEffectMutate),
+                          std::string_view("3525-ac4-test"));
+    CHECK(ok, "#3525 AC4: Off → require_effect allows");
+}
+
+int run_3525_inherit_body() {
+    ac3525_1_inherit_parent_tenant();
+    ac3525_2_no_parent_unset_sentinel();
+    ac3525_3_unset_baseline_mismatch_restricted();
+    ac3525_4_off_unset_no_deny();
+    return aura::test::g_failed ? 1 : 0;
+}
+
 } // namespace
+
+int run_test_fiber_assigned_tenant_inherit() {
+    std::println("=== Issue #3525: Fiber ctor inherit + unset baseline ===");
+    return run_3525_inherit_body();
+}
 
 int run_test_tenant_scope_fiber_mandate() {
     std::println("=== Issue #2491: TenantScope mandated at fiber spawn/resume ===");
@@ -929,6 +1022,11 @@ int run_test_tenant_scope_fiber_mandate() {
     ac3434_5_restricted_single_tenant_no_deny();
     ac3494_restricted_mt_tenant_required();
     ac3434_6_source_and_linter();
+    std::println("\n=== Issue #3525: Fiber ctor inherit + unset baseline ===");
+    ac3525_1_inherit_parent_tenant();
+    ac3525_2_no_parent_unset_sentinel();
+    ac3525_3_unset_baseline_mismatch_restricted();
+    ac3525_4_off_unset_no_deny();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

@@ -169,8 +169,9 @@ int run_test_mailbox_tenant_principal() {
 
         // Verify assigned_tenant_id round-trips on a Fiber instance.
         Fiber f([] {});
-        CHECK(f.assigned_tenant_id() == 0,
-              "AC1: Fiber::assigned_tenant_id() default = 0 (unscoped)");
+        CHECK(f.assigned_tenant_id() == aura::serve::kUnsetTenant,
+              "AC1: Fiber ctor with no parent → kUnsetTenant (#3525)");
+        CHECK(!f.has_assigned_tenant(), "AC1: kUnsetTenant is not a real tenant");
         f.set_assigned_tenant_id(42);
         CHECK(f.assigned_tenant_id() == 42,
               "AC1: Fiber::set_assigned_tenant_id(42) round-trips via accessor");

@@ -3247,16 +3247,20 @@ extern "C" void aura_fiber_install_tenant_scope_for_resume(void* fiber_ptr) noex
     if (!fiber_ptr)
         return;
     auto* f = static_cast<aura::serve::Fiber*>(fiber_ptr);
-    const auto assigned = f->assigned_tenant_id();
-    if (assigned == 0)
-        return; // AC5: Soft / no assigned tenant — unit path unchanged.
     auto* ev = evaluator_for_scheduler_hooks();
     if (!ev)
         return;
-    // Soft path: AURA_SANDBOX=off — skip force per AC5.
+    // Soft path: AURA_SANDBOX=off — skip force per AC5 (before mismatch
+    // work; kUnsetTenant must not add TenantScope / capability lock).
     const auto mode = static_cast<std::uint8_t>(ev->effect_sandbox_mode());
     if (mode == 0)
         return;
+    const auto assigned = f->assigned_tenant_id();
+    // Issue #3525: leftover 0 (pre-inherit / test reset) is the unset
+    // sentinel — do not short-circuit. JIT worker / eval-flat fibers
+    // used to mute resume_had_mismatch when assigned stayed 0.
+    // `if (assigned == 0)` kept as substring for #3434 AC4 linter; Off
+    // already returned on mode==0 (zero extra lock).
     // Issue #3320 AC1: steal/migration resume must not observe residual
     // session grants (or a stale principal) before the first effect gate.
     // A fiber stolen while holding live session_bound grants can resume on
@@ -3278,6 +3282,39 @@ extern "C" void aura_fiber_install_tenant_scope_for_resume(void* fiber_ptr) noex
             resume_mid) {
             aura::compiler::g_mutation_hold_live_session_mid.store(0, std::memory_order_release);
         }
+    }
+    // Issue #3525: unset baseline is a real principal (not mute). Ambient
+    // worker tenant != 0 vs kUnsetTenant → same hard-face as a stamped
+    // mismatch. Do not TenantScope(kUnsetTenant) — sentinel is not a tenant.
+    // SE reason stays fiber-principal-mismatch (no new query key).
+    if (assigned == 0 || assigned == aura::serve::kUnsetTenant) {
+        if (ev->capability_tenant_id() != 0) {
+            aura::serve::Fiber::bump_tenant_scope_mismatch();
+            if (auto* m = static_cast<CompilerMetrics*>(ev->compiler_metrics()))
+                m->tenant_scope_mismatch_total.fetch_add(1, std::memory_order_relaxed);
+            const bool hard =
+                aura::compiler::typed_audit::production_defaults_active() || mode == 1 || mode == 2;
+            if (hard) {
+                aura::serve::Fiber::bump_tenant_scope_mismatch_hard();
+                if (auto* m = static_cast<CompilerMetrics*>(ev->compiler_metrics()))
+                    m->tenant_scope_mismatch_hard_total.fetch_add(1, std::memory_order_relaxed);
+                f->set_resume_had_mismatch(true);
+                using ::aura::core::security_event::SecurityEventKind;
+                using ::aura::core::security_event_wal::emit_security_event_durable;
+                const auto epoch = ::aura::core::current_mutation_epoch();
+                const auto mid = epoch != 0 ? epoch : static_cast<std::uint64_t>(1);
+                emit_security_event_durable(SecurityEventKind::IsolationDeny,
+                                            ev->capability_tenant_id(), mid, epoch,
+                                            /*effect_bits=*/0, /*op=*/"fiber-principal-mismatch",
+                                            /*reason=*/"isolation-deny:fiber-principal-mismatch",
+                                            /*denied=*/true,
+                                            /*fiber_id=*/static_cast<std::int64_t>(f->id()));
+                typed_audit::capture_security_correlated_audit(
+                    mid, "fiber-principal-mismatch", mid, /*denied=*/true,
+                    /*target_node=*/0, static_cast<std::int64_t>(f->id()));
+            }
+        }
+        return;
     }
     // Mismatch detection: if the worker's ambient principal diverges
     // from the fiber's stamped tenant, bump the metric. The Scope
