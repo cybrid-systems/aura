@@ -1379,7 +1379,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_occurrence_provenance_chain_completeness.cpp` (—) [domain_suite, theme_compiler] — AC1: source cites #2024; fill_coercion_provenance_chain + sentinel
 - `tests/compiler/test_occurrence_typing_blame_post_mutate_recovery.cpp` (—) [domain_suite, theme_compiler] — test_occurrence_typing_blame_post_mutate_recovery.cpp — restored standalone (AC drift under batch
 - `tests/compiler/test_occurrence_typing_blame_post_mutate_task2.cpp` (—) [domain_suite, theme_compiler] — test_occurrence_typing_blame_post_mutate_task2.cpp — restored standalone (AC drift under batch
-- `tests/compiler/test_outermost_persist_fail_closed.cpp` (—) [domain_suite, theme_compiler] — AC1: source cites the fingerprint-mismatch early-return + new reject stamp
+- `tests/compiler/test_outermost_persist_fail_closed.cpp` (—) [large, domain_suite, theme_compiler] — AC1: source cites the fingerprint-mismatch early-return + new reject stamp
 - `tests/compiler/test_owner_scoped_hard_invalidate_slot_clear.cpp` (—) [domain_suite, theme_compiler] — AC1: source cites the new aura_aot_invalidate_owner_slot_for_func_id
 - `tests/orch/test_parallel_intend_pure.cpp` (—) [domain_suite, theme_orch] — thunks; mutating thunks fail pure-contract; FailurePolicy still works.
 - `tests/orch/test_parallel_intend_pure_contract.cpp` (—) [large, domain_suite, theme_orch] — (pure_unlocked_applies / pure_fallback_locked / pure_contract_violated)

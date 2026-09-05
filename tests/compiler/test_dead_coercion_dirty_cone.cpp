@@ -22,6 +22,7 @@
 
 #include "test_harness.hpp"
 #include "compiler/typed_mutation_audit.h"
+#include "compiler/dce_elided_deopt_meta.h"
 
 #include <atomic>
 #include <cstdint>
@@ -68,7 +69,9 @@ using aura::compiler::opt_registry::dead_coercion_dirty_cone_skips;
 using aura::compiler::opt_registry::dead_coercion_full_scan_runs;
 using aura::compiler::opt_registry::dead_coercion_hot_residual_reject_total;
 using aura::compiler::opt_registry::dead_coercion_hot_residual_sweep_total;
+using aura::compiler::opt_registry::dead_coercion_ir_decision_invalidate_total;
 using aura::compiler::opt_registry::DeadCoercionPass;
+using aura::compiler::opt_registry::kDeadCoercionDecisionReverifyIssue;
 using aura::compiler::opt_registry::kDeadCoercionHotResidualIssue;
 using aura::compiler::opt_registry::sweep_production_hot_residual_castops;
 using aura::compiler::types::as_int;
@@ -658,8 +661,13 @@ static void ac3120_1_type_txn_remirrors_skipped_castop() {
     DeadCoercionPass dce;
     dce.set_block_dirty_fn([](std::uint32_t bid) { return bid == 0; });
     const auto skips0 = load_u64(dead_coercion_dirty_cone_skips);
+    const auto full0 = load_u64(dead_coercion_full_scan_runs);
     dce.run(fn);
-    CHECK(load_u64(dead_coercion_dirty_cone_skips) > skips0, "3120 AC1: cone-skip counted");
+    // Issue #3547: production + stamper_bound=0 drops the dirty-cone cache
+    // (full scan). Residual persist below still records the cone-external site.
+    CHECK(load_u64(dead_coercion_dirty_cone_skips) > skips0 ||
+              load_u64(dead_coercion_full_scan_runs) > full0,
+          "3120 AC1: cone-skip or stamper-unbound full scan");
     CHECK(residual_castop_persist_size() >= 1, "3120 AC1: residual persist after sweep");
     CHECK(cone_contains(kSkip), "3120 AC1: sweep remirror put skip site in last cone");
 
@@ -1081,6 +1089,108 @@ static void ac3349_4_linter_no_invent() {
     CHECK(read_file("tests/issues/test_issue_3349.cpp").empty(), "3349 AC4: no tests/issues");
 }
 
+// Issue #3547: dirty-cone DeadCoercion re-verify type_id / stamper_bound.
+static void ac3547_1_stamper_unbound_drops_cone() {
+    std::println("\n--- #3547 AC1: production stamper_bound=0 drops dirty-cone cache ---");
+    using aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+    auto save =
+        g_typed_mutation_audit_counters.production_defaults_active.load(std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.production_defaults_active.store(1, std::memory_order_relaxed);
+    CHECK(aura::compiler::typed_audit::last_proof_stamper_bound_v_read() == 0,
+          "3547 AC1: stamper unbound");
+    CHECK(kDeadCoercionDecisionReverifyIssue == 3547, "3547 AC1: issue stamp");
+
+    DeadCoercionPass dce;
+    dce.set_block_dirty_fn([](std::uint32_t bid) { return bid == 0; });
+    IRFunction fn = make_two_block_fn_with_casts();
+    const auto inv0 = load_u64(dead_coercion_ir_decision_invalidate_total);
+    const auto full0 = load_u64(dead_coercion_full_scan_runs);
+    dce.run(fn);
+    CHECK(load_u64(dead_coercion_ir_decision_invalidate_total) > inv0,
+          "3547 AC1: reuse existing invalidate total");
+    CHECK(load_u64(dead_coercion_full_scan_runs) > full0, "3547 AC1: full scan after drop");
+    bool block1_has_cast = false;
+    for (const auto& instr : fn.blocks[1].instructions) {
+        if (instr.opcode == IROpcode::CastOp)
+            block1_has_cast = true;
+    }
+    CHECK(!block1_has_cast, "3547 AC1: cone-external CastOp rescanned");
+
+    g_typed_mutation_audit_counters.production_defaults_active.store(save,
+                                                                     std::memory_order_relaxed);
+}
+
+static void ac3547_2_type_id_drift_invalidates_site() {
+    std::println("\n--- #3547 AC2: type_id drift invalidates deopt-meta site ---");
+    using aura::compiler::dce_deopt::clear_elided_cast_deopt_meta_for_test;
+    using aura::compiler::dce_deopt::lookup_elided_cast_deopt_meta;
+    using aura::compiler::dce_deopt::make_site_key;
+    using aura::compiler::dce_deopt::reverify_elided_cast_deopt_site;
+    using aura::compiler::dce_deopt::stamp_elided_cast_deopt_meta;
+    using aura::compiler::typed_audit::current_narrow_evidence;
+    clear_elided_cast_deopt_meta_for_test();
+    constexpr std::uint32_t kNode = 42;
+    constexpr std::uint32_t kEv = 4;
+    const auto site = make_site_key(0, kNode, 7);
+    stamp_elided_cast_deopt_meta(site, /*mid=*/99, kEv, /*tag=*/1, /*type_id=*/7);
+    CHECK(lookup_elided_cast_deopt_meta(site).has_value(), "3547 AC2: site stamped");
+    CHECK(current_narrow_evidence(kNode) == kEv, "3547 AC2: current_narrow_evidence");
+    CHECK(reverify_elided_cast_deopt_site(site, /*live_type_id=*/9, /*live_evidence=*/0),
+          "3547 AC2: type_id drift → invalidate");
+    CHECK(!lookup_elided_cast_deopt_meta(site).has_value(), "3547 AC2: site dropped");
+    stamp_elided_cast_deopt_meta(site, 99, kEv, 1, 7);
+    CHECK(!reverify_elided_cast_deopt_site(site, 7, kEv), "3547 AC2: matching type keeps site");
+    CHECK(reverify_elided_cast_deopt_site(site, 7, /*live_evidence=*/8),
+          "3547 AC2: evidence drift → invalidate");
+    clear_elided_cast_deopt_meta_for_test();
+}
+
+static void ac3547_3_soft_keeps_cone() {
+    std::println("\n--- #3547 AC4: Soft stamper_bound=0 keeps dirty cone ---");
+    using aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+    auto save =
+        g_typed_mutation_audit_counters.production_defaults_active.load(std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.production_defaults_active.store(0, std::memory_order_relaxed);
+    aura::compiler::dirty::reset_dead_coercion_decision_invalidate_for_test();
+    DeadCoercionPass dce;
+    dce.set_block_dirty_fn([](std::uint32_t bid) { return bid == 0; });
+    IRFunction fn = make_two_block_fn_with_casts();
+    dce.run(fn);
+    bool block1_has_cast = false;
+    for (const auto& instr : fn.blocks[1].instructions) {
+        if (instr.opcode == IROpcode::CastOp)
+            block1_has_cast = true;
+    }
+    CHECK(block1_has_cast, "3547 AC4: Soft cone-external CastOp untouched");
+    g_typed_mutation_audit_counters.production_defaults_active.store(save,
+                                                                     std::memory_order_relaxed);
+}
+
+static void ac3547_4_source_cite_no_invent() {
+    std::println("\n--- #3547 AC5: source-cite + no invent / no new query ---");
+    const auto opt = read_file("src/compiler/optimization_passes.ixx");
+    const auto meta = read_file("src/compiler/dce_elided_deopt_meta.h");
+    const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto t = read_file("tests/compiler/test_dead_coercion_dirty_cone.cpp");
+    CHECK(opt.find("Issue #3547") != std::string::npos, "3547 AC5: pass cite");
+    CHECK(opt.find("last_proof_stamper_bound_v_read") != std::string::npos, "3547 AC5: stamper");
+    CHECK(opt.find("last_type_linear_commit_proof_stamp_v_read") != std::string::npos,
+          "3547 AC5: stamp consult");
+    CHECK(meta.find("invalidate_elided_cast_deopt_meta") != std::string::npos,
+          "3547 AC5: invalidate");
+    CHECK(meta.find("reverify_elided_cast_deopt_site") != std::string::npos, "3547 AC5: reverify");
+    CHECK(emb.find("invalidate_elided_cast_deopt_meta") != std::string::npos,
+          "3547 AC5: persist-reject");
+    CHECK(t.find("ac3547_1_stamper_unbound_drops_cone") != std::string::npos, "3547 AC5: AC1");
+    CHECK(opt.find("schema-3547") == std::string::npos, "3547 AC5: no new query key");
+    CHECK(read_file("tests/compiler/test_issue_3547.cpp").empty(), "3547 AC5: no invent");
+    CHECK(read_file("tests/issues/test_issue_3547.cpp").empty(), "3547 AC5: no tests/issues");
+    CHECK(read_file("scripts/coverage/checks/check_dead_coercion_decision_invalidate.py").empty(),
+          "3547 AC5: no new linter");
+    CHECK(read_file("docs/design/3547-dead-coercion-reverify.md").empty(),
+          "3547 AC5: no docs/design");
+}
+
 } // namespace
 
 int run_test_dead_coercion_dirty_cone() {
@@ -1115,9 +1225,14 @@ int run_test_dead_coercion_dirty_cone() {
     ac3349_2_soft_quiet();
     ac3349_3_production_persist_marks_or_force_full();
     ac3349_4_linter_no_invent();
+    ac3547_1_stamper_unbound_drops_cone();
+    ac3547_2_type_id_drift_invalidates_site();
+    ac3547_3_soft_keeps_cone();
+    ac3547_4_source_cite_no_invent();
     reset_residual_castop_persist_for_test();
-    std::println("\n=== #2556/#3007/#3046/#3065/#3120/#3228/#3347/#3349: {} passed, {} failed ===",
-                 g_passed, g_failed);
+    std::println(
+        "\n=== #2556/#3007/#3046/#3065/#3120/#3228/#3347/#3349/#3547: {} passed, {} failed ===",
+        g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
 

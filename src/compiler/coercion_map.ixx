@@ -1168,7 +1168,7 @@ export std::size_t apply_coercion_map(aura::ast::FlatAST& flat, const CoercionMa
                     dce_deopt::make_site_key(0, static_cast<std::uint32_t>(e.original_child),
                                              static_cast<std::uint32_t>(e.parent_id));
                 dce_deopt::stamp_elided_cast_deopt_meta(site, e.source_mutation_id,
-                                                        e.narrow_evidence, e.type_tag);
+                                                        e.narrow_evidence, e.type_tag, e.type_id);
             }
             if (persist_elim_cone) {
                 elim_ast.push_back(e.original_child);
@@ -1195,7 +1195,7 @@ export std::size_t apply_coercion_map(aura::ast::FlatAST& flat, const CoercionMa
                     dce_deopt::make_site_key(0, static_cast<std::uint32_t>(e.original_child),
                                              static_cast<std::uint32_t>(e.parent_id));
                 dce_deopt::stamp_elided_cast_deopt_meta(site, e.source_mutation_id,
-                                                        e.narrow_evidence, e.type_tag);
+                                                        e.narrow_evidence, e.type_tag, e.type_id);
             }
             if (persist_elim_cone) {
                 elim_ast.push_back(e.original_child);

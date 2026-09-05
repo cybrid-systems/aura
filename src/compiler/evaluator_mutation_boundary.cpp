@@ -69,6 +69,7 @@ module;
                                              // aura_reemit_aot_for_dirty
                                              // Issue #3026 observe_residual_force_stale
 #include "typed_mutation_audit.h"            // Issue #1589 / #1614 / #1894 / #2145 / #2964
+#include "compiler/dce_elided_deopt_meta.h"  // Issue #3547: invalidate_elided_cast_deopt_meta
 #include "linear_occurrence_mutate_stats.h"  // Issue #2964: record_revalidate_hit on force
 #include "core/sandbox.hh"                   // Issue #2145 Strict hard-gate
 #include "core/provenance_tracker.hh"        // Issue #2222: boundary LinearEnforce Strict hold
@@ -246,6 +247,17 @@ extern "C" void aura_typed_audit_note_readiness_evaluator(void* ev) noexcept {
     ::g_tls_audit_commit_readiness_evaluator = ev;
 }
 
+// Issue #3547: live FlatAST type_id for DeadCoercion dirty-cone re-verify.
+extern "C" std::uint32_t aura_tls_workspace_type_id(std::uint32_t node) noexcept {
+    auto* ev = static_cast<aura::compiler::Evaluator*>(::g_tls_audit_commit_readiness_evaluator);
+    if (!ev)
+        return 0;
+    auto* flat = ev->workspace_flat();
+    if (!flat)
+        return 0;
+    return flat->type_id(node);
+}
+
 extern "C" void aura_typed_audit_clear_readiness_evaluator() noexcept {
     ::g_tls_audit_commit_readiness_evaluator = nullptr;
 }
@@ -397,6 +409,7 @@ extern "C" void aura_undo_apply_coercion_map_recent(void* ev_ptr, std::uint64_t 
             (void)::aura::compiler::dirty::force_dead_coercion_elim_into_cone(coerced);
     }
     ::aura::compiler::dirty::bump_dead_coercion_decision_invalidate();
+    ::aura::compiler::dce_deopt::invalidate_elided_cast_deopt_meta(0);
     g_last_proof_stamper_eval.store(0, std::memory_order_relaxed);
     if ((journal.ast_elided > 0 || journal.eliminated > 0) && journal.last_narrow_evidence == 0)
         ::aura::compiler::g_coercion_provenance_miss_total.fetch_add(1, std::memory_order_relaxed);
