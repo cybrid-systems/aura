@@ -1184,6 +1184,10 @@ aura_set_epoch_invariant_periodic_period_ms(std::uint64_t ms) {
     g_epoch_invariant_periodic_period_ms_stub.store(ms, std::memory_order_relaxed);
 }
 extern "C" __attribute__((weak)) void aura_periodic_epoch_invariant_walk_if_due(void) {}
+extern "C" __attribute__((weak)) void aura_force_drain_old_so(void) {}
+extern "C" __attribute__((weak)) std::uint64_t aura_reload_old_so_staged_total_v_read(void) {
+    return 0;
+}
 extern "C" __attribute__((weak)) void aura_reset_epoch_invariant_periodic_for_test(void) {}
 
 // Issue #2668: event-driven walk counters (distinct from periodic).

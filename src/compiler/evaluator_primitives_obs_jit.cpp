@@ -16,6 +16,7 @@ module;
 
 #include "runtime_shared.h"
 #include "compiler/aura_jit_bridge.h"
+#include "compiler/aot_reload_consistency_proof.h" // Issue #3539: kAotReloadOldSoStagedIssue
 #include "security_capabilities.h"
 #include "observability_metrics.h"
 #include "compiler/shape.h"
@@ -5763,7 +5764,7 @@ void ObservabilityPrims::register_jit_p31(PrimRegistrar add, Evaluator& ev) {
     // (query:aot-reload-primitive-stats) → hash
     ObservabilityPrims::register_stats_impl(
         "query:aot-reload-primitive-stats", [&ev](const auto&) -> EvalValue {
-            auto* ht = FlatHashTable::create(query_hash_capacity_for(16));
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(24));
             if (!ht)
                 return make_void();
             bool overflowed = false;
@@ -5815,6 +5816,12 @@ void ObservabilityPrims::register_jit_p31(PrimRegistrar add, Evaluator& ev) {
                 m ? static_cast<std::int64_t>(
                         m->aot_per_eval_region_sets.load(std::memory_order_relaxed))
                   : 0);
+            // Issue #3539: old .so staged for deferred dlclose. Additive.
+            put("old-so-staged-total",
+                static_cast<std::int64_t>(aura_reload_old_so_staged_total_v_read()));
+            put("old-so-staged-wired", 1);
+            put("schema-3539", kAotReloadOldSoStagedIssue);
+            put("issue-3539", kAotReloadOldSoStagedIssue);
             return query_hash_finish(ht, ev.string_heap_, overflowed);
         });
 }

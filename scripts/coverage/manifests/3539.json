@@ -1,0 +1,52 @@
+{
+  "issue": 3539,
+  "title": "Issue #3539: AOT reload must_deopt before deferred old-.so dlclose",
+  "ok": "OK: Issue #3539 reload old-.so staged — must_deopt first; Soft pending==0 one load; no new query:*.",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/aura_jit_bridge.cpp",
+      "contains": [
+        "stage_old_so_for_deferred_close",
+        "aura_epoch_invariant_must_deopt_stale_live_closures",
+        "aura_force_drain_old_so"
+      ]
+    },
+    {
+      "ac": "AC1-counter",
+      "path": "src/compiler/aot_reload_consistency_proof.h",
+      "contains": [
+        "kAotReloadOldSoStagedIssue = 3539",
+        "g_aura_reload_old_so_staged_total{0}"
+      ]
+    },
+    {
+      "ac": "AC5-query",
+      "path": "src/compiler/evaluator_primitives_obs_jit.cpp",
+      "contains": [
+        "old-so-staged-total",
+        "schema-3539"
+      ]
+    },
+    {
+      "ac": "AC1-test",
+      "path": "tests/compiler/test_aot_reload_primitive.cpp",
+      "contains": [
+        "3539 AC1",
+        "3539 AC2",
+        "3539 AC3",
+        "3539 AC4",
+        "3539 AC5"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "forbid": [
+        "tests/compiler/test_issue_3539.cpp",
+        "tests/compiler/test_reload_inflight_closure.cpp",
+        "docs/design/3539-reload-dlclose.md",
+        "scripts/coverage/checks/check_reload_inflight_3539.py"
+      ]
+    }
+  ]
+}
