@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 879 | Preferred destination suites |
-| **Total scanned** | **879** | |
+| `tests/core/test_*.cpp` | 880 | Preferred destination suites |
+| **Total scanned** | **880** | |
 
 ### Related artifacts
 
@@ -33,7 +33,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | Theme | Title | Issues | Root | Domain | Total | Migration priority |
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
 | `arena_compaction` | Arena / compaction / GC | 0 | 0 | 89 | 89 | P0 — well-contained, batch drivers already exist |
-| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 264 | 264 | P0 — high volume; strong domain suite foothold |
+| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 265 | 265 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 108 | 108 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 26 | 26 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 59 | 59 | P1 — domain hygiene suite exists |
@@ -592,6 +592,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_linear_enforce_strict.cpp`
 - `tests/compiler/test_linear_enforce_strict_default.cpp`
 - `tests/compiler/test_linear_escape_commit_hardblock.cpp`
+- `tests/compiler/test_linear_fast_path_or_semantics.cpp`
 - `tests/compiler/test_linear_force_unified.cpp`
 - `tests/compiler/test_linear_gc_window.cpp`
 - `tests/compiler/test_linear_live_closure_walk.cpp`
@@ -1195,13 +1196,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_type_dep_epoch_prune.cpp` (—) [domain_suite, theme_compiler] — AC1: After set_cache_epoch(e+1), edges stamped at epoch e (e>0) drop;
 - `tests/compiler/test_workspace_switch.cpp` (—) [domain_suite, theme_compiler] — AC1: switch binds flat/pool + set_workspace_cow_epoch in one block
 
-### `mutation_dirty` — Mutation / dirty propagation / provenance (264)
+### `mutation_dirty` — Mutation / dirty propagation / provenance (265)
 
 **Target:** tests/core/test_mutation_boundary_batch (domain/ pilot abandoned in R1)
 
 **Priority:** P0 — high volume; strong domain suite foothold
 
-#### domain/ (264)
+#### domain/ (265)
 
 - `tests/compiler/test_abort_ir_cache_fence_first.cpp` (—) [large, domain_suite, theme_compiler] — AC1: All 3 abort entry points in evaluator_mutation_boundary.cpp
 - `tests/core/test_add_node_builder_contract.cpp` (—) [domain_suite, theme_core] — AC1: single-threaded add_* path unchanged (builders work)
@@ -1322,6 +1323,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_linear_enforce_boundary_align.cpp` (—) [domain_suite, theme_compiler] — AC1: Production → process Strict; sandbox-off → Soft; boundary enter
 - `tests/compiler/test_linear_enforce_strict.cpp` (—) [domain_suite, theme_compiler] — AC1: Soft + incomplete trail → incomplete metric; ok continues
 - `tests/compiler/test_linear_enforce_strict_default.cpp` (—) [domain_suite, theme_compiler] — AC1: Default mode is Strict; Soft only via set_linear_enforce_mode(Soft)
+- `tests/compiler/test_linear_fast_path_or_semantics.cpp` (—) [domain_suite, theme_compiler] — test_linear_fast_path_or_semantics.cpp -- source-cite AC for Issue #3558
 - `tests/compiler/test_linear_force_unified.cpp` (—) [domain_suite, theme_compiler] — AC1: Production/strict synth → force-rollback; soft recovery skipped;
 - `tests/compiler/test_linear_gc_window.cpp` (—) [domain_suite, theme_compiler] — Issue #2043 — Linear ownership post-mutate enforcement + GC/fiber
 - `tests/compiler/test_linear_ownership_postmutate_guard_steal_envframe.cpp` (—) [domain_suite, theme_compiler] — test_linear_ownership_postmutate_guard_steal_envframe.cpp — Issue #800:

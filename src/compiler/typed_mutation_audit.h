@@ -2295,15 +2295,17 @@ inline void reset_linear_force_full_validate_for_test() noexcept {
     if (g_last_proof_would_allow_commit.load(std::memory_order_acquire) == 0 ||
         g_last_proof_linear_ok.load(std::memory_order_acquire) == 0)
         return false;
-    // mid MutationBoundary arm (#2964 AC3) — boundary_depth > 0 disables
+    // mid MutationBoundary arm (#2964 AC3) — boundary_depth > 0 disables.
+    // Issue #3558: OR semantics — either signal alone blocks elision.
+    // Bug: max-style `override >= 0 ? override : depth` picked up override=0
+    // mid-boundary flip and returned false (allowing elision) while actual
+    // `aura_evaluator_mutation_boundary_depth()` was > 0. Soft/Off quiet
+    // path: one branch each (override + depth), zero extra work when both
+    // signals quiet.
     {
-        std::size_t depth = 0;
-        if (g_linear_ir_fastpath_boundary_depth_override >= 0) {
-            depth = static_cast<std::size_t>(g_linear_ir_fastpath_boundary_depth_override);
-        } else {
-            depth = aura_evaluator_mutation_boundary_depth();
-        }
-        if (depth > 0)
+        if (g_linear_ir_fastpath_boundary_depth_override > 0)
+            return false;
+        if (aura_evaluator_mutation_boundary_depth() > 0)
             return false;
     }
     // escape gate arm (#2964 AC3 / #2263)
@@ -2376,16 +2378,14 @@ enum class LinearFastPathExitAction : std::uint8_t {
     // concurrent densify entry cannot elide on a stale true. Quiet skip:
     // two extra loads (depth + pending). Escape stays in linear_fast_path_ok
     // (mutex). Same blocked counters as #3006 — no new query key.
+    // Issue #3558: OR semantics — either override or actual depth alone
+    // blocks. Mid-boundary override=0 + actual depth>0 must not elide.
     {
-        std::size_t depth = 0;
-        if (g_linear_ir_fastpath_boundary_depth_override >= 0)
-            depth = static_cast<std::size_t>(g_linear_ir_fastpath_boundary_depth_override);
-        else
-            depth = aura_evaluator_mutation_boundary_depth();
         const auto pending =
             g_typed_mutation_audit_counters.linear_densify_scan_mismatch_inject_pending.load(
                 std::memory_order_relaxed);
-        if (depth > 0 || pending > 0) {
+        if (g_linear_ir_fastpath_boundary_depth_override > 0 ||
+            aura_evaluator_mutation_boundary_depth() > 0 || pending > 0) {
             g_linear_ir_fastpath_skip_blocked_total.fetch_add(1, std::memory_order_relaxed);
             if (production_defaults_active() || get_strategy() == AuditStrategy::Full)
                 g_linear_fast_path_elide_blocked_production_total.fetch_add(
