@@ -1,0 +1,43 @@
+{
+  "issue": 3581,
+  "title": "Issue #3581: #3065 remirror × #3068 completeness catch cone-skipped CastOp type changes",
+  "ok": "OK: Issue #3581 CastOp type-change + cone-skip is caught by #3065 remirror or #3068 missing_instr_loc upgrade; double-miss unreachable.",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "tests/compiler/test_dead_coercion_dirty_cone.cpp",
+      "contains": [
+        "3581 AC1",
+        "cone-skip left type-changed CastOp in clean block",
+        "#3065 remirror marked skipped CastOp dirty",
+        "#3068 missing_instr_loc upgrades partial→full"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/compiler/test_dead_coercion_dirty_cone.cpp",
+      "contains": [
+        "3581 AC2",
+        "double-miss",
+        "unreachable"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/compiler/test_dead_coercion_dirty_cone.cpp",
+      "contains": [
+        "3581 AC3",
+        "#3065 remirror owner",
+        "#3068 completeness owner"
+      ]
+    },
+    {
+      "ac": "NO-INVENT",
+      "forbid": [
+        "tests/compiler/test_issue_3581.cpp",
+        "docs/design/3581-cross-owner-castop.md",
+        "scripts/coverage/checks/check_cross_owner_castop_3581.py"
+      ]
+    }
+  ]
+}
