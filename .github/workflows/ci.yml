@@ -28,6 +28,9 @@
 #   - (2026-09) concurrent runs right after isolate compile (before issues);
 #     concurrent compile fail does not skip the issue farm; no ICE retry
 #     on deterministic -Werror for test_concurrent
+#   - (2026-09) issue serial recovery = crash/timeout/rc=127 only (not AC)
+#   - (2026-09) asan/ubsan slim matrix includes test_concurrent
+#   - (2026-09) build-test timeout-minutes=120 (default 360 hid hangs)
 #
 # Branch protection: require both `gate` and `build-test` (not only one).
 #
@@ -220,6 +223,8 @@ jobs:
     if: >-
       github.event_name == 'push' ||
       needs.changes.outputs.code == 'true'
+    # Healthy wall is ~15–40m. Default 360m hid hung issue binaries.
+    timeout-minutes: 120
     runs-on: ubuntu-latest
     container:
       image: ghcr.io/cybrid-systems/dev:v1.0.7
@@ -352,14 +357,13 @@ jobs:
     - name: Install Python CI deps
       run: pip install --break-system-packages -r requirements-dev.txt
 
-    # Slim matrix: aura + test_ir only (no all_test_issue_targets,
-    # no test_concurrent — asan-verify does not run that binary).
-    # Full ASAN of 500+ issue binaries filled the runner disk
-    # ("No space left on device") around link step ~1173/1196.
+    # Slim matrix: aura + test_ir + test_concurrent. Skip the 500+
+    # issue-bin farm (disk full around link ~1173/1196). concurrent is
+    # the stress leaf that SIGSEGVs on x86; asan must see it.
     - name: Build with ASAN
       env:
         AURA_ISSUE_BUILD: none
-        AURA_BUILD_TARGETS: aura,test_ir
+        AURA_BUILD_TARGETS: aura,test_ir,test_concurrent
         AURA_LINK_JOBS: "1"  # #2636: serialize link to avoid arena.ixx.o
                                # rebuild deadlock (ninja -j2 has been
                                # observed to hang on this stage).
@@ -378,6 +382,7 @@ jobs:
         path: |
           build_asan/aura
           build_asan/test_ir
+          build_asan/test_concurrent
           build_asan/libaura-reflect.so
           build_asan/libaura_tl_arena.so
         if-no-files-found: error
@@ -400,7 +405,7 @@ jobs:
 
     - name: Restore executable bit + shared-lib path
       run: |
-        chmod +x build_asan/aura build_asan/test_ir
+        chmod +x build_asan/aura build_asan/test_ir build_asan/test_concurrent
         test -f build_asan/libaura-reflect.so
         test -f build_asan/libaura_tl_arena.so
         # Belt-and-suspenders if RUNPATH/$ORIGIN is not honored after
@@ -451,6 +456,14 @@ jobs:
         python3 build.py --sanitizer=asan test unit
         echo "✓ unit tests clean under ASAN"
 
+    - name: Run concurrent tests under ASAN
+      env:
+        ASAN_OPTIONS: "detect_leaks=0:abort_on_error=1:print_stacktrace=1:halt_on_error=1"
+        AURA_SANDBOX: "off"
+      run: |
+        python3 build.py --sanitizer=asan test concurrent
+        echo "✓ concurrent tests clean under ASAN"
+
     - name: Run emit-binary suite (bash) under ASAN
       env:
         ASAN_OPTIONS: "detect_leaks=0:abort_on_error=1:print_stacktrace=1:halt_on_error=1"
@@ -483,12 +496,11 @@ jobs:
     - name: Install Python CI deps
       run: pip install --break-system-packages -r requirements-dev.txt
 
-    # Slim matrix (same rationale as asan-build): unit smoke only needs
-    # aura + test_ir; skip test_concurrent and the issue-test link farm.
+    # Slim matrix: aura + test_ir + test_concurrent; skip the issue farm.
     - name: Build with UBSAN
       env:
         AURA_ISSUE_BUILD: none
-        AURA_BUILD_TARGETS: aura,test_ir
+        AURA_BUILD_TARGETS: aura,test_ir,test_concurrent
         AURA_LINK_JOBS: "1"  # #2636: serialize link to avoid arena.ixx.o
                                # rebuild deadlock (mirrors asan-build fix).
       run: python3 build.py --sanitizer=ubsan build
@@ -503,6 +515,14 @@ jobs:
       run: |
         python3 build.py --sanitizer=ubsan test unit
         echo "✓ unit tests clean under UBSAN"
+
+    - name: Run concurrent tests under UBSAN
+      env:
+        UBSAN_OPTIONS: "halt_on_error=1:print_stacktrace=1"
+        AURA_SANDBOX: "off"
+      run: |
+        python3 build.py --sanitizer=ubsan test concurrent
+        echo "✓ concurrent tests clean under UBSAN"
 
   # Security scan starts immediately (no gate dependency) — overlaps with gate.
   security-scan:
