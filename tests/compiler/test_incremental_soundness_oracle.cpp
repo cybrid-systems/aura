@@ -29,6 +29,9 @@
 //   partial-vs-partial prod_ok).
 
 #include "test_harness.hpp"
+#include "compiler/frame_budget.hh"
+#include "compiler/observability_metrics.h"
+#include "compiler/typed_mutation_audit.h"
 
 #include <cstdint>
 #include <fstream>
@@ -47,7 +50,9 @@ extern "C" void aura_test_set_soundness_inject_under_dirty(int v);
 namespace {
 
 using aura::compiler::check_incremental_soundness;
+using aura::compiler::CompilerMetrics;
 using aura::compiler::CompilerService;
+using aura::compiler::current_adaptive_partial_thr;
 using aura::compiler::get_incremental_soundness_mode;
 using aura::compiler::incremental_soundness_enabled;
 using aura::compiler::incremental_soundness_mismatch_atomic;
@@ -57,6 +62,7 @@ using aura::compiler::incremental_soundness_runs_atomic;
 using aura::compiler::inject_soundness_under_dirty_for_test;
 using aura::compiler::ir_equivalent;
 using aura::compiler::ir_function_equivalent;
+using aura::compiler::kRelowerFbMapInconsistent;
 using aura::compiler::note_recent_partial_fallback_pct_for_test;
 using aura::compiler::recent_full_fallback_rate_high;
 using aura::compiler::reset_incremental_soundness_for_test;
@@ -329,12 +335,13 @@ void ac10_prod_sample_real_compare() {
               dirty.find("ir_module_equivalent") != std::string::npos,
           "3226 AC1: #2113 equivalence");
     CHECK(dirty.find("trivially pass") == std::string::npos, "3226 AC1: trivial pass gone");
-    CHECK(dirty.find("RelowerFallbackReason::Other") != std::string::npos,
+    CHECK(dirty.find("RelowerFallbackReason::MapInconsistent") != std::string::npos,
           "3226 AC2: fallback reason on mismatch");
 
     aura_test_set_soundness_sample_bp(10000);
     aura_test_set_soundness_force_mismatch(0);
     aura_test_set_soundness_inject_under_dirty(0);
+    aura::compiler::typed_audit::apply_production_audit_defaults();
     CompilerService cs;
     CHECK(cs.eval("(set-code \"(define a (lambda () 1))\")").has_value(), "3226 AC3: set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "3226 AC3: eval-current");
@@ -355,6 +362,7 @@ void ac10_prod_sample_real_compare() {
               "3226 AC3: sample site present even if this fixture took full");
     }
     aura_test_set_soundness_sample_bp(100);
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
 }
 
 // Issue #3226 AC11: injected IR divergence through the REAL compare
@@ -372,6 +380,7 @@ void ac11_prod_inject_mismatch_forces_full() {
     aura_test_set_soundness_sample_bp(10000);
     aura_test_set_soundness_force_mismatch(0);
     aura_test_set_soundness_inject_under_dirty(1);
+    aura::compiler::typed_audit::apply_production_audit_defaults();
     CompilerService cs;
     CHECK(cs.eval("(set-code \"(define a (lambda () 1))\")").has_value(), "3226 AC2: set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "3226 AC2: eval-current");
@@ -390,13 +399,14 @@ void ac11_prod_inject_mismatch_forces_full() {
     }
     aura_test_set_soundness_inject_under_dirty(0);
     aura_test_set_soundness_sample_bp(100);
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
 }
 
 // Issue #3226 AC12: sample_bp==0 never full-lowers (zero extra).
 void ac12_sample_bp_zero_no_full_lower() {
     std::println("\n--- #3226 AC12: sample_bp=0 zero extra lower ---");
     const auto dirty = read_file("src/compiler/service_dirty.cpp");
-    CHECK(dirty.find("if (sample_eff_bp > 0)") != std::string::npos, "3226 AC4: bp gate");
+    CHECK(dirty.find("sample_eff_bp > 0") != std::string::npos, "3226 AC4: bp gate");
     CHECK(dirty.find("lower_full_same_lambda") != std::string::npos,
           "3226 AC4: helper behind gate");
     aura_test_set_soundness_sample_bp(0);
@@ -425,6 +435,135 @@ void ac12_sample_bp_zero_no_full_lower() {
     CHECK(read_file("tests/issues/test_issue_3226.cpp").empty(), "3226 AC6: no tests/issues");
 }
 
+static bool file_exists_cwd_3585(const char* rel) {
+    return std::ifstream(rel).good() || std::ifstream(std::string("../") + rel).good();
+}
+
+// Issue #3585: sampled production shadow oracle — MapInconsistent closed
+// loop, frame_budget skip, Soft/Off zero extra.
+static void ac3585_1_soak_mismatch_zero() {
+    std::println("\n--- #3585 AC1: production soak sampled mismatch == 0 ---");
+    using namespace aura::compiler::typed_audit;
+    apply_production_audit_defaults();
+    aura_test_set_soundness_sample_bp(10000);
+    aura_test_set_soundness_force_mismatch(0);
+    aura_test_set_soundness_inject_under_dirty(0);
+    CompilerService cs;
+    auto sc = cs.eval("(set-code \"(define f (lambda (x) (+ x 1)))\")");
+    CHECK(sc.has_value(), "3585 AC1: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3585 AC1: eval");
+    auto& m = cs.metrics();
+    const auto mm0 = m.incremental_soundness_mismatch_prod_total.load();
+    for (int i = 0; i < 8; ++i) {
+        cs.public_invalidate_function("f");
+        (void)cs.eval("(eval-current)");
+    }
+    CHECK(m.incremental_soundness_mismatch_prod_total.load() == mm0,
+          "3585 AC1: sampled mismatch == 0");
+    const auto mapc =
+        href(cs, "query:incremental-relower-stats", "relower-fallback-map-inconsistent-count");
+    CHECK(mapc >= 0, "3585 AC3: reuse map-inconsistent-count");
+    aura_test_set_soundness_sample_bp(100);
+    apply_dev_audit_defaults();
+}
+
+static void ac3585_2_frame_budget_bounded() {
+    std::println("\n--- #3585 AC2: frame_budget::active skips sample; budget intact ---");
+    using namespace aura::compiler::typed_audit;
+    apply_production_audit_defaults();
+    aura_test_set_soundness_sample_bp(10000);
+    CompilerService cs;
+    auto sc = cs.eval("(set-code \"(define f (lambda () 1))\")");
+    CHECK(sc.has_value(), "3585 AC2: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3585 AC2: eval");
+    auto& m = cs.metrics();
+    const auto runs0 = m.incremental_soundness_prod_runs_total.load();
+    const auto bud0 = aura::compiler::frame_budget::budget_us();
+    {
+        aura::compiler::frame_budget::FrameBudgetGuard guard;
+        CHECK(aura::compiler::frame_budget::active(), "3585 AC2: budget live");
+        cs.public_invalidate_function("f");
+        CHECK(aura::compiler::frame_budget::budget_us() == bud0, "3585 AC2: did not empty budget");
+    }
+    CHECK(m.incremental_soundness_prod_runs_total.load() == runs0,
+          "3585 AC2: no shadow sample under budget");
+    const auto dirty = read_file("src/compiler/service_dirty.cpp");
+    CHECK(dirty.find("frame_budget::active()") != std::string::npos,
+          "3585 AC2: site consults frame_budget::active");
+    aura_test_set_soundness_sample_bp(100);
+    apply_dev_audit_defaults();
+}
+
+static void ac3585_3_inject_map_inconsistent() {
+    std::println("\n--- #3585 AC3: inject under-mark → MapInconsistent ---");
+    using namespace aura::compiler::typed_audit;
+    apply_production_audit_defaults();
+    aura_test_set_soundness_sample_bp(10000);
+    aura_test_set_soundness_force_mismatch(0);
+    aura_test_set_soundness_inject_under_dirty(1);
+    CompilerService cs;
+    auto sc = cs.eval("(set-code \"(define a (lambda () 1))\")");
+    CHECK(sc.has_value(), "3585 AC3: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3585 AC3: eval");
+    auto& m = cs.metrics();
+    const auto mm0 = m.incremental_soundness_mismatch_prod_total.load();
+    const auto map0 = m.relower_fallback_map_inconsistent_total.load();
+    const auto thr0 = current_adaptive_partial_thr();
+    const auto runs0 = m.incremental_soundness_prod_runs_total.load();
+    cs.public_invalidate_function("a");
+    const auto runs1 = m.incremental_soundness_prod_runs_total.load();
+    if (runs1 > runs0) {
+        CHECK(m.incremental_soundness_mismatch_prod_total.load() > mm0,
+              "3585 AC3: mismatch_prod on inject");
+        CHECK(m.relower_fallback_map_inconsistent_total.load() > map0,
+              "3585 AC3: MapInconsistent noted");
+        CHECK(m.relower_last_fallback_reason.load() ==
+                  static_cast<std::uint8_t>(kRelowerFbMapInconsistent),
+              "3585 AC3: last-reason MapInconsistent");
+        CHECK(current_adaptive_partial_thr() >= thr0, "3585 AC3: adaptive thr non-decreasing");
+    }
+    const auto dirty = read_file("src/compiler/service_dirty.cpp");
+    CHECK(dirty.find("RelowerFallbackReason::MapInconsistent") != std::string::npos,
+          "3585 AC3: mismatch notes MapInconsistent");
+    const auto ath = href(cs, "query:incremental-relower-stats", "adaptive-thr-current");
+    CHECK(ath >= 0, "3585 AC3: reuse adaptive-thr-current");
+    aura_test_set_soundness_inject_under_dirty(0);
+    aura_test_set_soundness_sample_bp(100);
+    apply_dev_audit_defaults();
+}
+
+static void ac3585_4_soft_zero_no_invent() {
+    std::println("\n--- #3585 AC4: Soft/Off zero extra; no invent ---");
+    using namespace aura::compiler::typed_audit;
+    apply_dev_audit_defaults();
+    g_typed_mutation_audit_counters.production_defaults_active.store(0, std::memory_order_relaxed);
+    aura_test_set_soundness_sample_bp(10000);
+    CompilerService cs;
+    auto sc = cs.eval("(set-code \"(define f (lambda () 1))\")");
+    CHECK(sc.has_value(), "3585 AC4: Soft set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3585 AC4: Soft eval");
+    auto& m = cs.metrics();
+    const auto runs0 = m.incremental_soundness_prod_runs_total.load();
+    cs.public_invalidate_function("f");
+    CHECK(m.incremental_soundness_prod_runs_total.load() == runs0,
+          "3585 AC4: Soft does not shadow-sample");
+    aura_test_set_soundness_sample_bp(100);
+    const auto dirty = read_file("src/compiler/service_dirty.cpp");
+    const auto t = read_file("tests/compiler/test_incremental_soundness_oracle.cpp");
+    const auto obs = read_file("src/compiler/observability_metrics.h");
+    CHECK(dirty.find("production_defaults_active()") != std::string::npos,
+          "3585 AC4: production-gated sample");
+    CHECK(dirty.find("schema-3585") == std::string::npos, "3585 AC4: no schema-3585");
+    CHECK(obs.find("g_3585_") == std::string::npos, "3585 AC4: no g_3585_*");
+    CHECK(t.find("ac3585_1_soak_mismatch_zero") != std::string::npos, "3585 AC4: soak present");
+    CHECK(!file_exists_cwd_3585("tests/compiler/test_issue_3585.cpp"),
+          "3585 AC4: no test_issue_3585.cpp");
+    CHECK(!file_exists_cwd_3585("docs/design/3585-prod-soundness-shadow.md"),
+          "3585 AC4: no docs/design/");
+    CHECK(!file_exists_cwd_3585("scripts/coverage/checks/check_prod_soundness_3585.py"),
+          "3585 AC4: no check_3585.py");
+}
+
 } // namespace
 
 int run_test_incremental_soundness_oracle() {
@@ -442,6 +581,10 @@ int run_test_incremental_soundness_oracle() {
     ac10_prod_sample_real_compare();
     ac11_prod_inject_mismatch_forces_full();
     ac12_sample_bp_zero_no_full_lower();
+    ac3585_1_soak_mismatch_zero();
+    ac3585_2_frame_budget_bounded();
+    ac3585_3_inject_map_inconsistent();
+    ac3585_4_soft_zero_no_invent();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

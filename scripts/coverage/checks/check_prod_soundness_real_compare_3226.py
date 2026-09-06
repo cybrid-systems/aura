@@ -54,13 +54,13 @@ def main() -> int:
     must("inject_soundness_under_dirty_for_test", "AC2 inject", dirty)
     must("incremental_soundness_mismatch_prod_total", "AC2 mismatch", dirty)
     must("mark_all_blocks_dirty", "AC2 force-full", dirty)
-    must("RelowerFallbackReason::Other", "AC2 fallback", dirty)
+    must("RelowerFallbackReason::MapInconsistent", "AC2/#3585 fallback", dirty)
     must("ac11_prod_inject_mismatch_forces_full", "AC2 test", t)
 
     must("incremental_soundness_prod_ok_total", "AC3 ok after compare", dirty)
     must("ac10_prod_sample_real_compare", "AC3 test", t)
 
-    must("if (sample_eff_bp > 0)", "AC4 bp gate", dirty)
+    must("if (sample_eff_bp > 0", "AC4 bp gate", dirty)
     must("ac12_sample_bp_zero_no_full_lower", "AC4 test", t)
 
     must("lower_full_same_lambda", "AC5 #2245 linter updated", old)

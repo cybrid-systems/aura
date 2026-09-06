@@ -1741,7 +1741,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_incremental_perblock_closure_bridge_safety.cpp` (—) [domain_suite, theme_compiler] — test_incremental_perblock_closure_bridge_safety.cpp — Issue #600:
 - `tests/compiler/test_incremental_relower_batch.cpp` (—) [large, batch_driver, domain_suite, theme_compiler] — test_incremental_relower_batch.cpp — batch driver for incremental_relower family.
 - `tests/core/test_incremental_restamp.cpp` (—) [domain_suite, theme_core] — Issue #2061 — incremental restamp observability for generation wrap.
-- `tests/compiler/test_incremental_soundness_oracle.cpp` (—) [domain_suite, theme_compiler] — Enable docs (AC5):
+- `tests/compiler/test_incremental_soundness_oracle.cpp` (—) [large, domain_suite, theme_compiler] — Enable docs (AC5):
 - `tests/compiler/test_incremental_type_batch.cpp` (—) [batch_driver, domain_suite, theme_compiler] — test_incremental_type_batch.cpp — batch driver for incremental_type family.
 - `tests/compiler/test_inline_pass_batch.cpp` (—) [batch_driver, domain_suite, theme_compiler] — tests/compiler/test_inline_pass_batch.cpp — inline_pass pair dup-merge (R19 phase 14).
 - `tests/compiler/test_instr_level_relower_pass.cpp` (—) [domain_suite, theme_compiler] — AC1: has_instr_precision / instr_level_eligible under threshold
