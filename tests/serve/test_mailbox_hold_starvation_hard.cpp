@@ -18,6 +18,7 @@
 #include "serve/scheduler.h"
 
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <cstdlib>
 #include <fstream>
@@ -2712,6 +2713,122 @@ static void ac3485_6_source_and_linter() {
     CHECK(read_file("tests/issues/test_issue_3485.cpp").empty(), "3485 AC6: no tests/issues");
 }
 
+// ── Issue #3588: busy-path hold-budget poll (all-busy + edge-free). ──
+static void ac3588_1_busy_all_workers_edge_free() {
+    std::println("\n--- #3588 AC1: all-busy + edge-free holder cancel within 2×SLO ---");
+    const auto wc = read_file("src/serve/worker.cpp");
+    const auto fc = read_file("src/serve/fiber.cpp");
+    const auto fh = read_file("src/serve/fiber.h");
+    CHECK(wc.find("Issue #3588") != std::string::npos, "3588 AC1: worker cites #3588");
+    const auto resume_pos = wc.find("fiber->resume()");
+    const auto busy_pos = wc.find("aura_hold_budget_poll_busy_path()");
+    CHECK(resume_pos != std::string::npos && busy_pos != std::string::npos && resume_pos < busy_pos,
+          "3588 AC1: busy-path poll after fiber swap-back");
+    CHECK(fh.find("aura_hold_budget_poll_busy_path") != std::string::npos,
+          "3588 AC1: ABI declared");
+    CHECK(fc.find("aura_hold_budget_poll_busy_path") != std::string::npos, "3588 AC1: helper");
+    CHECK(fc.find("mutation_hold_live_snapshot()") != std::string::npos,
+          "3588 AC1: reuses live holder snapshot");
+    CHECK(fc.find("aura_fiber_request_hold_budget_cancel") != std::string::npos,
+          "3588 AC1: reuses #2726 cancel");
+    CHECK(fc.find("aura_hold_budget_poll_inbody_window()") != std::string::npos,
+          "3588 AC1: reuses #3071/#3325 inbody poll");
+    CHECK(fc.find("mutation_hold_budget_reject_enabled()") != std::string::npos,
+          "3588 AC1: reject_enabled gate");
+
+    using aura::compiler::Evaluator;
+    using aura::serve::Scheduler;
+    ::unsetenv("AURA_SANDBOX");
+    ::unsetenv("AURA_MUTATION_HOLD_BUDGET_HARD");
+    ::unsetenv("AURA_HOLD_BUDGET_INBODY_BOUND_US");
+    ::setenv("AURA_MUTATION_HOLD_SLO_US", "2000", 1); // 2 ms; 2×SLO = 4 ms
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    CHECK(aura::compiler::mutation_hold_budget_reject_enabled(),
+          "3588 AC1: reject_enabled under production");
+    aura::compiler::mutation_hold_live_reset_for_test();
+    aura::compiler::clear_mutation_hold_budget_inbody_window_for_test();
+    aura::compiler::clear_mutation_hold_budget_forced_fail_closed_for_test();
+    aura::compiler::clear_mutation_hold_budget_forced_unlock_for_test();
+    const auto ex0 = aura::compiler::mutation_hold_budget_inbody_window_exceeded_total_v_read();
+    CompilerService cs;
+    Evaluator::set_query_evaluator(&cs.evaluator());
+    std::atomic<int> ok_flag{1};
+    std::atomic<int> ran{0};
+    std::atomic<int> polled{0};
+    std::atomic<int> held_after{-1};
+    std::atomic<int> depth_after{-1};
+    Scheduler sched(2);
+    sched.spawn([&]() {
+        bool ok = true;
+        {
+            Evaluator::MutationBoundaryGuard g(cs.evaluator(), &ok);
+            auto* f = aura::serve::g_current_fiber;
+            CHECK(f != nullptr, "3588 AC1: holder fiber current");
+            // Tight compute: no yield / no check_gc_safepoint. Busy-path
+            // helper is the 2×SLO watchdog (same shape as #3325 AC1).
+            volatile std::uint64_t sink = 0;
+            const auto t0 = std::chrono::steady_clock::now();
+            while (std::chrono::steady_clock::now() - t0 < std::chrono::milliseconds(5))
+                sink += 1;
+            (void)sink;
+            polled.store(aura::serve::aura_hold_budget_poll_busy_path(), std::memory_order_relaxed);
+            held_after.store(cs.evaluator().mutation_boundary_held() ? 1 : 0,
+                             std::memory_order_relaxed);
+            depth_after.store(cs.evaluator().mutation_boundary_depth_slot_value(/*fiber_id=*/0),
+                              std::memory_order_relaxed);
+            ran.store(1, std::memory_order_relaxed);
+        }
+        ok_flag.store(ok ? 1 : 0, std::memory_order_relaxed);
+    });
+    std::thread io([&]() { sched.run(); });
+    for (int i = 0; i < 200 && ran.load() == 0; ++i)
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    sched.stop();
+    io.join();
+    CHECK(ran.load() == 1, "3588 AC1: holder body ran");
+    CHECK(polled.load() == 1 ||
+              aura::compiler::mutation_hold_budget_inbody_window_exceeded_total_v_read() > ex0,
+          "3588 AC1: busy-path poll exceeded 2×SLO");
+    CHECK(ok_flag.load() == 0, "3588 AC1: dual-topology restore (success forced false)");
+    CHECK(held_after.load() == 0, "3588 AC1: workspace hold cleared");
+    CHECK(depth_after.load() == 0, "3588 AC1: depth slot == 0");
+    Evaluator::set_query_evaluator(nullptr);
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    ::unsetenv("AURA_MUTATION_HOLD_SLO_US");
+    ::setenv("AURA_SANDBOX", "off", 1);
+    aura::compiler::clear_mutation_hold_budget_inbody_window_for_test();
+}
+
+static void ac3588_2_happy_and_soft() {
+    std::println("\n--- #3588 AC2: happy path one snapshot; Soft skip ---");
+    const auto fc = read_file("src/serve/fiber.cpp");
+    CHECK(fc.find("mutation_hold_budget_reject_enabled()") != std::string::npos,
+          "3588 AC2: Soft/Off inside reject_enabled");
+    CHECK(fc.find("mutation_hold_live_snapshot()") != std::string::npos,
+          "3588 AC2: one snapshot on production face");
+    CHECK(fc.find("slo * 2ULL") != std::string::npos, "3588 AC2: 2×SLO threshold");
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    ::setenv("AURA_SANDBOX", "off", 1);
+    CHECK(!aura::compiler::mutation_hold_budget_reject_enabled(),
+          "3588 AC2: Soft reject_enabled false");
+}
+
+static void ac3588_3_reuse_no_new_key() {
+    std::println("\n--- #3588 AC3: reuse inbody-window-exceeded; no new query key ---");
+    const auto q = read_query_srcs();
+    CHECK(source_has_key(q, "hold-budget-inbody-window-exceeded-total"),
+          "3588 AC3: reuse inbody-window-exceeded");
+    CHECK(q.find("schema-3588") == std::string::npos, "3588 AC3: no schema-3588");
+    CHECK(q.find("issue-3588") == std::string::npos, "3588 AC3: no issue-3588 query key");
+    const auto fc = read_file("src/serve/fiber.cpp");
+    CHECK(fc.find("g_3588_") == std::string::npos, "3588 AC3: no new g_3588_* counter");
+    CHECK(read_file("tests/serve/test_issue_3588.cpp").empty(), "3588 AC3: no invent");
+    CHECK(read_file("docs/design/3588-busy-path-hold-budget.md").empty(),
+          "3588 AC3: no docs/design/");
+    CHECK(read_file("scripts/coverage/checks/check_hold_budget_busy_path_3588.py").empty(),
+          "3588 AC3: no invented check_*3588.py");
+}
+
 } // namespace
 
 int run_test_mailbox_hold_starvation_hard() {
@@ -2830,8 +2947,12 @@ int run_test_mailbox_hold_starvation_hard() {
     ac3485_1_p99_hot_held_over_budget();
     ac3485_2_soft_observe_only();
     ac3485_6_source_and_linter();
-    std::println("\n=== #2551..#2761 + #2847 + #3289 + #3485: {} passed, {} failed ===", g_passed,
-                 g_failed);
+    std::println("\n=== Issue #3588: busy-path hold-budget poll (all-busy + edge-free) ===");
+    ac3588_1_busy_all_workers_edge_free();
+    ac3588_2_happy_and_soft();
+    ac3588_3_reuse_no_new_key();
+    std::println("\n=== #2551..#2761 + #2847 + #3289 + #3485 + #3588: {} passed, {} failed ===",
+                 g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
 

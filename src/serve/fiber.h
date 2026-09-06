@@ -1463,6 +1463,10 @@ private:
 // no workspace_mtx_ unlock). Soft: 0 (observe only). Happy path:
 // one acquire of armed_ns == 0.
 extern "C" int aura_hold_budget_poll_inbody_window(void) noexcept;
+// Issue #3588: busy-path (post-swap) poll. Soft/Off: 0. Happy path
+// (hold ≤ 2×SLO): one snapshot. Over 2×SLO: arm #2726 cancel then
+// reuse #3071/#3325 inbody-window poll.
+extern "C" int aura_hold_budget_poll_busy_path(void) noexcept;
 extern "C" int aura_hold_budget_cancel_armed(void) noexcept;
 // Issue #3194: same-fiber force-release past inbody window (weak in fiber_bridge).
 extern "C" void aura_evaluator_force_release_outermost_holder(std::uint64_t fiber_id) noexcept;

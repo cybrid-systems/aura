@@ -42,6 +42,7 @@ def main() -> int:
             fails.append(f"{label}: missing {n!r}")
 
     fc = _read("src/serve/fiber.cpp")
+    fh = _read("src/serve/fiber.h")
     wc = _read("src/serve/worker.cpp")
     sc = _read("src/serve/scheduler.cpp")
     mhb = _read("src/compiler/mutation_hold_budget.h")
@@ -77,6 +78,27 @@ def main() -> int:
     must("run_test_hold_budget_no_edge_force_3325", "AC5", t)
     must("aura_hold_budget_poll_inbody_window", "AC5 chaos poll", chaos)
     must("check_hold_budget_no_edge_force_3325", "AC6 build.py", build)
+
+    # Issue #3588: busy-path poll after fiber swap-back (extend #3325;
+    # no new check_*3588.py). All-busy + edge-free never parks.
+    starve = _read("tests/serve/test_mailbox_hold_starvation_hard.cpp")
+    must("Issue #3588", "AC3588 worker cite", wc)
+    resume_pos = wc.find("fiber->resume()")
+    busy_pos = wc.find("aura_hold_budget_poll_busy_path()")
+    if not (resume_pos >= 0 and busy_pos > resume_pos):
+        fails.append("AC3588: busy-path poll must follow fiber->resume()")
+    must("aura_hold_budget_poll_busy_path", "AC3588 helper", fc)
+    must("mutation_hold_live_snapshot()", "AC3588 snapshot", fc)
+    must("aura_fiber_request_hold_budget_cancel", "AC3588 #2726 cancel", fc)
+    must("mutation_hold_budget_reject_enabled()", "AC3588 Soft gate", fc)
+    must("aura_hold_budget_poll_busy_path", "AC3588 ABI", fh)
+    must("ac3588_1_busy_all_workers_edge_free", "AC3588 test", starve)
+    must("ac3588_2_happy_and_soft", "AC3588 Soft test", starve)
+    must("ac3588_3_reuse_no_new_key", "AC3588 no new key", starve)
+    if (ROOT / "scripts" / "coverage" / "checks" / "check_hold_budget_busy_path_3588.py").is_file():
+        fails.append("AC3588: invented check_hold_budget_busy_path_3588.py")
+    if (ROOT / "tests" / "serve" / "test_issue_3588.cpp").is_file():
+        fails.append("AC3588: forbidden tests/serve/test_issue_3588.cpp")
 
     if (ROOT / "tests" / "issues" / "test_issue_3325.cpp").is_file():
         fails.append("AC5: forbidden tests/issues/test_issue_3325.cpp per #81967")
