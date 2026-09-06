@@ -22,9 +22,16 @@ import aura.compiler.ir_cache_pure;
 import aura.compiler.value;
 
 extern "C" void aura_clear_partial_relower_threshold_force(void);
+extern "C" std::uint8_t aura_hot_update_current_storm_level(void);
+extern "C" void aura_hot_update_note_deopt(void);
+extern "C" void aura_hot_update_set_deopt_storm_threshold(std::uint64_t, std::uint64_t);
+extern "C" void aura_hot_update_reset_deopt_storm_state_for_test(void);
+extern "C" void aura_hot_update_clear_global_throttle_keep_hysteresis_for_test(void);
+extern "C" void aura_hot_update_set_shape_storm_active(int);
 
 namespace {
 
+using aura::compiler::apply_partial_relower_storm_gate;
 using aura::compiler::avg_full_relower_cost_ns;
 using aura::compiler::avg_partial_relower_cost_ns;
 using aura::compiler::CompilerService;
@@ -36,12 +43,15 @@ using aura::compiler::kAdaptivePartialRelowerMax;
 using aura::compiler::kAdaptivePartialRelowerMin;
 using aura::compiler::kAdaptiveRelowerMinSamples;
 using aura::compiler::kDefaultPartialRelowerThreshold;
+using aura::compiler::kStormLevelGlobal;
+using aura::compiler::kStormLevelShape;
 using aura::compiler::partial_relower_cost_samples_atomic;
 using aura::compiler::partial_relower_threshold_is_forced;
 using aura::compiler::partial_vs_full_win_ratio_bp;
 using aura::compiler::reset_partial_relower_threshold_for_test;
 using aura::compiler::set_partial_relower_threshold;
 using aura::compiler::should_partial_relower;
+using aura::compiler::should_partial_relower_storm_aware;
 using aura::compiler::types::as_int;
 using aura::compiler::types::is_int;
 using aura::test::g_failed;
@@ -284,6 +294,130 @@ void ac2248_agent_driven_adaptive_thr() {
     aura::compiler::reset_adaptive_thr_for_test();
 }
 
+static bool file_exists_cwd_3582(const char* rel) {
+    return std::ifstream(rel).good() || std::ifstream(std::string("../") + rel).good();
+}
+
+static void trip_global_storm_3582() {
+    aura_hot_update_set_deopt_storm_threshold(5, 1000);
+    for (int i = 0; i < 10; ++i)
+        aura_hot_update_note_deopt();
+}
+
+static void clear_storm_3582() {
+    aura_hot_update_reset_deopt_storm_state_for_test();
+    aura_hot_update_set_shape_storm_active(0);
+}
+
+// ── Issue #3582: forced-freeze observability + storm-alternation monotonicity ──
+// #3101 freezes adaptive on explicit set; only aura_clear / storm-exit
+// unfreezes. Existing query:incremental-relower-policy-stats key
+// "threshold-forced" is the freeze-state face (no new query key).
+// #3070 storm-exit cooldown keeps force-full so Shape↔Global cannot
+// oscillate partial↔full.
+
+static void ac3582_1_forced_visible_on_existing_face() {
+    std::println("\n--- #3582 AC1: forced freeze visible on existing threshold-forced ---");
+    reset_partial_relower_threshold_for_test();
+    CompilerService cs;
+    CHECK(cs.eval("(+ 1 1)").has_value(), "3582 AC1: eval");
+    CHECK(href(cs, "query:incremental-relower-policy-stats", "threshold-forced") == 0,
+          "3582 AC1: adaptive → threshold-forced==0");
+    CHECK(!partial_relower_threshold_is_forced(), "3582 AC1: C++ helper unforced");
+    set_partial_relower_threshold(12);
+    CHECK(partial_relower_threshold_is_forced(), "3582 AC1: set freezes");
+    CHECK(href(cs, "query:incremental-relower-policy-stats", "threshold-forced") == 1,
+          "3582 AC1: set → threshold-forced==1 (existing face)");
+    CHECK(href(cs, "query:incremental-relower-policy-stats", "partial-relower-threshold") == 12,
+          "3582 AC1: thr=12");
+    reset_partial_relower_threshold_for_test();
+}
+
+static void ac3582_2_clear_restores_adaptive() {
+    std::println("\n--- #3582 AC2: clear restores adaptive ---");
+    reset_partial_relower_threshold_for_test();
+    set_partial_relower_threshold(4);
+    CHECK(partial_relower_threshold_is_forced(), "3582 AC2: frozen at 4");
+    aura_clear_partial_relower_threshold_force();
+    CHECK(!partial_relower_threshold_is_forced(), "3582 AC2: clear unfreezes");
+    CompilerService cs;
+    CHECK(cs.eval("(+ 1 1)").has_value(), "3582 AC2: eval");
+    CHECK(href(cs, "query:incremental-relower-policy-stats", "threshold-forced") == 0,
+          "3582 AC2: query forced==0 after clear");
+    // Adaptive may re-tighten from cost history (thr value kept until adapt).
+    inject_adaptive_relower_cost_samples_for_test(/*partial*/ 100, /*full*/ 10000,
+                                                  /*n*/ kAdaptiveRelowerMinSamples + 4);
+    const auto thr = get_partial_relower_threshold();
+    CHECK(thr > 4, "3582 AC2: adaptive raised thr after clear (was frozen at 4)");
+    CHECK(thr <= kAdaptivePartialRelowerMax, "3582 AC2: still in adaptive band");
+    CHECK(!partial_relower_threshold_is_forced(), "3582 AC2: still unforced after samples");
+    reset_partial_relower_threshold_for_test();
+}
+
+static void ac3582_3_storm_alternation_monotonic() {
+    std::println("\n--- #3582 AC3: Shape↔deopt-storm alternation is monotonic ---");
+    reset_partial_relower_threshold_for_test();
+    clear_storm_3582();
+    CHECK(should_partial_relower_storm_aware(3), "3582 AC3: None+3 → partial");
+
+    aura_hot_update_set_shape_storm_active(1);
+    CHECK((aura_hot_update_current_storm_level() & kStormLevelShape) != 0, "3582 AC3: Shape bit");
+    CHECK(should_partial_relower_storm_aware(3), "3582 AC3: Shape+3 still partial (#2212)");
+
+    trip_global_storm_3582();
+    CHECK((aura_hot_update_current_storm_level() & kStormLevelGlobal) != 0,
+          "3582 AC3: Global bit (Both)");
+    CHECK(!should_partial_relower_storm_aware(3), "3582 AC3: Both+3 escalate to full");
+
+    // Drop Global, keep Shape — #3070/#3515 cooldown must not fall back
+    // to partial (escalate-only; no partial↔full oscillation).
+    aura_hot_update_clear_global_throttle_keep_hysteresis_for_test();
+    aura_hot_update_set_shape_storm_active(1);
+    CHECK((aura_hot_update_current_storm_level() & kStormLevelGlobal) == 0, "3582 AC3: Global off");
+    CHECK((aura_hot_update_current_storm_level() & kStormLevelShape) != 0,
+          "3582 AC3: Shape remains");
+    CHECK(!apply_partial_relower_storm_gate(true),
+          "3582 AC3: #3070 cooldown keeps force-full (no drop to partial)");
+    CHECK(!should_partial_relower_storm_aware(3),
+          "3582 AC3: Shape after lost Global still full (monotonic)");
+    CHECK(!should_partial_relower_storm_aware(3),
+          "3582 AC3: second consult still full (no oscillation)");
+
+    clear_storm_3582();
+    reset_partial_relower_threshold_for_test();
+}
+
+static void ac3582_4_source_cite_no_invent() {
+    std::println("\n--- #3582 AC4: source-cite #3101/#3070 + no invent ---");
+    const auto q = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
+    const auto irc = read_file("src/compiler/ir_cache_pure.ixx");
+    const auto hur = read_file("src/compiler/hot_update_registry.cpp");
+    const auto t = read_file("tests/compiler/test_adaptive_partial_relower_threshold.cpp");
+    CHECK(q.find("threshold-forced") != std::string::npos, "3582 AC4: existing freeze face");
+    CHECK(q.find("partial_relower_threshold_is_forced()") != std::string::npos,
+          "3582 AC4: query reads forced helper");
+    CHECK(irc.find("Issue #3101") != std::string::npos, "3582 AC4: #3101 cite");
+    CHECK(irc.find("partial_relower_threshold_forced_atomic") != std::string::npos,
+          "3582 AC4: forced atomic");
+    CHECK(irc.find("Issue #3070") != std::string::npos, "3582 AC4: #3070 cite");
+    CHECK(irc.find("storm_exit_force_full_active") != std::string::npos,
+          "3582 AC4: #3070 cooldown consult");
+    CHECK(hur.find("Issue #3070") != std::string::npos, "3582 AC4: registry #3070");
+    CHECK(hur.find("kStormExitForceFullConsults") != std::string::npos,
+          "3582 AC4: cooldown window");
+    CHECK(t.find("ac3582_1_forced_visible_on_existing_face") != std::string::npos,
+          "3582 AC4: AC1 present");
+    CHECK(q.find("schema-3582") == std::string::npos &&
+              irc.find("schema-3582") == std::string::npos,
+          "3582 AC4: no schema-3582");
+    CHECK(!file_exists_cwd_3582("tests/compiler/test_issue_3582.cpp"),
+          "3582 AC4: no test_issue_3582.cpp");
+    CHECK(!file_exists_cwd_3582("docs/design/3582-threshold-forced-storm.md"),
+          "3582 AC4: no docs/design/");
+    CHECK(!file_exists_cwd_3582("scripts/coverage/checks/check_threshold_forced_3582.py"),
+          "3582 AC4: no check_3582.py");
+}
+
 } // namespace
 
 int run_test_adaptive_partial_relower_threshold() {
@@ -295,6 +429,10 @@ int run_test_adaptive_partial_relower_threshold() {
     ac5_regression_pure();
     ac3101_storm_exit_clears_force();
     ac2248_agent_driven_adaptive_thr();
+    ac3582_1_forced_visible_on_existing_face();
+    ac3582_2_clear_restores_adaptive();
+    ac3582_3_storm_alternation_monotonic();
+    ac3582_4_source_cite_no_invent();
     reset_partial_relower_threshold_for_test();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
