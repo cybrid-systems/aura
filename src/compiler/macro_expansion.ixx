@@ -241,6 +241,17 @@ export [[nodiscard]] FiberHygieneStats get_fiber_hygiene_metrics(std::uint32_t f
 
 // Clone a FlatAST subtree with optional param substitution and
 // hygienic renaming (name_map). hyg_ctr is per-call (instance-local).
+//
+// Issue #3574 depth-limit contract (Soft/Off unique exceed form):
+// when hygiene_depth >= effective limit (min of hard MAX_HYGIENE_DEPTH,
+// runtime cap, capability — #2101), the recursive frame returns
+// NULL_NODE and stamps kHygieneLimitReasonDepthLimit +
+// g_macro_origin_provenance_errors. The parent keeps the cloned node
+// and stores NULL_NODE as that child (a hole at the limit-depth path).
+// Callers MUST handle NULL_NODE children; this is the only depth-exceed
+// shape on the no-boundary path. Production may fail-closed restore the
+// whole clone (ExpandCheckpointGuard). Boundary rollback is
+// test_hygiene_checkpoint — not reimplemented here.
 export aura::ast::NodeId clone_macro_body(
     aura::ast::FlatAST& target, aura::ast::StringPool& target_pool, aura::ast::FlatAST& source,
     aura::ast::StringPool& source_pool, aura::ast::NodeId body_id,
