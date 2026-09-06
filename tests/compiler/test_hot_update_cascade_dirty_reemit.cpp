@@ -23,6 +23,7 @@
 #include "compiler/hot_update_registry.hh"
 #include "compiler/aura_jit_bridge.h"
 #include "compiler/typed_mutation_audit.h"
+#include "compiler/aot_reload_consistency_proof.h"
 
 extern "C" void aura_reset_runtime();
 extern "C" void aura_hot_update_set_reemit_boundary_policy(int policy);
@@ -556,6 +557,59 @@ static void ac3059_4_linter_no_invent() {
           "3059 AC5: no docs/design/3059-* per #1655");
 }
 
+// ── Issue #3573: mutate×reemit bounded soak — proof hygiene + residual ──
+// Repeated facade rounds (mark dirty → reemit → success) must never leave
+// a fail-stamped proof behind (#2845 face), a sticky force bit, or new
+// residual. Bounded N=8; per-round fresh CompilerService follows the AC4
+// pattern (emit_ok + static sentinel name — never pins a live JIT pointer
+// that dies with the service).
+static void ac_soak_3573_mutate_reemit_hygiene() {
+    std::println("\n--- #3573: mutate×reemit bounded soak — proof hygiene + residual ---");
+    auto& reg = hot_update_registry();
+    static ReemitFeed feed;
+    feed.names = {"__hu_soak_3573"};
+    feed.regions = {1};
+    feed.cursor = 0;
+    aura_set_reemit_candidate_fn(&reemit_candidate_iter, &feed);
+    aura_set_aot_emit_fn(&emit_ok, nullptr);
+
+    // #2845 hygiene contract: the soak must not produce NEW fail-path
+    // stamps. The proof's would_allow_native field itself is process-
+    // global and is legitimately re-stamped by success commits (healing
+    // fail faces left by earlier windows) — so equality against a
+    // baseline is NOT the contract; the fail-stamp COUNTER is.
+    const auto fail_stamp0 = aura_aot_reload_consistency_proof_stamped_on_fail_total();
+    const auto force0 = reg.force_jit_regions_mask();
+    const auto residual0 = reg.residual_force_mask();
+    std::uint32_t sid0 = 0;
+    for (int round = 0; round < 8; ++round) {
+        feed.cursor = 0;
+        CompilerService cs;
+        CHECK(cs.eval("(set-code \"(define (id x) x) (id 1)\")").has_value(), "3573: set-code");
+        CHECK(cs.eval("(eval-current)").has_value(), "3573: eval-current");
+        const auto succ_prev = reg.snapshot().reemit_success_total;
+        const auto fail_prev = aura_aot_reload_consistency_proof_stamped_on_fail_total();
+        cs.public_mark_define_dirty("id");
+        CHECK(reg.snapshot().reemit_success_total > succ_prev,
+              "3573: round advanced reemit success");
+        CHECK(aura_aot_reload_consistency_proof_stamped_on_fail_total() == fail_prev,
+              "3573: reemit round does not fail-stamp the proof (#2845)");
+        CHECK(reg.force_jit_regions_mask() == force0,
+              "3573: healthy window keeps force mask unchanged");
+        if (round == 0)
+            sid0 = aura_lookup_stable_func_id("__hu_soak_3573");
+        else
+            CHECK(aura_lookup_stable_func_id("__hu_soak_3573") == sid0,
+                  "3573: stable func id preserved across rounds");
+    }
+    CHECK(aura_aot_reload_consistency_proof_stamped_on_fail_total() == fail_stamp0,
+          "3573: zero fail stamps across the soak (#2845 face)");
+    CHECK(reg.residual_force_mask() == residual0, "3573: no residual introduced by the soak");
+    aura_set_aot_emit_fn(nullptr, nullptr);
+    aura_set_reemit_candidate_fn(nullptr, nullptr);
+    aura_clear_stable_func_id_map();
+}
+
 } // namespace
 
 int main() {
@@ -588,6 +642,8 @@ int main() {
         CompilerService cs;
         ac2273_deferred_reemit_seen_on_steal(cs);
     }
+    reset_runtime_after_cs();
+    ac_soak_3573_mutate_reemit_hygiene();
     std::println("\n=== {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
