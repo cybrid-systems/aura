@@ -1,0 +1,51 @@
+{
+  "issue": 3582,
+  "title": "Issue #3582: partial_relower_threshold forced-freeze observability + storm-alternation monotonicity",
+  "ok": "OK: Issue #3582 threshold-forced face pins freeze/clear; Shape↔Global alternation stays monotonic under #3070 cooldown.",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "tests/compiler/test_adaptive_partial_relower_threshold.cpp",
+      "contains": [
+        "3582 AC1",
+        "threshold-forced==1 (existing face)"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/compiler/test_adaptive_partial_relower_threshold.cpp",
+      "contains": [
+        "3582 AC2",
+        "clear unfreezes",
+        "adaptive raised thr after clear"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/compiler/test_adaptive_partial_relower_threshold.cpp",
+      "contains": [
+        "3582 AC3",
+        "#3070 cooldown keeps force-full",
+        "no oscillation"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/compiler/test_adaptive_partial_relower_threshold.cpp",
+      "contains": [
+        "3582 AC4",
+        "existing freeze face",
+        "#3101 cite",
+        "#3070 cite"
+      ]
+    },
+    {
+      "ac": "NO-INVENT",
+      "forbid": [
+        "tests/compiler/test_issue_3582.cpp",
+        "docs/design/3582-threshold-forced-storm.md",
+        "scripts/coverage/checks/check_threshold_forced_3582.py"
+      ]
+    }
+  ]
+}
