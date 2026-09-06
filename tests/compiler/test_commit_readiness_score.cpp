@@ -34,6 +34,7 @@ using aura::compiler::typed_audit::commit_readiness_live_policy;
 using aura::compiler::typed_audit::CommitReadinessInput;
 using aura::compiler::typed_audit::g_linear_ir_fastpath_boundary_depth_override;
 using aura::compiler::typed_audit::ir_typed_entry_commit_readiness_ok;
+using aura::compiler::typed_audit::kPendingFullSolveTypedEntryConsumeIssue;
 using aura::compiler::typed_audit::kTypeLinearProofOutcomeReject;
 using aura::compiler::typed_audit::kTypeLinearProofOutcomeStamped;
 using aura::compiler::typed_audit::note_pending_full_solve_residual;
@@ -384,6 +385,76 @@ static void ac3510_depth_zero_negative_authority() {
     CHECK(read_file("docs/design/3568-typed-entry-quiet.md").empty(), "3568 AC5: no docs/design");
 }
 
+// ── Issue #3579: pending_full_solve residual consume scope ──
+// Real-quiet depth==0 (override<0) does not consult the pending face.
+// Probe (override==0) and depth>0 still refuse. Zero behavior change.
+
+static bool file_exists_cwd_3579(const char* rel) {
+    return std::ifstream(rel).good() || std::ifstream(std::string("../") + rel).good();
+}
+
+static void ac3579_1_pending_depth0_real_quiet_allows() {
+    std::println("\n--- #3579 AC1: pending residual + depth==0 real-quiet allows ---");
+    apply_production_audit_defaults();
+    clear_type_linear_commit_proof_for_test();
+    clear_type_linear_proof_outcome_for_test();
+    reset_pending_full_solve_residual_for_test();
+    note_pending_full_solve_residual(1, /*hard=*/true);
+    g_linear_ir_fastpath_boundary_depth_override = -1;
+    CHECK(ir_typed_entry_commit_readiness_ok(),
+          "3579 AC1: pending face does not block real Quiet depth==0 (#3568)");
+    reset_pending_full_solve_residual_for_test();
+    apply_dev_audit_defaults();
+    g_linear_ir_fastpath_boundary_depth_override = -1;
+}
+
+static void ac3579_2_pending_depth_gt0_refuses() {
+    std::println("\n--- #3579 AC2: pending residual + depth>0 / probe refuses ---");
+    apply_production_audit_defaults();
+    clear_type_linear_commit_proof_for_test();
+    clear_type_linear_proof_outcome_for_test();
+    reset_pending_full_solve_residual_for_test();
+    note_pending_full_solve_residual(1, /*hard=*/true);
+
+    g_linear_ir_fastpath_boundary_depth_override = 0;
+    CHECK(!ir_typed_entry_commit_readiness_ok(),
+          "3579 AC2: probe override==0 still refuses pending (#3510 AC3)");
+
+    // Green last-proof so depth>0 reaches commit_readiness live policy
+    // (would_allow / linear_ok / stamper pass); pending face is the deny.
+    publish_type_linear_proof_outcome(kTypeLinearProofOutcomeStamped);
+    publish_last_proof_face(true, true);
+    g_linear_ir_fastpath_boundary_depth_override = 1;
+    CHECK(!ir_typed_entry_commit_readiness_ok(),
+          "3579 AC2: depth>0 consumes pending via commit_readiness");
+
+    reset_pending_full_solve_residual_for_test();
+    clear_type_linear_commit_proof_for_test();
+    clear_type_linear_proof_outcome_for_test();
+    apply_dev_audit_defaults();
+    g_linear_ir_fastpath_boundary_depth_override = -1;
+}
+
+static void ac3579_3_consume_scope_source_cite() {
+    std::println("\n--- #3579 AC3: consume-scope boundary comment source-cite ---");
+    const auto h = read_file("src/compiler/typed_mutation_audit.h");
+    CHECK(kPendingFullSolveTypedEntryConsumeIssue == 3579, "3579 AC3: issue constant");
+    CHECK(h.find("kPendingFullSolveTypedEntryConsumeIssue = 3579") != std::string::npos,
+          "3579 AC3: stamp");
+    CHECK(h.find("pending_full_solve residual consume scope") != std::string::npos,
+          "3579 AC3: consume-scope comment");
+    CHECK(h.find("does not consult pending_full_solve_residual_face_hit()") != std::string::npos,
+          "3579 AC3: real-quiet does not consult pending");
+    CHECK(h.find("Do not move the pending check") != std::string::npos,
+          "3579 AC3: do not hoist pending above real-quiet return");
+    CHECK(!file_exists_cwd_3579("tests/compiler/test_issue_3579.cpp"),
+          "3579 AC3: no test_issue_3579.cpp");
+    CHECK(!file_exists_cwd_3579("docs/design/3579-pending-consume-scope.md"),
+          "3579 AC3: no docs/design/");
+    CHECK(!file_exists_cwd_3579("scripts/coverage/checks/check_pending_consume_scope_3579.py"),
+          "3579 AC3: no check_3579.py");
+}
+
 } // namespace
 
 int run_test_commit_readiness_score() {
@@ -397,6 +468,9 @@ int run_test_commit_readiness_score() {
     ac3414_no_tls_default_solved_refused();
     ac3416_last_proof_eval_identity();
     ac3510_depth_zero_negative_authority();
+    ac3579_1_pending_depth0_real_quiet_allows();
+    ac3579_2_pending_depth_gt0_refuses();
+    ac3579_3_consume_scope_source_cite();
     apply_dev_audit_defaults();
     std::println("\n=== #2553: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
