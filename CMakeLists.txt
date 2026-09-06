@@ -440,6 +440,27 @@ AT(step15_letrec_fact5
 AT(step15_letrec_fact10
     "(letrec ((fact (lambda (n) (if (= n 0) 1 (* n (fact (- n 1))))))) (fact 10))" 3628800)
 
+# Shared serve/exec .cpp for test_ir + test_concurrent (compiled once).
+# OBJECT, not FILE_SET: aura / test_ir still cannot share a ninja
+# (GCC 16 ealias ICE on ast.ixx). These TUs only `import std`.
+add_library(aura_serve_fiber_objects OBJECT
+    src/serve/fiber.cpp
+    src/serve/worker.cpp
+    src/serve/steal_safety.cpp
+    src/serve/runtime_production_abi.cpp # Issue #2955
+    src/serve/scheduler.cpp
+    src/serve/gc_coordinator.cpp
+    src/compiler/fiber_bridge.cpp
+    src/compiler/messaging_bridge_impl.cpp
+    src/exec/execution_adapter.cpp
+    src/exec/combinators.cpp
+)
+set_property(TARGET aura_serve_fiber_objects PROPERTY CXX_MODULE_STD ON)
+set_target_properties(aura_serve_fiber_objects PROPERTIES POSITION_INDEPENDENT_CODE ON)
+target_include_directories(aura_serve_fiber_objects PRIVATE src src/compiler)
+aura_test_compile_options(aura_serve_fiber_objects)
+target_compile_definitions(aura_serve_fiber_objects PRIVATE AURA_ALLOW_IR_SOA_SINGLE_MARK=1)
+
 # ── IR tests ─────────────────────────────────────────────────────
 add_executable(test_ir tests/compiler/test_ir.cpp)
 set_property(TARGET test_ir PROPERTY CXX_MODULE_STD ON)
@@ -448,15 +469,8 @@ target_sources(test_ir PRIVATE
     src/core/contract_handler.cpp
     src/core/contract_stub.cpp
     src/core/mutation_impl.cpp
-    src/serve/fiber.cpp
-    src/serve/worker.cpp
-    src/serve/steal_safety.cpp
-    src/serve/runtime_production_abi.cpp # Issue #2955
     src/serve/thread_pool.cpp
-    src/serve/scheduler.cpp
-    src/serve/gc_coordinator.cpp
-    src/exec/execution_adapter.cpp
-    src/exec/combinators.cpp
+    $<TARGET_OBJECTS:aura_serve_fiber_objects>
     src/core/ast_impl.cpp
     src/core/ast_stability.cpp
     src/core/type_impl.cpp
@@ -480,7 +494,6 @@ target_sources(test_ir PRIVATE
     # Issue #1884: C hooks for TypedMutationAudit correlation (non-module)
     src/compiler/typed_mutation_audit_hooks.cpp
     src/compiler/arity_impl.cpp
-    src/compiler/messaging_bridge_impl.cpp
     # Issue #461: aura_jit_bridge.cpp provides
     # aura_jit_fallback_count_v_read (used by
     # query:jit-fallback-stats in evaluator_primitives_query.cpp).
@@ -518,15 +531,7 @@ set_property(TARGET test_concurrent PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_concurrent PRIVATE src)
 target_sources(test_concurrent PRIVATE
     src/compiler/test_concurrent_stubs.cpp # Issue #2858 / #2370: steal + storm TLS stubs
-    src/serve/fiber.cpp
-    src/serve/worker.cpp
-    src/serve/steal_safety.cpp
-    src/serve/runtime_production_abi.cpp # Issue #2955
-    src/serve/scheduler.cpp
-    src/serve/gc_coordinator.cpp
-    src/exec/execution_adapter.cpp
-    src/exec/combinators.cpp
-    src/compiler/messaging_bridge_impl.cpp
+    $<TARGET_OBJECTS:aura_serve_fiber_objects>
     # Issue #195: fiber.cpp has a static initializer that
     # calls aura_set_current_fiber_id_fn (defined in
     # aura_jit_runtime.cpp) to install the per-fiber id
@@ -550,16 +555,6 @@ target_sources(test_concurrent PRIVATE
     # returns 0 (no primitive found). See
     # src/compiler/aura_jit_prim_dispatch_stub.cpp for details.
     src/compiler/aura_jit_prim_dispatch_stub.cpp
-    # Issue #439: fiber_bridge.cpp provides the
-    # C-linkage shims (aura_evaluator_request_gc_safepoint,
-    # aura_evaluator_wait_for_safepoint,
-    # aura_evaluator_mutation_boundary_depth) called
-    # by Fiber::check_gc_safepoint (from fiber.cpp).
-    # Without this, test_concurrent fails to link with
-    # "undefined reference to aura_evaluator_request_gc_safepoint".
-    # Note: this is a non-module .cpp (not a module
-    # partition) so non-module binaries can include it.
-    src/compiler/fiber_bridge.cpp
 )
 set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")

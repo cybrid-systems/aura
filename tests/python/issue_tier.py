@@ -1,7 +1,7 @@
 """Resolve which issue test targets to build/run for fast vs full CI.
 
 Issue #1484 sub-task 4 audit (2026-07-16): AURA_ISSUES_TIER=fast
-covers 23 targets (10 bundles + 5 test_issue_* + 8 other) —
+covers 24 targets (10 bundles + 5 test_issue_* + domain batches) —
 sufficient for catching broken-include regressions in PR CI.
 The 9 broken files fixed at commit 313c530d were in low-tier
 tests (per issue body), and the new test_check_test_includes.sh

@@ -113,6 +113,8 @@ def check_issues_fast(errors: list[str]) -> None:
             or target.startswith("test_cyber_cat_")
             or target.startswith("test_arena_")
             or target.startswith("test_compact_")
+            or target.startswith("test_densify_")
+            or target.startswith("test_orch_")
             or target == "test_gc_batch"
         ):
             _fail(
