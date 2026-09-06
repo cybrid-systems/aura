@@ -579,9 +579,48 @@ int run_test_steal_safety_production_residual_zero() {
               "AC16d: tests/issues/test_issue_3385.cpp absent (#81967)");
     }
 
-    std::println(
-        "\n=== #3134/#3288/#3385 production-readiness residual-zero: {} passed, {} failed ===",
-        g_passed, g_failed);
+    // ── #3586: Scheduler::run refuses unarmed multi-worker ──
+    {
+        std::println("\n--- #3586: bootstrap order (unarmed refuse / arm-before-start) ---");
+        const auto sched = read_file("src/serve/scheduler.cpp");
+        CHECK(sched.find("Issue #3586") != std::string::npos, "3586: scheduler cites");
+        CHECK(sched.find("aura_production_defaults_active_probe() == 0") != std::string::npos,
+              "3586: unarmed probe");
+        CHECK(sched.find("AURA_SANDBOX=off") != std::string::npos, "3586: sandbox=off escape");
+        CHECK(sched.find("multi-worker needs production bootstrap") != std::string::npos,
+              "3586: FATAL");
+        CHECK(sched.find("std::abort()") != std::string::npos, "3586: abort");
+        const auto p3586 = sched.find("Issue #3586");
+        const auto pstart = sched.find("w->start()");
+        CHECK(p3586 != std::string::npos && pstart != std::string::npos && p3586 < pstart,
+              "3586: refuse before WorkerThread::start");
+        // Armed short-circuit: probe != 0 skips getenv (one load).
+        CHECK(sched.find("workers_.size() > 1 && aura_production_defaults_active_probe()") !=
+                  std::string::npos,
+              "3586: worker>1 then one probe");
+        CHECK(sched.find("schema-3586") == std::string::npos, "3586: no new query key");
+        CHECK(!std::filesystem::exists(std::filesystem::current_path() / "tests" / "compiler" /
+                                       "test_issue_3586.cpp"),
+              "3586: no test_issue_3586.cpp");
+        CHECK(!std::filesystem::exists(std::filesystem::current_path() / "docs" / "design" /
+                                       "3586-unarmed-multi-worker.md"),
+              "3586: no docs/design/");
+        // AC2: ci/concurrent + gate --changed spawn test_concurrent with the
+        // runner Soft latch so existing Scheduler(4) unit tests still start.
+        const auto bp = read_file("build.py");
+        const auto pconc = bp.find("def test_concurrent");
+        const auto pnext =
+            pconc == std::string::npos ? std::string::npos : bp.find("\ndef ", pconc + 1);
+        const auto slice = (pconc != std::string::npos && pnext != std::string::npos)
+                               ? bp.substr(pconc, pnext - pconc)
+                               : std::string{};
+        CHECK(slice.find("env=_aura_test_env()") != std::string::npos,
+              "3586: test_concurrent latches sandbox=off");
+    }
+
+    std::println("\n=== #3134/#3288/#3385/#3586 production-readiness residual-zero: {} passed, {} "
+                 "failed ===",
+                 g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
 

@@ -50,13 +50,18 @@
 
 #include <atomic>
 #include <chrono>
+#include <csignal>
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
+#include <fstream>
 #include <print>
 #include <random>
 #include <string>
 #include <string_view>
+#include <sys/wait.h>
 #include <thread>
+#include <unistd.h>
 #include <vector>
 
 import std;
@@ -114,6 +119,65 @@ static std::uint64_t soak_seed() noexcept {
     if (!e || !*e)
         return 1;
     return static_cast<std::uint64_t>(std::strtoull(e, nullptr, 10));
+}
+
+static std::string read_file(const char* path) {
+    for (const auto& p :
+         {std::string(path), std::string("../") + path, std::string("../../") + path}) {
+        std::ifstream in(p);
+        if (!in)
+            continue;
+        return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    }
+    return {};
+}
+
+static bool sandbox_is_off() noexcept {
+    const char* sb = std::getenv("AURA_SANDBOX");
+    return sb && *sb && std::strcmp(sb, "off") == 0;
+}
+
+// Issue #3586: unarmed multi-worker must FATAL, not silent Soft.
+static void ac3586_unarmed_multi_worker_refuses() {
+    std::println("\n--- #3586: unarmed multi-worker must refuse start ---");
+    const auto cpp = read_file("src/serve/scheduler.cpp");
+    CHECK(cpp.find("Issue #3586") != std::string::npos, "3586: scheduler cites #3586");
+    CHECK(cpp.find("multi-worker needs production bootstrap") != std::string::npos,
+          "3586: FATAL message");
+    CHECK(cpp.find("aura_production_defaults_active_probe()") != std::string::npos,
+          "3586: reuses existing probe");
+    CHECK(cpp.find("AURA_SANDBOX=off") != std::string::npos, "3586: sandbox=off escape");
+    CHECK(cpp.find("std::abort()") != std::string::npos, "3586: abort not silent Soft");
+    const auto p3586 = cpp.find("Issue #3586");
+    const auto pstart = cpp.find("w->start()");
+    CHECK(p3586 != std::string::npos && pstart != std::string::npos && p3586 < pstart,
+          "3586: refuse before worker start");
+
+    const auto prev_prod = aura::compiler::typed_audit::g_typed_mutation_audit_counters
+                               .production_defaults_active.load(std::memory_order_relaxed);
+    const char* prev_sb = std::getenv("AURA_SANDBOX");
+    const std::string prev_sb_s = prev_sb ? prev_sb : "";
+    aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active.store(
+        0, std::memory_order_relaxed);
+    ::unsetenv("AURA_SANDBOX");
+    const pid_t pid = ::fork();
+    if (pid == 0) {
+        ::alarm(2);
+        Scheduler sched(2);
+        sched.run();
+        ::_exit(99);
+    }
+    int st = 0;
+    if (pid > 0)
+        ::waitpid(pid, &st, 0);
+    const bool aborted = pid > 0 && WIFSIGNALED(st) && WTERMSIG(st) == SIGABRT;
+    CHECK(aborted, "3586 AC1: unarmed multi-worker abort");
+    aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active.store(
+        prev_prod, std::memory_order_relaxed);
+    if (!prev_sb_s.empty())
+        ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+    else
+        ::setenv("AURA_SANDBOX", "off", 1);
 }
 
 // ── Per-fiber chaos body ────────────────────────────────────────────
@@ -226,6 +290,12 @@ int run_test_chaos_soak_production_gate() {
                  "duration={}s, full={}, production={}, seed={}) ===",
                  workers, n_fibers, duration_s, full ? "yes" : "no", production ? "yes" : "no",
                  seed);
+
+    ac3586_unarmed_multi_worker_refuses();
+    // Soft soak still needs an explicit off latch so Scheduler::run
+    // does not FATAL (#3586) after the death test unset the env.
+    if (!production && !sandbox_is_off())
+        ::setenv("AURA_SANDBOX", "off", 1);
 
     // CompilerService first so per-Evaluator tenant_isolation_denials
     // (#3555 AC2.3) is reachable from read_snapshot.

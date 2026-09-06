@@ -1,0 +1,56 @@
+{
+  "issue": 3586,
+  "title": "Issue #3586: Scheduler::run refuses unarmed multi-worker (no silent Soft)",
+  "ok": "OK: Issue #3586 — unarmed worker>1 FATAL unless production bootstrap or AURA_SANDBOX=off.",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/serve/scheduler.cpp",
+      "contains": [
+        "Issue #3586",
+        "multi-worker needs production bootstrap",
+        "std::abort()"
+      ]
+    },
+    {
+      "ac": "AC1-test",
+      "path": "tests/serve/chaos_soak_production_gate.cpp",
+      "contains": [
+        "3586 AC1: unarmed multi-worker abort",
+        "unarmed multi-worker must refuse start"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/serve/scheduler.cpp",
+      "contains": [
+        "aura_production_defaults_active_probe() == 0",
+        "AURA_SANDBOX=off"
+      ]
+    },
+    {
+      "ac": "AC2-test",
+      "path": "tests/serve/test_steal_safety_production_residual_zero.cpp",
+      "contains": [
+        "3586: refuse before WorkerThread::start",
+        "3586: worker>1 then one probe",
+        "3586: test_concurrent latches sandbox=off"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/serve/test_steal_safety_production_residual_zero.cpp",
+      "contains": [
+        "3586: no new query key"
+      ]
+    },
+    {
+      "ac": "NO-INVENT",
+      "forbid": [
+        "tests/compiler/test_issue_3586.cpp",
+        "docs/design/3586-unarmed-multi-worker.md",
+        "scripts/coverage/checks/check_unarmed_multi_worker_3586.py"
+      ]
+    }
+  ]
+}

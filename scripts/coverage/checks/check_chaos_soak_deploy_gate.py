@@ -67,6 +67,9 @@ RE_ENV_FIBERS = re.compile(r"AURA_CHAOS_SOAK_DEPLOY_GATE_FIBERS")
 # ── Required contract (AC3: Soft / Off observe-only) ──────────────
 RE_PROD_GATE = re.compile(r"production_defaults_active\s*\(\s*\)\s*!=\s*0|production_defaults_active\s*\(\s*\)")
 RE_OBSERVE_ONLY = re.compile(r"observe-only|Soft\s*/\s*Off\s+path")
+RE_3586_REFUSE = re.compile(r"unarmed multi-worker")
+RE_3586_SCHED = re.compile(r"Issue #3586")
+RE_3586_FATAL = re.compile(r"multi-worker needs production bootstrap")
 
 # ── Required accessors (scheduler.h / scheduler.cpp) ──────────────
 RE_KMAILBOX = re.compile(r"inline\s+constexpr\s+std::int64_t\s+kMailboxP99SLO_us\s*=\s*50'?000")
@@ -109,6 +112,7 @@ def main() -> int:
         ("AC4", test_text, RE_ENV_FIBERS, "test: AURA_CHAOS_SOAK_DEPLOY_GATE_FIBERS env knob"),
         ("AC3", test_text, RE_PROD_GATE, "test: production_defaults_active() gate"),
         ("AC3", test_text, RE_OBSERVE_ONLY, "test: Soft / Off observe-only branch"),
+        ("#3586", test_text, RE_3586_REFUSE, "test: unarmed multi-worker refuse case"),
     ]
     for label, text, regex, why in checks:
         if not regex.search(text):
@@ -141,6 +145,12 @@ def main() -> int:
                 f"API: {SCHED_CPP.name}: missing g_safepoint_blocked_by_long_mutation_max_us "
                 f"(file-scope max-latency tracker)"
             )
+            v += 1
+        if not RE_3586_SCHED.search(cpp_text):
+            fail(f"#3586: {SCHED_CPP.name}: missing Issue #3586 unarmed multi-worker refuse")
+            v += 1
+        if not RE_3586_FATAL.search(cpp_text):
+            fail(f"#3586: {SCHED_CPP.name}: missing FATAL multi-worker bootstrap message")
             v += 1
 
     if v > 0 and strict:
