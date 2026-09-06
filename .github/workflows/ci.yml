@@ -34,6 +34,7 @@
 #   - (2026-09) test_ir + test_concurrent share aura_serve_fiber_objects
 #   - (2026-09) PR fast includes densify_pin + orch_agent batches
 #   - (2026-09) heavy issue bins live-stream stdout (hangs visible)
+#   - (2026-09) deployment-health reuses build-test aura artifact
 #
 # Branch protection: require both `gate` and `build-test` (not only one).
 #
@@ -281,6 +282,23 @@ jobs:
         # RelWithDebInfo -g → -g1: smaller .o / mold RSS. asan/ubsan keep full -g.
         AURA_DEBUG_LEVEL: "1"
       run: python3 build.py ci
+
+    # Main-only: deployment-health reuses this RelWithDebInfo aura
+    # instead of compiling it again on a second runner.
+    - name: Upload aura (deployment-health)
+      if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      uses: actions/upload-artifact@v7
+      with:
+        name: aura-relwithdebinfo
+        # Preserve workspace-relative paths so download path: . restores
+        # build/aura + lib/runtime.c (readyz checks runtime.c is readable).
+        path: |
+          build/aura
+          build/libaura-reflect.so
+          build/libaura_tl_arena.so
+          lib/runtime.c
+        if-no-files-found: error
+        retention-days: 1
 
     # Issue #2554: PR chaos hard-fail runtime (steal Δ==0, residual==0).
     # Binary requires cmake tree so the short profile runs after ./build.py ci.
@@ -608,42 +626,44 @@ jobs:
       run: python3 build.py repro --verify
 
   # Issue #677: health endpoint smoke (main only).
+  # Reuses RelWithDebInfo aura from build-test — no second full compile.
   deployment-health:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [gate]
+    if: >-
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/main' &&
+      needs.build-test.result == 'success'
+    needs: [build-test]
     runs-on: ubuntu-latest
-    timeout-minutes: 240  # #2636 belt-and-suspenders: same root cause as
-                          # asan-build + ubsan-smoke (arena.ixx.o rebuild
-                          # deadlock under header change). Normal build
-                          # (no sanitizer) is faster than ASAN/UBSAN but
-                          # still hits the link-stage race without
-                          # AURA_LINK_JOBS=1. Same 4h budget for
-                          # consistency across the 3 main-only sanitizer
-                          # + health smoke jobs.
+    timeout-minutes: 10
     container:
       image: ghcr.io/cybrid-systems/dev:v1.0.7
     steps:
-    - uses: actions/checkout@v7
+    - name: Download aura
+      uses: actions/download-artifact@v8
+      with:
+        name: aura-relwithdebinfo
+        # Artifact stores workspace-relative paths (build/, lib/).
+        # path: build would nest as build/build/aura.
+        path: .
 
-    - name: Install Python CI deps
-      run: pip install --break-system-packages -r requirements-dev.txt
-
-    # Issue #677 C++ test folded into test_obs_metrics_smoke_batch (wave 57 / #1957).
-    # This job only smokes the HTTP health surface on main — build aura only
-    # (not test_ir / test_concurrent / issue matrix).
-    # Use build.py (per-target build + GCC ICE retry) instead of a bare
-    # multi-job ninja; avoids flaky module .gcm races on error.ixx that
-    # showed up as "rm: cannot remove …aura.core.error.gcm".
-    # Compile note: restamp dual-def (lifetime_pin.hh + .ixx) broke this
-    # job's Build step on main; free funcs removed from .hh (c3848ebc).
-    - name: Build aura
-      env:
-        AURA_ISSUE_BUILD: none
-        AURA_BUILD_TARGETS: aura
-        AURA_LINK_JOBS: "1"  # #2636: serialize link to avoid arena.ixx.o
-                               # rebuild deadlock (mirrors asan-build +
-                               # ubsan-smoke fix in the same #2636 round).
-      run: python3 build.py build
+    - name: Restore executable bit + shared-lib path
+      run: |
+        test -f build/aura
+        test -f build/libaura-reflect.so
+        test -f build/libaura_tl_arena.so
+        test -f lib/runtime.c
+        chmod +x build/aura
+        echo "LD_LIBRARY_PATH=$(pwd)/build${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" >> "$GITHUB_ENV"
+        export LD_LIBRARY_PATH="$(pwd)/build${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+        ldd build/aura
+        if ldd build/aura | grep -q 'libaura-reflect.so => not found'; then
+          echo "::error::libaura-reflect.so still not resolved after artifact download"
+          exit 1
+        fi
+        if ldd build/aura | grep -q 'libaura_tl_arena.so => not found'; then
+          echo "::error::libaura_tl_arena.so still not resolved after artifact download"
+          exit 1
+        fi
 
     - name: Health endpoint smoke
       run: |
