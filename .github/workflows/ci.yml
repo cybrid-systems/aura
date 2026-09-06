@@ -31,6 +31,9 @@
 #   - (2026-09) issue serial recovery = crash/timeout/rc=127 only (not AC)
 #   - (2026-09) asan/ubsan slim matrix includes test_concurrent
 #   - (2026-09) build-test timeout-minutes=120 (default 360 hid hangs)
+#   - (2026-09) test_ir + test_concurrent share aura_serve_fiber_objects
+#   - (2026-09) PR fast includes densify_pin + orch_agent batches
+#   - (2026-09) heavy issue bins live-stream stdout (hangs visible)
 #
 # Branch protection: require both `gate` and `build-test` (not only one).
 #

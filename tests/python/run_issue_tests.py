@@ -29,12 +29,13 @@ from __future__ import annotations
 
 import argparse
 import os
+import shutil
 import subprocess
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from threading import Lock
+from threading import Lock, Thread
 
 # Issue #1932: allow sibling imports when run as tests/python/run_issue_tests.py
 _py = str(Path(__file__).resolve().parent)
@@ -309,11 +310,9 @@ _CRASH_RCS = frozenset(
 )
 
 
-def _eff_timeout(bin_name: str, timeout: int) -> int:
-    """Per-binary timeout scaling for stress / late bundles / orch."""
-    # late1 alone can exceed 6 min under parallel load on aarch64 CI
-    # (was timing out at 60*4=240s with rc=124).
-    is_very_heavy = bin_name in (
+# 600s budget; also live-streamed so a hang is visible before timeout.
+_VERY_HEAVY = frozenset(
+    {
         "test_issues_jit_late1",
         "test_issues_jit_late3",
         "test_issues_jit_late4",
@@ -322,14 +321,19 @@ def _eff_timeout(bin_name: str, timeout: int) -> int:
         "test_tenant_isolation_enforcement",
         "test_fiber_orch_parallel_quota_batch",
         "test_chaos_mutate_steal_gc_mailbox",
-        # 24-member mailbox/fiber/join-drain batch; 60s default dies mid-batch
-        # (rc=124) before test_join_drain_reclaim even starts.
         "test_mailbox_fiber_batch",
         "test_pmr_alloc_fiber_safe",
         "test_string_heap_corruption_guard",
         "test_mutation_aot_unit_batch",
         "test_hygiene_mutate_closed_loop",
-    )
+    }
+)
+
+
+def _eff_timeout(bin_name: str, timeout: int) -> int:
+    """Per-binary timeout scaling for stress / late bundles / orch."""
+    # late1 alone can exceed 6 min under parallel load on aarch64 CI
+    # (was timing out at 60*4=240s with rc=124).
     is_heavy = (
         "bench" in bin_name
         or bin_name == "test_issues_jit"
@@ -341,11 +345,48 @@ def _eff_timeout(bin_name: str, timeout: int) -> int:
         or "stress" in bin_name
         or "chaos" in bin_name
     )
-    if is_very_heavy:
+    if bin_name in _VERY_HEAVY:
         return timeout * 10  # 600s default
     if is_heavy:
         return timeout * 4
     return timeout
+
+
+def _run_streamed(
+    bin_name: str, cmd: list[str], timeout: int, cwd: str, env: dict[str, str]
+) -> subprocess.CompletedProcess[str]:
+    """Live-print stdout so a 600s hang is visible. Prefix per binary."""
+    proc = subprocess.Popen(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        errors="replace",
+        cwd=cwd,
+        env=env,
+        bufsize=1,
+    )
+    chunks: list[str] = []
+    prefix = f"[{bin_name}] "
+
+    def _reader() -> None:
+        assert proc.stdout is not None
+        for line in proc.stdout:
+            chunks.append(line)
+            with _print_lock:
+                sys.stdout.write(prefix + line)
+                sys.stdout.flush()
+
+    t = Thread(target=_reader, daemon=True)
+    t.start()
+    try:
+        rc = proc.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        t.join(timeout=2)
+        raise
+    t.join(timeout=5)
+    return subprocess.CompletedProcess(cmd, rc, "".join(chunks), "")
 
 
 def _run_one_attempt(bin_name: str, timeout: int) -> tuple[str, int, int, int, str]:
@@ -393,16 +434,22 @@ def _run_one_attempt(bin_name: str, timeout: int) -> tuple[str, int, int, int, s
     # the binary is the lock-order batch itself.
     if bin_name != "test_lock_order_audit_batch":
         env.pop("AURA_LOCK_ORDER_CANARY", None)
+    cmd: list[str] = [str(bin_path)]
+    if shutil.which("stdbuf"):
+        cmd = ["stdbuf", "-oL", "-eL", str(bin_path)]
     try:
-        r = subprocess.run(
-            [str(bin_path)],
-            capture_output=True,
-            text=True,
-            timeout=eff_timeout,
-            errors="replace",
-            cwd=str(ROOT),
-            env=env,
-        )
+        if bin_name in _VERY_HEAVY:
+            r = _run_streamed(bin_name, cmd, eff_timeout, str(ROOT), env)
+        else:
+            r = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=eff_timeout,
+                errors="replace",
+                cwd=str(ROOT),
+                env=env,
+            )
     except subprocess.TimeoutExpired:
         return bin_name, 0, 0, 124, f"timeout after {eff_timeout}s"
     finally:
