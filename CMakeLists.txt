@@ -2890,6 +2890,13 @@ aura_add_issue_test(test_scheduler_gc_defer_pending_panic_steal)
 aura_issue_test_link_light(test_scheduler_gc_defer_pending_panic_steal)
 add_dependencies(all_test_issue_targets test_scheduler_gc_defer_pending_panic_steal)
 
+# Issue #3570: PanicCheckpoint discriminator generation tag — void* ABA close
+# (address-only #1393 residual across aot:reload destroy/realloc).
+aura_add_issue_test(test_panic_checkpoint_aba)
+aura_issue_test_link_light(test_panic_checkpoint_aba)
+add_dependencies(all_test_issue_targets test_panic_checkpoint_aba)
+add_test(NAME test_panic_checkpoint_aba COMMAND ./test_panic_checkpoint_aba)
+
 
 
 
