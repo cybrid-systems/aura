@@ -825,6 +825,54 @@ export inline std::size_t snapshot_ffi_alias_slots_for_densify(std::vector<void*
     return out.size();
 }
 
+// Issue #3569: snapshot-scoped consume of the process-level FFI alias slot
+// queue. live_compact(Moving) snapshots the queue before relocate and erases
+// exactly the snapshotted entries at window end, so no entry survives across
+// Moving windows: registered slots are &opaque_heap_[i] / &modules_[i],
+// stable only within the densify window — an entry that persisted past a
+// vector realloc / aot:reload swap would dangle, and the next window's
+// rewrite walk would UAF-read `*slot` / UAF-write `*slot = it->second`.
+// Entries registered after the snapshot (mid-window, cross-evaluator) are
+// NOT in `consumed` and stay queued; their owner re-registers fresh at its
+// own densify entry (register_known_moving_densify_root_slots covers
+// opaque_heap_ / modules_ as a superset of create-time slots), and a
+// foreign slot can never match this arena's last_object_remap_ keys
+// (addresses disjoint while both arenas are live). All occurrences of a
+// consumed slot value are erased (re-registration is per-window). Soft /
+// Off / windows that never drained: no call, queue untouched, zero work.
+export inline std::size_t
+consume_ffi_alias_slots_for_densify(const std::vector<void**>& consumed) noexcept {
+    if (consumed.empty())
+        return 0;
+    auto& inv = moving_ffi_alias_slot_detail::g_inventory;
+    std::size_t n = 0;
+    {
+        std::lock_guard<std::mutex> lock(inv.mtx);
+        if (!inv.slots.empty()) {
+            const std::unordered_set<void**> drop(consumed.begin(), consumed.end());
+            std::vector<void**> kept;
+            kept.reserve(inv.slots.size());
+            for (void** s : inv.slots) {
+                if (drop.count(s) != 0) {
+                    ++n;
+                    continue;
+                }
+                kept.push_back(s);
+            }
+            if (n > 0) {
+                inv.slots.swap(kept);
+                inv.live.store(static_cast<std::uint32_t>(inv.slots.size()),
+                               std::memory_order_release);
+            }
+        }
+    }
+    if (n > 0) {
+        aura::core::densify_consistency::g_ffi_alias_slots_consumed_total.fetch_add(
+            n, std::memory_order_relaxed);
+    }
+    return n;
+}
+
 // Process-level slot register. live_compact drains into the arena slot list
 // so *slot is rewritten when it is a last_object_remap_ key.
 export inline void register_external_root_slot_for_densify(void** slot) noexcept {
@@ -2288,12 +2336,18 @@ public:
             note_temporary_moving_live_canaries();
             // Issue #3473: drain process-level FFI/JIT alias slots into this
             // arena's rewrite list before relocate. Empty inventory: one load.
-            {
-                std::vector<void**> alias_slots;
-                if (snapshot_ffi_alias_slots_for_densify(alias_slots) > 0) {
-                    for (void** s : alias_slots)
-                        this->register_external_root_slot_for_densify(s);
-                }
+            // Issue #3569: `alias_slots` outlives the drain block — the same
+            // snapshot is consumed (erased from the process queue) at window
+            // end so no entry survives across Moving windows. Slots are
+            // &opaque_heap_[i] / &modules_[i], stable only within the window;
+            // an entry that persisted past a realloc / aot:reload swap would
+            // dangle and UAF the next window's rewrite walk. Mid-window
+            // registrations (not in this snapshot) stay queued for the next
+            // window, whose densify entry re-registers fresh.
+            std::vector<void**> alias_slots;
+            if (snapshot_ffi_alias_slots_for_densify(alias_slots) > 0) {
+                for (void** s : alias_slots)
+                    this->register_external_root_slot_for_densify(s);
             }
             result.objects_moved = relocate_tracked_objects_for_moving_(&untracked_kept_local);
             result.untracked_kept_count = untracked_kept_local;
@@ -2355,6 +2409,12 @@ public:
             result.external_roots_prep_registered_cleared = external_roots_for_densify_.size();
             external_roots_for_densify_.clear();
             external_root_slots_for_densify_.clear();
+            // Issue #3569: window-end consume of the snapshot-scoped process
+            // queue entries. Runs on every path that took the snapshot (the
+            // Moving branch has no early return between the drain block and
+            // here), so the queue stays bounded and a later window can never
+            // dereference a stale void** left over from this one.
+            (void)consume_ffi_alias_slots_for_densify(alias_slots);
 
             // Issue #2495: fail-closed against false safety under Moving default.
             // When densify moved objects AND untracked candidates existed, the

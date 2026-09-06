@@ -3473,6 +3473,138 @@ static void ac3533_5_source_cite_no_invent() {
           "3533 AC5: no substring-only py linter");
 }
 
+// ── Issue #3569: FFI alias slot queue consumed per Moving window ───────────
+//
+// Residual of #3473: the process-level slot queue was append-only across
+// windows — registered slots are &opaque_heap_[i] / &modules_[i], stable
+// only within the densify window. Entries that persisted past a vector
+// realloc / aot:reload swap dangled, and the next window's rewrite walk
+// would UAF-read `*slot` / UAF-write `*slot = it->second`. Fix:
+// snapshot-scoped consume at window end (no entry survives a window;
+// mid-window registrations stay queued; their owner re-registers fresh at
+// its own densify entry).
+//
+//   AC1: register → snapshot → consume → queue empty; counter bumps.
+//   AC2: entry registered after the snapshot survives consume (next window).
+//   AC3: consume is idempotent + empty-consume no-op (no counter bump).
+//   AC4: Moving-window integration — queue drained as a side effect of
+//        live_compact(Moving) and slot still rewritten (#2837 intact).
+//   AC5: source-cite (window-end consume call + header counter).
+
+static void ac3569_1_consume_empties_queue() {
+    std::println("\n--- #3569 AC1: consume empties queue ---");
+    MovingFlagGuard on(1);
+    aura::ast::reset_ffi_alias_slots_for_densify_for_test();
+    aura::core::densify_consistency::reset_ffi_alias_slots_consumed_for_test();
+    void* a = &on; // stable addresses; contents never dereferenced here
+    void* b = &a;
+    aura::ast::register_external_root_slot_for_densify(&a);
+    aura::ast::register_external_root_slot_for_densify(&b);
+    std::vector<void**> snap;
+    CHECK(aura::ast::snapshot_ffi_alias_slots_for_densify(snap) == 2, "3569 AC1: snapshot 2");
+    CHECK(aura::ast::consume_ffi_alias_slots_for_densify(snap) == 2, "3569 AC1: consumed 2");
+    CHECK(aura::ast::snapshot_ffi_alias_slots_for_densify(snap) == 0,
+          "3569 AC1: queue empty after consume");
+    CHECK(aura::core::densify_consistency::ffi_alias_slots_consumed_total_v_read() == 2,
+          "3569 AC1: counter bumps by consumed entries");
+}
+
+static void ac3569_2_midwindow_entry_retained() {
+    std::println("\n--- #3569 AC2: mid-window registration retained ---");
+    MovingFlagGuard on(1);
+    aura::ast::reset_ffi_alias_slots_for_densify_for_test();
+    aura::core::densify_consistency::reset_ffi_alias_slots_consumed_for_test();
+    void* a = &on;
+    aura::ast::register_external_root_slot_for_densify(&a);
+    std::vector<void**> snap;
+    CHECK(aura::ast::snapshot_ffi_alias_slots_for_densify(snap) == 1, "3569 AC2: snapshot 1");
+    void* b = &snap; // registered after the snapshot (mid-window face)
+    aura::ast::register_external_root_slot_for_densify(&b);
+    CHECK(aura::ast::consume_ffi_alias_slots_for_densify(snap) == 1,
+          "3569 AC2: consume erases only the snapshotted entry");
+    CHECK(aura::ast::snapshot_ffi_alias_slots_for_densify(snap) == 1,
+          "3569 AC2: mid-window entry retained for next window");
+    snap.clear();
+    CHECK(aura::ast::snapshot_ffi_alias_slots_for_densify(snap) == 1, "3569 AC2: next snapshot 1");
+    CHECK(aura::ast::consume_ffi_alias_slots_for_densify(snap) == 1,
+          "3569 AC2: next window consumes it");
+    CHECK(aura::ast::snapshot_ffi_alias_slots_for_densify(snap) == 0, "3569 AC2: queue empty");
+}
+
+static void ac3569_3_idempotent_and_empty() {
+    std::println("\n--- #3569 AC3: idempotent + empty no-op ---");
+    MovingFlagGuard on(1);
+    aura::ast::reset_ffi_alias_slots_for_densify_for_test();
+    aura::core::densify_consistency::reset_ffi_alias_slots_consumed_for_test();
+    void* a = &on;
+    aura::ast::register_external_root_slot_for_densify(&a);
+    std::vector<void**> snap;
+    aura::ast::snapshot_ffi_alias_slots_for_densify(snap);
+    CHECK(aura::ast::consume_ffi_alias_slots_for_densify(snap) == 1, "3569 AC3: first consume");
+    CHECK(aura::ast::consume_ffi_alias_slots_for_densify(snap) == 0,
+          "3569 AC3: second consume no-op (queue already drained)");
+    std::vector<void**> empty;
+    CHECK(aura::ast::consume_ffi_alias_slots_for_densify(empty) == 0,
+          "3569 AC3: empty consumed vector no-op");
+    CHECK(aura::core::densify_consistency::ffi_alias_slots_consumed_total_v_read() == 1,
+          "3569 AC3: counter only moved once");
+}
+
+static void ac3569_4_moving_window_drains_queue() {
+    std::println("\n--- #3569 AC4: Moving window drains process queue ---");
+    MovingFlagGuard on(1);
+    aura::ast::g_moving_untracked_hard_abort_pref.store(0, std::memory_order_relaxed); // Soft
+    aura::ast::reset_ffi_alias_slots_for_densify_for_test();
+    aura::core::densify_consistency::reset_ffi_alias_slots_consumed_for_test();
+    ASTArena arena(64 * 1024);
+    auto* p0 = arena.create<Pod16>(1, 2, 3, 4);
+    auto* p1 = arena.create<Pod16>(5, 6, 7, 8);
+    auto* p2 = arena.create<Pod16>(9, 10, 11, 12);
+    CHECK(p0 && p1 && p2, "3569 AC4: create ok");
+    void* ext = p0;
+    void* old = ext;
+    // Process-level queue registration (#3473 face) — not the arena member.
+    aura::ast::register_external_root_slot_for_densify(&ext);
+    std::vector<void**> pre;
+    CHECK(aura::ast::snapshot_ffi_alias_slots_for_densify(pre) == 1,
+          "3569 AC4: queue holds the cover before the window");
+    const auto consumed_before =
+        aura::core::densify_consistency::ffi_alias_slots_consumed_total_v_read();
+    const auto r = arena.live_compact(LiveCompactMode::Moving);
+    CHECK(r.objects_moved > 0, "3569 AC4: objects_moved > 0");
+    void* neu = arena.resolve_object_remap(old);
+    CHECK(neu != nullptr, "3569 AC4: remap entry produced");
+    CHECK(ext == neu, "3569 AC4: slot rewritten (#2837 behavior intact)");
+    CHECK(aura::ast::snapshot_ffi_alias_slots_for_densify(pre) == 0,
+          "3569 AC4: process queue drained by the window (no entry survives)");
+    CHECK(aura::core::densify_consistency::ffi_alias_slots_consumed_total_v_read() >=
+              consumed_before + 1,
+          "3569 AC4: consumed counter bumps at window end");
+    (void)p1;
+    (void)p2;
+}
+
+static void ac3569_5_source_cite() {
+    std::println("\n--- #3569 AC5: source-cite ---");
+    const auto ixx = read_file("src/core/arena.ixx");
+    CHECK(ixx.find("(void)consume_ffi_alias_slots_for_densify(alias_slots);") != std::string::npos,
+          "3569 AC5: window-end consume call wired at the clear site");
+    CHECK(ixx.find("consume_ffi_alias_slots_for_densify(const std::vector<void**>& consumed)") !=
+              std::string::npos,
+          "3569 AC5: consume API exported");
+    CHECK(ixx.find("std::vector<void**> alias_slots;") != std::string::npos,
+          "3569 AC5: snapshot hoisted out of the drain block");
+    const auto hdr = read_file("src/core/densify_consistency_report.h");
+    CHECK(hdr.find("g_ffi_alias_slots_consumed_total") != std::string::npos,
+          "3569 AC5: additive counter in densify_consistency_report.h");
+    CHECK(hdr.find("Issue #3569") != std::string::npos, "3569 AC5: header cites #3569");
+    // No design doc (#1655).
+    std::ifstream design("docs/design/3569-ffi-alias-slot-consume.md");
+    if (!design)
+        design.open("../docs/design/3569-ffi-alias-slot-consume.md");
+    CHECK(!design.good(), "3569 AC5: no docs/design/3569-*");
+}
+
 int run_test_moving_densify_fail_closed() {
     std::println("=== Issue #2495: Moving densify fail-closed on untracked external roots ===");
     std::println(
@@ -4166,6 +4298,12 @@ int run_test_moving_densify_fail_closed() {
     ac3533_3_chaos_create_densify();
     ac3533_4_soft_zero_cost();
     ac3533_5_source_cite_no_invent();
+    std::println("\n=== Issue #3569: FFI alias slot queue consumed per Moving window ===");
+    ac3569_1_consume_empties_queue();
+    ac3569_2_midwindow_entry_retained();
+    ac3569_3_idempotent_and_empty();
+    ac3569_4_moving_window_drains_queue();
+    ac3569_5_source_cite();
 
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
