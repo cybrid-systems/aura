@@ -475,29 +475,20 @@ def _print_result(
                 print(f"      {err[:200]}")
 
 
-def _classify_result(
-    b: str,
-    passed: int,
-    failed: int,
-    rc: int,
-    err: str,
-    *,
-    failures: list,
-) -> None:
-    """Append to failures and print. Any non-zero result fails CI."""
-    if rc == 0 and failed == 0:
-        _print_result(b, passed, failed, rc, err)
-    else:
-        failures.append((b, passed, failed, rc, err))
-        _print_result(b, passed, failed, rc, err)
+def _transient_issue_fail(rc: int, err: str) -> bool:
+    """Load/link flakes worth a serial retry. rc=1 AC failures are not."""
+    if rc in _CRASH_RCS or rc in (127, 124):
+        return True
+    return bool(err) and ("undefined symbol" in err or "symbol lookup error" in err)
 
 
 def run_bins_parallel(bins: list[str], jobs: int, timeout: int) -> tuple[int, int, list, list]:
-    """Run binaries with a thread pool + serial recovery pass for crashers.
+    """Run binaries with a thread pool + serial recovery for crashers only.
 
-    Phase 1: parallel (jobs). Phase 2: any crash/signal/rc=127 failures are
-    rebuilt and re-run serially — catches load-induced flakes. Only phase-2
-    residual failures gate CI; there are no pre-existing waivers.
+    Phase 1: parallel (jobs), print each result as it finishes.
+    Phase 2: crash/signal/timeout/rc=127 only — rebuilt and re-run serially.
+    Deterministic AC (rc=1 with FAIL lines) is not a load flake; re-running
+    it doubled red ci/issues wall time (densify cite / orch inherit).
     """
     total_passed = 0
     total_failed = 0
@@ -548,58 +539,43 @@ def run_bins_parallel(bins: list[str], jobs: int, timeout: int) -> tuple[int, in
             refresh_stale_issue_binaries(present)
 
     workers = max(1, min(jobs, len(runnable)))
+    print(f"{B}Issue tests phase 1: {len(runnable)} binaries, jobs={workers} (live){N}")
     phase1: dict[str, tuple[int, int, int, str]] = {}
     with ThreadPoolExecutor(max_workers=workers) as pool:
         futures = {pool.submit(run_one, b, timeout): b for b in runnable}
         for fut in as_completed(futures):
             b, passed, failed, rc, err = fut.result()
             phase1[b] = (passed, failed, rc, err)
+            _print_result(b, passed, failed, rc, err)
 
-    # Phase 2: serial recovery for any failure from phase 1.
-    # Crash/timeout/symbol get a rebuild first; pure AC (rc=1) get a clean
-    # solo re-run (rules out /tmp collisions and parallel resource pressure).
-    recovery: list[str] = []
-    for b, (_passed, failed, rc, _err) in phase1.items():
-        if rc != 0 or failed > 0:
-            recovery.append(b)
+    # Phase 2: serial recovery for crash/timeout/missing-binary only.
+    recovery = [b for b, (_p, _f, rc, err) in phase1.items() if _transient_issue_fail(rc, err)]
+    skipped_ac = [b for b, (_p, failed, rc, err) in phase1.items() if (rc != 0 or failed > 0) and b not in recovery]
+    if skipped_ac:
+        print(f"{Y}Note: {len(skipped_ac)} deterministic AC fail(s) skip serial recovery (rc=1 is not a load flake){N}")
 
     if recovery:
         print(
-            f"\n{Y}Serial recovery: re-running {len(recovery)} failures under jobs=1 "
-            f"(load isolation + optional rebuild)...{N}"
+            f"\n{Y}Serial recovery: re-running {len(recovery)} crash/timeout/rc=127 "
+            f"under jobs=1 (load isolation + optional rebuild)...{N}"
         )
-        crash_like = [
-            b
-            for b in recovery
-            if phase1[b][2] in _CRASH_RCS
-            or phase1[b][2] in (127, 124)
-            or "undefined symbol" in (phase1[b][3] or "")
-            or "symbol lookup error" in (phase1[b][3] or "")
-        ]
-        if crash_like:
-            build_targets(crash_like, timeout_s=min(1200, 30 * max(1, len(crash_like))))
+        build_targets(recovery, timeout_s=min(1200, 30 * max(1, len(recovery))))
         for b in recovery:
             name, passed, failed, rc, err = _run_one_attempt(b, timeout)
-            # Extra rebuild+retry if still crash/symbol after first solo attempt.
-            if rc in _CRASH_RCS or rc == 127 or (err and "undefined symbol" in (err or "")):
+            if _transient_issue_fail(rc, err):
                 build_targets([b], timeout_s=300)
                 name, passed, failed, rc, err = _run_one_attempt(b, timeout)
             phase1[b] = (passed, failed, rc, err)
-    # Classify final results.
+            _print_result(b, passed, failed, rc, err)
+    # Tally final results (already printed live).
     for b in runnable:
         if b not in phase1:
             continue
         passed, failed, rc, err = phase1[b]
         total_passed += passed
         total_failed += failed
-        _classify_result(
-            b,
-            passed,
-            failed,
-            rc,
-            err,
-            failures=failures,
-        )
+        if rc != 0 or failed > 0:
+            failures.append((b, passed, failed, rc, err))
 
     return total_passed, total_failed, failures, skipped
 
