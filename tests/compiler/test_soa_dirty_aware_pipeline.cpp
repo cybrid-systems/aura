@@ -55,6 +55,7 @@ using aura::compiler::SoaDirtyAwarePass;
 using aura::compiler::TypePropagationPass;
 using aura::compiler::opt_registry::DeadCoercionPass;
 using aura::compiler::types::as_int;
+using aura::compiler::types::is_error;
 using aura::compiler::types::is_int;
 using aura::ir::IROpcode;
 using aura::test::g_failed;
@@ -114,6 +115,158 @@ struct FullSoaDirty {
     bool has_error() const { return false; }
     bool is_block_dirty(std::uint32_t) const { return true; }
 };
+
+static bool file_exists_cwd_3583(const char* rel) {
+    return std::ifstream(rel).good() || std::ifstream(std::string("../") + rel).good();
+}
+
+static std::int64_t href_q(aura::compiler::CompilerService& cs, std::string_view q,
+                           std::string_view key) {
+    auto r = cs.eval(std::format("(hash-ref (engine:metrics \"{}\") \"{}\")", q, key));
+    if (!r || !is_int(*r))
+        return -1;
+    return as_int(*r);
+}
+
+// Issue #3583 route A: AOT emit / production incremental pack never
+// runs cross-function InlinePass, so inline-caller native cannot go
+// silent-stale (table remap / dual-fresh stay sufficient).
+static void ac3583_1_dual_eval_callee_mutate_not_stale() {
+    std::println("\n--- #3583 AC1: dual-eval soak mutate inlined callee, caller not stale ---");
+    using aura::compiler::CompilerService;
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    apply_production_audit_defaults();
+
+    auto soak = [](CompilerService& cs, const char* tag) {
+        // Restricted capability deny is a sibling-member leak, not this
+        // issue's AOT/InlinePass face. Keep production_defaults; Off the
+        // evaluator sandbox so set-body is not grant-gated.
+        cs.evaluator().set_effect_sandbox_mode(0);
+        auto sc = cs.eval("(set-code \"(define f (lambda () 1)) (define g (lambda () (f)))\")");
+        CHECK(sc.has_value(), std::string(tag) + " set-code");
+        CHECK(cs.eval("(eval-current)").has_value(), std::string(tag) + " eval-current");
+        auto g0 = cs.eval("(g)");
+        CHECK(g0 && is_int(*g0) && as_int(*g0) == 1, std::string(tag) + " g==1 before mutate");
+        for (int i = 2; i <= 8; ++i) {
+            const auto body = std::format("(lambda () {})", i);
+            const auto mut =
+                cs.eval(std::format("(mutate:set-body \"f\" \"{}\" \"#3583-{}\")", body, i));
+            CHECK(mut.has_value() && !is_error(*mut), std::string(tag) + " set-body f");
+            CHECK(cs.eval("(eval-current)").has_value(), std::string(tag) + " re-eval");
+            auto fi = cs.eval("(f)");
+            CHECK(fi && is_int(*fi) && as_int(*fi) == i, std::string(tag) + " f tracks");
+            auto gi = cs.eval("(g)");
+            CHECK(gi && is_int(*gi) && as_int(*gi) == i,
+                  std::string(tag) + " g tracks callee (no silent-stale native)");
+        }
+    };
+    CompilerService a;
+    CompilerService b;
+    soak(a, "3583 AC1 eval-A");
+    soak(b, "3583 AC1 eval-B");
+    apply_dev_audit_defaults();
+}
+
+static void ac3583_1b_aot_emit_has_no_inline_pass() {
+    std::println("\n--- #3583 AC1: AOT emit / production pack has no InlinePass ---");
+    const auto impls = read_file("src/compiler/pass_impls.ixx");
+    const auto core = read_file("src/compiler/pass_pipeline_core.ixx");
+    const auto svc = read_file("src/compiler/service.ixx");
+    const auto jit = read_file("src/compiler/aura_jit.cpp");
+    const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
+    const auto br = read_file("src/compiler/aura_jit_bridge.cpp");
+    CHECK(impls.find("run_production_soa_dirty_hot_pack") != std::string::npos,
+          "3583 AC1: production SoA hot pack present");
+    auto pack_pos = impls.find("run_production_soa_dirty_hot_pack(IRModuleV2& mod");
+    CHECK(pack_pos != std::string::npos, "3583 AC1: hot pack definition");
+    auto pack_end = impls.find("\nexport ", pack_pos + 1);
+    if (pack_end == std::string::npos)
+        pack_end = pack_pos + 1800;
+    auto pack = impls.substr(pack_pos, pack_end - pack_pos);
+    CHECK(pack.find("InlinePass") == std::string::npos,
+          "3583 AC1: hot pack does not instantiate InlinePass");
+    CHECK(pack.find("DeadCoercionEliminationPass") != std::string::npos,
+          "3583 AC1: hot pack still runs DCE");
+    CHECK(core.find("do not add InlinePass here") != std::string::npos,
+          "3583 AC1: AoS incremental pipeline forbids InlinePass");
+    CHECK(svc.find("do not add it to this AoS suite") != std::string::npos,
+          "3583 AC1: service incremental suite excludes InlinePass");
+    auto soa_pos = impls.find("void run_on_dirty_blocks_only(IRModuleV2& module,");
+    CHECK(soa_pos != std::string::npos, "3583 AC1: InlinePass SoA entry");
+    auto aos_pos = impls.find("void run(aura::ir::IRModule& module)", soa_pos);
+    CHECK(aos_pos != std::string::npos && aos_pos > soa_pos, "3583 AC1: AoS run is cold path");
+    auto soa = impls.substr(soa_pos, aos_pos - soa_pos);
+    CHECK(soa.find("try_inline") == std::string::npos &&
+              soa.find("inlined_count_") == std::string::npos,
+          "3583 AC1: SoA dirty entry does not rewrite Call / inline");
+    CHECK(impls.find("AoS `run(IRModule&)` is the cold") != std::string::npos,
+          "3583 AC1: AoS InlinePass::run is tests/debug only");
+    CHECK(jit.find("InlinePass") == std::string::npos, "3583 AC1: aura_jit.cpp has no InlinePass");
+    CHECK(rt.find("InlinePass") == std::string::npos,
+          "3583 AC1: aura_jit_runtime.cpp has no InlinePass");
+    CHECK(br.find("InlinePass") == std::string::npos,
+          "3583 AC1: aura_jit_bridge.cpp has no InlinePass");
+}
+
+static void ac3583_2_reuse_existing_counters() {
+    std::println("\n--- #3583 AC2: reuse existing reemit counters; no new query key ---");
+    using aura::compiler::CompilerService;
+    CompilerService cs;
+    CHECK(cs.eval("(+ 1 1)").has_value(), "3583 AC2: eval");
+    const auto success =
+        href_q(cs, "query:aot-incremental-reemit-stats", "aot_incremental_reemit_success_total");
+    const auto forced =
+        href_q(cs, "query:incremental-relower-stats", "partial_forced_full_by_impact_total");
+    CHECK(success >= 0, "3583 AC2: reuse aot_incremental_reemit_success_total");
+    CHECK(forced >= 0, "3583 AC2: reuse partial_forced_full_by_impact_total");
+    const auto obs = read_file("src/compiler/observability_metrics.h");
+    CHECK(obs.find("aot_incremental_reemit_success_total") != std::string::npos,
+          "3583 AC2: success counter exists");
+    CHECK(obs.find("g_3583_") == std::string::npos, "3583 AC2: no g_3583_*");
+    const auto q = read_file("src/compiler/evaluator_primitives_query_tail.cpp") +
+                   read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
+    CHECK(q.find("schema-3583") == std::string::npos, "3583 AC2: no schema-3583");
+}
+
+static void ac3583_3_soft_zero_cost() {
+    std::println("\n--- #3583 AC3: Soft/Off zero-cost; ring push production-gated ---");
+    using aura::compiler::CompilerService;
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    apply_dev_audit_defaults();
+    CompilerService cs;
+    cs.evaluator().set_effect_sandbox_mode(0);
+    auto sc = cs.eval("(set-code \"(define f (lambda () 1)) (define g (lambda () (f)))\")");
+    CHECK(sc.has_value(), "3583 AC3: Soft set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3583 AC3: Soft eval");
+    auto mut = cs.eval("(mutate:set-body \"f\" \"(lambda () 9)\" \"#3583-soft\")");
+    CHECK(mut.has_value() && !is_error(*mut), "3583 AC3: Soft set-body");
+    CHECK(cs.eval("(eval-current)").has_value(), "3583 AC3: Soft re-eval");
+    auto f = cs.eval("(f)");
+    CHECK(f && is_int(*f) && as_int(*f) == 9, "3583 AC3: Soft f tracks");
+    auto g = cs.eval("(g)");
+    CHECK(g && is_int(*g) && as_int(*g) == 9, "3583 AC3: Soft caller still tracks callee");
+    const auto dirty = read_file("src/compiler/service_dirty.cpp");
+    CHECK(dirty.find("aura_production_defaults_active_probe()") != std::string::npos,
+          "3583 AC3: ring push gated on production probe");
+    CHECK(dirty.find("aura_production_dirty_ring_push") != std::string::npos,
+          "3583 AC3: existing ring push (no new Soft path)");
+}
+
+static void ac3583_4_no_invent_no_mangle() {
+    std::println("\n--- #3583 AC4: no invent; no mangle/epoch/remount redo ---");
+    const auto t = read_file("tests/compiler/test_soa_dirty_aware_pipeline.cpp");
+    CHECK(t.find("ac3583_1_dual_eval_callee_mutate_not_stale") != std::string::npos,
+          "3583 AC4: soak present");
+    CHECK(t.find("ac3583_1b_aot_emit_has_no_inline_pass") != std::string::npos,
+          "3583 AC4: route-A cite present");
+    CHECK(!file_exists_cwd_3583("tests/compiler/test_issue_3583.cpp"),
+          "3583 AC4: no test_issue_3583.cpp");
+    CHECK(!file_exists_cwd_3583("docs/design/3583-inline-caller-stale.md"),
+          "3583 AC4: no docs/design/");
+    CHECK(!file_exists_cwd_3583("scripts/coverage/checks/check_inline_aot_3583.py"),
+          "3583 AC4: no check_3583.py");
+}
 
 } // namespace
 
@@ -450,7 +603,13 @@ int run_test_soa_dirty_aware_pipeline() {
         aura::compiler::typed_audit::apply_dev_audit_defaults();
     }
 
-    std::println("\n=== #2143/#2907/#3488/#3502 results: {} passed, {} failed ===", g_passed,
+    ac3583_1_dual_eval_callee_mutate_not_stale();
+    ac3583_1b_aot_emit_has_no_inline_pass();
+    ac3583_2_reuse_existing_counters();
+    ac3583_3_soft_zero_cost();
+    ac3583_4_no_invent_no_mangle();
+
+    std::println("\n=== #2143/#2907/#3488/#3502/#3583 results: {} passed, {} failed ===", g_passed,
                  g_failed);
     return g_failed ? 1 : 0;
 }

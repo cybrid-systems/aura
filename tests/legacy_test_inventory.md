@@ -1431,7 +1431,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_shape_jit_pass_deopt_incremental_closedloop_ai_mutate.cpp` (—) [domain_suite, theme_compiler] — test_shape_jit_pass_deopt_incremental_closedloop_ai_mutate.cpp — Issue #744:
 - `tests/compiler/test_side_effect_inherit.cpp` (—) [domain_suite, theme_compiler] — AC1: PrimMeta carries required_effects / effect_enforced_in_body / security_exempt
 - `tests/compiler/test_soa_cascade_instr_dirty_sync.cpp` (—) [domain_suite, theme_compiler] — AC1: source cites #2034; force_soa_instruction_dirty_sync +
-- `tests/compiler/test_soa_dirty_aware_pipeline.cpp` (—) [domain_suite, theme_compiler] — Issue #2907 — sunset SoAtoAoSBridgePass; production SoA dirty hot pack.
+- `tests/compiler/test_soa_dirty_aware_pipeline.cpp` (—) [large, domain_suite, theme_compiler] — Issue #2907 — sunset SoAtoAoSBridgePass; production SoA dirty hot pack.
 - `tests/compiler/test_soa_single_entry_dirty_sync.cpp` (—) [domain_suite, theme_compiler] — AC1: production sites use finish_cascade / finish_dirty_sync; no bare
 - `tests/compiler/test_solve_delta_after_mutate.cpp` (—) [domain_suite, theme_compiler] — AC1: Production mode \u2014 cap-hit frontier push at type_checker_impl.cpp:1205-1209
 - `tests/compiler/test_source_to_ir_map_consistency.cpp` (—) [domain_suite, theme_compiler] — AC1: source cites #2045; rebuild_or_patch + pure helpers + consistency
