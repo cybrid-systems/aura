@@ -39,6 +39,7 @@ import aura.compiler.coercion_map;
 import aura.compiler.service;
 import aura.compiler.value;
 import aura.compiler.ir;
+import aura.compiler.ir_cache_pure; // #3068 source_to_ir_map_missing_instr_loc
 import aura.core.ast;
 
 namespace {
@@ -1191,6 +1192,190 @@ static void ac3547_4_source_cite_no_invent() {
           "3547 AC5: no docs/design");
 }
 
+// ── Issue #3581: #3065 remirror × #3068 map-completeness cross-owner ──
+// Motivating hole: cone-skipped CastOp whose type already changed.
+// Map→IR consistency (#2045) cannot see a *missing* reverse entry;
+// ImpactScope then under-counts. Type remirror owner is #3065;
+// decision-time completeness owner is #3068. At least one must catch.
+// Double-miss (neither catches, CastOp survives with old type) is
+// unreachable under production.
+
+static bool file_exists_cwd_3581(const char* rel) {
+    return std::ifstream(rel).good() || std::ifstream(std::string("../") + rel).good();
+}
+
+static IRFunction make_cone_skip_type_changed_castop(aura::compiler::dirty::NodeId nid) {
+    IRFunction fn;
+    fn.name = "cross_owner_3581";
+    fn.local_count = 4;
+    fn.entry_block = 0;
+    BasicBlock b0;
+    b0.id = 0;
+    b0.instructions = {
+        IRInstruction{.opcode = IROpcode::ConstI64,
+                      .operands = {0, 1, 0, 0},
+                      .source_ast_node_id = 0,
+                      .type_id = 1},
+        IRInstruction{.opcode = IROpcode::Return, .operands = {0, 0, 0, 0}},
+    };
+    BasicBlock b1;
+    b1.id = 1;
+    b1.instructions = {
+        IRInstruction{.opcode = IROpcode::ConstI64,
+                      .operands = {2, 7, 0, 0},
+                      .source_ast_node_id = 0,
+                      .type_id = 1},
+        // Non-identity CastOp (src tag 1 → dest type_id 2) outside cone.
+        IRInstruction{.opcode = IROpcode::CastOp,
+                      .operands = {3, 2, 1, 0},
+                      .source_ast_node_id = nid,
+                      .type_id = 2},
+        IRInstruction{.opcode = IROpcode::Return, .operands = {3, 0, 0, 0}},
+    };
+    fn.blocks.push_back(std::move(b0));
+    fn.blocks.push_back(std::move(b1));
+    return fn;
+}
+
+static void ac3581_1_castop_type_change_cone_skip_either_owner() {
+    std::println("\n--- #3581 AC1: CastOp type-change + cone-skip → remirror or completeness ---");
+    using aura::compiler::populate_source_to_ir_map_from_irs;
+    using aura::compiler::should_partial_relower_impact_checked_prod;
+    using aura::compiler::source_to_ir_map_missing_instr_loc;
+    using aura::compiler::SourceToIrMap;
+    using aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+    auto save =
+        g_typed_mutation_audit_counters.production_defaults_active.load(std::memory_order_relaxed);
+    // Cone-skip needs the dirty-pred path; production + unbound stamper
+    // force-fulls DCE (#3547). Remirror/completeness run after, under production.
+    g_typed_mutation_audit_counters.production_defaults_active.store(0, std::memory_order_relaxed);
+    reset_residual_castop_persist_for_test();
+
+    constexpr aura::compiler::dirty::NodeId kCast = 3581;
+    IRFunction fn = make_cone_skip_type_changed_castop(kCast);
+    CHECK(count_identity_castops(fn) == 0, "3581 AC1: leftover is type-changed (non-identity)");
+    DeadCoercionPass dce;
+    dce.set_block_dirty_fn([](std::uint32_t bid) { return bid == 0; });
+    const auto skips0 = load_u64(dead_coercion_dirty_cone_skips);
+    const auto partial0 = load_u64(dead_coercion_dirty_cone_partial_runs);
+    dce.run(fn);
+    CHECK(load_u64(dead_coercion_dirty_cone_partial_runs) > partial0 ||
+              load_u64(dead_coercion_dirty_cone_skips) > skips0,
+          "3581 AC1: dirty-cone limited scan (partial-run or skip)");
+    bool skipped_alive = false;
+    for (const auto& ins : fn.blocks[1].instructions) {
+        if (ins.opcode == IROpcode::CastOp && ins.source_ast_node_id == kCast && ins.type_id == 2)
+            skipped_alive = true;
+    }
+    CHECK(skipped_alive, "3581 AC1: cone-skip left type-changed CastOp in clean block");
+
+    g_typed_mutation_audit_counters.production_defaults_active.store(1, std::memory_order_relaxed);
+    // #3065 remirror face: persist + remirror the skipped nid into type∪IR.
+    const aura::compiler::dirty::NodeId one[] = {kCast};
+    note_residual_castop_sites(one, {});
+    CHECK(mirror_type_affected_to_cascade({}) == 0, "3581 AC1: wipe type cone");
+    CHECK(!cone_contains(kCast), "3581 AC1: skipped nid not in cone before remirror");
+    CHECK(remirror_persisted_residual_castops() >= 1, "3581 AC1: #3065 remirror ran");
+    const bool remirror_hit = cone_contains(kCast);
+
+    // #3068 completeness face: drop instr loc on the reverse entry.
+    std::vector<IRFunction> irs;
+    irs.push_back(fn);
+    SourceToIrMap map;
+    populate_source_to_ir_map_from_irs(irs, map);
+    auto mit = map.find(static_cast<aura::ast::NodeId>(kCast));
+    CHECK(mit != map.end(), "3581 AC1: reverse entry exists before drop");
+    mit->second.instr_index = UINT32_MAX;
+    const bool missing = source_to_ir_map_missing_instr_loc(irs, map);
+    const std::size_t sentinel = static_cast<std::size_t>(-1);
+    const bool completeness_upgrade =
+        missing && !should_partial_relower_impact_checked_prod(1, sentinel, /*production=*/true);
+
+    CHECK(remirror_hit || completeness_upgrade,
+          "3581 AC1: remirror dirty or #3068 completeness upgrade (at least one)");
+    CHECK(remirror_hit, "3581 AC1: #3065 remirror marked skipped CastOp dirty");
+    CHECK(completeness_upgrade, "3581 AC1: #3068 missing_instr_loc upgrades partial→full");
+
+    reset_residual_castop_persist_for_test();
+    g_typed_mutation_audit_counters.production_defaults_active.store(save,
+                                                                     std::memory_order_relaxed);
+}
+
+static void ac3581_2_double_miss_unreachable() {
+    std::println("\n--- #3581 AC2: double-miss form unreachable under production ---");
+    using aura::compiler::populate_source_to_ir_map_from_irs;
+    using aura::compiler::should_partial_relower_impact_checked_prod;
+    using aura::compiler::source_to_ir_map_missing_instr_loc;
+    using aura::compiler::SourceToIrMap;
+    using aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+    auto save =
+        g_typed_mutation_audit_counters.production_defaults_active.load(std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.production_defaults_active.store(1, std::memory_order_relaxed);
+    reset_residual_castop_persist_for_test();
+
+    constexpr aura::compiler::dirty::NodeId kCast = 35811;
+    IRFunction fn = make_cone_skip_type_changed_castop(kCast);
+    DeadCoercionPass dce;
+    dce.set_block_dirty_fn([](std::uint32_t bid) { return bid == 0; });
+    dce.run(fn);
+
+    // Simulate remirror miss: persist then wipe without remirror.
+    const aura::compiler::dirty::NodeId one[] = {kCast};
+    note_residual_castop_sites(one, {});
+    CHECK(mirror_type_affected_to_cascade({}) == 0, "3581 AC2: wipe");
+    const bool remirror_hit = cone_contains(kCast);
+
+    std::vector<IRFunction> irs;
+    irs.push_back(fn);
+    SourceToIrMap map;
+    populate_source_to_ir_map_from_irs(irs, map);
+    auto mit = map.find(static_cast<aura::ast::NodeId>(kCast));
+    CHECK(mit != map.end(), "3581 AC2: reverse entry");
+    mit->second.instr_index = UINT32_MAX;
+    const bool missing = source_to_ir_map_missing_instr_loc(irs, map);
+    const std::size_t sentinel = static_cast<std::size_t>(-1);
+    const bool allow_partial_sentinel =
+        should_partial_relower_impact_checked_prod(1, sentinel, /*production=*/true);
+    const bool allow_partial_unknown =
+        should_partial_relower_impact_checked_prod(1, 0, /*production=*/true);
+
+    CHECK(!remirror_hit, "3581 AC2: remirror miss simulated (cone empty)");
+    CHECK(missing, "3581 AC2: #3068 still sees missing instr loc");
+    CHECK(!allow_partial_sentinel, "3581 AC2: #3034 sentinel refuses silent partial");
+    CHECK(!allow_partial_unknown, "3581 AC2: #3310 unknown-impact refuses silent partial");
+    CHECK(!(!remirror_hit && !missing && allow_partial_sentinel),
+          "3581 AC2: double-miss (neither owner, CastOp survives old type) unreachable");
+
+    reset_residual_castop_persist_for_test();
+    g_typed_mutation_audit_counters.production_defaults_active.store(save,
+                                                                     std::memory_order_relaxed);
+}
+
+static void ac3581_3_dual_owner_source_cite() {
+    std::println("\n--- #3581 AC3: dual-owner source-cite #3065 / #3068 ---");
+    const auto dirty = read_file("src/compiler/dirty_propagation.ixx");
+    const auto pure = read_file("src/compiler/ir_cache_pure.ixx");
+    const auto t = read_file("tests/compiler/test_dead_coercion_dirty_cone.cpp");
+    CHECK(dirty.find("Issue #3065") != std::string::npos, "3581 AC3: #3065 remirror owner");
+    CHECK(dirty.find("force_dead_coercion_elim_into_cone") != std::string::npos,
+          "3581 AC3: #3065 remirror helper");
+    CHECK(pure.find("Issue #3068") != std::string::npos, "3581 AC3: #3068 completeness owner");
+    CHECK(pure.find("source_to_ir_map_missing_instr_loc") != std::string::npos,
+          "3581 AC3: #3068 missing-loc helper");
+    CHECK(pure.find("CastOp / type-cone is the motivating case") != std::string::npos,
+          "3581 AC3: #3068 cites CastOp type-cone");
+    CHECK(pure.find("#3065") != std::string::npos, "3581 AC3: #3068 names remirror owner");
+    CHECK(t.find("ac3581_1_castop_type_change_cone_skip_either_owner") != std::string::npos,
+          "3581 AC3: AC1 present");
+    CHECK(t.find("ac3581_2_double_miss_unreachable") != std::string::npos, "3581 AC3: AC2 present");
+    CHECK(!file_exists_cwd_3581("tests/compiler/test_issue_3581.cpp"),
+          "3581 AC3: no test_issue_3581.cpp");
+    CHECK(!file_exists_cwd_3581("docs/design/3581-cross-owner-castop.md"),
+          "3581 AC3: no docs/design/");
+    CHECK(!file_exists_cwd_3581("scripts/coverage/checks/check_cross_owner_castop_3581.py"),
+          "3581 AC3: no check_3581.py");
+}
+
 } // namespace
 
 int run_test_dead_coercion_dirty_cone() {
@@ -1229,10 +1414,13 @@ int run_test_dead_coercion_dirty_cone() {
     ac3547_2_type_id_drift_invalidates_site();
     ac3547_3_soft_keeps_cone();
     ac3547_4_source_cite_no_invent();
+    ac3581_1_castop_type_change_cone_skip_either_owner();
+    ac3581_2_double_miss_unreachable();
+    ac3581_3_dual_owner_source_cite();
     reset_residual_castop_persist_for_test();
-    std::println(
-        "\n=== #2556/#3007/#3046/#3065/#3120/#3228/#3347/#3349/#3547: {} passed, {} failed ===",
-        g_passed, g_failed);
+    std::println("\n=== #2556/#3007/#3046/#3065/#3120/#3228/#3347/#3349/#3547/#3581: {} passed, {} "
+                 "failed ===",
+                 g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
 
