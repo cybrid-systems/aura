@@ -8366,14 +8366,22 @@ def _cmake_build_cmd(targets: list[str], nproc: int) -> list[str]:
     return cmd
 
 
-def _build_named_targets(targets: list[str], nproc: int, *, fatal: bool) -> int:
-    """Ninja one or more cmake targets; retry once on GCC 16 module ICE."""
+def _build_named_targets(targets: list[str], nproc: int, *, fatal: bool, retry_ice: bool = True) -> int:
+    """Ninja one or more cmake targets.
+
+    retry_ice: GCC 16 ealias ICE on combined FILE_SET ninja is real for
+    aura/test_ir. test_concurrent isolate failures have been deterministic
+    (-Werror=unused-result); retrying the same compile doubled the wait
+    and hid the diagnostic behind 'GCC ICE workaround'.
+    """
     label = "+".join(targets)
     t0 = time.time()
     r = run(_cmake_build_cmd(targets, nproc), cwd=ROOT)
-    if r != 0:
+    if r != 0 and retry_ice:
         warn(f"{label} build failed — retrying once (GCC ICE workaround)")
         r = run(_cmake_build_cmd(targets, nproc), cwd=ROOT)
+    elif r != 0:
+        warn(f"{label} build failed — skipping ICE retry (deterministic compile)")
     _phase(f"build {label}", t0)
     if r != 0 and fatal:
         fail(f"build {label} failed")
@@ -8382,9 +8390,8 @@ def _build_named_targets(targets: list[str], nproc: int, *, fatal: bool) -> int:
 
 # Own FILE_SET .ixx producers. Must not share a ninja with aura /
 # aura_test_objects — GCC 16 ealias ICE on ast.ixx under -O2.
-# test_concurrent: RelWithDebInfo -O2 + combined issue-farm ninja can
-# fail to emit the binary (GCC 16 ICE / contaminated .o); isolated
-# sequential build matches asan-build which already links it.
+# test_concurrent is isolated so RelWithDebInfo -Werror on that TU is
+# visible instead of a missing binary after a combined issue-farm ninja.
 _MODULE_ICE_ISOLATE = frozenset({"test_ir", "test_gc_evaluator_integration", "test_concurrent"})
 _MODULE_PRODUCER_DIRS = frozenset(f"{t}.dir" for t in _MODULE_ICE_ISOLATE)
 
@@ -8502,10 +8509,17 @@ class _BuildCtx:
     nproc: int
     t_all: float
     overlap_main: list[str]
+    concurrent_build_rc: int = 0
+    concurrent_attempted: bool = False
 
 
 def _begin_build() -> tuple[int, _BuildCtx | None]:
-    """Configure + aura + ICE-isolated bins (test_ir). None ctx = done or fail."""
+    """Configure + aura + ICE-isolated bins (test_ir). None ctx = done or fail.
+
+    test_concurrent compile failure is recorded on the ctx instead of
+    aborting: cmd_ci still builds/runs issues so one red leaf cannot
+    hide the other.
+    """
     print(f"{B}═══ Build ═══{N}")
     BUILD.mkdir(parents=True, exist_ok=True)
     nproc = _build_jobs()
@@ -8519,9 +8533,9 @@ def _begin_build() -> tuple[int, _BuildCtx | None]:
 
     # aura, then test_ir (own FILE_SET .ixx): a single ninja of
     # aura+test_ir races ast.ixx and can ICE GCC 16 ealias under -O2.
-    # test_concurrent is also ICE-isolated (RelWithDebInfo -O2 + the
-    # issue farm ninja can fail to emit the binary). Remaining overlap
-    # is issue binaries only.
+    # test_concurrent is isolated so RelWithDebInfo -Werror on that TU
+    # is visible; compile fail does not abort the issue farm. Remaining
+    # overlap ninja is issue binaries only.
     #
     # AURA_BUILD_TARGETS=aura[,test_ir,...] — restrict the main matrix
     # (deployment-health only needs the aura binary for --health-server).
@@ -8552,16 +8566,30 @@ def _begin_build() -> tuple[int, _BuildCtx | None]:
 
     ice_targets = [t for t in remaining if t in _MODULE_ICE_ISOLATE]
     overlap_main = [t for t in remaining if t not in _MODULE_ICE_ISOLATE]
+    concurrent_build_rc = 0
+    concurrent_attempted = False
     for target in ice_targets:
-        r = _build_named_targets([target], nproc, fatal=True)
+        is_conc = target == "test_concurrent"
+        if is_conc:
+            concurrent_attempted = True
+        r = _build_named_targets([target], nproc, fatal=not is_conc, retry_ice=not is_conc)
         if r != 0:
+            if is_conc:
+                concurrent_build_rc = r
+                continue
             return r, None
 
-    return 0, _BuildCtx(nproc=nproc, t_all=t_all, overlap_main=overlap_main)
+    return 0, _BuildCtx(
+        nproc=nproc,
+        t_all=t_all,
+        overlap_main=overlap_main,
+        concurrent_build_rc=concurrent_build_rc,
+        concurrent_attempted=concurrent_attempted,
+    )
 
 
 def _finish_overlap_issues(ctx: _BuildCtx) -> int:
-    """Ninja test_concurrent + issue matrix. Issue link flakes are non-fatal."""
+    """Ninja the issue matrix. Issue link flakes are non-fatal."""
     nproc = ctx.nproc
     overlap_main = ctx.overlap_main
 
@@ -8671,7 +8699,11 @@ def cmd_build():
     rc, ctx = _begin_build()
     if ctx is None:
         return rc
-    return _finish_overlap_issues(ctx)
+    link = _finish_overlap_issues(ctx)
+    if ctx.concurrent_build_rc:
+        fail("build test_concurrent failed")
+        return ctx.concurrent_build_rc
+    return link
 
 
 def cmd_clean():
@@ -21233,23 +21265,45 @@ def cmd_gate():
     return 0
 
 
-def _report_ci_slice_failures(link_rc: int, early_rc: int, late_rc: int) -> int:
-    """OR the three cmd_ci slices and print which one failed.
+def _run_concurrent_early(ctx: _BuildCtx) -> int:
+    """Run test_concurrent as soon as the isolate compile finishes.
 
-    Heavy/stress always runs even when cheap/medium already failed, so the
-    last printed line is often ``All 2 test suites passed`` while the
-    process still exits 1 (CI #4910). Surface the earlier slice here.
+    ci/concurrent used to sit in the stress wave after ci/issues (~368s).
+    The binary is already linked in _begin_build; running it here keeps
+    wall time the same (issues still dominate) but surfaces x86 UAF /
+    unused-result ~6 min earlier, and a compile miss no longer skips issues.
     """
-    if not (link_rc or early_rc or late_rc):
+    if not ctx.concurrent_attempted:
+        return 0
+    if ctx.concurrent_build_rc:
+        fail("test_concurrent failed to compile — continuing ci/issues")
+        return ctx.concurrent_build_rc
+    if not _target_bin_ok("test_concurrent"):
+        fail("test_concurrent binary not found — continuing ci/issues")
+        return 1
+    info("ci/concurrent: run after isolate compile, before issue ninja")
+    return test_concurrent()
+
+
+def _report_ci_slice_failures(link_rc: int, early_rc: int, late_rc: int, conc_rc: int = 0) -> int:
+    """OR the cmd_ci slices and print which one failed.
+
+    Heavy always runs even when cheap/medium already failed, so the
+    last printed line is often ``All 2 test suites passed`` while the
+    process still exits 1 (CI #4910). Surface every slice here.
+    """
+    if not (link_rc or early_rc or late_rc or conc_rc):
         return 0
     print(f"\n{'═' * 50}")
     fail("CI failed — later wave summary is not the whole result:")
+    if conc_rc:
+        print(f"  {R}✗{N} ci/concurrent (compile or run) rc={conc_rc}")
     if link_rc:
-        print(f"  {R}✗{N} overlap ninja (test_concurrent / issue binaries) rc={link_rc}")
+        print(f"  {R}✗{N} issue-bin ninja rc={link_rc}")
     if early_rc:
         print(f"  {R}✗{N} cheap/medium wave (search log for 'Waves cheap, medium') rc={early_rc}")
     if late_rc:
-        print(f"  {R}✗{N} heavy/stress wave rc={late_rc}")
+        print(f"  {R}✗{N} ci/issues (heavy wave) rc={late_rc}")
     return 1
 
 
@@ -21259,13 +21313,15 @@ def cmd_ci():
     Honors AURA_ISSUE_BUILD=none (skip issue binary matrix + issues suite)
     for PR path-filter when only scripts/lib tooling changed.
 
-    After aura + test_ir, cheap/medium suites (need those two bins) run
-    alongside the remaining ninja (test_concurrent + issue farm). Heavy
-    (issues) and stress (concurrent) wait until that ninja finishes.
+    After aura + test_ir + test_concurrent compile: run concurrent, then
+    overlap cheap/medium with the issue-farm ninja. Heavy (issues) waits
+    for that ninja. Concurrent compile/run failure does not skip issues.
     """
     rc, ctx = _begin_build()
     if ctx is None:
         return rc
+
+    conc_rc = _run_concurrent_early(ctx)
 
     saved_jobs = os.environ.get("AURA_TEST_JOBS")
     # Cap suite fan-out while ninja is live so 4-vCPU CI does not stack
@@ -21275,7 +21331,7 @@ def cmd_ci():
         info("ci overlap: AURA_TEST_JOBS=2 while remaining ninja runs")
 
     print(
-        f"{B}═══ Overlap: cheap/medium tests ‖ test_concurrent+issue ninja ═══{N}",
+        f"{B}═══ Overlap: cheap/medium tests ‖ issue ninja ═══{N}",
         flush=True,
     )
     link_rc = 0
@@ -21295,8 +21351,9 @@ def cmd_ci():
         else:
             os.environ["AURA_TEST_JOBS"] = saved_jobs
 
-    late_rc = cmd_test(["ci"], waves=("heavy", "stress"))
-    return _report_ci_slice_failures(link_rc, early_rc, late_rc)
+    # Concurrent already ran. Heavy = ci/issues only.
+    late_rc = cmd_test(["ci"], waves=("heavy",))
+    return _report_ci_slice_failures(link_rc, early_rc, late_rc, conc_rc)
 
 
 def cmd_list():
