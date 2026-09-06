@@ -1,0 +1,56 @@
+{
+  "issue": 3590,
+  "title": "Issue #3590: QueryEpoch strict joins production bootstrap gate",
+  "ok": "OK: Issue #3590 — armed process query_epoch_strict=true; unarmed=false unless AURA_QUERY_EPOCH_STRICT override.",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "tests/serve/chaos_soak_production_gate.cpp",
+      "contains": [
+        "epoch strict must be armed under production defaults (#3075)",
+        "unbootstrapped process must not report strict armed",
+        "fail_if_prod(\"query_epoch_strict armed\""
+      ]
+    },
+    {
+      "ac": "AC1-test",
+      "path": "tests/serve/test_steal_safety_production_residual_zero.cpp",
+      "contains": [
+        "3590: QueryEpoch strict joins production bootstrap gate",
+        "joins 6 hard-fail path (no 7th counter)"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/serve/chaos_soak_production_gate.cpp",
+      "contains": [
+        "AURA_QUERY_EPOCH_STRICT",
+        "maybe_init_query_epoch_strict_from_env"
+      ]
+    },
+    {
+      "ac": "AC2-test",
+      "path": "tests/serve/test_production_sweep.cpp",
+      "contains": [
+        "ac3590_bootstrap_order_matrix",
+        "AURA_QUERY_EPOCH_STRICT override arms strict"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/serve/chaos_soak_production_gate.cpp",
+      "contains": [
+        "no schema-3590",
+        "no test_issue_3590.cpp"
+      ]
+    },
+    {
+      "ac": "NO-INVENT",
+      "forbid": [
+        "tests/serve/test_issue_3590.cpp",
+        "docs/design/3590-query-epoch-bootstrap.md",
+        "scripts/coverage/checks/check_query_epoch_strict_3590.py"
+      ]
+    }
+  ]
+}

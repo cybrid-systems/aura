@@ -2,7 +2,11 @@
 
 #include "test_harness.hpp"
 
+#include "compiler/typed_mutation_audit.h"
+#include "core/workspace_epoch.hh"
+
 #include <cstdint>
+#include <cstdlib>
 #include <string>
 #include <string_view>
 
@@ -28,6 +32,51 @@ std::int64_t href(CompilerService& cs, std::string_view q, std::string_view key)
     if (!r || !is_int(*r))
         return -1;
     return as_int(*r);
+}
+
+// Issue #3590: bootstrap order matrix (start-then-arm / unarmed / env override).
+static void ac3590_bootstrap_order_matrix() {
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    using aura::compiler::typed_audit::production_defaults_active;
+    using aura::core::query_epoch_strict;
+    using aura::core::set_query_epoch_strict;
+
+    std::println("\n--- #3590: bootstrap order matrix (start-then-arm / unarmed) ---");
+
+    // Unarmed: observe-only is the contract.
+    apply_dev_audit_defaults();
+    ::setenv("AURA_SANDBOX", "off", 1);
+    ::unsetenv("AURA_QUERY_EPOCH_STRICT");
+    CHECK(production_defaults_active() == 0, "3590: unarmed probe");
+    CHECK(!query_epoch_strict(), "unbootstrapped process must not report strict armed");
+
+    // Start then arm: CompilerService already constructed above in main;
+    // arming after start must flip QueryEpoch strict on.
+    apply_production_audit_defaults();
+    CHECK(query_epoch_strict(), "epoch strict must be armed under production defaults (#3075)");
+
+    // Restore Soft, then arm-before-start: apply production then a fresh service.
+    apply_dev_audit_defaults();
+    ::setenv("AURA_SANDBOX", "off", 1);
+    apply_production_audit_defaults();
+    {
+        CompilerService armed;
+        CHECK(armed.eval("(+ 1 1)").has_value(), "3590: arm-then-start eval");
+        CHECK(query_epoch_strict(), "3590: arm-then-start stays strict");
+    }
+
+    // AC2: explicit AURA_QUERY_EPOCH_STRICT override wins over unarmed default.
+    apply_dev_audit_defaults();
+    ::setenv("AURA_SANDBOX", "off", 1);
+    ::setenv("AURA_QUERY_EPOCH_STRICT", "1", 1);
+    set_query_epoch_strict(true);
+    CHECK(production_defaults_active() == 0, "3590 AC2: still unarmed");
+    CHECK(query_epoch_strict(), "3590 AC2: AURA_QUERY_EPOCH_STRICT override arms strict");
+    ::unsetenv("AURA_QUERY_EPOCH_STRICT");
+    set_query_epoch_strict(false);
+    apply_dev_audit_defaults();
+    ::setenv("AURA_SANDBOX", "off", 1);
 }
 
 } // namespace
@@ -83,6 +132,9 @@ int main() {
         auto a = cs.eval("(+ 20 22)");
         CHECK(a && is_int(*a) && as_int(*a) == 42, "(+ 20 22)");
     }
+
+    // Issue #3590: bootstrap-order matrix for QueryEpoch strict (#3075 x #3586).
+    ac3590_bootstrap_order_matrix();
 
     if (::aura::test::g_failed)
         return 1;

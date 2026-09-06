@@ -14,6 +14,9 @@
 //        - g_lock_order_violation_total == 0
 //        - eventfd_wake_force_safepoint_total_v_read() == 0
 //        - provenance::g_provenance_enforcement().fiber_id_mismatch_total == 0
+//   Issue #3590: QueryEpoch strict joins this gate (no 7th counter):
+//        armed process query_epoch_strict()==true; unarmed==false unless
+//        operator AURA_QUERY_EPOCH_STRICT override. Same fail_if_prod path.
 //   AC3: Soft / Off path (sandbox=off / !production_defaults_active):
 //        same test runs observe-only; logs counter snapshot, no CHECK fail.
 //   AC4: Env knobs:
@@ -42,6 +45,7 @@
 #include "compiler/typed_mutation_audit.h" // production_defaults_active (#2902)
 #include "core/gc_hooks.h"
 #include "core/provenance_tracker.hh"
+#include "core/workspace_epoch.hh" // query_epoch_strict (#3075 / #3590)
 #include "serve/fiber.h"
 #include "serve/metrics.h"
 #include "serve/multi_fiber_mailbox.h"
@@ -180,6 +184,76 @@ static void ac3586_unarmed_multi_worker_refuses() {
         ::setenv("AURA_SANDBOX", "off", 1);
 }
 
+static bool query_epoch_strict_env_on() noexcept {
+    const char* e = std::getenv("AURA_QUERY_EPOCH_STRICT");
+    return e && (e[0] == '1' || e[0] == 't' || e[0] == 'T' || e[0] == 'y' || e[0] == 'Y');
+}
+
+// Issue #3590: QueryEpoch strict must join the production bootstrap gate
+// (#3075 x #3586). Same 6 hard-fail path (fail_if_prod); no new counter.
+static void ac3590_query_epoch_strict_joins_bootstrap_gate() {
+    std::println("\n--- #3590: QueryEpoch strict joins production bootstrap gate ---");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    using aura::compiler::typed_audit::production_defaults_active;
+    using aura::core::query_epoch_strict;
+    using aura::core::set_query_epoch_strict;
+
+    const auto was_prod = production_defaults_active();
+
+    // Scenario 1: production defaults already armed (or we arm then restore).
+    apply_production_audit_defaults();
+    CHECK(query_epoch_strict(), "epoch strict must be armed under production defaults (#3075)");
+    CHECK(aura_production_defaults_active_probe() != 0, "3590: armed probe");
+    if (was_prod == 0) {
+        apply_dev_audit_defaults();
+        ::setenv("AURA_SANDBOX", "off", 1);
+    }
+
+    // Scenario 2: dual unarmed process (observe-only is contract, gate-visible).
+    if (aura_production_defaults_active_probe() == 0 && !query_epoch_strict_env_on()) {
+        CHECK(!query_epoch_strict(), "unbootstrapped process must not report strict armed");
+    }
+
+    // Dual child keeps parent face intact: unarmed must report !strict,
+    // then AURA_QUERY_EPOCH_STRICT override still arms (AC2).
+    const pid_t pid = ::fork();
+    if (pid == 0) {
+        ::alarm(2);
+        apply_dev_audit_defaults();
+        ::unsetenv("AURA_QUERY_EPOCH_STRICT");
+        set_query_epoch_strict(false);
+        if (aura_production_defaults_active_probe() != 0)
+            ::_exit(2);
+        if (query_epoch_strict())
+            ::_exit(3);
+        ::setenv("AURA_QUERY_EPOCH_STRICT", "1", 1);
+        set_query_epoch_strict(true);
+        if (!query_epoch_strict())
+            ::_exit(4);
+        if (aura_production_defaults_active_probe() != 0)
+            ::_exit(5);
+        ::_exit(0);
+    }
+    int st = 0;
+    if (pid > 0)
+        ::waitpid(pid, &st, 0);
+    CHECK(pid > 0 && WIFEXITED(st) && WEXITSTATUS(st) == 0,
+          "3590 AC2: unarmed !strict; AURA_QUERY_EPOCH_STRICT override arms");
+
+    const auto sweep = read_file("tests/serve/test_production_sweep.cpp");
+    CHECK(sweep.find("ac3590_bootstrap_order_matrix") != std::string::npos,
+          "3590: production_sweep bootstrap matrix");
+    const auto epoch = read_file("src/core/workspace_epoch.hh");
+    CHECK(epoch.find("maybe_init_query_epoch_strict_from_env") != std::string::npos,
+          "3590 AC2: env bootstrap preserved");
+    const auto qw = read_file("src/compiler/evaluator_primitives_query_workspace.cpp");
+    CHECK(qw.find("schema-3590") == std::string::npos, "3590 AC3: no schema-3590");
+    CHECK(read_file("tests/serve/test_issue_3590.cpp").empty(), "3590 AC3: no test_issue_3590.cpp");
+    CHECK(read_file("docs/design/3590-query-epoch-bootstrap.md").empty(),
+          "3590 AC3: no docs/design/");
+}
+
 // ── Per-fiber chaos body ────────────────────────────────────────────
 struct ChaosState {
     std::atomic<std::uint64_t> ops{0};
@@ -292,6 +366,7 @@ int run_test_chaos_soak_production_gate() {
                  seed);
 
     ac3586_unarmed_multi_worker_refuses();
+    ac3590_query_epoch_strict_joins_bootstrap_gate();
     // Soft soak still needs an explicit off latch so Scheduler::run
     // does not FATAL (#3586) after the death test unset the env.
     if (!production && !sandbox_is_off())
@@ -409,6 +484,13 @@ int run_test_chaos_soak_production_gate() {
     const auto fiber_id_delta = after.fiber_id_mismatch - before.fiber_id_mismatch;
     fail_if_prod("fiber_id_mismatch delta", fiber_id_delta != 0);
     CHECK(fiber_id_delta == 0 || !production, "3555 AC2: fiber_id_mismatch_total delta == 0");
+
+    // Issue #3590: QueryEpoch strict joins the 6 hard-fail path (no 7th
+    // counter). Armed production process must report strict; Soft/Off
+    // observe-only via fail_if_prod.
+    fail_if_prod("query_epoch_strict armed", !aura::core::query_epoch_strict());
+    CHECK(aura::core::query_epoch_strict() || !production,
+          "3590: epoch strict must be armed under production defaults (#3075)");
 
     // AC4: env knobs documented + defaults sane.
     CHECK(duration_s >= 1, "3555 AC4: AURA_CHAOS_SOAK_DEPLOY_GATE_DURATION_S sane");
