@@ -1594,6 +1594,63 @@ static void ac3519_escape_active_depth_emits() {
     CHECK(read_file("tests/compiler/test_issue_3519.cpp").empty(), "3519 AC5: no invent");
 }
 
+static void ac3591_1_elision_routes_predicate() {
+    std::println("\n--- #3591 AC1: owned elision routes #3006 predicate ---");
+    using aura::compiler::kLinearElisionEpochFenceIssue;
+    CHECK(kLinearElisionEpochFenceIssue == 3591, "3591: stamp");
+    const auto lin = read_file("src/compiler/lowering_linear_types_impl.cpp");
+    CHECK(lin.find("Issue #3591") != std::string::npos, "3591 AC1: lowering cites #3591");
+    CHECK(lin.find("aura_linear_fast_path_ok()") != std::string::npos,
+          "3591 AC1: Production conjunct ok()");
+    CHECK(lin.find("aura_linear_fast_path_depth_or_densify_block()") != std::string::npos,
+          "3591 AC1: epoch subset");
+    CHECK(lin.find("aura_production_defaults_active_probe()") != std::string::npos,
+          "3591 AC3: Soft skip via probe");
+    const auto gate = read_file("src/compiler/ownership_escape_lowering_gate.h");
+    CHECK(gate.find("kLinearElisionEpochFenceIssue = 3591") != std::string::npos,
+          "3591 AC1: header stamp");
+    const auto hooks = read_file("src/compiler/typed_mutation_audit_hooks.cpp");
+    CHECK(hooks.find("linear_fast_path_rehydrate_gen_blocks_elision()") != std::string::npos,
+          "3591 AC1: depth_or_densify epoch arm");
+
+    reset_fast_path_block_for_elision_test();
+    clear_escape_move_elision_gate();
+    using namespace aura::compiler::typed_audit;
+    clear_type_linear_commit_proof_for_test();
+    auto save =
+        g_typed_mutation_audit_counters.production_defaults_active.load(std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.production_defaults_active.store(1, std::memory_order_relaxed);
+    set_escape_move_elision_gate(true, {});
+    {
+        aura::ast::ASTArena arena;
+        auto alloc = arena.allocator();
+        StringPool pool(alloc);
+        FlatAST flat(alloc);
+        make_move_var_flat(arena, pool, flat, "y");
+        auto mod = lower_to_ir(flat, pool, arena);
+        CHECK(count_move_ops(mod) >= 1, "3591 AC1: Production !ok does not elide");
+    }
+    g_typed_mutation_audit_counters.production_defaults_active.store(save,
+                                                                     std::memory_order_relaxed);
+    clear_escape_move_elision_gate();
+    clear_type_linear_commit_proof_for_test();
+}
+
+static void ac3591_2_linter_rejects_unsynced_elide() {
+    std::println("\n--- #3591 AC2: linter rejects unsynced elision ---");
+    const auto lint = read_file("scripts/coverage/checks/check_linear_elision_fast_path_3591.py");
+    CHECK(lint.find("Issue #3591") != std::string::npos, "3591 AC2: linter cites #3591");
+    CHECK(lint.find("classify_elision_decisions") != std::string::npos,
+          "3591 AC2: executable classifier");
+    CHECK(lint.find("unsynced Move elision") != std::string::npos, "3591 AC2: teeth unsynced");
+    CHECK(lint.find("aura_linear_fast_path_ok-synced elision") != std::string::npos,
+          "3591 AC2: teeth synced ok()");
+    CHECK(read_file("tests/compiler/test_issue_3591.cpp").empty(),
+          "3591 AC3: no test_issue_3591.cpp");
+    CHECK(read_file("docs/design/3591-linear-elision-epoch-fence.md").empty(),
+          "3591 AC3: no docs/design/");
+}
+
 } // namespace
 
 int run_test_escape_move_elision_gate() {
@@ -1603,6 +1660,9 @@ int run_test_escape_move_elision_gate() {
     ac2_clean_path_elides();
     ac3_null_summary_legacy();
     ac3519_escape_active_depth_emits();
+    std::println("\n=== Issue #3591: linear elision #3006 epoch-fence machine proof ===");
+    ac3591_1_elision_routes_predicate();
+    ac3591_2_linter_rejects_unsynced_elide();
     ac4_schema_source();
     ac6_cross_eval_isolation();
     ac7_same_eval_parity();

@@ -1978,6 +1978,27 @@ static void ac3577_soak_typed_audit_face() {
     }
 }
 
+static void ac3591_3_epoch_arm_and_soft() {
+    std::println("\n--- #3591 AC3: epoch arm in predicate + Soft skip ---");
+    const auto aud = read_file("src/compiler/typed_mutation_audit.h");
+    CHECK(aud.find("g_rehydrate_miss_invalidate_gen") != std::string::npos,
+          "3591 AC3: linear_fast_path_ok epoch arm");
+    CHECK(aud.find("linear_fast_path_rehydrate_gen_blocks_elision") != std::string::npos,
+          "3591 AC3: gen-blocks helper");
+    const auto tc = read_file("src/compiler/evaluator_typecheck.cpp");
+    CHECK(tc.find("note_steal_or_densify_epoch_fence") != std::string::npos,
+          "3591 AC3: reuse #2552 fence");
+    const auto low = read_file("src/compiler/lowering_linear_types_impl.cpp");
+    CHECK(low.find("aura_production_defaults_active_probe()") != std::string::npos,
+          "3591 AC3: Soft/Off skip ok()");
+    CHECK(low.find("schema-3591") == std::string::npos, "3591 AC3: no schema-3591");
+    CHECK(read_file("tests/compiler/test_issue_3591.cpp").empty(), "3591 AC3: no invent");
+    CHECK(read_file("docs/design/3591-linear-elision-epoch-fence.md").empty(),
+          "3591 AC3: no docs/design/");
+    const auto lint = read_file("scripts/coverage/checks/check_linear_elision_fast_path_3591.py");
+    CHECK(lint.find("classify_elision_decisions") != std::string::npos, "3591 AC3: classifier");
+}
+
 } // namespace
 
 int run_test_type_linear_commit_health() {
@@ -2161,6 +2182,8 @@ int run_test_type_linear_commit_health() {
               "3418: cap stays 16");
         CHECK(cap.find("fingerprint_overflow") != std::string::npos, "3418: overflow field");
     }
+    std::println("\n=== Issue #3591: linear elision epoch-fence (#3006 x #2552) ===");
+    ac3591_3_epoch_arm_and_soft();
     std::println("\n=== Issue #3577: enumerative TypeLinear publish ownership-quiet ===");
     ac3577_1_list_from_symbol_surface();
     ac3577_2_each_non_exempt_ownership_aware();
@@ -2168,7 +2191,7 @@ int run_test_type_linear_commit_health() {
     ac3577_4_linter_3448_not_regressed();
     ac3577_soak_typed_audit_face();
     std::println("\n=== #2613 + #2697 + #2717 + #2758 + #2842 + #2897 + #2911 + #2981 + #2984 + "
-                 "#2995 + #3030 + #3031 + #3032 + #3091 + #3577: {} "
+                 "#2995 + #3030 + #3031 + #3032 + #3091 + #3577 + #3591: {} "
                  "passed, {} "
                  "failed ===",
                  g_passed, g_failed);
