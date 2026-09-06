@@ -310,7 +310,7 @@ _CRASH_RCS = frozenset(
 )
 
 
-# 600s budget; also live-streamed so a hang is visible before timeout.
+# Live-streamed so a hang is visible before timeout.
 _VERY_HEAVY = frozenset(
     {
         "test_issues_jit_late1",
@@ -328,12 +328,18 @@ _VERY_HEAVY = frozenset(
         "test_hygiene_mutate_closed_loop",
     }
 )
+# late1 has exceeded 6 min under parallel load (rc=124 at *4). Keep *10.
+_VERY_HEAVY_JIT = frozenset(
+    {
+        "test_issues_jit_late1",
+        "test_issues_jit_late3",
+        "test_issues_jit_late4",
+    }
+)
 
 
 def _eff_timeout(bin_name: str, timeout: int) -> int:
     """Per-binary timeout scaling for stress / late bundles / orch."""
-    # late1 alone can exceed 6 min under parallel load on aarch64 CI
-    # (was timing out at 60*4=240s with rc=124).
     is_heavy = (
         "bench" in bin_name
         or bin_name == "test_issues_jit"
@@ -345,8 +351,10 @@ def _eff_timeout(bin_name: str, timeout: int) -> int:
         or "stress" in bin_name
         or "chaos" in bin_name
     )
+    if bin_name in _VERY_HEAVY_JIT:
+        return timeout * 10  # 600s — jit_late1 wall under load
     if bin_name in _VERY_HEAVY:
-        return timeout * 10  # 600s default
+        return timeout * 4  # 240s; isolate alarm is 90s/member
     if is_heavy:
         return timeout * 4
     return timeout
@@ -355,7 +363,7 @@ def _eff_timeout(bin_name: str, timeout: int) -> int:
 def _run_streamed(
     bin_name: str, cmd: list[str], timeout: int, cwd: str, env: dict[str, str]
 ) -> subprocess.CompletedProcess[str]:
-    """Live-print stdout so a 600s hang is visible. Prefix per binary."""
+    """Live-print stdout so a hang is visible before timeout. Prefix per binary."""
     proc = subprocess.Popen(
         cmd,
         stdout=subprocess.PIPE,
