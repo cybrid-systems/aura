@@ -604,6 +604,10 @@ void WorkerThread::run() {
             fiber->resume();
             gc_state_.running_fiber_count.fetch_sub(1, std::memory_order_acq_rel);
 
+            // Issue #3588: busy-path hold-budget poll. Park/idle already
+            // poll (#3071/#3325). All-busy + edge-free holder never parks.
+            (void)aura_hold_budget_poll_busy_path();
+
             // Issue #XXXX: the fiber may have been reclaimed while it
             // was running (reaper marked it during resume). resume()
             // no-op'd via the #2468 guard; never re-queue a reclaimed

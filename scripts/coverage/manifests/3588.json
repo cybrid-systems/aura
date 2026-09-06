@@ -1,0 +1,55 @@
+{
+  "issue": 3588,
+  "title": "Issue #3588: busy-path hold-budget poll after fiber swap-back",
+  "ok": "OK: Issue #3588 — all-busy + edge-free holder cancel+force-safepoint within 2×SLO; Soft skip.",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/serve/worker.cpp",
+      "contains": [
+        "Issue #3588",
+        "aura_hold_budget_poll_busy_path()"
+      ]
+    },
+    {
+      "ac": "AC1-test",
+      "path": "tests/serve/test_mailbox_hold_starvation_hard.cpp",
+      "contains": [
+        "ac3588_1_busy_all_workers_edge_free",
+        "all-busy + edge-free holder cancel within 2×SLO"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/serve/fiber.cpp",
+      "contains": [
+        "mutation_hold_budget_reject_enabled()",
+        "slo * 2ULL"
+      ]
+    },
+    {
+      "ac": "AC2-test",
+      "path": "tests/serve/test_mailbox_hold_starvation_hard.cpp",
+      "contains": [
+        "ac3588_2_happy_and_soft",
+        "one snapshot"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/serve/test_mailbox_hold_starvation_hard.cpp",
+      "contains": [
+        "ac3588_3_reuse_no_new_key",
+        "no schema-3588"
+      ]
+    },
+    {
+      "ac": "NO-INVENT",
+      "forbid": [
+        "tests/serve/test_issue_3588.cpp",
+        "docs/design/3588-busy-path-hold-budget.md",
+        "scripts/coverage/checks/check_hold_budget_busy_path_3588.py"
+      ]
+    }
+  ]
+}

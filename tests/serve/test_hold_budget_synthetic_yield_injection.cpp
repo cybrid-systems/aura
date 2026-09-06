@@ -1421,6 +1421,12 @@ int run_test_hold_budget_no_edge_force_3325() {
               "3325 AC5: no invent test_issue_3325");
         CHECK(read_file("tests/issues/test_issue_3325.cpp").empty(),
               "3325 AC5: no tests/issues/test_issue_3325");
+        const auto wc3588 = read_file("src/serve/worker.cpp");
+        CHECK(wc3588.find("Issue #3588") != std::string::npos,
+              "3325 AC5: #3588 busy-path poll extends this suite");
+        CHECK(read_file("tests/serve/test_mailbox_hold_starvation_hard.cpp")
+                      .find("ac3588_1_busy_all_workers_edge_free") != std::string::npos,
+              "3325 AC5: #3588 all-busy live case in starvation_hard");
     }
 
     int failed = aura::test::g_failed - saved_failed;
