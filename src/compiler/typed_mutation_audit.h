@@ -2512,15 +2512,23 @@ inline constexpr int kDepthZeroTypedEntryNegativeAuthorityIssue = 3510;
         depth = aura_evaluator_mutation_boundary_depth();
     if (depth == 0) {
         // Issue #3510: negative authority is not "stale chaos leftover".
-        // Persist-reject / #3477 leftover / remount #3448 publish Reject
-        // or latch pending residual; CastOp/Apply must not run.
-        if (g_last_type_linear_proof_outcome.load(std::memory_order_relaxed) ==
-            kTypeLinearProofOutcomeReject) {
+        // Scope the refusal to authority OWNED by the current eval context:
+        // background hygiene (remount-last-zero strip / post-migration
+        // rebind) publishes process-global Reject while holding the OLD
+        // green-bind stamper (≠ TLS of an unrelated warm eval). Refusing on
+        // that residue would kill every later depth==0 warm eval in the same
+        // process. Mirror the depth>0 #3416 rule: only refuse when the
+        // negative face is bound to the current TLS eval. stamper==0 ==
+        // TLS==0 (unit tests / fresh process) still compares equal so
+        // #3510 AC1-AC3 keep refusing.
+        const bool owned = last_proof_bound_to_current_eval();
+        if (owned && g_last_type_linear_proof_outcome.load(std::memory_order_relaxed) ==
+                         kTypeLinearProofOutcomeReject) {
             g_linear_fast_path_elide_blocked_production_total.fetch_add(1,
                                                                         std::memory_order_relaxed);
             return false;
         }
-        if (g_last_proof_would_allow_commit.load(std::memory_order_relaxed) == 0 &&
+        if (owned && g_last_proof_would_allow_commit.load(std::memory_order_relaxed) == 0 &&
             g_last_type_linear_commit_proof_stamp.load(std::memory_order_relaxed) != 0) {
             g_linear_fast_path_elide_blocked_production_total.fetch_add(1,
                                                                         std::memory_order_relaxed);
@@ -3430,7 +3438,18 @@ inline void strip_green_face_on_remount_last_zero() noexcept {
     TypeLinearCommitProof p{};
     ProofGoalTruth truth{};
     reject_stamp_last_look_mismatch(p, truth);
-    publish_type_linear_proof_outcome(kTypeLinearProofOutcomeReject);
+    // Issue #3510-residual: this hygiene strip only invalidates a stale
+    // green face so the NEXT mutate re-proves. It must not leave a
+    // process-global stamped Reject behind: the #3510 depth==0 gate reads
+    // outcome==Reject / (wa==0 && stamp!=0) as negative authority and
+    // would refuse unrelated warm evals for the rest of the batch process.
+    // The face drop + invalidate_gen advance (done above) is the actual
+    // elision protection; clear the stamp + quiet the outcome so a later
+    // depth==0 typed entry is not poisoned by this background hygiene.
+    // #3548 AC1/AC2 only assert stamper_unbound + would_allow==0, so this
+    // stays additive to those contracts.
+    g_last_type_linear_commit_proof_stamp.store(0, std::memory_order_relaxed);
+    g_last_type_linear_proof_outcome.store(kTypeLinearProofOutcomeQuiet, std::memory_order_relaxed);
 }
 
 [[nodiscard]] inline std::int64_t commit_readiness_reason_code(std::string_view r) noexcept {
