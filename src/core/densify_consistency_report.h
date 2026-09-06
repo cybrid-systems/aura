@@ -414,6 +414,21 @@ inline void reset_opaque_heap_pin_required_fail_for_test() noexcept {
     g_opaque_heap_pin_required_fail_total.store(0, std::memory_order_relaxed);
 }
 
+// Issue #3569: # of process-level FFI alias densify slot queue entries
+// consumed (erased) at Moving window end — snapshot-scoped drain so no
+// entry survives across windows (registered slots are &opaque_heap_[i] /
+// &modules_[i]; entries that persisted past vector realloc / aot:reload
+// swap would dangle and UAF the next window's rewrite walk). Append END
+// per #2906. Soft / no-drain windows never increment.
+inline std::atomic<std::uint64_t> g_ffi_alias_slots_consumed_total{0};
+inline constexpr int kFfiAliasSlotConsumeIssue = 3569;
+[[nodiscard]] inline std::uint64_t ffi_alias_slots_consumed_total_v_read() noexcept {
+    return g_ffi_alias_slots_consumed_total.load(std::memory_order_relaxed);
+}
+inline void reset_ffi_alias_slots_consumed_for_test() noexcept {
+    g_ffi_alias_slots_consumed_total.store(0, std::memory_order_relaxed);
+}
+
 } // namespace aura::core::densify_consistency
 
 #endif // AURA_CORE_DENSIFY_CONSISTENCY_REPORT_H
