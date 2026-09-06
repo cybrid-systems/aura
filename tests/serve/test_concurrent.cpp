@@ -7,6 +7,7 @@
 #include <signal.h>
 #include <execinfo.h>
 #include <cstring>
+#include <cstdio>
 
 #include "compiler/messaging_bridge.h"
 #include "serve/fiber.h"
@@ -180,54 +181,55 @@ bool test_multi_fiber_parallel() {
 bool test_eventfd_wakeup() {
     std::println("\n--- Test: Eventfd wakeup ---");
 
+    // Issue #3567: never touch Fiber* from the host after sched.run()
+    // starts. x86 CI reaps the unique_ptr (Done / resume-invariant
+    // hard-fail / stdin-readable IO wake) while the host still waits
+    // on fb->state() / is_queued() / eventfd() → SIGSEGV. ARM timing
+    // usually misses the window. Body publishes the fd into an atomic;
+    // host retry-writes that fd until stage==2.
     std::atomic<int> stage{0};
+    std::atomic<int> evfd{-1};
 
     aura::serve::Scheduler sched(2);
 
-    aura::serve::Fiber* fb = sched.spawn([&stage]() {
-        // Stage 1: running
-        stage.store(1);
-
-        // Park on the fiber eventfd — same path as Mailbox / Fiber::join
-        // (Waiting is set inside yield(BlockingIO)). Do not pre-set Waiting
-        // then yield() Explicit: that races the IO thread (#3521).
-        if (!aura::serve::g_current_fiber)
+    const bool spawned = sched.spawn([&stage, &evfd]() {
+        auto* self = aura::serve::g_current_fiber;
+        if (!self) {
+            stage.store(-1, std::memory_order_release);
             return;
+        }
+        evfd.store(self->eventfd(), std::memory_order_release);
+        stage.store(1, std::memory_order_release);
         aura::serve::Fiber::yield(aura::serve::YieldReason::BlockingIO);
+        stage.store(2, std::memory_order_release);
+    }) != nullptr;
+    CHECK(spawned, "spawn returned a fiber");
 
-        // Stage 2: woken up
-        stage.store(2);
-    });
-    CHECK(fb != nullptr, "spawn returned a fiber");
-
-    // Run scheduler in background
     std::thread t([&sched]() { sched.run(); });
 
-    // Wait until the fiber has actually parked: state == Waiting AND the
-    // worker has dropped it (is_queued() == false). Writing the eventfd
-    // earlier could re-enqueue a fiber that is still running on a worker.
-    bool parked = false;
-    auto park_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
-    while (fb && std::chrono::steady_clock::now() < park_deadline) {
-        if (fb->state() == aura::serve::FiberState::Waiting && !fb->is_queued()) {
-            parked = true;
-            break;
+    auto published = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+    while (stage.load(std::memory_order_acquire) == 0 &&
+           std::chrono::steady_clock::now() < published) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    CHECK(stage.load(std::memory_order_acquire) != -1, "g_current_fiber was set in body");
+    CHECK(stage.load(std::memory_order_acquire) >= 1, "fiber published eventfd before park");
+
+    const int fd = evfd.load(std::memory_order_acquire);
+    CHECK(fd >= 0, "fiber published a valid eventfd");
+    if (stage.load(std::memory_order_acquire) >= 1 && fd >= 0) {
+        auto wake_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+        while (stage.load(std::memory_order_acquire) < 2 &&
+               std::chrono::steady_clock::now() < wake_deadline) {
+            const uint64_t one = 1;
+            (void)::write(fd, &one, sizeof(one));
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
         }
-        std::this_thread::sleep_for(std::chrono::milliseconds(5));
-    }
-    CHECK(parked, "fiber reached Waiting and was dropped by its worker");
-
-    // Wake it: write 1 to the fiber's eventfd. The scheduler's IO thread
-    // (epoll) picks this up, drains it and re-enqueues the fiber to a
-    // worker — the same wake path used for real IO in serve-async.
-    if (parked) {
-        const uint64_t one = 1;
-        ssize_t w = ::write(fb->eventfd(), &one, sizeof(one));
-        CHECK(w == static_cast<ssize_t>(sizeof(one)), "eventfd write woke the fiber");
     }
 
-    // Wait for completion before stop (never stop with a Waiting fiber).
-    bool finished = wait_for_atomic(stage, 2);
+    bool finished = stage.load(std::memory_order_acquire) >= 2;
+    if (!finished && stage.load(std::memory_order_acquire) >= 1)
+        finished = wait_for_atomic(stage, 2);
     sched.stop();
     t.join();
 
@@ -2430,6 +2432,11 @@ static void ew_install_fatal_handlers() {
 
 int main() {
     ew_install_fatal_handlers();
+    // Issue #3567: CI redirects stdout; default fully-buffered FILE*
+    // hides the dying test on SIGSEGV. Line-buffer so every PASS/FAIL
+    // flushes before the next test (stdbuf -oL in build.py is belt).
+    setvbuf(stdout, nullptr, _IOLBF, 0);
+    setvbuf(stderr, nullptr, _IOLBF, 0);
     std::println("═══ Concurrent model unit tests ═══\n");
 
     // Issue: test_concurrent flake fix. The 72 std::thread

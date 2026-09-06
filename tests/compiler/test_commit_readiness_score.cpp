@@ -351,6 +351,15 @@ static void ac3510_depth_zero_negative_authority() {
     reset_pending_full_solve_residual_for_test();
     CHECK(ir_typed_entry_commit_readiness_ok(), "3510 AC4: face clear restores Quiet allow");
 
+    // Issue #3568: real Quiet (override unset) must allow leftover Reject
+    // so engine:metrics / hash-ref IR evals in the same process survive.
+    publish_type_linear_proof_outcome(kTypeLinearProofOutcomeReject);
+    g_linear_ir_fastpath_boundary_depth_override = -1;
+    CHECK(ir_typed_entry_commit_readiness_ok(),
+          "3568 AC1: real depth==0 Quiet allows leftover Reject");
+    clear_type_linear_proof_outcome_for_test();
+    g_linear_ir_fastpath_boundary_depth_override = 0;
+
     apply_dev_audit_defaults();
     publish_type_linear_proof_outcome(kTypeLinearProofOutcomeReject);
     CHECK(ir_typed_entry_commit_readiness_ok(), "3510 AC4: Soft Reject still allows");
@@ -360,11 +369,19 @@ static void ac3510_depth_zero_negative_authority() {
     const auto h = read_file("src/compiler/typed_mutation_audit.h");
     CHECK(h.find("kDepthZeroTypedEntryNegativeAuthorityIssue = 3510") != std::string::npos,
           "3510 AC5: issue stamp");
+    CHECK(h.find("kQuietTypedEntryWarmEvalIssue = 3568") != std::string::npos,
+          "3568 AC5: issue stamp");
     CHECK(h.find("pending_full_solve_residual_face_hit()") != std::string::npos,
           "3510 AC5: pending face consult");
+    CHECK(h.find("Real Quiet (override unset)") != std::string::npos, "3568 AC5: real Quiet split");
+    CHECK(read_file("src/compiler/ir_executor_impl.cpp")
+                  .find("g_linear_ir_fastpath_boundary_depth_override = -1") != std::string::npos,
+          "3568 AC2: IR execute ignores leftover override");
     CHECK(read_file("docs/design/3510-depth-zero-typed-entry.md").empty(),
           "3510 AC5: no docs/design");
     CHECK(read_file("tests/compiler/test_issue_3510.cpp").empty(), "3510 AC5: no invent");
+    CHECK(read_file("tests/compiler/test_issue_3568.cpp").empty(), "3568 AC5: no invent");
+    CHECK(read_file("docs/design/3568-typed-entry-quiet.md").empty(), "3568 AC5: no docs/design");
 }
 
 } // namespace

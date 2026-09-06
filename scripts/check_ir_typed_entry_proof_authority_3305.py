@@ -50,10 +50,10 @@ def _check_ir_typed_entry_face_consult(h: str) -> list[str]:
     if fn_pos < 0:
         failures.append("AC1: ir_typed_entry_commit_readiness_ok not found")
         return failures
-    # Read a generous window (~5000 chars) to capture the new face-consult
-    # + the existing commit_readiness check. Window expanded from 3500
-    # after #3510 grew the depth==0 negative-authority block.
-    scope = h[fn_pos : fn_pos + 5000]
+    # Read a generous window to capture the face-consult + commit_readiness
+    # check. Expanded 3500 → 5000 after #3510, 5000 → 6500 after #3568
+    # Quiet early-return comments in the depth==0 block.
+    scope = h[fn_pos : fn_pos + 6500]
     required = (
         ("g_last_type_linear_proof_outcome", "AC1: g_last_type_linear_proof_outcome not consulted"),
         ("kTypeLinearProofOutcomeReject", "AC1: kTypeLinearProofOutcomeReject not compared"),

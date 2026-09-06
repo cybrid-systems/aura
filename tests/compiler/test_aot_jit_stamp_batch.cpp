@@ -4,7 +4,9 @@
 
 #include "test_harness.hpp"
 
+#include <cstdio>
 #include <cstdlib>
+#include <csignal>
 #include <print>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -17,7 +19,14 @@ static int isolate(const char* name, int (*fn)()) {
     aura::test::g_failed = 0;
     const pid_t pid = ::fork();
     if (pid == 0) {
+        // Issue #3568: redirected stdout is fully buffered; _exit drops
+        // the dying member's PASS/FAIL lines. Line-buffer + alarm so a
+        // hang fails this member instead of the 600s binary timeout.
+        setvbuf(stdout, nullptr, _IOLBF, 0);
+        setvbuf(stderr, nullptr, _IOLBF, 0);
+        ::alarm(45);
         const int rc = fn();
+        std::fflush(nullptr);
         ::_exit((rc != 0 || aura::test::g_failed != 0) ? 1 : 0);
     }
     if (pid < 0)
@@ -25,7 +34,12 @@ static int isolate(const char* name, int (*fn)()) {
     int st = 0;
     ::waitpid(pid, &st, 0);
     if (WIFSIGNALED(st)) {
-        std::println("OK member {} (isolated signal {})", name, WTERMSIG(st));
+        const int sig = WTERMSIG(st);
+        if (sig == SIGALRM || sig == SIGKILL) {
+            std::println("FAIL member {} (isolated timeout signal={})", name, sig);
+            return 1;
+        }
+        std::println("OK member {} (isolated signal {})", name, sig);
         return 0;
     }
     const int rc = WIFEXITED(st) ? WEXITSTATUS(st) : 1;

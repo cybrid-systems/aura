@@ -521,7 +521,9 @@ static void ac3552_fiber_id_zero_legacy_path_source_cite() {
     // fiber_id == 0 (legacy single-eval MVP) falls through to per-instance
     // single-slot — the legacy callers (boundary_ssot / ensure_mutation_invariants
     // / NDEBUG assert) all derive fid = 0 when no g_current_fiber is present.
-    CHECK(efm.find("fid = (aura::serve::g_current_fiber != nullptr)") != std::string::npos,
+    CHECK(efm.find(
+              "(aura::serve::g_current_fiber != nullptr) ? aura::serve::g_current_fiber->id()") !=
+              std::string::npos,
           "3552 AC4: callers derive fid=0 (no fiber → legacy)");
     CHECK(efm.find("auto& inner = slot->depths[id];") != std::string::npos,
           "3552 AC1: nested map keyed by (instance_id, fiber_id)");

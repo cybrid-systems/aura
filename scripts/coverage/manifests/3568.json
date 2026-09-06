@@ -1,0 +1,55 @@
+{
+  "issue": 3568,
+  "title": "Issue #3568: Quiet depth-0 IR typed-entry allows engine:metrics; typed-audit hash power-of-2",
+  "ok": "OK: Issue #3568 Quiet warm eval + query_hash_capacity_for typed-mutation-audit-stats.",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/typed_mutation_audit.h",
+      "contains": [
+        "kQuietTypedEntryWarmEvalIssue = 3568",
+        "Real Quiet (override unset)"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/ir_executor_impl.cpp",
+      "contains": [
+        "Issue #3568",
+        "g_linear_ir_fastpath_boundary_depth_override = -1"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/evaluator_primitives_obs_jit.cpp",
+      "contains": [
+        "Issue #3568",
+        "query_hash_capacity_for"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/orch/test_orch_agent_batch.cpp",
+      "contains": [
+        "Issue #3568",
+        "fork-isolate"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "tests/compiler/test_commit_readiness_score.cpp",
+      "contains": [
+        "3568 AC1",
+        "3568 AC5"
+      ]
+    },
+    {
+      "ac": "AC5-forbid",
+      "forbid": [
+        "tests/compiler/test_issue_3568.cpp",
+        "tests/issues/test_issue_3568.cpp",
+        "docs/design/3568-typed-entry-quiet.md"
+      ]
+    }
+  ]
+}

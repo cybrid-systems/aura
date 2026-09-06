@@ -64,6 +64,8 @@ def main() -> int:
     must("security-posture", "AC1 inventory high-churn", ev)
     must("type-linear-commit-health", "AC1 inventory high-churn", ev)
     must("reload-recovery-playbook", "AC1 inventory high-churn", ev)
+    tma_q = _slice_after(jit, '"query:typed-mutation-audit-stats"')
+    must("query_hash_capacity_for", "AC1 typed-mutation-audit-stats size (#3568)", tma_q)
 
     sec_q = _slice_after(sec, '"query:security-posture"')
     must("query_hash_capacity_for", "AC1 security-posture size", sec_q)

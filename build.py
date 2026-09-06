@@ -21045,6 +21045,28 @@ def _run_parallel_coverage_checks(*, changed: bool) -> int:
     return 0
 
 
+def _gate_changed_runtime_suites() -> int:
+    """Issue #3567: run test_concurrent when serve/fiber/scheduler change.
+
+    ci/concurrent is stress-wave only. Local ARM often misses the x86
+    eventfd UAF. Compile+run here so a serve change cannot land blind.
+    """
+    changed = _git_changed_files()
+    hit = any(p == "tests/serve/test_concurrent.cpp" or p.startswith("src/serve/") for p in changed)
+    if not hit:
+        return 0
+    if not (BUILD / "build.ninja").is_file():
+        info("changed serve: skip test_concurrent (no ninja tree)")
+        return 0
+    print(f"{B}═══ Gate changed: test_concurrent (serve/fiber surface) ═══{N}")
+    jobs = _gate_parse_jobs() or 4
+    rc = _ninja_build(["test_concurrent"], jobs=max(1, jobs))
+    if rc:
+        fail("ninja test_concurrent failed")
+        return rc
+    return test_concurrent()
+
+
 def cmd_gate():
     """Fast static checks for CI / pre-push.
 
@@ -21148,6 +21170,14 @@ def cmd_gate():
         info("changed mode: skipping chaos runtime profiles (static coverage already ran)")
     else:
         rc = cmd_chaos_release_blocker_2902() or cmd_chaos_pr_hard_fail_gate()
+        if rc:
+            return rc
+
+    # Issue #3567: ci/concurrent is a stress-wave suite (~16s, x86 SIGSEGV).
+    # Agents that only run gate --changed + unit never see it. When the
+    # serve/fiber surface changes and a ninja tree exists, compile+run here.
+    if changed and not scripts_only:
+        rc = _gate_changed_runtime_suites()
         if rc:
             return rc
 
