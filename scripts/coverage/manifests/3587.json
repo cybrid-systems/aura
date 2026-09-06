@@ -1,0 +1,55 @@
+{
+  "issue": 3587,
+  "title": "Issue #3587: Ready-transition machine extends #3072 sole-enqueue linter",
+  "ok": "OK: Issue #3587 — all set_state/store Ready on whitelist; naked Ready fails CI.",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "scripts/coverage/checks/check_steal_enqueue_sole_gate_3072.py",
+      "contains": [
+        "Issue #3587",
+        "classify_ready_transitions",
+        "set_state(FiberState::Ready)"
+      ]
+    },
+    {
+      "ac": "AC1-test",
+      "path": "tests/serve/test_steal_complete_restamp_txn.cpp",
+      "contains": [
+        "ac3587_1_head_scan_green",
+        "Waiting→Ready"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "scripts/coverage/checks/check_steal_enqueue_sole_gate_3072.py",
+      "contains": [
+        "naked set_state(Ready)",
+        "state_.store(FiberState::Ready"
+      ]
+    },
+    {
+      "ac": "AC2-test",
+      "path": "tests/serve/test_steal_complete_restamp_txn.cpp",
+      "contains": [
+        "ac3587_2_linter_rejects_naked_ready"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/serve/test_steal_complete_restamp_txn.cpp",
+      "contains": [
+        "ac3587_3_static_no_runtime",
+        "no schema-3587"
+      ]
+    },
+    {
+      "ac": "NO-INVENT",
+      "forbid": [
+        "tests/serve/test_issue_3587.cpp",
+        "docs/design/3587-ready-transition-machine.md",
+        "scripts/coverage/checks/check_ready_transition_3587.py"
+      ]
+    }
+  ]
+}
