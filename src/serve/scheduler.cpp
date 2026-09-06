@@ -6,7 +6,10 @@
 #include "core/resource_quota.hh"
 #include "compiler/lock_order_audit.h" // Issue #2354: rank audit
 #include "runtime_production_abi.h"    // Issue #3476: Ready weld
+#include <cstring>
 #include <unistd.h>
+
+extern "C" int aura_production_defaults_active_probe() noexcept;
 
 import std;
 #if AURA_HAVE_EPOLL
@@ -859,6 +862,19 @@ void Scheduler::run() {
         workers_[i]->set_metrics(&metrics_.worker(i));
     }
 
+    // Issue #3586: unarmed multi-worker is silent Soft (I6). Refuse
+    // start unless production bootstrap is latched or AURA_SANDBOX=off.
+    // Armed / single-worker: one probe load, no getenv.
+    if (workers_.size() > 1 && aura_production_defaults_active_probe() == 0) {
+        const char* sb = std::getenv("AURA_SANDBOX");
+        const bool sandbox_off = sb && *sb && std::strcmp(sb, "off") == 0;
+        if (!sandbox_off) {
+            std::fprintf(stderr, "FATAL: multi-worker needs production bootstrap "
+                                 "(apply_production_security_defaults) or AURA_SANDBOX=off\n");
+            std::fflush(stderr);
+            std::abort();
+        }
+    }
     // Issue #3476: weld production Ready before WorkerThread::start so
     // g_production_multi_worker_latched is not host-optional (I3/I6).
     // workers_.size()>1 → aura_runtime_require_production_multi_worker

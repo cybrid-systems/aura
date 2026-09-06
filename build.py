@@ -9163,7 +9163,10 @@ def test_concurrent():
     cmd: list[str] = [str(bin_path)]
     if shutil.which("stdbuf"):
         cmd = ["stdbuf", "-oL", "-eL", str(bin_path)]
-    r = subprocess.run(cmd, timeout=600)
+    # Issue #3586: unarmed Scheduler(N>1).run() aborts unless production
+    # bootstrap is latched or AURA_SANDBOX=off. Latch Soft for this suite
+    # (same helper as issue/integ runners). Explicit AURA_SANDBOX wins.
+    r = subprocess.run(cmd, timeout=600, env=_aura_test_env())
     if r.returncode != 0 and r.stderr:
         print(r.stderr[:500], file=sys.stderr)
     return r.returncode
