@@ -1,0 +1,41 @@
+{
+  "issue": 3579,
+  "title": "Issue #3579: pending_full_solve residual consume scope at depth==0",
+  "ok": "OK: Issue #3579 real-quiet depth==0 does not consume pending residual; probe/depth>0 still refuse.",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "tests/compiler/test_commit_readiness_score.cpp",
+      "contains": [
+        "3579 AC1",
+        "pending face does not block real Quiet depth==0"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/compiler/test_commit_readiness_score.cpp",
+      "contains": [
+        "3579 AC2",
+        "probe override==0 still refuses pending",
+        "depth>0 consumes pending"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/typed_mutation_audit.h",
+      "contains": [
+        "kPendingFullSolveTypedEntryConsumeIssue = 3579",
+        "pending_full_solve residual consume scope",
+        "does not consult pending_full_solve_residual_face_hit()"
+      ]
+    },
+    {
+      "ac": "NO-INVENT",
+      "forbid": [
+        "tests/compiler/test_issue_3579.cpp",
+        "docs/design/3579-pending-consume-scope.md",
+        "scripts/coverage/checks/check_pending_consume_scope_3579.py"
+      ]
+    }
+  ]
+}

@@ -2498,8 +2498,13 @@ inline constexpr int kNoTlsLivePolicyDefaultSolvedIssue = 3414;
 // Quiet (no stamp, not Reject, no pending face) still returns true.
 // Issue #3568: real Quiet (override unset) always allows at depth==0 so
 // engine:metrics / hash-ref cannot be poisoned by leftover faces.
+// Issue #3579: pending_full_solve residual consume scope — real-quiet
+// (override<0) does not consult pending_full_solve_residual_face_hit();
+// probe (override==0) and depth>0 consume it. Defence is publish-side
+// Quiet + the depth>0 gate; not a depth==0 IR-entry barrier.
 inline constexpr int kDepthZeroTypedEntryNegativeAuthorityIssue = 3510;
 inline constexpr int kQuietTypedEntryWarmEvalIssue = 3568;
+inline constexpr int kPendingFullSolveTypedEntryConsumeIssue = 3579;
 [[nodiscard]] inline bool ir_typed_entry_commit_readiness_ok() noexcept {
     if (!(production_defaults_active() || get_strategy() == AuditStrategy::Full))
         return true;
@@ -2520,6 +2525,12 @@ inline constexpr int kQuietTypedEntryWarmEvalIssue = 3568;
         // mutate in the same process must not refuse the whole eval
         // (href returns -1 for every key — ci/issues #3568). #3510
         // AC1-AC3 probe this helper with override==0; keep that path.
+        // Issue #3579: pending_full_solve residual consume scope —
+        // this early return is the documented contract that real-quiet
+        // depth==0 does not consult pending_full_solve_residual_face_hit().
+        // Probe (override==0, below) and depth>0 (commit_readiness live
+        // policy) still consume the face. Do not move the pending check
+        // above this return.
         if (g_linear_ir_fastpath_boundary_depth_override < 0)
             return true;
         // Issue #3510: negative authority is not "stale chaos leftover".
