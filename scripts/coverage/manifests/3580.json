@@ -1,0 +1,53 @@
+{
+  "issue": 3580,
+  "title": "Issue #3580: dual-DepGraph one-side write fail-closed to full, never silent partial",
+  "ok": "OK: Issue #3580 one-side write is visible to graphs_consistent; production refuses silent partial via #3034/#3310; Soft under-cascade allowed with counters visible.",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "tests/compiler/test_dep_graph_hybrid_cascade.cpp",
+      "contains": [
+        "3580 AC1",
+        "string callee→caller + missing NodeId edge is inconsistent",
+        "live NodeId-drop fork is visible"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/compiler/test_dep_graph_hybrid_cascade.cpp",
+      "contains": [
+        "3580 AC2",
+        "#3310 production + dirty + ub==0 refuses partial",
+        "#3034 production + ub > dirty refuses partial",
+        "never silent partial"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/compiler/test_dep_graph_hybrid_cascade.cpp",
+      "contains": [
+        "3580 AC3",
+        "Soft + dirty + ub==0 still allows partial",
+        "dual_dep_graph_parity_fail_total visible"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/compiler/test_dep_graph_hybrid_cascade.cpp",
+      "contains": [
+        "3580 AC4",
+        "graphs_consistent",
+        "#3034 cite",
+        "#3310 cite"
+      ]
+    },
+    {
+      "ac": "NO-INVENT",
+      "forbid": [
+        "tests/compiler/test_issue_3580.cpp",
+        "docs/design/3580-dual-depgraph-divergence.md",
+        "scripts/coverage/checks/check_dual_dep_graph_divergence_3580.py"
+      ]
+    }
+  ]
+}
