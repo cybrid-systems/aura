@@ -1,0 +1,55 @@
+{
+  "issue": 3589,
+  "title": "Issue #3589: index-sync machine proof for structural AST writes",
+  "ok": "OK: Issue #3589 — every structural write in mutation/mutators/pipeline syncs tag_arity/DefUse; unsynced write fails CI.",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "scripts/coverage/checks/check_index_sync_structural_write_3589.py",
+      "contains": [
+        "Issue #3589",
+        "classify_structural_writes",
+        "src/core/mutators.ixx"
+      ]
+    },
+    {
+      "ac": "AC1-test",
+      "path": "tests/core/test_tag_arity_index_lock.cpp",
+      "contains": [
+        "ac3589_1_head_scan_green",
+        "mutators mark_dirty_upward"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "scripts/coverage/checks/check_index_sync_structural_write_3589.py",
+      "contains": [
+        "unsynced set_child",
+        "mark_dirty_upward-synced write"
+      ]
+    },
+    {
+      "ac": "AC2-test",
+      "path": "tests/core/test_tag_arity_index_lock.cpp",
+      "contains": [
+        "ac3589_2_linter_rejects_unsynced_write"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/core/test_tag_arity_index_lock.cpp",
+      "contains": [
+        "ac3589_3_static_no_runtime",
+        "no schema-3589"
+      ]
+    },
+    {
+      "ac": "NO-INVENT",
+      "forbid": [
+        "tests/core/test_issue_3589.cpp",
+        "docs/design/3589-index-sync-machine.md",
+        "scripts/coverage/checks/check_index_sync_substring_3589.py"
+      ]
+    }
+  ]
+}
