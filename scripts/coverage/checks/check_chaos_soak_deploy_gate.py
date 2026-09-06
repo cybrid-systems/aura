@@ -75,6 +75,12 @@ RE_3590_UNARMED = re.compile(r"unbootstrapped process must not report strict arm
 RE_3590_QES = re.compile(r"query_epoch_strict\s*\(\s*\)")
 RE_3590_OVERRIDE = re.compile(r"AURA_QUERY_EPOCH_STRICT")
 RE_3590_JOIN = re.compile(r"fail_if_prod\(\s*\"query_epoch_strict armed\"")
+RE_3592_ARMED = re.compile(r"effective Strict unify must be armed under production defaults")
+RE_3592_UNARMED = re.compile(r"unbootstrapped process must not silently report Strict")
+RE_3592_EFF = re.compile(r"effective_gradual_permissiveness\s*\(\s*\)")
+RE_3592_OVERRIDE = re.compile(r"AURA_GRADUAL_PERMISSIVENESS")
+RE_3592_JOIN = re.compile(r"fail_if_prod\(\s*\"effective Strict unify\"")
+RE_3592_DOWN = re.compile(r"production explicit downgrade stays Strict")
 
 # ── Required accessors (scheduler.h / scheduler.cpp) ──────────────
 RE_KMAILBOX = re.compile(r"inline\s+constexpr\s+std::int64_t\s+kMailboxP99SLO_us\s*=\s*50'?000")
@@ -123,6 +129,12 @@ def main() -> int:
         ("#3590", test_text, RE_3590_QES, "test: query_epoch_strict() gate read"),
         ("#3590", test_text, RE_3590_OVERRIDE, "test: AURA_QUERY_EPOCH_STRICT override"),
         ("#3590", test_text, RE_3590_JOIN, "test: epoch strict joins 6 hard-fail path"),
+        ("#3592", test_text, RE_3592_ARMED, "test: effective Strict unify armed under production"),
+        ("#3592", test_text, RE_3592_UNARMED, "test: unarmed process must not silently report Strict"),
+        ("#3592", test_text, RE_3592_EFF, "test: effective_gradual_permissiveness() gate read"),
+        ("#3592", test_text, RE_3592_OVERRIDE, "test: AURA_GRADUAL_PERMISSIVENESS override"),
+        ("#3592", test_text, RE_3592_JOIN, "test: unify Strict joins 6 hard-fail path"),
+        ("#3592", test_text, RE_3592_DOWN, "test: production explicit downgrade fail-closed"),
     ]
     for label, text, regex, why in checks:
         if not regex.search(text):

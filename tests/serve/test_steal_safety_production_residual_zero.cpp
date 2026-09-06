@@ -60,7 +60,9 @@
 import std;
 import aura.compiler.evaluator;
 import aura.compiler.service;
+import aura.compiler.type_checker;
 import aura.compiler.value;
+import aura.core.type;
 
 namespace {
 
@@ -660,7 +662,66 @@ int run_test_steal_safety_production_residual_zero() {
               "3590: no docs/design/");
     }
 
-    std::println("\n=== #3134/#3288/#3385/#3586/#3590 production-readiness residual-zero: {} "
+    // ── #3592: effective Strict unify joins the same production bootstrap gate ──
+    {
+        std::println("\n--- #3592: effective Strict unify joins production bootstrap gate ---");
+        using aura::compiler::GradualPermissiveness;
+        using aura::compiler::TypeChecker;
+        using aura::compiler::typed_audit::apply_dev_audit_defaults;
+        using aura::compiler::typed_audit::apply_production_audit_defaults;
+        using aura::compiler::typed_audit::production_defaults_active;
+        using aura::core::TypeRegistry;
+
+        apply_dev_audit_defaults();
+        ::unsetenv("AURA_GRADUAL_PERMISSIVENESS");
+        {
+            TypeRegistry reg;
+            TypeChecker tc(reg);
+            CHECK(tc.effective_gradual_permissiveness() != GradualPermissiveness::Strict,
+                  "unbootstrapped process must not silently report Strict");
+        }
+        apply_production_audit_defaults();
+        {
+            TypeRegistry reg;
+            TypeChecker tc(reg);
+            CHECK(tc.effective_gradual_permissiveness() == GradualPermissiveness::Strict,
+                  "effective Strict unify must be armed under production defaults (#3430/#3202)");
+            tc.set_gradual_permissiveness(GradualPermissiveness::Balanced);
+            CHECK(tc.effective_gradual_permissiveness() == GradualPermissiveness::Strict,
+                  "3592 AC3: production explicit downgrade stays Strict");
+        }
+        apply_dev_audit_defaults();
+        ::setenv("AURA_GRADUAL_PERMISSIVENESS", "strict", 1);
+        {
+            TypeRegistry reg;
+            TypeChecker tc(reg);
+            CHECK(production_defaults_active() == 0, "3592 AC2: unarmed");
+            CHECK(tc.effective_gradual_permissiveness() == GradualPermissiveness::Strict,
+                  "3592 AC2: AURA_GRADUAL_PERMISSIVENESS override");
+        }
+        ::unsetenv("AURA_GRADUAL_PERMISSIVENESS");
+        apply_dev_audit_defaults();
+
+        const auto gate = read_file("tests/serve/chaos_soak_production_gate.cpp");
+        CHECK(gate.find("ac3592_unify_strict_joins_bootstrap_gate") != std::string::npos,
+              "3592: chaos gate cites");
+        CHECK(gate.find("fail_if_prod(\"effective Strict unify\"") != std::string::npos,
+              "3592: joins 6 hard-fail path (no new counter)");
+        const auto sweep = read_file("tests/serve/test_production_sweep.cpp");
+        CHECK(sweep.find("ac3592_bootstrap_order_matrix") != std::string::npos,
+              "3592: production_sweep bootstrap matrix");
+        CHECK(read_file("src/compiler/evaluator_primitives_obs_jit.cpp").find("schema-3592") ==
+                  std::string::npos,
+              "3592 AC4: no schema-3592");
+        CHECK(!std::filesystem::exists(std::filesystem::current_path() / "tests" / "serve" /
+                                       "test_issue_3592.cpp"),
+              "3592: no test_issue_3592.cpp");
+        CHECK(!std::filesystem::exists(std::filesystem::current_path() / "docs" / "design" /
+                                       "3592-unify-strict-bootstrap.md"),
+              "3592: no docs/design/");
+    }
+
+    std::println("\n=== #3134/#3288/#3385/#3586/#3590/#3592 production-readiness residual-zero: {} "
                  "passed, {} failed ===",
                  g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
