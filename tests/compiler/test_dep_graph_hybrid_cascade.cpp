@@ -35,6 +35,7 @@ import std;
 import aura.compiler.service;
 import aura.compiler.value;
 import aura.compiler.dirty_propagation; // aura::compiler::dirty::*
+import aura.compiler.ir_cache_pure;     // should_partial_relower_impact_checked{,_prod}
 
 namespace {
 
@@ -1119,6 +1120,218 @@ static void ac3486_5_linter_no_invent() {
     CHECK(read_file("tests/issues/test_issue_3486.cpp").empty(), "3486 AC5: no tests/issues");
 }
 
+// ── Issue #3580: dual-DepGraph one-side write → fail-closed to full ──
+// graphs_consistent is a debug/fuzz/tests checker (string-authority:
+// every string callee→caller edge must have a NodeId mirror). It is
+// not a production gate. Production never silent-partials a fork:
+// #3034 upgrades partial→full when impact_ub > dirty_n; #3310
+// fail-closes unknown impact (ub==0) under production. Soft may
+// under-cascade on the #3310 face (ub==0 + production=false still
+// allows threshold partial); observation counters stay visible.
+
+static bool file_exists_cwd_3580(const char* rel) {
+    return std::ifstream(rel).good() || std::ifstream(std::string("../") + rel).good();
+}
+
+static void ac3580_1_divergence_injection_visible() {
+    std::println("\n--- #3580 AC1: one-side write → graphs_consistent == false ---");
+    using aura::compiler::dirty::DepGraph;
+    using aura::compiler::dirty::encode_fn_node;
+    using aura::compiler::dirty::FunctionDepEntry;
+    using aura::compiler::dirty::graphs_consistent;
+
+    std::unordered_map<std::string, FunctionDepEntry, aura::core::TransparentStringHash,
+                       std::equal_to<>>
+        str_dep;
+    std::unordered_map<std::string, std::uint32_t, aura::core::TransparentStringHash,
+                       std::equal_to<>>
+        name_to_slot;
+    name_to_slot["callee"] = 0;
+    name_to_slot["caller"] = 1;
+    str_dep["callee"].called_by.push_back("caller");
+    DepGraph node_dep;
+    CHECK(!graphs_consistent(str_dep, node_dep, name_to_slot),
+          "3580 AC1: string callee→caller + missing NodeId edge is inconsistent");
+    node_dep.add_edge(encode_fn_node(0), encode_fn_node(1));
+    CHECK(graphs_consistent(str_dep, node_dep, name_to_slot),
+          "3580 AC1: matching NodeId edge restores consistent");
+
+    // Reverse one-side write: NodeId has the edge, string graph does not.
+    // graphs_consistent is string-authority (#3486 AC4) — extra NodeId
+    // edges are not a fail. The checker-visible fork is string-has /
+    // node-missing (above).
+    str_dep.clear();
+    CHECK(graphs_consistent(str_dep, node_dep, name_to_slot),
+          "3580 AC1: reverse NodeId-only extra is not a string-authority fail");
+
+    CompilerService cs;
+    CHECK(cs.eval(R"(
+(set-code "
+(define leaf (lambda () 1))
+(define root (lambda () (leaf)))
+")")
+              .has_value(),
+          "3580 AC1: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3580 AC1: eval");
+    cs.public_record_dependency("root", "leaf");
+    CHECK(cs.public_graphs_consistent(), "3580 AC1: dual-write consistent");
+    cs.public_drop_node_dep_mirror_edge("root", "leaf");
+    CHECK(cs.public_dep_graph_has_edge("root", "leaf"), "3580 AC1: string edge remains");
+    CHECK(!cs.public_graphs_consistent(), "3580 AC1: live NodeId-drop fork is visible");
+    cs.inject_string_only_edge_for_test("root", "leaf");
+    CHECK(!cs.public_graphs_consistent(), "3580 AC1: string-only extra stays a visible fork");
+}
+
+static void ac3580_2_production_never_silent_partial() {
+    std::println("\n--- #3580 AC2: production fork never silent-partial (#3034/#3310) ---");
+    using aura::compiler::should_partial_relower_impact_checked;
+    using aura::compiler::should_partial_relower_impact_checked_prod;
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+
+    // #3310: unknown impact (ub==0) under production is fail-closed full.
+    CHECK(!should_partial_relower_impact_checked_prod(1, 0, /*production=*/true),
+          "3580 AC2: #3310 production + dirty + ub==0 refuses partial");
+    CHECK(!should_partial_relower_impact_checked_prod(3, 0, /*production=*/true),
+          "3580 AC2: #3310 production + dirty_n=3 + ub==0 refuses partial");
+    // #3034: impact_ub > dirty_n upgrades partial → full (monotonic).
+    CHECK(!should_partial_relower_impact_checked_prod(1, 2, /*production=*/true),
+          "3580 AC2: #3034 production + ub > dirty refuses partial");
+    CHECK(!should_partial_relower_impact_checked(7, 8),
+          "3580 AC2: #3034 impact_checked ub > dirty upgrades to full");
+    CHECK(should_partial_relower_impact_checked_prod(3, 3, /*production=*/true) ==
+              should_partial_relower_impact_checked(3, 3),
+          "3580 AC2: computable ub==dirty still matches existing helper");
+
+    apply_production_audit_defaults();
+    CompilerService cs;
+    CHECK(cs.eval(R"(
+(set-code "
+(define f (lambda () 1))
+(define g (lambda () (f)))
+(define x3580 (lambda () 0))
+")")
+              .has_value(),
+          "3580 AC2: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3580 AC2: eval");
+    if (!cs.get_define_v2("x3580"))
+        (void)cs.eval("(compile:cache-define \"x3580\")");
+    cs.public_record_dependency("g", "f");
+    CHECK(cs.public_graphs_consistent(), "3580 AC2: consistent after dual record");
+    cs.inject_string_only_edge_for_test("x3580", "f");
+    CHECK(!cs.public_graphs_consistent(), "3580 AC2: string-only inject forks");
+    auto& m = cs.metrics();
+    const auto fail0 = m.dual_dep_graph_parity_fail_total.load(std::memory_order_relaxed);
+    const auto forced0 = m.partial_forced_full_by_impact_total.load(std::memory_order_relaxed);
+    const auto full0 = m.incremental_full_fallback_total.load(std::memory_order_relaxed);
+    const auto* be = cs.get_define_v2("f");
+    const std::size_t fi = (be && be->irs.size() >= 2) ? 1 : 0;
+    CHECK(cs.mark_block_dirty_v2("f", fi, 0), "3580 AC2: one-block dirty (would-be partial)");
+    (void)cs.public_relower_dirty_defines_from_workspace();
+    CHECK(cs.public_graphs_consistent() ||
+              m.dual_dep_graph_parity_fail_total.load(std::memory_order_relaxed) > fail0 ||
+              m.partial_forced_full_by_impact_total.load(std::memory_order_relaxed) > forced0 ||
+              m.incremental_full_fallback_total.load(std::memory_order_relaxed) > full0,
+          "3580 AC2: production peel fail-closed (rebuild and/or forced full)");
+    CHECK(m.dual_dep_graph_parity_fail_total.load(std::memory_order_relaxed) > fail0 ||
+              m.partial_forced_full_by_impact_total.load(std::memory_order_relaxed) > forced0 ||
+              m.incremental_full_fallback_total.load(std::memory_order_relaxed) > full0,
+          "3580 AC2: never silent partial (fail / forced-full / full-fallback moved)");
+    apply_dev_audit_defaults();
+}
+
+static void ac3580_3_soft_undercascade_counters_visible() {
+    std::println("\n--- #3580 AC3: Soft under-cascade allowed; counters visible ---");
+    using aura::compiler::should_partial_relower_impact_checked_prod;
+    using aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+
+    // Soft #3310 face: ub==0 is *empty/unknown but not fail-closed* —
+    // threshold partial is allowed (under-cascade by contract).
+    CHECK(should_partial_relower_impact_checked_prod(1, 0, /*production=*/false),
+          "3580 AC3: Soft + dirty + ub==0 still allows partial");
+    CHECK(should_partial_relower_impact_checked_prod(3, 0, /*production=*/false),
+          "3580 AC3: Soft + dirty_n=3 + ub==0 still allows partial");
+
+    const auto save_prod =
+        g_typed_mutation_audit_counters.production_defaults_active.load(std::memory_order_relaxed);
+    const auto save_strat = aura::compiler::typed_audit::get_strategy();
+    const auto save_strict = aura::compiler::dirty::dual_dep_graph_strict_enabled();
+    aura::compiler::dirty::set_dual_dep_graph_strict(0);
+    aura::compiler::typed_audit::set_strategy(aura::compiler::typed_audit::AuditStrategy::Off);
+    g_typed_mutation_audit_counters.production_defaults_active.store(0, std::memory_order_relaxed);
+
+    CompilerService cs;
+    CHECK(cs.eval(R"(
+(set-code "
+(define leaf (lambda () 1))
+(define root (lambda () (leaf)))
+")")
+              .has_value(),
+          "3580 AC3: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3580 AC3: eval");
+    cs.public_record_dependency("root", "leaf");
+    auto& m = cs.metrics();
+    const auto check0 = m.dual_dep_graph_parity_check_total.load(std::memory_order_relaxed);
+    const auto fail0 = m.dual_dep_graph_parity_fail_total.load(std::memory_order_relaxed);
+    cs.public_drop_node_dep_mirror_edge("root", "leaf");
+    CHECK(!cs.public_graphs_consistent(), "3580 AC3: Soft fork is visible to checker");
+    const auto* be = cs.get_define_v2("leaf");
+    const std::size_t fi = (be && be->irs.size() >= 2) ? 1 : 0;
+    (void)cs.mark_block_dirty_v2("leaf", fi, 0);
+    (void)cs.public_relower_dirty_defines_from_workspace();
+    // Observation face: check/fail counters are live (non-decreasing;
+    // peel-path #3255 may bump fail_total). No new query key.
+    CHECK(m.dual_dep_graph_parity_check_total.load(std::memory_order_relaxed) >= check0,
+          "3580 AC3: dual_dep_graph_parity_check_total visible");
+    CHECK(m.dual_dep_graph_parity_fail_total.load(std::memory_order_relaxed) >= fail0,
+          "3580 AC3: dual_dep_graph_parity_fail_total visible");
+    CHECK(m.dual_dep_graph_parity_fail_total.load(std::memory_order_relaxed) > fail0 ||
+              !cs.public_graphs_consistent(),
+          "3580 AC3: Soft fork fail-counted or still checker-visible");
+
+    aura::compiler::dirty::set_dual_dep_graph_strict(save_strict ? 1 : 0);
+    aura::compiler::typed_audit::set_strategy(save_strat);
+    g_typed_mutation_audit_counters.production_defaults_active.store(save_prod,
+                                                                     std::memory_order_relaxed);
+}
+
+static void ac3580_4_source_cite_no_invent() {
+    std::println("\n--- #3580 AC4: source-cite #3034/#3310/graphs_consistent ---");
+    const auto pure = read_file("src/compiler/dirty_propagation.ixx");
+    const auto irp = read_file("src/compiler/ir_cache_pure.ixx");
+    const auto svc = read_file("src/compiler/service.ixx");
+    const auto t = read_file("tests/compiler/test_dep_graph_hybrid_cascade.cpp");
+    CHECK(pure.find("graphs_consistent") != std::string::npos, "3580 AC4: graphs_consistent");
+    CHECK(pure.find("callee → caller") != std::string::npos ||
+              pure.find("callee->caller") != std::string::npos,
+          "3580 AC4: string-authority callee→caller");
+    CHECK(irp.find("Issue #3034") != std::string::npos, "3580 AC4: #3034 cite");
+    CHECK(irp.find("should_partial_relower_impact_checked") != std::string::npos,
+          "3580 AC4: #3034 helper");
+    CHECK(irp.find("impact_upper_bound > dirty_count") != std::string::npos,
+          "3580 AC4: #3034 upgrade-to-full");
+    CHECK(irp.find("Issue #3310") != std::string::npos, "3580 AC4: #3310 cite");
+    CHECK(irp.find("should_partial_relower_impact_checked_prod") != std::string::npos,
+          "3580 AC4: #3310 helper");
+    CHECK(irp.find("production && impact_upper_bound == 0") != std::string::npos,
+          "3580 AC4: #3310 unknown-impact fail-closed");
+    CHECK(svc.find("should_partial_relower_impact_checked_prod(dirty_n, impact_ub") !=
+              std::string::npos,
+          "3580 AC4: peel consults #3310 prod helper");
+    CHECK(t.find("ac3580_1_divergence_injection_visible") != std::string::npos,
+          "3580 AC4: AC1 present");
+    CHECK(t.find("ac3580_2_production_never_silent_partial") != std::string::npos,
+          "3580 AC4: AC2 present");
+    CHECK(t.find("ac3580_3_soft_undercascade_counters_visible") != std::string::npos,
+          "3580 AC4: AC3 present");
+    CHECK(!file_exists_cwd_3580("tests/compiler/test_issue_3580.cpp"),
+          "3580 AC4: no test_issue_3580.cpp");
+    CHECK(!file_exists_cwd_3580("docs/design/3580-dual-depgraph-divergence.md"),
+          "3580 AC4: no docs/design/");
+    CHECK(!file_exists_cwd_3580("scripts/coverage/checks/check_dual_dep_graph_divergence_3580.py"),
+          "3580 AC4: no check_3580.py");
+}
+
 int run_test_dep_graph_hybrid_cascade() {
     std::println("=== Issue #2110 + #2187: hybrid dep_graph ↔ NodeId DepGraph (block edges) ===");
     ac1_dual_graph_parity();
@@ -1151,6 +1364,11 @@ int run_test_dep_graph_hybrid_cascade() {
     ac3486_2_cross_fiber();
     ac3486_3_soft_zero_extra();
     ac3486_5_linter_no_invent();
+    // Issue #3580: one-side write fail-closed to full (never silent partial).
+    ac3580_1_divergence_injection_visible();
+    ac3580_2_production_never_silent_partial();
+    ac3580_3_soft_undercascade_counters_visible();
+    ac3580_4_source_cite_no_invent();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
