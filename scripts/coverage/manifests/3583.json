@@ -1,0 +1,49 @@
+{
+  "issue": 3583,
+  "title": "Issue #3583: InlinePass never reaches AOT table (inline-caller native silent-stale)",
+  "ok": "OK: Issue #3583 route A — production AOT/incremental pack has no InlinePass; dual-eval callee mutate does not leave caller stale.",
+  "checks": [
+    {
+      "ac": "AC1-soak",
+      "path": "tests/compiler/test_soa_dirty_aware_pipeline.cpp",
+      "contains": [
+        "3583 AC1",
+        "g tracks callee (no silent-stale native)"
+      ]
+    },
+    {
+      "ac": "AC1-prove",
+      "path": "tests/compiler/test_soa_dirty_aware_pipeline.cpp",
+      "contains": [
+        "hot pack does not instantiate InlinePass",
+        "aura_jit.cpp has no InlinePass",
+        "SoA dirty entry does not rewrite Call / inline"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/compiler/test_soa_dirty_aware_pipeline.cpp",
+      "contains": [
+        "3583 AC2",
+        "reuse aot_incremental_reemit_success_total",
+        "no schema-3583"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/compiler/test_soa_dirty_aware_pipeline.cpp",
+      "contains": [
+        "3583 AC3",
+        "ring push gated on production probe"
+      ]
+    },
+    {
+      "ac": "NO-INVENT",
+      "forbid": [
+        "tests/compiler/test_issue_3583.cpp",
+        "docs/design/3583-inline-caller-stale.md",
+        "scripts/coverage/checks/check_inline_aot_3583.py"
+      ]
+    }
+  ]
+}
