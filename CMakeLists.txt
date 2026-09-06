@@ -570,6 +570,13 @@ target_link_libraries(test_concurrent PRIVATE ${llvm_libs})
 # Issue #477: test_concurrent.cpp is the main concurrency specification;
 # opt the test source itself into strict warnings.
 aura_strict_test_warnings(tests/serve/test_concurrent.cpp)
+# Debug -O0 does not define _FORTIFY_SOURCE, so glibc write() is not
+# __wur and local gate misses CI RelWithDebInfo -Werror=unused-result
+# on (void)::write (ci/concurrent). Keep this TU fortified in Debug.
+if(NOT CMAKE_BUILD_TYPE MATCHES "RelWithDebInfo|Release|MinSizeRel")
+    set_property(SOURCE tests/serve/test_concurrent.cpp APPEND PROPERTY
+        COMPILE_OPTIONS "-O1" "-U_FORTIFY_SOURCE" "-D_FORTIFY_SOURCE=2")
+endif()
 aura_test_compile_options(test_concurrent)
 target_link_libraries(test_concurrent PRIVATE pthread)
 add_test(NAME concurrent_basic COMMAND ./test_concurrent)
