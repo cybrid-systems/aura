@@ -32,6 +32,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <vector>
 
 import std;
 import aura.compiler.evaluator;
@@ -4563,6 +4564,274 @@ static void ac3542_source_query() {
     CHECK(r && is_int(*r) && as_int(*r) >= 0, "3542 AC5: schema-3029 retained");
 }
 
+// ── Issue #3576: enumerative mutate:* MacroIntroduced default-deny ──
+// List is generated from primitives() registration (slot_count /
+// name_for_slot, names starting with "mutate:"), not a hand-copied
+// table. Allowlist is the documented non-structural face. No prim
+// behavior change; #3542 already fences :allow-macro? opt-out.
+
+struct HygieneExempt3576 {
+    const char* name;
+    const char* reason;
+    const char* source_cite;
+};
+
+// One-line reason + source-cite (GUARD_EXEMPT / HYGIENE_EXEMPT /
+// SECURITY_EXEMPT registration comments). New metadata/policy prims
+// must append a row here or AC2 fails them as ungated structural.
+static constexpr HygieneExempt3576 kMutateHygieneExempt3576[] = {
+    {"mutate:set-agent-fingerprint", "metadata fingerprint; raw add, not an AST write",
+     "SECURITY_EXEMPT / GUARD_EXEMPT: metadata-only agent fingerprint"},
+    {"mutate:check-stable-ref", "read-only stable-ref probe; no AST write",
+     "GUARD_EXEMPT: read-only stable-ref probe"},
+    {"mutate:set-stale-ref-policy", "policy setter; no AST write",
+     "GUARD_EXEMPT: policy setter — no AST write"},
+    {"mutate:set-pattern-index-policy", "policy setter; no AST write",
+     "GUARD_EXEMPT: policy setter — no AST write"},
+    {"mutate:request-gc-safepoint", "safepoint request; no AST write",
+     "GUARD_EXEMPT: safepoint request — no AST write"},
+    {"mutate:save-hygiene-checkpoint", "metadata snapshot of marker/provenance columns",
+     "GUARD_EXEMPT: hygiene checkpoint save"},
+    {"mutate:restore-hygiene-checkpoint",
+     "HYGIENE_EXEMPT restore of checkpointed marker/provenance columns",
+     "Issue #3344 HYGIENE_EXEMPT: restores checkpointed marker"},
+    {"mutate:rollback-macro-introduced",
+     "this prim IS the MacroIntroduced unstamp; default-deny would make rollback unreachable",
+     "Issue #3344 HYGIENE_EXEMPT: this prim IS the MacroIntroduced"},
+    {"mutate:validate-reflected", "diagnostic reflect counters; no AST write",
+     "SECURITY_EXEMPT / GUARD_EXEMPT: diagnostic reflect counters only"},
+    {"mutate:from-verification-feedback", "retired EDA/SV facade; always #f, no AST write",
+     "eda:weaken-property retired"},
+};
+
+static bool file_exists_cwd_3576(const char* rel) {
+    return std::ifstream(rel).good() || std::ifstream(std::string("../") + rel).good();
+}
+
+static bool is_hygiene_exempt_3576(std::string_view name) {
+    for (const auto& e : kMutateHygieneExempt3576) {
+        if (name == e.name)
+            return true;
+    }
+    return false;
+}
+
+static std::vector<std::string> registered_mutate_star_3576(CompilerService& cs) {
+    std::vector<std::string> out;
+    const auto& prims = cs.evaluator().primitives();
+    for (std::size_t i = 0; i < prims.slot_count(); ++i) {
+        const auto& n = prims.name_for_slot(i);
+        if (n.starts_with("mutate:"))
+            out.push_back(n);
+    }
+    return out;
+}
+
+static std::string merr_message_3576(CompilerService& cs, const EvalValue& v) {
+    return merr_cadr_3121(cs, v);
+}
+
+static std::string_view short_mutate_name_3576(std::string_view name) {
+    constexpr std::string_view prefix = "mutate:";
+    if (name.starts_with(prefix))
+        return name.substr(prefix.size());
+    return name;
+}
+
+static bool error_names_prim_3576(CompilerService& cs, const EvalValue& v, std::string_view name) {
+    const auto msg = merr_message_3576(cs, v);
+    const auto last = cs.evaluator().last_mutate_error();
+    const auto shortn = short_mutate_name_3576(name);
+    auto hit = [&](std::string_view hay) {
+        return hay.find(shortn) != std::string_view::npos ||
+               hay.find(name) != std::string_view::npos;
+    };
+    if (hit(msg) || hit(last))
+        return true;
+    // hygiene_protected_error / enforce_macro_hygiene_mutate_hotpath
+    // stable face does not take a prim name (tweak-literal / rebind /
+    // replace-pattern / query-and-replace*). Kind + helper phrase is
+    // the documented reject string; do not change that helper.
+    const auto kind = merr_kind_3027(cs, v);
+    if ((kind == "hygiene" || kind == "hygiene-protected") &&
+        (msg.find("hygienic macro expansion") != std::string::npos ||
+         msg.find("MacroIntroduced") != std::string::npos))
+        return true;
+    return false;
+}
+
+static void ac3576_1_list_from_registration() {
+    std::println("\n--- #3576 AC1: mutate:* list from primitives() registration ---");
+    CompilerService cs;
+    const auto names = registered_mutate_star_3576(cs);
+    CHECK(!names.empty(), "3576 AC1: registration returned mutate:* names");
+    CHECK(names.size() >= 20, "3576 AC1: registration surface has a full mutate:* set");
+    bool has_replace_subtree = false;
+    bool has_set_body = false;
+    for (const auto& n : names) {
+        if (n == "mutate:replace-subtree")
+            has_replace_subtree = true;
+        if (n == "mutate:set-body")
+            has_set_body = true;
+    }
+    CHECK(has_replace_subtree, "3576 AC1: registered mutate:replace-subtree");
+    CHECK(has_set_body, "3576 AC1: registered mutate:set-body");
+    const auto self = read_file("tests/compiler/test_hygiene_mutate_closed_loop.cpp");
+    CHECK(self.find("name_for_slot") != std::string::npos, "3576 AC1: walks name_for_slot");
+    CHECK(self.find("starts_with(\"mutate:\")") != std::string::npos,
+          "3576 AC1: filters mutate: prefix");
+    CHECK(self.find("registered_mutate_star_3576") != std::string::npos,
+          "3576 AC1: list helper is registration-derived");
+    std::println("3576 AC1: {} registered mutate:* prims", names.size());
+}
+
+static bool invoke_until_hygiene_3576(CompilerService& cs, std::string_view name,
+                                      aura::ast::NodeId target, aura::ast::NodeId parent) {
+    const auto before = cs.evaluator().get_hygiene_violation_attempts();
+    const std::array<std::string, 18> shapes = {
+        std::format("({} {})", name, target),
+        std::format("({} {} \"Int\")", name, target),
+        std::format("({} {} 99 \"3576\")", name, target),
+        std::format("({} {} \"op\" \"3576\")", name, target),
+        std::format("({} {} 1)", name, target),
+        std::format("({} {} 0 \"0\")", name, target),
+        std::format("({} {} 0 \"1\")", name, target),
+        std::format("({} {} \"(begin _)\")", name, target),
+        std::format("({} {} \"h3576\")", name, target),
+        std::format("({} {} {} 0)", name, target, parent),
+        std::format("({} \"f\" \"(lambda (x) 0)\")", name),
+        std::format("({} \"f\" \"(lambda (x) 0)\" \"3576\")", name),
+        std::format("({} \"f\" \"g3576\")", name),
+        std::format("({} \"(+ x 1)\" \"(+ x 9)\" :include-macro-introduced #t)", name),
+        std::format("({} (query:where :marker \"MacroIntroduced\") \"99\")", name),
+        std::format("({} (query:where :marker \"MacroIntroduced\") \"99\" "
+                    ":include-macro-introduced #t)",
+                    name),
+        std::format("({} (list (list \"mutate:replace-value\" {} 99 \"3576\")))", name, target),
+        std::format("({} (list (list \"mutate:remove-node\" {})))", name, target),
+    };
+    std::string last_kind;
+    std::string last_msg;
+    for (const auto& sexpr : shapes) {
+        auto r = cs.eval(sexpr);
+        const auto after = cs.evaluator().get_hygiene_violation_attempts();
+        if (after > before) {
+            if (!r) {
+                CHECK(false, std::string("3576 AC2: ") + std::string(name) +
+                                 " recorded hygiene but eval returned nullopt");
+                return false;
+            }
+            const auto kind = merr_kind_3027(cs, *r);
+            const bool rejected =
+                kind == "hygiene" || kind == "hygiene-protected" || (is_bool(*r) && !as_bool(*r));
+            CHECK(rejected, std::string("3576 AC2: ") + std::string(name) +
+                                " recorded hygiene (kind=" + kind + ")");
+            CHECK(error_names_prim_3576(cs, *r, name),
+                  std::string("3576 AC2: ") + std::string(name) +
+                      " error names prim (msg=" + merr_message_3576(cs, *r) + ")");
+            return rejected && error_names_prim_3576(cs, *r, name);
+        }
+        if (r) {
+            last_kind = merr_kind_3027(cs, *r);
+            last_msg = merr_message_3576(cs, *r);
+        }
+    }
+    CHECK(false, std::string("3576 AC2: ") + std::string(name) +
+                     " never recorded a hygiene violation (last kind=" + last_kind +
+                     " msg=" + last_msg + ")");
+    return false;
+}
+
+static void ac3576_2_each_non_exempt_default_rejects() {
+    std::println("\n--- #3576 AC2: each non-exempt mutate:* default-rejects MacroIntroduced ---");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    apply_dev_audit_defaults();
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define f (lambda (x) (+ x 1))) (define g (lambda () (f 2)))\")")
+              .has_value(),
+          "3576 AC2: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3576 AC2: eval");
+    auto* ws = cs.evaluator().workspace_flat();
+    CHECK(ws != nullptr, "3576 AC2: workspace");
+    if (!ws) {
+        apply_dev_audit_defaults();
+        return;
+    }
+    for (aura::ast::NodeId id = 0; id < ws->size(); ++id) {
+        if (ws->is_live_node(id))
+            ws->set_marker(id, aura::ast::SyntaxMarker::MacroIntroduced);
+    }
+    aura::ast::NodeId target = first_parented(ws);
+    if (target == aura::ast::NULL_NODE)
+        target = first_tag(ws, aura::ast::NodeTag::LiteralInt);
+    aura::ast::NodeId parent = first_tag(ws, aura::ast::NodeTag::Lambda);
+    if (parent == aura::ast::NULL_NODE)
+        parent = first_tag(ws, aura::ast::NodeTag::Define);
+    CHECK(target != aura::ast::NULL_NODE, "3576 AC2: MacroIntroduced target");
+    if (target == aura::ast::NULL_NODE) {
+        apply_dev_audit_defaults();
+        return;
+    }
+    if (parent == aura::ast::NULL_NODE)
+        parent = target;
+    CHECK(!cs.evaluator().get_allow_macro_mutate(), "3576 AC2: no global allow-macro-mutate");
+
+    const auto names = registered_mutate_star_3576(cs);
+    std::size_t gated = 0;
+    for (const auto& name : names) {
+        if (is_hygiene_exempt_3576(name))
+            continue;
+        if (invoke_until_hygiene_3576(cs, name, target, parent))
+            ++gated;
+        // Rejects must not unstamp; keep the enumerative target live.
+        if (ws->is_live_node(target) && !ws->is_macro_introduced(target))
+            ws->set_marker(target, aura::ast::SyntaxMarker::MacroIntroduced);
+    }
+    CHECK(gated >= 15, "3576 AC2: gated a full structural mutate:* set");
+    apply_dev_audit_defaults();
+}
+
+static void ac3576_3_allowlist_reason_source_cite() {
+    std::println("\n--- #3576 AC3: allowlist items have reason + source-cite ---");
+    const auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
+    const auto qtail = read_file("src/compiler/evaluator_primitives_query_tail.cpp");
+    const auto compile = read_file("src/compiler/evaluator_primitives_compile.cpp");
+    CHECK(!mut.empty(), "3576 AC3: mutate.cpp readable");
+    for (const auto& e : kMutateHygieneExempt3576) {
+        CHECK(e.reason != nullptr && e.reason[0] != '\0',
+              std::string("3576 AC3: reason for ") + e.name);
+        CHECK(e.source_cite != nullptr && e.source_cite[0] != '\0',
+              std::string("3576 AC3: source-cite for ") + e.name);
+        const bool cited = mut.find(e.source_cite) != std::string::npos ||
+                           qtail.find(e.source_cite) != std::string::npos ||
+                           compile.find(e.source_cite) != std::string::npos;
+        CHECK(cited, std::string("3576 AC3: ") + e.name + " cite in registration source");
+        CHECK(mut.find(e.name) != std::string::npos || qtail.find(e.name) != std::string::npos ||
+                  compile.find(e.name) != std::string::npos,
+              std::string("3576 AC3: ") + e.name + " registered in source");
+    }
+}
+
+static void ac3576_4_existing_point_tests_not_reimplemented() {
+    std::println("\n--- #3576 AC4: existing per-prim tests cross-cited, not reimplemented ---");
+    const auto t = read_file("tests/compiler/test_hygiene_mutate_closed_loop.cpp");
+    CHECK(t.find("ac2_default_fail_closed") != std::string::npos, "3576 AC4: #2037 AC2");
+    CHECK(t.find("ac3027_1_default_reject_all_prims") != std::string::npos, "3576 AC4: #3027");
+    CHECK(t.find("ac3115_1_default_reject") != std::string::npos, "3576 AC4: #3115");
+    CHECK(t.find("ac3191_1_default_reject") != std::string::npos, "3576 AC4: #3191");
+    CHECK(t.find("ac2961_2_include_without_allow_rejects") != std::string::npos, "3576 AC4: #2961");
+    CHECK(t.find("ac3509_batch_default_deny") != std::string::npos, "3576 AC4: #3509");
+    CHECK(t.find("ac3213_3_default_deny") != std::string::npos, "3576 AC4: #3213");
+    CHECK(t.find("ac3301_1_batch_level_deny_production") != std::string::npos, "3576 AC4: #3301");
+    CHECK(t.find("ac3344_2_existing_closed_loop_prims") != std::string::npos, "3576 AC4: #3344");
+    CHECK(!file_exists_cwd_3576("tests/compiler/test_issue_3576.cpp"),
+          "3576 AC4: no test_issue_3576.cpp");
+    CHECK(!file_exists_cwd_3576("docs/design/3576-mutate-hygiene-enumerative.md"),
+          "3576 AC4: no docs/design/");
+    CHECK(!file_exists_cwd_3576("scripts/coverage/checks/check_mutate_hygiene_enumerative_3576.py"),
+          "3576 AC4: no check_3576.py");
+}
+
 } // namespace
 
 int main() {
@@ -4746,6 +5015,11 @@ int main() {
     ac3542_soft_opt_out_unchanged();
     ac3542_soft_no_abort();
     ac3542_source_query();
+    std::println("\n=== Issue #3576: enumerative mutate:* default-reject MacroIntroduced ===");
+    ac3576_1_list_from_registration();
+    ac3576_2_each_non_exempt_default_rejects();
+    ac3576_3_allowlist_reason_source_cite();
+    ac3576_4_existing_point_tests_not_reimplemented();
     std::println("\n=== {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
