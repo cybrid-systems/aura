@@ -3749,6 +3749,13 @@ int64_t aura_lookup_fn_by_name(const char* name, int64_t* out_local_count, int64
 // production Defer. Same leave-native decision, no new query key:
 //   named     → aura_jit_is_deopt_pending(name)  (#3412 table)
 //   unnamed   → aura_jit_deopt_pending_count()!=0 (same table; Soft is 0)
+// Issue #3572: the unnamed arm's process-global consult is BY DESIGN in
+// the shared-workspace MVP — the workspace IR and the JIT fn cache are
+// shared across Evaluators, so one eval's mutate makes the pending name
+// semantically stale for every peer too; a per-owner filter would
+// UNDER-invalidate (correctness regression, not an availability fix).
+// Per-owner scoping becomes meaningful only with cross-workspace
+// isolation ((workspace, name) keying, post-#2178 long-term).
 [[nodiscard]] static bool closure_call_deopt_pending_leave_native_(size_t cid) noexcept {
     if (cid < g_closure_names.size() && !g_closure_names[cid].empty())
         return aura_jit_is_deopt_pending(g_closure_names[cid].c_str()) != 0;
