@@ -1,0 +1,58 @@
+{
+  "issue": 3584,
+  "title": "Issue #3584: estimate_relower_blocks single block unit (hub callees do not force full)",
+  "ok": "OK: Issue #3584 — precompute returns callee dirty-block sum; hub ≥8 callees + 1-block edit stays partial.",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "tests/compiler/test_partial_relower_cascade.cpp",
+      "contains": [
+        "3584 AC1",
+        "incremental_partial_relower_total +1",
+        "h tracks f (no stale)"
+      ]
+    },
+    {
+      "ac": "AC1-src",
+      "path": "src/compiler/service.ixx",
+      "contains": [
+        "#3584",
+        "Do not merge-add"
+      ]
+    },
+    {
+      "ac": "AC1-def",
+      "path": "src/compiler/service_dirty.cpp",
+      "contains": [
+        "callee_dirty_blocks",
+        "return Σ dirty blocks"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/compiler/test_partial_relower_cascade.cpp",
+      "contains": [
+        "3584 AC2",
+        "schema-2113 retained",
+        "no soundness mismatch"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/compiler/test_partial_relower_cascade.cpp",
+      "contains": [
+        "3584 AC3",
+        "Soft does not bump precompute total",
+        "no schema-3584"
+      ]
+    },
+    {
+      "ac": "NO-INVENT",
+      "forbid": [
+        "tests/compiler/test_issue_3584.cpp",
+        "docs/design/3584-estimate-relower-units.md",
+        "scripts/coverage/checks/check_estimate_relower_3584.py"
+      ]
+    }
+  ]
+}

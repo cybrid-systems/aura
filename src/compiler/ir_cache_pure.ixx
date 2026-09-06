@@ -1227,6 +1227,9 @@ inline void reset_partial_relower_threshold_for_test() noexcept {
 
 // Issue #3550: overload sums local dirty blocks + callee cascade dirty
 // blocks so a lockless batch cannot under-count the peel surface.
+// Issue #3584: `callee_count` is Σ dirty blocks (same unit), not define
+// count. Production hub consult does not merge-add this into the
+// per-function threshold (hub callees ≥ 8 − dirty_n must still partial).
 [[nodiscard]] constexpr std::size_t estimate_relower_blocks(std::size_t dirty_count,
                                                             std::size_t threshold,
                                                             std::size_t callee_count) noexcept {

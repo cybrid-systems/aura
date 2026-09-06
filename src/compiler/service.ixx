@@ -7537,7 +7537,11 @@ public:
             }
             metrics_.should_partial_relower_consult_total.fetch_add(1, std::memory_order_relaxed);
             // Issue #3550: pre-cascade callees before adaptive / impact check.
-            const auto callee_n = precompute_callee_cascade_for_partial(name);
+            // Issue #3584: precompute returns callee dirty-block sum (single
+            // block unit). Do not merge-add that sum into this function's
+            // threshold — #3550 added define count, so hub callees≥8−dirty_n
+            // forced full on a 1-block edit. Callees decide independently.
+            (void)precompute_callee_cascade_for_partial(name);
             dirty_n = it->second.dirty_block_count();
             // Issue #2127: deopt + density adaptive threshold (base #2032/#2112).
             std::size_t total_blocks = 0;
@@ -7545,8 +7549,8 @@ public:
                 total_blocks += fb.size();
             const auto adaptive = consult_workload_adaptive_partial_(dirty_n, total_blocks);
             bool want_partial = adaptive.want_partial;
-            if (want_partial && estimate_relower_blocks(dirty_n, get_partial_relower_threshold(),
-                                                        callee_n) == static_cast<std::size_t>(-1))
+            if (want_partial && estimate_relower_blocks(dirty_n, get_partial_relower_threshold()) ==
+                                    static_cast<std::size_t>(-1))
                 want_partial = false;
             // Issue #3484: zero-mask cone name already took fail-closed
             // full — do not re-enter partial / skip-as-clean.
@@ -11898,6 +11902,8 @@ private:
     // estimate_relower_blocks / impact_checked cannot miss a lockless
     // batch. Reuses cascade_mark_dirty + mark_body_only_dirty (no
     // second cone). Soft/Off: observe only.
+    // Issue #3584: returns Σ callee dirty_block_count (block unit),
+    // not the number of marked defines.
     std::size_t precompute_callee_cascade_for_partial(const std::string& name);
 
     // Issue #3345: production hybrid depth-1 IR dirty of direct called_by

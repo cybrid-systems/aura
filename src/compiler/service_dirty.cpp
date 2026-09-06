@@ -1865,7 +1865,7 @@ std::size_t CompilerService::precompute_callee_cascade_for_partial(const std::st
         graph_snap = node_dep_graph_;
     }
     DirtySet set;
-    std::size_t marked = 0;
+    std::size_t callee_dirty_blocks = 0;
     for (const auto& callee : callees) {
         if (callee == name)
             continue;
@@ -1878,8 +1878,9 @@ std::size_t CompilerService::precompute_callee_cascade_for_partial(const std::st
                 if (n == 0)
                     cit->second.mark_all_blocks_dirty();
                 finish_cascade_soa_dirty_sync_(cit->second);
-                ++marked;
             }
+            // Issue #3584: return Σ dirty blocks (not define count).
+            callee_dirty_blocks += cit->second.dirty_block_count();
         }
         std::uint32_t slot = UINT32_MAX;
         {
@@ -1892,7 +1893,7 @@ std::size_t CompilerService::precompute_callee_cascade_for_partial(const std::st
             (void)cascade_mark_dirty(set, encode_fn_node(slot), graph_snap);
     }
     g_partial_relower_callee_cascade_precompute_total.fetch_add(1, std::memory_order_relaxed);
-    return marked;
+    return callee_dirty_blocks;
 }
 
 void CompilerService::mark_direct_hybrid_dependents_body_dirty_(const std::string& name) {

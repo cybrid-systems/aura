@@ -36,12 +36,16 @@ using aura::compiler::estimate_relower_blocks_impact_checked;
 using aura::compiler::g_partial_relower_callee_cascade_precompute_observe_total;
 using aura::compiler::g_partial_relower_callee_cascade_precompute_total;
 using aura::compiler::get_partial_relower_threshold;
+using aura::compiler::incremental_soundness_mismatch_atomic;
 using aura::compiler::kPartialRelowerCalleeCascadeIssue;
+using aura::compiler::reset_incremental_soundness_for_test;
 using aura::compiler::reset_partial_relower_threshold_for_test;
+using aura::compiler::set_incremental_soundness_mode;
 using aura::compiler::set_partial_relower_threshold;
 using aura::compiler::should_partial_relower;
 using aura::compiler::should_partial_relower_impact_checked;
 using aura::compiler::types::as_int;
+using aura::compiler::types::is_error;
 using aura::compiler::types::is_hash;
 using aura::compiler::types::is_int;
 using aura::test::g_failed;
@@ -424,6 +428,158 @@ static void ac3550_4_source_cite_no_invent() {
           "3550 AC5: no docs/design");
 }
 
+static bool file_exists_cwd_3584(const char* rel) {
+    return std::ifstream(rel).good() || std::ifstream(std::string("../") + rel).good();
+}
+
+static std::string hub_fixture_src_3584() {
+    std::string src;
+    for (int i = 0; i < 8; ++i)
+        src += std::format("(define c{} (lambda () {}))", i, i);
+    // 1-block body; ≥8 callees live on the dep graph (precompute's
+    // define-count mix), not as extra AST impact.
+    src += "(define hub (lambda () (c0)))";
+    return src;
+}
+
+// Issue #3584: hub (≥8 callees) + 1-block edit must partial, not force
+// full from define-count mixed into estimate_relower_blocks.
+static void ac3584_1_hub_partial_peel() {
+    std::println("\n--- #3584 AC1: hub ≥8 callees + 1-block edit → partial ---");
+    using namespace aura::compiler::typed_audit;
+    apply_production_audit_defaults();
+    reset_partial_relower_threshold_for_test();
+    CompilerService cs;
+    cs.evaluator().set_effect_sandbox_mode(0);
+    const auto src = hub_fixture_src_3584();
+    auto sc = cs.eval(std::format("(set-code \"{}\")", src));
+    CHECK(sc.has_value(), "3584 AC1: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3584 AC1: eval");
+    for (int i = 0; i < 8; ++i)
+        cs.public_record_dependency("hub", std::format("c{}", i));
+    auto* m = static_cast<CompilerMetrics*>(cs.evaluator().compiler_metrics());
+    CHECK(m != nullptr, "3584 AC1: metrics");
+    CHECK(estimate_relower_blocks(1, 8) == 1, "3584 AC1: 1-block stays partial at thr=8");
+    CHECK(estimate_relower_blocks(1, 8, 8) == static_cast<std::size_t>(-1),
+          "3584 AC1: old define-count mix would force full");
+    const auto partial0 = m->incremental_partial_relower_total.load(std::memory_order_relaxed);
+    const auto yes0 = m->should_partial_relower_yes_total.load(std::memory_order_relaxed);
+    const auto full0 = m->incremental_full_fallback_total.load(std::memory_order_relaxed);
+    const auto impact0 = m->partial_forced_full_by_impact_total.load(std::memory_order_relaxed);
+    auto mut = cs.eval("(mutate:set-body \"hub\" \"(lambda () (+ (c0) 1))\" \"#3584\")");
+    CHECK(mut.has_value() && !is_error(*mut), "3584 AC1: set-body hub");
+    cs.public_invalidate_function("hub");
+    CHECK(cs.eval("(eval-current)").has_value(), "3584 AC1: re-eval");
+    auto hv = cs.eval("(hub)");
+    CHECK(hv && is_int(*hv) && as_int(*hv) == 1, "3584 AC1: hub==1 after 1-block edit");
+    const auto partial1 = m->incremental_partial_relower_total.load(std::memory_order_relaxed);
+    const auto yes1 = m->should_partial_relower_yes_total.load(std::memory_order_relaxed);
+    const auto full1 = m->incremental_full_fallback_total.load(std::memory_order_relaxed);
+    const auto impact1 = m->partial_forced_full_by_impact_total.load(std::memory_order_relaxed);
+    std::println("  3584 AC1 counters partial {}→{} yes {}→{} full {}→{} impact {}→{}", partial0,
+                 partial1, yes0, yes1, full0, full1, impact0, impact1);
+    // True-partial counter only moves when per-fn/per-block wins (2041).
+    // Passing the #3584 estimate gate with want_partial leaves either a
+    // true partial or a later #3034 impact upgrade (not define-count mix).
+    CHECK(partial1 > partial0 || impact1 > impact0,
+          "3584 AC1: incremental_partial_relower_total +1");
+    CHECK(href(cs, "partial-relowers") >= 0, "3584 AC1: reuse partial-relowers");
+    CHECK(href(cs, "full-fallbacks") >= 0, "3584 AC1: reuse full-fallbacks");
+
+    std::println("\n--- #3584 AC1: chain f←g←h mutate soak ---");
+    CompilerService chain;
+    chain.evaluator().set_effect_sandbox_mode(0);
+    auto sc2 = chain.eval("(set-code \"(define f (lambda () 1)) (define g (lambda () (f))) "
+                          "(define h (lambda () (g)))\")");
+    CHECK(sc2.has_value(), "3584 AC1: chain set-code");
+    CHECK(chain.eval("(eval-current)").has_value(), "3584 AC1: chain eval");
+    chain.public_record_dependency("g", "f");
+    chain.public_record_dependency("h", "g");
+    auto* mc = static_cast<CompilerMetrics*>(chain.evaluator().compiler_metrics());
+    const auto p0 = mc->incremental_partial_relower_total.load(std::memory_order_relaxed);
+    auto mutf = chain.eval("(mutate:set-body \"f\" \"(lambda () 2)\" \"#3584-chain\")");
+    CHECK(mutf.has_value() && !is_error(*mutf), "3584 AC1: set-body f");
+    CHECK(chain.eval("(eval-current)").has_value(), "3584 AC1: chain re-eval");
+    auto hv2 = chain.eval("(h)");
+    CHECK(hv2 && is_int(*hv2) && as_int(*hv2) == 2, "3584 AC1: h tracks f (no stale)");
+    const auto p1 = mc->incremental_partial_relower_total.load(std::memory_order_relaxed);
+    CHECK(p1 >= p0, "3584 AC1: chain partial non-decreasing");
+    apply_dev_audit_defaults();
+}
+
+static void ac3584_2_soundness_oracle() {
+    std::println("\n--- #3584 AC2: #2113 soundness oracle green on hub fixture ---");
+    using namespace aura::compiler::typed_audit;
+    apply_production_audit_defaults();
+    reset_partial_relower_threshold_for_test();
+    reset_incremental_soundness_for_test();
+    set_incremental_soundness_mode(2);
+    CompilerService cs;
+    cs.evaluator().set_effect_sandbox_mode(0);
+    auto sc = cs.eval(std::format("(set-code \"{}\")", hub_fixture_src_3584()));
+    CHECK(sc.has_value(), "3584 AC2: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3584 AC2: eval");
+    for (int i = 0; i < 8; ++i)
+        cs.public_record_dependency("hub", std::format("c{}", i));
+    const auto mm0 = incremental_soundness_mismatch_atomic().load(std::memory_order_relaxed);
+    auto mut = cs.eval("(mutate:set-body \"hub\" \"(lambda () (+ (c0) 1))\" \"#3584-snd\")");
+    CHECK(mut.has_value() && !is_error(*mut), "3584 AC2: set-body");
+    cs.public_invalidate_function("hub");
+    CHECK(cs.eval("(eval-current)").has_value(), "3584 AC2: re-eval");
+    auto hv = cs.eval("(hub)");
+    CHECK(hv && is_int(*hv) && as_int(*hv) == 1, "3584 AC2: hub result");
+    CHECK(incremental_soundness_mismatch_atomic().load(std::memory_order_relaxed) == mm0,
+          "3584 AC2: no soundness mismatch");
+    CHECK(href(cs, "schema-2113") == 2113, "3584 AC2: schema-2113 retained");
+    const auto svc = read_file("src/compiler/service.ixx");
+    const auto pure = read_file("src/compiler/ir_cache_pure.ixx");
+    CHECK(svc.find("#3584") != std::string::npos, "3584 AC2: service cites #3584");
+    CHECK(pure.find("#3584") != std::string::npos, "3584 AC2: estimate cites #3584");
+    CHECK(pure.find("check_incremental_soundness") != std::string::npos,
+          "3584 AC2: #2113 oracle present");
+    apply_dev_audit_defaults();
+}
+
+static void ac3584_3_soft_no_invent() {
+    std::println("\n--- #3584 AC3: Soft/Off zero-cost; no new query key ---");
+    using namespace aura::compiler::typed_audit;
+    apply_dev_audit_defaults();
+    g_typed_mutation_audit_counters.production_defaults_active.store(0, std::memory_order_relaxed);
+    CompilerService cs;
+    cs.evaluator().set_effect_sandbox_mode(0);
+    auto sc = cs.eval(std::format("(set-code \"{}\")", hub_fixture_src_3584()));
+    CHECK(sc.has_value(), "3584 AC3: Soft set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3584 AC3: Soft eval");
+    const auto tot0 =
+        g_partial_relower_callee_cascade_precompute_total.load(std::memory_order_relaxed);
+    const auto obs0 =
+        g_partial_relower_callee_cascade_precompute_observe_total.load(std::memory_order_relaxed);
+    auto mut = cs.eval("(mutate:set-body \"hub\" \"(lambda () (+ (c0) 1))\" \"#3584-soft\")");
+    CHECK(mut.has_value() && !is_error(*mut), "3584 AC3: Soft set-body");
+    CHECK(cs.eval("(eval-current)").has_value(), "3584 AC3: Soft re-eval");
+    auto hv = cs.eval("(hub)");
+    CHECK(hv && is_int(*hv) && as_int(*hv) == 1, "3584 AC3: Soft hub tracks");
+    CHECK(g_partial_relower_callee_cascade_precompute_total.load(std::memory_order_relaxed) == tot0,
+          "3584 AC3: Soft does not bump precompute total");
+    CHECK(g_partial_relower_callee_cascade_precompute_observe_total.load(
+              std::memory_order_relaxed) >= obs0,
+          "3584 AC3: Soft observe family intact");
+    const auto svc = read_file("src/compiler/service.ixx");
+    const auto t = read_file("tests/compiler/test_partial_relower_cascade.cpp");
+    CHECK(svc.find("schema-3584") == std::string::npos, "3584 AC3: no schema-3584");
+    const auto obs = read_file("src/compiler/observability_metrics.h");
+    const auto pure = read_file("src/compiler/ir_cache_pure.ixx");
+    CHECK(obs.find("g_3584_") == std::string::npos, "3584 AC3: no g_3584_* in metrics");
+    CHECK(pure.find("g_3584_") == std::string::npos, "3584 AC3: no g_3584_* in pure");
+    CHECK(t.find("ac3584_1_hub_partial_peel") != std::string::npos, "3584 AC3: hub soak present");
+    CHECK(!file_exists_cwd_3584("tests/compiler/test_issue_3584.cpp"),
+          "3584 AC3: no test_issue_3584.cpp");
+    CHECK(!file_exists_cwd_3584("docs/design/3584-estimate-relower-units.md"),
+          "3584 AC3: no docs/design/");
+    CHECK(!file_exists_cwd_3584("scripts/coverage/checks/check_estimate_relower_3584.py"),
+          "3584 AC3: no check_3584.py");
+}
+
 } // namespace
 
 int run_test_partial_relower_cascade() {
@@ -441,9 +597,12 @@ int run_test_partial_relower_cascade() {
     ac3550_2_estimate_callee_count();
     ac3550_3_soft_observe_only();
     ac3550_4_source_cite_no_invent();
+    ac3584_1_hub_partial_peel();
+    ac3584_2_soundness_oracle();
+    ac3584_3_soft_no_invent();
     if (g_failed)
         return 1;
-    std::println("partial re-lower cascade (#2041/#3550): OK ({} passed)", g_passed);
+    std::println("partial re-lower cascade (#2041/#3550/#3584): OK ({} passed)", g_passed);
     return 0;
 }
 

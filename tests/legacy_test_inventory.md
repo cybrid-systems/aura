@@ -1767,7 +1767,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_optimization_passes_contracts.cpp` (—) [domain_suite, theme_compiler] — AC1: 4 core passes satisfy Pass / DirtyAware / PureAnalysis where applicable
 - `tests/compiler/test_orch_hot_update_health_throttle.cpp` (—) [domain_suite, theme_compiler] — AC1: StormLevel ≠ None → health_bp drops; throttle fires; cap=1
 - `tests/core/test_pair_slot_lock.cpp` (—) [domain_suite, theme_core] — test_pair_slot_lock.cpp -- runtime smoke test for B-024 / #1998
-- `tests/compiler/test_partial_relower_cascade.cpp` (—) [domain_suite, theme_compiler] — Issue #2041 — Partial re-lower + JIT hot-swap end-to-end on
+- `tests/compiler/test_partial_relower_cascade.cpp` (—) [large, domain_suite, theme_compiler] — Issue #2041 — Partial re-lower + JIT hot-swap end-to-end on
 - `tests/compiler/test_partial_relower_impact_production.cpp` (—) [domain_suite, theme_compiler] — zero-cost threshold partial when ub==0 (existing contract). The
 - `tests/compiler/test_partial_relower_storm_gate.cpp` (—) [domain_suite, theme_compiler] — AC1: Global storm + small dirty → full + forced_full metric
 - `tests/compiler/test_peer_jit_name_soft_stale.cpp` (—) [domain_suite, theme_compiler] — AC1: aura_aot_mark_peer_jit_name_soft_stale / is_soft_stale / clear
