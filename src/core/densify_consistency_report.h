@@ -429,6 +429,21 @@ inline void reset_ffi_alias_slots_consumed_for_test() noexcept {
     g_ffi_alias_slots_consumed_total.store(0, std::memory_order_relaxed);
 }
 
+// Issue #3571: # of Moving live_compact attempts blocked at the relocate
+// commit point by a live EnvFrameLifetimeGuard (commit-time hold-pin
+// re-check; TOCTOU close for the #3123/#3200 decision-point-only sample —
+// a concurrent steal-probe Guard can raise the depth between the auto-arm
+// sample and this commit). Append END per #2906. Soft / depth==0 never
+// increments (single relaxed atomic).
+inline std::atomic<std::uint64_t> g_moving_envframe_guard_commit_block_total{0};
+inline constexpr int kMovingEnvframeGuardCommitBlockIssue = 3571;
+[[nodiscard]] inline std::uint64_t moving_envframe_guard_commit_block_total_v_read() noexcept {
+    return g_moving_envframe_guard_commit_block_total.load(std::memory_order_relaxed);
+}
+inline void reset_moving_envframe_guard_commit_block_for_test() noexcept {
+    g_moving_envframe_guard_commit_block_total.store(0, std::memory_order_relaxed);
+}
+
 } // namespace aura::core::densify_consistency
 
 #endif // AURA_CORE_DENSIFY_CONSISTENCY_REPORT_H
