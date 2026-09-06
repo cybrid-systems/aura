@@ -689,6 +689,50 @@ namespace {
 inline std::unordered_map<std::uint32_t, FiberHygieneStats> g_fiber_hygiene_map{};
 inline std::atomic<std::uint64_t> g_fiber_hygiene_query_total{0};
 inline std::atomic<std::uint64_t> g_fiber_hygiene_violation_per_fiber_total{0};
+// Issue #3575: LRU seq + eviction total (append END of the #2097 family).
+inline std::atomic<std::uint64_t> g_fiber_hygiene_touch_seq{0};
+std::atomic<std::uint64_t> g_fiber_hygiene_stats_evicted_total{0};
+
+// Caller holds g_fiber_hygiene_mu. Prefer idle (clone_in_flight==0);
+// if every slot is in-flight, still evict LRU so size stays ≤ cap.
+static void evict_one_fiber_hygiene_slot() noexcept {
+    auto victim = g_fiber_hygiene_map.end();
+    std::uint64_t best = ~std::uint64_t{0};
+    for (auto it = g_fiber_hygiene_map.begin(); it != g_fiber_hygiene_map.end(); ++it) {
+        if (it->second.clone_in_flight != 0)
+            continue;
+        if (it->second.last_touch_seq <= best) {
+            best = it->second.last_touch_seq;
+            victim = it;
+        }
+    }
+    if (victim == g_fiber_hygiene_map.end()) {
+        best = ~std::uint64_t{0};
+        for (auto it = g_fiber_hygiene_map.begin(); it != g_fiber_hygiene_map.end(); ++it) {
+            if (it->second.last_touch_seq <= best) {
+                best = it->second.last_touch_seq;
+                victim = it;
+            }
+        }
+    }
+    if (victim == g_fiber_hygiene_map.end())
+        return;
+    g_fiber_hygiene_map.erase(victim);
+    g_fiber_hygiene_stats_evicted_total.fetch_add(1, std::memory_order_relaxed);
+}
+
+static FiberHygieneStats& ensure_fiber_hygiene_slot(std::uint32_t fiber_id) noexcept {
+    const auto seq = g_fiber_hygiene_touch_seq.fetch_add(1, std::memory_order_relaxed) + 1;
+    if (auto it = g_fiber_hygiene_map.find(fiber_id); it != g_fiber_hygiene_map.end()) {
+        it->second.last_touch_seq = seq;
+        return it->second;
+    }
+    while (g_fiber_hygiene_map.size() >= kFiberHygieneStatsMapCap)
+        evict_one_fiber_hygiene_slot();
+    auto& slot = g_fiber_hygiene_map[fiber_id];
+    slot.last_touch_seq = seq;
+    return slot;
+}
 
 // Issue #2241: per-fiber hygiene violation budget. When non-zero, an
 // Agent / supervisor can deny further expand on fibers that have
@@ -703,7 +747,7 @@ inline std::atomic<std::uint64_t> g_macro_self_evo_fiber_violation_deny_total{0}
 
 inline void bump_fiber_hygiene_on_enter(std::uint32_t fiber_id, int depth) noexcept {
     std::lock_guard<std::mutex> lock(g_fiber_hygiene_mu);
-    auto& slot = g_fiber_hygiene_map[fiber_id];
+    auto& slot = ensure_fiber_hygiene_slot(fiber_id);
     slot.depth = depth;
     slot.clone_in_flight = 1;
 }
@@ -712,11 +756,11 @@ inline void bump_fiber_hygiene_on_enter(std::uint32_t fiber_id, int depth) noexc
 // no new TLS, no quiet-path walk.
 static void stamp_fiber_last_limit_reason(std::uint32_t fiber_id, std::uint8_t code) noexcept {
     std::lock_guard<std::mutex> lock(g_fiber_hygiene_mu);
-    g_fiber_hygiene_map[fiber_id].last_limit_reason = code;
+    ensure_fiber_hygiene_slot(fiber_id).last_limit_reason = code;
 }
 inline void bump_fiber_hygiene_on_violation(std::uint32_t fiber_id) noexcept {
     std::lock_guard<std::mutex> lock(g_fiber_hygiene_mu);
-    g_fiber_hygiene_map[fiber_id].violations += 1;
+    ensure_fiber_hygiene_slot(fiber_id).violations += 1;
     g_fiber_hygiene_violation_per_fiber_total.fetch_add(1, std::memory_order_relaxed);
 }
 inline void bump_fiber_hygiene_on_exit(std::uint32_t fiber_id,
@@ -728,7 +772,7 @@ inline void bump_fiber_hygiene_on_exit(std::uint32_t fiber_id,
     // this expand, not a placeholder zero. Bumped under the same lock
     // as depth/violations so the snapshot is consistent.
     std::lock_guard<std::mutex> lock(g_fiber_hygiene_mu);
-    auto& slot = g_fiber_hygiene_map[fiber_id];
+    auto& slot = ensure_fiber_hygiene_slot(fiber_id);
     slot.depth = 0;
     slot.gensym_map_size = name_map_size_snapshot;
     slot.clone_in_flight = 0;
@@ -752,6 +796,10 @@ FiberHygieneStats get_fiber_hygiene_metrics(std::uint32_t fiber_id) noexcept {
     std::lock_guard<std::mutex> lock(g_fiber_hygiene_mu);
     auto it = g_fiber_hygiene_map.find(fiber_id);
     return it == g_fiber_hygiene_map.end() ? FiberHygieneStats{} : it->second;
+}
+std::size_t fiber_hygiene_stats_map_size() noexcept {
+    std::lock_guard<std::mutex> lock(g_fiber_hygiene_mu);
+    return g_fiber_hygiene_map.size();
 }
 // Issue #1652: clone_macro_body expand observability counters (paired with
 // #1611 MacroIntroduced hygiene gate). Bumped at the success path +
@@ -1028,6 +1076,17 @@ std::uint64_t aura_fiber_hygiene_query_total_v_read() noexcept {
 }
 std::uint64_t aura_fiber_hygiene_violation_per_fiber_total_v_read() noexcept {
     return g_fiber_hygiene_violation_per_fiber_total.load(std::memory_order_relaxed);
+}
+// Issue #3575: bounded-map occupancy + eviction total (C ABI for tests
+// that stay bridge-light). Size is locked; evicted is lock-free.
+extern "C" std::uint64_t aura_fiber_hygiene_stats_evicted_total_v_read(void) noexcept {
+    return g_fiber_hygiene_stats_evicted_total.load(std::memory_order_relaxed);
+}
+extern "C" std::size_t aura_fiber_hygiene_stats_map_size_v_read(void) noexcept {
+    return fiber_hygiene_stats_map_size();
+}
+extern "C" void aura_test_reset_fiber_hygiene_stats_evicted_total_for_test(void) noexcept {
+    g_fiber_hygiene_stats_evicted_total.store(0, std::memory_order_relaxed);
 }
 
 // Issue #2241: per-fiber violation budget gate (refine #2097).

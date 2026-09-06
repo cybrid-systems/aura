@@ -113,6 +113,10 @@ export extern std::atomic<std::uint64_t> g_macro_schema_cache_rest_stamped_total
 // map + per-fiber query counters).
 export extern std::atomic<std::uint64_t> g_fiber_hygiene_query_total;
 export extern std::atomic<std::uint64_t> g_fiber_hygiene_violation_per_fiber_total;
+// Issue #3575: per-fiber map cap + LRU eviction of idle slots (append END).
+export inline constexpr std::size_t kFiberHygieneStatsMapCap = 4096;
+export inline constexpr int kFiberHygieneStatsEvictIssue = 3575;
+export extern std::atomic<std::uint64_t> g_fiber_hygiene_stats_evicted_total;
 
 // Issue #2023: MacroSelfEvo capability gate observability.
 export extern std::atomic<std::uint64_t> g_macro_self_evo_denied_total;
@@ -221,6 +225,11 @@ export struct MacroExpansionDef {
 // Zero-cost when fiber_id not requested — the per-fiber map is only
 // populated on expand entry/exit events (same hot path that already bumps
 // the global atomics); the hash lookup is amortized.
+// Issue #3575: the map is bounded (kFiberHygieneStatsMapCap). Insert of a
+// new fiber_id at cap LRU-evicts an idle slot (clone_in_flight==0;
+// all-in-flight falls back to global LRU) and bumps
+// g_fiber_hygiene_stats_evicted_total. Soft/Off still only fill on expand
+// events — the cap is the observation map, not clone behavior.
 export struct FiberHygieneStats {
     int depth = 0;
     std::uint64_t violations = 0;
@@ -233,11 +242,18 @@ export struct FiberHygieneStats {
     // top-level ConcurrentCloneGuard claim. Cleared on guard dtor and on
     // steal abort / provenance-repin unwind. Append END.
     std::uint8_t clone_in_flight = 0;
+    // Issue #3575: LRU bookkeeping for map eviction. Not an Agent query
+    // field — get_fiber_hygiene_metrics still returns zeros for unknown
+    // or evicted ids. Append END.
+    std::uint64_t last_touch_seq = 0;
 };
 
 // Snapshot a fiber's accumulated hygiene state. Returns a default-constructed
-// FiberHygieneStats (all zeros) if the fiber_id has no recorded expand events.
+// FiberHygieneStats (all zeros) if the fiber_id has no recorded expand events
+// or the slot was LRU-evicted (#3575).
 export [[nodiscard]] FiberHygieneStats get_fiber_hygiene_metrics(std::uint32_t fiber_id) noexcept;
+// Issue #3575: live occupancy of the bounded per-fiber map (≤ cap).
+export [[nodiscard]] std::size_t fiber_hygiene_stats_map_size() noexcept;
 
 // Clone a FlatAST subtree with optional param substitution and
 // hygienic renaming (name_map). hyg_ctr is per-call (instance-local).

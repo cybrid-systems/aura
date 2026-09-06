@@ -1,0 +1,45 @@
+{
+  "issue": 3575,
+  "title": "Issue #3575: per-fiber hygiene stats map cap + LRU eviction",
+  "ok": "OK: Issue #3575 FiberHygieneStats map bounded; LRU-evict idle; unknown id still zeros.",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/macro_expansion.ixx",
+      "contains": [
+        "kFiberHygieneStatsMapCap",
+        "kFiberHygieneStatsEvictIssue = 3575",
+        "g_fiber_hygiene_stats_evicted_total",
+        "last_touch_seq"
+      ]
+    },
+    {
+      "ac": "AC1-impl",
+      "path": "src/compiler/macro_expansion.cpp",
+      "contains": [
+        "ensure_fiber_hygiene_slot",
+        "evict_one_fiber_hygiene_slot",
+        "g_fiber_hygiene_stats_evicted_total"
+      ]
+    },
+    {
+      "ac": "TESTS",
+      "path": "tests/compiler/test_macro_fiber_hygiene.cpp",
+      "contains": [
+        "3575 AC1",
+        "3575 AC2",
+        "3575 AC3",
+        "3575 AC4",
+        "kFiberHygieneStatsMapCap"
+      ]
+    },
+    {
+      "ac": "NO-INVENT",
+      "forbid": [
+        "tests/compiler/test_issue_3575.cpp",
+        "docs/design/3575-fiber-hygiene-map-cap.md",
+        "scripts/coverage/checks/check_fiber_hygiene_map_cap_3575.py"
+      ]
+    }
+  ]
+}

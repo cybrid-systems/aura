@@ -29,6 +29,9 @@
 //         2 new gates (force_hygienic deny + gensym-map-size exceeded)
 //         bump 2 new file-scope atomics, exposed via v_read C-linkage
 //         + query:macro-fiber-hygiene keys (Agent observability).
+//
+// Issue #3575: per-fiber map cap + LRU eviction of idle slots
+//   (10k synthetic fiber_id churn → size ≤ cap; unknown id still zeros).
 
 #include "test_harness.hpp"
 #include "compiler/observability_metrics.h"
@@ -553,6 +556,59 @@ static void ac3341_per_fiber_last_limit_reason() {
           "3341: build.py wires linter");
 }
 
+// Issue #3575: per-fiber hygiene map is bounded; LRU-evict idle slots.
+static void ac3575_fiber_hygiene_map_cap() {
+    std::println("\n--- #3575: per-fiber hygiene map cap + LRU eviction ---");
+    using aura::compiler::macro_exp::fiber_hygiene_stats_map_size;
+    using aura::compiler::macro_exp::g_fiber_hygiene_stats_evicted_total;
+    using aura::compiler::macro_exp::get_fiber_hygiene_metrics;
+    using aura::compiler::macro_exp::kFiberHygieneStatsMapCap;
+
+    auto mex = read_file("src/compiler/macro_expansion.cpp");
+    auto mix = read_file("src/compiler/macro_expansion.ixx");
+    CHECK(mix.find("kFiberHygieneStatsMapCap") != std::string::npos,
+          "3575 AC1: cap exported (bounded, not unbounded)");
+    CHECK(mex.find("ensure_fiber_hygiene_slot") != std::string::npos, "3575 AC1: ensure+evict");
+    CHECK(mex.find("evict_one_fiber_hygiene_slot") != std::string::npos, "3575 AC1: LRU evict");
+    CHECK(mex.find("g_fiber_hygiene_stats_evicted_total") != std::string::npos,
+          "3575 AC1: evicted counter");
+    CHECK(mix.find("kFiberHygieneStatsEvictIssue = 3575") != std::string::npos, "3575 AC1: stamp");
+    CHECK(kFiberHygieneStatsMapCap >= 1024 && kFiberHygieneStatsMapCap <= 65536,
+          "3575 AC1: cap in [1024, 65536]");
+
+    const auto ev0 = g_fiber_hygiene_stats_evicted_total.load(std::memory_order_relaxed);
+    constexpr std::uint32_t kBase = 0x35750000u;
+    constexpr int kChurn = 10000;
+    for (int i = 0; i < kChurn; ++i)
+        note_hygiene_last_limit_reason_for_fiber(kBase + static_cast<std::uint32_t>(i),
+                                                 kHygieneLimitReasonDepthLimit);
+    const auto sz = fiber_hygiene_stats_map_size();
+    CHECK(sz <= kFiberHygieneStatsMapCap, "3575 AC2: map size ≤ cap after 10k churn");
+    CHECK(sz > 0, "3575 AC2: map still holds live slots");
+    const auto ev1 = g_fiber_hygiene_stats_evicted_total.load(std::memory_order_relaxed);
+    CHECK(ev1 > ev0, "3575 AC3: evicted counter advanced");
+    CHECK(ev1 - ev0 >= static_cast<std::uint64_t>(kChurn) - kFiberHygieneStatsMapCap,
+          "3575 AC3: evicted at least churn-cap");
+
+    const auto early = get_fiber_hygiene_metrics(kBase);
+    CHECK(early.depth == 0 && early.violations == 0 && early.last_limit_reason == 0,
+          "3575 AC3: LRU-oldest id evicted (looks unknown)");
+    const auto late = get_fiber_hygiene_metrics(kBase + static_cast<std::uint32_t>(kChurn - 1));
+    CHECK(late.last_limit_reason == kHygieneLimitReasonDepthLimit, "3575 AC3: newest id retained");
+
+    const std::uint32_t unknown = 0x3575FFFFu;
+    const auto z = get_fiber_hygiene_metrics(unknown);
+    CHECK(z.depth == 0 && z.violations == 0 && z.gensym_map_size == 0 && z.last_limit_reason == 0 &&
+              z.clone_in_flight == 0,
+          "3575 AC4: unknown id still default zeros");
+    CHECK(!std::ifstream("tests/compiler/test_issue_3575.cpp").good() &&
+              !std::ifstream("../tests/compiler/test_issue_3575.cpp").good(),
+          "3575 AC4: no test_issue_3575.cpp");
+    CHECK(!std::ifstream("docs/design/3575-fiber-hygiene-map-cap.md").good() &&
+              !std::ifstream("../docs/design/3575-fiber-hygiene-map-cap.md").good(),
+          "3575 AC4: no docs/design/");
+}
+
 } // namespace
 
 int main() {
@@ -566,9 +622,11 @@ int main() {
     ac8_concurrent_and_global_counters_2174();
     ac12_self_evo_enforcement_2243();
     ac3341_per_fiber_last_limit_reason();
+    ac3575_fiber_hygiene_map_cap();
     if (g_failed)
         return 1;
-    std::println("macro fiber hygiene (#2097 + #2174 + #2241 + #2243 + #3341): OK ({} passed)",
+    std::println("macro fiber hygiene (#2097 + #2174 + #2241 + #2243 + #3341 + #3575): OK ({} "
+                 "passed)",
                  g_passed);
     return 0;
 }
