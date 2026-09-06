@@ -22,7 +22,7 @@ module;
 #include <cstdint>
 #include <string>
 #include <string_view>
-#include "compiler/ownership_escape_lowering_gate.h" // Issue #2263
+#include "compiler/ownership_escape_lowering_gate.h" // Issue #2263 / #3006 / #3591
 
 module aura.compiler.lowering_linear_types;
 import std;
@@ -136,6 +136,13 @@ std::optional<std::uint32_t> try_lower_linear_type(LoweringState& state,
                     // unblocked names. #2263 AC2 (no depth) still elides.
                     if (aura_linear_fast_path_depth_or_densify_block() != 0) {
                         // Fall through: emit MoveOp.
+                    } else if (aura_production_defaults_active_probe() != 0 &&
+                               aura_linear_fast_path_ok() == 0) {
+                        // Issue #3591: Production never elides without the
+                        // full #3006 predicate (epoch arm =
+                        // invalidate_gen vs green_bind). Soft/Off: one
+                        // probe load then skip (zero extra; #2263 clean
+                        // elide unchanged).
                     } else {
                         g_linear_move_elided_total.fetch_add(1, std::memory_order_relaxed);
                         ++state.linear_move_elided;

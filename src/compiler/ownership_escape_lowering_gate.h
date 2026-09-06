@@ -59,6 +59,8 @@ extern "C" int aura_escape_move_gate_active() noexcept;
 // Issue #3006: unified linear_fast_path_ok for lowering (depth / escape /
 // densify_pending must keep blocking Move/Drop elision after IR emit).
 extern "C" int aura_linear_fast_path_ok() noexcept;
+// Soft/Off skip for #3591 Production conjunct (one load then skip).
+extern "C" int aura_production_defaults_active_probe() noexcept;
 // Mid-boundary / densify-pending / rehydrate-miss gen (Issue #3085).
 // Does not blanket-block #2263 clean elide when gens match.
 extern "C" int aura_linear_fast_path_depth_or_densify_block() noexcept;
@@ -83,6 +85,11 @@ extern "C" int aura_escape_blocks_move_elision_for_key(void* eval, std::uint64_t
 namespace aura::compiler {
 
 inline constexpr int kEscapeActiveMoveElisionDepthIssue = 3519;
+// Issue #3591: every owned Move/Drop elision in lowering_linear_types_impl
+// routes through aura_linear_fast_path_ok (Production) or the lowering
+// subset aura_linear_fast_path_depth_or_densify_block (epoch arm =
+// linear_fast_path_rehydrate_gen_blocks_elision). Soft/Off skip ok().
+inline constexpr int kLinearElisionEpochFenceIssue = 3591;
 
 // Process atomics (query / tests) — defined once in typed_mutation_audit_hooks.cpp.
 extern std::atomic<std::uint64_t> g_linear_move_elision_blocked_escape_total;

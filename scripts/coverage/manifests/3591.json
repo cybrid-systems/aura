@@ -1,0 +1,55 @@
+{
+  "issue": 3591,
+  "title": "Issue #3591: linear elision routes #3006 epoch arm",
+  "ok": "OK: Issue #3591 — owned Move/Drop elision routes aura_linear_fast_path_ok / depth_or_densify_block epoch arm; unsynced elide fails CI.",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/lowering_linear_types_impl.cpp",
+      "contains": [
+        "Issue #3591",
+        "aura_linear_fast_path_ok()",
+        "aura_linear_fast_path_depth_or_densify_block()"
+      ]
+    },
+    {
+      "ac": "AC1-test",
+      "path": "tests/compiler/test_escape_move_elision_gate.cpp",
+      "contains": [
+        "ac3591_1_elision_routes_predicate",
+        "Production !ok does not elide"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "scripts/coverage/checks/check_linear_elision_fast_path_3591.py",
+      "contains": [
+        "classify_elision_decisions",
+        "unsynced Move elision"
+      ]
+    },
+    {
+      "ac": "AC2-test",
+      "path": "tests/compiler/test_escape_move_elision_gate.cpp",
+      "contains": [
+        "ac3591_2_linter_rejects_unsynced_elide"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/compiler/test_type_linear_commit_health.cpp",
+      "contains": [
+        "ac3591_3_epoch_arm_and_soft",
+        "no schema-3591"
+      ]
+    },
+    {
+      "ac": "NO-INVENT",
+      "forbid": [
+        "tests/compiler/test_issue_3591.cpp",
+        "docs/design/3591-linear-elision-epoch-fence.md",
+        "scripts/coverage/checks/check_linear_elision_substring_3591.py"
+      ]
+    }
+  ]
+}
