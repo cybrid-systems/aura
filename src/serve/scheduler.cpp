@@ -975,6 +975,18 @@ void Scheduler::run() {
                 if (fiber->is_done())
                     continue;
 
+                // Issue #3521: skip if already queued / in resume. Stdin
+                // EPOLLET on a CI pipe plus this write used to enqueue the
+                // same Waiting fiber twice → double swapcontext SIGSEGV.
+                // Do NOT drain on this path: level-triggered EPOLLIN must
+                // stay readable so the next epoll_wait fires after the
+                // worker clear_queued()s the park. Draining here ate the
+                // test/host wake while the body was still in its first
+                // resume (stage=1 published before yield(BlockingIO)) and
+                // ubsan-smoke then waited 60s for stage 2.
+                if (fiber->is_queued())
+                    continue;
+
                 // Drain the eventfd (read the 8-byte counter)
                 uint64_t val;
                 ::read(fiber->eventfd(), &val, sizeof(val));
@@ -983,12 +995,6 @@ void Scheduler::run() {
                 if (metrics_on_) {
                     metrics_.io_events_processed.fetch_add(1, std::memory_order_relaxed);
                 }
-
-                // Issue #3521: skip if already queued / in resume. Stdin
-                // EPOLLET on a CI pipe plus this write used to enqueue the
-                // same Waiting fiber twice → double swapcontext SIGSEGV.
-                if (fiber->is_queued())
-                    continue;
 
                 // Issue #3553: eventfd / IO-thread wake bypasses force-safepoint.
                 // If any Fiber holds an outermost Guard (process-wide held count > 0),

@@ -1439,6 +1439,19 @@ void Fiber::resume() {
 namespace {
     std::atomic<std::uint64_t> g_yield_while_mutation_held_total{0};
 
+    // swapcontext does not reliably round-trip thread_local under
+    // -fsanitize=undefined (x86_64 ubsan-smoke: member call on null
+    // Fiber* at the first load after BlockingIO yield returns).
+    // `fb` / `wctx` live on the fiber stack and survive the park.
+    // Only rebind when TLS is empty — intact TLS on a steal-resume
+    // already points at the resuming worker.
+    void rebind_tls_after_swap(Fiber* fb, WorkerContext* wctx) noexcept {
+        if (!g_current_fiber && fb)
+            g_current_fiber = fb;
+        if (!g_worker_ctx && wctx)
+            g_worker_ctx = wctx;
+    }
+
     // why: 1 = held flag, 2 = depth>0 (defense in depth)
     [[nodiscard]] bool yield_blocked_by_mutation_boundary(std::uint8_t* why_out) noexcept {
         // Soft orch agent-body window (#2118 / #1881) does not hold
@@ -1545,6 +1558,7 @@ void Fiber::yield() {
     if (::swapcontext(&fb->ctx_, &wctx->uctx) == -1) {
         std::fprintf(stderr, "fiber: yield swapcontext failed: %s\n", std::strerror(errno));
     }
+    rebind_tls_after_swap(fb, wctx);
 }
 
 // ── yield(YieldReason) — yield with reason ────────────
@@ -1648,15 +1662,20 @@ void Fiber::yield(YieldReason reason) {
     if (::swapcontext(&fb->ctx_, &wctx->uctx) == -1) {
         std::fprintf(stderr, "fiber: yield swapcontext failed: %s\n", std::strerror(errno));
     }
+    rebind_tls_after_swap(fb, wctx);
 }
 
 // ── Trampoline — first entry point when fiber starts ──
 
 void Fiber::trampoline(uint32_t /*high*/, uint32_t /*low*/) {
-    if (g_current_fiber) {
-        g_current_fiber->set_state(FiberState::Running);
-        g_current_fiber->func_();
-        // Function returned — fiber is done
+    Fiber* self = g_current_fiber;
+    if (self) {
+        self->set_state(FiberState::Running);
+        self->func_();
+        // Function returned — fiber is done. Rebind if ucontext/sanitizer
+        // dropped TLS during the body (ubsan-smoke member-call-on-null).
+        if (!g_current_fiber)
+            g_current_fiber = self;
         g_current_fiber->set_state(FiberState::Done);
         // Issue #2397: if hard-reclaimed while body was still
         // executing, pair still-running gauge + bump retired.
