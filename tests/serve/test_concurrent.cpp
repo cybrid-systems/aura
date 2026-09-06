@@ -222,7 +222,11 @@ bool test_eventfd_wakeup() {
         while (stage.load(std::memory_order_acquire) < 2 &&
                std::chrono::steady_clock::now() < wake_deadline) {
             const uint64_t one = 1;
-            (void)::write(fd, &one, sizeof(one));
+            // glibc _FORTIFY_SOURCE (CI RelWithDebInfo -O2) marks write()
+            // __wur; (void)::write does not silence -Werror=unused-result.
+            // EINTR / EAGAIN / closed-after-reap: retry until stage==2.
+            const ssize_t n = ::write(fd, &one, sizeof(one));
+            (void)n;
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
         }
     }
