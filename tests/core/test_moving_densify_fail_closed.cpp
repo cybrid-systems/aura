@@ -44,6 +44,7 @@
 import std;
 import aura.core.arena;
 import aura.core.lifetime_pin;
+import aura.core.envframe_lifetime;
 
 namespace {
 
@@ -3605,6 +3606,68 @@ static void ac3569_5_source_cite() {
     CHECK(!design.good(), "3569 AC5: no docs/design/3569-*");
 }
 
+// ── Issue #3571: commit-time envframe hold-pin re-check at Moving ──────────
+//
+// Residual: the guard-depth check was decision-point only (#3123/#3200
+// auto-arm sample); a concurrent fiber (steal-probe constructs an
+// EnvFrameLifetimeGuard at FiberSteal) could raise the depth between the
+// sample and the relocate commit inside live_compact(Moving). The hold-pin
+// contract must hold at relocate time, not only at the decision point.
+//
+//   AC1: guard live → Moving blocked at commit: objects_moved == 0,
+//        moving_blocked_precondition, pin_contract_held=false, counter
+//        bumps, payload intact (no relocation side effects).
+//   AC2: guard released → Moving proceeds (green window unchanged).
+//   AC3: source-cite (arena.ixx commit check + header counter).
+
+static void ac3571_1_guard_live_blocks_moving() {
+    std::println("\n--- #3571 AC1: guard live blocks Moving at commit ---");
+    MovingFlagGuard on(1);
+    aura::ast::g_moving_untracked_hard_abort_pref.store(0, std::memory_order_relaxed);
+    aura::core::densify_consistency::reset_moving_envframe_guard_commit_block_for_test();
+    ASTArena arena(64 * 1024);
+    auto* p0 = arena.create<Pod16>(1, 2, 3, 4);
+    auto* p1 = arena.create<Pod16>(5, 6, 7, 8);
+    auto* p2 = arena.create<Pod16>(9, 10, 11, 12);
+    CHECK(p0 && p1 && p2, "3571 AC1: create ok");
+    const auto blocked_before =
+        aura::core::densify_consistency::moving_envframe_guard_commit_block_total_v_read();
+    {
+        // Default host: no scan callback; hold_generation falls back to
+        // compact_generation() — dtor is safe without an Evaluator.
+        aura::core::envframe_lifetime::EnvFrameLifetimeGuard guard{
+            aura::core::envframe_lifetime::EnvFrameLifetimeHost{},
+            aura::core::envframe_lifetime::EnvFrameLifetimeSite::CompactSweep};
+        const auto r = arena.live_compact(LiveCompactMode::Moving);
+        CHECK(r.objects_moved == 0, "3571 AC1: no relocation under live guard");
+        CHECK(r.moving_blocked_precondition, "3571 AC1: blocked_precondition face");
+        CHECK(!r.pin_contract_held, "3571 AC1: pin_contract_held=false (unified gate)");
+        CHECK(aura::core::densify_consistency::moving_envframe_guard_commit_block_total_v_read() ==
+                  blocked_before + 1,
+              "3571 AC1: commit-block counter bumps");
+        CHECK(p0->a == 1 && p0->b == 2, "3571 AC1: payload intact (nothing moved)");
+    }
+    // AC2: guard released → Moving proceeds.
+    const auto r2 = arena.live_compact(LiveCompactMode::Moving);
+    CHECK(r2.objects_moved > 0, "3571 AC2: Moving proceeds after guard release");
+    CHECK(!r2.moving_blocked_precondition, "3571 AC2: no commit block");
+    (void)p1;
+    (void)p2;
+}
+
+static void ac3571_2_source_cite() {
+    std::println("\n--- #3571 AC3: source-cite ---");
+    const auto ixx = read_file("src/core/arena.ixx");
+    CHECK(ixx.find("Issue #3571: commit-time envframe hold-pin re-check") != std::string::npos,
+          "3571 AC3: commit-time re-check wired in live_compact(Moving)");
+    CHECK(ixx.find("g_moving_envframe_guard_commit_block_total.fetch_add") != std::string::npos,
+          "3571 AC3: additive counter bump site");
+    const auto hdr = read_file("src/core/densify_consistency_report.h");
+    CHECK(hdr.find("g_moving_envframe_guard_commit_block_total") != std::string::npos,
+          "3571 AC3: counter declared (append END)");
+    CHECK(hdr.find("Issue #3571") != std::string::npos, "3571 AC3: header cites #3571");
+}
+
 int run_test_moving_densify_fail_closed() {
     std::println("=== Issue #2495: Moving densify fail-closed on untracked external roots ===");
     std::println(
@@ -4304,6 +4367,9 @@ int run_test_moving_densify_fail_closed() {
     ac3569_3_idempotent_and_empty();
     ac3569_4_moving_window_drains_queue();
     ac3569_5_source_cite();
+    std::println("\n=== Issue #3571: commit-time envframe hold-pin re-check ===");
+    ac3571_1_guard_live_blocks_moving();
+    ac3571_2_source_cite();
 
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;

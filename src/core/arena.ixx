@@ -2223,6 +2223,17 @@ public:
                     ++stats_.force_compact_blocked_by_envframe_guard;
                     g_force_compact_blocked_by_envframe_guard_total.fetch_add(
                         1, std::memory_order_relaxed);
+                    // Issue #3571: commit-time envframe hold-pin re-check
+                    // face. This entry gate IS the relocate-time check (the
+                    // TOCTOU is closed here — nothing below runs when
+                    // guard_block is true). Fold the unified gate so a
+                    // blocked window can never publish pin-ok (#3372
+                    // vacuous-green shape) and give the Moving guard-block
+                    // face its own additive counter. Soft / depth==0:
+                    // unchanged.
+                    result.pin_contract_held = false;
+                    aura::core::densify_consistency::g_moving_envframe_guard_commit_block_total
+                        .fetch_add(1, std::memory_order_relaxed);
                 }
                 // Issue #3200: production pack + pins/EnvFrame must not leave
                 // a silent amortisation gap. Soft/sandbox observe-only.
