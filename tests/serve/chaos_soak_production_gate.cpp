@@ -17,6 +17,10 @@
 //   Issue #3590: QueryEpoch strict joins this gate (no 7th counter):
 //        armed process query_epoch_strict()==true; unarmed==false unless
 //        operator AURA_QUERY_EPOCH_STRICT override. Same fail_if_prod path.
+//   Issue #3592: effective Strict unify joins this gate (no 8th counter):
+//        armed process effective_gradual_permissiveness()==Strict (#3430);
+//        unarmed != Strict unless AURA_GRADUAL_PERMISSIVENESS override.
+//        Production explicit downgrade stays fail-closed (effective Strict).
 //   AC3: Soft / Off path (sandbox=off / !production_defaults_active):
 //        same test runs observe-only; logs counter snapshot, no CHECK fail.
 //   AC4: Env knobs:
@@ -71,7 +75,9 @@
 import std;
 import aura.compiler.evaluator;
 import aura.compiler.service;
+import aura.compiler.type_checker;
 import aura.compiler.value;
+import aura.core.type;
 
 namespace {
 
@@ -254,6 +260,95 @@ static void ac3590_query_epoch_strict_joins_bootstrap_gate() {
           "3590 AC3: no docs/design/");
 }
 
+static bool gradual_strict_env_on() noexcept {
+    const char* e = std::getenv("AURA_GRADUAL_PERMISSIVENESS");
+    if (!e || !*e)
+        return false;
+    return aura::compiler::parse_gradual_permissiveness(e) ==
+           aura::compiler::GradualPermissiveness::Strict;
+}
+
+// Issue #3592: effective Strict unify must join the production bootstrap
+// gate (#3430/#3202 x #3586/#3590). Same fail_if_prod path; no new counter.
+static void ac3592_unify_strict_joins_bootstrap_gate() {
+    std::println("\n--- #3592: effective Strict unify joins production bootstrap gate ---");
+    using aura::compiler::GradualPermissiveness;
+    using aura::compiler::TypeChecker;
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    using aura::compiler::typed_audit::production_defaults_active;
+    using aura::core::TypeRegistry;
+
+    const auto was_prod = production_defaults_active();
+
+    apply_production_audit_defaults();
+    {
+        TypeRegistry reg;
+        TypeChecker tc(reg);
+        CHECK(tc.effective_gradual_permissiveness() == GradualPermissiveness::Strict,
+              "effective Strict unify must be armed under production defaults (#3430/#3202)");
+        // AC3: explicit downgrade under production stays fail-closed.
+        tc.set_gradual_permissiveness(GradualPermissiveness::Balanced);
+        CHECK(tc.effective_gradual_permissiveness() == GradualPermissiveness::Strict,
+              "3592 AC3: production explicit downgrade stays Strict");
+    }
+    CHECK(aura_production_defaults_active_probe() != 0, "3592: armed probe");
+    if (was_prod == 0) {
+        apply_dev_audit_defaults();
+        ::setenv("AURA_SANDBOX", "off", 1);
+    }
+
+    if (aura_production_defaults_active_probe() == 0 && !gradual_strict_env_on()) {
+        TypeRegistry reg;
+        TypeChecker tc(reg);
+        CHECK(tc.effective_gradual_permissiveness() != GradualPermissiveness::Strict,
+              "unbootstrapped process must not silently report Strict");
+    }
+
+    const pid_t pid = ::fork();
+    if (pid == 0) {
+        ::alarm(2);
+        apply_dev_audit_defaults();
+        ::unsetenv("AURA_GRADUAL_PERMISSIVENESS");
+        {
+            TypeRegistry reg;
+            TypeChecker tc(reg);
+            if (aura_production_defaults_active_probe() != 0)
+                ::_exit(2);
+            if (tc.effective_gradual_permissiveness() == GradualPermissiveness::Strict)
+                ::_exit(3);
+        }
+        ::setenv("AURA_GRADUAL_PERMISSIVENESS", "strict", 1);
+        {
+            TypeRegistry reg;
+            TypeChecker tc(reg);
+            if (tc.effective_gradual_permissiveness() != GradualPermissiveness::Strict)
+                ::_exit(4);
+            if (aura_production_defaults_active_probe() != 0)
+                ::_exit(5);
+        }
+        ::_exit(0);
+    }
+    int st = 0;
+    if (pid > 0)
+        ::waitpid(pid, &st, 0);
+    CHECK(pid > 0 && WIFEXITED(st) && WEXITSTATUS(st) == 0,
+          "3592 AC2: unarmed != Strict; AURA_GRADUAL_PERMISSIVENESS override arms");
+
+    const auto sweep = read_file("tests/serve/test_production_sweep.cpp");
+    CHECK(sweep.find("ac3592_bootstrap_order_matrix") != std::string::npos,
+          "3592: production_sweep bootstrap matrix");
+    const auto tix = read_file("src/compiler/type_checker.ixx");
+    CHECK(tix.find("kProductionDefaultsForceStrictUnifyIssue = 3430") != std::string::npos,
+          "3592: #3430 effective Strict SSOT");
+    CHECK(tix.find("AURA_GRADUAL_PERMISSIVENESS") != std::string::npos, "3592 AC2: env knob");
+    const auto qw = read_file("src/compiler/evaluator_primitives_obs_jit.cpp");
+    CHECK(qw.find("schema-3592") == std::string::npos, "3592 AC4: no schema-3592");
+    CHECK(read_file("tests/serve/test_issue_3592.cpp").empty(), "3592 AC4: no test_issue_3592.cpp");
+    CHECK(read_file("docs/design/3592-unify-strict-bootstrap.md").empty(),
+          "3592 AC4: no docs/design/");
+}
+
 // ── Per-fiber chaos body ────────────────────────────────────────────
 struct ChaosState {
     std::atomic<std::uint64_t> ops{0};
@@ -367,6 +462,7 @@ int run_test_chaos_soak_production_gate() {
 
     ac3586_unarmed_multi_worker_refuses();
     ac3590_query_epoch_strict_joins_bootstrap_gate();
+    ac3592_unify_strict_joins_bootstrap_gate();
     // Soft soak still needs an explicit off latch so Scheduler::run
     // does not FATAL (#3586) after the death test unset the env.
     if (!production && !sandbox_is_off())
@@ -491,6 +587,19 @@ int run_test_chaos_soak_production_gate() {
     fail_if_prod("query_epoch_strict armed", !aura::core::query_epoch_strict());
     CHECK(aura::core::query_epoch_strict() || !production,
           "3590: epoch strict must be armed under production defaults (#3075)");
+
+    // Issue #3592: effective Strict unify joins the 6 hard-fail path (no
+    // new counter). Armed production process must report Strict; Soft/Off
+    // observe-only via fail_if_prod.
+    {
+        aura::core::TypeRegistry ureg;
+        aura::compiler::TypeChecker utc(ureg);
+        const bool unify_strict =
+            utc.effective_gradual_permissiveness() == aura::compiler::GradualPermissiveness::Strict;
+        fail_if_prod("effective Strict unify", !unify_strict);
+        CHECK(unify_strict || !production,
+              "3592: effective Strict unify must be armed under production defaults (#3430/#3202)");
+    }
 
     // AC4: env knobs documented + defaults sane.
     CHECK(duration_s >= 1, "3555 AC4: AURA_CHAOS_SOAK_DEPLOY_GATE_DURATION_S sane");

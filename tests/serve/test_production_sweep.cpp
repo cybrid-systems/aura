@@ -12,7 +12,9 @@
 
 import std;
 import aura.compiler.service;
+import aura.compiler.type_checker;
 import aura.compiler.value;
+import aura.core.type;
 
 // Issue #1202/#1203/#1215/#1228 (#1978 renamed): issue# moved from filename to header.
 // test_production_sweep_1202_1228.cpp — Issues #1202–#1228 Phase 1
@@ -79,6 +81,64 @@ static void ac3590_bootstrap_order_matrix() {
     ::setenv("AURA_SANDBOX", "off", 1);
 }
 
+// Issue #3592: bootstrap order matrix for effective Strict unify (#3430 x #3586).
+static void ac3592_bootstrap_order_matrix() {
+    using aura::compiler::GradualPermissiveness;
+    using aura::compiler::TypeChecker;
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    using aura::compiler::typed_audit::production_defaults_active;
+    using aura::core::TypeRegistry;
+
+    std::println("\n--- #3592: bootstrap order matrix (start-then-arm / unarmed / override) ---");
+
+    apply_dev_audit_defaults();
+    ::setenv("AURA_SANDBOX", "off", 1);
+    ::unsetenv("AURA_GRADUAL_PERMISSIVENESS");
+    CHECK(production_defaults_active() == 0, "3592: unarmed probe");
+    {
+        TypeRegistry reg;
+        TypeChecker tc(reg);
+        CHECK(tc.effective_gradual_permissiveness() != GradualPermissiveness::Strict,
+              "unbootstrapped process must not silently report Strict");
+    }
+
+    apply_production_audit_defaults();
+    {
+        TypeRegistry reg;
+        TypeChecker tc(reg);
+        CHECK(tc.effective_gradual_permissiveness() == GradualPermissiveness::Strict,
+              "effective Strict unify must be armed under production defaults (#3430/#3202)");
+        tc.set_gradual_permissiveness(GradualPermissiveness::Balanced);
+        CHECK(tc.effective_gradual_permissiveness() == GradualPermissiveness::Strict,
+              "3592 AC3: production explicit downgrade stays Strict");
+    }
+
+    apply_dev_audit_defaults();
+    ::setenv("AURA_SANDBOX", "off", 1);
+    apply_production_audit_defaults();
+    {
+        TypeRegistry reg;
+        TypeChecker armed(reg);
+        CHECK(armed.effective_gradual_permissiveness() == GradualPermissiveness::Strict,
+              "3592: arm-then-start stays Strict");
+    }
+
+    apply_dev_audit_defaults();
+    ::setenv("AURA_SANDBOX", "off", 1);
+    ::setenv("AURA_GRADUAL_PERMISSIVENESS", "strict", 1);
+    {
+        TypeRegistry reg;
+        TypeChecker tc(reg);
+        CHECK(production_defaults_active() == 0, "3592 AC2: still unarmed");
+        CHECK(tc.effective_gradual_permissiveness() == GradualPermissiveness::Strict,
+              "3592 AC2: AURA_GRADUAL_PERMISSIVENESS override arms Strict");
+    }
+    ::unsetenv("AURA_GRADUAL_PERMISSIVENESS");
+    apply_dev_audit_defaults();
+    ::setenv("AURA_SANDBOX", "off", 1);
+}
+
 } // namespace
 
 int main() {
@@ -135,6 +195,7 @@ int main() {
 
     // Issue #3590: bootstrap-order matrix for QueryEpoch strict (#3075 x #3586).
     ac3590_bootstrap_order_matrix();
+    ac3592_bootstrap_order_matrix();
 
     if (::aura::test::g_failed)
         return 1;

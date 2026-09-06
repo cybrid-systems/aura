@@ -89,6 +89,19 @@ def main() -> int:
     must("ac3430_4_dynamic_and_linear", "AC4 live test_ir", tir)
 
     must("check_production_defaults_force_strict_unify_3430", "AC5 build.py", build)
+
+    # Issue #3592: effective Strict unify joins the production bootstrap gate.
+    gate = _read("tests/serve/chaos_soak_production_gate.cpp")
+    sweep = _read("tests/serve/test_production_sweep.cpp")
+    must("effective Strict unify must be armed under production defaults", "AC3592 gate armed", gate)
+    must("unbootstrapped process must not silently report Strict", "AC3592 gate unarmed", gate)
+    must("AURA_GRADUAL_PERMISSIVENESS", "AC3592 override", gate)
+    must('fail_if_prod("effective Strict unify"', "AC3592 joins 6 hard-fail", gate)
+    must("production explicit downgrade stays Strict", "AC3592 fail-closed", gate)
+    must("ac3592_bootstrap_order_matrix", "AC3592 sweep matrix", sweep)
+    qws = _read("src/compiler/evaluator_primitives_obs_jit.cpp")
+    if "schema-3592" in qws:
+        fails.append("AC3592: schema-3592 present (forbidden new query key)")
     must("ac3430_5_no_docs", "AC5 test", ta)
     must("3202", "AC5 3202 linter kept", lint3202)
     prev = build.find("check_production_strict_ground_unify_3202")
