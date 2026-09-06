@@ -14,6 +14,9 @@
 
 // aura_deopt_count is defined in aura_jit_runtime (not always in headers).
 extern "C" std::uint64_t aura_deopt_count(void);
+// Issue #3572: deopt-pending consult ABI (impl in aura_jit_bridge.cpp;
+// weak stub in aura_jit_bridge_stub.cpp for light-link test binaries).
+extern "C" int aura_jit_is_deopt_pending(const char* name);
 
 #include <cstdint>
 #include <fstream>
@@ -296,6 +299,41 @@ int run_test_must_deopt_before_next_call() {
         auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
         CHECK(m != nullptr, "metrics for TW");
         (void)m;
+    }
+
+    // ── Issue #3572: unnamed deopt_pending consult — shared-workspace MVP contract ──
+    // Review residual: the unnamed/sid==0 arm consults the PROCESS-level
+    // deopt_pending count. In the shared-workspace MVP this is by design:
+    // the workspace IR and the JIT fn cache are shared across Evaluators,
+    // so one eval's mutate makes the pending name semantically stale for
+    // every peer too — a per-owner filter would UNDER-invalidate. This
+    // section pins the contract so post-MVP per-owner work starts from an
+    // explicit baseline.
+    {
+        std::println(
+            "\n--- #3572 AC1: unnamed arm is process-global BY DESIGN (source contract) ---");
+        const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
+        CHECK(rt.find("Issue #3441") != std::string::npos, "3572: #3441 lineage kept");
+        CHECK(rt.find("Issue #3572") != std::string::npos,
+              "3572 AC1: rationale marker present at the consult site");
+        CHECK(rt.find("UNDER-invalidate") != std::string::npos,
+              "3572 AC1: documents the per-owner under-invalidation hazard");
+        CHECK(rt.find("closure_call_deopt_pending_leave_native_(fast_cid)") != std::string::npos &&
+                  rt.find("closure_call_deopt_pending_leave_native_(slow_cid)") !=
+                      std::string::npos,
+              "3572 AC1: both arms route through the shared helper");
+        CHECK(rt.find("aura_jit_deopt_pending_count()") != std::string::npos,
+              "3572 AC1: unnamed arm consults the #3412 table count");
+    }
+    {
+        std::println("\n--- #3572 AC2: named-arm precision at the ABI ---");
+        // g_batch_deopt_jit is wired by CompilerService boot (service.ixx).
+        CompilerService cs;
+        CHECK(cs.eval("(define x 42)").has_value(),
+              "3572: service compile wires the batch deopt target");
+        CHECK(aura_jit_is_deopt_pending("no_such_fn_3572") == 0,
+              "3572 AC2: unstamped name reads not-pending (named precision)");
+        CHECK(aura_jit_is_deopt_pending(nullptr) == 0, "3572 AC2: null name safe");
     }
 
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
