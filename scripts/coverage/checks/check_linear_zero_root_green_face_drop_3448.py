@@ -64,7 +64,13 @@ def main() -> int:
     must("g_last_proof_linear_ok", "AC1 linear_ok load", body)
     must("linear_or_dirty_roots_count_for_rebind", "AC1 extra collect", body)
     must("g_rehydrate_miss_invalidate_gen", "AC1 steal/densify gen", body)
-    must("kTypeLinearProofOutcomeReject", "AC1 reject outcome", body)
+    # Issue #3510-residual: last==0-green remount is face hygiene (next
+    # mutate re-proves via wa==0 + invalidate_gen), NOT a typed-op reject.
+    # AC1 asserts the drop + elision block + stamp clear + Quiet outcome
+    # (mirror of the !mismatch branch); no process-global stamped Reject.
+    must("g_last_type_linear_commit_proof_stamp.store(0", "AC1 stamp clear", body)
+    must("kTypeLinearProofOutcomeQuiet", "AC1 quiet outcome", body)
+    must_not("kTypeLinearProofOutcomeReject", "AC1 no stamped Reject publish", body)
     must("rebind_linear_proof_after_root_migration", "AC1 compact_sweep", gc)
     must("Issue #3448", "AC1 compact_sweep cite", gc)
     must("rebind_linear_proof_after_root_migration", "AC1 compact hook", svc)
