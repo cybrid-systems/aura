@@ -217,6 +217,11 @@ bool test_eventfd_wakeup() {
 
     const int fd = evfd.load(std::memory_order_acquire);
     CHECK(fd >= 0, "fiber published a valid eventfd");
+    // Body stores stage=1 *before* yield(BlockingIO). Give the worker
+    // time to park + clear_queued so the first write is not consumed
+    // while is_queued (IO thread used to drain-and-skip that wake).
+    if (stage.load(std::memory_order_acquire) == 1)
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
     if (stage.load(std::memory_order_acquire) >= 1 && fd >= 0) {
         auto wake_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
         while (stage.load(std::memory_order_acquire) < 2 &&
@@ -1769,17 +1774,26 @@ bool test_yield_blocking_io_state() {
     std::atomic<int> stage{0};
 
     sched.spawn([&stage]() {
+        auto* self = aura::serve::g_current_fiber;
+        CHECK(self != nullptr, "g_current_fiber set at start");
+        if (!self)
+            return;
         // Initially Running
-        CHECK(aura::serve::g_current_fiber->state() == aura::serve::FiberState::Running,
-              "initial state = Running");
+        CHECK(self->state() == aura::serve::FiberState::Running, "initial state = Running");
         stage.store(1);
 
         // Yield with BlockingIO — transitions to Waiting
         aura::serve::Fiber::yield(aura::serve::YieldReason::BlockingIO);
 
-        // After resume (should happen if epoll wakes us): still Running
-        CHECK(aura::serve::g_current_fiber->state() == aura::serve::FiberState::Running,
-              "after resume state = Running");
+        // After resume (epoll / stdin / eventfd): TLS may have been
+        // dropped by swapcontext under UBSAN; rebind uses the stack
+        // Fiber* if needed. Never member-call a null TLS pointer —
+        // halt_on_error=1 kills the whole ubsan-smoke suite.
+        self = aura::serve::g_current_fiber;
+        CHECK(self != nullptr, "g_current_fiber set after BlockingIO resume");
+        if (!self)
+            return;
+        CHECK(self->state() == aura::serve::FiberState::Running, "after resume state = Running");
         stage.store(2);
     });
 
