@@ -1,0 +1,46 @@
+{
+  "issue": 3567,
+  "title": "Issue #3567: ci/concurrent eventfd wakeup never touches Fiber* after run",
+  "ok": "OK: Issue #3567 eventfd wakeup atomic protocol + gate --changed runs test_concurrent.",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "tests/serve/test_concurrent.cpp",
+      "contains": [
+        "Issue #3567",
+        "never touch Fiber*",
+        "evfd.store"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/serve/test_concurrent.cpp",
+      "contains": [
+        "g_current_fiber was set in body"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/serve/test_concurrent.cpp",
+      "contains": [
+        "setvbuf(stdout, nullptr, _IOLBF, 0)"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "build.py",
+      "contains": [
+        "_gate_changed_runtime_suites",
+        "Issue #3567"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "forbid": [
+        "tests/serve/test_issue_3567.cpp",
+        "tests/issues/test_issue_3567.cpp",
+        "docs/design/3567-eventfd-wakeup.md"
+      ]
+    }
+  ]
+}

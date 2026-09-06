@@ -292,7 +292,16 @@ static bool eq_str_content(const EvalValue& a, const EvalValue& b,
 // refuses before typed linear / provenance ops. Soft / depth==0: helper
 // short-circuits. Reuses linear_post_mutate_force_rollback_total.
 static std::optional<EvalResult> ir_typed_entry_blocked_result(CompilerMetrics* metrics) {
-    if (aura::compiler::typed_audit::ir_typed_entry_commit_readiness_ok())
+    // Issue #3568: IR execute is never the #3510 helper probe. A prior
+    // unit test can leave g_linear_ir_fastpath_boundary_depth_override==0
+    // which would refuse engine:metrics / hash-ref for the rest of the
+    // batch process. Force real depth for this entry; restore after.
+    using aura::compiler::typed_audit::g_linear_ir_fastpath_boundary_depth_override;
+    const auto saved = g_linear_ir_fastpath_boundary_depth_override;
+    g_linear_ir_fastpath_boundary_depth_override = -1;
+    const bool ok = aura::compiler::typed_audit::ir_typed_entry_commit_readiness_ok();
+    g_linear_ir_fastpath_boundary_depth_override = saved;
+    if (ok)
         return std::nullopt;
     if (metrics)
         metrics->linear_post_mutate_force_rollback_total.fetch_add(1, std::memory_order_relaxed);

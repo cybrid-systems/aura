@@ -6,6 +6,7 @@
 
 #include "test_harness.hpp"
 
+#include <csignal>
 #include <cstdio>
 #include <cstdlib>
 #include <print>
@@ -34,7 +35,13 @@ int aura_run_issue_bundle(const char* profile, const AuraBundleMember* members, 
             continue;
         }
         if (pid == 0) {
+            // Issue #3568: redirected stdout is fully buffered; _exit
+            // drops the child's PASS/FAIL. Line-buffer + 45s alarm so a
+            // hung member fails itself instead of the 600s binary timeout.
+            setvbuf(stdout, nullptr, _IOLBF, 0);
+            setvbuf(stderr, nullptr, _IOLBF, 0);
             aura_reset_runtime();
+            ::alarm(45);
             const int rc = members[i].run();
             std::fflush(nullptr);
             ::_exit(rc == 0 ? 0 : 1);

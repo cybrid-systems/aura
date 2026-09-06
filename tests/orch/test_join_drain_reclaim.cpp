@@ -4976,12 +4976,15 @@ int run_test_join_drain_reclaim() {
                            (if (hash-has-key? r "identity-plane") 1 0)
                            (hash-ref r "schema-3273"))))");
             CHECK(obsv.has_value(), "3273 AC3: join-via-token invalid hash returns");
-            auto spawn_ok = cs.eval(R"((let ((r (orch:spawn-agent "ac3273-src")))
+            auto spawn_ok = cs.eval(R"((let ((r (orch:spawn-agent "ac3273-src" (lambda () #t))))
                                          (if (hash-ref r "ok") 1 0)))");
             CHECK(spawn_ok && is_int(*spawn_ok) && as_int(*spawn_ok) == 1,
                   "3273 AC3: spawn-agent ac3273-src ok");
-            auto tok_hash = cs.eval(R"((orch:agent-export-via-token "ac3273-src"))");
-            CHECK(tok_hash && is_string(*tok_hash), "3273 AC3: export-via-token returns hash");
+            auto tok_hash = cs.eval(R"(
+              (let ((tok (orch:agent-export-via-token "ac3273-src")))
+                (if (and (string? tok) (> (string-length tok) 0)) 1 0)))");
+            CHECK(tok_hash && is_int(*tok_hash) && as_int(*tok_hash) == 1,
+                  "3273 AC3: export-via-token returns hash");
             auto obsv2 = cs.eval(R"(
               (let* ((tok (orch:agent-export-via-token "ac3273-src"))
                      (r (orch:join-via-token tok :timeout-ms 20)))

@@ -2496,7 +2496,10 @@ inline constexpr int kNoTlsLivePolicyDefaultSolvedIssue = 3414;
 // warm eval), but Production/Full refuse negative authority (Reject /
 // published would_allow==0 with stamp / pending-full-solve residual).
 // Quiet (no stamp, not Reject, no pending face) still returns true.
+// Issue #3568: real Quiet (override unset) always allows at depth==0 so
+// engine:metrics / hash-ref cannot be poisoned by leftover faces.
 inline constexpr int kDepthZeroTypedEntryNegativeAuthorityIssue = 3510;
+inline constexpr int kQuietTypedEntryWarmEvalIssue = 3568;
 [[nodiscard]] inline bool ir_typed_entry_commit_readiness_ok() noexcept {
     if (!(production_defaults_active() || get_strategy() == AuditStrategy::Full))
         return true;
@@ -2511,6 +2514,14 @@ inline constexpr int kDepthZeroTypedEntryNegativeAuthorityIssue = 3510;
     else
         depth = aura_evaluator_mutation_boundary_depth();
     if (depth == 0) {
+        // Real Quiet (override unset): engine:metrics / hash-ref / orch
+        // prims compile to IRInterpreter::execute. Leftover Reject /
+        // stamp+would_allow==0 / pending-full-solve from an earlier Full
+        // mutate in the same process must not refuse the whole eval
+        // (href returns -1 for every key — ci/issues #3568). #3510
+        // AC1-AC3 probe this helper with override==0; keep that path.
+        if (g_linear_ir_fastpath_boundary_depth_override < 0)
+            return true;
         // Issue #3510: negative authority is not "stale chaos leftover".
         // Scope the refusal to authority OWNED by the current eval context:
         // background hygiene (remount-last-zero strip / post-migration

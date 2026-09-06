@@ -9015,8 +9015,10 @@ void ObservabilityPrims::register_jit_p68(PrimRegistrar add, Evaluator& ev) {
                         m->typed_mut_audit_savings_total.load(std::memory_order_relaxed))
                   : 0;
             const std::int64_t active = 1;
-            auto* ht = FlatHashTable::create(
-                96) /* #1141 / #1894 / #2053 / #2814 / #2818 / #3016 — room for schema keys */;
+            // Issue #3568: create(96) is not power-of-2; insert_kv masks
+            // with hcap-1 and silently drops late keys (issue-2288).
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(
+                80)) /* #1141 / #1894 / #2053 / #2814 / #2818 / #3016 / #3568 */;
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();

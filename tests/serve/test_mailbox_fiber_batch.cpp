@@ -8,6 +8,8 @@
 #include "compiler/pipeline_policy.hh"
 #include "compiler/typed_mutation_audit.h"
 
+#include <csignal>
+#include <cstdio>
 #include <cstdlib>
 #include <print>
 #include <sys/wait.h>
@@ -24,6 +26,11 @@ static int isolate(const char* name, int (*fn)()) {
     aura::test::g_failed = 0;
     const pid_t pid = ::fork();
     if (pid == 0) {
+        // Issue #3568: line-buffer isolate child; alarm so a hang cannot
+        // take the 600s binary timeout (join-drain historically hung).
+        setvbuf(stdout, nullptr, _IOLBF, 0);
+        setvbuf(stderr, nullptr, _IOLBF, 0);
+        ::alarm(120);
         const int rc = fn();
         std::fflush(stdout);
         std::fflush(stderr);
@@ -34,7 +41,12 @@ static int isolate(const char* name, int (*fn)()) {
     int st = 0;
     ::waitpid(pid, &st, 0);
     if (WIFSIGNALED(st)) {
-        std::println("OK member {} (isolated signal {})", name, WTERMSIG(st));
+        const int sig = WTERMSIG(st);
+        if (sig == SIGALRM || sig == SIGKILL) {
+            std::println("FAIL member {} (isolated timeout signal={})", name, sig);
+            return 1;
+        }
+        std::println("OK member {} (isolated signal {})", name, sig);
         return 0;
     }
     const int rc = WIFEXITED(st) ? WEXITSTATUS(st) : 1;
@@ -102,18 +114,10 @@ int main() {
     else
         ++members_passed;
 
-    std::println("\n──── test_join_drain_reclaim ────");
-    reset_member_face();
-    reset_member_face();
-    g_passed = 0;
-    g_failed = 0;
-    if (run_test_join_drain_reclaim() != 0 || g_failed != 0) {
+    if (isolate("test_join_drain_reclaim", run_test_join_drain_reclaim) != 0)
         ++members_failed;
-        std::println("FAIL member test_join_drain_reclaim ({}/{})", g_passed, g_failed);
-    } else {
+    else
         ++members_passed;
-        std::println("OK member test_join_drain_reclaim ({} checks)", g_passed);
-    }
 
     std::println("\n──── test_mailbox_bp_admit ────");
     reset_member_face();
