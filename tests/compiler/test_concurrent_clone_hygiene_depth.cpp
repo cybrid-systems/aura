@@ -9,6 +9,9 @@
 //        concurrent metric may bump; no crash
 //   AC4: nested same-thread clone still depth-limits correctly
 //   AC5: this suite + linter; no docs/design/2806-*; no test_issue_2806.cpp
+//
+// Issue #3574: no-boundary depth-exceed NULL_NODE hole + caller contract
+//   (extends this suite; boundary rollback stays in test_hygiene_checkpoint).
 
 #include "test_harness.hpp"
 
@@ -37,6 +40,7 @@ import aura.parser.parser;
 namespace {
 
 using aura::ast::FlatAST;
+using aura::ast::NodeTag;
 using aura::ast::NULL_NODE;
 using aura::ast::StringPool;
 using aura::ast::SyntaxMarker;
@@ -45,8 +49,13 @@ using aura::compiler::macro_exp::g_clone_macro_body_concurrent_refused_total;
 using aura::compiler::macro_exp::g_clone_macro_body_concurrent_top_level_total;
 using aura::compiler::macro_exp::g_macro_clone_in_flight;
 using aura::compiler::macro_exp::g_macro_clone_same_flat_reject_total;
+using aura::compiler::macro_exp::g_macro_hygiene_last_limit_reason;
+using aura::compiler::macro_exp::g_macro_origin_provenance_errors;
 using aura::compiler::macro_exp::get_fiber_hygiene_metrics;
 using aura::compiler::macro_exp::hygiene_last_limit_reason_string;
+using aura::compiler::macro_exp::kHygieneLimitReasonDepthLimit;
+using aura::compiler::macro_exp::reset_hygiene_runtime_caps_for_test;
+using aura::compiler::macro_exp::set_hygiene_depth_cap;
 using aura::test::g_failed;
 using aura::test::g_passed;
 
@@ -619,8 +628,89 @@ int run_test_concurrent_clone_hygiene_depth() {
         CHECK(aura_clone_macro_body_concurrent_refused_total_v_read() >= 0, "3544 AC5: v_read");
     }
 
-    std::println("\n=== #2806 + #3028 + #3094 + #3507 + #3544 concurrent clone hygiene depth: {} "
-                 "passed, {} failed ===",
+    // Issue #3574: no-boundary depth-exceed NULL_NODE hole + caller contract.
+    // Boundary rollback stays in test_hygiene_checkpoint (AC4 cross-ref).
+    std::println("\n=== Issue #3574: clone depth-exceed NULL_NODE contract ===");
+    {
+        std::println("\n--- #3574 AC1: depth-limit reason + provenance counter ---");
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+        reset_hygiene_runtime_caps_for_test();
+        aura_test_reset_macro_hygiene_last_limit_reason_for_test();
+        constexpr int kCap = 4;
+        CHECK(set_hygiene_depth_cap(kCap), "3574 AC1: runtime cap=4");
+        aura::ast::ASTArena sa, ta;
+        StringPool sp(sa.allocator());
+        FlatAST src(sa.allocator());
+        auto leaf = src.add_variable(sp.intern("x"));
+        aura::ast::NodeId body = leaf;
+        for (int i = 0; i < 12; ++i)
+            body = src.add_let(sp.intern(std::format("t{}", i)), src.add_literal(i), body);
+        StringPool tp(ta.allocator());
+        FlatAST tgt(ta.allocator());
+        NameMap nm;
+        const auto err0 = g_macro_origin_provenance_errors.load(std::memory_order_relaxed);
+        const auto cloned =
+            clone_macro_body(tgt, tp, src, sp, body, nullptr, &nm, SyntaxMarker::MacroIntroduced);
+        CHECK(g_macro_hygiene_last_limit_reason.load(std::memory_order_relaxed) ==
+                  kHygieneLimitReasonDepthLimit,
+              "3574 AC1: reason==kHygieneLimitReasonDepthLimit");
+        CHECK(std::string_view(hygiene_last_limit_reason_string()) == "hygiene-depth-limit",
+              "3574 AC1: reason string");
+        CHECK(g_macro_origin_provenance_errors.load(std::memory_order_relaxed) > err0,
+              "3574 AC1: g_macro_origin_provenance_errors advanced");
+        CHECK(cloned != NULL_NODE, "3574 AC1: Soft/Off top-level clone is partial, not all-NULL");
+
+        std::println("\n--- #3574 AC2: NULL_NODE hole at limit-depth path ---");
+        CHECK(tgt.is_live_node(cloned), "3574 AC2: cloned root live");
+        aura::ast::NodeId cur = cloned;
+        int hops = 0;
+        while (cur != NULL_NODE && hops < 64) {
+            if (cur >= tgt.size() || !tgt.is_live_node(cur))
+                break;
+            auto v = tgt.get(cur);
+            if (v.tag != NodeTag::Let || v.children.size() < 2)
+                break;
+            cur = v.child(1);
+            ++hops;
+        }
+        CHECK(cur == NULL_NODE, "3574 AC2: walk terminates at NULL_NODE hole");
+        CHECK(hops == kCap, "3574 AC2: hole at effective depth path");
+        reset_hygiene_runtime_caps_for_test();
+    }
+    {
+        std::println("\n--- #3574 AC3: caller contract source-cite ---");
+        const auto ixx = read_file("src/compiler/macro_expansion.ixx");
+        const auto export_pos = ixx.find("export aura::ast::NodeId clone_macro_body(");
+        CHECK(export_pos != std::string::npos, "3574 AC3: clone_macro_body export");
+        const auto win =
+            export_pos >= 900 ? ixx.substr(export_pos - 900, 900) : ixx.substr(0, export_pos);
+        CHECK(win.find("#3574") != std::string::npos, "3574 AC3: #3574 on export");
+        CHECK(win.find("NULL_NODE") != std::string::npos, "3574 AC3: NULL_NODE form");
+        CHECK(win.find("kHygieneLimitReasonDepthLimit") != std::string::npos,
+              "3574 AC3: DepthLimit reason");
+        CHECK(win.find("Callers MUST handle") != std::string::npos ||
+                  win.find("must handle NULL_NODE") != std::string::npos,
+              "3574 AC3: caller obligation");
+    }
+    {
+        std::println("\n--- #3574 AC4: boundary rollback stays in checkpoint suite ---");
+        const auto ckpt = read_file("tests/compiler/test_hygiene_checkpoint.cpp");
+        const auto me = read_file("src/compiler/macro_expansion.cpp");
+        CHECK(!ckpt.empty() && ckpt.find("HygieneCheckpoint") != std::string::npos,
+              "3574 AC4: test_hygiene_checkpoint owns boundary restore");
+        CHECK(me.find("expand_ckpt.try_restore()") != std::string::npos,
+              "3574 AC4: production clone still uses ExpandCheckpointGuard");
+        CHECK(me.find("production_surface && inner_expand_production_limit_deny()") !=
+                  std::string::npos,
+              "3574 AC4: Soft/Off keep historical NULL_NODE hole (no restore)");
+        CHECK(read_file("tests/compiler/test_issue_3574.cpp").empty(),
+              "3574 AC4: no test_issue_3574.cpp");
+        CHECK(read_file("docs/design/3574-clone-null-node.md").empty(),
+              "3574 AC4: no docs/design/");
+    }
+
+    std::println("\n=== #2806 + #3028 + #3094 + #3507 + #3544 + #3574 concurrent clone hygiene "
+                 "depth: {} passed, {} failed ===",
                  g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }

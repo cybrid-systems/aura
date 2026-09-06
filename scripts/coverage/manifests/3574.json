@@ -1,0 +1,36 @@
+{
+  "issue": 3574,
+  "title": "Issue #3574: clone depth-exceed NULL_NODE fallback — pin hole shape + caller contract",
+  "ok": "OK: Issue #3574 clone depth-limit NULL_NODE hole + caller contract; Soft/Off unchanged.",
+  "checks": [
+    {
+      "ac": "AC3",
+      "path": "src/compiler/macro_expansion.ixx",
+      "contains": [
+        "#3574",
+        "NULL_NODE",
+        "kHygieneLimitReasonDepthLimit",
+        "clone_macro_body"
+      ]
+    },
+    {
+      "ac": "TESTS",
+      "path": "tests/compiler/test_concurrent_clone_hygiene_depth.cpp",
+      "contains": [
+        "3574 AC1",
+        "3574 AC2",
+        "3574 AC3",
+        "3574 AC4",
+        "kHygieneLimitReasonDepthLimit"
+      ]
+    },
+    {
+      "ac": "NO-INVENT",
+      "forbid": [
+        "tests/compiler/test_issue_3574.cpp",
+        "docs/design/3574-clone-null-node.md",
+        "scripts/coverage/checks/check_clone_depth_null_3574.py"
+      ]
+    }
+  ]
+}
