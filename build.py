@@ -21049,26 +21049,70 @@ def _run_parallel_coverage_checks(*, changed: bool) -> int:
     return 0
 
 
-def _gate_changed_runtime_suites() -> int:
-    """Issue #3567: run test_concurrent when serve/fiber/scheduler change.
+def _gate_run_issue_bin(target: str) -> int:
+    """Ninja + run one issue binary from repo root (CI source-cite cwd)."""
+    if not (BUILD / "build.ninja").is_file():
+        info(f"changed: skip {target} (no ninja tree)")
+        return 0
+    print(f"{B}═══ Gate changed: {target} ═══{N}")
+    jobs = _gate_parse_jobs() or 4
+    rc = _ninja_build([target], jobs=max(1, jobs))
+    if rc:
+        fail(f"ninja {target} failed")
+        return rc
+    bin_path = BUILD / target
+    if not bin_path.is_file():
+        fail(f"{target} binary not found")
+        return 1
+    env = os.environ.copy()
+    # Match tests/python/run_issue_tests.py — inherit hole is only
+    # visible when the runner default AURA_SANDBOX=off is set.
+    if not str(env.get("AURA_SANDBOX", "")).strip():
+        env["AURA_SANDBOX"] = "off"
+    env["AURA_IR_DIRTY_BATCH_ONLY"] = "0"
+    r = subprocess.run([str(bin_path)], cwd=str(ROOT), env=env)
+    if r.returncode != 0:
+        fail(f"{target} rc={r.returncode}")
+    return r.returncode
 
-    ci/concurrent is stress-wave only. Local ARM often misses the x86
-    eventfd UAF. Compile+run here so a serve change cannot land blind.
+
+def _gate_changed_runtime_suites() -> int:
+    """Run the slow CI leaves that gate --changed would otherwise skip.
+
+    ci/concurrent and ci/issues are wave-only. Local Debug often misses
+    RelWithDebInfo unused-result / AURA_SANDBOX=off isolate / source-cite
+    wraps. Compile+run the touched leaf here so those cannot land blind.
     """
     changed = _git_changed_files()
-    hit = any(p == "tests/serve/test_concurrent.cpp" or p.startswith("src/serve/") for p in changed)
-    if not hit:
-        return 0
-    if not (BUILD / "build.ninja").is_file():
-        info("changed serve: skip test_concurrent (no ninja tree)")
-        return 0
-    print(f"{B}═══ Gate changed: test_concurrent (serve/fiber surface) ═══{N}")
-    jobs = _gate_parse_jobs() or 4
-    rc = _ninja_build(["test_concurrent"], jobs=max(1, jobs))
-    if rc:
-        fail("ninja test_concurrent failed")
-        return rc
-    return test_concurrent()
+    rc = 0
+    if any(p == "tests/serve/test_concurrent.cpp" or p.startswith("src/serve/") for p in changed):
+        if not (BUILD / "build.ninja").is_file():
+            info("changed serve: skip test_concurrent (no ninja tree)")
+        else:
+            print(f"{B}═══ Gate changed: test_concurrent (serve/fiber surface) ═══{N}")
+            jobs = _gate_parse_jobs() or 4
+            nrc = _ninja_build(["test_concurrent"], jobs=max(1, jobs))
+            if nrc:
+                fail("ninja test_concurrent failed")
+                return nrc
+            rc = test_concurrent() or rc
+    densify_hit = any(
+        p
+        in (
+            "tests/core/test_moving_densify_fail_closed.cpp",
+            "tests/core/test_densify_pin_batch.cpp",
+            "src/core/arena.ixx",
+            "src/core/densify_consistency_report.h",
+        )
+        for p in changed
+    )
+    if densify_hit:
+        rc = _gate_run_issue_bin("test_densify_pin_batch") or rc
+    # Do not ninja-run test_orch_agent_batch here: leftover isolate
+    # members (apply-mutex join, schedule-gate SIGSEGV) flake the
+    # 12-member binary. #3179 ACs are covered by densify-style
+    # AURA_SANDBOX=off runs of that member in ci/issues.
+    return rc
 
 
 def cmd_gate():

@@ -107,9 +107,13 @@ int run_test_bare_bp_resolve_3179() {
         std::println("\n--- #3179 AC1: production + empty → non-empty non-process ---");
         // Isolate + AURA_SANDBOX=off (issue runner) used to skip inherit
         // even after apply_production_audit_defaults — in-process the
-        // previous member leaked unset sandbox. Arm the production gate.
-        SandboxRestore prod{nullptr};
+        // previous member leaked unset sandbox. Arm Restricted, not unset:
+        // production_scope_bp_inherit is false on "off" and true on
+        // Restricted + production_defaults_active.
+        SandboxRestore prod{"restricted"};
         apply_production_audit_defaults();
+        CHECK(aura::orch::production_scope_bp_inherit(),
+              "AC1 setup: inherit armed under Restricted + production defaults");
         // No tenant context bound (current_quota_tenant() == 0 in tests
         // unless set elsewhere). The bare:<seq> fallback applies. Each
         // call increments the monotonic counter, so two calls give
@@ -140,7 +144,7 @@ int run_test_bare_bp_resolve_3179() {
     // distinct tenant contexts get distinct bp_scope_ids on the handle.
     {
         std::println("\n--- #3179 AC5: spawn_agent_with_mailbox distinct bp_scope_ids ---");
-        SandboxRestore prod{nullptr};
+        SandboxRestore prod{"restricted"};
         apply_production_audit_defaults();
         Scheduler sched;
         AgentSpec spec_a;
@@ -186,7 +190,7 @@ int run_test_bare_bp_resolve_3179() {
     // ── #3461: move is a complete field transfer — put survives ──────
     {
         std::println("\n--- #3461 AC1: put(std::move(h)) keeps bp_scope_id ---");
-        SandboxRestore prod{nullptr};
+        SandboxRestore prod{"restricted"};
         apply_production_audit_defaults();
         Scheduler sched;
         AgentSpec spec;

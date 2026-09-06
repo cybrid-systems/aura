@@ -3660,8 +3660,14 @@ static void ac3571_2_source_cite() {
     const auto ixx = read_file("src/core/arena.ixx");
     CHECK(ixx.find("Issue #3571: commit-time envframe hold-pin re-check") != std::string::npos,
           "3571 AC3: commit-time re-check wired in live_compact(Moving)");
-    CHECK(ixx.find("g_moving_envframe_guard_commit_block_total.fetch_add") != std::string::npos,
-          "3571 AC3: additive counter bump site");
+    // clang-format wraps the qualified name onto its own line, then
+    // `.fetch_add(` on the next — glued `name.fetch_add` is not in the
+    // file (CI RelWithDebInfo and local Debug both read the source).
+    const auto bump = ixx.find("g_moving_envframe_guard_commit_block_total");
+    CHECK(bump != std::string::npos, "3571 AC3: additive counter bump site");
+    const auto add = bump == std::string::npos ? std::string::npos : ixx.find("fetch_add", bump);
+    CHECK(add != std::string::npos && add < bump + 96,
+          "3571 AC3: fetch_add at the commit-block counter");
     const auto hdr = read_file("src/core/densify_consistency_report.h");
     CHECK(hdr.find("g_moving_envframe_guard_commit_block_total") != std::string::npos,
           "3571 AC3: counter declared (append END)");
