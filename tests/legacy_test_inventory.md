@@ -37,9 +37,9 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 108 | 108 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 26 | 26 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 59 | 59 | P1 — domain hygiene suite exists |
-| `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 86 | 86 | P2 — link-profile heavy; migrate AC smoke first |
+| `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 87 | 87 | P2 — link-profile heavy; migrate AC smoke first |
 | `shape_soa` | Shape / SoA / column layout | 0 | 0 | 55 | 55 | P2 — small-medium; soa_batch precedent |
-| `observability` | Observability / metrics / query:*-stats | 0 | 0 | 136 | 136 | P2 — often thin schema probes; collapse into obs matrix |
+| `observability` | Observability / metrics / query:*-stats | 0 | 0 | 135 | 135 | P2 — often thin schema probes; collapse into obs matrix |
 | `uncategorized` | Uncategorized / mixed | 0 | 0 | 57 | 57 | P3 — review case-by-case |
 
 ## Patterns, harness usage, coupling
@@ -1695,13 +1695,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_symbol_eq.cpp` (—) [domain_suite, theme_compiler] — AC1: (eq? 'commit 'commit) → #t  (interned short-str cache)
 - `tests/compiler/test_unquote_splicing_hygiene.cpp` (—) [large, domain_suite, theme_compiler] — AC1: pre_scan cites #2807; unquote-splicing boundary + metric
 
-### `jit_incremental` — JIT / AOT / incremental relower (86)
+### `jit_incremental` — JIT / AOT / incremental relower (87)
 
 **Target:** domain suite for incremental_*; keep heavy JIT in issue bundles
 
 **Priority:** P2 — link-profile heavy; migrate AC smoke first
 
-#### domain/ (86)
+#### domain/ (87)
 
 - `tests/compiler/test_adaptive_cascade_depth_partial_thr.cpp` (—) [domain_suite, theme_compiler] — AC1: After enough samples, high cascade-depth raises the threshold.
 - `tests/compiler/test_adaptive_partial_relower_threshold.cpp` (—) [domain_suite, theme_compiler] — AC1: Cold-start stays at default 8 until enough samples
@@ -1762,6 +1762,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_live_closure_stable_id_only.cpp` (—) [domain_suite, theme_compiler] — AC1: positive — stable_func_id present → remap, name-fallback counter 0
 - `tests/compiler/test_lock_order_audit.cpp` (—) [domain_suite, theme_compiler] — test_lock_order_audit.cpp — Issue #2316:
 - `tests/compiler/test_module_partition_map.cpp` (—) [domain_suite, theme_compiler] — AC1: Measurable reduction OR clear partition map (pass_manager facade
+- `tests/compiler/test_must_deopt_before_next_call.cpp` (—) [domain_suite, theme_compiler] — AC1: flag set on remap miss; aura_closure_call force-deopts (no silent native)
 - `tests/compiler/test_obs_misc_batch.cpp` (—) [small, batch_driver, domain_suite, theme_compiler] — test_obs_misc_batch.cpp — thematic multi-TU batch
 - `tests/compiler/test_optimization_passes_contracts.cpp` (—) [domain_suite, theme_compiler] — AC1: 4 core passes satisfy Pass / DirtyAware / PureAnalysis where applicable
 - `tests/compiler/test_orch_hot_update_health_throttle.cpp` (—) [domain_suite, theme_compiler] — AC1: StormLevel ≠ None → health_bp drops; throttle fires; cap=1
@@ -1854,13 +1855,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_value_tag_hot_path.cpp` (—) [domain_suite, theme_compiler] — AC1: Pure is_* (is_fixnum_hot / is_int) match classify; single low2 path
 - `tests/compiler/test_workspace_delete_child.cpp` (—) [domain_suite, theme_compiler] — tests/compiler/test_workspace_delete_child.cpp — Issue #1770: WorkspaceTree delete_child test.
 
-### `observability` — Observability / metrics / query:*-stats (136)
+### `observability` — Observability / metrics / query:*-stats (135)
 
 **Target:** tests/compiler/test_obs_schema_matrix.cpp + tests/compiler/obs_schema_cases.hpp
 
 **Priority:** P2 — often thin schema probes; collapse into obs matrix
 
-#### domain/ (136)
+#### domain/ (135)
 
 - `tests/compiler/test_adaptive_reverify_limit.cpp` (—) [domain_suite, theme_compiler] — Issue #2939 — dep-closure reverify (BFS over var_to_constraints_) to
 - `tests/compiler/test_adt_exhaustiveness_production_hard.cpp` (—) [domain_suite, theme_compiler] — test_adt_exhaustiveness_production_hard.cpp -- source-cite AC for Issue #3559
@@ -1926,7 +1927,6 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_lookup_stats_impl_heterogeneous.cpp` (—) [small, domain_suite, theme_compiler] — Issue #1671 (#1978 renamed): issue# moved from filename to header.
 - `tests/orch/test_mailbox_bp_admit.cpp` (—) [large, domain_suite, theme_orch] — AC1: Spawn soft reject — fill a mailbox to high_water (triggers
 - `tests/compiler/test_module_export_cache.cpp` (—) [domain_suite, theme_compiler] — Issue #1680 (#1978 renamed): issue# moved from filename to header.
-- `tests/compiler/test_must_deopt_before_next_call.cpp` (—) [domain_suite, theme_compiler] — AC1: flag set on remap miss; aura_closure_call force-deopts (no silent native)
 - `tests/compiler/test_mutation_aot_unit_batch.cpp` (—) [large, batch_driver, domain_suite, theme_compiler] — test_mutation_aot_unit_batch.cpp — consolidated mutation-theme drivers
 - `tests/compiler/test_mutation_contention.cpp` (—) [domain_suite, theme_compiler] — Issue #2040 — high-concurrency observability for Guard hold +
 - `tests/serve/test_mutation_hold_time.cpp` (—) [domain_suite, theme_serve] — test_mutation_hold_time.cpp — Issue #1375:
