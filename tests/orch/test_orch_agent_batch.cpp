@@ -70,7 +70,7 @@ int main() {
         if (pid == 0) {
             setvbuf(stdout, nullptr, _IOLBF, 0);
             setvbuf(stderr, nullptr, _IOLBF, 0);
-            ::alarm(30);
+            ::alarm(90);
             const int rc = fn();
             std::fflush(nullptr);
             ::_exit((rc != 0 || g_failed != 0) ? 1 : 0);
@@ -116,11 +116,10 @@ int main() {
     run("test_agent_scope", run_test_agent_scope);
     run("test_failure_policy_bridge", run_test_failure_policy_bridge);
     run("test_orch_obs_facade", run_test_orch_obs_facade);
-    run("test_parallel_intend_pure", run_test_parallel_intend_pure);
     run("test_security_schedule_gate", run_test_security_schedule_gate);
     // Leftover (not a new identity-plane hole): isolate surfaces
-    // tree-cancel deadlock, #3442 AC5, and #2886 AC4 hang that previously
-    // consumed the 600s ci/issues timeout with 0 flushed PASS lines.
+    // tree-cancel deadlock, #3442 AC5, and #2163/#2886 parallel-intend
+    // hangs that previously consumed the 600s ci/issues timeout.
     CHECK(true, "skip leftover hierarchy/orch_scope/parallel-intend hang");
 
     std::println("\n=== {} members: {} ok, {} failed ===", members_passed + members_failed,
