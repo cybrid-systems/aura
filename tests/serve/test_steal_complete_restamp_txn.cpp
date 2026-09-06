@@ -846,6 +846,52 @@ static void ac3072_5_source_and_linter() {
           "AC5: no invent test file per #81967");
 }
 
+// ── Issue #3587: Ready-transition machine (extend #3072 linter). ──
+static void ac3587_1_head_scan_green() {
+    std::println("\n--- #3587 AC1: HEAD Ready transitions on whitelist ---");
+    const auto lint = read_file("scripts/coverage/checks/check_steal_enqueue_sole_gate_3072.py");
+    CHECK(lint.find("Issue #3587") != std::string::npos, "3587 AC1: linter cites #3587");
+    CHECK(lint.find("classify_ready_transitions") != std::string::npos,
+          "3587 AC1: Ready-transition classifier");
+    CHECK(lint.find("set_state(FiberState::Ready)") != std::string::npos,
+          "3587 AC1: scans set_state(FiberState::Ready)");
+    CHECK(lint.find("state_.store(FiberState::Ready") != std::string::npos,
+          "3587 AC1: scans state_.store(FiberState::Ready)");
+    CHECK(lint.find("Waiting→Ready") != std::string::npos ||
+              lint.find("Waiting->Ready") != std::string::npos,
+          "3587 AC1: Waiting→Ready wait-wake whitelist");
+    const auto fh = read_file("src/serve/fiber.h");
+    CHECK(fh.find("state_{FiberState::Ready}") != std::string::npos, "3587 AC1: Fiber init Ready");
+    const auto mb = read_file("src/serve/multi_fiber_mailbox.h");
+    CHECK(mb.find("set_state(FiberState::Ready)") != std::string::npos,
+          "3587 AC1: mailbox wait-wake is the production set_state(Ready)");
+    CHECK(mb.find("FiberState::Waiting") != std::string::npos,
+          "3587 AC1: mailbox Ready is Waiting-guarded");
+}
+
+static void ac3587_2_linter_rejects_naked_ready() {
+    std::println("\n--- #3587 AC2: linter rejects naked set_state(Ready) ---");
+    const auto lint = read_file("scripts/coverage/checks/check_steal_enqueue_sole_gate_3072.py");
+    CHECK(lint.find("naked set_state(Ready)") != std::string::npos,
+          "3587 AC2: synthetic set_state bypass self-test");
+    CHECK(lint.find("naked state_.store(Ready)") != std::string::npos,
+          "3587 AC2: synthetic store bypass self-test");
+    CHECK(lint.find("stolen set_state(Ready) without txn") != std::string::npos,
+          "3587 AC2: steal-binding Ready without txn self-test");
+}
+
+static void ac3587_3_static_no_runtime() {
+    std::println("\n--- #3587 AC3: pure static, no runtime change ---");
+    const auto q = read_file("src/compiler/evaluator_primitives_obs_jit.cpp");
+    CHECK(q.find("schema-3587") == std::string::npos, "3587 AC3: no schema-3587");
+    CHECK(q.find("issue-3587") == std::string::npos, "3587 AC3: no issue-3587 query key");
+    CHECK(read_file("tests/serve/test_issue_3587.cpp").empty(), "3587 AC3: no test_issue_3587.cpp");
+    CHECK(read_file("scripts/coverage/checks/check_ready_transition_3587.py").empty(),
+          "3587 AC3: no invented check_ready_transition_3587.py");
+    CHECK(read_file("docs/design/3587-ready-transition-machine.md").empty(),
+          "3587 AC3: no docs/design/3587-*");
+}
+
 // ── Issue #3290: residual hard-AND invariant table machine-checkable ──
 // AC1: resume path enters the invariant check (no resume bypass).
 static void ac3290_1_resume_no_bypass() {
@@ -2125,6 +2171,10 @@ int run_test_steal_complete_restamp_txn() {
     ac3072_3_soft_unchanged();
     ac3072_4_query_keys();
     ac3072_5_source_and_linter();
+    std::println("\n=== Issue #3587: Ready-transition machine (extend #3072) ===");
+    ac3587_1_head_scan_green();
+    ac3587_2_linter_rejects_naked_ready();
+    ac3587_3_static_no_runtime();
     std::println("\n=== Issue #3290: residual invariant table machine-checkable ===");
     ac3290_1_resume_no_bypass();
     ac3290_2_arms_evaluate_and_publish();
@@ -2282,10 +2332,10 @@ int run_test_steal_complete_restamp_txn() {
               "3369 AC6: existing test file cites #3369");
     }
 
-    std::println(
-        "steal-complete restamp txn #2510 + #2699 + #2721 + #2745 + #2752 + #2844 + "
-        "#3072 + #2727 + #2901 + #2929 + #2954 + #2957 + #3001 + #3038 + #3111: OK ({} passed)",
-        g_passed);
+    std::println("steal-complete restamp txn #2510 + #2699 + #2721 + #2745 + #2752 + #2844 + "
+                 "#3072 + #3587 + #2727 + #2901 + #2929 + #2954 + #2957 + #3001 + #3038 + #3111: "
+                 "OK ({} passed)",
+                 g_passed);
     return 0;
 }
 

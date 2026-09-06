@@ -661,10 +661,12 @@ def cmd_lint():
             "Issue #3483 steal-complete latch∧strong linter failed — run python3 scripts/coverage/checks/check_steal_complete_latch_strong_3483.py"
         )
         return r
-    # Issue #3072: every stolen-fiber Ready enqueue in src/ must be
-    # dominated by steal_safety_transaction Ok (static proof residual
+    # Issue #3072 / #3587: every stolen-fiber Ready enqueue in src/ must
+    # be dominated by steal_safety_transaction Ok (static proof residual
     # of #2844/#2929). Scans all steal-result bindings, not just
-    # local_queue_.push(stolen). Soft unchanged; additive schema-3072.
+    # local_queue_.push(stolen). #3587 also scans set_state(Ready) /
+    # state_.store(Ready) (whitelist: Fiber init, owner requeue,
+    # txn-Ok, Waiting→Ready wait-wake). Soft unchanged; additive schema-3072.
     se3072_script = COVERAGE_CHECKS / "check_steal_enqueue_sole_gate_3072.py"
     if not se3072_script.exists():
         fail(f"missing {se3072_script}")
