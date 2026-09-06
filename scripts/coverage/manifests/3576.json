@@ -1,0 +1,53 @@
+{
+  "issue": 3576,
+  "title": "Issue #3576: enumerative mutate:* default-reject MacroIntroduced",
+  "ok": "OK: Issue #3576 every registered mutate:* default-rejects MacroIntroduced; allowlist is documented non-structural.",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "tests/compiler/test_hygiene_mutate_closed_loop.cpp",
+      "contains": [
+        "3576 AC1",
+        "name_for_slot",
+        "starts_with(\"mutate:\")",
+        "registered_mutate_star_3576"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/compiler/test_hygiene_mutate_closed_loop.cpp",
+      "contains": [
+        "3576 AC2",
+        "get_hygiene_violation_attempts",
+        "invoke_until_hygiene_3576"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/compiler/test_hygiene_mutate_closed_loop.cpp",
+      "contains": [
+        "3576 AC3",
+        "kMutateHygieneExempt3576",
+        "GUARD_EXEMPT",
+        "HYGIENE_EXEMPT"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/compiler/test_hygiene_mutate_closed_loop.cpp",
+      "contains": [
+        "3576 AC4",
+        "ac3027_1_default_reject_all_prims",
+        "ac3115_1_default_reject"
+      ]
+    },
+    {
+      "ac": "NO-INVENT",
+      "forbid": [
+        "tests/compiler/test_issue_3576.cpp",
+        "docs/design/3576-mutate-hygiene-enumerative.md",
+        "scripts/coverage/checks/check_mutate_hygiene_enumerative_3576.py"
+      ]
+    }
+  ]
+}
