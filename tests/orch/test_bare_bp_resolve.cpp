@@ -69,6 +69,26 @@ std::string read_repo_file(const char* path) {
     return {};
 }
 
+// production_scope_bp_inherit() is false when AURA_SANDBOX=off (issue
+// runner default). Production ACs must unset that, then restore.
+struct SandboxRestore {
+    std::string prev;
+    explicit SandboxRestore(const char* set_to) {
+        const char* p = std::getenv("AURA_SANDBOX");
+        prev = p ? p : "";
+        if (set_to)
+            ::setenv("AURA_SANDBOX", set_to, 1);
+        else
+            ::unsetenv("AURA_SANDBOX");
+    }
+    ~SandboxRestore() {
+        if (!prev.empty())
+            ::setenv("AURA_SANDBOX", prev.c_str(), 1);
+        else
+            ::unsetenv("AURA_SANDBOX");
+    }
+};
+
 } // namespace
 
 int run_test_bare_bp_resolve_3179() {
@@ -85,6 +105,10 @@ int run_test_bare_bp_resolve_3179() {
     // ── AC1: production + empty explicit → non-empty non-process key
     {
         std::println("\n--- #3179 AC1: production + empty → non-empty non-process ---");
+        // Isolate + AURA_SANDBOX=off (issue runner) used to skip inherit
+        // even after apply_production_audit_defaults — in-process the
+        // previous member leaked unset sandbox. Arm the production gate.
+        SandboxRestore prod{nullptr};
         apply_production_audit_defaults();
         // No tenant context bound (current_quota_tenant() == 0 in tests
         // unless set elsewhere). The bare:<seq> fallback applies. Each
@@ -116,6 +140,7 @@ int run_test_bare_bp_resolve_3179() {
     // distinct tenant contexts get distinct bp_scope_ids on the handle.
     {
         std::println("\n--- #3179 AC5: spawn_agent_with_mailbox distinct bp_scope_ids ---");
+        SandboxRestore prod{nullptr};
         apply_production_audit_defaults();
         Scheduler sched;
         AgentSpec spec_a;
@@ -161,6 +186,7 @@ int run_test_bare_bp_resolve_3179() {
     // ── #3461: move is a complete field transfer — put survives ──────
     {
         std::println("\n--- #3461 AC1: put(std::move(h)) keeps bp_scope_id ---");
+        SandboxRestore prod{nullptr};
         apply_production_audit_defaults();
         Scheduler sched;
         AgentSpec spec;

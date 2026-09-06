@@ -8382,7 +8382,10 @@ def _build_named_targets(targets: list[str], nproc: int, *, fatal: bool) -> int:
 
 # Own FILE_SET .ixx producers. Must not share a ninja with aura /
 # aura_test_objects — GCC 16 ealias ICE on ast.ixx under -O2.
-_MODULE_ICE_ISOLATE = frozenset({"test_ir", "test_gc_evaluator_integration"})
+# test_concurrent: RelWithDebInfo -O2 + combined issue-farm ninja can
+# fail to emit the binary (GCC 16 ICE / contaminated .o); isolated
+# sequential build matches asan-build which already links it.
+_MODULE_ICE_ISOLATE = frozenset({"test_ir", "test_gc_evaluator_integration", "test_concurrent"})
 _MODULE_PRODUCER_DIRS = frozenset(f"{t}.dir" for t in _MODULE_ICE_ISOLATE)
 
 
@@ -8516,8 +8519,9 @@ def _begin_build() -> tuple[int, _BuildCtx | None]:
 
     # aura, then test_ir (own FILE_SET .ixx): a single ninja of
     # aura+test_ir races ast.ixx and can ICE GCC 16 ealias under -O2.
-    # After that, test_concurrent + issue binaries share aura_test_objects
-    # BMIs and can be one ninja (overlap unique TUs with the issue farm).
+    # test_concurrent is also ICE-isolated (RelWithDebInfo -O2 + the
+    # issue farm ninja can fail to emit the binary). Remaining overlap
+    # is issue binaries only.
     #
     # AURA_BUILD_TARGETS=aura[,test_ir,...] — restrict the main matrix
     # (deployment-health only needs the aura binary for --health-server).
