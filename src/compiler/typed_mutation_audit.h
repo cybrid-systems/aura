@@ -3412,8 +3412,22 @@ inline constexpr int kLinearZeroRootGreenFaceDropIssue = 3448;
     g_rehydrate_miss_invalidate_gen.fetch_add(1, std::memory_order_release);
     g_last_proof_would_allow_commit.store(0, std::memory_order_relaxed);
     g_last_proof_linear_ok.store(0, std::memory_order_relaxed);
-    if (!mismatch)
-        publish_type_linear_proof_outcome(kTypeLinearProofOutcomeReject);
+    if (!mismatch) {
+        // Issue #3510-residual: a successful remount with consistent roots
+        // (no arena-compact mismatch) only invalidates the stale green face
+        // so the NEXT mutate re-proves. It must not publish a process-global
+        // stamped Reject: the #3510 depth==0 gate reads outcome==Reject /
+        // (wa==0 && stamp!=0) as negative authority and would refuse every
+        // later unrelated warm eval in the same batch process. The face drop
+        // + invalidate_gen advance above are the actual elision protection
+        // (#3227 AC1 asserts wa/lok dropped + gen advanced + elision blocked,
+        // NOT outcome==Reject); clear the stale commit-proof stamp + quiet the
+        // outcome so depth==0 stays Quiet. A real #2984 count mismatch is
+        // still published by note_arena_compact_linear_root_consistency.
+        g_last_type_linear_commit_proof_stamp.store(0, std::memory_order_relaxed);
+        g_last_type_linear_proof_outcome.store(kTypeLinearProofOutcomeQuiet,
+                                               std::memory_order_relaxed);
+    }
     return true;
 }
 
