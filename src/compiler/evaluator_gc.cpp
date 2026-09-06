@@ -1164,6 +1164,9 @@ Evaluator::CompactSweepResult Evaluator::compact_sweep(void* sweep_buffers) {
     // Issue #3227: rebind / reject face + densify/steal invalidate_gen
     // so Move/Drop cannot elide against remapped roots.
     // Issue #3448: last==0 green face still drops (not quiet).
+    // Issue #3578: (void) is the observability contract — counters + the
+    // next owned depth>0 gate / Agent poll consume the result; not an
+    // immediate commit-barrier. Quiet means unknown, not invalid/green.
     (void)typed_audit::rebind_linear_proof_after_root_migration();
 
     return result;

@@ -1,0 +1,57 @@
+{
+  "issue": 3578,
+  "title": "Issue #3578: background rebind/strip observability + Quiet=unknown",
+  "ok": "OK: Issue #3578 rebind reject unbinds stamper; last==0-green Quiet=unknown; (void) sites cited.",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "tests/compiler/test_remount_force_deopt.cpp",
+      "contains": [
+        "3578 AC1",
+        "proof_reject_after_rebind_fail_total",
+        "last-proof-stamper-bound"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/compiler/test_remount_force_deopt.cpp",
+      "contains": [
+        "3578 AC2",
+        "kTypeLinearProofOutcomeQuiet",
+        "last-proof-outcome"
+      ]
+    },
+    {
+      "ac": "AC3-gc",
+      "path": "src/compiler/evaluator_gc.cpp",
+      "contains": [
+        "Issue #3578",
+        "commit-barrier"
+      ]
+    },
+    {
+      "ac": "AC3-runtime",
+      "path": "src/compiler/aura_jit_runtime.cpp",
+      "contains": [
+        "Issue #3578",
+        "Quiet=unknown"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/compiler/test_remount_force_deopt.cpp",
+      "contains": [
+        "3578 AC4",
+        "check_linear_zero_root_green_face_drop_3448"
+      ]
+    },
+    {
+      "ac": "NO-INVENT",
+      "forbid": [
+        "tests/compiler/test_issue_3578.cpp",
+        "docs/design/3578-rebind-observability.md",
+        "scripts/coverage/checks/check_rebind_observability_3578.py"
+      ]
+    }
+  ]
+}

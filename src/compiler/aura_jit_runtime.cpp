@@ -2788,6 +2788,8 @@ extern "C" void aura_pure_anon_bg_remount_drain(std::uint64_t max_n) noexcept {
     // Issue #3227: successful remount may relocate linear roots.
     // Issue #3448: last==0 green face still drops on remount.
     // Issue #3548: max_n>0 && remounted==0 strips prior green face.
+    // Issue #3578: (void) is observability — counters + next owned gate
+    // consume the result; not an immediate commit-barrier. Quiet=unknown.
     if (ok > 0)
         (void)aura::compiler::typed_audit::rebind_linear_proof_after_root_migration();
     else
@@ -3096,6 +3098,8 @@ extern "C" void aura_residual_live_closure_remount_tick(std::uint64_t budget) {
         aura_bump_residual_remount_totals(ok, /*budget_skip=*/0);
         // Issue #3227: remount changed live linear roots — rebind/reject.
         // Issue #3448: last==0 green face still drops.
+        // Issue #3578: (void) is observability — counters + next owned gate
+        // consume the result; not an immediate commit-barrier. Quiet=unknown.
         (void)aura::compiler::typed_audit::rebind_linear_proof_after_root_migration();
     } else {
         // Issue #3548: budget>0 && remounted==0 (incl. nslots==0) strips
@@ -3229,6 +3233,8 @@ extern "C" void aura_sync_remount_covered_named_live_closures(std::uint64_t mask
         aura_bump_reemit_success_sync_covered_remount_totals(ok, fail, leftover);
     // Issue #3227: successful covered remount may relocate linear roots.
     // Issue #3448: last==0 green face still drops.
+    // Issue #3578: (void) is observability — counters + next owned gate
+    // consume the result; not an immediate commit-barrier. Quiet=unknown.
     if (ok > 0)
         (void)aura::compiler::typed_audit::rebind_linear_proof_after_root_migration();
 }
