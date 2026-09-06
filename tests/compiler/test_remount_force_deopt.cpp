@@ -73,6 +73,18 @@ static std::int64_t href(CompilerService& cs, const char* key) {
     return as_int(*r);
 }
 
+static std::int64_t href_evolv(CompilerService& cs, const char* key) {
+    auto r = cs.eval(std::format(
+        "(hash-ref (engine:metrics \"query:type-linear-evolution-snapshot\") \"{}\")", key));
+    if (!r || !is_int(*r))
+        return -1;
+    return as_int(*r);
+}
+
+static bool file_exists_cwd_3578(const char* rel) {
+    return std::ifstream(rel).good() || std::ifstream(std::string("../") + rel).good();
+}
+
 // Align env_gen + defuse so remount fingerprint axes pass (same as #2297).
 static std::uint64_t stamp_for_remount(std::int64_t cid) {
     const auto defuse = aura_get_closure_defuse_version(cid);
@@ -604,6 +616,109 @@ static void ac3548_5_source_cite_no_invent() {
     CHECK(read_file("docs/design/3548-remount-last-zero.md").empty(), "3548 AC5: no docs/design");
 }
 
+// ── Issue #3578: background rebind/strip observability + Quiet=unknown ──
+// (void) call sites discard the bool; Agent polls evolution-snapshot
+// gauges. Reject is not an immediate commit-barrier. Quiet ≠ invalid/green.
+
+static void ac3578_1_rebind_reject_counter_stamper_unbound() {
+    std::println("\n--- #3578 AC1: rebind reject → counter + stamper_bound==0 ---");
+    using namespace aura::compiler::typed_audit;
+    apply_production_audit_defaults();
+    reset_type_linear_proof_same_transaction_counters_for_test();
+    g_linear_ir_fastpath_boundary_depth_override = -1;
+
+    // GC compact-mismatch path (same helper evaluator_gc (void)-calls).
+    seed_green_face();
+    stamp_type_linear_commit_proof(1);
+    publish_type_linear_proof_outcome(kTypeLinearProofOutcomeStamped);
+    set_last_proof_linear_root_count_for_test(3);
+    CHECK(last_proof_stamper_bound_v_read() == 1, "3578 AC1: stamper bound before rebind");
+    (void)rebind_linear_proof_after_root_migration();
+    CHECK(last_proof_stamper_bound_v_read() == 0, "3578 AC1: compact-mismatch unbinds stamper");
+    CHECK(last_type_linear_proof_outcome_v_read() == kTypeLinearProofOutcomeReject,
+          "3578 AC1: compact-mismatch publishes Reject");
+    CHECK(ir_typed_entry_commit_readiness_ok(),
+          "3578 AC1: unowned Reject does not block real depth==0 (#3568)");
+
+    // Remount-last-zero strip is the reject-after-rebind-fail counter SSOT.
+    seed_green_face();
+    const auto fail0 = type_linear_proof_reject_after_rebind_fail_total_v_read();
+    strip_green_face_on_remount_last_zero();
+    CHECK(type_linear_proof_reject_after_rebind_fail_total_v_read() > fail0,
+          "3578 AC1: proof_reject_after_rebind_fail_total advances");
+    CHECK(last_proof_stamper_bound_v_read() == 0, "3578 AC1: strip unbinds stamper");
+
+    CompilerService cs;
+    CHECK(href_evolv(cs, "last-proof-stamper-bound") == 0,
+          "3578 AC1: evolution snapshot last-proof-stamper-bound==0");
+    CHECK(href_evolv(cs, "proof-reject-after-rebind-fail-total") > 0,
+          "3578 AC1: snapshot reject-after-rebind-fail-total");
+    apply_dev_audit_defaults();
+    g_linear_ir_fastpath_boundary_depth_override = -1;
+}
+
+static void ac3578_2_last0_green_quiet_unknown() {
+    std::println("\n--- #3578 AC2: last==0-green → Quiet=unknown; depth==0 warm eval lives ---");
+    using namespace aura::compiler::typed_audit;
+    apply_production_audit_defaults();
+    g_linear_ir_fastpath_boundary_depth_override = -1;
+    stamp_type_linear_commit_proof(1);
+    publish_type_linear_proof_outcome(kTypeLinearProofOutcomeStamped);
+    publish_last_proof_face(true, true);
+    set_last_proof_linear_root_count_for_test(0);
+    CHECK(rebind_linear_proof_after_root_migration(), "3578 AC2: last==0-green rebinds");
+    CHECK(last_type_linear_proof_outcome_v_read() == kTypeLinearProofOutcomeQuiet,
+          "3578 AC2: face Quiet (unknown), not Stamped/Reject");
+    CHECK(last_type_linear_proof_outcome_v_read() != kTypeLinearProofOutcomeStamped,
+          "3578 AC2: Quiet is not green");
+    CHECK(last_type_linear_proof_outcome_v_read() != kTypeLinearProofOutcomeReject,
+          "3578 AC2: Quiet is not Reject/invalid");
+    CHECK(ir_typed_entry_commit_readiness_ok(), "3578 AC2: real Quiet depth==0 allows");
+    g_linear_ir_fastpath_boundary_depth_override = 0;
+    CHECK(ir_typed_entry_commit_readiness_ok(), "3578 AC2: override==0 also allows Quiet");
+    CompilerService cs;
+    CHECK(href_evolv(cs, "last-proof-outcome") == 0, "3578 AC2: snapshot last-proof-outcome Quiet");
+    CHECK(href_evolv(cs, "last-proof-outcome-quiet") == 0, "3578 AC2: Quiet sentinel 0");
+    apply_dev_audit_defaults();
+    g_linear_ir_fastpath_boundary_depth_override = -1;
+}
+
+static void ac3578_3_void_call_sites_observability_cite() {
+    std::println("\n--- #3578 AC3: four (void) call sites cite observability contract ---");
+    const auto gc = read_file("src/compiler/evaluator_gc.cpp");
+    const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
+    CHECK(gc.find("Issue #3578") != std::string::npos, "3578 AC3: GC compact_sweep cites #3578");
+    CHECK(gc.find("(void)typed_audit::rebind_linear_proof_after_root_migration()") !=
+              std::string::npos,
+          "3578 AC3: GC still (void)-discards rebind");
+    CHECK(gc.find("not an") != std::string::npos && gc.find("commit-barrier") != std::string::npos,
+          "3578 AC3: GC notes not an immediate commit-barrier");
+    std::size_t n3578 = 0;
+    for (std::size_t p = 0; (p = rt.find("Issue #3578", p)) != std::string::npos; p += 11)
+        ++n3578;
+    CHECK(n3578 >= 3, "3578 AC3: three jit-runtime remount sites cite #3578");
+    CHECK(rt.find("Quiet=unknown") != std::string::npos, "3578 AC3: Quiet=unknown on remount path");
+}
+
+static void ac3578_4_linter_3448_not_regressed() {
+    std::println("\n--- #3578 AC4: #3448 remount/quiet linter does not regress ---");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_linear_zero_root_green_face_drop_3448.py");
+    const auto tma = read_file("src/compiler/typed_mutation_audit.h");
+    CHECK(!lint.empty() && lint.find("kTypeLinearProofOutcomeQuiet") != std::string::npos,
+          "3578 AC4: #3448 linter still requires Quiet");
+    CHECK(lint.find("kTypeLinearProofOutcomeReject") != std::string::npos,
+          "3578 AC4: #3448 linter still forbids remount Reject");
+    CHECK(tma.find("rebind_linear_proof_after_root_migration") != std::string::npos,
+          "3578 AC4: remount helper kept");
+    CHECK(!file_exists_cwd_3578("tests/compiler/test_issue_3578.cpp"),
+          "3578 AC4: no test_issue_3578.cpp");
+    CHECK(!file_exists_cwd_3578("docs/design/3578-rebind-observability.md"),
+          "3578 AC4: no docs/design/");
+    CHECK(!file_exists_cwd_3578("scripts/coverage/checks/check_rebind_observability_3578.py"),
+          "3578 AC4: no check_3578.py");
+}
+
 } // namespace
 
 int run_test_remount_force_deopt() {
@@ -620,9 +735,13 @@ int run_test_remount_force_deopt() {
     ac3548_3_budget_zero_no_strip();
     ac3548_4_soft_observe_only();
     ac3548_5_source_cite_no_invent();
+    ac3578_1_rebind_reject_counter_stamper_unbound();
+    ac3578_2_last0_green_quiet_unknown();
+    ac3578_3_void_call_sites_observability_cite();
+    ac3578_4_linter_3448_not_regressed();
     if (g_failed)
         return 1;
-    std::println("remount force-deopt #2503/#2894/#3548: OK ({} passed)", g_passed);
+    std::println("remount force-deopt #2503/#2894/#3548/#3578: OK ({} passed)", g_passed);
     return 0;
 }
 
