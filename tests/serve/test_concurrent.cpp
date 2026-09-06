@@ -2452,7 +2452,9 @@ int main() {
     ew_install_fatal_handlers();
     // Issue #3567: CI redirects stdout; default fully-buffered FILE*
     // hides the dying test on SIGSEGV. Line-buffer so every PASS/FAIL
-    // flushes before the next test (stdbuf -oL in build.py is belt).
+    // flushes before the next test. Do not wrap the asan binary with
+    // stdbuf: libstdbuf.so loads before libasan and asan-verify
+    // concurrent aborts at startup.
     setvbuf(stdout, nullptr, _IOLBF, 0);
     setvbuf(stderr, nullptr, _IOLBF, 0);
     std::println("═══ Concurrent model unit tests ═══\n");

@@ -9160,15 +9160,23 @@ def test_concurrent():
     # signal mid-run with zero FAIL lines / zero Results line — the
     # block-buffered stdout tail (last test + crash context) is lost
     # on signal death, so the failing test is invisible in CI logs.
-    # Run through stdbuf line-buffering so every line flushes
-    # immediately and the next failure pins the exact test.
+    # Line-buffer via stdbuf so every PASS/FAIL flushes. Skip under
+    # asan/tsan: stdbuf LD_PRELOADs libstdbuf.so ahead of the sanitizer
+    # runtime and the process aborts at startup ("ASan runtime does not
+    # come first") — asan-verify concurrent died in 0.2s. The binary
+    # already setvbuf(_IOLBF) in main (#3567 AC3).
     cmd: list[str] = [str(bin_path)]
-    if shutil.which("stdbuf"):
+    san_name = BUILD.name.removeprefix("build_") if BUILD.name.startswith("build_") else ""
+    if shutil.which("stdbuf") and san_name not in ("asan", "tsan"):
         cmd = ["stdbuf", "-oL", "-eL", str(bin_path)]
     # Issue #3586: unarmed Scheduler(N>1).run() aborts unless production
     # bootstrap is latched or AURA_SANDBOX=off. Latch Soft for this suite
     # (same helper as issue/integ runners). Explicit AURA_SANDBOX wins.
-    r = subprocess.run(cmd, timeout=600, env=_aura_test_env())
+    try:
+        r = subprocess.run(cmd, timeout=600, env=_aura_test_env())
+    except subprocess.TimeoutExpired:
+        print("  ✗ test_concurrent timed out (600s)")
+        return 1
     if r.returncode != 0 and r.stderr:
         print(r.stderr[:500], file=sys.stderr)
     return r.returncode
