@@ -40,6 +40,12 @@ struct PanicCheckpointStats {
     // checkpoint (via host.clear) so panic_safe_* / GC defer do not
     // permanently leak when restore is skipped.
     std::uint64_t restores_discriminator_cleared = 0;
+    // Issue #3570: restore attempts skipped because the instance at the ctx
+    // address was destroyed and replaced (address match, generation
+    // advanced — ABA). Restore AND clear are both skipped: the original
+    // save receiver no longer exists, and clearing would drop the NEW
+    // occupant's live checkpoint.
+    std::uint64_t restores_gen_aba_mismatch_total = 0;
 };
 
 inline PanicCheckpointStats g_panic_checkpoint_raii_stats{};
@@ -64,12 +70,28 @@ inline void reset_panic_checkpoint_raii_stats() noexcept {
 // Issue #1727: on the same mismatch path, invoke `clear` (if set)
 // so the evaluator that received save() does not keep a stale
 // panic_safe_* snapshot / GC-defer arm forever.
+// Issue #3570: process-wide monotonic instance generation for ABA-safe
+// cross-instance discrimination. Handed out once per instance construction
+// (Evaluator member init); a recycled address always carries a NEW value,
+// so a stale Guard's saved generation no longer matches (closes the
+// address-only #1393 residual). Lives beside the host — no new registry.
+inline std::atomic<std::uint64_t> g_instance_discriminator_gen{0};
+[[nodiscard]] inline std::uint64_t next_instance_discriminator_gen() noexcept {
+    return g_instance_discriminator_gen.fetch_add(1, std::memory_order_relaxed) + 1;
+}
+
 struct PanicCheckpointHost {
     void* ctx = nullptr;
     void* expected_evaluator_id = nullptr; // Issue #1393: cross-evaluator discriminator
     bool (*save)(void* ctx) noexcept = nullptr;
     bool (*restore)(void* ctx) noexcept = nullptr;
     bool (*clear)(void* ctx) noexcept = nullptr; // Issue #1727
+    // Issue #3570: ABA discriminator. ctx_gen_source points at the ctx
+    // instance's generation atomic; ctx_gen_at_save snapshots it at host
+    // construction. nullptr = legacy (no gen check — existing hosts/tests
+    // unchanged).
+    const std::atomic<std::uint64_t>* ctx_gen_source = nullptr;
+    std::uint64_t ctx_gen_at_save = 0;
 };
 
 // RAII guard: save on construct; restore on dtor unless commit().
@@ -91,6 +113,18 @@ public:
     ~PanicCheckpointGuard() noexcept {
         if (committed_)
             return;
+        // Issue #3570: ABA check first. Same address, different generation
+        // → the instance that received save() was destroyed and a new one
+        // occupies the address. Restore would write the old checkpoint into
+        // the new instance; clear would drop the new instance's live
+        // checkpoint (#1727's clear targets the original save receiver,
+        // which no longer exists here) — skip both, count only.
+        if (host_.ctx_gen_source != nullptr &&
+            host_.ctx_gen_source->load(std::memory_order_acquire) != host_.ctx_gen_at_save) {
+            ++g_panic_checkpoint_raii_stats.restores_gen_aba_mismatch_total;
+            ++g_panic_checkpoint_raii_stats.auto_rollbacks;
+            return;
+        }
         // Issue #1393: cross-evaluator discriminator check.
         // If expected_evaluator_id is set (non-null) AND differs
         // from ctx, this Guard was constructed on a different

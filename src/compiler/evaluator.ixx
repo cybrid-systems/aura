@@ -3109,6 +3109,15 @@ public:
     // Returns true if restore was performed.
     bool restore_panic_checkpoint();
 
+    // Issue #3570: ABA discriminator source for PanicCheckpointHost wiring.
+    // Monotonic per-instance generation — a recycled address always carries
+    // a new value, so a stale Guard detects destroy/realloc (address-only
+    // #1393 residual).
+    [[nodiscard]] const std::atomic<std::uint64_t>*
+    panic_cp_discriminator_gen_source() const noexcept {
+        return &panic_cp_discriminator_gen_;
+    }
+
     // Issue #1363: type-erased host for aura.core.panic_cp::PanicCheckpointGuard.
     // Core module cannot depend on Evaluator; bind save/restore via void*.
     [[nodiscard]] static aura::core::panic_cp::PanicCheckpointHost
@@ -3135,6 +3144,8 @@ public:
                 static_cast<Evaluator*>(p)->clear_panic_checkpoint();
                 return true;
             },
+            /*ctx_gen_source=*/ev.panic_cp_discriminator_gen_source(),
+            /*ctx_gen_at_save=*/ev.panic_cp_discriminator_gen_.load(std::memory_order_relaxed),
         };
     }
 
@@ -5424,6 +5435,12 @@ private:
     // Issue #1489: true while process-wide gc_hooks defer depth was
     // armed for this evaluator's live PanicCheckpoint (save→commit/restore).
     bool gc_defer_armed_for_panic_cp_ = false;
+    // Issue #3570: monotonic per-instance discriminator generation. Handed
+    // out at construction; a recycled address always carries a NEW value so
+    // a stale PanicCheckpointGuard detects ABA (address-only #1393
+    // residual). Never resets. Read via panic_cp_discriminator_gen_source().
+    std::atomic<std::uint64_t> panic_cp_discriminator_gen_{
+        aura::core::panic_cp::next_instance_discriminator_gen()};
 
     // Issue #753: long-running resource quota limits (0 = unlimited).
     // resource_quota_memory_ = per-request size cap (#1481).

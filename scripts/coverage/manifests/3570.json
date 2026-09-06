@@ -1,0 +1,34 @@
+{
+  "issue": 3570,
+  "title": "Issue #3570: PanicCheckpoint discriminator generation tag — close void* ABA across evaluator destroy/realloc",
+  "ok": "OK: Issue #3570 ABA close — gen advanced at recycled address skips restore AND clear (original save receiver gone); legacy nullptr host unchanged; no new registry.",
+  "checks": [
+    {
+      "ac": "AC2",
+      "path": "src/core/panic_checkpoint_raii.ixx",
+      "contains": [
+        "restores_gen_aba_mismatch_total",
+        "ctx_gen_source",
+        "ctx_gen_at_save",
+        "next_instance_discriminator_gen"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/evaluator.ixx",
+      "contains": [
+        "panic_cp_discriminator_gen_",
+        "panic_cp_discriminator_gen_source",
+        "next_instance_discriminator_gen"
+      ]
+    },
+    {
+      "ac": "TESTS",
+      "path": "tests/core/test_panic_checkpoint_aba.cpp",
+      "contains": [
+        "#3570",
+        "restores_gen_aba_mismatch_total"
+      ]
+    }
+  ]
+}
