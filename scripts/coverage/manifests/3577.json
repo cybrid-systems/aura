@@ -1,0 +1,63 @@
+{
+  "issue": 3577,
+  "title": "Issue #3577: enumerative TypeLinear publish-site ownership-quiet",
+  "ok": "OK: Issue #3577 every TypeLinear proof/outcome publisher is ownership-aware; unowned remount Quiets.",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "tests/compiler/test_type_linear_commit_health.cpp",
+      "contains": [
+        "3577 AC1",
+        "publish_type_linear_proof_outcome(",
+        "g_last_type_linear_proof_outcome.store(",
+        "recursive_directory_iterator",
+        "discover_type_linear_publish_sites_3577"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/compiler/test_type_linear_commit_health.cpp",
+      "contains": [
+        "3577 AC2",
+        "site_ownership_aware_3577",
+        "kTypeLinearProofOutcomeQuiet"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/compiler/test_type_linear_commit_health.cpp",
+      "contains": [
+        "3577 AC3",
+        "kPublishOwnershipExempt3577",
+        "reject_fingerprint_cap_overflow",
+        "strip_green_face_on_remount_last_zero"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/compiler/test_type_linear_commit_health.cpp",
+      "contains": [
+        "3577 AC4",
+        "ac3448_1_prod_last0_green_drops_face",
+        "check_linear_zero_root_green_face_drop_3448"
+      ]
+    },
+    {
+      "ac": "SOAK",
+      "path": "tests/compiler/test_type_linear_commit_health.cpp",
+      "contains": [
+        "3577 soak",
+        "rebind_linear_proof_after_root_migration",
+        "schema-2613"
+      ]
+    },
+    {
+      "ac": "NO-INVENT",
+      "forbid": [
+        "tests/compiler/test_issue_3577.cpp",
+        "docs/design/3577-publish-ownership-quiet.md",
+        "scripts/coverage/checks/check_publish_ownership_quiet_3577.py"
+      ]
+    }
+  ]
+}
