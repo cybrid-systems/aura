@@ -11,7 +11,10 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <fstream>
 #include <print>
+#include <string>
+#include <string_view>
 #include <thread>
 #include <vector>
 
@@ -25,6 +28,58 @@ using aura::ast::NodeId;
 using aura::ast::NodeTag;
 using aura::test::g_failed;
 using aura::test::g_passed;
+
+static std::string read_file(const char* path) {
+    for (const auto& p :
+         {std::string(path), std::string("../") + path, std::string("../../") + path}) {
+        std::ifstream in(p);
+        if (!in)
+            continue;
+        return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    }
+    return {};
+}
+
+static void ac3589_1_head_scan_green() {
+    std::println("\n--- #3589 AC1: HEAD structural writes sync index ---");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_index_sync_structural_write_3589.py");
+    CHECK(lint.find("Issue #3589") != std::string::npos, "3589 AC1: linter cites #3589");
+    CHECK(lint.find("classify_structural_writes") != std::string::npos,
+          "3589 AC1: executable classifier");
+    CHECK(lint.find("src/core/mutation.ixx") != std::string::npos, "3589 AC1: scans mutation.ixx");
+    CHECK(lint.find("src/core/mutators.ixx") != std::string::npos, "3589 AC1: scans mutators.ixx");
+    CHECK(lint.find("src/core/ast_mutation_pipeline.ixx") != std::string::npos,
+          "3589 AC1: scans ast_mutation_pipeline.ixx");
+    const auto mut = read_file("src/core/mutators.ixx");
+    CHECK(mut.find("flat.set_child") != std::string::npos, "3589 AC1: Replace uses set_child");
+    CHECK(mut.find("flat.mark_dirty_upward(target)") != std::string::npos,
+          "3589 AC1: mutators mark_dirty_upward");
+    const auto ast = read_file("src/core/ast.ixx");
+    CHECK(ast.find("tag_arity_index. mark_dirty_upward + structural mutate") != std::string::npos,
+          "3589 AC1: ast.ixx index-sync contract");
+}
+
+static void ac3589_2_linter_rejects_unsynced_write() {
+    std::println("\n--- #3589 AC2: linter rejects unsynced structural write ---");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_index_sync_structural_write_3589.py");
+    CHECK(lint.find("unsynced set_child") != std::string::npos,
+          "3589 AC2: synthetic unsynced-write self-test");
+    CHECK(lint.find("mark_dirty_upward-synced write") != std::string::npos,
+          "3589 AC2: synced-write self-test");
+}
+
+static void ac3589_3_static_no_runtime() {
+    std::println("\n--- #3589 AC3: pure static, no runtime change ---");
+    CHECK(read_file("tests/core/test_issue_3589.cpp").empty(), "3589 AC3: no test_issue_3589.cpp");
+    CHECK(read_file("tests/compiler/test_issue_3589.cpp").empty(),
+          "3589 AC3: no compiler test_issue_3589.cpp");
+    CHECK(read_file("docs/design/3589-index-sync-machine.md").empty(), "3589 AC3: no docs/design/");
+    CHECK(read_file("src/compiler/evaluator_primitives_obs_jit.cpp").find("schema-3589") ==
+              std::string::npos,
+          "3589 AC3: no schema-3589");
+}
 
 } // namespace
 
@@ -139,6 +194,11 @@ int run_test_tag_arity_index_lock() {
             flat.find_by_tag_arity(static_cast<std::uint32_t>(NodeTag::LiteralInt), 0, 0);
         CHECK(final_lits.size() >= 32, "AC3: final index has lits");
     }
+
+    std::println("\n=== Issue #3589: index-sync structural-write machine proof ===");
+    ac3589_1_head_scan_green();
+    ac3589_2_linter_rejects_unsynced_write();
+    ac3589_3_static_no_runtime();
 
     std::println("\n=== results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
