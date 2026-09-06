@@ -250,6 +250,9 @@ static void ac3208_3_reclaimed_skip() {
 
 static void ac3208_4_hash_and_soak() {
     std::println("\n--- #3208 AC4/AC5: hash keys + multi-agent Timeout soak + HardDeny ---");
+    const char* sb0 = std::getenv("AURA_SANDBOX");
+    const std::string saved_sandbox = sb0 ? sb0 : "";
+    const bool had_sandbox = sb0 != nullptr;
     ac3208_set_prod(true);
     unsetenv("AURA_SANDBOX");
     unsetenv("AURA_AGENT_SCOPE_CONCURRENT_ABORT");
@@ -277,6 +280,12 @@ static void ac3208_4_hash_and_soak() {
     CHECK(scope.last_join_fail_action_taken() >= 1, "AC5: soak action taken");
     ac3208_set_prod(false);
     ac3208_stop(scope, keep);
+    // #3586: restore inherited AURA_SANDBOX so later Scheduler(N>1)
+    // in this member does not abort (ci/issues isolate signal=6).
+    if (had_sandbox)
+        ::setenv("AURA_SANDBOX", saved_sandbox.c_str(), 1);
+    else
+        ::unsetenv("AURA_SANDBOX");
 
     CompilerService cs;
     CHECK(href(cs, "schema-3208") == 3208, "AC4: schema-3208");

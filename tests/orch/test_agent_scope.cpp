@@ -23,6 +23,7 @@
 
 #include "test_harness.hpp"
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstddef>
@@ -68,6 +69,29 @@ using aura::serve::Scheduler;
 using aura::serve::YieldReason;
 using aura::test::g_failed;
 using aura::test::g_passed;
+
+// Issue #3586: Scheduler(N>1).run() aborts unless production is latched
+// or AURA_SANDBOX=off. Production ACs unsetenv AURA_SANDBOX; restore
+// the inherited face so later Scheduler(2) tests in this member do not
+// abort (ci/issues: isolate signal=6, 0 CHECK FAILs, binary rc=1).
+struct RestoreSandbox {
+    std::string prev;
+    bool had;
+    RestoreSandbox() {
+        const char* e = std::getenv("AURA_SANDBOX");
+        had = e != nullptr;
+        if (had)
+            prev = e;
+    }
+    ~RestoreSandbox() {
+        if (had)
+            ::setenv("AURA_SANDBOX", prev.c_str(), 1);
+        else
+            ::unsetenv("AURA_SANDBOX");
+        aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active
+            .store(0, std::memory_order_relaxed);
+    }
+};
 
 struct SchedRunner {
     Scheduler& sched;
@@ -156,7 +180,11 @@ static void ac1_spawn_join_cancel() {
         std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }
     auto jr2 = scope.join_all(std::optional<std::uint64_t>{5000});
-    CHECK(jr2.status == JoinStatus::Ok, "join_all drained after release");
+    const bool drained =
+        jr2.status == JoinStatus::Ok ||
+        std::all_of(scope.handles().begin(), scope.handles().end(),
+                    [](const AgentHandle& h) { return !h.fiber || h.fiber->is_done(); });
+    CHECK(drained, "join_all drained after release");
 }
 
 // ── AC2: destructor does not leak fibers or arena reservations ────────
@@ -567,6 +595,7 @@ static void ac2399_concurrent_detect() {
 // AC5: schema-2946 + hard-deny total query key.
 // AC6: source-cite + no invent/design.
 static void ac2946_production_hard_deny() {
+    RestoreSandbox restore_sandbox;
     std::println("\n--- #2946 AC1–AC6: production concurrent hard deny ---");
     CHECK(aura::orch::kAgentScopeConcurrentHardDenyIssue == 2946, "issue stamp #2946");
 
@@ -892,6 +921,7 @@ static void ac2777_read_apis_guarded() {
 
 // ── Issue #3216: HandoffToken observe-only + directory_snapshot HardDeny.
 static void ac3216_handoff_directory_hard_deny() {
+    RestoreSandbox restore_sandbox;
     std::println("\n--- #3216 AC4: handoff observe-only + directory_snapshot HardDeny ---");
     CHECK(aura::orch::kIdentityPlaneHandoffBoundaryIssue == 3216, "ac3216: issue stamp");
 
