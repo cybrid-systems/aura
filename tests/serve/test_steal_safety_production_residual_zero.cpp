@@ -50,6 +50,7 @@
 #include "serve/steal_safety.h"
 
 #include <cstdint>
+#include <cstdlib>
 #include <format>
 #include <fstream>
 #include <print>
@@ -618,8 +619,49 @@ int run_test_steal_safety_production_residual_zero() {
               "3586: test_concurrent latches sandbox=off");
     }
 
-    std::println("\n=== #3134/#3288/#3385/#3586 production-readiness residual-zero: {} passed, {} "
-                 "failed ===",
+    // ── #3590: QueryEpoch strict joins the same production bootstrap gate ──
+    {
+        std::println("\n--- #3590: QueryEpoch strict joins production bootstrap gate ---");
+        using aura::compiler::typed_audit::apply_dev_audit_defaults;
+        using aura::compiler::typed_audit::apply_production_audit_defaults;
+        using aura::compiler::typed_audit::production_defaults_active;
+        using aura::core::query_epoch_strict;
+        using aura::core::set_query_epoch_strict;
+
+        apply_dev_audit_defaults();
+        CHECK(!query_epoch_strict(), "unbootstrapped process must not report strict armed");
+        apply_production_audit_defaults();
+        CHECK(query_epoch_strict(), "epoch strict must be armed under production defaults (#3075)");
+        apply_dev_audit_defaults();
+        ::setenv("AURA_QUERY_EPOCH_STRICT", "1", 1);
+        set_query_epoch_strict(true);
+        CHECK(production_defaults_active() == 0, "3590 AC2: unarmed");
+        CHECK(query_epoch_strict(), "3590 AC2: AURA_QUERY_EPOCH_STRICT override");
+        ::unsetenv("AURA_QUERY_EPOCH_STRICT");
+        set_query_epoch_strict(false);
+        apply_dev_audit_defaults();
+
+        const auto gate = read_file("tests/serve/chaos_soak_production_gate.cpp");
+        CHECK(gate.find("ac3590_query_epoch_strict_joins_bootstrap_gate") != std::string::npos,
+              "3590: chaos gate cites");
+        CHECK(gate.find("fail_if_prod(\"query_epoch_strict armed\"") != std::string::npos,
+              "3590: joins 6 hard-fail path (no 7th counter)");
+        const auto sweep = read_file("tests/serve/test_production_sweep.cpp");
+        CHECK(sweep.find("ac3590_bootstrap_order_matrix") != std::string::npos,
+              "3590: production_sweep bootstrap matrix");
+        CHECK(read_file("src/compiler/evaluator_primitives_query_workspace.cpp")
+                      .find("schema-3590") == std::string::npos,
+              "3590 AC3: no schema-3590");
+        CHECK(!std::filesystem::exists(std::filesystem::current_path() / "tests" / "serve" /
+                                       "test_issue_3590.cpp"),
+              "3590: no test_issue_3590.cpp");
+        CHECK(!std::filesystem::exists(std::filesystem::current_path() / "docs" / "design" /
+                                       "3590-query-epoch-bootstrap.md"),
+              "3590: no docs/design/");
+    }
+
+    std::println("\n=== #3134/#3288/#3385/#3586/#3590 production-readiness residual-zero: {} "
+                 "passed, {} failed ===",
                  g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }

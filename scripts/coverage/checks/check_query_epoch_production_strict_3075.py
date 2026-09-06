@@ -79,6 +79,19 @@ def main() -> int:
     must("schema-3041", "AC4 lineage 3041", qws)
     must("ac3075_4_schema_and_linter", "AC4 sla", sla)
 
+    # Issue #3590: QueryEpoch strict joins the production bootstrap gate
+    # (#3075 x #3586). Explicit AURA_QUERY_EPOCH_STRICT override stays.
+    gate = _read("tests/serve/chaos_soak_production_gate.cpp")
+    sweep = _read("tests/serve/test_production_sweep.cpp")
+    must("epoch strict must be armed under production defaults", "AC3590 gate armed", gate)
+    must("unbootstrapped process must not report strict armed", "AC3590 gate unarmed", gate)
+    must("AURA_QUERY_EPOCH_STRICT", "AC3590 override", gate)
+    must('fail_if_prod("query_epoch_strict armed"', "AC3590 joins 6 hard-fail", gate)
+    must("maybe_init_query_epoch_strict_from_env", "AC3590 env bootstrap", epoch)
+    must("ac3590_bootstrap_order_matrix", "AC3590 sweep matrix", sweep)
+    if "schema-3590" in qws:
+        fails.append("AC3590: schema-3590 present (forbidden new query key)")
+
     must("check_query_epoch_production_strict_3075", "AC5 build.py", build)
     must("#3075 AC1", "AC5 contract test", qec)
     must("ac3075_1_production_strict_finish_stale", "AC5 sla test", sla)

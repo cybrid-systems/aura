@@ -70,6 +70,11 @@ RE_OBSERVE_ONLY = re.compile(r"observe-only|Soft\s*/\s*Off\s+path")
 RE_3586_REFUSE = re.compile(r"unarmed multi-worker")
 RE_3586_SCHED = re.compile(r"Issue #3586")
 RE_3586_FATAL = re.compile(r"multi-worker needs production bootstrap")
+RE_3590_ARMED = re.compile(r"epoch strict must be armed under production defaults")
+RE_3590_UNARMED = re.compile(r"unbootstrapped process must not report strict armed")
+RE_3590_QES = re.compile(r"query_epoch_strict\s*\(\s*\)")
+RE_3590_OVERRIDE = re.compile(r"AURA_QUERY_EPOCH_STRICT")
+RE_3590_JOIN = re.compile(r"fail_if_prod\(\s*\"query_epoch_strict armed\"")
 
 # ── Required accessors (scheduler.h / scheduler.cpp) ──────────────
 RE_KMAILBOX = re.compile(r"inline\s+constexpr\s+std::int64_t\s+kMailboxP99SLO_us\s*=\s*50'?000")
@@ -113,6 +118,11 @@ def main() -> int:
         ("AC3", test_text, RE_PROD_GATE, "test: production_defaults_active() gate"),
         ("AC3", test_text, RE_OBSERVE_ONLY, "test: Soft / Off observe-only branch"),
         ("#3586", test_text, RE_3586_REFUSE, "test: unarmed multi-worker refuse case"),
+        ("#3590", test_text, RE_3590_ARMED, "test: QueryEpoch strict armed under production"),
+        ("#3590", test_text, RE_3590_UNARMED, "test: unarmed process must not report strict"),
+        ("#3590", test_text, RE_3590_QES, "test: query_epoch_strict() gate read"),
+        ("#3590", test_text, RE_3590_OVERRIDE, "test: AURA_QUERY_EPOCH_STRICT override"),
+        ("#3590", test_text, RE_3590_JOIN, "test: epoch strict joins 6 hard-fail path"),
     ]
     for label, text, regex, why in checks:
         if not regex.search(text):
