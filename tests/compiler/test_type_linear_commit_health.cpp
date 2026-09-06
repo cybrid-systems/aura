@@ -1291,8 +1291,11 @@ static void ac3448_1_prod_last0_green_drops_face() {
           "3448 AC1: linear_ok dropped");
     CHECK(!typed_audit::linear_fast_path_ok(), "3448 AC1: !linear_fast_path_ok");
     CHECK(!typed_audit::linear_move_drop_elision_ok(), "3448 AC1: !Move/Drop elision");
-    CHECK(last_type_linear_proof_outcome_v_read() == typed_audit::kTypeLinearProofOutcomeReject,
-          "3448 AC1: outcome Reject");
+    // Issue #3510-residual: remount last==0 is face hygiene (next mutate
+    // re-proves via wa==0 + invalidate_gen); it must NOT leave a process-
+    // global stamped Reject that the depth==0 gate reads as authority for
+    // unrelated warm evals. Mirror escape_move_elision_gate #3448 AC1:
+    // assert the drop + elision block, not outcome==Reject.
     CHECK(typed_audit::linear_compact_root_check_total_v_read() == chk0,
           "3448 AC1: last==0 is not #2984 last!=0 collect");
     CHECK(typed_audit::linear_compact_root_mismatch_total_v_read() == mis0,

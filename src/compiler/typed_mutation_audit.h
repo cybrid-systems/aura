@@ -3397,13 +3397,21 @@ inline constexpr int kLinearZeroRootGreenFaceDropIssue = 3448;
         // drop face + advance gen even though #2984 count-mismatch does
         // not fire (last==0). One extra live-root count so remount
         // introducing roots is observed; drop regardless of match.
+        // Issue #3510-residual: face hygiene (next mutate re-proves via
+        // wa==0 + invalidate_gen), NOT a typed-op reject — do not leave a
+        // process-global stamped Reject that the depth==0 gate reads as
+        // authority for unrelated warm evals. #3448 AC1 asserts the drop +
+        // elision block, not outcome==Reject (mirror of the !mismatch
+        // branch below).
         if (!hard)
             return false;
         (void)aura::compiler::linear_or_dirty_roots_count_for_rebind();
         g_rehydrate_miss_invalidate_gen.fetch_add(1, std::memory_order_release);
         g_last_proof_would_allow_commit.store(0, std::memory_order_relaxed);
         g_last_proof_linear_ok.store(0, std::memory_order_relaxed);
-        publish_type_linear_proof_outcome(kTypeLinearProofOutcomeReject);
+        g_last_type_linear_commit_proof_stamp.store(0, std::memory_order_relaxed);
+        g_last_type_linear_proof_outcome.store(kTypeLinearProofOutcomeQuiet,
+                                               std::memory_order_relaxed);
         return true;
     }
     const bool mismatch = note_arena_compact_linear_root_consistency();
