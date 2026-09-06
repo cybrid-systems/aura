@@ -1429,9 +1429,17 @@ void CompilerService::invalidate_function(const std::string& name) {
             // incremental_soundness_mismatch_prod_total; never silent
             // keep with partial IR (closes "partial looks clean but
             // is wrong" hole for commercial AI self-mod).
+            // Issue #3585: production-only shadow sample; skip while
+            // frame_budget::active (do not empty the present budget).
+            // Mismatch notes MapInconsistent so #2248 AdaptiveThrPolicy
+            // raises thr (closed loop). Soft/Off: zero extra.
             static std::atomic<std::uint64_t> prod_sample_counter{0};
             const auto sample_eff_bp = should_sample_soundness_prod();
-            if (sample_eff_bp > 0) {
+            if (sample_eff_bp > 0 &&
+                (aura::compiler::typed_audit::production_defaults_active() ||
+                 aura::compiler::typed_audit::get_strategy() ==
+                     aura::compiler::typed_audit::AuditStrategy::Full) &&
+                !frame_budget::active()) {
                 const auto c = prod_sample_counter.fetch_add(1, std::memory_order_relaxed);
                 // Knuth multiplicative hash mod 10000 (cheap + thread-safe).
                 const auto roll = (c * 2654435761ULL) % 10000ULL;
@@ -1444,6 +1452,7 @@ void CompilerService::invalidate_function(const std::string& name) {
                             1, std::memory_order_relaxed);
                         vit->second.mark_all_blocks_dirty();
                         finish_cascade_soa_dirty_sync_(vit->second);
+                        note_fb(RelowerFallbackReason::MapInconsistent);
                     } else {
                         // Issue #3226: real same-lambda full lower + #2113
                         // IR equivalence. Replaces the #2245 deferred
@@ -1492,7 +1501,7 @@ void CompilerService::invalidate_function(const std::string& name) {
                                 1, std::memory_order_relaxed);
                             vit->second.mark_all_blocks_dirty();
                             finish_cascade_soa_dirty_sync_(vit->second);
-                            note_fb(RelowerFallbackReason::Other);
+                            note_fb(RelowerFallbackReason::MapInconsistent);
                         } else {
                             metrics_.incremental_soundness_prod_ok_total.fetch_add(
                                 1, std::memory_order_relaxed);

@@ -1,0 +1,63 @@
+{
+  "issue": 3585,
+  "title": "Issue #3585: sampled production soundness oracle MapInconsistent closed loop",
+  "ok": "OK: Issue #3585 — production shadow sample notes MapInconsistent; frame_budget skip; Soft/Off zero extra.",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "tests/compiler/test_incremental_soundness_oracle.cpp",
+      "contains": [
+        "3585 AC1",
+        "sampled mismatch == 0"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/service_dirty.cpp",
+      "contains": [
+        "frame_budget::active()",
+        "Issue #3585"
+      ]
+    },
+    {
+      "ac": "AC2-test",
+      "path": "tests/compiler/test_incremental_soundness_oracle.cpp",
+      "contains": [
+        "3585 AC2",
+        "did not empty budget"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/service_dirty.cpp",
+      "contains": [
+        "RelowerFallbackReason::MapInconsistent"
+      ]
+    },
+    {
+      "ac": "AC3-test",
+      "path": "tests/compiler/test_incremental_soundness_oracle.cpp",
+      "contains": [
+        "3585 AC3",
+        "MapInconsistent noted"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/compiler/test_incremental_soundness_oracle.cpp",
+      "contains": [
+        "3585 AC4",
+        "Soft does not shadow-sample",
+        "no schema-3585"
+      ]
+    },
+    {
+      "ac": "NO-INVENT",
+      "forbid": [
+        "tests/compiler/test_issue_3585.cpp",
+        "docs/design/3585-prod-soundness-shadow.md",
+        "scripts/coverage/checks/check_prod_soundness_3585.py"
+      ]
+    }
+  ]
+}
