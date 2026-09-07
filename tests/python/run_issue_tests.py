@@ -201,6 +201,18 @@ def _last_bundle_member(stdout: str) -> str | None:
     return last
 
 
+def _isolate_member_fail_lines(stdout: str) -> list[str]:
+    """Orch batch isolate deaths: FAIL member X (isolated signal=N|timeout SIGKILL)."""
+    import re
+
+    out: list[str] = []
+    for line in stdout.splitlines():
+        m = re.search(r"FAIL member \S+ \(isolated (?:signal=\d+|timeout SIGKILL|rc=\d+)\)", line)
+        if m:
+            out.append(m.group(0))
+    return out
+
+
 def parse_pass_fail_count(stdout: str) -> tuple[int, int]:
     """Parse a test binary's stdout for pass/fail counts."""
     import re
@@ -477,7 +489,12 @@ def _run_one_attempt(bin_name: str, timeout: int) -> tuple[str, int, int, int, s
             return bin_name, 1, 0, 0, ""
         return bin_name, 0, 1, r.returncode, stderr_tail if stderr_tail else "no output"
     err = ""
-    if r.returncode != 0 and r.returncode not in (0, 1):
+    isolate_fails = _isolate_member_fail_lines(r.stdout or "")
+    if isolate_fails:
+        err = "; ".join(isolate_fails)
+        if stderr_tail:
+            err = f"{err}\n{stderr_tail}"
+    elif r.returncode != 0 and r.returncode not in (0, 1):
         member = _last_bundle_member(r.stdout)
         if member:
             err = f"crashed during bundle member {member}\n{stderr_tail}"
@@ -534,7 +551,12 @@ def _transient_issue_fail(rc: int, err: str) -> bool:
     """Load/link flakes worth a serial retry. rc=1 AC failures are not."""
     if rc in _CRASH_RCS or rc in (127, 124):
         return True
-    return bool(err) and ("undefined symbol" in err or "symbol lookup error" in err)
+    return bool(err) and (
+        "undefined symbol" in err
+        or "symbol lookup error" in err
+        or "isolated signal=" in err
+        or "isolated timeout SIGKILL" in err
+    )
 
 
 def run_bins_parallel(bins: list[str], jobs: int, timeout: int) -> tuple[int, int, list, list]:

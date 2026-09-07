@@ -736,16 +736,27 @@ int run_test_agent_failure_policy() {
             CHECK(dN.threshold == 7, "2948 AC2: policy N → N");
             CHECK(std::string_view{dN.source} == "policy", "2948 AC2: source=policy");
 
-            // Live: policy thr=0 uses process default against same scope gauge.
+            // Live: explicit N=3 against the same scope gauge watch_all
+            // uses (SSOT #2948). Keep the producer running — watch_all
+            // skips Done / no-mailbox handles. Empty body finished
+            // before watch on x86 RelWithDebInfo isolate (ci/issues
+            // 11 ok / 1 failed: load>=5, wr.bp_degraded==0).
             Scheduler sched(1);
             SchedRunner runner(sched);
+            std::atomic<bool> keep_running{true};
             AgentScope scope(sched);
             AgentSpec spec;
             spec.name = "2948-watch-ssot";
             spec.attach_mailbox = true;
             spec.bp_scope_id = "tenant-2948";
             spec.keepalive_interval_ms = 0;
-            spec.body = [] {};
+            spec.body = [&] {
+                while (keep_running.load(std::memory_order_relaxed)) {
+                    if (scope.handles()[0].fiber && scope.handles()[0].fiber->is_cancel_requested())
+                        return;
+                    aura::orch::fiber_sleep_ms(20);
+                }
+            };
             AgentHandle& h = scope.spawn(spec);
             CHECK(h.ok, "2948 AC2: spawn admitted for watch test");
             // Inject recent just under process default if default is 32
@@ -760,6 +771,14 @@ int run_test_agent_failure_policy() {
             pol.bp_threshold = 3; // explicit N — SSOT policy path
             auto wr = scope.watch_all(0, pol);
             CHECK(wr.bp_degraded >= 1, "2948 AC2: watch degrade fires on shared scope gauge");
+            keep_running.store(false, std::memory_order_relaxed);
+            if (h.fiber) {
+                h.fiber->request_cancel();
+                if (auto* s = h.fiber->owner_sched()) {
+                    s->note_orphan_fiber(h.fiber, 50);
+                    s->reap_orphans_now();
+                }
+            }
             (void)aura::orch::erase_scope_bp_gauge("tenant-2948");
 
             // AC5: query keys
