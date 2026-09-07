@@ -337,6 +337,34 @@ int run_test_orch_scope() {
               "3467 AC6: no test_issue_3467.cpp (src-aligned suites only)");
     }
 
+    // ── Issue #3598: Done-path-cleaned handle → same-plane retire ──
+    {
+        std::println("\n--- #3598: cleaned handle retires (resolve miss + directory skip) ---");
+        reset_all();
+        CompilerService cs;
+        // Trivial body exits; per-agent join runs the Done-path cleanup
+        // (mailbox detach + reservation release + flag clears) while the
+        // scope slot itself stays (per-agent join does not drop the root
+        // slot — that is the #3467 B1 scope-join-all contract).
+        CHECK(cs.eval(R"((orch:scope-spawn \"done-a\"))"), "3598: scope-spawn done-a");
+        CHECK(hash_bool(cs, R"((orch:agent-join \"done-a\"))", "ok"),
+              "3598: agent-join ok (Done-path cleanup ran)");
+        // Cleaned ghost → resolve misses (AC4: not status=alive/done).
+        const auto resolve_miss =
+            cs.eval(R"((let ((r (orch:scope-resolve \"done-a\"))) (if (hash-ref r \"ok\") 1 0)))");
+        CHECK(resolve_miss && is_int(*resolve_miss) && as_int(*resolve_miss) == 0,
+              "3598 AC4: scope-resolve misses a cleaned handle");
+        // Directory: the ghost row is not projected.
+        const auto dir_count =
+            cs.eval(R"((let ((r (orch:agent-directory))) (hash-ref r \"count\")))");
+        CHECK(dir_count && is_int(*dir_count) && as_int(*dir_count) == 0,
+              "3598 AC4: directory does not project the cleaned row");
+        // Re-spawn same name → fresh (#3497 blocks only Reclaimed-pending).
+        const auto fresh =
+            cs.eval(R"((let ((r (orch:scope-spawn \"done-a\"))) (hash-ref r \"ok\")))");
+        CHECK(fresh && is_bool(*fresh) && as_bool(*fresh), "3598: re-spawn same name ok");
+    }
+
     // ── #3496: root join-all drop sees descendant handles ──
     {
         using aura::orch::AgentSpec;

@@ -973,9 +973,12 @@ public:
     // AgentRegistry). Best-effort against current handles_ (+ optional
     // descendant scopes under #2537). Concurrent spawn may race (same
     // serial-owner model as directory_snapshot). Returns nullptr on miss.
-    // After join_all, handles may remain with fiber done — find still
-    // returns them (caller reads status via fiber/is_done); after the
-    // per-Evaluator scope slot is dropped, Aura resolve returns not-found.
+    // Issue #3598: after the Done-path cleanup the slot is
+    // reclaimable-clean and find retires it — resolve returns not-found
+    // (the ghost no longer answers). A done-but-not-yet-joined handle
+    // still resolves: the arena reservation pins it until the Done-path
+    // join releases it. After the per-Evaluator scope slot is dropped,
+    // Aura resolve returns not-found.
     // Issue #3442: orch:agent-send / recv / ask / agent-join fall back
     // to this find after a name-table miss (same Evaluator, no put).
     [[nodiscard]] AgentHandle* find(std::string_view name,
@@ -1215,8 +1218,17 @@ private:
         for (auto& h : handles_) {
             if (h.name == name) {
                 // Issue #3564: non-dtor recycle — Scope holds the handle
-                // until tree_settled drop, so #3529 dtor never runs.
+                // until tree_settled drop, so #3529 dtor never runs. Quota
+                // only — runs before any retire check (#3598 AC2).
                 (void)aura::orch::maybe_force_release_reclaimed_quota(h);
+                // Issue #3598: Done-path-cleaned handle → resolve miss
+                // (same-plane retire; the ghost no longer answers find).
+                // A fresh same-name handle may sit behind the ghost — keep
+                // walking. Pending handles return as before (#3467/#3527);
+                // done-but-not-yet-joined stays resolvable (reservation
+                // pins it — reserved_memory_bytes > 0 fails the predicate).
+                if (aura::orch::slot_is_reclaimable_clean(h))
+                    continue;
                 return &h;
             }
         }
@@ -1234,8 +1246,14 @@ private:
     [[nodiscard]] const AgentHandle* find_unlocked_(std::string_view name,
                                                     bool include_descendants) const noexcept {
         for (const auto& h : handles_) {
-            if (h.name == name)
+            if (h.name == name) {
+                // Issue #3598: Done-path-cleaned handle → resolve miss
+                // (same-plane retire; read-only mirror of the mutable
+                // walk — no #3564 recycle on the const path, unchanged).
+                if (aura::orch::slot_is_reclaimable_clean(h))
+                    continue;
                 return &h;
+            }
         }
         if (!include_descendants)
             return nullptr;
@@ -1263,6 +1281,13 @@ private:
             if (hi >= handles_.size())
                 break; // concurrent shrink (misuse path) — best-effort stop
             const auto& h = handles_[hi];
+            // Issue #3598: Done-path-cleaned ghost → not projected. The row
+            // would read done/unknown for the Evaluator lifetime (alive_only
+            // already dropped it; the default view now retires it too).
+            // Pending rows fall through — #3527 lifecycle projection is
+            // intact (the predicate never matches a pending slot).
+            if (aura::orch::slot_is_reclaimable_clean(h))
+                continue;
             AgentDirectoryEntry e;
             e.name = h.name;
             e.id = h.id;
