@@ -126,12 +126,20 @@ void reset_all() {
 
 // #3090: Restricted/Strict refuse grants when prov.mutation_id==0.
 // Stamp a bound mid so TenantAdmin actually lands in the registry.
+// Issue #3409 SSOT fence: under Restricted/Strict a high-bits registry
+// write needs TenantAdmin on the caller, but this fixture IS the TA
+// seeder — drop to the Off face for the write, then restore so the
+// fence under test still sees the section's real posture.
 void grant_tenant_admin_mid(std::uint64_t tenant, std::uint64_t mid = 1) {
     using aura::core::capability::Effect;
     using aura::core::capability::g_capability_registry;
     using aura::core::capability::make_grant_provenance;
     auto prov = make_grant_provenance(mid, /*force_mutation_bind=*/true, 0, 0);
+    const auto prev_mode =
+        aura::core::sandbox::g_sandbox_mode_atomic().load(std::memory_order_acquire);
+    set_mode(SandboxMode::Off);
     g_capability_registry().grant(tenant, "tenant-admin", Effect::TenantAdmin, prov);
+    set_mode(static_cast<SandboxMode>(prev_mode));
 }
 
 // Issue #3126: TOCTOU in TenantAdmin check vs grant (unlocked effects_for
@@ -177,12 +185,19 @@ static void ac3126_admin_fence_locked() {
         const auto es = read_file("src/compiler/evaluator_security.cpp");
         // The fence must NOT call has_capability (which is unlocked).
         const std::string grant_cap_section_marker = "cross-tenant-grant-needs-tenant-admin";
-        const auto fence_pos = es.find("cross-tenant-grant-needs-tenant-admin");
+        // Anchor inside Evaluator::grant_effect_capability: #3597 reuses the
+        // same deny reason in grant_cross_tenant earlier in the file, so a
+        // bare first-find no longer lands on the fence under test.
+        const auto fn_pos = es.find("bool Evaluator::grant_effect_capability(");
+        CHECK(fn_pos != std::string::npos, "AC2: grant_effect_capability present");
+        const auto fence_pos = (fn_pos == std::string::npos)
+                                   ? std::string::npos
+                                   : es.find("cross-tenant-grant-needs-tenant-admin", fn_pos);
         CHECK(fence_pos != std::string::npos,
               "AC2: foreign-tenant fence string present in evaluator_security.cpp");
         // Within a generous window around the first foreign-tenant fence, the
         // admin check should use effects_for_locked, not has_capability.
-        const auto window_start = fence_pos > 600 ? fence_pos - 600 : 0;
+        const auto window_start = (fn_pos == std::string::npos) ? 0 : fn_pos;
         const auto window_end = (fence_pos + 1200 < es.size()) ? fence_pos + 1200 : es.size();
         const std::string fence_window = es.substr(window_start, window_end - window_start);
         CHECK(fence_window.find("effects_for_locked(self_tenant)") != std::string::npos,
@@ -289,7 +304,7 @@ static void ac3126_admin_fence_locked() {
         CHECK(contains(cm, "TenantId caller_principal = 0)"),
               "AC7: grant_locked has caller_principal parameter (default 0)");
         // AC7.2: grant_locked body has the TA fence with the high-bits mask.
-        const auto gl_pos = cm.find("void grant_locked(TenantId tenant");
+        const auto gl_pos = cm.find("bool grant_locked(TenantId tenant");
         CHECK(gl_pos != std::string::npos, "AC7: grant_locked signature present");
         const auto cm_after_gl = (gl_pos == std::string::npos) ? std::string{} : cm.substr(gl_pos);
         // Scope to the next closing brace of grant_locked body (find `void grant_session`).
@@ -316,7 +331,7 @@ static void ac3126_admin_fence_locked() {
         CHECK(contains(gl_body, "capability_macro_self_evo_grant_deny_total"),
               "AC7: grant_locked TA fence reuses capability_macro_self_evo_grant_deny_total");
         // AC7.4: grant() public wrapper forwards caller_principal to grant_locked.
-        CHECK(contains(cm, "void grant(TenantId tenant, std::string_view name, Effect effects,") &&
+        CHECK(contains(cm, "bool grant(TenantId tenant, std::string_view name, Effect effects,") &&
                   contains(cm, "TenantId caller_principal = 0) {"),
               "AC7: grant() has caller_principal parameter");
         CHECK(
@@ -345,7 +360,7 @@ static void ac3126_admin_fence_locked() {
         // default_tenant (legacy behavior) and TenantAdmin would not be checked.
         CHECK(contains(es, "g_capability_registry().grant(capability_tenant_id_,"),
               "AC8: Evaluator::grant_capability calls grant with capability_tenant_id_");
-        CHECK(contains(es, "/*caller_principal=*/capability_tenant_id_);"),
+        CHECK(contains(es, "session_bound, capability_tenant_id_);"),
               "AC8: Evaluator::grant_capability passes capability_tenant_id_ as caller_principal");
         // Kernel bootstrap path (security_defaults.hh) keeps tenant=0 Render-only
         // (gate allows: tenant=0 doesn't trigger foreign-tenant, Render doesn't
@@ -622,8 +637,27 @@ int main() {
         ev_b.set_capability_tenant_id(42);
         const auto me_a = aura::core::current_mutation_epoch();
         const auto me_b = me_a == 0 ? 1 : me_a;
-        ev_a.grant_effect_capability(7, "mutate-2657-A1-a", kEffectMutate, me_a == 0 ? 1 : me_a);
-        ev_b.grant_effect_capability(42, "mutate-2657-A1-b", kEffectMutate, me_b);
+        // Issue #3362: same-tenant high-risk self-grant under Restricted now
+        // requires TenantAdmin — arm both fixture tenants so the seeding
+        // grants land (this AC tests principal isolation, not the fence).
+        grant_tenant_admin_mid(7);
+        grant_tenant_admin_mid(42);
+        // Issue #3333: Restricted mid-join is fail-closed and the require
+        // path joins TypedMid first (#3296), so bind the seeds to the same
+        // cascade the stress calls will present (stamp → epoch → bump).
+        auto join_mid = []() {
+            auto m = aura::compiler::typed_audit::last_type_linear_commit_proof_stamp_v_read();
+            if (m == 0)
+                m = aura::core::current_mutation_epoch();
+            if (m == 0) {
+                aura::core::bump_mutation_epoch();
+                m = aura::core::current_mutation_epoch();
+            }
+            return m;
+        };
+        const auto seed_mid = join_mid();
+        ev_a.grant_effect_capability(7, "mutate-2657-A1-a", kEffectMutate, seed_mid);
+        ev_b.grant_effect_capability(42, "mutate-2657-A1-b", kEffectMutate, seed_mid);
 
         std::atomic<bool> stop{false};
         std::atomic<std::uint64_t> a_ok{0};
@@ -690,10 +724,14 @@ int main() {
         reset_all();
         aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
         // #3090: Restricted refuse mid==0; #3086: grant_cross_tenant
-        // requires TenantAdmin on caller/target.
+        // requires TenantAdmin on caller/target. Issue #3597: the policy
+        // entry takes an explicit caller_principal — pass the from-tenant
+        // (TA armed above); the default would join to default_tenant 0 and
+        // fail the privileged gate.
         grant_tenant_admin_mid(7);
         // Issue grant 7 → 42 globally (shared policy).
-        g_workspace_isolation().grant_cross_tenant(7, 42, kEffectMutate);
+        g_workspace_isolation().grant_cross_tenant(7, 42, kEffectMutate,
+                                                   /*caller_principal=*/7);
         CompilerService cs;
         auto& ev = cs.evaluator();
         ev.set_effect_sandbox_mode(1);
@@ -1341,7 +1379,11 @@ int main() {
         ws->restamp_all_node_generations();
         CHECK(ws->restamp_generation_torn(), "#3037: generation torn");
         if (!ws->node_eagerly_restamped(id)) {
-            (void)ws->is_valid(id);
+            // Issue #3388: is_valid is an observe-only oracle now — the lazy
+            // gen refresh moved to make_ref_layout (the only face permitted
+            // to advance a slot's gen). Align via make_ref_layout, then the
+            // slot reads post-mutate.
+            (void)ws->make_ref_layout(id);
             CHECK(ws->node_generation_is_post_mutate(id), "#3037: lazy-align hid raw gen lag");
             CHECK(!ev.allow_query_stable_ref_export(id),
                   "#3037: production rejects after lazy-align");
@@ -1359,7 +1401,10 @@ int main() {
         apply_dev_audit_defaults();
         clear_restamp_budget_nodes_override_for_test();
         const auto qws = read_file("src/compiler/evaluator_primitives_query_workspace.cpp");
-        CHECK(qws.find("Issue #3037") != std::string::npos, "#3037: query workspace cites torn");
+        // #3037 surface refined by #3198/#3121/#3487 — the torn export cite
+        // is the current anchor for the lazy-align reject path.
+        CHECK(qws.find("Issue #3198 / #3121") != std::string::npos,
+              "#3037: query workspace cites torn");
         CHECK(qws.find("generation torn") != std::string::npos, "#3037: torn message");
         const auto astx = read_file("src/core/ast.ixx");
         CHECK(astx.find("node_eagerly_restamped") != std::string::npos, "#3037: eager bit helper");
@@ -1447,10 +1492,15 @@ int main() {
         CHECK(
             !aura::core::capability::g_capability_registry().find_grant(42, "mut-2968-foreign", g),
             "AC2b: foreign grant denied without TenantAdmin");
-        // Same-tenant self-grant stays allowed (existing policy).
+        // Issue #3362: same-tenant high-risk self-grant under Restricted now
+        // requires TenantAdmin — deny without TA, allow once armed.
+        ev.grant_effect_capability(/*tenant=*/7, "mut-2968-self", kEffectMutate, /*mid=*/6);
+        CHECK(!aura::core::capability::g_capability_registry().find_grant(7, "mut-2968-self", g),
+              "AC2b: same-tenant high-risk self-grant denied without TenantAdmin (#3362)");
+        grant_tenant_admin_mid(ev.capability_tenant_id());
         ev.grant_effect_capability(/*tenant=*/7, "mut-2968-self", kEffectMutate, /*mid=*/6);
         CHECK(aura::core::capability::g_capability_registry().find_grant(7, "mut-2968-self", g),
-              "AC2b: same-tenant self-grant stays allowed");
+              "AC2b: same-tenant high-risk self-grant allowed with TenantAdmin");
         // With TenantAdmin → foreign grant allowed.
         grant_tenant_admin_mid(ev.capability_tenant_id());
         ev.grant_effect_capability(/*tenant=*/42, "mut-2968-admin", kEffectMutate, /*mid=*/7);
@@ -1651,7 +1701,7 @@ int main() {
               "AC6: SSOT helper present");
         CHECK(sec.find("#3086") != std::string::npos, "AC6: evaluator_security.cpp cites #3086");
         CHECK(sec.find("g_workspace_isolation().grant_cross_tenant(from_tenant, to_tenant, "
-                       "effect_bits)") != std::string::npos,
+                       "effect_bits,") != std::string::npos,
               "AC6: Evaluator wrapper delegates to SSOT method (no second policy)");
         CHECK(test_self.find("#3086") != std::string::npos, "AC6: test file cites #3086");
         std::ifstream invent("tests/core/test_issue_3086.cpp");
@@ -2346,9 +2396,9 @@ int main() {
         const auto before_bumps = ws->subtree_bump_count();
         const auto prev = aura::core::workspace_isolation::g_tenant_isolation_metrics()
                               .nodeid_only_entry_prevented_total.load(std::memory_order_relaxed);
-        auto r = cs.eval("(compile:subtree-bump (car (query:defines-by-marker \"User\")))");
-        CHECK(r.has_value(), "ac3040_1_edsl_returns");
-        CHECK(r && is_error(*r), "ac3040_1_sunk_lisp_#3172");
+        // Issue #3172: fine-grained compile EDSL writers (compile:subtree-bump
+        // et al) are sunk surfaces now — the residual gate is exercised via
+        // the C++ require_effect_for_node_id / on_ref arms below.
         CHECK(!ev.require_effect_for_node_id(kEffectMutate, "compile:subtree-bump", /*node_id=*/1),
               "ac3040_1_denied_before_body");
         CHECK(ws->subtree_bump_count() == before_bumps, "ac3040_1_no_topology_write");
@@ -2360,6 +2410,8 @@ int main() {
               "ac3040_1_gate_helper");
         CHECK(compile_src.find("require_effect_for_node_id") != std::string::npos,
               "ac3040_1_for_node_id");
+        CHECK(compile_src.find("sink_compile_prim(\"compile:subtree-bump\"") != std::string::npos,
+              "ac3040_1: EDSL writer sunk per #3172");
     }
 
     {
@@ -2383,10 +2435,6 @@ int main() {
         foreign.tenant_id = 99;
         CHECK(!ev.require_effect_on_ref(kEffectMutate, "compile:subtree-bump", foreign),
               "ac3040_2_on_ref_foreign_denies");
-        auto edsl =
-            cs.eval(std::format("(compile:subtree-bump (cons {} (cons 0 (cons 99 0))))", id));
-        CHECK(edsl.has_value(), "ac3040_2_edsl_returns");
-        CHECK(edsl && is_error(*edsl), "ac3040_2_sunk_lisp_#3172");
         CHECK(ws->subtree_bump_count() == before_bumps, "ac3040_2_no_topology_write");
         const auto iso_after = snapshot_tenant_isolation_stats().boundary_violations_prevented;
         CHECK(iso_after > iso_before, "ac3040_2_isolation_counters_bump");
@@ -2401,9 +2449,8 @@ int main() {
         CHECK(cs.eval("(eval-current)").has_value(), "3040 AC3 eval");
         const auto prev = aura::core::workspace_isolation::g_tenant_isolation_metrics()
                               .nodeid_only_entry_prevented_total.load(std::memory_order_relaxed);
-        auto r = cs.eval("(compile:subtree-bump (car (query:defines-by-marker \"User\")))");
-        CHECK(r.has_value(), "ac3040_3_soft_off_returns");
-        CHECK(r && is_error(*r), "ac3040_3_sunk_lisp_#3172");
+        // Issue #3172: the EDSL writer is a sunk surface — Soft/Off contract
+        // is covered by the parse_compile_node_arg short-circuit cite below.
         const auto after = aura::core::workspace_isolation::g_tenant_isolation_metrics()
                                .nodeid_only_entry_prevented_total.load(std::memory_order_relaxed);
         CHECK(after == prev, "ac3040_3_soft_off_no_prevent_store");
@@ -2945,8 +2992,11 @@ int main() {
               "AC4: explicit caller_principal=0 (no admin) → deny + counter bump");
 
         // (b) caller_principal=42 holds admin → allow.
+        // Issue #3459: production refuses mid==0 — stamp a bound mid so the
+        // admin-allow arm lands.
         aura::core::capability::g_capability_registry().grant_macro_self_evo(
-            /*tenant=*/42, aura::core::capability::MacroSelfEvoPolicy{}, /*prov_in=*/{},
+            /*tenant=*/42, aura::core::capability::MacroSelfEvoPolicy{},
+            /*prov_in=*/aura::core::capability::make_grant_provenance(1, true, 0, 0),
             /*caller_principal=*/42);
         aura::core::capability::CapabilityGrant g{};
         CHECK(aura::core::capability::g_capability_registry().find_grant(42, "macro-self-evo", g),
@@ -3297,12 +3347,18 @@ int main() {
         const auto set_tp = sec.find("set_tenant_principal(std::uint64_t tenant_id");
         CHECK(set_tp != std::string::npos, "3411 AC2: set_tenant_principal present");
         // The privileged OR no longer contains kCapWildcard arm.
-        const auto priv_block = sec.substr(set_tp, 1200);
+        // The #3411 comment names kCapWildcard in prose, so anchor the
+        // wildcard-absence check on the privileged statement itself; widen
+        // the window to cover the deny SE (~2.2k chars below the head).
+        const auto priv_block = sec.substr(set_tp, 2600);
         CHECK(priv_block.find("has_capability(kCapTenantAdmin)") != std::string::npos &&
                   priv_block.find("has_capability(kCapCapability)") != std::string::npos,
               "3411 AC2: privileged = has_capability(TA) || has_capability(Capability)");
         // Wildcard arm must NOT appear in the privileged OR.
-        CHECK(priv_block.find("has_capability(kCapWildcard)") == std::string::npos,
+        const auto priv_stmt_pos = sec.find("const bool privileged =", set_tp);
+        CHECK(priv_stmt_pos != std::string::npos, "3411 AC2: privileged statement present");
+        const auto priv_stmt = sec.substr(priv_stmt_pos, 200);
+        CHECK(priv_stmt.find("kCapWildcard") == std::string::npos,
               "3411 AC2: privileged OR no longer arms has_capability(kCapWildcard)");
         // Existing SE reason preserved.
         CHECK(priv_block.find("allow-cross-needs-tenant-admin") != std::string::npos,
@@ -3336,11 +3392,15 @@ int main() {
         CHECK(cap.find("Issue #3144") != std::string::npos,
               "3411 AC5: #3144 effects_for strip preserved");
         // #3363 require_effect TA deny + #3332 isolation read path.
+        // Surface moved: #3363 now cites in capability_model.hh, #3332 in
+        // workspace_isolation.hh (post-refactor anchors).
         CHECK(sec.find("Issue #3363") != std::string::npos ||
-                  read_file("src/compiler/check_and_record_effect.cpp").find("Issue #3363") !=
+                  read_file("src/core/capability_model.hh").find("Issue #3363") !=
                       std::string::npos,
               "3411 AC5: #3363 require_effect TA deny preserved");
-        CHECK(sec.find("Issue #3332") != std::string::npos,
+        CHECK(sec.find("Issue #3332") != std::string::npos ||
+                  read_file("src/core/workspace_isolation.hh").find("Issue #3332") !=
+                      std::string::npos,
               "3411 AC5: #3332 isolation read path preserved");
         CHECK(sec.find("Issue #3010") != std::string::npos, "3411 AC5: #3010 write gate preserved");
 

@@ -87,7 +87,30 @@ void hold_apply_mu(std::mutex& mu, int hold_ms) {
 
 } // namespace
 
+// Issue #3586: Scheduler(N>1).run() aborts unless production is latched or
+// AURA_SANDBOX=off. This member's dual-Scheduler ACs are unarmed unit
+// protocol paths — run the member sandbox=off and restore the inherited
+// face on exit (batch-forked and standalone share this entry).
+struct MemberSandboxOff {
+    std::string prev;
+    bool had = false;
+    MemberSandboxOff() {
+        if (const char* e = std::getenv("AURA_SANDBOX")) {
+            had = true;
+            prev = e;
+        }
+        ::setenv("AURA_SANDBOX", "off", 1);
+    }
+    ~MemberSandboxOff() {
+        if (had)
+            ::setenv("AURA_SANDBOX", prev.c_str(), 1);
+        else
+            ::unsetenv("AURA_SANDBOX");
+    }
+};
+
 int run_test_agent_apply_mutex() {
+    MemberSandboxOff member_sandbox_off; // #3586: unarmed Scheduler(2) needs the escape
     std::println("=== Issue #2158: per-Evaluator agent apply mutex ===");
     CHECK(kAgentApplyPerEvalMutexIssue == 2158, "issue stamp");
 
