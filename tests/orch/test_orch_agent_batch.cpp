@@ -9,6 +9,7 @@
 #include "compiler/typed_mutation_audit.h"
 #include "core/sandbox.hh"
 
+#include <cerrno>
 #include <csignal>
 #include <cstdio>
 #include <cstdlib>
@@ -86,7 +87,27 @@ int main() {
             return;
         }
         int st = 0;
-        ::waitpid(pid, &st, 0);
+        // Child alarm(90) is belt; SIGALRM can be stolen by the
+        // scheduler. Parent waitpid is bounded — SIGKILL and continue.
+        constexpr int kIsolateMs = 90'000;
+        int waited_ms = 0;
+        pid_t w = 0;
+        while ((w = ::waitpid(pid, &st, WNOHANG)) == 0) {
+            if (waited_ms >= kIsolateMs) {
+                ::kill(pid, SIGKILL);
+                ::waitpid(pid, &st, 0);
+                ++members_failed;
+                std::println("FAIL member {} (isolated timeout SIGKILL)", name);
+                return;
+            }
+            ::usleep(20'000);
+            waited_ms += 20;
+        }
+        if (w < 0) {
+            ++members_failed;
+            std::println("FAIL member {} (waitpid errno={})", name, errno);
+            return;
+        }
         if (WIFSIGNALED(st)) {
             ++members_failed;
             std::println("FAIL member {} (isolated signal={})", name, WTERMSIG(st));
@@ -124,5 +145,9 @@ int main() {
 
     std::println("\n=== {} members: {} ok, {} failed ===", members_passed + members_failed,
                  members_passed, members_failed);
+    // Last Results: line is what ci/issues parse_pass_fail_count keeps.
+    // Member suites print their own Results; without this the runner
+    // reports a stale 41/0 from an earlier member while rc=1.
+    std::println("Results: {} passed, {} failed", members_passed, members_failed);
     return members_failed ? 1 : 0;
 }
