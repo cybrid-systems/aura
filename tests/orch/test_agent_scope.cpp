@@ -1504,6 +1504,11 @@ static void ac3366_6_source_cite_and_no_invent() {
 } // namespace
 
 int run_test_agent_scope() {
+    // Issue #3586: the Scheduler(2) ACs below run unarmed by design — take
+    // the sandbox=off escape for the whole member and restore the inherited
+    // face on exit. ac2946 manages its own production posture internally.
+    RestoreSandbox member_sandbox_face;
+    ::setenv("AURA_SANDBOX", "off", 1);
     std::println("=== Issue #2083 / #2161: AgentScope + watch_all ===");
     ac4_linter_and_source();
     ac2161_flag_and_linter_surface();

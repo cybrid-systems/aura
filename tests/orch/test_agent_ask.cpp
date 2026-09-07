@@ -92,7 +92,30 @@ std::int64_t href(CompilerService& cs, std::string_view key) {
 
 } // namespace
 
+// Issue #3586: Scheduler(N>1).run() aborts unless production is latched or
+// AURA_SANDBOX=off. The AC5 interleave member runs an unarmed Scheduler(2)
+// by design — take the sandbox=off escape for the whole member and restore
+// the inherited face on exit (batch-forked and standalone share this entry).
+struct MemberSandboxOff {
+    std::string prev;
+    bool had = false;
+    MemberSandboxOff() {
+        if (const char* e = std::getenv("AURA_SANDBOX")) {
+            had = true;
+            prev = e;
+        }
+        ::setenv("AURA_SANDBOX", "off", 1);
+    }
+    ~MemberSandboxOff() {
+        if (had)
+            ::setenv("AURA_SANDBOX", prev.c_str(), 1);
+        else
+            ::unsetenv("AURA_SANDBOX");
+    }
+};
+
 int run_test_agent_ask() {
+    MemberSandboxOff member_sandbox_off; // #3586: unarmed Scheduler(2) needs the escape
     std::println("=== Issue #2231 / #2401: agent-ask + agent-reply ===");
     CHECK(true, "issue stamp #2231/#2401");
     CompilerService cs;

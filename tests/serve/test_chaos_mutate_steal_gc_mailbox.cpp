@@ -323,7 +323,10 @@ static long run_chaos_pass(const char* label, int workers, int n_fibers, int dur
     // so Soft residual policies cannot mask multi-fiber fail-closed paths.
     // Issue #3036: soak / prod_gate also force production_defaults so
     // mailbox residual RejectHard cannot Soft-escape to silent Ok.
-    if (release_blocker || sustained || soak || prod_gate) {
+    // Issue #2554 + #3586 fallout: the PR hard-fail profile runs the same
+    // counters on a short 4-worker pass; Scheduler(N>1).run() aborts unless
+    // production defaults are latched, so pr_gate arms here too.
+    if (release_blocker || sustained || soak || prod_gate || pr_gate) {
         aura::compiler::typed_audit::apply_production_audit_defaults();
         CHECK(aura::compiler::typed_audit::production_defaults_active(),
               "#2902/#3036: production_defaults_active under soak / prod / release");
@@ -2040,7 +2043,8 @@ static void ac3036_mailbox_residual_prod_fail_closed_cite() {
     CHECK(chaos.find("apply_production_audit_defaults") != std::string::npos,
           "3036: soak applies production_defaults");
     CHECK(chaos.find("soak || prod_gate") != std::string::npos ||
-              chaos.find("release_blocker || sustained || soak || prod_gate") != std::string::npos,
+              chaos.find("release_blocker || sustained || soak || prod_gate || pr_gate") !=
+                  std::string::npos,
           "3036: soak/prod_gate force production_defaults");
     CHECK(mb.find("mailbox_residual_hard_enabled") != std::string::npos,
           "3036: residual hard helper");
