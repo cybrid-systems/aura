@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 883 | Preferred destination suites |
-| **Total scanned** | **883** | |
+| `tests/core/test_*.cpp` | 884 | Preferred destination suites |
+| **Total scanned** | **884** | |
 
 ### Related artifacts
 
@@ -40,7 +40,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 87 | 87 | P2 — link-profile heavy; migrate AC smoke first |
 | `shape_soa` | Shape / SoA / column layout | 0 | 0 | 54 | 54 | P2 — small-medium; soa_batch precedent |
 | `observability` | Observability / metrics / query:*-stats | 0 | 0 | 134 | 134 | P2 — often thin schema probes; collapse into obs matrix |
-| `uncategorized` | Uncategorized / mixed | 0 | 0 | 57 | 57 | P3 — review case-by-case |
+| `uncategorized` | Uncategorized / mixed | 0 | 0 | 58 | 58 | P3 — review case-by-case |
 
 ## Patterns, harness usage, coupling
 
@@ -365,6 +365,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_cross_cow_batch.cpp`
 - `tests/compiler/test_cross_cow_drift_contract.cpp`
 - `tests/compiler/test_cross_cow_soft_migrate.cpp`
+- `tests/core/test_cross_tenant_grant_toctou.cpp`
 - `tests/compiler/test_current_source_roundtrip.cpp`
 - `tests/stdlib/test_datetime.cpp`
 - `tests/compiler/test_dce_branch_block_id_overprotect.cpp`
@@ -1999,13 +2000,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_verify_parse_shared_helper.cpp` (—) [domain_suite, theme_compiler] — Issue #1771 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_workspace_mtx_contention.cpp` (—) [domain_suite, theme_compiler] — AC1: Source cites #2523; residual strategy documented
 
-### `uncategorized` — Uncategorized / mixed (57)
+### `uncategorized` — Uncategorized / mixed (58)
 
 **Target:** manual triage before domain placement
 
 **Priority:** P3 — review case-by-case
 
-#### domain/ (57)
+#### domain/ (58)
 
 - `tests/compiler/test_arithmetic_int64_safety.cpp` (—) [small, domain_suite, theme_compiler] — test_arithmetic_int64_safety.cpp — Issues #1150–#1156 Phase 1
 - `tests/compiler/test_ast_workspace_modules.cpp` (—) [domain_suite, theme_compiler] — test_ast_workspace_modules.cpp — Issue #563:
@@ -2018,6 +2019,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_composite_commit_cs_reuse.cpp` (—) [domain_suite, theme_compiler] — AC1: inject type conflict into commit CS → solve_fail + reject
 - `tests/compiler/test_core_builtins_review.cpp` (—) [domain_suite, theme_compiler] — test_core_builtins_review.cpp — Issue #564:
 - `tests/compiler/test_cross_cow_batch.cpp` (—) [small, batch_driver, domain_suite, theme_compiler] — test_cross_cow_batch.cpp — thematic multi-TU batch
+- `tests/core/test_cross_tenant_grant_toctou.cpp` (—) [domain_suite, theme_core] — tests/core/test_cross_tenant_grant_toctou.cpp — Issue #3597
 - `tests/compiler/test_eval_current_no_auto_fix.cpp` (—) [domain_suite, theme_compiler] — AC1: last form lambda → closure returned unchanged
 - `tests/orch/test_failure_policy_bridge.cpp` (—) [large, domain_suite, theme_orch] — Issue #2756 — WorkflowFailurePolicy composition (batch + AgentScope +
 - `tests/core/test_general_object_pin_coverage_gate.cpp` (—) [large, domain_suite, theme_core] — AC1: Linter fails when a listed inventory site lacks wire call

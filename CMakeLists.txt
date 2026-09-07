@@ -1641,6 +1641,12 @@ aura_issue_test_link_light(test_workspace_state_lock)
 # capture fallback. Lives in tests/core/ per #81934/#81967.
 aura_add_issue_test(test_tenant_isolation_enforcement)
 aura_issue_test_link_light(test_tenant_isolation_enforcement)
+# Issue #3597: grant_cross_tenant TA fence + cross_grants write must be one
+# ordered critical section (isolation → registry, never reverse). Behavior
+# oracle — two threads, one shared registry, revoke vs grant_cross_tenant
+# (not a source-string scan). Lives in tests/core/ per #81934/#81967.
+aura_add_issue_test(test_cross_tenant_grant_toctou)
+aura_issue_test_link_light(test_cross_tenant_grant_toctou)
 # Wave1 B-03/B-09: eval-current short pin + WorkspaceFlatPin adopt under Guard
 aura_add_issue_test(test_workspace_lock_reentrancy)
 aura_issue_test_link_llvm_jit(test_workspace_lock_reentrancy)

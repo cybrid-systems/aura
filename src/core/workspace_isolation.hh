@@ -192,13 +192,37 @@ struct WorkspaceIsolationPolicy {
     // resolves the real per-Evaluator principal instead of the often-zero
     // default_tenant (AC2). AC3 (Soft/Off zero-cost) is unaffected — the
     // short-circuit precedes any principal load.
+    // Issue #3597: the TenantAdmin fence and the cross_grants store are
+    // ONE ordered critical section — isolation mtx → registry mtx (never
+    // reverse; the only nested pair in the process — registry paths never
+    // take isolation mtx). A concurrent revoke of TenantAdmin from another
+    // Evaluator / fiber therefore cannot land between check and write:
+    // either the write happens while the TA check still passes under the
+    // same registry lock a revoke needs, or the deny fires with the table
+    // unchanged. No "TA gone + grant present" mid-window (#3086/#3409
+    // residual, #3126 TOCTOU shape). Soft/Off: zero-registry-lock
+    // short-circuit before the fence (AC3, unchanged) — the table write
+    // stays under isolation mtx. Deny keeps #2968 stable strings +
+    // counters; allow keeps #3086 AC4 counter-on-allow-only.
     void grant_cross_tenant(TenantId from, TenantId to, std::uint16_t effect_bits,
                             TenantId caller_principal = 0) noexcept {
         if (from == 0 || to == 0)
             return;
-        if (!try_grant_cross_tenant_privileged(from, to, effect_bits, caller_principal))
-            return; // deny path already bumped counter + emitted SE (#2968 stable)
-        std::lock_guard<std::mutex> lock(mtx);
+        using ::aura::core::capability::EffectSandboxMode;
+        using ::aura::core::capability::g_capability_registry;
+        auto& reg = g_capability_registry();
+        if (reg.sandbox_mode.load(std::memory_order_acquire) == EffectSandboxMode::Off) {
+            std::lock_guard<std::mutex> lock(mtx);
+            CrossTenantKey key{from, to};
+            cross_grants[key] = static_cast<std::uint16_t>(cross_grants[key] | effect_bits);
+            g_tenant_isolation_metrics().cross_tenant_capability_grant_total.fetch_add(
+                1, std::memory_order_relaxed);
+            return;
+        }
+        std::lock_guard<std::mutex> isolation_lock(mtx);
+        std::lock_guard<std::mutex> registry_lock(reg.mtx);
+        if (!try_grant_cross_tenant_privileged(to, effect_bits, caller_principal, reg))
+            return; // deny: SE + counter emitted inside (#2968 stable); table unchanged
         CrossTenantKey key{from, to};
         cross_grants[key] = static_cast<std::uint16_t>(cross_grants[key] | effect_bits);
         g_tenant_isolation_metrics().cross_tenant_capability_grant_total.fetch_add(
@@ -223,24 +247,24 @@ struct WorkspaceIsolationPolicy {
     // fallback never widens access (deny remains deny; the test surface
     // uses it). AC3: Soft/Off short-circuits before any lock or principal
     // load. SE reason string + counter names unchanged (#2968 stable).
-    [[nodiscard]] bool try_grant_cross_tenant_privileged(TenantId /*from*/, TenantId to,
-                                                         std::uint16_t effect_bits,
-                                                         TenantId caller_principal) noexcept {
-        using ::aura::core::capability::EffectSandboxMode;
-        using ::aura::core::capability::g_capability_registry;
-        const auto mode = g_capability_registry().sandbox_mode.load(std::memory_order_acquire);
-        if (mode == EffectSandboxMode::Off)
-            return true; // AC3: zero-cost allow under Soft/Off
-        auto& reg = g_capability_registry();
-        // AC2: explicit caller_principal (Evaluator::capability_tenant_id_)
-        // wins; fallback to default_tenant only for legacy direct callers.
+    // Issue #3597: caller MUST already hold BOTH isolation mtx (this->mtx)
+    // and registry mtx — the TA check and the cross_grants store run under
+    // one ordered critical section (isolation → registry, never reverse;
+    // see grant_cross_tenant), so a concurrent revoke of TenantAdmin from
+    // another Evaluator / fiber cannot land between check and write (TOCTOU
+    // closure — #3126 shape, #3086/#3409 residual). Soft/Off never reaches
+    // here (grant_cross_tenant short-circuits before any lock — AC3).
+    // #3145 AC2: explicit caller_principal (Evaluator::capability_tenant_id_)
+    // wins; fallback to default_tenant only for legacy direct callers
+    // without an Evaluator context — the fallback never widens access.
+    // SE reason string + counter names unchanged (#2968 stable).
+    [[nodiscard]] bool
+    try_grant_cross_tenant_privileged(TenantId to, std::uint16_t effect_bits,
+                                      TenantId caller_principal,
+                                      ::aura::core::capability::CapabilityRegistry& reg) noexcept {
         const TenantId caller = caller_principal != 0
                                     ? caller_principal
                                     : reg.default_tenant.load(std::memory_order_acquire);
-        // AC1: take the registry mtx so a concurrent revoke of TenantAdmin
-        // from another Evaluator / fiber cannot race past this fence
-        // (previous unlocked effects_for() was a TOCTOU window — see #3126).
-        std::lock_guard<std::mutex> lock(reg.mtx);
         const auto caller_eff = reg.effects_for_locked(caller);
         const auto target_eff = reg.effects_for_locked(to);
         const bool is_admin =
