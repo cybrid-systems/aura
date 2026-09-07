@@ -165,6 +165,14 @@ inline void bump_mutation_epoch(std::uint64_t delta = 1) noexcept {
     notify_mutation_epoch_bump(prev + delta);
 }
 
+// Issue #3594: test-only — the epoch=0 / TypedMid=0 production matrix (the
+// phantom mid=1 refusal) needs a deterministic zero epoch; the real epoch is
+// process-global and monotonic. Tests must re-seed grants after this (any
+// epoch-fenced rows go stale by definition).
+inline void reset_mutation_epoch_for_test() noexcept {
+    store_workspace_epoch(WorkspaceEpochKind::Mutation, 0);
+}
+
 // ── Bridge epoch (process-global; #1964 2c + #2039 2d) ─────
 // Canonical storage: WorkspaceEpoch::Bridge. C runtime
 // (aura_get/set_current_bridge_epoch) dual-writes the same value

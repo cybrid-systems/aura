@@ -2211,7 +2211,7 @@ struct CapabilityEffectStatsSnapshot {
 // call_fiber_id: live fiber for hard isolation / audit (0 → effect override only).
 [[nodiscard]] inline MacroSelfEvoCheck
 check_macro_self_evo(TenantId tenant, bool sandbox_active = false, bool wildcard_ok = false,
-                     std::uint32_t call_fiber_id = 0) noexcept {
+                     std::uint32_t call_fiber_id = 0, std::uint64_t caller_mid = 0) noexcept {
     auto& reg = g_capability_registry();
     auto& met = g_capability_effect_metrics();
     met.macro_self_evo_check_total.fetch_add(1, std::memory_order_relaxed);
@@ -2227,7 +2227,12 @@ check_macro_self_evo(TenantId tenant, bool sandbox_active = false, bool wildcard
     {
         const auto me = ::aura::core::current_mutation_epoch();
         call_prov.epoch = me != 0 ? me : 1;
-        call_prov.mutation_id = call_prov.epoch;
+        // Issue #3594: check provenance key — no phantom mid=1. caller_mid
+        // (live session mid / TypedMid join) wins; else Mutation epoch.
+        // epoch=0 → mutation_id=0 hits the provenance fence below
+        // (fail-closed; reuses capability_mid_join_zero_deny_total +
+        // kCapabilityDenyReasonProvenanceFence — no refuse synthesis).
+        call_prov.mutation_id = caller_mid != 0 ? caller_mid : me;
         call_prov.fiber_id = effect_fiber_id_or(call_fiber_id);
     }
 

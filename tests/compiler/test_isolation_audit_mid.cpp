@@ -301,7 +301,11 @@ int run_test_isolation_audit_mid() {
         const auto n_zero_reason = eval_int("(length (engine:metrics \"query:security-audit\" 50 0 "
                                             "0 0 0 \"mid-fallback-refused\"))");
         CHECK(n_zero >= 1, "AC5: explicit mid=0 selects the refuse row(s)");
-        CHECK(n_zero == n_zero_reason, "AC5: every mid=0 row is the mid-fallback-refused evidence");
+        // Issue #3594: mid=0 rows now include the deny-surface join evidence
+        // (isolation-deny / cross-tenant-grant fence at epoch=0) — the
+        // mid-fallback-refused refuse rows are a subset of the mid=0 view.
+        CHECK(n_zero >= n_zero_reason,
+              "AC5: mid=0 rows carry deny-surface join evidence (#3594); refuse rows subset");
 
         // AC2: fiber-principal-mismatch deny emits no phantom mid=1 SE.
         {

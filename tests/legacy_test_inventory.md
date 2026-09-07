@@ -1295,7 +1295,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_edsl_core_stability_cow_atomic_query_mutate.cpp` (—) [domain_suite, theme_compiler] — test_edsl_core_stability_cow_atomic_query_mutate.cpp — Issue #655:
 - `tests/compiler/test_edsl_query_mutate_commercial_closed_loop.cpp` (—) [domain_suite, theme_compiler] — Issue #552/#619/#634/#635/#636 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_edsl_validate_or_refresh.cpp` (—) [domain_suite, theme_compiler] — AC1: query:children/node/parent/*-stable/node-marker/node-provenance
-- `tests/compiler/test_effect_epoch_mutation_unify.cpp` (—) [domain_suite, theme_compiler] — AC1: check_and_record_effect stamps EffectProvenance.epoch from
+- `tests/compiler/test_effect_epoch_mutation_unify.cpp` (—) [large, domain_suite, theme_compiler] — AC1: check_and_record_effect stamps EffectProvenance.epoch from
 - `tests/compiler/test_envframe_bridge_invalidate.cpp` (—) [domain_suite, theme_compiler] — Issue #1916 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_envframe_dualpath_stale_closed_loop.cpp` (—) [domain_suite, theme_compiler] — Issue #417/#418/#543/#602 (#1978 renamed): issue# moved from filename to header.
 - `tests/reflect/test_error_kind_names_wire.cpp` (—) [domain_suite, theme_reflect] — Wire C1 into business: P2996 validates name tables used by

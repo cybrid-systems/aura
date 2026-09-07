@@ -273,7 +273,10 @@ struct WorkspaceIsolationPolicy {
         if (is_admin)
             return true;
         const auto epoch = ::aura::core::current_mutation_epoch();
-        const auto mid = epoch != 0 ? epoch : static_cast<std::uint64_t>(1);
+        // Issue #3594: epoch=0 stays 0 on the deny surface — joins the
+        // grant-mid-refused / mid-fallback-refused refuse rows (mid=0,
+        // #3090/#3462); never mint phantom mid=1 here.
+        const auto mid = epoch;
         const auto fid = static_cast<std::int64_t>(::aura::core::capability::effect_fiber_id_or(
             static_cast<std::uint32_t>(aura_fiber_current_id())));
         g_tenant_isolation_metrics().cross_tenant_grant_deny_total.fetch_add(
@@ -307,7 +310,10 @@ struct WorkspaceIsolationPolicy {
                       std::uint16_t required_effects = 0) noexcept {
         using ::aura::core::current_mutation_epoch;
         const auto epoch = current_mutation_epoch();
-        const auto mid = epoch != 0 ? epoch : static_cast<std::uint64_t>(1);
+        // Issue #3594: IsolationDeny at epoch=0 keeps mid=0 (joins the
+        // refuse rows); no phantom mid=1 coercion. Fiber id still resolved
+        // on deny (#3011) below.
+        const auto mid = epoch;
 
         const auto seq = audit_seq.fetch_add(1, std::memory_order_release);
         IsolationAuditEntry entry{};
