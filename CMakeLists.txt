@@ -3199,6 +3199,7 @@ add_executable(test_security_capability_batch
     tests/compiler/test_grant_macro_self_evo_stamp.cpp
     tests/compiler/test_hard_fiber_isolation.cpp
     tests/compiler/test_hard_fiber_restricted.cpp
+    tests/compiler/test_jit_prim_dispatch_telemetry.cpp
     tests/compiler/test_require_effect_auto_isolation.cpp
     tests/compiler/test_require_effect_live_mid.cpp
     tests/compiler/test_security_audit_fold.cpp

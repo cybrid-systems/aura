@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 884 | Preferred destination suites |
-| **Total scanned** | **884** | |
+| `tests/core/test_*.cpp` | 885 | Preferred destination suites |
+| **Total scanned** | **885** | |
 
 ### Related artifacts
 
@@ -37,7 +37,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 109 | 109 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 26 | 26 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 59 | 59 | P1 — domain hygiene suite exists |
-| `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 87 | 87 | P2 — link-profile heavy; migrate AC smoke first |
+| `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 88 | 88 | P2 — link-profile heavy; migrate AC smoke first |
 | `shape_soa` | Shape / SoA / column layout | 0 | 0 | 54 | 54 | P2 — small-medium; soa_batch precedent |
 | `observability` | Observability / metrics / query:*-stats | 0 | 0 | 134 | 134 | P2 — often thin schema probes; collapse into obs matrix |
 | `uncategorized` | Uncategorized / mixed | 0 | 0 | 58 | 58 | P3 — review case-by-case |
@@ -576,6 +576,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_jit_macro_introduced_preserve.cpp`
 - `tests/compiler/test_jit_metrics.cpp`
 - `tests/compiler/test_jit_metrics_stub.cpp`
+- `tests/compiler/test_jit_prim_dispatch_telemetry.cpp`
 - `tests/orch/test_join_drain_reclaim.cpp`
 - `tests/serve/test_join_drain_timeout.cpp`
 - `tests/compiler/test_json_io_cap_batch.cpp`
@@ -1698,13 +1699,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_symbol_eq.cpp` (—) [domain_suite, theme_compiler] — AC1: (eq? 'commit 'commit) → #t  (interned short-str cache)
 - `tests/compiler/test_unquote_splicing_hygiene.cpp` (—) [large, domain_suite, theme_compiler] — AC1: pre_scan cites #2807; unquote-splicing boundary + metric
 
-### `jit_incremental` — JIT / AOT / incremental relower (87)
+### `jit_incremental` — JIT / AOT / incremental relower (88)
 
 **Target:** domain suite for incremental_*; keep heavy JIT in issue bundles
 
 **Priority:** P2 — link-profile heavy; migrate AC smoke first
 
-#### domain/ (87)
+#### domain/ (88)
 
 - `tests/compiler/test_adaptive_cascade_depth_partial_thr.cpp` (—) [domain_suite, theme_compiler] — AC1: After enough samples, high cascade-depth raises the threshold.
 - `tests/compiler/test_adaptive_partial_relower_threshold.cpp` (—) [domain_suite, theme_compiler] — AC1: Cold-start stays at default 8 until enough samples
@@ -1762,6 +1763,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_jit_macro_introduced_preserve.cpp` (—) [large, domain_suite, theme_compiler] — AC1: source cites #2022; side-table + FunctionMeta + FlatFunction fields
 - `tests/compiler/test_jit_metrics.cpp` (—) [domain_suite, theme_compiler] — test_jit_metrics.cpp — Issue #114 JIT observability + per-function cache tests
 - `tests/compiler/test_jit_metrics_stub.cpp` (—) [small, domain_suite, theme_compiler] — test_jit_metrics_stub.cpp — Stub for the JIT test.
+- `tests/compiler/test_jit_prim_dispatch_telemetry.cpp` (—) [domain_suite, theme_compiler] — AC1: Restricted+MT production face, PrimMeta-only Mutate stub over a
 - `tests/compiler/test_live_closure_stable_id_only.cpp` (—) [domain_suite, theme_compiler] — AC1: positive — stable_func_id present → remap, name-fallback counter 0
 - `tests/compiler/test_lock_order_audit.cpp` (—) [domain_suite, theme_compiler] — test_lock_order_audit.cpp — Issue #2316:
 - `tests/compiler/test_module_partition_map.cpp` (—) [domain_suite, theme_compiler] — AC1: Measurable reduction OR clear partition map (pass_manager facade

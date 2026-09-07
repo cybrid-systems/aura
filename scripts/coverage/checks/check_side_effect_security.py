@@ -29,6 +29,12 @@ must have a ``require_effect(`` predecessor in the local window.
 The hot-path header itself is the API/forwarder (skipped). Use
 ``--dispatch-path`` for fixture TUs (CI never passes it).
 
+Issue #3593: the JIT C ABI prim dispatch (``aura_jit_prim_dispatch`` in
+``service.ixx``) must route through the Evaluator choke point
+(``invoke_prim_with_telemetry``) with fail-closed owner resolution — no
+bare ``(*pfn)(`` outside that routing. The body scan flags a second bare
+call or a lost/fail-open routing.
+
 Also accepts per-name allowlist entries in
 ``tests/side-effect-security-allowlist.txt`` (one name per line, with
 ``# SECURITY_EXEMPT: reason`` required).
@@ -194,6 +200,59 @@ def scan(path_override: str | None = None) -> tuple[list[tuple[str, str, int]], 
     return violations, reason_errors
 
 
+def scan_jit_dispatch_body(service_path: str | None = None) -> list[str]:
+    """Issue #3593: aura_jit_prim_dispatch must route through the Evaluator
+    choke point (invoke_prim_with_telemetry) with fail-closed owner
+    resolution. Flags: lost routing, fail-open owner check, or growth of a
+    second bare (*pfn)( call outside the telemetry lambda.
+
+    Returns list of violation strings.
+    """
+    path = Path(service_path) if service_path else ROOT / "src" / "compiler" / "service.ixx"
+    if not path.is_file():
+        return [f"{path}: missing — cannot verify #3593 JIT dispatch routing"]
+    text = path.read_text(encoding="utf-8", errors="replace")
+    lines = text.splitlines()
+    impl_start = None
+    for i, line in enumerate(lines):
+        if "std::int64_t jit_prim_dispatch_impl(" in line:
+            impl_start = i
+            break
+    if impl_start is None:
+        return [f"{path}: jit_prim_dispatch_impl not found (#3593)"]
+    # Bound at the first column-0 close brace after the impl (its own close
+    # is indented) — marker-independent, survives comment reformatting.
+    impl_end = len(lines)
+    for j in range(impl_start + 1, len(lines)):
+        if lines[j].startswith("}"):
+            impl_end = j
+            break
+    body = lines[impl_start:impl_end]
+    issues: list[str] = []
+    telemetry = [i for i, ln in enumerate(body) if "invoke_prim_with_telemetry(" in ln]
+    bare = [i for i, ln in enumerate(body) if "(*pfn)(" in ln]
+    owner_check = [i for i, ln in enumerate(body) if "owner_evaluator(prims)" in ln]
+    if not telemetry:
+        issues.append("service.ixx: jit_prim_dispatch_impl lost invoke_prim_with_telemetry routing (#3593)")
+    if not owner_check:
+        issues.append("service.ixx: jit_prim_dispatch_impl lost owner_evaluator fail-closed resolution (#3593)")
+    if len(bare) != 1:
+        issues.append(
+            f"service.ixx: jit_prim_dispatch_impl has {len(bare)} (*pfn)( calls — "
+            "exactly one, inside invoke_prim_with_telemetry (#3593)"
+        )
+    elif telemetry and bare[0] < telemetry[0]:
+        issues.append("service.ixx: bare (*pfn)( call precedes invoke_prim_with_telemetry (#3593)")
+    # The extern "C" entry and the test hook must both delegate to the impl.
+    if text.count("jit_prim_dispatch_impl(prim_id, args, argc)") < 2:
+        issues.append(
+            "service.ixx: aura_jit_prim_dispatch / aura_test_jit_prim_dispatch "
+            "must both delegate to jit_prim_dispatch_impl (#3593)"
+        )
+    rel = str(path.relative_to(ROOT)) if path.is_relative_to(ROOT) else str(path)
+    return [f"{rel}: {msg}" for msg in issues]
+
+
 def scan_dispatch_callers(dispatch_path: str | None = None) -> list[tuple[str, str, int]]:
     """Issue #3524: flag dispatch_* calls without require_effect predecessor.
 
@@ -262,10 +321,18 @@ def main() -> int:
         default=None,
         help="extra TU to scan for dispatch_* calls (test fixture only)",
     )
+    # Issue #3593: fixture override for the JIT dispatch body scan.
+    ap.add_argument(
+        "--jit-dispatch-path",
+        action="store",
+        default=None,
+        help="override service.ixx path for the #3593 dispatch scan (test fixture only)",
+    )
     args = ap.parse_args()
 
     violations, reason_errors = scan(args.path)
     dispatch_violations = scan_dispatch_callers(args.dispatch_path)
+    jit_violations = scan_jit_dispatch_body(args.jit_dispatch_path)
     failed = False
 
     if reason_errors:
@@ -300,8 +367,19 @@ def main() -> int:
         )
         failed = True
 
+    if jit_violations:
+        print("FAIL: JIT prim dispatch routing violations (Issue #3593):")
+        for v in jit_violations:
+            print(f"  + {v}")
+        print(
+            "\naura_jit_prim_dispatch must route through invoke_prim_with_telemetry\n"
+            "with fail-closed owner_evaluator resolution — exactly one (*pfn)(,\n"
+            "inside the telemetry lambda (#3593)."
+        )
+        failed = True
+
     if not failed:
-        print("OK: side-effect security coverage (Issue #2057/#2152/#3524) — no uncovered effectful prims")
+        print("OK: side-effect security coverage (Issue #2057/#2152/#3524/#3593) — no uncovered effectful prims")
         return 0
 
     return 1 if args.strict else 0
