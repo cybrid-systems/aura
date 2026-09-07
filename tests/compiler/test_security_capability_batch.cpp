@@ -76,13 +76,14 @@ extern int run_test_grant_effect_capability_session_3561();
 extern int run_test_restricted_unset_principal();
 extern int run_test_check_and_record_wildcard_strip();
 extern int run_test_grant_effect_wildcard_write_fence();
+extern int run_test_jit_prim_dispatch_telemetry(); // #3593: JIT C ABI telemetry routing
 
 int main() {
     using aura::test::g_failed;
     using aura::test::g_passed;
     int members_failed = 0;
     int members_passed = 0;
-    std::println("=== test_security_capability_batch (39 members) ===");
+    std::println("=== test_security_capability_batch (40 members) ===");
 
     std::println("\n──── test_audit_mid_fallback_slo ────");
     reset_member_face();
@@ -417,6 +418,21 @@ int main() {
     } else {
         ++members_passed;
         std::println("OK member test_audit_durable_gap_force_wal ({} checks)", g_passed);
+    }
+
+    // Issue #3593: JIT C ABI prim dispatch routes through the Evaluator
+    // choke point (invoke_prim_with_telemetry). Must run before the
+    // summary — arms the production face internally, restores on exit.
+    std::println("\n──── test_jit_prim_dispatch_telemetry ────");
+    reset_member_face();
+    g_passed = 0;
+    g_failed = 0;
+    if (run_test_jit_prim_dispatch_telemetry() != 0 || g_failed != 0) {
+        ++members_failed;
+        std::println("FAIL member test_jit_prim_dispatch_telemetry ({}/{})", g_passed, g_failed);
+    } else {
+        ++members_passed;
+        std::println("OK member test_jit_prim_dispatch_telemetry ({} checks)", g_passed);
     }
 
     std::println("\n=== {} members: {} ok, {} failed ===", members_passed + members_failed,

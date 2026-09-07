@@ -114,6 +114,22 @@ static constexpr const char* kPrimNameTable[] = {
 
 static std::atomic<const aura::compiler::Primitives*> g_jit_prim_ctx{nullptr};
 
+// Issue #3593: the Evaluator that owns the wired prim table — the same
+// owner the IR executor uses for invoke_prim_with_telemetry
+// (ir_executor_impl.cpp context_.evaluator). Null when the JIT link is
+// stubbed / unwired -> aura_jit_prim_dispatch fails closed (no silent
+// exec), same shape as the #3275 weak-abort rule.
+static std::atomic<aura::compiler::Evaluator*> g_jit_prim_owner{nullptr};
+
+// Issue #3593: resolve the owner Evaluator for the wired table. The ctx
+// must still point at prims (stale prims pointer -> no exec).
+static aura::compiler::Evaluator*
+owner_evaluator(const aura::compiler::Primitives* prims) noexcept {
+    if (prims != nullptr && g_jit_prim_ctx.load(std::memory_order_acquire) == prims)
+        return g_jit_prim_owner.load(std::memory_order_acquire);
+    return nullptr;
+}
+
 // Nested CompilerService last-writer-wins: inner ctor overwrites process-wide
 // linear / lock / top-cell wires with &evaluator_. A thread_local stack
 // restores the previous Evaluator* on ~inner so ~outer is not left with
@@ -286,38 +302,75 @@ extern "C" std::int64_t aura_hash_callback_key_eq(std::int64_t stored_key,
     return 0;
 }
 
-extern "C" std::int64_t aura_jit_prim_dispatch(std::int64_t prim_id, std::int64_t* args,
-                                               std::int32_t argc) {
-    auto* prims = g_jit_prim_ctx.load(std::memory_order_acquire);
-    if (!prims)
-        return 0;
+// Issue #3593: internal dispatch body — anonymous namespace gives internal
+// linkage, so the compile-time call binding below cannot be interposed by
+// the weak aura_jit_prim_dispatch stub in aura_jit_light_test_objects
+// (.so link-order shadow intercepts even intra-TU extern "C" calls).
+namespace aura::compiler {
+namespace {
 
-    // Look up primitive by PrimId → kPrimNameTable → evaluator name
-    std::string_view pname;
-    if (prim_id >= 0 && static_cast<std::size_t>(prim_id) < std::size(kPrimNameTable))
-        pname = kPrimNameTable[static_cast<std::size_t>(prim_id)];
-    if (pname.empty())
-        return 0;
+    std::int64_t jit_prim_dispatch_impl(std::int64_t prim_id, std::int64_t* args,
+                                        std::int32_t argc) {
+        auto* prims = g_jit_prim_ctx.load(std::memory_order_acquire);
+        if (!prims)
+            return 0;
 
-    auto pfn = prims->lookup(std::string(pname));
-    if (!pfn)
-        return 0;
+        // Look up primitive by PrimId → kPrimNameTable → evaluator name
+        std::string_view pname;
+        if (prim_id >= 0 && static_cast<std::size_t>(prim_id) < std::size(kPrimNameTable))
+            pname = kPrimNameTable[static_cast<std::size_t>(prim_id)];
+        if (pname.empty())
+            return 0;
 
-    // Issue #2575: convert string args JIT→eval; re-intern results eval→JIT.
-    std::vector<aura::compiler::types::EvalValue> eval_args;
-    eval_args.reserve(static_cast<std::size_t>(argc));
-    for (std::int32_t i = 0; i < argc; ++i) {
-        std::int64_t a = args[i];
-        if (is_str_val(a))
-            a = convert_str_for_eval(a, prims);
-        eval_args.emplace_back(a);
+        auto pfn = prims->lookup(std::string(pname));
+        if (!pfn)
+            return 0;
+
+        // Issue #2575: convert string args JIT→eval; re-intern results eval→JIT.
+        std::vector<aura::compiler::types::EvalValue> eval_args;
+        eval_args.reserve(static_cast<std::size_t>(argc));
+        for (std::int32_t i = 0; i < argc; ++i) {
+            std::int64_t a = args[i];
+            if (is_str_val(a))
+                a = convert_str_for_eval(a, prims);
+            eval_args.emplace_back(a);
+        }
+
+        // Issue #3593: route through the same Evaluator choke point the
+        // interpreter + IR use (#2152/#2583 dispatch require_effect, #3235
+        // heap-mutate Guard, #2490/#3526 isolation auto-gate). The JIT C ABI
+        // previously called (*pfn) bare — a PrimMeta / name-inferred effectful
+        // prim could exec with zero cap + isolation check. Fail-closed when no
+        // owner is wired (stub link / unwired JIT): no silent exec.
+        auto* owner = owner_evaluator(prims);
+        if (!owner)
+            return 0;
+        auto result = owner->invoke_prim_with_telemetry(pname, [&] { return (*pfn)(eval_args); });
+
+        if (is_str_val(result.val))
+            return convert_str_for_jit(result.val, prims);
+        return result.val;
     }
 
-    auto result = (*pfn)(eval_args);
+} // namespace
+} // namespace aura::compiler
 
-    if (is_str_val(result.val))
-        return convert_str_for_jit(result.val, prims);
-    return result.val;
+extern "C" std::int64_t aura_jit_prim_dispatch(std::int64_t prim_id, std::int64_t* args,
+                                               std::int32_t argc) {
+    // Issue #3593: thin C ABI entry — the body lives in
+    // jit_prim_dispatch_impl (internal linkage, interposition-proof).
+    return aura::compiler::jit_prim_dispatch_impl(prim_id, args, argc);
+}
+
+// Issue #3593: test hook — drive the JIT C ABI dispatch entry directly.
+// Light-test links can bind a bare aura_jit_prim_dispatch reference to the
+// weak stub in aura_jit_light_test_objects (.so), silently bypassing the
+// strong body; this hook and the C ABI entry both delegate to the same
+// internal impl, so tests always exercise the real routing (telemetry
+// choke point).
+extern "C" std::int64_t aura_test_jit_prim_dispatch(std::int64_t prim_id, std::int64_t* args,
+                                                    std::int32_t argc) {
+    return aura::compiler::jit_prim_dispatch_impl(prim_id, args, argc);
 }
 
 // ── Hash operation dispatch ──────────────────────────────
@@ -12453,6 +12506,7 @@ private:
     void* prev_query_evaluator_ = nullptr;
     void* prev_aot_metrics_ = nullptr;
     const Primitives* prev_jit_prim_ctx_ = nullptr;
+    Evaluator* prev_jit_prim_owner_ = nullptr; // Issue #3593: owner for the wired ctx
 
 public:
     // Issue #300 follow-up #1: drop per-fiber / main-thread
@@ -12538,6 +12592,8 @@ public:
         }
         if (g_jit_prim_ctx.load(std::memory_order_acquire) == &evaluator_.primitives()) {
             g_jit_prim_ctx.store(prev_jit_prim_ctx_, std::memory_order_release);
+            // Issue #3593: clear the owner with the ctx it belongs to.
+            g_jit_prim_owner.store(prev_jit_prim_owner_, std::memory_order_release);
         }
         Evaluator::set_query_evaluator(static_cast<Evaluator*>(prev_query_evaluator_));
         pop_linear_hooks_for_eval(&evaluator_);
@@ -14679,7 +14735,12 @@ public:
         // Set the global primitives pointer for the JIT dispatcher
         if (prev_jit_prim_ctx_ == nullptr)
             prev_jit_prim_ctx_ = g_jit_prim_ctx.load(std::memory_order_acquire);
+        if (prev_jit_prim_owner_ == nullptr)
+            prev_jit_prim_owner_ = g_jit_prim_owner.load(std::memory_order_acquire);
         g_jit_prim_ctx.store(&evaluator_.primitives(), std::memory_order_release);
+        // Issue #3593: wire the owner Evaluator — aura_jit_prim_dispatch
+        // routes through it (invoke_prim_with_telemetry choke point).
+        g_jit_prim_owner.store(&evaluator_, std::memory_order_release);
 
         // Issue #452: wire AOT bridge metrics pointer so
         // aura_reload_aot_module can bump the
@@ -14705,11 +14766,15 @@ public:
             g_lock_hook_eval_stack.push_back(&evaluator_);
         install_lock_and_topcell_hooks_for_eval(&evaluator_);
 
-// Register the dispatcher with JIT runtime
-#ifdef AURA_HAVE_LLVM
+        // Issue #3593: wire the C ABI dispatcher in ALL builds — the
+        // telemetry choke point (invoke_prim_with_telemetry) is LLVM-free,
+        // and an unarmed dispatcher silently bypasses it in non-LLVM
+        // (light / embedded) builds. Hash callbacks stay LLVM-gated below.
         // aura_jit_prim_dispatch is defined at file scope (after imports)
         // and aura_set_prim_dispatcher is declared at file scope.
         aura_set_prim_dispatcher(aura_jit_prim_dispatch);
+
+#ifdef AURA_HAVE_LLVM
 
         // Register the hash operation dispatchers (hash-ref, hash-set!, hash-remove!)
         // These are separate from the prim dispatcher because hash ops have dedicated
