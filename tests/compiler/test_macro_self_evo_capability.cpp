@@ -170,11 +170,18 @@ static void ac3_strict_deny_without_grant() {
 static void ac4_grant_reduced_limits() {
     std::println("\n--- AC4: Strict + reduced limits → clamp ---");
     reset_all();
+    // Issue #3594: the Strict-mode check key must join the grant's bound
+    // mid — establish a deterministic live Mutation epoch and bind the
+    // grants to it (epoch=0 / caller_mid=0 is a provenance-fence deny by
+    // design; see test_effect_epoch_mutation_unify ac3594_mse_epoch0_fenced).
+    aura::core::reset_mutation_epoch_for_test();
+    aura::core::bump_mutation_epoch();
+    const auto live_mid = aura::core::current_mutation_epoch();
     // Issue #3409 bootstrap: seed TenantAdmin while the registry is Off —
     // a production bootstrap grant from a non-admin caller is denied by
     // the SSOT fence. Then flip to Strict for the policy checks.
     g_capability_registry().grant(0, "tenant-admin", Effect::TenantAdmin,
-                                  make_grant_provenance(1, true, 0, 0));
+                                  make_grant_provenance(live_mid, true, 0, 0));
     aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Strict);
     set_mode(SandboxMode::Strict);
     MacroSelfEvoPolicy pol;
@@ -184,7 +191,10 @@ static void ac4_grant_reduced_limits() {
     pol.allow_concurrent_fiber = true;
     // Issue #3459: production callers must supply a real mid — the old
     // phantom synthesis (mid = epoch|1) is gone (#3090 one-refuse-policy).
-    g_capability_registry().grant_macro_self_evo(0, pol, make_grant_provenance(1, true, 0, 0));
+    // Bind to the live epoch so check_macro_self_evo (caller_mid defaults
+    // to the Mutation epoch) joins the grant fence.
+    g_capability_registry().grant_macro_self_evo(0, pol,
+                                                 make_grant_provenance(live_mid, true, 0, 0));
 
     auto chk = check_macro_self_evo(0, true, false);
     CHECK(chk.allowed, "granted → allowed");
@@ -203,16 +213,24 @@ static void ac4_grant_reduced_limits() {
 static void ac5_zero_limits_deny() {
     std::println("\n--- AC5: zero limits → deny ---");
     reset_all();
+    // Issue #3594: live epoch + mid-bound grants so the provenance fence
+    // passes and the zero-limits deny reason below is reached (epoch=0
+    // would fence first — see AC4).
+    aura::core::reset_mutation_epoch_for_test();
+    aura::core::bump_mutation_epoch();
+    const auto live_mid = aura::core::current_mutation_epoch();
     // Issue #3409 bootstrap: seed TenantAdmin while Off (see AC4).
     g_capability_registry().grant(0, "tenant-admin", Effect::TenantAdmin,
-                                  make_grant_provenance(1, true, 0, 0));
+                                  make_grant_provenance(live_mid, true, 0, 0));
     aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Strict);
     set_mode(SandboxMode::Strict);
     MacroSelfEvoPolicy pol;
     pol.max_expansion_passes = 0;
     pol.max_depth = 0;
-    // Issue #3459: real mid under production (phantom synthesis removed).
-    g_capability_registry().grant_macro_self_evo(0, pol, make_grant_provenance(1, true, 0, 0));
+    // Issue #3459: real mid under production (phantom synthesis removed);
+    // live epoch so the check joins the grant fence (#3594).
+    g_capability_registry().grant_macro_self_evo(0, pol,
+                                                 make_grant_provenance(live_mid, true, 0, 0));
     auto chk = check_macro_self_evo(0, true, false);
     CHECK(!chk.allowed, "zero limits deny");
     CHECK(chk.deny_reason != nullptr &&
