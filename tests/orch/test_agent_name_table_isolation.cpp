@@ -56,13 +56,18 @@ static std::string read_file(const char* path) {
 }
 
 // Build a minimal AgentHandle for storage-layer testing (no actual fiber).
-// reserved_memory_bytes = 0 so the destructor is a no-op (no quota release).
-// ok=true makes find() return this handle for the test path that gates on ok.
+// Issue #3598: reserved_memory_bytes = 64 keeps the slot NON-clean so find
+// resolves it — these tests exercise storage-layer resolution/isolation,
+// not retirement. (A fully-clean slot — flags false, fiber null, reserved
+// 0 — retires on find per #3598; that contract is covered by the #3598 AC
+// below and by test_join_drain_reclaim.cpp.) ok=true makes find() return
+// this handle for the test path that gates on ok.
 static AgentHandle make_minimal_handle(std::string name, std::uint64_t id) {
     AgentHandle h;
     h.id = id;
     h.name = std::move(name);
     h.ok = true;
+    h.reserved_memory_bytes = 64;
     return h;
 }
 
@@ -349,6 +354,38 @@ static void ac3467_put_deny_pending() {
           "3467 AC6: no test_issue_3467.cpp (src-aligned suites only)");
 }
 
+// ── #3598: fully-clean slot retires on find; pending never does ──
+static void ac3598_clean_slot_retire() {
+    std::println("\n--- #3598: clean slot retires on find (fresh insert after) ---");
+    // A fully-clean slot (flags false, fiber null, reserved 0) is retired by
+    // the next find (nullptr, ~AgentHandle ran); the same-name put after is
+    // a fresh insert. Pending slots (either flag) stay resolvable (#3467).
+    {
+        AgentNameTable table;
+        aura::orch::AgentHandle clean;
+        clean.name = "ghost-3598";
+        clean.id = 71;
+        clean.ok = true; // flags false, fiber null, reserved 0 → clean
+        CHECK(table.put(std::move(clean)) != nullptr, "3598: clean put lands");
+        CHECK(table.find("ghost-3598") == nullptr, "3598: find retires the clean slot");
+        CHECK(table.size() == 0, "3598: slot erased (~AgentHandle ran)");
+        CHECK(table.put(make_minimal_handle("ghost-3598", 72)) != nullptr,
+              "3598: same-name put after retire = fresh insert");
+        CHECK(table.find("ghost-3598") != nullptr && table.find("ghost-3598")->id == 72,
+              "3598: fresh slot carries the new handle");
+    }
+    // Pending slot (must_wait) is never retired by find.
+    {
+        AgentNameTable table;
+        auto pending = make_minimal_handle("pend-3598", 73);
+        pending.must_wait_reclaimed = true;
+        CHECK(table.put(std::move(pending)) != nullptr, "3598: pending put lands");
+        auto* p = table.find("pend-3598");
+        CHECK(p != nullptr && p->must_wait_reclaimed,
+              "3598: pending slot stays resolvable (#3467)");
+    }
+}
+
 } // namespace
 
 int run_test_agent_name_table_isolation() {
@@ -361,7 +398,9 @@ int run_test_agent_name_table_isolation() {
     ac3125_cross_scope_isolation();
     ac3442_message_plane_resolve();
     ac3467_put_deny_pending();
-    std::println("\n=== #2078/#3125/#3442/#3467: passed={} failed={} ===", g_passed, g_failed);
+    ac3598_clean_slot_retire();
+    std::println("\n=== #2078/#3125/#3442/#3467/#3598: passed={} failed={} ===", g_passed,
+                 g_failed);
     return g_failed == 0 ? 0 : 1;
 }
 

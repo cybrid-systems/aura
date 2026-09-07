@@ -90,6 +90,14 @@ struct AgentNameTable {
             // that still owes Reclaimed cleanup. Caller keeps `h`.
             if (it->second.must_wait_reclaimed || it->second.reclaimed_deferred_cleanup)
                 return nullptr;
+            // Issue #3598: Done-path-cleaned ghost → retire + FRESH insert
+            // (AC1) — not a move-assign over the cleaned slot. The ghost's
+            // ~AgentHandle runs here (idempotent no-op on a clean slot).
+            if (aura::orch::slot_is_reclaimable_clean(it->second)) {
+                impl_->agents_.erase(it);
+                auto [ins_clean, _ins_clean] = impl_->agents_.emplace(name, std::move(h));
+                return &ins_clean->second;
+            }
             it->second = std::move(h);
             return &it->second;
         }
@@ -103,8 +111,19 @@ struct AgentNameTable {
         if (it == impl_->agents_.end())
             return nullptr;
         // Issue #3564: non-dtor recycle when Aura resolve hits a
-        // Reclaimed-pending slot (send/recv/join/wait). Quota only.
+        // Reclaimed-pending slot (send/recv/join/wait). Quota only — runs
+        // before any retire check (#3598 AC2).
         (void)aura::orch::maybe_force_release_reclaimed_quota(it->second);
+        // Issue #3598: Done-path-cleaned slot → same-plane retire here
+        // (~AgentHandle runs; the next same-name put is a fresh insert,
+        // not a move-assign over the ghost). Pending slots stay (#3467);
+        // a done-but-not-yet-joined slot stays (reservation pins it until
+        // the Done-path join clears reserved_memory_bytes). Predicate is
+        // two bool loads + is_done — no new atomic (AC3).
+        if (aura::orch::slot_is_reclaimable_clean(it->second)) {
+            impl_->agents_.erase(it);
+            return nullptr;
+        }
         return &it->second;
     }
 

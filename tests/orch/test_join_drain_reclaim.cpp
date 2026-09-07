@@ -1314,6 +1314,90 @@ static void ac3463_4_no_new_query_key_and_no_invent() {
           "3463 AC4: build.py wires linter");
 }
 
+// Issue #3598: Done-path-cleaned slot → same-plane retire. Behavior
+// oracle on a direct table — isolated, no soak. The predicate is state
+// (two bools + is_done + reservation) — this binary runs without
+// production defaults armed, which also covers AC3 (Soft retires too;
+// no getenv in the predicate).
+static void ac3598_name_table_retire_clean() {
+    std::println("\n--- #3598 AC1/AC2: AgentNameTable clean-slot retire ---");
+    // AC1: Done-path-cleaned ghost (flags false, fiber null, reservation
+    // 0) → the next find retires it (nullptr, ~AgentHandle ran) and the
+    // same-name put after retire is a FRESH insert (not move-assign). The
+    // fresh handle uses the live-spawn shape (fiber + reservation — what a
+    // real re-spawn carries), so it stays resolvable; a fully-clean fresh
+    // handle would retire on the next find by contract.
+    {
+        using aura::serve::Fiber;
+        aura::compiler::AgentNameTable table;
+        aura::orch::AgentHandle h;
+        h.name = "a3598";
+        h.id = 41;
+        h.ok = true; // Done-path shape: flags false, fiber null, reservation 0
+        CHECK(table.put(std::move(h)) != nullptr, "3598 AC1: initial put lands");
+        CHECK(table.size() == 1, "3598 AC1: slot registered");
+        CHECK(table.find("a3598") == nullptr, "3598 AC1: find retires the cleaned slot → nullptr");
+        CHECK(table.size() == 0, "3598 AC1: slot erased (~AgentHandle ran)");
+        auto fiber_owned = std::make_unique<Fiber>([] {});
+        aura::orch::AgentHandle h2;
+        h2.name = "a3598";
+        h2.id = 42;
+        h2.ok = true;
+        h2.fiber = fiber_owned.get();
+        h2.reserved_memory_bytes = 4096;
+        auto* fresh = table.put(std::move(h2));
+        CHECK(fresh != nullptr, "3598 AC1: same-name put after retire = fresh insert");
+        CHECK(table.size() == 1, "3598 AC1: table holds exactly the fresh slot");
+        auto* again = table.find("a3598");
+        CHECK(again != nullptr && again->id == 42,
+              "3598 AC1: fresh live slot resolves (reservation pins it)");
+        CHECK(table.find("a3598") != nullptr, "3598 AC1: live slot keeps resolving across finds");
+    }
+    // AC3: a LIVE slot (flags false, fiber not done, reservation held) is
+    // not retired by find — repeated finds keep resolving it, and the
+    // reservation is untouched (the #3564 recycle is flags-gated).
+    {
+        using aura::serve::Fiber;
+        aura::compiler::AgentNameTable table;
+        auto fiber_owned = std::make_unique<Fiber>([] {});
+        aura::orch::AgentHandle h;
+        h.name = "live3598";
+        h.id = 45;
+        h.ok = true;
+        h.fiber = fiber_owned.get();
+        h.reserved_memory_bytes = 4096;
+        CHECK(table.put(std::move(h)) != nullptr, "3598 AC3: live put lands");
+        for (int i = 0; i < 3; ++i) {
+            auto* found = table.find("live3598");
+            CHECK(found != nullptr, "3598 AC3: live slot never retired by find");
+            CHECK(found->reserved_memory_bytes == 4096,
+                  "3598 AC3: reservation untouched (flags-gated #3564)");
+        }
+    }
+    // AC2: pending slot stays — find returns it, same-name put typed-denies
+    // (#3467); the #3564 recycle (production + stuck) runs before any
+    // retire check and never clears the pending flags.
+    {
+        using aura::serve::Fiber;
+        aura::compiler::AgentNameTable table;
+        auto fiber_owned = std::make_unique<Fiber>([] {});
+        fiber_owned->mark_reclaimed();
+        CHECK(table.put(make_pending_reclaimed_handle(fiber_owned.get(), "p3598", 4096)) != nullptr,
+              "3598 AC2: pending put lands");
+        auto* slot = table.find("p3598");
+        CHECK(slot != nullptr, "3598 AC2: find still returns the pending slot");
+        CHECK(slot->must_wait_reclaimed && slot->reclaimed_deferred_cleanup,
+              "3598 AC2: pending flags stay (wait_reclaimed still resolves)");
+        aura::orch::AgentHandle h2;
+        h2.name = "p3598";
+        h2.id = 44;
+        h2.ok = true;
+        CHECK(table.put(std::move(h2)) == nullptr,
+              "3598 AC2: same-name put over pending typed-denies (#3467)");
+        CHECK(table.find("p3598") != nullptr, "3598 AC2: pending slot untouched after deny");
+    }
+}
+
 } // namespace
 
 int run_test_join_drain_reclaim() {
@@ -5084,6 +5168,9 @@ int run_test_join_drain_reclaim() {
     ac3463_2_resolve_aura_agent_unchanged();
     ac3463_3_aura_negative_path_unknown_name();
     ac3463_4_no_new_query_key_and_no_invent();
+
+    std::println("\n=== Issue #3598: Done-path-cleaned slot → same-plane retire ===");
+    ac3598_name_table_retire_clean();
 
     std::println("\n=== Results: {} passed, {} failed ===", aura::test::g_passed,
                  aura::test::g_failed);

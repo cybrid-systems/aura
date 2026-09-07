@@ -2662,6 +2662,23 @@ inline void complete_agent_join_cleanup(AgentHandle& h, serve::JoinResult jr) no
     return true;
 }
 
+// Issue #3598: same-plane retire predicate shared by the name-table and
+// Scope planes. A slot is reclaimable-clean when the Done-path cleanup has
+// run (neither pending flag set), the body is gone (fiber null or done),
+// and no arena reservation is held (reserved_memory_bytes == 0 — the
+// reservation pins the slot until the Done-path join releases it, so a
+// done-but-not-yet-joined agent stays resolvable). Pending slots never
+// match (#3467 — wait_reclaimed_body still resolves the name); live slots
+// never match. Cost: two bool loads + fiber-null check + one is_done load
+// — no new atomic, no getenv (AC3).
+[[nodiscard]] inline bool slot_is_reclaimable_clean(const AgentHandle& h) noexcept {
+    if (h.must_wait_reclaimed || h.reclaimed_deferred_cleanup)
+        return false;
+    if (h.fiber && !h.fiber->is_done())
+        return false;
+    return h.reserved_memory_bytes == 0;
+}
+
 // Issue #3012: ~AgentHandle / move-assign finish after Reclaimed.
 // If the body has exited, run Done-path cleanup (mailbox detach +
 // reservation). Always release reservation so a host that never

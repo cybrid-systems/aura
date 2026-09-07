@@ -4564,9 +4564,11 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
     // Issue #2926: orch:scope-resolve name [:include-descendants bool]
     // Session-local live find on the per-Evaluator AgentScope (no global
     // AgentRegistry). Best-effort against handles_ (+ optional children).
-    // Missing name → ok=#f status=not-found (never hang). After join_all,
-    // fiber may be done — ok=#t with status=done (handle still in scope).
-    // After scope slot dropped (empty session) → not-found.
+    // Missing name → ok=#f status=not-found (never hang). Issue #3598:
+    // after the Done-path cleanup the slot is reclaimable-clean and find
+    // retires it → not-found (the ghost no longer answers); a
+    // done-but-not-yet-joined handle still resolves (the arena reservation
+    // pins it). After scope slot dropped (empty session) → not-found.
     add("orch:scope-resolve",
         [&ev, build_orch_hash, orch_keyword_key, add_identity_plane,
          add_reclaimed_pending_lifecycle, parse_scope_addr_kw, resolve_scope_addr,
