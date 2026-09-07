@@ -22,10 +22,14 @@
 #include "test_harness.hpp"
 
 #include "compiler/security_capabilities.h"
+#include "compiler/security_defaults.hh"
 #include "core/capability_model.hh"
 #include "core/sandbox.hh"
 #include "core/security_event.hh"
 #include "core/workspace_epoch.hh"
+#include "core/workspace_isolation.hh"
+#include "core/gc_hooks.h" // Issue #3594: clear gc_defer production lock post-member
+#include "compiler/typed_mutation_audit.h" // Issue #3594: reset production latch post-member
 
 #include <cstdint>
 #include <fstream>
@@ -485,7 +489,90 @@ static void ac3335_6_source_and_linter() {
 
 } // namespace
 
+
+// ── #3594: IsolationDeny at epoch=0 keeps mid=0 (+ live fiber, #3011);
+//          MacroSelfEvo check at epoch=0 fenced (no phantom mid=1) ──
+static void ac3594_isolation_deny_mid0() {
+    std::println("[#3594] IsolationDeny epoch=0 carries mid=0 + live fiber");
+    reset_all();
+    aura::core::reset_mutation_epoch_for_test();
+    ::setenv("AURA_SANDBOX", "restricted", 1);
+    aura::compiler::security::apply_production_security_defaults();
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+    auto& iso = aura::core::workspace_isolation::g_workspace_isolation();
+    iso.set_current_tenant(1, "alice");
+    const auto seq0 = g_security_event_ring().seq.load(std::memory_order_acquire);
+    // #3011: the deny must carry the live fiber id — pin via the test
+    // override (bare main thread has no fiber context, id would be 0).
+    aura::core::capability::set_effect_fiber_id_override(777);
+    const bool ok = aura::core::workspace_isolation::check_boundary(
+        1, 2, /*ref=*/nullptr, /*allow_cross=*/false, kEffectMutate,
+        /*sandbox_strict=*/false, "test:3594-iso", /*sandbox_restricted=*/true);
+    CHECK(!ok, "AC: cross-tenant deny fires at epoch=0");
+    const auto seq1 = g_security_event_ring().seq.load(std::memory_order_acquire);
+    bool saw_iso_mid0 = false;
+    bool saw_iso_mid1 = false;
+    std::int64_t fiber = 0;
+    for (std::uint64_t s = seq0; s < seq1; ++s) {
+        const auto& e = g_security_event_ring().ring[s % g_security_event_ring().ring.size()];
+        if (e.seq != s)
+            continue;
+        if (static_cast<int>(e.kind) ==
+            static_cast<int>(aura::core::security_event::SecurityEventKind::IsolationDeny)) {
+            if (e.mutation_id == 0)
+                saw_iso_mid0 = true;
+            if (e.mutation_id == 1)
+                saw_iso_mid1 = true;
+            fiber = e.fiber_id;
+        }
+    }
+    CHECK(saw_iso_mid0, "AC: IsolationDeny carries mid=0 (joinable with refuse rows)");
+    CHECK(!saw_iso_mid1, "AC: no phantom mid=1 IsolationDeny");
+    CHECK(fiber == 777, "AC: fiber_id still resolved on deny (#3011 override)");
+    aura::core::capability::set_effect_fiber_id_override(0);
+    ::setenv("AURA_SANDBOX", "off", 1);
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+    reset_all();
+}
+
+static void ac3594_mse_epoch0_fenced() {
+    std::println("[#3594] MacroSelfEvo check at epoch=0 -> provenance fence");
+    reset_all();
+    aura::core::reset_mutation_epoch_for_test();
+    // Seed a durable MSE row under the Off face (bound mid=0 — the fence is
+    // the surface under test, not the seeding).
+    {
+        const auto prev =
+            aura::core::sandbox::g_sandbox_mode_atomic().load(std::memory_order_acquire);
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+        auto prov = aura::core::capability::make_grant_provenance(0, /*force_bind=*/true, 0, 0);
+        g_capability_registry().grant(70, "mse-3594", aura::core::capability::Effect::MacroSelfEvo,
+                                      prov);
+        aura::core::sandbox::set_mode(static_cast<aura::core::sandbox::SandboxMode>(prev));
+    }
+    ::setenv("AURA_SANDBOX", "restricted", 1);
+    aura::compiler::security::apply_production_security_defaults();
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+
+    // caller_mid = 0 (nothing pinned at epoch=0) -> mutation_id stays 0 ->
+    // provenance fence denies; no phantom mid=1 synthesized.
+    const auto chk = aura::core::capability::check_macro_self_evo(
+        70, /*sandbox_active=*/true, /*wildcard_ok=*/false, /*call_fiber_id=*/0,
+        /*caller_mid=*/0);
+    CHECK(!chk.allowed, "AC: epoch=0 production check fenced (no phantom join)");
+    CHECK(std::string_view(chk.deny_reason).find("provenance fence") != std::string_view::npos,
+          "AC: provenance-fence deny reason");
+    ::setenv("AURA_SANDBOX", "off", 1);
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+    reset_all();
+}
+
 int run_test_effect_epoch_mutation_unify() {
+    // Issue #3594: the epoch=0 matrix resets the process-global Mutation
+    // epoch and the production ACs arm the one-way production latch
+    // (#3294) — both must be restored so later Soft members of this batch
+    // keep their face.
+    const auto saved_epoch = aura::core::current_mutation_epoch();
     std::println("=== Issue #2149: effect epoch = Mutation (not Bridge) ===");
     CHECK(kEffectEpochUnifyIssue == 2149, "issue stamp");
     CHECK(kMutationAuditEpochUnifyIssue == 3335, "3335 issue stamp");
@@ -501,6 +588,23 @@ int run_test_effect_epoch_mutation_unify() {
     ac3335_4_soft_off_write();
     ac3335_5_agent_join_vocab();
     ac3335_6_source_and_linter();
+    std::println("[#3594] production phantom mid=1 refusal");
+    ac3594_isolation_deny_mid0();
+    ac3594_mse_epoch0_fenced();
+    // Restore the member-entry face: Mutation epoch + production latch +
+    // dev audit defaults (mirror test_security_capability_batch's
+    // reset_member_face — one-way latch must not leak into Soft members).
+    aura::core::store_workspace_epoch(aura::core::WorkspaceEpochKind::Mutation, saved_epoch);
+    aura::compiler::typed_audit::reset_for_test();
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    // Issue #3594: force_wal latch survives the driver's reset — clear it so
+    // the #2598 residual arm (production lock) stays dormant for Soft members.
+    ::aura::core::wal_slo::set_wal_fail_closed_defaulted_by_force_wal(false);
+    // Issue #3594: the gc_defer production lock (#2598 residual arm) also
+    // survives the driver reset — clear it for Soft members.
+    ::aura::gc_hooks::set_gc_defer_production_locked(false);
+    ::setenv("AURA_SANDBOX", "off", 1);
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
 
     std::println("\n=== #2149/#3335 effect+audit epoch unify: {} passed, {} failed ===", g_passed,
                  g_failed);

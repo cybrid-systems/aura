@@ -12,7 +12,9 @@
 #include "test_harness.hpp"
 
 #include "compiler/security_capabilities.h"
+#include "compiler/security_defaults.hh"
 #include "core/capability_model.hh"
+#include "core/sandbox.hh"
 #include "core/security_event.hh"
 #include "core/workspace_epoch.hh"
 
@@ -66,6 +68,19 @@ static std::uint64_t last_security_event_mid() {
     if (seq == 0)
         return 0;
     return ring.ring[(seq - 1) % ring.ring.size()].mutation_id;
+}
+
+// #3594 helper: count ring rows carrying a specific mutation_id.
+static std::size_t count_ring_rows_with_mid(std::uint64_t mid) {
+    const auto& ring = g_security_event_ring();
+    const auto seq = ring.seq.load(std::memory_order_relaxed);
+    std::size_t n = 0;
+    for (std::uint64_t s = 0; s < seq; ++s) {
+        const auto& e = ring.ring[s % ring.ring.size()];
+        if (e.seq == s && e.mutation_id == mid)
+            ++n;
+    }
+    return n;
 }
 
 // AC1: bound mid M, require_effect with live mid != M → deny + mismatch.
@@ -335,6 +350,131 @@ static void ac3176_std_ffi_surface() {
 
 } // namespace
 
+
+// ── #3594: production phantom mid=1 refusal (epoch=0 / TypedMid=0 matrix) ──
+static void ac3594_1_production_epoch0_refuses() {
+    std::println("\n--- #3594 AC1: production epoch=0 → refuse, no phantom mid=1 ---");
+    reset_all();
+    aura::core::reset_mutation_epoch_for_test();
+    ::setenv("AURA_SANDBOX", "restricted", 1);
+    aura::compiler::security::apply_production_security_defaults();
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_effect_sandbox_mode(1); // Restricted
+    ev.set_capability_tenant_id(80);
+    CHECK(aura::core::current_mutation_epoch() == 0, "AC1: epoch=0 matrix");
+
+    const auto mid1_before = count_ring_rows_with_mid(1);
+    const bool ok =
+        ev.require_effect(static_cast<std::uint16_t>(kEffectMutate), "test:3594-ac1", 0);
+    const auto mid1_after = count_ring_rows_with_mid(1);
+    CHECK(!ok, "AC1: production epoch=0 TypedMid=0 → require_effect refuses");
+    CHECK(mid1_after == mid1_before, "AC1: no phantom mid=1 ring row minted");
+
+    // Refuse surface joins at mid=0 (grant-mid-refused / mid-fallback-refused
+    // rows carry mid=0 per #3090/#3462) — some deny row at mid=0 must exist.
+    bool saw_deny_mid0 = false;
+    const auto& ring = g_security_event_ring();
+    const auto seq = ring.seq.load(std::memory_order_acquire);
+    for (std::uint64_t s = 0; s < seq; ++s) {
+        const auto& e = ring.ring[s % ring.ring.size()];
+        if (e.seq != s)
+            continue;
+        if (e.mutation_id == 0 && e.denied &&
+            std::string_view(e.reason).find("mid-fallback-refused") != std::string_view::npos)
+            saw_deny_mid0 = true;
+    }
+    CHECK(saw_deny_mid0, "AC1: mid-fallback-refused refuse row at mid=0");
+
+    ::setenv("AURA_SANDBOX", "off", 1);
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+}
+
+static void ac3594_2_bump_joins_allows() {
+    std::println("\n--- #3594 AC2: epoch bump → join equal → allow ---");
+    reset_all();
+    aura::compiler::security::apply_production_security_defaults();
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+    bump_mutation_epoch(2);
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_effect_sandbox_mode(1); // Restricted
+    ev.set_capability_tenant_id(81);
+    const auto me = current_mutation_epoch();
+    CHECK(me != 0, "AC2: epoch non-zero after bump");
+    // Durable registry row (raw-thread consumable; the #3561 session-bind
+    // wrapper is not the surface under test here — the mid join is).
+    {
+        const auto prev =
+            aura::core::sandbox::g_sandbox_mode_atomic().load(std::memory_order_acquire);
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+        auto prov = aura::core::capability::make_grant_provenance(me, /*force_bind=*/true, 0, 0);
+        g_capability_registry().grant(81, "mut-3594-ac2", aura::core::capability::Effect::Mutate,
+                                      prov);
+        aura::core::sandbox::set_mode(static_cast<aura::core::sandbox::SandboxMode>(prev));
+    }
+    const bool ok =
+        ev.require_effect(static_cast<std::uint16_t>(kEffectMutate), "test:3594-ac2", 0);
+    CHECK(ok, "AC2: TypedMid/grant bound join equal after bump → allow (#3296/#3333)");
+}
+
+static void ac3594_3_soft_mid1_stamp_preserved() {
+    std::println("\n--- #3594 AC3: Soft/Off keeps the mid=1 observe stamp ---");
+    reset_all();
+    aura::core::reset_mutation_epoch_for_test(); // epoch=0
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_effect_sandbox_mode(0); // Off
+    const bool ok =
+        ev.require_effect(static_cast<std::uint16_t>(kEffectMutate), "test:3594-ac3", 0);
+    CHECK(ok, "AC3: Off sandbox allows without grant");
+    const auto mid = last_security_event_mid();
+    std::println("  AC3: last SecurityEvent mid={}", mid);
+    CHECK(mid == 1, "AC3: Soft observe stamp mid=1 preserved (#2493 AC4)");
+}
+
+static void ac3594_4_dual_refuse_join_mid0() {
+    std::println("\n--- #3594 AC4: grant refuse + effect refuse join at mid=0 ---");
+    reset_all();
+    aura::core::reset_mutation_epoch_for_test();
+    ::setenv("AURA_SANDBOX", "restricted", 1);
+    aura::compiler::security::apply_production_security_defaults();
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_effect_sandbox_mode(1); // Restricted
+    ev.set_capability_tenant_id(82);
+    // Grant refuse surface: production grant with prov mid=0 → grant-mid-refused
+    // (#2836/#3090 — mid stays 0, no phantom).
+    const bool g = ev.grant_effect_capability(82, "mut-3594-ac4", kEffectMutate,
+                                              /*prov mid=*/0);
+    CHECK(!g, "AC4: production grant with mid=0 refuses");
+    // Effect refuse surface: require_effect refuses at mid=0.
+    const bool ok =
+        ev.require_effect(static_cast<std::uint16_t>(kEffectMutate), "test:3594-ac4", 0);
+    CHECK(!ok, "AC4: effect check refuses at mid=0");
+
+    // One Agent filter view: deny rows at mid=0 from BOTH surfaces.
+    std::size_t mid0_denies = 0;
+    const auto& ring = g_security_event_ring();
+    const auto seq = ring.seq.load(std::memory_order_acquire);
+    for (std::uint64_t s = 0; s < seq; ++s) {
+        const auto& e = ring.ring[s % ring.ring.size()];
+        if (e.seq != s)
+            continue;
+        if (e.mutation_id == 0 && e.denied)
+            ++mid0_denies;
+    }
+    std::println("  AC4: mid=0 deny rows={}", mid0_denies);
+    CHECK(mid0_denies >= 2, "AC4: grant refuse + effect refuse joinable at mid=0");
+
+    ::setenv("AURA_SANDBOX", "off", 1);
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+}
+
+
 int run_test_require_effect_live_mid() {
     std::println("=== Issue #2384: require_effect live mutation_id provenance ===");
     ac1_bound_mismatch_denies();
@@ -349,6 +489,11 @@ int run_test_require_effect_live_mid() {
     ac2707_4_soft_zero_skips();
     ac2707_5_6_query_and_source();
     ac3176_std_ffi_surface();
+    std::println("\n=== Issue #3594: production phantom mid=1 refusal ===");
+    ac3594_1_production_epoch0_refuses();
+    ac3594_2_bump_joins_allows();
+    ac3594_3_soft_mid1_stamp_preserved();
+    ac3594_4_dual_refuse_join_mid0();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

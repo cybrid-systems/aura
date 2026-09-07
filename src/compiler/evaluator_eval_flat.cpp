@@ -6324,7 +6324,12 @@ std::size_t Evaluator::post_mutation_macro_reexpand(aura::ast::FlatAST& flat,
         using aura::core::capability::g_capability_registry;
         const auto tenant = g_capability_registry().default_tenant.load();
         const bool sandbox_active = aura::core::sandbox::is_sandbox_active();
-        const auto chk = check_macro_self_evo(tenant, sandbox_active, /*wildcard_ok=*/false);
+        // Issue #3594: pass the live join mid (composite / TypedMid /
+        // session) so production MacroSelfEvo checks join session-bound
+        // grants instead of false-denying on epoch-only keys.
+        const auto chk = check_macro_self_evo(
+            tenant, sandbox_active, /*wildcard_ok=*/false,
+            /*call_fiber_id=*/0, aura::compiler::typed_audit::join_audit_and_se_mid(0));
         if (!chk.allowed) {
             g_macro_self_evo_denied_total.fetch_add(1, std::memory_order_relaxed);
             g_macro_clone_last_reject_reason.store(1, std::memory_order_relaxed);
