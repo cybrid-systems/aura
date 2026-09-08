@@ -2042,14 +2042,25 @@ JoinResult Fiber::join(std::span<Fiber* const> targets, std::optional<std::uint6
             if (elapsed >= static_cast<std::int64_t>(*timeout_ms)) {
                 // Issue #3050: the shared deadline can expire BETWEEN
                 // per-fiber joins under load (CI jobs>1, busy hosts). A
-                // remaining target may already be terminal non-Ok — report
+                // remaining target may already be reclaimed-live — report
                 // the real worst-case status instead of a blanket Timeout.
-                // join(t, 0) polls without waiting: terminal fibers return
-                // instantly; a still-live target Timeout-fails at 0 budget,
-                // preserving the #2153 wall-clock contract.
-                last = join(t, std::optional<std::uint64_t>(0));
-                if (last.status == JoinStatus::Reclaimed || last.status == JoinStatus::Cancelled)
+                // State-flag read ONLY: join(t, 0) would fire the single-
+                // join reclaimed path (orphan-root release + session
+                // revoke) on a body that may still be executing, and this
+                // aggregate poll must stay side-effect-free — per-handle
+                // cleanup in join_agents owns those (#3600 follow-up:
+                // test_agent_scope join_all drained-after-release). A
+                // live / done target keeps the blanket Timeout (#2153
+                // wall-clock contract).
+                if (t->is_reclaimed() && !t->is_done()) {
+                    join_reclaim_total_.fetch_add(1, std::memory_order_relaxed);
+                    last.status = JoinStatus::Reclaimed;
+                    last.wait_us = static_cast<std::uint64_t>(
+                        std::chrono::duration_cast<std::chrono::microseconds>(
+                            std::chrono::steady_clock::now() - t0)
+                            .count());
                     return last;
+                }
                 join_timeout_total_.fetch_add(1, std::memory_order_relaxed);
                 last.status = JoinStatus::Timeout;
                 last.wait_us = static_cast<std::uint64_t>(
