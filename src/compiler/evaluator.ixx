@@ -3146,6 +3146,14 @@ public:
             },
             /*ctx_gen_source=*/ev.panic_cp_discriminator_gen_source(),
             /*ctx_gen_at_save=*/ev.panic_cp_discriminator_gen_.load(std::memory_order_relaxed),
+            // Issue #3604: ABA skip drains the old occupant's gc_defer only
+            // when the NEW occupant at the recycled address has not re-armed
+            // a live checkpoint of its own (dropping that arm would expose a
+            // half-graph to destructive GC).
+            /*has_panic_checkpoint=*/
+            [](void* p) noexcept -> bool {
+                return static_cast<Evaluator*>(p)->has_panic_checkpoint();
+            },
         };
     }
 

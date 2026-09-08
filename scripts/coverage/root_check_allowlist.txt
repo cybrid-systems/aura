@@ -58,3 +58,4 @@ check_join_reclaim_retry_3595.py
 check_lockless_hygiene_se_3601.py
 check_ffi_apply_densify_refuse_3602.py
 check_wal_window_miss_catalog_3603.py
+check_panic_aba_gc_defer_drain_3604.py

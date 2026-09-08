@@ -11,6 +11,8 @@
 
 module;
 
+#include "gc_hooks.h"
+
 export module aura.core.panic_checkpoint_raii;
 
 import std;
@@ -92,6 +94,11 @@ struct PanicCheckpointHost {
     // unchanged).
     const std::atomic<std::uint64_t>* ctx_gen_source = nullptr;
     std::uint64_t ctx_gen_at_save = 0;
+    // Issue #3604: ABA skip drains the OLD occupant's gc_defer (keyed by
+    // the shared evaluator_id) only when the NEW occupant at the recycled
+    // address has not re-armed a live checkpoint. nullptr = legacy host —
+    // drain skipped, exact #3570 behavior preserved.
+    bool (*has_panic_checkpoint)(void* ctx) = nullptr;
 };
 
 // RAII guard: save on construct; restore on dtor unless commit().
@@ -108,6 +115,11 @@ public:
             else
                 ++g_panic_checkpoint_raii_stats.saves_failed;
         }
+        // Issue #3604: snapshot whether a gc_defer arm exists under this
+        // evaluator_id once the save attempt completed — the ABA dtor arm
+        // may only drain what the OLD occupant owned.
+        defer_armed_at_save_ =
+            saved_ && host_.ctx != nullptr && aura::gc_hooks::gc_deferred_for_evaluator(host_.ctx);
     }
 
     ~PanicCheckpointGuard() noexcept {
@@ -123,6 +135,30 @@ public:
             host_.ctx_gen_source->load(std::memory_order_acquire) != host_.ctx_gen_at_save) {
             ++g_panic_checkpoint_raii_stats.restores_gen_aba_mismatch_total;
             ++g_panic_checkpoint_raii_stats.auto_rollbacks;
+            // Issue #3604: skip restore AND host.clear (#3570 — the address
+            // now names the NEW occupant), but do not leak the OLD
+            // occupant's gc_defer arm: it is keyed by the shared
+            // evaluator_id and would keep compact_sweep / destructive
+            // Moving deferred for the new occupant until an unrelated
+            // reconcile. Drain only what this Guard's save owned AND only
+            // when the new occupant has not re-armed a live checkpoint
+            // (dropping that arm would expose a half-graph to destructive
+            // GC). Legacy hosts without the probe keep exact #3570
+            // behavior. steal_complete (#2203/#2314) still owns the
+            // fiber-migration case — this is the no-steal recycle path.
+            if (defer_armed_at_save_ && host_.has_panic_checkpoint != nullptr &&
+                !host_.has_panic_checkpoint(host_.ctx)) {
+                const auto drained = aura::gc_hooks::clear_gc_defer_for_evaluator(
+                    host_.expected_evaluator_id != nullptr ? host_.expected_evaluator_id
+                                                           : host_.ctx);
+                if (drained > 0) {
+                    (void)aura::gc_hooks::reconcile_gc_defer_bits_after_clear();
+                    // Issue #3604 (issue-sanctioned): the drain actually
+                    // ran — bump the existing clear total. No new
+                    // PanicCheckpointStats mid-field, no steal-named reuse.
+                    ++g_panic_checkpoint_raii_stats.restores_discriminator_cleared;
+                }
+            }
             return;
         }
         // Issue #1393: cross-evaluator discriminator check.
@@ -161,9 +197,11 @@ public:
     PanicCheckpointGuard(PanicCheckpointGuard&& o) noexcept
         : host_(o.host_)
         , saved_(o.saved_)
-        , committed_(o.committed_) {
+        , committed_(o.committed_)
+        , defer_armed_at_save_(o.defer_armed_at_save_) {
         o.committed_ = true; // moved-from: no restore on dtor
         o.saved_ = false;
+        o.defer_armed_at_save_ = false;
     }
     PanicCheckpointGuard& operator=(PanicCheckpointGuard&&) = delete;
 
@@ -179,6 +217,7 @@ private:
     PanicCheckpointHost host_{};
     bool saved_ = false;
     bool committed_ = false;
+    bool defer_armed_at_save_ = false; // Issue #3604: ABA drain gate
 };
 
 } // namespace aura::core::panic_cp
