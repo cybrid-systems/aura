@@ -11653,6 +11653,29 @@ def cmd_ffi_apply_densify_refuse_3602_coverage():
     return 0
 
 
+def cmd_wal_window_miss_catalog_3603_coverage():
+    """Issue #3603: mid point-query window-miss face + forensic catalog seed.
+
+    security-audit additive wal-lookup-window-miss (ring/fallback lines +
+    synthetic miss line gated production/Full + explicit mid + SE WAL on);
+    evolution-audit-decision durable window-miss flag; 7 forensic keys in
+    the engine:metrics catalog seed (no dirty-columnar-stats revival);
+    test faces: replay-join live wrap+rotate, facade catalog-contains,
+    forensic source-cite. No docs/design/3603-*, no tests/**/test_issue_3603.cpp.
+    """
+    print(f"{B}=== wal window-miss + forensic catalog (#3603) ==={N}")
+    script = ROOT / "scripts" / "check_wal_window_miss_catalog_3603.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script), "--strict"], cwd=ROOT)
+    if r.returncode != 0:
+        fail("wal window-miss + forensic catalog (#3603) contract rows failed")
+        return 1
+    ok("wal window-miss + forensic catalog (#3603) clean")
+    return 0
+
+
 def cmd_query_stable_hard_reject_torn_latch_3386_coverage():
     """Issue #3386: shared probe Evaluator::query_stable_hard_reject_torn()
     must OR restamp_over_budget_torn() under multi-worker latch (I6 residual).
@@ -21393,6 +21416,7 @@ def cmd_gate():
         or cmd_moving_untracked_split_3600_coverage()
         or cmd_lockless_hygiene_se_3601_coverage()
         or cmd_ffi_apply_densify_refuse_3602_coverage()
+        or cmd_wal_window_miss_catalog_3603_coverage()
     )
     if rc:
         return rc

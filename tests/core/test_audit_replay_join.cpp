@@ -19,6 +19,17 @@
 //        typed_mutation_audit.h + workspace_epoch.hh +
 //        evaluator_primitives_security.cpp; no docs/design/, no
 //        tests/issues/test_issue_3143.cpp (per #81967/#1655).
+//   AC6 (#3603): production + SE WAL + rotate-bytes(1) + typed-256 /
+//        SE-1024 ring wrap: explicit mid still inside the
+//        wal_mid_lookup_segments() window → row via WAL fallback,
+//        wal-lookup-window-miss=0 (typed-trail-miss=1, not never-audited).
+//   AC7 (#3603): mid beyond the lookup window → synthetic miss line
+//        (reason="wal-lookup-window-miss" + typed-trail-miss=1);
+//        evolution-audit-decision :durable flags
+//        wal-lookup-window-miss=1 (no longer silent).
+//   AC8 (#3603): Soft / WAL-off — ring hit line carries miss=0; ring
+//        miss emits no synthetic line; WAL on + Soft strategy → no
+//        fallback / no miss line (no extra I/O).
 
 #include "test_harness.hpp"
 
@@ -29,13 +40,16 @@
 #include "core/workspace_epoch.hh"
 #include "core/mutation_audit_wal.hh"
 #include "core/capability_model.hh"
+#include "core/wal_append_fail_slo.h"
 
+#include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <print>
 #include <string>
 #include <string_view>
+#include <vector>
 
 import std;
 import aura.compiler.evaluator;
@@ -248,6 +262,207 @@ static void ac5_source_cite_no_design() {
           "AC5: no tests/core/test_issue_3143.cpp");
 }
 
+// ── #3603 helpers: fresh WAL dir + query line flattening + persist ──
+static std::filesystem::path fresh_wal_dir_3603(const char* tag) {
+    auto dir = std::filesystem::temp_directory_path() / "aura-3603-wal" / tag;
+    std::error_code ec;
+    std::filesystem::remove_all(dir, ec);
+    std::filesystem::create_directories(dir, ec);
+    return dir;
+}
+
+static std::vector<std::string> query_audit_lines(CompilerService& cs, auto& ev,
+                                                  const std::string& expr) {
+    std::vector<std::string> out;
+    auto q = cs.eval(expr);
+    if (!q)
+        return out;
+    auto cur = *q;
+    int guard = 0;
+    auto& pairs = ev.pairs();
+    auto heap = ev.string_heap();
+    while (is_pair(cur) && guard++ < 64) {
+        const auto idx = as_pair_idx(cur);
+        if (idx >= pairs.size())
+            break;
+        if (is_string(pairs[idx].car)) {
+            const auto sidx = as_string_idx(pairs[idx].car);
+            if (sidx < heap.size())
+                out.emplace_back(heap[sidx]);
+        }
+        cur = pairs[idx].cdr;
+    }
+    return out;
+}
+
+static std::uint64_t now_ms_3603() {
+    return static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                          std::chrono::steady_clock::now().time_since_epoch())
+                                          .count());
+}
+
+static bool persist_se_3603(std::uint64_t mid, const char* op, const char* reason,
+                            std::uint64_t ts) {
+    return aura::core::security_event_wal::persist_security_event(
+        aura::core::security_event::SecurityEventKind::EffectAllow, /*tenant=*/42, mid,
+        /*epoch=*/7, aura::compiler::security::kEffectMutate, op, reason,
+        /*denied=*/false, /*fiber=*/0, ts);
+}
+
+static void append_se_3603(auto& ring, bool deny, std::uint64_t mid, const char* op,
+                           const char* reason) {
+    append_security_event(ring,
+                          deny ? aura::core::security_event::SecurityEventKind::EffectDeny
+                               : aura::core::security_event::SecurityEventKind::EffectAllow,
+                          /*tenant=*/42, /*mutation_id=*/mid, /*epoch=*/7,
+                          aura::compiler::security::kEffectMutate, op, reason);
+}
+
+// ── AC6 (#3603): production + WAL + wrap → in-window WAL hit ────
+static void ac6_wal_window_hit_after_wrap() {
+    std::println("\n--- #3603 AC6: explicit mid inside lookup window after wrap ---");
+    reset_all();
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    CHECK(aura::core::wal_slo::wal_mid_lookup_segments() == 8,
+          "AC6 pre: production lookup window = 8 segments");
+    const auto dir = fresh_wal_dir_3603("ac6");
+    CHECK(ev.enable_security_event_wal(dir.string()), "AC6: SE WAL enabled");
+    // set_rotate_bytes clamps below 4 records — use the exact minimum so
+    // rotation geometry is deterministic (#3603 window driving).
+    aura::core::security_event_wal::g_security_event_wal().set_rotate_bytes(
+        sizeof(aura::core::security_event_wal::SecurityEventWalRecord) * 4);
+    auto& ring = ::aura::core::security_event::g_security_event_ring();
+    const auto ts = now_ms_3603();
+    // TARGET persisted → WAL segment 0 (every later append rotates).
+    CHECK(persist_se_3603(4242, "test:3603", "3603-target", ts), "AC6: TARGET persisted");
+    append_se_3603(ring, /*deny=*/false, 4242, "test:3603", "3603-target");
+    // Wrap the typed trail (256) + SE ring (1024) with ring-only appends
+    // (no persist — the WAL window must stay tight around TARGET).
+    for (std::uint64_t i = 0; i < 1030; ++i)
+        append_se_3603(ring, /*deny=*/true, 7000 + i, "test:3603-wrap", "wrap");
+    // 3 in-window fillers persisted → TARGET sits 4 segments back (< 8).
+    for (std::uint64_t i = 0; i < 3; ++i) {
+        CHECK(persist_se_3603(9001 + i, "test:3603", "3603-filler", ts), "AC6: filler persisted");
+        append_se_3603(ring, /*deny=*/false, 9001 + i, "test:3603", "3603-filler");
+    }
+    const auto lines =
+        query_audit_lines(cs, ev, "(engine:metrics \"query:security-audit\" 10 42 0 0 4242)");
+    bool saw_row = false, miss0 = false, miss1 = false, typed_miss1 = false;
+    for (const auto& ln : lines) {
+        if (ln.find("mutation_id=4242") == std::string::npos)
+            continue;
+        saw_row = true;
+        if (ln.find("wal-lookup-window-miss=0") != std::string::npos)
+            miss0 = true;
+        if (ln.find("wal-lookup-window-miss=1") != std::string::npos)
+            miss1 = true;
+        if (ln.find("typed-trail-miss=1") != std::string::npos)
+            typed_miss1 = true;
+    }
+    CHECK(saw_row, "AC6: explicit-mid row found via WAL fallback after ring wrap");
+    CHECK(miss0 && !miss1, "AC6: in-window WAL hit → wal-lookup-window-miss=0");
+    CHECK(typed_miss1, "AC6: typed trail (256) wrapped → typed-trail-miss=1 (not never-audited)");
+    ev.disable_security_event_wal();
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+}
+
+// ── AC7 (#3603): beyond lookup window → additive miss face ──────
+static void ac7_wal_window_miss_flagged() {
+    std::println("\n--- #3603 AC7: explicit mid beyond lookup window ---");
+    reset_all();
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    const auto dir = fresh_wal_dir_3603("ac7");
+    CHECK(ev.enable_security_event_wal(dir.string()), "AC7: SE WAL enabled");
+    aura::core::security_event_wal::g_security_event_wal().set_rotate_bytes(
+        sizeof(aura::core::security_event_wal::SecurityEventWalRecord) * 4);
+    auto& ring = ::aura::core::security_event::g_security_event_ring();
+    const auto ts = now_ms_3603();
+    CHECK(persist_se_3603(4242, "test:3603", "3603-target", ts), "AC7: TARGET persisted");
+    append_se_3603(ring, /*deny=*/false, 4242, "test:3603", "3603-target");
+    // 40 persisted fillers, rotation every 4 records → TARGET lands in
+    // segment 0 with segments 1..10 after it; win=8 scans the newest 8
+    // (segments 3..10) → segment 0 is never scanned.
+    for (std::uint64_t i = 0; i < 40; ++i) {
+        CHECK(persist_se_3603(9100 + i, "test:3603", "3603-filler", ts), "AC7: filler persisted");
+        append_se_3603(ring, /*deny=*/false, 9100 + i, "test:3603", "3603-filler");
+    }
+    // Wrap the ring past TARGET so the live-ring scan misses too.
+    for (std::uint64_t i = 0; i < 1030; ++i)
+        append_se_3603(ring, /*deny=*/true, 7000 + i, "test:3603-wrap", "wrap");
+    const auto lines =
+        query_audit_lines(cs, ev, "(engine:metrics \"query:security-audit\" 10 42 0 0 4242)");
+    bool miss_line = false, miss1 = false, typed1 = false, bogus_row = false;
+    for (const auto& ln : lines) {
+        if (ln.find("wal-lookup-window-miss=1") != std::string::npos)
+            miss1 = true;
+        if (ln.find("reason=\"wal-lookup-window-miss\"") != std::string::npos)
+            miss_line = true;
+        if (ln.find("typed-trail-miss=1") != std::string::npos)
+            typed1 = true;
+        if (ln.find("wal-lookup-window-miss=0") != std::string::npos)
+            bogus_row = true;
+    }
+    CHECK(miss1 && miss_line, "AC7: window miss flagged — not silent, not never-audited");
+    CHECK(typed1, "AC7: typed-trail-miss stays 1 (not rewritten as typed hit)");
+    CHECK(!bogus_row, "AC7: no row claims an in-window hit");
+    // Decision hash: :durable + all find_recent_* miss → additive flag=1.
+    auto dm = cs.eval("(hash-ref (engine:metrics \"query:evolution-audit-decision\" 4242 "
+                      "\"durable\") \"wal-lookup-window-miss\")");
+    CHECK(dm && is_int(*dm) && as_int(*dm) == 1,
+          "AC7: evolution-audit-decision :durable wal-lookup-window-miss=1");
+    ev.disable_security_event_wal();
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+}
+
+// ── AC8 (#3603): Soft / WAL-off — no miss line, no extra I/O ────
+static void ac8_soft_wal_off_silent() {
+    std::println("\n--- #3603 AC8: Soft / WAL-off stays silent ---");
+    reset_all();
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    auto& ring = ::aura::core::security_event::g_security_event_ring();
+    // (a) WAL-off + ring hit → line carries wal-lookup-window-miss=0.
+    append_se_3603(ring, /*deny=*/false, 555, "test:3603", "soft");
+    const auto lines =
+        query_audit_lines(cs, ev, "(engine:metrics \"query:security-audit\" 10 42 0 0 555)");
+    bool ring_hit0 = false;
+    for (const auto& ln : lines)
+        if (ln.find("mutation_id=555") != std::string::npos &&
+            ln.find("wal-lookup-window-miss=0") != std::string::npos)
+            ring_hit0 = true;
+    CHECK(ring_hit0, "AC8a: ring hit line carries wal-lookup-window-miss=0");
+    // (b) WAL-off + ring miss → nothing (no synthetic miss line, no I/O).
+    const auto none =
+        query_audit_lines(cs, ev, "(engine:metrics \"query:security-audit\" 10 0 0 0 999999)");
+    CHECK(none.empty(), "AC8b: WAL-off + ring miss emits no synthetic line");
+    // (c) WAL on but Soft strategy → fallback + miss face gated off.
+    const auto dir = fresh_wal_dir_3603("ac8");
+    CHECK(ev.enable_security_event_wal(dir.string()), "AC8c: SE WAL enabled (dev defaults)");
+    aura::core::security_event_wal::g_security_event_wal().set_rotate_bytes(
+        sizeof(aura::core::security_event_wal::SecurityEventWalRecord) * 4);
+    const auto ts = now_ms_3603();
+    CHECK(persist_se_3603(4242, "test:3603", "3603-target", ts), "AC8c: TARGET persisted");
+    for (std::uint64_t i = 0; i < 10; ++i)
+        CHECK(persist_se_3603(9200 + i, "test:3603", "3603-filler", ts), "AC8c: filler persisted");
+    const auto soft_lines =
+        query_audit_lines(cs, ev, "(engine:metrics \"query:security-audit\" 10 0 0 0 4242)");
+    bool any_miss = false;
+    for (const auto& ln : soft_lines)
+        if (ln.find("wal-lookup-window-miss=1") != std::string::npos)
+            any_miss = true;
+    CHECK(!any_miss, "AC8c: Soft strategy → no WAL fallback / no miss line (no extra I/O)");
+    ev.disable_security_event_wal();
+    std::filesystem::remove_all(dir);
+}
+
 } // namespace
 
 int run_test_audit_replay_join() {
@@ -257,6 +472,9 @@ int run_test_audit_replay_join() {
     ac3_typedmid_after_boundary_enter();
     ac4_query_audit_replay_join();
     ac5_source_cite_no_design();
+    ac6_wal_window_hit_after_wrap();
+    ac7_wal_window_miss_flagged();
+    ac8_soft_wal_off_silent();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }

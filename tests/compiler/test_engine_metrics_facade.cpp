@@ -345,6 +345,30 @@ int main() {
     }
 
     {
+        // Issue #3603: forensic query handlers are register_stats_impl'd
+        // but were absent from the catalog seed — (engine:metrics :prefix
+        // "query:") never showed them. Catalog-contains is the discovery
+        // contract (#3531 probe style; :all/:prefix dumps are a
+        // pre-existing stack-smash on this tree).
+        aura_metrics_catalog_clear_runtime_for_test();
+        std::println("\n--- #3603: forensic queries present in catalog seed ---");
+        for (const char* k :
+             {"query:security-audit", "query:security-posture", "query:security-schedule-gate",
+              "query:reload-recovery-playbook", "query:aot-hotupdate-stats",
+              "query:aot-incremental-reemit-stats", "query:arena-moving-densify-health"}) {
+            CHECK(aura_metrics_catalog_contains(k) == 1, std::format("3603 AC4: {} in catalog", k));
+        }
+        CHECK(aura_metrics_catalog_contains("query:dirty-columnar-stats") == 0,
+              "3603 AC5: query:dirty-columnar-stats stays merged away");
+        CHECK(hash_int(cs, "(engine:metrics \"query:evolution-audit-decision\")",
+                       "wal-lookup-window-miss") == 0,
+              "3603 AC3: decision hash carries wal-lookup-window-miss=0 under Soft");
+        CHECK(hash_int(cs, "(engine:metrics \"query:evolution-audit-decision\")", "observe-only") ==
+                  1,
+              "3603: observe-only stays 1");
+    }
+
+    {
         const auto obs = read_file("src/compiler/evaluator_primitives_observability.cpp");
         CHECK(obs.find("kMetricsCatalogRuntimeIssue = 3531") != std::string::npos,
               "3531 AC4: stamp in catalog TU");

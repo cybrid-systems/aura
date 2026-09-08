@@ -1296,6 +1296,18 @@ const std::vector<std::string> kObservabilityStatsPrimitives = {
     "gc-arena-stats",
     "gc-stats",
     "type-registry-stats",
+    // Issue #3603 — forensic query handlers are register_stats_impl'd
+    // but were absent from this seed, so the engine:metrics prefix query:
+    // listing and stats:list never showed them (agent fell back to OR-ing
+    // schema sentinels). Catalog-only — SlimSurface public add() stays
+    // frozen (#1448); by-name lookup is unchanged (these already resolved).
+    "query:security-audit",
+    "query:security-posture",
+    "query:security-schedule-gate",
+    "query:reload-recovery-playbook",
+    "query:aot-hotupdate-stats",
+    "query:aot-incremental-reemit-stats",
+    "query:arena-moving-densify-health",
 };
 
 
