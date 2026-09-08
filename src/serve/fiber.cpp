@@ -2040,6 +2040,16 @@ JoinResult Fiber::join(std::span<Fiber* const> targets, std::optional<std::uint6
                                      std::chrono::steady_clock::now() - t0)
                                      .count();
             if (elapsed >= static_cast<std::int64_t>(*timeout_ms)) {
+                // Issue #3050: the shared deadline can expire BETWEEN
+                // per-fiber joins under load (CI jobs>1, busy hosts). A
+                // remaining target may already be terminal non-Ok — report
+                // the real worst-case status instead of a blanket Timeout.
+                // join(t, 0) polls without waiting: terminal fibers return
+                // instantly; a still-live target Timeout-fails at 0 budget,
+                // preserving the #2153 wall-clock contract.
+                last = join(t, std::optional<std::uint64_t>(0));
+                if (last.status == JoinStatus::Reclaimed || last.status == JoinStatus::Cancelled)
+                    return last;
                 join_timeout_total_.fetch_add(1, std::memory_order_relaxed);
                 last.status = JoinStatus::Timeout;
                 last.wait_us = static_cast<std::uint64_t>(
