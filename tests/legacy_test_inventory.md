@@ -33,13 +33,13 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | Theme | Title | Issues | Root | Domain | Total | Migration priority |
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
 | `arena_compaction` | Arena / compaction / GC | 0 | 0 | 90 | 90 | P0 — well-contained, batch drivers already exist |
-| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 267 | 267 | P0 — high volume; strong domain suite foothold |
+| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 268 | 268 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 109 | 109 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 26 | 26 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 59 | 59 | P1 — domain hygiene suite exists |
 | `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 88 | 88 | P2 — link-profile heavy; migrate AC smoke first |
 | `shape_soa` | Shape / SoA / column layout | 0 | 0 | 54 | 54 | P2 — small-medium; soa_batch precedent |
-| `observability` | Observability / metrics / query:*-stats | 0 | 0 | 134 | 134 | P2 — often thin schema probes; collapse into obs matrix |
+| `observability` | Observability / metrics / query:*-stats | 0 | 0 | 133 | 133 | P2 — often thin schema probes; collapse into obs matrix |
 | `uncategorized` | Uncategorized / mixed | 0 | 0 | 58 | 58 | P3 — review case-by-case |
 
 ## Patterns, harness usage, coupling
@@ -1202,13 +1202,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_type_dep_epoch_prune.cpp` (—) [domain_suite, theme_compiler] — AC1: After set_cache_epoch(e+1), edges stamped at epoch e (e>0) drop;
 - `tests/compiler/test_workspace_switch.cpp` (—) [domain_suite, theme_compiler] — AC1: switch binds flat/pool + set_workspace_cow_epoch in one block
 
-### `mutation_dirty` — Mutation / dirty propagation / provenance (267)
+### `mutation_dirty` — Mutation / dirty propagation / provenance (268)
 
 **Target:** tests/core/test_mutation_boundary_batch (domain/ pilot abandoned in R1)
 
 **Priority:** P0 — high volume; strong domain suite foothold
 
-#### domain/ (267)
+#### domain/ (268)
 
 - `tests/compiler/test_abort_ir_cache_fence_first.cpp` (—) [large, domain_suite, theme_compiler] — AC1: All 3 abort entry points in evaluator_mutation_boundary.cpp
 - `tests/core/test_add_node_builder_contract.cpp` (—) [domain_suite, theme_core] — AC1: single-threaded add_* path unchanged (builders work)
@@ -1292,6 +1292,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_dirty_propagation_cascade.cpp` (—) [domain_suite, theme_compiler] — AC1: cascade_mark_dirty / propagate_closure BFS marks all dependents
 - `tests/compiler/test_dirty_propagation_cost_closed_loop.cpp` (—) [small, domain_suite, theme_compiler] — Issue #398/#399/#408/#415 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_dirty_reason_verification_propagation.cpp` (—) [domain_suite, theme_compiler] — Issue #344/#415/#437/#469 (#1978 renamed): issue# moved from filename to header.
+- `tests/compiler/test_dispatch_required_effects.cpp` (—) [large, domain_suite, theme_compiler] — Issue #2583 — Hard path: every non-zero required_effects call goes
 - `tests/compiler/test_edsl_core_stability_cow_atomic_query_mutate.cpp` (—) [domain_suite, theme_compiler] — test_edsl_core_stability_cow_atomic_query_mutate.cpp — Issue #655:
 - `tests/compiler/test_edsl_query_mutate_commercial_closed_loop.cpp` (—) [domain_suite, theme_compiler] — Issue #552/#619/#634/#635/#636 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_edsl_validate_or_refresh.cpp` (—) [domain_suite, theme_compiler] — AC1: query:children/node/parent/*-stable/node-marker/node-provenance
@@ -1859,13 +1860,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_value_tag_hot_path.cpp` (—) [domain_suite, theme_compiler] — AC1: Pure is_* (is_fixnum_hot / is_int) match classify; single low2 path
 - `tests/compiler/test_workspace_delete_child.cpp` (—) [domain_suite, theme_compiler] — tests/compiler/test_workspace_delete_child.cpp — Issue #1770: WorkspaceTree delete_child test.
 
-### `observability` — Observability / metrics / query:*-stats (134)
+### `observability` — Observability / metrics / query:*-stats (133)
 
 **Target:** tests/compiler/test_obs_schema_matrix.cpp + tests/compiler/obs_schema_cases.hpp
 
 **Priority:** P2 — often thin schema probes; collapse into obs matrix
 
-#### domain/ (134)
+#### domain/ (133)
 
 - `tests/compiler/test_adaptive_reverify_limit.cpp` (—) [domain_suite, theme_compiler] — Issue #2939 — dep-closure reverify (BFS over var_to_constraints_) to
 - `tests/compiler/test_adt_exhaustiveness_production_hard.cpp` (—) [domain_suite, theme_compiler] — test_adt_exhaustiveness_production_hard.cpp -- source-cite AC for Issue #3559
@@ -1901,7 +1902,6 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_delta_truncate_goal_priority.cpp` (—) [domain_suite, theme_compiler] — AC1: Truncate + non-empty occurrence_goals → goal-priority reverify
 - `tests/compiler/test_densify_envframe_ok.cpp` (—) [domain_suite, theme_compiler] — AC1: Soft / no Moving densify → envframe_ok stays true (vacuous)
 - `tests/compiler/test_densify_root_closure_closed_loop.cpp` (—) [domain_suite, theme_compiler] — AC1: Soft / no Moving densify → root_remap_ok + closure_remount_ok true
-- `tests/compiler/test_dispatch_required_effects.cpp` (—) [domain_suite, theme_compiler] — Issue #2583 — Hard path: every non-zero required_effects call goes
 - `tests/compiler/test_dual_path_desync_hard_fail.cpp` (—) [domain_suite, theme_compiler] — AC1: inject desync → hard path; metric++; materialize bindings empty
 - `tests/compiler/test_engine_metrics_facade.cpp` (—) [large, domain_suite, theme_compiler] — AC1: (engine:metrics) returns hash with nested groups + ≥200 metric fields
 - `tests/compiler/test_envframe_resolve_distinction.cpp` (—) [domain_suite, theme_compiler] — Issue #1708/#1709/#1754/#1756/#1890 (#1978 renamed): issue# moved from filename to header.

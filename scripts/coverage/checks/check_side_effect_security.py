@@ -298,6 +298,29 @@ def scan_dispatch_callers(dispatch_path: str | None = None) -> list[tuple[str, s
     return violations
 
 
+def scan_infer_mse_bits(side_effect_path: str | None = None) -> list[str]:
+    """Issue #3596: the agent:/synthesize:/strategy: prefix infer must demand
+    Mutate | MacroSelfEvo — dispatch MSE gate parity with effect_for_cap_name
+    (#2489/#2583 residual; expand sites were closed by #3378)."""
+    path = ROOT / side_effect_path if side_effect_path else ROOT / "src" / "compiler" / "security_side_effect.hh"
+    if not path.is_file():
+        return [f"{path}: missing — cannot verify #3596 infer MSE bits"]
+    text = path.read_text(encoding="utf-8", errors="replace")
+    idx = text.find('name.starts_with("agent:")')
+    if idx < 0:
+        return ["#3596: agent:/synthesize:/strategy: infer block not found"]
+    window = text[idx : idx + 400]
+    issues: list[str] = []
+    if "kEffectMacroSelfEvo" not in window:
+        issues.append(
+            "#3596: agent:/synthesize:/strategy: infer must include kEffectMacroSelfEvo "
+            "(Mutate|MSE — dispatch gate parity with effect_for_cap_name)"
+        )
+    if "kEffectMutate" not in window:
+        issues.append("#3596: agent:/synthesize:/strategy: infer must keep kEffectMutate")
+    return issues
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument(
@@ -367,6 +390,19 @@ def main() -> int:
         )
         failed = True
 
+    infer_violations = scan_infer_mse_bits()
+
+    if infer_violations:
+        print("FAIL: infer MSE-bit violations (Issue #3596):")
+        for v in infer_violations:
+            print(f"  + {v}")
+        print(
+            "\nagent:/synthesize:/strategy: are the #2489 self-evo family —\n"
+            "dispatch infer must demand kEffectMutate | kEffectMacroSelfEvo\n"
+            "(#3596), not Mutate-only."
+        )
+        failed = True
+
     if jit_violations:
         print("FAIL: JIT prim dispatch routing violations (Issue #3593):")
         for v in jit_violations:
@@ -379,7 +415,7 @@ def main() -> int:
         failed = True
 
     if not failed:
-        print("OK: side-effect security coverage (Issue #2057/#2152/#3524/#3593) — no uncovered effectful prims")
+        print("OK: side-effect security coverage (Issue #2057/#2152/#3524/#3593/#3596) — no uncovered effectful prims")
         return 0
 
     return 1 if args.strict else 0

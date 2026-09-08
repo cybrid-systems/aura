@@ -72,9 +72,15 @@ infer_required_effects_from_name(std::string_view name) noexcept {
         name.starts_with("sys-exec"))
         return kEffectExec;
     // Issue #2627: auto-evolve-* removed; agent: remains the self-evo surface.
+    // Issue #3596: self-mod / agent surfaces demand Mutate | MacroSelfEvo —
+    // the same family `effect_for_cap_name` maps to MacroSelfEvo / TenantAdmin
+    // (#2489). Mutate-only infer let a Restricted principal holding a plain
+    // mutate grant run agent:/synthesize:/strategy: prims with no MSE gate at
+    // dispatch (expand sites were already closed by #3378; dispatch name-infer
+    // was the residual). Soft / Off: dispatch require_effect stays a no-op.
     if (name.starts_with("agent:") || name.starts_with("synthesize:") ||
         name.starts_with("strategy:"))
-        return kEffectMutate; // self-mod / agent surfaces treated as mutate-class
+        return static_cast<std::uint16_t>(kEffectMutate | kEffectMacroSelfEvo);
     return kEffectNone;
 }
 
