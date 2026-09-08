@@ -320,6 +320,44 @@ static void note_apply_closure_densify_hard_refuse(CompilerMetrics* metrics,
     ev.bump_compiler_root_dangling_prevented();
 }
 
+// Issue #3602: the FFI return path shares the #3421 predicate. The TW/IR
+// arms hard-refuse densify-stale closures; this arm marshaled + called
+// native without consulting last_object_remap_. Opaque args resolve through
+// opaque_heap_ slots (rewritten by #3057 windows), so a resolve hit means
+// the live value is a densify-OLD address that escaped slot rewrite (EXEMPT
+// alias, observed-only, pre-rewrite copy). fn_ptr: a remap hit means the
+// pointer aliases an arena object that moved - native libc addrs are never
+// remap keys, so no false positive. Same quiet shape as #3421: two relaxed
+// loads when Soft / objects_moved==0, then return. Counters reused via the
+// shared note helper (closure_stale_returns + compiler_root_dangling). No
+// remap inside ffi_marshal_args_pure - it stays pure (#3602 non-goal).
+// Marshalled is a template parameter: FFIMarshalled is reachable-but-not
+// namable through the module import (non-exported in evaluator_pure.ixx).
+template <typename Marshalled>
+static bool production_ffi_apply_densify_hard_refuse(ast::ASTArena* arena, const void* fn_ptr,
+                                                     std::span<const int> arg_types,
+                                                     const Marshalled& marshalled) noexcept {
+    if (!aura::compiler::typed_audit::production_defaults_active())
+        return false;
+    if (aura::core::moving_densify_health::g_last_objects_moved.load(std::memory_order_relaxed) ==
+        0)
+        return false;
+    if (!aura::core::lifetime_consistency_proof::last_lifetime_consistency_would_allow())
+        return true;
+    if (arena && fn_ptr && arena->resolve_object_remap(const_cast<void*>(fn_ptr)))
+        return true;
+    const auto n =
+        arg_types.size() < marshalled.i_vals.size() ? arg_types.size() : marshalled.i_vals.size();
+    for (std::size_t i = 0; i < n; ++i) {
+        if (arg_types[i] != 4)
+            continue; // Opaque arm - the only register carrying a live addr
+        auto live = reinterpret_cast<void*>(static_cast<std::intptr_t>(marshalled.i_vals[i]));
+        if (live && arena && arena->resolve_object_remap(live))
+            return true;
+    }
+    return false;
+}
+
 // Issue #1511: dual-check gate for every closure_bridge_ dispatch.
 // Covers (1) local-map stale recovery and (2) local-miss IR bridge.
 // When provenance is available (local Closure copy), enforces the same
@@ -445,6 +483,18 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const
             // s6 and str_bufs are not used directly (we only
             // need the void*; s_vals already points into str_bufs
             // for lifetime).
+
+            // Issue #3602: FFI arm shares the #3421 densify-stale refuse.
+            // The TW/IR arms hard-refuse; this return path marshaled +
+            // called native with no consult. Reuses closure_stale_returns
+            // + compiler_root_dangling_prevented via the shared note
+            // helper. Soft / objects_moved==0: two relaxed loads, then
+            // proceed (same quiet shape as #3421).
+            if (production_ffi_apply_densify_hard_refuse(arena_, fn_ptr, arg_types, marshalled)) {
+                note_apply_closure_densify_hard_refuse(
+                    static_cast<struct CompilerMetrics*>(compiler_metrics_), *this);
+                return std::nullopt;
+            }
 
             std::int64_t result_i = 0;
             double result_f = 0.0;
