@@ -82,6 +82,14 @@ def main() -> int:
     if bump_pos < 0 or decide_pos < 0 or bump_pos > decide_pos:
         fails.append("AC1: epoch advance must precede decide_and_reemit in facade body")
 
+    # Issue #3605: owner-scope exception — the facade consults the table
+    # bumper's scope prediction BEFORE the joint C-bridge/defuse bump and
+    # freezes both clocks on the owner-scoped path (peer dual-fresh stays
+    # green on unrelated defines). Single-eval / force / env-opt-out keep
+    # the #3150 joint process bump (the bumpers stay in the facade body).
+    must("Issue #3605", "AC6 owner-scope C-clock skip cite", hur)
+    must("aura_aot_bump_will_be_owner_scoped()", "AC6 facade scope prediction", facade_block)
+
     # AC2 — runtime observable via aura_aot_func_table_epoch.
     # The function is declared in aura_jit_bridge.h + defined in aura_jit_bridge.cpp.
     bridge = _read("src/compiler/aura_jit_bridge.cpp")

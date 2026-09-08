@@ -13673,9 +13673,18 @@ public:
         sync_lock_order_metrics_();
         metrics_.unified_invalidation_protocol_total.fetch_add(1, std::memory_order_relaxed);
         aura::util::thread_fence(std::memory_order_release);
-        bump_bridge_epoch();
-        evaluator_.bump_defuse_version_for_test();
-        metrics_.dep_graph_defuse_version_bumps.fetch_add(1, std::memory_order_relaxed);
+        // Issue #3605: on the owner-scoped facade path the process C
+        // clocks did not advance — the core bridge bump + C mirror SET
+        // here would re-point g_current_bridge_epoch process-wide and
+        // fail every peer closure's dual-fresh. Skip both on that path;
+        // owner-local cleanup below still runs (peers ride #3300/#3351
+        // name bits + #3377 owner slot clear).
+        const bool os_table_bump = aura_aot_last_table_bump_owner_scoped() != 0;
+        if (!os_table_bump) {
+            bump_bridge_epoch();
+            evaluator_.bump_defuse_version_for_test();
+            metrics_.dep_graph_defuse_version_bumps.fetch_add(1, std::memory_order_relaxed);
+        }
         on_typed_mutation_epoch_bump();
         if (name.empty()) {
             std::vector<std::string> names;

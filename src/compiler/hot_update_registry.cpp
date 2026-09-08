@@ -161,8 +161,27 @@ bool HotUpdateRegistry::hard_invalidate_via_facade(const char* name, ReemitReaso
     // epoch (release). Each bumper is independent under the same
     // mutate_mtx_ discipline the caller holds in
     // CompilerService::invalidate_function / mark_define_dirty.
-    aura_hot_update_bump_bridge_epoch();
-    aura_hot_update_bump_defuse_version();
+    // Issue #3605: predict the table bumper's scope BEFORE the joint C
+    // bump. Production multi-eval owner-scoped (#2951 default) must NOT
+    // advance the process C-bridge / defuse clocks — aura_is_jit_closure_
+    // fresh samples both, and a process bump makes every live closure on
+    // every eval fail dual-fresh: fail-closed, but it defeats the
+    // owner-scope isolation #2841 named and contradicts the #3300
+    // contract ("bridge_epoch not advanced") the peer name tables rely
+    // on. Single-eval / force / env-opt-out keep the #3150 joint process
+    // bump. Fail-safe: a prediction mismatch still force-stales peers
+    // through the table domain (global bump) — same fail-closed posture.
+    const bool c_clocks_owner_skipped = aura_aot_bump_will_be_owner_scoped() != 0;
+    if (c_clocks_owner_skipped) {
+        // Arm hard-owner-scoped attribution BEFORE the bump so the
+        // bumper's owner branch skips the #3070 all-slot peer mark
+        // (name-level bits #3300/#3351 + owner slot clear #3377 carry
+        // the signal without staling unrelated peers' AOT slots).
+        aura_aot_note_cross_eval_hard_owner_scoped();
+    } else {
+        aura_hot_update_bump_bridge_epoch();
+        aura_hot_update_bump_defuse_version();
+    }
     const std::uint64_t epoch_before = aura_aot_func_table_epoch();
     aura_aot_bump_func_table_epoch();
     // Issue #3300 / #3351: owner-scoped hard success does not advance
@@ -177,7 +196,6 @@ bool HotUpdateRegistry::hard_invalidate_via_facade(const char* name, ReemitReaso
         // bump g_aot_table_epoch. Mark no-ops unless multi-eval live > 1.
         aura_aot_mark_peer_ir_name_soft_stale(name);
     }
-    aura_aot_note_cross_eval_hard_owner_scoped();
     // Issue #3377: owner-scoped hard invalidate must physically clear the
     // owner AOT slot for the mutated define. The owner-scoped branch of
     // aura_aot_bump_func_table_epoch does NOT advance g_aot_table_epoch

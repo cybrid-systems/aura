@@ -722,6 +722,18 @@ std::uint64_t aura_aot_state_map_size(void);
 
 void aura_register_fn_tracked(int64_t func_id, int64_t fn_ptr);
 std::uint64_t aura_aot_func_table_epoch(void);
+// Issue #3605: non-consuming prediction of the table bumper's scope —
+// same inputs as the owner-scoped branch of aura_aot_bump_func_table_epoch
+// (multi-eval live + throttle armed + no force note + owner TLS present).
+// The facade consults this BEFORE the joint C-bridge/defuse bump so the
+// owner-scoped path can freeze the process clocks (peer dual-fresh stays
+// green on unrelated defines, #3300 contract).
+int aura_aot_bump_will_be_owner_scoped(void);
+// Issue #3605: 1 when the most recent aura_aot_bump_func_table_epoch call
+// took the owner-scoped (no table advance) branch. The #3219 eval-core
+// joint stamp reads it (same mutate_mtx_ critical section, same thread)
+// to skip the core bridge epoch bump + C mirror SET on that path.
+int aura_aot_last_table_bump_owner_scoped(void);
 bool aura_aot_probe_checkpoint_version(std::uint64_t defuse_version, std::uint64_t bridge_epoch);
 void aura_aot_record_deopt_on_steal(void);
 std::uint64_t aura_aot_bridge_epoch_mismatches(void);

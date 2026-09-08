@@ -220,6 +220,15 @@ extern "C" __attribute__((weak)) void aura_aot_note_cross_eval_hard_owner_scoped
 extern "C" __attribute__((weak)) int aura_aot_cross_eval_hard_owner_scoped_armed(void) {
     return 0;
 }
+// Issue #3605: stub semantics — never owner-scoped (the stub bridge has
+// no owner-scoped table branch), so the facade keeps the #3150 joint C
+// bump and the stamp keeps the #3219 core dual-write.
+extern "C" __attribute__((weak)) int aura_aot_bump_will_be_owner_scoped(void) {
+    return 0;
+}
+extern "C" __attribute__((weak)) int aura_aot_last_table_bump_owner_scoped(void) {
+    return 0;
+}
 extern "C" __attribute__((weak)) std::uint64_t
 cross_eval_epoch_action_throttled_total_v_read(void) {
     return 0;
