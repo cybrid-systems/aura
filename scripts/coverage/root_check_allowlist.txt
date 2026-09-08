@@ -25,6 +25,7 @@ check_impact_rearm_coverage_3161.py
 check_inline_pass_soa_3403.py
 check_intermediate_create_value_only_soak_3306.py
 check_ir_typed_entry_proof_authority_3305.py
+check_moving_untracked_split_3600.py
 check_mutation_boundary_ssot_3384.py
 check_nested_guard_exit_dirty_pending_3166.py
 check_occurrence_hard_face_commit_2716.py

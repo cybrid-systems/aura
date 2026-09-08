@@ -2335,9 +2335,11 @@ public:
             // above (caller intent not lost on soft-gate / pin-count gate).
             // Densify tracked create objects before freelist/tail compact.
             // Issue #2495: pass out_untracked_kept_count so we can detect
-            // densify windows where Moving moved live objects but left
-            // external / untracked candidates behind. failure-closed →
-            // set moving_incomplete_remap + clear pin_contract_held.
+            // densify windows where Moving dropped an external identity
+            // (alloc-fail restore / same-window collision). Issue #3600:
+            // kept-large tracked entries no longer count — they stay on
+            // dtors_ at the old address. failure-closed → set
+            // moving_incomplete_remap + clear pin_contract_held.
             std::size_t untracked_kept_local = 0;
             // Issue #3210: drain stack/temp EnvFrame/Closure/JIT/FFI live
             // ptrs into post_moving_live_canaries_ BEFORE relocate so
@@ -2430,7 +2432,10 @@ public:
             // Issue #2495: fail-closed against false safety under Moving default.
             // When densify moved objects AND untracked candidates existed, the
             // remap walk missed at least one potential live root (external raw
-            // pointer not registered as pin or root). Pin-or-remap contract
+            // pointer not registered as pin or root). Issue #3600: the count
+            // no longer aliases kept-large tracked entries — the gate fires
+            // only on true external identity-drops (alloc-fail restore /
+            // collision) and stale_unremapped slots. Pin-or-remap contract
             // cannot be claimed; bump the untracked counter and mark both
             // moving_incomplete_remap (observability) and pin_contract_held
             // (the unified failure flag the Phase 5 driver checks).
@@ -2961,10 +2966,15 @@ private:
     // Snapshot → freelist recycle (no dtor) → reallocate → memcpy → remap.
     // Non-small-pool / untracked slots stay put. Avoids allocate_raw_impl
     // auto-compact re-entry. Returns count of objects whose address changed.
-    // Issue #2495: also returns the count of untracked-kept candidates via
-    // the out-parameter so LiveCompactResult can set moving_incomplete_remap
-    // when objects_moved > 0 && untracked_kept_count > 0 (failure-closed
+    // Issue #2495: returns the count of external identity-drops via the
+    // out-parameter (alloc-fail restore / same-window collision) so
+    // LiveCompactResult can set moving_incomplete_remap when
+    // objects_moved > 0 && untracked_kept_count > 0 (failure-closed
     // against false safety under production Moving default).
+    // Issue #3600: kept-large / degenerate dtor entries are tracked and
+    // address-stable — they are NOT external-root misses and no longer
+    // increment the count (a mixed-size arena publishes a green Moving
+    // window when every moved referent has slot/pin/RootRemap cover).
     [[nodiscard]] std::size_t
     relocate_tracked_objects_for_moving_(std::size_t* out_untracked_kept_count = nullptr) noexcept {
         // Issue #3469: keep previous-window keys across relocate so
@@ -2990,22 +3000,26 @@ private:
         std::vector<DtorEntry> kept;
         kept.reserve(dtors_.size());
 
-        // Issue #2495: count of candidates that were NOT small-pool /
-        // NOT in size budget / NOT pinned (external / untracked). When
-        // objects_moved > 0 alongside this count > 0, the densify may
-        // have moved a referent out from under an untracked live pointer.
-        std::size_t untracked_kept = 0;
+        // Issue #3600: no local untracked counter. Kept-large / degenerate
+        // dtor entries stay on dtors_ at the old address (tracked, address
+        // stable) and are NOT external-root misses; the out-parameter now
+        // carries only alloc-fail restore / same-window collision drops.
+        // Pre-densify count_pre_densify_untracked_external_roots_ remains
+        // the SSOT signal for uncovered external roots (#2973/#3017).
 
         for (auto& e : dtors_) {
             if (!e.ptr || e.size == 0 || e.dtor == nullptr) {
                 kept.push_back(e);
-                ++untracked_kept;
                 continue;
             }
             // Only densify freelist-reclaimable small-pool objects.
+            // Issue #3600: kept-large is a tracked, address-stable dtor
+            // entry — NOT an untracked external root. Do not feed the
+            // incomplete gate: a mixed-size arena (small + >kMaxSmallSize
+            // tracked) must still publish a green Moving window when every
+            // moved referent has slot/pin/RootRemap cover.
             if (!small_pool_.owns(e.ptr) || e.size > SmallObjectPool::kMaxSmallSize) {
                 kept.push_back(e);
-                ++untracked_kept;
                 continue;
             }
             Pending p;
