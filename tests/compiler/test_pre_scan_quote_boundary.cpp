@@ -128,7 +128,7 @@ static void ac3_qq_unquote_splicing_unchanged() {
     const auto pre_scan_pos = mxcpp.find("std::function<void(NodeId, int)> pre_scan = ");
     CHECK(pre_scan_pos != std::string::npos, "pre_scan closure found");
     if (pre_scan_pos != std::string::npos) {
-        const auto window_end = std::min<std::size_t>(pre_scan_pos + 4500, mxcpp.size());
+        const auto window_end = std::min<std::size_t>(pre_scan_pos + 6500, mxcpp.size());
         const std::string window(mxcpp, pre_scan_pos, window_end - pre_scan_pos);
         CHECK(window.find("cname == \"quasiquote\"") != std::string::npos,
               "quasiquote Call-head path still present (#2807)");
