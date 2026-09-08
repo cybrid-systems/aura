@@ -11676,6 +11676,30 @@ def cmd_wal_window_miss_catalog_3603_coverage():
     return 0
 
 
+def cmd_panic_aba_gc_defer_drain_3604_coverage():
+    """Issue #3604: PanicCheckpoint ABA arm drains gc_defer for the saved id.
+
+    raii.ixx ABA skip arm calls clear_gc_defer_for_evaluator +
+    reconcile_gc_defer_bits_after_clear, gated on defer_armed_at_save_ + a
+    wired has_panic_checkpoint probe + !probe(ctx); host.clear(ctx) must
+    NOT run on the ABA arm (#3570 AC); counter discipline (sanctioned
+    clears total only when the drain ran, no steal-named reuse, no new
+    mid-field, no mutex); factory wires the probe shim; aba test AC6/7/8;
+    steal ACs untouched. No docs/design/3604-*, no tests/**/test_issue_3604.cpp.
+    """
+    print(f"{B}=== panic aba gc_defer drain (#3604) ==={N}")
+    script = ROOT / "scripts" / "check_panic_aba_gc_defer_drain_3604.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script), "--strict"], cwd=ROOT)
+    if r.returncode != 0:
+        fail("panic aba gc_defer drain (#3604) contract rows failed")
+        return 1
+    ok("panic aba gc_defer drain (#3604) clean")
+    return 0
+
+
 def cmd_query_stable_hard_reject_torn_latch_3386_coverage():
     """Issue #3386: shared probe Evaluator::query_stable_hard_reject_torn()
     must OR restamp_over_budget_torn() under multi-worker latch (I6 residual).
@@ -21417,6 +21441,7 @@ def cmd_gate():
         or cmd_lockless_hygiene_se_3601_coverage()
         or cmd_ffi_apply_densify_refuse_3602_coverage()
         or cmd_wal_window_miss_catalog_3603_coverage()
+        or cmd_panic_aba_gc_defer_drain_3604_coverage()
     )
     if rc:
         return rc

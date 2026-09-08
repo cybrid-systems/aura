@@ -12,8 +12,17 @@
 //   AC3: legacy host (ctx_gen_source == nullptr) → no gen check
 //   AC4: Evaluator factory wires gen fields; live instance never trips ABA
 //   AC5: source-cite (raii.ixx dtor arm + evaluator.ixx factory wiring)
+//   AC6 (#3604): ABA + defer armed at save + new occupant clean →
+//        gc_defer drained for the recycled id (drain counted on the
+//        issue-sanctioned clears counter), restore/clear still skipped
+//   AC7 (#3604): new occupant re-armed a live checkpoint → drain skipped,
+//        defer arm intact (#3570 half-graph protection)
+//   AC8 (#3604): legacy unwired host (no has_panic_checkpoint probe) →
+//        no drain, exact #3570 behavior; steal_complete stays steal-only
 
 #include "test_harness.hpp"
+
+#include "core/gc_hooks.h"
 
 #include <atomic>
 #include <cstdint>
@@ -64,6 +73,22 @@ struct FakeHost {
     static bool clear_fn(void* p) noexcept {
         ++static_cast<FakeHost*>(p)->clears;
         return true;
+    }
+};
+
+// Issue #3604: host double mirroring Evaluator::save_panic_checkpoint —
+// save arms the per-evaluator gc_defer (keyed by the instance address);
+// has_live models the NEW occupant's live-checkpoint state at dtor time.
+struct DeferHost {
+    bool has_live = false;
+    static bool save_fn(void* p) noexcept {
+        aura::gc_hooks::arm_gc_defer_pending_panic_for(p);
+        return true;
+    }
+    static bool restore_fn(void*) noexcept { return true; }
+    static bool clear_fn(void*) noexcept { return true; }
+    static bool has_panic_checkpoint_fn(void* self) noexcept {
+        return static_cast<DeferHost*>(self)->has_live;
     }
 };
 
@@ -132,6 +157,8 @@ int main() {
         CHECK(host.ctx_gen_at_save != 0, "AC4: gen handed out at construction");
         CHECK(*host.ctx_gen_source == host.ctx_gen_at_save,
               "AC4: source matches snapshot for the live instance");
+        CHECK(host.has_panic_checkpoint != nullptr, "3604: factory wires has_panic_checkpoint");
+        CHECK(!host.has_panic_checkpoint(&ev), "3604: fresh evaluator reports no live checkpoint");
         {
             PanicCheckpointGuard g(host);
         }
@@ -154,6 +181,88 @@ int main() {
               "AC5: accessor");
         CHECK(ixx.find("ev.panic_cp_discriminator_gen_source()") != std::string::npos,
               "AC5: factory wiring");
+    }
+
+    // ── AC6 (#3604): ABA drains the old occupant's gc_defer ──
+    {
+        std::println("\n--- #3604 AC6: ABA drains gc_defer for the recycled id ---");
+        reset_panic_checkpoint_raii_stats();
+        DeferHost fake; // new occupant: no live checkpoint of its own
+        std::atomic<std::uint64_t> gen{5};
+        PanicCheckpointHost host{&fake,
+                                 &fake,
+                                 &DeferHost::save_fn,
+                                 &DeferHost::restore_fn,
+                                 &DeferHost::clear_fn,
+                                 &gen,
+                                 5,
+                                 &DeferHost::has_panic_checkpoint_fn};
+        {
+            PanicCheckpointGuard g(host); // save arms the per-eval gc_defer
+            CHECK(g.saved(), "AC6: save ok");
+            CHECK(aura::gc_hooks::gc_deferred_for_evaluator(&fake),
+                  "AC6 pre: defer armed under the shared id");
+            gen.store(6, std::memory_order_release); // destroy + placement-new
+        } // dtor: ABA skip + drain
+        CHECK(!aura::gc_hooks::gc_deferred_for_evaluator(&fake),
+              "AC6: gc_defer drained — destructive GC no longer stuck on this id");
+        CHECK(g_panic_checkpoint_raii_stats.restores_gen_aba_mismatch_total == 1,
+              "AC6: gen_aba counter bumps");
+        CHECK(g_panic_checkpoint_raii_stats.restores_discriminator_cleared == 1,
+              "AC6: drain counted on the sanctioned clears counter");
+    }
+
+    // ── AC7 (#3604): new occupant re-armed → drain skipped ──
+    {
+        std::println("\n--- #3604 AC7: live new-occupant checkpoint keeps its defer arm ---");
+        reset_panic_checkpoint_raii_stats();
+        DeferHost fake;
+        fake.has_live = true; // new occupant holds its own PanicCheckpoint
+        std::atomic<std::uint64_t> gen{5};
+        PanicCheckpointHost host{&fake,
+                                 &fake,
+                                 &DeferHost::save_fn,
+                                 &DeferHost::restore_fn,
+                                 &DeferHost::clear_fn,
+                                 &gen,
+                                 5,
+                                 &DeferHost::has_panic_checkpoint_fn};
+        {
+            PanicCheckpointGuard g(host);
+            CHECK(g.saved(), "AC7: save ok");
+            gen.store(6, std::memory_order_release);
+        }
+        CHECK(aura::gc_hooks::gc_deferred_for_evaluator(&fake),
+              "AC7: new occupant's defer arm intact (no half-graph exposure)");
+        CHECK(g_panic_checkpoint_raii_stats.restores_discriminator_cleared == 0,
+              "AC7: no drain counted");
+        // Cleanup: drop the modelled occupant arm so process-wide depth
+        // stays balanced for the rest of the batch.
+        (void)aura::gc_hooks::clear_gc_defer_for_evaluator(&fake);
+        (void)aura::gc_hooks::reconcile_gc_defer_bits_after_clear();
+    }
+
+    // ── AC8 (#3604): legacy unwired host → no drain (#3570 exact) ──
+    {
+        std::println("\n--- #3604 AC8: unwired host keeps #3570 behavior ---");
+        reset_panic_checkpoint_raii_stats();
+        DeferHost fake;
+        std::atomic<std::uint64_t> gen{5};
+        PanicCheckpointHost host{
+            &fake, &fake, &DeferHost::save_fn, &DeferHost::restore_fn, &DeferHost::clear_fn,
+            &gen,  5};
+        {
+            PanicCheckpointGuard g(host);
+            CHECK(g.saved(), "AC8: save ok");
+            CHECK(aura::gc_hooks::gc_deferred_for_evaluator(&fake), "AC8 pre: defer armed");
+            gen.store(6, std::memory_order_release);
+        }
+        CHECK(aura::gc_hooks::gc_deferred_for_evaluator(&fake),
+              "AC8: no probe wired → drain skipped (legacy exact)");
+        CHECK(g_panic_checkpoint_raii_stats.restores_discriminator_cleared == 0,
+              "AC8: no drain counted");
+        (void)aura::gc_hooks::clear_gc_defer_for_evaluator(&fake);
+        (void)aura::gc_hooks::reconcile_gc_defer_bits_after_clear();
     }
 
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
