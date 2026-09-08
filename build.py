@@ -11724,6 +11724,30 @@ def cmd_facade_owner_scope_clock_skip_3605_coverage():
     return 0
 
 
+def cmd_nested_qq_depth_3606_coverage():
+    """Issue #3606: nested quasiquote depth — unquote scope by qq_depth.
+
+    pre_scan unquote / unquote-splicing recurses with qq_depth - 1 at
+    depth > 1 (outer-template scope) and stops at depth <= 1 (caller
+    scope; the splicing mismatch counter fires only there). The clone
+    walk threads int qq_depth (replaces the bool in_unquote); the
+    caller-scope verbatim zone is the negative sentinel
+    kUnquoteCallerScopeDepth with per-child depth at the recursion site.
+    No docs/design/3606-*, no tests/**/test_issue_3606.cpp.
+    """
+    print(f"{B}=== nested qq depth (#3606) ==={N}")
+    script = ROOT / "scripts" / "check_nested_qq_depth_3606.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script), "--strict"], cwd=ROOT)
+    if r.returncode != 0:
+        fail("nested qq depth (#3606) contract rows failed")
+        return 1
+    ok("nested qq depth (#3606) clean")
+    return 0
+
+
 def cmd_query_stable_hard_reject_torn_latch_3386_coverage():
     """Issue #3386: shared probe Evaluator::query_stable_hard_reject_torn()
     must OR restamp_over_budget_torn() under multi-worker latch (I6 residual).
@@ -21467,6 +21491,7 @@ def cmd_gate():
         or cmd_wal_window_miss_catalog_3603_coverage()
         or cmd_panic_aba_gc_defer_drain_3604_coverage()
         or cmd_facade_owner_scope_clock_skip_3605_coverage()
+        or cmd_nested_qq_depth_3606_coverage()
     )
     if rc:
         return rc

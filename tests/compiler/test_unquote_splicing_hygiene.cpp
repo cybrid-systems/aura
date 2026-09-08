@@ -236,6 +236,181 @@ static void ac3183_6_no_invent() {
 
 } // namespace
 
+// (quasiquote (quasiquote (let ((x 1)) (unquote x)))) — Issue #3606
+// nested-qq reproducer: the inner unquote sits at qq_depth 2 → still
+// OUTER-TEMPLATE scope. The inner let binding gensyms AND the unquote
+// operand resolves to the same gensym (old code left the operand as `x`
+// — binding/ref split).
+static NodeId build_nested_qq_let_unquote(FlatAST& src, StringPool& sp) {
+    auto x = sp.intern("x");
+    auto lit_1 = src.add_literal(1);
+    auto v_x_inner = src.add_variable(x);
+    auto uq_var = src.add_variable(sp.intern("unquote"));
+    const NodeId uq_args[] = {v_x_inner};
+    auto uq_call = src.add_call(uq_var, std::span<const NodeId>{uq_args});
+    auto let_id = src.add_let(x, lit_1, uq_call);
+    auto inner_qq_var = src.add_variable(sp.intern("quasiquote"));
+    const NodeId inner_qq_args[] = {let_id};
+    auto inner_qq = src.add_call(inner_qq_var, std::span<const NodeId>{inner_qq_args});
+    auto outer_qq_var = src.add_variable(sp.intern("quasiquote"));
+    const NodeId outer_qq_args[] = {inner_qq};
+    return src.add_call(outer_qq_var, std::span<const NodeId>{outer_qq_args});
+}
+
+// (quasiquote (quasiquote (let ((xs 1)) (unquote-splicing xs)))) —
+// Issue #3606 AC3: splice at depth 2 is template scope (gensym'd);
+// single-level splice stays caller-scope (#2807).
+static NodeId build_nested_qq_let_splicing(FlatAST& src, StringPool& sp) {
+    auto xs = sp.intern("xs");
+    auto lit_1 = src.add_literal(1);
+    auto v_xs_inner = src.add_variable(xs);
+    auto us_var = src.add_variable(sp.intern("unquote-splicing"));
+    const NodeId us_args[] = {v_xs_inner};
+    auto us_call = src.add_call(us_var, std::span<const NodeId>{us_args});
+    auto let_id = src.add_let(xs, lit_1, us_call);
+    auto inner_qq_var = src.add_variable(sp.intern("quasiquote"));
+    const NodeId inner_qq_args[] = {let_id};
+    auto inner_qq = src.add_call(inner_qq_var, std::span<const NodeId>{inner_qq_args});
+    auto outer_qq_var = src.add_variable(sp.intern("quasiquote"));
+    const NodeId outer_qq_args[] = {inner_qq};
+    return src.add_call(outer_qq_var, std::span<const NodeId>{outer_qq_args});
+}
+
+// Collect Variable names from the cloned tree (target pool resolution).
+static void collect_var_names_3606(const FlatAST& t, NodeId n, const StringPool& sp,
+                                   std::vector<std::string>& out) {
+    if (n == NULL_NODE)
+        return;
+    const auto v = t.get(n);
+    if (v.tag == NodeTag::Variable && v.sym_id != aura::ast::INVALID_SYM)
+        out.push_back(std::string(sp.resolve(v.sym_id)));
+    for (auto ch : v.children)
+        collect_var_names_3606(t, ch, sp, out);
+}
+
+// ── Issue #3606: nested quasiquote depth — unquote / unquote-splicing
+// at depth > 1 is outer-template scope (qq_depth decrements); at
+// depth ≤ 1 caller-scope (#2807 preserved).
+static void ac3606_nested_qq_depth() {
+    std::println("\n--- #3606: nested qq depth — unquote template/caller scope ---");
+
+    const auto me = read_file("src/compiler/macro_expansion.cpp");
+    CHECK(me.find("Issue #3606") != std::string::npos, "3606 AC1: cites #3606");
+    CHECK(me.find("if (qq_depth > 1 && nv.children.size() >= 2)") != std::string::npos,
+          "3606 AC1: pre_scan unquote recurses at depth > 1");
+    CHECK(me.find("kUnquoteCallerScopeDepth") != std::string::npos,
+          "3606 AC1: caller-scope verbatim sentinel defined");
+    CHECK(me.find("bool in_quote = false, int qq_depth = 0);") != std::string::npos,
+          "3606 AC1: clone signature threads int qq_depth");
+    {
+        auto pos = me.find("if (cname == \"unquote-splicing\") {");
+        CHECK(pos != std::string::npos, "3606 AC6: splicing handler found");
+        if (pos != std::string::npos) {
+            const auto win = me.substr(pos, 400);
+            CHECK(win.find("qq_depth <= 1") != std::string::npos,
+                  "3606 AC6: counter gated on depth <= 1");
+        }
+    }
+
+    // AC2 live: double-qq + inner let + inner unquote → ref resolves to
+    // the gensym (binding/ref join); caller `x` gone from the output.
+    {
+        FlatAST src;
+        StringPool sp;
+        auto root = build_nested_qq_let_unquote(src, sp);
+        FlatAST target;
+        StringPool tp;
+        NameMap nm;
+        auto c = clone_macro_body(target, tp, src, sp, root, nullptr, &nm,
+                                  SyntaxMarker::MacroIntroduced);
+        CHECK(c != NULL_NODE, "3606 AC2: clone ok");
+        auto mit = nm.find("x");
+        CHECK(mit != nm.end(), "3606 AC2: inner let binding gensym'd");
+        CHECK(mit != nm.end() && mit->second.rfind("__", 0) == 0, "3606 AC2: gensym shape __...");
+        std::vector<std::string> var_names;
+        collect_var_names_3606(target, c, tp, var_names);
+        bool saw_x = false, saw_gensym = false;
+        for (const auto& n : var_names) {
+            if (n == "x")
+                saw_x = true;
+            if (mit != nm.end() && n == mit->second)
+                saw_gensym = true;
+        }
+        CHECK(!saw_x, "3606 AC2: binding AND unquote operand both renamed (no capture split)");
+        CHECK(saw_gensym, "3606 AC2: gensym present in the cloned tree");
+    }
+
+    // AC3 live: double-qq + inner splice → template scope (gensym'd, no
+    // mismatch counter at depth 2); single-level splice stays
+    // caller-scope (no gensym, counter fired in the #2807 AC2 above).
+    {
+        FlatAST src;
+        StringPool sp;
+        auto root = build_nested_qq_let_splicing(src, sp);
+        FlatAST target;
+        StringPool tp;
+        NameMap nm;
+        const auto m0 = g_unquote_splicing_hygiene_mismatch_total.load(std::memory_order_relaxed);
+        auto c = clone_macro_body(target, tp, src, sp, root, nullptr, &nm,
+                                  SyntaxMarker::MacroIntroduced);
+        CHECK(c != NULL_NODE, "3606 AC3: clone ok");
+        const auto m1 = g_unquote_splicing_hygiene_mismatch_total.load(std::memory_order_relaxed);
+        CHECK(m1 >= m0, "3606 AC3: mismatch counter monotonic (multi-pass clone may recount)");
+        auto mit = nm.find("xs");
+        CHECK(mit != nm.end(), "3606 AC3: inner splice binding gensym'd (template scope)");
+        std::vector<std::string> var_names;
+        collect_var_names_3606(target, c, tp, var_names);
+        bool saw_xs = false, saw_gensym = false;
+        for (const auto& n : var_names) {
+            if (n == "xs")
+                saw_xs = true;
+            if (mit != nm.end() && n == mit->second)
+                saw_gensym = true;
+        }
+        CHECK(!saw_xs, "3606 AC3: splice operand renamed (template scope at depth 2)");
+        CHECK(saw_gensym, "3606 AC3: gensym present");
+
+        // Single-level regression: splicing at depth 1 keeps caller
+        // scope — the dotted rest is NOT template-scanned.
+        FlatAST src1;
+        StringPool sp1;
+        auto root1 = build_qq_unsplice_dotted(src1, sp1);
+        FlatAST target1;
+        StringPool tp1;
+        NameMap nm1;
+        auto c1 = clone_macro_body(target1, tp1, src1, sp1, root1, nullptr, &nm1,
+                                   SyntaxMarker::MacroIntroduced);
+        // Single-level regression: splicing at depth 1 keeps caller scope —
+        // the spliced REF stays verbatim `rest` (caller names preserved);
+        // no __rest_ template gensym leaks into the refs.
+        std::vector<std::string> var_names1;
+        collect_var_names_3606(target1, c1, tp1, var_names1);
+        bool saw_rest_verbatim = false, saw_rest_gensym = false;
+        for (const auto& n : var_names1) {
+            if (n == "rest")
+                saw_rest_verbatim = true;
+            if (n.rfind("__rest_", 0) == 0)
+                saw_rest_gensym = true;
+        }
+        CHECK(saw_rest_verbatim, "3606 AC3: single-level splice keeps caller scope (ref verbatim)");
+        CHECK(!saw_rest_gensym,
+              "3606 AC3: single-level splice does not rename refs to template gensyms");
+    }
+
+    // AC4: name_map-less clone (Soft path) still clones the nested shape
+    // through the same walk — no allocation, no gensym path.
+    {
+        FlatAST src;
+        StringPool sp;
+        auto root = build_nested_qq_let_unquote(src, sp);
+        FlatAST target;
+        StringPool tp;
+        auto c = clone_macro_body(target, tp, src, sp, root, nullptr, nullptr,
+                                  SyntaxMarker::MacroIntroduced);
+        CHECK(c != NULL_NODE, "3606 AC4: name_map-less clone ok (same walk)");
+    }
+}
+
 int run_test_unquote_splicing_hygiene() {
     std::println("=== Issue #2807: unquote-splicing hygiene boundary ===");
     CHECK(true, "ac2807: issue stamp");
@@ -492,8 +667,8 @@ int run_test_unquote_splicing_hygiene() {
             std::println("\n--- AC3181.5: source-cite in_quote param + local_in_quote ---");
             auto me = read_file("src/compiler/macro_expansion.cpp");
             CHECK(!me.empty(), "AC3181.5: macro_expansion.cpp readable");
-            auto pos_def = me.find("bool in_quote, bool in_unquote) {");
-            auto pos_decl = me.find("bool in_quote = false, bool in_unquote = false);");
+            auto pos_def = me.find("bool in_quote, int qq_depth) {");
+            auto pos_decl = me.find("bool in_quote = false, int qq_depth = 0);");
             CHECK(pos_def != std::string::npos,
                   "AC3181.5: clone_macro_body_at_depth definition has in_quote param");
             CHECK(pos_decl != std::string::npos,
@@ -551,6 +726,11 @@ int run_test_unquote_splicing_hygiene() {
     ac3183_4_no_serial_drift_from_rest();
     ac3183_5_steal_pass_limit_non_regression();
     ac3183_6_no_invent();
+
+    // Issue #3606: nested quasiquote depth — unquote / unquote-splicing
+    // at depth > 1 is outer-template scope (qq_depth decrements); at
+    // depth ≤ 1 caller-scope (#2807 preserved).
+    ac3606_nested_qq_depth();
     std::println("\n=== #2807 unquote-splicing hygiene: {} passed, {} failed ===", g_passed,
                  g_failed);
     return g_failed == 0 ? 0 : 1;

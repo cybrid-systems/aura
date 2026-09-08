@@ -92,12 +92,15 @@ def main() -> int:
 
     # ── AC1: clone_macro_body_at_depth in_quote parameter ──
     # Issue #3181 + #2807 collateral: the function also gained an
-    # `in_unquote` parameter (clone walk now mirrors pre_scan for both
-    # quote and unquote boundaries). Search for the full signature so
+    # `in_unquote` parameter (clone walk mirrored pre_scan for both
+    # quote and unquote boundaries). Issue #3606: `in_unquote` became
+    # `int qq_depth` (nested-qq depth decrement — outer-template scope
+    # above depth 1, caller-scope verbatim below); the `in_quote`
+    # threading contract is unchanged. Search for the full signature so
     # the linter doesn't false-positive against the older single-flag
     # signature.
-    pos_def = me.find("bool in_quote, bool in_unquote) {")
-    pos_decl = me.find("bool in_quote = false, bool in_unquote = false);")
+    pos_def = me.find("bool in_quote, int qq_depth) {")
+    pos_decl = me.find("bool in_quote = false, int qq_depth = 0);")
     ac1_ok = pos_def != -1 and pos_decl != -1
     if not ac1_ok:
         fails.append("AC1: clone_macro_body_at_depth missing `bool in_quote` parameter")
@@ -216,7 +219,10 @@ def main() -> int:
     recur_window = ""
     if pos_recur != -1:
         recur_window = me[max(0, pos_recur - 200) : pos_recur + 500]
-    ac5_threaded = "local_in_quote" in recur_window and "local_in_unquote" in recur_window
+    ac5_threaded = "local_in_quote" in recur_window and (
+        "local_in_unquote" in recur_window
+        or "child_qq_depth" in recur_window  # Issue #3606: int qq_depth replaces the bool
+    )
     ac5_ok = ac5_threaded
     if not ac5_ok:
         fails.append("AC5: recursive children clone must pass local_in_quote")

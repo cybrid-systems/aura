@@ -1562,6 +1562,12 @@ static void ensure_cross_flat_expand_consistency(aura::ast::FlatAST& target,
     }
 }
 
+// Issue #3606: sentinel depth for the caller-scope verbatim zone —
+// the subtree descended through an unquote / unquote-splicing boundary
+// at qq_depth ≤ 1. Negative so it never collides with a real
+// quasiquote nesting depth (≥ 0).
+constexpr int kUnquoteCallerScopeDepth = -1;
+
 // Issue #2806: internal recursive entry with explicit depth (not TLS).
 // Public clone_macro_body(...) is a depth=0 wrapper.
 static aura::ast::NodeId clone_macro_body_at_depth(
@@ -1572,7 +1578,7 @@ static aura::ast::NodeId clone_macro_body_at_depth(
     std::unordered_map<std::string, std::string, aura::core::TransparentStringHash,
                        std::equal_to<>>* name_map,
     aura::ast::SyntaxMarker cloned_marker, int hygiene_depth, int session_depth_limit,
-    bool in_quote = false, bool in_unquote = false);
+    bool in_quote = false, int qq_depth = 0);
 
 aura::ast::NodeId clone_macro_body(
     aura::ast::FlatAST& target, aura::ast::StringPool& target_pool, aura::ast::FlatAST& source,
@@ -1588,7 +1594,7 @@ aura::ast::NodeId clone_macro_body(
                                      name_map, cloned_marker, /*hygiene_depth=*/0,
                                      /*session_depth_limit=*/0,
                                      /*in_quote=*/false,
-                                     /*in_unquote=*/false);
+                                     /*qq_depth=*/0);
 }
 
 static aura::ast::NodeId clone_macro_body_at_depth(
@@ -1599,7 +1605,7 @@ static aura::ast::NodeId clone_macro_body_at_depth(
     std::unordered_map<std::string, std::string, aura::core::TransparentStringHash,
                        std::equal_to<>>* name_map,
     aura::ast::SyntaxMarker cloned_marker, int hygiene_depth, int session_depth_limit,
-    bool in_quote, bool in_unquote) {
+    bool in_quote, int qq_depth) {
     using namespace aura::ast;
     // Issue #2806: residual TLS mirror for diagnostics only (not authority).
     s_hygiene_depth = hygiene_depth;
@@ -2065,15 +2071,28 @@ static aura::ast::NodeId clone_macro_body_at_depth(
     // possible, and the existing transplant fallback already returns
     // verbatim). #3181 fix shape is the template — analogous boundary
     // detection, analogous local flag, analogous recursive threading.
-    bool local_in_unquote = in_unquote;
-    if (!local_in_unquote && name_map && v.tag == NodeTag::Call && !v.children.empty()) {
+    // Issue #3606: qq_depth replaces the #2807 boolean in_unquote.
+    // Caller-scope verbatim zone ≡ crossed an unquote / unquote-splicing
+    // boundary at depth ≤ 1 (subtree descends at kUnquoteCallerScopeDepth,
+    // a negative sentinel that never collides with real qq depth ≥ 0).
+    // An unquote at depth > 1 is still OUTER-TEMPLATE scope — depth drops
+    // by one and the walk continues (#2239 residual: qq_depth never
+    // decremented), so bindings inside it gensym and refs resolve via
+    // name_map. Cache the Call-head qq form name for the per-child depth
+    // assignment at the recursion site.
+    std::string_view qq_head_name;
+    if (!local_in_quote && v.tag == NodeTag::Call && !v.children.empty()) {
         auto callee_n = source.get(v.children[0]);
         if (callee_n.tag == NodeTag::Variable) {
             auto cname = std::string(source_pool.resolve(callee_n.sym_id));
-            if (cname == "unquote" || cname == "unquote-splicing")
-                local_in_unquote = true;
+            if (cname == "quasiquote" || cname == "unquote" || cname == "unquote-splicing")
+                qq_head_name = source_pool.resolve(callee_n.sym_id);
         }
     }
+    const aura::ast::NodeId qq_arg_id =
+        (!qq_head_name.empty() && v.children.size() >= 2) ? v.children[1] : NULL_NODE;
+    // Caller-scope verbatim zone (replaces the #2807 local_in_unquote).
+    const bool local_in_unquote = qq_depth < 0;
 
     // Variable substitution: if this variable is a macro param, return the arg clone.
     //
@@ -2284,18 +2303,30 @@ static aura::ast::NodeId clone_macro_body_at_depth(
                         return;
                     }
                     if (cname == "unquote") {
-                        // Boundary: do NOT recurse into unquote inner.
-                        // Bindings inside unquote live in the caller's
-                        // scope and must NOT be gensym'd by the macro.
+                        // Issue #2807/#3606: unquote at depth ≤ 1 is
+                        // caller scope — stop, no gensym (bindings inside
+                        // unquote live in the caller's scope). At depth
+                        // > 1 the unquote body is still OUTER-TEMPLATE
+                        // scope: recurse with depth - 1 so nested-qq
+                        // bindings gensym and refs resolve via name_map
+                        // (#2239 residual — qq_depth never decremented).
+                        if (qq_depth > 1 && nv.children.size() >= 2)
+                            pre_scan(nv.child(1), qq_depth - 1);
                         return;
                     }
-                    // Issue #2807: unquote-splicing (`,@x`) is also caller
-                    // scope — same stop as unquote. Without this, pre_scan
-                    // walks the splice body at template qq_depth and
-                    // gensyms bindings that should evaluate in the caller.
+                    // Issue #2807: unquote-splicing (`,@x`) is caller
+                    // scope at depth ≤ 1 — same stop as unquote (the
+                    // mismatch counter keeps firing there). Issue #3606:
+                    // at depth > 1 the splice body is still
+                    // outer-template — recurse with depth - 1, no counter
+                    // (not a mismatch).
                     if (cname == "unquote-splicing") {
-                        g_unquote_splicing_hygiene_mismatch_total.fetch_add(
-                            1, std::memory_order_relaxed);
+                        if (qq_depth <= 1) {
+                            g_unquote_splicing_hygiene_mismatch_total.fetch_add(
+                                1, std::memory_order_relaxed);
+                        } else if (nv.children.size() >= 2) {
+                            pre_scan(nv.child(1), qq_depth - 1);
+                        }
                         return;
                     }
                 }
@@ -2414,12 +2445,22 @@ static aura::ast::NodeId clone_macro_body_at_depth(
         // Issue #3181: propagate local_in_quote to recursive children so
         // the subtree inside quote is cloned verbatim (no rename, no
         // name_map write).
-        // Issue #2807: propagate local_in_unquote to recursive children
-        // so variables inside unquote / unquote-splicing don't pick up
-        // outer Let bindings' __x_N gensyms via name_map.
+        // Issue #3606: per-child qq depth (replaces the #2807 uniform
+        // in_unquote bool). quasiquote template arg → depth + 1;
+        // unquote / unquote-splicing arg at depth ≤ 1 → caller-scope
+        // verbatim zone (kUnquoteCallerScopeDepth); at depth > 1 →
+        // depth - 1 (still outer template — #2239). Head symbol and
+        // verbatim-zone children inherit depth.
+        int child_qq_depth = qq_depth;
+        if (!qq_head_name.empty() && qq_depth >= 0 && cid == qq_arg_id) {
+            if (qq_head_name == "quasiquote")
+                child_qq_depth = qq_depth + 1;
+            else
+                child_qq_depth = (qq_depth <= 1) ? kUnquoteCallerScopeDepth : qq_depth - 1;
+        }
         const auto cloned = clone_macro_body_at_depth(
             target, target_pool, source, source_pool, cid, subst, name_map, cloned_marker,
-            hygiene_depth + 1, depth_limit, local_in_quote, local_in_unquote);
+            hygiene_depth + 1, depth_limit, local_in_quote, child_qq_depth);
         child_ids.push_back(cloned);
         // Issue #3321: production fail-fast after nested steal-abort.
         // Issue #3506: same restore for nested depth / gensym / cap / pass.
