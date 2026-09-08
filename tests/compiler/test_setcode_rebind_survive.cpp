@@ -21,6 +21,7 @@
 
 import std;
 import aura.compiler.evaluator;
+import aura.compiler.root_remap_pass;
 import aura.compiler.service;
 import aura.compiler.value;
 import aura.core.arena;
@@ -326,6 +327,117 @@ static void ac6_3469_two_window_stale_flat_refuse() {
           "3469: reuses closure_stale_returns");
 }
 
+// Issue #3602: the FFI arm shares the #3421 densify-stale refuse. The TW/IR
+// arms hard-refused; the FFI return path marshaled + called native without
+// consulting last_object_remap_.
+static void ac7_3602_ffi_densify_refuse() {
+    std::println("\n--- #3602: FFI apply densify-stale refuse ---");
+    const auto flat = read_file("src/compiler/evaluator_eval_flat.cpp");
+    CHECK(flat.find("production_ffi_apply_densify_hard_refuse") != std::string::npos,
+          "3602: FFI refuse helper present");
+    CHECK(flat.find("Issue #3602") != std::string::npos, "3602: eval_flat cites #3602");
+    CHECK(flat.find("g_3602_") == std::string::npos, "3602: no invented g_3602_* counter");
+
+    std::array<aura::compiler::types::EvalValue, 1> args{make_int(-5)};
+
+    // AC-b: production + moved>0 + LCP deny -> FFI arm refuses (previously
+    // the native call proceeded). No native call: refused abs returns no
+    // value; closure_stale_returns reuses the #3421 counter.
+    {
+        CompilerService cs;
+        auto* m = metrics_of(cs);
+        auto cid_r = cs.eval("(require \"std/ffi\")");
+        CHECK(cid_r.has_value(), "3602 AC-b: require std/ffi");
+        cid_r = cs.eval("(c-func -1 \"abs\" \"(Int) -> Int\")");
+        std::println("#3602 AC-b probe: has_value={} is_closure={} is_int={} int={}",
+                     cid_r.has_value(), cid_r && is_closure(*cid_r), cid_r && is_int(*cid_r),
+                     cid_r && is_int(*cid_r) ? as_int(*cid_r) : -999);
+        CHECK(cid_r && is_closure(*cid_r), "3602 AC-b: c-func registered");
+        const auto stale0 = m->closure_stale_returns.load(std::memory_order_relaxed);
+        ProdDensifyWindowGuard g(/*prod=*/true, /*moved=*/1, /*lcp_allow=*/false);
+        auto got = cs.evaluator().apply_closure(0, args);
+        CHECK(!got.has_value(), "3602 AC-b: FFI apply hard-refuses under LCP deny");
+        CHECK(m->closure_stale_returns.load(std::memory_order_relaxed) > stale0,
+              "3602 AC-b: reuses closure_stale_returns");
+    }
+
+    // AC-c: production + moved>0 + LCP allow + opaque arg still a
+    // last_object_remap_ key -> refuse (the #3602 residual: the marshalled
+    // opaque value escaped slot rewrite - EXEMPT / observed-only /
+    // pre-rewrite copy).
+    {
+        CompilerService cs;
+        auto* m = metrics_of(cs);
+        MovingFlagGuard on(1);
+        auto& ar = cs.evaluator().test_arena();
+        // test_root_remap_pass recipe: hole + stable slot so the window
+        // relocates p and records old -> new in last_object_remap_.
+        auto* p = ar.create<Pod16>(7, 8, 9, 10);
+        auto* p1 = ar.create<Pod16>(11, 12, 13, 14);
+        CHECK(p != nullptr && p1 != nullptr, "3602 AC-c: arena objects");
+        void* old = p;
+        aura::compiler::register_root_remap_stable_slot(&old);
+        ar.destroy(p1);
+        const auto r = ar.live_compact(LiveCompactMode::Moving);
+        CHECK(!r.moving_blocked_precondition, "3602 AC-c: Moving not blocked");
+        CHECK(ar.resolve_object_remap(old) != nullptr, "3602 AC-c: old is a remap key");
+        auto cid_r = cs.eval("(require \"std/ffi\")");
+        CHECK(cid_r.has_value(), "3602 AC-c: require std/ffi");
+        cid_r = cs.eval("(c-func -1 \"abs\" \"(Opaque) -> Int\")");
+        std::println("#3602 AC-c probe: has_value={} is_closure={} is_int={} int={}",
+                     cid_r.has_value(), cid_r && is_closure(*cid_r), cid_r && is_int(*cid_r),
+                     cid_r && is_int(*cid_r) ? as_int(*cid_r) : -999);
+        CHECK(cid_r && is_closure(*cid_r), "3602 AC-c: opaque fn registered");
+        auto op_r = cs.eval(std::format(
+            "(c-opaque {})", static_cast<std::int64_t>(reinterpret_cast<std::intptr_t>(old))));
+        CHECK(op_r && aura::compiler::types::is_opaque(*op_r), "3602 AC-c: stale opaque created");
+        std::array<aura::compiler::types::EvalValue, 1> oargs{*op_r};
+        ProdDensifyWindowGuard g(/*prod=*/true, /*moved=*/1, /*lcp_allow=*/true);
+        const auto stale0 = m->closure_stale_returns.load(std::memory_order_relaxed);
+        auto got = cs.evaluator().apply_closure(0, oargs);
+        CHECK(!got.has_value(), "3602 AC-c: remap-key opaque arg refuses FFI call");
+        CHECK(m->closure_stale_returns.load(std::memory_order_relaxed) > stale0,
+              "3602 AC-c: reuses closure_stale_returns");
+    }
+
+    // AC-d: after a successful window, a live (rewritten / non-remap-key)
+    // value applies -> native call proceeds under production.
+    {
+        CompilerService cs;
+        CHECK(cs.eval("(require \"std/ffi\")").has_value(), "3602 AC-d: require std/ffi");
+        auto cid_r = cs.eval("(c-func -1 \"abs\" \"(Int) -> Int\")");
+        CHECK(cid_r && is_closure(*cid_r), "3602 AC-d: c-func registered");
+        ProdDensifyWindowGuard g(/*prod=*/true, /*moved=*/1, /*lcp_allow=*/true);
+        auto got = cs.evaluator().apply_closure(0, args);
+        CHECK(got.has_value() && is_int(*got) && as_int(*got) == 5,
+              "3602 AC-d: apply allowed after rewrite (abs(-5)=5)");
+    }
+
+    // AC-e: Soft -> FFI path cost unchanged (production load only).
+    {
+        CompilerService cs;
+        CHECK(cs.eval("(require \"std/ffi\")").has_value(), "3602 AC-e: require std/ffi");
+        auto cid_r = cs.eval("(c-func -1 \"abs\" \"(Int) -> Int\")");
+        CHECK(cid_r && is_closure(*cid_r), "3602 AC-e: c-func registered");
+        ProdDensifyWindowGuard g(/*prod=*/false, /*moved=*/1, /*lcp_allow=*/false);
+        auto got = cs.evaluator().apply_closure(0, args);
+        CHECK(got.has_value() && is_int(*got) && as_int(*got) == 5,
+              "3602 AC-e: Soft stays allowed");
+    }
+
+    // AC-f: production + objects_moved==0 -> quiet skip, apply proceeds.
+    {
+        CompilerService cs;
+        CHECK(cs.eval("(require \"std/ffi\")").has_value(), "3602 AC-f: require std/ffi");
+        auto cid_r = cs.eval("(c-func -1 \"abs\" \"(Int) -> Int\")");
+        CHECK(cid_r && is_closure(*cid_r), "3602 AC-f: c-func registered");
+        ProdDensifyWindowGuard g(/*prod=*/true, /*moved=*/0, /*lcp_allow=*/false);
+        auto got = cs.evaluator().apply_closure(0, args);
+        CHECK(got.has_value() && is_int(*got) && as_int(*got) == 5,
+              "3602 AC-f: objects_moved==0 quiet skip");
+    }
+}
+
 } // namespace
 
 int run_test_setcode_rebind_survive() {
@@ -336,7 +448,8 @@ int run_test_setcode_rebind_survive() {
     ac4_source_gate();
     ac5_3421_production_hard_refuse();
     ac6_3469_two_window_stale_flat_refuse();
-    std::println("\n=== #2569/#3421/#3469: {} passed, {} failed ===", g_passed, g_failed);
+    ac7_3602_ffi_densify_refuse();
+    std::println("\n=== #2569/#3421/#3469/#3602: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
 

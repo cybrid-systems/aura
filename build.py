@@ -11622,6 +11622,37 @@ def cmd_lockless_hygiene_se_3601_coverage():
     return 0
 
 
+def cmd_ffi_apply_densify_refuse_3602_coverage():
+    """Issue #3602: apply_closure FFI arm skips the #3421 densify-stale
+    hard-refuse (#3533/#3443 residual).
+
+    Contract rows (AC1-AC4 from the test file):
+
+      AC1: production_ffi_apply_densify_hard_refuse defined + wired at the
+           FFI entry (after ffi_marshal_args_pure, before the native
+           dispatch), reusing the shared note helper (closure_stale_returns
+           + compiler_root_dangling) - no second emitter, no new counters.
+      AC2: ffi_marshal_args_pure stays pure (no resolve_object_remap in the
+           marshal - remap consults happen at the apply gate).
+      AC3: test face in test_setcode_rebind_survive.cpp (c-func RTLD_DEFAULT
+           registration, c-opaque stale-arg fabrication, remap-key refuse,
+           post-rewrite allow, Soft/no-move quiet).
+      AC4: no docs/design/3602-* (#1655); no tests/**/test_issue_3602.cpp
+           (#81934); build.py wires this linter.
+    """
+    print(f"{B}=== ffi apply densify refuse (#3602) ==={N}")
+    script = ROOT / "scripts" / "check_ffi_apply_densify_refuse_3602.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script), "--strict"], cwd=ROOT)
+    if r.returncode != 0:
+        fail("ffi apply densify refuse (#3602) contract rows failed")
+        return 1
+    ok("ffi apply densify refuse (#3602) clean")
+    return 0
+
+
 def cmd_query_stable_hard_reject_torn_latch_3386_coverage():
     """Issue #3386: shared probe Evaluator::query_stable_hard_reject_torn()
     must OR restamp_over_budget_torn() under multi-worker latch (I6 residual).
@@ -21361,6 +21392,7 @@ def cmd_gate():
         or cmd_join_reclaim_retry_3595_coverage()
         or cmd_moving_untracked_split_3600_coverage()
         or cmd_lockless_hygiene_se_3601_coverage()
+        or cmd_ffi_apply_densify_refuse_3602_coverage()
     )
     if rc:
         return rc

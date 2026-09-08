@@ -56,3 +56,4 @@ check_wildcard_ta_string_gate_3411.py
 check_evaluator_ctor_production_upgrade.py
 check_join_reclaim_retry_3595.py
 check_lockless_hygiene_se_3601.py
+check_ffi_apply_densify_refuse_3602.py
