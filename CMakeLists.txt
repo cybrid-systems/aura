@@ -3186,6 +3186,7 @@ add_executable(test_security_capability_batch
     tests/compiler/test_isolation_audit_mid.cpp
     tests/compiler/test_audit_mutation_id_unify.cpp
     tests/compiler/test_audit_ring_publish.cpp
+    tests/core/test_audit_replay_join.cpp
     tests/compiler/test_cap_write_effect_matrix.cpp
     tests/compiler/test_capability_effect_force.cpp
     tests/compiler/test_capability_high_risk_promote.cpp

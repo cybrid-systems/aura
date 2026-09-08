@@ -22,7 +22,7 @@
 
 #include "test_harness.hpp"
 
-#include "compiler/evaluator.h"
+#include "compiler/security_capabilities.h"
 #include "compiler/typed_mutation_audit.h"
 #include "core/security_event.hh"
 #include "core/security_event_wal.hh"
@@ -46,12 +46,14 @@ namespace {
 
 using aura::compiler::CompilerService;
 using aura::compiler::typed_audit::last_type_linear_commit_proof_stamp_v_read;
+using aura::test::g_failed;
+using aura::test::g_passed;
 
 void reset_all() {
-    reset_capability_effects_for_test();
-    reset_audit_wal_for_test();
-    reset_security_event_ring_for_test();
-    reset_security_event_wal_for_test();
+    aura::core::capability::reset_capability_effects_for_test();
+    aura::core::audit_wal::reset_audit_wal_for_test();
+    aura::core::security_event::reset_security_event_ring_for_test();
+    aura::core::security_event_wal::reset_security_event_wal_for_test();
 }
 
 std::string read_file(const char* path) {
@@ -73,12 +75,15 @@ static void ac1_typedmid_first_stamp_order() {
     CompilerService cs;
     auto& ev = cs.evaluator();
     // Stamp a TypedMid so the TypedMid-first path fires on next require_effect.
-    typed_audit::stamp_type_linear_commit_proof(42);
+    aura::compiler::typed_audit::stamp_type_linear_commit_proof(42);
     CHECK(last_type_linear_commit_proof_stamp_v_read() == 42, "AC1 pre: TypedMid stamped to 42");
     // require_effect under production: stamp order must pick TypedMid first.
     aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Strict);
+    // Issue #3599 re-pin: under the current fail-closed contract the stamp
+    // order (TypedMid first) shows up on the DENY provenance — no grant, no
+    // allow, regardless of a stamped mid.
     const bool ok = ev.require_effect(aura::compiler::security::kEffectMutate, "test-3143-ac1");
-    CHECK(ok, "AC1: require_effect succeeds under Strict (TypedMid matches)");
+    CHECK(!ok, "AC1: require_effect denies without grant under Strict (fail-closed)");
     aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
 }
 
@@ -104,12 +109,14 @@ static void ac3_typedmid_after_boundary_enter() {
     // Simulate MutationBoundary enter: TypedMid gets stamped to the
     // boundary mid value. Subsequent require_effect must read TypedMid
     // directly (no drift to current_mutation_epoch()).
-    typed_audit::stamp_type_linear_commit_proof(99);
+    aura::compiler::typed_audit::stamp_type_linear_commit_proof(99);
     const auto typed_before = last_type_linear_commit_proof_stamp_v_read();
     CHECK(typed_before == 99, "AC3 pre: TypedMid = 99 (boundary enter)");
     // require_effect mid path: TypedMid is non-zero → use it (AC1 order).
+    // Issue #3599 re-pin: boundary-stamped TypedMid does not bypass the
+    // capability bit — fail-closed deny without a grant.
     const bool ok = ev.require_effect(aura::compiler::security::kEffectMutate, "test-3143-ac3");
-    CHECK(ok, "AC3: post-boundary require_effect succeeds");
+    CHECK(!ok, "AC3: post-boundary require_effect denies without grant (fail-closed)");
     aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
 }
 
@@ -121,7 +128,7 @@ static void ac4_query_audit_replay_join() {
     CompilerService cs;
     auto& ev = cs.evaluator();
     // Stamp a TypedMid so the query primitive reads it.
-    typed_audit::stamp_type_linear_commit_proof(123);
+    aura::compiler::typed_audit::stamp_type_linear_commit_proof(123);
 
     // Look for the joined audit keys in the query surface by checking the
     // source-cite surface (additive on query:capability-effect-stats).
@@ -138,6 +145,51 @@ static void ac4_query_audit_replay_join() {
     // Lambda must name `args` so the optional mid join compiles under -Werror.
     CHECK(src.find("const auto& args") != std::string::npos,
           "AC4: query:capability-effect-stats lambda names args (replay-mid join)");
+
+    // Issue #3599: live eval assertions — replay-mid is arg || TypedMid ||
+    // Mutation epoch with NO phantom 1; under the production epoch=0 matrix
+    // it reads 0 and the deny SE lands mid=0 (refuse class, #3462).
+    ev.set_effect_sandbox_mode(1); // Restricted face: arms the deny gate.
+    auto href_replay = [&](std::string_view key) -> std::int64_t {
+        auto r = cs.eval(std::format(
+            "(hash-ref (engine:metrics \"query:capability-effect-stats\") \"{}\")", key));
+        if (!r || !aura::compiler::types::is_int(*r))
+            return -1;
+        return aura::compiler::types::as_int(*r);
+    };
+    // (a) TypedMid join: 123 stamped above -> replay-mid == 123.
+    CHECK(href_replay("replay-mid") == 123, "3599 AC4: replay-mid == TypedMid (123)");
+    // (b) Production epoch=0 matrix: TypedMid=0 + Mutation epoch=0 -> 0 is
+    // legal (refuse evidence); no phantom mid=1 invented.
+    aura::compiler::typed_audit::reset_for_test();
+    aura::compiler::typed_audit::clear_type_linear_commit_proof_for_test();
+    aura::core::reset_mutation_epoch_for_test();
+    CHECK(href_replay("replay-mid") == 0,
+          "3599 AC4: epoch=0 + TypedMid=0 -> replay-mid == 0 (no phantom 1)");
+    // (c) grant-effect deny SE lands mid=0 with the stable reason; no new
+    // mid=1 row (dual surface with query:security-audit mid=0, #3462).
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    auto& se_ring = ::aura::core::security_event::g_security_event_ring();
+    const auto seq0 = se_ring.seq.load(std::memory_order_acquire);
+    const auto deny = cs.eval("(security:grant-effect! \"mutate\" 1)");
+    (void)deny;
+    const auto seq1 = se_ring.seq.load(std::memory_order_acquire);
+    bool saw_deny_mid0 = false;
+    bool saw_deny_mid1 = false;
+    for (std::uint64_t s = seq0; s < seq1; ++s) {
+        const auto& e = se_ring.ring[s % se_ring.ring.size()];
+        if (e.seq != s || !e.denied)
+            continue;
+        if (std::string_view{e.reason} != "grant-effect-needs-explicit-tenant-admin")
+            continue;
+        if (e.mutation_id == 0)
+            saw_deny_mid0 = true;
+        if (e.mutation_id == 1)
+            saw_deny_mid1 = true;
+    }
+    CHECK(saw_deny_mid0, "3599 AC4: grant-effect deny SE carries mid=0 (refuse class)");
+    CHECK(!saw_deny_mid1, "3599 AC4: no phantom mid=1 deny row");
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
     aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
 }
 
@@ -152,8 +204,8 @@ static void ac5_source_cite_no_design() {
 
     // Source-cite in evaluator_security.cpp (stamp order changed)
     const auto eval_sec = read_file("src/compiler/evaluator_security.cpp");
-    CHECK(eval_sec.find("Issue #3143") != std::string::npos,
-          "AC5: evaluator_security.cpp cites #3143");
+    CHECK(eval_sec.find("Issue #3462") != std::string::npos,
+          "AC5: evaluator_security.cpp cites #3462 (mid SSOT emit contract)");
     CHECK(eval_sec.find("last_type_linear_commit_proof_stamp_v_read") != std::string::npos,
           "AC5: TypedMid reader referenced in require_effect");
     CHECK(eval_sec.find("TypedMid (typed_mutation_audit.h:1176)") != std::string::npos ||
@@ -162,8 +214,8 @@ static void ac5_source_cite_no_design() {
 
     // Source-cite in typed_mutation_audit.h
     const auto typed_audit = read_file("src/compiler/typed_mutation_audit.h");
-    CHECK(typed_audit.find("Issue #3143") != std::string::npos,
-          "AC5: typed_mutation_audit.h cites #3143 (SSOT)");
+    CHECK(typed_audit.find("Issue #3532") != std::string::npos,
+          "AC5: typed_mutation_audit.h cites #3532 (mid=0 SE classifier)");
 
     // Source-cite in evaluator_primitives_security.cpp (query primitive)
     const auto ep = read_file("src/compiler/evaluator_primitives_security.cpp");

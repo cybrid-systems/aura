@@ -98,6 +98,18 @@ def main() -> int:
     must("schema-3143", "AC4 schema-3143 key", ep)
     must("Issue #3143", "AC4 cite in evaluator_primitives_security.cpp", ep)
 
+    # ── AC(#3599): no phantom mid=1 inventions on the query / deny face ──
+    if "static_cast<std::uint64_t>(1)" in ep:
+        fails.append(
+            "#3599: phantom mid=1 invention in evaluator_primitives_security.cpp — "
+            "production deny SE joins via typed_audit::join_audit_and_se_mid(0); "
+            "replay-mid stops at the Mutation epoch (0 is legal refuse evidence)"
+        )
+    must("join_audit_and_se_mid(0)", "#3599 deny SE joins via the mid SSOT", ep)
+    must("Issue #3599", "#3599 cite in evaluator_primitives_security.cpp", ep)
+    cap_model = _read("src/core/capability_model.hh")
+    must("Issue #3599", "#3599 cite in capability_model.hh", cap_model)
+
     # ── AC5: source-cite + extend test + no docs/issues ─────────────
     must("ac1_typedmid_first_stamp_order", "AC5 AC1 test function", test)
     must("ac2_soft_off_zero_cost", "AC5 AC2 test function", test)
