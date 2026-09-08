@@ -152,6 +152,16 @@ inline constexpr std::uint64_t kDefaultJoinDrainMs = 2000;
 // reaping prematurely, short enough that production cancel
 // storms converge within a minute.
 inline constexpr std::uint64_t kJoinDrainResidualHardMsDefault = 30000;
+// Issue #3595: production reclaimed-cleanup retry budget for the join
+// surface — the same #2227 shape as the reaper hard deadline: the
+// caller's drain window scaled 8x, capped at
+// kJoinDrainResidualHardMsDefault. drain_ms=0 (cancel-only join) -> 0 ->
+// the auto-wait stays one-shot; the default JoinPolicy drain (2000) ->
+// a 16s bounded retry window. No new env / query key.
+[[nodiscard]] inline constexpr std::uint64_t
+reclaimed_retry_budget_ms(std::uint64_t drain_ms) noexcept {
+    return std::min(drain_ms * 8, kJoinDrainResidualHardMsDefault);
+}
 // Issue #2228 / #2535: mailbox-backpressure admit threshold default.
 // spawn_agent_with_mailbox soft-rejects new agents (with attach_mailbox)
 // when the process-wide mailbox_bp_recent_total is >= this threshold.
@@ -2953,15 +2963,43 @@ struct JoinViaTokenResult {
     return wr;
 }
 
-[[nodiscard]] inline std::uint64_t
-maybe_auto_wait_reclaimed_production(AgentHandle& h,
-                                     bool caller_passed_wait_reclaimed_ms) noexcept {
+[[nodiscard]] inline std::uint64_t maybe_auto_wait_reclaimed_production(
+    AgentHandle& h, bool caller_passed_wait_reclaimed_ms,
+    std::uint64_t retry_budget_ms = kJoinDrainResidualHardMsDefault) noexcept {
     if (caller_passed_wait_reclaimed_ms || !h.must_wait_reclaimed)
         return 0;
     // Issue #3087: delegate to the SSOT helper so the wait logic
     // (50 ms deadline + flag writes) lives in one place.
-    auto wr = ensure_reclaimed_cleanup(h);
-    return wr.wait_us;
+    // Issue #3595: bounded production retry — close the host-forget window
+    // on the join surface. Every wait still goes through
+    // ensure_reclaimed_cleanup (the only second-wait SSOT — no third
+    // cleanup function): the loop re-arms the 50 ms deadline until a
+    // still-running Reclaimed body exits (Ok → Done-path cleanup clears
+    // must_wait) or the budget expires. Call sites pass
+    // reclaimed_retry_budget_ms(drain_ms); Soft / Off / explicit
+    // :wait-reclaimed-ms early-return above — zero extra loop (AC3).
+    // Budget expiry leaves flags + cleanup-pending exactly as the one-shot
+    // did: no auto-abandon (#3334 stays host-opt-in), no body-stack free
+    // (#2661 no-early-free). The #3220 host-forget risk counter moves here
+    // (one bump per expiry) so the C++ and Aura join paths share it.
+    const auto t0 = std::chrono::steady_clock::now();
+    std::uint64_t waited_us = 0;
+    for (;;) {
+        waited_us += ensure_reclaimed_cleanup(h).wait_us;
+        if (!h.must_wait_reclaimed)
+            return waited_us; // body exited + cleanup landed (AC1)
+        const auto elapsed_ms =
+            static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                           std::chrono::steady_clock::now() - t0)
+                                           .count());
+        if (elapsed_ms >= retry_budget_ms) {
+            // Body still live after the bounded window — host-visible
+            // signal unchanged (cleanup-pending #3272); reuse #3220 risk.
+            g_orch_module_stats.host_forget_reclaimed_risk_total.fetch_add(
+                1, std::memory_order_relaxed);
+            return waited_us; // AC2
+        }
+    }
 }
 
 // Issue #3334: production long-lived C++ hosts that keep AgentHandle in
@@ -3259,26 +3297,17 @@ inline void cancel_and_drain_fibers(std::span<serve::Fiber* const> fibers,
         // Hosts that store the handle in a vector / hand it to another
         // component must not have to remember a second wait_reclaimed_body
         // call (closes the #2661 host footgun on the C++ path; Aura
-        // language path already auto-injects via #3051/#3087). 50ms
-        // production default (kProductionWaitReclaimedMsDefault); Soft /
+        // language path already auto-injects via #3051/#3087). Soft /
         // sandbox=off / unset production_reclaimed_must_wait stays false
         // here (AC3 zero cost). Timeout preserves #2661 no-early-free.
-        auto wr3110 = wait_reclaimed_body(h, kProductionWaitReclaimedMsDefault);
-        jr.wait_us += wr3110.wait_us;
-        h.wait_reclaimed_used = true;
-        h.wait_reclaimed_timeout = (wr3110.status == serve::JoinStatus::Timeout);
-        // Issue #3146: on Timeout, retain must_wait_reclaimed so the host
-        // still knows the body is running and reservation/mailbox are
-        // still held (#2661 no-early-free; wait_reclaimed_body does not
-        // release / detach on Timeout, so the flag is the only host-
-        // visible signal). Ok path clears the flag (#3110 AC1 — host
-        // sees cleanup completed).
-        h.must_wait_reclaimed = (wr3110.status == serve::JoinStatus::Timeout);
-        // Issue #3220: host still holds the handle after Timeout; name-
-        // table / directory can still surface it until ~AgentHandle.
-        if (h.must_wait_reclaimed)
-            g_orch_module_stats.host_forget_reclaimed_risk_total.fetch_add(
-                1, std::memory_order_relaxed);
+        // Issue #3595: one SSOT with the Aura prims — the bounded retry
+        // wrapper (ensure_reclaimed_cleanup loop, budget =
+        // reclaimed_retry_budget_ms(drain_ms); drain=0 cancel-only stays
+        // one-shot) now owns the flag writes (#3146) and the #3220
+        // host_forget bump.
+        jr.wait_us +=
+            maybe_auto_wait_reclaimed_production(h, /*caller_passed_wait_reclaimed_ms=*/false,
+                                                 reclaimed_retry_budget_ms(policy.drain_ms));
     }
     if (jr.status == serve::JoinStatus::Reclaimed && policy.wait_reclaimed_ms.has_value()) {
         auto wr = wait_reclaimed_body(h, policy.wait_reclaimed_ms);
@@ -3390,20 +3419,13 @@ inline void cancel_and_drain_fibers(std::span<serve::Fiber* const> fibers,
             // a single non-yielding sibling cannot pin every reservation.
             // Soft / sandbox=off / unset production_reclaimed_must_wait stays
             // zero cost (AC3). Timeout preserves #2661 no-early-free.
-            auto wr3110 = wait_reclaimed_body(a, kProductionWaitReclaimedMsDefault);
-            jr.wait_us += wr3110.wait_us;
-            a.wait_reclaimed_used = true;
-            a.wait_reclaimed_timeout = (wr3110.status == serve::JoinStatus::Timeout);
-            // Issue #3146: on Timeout, retain must_wait_reclaimed so the
-            // host still knows the body is running and reservation/mailbox
-            // are still held (#2661 no-early-free). Ok path clears the
-            // flag (#3110 AC1 — host sees cleanup completed). Mirrors the
-            // single-handle join_agent fix.
-            a.must_wait_reclaimed = (wr3110.status == serve::JoinStatus::Timeout);
-            // Issue #3220: same host-forget risk as join_agent Timeout.
-            if (a.must_wait_reclaimed)
-                g_orch_module_stats.host_forget_reclaimed_risk_total.fetch_add(
-                    1, std::memory_order_relaxed);
+            // Issue #3595: same SSOT wrapper as join_agent (budget =
+            // reclaimed_retry_budget_ms(drain_ms); drain=0 stays one-shot) —
+            // the wrapper owns the flag writes (#3146) and the #3220
+            // host_forget bump.
+            jr.wait_us +=
+                maybe_auto_wait_reclaimed_production(a, /*caller_passed_wait_reclaimed_ms=*/false,
+                                                     reclaimed_retry_budget_ms(policy.drain_ms));
         }
         if (local.status == serve::JoinStatus::Reclaimed && policy.wait_reclaimed_ms.has_value()) {
             auto wr = wait_reclaimed_body(a, policy.wait_reclaimed_ms);

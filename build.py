@@ -11512,6 +11512,47 @@ def cmd_steal_safety_lifetime_proof_latch_3385_coverage():
     return 0
 
 
+def cmd_join_reclaim_retry_3595_coverage():
+    """Issue #3595: bounded production reclaimed-cleanup retry on the join
+    surface (P0 residual: orch:agent-join / orch:scope-join-all stayed a
+    one-shot 50ms wait after Reclaimed Timeout — cleanup-pending was
+    signal-only, and recycling name/mailbox still required a second host
+    call).
+
+    Contract rows (AC1-AC5 from the test file):
+
+      AC1: maybe_auto_wait_reclaimed_production takes the bounded budget
+           param; every wait goes through ensure_reclaimed_cleanup (the
+           only second-wait SSOT); the expiry arm bumps the #3220
+           host-forget risk counter once.
+      AC2: reclaimed_retry_budget_ms reuses the #2227 shape
+           min(drain_ms * 8, kJoinDrainResidualHardMsDefault); no new env
+           / query key.
+      AC3: join_agent + join_agents production arms route through the
+           wrapper (no direct wait_reclaimed_body / inline host_forget
+           bump left in the #3110 arms); drain=0 cancel-only stays
+           one-shot.
+      AC4: Both join prims pass reclaimed_retry_budget_ms(policy.drain_ms);
+           the wrapper never auto-abandons (#3334 host-opt-in); no
+           body-stack free (#2661).
+      AC5: No docs/design/3595-* (per MEMORY 2026-07-19), no
+           tests/issues/test_issue_3595.cpp (#81934). Existing counters
+           (wait_reclaimed_total / wait_reclaimed_timeout_total /
+           host_forget_reclaimed_risk_total) reused.
+    """
+    print(f"{B}=== join reclaimed-cleanup retry (#3595) ==={N}")
+    script = ROOT / "scripts" / "check_join_reclaim_retry_3595.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script), "--strict"], cwd=ROOT)
+    if r.returncode != 0:
+        fail("join reclaimed-cleanup retry (#3595) contract rows failed")
+        return 1
+    ok("join reclaimed-cleanup retry (#3595) clean")
+    return 0
+
+
 def cmd_query_stable_hard_reject_torn_latch_3386_coverage():
     """Issue #3386: shared probe Evaluator::query_stable_hard_reject_torn()
     must OR restamp_over_budget_torn() under multi-worker latch (I6 residual).
@@ -21248,6 +21289,7 @@ def cmd_gate():
         or cmd_steal_safety_lifetime_proof_latch_3385_coverage()
         or cmd_query_stable_hard_reject_torn_latch_3386_coverage()
         or cmd_soak_pr_short_3387_coverage()
+        or cmd_join_reclaim_retry_3595_coverage()
     )
     if rc:
         return rc

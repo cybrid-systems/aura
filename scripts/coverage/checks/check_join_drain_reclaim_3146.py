@@ -59,13 +59,13 @@ def main() -> int:
     # The conditional update must appear in join_agent (single-handle).
     must("Issue #3146", "AC1 source-cite marker in agent_spawn.h", spawn)
     must(
-        "wr3110 = wait_reclaimed_body(h, kProductionWaitReclaimedMsDefault)",
+        "maybe_auto_wait_reclaimed_production(h, /*caller_passed_wait_reclaimed_ms=*/false,",
         "AC1 join_agent auto-wait calls wait_reclaimed_body(50ms default)",
         spawn,
     )
     # Conditional flag update in join_agent single-handle path
     must(
-        "(wr3110.status == serve::JoinStatus::Timeout)",
+        "(wr.status == serve::JoinStatus::Timeout)",
         "AC1 join_agent sets must_wait_reclaimed conditionally on auto-wait result",
         spawn,
     )
@@ -84,7 +84,7 @@ def main() -> int:
         spawn,
     )
     must(
-        "h.wait_reclaimed_timeout = (wr3110.status == serve::JoinStatus::Timeout)",
+        "h.wait_reclaimed_timeout = (wr.status == serve::JoinStatus::Timeout)",
         "AC2 wait_reclaimed_timeout mirrors auto-wait result",
         spawn,
     )
@@ -113,7 +113,7 @@ def main() -> int:
     # The new auto-wait block must be INSIDE the production gate (Soft path
     # would auto-wait too otherwise).
     gate_idx = spawn.find("production_reclaimed_must_wait()")
-    autowait_idx = spawn.find("wr3110 = wait_reclaimed_body(h, kProductionWaitReclaimedMsDefault)")
+    autowait_idx = spawn.find("maybe_auto_wait_reclaimed_production(h, /*caller_passed_wait_reclaimed_ms=*/false,")
     if gate_idx < 0 or autowait_idx < 0:
         fails.append("AC4: missing production gate or auto-wait call")
     elif autowait_idx < gate_idx:
@@ -127,7 +127,7 @@ def main() -> int:
         spawn,
     )
     must(
-        "wait_reclaimed_timeout = (wr3110.status == serve::JoinStatus::Timeout)",
+        "wait_reclaimed_timeout = (wr.status == serve::JoinStatus::Timeout)",
         "AC5 timeout wired into wait_reclaimed_timeout flag",
         spawn,
     )
@@ -196,7 +196,7 @@ def main() -> int:
         # block, which can sit ~2-3k chars past the signature depending on
         # formatting and comments.
         snip = spawn[span_idx : span_idx + 12000]
-        if "(wr3110.status == serve::JoinStatus::Timeout)" not in snip:
+        if "(wr.status == serve::JoinStatus::Timeout)" not in snip:
             fails.append("AC8: join_agents span variant must mirror single-handle conditional update")
     else:
         fails.append("AC8: join_agents span variant signature not found")

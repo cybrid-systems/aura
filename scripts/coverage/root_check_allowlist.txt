@@ -53,3 +53,4 @@ check_type_linear_proof_mid_3091.py
 check_unified_restamp_single_entry_3309.py
 check_wildcard_ta_string_gate_3411.py
 check_evaluator_ctor_production_upgrade.py
+check_join_reclaim_retry_3595.py
