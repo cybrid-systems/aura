@@ -213,6 +213,18 @@ def _isolate_member_fail_lines(stdout: str) -> list[str]:
     return out
 
 
+def _member_check_fail_lines(stdout: str) -> list[str]:
+    """Member CHECK failure labels: 'FAIL: <label> (line N)' — keep the last few.
+
+    The batch harness discards member stdout on success, and rc=1 isolate
+    deaths used to lose the failing CHECK label entirely (only the member
+    summary + stderr tail survived). Keep the labels so a red CI run names
+    the exact AC that failed.
+    """
+    out = [ln.strip() for ln in stdout.splitlines() if ln.strip().startswith("FAIL:")]
+    return out[-8:]
+
+
 def parse_pass_fail_count(stdout: str) -> tuple[int, int]:
     """Parse a test binary's stdout for pass/fail counts."""
     import re
@@ -492,6 +504,9 @@ def _run_one_attempt(bin_name: str, timeout: int) -> tuple[str, int, int, int, s
     isolate_fails = _isolate_member_fail_lines(r.stdout or "")
     if isolate_fails:
         err = "; ".join(isolate_fails)
+        check_fails = _member_check_fail_lines(r.stdout or "")
+        if check_fails:
+            err = f"{err}\n" + "\n".join(check_fails)
         if stderr_tail:
             err = f"{err}\n{stderr_tail}"
     elif r.returncode != 0 and r.returncode not in (0, 1):
