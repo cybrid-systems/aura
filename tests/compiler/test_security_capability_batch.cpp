@@ -36,6 +36,7 @@ static void reset_member_face() {
 extern int run_test_audit_mid_fallback_slo();
 extern int run_test_audit_mutation_id_unify();
 extern int run_test_audit_ring_publish();
+extern int run_test_audit_replay_join();
 extern int run_test_cap_write_effect_matrix();
 extern int run_test_capability_effect_force();
 extern int run_test_capability_high_risk_promote();
@@ -110,9 +111,16 @@ int main() {
     }
 
     std::println("\n──── test_audit_mutation_id_unify ────");
-    CHECK(true, "skip leftover 3066 Full-query AC");
-    ++members_passed;
-    std::println("OK member test_audit_mutation_id_unify (skip leftover AC)");
+    reset_member_face();
+    g_passed = 0;
+    g_failed = 0;
+    if (run_test_audit_mutation_id_unify() != 0 || g_failed != 0) {
+        ++members_failed;
+        std::println("FAIL member test_audit_mutation_id_unify ({}/{})", g_passed, g_failed);
+    } else {
+        ++members_passed;
+        std::println("OK member test_audit_mutation_id_unify ({} checks)", g_passed);
+    }
 
     std::println("\n──── test_audit_ring_publish ────");
     reset_member_face();
@@ -124,6 +132,18 @@ int main() {
     } else {
         ++members_passed;
         std::println("OK member test_audit_ring_publish ({} checks)", g_passed);
+    }
+
+    std::println("\n──── test_audit_replay_join ────");
+    reset_member_face();
+    g_passed = 0;
+    g_failed = 0;
+    if (run_test_audit_replay_join() != 0 || g_failed != 0) {
+        ++members_failed;
+        std::println("FAIL member test_audit_replay_join ({}/{})", g_passed, g_failed);
+    } else {
+        ++members_passed;
+        std::println("OK member test_audit_replay_join ({} checks)", g_passed);
     }
 
     std::println("\n──── test_cap_write_effect_matrix ────");

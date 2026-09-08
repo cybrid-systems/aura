@@ -155,7 +155,9 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 using ::aura::core::security_event::SecurityEventKind;
                 using ::aura::core::security_event_wal::emit_security_event_durable;
                 const auto epoch = ::aura::core::current_mutation_epoch();
-                const auto mid = epoch != 0 ? epoch : static_cast<std::uint64_t>(1);
+                // Issue #3599 (#3462): production deny SE joins the mid SSOT —
+                // mid=0 is the legal refuse-class row; never a phantom 1.
+                const auto mid = typed_audit::join_audit_and_se_mid(0);
                 const auto fid = static_cast<std::int64_t>(aura_fiber_current_id());
                 emit_security_event_durable(SecurityEventKind::EffectDeny,
                                             ev.capability_tenant_id(), mid, epoch,
@@ -250,7 +252,9 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 using ::aura::core::security_event::SecurityEventKind;
                 using ::aura::core::security_event_wal::emit_security_event_durable;
                 const auto epoch = ::aura::core::current_mutation_epoch();
-                const auto mid = epoch != 0 ? epoch : static_cast<std::uint64_t>(1);
+                // Issue #3599 (#3462): production deny SE joins the mid SSOT —
+                // mid=0 is the legal refuse-class row; never a phantom 1.
+                const auto mid = typed_audit::join_audit_and_se_mid(0);
                 const auto fid = static_cast<std::int64_t>(aura_fiber_current_id());
                 emit_security_event_durable(SecurityEventKind::EffectDeny,
                                             ev.capability_tenant_id(), mid, epoch,
@@ -634,7 +638,8 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             }
             auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
             // 1565 + 1876 + #2023 MacroSelfEvo + #2052 mutate-force keys
-            auto* ht = FlatHashTable::create(query_hash_capacity_for(164));
+            auto* ht =
+                FlatHashTable::create(query_hash_capacity_for(178)); // #3339: 170 live + 8 (#3599)
             if (!ht)
                 return make_void();
             bool overflowed = false;
@@ -691,8 +696,10 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                     mid = typed_audit::last_type_linear_commit_proof_stamp_v_read();
                 if (mid == 0)
                     mid = ::aura::core::current_mutation_epoch();
-                if (mid == 0)
-                    mid = 1;
+                // Issue #3599: stop at the epoch — 0 is legal under production
+                // refuse (mid-fallback-refused rows carry mid=0); the ring scan
+                // below then selects exactly the refuse class (same filter as
+                // query:security-audit mid=0, #3462). No phantom mid=1 join.
                 std::size_t se_count = 0;
                 std::size_t se_deny_count = 0;
                 auto& se_ring = ::aura::core::security_event::g_security_event_ring();
@@ -1135,7 +1142,9 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 using ::aura::core::workspace_isolation::g_tenant_isolation_metrics;
                 ev.bump_capability_denial();
                 const auto epoch = ::aura::core::current_mutation_epoch();
-                const auto mid = epoch != 0 ? epoch : static_cast<std::uint64_t>(1);
+                // Issue #3599 (#3462): production deny SE joins the mid SSOT —
+                // mid=0 is the legal refuse-class row; never a phantom 1.
+                const auto mid = typed_audit::join_audit_and_se_mid(0);
                 const auto fid = static_cast<std::int64_t>(aura_fiber_current_id());
                 if (allow_cross && !elevate) {
                     g_tenant_isolation_metrics().allow_cross_tenant_deny_total.fetch_add(
@@ -1177,7 +1186,9 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 using ::aura::core::security_event::SecurityEventKind;
                 using ::aura::core::security_event_wal::emit_security_event_durable;
                 const auto epoch = ::aura::core::current_mutation_epoch();
-                const auto mid = epoch != 0 ? epoch : static_cast<std::uint64_t>(1);
+                // Issue #3599 (#3462): production deny SE joins the mid SSOT —
+                // mid=0 is the legal refuse-class row; never a phantom 1.
+                const auto mid = typed_audit::join_audit_and_se_mid(0);
                 const auto fid = static_cast<std::int64_t>(aura_fiber_current_id());
                 emit_security_event_durable(SecurityEventKind::EffectDeny,
                                             ev.capability_tenant_id(), mid, epoch,

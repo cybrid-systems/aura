@@ -718,12 +718,12 @@ struct CapabilityRegistry {
             g.grant_fiber_id = prov.fiber_id;
             // Issue #2531 / #2944: Soft/Off (sandbox_mode==Off) keeps legacy
             // optional mid; session_bound always needs non-zero mid stamp.
-            // After the pre-lock refuse (#3090), production with bound_mid==0
-            // has already been refused above, so this synthesis is unreachable
-            // under Restricted/Strict — it only fires for Soft/Off + session_bound.
-            if ((sandbox_mode.load(std::memory_order_acquire) != EffectSandboxMode::Off ||
-                 session_bound) &&
-                g.bound_mutation_id == 0) {
+            // Issue #3599: production never binds a phantom mid — the pre-lock
+            // refuse (#3090) already covers Restricted/Strict, so this tail is
+            // structurally Soft/Off + session_bound only (#2493 AC4 observe);
+            // no `: 1` fallback is reachable from a production face.
+            if (sandbox_mode.load(std::memory_order_acquire) == EffectSandboxMode::Off &&
+                session_bound && g.bound_mutation_id == 0) {
                 g.bound_mutation_id = g.grant_epoch != 0 ? g.grant_epoch : 1;
             }
             g.revoke_epoch = 0;
@@ -1661,14 +1661,12 @@ struct CapabilityRegistry {
                     return;
                 }
             }
-            // Issue #2531: same non-zero mid force as grant().
-            // After the refuse block above, this synthesis is dead under
-            // production (bound_mid==0 has been refused above); it only
-            // fires for Soft/Off when bound_mid is still zero.
-            if (sandbox_mode.load(std::memory_order_acquire) != EffectSandboxMode::Off &&
-                g.bound_mutation_id == 0) {
-                g.bound_mutation_id = g.grant_epoch != 0 ? g.grant_epoch : 1;
-            }
+            // Issue #2531: Soft/Off keeps the legacy optional mid — the
+            // Soft/Off-only pre-synthesis above (#3459 contract) already
+            // stamped prov.mutation_id from the epoch, and the refuse block
+            // above (#3090 parity) returned for production bound_mid==0.
+            // Issue #3599: the leftover `grant_epoch ?: 1` tail is gone —
+            // production refuses (above), never binds a phantom 1.
             g.revoke_epoch = 0;
             auto& met = g_capability_effect_metrics();
             met.capability_grant_total.fetch_add(1, std::memory_order_relaxed);

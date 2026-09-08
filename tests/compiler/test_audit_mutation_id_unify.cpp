@@ -29,6 +29,7 @@
 #include "compiler/type_linear_commit_health.hh"
 #include "core/capability_model.hh"
 #include "core/resource_quota.hh"
+#include "core/sandbox.hh" // #3599: Strict face for the deny gate
 #include "core/security_event.hh"
 #include "core/security_event_wal.hh"
 #include "core/typed_mutation_audit_counters.h"
@@ -317,7 +318,9 @@ static void ac3066_1_production_batch_share_mid() {
     auto& ev = cs.evaluator();
     ev.begin_atomic_batch_pinning();
     const auto pin = aura::compiler::typed_audit::current_boundary_audit_mid();
-    CHECK(pin != 0, "3066 AC1: production batch pins a join mid");
+    // Issue #3599 re-pin: production epoch=0 refuses to mid=0 — no phantom
+    // join mid (the #3462 refuse-class contract supersedes the #3066 pin).
+    CHECK(pin == 0, "3066 AC1: production epoch=0 -> pin refuses to 0 (no phantom)");
     CHECK(aura::compiler::typed_audit::g_last_stamped_audit_mid.load() == pin,
           "3066 AC1: last_stamped == pin");
     CHECK(aura::compiler::typed_audit::g_last_composite_batch_join_mid.load() == pin,
@@ -330,9 +333,9 @@ static void ac3066_1_production_batch_share_mid() {
     CHECK(aura::compiler::typed_audit::g_last_stamped_audit_mid.load() == pin,
           "3066 AC1: SE-correlated stamp stays on pin");
     aura::compiler::typed_audit::TypedMutationAuditEvent te{};
-    CHECK(aura::compiler::typed_audit::trail_find_by_mutation_id(pin, te),
-          "3066 AC1: typed trail find pin");
-    CHECK(se_ring_has_mid(pin), "3066 AC1: SE ring has same mid");
+    CHECK(!aura::compiler::typed_audit::trail_find_by_mutation_id(pin, te),
+          "3066 AC1: no typed trail row for the refuse mid=0");
+    CHECK(!se_ring_has_mid(1), "3066 AC1: no phantom mid=1 row (#3462/#3599)");
     CHECK(href_audit(cs, "schema-3066") == 3066, "3066 AC1: live schema-3066");
     CHECK(href_audit(cs, "last-stamped-audit-mid") == static_cast<std::int64_t>(pin),
           "3066 AC1: query last-stamped == pin");
@@ -649,6 +652,52 @@ static void ac3546_4_source_cite_no_invent() {
 }
 
 // Issue #3367 source-cite + linter pass.
+// ── Issue #3599: production refuse class stays joinable — the replay hash
+// reads 0 under the epoch=0 matrix (no phantom 1) and the grant-effect deny
+// SE lands mid=0 via join_audit_and_se_mid (#3462 contract).
+static void ac3599_1_refuse_class_joinable() {
+    std::println("\n--- #3599: epoch=0 matrix — replay-mid=0 + deny SE mid=0 ---");
+    reset_all();
+    aura::core::reset_mutation_epoch_for_test();
+    aura::compiler::typed_audit::reset_for_test();
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Strict);
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_effect_sandbox_mode(1); // Restricted face: arms the deny gate.
+    auto href_replay = [&](std::string_view key) -> std::int64_t {
+        auto r = cs.eval(std::format(
+            "(hash-ref (engine:metrics \"query:capability-effect-stats\") \"{}\")", key));
+        if (!r || !is_int(*r))
+            return -1;
+        return as_int(*r);
+    };
+    CHECK(href_replay("replay-mid") == 0, "3599: epoch=0 + TypedMid=0 -> replay-mid == 0");
+    CHECK(href_replay("schema-3143") == 3143, "3599: schema-3143 key unchanged");
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    auto& se_ring = ::aura::core::security_event::g_security_event_ring();
+    const auto seq0 = se_ring.seq.load(std::memory_order_acquire);
+    const auto deny = cs.eval("(security:grant-effect! \"mutate\" 1)");
+    (void)deny;
+    const auto seq1 = se_ring.seq.load(std::memory_order_acquire);
+    bool saw_deny_mid0 = false;
+    bool saw_deny_mid1 = false;
+    for (std::uint64_t s = seq0; s < seq1; ++s) {
+        const auto& e = se_ring.ring[s % se_ring.ring.size()];
+        if (e.seq != s || !e.denied)
+            continue;
+        if (std::string_view{e.reason} != "grant-effect-needs-explicit-tenant-admin")
+            continue;
+        if (e.mutation_id == 0)
+            saw_deny_mid0 = true;
+        if (e.mutation_id == 1)
+            saw_deny_mid1 = true;
+    }
+    CHECK(saw_deny_mid0, "3599: grant-effect deny SE mid=0 (refuse class)");
+    CHECK(!saw_deny_mid1, "3599: no phantom mid=1 deny row");
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+}
+
 static void ac3367_source_cite_and_no_invent() {
     std::println("\n--- #3367: source-cite + no docs/design/ ---");
     const auto tma = read_file("src/compiler/typed_mutation_audit.h");
@@ -691,6 +740,7 @@ int run_test_audit_mutation_id_unify() {
     ac3546_2_abort_clear_still_prefers_tls();
     ac3546_3_enter_zero_is_noop();
     ac3546_4_source_cite_no_invent();
+    ac3599_1_refuse_class_joinable();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

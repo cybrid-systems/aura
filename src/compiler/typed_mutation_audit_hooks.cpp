@@ -301,7 +301,12 @@ extern "C" const char* aura_classify_mid0_se_reason(const char* reason) noexcept
     using aura::compiler::typed_audit::kAuditMidSsotMissReason;
     using aura::compiler::typed_audit::production_defaults_active;
     const std::string_view r = reason ? std::string_view{reason} : std::string_view{};
-    if (r == "mid-fallback-refused" || r == "grant-mid-refused" || r == kAuditMidSsotMissReason)
+    // Issue #3599: the security:grant-effect! / cross-tenant deny is a
+    // canonical production refuse — its mid=0 row must keep the stable
+    // reason so query:security-audit mid=0 joins it (#3462 contract).
+    if (r == "mid-fallback-refused" || r == "grant-mid-refused" ||
+        r == "grant-effect-needs-explicit-tenant-admin" || r == "allow-cross-needs-tenant-admin" ||
+        r == kAuditMidSsotMissReason)
         return reason ? reason : "";
     if (!(production_defaults_active() || get_strategy() == AuditStrategy::Full))
         return reason ? reason : "";
