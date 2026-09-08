@@ -229,6 +229,11 @@ int run_test_agent_ask_typed_corr() {
         spec.keepalive_interval_ms = 0;
         spec.body = [] {};
         b = spawn_agent_with_mailbox(sched, std::move(spec));
+        // Issue #2228: spawn soft-rejects on process-wide BP admit; a
+        // rejected spawn (b.ok=false, no mailbox) surfaces as an instant
+        // agent_ask "no-mailbox" — name it here instead of burying the
+        // cause inside the ask CHECKs.
+        CHECK(b.ok && b.mailbox != nullptr, "AC2: legacy-B spawned with mailbox (BP admit ok)");
 
         std::atomic<bool> running{true};
         std::thread worker([&] {
@@ -272,8 +277,10 @@ int run_test_agent_ask_typed_corr() {
         });
 
         AskResult r = agent_ask(b, "legacy-ping", /*timeout_ms=*/2000);
-        CHECK(r.ok, "AC2: agent_ask ok via pure text-prefix worker");
-        CHECK(r.payload == "legacy-ping", "AC2: legacy payload match");
+        CHECK(r.ok, std::format("AC2: agent_ask ok via pure text-prefix worker (status={} corr={})",
+                                r.status, r.correlation_id));
+        CHECK(r.payload == "legacy-ping",
+              std::format("AC2: legacy payload match (status={} payload={})", r.status, r.payload));
         // Match should count as non-typed (text path).
         // (typed_match may not bump for this ask)
 
