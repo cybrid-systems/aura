@@ -461,6 +461,19 @@ struct Pod16 {
         , d(d_) {}
 };
 
+// Issue #3600: >kMaxSmallSize (64) tracked create — densify-ineligible
+// kept-large entry. Tracked + address-stable; must NOT feed the
+// incomplete-remap gate (mixed-size arena publishes green Moving windows
+// when every moved referent has slot/pin/RootRemap cover).
+struct PodLarge3600 {
+    std::uint64_t v[16] = {}; // 128 bytes > kMaxSmallSize
+    PodLarge3600() = default;
+    explicit PodLarge3600(std::uint64_t seed) noexcept {
+        for (auto& x : v)
+            x = seed;
+    }
+};
+
 struct MovingFlagGuard {
     int prev_pref = -1;
     int prev_hard = -1;
@@ -3370,6 +3383,112 @@ static void ac3464_5_collision_avoided_dtors_unique() {
     }
 }
 
+// ── Issue #3600: untracked_kept no longer aliases kept-large tracked entries ──
+// Mixed-size arenas (small + >kMaxSmallSize tracked creates) publish green
+// Moving windows when every moved referent has slot/pin/RootRemap cover;
+// kept-large stays on dtors_ at the old address and is NOT an external miss.
+
+static void ac3600_1_mixed_size_green_window() {
+    std::println("\n--- #3600 AC1: mixed-size arena, covered smalls → green Moving window ---");
+    MovingFlagGuard on(1);
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    aura::ast::g_moving_untracked_hard_abort_pref.store(1, std::memory_order_relaxed);
+    aura::ast::reset_relocate_alloc_fail_inject_for_test();
+    {
+        ASTArena arena(64 * 1024);
+        auto* s0 = arena.create<Pod16>(1, 2, 3, 4);
+        auto* s1 = arena.create<Pod16>(5, 6, 7, 8);
+        auto* l0 = arena.create<PodLarge3600>(7);
+        CHECK(s0 && s1 && l0, "3600 AC1: creates ok");
+        const auto r = arena.live_compact(LiveCompactMode::Moving);
+        CHECK(r.objects_moved > 0, "3600 AC1: small referents moved");
+        CHECK(r.untracked_kept_count == 0, "3600 AC1: kept-large no longer counted");
+        CHECK(!r.moving_incomplete_remap, "3600 AC1: window not incomplete");
+        CHECK(r.pin_contract_held, "3600 AC1: pin contract held");
+        CHECK(!aura::ast::moving_incomplete_remap_sticky_densify_off(),
+              "3600 AC1: sticky densify-off stays off");
+        // Kept-large stays at its old address (no remap entry); smalls move.
+        CHECK(arena.resolve_object_remap(l0) == nullptr,
+              "3600 AC1: kept-large did not move (no remap entry)");
+        CHECK(arena.resolve_object_remap(s0) != nullptr ||
+                  arena.resolve_object_remap(s1) != nullptr,
+              "3600 AC1: at least one small remapped");
+    }
+    aura::ast::g_moving_untracked_hard_abort_pref.store(0, std::memory_order_relaxed);
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+}
+
+static void ac3600_2_external_only_still_red() {
+    std::println("\n--- #3600 AC2: mixed-size + alloc-fail → external bucket only, red ---");
+    MovingFlagGuard on(1);
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    aura::ast::g_moving_untracked_hard_abort_pref.store(1, std::memory_order_relaxed);
+    aura::ast::reset_relocate_alloc_fail_inject_for_test();
+    {
+        ASTArena arena(64 * 1024);
+        auto* s0 = arena.create<Pod16>(1, 2, 3, 4);
+        auto* s1 = arena.create<Pod16>(5, 6, 7, 8);
+        auto* s2 = arena.create<Pod16>(9, 10, 11, 12);
+        auto* l0 = arena.create<PodLarge3600>(9);
+        CHECK(s0 && s1 && s2 && l0, "3600 AC2: creates ok");
+        aura::ast::g_relocate_alloc_fail_inject_remaining.store(1, std::memory_order_relaxed);
+        const auto r = arena.live_compact(LiveCompactMode::Moving);
+        CHECK(r.objects_moved > 0, "3600 AC2: window moved objects");
+        CHECK(r.untracked_kept_count == 1,
+              "3600 AC2: exactly the alloc-fail identity-drop (kept-large not aliased)");
+        CHECK(r.moving_incomplete_remap, "3600 AC2: window red (fail-closed)");
+        CHECK(r.pin_contract_held == false, "3600 AC2: pin contract cleared");
+        CHECK(aura::ast::moving_incomplete_remap_sticky_densify_off(),
+              "3600 AC2: production hard arms sticky");
+    }
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    aura::ast::g_moving_untracked_hard_abort_pref.store(0, std::memory_order_relaxed);
+}
+
+static void ac3600_3_soft_mixed_no_sticky() {
+    std::println("\n--- #3600 AC3: Soft mixed-size window — no sticky arm ---");
+    MovingFlagGuard on(1);
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    aura::ast::g_moving_untracked_hard_abort_pref.store(0, std::memory_order_relaxed);
+    aura::ast::reset_relocate_alloc_fail_inject_for_test();
+    ASTArena arena(64 * 1024);
+    // Two smalls so freelist LIFO swaps their slots (a single pending
+    // reallocates its own slot -> objects_moved == 0).
+    auto* s0 = arena.create<Pod16>(1, 2, 3, 4);
+    auto* s1 = arena.create<Pod16>(5, 6, 7, 8);
+    auto* l0 = arena.create<PodLarge3600>(3);
+    CHECK(s0 && s1 && l0, "3600 AC3: creates ok");
+    const auto r = arena.live_compact(LiveCompactMode::Moving);
+    CHECK(r.objects_moved > 0, "3600 AC3: moved under Soft");
+    CHECK(r.untracked_kept_count == 0, "3600 AC3: kept-large not counted under Soft");
+    CHECK(r.pin_contract_held, "3600 AC3: pin contract held under Soft");
+    CHECK(!aura::ast::moving_incomplete_remap_sticky_densify_off(),
+          "3600 AC3: Soft never arms sticky");
+}
+
+static void ac3600_4_source_and_linter() {
+    std::println("\n--- #3600 AC4: source-cite + linter + no invent ---");
+    const auto arena_src = read_file("src/core/arena.ixx");
+    CHECK(arena_src.find("Issue #3600") != std::string::npos, "3600 AC4: arena.ixx cites #3600");
+    CHECK(arena_src.find("++untracked_kept;") == std::string::npos,
+          "3600 AC4: bare kept-large increment gone");
+    CHECK(arena_src.find("++*out_untracked_kept_count") != std::string::npos,
+          "3600 AC4: external identity-drop bucket preserved");
+    CHECK(arena_src.find("count_pre_densify_untracked_external_roots_") != std::string::npos,
+          "3600 AC4: pre-densify external-root SSOT preserved");
+    const auto build = read_file("build.py");
+    CHECK(build.find("check_moving_untracked_split_3600") != std::string::npos,
+          "3600 AC4: build.py wires linter");
+    const auto t = read_file("tests/core/test_moving_densify_fail_closed.cpp");
+    CHECK(t.find("ac3600_1_mixed_size_green_window") != std::string::npos, "3600 AC4: AC1 present");
+    CHECK(read_file("docs/design/3600-moving-untracked-split.md").empty(),
+          "3600 AC4: no docs/design/ per #1655");
+    std::ifstream invent3600("tests/core/test_issue_3600.cpp");
+    if (!invent3600.good())
+        invent3600.open("../tests/core/test_issue_3600.cpp");
+    CHECK(!invent3600.good(), "3600 AC4: no test_issue_3600.cpp per #81967");
+}
+
 static void ac3533_1_required_no_slot_refuses() {
     std::println("\n--- #3533 AC1: production required + no slot refuses ---");
     RequiredPinGuard req(1);
@@ -4376,6 +4495,11 @@ int run_test_moving_densify_fail_closed() {
     std::println("\n=== Issue #3571: commit-time envframe hold-pin re-check ===");
     ac3571_1_guard_live_blocks_moving();
     ac3571_2_source_cite();
+    std::println("\n=== Issue #3600: untracked_kept no longer aliases kept-large ===");
+    ac3600_1_mixed_size_green_window();
+    ac3600_2_external_only_still_red();
+    ac3600_3_soft_mixed_no_sticky();
+    ac3600_4_source_and_linter();
 
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;

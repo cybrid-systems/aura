@@ -11553,6 +11553,41 @@ def cmd_join_reclaim_retry_3595_coverage():
     return 0
 
 
+def cmd_moving_untracked_split_3600_coverage():
+    """Issue #3600: untracked_kept conflated kept-large tracked objects with
+    uncovered external roots — mixed-size Moving windows went false-red and
+    armed sticky densify-off (#2495/#2682 residual).
+
+    Contract rows (AC1-AC5 from the test file):
+
+      AC1: relocate kept-large / degenerate dtor entries no longer increment
+           the incomplete counter — tracked, address-stable, not external
+           misses; the bare local untracked_kept is gone.
+      AC2: the out-parameter still carries alloc-fail restore (#3435) /
+           same-window collision (#3464) identity-drops.
+      AC3: pre-densify count_pre_densify_untracked_external_roots_ stays the
+           external-root SSOT (#2973/#3017); still publishes
+           result.untracked_kept_count and blocks + sticky under hard.
+      AC4: fail-closed gate shape unchanged (objects_moved > 0 &&
+           (untracked_kept_count > 0 || stale_unremapped > 0));
+           g_moving_untracked_external_roots_total reused — no new key.
+      AC5: tests/core/test_moving_densify_fail_closed.cpp hosts
+           ac3600_1..4 + PodLarge3600; no test_issue_3600.cpp (#81934);
+           no docs/design/3600-* (#1655).
+    """
+    print(f"{B}=== moving untracked split (#3600) ==={N}")
+    script = ROOT / "scripts" / "check_moving_untracked_split_3600.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script), "--strict"], cwd=ROOT)
+    if r.returncode != 0:
+        fail("moving untracked split (#3600) contract rows failed")
+        return 1
+    ok("moving untracked split (#3600) clean")
+    return 0
+
+
 def cmd_query_stable_hard_reject_torn_latch_3386_coverage():
     """Issue #3386: shared probe Evaluator::query_stable_hard_reject_torn()
     must OR restamp_over_budget_torn() under multi-worker latch (I6 residual).
@@ -21290,6 +21325,7 @@ def cmd_gate():
         or cmd_query_stable_hard_reject_torn_latch_3386_coverage()
         or cmd_soak_pr_short_3387_coverage()
         or cmd_join_reclaim_retry_3595_coverage()
+        or cmd_moving_untracked_split_3600_coverage()
     )
     if rc:
         return rc
