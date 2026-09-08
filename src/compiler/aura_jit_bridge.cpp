@@ -2093,6 +2093,12 @@ static std::atomic<std::uint64_t> g_cross_eval_hard_owner_scoped_total{0};
 static std::atomic<std::uint64_t> g_aot_owner_scoped_slot_invalidate_total{0};
 // Issue #2951: hard / force path advanced process-global table epoch under multi.
 static std::atomic<std::uint64_t> g_cross_eval_hard_global_bump_total{0};
+// Issue #3605: scope of the most recent aura_aot_bump_func_table_epoch
+// call (1 = owner-scoped, no table advance; 0 = global bump). Read by the
+// #3219 eval-core joint stamp under the same mutate_mtx_ critical section
+// so it can skip the core bridge epoch bump + C mirror SET when the
+// process C clocks stayed frozen.
+static std::atomic<int> g_last_table_bump_owner_scoped{0};
 // Issue #3025: production multi-eval C-ABI reemit rejected (no owner TLS).
 static std::atomic<std::uint64_t> g_reemit_owner_missing_reject_total{0};
 // Force flag: hard invalidate / Agent fence paths set this TLS so the
@@ -2181,6 +2187,32 @@ extern "C" int aura_aot_cross_eval_hard_owner_scoped_armed(void) {
     return cross_eval_hard_owner_scoped_armed() ? 1 : 0;
 }
 
+// Issue #3605: non-consuming prediction of the table bumper's scope —
+// identical inputs to the owner-scoped branch of
+// aura_aot_bump_func_table_epoch (multi + throttle armed + no force note
+// + owner TLS). The facade consults this BEFORE the joint C-bridge /
+// defuse bump so the owner-scoped path freezes the process clocks
+// (peer dual-fresh stays green on unrelated defines, #3300 contract).
+extern "C" int aura_aot_bump_will_be_owner_scoped(void) {
+    if (g_cross_eval_epoch_force_bump != 0)
+        return 0;
+    if (aura_aot_state_map_size() <= 1)
+        return 0;
+    if (!cross_eval_epoch_throttle_armed())
+        return 0;
+    if (aura_aot_get_reemit_owner_eval() != nullptr)
+        return 1;
+    return aura_aot_get_register_owner_eval() != nullptr ? 1 : 0;
+}
+
+// Issue #3605: scope of the most recent table bump (1 = owner-scoped, no
+// table advance). stamp_eval_core_joint_after_production_facade_ reads it
+// (same mutate_mtx_ critical section, same thread) to skip the core
+// bridge epoch bump + C mirror SET on the owner-scoped path.
+extern "C" int aura_aot_last_table_bump_owner_scoped(void) {
+    return g_last_table_bump_owner_scoped.load(std::memory_order_relaxed);
+}
+
 // Issue #3070: arm soft-stale on live slots not owned by `owner`
 // (peer table). Probe returns 0; raw probe still sees the pointer.
 // No table-epoch advance.
@@ -2210,11 +2242,13 @@ extern "C" int aura_aot_slot_is_soft_stale(std::int64_t func_id) {
 // Owner-scoped hard invalidate marks peer AOT slots soft-stale (#3070),
 // but the pure-JIT path is a per-CompilerService / per-eval name cache:
 // the peer eval receives no name-level signal, and because bridge_epoch
-// is intentionally not advanced (#2841/#2951), peer dual-fresh
-// (aura_is_jit_closure_fresh / is_bridge_stale) still treats captured
-// closures as fresh → long-running peer fibers can keep executing
-// pre-invalidate native. This table arms a name-level soft-stale bit so
-// aura_closure_call can MustDeopt before JIT native entry.
+// is intentionally not advanced on the owner-scoped path (#2841/#2951;
+// #3605 keeps the facade's C-bridge/defuse clocks frozen in lockstep
+// with the frozen table), peer dual-fresh (aura_is_jit_closure_fresh /
+// is_bridge_stale) still treats captured closures of UNRELATED defines
+// as fresh — the intended #2841 isolation. This table arms a name-level
+// soft-stale bit for the mutated define so aura_closure_call can
+// MustDeopt before JIT native entry.
 //
 // Bit / generation side-table keyed by stable name hash (FNV-1a).
 // Zero-cost when empty: g_peer_jit_name_soft_stale_live == 0 → probe
@@ -2448,6 +2482,10 @@ extern "C" void aura_aot_bump_func_table_epoch(void) {
     const bool hard_os_pref = g_cross_eval_hard_owner_scoped_pref != 0;
     g_cross_eval_epoch_force_bump = 0;
     g_cross_eval_hard_owner_scoped_pref = 0;
+    // Issue #3605: record the scope decision — the #3219 eval-core joint
+    // stamp reads it to skip the core bridge epoch bump + C mirror SET on
+    // the owner-scoped path (process C clocks stay frozen).
+    g_last_table_bump_owner_scoped.store(0, std::memory_order_release);
     if (multi && !force && cross_eval_epoch_throttle_armed()) {
         // Prefer reemit-owner TLS; fall back to register-owner (AC1).
         void* owner = aura_aot_get_reemit_owner_eval();
@@ -2469,7 +2507,14 @@ extern "C" void aura_aot_bump_func_table_epoch(void) {
             // Issue #3070: mark peer live slots soft-stale so apply
             // cannot execute pre-invalidate native. No g_aot_table_epoch
             // bump (#2841). Same batch as owner invalidate / restamp.
-            aura_aot_mark_peer_slots_soft_stale(owner);
+            // Issue #3605: the hard owner-scoped facade path skips the
+            // all-slot peer mark — staling unrelated peers' AOT slots is
+            // over-cover now that the facade freezes the C clocks; the
+            // peer signal rides #3300/#3351 name bits + #3377 owner slot
+            // clear + MustDeopt. Soft cascade (pref unset) keeps #3070.
+            if (!hard_os_pref)
+                aura_aot_mark_peer_slots_soft_stale(owner);
+            g_last_table_bump_owner_scoped.store(1, std::memory_order_release);
             // Do not notify_epoch_bump / event walk — no global epoch change.
             return;
         }

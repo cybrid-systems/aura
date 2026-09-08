@@ -966,6 +966,97 @@ static void ac3474_production_called_by_cone() {
 
 } // namespace
 
+// ── Issue #3605: production owner-scoped facade freezes the process
+// C-bridge / defuse clocks (#3300 contract lockstep; #2841 isolation).
+// Owner-scoped hard invalidate must not make every live closure on every
+// eval fail dual-fresh: peers of unrelated defines stay green; the
+// mutated define leaves native via #3300/#3351 name bits + #3377 owner
+// slot clear. The #3219 stamp skips the core bridge bump + C mirror SET
+// on that path (last-bump-scope flag).
+
+static void ac3605_owner_scope_clock_isolation() {
+    std::println("\n--- #3605: owner-scoped facade freezes process C clocks ---");
+
+    const auto hur = read_file("src/compiler/hot_update_registry.cpp");
+    const auto bridge = read_file("src/compiler/aura_jit_bridge.cpp");
+    const auto ixx = read_file("src/compiler/service.ixx");
+    const auto build = read_file("build.py");
+
+    // Source-cite: facade prediction + skip guard; probe; scope flag.
+    CHECK(hur.find("Issue #3605") != std::string::npos, "3605: facade cites #3605");
+    CHECK(hur.find("aura_aot_bump_will_be_owner_scoped()") != std::string::npos,
+          "3605: facade consults the scope prediction");
+    CHECK(hur.find("if (c_clocks_owner_skipped)") != std::string::npos, "3605: skip guard present");
+    CHECK(bridge.find("int aura_aot_bump_will_be_owner_scoped(void)") != std::string::npos,
+          "3605: probe defined in the bridge TU");
+    CHECK(bridge.find("aura_aot_last_table_bump_owner_scoped") != std::string::npos,
+          "3605: last-bump-scope flag + reader present");
+    CHECK(bridge.find("intentionally not advanced on the owner-scoped path") != std::string::npos,
+          "3605: #3300 comment reworded to the frozen-clock contract");
+    CHECK(ixx.find("aura_aot_last_table_bump_owner_scoped") != std::string::npos,
+          "3605: stamp reads the scope flag");
+    {
+        const auto gpos = ixx.find("if (!os_table_bump)");
+        CHECK(gpos != std::string::npos, "3605: stamp gate present");
+        if (gpos != std::string::npos) {
+            const auto gwin = ixx.substr(gpos, 400);
+            CHECK(gwin.find("bump_bridge_epoch();") != std::string::npos,
+                  "3605: global path keeps the core bridge dual-write");
+            CHECK(gwin.find("evaluator_.bump_defuse_version_for_test();") != std::string::npos,
+                  "3605: global path keeps the Evaluator defuse dual-write");
+        }
+    }
+    CHECK(build.find("check_facade_owner_scope_clock_skip_3605") != std::string::npos,
+          "3605: build.py wires the linter");
+    CHECK(read_file("tests/issues/test_issue_3605.cpp").empty() &&
+              read_file("tests/compiler/test_issue_3605.cpp").empty(),
+          "3605: no test_issue_3605.cpp per #81967");
+    CHECK(read_file("docs/design/3605-owner-scope-clock-skip.md").empty(),
+          "3605: no docs/design/3605-* per #1655");
+
+    // Live runtime: production + multi-eval topology (two live AotState +
+    // owner TLS) → owner-scoped facade freezes the C clocks; a peer
+    // closure captured pre-invalidate stays dual-fresh green.
+    apply_production_audit_defaults();
+    {
+        CompilerService cs_a;
+        CompilerService cs_b; // second live AotState → multi-eval topology
+        void* owner = &cs_a.evaluator();
+        aura_aot_set_reemit_owner_eval(owner);
+        aura_aot_set_register_owner_eval(owner);
+        if (aura_aot_state_map_size() > 1) {
+            const auto c_bridge0 = aura_get_current_bridge_epoch();
+            const auto c_defuse0 = aura_get_aot_defuse_version();
+            const auto aot0 = aura_aot_func_table_epoch();
+            const auto h0 = cross_eval_hard_owner_scoped_total_v_read();
+            cs_a.public_invalidate_function("ac3605_mutated_fn");
+            const auto h1 = cross_eval_hard_owner_scoped_total_v_read();
+            if (h1 > h0) {
+                // Owner-scoped path ran → the process C clocks must be
+                // frozen (table froze too — that is the trigger).
+                CHECK(aura_aot_func_table_epoch() == aot0,
+                      "3605 AC1: table epoch frozen (owner-scoped)");
+                CHECK(aura_get_current_bridge_epoch() == c_bridge0,
+                      "3605 AC1: C-bridge frozen on owner-scoped invalidate");
+                CHECK(aura_get_aot_defuse_version() == c_defuse0,
+                      "3605 AC1: defuse frozen on owner-scoped invalidate");
+                CHECK(aura_is_jit_closure_fresh(c_bridge0, c_defuse0, aot0),
+                      "3605 AC1: peer closure of an unrelated define stays dual-fresh green");
+            } else {
+                // Topology fell back to global — the fail-closed tax must
+                // hold (clocks advance together with the table).
+                CHECK(aura_get_current_bridge_epoch() > c_bridge0,
+                      "3605: global fallback advances C-bridge");
+                CHECK(aura_aot_func_table_epoch() > aot0,
+                      "3605: global fallback advances the table");
+            }
+        } else {
+            std::println("  [3605] single-state topology — live owner-scope branch skipped");
+        }
+    }
+    apply_dev_audit_defaults();
+}
+
 int run_test_issue_3112() {
     std::print("[test_issue_3112] running 5 ACs + #3129 + #3150 extensions\n");
 
@@ -1006,6 +1097,11 @@ int run_test_issue_3112() {
     // Issue #3345: production hybrid depth-1 called_by IR dirty after
     // facade early-return. Soft BFS unchanged. Empty IR cache no-op.
     ac3345_production_hybrid_depth1_fanout();
+
+    // Issue #3605: owner-scoped facade freezes the process C-bridge /
+    // defuse clocks (peer dual-fresh stays green on unrelated defines;
+    // stamp skips the core bridge dual-write on that path).
+    ac3605_owner_scope_clock_isolation();
 
     // Issue #3474: production FIFO called_by cone (transitive IR dirty).
     // #3345 stays depth-1. Peel union is transitive. Soft teardown

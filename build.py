@@ -11700,6 +11700,30 @@ def cmd_panic_aba_gc_defer_drain_3604_coverage():
     return 0
 
 
+def cmd_facade_owner_scope_clock_skip_3605_coverage():
+    """Issue #3605: owner-scoped facade freezes the process C clocks.
+
+    hard_invalidate_via_facade consults aura_aot_bump_will_be_owner_scoped
+    before the joint C bump; the owner-scoped path skips the C-bridge /
+    defuse process bumpers + the #3070 all-slot peer mark (name bits
+    #3300/#3351 + #3377 owner slot clear carry the signal), and the
+    #3219 stamp skips the core bridge bump + C mirror SET via the
+    last-bump-scope flag. Single-eval / force keep the joint bump.
+    No docs/design/3605-*, no tests/**/test_issue_3605.cpp.
+    """
+    print(f"{B}=== facade owner-scope clock skip (#3605) ==={N}")
+    script = ROOT / "scripts" / "check_facade_owner_scope_clock_skip_3605.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script), "--strict"], cwd=ROOT)
+    if r.returncode != 0:
+        fail("facade owner-scope clock skip (#3605) contract rows failed")
+        return 1
+    ok("facade owner-scope clock skip (#3605) clean")
+    return 0
+
+
 def cmd_query_stable_hard_reject_torn_latch_3386_coverage():
     """Issue #3386: shared probe Evaluator::query_stable_hard_reject_torn()
     must OR restamp_over_budget_torn() under multi-worker latch (I6 residual).
@@ -21442,6 +21466,7 @@ def cmd_gate():
         or cmd_ffi_apply_densify_refuse_3602_coverage()
         or cmd_wal_window_miss_catalog_3603_coverage()
         or cmd_panic_aba_gc_defer_drain_3604_coverage()
+        or cmd_facade_owner_scope_clock_skip_3605_coverage()
     )
     if rc:
         return rc

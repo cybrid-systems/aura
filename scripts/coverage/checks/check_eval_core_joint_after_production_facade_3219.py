@@ -68,6 +68,16 @@ def main() -> int:
     must("expire_stale_live_closures_", "AC1 expire", hwin)
     must("notify_walk_active_closures_", "AC1 walk", hwin)
     must("on_typed_mutation_epoch_bump()", "AC1 solve_delta wipe", hwin)
+    # Issue #3605: owner-scope exception — the stamp skips the core bridge
+    # epoch bump + Evaluator defuse dual-write when the facade took the
+    # owner-scoped path (process C clocks stayed frozen; peer dual-fresh
+    # stays green). Single-eval / force keep the #3219 joint dual-write.
+    must("Issue #3605", "AC6 owner-scope stamp gate cite", hwin)
+    must(
+        "aura_aot_last_table_bump_owner_scoped",
+        "AC6 stamp skips core bump on owner-scope",
+        hwin,
+    )
 
     md = _fn_win(svc, "void CompilerService::mark_define_dirty")
     inv = _fn_win(svc, "void CompilerService::invalidate_function")
