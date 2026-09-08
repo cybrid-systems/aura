@@ -70,13 +70,22 @@ def main() -> int:
         fails.append("AC4: join_agent(JoinPolicy) missing")
     else:
         end = jas if jas > ja else ja + 4000
-        if "maybe_auto_wait_reclaimed_production" in spawn[ja:end]:
-            fails.append("AC4: join_agent must not call Aura auto-wait helper")
+        # Issue #3595: the #3051 language-surface-only prohibition is
+        # superseded — join_agent routes its production arm through the SAME
+        # bounded retry wrapper as the Aura prims (one SSOT, budget =
+        # reclaimed_retry_budget_ms(drain_ms)). JoinPolicy.wait_reclaimed_ms
+        # default stays unset (explicit-wait callers unchanged).
+        if "maybe_auto_wait_reclaimed_production" not in spawn[ja:end]:
+            fails.append("AC4: join_agent must route the production arm through the #3595 wrapper")
+        if "reclaimed_retry_budget_ms(policy.drain_ms)" not in spawn[ja:end]:
+            fails.append("AC4: join_agent auto-wait must be budget-bounded (#3595)")
     if jas > 0:
         jas2 = spawn.find("inline serve::JoinResult join_agents(std::span<AgentHandle> agents,", jas + 1)
         end = jas2 if jas2 > jas else jas + 4000
-        if "maybe_auto_wait_reclaimed_production" in spawn[jas:end]:
-            fails.append("AC4: join_agents must not call Aura auto-wait helper")
+        if "maybe_auto_wait_reclaimed_production" not in spawn[jas:end]:
+            fails.append("AC4: join_agents must route the production arm through the #3595 wrapper")
+        if "reclaimed_retry_budget_ms(policy.drain_ms)" not in spawn[jas:end]:
+            fails.append("AC4: join_agents auto-wait must be budget-bounded (#3595)")
 
     # ── AC5: reuse wait_reclaimed_* ───────────────────────────────
     must("wait_reclaimed_total", "AC5", spawn)

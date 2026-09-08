@@ -59,7 +59,7 @@ def main() -> int:
     # ── AC1: join_agent auto-wait when Reclaimed + unset wait + production
     must("Issue #3110: auto-wait to close the host-forget cleanup window", "AC1 join_agent comment marker", spawn)
     must(
-        "wr3110 = wait_reclaimed_body(h, kProductionWaitReclaimedMsDefault)",
+        "maybe_auto_wait_reclaimed_production(h, /*caller_passed_wait_reclaimed_ms=*/false,",
         "AC1 join_agent auto-wait calls wait_reclaimed_body(50ms default)",
         spawn,
     )
@@ -93,7 +93,7 @@ def main() -> int:
     # The new auto-wait block must be INSIDE the production gate (else Soft path
     # would auto-wait too).
     gate_idx = spawn.find("production_reclaimed_must_wait()")
-    autowait_idx = spawn.find("wr3110 = wait_reclaimed_body(h, kProductionWaitReclaimedMsDefault)")
+    autowait_idx = spawn.find("maybe_auto_wait_reclaimed_production(h, /*caller_passed_wait_reclaimed_ms=*/false,")
     if gate_idx < 0 or autowait_idx < 0:
         fails.append("AC3: missing production gate or auto-wait call")
     elif autowait_idx < gate_idx:
@@ -102,7 +102,7 @@ def main() -> int:
 
     # ── AC4: Timeout preserves #2661 no-early-free
     must(
-        "wait_reclaimed_timeout = (wr3110.status == serve::JoinStatus::Timeout)",
+        "h.wait_reclaimed_timeout = (wr.status == serve::JoinStatus::Timeout)",
         "AC4 timeout wired into wait_reclaimed_timeout flag",
         spawn,
     )
@@ -143,7 +143,7 @@ def main() -> int:
     # ── AC7: Source-cite + build.py wiring + join_agents span variant
     must("Issue #3110: auto-wait to close the host-forget cleanup window", "AC7 source-cite comment", spawn)
     must(
-        "wr3110 = wait_reclaimed_body(a, kProductionWaitReclaimedMsDefault)",
+        "a, /*caller_passed_wait_reclaimed_ms=*/false,",
         "AC7 join_agents span variant auto-wait also wired",
         spawn,
     )

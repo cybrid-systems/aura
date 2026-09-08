@@ -1400,6 +1400,189 @@ static void ac3598_name_table_retire_clean() {
 
 } // namespace
 
+
+// ── Issue #3595: bounded production reclaimed-cleanup retry on the join
+// surface. maybe_auto_wait_reclaimed_production loops ensure_reclaimed_cleanup
+// under reclaimed_retry_budget_ms(drain_ms) so a still-running Reclaimed body
+// that exits inside the window lands Done-path cleanup before join returns
+// (closes the host-forget window). Budget expiry keeps the one-shot contract:
+// flags + cleanup-pending, no auto-abandon (#3334), no body-stack free
+// (#2661). ACs below mirror the #3334/#3433 synthetic-liveness fixtures.
+
+static void ac3595_1_retry_covers_body_exit() {
+    std::println("\n--- #3595 AC1: body exits inside budget → cleanup lands ---");
+    apply_production_audit_defaults();
+    const auto hf0 =
+        g_orch_module_stats.host_forget_reclaimed_risk_total.load(std::memory_order_relaxed);
+    auto fiber_owned = std::make_unique<Fiber>([] {});
+    fiber_owned->mark_reclaimed();
+    AgentHandle h;
+    h.ok = true;
+    h.fiber = fiber_owned.get();
+    h.reserved_memory_bytes = 4096;
+    h.must_wait_reclaimed = true;
+    h.reclaimed_deferred_cleanup = true;
+    // Synthetic liveness: body "exits" ~100ms into the retry window
+    // (same Done-flip recipe as the #3433 fixtures).
+    std::thread finisher([&h] {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        if (h.fiber)
+            h.fiber->set_state(FiberState::Done);
+    });
+    const auto waited = aura::orch::maybe_auto_wait_reclaimed_production(
+        h, /*caller_passed_wait_reclaimed_ms=*/false, /*retry_budget_ms=*/2000);
+    finisher.join();
+    CHECK(waited >= 50000, "3595 AC1: retry covered the wait (>= one 50ms arm)");
+    CHECK(!h.must_wait_reclaimed, "3595 AC1: Ok path cleared must_wait");
+    CHECK(h.reserved_memory_bytes == 0, "3595 AC1: Done-path released reservation");
+    CHECK(!h.wait_reclaimed_timeout, "3595 AC1: not a timeout outcome");
+    CHECK(g_orch_module_stats.host_forget_reclaimed_risk_total.load(std::memory_order_relaxed) ==
+              hf0,
+          "3595 AC1: no host_forget bump on in-budget exit");
+    apply_dev_audit_defaults();
+}
+
+static void ac3595_2_budget_expiry_keeps_signal() {
+    std::println("\n--- #3595 AC2: budget expiry → cleanup-pending kept, no auto-abandon ---");
+    apply_production_audit_defaults();
+    const auto hf0 =
+        g_orch_module_stats.host_forget_reclaimed_risk_total.load(std::memory_order_relaxed);
+    const auto wrt0 =
+        g_orch_module_stats.wait_reclaimed_timeout_total.load(std::memory_order_relaxed);
+    auto fiber_owned = std::make_unique<Fiber>([] {});
+    fiber_owned->mark_reclaimed();
+    AgentHandle h;
+    h.ok = true;
+    h.fiber = fiber_owned.get();
+    h.reserved_memory_bytes = 4096;
+    h.must_wait_reclaimed = true;
+    h.reclaimed_deferred_cleanup = true;
+    const auto waited = aura::orch::maybe_auto_wait_reclaimed_production(
+        h, /*caller_passed_wait_reclaimed_ms=*/false, /*retry_budget_ms=*/150);
+    CHECK(waited >= 100000, "3595 AC2: loop re-armed the 50ms deadline (>= 2 arms)");
+    CHECK(h.must_wait_reclaimed, "3595 AC2: must_wait kept on expiry (#3146)");
+    CHECK(h.reserved_memory_bytes == 4096, "3595 AC2: reservation still held (#2661)");
+    CHECK(!h.fiber->is_done(), "3595 AC2: body-stack untouched (#2661)");
+    CHECK(g_orch_module_stats.wait_reclaimed_timeout_total.load(std::memory_order_relaxed) >=
+              wrt0 + 2,
+          "3595 AC2: reused timeout counter bumped per retry arm");
+    CHECK(g_orch_module_stats.host_forget_reclaimed_risk_total.load(std::memory_order_relaxed) ==
+              hf0 + 1,
+          "3595 AC2: host_forget bumps once on expiry (#3220 reuse)");
+    // Host-opt-in abandon still lands after expiry (#3334 unchanged).
+    aura::orch::AbandonReclaimedOpts opts;
+    opts.max_second_wait_ms = 1;
+    const auto ar = h.abandon_reclaimed(opts);
+    CHECK(ar.outcome == aura::orch::AbandonReclaimedOutcome::Abandoned,
+          "3595 AC2: abandon stays host-opt-in and works");
+    CHECK(!h.must_wait_reclaimed, "3595 AC2: abandon cleared must_wait");
+    h.finish_reclaimed_cleanup_on_dtor();
+    apply_dev_audit_defaults();
+}
+
+static void ac3595_3_soft_and_explicit_zero_extra() {
+    std::println("\n--- #3595 AC3: !must_wait / caller-passed wait → zero extra loop ---");
+    apply_dev_audit_defaults();
+    auto fiber_owned = std::make_unique<Fiber>([] {});
+    fiber_owned->mark_reclaimed();
+    AgentHandle h;
+    h.ok = true;
+    h.fiber = fiber_owned.get();
+    h.reserved_memory_bytes = 4096;
+    h.reclaimed_deferred_cleanup = true;
+    h.must_wait_reclaimed = false; // Soft join leaves the flag clear
+    const auto wr0 = g_orch_module_stats.wait_reclaimed_total.load(std::memory_order_relaxed);
+    CHECK(aura::orch::maybe_auto_wait_reclaimed_production(
+              h, /*caller_passed_wait_reclaimed_ms=*/false, /*retry_budget_ms=*/1000) == 0,
+          "3595 AC3: !must_wait → zero wait_us");
+    CHECK(g_orch_module_stats.wait_reclaimed_total.load(std::memory_order_relaxed) == wr0,
+          "3595 AC3: no wait_reclaimed_total bump");
+    h.must_wait_reclaimed = true;
+    CHECK(aura::orch::maybe_auto_wait_reclaimed_production(
+              h, /*caller_passed_wait_reclaimed_ms=*/true, /*retry_budget_ms=*/1000) == 0,
+          "3595 AC3: caller-passed wait → zero extra wait_us");
+    CHECK(g_orch_module_stats.wait_reclaimed_total.load(std::memory_order_relaxed) == wr0,
+          "3595 AC3: still no wait bump (explicit wait owns its single wait)");
+    CHECK(h.must_wait_reclaimed, "3595 AC3: flags untouched by early return");
+}
+
+static void ac3595_4_join_agent_routes_wrapper() {
+    using aura::core::sandbox::SandboxMode;
+    using aura::core::sandbox::set_mode;
+    std::println("\n--- #3595 AC4: C++ join_agent production → same wrapper/budget ---");
+    const char* prev_sb = std::getenv("AURA_SANDBOX");
+    std::string prev_sb_s = prev_sb ? prev_sb : "";
+    ::setenv("AURA_SANDBOX", "restricted", 1);
+    apply_production_audit_defaults();
+    set_mode(SandboxMode::Strict);
+    Scheduler sched(1);
+    aura::orch::AgentSpec spec;
+    spec.name = "3595-join";
+    spec.attach_mailbox = true;
+    spec.body = [] {
+        for (;;) {
+        }
+    };
+    auto h = aura::orch::spawn_agent_with_mailbox(sched, std::move(spec));
+    CHECK(h.ok && h.fiber, "3595 AC4: spawn ok");
+    const auto hf0 =
+        g_orch_module_stats.host_forget_reclaimed_risk_total.load(std::memory_order_relaxed);
+    JoinPolicy policy;
+    policy.primary_ms = 20;
+    policy.drain_ms = 0; // cancel-only → budget 0 → one-shot (same as #3433 fixture)
+    const auto jr = join_agent(h, policy);
+    CHECK(jr.status == JoinStatus::Reclaimed, "3595 AC4: live body → derived Reclaimed");
+    if (aura::orch::production_reclaimed_must_wait()) {
+        CHECK(h.must_wait_reclaimed, "3595 AC4: production must_wait after one-shot");
+        CHECK(g_orch_module_stats.host_forget_reclaimed_risk_total.load(
+                  std::memory_order_relaxed) == hf0 + 1,
+              "3595 AC4: expiry bump owned by the shared wrapper");
+        CHECK(h.wait_reclaimed_used, "3595 AC4: SSOT flag writes preserved");
+    }
+    if (h.fiber)
+        h.fiber->set_state(FiberState::Done);
+    h.finish_reclaimed_cleanup_on_dtor();
+    apply_dev_audit_defaults();
+    if (!prev_sb_s.empty())
+        ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+    else
+        ::unsetenv("AURA_SANDBOX");
+}
+
+static void ac3595_5_source_and_no_invent() {
+    std::println("\n--- #3595 AC5: source-cite + no invent ---");
+    const auto spawn = read_file("src/orch/agent_spawn.h");
+    CHECK(spawn.find("Issue #3595") != std::string::npos, "3595 AC5: agent_spawn.h cites #3595");
+    CHECK(spawn.find("reclaimed_retry_budget_ms(std::uint64_t drain_ms)") != std::string::npos,
+          "3595 AC5: budget helper present");
+    CHECK(spawn.find("std::min(drain_ms * 8, kJoinDrainResidualHardMsDefault)") !=
+              std::string::npos,
+          "3595 AC5: budget reuses the #2227 shape");
+    // One SSOT: the retry loop wraps ensure_reclaimed_cleanup and never
+    // auto-abandons (#3334 stays host-opt-in).
+    const auto w0 = spawn.find("std::uint64_t retry_budget_ms =");
+    CHECK(w0 != std::string::npos, "3595 AC5: wrapper takes the budget param");
+    const auto w1 = spawn.find("Issue #3334", w0);
+    CHECK(w1 != std::string::npos && w1 > w0, "3595 AC5: wrapper section bounded");
+    const auto wrapper_body = spawn.substr(w0, w1 - w0);
+    CHECK(wrapper_body.find("ensure_reclaimed_cleanup(h)") != std::string::npos,
+          "3595 AC5: every wait goes through the SSOT helper");
+    CHECK(wrapper_body.find("abandon_reclaimed") == std::string::npos,
+          "3595 AC5: retry loop does not auto-abandon (#3334)");
+    CHECK(wrapper_body.find("host_forget_reclaimed_risk_total") != std::string::npos,
+          "3595 AC5: expiry reuses the #3220 risk counter");
+    // Both join prims pass the drain-scaled budget.
+    const auto prims = read_file("src/compiler/evaluator_primitives_agent.cpp");
+    CHECK(prims.find("aura::orch::reclaimed_retry_budget_ms(policy.drain_ms)") != std::string::npos,
+          "3595 AC5: join prims pass the drain-scaled budget");
+    CHECK(prims.find("Issue #3595") != std::string::npos, "3595 AC5: prims cite #3595");
+    // No new query key / no design doc / no standalone issue test.
+    CHECK(read_file("docs/design/3595-join-reclaim-retry.md").empty(),
+          "3595 AC5: no design doc (#1655)");
+    CHECK(read_file("tests/issues/test_issue_3595.cpp").empty(),
+          "3595 AC5: no tests/issues/ standalone (#81934)");
+}
+
 int run_test_join_drain_reclaim() {
     std::println("=== Issue #2227: hard reclaim path for join drain residual fibers ===");
     CHECK(true, "issue stamp #2227");
@@ -3484,10 +3667,9 @@ int run_test_join_drain_reclaim() {
         CHECK(spawn3110.find("Issue #3110: auto-wait to close the host-forget cleanup window") !=
                   std::string::npos,
               "3110 AC1: join_agent auto-wait comment marker");
-        CHECK(
-            spawn3110.find("wr3110 = wait_reclaimed_body(h, kProductionWaitReclaimedMsDefault)") !=
-                std::string::npos,
-            "3110 AC1: join_agent auto-wait calls wait_reclaimed_body(50ms default)");
+        CHECK(spawn3110.find("maybe_auto_wait_reclaimed_production(h, "
+                             "/*caller_passed_wait_reclaimed_ms=*/false,") != std::string::npos,
+              "3110 AC1: join_agent production arm routes through the #3595 retry wrapper");
         // AC2: explicit wait path unchanged (existing wr/wait_reclaimed_used/wait_reclaimed_timeout
         // set).
         CHECK(spawn3110.find("policy.wait_reclaimed_ms.has_value()") != std::string::npos,
@@ -3498,9 +3680,9 @@ int run_test_join_drain_reclaim() {
               "3110 AC3: production_reclaimed_must_wait() gate preserved");
         // AC4: timeout preserves #2661 no-early-free (wait_reclaimed_timeout flag wired).
         CHECK(spawn3110.find(
-                  "wait_reclaimed_timeout = (wr3110.status == serve::JoinStatus::Timeout)") !=
+                  "h.wait_reclaimed_timeout = (wr.status == serve::JoinStatus::Timeout)") !=
                   std::string::npos,
-              "3110 AC4: timeout wired into wait_reclaimed_timeout flag");
+              "3110 AC4: timeout wired into wait_reclaimed_timeout flag (SSOT ensure, #3595)");
         // AC5: reuse wait_reclaimed_used/timeout counters (no new metric key).
         CHECK(spawn3110.find("wait_reclaimed_used = true") != std::string::npos,
               "3110 AC5: reuse wait_reclaimed_used, no new metric key");
@@ -3532,10 +3714,9 @@ int run_test_join_drain_reclaim() {
         CHECK(build3110.find("check_join_drain_reclaim_3110") != std::string::npos,
               "3110 AC7: build.py wires 3110 linter");
         // join_agents span variant: same auto-wait pattern.
-        CHECK(
-            spawn3110.find("wr3110 = wait_reclaimed_body(a, kProductionWaitReclaimedMsDefault)") !=
-                std::string::npos,
-            "3110 AC7: join_agents span variant auto-wait also wired");
+        CHECK(spawn3110.find("maybe_auto_wait_reclaimed_production(a, "
+                             "/*caller_passed_wait_reclaimed_ms=*/false,") != std::string::npos,
+              "3110 AC7: join_agents span variant routes through the #3595 wrapper");
         // Lineage: #2661 / #2924 / #3012 / #3051 / #3087 preserved.
         CHECK(spawn3110.find("wait_reclaimed_body(") != std::string::npos,
               "3110 AC7: #2924 wait_reclaimed_body helper preserved");
@@ -3733,8 +3914,8 @@ int run_test_join_drain_reclaim() {
         // sites (SSOT helper + join_agent + join_agents span variant).
         CHECK(spawn3146.find("Issue #3146") != std::string::npos,
               "3146 AC8: agent_spawn.h cites Issue #3146");
-        CHECK(spawn3146.find("(wr3110.status == serve::JoinStatus::Timeout)") != std::string::npos,
-              "3146 AC8: join_agent Timeout arm sets must_wait_reclaimed conditionally");
+        CHECK(spawn3146.find("(wr.status == serve::JoinStatus::Timeout)") != std::string::npos,
+              "3146 AC8: conditional update lives in the ensure_reclaimed_cleanup SSOT (#3595)");
         // ensure_reclaimed_cleanup SSOT must also apply the conditional update
         // (mirrors join_agent for the long-term-handle host path).
         const auto ssot_idx = spawn3146.find("ensure_reclaimed_cleanup(AgentHandle& h)");
@@ -3750,8 +3931,9 @@ int run_test_join_drain_reclaim() {
         CHECK(span_idx != std::string::npos, "3146 AC8: join_agents span variant present");
         if (span_idx != std::string::npos) {
             const auto snip = spawn3146.substr(span_idx, 6000);
-            CHECK(snip.find("(wr3110.status == serve::JoinStatus::Timeout)") != std::string::npos,
-                  "3146 AC8: join_agents span variant mirrors single-handle fix");
+            CHECK(snip.find("maybe_auto_wait_reclaimed_production(a, "
+                            "/*caller_passed_wait_reclaimed_ms=*/false,") != std::string::npos,
+                  "3146 AC8: join_agents span variant routes through the #3595 wrapper");
         }
 
         // AC8: test file cites #3146.
@@ -5171,6 +5353,11 @@ int run_test_join_drain_reclaim() {
 
     std::println("\n=== Issue #3598: Done-path-cleaned slot → same-plane retire ===");
     ac3598_name_table_retire_clean();
+    ac3595_1_retry_covers_body_exit();
+    ac3595_2_budget_expiry_keeps_signal();
+    ac3595_3_soft_and_explicit_zero_extra();
+    ac3595_4_join_agent_routes_wrapper();
+    ac3595_5_source_and_no_invent();
 
     std::println("\n=== Results: {} passed, {} failed ===", aura::test::g_passed,
                  aura::test::g_failed);
