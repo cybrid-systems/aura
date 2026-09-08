@@ -21,6 +21,10 @@
 //        #2583 AC4)
 //   AC6: dispatch_effect_auto_check_total / _deny_total surface
 //        bumped on every require_effect call (#2583 AC6)
+//   Issue #3596 — agent:/synthesize:/strategy: infer demands
+//        Mutate|MacroSelfEvo at dispatch (MSE gate parity with
+//        effect_for_cap_name, #2489/#2583 residual): string-level AC +
+//        behavioral deny/allow/TA matrix + Soft zero-extra.
 
 #include "test_harness.hpp"
 
@@ -95,6 +99,169 @@ void reset_all() {
 }
 
 } // namespace
+
+
+// ── Issue #3596: agent:/synthesize:/strategy: infer demands Mutate|MSE —
+// dispatch-side MSE gate parity with effect_for_cap_name (#2489/#2583
+// residual; expand sites were already closed by #3378). Behavioral ACs
+// mirror the #2152 harness (Restricted face + synthetic prim + counters).
+
+static void ac3596_1_infer_mse_bits() {
+    std::println("\n--- #3596 AC1: infer includes MSE bits for the three prefixes ---");
+    constexpr auto kReq = static_cast<std::uint16_t>(aura::compiler::security::kEffectMutate |
+                                                     aura::compiler::security::kEffectMacroSelfEvo);
+    CHECK(infer_required_effects_from_name("agent:tick") == kReq, "3596 AC1: agent: -> Mutate|MSE");
+    CHECK(infer_required_effects_from_name("synthesize:fill") == kReq,
+          "3596 AC1: synthesize: -> Mutate|MSE");
+    CHECK(infer_required_effects_from_name("strategy:set-strategy") == kReq,
+          "3596 AC1: strategy: -> Mutate|MSE");
+    CHECK(effective_required_effects("synthesize:fill", 0, false) == kReq,
+          "3596 AC1: effective_required_effects keeps inferred MSE bits");
+    // Neighbouring families unchanged (no over-reach).
+    CHECK(infer_required_effects_from_name("mutate:x") == kEffectMutate,
+          "3596 AC1: mutate: stays Mutate-only");
+    CHECK(infer_required_effects_from_name("ffi:x") == aura::compiler::security::kEffectFfi,
+          "3596 AC1: ffi: unchanged");
+}
+
+static void ac3596_2_mutate_only_dispatch_deny() {
+    std::println("\n--- #3596 AC2: Mutate-only tenant -> synthesize: dispatch deny ---");
+    reset_all();
+    // Live Mutation epoch: Restricted provenance join is fail-closed on
+    // mid=0 (#3594 contract) — grant and check must join on the same mid.
+    aura::core::bump_mutation_epoch(1);
+    const auto live_mid = aura::core::current_mutation_epoch();
+    using aura::core::capability::g_capability_registry;
+    using aura::core::capability::make_grant_provenance;
+    // Seed Mutate-only while the registry face is Off (fence-free, #3409).
+    g_capability_registry().grant(3596, "mutate-only-3596",
+                                  static_cast<aura::core::capability::Effect>(kEffectMutate),
+                                  make_grant_provenance(live_mid, true, 0, 0));
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_effect_sandbox_mode(1);     // Restricted (evaluator face)
+    set_mode(SandboxMode::Restricted); // registry SOLE writer (#2657)
+    ev.set_capability_tenant_id(3596);
+    // Plain add(): required_effects auto-stamped Mutate|MSE from the name (#3596).
+    bool body_ran = false;
+    ev.primitives().add("synthesize:probe-3596",
+                        [&](std::span<const aura::compiler::types::EvalValue>) {
+                            body_ran = true;
+                            return aura::compiler::types::make_bool(true);
+                        });
+    auto* cm = static_cast<CompilerMetrics*>(ev.compiler_metrics());
+    const auto ddeny0 = cm ? cm->dispatch_required_effects_deny_total.load() : 0;
+    auto r = ev.invoke_prim_with_telemetry("synthesize:probe-3596", [&]() {
+        auto fn = ev.primitives().lookup("synthesize:probe-3596");
+        return (*fn)({});
+    });
+    CHECK(is_error(r), "3596 AC2: Mutate-only (no MSE) -> dispatch deny");
+    CHECK(!body_ran, "3596 AC2: body not entered");
+    CHECK(cm && cm->dispatch_required_effects_deny_total.load() > ddeny0,
+          "3596 AC2: dispatch deny counter advanced");
+}
+
+static void ac3596_3_mutate_mse_allow() {
+    std::println("\n--- #3596 AC3: Mutate|MSE tenant -> allowed under Restricted ---");
+    reset_all();
+    aura::core::bump_mutation_epoch(1);
+    const auto live_mid = aura::core::current_mutation_epoch();
+    using aura::core::capability::g_capability_registry;
+    using aura::core::capability::make_grant_provenance;
+    g_capability_registry().grant(
+        3596, "mutate-mse-3596",
+        static_cast<aura::core::capability::Effect>(
+            static_cast<std::uint16_t>(kEffectMutate) |
+            static_cast<std::uint16_t>(aura::compiler::security::kEffectMacroSelfEvo)),
+        make_grant_provenance(live_mid, true, 0, 0));
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_effect_sandbox_mode(1);
+    set_mode(SandboxMode::Restricted);
+    ev.set_capability_tenant_id(3596);
+    bool body_ran = false;
+    ev.primitives().add("strategy:probe-3596",
+                        [&](std::span<const aura::compiler::types::EvalValue>) {
+                            body_ran = true;
+                            return aura::compiler::types::make_bool(true);
+                        });
+    auto r = ev.invoke_prim_with_telemetry("strategy:probe-3596", [&]() {
+        auto fn = ev.primitives().lookup("strategy:probe-3596");
+        return (*fn)({});
+    });
+    CHECK(!is_error(r), "3596 AC3: Mutate|MSE + live mid -> allowed");
+    CHECK(body_ran, "3596 AC3: body ran");
+}
+
+static void ac3596_4_explicit_ta_unchanged() {
+    std::println("\n--- #3596 AC4: explicit TenantAdmin meta not weakened by infer ---");
+    reset_all();
+    aura::core::bump_mutation_epoch(1);
+    const auto live_mid = aura::core::current_mutation_epoch();
+    using aura::core::capability::g_capability_registry;
+    using aura::core::capability::make_grant_provenance;
+    // Seed Mutate|MSE while Off (fence-free). NO TenantAdmin yet — the
+    // control-plane prim below must stay denied on the TA bit alone.
+    g_capability_registry().grant(
+        3596, "mm-3596",
+        static_cast<aura::core::capability::Effect>(
+            static_cast<std::uint16_t>(kEffectMutate) |
+            static_cast<std::uint16_t>(aura::compiler::security::kEffectMacroSelfEvo)),
+        make_grant_provenance(live_mid, true, 0, 0));
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_effect_sandbox_mode(1);
+    set_mode(SandboxMode::Restricted);
+    ev.set_capability_tenant_id(3596);
+    // Control-plane agent: prim: explicit TA bits at registration (issue AC3 —
+    // infer must not weaken an explicit meta; wildcard-only cannot satisfy
+    // TA per #3144/#3411).
+    PrimMeta m{};
+    m.required_effects = aura::compiler::security::kEffectTenantAdmin;
+    m.doc = "synthetic #3596 AC4 control-plane";
+    bool body_ran = false;
+    ev.primitives().add(
+        "agent:control-3596",
+        [&](std::span<const aura::compiler::types::EvalValue>) {
+            body_ran = true;
+            return aura::compiler::types::make_bool(true);
+        },
+        m);
+    CHECK(effective_required_effects("agent:control-3596", m.required_effects, false) ==
+              aura::compiler::security::kEffectTenantAdmin,
+          "3596 AC4: explicit meta wins over infer");
+    auto r = ev.invoke_prim_with_telemetry("agent:control-3596", [&]() {
+        auto fn = ev.primitives().lookup("agent:control-3596");
+        return (*fn)({});
+    });
+    CHECK(is_error(r), "3596 AC4: Mutate|MSE without TA -> control-plane deny");
+    CHECK(!body_ran, "3596 AC4: body not entered");
+}
+
+static void ac3596_5_soft_zero_extra() {
+    std::println("\n--- #3596 AC5: Soft/Off -> no new checks (require_effect no-op) ---");
+    reset_all();
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_effect_sandbox_mode(0); // Off
+    set_mode(SandboxMode::Off);
+    ev.set_capability_tenant_id(3596);
+    bool body_ran = false;
+    ev.primitives().add("synthesize:probe-soft-3596",
+                        [&](std::span<const aura::compiler::types::EvalValue>) {
+                            body_ran = true;
+                            return aura::compiler::types::make_bool(true);
+                        });
+    const auto denied0 = g_capability_effect_metrics().capability_effect_denied_total.load();
+    auto r = ev.invoke_prim_with_telemetry("synthesize:probe-soft-3596", [&]() {
+        auto fn = ev.primitives().lookup("synthesize:probe-soft-3596");
+        return (*fn)({});
+    });
+    CHECK(!is_error(r), "3596 AC5: Soft/Off allows without grants");
+    CHECK(body_ran, "3596 AC5: body ran");
+    CHECK(g_capability_effect_metrics().capability_effect_denied_total.load() == denied0,
+          "3596 AC5: no new deny under Soft/Off");
+}
 
 int run_test_dispatch_required_effects() {
     std::println("=== Issue #2152: dispatch non-bypassable required_effects ===");
@@ -454,6 +621,11 @@ int run_test_dispatch_required_effects() {
         CHECK(rc_live == 0 || rc_live2 == 0, "#3524 AC: production dispatch TUs pass --strict");
     }
 
+    ac3596_1_infer_mse_bits();
+    ac3596_2_mutate_only_dispatch_deny();
+    ac3596_3_mutate_mse_allow();
+    ac3596_4_explicit_ta_unchanged();
+    ac3596_5_soft_zero_extra();
     std::println("\n=== #2152/#3524 dispatch required_effects: {} passed, {} failed ===", g_passed,
                  g_failed);
     return g_failed == 0 ? 0 : 1;
