@@ -11588,6 +11588,40 @@ def cmd_moving_untracked_split_3600_coverage():
     return 0
 
 
+def cmd_lockless_hygiene_se_3601_coverage():
+    """Issue #3601: lockless mutate deny was counters-only — no joinable SE
+    mid+reason (#3217/#3319/#3543 residual).
+
+    Contract rows (AC1-AC5 from the test file):
+
+      AC1: every record_hygiene_violation_attempt() deny site in
+           evaluator_eval_flat.cpp pairs with the
+           note_hygiene_last_limit_reason(kHygieneLimitReasonMacroIntroduced)
+           stamp (16/16) — SE flows through the landed #3543 emit; Soft/Off
+           stays zero-extra, production denies join the pinned composite mid.
+      AC2: evaluator_eval_flat.cpp cites #3601 at the fix site.
+      AC3: no parallel SE emit in the lockless helper (single #3543 emitter;
+           no second audit bus; no invented mid / reason spelling).
+      AC4: runtime face test in test_tweak_literal_audit_consistency.cpp
+           (pinned-mid join, query:security-audit mid+reason filter,
+           Soft/Off zero SE, public one-SE-per-deny, aborted-batch chaos
+           #3066).
+      AC5: no docs/design/3601-* (#1655); no tests/**/test_issue_3601.cpp
+           (#81934); no new public query name.
+    """
+    print(f"{B}=== lockless hygiene deny SE (#3601) ==={N}")
+    script = ROOT / "scripts" / "check_lockless_hygiene_se_3601.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script), "--strict"], cwd=ROOT)
+    if r.returncode != 0:
+        fail("lockless hygiene deny SE (#3601) contract rows failed")
+        return 1
+    ok("lockless hygiene deny SE (#3601) clean")
+    return 0
+
+
 def cmd_query_stable_hard_reject_torn_latch_3386_coverage():
     """Issue #3386: shared probe Evaluator::query_stable_hard_reject_torn()
     must OR restamp_over_budget_torn() under multi-worker latch (I6 residual).
@@ -21326,6 +21360,7 @@ def cmd_gate():
         or cmd_soak_pr_short_3387_coverage()
         or cmd_join_reclaim_retry_3595_coverage()
         or cmd_moving_untracked_split_3600_coverage()
+        or cmd_lockless_hygiene_se_3601_coverage()
     )
     if rc:
         return rc

@@ -2376,6 +2376,10 @@ EvalResult Evaluator::eval_flat_apply_mutate_tweak_literal(std::span<const types
     if (flat.is_macro_introduced(node) &&
         !(get_allow_macro_mutate() || parse_allow_macro_opt_out(a))) {
         record_hygiene_violation_attempt();
+        // Issue #3601: lockless deny was counters-only - stamp the landed #3543
+        // SE face (MacroHygiene + hygiene-macro-introduced, mid via
+        // join_audit_and_se_mid) so production denies join the batch mid.
+        note_hygiene_last_limit_reason(kHygieneLimitReasonMacroIntroduced);
         return std::unexpected(aura::diag::Diagnostic{
             aura::diag::ErrorKind::InternalError,
             "batch :tweak-literal: cannot tweak-literal MacroIntroduced without "
@@ -2432,6 +2436,7 @@ EvalResult Evaluator::eval_flat_apply_mutate_remove_node(std::span<const types::
     if (flat.is_macro_introduced(target) &&
         !(get_allow_macro_mutate() || parse_allow_macro_opt_out(a))) {
         record_hygiene_violation_attempt();
+        note_hygiene_last_limit_reason(kHygieneLimitReasonMacroIntroduced);
         return std::unexpected(
             aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
                                    "batch :remove-node: cannot remove-node MacroIntroduced without "
@@ -2482,6 +2487,7 @@ EvalResult Evaluator::eval_flat_apply_mutate_insert_child(std::span<const types:
     if (flat.is_macro_introduced(parent) &&
         !(get_allow_macro_mutate() || parse_allow_macro_opt_out(a))) {
         record_hygiene_violation_attempt();
+        note_hygiene_last_limit_reason(kHygieneLimitReasonMacroIntroduced);
         return std::unexpected(aura::diag::Diagnostic{
             aura::diag::ErrorKind::InternalError,
             "batch :insert-child: cannot insert-child MacroIntroduced without "
@@ -2568,6 +2574,7 @@ EvalResult Evaluator::eval_flat_apply_mutate_set_body(std::span<const types::Eva
     if ((flat.is_macro_introduced(target) || flat.is_macro_introduced(lambda_id)) &&
         !(get_allow_macro_mutate() || parse_allow_macro_opt_out(a))) {
         record_hygiene_violation_attempt();
+        note_hygiene_last_limit_reason(kHygieneLimitReasonMacroIntroduced);
         return std::unexpected(
             aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
                                    "batch :set-body: cannot set-body MacroIntroduced without "
@@ -2603,6 +2610,7 @@ EvalResult Evaluator::eval_flat_apply_mutate_set_body(std::span<const types::Eva
                 (void)flat.free_orphan_nodes_from(
                     static_cast<aura::ast::NodeId>(size_before_parse));
             record_hygiene_violation_attempt();
+            note_hygiene_last_limit_reason(kHygieneLimitReasonMacroIntroduced);
             return std::unexpected(
                 aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
                                        "batch :set-body: cannot set-body MacroIntroduced without "
@@ -2920,6 +2928,7 @@ EvalResult Evaluator::eval_flat_apply_mutate_replace_subtree(std::span<const typ
     if (flat.is_macro_introduced(target) &&
         !(get_allow_macro_mutate() || parse_allow_macro_opt_out(a))) {
         record_hygiene_violation_attempt();
+        note_hygiene_last_limit_reason(kHygieneLimitReasonMacroIntroduced);
         return std::unexpected(
             aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
                                    "batch :replace-subtree: cannot mutate macro-introduced node"});
@@ -3040,6 +3049,7 @@ EvalResult Evaluator::eval_flat_apply_mutate_splice(std::span<const types::EvalV
     if (flat.is_macro_introduced(parent) &&
         !(get_allow_macro_mutate() || parse_allow_macro_opt_out(a))) {
         record_hygiene_violation_attempt();
+        note_hygiene_last_limit_reason(kHygieneLimitReasonMacroIntroduced);
         return std::unexpected(
             aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
                                    "batch :splice: cannot splice MacroIntroduced without "
@@ -3122,6 +3132,7 @@ EvalResult Evaluator::eval_flat_apply_mutate_wrap(std::span<const types::EvalVal
     if (flat.is_macro_introduced(node) &&
         !(get_allow_macro_mutate() || parse_allow_macro_opt_out(a))) {
         record_hygiene_violation_attempt();
+        note_hygiene_last_limit_reason(kHygieneLimitReasonMacroIntroduced);
         return std::unexpected(
             aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
                                    "batch :wrap: cannot wrap MacroIntroduced without "
@@ -3411,6 +3422,7 @@ EvalResult Evaluator::eval_flat_apply_mutate_inline_call(std::span<const types::
     if (flat.is_macro_introduced(call_id) &&
         !(get_allow_macro_mutate() || parse_allow_macro_opt_out(a))) {
         record_hygiene_violation_attempt();
+        note_hygiene_last_limit_reason(kHygieneLimitReasonMacroIntroduced);
         return std::unexpected(
             aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
                                    "batch :inline-call: cannot inline-call MacroIntroduced without "
@@ -3465,6 +3477,7 @@ EvalResult Evaluator::eval_flat_apply_mutate_inline_call(std::span<const types::
     if (func_body_node != aura::ast::NULL_NODE && flat.is_macro_introduced(func_body_node) &&
         !(get_allow_macro_mutate() || parse_allow_macro_opt_out(a))) {
         record_hygiene_violation_attempt();
+        note_hygiene_last_limit_reason(kHygieneLimitReasonMacroIntroduced);
         return std::unexpected(
             aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
                                    "batch :inline-call: cannot inline-call MacroIntroduced without "

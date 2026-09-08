@@ -50,7 +50,10 @@ def main() -> int:
     pwin = mut[max(0, ppos - 100) : ppos + 4000] if ppos >= 0 else ""
 
     lpos = flat.find("eval_flat_apply_mutate_tweak_literal")
-    lwin = flat[lpos : lpos + 2500] if lpos >= 0 else ""
+    # Issue #3601: the lockless deny site gained the #3543 reason stamp + cite
+    # comment inside this function, shifting the IntVal anchor ~300 chars down
+    # (original slack was 63). Widen the window accordingly.
+    lwin = flat[lpos : lpos + 3000] if lpos >= 0 else ""
 
     # AC1
     must("Issue #2799", "AC1", pwin)
