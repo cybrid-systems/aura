@@ -4997,7 +4997,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                     "op=\"{}\" reason=\"{}\" denied={} typed_seq={} typed_kind={} "
                     "typed_outcome={} schema={} typed-trail-miss={} typed-trail-size={} "
                     "se-ring-size={} wal-replay-hint={} typed-summary-from-wal={} "
-                    "typed-outcome-wal={} typed-kind-wal={}",
+                    "typed-outcome-wal={} typed-kind-wal={} wal-lookup-window-miss=0",
                     e.seq, kind_name(e.kind), e.tenant_id, e.fiber_id, e.mutation_id, e.epoch,
                     e.effect_bits, op_out, reason_out, e.denied ? 1 : 0, typed_seq, typed_kind,
                     typed_outcome, kSecurityAuditUnifyIssue, typed_miss,
@@ -5015,10 +5015,16 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             // 256 + SE 1024 wrap, or restart without hydrate) → one
             // WAL-backed line under production/Full. Soft / WAL-off: no
             // I/O. typed-trail-miss=1 — WAL is not the typed trail.
+            // Issue #3603: wal_window_hit records whether the fallback
+            // found the mid — a fallback row the agent's own tenant/fiber/
+            // reason filter rejected is still evidence in-window, so the
+            // miss face below must not fire for it.
+            bool wal_window_hit = false;
             if (emitted == 0 && filt_mid && want_mid != 0 && summary_scan_ok &&
                 g_security_event_wal().is_enabled()) {
                 if (auto rec = g_security_event_wal().find_recent_by_mutation_id(
                         want_mid, ::aura::core::wal_slo::wal_mid_lookup_segments())) {
+                    wal_window_hit = true;
                     if ((!filt_tenant || rec->tenant_id == want_tenant) &&
                         (!filt_fiber || rec->fiber_id == want_fiber) &&
                         (!filt_reason || std::string_view(rec->reason).find(want_reason) !=
@@ -5043,7 +5049,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                             "op=\"{}\" reason=\"{}\" denied={} typed_seq={} typed_kind={} "
                             "typed_outcome={} schema={} typed-trail-miss={} typed-trail-size={} "
                             "se-ring-size={} wal-replay-hint={} typed-summary-from-wal={} "
-                            "typed-outcome-wal={} typed-kind-wal={}",
+                            "typed-outcome-wal={} typed-kind-wal={} wal-lookup-window-miss=0",
                             rec->seq, kind_name(kind), rec->tenant_id, rec->fiber_id,
                             rec->mutation_id, rec->epoch, rec->effect_bits, rec->op, rec->reason,
                             rec->denied ? 1 : 0, 0, "-", "-", kSecurityAuditUnifyIssue, 1,
@@ -5057,6 +5063,47 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                         result = make_pair(pid);
                     }
                 }
+            }
+            // Issue #3603: ring miss + SE WAL find_recent miss → additive
+            // window-miss face. The mid may still exist on disk beyond the
+            // lookup window (wal_mid_lookup_segments(); AURA_WAL_MAX_SEGMENTS
+            // 0 = unbounded files, lookup stays bounded). Without this the
+            // miss is indistinguishable from never-audited. typed-trail-miss
+            // stays 1 — WAL is not the typed trail. A typed-summary sidecar
+            // hit inside the same window still counts as evidence (flag 0).
+            // Soft / WAL-off: no extra I/O, no line. A fallback row the
+            // agent's own filter rejected (!wal_window_hit == false) is
+            // evidence too — no contradiction line beside it (#3603).
+            if (emitted == 0 && !wal_window_hit && filt_mid && want_mid != 0 && summary_scan_ok &&
+                g_security_event_wal().is_enabled()) {
+                int typed_summary_from_wal = 0;
+                const char* typed_outcome_wal = "-";
+                const char* typed_kind_wal = "-";
+                if (g_mutation_audit_wal().is_enabled()) {
+                    if (auto ts = g_mutation_audit_wal().find_recent_typed_summary_by_mid(
+                            want_mid, ::aura::core::wal_slo::wal_mid_lookup_segments())) {
+                        typed_summary_from_wal = 1;
+                        typed_outcome_wal =
+                            typed_outcome_name(static_cast<AuditOutcome>(ts->outcome));
+                        typed_kind_wal = typed_kind_name(static_cast<MutationKind>(ts->kind));
+                    }
+                }
+                auto line = std::format(
+                    "seq=0 kind=mid-window-miss tenant=0 fiber=0 mutation_id={} epoch=0 "
+                    "effect=0 op=\"\" reason=\"wal-lookup-window-miss\" denied=0 typed_seq=0 "
+                    "typed_kind=- typed_outcome=- schema={} typed-trail-miss=1 "
+                    "typed-trail-size={} se-ring-size={} wal-replay-hint=1 "
+                    "typed-summary-from-wal={} typed-outcome-wal={} typed-kind-wal={} "
+                    "wal-lookup-window-miss={}",
+                    want_mid, kSecurityAuditUnifyIssue,
+                    static_cast<unsigned>(kTypedMutationAuditTrailSize),
+                    static_cast<unsigned>(kSecurityEventRingSize), typed_summary_from_wal,
+                    typed_outcome_wal, typed_kind_wal, typed_summary_from_wal == 1 ? 0 : 1);
+                auto sidx = ev.string_heap_.size();
+                ev.string_heap_.push_back(std::move(line));
+                auto pid = ev.pairs_.size();
+                ev.pairs_.push_back({make_string(sidx), result});
+                result = make_pair(pid);
             }
             return result;
         });
@@ -5745,7 +5792,8 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             // + 4 additive keys (suggested-next + suggested-next-code +
             //   schema-3246 + issue-3246)
             // + 3 additive keys (se-mid-miss + schema-3284 + issue-3284)
-            // = 49 live keys. Issue #3339: planned 72 (>= 49+8 headroom;
+            // + 1 additive key (wal-lookup-window-miss, #3603)
+            // = 50 live keys. Issue #3339: planned 72 (>= 50+8 headroom;
             // +20 dummy keys without a raise must fail the CI headroom
             // gate). Additive insert_kv must raise planned_keys; this
             // Agent facade forbids hash-overflow.
@@ -5947,6 +5995,12 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             // with :durable. Join key is join_mid (explicit mid or last
             // stamped) — never a synthetic process-origin mid.
             std::int64_t durable_hit = 0;
+            // Issue #3603: durable scan ran + explicit mid + every
+            // find_recent_* missed → the mid likely lives beyond the lookup
+            // window (wal_mid_lookup_segments(), bounded; retention
+            // AURA_WAL_MAX_SEGMENTS 0 = unbounded files). Additive face —
+            // typed-trail-miss / forensic-source semantics unchanged.
+            std::int64_t wal_lookup_window_miss = 0;
             std::int64_t typed_summary_from_wal = 0;
             std::int64_t typed_kind = 0;
             if (typed_hit)
@@ -6025,6 +6079,12 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                                 forensic_source = 3;
                         }
                     }
+                    // Issue #3603: all three find_recent_* missed within the
+                    // lookup window → additive face (the row may still exist
+                    // on disk beyond it). Soft / observe-only / no durable
+                    // scan keeps 0 — no extra I/O either way.
+                    wal_lookup_window_miss =
+                        (durable_hit == 0 && typed_summary_from_wal == 0) ? 1 : 0;
                 }
             }
 
@@ -6043,6 +6103,9 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             insert_kv("se-mid-miss", se_mid_miss);
             insert_kv("typed-outcome", typed_outcome);
             insert_kv("typed-trail-miss", typed_miss);
+            // Issue #3603: additive window-miss face (0 when Soft /
+            // observe-only / no durable scan — no extra I/O either way).
+            insert_kv("wal-lookup-window-miss", wal_lookup_window_miss);
             insert_kv("commit-would-allow", cr.would_allow_commit ? 1 : 0);
             insert_kv("commit-force-reason-code", cr.force_reason_code);
             insert_kv("playbook-action", static_cast<std::int64_t>(pb.action));

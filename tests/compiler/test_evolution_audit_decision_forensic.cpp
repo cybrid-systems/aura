@@ -199,6 +199,33 @@ static void ac8_3284_se_mid_miss() {
           "gate aligned with Full hard face (#3298)");
 }
 
+// AC9 (#3603): :durable window-miss additive key; observe-only stays 1.
+static void ac9_wal_window_miss_3603() {
+    std::println("\n--- AC9 (#3603): wal-lookup-window-miss additive key ---");
+    auto src = read_file("src/compiler/evaluator_primitives_security.cpp");
+    CHECK(!src.empty(), "evaluator_primitives_security.cpp readable");
+    CHECK(src.find("wal-lookup-window-miss") != std::string::npos,
+          "3603: key present on the decision hash");
+    CHECK(src.find("Issue #3603") != std::string::npos, "cites #3603");
+    const auto kv = src.find("insert_kv(\"wal-lookup-window-miss\", wal_lookup_window_miss)");
+    CHECK(kv != std::string::npos, "insert_kv(\"wal-lookup-window-miss\", ...) present");
+    // Gate alignment: computed inside the want_durable + production/Full
+    // + WAL-enabled block (Soft / observe-only keeps 0, no extra I/O).
+    const auto gate = src.find("if (want_durable && join_mid != 0 &&");
+    CHECK(gate != std::string::npos, "durable WAL gate unchanged");
+    CHECK(kv != std::string::npos && gate != std::string::npos && kv > gate,
+          "window-miss insert sits after the durable gate");
+    const auto comp = src.find("(durable_hit == 0 && typed_summary_from_wal == 0) ? 1 : 0");
+    CHECK(comp != std::string::npos && comp > gate,
+          "window-miss computed inside the durable block");
+    // Flag semantics: every find_recent_* missed → 1 (never a typed rewrite).
+    CHECK(src.find("(durable_hit == 0 && typed_summary_from_wal == 0) ? 1 : 0") !=
+              std::string::npos,
+          "window-miss = all-find_recent-miss semantics");
+    // observe-only stays 1 (unchanged #3114 face).
+    CHECK(src.find("insert_kv(\"observe-only\", 1)") != std::string::npos, "observe-only stays 1");
+}
+
 } // namespace
 
 int main() {
@@ -210,6 +237,7 @@ int main() {
     ac6_durable_3205();
     ac7_typed_summary_3242();
     ac8_3284_se_mid_miss();
+    ac9_wal_window_miss_3603();
     if (g_failed)
         return 1;
     std::println("evolution-audit-decision forensic-source (#3152): OK ({} passed)", g_passed);
