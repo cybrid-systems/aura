@@ -365,8 +365,14 @@ int run_test_dirty_column_lock() {
         CHECK(final_count > 0, "AC3: final dirty count > 0");
         CHECK(final_count <= static_cast<std::size_t>(kN), "AC3: final count <= N");
         CHECK(max_count.load() <= static_cast<std::size_t>(kN), "AC3: max snapshot <= N");
-        // With enough marks, most/all nodes should be dirty.
-        CHECK(final_count >= static_cast<std::size_t>(kN) / 2 || mark_ops.load() < 100,
+        // With enough marks, most/all nodes should be dirty. The two
+        // writers cover slots 0,1,2,... consecutively, so kN marks
+        // guarantee full coverage; below that (slow machine / short
+        // window) a majority is not reachable and the check is waived.
+        // Calibration: the old fixed 100-op waiver under-waived on
+        // loaded CI runners (ops in [100, kN) failed the majority bar;
+        // observed on the a9c6c710d run).
+        CHECK(final_count >= static_cast<std::size_t>(kN) / 2 || mark_ops.load() < kN,
               "AC3: majority dirty after concurrent marks (or few ops)");
     }
 
