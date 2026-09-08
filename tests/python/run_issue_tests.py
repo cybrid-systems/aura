@@ -504,7 +504,11 @@ def _run_one_attempt(bin_name: str, timeout: int) -> tuple[str, int, int, int, s
     isolate_fails = _isolate_member_fail_lines(r.stdout or "")
     if isolate_fails:
         err = "; ".join(isolate_fails)
-        check_fails = _member_check_fail_lines(r.stdout or "")
+        # CHECK failures print to STDERR (test_harness.hpp CHECK -> std::cerr),
+        # so scan both streams — the aot batch's stderr tail is dominated by
+        # later members' aot_log lines, which is exactly where the label was
+        # getting lost.
+        check_fails = _member_check_fail_lines((r.stdout or "") + "\n" + (r.stderr or ""))
         if check_fails:
             err = f"{err}\n" + "\n".join(check_fails)
         if stderr_tail:
