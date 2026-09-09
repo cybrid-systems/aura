@@ -11818,6 +11818,31 @@ def cmd_reexpand_tenant_principal_3609_coverage():
     return 0
 
 
+def cmd_real_quiet_live_tc_3610_coverage():
+    """Issue #3610: real-Quiet (override<0, depth==0) IR entry still rode the
+    pending residual face when a live commit TC is bound (#3579/#3307/#3510
+    residual).
+
+    The Quiet branch now splits via ir_typed_entry_real_quiet_allows():
+    no TLS commit TC → #3568 allow (metrics path stays unpolluted); live TC
+    bound + latched pending_full_solve_residual face → refuse with the
+    #3305 elide-blocked counter (no new key). Owned probe + depth>0 +
+    Soft/Off unchanged. No docs/design/3610-*, no
+    tests/**/test_issue_3610.cpp.
+    """
+    print(f"{B}=== real quiet live tc (#3610) ==={N}")
+    script = ROOT / "scripts" / "check_real_quiet_live_tc_3610.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script), "--strict"], cwd=ROOT)
+    if r.returncode != 0:
+        fail("real quiet live tc (#3610) contract rows failed")
+        return 1
+    ok("real quiet live tc (#3610) clean")
+    return 0
+
+
 def cmd_query_stable_hard_reject_torn_latch_3386_coverage():
     """Issue #3386: shared probe Evaluator::query_stable_hard_reject_torn()
     must OR restamp_over_budget_torn() under multi-worker latch (I6 residual).
@@ -21565,6 +21590,7 @@ def cmd_gate():
         or cmd_remount_reason_domain_3607_coverage()
         or cmd_expand_checkpoint_local_rollback_3608_coverage()
         or cmd_reexpand_tenant_principal_3609_coverage()
+        or cmd_real_quiet_live_tc_3610_coverage()
     )
     if rc:
         return rc
@@ -22533,6 +22559,7 @@ def main():
         "remount-reason-domain-3607": cmd_remount_reason_domain_3607_coverage,
         "expand-checkpoint-local-rollback-3608": cmd_expand_checkpoint_local_rollback_3608_coverage,
         "reexpand-tenant-principal-3609": cmd_reexpand_tenant_principal_3609_coverage,
+        "real-quiet-live-tc-3610": cmd_real_quiet_live_tc_3610_coverage,
         "epoch-residual-merged-heal-2980": cmd_epoch_residual_merged_heal_2980_coverage,
         "steal-invariant-table-2929": cmd_steal_invariant_table_2929_coverage,
         "steal-enqueue-sole-gate-3072": cmd_steal_enqueue_sole_gate_3072,

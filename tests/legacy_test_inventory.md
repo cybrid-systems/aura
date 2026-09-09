@@ -1606,7 +1606,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 #### domain/ (26)
 
 - `tests/core/test_capability_single_use_consume.cpp` (—) [large, domain_suite, theme_core] — tests/core/test_capability_single_use_consume.cpp
-- `tests/compiler/test_commit_readiness_score.cpp` (—) [domain_suite, theme_compiler] — AC1: Clean SOLVED + linear + blame + !trunc → bp=10000, ok, allow
+- `tests/compiler/test_commit_readiness_score.cpp` (—) [large, domain_suite, theme_compiler] — AC1: Clean SOLVED + linear + blame + !trunc → bp=10000, ok, allow
 - `tests/compiler/test_compiler_service_ownership.cpp` (—) [small, domain_suite, theme_compiler] — Issue #1835/#1837/#1839 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_densify_last_call_axes.cpp` (—) [domain_suite, theme_compiler] — for envframe + closure remount axes (seal #2361/#2365 last-call contract).
 - `tests/compiler/test_densify_ownership_scan_fail_gate.cpp` (—) [large, domain_suite, theme_compiler] — metrics the same way pin_contract_held does — no path where scan fail is
