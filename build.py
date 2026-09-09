@@ -11871,6 +11871,32 @@ def cmd_cascade_rearm_reconsult_3611_coverage():
     return 0
 
 
+def cmd_remount_densify_pairing_strip_3612_coverage():
+    """Issue #3612: remount last==0 strip was JIT-walk only — the Moving
+    densify path (force_densify_remap_pairing + the Phase-5 pin-contract
+    fail branch) only published the health atomic on a remount fail, so a
+    still-green TypeLinearCommitProof stayed servable until the next
+    outermost restamp (silent linear_fast_path_ok; #3548/#3448 residual).
+
+    Fix: both densify call sites share strip_green_face_on_remount_last_zero
+    (production/Full gated; Quiet outcome, no process-global Reject, no new
+    proof model). Soft vacuous-true never strips. Reuses
+    type_linear_proof_reject_after_rebind_fail_total — no new counter, no
+    new query key. No docs/design/3612-*, no tests/**/test_issue_3612.cpp.
+    """
+    print(f"{B}=== remount densify pairing strip (#3612) ==={N}")
+    script = ROOT / "scripts" / "check_remount_densify_pairing_strip_3612.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script), "--strict"], cwd=ROOT)
+    if r.returncode != 0:
+        fail("remount densify pairing strip (#3612) contract rows failed")
+        return 1
+    ok("remount densify pairing strip (#3612) clean")
+    return 0
+
+
 def cmd_query_stable_hard_reject_torn_latch_3386_coverage():
     """Issue #3386: shared probe Evaluator::query_stable_hard_reject_torn()
     must OR restamp_over_budget_torn() under multi-worker latch (I6 residual).
@@ -21620,6 +21646,7 @@ def cmd_gate():
         or cmd_reexpand_tenant_principal_3609_coverage()
         or cmd_real_quiet_live_tc_3610_coverage()
         or cmd_cascade_rearm_reconsult_3611_coverage()
+        or cmd_remount_densify_pairing_strip_3612_coverage()
     )
     if rc:
         return rc
@@ -22590,6 +22617,7 @@ def main():
         "reexpand-tenant-principal-3609": cmd_reexpand_tenant_principal_3609_coverage,
         "real-quiet-live-tc-3610": cmd_real_quiet_live_tc_3610_coverage,
         "cascade-rearm-reconsult-3611": cmd_cascade_rearm_reconsult_3611_coverage,
+        "remount-densify-pairing-strip-3612": cmd_remount_densify_pairing_strip_3612_coverage,
         "epoch-residual-merged-heal-2980": cmd_epoch_residual_merged_heal_2980_coverage,
         "steal-invariant-table-2929": cmd_steal_invariant_table_2929_coverage,
         "steal-enqueue-sole-gate-3072": cmd_steal_enqueue_sole_gate_3072,

@@ -719,6 +719,115 @@ static void ac3578_4_linter_3448_not_regressed() {
           "3578 AC4: no check_3578.py");
 }
 
+// ── Issue #3612 ACs ──
+// Densify pairing fail is a remount-last-zero outcome: the JIT residual
+// walks strip the green face on remounted==0 (#3548), but the Moving
+// densify path (force_densify_remap_pairing + the Phase-5 pin-contract
+// fail branch) only published the health atomic — a still-green
+// TypeLinearCommitProof stayed servable until the next outermost restamp
+// (silent linear_fast_path_ok). Fix: share
+// strip_green_face_on_remount_last_zero at both densify call sites
+// (production/Full gated; Quiet outcome, no process-global Reject).
+static void ac3612_1_densify_pairing_fail_strips() {
+    std::println("\n--- #3612 AC1: densify pairing fail strips green face ---");
+    using namespace aura::compiler::typed_audit;
+    apply_production_audit_defaults();
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    const auto env_id = ev.alloc_env_frame();
+    ev.inject_envframe_dual_path_desync_for_test(env_id);
+    seed_green_face();
+    stamp_type_linear_commit_proof(1);
+    publish_type_linear_proof_outcome(kTypeLinearProofOutcomeStamped);
+    CHECK(last_proof_stamper_bound_v_read() == 1, "3612 AC1: green face before pairing");
+    const auto fail0 = type_linear_proof_reject_after_rebind_fail_total_v_read();
+    const auto pairing = ev.force_densify_remap_pairing();
+    CHECK(pairing.forced, "3612 AC1: pairing forced");
+    CHECK(!pairing.dual_epoch_ok, "3612 AC1: dual_epoch fail injected");
+    CHECK(!pairing.closure_remount_ok, "3612 AC1: closure_remount_ok false");
+    CHECK(last_proof_would_allow_commit_v_read() == 0, "3612 AC1: would_allow dropped (AC1)");
+    CHECK(last_proof_stamper_bound_v_read() == 0, "3612 AC1: stamper unbound");
+    CHECK(last_type_linear_proof_outcome_v_read() == kTypeLinearProofOutcomeQuiet,
+          "3612 AC1: outcome Quiet (no process-global Reject)");
+    CHECK(type_linear_proof_reject_after_rebind_fail_total_v_read() > fail0,
+          "3612 AC1: reject-after-rebind-fail distinguisher advanced");
+    apply_dev_audit_defaults();
+}
+
+static void ac3612_2_soft_pairing_fail_no_strip() {
+    std::println("\n--- #3612 AC2: Soft pairing fail keeps face green, zero extra stores ---");
+    using namespace aura::compiler::typed_audit;
+    apply_dev_audit_defaults();
+    g_typed_mutation_audit_counters.production_defaults_active.store(0, std::memory_order_relaxed);
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    const auto env_id = ev.alloc_env_frame();
+    ev.inject_envframe_dual_path_desync_for_test(env_id);
+    seed_green_face();
+    const auto obs0 = g_rehydrate_miss_invalidate_observe_total.load(std::memory_order_relaxed);
+    const auto pairing = ev.force_densify_remap_pairing();
+    CHECK(!pairing.closure_remount_ok, "3612 AC2: pairing fail observed");
+    CHECK(last_proof_stamper_bound_v_read() == 1, "3612 AC2: Soft keeps stamper bound");
+    CHECK(last_proof_would_allow_commit_v_read() == 1, "3612 AC2: Soft face stays green");
+    CHECK(g_rehydrate_miss_invalidate_observe_total.load(std::memory_order_relaxed) == obs0,
+          "3612 AC2: zero extra stores beyond current notes (AC3)");
+}
+
+static void ac3612_3_success_no_strip() {
+    std::println("\n--- #3612 AC3: successful pairing does not strip ---");
+    using namespace aura::compiler::typed_audit;
+    apply_production_audit_defaults();
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    (void)ev.alloc_env_frame();
+    seed_green_face();
+    stamp_type_linear_commit_proof(1);
+    publish_type_linear_proof_outcome(kTypeLinearProofOutcomeStamped);
+    const auto pairing = ev.force_densify_remap_pairing();
+    CHECK(pairing.closure_remount_ok, "3612 AC3: clean pairing ok");
+    CHECK(last_proof_stamper_bound_v_read() == 1, "3612 AC3: stamper stays bound");
+    CHECK(last_proof_would_allow_commit_v_read() == 1, "3612 AC3: face stays green");
+    CHECK(last_type_linear_proof_outcome_v_read() == kTypeLinearProofOutcomeStamped,
+          "3612 AC3: outcome untouched (next publish_last_proof_face may rebind)");
+    apply_dev_audit_defaults();
+}
+
+static void ac3612_4_source_and_linter() {
+    std::println("\n--- #3612 AC4: source-cite both sites + linter + no invent ---");
+    const auto env = read_file("src/compiler/evaluator_env.cpp");
+    const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto t = read_file("tests/compiler/test_remount_force_deopt.cpp");
+    const auto build = read_file("build.py");
+    // Site A: pairing body shares the strip (production-gated).
+    CHECK(env.find("Issue #3612: a densify pairing fail") != std::string::npos,
+          "3612 AC4: env.cpp Site A cites #3612");
+    CHECK(env.find("typed_mutation_audit.h") != std::string::npos,
+          "3612 AC4: env.cpp includes the strip header");
+    // Site B: Phase-5 pin-contract-fail branch (pairing did not run).
+    CHECK(mb.find("Issue #3612: pin-contract fail forces") != std::string::npos,
+          "3612 AC4: mutation_boundary Site B cites #3612");
+    // Soft vacuous branch must not strip (issue AC3).
+    const auto pos_soft = mb.find("Soft / empty densify: vacuous axes");
+    CHECK(pos_soft != std::string::npos, "3612 AC4: Soft vacuous branch present");
+    CHECK(mb.find("Issue #3612: pin-contract fail forces") < pos_soft,
+          "3612 AC4: strip sites precede the Soft vacuous branch");
+    // JIT #3548 ACs unchanged (issue AC2 regression guard).
+    CHECK(t.find("ac3548_1_tick_last0_strips_stamper") != std::string::npos,
+          "3612 AC4: #3548 JIT tick AC retained");
+    CHECK(t.find("ac3548_4_soft_observe_only") != std::string::npos,
+          "3612 AC4: #3548 Soft AC retained");
+    // Linter wired.
+    CHECK(build.find("check_remount_densify_pairing_strip_3612") != std::string::npos,
+          "3612 AC4: build.py wires linter");
+    const int rc = std::system(
+        "python3 scripts/check_remount_densify_pairing_strip_3612.py --self-test > /dev/null 2>&1");
+    CHECK(rc == 0, "3612 AC4: linter --self-test passes");
+    CHECK(read_file("tests/issues/test_issue_3612.cpp").empty(),
+          "3612 AC4: no tests/issues/test_issue_3612.cpp");
+    CHECK(read_file("docs/design/3612-densify-remount-strip.md").empty(),
+          "3612 AC4: no docs/design");
+}
+
 } // namespace
 
 int run_test_remount_force_deopt() {
@@ -739,9 +848,13 @@ int run_test_remount_force_deopt() {
     ac3578_2_last0_green_quiet_unknown();
     ac3578_3_void_call_sites_observability_cite();
     ac3578_4_linter_3448_not_regressed();
+    ac3612_1_densify_pairing_fail_strips();
+    ac3612_2_soft_pairing_fail_no_strip();
+    ac3612_3_success_no_strip();
+    ac3612_4_source_and_linter();
     if (g_failed)
         return 1;
-    std::println("remount force-deopt #2503/#2894/#3548/#3578: OK ({} passed)", g_passed);
+    std::println("remount force-deopt #2503/#2894/#3548/#3578/#3612: OK ({} passed)", g_passed);
     return 0;
 }
 

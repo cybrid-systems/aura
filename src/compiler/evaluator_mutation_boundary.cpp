@@ -4892,6 +4892,17 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
             densify_consistency.envframe_ok = false;
             aura::core::densify_consistency::note_last_densify_dual_epoch_ok(false);
             aura::core::densify_consistency::note_last_densify_remap_pairing_forced(false);
+            // Issue #3612: pin-contract fail forces the remount axes false
+            // without running the pairing — same remount-last-zero outcome
+            // as the JIT residual walks (#3548). A still-green
+            // TypeLinearCommitProof must not survive a failed Moving
+            // densify window. Share the existing strip (Quiet outcome +
+            // invalidate_gen advance; helper self-gates Soft / Off to
+            // observe-only, and Soft takes the vacuous-true branch below
+            // so it never reaches this path — AC3).
+            if (typed_audit::production_defaults_active() ||
+                typed_audit::get_strategy() == typed_audit::AuditStrategy::Full)
+                typed_audit::strip_green_face_on_remount_last_zero();
         } else {
             // Soft / empty densify: vacuous axes (do not read stale
             // last_root_remap or cumulative closure fails).
