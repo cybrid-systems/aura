@@ -2935,6 +2935,46 @@ static void ac3419_jit_typed_entry_every_function() {
     CHECK(stub.find("g_3419_") == std::string::npos, "3419 AC4: no g_3419_*");
 }
 
+// ── Issue #3616: anon prologue emits linear_post_mutate_enforce ──
+//   AC1: can_linear gate (production/Full, anon included) emits the same
+//        UINT32_MAX env-hint probe into the prologue deopt with typed-entry.
+//   AC2: suppressed when can_epoch already emitted it (named) — exactly one
+//        linear probe per function, shared is_unsafe deopt.
+//   AC3: Soft/Off keep zero prologue calls (hard_typed_entry false).
+//   AC4: named epoch arm probe (#1540) + #3419 typed-entry gate unchanged;
+//        probe/counter reuse only — no new key or counter.
+static void ac3616_anon_linear_prologue_enforce() {
+    std::println("\n--- #3616: anon prologue emits linear_post_mutate_enforce ---");
+    const auto jit = read_file("src/compiler/aura_jit.cpp");
+    CHECK(jit.find("const bool can_linear = hard_typed_entry && !can_epoch &&") !=
+              std::string::npos,
+          "3616 AC1: can_linear gate (production/Full, anon included)");
+    CHECK(jit.find("if (can_epoch || can_typed || can_linear) {") != std::string::npos,
+          "3616 AC1: prologue gate includes can_linear");
+    CHECK(jit.find("auto* env_max_lin =") != std::string::npos,
+          "3616 AC1: anon arm emits the probe");
+    CHECK(jit.find("CreateOr(is_unsafe, lin_unsafe)") != std::string::npos,
+          "3616 AC2: probe ORs into the shared deopt with typed-entry");
+    CHECK(jit.find("hard_typed_entry && !can_epoch") != std::string::npos,
+          "3616 AC2: suppressed when can_epoch emitted it (no double probe)");
+    CHECK(jit.find("can_linear = hard_typed_entry") != std::string::npos,
+          "3616 AC3: Soft/Off keep zero prologue calls (hard gate)");
+    CHECK(jit.find("llvm::ArrayRef<llvm::Value*>{env_max}") != std::string::npos,
+          "3616 AC4: named epoch arm probe unchanged (#1540)");
+    CHECK(
+        jit.find("can_typed = hard_typed_entry && builder.fn_ir_typed_entry_commit_readiness_ok") !=
+            std::string::npos,
+        "3616 AC4: #3419 anon typed-entry gate unchanged");
+    CHECK(jit.find("g_3616_") == std::string::npos,
+          "3616 AC4: no new file-scope counters (probe/counter reuse)");
+    const auto build = read_file("build.py");
+    CHECK(build.find("check_jit_anon_linear_prologue_3616") != std::string::npos,
+          "3616 AC5: build.py wires linter");
+    CHECK(read_file("docs/design/3616-jit-anon-linear-prologue.md").empty(),
+          "3616: no docs/design");
+    CHECK(read_file("tests/compiler/test_issue_3616.cpp").empty(), "3616: no invent");
+}
+
 static void ac3446_linear_epoch_fence_elision_typed() {
     std::println("\n--- #3446: fence ORs elision_ok + typed-entry (residual of #3186) ---");
     const auto jit = read_file("src/compiler/aura_jit.cpp");
@@ -3526,6 +3566,7 @@ int run_test_occurrence_goal_persist_rehydrate() {
     ac3224_ir_typed_entry_commit_readiness();
     ac3343_production_weak_abi_commit_readiness();
     ac3419_jit_typed_entry_every_function();
+    ac3616_anon_linear_prologue_enforce();
     ac3446_linear_epoch_fence_elision_typed();
     ac3225_occurrence_persist_seqlock();
     // Issue #3170: outermost-success occurrence persist fingerprint guard

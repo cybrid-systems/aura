@@ -5358,6 +5358,20 @@ def cmd_lint():
             "Issue #3419 JIT typed-entry every-function linter failed — run python3 scripts/coverage/checks/check_jit_typed_entry_every_function_3419.py"
         )
         return r
+    # Issue #3616: anon prologue emits linear_post_mutate_enforce (same
+    # UINT32_MAX env-hint probe as the named epoch arm, OR'd into the shared
+    # typed-entry deopt; suppressed when can_epoch already emitted it).
+    # Linter after #3419.
+    alp3616_script = COVERAGE_CHECKS / "check_jit_anon_linear_prologue_3616.py"
+    if not alp3616_script.exists():
+        fail(f"missing {alp3616_script}")
+        return 1
+    r = run([sys.executable, str(alp3616_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3616 anon linear prologue linter failed — run python3 scripts/coverage/checks/check_jit_anon_linear_prologue_3616.py"
+        )
+        return r
     # Issue #3446: compiled Move/Drop fence ORs live elision_ok + typed-entry
     # (probe deopt_inc then continues — not a substitute). Residual of
     # #3186/#3224/#3419. Extends test_escape_move_elision_gate; no new
