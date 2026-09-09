@@ -2092,7 +2092,9 @@ int main() {
                 ConstraintSystem cs(treg);
                 cs.set_unify_gradual_mode(GradualPermissiveness::Strict);
                 auto fl = treg.lookup_type("Float");
-                if (cs.consistent_unify(treg.dynamic_type(), treg.string_type()) &&
+                // Issue #3622: Dynamic ~ T hard-rejects under the production
+                // face; Int ↔ Float stays the intentional numeric coercion.
+                if (!cs.consistent_unify(treg.dynamic_type(), treg.string_type()) &&
                     cs.consistent_unify(treg.int_type(), fl) &&
                     cs.consistent_unify(fl, treg.int_type())) {
                     ++ts_passed;
@@ -2132,6 +2134,106 @@ int main() {
                 } else {
                     ++ts_failed;
                     std::println(std::cerr, "TS FAIL: ac3202_1_typeerror");
+                }
+            }
+
+            apply_dev_audit_defaults();
+        }
+
+        // ── Issue #3622: Production consistent_unify rejects Dynamic~T and
+        // non-primitive ground pairs (I1 residual of #3202/#3430). ──
+        {
+            using aura::compiler::ConstraintSystem;
+            using aura::compiler::GradualPermissiveness;
+            using aura::compiler::typed_audit::apply_dev_audit_defaults;
+            using aura::compiler::typed_audit::apply_production_audit_defaults;
+            using aura::core::TypeRegistry;
+            using aura::core::TypeTag;
+
+            struct ProdScope {
+                ProdScope() { apply_production_audit_defaults(); }
+                ~ProdScope() { apply_dev_audit_defaults(); }
+            };
+
+            // AC1: Production + Strict — Dynamic ~ Int fails closed both ways.
+            {
+                ProdScope prod;
+                TypeRegistry treg;
+                ConstraintSystem cs(treg);
+                cs.set_unify_gradual_mode(GradualPermissiveness::Strict);
+                if (!cs.consistent_unify(treg.dynamic_type(), treg.int_type()) &&
+                    !cs.consistent_unify(treg.int_type(), treg.dynamic_type())) {
+                    ++ts_passed;
+                    std::println("TS OK: ac3622_1_dynamic_int_prod_false");
+                } else {
+                    ++ts_failed;
+                    std::println(std::cerr, "TS FAIL: ac3622_1_dynamic_int_prod_false");
+                }
+            }
+
+            // AC2: Production + Strict — non-primitive grounds (List~Int) fail.
+            {
+                ProdScope prod;
+                TypeRegistry treg;
+                ConstraintSystem cs(treg);
+                cs.set_unify_gradual_mode(GradualPermissiveness::Strict);
+                const auto lst = treg.register_type(TypeTag::VECTOR, "List");
+                if (!cs.consistent_unify(lst, treg.int_type()) &&
+                    !cs.consistent_unify(treg.int_type(), lst)) {
+                    ++ts_passed;
+                    std::println("TS OK: ac3622_2_list_int_prod_false");
+                } else {
+                    ++ts_failed;
+                    std::println(std::cerr, "TS FAIL: ac3622_2_list_int_prod_false");
+                }
+            }
+
+            // AC3: Soft — Dynamic ~ T still true (gradual core stays, #2992).
+            {
+                apply_dev_audit_defaults();
+                TypeRegistry treg;
+                ConstraintSystem cs(treg);
+                cs.set_unify_gradual_mode(GradualPermissiveness::Strict);
+                if (cs.consistent_unify(treg.dynamic_type(), treg.int_type())) {
+                    ++ts_passed;
+                    std::println("TS OK: ac3622_3_dynamic_soft_true");
+                } else {
+                    ++ts_failed;
+                    std::println(std::cerr, "TS FAIL: ac3622_3_dynamic_soft_true");
+                }
+            }
+
+            // AC4: Production + Strict — Int ↔ Float numeric coercion stays.
+            {
+                ProdScope prod;
+                TypeRegistry treg;
+                ConstraintSystem cs(treg);
+                cs.set_unify_gradual_mode(GradualPermissiveness::Strict);
+                const auto fl = treg.lookup_type("Float");
+                if (cs.consistent_unify(treg.int_type(), fl) &&
+                    cs.consistent_unify(fl, treg.int_type())) {
+                    ++ts_passed;
+                    std::println("TS OK: ac3622_4_int_float_prod_true");
+                } else {
+                    ++ts_failed;
+                    std::println(std::cerr, "TS FAIL: ac3622_4_int_float_prod_true");
+                }
+            }
+
+            // AC6: Linear ~ Dynamic still fails closed in both faces (#117).
+            {
+                ProdScope prod;
+                TypeRegistry treg;
+                ConstraintSystem cs(treg);
+                cs.set_unify_gradual_mode(GradualPermissiveness::Strict);
+                const auto lin = treg.register_linear(treg.int_type());
+                if (!cs.consistent_unify(treg.dynamic_type(), lin) &&
+                    !cs.consistent_unify(lin, treg.dynamic_type())) {
+                    ++ts_passed;
+                    std::println("TS OK: ac3622_5_linear_dynamic_false");
+                } else {
+                    ++ts_failed;
+                    std::println(std::cerr, "TS FAIL: ac3622_5_linear_dynamic_false");
                 }
             }
 
@@ -2238,7 +2340,9 @@ int main() {
                 aura::compiler::ConstraintSystem cs(treg);
                 cs.set_unify_gradual_mode(GradualPermissiveness::Strict);
                 auto lin = treg.register_linear(treg.int_type());
-                if (cs.consistent_unify(treg.dynamic_type(), treg.string_type()) &&
+                // Issue #3622: Dynamic ~ T hard-rejects under the production
+                // face (supersedes the #3430 dynamic-permissive accept).
+                if (!cs.consistent_unify(treg.dynamic_type(), treg.string_type()) &&
                     !cs.consistent_unify(treg.dynamic_type(), lin)) {
                     ++ts_passed;
                     std::println("TS OK: ac3430_4_dynamic_and_linear");

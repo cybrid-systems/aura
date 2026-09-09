@@ -1866,6 +1866,23 @@ bool ConstraintSystem::consistent_unify(TypeId t1, TypeId t2) {
 
     // Any consistent with everything (sound gradual core)
     if (t1 == reg_.dynamic_type() || t2 == reg_.dynamic_type()) {
+        // Issue #3622: Production face — Dynamic ~ T is not a silent
+        // success. Under the production hard face (Strict forced by #3430
+        // + production_defaults_active), the gradual accept arm fails
+        // closed: agent self-modify without annotations, Quote and
+        // uncovered inputs can no longer unify as success / insert
+        // CastOp. Soft / Balanced keep the gradual core (#2992 contract);
+        // Dynamic ~ Linear already failed closed above (#117).
+        if (unify_gradual_mode_ == GradualPermissiveness::Strict &&
+            aura::compiler::typed_audit::production_defaults_active()) {
+            // Issue #2064 blame note: the reject stays observable when the
+            // accept would have carried provenance.
+            if (metrics_ && active_mutation_id_ != 0) {
+                auto* m = static_cast<struct CompilerMetrics*>(metrics_);
+                m->dynamic_degrade_with_blame_total.fetch_add(1, std::memory_order_relaxed);
+            }
+            return false; // Production: Dynamic is not a silent success (#3622)
+        }
         // If one side is Any and the other is a type variable, bind the
         // variable to Any.  This prevents the free var from escaping into
         // let-polymorphism generalization where it would be ∀-quantified,
@@ -1921,14 +1938,15 @@ bool ConstraintSystem::consistent_unify(TypeId t1, TypeId t2) {
             aura::compiler::typed_audit::production_defaults_active()) {
             const auto a = reg_.tag_of(t1);
             const auto b = reg_.tag_of(t2);
-            auto is_prim = [](TypeTag t) {
-                return t == TypeTag::INT || t == TypeTag::BOOL || t == TypeTag::STRING ||
-                       t == TypeTag::FLOAT || t == TypeTag::VOID;
-            };
             const bool is_intentional_numeric_coercion =
                 (a == TypeTag::INT && b == TypeTag::FLOAT) ||
                 (a == TypeTag::FLOAT && b == TypeTag::INT);
-            if (is_prim(a) && is_prim(b) && a != b && !is_intentional_numeric_coercion) {
+            // Issue #3622: Production + Strict hard-rejects ANY two
+            // concrete non-var grounds with unequal tags — not only
+            // primitive pairs (List~Int, distinct ADT names, PAIR~VECTOR,
+            // etc.). Int↔Float stays the single intentional numeric
+            // coercion; same-tag structural consistency is unchanged.
+            if (a != b && !is_intentional_numeric_coercion) {
                 if (metrics_) {
                     auto* m = static_cast<struct CompilerMetrics*>(metrics_);
                     m->gradual_ground_incompatible_error_total.fetch_add(1,

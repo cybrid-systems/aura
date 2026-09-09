@@ -12083,6 +12083,37 @@ def cmd_steal_identity_proof_3621_coverage():
     return 0
 
 
+def cmd_type_dynamic_production_3622_coverage():
+    """Issue #3622: Production consistent_unify fails closed on Dynamic~T
+    and non-primitive ground pairs (I1 residual of #3202/#3430):
+
+    - Dynamic arm: under Strict + production_defaults_active the gradual
+      accept arm bumps dynamic_degrade_with_blame_total (#2064 blame) and
+      returns false — Dynamic is not a silent success. Soft / Balanced
+      keep the gradual core (#2992); Dynamic ~ Linear stays false (#117).
+    - Ground table: ANY two concrete non-var grounds with unequal tags
+      reject (not only primitive pairs) — List~Int, distinct ADT names —
+      except the intentional Int↔Float coercion.
+
+    No new counter, no new query key, no second unify model, no
+    ConstraintSystem rewrite. ACs in the existing Strict ground suite
+    (tests/compiler/test_ir.cpp ac3622_*, ac3202_3 flipped in test_ir +
+    test_bidirectional_annotation). No docs/design/3622-*, no
+    tests/**/test_issue_3622.cpp.
+    """
+    print(f"{B}=== type dynamic production (#3622) ==={N}")
+    script = ROOT / "scripts" / "check_type_dynamic_production_3622.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script), "--strict"], cwd=ROOT)
+    if r.returncode != 0:
+        fail("type dynamic production (#3622) contract rows failed")
+        return 1
+    ok("type dynamic production (#3622) clean")
+    return 0
+
+
 def cmd_query_stable_hard_reject_torn_latch_3386_coverage():
     """Issue #3386: shared probe Evaluator::query_stable_hard_reject_torn()
     must OR restamp_over_budget_torn() under multi-worker latch (I6 residual).
@@ -21838,6 +21869,7 @@ def cmd_gate():
         or cmd_dual_graph_parity_cone_3615_coverage()
         or cmd_chaos_guard_hold_smoke_3620_coverage()
         or cmd_steal_identity_proof_3621_coverage()
+        or cmd_type_dynamic_production_3622_coverage()
     )
     if rc:
         return rc
