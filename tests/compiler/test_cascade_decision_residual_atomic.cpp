@@ -70,7 +70,8 @@ static void ac3257_1_last_look_source() {
     const auto ixx = read_file("src/compiler/service.ixx");
     auto pos = ixx.find("std::size_t relower_dirty_defines_from_workspace()");
     CHECK(pos != std::string::npos, "3257 AC1: relower present");
-    auto block = ixx.substr(pos, 30000); // window covers relower growth through #3491
+    auto block = ixx.substr(pos, 34000); // window covers relower growth through #3491; #3611 peer +
+                                         // reconsult pushed last-look past 30000
     CHECK(block.find("Issue #3257") != std::string::npos, "3257 AC1: relower cites #3257");
     CHECK(block.find("post_attr_armed") != std::string::npos ||
               block.find("attr_seen_size") != std::string::npos,
@@ -185,6 +186,15 @@ static void ac3348_1_last_look_source();
 static void ac3348_2_soft_quiet();
 static void ac3348_3_concurrent_nonstale_soak();
 static void ac3348_4_linter_no_invent();
+
+// Issue #3611: #3168 attribution must reconsult want_partial and pull the
+// peer endpoint of the armed edge into the peel set (peer-can-stay-clean
+// residual post-#3168/#3283).
+static void ac3611_1_peer_enters_peel_set();
+static void ac3611_2_reconsult_after_attribution();
+static void ac3611_3_soft_clean_zero_extra();
+static void ac3611_4_peer_soak_lookup_stays_hot();
+static void ac3611_5_source_and_linter();
 
 int run_test_cascade_decision_residual_atomic_3135() {
     std::println("=== Issue #3135: cascade-decision residual atomic ===");
@@ -368,6 +378,13 @@ int run_test_cascade_decision_residual_atomic_3135() {
     ac3348_3_concurrent_nonstale_soak();
     ac3348_4_linter_no_invent();
 
+    std::println("\n=== Issue #3611: new-edge attribution reconsult + peer peel ===");
+    ac3611_1_peer_enters_peel_set();
+    ac3611_2_reconsult_after_attribution();
+    ac3611_3_soft_clean_zero_extra();
+    ac3611_4_peer_soak_lookup_stays_hot();
+    ac3611_5_source_and_linter();
+
     std::println("\n=== Final: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
@@ -465,7 +482,8 @@ static void ac3168_3_partial_peel_preserved() {
     auto pos_attr = ixx.find("Issue #3168: prefer new-edge-only mark over full fallback");
     CHECK(pos_attr != std::string::npos, "3168 AC3: attribution block present");
     if (pos_attr != std::string::npos) {
-        const auto attr_block = ixx.substr(pos_attr, 4000);
+        const auto attr_block = ixx.substr(
+            pos_attr, 7000); // #3611 peer + reconsult block grew the attribution branch past 4000
         CHECK(attr_block.find("metrics_.cascade_rearm_new_edge_only_total.fetch_add") !=
                   std::string::npos,
               "3168 AC3: attribution bumps cascade_rearm_new_edge_only_total");
@@ -553,7 +571,8 @@ static void ac3283_2_gen_recheck_fail_closed() {
     auto ixx = read_file("src/compiler/service.ixx");
     auto pos = ixx.find("std::size_t relower_dirty_defines_from_workspace()");
     CHECK(pos != std::string::npos, "3283 AC2: relower def");
-    auto rel = ixx.substr(pos, 30000); // window covers relower growth through #3491
+    auto rel = ixx.substr(
+        pos, 34000); // window covers relower growth through #3491; #3611 pushed cone_hit past 30000
     must_inline(rel, "gen0 = deferred_hybrid_gen_.load", "3283 AC2: gen0 snapshot under lock");
     must_inline(rel, "deferred_hybrid_gen_.load(std::memory_order_acquire) != gen0",
                 "3283 AC2: pre-peel gen re-check");
@@ -624,7 +643,8 @@ static void ac3348_1_last_look_source() {
     auto ixx = read_file("src/compiler/service.ixx");
     auto pos = ixx.find("std::size_t relower_dirty_defines_from_workspace()");
     CHECK(pos != std::string::npos, "3348 AC1: relower def");
-    auto rel = ixx.substr(pos, 32000); // relower body ends ~33.3KB; 32KB stays inside fn
+    auto rel =
+        ixx.substr(pos, 37000); // relower body ends ~35.5KB after #3611; 37KB stays inside fn
     CHECK(rel.find("Issue #3348") != std::string::npos, "3348 AC1: relower cites #3348");
     must_inline(rel, "initial_block_mirror_edges", "3348 AC1: block-dep snapshot with gen0");
     must_inline(rel, "dep_graph_block_mirror_edges_total",
@@ -716,5 +736,163 @@ static void ac3348_4_linter_no_invent() {
           "3348 AC4: no docs/design");
     CHECK(read_file("tests/compiler/test_issue_3348.cpp").empty(), "3348 AC4: no invent");
     CHECK(read_file("tests/issues/test_issue_3348.cpp").empty(), "3348 AC4: no tests/issues");
+}
+
+// ── Issue #3611 ACs ──
+// #3168 new-edge attribution used to keep the stale pre-attribution
+// want_partial and only mark THIS define — the peer endpoint of the armed
+// edge (deferred (g, f) while peeling f) never entered the peel set, so
+// lookup_define_v2(g) could serve pre-mutate IR whose Call still names the
+// old f encoding. Fix: peer endpoints enter dirty_names (index-based walk)
+// with mark_caller_body_dirty, and want_partial is reconsulted from the
+// post-mark dirty_n + impact_ub (#3310 prod gate; monotone partial→full).
+static void ac3611_1_peer_enters_peel_set() {
+    std::println("\n--- #3611 AC1: attributed new edge pulls peer into peel set ---");
+    const auto ixx = read_file("src/compiler/service.ixx");
+    CHECK(ixx.find("Issue #3611: index-based walk") != std::string::npos,
+          "3611 AC1: per-name loop index-based (mid-loop growth peeled)");
+    CHECK(ixx.find("const std::string name = dirty_names[dn_i];") != std::string::npos,
+          "3611 AC1: value copy stable across peer pushes");
+    CHECK(ixx.find("Issue #3611: attribution used to keep the stale") != std::string::npos,
+          "3611 AC1: attribution block cites #3611");
+    CHECK(ixx.find("dirty_names.push_back(peer)") != std::string::npos,
+          "3611 AC1: peer endpoints pushed into peel set");
+    CHECK(ixx.find("pit->second.mark_caller_body_dirty()") != std::string::npos,
+          "3611 AC1: peer marked via existing #3474 helper shape");
+    CHECK(ixx.find("finish_cascade_soa_dirty_sync_(pit->second)") != std::string::npos,
+          "3611 AC1: SoA dirty sync on the peer entry");
+    // No docs/design/3611-* (per #1655).
+    const auto docs = std::string("docs/design/");
+    if (std::filesystem::exists(docs)) {
+        for (const auto& f : std::filesystem::directory_iterator(docs)) {
+            auto name = f.path().filename().string();
+            CHECK(name.find("3611-") == std::string::npos,
+                  "3611 AC1: no docs/design/3611-* plan doc (#1655)");
+            (void)name;
+            break;
+        }
+    }
+    // No test_issue_3611.cpp (per #81967).
+    for (const auto& rel : {std::string("tests/issues/test_issue_3611.cpp"),
+                            std::string("tests/compiler/test_issue_3611.cpp")}) {
+        std::error_code ec;
+        CHECK(!std::filesystem::exists(rel, ec),
+              std::format("3611 AC1: forbidden {} per #81967", rel));
+    }
+}
+
+static void ac3611_2_reconsult_after_attribution() {
+    std::println("\n--- #3611 AC2: want_partial reconsulted after peer marks ---");
+    const auto ixx = read_file("src/compiler/service.ixx");
+    auto pos = ixx.find("Issue #3611: attribution used to keep the stale");
+    CHECK(pos != std::string::npos, "3611 AC2: #3611 block present");
+    if (pos != std::string::npos) {
+        const auto win = ixx.substr(pos, 3200);
+        CHECK(win.find("impact_upper_bound_for_entry_") != std::string::npos,
+              "3611 AC2: impact_ub recomputed post-mark");
+        CHECK(win.find("should_partial_relower_impact_checked_prod") != std::string::npos,
+              "3611 AC2: want_partial reconsulted (#3310 prod gate preserved)");
+        CHECK(win.find("partial_forced_full_by_impact_total.fetch_add") != std::string::npos,
+              "3611 AC2: reconsult fail-closed bumps existing distinguisher");
+        CHECK(win.find("mark_all_blocks_dirty") != std::string::npos,
+              "3611 AC2: reconsult fail-closed takes full");
+    }
+    CHECK(ixx.find("metrics_.cascade_rearm_new_edge_only_total.fetch_add") != std::string::npos,
+          "3611 AC2: attribution distinguisher retained (no new counter)");
+}
+
+static void ac3611_3_soft_clean_zero_extra() {
+    std::println("\n--- #3611 AC3: Soft / Off + clean (armed==0) → zero extra ---");
+    const auto ixx = read_file("src/compiler/service.ixx");
+    // The #3611 peer + reconsult block must sit inside the
+    // rearm_observed_mid_loop && want_partial gate (armed != 0 required) —
+    // Soft / Off + clean single-fiber never reaches it.
+    const auto pos_gate = ixx.find("if (rearm_observed_mid_loop && want_partial) {");
+    const auto pos_3611 = ixx.find("Issue #3611: attribution used to keep the stale");
+    CHECK(pos_gate != std::string::npos, "3611 AC3: re-arm gate present");
+    CHECK(pos_3611 != std::string::npos && pos_gate != std::string::npos && pos_3611 > pos_gate,
+          "3611 AC3: #3611 block gated behind armed!=0 re-arm window");
+    // No new decision mutex: #3135's cascade_decision_mtx_ stays the only one.
+    CHECK(ixx.find("std::mutex cascade_decision_mtx_") != std::string::npos,
+          "3611 AC3: #3135 decision mutex unchanged");
+    // No new query key / metrics field (existing counters are the only
+    // observables — AC4 of the issue).
+    const auto q = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
+    CHECK(q.find("schema-3611") == std::string::npos, "3611 AC3: no schema-3611");
+    const auto obs = read_file("src/compiler/observability_metrics.h");
+    CHECK(obs.find("cascade_rearm_new_edge_only_total") != std::string::npos,
+          "3611 AC3: existing attribution counter retained");
+    CHECK(obs.find("3611") == std::string::npos, "3611 AC3: no new metrics field");
+}
+
+static void ac3611_4_peer_soak_lookup_stays_hot() {
+    std::println("\n--- #3611 AC4: peer (g, f) armed mid-peel of f — g never stale ---");
+    CompilerService cs;
+    CHECK(cs.eval(R"(
+(set-code "
+(define F (lambda () 1))
+(define G (lambda () (F)))
+")")
+              .has_value(),
+          "3611 AC4: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3611 AC4: eval");
+    cs.public_record_dependency("G", "F");
+    auto& m = cs.metrics();
+    const auto forced0 = m.partial_forced_full_by_impact_total.load(std::memory_order_relaxed);
+    const auto attr0 = m.cascade_rearm_new_edge_only_total.load(std::memory_order_relaxed);
+    std::atomic<int> stop{0};
+    // Bumper arms the deferred queue with the peer edge (G, F) so the
+    // #3168 attribution window [initial_deferred_edges_size, now) can hit
+    // mid-sweep of F. G is the peer that used to stay clean (#3611).
+    std::thread bumper([&] {
+        for (int i = 0; i < 120 && !stop.load(std::memory_order_relaxed); ++i) {
+            cs.public_note_stale_dep_reject("G", "F");
+            cs.public_record_dependency("G", "F");
+        }
+    });
+    for (int i = 0; i < 16; ++i) {
+        cs.public_mark_define_dirty("F"); // only F — G must be pulled in by attribution
+        (void)cs.public_relower_dirty_defines_from_workspace();
+    }
+    stop.store(1, std::memory_order_relaxed);
+    bumper.join();
+    (void)cs.public_relower_dirty_defines_from_workspace();
+    CHECK(cs.public_graphs_consistent(), "3611 AC4: graphs consistent after soak");
+    // Miss-compile distinguisher: mutate F's body, quiesce, and the peer
+    // caller G must observe the NEW F encoding (never a stale partial peel).
+    CHECK(cs.eval(R"(
+(set-code "
+(define F (lambda () 2))
+(define G (lambda () (F)))
+")")
+              .has_value(),
+          "3611 AC4: re-set-code F=2");
+    CHECK(cs.eval("(eval-current)").has_value(), "3611 AC4: eval after mutate");
+    (void)cs.public_relower_dirty_defines_from_workspace();
+    auto r = cs.eval("(G)");
+    CHECK(r.has_value(), "3611 AC4: (G) evals after mutate");
+    CHECK(r.has_value() && aura::compiler::types::as_int(*r) == 2,
+          "3611 AC4: (G) sees post-mutate F (no stale peer IR)");
+    CHECK(m.partial_forced_full_by_impact_total.load(std::memory_order_relaxed) >= forced0,
+          "3611 AC4: forced-full distinguisher non-decreasing");
+    CHECK(m.cascade_rearm_new_edge_only_total.load(std::memory_order_relaxed) >= attr0,
+          "3611 AC4: new-edge-only distinguisher non-decreasing");
+}
+
+static void ac3611_5_source_and_linter() {
+    std::println("\n--- #3611 AC5: linter + build.py wiring + no invent ---");
+    const auto t = read_file("tests/compiler/test_cascade_decision_residual_atomic.cpp");
+    const auto build = read_file("build.py");
+    CHECK(t.find("ac3611_1_peer_enters_peel_set") != std::string::npos, "3611 AC5: AC1");
+    CHECK(t.find("ac3611_4_peer_soak_lookup_stays_hot") != std::string::npos, "3611 AC5: soak");
+    CHECK(build.find("check_cascade_rearm_reconsult_3611") != std::string::npos,
+          "3611 AC5: build.py wires linter");
+    const int rc = std::system(
+        "python3 scripts/check_cascade_rearm_reconsult_3611.py --self-test > /dev/null 2>&1");
+    CHECK(rc == 0, "3611 AC5: linter --self-test passes");
+    CHECK(read_file("tests/issues/test_issue_3611.cpp").empty(),
+          "3611 AC5: no tests/issues/test_issue_3611.cpp");
+    CHECK(read_file("docs/design/3611-attribution-reconsult.md").empty(),
+          "3611 AC5: no docs/design");
 }
 #endif

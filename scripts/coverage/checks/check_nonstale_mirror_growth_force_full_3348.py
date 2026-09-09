@@ -54,8 +54,10 @@ def main() -> int:
 
     rel_pos = svc.find("std::size_t relower_dirty_defines_from_workspace()")
     # Window expanded after #3484 zero-mask fail-closed grew the peel
-    # body (last-look node/block compares sat past 28000).
-    rel = svc[rel_pos : rel_pos + 32000] if rel_pos >= 0 else ""
+    # body (last-look node/block compares sat past 28000). #3611
+    # attribution reconsult + peer peel-set block pushed them past
+    # 32000.
+    rel = svc[rel_pos : rel_pos + 36000] if rel_pos >= 0 else ""
 
     must("Issue #3348", "AC1 cite", rel)
     must("initial_block_mirror_edges", "AC1 block snapshot", rel)

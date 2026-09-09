@@ -7499,7 +7499,13 @@ public:
         const auto initial_block_mirror_edges =
             metrics_.dep_graph_block_mirror_edges_total.load(std::memory_order_relaxed);
         bool rearm_observed_mid_loop = false;
-        for (const auto& name : dirty_names) {
+        // Issue #3611: index-based walk — the #3168 attribution block below
+        // can push newly-armed edge endpoints into dirty_names mid-loop, and
+        // a range-for would never see them (end captured once) while a
+        // reference binding would dangle across the reallocation. Value
+        // copy keeps `name` stable across peer pushes.
+        for (std::size_t dn_i = 0; dn_i < dirty_names.size(); ++dn_i) {
+            const std::string name = dirty_names[dn_i];
             auto it = ir_cache_v2_.find(name);
             if (it == ir_cache_v2_.end())
                 continue;
@@ -7743,7 +7749,51 @@ public:
                 if (attributed_new_edge) {
                     metrics_.cascade_rearm_new_edge_only_total.fetch_add(1,
                                                                          std::memory_order_relaxed);
-                    // Partial peel preserved — want_partial stays true.
+                    // Issue #3611: attribution used to keep the stale
+                    // pre-attribution want_partial and only mark THIS
+                    // define — the peer endpoint of the armed edge (e.g.
+                    // deferred (g, f) while peeling f) never entered the
+                    // peel set (production facade early-return already
+                    // skipped the Soft BFS erase), so lookup_define_v2(g)
+                    // could serve pre-mutate IR whose Call still names the
+                    // old f encoding. Close the residual:
+                    //   (a) both endpoints of every newly-armed edge enter
+                    //       the peel set (dirty_names push if missing) with
+                    //       mark_caller_body_dirty (#3474 union shape; the
+                    //       per-name loop above is index-based so mid-loop
+                    //       growth is peeled in the same sweep);
+                    //   (b) want_partial is reconsulted from the post-mark
+                    //       dirty_n + impact_ub (#3310 production
+                    //       fail-closed preserved — the consult is
+                    //       monotone, partial → full only).
+                    for (const auto& [edge_caller, edge_callee] : new_edges_snapshot) {
+                        for (const auto& peer : {edge_caller, edge_callee}) {
+                            if (peer == name)
+                                continue; // current define: already marked above
+                            if (std::find(dirty_names.begin(), dirty_names.end(), peer) !=
+                                dirty_names.end())
+                                continue; // already in the peel set
+                            const auto pit = ir_cache_v2_.find(peer);
+                            if (pit != ir_cache_v2_.end()) {
+                                (void)pit->second.mark_caller_body_dirty();
+                                finish_cascade_soa_dirty_sync_(pit->second);
+                            }
+                            dirty_names.push_back(peer);
+                        }
+                    }
+                    const std::size_t impact_ub = impact_upper_bound_for_entry_(name, it->second);
+                    const bool production_consult =
+                        aura::compiler::typed_audit::production_defaults_active() ||
+                        aura::compiler::typed_audit::get_strategy() ==
+                            aura::compiler::typed_audit::AuditStrategy::Full;
+                    if (!should_partial_relower_impact_checked_prod(
+                            it->second.dirty_block_count(), impact_ub, production_consult)) {
+                        want_partial = false;
+                        it->second.mark_all_blocks_dirty();
+                        it->second.dirty = true;
+                        metrics_.partial_forced_full_by_impact_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                    }
                 } else {
                     // Defensive last-resort: new-edge set empty or
                     // cannot be attributed. Preserve #3097 semantics.
