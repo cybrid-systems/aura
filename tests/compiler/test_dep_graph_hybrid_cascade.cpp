@@ -1224,8 +1224,9 @@ static void ac3615_4_no_new_metrics_or_query_key() {
 
 static void ac3615_5_linter_self_test() {
     std::println("\n--- #3615 AC5: linter --self-test passes ---");
-    // Run from build/ so use ../scripts/ to reach the repo root.
-    const std::string cmd = "python3 ../scripts/check_dual_graph_parity_cone_3615.py --self-test";
+    // Test binaries run with cwd = repo root (CI gate + local); match the
+    // repo-root-relative linter invocations used by the rest of the suite.
+    const std::string cmd = "python3 scripts/check_dual_graph_parity_cone_3615.py --self-test";
     const int rc = std::system(cmd.c_str());
     CHECK(rc == 0, "3615 AC5: linter --self-test exits 0");
 }
