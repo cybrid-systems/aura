@@ -11794,6 +11794,30 @@ def cmd_expand_checkpoint_local_rollback_3608_coverage():
     return 0
 
 
+def cmd_reexpand_tenant_principal_3609_coverage():
+    """Issue #3609: post_mutation_macro_reexpand keyed check_macro_self_evo
+    on the process default_tenant (#3132/#3378 residual).
+
+    The choke now consumes the exported #3378 helper
+    (tenant_for_macro_self_evo_check — live Evaluator principal,
+    default_tenant only when no Evaluator) and stamps the #3304
+    capability-deny sentinel on deny. Counters + #3028 reason surface +
+    #3594 join mid unchanged. wildcard_ok stays false. No docs/design/
+    3609-*, no tests/**/test_issue_3609.cpp.
+    """
+    print(f"{B}=== reexpand tenant principal (#3609) ==={N}")
+    script = ROOT / "scripts" / "check_reexpand_tenant_principal_3609.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script), "--strict"], cwd=ROOT)
+    if r.returncode != 0:
+        fail("reexpand tenant principal (#3609) contract rows failed")
+        return 1
+    ok("reexpand tenant principal (#3609) clean")
+    return 0
+
+
 def cmd_query_stable_hard_reject_torn_latch_3386_coverage():
     """Issue #3386: shared probe Evaluator::query_stable_hard_reject_torn()
     must OR restamp_over_budget_torn() under multi-worker latch (I6 residual).
@@ -21540,6 +21564,7 @@ def cmd_gate():
         or cmd_nested_qq_depth_3606_coverage()
         or cmd_remount_reason_domain_3607_coverage()
         or cmd_expand_checkpoint_local_rollback_3608_coverage()
+        or cmd_reexpand_tenant_principal_3609_coverage()
     )
     if rc:
         return rc
@@ -22507,6 +22532,7 @@ def main():
         "reemit-success-sync-covered-2978": cmd_reemit_success_sync_covered_remount_2978_coverage,
         "remount-reason-domain-3607": cmd_remount_reason_domain_3607_coverage,
         "expand-checkpoint-local-rollback-3608": cmd_expand_checkpoint_local_rollback_3608_coverage,
+        "reexpand-tenant-principal-3609": cmd_reexpand_tenant_principal_3609_coverage,
         "epoch-residual-merged-heal-2980": cmd_epoch_residual_merged_heal_2980_coverage,
         "steal-invariant-table-2929": cmd_steal_invariant_table_2929_coverage,
         "steal-enqueue-sole-gate-3072": cmd_steal_enqueue_sole_gate_3072,

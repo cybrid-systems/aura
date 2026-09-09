@@ -188,6 +188,19 @@ int run_test_macro_self_evo_check_evaluator_principal() {
               "AC5: no tests/issues/test_issue_3378.cpp (R1 abandoned scheme)");
     }
 
+    // ── Issue #3609: reexpand choke consumes the same helper (#3378 parity) ──
+    {
+        std::println("\n--- #3609: post_mutation_macro_reexpand uses the live principal ---");
+        const auto efl = read_file("src/compiler/evaluator_eval_flat.cpp");
+        CHECK(contains(efl, "macro_exp::tenant_for_macro_self_evo_check()"),
+              "3609: reexpand choke resolves the live Evaluator principal");
+        CHECK(!contains(efl, "g_capability_registry().default_tenant.load()"),
+              "3609: reexpand choke no longer reads process default_tenant");
+        const auto mixx = read_file("src/compiler/macro_expansion.ixx");
+        CHECK(contains(mixx, "export std::uint16_t tenant_for_macro_self_evo_check()"),
+              "3609: helper exported for the reexpand choke");
+    }
+
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

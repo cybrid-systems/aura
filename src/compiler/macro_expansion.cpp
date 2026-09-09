@@ -76,7 +76,10 @@ namespace aura::compiler::macro_exp {
 // default_tenant when no Evaluator (tests / CLI). No new query keys.
 // Deny reason strings stay `MacroSelfEvo capability not granted` /
 // `MacroSelfEvo provenance fence` / `MacroSelfEvo policy missing`.
-[[nodiscard]] static std::uint16_t tenant_for_macro_self_evo_check() noexcept {
+// Issue #3609: no longer TU-local — Evaluator::post_mutation_macro_reexpand
+// consumes the same principal (the last default_tenant choke; #3132
+// residual), so the definition is exported via macro_expansion.ixx.
+[[nodiscard]] std::uint16_t tenant_for_macro_self_evo_check() noexcept {
     if (void* ev = aura_evaluator_resolve_current_for_macro()) {
         // Tenant 0 is a real principal (default tenant grants live there).
         // Only fall back to process default_tenant when no Evaluator is wired.
