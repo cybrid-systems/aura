@@ -2936,19 +2936,14 @@ extern "C" void aura_test_reset_residual_remount_state() noexcept {
     // Do not zero ok/skip totals — monotonic for Agents; tests delta against snapshot.
 }
 
-// Issue #2977: sid → force-JIT / last-success coverage bit.
-// Anonymous (sid==0) never intersects. Named: bit (sid % 64) so
-// Version|Defuse=0, Env=1, Linear=2, Region|Staging=3, Dlopen|Other=4
-// match #2927 aot_reload_fail_to_force_jit_mask when sid % 64 lands there.
-static std::uint64_t residual_closure_sid_region_bits_unlocked(std::size_t cid) noexcept {
-    if (cid >= g_closure_stable_func_ids.size())
-        return 0;
-    const auto sid = g_closure_stable_func_ids[cid];
-    if (sid == 0)
-        return 0;
-    return static_cast<std::uint64_t>(1) << (static_cast<unsigned>(sid) % 64u);
-}
-
+// Issue #3607: the sid%64 "region bit" helper is gone. force_jit_regions_mask
+// and last_reemit_success_region_mask are #3445 reason-group words (bits 0-4
+// via aot_reload_fail_to_force_jit_mask); ANDing them against 1<<(sid%64)
+// healed an accidental sid-modulo set instead of the defines that actually
+// re-emitted (sid%64 was neither necessary nor sufficient). Per-closure
+// coverage is the #3229 define side set (relower_success_covers_define);
+// when that side set is idle there is no precise record, so the covered and
+// prefer walks fall back to the full named FIFO (budget/cap still bounded).
 extern "C" void aura_residual_live_closure_remount_tick(std::uint64_t budget) {
     // AC4: budget=0 → zero walk (caller may still have done one relaxed load).
     if (budget == 0) {
@@ -3014,10 +3009,18 @@ extern "C" void aura_residual_live_closure_remount_tick(std::uint64_t budget) {
 
             // Issue #2977: production + non-idle coverage → prefer queue.
             // Soft / idle → prefer_mask=0, identical to #2928 (no extra walk).
+            // Issue #3607: force | last_success is the cheap "something
+            // happened" gate, but those words are #3445 reason-group bits —
+            // NOT sid bitmaps. The prefer set is the #3229 define side set
+            // (defines that actually re-emitted). Side set idle → no prefer
+            // pass; FIFO like pre-#2977 (budget still caps).
             std::uint64_t prefer_mask = 0;
+            bool prefer_define = false;
             if (aura::compiler::typed_audit::production_defaults_active()) {
                 prefer_mask = aura_hot_update_force_jit_regions_mask() |
                               aura_hot_update_last_reemit_success_region_mask();
+                if (prefer_mask != 0 && aura_hot_update_relower_success_define_active() != 0)
+                    prefer_define = true;
             }
 
             auto heal_slot = [&](std::size_t cid) -> bool {
@@ -3036,7 +3039,7 @@ extern "C" void aura_residual_live_closure_remount_tick(std::uint64_t budget) {
             std::size_t steps = 0;
             std::size_t idx = static_cast<std::size_t>(start);
 
-            if (prefer_mask != 0) {
+            if (prefer_define) {
                 prefer_entered = true;
                 std::size_t pidx = static_cast<std::size_t>(start);
                 std::size_t psteps = 0;
@@ -3046,15 +3049,14 @@ extern "C" void aura_residual_live_closure_remount_tick(std::uint64_t budget) {
                     ++psteps;
                     if (cid < g_closure_freed.size() && g_closure_freed[cid] != 0)
                         continue;
-                    if ((residual_closure_sid_region_bits_unlocked(cid) & prefer_mask) == 0)
+                    // Issue #3229 / #3607: prefer exactly the defines that
+                    // re-emitted. Anon (sid==0) and unrecorded ids stay on
+                    // the FIFO pass (fail-close: unrecorded id stays residual).
+                    if (cid >= g_closure_stable_func_ids.size())
                         continue;
-                    // Issue #3229: hashed-name coverage is not define-complete.
-                    if (cid < g_closure_stable_func_ids.size()) {
-                        const auto sid = g_closure_stable_func_ids[cid];
-                        if (sid != 0 && aura_hot_update_relower_success_define_active() != 0 &&
-                            aura_hot_update_relower_success_covers_define(sid) == 0)
-                            continue;
-                    }
+                    const auto sid = g_closure_stable_func_ids[cid];
+                    if (sid == 0 || aura_hot_update_relower_success_covers_define(sid) == 0)
+                        continue;
                     if (heal_slot(cid))
                         ++prefer_hit;
                     ++used;
@@ -3068,9 +3070,14 @@ extern "C" void aura_residual_live_closure_remount_tick(std::uint64_t budget) {
                 if (cid < g_closure_freed.size() && g_closure_freed[cid] != 0)
                     continue;
                 // Already considered on the prefer pass — no double remount.
-                if (prefer_mask != 0 &&
-                    (residual_closure_sid_region_bits_unlocked(cid) & prefer_mask) != 0)
-                    continue;
+                // Issue #3607: the prefer set is the #3229 define side set,
+                // not a sid-modulo intersection; unrecorded named slots fall
+                // through to this FIFO pass as usual.
+                if (prefer_define && cid < g_closure_stable_func_ids.size()) {
+                    const auto sid = g_closure_stable_func_ids[cid];
+                    if (sid != 0 && aura_hot_update_relower_success_covers_define(sid) != 0)
+                        continue;
+                }
                 (void)heal_slot(cid);
                 ++used;
             }
@@ -3109,8 +3116,12 @@ extern "C" void aura_residual_live_closure_remount_tick(std::uint64_t budget) {
 }
 
 // ── Issue #2978: reemit-success sync covered-named remount ──
-// After last_reemit_success_region_mask is stamped, remount named
-// (sid != 0) closures whose sid bit intersects the coverage mask.
+// After a clean reemit success, remount named (sid != 0) closures the
+// success covered. Issue #3607: last_reemit_success is a #3445
+// reason-group word — it gates the walk (mask != 0), it is NOT a sid
+// bitmap. Per-closure coverage is the #3229 define side set; idle side
+// set falls back to the full named FIFO walk (cap-bounded, same heal
+// the #2602 named walk performs on every trusted reemit).
 // Budget-exempt vs residual (#2928); cap N so a huge named table
 // cannot stall the pipeline. Overflow stays MustDeopt and residual
 // still rotates them (AC4). Anonymous / pure-anon stay on residual
@@ -3198,12 +3209,14 @@ extern "C" void aura_sync_remount_covered_named_live_closures(std::uint64_t mask
             const std::uint32_t sid = g_closure_stable_func_ids[cid];
             if (sid == 0)
                 continue; // AC3: anon / pure-anon stay residual / #2950
-            // Issue #3229: hashed-name 6-bit coverage is not define-complete.
-            // Skip remount of a named peer that did not itself succeed.
+            // Issue #3229 / #3607: mask only gates "a clean success
+            // happened"; it is NOT a sid bitmap. Define side set active →
+            // only defines that re-emitted count as covered (fail-close:
+            // unrecorded id stays residual). Side set idle → no precise
+            // record; every named closure is a FIFO candidate (full named
+            // walk, cap-bounded).
             if (aura_hot_update_relower_success_define_active() != 0 &&
                 aura_hot_update_relower_success_covers_define(sid) == 0)
-                continue;
-            if ((residual_closure_sid_region_bits_unlocked(cid) & mask) == 0)
                 continue;
             if (used >= cap) {
                 ++leftover; // AC4: overflow → residual still rotates

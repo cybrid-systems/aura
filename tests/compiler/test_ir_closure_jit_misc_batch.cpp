@@ -72,6 +72,11 @@ int main() {
         const char* name;
         int (*fn)();
     } members[] = {
+        // Issue #3607: the Aug 23 fork-isolate rewrite dropped this member
+        // from the table (extern decl + #if 0 body kept) — the residual /
+        // stable-id suite (#2977/#2978/#2980/#3607 remount domains) ran in
+        // no binary since. Restore it so its ACs execute in CI.
+        {"test_anonymous_residual_stable_id_policy", run_test_anonymous_residual_stable_id_policy},
         {"test_aura_jit_unused_fn_lock", run_test_aura_jit_unused_fn_lock},
         {"test_closure_call_must_deopt_toctou", run_test_closure_call_must_deopt_toctou},
         {"test_comprehensive_live_closure_expire", run_test_comprehensive_live_closure_expire},

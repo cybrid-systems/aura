@@ -2,12 +2,14 @@
 """Issue #2977: residual remount prefer force_jit + last_success coverage.
 
 Binds #2928 residual walk to #2895/#2949 coverage masks. Production
-prefers closures whose stable_func_id bit (sid % 64) intersects
-force_jit_regions_mask | last_reemit_success_region_mask inside budget B.
-Soft / mask idle / budget=0 stay #2928 (no prefer path).
+prefers the #3229 covered defines first inside budget B (Issue #3607:
+the reason word gates the pass, it is not a sid bitmap — the old
+sid % 64 intersection healed the wrong set). Soft / mask idle /
+budget=0 stay #2928 (no prefer path).
 
 Contract (one row per AC):
-  AC1 production + multi-bit force_jit prefers demoted sid first
+  AC1 production + non-idle reason word prefers #3229 covered defines
+      first (#3607 domain fix)
   AC2 Soft / mask idle / budget=0 → no prefer path
   AC3 named/captured/pure remount unchanged; no double remount
   AC4 global cursor still advances (no starvation)
@@ -55,7 +57,11 @@ def main() -> int:
 
     # AC1
     must("Issue #2977", "AC1", rt)
-    must("residual_closure_sid_region_bits_unlocked", "AC1", rt)
+    # Issue #3607: the sid%64 helper is gone; the prefer filter is the
+    # #3229 define side set (reason masks are not sid bitmaps).
+    must("relower_success_covers_define", "AC1", rt)
+    if "residual_closure_sid_region_bits_unlocked" in rt:
+        fails.append("AC1: sid%64 helper residual_closure_sid_region_bits_unlocked still present (#3607 removed it)")
     must("prefer_mask", "AC1", rt)
     must("aura_hot_update_force_jit_regions_mask", "AC1", rt)
     must("aura_hot_update_last_reemit_success_region_mask", "AC1", rt)
@@ -104,7 +110,11 @@ def main() -> int:
     must("Issue #2977", "AC6 header", hh)
     must("aura_bump_residual_remount_prefer_totals", "AC6", br)
     must("aura_residual_remount_prefer_force_jit_total_v_read", "AC6 shared", shared)
-    must("aura_hot_update_force_jit_regions_mask", "AC6 stub", stub)
+    # Issue #3607: the stub TU no longer defines the registry read stubs —
+    # they shadowed the real hot_update_registry C ABIs in every light-linked
+    # binary (weak-in-earlier-.so wins the global symbol scope).
+    if "aura_hot_update_force_jit_regions_mask" in stub:
+        fails.append("AC6: registry read stub shadowing is back in aura_jit_bridge_stub.cpp (#3607 removed it)")
     if (ROOT / "tests" / "compiler" / "test_issue_2977.cpp").is_file():
         fails.append("AC6: test_issue_2977.cpp present (forbidden per #81967)")
     docs = ROOT / "docs" / "design"

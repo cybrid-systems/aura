@@ -655,29 +655,13 @@ extern "C" __attribute__((weak)) std::uint64_t aura_residual_remount_prefer_hit_
 }
 extern "C" __attribute__((weak)) void
 aura_bump_residual_remount_prefer_totals(std::uint64_t /*enter*/, std::uint64_t /*hit*/) {}
-extern "C" __attribute__((weak)) std::uint64_t aura_hot_update_force_jit_regions_mask(void) {
-    return 0;
-}
-extern "C" __attribute__((weak)) std::uint64_t
-aura_hot_update_last_reemit_success_region_mask(void) {
-    return 0;
-}
-extern "C" __attribute__((weak)) std::uint64_t aura_hot_update_residual_force_mask(void) {
-    return 0;
-}
-extern "C" __attribute__((weak)) int aura_hot_update_relower_success_define_active(void) {
-    return 0;
-}
-extern "C" __attribute__((weak)) int
-aura_hot_update_relower_success_covers_define(std::uint32_t /*id*/) {
-    return 0;
-}
-extern "C" __attribute__((weak)) std::uint64_t
-aura_hot_update_residual_force_stale_observe_total(void) {
-    return 0;
-}
-extern "C" __attribute__((weak)) void aura_hot_update_observe_residual_force_stale(void) {}
-extern "C" __attribute__((weak)) void aura_hot_update_reset_residual_force_observe_for_test(void) {}
+// Issue #3607: the registry read surface below was stubbed to 0 here, but
+// hot_update_registry.cpp (aura_test_objects) defines the real C ABIs. With
+// both .so files loaded the weak stubs shadowed the real reads for every
+// caller (ELF binds the first definition in scope), so force/last_success
+// masks always read idle and the #3229 define side set always looked inactive
+// — the residual suite silently tested the FIFO fallback only. The stubs are
+// removed: the light .so resolves these at load time from test_objects.
 extern "C" __attribute__((weak)) std::uint64_t
 aura_macro_clone_same_flat_reject_total_v_read(void) noexcept {
     return 0;

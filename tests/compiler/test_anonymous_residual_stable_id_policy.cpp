@@ -1948,10 +1948,13 @@ static void ac2977_1_prefer_demoted_region() {
     aura_closure_set_must_deopt(dummy, 1);
     const auto named = aura_alloc_closure(/*func_id=*/0);
     CHECK(named >= 0, "AC1: named alloc");
-    // sid=1 → bit 1 = Env (#2927). Bypass light-link map stub.
+    // Issue #3607: the prefer set is the #3229 define side set — the old
+    // sid=1 → Env-bit-1 coincidence is irrelevant now. Stamp the re-emitted
+    // define so the prefer pass has a domain-correct covered set.
     aura_test_set_closure_stable_func_id(named, 1);
     aura_closure_set_must_deopt(named, 1);
-    CHECK(aura_get_closure_stable_func_id(named) == 1, "AC1: inject sid=1 (Env bit)");
+    CHECK(aura_get_closure_stable_func_id(named) == 1, "AC1: inject sid=1");
+    reg.note_relower_success_define(1);
     reg.on_force_jit_for_reason(AotReloadFail::Env);
     reg.on_force_jit_for_reason(AotReloadFail::Linear);
     const auto mask = aura_hot_update_force_jit_regions_mask();
@@ -2071,8 +2074,12 @@ static void ac2977_6_source_and_linter() {
     const auto lint =
         read_file("scripts/coverage/checks/check_residual_remount_prefer_force_jit_2977.py");
     CHECK(rt.find("Issue #2977") != std::string::npos, "AC6: runtime cites #2977");
-    CHECK(rt.find("residual_closure_sid_region_bits_unlocked") != std::string::npos,
-          "AC6: sid bit helper");
+    // Issue #3607: the sid%64 helper is deleted; the prefer filter is the
+    // #3229 define side set (reason masks are not sid bitmaps).
+    CHECK(rt.find("residual_closure_sid_region_bits_unlocked") == std::string::npos,
+          "AC6: sid%64 helper removed (#3607)");
+    CHECK(rt.find("relower_success_covers_define") != std::string::npos,
+          "AC6: prefer filters by #3229 define set (#3607)");
     CHECK(rt.find("prefer_mask") != std::string::npos, "AC6: prefer_mask");
     CHECK(br.find("aura_bump_residual_remount_prefer_totals") != std::string::npos,
           "AC6: bridge bump");
@@ -2416,6 +2423,224 @@ static void ac2980_6_source_and_linter() {
           "AC6: no docs/design/2980-* per #1655");
     CHECK(read_file("tests/compiler/test_issue_2980.cpp").empty(),
           "AC6: no invent test per #81967");
+}
+
+// ── Issue #3607: covered / prefer remount consumed the #3445 reason word
+// as a sid bitmap — only_covered healed the sid-modulo set, not the defines ──
+
+static void ac3607_restore(std::uint32_t save) {
+    aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active.store(
+        save, std::memory_order_relaxed);
+    auto& reg = aura::compiler::hot_update_registry();
+    reg.on_reload_success();
+    reg.note_reemit_success_coverage(0); // also clears the #3229 define side set
+    aura_test_reset_residual_remount_state();
+    aura_test_reset_reemit_success_sync_covered_state();
+}
+
+// AC1: production + force bit set + covered define D whose sid%64 is NOT in
+// the reason mask → the covered remount still visits D. sid%64 is neither
+// necessary (D healed with 70%64=6 ∉ mask) nor sufficient (S with 65%64=1 ∈
+// mask but unrecorded stays residual — the #3229 fail-close, AC4).
+static void ac3607_1_covered_define_domain() {
+    std::println("\n--- #3607 AC1: covered remount follows the define side set, not sid%64 ---");
+    auto& ctr = aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+    const auto save = ctr.production_defaults_active.load(std::memory_order_relaxed);
+    ctr.production_defaults_active.store(1, std::memory_order_relaxed);
+    auto& reg = aura::compiler::hot_update_registry();
+    reg.on_reload_success();
+    reg.note_reemit_success_coverage(0);
+    aura_test_reset_reemit_success_sync_covered_state();
+    aura_test_set_reemit_success_sync_covered_cap(64);
+    const auto d = aura_alloc_closure(/*func_id=*/0);
+    const auto s = aura_alloc_closure(/*func_id=*/0);
+    CHECK(d >= 0 && s >= 0, "AC1: alloc D/S");
+    aura_test_set_closure_stable_func_id(d, 70); // 70%64=6 — outside the mask
+    aura_test_set_closure_stable_func_id(s, 65); // 65%64=1 — inside, unrecorded
+    aura_closure_set_must_deopt(d, 1);
+    aura_closure_set_must_deopt(s, 1);
+    reg.note_relower_success_define(70); // only D re-emitted (#3229 side set)
+    const auto env = aot_reload_fail_to_force_jit_mask(AotReloadFail::Env);
+    const auto ok0 = aura_reemit_success_sync_covered_ok_total_v_read();
+    aura_sync_remount_covered_named_live_closures(env, /*cap=*/64);
+    CHECK(aura_reemit_success_sync_covered_ok_total_v_read() > ok0,
+          "AC1: covered walk ran (D visited)");
+    CHECK(aura_closure_get_must_deopt(d) == 0,
+          "AC1: D healed although sid%64 not in reason mask (not necessary)");
+    CHECK(aura_closure_get_must_deopt(s) == 1,
+          "AC1: S unrecorded stays residual despite sid%64 in mask (not sufficient)");
+    ac3607_restore(save);
+}
+
+// AC2: the only_covered re-promote domain is untouched — last_success stays
+// the reason-group word, and the covered walk never restamps it with the
+// full demoted mask (#3413/#3445 hold across the filter change).
+static void ac3607_2_reason_domain_untouched() {
+    std::println("\n--- #3607 AC2: reason word untouched; walk does not restamp ---");
+    auto& ctr = aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+    const auto save = ctr.production_defaults_active.load(std::memory_order_relaxed);
+    ctr.production_defaults_active.store(1, std::memory_order_relaxed);
+    auto& reg = aura::compiler::hot_update_registry();
+    reg.on_reload_success();
+    reg.on_force_jit_for_reason(AotReloadFail::Env);
+    reg.on_force_jit_for_reason(AotReloadFail::Linear);
+    const auto env = aot_reload_fail_to_force_jit_mask(AotReloadFail::Env);
+    const auto linear = aot_reload_fail_to_force_jit_mask(AotReloadFail::Linear);
+    const auto demoted = aura_hot_update_force_jit_regions_mask();
+    CHECK((demoted & env) != 0 && (demoted & linear) != 0, "AC2: Env|Linear demoted");
+    reg.note_reemit_success_coverage(env); // last = Env only
+    aura_test_reset_reemit_success_sync_covered_state();
+    aura_test_set_reemit_success_sync_covered_cap(64);
+    const auto d = aura_alloc_closure(/*func_id=*/0);
+    CHECK(d >= 0, "AC2: alloc D");
+    aura_test_set_closure_stable_func_id(d, 70);
+    aura_closure_set_must_deopt(d, 1);
+    reg.note_relower_success_define(70);
+    const auto ok0 = aura_reemit_success_sync_covered_ok_total_v_read();
+    reg.on_reemit_pipeline_call(/*candidates=*/1, /*successes=*/1);
+    CHECK(aura_reemit_success_sync_covered_ok_total_v_read() > ok0,
+          "AC2: covered walk ran after pipeline success");
+    CHECK(reg.last_reemit_success_region_mask() == env,
+          "AC2: last_success still Env only (not restamped to full demoted mask)");
+    const auto force_after = aura_hot_update_force_jit_regions_mask();
+    CHECK((force_after & linear) != 0,
+          "AC2: uncovered Linear reason bit stays residual (only_covered clears its own bit)");
+    ac3607_restore(save);
+}
+
+// AC3: the residual prefer-queue spends budget on the re-emitted define D,
+// not on an unrelated sid%64 decoy that happens to intersect the reason mask.
+static void ac3607_3_prefer_define_not_sid_decoy() {
+    std::println("\n--- #3607 AC3: prefer budget goes to the define, not the sid%64 decoy ---");
+    auto& ctr = aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+    const auto save = ctr.production_defaults_active.load(std::memory_order_relaxed);
+    ctr.production_defaults_active.store(1, std::memory_order_relaxed);
+    auto& reg = aura::compiler::hot_update_registry();
+    reg.on_reload_success();
+    reg.note_reemit_success_coverage(0);
+    aura_test_reset_residual_remount_state();
+    aura_test_set_residual_remount_budget(1);
+    const auto d = aura_alloc_closure(/*func_id=*/0);
+    const auto s = aura_alloc_closure(/*func_id=*/0);
+    CHECK(d >= 0 && s >= 0, "AC3: alloc D/S");
+    aura_test_set_closure_stable_func_id(d, 70);
+    aura_test_set_closure_stable_func_id(s, 65);
+    aura_closure_set_must_deopt(d, 1);
+    aura_closure_set_must_deopt(s, 1);
+    reg.note_relower_success_define(70);
+    reg.on_force_jit_for_reason(AotReloadFail::Env);
+    aura_test_set_residual_remount_cursor(static_cast<std::uint64_t>(s)); // decoy at cursor
+    const auto e0 = aura_residual_remount_prefer_force_jit_total_v_read();
+    const auto h0 = aura_residual_remount_prefer_hit_total_v_read();
+    aura_residual_live_closure_remount_tick(1);
+    CHECK(aura_residual_remount_prefer_force_jit_total_v_read() > e0, "AC3: prefer entered");
+    CHECK(aura_residual_remount_prefer_hit_total_v_read() > h0, "AC3: prefer hit D");
+    // Issue #3503: with a force reason live, a prefer heal keeps MustDeopt on
+    // a dual-fresh miss — the prefer_hit counter above is the selection proof.
+    CHECK(aura_closure_get_must_deopt(s) == 1,
+          "AC3: sid%64 decoy S did not consume the prefer budget");
+    ac3607_restore(save);
+}
+
+// AC4: the #3229 side-set fail-close is preserved — with the define side set
+// active, the covered walk remounts only recorded defines; unrecorded ids
+// (mask-intersecting or not) stay residual for the FIFO rotation.
+static void ac3607_4_fail_close_unrecorded() {
+    std::println("\n--- #3607 AC4: #3229 fail-close — unrecorded ids stay residual ---");
+    auto& ctr = aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+    const auto save = ctr.production_defaults_active.load(std::memory_order_relaxed);
+    ctr.production_defaults_active.store(1, std::memory_order_relaxed);
+    auto& reg = aura::compiler::hot_update_registry();
+    reg.on_reload_success();
+    reg.note_reemit_success_coverage(0);
+    aura_test_reset_reemit_success_sync_covered_state();
+    aura_test_set_reemit_success_sync_covered_cap(64);
+    const auto w = aura_alloc_closure(/*func_id=*/0);
+    const auto s = aura_alloc_closure(/*func_id=*/0);
+    const auto u = aura_alloc_closure(/*func_id=*/0);
+    CHECK(w >= 0 && s >= 0 && u >= 0, "AC4: alloc W/S/U");
+    aura_test_set_closure_stable_func_id(w, 70); // recorded define
+    aura_test_set_closure_stable_func_id(s, 65); // 65%64=1 ∈ mask, unrecorded
+    aura_test_set_closure_stable_func_id(u, 64); // 64%64=0, unrecorded
+    aura_closure_set_must_deopt(w, 1);
+    aura_closure_set_must_deopt(s, 1);
+    aura_closure_set_must_deopt(u, 1);
+    reg.note_relower_success_define(70);
+    const auto env = aot_reload_fail_to_force_jit_mask(AotReloadFail::Env);
+    const auto ok0 = aura_reemit_success_sync_covered_ok_total_v_read();
+    aura_sync_remount_covered_named_live_closures(env, /*cap=*/64);
+    CHECK(aura_reemit_success_sync_covered_ok_total_v_read() > ok0, "AC4: covered walk ran");
+    CHECK(aura_closure_get_must_deopt(w) == 0, "AC4: recorded define W healed");
+    CHECK(aura_closure_get_must_deopt(s) == 1 && aura_closure_get_must_deopt(u) == 1,
+          "AC4: unrecorded S/U stay residual (fail-close, mask value irrelevant)");
+    const auto hh = read_file("src/compiler/hot_update_registry.hh");
+    CHECK(hh.find("!relower_success_covers_define(id)") != std::string::npos,
+          "AC4: collision fail-close row preserved (#3229)");
+    CHECK(hh.find("unrecorded id stays residual") != std::string::npos,
+          "AC4: fail-close contract documented");
+    ac3607_restore(save);
+}
+
+// AC5: Soft / Off / force==0 && last==0 → zero extra remount. The prefer
+// pass is skipped even with the define side set active when the reason word
+// is idle; the covered walk still gates on mask==0||cap==0 + production.
+static void ac3607_5_idle_zero_extra() {
+    std::println("\n--- #3607 AC5: idle reason word → no prefer pass even with defines ---");
+    auto& ctr = aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+    const auto save = ctr.production_defaults_active.load(std::memory_order_relaxed);
+    ctr.production_defaults_active.store(1, std::memory_order_relaxed);
+    auto& reg = aura::compiler::hot_update_registry();
+    reg.on_reload_success();             // force=0
+    reg.note_reemit_success_coverage(0); // last=0 (+ clears defines)
+    aura_test_reset_residual_remount_state();
+    aura_test_set_residual_remount_budget(1);
+    const auto d = aura_alloc_closure(/*func_id=*/0);
+    CHECK(d >= 0, "AC5: alloc D");
+    aura_test_set_closure_stable_func_id(d, 70);
+    aura_closure_set_must_deopt(d, 1);
+    reg.note_relower_success_define(70); // define side set ACTIVE
+    aura_test_set_residual_remount_cursor(static_cast<std::uint64_t>(d));
+    const auto e0 = aura_residual_remount_prefer_force_jit_total_v_read();
+    const auto h0 = aura_residual_remount_prefer_hit_total_v_read();
+    aura_residual_live_closure_remount_tick(1);
+    CHECK(aura_residual_remount_prefer_force_jit_total_v_read() == e0,
+          "AC5: define-active but idle reason word → no prefer pass");
+    CHECK(aura_residual_remount_prefer_hit_total_v_read() == h0, "AC5: no prefer hit");
+    CHECK(aura_closure_get_must_deopt(d) == 0,
+          "AC5: FIFO rotation still heals the cursor slot (#2928 preserved)");
+    const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
+    CHECK(rt.find("mask == 0 || cap == 0") != std::string::npos,
+          "AC5: covered walk zero-walk gate preserved");
+    CHECK(rt.find("production_defaults_active()") != std::string::npos,
+          "AC5: Soft/Off production gate preserved");
+    ac3607_restore(save);
+}
+
+static void ac3607_6_source_and_linter() {
+    std::println("\n--- #3607 AC6: source-cite + linter + no docs/design ---");
+    const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
+    const auto reg = read_file("src/compiler/hot_update_registry.cpp");
+    const auto hh = read_file("src/compiler/hot_update_registry.hh");
+    const auto build = read_file("build.py");
+    const auto lint = read_file("scripts/check_remount_reason_domain_3607.py");
+    CHECK(rt.find("Issue #3607") != std::string::npos, "AC6: runtime cites #3607");
+    CHECK(rt.find("residual_closure_sid_region_bits_unlocked") == std::string::npos,
+          "AC6: sid%64 helper deleted");
+    CHECK(rt.find("relower_success_covers_define") != std::string::npos,
+          "AC6: define-set filter in runtime");
+    CHECK(reg.find("aot_reload_fail_to_force_jit_mask(fail) & demoted") != std::string::npos,
+          "AC6: reason-group stamp intact (#3445)");
+    CHECK(reg.find("aura_sync_remount_covered_named_live_closures(cov, cap)") != std::string::npos,
+          "AC6: pipeline wiring preserved");
+    CHECK(hh.find("note_relower_success_define") != std::string::npos,
+          "AC6: define side set SSOT preserved");
+    CHECK(!lint.empty() && lint.find("3607") != std::string::npos, "AC6: linter present");
+    CHECK(build.find("check_remount_reason_domain_3607") != std::string::npos,
+          "AC6: build.py wires linter");
+    CHECK(read_file("docs/design/3607-remount-reason-domain.md").empty(),
+          "AC6: no docs/design/3607-* per #1655");
+    CHECK(read_file("tests/compiler/test_issue_3607.cpp").empty(),
+          "AC6: no invent test per #81934/#81967");
 }
 
 int run_test_anonymous_residual_stable_id_policy() {
@@ -2833,6 +3058,13 @@ int run_test_anonymous_residual_stable_id_policy() {
     ac2980_4_standalone_preserved();
     ac2980_5_query_keys();
     ac2980_6_source_and_linter();
+    std::println("\n=== Issue #3607: covered/prefer remount reason-domain fix ===");
+    ac3607_1_covered_define_domain();
+    ac3607_2_reason_domain_untouched();
+    ac3607_3_prefer_define_not_sid_decoy();
+    ac3607_4_fail_close_unrecorded();
+    ac3607_5_idle_zero_extra();
+    ac3607_6_source_and_linter();
 
     std::println("\n=== "
                  "#2605+#2637+#2638+#2666+#2691+#2714+#2850+#2893+#2928+#2977+#2978+#2980+#3024+#"
