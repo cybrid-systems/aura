@@ -1069,6 +1069,112 @@ static void ac3349_3_production_persist_marks_or_force_full() {
                                                                      std::memory_order_relaxed);
 }
 
+// ── Issue #3618: unmatched persist forces full with non-empty map ──
+//   AC1: production + persist nonempty + attribution false (map non-empty
+//        but missing the persisted nid) → force full; the #3349 tail gate
+//        no longer conjuncts source_to_ir_map.empty() (distinguishable via
+//        partial_forced_full_by_impact_total bump).
+//   AC2: persist attributed (block-node encoding marks without a map
+//        lookup) → tail gate must not force full on its own.
+//   AC3: Soft persist stays empty → gate inert (zero extra).
+//   AC5: no new query key; service.ixx cites #3618.
+static void ac3618_persist_attribution_forces_full() {
+    std::println("\n--- #3618: unmatched persist → full with non-empty map ---");
+    using aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+    auto save =
+        g_typed_mutation_audit_counters.production_defaults_active.load(std::memory_order_relaxed);
+
+    const auto sixx = read_file("src/compiler/service.ixx");
+    CHECK(sixx.find("Issue #3618") != std::string::npos, "3618 AC1: gate cites #3618");
+    // Windowed: the #3349 tail gate must key on !persist_attributed WITHOUT
+    // the source_to_ir_map.empty() conjunct (#3618).
+    {
+        const auto g = sixx.find("!persist_attributed) {");
+        const auto win =
+            g != std::string::npos ? sixx.substr(g >= 600 ? g - 600 : 0, 1200) : std::string{};
+        CHECK(win.find("residual_castop_persist_size() > 0") != std::string::npos,
+              "3618 AC1: persist-nonempty term present");
+        CHECK(win.find("source_to_ir_map.empty()") == std::string::npos,
+              "3618 AC1: empty-map conjunct dropped");
+    }
+
+    // AC3: Soft — persist stays empty, tail gate inert.
+    {
+        SoftAuditScope soft;
+        reset_residual_castop_persist_for_test();
+        constexpr aura::compiler::dirty::NodeId kSoft = 3618;
+        const aura::compiler::dirty::NodeId one[] = {kSoft};
+        note_residual_castop_sites(one, {});
+        CHECK(aura::compiler::dirty::residual_castop_persist_size() == 0,
+              "3618 AC3: Soft persist empty → tail gate inert");
+    }
+
+    // AC1/AC2: production — unmatched vs attributed persist.
+    g_typed_mutation_audit_counters.production_defaults_active.store(1, std::memory_order_relaxed);
+    reset_residual_castop_persist_for_test();
+
+    CompilerService cs;
+    CHECK(cs.eval(R"(
+(set-code "
+(define f (lambda (x) x))
+")
+)")
+              .has_value(),
+          "3618: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3618: eval");
+
+    // AC2: attributed persist — block-DEP encoding (non-zero by tag; decodes
+    // to fi=0, bi=0) marks via the block table without a map lookup →
+    // attribution true → the tail gate must not force full on its own.
+    // (encode_block_node(0,0) is NodeId 0 — the persist path filters enc==0.)
+    {
+        reset_residual_castop_persist_for_test();
+        const auto blk = aura::compiler::dirty::encode_block_dep_node(0, 0, 0);
+        const aura::compiler::dirty::NodeId blocks[] = {blk};
+        note_residual_castop_sites({}, blocks);
+        CHECK(aura::compiler::dirty::residual_castop_persist_size() >= 1,
+              "3618 AC2: attributed persist nonempty");
+        cs.public_mark_define_dirty("f");
+        const auto forced0 =
+            cs.metrics().partial_forced_full_by_impact_total.load(std::memory_order_relaxed);
+        (void)cs.public_relower_dirty_defines_from_workspace();
+        const auto forced1 =
+            cs.metrics().partial_forced_full_by_impact_total.load(std::memory_order_relaxed);
+        // The prepare/impact branches may fail-closed full on a tiny fixture
+        // (unknown impact_ub) — that is NOT this arm. AC2's contract: the
+        // tail gate is keyed on !persist_attributed (asserted structurally
+        // above), so attribution true can never fire it; the attributed
+        // relower must leave f intact and evaluable either way.
+        std::println("  3618 AC2: force-full delta={}", forced1 - forced0);
+        CHECK(cs.eval("(f 41)").has_value(), "3618 AC2: attributed relower leaves f evaluable");
+    }
+
+    // AC1: unmatched persist — ghost ast nid not in f's map. The desync
+    // inject keeps the map non-empty (partial-rebuild shape) but corrupts
+    // one entry; it lives in this block only — AC2 must see a clean map so
+    // the impact branch cannot confound the counter.
+    {
+        CHECK(cs.inject_source_to_ir_map_desync_for_test("f"), "3618 AC1: map non-empty (inject)");
+        reset_residual_castop_persist_for_test();
+        constexpr aura::compiler::dirty::NodeId kGhost = 3618;
+        const aura::compiler::dirty::NodeId one[] = {kGhost};
+        note_residual_castop_sites(one, {});
+        CHECK(aura::compiler::dirty::residual_castop_persist_size() >= 1,
+              "3618 AC1: unmatched persist nonempty");
+        cs.public_mark_define_dirty("f");
+        const auto forced1 =
+            cs.metrics().partial_forced_full_by_impact_total.load(std::memory_order_relaxed);
+        (void)cs.public_relower_dirty_defines_from_workspace();
+        CHECK(cs.metrics().partial_forced_full_by_impact_total.load(std::memory_order_relaxed) >
+                  forced1,
+              "3618 AC1: unmatched persist + non-empty map → force full");
+    }
+
+    reset_residual_castop_persist_for_test();
+    g_typed_mutation_audit_counters.production_defaults_active.store(save,
+                                                                     std::memory_order_relaxed);
+}
+
 static void ac3349_4_linter_no_invent() {
     std::println("\n--- #3349 AC4: linter + no invent / no new query keys ---");
     const auto t = read_file("tests/compiler/test_dead_coercion_dirty_cone.cpp");
@@ -1410,6 +1516,7 @@ int run_test_dead_coercion_dirty_cone() {
     ac3349_2_soft_quiet();
     ac3349_3_production_persist_marks_or_force_full();
     ac3349_4_linter_no_invent();
+    ac3618_persist_attribution_forces_full();
     ac3547_1_stamper_unbound_drops_cone();
     ac3547_2_type_id_drift_invalidates_site();
     ac3547_3_soft_keeps_cone();
