@@ -70,9 +70,11 @@ def _check_densify_lcp_stamp(arena: str) -> list[str]:
     # Walk back 4000 chars to find the stamp call before the clear.
     scope_start = max(0, clear_pos - 4000)
     scope = arena[scope_start:clear_pos]
-    if "stamp_lifetime_consistency_proof(" not in scope:
+    # Issue #3617: the stamp is now the keyed _for variant (victim-eval
+    # identity) — same BEFORE-clear ordering contract.
+    if "stamp_lifetime_consistency_proof_for(" not in scope:
         failures.append(
-            "AC1: stamp_lifetime_consistency_proof(...) NOT called BEFORE "
+            "AC1: stamp_lifetime_consistency_proof_for(...) NOT called BEFORE "
             "post_moving_live_canaries_.clear() — canary race window re-opens"
         )
     return failures
@@ -89,10 +91,10 @@ def _check_lcp_include(arena: str) -> list[str]:
 def _check_proof_would_allow_commit_reflects_state(arena: str) -> list[str]:
     """AC3: LCP proof.would_allow_commit reflects incomplete state."""
     failures: list[str] = []
-    # Anchor on the stamp call.
-    stamp_pos = arena.find("stamp_lifetime_consistency_proof(")
+    # Anchor on the stamp call (keyed variant per #3617).
+    stamp_pos = arena.find("stamp_lifetime_consistency_proof_for(")
     if stamp_pos < 0:
-        failures.append("AC3: stamp_lifetime_consistency_proof call not found")
+        failures.append("AC3: stamp_lifetime_consistency_proof_for call not found")
         return failures
     scope_start = max(0, stamp_pos - 1500)
     scope = arena[scope_start:stamp_pos]

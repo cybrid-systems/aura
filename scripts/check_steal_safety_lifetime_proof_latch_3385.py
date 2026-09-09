@@ -48,8 +48,8 @@ INFRA_REQUIRED: tuple[tuple[str, str, str], ...] = (
     ),
     (
         "src/serve/steal_safety.cpp",
-        r"lcp::last_lifetime_consistency_proof_present\(\)\s*&&\s*[\s\S]{0,80}last_densify_call_seq\(\)\s*>\s*0\s*&&\s*!lcp::last_lifetime_consistency_would_allow\(\)",
-        "3385 AC1: LifetimeProofOk arm predicate (proof present + densify_seq>0 + !would_allow)",
+        r"lcp::last_lifetime_consistency_proof_present_for\(victim_eval_id\)\s*&&\s*[\s\S]{0,120}last_densify_call_seq_for\(victim_eval_id\)\s*>\s*0\s*&&\s*!lcp::last_lifetime_consistency_would_allow_for\(victim_eval_id\)",
+        "3385 AC1: LifetimeProofOk arm predicate (victim-eval keyed per #3617: present + densify_seq>0 + !would_allow)",
     ),
     # AC3: mailbox conditional skip based on (observe_latch && check_envframe).
     (
@@ -131,9 +131,12 @@ def _self_test() -> int:
         if (!skip(StealInvariant::LifetimeProofOk) &&
             (is_steal_snapshot_hard_mode() || aura_runtime_multi_worker_production_latched() != 0)) {
             namespace lcp = aura::core::lifetime_consistency_proof;
-            if (lcp::last_lifetime_consistency_proof_present() &&
-                aura::core::densify_consistency::last_densify_call_seq() > 0 &&
-                !lcp::last_lifetime_consistency_would_allow()) {
+            // Issue #3617: victim-eval keyed reads (#2727 identity).
+            void* victim_eval_id = aura_fiber_evaluator_id_for_steal_safety(stolen);
+            if (victim_eval_id != nullptr &&
+                lcp::last_lifetime_consistency_proof_present_for(victim_eval_id) &&
+                aura::core::densify_consistency::last_densify_call_seq_for(victim_eval_id) > 0 &&
+                !lcp::last_lifetime_consistency_would_allow_for(victim_eval_id)) {
                 fail_bits |= steal_invariant_mask(StealInvariant::LifetimeProofOk);
                 note_steal_invariant_fail(StealInvariant::LifetimeProofOk);
             }

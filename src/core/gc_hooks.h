@@ -1464,6 +1464,21 @@ inline void notify_fiber_safe_compact() noexcept {
     g_arena_compact_hook_in_flight.fetch_sub(1, std::memory_order_release);
 }
 
+// Issue #3617: thread-local mirror of the outermost Guard-enter evaluator
+// identity (the void* Fiber::set_evaluator_id stamps, #2727). Arena-side
+// stamp sites in core read this to key per-eval last-proof slots without a
+// serve-layer dependency. Set/cleared by MutationBoundaryGuard enter/dtor
+// (evaluator_mutation_boundary.cpp) alongside the per-Fiber field;
+// steal-complete restamps pass the explicit evaluator id instead (they may
+// run on the thief's thread).
+inline thread_local void* g_current_eval_identity = nullptr;
+inline void set_current_eval_identity(void* id) noexcept {
+    g_current_eval_identity = id;
+}
+[[nodiscard]] inline void* current_eval_identity() noexcept {
+    return g_current_eval_identity;
+}
+
 } // namespace aura::gc_hooks
 
 #endif // AURA_CORE_GC_HOOKS_H

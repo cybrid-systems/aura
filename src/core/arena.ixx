@@ -2728,7 +2728,10 @@ public:
                 if (result.objects_moved > 0) {
                     proof.mutation_epoch = aura::core::current_mutation_epoch();
                 }
-                aura::core::lifetime_consistency_proof::stamp_lifetime_consistency_proof(proof);
+                // Issue #3617: key the Moving-window proof on the densifying
+                // evaluator's identity (Guard-enter TLS, same thread).
+                aura::core::lifetime_consistency_proof::stamp_lifetime_consistency_proof_for(
+                    aura::gc_hooks::current_eval_identity(), proof);
             }
             post_moving_live_canaries_.clear();
         }

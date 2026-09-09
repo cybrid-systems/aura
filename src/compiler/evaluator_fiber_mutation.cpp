@@ -2848,6 +2848,11 @@ void Evaluator::complete_post_join_linear_enforcement(void* joined_fiber_void) n
             layout.flat_gen, layout.env_gen, aura::gc_hooks::residual_defer_after_exit_total(),
             efl.mutation_epoch);
         stamp_lifetime_consistency_proof(proof);
+        // Issue #3617: key the post-join proof on this evaluator's identity
+        // (explicit — steal-complete may run on the thief's thread, so the
+        // Guard-enter TLS mirror is not consulted here).
+        aura::core::lifetime_consistency_proof::stamp_lifetime_consistency_proof_for(
+            static_cast<void*>(this), proof);
     }
 
     if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics())) {
