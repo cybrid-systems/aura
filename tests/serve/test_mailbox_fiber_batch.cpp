@@ -437,6 +437,14 @@ int main() {
     else
         ++members_passed;
 
+    // Issue #3621: live-isolate steal snapshot hard-invariant (was inside
+    // #if 0 leftover). The #2346 resume canary + the sample→enqueue
+    // identity proof (ac3621_*) must actually run in the gate.
+    if (isolate("test_steal_snapshot_hard_invariant", run_test_steal_snapshot_hard_invariant) != 0)
+        ++members_failed;
+    else
+        ++members_passed;
+
     std::println("\n=== {} members: {} ok, {} failed ===", members_passed + members_failed,
                  members_passed, members_failed);
     return members_failed ? 1 : 0;

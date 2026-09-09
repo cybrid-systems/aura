@@ -12050,6 +12050,39 @@ def cmd_chaos_guard_hold_smoke_3620_coverage():
     return 0
 
 
+def cmd_steal_identity_proof_3621_coverage():
+    """Issue #3621: enumerative machine proof that the steal
+    sample→clear→resample→stamp state machine cannot read thief TLS
+    (I3 residual of #2929/#3072):
+
+    - #3613-style identity story pinned: mutation_safety_snapshot depth
+      resolves via the victim storage helper (never the compiler-side
+      mutation_boundary_depth_slot on the steal path);
+    - set_resume_safety_ticket is reachable only on the Ok path of
+      steal_safety_transaction (sole-enqueue #2844) and stamps the
+      decision-window snapshot ticket;
+    - GcDeferClear/EnvFrame/Lifetime residual arms key on the victim
+      evaluator id (#2727/#3617), never thief g_current_fiber; Lifetime
+      soft skip stays documented + cited.
+
+    Source-cite over the existing #3072/#2929 linter style, ACs in
+    tests/serve/test_steal_snapshot_hard_invariant.cpp (ac3621_*). No new
+    metric, no new query key, no new invariant enum, no TLA model.
+    No docs/design/3621-*, no tests/**/test_issue_3621.cpp.
+    """
+    print(f"{B}=== steal identity proof (#3621) ==={N}")
+    script = ROOT / "scripts" / "check_steal_identity_proof_3621.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script), "--strict"], cwd=ROOT)
+    if r.returncode != 0:
+        fail("steal identity proof (#3621) contract rows failed")
+        return 1
+    ok("steal identity proof (#3621) clean")
+    return 0
+
+
 def cmd_query_stable_hard_reject_torn_latch_3386_coverage():
     """Issue #3386: shared probe Evaluator::query_stable_hard_reject_torn()
     must OR restamp_over_budget_torn() under multi-worker latch (I6 residual).
@@ -21804,6 +21837,7 @@ def cmd_gate():
         or cmd_outermost_persist_order_3614_coverage()
         or cmd_dual_graph_parity_cone_3615_coverage()
         or cmd_chaos_guard_hold_smoke_3620_coverage()
+        or cmd_steal_identity_proof_3621_coverage()
     )
     if rc:
         return rc
