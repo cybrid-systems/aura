@@ -1096,6 +1096,140 @@ static void ac3486_3_soft_zero_extra() {
           "3486 AC4: rebuild from string remains");
 }
 
+// ── Issue #3615: cone-wide dual-graph parity check + Soft-erased hole ──
+//   AC1: cone-wide non-front fork caught (#3486 only checked front).
+//   AC2: Soft-erased hole → take_full.
+//   AC3: Soft/Off zero extra (production/Full gate only).
+//   AC4: no new metrics / query key.
+//   AC5: linter self-test.
+
+static void ac3615_1_cone_wide_non_front_fork() {
+    std::println("\n--- #3615 AC1: non-front fork caught by cone-wide check ---");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    apply_production_audit_defaults();
+    CompilerService cs;
+    CHECK(cs.eval(R"(
+(set-code "
+(define f (lambda () 1))
+(define g (lambda () (f)))
+(define h (lambda () (g)))
+(define x3615 (lambda () 0))
+")")
+              .has_value(),
+          "3615 AC1: set-code cone (f ← g ← h, x3615 separate)");
+    CHECK(cs.eval("(eval-current)").has_value(), "3615 AC1: eval");
+    if (!cs.get_define_v2("f"))
+        (void)cs.eval("(compile:cache-define \"f\")");
+    if (!cs.get_define_v2("x3615"))
+        (void)cs.eval("(compile:cache-define \"x3615\")");
+    cs.public_record_dependency("g", "f");
+    cs.public_record_dependency("h", "g");
+    cs.public_record_dependency("x3615", "f");
+    CHECK(cs.public_graphs_consistent(), "3615 AC1: consistent after dual record");
+    // Inject a string-only fork on x3615 (will land in cone via #3474 FIFO
+    // walk from f's called_by; x3615 is a caller of f, so it enters the
+    // cone as a non-front entry). #3486's front-only check would miss this;
+    // #3615's cone helper must catch it.
+    cs.inject_string_only_edge_for_test("x3615", "h");
+    CHECK(cs.public_dep_graph_has_edge("x3615", "h"),
+          "3615 AC1: string-only inject on non-front cone entry");
+    CHECK(!cs.public_graphs_consistent(), "3615 AC1: string-only inject forks");
+    auto& m = cs.metrics();
+    const auto fail0 = m.dual_dep_graph_parity_fail_total.load(std::memory_order_relaxed);
+    const auto forced0 = m.partial_forced_full_by_impact_total.load(std::memory_order_relaxed);
+    cs.public_mark_define_dirty("f");
+    (void)cs.public_relower_dirty_defines_from_workspace();
+    CHECK(cs.public_graphs_consistent(), "3615 AC1: rebuilt from string at peel");
+    // Cone helper must have caught the fork: fail_total OR forced_full
+    // distinguisher must have moved (proves the cone-wide check fired,
+    // not just the front-only #3486 path).
+    CHECK(m.dual_dep_graph_parity_fail_total.load() > fail0 ||
+              m.partial_forced_full_by_impact_total.load() > forced0,
+          "3615 AC1: cone-wide parity fail or forced-full distinguisher moved");
+    apply_dev_audit_defaults();
+}
+
+static void ac3615_2_soft_erased_hole_take_full() {
+    std::println("\n--- #3615 AC2: Soft-erased hole detection (source-cite + cone helper) ---");
+    const auto svc = read_file("src/compiler/service.ixx");
+    const auto cone_pos = svc.find("fail_closed_soft_dual_graph_parity_before_partial_cone_");
+    CHECK(cone_pos != std::string::npos, "3615 AC2: cone helper present");
+    if (cone_pos != std::string::npos) {
+        const auto win = svc.substr(cone_pos, 6000);
+        // Soft-erased hole detection: walks each root, checks
+        // dep_graph_[root].called_by empty + node_dep has encode_fn_node
+        // dependents → divergent → parity fail.
+        CHECK(win.find("called_by.empty()") != std::string::npos,
+              "3615 AC2: hole detection checks called_by empty");
+        CHECK(win.find("node_dep_graph_.dependents") != std::string::npos,
+              "3615 AC2: hole detection walks node_dep dependents");
+        CHECK(win.find("encode_fn_node") != std::string::npos,
+              "3615 AC2: hole detection uses encode_fn_node");
+        // Same take-full path on hole: rebuild + force-dirty + counter bump.
+        CHECK(win.find("rebuild_node_dep_graph_from_string") != std::string::npos,
+              "3615 AC2: hole → rebuild");
+        CHECK(win.find("dual_dep_graph_parity_fail_total") != std::string::npos,
+              "3615 AC2: hole → parity fail counter");
+        CHECK(win.find("partial_forced_full_by_impact_total") != std::string::npos,
+              "3615 AC2: hole → forced-full distinguisher");
+    }
+}
+
+static void ac3615_3_soft_zero_extra_path() {
+    std::println("\n--- #3615 AC3: Soft/Off zero extra (production/Full gate only) ---");
+    const auto svc = read_file("src/compiler/service.ixx");
+    const auto cone_pos = svc.find("fail_closed_soft_dual_graph_parity_before_partial_cone_");
+    CHECK(cone_pos != std::string::npos, "3615 AC3: cone helper present");
+    if (cone_pos != std::string::npos) {
+        // Window starts 1500 chars before cone_pos to capture the function
+        // header comment (which contains "Issue #3615" cite) plus the
+        // function body. The comment block is ~15 lines × ~70 chars.
+        const auto start = cone_pos > 1500 ? cone_pos - 1500 : 0;
+        const auto win = svc.substr(start, cone_pos + 6500 - start);
+        CHECK(win.find("Issue #3615") != std::string::npos, "3615 AC3: cone helper cites #3615");
+        CHECK(win.find("production_defaults_active()") != std::string::npos,
+              "3615 AC3: cone helper gated on production");
+        CHECK(win.find("AuditStrategy::Full") != std::string::npos,
+              "3615 AC3: cone helper gated on Full");
+        CHECK(win.find("production_or_full") != std::string::npos,
+              "3615 AC3: early-return on Soft/Off");
+    }
+    // The #3486 front-only block must be replaced: the relower function
+    // must use the cone helper (not the old front-only lookup).
+    const auto rel_pos = svc.find("std::size_t relower_dirty_defines_from_workspace()");
+    CHECK(rel_pos != std::string::npos, "3615 AC3: peel function present");
+    if (rel_pos != std::string::npos) {
+        const auto rel_win = svc.substr(rel_pos, 12000);
+        CHECK(rel_win.find("fail_closed_soft_dual_graph_parity_before_partial_cone_") !=
+                  std::string::npos,
+              "3615 AC3: relower uses cone helper");
+        CHECK(rel_win.find("auto eit = ir_cache_v2_.find(dirty_names.front());") ==
+                  std::string::npos,
+              "3615 AC3: old front-only block removed");
+    }
+}
+
+static void ac3615_4_no_new_metrics_or_query_key() {
+    std::println("\n--- #3615 AC4: no new metrics field; no new query key ---");
+    const auto obs = read_file("src/compiler/observability_metrics.h");
+    const auto query = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
+    CHECK(obs.find("3615") == std::string::npos, "3615 AC4: no new metrics field");
+    CHECK(query.find("schema-3615") == std::string::npos, "3615 AC4: no schema-3615 query key");
+    CHECK(read_file("docs/design/3615-dual-graph-parity-cone.md").empty(),
+          "3615 AC4: no docs/design/3615-*");
+    CHECK(read_file("tests/compiler/test_issue_3615.cpp").empty(),
+          "3615 AC4: no test_issue_3615.cpp");
+}
+
+static void ac3615_5_linter_self_test() {
+    std::println("\n--- #3615 AC5: linter --self-test passes ---");
+    // Run from build/ so use ../scripts/ to reach the repo root.
+    const std::string cmd = "python3 ../scripts/check_dual_graph_parity_cone_3615.py --self-test";
+    const int rc = std::system(cmd.c_str());
+    CHECK(rc == 0, "3615 AC5: linter --self-test exits 0");
+}
+
 static void ac3486_5_linter_no_invent() {
     std::println("\n--- #3486 AC5: no new query key; linter; no invent ---");
     const auto svc = read_file("src/compiler/service.ixx");
@@ -1369,6 +1503,15 @@ int run_test_dep_graph_hybrid_cascade() {
     ac3580_2_production_never_silent_partial();
     ac3580_3_soft_undercascade_counters_visible();
     ac3580_4_source_cite_no_invent();
+    // Issue #3615: cone-wide dual-graph parity check (#3486 only checked
+    // dirty_names.front(); fork against any other cone name slipped through).
+    // Plus Soft-erased hole detection: called_by empty but node_dep still
+    // has encode_fn_node dependents → take_full.
+    ac3615_1_cone_wide_non_front_fork();
+    ac3615_2_soft_erased_hole_take_full();
+    ac3615_3_soft_zero_extra_path();
+    ac3615_4_no_new_metrics_or_query_key();
+    ac3615_5_linter_self_test();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

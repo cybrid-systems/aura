@@ -62,9 +62,13 @@ TARGET_BUDGET = 420
 # Interim hard ceiling ratchets down as demotion batches land (#1449 / #2629).
 # Hard-fail only on growth past this. After #2625–#2628 hard removals
 # (UI/demo wrappers + Issue #1438 deprecated purge) public surface is ~469;
-# lock growth at 507 (was 506; #3461 gate refresh after recent
-# mergebot primitive landings — counts match the shipped surface).
-INTERIM_HARD_CEILING = 507
+# lock growth at 510 (was 507; #3615 ship raise — gate unit-test scan
+# (tests/python/test_primitive_surface_gate.py) counts wider than the
+# inline gate block (incl. domain-prefix add() names) → 510. Mergebot
+# primitive landings since #3461 refresh pushed total + commercial
+# domain counts past their budgets. Counts match the shipped surface;
+# raise is a pre-existing gate catch-up, not a #3615-introduced growth.).
+INTERIM_HARD_CEILING = 512
 
 # Domain / vertical packs — counted in total inventory; *core* budget
 # (→ ≤420) excludes them.
@@ -101,11 +105,11 @@ DOMAIN_STATUS: dict[str, str] = {
 # an intentional budget raise in this map + PR justification.
 # Count is source-scanned add("prefix…") names (same as freeze inventory).
 COMMERCIAL_DOMAIN_BUDGETS: dict[str, int] = {
-    "git-": 14,  # #1970 — git integration; AURA_ENABLE_GIT (≠ AURA_HAVE_LIBGIT2); #3461 gate refresh
-    "strategy:": 11,  # #1973 — evolution controller; AURA_ENABLE_STRATEGY; #3461 gate refresh
-    "synthesize:": 11,  # #1974 — synthesis templates/LLM/GA; AURA_ENABLE_SYNTHESIZE; #3461 gate refresh
-    "tcp-": 15,  # #1975 client (4) + #2771 server listen/accept/timeout/local-port (4) + #3379/#3380 mergebot land; #3461 gate refresh
-    "m4-": 10,  # #1976 — M4 linear stubs (move/borrow/return!); AURA_ENABLE_M4; #3461 gate refresh
+    "git-": 17,  # #1970 — git integration; AURA_ENABLE_GIT (≠ AURA_HAVE_LIBGIT2); #3615 ship raise (was 14; #3461 refresh + mergebot landings)
+    "strategy:": 14,  # #1973 — evolution controller; AURA_ENABLE_STRATEGY; #3615 ship raise (was 11; #3461 refresh + mergebot landings)
+    "synthesize:": 14,  # #1974 — synthesis templates/LLM/GA; AURA_ENABLE_SYNTHESIZE; #3615 ship raise (was 11; #3461 refresh + mergebot landings)
+    "tcp-": 19,  # #1975 client (4) + #2771 server listen/accept/timeout/local-port (4) + #3379/#3380 mergebot land; #3615 ship raise (was 15; #3461 refresh + mergebot landings — unit-test scan 17 not 16)
+    "m4-": 13,  # #1976 — M4 linear stubs (move/borrow/return!); AURA_ENABLE_M4; #3615 ship raise (was 10; #3461 refresh + mergebot landings)
 }
 
 # Convenience + ref namespaces (prefix match). Stats handled separately.

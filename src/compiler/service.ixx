@@ -7311,6 +7311,120 @@ public:
         metrics_.partial_forced_full_by_impact_total.fetch_add(1, std::memory_order_relaxed);
     }
 
+    // Issue #3615: cone-wide dual-graph parity check. Extends #3486 (which
+    // only consulted dirty_names.front()) to walk every name in the cone
+    // and detect Soft-erased holes: a root whose dep_graph_[root].called_by
+    // is empty but node_dep still has encode_fn_node(callee_slot)
+    // dependents — divergent state from a prior Soft invalidate that
+    // erased the string edge without rebuilding the node mirror. Same
+    // take-full path as fail_closed_soft_dual_graph_parity_before_partial_
+    // (rebuild + bump dual_dep_graph_parity_fail_total + force-dirty all
+    // callers + partial_forced_full_by_impact_total++ + want_partial=false).
+    // Caller holds cascade_decision_mtx_ (relower path). Soft / Off skip
+    // (zero extra — AC3). No new query key (AC4 — reuses
+    // dual_dep_graph_parity_fail_total + partial_forced_full_by_impact_total).
+    // String graph stays authority (rebuild_node_dep_graph_from_string).
+    // Non-duplicative vs #3188 (facade skipped IR dirty), #3345 (depth-1),
+    // #3381 (one-hop union), #3474 (FIFO cone), #3486 (front-only consult),
+    // #3165/#3187 (all-callers on record_dependency fail).
+    bool fail_closed_soft_dual_graph_parity_before_partial_cone_(
+        const std::vector<std::string>& cone_names, bool& want_partial) {
+        if (!want_partial || cone_names.empty())
+            return false;
+        // AC3: Soft / Off + clean single-fiber skips the consult entirely.
+        const bool production_or_full = aura::compiler::typed_audit::production_defaults_active() ||
+                                        aura::compiler::typed_audit::get_strategy() ==
+                                            aura::compiler::typed_audit::AuditStrategy::Full;
+        if (!production_or_full)
+            return false;
+        bool parity_fail = false;
+        {
+            lock_order::OrderedSharedLock<std::shared_mutex> read(dep_graph_mtx_,
+                                                                  lock_order::Level::DepGraph);
+            if (!aura::compiler::dirty::graphs_consistent(dep_graph_, node_dep_graph_,
+                                                          dep_name_to_slot_)) {
+                parity_fail = true;
+            } else {
+                // AC2: Soft-erased hole detection. Walk each root in cone;
+                // dep_graph_[root].called_by empty but node_dep has
+                // encode_fn_node(callee_slot) dependents → divergent.
+                for (const auto& root : cone_names) {
+                    const auto dit = dep_graph_.find(root);
+                    if (dit == dep_graph_.end() || !dit->second.called_by.empty())
+                        continue;
+                    const auto slot_it = dep_name_to_slot_.find(root);
+                    if (slot_it == dep_name_to_slot_.end())
+                        continue;
+                    const auto fn_from = aura::compiler::dirty::encode_fn_node(slot_it->second);
+                    const auto* deps = node_dep_graph_.dependents(fn_from);
+                    if (!deps)
+                        continue;
+                    for (const auto& n : *deps) {
+                        (void)n;
+                        parity_fail = true;
+                        break;
+                    }
+                    if (parity_fail)
+                        break;
+                }
+            }
+        }
+        if (!parity_fail)
+            return false;
+        // Exclusive rebuild + force-dirty all callers (same shape as
+        // fail_closed_soft_dual_graph_parity_before_partial_).
+        lock_order::OrderedUniqueLock<std::shared_mutex> write(dep_graph_mtx_,
+                                                               lock_order::Level::DepGraph);
+        bool still_fail = !aura::compiler::dirty::graphs_consistent(dep_graph_, node_dep_graph_,
+                                                                    dep_name_to_slot_);
+        if (!still_fail) {
+            for (const auto& root : cone_names) {
+                const auto dit = dep_graph_.find(root);
+                if (dit == dep_graph_.end() || !dit->second.called_by.empty())
+                    continue;
+                const auto slot_it = dep_name_to_slot_.find(root);
+                if (slot_it == dep_name_to_slot_.end())
+                    continue;
+                const auto fn_from = aura::compiler::dirty::encode_fn_node(slot_it->second);
+                const auto* deps = node_dep_graph_.dependents(fn_from);
+                if (!deps)
+                    continue;
+                for (const auto& n : *deps) {
+                    (void)n;
+                    still_fail = true;
+                    break;
+                }
+                if (still_fail)
+                    break;
+            }
+        }
+        if (!still_fail)
+            return false;
+        aura::compiler::dirty::rebuild_node_dep_graph_from_string(node_dep_graph_, dep_graph_,
+                                                                  dep_name_to_slot_);
+        metrics_.dual_dep_graph_parity_fail_total.fetch_add(1, std::memory_order_relaxed);
+        aura::compiler::dirty::g_dual_dep_graph_parity_fail_total_atomic().fetch_add(
+            1, std::memory_order_relaxed);
+        std::unordered_set<std::string, aura::core::TransparentStringHash, std::equal_to<>>
+            affected;
+        for (const auto& [callee_name, callee_entry] : dep_graph_) {
+            (void)callee_name;
+            for (const auto& caller_name : callee_entry.called_by)
+                affected.insert(caller_name);
+        }
+        for (const auto& caller_name : affected) {
+            auto cit2 = ir_cache_v2_.find(caller_name);
+            if (cit2 != ir_cache_v2_.end()) {
+                cit2->second.dirty = true;
+                cit2->second.mark_all_blocks_dirty();
+                finish_cascade_soa_dirty_sync_(cit2->second);
+            }
+        }
+        want_partial = false;
+        metrics_.partial_forced_full_by_impact_total.fetch_add(1, std::memory_order_relaxed);
+        return true;
+    }
+
     // Issue #1495: walk dirty ir_cache_v2_ entries and prefer
     // partial re-lower (relower_define_blocks → per-function /
     // per-block) before a full cache_define. Called from
@@ -7455,29 +7569,28 @@ public:
                 metrics_.partial_forced_full_by_impact_total.fetch_add(1,
                                                                        std::memory_order_relaxed);
             }
-            // Issue #3486: lockless / test inject can fork the dual graph
-            // and reach peel with want_partial already false (#3310 /
-            // threshold), so the per-entry #3255 helper never runs.
-            // Production / Full: one peel-entry consult (shared lock when
-            // consistent; exclusive rebuild + all-callers dirty on fail).
-            // Reuses fail_closed_soft_dual_graph_parity_before_partial_.
-            // Soft / Off skip (zero extra). String graph stays authority
-            // (rebuild_node_dep_graph_from_string).
+            // Issue #3615: cone-wide dual-graph parity check (Issue #3486 only
+            // consulted dirty_names.front(); a fork against any other cone
+            // name slipped through). New helper walks every name in
+            // dirty_names + detects Soft-erased holes (called_by empty but
+            // node_dep has encode_fn_node dependents). Same take-full path
+            // (rebuild + all-callers dirty + partial_forced_full_by_impact_total
+            // + dual_dep_graph_parity_fail_total). Soft / Off skip (zero
+            // extra — AC3). No new query key (AC4). String graph stays
+            // authority (rebuild_node_dep_graph_from_string).
             if (!dirty_names.empty() &&
                 (aura::compiler::typed_audit::production_defaults_active() ||
                  aura::compiler::typed_audit::get_strategy() ==
                      aura::compiler::typed_audit::AuditStrategy::Full)) {
-                auto eit = ir_cache_v2_.find(dirty_names.front());
-                if (eit != ir_cache_v2_.end()) {
-                    bool want = true;
-                    fail_closed_soft_dual_graph_parity_before_partial_(eit->second, want);
-                    if (!want) {
-                        for (const auto& name : dirty_names) {
-                            auto cit = ir_cache_v2_.find(name);
-                            if (cit != ir_cache_v2_.end()) {
-                                cit->second.mark_all_blocks_dirty();
-                                cit->second.dirty = true;
-                            }
+                bool want = true;
+                const bool cone_failed =
+                    fail_closed_soft_dual_graph_parity_before_partial_cone_(dirty_names, want);
+                if (cone_failed && !want) {
+                    for (const auto& name : dirty_names) {
+                        auto cit = ir_cache_v2_.find(name);
+                        if (cit != ir_cache_v2_.end()) {
+                            cit->second.mark_all_blocks_dirty();
+                            cit->second.dirty = true;
                         }
                     }
                 }

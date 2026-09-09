@@ -11952,6 +11952,33 @@ def cmd_outermost_persist_order_3614_coverage():
     return 0
 
 
+def cmd_dual_graph_parity_cone_3615_coverage():
+    """Issue #3615: cone-wide dual-graph parity check + Soft-erased hole
+    detection. #3486 only consulted dirty_names.front(); a fork against
+    any other cone name slipped through. Production / Full peel now
+    walks every name in the cone via
+    fail_closed_soft_dual_graph_parity_before_partial_cone_ and detects
+    Soft-erased holes (called_by empty but node_dep has encode_fn_node
+    dependents) — same take-full path (rebuild + all-callers dirty +
+    dual_dep_graph_parity_fail_total + partial_forced_full_by_impact_total).
+    Soft / Off: zero extra (production/Full gate only). No new query key.
+    String graph stays authority (rebuild_node_dep_graph_from_string).
+    No second restore, no new counter, no docs/design/3615-*, no
+    tests/**/test_issue_3615.cpp.
+    """
+    print(f"{B}=== dual graph parity cone (#3615) ==={N}")
+    script = ROOT / "scripts" / "check_dual_graph_parity_cone_3615.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script), "--strict"], cwd=ROOT)
+    if r.returncode != 0:
+        fail("dual graph parity cone (#3615) contract rows failed")
+        return 1
+    ok("dual graph parity cone (#3615) clean")
+    return 0
+
+
 def cmd_query_stable_hard_reject_torn_latch_3386_coverage():
     """Issue #3386: shared probe Evaluator::query_stable_hard_reject_torn()
     must OR restamp_over_budget_torn() under multi-worker latch (I6 residual).
@@ -21704,6 +21731,7 @@ def cmd_gate():
         or cmd_remount_densify_pairing_strip_3612_coverage()
         or cmd_mailbox_holder_send_lock_order_3613_coverage()
         or cmd_outermost_persist_order_3614_coverage()
+        or cmd_dual_graph_parity_cone_3615_coverage()
     )
     if rc:
         return rc
@@ -22677,6 +22705,7 @@ def main():
         "remount-densify-pairing-strip-3612": cmd_remount_densify_pairing_strip_3612_coverage,
         "mailbox-holder-send-lock-order-3613": cmd_mailbox_holder_send_lock_order_3613_coverage,
         "outermost-persist-order-3614": cmd_outermost_persist_order_3614_coverage,
+        "dual-graph-parity-cone-3615": cmd_dual_graph_parity_cone_3615_coverage,
         "epoch-residual-merged-heal-2980": cmd_epoch_residual_merged_heal_2980_coverage,
         "steal-invariant-table-2929": cmd_steal_invariant_table_2929_coverage,
         "steal-enqueue-sole-gate-3072": cmd_steal_enqueue_sole_gate_3072,
