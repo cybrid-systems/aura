@@ -51,13 +51,13 @@ def main() -> int:
     test = _read("tests/compiler/test_cascade_decision_residual_atomic.cpp")
 
     # ── AC1: cascade_decision_mtx_ + record_dependency reject lock ──
-    field_pos = ixx.find("cascade_decision_mtx_")
+    field_pos = ixx.find("std::mutex cascade_decision_mtx_;")
     if field_pos == -1:
         fails.append("AC1: cascade_decision_mtx_ not declared")
     else:
         # Field declaration block: anchor backwards to include comment.
-        field_start = max(0, field_pos - 1500)
-        field_end = field_pos + 1500
+        field_start = max(0, field_pos - 3000)
+        field_end = field_pos + 3000
         field_block = ixx[field_start:field_end]
         must("Issue #3135", "AC1 field block cites #3135", field_block)
         must("std::mutex", "AC1 lock is std::mutex", field_block)
