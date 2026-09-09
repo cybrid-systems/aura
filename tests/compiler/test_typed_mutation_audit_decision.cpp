@@ -13,9 +13,12 @@
 
 #include "test_harness.hpp"
 
+#include "compiler/observability_metrics.h"
 #include "compiler/typed_mutation_audit.h"
 
 #include <cstdint>
+#include <fstream>
+#include <iterator>
 #include <print>
 #include <string>
 
@@ -52,6 +55,129 @@ struct AuditStateGuard {
 };
 
 } // namespace
+
+static std::string read_file(const char* path) {
+    for (const auto& p :
+         {std::string(path), std::string("../") + path, std::string("../../") + path}) {
+        std::ifstream in(p);
+        if (!in)
+            continue;
+        return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    }
+    return {};
+}
+
+// ── Issue #3625: Production RenderFastExit is metrics-only — never an audit skip ──
+static void ac3625_1_production_render_still_audits() {
+    std::println("\n--- #3625 AC1: production + render hotpath → invariant audit still runs ---");
+    using aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+    // Production face (Full strategy, the real deployment pairing): the
+    // invariant audit decision must run and the render-fast skip must not
+    // fire. Regression guard for the #2311/#3625 ordering. The metrics-only
+    // gate (production_defaults_active() || strategy == Full) also covers
+    // the degenerate pairings (Sampled/Off leftovers) at source level;
+    // empirically the Guard path is strategy-gated upstream there, so the
+    // skip cannot engage through this surface regardless.
+    apply_production_audit_defaults();
+    {
+        CompilerService cs;
+        (void)cs.eval("(define f3625 (lambda (x) x))");
+        auto* metrics =
+            static_cast<aura::compiler::CompilerMetrics*>(cs.evaluator().compiler_metrics());
+        const auto considered0 =
+            g_typed_mutation_audit_counters.audits_considered.load(std::memory_order_relaxed);
+        const auto skip0 =
+            metrics ? metrics->render_fast_exit_skipped_audit_total.load(std::memory_order_relaxed)
+                    : 0;
+        cs.evaluator().enter_render_hotpath();
+        // Ordinary typed mutate: non-linear, non-match set-body.
+        auto mut = cs.eval("(mutate:set-body \"f3625\" \"(lambda (x) (+ x 1))\")");
+        CHECK(mut.has_value(), "3625 AC1: set-body mutate ran");
+        const auto considered1 =
+            g_typed_mutation_audit_counters.audits_considered.load(std::memory_order_relaxed);
+        const auto skip1 =
+            metrics ? metrics->render_fast_exit_skipped_audit_total.load(std::memory_order_relaxed)
+                    : 0;
+        CHECK(considered1 > considered0,
+              "ac3625_1_production_render_still_audits: audits_considered increments (audit ran)");
+        CHECK(skip1 == skip0,
+              "3625 AC1: render fast did NOT skip the invariant suite under Production/Full");
+        cs.evaluator().exit_render_hotpath();
+    }
+    apply_dev_audit_defaults();
+}
+
+static void ac3625_2_soft_render_fast_still_skips() {
+    std::println("\n--- #3625 AC2: Soft + render hotpath keeps the fast-exit skip ---");
+    apply_dev_audit_defaults();
+    set_strategy(AuditStrategy::Sampled);
+    CompilerService cs;
+    (void)cs.eval("(define g3625 (lambda (x) x))");
+    auto* metrics =
+        static_cast<aura::compiler::CompilerMetrics*>(cs.evaluator().compiler_metrics());
+    const auto rf0 = metrics ? metrics->render_fast_exit_total.load(std::memory_order_relaxed) : 0;
+    const auto skip0 =
+        metrics ? metrics->render_fast_exit_skipped_audit_total.load(std::memory_order_relaxed) : 0;
+    cs.evaluator().enter_render_hotpath();
+    auto mut = cs.eval("(mutate:set-body \"g3625\" \"(lambda (x) (+ x 1))\")");
+    CHECK(mut.has_value(), "3625 AC2: set-body mutate ran");
+    const auto rf1 = metrics ? metrics->render_fast_exit_total.load(std::memory_order_relaxed) : 0;
+    const auto skip1 =
+        metrics ? metrics->render_fast_exit_skipped_audit_total.load(std::memory_order_relaxed) : 0;
+    CHECK(rf1 > rf0, "ac3625_2_soft_render_fast_still_skips: Soft render fast path armed");
+    CHECK(skip1 > skip0, "ac3625_2_soft_render_fast_still_skips: Soft fast-exit skip retained");
+    cs.evaluator().exit_render_hotpath();
+    apply_dev_audit_defaults();
+}
+
+static void ac3625_3_suppress_counters_unchanged() {
+    std::println("\n--- #3625 AC3: #2311 linear/match suppress stays ahead of the gate ---");
+    const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto suppress_pos =
+        mb.find("m->render_fast_exit_suppressed_linear_or_match_total.fetch_add(");
+    const auto gate_pos = mb.find("Issue #3625 (#2311/#3322 residual)");
+    CHECK(suppress_pos != std::string::npos, "3625 AC3: #2311 suppress counter block present");
+    CHECK(gate_pos != std::string::npos, "3625 AC3: #3625 strategy gate present");
+    CHECK(
+        suppress_pos < gate_pos,
+        "ac3625_3_suppress_counters_unchanged: linear/match suppress still fires before the gate");
+    CHECK(mb.find("render_fast_exit_suppressed_linear_total") != std::string::npos &&
+              mb.find("render_fast_exit_suppressed_match_total") != std::string::npos,
+          "3625 AC3: per-cause counters retained");
+}
+
+static void ac3625_4_source_and_linter() {
+    std::println("\n--- #3625 AC4: source-cite + linter ---");
+    const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto t = read_file("tests/compiler/test_typed_mutation_audit_decision.cpp");
+    const auto lint = read_file("scripts/check_render_fast_audit_3625.py");
+    const auto build = read_file("build.py");
+    const auto gate_pos = mb.find("Issue #3625 (#2311/#3322 residual)");
+    CHECK(gate_pos != std::string::npos, "3625 AC4: gate cite");
+    const std::string scope = mb.substr(gate_pos, 1700);
+    CHECK(scope.find("production_defaults_active()") != std::string::npos &&
+              scope.find("typed_audit::get_strategy() == typed_audit::AuditStrategy::Full") !=
+                  std::string::npos,
+          "3625 AC4: production/Full metrics-only gate");
+    CHECK(scope.find("render_fast_effective") != std::string::npos &&
+              scope.find("ev_->render_fast_exit_this_boundary_ = render_fast_effective;") !=
+                  std::string::npos,
+          "3625 AC4: boundary flag gated on render_fast_effective");
+    CHECK(scope.find("render_fast_exit_total.fetch_add") != std::string::npos,
+          "3625 AC4: observe-only hotpath signal retained (RenderFastExit not deleted)");
+    CHECK(mb.find("note_invariant_enforcement_skipped") != std::string::npos &&
+              mb.find("render_fast_exit_skipped_audit_total") != std::string::npos,
+          "3625 AC4: skip site intact for Soft");
+    CHECK(mb.find("Issue #3614") != std::string::npos, "3625 AC4: #3614 persist order untouched");
+    CHECK(mb.find("consume_outermost_audit_rollback_needs_fail") != std::string::npos,
+          "3625 AC4: #3517 rollback machinery retained");
+    CHECK(t.find("ac3625_1_production_render_still_audits") != std::string::npos,
+          "3625 AC4: runtime AC1");
+    CHECK(!lint.empty() && lint.find("3625") != std::string::npos, "3625 AC4: linter");
+    CHECK(build.find("check_render_fast_audit_3625") != std::string::npos, "3625 AC4: build.py");
+    CHECK(read_file("tests/compiler/test_issue_3625.cpp").empty(), "3625 AC4: no invent");
+    CHECK(read_file("docs/design/3625-render-fast-audit.md").empty(), "3625 AC4: no docs/design");
+}
 
 int run_test_typed_mutation_audit_decision() {
     std::println("=== Issue #2281: TypedMutationAudit decision query ===");
@@ -240,6 +366,14 @@ int run_test_typed_mutation_audit_decision() {
             CHECK(r.has_value(), std::format("AC3.q: {} reachable", k));
         }
     }
+
+    // ── Issue #3625: Production RenderFastExit is metrics-only — never an
+    // audit skip (#2311/#3322 residual); Soft keeps the hotpath skip.
+    std::println("\n=== Issue #3625: production render fast never skips the invariant audit ===");
+    ac3625_1_production_render_still_audits();
+    ac3625_2_soft_render_fast_still_skips();
+    ac3625_3_suppress_counters_unchanged();
+    ac3625_4_source_and_linter();
 
     apply_dev_audit_defaults();
     std::println("=== #2281 done: {} passed, {} failed ===", g_passed, g_failed);

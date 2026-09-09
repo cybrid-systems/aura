@@ -3926,7 +3926,21 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
                 m->render_fast_exit_suppressed_match_total.fetch_add(1, std::memory_order_relaxed);
         }
     }
-    ev_->render_fast_exit_this_boundary_ = render_fast;
+    // Issue #3625 (#2311/#3322 residual): under Production defaults / Full
+    // strategy, RenderFastExit is metrics-only — never an audit skip. Agent
+    // self-modify of ordinary typed code (set-body / ReplaceType /
+    // annotation rewrite) is exactly the non-linear non-match case, so the
+    // #2145/#2311 Full invariant suite + #3517 force-rollback / grant-drop
+    // must run. #2311's linear/match/hard-gate suppress stays the Soft-path
+    // gate (its counters above still fire first). render_fast_exit_total
+    // keeps bumping as an observe-only hotpath signal, but the boundary
+    // flag stays false so exit_mutation_boundary audits. Persist/linear
+    // order remains #3614 (untouched).
+    const bool render_fast_audit_hard =
+        typed_audit::production_defaults_active() ||
+        typed_audit::get_strategy() == typed_audit::AuditStrategy::Full;
+    const bool render_fast_effective = render_fast && !render_fast_audit_hard;
+    ev_->render_fast_exit_this_boundary_ = render_fast_effective;
     if (render_fast) {
         if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics_))
             m->render_fast_exit_total.fetch_add(1, std::memory_order_relaxed);

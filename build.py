@@ -12176,6 +12176,37 @@ def cmd_type_export_face_3624_coverage():
     return 0
 
 
+def cmd_render_fast_audit_3625_coverage():
+    """Issue #3625: Production RenderFastExit still skips the Full
+    invariant audit when no linear/match (#2311/#3322 residual):
+
+    - The Guard-dtor RenderFastExit decision now carries a
+      Production/Full metrics-only gate (render_fast_effective =
+      render_fast && !(production_defaults_active() || strategy ==
+      Full)), so ordinary non-linear non-match mutates can no longer
+      skip the #2145/#2311 Full invariant suite or the #3517
+      force-rollback/grant-drop path. #2311's linear/match suppress
+      counters still fire before the gate (Soft-path gate unchanged);
+      render_fast_exit_total keeps bumping as an observe-only hotpath
+      signal (RenderFastExit not deleted). Persist/linear order
+      remains #3614 (untouched); no new query key.
+
+    Runtime ACs in tests/compiler/test_typed_mutation_audit_decision.cpp
+    (ac3625_1..4). No docs/design/3625-*, no tests/**/test_issue_3625.cpp.
+    """
+    print(f"{B}=== render fast audit gate (#3625) ==={N}")
+    script = ROOT / "scripts" / "check_render_fast_audit_3625.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script), "--strict"], cwd=ROOT)
+    if r.returncode != 0:
+        fail("render fast audit gate (#3625) contract rows failed")
+        return 1
+    ok("render fast audit gate (#3625) clean")
+    return 0
+
+
 def cmd_query_stable_hard_reject_torn_latch_3386_coverage():
     """Issue #3386: shared probe Evaluator::query_stable_hard_reject_torn()
     must OR restamp_over_budget_torn() under multi-worker latch (I6 residual).
@@ -21934,6 +21965,7 @@ def cmd_gate():
         or cmd_type_dynamic_production_3622_coverage()
         or cmd_occurrence_recover_regate_3623_coverage()
         or cmd_type_export_face_3624_coverage()
+        or cmd_render_fast_audit_3625_coverage()
     )
     if rc:
         return rc
