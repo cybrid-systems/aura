@@ -3935,6 +3935,52 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
     // (dual topology + coercion rewind + #3158 occurrence restore).
     // Soft/Off: note is a no-op (flag stays false). Quiet SOLVED: one
     // TLS load. Happy persist + grant path unchanged (no extra restore).
+    // Issue #3614: linear deny + pending_full_solve drain gate BEFORE the
+    // outermost persist helper freezes authority (#3472 residual — order,
+    // not a missing restore). The previous order ran the Phase-1 walk
+    // after the persist helper, so a linear-unsafe outermost could write
+    // the Occurrence persist buffer + stamp a green TypeLinearCommitProof
+    // + grant query:type for one beat before the deny un-stamped them
+    // (concurrent steal / rehydrate / query:type observed frozen green
+    // authority). Order: drain + linear first, persist + green stamp
+    // last. Deny reuses the #3472 un-stamp set (clear proof / persist /
+    // grant) and flips success into the existing !success abort_restore
+    // SSOT — no second restore, no new query key. Soft/Off: gate is
+    // production/Full-only (persist helper stays zero-cost; no extra
+    // walk beyond the current Soft observe). #3512: staging is one-shot —
+    // the deny arm also clears expected_fp so a stale staged fingerprint
+    // cannot poison the next outermost persist.
+    bool linear_pre_exit_enforced = false;
+    if (outermost && success &&
+        (typed_audit::production_defaults_active() ||
+         typed_audit::get_strategy() == typed_audit::AuditStrategy::Full)) {
+        const auto lin = ev_->enforce_linear_boundary_consistency(
+            Evaluator::kLinearGcRootAuditTypedMutate, /*mark_all_linear=*/false);
+        linear_pre_exit_enforced = true;
+        // Pre-persist drain (#3190 face hoisted ahead of the persist
+        // write): non-SOLVED pending_full_solve must deny BEFORE
+        // maybe_persist_occurrence_snapshot freezes the snapshot. The
+        // in-helper drain stays as belt-and-suspenders for residuals
+        // that latch after this gate.
+        bool drain_pre_persist_ok = true;
+        if (auto* pre_gate_tc =
+                static_cast<aura::compiler::TypeChecker*>(ev_->commit_type_checker_handle())) {
+            std::vector<aura::compiler::Constraint> pre_gate_unresolved;
+            drain_pre_persist_ok =
+                pre_gate_tc->constraint_system().drain_pending_full_solve_before_commit(
+                    &pre_gate_unresolved) == aura::compiler::SolveResult::SOLVED;
+        }
+        if (!lin.all_safe || ev_->linear_synth_hard_fail_pending() || !drain_pre_persist_ok) {
+            typed_audit::clear_type_linear_commit_proof_on_abort();
+            typed_audit::publish_type_linear_proof_outcome(
+                typed_audit::kTypeLinearProofOutcomeReject);
+            aura_clear_occurrence_persist_buffer(ev_);
+            ev_->clear_type_export_authority();
+            ev_->clear_expected_occurrence_snapshot_fp();
+            success = false;
+            success_flag_store(flag_, false);
+        }
+    }
     if (outermost && success) {
         const auto mid = ev_->defuse_version_.load(std::memory_order_relaxed);
         aura_outermost_success_persist_occurrence(ev_, mid);
@@ -3945,14 +3991,13 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
             success_flag_store(flag_, false);
         }
     }
-    // Issue #3472: persist-green then Phase-1 linear deny must flip
-    // success into the existing abort_restore SSOT. Persist already
-    // stamped TypeLinearCommitProof + froze Occurrence + granted
-    // query:type; (void)enforce later cannot un-stamp. Production/Full
-    // walk once here (return / synth pending are the deny signal —
-    // the happy-path observability bump is not). Soft/Off: observe-only,
-    // no hard flip. Do not invent a second restore.
-    bool linear_pre_exit_enforced = false;
+    // Issue #3472: belt-and-suspenders post-persist linear deny. The
+    // pre-persist #3614 gate above is the primary deny path now; retain
+    // this walk for the case the persist helper's own drain / recover
+    // latch flips linear safety after a green pre-check. Same un-stamp
+    // set (proof / persist buffer / query:type grant) and the same
+    // success flip into the existing abort_restore SSOT — do not
+    // invent a second restore. Soft/Off: observe-only, no hard flip.
     if (outermost && success &&
         (typed_audit::production_defaults_active() ||
          typed_audit::get_strategy() == typed_audit::AuditStrategy::Full)) {

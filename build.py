@@ -11923,6 +11923,35 @@ def cmd_mailbox_holder_send_lock_order_3613_coverage():
     return 0
 
 
+def cmd_outermost_persist_order_3614_coverage():
+    """Issue #3614: outermost persist still froze Occurrence authority
+    before the linear deny / pending_full_solve drain signal existed
+    (#3472 closed "flip success after deny", not "do not freeze before
+    the deny"). A linear-unsafe outermost could publish a green
+    TypeLinearCommitProof + persist snapshot observable by concurrent
+    steal / rehydrate / query:type for one beat.
+
+    Fix: drain + linear first, persist + green stamp last — the #3472
+    walk becomes a pre-persist gate (plus a #3190 drain hoisted ahead of
+    the persist write); the post-persist walk stays as belt-and-suspenders.
+    Deny reuses the #3472 un-stamp set and the !success abort_restore SSOT.
+    Soft/Off: gate is production/Full-only (persist helper zero-cost). No
+    second restore, no new counter / query key. No docs/design/3614-*,
+    no tests/**/test_issue_3614.cpp.
+    """
+    print(f"{B}=== outermost persist order (#3614) ==={N}")
+    script = ROOT / "scripts" / "check_outermost_persist_order_3614.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script), "--strict"], cwd=ROOT)
+    if r.returncode != 0:
+        fail("outermost persist order (#3614) contract rows failed")
+        return 1
+    ok("outermost persist order (#3614) clean")
+    return 0
+
+
 def cmd_query_stable_hard_reject_torn_latch_3386_coverage():
     """Issue #3386: shared probe Evaluator::query_stable_hard_reject_torn()
     must OR restamp_over_budget_torn() under multi-worker latch (I6 residual).
@@ -21674,6 +21703,7 @@ def cmd_gate():
         or cmd_cascade_rearm_reconsult_3611_coverage()
         or cmd_remount_densify_pairing_strip_3612_coverage()
         or cmd_mailbox_holder_send_lock_order_3613_coverage()
+        or cmd_outermost_persist_order_3614_coverage()
     )
     if rc:
         return rc
@@ -22646,6 +22676,7 @@ def main():
         "cascade-rearm-reconsult-3611": cmd_cascade_rearm_reconsult_3611_coverage,
         "remount-densify-pairing-strip-3612": cmd_remount_densify_pairing_strip_3612_coverage,
         "mailbox-holder-send-lock-order-3613": cmd_mailbox_holder_send_lock_order_3613_coverage,
+        "outermost-persist-order-3614": cmd_outermost_persist_order_3614_coverage,
         "epoch-residual-merged-heal-2980": cmd_epoch_residual_merged_heal_2980_coverage,
         "steal-invariant-table-2929": cmd_steal_invariant_table_2929_coverage,
         "steal-enqueue-sole-gate-3072": cmd_steal_enqueue_sole_gate_3072,

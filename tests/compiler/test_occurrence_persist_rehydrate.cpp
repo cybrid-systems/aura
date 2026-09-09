@@ -49,10 +49,12 @@ using aura::compiler::typed_audit::apply_dev_audit_defaults;
 using aura::compiler::typed_audit::apply_production_audit_defaults;
 using aura::compiler::typed_audit::bump_occurrence_persist_reject_expected_fp_zero_total;
 using aura::compiler::typed_audit::last_proof_goal_fingerprint_v_read;
+using aura::compiler::typed_audit::occurrence_commit_snapshot_written_total_v_read;
 using aura::compiler::typed_audit::occurrence_persist_reject_expected_fp_zero_total_v_read;
 using aura::compiler::typed_audit::production_hard_face_active;
 using aura::compiler::typed_audit::reset_for_test;
 using aura::compiler::typed_audit::reset_last_proof_goal_fingerprint_for_test;
+using aura::compiler::typed_audit::reset_occurrence_commit_snapshot_for_test;
 using aura::compiler::typed_audit::reset_occurrence_persist_reject_expected_fp_zero_total_for_test;
 using aura::test::g_failed;
 using aura::test::g_passed;
@@ -179,6 +181,58 @@ int run_test_occurrence_persist_rehydrate() {
         // Test is a NEW file in tests/compiler/ \u2014 not tests/issues/.
         // (verifies the path lives where MEMORY.md 2026-07-24 dictates.)
         CHECK(true, "3556 AC4: test in tests/compiler/ (src/-aligned suite per #81934)");
+    }
+
+    // ── Issue #3614: outermost persist gated behind linear deny + drain ──
+    //   (#3472 residual — order, not a missing restore: drain + linear
+    //   first, persist + green stamp last. Soft/Off stays zero-cost.)
+    {
+        std::println("\n--- #3614: drain+linear gate before outermost persist ---");
+        CHECK(true, "3614: issue stamp");
+        const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+        const auto gate = emb.find("Issue #3614");
+        const auto persist_call = emb.find("aura_outermost_success_persist_occurrence(ev_");
+        const auto consume = emb.find("consume_outermost_persist_reject_needs_restore()");
+        CHECK(gate != std::string::npos && persist_call != std::string::npos &&
+                  consume != std::string::npos && gate < persist_call && persist_call < consume,
+              "3614 AC1: #3614 pre-gate precedes the persist call; reject consume after");
+        if (gate != std::string::npos && persist_call != std::string::npos && gate < persist_call) {
+            const auto gate_win = emb.substr(gate, persist_call - gate);
+            CHECK(gate_win.find("drain_pending_full_solve_before_commit") != std::string::npos,
+                  "3614 AC1: pre-gate drains pending_full_solve before persist");
+            CHECK(gate_win.find("enforce_linear_boundary_consistency") != std::string::npos,
+                  "3614 AC1: pre-gate walks linear before persist");
+            CHECK(gate_win.find("production_defaults_active()") != std::string::npos &&
+                      gate_win.find("get_strategy() == typed_audit::AuditStrategy::Full") !=
+                          std::string::npos,
+                  "3614 AC1: pre-gate production/Full-gated (Soft/Off zero-cost)");
+            CHECK(gate_win.find("aura_clear_occurrence_persist_buffer(ev_)") != std::string::npos,
+                  "3614 AC1: deny arm clears persist buffer (existing helper)");
+        } else {
+            CHECK(false, "3614 AC1: gate before persist (order)");
+        }
+        const auto issue_3472 = emb.find("Issue #3472");
+        CHECK(issue_3472 != std::string::npos && issue_3472 > persist_call,
+              "3614 AC1: #3472 belt-and-suspenders retained after persist");
+        CHECK(emb.find("abort_restore_3614") == std::string::npos,
+              "3614 AC1: no second restore helper");
+        // written_total accessor seam: reset + read coherent (production).
+        reset_for_test();
+        apply_production_audit_defaults();
+        reset_occurrence_commit_snapshot_for_test();
+        CHECK(occurrence_commit_snapshot_written_total_v_read() == 0,
+              "3614 AC2: written_total reset seam works");
+        apply_dev_audit_defaults();
+        reset_for_test();
+        // No new observability surface (reuse the #2938/#3472 set).
+        CHECK(read_file("src/compiler/observability_metrics.h").find("3614") == std::string::npos,
+              "3614 AC3: no new metrics field");
+        const auto q = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
+        CHECK(q.find("schema-3614") == std::string::npos, "3614 AC3: no schema-3614");
+        CHECK(read_file("docs/design/3614-outermost-persist-order.md").empty(),
+              "3614 AC3: no docs/design/3614-*");
+        CHECK(read_file("tests/compiler/test_issue_3614.cpp").empty(),
+              "3614 AC3: no test_issue_3614.cpp");
     }
 
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
