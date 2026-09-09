@@ -5386,6 +5386,20 @@ def cmd_lint():
             "Issue #3617 steal eval-keyed residual linter failed — run python3 scripts/coverage/checks/check_steal_eval_keyed_residual_3617.py"
         )
         return r
+    # Issue #3618: unmatched residual CastOp persist forces full relower —
+    # the #3349 tail gate drops the source_to_ir_map.empty() conjunct
+    # (map non-empty but missing the persisted nid used to cone-skip a
+    # type-changed site). Linter after #3617.
+    rpa3618_script = COVERAGE_CHECKS / "check_residual_persist_attribution_3618.py"
+    if not rpa3618_script.exists():
+        fail(f"missing {rpa3618_script}")
+        return 1
+    r = run([sys.executable, str(rpa3618_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3618 residual persist attribution linter failed — run python3 scripts/coverage/checks/check_residual_persist_attribution_3618.py"
+        )
+        return r
     # Issue #3446: compiled Move/Drop fence ORs live elision_ok + typed-entry
     # (probe deopt_inc then continues — not a substitute). Residual of
     # #3186/#3224/#3419. Extends test_escape_move_elision_gate; no new

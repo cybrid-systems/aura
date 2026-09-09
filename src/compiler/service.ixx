@@ -7777,9 +7777,14 @@ public:
                             1, std::memory_order_relaxed);
                     } else if (production_consult &&
                                aura::compiler::dirty::residual_castop_persist_size() > 0 &&
-                               !persist_attributed && it->second.source_to_ir_map.empty()) {
-                        // Persist nonempty + production + map still empty
-                        // → cone incomplete; fail-closed full.
+                               !persist_attributed) {
+                        // Issue #3618: persist nonempty + production + attribution
+                        // failed — the map is missing the persisted CastOp site
+                        // (empty OR non-empty from a partial rebuild of another
+                        // fn). impact_ub from an incomplete map can stay ≤ dirty_n
+                        // and cone-skip a type-changed site → fail-closed full.
+                        // Attribution success (site mapped + block marked) keeps
+                        // partial.
                         want_partial = false;
                         it->second.mark_all_blocks_dirty();
                         it->second.dirty = true;
