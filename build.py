@@ -11843,6 +11843,34 @@ def cmd_real_quiet_live_tc_3610_coverage():
     return 0
 
 
+def cmd_cascade_rearm_reconsult_3611_coverage():
+    """Issue #3611: #3168 new-edge attribution kept the stale pre-attribution
+    want_partial and only marked THIS define — the peer endpoint of the armed
+    edge (deferred (g, f) while peeling f) never entered the peel set, so
+    lookup_define_v2(g) could serve pre-mutate IR whose Call still names the
+    old f encoding (peer-can-stay-clean residual post-#3168/#3283).
+
+    Fix: peer endpoints enter dirty_names (index-based peel walk) via the
+    existing mark_caller_body_dirty + finish_cascade_soa_dirty_sync_ shape,
+    and want_partial is reconsulted from the post-mark dirty_n + impact_ub
+    (#3310 production gate; monotone partial → full). Attribution
+    distinguisher cascade_rearm_new_edge_only_total retained; Soft / Off +
+    clean (armed==0) zero extra. No docs/design/3611-*, no
+    tests/**/test_issue_3611.cpp.
+    """
+    print(f"{B}=== cascade rearm reconsult (#3611) ==={N}")
+    script = ROOT / "scripts" / "check_cascade_rearm_reconsult_3611.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script), "--strict"], cwd=ROOT)
+    if r.returncode != 0:
+        fail("cascade rearm reconsult (#3611) contract rows failed")
+        return 1
+    ok("cascade rearm reconsult (#3611) clean")
+    return 0
+
+
 def cmd_query_stable_hard_reject_torn_latch_3386_coverage():
     """Issue #3386: shared probe Evaluator::query_stable_hard_reject_torn()
     must OR restamp_over_budget_torn() under multi-worker latch (I6 residual).
@@ -21591,6 +21619,7 @@ def cmd_gate():
         or cmd_expand_checkpoint_local_rollback_3608_coverage()
         or cmd_reexpand_tenant_principal_3609_coverage()
         or cmd_real_quiet_live_tc_3610_coverage()
+        or cmd_cascade_rearm_reconsult_3611_coverage()
     )
     if rc:
         return rc
@@ -22560,6 +22589,7 @@ def main():
         "expand-checkpoint-local-rollback-3608": cmd_expand_checkpoint_local_rollback_3608_coverage,
         "reexpand-tenant-principal-3609": cmd_reexpand_tenant_principal_3609_coverage,
         "real-quiet-live-tc-3610": cmd_real_quiet_live_tc_3610_coverage,
+        "cascade-rearm-reconsult-3611": cmd_cascade_rearm_reconsult_3611_coverage,
         "epoch-residual-merged-heal-2980": cmd_epoch_residual_merged_heal_2980_coverage,
         "steal-invariant-table-2929": cmd_steal_invariant_table_2929_coverage,
         "steal-enqueue-sole-gate-3072": cmd_steal_enqueue_sole_gate_3072,
