@@ -274,15 +274,16 @@ int aura_issue_1413_run() {
                   "ac3202_2_prod_balanced_unify_true");
         }
 
-        // AC3: Dynamic ~ T and Int ↔ Float remain permissive
+        // AC3: Int ↔ Float stays permissive; Dynamic ~ T hard-rejects under
+        // the production face (Issue #3622 residual — Soft stays permissive).
         {
-            std::println("\n--- AC11 (#3202): Dynamic~T and Int↔Float stay true ---");
+            std::println("\n--- AC11 (#3202+#3622): Dynamic~T rejects, Int↔Float stays true ---");
             ProdScope prod;
             TypeRegistry reg;
             ConstraintSystem cs(reg);
             cs.set_unify_gradual_mode(GradualPermissiveness::Strict);
             auto fl = reg.lookup_type("Float");
-            CHECK(cs.consistent_unify(reg.dynamic_type(), reg.string_type()),
+            CHECK(!cs.consistent_unify(reg.dynamic_type(), reg.string_type()),
                   "ac3202_3_dynamic_permissive");
             CHECK(cs.consistent_unify(reg.int_type(), fl), "ac3202_3_numeric_int_float");
             CHECK(cs.consistent_unify(fl, reg.int_type()), "ac3202_3_numeric_float_int");
@@ -401,7 +402,9 @@ int aura_issue_1413_run() {
             TypeRegistry reg;
             ConstraintSystem cs(reg);
             cs.set_unify_gradual_mode(GradualPermissiveness::Strict);
-            CHECK(cs.consistent_unify(reg.dynamic_type(), reg.string_type()),
+            // Issue #3622: Dynamic ~ T hard-rejects under the production face
+            // (supersedes the #3430 dynamic-permissive accept).
+            CHECK(!cs.consistent_unify(reg.dynamic_type(), reg.string_type()),
                   "ac3430_4_dynamic_permissive");
             auto lin = reg.register_linear(reg.int_type());
             CHECK(!cs.consistent_unify(reg.dynamic_type(), lin), "ac3430_4_linear_dynamic_reject");
