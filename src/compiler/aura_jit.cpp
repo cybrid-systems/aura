@@ -3235,7 +3235,18 @@ struct AuraJIT::Impl {
                                builder.fn_is_fn_epoch_stale && builder.fn_deopt_to_interpreter;
         const bool can_typed = hard_typed_entry && builder.fn_ir_typed_entry_commit_readiness_ok &&
                                builder.fn_deopt_to_interpreter;
-        if (can_epoch || can_typed) {
+        // Issue #3616: anonymous production functions ran the JIT body with
+        // typed-entry only — linear_post_mutate_enforce stayed named-only
+        // because #1540 emitted it inside the epoch arm. Post-mutate linear
+        // unsafety (remount last==0 / persist-reject hygiene) must deopt anon
+        // applies too: emit the same UINT32_MAX env-hint call (host resolves
+        // g_linear_env_id). Suppressed when can_epoch already emitted it
+        // (named path) — exactly one linear probe per function, no double
+        // count. Soft/Off keep zero prologue calls (hard_typed_entry false).
+        const bool can_linear = hard_typed_entry && !can_epoch &&
+                                builder.fn_linear_post_mutate_enforce &&
+                                builder.fn_deopt_to_interpreter;
+        if (can_epoch || can_typed || can_linear) {
             auto* entry_bb = builder.block_map[fn.entry_block];
             auto* parent = builder.func;
             auto* bb_deopt = llvm::BasicBlock::Create(ctx, "epoch_prologue_deopt", parent);
@@ -3263,6 +3274,19 @@ struct AuraJIT::Impl {
                 }
                 auto* unsafe_i = builder.irb->CreateOr(stale_i, lin_i);
                 is_unsafe = builder.irb->CreateICmpNE(unsafe_i, zero32);
+            }
+            if (can_linear) {
+                // Issue #3616: same probe the named epoch arm emits —
+                // UINT32_MAX → host g_linear_env_id. Non-zero return =
+                // post-mutate linear state unsafe → deopt (shared path with
+                // typed-entry below; no separate rollback metric).
+                auto* env_max_lin =
+                    llvm::ConstantInt::get(llvm::Type::getInt32Ty(ctx), 0xFFFFFFFFu);
+                auto* lin_i = builder.irb->CreateCall(
+                    llvm::FunctionCallee(builder.fn_linear_post_mutate_enforce),
+                    llvm::ArrayRef<llvm::Value*>{env_max_lin});
+                auto* lin_unsafe = builder.irb->CreateICmpNE(lin_i, zero32);
+                is_unsafe = is_unsafe ? builder.irb->CreateOr(is_unsafe, lin_unsafe) : lin_unsafe;
             }
             if (can_typed) {
                 auto* entry_ok_i = builder.irb->CreateCall(
