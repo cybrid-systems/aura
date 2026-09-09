@@ -11897,6 +11897,32 @@ def cmd_remount_densify_pairing_strip_3612_coverage():
     return 0
 
 
+def cmd_mailbox_holder_send_lock_order_3613_coverage():
+    """Issue #3613: MultiFiberMailbox::push / broadcast_fanout took mu_
+    BEFORE the #2849 under-boundary check — a sender already holding the
+    outermost MutationBoundaryGuard inverted Workspace→Mailbox (rank table
+    Mailbox < Workspace; production canary/hard aborts). #2849 closed
+    visibility, not acquire order.
+
+    Fix: same note_mailbox_deferred_under_boundary helper, earlier — the BP
+    fires before any lock acquisition in push and broadcast_fanout (Soft /
+    Off still BP; gate not weakened to enqueue). No new lock, no new steal
+    protocol, no new counter / query key. No docs/design/3613-*, no
+    tests/**/test_issue_3613.cpp.
+    """
+    print(f"{B}=== mailbox holder send lock order (#3613) ==={N}")
+    script = ROOT / "scripts" / "check_mailbox_holder_send_lock_order_3613.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script), "--strict"], cwd=ROOT)
+    if r.returncode != 0:
+        fail("mailbox holder send lock order (#3613) contract rows failed")
+        return 1
+    ok("mailbox holder send lock order (#3613) clean")
+    return 0
+
+
 def cmd_query_stable_hard_reject_torn_latch_3386_coverage():
     """Issue #3386: shared probe Evaluator::query_stable_hard_reject_torn()
     must OR restamp_over_budget_torn() under multi-worker latch (I6 residual).
@@ -21647,6 +21673,7 @@ def cmd_gate():
         or cmd_real_quiet_live_tc_3610_coverage()
         or cmd_cascade_rearm_reconsult_3611_coverage()
         or cmd_remount_densify_pairing_strip_3612_coverage()
+        or cmd_mailbox_holder_send_lock_order_3613_coverage()
     )
     if rc:
         return rc
@@ -22618,6 +22645,7 @@ def main():
         "real-quiet-live-tc-3610": cmd_real_quiet_live_tc_3610_coverage,
         "cascade-rearm-reconsult-3611": cmd_cascade_rearm_reconsult_3611_coverage,
         "remount-densify-pairing-strip-3612": cmd_remount_densify_pairing_strip_3612_coverage,
+        "mailbox-holder-send-lock-order-3613": cmd_mailbox_holder_send_lock_order_3613_coverage,
         "epoch-residual-merged-heal-2980": cmd_epoch_residual_merged_heal_2980_coverage,
         "steal-invariant-table-2929": cmd_steal_invariant_table_2929_coverage,
         "steal-enqueue-sole-gate-3072": cmd_steal_enqueue_sole_gate_3072,

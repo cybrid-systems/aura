@@ -1268,6 +1268,14 @@ public:
             local_stats_.handoff_reject_total.fetch_add(1, std::memory_order_relaxed);
             return PushStatus::HandoffRequired;
         }
+        // Issue #3613: BEFORE mu_ — a sender already holding the outermost
+        // MutationBoundaryGuard must not invert Workspace→Mailbox (rank
+        // table: Mailbox < Workspace; production canary/hard aborts on the
+        // inversion). Same #2849 helper, earlier: the BP fires before any
+        // lock acquisition. Two relaxed loads when the boundary is idle —
+        // zero cost on the happy path (no live boundary).
+        if (note_mailbox_deferred_under_boundary(&local_stats_))
+            return PushStatus::Backpressure;
         (void)::aura::compiler::lock_order::on_acquire(::aura::compiler::lock_order::Level::Mailbox,
                                                        __builtin_FILE(), __builtin_LINE());
         std::lock_guard lock(mu_);
@@ -1301,16 +1309,9 @@ public:
                 }
             }
         }
-        // Issue #2680 / #2849: shared-Evaluator mid-mutation delivery gate.
-        // If the shared Evaluator's MutationBoundary is held (depth>0 || held)
-        // by ANY fiber, defer (BP) — never enqueue a payload that could
-        // observe mid-mutation state. Same authority as steal safety
-        // (aura_evaluator_mutation_boundary_held / depth). Production
-        // fail-closed via note_mailbox_deferred_under_boundary (always BP;
-        // Soft soft_observe / production hard counters). Phase-5 outermost
-        // Guard dtor is the sole reopen of the deliverability window.
-        if (note_mailbox_deferred_under_boundary(&local_stats_))
-            return PushStatus::Backpressure;
+        // Issue #2680 / #2849: shared-Evaluator mid-mutation delivery gate —
+        // moved BEFORE mu_ (#3613: a Guard-held sender must not invert
+        // Workspace→Mailbox; the note now fires before on_acquire above).
         // Issue #2987: residual hard-AND (LayoutStamp / Ticket / GcDefer)
         // even when depth/held snapshot looks safe. Inject / target residual
         // → RejectHard → Backpressure; never enqueue. Happy path (no
@@ -1376,17 +1377,18 @@ public:
             local_stats_.handoff_reject_total.fetch_add(1, std::memory_order_relaxed);
             return PushStatus::HandoffRequired;
         }
-        std::lock_guard lock(mu_);
-        if (closed_.load(std::memory_order_relaxed))
-            return PushStatus::Closed;
-        // Issue #2680 / #2849: shared-Evaluator mid-mutation delivery gate
-        // (fanout variant). Defer the ENTIRE fanout — never partial-deliver
-        // while any fiber on the shared Evaluator is mid-mutation. Same
-        // sole helper as push(); production fail-closed (always BP).
+        // Issue #3613: same holder-send inversion fix as push() — the whole
+        // fanout defers BEFORE mu_ (all-or-nothing; note_self_backpressure
+        // pairing kept). A Guard-held sender must not take Mailbox under a
+        // live Workspace Guard.
         if (note_mailbox_deferred_under_boundary(&local_stats_)) {
             note_self_backpressure(/*from_fanout=*/true);
             return PushStatus::Backpressure;
         }
+        std::lock_guard lock(mu_);
+        if (closed_.load(std::memory_order_relaxed))
+            return PushStatus::Closed;
+        // Issue #2680 / #2849 (fanout variant): moved BEFORE mu_ (#3613).
         // Issue #2987: inject residual (no target) still RejectHard the
         // entire fanout — never silent Ok.
         if (note_mailbox_delivery_safety(nullptr, nullptr, proto.held_ref_token.has_value(),
