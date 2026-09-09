@@ -1704,7 +1704,15 @@ int run_test_join_drain_reclaim() {
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
             ran.store(true, std::memory_order_relaxed);
         });
-        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        // Bounded wait for natural completion (CI de-flake: the fixed
+        // 20ms window assumed the single-worker runner scheduled the
+        // 10ms body promptly; heavy-wave load can delay its first slice
+        // past the window → spurious FAILs). 5s cap ≪ the 120s isolate
+        // alarm; a genuinely dead runner still fails these two CHECKs.
+        const auto ac3_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        while (!(ran.load(std::memory_order_relaxed) && f->is_done()) &&
+               std::chrono::steady_clock::now() < ac3_deadline)
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
         CHECK(ran.load(std::memory_order_relaxed), "AC3: yielding body completed");
         CHECK(f->is_done(), "AC3: fiber done after natural completion");
 
@@ -1941,7 +1949,13 @@ int run_test_join_drain_reclaim() {
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
             ran.store(true, std::memory_order_relaxed);
         });
-        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        // Bounded wait (same CI de-flake as AC3 above): the fixed 20ms
+        // window missed the body's first scheduling slice under
+        // heavy-wave load → ran=false + !Done → two spurious FAILs.
+        const auto ac2_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        while (!(ran.load(std::memory_order_relaxed) && f->is_done()) &&
+               std::chrono::steady_clock::now() < ac2_deadline)
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
         CHECK(ran.load(std::memory_order_relaxed), "#2397 AC2: body completed");
         CHECK(f->is_done(), "#2397 AC2: fiber Done");
         const auto sr_before = Fiber::join_drain_residual_still_running();

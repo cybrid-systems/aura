@@ -196,7 +196,10 @@ int run_test_fiber_native_keepalive() {
             for (int i = 0; i < 200 && h.keepalive_helper && !h.keepalive_helper->is_done(); ++i)
                 std::this_thread::sleep_for(std::chrono::milliseconds(2));
         }
-        auto jr = join_agent(h, std::optional<std::uint64_t>{3000});
+        // De-flake: 3s join budget expired under full-machine saturation
+        // (2-worker scheduler starved by competing load → Timeout);
+        // 10s ≪ the 120s isolate alarm. AC intent (Ok/Cancelled) kept.
+        auto jr = join_agent(h, std::optional<std::uint64_t>{10000});
         CHECK(jr.status == JoinStatus::Ok || jr.status == JoinStatus::Cancelled, "AC2: join body");
         // Drain a few ms so any finishing trampoline completes before next AC.
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
@@ -235,7 +238,10 @@ int run_test_fiber_native_keepalive() {
         stop_keepalive_helper(h);
         for (int i = 0; i < 200 && helper && !helper->is_done(); ++i)
             std::this_thread::sleep_for(std::chrono::milliseconds(2));
-        auto jr = join_agent(h, std::optional<std::uint64_t>{3000});
+        // De-flake (same as AC2): 3s join budget can expire under heavy
+        // load before the starved 2-worker scheduler finishes the body →
+        // Timeout FAILs "join ok". 10s budget, AC intent unchanged.
+        auto jr = join_agent(h, std::optional<std::uint64_t>{10000});
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
         CHECK(jr.status == JoinStatus::Ok || jr.status == JoinStatus::Cancelled, "AC3: join ok");
         CHECK(helper->is_done(), "AC3: helper fiber is_done after join");
