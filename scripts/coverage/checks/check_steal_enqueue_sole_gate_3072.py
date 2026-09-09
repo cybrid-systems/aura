@@ -338,6 +338,26 @@ def main() -> int:
     if (ROOT / "scripts" / "coverage" / "checks" / "check_ready_transition_3587.py").is_file():
         fails.append("AC3587: invented check_ready_transition_3587.py")
 
+    # Issue #3619: no-edge force + still-held = production residual
+    # (Ready/admit fail closed via the existing sticky bus — no new
+    # metric / query key).
+    fcpp = _read("src/serve/fiber.cpp")
+    bridge = _read("src/compiler/fiber_bridge.cpp")
+    mb = _read("src/compiler/evaluator_mutation_boundary.cpp")
+    setest = _read("tests/serve/test_steal_complete_strong_entry.cpp")
+    must("Issue #3619", "AC1 reader fold stamp", hdr)
+    must("aura_mutation_hold_no_edge_still_held", "AC1 probe decl + reader consult", hdr)
+    must("aura_mutation_hold_no_edge_still_held() == 0", "AC1 reader fold zero", hdr)
+    must("aura_mutation_hold_no_edge_still_held", "AC6 strong probe", fcpp)
+    must("g_hold_budget_no_edge_force_total.fetch_add", "AC6 no-edge bump", fcpp)
+    must("aura_mutation_hold_no_edge_still_held", "AC6 weak stub", bridge)
+    must("AdmissionRejected: production-residual-sticky", "AC6 try_acquire sticky reject", mb)
+    must("ac3619_no_edge_held_residual", "AC5 strong-entry test", setest)
+    if "g_3619_" in hdr or "g_3619_" in fcpp:
+        fails.append("AC4: new g_3619_* counter (forbidden)")
+    if "schema-3619" in hdr:
+        fails.append("AC4: new schema-3619 query key (forbidden)")
+
     if fails:
         # Drop the no-op ternary leftover if I accidentally appended None
         fails = [f for f in fails if f]

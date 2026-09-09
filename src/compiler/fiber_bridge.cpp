@@ -35,6 +35,12 @@ namespace aura::serve {
 extern "C" {
 
 // Issue #438: per-thread mutation boundary depth.
+// Issue #3619: weak stub — light-link units treat the no-edge+held
+// residual as clear (observe-only). Strong def in fiber.cpp.
+__attribute__((weak)) int aura_mutation_hold_no_edge_still_held(void) {
+    return 0;
+}
+
 __attribute__((weak)) std::size_t aura_evaluator_mutation_boundary_depth() {
     return 0;
 }
