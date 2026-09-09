@@ -5372,6 +5372,20 @@ def cmd_lint():
             "Issue #3616 anon linear prologue linter failed — run python3 scripts/coverage/checks/check_jit_anon_linear_prologue_3616.py"
         )
         return r
+    # Issue #3617: steal residual hard-AND keys Lifetime/EnvFrame on the
+    # victim evaluator identity (#2727) instead of process-last proof.
+    # Per-eval lock-free slot tables; no new steal-decision mutex. Linter
+    # after #3616.
+    sekr3617_script = COVERAGE_CHECKS / "check_steal_eval_keyed_residual_3617.py"
+    if not sekr3617_script.exists():
+        fail(f"missing {sekr3617_script}")
+        return 1
+    r = run([sys.executable, str(sekr3617_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3617 steal eval-keyed residual linter failed — run python3 scripts/coverage/checks/check_steal_eval_keyed_residual_3617.py"
+        )
+        return r
     # Issue #3446: compiled Move/Drop fence ORs live elision_ok + typed-entry
     # (probe deopt_inc then continues — not a substitute). Residual of
     # #3186/#3224/#3419. Extends test_escape_move_elision_gate; no new

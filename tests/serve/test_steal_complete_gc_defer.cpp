@@ -15,15 +15,19 @@
 
 #include "test_harness.hpp"
 
+#include "core/densify_consistency_report.h"
 #include "core/gc_hooks.h"
+#include "core/lifetime_consistency_proof.hh"
 #include "serve/fiber.h"
 #include "serve/metrics.h"
 #include "serve/runtime_production_abi.h"
 #include "serve/scheduler.h"
+#include "serve/steal_safety.h"
 
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <cstdlib>
 #include <fstream>
 #include <print>
 #include <string>
@@ -537,6 +541,120 @@ static void ac3552_fiber_id_zero_legacy_path_source_cite() {
 
 } // namespace
 
+// ── Issue #3617: Lifetime/EnvFrame residuals key on victim evaluator ──
+//   AC1: two evaluators, hard mode — E1 densify Reject fires LifetimeProofOk
+//        on E1 fibers only; E2 fibers (own proof would_allow) stay quiet.
+//   AC2: EnvFrameOk same scoping (victim eval densify seq, not process-last).
+//   AC3: Soft skips the Lifetime arm; no evaluator_id → both arms quiet.
+//   AC4: reuse StealInvariant bits + existing reject counters (no new metric
+//        / query key); per-eval slot tables are lock-free (no new mutex).
+//   AC6: source-cite evaluate_residual_hard_and_bits +
+//        aura_fiber_evaluator_id_for_steal_safety.
+static void ac3617_eval_keyed_residual() {
+    std::println("\n--- #3617: residual arms keyed on victim evaluator_id ---");
+    const auto ss = read_file("src/serve/steal_safety.cpp");
+    CHECK(ss.find("evaluate_residual_hard_and_bits") != std::string::npos,
+          "3617 AC6: residual evaluator present");
+    CHECK(ss.find("void* victim_eval_id = aura_fiber_evaluator_id_for_steal_safety(stolen)") !=
+              std::string::npos,
+          "3617 AC6: arms consult victim identity");
+    CHECK(ss.find("last_lifetime_consistency_proof_present_for(victim_eval_id)") !=
+              std::string::npos,
+          "3617 AC6: Lifetime arm keyed");
+    CHECK(ss.find("last_densify_envframe_ok_for(victim_eval_id)") != std::string::npos,
+          "3617 AC6: EnvFrame arm keyed");
+    CHECK(ss.find(
+              "is_steal_snapshot_hard_mode() || aura_runtime_multi_worker_production_latched()") !=
+              std::string::npos,
+          "3617 AC3: Lifetime gate (hard || latched) unchanged");
+    CHECK(ss.find("g_3617_") == std::string::npos && ss.find("schema-3617") == std::string::npos,
+          "3617 AC4: no new counters / query keys");
+    // Structural: keyed reads must sit INSIDE the Lifetime arm window (the
+    // gate + identity + three keyed reads in one bounded region), not just
+    // anywhere in the file.
+    {
+        const auto arm = ss.find("StealInvariant::LifetimeProofOk — Issue #2957 residual arm");
+        const auto arm_win = arm != std::string::npos ? ss.substr(arm, 1700) : std::string{};
+        CHECK(arm_win.find("last_lifetime_consistency_proof_present_for(victim_eval_id)") !=
+                  std::string::npos,
+              "3617 AC1: keyed present read inside Lifetime arm window");
+        CHECK(arm_win.find("last_densify_call_seq_for(victim_eval_id)") != std::string::npos,
+              "3617 AC3: keyed seq read inside Lifetime arm window");
+        CHECK(arm_win.find("is_steal_snapshot_hard_mode() || "
+                           "aura_runtime_multi_worker_production_latched()") != std::string::npos,
+              "3617 AC3: hard||latched gate inside arm window");
+    }
+    const auto lcp_h = read_file("src/core/lifetime_consistency_proof.hh");
+    const auto dens_h = read_file("src/core/densify_consistency_report.h");
+    CHECK(lcp_h.find("g_lcp_eval_slots") != std::string::npos &&
+              lcp_h.find("stamp_lifetime_consistency_proof_for") != std::string::npos,
+          "3617 AC1: per-eval LCP slot table + keyed stamp");
+    CHECK(dens_h.find("note_last_densify_result_for") != std::string::npos,
+          "3617 AC2: per-eval densify mirror");
+    const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    CHECK(mb.find("note_last_densify_result_for") != std::string::npos &&
+              mb.find("stamp_lifetime_consistency_proof_for") != std::string::npos,
+          "3617: boundary flow keys densify + LCP stamps");
+
+    namespace lcp = aura::core::lifetime_consistency_proof;
+    namespace dens = aura::core::densify_consistency;
+    auto* e1 = reinterpret_cast<void*>(static_cast<std::uintptr_t>(0x3617E001u));
+    auto* e2 = reinterpret_cast<void*>(static_cast<std::uintptr_t>(0x3617E002u));
+
+    lcp::LifetimeConsistencyProof reject{};
+    reject.would_allow_commit = false;
+    lcp::stamp_lifetime_consistency_proof_for(e1, reject);
+    dens::note_last_densify_result_for(e1, /*envframe_ok=*/false, /*dual_epoch_ok=*/true);
+    lcp::LifetimeConsistencyProof healthy{};
+    lcp::stamp_lifetime_consistency_proof_for(e2, healthy);
+    dens::note_last_densify_result_for(e2, /*envframe_ok=*/true, /*dual_epoch_ok=*/true);
+
+    Fiber f1([]() {}, /*stack_size=*/64 * 1024);
+    Fiber f2([]() {}, /*stack_size=*/64 * 1024);
+    f1.set_evaluator_id(e1);
+    f2.set_evaluator_id(e2);
+
+    const auto m_lifetime =
+        aura::serve::steal_invariant_mask(aura::serve::StealInvariant::LifetimeProofOk);
+    const auto m_envframe =
+        aura::serve::steal_invariant_mask(aura::serve::StealInvariant::EnvFrameOk);
+
+    // AC1/AC2: hard mode — E1 keyed Reject, E2 own-proof quiet.
+    // is_steal_snapshot_hard_mode() = !soft_override && (AURA_STEAL_SNAPSHOT_HARD=1
+    // || production probe): tests have no production bootstrap, so pin the env
+    // lever the gate itself reads (member runs isolated in a fork — the env
+    // stays local to this child). Soft override still wins for AC3 (checked
+    // first inside the gate).
+    ::setenv("AURA_STEAL_SNAPSHOT_HARD", "1", 1);
+    aura::serve::set_steal_snapshot_soft_for_test(false);
+    const auto bits1 =
+        aura::serve::evaluate_residual_hard_and_bits(&f1, f1.mutation_safety_snapshot(), false);
+    CHECK((bits1 & m_lifetime) != 0, "3617 AC1: E1 densify Reject → LifetimeProofOk on E1 fiber");
+    CHECK((bits1 & m_envframe) != 0, "3617 AC2: E1 envframe fail → EnvFrameOk on E1 fiber");
+    const auto bits2 =
+        aura::serve::evaluate_residual_hard_and_bits(&f2, f2.mutation_safety_snapshot(), false);
+    CHECK((bits2 & m_lifetime) == 0, "3617 AC1: E2 own proof would_allow → no LifetimeProofOk");
+    CHECK((bits2 & m_envframe) == 0, "3617 AC2: E2 own densify ok → no EnvFrameOk");
+
+    // AC3: Soft skips the Lifetime arm; no identity → both arms quiet.
+    aura::serve::set_steal_snapshot_soft_for_test(true);
+    const auto bits1_soft =
+        aura::serve::evaluate_residual_hard_and_bits(&f1, f1.mutation_safety_snapshot(), false);
+    CHECK((bits1_soft & m_lifetime) == 0, "3617 AC3: Soft skips Lifetime arm");
+    aura::serve::set_steal_snapshot_soft_for_test(false);
+    Fiber f3([]() {}, /*stack_size=*/64 * 1024); // no Guard-entered identity
+    const auto bits3 =
+        aura::serve::evaluate_residual_hard_and_bits(&f3, f3.mutation_safety_snapshot(), false);
+    CHECK((bits3 & m_lifetime) == 0 && (bits3 & m_envframe) == 0,
+          "3617 AC3: no evaluator_id → quiet skip (zero extra)");
+    aura::serve::reset_steal_snapshot_soft_for_test();
+    ::unsetenv("AURA_STEAL_SNAPSHOT_HARD");
+
+    CHECK(read_file("docs/design/3617-steal-eval-keyed-residual.md").empty(),
+          "3617: no docs/design");
+    CHECK(read_file("tests/serve/test_issue_3617.cpp").empty(), "3617: no invent");
+}
+
 int run_test_steal_complete_gc_defer() {
     std::println("=== Issue #2203: steal-complete single entry (clear_gc_defer + metric) ===");
     std::println("=== Issue #2314: residual defer clear interlock (share helper, idempotent) ===");
@@ -560,6 +678,7 @@ int run_test_steal_complete_gc_defer() {
     std::println("\n=== #3552: fiber_id dimension isolates depth_slot across hot-swap ===");
     ac3552_signature_and_callers_source_cite();
     ac3552_fiber_id_zero_legacy_path_source_cite();
+    ac3617_eval_keyed_residual();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

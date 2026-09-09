@@ -192,13 +192,20 @@ namespace {
     }
     // StealInvariant::EnvFrameOk — Issue #2745: EnvFrame residual after densify.
     // Issue #3001: chaos soak fail-closed if this arm grows without RejectHard.
-    if (!skip(StealInvariant::EnvFrameOk) &&
-        aura::core::densify_consistency::last_densify_call_seq() > 0) {
-        if (!aura::core::densify_consistency::last_densify_envframe_ok() ||
-            !aura::core::densify_consistency::last_densify_dual_epoch_ok()) {
-            fail_bits |= steal_invariant_mask(StealInvariant::EnvFrameOk);
-            if (bump_counters)
-                note_steal_invariant_fail(StealInvariant::EnvFrameOk);
+    // Issue #3617: read the VICTIM evaluator's own densify result (#2727
+    // identity) — the process-last read let one evaluator's Reject freeze
+    // steal for the whole pool. No Guard-entered identity (cold/test fiber)
+    // → skip, zero extra atomics beyond the identity load.
+    if (!skip(StealInvariant::EnvFrameOk)) {
+        void* victim_eval_id = aura_fiber_evaluator_id_for_steal_safety(stolen);
+        if (victim_eval_id != nullptr &&
+            aura::core::densify_consistency::last_densify_call_seq_for(victim_eval_id) > 0) {
+            if (!aura::core::densify_consistency::last_densify_envframe_ok_for(victim_eval_id) ||
+                !aura::core::densify_consistency::last_densify_dual_epoch_ok_for(victim_eval_id)) {
+                fail_bits |= steal_invariant_mask(StealInvariant::EnvFrameOk);
+                if (bump_counters)
+                    note_steal_invariant_fail(StealInvariant::EnvFrameOk);
+            }
         }
     }
     // StealInvariant::LifetimeProofOk — Issue #2957 residual arm (f).
@@ -212,9 +219,14 @@ namespace {
     if (!skip(StealInvariant::LifetimeProofOk) &&
         (is_steal_snapshot_hard_mode() || aura_runtime_multi_worker_production_latched() != 0)) {
         namespace lcp = aura::core::lifetime_consistency_proof;
-        if (lcp::last_lifetime_consistency_proof_present() &&
-            aura::core::densify_consistency::last_densify_call_seq() > 0 &&
-            !lcp::last_lifetime_consistency_would_allow()) {
+        // Issue #3617: victim-eval keyed — the process-last read fired on a
+        // foreign evaluator's Reject. All three terms now read the victim's
+        // own slots (#2727 identity); no slot / no identity → quiet skip.
+        void* victim_eval_id = aura_fiber_evaluator_id_for_steal_safety(stolen);
+        if (victim_eval_id != nullptr &&
+            lcp::last_lifetime_consistency_proof_present_for(victim_eval_id) &&
+            aura::core::densify_consistency::last_densify_call_seq_for(victim_eval_id) > 0 &&
+            !lcp::last_lifetime_consistency_would_allow_for(victim_eval_id)) {
             fail_bits |= steal_invariant_mask(StealInvariant::LifetimeProofOk);
             if (bump_counters)
                 note_steal_invariant_fail(StealInvariant::LifetimeProofOk);

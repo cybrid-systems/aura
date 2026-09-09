@@ -326,6 +326,81 @@ inline void note_last_densify_dual_epoch_ok(bool ok) noexcept {
 [[nodiscard]] inline bool last_densify_dual_epoch_ok() noexcept {
     return g_last_densify_dual_epoch_ok.load(std::memory_order_relaxed) != 0;
 }
+
+// ── Issue #3617: per-evaluator densify last-result slots (#2727 identity) ──
+// Mirrors the process-wide densify atomics above keyed on the victim
+// evaluator id, so one evaluator's densify Reject cannot RejectHard steal
+// of another evaluator's fibers (process-last over-reject). Lock-free:
+// fields stored relaxed, published by the seq release-increment; readers
+// load seq (acquire) then fields (relaxed).
+struct DensifyEvalSlot {
+    std::atomic<const void*> id{nullptr};
+    std::atomic<std::uint8_t> envframe_ok{1};
+    std::atomic<std::uint8_t> dual_epoch_ok{1};
+    std::atomic<std::uint64_t> seq{0};
+};
+inline constexpr std::size_t kDensifyEvalSlotCount = 64; // power of two
+inline DensifyEvalSlot g_densify_eval_slots[kDensifyEvalSlotCount];
+
+inline std::size_t densify_eval_slot_base(const void* eval_id) noexcept {
+    auto h = reinterpret_cast<std::uintptr_t>(eval_id);
+    h ^= h >> 17;
+    h *= 0x9E3779B97F4A7C15ULL;
+    h ^= h >> 29;
+    return static_cast<std::size_t>(h) & (kDensifyEvalSlotCount - 1);
+}
+
+inline DensifyEvalSlot* densify_eval_slot_find(const void* eval_id) noexcept {
+    if (!eval_id)
+        return nullptr;
+    const std::size_t h = densify_eval_slot_base(eval_id);
+    for (std::size_t i = 0; i < kDensifyEvalSlotCount; ++i) {
+        auto& s = g_densify_eval_slots[(h + i) & (kDensifyEvalSlotCount - 1)];
+        if (s.id.load(std::memory_order_acquire) == eval_id)
+            return &s;
+    }
+    return nullptr;
+}
+
+// Publish (envframe_ok, dual_epoch_ok) for eval_id and bump its seq. The
+// bump site passes the process atomics' current values (just written by
+// this thread within the same densify flow). A full table degrades to
+// process-only (same visibility as today).
+inline void note_last_densify_result_for(const void* eval_id, bool envframe_ok,
+                                         bool dual_epoch_ok) noexcept {
+    if (!eval_id)
+        return;
+    const std::size_t h = densify_eval_slot_base(eval_id);
+    DensifyEvalSlot* slot = nullptr;
+    for (std::size_t i = 0; i < kDensifyEvalSlotCount && slot == nullptr; ++i) {
+        auto& s = g_densify_eval_slots[(h + i) & (kDensifyEvalSlotCount - 1)];
+        if (s.id.load(std::memory_order_acquire) == eval_id) {
+            slot = &s;
+        } else {
+            const void* expected = nullptr;
+            if (s.id.compare_exchange_strong(expected, eval_id, std::memory_order_acq_rel,
+                                             std::memory_order_acquire))
+                slot = &s;
+        }
+    }
+    if (!slot)
+        return;
+    slot->envframe_ok.store(envframe_ok ? 1 : 0, std::memory_order_relaxed);
+    slot->dual_epoch_ok.store(dual_epoch_ok ? 1 : 0, std::memory_order_relaxed);
+    slot->seq.fetch_add(1, std::memory_order_release);
+}
+[[nodiscard]] inline std::uint64_t last_densify_call_seq_for(const void* eval_id) noexcept {
+    auto* s = densify_eval_slot_find(eval_id);
+    return s ? s->seq.load(std::memory_order_acquire) : 0;
+}
+[[nodiscard]] inline bool last_densify_envframe_ok_for(const void* eval_id) noexcept {
+    auto* s = densify_eval_slot_find(eval_id);
+    return !s || s->envframe_ok.load(std::memory_order_relaxed) != 0;
+}
+[[nodiscard]] inline bool last_densify_dual_epoch_ok_for(const void* eval_id) noexcept {
+    auto* s = densify_eval_slot_find(eval_id);
+    return !s || s->dual_epoch_ok.load(std::memory_order_relaxed) != 0;
+}
 inline void note_last_densify_remap_pairing_forced(bool forced) noexcept {
     g_last_densify_remap_pairing_forced.store(forced ? 1 : 0, std::memory_order_relaxed);
 }

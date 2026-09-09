@@ -3318,6 +3318,9 @@ Evaluator::MutationBoundaryGuard::MutationBoundaryGuard(
         // re-entry; zero cost on non-mutation fibers.
         if (aura::serve::g_current_fiber) {
             aura::serve::g_current_fiber->set_evaluator_id(static_cast<void*>(ev_));
+            // Issue #3617: core-side TLS mirror — arena stamp sites key
+            // per-eval slots on this identity without a serve dependency.
+            aura::gc_hooks::set_current_eval_identity(static_cast<void*>(ev_));
         }
     }
     // Issue #3194: publish TLS so same-fiber inbody poll can force-release.
@@ -4989,6 +4992,11 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
         aura::core::densify_consistency::note_last_densify_closure_remount_ok(
             densify_consistency.closure_remount_ok, cl_fc);
         aura::core::densify_consistency::bump_last_densify_call_seq();
+        // Issue #3617: mirror this evaluator's fresh densify result into its
+        // keyed slot (values just noted process-wide on this thread).
+        aura::core::densify_consistency::note_last_densify_result_for(
+            static_cast<void*>(ev_), aura::core::densify_consistency::last_densify_envframe_ok(),
+            aura::core::densify_consistency::last_densify_dual_epoch_ok());
         // Issue #2619: publish Agent-visible Moving densify health window.
         // Soft/no densify → vacuous healthy (would-allow-mutate=true). Production
         // hard (#2596) + incomplete remap → agent_throttle (orch refuse mutate).
@@ -5385,6 +5393,9 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
                     layout.flat_gen, layout.env_gen,
                     aura::gc_hooks::residual_defer_after_exit_total(), efl.mutation_epoch);
                 stamp_lifetime_consistency_proof(proof);
+                // Issue #3617: key the same proof on this evaluator's identity.
+                aura::core::lifetime_consistency_proof::stamp_lifetime_consistency_proof_for(
+                    static_cast<void*>(ev_), proof);
             }
             // Issue #2507 / #2552 / #2910: escape-clear + type fence already
             // ran above (before TypeLinearCommitProof freeze) under Moving
@@ -5688,6 +5699,8 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
     // throughout the Guard lifetime. Atomic store nullptr (release).
     if (is_outermost_ && aura::serve::g_current_fiber) {
         aura::serve::g_current_fiber->clear_evaluator_id();
+        // Issue #3617: drop the core-side TLS mirror with the fiber field.
+        aura::gc_hooks::set_current_eval_identity(nullptr);
     }
     // Issue #3312: last writer of restamp_eager_ on nested production
     // success. exit_mutation_boundary cascade / wrap restamp_all can

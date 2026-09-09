@@ -48,6 +48,7 @@
 #define AURA_CORE_LIFETIME_CONSISTENCY_PROOF_HH
 
 #include <atomic>
+#include <cstddef>
 #include <cstdint>
 
 namespace aura::core::lifetime_consistency_proof {
@@ -193,6 +194,81 @@ inline void stamp_lifetime_consistency_proof(const LifetimeConsistencyProof& p) 
     g_lcp_last_force_reason_code().store(p.force_reason_code, std::memory_order_relaxed);
     g_lcp_last_mutation_epoch().store(p.mutation_epoch, std::memory_order_relaxed);
     g_lcp_stamped_total().fetch_add(1, std::memory_order_relaxed);
+}
+
+// ── Issue #3617: per-evaluator last-proof slots (#2727 identity) ──────────
+// The process-wide last-proof above is global: one evaluator's densify
+// Reject used to RejectHard every subsequent steal in the pool (multi-
+// tenant freeze). These slots key the same proof on the victim evaluator
+// id (the void* MutationBoundaryGuard stamps on outermost enter). Lock-
+// free — no steal-decision mutex: stamp stores would_allow (relaxed) then
+// publishes with present (release); read compares id (acquire), gates on
+// present (acquire), then loads would_allow. A fiber with no Guard-entered
+// identity or no stamped slot reads quiet-skip (same zero-cost shape as
+// the Soft skip).
+struct LcpEvalSlot {
+    std::atomic<const void*> id{nullptr};
+    std::atomic<std::uint8_t> would_allow{1};
+    std::atomic<std::uint8_t> present{0};
+};
+inline constexpr std::size_t kLcpEvalSlotCount = 64; // power of two
+inline LcpEvalSlot g_lcp_eval_slots[kLcpEvalSlotCount];
+
+inline std::size_t lcp_eval_slot_base(const void* eval_id) noexcept {
+    auto h = reinterpret_cast<std::uintptr_t>(eval_id);
+    h ^= h >> 17;
+    h *= 0x9E3779B97F4A7C15ULL;
+    h ^= h >> 29;
+    return static_cast<std::size_t>(h) & (kLcpEvalSlotCount - 1);
+}
+
+inline LcpEvalSlot* lcp_eval_slot_find(const void* eval_id) noexcept {
+    if (!eval_id)
+        return nullptr;
+    const std::size_t h = lcp_eval_slot_base(eval_id);
+    for (std::size_t i = 0; i < kLcpEvalSlotCount; ++i) {
+        auto& s = g_lcp_eval_slots[(h + i) & (kLcpEvalSlotCount - 1)];
+        if (s.id.load(std::memory_order_acquire) == eval_id)
+            return &s;
+    }
+    return nullptr;
+}
+
+// Keyed stamp: process-wide publish above + this evaluator's slot. A full
+// table degrades to process-only (same visibility as today).
+inline void stamp_lifetime_consistency_proof_for(const void* eval_id,
+                                                 const LifetimeConsistencyProof& p) noexcept {
+    stamp_lifetime_consistency_proof(p);
+    if (!eval_id)
+        return;
+    const std::size_t h = lcp_eval_slot_base(eval_id);
+    LcpEvalSlot* slot = nullptr;
+    for (std::size_t i = 0; i < kLcpEvalSlotCount && slot == nullptr; ++i) {
+        auto& s = g_lcp_eval_slots[(h + i) & (kLcpEvalSlotCount - 1)];
+        if (s.id.load(std::memory_order_acquire) == eval_id) {
+            slot = &s;
+        } else {
+            const void* expected = nullptr;
+            if (s.id.compare_exchange_strong(expected, eval_id, std::memory_order_acq_rel,
+                                             std::memory_order_acquire))
+                slot = &s;
+        }
+    }
+    if (!slot)
+        return;
+    slot->would_allow.store(p.would_allow_commit ? 1 : 0, std::memory_order_relaxed);
+    slot->present.store(1, std::memory_order_release);
+}
+
+[[nodiscard]] inline bool
+last_lifetime_consistency_proof_present_for(const void* eval_id) noexcept {
+    auto* s = lcp_eval_slot_find(eval_id);
+    return s && s->present.load(std::memory_order_acquire) != 0;
+}
+
+[[nodiscard]] inline bool last_lifetime_consistency_would_allow_for(const void* eval_id) noexcept {
+    auto* s = lcp_eval_slot_find(eval_id);
+    return !s || s->would_allow.load(std::memory_order_relaxed) != 0;
 }
 
 // Cheap high-frequency poll: reads the three atomics only (no full-struct
