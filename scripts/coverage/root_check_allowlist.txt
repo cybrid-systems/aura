@@ -70,3 +70,4 @@ check_remount_densify_pairing_strip_3612.py
 check_mailbox_holder_send_lock_order_3613.py
 check_outermost_persist_order_3614.py
 check_dual_graph_parity_cone_3615.py
+check_chaos_guard_hold_smoke_3620.py

@@ -29,6 +29,10 @@ Contract:
      hard-fail gate; full SOAK/FULL path unchanged.
   AC6 Reproducible seed via AURA_CHAOS_SEED (default 1) + documented
      reproduction steps in test file header (AURA_CHAOS_* env knobs).
+  AC7 (#3620 residual): PR smoke fail-closed doors for the Guard-held
+     mailbox (#3613) + no-edge hold (#3619) windows live in the same
+     chaos binary (ac3620_1_*), default invocation — PR smoke green now
+     covers the I4/I5 windows; nightly FULL/SOAK unchanged.
 
 Exit 0 = all AC rows satisfied.
 """

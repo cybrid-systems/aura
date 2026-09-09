@@ -12021,6 +12021,35 @@ def cmd_dual_graph_parity_cone_3615_coverage():
     return 0
 
 
+def cmd_chaos_guard_hold_smoke_3620_coverage():
+    """Issue #3620: PR chaos smoke fail-closed doors for the two
+    deploy-blocking windows the default pass never exercised:
+
+    - #3613 (I4): Guard-held mailbox push — note_mailbox_deferred_under_
+      boundary BPs BEFORE any lock (no Workspace→Mailbox inversion).
+    - #3619 (I5): no-edge hold past the 2×SLO inbody window — busy-path/
+      inbody poll arms the force, aura_mutation_hold_no_edge_still_held
+      reads still-held on the sticky bus, Ready/admit fail closed.
+
+    One fixed-seed case (ac3620_1_*) in the existing chaos binary, default
+    invocation (no FULL=1). Hard-fail on push Ok while boundary live /
+    mismatch delta / torn query-stable export. Soft split stays
+    observe-only (reject_enabled gate). No new counter, no new query key.
+    No docs/design/3620-*, no tests/**/test_issue_3620.cpp.
+    """
+    print(f"{B}=== chaos guard-hold smoke (#3620) ==={N}")
+    script = ROOT / "scripts" / "check_chaos_guard_hold_smoke_3620.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script), "--strict"], cwd=ROOT)
+    if r.returncode != 0:
+        fail("chaos guard-hold smoke (#3620) contract rows failed")
+        return 1
+    ok("chaos guard-hold smoke (#3620) clean")
+    return 0
+
+
 def cmd_query_stable_hard_reject_torn_latch_3386_coverage():
     """Issue #3386: shared probe Evaluator::query_stable_hard_reject_torn()
     must OR restamp_over_budget_torn() under multi-worker latch (I6 residual).
@@ -21774,6 +21803,7 @@ def cmd_gate():
         or cmd_mailbox_holder_send_lock_order_3613_coverage()
         or cmd_outermost_persist_order_3614_coverage()
         or cmd_dual_graph_parity_cone_3615_coverage()
+        or cmd_chaos_guard_hold_smoke_3620_coverage()
     )
     if rc:
         return rc

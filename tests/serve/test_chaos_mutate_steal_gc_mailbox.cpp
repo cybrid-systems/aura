@@ -85,6 +85,7 @@
 #include "serve/scheduler.h"
 #include "compiler/mutation_hold_budget.h" // #3002 forced-fail-closed soak
 #include "serve/steal_safety.h"            // Issue #2755/#2901: residual hard-AND + rearm race
+#include "serve/runtime_production_abi.h"  // Issue #3620: multi-worker latch test seam
 
 #include <atomic>
 #include <chrono>
@@ -2055,6 +2056,190 @@ static void ac3036_mailbox_residual_prod_fail_closed_cite() {
 
 } // namespace
 
+// ── Issue #3620: PR smoke fail-closed doors for the two deploy-blocking
+// windows the default chaos pass never exercised deterministically:
+//   Window I4 (#3613): a sender pushes while the shared Evaluator holds a
+//     live outermost MutationBoundaryGuard — push must Backpressure via
+//     note_mailbox_deferred_under_boundary (multi_fiber_mailbox.h) BEFORE
+//     any lock acquisition (no Workspace→Mailbox inversion, no hang).
+//   Window I5 (#3619): the holder runs a no-edge body (no
+//     check_gc_safepoint / yield) past the 2×SLO inbody window — the
+//     busy-path/inbody poll arms the no-edge force, the strong probe
+//     aura_mutation_hold_no_edge_still_held (fiber.cpp) reads still-held
+//     on the sticky bus, and Ready/admit fail closed.
+// Fixed seed, N small, default invocation (no FULL=1). Reuses existing
+// faces only: steal snapshot counters + mailbox BP + torn probe (AC4).
+static void ac3620_1_guard_held_mailbox_no_edge_hold_windows() {
+    std::println("\n--- #3620 AC1/AC2: Guard-held mailbox BPs + no-edge hold residual (fixed-seed "
+                 "smoke) ---");
+    const auto mismatch0 = Fiber::mutation_steal_snapshot_mismatch_total();
+    const auto lock_viol0 =
+        aura::compiler::lock_order::g_lock_order_violation_total.load(std::memory_order_relaxed);
+
+    // Production split under test: #3619 soft is metric-only, so latch
+    // production defaults + the multi-worker latch (same shape run_chaos_pass
+    // uses under the #2902/#2856/#2554 hard-fail profiles).
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    CHECK(aura::compiler::typed_audit::production_defaults_active(),
+          "#3620: production_defaults_active (production split under test)");
+    aura::serve::set_production_multi_worker_latched_for_test(true);
+
+    CompilerService cs;
+    CHECK(cs.eval("(+ 1 1)").has_value(), "#3620: warm eval");
+    auto& ev = cs.evaluator();
+
+    const auto slo_us = aura::compiler::mutation_hold_slo_us();
+    CHECK(slo_us > 0, "#3620: hold SLO configured");
+    // No-edge body ≥6×SLO: elapsed is measured from cancel-arm time, and
+    // the arm can be (re)stamped by a peer edge as late as ~1×SLO into the
+    // hold, with the 2×SLO inbody bound measured from that arm — so the
+    // bump lands ~3×SLO in and the still-held probe window gets ≥3×SLO.
+    const auto body_ns = static_cast<std::int64_t>(slo_us) * 6 * 1000;
+
+    MultiFiberMailbox mailbox(/*high_water=*/64);
+    Scheduler sched(2);
+
+    std::atomic<bool> guard_held{false};
+    std::atomic<bool> body_done{false};
+    std::atomic<int> push_ok_while_live{0}; // AC2: hard-fail if > 0
+    std::atomic<int> push_bp{0};            // #3613: expect > 0
+    std::atomic<int> no_edge_probe_seen{0}; // #3619: expect > 0 while held
+
+    std::atomic<bool> stop_peers{false};
+
+    // Peer fibers: normal cooperative bodies (Explicit edges) — real steal
+    // traffic during the window; no steal may tear the live Guard (AC2:
+    // mismatch delta 0).
+    for (int i = 0; i < 2; ++i) {
+        sched.spawn([&stop_peers]() {
+            while (!stop_peers.load(std::memory_order_acquire)) {
+                volatile std::uint64_t acc = 0;
+                for (int j = 0; j < 64; ++j)
+                    acc += static_cast<std::uint64_t>(j);
+                (void)acc;
+                Fiber::yield(YieldReason::Explicit);
+            }
+        });
+    }
+
+    // Holder: RAW thread — a scheduler-managed fiber gets nudged by the 1×SLO
+    // urgent-inbody arm (the production machinery works), so the un-nudgeable
+    // no-edge window (#3619: native/JIT body stays inside resume()) only
+    // materializes on a non-fiber holder. No cooperative edge exists here
+    // until the 3×SLO spin ends.
+    std::thread holder([&]() {
+        bool ok = false;
+        {
+            auto gr = Evaluator::MutationBoundaryGuard::try_acquire(ev, 1, &ok);
+            guard_held.store(ok, std::memory_order_release);
+            if (ok) {
+                const auto deadline =
+                    std::chrono::steady_clock::now() + std::chrono::nanoseconds(body_ns);
+                volatile std::uint64_t acc = 0;
+                while (std::chrono::steady_clock::now() < deadline)
+                    for (int i = 0; i < 512; ++i)
+                        acc += static_cast<std::uint64_t>(i);
+                (void)acc;
+            }
+            guard_held.store(false, std::memory_order_release);
+        } // Guard dtor: BoundaryExit cooperative edge
+        body_done.store(true, std::memory_order_release);
+    });
+
+    std::thread io([&sched]() { sched.run(); });
+
+    // Peer: while A holds the outermost Guard — push must BP (#3613:
+    // note_mailbox_deferred_under_boundary BEFORE any lock), and the
+    // busy-path poll (#3588) drives the inbody window + no-edge force
+    // (#3619) from a foreign thread (never drops the holder's lock).
+    while (!body_done.load(std::memory_order_acquire)) {
+        if (guard_held.load(std::memory_order_acquire)) {
+            if (mailbox.push(MailMessage{}) == PushStatus::Ok)
+                push_ok_while_live.fetch_add(1, std::memory_order_relaxed);
+            else
+                push_bp.fetch_add(1, std::memory_order_relaxed);
+            (void)aura::serve::aura_hold_budget_poll_busy_path();
+            if (aura::serve::aura_mutation_hold_no_edge_still_held() != 0)
+                no_edge_probe_seen.fetch_add(1, std::memory_order_relaxed);
+        }
+        std::this_thread::sleep_for(std::chrono::microseconds(200));
+    }
+
+    // Post-window: wrapper/inbody poll — depth==0 && !held (#3620 Goal).
+    (void)aura::serve::aura_hold_budget_poll_inbody_window();
+    CHECK(aura_evaluator_mutation_boundary_depth() == 0,
+          "#3620: boundary depth 0 after the no-edge body exits (inbody/wrapper poll)");
+    CHECK(aura_evaluator_mutation_boundary_held() == 0,
+          "#3620: boundary not held after the no-edge body exits");
+    CHECK(!aura::compiler::mutation_hold_live_snapshot().held,
+          "#3620: hold snapshot clear after the cooperative edge");
+
+    stop_peers.store(true, std::memory_order_release);
+    holder.join();
+    sched.stop();
+    io.join();
+
+    // AC2 hard-fails + window positives:
+    CHECK(push_ok_while_live.load() == 0,
+          "#3620 AC2: push Ok while shared Evaluator boundary live → hard-fail");
+    CHECK(push_bp.load() > 0, "#3620 AC1: Guard-held mailbox push Backpressures (#3613)");
+    CHECK(no_edge_probe_seen.load() > 0,
+          "#3620 AC1/AC2: no-edge hold residual probe fired while held (#3619 sticky bus)");
+    // No steal completed Ok against the held fiber: an Ok-steal mid-guard
+    // trips the snapshot mismatch on resume — delta must stay 0 (RejectHard
+    // deltas are the safe door; the mismatch is the bug).
+    CHECK(Fiber::mutation_steal_snapshot_mismatch_total() == mismatch0,
+          "#3620 AC2: no steal Ok while A held (mutation_steal_snapshot_mismatch delta 0)");
+    // Abort dual-restore canary quiet: no lock-order inversion during the
+    // Guard-held push window.
+    CHECK(aura::compiler::lock_order::g_lock_order_violation_total.load(
+              std::memory_order_relaxed) == lock_viol0,
+          "#3620 AC2: dual-restore/lock-order canary quiet (no Workspace→Mailbox inversion)");
+    // Query-stable export: torn latch clear — no pre-mutate gen export.
+    CHECK(!ev.query_stable_hard_reject_torn(),
+          "#3620 AC2: query-stable torn latch clear (no pre-mutate gen export after abort)");
+
+    aura::serve::set_production_multi_worker_latched_for_test(false);
+}
+
+static void ac3620_2_windows_source_cite() {
+    std::println("\n--- #3620 AC3-AC6: soft split / no new keys / soak cite / anchors ---");
+    const auto fcpp = read_file("src/serve/fiber.cpp");
+    const auto mbh = read_file("src/serve/multi_fiber_mailbox.h");
+    const auto sh = read_file("src/serve/steal_safety.h");
+    const auto chaos = read_file("tests/serve/test_chaos_mutate_steal_gc_mailbox.cpp");
+    const auto soak = read_file("scripts/coverage/checks/check_chaos_soak_2679.py");
+    // AC3: Soft / sandbox=off path of the same binary remains observe-only
+    // for force-unlock (existing production split in the inbody poll).
+    CHECK(fcpp.find("if (!mutation_hold_budget_reject_enabled())") != std::string::npos,
+          "3620 AC3: reject_enabled gate in the inbody poll (fiber.cpp)");
+    CHECK(fcpp.find("Soft / sandbox=off: metric-only") != std::string::npos,
+          "3620 AC3: soft observe-only split documented at the force site");
+    // AC4: no new counter, no new query key — reuse steal RejectHard bits +
+    // mailbox BP + restamp torn. Scan the production surfaces the case
+    // touches (this file's own CHECK strings mention the needles, so
+    // scanning it here would self-match — production files only).
+    CHECK(fcpp.find("g_3620_") == std::string::npos && mbh.find("schema-3620") == std::string::npos,
+          "3620 AC4: no new counter / query key in production surfaces");
+    // AC5: cite in the existing soak linter / AC comments only.
+    CHECK(soak.find("3620") != std::string::npos,
+          "3620 AC5: check_chaos_soak_2679.py cites the PR smoke windows");
+    // AC6: source-cite the case body + both companion fixes at file:function.
+    CHECK(chaos.find("note_mailbox_deferred_under_boundary") != std::string::npos,
+          "3620 AC6: case cites #3613 (multi_fiber_mailbox.h "
+          "note_mailbox_deferred_under_boundary)");
+    CHECK(chaos.find("aura_mutation_hold_no_edge_still_held") != std::string::npos,
+          "3620 AC6: case cites #3619 (fiber.cpp aura_mutation_hold_no_edge_still_held)");
+    CHECK(mbh.find("Issue #3613") != std::string::npos,
+          "3620 AC6: mailbox push BP gate cites #3613");
+    CHECK(sh.find("aura_mutation_hold_no_edge_still_held") != std::string::npos,
+          "3620 AC6: steal_safety.h residual-zero reader consults the #3619 probe");
+    CHECK(read_file("tests/serve/test_issue_3620.cpp").empty(),
+          "3620: no test_issue_3620.cpp (#81934 — extend existing suites)");
+    CHECK(read_file("docs/design/3620-guard-held-mailbox-no-edge-hold.md").empty(),
+          "3620: no docs/design (per #1655)");
+}
+
 int run_test_chaos_mutate_steal_gc_mailbox() {
     std::println("=== Issue #2352/#2380/#2513/#2554/#2902: chaos mutate×steal×GC×mailbox "
                  "production gate ===");
@@ -2150,6 +2335,12 @@ int run_test_chaos_mutate_steal_gc_mailbox() {
     ac2902_3_sustained_mode();
     ac2902_4_structural_source_cite();
     ac2902_5_release_blocker_docs_and_linter();
+
+    // Issue #3620: PR smoke fail-closed doors for the two deploy-blocking
+    // windows — Guard-held mailbox push (#3613) + no-edge hold residual
+    // (#3619). Fixed seed, default invocation (AC1: no FULL=1 required).
+    ac3620_1_guard_held_mailbox_no_edge_hold_windows();
+    ac3620_2_windows_source_cite();
 
     // Optional fault-only mode for debugging inject paths.
     const std::string fault = chaos_fault();
