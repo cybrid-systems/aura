@@ -449,10 +449,19 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const
     AURA_HOT_RECORD();
     types::note_value_tag_hot_path();
     soa_view::record_edsl_apply_soa_path();
+    // Issue #3626 (#252/#3421 residual): process-wide fetch_add on every
+    // apply is I1 eval tax under the production pack — the dashboard
+    // counter rode inter-core coherency on the shared entry. Soft/unit
+    // keep the dual-path counter; production pack + NDEBUG compiles it
+    // out (AURA_HOT_RECORD remains the sampled observe arm). #3421
+    // densify refuse + dispatch below unchanged; the FFI arm stays with
+    // #3602.
+#if !defined(NDEBUG) || !defined(AURA_PRODUCTION_PACK)
     if (compiler_metrics_) {
         auto* m = static_cast<struct CompilerMetrics*>(compiler_metrics_);
         m->closure_calls_total.fetch_add(1, std::memory_order_relaxed);
     }
+#endif
     // Check for foreign function closure (cid < ffi_runtime_.func_count())
     if (cid < ffi_runtime_.func_count()) {
         if (compiler_metrics_) {

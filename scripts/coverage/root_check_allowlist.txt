@@ -76,3 +76,4 @@ check_type_dynamic_production_3622.py
 check_occurrence_recover_regate_3623.py
 check_type_export_face_3624.py
 check_render_fast_audit_3625.py
+check_closure_calls_hotpath_3626.py
