@@ -2770,9 +2770,11 @@ static void ac3308_1_densify_lcp_stamp_before_canary_clear() {
     }
     // Walk back 4000 chars to find the stamp call BEFORE the clear.
     const std::string scope = arena.substr(std::max<std::size_t>(0, clear_pos - 4000), clear_pos);
-    CHECK(scope.find("stamp_lifetime_consistency_proof(") != std::string::npos,
-          "3308 AC1: stamp_lifetime_consistency_proof(...) called BEFORE canary clear (closes "
-          "canary race window)");
+    // #3617 keyed the stamp on evaluator identity via the _for variant; match
+    // the stem so both plain and _for call shapes satisfy the gate.
+    CHECK(scope.find("stamp_lifetime_consistency_proof") != std::string::npos,
+          "3308 AC1: stamp_lifetime_consistency_proof[_for](...) called BEFORE canary clear "
+          "(closes canary race window)");
 }
 
 static void ac3308_2_lcp_include_added() {
@@ -2785,7 +2787,7 @@ static void ac3308_2_lcp_include_added() {
 static void ac3308_3_proof_would_allow_commit_reflects_state() {
     std::println("\n--- #3308 AC3: proof.would_allow_commit reflects incomplete state ---");
     const auto arena = read_file("src/core/arena.ixx");
-    const auto stamp_pos = arena.find("stamp_lifetime_consistency_proof(");
+    const auto stamp_pos = arena.find("stamp_lifetime_consistency_proof");
     if (stamp_pos == std::string::npos) {
         CHECK(false, "3308 AC3: stamp_lifetime_consistency_proof call not found");
         return;
