@@ -1559,6 +1559,10 @@ static void ac3003_2_soft_timeout_observe() {
 
 static void ac3003_3_no_stash_no_authority() {
     std::println("\n--- #3003 AC3: type-export authority + no live stash ---");
+    // Issue #3624: the TC accessor now consults the pending residual face,
+    // so the default-authoritative contract requires a clean face state
+    // (earlier members in the batch latch it without reset).
+    aura::compiler::typed_audit::reset_pending_full_solve_residual_for_test();
     TypeRegistry reg;
     aura::compiler::TypeChecker tc(reg);
     CHECK(tc.last_type_export_authoritative(), "3003 AC3: default authoritative");
@@ -3755,6 +3759,213 @@ static void ac3511_instance_repair_clean_reverify() {
     CHECK(read_file("tests/compiler/test_issue_3511.cpp").empty(), "3511 AC5: no invent");
 }
 
+// ── Issue #3624: budget-allow SOLVED must drop TypeChecker export authority
+// until drain SOLVED (#3307/#3237 residual — #3307 latched the IR face and
+// #3237's face consult lived on the Evaluator only; TC-level export/query
+// still exported refined TypeIds mid-batch).
+static void ac3624_1_budget_allow_denies_tc_export() {
+    std::println(
+        "\n--- #3624 AC1: budget-allow SOLVED → TC export authority false + vars empty ---");
+    using aura::compiler::SolverBudget;
+    using aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+    using aura::compiler::typed_audit::reset_pending_full_solve_residual_for_test;
+    auto save =
+        g_typed_mutation_audit_counters.production_defaults_active.load(std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.production_defaults_active.store(1, std::memory_order_relaxed);
+    reset_pending_full_solve_residual_for_test();
+
+    TypeRegistry reg;
+    ConstraintSystem cs(reg);
+    CompilerMetrics metrics;
+    cs.set_metrics(&metrics);
+    SolverBudget b{};
+    b.max_locality_residual = 4;
+    cs.set_solver_budget(b);
+    auto v = cs.fresh_var();
+    Constraint eq;
+    eq.kind = Constraint::EQUAL;
+    eq.lhs = v;
+    eq.rhs = reg.int_type();
+    cs.add_delta(std::move(eq));
+    cs.force_locality_pruned_for_test(2);
+    auto post = cs.escalate_locality_slo_if_production(SolveResult::SOLVED);
+    CHECK(post == SolveResult::SOLVED, "3624 AC1: budget-allow retains SOLVED");
+    CHECK(cs.pending_full_solve_roots_size() > 0, "3624 AC1: pending handoff non-empty");
+
+    // Default TC surface: last_delta_solve_status_ = SOLVED + flag true —
+    // only the #3307 residual face may deny authority (this is #3624).
+    aura::compiler::TypeChecker tc(reg);
+    CHECK(tc.last_delta_solve_status() == SolveResult::SOLVED, "3624 AC1: TC default SOLVED");
+    CHECK(!tc.type_export_is_authoritative(),
+          "ac3624_1_budget_allow_denies_tc_export: SOLVED+pending refuses TC export authority");
+    CHECK(!tc.last_type_export_authoritative(), "3624 AC1: flag path refuses too");
+    CHECK(tc.last_occurrence_vars().empty(), "3624 AC1: no live occurrence vars mid-batch");
+
+    reset_pending_full_solve_residual_for_test();
+    g_typed_mutation_audit_counters.production_defaults_active.store(save,
+                                                                     std::memory_order_relaxed);
+}
+
+static void ac3624_2_drain_solved_restores_tc_export() {
+    std::println("\n--- #3624 AC2: drain SOLVED restores TC export authority ---");
+    using aura::compiler::SolverBudget;
+    using aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+    using aura::compiler::typed_audit::reset_pending_full_solve_residual_for_test;
+    auto save =
+        g_typed_mutation_audit_counters.production_defaults_active.load(std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.production_defaults_active.store(1, std::memory_order_relaxed);
+    reset_pending_full_solve_residual_for_test();
+
+    TypeRegistry reg;
+    ConstraintSystem cs(reg);
+    CompilerMetrics metrics;
+    cs.set_metrics(&metrics);
+    SolverBudget b{};
+    b.max_locality_residual = 4;
+    cs.set_solver_budget(b);
+    auto v = cs.fresh_var();
+    Constraint eq;
+    eq.kind = Constraint::EQUAL;
+    eq.lhs = v;
+    eq.rhs = reg.int_type();
+    cs.add_delta(std::move(eq));
+    cs.force_locality_pruned_for_test(2);
+    auto post = cs.escalate_locality_slo_if_production(SolveResult::SOLVED);
+    CHECK(post == SolveResult::SOLVED, "3624 AC2: budget-allow retains SOLVED");
+
+    aura::compiler::TypeChecker tc(reg);
+    CHECK(!tc.type_export_is_authoritative(), "3624 AC2: authority denied in budget-allow window");
+    // #3190 restore point — drain is the only grant authority; no second drain.
+    auto drain = cs.drain_pending_full_solve_before_commit();
+    CHECK(drain == SolveResult::SOLVED, "3624 AC2: drain SOLVED via existing restore point");
+    CHECK(cs.pending_full_solve_roots_size() == 0, "3624 AC2: pending drained");
+    CHECK(tc.type_export_is_authoritative(),
+          "ac3624_2_drain_solved_restores_tc_export: authority returns after drain SOLVED");
+
+    reset_pending_full_solve_residual_for_test();
+    g_typed_mutation_audit_counters.production_defaults_active.store(save,
+                                                                     std::memory_order_relaxed);
+}
+
+static void ac3624_3_drain_nonsolved_stays_denied() {
+    std::println("\n--- #3624 AC3: drain non-SOLVED keeps export authority dropped (#3190) ---");
+    using aura::compiler::SolverBudget;
+    using aura::compiler::typed_audit::g_pending_full_solve_residual_reject_total;
+    using aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+    using aura::compiler::typed_audit::reset_pending_full_solve_residual_for_test;
+    auto save =
+        g_typed_mutation_audit_counters.production_defaults_active.load(std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.production_defaults_active.store(1, std::memory_order_relaxed);
+    reset_pending_full_solve_residual_for_test();
+
+    TypeRegistry reg;
+    ConstraintSystem cs(reg);
+    CompilerMetrics metrics;
+    cs.set_metrics(&metrics);
+    SolverBudget b{};
+    b.max_locality_residual = 4;
+    cs.set_solver_budget(b);
+    auto v = cs.fresh_var();
+    Constraint eq;
+    eq.kind = Constraint::EQUAL;
+    eq.lhs = v;
+    eq.rhs = reg.int_type();
+    cs.add_delta(std::move(eq));
+    cs.force_locality_pruned_for_test(2);
+    auto post = cs.escalate_locality_slo_if_production(SolveResult::SOLVED);
+    CHECK(post == SolveResult::SOLVED, "3624 AC3: budget-allow retains SOLVED");
+
+    // Post-allow conflict: the drain-time full solve must fail (#3190 reject arm).
+    auto w = cs.fresh_var();
+    Constraint c1;
+    c1.kind = Constraint::EQUAL;
+    c1.lhs = w;
+    c1.rhs = reg.int_type();
+    cs.add_delta(std::move(c1));
+    Constraint c2;
+    c2.kind = Constraint::EQUAL;
+    c2.lhs = w;
+    c2.rhs = reg.bool_type();
+    cs.add_delta(std::move(c2));
+    const auto rej0 = g_pending_full_solve_residual_reject_total.load(std::memory_order_relaxed);
+    auto drain = cs.drain_pending_full_solve_before_commit();
+    CHECK(drain != SolveResult::SOLVED, "3624 AC3: drain rejects unsolvable residual");
+    CHECK(g_pending_full_solve_residual_reject_total.load(std::memory_order_relaxed) > rej0,
+          "3624 AC3: #3190 reject counter bumped");
+    aura::compiler::TypeChecker tc(reg);
+    CHECK(!tc.type_export_is_authoritative(),
+          "ac3624_3_drain_nonsolved_stays_denied: no grant on drain non-SOLVED");
+
+    reset_pending_full_solve_residual_for_test();
+    g_typed_mutation_audit_counters.production_defaults_active.store(save,
+                                                                     std::memory_order_relaxed);
+}
+
+static void ac3624_4_soft_observe_unchanged() {
+    std::println("\n--- #3624 AC4: Soft observe+allow SOLVED unchanged, no extra latch ---");
+    using aura::compiler::SolverBudget;
+    using aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+    using aura::compiler::typed_audit::reset_pending_full_solve_residual_for_test;
+    auto save =
+        g_typed_mutation_audit_counters.production_defaults_active.load(std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.production_defaults_active.store(0, std::memory_order_relaxed);
+    reset_pending_full_solve_residual_for_test();
+
+    TypeRegistry reg;
+    ConstraintSystem cs(reg);
+    CompilerMetrics metrics;
+    cs.set_metrics(&metrics);
+    SolverBudget b{};
+    b.max_locality_residual = 4;
+    cs.set_solver_budget(b);
+    auto v = cs.fresh_var();
+    Constraint eq;
+    eq.kind = Constraint::EQUAL;
+    eq.lhs = v;
+    eq.rhs = reg.int_type();
+    cs.add_delta(std::move(eq));
+    cs.force_locality_pruned_for_test(2);
+    const auto obs0 = g_typed_mutation_audit_counters.solve_delta_locality_slo_observe_total.load(
+        std::memory_order_relaxed);
+    auto post = cs.escalate_locality_slo_if_production(SolveResult::SOLVED);
+    CHECK(post == SolveResult::SOLVED, "3624 AC4: Soft observe-allow retains SOLVED");
+    CHECK(g_typed_mutation_audit_counters.solve_delta_locality_slo_observe_total.load(
+              std::memory_order_relaxed) > obs0,
+          "3624 AC4: Soft observe counter bumped (no budget-allow latch)");
+
+    aura::compiler::TypeChecker tc(reg);
+    CHECK(tc.type_export_is_authoritative(),
+          "ac3624_4_soft_observe_unchanged: Soft SOLVED stays authoritative (no extra latch)");
+
+    reset_pending_full_solve_residual_for_test();
+    g_typed_mutation_audit_counters.production_defaults_active.store(save,
+                                                                     std::memory_order_relaxed);
+}
+
+static void ac3624_5_source_and_linter() {
+    std::println("\n--- #3624 AC5: source-cite + linter ---");
+    const auto ixx = read_file("src/compiler/type_checker.ixx");
+    const auto impl = read_file("src/compiler/type_checker_impl.cpp");
+    const auto t = read_file("tests/compiler/test_solve_delta_unresolved_export.cpp");
+    const auto lint = read_file("scripts/check_type_export_face_3624.py");
+    const auto build = read_file("build.py");
+    CHECK(ixx.find("Issue #3624") != std::string::npos, "3624 AC5: accessor cite");
+    CHECK(ixx.find("type_export_residual_faces_clear()") != std::string::npos,
+          "3624 AC5: TC accessor consults residual face");
+    CHECK(ixx.find("type_export_residual_faces_stable()") != std::string::npos,
+          "3624 AC5: #3316 stable resample mirrored");
+    CHECK(impl.find("note_pending_full_solve_residual(0, true)") != std::string::npos,
+          "3624 AC5: drain SOLVED restore retained");
+    CHECK(t.find("ac3307_1_production_budget_allow_hard_latch") != std::string::npos,
+          "3624 AC5: #3307 face tests still latch");
+    CHECK(t.find("ac3624_1_budget_allow_denies_tc_export") != std::string::npos, "3624 AC5: AC1");
+    CHECK(!lint.empty() && lint.find("3624") != std::string::npos, "3624 AC5: linter");
+    CHECK(build.find("check_type_export_face_3624") != std::string::npos, "3624 AC5: build.py");
+    CHECK(read_file("tests/compiler/test_issue_3624.cpp").empty(), "3624 AC5: no invent");
+    CHECK(read_file("docs/design/3624-tc-export-residual-face.md").empty(),
+          "3624 AC5: no docs/design");
+}
+
 } // namespace
 
 int run_test_solve_delta_unresolved_export() {
@@ -3894,6 +4105,14 @@ int run_test_solve_delta_unresolved_export() {
     ac3307_4_drain_clears_face();
     ac3307_5_existing_surfaces_preserved();
     ac3307_6_source_and_linter();
+    // ── Issue #3624: budget-allow SOLVED must drop TypeChecker export
+    // authority until drain SOLVED (#3307/#3237 residual)
+    std::println("\n=== Issue #3624: budget-allow drops TC export authority until drain ===");
+    ac3624_1_budget_allow_denies_tc_export();
+    ac3624_2_drain_solved_restores_tc_export();
+    ac3624_3_drain_nonsolved_stays_denied();
+    ac3624_4_soft_observe_unchanged();
+    ac3624_5_source_and_linter();
     std::println("\n=== Issue #3511: instance-repair clean reverify ===");
     ac3511_instance_repair_clean_reverify();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
