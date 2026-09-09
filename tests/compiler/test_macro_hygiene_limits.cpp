@@ -785,6 +785,131 @@ static void ac3543_source_query() {
           "3543 AC5: provenance-stats key family unchanged");
 }
 
+// ── Issue #3608: no-Evaluator production expand rollback (truncate brick) ──
+
+static void ac3608_1_depth_no_evaluator_size_unchanged() {
+    std::println("\n--- #3608 AC1: no-Evaluator depth deny leaves target unchanged ---");
+    reset_all();
+    grant_self_evo_production();
+    CHECK(set_hygiene_depth_cap(1), "3608 AC1 depth cap=1");
+    StringPool pool;
+    auto source = make_deep_body(pool, 8);
+    FlatAST target;
+    StringPool tp;
+    NameMap names;
+    const auto size0 = target.size();
+    g_macro_hygiene_last_limit_reason.store(0, std::memory_order_relaxed);
+    const auto out = clone_macro_body(target, tp, source, pool, source.root, nullptr, &names,
+                                      SyntaxMarker::MacroIntroduced);
+    CHECK(out == NULL_NODE, "3608 AC1 depth deny returns NULL_NODE");
+    CHECK(target.size() == size0,
+          "3608 AC1 target size unchanged (deny truncates half-adds without Evaluator)");
+    const auto* rs = hygiene_last_limit_reason_string();
+    CHECK(rs != nullptr && std::string(rs) == "hygiene-depth-limit",
+          "3608 AC1 reason hygiene-depth-limit");
+    CHECK(g_macro_hygiene_last_limit_reason.load(std::memory_order_relaxed) == 2,
+          "3608 AC1 reason enum 2");
+    reset_all();
+}
+
+static void ac3608_2_gensym_no_evaluator_size_unchanged() {
+    std::println("\n--- #3608 AC2: no-Evaluator gensym ceiling leaves target unchanged ---");
+    reset_all();
+    grant_self_evo_production();
+    aura_test_set_max_gensym_map_size_for_test(1);
+    StringPool pool;
+    auto source = make_deep_body(pool, 6);
+    FlatAST target;
+    StringPool tp;
+    NameMap names;
+    const auto size0 = target.size();
+    g_macro_hygiene_last_limit_reason.store(0, std::memory_order_relaxed);
+    (void)clone_macro_body(target, tp, source, pool, source.root, nullptr, &names,
+                           SyntaxMarker::MacroIntroduced);
+    CHECK(g_macro_hygiene_last_limit_reason.load(std::memory_order_relaxed) == 1,
+          "3608 AC2 reason enum 1 (gensym ceiling)");
+    CHECK(target.size() == size0,
+          "3608 AC2 target size unchanged (deny truncates half-adds without Evaluator)");
+    reset_all();
+    aura_test_set_max_gensym_map_size_for_test(0);
+}
+
+static void ac3608_3_owned_path_preserved() {
+    std::println("\n--- #3608 AC3: owned #3062 checkpoint path unchanged ---");
+    reset_all();
+    grant_self_evo_production();
+    CHECK(set_hygiene_pass_cap(1), "3608 AC3 pass cap=1");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define a 1)\")").has_value(), "3608 AC3 set-code");
+    auto& ev = cs.evaluator();
+    StringPool pool;
+    FlatAST flat;
+    fill_two_pass_macros(flat, pool);
+    const auto orig = flat.root;
+    const auto fp0 = tree_fp(flat, orig);
+    bool ok = true;
+    {
+        auto gr = Evaluator::MutationBoundaryGuard::try_acquire(ev, /*pending=*/1, &ok);
+        CHECK(gr.has_value(), "3608 AC3 Guard acquired");
+        auto out = macro_expand_all(flat, pool, orig, 8);
+        CHECK(out == orig, "3608 AC3 boundary returns original_root");
+        CHECK(tree_fp(flat, out) == fp0, "3608 AC3 tree identical after restore");
+    }
+    reset_all();
+}
+
+static void ac3608_4_boundary_ssot() {
+    std::println("\n--- #3608 AC4: boundary-active keeps boundary as SSOT ---");
+    const auto cpp = read_file("src/compiler/macro_expansion.cpp");
+    CHECK(cpp.find("if (aura_evaluator_mutation_boundary_depth() > 0)") != std::string::npos,
+          "3608 AC4: install returns 0 under boundary");
+    CHECK(cpp.find("aura_evaluator_mutation_boundary_depth() == 0") != std::string::npos,
+          "3608 AC4: local snapshot only without boundary (no double restore)");
+    reset_all();
+}
+
+static void ac3608_5_soft_half_write_preserved() {
+    std::println(
+        "\n--- #3608 AC5: Soft/Off keeps historical half-write (no save, no truncate) ---");
+    reset_all();
+    CHECK(set_hygiene_depth_cap(1), "3608 AC5 depth cap=1");
+    StringPool pool;
+    auto source = make_deep_body(pool, 8);
+    FlatAST target;
+    StringPool tp;
+    NameMap names;
+    const auto size0 = target.size();
+    g_macro_hygiene_last_limit_reason.store(0, std::memory_order_relaxed);
+    (void)clone_macro_body(target, tp, source, pool, source.root, nullptr, &names,
+                           SyntaxMarker::MacroIntroduced);
+    CHECK(target.size() > size0,
+          "3608 AC5 Soft/Off half-write preserved (no truncate without production)");
+    reset_all();
+}
+
+static void ac3608_6_source_and_linter() {
+    std::println("\n--- #3608 AC6: source wiring + linter + no docs/design ---");
+    const auto cpp = read_file("src/compiler/macro_expansion.cpp");
+    const auto ast = read_file("src/core/ast.ixx");
+    const auto build = read_file("build.py");
+    const auto lint = read_file("scripts/check_expand_checkpoint_local_rollback_3608.py");
+    CHECK(cpp.find("Issue #3608") != std::string::npos, "3608 AC6: macro_expansion cites #3608");
+    CHECK(cpp.find("install_local_snapshot") != std::string::npos,
+          "3608 AC6: local snapshot armed");
+    CHECK(cpp.find("truncate_to") != std::string::npos, "3608 AC6: truncate wired");
+    CHECK(ast.find("Issue #3608") != std::string::npos, "3608 AC6: ast.ixx cites #3608");
+    CHECK(ast.find("void truncate_to(std::size_t keep_size)") != std::string::npos,
+          "3608 AC6: truncate primitive");
+    CHECK(!lint.empty() && lint.find("3608") != std::string::npos, "3608 AC6: linter present");
+    CHECK(build.find("check_expand_checkpoint_local_rollback_3608") != std::string::npos,
+          "3608 AC6: build.py wires linter");
+    CHECK(read_file("docs/design/3608-expand-checkpoint-local-rollback.md").empty(),
+          "3608 AC6: no docs/design/3608-* per #1655");
+    CHECK(read_file("tests/compiler/test_issue_3608.cpp").empty(),
+          "3608 AC6: no invent test per #81934");
+    reset_all();
+}
+
 } // namespace
 
 int run_test_macro_hygiene_limits() {
@@ -815,6 +940,13 @@ int run_test_macro_hygiene_limits() {
     ac3543_soft_no_se();
     ac3543_soft_no_abort();
     ac3543_source_query();
+    std::println("\n=== Issue #3608: no-Evaluator production expand rollback ===");
+    ac3608_1_depth_no_evaluator_size_unchanged();
+    ac3608_2_gensym_no_evaluator_size_unchanged();
+    ac3608_3_owned_path_preserved();
+    ac3608_4_boundary_ssot();
+    ac3608_5_soft_half_write_preserved();
+    ac3608_6_source_and_linter();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

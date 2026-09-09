@@ -11771,6 +11771,29 @@ def cmd_remount_reason_domain_3607_coverage():
     return 0
 
 
+def cmd_expand_checkpoint_local_rollback_3608_coverage():
+    """Issue #3608: production ExpandCheckpointGuard was a no-op without a
+    current Evaluator — limit/steal denies could publish a half-tree.
+
+    The guard now falls back to a local no-TLS rollback brick: snapshot the
+    bare target FlatAST node count at install and truncate_to it on deny
+    (exact inverse of add_node's append set). Owned #3062 panic-checkpoint
+    path unchanged; MutationBoundary stays SSOT; Soft/Off zero-cost. No
+    docs/design/3608-*, no tests/**/test_issue_3608.cpp.
+    """
+    print(f"{B}=== expand checkpoint local rollback (#3608) ==={N}")
+    script = ROOT / "scripts" / "check_expand_checkpoint_local_rollback_3608.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script), "--strict"], cwd=ROOT)
+    if r.returncode != 0:
+        fail("expand checkpoint local rollback (#3608) contract rows failed")
+        return 1
+    ok("expand checkpoint local rollback (#3608) clean")
+    return 0
+
+
 def cmd_query_stable_hard_reject_torn_latch_3386_coverage():
     """Issue #3386: shared probe Evaluator::query_stable_hard_reject_torn()
     must OR restamp_over_budget_torn() under multi-worker latch (I6 residual).
@@ -21516,6 +21539,7 @@ def cmd_gate():
         or cmd_facade_owner_scope_clock_skip_3605_coverage()
         or cmd_nested_qq_depth_3606_coverage()
         or cmd_remount_reason_domain_3607_coverage()
+        or cmd_expand_checkpoint_local_rollback_3608_coverage()
     )
     if rc:
         return rc
@@ -22482,6 +22506,7 @@ def main():
         "residual-remount-prefer-2977": cmd_residual_remount_prefer_force_jit_2977_coverage,
         "reemit-success-sync-covered-2978": cmd_reemit_success_sync_covered_remount_2978_coverage,
         "remount-reason-domain-3607": cmd_remount_reason_domain_3607_coverage,
+        "expand-checkpoint-local-rollback-3608": cmd_expand_checkpoint_local_rollback_3608_coverage,
         "epoch-residual-merged-heal-2980": cmd_epoch_residual_merged_heal_2980_coverage,
         "steal-invariant-table-2929": cmd_steal_invariant_table_2929_coverage,
         "steal-enqueue-sole-gate-3072": cmd_steal_enqueue_sole_gate_3072,

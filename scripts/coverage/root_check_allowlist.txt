@@ -62,3 +62,4 @@ check_panic_aba_gc_defer_drain_3604.py
 check_facade_owner_scope_clock_skip_3605.py
 check_nested_qq_depth_3606.py
 check_remount_reason_domain_3607.py
+check_expand_checkpoint_local_rollback_3608.py
