@@ -12146,6 +12146,36 @@ def cmd_occurrence_recover_regate_3623_coverage():
     return 0
 
 
+def cmd_type_export_face_3624_coverage():
+    """Issue #3624: locality-budget SOLVED+pending must drop type_export
+    authority until drain (#3307/#3237 residual):
+
+    - #3307 budget-allow keeps local SOLVED and hard-latches the
+      pending_full_solve residual face, but only the Evaluator accessor
+      consulted it (#3237). TypeChecker::type_export_is_authoritative()
+      now consults the same residual face (clear + #3316 stable
+      resample), so mid-batch query:type / last_occurrence_vars() /
+      commit_cs_live / copy_infer authority refuse until the #3190
+      drain clears the face on SOLVED. Soft never latches (#3307) —
+      quiet Soft SOLVED unchanged. No new counter, no new query key,
+      no second drain, no new model.
+
+    Runtime ACs in tests/compiler/test_solve_delta_unresolved_export.cpp
+    (ac3624_1..5). No docs/design/3624-*, no tests/**/test_issue_3624.cpp.
+    """
+    print(f"{B}=== type export residual face (#3624) ==={N}")
+    script = ROOT / "scripts" / "check_type_export_face_3624.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script), "--strict"], cwd=ROOT)
+    if r.returncode != 0:
+        fail("type export residual face (#3624) contract rows failed")
+        return 1
+    ok("type export residual face (#3624) clean")
+    return 0
+
+
 def cmd_query_stable_hard_reject_torn_latch_3386_coverage():
     """Issue #3386: shared probe Evaluator::query_stable_hard_reject_torn()
     must OR restamp_over_budget_torn() under multi-worker latch (I6 residual).
@@ -21903,6 +21933,7 @@ def cmd_gate():
         or cmd_steal_identity_proof_3621_coverage()
         or cmd_type_dynamic_production_3622_coverage()
         or cmd_occurrence_recover_regate_3623_coverage()
+        or cmd_type_export_face_3624_coverage()
     )
     if rc:
         return rc
