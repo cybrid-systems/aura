@@ -2502,9 +2502,39 @@ inline constexpr int kNoTlsLivePolicyDefaultSolvedIssue = 3414;
 // (override<0) does not consult pending_full_solve_residual_face_hit();
 // probe (override==0) and depth>0 consume it. Defence is publish-side
 // Quiet + the depth>0 gate; not a depth==0 IR-entry barrier.
+// Issue #3610: path split — on the no-TLS metrics path the real-quiet
+// allow stands (#3568); a live commit TC bound on the thread consumes
+// the pending face (ir_typed_entry_real_quiet_allows).
 inline constexpr int kDepthZeroTypedEntryNegativeAuthorityIssue = 3510;
 inline constexpr int kQuietTypedEntryWarmEvalIssue = 3568;
 inline constexpr int kPendingFullSolveTypedEntryConsumeIssue = 3579;
+// Issue #3610: residual of #3579 — path split inside real Quiet. A live
+// commit TC bound on the thread (g_tls_audit_commit_readiness_evaluator)
+// still owns the live CS: a latched pending_full_solve_residual face
+// refuses depth==0 IR/JIT entry for that face (SOLVED-with-dirty #2994
+// before the #3190 drain + green stamp). The no-TLS metrics path keeps
+// the #3568 allow. Reuses g_linear_fast_path_elide_blocked_production_total.
+inline constexpr int kRealQuietLiveTcTypedEntryIssue = 3610;
+// Issue #3610: real-Quiet (override<0, depth==0) face split — metrics vs
+// live commit TC. No TLS commit TC (engine:metrics / hash-ref / orch
+// prims) → allow without consulting the pending face (#3568/#3579
+// contract preserved). Live commit TC bound on this thread → the eval
+// still owns the live CS: a latched pending_full_solve_residual face
+// (#2994 SOLVED-with-dirty before the #3190 drain + green stamp)
+// refuses IR/JIT entry. Reuses
+// g_linear_fast_path_elide_blocked_production_total — no new counter /
+// query key. Single helper so the IR interpreter and the JIT prologue
+// cannot drift.
+[[nodiscard]] inline bool ir_typed_entry_real_quiet_allows() noexcept {
+    if (::g_tls_audit_commit_readiness_evaluator == nullptr)
+        return true;
+    if (pending_full_solve_residual_face_hit()) {
+        g_linear_fast_path_elide_blocked_production_total.fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
+    return true;
+}
+
 [[nodiscard]] inline bool ir_typed_entry_commit_readiness_ok() noexcept {
     if (!(production_defaults_active() || get_strategy() == AuditStrategy::Full))
         return true;
@@ -2531,8 +2561,12 @@ inline constexpr int kPendingFullSolveTypedEntryConsumeIssue = 3579;
         // Probe (override==0, below) and depth>0 (commit_readiness live
         // policy) still consume the face. Do not move the pending check
         // above this return.
+        // Issue #3610: path split — a live commit TC bound on this thread
+        // still owns the live CS; ir_typed_entry_real_quiet_allows()
+        // consumes the pending face for that face only (refuse
+        // SOLVED-with-dirty until the #3190 drain + green stamp).
         if (g_linear_ir_fastpath_boundary_depth_override < 0)
-            return true;
+            return ir_typed_entry_real_quiet_allows();
         // Issue #3510: negative authority is not "stale chaos leftover".
         // Scope the refusal to authority OWNED by the current eval context:
         // background hygiene (remount-last-zero strip / post-migration

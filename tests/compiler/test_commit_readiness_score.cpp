@@ -455,6 +455,60 @@ static void ac3579_3_consume_scope_source_cite() {
           "3579 AC3: no check_3579.py");
 }
 
+// ── Issue #3610: real-Quiet live commit TC + pending residual face split ──
+static void ac3610_real_quiet_live_tc_face_split() {
+    std::println(
+        "\n--- #3610: live TC + pending residual refuses real Quiet; no-TLS still allows ---");
+    apply_production_audit_defaults();
+    clear_type_linear_commit_proof_for_test();
+    clear_type_linear_proof_outcome_for_test();
+    reset_pending_full_solve_residual_for_test();
+    aura_typed_audit_clear_readiness_evaluator();
+
+    // AC2 (#3568 parity): no TLS eval + leftover pending face + real Quiet → allow.
+    note_pending_full_solve_residual(1, /*hard=*/true);
+    g_linear_ir_fastpath_boundary_depth_override = -1;
+    CHECK(ir_typed_entry_commit_readiness_ok(),
+          "3610 AC2: no-TLS real Quiet still allows leftover pending face");
+
+    // AC1: live TLS commit TC + pending residual face + real Quiet → refuse.
+    const auto blocked0 =
+        aura::compiler::typed_audit::g_linear_fast_path_elide_blocked_production_total.load(
+            std::memory_order_relaxed);
+    void* eval_c = reinterpret_cast<void*>(static_cast<std::uintptr_t>(0xC));
+    aura_typed_audit_note_readiness_evaluator(eval_c);
+    CHECK(!ir_typed_entry_commit_readiness_ok(),
+          "3610 AC1: live commit TC + pending face refuses real Quiet depth==0");
+    CHECK(aura::compiler::typed_audit::g_linear_fast_path_elide_blocked_production_total.load(
+              std::memory_order_relaxed) > blocked0,
+          "3610 AC1: #3305 elide-blocked counter reused (no new key)");
+
+    // AC3: probe override==0 unchanged (still refuses with the face latched).
+    g_linear_ir_fastpath_boundary_depth_override = 0;
+    CHECK(!ir_typed_entry_commit_readiness_ok(),
+          "3610 AC3: probe override==0 refuses pending face (3510 parity)");
+
+    // AC5: #3190 drain + green stamp — live-TC depth==0 allows again.
+    reset_pending_full_solve_residual_for_test();
+    publish_type_linear_proof_outcome(kTypeLinearProofOutcomeStamped);
+    publish_last_proof_face(true, true);
+    g_linear_ir_fastpath_boundary_depth_override = -1;
+    CHECK(ir_typed_entry_commit_readiness_ok(),
+          "3610 AC5: drain + green stamp restores live-TC depth==0 allow");
+
+    // AC4: Soft/Off unchanged (function returns true before depth math).
+    apply_dev_audit_defaults();
+    note_pending_full_solve_residual(1, /*hard=*/true);
+    g_linear_ir_fastpath_boundary_depth_override = -1;
+    CHECK(ir_typed_entry_commit_readiness_ok(), "3610 AC4: Soft still allows before depth math");
+
+    aura_typed_audit_clear_readiness_evaluator();
+    reset_pending_full_solve_residual_for_test();
+    clear_type_linear_commit_proof_for_test();
+    clear_type_linear_proof_outcome_for_test();
+    g_linear_ir_fastpath_boundary_depth_override = -1;
+}
+
 } // namespace
 
 int run_test_commit_readiness_score() {
@@ -471,6 +525,7 @@ int run_test_commit_readiness_score() {
     ac3579_1_pending_depth0_real_quiet_allows();
     ac3579_2_pending_depth_gt0_refuses();
     ac3579_3_consume_scope_source_cite();
+    ac3610_real_quiet_live_tc_face_split();
     apply_dev_audit_defaults();
     std::println("\n=== #2553: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;

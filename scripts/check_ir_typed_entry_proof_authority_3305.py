@@ -51,7 +51,8 @@ def _check_ir_typed_entry_face_consult(h: str) -> list[str]:
         failures.append("AC1: ir_typed_entry_commit_readiness_ok not found")
         return failures
     # Read a generous window to capture the face-consult + commit_readiness
-    # check. Expanded 3500 → 5000 after #3510, 5000 → 6500 after #3568
+    # check. Expanded 3500 → 5000 after #3510, 5000 → 6500 after #3568,
+    # 6500 → 7500 after #3610 (real-quiet live-TC split + helper).
     # Quiet early-return comments in the depth==0 block.
     scope = h[fn_pos : fn_pos + 6500]
     required = (
@@ -130,7 +131,9 @@ def _check_existing_counter_reused(h: str) -> list[str]:
     fn_pos = h.find("inline bool ir_typed_entry_commit_readiness_ok() noexcept")
     if fn_pos < 0:
         return failures
-    scope = h[fn_pos : fn_pos + 3500]
+    # 3500 → 4500 after #3610 (real-quiet split + helper shifted the
+    # pending-face bump deeper into the function body).
+    scope = h[fn_pos : fn_pos + 4500]
     target = "g_linear_fast_path_elide_blocked_production_total.fetch_add(1,"
     count = scope.count(target)
     if count < 3:
