@@ -96,7 +96,11 @@ def main() -> int:
     must("residual-force-stale-observe-total", "AC5 stale query", mut)
     must("residual-force-observe-wired", "AC5 wired query", mut)
     must("schema_3026", "AC5 snap field", hh)
-    must("aura_hot_update_observe_residual_force_stale", "AC5 stub", stub)
+    # Issue #3607: the stub TU no longer defines the registry read/observe
+    # stubs — they shadowed the real hot_update_registry C ABIs in every
+    # light-linked binary (weak-in-earlier-.so wins the global symbol scope).
+    if "aura_hot_update_observe_residual_force_stale" in stub:
+        fails.append("AC5: registry observe stub shadowing is back in aura_jit_bridge_stub.cpp (#3607 removed it)")
     must("check_residual_force_agent_actionable_3026", "AC5 build", build)
     must("cmd_residual_force_agent_actionable_3026", "AC5 build cmd", build)
     must("ac3026_5_source_and_linter", "AC5 test fn", test)

@@ -11748,6 +11748,29 @@ def cmd_nested_qq_depth_3606_coverage():
     return 0
 
 
+def cmd_remount_reason_domain_3607_coverage():
+    """Issue #3607: covered/prefer remount consumed the #3445 reason word as
+    a sid bitmap — only_covered healed the sid-modulo set, not the defines.
+
+    The covered walk gates on the reason word but filters per-closure by the
+    #3229 define side set (full named FIFO fallback when idle). The residual
+    tick prefer pass prefers the same define set; side set idle → FIFO like
+    pre-#2977. The sid%64 helper is deleted. No docs/design/3607-*, no
+    tests/**/test_issue_3607.cpp.
+    """
+    print(f"{B}=== remount reason domain (#3607) ==={N}")
+    script = ROOT / "scripts" / "check_remount_reason_domain_3607.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script), "--strict"], cwd=ROOT)
+    if r.returncode != 0:
+        fail("remount reason domain (#3607) contract rows failed")
+        return 1
+    ok("remount reason domain (#3607) clean")
+    return 0
+
+
 def cmd_query_stable_hard_reject_torn_latch_3386_coverage():
     """Issue #3386: shared probe Evaluator::query_stable_hard_reject_torn()
     must OR restamp_over_budget_torn() under multi-worker latch (I6 residual).
@@ -21492,6 +21515,7 @@ def cmd_gate():
         or cmd_panic_aba_gc_defer_drain_3604_coverage()
         or cmd_facade_owner_scope_clock_skip_3605_coverage()
         or cmd_nested_qq_depth_3606_coverage()
+        or cmd_remount_reason_domain_3607_coverage()
     )
     if rc:
         return rc
@@ -22457,6 +22481,7 @@ def main():
         "residual-remount-2928": cmd_residual_remount_round_robin_2928_coverage,
         "residual-remount-prefer-2977": cmd_residual_remount_prefer_force_jit_2977_coverage,
         "reemit-success-sync-covered-2978": cmd_reemit_success_sync_covered_remount_2978_coverage,
+        "remount-reason-domain-3607": cmd_remount_reason_domain_3607_coverage,
         "epoch-residual-merged-heal-2980": cmd_epoch_residual_merged_heal_2980_coverage,
         "steal-invariant-table-2929": cmd_steal_invariant_table_2929_coverage,
         "steal-enqueue-sole-gate-3072": cmd_steal_enqueue_sole_gate_3072,
