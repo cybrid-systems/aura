@@ -251,6 +251,23 @@ static void ac3554_2_no_docs_no_invent() {
           "3554: no docs/design/3554-* (agent repo philosophy)");
 }
 
+// ── Issue #3613: Guard-held mailbox send BPs before on_acquire(Mailbox) ──
+// (rank inversion Mailbox < Workspace; production canary/hard aborts on
+//  the old mu_-first order. The under-boundary note now precedes every
+//  mailbox lock acquisition — no violation counted, no abort.)
+static void ac3613_canary_holder_send_no_inversion() {
+    std::println("\n--- #3613: holder send BPs before Mailbox acquire ---");
+    const auto mb = read_file("src/serve/multi_fiber_mailbox.h");
+    const auto p3613 = mb.find("Issue #3613: BEFORE mu_");
+    CHECK(p3613 != std::string::npos, "3613: push under-boundary gate cites #3613");
+    const auto p_note = mb.find("if (note_mailbox_deferred_under_boundary(&local_stats_))", p3613);
+    const auto p_acq = mb.find("on_acquire(::aura::compiler::lock_order::Level::Mailbox", p3613);
+    CHECK(p_note != std::string::npos && p_acq != std::string::npos && p_note < p_acq,
+          "3613: under-boundary gate precedes on_acquire(Mailbox)");
+    CHECK(mb.find("moved BEFORE mu_ (#3613") != std::string::npos,
+          "3613: old in-lock gates replaced at both sites");
+}
+
 
 } // namespace
 
@@ -265,6 +282,8 @@ int run_test_lock_order_audit() {
     std::println("\n=== #3554: Evaluator ctor self-upgrade ===");
     ac3554_1_evaluator_ctor_self_upgrade_source_cite();
     ac3554_2_no_docs_no_invent();
+    std::println("\n=== Issue #3613: holder send BPs before Mailbox acquire (no inversion) ===");
+    ac3613_canary_holder_send_no_inversion();
     std::println("\n=== #2316 lock-order audit: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

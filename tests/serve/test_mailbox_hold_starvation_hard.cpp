@@ -2831,6 +2831,191 @@ static void ac3588_3_reuse_no_new_key() {
 
 } // namespace
 
+// ── Issue #3613 ACs ──
+static std::string read_file_3613(const std::string& rel) {
+    for (const auto& p : {rel, std::string("../") + rel, std::string("../../") + rel}) {
+        std::ifstream in(p);
+        if (!in)
+            continue;
+        return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    }
+    return {};
+}
+
+// Guard-held send must BP before on_acquire(Mailbox)/mu_: the old order
+// took Mailbox under a live Workspace Guard (rank inversion Mailbox <
+// Workspace; production canary/hard aborts). Same #2849 helper, earlier —
+// moved ahead of every lock acquisition in push / broadcast_fanout.
+static void ac3613_1_holder_send_bp_before_lock() {
+    std::println("\n--- #3613 AC1: Guard-held push/fanout BP before mu_ ---");
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    aura::compiler::CompilerService cs;
+    aura::compiler::Evaluator::set_query_evaluator(&cs.evaluator());
+    aura::serve::mf_mailbox::MultiFiberMailbox mailbox(64);
+    std::atomic<int> ran{0};
+    std::atomic<int> push_bp{0};
+    std::atomic<int> fanout_bp{0};
+    const auto defer0 =
+        aura::serve::mf_mailbox::g_mf_mailbox_stats.mailbox_under_boundary_deferred_total.load(
+            std::memory_order_relaxed);
+    const auto viol0 =
+        aura::compiler::lock_order::g_lock_order_violation_total.load(std::memory_order_relaxed);
+    aura::serve::Scheduler sched(2);
+    sched.spawn([&]() {
+        bool ok = true;
+        aura::serve::mf_mailbox::MailMessage msg{};
+        msg.payload = "holder-send-3613";
+        {
+            aura::compiler::Evaluator::MutationBoundaryGuard g(cs.evaluator(), &ok);
+            CHECK(g.is_outermost(), "3613 AC1: outermost Guard on sender");
+            if (mailbox.push(msg) == aura::serve::mf_mailbox::PushStatus::Backpressure)
+                push_bp.fetch_add(1, std::memory_order_relaxed);
+            if (mailbox.broadcast_fanout(msg) == aura::serve::mf_mailbox::PushStatus::Backpressure)
+                fanout_bp.fetch_add(1, std::memory_order_relaxed);
+            ran.store(1, std::memory_order_relaxed);
+        }
+    });
+    std::thread io([&]() { sched.run(); });
+    for (int i = 0; i < 200 && ran.load() == 0; ++i)
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    sched.stop();
+    io.join();
+    CHECK(ran.load() == 1, "3613 AC1: fiber body ran");
+    CHECK(push_bp.load() == 1, "3613 AC1: push BP under Guard (AC1)");
+    CHECK(fanout_bp.load() == 1, "3613 AC1: fanout BP under Guard (AC1)");
+    CHECK(aura::serve::mf_mailbox::g_mf_mailbox_stats.mailbox_under_boundary_deferred_total.load(
+              std::memory_order_relaxed) > defer0,
+          "3613 AC1: BP from the under-boundary gate (before mu_, no mu_ taken)");
+    CHECK(aura::compiler::lock_order::g_lock_order_violation_total.load(
+              std::memory_order_relaxed) == viol0,
+          "3613 AC1: no lock-order violation counted, no abort (AC2)");
+    aura::compiler::Evaluator::set_query_evaluator(nullptr);
+}
+
+static void ac3613_2_peer_send_still_defers() {
+    std::println("\n--- #3613 AC3: peer (non-holder) send still defers ---");
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    aura::compiler::CompilerService cs;
+    aura::compiler::Evaluator::set_query_evaluator(&cs.evaluator());
+    aura::serve::mf_mailbox::MultiFiberMailbox mailbox(64);
+    std::atomic<int> guard_live{0};
+    std::atomic<int> peer_done{0};
+    std::atomic<int> ran{0};
+    std::atomic<int> peer_push_bp{0};
+    std::atomic<int> peer_fanout_bp{0};
+    aura::serve::Scheduler sched(2);
+    sched.spawn([&]() {
+        bool ok = true;
+        {
+            aura::compiler::Evaluator::MutationBoundaryGuard g(cs.evaluator(), &ok);
+            CHECK(g.is_outermost(), "3613 AC3: outermost Guard on holder");
+            guard_live.store(1, std::memory_order_release);
+            // Busy-spin (never sleep inside a fiber — #3118 contract),
+            // bounded so a lost peer cannot hang the member.
+            for (int i = 0; i < 4000000 && peer_done.load(std::memory_order_acquire) == 0; ++i) {
+            }
+        }
+        ran.store(1, std::memory_order_relaxed);
+    });
+    std::thread io([&]() { sched.run(); });
+    // Peer is a plain std::thread (non-holder): while the holder fiber has
+    // the outermost Guard live, the peer send must still defer (AC3).
+    std::thread peer([&]() {
+        while (guard_live.load(std::memory_order_acquire) == 0) {
+        }
+        aura::serve::mf_mailbox::MailMessage msg{};
+        msg.payload = "peer-send-3613";
+        if (mailbox.push(msg) == aura::serve::mf_mailbox::PushStatus::Backpressure)
+            peer_push_bp.fetch_add(1, std::memory_order_relaxed);
+        if (mailbox.broadcast_fanout(msg) == aura::serve::mf_mailbox::PushStatus::Backpressure)
+            peer_fanout_bp.fetch_add(1, std::memory_order_relaxed);
+        peer_done.store(1, std::memory_order_release);
+    });
+    peer.join();
+    for (int i = 0; i < 200 && ran.load() == 0; ++i)
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    sched.stop();
+    io.join();
+    CHECK(peer_push_bp.load() == 1, "3613 AC3: peer push still BP under holder Guard");
+    CHECK(peer_fanout_bp.load() == 1, "3613 AC3: peer fanout still BP (AC3)");
+    aura::compiler::Evaluator::set_query_evaluator(nullptr);
+}
+
+static void ac3613_3_soft_still_bp() {
+    std::println("\n--- #3613 AC4: Soft still BP on live boundary (gate not weakened) ---");
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    aura::compiler::CompilerService cs;
+    aura::compiler::Evaluator::set_query_evaluator(&cs.evaluator());
+    aura::serve::mf_mailbox::MultiFiberMailbox mailbox(64);
+    bool ok = true;
+    int pushes_ok = 0;
+    const auto soft0 =
+        aura::serve::mf_mailbox::g_mf_mailbox_stats
+            .mailbox_under_boundary_deferred_soft_observe_total.load(std::memory_order_relaxed);
+    {
+        aura::compiler::Evaluator::MutationBoundaryGuard g(cs.evaluator(), &ok);
+        CHECK(g.is_outermost(), "3613 AC4: outermost Guard");
+        if (mailbox.push(aura::serve::mf_mailbox::MailMessage{}) ==
+            aura::serve::mf_mailbox::PushStatus::Backpressure)
+            ++pushes_ok;
+        if (mailbox.broadcast_fanout(aura::serve::mf_mailbox::MailMessage{}) ==
+            aura::serve::mf_mailbox::PushStatus::Backpressure)
+            ++pushes_ok;
+    }
+    CHECK(pushes_ok == 2, "3613 AC4: Soft still BP on live boundary (AC4)");
+    CHECK(aura::serve::mf_mailbox::g_mf_mailbox_stats
+                  .mailbox_under_boundary_deferred_soft_observe_total.load(
+                      std::memory_order_relaxed) > soft0,
+          "3613 AC4: soft_observe bumped (no new key)");
+    aura::compiler::Evaluator::set_query_evaluator(nullptr);
+}
+
+static void ac3613_4_source_and_linter() {
+    std::println("\n--- #3613 AC5/AC6: source-cite + linter + no invent ---");
+    const auto mb = read_file_3613("src/serve/multi_fiber_mailbox.h");
+    const auto t = read_file_3613("tests/serve/test_mailbox_hold_starvation_hard.cpp");
+    const auto canary = read_file_3613("tests/compiler/test_lock_order_audit.cpp");
+    const auto build = read_file_3613("build.py");
+    // push: the under-boundary note precedes on_acquire(Mailbox) (AC1/AC6).
+    const auto p_push = mb.find("Issue #3613: BEFORE mu_");
+    CHECK(p_push != std::string::npos, "3613 AC6: push cite present");
+    if (p_push != std::string::npos) {
+        const auto win = mb.substr(p_push, 1200);
+        const auto p_note = win.find("if (note_mailbox_deferred_under_boundary(&local_stats_))");
+        const auto p_acq = win.find("on_acquire");
+        CHECK(p_note != std::string::npos, "3613 AC6: note call in push window");
+        CHECK(p_acq != std::string::npos, "3613 AC6: on_acquire in push window");
+        CHECK(p_note < p_acq, "3613 AC6: note BEFORE on_acquire (AC6)");
+    }
+    // broadcast_fanout: the note precedes mu_ (AC6).
+    const auto p_fan = mb.find("Issue #3613: same holder-send inversion fix as push()");
+    CHECK(p_fan != std::string::npos, "3613 AC6: fanout cite present");
+    if (p_fan != std::string::npos) {
+        const auto win = mb.substr(p_fan, 900);
+        const auto p_note = win.find("if (note_mailbox_deferred_under_boundary(&local_stats_))");
+        const auto p_mu = win.find("std::lock_guard lock(mu_)");
+        CHECK(p_note != std::string::npos && p_mu != std::string::npos && p_note < p_mu,
+              "3613 AC6: note BEFORE mu_ in fanout");
+    }
+    CHECK(mb.find("moved BEFORE mu_ (#3613") != std::string::npos,
+          "3613 AC6: both old in-lock gates replaced");
+    CHECK(t.find("ac3613_1_holder_send_bp_before_lock") != std::string::npos,
+          "3613 AC5: starvation suite extended");
+    CHECK(canary.find("ac3613_canary_holder_send_no_inversion") != std::string::npos,
+          "3613 AC5: lock-order canary extended");
+    CHECK(build.find("check_mailbox_holder_send_lock_order_3613") != std::string::npos,
+          "3613 AC6: build.py wires linter");
+    const int rc = std::system("python3 scripts/check_mailbox_holder_send_lock_order_3613.py "
+                               "--self-test > /dev/null 2>&1");
+    CHECK(rc == 0, "3613 AC6: linter --self-test passes");
+    CHECK(read_file_3613("tests/issues/test_issue_3613.cpp").empty(),
+          "3613 AC6: no tests/issues/test_issue_3613.cpp");
+    CHECK(read_file_3613("docs/design/3613-holder-send-lock-order.md").empty(),
+          "3613 AC6: no docs/design");
+    CHECK(read_file_3613("src/compiler/observability_metrics.h").find("3613") == std::string::npos,
+          "3613 AC4: no new metrics field");
+}
+
 int run_test_mailbox_hold_starvation_hard() {
     std::println("=== Issue #2551: mailbox hold starvation hard + Agent throttle ===");
     ac1_production_hard_signal();
@@ -2951,8 +3136,14 @@ int run_test_mailbox_hold_starvation_hard() {
     ac3588_1_busy_all_workers_edge_free();
     ac3588_2_happy_and_soft();
     ac3588_3_reuse_no_new_key();
-    std::println("\n=== #2551..#2761 + #2847 + #3289 + #3485 + #3588: {} passed, {} failed ===",
-                 g_passed, g_failed);
+    std::println("\n=== Issue #3613: Guard-held send BPs before mu_ (lock-order I5 residual) ===");
+    ac3613_1_holder_send_bp_before_lock();
+    ac3613_2_peer_send_still_defers();
+    ac3613_3_soft_still_bp();
+    ac3613_4_source_and_linter();
+    std::println(
+        "\n=== #2551..#2761 + #2847 + #3289 + #3485 + #3588 + #3613: {} passed, {} failed ===",
+        g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
 
