@@ -2008,14 +2008,31 @@ static aura::ast::NodeId clone_macro_body_at_depth(
     struct ExpandCheckpointGuard {
         bool owned = false;
         bool consumed = false;
+        // Issue #3608: production no-Evaluator local rollback. The C-ABI save
+        // cannot snapshot anything without a current Evaluator (weak stub /
+        // null strong def), so the guard falls back to the #3608 FlatAST
+        // truncate brick: snapshot the bare target's node count at install
+        // and truncate_to it on deny. No TLS, no second checkpoint model —
+        // same deny sites, one extra rollback surface.
+        aura::ast::FlatAST* local_target = nullptr;
+        std::size_t local_size0 = 0;
         void ensure_installed() noexcept {
             if (owned || consumed)
                 return;
             owned = install_macro_expand_checkpoint() != 0;
         }
+        void install_local_snapshot(aura::ast::FlatAST& target) noexcept {
+            if (local_target != nullptr)
+                return;
+            local_target = &target;
+            local_size0 = target.size();
+        }
         void try_restore() noexcept {
             consumed = true;
-            (void)aura_evaluator_try_restore_macro_expand_checkpoint();
+            if (owned)
+                (void)aura_evaluator_try_restore_macro_expand_checkpoint();
+            else if (local_target != nullptr)
+                local_target->truncate_to(local_size0);
         }
         ~ExpandCheckpointGuard() {
             if (owned && !consumed)
@@ -2025,6 +2042,14 @@ static aura::ast::NodeId clone_macro_body_at_depth(
     const bool production_surface = aura::core::sandbox::is_sandbox_active();
     if (hygiene_depth == 0 && production_surface)
         expand_ckpt.ensure_installed();
+    // Issue #3608: save failed (no current Evaluator) and no
+    // MutationBoundary owns rollback — arm the local target snapshot so
+    // every deny site's try_restore() truncates half-adds. Boundary
+    // stays SSOT: with a boundary active install_macro_expand_checkpoint
+    // returned 0 and the local snapshot is NOT armed.
+    if (hygiene_depth == 0 && production_surface && !expand_ckpt.owned &&
+        aura_evaluator_mutation_boundary_depth() == 0)
+        expand_ckpt.install_local_snapshot(target);
     // Issue #3303: capture steal0 at ALL depths (was depth==0 only).
     // Nested clones inherit the top-level name_map but can still observe
     // mid-walk steals; the delta comparison must work at every recursion
@@ -3232,14 +3257,29 @@ static aura::ast::NodeId macro_expand_all_body(aura::ast::FlatAST& flat,
     struct ExpandCheckpointGuard {
         bool owned = false;
         bool consumed = false;
+        // Issue #3608: local no-Evaluator rollback — mirrors the clone walk
+        // guard (see clone_macro_body_at_depth): snapshot the bare flat's
+        // node count when the C-ABI save cannot own a checkpoint, and
+        // truncate_to it on deny. Boundary-active keeps the boundary SSOT.
+        aura::ast::FlatAST* local_target = nullptr;
+        std::size_t local_size0 = 0;
         void ensure_installed() noexcept {
             if (owned || consumed)
                 return;
             owned = install_macro_expand_checkpoint() != 0;
         }
+        void install_local_snapshot(aura::ast::FlatAST& tree) noexcept {
+            if (local_target != nullptr)
+                return;
+            local_target = &tree;
+            local_size0 = tree.size();
+        }
         void try_restore() noexcept {
             consumed = true;
-            (void)aura_evaluator_try_restore_macro_expand_checkpoint();
+            if (owned)
+                (void)aura_evaluator_try_restore_macro_expand_checkpoint();
+            else if (local_target != nullptr)
+                local_target->truncate_to(local_size0);
         }
         ~ExpandCheckpointGuard() {
             if (owned && !consumed)
@@ -3292,8 +3332,13 @@ static aura::ast::NodeId macro_expand_all_body(aura::ast::FlatAST& flat,
 
         // Issue #3062: before any clone work, install a lightweight
         // expand checkpoint when production and no MutationBoundary.
-        if (production_surface)
+        if (production_surface) {
             expand_ckpt.ensure_installed();
+            // Issue #3608: no-Evaluator local target snapshot — deny sites
+            // truncate half-adds without TLS (clone walk parity).
+            if (!expand_ckpt.owned && aura_evaluator_mutation_boundary_depth() == 0)
+                expand_ckpt.install_local_snapshot(flat);
+        }
 
         // Phase 2: find and expand macro calls
         bool expanded_any = false;

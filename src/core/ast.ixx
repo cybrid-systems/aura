@@ -7311,6 +7311,62 @@ public:
     // read; size() is O(1) on pmr vector.
     [[nodiscard]] std::size_t mutation_log_size() const noexcept { return mutation_log_.size(); }
 
+    // Issue #3608: no-Evaluator production expand rollback — the exact
+    // inverse of add_node's append set. Resizes every SoA column published
+    // by add_node back to keep_size under flatast_mutex_ exclusive, then
+    // restamps all node generations (same contract as the mutation-log
+    // rollback) so stale NodeViews/NodeIds >= keep_size re-read. NodeIds
+    // < keep_size stay valid; the append path never touches free_list_,
+    // so no free-list fix is required. No-op when already <= keep_size
+    // (idempotent under the deny-unwind double-restore). Called from the
+    // macro expand checkpoint guard when production expand runs without a
+    // current Evaluator (no TLS panic checkpoint to reuse).
+    void truncate_to(std::size_t keep_size) {
+        std::unique_lock<std::shared_mutex> lock(flatast_mutex_.mutable_get());
+        if (tag_.size() <= keep_size)
+            return;
+        tag_.resize(keep_size);
+        int_val_.resize(keep_size);
+        float_val_.resize(keep_size);
+        sym_id_.resize(keep_size);
+        children_.resize(keep_size);
+        param_begin_.resize(keep_size);
+        param_count_.resize(keep_size);
+        cap_require_count_.resize(keep_size);
+        line_.resize(keep_size);
+        col_.resize(keep_size);
+        marker_.resize(keep_size);
+        provenance_.resize(keep_size);
+        type_id_.resize(keep_size);
+        type_cache_gen_.resize(keep_size);
+        type_cache_binding_gen_.resize(keep_size);
+        {
+            std::unique_lock<std::shared_mutex> dirty_wlock(dirty_column_mtx_.mutable_get());
+            dirty_.resize(keep_size);
+        }
+        ppa_dirty_.resize(keep_size);
+        verify_dirty_.resize(keep_size);
+        verification_dirty_.resize(keep_size);
+        macro_dirty_.resize(keep_size);
+        schema_cache_.resize(keep_size);
+        error_kind_.resize(keep_size);
+        occ_stale_.resize(keep_size);
+        // value_cache_ grows lazily (add_node resize(id + 1)); shrink the
+        // tail when larger — extra kNotCached slots are harmless either way.
+        if (value_cache_.size() > keep_size)
+            value_cache_.resize(keep_size);
+        node_first_mutation_.resize(keep_size);
+        last_seen_epoch_.resize(keep_size);
+        parent_.resize(keep_size);
+        // Issue #1689 inverted index: mirror add_node's column-parallel
+        // maintenance when clean; a dirty index rebuilds on demand anyway.
+        if (!incoming_parent_index_dirty_.load(std::memory_order_acquire) &&
+            incoming_parent_edges_.size() > keep_size)
+            incoming_parent_edges_.resize(keep_size);
+        node_gen_.resize(keep_size);
+        restamp_all_node_generations();
+    }
+
     // Issue #282: Occurrence Typing provenance accessors.
     // narrowing_log_ is captured at synthesize_flat_if time
     // (see type_checker_impl.cpp). Same lifecycle as
