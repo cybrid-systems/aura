@@ -73,3 +73,4 @@ check_dual_graph_parity_cone_3615.py
 check_chaos_guard_hold_smoke_3620.py
 check_steal_identity_proof_3621.py
 check_type_dynamic_production_3622.py
+check_occurrence_recover_regate_3623.py

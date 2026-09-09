@@ -3902,7 +3902,17 @@ inline void clear_occurrence_empty_after_fence_for_test() noexcept;
         // the Evaluator TLS handle + commit_type_checker_handle). AC2:
         // nullptr / no TLS → recover fn returns false → hard reject with
         // force_reason refined_drift (code 15).
-        if (aura_typed_audit_try_occurrence_hard_face_full_solve_recover()) {
+        bool recovered = aura_typed_audit_try_occurrence_hard_face_full_solve_recover();
+        // Issue #3623: #3108 SOLVED re-gate — same two lines as cone
+        // (step 2) and cone/empty (step 6). The refined_drift face
+        // recovered in #2911 without the override-recover re-gate, so a
+        // CONFLICT/TIMEOUT recover that still reported true could stamp
+        // would_allow_commit. Asymmetric fail-closed after #3108.
+        if (recovered && in.solve_status != 0) {
+            g_occurrence_recover_not_solved_total.fetch_add(1, std::memory_order_relaxed);
+            recovered = false;
+        }
+        if (recovered) {
             g_refined_consistency_recover_total.fetch_add(1, std::memory_order_relaxed);
             g_occurrence_hard_face_recover_success_total.fetch_add(1, std::memory_order_relaxed);
             g_refined_consistency_drift_face.store(0, std::memory_order_relaxed);

@@ -12114,6 +12114,38 @@ def cmd_type_dynamic_production_3622_coverage():
     return 0
 
 
+def cmd_occurrence_recover_regate_3623_coverage():
+    """Issue #3623: commit_readiness refined_drift recover missing the
+    #3108 SOLVED re-gate (cone/empty faces have it) — asymmetric
+    fail-closed after #3108:
+
+    - 6c refined_drift now re-gates the recover hook result on the
+      CommitReadinessInput solve_status snapshot — same two lines as
+      cone (step 2) and cone/empty (step 6). An override recover that
+      reports true while the CS snapshot is CONFLICT/TIMEOUT bumps the
+      existing g_occurrence_recover_not_solved_total and fails closed
+      with force_reason refined_drift (code 15).
+    - Soft observe path unchanged; cone/empty #3108 tests stay green
+      (no behavior change there); no new counter, no new query key, no
+      second recover hook, no new force_reason.
+
+    Runtime ACs in tests/compiler/test_partial_cone_commit_gate.cpp
+    (ac3623_*, link-time mock recover seam). No docs/design/3623-*, no
+    tests/**/test_issue_3623.cpp.
+    """
+    print(f"{B}=== occurrence recover re-gate (#3623) ==={N}")
+    script = ROOT / "scripts" / "check_occurrence_recover_regate_3623.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script), "--strict"], cwd=ROOT)
+    if r.returncode != 0:
+        fail("occurrence recover re-gate (#3623) contract rows failed")
+        return 1
+    ok("occurrence recover re-gate (#3623) clean")
+    return 0
+
+
 def cmd_query_stable_hard_reject_torn_latch_3386_coverage():
     """Issue #3386: shared probe Evaluator::query_stable_hard_reject_torn()
     must OR restamp_over_budget_torn() under multi-worker latch (I6 residual).
@@ -21870,6 +21902,7 @@ def cmd_gate():
         or cmd_chaos_guard_hold_smoke_3620_coverage()
         or cmd_steal_identity_proof_3621_coverage()
         or cmd_type_dynamic_production_3622_coverage()
+        or cmd_occurrence_recover_regate_3623_coverage()
     )
     if rc:
         return rc

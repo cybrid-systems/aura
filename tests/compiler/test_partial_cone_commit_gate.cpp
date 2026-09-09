@@ -12,6 +12,7 @@
 #include "compiler/typed_mutation_audit.h"
 #include "test_harness.hpp"
 
+#include <atomic>
 #include <cstdint>
 #include <cstdlib>
 #include <fstream>
@@ -22,6 +23,15 @@
 import std;
 import aura.compiler.service;
 import aura.compiler.value;
+
+// Issue #3623 test seam: strong override for the weak occurrence-recover
+// stub (aura_test_objects). Default mirrors the stub (false); the refined
+// drift ACs opt into "override recover reports true" (the #3108 hazard:
+// hook true while the CS snapshot is CONFLICT/TIMEOUT).
+std::atomic<int> g_ac3623_mock_recover{0};
+extern "C" bool aura_typed_audit_try_occurrence_hard_face_full_solve_recover() noexcept {
+    return g_ac3623_mock_recover.load(std::memory_order_relaxed) != 0;
+}
 
 namespace {
 
@@ -942,6 +952,72 @@ static void ac2694_4_empty_no_extra_work();
 static void ac2694_5_query_keys_added();
 static void ac2694_6_source_and_linter();
 
+// ── Issue #3623: refined_drift recover #3108 SOLVED re-gate ──
+static void ac3623_set_mock_recover(bool on) {
+    g_ac3623_mock_recover.store(on ? 1 : 0, std::memory_order_relaxed);
+}
+
+static void ac3623_1_recover_solved_allows() {
+    std::println("\n--- #3623 AC2: refined_drift recover SOLVED → allow ---");
+    apply_production_audit_defaults();
+    ac3623_set_mock_recover(true);
+    CommitReadinessInput in;
+    in.refined_consistency_hard = true;
+    in.refined_consistency_drift = true;
+    in.solve_status = 0; // SOLVED
+    const auto cr = commit_readiness(in);
+    CHECK(cr.would_allow_commit, "AC2: recover SOLVED allows commit");
+    ac3623_set_mock_recover(false);
+    apply_dev_audit_defaults();
+}
+
+static void ac3623_2_recover_fail_rejects() {
+    std::println("\n--- #3623: refined_drift recover fail → reject (#2911) ---");
+    apply_production_audit_defaults();
+    ac3623_set_mock_recover(false);
+    CommitReadinessInput in;
+    in.refined_consistency_hard = true;
+    in.refined_consistency_drift = true;
+    in.solve_status = 0;
+    const auto cr = commit_readiness(in);
+    CHECK(!cr.would_allow_commit, "reject on recover fail");
+    CHECK(cr.force_reason == "refined_drift", "force_reason refined_drift");
+    CHECK(cr.force_reason_code == 15, "code 15");
+    apply_dev_audit_defaults();
+}
+
+static void ac3623_3_conflict_snapshot_fail_closed() {
+    std::println("\n--- #3623 AC1: override recover true + CONFLICT snapshot → fail-closed ---");
+    apply_production_audit_defaults();
+    ac3623_set_mock_recover(true);
+    CommitReadinessInput in;
+    in.refined_consistency_hard = true;
+    in.refined_consistency_drift = true;
+    in.solve_status = 1; // CONFLICT snapshot (#3108 hazard)
+    const auto cr = commit_readiness(in);
+    CHECK(!cr.would_allow_commit, "AC1: CONFLICT snapshot never allows");
+    // Fail-closed lands at the solve face (step 5) or the refined_drift
+    // face (6c) — both hard-reject; the #3623 re-gate guarantees the
+    // refined recover never stamps allow under a non-SOLVED snapshot.
+    CHECK(cr.force_reason == "refined_drift" || cr.force_reason == "solve",
+          "AC1: fail-closed reason");
+    ac3623_set_mock_recover(false);
+    apply_dev_audit_defaults();
+}
+
+static void ac3623_4_soft_observe_allow() {
+    std::println("\n--- #3623 AC3: Soft observe + allow unchanged ---");
+    apply_dev_audit_defaults();
+    ac3623_set_mock_recover(true);
+    CommitReadinessInput in;
+    in.refined_consistency_hard = false;
+    in.refined_consistency_drift = true;
+    in.solve_status = 0;
+    const auto cr = commit_readiness(in);
+    CHECK(cr.would_allow_commit, "AC3: Soft observe allows");
+    ac3623_set_mock_recover(false);
+}
+
 int run_test_partial_cone_commit_gate() {
     std::println("=== Issue #2621: partial cone truncate commit gate ===");
     ac1_soft_observe_allow();
@@ -982,6 +1058,13 @@ int run_test_partial_cone_commit_gate() {
     // preserved.
     ac2716_1_production_hard_reject_on_face_hit();
     ac2716_2_soft_counter_only();
+    // Issue #3623: refined_drift recover #3108 SOLVED re-gate — the face
+    // recovered in #2911 without the override-recover re-gate wired on
+    // cone/empty; ac3623_* pin the fail-closed symmetry.
+    ac3623_1_recover_solved_allows();
+    ac3623_2_recover_fail_rejects();
+    ac3623_3_conflict_snapshot_fail_closed();
+    ac3623_4_soft_observe_allow();
     {
         std::println("\n--- #3440: persist-reject restore does not invent a cone/query face ---");
         const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
