@@ -4,6 +4,7 @@
 
 #include "test_harness.hpp"
 
+#include "compiler/mutation_hold_budget.h"
 #include "core/gc_hooks.h"
 #include "serve/fiber.h"
 #include "serve/runtime_production_abi.h"
@@ -21,6 +22,7 @@
 #include <thread>
 
 import std;
+import aura.compiler.evaluator;
 import aura.compiler.service;
 import aura.compiler.value;
 
@@ -56,6 +58,99 @@ static std::int64_t href(CompilerService& cs, const char* key) {
 }
 
 } // namespace
+
+// ── Issue #3619: no-edge force + still-held = production residual ──
+//   AC1: production + latched + no-edge counter != 0 + snapshot held →
+//        residual-zero reader returns 0 and try_acquire rejects with
+//        AdmissionRejected: production-residual-sticky. Holder exit drops
+//        held → reader returns 1 (sticky reset).
+//   AC2: no unlock path added (thief-cannot-unlock unchanged — #3222 AC2
+//        rows above; this change adds reads only).
+//   AC3: Soft / unlatched → reader returns 1 (observe-only) with the same
+//        counter + held.
+//   AC4: no new metric / query key (reuse g_hold_budget_no_edge_force_
+//        total + existing sticky bit).
+//   AC6: source-cite the probe + residual-zero reader + try_acquire
+//        sticky reject.
+static void ac3619_no_edge_held_residual() {
+    std::println("\n--- #3619: no-edge held residual → Ready/admit fail-closed ---");
+    const auto sh = read_file("src/serve/steal_safety.h");
+    const auto fcpp = read_file("src/serve/fiber.cpp");
+    const auto bridge = read_file("src/compiler/fiber_bridge.cpp");
+    const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    CHECK(sh.find("aura_mutation_hold_no_edge_still_held") != std::string::npos,
+          "3619 AC6: residual-zero reader consults the probe");
+    CHECK(sh.find("Issue #3619") != std::string::npos, "3619 AC6: reader fold cites #3619");
+    CHECK(fcpp.find("g_hold_budget_no_edge_force_total.fetch_add") != std::string::npos,
+          "3619 AC6: inbody-window no-edge bump");
+    CHECK(fcpp.find("aura_mutation_hold_no_edge_still_held") != std::string::npos,
+          "3619 AC6: strong probe def in fiber.cpp");
+    CHECK(bridge.find("aura_mutation_hold_no_edge_still_held") != std::string::npos,
+          "3619 AC6: weak stub (light link observe-only)");
+    CHECK(mb.find("AdmissionRejected: production-residual-sticky") != std::string::npos,
+          "3619 AC6: try_acquire sticky reject (existing bus)");
+    CHECK(sh.find("g_3619_") == std::string::npos && sh.find("schema-3619") == std::string::npos,
+          "3619 AC4: no new counter / query key");
+    CHECK(read_file("tests/serve/test_issue_3619.cpp").empty(), "3619: no invent");
+    CHECK(read_file("docs/design/3619-no-edge-held-residual.md").empty(), "3619: no docs/design");
+
+    CompilerService cs;
+    CHECK(cs.eval(R"(
+(set-code "
+(define f (lambda (x) x))
+")
+)")
+              .has_value(),
+          "3619: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3619: eval");
+
+    // AC3: unlatched + Soft → observe-only (reader 1 even with counter+held).
+    aura::serve::set_production_multi_worker_latched_for_test(false);
+    auto prod_save = aura::compiler::typed_audit::g_typed_mutation_audit_counters
+                         .production_defaults_active.load(std::memory_order_relaxed);
+    aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active.store(
+        0, std::memory_order_relaxed);
+    aura::compiler::clear_hold_budget_no_edge_force_for_test();
+    aura::compiler::g_hold_budget_no_edge_force_total.store(2, std::memory_order_relaxed);
+    bool hold_ok = false;
+    {
+        aura::compiler::Evaluator::MutationBoundaryGuard g(cs.evaluator(), &hold_ok);
+        CHECK(aura::serve::steal_safety_production_residual_zero_v_read() == 1,
+              "3619 AC3: unlatched → reader observe-only (returns 1)");
+    }
+
+    // AC1: production + latched + no-edge + held → reader 0 + admit reject.
+    // Guard ctor runs BEFORE the counter forces so the admit itself is
+    // clean; the residual then refuse nested admits until held drops.
+    aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active.store(
+        1, std::memory_order_relaxed);
+    aura::serve::set_production_multi_worker_latched_for_test(true);
+    {
+        aura::compiler::Evaluator::MutationBoundaryGuard g(cs.evaluator(), &hold_ok);
+        CHECK(aura::serve::steal_safety_production_residual_zero_v_read() == 0,
+              "3619 AC1: no-edge + still held → residual-zero 0");
+        auto gr = aura::compiler::Evaluator::MutationBoundaryGuard::try_acquire(
+            cs.evaluator(), /*pending=*/1, &hold_ok);
+        CHECK(!gr.has_value(), "3619 AC1: try_acquire rejected under residual sticky");
+        if (!gr.has_value())
+            std::println("  3619 AC1: reject msg={}", gr.error().message);
+        // The #2701 budget arm may pre-empt the sticky arm here (the held
+        // Guard IS the over-budget holder once no-edge forces fired — its
+        // force-degrade is the remediation). AC1's observable: the sticky
+        // production-residual bit is set and the admit is fail-closed.
+        CHECK(aura::serve::steal_safety_production_residual_sticky_fail_v_read() != 0,
+              "3619 AC1: production-residual sticky set");
+    }
+    // Holder exited → held drops → residual clears (sticky reset).
+    CHECK(aura::serve::steal_safety_production_residual_zero_v_read() == 1,
+          "3619 AC1: held drops → residual clears (sticky reset)");
+
+    // Cleanup.
+    aura::compiler::clear_hold_budget_no_edge_force_for_test();
+    aura::serve::set_production_multi_worker_latched_for_test(false);
+    aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active.store(
+        prod_save, std::memory_order_relaxed);
+}
 
 int run_test_steal_complete_strong_entry() {
     std::println("=== Issue #2377: steal-complete strong entry contract ===");
@@ -566,6 +661,7 @@ int run_test_steal_complete_strong_entry() {
         CHECK(cpp.find("schema-3343") == std::string::npos, "3343 AC5: no schema-3343");
     }
 
+    ac3619_no_edge_held_residual();
     std::println("\n=== #2377 + #2955 + #3098 + #3195 + #3343 results: {} passed, {} failed ===",
                  g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;

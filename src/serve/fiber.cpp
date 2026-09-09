@@ -485,6 +485,21 @@ extern "C" int aura_hold_budget_poll_busy_path(void) noexcept {
     return aura_hold_budget_poll_inbody_window();
 }
 
+// Issue #3619: production residual probe — a no-edge force has fired
+// (holder starved past the 2×SLO inbody window) and the hold snapshot is
+// STILL held (no cooperative edge consumed the force). The residual-zero
+// reader consults this under latch → Ready/admit fail closed via the
+// existing sticky bus (#3288 continuous fail-closed + try_acquire
+// production-residual-sticky reject). Weak stub in fiber_bridge.cpp keeps
+// non-evaluator link units building (returns 0 = observe-only).
+extern "C" int aura_mutation_hold_no_edge_still_held(void) noexcept {
+    return (aura::compiler::g_hold_budget_no_edge_force_total.load(std::memory_order_relaxed) !=
+                0 &&
+            aura::compiler::mutation_hold_live_snapshot().held)
+               ? 1
+               : 0;
+}
+
 // Issue #2726: read-only diagnostic accessor (peek, no consume).
 // Used by tests + observability; weak no-op when fiber not found.
 extern "C" int aura_fiber_peek_hold_budget_cancel(std::uint64_t fiber_id) noexcept {

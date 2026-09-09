@@ -158,6 +158,13 @@ extern "C" int aura_production_defaults_active_probe() noexcept;
 // Weak 0 in fiber.cpp (single-worker / light-link).
 extern "C" int aura_runtime_multi_worker_production_latched() noexcept;
 
+// Issue #3619: 1 when a no-edge hold-budget force has fired (holder
+// starved past the 2×SLO inbody window) AND the hold snapshot is still
+// held — live starvation residual (steal/GC/mailbox cannot progress).
+// Strong def in fiber.cpp; weak 0 stub in fiber_bridge.cpp (light link:
+// observe-only).
+extern "C" int aura_mutation_hold_no_edge_still_held(void) noexcept;
+
 // Issue #3134: production-readiness residual-zero wired sentinel (moved
 // here from its original L132–133 position so the #3134 coverage linter's
 // 1500-char check_win around `steal_safety_production_residual_zero_v_read`
@@ -202,7 +209,12 @@ inline constexpr int kStealSafetyProductionResidualZeroIssue = 3134;
                g_steal_safety_residual_layout_stamp_mismatch_total.load(
                    std::memory_order_relaxed) == 0 &&
                g_steal_safety_residual_gc_defer_armed_total.load(std::memory_order_relaxed) == 0 &&
-               g_steal_safety_residual_envframe_lag_total.load(std::memory_order_relaxed) == 0;
+               g_steal_safety_residual_envframe_lag_total.load(std::memory_order_relaxed) == 0 &&
+               // Issue #3619: no-edge force + still-held = live starvation
+               // residual (holder inside resume() past 2×SLO, no cooperative
+               // edge — native/JIT tight loop). Holder exit drops held →
+               // residual clears via the zero path (sticky reset).
+               aura_mutation_hold_no_edge_still_held() == 0;
     }
     if (zero) {
         // Residual returned to 0 — clear sticky fail so readiness
