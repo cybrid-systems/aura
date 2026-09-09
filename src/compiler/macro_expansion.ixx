@@ -183,6 +183,11 @@ export inline constexpr std::uint8_t kHygieneLimitReasonConcurrentTopLevel = 10;
 export inline constexpr int kConcurrentCloneProdZeroHalfTreeIssue = 3321;
 export inline constexpr int kConcurrentTopLevelCloneIssue = 3544;
 export void note_hygiene_last_limit_reason(std::uint8_t code) noexcept;
+// Issue #3609: the reexpand choke (Evaluator::post_mutation_macro_reexpand)
+// consumes the same live-Evaluator principal as clone / expand-all (#3378
+// parity) — resolves aura_evaluator_resolve_current_for_macro +
+// capability_tenant_id, default_tenant only when no Evaluator is wired.
+export std::uint16_t tenant_for_macro_self_evo_check() noexcept;
 // Issue #3341: stamp the process-global last_limit_reason AND a specific
 // fiber's FiberHygieneStats.last_limit_reason. Concurrent fibers no longer
 // last-writer-wins on the only Agent-visible reason. Tests use this to

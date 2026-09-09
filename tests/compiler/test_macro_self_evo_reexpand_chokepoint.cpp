@@ -175,6 +175,41 @@ int run_test_macro_self_evo_reexpand_chokepoint() {
         }
     }
 
+    // ── Issue #3609: chokepoint keys check_macro_self_evo on the live principal ──
+    {
+        std::println("\n--- #3609: reexpand choke consumes the live Evaluator principal ---");
+        auto src = read_file("src/compiler/evaluator_eval_flat.cpp");
+        CHECK(!src.empty(), "3609: evaluator_eval_flat.cpp readable");
+        auto pos = src.find("Evaluator::post_mutation_macro_reexpand(");
+        CHECK(pos != std::string::npos, "3609: post_mutation_macro_reexpand definition");
+        auto end = src.find("Issue #2762", pos);
+        if (end == std::string::npos || end > pos + 12000)
+            end = pos + 12000;
+        auto win = src.substr(pos, end - pos);
+        CHECK(win.find("macro_exp::tenant_for_macro_self_evo_check()") != std::string::npos,
+              "3609: choke resolves the live Evaluator principal (#3378 parity)");
+        CHECK(win.find("g_capability_registry().default_tenant.load()") == std::string::npos,
+              "3609: process default_tenant read removed from the choke");
+        CHECK(win.find("kHygieneLimitReasonCapabilityDeny") != std::string::npos,
+              "3609: deny stamps the #3304 capability-deny sentinel");
+        CHECK(win.find("wildcard_ok=*/false") != std::string::npos,
+              "3609: wildcard_ok stays false");
+        CHECK(win.find("join_audit_and_se_mid(0)") != std::string::npos,
+              "3609: #3594 live join mid preserved");
+        const auto mixx = read_file("src/compiler/macro_expansion.ixx");
+        CHECK(mixx.find("export std::uint16_t tenant_for_macro_self_evo_check()") !=
+                  std::string::npos,
+              "3609: helper exported from macro_expansion.ixx");
+        const auto mex = read_file("src/compiler/macro_expansion.cpp");
+        CHECK(mex.find("[[nodiscard]] std::uint16_t tenant_for_macro_self_evo_check()") !=
+                  std::string::npos,
+              "3609: helper definition non-static (shared with reexpand choke)");
+        CHECK(read_file("docs/design/3609-reexpand-tenant-principal.md").empty(),
+              "3609: no docs/design/3609-* per #1655");
+        CHECK(read_file("tests/compiler/test_issue_3609.cpp").empty(),
+              "3609: no test_issue_3609.cpp per #81967");
+    }
+
     std::println("\n=== #3132 reexpand chokepoint: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }

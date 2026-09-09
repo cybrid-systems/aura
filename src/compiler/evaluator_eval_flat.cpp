@@ -6384,8 +6384,10 @@ std::size_t Evaluator::post_mutation_macro_reexpand(aura::ast::FlatAST& flat,
     // no re-expansion work is performed.
     {
         using aura::core::capability::check_macro_self_evo;
-        using aura::core::capability::g_capability_registry;
-        const auto tenant = g_capability_registry().default_tenant.load();
+        // Issue #3609: live Evaluator principal (#3378 parity) — was the
+        // process default_tenant (#3132 residual), which mis-attributed
+        // denies and blocked granted tenants in multi-Evaluator faces.
+        const auto tenant = macro_exp::tenant_for_macro_self_evo_check();
         const bool sandbox_active = aura::core::sandbox::is_sandbox_active();
         // Issue #3594: pass the live join mid (composite / TypedMid /
         // session) so production MacroSelfEvo checks join session-bound
@@ -6396,6 +6398,9 @@ std::size_t Evaluator::post_mutation_macro_reexpand(aura::ast::FlatAST& flat,
         if (!chk.allowed) {
             g_macro_self_evo_denied_total.fetch_add(1, std::memory_order_relaxed);
             g_macro_clone_last_reject_reason.store(1, std::memory_order_relaxed);
+            // Issue #3609: principal-accurate replay face — same #3304
+            // capability-deny sentinel as every other MacroSelfEvo deny.
+            macro_exp::note_hygiene_last_limit_reason(macro_exp::kHygieneLimitReasonCapabilityDeny);
             return 0;
         }
     }

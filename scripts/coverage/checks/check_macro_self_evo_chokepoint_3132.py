@@ -69,7 +69,13 @@ def main() -> int:
         window = efl[func_anchor:func_end]
     must("Issue #3132", "AC1 chokepoint stamp", window)
     must("check_macro_self_evo", "AC1 check call", window)
-    must("g_capability_registry().default_tenant.load()", "AC1 capability tenant load", window)
+    # Issue #3609: the choke consumes the live Evaluator principal
+    # (tenant_for_macro_self_evo_check) — process default_tenant was the
+    # #3132 residual (wrong-principal denies + granted-tenant availability
+    # loss in multi-Evaluator faces).
+    must("tenant_for_macro_self_evo_check()", "AC1 capability tenant principal", window)
+    if "g_capability_registry().default_tenant.load()" in window:
+        fails.append("AC1: process default_tenant read is back in the reexpand choke (#3609 removed it)")
     must("g_macro_self_evo_denied_total.fetch_add(1", "AC1 #2023 counter bump", window)
     must("g_macro_clone_last_reject_reason.store(1", "AC1 #3028 reason set", window)
     # Chokepoint must come AFTER the quiet-path early return, BEFORE the
