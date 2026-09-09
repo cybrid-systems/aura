@@ -2858,10 +2858,21 @@ export struct TypeChecker {
     // Issue #3203: Soft TIMEOUT/CONFLICT never exports durable TypeIds.
     // Quiet SOLVED: compare last_delta_solve_status_ first (no extra atomic).
     // Issue #3237: query:type residual-face gate lives on Evaluator.
+    // Issue #3624: #3307 budget-allow keeps local SOLVED while residual is
+    // handed to pending_full_solve; only the Evaluator consulted the face,
+    // so TypeChecker-level export/query (last_occurrence_vars,
+    // commit_cs_live, copy_infer authority) still exported refined TypeIds
+    // mid-batch. Refuse the residual face here too — until the #3190 drain
+    // clears it (note_pending_full_solve_residual(0) on drain SOLVED). Soft
+    // never latches (#3307) — quiet Soft SOLVED: unchanged.
     [[nodiscard]] bool type_export_is_authoritative() const noexcept {
         if (last_delta_solve_status_ != SolveResult::SOLVED)
             return false;
-        return last_type_export_authoritative_;
+        if (!last_type_export_authoritative_)
+            return false;
+        if (!aura::compiler::typed_audit::type_export_residual_faces_clear())
+            return false;
+        return aura::compiler::typed_audit::type_export_residual_faces_stable();
     }
     [[nodiscard]] bool last_type_export_authoritative() const noexcept {
         return type_export_is_authoritative();
