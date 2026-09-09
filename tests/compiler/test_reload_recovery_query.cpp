@@ -367,8 +367,28 @@ static void ac2776_3_reader_no_tear() {
     std::atomic<int> stop{0};
     std::atomic<int> tears{0};
     std::atomic<int> reads{0};
+    // CI tier=full starvation fix: the reader thread must take >=1 sample
+    // before the writers may finish, else a late-scheduled reader observes
+    // start==1 && stop==1 with zero reads.
+    std::atomic<int> reader_warm{0};
     auto writer = [&](std::uint64_t base) {
         while (start.load(std::memory_order_acquire) == 0) {
+        }
+        // Bounded warm-wait: keep stamping (disjoint epoch range, same
+        // field coupling) until the reader warmed up; the cap bounds the
+        // wait so a lost reader cannot hang the suite.
+        for (int warm = 0; warm < kIters && reader_warm.load(std::memory_order_acquire) == 0;
+             ++warm) {
+            AotReloadConsistencyProof p{};
+            p.table_epoch = base * 2 + static_cast<std::uint64_t>(warm);
+            p.bridge_epoch = p.table_epoch;
+            p.defuse_version = p.table_epoch;
+            p.region_mask = p.table_epoch & 0xffff;
+            p.last_fail_reason = 0;
+            p.force_jit_regions_mask = 0;
+            p.would_allow_native = true;
+            p.schema = kAotReloadConsistencyProofIssue;
+            stamp_aot_reload_consistency_proof(p);
         }
         for (int i = 0; i < kIters; ++i) {
             AotReloadConsistencyProof p{};
@@ -387,6 +407,11 @@ static void ac2776_3_reader_no_tear() {
     auto reader = [&]() {
         while (start.load(std::memory_order_acquire) == 0) {
         }
+        // Warm sample: one guaranteed read before stop can be observed;
+        // releases the writers' warm-wait (AC3 reads>0 under starvation).
+        (void)load_aot_reload_consistency_proof_snapshot();
+        reads.fetch_add(1, std::memory_order_relaxed);
+        reader_warm.store(1, std::memory_order_release);
         while (stop.load(std::memory_order_acquire) == 0) {
             auto p = load_aot_reload_consistency_proof_snapshot();
             reads.fetch_add(1, std::memory_order_relaxed);
@@ -1422,8 +1447,13 @@ static void ac3026_5_source_and_linter() {
     CHECK(mut.find("schema-3026") != std::string::npos, "3026 AC5: schema-3026");
     CHECK(bnd.find("aura_hot_update_observe_residual_force_stale") != std::string::npos,
           "3026 AC5: BoundaryExit observe hook");
-    CHECK(stub.find("aura_hot_update_observe_residual_force_stale") != std::string::npos,
-          "3026 AC5: weak stub");
+    // Issue #3607: the stub TU no longer defines the registry read/observe
+    // stubs — they shadowed the real hot_update_registry C ABIs in every
+    // light-linked binary (weak-in-earlier-.so wins the global symbol
+    // scope). Assert the shadowing stays gone — same contract as the
+    // #3026 linter retarget in #3607.
+    CHECK(stub.find("aura_hot_update_observe_residual_force_stale") == std::string::npos,
+          "3026 AC5: observe stub shadowing stays removed (#3607 light-link fix)");
     CHECK(!lint.empty() && lint.find("Issue #3026") != std::string::npos, "3026 AC5: linter");
     CHECK(build.find("check_residual_force_agent_actionable_3026") != std::string::npos,
           "3026 AC5: build.py wires linter");
