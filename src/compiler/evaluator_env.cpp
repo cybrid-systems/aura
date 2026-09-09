@@ -10,7 +10,8 @@ module;
 #include "aura_jit_bridge.h" // Issue #2091 / #3267: live env/linear + combined bridge state
 #include "compiler/bridge_epoch_zero_stats.h" // Issue #2930: zero-epoch counters
 #include "core/densify_consistency_report.h"  // Issue #2368: DensifyRemapPairingResult
-#include "serve/fiber.h" // Issue #2498: orphan_root_release registration on fiber context
+#include "typed_mutation_audit.h" // Issue #3612: densify pairing fail shares the #3548 green-face strip
+#include "serve/fiber.h"          // Issue #2498: orphan_root_release registration on fiber context
 
 #include <cstdlib> // Issue #2930: getenv AURA_BRIDGE_EPOCH_LEGACY_TRUST
 
@@ -2959,6 +2960,18 @@ Evaluator::force_densify_remap_pairing() noexcept {
     aura::core::densify_consistency::note_last_densify_envframe_ok(r.envframe_ok, env_code);
     aura::core::densify_consistency::note_last_densify_closure_remount_ok(r.closure_remount_ok,
                                                                           cl_code);
+    // Issue #3612: a densify pairing fail is the same remount-last-zero
+    // outcome the JIT residual walks strip for (#3548) — this path only
+    // published the health atomic, so a still-green TypeLinearCommitProof
+    // stayed servable until the next outermost restamp (silent
+    // linear_fast_path_ok). Share the existing strip: Quiet outcome +
+    // invalidate_gen advance, no process-global Reject (#3510-residual),
+    // no second proof model. Soft never enters the pairing (Moving-only;
+    // Soft leaves axes vacuous true — AC3) and the helper self-gates
+    // Soft / Off to observe-only.
+    if (!r.closure_remount_ok && (typed_audit::production_defaults_active() ||
+                                  typed_audit::get_strategy() == typed_audit::AuditStrategy::Full))
+        typed_audit::strip_green_face_on_remount_last_zero();
     return r;
 }
 

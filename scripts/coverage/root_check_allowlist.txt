@@ -66,3 +66,4 @@ check_expand_checkpoint_local_rollback_3608.py
 check_reexpand_tenant_principal_3609.py
 check_real_quiet_live_tc_3610.py
 check_cascade_rearm_reconsult_3611.py
+check_remount_densify_pairing_strip_3612.py
