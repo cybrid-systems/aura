@@ -4,6 +4,7 @@
 
 #include "test_harness.hpp"
 #include "compiler/aura_jit_bridge.h"
+#include "compiler/observability_metrics.h"
 #include "compiler/prim_registrar_scaffold.hh"
 #include "compiler/runtime_shared.h"
 
@@ -2359,6 +2360,92 @@ int run_2996_core_register_prim() { // ac2996
 }
 } // namespace aura_obs_run_2996
 
+// ═══════════════════════════════════════════════════════════════
+namespace aura_obs_run_3626 {
+
+using aura::compiler::CompilerService;
+using aura::compiler::types::as_closure_id;
+using aura::compiler::types::is_closure;
+using aura::compiler::types::make_int;
+using aura::test::g_failed;
+using aura::test::g_passed;
+
+static std::string read_file(const char* path) {
+    for (const auto& p :
+         {std::string(path), std::string("../") + path, std::string("../../") + path}) {
+        std::ifstream in(p);
+        if (!in)
+            continue;
+        return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    }
+    return {};
+}
+
+static int run_3626_metrics_smoke() {
+    // Issue #3626 (#252/#3421 residual): the apply_closure entry RMW
+    // (closure_calls_total) is compile-out ONLY under production pack +
+    // NDEBUG. This (non-pack) build keeps it, so the Soft/unit dual-path
+    // counter still advances on every apply (issue AC2); the source-cite
+    // half of the contract lives below + in the linter.
+    std::println("\n--- #3626: Soft/unit apply bumps closure_calls_total ---");
+    CompilerService cs;
+    (void)cs.eval("(define f3626 (lambda (x) x))");
+    auto* m = static_cast<aura::compiler::CompilerMetrics*>(cs.evaluator().compiler_metrics());
+    CHECK(m, "3626: metrics");
+    const auto total0 = m->closure_calls_total.load(std::memory_order_relaxed);
+    std::array<aura::compiler::types::EvalValue, 1> args{make_int(5)};
+    int applied = 0;
+    for (int i = 0; i < 2; ++i) {
+        auto r = cs.eval("(lambda (x) (+ x 1))");
+        if (!r || !is_closure(*r))
+            continue;
+        try {
+            (void)cs.evaluator().apply_closure(as_closure_id(*r), args);
+            ++applied;
+        } catch (...) {
+            CHECK(false, "3626: apply_closure must not throw");
+        }
+    }
+    CHECK(applied > 0, "3626: captured + applied closures");
+    CHECK(m->closure_calls_total.load(std::memory_order_relaxed) > total0,
+          "ac3626_1_soft_counter_still_bumps: closure_calls_total increments on apply");
+
+    // Source-cite: the entry RMW sits behind the production-pack
+    // compile-out guard; #3421 refuse + FFI arm (#3602) untouched.
+    const auto src = read_file("src/compiler/evaluator_eval_flat.cpp");
+    const auto t = read_file("tests/compiler/test_obs_metrics_smoke_batch.cpp");
+    const auto lint = read_file("scripts/check_closure_calls_hotpath_3626.py");
+    const auto build = read_file("build.py");
+    const auto metrics_hdr = read_file("src/compiler/observability_metrics.h");
+    const auto hot = src.find("AURA_HOT_RECORD();");
+    CHECK(hot != std::string::npos, "3626: AURA_HOT_RECORD anchor");
+    const std::string scope = src.substr(hot, 1500);
+    CHECK(scope.find("#if !defined(NDEBUG) || !defined(AURA_PRODUCTION_PACK)") != std::string::npos,
+          "3626: production-pack compile-out guard");
+    CHECK(scope.find("Issue #3626") != std::string::npos, "3626: cite");
+    CHECK(scope.find("m->closure_calls_total.fetch_add(1, std::memory_order_relaxed);") !=
+              std::string::npos,
+          "3626: entry RMW retained inside the guard");
+    CHECK(scope.find("#endif") != std::string::npos, "3626: guard closed");
+    CHECK(src.find("production_apply_closure_densify_hard_refuse") != std::string::npos,
+          "3626: #3421 refuse gate present");
+    CHECK(src.find("note_apply_closure_densify_hard_refuse") != std::string::npos,
+          "3626: refuse note helper present");
+    CHECK(src.find("closure_stale_returns") != std::string::npos,
+          "3626: stale faces note retained");
+    CHECK(src.find("closure_ffi_calls.fetch_add") != std::string::npos,
+          "3626: FFI arm counter untouched (#3602)");
+    CHECK(!lint.empty() && lint.find("3626") != std::string::npos, "3626: linter");
+    CHECK(build.find("check_closure_calls_hotpath_3626") != std::string::npos, "3626: build.py");
+    CHECK(metrics_hdr.find("3626") == std::string::npos, "3626: no new metric / no header change");
+    CHECK(t.find("run_3626_metrics_smoke") != std::string::npos, "3626: runtime AC present");
+    CHECK(read_file("tests/compiler/test_issue_3626.cpp").empty(), "3626: no invent");
+    CHECK(read_file("docs/design/3626-closure-hotpath-counter.md").empty(), "3626: no docs/design");
+    return g_failed != 0 ? 1 : 0;
+}
+
+} // namespace aura_obs_run_3626
+
 int main() {
 
 
@@ -3150,6 +3237,12 @@ int main() {
     ::aura::test::g_passed = 0;
     std::println("\n######## #2996 core register_prim ########");
     if (int rc = aura_obs_run_2996::run_2996_core_register_prim(); rc != 0)
+        return rc;
+
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## #3626 apply_closure hot-path counter compile-out ########");
+    if (int rc = aura_obs_run_3626::run_3626_metrics_smoke(); rc != 0)
         return rc;
 
     std::println("\ntest_obs_metrics_smoke_batch: OK");
