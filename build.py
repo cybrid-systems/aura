@@ -11752,6 +11752,36 @@ def cmd_closure_dispatch_entry_3635_coverage():
     return 0
 
 
+def cmd_region_storm_attribution_3636_coverage():
+    """Issue #3636: deopt storm throttle per-region attribution + watermark.
+
+    Contract rows (AC1-AC5 from the test file):
+
+      AC1: force-bit 0→1 stamps per-region first-armed watermark (end-append
+           array + snapshot tail schema_3636).
+      AC2: soft storm attributes the cause mask + scopes the throttle to the
+           attributed dirty regions; hard ceiling still throttles all;
+           critical bypass per-candidate preserved.
+      AC3: health advisory region-force-starve (no bp / force_reason change).
+      AC4: quiet path — scoped skip guarded by storm_scope_mask != 0.
+      AC5: test face in test_region_priority_deopt_throttle.cpp (watermark,
+           dual-region scoped storm, hard ceiling, advisory purity).
+      AC6: no docs/design/3636-* (#1655); no tests/**/test_issue_3636.cpp
+           (#81934); build.py wires this linter.
+    """
+    print(f"{B}=== region storm attribution + watermark (#3636) ==={N}")
+    script = ROOT / "scripts" / "check_region_storm_attribution_3636.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script), "--strict"], cwd=ROOT)
+    if r.returncode != 0:
+        fail("region storm attribution + watermark (#3636) contract rows failed")
+        return 1
+    ok("region storm attribution + watermark (#3636) clean")
+    return 0
+
+
 def cmd_wal_window_miss_catalog_3603_coverage():
     """Issue #3603: mid point-query window-miss face + forensic catalog seed.
 
@@ -22161,6 +22191,7 @@ def cmd_gate():
         or cmd_lockless_hygiene_se_3601_coverage()
         or cmd_ffi_apply_densify_refuse_3602_coverage()
         or cmd_closure_dispatch_entry_3635_coverage()
+        or cmd_region_storm_attribution_3636_coverage()
         or cmd_wal_window_miss_catalog_3603_coverage()
         or cmd_panic_aba_gc_defer_drain_3604_coverage()
         or cmd_facade_owner_scope_clock_skip_3605_coverage()

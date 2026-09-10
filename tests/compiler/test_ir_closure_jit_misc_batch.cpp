@@ -95,6 +95,12 @@ int main() {
         {"test_peer_jit_name_soft_stale", run_test_peer_jit_name_soft_stale},
         {"test_primcall_narg", run_test_primcall_narg},
         {"test_primcall_str_intern", run_test_primcall_str_intern},
+        // Issue #3636: restore this member to the isolate table — the Aug 23
+        // fork-isolate rewrite dropped it from the table (extern decl + #if 0
+        // body kept), so its #2132 ACs — and the new #3636 watermark /
+        // scoped-storm / advisory ACs — never executed in CI. Same restore
+        // precedent as #3607.
+        {"test_region_priority_deopt_throttle", run_test_region_priority_deopt_throttle},
 
         {"test_remount_force_deopt", run_test_remount_force_deopt},
         {"test_source_to_ir_desync_recovery", run_test_source_to_ir_desync_recovery},

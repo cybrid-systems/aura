@@ -24,9 +24,12 @@
 #include "compiler/aura_jit_bridge.h"
 #include "compiler/typed_mutation_audit.h"
 #include "compiler/aot_reload_consistency_proof.h"
+#include "compiler/aot_hot_update_health.hh" // Issue #3636: advisory face
 
 extern "C" void aura_reset_runtime();
 extern "C" void aura_hot_update_set_reemit_boundary_policy(int policy);
+extern "C" std::uint64_t aura_reemit_dirty_count(void);
+extern "C" std::uint64_t aura_reemit_success_count(void);
 
 #include <cstdint>
 #include <fstream>
@@ -610,6 +613,103 @@ static void ac_soak_3573_mutate_reemit_hygiene() {
     aura_clear_stable_func_id_map();
 }
 
+// ── Issue #3636: per-region force watermark + storm attribution ──
+static void ac3636_watermark() {
+    std::println("\n--- #3636 AC7: force-arm watermark ---");
+    auto& reg = hot_update_registry();
+    reg.on_force_jit_for_reason(AotReloadFail::Env); // group bit 1 (#2927)
+    const auto w1 = reg.region_force_first_armed_ms(1);
+    CHECK(w1 > 0, "3636 AC7: arm stamps watermark");
+    CHECK(reg.max_region_force_age_ms() < 60000, "3636 AC7: fresh arm age small");
+    reg.on_force_jit_for_reason(AotReloadFail::Linear); // group bit 2
+    CHECK(reg.region_force_first_armed_ms(2) >= w1, "3636 AC7: second bit stamped");
+    const auto w1b = reg.region_force_first_armed_ms(1);
+    reg.on_force_jit_for_reason(AotReloadFail::Env); // already set — no re-stamp
+    CHECK(reg.region_force_first_armed_ms(1) == w1b, "3636 AC7: set bit keeps stamp");
+    reg.on_reload_success(); // #2502 wholesale clear
+    CHECK(reg.force_jit_regions_mask() == 0, "3636 AC7: wholesale clear");
+    reg.on_force_jit_for_reason(AotReloadFail::Env);
+    CHECK(reg.region_force_first_armed_ms(1) >= w1b, "3636 AC7: re-arm re-stamps");
+    reg.on_reload_success();
+    CHECK(reg.snapshot().region_force_max_age_ms == 0, "3636 AC7: no force bits → age 0");
+}
+
+static void ac3636_scoped_storm() {
+    std::println("\n--- #3636 AC8: soft storm scoped to attributed dirty regions ---");
+    auto& reg = hot_update_registry();
+    // Region A = bit 1 (0x2) storms + is the attributed dirty mask; candidate
+    // B carries region 0 (proceeds), candidate A region 1 (attributed →
+    // defers). Emit region mask cleared so the per-region filter does not
+    // pre-skip A before the storm scope.
+    reg.on_region_mask_from_dirty(0x2);
+    aura_set_aot_emit_region_mask(0);
+    // Soft storm via the direct registry feed — the C ABI deopt feed
+    // (aura_deopt_inc → aura_hot_update_note_deopt) resolves to the weak
+    // no-op stub in test executables (weak def in the exe preempts the
+    // strong .so def), so the window would never feed.
+    reg.reset_deopt_storm_state_for_test();
+    reg.set_deopt_storm_threshold(15, 5000);
+    reg.set_hard_deopt_storm_threshold(1500);
+    for (std::uint64_t i = 0; i < 17; ++i)
+        reg.on_stale_deopt(0); // region 0 → Global window (#2236)
+    CHECK(reg.should_throttle_reemit(0x2), "3636 AC8: attributed region throttled");
+    static ReemitFeed feed3636;
+    feed3636.names = {"b3636_cand", "a3636_cand"};
+    feed3636.regions = {0, 1}; // B proceeds; A attributed → defers
+    feed3636.cursor = 0;
+    aura_set_reemit_candidate_fn(&reemit_candidate_iter, &feed3636);
+    aura_set_aot_emit_fn(&emit_ok, nullptr);
+    const auto scope_skips0 = reg.reemit_soft_storm_region_skips();
+    const auto throttle_skips0 = reg.snapshot().reemit_throttle_skips_total;
+    (void)aura_reemit_aot_for_dirty(0);
+    CHECK(reg.snapshot().reemit_throttle_skips_total > throttle_skips0,
+          "3636 AC8: soft throttle recorded");
+    CHECK(reg.reemit_throttle_cause_mask() == 0x2, "3636 AC8: cause mask attributed");
+    CHECK(reg.reemit_soft_storm_region_skips() > scope_skips0,
+          "3636 AC8: attributed candidate deferred");
+    // B proceeded: the pass fell through to the walk instead of the old
+    // throttle-all early return; B emitted successfully.
+    CHECK(aura_reemit_dirty_count() >= 1, "3636 AC8: pass fell through (not throttled)");
+    CHECK(aura_reemit_success_count() >= 1, "3636 AC8: non-attributed candidate reemitted");
+    // Hard ceiling still throttles everyone (AC2) — no scoped skips.
+    reg.set_hard_deopt_storm_threshold(1);
+    for (std::uint64_t i = 0; i < 4; ++i)
+        reg.on_stale_deopt(0);
+    CHECK(reg.hard_storm_active(), "3636 AC8: hard ceiling tripped");
+    const auto hard_scope0 = reg.reemit_soft_storm_region_skips();
+    feed3636.cursor = 0;
+    (void)aura_reemit_aot_for_dirty(0);
+    CHECK(aura_reemit_dirty_count() == 0, "3636 AC8: hard ceiling throttles all");
+    CHECK(reg.reemit_soft_storm_region_skips() == hard_scope0,
+          "3636 AC8: no scoped skips under hard ceiling");
+    // Cleanup.
+    aura_set_reemit_candidate_fn(nullptr, nullptr);
+    aura_set_aot_emit_fn(nullptr, nullptr);
+    aura_clear_stable_func_id_map();
+    aura_hot_update_set_reemit_boundary_policy(1);
+    reg.reset_deopt_storm_state_for_test();
+    reg.set_deopt_storm_threshold(1000, 100);
+    reg.set_hard_deopt_storm_threshold(0);
+}
+
+static void ac3636_advisory() {
+    std::println("\n--- #3636 AC9: advisory region-force-starve ---");
+    // Pure face: the starve flag flips the advisory reason and nothing
+    // else (no bp change, no force_reason change — #2543 semantics).
+    aura::compiler::AotHotUpdateHealthSnapshot s3636{};
+    s3636.force_jit_regions_mask = 0x2;
+    s3636.region_force_max_age_ms = aura::compiler::kRegionForceStarveAdvisoryMs + 1;
+    s3636.region_force_starve = 1;
+    const auto r1 = aura::compiler::compute_aot_hot_update_health(s3636);
+    CHECK(std::string_view(r1.advisory_reason) == "region-force-starve",
+          "3636 AC9: advisory reason set");
+    s3636.region_force_starve = 0;
+    const auto r0 = aura::compiler::compute_aot_hot_update_health(s3636);
+    CHECK(r0.advisory_reason.empty(), "3636 AC9: quiet advisory empty");
+    CHECK(r1.health_bp == r0.health_bp, "3636 AC9: advisory does not change bp");
+    CHECK(r1.force_reason_code == r0.force_reason_code, "3636 AC9: force_reason unchanged");
+}
+
 } // namespace
 
 int main() {
@@ -644,6 +744,13 @@ int main() {
     }
     reset_runtime_after_cs();
     ac_soak_3573_mutate_reemit_hygiene();
+    reset_runtime_after_cs();
+    ac3636_watermark();
+    reset_runtime_after_cs();
+    ac3636_scoped_storm();
+    reset_runtime_after_cs();
+    ac3636_advisory();
+    reset_runtime_after_cs();
     std::println("\n=== {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

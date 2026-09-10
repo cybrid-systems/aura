@@ -988,6 +988,8 @@ std::uint64_t HotUpdateRegistry::rebuild_force_mask_from_slots() noexcept {
             continue;
         agg |= eval_force_slots_[i].mask.load(std::memory_order_relaxed);
     }
+    // Issue #3636: the aggregate merge can arm new bits — stamp watermark.
+    note_force_bits_armed(force_jit_regions_mask_.load(std::memory_order_relaxed), agg);
     force_jit_regions_mask_.store(agg, std::memory_order_relaxed);
     return agg;
 }
@@ -1357,7 +1359,11 @@ void HotUpdateRegistry::on_force_jit_for_reason(AotReloadFail reason) noexcept {
     const auto bit_mask = aot_reload_fail_to_force_jit_mask(reason);
     std::uint64_t new_mask;
     if (bit_mask != 0) {
-        new_mask = force_jit_regions_mask_.fetch_or(bit_mask, std::memory_order_relaxed) | bit_mask;
+        const auto prev_mask =
+            force_jit_regions_mask_.fetch_or(bit_mask, std::memory_order_relaxed);
+        new_mask = prev_mask | bit_mask;
+        // Issue #3636: stamp the first-armed watermark for newly set bits.
+        note_force_bits_armed(prev_mask, new_mask);
         or_eval_force_bit(force_owner_tls(), bit_mask);
     } else {
         new_mask = force_jit_regions_mask_.load(std::memory_order_relaxed);
@@ -1560,6 +1566,66 @@ void HotUpdateRegistry::on_reemit_throttled(ThrottleReason reason) noexcept {
 
 void HotUpdateRegistry::on_reemit_critical_bypass() noexcept {
     reemit_critical_bypass_.fetch_add(1, std::memory_order_relaxed);
+}
+
+// Issue #3636: stamp the first-armed watermark for every force bit that
+// transitioned 0→1. Residual / aggregate re-stores of already-set bits
+// keep the original arm time (only true 0→1 transitions re-stamp).
+void HotUpdateRegistry::note_force_bits_armed(const std::uint64_t old_mask,
+                                              const std::uint64_t new_mask) noexcept {
+    const auto armed = new_mask & ~old_mask;
+    if (armed == 0)
+        return;
+    const auto now = steady_ms_now();
+    for (std::uint64_t bit = 0; bit < 64; ++bit) {
+        if (((armed >> bit) & 1ULL) == 0)
+            continue;
+        region_force_first_armed_ms_[bit].store(now, std::memory_order_relaxed);
+    }
+}
+
+std::uint64_t
+HotUpdateRegistry::region_force_first_armed_ms(const std::uint64_t bit_index) const noexcept {
+    if (bit_index >= 64)
+        return 0;
+    return region_force_first_armed_ms_[bit_index].load(std::memory_order_relaxed);
+}
+
+// Advisory: max age across set force bits (0 when none watermarked).
+std::uint64_t HotUpdateRegistry::max_region_force_age_ms() const noexcept {
+    const auto mask = force_jit_regions_mask_.load(std::memory_order_relaxed);
+    if (mask == 0)
+        return 0;
+    const auto now = steady_ms_now();
+    std::uint64_t max_age = 0;
+    for (std::uint64_t bit = 0; bit < 64; ++bit) {
+        if (((mask >> bit) & 1ULL) == 0)
+            continue;
+        const auto armed = region_force_first_armed_ms_[bit].load(std::memory_order_relaxed);
+        if (armed == 0)
+            continue; // armed before the feature landed — no watermark
+        const auto age = now > armed ? now - armed : 0;
+        if (age > max_age)
+            max_age = age;
+    }
+    return max_age;
+}
+
+void HotUpdateRegistry::note_throttle_cause_mask(const std::uint64_t mask) noexcept {
+    reemit_throttle_cause_mask_.store(mask, std::memory_order_relaxed);
+}
+
+std::uint64_t HotUpdateRegistry::reemit_throttle_cause_mask() const noexcept {
+    return reemit_throttle_cause_mask_.load(std::memory_order_relaxed);
+}
+
+void HotUpdateRegistry::bump_reemit_soft_storm_region_skips(const std::uint64_t n) noexcept {
+    if (n != 0)
+        reemit_soft_storm_region_skips_.fetch_add(n, std::memory_order_relaxed);
+}
+
+std::uint64_t HotUpdateRegistry::reemit_soft_storm_region_skips() const noexcept {
+    return reemit_soft_storm_region_skips_.load(std::memory_order_relaxed);
 }
 
 // Issue #2236 / #2370: StormIsolation mode setter / getter. Default =
@@ -2627,6 +2693,11 @@ HotUpdateRegistry::Snapshot HotUpdateRegistry::snapshot() const noexcept {
     s.coverage_verify_storm_skip_total = static_cast<std::int64_t>(
         coverage_verify_storm_skip_total_.load(std::memory_order_relaxed));
     s.coverage_verify_min_dirty_wired = 1;
+    // Issue #3636: per-region force watermark + storm attribution.
+    s.region_force_max_age_ms = static_cast<std::int64_t>(max_region_force_age_ms());
+    s.reemit_throttle_cause_mask = static_cast<std::int64_t>(reemit_throttle_cause_mask());
+    s.reemit_soft_storm_region_skips_total =
+        static_cast<std::int64_t>(reemit_soft_storm_region_skips());
     s.schema_2952 = 2952;
     s.issue_2952 = 2952;
     // schema_2601 / issue_2601 / schema_2639 / issue_2639 / schema_2669 / issue_2669 are constexpr
@@ -2835,6 +2906,12 @@ extern "C" void aura_hot_update_registry_get_snapshot(aura_hot_update_registry_s
         s.force_jit_repromote_allow_pending_idle_when_force_jit_covered;
     out->schema_2601 = s.schema_2601;
     out->issue_2601 = s.issue_2601;
+    // Issue #3636: per-region force watermark + storm attribution.
+    out->region_force_max_age_ms = s.region_force_max_age_ms;
+    out->reemit_throttle_cause_mask = s.reemit_throttle_cause_mask;
+    out->reemit_soft_storm_region_skips_total = s.reemit_soft_storm_region_skips_total;
+    out->schema_3636 = s.schema_3636;
+    out->issue_3636 = s.issue_3636;
 }
 
 extern "C" void aura_hot_update_note_deopt(void) {

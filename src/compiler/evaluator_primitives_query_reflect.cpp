@@ -1198,6 +1198,13 @@ void register_query_reflect_primitives(PrimRegistrar add, std::pmr::vector<Pair>
                 // Epoch invariant (#2366 / #2501).
                 snap.epoch_invariant_violation_total =
                     aura_epoch_invariant_violation_total_v_read();
+                // Issue #3636: per-region force watermark (advisory only).
+                snap.region_force_max_age_ms =
+                    aura::compiler::hot_update_registry().max_region_force_age_ms();
+                snap.region_force_starve =
+                    snap.region_force_max_age_ms >= aura::compiler::kRegionForceStarveAdvisoryMs
+                        ? std::uint8_t{1}
+                        : std::uint8_t{0};
 
                 const auto scored = compute_aot_hot_update_health(snap);
 
@@ -1256,6 +1263,13 @@ void register_query_reflect_primitives(PrimRegistrar add, std::pmr::vector<Pair>
                 insert_kv("health-bp", static_cast<std::int64_t>(scored.health_bp));
                 insert_kv("health-budget-bp", static_cast<std::int64_t>(scored.health_budget_bp));
                 insert_kv_str("force-reason", scored.force_reason);
+                // Issue #3636: advisory region-force watermark.
+                insert_kv("region-force-max-age-ms",
+                          static_cast<std::int64_t>(scored.components.region_force_max_age_ms));
+                insert_kv("region-force-starve",
+                          static_cast<std::int64_t>(scored.components.region_force_starve));
+                if (!scored.advisory_reason.empty())
+                    insert_kv_str("advisory-reason", scored.advisory_reason);
                 insert_kv("force-reason-code", scored.force_reason_code);
                 insert_kv("recovery-active", scored.recovery_active);
                 // Components (raw totals; subsystem queries unchanged).
