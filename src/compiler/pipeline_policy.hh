@@ -56,11 +56,14 @@ inline void reset_tree_walker_fallback_policy_for_test() noexcept {
 }
 
 // Apply policy from production security defaults + env.
-//   AURA_SANDBOX=off → Allow (unit Soft ergonomics)
 //   AURA_PIPELINE_STRICT=0|off|allow → Allow
 //   AURA_PIPELINE_STRICT=force-soa|force_soa|soa → ForceSoa
 //   AURA_PIPELINE_STRICT=1|true|strict|forbid|forbidden → Forbidden
-//   no env: Forbidden when production (dev_off=false), else Allow
+//   no env, AURA_PRODUCTION_PACK (#3627): Forbidden — the pack binary is
+//     bound to the strict face; the AURA_SANDBOX=off isolate/CI knob
+//     (#3179) cannot select the legacy tree-walker in production.
+//   no env, non-pack: Forbidden when production (dev_off=false), else
+//     Allow (unit Soft ergonomics, #2213 AC2)
 inline void apply_pipeline_strict_defaults(bool dev_sandbox_off) noexcept {
     const char* e = std::getenv("AURA_PIPELINE_STRICT");
     if (e && *e) {
@@ -77,10 +80,21 @@ inline void apply_pipeline_strict_defaults(bool dev_sandbox_off) noexcept {
         set_tree_walker_fallback_policy(TreeWalkerFallbackPolicy::Forbidden);
         return;
     }
+#if defined(AURA_PRODUCTION_PACK)
+    // Issue #3627: the production pack binary is bound to the strict face
+    // regardless of AURA_SANDBOX=off — the sandbox knob belongs to the
+    // isolate / CI / Agent-harness face (#3179) and must not silently
+    // select the legacy tree-walker in the pack (that abandons instruction
+    // dirty, source_to_ir_map precision, and DirtyAware peel — the exact
+    // I6 failure #2213 named). Operator override AURA_PIPELINE_STRICT
+    // still wins via the env parse above.
+    set_tree_walker_fallback_policy(TreeWalkerFallbackPolicy::Forbidden);
+#else
     if (dev_sandbox_off)
         set_tree_walker_fallback_policy(TreeWalkerFallbackPolicy::Allow);
     else
         set_tree_walker_fallback_policy(TreeWalkerFallbackPolicy::Forbidden);
+#endif
 }
 
 // Disposition when needs_tree_walker_fallback is true (caller already knows).
