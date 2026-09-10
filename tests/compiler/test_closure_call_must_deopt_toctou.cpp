@@ -9,6 +9,21 @@
 //   AC3: baseline force-deopt still clears flag for same identity
 //   AC4: source cites Issue #2472 + freed / func_id guards
 //   AC5: gate wiring (check script + CMake + build.py)
+//
+//   Issue #3635 ACs (blessed anon dispatch entry — single enforcement
+//   point for closure native dispatch):
+//   AC6 (#3635): entry owns the call-time transaction — invalid cid
+//        returns callee_val, no-entry / freed returns 0, MustDeopt
+//        force-deopt through the entry clears the flag + advances deopt
+//        (same observable contract as aura_closure_call)
+//   AC7 (#3635): stale anon closure (injected old bridge_epochs) through
+//        the entry takes the safe fallback, never native
+//   AC8 (#3635): adversarial linter face — --probe-file flags a bare
+//        g_closure_func_ids read in a stub surface; #3635-allow-direct
+//        annotated line passes; --self-test clean
+//   AC9 (#3635): gate wiring — blessed entry + wrapper forward in the
+//        table TU, header declaration, build.py linter wiring,
+//        fast-path generation double-check preserved
 
 #include "test_harness.hpp"
 
@@ -27,6 +42,8 @@ import std;
 // aura_deopt_count is defined in aura_jit_runtime (not always in headers).
 extern "C" std::uint64_t aura_deopt_count(void);
 extern "C" void aura_reset_runtime(void);
+// Issue #3635: stale-epoch injection helper (test-only, table TU).
+extern "C" void aura_inject_stale_closure_bridge_epoch_for_test(std::int64_t closure_id);
 
 namespace {
 
@@ -40,6 +57,17 @@ static std::string read_file(const char* path) {
         if (!in)
             continue;
         return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    }
+    return {};
+}
+
+// Issue #3635: locate a repo-relative path from the test CWD (same probe
+// chain as read_file, returns the working prefix for command strings).
+static std::string find_path(const std::string& rel) {
+    for (const auto& p : {rel, std::string("../") + rel, std::string("../../") + rel}) {
+        std::ifstream in(p);
+        if (in)
+            return p;
     }
     return {};
 }
@@ -154,10 +182,12 @@ static void ac4_source_cite() {
     CHECK(rt.find("Issue #2472") != std::string::npos, "AC4: cites #2472");
     CHECK(rt.find("g_closure_freed") != std::string::npos, "AC4: freed vector");
     CHECK(rt.find("orig_func_id") != std::string::npos, "AC4: stashes orig_func_id");
-    // Scope to aura_closure_call body (earlier #2128 comments also mention
-    // MustDeoptBeforeNextCall on the vector / remap path).
-    const auto call = rt.find("int64_t aura_closure_call(");
-    CHECK(call != std::string::npos, "AC4: aura_closure_call present");
+    // Scope to the blessed dispatch entry body (earlier #2128 comments
+    // also mention MustDeoptBeforeNextCall on the vector / remap path).
+    // Issue #3635: aura_closure_call is a thin forward; the transaction
+    // body lives in aura_closure_dispatch_native_checked.
+    const auto call = rt.find("int64_t aura_closure_dispatch_native_checked(");
+    CHECK(call != std::string::npos, "AC4: blessed dispatch entry present");
     if (call != std::string::npos) {
         const auto body = rt.substr(call, 4500);
         CHECK(body.find("Issue #2472") != std::string::npos, "AC4: #2472 in MustDeopt path");
@@ -257,6 +287,104 @@ static void ac2_reverify_order() {
     }
 }
 
+// ── #3635 AC6: entry owns the call-time transaction ──
+static void ac3635_entry_transaction() {
+    std::println("\n=== Issue #3635: blessed anon dispatch entry ===");
+    std::println("--- #3635 AC6: entry owns the transaction (contract parity) ---");
+    aura_reset_runtime();
+    std::int64_t args[1] = {0};
+    // Out-of-range cid: same refuse-as-callee semantics as aura_closure_call.
+    CHECK(aura_closure_dispatch_native_checked(-7, args, 0) == -7,
+          "AC6: invalid cid returns callee_val");
+    // No native fn registered: entry and wrapper both return 0.
+    auto cid = aura_alloc_closure(/*func_id=*/333);
+    CHECK(cid >= 0, "AC6: alloc");
+    CHECK(aura_closure_dispatch_native_checked(cid, args, 0) == 0,
+          "AC6: no-entry returns 0 via entry");
+    CHECK(aura_closure_call(cid, args, 0) == 0, "AC6: wrapper forwards (parity)");
+    // MustDeopt transaction through the entry (#2128/#2472 consume path).
+    aura_closure_set_must_deopt(cid, 1);
+    const auto deopt0 = aura_deopt_count();
+    CHECK(aura_closure_dispatch_native_checked(cid, args, 0) == 0,
+          "AC6: must_deopt force-deopt returns 0");
+    CHECK(aura_closure_get_must_deopt(cid) == 0, "AC6: flag cleared via entry");
+    CHECK(aura_deopt_count() > deopt0, "AC6: deopt advanced via entry");
+    // Freed refuse parity.
+    aura_free_closure(cid);
+    CHECK(aura_closure_dispatch_native_checked(cid, args, 0) == 0,
+          "AC6: freed returns 0 via entry");
+}
+
+// ── #3635 AC7: stale anon through the entry → safe fallback ──
+static void ac3635_stale_entry_fallback() {
+    std::println("--- #3635 AC7: stale anon via entry → interpreter fallback ---");
+    aura_reset_runtime();
+    auto cid = aura_alloc_closure(/*func_id=*/444);
+    CHECK(cid >= 0, "AC7: alloc anon closure");
+    // Inject an old bridge_epochs snapshot (capture behind the live clock;
+    // a no-op when the clock is 0 — domain inactive → fresh, same as prod
+    // Soft). Either way: entry == wrapper, fallback only, never native.
+    aura_inject_stale_closure_bridge_epoch_for_test(cid);
+    std::int64_t args[1] = {0};
+    CHECK(aura_closure_dispatch_native_checked(cid, args, 0) == 0,
+          "AC7: stale entry safe-fallback (0)");
+    CHECK(aura_closure_call(cid, args, 0) == 0, "AC7: wrapper parity under stale state");
+    aura_free_closure(cid);
+}
+
+// ── #3635 AC8: adversarial linter face ──
+static void ac3635_linter_probe() {
+    std::println("--- #3635 AC8: adversarial probe-file face ---");
+    const auto script = find_path("scripts/check_closure_dispatch_entry_3635.py");
+    CHECK(!script.empty(), "AC8: linter script found");
+    if (script.empty())
+        return;
+    // Bare direct table read in a stub surface → flagged.
+    {
+        std::ofstream bad("/tmp/aura_3635_probe_bad.cpp");
+        bad << "#include <cstdint>\n"
+            << "extern \"C\" const std::int64_t* stub_surface_direct_read() {\n"
+            << "    return g_closure_func_ids.data(); // no annotation\n"
+            << "}\n";
+    }
+    const std::string bad_cmd =
+        "python3 " + script + " --probe-file /tmp/aura_3635_probe_bad.cpp >/dev/null 2>&1";
+    CHECK(std::system(bad_cmd.c_str()) != 0, "AC8: bare direct read flagged");
+    // Same read with the per-line annotation → allowed.
+    {
+        std::ofstream ok("/tmp/aura_3635_probe_ok.cpp");
+        ok << "#include <cstdint>\n"
+           << "extern \"C\" const std::int64_t* stub_surface_direct_read() {\n"
+           << "    return g_closure_func_ids.data(); // #3635-allow-direct legacy surface\n"
+           << "}\n";
+    }
+    const std::string ok_cmd =
+        "python3 " + script + " --probe-file /tmp/aura_3635_probe_ok.cpp >/dev/null 2>&1";
+    CHECK(std::system(ok_cmd.c_str()) == 0, "AC8: annotated read allowed");
+    // Linter self-test stays clean.
+    const std::string st_cmd = "python3 " + script + " --self-test >/dev/null 2>&1";
+    CHECK(std::system(st_cmd.c_str()) == 0, "AC8: linter self-test clean");
+}
+
+// ── #3635 AC9: gate wiring ──
+static void ac3635_gate_wiring() {
+    std::println("--- #3635 AC9: gate wiring ---");
+    auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
+    auto hdr = read_file("src/compiler/runtime_shared.h");
+    auto build = read_file("build.py");
+    CHECK(rt.find("aura_closure_dispatch_native_checked") != std::string::npos,
+          "AC9: blessed entry in table TU");
+    CHECK(rt.find("return aura_closure_dispatch_native_checked(closure_id, args, argc);") !=
+              std::string::npos,
+          "AC9: wrapper forwards to entry");
+    CHECK(hdr.find("aura_closure_dispatch_native_checked") != std::string::npos,
+          "AC9: header declares the entry");
+    CHECK(build.find("check_closure_dispatch_entry_3635") != std::string::npos,
+          "AC9: build.py wires the linter");
+    CHECK(rt.find("(g1 & 1ull) == 0") != std::string::npos,
+          "AC9: fast-path generation double-check preserved");
+}
+
 } // namespace
 
 int run_test_closure_call_must_deopt_toctou() {
@@ -268,7 +396,11 @@ int run_test_closure_call_must_deopt_toctou() {
     ac4_source_cite();
     ac3247_getter_sticky();
     ac5_gate();
-    std::println("\n=== #2472 results: {} passed, {} failed ===", g_passed, g_failed);
+    ac3635_entry_transaction();
+    ac3635_stale_entry_fallback();
+    ac3635_linter_probe();
+    ac3635_gate_wiring();
+    std::println("\n=== #2472 + #3635 results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
 

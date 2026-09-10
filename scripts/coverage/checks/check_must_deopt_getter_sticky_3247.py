@@ -62,7 +62,9 @@ def main() -> int:
     must("does **not** clear", "AC1 header sticky", hdr)
     must("Agent must not treat", "AC1 header Agent", hdr)
 
-    call = rt.find("int64_t aura_closure_call(")
+    # Issue #3635: the call-time transaction lives in the blessed entry
+    # (aura_closure_call is a thin forward to it).
+    call = rt.find("int64_t aura_closure_dispatch_native_checked(")
     body = rt[call : call + 4500] if call >= 0 else ""
     must("g_closure_must_deopt[cid] = 0", "AC2 call still clears", body)
     must("g_closure_bridge_epochs[cid] = 0", "AC2 poison epoch", body)

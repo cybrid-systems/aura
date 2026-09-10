@@ -3781,7 +3781,19 @@ int64_t aura_lookup_fn_by_name(const char* name, int64_t* out_local_count, int64
     return aura_jit_deopt_pending_count() != 0;
 }
 
-int64_t aura_closure_call(int64_t closure_id, int64_t* args, int64_t argc) {
+// Issue #3635: blessed entry — the ONLY legal anon (sid==0 / unnamed)
+// closure native-dispatch path. Owns the complete call-time transaction:
+// freed refuse (#1361/#3021), MustDeopt consume TOCTOU (#2128/#2472),
+// cow_gen primary (#2547), dual-fresh (#1508/#2371), env_gen primary
+// (#3504), linear ownership (#2129), peer soft-stale (#3300/#3514),
+// last-look MustDeopt (#3323), fast-path inline cache (#1707) +
+// deopt_pending consult (#3441), named gate (#3412), native invoke +
+// cache write (#1305/#1707). Future dispatch surfaces MUST route through
+// this entry: direct g_closure_func_ids reads / native fn-ptr invocation
+// outside this table TU fail scripts/check_closure_dispatch_entry_3635.py
+// (gate; per-line "#3635-allow-direct" annotation opt-out).
+extern "C" int64_t aura_closure_dispatch_native_checked(int64_t closure_id, int64_t* args,
+                                                        int64_t argc) {
     // Issue #157 Phase 2 + #1361: shared table lock (always) + workspace read.
     std::shared_lock<std::shared_mutex> tlock(g_closure_table_mtx);
     aura_lock_workspace_read();
@@ -4218,6 +4230,14 @@ int64_t aura_closure_call(int64_t closure_id, int64_t* args, int64_t argc) {
                               entry.arg_count, static_cast<int32_t>(env_count_check));
     aura_unlock_workspace_write();
     return result;
+}
+
+// Issue #3635: C ABI preserved for JIT'd code + lib/runtime.c symbol
+// registration — thin forward to the blessed entry. aura_jit.cpp hands
+// out this symbol (reg("aura_closure_call", ...)); all traffic lands in
+// the checked transaction above.
+extern "C" int64_t aura_closure_call(int64_t closure_id, int64_t* args, int64_t argc) {
+    return aura_closure_dispatch_native_checked(closure_id, args, argc);
 }
 
 // === Top-level value-define cells (Issue #272 Cycle 5) ===

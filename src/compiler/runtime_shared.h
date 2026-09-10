@@ -160,6 +160,14 @@ extern "C" void aura_closure_set_name(std::int64_t closure_id, const char* name)
 extern "C" void aura_closure_capture(std::int64_t closure_id, std::int64_t idx, std::int64_t val);
 extern "C" std::int64_t aura_closure_call(std::int64_t closure_id, std::int64_t* args,
                                           std::int64_t argc);
+// Issue #3635: blessed anon closure native-dispatch entry — sole legal
+// call-time transaction owner (fresh-check + MustDeopt + deopt_pending +
+// #2472 TOCTOU). New dispatch surfaces route here; direct closure-table
+// reads / native fn-ptr invocation outside the table TU fail
+// scripts/check_closure_dispatch_entry_3635.py (per-line
+// "#3635-allow-direct" annotation opt-out).
+extern "C" std::int64_t aura_closure_dispatch_native_checked(std::int64_t closure_id,
+                                                             std::int64_t* args, std::int64_t argc);
 // Issue #2013 / #2092 / #2128: after successful reemit, retarget live
 // closures whose stable_func_id (NOT display name — name is unstable
 // under redefine / gensym / multi-define) is in the reemit set: rewrite

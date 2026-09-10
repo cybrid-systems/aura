@@ -251,8 +251,10 @@ int run_test_must_deopt_before_next_call() {
                   "3247 AC1: getter body does not store 0");
             CHECK(fn.find("shared_lock") != std::string::npos, "3247: getter shared-lock read");
         }
-        const auto call = rt.find("int64_t aura_closure_call(");
-        CHECK(call != std::string::npos, "3247: aura_closure_call present");
+        // Issue #3635: the call-time transaction lives in the blessed
+        // entry (aura_closure_call is a thin forward to it).
+        const auto call = rt.find("int64_t aura_closure_dispatch_native_checked(");
+        CHECK(call != std::string::npos, "3247: blessed dispatch entry present");
         if (call != std::string::npos) {
             const auto body = rt.substr(call, 4500);
             CHECK(body.find("g_closure_must_deopt[cid] = 0") != std::string::npos,

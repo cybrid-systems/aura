@@ -38,8 +38,10 @@ def main() -> int:
     build = _read("build.py")
     cmake = _read("CMakeLists.txt")
 
-    # Locate MustDeopt section inside aura_closure_call
-    idx = rt.find("int64_t aura_closure_call(")
+    # Locate MustDeopt section inside the blessed dispatch entry
+    # (Issue #3635: aura_closure_call is a thin forward; the transaction
+    # body moved to aura_closure_dispatch_native_checked).
+    idx = rt.find("int64_t aura_closure_dispatch_native_checked(")
     body = rt[idx : idx + 4500] if idx >= 0 else ""
     md = body.find("MustDeoptBeforeNextCall")
     md_body = body[md : md + 2200] if md >= 0 else ""
