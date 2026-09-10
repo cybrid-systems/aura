@@ -1977,7 +1977,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_self_evolution_loop_stats.cpp` (—) [domain_suite, theme_compiler] — Issue #1883 (#1978 renamed): issue# moved from filename to header.
 - `tests/serve/test_self_heal_policy_engine.cpp` (—) [domain_suite, theme_serve] — test_self_heal_policy_engine.cpp — standalone (flaky/failing ACs under batch link)
 - `tests/compiler/test_selfevo_bugfix.cpp` (—) [domain_suite, theme_compiler] — test_selfevo_bugfix_941_967.cpp — Issues #941–#967 Phase 1
-- `tests/compiler/test_setcode_rebind_survive.cpp` (—) [domain_suite, theme_compiler] — closures or hash telemetry (Aether closed-loop agent state).
+- `tests/compiler/test_setcode_rebind_survive.cpp` (—) [large, domain_suite, theme_compiler] — closures or hash telemetry (Aether closed-loop agent state).
 - `tests/compiler/test_shape_linear_collaborative_pass.cpp` (—) [domain_suite, theme_compiler] — Issue #1531/#1661/#462/#606 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_should_audit_sampled_default.cpp` (—) [domain_suite, theme_compiler] — AC1: cold-start default Full (strategy + should_audit always hits)
 - `tests/compiler/test_solve_delta_unresolved_export.cpp` (—) [large, domain_suite, theme_compiler] — AC1: Synthetic over-limit → TIMEOUT + non-empty unresolved

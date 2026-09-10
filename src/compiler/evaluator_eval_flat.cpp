@@ -294,14 +294,24 @@ static bool closure_needs_safe_fallback(const Evaluator& ev, const Closure& cl,
 // predicate is unchanged (resolve hit ⇒ refuse).
 inline constexpr int kApplyClosureDensifyHardRefuseIssue = 3421;
 
-static bool production_apply_closure_densify_hard_refuse(ast::ASTArena* arena,
-                                                         const Closure& cl) noexcept {
+static bool production_apply_closure_densify_hard_refuse(ast::ASTArena* arena, const Closure& cl,
+                                                         const void* eval_id) noexcept {
     if (!aura::compiler::typed_audit::production_defaults_active())
         return false;
     if (aura::core::moving_densify_health::g_last_objects_moved.load(std::memory_order_relaxed) ==
         0)
         return false;
-    if (!aura::core::lifetime_consistency_proof::last_lifetime_consistency_would_allow())
+    // Issue #3634: per-eval first (#3617 slots), process-wide fallback.
+    // A foreign evaluator's Reject poisons the process-wide bit; an
+    // evaluator with a slot of its own consults its own last-window
+    // verdict instead. No slot keeps today's semantics (process-wide read
+    // — still fail-closed for evaluators that never stamped).
+    const bool lcp_ok =
+        aura::core::lifetime_consistency_proof::last_lifetime_consistency_proof_present_for(eval_id)
+            ? aura::core::lifetime_consistency_proof::last_lifetime_consistency_would_allow_for(
+                  eval_id)
+            : aura::core::lifetime_consistency_proof::last_lifetime_consistency_would_allow();
+    if (!lcp_ok)
         return true;
     ast::ASTArena* ar = arena ? arena : cl.owner_arena;
     if (!ar)
@@ -336,13 +346,21 @@ static void note_apply_closure_densify_hard_refuse(CompilerMetrics* metrics,
 template <typename Marshalled>
 static bool production_ffi_apply_densify_hard_refuse(ast::ASTArena* arena, const void* fn_ptr,
                                                      std::span<const int> arg_types,
-                                                     const Marshalled& marshalled) noexcept {
+                                                     const Marshalled& marshalled,
+                                                     const void* eval_id) noexcept {
     if (!aura::compiler::typed_audit::production_defaults_active())
         return false;
     if (aura::core::moving_densify_health::g_last_objects_moved.load(std::memory_order_relaxed) ==
         0)
         return false;
-    if (!aura::core::lifetime_consistency_proof::last_lifetime_consistency_would_allow())
+    // Issue #3634: per-eval first (#3617 slots), process-wide fallback —
+    // same shape as the #3421 closure arm above.
+    const bool lcp_ok =
+        aura::core::lifetime_consistency_proof::last_lifetime_consistency_proof_present_for(eval_id)
+            ? aura::core::lifetime_consistency_proof::last_lifetime_consistency_would_allow_for(
+                  eval_id)
+            : aura::core::lifetime_consistency_proof::last_lifetime_consistency_would_allow();
+    if (!lcp_ok)
         return true;
     if (arena && fn_ptr && arena->resolve_object_remap(const_cast<void*>(fn_ptr)))
         return true;
@@ -499,7 +517,8 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const
             // + compiler_root_dangling_prevented via the shared note
             // helper. Soft / objects_moved==0: two relaxed loads, then
             // proceed (same quiet shape as #3421).
-            if (production_ffi_apply_densify_hard_refuse(arena_, fn_ptr, arg_types, marshalled)) {
+            if (production_ffi_apply_densify_hard_refuse(arena_, fn_ptr, arg_types, marshalled,
+                                                         static_cast<const void*>(this))) {
                 note_apply_closure_densify_hard_refuse(
                     static_cast<struct CompilerMetrics*>(compiler_metrics_), *this);
                 return std::nullopt;
@@ -654,7 +673,8 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const
         if (cl_copy.must_deopt_before_next_call) {
             // Issue #3421: densify-old + production → MustDeopt refuse.
             // Do not #2569-style restamp and do not remount onto native.
-            if (production_apply_closure_densify_hard_refuse(arena_, cl_copy)) {
+            if (production_apply_closure_densify_hard_refuse(arena_, cl_copy,
+                                                             static_cast<const void*>(this))) {
                 if (metrics)
                     metrics->compiler_closure_safe_fallbacks.fetch_add(1,
                                                                        std::memory_order_relaxed);
@@ -753,7 +773,8 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const
             // not kill unrelated eval-arena closures.
             // Issue #3421: production + densify-old is not recoverable —
             // restamp is not remap. Soft / no-move keep the recover below.
-            if (production_apply_closure_densify_hard_refuse(arena_, cl_copy)) {
+            if (production_apply_closure_densify_hard_refuse(arena_, cl_copy,
+                                                             static_cast<const void*>(this))) {
                 note_apply_closure_densify_hard_refuse(metrics, *this);
                 return std::nullopt;
             }
@@ -916,7 +937,8 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const
                     // (same policy as pre-materialize path).
                     // Issue #3421: production densify-old must not restamp here
                     // either — race recover would re-enter eval_flat.
-                    if (production_apply_closure_densify_hard_refuse(arena_, cl_copy)) {
+                    if (production_apply_closure_densify_hard_refuse(
+                            arena_, cl_copy, static_cast<const void*>(this))) {
                         note_apply_closure_densify_hard_refuse(metrics, *this);
                         return std::nullopt;
                     }
