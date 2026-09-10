@@ -8248,14 +8248,25 @@ def _aura_test_env(extra: dict | None = None) -> dict:
     otherwise tree-walker-forbidden + MacroSelfEvo grant denials mass-fail
     under production defaults.
 
-    Explicit `AURA_SANDBOX` in the caller environment always wins (canary /
-    intentional prod-like runs). Does **not** mutate global `os.environ` so
-    C++ unit tests that unsetenv + call `apply_production_security_defaults`
-    keep clean production-default coverage.
+    Issue #3627: AURA_SANDBOX=off no longer selects the walker on the
+    pack — the pipeline face is its own axis now (AURA_PIPELINE_STRICT).
+    These suites exercise walker-side interpreter features by design, so
+    default to `AURA_PIPELINE_STRICT=0` (diagnostics face) as well; the
+    strict production face is covered by
+    tests/compiler/test_pack_pipeline_strict.cpp. Same rationale as the
+    ci/p0 module pin.
+
+    Explicit `AURA_SANDBOX` / `AURA_PIPELINE_STRICT` in the caller
+    environment always wins (canary / intentional prod-like runs). Does
+    **not** mutate global `os.environ` so C++ unit tests that unsetenv +
+    call `apply_production_security_defaults` keep clean
+    production-default coverage.
     """
     env = os.environ.copy()
     if not str(env.get("AURA_SANDBOX", "")).strip():
         env["AURA_SANDBOX"] = "off"
+    if not str(env.get("AURA_PIPELINE_STRICT", "")).strip():
+        env["AURA_PIPELINE_STRICT"] = "0"
     if extra:
         env.update(extra)
     return env

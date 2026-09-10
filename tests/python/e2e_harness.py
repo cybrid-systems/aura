@@ -81,6 +81,11 @@ def run_aura_file(
     # Issue #2213 / #2053: Soft sandbox for e2e harness unless overridden.
     if not str(run_env.get("AURA_SANDBOX", "")).strip():
         run_env["AURA_SANDBOX"] = "off"
+    # Issue #3627: AURA_SANDBOX=off no longer selects the walker on the
+    # pack — golden e2e cases exercise walker-side features by design, so
+    # default the diagnostics face too (caller override wins).
+    if not str(run_env.get("AURA_PIPELINE_STRICT", "")).strip():
+        run_env["AURA_PIPELINE_STRICT"] = "0"
     t0 = time.time()
     try:
         proc = invoke_aura_load(path, aura_bin=bin_path, env=run_env, timeout_s=timeout, cwd=ROOT)
