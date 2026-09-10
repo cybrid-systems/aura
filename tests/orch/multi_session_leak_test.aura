@@ -93,6 +93,8 @@
 (display growth)
 (newline)
 
-(if (and (number? growth) (< growth 100000))
-    (display "✅ PASS: memory growth under threshold\n")
+(if (number? growth)
+    (if (< growth 100000)
+        (display "✅ PASS: memory growth under threshold\n")
+        (display "❌ FAIL: memory growth exceeded threshold\n"))
     (display "❌ FAIL: memory growth exceeded threshold (or unparsable stats)\n"))

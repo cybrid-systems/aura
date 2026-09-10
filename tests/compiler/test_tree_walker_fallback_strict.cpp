@@ -14,6 +14,15 @@
 //        Forbidden with env unset is proven at runtime by
 //        tests/compiler/test_pack_pipeline_strict.cpp (same define as
 //        the production aura binary).
+//
+// Issue #3632 — whole-program Begin eval (multi-form --load) gate:
+//   AC6: Forbidden + sibling define refs in a Begin → known-sim keeps
+//        all-IR-clean scripts on the IR path (no false HardError from
+//        not-yet-registered sibling defines).
+//   AC7: Forbidden + `while` fn body → HardError (never silently
+//        IR-cache a loop that would not run — the multi-session leak
+//        oracle returned growth=0 → vacuous PASS); Allow → walker
+//        computes the real value (legacy routing preserved).
 
 #include "test_harness.hpp"
 
@@ -315,6 +324,59 @@ static void ac5_issue_3627_nonpack_binding() {
     reset_tree_walker_fallback_policy_for_test();
 }
 
+// Issue #3632: whole-program Begin eval — the known-sim must treat
+// sibling defines as known so all-IR-clean multi-form scripts stay on
+// the IR path under Forbidden (no false HardError from forward refs
+// that are simply "defined two forms earlier").
+static void ac6_whole_begin_sibling_refs() {
+    std::println("\n=== Issue #3632: Begin sibling refs under Forbidden ===");
+    reset_tree_walker_fallback_policy_for_test();
+    set_tree_walker_fallback_policy(TreeWalkerFallbackPolicy::Forbidden);
+    {
+        CompilerService cs;
+        auto r = cs.eval(R"((begin
+  (define (inc x) (+ x 1))
+  (define five (inc 4))
+  five))");
+        CHECK(r.has_value() && is_int(*r) && as_int(*r) == 5,
+              "3632 AC6: Forbidden + sibling refs in Begin → IR eval ok (no false HardError)");
+    }
+    reset_tree_walker_fallback_policy_for_test();
+}
+
+// Issue #3632: `while` fn bodies are not IR-lowerable — under Forbidden
+// the define must hard-error instead of silently IR-caching a loop that
+// would never run (the multi-session leak oracle returned growth=0 →
+// vacuous PASS). Under Allow the legacy walker still computes it.
+static void ac7_while_body_needs_walker() {
+    std::println("\n=== Issue #3632: while fn body routes by policy ===");
+    reset_tree_walker_fallback_policy_for_test();
+    constexpr const char* kWhileScript = R"((begin
+  (define *i* 0)
+  (define *total* 0)
+  (define (bump)
+    (while (lambda () (< *i* 3))
+      (lambda ()
+        (set! *total* (+ *total* 1))
+        (set! *i* (+ *i* 1))))
+    *total*)
+  (bump)))";
+    {
+        set_tree_walker_fallback_policy(TreeWalkerFallbackPolicy::Forbidden);
+        CompilerService cs;
+        auto r = cs.eval(kWhileScript);
+        CHECK(!r, "3632 AC7: Forbidden + while fn body → HardError (no vacuous IR-cache)");
+    }
+    reset_tree_walker_fallback_policy_for_test();
+    {
+        CompilerService cs; // Allow (unit default)
+        auto r = cs.eval(kWhileScript);
+        CHECK(r.has_value() && is_int(*r) && as_int(*r) == 3,
+              "3632 AC7: Allow + while fn body → walker computes (3)");
+    }
+    reset_tree_walker_fallback_policy_for_test();
+}
+
 } // namespace
 
 int run_test_tree_walker_fallback_strict() {
@@ -324,6 +386,8 @@ int run_test_tree_walker_fallback_strict() {
     ac3_query_schema();
     ac4_happy_path_and_source();
     ac5_issue_3627_nonpack_binding();
+    ac6_whole_begin_sibling_refs();
+    ac7_while_body_needs_walker();
 
     std::println("\n=== test_tree_walker_fallback_strict: {} passed, {} failed ===", g_passed,
                  g_failed);

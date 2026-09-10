@@ -1601,6 +1601,61 @@ public:
         metrics_.needs_tree_walker_fallback_calls.fetch_add(1, std::memory_order_relaxed);
         if (root == aura::ast::NULL_NODE || root >= flat.size())
             return false;
+        // Whole-program Begin root (multi-form --load / pasted buffer):
+        // forms are evaluated sequentially by the IR pipeline and each
+        // top-level define registers as it evaluates — but nothing is
+        // registered at gate time. Two hazards made such scripts
+        // hard-error under the strict gate:
+        //   (a) the slow-path scan walks the entire flat, including
+        //       ORPHANED forms already pre-executed and stripped from the
+        //       root by pre_exec_requires (e.g. (require "x" all:) leaves
+        //       its trailing-colon keyword arg orphaned in the flat →
+        //       bogus "unknown variable" all:);
+        //   (b) free variables / calls referencing earlier sibling forms
+        //       look unknown because those defines have not run yet.
+        // Simulate the sequential order instead: direct-child define
+        // names are known to every scanned sibling; each define's own
+        // body keeps its existing define-path validation (checked with
+        // real registered state during sequential evaluation).
+        // Scope: the known-sim precision only reshapes the NON-Allow
+        // decision. The Allow (legacy) face keeps the legacy whole-flat
+        // routing below — "anything unrecognized → silent TakeWalker" is
+        // a pinned contract there (#2577 heap tests, #3632 asan-verify
+        // diagnostics face).
+        if (flat.get(root).tag == aura::ast::NodeTag::Begin &&
+            tree_walker_fallback_policy() != TreeWalkerFallbackPolicy::Allow) {
+            const auto begin_v = flat.get(root);
+            std::unordered_set<std::string> begin_defined;
+            for (auto cid : begin_v.children) {
+                if (cid >= flat.size())
+                    continue;
+                const auto cv = flat.get(cid);
+                if (cv.tag == aura::ast::NodeTag::Define && !cv.children.empty())
+                    begin_defined.insert(std::string(pool.resolve(cv.sym_id)));
+            }
+            for (auto cid : begin_v.children) {
+                if (cid >= flat.size())
+                    continue;
+                const auto cv = flat.get(cid);
+                if (cv.tag == aura::ast::NodeTag::Define && !cv.children.empty()) {
+                    // Define bodies are lambda-aware checked here too: a body
+                    // that needs the walker (while, fiber:*, unknown refs) must
+                    // trip the gate so the disposition selects TakeWalker
+                    // (Allow) / HardError (Forbidden). Skipping defines entirely
+                    // silently IR-cached non-IR-safe bodies (#3632: while loop
+                    // never ran → growth=0 vacuous PASS).
+                    const auto dbody = cv.child(0);
+                    const auto dname = std::string(pool.resolve(cv.sym_id));
+                    if (define_body_needs_tree_walker_fallback(flat, pool, dbody, dname,
+                                                               &begin_defined))
+                        return true;
+                    continue;
+                }
+                if (subtree_needs_tree_walker_fallback(flat, pool, cid, &begin_defined))
+                    return true;
+            }
+            return false;
+        }
         // Issue #657: quote-containing defines need bridge/fallback refresh.
         bool flat_has_quote = false;
         for (aura::ast::NodeId qid = 0; qid < flat.size(); ++qid) {
@@ -1871,9 +1926,9 @@ public:
     // SAME per-node logic as the slow-path scan — Variable
     // keyword check, Call query:/mutate: prefix, primitive
     // slot lookup, etc. — but bounded by root size.
-    bool subtree_needs_tree_walker_fallback(const aura::ast::FlatAST& flat,
-                                            const aura::ast::StringPool& pool,
-                                            aura::ast::NodeId root) const {
+    bool subtree_needs_tree_walker_fallback(
+        const aura::ast::FlatAST& flat, const aura::ast::StringPool& pool, aura::ast::NodeId root,
+        const std::unordered_set<std::string>* extra_known = nullptr) const {
         if (root == aura::ast::NULL_NODE || root >= flat.size())
             return false;
 
@@ -1981,6 +2036,10 @@ public:
                     needs = true;
                     return;
                 }
+                // Whole-program Begin eval: names defined by sibling forms
+                // register sequentially — treat them as known (#3632).
+                if (extra_known && extra_known->count(std::string(var_name)))
+                    return;
                 if (user_bindings_.count(std::string(var_name))) {
                     // Issue #1284: ir_cache_v2_ define cache avoids fallback.
                     if (!name_in_ir_define_cache(std::string(var_name))) {
@@ -2009,6 +2068,10 @@ public:
                             needs = true;
                             return;
                         }
+                        // Whole-program Begin eval: sibling defines register
+                        // sequentially — treat them as known (#3632).
+                        if (extra_known && extra_known->count(name))
+                            return;
                         if (tree_walker_only.count(name)) {
                             needs = true;
                             return;
@@ -8782,7 +8845,8 @@ public:
 
     [[nodiscard]] bool define_body_needs_tree_walker_fallback(
         const aura::ast::FlatAST& flat, const aura::ast::StringPool& pool,
-        aura::ast::NodeId body_id, const std::string& self_name = {}) const {
+        aura::ast::NodeId body_id, const std::string& self_name = {},
+        const std::unordered_set<std::string>* extra_known = nullptr) const {
         if (body_id == aura::ast::NULL_NODE || body_id >= flat.size())
             return false;
         std::unordered_set<std::string> param_names;
@@ -8802,6 +8866,9 @@ public:
                                      aura::core::TransparentStringHash, std::equal_to<>>& ir_cache;
             const std::unordered_map<std::string, std::size_t, aura::core::TransparentStringHash,
                                      std::equal_to<>>& value_cells;
+            // Whole-program Begin eval: sibling defines register sequentially —
+            // body refs to their names are known at gate time (#3632).
+            const std::unordered_set<std::string>* extra_known;
             bool needs_fallback = false;
             void walk(aura::ast::NodeId id) {
                 if (needs_fallback || id == aura::ast::NULL_NODE || id >= f.size())
@@ -8825,12 +8892,22 @@ public:
                             auto callee_name = std::string(p.resolve(callee_v.sym_id));
                             if (callee_name == "fiber:spawn" || callee_name == "fiber:join")
                                 needs_fallback = true;
+                            // Issue #3632: `while` bodies are not IR-lowerable —
+                            // an IR-cached fn with a while loop silently
+                            // miscomputes (loop never runs; the multi-session
+                            // leak oracle returned growth=0 → vacuous PASS).
+                            // Route the define to walker-define (Allow) or
+                            // hard-error (Forbidden) via the define-path gate.
+                            else if (callee_name == "while")
+                                needs_fallback = true;
                         }
                     }
                 }
                 if (nv.tag == aura::ast::NodeTag::Variable) {
                     auto var_name = std::string(p.resolve(nv.sym_id));
                     if (param_names.count(var_name) || var_name == self_name)
+                        return;
+                    if (extra_known && extra_known->count(var_name))
                         return;
                     if (eval.primitives().slot_for_name(var_name) < eval.primitives().slot_count())
                         return;
@@ -8842,8 +8919,14 @@ public:
                     walk(c);
             }
         };
-        BodyWalker bw{
-            flat, pool, self_name, param_names, evaluator_, ir_cache_, ir_value_cell_bindings_};
+        BodyWalker bw{flat,
+                      pool,
+                      self_name,
+                      param_names,
+                      evaluator_,
+                      ir_cache_,
+                      ir_value_cell_bindings_,
+                      extra_known};
         bw.walk(body_id);
         return bw.needs_fallback;
     }
