@@ -456,6 +456,13 @@ jobs:
     - name: Multi-session leak test
       env:
         AURA_SANDBOX: "off"
+        # Diagnostics face: the leak oracle's digit-parse fn is deliberately
+        # walker-side (top-level while/set! per #2770) and the script needs
+        # TakeWalker to compute real growth numbers. #3627 binds the pack
+        # binary to Forbidden with env unset, which made this step hard-error
+        # (and a silent IR-path run returns growth=0 → vacuous PASS). The
+        # strict production face is covered by test_pack_pipeline_strict.
+        AURA_PIPELINE_STRICT: "0"
       run: |
         set +e
         ASAN_OPTIONS=detect_leaks=1:abort_on_error=0:print_stacktrace=1:exitcode=42 \
@@ -496,6 +503,9 @@ jobs:
       env:
         ASAN_OPTIONS: "detect_leaks=0:abort_on_error=1:print_stacktrace=1:halt_on_error=1"
         AURA_SANDBOX: "off"
+        # Diagnostics face (see multi-session step): bash .aura cases are
+        # walker-side scripts, not strict-face fixtures.
+        AURA_PIPELINE_STRICT: "0"
       run: |
         AURA=$(pwd)/build_asan/aura bash tests/run-tests.sh
         echo "✓ emit-binary suite clean under ASAN"
