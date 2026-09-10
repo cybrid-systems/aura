@@ -784,6 +784,9 @@ void Evaluator::install_defuse_subsystem() {
             defuse_version_.store(1, std::memory_order_relaxed);
             defuse_rebuild_count_++;
             defuse_affected_syms_.clear();
+            // Issue #3638: cold build-from-scratch walks the whole tree =
+            // defuse-axis full-scan fallback (single bump per query call).
+            g_query_full_scan_fallback_total.fetch_add(1, std::memory_order_relaxed);
             return idx;
         }
 
@@ -810,6 +813,9 @@ void Evaluator::install_defuse_subsystem() {
                     auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
                     m->defuse_incremental_updates_total.fetch_add(1, std::memory_order_relaxed);
                 }
+                // Issue #3638: incremental maintenance served the query from
+                // the defuse index = defuse-axis hit.
+                g_query_index_hit_total.fetch_add(1, std::memory_order_relaxed);
                 return idx;
             }
         }
@@ -819,6 +825,8 @@ void Evaluator::install_defuse_subsystem() {
         defuse_version_.store(1, std::memory_order_relaxed);
         defuse_rebuild_count_++;
         ++defuse_full_rebuild_fallbacks_;
+        // Issue #3638: full rebuild = defuse-axis full-scan fallback.
+        g_query_full_scan_fallback_total.fetch_add(1, std::memory_order_relaxed);
         if (compiler_metrics_) {
             auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
             m->defuse_full_rebuild_fallbacks_total.fetch_add(1, std::memory_order_relaxed);

@@ -511,7 +511,10 @@ static void ac8_3634_per_eval_lcp_consult() {
     auto cid_c = cs_c.eval("(c-func -1 \"abs\" \"(Int) -> Int\")");
     CHECK(cid_c && is_closure(*cid_c), "3634 AC2: C c-func registered");
 
-    ProdDensifyWindowGuard g(/*prod=*/true, /*moved=*/1, /*lcp_allow=*/false, &cs.evaluator());
+    // Neutral window holder: a fresh evaluator binds the production window
+    // WITHOUT touching the A/B/C per-eval LCP slots under test.
+    CompilerService cs_win;
+    ProdDensifyWindowGuard g(/*prod=*/true, /*moved=*/1, /*lcp_allow=*/false, &cs_win.evaluator());
 
     // A: own slot = Reject → refuse (fail-closed preserved).
     auto ga = cs_a.evaluator().apply_closure(0, args);
