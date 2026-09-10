@@ -11782,6 +11782,40 @@ def cmd_region_storm_attribution_3636_coverage():
     return 0
 
 
+def cmd_macro_boundary_backstop_3637_coverage():
+    """Issue #3637: runtime boundary-level MacroIntroduced marker-delta
+    backstop.
+
+    Contract rows (AC1-AC5 from the test file):
+
+      AC1: outermost Guard snapshots the cumulative macro-expansion dirty
+           counter at enter; exit delta > 0 && !allow fires the hoisted
+           #1611 MutationReflectHealth net — production fail-closes
+           (+ hygiene_violation_prevented_on_boundary_total, #1908).
+      AC2: Soft/Off observe-only (end-append backstop counter, no
+           rollback); delta==0 quiet path = single counter read.
+      AC3: pre-gates stay primary; net reuses the #1611 validator (no
+           new query keys; counter appended at END, #2906).
+      AC4: the net never widens authorization — allow consults the
+           #3542 recorded flag.
+      AC5: test face in test_hygiene_mutate_closed_loop.cpp + regression
+           suites (closed_loop / macro_hygiene_batch).
+      AC6: no docs/design/3637-* (#1655); no tests/**/test_issue_3637.cpp
+           (#81934); build.py wires this linter.
+    """
+    print(f"{B}=== boundary macro-dirty backstop (#3637) ==={N}")
+    script = ROOT / "scripts" / "check_macro_boundary_backstop_3637.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script), "--strict"], cwd=ROOT)
+    if r.returncode != 0:
+        fail("boundary macro-dirty backstop (#3637) contract rows failed")
+        return 1
+    ok("boundary macro-dirty backstop (#3637) clean")
+    return 0
+
+
 def cmd_wal_window_miss_catalog_3603_coverage():
     """Issue #3603: mid point-query window-miss face + forensic catalog seed.
 
@@ -22192,6 +22226,7 @@ def cmd_gate():
         or cmd_ffi_apply_densify_refuse_3602_coverage()
         or cmd_closure_dispatch_entry_3635_coverage()
         or cmd_region_storm_attribution_3636_coverage()
+        or cmd_macro_boundary_backstop_3637_coverage()
         or cmd_wal_window_miss_catalog_3603_coverage()
         or cmd_panic_aba_gc_defer_drain_3604_coverage()
         or cmd_facade_owner_scope_clock_skip_3605_coverage()

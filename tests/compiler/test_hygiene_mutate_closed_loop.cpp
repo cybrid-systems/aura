@@ -4834,6 +4834,124 @@ static void ac3576_4_existing_point_tests_not_reimplemented() {
 
 } // namespace
 
+// ── Issue #3637: MutationBoundary macro-dirty backstop ──
+static void ac3637_production_net() {
+    std::println("\n--- 3637 AC1: production net fail-closes on enumeration escape ---");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    using aura::compiler::typed_audit::production_defaults_active;
+    apply_dev_audit_defaults();
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define base 10)\")").has_value(), "3637 AC1: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3637 AC1: eval");
+    auto* ws = cs.evaluator().workspace_flat();
+    CHECK(ws != nullptr, "3637 AC1: workspace");
+    auto lit = first_lit_int(ws);
+    CHECK(lit != aura::ast::NULL_NODE, "3637 AC1: LiteralInt");
+    CHECK(cs.eval(std::format("(syntax:set-marker {} 1)", lit)).has_value(),
+          "3637 AC1: stamp MacroIntroduced");
+    CHECK(ws->is_macro_introduced(lit), "3637 AC1: marker set");
+    auto* cm = static_cast<aura::compiler::CompilerMetrics*>(cs.evaluator().compiler_metrics());
+    // Flip production AFTER workspace setup (production densify fail-close
+    // can refuse to attach workspace_flat during eval-current).
+    apply_production_audit_defaults();
+    CHECK(production_defaults_active(), "3637 AC1: production regime");
+    const auto backstop0 =
+        cm->mutation_boundary_macro_hygiene_backstop_total.load(std::memory_order_relaxed);
+    const auto prevented0 =
+        cm->hygiene_violation_prevented_on_boundary_total.load(std::memory_order_relaxed);
+    bool ok = true;
+    {
+        // Enumeration-escape stub: dirty the macro-introduced node via the
+        // column setter directly — bypasses all four enumerated mechanisms
+        // (pre-gates / #2037 / #2525 / #3354). The boundary net must catch it.
+        Evaluator::MutationBoundaryGuard guard(cs.evaluator(), &ok);
+        ws->apply_macro_dirty_bits(
+            lit, static_cast<std::uint8_t>(aura::ast::FlatAST::MacroDirtyReason::kMacroExpansion));
+    }
+    CHECK(!ok, "3637 AC1: boundary fail-closed without allow");
+    CHECK(cm->mutation_boundary_macro_hygiene_backstop_total.load(std::memory_order_relaxed) >
+              backstop0,
+          "3637 AC1: backstop counter bumped");
+    CHECK(cm->hygiene_violation_prevented_on_boundary_total.load(std::memory_order_relaxed) >
+              prevented0,
+          "3637 AC1: hygiene prevented bumped");
+    apply_dev_audit_defaults();
+}
+
+static void ac3637_soft_observe() {
+    std::println("\n--- 3637 AC2: Soft observe-only + quiet path ---");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::production_defaults_active;
+    apply_dev_audit_defaults();
+    CHECK(!production_defaults_active(), "3637 AC2: Soft regime");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define base 20)\")").has_value(), "3637 AC2: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3637 AC2: eval");
+    auto* ws = cs.evaluator().workspace_flat();
+    CHECK(ws != nullptr, "3637 AC2: workspace");
+    auto lit = first_lit_int(ws);
+    CHECK(lit != aura::ast::NULL_NODE, "3637 AC2: LiteralInt");
+    auto* cm = static_cast<aura::compiler::CompilerMetrics*>(cs.evaluator().compiler_metrics());
+    // Quiet path: a boundary with no macro-dirty delta bumps nothing and
+    // costs a single counter read per edge (AC2).
+    const auto q0 =
+        cm->mutation_boundary_macro_hygiene_backstop_total.load(std::memory_order_relaxed);
+    bool ok = true;
+    {
+        Evaluator::MutationBoundaryGuard guard(cs.evaluator(), &ok);
+    }
+    CHECK(ok, "3637 AC2: quiet boundary commits");
+    CHECK(cm->mutation_boundary_macro_hygiene_backstop_total.load(std::memory_order_relaxed) == q0,
+          "3637 AC2: quiet path — no backstop bump");
+    // Observe-only: delta fires the counter but the boundary still commits.
+    CHECK(cs.eval(std::format("(syntax:set-marker {} 1)", lit)).has_value(),
+          "3637 AC2: stamp MacroIntroduced");
+    bool ok2 = true;
+    {
+        Evaluator::MutationBoundaryGuard guard(cs.evaluator(), &ok2);
+        ws->apply_macro_dirty_bits(
+            lit, static_cast<std::uint8_t>(aura::ast::FlatAST::MacroDirtyReason::kMacroExpansion));
+    }
+    CHECK(ok2, "3637 AC2: Soft observe-only — boundary commits (no rollback)");
+    CHECK(cm->mutation_boundary_macro_hygiene_backstop_total.load(std::memory_order_relaxed) > q0,
+          "3637 AC2: observe counter bumped");
+}
+
+static void ac3637_allow_pass() {
+    std::println("\n--- 3637 AC4: recorded allow passes the net (never widens) ---");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    apply_dev_audit_defaults();
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define base 30)\")").has_value(), "3637 AC4: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3637 AC4: eval");
+    auto* ws = cs.evaluator().workspace_flat();
+    CHECK(ws != nullptr, "3637 AC4: workspace");
+    auto lit = first_lit_int(ws);
+    CHECK(lit != aura::ast::NULL_NODE, "3637 AC4: LiteralInt");
+    CHECK(cs.eval(std::format("(syntax:set-marker {} 1)", lit)).has_value(),
+          "3637 AC4: stamp MacroIntroduced");
+    auto* cm = static_cast<aura::compiler::CompilerMetrics*>(cs.evaluator().compiler_metrics());
+    apply_production_audit_defaults();
+    // Recorded allow (#3542 surface): the net consults it and never grants it.
+    cs.evaluator().set_allow_macro_mutate(true);
+    const auto backstop0 =
+        cm->mutation_boundary_macro_hygiene_backstop_total.load(std::memory_order_relaxed);
+    bool ok = true;
+    {
+        Evaluator::MutationBoundaryGuard guard(cs.evaluator(), &ok);
+        ws->apply_macro_dirty_bits(
+            lit, static_cast<std::uint8_t>(aura::ast::FlatAST::MacroDirtyReason::kMacroExpansion));
+    }
+    CHECK(ok, "3637 AC4: recorded allow → boundary commits");
+    CHECK(cm->mutation_boundary_macro_hygiene_backstop_total.load(std::memory_order_relaxed) ==
+              backstop0,
+          "3637 AC4: net quiet with allow");
+    cs.evaluator().set_allow_macro_mutate(false);
+    apply_dev_audit_defaults();
+}
+
 int main() {
     std::println("=== test_hygiene_mutate_closed_loop (#2037 + #2762 + #2858 + #2863 + #2864 + "
                  "#2961 + #3000 + #3027 + #3037 + #3076 + #3121) ===");
@@ -5020,6 +5138,10 @@ int main() {
     ac3576_2_each_non_exempt_default_rejects();
     ac3576_3_allowlist_reason_source_cite();
     ac3576_4_existing_point_tests_not_reimplemented();
+    std::println("\n=== Issue #3637: boundary macro-dirty backstop ===");
+    ac3637_production_net();
+    ac3637_soft_observe();
+    ac3637_allow_pass();
     std::println("\n=== {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

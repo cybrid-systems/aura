@@ -69,7 +69,13 @@ def main() -> int:
     must("forced_unlock_total", "AC1 forced-unlock counter bump", emb)
     must("abort_restore_dual_topology", "AC1 dual restore path", emb)
     must("kMutationHoldBudgetForcedUnlockIssue = 3035", "AC1", mhb)
-    must("success = cancel_forced_fail ? false", "AC1 flag-null force-fail", emb)
+    # Issue #3637: the fold gained the macro-hygiene backstop arm — the
+    # anchor now matches the folded form (cancel still forces success=false).
+    must(
+        "(cancel_forced_fail || macro_hygiene_forced_fail) ? false : success_flag_load(flag_)",
+        "AC1 flag-null force-fail",
+        emb,
+    )
 
     must("peek_hold_budget_cancel", "AC2 Soft peek", emb)
     must("soft_observe_total", "AC2 Soft observe", emb)
