@@ -154,7 +154,10 @@ int run_test_agent_ask_typed_corr() {
         const auto reply_typed_before =
             g_orch_module_stats.agent_reply_typed_total.load(std::memory_order_relaxed);
 
-        AskResult r = agent_ask(b, "typed-ping", /*timeout_ms=*/2000);
+        // De-flake: 2s ask budget can expire under tier load (jobs=4 ×
+        // inner_jobs=3) before the starved worker replies — same class
+        // as the keepalive join 3s→10s de-flake. 10s, AC intent unchanged.
+        AskResult r = agent_ask(b, "typed-ping", /*timeout_ms=*/10000);
         CHECK(r.ok, "AC1: e2e agent_ask ok via typed worker");
         CHECK(r.payload == "typed-ping", "AC1: e2e payload match");
         CHECK(g_orch_module_stats.agent_ask_typed_match_total.load() > typed_before,
@@ -276,7 +279,10 @@ int run_test_agent_ask_typed_corr() {
             }
         });
 
-        AskResult r = agent_ask(b, "legacy-ping", /*timeout_ms=*/2000);
+        // De-flake: same tier-load budget raise as AC1 (10s). This AC
+        // checks the legacy text-prefix match path, not the timeout
+        // contract (that keeps its own tight budget).
+        AskResult r = agent_ask(b, "legacy-ping", /*timeout_ms=*/10000);
         CHECK(r.ok, std::format("AC2: agent_ask ok via pure text-prefix worker (status={} corr={})",
                                 r.status, r.correlation_id));
         CHECK(r.payload == "legacy-ping",
@@ -328,7 +334,8 @@ int run_test_agent_ask_typed_corr() {
         std::vector<std::thread> threads;
         for (int i = 0; i < 3; ++i) {
             threads.emplace_back([&, i] {
-                results[i] = agent_ask(b, std::format("ping-{}", i + 1), /*timeout_ms=*/4000);
+                // De-flake: same tier-load budget raise as AC1 (10s).
+                results[i] = agent_ask(b, std::format("ping-{}", i + 1), /*timeout_ms=*/10000);
             });
         }
         for (auto& t : threads)
