@@ -28,12 +28,14 @@
 #include "core/workspace_epoch.hh"
 #include "core/workspace_isolation.hh"
 
+#include <atomic>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
 #include <string>
 #include <string_view>
+#include <thread>
 
 import std;
 import aura.compiler.evaluator;
@@ -1492,6 +1494,144 @@ static void ac3415_7_packed_resolve_keeps_stamp() {
 
 } // namespace
 
+// ── Issue #3629: occupancy ring — single-slot evict window closed ──
+static void ac3629_1_interleaved_stamp_keeps_occupancy() {
+    std::println("\n--- #3629 AC1: interleaved stamp does not evict foreign occupancy ---");
+    reset_all();
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+    aura::core::provenance::set_multi_tenant_env_active(true);
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_effect_sandbox_mode(1);
+    const auto me = current_mutation_epoch();
+    ev.grant_effect_capability(99, "mut-3629-b", kEffectMutate, me == 0 ? 1 : me);
+    ev.grant_effect_capability(7, "mut-3629-a", kEffectMutate, me == 0 ? 1 : me);
+    // X and Z map to distinct ring slots (0x100 & 255 = 0, 0x101 & 255 = 1).
+    ev.set_capability_tenant_id(99);
+    (void)ev.make_stamped_ref(/*node_id=*/0x100);
+    CHECK(aura::core::provenance::existing_stamp_for_node(0x100) == 99,
+          "3629 AC1: B stamp records (X, 99)");
+    ev.set_capability_tenant_id(7);
+    (void)ev.make_stamped_ref(/*node_id=*/0x101);
+    CHECK(aura::core::provenance::existing_stamp_for_node(0x101) == 7,
+          "3629 AC1: A stamp records (Z, 7)");
+    CHECK(aura::core::provenance::existing_stamp_for_node(0x100) == 99,
+          "3629 AC1: A's Z stamp did NOT evict X (single-slot window closed)");
+    const auto seq0 = current_seq();
+    const bool ok = ev.require_effect_for_node_id(static_cast<std::uint16_t>(kEffectMutate),
+                                                  "3629-ac1-occupancy", /*node_id=*/0x100);
+    CHECK(!ok, "3629 AC1: NodeId-only mutate on X denies after interleave");
+    CHECK(isolation_denies_since(seq0) >= 1, "3629 AC1: IsolationDeny SE emitted (audit join)");
+    // Bounded residual (documented): same-slot collision still evicts.
+    (void)ev.make_stamped_ref(/*node_id=*/0x200);
+    CHECK(aura::core::provenance::existing_stamp_for_node(0x100) == 0,
+          "3629 AC1: same-slot collision evicts (bounded, documented)");
+    aura::core::provenance::set_multi_tenant_env_active(false);
+}
+
+static void ac3629_2_chaos_interleaved_nodes() {
+    std::println("\n--- #3629 AC2: 64 interleaved nodes, zero false allows while resident ---");
+    reset_all();
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+    aura::core::provenance::set_multi_tenant_env_active(true);
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_effect_sandbox_mode(1);
+    const auto me = current_mutation_epoch();
+    ev.grant_effect_capability(99, "mut-3629-chaos-b", kEffectMutate, me == 0 ? 1 : me);
+    ev.grant_effect_capability(7, "mut-3629-chaos-a", kEffectMutate, me == 0 ? 1 : me);
+    // Interleave: B stamps even-slot nodes (slots 0,2,..,126), A odd-slot
+    // (1,3,..,127) — no collisions, all 128 stamps resident simultaneously.
+    ev.set_capability_tenant_id(99);
+    for (int i = 0; i < 64; ++i)
+        (void)ev.make_stamped_ref(/*node_id=*/0x1000 + i * 2);
+    ev.set_capability_tenant_id(7);
+    for (int i = 0; i < 64; ++i)
+        (void)ev.make_stamped_ref(/*node_id=*/0x1000 + i * 2 + 1);
+    // Replay: every B-owned node denies for A; zero false allows.
+    int denies = 0;
+    int resident = 0;
+    for (int i = 0; i < 64; ++i) {
+        const auto nx = static_cast<std::uint32_t>(0x1000 + i * 2);
+        if (aura::core::provenance::existing_stamp_for_node(nx) != 99)
+            continue;
+        ++resident;
+        const bool ok = ev.require_effect_for_node_id(static_cast<std::uint16_t>(kEffectMutate),
+                                                      "3629-ac2-chaos", nx);
+        if (!ok)
+            ++denies;
+    }
+    CHECK(resident == 64, "3629 AC2: all 64 B nodes resident after A's interleaved stamps");
+    CHECK(denies == 64, "3629 AC2: zero false allows (deny on every resident foreign node)");
+    aura::core::provenance::set_multi_tenant_env_active(false);
+}
+
+static void ac3629_3_seqlock_hammer_and_reset() {
+    std::println("\n--- #3629 AC3: seqlock stable under concurrent stamps; clear resets ---");
+    reset_all();
+    constexpr std::uint32_t kHot = 0x7Eu; // slot 126; kHot+1 never stamped
+    std::atomic<int> bad{0};
+    std::atomic<bool> stop{false};
+    std::thread w1([&] {
+        while (!stop.load(std::memory_order_relaxed))
+            aura::core::provenance::note_stamped_node(kHot, 99);
+    });
+    std::thread w2([&] {
+        while (!stop.load(std::memory_order_relaxed))
+            aura::core::provenance::note_stamped_node(kHot, 7);
+    });
+    std::thread rd([&] {
+        while (!stop.load(std::memory_order_relaxed)) {
+            const auto t = aura::core::provenance::existing_stamp_for_node(kHot);
+            if (t != 99 && t != 7 && t != 0)
+                bad.fetch_add(1, std::memory_order_relaxed);
+            if (aura::core::provenance::existing_stamp_for_node(kHot + 1) != 0)
+                bad.fetch_add(1, std::memory_order_relaxed);
+        }
+    });
+    for (int i = 0; i < 50 && bad.load() == 0; ++i)
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    stop.store(true, std::memory_order_relaxed);
+    w1.join();
+    w2.join();
+    rd.join();
+    CHECK(bad.load() == 0,
+          "3629 AC3: reader never observes torn/garbage stamp; no cross-slot bleed");
+    aura::core::provenance::clear_last_stamped_node_for_test();
+    CHECK(aura::core::provenance::existing_stamp_for_node(kHot) == 0,
+          "3629 AC3: clear_for_test resets the whole ring");
+}
+
+static void ac3629_4_source_cite_and_no_invent() {
+    std::println("\n--- #3629 AC4: source-cite + no invent ---");
+    static const auto slurp = [](const char* path) {
+        for (const auto& p :
+             {std::string(path), std::string("../") + path, std::string("../../") + path}) {
+            std::ifstream in(p);
+            if (!in)
+                continue;
+            return std::string((std::istreambuf_iterator<char>(in)),
+                               std::istreambuf_iterator<char>());
+        }
+        return std::string{};
+    };
+    const auto prov = slurp("src/core/provenance_tracker.hh");
+    CHECK(prov.find("kNodeOccupancyRingIssue = 3629") != std::string::npos, "3629: header stamp");
+    CHECK(prov.find("node_occupancy_ring") != std::string::npos, "3629: ring store present");
+    CHECK(prov.find("last_stamped_node_id") == std::string::npos,
+          "3629: evictable single-slot scalars gone");
+    CHECK(slurp("src/compiler/evaluator.ixx").find("kNodeOccupancyRingIssue = 3629") !=
+              std::string::npos,
+          "3629: ixx re-export");
+    CHECK(slurp("src/compiler/evaluator_security.cpp").find("Issue #3629") != std::string::npos,
+          "3629: consult site cites");
+    CHECK(slurp("scripts/coverage/checks/check_bare_nodeid_foreign_stamp_3415.py").find("3629") !=
+              std::string::npos,
+          "3629: linter extended");
+    CHECK(slurp("tests/issues/test_issue_3629.cpp").empty(), "3629: no tests/issues file");
+    CHECK(slurp("tests/compiler/test_issue_3629.cpp").empty(), "3629: no test_issue file");
+}
+
 int run_test_require_effect_auto_isolation() {
     std::println("=== Issue #2490: require_effect auto-enforces isolation ===");
     ac1_restricted_unset_principal_denies();
@@ -1561,6 +1701,11 @@ int run_test_require_effect_auto_isolation() {
     ac3415_5_no_grant_denies();
     ac3415_6_source_cite_and_no_invent();
     ac3415_7_packed_resolve_keeps_stamp();
+    std::println("\n=== Issue #3629: occupancy ring — single-slot evict window closed ===");
+    ac3629_1_interleaved_stamp_keeps_occupancy();
+    ac3629_2_chaos_interleaved_nodes();
+    ac3629_3_seqlock_hammer_and_reset();
+    ac3629_4_source_cite_and_no_invent();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
