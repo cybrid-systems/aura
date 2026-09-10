@@ -55,6 +55,11 @@ def _test_env():
     env = os.environ.copy()
     if not str(env.get("AURA_SANDBOX", "")).strip():
         env["AURA_SANDBOX"] = "off"
+    # Issue #3627: AURA_SANDBOX=off no longer selects the walker on the
+    # pack — gradual cases exercise walker-side features by design, so
+    # default the diagnostics face too (caller override wins).
+    if not str(env.get("AURA_PIPELINE_STRICT", "")).strip():
+        env["AURA_PIPELINE_STRICT"] = "0"
     return env
 
 

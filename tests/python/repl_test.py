@@ -17,6 +17,11 @@ def spawn_repl():
     # Issue #2213 / #2053: Soft sandbox for harness unless caller overrode.
     if not str(env.get("AURA_SANDBOX", "")).strip():
         env["AURA_SANDBOX"] = "off"
+    # Issue #3627: AURA_SANDBOX=off no longer selects the walker on the
+    # pack — REPL cases exercise walker-side features by design, so
+    # default the diagnostics face too (caller override wins).
+    if not str(env.get("AURA_PIPELINE_STRICT", "")).strip():
+        env["AURA_PIPELINE_STRICT"] = "0"
     child = pexpect.spawn(AURA_BIN, timeout=TIMEOUT, env=env, encoding="utf-8", codec_errors="replace")
     child.delaybeforesend = 0.1
     return child
