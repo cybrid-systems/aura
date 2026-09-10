@@ -11816,6 +11816,36 @@ def cmd_macro_boundary_backstop_3637_coverage():
     return 0
 
 
+def cmd_query_index_telemetry_3638_coverage():
+    """Issue #3638: per-query index hit vs full-scan fallback telemetry.
+
+    Contract rows (AC1-AC4 from the test file):
+
+      AC1: per-query-call hit/fallback counters (relaxed add-only, exported
+           inline atomics; no mid-metrics inserts, no schema change).
+      AC2: cold probe = full-scan fallback, synced probe = index hit; defuse
+           axis bumps at ensure_defuse (cold build / incremental / full
+           rebuild).
+      AC3: shared-lock scope — bucket probe holds the index lock across
+           build + by-value copy only.
+      AC4: query:index-hit-total / query:full-scan-fallback-total additive
+           stats faces.
+      AC6: no docs/design/3638-* (#1655); no tests/**/test_issue_3638.cpp
+           (#81934); build.py wires this linter.
+    """
+    print(f"{B}=== query index hit/fallback telemetry (#3638) ==={N}")
+    script = ROOT / "scripts" / "check_query_index_telemetry_3638.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script), "--strict"], cwd=ROOT)
+    if r.returncode != 0:
+        fail("query index hit/fallback telemetry (#3638) contract rows failed")
+        return 1
+    ok("query index hit/fallback telemetry (#3638) clean")
+    return 0
+
+
 def cmd_wal_window_miss_catalog_3603_coverage():
     """Issue #3603: mid point-query window-miss face + forensic catalog seed.
 
@@ -22227,6 +22257,7 @@ def cmd_gate():
         or cmd_closure_dispatch_entry_3635_coverage()
         or cmd_region_storm_attribution_3636_coverage()
         or cmd_macro_boundary_backstop_3637_coverage()
+        or cmd_query_index_telemetry_3638_coverage()
         or cmd_wal_window_miss_catalog_3603_coverage()
         or cmd_panic_aba_gc_defer_drain_3604_coverage()
         or cmd_facade_owner_scope_clock_skip_3605_coverage()

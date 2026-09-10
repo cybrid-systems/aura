@@ -425,8 +425,23 @@ Evaluator::snapshot_tag_arity_bucket(std::uint64_t key, std::uint8_t trigger,
         pattern_query_after_batch_armed_.exchange(false, std::memory_order_acq_rel);
     const auto t0 = measure_post_batch ? std::chrono::steady_clock::now()
                                        : std::chrono::steady_clock::time_point{};
+    // Issue #3638: per-query-call hit vs full-scan fallback (AC1/AC2). A
+    // cold / high-dirty rebuild walks the whole tree (fallback); a synced
+    // index serves from the map (hit). Single bump per probe — never per node.
+    const auto full_rebuild_before =
+        compiler_metrics_ ? static_cast<CompilerMetrics*>(compiler_metrics_)
+                                ->query_pattern_full_rebuild_total.load(std::memory_order_relaxed)
+                          : 0;
     std::unique_lock<std::shared_mutex> wlock(tag_arity_index_mtx_);
     build_tag_arity_index_unlocked(trigger);
+    if (compiler_metrics_) {
+        auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+        if (m->query_pattern_full_rebuild_total.load(std::memory_order_relaxed) !=
+            full_rebuild_before)
+            g_query_full_scan_fallback_total.fetch_add(1, std::memory_order_relaxed);
+        else
+            g_query_index_hit_total.fetch_add(1, std::memory_order_relaxed);
+    }
     const auto epoch_at_copy = tag_arity_index_epoch_.load(std::memory_order_acquire);
     const auto& map = skip_macro_introduced ? tag_arity_index_user_ : tag_arity_index_;
     if (skip_macro_introduced) {
@@ -520,8 +535,22 @@ Evaluator::snapshot_tag_arity_bucket(std::uint64_t key, std::uint8_t trigger,
 std::vector<aura::ast::NodeId>
 Evaluator::snapshot_tag_all_arities(std::uint32_t tag, std::uint8_t trigger,
                                     bool skip_macro_introduced) const {
+    // Issue #3638: same hit/fallback probe semantics as the bucket snapshot
+    // (single bump per call — full rebuild = fallback, synced = hit).
+    const auto full_rebuild_before =
+        compiler_metrics_ ? static_cast<CompilerMetrics*>(compiler_metrics_)
+                                ->query_pattern_full_rebuild_total.load(std::memory_order_relaxed)
+                          : 0;
     std::unique_lock<std::shared_mutex> wlock(tag_arity_index_mtx_);
     build_tag_arity_index_unlocked(trigger);
+    if (compiler_metrics_) {
+        auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+        if (m->query_pattern_full_rebuild_total.load(std::memory_order_relaxed) !=
+            full_rebuild_before)
+            g_query_full_scan_fallback_total.fetch_add(1, std::memory_order_relaxed);
+        else
+            g_query_index_hit_total.fetch_add(1, std::memory_order_relaxed);
+    }
     const auto& map = skip_macro_introduced ? tag_arity_index_user_ : tag_arity_index_;
     if (skip_macro_introduced)
         tag_arity_hygiene_index_served_total_.fetch_add(1, std::memory_order_relaxed);

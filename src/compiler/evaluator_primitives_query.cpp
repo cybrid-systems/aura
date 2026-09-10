@@ -766,6 +766,23 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 aura::compiler::g_coercion_map_abort_rewind_total.load(std::memory_order_relaxed)));
         });
 
+    // Issue #3638: per-query index hit vs full-scan fallback telemetry
+    // (counters exported from evaluator.ixx; tag/arity+marker axis bumps in
+    // evaluator_query_index.cpp, defuse axis in evaluator_defuse_index.cpp).
+    // Additive faces — no schema break (AC4).
+    ObservabilityPrims::register_stats_impl(
+        "query:index-hit-total", [](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            return make_int(
+                static_cast<std::int64_t>(g_query_index_hit_total.load(std::memory_order_relaxed)));
+        });
+    ObservabilityPrims::register_stats_impl(
+        "query:full-scan-fallback-total", [](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            return make_int(static_cast<std::int64_t>(
+                g_query_full_scan_fallback_total.load(std::memory_order_relaxed)));
+        });
+
     // Issue #3102: AC5 — CoercionMap abort rewind observe counter (Soft).
     // Bumped once per abort path under Soft (no production/Full gate).
     ObservabilityPrims::register_stats_impl(

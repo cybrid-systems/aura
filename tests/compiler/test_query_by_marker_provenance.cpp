@@ -261,6 +261,35 @@ static void ac4_combined_scenario() {
     CHECK(ok.load() >= 80, "concurrent last-mutation-provenance invocations ok");
 }
 
+// ── Issue #3638: per-query index hit vs full-scan fallback telemetry ──
+static void ac3638_hit_fallback_telemetry() {
+    std::println("\n--- 3638 AC1/AC2/AC4: index hit vs full-scan fallback ---");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define (f x) (+ x 1)) (define (g x) (+ x 2))\")").has_value(),
+          "3638: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3638: eval");
+    const auto fb0 =
+        aura::compiler::g_query_full_scan_fallback_total.load(std::memory_order_relaxed);
+    const auto hit0 = aura::compiler::g_query_index_hit_total.load(std::memory_order_relaxed);
+    // Cold index: the first indexed probe full-rebuilds (a cold rebuild
+    // walks the whole tree = full-scan fallback).
+    auto r1 = cs.eval("(query:pattern \"(define ?f (lambda (?x) ?y))\" :nested-arity #t)");
+    CHECK(r1.has_value(), "3638: cold query:pattern returns");
+    CHECK(aura::compiler::g_query_full_scan_fallback_total.load(std::memory_order_relaxed) > fb0,
+          "3638 AC2: cold probe = full-scan fallback");
+    // Synced index: the second probe serves from the map (index hit).
+    auto r2 = cs.eval("(query:pattern \"(define ?g (lambda (?x) ?y))\" :nested-arity #t)");
+    CHECK(r2.has_value(), "3638: warm query:pattern returns");
+    CHECK(aura::compiler::g_query_index_hit_total.load(std::memory_order_relaxed) > hit0,
+          "3638 AC2: synced probe = index hit");
+    // Stats faces expose both counters (AC4 — additive faces, no schema break;
+    // register_stats_impl faces are read via engine:metrics).
+    CHECK(cs.eval("(engine:metrics \"query:index-hit-total\")").has_value(),
+          "3638 AC4: index-hit-total face");
+    CHECK(cs.eval("(engine:metrics \"query:full-scan-fallback-total\")").has_value(),
+          "3638 AC4: full-scan-fallback-total face");
+}
+
 } // namespace
 
 int run_test_query_by_marker_provenance() {
@@ -268,6 +297,7 @@ int run_test_query_by_marker_provenance() {
     ac2_pattern_default_hygiene();
     ac3_metrics_in_combined_surfaces();
     ac4_combined_scenario();
+    ac3638_hit_fallback_telemetry();
 
     std::println("\n=== test_query_by_marker_provenance: {} passed, {} failed ===", g_passed,
                  g_failed);

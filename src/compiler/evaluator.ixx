@@ -1172,6 +1172,17 @@ export inline std::atomic<std::uint64_t> g_closure_apply_use_site_reject_total{0
 // false due to lifetime_version mismatch.
 export inline std::atomic<std::uint64_t> g_closure_view_invalid_access_total{0};
 
+// Issue #3638: per-query-call index hit vs full-scan fallback telemetry.
+// Bumped once per indexed query probe (never per node; relaxed add-only;
+// a synced index costs only the probe's existing reads):
+//   hit      = the (tag,arity) index / defuse index served the query
+//   fallback = the probe had to full-rebuild / full-scan (cold, size change,
+//              build-from-scratch)
+// Consumed by the query:index-hit-total / query:full-scan-fallback-total
+// stats faces + the query-suite assertions (AC2/AC4).
+export inline std::atomic<std::uint64_t> g_query_index_hit_total{0};
+export inline std::atomic<std::uint64_t> g_query_full_scan_fallback_total{0};
+
 // Legacy alias — kept for backward compatibility during the
 // P2 transition (Issue #127). New code should prefer
 // `aura::diag::Result<types::EvalValue>`. Both names refer
