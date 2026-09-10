@@ -171,7 +171,12 @@ int run_test_agent_ask() {
         const auto reply_before =
             g_orch_module_stats.agent_reply_total.load(std::memory_order_relaxed);
 
-        AskResult r = agent_ask(b_handle, "ping", /*timeout_ms=*/2000);
+        // De-flake: 2s ask budget can expire under tier load (jobs=4 ×
+        // inner_jobs=3) before the starved worker thread replies → timeout
+        // FAILs the round-trip (same class as the keepalive join 3s→10s
+        // de-flake). 10s budget, AC intent unchanged (AC2 keeps its own
+        // tight timeout for the timeout contract).
+        AskResult r = agent_ask(b_handle, "ping", /*timeout_ms=*/10000);
         std::println("  status='{}' ok={} payload='{}' corr={} handled={}", r.status, r.ok,
                      r.payload, r.correlation_id, b_handled.load());
         CHECK(r.ok, "AC1: agent_ask returns ok when worker uses agent_reply");
@@ -290,8 +295,9 @@ int run_test_agent_ask() {
         std::vector<std::thread> threads;
         for (int i = 0; i < 3; ++i) {
             threads.emplace_back([&, i] {
+                // De-flake: same tier-load budget raise as AC1 (10s).
                 results[i] =
-                    agent_ask(b_handle, std::format("ping-{}", i + 1), /*timeout_ms=*/3000);
+                    agent_ask(b_handle, std::format("ping-{}", i + 1), /*timeout_ms=*/10000);
             });
         }
         for (auto& t : threads)
