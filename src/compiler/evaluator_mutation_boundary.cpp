@@ -39,7 +39,8 @@ module;
 // Issue #221: PCV header in GMF (same as evaluator.ixx) so enter_mutation_boundary
 // can name PersistentChildVector in the checkpoint snapshot type.
 #include "../core/persistent_child_vector.hh"
-#include "../core/layout_stamp.hh" // Issue #2170: LayoutStamp capture + publisher
+#include "../core/layout_stamp.hh"        // Issue #2170: LayoutStamp capture + publisher
+#include "../reflect/hygiene_validate.hh" // Issue #3637: MutationReflectHealth boundary backstop
 // lifetime_pin.hh omitted: import aura.core.lifetime_pin provides
 // restamp_all_pins_for_arena; dual include+import makes the call ambiguous.
 #include "../core/workspace_epoch.hh"    // Issue #2170: current_mutation_epoch() for capture
@@ -2996,6 +2997,11 @@ Evaluator::MutationBoundaryGuard::MutationBoundaryGuard(
     // Issue #2162: dirty-upward is cumulative — snapshot for boundary delta.
     dirty_upward_at_enter_ =
         ev_->workspace_flat_ ? ev_->workspace_flat_->mark_dirty_upward_call_count() : 0;
+    // Issue #3637: macro-dirty marker counter snapshot (same cumulative
+    // delta pattern; bumped once per newly-set kMacroExpansion column bit
+    // by apply_macro_dirty_bits, #290).
+    macro_expansion_dirty_at_enter_ =
+        ev_->workspace_flat_ ? ev_->workspace_flat_->macro_expansion_dirty_total() : 0;
     // Issue #236 / #1746 / #3552: thread_local depth counter keyed by
     // (Evaluator::instance_id_, Fiber::id()). The fiber_id key prevents
     // cross-worker hot-swap leaks: when scheduler migrates a Fiber to
@@ -3498,7 +3504,59 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
             }
         }
     }
-    bool success = cancel_forced_fail ? false : success_flag_load(flag_);
+    // Issue #3637: MacroIntroduced marker-delta backstop — one net at the
+    // outermost boundary covering prim paths, lockless helpers (#3213),
+    // and future prims the four enumerated pre-gate mechanisms might miss.
+    // Field source hoisted from the eval_flat apply site: the #1611
+    // MutationReflectHealth validator decides (existing error string — AC3;
+    // no new query keys, no mid-metrics counter inserts). The delta is a
+    // single cumulative-counter read per edge (AC2 quiet path: no O(n)
+    // scan, zero extra atomics when no macro subtree was dirtied).
+    bool macro_hygiene_forced_fail = false;
+    if (is_outermost_ && !cancel_forced_fail && ev_ && ev_->workspace_flat_ &&
+        success_flag_load(flag_)) {
+        const auto macro_exit = ev_->workspace_flat_->macro_expansion_dirty_total();
+        const auto macro_delta = macro_exit - macro_expansion_dirty_at_enter_;
+        if (macro_delta != 0) {
+            aura::reflect::MutationReflectHealth h3637;
+            h3637.enforce_macro_hygiene_reject = true;
+            h3637.allow_macro_evolution = ev_->get_allow_macro_mutate();
+            h3637.dirty_macro_nodes = macro_delta;
+            std::string backstop_err;
+            const bool net_reject =
+                !aura::reflect::validate_mutation_reflect_health(h3637, &backstop_err);
+            if (net_reject) {
+                // Counter = "net fired" (violation observed), not merely
+                // delta>0 — a recorded allow keeps the net quiet (AC4).
+                if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics_)) {
+                    m->mutation_boundary_macro_hygiene_backstop_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                }
+                // Issue #3637: hard = production defaults only. AuditStrategy::Full
+                // is a test/audit regime — unit tests that restamp macro columns
+                // under Full get the observe counter, not forced rollbacks.
+                const bool hard = typed_audit::production_defaults_active();
+                if (hard) {
+                    // Production: do not commit unauthorized macro-introduced
+                    // schema evolution — fail the boundary (same reject shape
+                    // as the region-type-commit gate). The #3542 recorded allow
+                    // (capability-fenced) is the only in-window pass (AC4:
+                    // the net never widens authorization).
+                    macro_hygiene_forced_fail = true;
+                    // #3268: single exchange so the caller observes the forced
+                    // fail (same caller-flag protocol as the #3035 cancel path).
+                    success_flag_exchange_false(flag_);
+                    if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics_)) {
+                        m->hygiene_violation_prevented_on_boundary_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                    }
+                }
+            }
+            // Soft / Off: observe only — success unchanged (AC2).
+        }
+    }
+    bool success =
+        (cancel_forced_fail || macro_hygiene_forced_fail) ? false : success_flag_load(flag_);
     // Issue #3423: nested Guard fail must flip the outermost success
     // flag. add_mutate now holds the outermost Guard; a body that
     // sets its nested ok=false still has to abort-restore via the

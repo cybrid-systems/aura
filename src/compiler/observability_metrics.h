@@ -9543,6 +9543,13 @@ struct CompilerMetrics {
     // bumps this existing counter (AuraJit::Metrics has a namesake; AOT
     // metrics pointer is CompilerMetrics). Appended at END (#2906).
     std::atomic<std::uint64_t> deopt_pending_invoke_fallbacks{0};
+    // Issue #3637: MacroIntroduced marker-delta backstop at the outermost
+    // MutationBoundary (production hard-fail + Soft/Off observe-only).
+    // Bumped whenever the net fires (macro-dirty delta > 0 && !allow)
+    // regardless of mode; production additionally bumps
+    // hygiene_violation_prevented_on_boundary_total (#1908). Appended at
+    // END (#2906).
+    std::atomic<std::uint64_t> mutation_boundary_macro_hygiene_backstop_total{0};
 };
 
 // Issue #2248: adaptive thr feed lives in ir_cache_pure (module). Header

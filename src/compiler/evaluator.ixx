@@ -15036,6 +15036,13 @@ public:
         // The FlatAST counter is lifetime-cumulative; dirty-marks for this
         // boundary is (exit_count > enter_count), not (exit_count > 0).
         std::uint64_t dirty_upward_at_enter_ = 0;
+        // Issue #3637: macro-dirty marker delta at outermost enter.
+        // Cumulative macro_expansion_dirty_total (FlatAST column counter,
+        // #290 — bumped once per newly-set kMacroExpansion bit by
+        // apply_macro_dirty_bits). Delta at outermost exit detects "some
+        // path dirtied a macro subtree this boundary" with a single
+        // counter read per edge (no O(n) scan on the quiet path).
+        std::uint64_t macro_expansion_dirty_at_enter_ = 0;
         // Issue #2215: outermost entered under render hotpath → RenderFastExit
         // on success (skip Full audit / full linear+dual-path; defer reemit).
         // Captured at ctor from arena_policy::in_render_hotpath() (set by
