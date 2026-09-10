@@ -24,14 +24,12 @@ import std;
 import aura.compiler.service;
 import aura.compiler.value;
 
-// Issue #3623 test seam: strong override for the weak occurrence-recover
-// stub (aura_test_objects). Default mirrors the stub (false); the refined
-// drift ACs opt into "override recover reports true" (the #3108 hazard:
-// hook true while the CS snapshot is CONFLICT/TIMEOUT).
-std::atomic<int> g_ac3623_mock_recover{0};
-extern "C" bool aura_typed_audit_try_occurrence_hard_face_full_solve_recover() noexcept {
-    return g_ac3623_mock_recover.load(std::memory_order_relaxed) != 0;
-}
+// Issue #3623 refined-drift ACs drive the occurrence-recover hook through
+// the production TLS-override chain (aura_typed_audit_test_install_recover_
+// override, defined in evaluator_mutation_boundary.cpp). An earlier strong
+// in-TU mock here shadowed the production def for the whole batch binary
+// and starved the #2909/#2962/#2911 recover-true ACs of their overrides
+// (#3623 residual; seam removed, overrides route through the real chain).
 
 namespace {
 
@@ -954,7 +952,14 @@ static void ac2694_6_source_and_linter();
 
 // ── Issue #3623: refined_drift recover #3108 SOLVED re-gate ──
 static void ac3623_set_mock_recover(bool on) {
-    g_ac3623_mock_recover.store(on ? 1 : 0, std::memory_order_relaxed);
+    // Issue #3623 residual: drive the production TLS-override chain instead
+    // of a strong in-TU mock (the mock shadowed the real def for the whole
+    // batch binary and starved the #2909/#2962/#2911 overrides).
+    if (on)
+        aura_typed_audit_test_install_recover_override([](void*) noexcept -> bool { return true; },
+                                                       nullptr);
+    else
+        aura_typed_audit_test_install_recover_override(nullptr, nullptr);
 }
 
 static void ac3623_1_recover_solved_allows() {
