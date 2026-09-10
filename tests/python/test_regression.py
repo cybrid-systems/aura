@@ -13,6 +13,16 @@ from regression_cases import load_regression_cases
 
 REPO = Path(__file__).resolve().parents[2]  # #1932 repo root
 
+# Issue #3627 pack-strict binding: AURA is the production pack binary
+# (Forbidden with env unset — AURA_SANDBOX=off no longer selects the
+# walker on the pack), which hard-errored the walker-side P0 regression
+# net: the snippet suite fell to 38/157 and the jit / mutation /
+# aura-type subprocess modes returned empty stdout. The net exercises
+# interpreter features on the dev face by design; the strict production
+# face is covered by tests/compiler/test_pack_pipeline_strict.cpp. Pin
+# the diagnostics face for every invocation in this module.
+os.environ["AURA_PIPELINE_STRICT"] = "0"
+
 # Fixture snippets live in tests/fixtures/regression/*.json (#1962)
 # and run through aura_file_runner.run_snippet_suite.
 
@@ -715,11 +725,22 @@ for case in load_regression_cases():
             exact_out=bool(case.expect_out.startswith("(") and case.expect_out.endswith(")")),
         )
     )
+# Issue #3627 pack-strict binding: AURA is the production pack binary
+# (Forbidden with env unset — AURA_SANDBOX=off no longer selects the
+# walker on the pack), which hard-errored every walker-side snippet in
+# this regression net (38/157 in ci/p0: set-code / mutate:rebind /
+# ast-viz / require-heavy cases). The P0 net exercises interpreter
+# features on the dev face by design; the strict production face is
+# covered by tests/compiler/test_pack_pipeline_strict.cpp. Pin the
+# diagnostics face for the suite (same rationale as the asan-verify
+# multi-session step).
+suite_env = os.environ.copy()
+suite_env["AURA_PIPELINE_STRICT"] = "0"
 snippet_rc = run_snippet_suite(
     "P0 snippets",
     specs,
     aura_bin=AURA,
-    env=os.environ.copy(),
+    env=suite_env,
     jobs=1,
 )
 print(f"\nP0 snippets rc={snippet_rc}; subprocess {passed_s}/{passed_s + failed_s} passed")
