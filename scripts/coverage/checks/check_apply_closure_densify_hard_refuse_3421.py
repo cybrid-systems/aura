@@ -53,15 +53,18 @@ def main() -> int:
     must("production_defaults_active()", "AC2 production load", helper_win)
     must("g_last_objects_moved", "AC2 last-window moved", helper_win)
     must("last_lifetime_consistency_would_allow()", "AC1 LCP", helper_win)
+    must("Issue #3634", "AC1 per-eval consult cite (#3634)", helper_win)
     must("resolve_object_remap", "AC1 remap key", helper_win)
     if "LifetimePin::pin" in helper_win or ".pin(" in helper_win:
         fails.append("AC2: extra pin walk on densify-refuse helper")
     if "invoke_closure_bridge_checked" in helper_win:
         fails.append("AC3: helper must not soft-migrate onto native bridge")
 
-    calls = flat.count("production_apply_closure_densify_hard_refuse(arena_, cl_copy)")
-    if calls < 3:
-        fails.append(f"AC1: expected 3 apply-site helper calls, found {calls}")
+    # Issue #3634: apply sites pass the evaluator identity as a third arg
+    # (clang-format may reflow args across lines — count the call prefix).
+    calls = flat.count("production_apply_closure_densify_hard_refuse(")
+    if calls < 4:  # 1 definition + 3 apply sites
+        fails.append(f"AC1: expected 3 apply-site helper calls, found {max(calls - 1, 0)}")
     # Recover sites: helper call must appear in the same window as the restamp cite.
     for label, needle, before in (
         ("must_deopt", "if (cl_copy.must_deopt_before_next_call)", False),
@@ -73,7 +76,7 @@ def main() -> int:
             fails.append(f"AC1: missing {label} site {needle!r}")
             continue
         win = flat[pos : pos + 1200] if not before else flat[max(0, pos - 2800) : pos + 80]
-        if "production_apply_closure_densify_hard_refuse(arena_, cl_copy)" not in win:
+        if "production_apply_closure_densify_hard_refuse(" not in win:
             fails.append(f"AC1: {label} must consult densify hard-refuse before recover")
 
     must("closure_stale_returns.fetch_add", "AC4 reuse stale_returns", flat)

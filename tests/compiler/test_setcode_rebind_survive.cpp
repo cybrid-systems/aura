@@ -67,7 +67,10 @@ struct ProdDensifyWindowGuard {
     std::uint32_t prev_prod;
     std::uint64_t prev_moved;
     std::uint8_t prev_lcp;
-    ProdDensifyWindowGuard(bool prod, std::uint64_t moved, bool lcp_allow) {
+    const void* eval_id = nullptr;
+    ProdDensifyWindowGuard(bool prod, std::uint64_t moved, bool lcp_allow,
+                           const void* eval_id = nullptr)
+        : eval_id(eval_id) {
         using aura::compiler::typed_audit::g_typed_mutation_audit_counters;
         using aura::core::lifetime_consistency_proof::g_lcp_last_would_allow_commit;
         using aura::core::moving_densify_health::g_last_objects_moved;
@@ -79,6 +82,15 @@ struct ProdDensifyWindowGuard {
                                                                          std::memory_order_relaxed);
         g_last_objects_moved.store(moved, std::memory_order_relaxed);
         g_lcp_last_would_allow_commit().store(lcp_allow ? 1 : 0, std::memory_order_relaxed);
+        // Issue #3634: keep the per-eval slot in sync with the fabricated
+        // window — the apply arm consults the evaluator's own slot first
+        // now, so `lcp_allow` must speak for that slot too.
+        if (eval_id != nullptr) {
+            namespace lcp = aura::core::lifetime_consistency_proof;
+            auto p = lcp::make_lifetime_consistency_proof();
+            p.would_allow_commit = lcp_allow;
+            lcp::stamp_lifetime_consistency_proof_for(eval_id, p);
+        }
     }
     ~ProdDensifyWindowGuard() {
         using aura::compiler::typed_audit::g_typed_mutation_audit_counters;
@@ -88,6 +100,8 @@ struct ProdDensifyWindowGuard {
                                                                          std::memory_order_relaxed);
         g_last_objects_moved.store(prev_moved, std::memory_order_relaxed);
         g_lcp_last_would_allow_commit().store(prev_lcp, std::memory_order_relaxed);
+        if (eval_id != nullptr)
+            aura::core::lifetime_consistency_proof::reset_lifetime_consistency_proof_for_test();
     }
 };
 
@@ -223,7 +237,7 @@ static void ac5_3421_production_hard_refuse() {
         auto* m = metrics_of(cs);
         const auto cid = make_stale_unimpacted_lambda(cs);
         const auto restamp0 = m->live_closure_epoch_restamp_total.load(std::memory_order_relaxed);
-        ProdDensifyWindowGuard g(/*prod=*/false, /*moved=*/1, /*lcp_allow=*/false);
+        ProdDensifyWindowGuard g(/*prod=*/false, /*moved=*/1, /*lcp_allow=*/false, &cs.evaluator());
         auto got = cs.evaluator().apply_closure(cid, args);
         CHECK(got.has_value() && is_int(*got) && as_int(*got) == 2,
               "AC2 Soft: #2569 recover still allowed");
@@ -238,7 +252,7 @@ static void ac5_3421_production_hard_refuse() {
         const auto cid = make_stale_unimpacted_lambda(cs);
         const auto restamp0 = m->live_closure_epoch_restamp_total.load(std::memory_order_relaxed);
         const auto stale0 = m->closure_stale_returns.load(std::memory_order_relaxed);
-        ProdDensifyWindowGuard g(/*prod=*/true, /*moved=*/1, /*lcp_allow=*/false);
+        ProdDensifyWindowGuard g(/*prod=*/true, /*moved=*/1, /*lcp_allow=*/false, &cs.evaluator());
         auto got = cs.evaluator().apply_closure(cid, args);
         CHECK(!got.has_value(), "AC1 production densify-stale hard-refuse");
         CHECK(m->live_closure_epoch_restamp_total.load(std::memory_order_relaxed) == restamp0,
@@ -253,7 +267,7 @@ static void ac5_3421_production_hard_refuse() {
         auto* m = metrics_of(cs);
         const auto cid = make_stale_unimpacted_lambda(cs);
         const auto restamp0 = m->live_closure_epoch_restamp_total.load(std::memory_order_relaxed);
-        ProdDensifyWindowGuard g(/*prod=*/true, /*moved=*/0, /*lcp_allow=*/false);
+        ProdDensifyWindowGuard g(/*prod=*/true, /*moved=*/0, /*lcp_allow=*/false, &cs.evaluator());
         auto got = cs.evaluator().apply_closure(cid, args);
         CHECK(got.has_value() && is_int(*got) && as_int(*got) == 2,
               "AC2 production + objects_moved==0 still recover");
@@ -266,7 +280,7 @@ static void ac5_3421_production_hard_refuse() {
         CompilerService cs;
         auto* m = metrics_of(cs);
         const auto cid = make_stale_unimpacted_lambda(cs);
-        ProdDensifyWindowGuard g(/*prod=*/true, /*moved=*/1, /*lcp_allow=*/false);
+        ProdDensifyWindowGuard g(/*prod=*/true, /*moved=*/1, /*lcp_allow=*/false, &cs.evaluator());
         const auto restamp0 = m->live_closure_epoch_restamp_total.load(std::memory_order_relaxed);
         for (int i = 0; i < 8; ++i) {
             auto got = cs.evaluator().apply_closure(cid, args);
@@ -318,7 +332,7 @@ static void ac6_3469_two_window_stale_flat_refuse() {
     const auto restamp0 = m->live_closure_epoch_restamp_total.load(std::memory_order_relaxed);
     const auto stale0 = m->closure_stale_returns.load(std::memory_order_relaxed);
     // LCP allow: the residual is remap-miss after a healthy window 2.
-    ProdDensifyWindowGuard g(/*prod=*/true, /*moved=*/1, /*lcp_allow=*/true);
+    ProdDensifyWindowGuard g(/*prod=*/true, /*moved=*/1, /*lcp_allow=*/true, &cs.evaluator());
     auto got = cs.evaluator().apply_closure(cid, args);
     CHECK(!got.has_value(), "3469: apply_closure hard-refuses stale A");
     CHECK(m->live_closure_epoch_restamp_total.load(std::memory_order_relaxed) == restamp0,
@@ -354,7 +368,7 @@ static void ac7_3602_ffi_densify_refuse() {
                      cid_r && is_int(*cid_r) ? as_int(*cid_r) : -999);
         CHECK(cid_r && is_closure(*cid_r), "3602 AC-b: c-func registered");
         const auto stale0 = m->closure_stale_returns.load(std::memory_order_relaxed);
-        ProdDensifyWindowGuard g(/*prod=*/true, /*moved=*/1, /*lcp_allow=*/false);
+        ProdDensifyWindowGuard g(/*prod=*/true, /*moved=*/1, /*lcp_allow=*/false, &cs.evaluator());
         auto got = cs.evaluator().apply_closure(0, args);
         CHECK(!got.has_value(), "3602 AC-b: FFI apply hard-refuses under LCP deny");
         CHECK(m->closure_stale_returns.load(std::memory_order_relaxed) > stale0,
@@ -392,7 +406,7 @@ static void ac7_3602_ffi_densify_refuse() {
             "(c-opaque {})", static_cast<std::int64_t>(reinterpret_cast<std::intptr_t>(old))));
         CHECK(op_r && aura::compiler::types::is_opaque(*op_r), "3602 AC-c: stale opaque created");
         std::array<aura::compiler::types::EvalValue, 1> oargs{*op_r};
-        ProdDensifyWindowGuard g(/*prod=*/true, /*moved=*/1, /*lcp_allow=*/true);
+        ProdDensifyWindowGuard g(/*prod=*/true, /*moved=*/1, /*lcp_allow=*/true, &cs.evaluator());
         const auto stale0 = m->closure_stale_returns.load(std::memory_order_relaxed);
         auto got = cs.evaluator().apply_closure(0, oargs);
         CHECK(!got.has_value(), "3602 AC-c: remap-key opaque arg refuses FFI call");
@@ -407,7 +421,7 @@ static void ac7_3602_ffi_densify_refuse() {
         CHECK(cs.eval("(require \"std/ffi\")").has_value(), "3602 AC-d: require std/ffi");
         auto cid_r = cs.eval("(c-func -1 \"abs\" \"(Int) -> Int\")");
         CHECK(cid_r && is_closure(*cid_r), "3602 AC-d: c-func registered");
-        ProdDensifyWindowGuard g(/*prod=*/true, /*moved=*/1, /*lcp_allow=*/true);
+        ProdDensifyWindowGuard g(/*prod=*/true, /*moved=*/1, /*lcp_allow=*/true, &cs.evaluator());
         auto got = cs.evaluator().apply_closure(0, args);
         CHECK(got.has_value() && is_int(*got) && as_int(*got) == 5,
               "3602 AC-d: apply allowed after rewrite (abs(-5)=5)");
@@ -419,7 +433,7 @@ static void ac7_3602_ffi_densify_refuse() {
         CHECK(cs.eval("(require \"std/ffi\")").has_value(), "3602 AC-e: require std/ffi");
         auto cid_r = cs.eval("(c-func -1 \"abs\" \"(Int) -> Int\")");
         CHECK(cid_r && is_closure(*cid_r), "3602 AC-e: c-func registered");
-        ProdDensifyWindowGuard g(/*prod=*/false, /*moved=*/1, /*lcp_allow=*/false);
+        ProdDensifyWindowGuard g(/*prod=*/false, /*moved=*/1, /*lcp_allow=*/false, &cs.evaluator());
         auto got = cs.evaluator().apply_closure(0, args);
         CHECK(got.has_value() && is_int(*got) && as_int(*got) == 5,
               "3602 AC-e: Soft stays allowed");
@@ -431,11 +445,90 @@ static void ac7_3602_ffi_densify_refuse() {
         CHECK(cs.eval("(require \"std/ffi\")").has_value(), "3602 AC-f: require std/ffi");
         auto cid_r = cs.eval("(c-func -1 \"abs\" \"(Int) -> Int\")");
         CHECK(cid_r && is_closure(*cid_r), "3602 AC-f: c-func registered");
-        ProdDensifyWindowGuard g(/*prod=*/true, /*moved=*/0, /*lcp_allow=*/false);
+        ProdDensifyWindowGuard g(/*prod=*/true, /*moved=*/0, /*lcp_allow=*/false, &cs.evaluator());
         auto got = cs.evaluator().apply_closure(0, args);
         CHECK(got.has_value() && is_int(*got) && as_int(*got) == 5,
               "3602 AC-f: objects_moved==0 quiet skip");
     }
+}
+
+// Issue #3634: the apply arm (#3421 closure + #3602 FFI) consulted the
+// PROCESS-WIDE LCP bit — one evaluator's Reject poisoned every other
+// evaluator's apply until the next healthy stamp (#3617 fixed the steal
+// arm only). Now: per-eval slot first (#3617), process-wide fallback for
+// evaluators with no slot (today's fail-closed semantics preserved).
+//
+//   AC1: both predicates consult per-eval first with process-wide
+//        fallback (source-cite below); process-wide stamp semantics
+//        unchanged.
+//   AC2: two evaluators — B stamps Allow, then A stamps Reject (the LAST
+//        process-wide publish poisons the bit): A's apply still refuses,
+//        B's apply proceeds while the process bit is poisoned, C (no
+//        slot) falls back to the poisoned process bit and refuses.
+//   AC3: quiet path unchanged — the slot probe sits after the
+//        objects_moved quiet skip (Soft / no-move: two relaxed loads).
+static void ac8_3634_per_eval_lcp_consult() {
+    std::println("\n--- #3634: per-eval LCP consult on the apply arm ---");
+    const auto flat = read_file("src/compiler/evaluator_eval_flat.cpp");
+    CHECK(flat.find("Issue #3634") != std::string::npos, "3634: predicates cite the issue");
+    CHECK(flat.find("last_lifetime_consistency_proof_present_for") != std::string::npos,
+          "3634 AC1: per-eval present probe consulted");
+    CHECK(flat.find("last_lifetime_consistency_would_allow_for") != std::string::npos,
+          "3634 AC1: per-eval verdict consulted");
+    // AC3: the slot probe sits after the objects_moved quiet skip.
+    const auto moved_pos = flat.find("g_last_objects_moved");
+    const auto probe_pos = flat.find("last_lifetime_consistency_proof_present_for");
+    CHECK(moved_pos != std::string::npos && probe_pos != std::string::npos && moved_pos < probe_pos,
+          "3634 AC3: slot probe only after the objects_moved quiet skip");
+
+    namespace lcp = aura::core::lifetime_consistency_proof;
+    std::array<aura::compiler::types::EvalValue, 1> args{make_int(-5)};
+
+    // B first: its healthy stamp is NOT the last process-wide publish.
+    CompilerService cs_b;
+    CHECK(cs_b.eval("(require \"std/ffi\")").has_value(), "3634 AC2: B require std/ffi");
+    auto cid_b = cs_b.eval("(c-func -1 \"abs\" \"(Int) -> Int\")");
+    CHECK(cid_b && is_closure(*cid_b), "3634 AC2: B c-func registered");
+    const void* b_id = static_cast<const void*>(&cs_b.evaluator());
+    lcp::stamp_lifetime_consistency_proof_for(b_id, lcp::make_lifetime_consistency_proof());
+
+    // A second: its Reject stamp is the LAST process-wide publish — the
+    // process bit is now poisoned for any evaluator without its own slot.
+    CompilerService cs_a;
+    CHECK(cs_a.eval("(require \"std/ffi\")").has_value(), "3634 AC2: A require std/ffi");
+    auto cid_a = cs_a.eval("(c-func -1 \"abs\" \"(Int) -> Int\")");
+    CHECK(cid_a && is_closure(*cid_a), "3634 AC2: A c-func registered");
+    const void* a_id = static_cast<const void*>(&cs_a.evaluator());
+    {
+        auto p = lcp::make_lifetime_consistency_proof();
+        p.would_allow_commit = false;
+        lcp::stamp_lifetime_consistency_proof_for(a_id, p);
+    }
+
+    // C: fresh evaluator, never stamped (fallback face).
+    CompilerService cs_c;
+    CHECK(cs_c.eval("(require \"std/ffi\")").has_value(), "3634 AC2: C require std/ffi");
+    auto cid_c = cs_c.eval("(c-func -1 \"abs\" \"(Int) -> Int\")");
+    CHECK(cid_c && is_closure(*cid_c), "3634 AC2: C c-func registered");
+
+    ProdDensifyWindowGuard g(/*prod=*/true, /*moved=*/1, /*lcp_allow=*/false, &cs.evaluator());
+
+    // A: own slot = Reject → refuse (fail-closed preserved).
+    auto ga = cs_a.evaluator().apply_closure(0, args);
+    CHECK(!ga.has_value(), "3634 AC2: A (own Reject slot) still hard-refuses");
+
+    // B: own slot = Allow → applies while the process bit is poisoned
+    // (pre-#3634 this false-refused — the cross-evaluator leak).
+    auto gb = cs_b.evaluator().apply_closure(0, args);
+    CHECK(gb.has_value() && is_int(*gb) && as_int(*gb) == 5,
+          "3634 AC2: B (own Allow slot) applies while process bit poisoned");
+
+    // C: no slot → process-wide fallback (poisoned) → refuse.
+    auto gc = cs_c.evaluator().apply_closure(0, args);
+    CHECK(!gc.has_value(), "3634 AC2: C (no slot) falls back to the poisoned process bit");
+
+    // Slot hygiene for later members in this process.
+    lcp::reset_lifetime_consistency_proof_for_test();
 }
 
 } // namespace
@@ -449,7 +542,9 @@ int run_test_setcode_rebind_survive() {
     ac5_3421_production_hard_refuse();
     ac6_3469_two_window_stale_flat_refuse();
     ac7_3602_ffi_densify_refuse();
-    std::println("\n=== #2569/#3421/#3469/#3602: {} passed, {} failed ===", g_passed, g_failed);
+    ac8_3634_per_eval_lcp_consult();
+    std::println("\n=== #2569/#3421/#3469/#3602/#3634: {} passed, {} failed ===", g_passed,
+                 g_failed);
     return g_failed ? 1 : 0;
 }
 
