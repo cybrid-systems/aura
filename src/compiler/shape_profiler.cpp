@@ -862,6 +862,10 @@ void ShapeProfiler::invalidate_all() noexcept {
 // *** COMPACT ↛ unique_lock_all_shards_ (#3199) ***
 // Gate: scripts/coverage/checks/check_shape_compact_no_all_shards_lock_3199.py
 // Per-shard unique_lock_shard_ only so disjoint record_shape proceeds.
+// Issue #3628: the lock set is the shard cone of dirty_or_relocated —
+// only shards owning a span key take unique (bitmask dedupe); the old
+// 0..N-1 walk re-serialized disjoint traffic for the whole compact
+// window (#3199 latency, striped residual).
 //
 // *** COMPACT ↛ FULL-TABLE DEOPT (#3455) ***
 // Gate: scripts/coverage/checks/check_shape_compact_dirty_fnkey_3455.py
@@ -908,13 +912,28 @@ std::uint32_t ShapeProfiler::on_arena_compact(std::span<const FnKey> dirty_or_re
     if (!dirty_or_relocated.empty()) {
         if (hooks_to_fire.capacity() < dirty_or_relocated.size())
             hooks_to_fire.reserve(dirty_or_relocated.size());
-        for (std::size_t i = 0; i < kShapeProfilerShardCount; ++i) {
-            auto lock = unique_lock_shard_(i);
-            auto& profiles = shards_[i].profiles;
-            for (FnKey fn : dirty_or_relocated) {
-                if (shard_index(fn) != i)
+        // Issue #3628: the unique-lock set is the shard cone of the span —
+        // only shards owning a key in dirty_or_relocated take unique here.
+        // One unique per hit shard (u64 bitmask dedupe; #2937 keeps the
+        // single-acquisition order — no nested multi-shard hold), inner
+        // span filter unchanged (#3455). Shards absent from the cone are
+        // never locked, so disjoint record_shape proceeds during compact.
+        static_assert(kShapeProfilerShardCount <= 64,
+                      "#3628 shard-cone bitmask dedupe assumes <= 64 shards");
+        std::uint64_t seen_shards = 0;
+        for (FnKey fn : dirty_or_relocated) {
+            if (fn == 0)
+                continue; // sentinel key — never profiled
+            const std::size_t si = shard_index(fn);
+            if (seen_shards & (1ull << si))
+                continue;
+            seen_shards |= (1ull << si);
+            auto lock = unique_lock_shard_(si);
+            auto& profiles = shards_[si].profiles;
+            for (FnKey cfn : dirty_or_relocated) {
+                if (shard_index(cfn) != si)
                     continue;
-                auto it = profiles.find(fn);
+                auto it = profiles.find(cfn);
                 if (it == profiles.end())
                     continue;
                 auto& profile = it->second;
@@ -939,7 +958,7 @@ std::uint32_t ShapeProfiler::on_arena_compact(std::span<const FnKey> dirty_or_re
                     arena_compact_stable_preserved_.fetch_add(1, std::memory_order_relaxed);
                 }
 
-                hooks_to_fire.push_back(HookWork{fn, profile.version});
+                hooks_to_fire.push_back(HookWork{cfn, profile.version});
                 deopt_from_arena_compact_total.fetch_add(1, std::memory_order_relaxed);
                 arena_compact_deopt_hooks_.fetch_add(1, std::memory_order_relaxed);
                 // Explicitly do NOT call update_deopt_storm_state_(fn).  // #2617

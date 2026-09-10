@@ -16,16 +16,27 @@
 //   AC3: shape_compact_storm_isolation_wired + #2617 linter lineage green
 //   AC4: force-reason Threshold hard; compact soft; query keys
 //   AC5: schema-2908 + linter; no docs/design/*
+//
+// #3628 ACs (extend this suite per #81967):
+//   AC1: compact unique-lock set = shard cone of dirty_or_relocated
+//        (bitmask dedupe; #3199 linter bans the 0..N-1 unique walk)
+//   AC2: cone restructure keeps the #3455 per-key filter + empty no-op
+//        + #2617 storm isolation
+//   AC3: multi-fiber disjoint record_shape progress during compact
+//   AC4: invalidate_all keeps its cold all-shard shared walk
+//   AC5: no new query key / mid-struct counter
 
 #include "compiler/shape.h"
 #include "compiler/shape_profiler.h"
 #include "test_harness.hpp"
 
+#include <atomic>
 #include <cstdint>
 #include <fstream>
 #include <print>
 #include <string>
 #include <string_view>
+#include <thread>
 
 import std;
 import aura.compiler.service;
@@ -277,6 +288,108 @@ static void ac5_source_cite() {
     CHECK(kShapeStormForceReasonNone == 0, "AC5: none reason");
 }
 
+static void ac3628_shard_cone_lock_set() {
+    std::println("\n--- #3628: compact unique-lock set = shard cone of the span ---");
+    using aura::compiler::shape::kShapeCompactShardConeLockIssue;
+    CHECK(kShapeCompactShardConeLockIssue == 3628, "3628: issue stamp");
+    ShapeProfiler sp;
+    sp.apply_preset(ShapeProfiler::kLowMutationPreset);
+    seed_stable(sp, 4, 120);
+    const FnKey a = 6100;
+    const FnKey b = 6101;
+    const FnKey c = 6102;
+    const FnKey d = 6103;
+    const auto sa = ShapeProfiler::shard_index(a);
+    FnKey cone_key = 0;
+    FnKey third_key = 0;
+    for (FnKey k : {b, c, d}) {
+        if (ShapeProfiler::shard_index(k) != sa) {
+            cone_key = k;
+            break;
+        }
+    }
+    for (FnKey k : {b, c, d}) {
+        if (k != cone_key) {
+            third_key = k;
+            break;
+        }
+    }
+    if (cone_key == 0 || third_key == 0) {
+        CHECK(false, "3628: disjoint-shard seeded key pair found");
+        return;
+    }
+    CHECK(ShapeProfiler::shard_index(cone_key) != sa, "3628 AC1: cone spans >= 2 shards");
+    const auto va0 = sp.current_snapshot(a).version;
+    const auto vc0 = sp.current_snapshot(cone_key).version;
+    const auto vt0 = sp.current_snapshot(third_key).version;
+    const auto storm0 = sp.deopt_storm_total();
+
+    // Single-key cone: only the cone key advances; the disjoint-shard key
+    // is never touched (#3455 filter re-proven through the cone walk).
+    const FnKey cone1[] = {cone_key};
+    CHECK(sp.on_arena_compact(cone1) == 1, "3628 AC1: touched == cone size");
+    CHECK(sp.current_snapshot(cone_key).version > vc0, "3628 AC1: cone key versioned");
+    CHECK(sp.current_snapshot(a).version == va0, "3628 AC1: disjoint-shard key held");
+
+    // Multi-key cone spanning >= 2 shards: per-key filter intact through
+    // the bitmask restructure.
+    const FnKey cone2[] = {a, cone_key, third_key};
+    CHECK(sp.on_arena_compact(cone2) == 3, "3628 AC2: multi-shard cone touched == 3");
+    CHECK(sp.current_snapshot(a).version > va0, "3628 AC2: a versioned");
+    CHECK(sp.current_snapshot(cone_key).version > vc0 + 1, "3628 AC2: cone key versioned again");
+    CHECK(sp.current_snapshot(third_key).version > vt0, "3628 AC2: third key versioned");
+    CHECK(sp.deopt_storm_total() == storm0, "3628 AC2: compact still not storm (#2617)");
+    CHECK(sp.on_arena_compact() == 0, "3628 AC2: empty cone still the touched==0 no-op");
+
+    // Source-cite: cone bitmask + issue cite; the 0..N-1 walk ban is
+    // body-scoped in the #3199 linter. invalidate_all keeps its cold
+    // all-shard shared walk (AC4).
+    const auto spc = read_file("src/compiler/shape_profiler.cpp");
+    const auto sph = read_file("src/compiler/shape_profiler.h");
+    CHECK(spc.find("Issue #3628") != std::string::npos, "3628: cpp cites");
+    CHECK(spc.find("seen_shards") != std::string::npos, "3628 AC1: cone bitmask dedupe");
+    CHECK(sph.find("kShapeCompactShardConeLockIssue = 3628") != std::string::npos,
+          "3628: header stamp");
+    CHECK(spc.find("void ShapeProfiler::invalidate_all") != std::string::npos &&
+              spc.find("shared_lock_all_shards_()") != std::string::npos,
+          "3628 AC4: invalidate_all cold all-shard walk unchanged");
+    CHECK(read_file("tests/compiler/test_issue_3628.cpp").empty(), "3628 AC5: no test_issue file");
+
+    // AC3 multi-fiber: record_shape(A) concurrent with compact({B}) on a
+    // disjoint shard — A's records all land (progress; A never waits on
+    // B's compact unique). The structural lock-set gate is the #3199
+    // linter's body-scoped ban; this row proves live interleaving.
+    ShapeProfiler sp2;
+    sp2.apply_preset(ShapeProfiler::kLowMutationPreset);
+    seed_stable(sp2, 4, 120);
+    const auto vB0 = sp2.current_snapshot(cone_key).version;
+    const auto hooks0 = sp2.arena_compact_deopt_hooks();
+    const auto storm2_0 = sp2.deopt_storm_total();
+    std::atomic<int> recorded{0};
+    std::atomic<bool> go{false};
+    std::thread recorder([&] {
+        while (!go.load(std::memory_order_acquire)) {
+        }
+        for (int i = 0; i < 4000; ++i) {
+            sp2.record_shape(a, SHAPE_INT);
+            recorded.fetch_add(1, std::memory_order_relaxed);
+        }
+    });
+    std::thread compactor([&] {
+        while (!go.load(std::memory_order_acquire)) {
+        }
+        const FnKey cone[] = {cone_key};
+        (void)sp2.on_arena_compact(cone);
+    });
+    go.store(true, std::memory_order_release);
+    recorder.join();
+    compactor.join();
+    CHECK(recorded.load() == 4000, "3628 AC3: disjoint record_shape progress (all landed)");
+    CHECK(sp2.current_snapshot(cone_key).version > vB0, "3628 AC3: compact versioned its cone key");
+    CHECK(sp2.arena_compact_deopt_hooks() - hooks0 == 1, "3628 AC3: exactly one cone hook");
+    CHECK(sp2.deopt_storm_total() == storm2_0, "3628 AC3: compact not storm (#2617)");
+}
+
 } // namespace
 
 // ── Issue #2908: PerEval harden — compact ↛ process-global shape_version ──
@@ -422,7 +535,8 @@ int run_test_shape_compact_storm_isolation() {
     ac2908_compact_no_global_bump();
     ac3455_compact_dirty_cone_only();
     ac3199_compact_no_all_shards_source();
-    std::println("\n=== #2617/#2908: {} passed, {} failed ===", g_passed, g_failed);
+    ac3628_shard_cone_lock_set();
+    std::println("\n=== #2617/#2908/#3628: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
 

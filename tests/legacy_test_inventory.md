@@ -32,13 +32,13 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 
 | Theme | Title | Issues | Root | Domain | Total | Migration priority |
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
-| `arena_compaction` | Arena / compaction / GC | 0 | 0 | 90 | 90 | P0 — well-contained, batch drivers already exist |
+| `arena_compaction` | Arena / compaction / GC | 0 | 0 | 91 | 91 | P0 — well-contained, batch drivers already exist |
 | `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 268 | 268 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 109 | 109 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 26 | 26 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 59 | 59 | P1 — domain hygiene suite exists |
 | `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 88 | 88 | P2 — link-profile heavy; migrate AC smoke first |
-| `shape_soa` | Shape / SoA / column layout | 0 | 0 | 54 | 54 | P2 — small-medium; soa_batch precedent |
+| `shape_soa` | Shape / SoA / column layout | 0 | 0 | 53 | 53 | P2 — small-medium; soa_batch precedent |
 | `observability` | Observability / metrics / query:*-stats | 0 | 0 | 133 | 133 | P2 — often thin schema probes; collapse into obs matrix |
 | `uncategorized` | Uncategorized / mixed | 0 | 0 | 59 | 59 | P3 — review case-by-case |
 
@@ -1104,13 +1104,13 @@ Suggested order starts with well-contained groups (per #1957) and leverages exis
 
 Files listed as ``location/name`` with issue id and one-line summary.
 
-### `arena_compaction` — Arena / compaction / GC (90)
+### `arena_compaction` — Arena / compaction / GC (91)
 
 **Target:** tests/core/ (extend compact/gc family; see test_arena_batch / test_hotpath_matrix_batch)
 
 **Priority:** P0 — well-contained, batch drivers already exist
 
-#### domain/ (90)
+#### domain/ (91)
 
 - `tests/compiler/test_adt_match_exhaust_post_mutate_reliability.cpp` (—) [domain_suite, theme_compiler] — test_adt_match_exhaust_post_mutate_reliability.cpp — Issue #612:
 - `tests/orch/test_agent_name_table_isolation.cpp` (—) [domain_suite, theme_orch] — AC1: source cites #2078; no process-static OrchAgentNameTable;
@@ -1196,6 +1196,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_security_event_wal_replay.cpp` (—) [large, domain_suite, theme_compiler] — AC1: ring ≥ 1024; ring-wrap-total increments when N>1024 denies
 - `tests/compiler/test_security_health.cpp` (—) [domain_suite, theme_compiler] — AC1: Fresh / vacuous → health_bp high / force-reason ok
 - `tests/core/test_set_arena_atomic_owner.cpp` (—) [domain_suite, theme_core] — test_set_arena_atomic_owner.cpp — Issue #1663
+- `tests/compiler/test_shape_compact_storm_isolation.cpp` (—) [large, domain_suite, theme_compiler] — Issue #2908 — PerEval harden: compact must not bump process-global
 - `tests/compiler/test_solve_delta_epoch_filter.cpp` (—) [domain_suite, theme_compiler] — Issue #2065 — solve_delta epoch filter test.
 - `tests/serve/test_spawn_quota_no_leak.cpp` (—) [domain_suite, theme_serve] — AC1: Quota reject never calls agent_names_->put (C++ + Aura)
 - `tests/core/test_stringpool_buf_fragmentation_lock.cpp` (—) [domain_suite, theme_core] — AC1: 4 writers intern + 4 readers buf_fragmentation (no crash)
@@ -1798,13 +1799,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_workload_adaptive_relower.cpp` (—) [domain_suite, theme_compiler] — AC1: default base=8 compatible with #2032 (no forced signals)
 - `tests/compiler/test_write_string_escape.cpp` (—) [domain_suite, theme_compiler] — AC1: (write "a\"b") → "a\"b" under default JIT path
 
-### `shape_soa` — Shape / SoA / column layout (54)
+### `shape_soa` — Shape / SoA / column layout (53)
 
 **Target:** tests/core/test_soa_batch.cpp (no move needed)
 
 **Priority:** P2 — small-medium; soa_batch precedent
 
-#### domain/ (54)
+#### domain/ (53)
 
 - `tests/compiler/test_alloc_block_seal_last.cpp` (—) [domain_suite, theme_compiler] — AC1: finalize_last_blocks / finalize_soa_module / #2820 cites
 - `tests/compiler/test_apply_closure_envframe_soa.cpp` (—) [domain_suite, theme_compiler] — Issue #1365/#1475/#1511/#1626/#1632/#1660 (#1978 renamed): issue# moved from filename to header.
@@ -1836,7 +1837,6 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_self_func_active_invariant.cpp` (—) [domain_suite, theme_compiler] — AC1: source helpers + static_assert + #2826 cites
 - `tests/core/test_set_workspace_flat.cpp` (—) [domain_suite, theme_core] — Issue #1729 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_shape.cpp` (—) [large, domain_suite, theme_compiler] — test_shape.cpp — Unit tests for shape infrastructure (Phase 1, #53)
-- `tests/compiler/test_shape_compact_storm_isolation.cpp` (—) [domain_suite, theme_compiler] — Issue #2908 — PerEval harden: compact must not bump process-global
 - `tests/compiler/test_shape_high_mutation_storm.cpp` (—) [domain_suite, theme_compiler] — AC1: production default applies kHighMutationPreset knobs (no env)
 - `tests/compiler/test_shape_profiler_burst_closed_loop.cpp` (—) [domain_suite, theme_compiler] — Issue #406/#407/#570/#605 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_shape_profiler_concurrency.cpp` (—) [large, domain_suite, theme_compiler] — Issue #2937 — FnKey-sharded locks (extend per #81967).

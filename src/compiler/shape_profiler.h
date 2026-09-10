@@ -70,6 +70,12 @@ inline constexpr int kShapeCompactNoAllShardsLockIssue = 3199;
 // tracked profile. Storm isolation (#2617) and per-shard unique (#3199)
 // stay. Empty cone is the existing touched==0 no-op.
 inline constexpr int kShapeCompactDirtyFnkeyIssue = 3455;
+// Issue #3628: on_arena_compact's unique-lock set is the shard cone of
+// dirty_or_relocated — only shards owning a span key take unique (u64
+// bitmask dedupe). #3199 per-shard unique + #3455 span filter stay; the
+// empty cone is still the touched==0 no-op; #2617/#2908 isolation is
+// unchanged; invalidate_all keeps its cold all-shard shared walk.
+inline constexpr int kShapeCompactShardConeLockIssue = 3628;
 // Issue #3271: dirty hook is a trivially-copyable fn ptr (no std::function).
 inline constexpr int kShapeDirtyHookNoStdFunctionIssue = 3271;
 // Issue #3357: TLS record_shape merge (hot-FnKey unique_lock amortisation).
@@ -281,7 +287,8 @@ public:
     //   - Preserves is_stable + history on touched stables
     //   - Does NOT feed the deopt-storm ring (compact is expected pressure)
     //   - Does NOT bump mutation_induced_invalidations_ (#2617 hard contract)
-    //   - Does NOT unique_lock_all_shards_ (#3199: per-shard unique only)
+    //   - Does NOT unique_lock_all_shards_ (#3199: per-shard unique only;
+    //     #3628: lock set = the span's shard cone, one unique per hit shard)
     // Gate: scripts/coverage/checks/check_shape_compact_storm_isolation_2617.py
     //       scripts/coverage/checks/check_shape_compact_no_all_shards_lock_3199.py
     //       scripts/coverage/checks/check_shape_compact_dirty_fnkey_3455.py
