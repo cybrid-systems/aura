@@ -15,7 +15,7 @@
 //        tests/compiler/test_pack_pipeline_strict.cpp (same define as
 //        the production aura binary).
 //
-// Issue #3632 — whole-program Begin eval (multi-form --load) gate:
+// asan-verify Begin-gate (937d53d22) — whole-program Begin eval gate:
 //   AC6: Forbidden + sibling define refs in a Begin → known-sim keeps
 //        all-IR-clean scripts on the IR path (no false HardError from
 //        not-yet-registered sibling defines).
@@ -324,12 +324,12 @@ static void ac5_issue_3627_nonpack_binding() {
     reset_tree_walker_fallback_policy_for_test();
 }
 
-// Issue #3632: whole-program Begin eval — the known-sim must treat
+// asan-verify Begin-gate (937d53d22): the known-sim must treat
 // sibling defines as known so all-IR-clean multi-form scripts stay on
 // the IR path under Forbidden (no false HardError from forward refs
 // that are simply "defined two forms earlier").
 static void ac6_whole_begin_sibling_refs() {
-    std::println("\n=== Issue #3632: Begin sibling refs under Forbidden ===");
+    std::println("\n=== Begin-gate asan-verify: Begin sibling refs under Forbidden ===");
     reset_tree_walker_fallback_policy_for_test();
     set_tree_walker_fallback_policy(TreeWalkerFallbackPolicy::Forbidden);
     {
@@ -339,17 +339,17 @@ static void ac6_whole_begin_sibling_refs() {
   (define five (inc 4))
   five))");
         CHECK(r.has_value() && is_int(*r) && as_int(*r) == 5,
-              "3632 AC6: Forbidden + sibling refs in Begin → IR eval ok (no false HardError)");
+              "AC6: Forbidden + sibling refs in Begin → IR eval ok (no false HardError)");
     }
     reset_tree_walker_fallback_policy_for_test();
 }
 
-// Issue #3632: `while` fn bodies are not IR-lowerable — under Forbidden
+// asan-verify Begin-gate (937d53d22): `while` fn bodies are not IR-lowerable — under Forbidden
 // the define must hard-error instead of silently IR-caching a loop that
 // would never run (the multi-session leak oracle returned growth=0 →
 // vacuous PASS). Under Allow the legacy walker still computes it.
 static void ac7_while_body_needs_walker() {
-    std::println("\n=== Issue #3632: while fn body routes by policy ===");
+    std::println("\n=== Begin-gate asan-verify: while fn body routes by policy ===");
     reset_tree_walker_fallback_policy_for_test();
     constexpr const char* kWhileScript = R"((begin
   (define *i* 0)
@@ -365,14 +365,14 @@ static void ac7_while_body_needs_walker() {
         set_tree_walker_fallback_policy(TreeWalkerFallbackPolicy::Forbidden);
         CompilerService cs;
         auto r = cs.eval(kWhileScript);
-        CHECK(!r, "3632 AC7: Forbidden + while fn body → HardError (no vacuous IR-cache)");
+        CHECK(!r, "AC7: Forbidden + while fn body → HardError (no vacuous IR-cache)");
     }
     reset_tree_walker_fallback_policy_for_test();
     {
         CompilerService cs; // Allow (unit default)
         auto r = cs.eval(kWhileScript);
         CHECK(r.has_value() && is_int(*r) && as_int(*r) == 3,
-              "3632 AC7: Allow + while fn body → walker computes (3)");
+              "AC7: Allow + while fn body → walker computes (3)");
     }
     reset_tree_walker_fallback_policy_for_test();
 }
