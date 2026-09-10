@@ -3643,6 +3643,24 @@ if(TARGET all_test_issue_targets)
     add_dependencies(all_test_issue_targets test_ir_closure_jit_misc_batch)
 endif()
 
+# Issue #3627: pack-binary binding fixture — compiled with the SAME
+# AURA_PRODUCTION_PACK=1 define as the production `aura` target so
+# apply_pipeline_strict_defaults is exercised through the pack arm:
+# env unset → Forbidden (sandbox=off or not), AURA_PIPELINE_STRICT wins.
+# Self-contained (header-only pipeline_policy.hh, no aura_test_objects
+# link) so the fixture binary carries exactly one instantiation of the
+# inline policy chain. Non-pack Soft face:
+# test_tree_walker_fallback_strict.cpp (test_ir_closure_jit_misc_batch).
+add_executable(test_pack_pipeline_strict tests/compiler/test_pack_pipeline_strict.cpp)
+target_include_directories(test_pack_pipeline_strict PRIVATE src)
+target_compile_definitions(test_pack_pipeline_strict PRIVATE AURA_PRODUCTION_PACK=1)
+aura_test_compile_options(test_pack_pipeline_strict)
+target_link_libraries(test_pack_pipeline_strict PRIVATE pthread stdc++ stdc++exp)
+add_test(NAME test_pack_pipeline_strict_verification COMMAND ./test_pack_pipeline_strict)
+if(TARGET all_test_issue_targets)
+    add_dependencies(all_test_issue_targets test_pack_pipeline_strict)
+endif()
+
 
 # Domain batch: Module load/rebind/export + query hygiene/index (12 members + driver). Stream A4.
 add_executable(test_module_query_batch

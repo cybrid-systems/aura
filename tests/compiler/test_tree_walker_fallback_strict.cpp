@@ -7,6 +7,13 @@
 //   AC2: Default / unit Allow remains permissive (TakeWalker).
 //   AC3: query:soa-dirty-stats schema-2213 + counters.
 //   AC4: needs=false happy path is zero-cost (no fallback counters).
+//
+// Issue #3627 — pack-binary binding (AURA_PRODUCTION_PACK):
+//   AC5: non-pack face keeps sandbox=off → Allow (the pack arm compiled
+//        out here) + operator override preserved; the pack face →
+//        Forbidden with env unset is proven at runtime by
+//        tests/compiler/test_pack_pipeline_strict.cpp (same define as
+//        the production aura binary).
 
 #include "test_harness.hpp"
 
@@ -15,6 +22,7 @@
 #include "compiler/security_defaults.hh"
 
 #include <cstdint>
+#include <cstdlib>
 #include <fstream>
 #include <print>
 #include <string>
@@ -27,6 +35,7 @@ import aura.core.ast;
 
 namespace {
 
+using aura::compiler::apply_pipeline_strict_defaults;
 using aura::compiler::CompilerMetrics;
 using aura::compiler::CompilerService;
 using aura::compiler::production_pipeline_strict;
@@ -248,6 +257,64 @@ static void ac4_happy_path_and_source() {
     reset_tree_walker_fallback_policy_for_test();
 }
 
+// Issue #3627: on the NON-pack face the sandbox=off dev ergonomics must
+// survive — apply_pipeline_strict_defaults still resolves Allow with env
+// unset because the AURA_PRODUCTION_PACK arm compiled out in this binary.
+// The pack face (Forbidden + operator override) is proven at runtime by
+// tests/compiler/test_pack_pipeline_strict.cpp (same define as the
+// production aura binary).
+static void ac5_issue_3627_nonpack_binding() {
+    std::println("\n=== Issue #3627: pack binding — non-pack face stays Soft ===");
+    unsetenv("AURA_PIPELINE_STRICT");
+    unsetenv("AURA_SANDBOX");
+    apply_pipeline_strict_defaults(/*dev_sandbox_off=*/true);
+    CHECK(tree_walker_fallback_policy() == TreeWalkerFallbackPolicy::Allow,
+          "3627 AC2: non-pack sandbox=off env unset → Allow (#2213 AC2 kept)");
+    CHECK(tree_walker_fallback_disposition(true) == TreeWalkerFallbackDisposition::TakeWalker,
+          "3627 AC2: non-pack needs → TakeWalker (dev ergonomics)");
+
+    // Operator override precedes everything on this face too.
+    setenv("AURA_PIPELINE_STRICT", "allow", 1);
+    apply_pipeline_strict_defaults(/*dev_sandbox_off=*/true);
+    CHECK(tree_walker_fallback_policy() == TreeWalkerFallbackPolicy::Allow,
+          "3627 AC3: env allow wins (non-pack)");
+    setenv("AURA_PIPELINE_STRICT", "1", 1);
+    apply_pipeline_strict_defaults(/*dev_sandbox_off=*/true);
+    CHECK(tree_walker_fallback_policy() == TreeWalkerFallbackPolicy::Forbidden,
+          "3627 AC3: env 1 → Forbidden (non-pack)");
+    unsetenv("AURA_PIPELINE_STRICT");
+
+    // Source-cite: the pack arm exists in the header, binds Forbidden,
+    // never stores Allow, and the env parse precedes it (operator wins).
+    auto pol = read_file("src/compiler/pipeline_policy.hh");
+    const auto fn = pol.find("apply_pipeline_strict_defaults(bool dev_sandbox_off)");
+    const auto guard = pol.find("#if defined(AURA_PRODUCTION_PACK)");
+    if (fn == std::string::npos || guard == std::string::npos || guard < fn) {
+        CHECK(false, "3627 AC1: pack guard inside apply fn");
+        reset_tree_walker_fallback_policy_for_test();
+        return;
+    }
+    CHECK(true, "3627 AC1: pack guard inside apply fn");
+    const auto alt = pol.find("#else", guard);
+    const auto end = pol.find("#endif", guard);
+    CHECK(alt != std::string::npos && end != std::string::npos && alt < end,
+          "3627 AC1: guard closed with #else/#endif");
+    const auto pack_arm =
+        (alt == std::string::npos) ? std::string{} : pol.substr(guard, alt - guard);
+    CHECK(pack_arm.find("TreeWalkerFallbackPolicy::Forbidden") != std::string::npos,
+          "3627 AC1: pack arm → Forbidden");
+    CHECK(pack_arm.find("TreeWalkerFallbackPolicy::Allow") == std::string::npos,
+          "3627 AC1: pack arm never stores Allow");
+    const auto env = pol.find("std::getenv(\"AURA_PIPELINE_STRICT\")");
+    CHECK(env != std::string::npos && env < guard, "3627 AC3: env parse precedes pack guard");
+    auto sec = read_file("src/compiler/security_defaults.hh");
+    CHECK(sec.find("apply_pipeline_strict_defaults(/*dev_sandbox_off=*/dev_off)") !=
+              std::string::npos,
+          "3627: security_defaults wire intact");
+
+    reset_tree_walker_fallback_policy_for_test();
+}
+
 } // namespace
 
 int run_test_tree_walker_fallback_strict() {
@@ -256,6 +323,7 @@ int run_test_tree_walker_fallback_strict() {
     ac1_forbidden_and_force_soa();
     ac3_query_schema();
     ac4_happy_path_and_source();
+    ac5_issue_3627_nonpack_binding();
 
     std::println("\n=== test_tree_walker_fallback_strict: {} passed, {} failed ===", g_passed,
                  g_failed);

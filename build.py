@@ -12238,6 +12238,36 @@ def cmd_closure_calls_hotpath_3626_coverage():
     return 0
 
 
+def cmd_pack_pipeline_strict_3627_coverage():
+    """Issue #3627: AURA_PRODUCTION_PACK + AURA_SANDBOX=off still Allow
+    tree-walker (#2213 production face unbound from the pack binary):
+
+    - apply_pipeline_strict_defaults binds the pack TU to Forbidden with
+      env unset (the #3179 isolate/CI sandbox knob must not select the
+      legacy walker); AURA_PIPELINE_STRICT operator override still wins
+      via the env parse that precedes the pack guard.
+    - Non-pack Soft fixture keeps sandbox=off -> Allow (#2213 AC2) in
+      test_tree_walker_fallback_strict.cpp.
+    - Pack runtime fixture test_pack_pipeline_strict (same
+      AURA_PRODUCTION_PACK=1 define as the aura binary) asserts Forbidden
+      + dev-flag ignore + operator override.
+    - No new query key / metric (tree_walker_fallback_total /
+      tree_walker_fallback_forbidden_total reused); no docs/design/3627-*,
+      no tests/**/test_issue_3627.cpp.
+    """
+    print(f"{B}=== pack pipeline strict binding (#3627) ==={N}")
+    script = ROOT / "scripts" / "check_pack_pipeline_strict_3627.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script), "--strict"], cwd=ROOT)
+    if r.returncode != 0:
+        fail("pack pipeline strict binding (#3627) contract rows failed")
+        return 1
+    ok("pack pipeline strict binding (#3627) clean")
+    return 0
+
+
 def cmd_query_stable_hard_reject_torn_latch_3386_coverage():
     """Issue #3386: shared probe Evaluator::query_stable_hard_reject_torn()
     must OR restamp_over_budget_torn() under multi-worker latch (I6 residual).
@@ -21998,6 +22028,7 @@ def cmd_gate():
         or cmd_type_export_face_3624_coverage()
         or cmd_render_fast_audit_3625_coverage()
         or cmd_closure_calls_hotpath_3626_coverage()
+        or cmd_pack_pipeline_strict_3627_coverage()
     )
     if rc:
         return rc
