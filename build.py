@@ -11721,6 +11721,37 @@ def cmd_ffi_apply_densify_refuse_3602_coverage():
     return 0
 
 
+def cmd_closure_dispatch_entry_3635_coverage():
+    """Issue #3635: anon closure native dispatch single enforcement point.
+
+    Contract rows (AC1-AC4 from the test file):
+
+      AC1: blessed entry aura_closure_dispatch_native_checked owns the full
+           call-time transaction (MustDeopt #2472 TOCTOU + dual-fresh +
+           deopt_pending consult) in the table TU; aura_closure_call is a
+           thin forward; runtime_shared.h declares the entry.
+      AC2: g_closure_func_ids / g_jit_fns[ / JitFnEntry stay table-TU-only
+           across src/** (per-line #3635-allow-direct annotation opt-out);
+           --probe-file mode drives the test's adversarial stub face.
+      AC3: test face in test_closure_call_must_deopt_toctou.cpp (entry
+           transaction parity, stale-epoch fallback, adversarial probe).
+      AC4: no docs/design/3635-* (#1655); no tests/**/test_issue_3635.cpp
+           (#81934); build.py wires this linter; #1707 two-load fast path
+           preserved.
+    """
+    print(f"{B}=== closure dispatch blessed entry (#3635) ==={N}")
+    script = ROOT / "scripts" / "check_closure_dispatch_entry_3635.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script), "--strict"], cwd=ROOT)
+    if r.returncode != 0:
+        fail("closure dispatch blessed entry (#3635) contract rows failed")
+        return 1
+    ok("closure dispatch blessed entry (#3635) clean")
+    return 0
+
+
 def cmd_wal_window_miss_catalog_3603_coverage():
     """Issue #3603: mid point-query window-miss face + forensic catalog seed.
 
@@ -22129,6 +22160,7 @@ def cmd_gate():
         or cmd_moving_untracked_split_3600_coverage()
         or cmd_lockless_hygiene_se_3601_coverage()
         or cmd_ffi_apply_densify_refuse_3602_coverage()
+        or cmd_closure_dispatch_entry_3635_coverage()
         or cmd_wal_window_miss_catalog_3603_coverage()
         or cmd_panic_aba_gc_defer_drain_3604_coverage()
         or cmd_facade_owner_scope_clock_skip_3605_coverage()

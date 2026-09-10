@@ -81,3 +81,4 @@ check_closure_calls_hotpath_3626.py
 check_pack_pipeline_strict_3627.py
 check_undeclared_mt_autodetect_3630.py
 check_reclaimed_batch_join_3631.py
+check_closure_dispatch_entry_3635.py
