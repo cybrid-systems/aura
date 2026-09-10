@@ -3002,6 +3002,93 @@ struct JoinViaTokenResult {
     }
 }
 
+// Issue #3631: batch residual-wait for join_agents — ONE shared budget for
+// the whole Reclaimed residual set (wall ~= budget, not N x budget; the
+// serial per-handle auto-wait pinned the joining host thread in 200us
+// polls for N x reclaimed_retry_budget_ms worst case). Contract-preserving
+// shape: a shared-deadline poll over the residual fibers (same 200us
+// cadence + done/timeout semantics as wait_reclaimed_body) — deliberately
+// NOT Fiber::join: join already returned Reclaimed for these fibers and
+// re-join would race residual cleanup contracts (see wait_reclaimed_body).
+//   - body exited  -> note_body_exit_if_reclaimed + Done-path
+//     complete_agent_join_cleanup when deferred cleanup is pending
+//     (+ wait_reclaimed_cleanup_total); must_wait cleared (#3467).
+//   - budget expiry -> wait_reclaimed_timeout_total per residual fiber,
+//     must_wait stays set (#3146 host-visible signal), #3529/#3564 quota
+//     recycle per handle, and host_forget_reclaimed_risk_total bumps ONCE
+//     per batch (was per-handle expiry before #3631).
+struct WaitReclaimedBatchResult {
+    std::uint64_t wait_us = 0;
+    std::size_t cleaned = 0;
+    std::size_t still_running = 0;
+};
+
+inline WaitReclaimedBatchResult
+maybe_auto_wait_reclaimed_batch(std::span<AgentHandle> agents,
+                                std::uint64_t retry_budget_ms) noexcept {
+    WaitReclaimedBatchResult out;
+    std::vector<serve::Fiber*> residual;
+    for (auto& a : agents)
+        if (a.must_wait_reclaimed && a.fiber)
+            residual.push_back(a.fiber);
+    if (residual.empty())
+        return out; // Soft/Off / no production gate: zero extra wait (AC3)
+    g_orch_module_stats.wait_reclaimed_total.fetch_add(residual.size(), std::memory_order_relaxed);
+    const auto t0 = std::chrono::steady_clock::now();
+    const auto deadline = t0 + std::chrono::milliseconds(retry_budget_ms);
+    for (;;) {
+        bool all_done = true;
+        for (auto* f : residual)
+            if (f && !f->is_done()) {
+                all_done = false;
+                break;
+            }
+        if (all_done)
+            break;
+        if (std::chrono::steady_clock::now() >= deadline)
+            break;
+        std::this_thread::sleep_for(std::chrono::microseconds(200));
+    }
+    out.wait_us = static_cast<std::uint64_t>(
+        std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - t0)
+            .count());
+    bool any_still_running = false;
+    for (auto& a : agents) {
+        if (!a.must_wait_reclaimed || !a.fiber)
+            continue;
+        a.wait_reclaimed_used = true;
+        if (a.fiber->is_done()) {
+            a.fiber->note_body_exit_if_reclaimed();
+            if (a.reclaimed_deferred_cleanup) {
+                serve::JoinResult done_jr;
+                done_jr.status = serve::JoinStatus::Ok;
+                complete_agent_join_cleanup(a, done_jr);
+                g_orch_module_stats.wait_reclaimed_cleanup_total.fetch_add(
+                    1, std::memory_order_relaxed);
+                ++out.cleaned;
+            }
+            // must_wait cleared by complete_agent_join_cleanup (#3467).
+        } else {
+            a.wait_reclaimed_timeout = true;
+            g_orch_module_stats.wait_reclaimed_timeout_total.fetch_add(1,
+                                                                       std::memory_order_relaxed);
+            ++out.still_running;
+            any_still_running = true;
+            // #3529/#3564 quota recycle mirror (ensure_reclaimed_cleanup
+            // Timeout arm) — per handle.
+            if (maybe_force_release_reclaimed_quota(a))
+                a.must_wait_reclaimed = false;
+        }
+    }
+    if (any_still_running) {
+        // Issue #3220 host-forget risk: ONE bump per batch expiry (was
+        // per-handle expiry before #3631).
+        g_orch_module_stats.host_forget_reclaimed_risk_total.fetch_add(1,
+                                                                       std::memory_order_relaxed);
+    }
+    return out;
+}
+
 // Issue #3334: production long-lived C++ hosts that keep AgentHandle in
 // vectors / hand it across components and must free the name / quota
 // slot without an indefinite body wait. One bounded second wait (default
@@ -3413,19 +3500,16 @@ inline void cancel_and_drain_fibers(std::span<serve::Fiber* const> fibers,
         if (local.status == serve::JoinStatus::Reclaimed && !policy.wait_reclaimed_ms.has_value() &&
             production_reclaimed_must_wait()) {
             a.must_wait_reclaimed = true;
-            // Issue #3110: auto-wait to close the host-forget cleanup window
-            // (span variant — mirrors the single-handle join_agent fix).
-            // Each Reclaimed handle in the batch gets its own short wait so
-            // a single non-yielding sibling cannot pin every reservation.
-            // Soft / sandbox=off / unset production_reclaimed_must_wait stays
-            // zero cost (AC3). Timeout preserves #2661 no-early-free.
-            // Issue #3595: same SSOT wrapper as join_agent (budget =
-            // reclaimed_retry_budget_ms(drain_ms); drain=0 stays one-shot) —
-            // the wrapper owns the flag writes (#3146) and the #3220
-            // host_forget bump.
-            jr.wait_us +=
-                maybe_auto_wait_reclaimed_production(a, /*caller_passed_wait_reclaimed_ms=*/false,
-                                                     reclaimed_retry_budget_ms(policy.drain_ms));
+            // Issue #3110: auto-wait to close the host-forget cleanup window.
+            // Issue #3631: the WAIT itself is deferred to ONE shared-budget
+            // batch pass after this loop (was serial per-handle here —
+            // N x reclaimed_retry_budget_ms worst case pinned the joining
+            // host thread in 200us polls). Flag writes stay per-handle
+            // (#3146); the batch helper owns the wait, Done-path cleanup,
+            // timeout flags, and the #3220 host_forget bump (once per
+            // batch, not per handle). Soft / sandbox=off / unset
+            // production_reclaimed_must_wait stays zero cost (AC3).
+            // Budget expiry preserves #2661 no-early-free.
         }
         if (local.status == serve::JoinStatus::Reclaimed && policy.wait_reclaimed_ms.has_value()) {
             auto wr = wait_reclaimed_body(a, policy.wait_reclaimed_ms);
@@ -3448,6 +3532,36 @@ inline void cancel_and_drain_fibers(std::span<serve::Fiber* const> fibers,
             a.last_join_status = jr.status;
         else
             a.last_join_status = local.status; // Issue #3052: per-handle (not batch jr)
+    }
+    // Issue #3631: ONE shared residual budget for the whole batch — the
+    // serial per-handle auto-wait above cost N x reclaimed_retry_budget_ms
+    // worst case on non-yielding Reclaimed bodies (host thread pinned in
+    // 200us polls). Single shared-deadline pass (contract-preserving: NOT
+    // Fiber::join — re-join races residual cleanup contracts, see
+    // wait_reclaimed_body), then last_join_status re-derivation for
+    // residual handles (#3050 formula — the serial path classified each
+    // handle after its own wait; same semantics, post-wait state).
+    {
+        const auto batch =
+            maybe_auto_wait_reclaimed_batch(agents, reclaimed_retry_budget_ms(policy.drain_ms));
+        jr.wait_us += batch.wait_us;
+        for (auto& a : agents) {
+            if (!a.wait_reclaimed_used || !a.fiber)
+                continue;
+            serve::JoinResult local = jr;
+            if ((a.fiber->is_reclaimed() || local.status != serve::JoinStatus::Ok) &&
+                !a.fiber->is_done())
+                local.status = serve::JoinStatus::Reclaimed;
+            else if (a.fiber->is_done())
+                local.status = serve::JoinStatus::Ok;
+            const bool reclaimed_live_fuel =
+                a.reclaimed_deferred_cleanup || (a.fiber->is_reclaimed() && !a.fiber->is_done());
+            if (!reclaimed_live_fuel && (jr.status == serve::JoinStatus::Timeout ||
+                                         jr.status == serve::JoinStatus::Cancelled))
+                a.last_join_status = jr.status;
+            else
+                a.last_join_status = local.status;
+        }
     }
     return jr;
 }

@@ -143,8 +143,8 @@ def main() -> int:
     # ── AC7: Source-cite + build.py wiring + join_agents span variant
     must("Issue #3110: auto-wait to close the host-forget cleanup window", "AC7 source-cite comment", spawn)
     must(
-        "a, /*caller_passed_wait_reclaimed_ms=*/false,",
-        "AC7 join_agents span variant auto-wait also wired",
+        "maybe_auto_wait_reclaimed_batch(agents,",
+        "AC7 join_agents span variant routes the shared-budget batch pass (#3631)",
         spawn,
     )
     # join_agents span variant: same auto-wait pattern. The source file has TWO
