@@ -489,6 +489,20 @@ public:
     static constexpr std::uint64_t kStormIsolationRegionCap = 64;
     void on_reemit_throttled(ThrottleReason reason) noexcept;
     void on_reemit_critical_bypass() noexcept;
+    // Issue #3636: per-region force-arm watermark + storm attribution.
+    // note_force_bits_armed stamps a steady-ms watermark for every force
+    // bit that transitioned 0→1 (residual / aggregate re-stores keep the
+    // original arm time — only true 0→1 re-stamps). max_region_force_age_ms
+    // is advisory telemetry for the health face (#2543 semantics: orch
+    // decides; no auto-clear, no auto-recovery). The cause mask records
+    // the dirty-region mask a soft storm throttle skipped.
+    void note_force_bits_armed(std::uint64_t old_mask, std::uint64_t new_mask) noexcept;
+    [[nodiscard]] std::uint64_t region_force_first_armed_ms(std::uint64_t bit_index) const noexcept;
+    [[nodiscard]] std::uint64_t max_region_force_age_ms() const noexcept;
+    void note_throttle_cause_mask(std::uint64_t mask) noexcept;
+    [[nodiscard]] std::uint64_t reemit_throttle_cause_mask() const noexcept;
+    void bump_reemit_soft_storm_region_skips(std::uint64_t n) noexcept;
+    [[nodiscard]] std::uint64_t reemit_soft_storm_region_skips() const noexcept;
     // Issue #2236 / #2370: StormIsolation mode setter / getter. Default =
     // Global. PerRegion activates per-region windows; PerEval activates
     // per-eval windows + SpecJIT isolation epoch (#2370).
@@ -805,6 +819,12 @@ public:
         std::int64_t coverage_verify_min_dirty_wired = 1;
         std::int64_t schema_2952 = 2952;
         std::int64_t issue_2952 = 2952;
+        // Issue #3636: per-region force watermark + storm attribution.
+        std::int64_t region_force_max_age_ms = 0;
+        std::int64_t reemit_throttle_cause_mask = 0;
+        std::int64_t reemit_soft_storm_region_skips_total = 0;
+        std::int64_t schema_3636 = 3636;
+        std::int64_t issue_3636 = 3636;
     };
     [[nodiscard]] Snapshot snapshot() const noexcept;
 
@@ -1319,6 +1339,15 @@ public:
 
     [[nodiscard]] PendingRecovery exchange_pending_recovery() noexcept;
     void drain_pending_recovery(std::uint8_t why) noexcept;
+
+    // Issue #3636 (end-append): per-region force-arm watermark (steady ms;
+    // 0 = never armed since feature), last soft-throttle cause mask, and
+    // the scoped soft-storm candidate skip counter. Advisory telemetry —
+    // no layout-stable consumers, no C-ABI exposure beyond the snapshot
+    // tail appended in lockstep.
+    std::atomic<std::uint64_t> region_force_first_armed_ms_[64] = {};
+    std::atomic<std::uint64_t> reemit_throttle_cause_mask_{0};
+    std::atomic<std::uint64_t> reemit_soft_storm_region_skips_{0};
 };
 
 // Free functions for C bridge (no C++ class in extern "C" bodies).
@@ -1437,6 +1466,14 @@ struct aura_hot_update_registry_snapshot {
     std::int64_t force_jit_repromote_allow_pending_idle_when_force_jit_covered;
     std::int64_t schema_2601;
     std::int64_t issue_2601;
+    // Issue #3636: per-region force watermark + storm attribution. MUST
+    // stay in lockstep with HotUpdateRegistry::Snapshot (same rule as
+    // #2236: missing fields overflow adjacent memory on write).
+    std::int64_t region_force_max_age_ms;
+    std::int64_t reemit_throttle_cause_mask;
+    std::int64_t reemit_soft_storm_region_skips_total;
+    std::int64_t schema_3636;
+    std::int64_t issue_3636;
 };
 void aura_hot_update_registry_get_snapshot(aura_hot_update_registry_snapshot* out);
 // Issue #2014: C entry points for deopt feed / throttle / config.

@@ -4281,6 +4281,10 @@ extern "C" std::uint64_t aura_reemit_aot_for_dirty(std::uint64_t current_defuse_
         return 0;
     }
 
+    // Issue #3636: region-scoped soft storm — the attributed dirty region
+    // mask whose candidates defer while a Global soft storm is active.
+    // 0 = no scoping (hard ceiling early-returns below instead).
+    std::uint64_t storm_scope_mask = 0;
     // Issue #2014 / #2132: during a deopt storm, coalesce reemit (skip).
     // Dual-check / deopt correctness is unchanged; only recovery is delayed
     // until the sliding window rolls and throttle clears.
@@ -4303,19 +4307,31 @@ extern "C" std::uint64_t aura_reemit_aot_for_dirty(std::uint64_t current_defuse_
             static_cast<std::uint8_t>(aura::compiler::HotUpdateRegistry::StormLevel::Global);
         const bool global_storm = (static_cast<std::uint8_t>(storm_level) & kGlobal) != 0;
         if (global_storm) {
-            if (hur_thr.should_throttle_reemit(region_or_prio)) {
+            const bool hard = hur_thr.hard_storm_active();
+            if (hard || hur_thr.should_throttle_reemit(region_or_prio)) {
                 using TR = aura::compiler::HotUpdateRegistry::ThrottleReason;
                 TR reason = TR::Global;
-                if (hur_thr.hard_storm_active())
+                if (hard)
                     reason = TR::Hard;
                 else if (region_or_prio != 0)
                     reason = TR::Region;
                 hur_thr.on_reemit_throttled(reason);
-                g_last_reemit_dirty_count.store(0, std::memory_order_relaxed);
-                g_last_reemit_region_skips.store(0, std::memory_order_relaxed);
-                g_last_reemit_closure_dep_count.store(0, std::memory_order_relaxed);
-                g_last_reemit_success_count.store(0, std::memory_order_relaxed);
-                return 0;
+                // Issue #3636: attribute the skipped pass to its dirty
+                // region mask (throttle-cause mask, advisory).
+                hur_thr.note_throttle_cause_mask(dirty_mask);
+                if (hard || region_or_prio == 0) {
+                    // Hard ceiling always throttles everyone (#2132);
+                    // without a dirty mask there is nothing to attribute.
+                    g_last_reemit_dirty_count.store(0, std::memory_order_relaxed);
+                    g_last_reemit_region_skips.store(0, std::memory_order_relaxed);
+                    g_last_reemit_closure_dep_count.store(0, std::memory_order_relaxed);
+                    g_last_reemit_success_count.store(0, std::memory_order_relaxed);
+                    return 0;
+                }
+                // Issue #3636: region-scoped soft storm — candidates in the
+                // attributed dirty bits defer; others proceed (AC2 liveness).
+                // Critical bits keep bypassing per-candidate below (#2132).
+                storm_scope_mask = region_or_prio;
             }
             // Soft storm active but critical region allowed reemit.
             if (hur_thr.is_critical_region(region_or_prio))
@@ -4401,6 +4417,7 @@ extern "C" std::uint64_t aura_reemit_aot_for_dirty(std::uint64_t current_defuse_
     std::uint64_t to_re_emit = 0;
     std::uint64_t success_count = 0;
     std::uint64_t region_skips = 0;
+    std::uint64_t storm_scope_skips = 0; // #3636 scoped soft-storm candidate skips
     std::uint64_t cross_eval_skips = 0;
     std::uint64_t closure_dep_count = 0;
     std::uint64_t dirty_by_region[3] = {0, 0, 0};
@@ -4493,6 +4510,20 @@ extern "C" std::uint64_t aura_reemit_aot_for_dirty(std::uint64_t current_defuse_
 
         if (region < 3)
             dirty_by_region[region] += 1;
+
+        // Issue #3636: region-scoped soft storm — a candidate whose region
+        // bit intersects the attributed storm mask defers (storm-source
+        // recovery throttle); non-intersecting candidates proceed. Critical
+        // bits still bypass (#2132). Hard ceiling never reaches the walk
+        // (early return in the storm gate above).
+        if (storm_scope_mask != 0 && region != 0) {
+            const std::uint64_t cbit = 1ULL << (region & 63);
+            if ((storm_scope_mask & cbit) != 0 && !hur.is_critical_region(cbit)) {
+                ++region_skips;
+                ++storm_scope_skips;
+                continue;
+            }
+        }
 
         // Per-function region mask filter: if host set a non-zero
         // mask, the candidate's region must have its bit set in the
@@ -4740,6 +4771,8 @@ extern "C" std::uint64_t aura_reemit_aot_for_dirty(std::uint64_t current_defuse_
     // is the actual emit count when emit path is active.
     g_last_reemit_dirty_count.store(to_re_emit, std::memory_order_relaxed);
     g_last_reemit_region_skips.store(region_skips, std::memory_order_relaxed);
+    if (storm_scope_skips != 0)
+        hur.bump_reemit_soft_storm_region_skips(storm_scope_skips);
     g_last_reemit_closure_dep_count.store(closure_dep_count, std::memory_order_relaxed);
     g_last_reemit_success_count.store(success_count, std::memory_order_relaxed);
     (void)cross_eval_skips; // counted via reemit_cross_eval_candidate_skipped_total

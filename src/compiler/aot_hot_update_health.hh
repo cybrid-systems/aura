@@ -58,6 +58,10 @@ namespace aura::compiler {
 inline constexpr int kAotHotUpdateHealthIssue = 2506;
 // Issue #2543: orch self-throttle over health_bp (control plane).
 inline constexpr int kAotHotUpdateHealthThrottleIssue = 2543;
+// Issue #3636: advisory threshold for the per-region force-starve flag.
+// Advisory only — no health_bp change, no auto-clear, no auto-recovery;
+// orch decides (#2543 semantics, playbook stays observe-only).
+inline constexpr std::uint64_t kRegionForceStarveAdvisoryMs = 30000;
 
 struct AotHotUpdateHealthSnapshot {
     // ReloadRecoveryState core (#2302 / #2367).
@@ -77,6 +81,9 @@ struct AotHotUpdateHealthSnapshot {
     std::uint64_t epoch_invariant_violation_total = 0;
     // Collapsed recovery-active (snapshot builder may precompute).
     std::int64_t recovery_active = 0;
+    // Issue #3636: per-region force watermark (advisory only).
+    std::uint64_t region_force_max_age_ms = 0;
+    std::uint8_t region_force_starve = 0;
 };
 
 struct AotHotUpdateHealthResult {
@@ -88,6 +95,9 @@ struct AotHotUpdateHealthResult {
     std::int64_t force_reason_code = 0;
     std::int64_t recovery_active = 0;
     AotHotUpdateHealthSnapshot components{};
+    // Issue #3636: advisory escalation reason (empty when none). Never
+    // changes health_bp or force_reason — advisory only (#2543 semantics).
+    std::string_view advisory_reason = {};
 };
 
 // Default budget 8000 bp (80%). Override: AURA_AOT_HOT_UPDATE_HEALTH_BUDGET_BP.
@@ -168,6 +178,11 @@ compute_aot_hot_update_health(const AotHotUpdateHealthSnapshot& s) noexcept {
                          s.storm_level != 0 || s.hard_storm_active != 0 || s.recovery_active != 0)
                             ? 1
                             : 0;
+
+    // Issue #3636: advisory escalation reason — no bp change, no
+    // force_reason change (#2543 semantics: orch decides; observe-only).
+    if (s.region_force_starve != 0)
+        r.advisory_reason = "region-force-starve";
 
     // force_reason priority (hard first). Independent of budget.
     if (has_storm(s)) {
