@@ -1220,8 +1220,9 @@ inline std::size_t unpin_linear_roots_except(const std::unordered_set<void*>& ke
     return g_linear_root_remap_total.load(std::memory_order_relaxed);
 }
 
-inline std::size_t remap_linear_roots_under_moving(
-    const std::unordered_map<void*, void*>& last_object_remap) noexcept {
+inline std::size_t
+remap_linear_roots_under_moving(const std::unordered_map<void*, void*>& last_object_remap,
+                                std::vector<void*>* covered_old_out = nullptr) noexcept {
     std::lock_guard<std::mutex> lock(linear_roots_mtx());
     auto& roots = linear_roots();
     if (roots.empty() || last_object_remap.empty())
@@ -1242,6 +1243,12 @@ inline std::size_t remap_linear_roots_under_moving(
         roots.erase(r);
     for (auto* n : to_insert)
         roots.insert(n);
+    // Issue #3633: report the covered OLD addresses so the arena's
+    // window-exit moved-vs-covered reconciliation counts the linear-roots
+    // channel as cover (an object whose only referent is a linear root is
+    // safe — rewritten here — and must not fail-close the window).
+    if (covered_old_out != nullptr)
+        covered_old_out->insert(covered_old_out->end(), to_erase.begin(), to_erase.end());
     g_linear_root_remap_total.fetch_add(to_erase.size(), std::memory_order_relaxed);
     return to_erase.size();
 }

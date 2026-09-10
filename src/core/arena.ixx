@@ -21,6 +21,7 @@ module;
 #include "core/arena_auto_policy_stats.h"
 #include "core/densify_consistency_report.h" // Issue #2973 pre-densify counters
 #include "core/lifetime_consistency_proof.hh" // Issue #3308: stamp LCP BEFORE post_moving_live_canaries_.clear()
+#include "core/moving_cover_probe.h" // Issue #3633: root-remap covered-old probe (window-exit reconciliation)
 #include "core/moving_densify_health.hh" // Issue #3123 production auto-arm + clear reason
 #include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 export module aura.core.arena;
@@ -213,6 +214,8 @@ export struct ArenaStats {
     // untracked external candidates unmapped (fail-closed signal).
     // GUARDED_BY(per-arena compact serial)
     std::size_t moving_untracked_external_roots_total = 0;
+    // Issue #3633: uncovered relocations (appended at end — no mid-struct insert).
+    std::size_t moving_uncovered_relocation_total = 0;
 
     std::string format() const {
         return std::format("arena: {:.1f}MB / {:.1f}MB (peak {:.1f}MB) | {} allocs | {}B wasted | "
@@ -276,6 +279,7 @@ export struct ArenaStats {
         objects_moved_total += other.objects_moved_total;
         moving_blocked_precondition_total += other.moving_blocked_precondition_total;
         moving_untracked_external_roots_total += other.moving_untracked_external_roots_total;
+        moving_uncovered_relocation_total += other.moving_uncovered_relocation_total; // Issue #3633
         if (other.frag_post_compact_bp > 0)
             frag_post_compact_bp = other.frag_post_compact_bp;
         if (other.defrag_attempted_count > 0)
@@ -563,6 +567,11 @@ export inline std::atomic<int> g_moving_compact_enabled_pref{-1}; // -1 = env/de
 // when objects_moved > 0 && untracked_kept_count > 0. Agent dashboards
 // surface untracked-buffer accumulation.
 export inline std::atomic<std::uint64_t> g_moving_untracked_external_roots_total{0};
+// Issue #3633: window-exit moved-vs-covered reconciliation — count of
+// relocated objects with NO cover in any rewrite family (external-root
+// slot / LifetimePin remap / RootRemapPass). Appended at end per #3633
+// non-goals (counters append; no mid-struct inserts, no query-key change).
+export inline std::atomic<std::uint64_t> g_moving_uncovered_relocation_total{0};
 
 // Issue #2682: unified Moving success / fail totals. Bumped by Phase-5
 // outermost exit after computing the single unified predicate
@@ -1171,12 +1180,17 @@ export struct LiveCompactResult {
     std::size_t root_remap_stable_ref_fail_total = 0;
     std::size_t root_remap_closure_capture_total = 0;
     std::size_t root_remap_closure_capture_fail_total = 0;
+    // Issue #3633: objects relocated this window with no cover in any
+    // rewrite family (external-root slot / LifetimePin remap / RootRemapPass).
+    // > 0 forces moving_incomplete_remap + pin_contract_held=false at the
+    // window-exit reconciliation. Appended at end — no mid-struct insert.
+    std::size_t uncovered_moved_count = 0;
 
     [[nodiscard]] bool empty() const noexcept {
         return bytes_reclaimed == 0 && slots_recycled == 0 && !soft_gated &&
                !force_blocked_by_pin && !force_blocked_by_envframe_guard &&
                !moving_blocked_precondition && objects_moved == 0 && pin_contract_held &&
-               !moving_incomplete_remap && untracked_kept_count == 0;
+               !moving_incomplete_remap && untracked_kept_count == 0 && uncovered_moved_count == 0;
     }
     [[nodiscard]] bool force_blocked() const noexcept {
         return force_blocked_by_pin || force_blocked_by_envframe_guard;
@@ -2177,6 +2191,10 @@ public:
         LiveCompactResult result;
         result.mode = mode;
         result.new_gen = generation_.load(std::memory_order_acquire);
+        // Issue #3633: slot-rewrite covered old addresses — populated in
+        // the Moving branch, consumed by the window-exit moved-vs-covered
+        // reconciliation in the common tail (dedup key = old address).
+        std::unordered_set<void*> slot_covered_old;
 
         // Soft-gate the auto path during render / active MutationBoundary
         // so fiber yield / Guard pins stay coherent.
@@ -2373,7 +2391,6 @@ public:
             // only when objects_moved > 0 (zero extra work on no-move).
             // Track which densify-old values were covered by a slot rewrite.
             std::size_t slots_remapped = 0;
-            std::unordered_set<void*> slot_covered_old;
             if (result.objects_moved > 0 && !external_root_slots_for_densify_.empty() &&
                 !last_object_remap_.empty()) {
                 slot_covered_old.reserve(external_root_slots_for_densify_.size());
@@ -2570,6 +2587,12 @@ public:
         // pins are still invalidated (existing fail-closed policy). The remap
         // pass is Moving-only — Soft/Force paths skip it (AC3 zero-cost).
         if (saved_bytes > 0 || relocated > 0 || result.moved_live_objects) {
+            // Issue #3633: cover sets for the window-exit moved-vs-covered
+            // reconciliation (dedup by old address at the reconciliation
+            // site; canaries are observe-only #3017/#3055 — not a family).
+            std::unordered_set<void*> pins_honoring_old;
+            std::vector<void*> root_remap_covered_old;
+            std::vector<void*> linear_roots_covered_old;
             result.new_gen = generation_.fetch_add(1, std::memory_order_acq_rel) + 1;
             result.invalidates_pins = true;
             ++stats_.live_compact_gen_restamps_total;
@@ -2579,6 +2602,10 @@ public:
                     const auto rr = aura::core::lifetime::remap_pins_pointing_to(
                         old_ptr, new_ptr, result.new_gen, arena_id_);
                     remapped_pins += rr.remapped;
+                    // Issue #3633: a pin actually remapped onto this old
+                    // address = the object had pin cover (dedup key = old addr).
+                    if (rr.remapped > 0)
+                        pins_honoring_old.insert(old_ptr);
                 }
                 stats_.live_compact_remapped_pins_total += remapped_pins;
                 result.remapped_pins = remapped_pins;
@@ -2612,7 +2639,10 @@ public:
                 // (moved set). IR/JIT cone-limited restamp is the compact-hook
                 // sibling (on_arena_compact_notify) — dirty mask only, no
                 // wholesale mark_all_blocks_dirty.
-                (void)aura::core::lifetime::remap_linear_roots_under_moving(last_object_remap_);
+                // Issue #3633: linear roots are a rewrite channel — capture
+                // covered old addresses as a reconciliation family.
+                (void)aura::core::lifetime::remap_linear_roots_under_moving(
+                    last_object_remap_, &linear_roots_covered_old);
                 std::unordered_set<void*> old_addrs;
                 old_addrs.reserve(last_object_remap_.size());
                 for (const auto& [old_ptr, new_ptr] : last_object_remap_)
@@ -2655,7 +2685,7 @@ public:
             // Only fires for Moving densify (moved_live_objects + non-empty
             // remap). Stats write back into LiveCompactResult + ArenaStats.
             if (result.moved_live_objects && !last_object_remap_.empty()) {
-                invoke_root_remap_callback_(result);
+                invoke_root_remap_callback_(result, &root_remap_covered_old);
                 // Issue #2499: unify RootRemapPass fail into pin_contract_held at
                 // the densify source so every driver (Phase 5, ArenaGroup
                 // compact_all_moving_pinned, GC Soft path metrics) shares one
@@ -2697,6 +2727,66 @@ public:
                     }
                 }
             }
+            // Issue #3633: window-exit moved-vs-covered reconciliation —
+            // the last line before publish consumption (the #3308 proof
+            // stamp below reads these flags; #3123 healthy auto-clear
+            // requires them clean; Phase 5 publishes from them). Every
+            // object physically relocated this window must be covered by
+            // at least one rewrite family: external-root slot rewrite,
+            // LifetimePin remap, or RootRemapPass. A moved object in NO
+            // family has an unregistered raw alias as its only possible
+            // referent — pre-#3633 such windows stayed green until the
+            // alias dangled. Dedup by old address (pin+slot double cover
+            // counts once, AC3). Canaries are observe-only (#3017/#3055,
+            // not a rewrite channel) — a canary-held referent already
+            // fail-closes via the stale check above. Reuses the
+            // #2495/#2664 fail face: observe flags always; hard face
+            // (g_moving_untracked_hard_abort_pref > 0, production default
+            // #2596) blocks the window + arms the existing #2837 sticky
+            // densify-off. Soft / Off never reach here (inside the
+            // moved_live_objects block — AC4 zero-cost when no Moving).
+            if (result.objects_moved > 0 && !last_moving_relocated_old_.empty()) {
+                const std::unordered_set<void*> root_remap_covered_set(
+                    root_remap_covered_old.begin(), root_remap_covered_old.end());
+                const std::unordered_set<void*> linear_roots_covered_set(
+                    linear_roots_covered_old.begin(), linear_roots_covered_old.end());
+                std::size_t covered = 0;
+                for (void* moved_old : last_moving_relocated_old_) {
+                    const bool covered_anywhere = slot_covered_old.count(moved_old) != 0 ||
+                                                  pins_honoring_old.count(moved_old) != 0 ||
+                                                  root_remap_covered_set.count(moved_old) != 0 ||
+                                                  linear_roots_covered_set.count(moved_old) != 0;
+                    if (covered_anywhere)
+                        ++covered;
+                }
+                const std::size_t moved_count = last_moving_relocated_old_.size();
+                const std::size_t uncovered = moved_count > covered ? moved_count - covered : 0;
+                if (uncovered > 0) {
+                    result.moving_incomplete_remap = true;
+                    result.pin_contract_held = false;
+                    result.uncovered_moved_count = uncovered;
+                    stats_.moving_uncovered_relocation_total += uncovered;
+                    g_moving_uncovered_relocation_total.fetch_add(uncovered,
+                                                                  std::memory_order_relaxed);
+                    const int hard_pref =
+                        g_moving_untracked_hard_abort_pref.load(std::memory_order_relaxed);
+                    if (hard_pref > 0) {
+                        result.moving_blocked_precondition = true;
+                        result.soft_gated = true;
+                        g_moving_incomplete_remap_densify_hard_fail_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                        const auto prev_sticky =
+                            g_moving_incomplete_remap_sticky_densify_off.exchange(
+                                1, std::memory_order_acq_rel);
+                        if (prev_sticky == 0) {
+                            g_moving_incomplete_remap_sticky_densify_off_total.fetch_add(
+                                1, std::memory_order_relaxed);
+                        }
+                    }
+                }
+            }
+            // Issue #3633: per-window scratch — consumed; no retention.
+            last_moving_relocated_old_.clear();
             // Issue #3308: stamp unified LifetimeConsistencyProof BEFORE
             // post_moving_live_canaries_.clear() so steal-complete paths
             // (aura_evaluator_on_steal_complete in evaluator_fiber_mutation.cpp
@@ -2986,6 +3076,9 @@ private:
         // still preserve tombstones (no extra Soft walk).
         auto prev_remap = std::move(last_object_remap_);
         last_object_remap_.clear();
+        // Issue #3633: per-window scratch reset — holds ONLY this
+        // window's physically-relocated old addresses (neu != old).
+        last_moving_relocated_old_.clear();
         if (dtors_.empty()) {
             last_object_remap_ = std::move(prev_remap);
             return 0;
@@ -3107,8 +3200,13 @@ private:
             std::memcpy(neu, p.bytes.data(), p.size);
             kept.push_back(DtorEntry{neu, p.dtor, p.size, p.align});
             last_object_remap_[p.old] = neu;
-            if (neu != p.old)
+            if (neu != p.old) {
                 ++moved;
+                // Issue #3633: track the relocation for the window-exit
+                // moved-vs-covered reconciliation (denominator = objects
+                // that actually changed address this window).
+                last_moving_relocated_old_.push_back(p.old);
+            }
         }
         dtors_ = std::move(kept);
         rebuild_dtor_index_(); // Issue #3456: pointers moved; rebuild ptr→slot
@@ -3693,7 +3791,8 @@ public:
     // callback under root_remap_mtx_ and invokes outside the lock (same
     // pattern as invoke_layout_change_). Passes densify old→new object_remap
     // + new gen; writes per-call stats into result + ArenaStats.
-    void invoke_root_remap_callback_(LiveCompactResult& result) noexcept {
+    void invoke_root_remap_callback_(LiveCompactResult& result,
+                                     std::vector<void*>* covered_old_out = nullptr) noexcept {
         RootRemapHook cb_copy;
         {
             std::lock_guard<std::mutex> lock(root_remap_mtx_);
@@ -3716,6 +3815,11 @@ public:
         root_remap_stable_ref_fail_total_.fetch_add(sr_fail, std::memory_order_relaxed);
         root_remap_closure_capture_total_.fetch_add(cc, std::memory_order_relaxed);
         root_remap_closure_capture_fail_total_.fetch_add(cc_fail, std::memory_order_relaxed);
+        // Issue #3633: drain the pass's covered-old probe (thread_local,
+        // same-thread as this window) for the moved-vs-covered
+        // reconciliation. Last-call semantics — scratch, not a registry.
+        if (covered_old_out != nullptr)
+            *covered_old_out = aura::core::moving_cover_probe::drain();
     }
 
     // Issue #3055: observe-only. Count canaries that still hold a
@@ -3851,6 +3955,15 @@ public:
     KnownRootsHook known_roots_hook_{};
     // Issue #3055: observe-only residual live ptrs (not a remap registry).
     std::vector<void*> post_moving_live_canaries_;
+    // Issue #3633: old addresses physically relocated THIS window (neu !=
+    // old; excludes in-place relands + #3600 kept-large stable entries).
+    // Filled by relocate_tracked_objects_for_moving_, consumed + cleared
+    // by the window-exit moved-vs-covered reconciliation in
+    // live_compact(Moving). Per-window scratch — cleared at relocate
+    // entry and after consumption (no cross-window retention; the
+    // last_object_remap_ tombstone fold (#3469) must NOT widen the
+    // reconciliation denominator).
+    std::vector<void*> last_moving_relocated_old_;
     // Issue #1546: optional Evaluator* (void*) + quota allow callback.
     // Issue #1663: owner_mtx_ protects the dual-word owner pair.
     mutable std::shared_mutex owner_mtx_;

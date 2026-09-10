@@ -627,6 +627,15 @@ int run_test_moving_compact() {
         auto* p1 = arena.create<Pod16>(17, 18, 19, 20);
         auto* p2 = arena.create<Pod16>(27, 28, 29, 30);
         CHECK(p0 && p1 && p2, "AC_M6: objects created");
+        // Issue #3633: slot cover for the moved objects — the AC's subject is
+        // the pin contract (no live pin → densify ok), keep the window green
+        // under the moved-vs-covered reconciliation.
+        void* e0 = p0;
+        void* e1 = p1;
+        void* e2 = p2;
+        arena.register_external_root_slot_for_densify(&e0);
+        arena.register_external_root_slot_for_densify(&e1);
+        arena.register_external_root_slot_for_densify(&e2);
         // No live pin → Moving may densify (same as AC_M2).
         const auto r = arena.live_compact(LiveCompactMode::Moving);
         CHECK(r.moved_live_objects, "AC_M6: Moving densified without live pins");
