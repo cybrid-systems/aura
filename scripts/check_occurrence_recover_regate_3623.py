@@ -102,7 +102,7 @@ def _rows(h: str, test: str, build: str, allow: str) -> list[str]:
     ):
         must(fn, "AC5 test AC defined", test)
         must(fn + "();", "AC5 test AC invoked", test)
-    must("g_ac3623_mock_recover", "AC5 mock recover seam", test)
+    must("aura_typed_audit_test_install_recover_override", "AC5 override recover seam", test)
     if (ROOT / "tests" / "compiler" / "test_issue_3623.cpp").is_file():
         fails.append("AC5: forbidden tests/compiler/test_issue_3623.cpp (#81934)")
     design_dir = ROOT / "docs" / "design"
@@ -160,7 +160,7 @@ def main() -> int:
                     "ac3623_4_soft_observe_allow",
                 )
             )
-            + "g_ac3623_mock_recover\n"
+            + "aura_typed_audit_test_install_recover_override\n"
         )
         ok_fails = _rows(sample_h, sample_test, LINTER, LINTER + ".py")
         if ok_fails:
