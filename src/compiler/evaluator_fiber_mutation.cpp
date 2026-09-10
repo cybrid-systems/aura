@@ -3292,7 +3292,8 @@ extern "C" void aura_orch_note_mailbox_backpressure() {
     aura::orch::g_orch_module_stats.send_backpressure_total.fetch_add(1, std::memory_order_relaxed);
     // Issue #3566: TLS scope from MultiFiberMailbox::note_self_backpressure.
     // Empty = process bucket (Soft / "-" / unnamed test mailboxes).
-    aura::orch::note_mailbox_bp_recent_event(aura::serve::mf_mailbox::g_mf_mailbox_bp_note_scope);
+    aura::orch::note_mailbox_bp_recent_event(aura::serve::mf_mailbox::g_mf_mailbox_bp_note_scope,
+                                             aura::serve::mf_mailbox::g_mf_mailbox_bp_note_sender);
 }
 
 // Issue #2491: TenantScope install at Fiber::resume entry from the

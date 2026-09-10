@@ -449,6 +449,13 @@ inline std::atomic<std::uint64_t> g_mailbox_bp_last_event_us{0};
 struct ScopeBpGauge {
     std::atomic<std::uint64_t> recent{0};
     std::atomic<std::uint64_t> last_event_us{0};
+    // Issue #3632: sender attribution sketch — 4-slot top-sender sketch
+    // (fiber id + bp count), appended at struct END (#2906 — stale module
+    // BMI reads at offset zero are unaffected). Bumped by the note path
+    // under g_scope_bp_map_mtx; reset with the quiet window (#2398);
+    // freed with the gauge (#3337 / reset_scope_bp_map_for_test).
+    std::atomic<std::uint64_t> top_sender_fiber[4]{};
+    std::atomic<std::uint64_t> top_sender_bp[4]{};
 };
 
 // Issue #2633 / #2778: bounded map of scope-local BP gauges. First
@@ -1157,7 +1164,8 @@ inline void fiber_sleep_ms(std::uint32_t ms) noexcept {
 // (keeps isolation for the new scope) and bumps
 // spawn_bp_scope_overflow_total so dashboards still see pressure.
 // Hosts can also call erase_scope_bp_gauge on tenant teardown.
-inline void note_mailbox_bp_recent_event(std::string_view scope_id = {}) noexcept {
+inline void note_mailbox_bp_recent_event(std::string_view scope_id = {},
+                                         std::uint64_t from_fiber = 0) noexcept {
     const auto now_us = orch_now_us();
     if (scope_id.empty()) {
         g_orch_module_stats.mailbox_bp_recent_total.fetch_add(1, std::memory_order_relaxed);
@@ -1221,6 +1229,41 @@ inline void note_mailbox_bp_recent_event(std::string_view scope_id = {}) noexcep
         // the same mutex (#2780 skip-active path).
         gauge->last_event_us.store(now_us, std::memory_order_release);
         gauge->recent.fetch_add(1, std::memory_order_relaxed);
+        // Issue #3632: sender attribution sketch — bump the matching
+        // from_fiber slot, claim a zero slot, else replace the min-bp
+        // slot. Under g_scope_bp_map_mtx (serialized vs the decay reset);
+        // observability readers race acceptably (relaxed atomics).
+        // from_fiber == 0 (unknown sender) skips — no bogus zero-key.
+        // Process bucket / Soft path (empty scope_id) never reaches here
+        // (#3632 AC3: sketch cost only on the scoped case).
+        if (from_fiber != 0) {
+            std::size_t min_i = 0;
+            std::uint64_t min_v = ~std::uint64_t{0};
+            bool bumped = false;
+            for (std::size_t i = 0; i < 4; ++i) {
+                const auto f = gauge->top_sender_fiber[i].load(std::memory_order_relaxed);
+                if (f == from_fiber) {
+                    gauge->top_sender_bp[i].fetch_add(1, std::memory_order_relaxed);
+                    bumped = true;
+                    break;
+                }
+                if (f == 0) {
+                    gauge->top_sender_fiber[i].store(from_fiber, std::memory_order_relaxed);
+                    gauge->top_sender_bp[i].store(1, std::memory_order_relaxed);
+                    bumped = true;
+                    break;
+                }
+                const auto b = gauge->top_sender_bp[i].load(std::memory_order_relaxed);
+                if (b < min_v) {
+                    min_v = b;
+                    min_i = i;
+                }
+            }
+            if (!bumped) {
+                gauge->top_sender_fiber[min_i].store(from_fiber, std::memory_order_relaxed);
+                gauge->top_sender_bp[min_i].store(1, std::memory_order_relaxed);
+            }
+        }
     }
     // Issue #3566: named notes must NOT advance the process last-event
     // clock — a storm in A used to block quiet-period decay of B.
@@ -1304,6 +1347,50 @@ inline std::size_t scope_bp_map_size_for_test() noexcept {
     return g_scope_bp_map.size();
 }
 
+// Issue #3632: bounded bp-hot-sender snapshot for the observability
+// face — top scopes by recent, each with its 4-slot sender sketch.
+// Under g_scope_bp_map_mtx (consistent with note/decay). Bounded: at
+// most max_scopes rows; no process-global registry added.
+struct ScopeBpHotSenderRow {
+    std::string scope_id;
+    std::uint64_t recent = 0;
+    std::uint64_t top_sender_fiber[4]{};
+    std::uint64_t top_sender_bp[4]{};
+};
+inline std::vector<ScopeBpHotSenderRow>
+snapshot_bp_hot_senders(std::size_t max_scopes = 4) noexcept {
+    std::vector<ScopeBpHotSenderRow> rows;
+    {
+        std::lock_guard<std::mutex> lock(g_scope_bp_map_mtx);
+        rows.reserve(g_scope_bp_map.size());
+        for (const auto& [id, g] : g_scope_bp_map) {
+            if (!g)
+                continue;
+            ScopeBpHotSenderRow r;
+            r.scope_id = id;
+            r.recent = g->recent.load(std::memory_order_relaxed);
+            for (std::size_t i = 0; i < 4; ++i) {
+                r.top_sender_fiber[i] = g->top_sender_fiber[i].load(std::memory_order_relaxed);
+                r.top_sender_bp[i] = g->top_sender_bp[i].load(std::memory_order_relaxed);
+            }
+            rows.push_back(std::move(r));
+        }
+    }
+    // Hot first — insertion sort on a ≤256-row vector, capped after.
+    for (std::size_t i = 1; i < rows.size(); ++i) {
+        auto cur = rows[i];
+        std::size_t j = i;
+        while (j > 0 && rows[j - 1].recent < cur.recent) {
+            rows[j] = rows[j - 1];
+            --j;
+        }
+        rows[j] = cur;
+    }
+    if (rows.size() > max_scopes)
+        rows.resize(max_scopes);
+    return rows;
+}
+
 // Issue #2398: quiet-period decay of mailbox_bp_recent_total.
 // Zero-cost when window_ms==0. Admit preflight calls this only when
 // threshold>0 (zero cost when admit control is off). One CAS winner zeros.
@@ -1352,6 +1439,12 @@ inline void maybe_decay_mailbox_bp_recent() noexcept {
         if (last != 0 && now_us - last <= window_us)
             continue;
         g->recent.store(0, std::memory_order_release);
+        // Issue #3632: attribution sketch resets with the gauge quiet
+        // window (same decay contract — no cross-storm residue).
+        for (auto& s : g->top_sender_fiber)
+            s.store(0, std::memory_order_relaxed);
+        for (auto& b : g->top_sender_bp)
+            b.store(0, std::memory_order_relaxed);
     }
     // Issue #3127: also decay the overflow gauge (production-gated).
     // Soft/Off never bumps overflow gauge, so last_event_us stays 0 and
@@ -2008,6 +2101,8 @@ inline serve::mf_mailbox::PushStatus emit_keepalive(serve::mf_mailbox::MultiFibe
     // Fixed payload: "keepalive:" — supervisors use is_keepalive_payload;
     // precise epoch lives in live->last_keepalive_us / process stats.
     msg.payload.assign(kKeepalivePrefix.data(), kKeepalivePrefix.size());
+    // Issue #3632: sender = the emitting agent's fiber (from_fiber).
+    const auto keepalive_from_fiber = msg.from_fiber;
     auto st = mb.push(std::move(msg));
     if (st == serve::mf_mailbox::PushStatus::Ok) {
         if (live) {
@@ -2039,7 +2134,7 @@ inline serve::mf_mailbox::PushStatus emit_keepalive(serve::mf_mailbox::MultiFibe
         struct {
             std::string_view bp_scope_id;
         } h{bp_scope_id};
-        note_mailbox_bp_recent_event(h.bp_scope_id);
+        note_mailbox_bp_recent_event(h.bp_scope_id, keepalive_from_fiber);
     } else {
         g_orch_module_stats.send_closed_total.fetch_add(1, std::memory_order_relaxed);
     }
@@ -3718,6 +3813,9 @@ inline bool maybe_clear_producer_throttle(AgentHandle& h) noexcept {
         }
     }
     msg.to_fiber = h.id;
+    // Issue #3632: capture the sender before the move — the BP arm below
+    // attributes the gauge bump to msg.from_fiber.
+    const auto send_from_fiber = msg.from_fiber;
     auto st = h.mailbox->push(std::move(msg));
     if (st == serve::mf_mailbox::PushStatus::Ok) {
         g_orch_module_stats.agents_send.fetch_add(1, std::memory_order_relaxed);
@@ -3738,7 +3836,7 @@ inline bool maybe_clear_producer_throttle(AgentHandle& h) noexcept {
         // process bucket (Soft / single-agent MVP, zero behavioural
         // change). Mirrors the agent_send BP arm fix so a storm in
         // scope A does not poison the process bucket for siblings.
-        note_mailbox_bp_recent_event(h.bp_scope_id);
+        note_mailbox_bp_recent_event(h.bp_scope_id, send_from_fiber);
         if (h.producer_bp_budget > 0) {
             ++h.consecutive_bp_count;
             h.last_producer_bp_us = orch_now_us();

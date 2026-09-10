@@ -430,6 +430,21 @@ def cmd_lint():
             "scope BP gauge coverage linter failed — run python3 scripts/coverage/checks/check_scope_bp_gauge_coverage.py"
         )
         return r
+    # Issue #3632: mailbox BP sender attribution sketch contract rows
+    # (struct END-append + note from_fiber + call-site capture + decay
+    # reset + additive stats face). Wired next to the #2633 gauge
+    # coverage linter so a regression in the attribution surface fails
+    # the same gate.
+    bhs_script = COVERAGE_CHECKS / "check_scope_bp_sender_attribution_3632.py"
+    if not bhs_script.exists():
+        fail(f"missing {bhs_script}")
+        return 1
+    r = run([sys.executable, str(bhs_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "scope BP sender attribution linter failed — run python3 scripts/coverage/checks/check_scope_bp_sender_attribution_3632.py"
+        )
+        return r
     # Issue #2634: pure-parallel probe hardening (mutations_/workspace gen
     # snapshots in the unlocked pure apply path). Wording gate (#2593)
     # remains in scripts/coverage/checks/check_pure_parallel_isolation_wording.py — this

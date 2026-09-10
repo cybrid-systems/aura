@@ -6035,6 +6035,24 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             insert_kv("scope-bp-gauge-teardown-erase-total",
                       static_cast<std::int64_t>(
                           os.scope_bp_gauge_teardown_erase_total.load(std::memory_order_relaxed)));
+            // Issue #3632: sender attribution sketch — additive bp-hot-sender
+            // rows (top scopes by recent, each with its top sender slot).
+            // Bounded (≤4 rows); existing keys unchanged (#3632 AC5).
+            {
+                const auto hot = aura::orch::snapshot_bp_hot_senders(4);
+                insert_kv("bp-hot-sender-scopes", static_cast<std::int64_t>(hot.size()));
+                for (std::size_t i = 0; i < hot.size(); ++i) {
+                    const auto& row = hot[i];
+                    insert_kv(("bp-hot-scope[" + std::to_string(i) + "]=" + row.scope_id).c_str(),
+                              static_cast<std::int64_t>(row.recent));
+                    insert_kv(("bp-hot-sender[" + std::to_string(i) + "]").c_str(),
+                              static_cast<std::int64_t>(row.top_sender_fiber[0]));
+                    insert_kv(("bp-hot-sender[" + std::to_string(i) + "-bp]").c_str(),
+                              static_cast<std::int64_t>(row.top_sender_bp[0]));
+                }
+                insert_kv("schema-3632", 3632);
+                insert_kv("issue-3632", 3632);
+            }
             // Issue #2779: resume fence fail aggregate (#2677 triple fence)
             // facade on orch-module-stats so agents query one surface for
             // fail-closed resume signals. Source of truth is Fiber statics

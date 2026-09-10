@@ -1471,7 +1471,7 @@ int run_test_mailbox_bp_admit() {
               "3566 AC5: issue constant");
         CHECK(mbh.find("note_self_backpressure") != std::string::npos, "3566 AC5: mailbox helper");
         CHECK(hook.find("g_mf_mailbox_bp_note_scope") != std::string::npos, "3566 AC5: TLS hook");
-        CHECK(spawn.find("note_mailbox_bp_recent_event(h.bp_scope_id)") != std::string::npos,
+        CHECK(spawn.find("note_mailbox_bp_recent_event(h.bp_scope_id,") != std::string::npos,
               "3566 AC4: agent_send still notes h.bp_scope_id");
         CHECK(read_file("tests/orch/test_issue_3566.cpp").empty() &&
                   read_file("tests/issues/test_issue_3566.cpp").empty(),
@@ -1482,6 +1482,64 @@ int run_test_mailbox_bp_admit() {
         ::unsetenv("AURA_ORCH_BP_ADMIT_THRESHOLD");
         (void)reset_scope_bp_map_for_test();
         apply_dev_audit_defaults();
+    }
+
+    // ── Issue #3632: BP sender attribution sketch ──
+    {
+        std::println("\n--- #3632: BP sender attribution sketch ---");
+        (void)aura::orch::reset_scope_bp_map_for_test();
+        // AC1: storm — scope B flooded from sender fiber 4242; the sketch
+        // names it, and the admit source (recent) stays byte-identical.
+        for (int i = 0; i < 10; ++i)
+            aura::orch::note_mailbox_bp_recent_event("B-storm", 4242);
+        auto hot = aura::orch::snapshot_bp_hot_senders(4);
+        CHECK(hot.size() == 1, "3632 AC1: one hot scope");
+        if (!hot.empty()) {
+            CHECK(hot[0].scope_id == "B-storm", "3632 AC1: scope id B-storm");
+            CHECK(hot[0].top_sender_fiber[0] == 4242, "3632 AC1: sketch names sender 4242");
+            CHECK(hot[0].top_sender_bp[0] == 10, "3632 AC1: bp count == 10");
+        }
+        CHECK(aura::orch::load_mailbox_bp_recent("B-storm") == 10,
+              "3632 AC1: admit source unchanged (recent == 10)");
+        // Second sender claims a slot; dominant sender preserved.
+        aura::orch::note_mailbox_bp_recent_event("B-storm", 777);
+        hot = aura::orch::snapshot_bp_hot_senders(4);
+        bool second_slot = false;
+        if (!hot.empty() && hot[0].scope_id == "B-storm") {
+            for (std::size_t i = 0; i < 4; ++i)
+                if (hot[0].top_sender_fiber[i] == 777 && hot[0].top_sender_bp[i] == 1)
+                    second_slot = true;
+        }
+        CHECK(second_slot, "3632 AC1: second sender claimed a slot");
+        // AC2: teardown erase drops the sketch; map reset clears too.
+        CHECK(aura::orch::erase_scope_bp_gauge("B-storm"), "3632 AC2: teardown erase");
+        CHECK(aura::orch::snapshot_bp_hot_senders(4).empty(),
+              "3632 AC2: sketch erased at teardown");
+        aura::orch::note_mailbox_bp_recent_event("B-storm", 99);
+        CHECK(aura::orch::reset_scope_bp_map_for_test() >= 1, "3632 AC2: map reset");
+        CHECK(aura::orch::snapshot_bp_hot_senders(4).empty(),
+              "3632 AC2: sketch cleared by map reset");
+        // AC3: process bucket (empty scope_id) — sketch skipped, no map entry.
+        const auto map_before = aura::orch::scope_bp_map_size_for_test();
+        aura::orch::note_mailbox_bp_recent_event(/*scope_id=*/{}, 4242);
+        CHECK(aura::orch::scope_bp_map_size_for_test() == map_before,
+              "3632 AC3: empty scope skips sketch (process bucket only)");
+        // AC2b: quiet-window decay resets the sketch (window 1ms < sleep 3ms).
+        ::setenv("AURA_ORCH_BP_WINDOW_MS", "1", 1);
+        aura::orch::note_mailbox_bp_recent_event("B-decay", 55);
+        std::this_thread::sleep_for(std::chrono::milliseconds(3));
+        aura::orch::maybe_decay_mailbox_bp_recent();
+        CHECK(aura::orch::load_mailbox_bp_recent("B-decay") == 0,
+              "3632 AC2: quiet window zeros recent");
+        bool sketch_zero = true;
+        for (const auto& row : aura::orch::snapshot_bp_hot_senders(4))
+            if (row.scope_id == "B-decay")
+                for (std::size_t i = 0; i < 4; ++i)
+                    sketch_zero =
+                        sketch_zero && row.top_sender_fiber[i] == 0 && row.top_sender_bp[i] == 0;
+        CHECK(sketch_zero, "3632 AC2: quiet window resets sketch");
+        ::unsetenv("AURA_ORCH_BP_WINDOW_MS");
+        (void)aura::orch::reset_scope_bp_map_for_test();
     }
 
     return aura::test::g_failed ? 1 : 0;

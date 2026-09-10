@@ -1,0 +1,103 @@
+{
+  "issue": 3632,
+  "title": "Issue #3632: mailbox BP sender attribution sketch — cross-scope storms name the flooding scope.",
+  "ok": "OK: Issue #3632 sender attribution — all AC contract rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/orch/agent_spawn.h",
+      "contains": [
+        "std::atomic<std::uint64_t> top_sender_fiber[4]{}",
+        "std::atomic<std::uint64_t> top_sender_bp[4]{}",
+        "Issue #3632"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/orch/agent_spawn.h",
+      "contains": [
+        "std::uint64_t from_fiber = 0) noexcept"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/orch/agent_spawn.h",
+      "contains": [
+        "gauge->top_sender_bp[i].fetch_add(1, std::memory_order_relaxed)",
+        "gauge->top_sender_fiber[min_i].store(from_fiber, std::memory_order_relaxed)"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/orch/agent_spawn.h",
+      "contains": [
+        "if (from_fiber != 0) {"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/orch/agent_spawn.h",
+      "contains": [
+        "for (auto& s : g->top_sender_fiber)",
+        "for (auto& b : g->top_sender_bp)"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "src/orch/agent_spawn.h",
+      "contains": [
+        "const auto send_from_fiber = msg.from_fiber;",
+        "note_mailbox_bp_recent_event(h.bp_scope_id, send_from_fiber);"
+      ]
+    },
+    {
+      "ac": "AC7",
+      "path": "src/orch/agent_spawn.h",
+      "contains": [
+        "const auto keepalive_from_fiber = msg.from_fiber;",
+        "note_mailbox_bp_recent_event(h.bp_scope_id, keepalive_from_fiber);"
+      ]
+    },
+    {
+      "ac": "AC8",
+      "path": "src/serve/multi_fiber_mailbox.h",
+      "contains": [
+        "g_mf_mailbox_bp_note_sender",
+        "g_mf_mailbox_bp_note_sender = from_fiber;"
+      ]
+    },
+    {
+      "ac": "AC8",
+      "path": "src/compiler/evaluator_fiber_mutation.cpp",
+      "contains": [
+        "g_mf_mailbox_bp_note_sender);"
+      ]
+    },
+    {
+      "ac": "AC9",
+      "path": "src/compiler/evaluator_primitives_agent.cpp",
+      "contains": [
+        "bp-hot-sender-scopes",
+        "bp-hot-scope[",
+        "\"schema-3632\", 3632",
+        "\"issue-3632\", 3632"
+      ]
+    },
+    {
+      "ac": "AC10",
+      "path": "src/orch/agent_spawn.h",
+      "contains": [
+        "if (scope_id.empty()) {"
+      ]
+    },
+    {
+      "ac": "AC12",
+      "path": "tests/orch/test_mailbox_bp_admit.cpp",
+      "contains": [
+        "3632 AC1: sketch names sender 4242",
+        "3632 AC2: quiet window resets sketch",
+        "3632 AC3: empty scope skips sketch (process bucket only)"
+      ]
+    }
+  ]
+}

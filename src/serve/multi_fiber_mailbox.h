@@ -1077,6 +1077,9 @@ note_mailbox_delivery_safety(Fiber* target, const MutationSafetySnapshot* snap, 
 // per-scope gauge. Thread-local so the existing extern "C" hook signature
 // stays (weak fiber_bridge no-op unchanged).
 inline thread_local std::string_view g_mf_mailbox_bp_note_scope{};
+// Issue #3632: sender fiber id for the same note path — set alongside
+// the scope TLS by note_self_backpressure callers that have the message.
+inline thread_local std::uint64_t g_mf_mailbox_bp_note_sender{0};
 
 // Backpressure accounting: process + local + optional orch dashboard mirror.
 inline void note_backpressure(MultiFiberMailboxStats* local = nullptr,
@@ -1134,12 +1137,14 @@ public:
     // BP notes the named gauge instead of the process bucket.
     void set_bp_scope_id(std::string id) noexcept { bp_scope_id_ = std::move(id); }
     [[nodiscard]] std::string_view bp_scope_id() const noexcept { return bp_scope_id_; }
-    void note_self_backpressure(bool from_fanout = false) noexcept {
+    void note_self_backpressure(bool from_fanout = false, std::uint64_t from_fiber = 0) noexcept {
         const std::string_view s =
             (bp_scope_id_ == "-") ? std::string_view{} : std::string_view{bp_scope_id_};
         g_mf_mailbox_bp_note_scope = s;
+        g_mf_mailbox_bp_note_sender = from_fiber;
         note_backpressure(&local_stats_, from_fanout);
         g_mf_mailbox_bp_note_scope = {};
+        g_mf_mailbox_bp_note_sender = 0;
     }
     [[nodiscard]] std::size_t effective_credit() const noexcept {
         return credit_limit_ == 0 ? high_water_ : static_cast<std::size_t>(credit_limit_);
@@ -1324,11 +1329,11 @@ public:
         // #2535 admit + #2925 consecutive throttle see one real BP.
         if (inflight_.load(std::memory_order_relaxed) >= effective_credit()) {
             note_credit_backpressure(&local_stats_);
-            note_self_backpressure(/*from_fanout=*/false);
+            note_self_backpressure(/*from_fanout=*/false, msg.from_fiber);
             return PushStatus::Backpressure;
         }
         if (queue_.size() >= high_water_) {
-            note_self_backpressure(/*from_fanout=*/false);
+            note_self_backpressure(/*from_fanout=*/false, msg.from_fiber);
             return PushStatus::Backpressure;
         }
         g_mf_mailbox_stats.pushes.fetch_add(1, std::memory_order_relaxed);
@@ -1410,13 +1415,13 @@ public:
                 note_mailbox_mutation_hold_defer();
                 local_stats_.mailbox_deferred_mutation_hold_total.fetch_add(
                     1, std::memory_order_relaxed);
-                note_self_backpressure(/*from_fanout=*/true);
+                note_self_backpressure(/*from_fanout=*/true, proto.from_fiber);
                 return PushStatus::Backpressure;
             }
             // Issue #2987: residual hard-AND per attacher (same table).
             if (note_mailbox_delivery_safety(a, &snap, proto.held_ref_token.has_value(),
                                              &local_stats_)) {
-                note_self_backpressure(/*from_fanout=*/true);
+                note_self_backpressure(/*from_fanout=*/true, proto.from_fiber);
                 return PushStatus::Backpressure;
             }
         }
@@ -1424,11 +1429,11 @@ public:
         // Issue #2972: reserve `need` credits before any enqueue (all-or-nothing).
         if (inflight_.load(std::memory_order_relaxed) + need > effective_credit()) {
             note_credit_backpressure(&local_stats_);
-            note_self_backpressure(/*from_fanout=*/true);
+            note_self_backpressure(/*from_fanout=*/true, proto.from_fiber);
             return PushStatus::Backpressure;
         }
         if (queue_.size() + need > high_water_) {
-            note_self_backpressure(/*from_fanout=*/true);
+            note_self_backpressure(/*from_fanout=*/true, proto.from_fiber);
             return PushStatus::Backpressure;
         }
         g_mf_mailbox_stats.broadcasts.fetch_add(1, std::memory_order_relaxed);
