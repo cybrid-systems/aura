@@ -18,6 +18,9 @@ module;
 // Issue #2297: publish densify object_remap for structural capture remount
 // (aura_remount_closure_captures defense-in-depth after densify).
 #include "aura_jit_bridge.h"
+// Issue #3633: covered-old probe for the arena window-exit
+// moved-vs-covered reconciliation (recorded in remap_one_slot success).
+#include "core/moving_cover_probe.h"
 
 #include <atomic>
 #include <cstdlib>
@@ -108,6 +111,9 @@ namespace root_remap_detail {
             return 0;
         auto it = object_remap.find(*slot);
         if (it != object_remap.end()) {
+            // Issue #3633: record the OLD address this rewrite covered for
+            // the arena window-exit moved-vs-covered reconciliation.
+            aura::core::moving_cover_probe::record_covered_old(it->first);
             *slot = it->second;
             return 1;
         }
@@ -344,6 +350,9 @@ inline RootRemapStats
 run_root_remap_pass(const std::unordered_map<void*, void*>& object_remap) noexcept {
     RootRemapStats stats;
     root_remap_detail::g_pass_calls_total.fetch_add(1, std::memory_order_relaxed);
+    // Issue #3633: per-pass scratch reset — the probe holds ONLY this
+    // pass's covered old addresses (last-call semantics, #2376 pattern).
+    aura::core::moving_cover_probe::clear();
 
     // AC3: empty remap → no rewrite work, no fail scans.
     if (object_remap.empty() && [&] {

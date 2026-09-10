@@ -3256,6 +3256,14 @@ static void ac3435_3_success_remap_only_moved() {
     auto* p0 = arena.create<Pod16>(1, 2, 3, 4);
     auto* p1 = arena.create<Pod16>(5, 6, 7, 8);
     auto* p2 = arena.create<Pod16>(9, 10, 11, 12);
+    // Issue #3633: slot cover for the moved objects — success path stays
+    // green under the moved-vs-covered reconciliation.
+    void* e0 = p0;
+    void* e1 = p1;
+    void* e2 = p2;
+    arena.register_external_root_slot_for_densify(&e0);
+    arena.register_external_root_slot_for_densify(&e1);
+    arena.register_external_root_slot_for_densify(&e2);
     const auto r = arena.live_compact(LiveCompactMode::Moving);
     CHECK(r.objects_moved > 0, "3435 AC3: objects_moved > 0");
     std::size_t changed = 0;
@@ -3402,6 +3410,13 @@ static void ac3600_1_mixed_size_green_window() {
         auto* s1 = arena.create<Pod16>(5, 6, 7, 8);
         auto* l0 = arena.create<PodLarge3600>(7);
         CHECK(s0 && s1 && l0, "3600 AC1: creates ok");
+        // Issue #3633: moved smalls need real cover — slot-registered so the
+        // moved-vs-covered reconciliation reads this window as green (the
+        // test's premise: every moved referent has slot/pin/RootRemap cover).
+        void* e0 = s0;
+        void* e1 = s1;
+        arena.register_external_root_slot_for_densify(&e0);
+        arena.register_external_root_slot_for_densify(&e1);
         const auto r = arena.live_compact(LiveCompactMode::Moving);
         CHECK(r.objects_moved > 0, "3600 AC1: small referents moved");
         CHECK(r.untracked_kept_count == 0, "3600 AC1: kept-large no longer counted");
@@ -3460,6 +3475,11 @@ static void ac3600_3_soft_mixed_no_sticky() {
     auto* s1 = arena.create<Pod16>(5, 6, 7, 8);
     auto* l0 = arena.create<PodLarge3600>(3);
     CHECK(s0 && s1 && l0, "3600 AC3: creates ok");
+    // Issue #3633: slot cover for the moved smalls (see AC1).
+    void* e0 = s0;
+    void* e1 = s1;
+    arena.register_external_root_slot_for_densify(&e0);
+    arena.register_external_root_slot_for_densify(&e1);
     const auto r = arena.live_compact(LiveCompactMode::Moving);
     CHECK(r.objects_moved > 0, "3600 AC3: moved under Soft");
     CHECK(r.untracked_kept_count == 0, "3600 AC3: kept-large not counted under Soft");
@@ -3793,6 +3813,191 @@ static void ac3571_2_source_cite() {
     CHECK(hdr.find("g_moving_envframe_guard_commit_block_total") != std::string::npos,
           "3571 AC3: counter declared (append END)");
     CHECK(hdr.find("Issue #3571") != std::string::npos, "3571 AC3: header cites #3571");
+}
+
+// ── Issue #3633: window-exit moved-vs-covered reconciliation ────────
+//
+// Moving densify cover is defined by the create-site call (pin / slot /
+// RootRemapPass), not the allocation. An arena-tracked small-pool object
+// whose only live referent is an unregistered raw native pointer used to
+// relocate silently — linter (no pattern), #3534 inventory (no wire
+// call), #3210 canaries (observe-only), #2495 untracked count,
+// #2973/#3017 external-root counts and #2266 pin verify all miss the
+// class — nothing failed the window until the alias dangled.
+//
+//   AC1: Reconciliation runs in live_compact(Moving) before publish
+//        consumption (the #3308 proof stamp + #3123 healthy auto-clear
+//        read the flags; Phase 5 publishes from them). Failure reuses
+//        the #2837 sticky-off + #2596 hard face (#2664 counter).
+//   AC2: Unregistered raw alias → moving_incomplete_remap=true,
+//        pin_contract_held=false, objects_moved>0, uncovered_moved_count
+//        >0; g_moving_uncovered_relocation_total bumps. No false-green.
+//   AC3: Covered window stays green — no false-fail
+//        (uncovered_moved_count==0); dedup by old address is
+//        membership-union (pin+slot double cover counts once).
+//   AC4: Soft/Off zero-cost — no Moving window ⇒ zero extra atomics
+//        (check gated inside the moved_live_objects block).
+//   AC5: scripts/check_moving_cover_reconciliation_3633.py locks the
+//        call site before publish + probe recording; --self-test green.
+//   AC6: Hard face — uncovered + pref=1 → blocked_precondition +
+//        soft_gated + #2664 hard-fail counter + #2837 sticky densify-off.
+
+static void ac3633_1_source_cite_reconciliation() {
+    std::println("\n--- #3633 AC1: reconciliation before publish consumption ---");
+    const auto arena = read_file("src/core/arena.ixx");
+    CHECK(arena.find("Issue #3633: window-exit moved-vs-covered reconciliation") !=
+              std::string::npos,
+          "AC1: reconciliation block present");
+    // Runs BEFORE the #3308 proof stamp (publish consumption reads it).
+    // Unique block-gate needle — the counter comment at the top of the
+    // file shares the prose phrase, so anchor on the gate itself.
+    const auto recon =
+        arena.find("if (result.objects_moved > 0 && !last_moving_relocated_old_.empty()) {");
+    const auto proof = arena.find("stamp_lifetime_consistency_proof_for(");
+    CHECK(recon != std::string::npos && proof != std::string::npos && recon < proof,
+          "AC1: reconciliation precedes the LCP proof stamp (publish face)");
+    const auto healthy =
+        arena.find("clear_moving_incomplete_remap_sticky_densify_off_reason(reason);");
+    CHECK(healthy != std::string::npos && recon < healthy,
+          "AC1: reconciliation precedes the #3123 healthy sticky auto-clear");
+    CHECK(arena.find("last_moving_relocated_old_.push_back") != std::string::npos,
+          "AC1: relocate records this-window moved-old (tombstone-safe denominator)");
+    CHECK(arena.find("g_moving_uncovered_relocation_total{0}") != std::string::npos,
+          "AC1: process counter declared (appended schema)");
+    CHECK(arena.find("std::size_t uncovered_moved_count = 0;") != std::string::npos,
+          "AC1: LiveCompactResult.uncovered_moved_count appended");
+    // Sticky reuse inside the reconciliation face (#2837 arm).
+    const auto sticky = arena.find("g_moving_incomplete_remap_sticky_densify_off.exchange", recon);
+    CHECK(sticky != std::string::npos && sticky < proof,
+          "AC1: failure arms the existing #2837 sticky densify-off");
+}
+
+static void ac3633_2_unregistered_alias_fail_closed() {
+    std::println("\n--- #3633 AC2: unregistered raw alias fail-closes the window ---");
+    MovingFlagGuard on(1);
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    aura::ast::g_moving_untracked_hard_abort_pref.store(0, std::memory_order_relaxed); // Soft
+    ASTArena arena(64 * 1024);
+    auto* p0 = arena.create<Pod16>(1, 2, 3, 4);
+    auto* p1 = arena.create<Pod16>(5, 6, 7, 8);
+    auto* p2 = arena.create<Pod16>(9, 10, 11, 12);
+    CHECK(p0 && p1 && p2, "AC2: creates ok");
+    void* alias = p0; // unregistered raw native alias — the only referent
+    const auto uncovered_before =
+        aura::ast::g_moving_uncovered_relocation_total.load(std::memory_order_relaxed);
+    const auto r = arena.live_compact(LiveCompactMode::Moving);
+    CHECK(r.objects_moved > 0, "AC2: objects_moved > 0");
+    CHECK(r.moving_incomplete_remap, "AC2: moving_incomplete_remap (no false-green)");
+    CHECK(!r.pin_contract_held, "AC2: pin_contract_held=false (unified fail)");
+    CHECK(r.uncovered_moved_count >= 1, "AC2: uncovered_moved_count>0");
+    CHECK(aura::ast::g_moving_uncovered_relocation_total.load(std::memory_order_relaxed) >=
+              uncovered_before + r.uncovered_moved_count,
+          "AC2: process counter bumps by the window gap");
+    // Raw alias points at the freed old slot after the move — do NOT deref.
+    (void)alias;
+    (void)p1;
+    (void)p2;
+}
+
+static void ac3633_3_covered_window_stays_green() {
+    std::println("\n--- #3633 AC3: covered window stays green (no false-fail) ---");
+    MovingFlagGuard on(1);
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    aura::ast::g_moving_untracked_hard_abort_pref.store(0, std::memory_order_relaxed);
+    ASTArena arena(64 * 1024);
+    auto* p0 = arena.create<Pod16>(1, 2, 3, 4);
+    auto* p1 = arena.create<Pod16>(5, 6, 7, 8);
+    auto* p2 = arena.create<Pod16>(9, 10, 11, 12);
+    CHECK(p0 && p1 && p2, "AC3: creates ok");
+    void* s0 = p0;
+    void* s1 = p1;
+    void* s2 = p2;
+    arena.register_external_root_slot_for_densify(&s0);
+    arena.register_external_root_slot_for_densify(&s1);
+    arena.register_external_root_slot_for_densify(&s2);
+    const auto r = arena.live_compact(LiveCompactMode::Moving);
+    CHECK(r.objects_moved > 0, "AC3: objects_moved > 0");
+    CHECK(r.uncovered_moved_count == 0, "AC3: no false-fail — covered window green");
+    CHECK(!r.moving_incomplete_remap, "AC3: no incomplete-remap on covered window");
+    CHECK(r.pin_contract_held, "AC3: pin_contract_held held");
+    CHECK(s0 != nullptr && static_cast<Pod16*>(s0)->a == 1,
+          "AC3: slot-followed payload intact at the new address");
+    // Dedup: membership union by old address — never a per-family sum.
+    const auto arena_src = read_file("src/core/arena.ixx");
+    CHECK(
+        arena_src.find("const bool covered_anywhere = slot_covered_old.count(moved_old) != 0 ||") !=
+            std::string::npos,
+        "AC3: dedup = membership union by old address");
+}
+
+static void ac3633_4_soft_off_zero_cost() {
+    std::println("\n--- #3633 AC4: Soft / Off — no Moving window, zero extra atomics ---");
+    MovingFlagGuard on(0); // feature off — no Moving window at all
+    aura::ast::g_moving_untracked_hard_abort_pref.store(0, std::memory_order_relaxed);
+    ASTArena arena(64 * 1024);
+    auto* p0 = arena.create<Pod16>(1, 2, 3, 4);
+    CHECK(p0 != nullptr, "AC4: create ok");
+    const auto uncovered_before =
+        aura::ast::g_moving_uncovered_relocation_total.load(std::memory_order_relaxed);
+    const auto r = arena.live_compact(LiveCompactMode::Soft);
+    CHECK(r.objects_moved == 0, "AC4: Soft never relocates");
+    CHECK(aura::ast::g_moving_uncovered_relocation_total.load(std::memory_order_relaxed) ==
+              uncovered_before,
+          "AC4: zero extra atomics off the Moving path");
+    // Gate is inside the moved_live_objects block (source shape).
+    const auto arena_src = read_file("src/core/arena.ixx");
+    const auto gate =
+        arena_src.find("if (saved_bytes > 0 || relocated > 0 || result.moved_live_objects) {");
+    const auto recon =
+        arena_src.find("if (result.objects_moved > 0 && !last_moving_relocated_old_.empty()) {");
+    CHECK(gate != std::string::npos && recon != std::string::npos && gate < recon,
+          "AC4: reconciliation gated inside the moved_live_objects block");
+}
+
+static void ac3633_5_linter_locks_call_site() {
+    std::println("\n--- #3633 AC5: source-cite linter locks the call site ---");
+    const auto lint = read_file("scripts/check_moving_cover_reconciliation_3633.py");
+    CHECK(!lint.empty(), "AC5: linter exists");
+    CHECK(lint.find("Issue #3633") != std::string::npos, "AC5: linter cites the issue");
+    CHECK(lint.find("--self-test") != std::string::npos, "AC5: self-test mode present");
+    const auto build = read_file("build.py");
+    CHECK(build.find("check_moving_cover_reconciliation_3633") != std::string::npos,
+          "AC5: build.py wires the linter");
+    const auto pass = read_file("src/compiler/root_remap_pass.ixx");
+    CHECK(pass.find("record_covered_old(it->first)") != std::string::npos,
+          "AC5: RootRemapPass records covered old addresses");
+    const auto probe = read_file("src/core/moving_cover_probe.h");
+    CHECK(probe.find("Issue #3633") != std::string::npos &&
+              probe.find("thread_local") != std::string::npos,
+          "AC5: probe header present (thread_local scratch)");
+}
+
+static void ac3633_6_hard_face_sticky_block() {
+    std::println("\n--- #3633 AC6: hard face — uncovered move blocks + sticky-off ---");
+    MovingFlagGuard on(1);
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    aura::ast::g_moving_untracked_hard_abort_pref.store(1, std::memory_order_relaxed);
+    ASTArena arena(64 * 1024);
+    auto* p0 = arena.create<Pod16>(1, 2, 3, 4);
+    auto* p1 = arena.create<Pod16>(5, 6, 7, 8);
+    CHECK(p0 && p1, "AC6: creates ok");
+    void* alias = p0;
+    const auto hard_before = aura::ast::g_moving_incomplete_remap_densify_hard_fail_total.load(
+        std::memory_order_relaxed);
+    const auto sticky_before = aura::ast::g_moving_incomplete_remap_sticky_densify_off_total.load(
+        std::memory_order_relaxed);
+    const auto r = arena.live_compact(LiveCompactMode::Moving);
+    CHECK(r.uncovered_moved_count >= 1, "AC6: uncovered relocation detected");
+    CHECK(r.moving_blocked_precondition, "AC6: window blocked (hard face)");
+    CHECK(aura::ast::moving_incomplete_remap_sticky_densify_off(), "AC6: #2837 sticky armed");
+    CHECK(aura::ast::g_moving_incomplete_remap_densify_hard_fail_total.load(
+              std::memory_order_relaxed) >= hard_before + 1,
+          "AC6: #2664 hard-fail counter bumps");
+    CHECK(aura::ast::g_moving_incomplete_remap_sticky_densify_off_total.load(
+              std::memory_order_relaxed) >= sticky_before + 1,
+          "AC6: sticky total bumps");
+    (void)alias;
+    (void)p1;
 }
 
 int run_test_moving_densify_fail_closed() {
@@ -4502,6 +4707,14 @@ int run_test_moving_densify_fail_closed() {
     ac3600_2_external_only_still_red();
     ac3600_3_soft_mixed_no_sticky();
     ac3600_4_source_and_linter();
+    std::println("\n=== Issue #3633: window-exit moved-vs-covered reconciliation "
+                 "(extends #2495 test file per #81967) ===");
+    ac3633_1_source_cite_reconciliation();
+    ac3633_2_unregistered_alias_fail_closed();
+    ac3633_3_covered_window_stays_green();
+    ac3633_4_soft_off_zero_cost();
+    ac3633_5_linter_locks_call_site();
+    ac3633_6_hard_face_sticky_block();
 
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;

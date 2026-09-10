@@ -12020,6 +12020,36 @@ def cmd_outermost_persist_order_3614_coverage():
     return 0
 
 
+def cmd_moving_cover_reconciliation_3633_coverage():
+    """Issue #3633: Moving densify cover is create-site-defined (pin / slot /
+    RootRemapPass) — an arena-tracked small-pool object whose only live
+    referent is an unregistered raw alias relocated silently (linter,
+    #3534 inventory, #3210 canaries, #2495 untracked, #2973/#3017
+    external-root counts and #2266 pin verify all miss the class) until
+    the pointer dangled. Fix: window-exit moved-vs-covered reconciliation
+    in live_compact(Moving) before publish consumption — dedup by old
+    address across slot ∪ LifetimePin-remap ∪ RootRemapPass cover (the
+    RootRemapPass family recorded via the thread_local
+    moving_cover_probe); canaries stay observe-only (#3017/#3055).
+    Failure reuses the #2495/#2664 face + #2837 sticky densify-off.
+    Appended-only schema (uncovered_moved_count /
+    moving_uncovered_relocation_total / g_moving_uncovered_relocation_total).
+    Tests extend the src-aligned suites. No docs/design/*3633*, no
+    tests/**/test_issue_3633.cpp.
+    """
+    print(f"{B}=== moving cover reconciliation (#3633) ==={N}")
+    script = ROOT / "scripts" / "check_moving_cover_reconciliation_3633.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script), "--strict"], cwd=ROOT)
+    if r.returncode != 0:
+        fail("moving cover reconciliation (#3633) contract rows failed")
+        return 1
+    ok("moving cover reconciliation (#3633) clean")
+    return 0
+
+
 def cmd_dual_graph_parity_cone_3615_coverage():
     """Issue #3615: cone-wide dual-graph parity check + Soft-erased hole
     detection. #3486 only consulted dirty_names.front(); a fork against
@@ -22122,6 +22152,7 @@ def cmd_gate():
         or cmd_pack_pipeline_strict_3627_coverage()
         or cmd_undeclared_mt_autodetect_3630_coverage()
         or cmd_reclaimed_batch_join_3631_coverage()
+        or cmd_moving_cover_reconciliation_3633_coverage()
     )
     if rc:
         return rc

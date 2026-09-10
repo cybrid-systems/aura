@@ -578,6 +578,14 @@ static void ac3123_3_sticky_clears_only_on_healthy() {
         auto* p1 = arena.create<Pod16_3123>(5, 6, 7, 8);
         auto* p2 = arena.create<Pod16_3123>(9, 10, 11, 12);
         CHECK(p0 && p1 && p2, "AC3: create");
+        // Issue #3633: moved objects need real cover — slot-registered so the
+        // window is healthy under the moved-vs-covered reconciliation.
+        void* e0 = p0;
+        void* e1 = p1;
+        void* e2 = p2;
+        arena.register_external_root_slot_for_densify(&e0);
+        arena.register_external_root_slot_for_densify(&e1);
+        arena.register_external_root_slot_for_densify(&e2);
         const auto r = arena.live_compact(aura::ast::LiveCompactMode::Moving);
         CHECK(!r.moving_blocked_precondition, "AC3: healthy window not blocked");
         CHECK(r.untracked_kept_count == 0, "AC3: zero untracked");
@@ -819,6 +827,36 @@ static void ac3200_5_source_and_linter() {
 
 } // namespace
 
+// ── Issue #3633: reconciliation probe + publish-flow source-cite ────
+//
+// RootRemapPass records covered old addresses (thread_local probe);
+// the Moving window drains them after the callback and fail-closes on
+// any relocated object with no cover in any rewrite family. The failure
+// flags (moving_incomplete_remap + pin_contract_held=false) are exactly
+// what the publish face consumes — Phase 5 cannot publish a green window
+// over an uncovered relocation.
+static void ac3633_health_probe_and_publish() {
+    std::println("\n--- #3633: root-remap probe + reconciliation feed the publish face ---");
+    const auto pass = read_file("src/compiler/root_remap_pass.ixx");
+    CHECK(pass.find("aura::core::moving_cover_probe::record_covered_old(it->first)") !=
+              std::string::npos,
+          "3633: RootRemapPass records covered old addresses (remap_one_slot)");
+    CHECK(pass.find("aura::core::moving_cover_probe::clear()") != std::string::npos,
+          "3633: probe cleared at pass start (last-call #2376)");
+    const auto arena_src = read_file("src/core/arena.ixx");
+    CHECK(arena_src.find("invoke_root_remap_callback_(result, &root_remap_covered_old)") !=
+              std::string::npos,
+          "3633: Moving window drains the probe after the RootRemap callback");
+    CHECK(arena_src.find("result.uncovered_moved_count = uncovered;") != std::string::npos,
+          "3633: reconciliation writes the gap into the result");
+    // Publish consumption: the reconciliation failure flags are the same
+    // ones publish_last_moving_densify_window takes from Phase 5.
+    const auto health = read_file("src/core/moving_densify_health.hh");
+    CHECK(health.find("pin_contract_held") != std::string::npos &&
+              health.find("moving_incomplete_remap") != std::string::npos,
+          "3633: health publish face consumes the reconciliation flags");
+}
+
 int run_test_arena_moving_densify_health() {
     std::println("=== Issue #2619 + #2682 + #2775: Agent Moving densify health ===");
     ac1_query_exposes_window();
@@ -923,7 +961,7 @@ int run_test_arena_moving_densify_health() {
         CHECK(t3370_self.find("3370 AC") != std::string::npos,
               "3370 AC6: existing test file cites #3370");
     }
-    std::println("\n=== #2619/#2682/#2775/#3123/#3200/#3368/#3370: {} passed, {} failed ===",
+    std::println("\n=== #2619/#2682/#2775/#3123/#3200/#3368/#3370/#3633: {} passed, {} failed ===",
                  g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
