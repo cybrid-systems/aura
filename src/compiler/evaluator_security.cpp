@@ -646,6 +646,9 @@ bool Evaluator::require_effect_for_node_id(std::uint16_t req_bits, std::string_v
     // foreign stamp (last export / query-stable / stamp slot) with the
     // caller — occupancy int would otherwise pass cur==target. Soft /
     // single-tenant Restricted still stamp the caller (#2056).
+    // Issue #3629: the consult store is the #3415 occupancy ring
+    // (direct-mapped, per-slot seqlock) — consult logic unchanged;
+    // eviction now requires a same-slot hash collision.
     ast::FlatAST::StableNodeRef ref{};
     const auto mode = effect_sandbox_mode();
     const bool strict = mode == 2 || ::aura::core::sandbox::is_strict();

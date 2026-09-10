@@ -17,6 +17,8 @@ Contract:
       no new query key
   AC7 resolve_mutate_node_arg packed path keeps stamp (no occupancy
       restamp)
+  AC1b(#3629) the stamp store is a direct-mapped occupancy ring
+      (per-slot seqlock) — the evictable single slot is gone
 
 Exit 0 = all rows satisfied.
 """
@@ -57,7 +59,13 @@ def main() -> int:
     must("existing_stamp_for_node", "AC1", sec)
     must("note_stamped_node", "AC1", sec)
     must("kBareNodeIdIsolationIssue = 3415", "AC1", ixx)
-    must("last_stamped_node_id", "AC1", prov)
+    must("node_occupancy_ring", "AC1", prov)
+    must("kNodeOccupancyRingSlots = 256", "AC1(#3629) ring size", prov)
+    must("kNodeOccupancyRingIssue = 3629", "AC1(#3629) stamp", prov)
+    must("kNodeOccupancyRingIssue", "AC1(#3629) ixx re-export", ixx)
+    must("slot.seq.store(s + 1, std::memory_order_release)", "AC1(#3629) seqlock write fence", prov)
+    must("slot.seq.load(std::memory_order_acquire)", "AC1(#3629) seqlock read fence", prov)
+    must("ac3629", "AC1(#3629) auto-isolation suite", test_req)
     fn = sec.find("bool Evaluator::require_effect_for_node_id")
     fn_body = sec[fn : fn + 2800] if fn >= 0 else ""
     must("existing_stamp_for_node", "AC1 for_node_id", fn_body)
@@ -122,7 +130,7 @@ def main() -> int:
         for f in fails:
             print(f"  - {f}")
         return 1
-    print("OK: Issue #3415 occupancy NodeId foreign-stamp isolation — all AC rows satisfied")
+    print("OK: Issue #3415/#3629 occupancy NodeId foreign-stamp isolation — all AC rows satisfied")
     return 0
 
 

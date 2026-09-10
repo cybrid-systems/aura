@@ -479,6 +479,8 @@ export inline constexpr std::int64_t kNodeIdOnlyEntryIssue = 3040;
 // Issue #3415: occupancy NodeId must not restamp a foreign owner as the
 // caller. Coverage linter: check_bare_nodeid_foreign_stamp_3415.py.
 export inline constexpr std::int64_t kBareNodeIdIsolationIssue = 3415;
+// Issue #3629: occupancy ring backing the #3415 stamp store.
+export inline constexpr std::int64_t kNodeOccupancyRingIssue = 3629;
 
 // Issue #1861: Env is a single-writer structure (same quiescence class
 // as compiler_metrics_ / type_registry_ / compiler_service_ — #1835–

@@ -856,6 +856,21 @@ struct ProvenanceStatsSnapshot {
     };
 }
 
+// Issue #3629: direct-mapped occupancy ring backing the #3415 NodeId
+// stamp store. One seqlock-protected slot per node_id & (kRing - 1);
+// a stamp on another node no longer evicts a foreign owner unless it
+// collides on the same slot (bounded 1/256 residual). The per-slot
+// seqlock (odd = writing, even = stable, release/acquire fences) also
+// closes the cross-thread plain-field race the single slot had by
+// design (stamp_stable_ref is const noexcept — no mutex on this path).
+struct NodeOccupancySlot {
+    std::atomic<std::uint32_t> seq{0};       // even = stable, odd = writing
+    std::atomic<std::uint32_t> node_id{0};   // guarded by seq
+    std::atomic<std::uint64_t> tenant_id{0}; // guarded by seq
+};
+inline constexpr std::size_t kNodeOccupancyRingSlots = 256; // power of two
+inline constexpr int kNodeOccupancyRingIssue = 3629;
+
 // Lightweight tracker (Phase 2): mutation_id + epoch fence bookkeeping.
 // FlatAST::StableNodeRef remains the production handle; this tracks policy metrics.
 struct ProvenanceTracker {
@@ -866,11 +881,12 @@ struct ProvenanceTracker {
     // Issue #1877: last hygiene stamp lives on the process-wide tracker so
     // module TUs (type_checker) and non-module TUs (tests/audit) share it.
     HygieneProvenanceStamp last_hygiene{};
-    // Issue #3415: last Evaluator stamp of a workspace NodeId. Occupancy
+    // Issue #3415: Evaluator stamps of workspace NodeIds. Occupancy
     // `require_effect_for_node_id` consults this so Restricted+MT cannot
     // restamp a foreign owner as the caller. Soft/Off does not write.
-    std::uint32_t last_stamped_node_id = 0;
-    std::uint64_t last_stamped_node_tenant = 0;
+    // Issue #3629: store is the direct-mapped occupancy ring (see
+    // NodeOccupancySlot above) — replaces the evictable single slot.
+    NodeOccupancySlot node_occupancy_ring[kNodeOccupancyRingSlots]{};
 
     void record_mutation() noexcept { ++records; }
     void set_policy(AutoRefreshPolicy p) noexcept { policy = p; }
@@ -908,22 +924,41 @@ inline HygieneProvenanceStamp& g_last_hygiene_provenance_stamp() noexcept {
 
 // Issue #3415: stamp-slot for occupancy NodeId isolation. Write only from
 // Evaluator::stamp_stable_ref under Restricted/Strict (Soft/Off skip).
+// Issue #3629: backing store is the direct-mapped occupancy ring —
+// per-slot seqlock, no mutex (stamp_stable_ref stays const noexcept).
 inline constexpr int kBareNodeIdIsolationIssue = 3415;
 inline void note_stamped_node(std::uint32_t node_id, std::uint64_t tenant_id) noexcept {
+    if (node_id == 0)
+        return;
     auto& t = g_provenance_tracker();
-    t.last_stamped_node_id = node_id;
-    t.last_stamped_node_tenant = tenant_id;
+    auto& slot = t.node_occupancy_ring[node_id & (kNodeOccupancyRingSlots - 1)];
+    const auto s = slot.seq.load(std::memory_order_relaxed);
+    slot.seq.store(s + 1, std::memory_order_release); // odd: writing
+    slot.node_id.store(node_id, std::memory_order_relaxed);
+    slot.tenant_id.store(tenant_id, std::memory_order_relaxed);
+    slot.seq.store(s + 2, std::memory_order_release); // even: stable
 }
 [[nodiscard]] inline std::uint64_t existing_stamp_for_node(std::uint32_t node_id) noexcept {
     if (node_id == 0)
         return 0;
     const auto& t = g_provenance_tracker();
-    return t.last_stamped_node_id == node_id ? t.last_stamped_node_tenant : 0;
+    const auto& slot = t.node_occupancy_ring[node_id & (kNodeOccupancyRingSlots - 1)];
+    const auto s1 = slot.seq.load(std::memory_order_acquire);
+    if ((s1 & 1u) != 0)
+        return 0; // writer in flight
+    const auto n = slot.node_id.load(std::memory_order_relaxed);
+    const auto tn = slot.tenant_id.load(std::memory_order_relaxed);
+    if (slot.seq.load(std::memory_order_acquire) != s1)
+        return 0; // torn read — treat as miss (caller-stamp fallback)
+    return n == node_id ? tn : 0;
 }
 inline void clear_last_stamped_node_for_test() noexcept {
     auto& t = g_provenance_tracker();
-    t.last_stamped_node_id = 0;
-    t.last_stamped_node_tenant = 0;
+    for (auto& slot : t.node_occupancy_ring) {
+        slot.seq.store(0, std::memory_order_relaxed);
+        slot.node_id.store(0, std::memory_order_relaxed);
+        slot.tenant_id.store(0, std::memory_order_relaxed);
+    }
 }
 
 // Stamp hygiene violation into process-wide provenance tracker + last stamp.
@@ -984,8 +1019,7 @@ inline void reset_provenance_enforcement_for_test() noexcept {
     m.linear_provenance_steal_checks_total.store(0, std::memory_order_relaxed);
     m.linear_provenance_gc_checks_total.store(0, std::memory_order_relaxed);
     g_provenance_tracker().last_hygiene = {};
-    g_provenance_tracker().last_stamped_node_id = 0;
-    g_provenance_tracker().last_stamped_node_tenant = 0;
+    clear_last_stamped_node_for_test(); // Issue #3629: reset the occupancy ring.
 }
 
 // Soft-mode + last_hygiene isolation for Strict incomplete walks.
