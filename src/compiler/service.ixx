@@ -1620,7 +1620,7 @@ public:
         // Scope: the known-sim precision only reshapes the NON-Allow
         // decision. The Allow (legacy) face keeps the legacy whole-flat
         // routing below — "anything unrecognized → silent TakeWalker" is
-        // a pinned contract there (#2577 heap tests, #3632 asan-verify
+        // a pinned contract there (#2577 heap tests, asan-verify 937d53d22
         // diagnostics face).
         if (flat.get(root).tag == aura::ast::NodeTag::Begin &&
             tree_walker_fallback_policy() != TreeWalkerFallbackPolicy::Allow) {
@@ -1642,7 +1642,7 @@ public:
                     // that needs the walker (while, fiber:*, unknown refs) must
                     // trip the gate so the disposition selects TakeWalker
                     // (Allow) / HardError (Forbidden). Skipping defines entirely
-                    // silently IR-cached non-IR-safe bodies (#3632: while loop
+                    // silently IR-cached non-IR-safe bodies (937d53d22: while loop
                     // never ran → growth=0 vacuous PASS).
                     const auto dbody = cv.child(0);
                     const auto dname = std::string(pool.resolve(cv.sym_id));
@@ -2037,7 +2037,7 @@ public:
                     return;
                 }
                 // Whole-program Begin eval: names defined by sibling forms
-                // register sequentially — treat them as known (#3632).
+                // register sequentially — treat them as known (asan-verify 937d53d22).
                 if (extra_known && extra_known->count(std::string(var_name)))
                     return;
                 if (user_bindings_.count(std::string(var_name))) {
@@ -2069,7 +2069,7 @@ public:
                             return;
                         }
                         // Whole-program Begin eval: sibling defines register
-                        // sequentially — treat them as known (#3632).
+                        // sequentially — treat them as known (asan-verify 937d53d22).
                         if (extra_known && extra_known->count(name))
                             return;
                         if (tree_walker_only.count(name)) {
@@ -8867,7 +8867,7 @@ public:
             const std::unordered_map<std::string, std::size_t, aura::core::TransparentStringHash,
                                      std::equal_to<>>& value_cells;
             // Whole-program Begin eval: sibling defines register sequentially —
-            // body refs to their names are known at gate time (#3632).
+            // body refs to their names are known at gate time (asan-verify 937d53d22).
             const std::unordered_set<std::string>* extra_known;
             bool needs_fallback = false;
             void walk(aura::ast::NodeId id) {
@@ -8892,11 +8892,10 @@ public:
                             auto callee_name = std::string(p.resolve(callee_v.sym_id));
                             if (callee_name == "fiber:spawn" || callee_name == "fiber:join")
                                 needs_fallback = true;
-                            // Issue #3632: `while` bodies are not IR-lowerable —
-                            // an IR-cached fn with a while loop silently
-                            // miscomputes (loop never runs; the multi-session
-                            // leak oracle returned growth=0 → vacuous PASS).
-                            // Route the define to walker-define (Allow) or
+                            // asan-verify Begin-gate (937d53d22): `while` bodies are not
+                            // IR-lowerable — an IR-cached fn with a while loop silently miscomputes
+                            // (loop never runs; the multi-session leak oracle returned growth=0 →
+                            // vacuous PASS). Route the define to walker-define (Allow) or
                             // hard-error (Forbidden) via the define-path gate.
                             else if (callee_name == "while")
                                 needs_fallback = true;
