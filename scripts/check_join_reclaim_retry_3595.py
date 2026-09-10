@@ -14,7 +14,11 @@
 #       query key.
 #  AC3: join_agent + join_agents production arms route through the wrapper
 #       (no direct wait_reclaimed_body / inline host_forget bump left in
-#       the #3110 arms); drain=0 cancel-only stays one-shot.
+#       the #3110 arms); drain=0 cancel-only stays one-shot. #3631:
+#       join_agents defers to the shared-budget batch pass
+#       (maybe_auto_wait_reclaimed_batch) — same bounded contract, wall ~=
+#       budget instead of N x budget; single-handle join_agent keeps the
+#       wrapper.
 #  AC4: Both join prims pass reclaimed_retry_budget_ms(policy.drain_ms);
 #       the wrapper never auto-abandons (#3334 stays host-opt-in); no
 #       body-stack free (#2661).
@@ -76,8 +80,8 @@ REQUIRED: tuple[tuple[str, str, str], ...] = (
     ),
     (
         "src/orch/agent_spawn.h",
-        r"jr\.wait_us\s*\+=\s*maybe_auto_wait_reclaimed_production\(\s*a,\s*/\*caller_passed_wait_reclaimed_ms=\*/false,\s*reclaimed_retry_budget_ms\(policy\.drain_ms\)\);",
-        "3595 AC3: join_agents production arm routes through the wrapper",
+        r"maybe_auto_wait_reclaimed_batch\(\s*agents,\s*reclaimed_retry_budget_ms\(policy\.drain_ms\)\);",
+        "3595 AC3: join_agents production arm routes the shared-budget batch pass (#3631)",
     ),
     # AC4: prims pass the drain-scaled budget.
     (

@@ -1583,6 +1583,254 @@ static void ac3595_5_source_and_no_invent() {
           "3595 AC5: no tests/issues/ standalone (#81934)");
 }
 
+// ── Issue #3631: batch Reclaimed residual wait — one shared budget ──
+static void ac3631_1_batch_shared_budget() {
+    using aura::core::sandbox::SandboxMode;
+    using aura::core::sandbox::set_mode;
+    std::println("\n--- #3631 AC1: batch residual wait ~= shared budget (not N x) ---");
+    const char* prev_sb = std::getenv("AURA_SANDBOX");
+    std::string prev_sb_s = prev_sb ? prev_sb : "";
+    ::setenv("AURA_SANDBOX", "restricted", 1);
+    apply_production_audit_defaults();
+    set_mode(SandboxMode::Strict);
+
+    // No SchedRunner: bodies never execute → deterministic non-yielding
+    // Reclaimed residual (same fixture pattern as #3433 AC1).
+    Scheduler sched(1);
+    constexpr std::size_t kAgents = 32;
+    std::vector<aura::orch::AgentHandle> handles;
+    for (std::size_t i = 0; i < kAgents; ++i) {
+        aura::orch::AgentSpec spec;
+        spec.name = std::format("3631-agent-{}", i);
+        spec.attach_mailbox = true;
+        spec.body = [] {
+            for (;;) {
+            }
+        };
+        auto h = aura::orch::spawn_agent_with_mailbox(sched, std::move(spec));
+        CHECK(h.ok && h.fiber, "3631 AC1: spawn ok");
+        handles.push_back(std::move(h));
+    }
+
+    const auto hf0 =
+        g_orch_module_stats.host_forget_reclaimed_risk_total.load(std::memory_order_relaxed);
+    JoinPolicy policy;
+    policy.primary_ms = 20; // short primary → Timeout for every body
+    policy.drain_ms = 125;  // budget = min(125*8, 30000) = 1000ms SHARED
+    const auto t0 = std::chrono::steady_clock::now();
+    const auto jr = join_agents(std::span<aura::orch::AgentHandle>(handles), policy);
+    const auto wall_ms = static_cast<std::uint64_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0)
+            .count());
+    CHECK(jr.status == JoinStatus::Timeout, "3631 AC1: batch primary Timeout (bodies live)");
+    // Shared budget consumed once (all 32 bodies non-yielding); the serial
+    // per-handle auto-wait would have pinned ~32 x 1000ms.
+    CHECK(wall_ms >= 950, "3631 AC1: shared budget consumed (all bodies non-yielding)");
+    CHECK(wall_ms < 4000, "3631 AC1: wall ~= shared budget, NOT 32 x 1000ms serial cliff");
+    CHECK(g_orch_module_stats.host_forget_reclaimed_risk_total.load(std::memory_order_relaxed) ==
+              hf0 + 1,
+          "3631 AC1: host_forget bumps ONCE per batch expiry");
+    for (auto& h : handles) {
+        CHECK(h.must_wait_reclaimed, "3631 AC1: must_wait stays set on expiry (#3146)");
+        CHECK(h.reclaimed_deferred_cleanup, "3631 AC1: deferred cleanup pending");
+    }
+
+    // Cleanup: mark the synthetic bodies Done so dtor completes deferred
+    // cleanup (same pattern as #3433 AC1).
+    for (auto& h : handles) {
+        if (h.fiber)
+            h.fiber->set_state(FiberState::Done);
+        h.finish_reclaimed_cleanup_on_dtor();
+    }
+    apply_dev_audit_defaults();
+    if (!prev_sb_s.empty())
+        ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+    else
+        ::unsetenv("AURA_SANDBOX");
+}
+
+static void ac3631_2_cleanup_after_expiry() {
+    using aura::core::sandbox::SandboxMode;
+    using aura::core::sandbox::set_mode;
+    std::println("\n--- #3631 AC2: expiry leaves contracts intact; later exit cleans ---");
+    const char* prev_sb = std::getenv("AURA_SANDBOX");
+    std::string prev_sb_s = prev_sb ? prev_sb : "";
+    ::setenv("AURA_SANDBOX", "restricted", 1);
+    apply_production_audit_defaults();
+    set_mode(SandboxMode::Strict);
+    Scheduler sched(1);
+    std::vector<aura::orch::AgentHandle> handles;
+    for (std::size_t i = 0; i < 4; ++i) {
+        aura::orch::AgentSpec spec;
+        spec.name = std::format("3631-exp-{}", i);
+        spec.attach_mailbox = true;
+        spec.body = [] {
+            for (;;) {
+            }
+        };
+        auto h = aura::orch::spawn_agent_with_mailbox(sched, std::move(spec));
+        CHECK(h.ok && h.fiber, "3631 AC2: spawn ok");
+        handles.push_back(std::move(h));
+    }
+    JoinPolicy policy;
+    policy.primary_ms = 20;
+    policy.drain_ms = 125;
+    (void)join_agents(std::span<aura::orch::AgentHandle>(handles), policy);
+    for (auto& h : handles)
+        CHECK(h.must_wait_reclaimed, "3631 AC2: must_wait set after batch expiry");
+
+    // (1) later body exit → ensure_reclaimed_cleanup lands Done-path cleanup
+    //     (reservation released + mailbox detached + must_wait cleared).
+    handles[0].fiber->set_state(FiberState::Done);
+    {
+        const auto res0 = handles[0].reserved_memory_bytes;
+        const auto wr = aura::orch::ensure_reclaimed_cleanup(handles[0]);
+        CHECK(wr.status == JoinStatus::Ok, "3631 AC2: ensure lands Ok after exit");
+        CHECK(!handles[0].must_wait_reclaimed, "3631 AC2: must_wait cleared (#3110)");
+        CHECK(handles[0].reserved_memory_bytes < res0 || res0 == 0,
+              "3631 AC2: reservation released");
+    }
+    // (2) typed abandon (#3334) unaffected by the batch path.
+    handles[1].fiber->set_state(FiberState::Done);
+    {
+        aura::orch::AbandonReclaimedOpts opts;
+        opts.max_second_wait_ms = 50;
+        const auto ab = aura::orch::abandon_reclaimed(handles[1], opts);
+        CHECK(ab.outcome == aura::orch::AbandonReclaimedOutcome::Cleaned,
+              "3631 AC2: typed abandon unaffected (Cleaned after exit)");
+    }
+    // (3) dtor backstop (#3297) for the rest.
+    for (std::size_t i = 2; i < handles.size(); ++i) {
+        if (handles[i].fiber)
+            handles[i].fiber->set_state(FiberState::Done);
+        handles[i].finish_reclaimed_cleanup_on_dtor();
+    }
+    apply_dev_audit_defaults();
+    if (!prev_sb_s.empty())
+        ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+    else
+        ::unsetenv("AURA_SANDBOX");
+}
+
+static void ac3631_3_single_handle_regression() {
+    using aura::core::sandbox::SandboxMode;
+    using aura::core::sandbox::set_mode;
+    std::println("\n--- #3631 AC3: single-handle join_agent unchanged (SSOT wrapper) ---");
+    const char* prev_sb = std::getenv("AURA_SANDBOX");
+    std::string prev_sb_s = prev_sb ? prev_sb : "";
+    ::setenv("AURA_SANDBOX", "restricted", 1);
+    apply_production_audit_defaults();
+    set_mode(SandboxMode::Strict);
+    Scheduler sched(1);
+    aura::orch::AgentSpec spec;
+    spec.name = "3631-single";
+    spec.attach_mailbox = true;
+    spec.body = [] {
+        for (;;) {
+        }
+    };
+    auto h = aura::orch::spawn_agent_with_mailbox(sched, std::move(spec));
+    const auto hf0 =
+        g_orch_module_stats.host_forget_reclaimed_risk_total.load(std::memory_order_relaxed);
+    JoinPolicy policy;
+    policy.primary_ms = 20;
+    policy.drain_ms = 125; // budget = 1000ms (single handle = today's behavior)
+    const auto t0 = std::chrono::steady_clock::now();
+    const auto jr = join_agent(h, policy);
+    const auto wall_ms = static_cast<std::uint64_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0)
+            .count());
+    CHECK(jr.status == JoinStatus::Reclaimed, "3631 AC3: single-handle derived Reclaimed");
+    CHECK(wall_ms >= 950, "3631 AC3: bounded auto-wait budget consumed");
+    CHECK(wall_ms < 3000, "3631 AC3: single-handle wall ~= budget (unchanged)");
+    CHECK(h.must_wait_reclaimed, "3631 AC3: must_wait set on expiry (#3146)");
+    CHECK(g_orch_module_stats.host_forget_reclaimed_risk_total.load(std::memory_order_relaxed) ==
+              hf0 + 1,
+          "3631 AC3: host_forget bumps once (single-handle path unchanged)");
+    if (h.fiber)
+        h.fiber->set_state(FiberState::Done);
+    h.finish_reclaimed_cleanup_on_dtor();
+    apply_dev_audit_defaults();
+    if (!prev_sb_s.empty())
+        ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+    else
+        ::unsetenv("AURA_SANDBOX");
+}
+
+static void ac3631_4_soft_zero_cost() {
+    std::println("\n--- #3631 AC4: Soft / sandbox=off → batch no-op, zero cost ---");
+    apply_dev_audit_defaults();
+    Scheduler sched(1);
+    std::vector<aura::orch::AgentHandle> handles;
+    for (std::size_t i = 0; i < 4; ++i) {
+        aura::orch::AgentSpec spec;
+        spec.name = std::format("3631-soft-{}", i);
+        spec.attach_mailbox = true;
+        spec.body = [] {
+            for (;;) {
+            }
+        };
+        auto h = aura::orch::spawn_agent_with_mailbox(sched, std::move(spec));
+        CHECK(h.ok && h.fiber, "3631 AC4: spawn ok");
+        handles.push_back(std::move(h));
+    }
+    const auto hf0 =
+        g_orch_module_stats.host_forget_reclaimed_risk_total.load(std::memory_order_relaxed);
+    JoinPolicy policy;
+    policy.primary_ms = 20;
+    policy.drain_ms = 125;
+    const auto t0 = std::chrono::steady_clock::now();
+    (void)join_agents(std::span<aura::orch::AgentHandle>(handles), policy);
+    const auto wall_ms = static_cast<std::uint64_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0)
+            .count());
+    CHECK(wall_ms < 200, "3631 AC4: no residual wait under Soft (zero cost)");
+    CHECK(g_orch_module_stats.host_forget_reclaimed_risk_total.load(std::memory_order_relaxed) ==
+              hf0,
+          "3631 AC4: no host_forget bump under Soft");
+    for (auto& h : handles)
+        CHECK(!h.must_wait_reclaimed, "3631 AC4: no must_wait under Soft (gate off)");
+    for (auto& h : handles) {
+        if (h.fiber)
+            h.fiber->set_state(FiberState::Done);
+        h.finish_reclaimed_cleanup_on_dtor();
+    }
+}
+
+static void ac3631_5_source_cite_and_no_invent() {
+    std::println("\n--- #3631 AC5: source-cite + no invent ---");
+    static const auto slurp = [](const char* path) {
+        for (const auto& p :
+             {std::string(path), std::string("../") + path, std::string("../../") + path}) {
+            std::ifstream in(p);
+            if (!in)
+                continue;
+            return std::string((std::istreambuf_iterator<char>(in)),
+                               std::istreambuf_iterator<char>());
+        }
+        return std::string{};
+    };
+    const auto asrc = slurp("src/orch/agent_spawn.h");
+    CHECK(asrc.find("maybe_auto_wait_reclaimed_batch") != std::string::npos,
+          "3631: batch residual-wait helper present");
+    CHECK(asrc.find("Issue #3631") != std::string::npos, "3631: helper cites issue");
+    CHECK(asrc.find("re-join would race residual cleanup contracts") != std::string::npos,
+          "3631: wait_reclaimed_body contract note intact (no re-join)");
+    // join_agents routes the batch pass, not the serial wrapper.
+    const auto sig = asrc.find("join_agents(std::span<AgentHandle> agents,");
+    CHECK(sig != std::string::npos, "3631: join_agents found");
+    const auto ret = asrc.find("return jr;", sig);
+    if (sig != std::string::npos && ret != std::string::npos) {
+        const auto body = asrc.substr(sig, ret - sig);
+        CHECK(body.find("maybe_auto_wait_reclaimed_batch") != std::string::npos,
+              "3631 AC1: join_agents calls the batch pass");
+        CHECK(body.find("maybe_auto_wait_reclaimed_production") == std::string::npos,
+              "3631 AC1: serial per-handle wrapper gone from join_agents");
+    }
+    CHECK(slurp("tests/issues/test_issue_3631.cpp").empty(), "3631: no tests/issues file");
+    CHECK(slurp("tests/orch/test_issue_3631.cpp").empty(), "3631: no test_issue file");
+}
+
 int run_test_join_drain_reclaim() {
     std::println("=== Issue #2227: hard reclaim path for join drain residual fibers ===");
     CHECK(true, "issue stamp #2227");
@@ -3727,10 +3975,12 @@ int run_test_join_drain_reclaim() {
               "3110 AC7: 3110 linter exists");
         CHECK(build3110.find("check_join_drain_reclaim_3110") != std::string::npos,
               "3110 AC7: build.py wires 3110 linter");
-        // join_agents span variant: same auto-wait pattern.
-        CHECK(spawn3110.find("maybe_auto_wait_reclaimed_production(a, "
-                             "/*caller_passed_wait_reclaimed_ms=*/false,") != std::string::npos,
-              "3110 AC7: join_agents span variant routes through the #3595 wrapper");
+        // join_agents span variant: same auto-wait pattern (#3631: the
+        // serial per-handle wait is deferred to ONE shared-budget batch
+        // pass — maybe_auto_wait_reclaimed_batch).
+        CHECK(spawn3110.find("maybe_auto_wait_reclaimed_batch(agents, "
+                             "reclaimed_retry_budget_ms(policy.drain_ms));") != std::string::npos,
+              "3110 AC7: join_agents span variant routes the batch pass (#3631)");
         // Lineage: #2661 / #2924 / #3012 / #3051 / #3087 preserved.
         CHECK(spawn3110.find("wait_reclaimed_body(") != std::string::npos,
               "3110 AC7: #2924 wait_reclaimed_body helper preserved");
@@ -3944,10 +4194,10 @@ int run_test_join_drain_reclaim() {
         const auto span_idx = spawn3146.find("join_agents(std::span<AgentHandle> agents");
         CHECK(span_idx != std::string::npos, "3146 AC8: join_agents span variant present");
         if (span_idx != std::string::npos) {
-            const auto snip = spawn3146.substr(span_idx, 6000);
-            CHECK(snip.find("maybe_auto_wait_reclaimed_production(a, "
-                            "/*caller_passed_wait_reclaimed_ms=*/false,") != std::string::npos,
-                  "3146 AC8: join_agents span variant routes through the #3595 wrapper");
+            const auto snip = spawn3146.substr(span_idx, 9500);
+            CHECK(snip.find("maybe_auto_wait_reclaimed_batch(agents, "
+                            "reclaimed_retry_budget_ms(policy.drain_ms));") != std::string::npos,
+                  "3146 AC8: join_agents span variant routes the batch pass (#3631)");
         }
 
         // AC8: test file cites #3146.
@@ -5372,6 +5622,13 @@ int run_test_join_drain_reclaim() {
     ac3595_3_soft_and_explicit_zero_extra();
     ac3595_4_join_agent_routes_wrapper();
     ac3595_5_source_and_no_invent();
+
+    std::println("\n=== Issue #3631: batch Reclaimed residual wait — one shared budget ===");
+    ac3631_1_batch_shared_budget();
+    ac3631_2_cleanup_after_expiry();
+    ac3631_3_single_handle_regression();
+    ac3631_4_soft_zero_cost();
+    ac3631_5_source_cite_and_no_invent();
 
     std::println("\n=== Results: {} passed, {} failed ===", aura::test::g_passed,
                  aura::test::g_failed);

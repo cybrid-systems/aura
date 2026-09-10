@@ -12300,6 +12300,39 @@ def cmd_undeclared_mt_autodetect_3630_coverage():
     return 0
 
 
+def cmd_reclaimed_batch_join_3631_coverage():
+    """Issue #3631: Reclaimed recovery wait is host-thread 200us polling +
+    serial per-handle auto-wait budget — N x 30s cliff under batch
+    Reclaimed:
+
+    - join_agents defers the Reclaimed residual wait to ONE shared-budget
+      batch pass (maybe_auto_wait_reclaimed_batch): wall ~= shared budget,
+      not N x reclaimed_retry_budget_ms; the serial per-handle wrapper is
+      gone from the join_agents body.
+    - Contract-preserving shape: shared-deadline poll (NOT Fiber::join —
+      re-join races residual cleanup contracts, see wait_reclaimed_body);
+      Done path: note_body_exit_if_reclaimed + complete_agent_join_cleanup
+      + wait_reclaimed_cleanup_total; expiry: must_wait stays set (#3146),
+      quota recycle per handle, host_forget_reclaimed_risk_total bumps
+      ONCE per batch.
+    - Single-handle join_agent keeps the SSOT wrapper (today's behavior);
+      wait_reclaimed_body poll cadence + contract note intact.
+    - Suite rows ac3631_1..5 in tests/orch/test_join_drain_reclaim.cpp;
+      no docs/design/3631-*, no tests/**/test_issue_3631.cpp.
+    """
+    print(f"{B}=== reclaimed batch join (#3631) ==={N}")
+    script = ROOT / "scripts" / "check_reclaimed_batch_join_3631.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script), "--strict"], cwd=ROOT)
+    if r.returncode != 0:
+        fail("reclaimed batch join (#3631) contract rows failed")
+        return 1
+    ok("reclaimed batch join (#3631) clean")
+    return 0
+
+
 def cmd_query_stable_hard_reject_torn_latch_3386_coverage():
     """Issue #3386: shared probe Evaluator::query_stable_hard_reject_torn()
     must OR restamp_over_budget_torn() under multi-worker latch (I6 residual).
@@ -22062,6 +22095,7 @@ def cmd_gate():
         or cmd_closure_calls_hotpath_3626_coverage()
         or cmd_pack_pipeline_strict_3627_coverage()
         or cmd_undeclared_mt_autodetect_3630_coverage()
+        or cmd_reclaimed_batch_join_3631_coverage()
     )
     if rc:
         return rc

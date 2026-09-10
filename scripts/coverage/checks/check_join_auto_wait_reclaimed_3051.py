@@ -82,8 +82,11 @@ def main() -> int:
     if jas > 0:
         jas2 = spawn.find("inline serve::JoinResult join_agents(std::span<AgentHandle> agents,", jas + 1)
         end = jas2 if jas2 > jas else jas + 4000
-        if "maybe_auto_wait_reclaimed_production" not in spawn[jas:end]:
-            fails.append("AC4: join_agents must route the production arm through the #3595 wrapper")
+        # Issue #3631: join_agents routes the shared-budget batch pass
+        # (maybe_auto_wait_reclaimed_batch) — the serial per-handle wrapper
+        # remains only on the single-handle join_agent surface.
+        if "maybe_auto_wait_reclaimed_batch" not in spawn[jas:end]:
+            fails.append("AC4: join_agents must route the production arm through the #3595 wrapper (batch pass, #3631)")
         if "reclaimed_retry_budget_ms(policy.drain_ms)" not in spawn[jas:end]:
             fails.append("AC4: join_agents auto-wait must be budget-bounded (#3595)")
 
