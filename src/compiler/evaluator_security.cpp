@@ -1522,6 +1522,46 @@ void Evaluator::set_tenant_principal(std::uint64_t tenant_id, std::string_view /
     }
     capability_tenant_id_ = tenant_id;
     allow_cross_tenant_ = allow_cross;
+    // Issue #3630: per-Evaluator principal authority is the multi-tenant
+    // detection point. A SECOND distinct non-zero principal under
+    // Restricted/Strict without AURA_MULTI_TENANT means the deployment is
+    // multi-tenant-undeclared: record it (counter + one posture SE) and
+    // arm the dark fences idempotently in capture -> fiber -> env order
+    // (#2705 / #2937 / #3365 — monotonic, never un-armed mid-process).
+    // AURA_MT_AUTODETECT=0 keeps legacy behavior (dark but observable via
+    // query:security-posture). Soft/Off never records (zero-cost, AC4).
+    if (tenant_id != 0 && !::aura::core::provenance::multi_tenant_env_active() &&
+        (sandbox_mode_ != 0 || effect_sandbox_mode() != 0)) {
+        const auto prev = ::aura::core::provenance::g_last_seen_nonzero_principal().exchange(
+            tenant_id, std::memory_order_acq_rel);
+        if (prev != 0 && prev != tenant_id) {
+            using ::aura::core::security_event::SecurityEventKind;
+            using ::aura::core::security_event_wal::emit_security_event_durable;
+            using ::aura::core::workspace_isolation::g_tenant_isolation_metrics;
+            g_tenant_isolation_metrics().undeclared_multi_tenant_detected_total.fetch_add(
+                1, std::memory_order_relaxed);
+            if (::aura::core::provenance::g_undeclared_mt_se_emitted().exchange(
+                    1, std::memory_order_acq_rel) == 0) {
+                const auto epoch = ::aura::core::current_mutation_epoch();
+                const auto mid = epoch != 0 ? epoch : static_cast<std::uint64_t>(1);
+                const auto fid =
+                    static_cast<std::int64_t>(::aura::core::capability::effect_fiber_id_or(
+                        static_cast<std::uint32_t>(aura_fiber_current_id())));
+                emit_security_event_durable(SecurityEventKind::PostureObserve, tenant_id, mid,
+                                            epoch, /*effect_bits=*/0, "set-tenant-principal",
+                                            "undeclared-multi-tenant-armed", /*denied=*/false, fid);
+            }
+            if (!::aura::core::provenance::mt_autodetect_disabled()) {
+                // Arm order (issue fix shape): capture -> fiber -> env flag.
+                ::aura::core::provenance::set_hard_capture_tenant(true);
+                ::aura::core::capability::g_capability_registry().set_hard_fiber_isolation(true);
+                ::aura::core::provenance::set_multi_tenant_env_active(true);
+                ::aura::core::provenance::g_undeclared_mt_armed_flag().store(
+                    1, std::memory_order_release);
+                ::aura::core::resource_quota::refresh_quota_per_tenant_cache();
+            }
+        }
+    }
 }
 
 // Issue #2055: RAII TenantScope — snapshot principal at fiber entry so a

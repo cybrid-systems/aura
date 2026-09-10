@@ -12268,6 +12268,38 @@ def cmd_pack_pipeline_strict_3627_coverage():
     return 0
 
 
+def cmd_undeclared_mt_autodetect_3630_coverage():
+    """Issue #3630: per-Evaluator multi-tenant without AURA_MULTI_TENANT
+    leaves unstamped-ref deny / hard fiber / hard capture dark (no
+    detection alarm):
+
+    - set_tenant_principal reports non-zero principals; a second distinct
+      principal under Restricted/Strict bumps
+      undeclared_multi_tenant_detected_total (metrics END, #2906), emits
+      one PostureObserve SE (reason undeclared-multi-tenant-armed,
+      denied=false), and arms the dark fences idempotently: capture ->
+      fiber -> env flag (monotonic, never un-armed mid-process).
+    - AURA_MT_AUTODETECT=0 opts out (dark but observable via posture);
+      Soft/Off never records (zero-cost, AC4).
+    - quota map follows the armed flag with an arm-time cache refresh;
+      posture surface additive on both query:security-posture
+      registrations (slim obs_eval + full security last-wins).
+    - Suite rows ac3630_1..5 in test_require_effect_auto_isolation.cpp;
+      no docs/design/3630-*, no tests/**/test_issue_3630.cpp.
+    """
+    print(f"{B}=== undeclared MT autodetect (#3630) ==={N}")
+    script = ROOT / "scripts" / "check_undeclared_mt_autodetect_3630.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script), "--strict"], cwd=ROOT)
+    if r.returncode != 0:
+        fail("undeclared MT autodetect (#3630) contract rows failed")
+        return 1
+    ok("undeclared MT autodetect (#3630) clean")
+    return 0
+
+
 def cmd_query_stable_hard_reject_torn_latch_3386_coverage():
     """Issue #3386: shared probe Evaluator::query_stable_hard_reject_torn()
     must OR restamp_over_budget_torn() under multi-worker latch (I6 residual).
@@ -22029,6 +22061,7 @@ def cmd_gate():
         or cmd_render_fast_audit_3625_coverage()
         or cmd_closure_calls_hotpath_3626_coverage()
         or cmd_pack_pipeline_strict_3627_coverage()
+        or cmd_undeclared_mt_autodetect_3630_coverage()
     )
     if rc:
         return rc

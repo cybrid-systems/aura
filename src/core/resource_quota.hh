@@ -14,6 +14,8 @@
 #include <cstdlib>
 #include <limits>
 #include <memory>
+
+#include "core/provenance_tracker.hh" // Issue #3630: multi_tenant_env_active arm consult
 #include <mutex>
 #include <optional>
 #include <string>
@@ -76,9 +78,18 @@ inline void clear_quota_per_tenant_test_override() noexcept {
         return sv == "1" || sv == "true" || sv == "yes" || sv == "on";
     };
     // Explicit arm, or production multi-tenant profile (#3049 AC1).
-    const bool on = env_on("AURA_QUOTA_PER_TENANT") || env_on("AURA_MULTI_TENANT");
+    // Issue #3630: the #3630 autodetect arm (per-Evaluator principal
+    // authority lighting set_multi_tenant_env_active) also arms the map.
+    const bool on = env_on("AURA_QUOTA_PER_TENANT") || env_on("AURA_MULTI_TENANT") ||
+                    aura::core::provenance::multi_tenant_env_active();
     g_quota_per_tenant_cached.store(on ? 1 : 0, std::memory_order_release);
     return on;
+}
+
+// Issue #3630: recompute on next query — the autodetect arm happens after
+// the lazy cache may have latched 0 (pre-arm queries).
+inline void refresh_quota_per_tenant_cache() noexcept {
+    g_quota_per_tenant_cached.store(-1, std::memory_order_release);
 }
 
 // Matches AuraErrorKind::ResourceQuotaExceeded for Agent mapping.

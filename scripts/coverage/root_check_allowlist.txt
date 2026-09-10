@@ -78,3 +78,4 @@ check_type_export_face_3624.py
 check_render_fast_audit_3625.py
 check_closure_calls_hotpath_3626.py
 check_pack_pipeline_strict_3627.py
+check_undeclared_mt_autodetect_3630.py
