@@ -394,6 +394,44 @@ inline void set_multi_tenant_env_active(bool on) noexcept {
 inline void reset_multi_tenant_env_for_test() noexcept {
     g_multi_tenant_env_flag().store(0u, std::memory_order_relaxed);
 }
+// Issue #3630: undeclared multi-tenant autodetect. Per-Evaluator principal
+// authority (set_tenant_principal) reports non-zero principals; a SECOND
+// distinct principal under Restricted/Strict without AURA_MULTI_TENANT
+// means the deployment is multi-tenant-undeclared — record it and arm the
+// dark fences idempotently (capture -> fiber -> env flag, monotonic, never
+// un-armed mid-process; test resets still clear). AURA_MT_AUTODETECT=0
+// opts out (dark but observable via query:security-posture). Read per-call:
+// only reached in the undeclared window (pre-arm) — post-arm the env flag
+// short-circuits the getenv away entirely.
+inline constexpr int kUndeclaredMtAutodetectIssue = 3630;
+inline std::atomic<std::uint64_t>& g_last_seen_nonzero_principal() noexcept {
+    static std::atomic<std::uint64_t> v{0};
+    return v;
+}
+// Process-lifetime once-guard for the arm SecurityEvent (no SE storm).
+inline std::atomic<std::uint32_t>& g_undeclared_mt_se_emitted() noexcept {
+    static std::atomic<std::uint32_t> v{0};
+    return v;
+}
+inline std::atomic<std::uint32_t>& g_undeclared_mt_armed_flag() noexcept {
+    static std::atomic<std::uint32_t> v{0};
+    return v;
+}
+[[nodiscard]] inline bool undeclared_mt_autodetect_armed() noexcept {
+    return g_undeclared_mt_armed_flag().load(std::memory_order_acquire) != 0;
+}
+[[nodiscard]] inline bool mt_autodetect_disabled() noexcept {
+    if (const char* e = std::getenv("AURA_MT_AUTODETECT"); e && *e) {
+        const std::string_view v(e);
+        return v == "0" || v == "false" || v == "off" || v == "no";
+    }
+    return false;
+}
+inline void reset_undeclared_mt_autodetect_for_test() noexcept {
+    g_last_seen_nonzero_principal().store(0, std::memory_order_relaxed);
+    g_undeclared_mt_se_emitted().store(0, std::memory_order_relaxed);
+    g_undeclared_mt_armed_flag().store(0, std::memory_order_relaxed);
+}
 // Issue #2759: under hard-close, refuse non-zero process-global capture
 // writes (multi-eval race). Clear-to-zero always allowed (test reset /
 // isolation off). Soft keeps full write for unit ergonomics.

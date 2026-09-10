@@ -55,6 +55,10 @@ enum class SecurityEventKind : std::uint8_t {
     // (durable side-car append when WAL enabled) + #2176
     // unstamp C-linkage (existing counter bumped alongside).
     MacroHygieneRollbackOnStrict = 5,
+    // Issue #3630: undeclared multi-tenant autodetect arm — posture
+    // observation (denied=false; reason "undeclared-multi-tenant-armed",
+    // one per process at first detection). Appended (never renumber).
+    PostureObserve = 6,
 };
 
 // Issue #2054 stamp (schema key on query:security-audit / stats).

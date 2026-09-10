@@ -18,6 +18,8 @@ module;
 #include "compiler/shape.h"
 #include "compiler/value_tags.h"
 #include "core/cpp26_contract_stats.h"
+#include "core/workspace_isolation.hh" // Issue #3630: undeclared MT posture keys
+#include "core/provenance_tracker.hh"  // Issue #3630: autodetect posture flag
 #include "core/arena_auto_policy_stats.h"
 #include "core/densify_consistency_report.h" // Issue #3533: opaque_heap_pin_required_fail_total
 #include "jit_typed_mutation_stats.h"
@@ -12068,7 +12070,7 @@ void ObservabilityPrims::register_eval_p65(PrimRegistrar add, Evaluator& ev) {
             const auto& ring = g_security_event_ring();
             // Issue #3339: live 30 + 8 headroom. Additive insert_kv must
             // raise planned_keys; Agent facade forbids hash-overflow.
-            constexpr std::size_t kSecurityPostureWalPlannedKeys = 40;
+            constexpr std::size_t kSecurityPostureWalPlannedKeys = 48;
             auto* ht =
                 FlatHashTable::create(query_hash_capacity_for(kSecurityPostureWalPlannedKeys));
             if (!ht)
@@ -12129,6 +12131,14 @@ void ObservabilityPrims::register_eval_p65(PrimRegistrar add, Evaluator& ev) {
                            ::aura::core::audit_wal::g_mutation_audit_wal().is_enabled())
                               ? 1
                               : 0));
+            // Issue #3630: undeclared multi-tenant autodetect posture.
+            insert_kv(
+                "undeclared-multi-tenant-detected-total",
+                static_cast<std::int64_t>(
+                    ::aura::core::workspace_isolation::g_tenant_isolation_metrics()
+                        .undeclared_multi_tenant_detected_total.load(std::memory_order_relaxed)));
+            insert_kv("undeclared-mt-autodetect-armed",
+                      ::aura::core::provenance::undeclared_mt_autodetect_armed() ? 1 : 0);
             // Issue #3056: same decide as query:security-posture #2534 /
             // query:audit-wal-stats (AC5 — one surface).
             {

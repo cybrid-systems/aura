@@ -1056,6 +1056,11 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                     static_cast<std::int64_t>(::aura::compiler::kNodeIdOnlyEntryPreventedWired));
                 insert_kv("nodeid-only-entry-prevented-total",
                           static_cast<std::int64_t>(iso.nodeid_only_entry_prevented));
+                // Issue #3630: undeclared multi-tenant autodetect posture.
+                insert_kv("undeclared-multi-tenant-detected-total",
+                          static_cast<std::int64_t>(iso.undeclared_multi_tenant_detected));
+                insert_kv("undeclared-mt-autodetect-armed",
+                          ::aura::core::provenance::undeclared_mt_autodetect_armed() ? 1 : 0);
             }
             // Issue #3011: IsolationDeny SecurityEvent carries live fiber
             // (effect_fiber_id_or). query:security-audit filters by fiber.
@@ -4779,6 +4784,9 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                     case SecurityEventKind::MacroHygieneRollbackOnStrict:
                         kind_str = "MacroHygieneRollbackOnStrict";
                         break;
+                    case SecurityEventKind::PostureObserve: // Issue #3630
+                        kind_str = "PostureObserve";
+                        break;
                 }
                 auto line = std::format(
                     "seq={} kind={} tenant={} fiber={} mutation_id={} epoch={} effect={} "
@@ -4873,6 +4881,8 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                         return "EffectAllow";
                     case SecurityEventKind::MacroHygieneRollbackOnStrict:
                         return "MacroHygieneRollbackOnStrict";
+                    case SecurityEventKind::PostureObserve: // Issue #3630
+                        return "PostureObserve";
                 }
                 return "Unknown";
             };

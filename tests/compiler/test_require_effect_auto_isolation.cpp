@@ -23,6 +23,7 @@
 #include "compiler/typed_mutation_audit.h"
 #include "core/capability_model.hh"
 #include "core/provenance_tracker.hh"
+#include "core/resource_quota.hh" // Issue #3630: quota map arm assertions
 #include "core/sandbox.hh"
 #include "core/security_event.hh"
 #include "core/workspace_epoch.hh"
@@ -78,6 +79,10 @@ static void reset_all() {
     g_workspace_isolation().set_strict_sandbox_linked(false);
     aura::core::provenance::set_multi_tenant_env_active(false);
     aura::core::provenance::clear_last_stamped_node_for_test();
+    aura::core::provenance::reset_undeclared_mt_autodetect_for_test(); // Issue #3630
+    aura::core::provenance::set_hard_capture_tenant(false);            // Issue #3630
+    aura::core::resource_quota::clear_quota_per_tenant_test_override();
+    aura::core::resource_quota::refresh_quota_per_tenant_cache();
     aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
 }
 
@@ -1632,6 +1637,188 @@ static void ac3629_4_source_cite_and_no_invent() {
     CHECK(slurp("tests/compiler/test_issue_3629.cpp").empty(), "3629: no test_issue file");
 }
 
+// ── Issue #3630: undeclared multi-tenant autodetect ──
+static void ac3630_1_detection_arms_idempotent() {
+    std::println("\n--- #3630 AC1: second distinct principal arms undeclared MT ---");
+    reset_all();
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+    CompilerService cs_a;
+    auto& ev_a = cs_a.evaluator();
+    ev_a.set_effect_sandbox_mode(1);
+    CompilerService cs_b;
+    auto& ev_b = cs_b.evaluator();
+    ev_b.set_effect_sandbox_mode(1);
+    const auto det0 = aura::core::workspace_isolation::g_tenant_isolation_metrics()
+                          .undeclared_multi_tenant_detected_total.load(std::memory_order_relaxed);
+    // First principal — no detection (prev 0 -> 7).
+    ev_a.set_tenant_principal(7, {}, /*allow_cross=*/false);
+    CHECK(aura::core::provenance::g_last_seen_nonzero_principal().load(std::memory_order_relaxed) ==
+              7,
+          "3630 AC1: first principal recorded");
+    CHECK(aura::core::workspace_isolation::g_tenant_isolation_metrics()
+                  .undeclared_multi_tenant_detected_total.load(std::memory_order_relaxed) == det0,
+          "3630 AC1: first principal does not detect");
+    CHECK(!aura::core::provenance::multi_tenant_env_active(),
+          "3630 AC1: env flag still dark after first principal");
+    // Second distinct principal — detection + idempotent arm.
+    ev_b.set_tenant_principal(9, {}, /*allow_cross=*/false);
+    CHECK(aura::core::workspace_isolation::g_tenant_isolation_metrics()
+                  .undeclared_multi_tenant_detected_total.load(std::memory_order_relaxed) ==
+              det0 + 1,
+          "3630 AC1: second distinct principal detected once");
+    CHECK(aura::core::provenance::multi_tenant_env_active(),
+          "3630 AC1: env flag armed (lights check_boundary_ex + quota)");
+    CHECK(aura::core::provenance::hard_capture_tenant_active(), "3630 AC1: hard capture armed");
+    CHECK(aura::core::capability::g_capability_registry().hard_fiber_isolation(),
+          "3630 AC1: hard fiber isolation armed");
+    CHECK(aura::core::provenance::undeclared_mt_autodetect_armed(),
+          "3630 AC1: autodetect posture flag set");
+    // Idempotent: same principal re-set does not re-detect.
+    ev_b.set_tenant_principal(9, {}, false);
+    CHECK(aura::core::workspace_isolation::g_tenant_isolation_metrics()
+                  .undeclared_multi_tenant_detected_total.load(std::memory_order_relaxed) ==
+              det0 + 1,
+          "3630 AC1: same-principal re-set does not re-detect");
+    // Third distinct transition: post-arm the window is CLOSED (env flag
+    // on) — no re-detect. Monotonic counter holds at det0+1.
+    ev_a.set_tenant_principal(7, {}, false);
+    CHECK(aura::core::workspace_isolation::g_tenant_isolation_metrics()
+                  .undeclared_multi_tenant_detected_total.load(std::memory_order_relaxed) ==
+              det0 + 1,
+          "3630 AC1: post-arm transitions close the window (no re-detect)");
+    CHECK(aura::core::provenance::multi_tenant_env_active(),
+          "3630 AC1: arm persists across transitions");
+}
+
+static void ac3630_2_fences_on_after_autodetect() {
+    std::println("\n--- #3630 AC2: autodetect lights the dark fences ---");
+    reset_all();
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_effect_sandbox_mode(1);
+    const auto me = current_mutation_epoch();
+    ev.grant_effect_capability(99, "mut-3630-b", kEffectMutate, me == 0 ? 1 : me);
+    ev.grant_effect_capability(7, "mut-3630-a", kEffectMutate, me == 0 ? 1 : me);
+    // Arm via autodetect (no env): principals 7 then 9.
+    ev.set_tenant_principal(7, {}, false);
+    ev.set_tenant_principal(9, {}, false);
+    CHECK(aura::core::provenance::multi_tenant_env_active(), "3630 AC2: armed via autodetect");
+    // Unstamped NodeId-only mutate now denies (#3415 path lit by autodetect).
+    ev.set_capability_tenant_id(99);
+    (void)ev.make_stamped_ref(/*node_id=*/0x300);
+    ev.set_capability_tenant_id(7);
+    const bool ok = ev.require_effect_for_node_id(static_cast<std::uint16_t>(kEffectMutate),
+                                                  "3630-ac2-fence-on", /*node_id=*/0x300);
+    CHECK(!ok, "3630 AC2: unstamped NodeId-only mutate denies after autodetect (no env)");
+    // Hard fiber isolation flag + per-tenant quota map on.
+    CHECK(aura::core::capability::g_capability_registry().hard_fiber_isolation(),
+          "3630 AC2: hard fiber isolation armed (steal x resume gate on)");
+    aura::core::resource_quota::refresh_quota_per_tenant_cache();
+    CHECK(aura::core::resource_quota::quota_per_tenant_enabled(),
+          "3630 AC2: per-tenant quota map armed");
+}
+
+static void ac3630_3_no_false_arm_single_principal() {
+    std::println("\n--- #3630 AC3: single-principal churn never arms ---");
+    reset_all();
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_effect_sandbox_mode(1);
+    const auto det0 = aura::core::workspace_isolation::g_tenant_isolation_metrics()
+                          .undeclared_multi_tenant_detected_total.load(std::memory_order_relaxed);
+    for (int i = 0; i < 50; ++i)
+        ev.set_tenant_principal(7, {}, false);
+    for (int i = 0; i < 10; ++i)
+        ev.set_tenant_principal(0, {}, false);
+    CHECK(aura::core::workspace_isolation::g_tenant_isolation_metrics()
+                  .undeclared_multi_tenant_detected_total.load(std::memory_order_relaxed) == det0,
+          "3630 AC3: same-principal churn does not detect");
+    CHECK(!aura::core::provenance::multi_tenant_env_active(),
+          "3630 AC3: fences stay dark on single-principal churn");
+    CHECK(!aura::core::provenance::undeclared_mt_autodetect_armed(),
+          "3630 AC3: posture flag unset");
+}
+
+static void ac3630_4_off_and_optout() {
+    std::println("\n--- #3630 AC4: Off never arms; AUTODETECT=0 dark but observable ---");
+    // (a) Soft/Off: distinct principals never record (zero-cost, AC4).
+    reset_all();
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    const auto det0 = aura::core::workspace_isolation::g_tenant_isolation_metrics()
+                          .undeclared_multi_tenant_detected_total.load(std::memory_order_relaxed);
+    ev.set_tenant_principal(7, {}, false);
+    ev.set_tenant_principal(9, {}, false);
+    CHECK(aura::core::workspace_isolation::g_tenant_isolation_metrics()
+                  .undeclared_multi_tenant_detected_total.load(std::memory_order_relaxed) == det0,
+          "3630 AC4: Soft/Off never records distinct principals");
+    CHECK(!aura::core::provenance::multi_tenant_env_active(), "3630 AC4: Soft/Off never arms");
+    // (b) AURA_MT_AUTODETECT=0: detection records + SE once, but no arm.
+    reset_all();
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+    CompilerService cs2;
+    auto& ev2 = cs2.evaluator();
+    ev2.set_effect_sandbox_mode(1);
+    const bool fiber_ctor = aura::core::capability::g_capability_registry().hard_fiber_isolation();
+    setenv("AURA_MT_AUTODETECT", "0", 1);
+    const auto det1 = aura::core::workspace_isolation::g_tenant_isolation_metrics()
+                          .undeclared_multi_tenant_detected_total.load(std::memory_order_relaxed);
+    ev2.set_tenant_principal(7, {}, false);
+    ev2.set_tenant_principal(9, {}, false);
+    CHECK(aura::core::workspace_isolation::g_tenant_isolation_metrics()
+                  .undeclared_multi_tenant_detected_total.load(std::memory_order_relaxed) ==
+              det1 + 1,
+          "3630 AC4: opt-out still records detection (observable)");
+    CHECK(!aura::core::provenance::multi_tenant_env_active(),
+          "3630 AC4: opt-out keeps env flag dark");
+    CHECK(aura::core::capability::g_capability_registry().hard_fiber_isolation() == fiber_ctor,
+          "3630 AC4: opt-out does not change hard fiber (ctor baseline held)");
+    CHECK(!aura::core::provenance::undeclared_mt_autodetect_armed(),
+          "3630 AC4: opt-out keeps posture flag dark");
+    unsetenv("AURA_MT_AUTODETECT");
+}
+
+static void ac3630_5_source_cite_and_no_invent() {
+    std::println("\n--- #3630 AC5: source-cite + no invent ---");
+    static const auto slurp = [](const char* path) {
+        for (const auto& p :
+             {std::string(path), std::string("../") + path, std::string("../../") + path}) {
+            std::ifstream in(p);
+            if (!in)
+                continue;
+            return std::string((std::istreambuf_iterator<char>(in)),
+                               std::istreambuf_iterator<char>());
+        }
+        return std::string{};
+    };
+    const auto prov = slurp("src/core/provenance_tracker.hh");
+    CHECK(prov.find("kUndeclaredMtAutodetectIssue = 3630") != std::string::npos,
+          "3630: header stamp");
+    CHECK(prov.find("g_last_seen_nonzero_principal") != std::string::npos,
+          "3630: last-seen principal atom");
+    CHECK(prov.find("AURA_MT_AUTODETECT") != std::string::npos, "3630: opt-out env parse");
+    const auto sec = slurp("src/compiler/evaluator_security.cpp");
+    CHECK(sec.find("undeclared-multi-tenant-armed") != std::string::npos,
+          "3630: stable SE reason string");
+    CHECK(sec.find("Issue #3630") != std::string::npos, "3630: detection site cites");
+    const auto iso = slurp("src/core/workspace_isolation.hh");
+    CHECK(iso.find("undeclared_multi_tenant_detected_total") != std::string::npos,
+          "3630: counter appended at metrics END");
+    const auto quota = slurp("src/core/resource_quota.hh");
+    CHECK(quota.find("refresh_quota_per_tenant_cache") != std::string::npos,
+          "3630: quota cache refresh on arm");
+    CHECK(slurp("src/compiler/evaluator_primitives_obs_eval.cpp")
+                  .find("undeclared-multi-tenant-detected-total") != std::string::npos,
+          "3630: posture key (slim)");
+    CHECK(slurp("src/compiler/evaluator_primitives_security.cpp")
+                  .find("undeclared-multi-tenant-detected-total") != std::string::npos,
+          "3630: posture key (full)");
+    CHECK(slurp("tests/issues/test_issue_3630.cpp").empty(), "3630: no tests/issues file");
+    CHECK(slurp("tests/compiler/test_issue_3630.cpp").empty(), "3630: no test_issue file");
+}
+
 int run_test_require_effect_auto_isolation() {
     std::println("=== Issue #2490: require_effect auto-enforces isolation ===");
     ac1_restricted_unset_principal_denies();
@@ -1706,6 +1893,12 @@ int run_test_require_effect_auto_isolation() {
     ac3629_2_chaos_interleaved_nodes();
     ac3629_3_seqlock_hammer_and_reset();
     ac3629_4_source_cite_and_no_invent();
+    std::println("\n=== Issue #3630: undeclared multi-tenant autodetect ===");
+    ac3630_1_detection_arms_idempotent();
+    ac3630_2_fences_on_after_autodetect();
+    ac3630_3_no_false_arm_single_principal();
+    ac3630_4_off_and_optout();
+    ac3630_5_source_cite_and_no_invent();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

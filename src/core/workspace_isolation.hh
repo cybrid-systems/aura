@@ -99,6 +99,10 @@ struct TenantIsolationMetrics {
     // require_effect_for_node_id before Guard / topology write.
     // Soft/Off allow path does not store. Appended at END (#2906).
     std::atomic<std::uint64_t> nodeid_only_entry_prevented_total{0};
+    // Issue #3630: undeclared multi-tenant autodetect — bumped once per
+    // distinct-second-principal event (no env arm). Appended at END
+    // (#2906).
+    std::atomic<std::uint64_t> undeclared_multi_tenant_detected_total{0};
 };
 
 inline TenantIsolationMetrics& g_tenant_isolation_metrics() noexcept {
@@ -628,6 +632,9 @@ struct TenantIsolationStatsSnapshot {
     std::uint64_t allow_cross_tenant_deny = 0;
     // Issue #3040: NodeId-only compile/mutate entry prevented.
     std::uint64_t nodeid_only_entry_prevented = 0;
+    // Issue #3630: undeclared multi-tenant autodetect detections.
+    // Appended (do not insert mid-struct — positional snapshot init).
+    std::uint64_t undeclared_multi_tenant_detected = 0;
 };
 
 [[nodiscard]] inline TenantIsolationStatsSnapshot snapshot_tenant_isolation_stats() noexcept {
@@ -650,6 +657,7 @@ struct TenantIsolationStatsSnapshot {
         p.strict_sandbox_linked ? 1 : 0,
         m.allow_cross_tenant_deny_total.load(std::memory_order_relaxed),
         m.nodeid_only_entry_prevented_total.load(std::memory_order_relaxed),
+        m.undeclared_multi_tenant_detected_total.load(std::memory_order_relaxed),
     };
 }
 
