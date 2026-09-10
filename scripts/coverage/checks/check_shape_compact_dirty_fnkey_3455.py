@@ -80,7 +80,7 @@ def main() -> int:
     else:
         stripped = re.sub(r"//[^\n]*", "", compact)
         must("dirty_or_relocated", "AC1 span param", compact)
-        must("profiles.find(fn)", "AC1 cone find", compact)
+        must("profiles.find(cfn)", "AC1 cone find", compact)
         if "for (auto&& [fn, profile] : profiles)" in stripped:
             fails.append("AC1: on_arena_compact still walks every profile")
         if re.search(r"\bupdate_deopt_storm_state_\s*\(", stripped):

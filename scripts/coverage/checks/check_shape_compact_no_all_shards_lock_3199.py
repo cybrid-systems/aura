@@ -6,6 +6,8 @@ locks at once, re-serializing disjoint FnKey traffic under densify/compact.
 
 Contract:
   AC1 compact body never calls unique_lock_all_shards_; per-shard unique only
+  AC1b(#3628) the unique set is the shard cone of the span — the 0..N-1
+      unique walk is banned from on_arena_compact (u64 bitmask dedupe)
   AC2 per-profile version still advances (LayoutStamp / SpecJIT see it)
   AC3 #2617 isolation: no update_deopt_storm_state_ / mutation_induced bump
   AC4 Soft / no-compact unchanged; concurrency + compact isolation suites
@@ -81,11 +83,21 @@ def main() -> int:
             fails.append("AC3: on_arena_compact bumps mutation_induced_invalidations_")
         must("Explicitly do NOT call update_deopt_storm_state_", "AC3", compact)
 
+        # Issue #3628: the lock set is the shard cone of the span — the
+        # 0..N-1 unique walk is banned from this function.
+        if re.search(r"i\s*<\s*kShapeProfilerShardCount", stripped):
+            fails.append("AC1(#3628): on_arena_compact still walks 0..N-1 shards for unique")
+        must("seen_shards", "AC1(#3628) cone bitmask dedupe", compact)
+        must("Issue #3628", "AC1(#3628) cite", compact)
+
     must("unique_lock_all_shards_", "AC4 helper retained", cpp)
     must("ac3199_1_compact_no_all_shards", "AC1 test", conc)
     must("ac3199_2_version_advances", "AC2 test", conc)
     must("ac3199_3_compact_not_storm", "AC3 test", conc)
     must("3199", "AC4 compact isolation suite", iso)
+    must("kShapeCompactShardConeLockIssue = 3628", "AC1(#3628) header stamp", hh)
+    must("ac3628_shard_cone_lock_set", "AC1(#3628) isolation-suite test", iso)
+    must("kShapeCompactShardConeLockIssue", "AC1(#3628) test uses stamp", iso)
     must("check_shape_compact_no_all_shards_lock_3199", "AC5 build.py", build)
     must("#3199", "AC5 2937 linter lineage", shard_lint)
 
@@ -109,7 +121,7 @@ def main() -> int:
             print(f"FAIL: {f}", file=sys.stderr)
         print(f"\n{len(fails)} contract row(s) failed", file=sys.stderr)
         return 1
-    print("OK: Issue #3199 on_arena_compact per-shard lock — all AC rows satisfied")
+    print("OK: Issue #3199/#3628 on_arena_compact per-shard + shard-cone lock — all AC rows satisfied")
     return 0
 
 
