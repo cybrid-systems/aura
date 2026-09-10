@@ -73,9 +73,11 @@ def main() -> int:
         spawn,
     )
     # agent_send BP arm passes h.bp_scope_id (instead of empty default).
-    # The exact text is searched twice (agent_send + emit_keepalive).
+    # The call text is searched twice (agent_send + emit_keepalive).
+    # Issue #3632: the BP arms now also pass the sender fiber — the pin
+    # keeps the scope arg + trailing comma (sender attribution wired).
     must(
-        "note_mailbox_bp_recent_event(h.bp_scope_id)",
+        "note_mailbox_bp_recent_event(h.bp_scope_id,",
         "AC1 agent_send BP arm passes h.bp_scope_id (not empty default)",
         spawn,
     )
