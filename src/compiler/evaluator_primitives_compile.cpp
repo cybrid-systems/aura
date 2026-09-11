@@ -14,6 +14,8 @@ module;
 #include "hash_meta.h"
 #include "basis_points.h"
 #include "security_capabilities.h"
+#include "typed_mutation_audit.h"     // Issue #3650: clear-marker MSE deny audit
+#include "core/security_event_wal.hh" // Issue #3650: clear-marker MSE deny WAL
 
 
 module aura.compiler.evaluator;
@@ -174,6 +176,40 @@ bool gate_compile_node_effect(Evaluator& ev, std::string_view op, const CompileN
         return ev.require_effect_on_ref(bits, op, ref);
     }
     return ev.require_effect_for_node_id(bits, op, arg.id);
+}
+
+// Issue #3650: clear-MacroIntroduced deny — same MSE contract as the
+// mutate TU's deny_macro_opt_out_without_mse (#3542; that helper is
+// file-local and builds the merr via its caller's MakeErrorVal, so
+// this TU mirrors only the telemetry). Returns true when the clear is
+// DENIED (no MacroSelfEvo under the active face — telemetry recorded);
+// false when allowed (require_effect_for_node_id handles Soft/Off as
+// one load). The caller builds the hygiene-protected merr.
+static bool deny_marker_clear_without_mse(Evaluator& ev, aura::ast::NodeId id) {
+    using aura::compiler::security::kEffectMacroSelfEvo;
+    if (ev.require_effect_for_node_id(kEffectMacroSelfEvo, "macro-mutate", id))
+        return false;
+    auto& met = aura::core::capability::g_capability_effect_metrics();
+    met.macro_mutate_capability_deny_total.fetch_add(1, std::memory_order_relaxed);
+    using ::aura::core::security_event::SecurityEventKind;
+    using ::aura::core::security_event_wal::emit_security_event_durable;
+    const auto mid = typed_audit::join_audit_and_se_mid(0);
+    const auto epoch = aura::core::current_mutation_epoch();
+    emit_security_event_durable(
+        SecurityEventKind::EffectDeny, ev.capability_tenant_id(), mid, epoch, kEffectMacroSelfEvo,
+        "macro-self-evo", "macro-mutate-needs-macro-self-evo",
+        /*denied=*/true, static_cast<std::int64_t>(aura_fiber_current_id()));
+    ev.record_hygiene_violation_attempt();
+    typed_audit::capture_macro_hygiene_audit(
+        "macro-mutate-needs-macro-self-evo", typed_audit::AuditOutcome::Error,
+        static_cast<std::uint32_t>(id), static_cast<std::int64_t>(aura_fiber_current_id()),
+        ev.capability_tenant_id());
+    if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
+        m->macro_hygiene_provenance_hits_total.fetch_add(1, std::memory_order_relaxed);
+        m->last_hygiene_blame_node = static_cast<std::uint32_t>(id);
+        m->last_hygiene_blame_mutation = typed_audit::join_audit_and_se_mid(0);
+    }
+    return true;
 }
 
 // Issue #1898: pin compiler_service_ for multi-step stats readers.
@@ -4169,6 +4205,16 @@ void CompilePrims::register_compile_p42(PrimRegistrar add, Evaluator& ev) {
         if (!gate_compile_node_effect(ev, "syntax:set-marker", narg))
             return ev.make_merr("tenant-isolation-denied",
                                 "cross-tenant syntax:set-marker denied (#3040)");
+        // Issue #3650: clearing a MacroIntroduced marker (→ User /
+        // BoolLiteral) is the unstamp face — same MSE gate as
+        // mutate:rollback-macro-introduced / structural macro-mutate
+        // (#3542 contract). Setting MacroIntroduced or User→User keeps
+        // the existing Mutate/tenant-only gates above.
+        if (marker_val != 1 && ev.workspace_flat_->is_macro_introduced(id) &&
+            deny_marker_clear_without_mse(ev, id)) {
+            return ev.make_merr("hygiene-protected",
+                                "mutation of MacroIntroduced requires MacroSelfEvo capability");
+        }
         // No MutationBoundaryGuard — metadata-only (no generation
         // bump). Issue #1783: exclusive metadata_mtx_ serializes
         // cross-fiber marker_column writes without invalidating

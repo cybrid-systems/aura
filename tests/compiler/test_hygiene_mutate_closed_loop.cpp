@@ -5087,6 +5087,149 @@ static void ac3640_packed_gate_spine() {
           "3640 AC4: Soft v1 (id . gen) accepted (no #3395 reject, no isolation deny)");
 }
 
+// ── Issue #3650: rollback / set-marker clear requires MacroSelfEvo ──
+static void ac3650_1_rollback_denied_without_mse() {
+    std::println("\n--- #3650 AC1: rollback-macro-introduced denied without MSE ---");
+    using aura::core::capability::g_capability_effect_metrics;
+    using aura::core::capability::reset_capability_effects_for_test;
+    using aura::core::security_event::reset_security_event_ring_for_test;
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    reset_capability_effects_for_test();
+    reset_security_event_ring_for_test();
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define f (lambda (x) (+ x 1)))\")").has_value(),
+          "3650 AC1: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3650 AC1: eval");
+    auto find_f = cs.eval("(car (query :find \"f\"))");
+    CHECK(find_f && is_int(*find_f), "3650 AC1: find f");
+    const auto id = static_cast<aura::ast::NodeId>(as_int(*find_f));
+    CHECK(cs.eval(std::format("(syntax:set-marker {} 1)", as_int(*find_f))).has_value(),
+          "3650 AC1: stamp MacroIntroduced");
+    grant_3301_production_mutate(cs);
+    aura::core::capability::g_capability_registry().revoke(cs.evaluator().capability_tenant_id(),
+                                                           "tenant-admin");
+    const auto deny0 = g_capability_effect_metrics().macro_mutate_capability_deny_total.load();
+    auto denied = cs.eval(std::format("(mutate:rollback-macro-introduced {})", as_int(*find_f)));
+    CHECK(denied.has_value(), "3650 AC1: returns");
+    CHECK(merr_kind_3027(cs, *denied) == "hygiene-protected", "3650 AC1: capability fence kind");
+    CHECK(g_capability_effect_metrics().macro_mutate_capability_deny_total.load() > deny0,
+          "3650 AC1: deny counter");
+    CHECK(ring_has_reason_3542("macro-mutate-needs-macro-self-evo"), "3650 AC1: SE reason");
+    auto& ws = *cs.evaluator().workspace_flat();
+    CHECK(ws.is_macro_introduced(id), "3650 AC1: marker unchanged");
+    reset_capability_effects_for_test();
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+}
+
+static void ac3650_2_set_marker_clear_denied() {
+    std::println("\n--- #3650 AC2: set-marker MacroIntroduced→User denied without MSE ---");
+    using aura::core::capability::reset_capability_effects_for_test;
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    reset_capability_effects_for_test();
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define f (lambda (x) (+ x 1)))\")").has_value(),
+          "3650 AC2: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3650 AC2: eval");
+    auto find_f = cs.eval("(car (query :find \"f\"))");
+    CHECK(find_f && is_int(*find_f), "3650 AC2: find f");
+    const auto id = static_cast<aura::ast::NodeId>(as_int(*find_f));
+    grant_3301_production_mutate(cs);
+    aura::core::capability::g_capability_registry().revoke(cs.evaluator().capability_tenant_id(),
+                                                           "tenant-admin");
+    auto& ws = *cs.evaluator().workspace_flat();
+    // Stamp MacroIntroduced → allowed (not a clear; existing Mutate/tenant gates only).
+    CHECK(cs.eval(std::format("(syntax:set-marker {} 1)", as_int(*find_f))).has_value(),
+          "3650 AC2: stamp 1 allowed");
+    CHECK(ws.is_macro_introduced(id), "3650 AC2: stamped");
+    // MacroIntroduced → User: denied without MSE.
+    auto denied = cs.eval(std::format("(syntax:set-marker {} 0)", as_int(*find_f)));
+    CHECK(denied.has_value(), "3650 AC2: returns");
+    CHECK(merr_kind_3027(cs, *denied) == "hygiene-protected", "3650 AC2: clear denied kind");
+    CHECK(ws.is_macro_introduced(id), "3650 AC2: marker unchanged after denied clear");
+    // User→User on a plain LiteralInt: allowed (existing gates only).
+    const auto lit = first_lit_int(&ws);
+    CHECK(lit != aura::ast::NULL_NODE, "3650 AC2: LiteralInt");
+    CHECK(cs.eval(std::format("(syntax:set-marker {} 0)", static_cast<unsigned>(lit))).has_value(),
+          "3650 AC2: User→User allowed");
+    reset_capability_effects_for_test();
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+}
+
+static void ac3650_3_rollback_with_mse_unstamps() {
+    std::println("\n--- #3650 AC3: rollback with MacroSelfEvo still unstamps ---");
+    using aura::core::capability::g_capability_registry;
+    using aura::core::capability::MacroSelfEvoPolicy;
+    using aura::core::capability::reset_capability_effects_for_test;
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    reset_capability_effects_for_test();
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define f (lambda (x) (+ x 1)))\")").has_value(),
+          "3650 AC3: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3650 AC3: eval");
+    auto find_f = cs.eval("(car (query :find \"f\"))");
+    CHECK(find_f && is_int(*find_f), "3650 AC3: find f");
+    const auto id = static_cast<aura::ast::NodeId>(as_int(*find_f));
+    CHECK(cs.eval(std::format("(syntax:set-marker {} 1)", as_int(*find_f))).has_value(),
+          "3650 AC3: stamp MacroIntroduced");
+    grant_3301_production_mutate(cs);
+    const auto tenant = cs.evaluator().capability_tenant_id();
+    g_capability_registry().grant_macro_self_evo(tenant, MacroSelfEvoPolicy{},
+                                                 aura_test_grant_prov(), tenant);
+    auto rolled = cs.eval(std::format("(mutate:rollback-macro-introduced {})", as_int(*find_f)));
+    CHECK(rolled.has_value() && is_int(*rolled) && as_int(*rolled) >= 1,
+          "3650 AC3: rollback unstamps with MSE");
+    auto& ws = *cs.evaluator().workspace_flat();
+    CHECK(!ws.is_macro_introduced(id), "3650 AC3: marker cleared");
+    reset_capability_effects_for_test();
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+}
+
+static void ac3650_4_soft_rollback_unchanged() {
+    std::println("\n--- #3650 AC4: Soft rollback / clear unchanged (one load, no MSE scan) ---");
+    using aura::core::capability::reset_capability_effects_for_test;
+    reset_capability_effects_for_test();
+    CompilerService cs;
+    CHECK(cs.evaluator().effect_sandbox_mode() == 0, "3650 AC4: Soft sandbox");
+    CHECK(cs.eval("(set-code \"(define f (lambda (x) (+ x 1)))\")").has_value(),
+          "3650 AC4: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3650 AC4: eval");
+    auto find_f = cs.eval("(car (query :find \"f\"))");
+    CHECK(find_f && is_int(*find_f), "3650 AC4: find f");
+    const auto id = static_cast<aura::ast::NodeId>(as_int(*find_f));
+    CHECK(cs.eval(std::format("(syntax:set-marker {} 1)", as_int(*find_f))).has_value(),
+          "3650 AC4: stamp allowed under Soft");
+    auto rolled = cs.eval(std::format("(mutate:rollback-macro-introduced {})", as_int(*find_f)));
+    CHECK(rolled.has_value() && is_int(*rolled) && as_int(*rolled) >= 1,
+          "3650 AC4: Soft rollback unstamps without MSE");
+    auto& ws = *cs.evaluator().workspace_flat();
+    CHECK(!ws.is_macro_introduced(id), "3650 AC4: marker cleared under Soft");
+    CHECK(cs.eval(std::format("(syntax:set-marker {} 0)", as_int(*find_f))).has_value(),
+          "3650 AC4: Soft set-marker clear unchanged");
+}
+
+static void ac3650_5_source_and_no_artifacts() {
+    std::println("\n--- #3650 AC5: source-cite + no forbidden artifacts ---");
+    const auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
+    const auto cmp = read_file("src/compiler/evaluator_primitives_compile.cpp");
+    const auto build = read_file("build.py");
+    CHECK(mut.find("Issue #3650") != std::string::npos, "3650 AC5: rollback gate cite");
+    CHECK(mut.find("subtree_has_macro_introduced") != std::string::npos,
+          "3650 AC5: subtree walker");
+    CHECK(cmp.find("Issue #3650") != std::string::npos, "3650 AC5: set-marker gate cite");
+    CHECK(cmp.find("deny_marker_clear_without_mse") != std::string::npos,
+          "3650 AC5: compile deny helper");
+    CHECK(cmp.find("macro-mutate-needs-macro-self-evo") != std::string::npos,
+          "3650 AC5: SE reason shared");
+    CHECK(build.find("check_rollback_mse_3650") != std::string::npos,
+          "3650 AC5: build.py wires linter");
+    const std::string issue_artifact = std::string("test_issue_") + "3650";
+    CHECK(mut.find(issue_artifact) == std::string::npos &&
+              cmp.find(issue_artifact) == std::string::npos,
+          "3650 AC5: no tests/issues artifact");
+    CHECK(read_file("docs/design/3650-rollback-set-marker-mse.md").empty(),
+          "3650 AC5: no docs/design/");
+}
+
 int main() {
     std::println("=== test_hygiene_mutate_closed_loop (#2037 + #2762 + #2858 + #2863 + #2864 + "
                  "#2961 + #3000 + #3027 + #3037 + #3076 + #3121) ===");
@@ -5279,6 +5422,12 @@ int main() {
     ac3637_allow_pass();
     std::println("\n=== Issue #3640: add_mutate gate single spine (wrap != tenant) ===");
     ac3640_packed_gate_spine();
+    std::println("\n=== Issue #3650: rollback / set-marker clear requires MacroSelfEvo ===");
+    ac3650_1_rollback_denied_without_mse();
+    ac3650_2_set_marker_clear_denied();
+    ac3650_3_rollback_with_mse_unstamps();
+    ac3650_4_soft_rollback_unchanged();
+    ac3650_5_source_and_no_artifacts();
     std::println("\n=== {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

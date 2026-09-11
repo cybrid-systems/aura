@@ -432,6 +432,35 @@ namespace {
         return subtree_has_closure(flat, body);
     }
 
+    // Issue #3650: subtree would-clear predicate for the rollback prim —
+    // true when any node under root still carries MacroIntroduced. The
+    // unstamp walker (unstamp_macro_introduced) clears the whole subtree,
+    // so a root-only marker check would leave child-level strips
+    // ungated. Iterative + seen-set (#1782: FlatAST children can form
+    // cycles).
+    static bool subtree_has_macro_introduced(const aura::ast::FlatAST& flat,
+                                             aura::ast::NodeId root) {
+        if (root == aura::ast::NULL_NODE || root >= flat.size())
+            return false;
+        std::vector<char> seen(flat.size(), 0);
+        std::vector<aura::ast::NodeId> stack{root};
+        while (!stack.empty()) {
+            const auto id = stack.back();
+            stack.pop_back();
+            if (id == aura::ast::NULL_NODE || id >= flat.size() || seen[id])
+                continue;
+            seen[id] = 1;
+            if (flat.is_macro_introduced(id))
+                return true;
+            auto v = flat.get(id);
+            for (auto c : v.children) {
+                if (c != aura::ast::NULL_NODE)
+                    stack.push_back(c);
+            }
+        }
+        return false;
+    }
+
     // Issue #3542: :allow-macro? / global opt-out still requires MacroSelfEvo
     // under Restricted/Strict (wildcard-only is stripped by effects_for
     // #3144). Soft / Off: effect_sandbox_mode()==0 → one load, no scan.
@@ -2918,6 +2947,19 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             bool keep_provenance = false;
             if (a.size() >= 2 && is_int(a[1])) {
                 keep_provenance = as_int(a[1]) != 0;
+            }
+            // Issue #3650: unstamp IS the macro-mutate face — stripping
+            // the marker here would let the #3344/#3542 structural
+            // default-deny go vacuous (the subtree then mutates as User).
+            // Same MSE gate as structural mutate; rollback stays
+            // reachable WITH the capability (HYGIENE_EXEMPT surface
+            // preserved). Soft/Off: effect_sandbox_mode()==0 → one load,
+            // no scan.
+            if (ev.effect_sandbox_mode() != 0 && subtree_has_macro_introduced(flat, root)) {
+                if (auto denied = deny_macro_opt_out_without_mse(ev, root, mev)) {
+                    ok = false;
+                    return *denied;
+                }
             }
             // No-op on NULL_NODE or out-of-bounds (caller bug; report 0 unstampped).
             // Routes through C-linkage helper aura_unstamp_macro_introduced_with_counter
