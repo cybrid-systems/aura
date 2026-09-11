@@ -20,6 +20,7 @@
 
 #include "test_harness.hpp"
 #include "compiler/observability_metrics.h"
+#include "compiler/typed_mutation_audit.h"
 
 #include <atomic>
 #include <cstdint>
@@ -32,6 +33,7 @@
 
 import std;
 import aura.compiler.evaluator;
+import aura.compiler.ir_cache_pure;
 import aura.compiler.service;
 import aura.compiler.value;
 
@@ -195,6 +197,10 @@ static void ac3611_2_reconsult_after_attribution();
 static void ac3611_3_soft_clean_zero_extra();
 static void ac3611_4_peer_soak_lookup_stays_hot();
 static void ac3611_5_source_and_linter();
+
+// Issue #3657: unslotted string edges + lockless reject must arm pending UB.
+static void ac3657_2_reject_arms_pending_ub();
+static void ac3657_5_source_and_linter();
 
 int run_test_cascade_decision_residual_atomic_3135() {
     std::println("=== Issue #3135: cascade-decision residual atomic ===");
@@ -384,6 +390,10 @@ int run_test_cascade_decision_residual_atomic_3135() {
     ac3611_3_soft_clean_zero_extra();
     ac3611_4_peer_soak_lookup_stays_hot();
     ac3611_5_source_and_linter();
+
+    std::println("\n=== Issue #3657: unslotted string edge / reject must arm ===");
+    ac3657_2_reject_arms_pending_ub();
+    ac3657_5_source_and_linter();
 
     std::println("\n=== Final: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
@@ -894,5 +904,53 @@ static void ac3611_5_source_and_linter() {
           "3611 AC5: no tests/issues/test_issue_3611.cpp");
     CHECK(read_file("docs/design/3611-attribution-reconsult.md").empty(),
           "3611 AC5: no docs/design");
+}
+
+static void ac3657_2_reject_arms_pending_ub() {
+    std::println("\n--- #3657 AC2: lockless reject arms pending UB ---");
+    const auto ixx = read_file("src/compiler/service.ixx");
+    auto rd_pos =
+        ixx.find("void record_dependency(const std::string& caller, const std::string& callee)");
+    CHECK(rd_pos != std::string::npos, "3657 AC2: record_dependency");
+    auto rd_win = ixx.substr(rd_pos, 4500);
+    CHECK(rd_win.find("Issue #3657") != std::string::npos, "3657 AC2: reject cites #3657");
+    CHECK(rd_win.find("deferred_hybrid_armed_.store(1") != std::string::npos,
+          "3657 AC2: reject stores armed=1");
+    CHECK(ixx.find("deferred_hybrid_pending_upper_bound_") != std::string::npos,
+          "3657 AC2: pending UB folded into impact_ub");
+
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    CompilerService cs;
+    cs.public_drain_deferred_hybrid_cascade();
+    CHECK(cs.public_deferred_hybrid_armed_for_test() == 0, "3657 AC2: armed 0 after drain");
+    CHECK(cs.public_deferred_hybrid_pending_upper_bound_for_test("A") == 0,
+          "3657 AC2: pending 0 when unarmed");
+    cs.public_note_stale_dep_reject("A", "B");
+    CHECK(cs.public_deferred_hybrid_armed_for_test() == 1, "3657 AC2: reject arms");
+    const auto pending = cs.public_deferred_hybrid_pending_upper_bound_for_test("A");
+    CHECK(pending >= 1, "3657 AC2: impact pending UB includes the edge");
+    CHECK(!aura::compiler::should_partial_relower_impact_checked_prod(1, 0, true),
+          "3657 AC2: production unknown impact (ub==0) forces full");
+    (void)aura::compiler::should_partial_relower_impact_checked_prod(1, pending, true);
+    cs.public_drain_deferred_hybrid_cascade();
+    CHECK(cs.public_graphs_consistent(), "3657 AC2: consistent after drain");
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+}
+
+static void ac3657_5_source_and_linter() {
+    std::println("\n--- #3657 AC5: linter + no invent ---");
+    const auto t = read_file("tests/compiler/test_cascade_decision_residual_atomic.cpp");
+    const auto hy = read_file("tests/compiler/test_dep_graph_hybrid_cascade.cpp");
+    const auto build = read_file("build.py");
+    CHECK(t.find("ac3657_2_reject_arms_pending_ub") != std::string::npos, "3657 AC5: AC2 here");
+    CHECK(hy.find("ac3657_1_unslotted_production_inconsistent") != std::string::npos,
+          "3657 AC5: hybrid AC1");
+    CHECK(build.find("check_unslotted_string_edge_parity_3657") != std::string::npos,
+          "3657 AC5: build.py");
+    CHECK(read_file("tests/compiler/test_issue_3657.cpp").empty(), "3657 AC5: no invent");
+    CHECK(read_file("docs/design/3657-unslotted-parity.md").empty(), "3657 AC5: no docs/design");
+    CHECK(read_file("src/compiler/evaluator_primitives_obs_eval.cpp")
+                  .find("query:dirty-cascade-stats") != std::string::npos,
+          "3657 AC5: old query key retained (not rewritten)");
 }
 #endif

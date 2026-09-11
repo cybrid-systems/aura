@@ -1467,6 +1467,107 @@ static void ac3580_4_source_cite_no_invent() {
           "3580 AC4: no check_3580.py");
 }
 
+static void ac3657_1_unslotted_production_inconsistent() {
+    std::println("\n--- #3657 AC1: production unslotted string edge is inconsistent ---");
+    const auto pure = read_file("src/compiler/dirty_propagation.ixx");
+    CHECK(pure.find("Issue #3657") != std::string::npos, "3657 AC1: graphs_consistent cite");
+    CHECK(pure.find("hard_unslotted") != std::string::npos, "3657 AC1: production unslotted gate");
+
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    {
+        std::unordered_map<std::string, aura::compiler::dirty::FunctionDepEntry,
+                           aura::core::TransparentStringHash, std::equal_to<>>
+            str_dep;
+        std::unordered_map<std::string, std::uint32_t, aura::core::TransparentStringHash,
+                           std::equal_to<>>
+            name_to_slot;
+        name_to_slot["g"] = 1;
+        str_dep["ghost"].called_by.push_back("g");
+        aura::compiler::dirty::DepGraph node_dep;
+        CHECK(!aura::compiler::dirty::graphs_consistent(str_dep, node_dep, name_to_slot),
+              "3657 AC1: production unslotted callee → false");
+    }
+    CompilerService cs;
+    CHECK(cs.eval(R"(
+(set-code "
+(define B (lambda () 1))
+(define A (lambda () (B)))
+")")
+              .has_value(),
+          "3657 AC1: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3657 AC1: eval");
+    CHECK(cs.get_define_v2("B") != nullptr, "3657 AC1: B cached");
+    const auto* be = cs.get_define_v2("B");
+    const std::size_t fi = (be && be->irs.size() >= 2) ? 1 : 0;
+    CHECK(cs.mark_block_dirty_v2("B", fi, 0), "3657 AC1: B one-block dirty (want_partial)");
+    cs.inject_string_called_by_unslotted_for_test("A", "ghost");
+    CHECK(!cs.public_graphs_consistent(), "3657 AC1: CS unslotted → inconsistent");
+    auto& m = cs.metrics();
+    const auto fail0 = m.dual_dep_graph_parity_fail_total.load(std::memory_order_relaxed);
+    const auto forced0 = m.partial_forced_full_by_impact_total.load(std::memory_order_relaxed);
+    (void)cs.public_relower_dirty_defines_from_workspace();
+    CHECK(m.dual_dep_graph_parity_fail_total.load(std::memory_order_relaxed) > fail0 ||
+              m.partial_forced_full_by_impact_total.load(std::memory_order_relaxed) > forced0,
+          "3657 AC1: fail_total or forced_full bumped");
+    CHECK(!cs.public_graphs_consistent(), "3657 AC1: still inconsistent (rebuild skips unslotted)");
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+}
+
+static void ac3657_3_soft_unslotted_continue() {
+    std::println("\n--- #3657 AC3: Soft unslotted continue + armed==0 zero cost ---");
+    const auto pure = read_file("src/compiler/dirty_propagation.ixx");
+    CHECK(pure.find("never mirrored; not a parity violation (Soft)") != std::string::npos,
+          "3657 AC3: Soft continue retained");
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    {
+        std::unordered_map<std::string, aura::compiler::dirty::FunctionDepEntry,
+                           aura::core::TransparentStringHash, std::equal_to<>>
+            str_dep;
+        std::unordered_map<std::string, std::uint32_t, aura::core::TransparentStringHash,
+                           std::equal_to<>>
+            name_to_slot;
+        name_to_slot["g"] = 1;
+        str_dep["ghost"].called_by.push_back("g");
+        aura::compiler::dirty::DepGraph node_dep;
+        CHECK(aura::compiler::dirty::graphs_consistent(str_dep, node_dep, name_to_slot),
+              "3657 AC3: Soft unslotted continue → consistent");
+    }
+    CompilerService cs;
+    cs.inject_string_called_by_unslotted_for_test("A", "ghost");
+    CHECK(cs.public_graphs_consistent(), "3657 AC3: Soft CS unslotted still consistent");
+    CHECK(cs.public_deferred_hybrid_armed_for_test() == 0, "3657 AC3: armed==0");
+    CHECK(cs.public_deferred_hybrid_pending_upper_bound_for_test("A") == 0,
+          "3657 AC3: pending UB 0 when unarmed");
+}
+
+static void ac3657_4_slotted_3165_still_consistent() {
+    std::println("\n--- #3657 AC4: slotted #3165 public_graphs_consistent ---");
+    const auto t = read_file("tests/compiler/test_dep_graph_hybrid_cascade.cpp");
+    CHECK(t.find("ac3165_strict_fail_closed_all_callers") != std::string::npos,
+          "3657 AC4: #3165 soak stays");
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    CompilerService cs;
+    cs.public_record_dependency("A", "B");
+    CHECK(cs.public_graphs_consistent(), "3657 AC4: slotted dual-write consistent");
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+}
+
+static void ac3657_5_linter_no_invent() {
+    std::println("\n--- #3657 AC5: linter + no invent / no query-key rewrite ---");
+    const auto t = read_file("tests/compiler/test_dep_graph_hybrid_cascade.cpp");
+    const auto build = read_file("build.py");
+    const auto q = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
+    CHECK(t.find("ac3657_1_unslotted_production_inconsistent") != std::string::npos,
+          "3657 AC5: AC1");
+    CHECK(build.find("check_unslotted_string_edge_parity_3657") != std::string::npos,
+          "3657 AC5: build.py");
+    CHECK(q.find("query:dirty-cascade-stats") != std::string::npos ||
+              q.find("dirty-cascade-stats") != std::string::npos,
+          "3657 AC5: old query key retained");
+    CHECK(read_file("tests/compiler/test_issue_3657.cpp").empty(), "3657 AC5: no invent");
+    CHECK(read_file("docs/design/3657-unslotted-parity.md").empty(), "3657 AC5: no docs/design");
+}
+
 int run_test_dep_graph_hybrid_cascade() {
     std::println("=== Issue #2110 + #2187: hybrid dep_graph ↔ NodeId DepGraph (block edges) ===");
     ac1_dual_graph_parity();
@@ -1513,6 +1614,12 @@ int run_test_dep_graph_hybrid_cascade() {
     ac3615_3_soft_zero_extra_path();
     ac3615_4_no_new_metrics_or_query_key();
     ac3615_5_linter_self_test();
+    // Issue #3657: unslotted string called_by is a production parity miss;
+    // Soft keeps continue. #3165 slotted soak stays.
+    ac3657_1_unslotted_production_inconsistent();
+    ac3657_3_soft_unslotted_continue();
+    ac3657_4_slotted_3165_still_consistent();
+    ac3657_5_linter_no_invent();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
