@@ -2955,28 +2955,38 @@ EvalResult Evaluator::eval_flat_apply_mutate_replace_pattern(std::span<const typ
             aura::diag::ErrorKind::ParseError, "batch :replace-pattern: pattern parse failed"});
     auto wildcard_sym = pat_pool->intern("...");
 
-    std::function<bool(aura::ast::NodeId, aura::ast::NodeId)> match_sub;
-    match_sub = [&](aura::ast::NodeId wid, aura::ast::NodeId pid) -> bool {
-        if (pid >= pat_flat->size() || wid >= flat.size())
-            return false;
-        auto wv = flat.get(wid);
-        auto pv = pat_flat->get(pid);
-        if (pv.tag == aura::ast::NodeTag::Variable && pv.sym_id == wildcard_sym)
+    // Issue #3664: recursive matcher without type-erased callable
+    // (no heap closure, no indirect call per node). Wildcard `...`,
+    // tag/sym equality, and per-child walk are unchanged. Soft/Off
+    // same helper. Do not merge query:pattern (#1374).
+    struct MatchSub {
+        const aura::ast::FlatAST* flat;
+        const aura::ast::FlatAST* pat;
+        aura::ast::SymId wildcard;
+        bool operator()(aura::ast::NodeId wid, aura::ast::NodeId pid) const {
+            if (pid >= pat->size() || wid >= flat->size())
+                return false;
+            auto wv = flat->get(wid);
+            auto pv = pat->get(pid);
+            if (pv.tag == aura::ast::NodeTag::Variable && pv.sym_id == wildcard)
+                return true;
+            if (wv.tag != pv.tag)
+                return false;
+            if (wv.tag == aura::ast::NodeTag::Variable ||
+                wv.tag == aura::ast::NodeTag::LiteralString ||
+                wv.tag == aura::ast::NodeTag::Define || wv.tag == aura::ast::NodeTag::DefineType ||
+                wv.tag == aura::ast::NodeTag::DefineModule)
+                if (wv.sym_id != pv.sym_id)
+                    return false;
+            if (wv.children.size() != pv.children.size())
+                return false;
+            for (std::size_t ci = 0; ci < wv.children.size(); ++ci)
+                if (!(*this)(wv.child(ci), pv.child(ci)))
+                    return false;
             return true;
-        if (wv.tag != pv.tag)
-            return false;
-        if (wv.tag == aura::ast::NodeTag::Variable || wv.tag == aura::ast::NodeTag::LiteralString ||
-            wv.tag == aura::ast::NodeTag::Define || wv.tag == aura::ast::NodeTag::DefineType ||
-            wv.tag == aura::ast::NodeTag::DefineModule)
-            if (wv.sym_id != pv.sym_id)
-                return false;
-        if (wv.children.size() != pv.children.size())
-            return false;
-        for (std::size_t ci = 0; ci < wv.children.size(); ++ci)
-            if (!match_sub(wv.child(ci), pv.child(ci)))
-                return false;
-        return true;
+        }
     };
+    const MatchSub match_sub{&flat, pat_flat, wildcard_sym};
 
     // ── Phase 1 (#2800): collect StableNodeRef before any workspace parse ──
     // Snapshot end_id so match scan does not extend into later replacements.

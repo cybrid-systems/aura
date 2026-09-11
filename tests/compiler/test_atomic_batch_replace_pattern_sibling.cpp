@@ -188,6 +188,92 @@ int run_test_atomic_batch_replace_pattern_sibling() {
         }
     }
 
+    // ── Issue #3664: lockless match_sub is a local recursive struct, not
+    // a type-erased callable. Wildcard + nested match still apply. Soft unchanged.
+    {
+        std::println("\n--- #3664 AC1: replace-pattern arm has no std::function ---");
+        auto flat = read_file("src/compiler/evaluator_eval_flat.cpp");
+        auto lpos = flat.find("eval_flat_apply_mutate_replace_pattern");
+        CHECK(lpos != std::string::npos, "3664 AC1: lockless helper");
+        auto nxt = flat.find("eval_flat_apply_mutate_replace_subtree", lpos);
+        auto lwin = nxt != std::string::npos && nxt > lpos ? flat.substr(lpos, nxt - lpos)
+                                                           : flat.substr(lpos, 14000);
+        CHECK(lwin.find("Issue #3664") != std::string::npos, "3664 AC1: cites #3664");
+        CHECK(lwin.find("struct MatchSub") != std::string::npos, "3664 AC1: local MatchSub");
+        CHECK(lwin.find("operator()") != std::string::npos, "3664 AC1: recursive operator()");
+        CHECK(lwin.find("std::function") == std::string::npos,
+              "3664 AC1: no std::function in replace-pattern arm");
+        CHECK(lwin.find("(*this)") != std::string::npos, "3664 AC1: recurse via *this");
+    }
+    {
+        std::println("\n--- #3664 AC2: #3042 PureWrap still bans std::function dirty pred ---");
+        const auto pw =
+            read_file("scripts/coverage/checks/check_pure_wrap_no_std_function_3042.py");
+        CHECK(pw.find("Issue #3042") != std::string::npos, "3664 AC2: #3042 linter present");
+        CHECK(pw.find("std::function") != std::string::npos, "3664 AC2: #3042 still bans");
+        const auto ev = read_file("src/compiler/evaluator_eval_flat.cpp");
+        CHECK(ev.find("std::function<bool(aura::ast::NodeId)> has_define") != std::string::npos,
+              "3664 AC2: while has_define cold std::function may remain");
+        CHECK(ev.find("std::function<std::string(aura::ast::NodeId)> node_source") !=
+                  std::string::npos,
+              "3664 AC2: DefineModule serializer cold std::function may remain");
+    }
+    {
+        std::println("\n--- #3664 AC3: Soft/Off unchanged; no new query key ---");
+        auto flat = read_file("src/compiler/evaluator_eval_flat.cpp");
+        auto lpos = flat.find("eval_flat_apply_mutate_replace_pattern");
+        auto nxt = flat.find("eval_flat_apply_mutate_replace_subtree", lpos);
+        auto lwin = nxt != std::string::npos && nxt > lpos ? flat.substr(lpos, nxt - lpos)
+                                                           : flat.substr(lpos, 14000);
+        CHECK(lwin.find("schema-3664") == std::string::npos, "3664 AC3: no schema-3664");
+        CHECK(lwin.find("production_defaults_active") == std::string::npos,
+              "3664 AC3: matcher is not production-gated");
+        const auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
+        CHECK(mut.find("schema-3664") == std::string::npos, "3664 AC3: no new query key");
+    }
+    {
+        std::println("\n--- #3664 AC4: wildcard + nested lockless replace ---");
+        {
+            CompilerService cs;
+            CHECK(cs.eval("(set-code \"(define f (lambda () (+ 1 2)))\")").has_value(),
+                  "3664 AC4: set-code wildcard");
+            CHECK(cs.eval("(eval-current)").has_value(), "3664 AC4: eval wildcard");
+            auto r = cs.eval("(mutate:atomic-batch "
+                             "(list "
+                             "  (list \"mutate:replace-pattern\" \"(+ ... ...)\" \"(* 3 4)\")))");
+            CHECK(r.has_value() && is_bool(*r) && as_bool(*r), "3664 AC4: wildcard batch #t");
+            auto vf = cs.eval("(begin (eval-current) (f))");
+            CHECK(vf && is_int(*vf) && as_int(*vf) == 12,
+                  "3664 AC4: f is 12 after (+ ...) → (* 3 4)");
+        }
+        {
+            CompilerService cs;
+            CHECK(cs.eval("(set-code \"(define g (lambda () 1))\")").has_value(),
+                  "3664 AC4: set-code nested");
+            CHECK(cs.eval("(eval-current)").has_value(), "3664 AC4: eval nested");
+            auto r = cs.eval(
+                "(mutate:atomic-batch "
+                "(list "
+                "  (list \"mutate:replace-pattern\" \"(lambda () ...)\" \"(lambda () 9)\")))");
+            CHECK(r.has_value() && is_bool(*r) && as_bool(*r), "3664 AC4: nested batch #t");
+            auto vg = cs.eval("(begin (eval-current) (g))");
+            CHECK(vg && is_int(*vg) && as_int(*vg) == 9, "3664 AC4: g is 9 after (lambda () ...)");
+        }
+        CHECK(read_file("tests/compiler/test_issue_3664.cpp").empty() &&
+                  read_file("tests/issues/test_issue_3664.cpp").empty(),
+              "3664 AC4: no test_issue_3664.cpp");
+        CHECK(read_file("docs/design/3664-replace-pattern-match-sub.md").empty(),
+              "3664 AC4: no docs/design/");
+        const auto build = read_file("build.py");
+        CHECK(build.find("check_replace_pattern_match_sub_no_std_function_3664") !=
+                  std::string::npos,
+              "3664 AC4: build.py wires linter");
+        const auto p3663 = build.find("check_linear_move_elision_abort_live_3663");
+        const auto p3664 = build.find("check_replace_pattern_match_sub_no_std_function_3664");
+        CHECK(p3663 != std::string::npos && p3664 != std::string::npos && p3663 < p3664,
+              "3664 AC4: linter AFTER #3663");
+    }
+
     std::println("\n=== #2802 atomic-batch replace-pattern sibling: {} passed, {} failed ===",
                  g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;

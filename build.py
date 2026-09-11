@@ -5479,6 +5479,19 @@ def cmd_lint():
             "Issue #3663 linear Move elision abort/live linter failed — run python3 scripts/coverage/checks/check_linear_move_elision_abort_live_3663.py"
         )
         return r
+    # Issue #3664: lockless replace-pattern matcher is a local recursive
+    # struct, not std::function. Soft same helper. Extends atomic-batch
+    # replace-pattern sibling; linter after #3663.
+    rpm3664_script = COVERAGE_CHECKS / "check_replace_pattern_match_sub_no_std_function_3664.py"
+    if not rpm3664_script.exists():
+        fail(f"missing {rpm3664_script}")
+        return 1
+    r = run([sys.executable, str(rpm3664_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3664 replace-pattern match_sub no std::function linter failed — run python3 scripts/coverage/checks/check_replace_pattern_match_sub_no_std_function_3664.py"
+        )
+        return r
     # Issue #3419: JIT typed-entry on every compiled function (anonymous)
     # included). Stub typed-entry is not production (ABI bit 8). Soft omit.
     # Extends persist-rehydrate + steal-complete; linter after #3343.
