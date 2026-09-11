@@ -2190,7 +2190,10 @@ static void ac3213_5_soft_non_macro_zero_extra() {
     CHECK(r.has_value(), "3213 AC5: batch returns");
     CHECK(ws->get(a).int_value == 7, "3213 AC5: non-macro replace-value commits");
     const auto flat = read_file("src/compiler/evaluator_eval_flat.cpp");
-    CHECK(flat.find("is_macro_introduced(node) &&") != std::string::npos,
+    // Issue #3652: the gate nests — single-line `A && B` form or the nested
+    // `if (is_macro_introduced(node)) {` form both gate before opt-out parse.
+    CHECK((flat.find("is_macro_introduced(node) &&") != std::string::npos ||
+           flat.find("if (flat.is_macro_introduced(node)) {") != std::string::npos),
           "3213 AC5: short-circuit is_macro_introduced before parse");
     CHECK(flat.find("get_allow_macro_mutate() || parse_allow_macro_opt_out(a)") !=
               std::string::npos,
@@ -4564,6 +4567,203 @@ static void ac3542_source_query() {
     CHECK(r && is_int(*r) && as_int(*r) >= 0, "3542 AC5: schema-3029 retained");
 }
 
+// ── Issue #3652: lockless / atomic-batch allow arms require MacroSelfEvo ──
+static void ac3652_1_batch_allow_denied_without_mse() {
+    std::println("\n--- #3652 AC1: atomic-batch allow arms denied without MacroSelfEvo ---");
+    using aura::core::capability::reset_capability_effects_for_test;
+    using aura::core::security_event::reset_security_event_ring_for_test;
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    reset_capability_effects_for_test();
+    reset_security_event_ring_for_test();
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define f (lambda (x) (+ x 1)))\")").has_value(),
+          "3652 AC1: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3652 AC1: eval");
+    auto find_f = cs.eval("(car (query :find \"f\"))");
+    CHECK(find_f && is_int(*find_f), "3652 AC1: find f");
+    CHECK(cs.eval(std::format("(syntax:set-marker {} 1)", as_int(*find_f))).has_value(),
+          "3652 AC1: stamp MacroIntroduced");
+    // Restricted + wildcard-only: grant TA to arm the production mutate
+    // wrapper, then drop TA so #3144 strips MacroSelfEvo from `*`.
+    grant_3301_production_mutate(cs);
+    aura::core::capability::g_capability_registry().revoke(cs.evaluator().capability_tenant_id(),
+                                                           "tenant-admin");
+    // (a) batch-level :allow-macro? #t — pre-audit MSE arm denies the whole
+    // batch before any sub-op (target_arg=0 walk member).
+    auto d1 = cs.eval(std::format("(mutate:atomic-batch (list (list \"mutate:replace-value\" {} 42 "
+                                  "\"3652-a\")) \"s\" :allow-macro? #t)",
+                                  as_int(*find_f)));
+    CHECK(d1.has_value(), "3652 AC1a: returns");
+    CHECK(merr_kind_3027(cs, *d1) == "hygiene", "3652 AC1a: batch hygiene merr");
+    CHECK(ring_has_reason_3542("macro-mutate-needs-macro-self-evo"), "3652 AC1a: SE reason");
+    // (b) per-sub-op :allow-macro? #t — op_opt_out arm, same MSE face.
+    // Single-use Mutate grants: the d1 wrapper consumed them — re-arm.
+    grant_3301_production_mutate(cs);
+    aura::core::capability::g_capability_registry().revoke(cs.evaluator().capability_tenant_id(),
+                                                           "tenant-admin");
+    reset_security_event_ring_for_test();
+    auto d2 = cs.eval(std::format("(mutate:atomic-batch (list (list \"mutate:replace-value\" {} 42 "
+                                  "\"3652-b\" :allow-macro? #t)) \"s\")",
+                                  as_int(*find_f)));
+    CHECK(d2.has_value() && merr_kind_3027(cs, *d2) == "hygiene", "3652 AC1b: per-op kwarg denied");
+    CHECK(ring_has_reason_3542("macro-mutate-needs-macro-self-evo"), "3652 AC1b: SE reason");
+    // (c) name-based :rebind (target_arg = -1, pre-audit cannot see it) —
+    // the eval_flat allow gate fires inside the sub-op; batch surfaces the
+    // MacroIntroduced diagnostic as kind=hygiene and rolls back.
+    // Single-use Mutate grants: d2 consumed them — re-arm.
+    grant_3301_production_mutate(cs);
+    aura::core::capability::g_capability_registry().revoke(cs.evaluator().capability_tenant_id(),
+                                                           "tenant-admin");
+    reset_security_event_ring_for_test();
+    auto d3 =
+        cs.eval("(mutate:atomic-batch (list (list \"mutate:rebind\" \"f\" \"(lambda (x) (+ x 2))\" "
+                ":allow-macro? #t)) \"s\")");
+    CHECK(d3.has_value() && merr_kind_3027(cs, *d3) == "hygiene",
+          "3652 AC1c: rebind sub-op denied");
+    CHECK(ring_has_reason_3542("macro-mutate-needs-macro-self-evo"), "3652 AC1c: SE reason");
+    // Rollback: binding intact, node id unchanged, still evaluable.
+    auto still = cs.eval("(car (query :find \"f\"))");
+    CHECK(still && is_int(*still) && as_int(*still) == as_int(*find_f),
+          "3652 AC1: node unchanged after batch rollback");
+    CHECK(cs.eval("(eval-current)").has_value(), "3652 AC1: eval-current still ok");
+    reset_capability_effects_for_test();
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+}
+
+static void ac3652_2_public_prim_still_denied() {
+    std::println("\n--- #3652 AC2: public mutate prim still denied (#3542 no regression) ---");
+    using aura::core::capability::reset_capability_effects_for_test;
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    reset_capability_effects_for_test();
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define f (lambda (x) (+ x 1)))\")").has_value(),
+          "3652 AC2: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3652 AC2: eval");
+    auto find_f = cs.eval("(car (query :find \"f\"))");
+    CHECK(find_f && is_int(*find_f), "3652 AC2: find f");
+    CHECK(cs.eval(std::format("(syntax:set-marker {} 1)", as_int(*find_f))).has_value(),
+          "3652 AC2: stamp");
+    grant_3301_production_mutate(cs);
+    aura::core::capability::g_capability_registry().revoke(cs.evaluator().capability_tenant_id(),
+                                                           "tenant-admin");
+    auto denied = cs.eval("(mutate:set-body \"f\" \"(lambda (x) (+ x 9))\" :allow-macro? #t)");
+    CHECK(denied.has_value(), "3652 AC2: returns");
+    CHECK(merr_kind_3027(cs, *denied) == "hygiene-protected", "3652 AC2: #3542 face kept");
+    reset_capability_effects_for_test();
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+}
+
+static void ac3652_3_mse_grant_batch_allow_ok() {
+    std::println("\n--- #3652 AC3: MacroSelfEvo + :allow-macro? #t batch write succeeds ---");
+    using aura::core::capability::MacroSelfEvoPolicy;
+    using aura::core::capability::reset_capability_effects_for_test;
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    reset_capability_effects_for_test();
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define f (lambda (x) (+ x 1)))\")").has_value(),
+          "3652 AC3: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3652 AC3: eval");
+    auto find_f = cs.eval("(car (query :find \"f\"))");
+    CHECK(find_f && is_int(*find_f), "3652 AC3: find f");
+    CHECK(cs.eval(std::format("(syntax:set-marker {} 1)", as_int(*find_f))).has_value(),
+          "3652 AC3: stamp");
+    grant_3301_production_mutate(cs);
+    const auto tenant = cs.evaluator().capability_tenant_id();
+    aura::core::capability::g_capability_registry().grant_macro_self_evo(
+        tenant, MacroSelfEvoPolicy{}, aura_test_grant_prov(), tenant);
+    auto ok =
+        cs.eval("(mutate:atomic-batch (list (list \"mutate:rebind\" \"f\" \"(lambda (x) (+ x 9))\" "
+                ":allow-macro? #t)) \"s\")");
+    CHECK(ok.has_value() && is_bool(*ok) && as_bool(*ok),
+          "3652 AC3: MSE + allow-macro batch writes");
+    CHECK(cs.eval("(eval-current)").has_value(), "3652 AC3: re-expanded AST evals");
+    reset_capability_effects_for_test();
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+}
+
+static void ac3652_4_soft_off_unchanged() {
+    std::println("\n--- #3652 AC4: Soft/Off allow arm unchanged (no MSE scan) ---");
+    using aura::core::capability::reset_capability_effects_for_test;
+    reset_capability_effects_for_test();
+    CompilerService cs;
+    CHECK(cs.evaluator().effect_sandbox_mode() == 0, "3652 AC4: Soft sandbox");
+    CHECK(cs.eval("(set-code \"(define f (lambda (x) (+ x 1)))\")").has_value(),
+          "3652 AC4: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3652 AC4: eval");
+    auto find_f = cs.eval("(car (query :find \"f\"))");
+    CHECK(find_f && is_int(*find_f), "3652 AC4: find f");
+    CHECK(cs.eval(std::format("(syntax:set-marker {} 1)", as_int(*find_f))).has_value(),
+          "3652 AC4: stamp");
+    // No grants at all — Soft/Off must not consult MacroSelfEvo.
+    auto ok =
+        cs.eval("(mutate:atomic-batch (list (list \"mutate:rebind\" \"f\" \"(lambda (x) (+ x 7))\" "
+                ":allow-macro? #t)) \"s\")");
+    CHECK(ok.has_value() && is_bool(*ok) && as_bool(*ok),
+          "3652 AC4: Soft allow-macro batch writes without capability");
+    reset_capability_effects_for_test();
+}
+
+static void ac3652_5_set_allow_flag_gate() {
+    std::println("\n--- #3652 AC5: hygiene:set-allow-macro-mutate! gated under Restricted ---");
+    using aura::core::capability::MacroSelfEvoPolicy;
+    using aura::core::capability::reset_capability_effects_for_test;
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    reset_capability_effects_for_test();
+    CompilerService cs;
+    grant_3301_production_mutate(cs);
+    aura::core::capability::g_capability_registry().revoke(cs.evaluator().capability_tenant_id(),
+                                                           "tenant-admin");
+    auto denied = cs.eval("(hygiene:set-allow-macro-mutate! #t)");
+    CHECK(denied.has_value(), "3652 AC5: returns");
+    CHECK(merr_kind_3027(cs, *denied) == "hygiene-protected",
+          "3652 AC5: arm denied without MacroSelfEvo");
+    auto flag = cs.eval("(hygiene:allow-macro-mutate?)");
+    CHECK(flag && is_bool(*flag) && !as_bool(*flag), "3652 AC5: flag stays off");
+    // grant_macro_self_evo is TenantAdmin-gated under production — re-arm
+    // (fresh TA) before granting; the explicit MSE grant survives the
+    // wildcard strip (#3144) for the success arm.
+    grant_3301_production_mutate(cs);
+    const auto tenant = cs.evaluator().capability_tenant_id();
+    aura::core::capability::g_capability_registry().grant_macro_self_evo(
+        tenant, MacroSelfEvoPolicy{}, aura_test_grant_prov(), tenant);
+    auto ok = cs.eval("(hygiene:set-allow-macro-mutate! #t)");
+    CHECK(ok.has_value() && merr_kind_3027(cs, *ok) != "hygiene-protected" &&
+              merr_kind_3027(cs, *ok) != "hygiene",
+          "3652 AC5: arm succeeds with MacroSelfEvo");
+    flag = cs.eval("(hygiene:allow-macro-mutate?)");
+    CHECK(flag && is_bool(*flag) && as_bool(*flag), "3652 AC5: flag armed");
+    // Clearing stays ungated so a denied arm cannot strand the flag on.
+    auto clear = cs.eval("(hygiene:set-allow-macro-mutate! #f)");
+    CHECK(clear.has_value() && merr_kind_3027(cs, *clear) != "hygiene-protected",
+          "3652 AC5: clear free");
+    reset_capability_effects_for_test();
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+}
+
+static void ac3652_6_source_cite() {
+    std::println("\n--- #3652 AC6: source-cite + no artifacts ---");
+    const auto efl = read_file("src/compiler/evaluator_eval_flat.cpp");
+    CHECK(efl.find("deny_macro_opt_out_without_mse") != std::string::npos,
+          "3652 AC6: eval-flat mirror present");
+    CHECK(efl.find("macro-mutate-needs-macro-self-evo") != std::string::npos,
+          "3652 AC6: SE reason mirrored");
+    CHECK(efl.find("Issue #3652") != std::string::npos, "3652 AC6: eval-flat cites");
+    const auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
+    CHECK(mut.find("deny_macro_opt_out_without_mse(ev, node, mev)") != std::string::npos,
+          "3652 AC6: batch allow arm routes #3542 helper");
+    CHECK(mut.find(":allow-macro? opt-out requires MacroSelfEvo capability") != std::string::npos,
+          "3652 AC6: batch merr cites MSE");
+    const auto cp = read_file("src/compiler/evaluator_primitives_compile.cpp");
+    CHECK(cp.find("(hygiene:set-allow-macro-mutate! #t) requires MacroSelfEvo capability") !=
+              std::string::npos,
+          "3652 AC6: set-allow gate");
+    CHECK(read_file("tests/compiler/test_issue_3652.cpp").empty(), "3652 AC6: no test_issue file");
+    CHECK(read_file("docs/design/3652-lockless-allow-mse.md").empty(), "3652 AC6: no docs/design");
+    const auto bl = read_file("build.py");
+    CHECK(bl.find("check_lockless_allow_mse_3652") != std::string::npos,
+          "3652 AC6: linter registered");
+}
+
 // ── Issue #3576: enumerative mutate:* MacroIntroduced default-deny ──
 // List is generated from primitives() registration (slot_count /
 // name_for_slot, names starting with "mutate:"), not a hand-copied
@@ -5411,6 +5611,12 @@ int main() {
     ac3542_soft_opt_out_unchanged();
     ac3542_soft_no_abort();
     ac3542_source_query();
+    ac3652_1_batch_allow_denied_without_mse();
+    ac3652_2_public_prim_still_denied();
+    ac3652_3_mse_grant_batch_allow_ok();
+    ac3652_4_soft_off_unchanged();
+    ac3652_5_set_allow_flag_gate();
+    ac3652_6_source_cite();
     std::println("\n=== Issue #3576: enumerative mutate:* default-reject MacroIntroduced ===");
     ac3576_1_list_from_registration();
     ac3576_2_each_non_exempt_default_rejects();

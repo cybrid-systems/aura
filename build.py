@@ -6649,6 +6649,23 @@ def cmd_lint():
             "Issue #3651 expand_all deny codes linter failed — run python3 scripts/check_expand_all_deny_codes_3651.py"
         )
         return r
+    # Issue #3652 (#3542 residual): the lockless eval_flat_apply_mutate_*
+    # allow arms and the #3301 atomic-batch pre-audit opt-out arm skipped
+    # the #3542 MSE gate — :allow-macro? (global flag / batch kwarg /
+    # per-op kwarg) let callers mutate MacroIntroduced nodes without
+    # MacroSelfEvo under Restricted/Strict. Every lockless allow arm now
+    # routes through a bool-returning telemetry mirror (#3650 precedent),
+    # the batch pre-audit walks under the production face even when an
+    # opt-out flag is set, and hygiene:set-allow-macro-mutate! #t is
+    # itself capability-gated. Soft/Off stays one load.
+    lam3652_script = ROOT / "scripts" / "check_lockless_allow_mse_3652.py"
+    if not lam3652_script.exists():
+        fail(f"missing {lam3652_script}")
+        return 1
+    r = run([sys.executable, str(lam3652_script)], cwd=ROOT)
+    if r != 0:
+        fail("Issue #3652 lockless allow-arm MSE linter failed — run python3 scripts/check_lockless_allow_mse_3652.py")
+        return r
     # Issue #3301: atomic-batch batch-level MacroIntroduced fail-closed
     # audit. Dispatcher walks each sub-op's target node-id arg before the
     # sub-op loop and denies the whole batch if a target is MacroIntroduced

@@ -5600,6 +5600,15 @@ void CompilePrims::register_compile_p58(PrimRegistrar add, Evaluator& ev) {
         if (a.empty() || !is_bool(a[0])) {
             return ev.make_merr("bad-arg", "usage: (hygiene:set-allow-macro-mutate! bool)");
         }
+        // Issue #3652: arming the global opt-out is itself capability-gated —
+        // same MacroSelfEvo contract as deny_macro_opt_out_without_mse
+        // (#3542) / deny_marker_clear_without_mse (#3650; telemetry mirror
+        // reused here). Soft/Off: one sandbox-mode load. Clearing (#f) stays
+        // ungated so a denied arm cannot strand the flag on.
+        if (as_bool(a[0]) && ev.effect_sandbox_mode() != 0 && deny_marker_clear_without_mse(ev, 0))
+            return ev.make_merr(
+                "hygiene-protected",
+                "(hygiene:set-allow-macro-mutate! #t) requires MacroSelfEvo capability");
         ev.set_allow_macro_mutate(as_bool(a[0]));
         return make_void();
     });
