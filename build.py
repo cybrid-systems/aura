@@ -6603,6 +6603,21 @@ def cmd_lint():
             "Issue #3649 storm exit coverage-verify linter failed — run python3 scripts/check_storm_exit_coverage_verify_3649.py"
         )
         return r
+    # Issue #3650 (#3542/#3344 residual): clearing a MacroIntroduced marker
+    # requires the same MacroSelfEvo gate as structural macro-mutate.
+    # mutate:rollback-macro-introduced (HYGIENE_EXEMPT unstamp surface)
+    # and syntax:set-marker (MacroIntroduced → User/BoolLiteral clear)
+    # both consult the #3542 MSE deny before the strip — otherwise the
+    # default-deny goes vacuous (subtree then mutates as User). Rollback
+    # stays reachable WITH the capability; Soft/Off one load, no scan.
+    rmse3650_script = ROOT / "scripts" / "check_rollback_mse_3650.py"
+    if not rmse3650_script.exists():
+        fail(f"missing {rmse3650_script}")
+        return 1
+    r = run([sys.executable, str(rmse3650_script)], cwd=ROOT)
+    if r != 0:
+        fail("Issue #3650 rollback MSE linter failed — run python3 scripts/check_rollback_mse_3650.py")
+        return r
     # Issue #3301: atomic-batch batch-level MacroIntroduced fail-closed
     # audit. Dispatcher walks each sub-op's target node-id arg before the
     # sub-op loop and denies the whole batch if a target is MacroIntroduced
