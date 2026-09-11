@@ -116,6 +116,21 @@ def main() -> int:
     must("#3109: fail-closed deny", "AC4 #3109 comment marker present", ev)
     must("3109 AC4", "AC4 test marker", test)
 
+    # ── #3639 residual: the production effect gate no longer treats a
+    # mutation WAL append miss as fail-open. The gate site consumes the
+    # append result and denies THIS mutate under fail-closed; exactly one
+    # bare (void)append remains (emit_mutation_audit observe path).
+    bare_gate_append = ev.count("(void)g_mutation_audit_wal().append(rec);")
+    if bare_gate_append != 1:
+        fails.append(
+            f"3639: expected exactly 1 bare (void) mutation append (emit observe path), found {bare_gate_append}"
+        )
+    if "if (!g_mutation_audit_wal().append(rec))" not in ev:
+        fails.append("3639: gate append result not consumed (same-mutate fail-closed deny)")
+    must("wal_append_missed", "3639 same-mutate miss flag", ev)
+    must('ovr.reason = std::string("mutation_wal_append_miss");', "3639 overflow miss reason stamp", ev)
+    must("3639 AC1", "3639 test marker", test)
+
     # ── AC5: additive query keys + no-invent + build.py + lineage ────────
     must('insert_kv("wal-fail-closed-active"', "AC5 wal-fail-closed-active key", sec)
     must('insert_kv("wal-overflow-ring-depth"', "AC5 wal-overflow-ring-depth key", sec)

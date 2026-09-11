@@ -419,6 +419,7 @@ bool Evaluator::check_and_record_effect(std::uint16_t required_effect_bits,
     slot.epoch = prov.epoch;
     slot.bridge_epoch = ::aura::core::current_bridge_epoch();
     mutation_audit_total_.fetch_add(1, std::memory_order_relaxed);
+    bool wal_append_missed = false;
     {
         using namespace ::aura::core::audit_wal;
         if (g_mutation_audit_wal().is_enabled()) {
@@ -427,10 +428,40 @@ bool Evaluator::check_and_record_effect(std::uint16_t required_effect_bits,
                             slot.epoch_delta, slot.target_node, slot.op, slot.effect_bits,
                             slot.tenant_id, slot.provenance_mutation_id, slot.epoch,
                             slot.effect_denied, peek_last_security_event_reason());
-            // Issue #3056: fail-open (AC3) — same as emit_mutation_audit.
-            (void)g_mutation_audit_wal().append(rec);
+            // Issue #3056: Soft / WAL-off keeps fail-open (AC3). Issue
+            // #3639: production fail-closed consumes the append result —
+            // a miss denies THIS mutate below so durable evidence and the
+            // side effect stay paired. The #3493 overflow-full entry deny
+            // (require_effect) and the #3211 next-outermost schedule-gate
+            // are unchanged; this closes the same-mutate window only.
+            if (!g_mutation_audit_wal().append(rec)) {
+                wal_append_missed = true;
+                // Issue #3109 caller pattern + #3178 join-key stamps: the
+                // overflow ring still captures the lost record under
+                // fail-closed. The gate site cannot distinguish a fwrite
+                // miss from the #3056 inject (test-only), so the reason
+                // is the caller-observed append miss.
+                if (::aura::core::wal_slo::wal_append_fail_closed_active()) {
+                    ::aura::core::security_event_wal::WalOverflowRecord ovr{};
+                    ovr.mid = rec.provenance_mutation_id;
+                    ovr.tenant_id = static_cast<std::uint32_t>(slot.tenant_id);
+                    ovr.fiber_id = static_cast<std::uint64_t>(slot.fiber_id);
+                    ovr.epoch = slot.epoch;
+                    ovr.op =
+                        op.empty() ? std::string("mutation_audit_wal_append") : std::string(op);
+                    ovr.reason = std::string("mutation_wal_append_miss");
+                    ::aura::core::security_event_wal::wal_overflow_ring_push(ovr);
+                }
+            }
         }
     }
+    // Issue #3639: fail-closed active + WAL append miss → deny THIS
+    // mutate with zero side effect (add_mutate calls require_effect before
+    // the body / Guard write). Soft / production_defaults_active()==0
+    // keeps #3056 fail-open; AURA_WAL_APPEND_FAIL_OPEN=1 keeps the
+    // explicit opt-out. Capability-denial accounting below is untouched.
+    if (ok && wal_append_missed && ::aura::core::wal_slo::wal_append_fail_closed_active())
+        return false;
 
     if (!ok) {
         bump_capability_denial();

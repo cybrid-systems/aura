@@ -6,7 +6,10 @@
 // authoritative; production + WAL enabled + (consecutive >= SLO or
 // fail-rate > SLO_BP) → would_arm_degraded + posture key
 // `wal-append-fail-breach`. Soft / WAL-off: observe only, never arm.
-// Mutation commit stays fail-open (callers keep `(void)append`).
+// Issue #3639: under production fail-closed the mutation effect gate
+// consumes the append result — a miss denies the SAME mutate
+// (require_effect / check_and_record_effect). Soft / WAL-off keeps the
+// observe-only `(void)append` fail-open.
 // Issue #3211: security-schedule-gate consumes would_arm_degraded and
 // hard-denies the *next* outermost mutate in production.
 //
