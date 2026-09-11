@@ -4164,6 +4164,8 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
             }
         }
         bool audit_ok = true;
+        bool proof_trunc = false;
+        bool proof_force = false;
         const bool batch_active =
             ev_->workspace_flat_ && ev_->workspace_flat_->atomic_batch_active();
         typed_audit::InvariantAuditResult inv{};
@@ -4180,8 +4182,6 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
                                                  /*nested=*/false, /*batch_active=*/true, &ccr) &&
                        audit_ok;
         } else if (mutated) {
-            bool proof_trunc = false;
-            bool proof_force = false;
             const bool proof_ok = ev_->boundary_solve_proof_gate(
                 /*hard_gate=*/true, linear_ops_present_local, nodes_changed_local, &proof_trunc,
                 &proof_force);

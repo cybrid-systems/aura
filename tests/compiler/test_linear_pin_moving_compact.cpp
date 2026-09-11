@@ -396,6 +396,17 @@ int run_test_linear_pin_moving_compact() {
             CHECK(roots.count(kRootD) == 0, "ac3249_1_nested: nested extra drained");
         }
         outer_ok = true; // outer success does not unpin_all
+        // Issue #3653: under Production/Full the outermost exit runs the
+        // check-only pre-persist proof gates — the nested abort's rollback
+        // records make this span non-vacuous, and a pin-semantics scenario
+        // carries no boundary-solve proof, so the audit would flip this
+        // success into abort_restore and drain the remaining pin. The
+        // #3249 contract (outer success keeps pins) is a Dev-face
+        // lifetime guarantee: drop to Dev for the exit, then re-arm
+        // production for the fail leg below. Production-exit flip
+        // coverage lives in #3653's own ACs
+        // (test_type_linear_commit_health.cpp).
+        aura::compiler::typed_audit::apply_dev_audit_defaults();
         if (og.has_value())
             og.value().reset();
         CHECK(linear_root_snapshot().live_count == 1,
@@ -404,6 +415,7 @@ int run_test_linear_pin_moving_compact() {
         bool fail_ok = true;
         aura::compiler::reset_mutation_concurrency_health_admit_for_test();
         aura::compiler::set_mutation_concurrency_health_admit_snapshot_for_test(clean_health);
+        aura::compiler::typed_audit::apply_production_audit_defaults();
         aura::compiler::typed_audit::publish_last_proof_face(true, true);
         aura::compiler::typed_audit::publish_type_linear_proof_outcome(
             aura::compiler::typed_audit::kTypeLinearProofOutcomeStamped);

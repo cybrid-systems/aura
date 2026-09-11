@@ -312,8 +312,10 @@ int run_test_cascade_decision_residual_atomic_3135() {
         std::println("\n--- AC4: existing #3067 + #3097 + re-check force-full ---");
         auto pos = ixx.find("std::size_t relower_dirty_defines_from_workspace()");
         // #3310 moved the consult deeper; #3381 caller-union + #3348
-        // last-look grew the body past 12000.
-        auto end = pos + 20000;
+        // last-look grew the body past 12000; the #3646-era SSOT/audit
+        // growth pushed the #3097 impact_ub consult past 20000 (~20.8k
+        // in at #3656) — keep the window ahead of the body.
+        auto end = pos + 32000;
         auto block = ixx.substr(pos, end - pos);
         // #3067: drain at entry (still present).
         must_inline(block, "drain_deferred_hybrid_cascade_()", "AC4 #3067 drain preserved");
