@@ -4645,6 +4645,8 @@ public:
 
     // Issue #3453: observe in-place dense patch (equal-length set).
     static constexpr int kSetChildLockedDenseInplaceIssue = 3453;
+    // Issue #3665: insert/remove splice one dense slot on a synced tree.
+    static constexpr int kInsertRemoveChildLockedDenseSpliceIssue = 3665;
     [[nodiscard]] bool dense_children_dirty() const noexcept { return dense_dirty_; }
     [[nodiscard]] std::size_t dense_child_data_size() const noexcept { return child_data_.size(); }
 
@@ -5252,7 +5254,8 @@ public:
         // Issue #3453: equal-length replace patches the already-synced
         // dense slot in O(1). Do not eager-sync. First mutate after
         // copy/compact / never-synced still dirties (full rebuild on
-        // next children_columnar). insert/remove keep dirty (arity).
+        // next children_columnar). Issue #3665: insert/remove splice
+        // one slot when !dense_dirty_ (arity change is not a full rebuild).
         if (!dense_dirty_ && id < child_count_.size() && idx < child_count_[id]) {
             const auto slot = static_cast<std::size_t>(child_begin_[id]) + idx;
             if (slot < child_data_.size())
@@ -5264,7 +5267,6 @@ public:
         }
     }
     void insert_child_locked(NodeId id, std::uint32_t idx, NodeId child) {
-        dense_dirty_ = true; // Issue #3402: invalidate dense mirror
         auto pos = std::min(static_cast<std::uint32_t>(children_[id].size()), idx);
         // Issue #1689: shift indices of edges at/after pos before insert
         // (reads children_[id] while still installed).
@@ -5291,9 +5293,28 @@ public:
         // Issue #1319 Phase 1: count structural inserts; full GapBuffer-backed
         // children_ column is progressive (PCV COW retained for snapshot/rollback).
         structural_mutate_insert_total_.fetch_add(1, std::memory_order_relaxed);
+        // Issue #3665: synced tree splices one dense slot + shifts later
+        // child_begin_. Never-synced / compact / restore stay dirty and
+        // full-rebuild on the next children_columnar. PCV remains the
+        // edit buffer.
+        if (!dense_dirty_ && id < child_count_.size() && id < child_begin_.size()) {
+            const auto b = child_begin_[id];
+            const auto n = child_count_[id];
+            const auto slot = static_cast<std::size_t>(b) + pos;
+            if (pos > n || slot > child_data_.size() ||
+                static_cast<std::size_t>(b) + n > child_data_.size()) {
+                dense_dirty_ = true;
+            } else {
+                child_data_.insert(child_data_.begin() + static_cast<std::ptrdiff_t>(slot), child);
+                child_count_[id] = n + 1;
+                for (std::size_t i = static_cast<std::size_t>(id) + 1; i < child_begin_.size(); ++i)
+                    child_begin_[i] += 1;
+            }
+        } else {
+            dense_dirty_ = true; // Issue #3402: never-synced / arity-miss fallback
+        }
     }
     void remove_child_locked(NodeId id, std::uint32_t idx) {
-        dense_dirty_ = true; // Issue #3402: invalidate dense mirror
         if (idx >= children_[id].size())
             return;
         auto cid = children_[id][idx];
@@ -5320,6 +5341,24 @@ public:
         children_[id] = std::move(list);
         add_mutation_child_op(id, idx, cid, NULL_NODE, "structural-remove-child");
         structural_mutate_erase_total_.fetch_add(1, std::memory_order_relaxed);
+        // Issue #3665: synced tree erases one dense slot + decrements later
+        // child_begin_. OOB no-op above does not dirty.
+        if (!dense_dirty_ && id < child_count_.size() && id < child_begin_.size()) {
+            const auto b = child_begin_[id];
+            const auto n = child_count_[id];
+            const auto slot = static_cast<std::size_t>(b) + idx;
+            if (idx >= n || slot >= child_data_.size() ||
+                static_cast<std::size_t>(b) + n > child_data_.size()) {
+                dense_dirty_ = true;
+            } else {
+                child_data_.erase(child_data_.begin() + static_cast<std::ptrdiff_t>(slot));
+                child_count_[id] = n - 1;
+                for (std::size_t i = static_cast<std::size_t>(id) + 1; i < child_begin_.size(); ++i)
+                    child_begin_[i] -= 1;
+            }
+        } else {
+            dense_dirty_ = true; // Issue #3402: never-synced / arity-miss fallback
+        }
     }
 
     // Issue #2418: ACQUIRES(structural_mtx_) only — never nests metadata.
@@ -9699,8 +9738,8 @@ public:
     // the dense columns and lazy-syncs from PCV on first call after a
     // structural mutation (controlled by dense_dirty_). Issue #3453:
     // equal-length set_child_locked patches child_data_ in-place when
-    // !dense_dirty_; insert_child_locked / remove_child_locked still
-    // dirty (arity change).
+    // !dense_dirty_. Issue #3665: insert_child_locked / remove_child_locked
+    // splice one slot + shift later child_begin_ when !dense_dirty_.
     // Issue #3402: mutable so children_columnar(id) const accessor can
     // trigger sync_dense_columns_from_pcv() on first read after a
     // structural mutation. Pattern matches the other FlatAST cache
@@ -9715,7 +9754,8 @@ public:
     // the dense columns have not yet been re-synced.
     // children_columnar(id) checks this flag and triggers
     // sync_dense_columns_from_pcv() before returning the SafePCVSpan.
-    // Issue #3453: equal-length set_child_locked may leave this false.
+    // Issue #3453 / #3665: equal-length set and arity splice may leave
+    // this false on a synced tree.
     mutable bool dense_dirty_ = true;
 };
 

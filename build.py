@@ -2620,8 +2620,8 @@ def cmd_lint():
         )
         return r
     # Issue #3453: equal-length set_child_locked patches dense children
-    # in-place when !dense_dirty_. insert/remove still dirty. Extends
-    # #3402 dense-columns linter + arena required-cover test.
+    # in-place when !dense_dirty_. Issue #3665 splices insert/remove.
+    # Extends #3402 dense-columns linter + arena required-cover test.
     scdi3453_script = COVERAGE_CHECKS / "check_set_child_locked_dense_inplace_3453.py"
     if not scdi3453_script.exists():
         fail(f"missing {scdi3453_script}")
@@ -5490,6 +5490,19 @@ def cmd_lint():
     if r != 0:
         fail(
             "Issue #3664 replace-pattern match_sub no std::function linter failed — run python3 scripts/coverage/checks/check_replace_pattern_match_sub_no_std_function_3664.py"
+        )
+        return r
+    # Issue #3665: insert/remove_child_locked splice dense children on a
+    # synced tree (no full child_data_.clear()). Soft same control flow.
+    # Extends #3402/#3453 dense-children suite; linter after #3664.
+    irds3665_script = COVERAGE_CHECKS / "check_insert_remove_child_locked_dense_splice_3665.py"
+    if not irds3665_script.exists():
+        fail(f"missing {irds3665_script}")
+        return 1
+    r = run([sys.executable, str(irds3665_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3665 insert/remove dense splice linter failed — run python3 scripts/coverage/checks/check_insert_remove_child_locked_dense_splice_3665.py"
         )
         return r
     # Issue #3419: JIT typed-entry on every compiled function (anonymous)
@@ -16631,9 +16644,9 @@ def cmd_dense_children_columns_3402_coverage():
       AC3 children_columnar(id) lazy-syncs the dense columns from PCV
          on first call after a structural mutation (controlled by
          dense_dirty_).
-      AC4 set_child_locked / insert_child_locked / remove_child_locked
-         mark dense_dirty_ = true so the next children_columnar(id)
-         triggers sync_dense_columns_from_pcv().
+      AC4 set_child_locked patches in-place (#3453). insert/remove splice
+         one dense slot when !dense_dirty_ (#3665); never-synced fallback
+         still marks dense_dirty_ so children_columnar full-syncs.
       AC5 sync_dense_columns_from_pcv() rebuilds child_data_ /
          child_begin_ / child_count_ from the legacy children_ vector
          (O(total children); runs once per structural-mutation batch).
@@ -16655,7 +16668,7 @@ def cmd_set_child_locked_dense_inplace_3453_coverage():
     """Issue #3453: equal-length set_child_locked patches dense in-place.
 
     Synced tree + set_child does not full-rebuild child_data_.
-    insert/remove still dirty. Extends #3402 linter + required-cover test.
+    Issue #3665 splices insert/remove. Extends #3402 linter + required-cover test.
     """
     print(f"{B}=== set_child_locked dense inplace coverage (#3453) ==={N}")
     script = COVERAGE_CHECKS / "check_set_child_locked_dense_inplace_3453.py"

@@ -1,14 +1,13 @@
 #!/usr/bin/env python3
 """Issue #3453: set_child_locked equal-length patches dense children in-place.
 
-#3402 closed the read-path layout. Every structural mutator still only
-set dense_dirty_=true, so the next children_columnar full-rebuilt
-child_data_. Equal-length set_child now writes the synced slot in O(1).
-insert/remove keep dirty (arity). No new query key.
+#3402 closed the read-path layout. Equal-length set_child writes the
+synced slot in O(1). Issue #3665 closed insert/remove full rebuild:
+those splice one dense slot when !dense_dirty_. No new query key.
 
 Contract:
   AC1 equal-length set on synced tree leaves dense_dirty_ false
-  AC2 insert/remove still dirty
+  AC2 insert/remove splice when !dense_dirty_ (#3665); fallback dirties
   AC3 copy/compact/restore still force dirty
   AC4 no new query key; exclusive/COW counters unchanged
   AC5 no docs/design/3453-*; no test_issue_3453.cpp
@@ -42,7 +41,7 @@ def main() -> int:
     build = _read("build.py")
 
     set_idx = ast.find("void set_child_locked(")
-    swin = ast[set_idx : set_idx + 2800] if set_idx >= 0 else ""
+    swin = ast[set_idx : set_idx + 3600] if set_idx >= 0 else ""
     must("Issue #3453", "AC1 cite", swin)
     must("!dense_dirty_", "AC1 in-place gate", swin)
     must("child_data_[", "AC1 slot write", swin)
@@ -55,10 +54,15 @@ def main() -> int:
 
     ins = ast.find("void insert_child_locked(")
     rem = ast.find("void remove_child_locked(")
-    iwin = ast[ins : ins + 400] if ins >= 0 else ""
-    rwin = ast[rem : rem + 400] if rem >= 0 else ""
-    must("dense_dirty_ = true", "AC2 insert dirty", iwin)
-    must("dense_dirty_ = true", "AC2 remove dirty", rwin)
+    iwin = ast[ins : ins + 2800] if ins >= 0 else ""
+    rwin = ast[rem : rem + 2200] if rem >= 0 else ""
+    must("!dense_dirty_", "AC2 insert splice gate", iwin)
+    must("child_data_.insert", "AC2 insert splice", iwin)
+    must("dense_dirty_ = true", "AC2 insert fallback dirty", iwin)
+    must("!dense_dirty_", "AC2 remove splice gate", rwin)
+    must("child_data_.erase", "AC2 remove splice", rwin)
+    must("dense_dirty_ = true", "AC2 remove fallback dirty", rwin)
+    must("ac3665_insert_remove_dense_splice", "AC2 #3665 test", t)
 
     must("Issue #3402: dest keeps its own runtime_resource_", "AC3 copy/move", ast)
     must("Issue #3402: compact remaps NodeIds", "AC3 compact", ast)
