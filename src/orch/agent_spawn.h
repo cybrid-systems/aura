@@ -124,6 +124,11 @@ inline constexpr std::uint64_t kReclaimedQuotaTimeoutMsDefault = 60000;
 // slots never dtor until drain; find/put is the non-dtor path. Soft /
 // Off stay zero-cost. Reuses reclaimed_quota_force_released_total.
 inline constexpr int kReclaimedNameTableQuotaRecycleIssue = 3564;
+// Issue #3644: second recycle on the resolution planes — after the #3564
+// quota-only arm, a stuck Reclaimed slot still holds its mailbox + name
+// until Evaluator drain. Done body → full Done-path cleanup; live body →
+// abandon shape once quota is gone. Soft / Off / not stuck: no-op.
+inline constexpr int kReclaimedSlotSecondRecycleIssue = 3644;
 // Issue #3336: production C++ send preference — agent_send_safe (or
 // explicit `// orch-raw-send-ok`) for non-test TUs. Raw agent_send
 // remains for zero-cost non-held_ref / already-stamped.
@@ -979,8 +984,10 @@ struct OrchModuleStats {
     // Issue #3529 / #3564: production force-released a still-held
     // Reclaimed reservation after reclaim-stuck ≥ timeout (dtor /
     // ensure / AgentNameTable::find+put / AgentScope::find). Soft /
-    // Off / body-already-exit / age < timeout: never bumped.
-    // Appended at struct END (#2906). Reuses query:orch-module-stats.
+    // Off / age < timeout: never bumped. Issue #3644: the second-
+    // recycle done-body arm (full Done-path cleanup on a stuck done
+    // body — it releases the reservation) bumps it too. Appended at
+    // struct END (#2906). Reuses query:orch-module-stats.
     std::atomic<std::uint64_t> reclaimed_quota_force_released_total{0};
 };
 
@@ -2786,6 +2793,59 @@ inline void complete_agent_join_cleanup(AgentHandle& h, serve::JoinResult jr) no
     if (h.fiber && !h.fiber->is_done())
         return false;
     return h.reserved_memory_bytes == 0;
+}
+
+// Issue #3644: second recycle for Reclaimed slots that survived the
+// #3564 quota-only arm. Runs on the same resolution planes (name-table
+// find / put walk, Scope find) with an ordering contract, not a flag:
+//   - body already done (join missed the Done-path — pending flags set,
+//     is_done()): full complete_agent_join_cleanup(Ok) — mailbox detach
+//     + reservation release + both pending flags cleared, so the slot
+//     retires clean (slot_is_reclaimable_clean) and same-name put is a
+//     fresh insert. First visit — #3564's helper never touches done
+//     bodies (is_done() guard), so no #3564 AC sees this arm. #2661:
+//     a done body has no live stack to free.
+//   - body still live: requires reserved_memory_bytes == 0, i.e. the
+//     #3564 quota arm already ran on an earlier visit. First visit with
+//     quota held returns false so #3564 keeps its exact semantics
+//     (quota released, flags stay, #3467 deny stays). On the later
+//     visit this is the abandon_reclaimed (#3334) mailbox + name arms:
+//     detach + reset mailbox, release reservation (no-op), clear name
+//     + both pending flags — same-name put passes, wait_reclaimed on
+//     the abandoned slot goes Invalid. Body-stack never freed (#2661);
+//     clearing reclaimed_deferred_cleanup keeps ~AgentHandle from
+//     re-counting under-account (same reason #3334 clears it).
+//   - Soft / Off / not stuck / no pending flags: no-op (false).
+// Counters (no new query key): the done arm bumps
+// reclaimed_quota_force_released_total (the cleanup releases the
+// reservation); the live arm bumps reclaimed_abandon_total (identical
+// outcome to an explicit abandon_reclaimed Timeout).
+[[nodiscard]] inline bool maybe_force_recycle_reclaimed_slot(AgentHandle& h) noexcept {
+    if (!h.reclaimed_deferred_cleanup && !h.must_wait_reclaimed)
+        return false;
+    if (!aura::compiler::typed_audit::production_defaults_active())
+        return false;
+    if (!reclaimed_quota_stuck_past_timeout(h.fiber))
+        return false;
+    if (h.fiber && h.fiber->is_done()) {
+        serve::JoinResult done_jr;
+        done_jr.status = serve::JoinStatus::Ok;
+        complete_agent_join_cleanup(h, done_jr);
+        g_orch_module_stats.reclaimed_quota_force_released_total.fetch_add(
+            1, std::memory_order_relaxed);
+        return true;
+    }
+    if (h.reserved_memory_bytes != 0)
+        return false; // first visit — the #3564 quota arm owns it
+    if (h.mailbox && h.fiber)
+        h.mailbox->detach(h.fiber);
+    h.mailbox.reset();
+    h.release_reservation_if_any();
+    h.name.clear();
+    h.must_wait_reclaimed = false;
+    h.reclaimed_deferred_cleanup = false;
+    g_orch_module_stats.reclaimed_abandon_total.fetch_add(1, std::memory_order_relaxed);
+    return true;
 }
 
 // Issue #3012: ~AgentHandle / move-assign finish after Reclaimed.

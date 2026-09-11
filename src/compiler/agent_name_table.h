@@ -80,8 +80,14 @@ struct AgentNameTable {
         // host that forgot wait_reclaimed and spawned a *different*
         // name still frees the old slot's reservation. Flags stay —
         // #3467 pending deny is unchanged. Soft: helper no-ops.
+        // Issue #3644: the second recycle runs first — a stuck done
+        // body gets the full Done-path cleanup (retire + same-name put
+        // passes), a stuck live body with quota already gone gets the
+        // abandon shape; a fresh pending slot returns false and the
+        // #3564 quota arm owns the visit (flags stay).
         for (auto& [_, slot] : impl_->agents_)
-            (void)aura::orch::maybe_force_release_reclaimed_quota(slot);
+            if (!aura::orch::maybe_force_recycle_reclaimed_slot(slot))
+                (void)aura::orch::maybe_force_release_reclaimed_quota(slot);
         auto name = h.name.empty() ? ("agent-" + std::to_string(h.id)) : h.name;
         h.name = name;
         auto it = impl_->agents_.find(name);
@@ -112,8 +118,12 @@ struct AgentNameTable {
             return nullptr;
         // Issue #3564: non-dtor recycle when Aura resolve hits a
         // Reclaimed-pending slot (send/recv/join/wait). Quota only — runs
-        // before any retire check (#3598 AC2).
-        (void)aura::orch::maybe_force_release_reclaimed_quota(it->second);
+        // before any retire check (#3598 AC2). Issue #3644: the second
+        // recycle runs first (done body → full Done-path cleanup; live
+        // body → abandon shape once quota is gone); a fresh pending slot
+        // returns false and the #3564 quota arm owns the visit.
+        if (!aura::orch::maybe_force_recycle_reclaimed_slot(it->second))
+            (void)aura::orch::maybe_force_release_reclaimed_quota(it->second);
         // Issue #3598: Done-path-cleaned slot → same-plane retire here
         // (~AgentHandle runs; the next same-name put is a fresh insert,
         // not a move-assign over the ghost). Pending slots stay (#3467);

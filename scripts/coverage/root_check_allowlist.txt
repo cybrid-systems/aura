@@ -90,3 +90,4 @@ check_unpack_spine_gate_3640.py
 check_occupancy_collision_failclosed_3641.py
 check_recv_stale_nullopt_3642.py
 check_scope_join_tree_3643.py
+check_reclaimed_slot_second_recycle_3644.py

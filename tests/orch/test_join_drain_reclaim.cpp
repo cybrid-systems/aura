@@ -48,6 +48,7 @@
 #include "compiler/typed_mutation_audit.h"
 #include "core/sandbox.hh"
 #include "serve/fiber.h"
+#include "serve/multi_fiber_mailbox.h"
 #include "serve/scheduler.h"
 
 #include <atomic>
@@ -1795,6 +1796,213 @@ static void ac3631_4_soft_zero_cost() {
             h.fiber->set_state(FiberState::Done);
         h.finish_reclaimed_cleanup_on_dtor();
     }
+}
+
+// Issue #3644: second recycle on the resolution planes after the #3564
+// quota-only arm. Done body → full Done-path cleanup on find (retire +
+// same-name put passes); live body → abandon shape on the later find
+// once quota is gone (mailbox freed, name + flags cleared, body-stack
+// intact). Soft / not stuck: no recycle, #3467 deny stays.
+static void ac3644_1_done_body_full_cleanup_on_find() {
+    using aura::orch::AgentHandle;
+    using aura::serve::Fiber;
+    using aura::serve::FiberState;
+    using aura::serve::mf_mailbox::MultiFiberMailbox;
+    std::println("\n--- #3644 AC1: production + done body + name-table find → Done-path cleanup, "
+                 "same-name put passes ---");
+    apply_production_audit_defaults();
+    const char* prev = std::getenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS");
+    std::string prev_s = prev ? prev : "";
+    ::setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", "0", 1);
+    const auto fr0 =
+        g_orch_module_stats.reclaimed_quota_force_released_total.load(std::memory_order_relaxed);
+    auto fiber_owned = std::make_unique<Fiber>([] {});
+    fiber_owned->mark_reclaimed();
+    fiber_owned->set_state(FiberState::Done);
+    auto h = make_pending_reclaimed_handle(fiber_owned.get(), "agent-3644", 4096);
+    auto mb = std::make_shared<MultiFiberMailbox>(/*high_water=*/4);
+    std::weak_ptr<MultiFiberMailbox> weak = mb;
+    h.mailbox = mb;
+    mb.reset();
+    aura::compiler::AgentNameTable table;
+    auto* slot = table.put(std::move(h));
+    CHECK(slot != nullptr, "3644 AC1: pending done-body handle registered");
+    auto* found = table.find("agent-3644");
+    CHECK(found == nullptr, "3644 AC1: find retires the fully cleaned slot (#3598)");
+    CHECK(weak.expired(), "3644 AC1: mailbox detached and freed by the Done-path cleanup");
+    CHECK(g_orch_module_stats.reclaimed_quota_force_released_total.load(
+              std::memory_order_relaxed) == fr0 + 1,
+          "3644 AC1: force-released counter bumps (existing key)");
+    auto* again = table.put(make_pending_reclaimed_handle(fiber_owned.get(), "agent-3644", 0));
+    CHECK(again != nullptr, "3644 AC1: same-name put succeeds after the recycle");
+    if (!prev_s.empty())
+        ::setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", prev_s.c_str(), 1);
+    else
+        ::unsetenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS");
+    apply_dev_audit_defaults();
+}
+
+static void ac3644_2_live_body_abandon_shape_on_later_find() {
+    using aura::orch::AgentHandle;
+    using aura::serve::Fiber;
+    using aura::serve::mf_mailbox::MultiFiberMailbox;
+    std::println("\n--- #3644 AC2: production + live body → first find keeps flags (#3564), later "
+                 "find abandons (mailbox+name) ---");
+    apply_production_audit_defaults();
+    const char* prev = std::getenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS");
+    std::string prev_s = prev ? prev : "";
+    ::setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", "0", 1);
+    const auto ab0 = g_orch_module_stats.reclaimed_abandon_total.load(std::memory_order_relaxed);
+    const auto fr0 =
+        g_orch_module_stats.reclaimed_quota_force_released_total.load(std::memory_order_relaxed);
+    auto fiber_owned = std::make_unique<Fiber>([] {});
+    fiber_owned->mark_reclaimed();
+    CHECK(!fiber_owned->is_done(), "3644 AC2: body still live");
+    auto h = make_pending_reclaimed_handle(fiber_owned.get(), "agent-3644b", 4096);
+    auto mb = std::make_shared<MultiFiberMailbox>(/*high_water=*/4);
+    std::weak_ptr<MultiFiberMailbox> weak = mb;
+    h.mailbox = mb;
+    mb.reset();
+    aura::compiler::AgentNameTable table;
+    auto* slot = table.put(std::move(h));
+    CHECK(slot != nullptr, "3644 AC2: pending live-body handle registered");
+    auto* f1 = table.find("agent-3644b");
+    CHECK(f1 != nullptr, "3644 AC2: first find resolves the pending slot");
+    CHECK(f1->reserved_memory_bytes == 0, "3644 AC2: first find recycles quota (#3564 shape)");
+    CHECK(f1->must_wait_reclaimed && f1->reclaimed_deferred_cleanup,
+          "3644 AC2: first find keeps pending flags (#3564 AC1 unchanged)");
+    CHECK(!weak.expired(), "3644 AC2: first find keeps the mailbox attached");
+    auto* f2 = table.find("agent-3644b");
+    CHECK(f2 != nullptr, "3644 AC2: husk slot stays resolvable while the body lives");
+    CHECK(!f2->fiber->is_done(), "3644 AC2: body-stack untouched (#2661)");
+    CHECK(f2->name.empty(), "3644 AC2: name cleared (abandon shape)");
+    CHECK(!f2->must_wait_reclaimed && !f2->reclaimed_deferred_cleanup,
+          "3644 AC2: pending flags cleared — same-name put no longer denied");
+    CHECK(weak.expired(), "3644 AC2: mailbox detached and freed on the later find");
+    CHECK(g_orch_module_stats.reclaimed_abandon_total.load(std::memory_order_relaxed) == ab0 + 1,
+          "3644 AC2: existing abandon counter bumps (no new query key)");
+    CHECK(g_orch_module_stats.reclaimed_quota_force_released_total.load(
+              std::memory_order_relaxed) == fr0 + 1,
+          "3644 AC2: exactly one quota bump across both visits (#3564 arm only)");
+    auto* again = table.put(make_pending_reclaimed_handle(fiber_owned.get(), "agent-3644b", 0));
+    CHECK(again != nullptr, "3644 AC2: same-name put succeeds over the abandoned husk");
+    if (!prev_s.empty())
+        ::setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", prev_s.c_str(), 1);
+    else
+        ::unsetenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS");
+    apply_dev_audit_defaults();
+}
+
+static void ac3644_3_soft_no_recycle() {
+    using aura::orch::AgentHandle;
+    using aura::serve::Fiber;
+    using aura::serve::mf_mailbox::MultiFiberMailbox;
+    std::println("\n--- #3644 AC3: Soft — finds never detach, never bump, deny stays ---");
+    apply_dev_audit_defaults();
+    const char* prev = std::getenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS");
+    std::string prev_s = prev ? prev : "";
+    ::setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", "0", 1);
+    const auto ab0 = g_orch_module_stats.reclaimed_abandon_total.load(std::memory_order_relaxed);
+    const auto fr0 =
+        g_orch_module_stats.reclaimed_quota_force_released_total.load(std::memory_order_relaxed);
+    auto fiber_owned = std::make_unique<Fiber>([] {});
+    fiber_owned->mark_reclaimed();
+    auto h = make_pending_reclaimed_handle(fiber_owned.get(), "soft-3644", 4096);
+    auto mb = std::make_shared<MultiFiberMailbox>(/*high_water=*/4);
+    std::weak_ptr<MultiFiberMailbox> weak = mb;
+    h.mailbox = mb;
+    mb.reset();
+    aura::compiler::AgentNameTable table;
+    auto* slot = table.put(std::move(h));
+    CHECK(slot != nullptr, "3644 AC3: pending handle registered");
+    auto* f1 = table.find("soft-3644");
+    auto* f2 = table.find("soft-3644");
+    CHECK(f1 != nullptr && f2 != nullptr, "3644 AC3: finds resolve");
+    CHECK(f2->reserved_memory_bytes == 4096, "3644 AC3: reservation held (no recycle)");
+    CHECK(f2->must_wait_reclaimed && f2->reclaimed_deferred_cleanup, "3644 AC3: flags stay");
+    CHECK(!weak.expired(), "3644 AC3: mailbox untouched");
+    CHECK(g_orch_module_stats.reclaimed_abandon_total.load(std::memory_order_relaxed) == ab0,
+          "3644 AC3: no abandon bump");
+    CHECK(g_orch_module_stats.reclaimed_quota_force_released_total.load(
+              std::memory_order_relaxed) == fr0,
+          "3644 AC3: no quota bump");
+    auto* denied = table.put(make_pending_reclaimed_handle(fiber_owned.get(), "soft-3644", 0));
+    CHECK(denied == nullptr, "3644 AC3: same-name put still typed-denied (#3467)");
+    if (!prev_s.empty())
+        ::setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", prev_s.c_str(), 1);
+    else
+        ::unsetenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS");
+}
+
+static void ac3644_4_not_stuck_no_recycle_deny_and_wait_intact() {
+    using aura::orch::AgentHandle;
+    using aura::serve::Fiber;
+    using aura::serve::JoinStatus;
+    using aura::serve::mf_mailbox::MultiFiberMailbox;
+    std::println("\n--- #3644 AC4: production + age < timeout → no recycle, deny + wait_reclaimed "
+                 "intact ---");
+    apply_production_audit_defaults();
+    // Env deliberately not overridden — default 60s; fresh mark_reclaimed ≈ age 0.
+    const auto ab0 = g_orch_module_stats.reclaimed_abandon_total.load(std::memory_order_relaxed);
+    const auto fr0 =
+        g_orch_module_stats.reclaimed_quota_force_released_total.load(std::memory_order_relaxed);
+    auto fiber_owned = std::make_unique<Fiber>([] {});
+    fiber_owned->mark_reclaimed();
+    auto h = make_pending_reclaimed_handle(fiber_owned.get(), "young-3644", 4096);
+    auto mb = std::make_shared<MultiFiberMailbox>(/*high_water=*/4);
+    std::weak_ptr<MultiFiberMailbox> weak = mb;
+    h.mailbox = mb;
+    mb.reset();
+    aura::compiler::AgentNameTable table;
+    auto* slot = table.put(std::move(h));
+    CHECK(slot != nullptr, "3644 AC4: pending handle registered");
+    auto* f1 = table.find("young-3644");
+    auto* f2 = table.find("young-3644");
+    CHECK(f1 != nullptr && f2 != nullptr, "3644 AC4: pending slot resolves on both visits");
+    CHECK(f2->reserved_memory_bytes == 4096, "3644 AC4: reservation held before the timeout");
+    CHECK(f2->must_wait_reclaimed && f2->reclaimed_deferred_cleanup, "3644 AC4: flags stay");
+    CHECK(!weak.expired(), "3644 AC4: mailbox untouched");
+    CHECK(g_orch_module_stats.reclaimed_abandon_total.load(std::memory_order_relaxed) == ab0,
+          "3644 AC4: no abandon bump");
+    CHECK(g_orch_module_stats.reclaimed_quota_force_released_total.load(
+              std::memory_order_relaxed) == fr0,
+          "3644 AC4: no quota bump");
+    auto* denied = table.put(make_pending_reclaimed_handle(fiber_owned.get(), "young-3644", 0));
+    CHECK(denied == nullptr, "3644 AC4: same-name put still denied (#3467, #3644 non-goal)");
+    auto wr = aura::orch::wait_reclaimed_body(*f2, /*timeout_ms=*/1);
+    CHECK(wr.status == JoinStatus::Timeout,
+          "3644 AC4: wait_reclaimed still resolves the name (Timeout, not Invalid)");
+    CHECK(f2->must_wait_reclaimed, "3644 AC4: wait Timeout keeps must_wait (#3146)");
+    apply_dev_audit_defaults();
+}
+
+static void ac3644_5_source_cite_and_no_invent() {
+    std::println("\n--- #3644 AC5: source-cite + linter + no invent / no new query key ---");
+    const auto spawn = read_file("src/orch/agent_spawn.h");
+    CHECK(spawn.find("maybe_force_recycle_reclaimed_slot") != std::string::npos,
+          "3644 AC5: sibling helper");
+    CHECK(spawn.find("kReclaimedSlotSecondRecycleIssue = 3644") != std::string::npos,
+          "3644 AC5: issue constant");
+    CHECK(spawn.find("Issue #3644") != std::string::npos, "3644 AC5: cite");
+    CHECK(spawn.find("maybe_force_release_reclaimed_quota") != std::string::npos,
+          "3644 AC5: #3564 quota arm retained");
+    const auto nametable = read_file("src/compiler/agent_name_table.h");
+    CHECK(nametable.find("maybe_force_recycle_reclaimed_slot") != std::string::npos,
+          "3644 AC5: name-table find/put cite");
+    const auto scopeh = read_file("src/orch/agent_scope.h");
+    CHECK(scopeh.find("maybe_force_recycle_reclaimed_slot") != std::string::npos,
+          "3644 AC5: scope find cite");
+    CHECK(read_file("scripts/check_reclaimed_slot_second_recycle_3644.py").find("3644") !=
+              std::string::npos,
+          "3644 AC5: linter present");
+    CHECK(read_file("tests/orch/test_issue_3644.cpp").empty() &&
+              read_file("tests/issues/test_issue_3644.cpp").empty(),
+          "3644 AC5: no test_issue_3644.cpp per #81967");
+    CHECK(read_file("docs/design/3644-reclaimed-second-recycle.md").empty(),
+          "3644 AC5: no docs/design/3644-* per #1655");
+    const auto prim = read_file("src/compiler/evaluator_primitives_agent.cpp");
+    CHECK(prim.find("reclaimed-slot-second-recycle") == std::string::npos,
+          "3644 AC5: no new query key");
 }
 
 static void ac3631_5_source_cite_and_no_invent() {
@@ -5629,6 +5837,11 @@ int run_test_join_drain_reclaim() {
     ac3631_3_single_handle_regression();
     ac3631_4_soft_zero_cost();
     ac3631_5_source_cite_and_no_invent();
+    ac3644_1_done_body_full_cleanup_on_find();
+    ac3644_2_live_body_abandon_shape_on_later_find();
+    ac3644_3_soft_no_recycle();
+    ac3644_4_not_stuck_no_recycle_deny_and_wait_intact();
+    ac3644_5_source_cite_and_no_invent();
 
     std::println("\n=== Results: {} passed, {} failed ===", aura::test::g_passed,
                  aura::test::g_failed);

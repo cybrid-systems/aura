@@ -6523,6 +6523,23 @@ def cmd_lint():
     if r != 0:
         fail("Issue #3643 scope join tree linter failed — run python3 scripts/check_scope_join_tree_3643.py")
         return r
+    # Issue #3644: second recycle on the resolution planes — after the
+    # #3564 quota-only arm, a stuck Reclaimed slot still held its mailbox
+    # + name until Evaluator drain. maybe_force_recycle_reclaimed_slot:
+    # done body → full Done-path cleanup (retire + same-name put passes);
+    # live body → abandon shape once quota is gone (mailbox freed, name +
+    # pending flags cleared, body-stack untouched #2661). Soft / not
+    # stuck: no-op; #3467 deny + #3564 first-visit semantics unchanged.
+    wfc3644_script = ROOT / "scripts" / "check_reclaimed_slot_second_recycle_3644.py"
+    if not wfc3644_script.exists():
+        fail(f"missing {wfc3644_script}")
+        return 1
+    r = run([sys.executable, str(wfc3644_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3644 second recycle linter failed — run python3 scripts/check_reclaimed_slot_second_recycle_3644.py"
+        )
+        return r
     # Issue #3301: atomic-batch batch-level MacroIntroduced fail-closed
     # audit. Dispatcher walks each sub-op's target node-id arg before the
     # sub-op loop and denies the whole batch if a target is MacroIntroduced
