@@ -1345,6 +1345,99 @@ int run_test_exhausted_min_dirty_reemit() {
                   "2952 AC6: no docs/design/");
         }
 
+        // ── #3649: storm-exit edge drives residual coverage-verify ──
+        // AC1: storm active → skip still (no seed during storm, #2952).
+        // AC2: storm → None edge (storm_exit_force_full_active now==0 &&
+        //      prev!=0) → coverage-verify runs at the edge, no 256 wait.
+        // AC3: Soft → no verify at the edge.
+        // AC4: #3096 256-exit belt + reason-group untouched (source-cite).
+        // AC5: source-cite + linter + no forbidden artifacts.
+        {
+            std::println("\n--- #3649: storm-exit edge residual coverage-verify ---");
+            reg.on_reload_success();
+            reg.reset_coverage_verify_for_test();
+            reg.reset_exhausted_min_dirty_retry_for_test();
+            unsetenv("AURA_COVERAGE_VERIFY_MIN_DIRTY");
+            unsetenv("AURA_SANDBOX");
+
+            // AC1 + AC2: production + residual + storm enter → skip; exit
+            // edge → coverage-verify fires without 256 BoundaryExits.
+            {
+                aura::compiler::typed_audit::g_typed_mutation_audit_counters
+                    .production_defaults_active.store(1, std::memory_order_relaxed);
+                reg.on_reload_success();
+                reg.reset_coverage_verify_for_test();
+                reg.reset_exhausted_min_dirty_retry_for_test();
+                reg.on_force_jit_for_reason(AotReloadFail::Env);
+                reg.note_reemit_success_coverage(0); // residual = Env bit
+                reg.set_exhausted_min_dirty_retry_cap(3);
+                reg.reset_exhausted_min_dirty_retry_for_test(); // attempts_left=0
+
+                // Storm entry edge: first consult with Shape active.
+                reg.set_shape_storm_active(true);
+                (void)reg.storm_exit_force_full_active(); // now=Shape prev=0 → #3163 entry
+                // AC1: under storm, coverage-verify still skips (#2952).
+                const auto skip0 = reg.coverage_verify_storm_skip_total();
+                const auto sched0 = reg.coverage_verify_scheduled_total();
+                const bool drove_storm = reg.maybe_coverage_verify_min_dirty();
+                CHECK(!drove_storm, "3649 AC1: storm active still skips");
+                CHECK(reg.coverage_verify_storm_skip_total() == skip0 + 1,
+                      "3649 AC1: storm-skip +1");
+                CHECK(reg.coverage_verify_scheduled_total() == sched0,
+                      "3649 AC1: no schedule during storm");
+
+                // Exit edge: Shape → None; the #3649 hook must run
+                // coverage-verify at the edge (no 256-exit wait).
+                const auto skip1 = reg.coverage_verify_storm_skip_total();
+                reg.set_shape_storm_active(false);
+                (void)reg.storm_exit_force_full_active(); // now=0 prev!=0 → #3649 hook
+                CHECK(reg.coverage_verify_scheduled_total() == sched0 + 1,
+                      "3649 AC2: exit edge schedules coverage-verify (no 256 wait)");
+                CHECK(reg.coverage_verify_storm_skip_total() == skip1,
+                      "3649 AC2: edge run is not a storm-skip");
+            }
+
+            // AC3: Soft → edge hook gated off (no verify, no schedule).
+            {
+                aura::compiler::typed_audit::g_typed_mutation_audit_counters
+                    .production_defaults_active.store(0, std::memory_order_relaxed);
+                reg.on_reload_success();
+                reg.reset_coverage_verify_for_test();
+                reg.reset_exhausted_min_dirty_retry_for_test();
+                reg.on_force_jit_for_reason(AotReloadFail::Env);
+                reg.note_reemit_success_coverage(0);
+                reg.set_shape_storm_active(true);
+                (void)reg.storm_exit_force_full_active();
+                const auto sched0 = reg.coverage_verify_scheduled_total();
+                reg.set_shape_storm_active(false);
+                (void)reg.storm_exit_force_full_active();
+                CHECK(reg.coverage_verify_scheduled_total() == sched0,
+                      "3649 AC3: Soft edge does not schedule");
+                reg.set_shape_storm_active(false);
+            }
+
+            // AC4 + AC5: source-cite; belt + reason-group + artifacts.
+            {
+                const auto cpp = read_file("src/compiler/hot_update_registry.cpp");
+                const auto build = read_file("build.py");
+                CHECK(cpp.find("Issue #3649") != std::string::npos, "3649 AC5: cpp cites #3649");
+                CHECK(cpp.find("kAutoHealExits = 256") != std::string::npos,
+                      "3649 AC4: #3096 256-exit belt retained");
+                CHECK(cpp.find("ReemitReason::ResidualForceHeal") != std::string::npos,
+                      "3649 AC4: ResidualForceHeal reason-group retained");
+                CHECK(cpp.find("if (current_storm_level() != StormLevel::None || "
+                               "hard_storm_active())") != std::string::npos,
+                      "3649 AC1: storm skip contract intact");
+                CHECK(build.find("check_storm_exit_coverage_verify_3649") != std::string::npos,
+                      "3649 AC5: build.py wires linter");
+                const std::string issue_artifact = std::string("test_issue_") + "3649";
+                CHECK(cpp.find(issue_artifact) == std::string::npos,
+                      "3649 AC5: no tests/issues artifact");
+                CHECK(read_file("docs/design/3649-storm-exit-coverage-verify.md").empty(),
+                      "3649 AC5: no docs/design/");
+            }
+        }
+
         // Restore Soft for subsequent suites / process exit.
         aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active
             .store(0, std::memory_order_relaxed);

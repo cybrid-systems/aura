@@ -94,3 +94,4 @@ check_reclaimed_slot_second_recycle_3644.py
 check_metrics_not_found_3645.py
 check_closure_densify_slots_3647.py
 check_apply_window_gate_3648.py
+check_storm_exit_coverage_verify_3649.py
