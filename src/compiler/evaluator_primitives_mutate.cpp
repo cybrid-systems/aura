@@ -1423,8 +1423,12 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             // Issue #1630: force full provenance (fiber_id / cow / wrap /
             // boundary_pinned) via ensure_valid_or_refresh on every mutate
             // StableNodeRef input — supersedes bare validate_or_refresh.
+            // Issue #3661: production packed v2 with expired gen must not
+            // occupancy-remake the current occupant (auto_refresh wrote a
+            // new layout gen and skipped Strict). Soft keeps #2186 refresh.
             const bool was_valid = ref.is_valid_in(flat) && flat.get_safe(ref).has_value();
-            if (ev.ensure_valid_or_refresh(ref, /*auto_refresh=*/true).has_value()) {
+            const bool refresh = !aura::compiler::typed_audit::production_defaults_active();
+            if (ev.ensure_valid_or_refresh(ref, /*auto_refresh=*/refresh).has_value()) {
                 if (!was_valid) {
                     ev.bump_stable_ref_cross_cow_refresh();
                 }

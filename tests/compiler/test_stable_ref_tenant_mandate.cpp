@@ -20,6 +20,8 @@
 #include "core/workspace_isolation.hh"
 
 #include <cstdint>
+#include <fstream>
+#include <iterator>
 #include <print>
 #include <string>
 #include <string_view>
@@ -288,6 +290,20 @@ int run_test_stable_ref_tenant_mandate() {
         ev.set_effect_sandbox_mode(0);
         CHECK(ev.ensure_valid_or_refresh(ref, true).has_value() || !ref.is_valid_in(*ws),
               "Off sandbox does not hard-deny cross-tenant");
+    }
+
+    // Issue #3661: packed-v2 occupancy remake closed at resolve; tenant
+    // deny in ensure_valid_or_refresh still runs before auto_refresh.
+    {
+        std::println("\n--- #3661: tenant deny still precedes auto_refresh ---");
+        std::ifstream f("src/compiler/evaluator_fiber_mutation.cpp");
+        std::string s((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+        CHECK(!s.empty(), "3661: ensure TU readable");
+        const auto tenant = s.find("record_stable_ref_cross_tenant_deny");
+        const auto policy = s.find("const bool policy_on");
+        CHECK(tenant != std::string::npos, "3661: cross-tenant deny kept");
+        CHECK(policy != std::string::npos, "3661: auto_refresh policy_on kept");
+        CHECK(tenant < policy, "3661: tenant deny before auto_refresh policy");
     }
 
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);

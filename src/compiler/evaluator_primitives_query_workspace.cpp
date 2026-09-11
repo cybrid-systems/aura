@@ -604,7 +604,10 @@ void register_workspace_query_primitives(
         // FailOnStale / wrap_epoch / tenant hard-fail without silent rebind.
         // ensure_valid_or_refresh bumps process-wide ensure_* / auto_refresh
         // counters (AC3); wrap_epoch / tenant denials stay non-refreshable.
-        if (!ev.ensure_valid_or_refresh(ref, /*auto_refresh=*/true).has_value()) {
+        // Issue #3661: production packed v2 gen mismatch is stale-ref, not
+        // occupancy remake. Soft / Off keep auto_refresh (Issue #2186).
+        const bool refresh = !aura::compiler::typed_audit::production_defaults_active();
+        if (!ev.ensure_valid_or_refresh(ref, /*auto_refresh=*/refresh).has_value()) {
             *ok = false;
             return mev("stale-ref", std::string(op) + ": stable-ref is stale or "
                                                       "provenance ensure failed");
