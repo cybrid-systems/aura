@@ -50,7 +50,10 @@ def main() -> int:
     must("production_surface", "AC1 gate", bwin)
     must("is_sandbox_active", "AC1 Restricted/Strict", mx)
     must("original_root", "AC1 return", bwin)
-    must("g_macro_hygiene_last_limit_reason", "AC1 reason", bwin)
+    # Issue #3651: the no-boundary guard consults the deny-code predicate
+    # (depth/pass/steal/cap/gensym) instead of the raw reason==2 load; the
+    # atomic itself lives in inner_expand_production_limit_deny().
+    must("inner_expand_production_limit_deny()", "AC1 reason gate", bwin)
     must("3062 AC1", "AC1 test", lim_t)
 
     # AC2 boundary restore
