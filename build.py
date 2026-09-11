@@ -5453,6 +5453,19 @@ def cmd_lint():
             "Issue #3661 packed v2 no occupancy refresh linter failed — run python3 scripts/coverage/checks/check_packed_v2_no_occupancy_refresh_3661.py"
         )
         return r
+    # Issue #3662: Production is_coercible(Dynamic, T) matches unify
+    # reject — check_flat must not insert CastOp after #3622. Soft
+    # gradual core kept. Extends test_ir #3622 suite; linter after #3661.
+    icd3662_script = COVERAGE_CHECKS / "check_is_coercible_dynamic_prod_3662.py"
+    if not icd3662_script.exists():
+        fail(f"missing {icd3662_script}")
+        return 1
+    r = run([sys.executable, str(icd3662_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3662 is_coercible Dynamic production linter failed — run python3 scripts/coverage/checks/check_is_coercible_dynamic_prod_3662.py"
+        )
+        return r
     # Issue #3419: JIT typed-entry on every compiled function (anonymous)
     # included). Stub typed-entry is not production (ABI bit 8). Soft omit.
     # Extends persist-rehydrate + steal-complete; linter after #3343.
