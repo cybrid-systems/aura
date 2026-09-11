@@ -422,7 +422,8 @@ extern "C" __attribute__((weak)) void
 aura_set_linear_post_mutate_enforce_fn(aura_linear_post_mutate_enforce_fn_t /*fn*/,
                                        void* /*user_data*/) {}
 extern "C" __attribute__((weak)) int aura_jit_linear_post_mutate_enforce(std::uint32_t /*env_id*/) {
-    // Issue #3343: 1 = unsafe / deopt under production; 0 = pass-through Soft.
+    // Issue #3343 / #3654: 1 = unsafe / deopt under production; 0 = pass-through Soft.
+    // Light-link has no host callback — production must not return safe.
     if (stub_production_defaults_active())
         return 1;
     return 0;
