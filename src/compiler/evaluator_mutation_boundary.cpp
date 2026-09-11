@@ -6600,6 +6600,35 @@ std::size_t Evaluator::register_known_moving_densify_root_slots() noexcept {
     }
     if (require_inject_env_)
         known_slots.push_back(reinterpret_cast<void**>(&require_inject_env_));
+    // Issue #3647 (#3055 residual): known Closure body slots. closures_
+    // entries are node-stable (unordered_map), so &cl.flat / &cl.pool are
+    // lasting void** — Moving densify rewrites them via the slot SSOT below
+    // instead of leaving eval_flat / JIT reading densify-old addresses
+    // between densify and apply (previously only the post-move canary
+    // fail-closed the window). Collect under shared closures_mtx_ (same
+    // scan lock as refresh_stale_frames_after_steal) and release BEFORE
+    // registration — no arena lock is ever taken under closures_mtx_
+    // (on_arena_compact_hook may walk closures from inside arena compact).
+    // No canary dual-note on these slots (#3368): the slot is the cover.
+    std::size_t closure_slots = 0;
+    {
+        std::shared_lock<std::shared_mutex> rlock(closures_mtx_);
+        for (auto& [cid, cl] : closures_) {
+            (void)cid;
+            if (cl.flat) {
+                known_slots.push_back(reinterpret_cast<void**>(&cl.flat));
+                ++closure_slots;
+            }
+            if (cl.pool) {
+                known_slots.push_back(reinterpret_cast<void**>(&cl.pool));
+                ++closure_slots;
+            }
+        }
+    }
+    if (closure_slots > 0) {
+        aura::core::densify_consistency::g_moving_closure_slots_registered_total.fetch_add(
+            closure_slots, std::memory_order_relaxed);
+    }
     if (!known_slots.empty()) {
         for (void** slot : known_slots)
             arena_group_->register_external_root_slot_for_densify_all(slot);

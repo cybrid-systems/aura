@@ -6555,6 +6555,22 @@ def cmd_lint():
     if r != 0:
         fail("Issue #3645 metrics not-found linter failed — run python3 scripts/check_metrics_not_found_3645.py")
         return r
+    # Issue #3647 (#3055 residual): known Closure body slots. The #2889
+    # known-root walk now registers &cl.flat / &cl.pool from closures_
+    # (node-stable unordered_map entries) into the Moving densify window
+    # via the existing register_external_root_slot_for_densify_all SSOT —
+    # slot rewrite instead of canary-only fail-close between densify and
+    # apply. No canary dual-note (#3368); Soft / no Moving zero extra.
+    cds3647_script = ROOT / "scripts" / "check_closure_densify_slots_3647.py"
+    if not cds3647_script.exists():
+        fail(f"missing {cds3647_script}")
+        return 1
+    r = run([sys.executable, str(cds3647_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3647 closure densify slots linter failed — run python3 scripts/check_closure_densify_slots_3647.py"
+        )
+        return r
     # Issue #3301: atomic-batch batch-level MacroIntroduced fail-closed
     # audit. Dispatcher walks each sub-op's target node-id arg before the
     # sub-op loop and denies the whole batch if a target is MacroIntroduced
