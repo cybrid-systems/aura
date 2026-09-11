@@ -1351,12 +1351,16 @@ static void ac3323_2_concurrent_call_no_stale_native() {
     CHECK(aura_closure_get_must_deopt(cid) != 0, "3323 AC2: MustDeopt after overflow");
     running.store(0, std::memory_order_relaxed);
     caller.join();
-    prod.store(prev, std::memory_order_relaxed);
+    // Keep production armed through the post-join asserts: the dual-fresh
+    // poison (bridge_epoch=0) only fences under production. Restoring Soft
+    // first let the post-join call dispatch native (must_deopt may already
+    // be consumed by the concurrent storm) — racy FAILs on loaded runners.
     const auto hits_after_join = g_3323_native_hits.load(std::memory_order_relaxed);
     CHECK(aura_closure_call(cid, nullptr, 0) == 0, "3323 AC2: post-join call leaves native");
     CHECK(g_3323_native_hits.load(std::memory_order_relaxed) == hits_after_join,
           "3323 AC2: no native after overflow returned");
     CHECK(aura_get_closure_bridge_epoch(cid) == 0, "3323 AC2: epoch stays poisoned");
+    prod.store(prev, std::memory_order_relaxed);
     aura_test_reset_pure_anon_bg_queue();
 }
 
