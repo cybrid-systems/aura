@@ -916,6 +916,189 @@ static void ac3399_5_no_docs_no_test_issue_cite_present() {
           "3399 AC5: cmd_structural_mutate_resolve_helper_coverage in build.py");
 }
 
+// Issue #3661: production packed v2 with expired gen must stale-ref, not
+// occupancy-remake the current occupant. Soft auto_refresh kept.
+
+static void test_ac3661_1_expired_gen_stale_ref() {
+    std::println("\n=== #3661 AC1: production expired-gen v2 is stale-ref ===");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    using aura::compiler::types::as_bool;
+    using aura::compiler::types::is_bool;
+    using aura::compiler::types::is_hash;
+    using aura::compiler::types::is_pair;
+    apply_dev_audit_defaults();
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define A3661 (lambda () 1))\\n(define B3661 (lambda () 2))\")")
+              .has_value(),
+          "3661 AC1: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3661 AC1: eval");
+    apply_production_audit_defaults();
+    CHECK(cs.eval("(define qrA3661 (query :find \"A3661\"))").has_value(), "3661 AC1: bind A hash");
+    CHECK(cs.eval("(define qrB3661 (query :find \"B3661\"))").has_value(), "3661 AC1: bind B hash");
+    auto ha = cs.eval("qrA3661");
+    auto hb = cs.eval("qrB3661");
+    CHECK(ha && is_hash(*ha), "3661 AC1: A is schema-2 hash");
+    CHECK(hb && is_hash(*hb), "3661 AC1: B is schema-2 hash");
+    CHECK(cs.eval("(define pA3661 (query:as-stable-ref qrA3661))").has_value(),
+          "3661 AC1: pack A v2");
+    auto packed = cs.eval("pA3661");
+    CHECK(packed && is_pair(*packed), "3661 AC1: packed v2 pair");
+    // Expire gen without a second mutate Guard (Guard-reject is not the
+    // residual). Slot stays live; wrap/tenant/cow unchanged.
+    auto* ws = cs.evaluator().workspace_flat();
+    CHECK(ws != nullptr, "3661 AC1: workspace");
+    // Poison packed gen in-place. Slot stays live; wrap/tenant/cow
+    // unchanged. A second replace-subtree Guard is not the residual.
+    aura::ast::FlatAST::StableNodeRef poisoned{};
+    {
+        using aura::compiler::types::as_int;
+        using aura::compiler::types::as_pair_idx;
+        using aura::compiler::types::is_int;
+        using aura::compiler::types::is_pair;
+        using aura::compiler::types::make_int;
+        auto& ev = cs.evaluator();
+        const auto pidx = as_pair_idx(*packed);
+        CHECK(is_int(ev.pairs()[pidx].car), "3661 AC1: v2 id is int");
+        poisoned.id = static_cast<aura::ast::NodeId>(as_int(ev.pairs()[pidx].car));
+        auto rest = ev.pairs()[pidx].cdr;
+        CHECK(is_pair(rest), "3661 AC1: v2 gen cell is a pair");
+        const auto gidx = as_pair_idx(rest);
+        CHECK(is_int(ev.pairs()[gidx].car), "3661 AC1: v2 gen is int");
+        const auto oldg = as_int(ev.pairs()[gidx].car);
+        ev.pairs()[gidx].car = make_int(oldg + 97);
+        poisoned.gen = static_cast<std::uint16_t>(oldg + 97);
+        rest = ev.pairs()[gidx].cdr;
+        if (is_pair(rest) && is_int(ev.pairs()[as_pair_idx(rest)].car))
+            poisoned.wrap_epoch =
+                static_cast<std::uint32_t>(as_int(ev.pairs()[as_pair_idx(rest)].car));
+        CHECK(ws->is_live_node(poisoned.id), "3661 AC1: slot still live");
+    }
+    CHECK(aura::compiler::typed_audit::production_defaults_active(),
+          "3661 AC1: production still active");
+    auto& ev = cs.evaluator();
+    CHECK(!ev.ensure_valid_or_refresh(poisoned, /*auto_refresh=*/false).has_value(),
+          "3661 AC1: mutate ensure auto_refresh=false rejects expired gen");
+    CHECK(cs.eval("(define rChk3661 (mutate:check-stable-ref pA3661))").has_value(),
+          "3661 AC1: bind check-stable-ref");
+    auto chk_t = cs.eval("(eq? rChk3661 #t)");
+    CHECK(chk_t && is_bool(*chk_t) && !as_bool(*chk_t),
+          "3661 AC1: mutate probe of expired-gen v2 is not ok");
+    CHECK(cs.eval("(define rQ3661 (query :children pA3661))").has_value(),
+          "3661 AC1: bind query children packed");
+    auto stale_q = cs.eval("(and (pair? rQ3661) (equal? (car rQ3661) \"stale-ref\"))");
+    CHECK(stale_q && is_bool(*stale_q) && as_bool(*stale_q),
+          "3661 AC1: query resolve of expired-gen v2 is stale-ref");
+    apply_dev_audit_defaults();
+}
+
+static void test_ac3661_2_matching_gen_succeeds() {
+    std::println("\n=== #3661 AC2: production matching-gen v2 still resolves ===");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    using aura::compiler::types::as_bool;
+    using aura::compiler::types::is_bool;
+    using aura::compiler::types::is_hash;
+    using aura::compiler::types::is_pair;
+    apply_dev_audit_defaults();
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define C3661 (lambda () 1))\")").has_value(), "3661 AC2: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3661 AC2: eval");
+    apply_production_audit_defaults();
+    CHECK(cs.eval("(define qrC3661 (query :find \"C3661\"))").has_value(), "3661 AC2: bind hash");
+    auto h = cs.eval("qrC3661");
+    CHECK(h && is_hash(*h), "3661 AC2: schema-2 hash");
+    CHECK(cs.eval("(define pC3661 (query:as-stable-ref qrC3661))").has_value(),
+          "3661 AC2: pack v2");
+    auto packed = cs.eval("pC3661");
+    CHECK(packed && is_pair(*packed), "3661 AC2: packed v2");
+    CHECK(cs.eval("(define rCh3661 (query :children pC3661))").has_value(),
+          "3661 AC2: bind children");
+    auto stale = cs.eval("(and (pair? rCh3661) (equal? (car rCh3661) \"stale-ref\"))");
+    CHECK(stale && is_bool(*stale) && !as_bool(*stale),
+          "3661 AC2: matching-gen v2 query resolve is not stale-ref");
+    apply_dev_audit_defaults();
+}
+
+static void test_ac3661_3_soft_auto_refresh() {
+    std::println("\n=== #3661 AC3: Soft auto_refresh historical ===");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::types::as_bool;
+    using aura::compiler::types::is_bool;
+    using aura::compiler::types::is_pair;
+    apply_dev_audit_defaults();
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define S3661 (lambda () 1))\\n(define T3661 (lambda () 2))\")")
+              .has_value(),
+          "3661 AC3: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3661 AC3: eval");
+    auto soft = cs.eval("(query:as-stable-ref 1)");
+    CHECK(soft && is_pair(*soft), "3661 AC3: Soft int → v1 pair");
+    CHECK(cs.eval("(define pS3661 (query:as-stable-ref 1))").has_value(), "3661 AC3: bind packed");
+    CHECK(cs.eval("(mutate:rebind \"T3661\" \"9\")").has_value(), "3661 AC3: rebind T");
+    CHECK(cs.eval("(define rS3661 (query :children pS3661))").has_value(),
+          "3661 AC3: bind children after mutate");
+    auto stale = cs.eval("(and (pair? rS3661) (equal? (car rS3661) \"stale-ref\"))");
+    CHECK(stale && is_bool(*stale) && !as_bool(*stale),
+          "3661 AC3: Soft packed still auto-refresh after mutate");
+    std::ifstream f_mut("src/compiler/evaluator_primitives_mutate.cpp");
+    std::string mut((std::istreambuf_iterator<char>(f_mut)), std::istreambuf_iterator<char>());
+    CHECK(mut.find("auto_refresh=*/true") != std::string::npos,
+          "3661 AC3: Soft auto_refresh=true still in mutate.cpp");
+}
+
+static void test_ac3661_4_strict_not_bypassed() {
+    std::println("\n=== #3661 AC4: Strict policy on ensure-fail, not after refresh success ===");
+    std::ifstream f_mut("src/compiler/evaluator_primitives_mutate.cpp");
+    std::string mut((std::istreambuf_iterator<char>(f_mut)), std::istreambuf_iterator<char>());
+    const auto r = mut.find("auto resolve_mutate_node_arg");
+    CHECK(r != std::string::npos, "3661 AC4: resolve helper");
+    const auto win = r == std::string::npos ? std::string{} : mut.substr(r, 4500);
+    CHECK(win.find("Issue #3661") != std::string::npos, "3661 AC4: cite");
+    CHECK(win.find("auto_refresh=*/refresh") != std::string::npos,
+          "3661 AC4: production refresh flag");
+    const auto ens = win.find("auto_refresh=*/refresh");
+    const auto strict = win.find("StaleRefPolicy::Strict");
+    CHECK(ens != std::string::npos && strict != std::string::npos && ens < strict,
+          "3661 AC4: Strict runs after ensure, not skipped by refresh success");
+    CHECK(win.find("stable-ref is stale (Strict policy blocked)") != std::string::npos,
+          "3661 AC4: Strict stale-ref message kept");
+}
+
+static void test_ac3661_5_suites_and_linter() {
+    std::println("\n=== #3661 AC5: suites + linter; no invent ===");
+    std::ifstream f_build("build.py");
+    std::string build((std::istreambuf_iterator<char>(f_build)), std::istreambuf_iterator<char>());
+    CHECK(build.find("check_packed_v2_no_occupancy_refresh_3661") != std::string::npos,
+          "3661 AC5: linter wired");
+    CHECK(build.find("check_query_result_per_match_fresh_3660") != std::string::npos,
+          "3661 AC5: #3660 linter retained");
+    std::ifstream f_hyg("tests/compiler/test_hygiene_mutate_closed_loop.cpp");
+    std::string hyg((std::istreambuf_iterator<char>(f_hyg)), std::istreambuf_iterator<char>());
+    CHECK(hyg.find("ac3661_hygiene_source_cite") != std::string::npos,
+          "3661 AC5: hygiene extended");
+    std::ifstream f_ten("tests/compiler/test_stable_ref_tenant_mandate.cpp");
+    std::string ten((std::istreambuf_iterator<char>(f_ten)), std::istreambuf_iterator<char>());
+    CHECK(ten.find("3661") != std::string::npos, "3661 AC5: tenant isolation extended");
+    std::ifstream f_mut("src/compiler/evaluator_primitives_mutate.cpp");
+    std::string mut((std::istreambuf_iterator<char>(f_mut)), std::istreambuf_iterator<char>());
+    CHECK(mut.find("raw node-id rejected under production") != std::string::npos,
+          "3661 AC5: #3395 retained");
+    CHECK(mut.find("walk_v2") != std::string::npos, "3661 AC5: #3396 retained");
+    std::ifstream f_st("src/core/ast_stability.cpp");
+    std::string st((std::istreambuf_iterator<char>(f_st)), std::istreambuf_iterator<char>());
+    CHECK(st.find("wrap_epoch != 0 && wrap_epoch != ast.wrap_epoch()") != std::string::npos,
+          "3661 AC5: #2393 wrap fence retained");
+    {
+        std::ifstream f("tests/compiler/test_issue_3661.cpp");
+        CHECK(!f.good(), "3661 AC5: no invent");
+    }
+    {
+        std::ifstream f("docs/design/3661-packed-v2-no-occupancy-refresh.md");
+        CHECK(!f.good(), "3661 AC5: no docs/design");
+    }
+}
+
 int main() {
     std::println(
         "=== Merged stable-ref provenance fiber COW: ORIG #457-#549 + TASK1 #551-#552 ===");
@@ -962,6 +1145,11 @@ int main() {
     ac3399_2_resolve_helper_has_3395_production_reject();
     ac3399_4_non_regress_489_2186_3395();
     ac3399_5_no_docs_no_test_issue_cite_present();
+    test_ac3661_1_expired_gen_stale_ref();
+    test_ac3661_2_matching_gen_succeeds();
+    test_ac3661_3_soft_auto_refresh();
+    test_ac3661_4_strict_not_bypassed();
+    test_ac3661_5_suites_and_linter();
     std::println("\n=== Results: {} passed, {} failed ===", ::aura::test::g_passed,
                  ::aura::test::g_failed);
     return ::aura::test::g_failed ? 1 : 0;

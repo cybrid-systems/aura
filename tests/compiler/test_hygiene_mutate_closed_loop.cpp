@@ -3367,6 +3367,22 @@ static void ac3451_4_soft_zero_extra() {
           "3451 AC4: Soft no extra g_query_result_stale_total");
 }
 
+static void ac3661_hygiene_source_cite() {
+    std::println("\n--- #3661: production packed v2 resolve does not occupancy remake ---");
+    auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
+    auto qws = read_file("src/compiler/evaluator_primitives_query_workspace.cpp");
+    CHECK(!mut.empty(), "3661 hygiene: mutate.cpp readable");
+    CHECK(!qws.empty(), "3661 hygiene: query_workspace.cpp readable");
+    CHECK(mut.find("Issue #3661") != std::string::npos, "3661 hygiene: mutate cite");
+    CHECK(qws.find("Issue #3661") != std::string::npos, "3661 hygiene: query cite");
+    CHECK(mut.find("auto_refresh=*/refresh") != std::string::npos,
+          "3661 hygiene: packed mutate auto_refresh gated");
+    CHECK(qws.find("auto_refresh=*/refresh") != std::string::npos,
+          "3661 hygiene: query auto_refresh gated");
+    CHECK(mut.find("raw node-id rejected under production") != std::string::npos,
+          "3661 hygiene: #3395 retained");
+}
+
 static void ac3451_5_source_and_linter() {
     std::println("\n--- #3451 AC5: source-cite + no invent / docs ---");
     auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
@@ -5575,6 +5591,7 @@ int main() {
     ac3451_3_outermost_clears_new_capture_fresh();
     ac3451_4_soft_zero_extra();
     ac3451_5_source_and_linter();
+    ac3661_hygiene_source_cite();
     std::println("\n=== Issue #3322: nested / render-fast observation window close ===");
     ac3322_1_nested_closes_window();
     ac3322_2_soft_zero_extra();

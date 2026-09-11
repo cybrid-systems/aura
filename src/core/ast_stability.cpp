@@ -185,6 +185,10 @@ bool FlatAST::StableNodeRef::validate_with_provenance(const FlatAST& ast) noexce
 // mismatch with a non-zero captured epoch (second wrap cycle), and
 // cross-layer COW epoch mismatch without pin_for_cow (Issue #2393 —
 // fail-closed, consistent with is_valid_in_layer / is_valid).
+// Issue #3661: Agent resolve_*_node_arg under production passes
+// auto_refresh=false so a gen-mismatched packed v2 cannot remake the
+// current occupant here. Steal / GC / pin restamp still call this with
+// auto_refresh and may remake (not an Agent consume path).
 //
 // Contract (#1564): every refresh that restamps gen/cow is counted on
 // both FlatAST::stale_ref_auto_refresh and process-wide

@@ -5440,6 +5440,19 @@ def cmd_lint():
             "Issue #3660 QueryResult per-match freshness linter failed — run python3 scripts/coverage/checks/check_query_result_per_match_fresh_3660.py"
         )
         return r
+    # Issue #3661: production packed v2 gen mismatch is stale-ref, not
+    # occupancy remake. Soft auto_refresh kept. Extends as-stable-ref /
+    # tenant / hygiene; linter after #3660.
+    pvr3661_script = COVERAGE_CHECKS / "check_packed_v2_no_occupancy_refresh_3661.py"
+    if not pvr3661_script.exists():
+        fail(f"missing {pvr3661_script}")
+        return 1
+    r = run([sys.executable, str(pvr3661_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3661 packed v2 no occupancy refresh linter failed — run python3 scripts/coverage/checks/check_packed_v2_no_occupancy_refresh_3661.py"
+        )
+        return r
     # Issue #3419: JIT typed-entry on every compiled function (anonymous)
     # included). Stub typed-entry is not production (ABI bit 8). Soft omit.
     # Extends persist-rehydrate + steal-complete; linter after #3343.
