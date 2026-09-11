@@ -696,6 +696,19 @@ bool Evaluator::require_effect_for_node_id(std::uint16_t req_bits, std::string_v
             if (hs.tenant_id != 0 && hs.node_id == static_cast<std::uint32_t>(node_id))
                 existing = hs.tenant_id;
         }
+        // Issue #3641: same-slot collision fail-closed. The slot held by
+        // another node's stamp means this NodeId has no exact ring entry,
+        // but caller-stamp would false-allow a foreign-occupied NodeId
+        // (collisions are inevitable at 256 slots — no special timing).
+        // Borrow the occupant's tenant so the existing foreign on_ref deny
+        // fires (same IsolationDeny face, no new query key); a same-tenant
+        // occupant keeps the #2056 caller-stamp allow path.
+        if (existing == 0) {
+            const auto occ = ::aura::core::provenance::occupying_stamp_for_node(
+                static_cast<std::uint32_t>(node_id));
+            if (occ.node_id != 0 && occ.node_id != static_cast<std::uint32_t>(node_id))
+                existing = occ.tenant_id;
+        }
     }
     const auto caller = static_cast<std::uint64_t>(capability_tenant_id_);
     if (consult && existing != 0 && existing != caller) {
@@ -1762,9 +1775,22 @@ void Evaluator::stamp_stable_ref(ast::FlatAST::StableNodeRef& ref) const noexcep
     ::aura::core::provenance::stamp_stable_ref_fields(ref, capability_tenant_id_, fiber);
     // Issue #3415: record stamp slot under Restricted/Strict so occupancy
     // NodeId cannot overwrite a foreign owner. Soft/Off: skip (zero extra).
-    if (sandbox_mode_ || effect_sandbox_mode() != 0)
+    // Issue #3641: under the consult regime (Strict, or Restricted+MT —
+    // same predicate as require_effect_for_node_id) the note refuses to
+    // evict a foreign node's occupancy or flip a foreign owner's tenant to
+    // the caller. Soft / single-tenant Restricted keep the legacy free
+    // note (#2056 / #3629 AC4).
+    if (sandbox_mode_ || effect_sandbox_mode() != 0) {
+        const auto mode_n = effect_sandbox_mode();
+        const bool strict_n = mode_n == 2 || ::aura::core::sandbox::is_strict();
+        const bool restricted_n = mode_n == 1;
+        const bool mt_n = ::aura::core::provenance::hard_capture_tenant_active() ||
+                          ::aura::core::provenance::multi_tenant_env_active();
+        const bool refuse = strict_n || (restricted_n && mt_n);
         ::aura::core::provenance::note_stamped_node(static_cast<std::uint32_t>(ref.id),
-                                                    capability_tenant_id_);
+                                                    capability_tenant_id_,
+                                                    /*refuse_foreign_owner=*/refuse);
+    }
 }
 
 // Issue #3000 / #3037 / #3121: production query:*-stable must not export a

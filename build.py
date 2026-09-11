@@ -6478,6 +6478,24 @@ def cmd_lint():
             "Issue #3640 add_mutate gate single-spine linter failed — run python3 scripts/check_unpack_spine_gate_3640.py"
         )
         return r
+    # Issue #3641: occupancy ring same-slot collision fail-closed
+    # (Restricted+MT / Strict). note_stamped_node refuses to evict a
+    # foreign node's occupancy or flip a foreign owner's tenant (torn /
+    # writer-in-flight keeps the occupant); require_effect_for_node_id
+    # borrows the slot occupant's tenant so the existing foreign on_ref
+    # deny fires — no caller-stamp false allow on a 1/256 hash collision.
+    # Soft / single-tenant Restricted unchanged (#2056); consult
+    # semantics (#3415) and ring size untouched.
+    wfc3641_script = ROOT / "scripts" / "check_occupancy_collision_failclosed_3641.py"
+    if not wfc3641_script.exists():
+        fail(f"missing {wfc3641_script}")
+        return 1
+    r = run([sys.executable, str(wfc3641_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3641 occupancy collision fail-closed linter failed — run python3 scripts/check_occupancy_collision_failclosed_3641.py"
+        )
+        return r
     # Issue #3301: atomic-batch batch-level MacroIntroduced fail-closed
     # audit. Dispatcher walks each sub-op's target node-id arg before the
     # sub-op loop and denies the whole batch if a target is MacroIntroduced

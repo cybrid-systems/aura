@@ -87,3 +87,4 @@ check_macro_boundary_backstop_3637.py
 check_query_index_telemetry_3638.py
 check_wal_append_miss_deny_3639.py
 check_unpack_spine_gate_3640.py
+check_occupancy_collision_failclosed_3641.py

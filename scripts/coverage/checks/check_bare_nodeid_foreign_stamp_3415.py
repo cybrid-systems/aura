@@ -67,10 +67,15 @@ def main() -> int:
     must("slot.seq.load(std::memory_order_acquire)", "AC1(#3629) seqlock read fence", prov)
     must("ac3629", "AC1(#3629) auto-isolation suite", test_req)
     fn = sec.find("bool Evaluator::require_effect_for_node_id")
-    fn_body = sec[fn : fn + 2800] if fn >= 0 else ""
+    # Issue #3641: the consult now carries the same-slot collision-borrow
+    # block (occupant tenant → foreign deny) before the on_ref call — the
+    # window must span the whole function body.
+    fn_body = sec[fn : fn + 3800] if fn >= 0 else ""
     must("existing_stamp_for_node", "AC1 for_node_id", fn_body)
     must("require_effect_on_ref", "AC1 for_node_id", fn_body)
     must("make_stamped_ref", "AC1 for_node_id same-tenant", fn_body)
+    must("Issue #3641", "AC1(#3641) collision borrow cite", fn_body)
+    must("occupying_stamp_for_node", "AC1(#3641) slot borrow", fn_body)
     if "make_stamped_ref(node_id)" in fn_body.split("existing_stamp_for_node")[0]:
         fails.append("AC1: for_node_id must consult existing stamp before restamping caller")
 
@@ -93,8 +98,11 @@ def main() -> int:
     # AC4 — Soft / single-tenant skip consult.
     must("restricted && mt", "AC4", fn_body)
     stamp = sec.find("void Evaluator::stamp_stable_ref")
-    stamp_body = sec[stamp : stamp + 1800] if stamp >= 0 else ""
+    # Issue #3641: the note call now carries the consult-regime refuse
+    # predicate — the window must span to the refuse flag at the call.
+    stamp_body = sec[stamp : stamp + 2800] if stamp >= 0 else ""
     must("sandbox_mode_ || effect_sandbox_mode() != 0", "AC4 Soft skip note", stamp_body)
+    must("refuse_foreign_owner", "AC4(#3641) refuse wiring", stamp_body)
 
     # AC5/AC6 — existing suites + no invent / no new query key.
     must("ac3415", "AC6 auto-isolation", test_req)

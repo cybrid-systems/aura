@@ -896,8 +896,10 @@ struct ProvenanceStatsSnapshot {
 
 // Issue #3629: direct-mapped occupancy ring backing the #3415 NodeId
 // stamp store. One seqlock-protected slot per node_id & (kRing - 1);
-// a stamp on another node no longer evicts a foreign owner unless it
-// collides on the same slot (bounded 1/256 residual). The per-slot
+// a stamp on another node never evicts a foreign owner — a same-slot
+// collision refuses the overwrite (#3641: collision is fail-closed,
+// first stainer keeps the slot; the consult borrows the occupant's
+// tenant for the foreign deny). The per-slot
 // seqlock (odd = writing, even = stable, release/acquire fences) also
 // closes the cross-thread plain-field race the single slot had by
 // design (stamp_stable_ref is const noexcept — no mutex on this path).
@@ -965,11 +967,32 @@ inline HygieneProvenanceStamp& g_last_hygiene_provenance_stamp() noexcept {
 // Issue #3629: backing store is the direct-mapped occupancy ring —
 // per-slot seqlock, no mutex (stamp_stable_ref stays const noexcept).
 inline constexpr int kBareNodeIdIsolationIssue = 3415;
-inline void note_stamped_node(std::uint32_t node_id, std::uint64_t tenant_id) noexcept {
+inline constexpr int kNodeOccupancyCollisionIssue = 3641;
+inline void note_stamped_node(std::uint32_t node_id, std::uint64_t tenant_id,
+                              bool refuse_foreign_owner = false) noexcept {
     if (node_id == 0)
         return;
     auto& t = g_provenance_tracker();
     auto& slot = t.node_occupancy_ring[node_id & (kNodeOccupancyRingSlots - 1)];
+    // Issue #3641: under the consult regime (Strict, or Restricted+MT) a
+    // stamp must not evict a foreign node's occupancy nor flip a foreign
+    // owner's tenant to the caller — same-slot collision is fail-closed,
+    // not evict. Any seqlock instability while refusing keeps the existing
+    // occupant (skip the note; the query-side collision borrow in
+    // require_effect_for_node_id still fail-closes cross-tenant).
+    if (refuse_foreign_owner) {
+        const auto s1 = slot.seq.load(std::memory_order_acquire);
+        if ((s1 & 1u) != 0)
+            return; // writer in flight — keep occupant
+        const auto n = slot.node_id.load(std::memory_order_relaxed);
+        const auto tn = slot.tenant_id.load(std::memory_order_relaxed);
+        if (slot.seq.load(std::memory_order_acquire) != s1)
+            return; // torn read — keep occupant
+        if (n != 0 && n != node_id)
+            return; // foreign node owns this slot — do not evict
+        if (n == node_id && tn != 0 && tn != tenant_id)
+            return; // same node, foreign owner — do not flip owner
+    }
     const auto s = slot.seq.load(std::memory_order_relaxed);
     slot.seq.store(s + 1, std::memory_order_release); // odd: writing
     slot.node_id.store(node_id, std::memory_order_relaxed);
@@ -989,6 +1012,30 @@ inline void note_stamped_node(std::uint32_t node_id, std::uint64_t tenant_id) no
     if (slot.seq.load(std::memory_order_acquire) != s1)
         return 0; // torn read — treat as miss (caller-stamp fallback)
     return n == node_id ? tn : 0;
+}
+struct NodeOccupancyView {
+    std::uint32_t node_id;
+    std::uint64_t tenant_id;
+};
+// Issue #3641: slot-level view — which stamp occupies the ring slot for
+// node_id, regardless of node match. The occupancy consult uses it to
+// fail-closed same-slot collisions (slot held by another node's stamp →
+// caller-stamp would false-allow a foreign-occupied NodeId). Torn /
+// writer-in-flight reads report unoccupied — the same bounded transient
+// residual existing_stamp_for_node already documents.
+[[nodiscard]] inline NodeOccupancyView occupying_stamp_for_node(std::uint32_t node_id) noexcept {
+    if (node_id == 0)
+        return {};
+    const auto& t = g_provenance_tracker();
+    const auto& slot = t.node_occupancy_ring[node_id & (kNodeOccupancyRingSlots - 1)];
+    const auto s1 = slot.seq.load(std::memory_order_acquire);
+    if ((s1 & 1u) != 0)
+        return {};
+    const auto n = slot.node_id.load(std::memory_order_relaxed);
+    const auto tn = slot.tenant_id.load(std::memory_order_relaxed);
+    if (slot.seq.load(std::memory_order_acquire) != s1)
+        return {};
+    return {n, tn};
 }
 inline void clear_last_stamped_node_for_test() noexcept {
     auto& t = g_provenance_tracker();
