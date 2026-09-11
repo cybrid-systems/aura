@@ -17,7 +17,10 @@
 
 #include "test_harness.hpp"
 
+#include "compiler/typed_mutation_audit.h"
+
 #include <cstdint>
+#include <fstream>
 #include <string>
 
 import std;
@@ -117,11 +120,48 @@ static void run_matrix(CompilerService& cs) {
     CHECK(lot && is_hash(*lot), "linear-ownership-typed-mutate-stats regression");
 }
 
+static std::string read_file(const char* path) {
+    for (const auto& p :
+         {std::string(path), std::string("../") + path, std::string("../../") + path}) {
+        std::ifstream in(p);
+        if (!in)
+            continue;
+        return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    }
+    return {};
+}
+
+static void ac3655_non_rebind_persist_sdo() {
+    std::println("\n--- #3655: non-rebind persist SDO ---");
+    const auto dtor = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
+    CHECK(dtor.find("Issue #3655") != std::string::npos, "3655 AC1: Guard persist-front SDO");
+    CHECK(dtor.find("run_post_mutate_typecheck_no_lock()") != std::string::npos,
+          "3655 AC1: typecheck before persist");
+    CHECK(mut.find("finish_mutate_hard_gate") != std::string::npos, "3655 AC2: hard-gate kept");
+    CHECK(mut.find("\"mutate:rebind\"") != std::string::npos ||
+              mut.find("mutate:rebind") != std::string::npos,
+          "3655 AC2: rebind still gated");
+    CHECK(dtor.find("occurrence_fp_staged()") != std::string::npos, "3655 AC3: staged skip");
+    CHECK(read_file("tests/compiler/test_issue_3655.cpp").empty(), "3655 AC5: no invent");
+    CHECK(read_file("docs/design/3655-persist-sdo.md").empty(), "3655 AC5: no docs");
+
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    aura::compiler::CompilerService cs;
+    CHECK(setup_predicate_workspace(cs), "3655 workspace");
+    auto tw = cs.eval("(mutate:tweak-literal 0 0)");
+    CHECK(tw.has_value(), "3655 AC1: production tweak-literal commits (SDO ran or vacuous)");
+    auto rs = cs.eval("(mutate:replace-subtree 0 \"1\")");
+    (void)rs;
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+}
+
 } // namespace aura_659_detail
 
 int aura_issue_typesystem_typed_mutate_incremental_gaps_run() {
     aura::compiler::CompilerService cs;
     aura_659_detail::run_matrix(cs);
+    aura_659_detail::ac3655_non_rebind_persist_sdo();
     return RUN_ALL_TESTS();
 }
 

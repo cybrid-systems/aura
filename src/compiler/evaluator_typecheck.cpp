@@ -269,6 +269,12 @@ bool Evaluator::run_post_mutate_typecheck_no_lock() {
             }
         }
         auto& tc = *tc_ptr;
+        // Issue #3655: mark infer-ran even when fingerprint is 0 (empty
+        // live goals). Distinguishes vacuous SOLVED from skipped SDO.
+        auto stage_fp_if_solved = [&]() {
+            if (tc.last_delta_solve_status() == SolveResult::SOLVED)
+                stage_expected_occurrence_snapshot_fp(aura_occurrence_goal_fingerprint_tc(&tc));
+        };
         // Issue #2219: Hard rejects match exhaustiveness diags (Warning or
         // TypeError). Do not force set_strict(true) at construction — apply
         // only on full recheck path below.
@@ -624,6 +630,7 @@ bool Evaluator::run_post_mutate_typecheck_no_lock() {
                         gate_m->mutate_soft_type_skip_total.fetch_add(1, std::memory_order_relaxed);
                 }
                 last_mutate_error_.clear();
+                stage_fp_if_solved();
                 return true;
             }
             // Keep "(selective)" token so typecheck-status fixtures / agents that
@@ -636,6 +643,7 @@ bool Evaluator::run_post_mutate_typecheck_no_lock() {
         }
         if (local_diags.empty()) {
             last_mutate_error_.clear();
+            stage_fp_if_solved();
             return true;
         }
         std::string err = selective ? "typecheck after mutate (selective) failed:"

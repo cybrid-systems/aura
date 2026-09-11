@@ -5373,7 +5373,20 @@ def cmd_lint():
             "Issue #3654 JIT linear_post_mutate unset fail-closed linter failed — run python3 scripts/coverage/checks/check_jit_linear_post_mutate_unset_3654.py"
         )
         return r
-    # Issue #3419: JIT typed-entry on every compiled function (anonymous
+    # Issue #3655: persist requires this-boundary SDO for non-rebind
+    # mutate. Soft skips extra typecheck. Extends persist-rehydrate +
+    # typed_mutate_incremental_gaps; linter after #3654.
+    sdo3655_script = COVERAGE_CHECKS / "check_persist_sdo_before_unstaged_3655.py"
+    if not sdo3655_script.exists():
+        fail(f"missing {sdo3655_script}")
+        return 1
+    r = run([sys.executable, str(sdo3655_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3655 persist SDO-before-unstaged linter failed — run python3 scripts/coverage/checks/check_persist_sdo_before_unstaged_3655.py"
+        )
+        return r
+    # Issue #3419: JIT typed-entry on every compiled function (anonymous)
     # included). Stub typed-entry is not production (ABI bit 8). Soft omit.
     # Extends persist-rehydrate + steal-complete; linter after #3343.
     jte3419_script = COVERAGE_CHECKS / "check_jit_typed_entry_every_function_3419.py"
