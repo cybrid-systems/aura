@@ -1470,7 +1470,10 @@ public:
         std::lock_guard lock(mu_);
         if (!try_pop_unlocked(out, /*for_fiber=*/0))
             return false;
-        (void)maybe_clear_stale_held_ref_on_recv(out, &local_stats_);
+        // Issue #3642: stale held_ref is not a successful pop — queue already
+        // popped, counters bumped; the cleared payload must not surface as Ok.
+        if (maybe_clear_stale_held_ref_on_recv(out, &local_stats_))
+            return false;
         // Issue #2592: deliver-side principal verify (TenantScope install
         // + mismatch bump). Re-call aura_fiber_install_tenant_scope_for_resume
         // from the receiving fiber; the hook is idempotent (no-op when
@@ -1506,6 +1509,15 @@ public:
     // Happy path (no boundary): zero extra cost beyond existing depth/held probe.
     [[nodiscard]] std::optional<MailMessage> recv(bool wait = true, int timeout_ms = -1,
                                                   std::uint64_t for_fiber = 0) {
+        return recv(wait, timeout_ms, for_fiber, /*stale_handoff=*/nullptr);
+    }
+
+    // Issue #3642: stale_handoff (optional) reports a consumed stale held_ref
+    // (payload cleared, counters bumped) that is NOT returned as a successful
+    // delivery — bare C++ hosts see nullopt; the orchestrator layer uses the
+    // flag for the Aura typed handoff-required surface (#3565 AC2).
+    [[nodiscard]] std::optional<MailMessage> recv(bool wait, int timeout_ms,
+                                                  std::uint64_t for_fiber, bool* stale_handoff) {
         const auto deadline = timeout_ms > 0 ? std::chrono::steady_clock::now() +
                                                    std::chrono::milliseconds(timeout_ms)
                                              : std::chrono::steady_clock::time_point::max();
@@ -1523,10 +1535,15 @@ public:
                     if (g_current_fiber != nullptr && g_current_fiber->has_assigned_tenant()) {
                         aura_fiber_install_tenant_scope_for_resume(g_current_fiber);
                     }
-                    // Issue #3565: production unstamped held_ref is not a
-                    // successful payload delivery (steal-complete cleared
-                    // the stamp; push-only gate was not enough).
-                    (void)maybe_clear_stale_held_ref_on_recv(out, &local_stats_);
+                    // Issue #3565 / #3642: production stale held_ref (steal-
+                    // complete cleared the stamp) is not a successful payload
+                    // delivery. Queue already popped; counters already bumped;
+                    // the cleared payload must not surface as Ok (AC1).
+                    if (maybe_clear_stale_held_ref_on_recv(out, &local_stats_)) {
+                        if (stale_handoff)
+                            *stale_handoff = true;
+                        return std::nullopt;
+                    }
                     return out;
                 }
                 if (closed_.load(std::memory_order_relaxed))

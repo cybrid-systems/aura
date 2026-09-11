@@ -6496,6 +6496,20 @@ def cmd_lint():
             "Issue #3641 occupancy collision fail-closed linter failed — run python3 scripts/check_occupancy_collision_failclosed_3641.py"
         )
         return r
+    # Issue #3642: stale held_ref consumes as nullopt/false at the mailbox
+    # consume paths (recv/try_pop) — the cleared payload never surfaces as a
+    # successful delivery to bare C++ hosts; the stale signal rides
+    # AgentHandle.last_recv_stale_handoff so the #3565 Aura typed
+    # handoff-required surface is unchanged. Soft delivers (#3111 AC3);
+    # no new query key; counters append-only reuse (#3565).
+    wfc3642_script = ROOT / "scripts" / "check_recv_stale_nullopt_3642.py"
+    if not wfc3642_script.exists():
+        fail(f"missing {wfc3642_script}")
+        return 1
+    r = run([sys.executable, str(wfc3642_script)], cwd=ROOT)
+    if r != 0:
+        fail("Issue #3642 recv stale nullopt linter failed — run python3 scripts/check_recv_stale_nullopt_3642.py")
+        return r
     # Issue #3301: atomic-batch batch-level MacroIntroduced fail-closed
     # audit. Dispatcher walks each sub-op's target node-id arg before the
     # sub-op loop and denies the whole batch if a target is MacroIntroduced
