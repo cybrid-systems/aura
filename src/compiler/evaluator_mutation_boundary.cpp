@@ -857,6 +857,10 @@ void Evaluator::flush_frame_budget_deferred() const noexcept {
 // checkpoint / rollback / typed-audit / impact telemetry.
 
 void Evaluator::enter_mutation_boundary() {
+    // Issue #3658: outermost enter starts a new type-txn window.
+    // Nested lockless helpers must not infer; outer Guard runs once.
+    if (active_mutation_stack().empty())
+        clear_type_dirty_txn_this_boundary();
     // Issue #233: the workspace_mtx_ lock was previously
     // acquired HERE as a local unique_lock that destructed
     // at function return, releasing the lock immediately.
@@ -1715,6 +1719,10 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
         // manual invalidate. #2988 adds binding_gen + JIT invalidate signal
         // (precise default; coarse env fallback). Scoped to mutation-log
         // targets + staged defuse names. No-op when log empty.
+        // Issue #3658: type dirty txn + mirror must already have run on
+        // the outermost production success path (Guard persist-front).
+        // This cascade is IR dirty / BFS enqueue only — Phase-5 densify
+        // is not a type txn.
         push_post_mutate_incremental_cascade(cp.mutation_log_size);
         // Issue #2144: selective predicate-memo invalidate + occurrence
         // reanalyze on outermost success exit only (long-lived engine).
@@ -4054,6 +4062,42 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
             ev_->clear_expected_occurrence_snapshot_fp();
             success = false;
             success_flag_store(flag_, false);
+        }
+    }
+    // Issue #3658: Production/Full outermost success structural mutate
+    // must complete this-boundary type dirty txn + mirror BEFORE persist
+    // and before exit_mutation_boundary IR cascade / invalidate_function
+    // drain. Complementary to #3655 (persist SDO vs type∪IR cone).
+    // rebind/set-body already ran infer_flat_partial_with_dirty_txn
+    // (type_dirty_txn_this_boundary_). replace-subtree / lockless /
+    // move-node do not. Phase-5 densify is not a type txn. Vacuous
+    // (no dirty/log) skips extra mirror. Soft/Off: no extra typecheck.
+    // lockless helpers must not infer; this outermost dtor runs once.
+    if (outermost && success &&
+        (typed_audit::production_defaults_active() ||
+         typed_audit::get_strategy() == typed_audit::AuditStrategy::Full) &&
+        !ev_->type_dirty_txn_this_boundary()) {
+        bool mutated = ev_->txn_dirty();
+        if (ev_->workspace_flat_) {
+            mutated = mutated ||
+                      ev_->workspace_flat_->mark_dirty_upward_call_count() > dirty_upward_at_enter_;
+            auto& stk = ev_->active_mutation_stack();
+            if (!stk.empty()) {
+                const auto enter_log = stk.back().mutation_log_size;
+                mutated = mutated || ev_->workspace_flat_->mutation_log_size() > enter_log;
+            }
+        }
+        if (mutated) {
+            if (!ev_->run_post_mutate_typecheck_no_lock() || !ev_->last_type_solve_solved()) {
+                typed_audit::clear_type_linear_commit_proof_on_abort();
+                typed_audit::publish_type_linear_proof_outcome(
+                    typed_audit::kTypeLinearProofOutcomeReject);
+                aura_clear_occurrence_persist_buffer(ev_);
+                ev_->clear_type_export_authority();
+                ev_->clear_expected_occurrence_snapshot_fp();
+                success = false;
+                success_flag_store(flag_, false);
+            }
         }
     }
     // Issue #3655: Production/Full persist must have this-boundary SDO

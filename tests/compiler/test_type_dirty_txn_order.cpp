@@ -180,6 +180,17 @@ int run_test_type_dirty_txn_order() {
     ac3_mirror_after_reinfer();
     ac4_empty_dirty_zero_cost();
     ac5_counters_and_query();
+    std::println("\n--- #3658 AC2: rebind skip second type txn ---");
+    {
+        const auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
+        const auto dtor = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+        CHECK(mut.find("mutate:rebind") != std::string::npos &&
+                  mut.find("run_post_mutate_typecheck_no_lock()") != std::string::npos,
+              "3658 AC2: rebind in-body typecheck kept");
+        CHECK(dtor.find("type_dirty_txn_this_boundary()") != std::string::npos,
+              "3658 AC2: Guard skip flag");
+        CHECK(dtor.find("Issue #3658") != std::string::npos, "3658 AC2: Guard cite");
+    }
     std::println("\n=== #2516: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
