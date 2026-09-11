@@ -135,8 +135,11 @@ stamp_query_result_full_provenance(aura::core::QueryResult& qr, Evaluator& ev,
             static_cast<std::uint16_t>(scratch_ref.cow_epoch_at_capture);
         qr.matches[i].tenant_id = static_cast<std::uint32_t>(scratch_ref.tenant_id);
         qr.matches[i].fiber_id = scratch_ref.fiber_id;
-        qr.matches[i].mutation_id_at_capture =
-            static_cast<std::uint32_t>(aura::core::current_mutation_epoch());
+        // Issue #3660: do not store current_mutation_epoch() in uint32
+        // mutation_id_at_capture (truncation can fake Fresh; equality
+        // killed unmodified matches). Match wrap/gen + occupancy are
+        // the freshness authority. Leave the field 0.
+        qr.matches[i].mutation_id_at_capture = 0;
         qr.matches[i].boundary_pinned = 0;
         // Issue #3231: schema-2 marker even if wrap/tenant/fiber/cow/mid
         // are still 0 (single-tenant never-wrapped production).

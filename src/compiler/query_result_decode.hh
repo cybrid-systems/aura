@@ -24,9 +24,12 @@ inline constexpr int kQueryResultHashResolveIssue = 3424;
 query_result_is_fresh_with_refs(const aura::core::QueryResult& qr, const aura::ast::FlatAST& flat,
                                 std::uint64_t current_tenant_id,
                                 std::uint64_t current_fiber_id) noexcept {
-    if (!qr.is_fresh_live(flat.generation()))
-        return aura::core::QueryResultFreshness::StaleByEpoch;
     const bool hard = aura::compiler::typed_audit::production_defaults_active();
+    // Issue #3660: empty matches stay Fresh-after-epoch (do not consult
+    // the whole-table mutation epoch). QueryEpoch finish_query_epoch
+    // still returns query-epoch-stale when generation moves in-flight.
+    if (qr.match_count == 0)
+        return aura::core::QueryResultFreshness::Fresh;
     // Issue #3451: production nested_authority_gap → held QueryResult is
     // not fresh until outermost triad. Reuse #3196 face + #3041 stale
     // counter. Soft / Off never set the gap (#3312 AC2) — skip extra
@@ -35,8 +38,6 @@ query_result_is_fresh_with_refs(const aura::core::QueryResult& qr, const aura::a
         aura::core::note_query_result_stale();
         return aura::core::QueryResultFreshness::StaleByEpoch;
     }
-    if (qr.match_count == 0)
-        return aura::core::QueryResultFreshness::Fresh;
     if (!qr.matches[0].has_full_provenance()) {
         if (hard)
             aura::core::note_query_result_full_provenance_stale();
@@ -46,8 +47,8 @@ query_result_is_fresh_with_refs(const aura::core::QueryResult& qr, const aura::a
         aura::core::note_query_result_full_provenance_stale();
         return aura::core::QueryResultFreshness::SoftOnlyNoProvenance;
     }
-    const auto live_mutation = aura::core::current_mutation_epoch();
     const auto live_cow = flat.workspace_cow_epoch();
+    const auto live_wrap = static_cast<std::uint16_t>(flat.wrap_epoch());
     for (std::size_t i = 0; i < qr.match_count; ++i) {
         const auto& m = qr.matches[i];
         if (hard) {
@@ -64,9 +65,16 @@ query_result_is_fresh_with_refs(const aura::core::QueryResult& qr, const aura::a
                 aura::core::note_query_result_full_provenance_cow_mismatch();
                 return aura::core::QueryResultFreshness::InvalidCowLayer;
             }
-            if (live_mutation != 0 && m.mutation_id_at_capture != 0 &&
-                static_cast<std::uint64_t>(m.mutation_id_at_capture) != live_mutation)
-                return aura::core::QueryResultFreshness::InvalidMutation;
+            // Issue #3660: freshness is per-match occupancy / wrap, not
+            // whole-table mutation_id_at_capture == current_mutation_epoch
+            // (an unrelated mutate:* must not kill unmodified matches).
+            if (m.node_id != 0) {
+                const auto nid = static_cast<aura::ast::NodeId>(m.node_id);
+                if (!flat.is_live_node(nid))
+                    return aura::core::QueryResultFreshness::StaleByEpoch;
+                if (m.wrap_epoch != 0 && m.wrap_epoch != live_wrap)
+                    return aura::core::QueryResultFreshness::StaleByEpoch;
+            }
             continue;
         }
         if (current_tenant_id != 0 && m.tenant_id != 0 && m.tenant_id != current_tenant_id) {
@@ -81,9 +89,11 @@ query_result_is_fresh_with_refs(const aura::core::QueryResult& qr, const aura::a
             aura::core::note_query_result_full_provenance_cow_mismatch();
             return aura::core::QueryResultFreshness::InvalidCowLayer;
         }
-        if (m.mutation_id_at_capture != 0 && live_mutation != 0 &&
-            static_cast<std::uint64_t>(m.mutation_id_at_capture) != live_mutation)
-            return aura::core::QueryResultFreshness::InvalidMutation;
+        // Issue #3660: Soft also skips whole-table mutation-epoch equality.
+        // Wrap mismatch still stales when the match carried a wrap stamp
+        // (3424 AC2 poison; empty already returned Fresh above).
+        if (m.wrap_epoch != 0 && m.wrap_epoch != live_wrap)
+            return aura::core::QueryResultFreshness::StaleByEpoch;
     }
     return aura::core::QueryResultFreshness::Fresh;
 }

@@ -662,7 +662,7 @@ enum class QueryResultFreshness {
     InvalidTenant = 2,        // tenant_id mismatch (multi-tenant isolation)
     InvalidFiber = 3,         // fiber_id mismatch (concurrent fiber steal)
     InvalidCowLayer = 4,      // cow_epoch_at_capture vs live cow_epoch
-    InvalidMutation = 5,      // mutation_id_at_capture vs live mutation_epoch
+    InvalidMutation = 5,      // retained ABI; #3660 no longer uses whole-table epoch equality
     SoftOnlyNoProvenance = 6, // schema-1 layout-only matches (no ref stamp)
 };
 
