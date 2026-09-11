@@ -4056,6 +4056,41 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
             success_flag_store(flag_, false);
         }
     }
+    // Issue #3655: Production/Full persist must have this-boundary SDO
+    // (SOLVED infer or composite stage). rebind/set-body already ran
+    // run_post_mutate_typecheck + stage_expected. replace-subtree /
+    // tweak-literal / lockless eval_flat_apply_* do not — without this
+    // gate, expected_fp==0 && live==0 freezes an empty snapshot as
+    // Occurrence authority. Vacuous (no dirty/log delta) skips extra
+    // SDO. Soft/Off: no extra typecheck. lockless helpers must not
+    // infer (deadlock); this outermost dtor runs once under the lock.
+    if (outermost && success &&
+        (typed_audit::production_defaults_active() ||
+         typed_audit::get_strategy() == typed_audit::AuditStrategy::Full) &&
+        !ev_->occurrence_fp_staged()) {
+        bool mutated = ev_->txn_dirty();
+        if (ev_->workspace_flat_) {
+            mutated = mutated ||
+                      ev_->workspace_flat_->mark_dirty_upward_call_count() > dirty_upward_at_enter_;
+            auto& stk = ev_->active_mutation_stack();
+            if (!stk.empty()) {
+                const auto enter_log = stk.back().mutation_log_size;
+                mutated = mutated || ev_->workspace_flat_->mutation_log_size() > enter_log;
+            }
+        }
+        if (mutated) {
+            if (!ev_->run_post_mutate_typecheck_no_lock() || !ev_->last_type_solve_solved()) {
+                typed_audit::clear_type_linear_commit_proof_on_abort();
+                typed_audit::publish_type_linear_proof_outcome(
+                    typed_audit::kTypeLinearProofOutcomeReject);
+                aura_clear_occurrence_persist_buffer(ev_);
+                ev_->clear_type_export_authority();
+                ev_->clear_expected_occurrence_snapshot_fp();
+                success = false;
+                success_flag_store(flag_, false);
+            }
+        }
+    }
     if (outermost && success) {
         const auto mid = ev_->defuse_version_.load(std::memory_order_relaxed);
         aura_outermost_success_persist_occurrence(ev_, mid);

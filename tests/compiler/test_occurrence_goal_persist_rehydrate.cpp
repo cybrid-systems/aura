@@ -2940,6 +2940,41 @@ static void ac3654_linear_post_mutate_unset_fail_closed() {
     CHECK(br.find("schema-3654") == std::string::npos, "3654 AC5: no new query key");
 }
 
+// ── Issue #3655: persist-before SDO for non-rebind mutate ──
+//   AC1: Production + mutated + !staged → run_post_mutate_typecheck before persist
+//   AC2: rebind/set-body finish_mutate_hard_gate still present
+//   AC3: vacuous (no dirty/log delta) skips extra SDO
+//   AC4: Soft does not force extra SDO (hard-face gate)
+//   AC5: this suite + typed_mutate_incremental_gaps; no invent / docs / query-key rewrite
+static void ac3655_persist_requires_this_mutate_sdo() {
+    std::println("\n--- #3655: persist requires this-boundary SDO (non-rebind) ---");
+    const auto dtor = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
+    const auto ixx = read_file("src/compiler/evaluator.ixx");
+    CHECK(dtor.find("Issue #3655") != std::string::npos, "3655 AC1: Guard cite");
+    CHECK(dtor.find("occurrence_fp_staged()") != std::string::npos, "3655 AC1: staged gate");
+    CHECK(dtor.find("run_post_mutate_typecheck_no_lock()") != std::string::npos,
+          "3655 AC1: persist-front typecheck");
+    CHECK(ixx.find("expected_occurrence_fp_staged_") != std::string::npos,
+          "3655 AC1: staged flag (infer-ran vs skipped)");
+    CHECK(mut.find("finish_mutate_hard_gate") != std::string::npos &&
+              mut.find("mutate:rebind") != std::string::npos &&
+              mut.find("mutate:set-body") != std::string::npos,
+          "3655 AC2: rebind/set-body hard-gate kept");
+    const auto persist_win = dtor.find("Issue #3655");
+    const auto persist_slice =
+        persist_win == std::string::npos ? std::string{} : dtor.substr(persist_win, 1800);
+    CHECK(persist_slice.find("mark_dirty_upward_call_count()") != std::string::npos ||
+              persist_slice.find("mutation_log_size()") != std::string::npos,
+          "3655 AC3: vacuous skip uses dirty/log delta");
+    CHECK(persist_slice.find("production_defaults_active()") != std::string::npos,
+          "3655 AC4: Soft skips extra SDO");
+    CHECK(read_file("tests/compiler/test_issue_3655.cpp").empty(), "3655 AC5: no invent");
+    CHECK(read_file("docs/design/3655-persist-sdo.md").empty(), "3655 AC5: no docs/design");
+    CHECK(dtor.find("query:type-linear-commit-health") == std::string::npos,
+          "3655 AC5: no old query-key rewrite");
+}
+
 static void ac3419_jit_typed_entry_every_function() {
     std::println("\n--- #3419: JIT typed-entry on every compiled function ---");
     const auto jit = read_file("src/compiler/aura_jit.cpp");
@@ -3632,6 +3667,7 @@ int run_test_occurrence_goal_persist_rehydrate() {
     ac3224_ir_typed_entry_commit_readiness();
     ac3343_production_weak_abi_commit_readiness();
     ac3654_linear_post_mutate_unset_fail_closed();
+    ac3655_persist_requires_this_mutate_sdo();
     ac3419_jit_typed_entry_every_function();
     ac3616_anon_linear_prologue_enforce();
     ac3446_linear_epoch_fence_elision_typed();

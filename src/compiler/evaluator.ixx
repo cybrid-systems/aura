@@ -3844,8 +3844,18 @@ public:
     // setter (field already at struct end).
     void stage_expected_occurrence_snapshot_fp(std::uint64_t fp) noexcept {
         expected_occurrence_fp_ = fp;
+        expected_occurrence_fp_staged_ = true;
     }
-    void clear_expected_occurrence_snapshot_fp() noexcept { expected_occurrence_fp_ = 0; }
+    void clear_expected_occurrence_snapshot_fp() noexcept {
+        expected_occurrence_fp_ = 0;
+        expected_occurrence_fp_staged_ = false;
+    }
+    // Issue #3655: true after SOLVED infer/SDO staged (fp may be 0 when
+    // live goals are empty). Distinguishes "infer ran" from "infer skipped".
+    [[nodiscard]] bool occurrence_fp_staged() const noexcept {
+        return expected_occurrence_fp_staged_;
+    }
+    [[nodiscard]] bool last_type_solve_solved() const noexcept { return last_type_solve_solved_; }
     void bump_occurrence_persist_fingerprint_mismatch() noexcept {
         if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
             m->occurrence_persist_fingerprint_mismatch_total.fetch_add(1,
@@ -15625,6 +15635,9 @@ private:
     std::uint64_t persistent_tc_reuse_total_ = 0;
     std::uint64_t persistent_tc_invalidate_total_ = 0;
     void destroy_persistent_typechecker() noexcept;
+    // Issue #3655: infer/SDO ran this boundary (even when fp==0).
+    // Append-only at struct end — do not insert mid-Evaluator.
+    bool expected_occurrence_fp_staged_ = false;
 };
 
 
