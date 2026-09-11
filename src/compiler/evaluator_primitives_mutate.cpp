@@ -966,8 +966,6 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 aura::ast::NodeId target_node = 0;
                 std::uint64_t ref_tenant = 0;
                 if (!a.empty()) {
-                    std::fprintf(stderr, "3640 WRAPPER %s a0: pair=%d int=%d\n", op,
-                                 (int)is_pair(a[0]), (int)is_int(a[0]));
                     if (is_int(a[0])) {
                         target_node = static_cast<aura::ast::NodeId>(as_int(a[0]));
                     } else if (is_pair(a[0])) {
@@ -982,10 +980,6 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                         // non-v2 packed leaves target/ref at 0 so the body
                         // falls through to the #3395 bare-int/v1 reject.
                         if (auto packed = unpack_stable_ref_arg(a[0])) {
-                            std::fprintf(
-                                stderr, "3640 GATE id=%d tenant=%llu prod=%d\n", (int)packed->id,
-                                (unsigned long long)packed->tenant_id,
-                                aura::compiler::typed_audit::production_defaults_active() ? 1 : 0);
                             target_node = static_cast<aura::ast::NodeId>(packed->id);
                             ref_tenant = packed->tenant_id;
                         }
