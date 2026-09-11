@@ -10,9 +10,13 @@
 #       note_hygiene_last_limit_reason(kHygieneLimitReasonMacroIntroduced)
 #       — 16/16 sites (10 fixed by #3601, 6 pre-existing).
 #  AC2: evaluator_eval_flat.cpp cites Issue #3601 at the fix site.
-#  AC3: no parallel SE emit — the lockless helper must not grow its own
-#       emit_security_event_durable / SecurityEventKind call (the #3543
-#       note path stays the sole emitter; no second audit bus).
+#  AC3: no parallel #3543 SE emit — the lockless deny sites must not grow
+#       their own MacroHygiene emit_security_event_durable (the #3543 note
+#       path stays the sole emitter of the hygiene-macro-introduced bus;
+#       no second audit bus). Issue #3652 exception: the allow-arm MSE
+#       mirror emits the #3542/#3650 capability-deny face (EffectDeny,
+#       reason macro-mutate-needs-macro-self-evo) — a different event
+#       kind, not a second hygiene bus.
 #  AC4: runtime face test lives in tests/compiler/
 #       test_tweak_literal_audit_consistency.cpp (pinned-mid join via
 #       query:security-audit-trail / query:security-audit, stable reason
@@ -70,13 +74,13 @@ REQUIRED: tuple[tuple[str, str, str], ...] = (
 FORBIDDEN: tuple[tuple[str, str, str], ...] = (
     (
         FLAT,
-        r"emit_security_event_durable",
-        "3601 AC3: lockless helper must not grow its own SE emit (single #3543 emitter)",
+        r"emit_security_event_durable\(\s*SecurityEventKind::MacroHygiene",
+        "3601 AC3: lockless helper must not grow its own #3543 SE emit (single note-path emitter; #3652 capability mirror uses EffectDeny)",
     ),
     (
         FLAT,
-        r"SecurityEventKind::",
-        "3601 AC3: no SecurityEventKind reference added to the lockless helper",
+        r"SecurityEventKind::MacroHygiene",
+        "3601 AC3: no #3543 MacroHygiene SE reference in the lockless helper (capability deny face is EffectDeny per #3542/#3650/#3652)",
     ),
 )
 
@@ -163,7 +167,7 @@ def main() -> int:
         for f in failures:
             print(f"  FAIL: {f}")
         return 1 if args.strict else 0
-    print("check_lockless_hygiene_se_3601: clean (16/16 deny sites stamped)")
+    print("check_lockless_hygiene_se_3601: clean (all deny sites stamped, incl. #3652 mirror)")
     return 0
 
 

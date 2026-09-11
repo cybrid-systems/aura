@@ -50,7 +50,9 @@ def main() -> int:
         # Issue #3301: batch-level MacroIntroduced audit added ~1.6KB to
         # the pre-batch setup (target walk table + deny block), pushing
         # the #2794 no-op path past 22000; bump to 26000.
-        ab_win = mut[pos : pos + 26000]
+        # Issue #3652: the pre-audit opt-out arm gained the #3542 MSE gate
+        # (~1.5KB more) — bump to 30000 so the no-op path stays in-window.
+        ab_win = mut[pos : pos + 30000]
 
     # AC1: soft no-op path
     must("Issue #2794", "AC1", ab_win)
