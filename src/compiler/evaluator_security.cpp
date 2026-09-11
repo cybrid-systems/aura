@@ -191,7 +191,13 @@ void Evaluator::grant_capability(std::string cap, bool single_use, bool session_
         // Issue #2151: honor effect_fiber_id_or so tests can stamp fiber A/B
         // without a real scheduler; production override stays 0.
         const auto fiber = effect_fiber_id_or(static_cast<std::uint32_t>(aura_fiber_current_id()));
-        auto prov = make_grant_provenance(provenance_mutation_id, force_bind, /*node_id=*/0, fiber);
+        // Issue #3646: grant mid joins the #3143 SSOT — same resolver as
+        // require_effect / emit_mutation_audit. Inside a Guard the boundary
+        // TypedMid wins so grant rows join SE/Typed by mid; without a
+        // boundary Soft keeps the epoch stamp and a cascade-empty production
+        // resolve returns 0 → the #3090 grant-mid-refused policy fires.
+        const auto mid = typed_audit::join_audit_and_se_mid(provenance_mutation_id);
+        auto prov = make_grant_provenance(mid, force_bind, /*node_id=*/0, fiber);
         // Issue #3436: single_use / session_bound now carry the caller's
         // lifetime (forced single_use on the plain string path; wrapper
         // lifetime on the grant_effect_* mirrors) instead of sticky false.
@@ -748,6 +754,31 @@ void Evaluator::arm_production_audit_defaults_for_test() noexcept {
     aura::compiler::typed_audit::apply_production_audit_defaults();
 }
 
+// Issue #3646: library-side boundary-TLS note/clear — the g_tls_boundary_*
+// pair is per-TU under module linkage (#3640), so the test TU's direct
+// note_boundary_audit_mid() / clear_boundary_audit_mid() cannot reach
+// grant_effect_capability / require_effect here. Shims execute in this
+// TU — the same instance both readers use.
+void Evaluator::note_boundary_audit_mid_for_test(std::uint64_t mid) noexcept {
+    aura::compiler::typed_audit::note_boundary_audit_mid(mid);
+    // require_effect reads the proof stamp (not the noted TLS) for its
+    // TypedMid — stamp it in THIS TU or its per-TU copy stays 0.
+    aura::compiler::typed_audit::stamp_type_linear_commit_proof(mid);
+}
+
+void Evaluator::clear_boundary_audit_mid_for_test() noexcept {
+    aura::compiler::typed_audit::clear_boundary_audit_mid();
+}
+
+// TEMP 3646DBG4 — remove before commit
+std::uint64_t Evaluator::probe_join_mid_for_test() noexcept {
+    return aura::compiler::typed_audit::join_audit_and_se_mid(0);
+}
+
+bool Evaluator::probe_production_active_for_test() noexcept {
+    return aura::compiler::typed_audit::production_defaults_active();
+}
+
 void Evaluator::disarm_production_audit_defaults_for_test() noexcept {
     aura::compiler::typed_audit::apply_dev_audit_defaults();
 }
@@ -881,7 +912,13 @@ bool Evaluator::grant_effect_capability(std::uint64_t tenant_id, std::string_vie
     const bool force_bind = sandbox_mode_ != 0 || effect_sandbox_mode() != 0;
     // Issue #2151: stamp grant with effect_fiber_id_or (override for tests).
     const auto fiber = effect_fiber_id_or(static_cast<std::uint32_t>(aura_fiber_current_id()));
-    auto prov = make_grant_provenance(provenance_mutation_id, force_bind, /*node_id=*/0, fiber);
+    // Issue #3646: grant mid joins the #3143 SSOT — same resolver as
+    // require_effect / emit_mutation_audit. Inside a Guard the boundary
+    // TypedMid wins so grant rows join SE/Typed by mid; without a
+    // boundary Soft keeps the epoch stamp and a cascade-empty production
+    // resolve returns 0 → the #3090 grant-mid-refused policy fires.
+    const auto mid = typed_audit::join_audit_and_se_mid(provenance_mutation_id);
+    auto prov = make_grant_provenance(mid, force_bind, /*node_id=*/0, fiber);
     // Issue #2882: production default single-use override. Under production
     // defaults (sandbox_mode_ != 0 || effect_sandbox_mode() != 0) any grant
     // touching a high-risk effect (Mutate | MacroSelfEvo | TenantAdmin |
@@ -1050,7 +1087,13 @@ void Evaluator::grant_effect_durable(std::uint64_t tenant_id, std::string_view n
     using namespace ::aura::core::capability;
     const bool force_bind = sandbox_mode_ != 0 || effect_sandbox_mode() != 0;
     const auto fiber = effect_fiber_id_or(static_cast<std::uint32_t>(aura_fiber_current_id()));
-    auto prov = make_grant_provenance(provenance_mutation_id, force_bind, /*node_id=*/0, fiber);
+    // Issue #3646: grant mid joins the #3143 SSOT — same resolver as
+    // require_effect / emit_mutation_audit. Inside a Guard the boundary
+    // TypedMid wins so grant rows join SE/Typed by mid; without a
+    // boundary Soft keeps the epoch stamp and a cascade-empty production
+    // resolve returns 0 → the #3090 grant-mid-refused policy fires.
+    const auto mid = typed_audit::join_audit_and_se_mid(provenance_mutation_id);
+    auto prov = make_grant_provenance(mid, force_bind, /*node_id=*/0, fiber);
     // Bump the durable high-risk counter when this durable override touches
     // a high-risk effect bit (Mutate / MacroSelfEvo / TenantAdmin / Syscall).
     // Non-high-risk durable grants are tracked only via capability_grant_total.
@@ -1196,7 +1239,13 @@ void Evaluator::grant_effect_durable_sticky(std::uint64_t tenant_id, std::string
     using namespace ::aura::core::capability;
     const bool force_bind = sandbox_mode_ != 0 || effect_sandbox_mode() != 0;
     const auto fiber = effect_fiber_id_or(static_cast<std::uint32_t>(aura_fiber_current_id()));
-    auto prov = make_grant_provenance(provenance_mutation_id, force_bind, /*node_id=*/0, fiber);
+    // Issue #3646: grant mid joins the #3143 SSOT — same resolver as
+    // require_effect / emit_mutation_audit. Inside a Guard the boundary
+    // TypedMid wins so grant rows join SE/Typed by mid; without a
+    // boundary Soft keeps the epoch stamp and a cascade-empty production
+    // resolve returns 0 → the #3090 grant-mid-refused policy fires.
+    const auto mid = typed_audit::join_audit_and_se_mid(provenance_mutation_id);
+    auto prov = make_grant_provenance(mid, force_bind, /*node_id=*/0, fiber);
     using aura::compiler::security::kEffectMacroSelfEvo;
     using aura::compiler::security::kEffectMutate;
     using aura::compiler::security::kEffectSyscall;
@@ -1314,7 +1363,13 @@ void Evaluator::grant_effect_session(std::uint64_t tenant_id, std::string_view n
     using namespace ::aura::core::capability;
     const bool force_bind = sandbox_mode_ != 0 || effect_sandbox_mode() != 0;
     const auto fiber = effect_fiber_id_or(static_cast<std::uint32_t>(aura_fiber_current_id()));
-    auto prov = make_grant_provenance(provenance_mutation_id, force_bind, /*node_id=*/0, fiber);
+    // Issue #3646: grant mid joins the #3143 SSOT — same resolver as
+    // require_effect / emit_mutation_audit. Inside a Guard the boundary
+    // TypedMid wins so grant rows join SE/Typed by mid; without a
+    // boundary Soft keeps the epoch stamp and a cascade-empty production
+    // resolve returns 0 → the #3090 grant-mid-refused policy fires.
+    const auto mid = typed_audit::join_audit_and_se_mid(provenance_mutation_id);
+    auto prov = make_grant_provenance(mid, force_bind, /*node_id=*/0, fiber);
     // Ensure non-zero mid for session binding (Soft may leave zero → force 1).
     if (prov.mutation_id == 0)
         prov.mutation_id = prov.epoch != 0 ? prov.epoch : 1;

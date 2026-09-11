@@ -1231,7 +1231,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_audit_durable_gap_force_wal.cpp` (—) [domain_suite, theme_compiler] — AC1: Soft / AURA_SANDBOX=off \u2014 WAL off, no new files,
 - `tests/compiler/test_audit_mid_fallback_slo.cpp` (—) [large, domain_suite, theme_compiler] — tests/compiler/test_audit_mid_fallback_slo.cpp
 - `tests/compiler/test_audit_mutation_id_unify.cpp` (—) [large, domain_suite, theme_compiler] — AC1: require_effect deny under Restricted → SE.mutation_id matches
-- `tests/core/test_audit_replay_join.cpp` (—) [domain_suite, theme_core] — AC1: require_effect mid stamp order: TypedMid
+- `tests/core/test_audit_replay_join.cpp` (—) [large, domain_suite, theme_core] — AC1: require_effect mid stamp order: TypedMid
 - `tests/compiler/test_audit_ring_publish.cpp` (—) [domain_suite, theme_compiler] — AC1: both kAuditRing == 1024
 - `tests/compiler/test_audit_wal_force_multi_tenant.cpp` (—) [domain_suite, theme_compiler] — AC1: AURA_MULTI_TENANT=1 without WAL env → enabled + forced metric > 0
 - `tests/compiler/test_aura_sandbox_env.cpp` (—) [domain_suite, theme_compiler] — Issue #2076 — production default Restricted sandbox + Agent-readable

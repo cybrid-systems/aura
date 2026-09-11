@@ -110,6 +110,44 @@ def main() -> int:
     cap_model = _read("src/core/capability_model.hh")
     must("Issue #3599", "#3599 cite in capability_model.hh", cap_model)
 
+    # ── AC(#3646): grant write paths join the same mid SSOT ──────────
+    # The #3143 unification covered the require_effect half; #3646 flips
+    # the grant write path: every grant_effect_* / grant_capability
+    # mirror must resolve its provenance mid via
+    # join_audit_and_se_mid(provenance_mutation_id) BEFORE
+    # make_grant_provenance, so Guard 内 grant rows join SE/Typed by the
+    # boundary TypedMid; no-boundary Soft keeps the epoch stamp and a
+    # cascade-empty production resolve returns 0 → the #3090
+    # grant-mid-refused policy still fires. make_grant_provenance stays
+    # pure (core header pulls no typed_audit TLS).
+    must("Issue #3646", "#3646 cite in evaluator_security.cpp", eval_sec)
+    must("Issue #3646", "#3646 cite in test", test)
+    for fn_marker, label in (
+        ("bool Evaluator::grant_effect_capability(", "grant_effect_capability"),
+        ("void Evaluator::grant_effect_durable(", "grant_effect_durable"),
+        ("void Evaluator::grant_effect_durable_sticky(", "grant_effect_durable_sticky"),
+        ("void Evaluator::grant_effect_session(", "grant_effect_session"),
+        (
+            "void Evaluator::grant_capability(std::string cap, bool single_use, bool session_bound,",
+            "grant_capability mirror",
+        ),
+    ):
+        start = eval_sec.find(fn_marker)
+        if start == -1:
+            fails.append(f"#3646: {label} function not found")
+            continue
+        end = eval_sec.find("\n}\n", start)
+        if end == -1:
+            fails.append(f"#3646: {label} function end not found")
+            continue
+        body = eval_sec[start:end]
+        if "join_audit_and_se_mid(provenance_mutation_id)" not in body:
+            fails.append(f"#3646: {label} must resolve mid via join_audit_and_se_mid(provenance_mutation_id)")
+        if "make_grant_provenance(mid," not in body:
+            fails.append(f"#3646: {label} must pass the joined mid to make_grant_provenance")
+    must("ac9_grant_mid_joins_boundary_typedmid", "#3646 AC1 test function", test)
+    must("ac10_grant_mid_without_guard_soft_epoch", "#3646 AC2 test function", test)
+
     # ── AC5: source-cite + extend test + no docs/issues ─────────────
     must("ac1_typedmid_first_stamp_order", "AC5 AC1 test function", test)
     must("ac2_soft_off_zero_cost", "AC5 AC2 test function", test)
