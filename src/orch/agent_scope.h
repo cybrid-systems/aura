@@ -1257,8 +1257,13 @@ private:
             if (h.name == name) {
                 // Issue #3564: non-dtor recycle — Scope holds the handle
                 // until tree_settled drop, so #3529 dtor never runs. Quota
-                // only — runs before any retire check (#3598 AC2).
-                (void)aura::orch::maybe_force_release_reclaimed_quota(h);
+                // only — runs before any retire check (#3598 AC2). Issue
+                // #3644: the second recycle runs first (done body → full
+                // Done-path cleanup; live body → abandon shape once quota
+                // is gone); a fresh pending slot returns false and the
+                // #3564 quota arm owns the visit.
+                if (!aura::orch::maybe_force_recycle_reclaimed_slot(h))
+                    (void)aura::orch::maybe_force_release_reclaimed_quota(h);
                 // Issue #3598: Done-path-cleaned handle → resolve miss
                 // (same-plane retire; the ghost no longer answers find).
                 // A fresh same-name handle may sit behind the ghost — keep
