@@ -252,7 +252,15 @@ static void ac5_security_event_schema() {
     seed_tenant_admin(500, 42);
     ev.set_effect_sandbox_mode(1); // Restricted after TA bootstrap (#3409)
     ev.grant_effect_capability(500, "ac5-g", kEffectMutate, /*prov=*/42);
-    CHECK(ev.check_and_record_effect_for_test(kEffectMutate, kEffectMutate, "ac5-op", 0, 500, 42),
+    // Issue #3646: the grant mid joins the #3143 SSOT — the boundary
+    // TypedMid from earlier batch members wins over the caller's synthetic
+    // prov. Read the landed bound mid back; grant/check/SE join on THAT
+    // (the #3335 vocabulary), not on the literal 42.
+    CapabilityGrant g5{};
+    CHECK(g_capability_registry().find_grant(500, "ac5-g", g5), "AC5: grant found");
+    CHECK(g5.bound_mutation_id != 0, "AC5: grant bound to a non-refused SSOT mid");
+    CHECK(ev.check_and_record_effect_for_test(kEffectMutate, kEffectMutate, "ac5-op", 0, 500,
+                                              g5.bound_mutation_id),
           "effect allow");
 
     // SecurityEvent ring should carry mutation_id + Mutation epoch.
@@ -264,7 +272,7 @@ static void ac5_security_event_schema() {
     const std::size_t n = std::min<std::size_t>(seq, ring.ring.size());
     for (std::size_t i = 0; i < n; ++i) {
         const auto& e = ring.ring[i];
-        if (e.mutation_id == 42 && (e.epoch == me || e.epoch == 1)) {
+        if (e.mutation_id == g5.bound_mutation_id && (e.epoch == me || e.epoch == 1)) {
             found = true;
             std::println("  event mutation_id={} epoch={} denied={}", e.mutation_id, e.epoch,
                          e.denied);
@@ -431,11 +439,14 @@ static void ac3335_5_agent_join_vocab() {
     ev.grant_effect_capability(510, "3335-join", kEffectMutate, /*prov=*/42);
     CapabilityGrant g{};
     CHECK(g_capability_registry().find_grant(510, "3335-join", g), "3335 AC5: grant");
-    CHECK(g.bound_mutation_id == 42, "3335 AC5: grant.bound_mutation_id");
+    // Issue #3646: the bound mid is the #3143 SSOT join — the boundary
+    // TypedMid wins over the caller's synthetic prov, so the literal 42 is
+    // not the landed mid. Non-refused + shared vocabulary is the contract.
+    CHECK(g.bound_mutation_id != 0, "3335 AC5: grant.bound_mutation_id non-refused");
     CHECK(g.grant_epoch == me || g.grant_epoch == 1, "3335 AC5: grant_epoch = Mutation");
 
     CHECK(ev.check_and_record_effect_for_test(kEffectMutate, kEffectMutate, "3335-join-op", 0, 510,
-                                              42),
+                                              g.bound_mutation_id),
           "3335 AC5: effect allow");
     ev.emit_mutation_audit(1, 0, "3335-join-struct", 0);
 
