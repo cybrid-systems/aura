@@ -674,8 +674,101 @@ int run_test_hot_contract_placement() {
         CHECK(hh.find("AURA_COLD_CONTRACT") != std::string::npos, "3490 AC5: cold unchanged");
     }
 
+    // ── Issue #3666: production pack compiles Harden as a constant ──
+    {
+        std::println("\n--- #3666 AC2: Soft/unit keep armed cache; unarmed skips expr ---");
+        auto hh = read_file("src/core/cpp26_contract_stats.h");
+        CHECK(aura::core::cpp26::kHotContractProductionPackIssue == 3666, "3666: stamp");
+        CHECK(hh.find("kHotContractProductionPackIssue = 3666") != std::string::npos,
+              "3666 AC5: stamp");
+        CHECK(hh.find("AURA_PRODUCTION_PACK") != std::string::npos, "3666 AC1: pack cite");
+        const auto pack =
+            hh.find("#if defined(AURA_HOT_MODE_OFF) && defined(AURA_PRODUCTION_PACK)");
+        CHECK(pack != std::string::npos, "3666 AC1: pack OFF redefine");
+        const auto pack_end = hh.find("#endif", pack == std::string::npos ? 0 : pack);
+        const auto pwin = (pack != std::string::npos && pack_end > pack)
+                              ? hh.substr(pack, pack_end - pack)
+                              : std::string{};
+        CHECK(pwin.find("hot_contract_harden_armed()") == std::string::npos,
+              "3666 AC1: pack CHECK/CONTRACT do not call armed()");
+        CHECK(pwin.find("std::abort()") != std::string::npos, "3666 AC1: pack still abort");
+        CHECK(pwin.find("record_hotpath_contract_harden_trap") != std::string::npos,
+              "3666 AC1: pack still trap");
+        CHECK(!aura::core::cpp26::kHotContractProductionPackCompileArmed,
+              "3666 AC2: unit is not pack-compile-armed");
+
+        aura::compiler::typed_audit::apply_dev_audit_defaults();
+#if defined(NDEBUG) && !defined(AURA_HOT_MODE_HARDEN) && !defined(AURA_HOT_MODE_ENFORCE) &&        \
+    !defined(AURA_PRODUCTION_PACK)
+        CHECK(!aura::core::cpp26::hot_contract_harden_armed(), "3666 AC2: Soft unarmed");
+        const auto t0 =
+            aura::core::cpp26::hotpath_contract_harden_trap_total.load(std::memory_order_relaxed);
+        AURA_HOT_CHECK(false);
+        AURA_HOT_CONTRACT(false);
+        CHECK(aura::core::cpp26::hotpath_contract_harden_trap_total.load(
+                  std::memory_order_relaxed) == t0,
+              "3666 AC2: unarmed does not trap");
+#else
+        CHECK(true, "3666 AC2: unarmed skip via source (non-OFF / pack build)");
+#endif
+
+        std::println("\n--- #3666 AC3: #3501 non-pack still one load; #3428 view_at kept ---");
+        const auto d1 = hh.find("#define AURA_HOT_CONTRACT");
+        const auto d2 = hh.find("#define AURA_HOT_CONTRACT", d1 == std::string::npos ? 0 : d1 + 1);
+        const auto off_body =
+            (d1 != std::string::npos && d2 > d1) ? hh.substr(d1, d2 - d1) : std::string{};
+        std::size_t armed_n = 0;
+        for (std::size_t p = 0;
+             (p = off_body.find("hot_contract_harden_armed()", p)) != std::string::npos; p += 26)
+            ++armed_n;
+        CHECK(armed_n == 1, "3666 AC3: #3501 OFF CONTRACT still one armed() load");
+        auto soa = read_file("src/compiler/ir_soa.ixx");
+        const auto vat = soa.find("IRInstructionView view_at(");
+        const auto addb = soa.find("add_block", vat == std::string::npos ? 0 : vat);
+        const auto vwin =
+            (vat != std::string::npos && addb > vat) ? soa.substr(vat, addb - vat) : std::string{};
+        CHECK(vwin.find("AURA_HOT_CONTRACT") != std::string::npos,
+              "3666 AC3: view_at CONTRACT kept");
+        auto val = read_file("src/compiler/value.ixx");
+        CHECK(val.find("AURA_HOT_CONTRACT(is_int(v))") != std::string::npos,
+              "3666 AC3: as_int call site unchanged");
+        CHECK(val.find("AURA_HOT_CHECK((v.val & 1) == 0)") != std::string::npos,
+              "3666 AC3: as_int CHECK call site unchanged");
+
+        std::println("\n--- #3666 AC4: apply_production flip is non-pack cache ---");
+        CHECK(hh.find("note_hot_contract_harden_armed") != std::string::npos,
+              "3666 AC4: cache store kept");
+        aura::compiler::typed_audit::apply_dev_audit_defaults();
+#if defined(NDEBUG) && !defined(AURA_HOT_MODE_HARDEN) && !defined(AURA_HOT_MODE_ENFORCE) &&        \
+    !defined(AURA_PRODUCTION_PACK)
+        CHECK(!aura::core::cpp26::hot_contract_harden_armed(), "3666 AC4: Soft disarmed");
+        aura::compiler::typed_audit::apply_production_audit_defaults();
+        CHECK(aura::core::cpp26::hot_contract_harden_armed(), "3666 AC4: apply_production arms");
+        aura::compiler::typed_audit::apply_dev_audit_defaults();
+        CHECK(!aura::core::cpp26::hot_contract_harden_armed(), "3666 AC4: apply_dev disarms");
+#else
+        CHECK(true, "3666 AC4: pack/HARDEN treated as always armed");
+#endif
+
+        std::println("\n--- #3666 AC5: linter + no invent / docs ---");
+        auto build = read_file("build.py");
+        auto q = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
+        CHECK(build.find("check_hot_contract_production_pack_3666") != std::string::npos,
+              "3666 AC5: build.py wires linter");
+        const auto p3665 = build.find("check_insert_remove_child_locked_dense_splice_3665");
+        const auto p3666 = build.find("check_hot_contract_production_pack_3666");
+        CHECK(p3665 != std::string::npos && p3666 != std::string::npos && p3665 < p3666,
+              "3666 AC5: linter AFTER #3665");
+        CHECK(q.find("schema-3666") == std::string::npos, "3666 AC5: no new query key");
+        CHECK(hh.find("g_hotpath_3666") == std::string::npos, "3666 AC5: no new g_hotpath series");
+        CHECK(read_file("tests/compiler/test_issue_3666.cpp").empty(), "3666 AC5: no invent");
+        CHECK(read_file("docs/design/3666-hot-contract-production-pack.md").empty(),
+              "3666 AC5: no docs/design");
+        CHECK(hh.find("AURA_COLD_CONTRACT") != std::string::npos, "3666 AC5: cold unchanged");
+    }
+
     std::println(
-        "\n=== #2435/#3043/#3106/#3139/#3313/#3428/#3490 results: {} passed, {} failed ===",
+        "\n=== #2435/#3043/#3106/#3139/#3313/#3428/#3490/#3666 results: {} passed, {} failed ===",
         g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

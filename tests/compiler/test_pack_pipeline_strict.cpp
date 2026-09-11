@@ -8,10 +8,14 @@
 // Allow, #2213 AC2).
 
 #include "compiler/pipeline_policy.hh"
+#include "core/cpp26_contract_stats.h"
 
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <fstream>
+#include <iterator>
+#include <string>
 
 namespace {
 
@@ -94,6 +98,47 @@ void ac3627_operator_wins() {
     reset_tree_walker_fallback_policy_for_test();
 }
 
+static std::string read_file(const char* path) {
+    for (const auto& p :
+         {std::string(path), std::string("../") + path, std::string("../../") + path}) {
+        std::ifstream in(p);
+        if (!in)
+            continue;
+        return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    }
+    return {};
+}
+
+void ac3666_pack_hot_check_compile_armed() {
+    std::printf("\n--- #3666 AC1: pack CHECK is compile-true Harden, no cache load ---\n");
+    CHECK(aura::core::cpp26::kHotContractProductionPackIssue == 3666, "3666 pack stamp");
+    CHECK(aura::core::cpp26::kHotContractProductionPackCompileArmed,
+          "3666 AC1: pack compile-armed constexpr");
+    CHECK(aura::core::cpp26::hot_contract_harden_armed(),
+          "3666 AC1: pack armed() is constant true");
+    aura::core::cpp26::note_hot_contract_harden_armed(false);
+    CHECK(aura::core::cpp26::hot_contract_harden_armed(),
+          "3666 AC4: pack stays armed after note(false)");
+    AURA_HOT_CHECK(true);
+    AURA_HOT_CONTRACT(true);
+    CHECK(true, "3666 AC1: pack CHECK/CONTRACT true does not abort");
+
+    auto hh = read_file("src/core/cpp26_contract_stats.h");
+    const auto pack = hh.find("#if defined(AURA_HOT_MODE_OFF) && defined(AURA_PRODUCTION_PACK)");
+    CHECK(pack != std::string::npos, "3666 AC1: pack redefine present");
+    const auto pack_end = hh.find("#endif", pack == std::string::npos ? 0 : pack);
+    const auto pwin = (pack != std::string::npos && pack_end > pack)
+                          ? hh.substr(pack, pack_end - pack)
+                          : std::string{};
+    CHECK(pwin.find("hot_contract_harden_armed()") == std::string::npos,
+          "3666 AC1: pack macros do not call armed()");
+    CHECK(pwin.find("hot_contract_harden_armed_cache") == std::string::npos,
+          "3666 AC1: pack macros do not load cache");
+    auto val = read_file("src/compiler/value.ixx");
+    CHECK(val.find("AURA_HOT_CONTRACT(is_int(v))") != std::string::npos,
+          "3666 AC1: as_int call site unchanged");
+}
+
 } // namespace
 
 int main() {
@@ -102,6 +147,7 @@ int main() {
     ac3627_pack_env_unset();
     ac3627_pack_ignores_dev_flag();
     ac3627_operator_wins();
+    ac3666_pack_hot_check_compile_armed();
     std::printf("\n=== Results: %d passed, %d failed ===\n", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
