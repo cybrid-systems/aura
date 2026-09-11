@@ -132,6 +132,14 @@ inline constexpr int kHotContractHardenCacheIssue = 3490;
 // Issue #3501: NDEBUG OFF AURA_HOT_CONTRACT loads armed() once (RECORD
 // then CHECK was two relaxed loads on as_int / view_at).
 inline constexpr int kHotContractSingleLoadIssue = 3501;
+// Issue #3666: AURA_PRODUCTION_PACK compiles Harden as a constant so
+// as_int / view_at / opcode() do not load hot_contract_harden_armed_cache.
+inline constexpr int kHotContractProductionPackIssue = 3666;
+#if defined(AURA_PRODUCTION_PACK)
+inline constexpr bool kHotContractProductionPackCompileArmed = true;
+#else
+inline constexpr bool kHotContractProductionPackCompileArmed = false;
+#endif
 // Soft-observe RECORD sample period (power of two). Acceptable upper
 // bound vs OFF: one relaxed atomic per this many RECORD sites. Applies to
 // both plain Soft-observe (#3043) and Harden-armed Soft-observe (#3106
@@ -286,7 +294,8 @@ inline void record_hotpath_invariant_hit_sampled() noexcept {
 // / agent-self-modify gates can assert harden is armed under their
 // preset without re-deriving the compile flag.
 [[nodiscard]] inline bool hot_contract_harden_armed() noexcept {
-#if defined(AURA_HOT_MODE_HARDEN)
+#if defined(AURA_HOT_MODE_HARDEN) || defined(AURA_PRODUCTION_PACK)
+    // Issue #3666: pack / compile HARDEN is a constant — no cache load.
     return true;
 #else
     // Issue #3490: load cached armed state first. After the first
@@ -414,6 +423,30 @@ inline void record_hotpath_invariant_hit_sampled() noexcept {
         }                                                                                          \
     } while (0)
 #else
+#define AURA_HOT_CONTRACT(expr)                                                                    \
+    do {                                                                                           \
+        AURA_HOT_RECORD();                                                                         \
+        AURA_HOT_CHECK(expr);                                                                      \
+    } while (0)
+#endif
+
+// Issue #3666: production pack (NDEBUG + AURA_PRODUCTION_PACK) compiles
+// Soft-observe+Harden as a constant. as_int / view_at / opcode() do not
+// load hot_contract_harden_armed_cache. Soft/unit keep the #3490 cache
+// (tests may flip apply_production). Failure still observe + trap + abort.
+#if defined(AURA_HOT_MODE_OFF) && defined(AURA_PRODUCTION_PACK)
+#undef AURA_HOT_RECORD
+#define AURA_HOT_RECORD() ::aura::core::cpp26::record_hotpath_invariant_hit_sampled()
+#undef AURA_HOT_CHECK
+#define AURA_HOT_CHECK(expr)                                                                       \
+    do {                                                                                           \
+        if (!(expr)) {                                                                             \
+            ::aura::core::cpp26::observe_hot_contract_false();                                     \
+            ::aura::core::cpp26::record_hotpath_contract_harden_trap();                            \
+            std::abort();                                                                          \
+        }                                                                                          \
+    } while (0)
+#undef AURA_HOT_CONTRACT
 #define AURA_HOT_CONTRACT(expr)                                                                    \
     do {                                                                                           \
         AURA_HOT_RECORD();                                                                         \

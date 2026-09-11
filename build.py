@@ -5505,6 +5505,19 @@ def cmd_lint():
             "Issue #3665 insert/remove dense splice linter failed — run python3 scripts/coverage/checks/check_insert_remove_child_locked_dense_splice_3665.py"
         )
         return r
+    # Issue #3666: production pack compiles Harden as a constant so
+    # as_int / view_at pay no armed-cache load. Soft/unit keep #3490
+    # cache. Extends hot-contract placement + pack-pipeline; after #3665.
+    hcpp3666_script = COVERAGE_CHECKS / "check_hot_contract_production_pack_3666.py"
+    if not hcpp3666_script.exists():
+        fail(f"missing {hcpp3666_script}")
+        return 1
+    r = run([sys.executable, str(hcpp3666_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3666 hot-contract production-pack linter failed — run python3 scripts/coverage/checks/check_hot_contract_production_pack_3666.py"
+        )
+        return r
     # Issue #3419: JIT typed-entry on every compiled function (anonymous)
     # included). Stub typed-entry is not production (ABI bit 8). Soft omit.
     # Extends persist-rehydrate + steal-complete; linter after #3343.
