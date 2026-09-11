@@ -158,8 +158,13 @@ static void ac3_replay_security_events() {
               "deny without grant");
         // Grant + allow.
         ev.grant_effect_capability(77, "m", kEffectMutate, 22);
+        // Issue #3646: the grant mid joins the #3143 SSOT — read the landed
+        // bound mid back and check with it (a boundary TypedMid may override
+        // the caller's synthetic 22).
+        aura::core::capability::CapabilityGrant gm{};
+        CHECK(g_capability_registry().find_grant(77, "m", gm), "grant m found");
         CHECK(ev.check_and_record_effect_for_test(kEffectMutate, kEffectMutate, "ac3-allow", 0, 77,
-                                                  22),
+                                                  gm.bound_mutation_id),
               "allow with grant");
         CHECK(g_mutation_audit_wal().is_enabled(), "WAL still on");
         // Flush by disabling (close + fflush).
