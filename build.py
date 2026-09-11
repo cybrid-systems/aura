@@ -5518,6 +5518,21 @@ def cmd_lint():
             "Issue #3666 hot-contract production-pack linter failed — run python3 scripts/coverage/checks/check_hot_contract_production_pack_3666.py"
         )
         return r
+    # Issue #3653: Production/Full outermost Full audit / proof-gate before
+    # persist freeze. Residual of #3614 (linear already before persist) +
+    # #3517 (deny flips success, but green face had already published).
+    # Soft/Off: no extra walk. Extends persist-order + commit-health;
+    # linter after #3666.
+    opao3653_script = COVERAGE_CHECKS / "check_outermost_persist_audit_order_3653.py"
+    if not opao3653_script.exists():
+        fail(f"missing {opao3653_script}")
+        return 1
+    r = run([sys.executable, str(opao3653_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3653 outermost persist audit-order linter failed — run python3 scripts/coverage/checks/check_outermost_persist_audit_order_3653.py"
+        )
+        return r
     # Issue #3419: JIT typed-entry on every compiled function (anonymous)
     # included). Stub typed-entry is not production (ABI bit 8). Soft omit.
     # Extends persist-rehydrate + steal-complete; linter after #3343.

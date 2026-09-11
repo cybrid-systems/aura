@@ -2975,6 +2975,48 @@ static void ac3655_persist_requires_this_mutate_sdo() {
           "3655 AC5: no old query-key rewrite");
 }
 
+// ── Issue #3653: Full audit before outermost persist freeze ──
+//   AC1: dtor cites #3653; proof-gate / hard-gate / composite before persist
+//   AC2: #3440 consume + #3517 consume retained as belt
+//   AC3: sole persist writer unchanged
+//   AC4: Soft production/Full-gated (no extra walk in the gate face)
+//   AC5: this suite + type_linear_commit_health; no invent / docs / query-key
+static void ac3653_audit_before_persist_source() {
+    std::println("\n--- #3653: Full audit before outermost persist freeze ---");
+    const auto dtor = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    CHECK(dtor.find("Issue #3653") != std::string::npos, "3653 AC1: Guard cite");
+    const auto gate = dtor.find("Issue #3653");
+    const auto persist_call = dtor.find("aura_outermost_success_persist_occurrence(ev_");
+    CHECK(gate != std::string::npos && persist_call != std::string::npos && gate < persist_call,
+          "3653 AC1: #3653 gate precedes persist");
+    if (gate != std::string::npos && persist_call != std::string::npos && gate < persist_call) {
+        const auto win = dtor.substr(gate, persist_call - gate);
+        CHECK(win.find("boundary_solve_proof_gate") != std::string::npos,
+              "3653 AC1: proof-gate in pre-persist window");
+        CHECK(win.find("finish_mutate_hard_gate") != std::string::npos,
+              "3653 AC1: finish_mutate_hard_gate in pre-persist window");
+        CHECK(win.find("composite_txn_commit") != std::string::npos,
+              "3653 AC1: composite_txn_commit in pre-persist window");
+        CHECK(win.find("production_defaults_active()") != std::string::npos,
+              "3653 AC4: Soft skips extra audit walk");
+    }
+    CHECK(dtor.find("consume_outermost_persist_reject_needs_restore()") != std::string::npos,
+          "3653 AC2: #3440 consume retained");
+    CHECK(dtor.find("consume_outermost_audit_rollback_needs_fail()") != std::string::npos,
+          "3653 AC2: #3517 consume retained after exit");
+    std::size_t writer_n = 0;
+    for (auto p = dtor.find("note_occurrence_commit_snapshot_written("); p != std::string::npos;
+         p = dtor.find("note_occurrence_commit_snapshot_written(", p + 1))
+        ++writer_n;
+    CHECK(writer_n == 1, "3653 AC3: sole snapshot writer remains the persist helper");
+    CHECK(read_file("tests/compiler/test_issue_3653.cpp").empty(), "3653 AC5: no invent");
+    CHECK(read_file("docs/design/3653-audit-before-persist.md").empty(),
+          "3653 AC5: no docs/design");
+    CHECK(dtor.find("query:type-linear-commit-health") == std::string::npos &&
+              dtor.find("query:type-linear-evolution-snapshot") == std::string::npos,
+          "3653 AC5: no old query-key rewrite");
+}
+
 static void ac3419_jit_typed_entry_every_function() {
     std::println("\n--- #3419: JIT typed-entry on every compiled function ---");
     const auto jit = read_file("src/compiler/aura_jit.cpp");
@@ -3668,6 +3710,7 @@ int run_test_occurrence_goal_persist_rehydrate() {
     ac3343_production_weak_abi_commit_readiness();
     ac3654_linear_post_mutate_unset_fail_closed();
     ac3655_persist_requires_this_mutate_sdo();
+    ac3653_audit_before_persist_source();
     ac3419_jit_typed_entry_every_function();
     ac3616_anon_linear_prologue_enforce();
     ac3446_linear_epoch_fence_elision_typed();

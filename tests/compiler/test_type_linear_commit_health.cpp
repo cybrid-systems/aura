@@ -1751,6 +1751,161 @@ static void ac3614_4_persist_reject_and_happy_unchanged() {
     reset_for_test();
 }
 
+// ── Issue #3653: Full audit / proof-gate before outermost persist freeze ──
+//   AC1: Production + outermost + invariant/type audit deny → written_total
+//        unchanged, outcome != Stamped, query:type no grant, elision false.
+//   AC2: #3614 linear deny still no persist; #3440 persist-reject + #3545
+//        undo retained; no second restore.
+//   AC3: happy SOLVED + linear_ok + audit_ok → persist once, not Reject.
+//   AC4: Soft/Off — no extra audit walk, persist helper still zero-cost.
+//   AC5: this suite + persist-rehydrate; no invent / docs / query-key rewrite.
+
+static void ac3653_1_audit_deny_pre_persist_no_write() {
+    std::println("\n--- #3653 AC1: invariant/type audit deny → no persist / no Stamped ---");
+    reset_for_test();
+    apply_production_audit_defaults();
+    typed_audit::clear_type_linear_proof_outcome_for_test();
+    typed_audit::clear_type_linear_commit_proof_for_test();
+    CompilerService cs;
+    CHECK(cs.eval("(+ 1 1)").has_value(), "3653 AC1: warm");
+    (void)cs.eval("(set-code \"(define f 1)\")");
+    (void)cs.eval("(eval-current)");
+    (void)cs.eval("(typecheck-current)");
+    const auto written_before = typed_audit::occurrence_commit_snapshot_written_total_v_read();
+    bool ok = true;
+    {
+        Evaluator::MutationBoundaryGuard g(cs.evaluator(), &ok);
+        cs.evaluator().inject_adt_non_exhaustive_for_test();
+    }
+    CHECK(!ok, "3653 AC1: success==false (pre-persist audit deny flips into abort_restore)");
+    CHECK(typed_audit::occurrence_commit_snapshot_written_total_v_read() == written_before,
+          "3653 AC1: occurrence_commit_snapshot_written_total unchanged on audit deny");
+    CHECK(last_type_linear_proof_outcome_v_read() != kTypeLinearProofOutcomeStamped,
+          "3653 AC1: last_proof_outcome != Stamped");
+    CHECK(last_type_linear_proof_outcome_v_read() == kTypeLinearProofOutcomeReject,
+          "3653 AC1: last_proof_outcome==Reject");
+    CHECK(!cs.evaluator().type_export_authoritative(), "3653 AC1: query:type no grant");
+    CHECK(!linear_move_drop_elision_ok(),
+          "3653 AC1: steal between persist and audit → elision false (no green freeze)");
+    cs.evaluator().clear_adt_non_exhaustive_inject_for_test();
+    apply_dev_audit_defaults();
+    reset_for_test();
+}
+
+static void ac3653_2_source_order_audit_before_persist() {
+    std::println("\n--- #3653 AC2: audit gate → persist; #3614/#3440/#3545 intact ---");
+    const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto gate_3614 = emb.find("Issue #3614");
+    const auto gate_3653 = emb.find("Issue #3653");
+    const auto persist_call = emb.find("aura_outermost_success_persist_occurrence(ev_");
+    const auto consume = emb.find("consume_outermost_persist_reject_needs_restore()");
+    const auto issue_3472 = emb.find("Issue #3472");
+    const auto exit_pos = emb.find("ev_->exit_mutation_boundary(success)");
+    const auto consume_3517 = emb.find("consume_outermost_audit_rollback_needs_fail()");
+    CHECK(gate_3614 != std::string::npos && gate_3653 != std::string::npos &&
+              persist_call != std::string::npos && consume != std::string::npos &&
+              issue_3472 != std::string::npos && exit_pos != std::string::npos &&
+              consume_3517 != std::string::npos && gate_3614 < gate_3653 &&
+              gate_3653 < persist_call && persist_call < consume && consume < issue_3472 &&
+              issue_3472 < exit_pos && exit_pos < consume_3517,
+          "3653 AC2: #3614 → #3653 → persist → #3440 consume → #3472 → exit → #3517");
+    if (gate_3653 != std::string::npos && persist_call != std::string::npos &&
+        gate_3653 < persist_call) {
+        const auto win = emb.substr(gate_3653, persist_call - gate_3653);
+        CHECK(win.find("boundary_solve_proof_gate") != std::string::npos,
+              "3653 AC2: proof-gate BEFORE persist");
+        CHECK(win.find("finish_mutate_hard_gate") != std::string::npos,
+              "3653 AC2: finish_mutate_hard_gate BEFORE persist");
+        CHECK(win.find("composite_txn_commit") != std::string::npos,
+              "3653 AC2: composite_txn_commit BEFORE persist (batch arm)");
+        CHECK(win.find("production_defaults_active()") != std::string::npos &&
+                  win.find("get_strategy() == typed_audit::AuditStrategy::Full") !=
+                      std::string::npos,
+              "3653 AC2: gate production/Full-gated (Soft zero extra walk)");
+        CHECK(win.find("clear_type_linear_commit_proof_on_abort()") != std::string::npos &&
+                  win.find("aura_clear_occurrence_persist_buffer(ev_)") != std::string::npos &&
+                  win.find("ev_->clear_type_export_authority();") != std::string::npos,
+              "3653 AC2: deny arm reuses the #3472 un-stamp set");
+    } else {
+        CHECK(false, "3653 AC2: #3653 gate before persist (order)");
+    }
+    CHECK(emb.find("abort_restore_dual_topology_3653") == std::string::npos &&
+              emb.find("abort_restore_3653") == std::string::npos,
+          "3653 AC2: no second restore helper");
+    CHECK(emb.find("note_outermost_persist_reject_needs_restore") != std::string::npos,
+          "3653 AC2: #3440 reject note retained");
+    CHECK(emb.find("undo_apply_coercion_map_recent") != std::string::npos,
+          "3653 AC2: #3545 coercion journal undo retained");
+    std::size_t occ_n = 0;
+    for (auto p = emb.find("restore_or_clear_occurrence_to_entry("); p != std::string::npos;
+         p = emb.find("restore_or_clear_occurrence_to_entry(", p + 1))
+        ++occ_n;
+    CHECK(occ_n == 3, "3653 AC2: still exactly 3 #3158 abort sites");
+}
+
+static void ac3653_3_happy_persist_stamped() {
+    std::println("\n--- #3653 AC3: happy SOLVED + linear_ok + audit_ok ---");
+    reset_for_test();
+    apply_production_audit_defaults();
+    typed_audit::clear_type_linear_proof_outcome_for_test();
+    typed_audit::clear_type_linear_commit_proof_for_test();
+    CompilerService cs;
+    CHECK(cs.eval("(+ 1 1)").has_value(), "3653 AC3: warm");
+    (void)cs.eval("(typecheck-current)");
+    bool ok = true;
+    {
+        Evaluator::MutationBoundaryGuard g(cs.evaluator(), &ok);
+    }
+    CHECK(ok, "3653 AC3: happy outermost success stays true");
+    CHECK(last_type_linear_proof_outcome_v_read() != kTypeLinearProofOutcomeReject,
+          "3653 AC3: happy proof not Reject");
+    const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    std::size_t writer_n = 0;
+    for (auto p = emb.find("note_occurrence_commit_snapshot_written("); p != std::string::npos;
+         p = emb.find("note_occurrence_commit_snapshot_written(", p + 1))
+        ++writer_n;
+    CHECK(writer_n == 1, "3653 AC3: sole snapshot writer remains the persist helper");
+    apply_dev_audit_defaults();
+    reset_for_test();
+}
+
+static void ac3653_4_soft_zero_cost_no_extra_walk() {
+    std::println("\n--- #3653 AC4: Soft/Off — no extra audit walk, persist helper zero-cost ---");
+    reset_for_test();
+    apply_dev_audit_defaults();
+    CompilerService cs;
+    CHECK(cs.eval("(+ 1 1)").has_value(), "3653 AC4: warm");
+    const auto written_before = typed_audit::occurrence_commit_snapshot_written_total_v_read();
+    bool ok = true;
+    {
+        Evaluator::MutationBoundaryGuard g(cs.evaluator(), &ok);
+        cs.evaluator().inject_adt_non_exhaustive_for_test();
+    }
+    CHECK(ok, "3653 AC4: Soft does not hard-flip success");
+    CHECK(typed_audit::occurrence_commit_snapshot_written_total_v_read() == written_before,
+          "3653 AC4: written_total unchanged under Soft");
+    cs.evaluator().clear_adt_non_exhaustive_inject_for_test();
+    const auto q = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
+    CHECK(q.find("schema-3653") == std::string::npos, "3653 AC4: no schema-3653 query key");
+    const auto qr = read_file("src/compiler/evaluator_primitives_query_reflect.cpp");
+    CHECK(qr.find("query:type-linear-commit-health") != std::string::npos,
+          "3653 AC4: query:type-linear-commit-health retained");
+    CHECK(qr.find("query:type-linear-evolution-snapshot") != std::string::npos,
+          "3653 AC4: query:type-linear-evolution-snapshot retained");
+    const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto g3653 = emb.find("Issue #3653");
+    const auto persist_call = emb.find("aura_outermost_success_persist_occurrence(ev_");
+    if (g3653 != std::string::npos && persist_call != std::string::npos && g3653 < persist_call) {
+        const auto win = emb.substr(g3653, persist_call - g3653);
+        CHECK(win.find("query:type-linear-commit-health") == std::string::npos &&
+                  win.find("query:type-linear-evolution-snapshot") == std::string::npos,
+              "3653 AC4: no old query-key rewrite in gate");
+    }
+    CHECK(read_file("docs/design/3653-audit-before-persist.md").empty(),
+          "3653 AC4: no docs/design");
+    CHECK(read_file("tests/compiler/test_issue_3653.cpp").empty(), "3653 AC4: no invent");
+}
+
 // ── Issue #3477: dirty-skip leftover must latch residual before IR ──
 //   AC1: Production + scan_limit=1 leftover → face set; IR refused
 //   AC2: persist #3190 drain path unchanged
@@ -2311,6 +2466,11 @@ int run_test_type_linear_commit_health() {
     ac3614_2_source_order_gate_before_persist();
     ac3614_3_soft_zero_cost_no_flip();
     ac3614_4_persist_reject_and_happy_unchanged();
+    std::println("\n=== Issue #3653: Full audit before outermost persist freeze ===");
+    ac3653_1_audit_deny_pre_persist_no_write();
+    ac3653_2_source_order_audit_before_persist();
+    ac3653_3_happy_persist_stamped();
+    ac3653_4_soft_zero_cost_no_extra_walk();
     std::println("\n=== Issue #3477: dirty-skip leftover latches residual before IR ===");
     ac3477_1_production_dirty_skip_refuses_ir();
     ac3477_2_persist_drain_unchanged();
