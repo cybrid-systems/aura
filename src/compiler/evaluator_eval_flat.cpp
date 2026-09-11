@@ -13,6 +13,9 @@ module;
 #include "serve/fiber.h"                 // Issue #2650: aura_eval_c_stack_depth_slot (fiber-local)
 #include "typed_mutation_audit.h"        // Issue #3066: pin composite/batch join mid
 #include "core/capability_model.hh"      // Issue #3132: check_macro_self_evo
+#include "security_capabilities.h"       // Issue #3652: kEffectMacroSelfEvo (allow-arm MSE mirror)
+#include "core/security_event.hh"        // Issue #3652: allow-arm MSE mirror (#3542 face)
+#include "core/security_event_wal.hh"    // Issue #3652: macro-mutate-needs-macro-self-evo
 #include "core/sandbox.hh"               // Issue #3132: is_sandbox_active
 #include "core/moving_densify_health.hh" // Issue #3421: g_last_objects_moved
 #include "core/lifetime_consistency_proof.hh" // Issue #3421: last_lifetime_consistency_would_allow
@@ -2261,6 +2264,42 @@ bool Evaluator::parse_allow_macro_opt_out(std::span<const types::EvalValue> args
 // :replace-value and :tweak-literal are stubs (error-out) so
 // they fail fast rather than deadlocking the batch. Follow-up
 // to extract those internals.
+// Issue #3652 / #3542: lockless allow-arm MSE gate. The mutate TU's
+// deny_macro_opt_out_without_mse is file-local there (#3650 precedent:
+// mirror the telemetry, caller builds the error), so this TU keeps a
+// bool-returning mirror with the same deny face: capability deny
+// counter + durable SE (EffectDeny, reason macro-mutate-needs-macro-
+// self-evo) + typed hygiene audit + provenance blame. Returns true
+// when DENIED (telemetry recorded); false when allowed —
+// require_effect_for_node_id handles Soft/Off as one load.
+static bool deny_macro_opt_out_without_mse(Evaluator& ev, aura::ast::NodeId id) {
+    using aura::compiler::security::kEffectMacroSelfEvo;
+    if (ev.require_effect_for_node_id(kEffectMacroSelfEvo, "macro-mutate", id))
+        return false;
+    auto& met = aura::core::capability::g_capability_effect_metrics();
+    met.macro_mutate_capability_deny_total.fetch_add(1, std::memory_order_relaxed);
+    using ::aura::core::security_event::SecurityEventKind;
+    using ::aura::core::security_event_wal::emit_security_event_durable;
+    const auto mid = typed_audit::join_audit_and_se_mid(0);
+    const auto epoch = aura::core::current_mutation_epoch();
+    emit_security_event_durable(
+        SecurityEventKind::EffectDeny, ev.capability_tenant_id(), mid, epoch, kEffectMacroSelfEvo,
+        "macro-self-evo", "macro-mutate-needs-macro-self-evo",
+        /*denied=*/true, static_cast<std::int64_t>(aura_fiber_current_id()));
+    ev.record_hygiene_violation_attempt();
+    note_hygiene_last_limit_reason(kHygieneLimitReasonMacroIntroduced);
+    typed_audit::capture_macro_hygiene_audit(
+        "macro-mutate-needs-macro-self-evo", typed_audit::AuditOutcome::Error,
+        static_cast<std::uint32_t>(id), static_cast<std::int64_t>(aura_fiber_current_id()),
+        ev.capability_tenant_id());
+    if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
+        m->macro_hygiene_provenance_hits_total.fetch_add(1, std::memory_order_relaxed);
+        m->last_hygiene_blame_node = static_cast<std::uint32_t>(id);
+        m->last_hygiene_blame_mutation = typed_audit::join_audit_and_se_mid(0);
+    }
+    return true;
+}
+
 EvalResult Evaluator::eval_flat_apply_mutate_rebind(std::span<const types::EvalValue> a) {
     if (a.size() < 2 || !is_string(a[0]) || !is_string(a[1]))
         return std::unexpected(
@@ -2301,14 +2340,23 @@ EvalResult Evaluator::eval_flat_apply_mutate_rebind(std::span<const types::EvalV
     // cannot see its define; gate like standalone mutate:rebind (#373)
     // and the other lockless helpers (#3027/#3213). Pre-parse fail-fast:
     // a deny must not even parse the (potentially macro-derived) new code.
-    if (flat.is_macro_introduced(old_define) &&
-        !(get_allow_macro_mutate() || parse_allow_macro_opt_out(a))) {
-        flat.note_rebind_hygiene_reject();
-        record_hygiene_violation_attempt();
-        note_hygiene_last_limit_reason(kHygieneLimitReasonMacroIntroduced);
-        return std::unexpected(aura::diag::Diagnostic{
-            aura::diag::ErrorKind::InternalError,
-            "batch :rebind: cannot rebind MacroIntroduced define without :allow-macro? #t"});
+    if (flat.is_macro_introduced(old_define)) {
+        if (!(get_allow_macro_mutate() || parse_allow_macro_opt_out(a))) {
+            flat.note_rebind_hygiene_reject();
+            record_hygiene_violation_attempt();
+            note_hygiene_last_limit_reason(kHygieneLimitReasonMacroIntroduced);
+            return std::unexpected(aura::diag::Diagnostic{
+                aura::diag::ErrorKind::InternalError,
+                "batch :rebind: cannot rebind MacroIntroduced define without :allow-macro? #t"});
+        }
+        // Issue #3652: the :allow-macro? opt-out arm still requires the
+        // MacroSelfEvo capability (#3542 face) under Restricted/Strict —
+        // parity with public mutate:rebind. Soft/Off: one mode load.
+        if (effect_sandbox_mode() != 0 && deny_macro_opt_out_without_mse(*this, old_define))
+            return std::unexpected(
+                aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
+                                       "batch :rebind: mutation of MacroIntroduced requires "
+                                       "MacroSelfEvo capability (mutate:rebind :allow-macro? #t)"});
     }
     // Issue #1685 / #1687: snapshot + re-resolve after parse_to_flat.
     const auto size_before_parse = static_cast<std::size_t>(flat.size());
@@ -2354,6 +2402,20 @@ EvalResult Evaluator::eval_flat_apply_mutate_rebind(std::span<const types::EvalV
                     "batch :rebind: cannot install MacroIntroduced body without "
                     ":allow-macro? #t"});
             }
+        } else if (effect_sandbox_mode() != 0) {
+            // Issue #3652: the allow arm still requires MacroSelfEvo (#3542
+            // face) for macro-provenance bodies under Restricted/Strict.
+            // Soft/Off skips the walk entirely (one mode load).
+            aura::ast::NodeId hit = aura::ast::NULL_NODE;
+            flat.walk_subtree(new_value, [&](aura::ast::NodeId id) {
+                if (hit == aura::ast::NULL_NODE && flat.is_macro_introduced(id))
+                    hit = id;
+            });
+            if (hit != aura::ast::NULL_NODE && deny_macro_opt_out_without_mse(*this, hit))
+                return std::unexpected(aura::diag::Diagnostic{
+                    aura::diag::ErrorKind::InternalError,
+                    "batch :rebind: MacroIntroduced body requires MacroSelfEvo "
+                    "capability (mutate:rebind :allow-macro? #t)"});
         }
     }
     // Issue #2795: capture body NodeId only after parse + resolve_define_after_parse
@@ -2400,14 +2462,23 @@ EvalResult Evaluator::eval_flat_apply_mutate_replace_value(std::span<const types
     // public mutate:replace-value). Global flag is not required when
     // the kwarg is present. Soft/Off: no parse unless MacroIntroduced
     // and global is false.
-    if (flat.is_macro_introduced(node) &&
-        !(get_allow_macro_mutate() || parse_allow_macro_opt_out(a))) {
-        record_hygiene_violation_attempt();
-        note_hygiene_last_limit_reason(kHygieneLimitReasonMacroIntroduced);
-        return std::unexpected(
-            aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
-                                   "batch :replace-value: cannot replace-value MacroIntroduced "
-                                   "without public mutate:replace-value :allow-macro? #t"});
+    if (flat.is_macro_introduced(node)) {
+        if (!(get_allow_macro_mutate() || parse_allow_macro_opt_out(a))) {
+            record_hygiene_violation_attempt();
+            note_hygiene_last_limit_reason(kHygieneLimitReasonMacroIntroduced);
+            return std::unexpected(
+                aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
+                                       "batch :replace-value: cannot replace-value MacroIntroduced "
+                                       "without public mutate:replace-value :allow-macro? #t"});
+        }
+        // Issue #3652: the :allow-macro? opt-out arm still requires the
+        // MacroSelfEvo capability (#3542 face) under Restricted/Strict.
+        // Soft/Off: one mode load.
+        if (effect_sandbox_mode() != 0 && deny_macro_opt_out_without_mse(*this, node))
+            return std::unexpected(aura::diag::Diagnostic{
+                aura::diag::ErrorKind::InternalError,
+                "batch :replace-value: mutation of MacroIntroduced requires "
+                "MacroSelfEvo capability (mutate:replace-value :allow-macro? #t)"});
     }
     auto nv = flat.get(node);
     switch (nv.tag) {
@@ -2488,17 +2559,25 @@ EvalResult Evaluator::eval_flat_apply_mutate_tweak_literal(std::span<const types
     // tweak-literal (post-#3131 scalar residual). Sibling #2249
     // remove-node pattern. Soft/Off: no parse unless MacroIntroduced
     // and global is false.
-    if (flat.is_macro_introduced(node) &&
-        !(get_allow_macro_mutate() || parse_allow_macro_opt_out(a))) {
-        record_hygiene_violation_attempt();
-        // Issue #3601: lockless deny was counters-only - stamp the landed #3543
-        // SE face (MacroHygiene + hygiene-macro-introduced, mid via
-        // join_audit_and_se_mid) so production denies join the batch mid.
-        note_hygiene_last_limit_reason(kHygieneLimitReasonMacroIntroduced);
-        return std::unexpected(aura::diag::Diagnostic{
-            aura::diag::ErrorKind::InternalError,
-            "batch :tweak-literal: cannot tweak-literal MacroIntroduced without "
-            "global (hygiene:set-allow-macro-mutate! #t)"});
+    if (flat.is_macro_introduced(node)) {
+        if (!(get_allow_macro_mutate() || parse_allow_macro_opt_out(a))) {
+            record_hygiene_violation_attempt();
+            // Issue #3601: lockless deny was counters-only - stamp the landed #3543
+            // SE face (MacroHygiene + hygiene-macro-introduced, mid via
+            // join_audit_and_se_mid) so production denies join the batch mid.
+            note_hygiene_last_limit_reason(kHygieneLimitReasonMacroIntroduced);
+            return std::unexpected(aura::diag::Diagnostic{
+                aura::diag::ErrorKind::InternalError,
+                "batch :tweak-literal: cannot tweak-literal MacroIntroduced without "
+                "global (hygiene:set-allow-macro-mutate! #t)"});
+        }
+        // Issue #3652: the opt-out arm still requires MacroSelfEvo (#3542
+        // face) under Restricted/Strict. Soft/Off: one mode load.
+        if (effect_sandbox_mode() != 0 && deny_macro_opt_out_without_mse(*this, node))
+            return std::unexpected(aura::diag::Diagnostic{
+                aura::diag::ErrorKind::InternalError,
+                "batch :tweak-literal: mutation of MacroIntroduced requires "
+                "MacroSelfEvo capability (mutate:tweak-literal :allow-macro? #t)"});
     }
     auto delta = as_int(a[1]);
     auto v = flat.get(node);
@@ -2548,14 +2627,22 @@ EvalResult Evaluator::eval_flat_apply_mutate_remove_node(std::span<const types::
     // Issue #3027 / Issue #3213: dual-track :allow-macro? (parity with
     // public mutate:remove-node). Soft/Off: no parse unless MacroIntroduced
     // and global is false.
-    if (flat.is_macro_introduced(target) &&
-        !(get_allow_macro_mutate() || parse_allow_macro_opt_out(a))) {
-        record_hygiene_violation_attempt();
-        note_hygiene_last_limit_reason(kHygieneLimitReasonMacroIntroduced);
-        return std::unexpected(
-            aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
-                                   "batch :remove-node: cannot remove-node MacroIntroduced without "
-                                   "public mutate:remove-node :allow-macro? #t"});
+    if (flat.is_macro_introduced(target)) {
+        if (!(get_allow_macro_mutate() || parse_allow_macro_opt_out(a))) {
+            record_hygiene_violation_attempt();
+            note_hygiene_last_limit_reason(kHygieneLimitReasonMacroIntroduced);
+            return std::unexpected(aura::diag::Diagnostic{
+                aura::diag::ErrorKind::InternalError,
+                "batch :remove-node: cannot remove-node MacroIntroduced without "
+                "public mutate:remove-node :allow-macro? #t"});
+        }
+        // Issue #3652: the opt-out arm still requires MacroSelfEvo (#3542
+        // face) under Restricted/Strict. Soft/Off: one mode load.
+        if (effect_sandbox_mode() != 0 && deny_macro_opt_out_without_mse(*this, target))
+            return std::unexpected(aura::diag::Diagnostic{
+                aura::diag::ErrorKind::InternalError,
+                "batch :remove-node: mutation of MacroIntroduced requires "
+                "MacroSelfEvo capability (mutate:remove-node :allow-macro? #t)"});
     }
     auto result = aura::ast::mutators::remove_node_from_all_parents(
         flat, target, [&](aura::ast::NodeId parent, std::uint32_t ci) {
@@ -2599,14 +2686,22 @@ EvalResult Evaluator::eval_flat_apply_mutate_insert_child(std::span<const types:
     // Issue #3027 / Issue #3213: dual-track :allow-macro? on MacroIntroduced
     // spine (parity with public mutate:insert-child). Soft/Off: no parse
     // unless MacroIntroduced and global is false.
-    if (flat.is_macro_introduced(parent) &&
-        !(get_allow_macro_mutate() || parse_allow_macro_opt_out(a))) {
-        record_hygiene_violation_attempt();
-        note_hygiene_last_limit_reason(kHygieneLimitReasonMacroIntroduced);
-        return std::unexpected(aura::diag::Diagnostic{
-            aura::diag::ErrorKind::InternalError,
-            "batch :insert-child: cannot insert-child MacroIntroduced without "
-            "public mutate:insert-child :allow-macro? #t"});
+    if (flat.is_macro_introduced(parent)) {
+        if (!(get_allow_macro_mutate() || parse_allow_macro_opt_out(a))) {
+            record_hygiene_violation_attempt();
+            note_hygiene_last_limit_reason(kHygieneLimitReasonMacroIntroduced);
+            return std::unexpected(aura::diag::Diagnostic{
+                aura::diag::ErrorKind::InternalError,
+                "batch :insert-child: cannot insert-child MacroIntroduced without "
+                "public mutate:insert-child :allow-macro? #t"});
+        }
+        // Issue #3652: the opt-out arm still requires MacroSelfEvo (#3542
+        // face) under Restricted/Strict. Soft/Off: one mode load.
+        if (effect_sandbox_mode() != 0 && deny_macro_opt_out_without_mse(*this, parent))
+            return std::unexpected(aura::diag::Diagnostic{
+                aura::diag::ErrorKind::InternalError,
+                "batch :insert-child: mutation of MacroIntroduced requires "
+                "MacroSelfEvo capability (mutate:insert-child :allow-macro? #t)"});
     }
     auto pr = aura::parser::parse_to_flat(string_heap_[code_idx], flat, *workspace_pool_);
     if (!pr.success || pr.root == aura::ast::NULL_NODE) {
@@ -2686,14 +2781,25 @@ EvalResult Evaluator::eval_flat_apply_mutate_set_body(std::span<const types::Eva
     // Issue #3027 / Issue #3213: dual-track :allow-macro? on MacroIntroduced
     // define/lambda (parity with public mutate:set-body). Soft/Off: no parse
     // unless MacroIntroduced and global is false.
-    if ((flat.is_macro_introduced(target) || flat.is_macro_introduced(lambda_id)) &&
-        !(get_allow_macro_mutate() || parse_allow_macro_opt_out(a))) {
-        record_hygiene_violation_attempt();
-        note_hygiene_last_limit_reason(kHygieneLimitReasonMacroIntroduced);
-        return std::unexpected(
-            aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
-                                   "batch :set-body: cannot set-body MacroIntroduced without "
-                                   "public mutate:set-body :allow-macro? #t"});
+    if (flat.is_macro_introduced(target) || flat.is_macro_introduced(lambda_id)) {
+        if (!(get_allow_macro_mutate() || parse_allow_macro_opt_out(a))) {
+            record_hygiene_violation_attempt();
+            note_hygiene_last_limit_reason(kHygieneLimitReasonMacroIntroduced);
+            return std::unexpected(
+                aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
+                                       "batch :set-body: cannot set-body MacroIntroduced without "
+                                       "public mutate:set-body :allow-macro? #t"});
+        }
+        // Issue #3652: the opt-out arm still requires MacroSelfEvo (#3542
+        // face) under Restricted/Strict. Soft/Off: one mode load.
+        if (effect_sandbox_mode() != 0) {
+            const auto mse_id = flat.is_macro_introduced(target) ? target : lambda_id;
+            if (deny_macro_opt_out_without_mse(*this, mse_id))
+                return std::unexpected(aura::diag::Diagnostic{
+                    aura::diag::ErrorKind::InternalError,
+                    "batch :set-body: mutation of MacroIntroduced requires "
+                    "MacroSelfEvo capability (mutate:set-body :allow-macro? #t)"});
+        }
     }
     // Issue #1687: capture size before parse; re-resolve BOTH Define and
     // Lambda (double-stale NodeId risk, sibling of #1685 rebind path).
@@ -2719,17 +2825,30 @@ EvalResult Evaluator::eval_flat_apply_mutate_set_body(std::span<const types::Eva
             if (hit == aura::ast::NULL_NODE && flat.is_macro_introduced(id))
                 hit = id;
         });
-        if (hit != aura::ast::NULL_NODE &&
-            !(get_allow_macro_mutate() || parse_allow_macro_opt_out(a))) {
-            if (size_before_parse < flat.size())
-                (void)flat.free_orphan_nodes_from(
-                    static_cast<aura::ast::NodeId>(size_before_parse));
-            record_hygiene_violation_attempt();
-            note_hygiene_last_limit_reason(kHygieneLimitReasonMacroIntroduced);
-            return std::unexpected(
-                aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
-                                       "batch :set-body: cannot set-body MacroIntroduced without "
-                                       "public mutate:set-body :allow-macro? #t"});
+        if (hit != aura::ast::NULL_NODE) {
+            if (!(get_allow_macro_mutate() || parse_allow_macro_opt_out(a))) {
+                if (size_before_parse < flat.size())
+                    (void)flat.free_orphan_nodes_from(
+                        static_cast<aura::ast::NodeId>(size_before_parse));
+                record_hygiene_violation_attempt();
+                note_hygiene_last_limit_reason(kHygieneLimitReasonMacroIntroduced);
+                return std::unexpected(aura::diag::Diagnostic{
+                    aura::diag::ErrorKind::InternalError,
+                    "batch :set-body: cannot set-body MacroIntroduced without "
+                    "public mutate:set-body :allow-macro? #t"});
+            }
+            // Issue #3652: the opt-out arm still requires MacroSelfEvo
+            // (#3542 face) under Restricted/Strict. Free parse orphans on
+            // reject.
+            if (effect_sandbox_mode() != 0 && deny_macro_opt_out_without_mse(*this, hit)) {
+                if (size_before_parse < flat.size())
+                    (void)flat.free_orphan_nodes_from(
+                        static_cast<aura::ast::NodeId>(size_before_parse));
+                return std::unexpected(aura::diag::Diagnostic{
+                    aura::diag::ErrorKind::InternalError,
+                    "batch :set-body: MacroIntroduced body requires MacroSelfEvo "
+                    "capability (mutate:set-body :allow-macro? #t)"});
+            }
         }
     }
     auto root_v = flat.get(pr.root);
@@ -2874,14 +2993,22 @@ EvalResult Evaluator::eval_flat_apply_mutate_replace_pattern(std::span<const typ
         // with public matcher :include-macro-introduced #f). :allow-macro?
         // #t or global allow includes macro sites. Soft/Off: keyword parse
         // only when the node is MacroIntroduced and global is false.
-        if (flat.is_macro_introduced(id) &&
-            !(get_allow_macro_mutate() || parse_allow_macro_opt_out(a))) {
-            if (match_sub(id, pat_pr.root)) {
-                flat.note_replace_pattern_hygiene_reject();
-                record_hygiene_violation_attempt();
-                note_hygiene_last_limit_reason(kHygieneLimitReasonMacroIntroduced);
+        if (flat.is_macro_introduced(id)) {
+            if (!(get_allow_macro_mutate() || parse_allow_macro_opt_out(a))) {
+                if (match_sub(id, pat_pr.root)) {
+                    flat.note_replace_pattern_hygiene_reject();
+                    record_hygiene_violation_attempt();
+                    note_hygiene_last_limit_reason(kHygieneLimitReasonMacroIntroduced);
+                }
+                continue;
             }
-            continue;
+            // Issue #3652: the :allow-macro? opt-out arm still requires the
+            // MacroSelfEvo capability (#3542 face) under Restricted/Strict —
+            // matching macro sites skip (default-deny face) unless MSE is
+            // granted. Soft/Off: one mode load.
+            if (effect_sandbox_mode() != 0 && match_sub(id, pat_pr.root) &&
+                deny_macro_opt_out_without_mse(*this, id))
+                continue;
         }
         if (!match_sub(id, pat_pr.root))
             continue;
@@ -3040,13 +3167,21 @@ EvalResult Evaluator::eval_flat_apply_mutate_replace_subtree(std::span<const typ
     // public mutate:replace-subtree). Global flag is not required when
     // the kwarg is present. Soft/Off: no parse unless MacroIntroduced
     // and global is false.
-    if (flat.is_macro_introduced(target) &&
-        !(get_allow_macro_mutate() || parse_allow_macro_opt_out(a))) {
-        record_hygiene_violation_attempt();
-        note_hygiene_last_limit_reason(kHygieneLimitReasonMacroIntroduced);
-        return std::unexpected(
-            aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
-                                   "batch :replace-subtree: cannot mutate macro-introduced node"});
+    if (flat.is_macro_introduced(target)) {
+        if (!(get_allow_macro_mutate() || parse_allow_macro_opt_out(a))) {
+            record_hygiene_violation_attempt();
+            note_hygiene_last_limit_reason(kHygieneLimitReasonMacroIntroduced);
+            return std::unexpected(aura::diag::Diagnostic{
+                aura::diag::ErrorKind::InternalError,
+                "batch :replace-subtree: cannot mutate macro-introduced node"});
+        }
+        // Issue #3652: the opt-out arm still requires MacroSelfEvo (#3542
+        // face) under Restricted/Strict. Soft/Off: one mode load.
+        if (effect_sandbox_mode() != 0 && deny_macro_opt_out_without_mse(*this, target))
+            return std::unexpected(aura::diag::Diagnostic{
+                aura::diag::ErrorKind::InternalError,
+                "batch :replace-subtree: mutation of MacroIntroduced requires "
+                "MacroSelfEvo capability (mutate:replace-subtree :allow-macro? #t)"});
     }
     auto new_code = string_heap_[code_idx];
     std::string summary =
@@ -3087,14 +3222,27 @@ EvalResult Evaluator::eval_flat_apply_mutate_replace_subtree(std::span<const typ
             if (hit == aura::ast::NULL_NODE && flat.is_macro_introduced(id))
                 hit = id;
         });
-        if (hit != aura::ast::NULL_NODE &&
-            !(get_allow_macro_mutate() || parse_allow_macro_opt_out(a))) {
-            if (size_before_parse < flat.size())
-                (void)flat.free_orphan_nodes_from(
-                    static_cast<aura::ast::NodeId>(size_before_parse));
-            return std::unexpected(aura::diag::Diagnostic{
-                aura::diag::ErrorKind::InternalError,
-                "batch :replace-subtree: cannot install macro-introduced body"});
+        if (hit != aura::ast::NULL_NODE) {
+            if (!(get_allow_macro_mutate() || parse_allow_macro_opt_out(a))) {
+                if (size_before_parse < flat.size())
+                    (void)flat.free_orphan_nodes_from(
+                        static_cast<aura::ast::NodeId>(size_before_parse));
+                return std::unexpected(aura::diag::Diagnostic{
+                    aura::diag::ErrorKind::InternalError,
+                    "batch :replace-subtree: cannot install macro-introduced body"});
+            }
+            // Issue #3652: the opt-out arm still requires MacroSelfEvo
+            // (#3542 face) under Restricted/Strict. Free parse orphans on
+            // reject.
+            if (effect_sandbox_mode() != 0 && deny_macro_opt_out_without_mse(*this, hit)) {
+                if (size_before_parse < flat.size())
+                    (void)flat.free_orphan_nodes_from(
+                        static_cast<aura::ast::NodeId>(size_before_parse));
+                return std::unexpected(aura::diag::Diagnostic{
+                    aura::diag::ErrorKind::InternalError,
+                    "batch :replace-subtree: MacroIntroduced body requires "
+                    "MacroSelfEvo capability (mutate:replace-subtree :allow-macro? #t)"});
+            }
         }
     }
     auto parent_slot_ok = [&]() -> bool {
@@ -3161,14 +3309,22 @@ EvalResult Evaluator::eval_flat_apply_mutate_splice(std::span<const types::EvalV
     // Issue #3027 / Issue #3213: dual-track :allow-macro? on MacroIntroduced
     // spine (parity with public mutate:splice). Soft/Off: no parse unless
     // MacroIntroduced and global is false.
-    if (flat.is_macro_introduced(parent) &&
-        !(get_allow_macro_mutate() || parse_allow_macro_opt_out(a))) {
-        record_hygiene_violation_attempt();
-        note_hygiene_last_limit_reason(kHygieneLimitReasonMacroIntroduced);
-        return std::unexpected(
-            aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
-                                   "batch :splice: cannot splice MacroIntroduced without "
-                                   "public mutate:splice :allow-macro? #t"});
+    if (flat.is_macro_introduced(parent)) {
+        if (!(get_allow_macro_mutate() || parse_allow_macro_opt_out(a))) {
+            record_hygiene_violation_attempt();
+            note_hygiene_last_limit_reason(kHygieneLimitReasonMacroIntroduced);
+            return std::unexpected(
+                aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
+                                       "batch :splice: cannot splice MacroIntroduced without "
+                                       "public mutate:splice :allow-macro? #t"});
+        }
+        // Issue #3652: the opt-out arm still requires MacroSelfEvo (#3542
+        // face) under Restricted/Strict. Soft/Off: one mode load.
+        if (effect_sandbox_mode() != 0 && deny_macro_opt_out_without_mse(*this, parent))
+            return std::unexpected(
+                aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
+                                       "batch :splice: mutation of MacroIntroduced requires "
+                                       "MacroSelfEvo capability (mutate:splice :allow-macro? #t)"});
     }
     std::vector<types::EvalValue> code_args;
     for (std::size_t i = 2; i < a.size(); ++i) {
@@ -3244,14 +3400,22 @@ EvalResult Evaluator::eval_flat_apply_mutate_wrap(std::span<const types::EvalVal
     // Issue #3027 / Issue #3213: dual-track :allow-macro? (parity with
     // public mutate:wrap). Soft/Off: no parse unless MacroIntroduced
     // and global is false.
-    if (flat.is_macro_introduced(node) &&
-        !(get_allow_macro_mutate() || parse_allow_macro_opt_out(a))) {
-        record_hygiene_violation_attempt();
-        note_hygiene_last_limit_reason(kHygieneLimitReasonMacroIntroduced);
-        return std::unexpected(
-            aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
-                                   "batch :wrap: cannot wrap MacroIntroduced without "
-                                   "public mutate:wrap :allow-macro? #t"});
+    if (flat.is_macro_introduced(node)) {
+        if (!(get_allow_macro_mutate() || parse_allow_macro_opt_out(a))) {
+            record_hygiene_violation_attempt();
+            note_hygiene_last_limit_reason(kHygieneLimitReasonMacroIntroduced);
+            return std::unexpected(
+                aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
+                                       "batch :wrap: cannot wrap MacroIntroduced without "
+                                       "public mutate:wrap :allow-macro? #t"});
+        }
+        // Issue #3652: the opt-out arm still requires MacroSelfEvo (#3542
+        // face) under Restricted/Strict. Soft/Off: one mode load.
+        if (effect_sandbox_mode() != 0 && deny_macro_opt_out_without_mse(*this, node))
+            return std::unexpected(
+                aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
+                                       "batch :wrap: mutation of MacroIntroduced requires "
+                                       "MacroSelfEvo capability (mutate:wrap :allow-macro? #t)"});
     }
     std::string summary = (a.size() > 2 && is_string(a[2])) ? string_heap_[as_string_idx(a[2])]
                                                             : "wrap node " + std::to_string(node);
@@ -3392,15 +3556,26 @@ EvalResult Evaluator::eval_flat_apply_mutate_rename_symbol(std::span<const types
         }
         if (!hit)
             continue;
-        if ((flat.is_macro_introduced(id) || flat.tag(id) == aura::ast::NodeTag::MacroDef) &&
-            !(get_allow_macro_mutate() || parse_allow_macro_opt_out(a))) {
-            flat.note_rename_symbol_hygiene_reject();
-            record_hygiene_violation_attempt();
-            note_hygiene_last_limit_reason(kHygieneLimitReasonMacroIntroduced);
-            return std::unexpected(aura::diag::Diagnostic{
-                aura::diag::ErrorKind::InternalError,
-                "batch :rename-symbol: MacroIntroduced / MacroDef site requires "
-                "public mutate:rename-symbol with :allow-macro? #t"});
+        if (flat.is_macro_introduced(id) || flat.tag(id) == aura::ast::NodeTag::MacroDef) {
+            if (!(get_allow_macro_mutate() || parse_allow_macro_opt_out(a))) {
+                flat.note_rename_symbol_hygiene_reject();
+                record_hygiene_violation_attempt();
+                note_hygiene_last_limit_reason(kHygieneLimitReasonMacroIntroduced);
+                return std::unexpected(aura::diag::Diagnostic{
+                    aura::diag::ErrorKind::InternalError,
+                    "batch :rename-symbol: MacroIntroduced / MacroDef site requires "
+                    "public mutate:rename-symbol with :allow-macro? #t"});
+            }
+            // Issue #3652: the opt-out arm still requires MacroSelfEvo
+            // (#3542 face) for MacroIntroduced sites under Restricted/Strict
+            // (hand-written MacroDef sites keep the historical allow face).
+            // Soft/Off: one mode load.
+            if (flat.is_macro_introduced(id) && effect_sandbox_mode() != 0 &&
+                deny_macro_opt_out_without_mse(*this, id))
+                return std::unexpected(aura::diag::Diagnostic{
+                    aura::diag::ErrorKind::InternalError,
+                    "batch :rename-symbol: MacroIntroduced site requires MacroSelfEvo "
+                    "capability (mutate:rename-symbol :allow-macro? #t)"});
         }
     }
     int count = 0;
@@ -3457,14 +3632,22 @@ EvalResult Evaluator::eval_flat_apply_mutate_move_node(std::span<const types::Ev
     // Issue #2801 / Issue #3061 / Issue #3213: dual-track :allow-macro?
     // before cycle / detach (parity with public mutate:move-node).
     // Soft/Off: no parse unless MacroIntroduced and global is false.
-    if (flat.is_macro_introduced(node) &&
-        !(get_allow_macro_mutate() || parse_allow_macro_opt_out(a))) {
-        flat.note_move_node_hygiene_reject();
-        record_hygiene_violation_attempt();
-        note_hygiene_last_limit_reason(kHygieneLimitReasonMacroIntroduced);
-        return std::unexpected(
-            aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
-                                   "batch :move-node: cannot move macro-introduced node"});
+    if (flat.is_macro_introduced(node)) {
+        if (!(get_allow_macro_mutate() || parse_allow_macro_opt_out(a))) {
+            flat.note_move_node_hygiene_reject();
+            record_hygiene_violation_attempt();
+            note_hygiene_last_limit_reason(kHygieneLimitReasonMacroIntroduced);
+            return std::unexpected(
+                aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
+                                       "batch :move-node: cannot move macro-introduced node"});
+        }
+        // Issue #3652: the opt-out arm still requires MacroSelfEvo (#3542
+        // face) under Restricted/Strict. Soft/Off: one mode load.
+        if (effect_sandbox_mode() != 0 && deny_macro_opt_out_without_mse(*this, node))
+            return std::unexpected(aura::diag::Diagnostic{
+                aura::diag::ErrorKind::InternalError,
+                "batch :move-node: mutation of MacroIntroduced requires "
+                "MacroSelfEvo capability (mutate:move-node :allow-macro? #t)"});
     }
     if (node == new_parent)
         return std::unexpected(aura::diag::Diagnostic{
@@ -3534,14 +3717,22 @@ EvalResult Evaluator::eval_flat_apply_mutate_inline_call(std::span<const types::
     // Issue #3027 / Issue #3213: dual-track :allow-macro? (parity with
     // public mutate:inline-call). Soft/Off: no parse unless MacroIntroduced
     // and global is false.
-    if (flat.is_macro_introduced(call_id) &&
-        !(get_allow_macro_mutate() || parse_allow_macro_opt_out(a))) {
-        record_hygiene_violation_attempt();
-        note_hygiene_last_limit_reason(kHygieneLimitReasonMacroIntroduced);
-        return std::unexpected(
-            aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
-                                   "batch :inline-call: cannot inline-call MacroIntroduced without "
-                                   "public mutate:inline-call :allow-macro? #t"});
+    if (flat.is_macro_introduced(call_id)) {
+        if (!(get_allow_macro_mutate() || parse_allow_macro_opt_out(a))) {
+            record_hygiene_violation_attempt();
+            note_hygiene_last_limit_reason(kHygieneLimitReasonMacroIntroduced);
+            return std::unexpected(aura::diag::Diagnostic{
+                aura::diag::ErrorKind::InternalError,
+                "batch :inline-call: cannot inline-call MacroIntroduced without "
+                "public mutate:inline-call :allow-macro? #t"});
+        }
+        // Issue #3652: the opt-out arm still requires MacroSelfEvo (#3542
+        // face) under Restricted/Strict. Soft/Off: one mode load.
+        if (effect_sandbox_mode() != 0 && deny_macro_opt_out_without_mse(*this, call_id))
+            return std::unexpected(aura::diag::Diagnostic{
+                aura::diag::ErrorKind::InternalError,
+                "batch :inline-call: mutation of MacroIntroduced requires "
+                "MacroSelfEvo capability (mutate:inline-call :allow-macro? #t)"});
     }
     auto cv = flat.get(call_id);
     if (cv.tag != aura::ast::NodeTag::Call || cv.children.empty())
@@ -3589,14 +3780,22 @@ EvalResult Evaluator::eval_flat_apply_mutate_inline_call(std::span<const types::
             aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
                                    "batch :inline-call: target function form not supported"});
     }
-    if (func_body_node != aura::ast::NULL_NODE && flat.is_macro_introduced(func_body_node) &&
-        !(get_allow_macro_mutate() || parse_allow_macro_opt_out(a))) {
-        record_hygiene_violation_attempt();
-        note_hygiene_last_limit_reason(kHygieneLimitReasonMacroIntroduced);
-        return std::unexpected(
-            aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
-                                   "batch :inline-call: cannot inline-call MacroIntroduced without "
-                                   "public mutate:inline-call :allow-macro? #t"});
+    if (func_body_node != aura::ast::NULL_NODE && flat.is_macro_introduced(func_body_node)) {
+        if (!(get_allow_macro_mutate() || parse_allow_macro_opt_out(a))) {
+            record_hygiene_violation_attempt();
+            note_hygiene_last_limit_reason(kHygieneLimitReasonMacroIntroduced);
+            return std::unexpected(aura::diag::Diagnostic{
+                aura::diag::ErrorKind::InternalError,
+                "batch :inline-call: cannot inline-call MacroIntroduced without "
+                "public mutate:inline-call :allow-macro? #t"});
+        }
+        // Issue #3652: the opt-out arm still requires MacroSelfEvo (#3542
+        // face) under Restricted/Strict. Soft/Off: one mode load.
+        if (effect_sandbox_mode() != 0 && deny_macro_opt_out_without_mse(*this, func_body_node))
+            return std::unexpected(aura::diag::Diagnostic{
+                aura::diag::ErrorKind::InternalError,
+                "batch :inline-call: mutation of MacroIntroduced requires "
+                "MacroSelfEvo capability (mutate:inline-call :allow-macro? #t)"});
     }
     std::vector<aura::ast::NodeId> actual_args;
     for (std::size_t i = 1; i < cv.children.size(); ++i)

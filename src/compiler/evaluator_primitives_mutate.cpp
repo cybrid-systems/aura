@@ -5794,7 +5794,10 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             // the fail-closed walk once the Agent armed Restricted.
             const bool prod_sandbox = aura::core::sandbox::is_sandbox_active() ||
                                       ev.effect_sandbox_mode() != 0 || ev.sandbox_mode();
-            if (prod_sandbox && !ev.get_allow_macro_mutate() && !batch_allow_macro) {
+            // Issue #3652: the walk now runs under the production face even
+            // when a global/batch opt-out flag is set — the opt-out arm
+            // routes through the #3542 MSE gate instead of skipping.
+            if (prod_sandbox) {
                 EvalValue audit_list = op_list;
                 while (is_pair(audit_list)) {
                     EvalValue op = pair_car(audit_list);
@@ -5806,8 +5809,9 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                         break;
                     std::vector<EvalValue> op_args = list_to_vec(pair_cdr(op));
                     std::string op_name = safe_str(op_name_ev);
-                    if (parse_allow_macro_opt_out(ev, op_args))
-                        continue; // Issue #3213 per-sub-op opt-out
+                    // Issue #3652: per-sub-op opt-out no longer skips the
+                    // walk — it selects the MSE arm below.
+                    const bool op_opt_out = parse_allow_macro_opt_out(ev, op_args);
                     for (const auto& e : kAtomicBatchLocklessOps) {
                         if (op_name != e.name || e.target_arg < 0)
                             continue;
@@ -5820,6 +5824,35 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                             break;
                         if (!ev.workspace_flat_->is_macro_introduced(node))
                             break;
+                        // Issue #3652: opt-out arms (global flag / batch
+                        // :allow-macro? / per-sub-op :allow-macro?) route
+                        // through the #3542 MSE gate — same face as the
+                        // public prims. Deny aborts the batch before any
+                        // sub-op; MSE granted falls through to per-op gates.
+                        if (op_opt_out || batch_allow_macro || ev.get_allow_macro_mutate()) {
+                            if (deny_macro_opt_out_without_mse(ev, node, mev)) {
+                                aura::compiler::macro_exp::note_hygiene_last_limit_reason(
+                                    aura::compiler::macro_exp::kHygieneLimitReasonMacroIntroduced);
+                                ev.bump_atomic_batch_hygiene_violation();
+                                abort_batch_workspace();
+                                ev.atomic_batch_domain_.rollbacks++;
+                                ev.bump_edsl_nested_atomic_rollback();
+                                if (batch_snap_id >= 0 &&
+                                    ev.restore_workspace_snapshot_under_lock(
+                                        static_cast<std::size_t>(batch_snap_id)))
+                                    ev.bump_atomic_batch_snapshot_rollback();
+                                ev.rollback_atomic_batch_pinning();
+                                guard_ok = false;
+                                return ev.make_merr(
+                                    "hygiene",
+                                    ("mutate:atomic-batch: target node " + std::to_string(node) +
+                                     " was produced by a hygienic macro expansion; the "
+                                     ":allow-macro? opt-out requires MacroSelfEvo capability "
+                                     "under the active sandbox face")
+                                        .c_str());
+                            }
+                            break; // MSE granted — continue walking remaining ops
+                        }
                         // Fail closed: deny the whole batch before any sub-op.
                         ev.record_hygiene_violation_attempt();
                         aura::compiler::macro_exp::note_hygiene_last_limit_reason(
