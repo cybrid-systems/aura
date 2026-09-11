@@ -1819,6 +1819,33 @@ static void ac3630_5_source_cite_and_no_invent() {
     CHECK(slurp("tests/compiler/test_issue_3630.cpp").empty(), "3630: no test_issue file");
 }
 
+
+// ── Issue #3640: add_mutate gate single spine (wrap_epoch != tenant) ────
+// Source-cite face: the isolation gate parses packed StableNodeRefs
+// through the same unpack_stable_ref_arg as resolve_mutate_node_arg
+// (#3396 v2) and takes ref_tenant from the packed tenant slot; the old
+// shallow parse read the wrap_epoch slot as ref_tenant. Runtime ACs
+// (deny / allow / Soft v1) live in test_hygiene_mutate_closed_loop.cpp
+// (3640 AC1/AC3/AC4) — the packed-drive service harness there.
+static void ac3640_gate_single_spine_source_cite() {
+    std::println("\n--- #3640: gate single-spine source-cite ---");
+    const auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
+    CHECK(mut.find("unpack_stable_ref_arg](std::span<const EvalValue> a)") != std::string::npos,
+          "3640 AC2: gate lambda captures unpack_stable_ref_arg");
+    const auto gate = mut.find("Issue #3640");
+    CHECK(gate != std::string::npos, "3640 AC2: gate cites #3640");
+    CHECK(mut.find("ref_tenant = packed->tenant_id;", gate) != std::string::npos,
+          "3640 AC2: ref_tenant from packed tenant (not wrap)");
+    CHECK(mut.find("auto c2 = ev.pairs_[inner].cdr;") == std::string::npos,
+          "3640 AC2: shallow wrap-as-tenant parse removed");
+    const auto resolve = mut.find("auto resolve_mutate_node_arg");
+    CHECK(resolve != std::string::npos && mut.find("if (auto packed = unpack_stable_ref_arg(arg))",
+                                                   resolve) != std::string::npos,
+          "3640 AC2: resolve_mutate_node_arg still unpacks (#3415 AC7)");
+    CHECK(read_file("build.py").find("check_unpack_stable_ref_arg_v2_3396") != std::string::npos,
+          "3640 AC2: #3396 v2 linter still wired");
+}
+
 int run_test_require_effect_auto_isolation() {
     std::println("=== Issue #2490: require_effect auto-enforces isolation ===");
     ac1_restricted_unset_principal_denies();
@@ -1899,6 +1926,8 @@ int run_test_require_effect_auto_isolation() {
     ac3630_3_no_false_arm_single_principal();
     ac3630_4_off_and_optout();
     ac3630_5_source_cite_and_no_invent();
+    std::println("\n=== Issue #3640: add_mutate gate single spine (wrap != tenant) ===");
+    ac3640_gate_single_spine_source_cite();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

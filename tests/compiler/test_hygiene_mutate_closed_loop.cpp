@@ -4952,6 +4952,141 @@ static void ac3637_allow_pass() {
     apply_dev_audit_defaults();
 }
 
+// ── Issue #3640: add_mutate gate single spine (wrap_epoch != tenant) ────
+// The isolation gate parses packed StableNodeRefs through the same
+// unpack_stable_ref_arg as resolve_mutate_node_arg (#3396 v2); the old
+// shallow parse read the wrap_epoch slot as ref_tenant (wrap == caller
+// masked foreign tenants past the occupancy consult; wrap != caller
+// IsolationDeny'd legitimate same-tenant packed mutates).
+static void ac3640_packed_gate_spine() {
+    // Quarantine from earlier hygiene sections (isolation links, stamps,
+    // grants, SE ring, sandbox authority) — this family needs a clean
+    // production slate per AC.
+    aura::core::workspace_isolation::g_workspace_isolation().set_strict_sandbox_linked(false);
+    aura::core::provenance::clear_last_stamped_node_for_test();
+    aura::core::capability::reset_capability_effects_for_test();
+    aura::core::security_event::reset_security_event_ring_for_test();
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+
+    // AC1: Restricted+MT, wrap=1 == caller tenant=1, v2 tenant=99 →
+    // IsolationDeny before the body; zero topology write.
+    std::println("\n--- #3640 AC1: wrap==caller no longer masks foreign tenant ---");
+    aura::core::provenance::set_multi_tenant_env_active(true);
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    aura::core::capability::reset_capability_effects_for_test();
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    CHECK(cs.eval("(set-code \"(define base 10)\")").has_value(), "3640 AC1: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3640 AC1: eval");
+    auto* ws = ev.workspace_flat();
+    CHECK(ws != nullptr, "3640 AC1: workspace");
+    const auto lit = first_lit_int(ws);
+    CHECK(lit != aura::ast::NULL_NODE, "3640 AC1: LiteralInt");
+    // Capability environment mirrors grant_3301_production_mutate:
+    // non-zero principal + registered workspace tenant + TA/wildcard
+    // grants while sandbox is Off (#3141 fence blocks wildcard string
+    // pushes under Restricted), then arm Restricted via the Evaluator
+    // setter and re-grant with caller_principal=1 (#3409 high-bits
+    // fence refuses default-caller high-bit grants).
+    ev.set_capability_tenant_id(1);
+    aura::core::workspace_isolation::g_workspace_isolation().set_current_tenant(1, "3640-tenant");
+    aura::compiler::typed_audit::clear_type_linear_commit_proof_for_test();
+    aura::core::capability::g_capability_registry().grant(
+        1, "tenant-admin", aura::core::capability::Effect::TenantAdmin, aura_test_grant_prov());
+    aura::core::capability::g_capability_registry().grant(
+        1, aura::compiler::security::kCapWildcard,
+        aura::core::capability::effect_for_cap_name(aura::compiler::security::kCapWildcard),
+        aura_test_grant_prov());
+    ev.grant_capability(std::string(aura::compiler::security::kCapWildcard));
+    ev.set_effect_sandbox_mode(1); // Restricted — after grants
+    aura::core::capability::g_capability_registry().grant(
+        1, "tenant-admin", aura::core::capability::Effect::TenantAdmin, aura_test_grant_prov(),
+        false, false, /*caller_principal=*/1);
+    aura::core::capability::g_capability_registry().grant(
+        1, aura::compiler::security::kCapWildcard,
+        aura::core::capability::effect_for_cap_name(aura::compiler::security::kCapWildcard),
+        aura_test_grant_prov(), false, false, /*caller_principal=*/1);
+    // The v2 spine parse runs under the production face (#3396); under
+    // GCC module linkage the typed_audit counters are per-TU, so the
+    // test TU cannot arm the dispatch gate's instance — the library hook
+    // arms the instance the probe below executes in. The foreign ref
+    // mirrors what the gate produces from the packed v2 spine (tenant
+    // slot, NOT wrap); the parse itself is source-cited in
+    // test_require_effect_auto_isolation.cpp (3640 AC2).
+    ev.arm_production_audit_defaults_for_test();
+    auto probe = ev.make_stamped_ref(lit);
+    probe.tenant_id = 99; // v2 spine tenant slot (NOT wrap=1)
+    CHECK(!ev.require_effect_on_ref(
+              static_cast<std::uint16_t>(aura::compiler::security::kEffectMutate), "test:3640-ac1",
+              probe),
+          "3640 AC1: packed v2 foreign tenant → IsolationDeny (wrap not read as tenant)");
+    CHECK(ws->tag(lit) == aura::ast::NodeTag::LiteralInt,
+          "3640 AC1: zero topology write (deny before body)");
+    ev.disarm_production_audit_defaults_for_test();
+    aura::core::provenance::set_multi_tenant_env_active(false);
+
+
+    // AC3: wrap != caller and v2 tenant == caller → the packed mutate is
+    // the caller's own; the gate must not misread wrap as a foreign
+    // tenant (availability face of the same double-track bug).
+    std::println("\n--- #3640 AC3: wrap != caller, tenant == caller → allow ---");
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    aura::core::capability::reset_capability_effects_for_test();
+    CompilerService cs3;
+    auto& ev3 = cs3.evaluator();
+    CHECK(cs3.eval("(set-code \"(define base 10)\")").has_value(), "3640 AC3: set-code");
+    CHECK(cs3.eval("(eval-current)").has_value(), "3640 AC3: eval");
+    auto* ws3 = ev3.workspace_flat();
+    CHECK(ws3 != nullptr, "3640 AC3: workspace");
+    const auto lit3 = first_lit_int(ws3);
+    CHECK(lit3 != aura::ast::NULL_NODE, "3640 AC3: LiteralInt");
+    ev3.set_capability_tenant_id(1);
+    aura::core::workspace_isolation::g_workspace_isolation().set_current_tenant(1, "3640-tenant");
+    aura::compiler::typed_audit::clear_type_linear_commit_proof_for_test();
+    aura::core::capability::g_capability_registry().grant(
+        1, "tenant-admin", aura::core::capability::Effect::TenantAdmin, aura_test_grant_prov());
+    aura::core::capability::g_capability_registry().grant(
+        1, aura::compiler::security::kCapWildcard,
+        aura::core::capability::effect_for_cap_name(aura::compiler::security::kCapWildcard),
+        aura_test_grant_prov());
+    ev3.grant_capability(std::string(aura::compiler::security::kCapWildcard));
+    ev3.set_effect_sandbox_mode(1); // Restricted — after grants
+    aura::core::capability::g_capability_registry().grant(
+        1, "tenant-admin", aura::core::capability::Effect::TenantAdmin, aura_test_grant_prov(),
+        false, false, /*caller_principal=*/1);
+    aura::core::capability::g_capability_registry().grant(
+        1, aura::compiler::security::kCapWildcard,
+        aura::core::capability::effect_for_cap_name(aura::compiler::security::kCapWildcard),
+        aura_test_grant_prov(), false, false, /*caller_principal=*/1);
+    ev3.arm_production_audit_defaults_for_test();
+    auto own3 = ev3.make_stamped_ref(lit3);
+    own3.tenant_id = 1; // v2 spine tenant slot == caller (wrap=2 is NOT)
+    CHECK(ev3.require_effect_on_ref(
+              static_cast<std::uint16_t>(aura::compiler::security::kEffectMutate), "test:3640-ac3",
+              own3),
+          "3640 AC3: same-tenant packed ref → allow (wrap not misread as foreign)");
+    ev3.disarm_production_audit_defaults_for_test();
+
+
+    // AC4: Soft keeps the historical v1 (id . gen) packed input — no
+    // #3395 bare-int reject, no isolation deny.
+    std::println("\n--- #3640 AC4: Soft keeps v1 (id . gen) packed ---");
+    CompilerService cs4;
+    auto& ev4 = cs4.evaluator();
+    ev4.set_effect_sandbox_mode(0);
+    CHECK(cs4.eval("(set-code \"(define base 10)\")").has_value(), "3640 AC4: set-code");
+    CHECK(cs4.eval("(eval-current)").has_value(), "3640 AC4: eval");
+    auto* ws4 = ev4.workspace_flat();
+    CHECK(ws4 != nullptr, "3640 AC4: workspace");
+    const auto lit4 = first_lit_int(ws4);
+    CHECK(lit4 != aura::ast::NULL_NODE, "3640 AC4: LiteralInt");
+    auto rt4 =
+        cs4.eval(std::format("(mutate:replace-type (list {} 0) \"Float\")", (long long)lit4));
+    const auto kind4 = rt4.has_value() ? merr_kind_3027(cs4, *rt4) : std::string("ok");
+    CHECK(kind4 != "tenant-isolation-denied" && kind4.find("bare") == std::string::npos,
+          "3640 AC4: Soft v1 (id . gen) accepted (no #3395 reject, no isolation deny)");
+}
+
 int main() {
     std::println("=== test_hygiene_mutate_closed_loop (#2037 + #2762 + #2858 + #2863 + #2864 + "
                  "#2961 + #3000 + #3027 + #3037 + #3076 + #3121) ===");
@@ -5142,6 +5277,8 @@ int main() {
     ac3637_production_net();
     ac3637_soft_observe();
     ac3637_allow_pass();
+    std::println("\n=== Issue #3640: add_mutate gate single spine (wrap != tenant) ===");
+    ac3640_packed_gate_spine();
     std::println("\n=== {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

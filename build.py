@@ -6461,6 +6461,23 @@ def cmd_lint():
             "Issue #3639 WAL append-miss same-mutate fail-closed linter failed — run python3 scripts/check_wal_append_miss_deny_3639.py"
         )
         return r
+    # Issue #3640: add_mutate isolation gate single spine (#3396 v2
+    # residual). The gate parses packed StableNodeRefs through the same
+    # unpack_stable_ref_arg as resolve_mutate_node_arg and takes
+    # ref_tenant from the packed tenant slot; the old shallow parse read
+    # the wrap_epoch slot as ref_tenant (wrap == caller masked foreign
+    # tenants past the occupancy consult; wrap != caller IsolationDeny'd
+    # legitimate same-tenant packed mutates).
+    wfc3640_script = ROOT / "scripts" / "check_unpack_spine_gate_3640.py"
+    if not wfc3640_script.exists():
+        fail(f"missing {wfc3640_script}")
+        return 1
+    r = run([sys.executable, str(wfc3640_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3640 add_mutate gate single-spine linter failed — run python3 scripts/check_unpack_spine_gate_3640.py"
+        )
+        return r
     # Issue #3301: atomic-batch batch-level MacroIntroduced fail-closed
     # audit. Dispatcher walks each sub-op's target node-id arg before the
     # sub-op loop and denies the whole batch if a target is MacroIntroduced
