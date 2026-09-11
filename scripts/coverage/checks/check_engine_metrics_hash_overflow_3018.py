@@ -5,7 +5,10 @@ Contract (one row per AC):
   AC1  Forced undersized table still returns a hash with schema + overflow=1;
        never FlatHashTable::destroy + void for capacity alone.
   AC2  Normal :all under current catalog is a full map (no overflow key).
-  AC3  :prefix "query:" stays a hash; missing impl is still void-per-key.
+  AC3  :prefix "query:" stays a hash; by-name miss is a typed not-found
+       hash (#3645 flip — was make_void()); the void-per-key contract
+       remains the :all/:prefix iteration path for catalog names with
+       missing impls.
   AC4  Soft/Off extra cost is one force-cap load; no second metrics bus.
   AC5  Extend test_engine_metrics_facade + engine_metrics.aura; no
        test_issue_3018.cpp; no docs/design/ (#1655). Additive overflow
@@ -59,7 +62,15 @@ def main() -> int:
     # ── AC2 / AC3: tests ──
     must("#3018 AC2: normal :all has no overflow key", "AC2", test)
     must("#3018 AC3: :prefix query: returns hash", "AC3", test)
-    must("#3018 AC3: missing impl still void-per-key", "AC3", test)
+    # Issue #3645: the by-name miss fixture flipped from void to the typed
+    # not-found hash (ok=#f / status=not-found / schema-3531); the #3018
+    # void-per-key contract lives in the :all/:prefix iteration path, not
+    # the by-name branch. Accept either fixture form so history still lints.
+    if (
+        "#3018 AC3 / #3645: by-name miss is typed not-found hash" not in test
+        and "#3018 AC3: missing impl still void-per-key" not in test
+    ):
+        fails.append("AC3: missing by-name miss fixture row (typed not-found hash per #3645, or legacy void-per-key)")
     must("engine:metrics-overflow-3018", "AC3 suite", suite)
     must('(not (hash-has-key? all "overflow"))', "AC2 suite", suite)
 
