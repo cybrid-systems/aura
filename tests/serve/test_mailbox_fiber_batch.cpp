@@ -119,6 +119,13 @@ int main() {
     else
         ++members_passed;
 
+    // Issue #3659: isolate the snapshot-gate member (the sequential copy
+    // below sits in the leftover #if 0 steal/chaos skip).
+    if (isolate("test_is_stealable_snapshot_gate", run_test_is_stealable_snapshot_gate) != 0)
+        ++members_failed;
+    else
+        ++members_passed;
+
     std::println("\n──── test_mailbox_bp_admit ────");
     reset_member_face();
     reset_member_face();

@@ -143,7 +143,8 @@ namespace {
 // only returns bits — zero atomics on the clean path (AC2 / #2987 AC3).
 // skip_mask omits arms (mailbox skips LifetimeProofOk; EnvFrameOk only
 // when the payload carries a held-ref). Same table as steal:
-//   BoundarySafe      — is_at_mutation_boundary_safe
+//   BoundarySafe      — is_at_mutation_boundary_safe(snap) (#3659: same
+//                       beat as ticket; no parameterless resample)
 //   LayoutStampMatch  — aura_evaluator_check_resume_layout_stamp
 //   TicketFresh       — resume ticket == snap.ticket
 //   GcDeferClear      — victim evaluator GC defer clear
@@ -160,7 +161,11 @@ namespace {
         return (skip_mask & steal_invariant_mask(inv)) != 0;
     };
     // StealInvariant::BoundarySafe
-    if (!skip(StealInvariant::BoundarySafe) && !stolen->is_at_mutation_boundary_safe()) {
+    // Issue #3659: use the transaction snap (same beat as ticket stamp).
+    // A no-argument BoundarySafe probe re-samples and can pass after
+    // snap.held==true was cleared — enqueue with a held-era ticket.
+    // Reverse (snap safe, live unsafe) was already RejectHard.
+    if (!skip(StealInvariant::BoundarySafe) && !stolen->is_at_mutation_boundary_safe(snap)) {
         fail_bits |= steal_invariant_mask(StealInvariant::BoundarySafe);
         if (bump_counters)
             note_steal_invariant_fail(StealInvariant::BoundarySafe);

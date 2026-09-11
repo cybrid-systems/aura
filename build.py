@@ -5414,6 +5414,19 @@ def cmd_lint():
             "Issue #3658 type dirty txn before cascade linter failed — run python3 scripts/coverage/checks/check_type_dirty_txn_before_cascade_3658.py"
         )
         return r
+    # Issue #3659: BoundarySafe uses the transaction snap (same beat as
+    # ticket). Soft unchanged. Extends test_is_stealable_snapshot_gate;
+    # linter after #3658.
+    bs3659_script = COVERAGE_CHECKS / "check_boundary_safe_uses_snap_3659.py"
+    if not bs3659_script.exists():
+        fail(f"missing {bs3659_script}")
+        return 1
+    r = run([sys.executable, str(bs3659_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3659 BoundarySafe snap-same-beat linter failed — run python3 scripts/coverage/checks/check_boundary_safe_uses_snap_3659.py"
+        )
+        return r
     # Issue #3419: JIT typed-entry on every compiled function (anonymous)
     # included). Stub typed-entry is not production (ABI bit 8). Soft omit.
     # Extends persist-rehydrate + steal-complete; linter after #3343.

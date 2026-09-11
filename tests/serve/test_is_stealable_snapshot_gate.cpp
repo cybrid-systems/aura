@@ -12,6 +12,7 @@
 #include "test_harness.hpp"
 
 #include "serve/fiber.h"
+#include "serve/steal_safety.h"
 #include "serve/worker.h"
 
 #include <cstdint>
@@ -23,9 +24,14 @@ import std;
 
 namespace {
 
+using aura::serve::evaluate_residual_hard_and_bits;
 using aura::serve::Fiber;
 using aura::serve::fiber_steal_priority;
 using aura::serve::MutationSafetySnapshot;
+using aura::serve::steal_invariant_mask;
+using aura::serve::steal_safety_transaction;
+using aura::serve::StealInvariant;
+using aura::serve::StealSafetyDecision;
 using aura::serve::YieldReason;
 using aura::test::g_failed;
 using aura::test::g_passed;
@@ -181,6 +187,93 @@ static void ac5_happy_path_cost() {
 
 } // namespace
 
+static void ac3659_1_boundary_safe_uses_snap() {
+    std::println("\n--- #3659 AC1: BoundarySafe uses snap, no parameterless resample ---");
+    const auto ss = read_file("src/serve/steal_safety.cpp");
+    CHECK(ss.find("is_at_mutation_boundary_safe(snap)") != std::string::npos,
+          "3659 AC1: evaluate uses is_at_mutation_boundary_safe(snap)");
+    CHECK(ss.find("Issue #3659") != std::string::npos, "3659 AC1: steal_safety cites #3659");
+    CHECK(ss.find("is_at_mutation_boundary_safe()") == std::string::npos,
+          "3659 AC1: steal_safety.cpp has no parameterless is_at_mutation_boundary_safe()");
+}
+
+static void ac3659_2_held_snap_rejects_after_clear() {
+    std::println("\n--- #3659 AC2: held snap + later held_mirror==0 → RejectHard, no ticket ---");
+    Fiber fiber(+[] {}, 64 * 1024);
+    fiber.set_yield_reason(YieldReason::MutationBoundary);
+    fiber.publish_mutation_safety_mirrors(/*depth=*/1, /*held=*/true, /*defuse=*/0);
+    const auto snap = fiber.mutation_safety_snapshot();
+    CHECK(snap.held, "3659 AC2: snap.held==true");
+    fiber.publish_mutation_safety_mirrors(/*depth=*/0, /*held=*/false, /*defuse=*/0);
+    CHECK(fiber.is_at_mutation_boundary_safe(),
+          "3659 AC2: live resample would pass (held_mirror==0)");
+    fiber.clear_resume_safety_ticket();
+    const auto bits = evaluate_residual_hard_and_bits(&fiber, snap, /*bump_counters=*/false);
+    CHECK((bits & steal_invariant_mask(StealInvariant::BoundarySafe)) != 0,
+          "3659 AC2: BoundarySafe fail on held snap");
+    CHECK(!fiber.has_resume_safety_ticket(), "3659 AC2: evaluate does not stamp ticket");
+    fiber.publish_mutation_safety_mirrors(/*depth=*/1, /*held=*/true, /*defuse=*/0);
+    fiber.clear_resume_safety_ticket();
+    const auto d = steal_safety_transaction(&fiber);
+    CHECK(d == StealSafetyDecision::RejectHard, "3659 AC2: transaction RejectHard on held snap");
+    CHECK(!fiber.has_resume_safety_ticket(), "3659 AC2: no set_resume_safety_ticket");
+}
+
+static void ac3659_3_clean_snap_ok_victim_id() {
+    std::println("\n--- #3659 AC3: clean snap Ok + ticket==snap.ticket; victim eval id ---");
+    const auto ss = read_file("src/serve/steal_safety.cpp");
+    CHECK(ss.find("set_resume_safety_ticket(snap.ticket)") != std::string::npos,
+          "3659 AC3: Ok stamps snap.ticket");
+    int victim_reads = 0;
+    for (std::size_t p = 0;
+         (p = ss.find("aura_fiber_evaluator_id_for_steal_safety(stolen)", p)) != std::string::npos;
+         p += 1)
+        ++victim_reads;
+    CHECK(victim_reads >= 3, "3659 AC3: GcDefer/EnvFrame/LCP still victim eval id");
+    Fiber fiber(+[] {}, 64 * 1024);
+    fiber.set_yield_reason(YieldReason::Explicit);
+    fiber.publish_mutation_safety_mirrors(0, false, 0);
+    fiber.clear_resume_safety_ticket();
+    const auto snap = fiber.mutation_safety_snapshot();
+    CHECK(!snap.held, "3659 AC3: clean snap");
+    const auto bits = evaluate_residual_hard_and_bits(&fiber, snap, /*bump_counters=*/false);
+    CHECK(bits == 0, "3659 AC3: clean snap residual bits==0");
+    const auto d = steal_safety_transaction(&fiber);
+    CHECK(d == StealSafetyDecision::Ok, "3659 AC3: transaction Ok");
+    CHECK(fiber.has_resume_safety_ticket(), "3659 AC3: ticket stamped");
+    CHECK(fiber.resume_safety_ticket() == snap.ticket, "3659 AC3: ticket==snap.ticket");
+}
+
+static void ac3659_4_soft_unchanged() {
+    std::println("\n--- #3659 AC4: Soft/single-worker not forced; Hard still RejectHard ---");
+    const auto ss = read_file("src/serve/steal_safety.cpp");
+    CHECK(ss.find("Soft: skip entirely (no loads)") != std::string::npos,
+          "3659 AC4: Lifetime Soft skip retained");
+    CHECK(ss.find("is_steal_snapshot_hard_mode()") != std::string::npos,
+          "3659 AC4: Hard production lock still on Lifetime arm");
+    Fiber fiber(+[] {}, 64 * 1024);
+    fiber.set_yield_reason(YieldReason::MutationBoundary);
+    fiber.publish_mutation_safety_mirrors(1, true, 0);
+    const auto snap = fiber.mutation_safety_snapshot();
+    const auto bits = evaluate_residual_hard_and_bits(&fiber, snap, /*bump_counters=*/false);
+    CHECK((bits & steal_invariant_mask(StealInvariant::BoundarySafe)) != 0,
+          "3659 AC4: held snap still BoundarySafe fail (not Soft-erased)");
+}
+
+static void ac3659_5_linter_no_invent() {
+    std::println("\n--- #3659 AC5: linter + no invent / no query-key rewrite ---");
+    const auto t = read_file("tests/serve/test_is_stealable_snapshot_gate.cpp");
+    const auto inv = read_file("tests/serve/test_steal_snapshot_hard_invariant.cpp");
+    const auto build = read_file("build.py");
+    CHECK(t.find("ac3659_1_boundary_safe_uses_snap") != std::string::npos, "3659 AC5: AC1");
+    CHECK(inv.find("ac3621_1_depth_victim_storage_identity") != std::string::npos,
+          "3659 AC5: #3621 TLS enum stays");
+    CHECK(build.find("check_boundary_safe_uses_snap_3659") != std::string::npos,
+          "3659 AC5: build.py");
+    CHECK(read_file("tests/serve/test_issue_3659.cpp").empty(), "3659 AC5: no invent");
+    CHECK(read_file("docs/design/3659-boundary-safe-snap.md").empty(), "3659 AC5: no docs/design");
+}
+
 int run_test_is_stealable_snapshot_gate() {
     std::println("=== Issue #2549: is_stealable snapshot gate ===");
     ac1_held_or_unsafe_mb_not_stealable();
@@ -188,7 +281,13 @@ int run_test_is_stealable_snapshot_gate() {
     ac3_production_call_sites();
     ac4_source_cite_and_gate();
     ac5_happy_path_cost();
-    std::println("\n=== #2549: {} passed, {} failed ===", g_passed, g_failed);
+    std::println("\n=== Issue #3659: BoundarySafe uses transaction snap ===");
+    ac3659_1_boundary_safe_uses_snap();
+    ac3659_2_held_snap_rejects_after_clear();
+    ac3659_3_clean_snap_ok_victim_id();
+    ac3659_4_soft_unchanged();
+    ac3659_5_linter_no_invent();
+    std::println("\n=== #2549/#3659: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
 
