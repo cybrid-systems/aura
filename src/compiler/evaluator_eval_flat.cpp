@@ -301,6 +301,25 @@ static bool production_apply_closure_densify_hard_refuse(ast::ASTArena* arena, c
     if (aura::core::moving_densify_health::g_last_objects_moved.load(std::memory_order_relaxed) ==
         0)
         return false;
+    // Issue #3648: apply must also consult the densify window gate — the
+    // same predicate as Phase-5 / #2682. LCP stamp points are outermost
+    // densify SUCCESS and steal-complete, so an incomplete window
+    // (untracked kept under objects_moved>0) can leave a still-green LCP,
+    // and an untracked stale flat* misses last_object_remap_ — neither
+    // #3421 half-guard (LCP red, remap key) fires. Refuse on the window
+    // itself; green windows fall through to the #3421 checks unchanged.
+    if (!aura::core::moving_densify_health::window_would_allow_mutate(
+            aura::core::moving_densify_health::g_last_had_moving_densify.load(
+                std::memory_order_relaxed) != 0,
+            aura::core::moving_densify_health::g_last_pin_contract_held.load(
+                std::memory_order_relaxed) != 0,
+            aura::core::moving_densify_health::g_last_moving_incomplete_remap.load(
+                std::memory_order_relaxed) != 0,
+            aura::core::moving_densify_health::g_last_untracked_kept.load(
+                std::memory_order_relaxed),
+            aura::core::moving_densify_health::g_last_root_remap_fail_total.load(
+                std::memory_order_relaxed)))
+        return true;
     // Issue #3634: per-eval first (#3617 slots), process-wide fallback.
     // A foreign evaluator's Reject poisons the process-wide bit; an
     // evaluator with a slot of its own consults its own last-window
@@ -353,6 +372,21 @@ static bool production_ffi_apply_densify_hard_refuse(ast::ASTArena* arena, const
     if (aura::core::moving_densify_health::g_last_objects_moved.load(std::memory_order_relaxed) ==
         0)
         return false;
+    // Issue #3648: same window-gate consult as the #3421 closure arm —
+    // the FFI return path must refuse an incomplete window too (untracked
+    // opaque args are exactly the escapes the remap table cannot name).
+    if (!aura::core::moving_densify_health::window_would_allow_mutate(
+            aura::core::moving_densify_health::g_last_had_moving_densify.load(
+                std::memory_order_relaxed) != 0,
+            aura::core::moving_densify_health::g_last_pin_contract_held.load(
+                std::memory_order_relaxed) != 0,
+            aura::core::moving_densify_health::g_last_moving_incomplete_remap.load(
+                std::memory_order_relaxed) != 0,
+            aura::core::moving_densify_health::g_last_untracked_kept.load(
+                std::memory_order_relaxed),
+            aura::core::moving_densify_health::g_last_root_remap_fail_total.load(
+                std::memory_order_relaxed)))
+        return true;
     // Issue #3634: per-eval first (#3617 slots), process-wide fallback —
     // same shape as the #3421 closure arm above.
     const bool lcp_ok =
