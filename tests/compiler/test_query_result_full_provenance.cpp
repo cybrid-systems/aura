@@ -231,12 +231,9 @@ void test_ac7_schema2_validator_fresh() {
     expect_true("schema-2 match has_full_provenance() (wrap_epoch != 0)",
                 qr.matches[0].has_full_provenance());
 
-    // Simulate stamp_query_result_full_provenance: production caller
-    // would have populated mutation_id_at_capture via current_mutation_epoch.
-    // The validator must return Fresh (not SoftOnlyNoProvenance) when
-    // schema-2 fields are populated and no mismatch.
-    qr.matches[0].mutation_id_at_capture =
-        static_cast<std::uint32_t>(aura::core::current_mutation_epoch());
+    // Issue #3660: stamp leaves mutation_id_at_capture = 0; schema-2
+    // discriminator is wrap / reserved, not the truncated epoch field.
+    qr.matches[0].reserved = aura::core::kQueryResultMatchSchema2;
     expect_eq_i64("match_count == 1 after push_match_full", 1,
                   static_cast<std::int64_t>(qr.match_count));
 
@@ -254,49 +251,26 @@ void test_ac7_schema2_validator_fresh() {
                 !qr_schema1.matches[0].has_full_provenance());
 }
 
-// AC8 -- Issue #3137: survives subsequent mutate. After stamp captures
-// mutation_id_at_capture at time T0, a later mutate that advances the
-// mutation epoch must surface as InvalidMutation when the Agent re-checks
-// query_result_is_fresh_with_refs (multi-round query → mutate → re-query
-// loop). This is the core guarantee #3137 closes — silent-rebind under
-// concurrent fiber / COW / wrap.
+// AC8 -- Issue #3137 / #3660: schema-2 discriminator stays; whole-table
+// mutation-epoch equality is no longer the freshness authority (unrelated
+// mutate must not kill unmodified matches). InvalidMutation enum is ABI.
 void test_ac8_schema2_validator_stale_on_mutate() {
-    std::print("AC8 -- schema-2 stamped match + mutation epoch drift → InvalidMutation\n");
+    std::print("AC8 -- schema-2 discriminator; #3660 no whole-table epoch kill\n");
     aura::core::QueryResult qr{};
     qr.push_match_full(/*node_id=*/11, /*generation=*/1,
                        /*wrap_epoch=*/0, /*cow_epoch_at_capture=*/0,
                        /*tenant_id=*/0, /*fiber_id=*/0,
                        /*mutation_id_at_capture=*/1, /*boundary_pinned=*/0);
     expect_true("schema-2 match has_full_provenance()", qr.matches[0].has_full_provenance());
-
-    // Simulate capture-time mutation_id_at_capture=1 and a subsequent
-    // mutate that advances current_mutation_epoch(). Validator must
-    // detect the drift and return InvalidMutation (not Fresh). We can't
-    // bump the actual epoch from here, but we can assert the validator's
-    // discriminator via a manual re-stamp with a non-matching
-    // mutation_id_at_capture + asserting the predicate behavior.
-    //
-    // Note: the actual query_result_is_fresh_with_refs check needs a
-    // live FlatAST + workspace_epoch for the cow_epoch comparison; this
-    // AC verifies the structural invariant (has_full_provenance + drift
-    // detection is wired) via the linter (scripts/check_query_result_
-    // full_provenance.py) + manifest. The end-to-end freshness check is
-    // covered in the integration test (#3103 layer).
-    qr.matches[0].mutation_id_at_capture = 999; // stale vs live epoch
-    expect_true("schema-2 match stays has_full_provenance() under drift",
+    qr.matches[0].mutation_id_at_capture = 999;
+    expect_true("schema-2 match stays has_full_provenance() under mid drift",
                 qr.matches[0].has_full_provenance());
-
-    // The validator returns SoftOnlyNoProvenance iff matches[0].has_full_provenance()
-    // is false (see query_result_is_fresh_with_refs early-return at
-    // workspace_epoch.hh). Verify the discriminator: a freshly-stamped
-    // match (schema-2) is NOT SoftOnlyNoProvenance, while a schema-1
-    // match IS. The validator's exact Fresh vs InvalidMutation verdict
-    // depends on live FlatAST state which we can't drive from a struct
-    // test; the linter + integration test pin the wiring.
     aura::core::QueryResult qr_schema1{};
     qr_schema1.push_match(/*node_id=*/11, /*generation=*/1);
     expect_true("schema-1 has_full_provenance() == false → SoftOnlyNoProvenance path",
                 !qr_schema1.matches[0].has_full_provenance());
+    expect_eq_i64("InvalidMutation ABI == 5", 5,
+                  static_cast<std::int64_t>(aura::core::QueryResultFreshness::InvalidMutation));
 }
 
 // Issue #3311: Soft → Production transition must invalidate any cached
@@ -420,14 +394,14 @@ void test_ac3231_production_as_query_result() {
     std::print("AC3231 -- production :as-query-result is schema-2 hash, not layout-only\n");
     using aura::compiler::typed_audit::apply_dev_audit_defaults;
     using aura::compiler::typed_audit::apply_production_audit_defaults;
-    using aura::compiler::types::is_hash;
-    apply_production_audit_defaults();
+    apply_dev_audit_defaults();
     CompilerService cs;
     expect_true("set-code", cs.eval("(set-code \"(define f (lambda (x) 1))\")").has_value());
     expect_true("eval", cs.eval("(eval-current)").has_value());
+    apply_production_audit_defaults();
     auto qr = cs.eval("(query :find \"f\" :as-query-result)");
     expect_true(":as-query-result returns", qr.has_value());
-    expect_true("production QueryResult is hash (not layout-only merr)", is_hash(*qr));
+    expect_true("production QueryResult is hash (not layout-only merr)", qr && is_hash(*qr));
     apply_dev_audit_defaults();
 }
 
@@ -435,11 +409,11 @@ void test_ac3286_production_bare_list_auto_upgraded() {
     std::print("AC3286 -- production bare match list auto-upgrades to schema-2 hash\n");
     using aura::compiler::typed_audit::apply_dev_audit_defaults;
     using aura::compiler::typed_audit::apply_production_audit_defaults;
-    using aura::compiler::types::is_hash;
-    apply_production_audit_defaults();
+    apply_dev_audit_defaults();
     CompilerService cs;
     expect_true("set-code", cs.eval("(set-code \"(define f (lambda (x) 1))\")").has_value());
     expect_true("eval", cs.eval("(eval-current)").has_value());
+    apply_production_audit_defaults();
     // Issue #3286: bare match list (no :as-query-result) under production
     // must NOT be handed to Agent memory as schema-1 — the shared
     // end_query_epoch_maybe_result finish auto-upgrades to the schema-2
@@ -817,13 +791,13 @@ void test_3424_ac2_production_hash_to_mutate() {
     expect_true("3424 AC2: query:parent accepts hash", parent.has_value());
     auto mut = cs.eval("(mutate:replace-subtree qr \"(lambda (x) 99)\")");
     expect_true("3424 AC2: mutate:replace-subtree accepts hash", mut.has_value());
-    expect_true("3424 AC2: poison generation",
-                cs.eval("(hash-set! qr \"generation\" 999)").has_value());
+    expect_true("3424 AC2: poison wrap-epoch (per-match freshness, #3660)",
+                cs.eval("(hash-set! qr \"wrap-epoch\" 999)").has_value());
     expect_true(
         "3424 AC2: bind poisoned mutate",
         cs.eval("(define r3424 (mutate:replace-subtree qr \"(lambda (x) 3)\"))").has_value());
     auto eq = cs.eval("(equal? (car r3424) \"stale-ref\")");
-    expect_true("3424 AC2: generation-mismatched hash is stale-ref",
+    expect_true("3424 AC2: wrap-epoch-mismatched hash is stale-ref",
                 eq && is_bool(*eq) && as_bool(*eq));
 }
 
@@ -974,6 +948,101 @@ void test_3424_ac3_soft_unchanged() {
     expect_true("3424 AC3: Soft bare-int mutate returns", soft_mut.has_value());
 }
 
+void test_ac3660_1_unrelated_mutate_keeps_unmodified_match() {
+    std::print("AC3660/AC1 -- unrelated mutate keeps unmodified match resolvable\n");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    apply_dev_audit_defaults();
+    CompilerService cs;
+    expect_true(
+        "3660 AC1: set-code",
+        cs.eval("(set-code \"(define A (lambda () 1))\n(define B (lambda () 2))\")").has_value());
+    expect_true("3660 AC1: eval", cs.eval("(eval-current)").has_value());
+    apply_production_audit_defaults();
+    expect_true("3660 AC1: bind A hash", cs.eval("(define qrA (query :find \"A\"))").has_value());
+    expect_true("3660 AC1: bind B hash", cs.eval("(define qrB (query :find \"B\"))").has_value());
+    auto ha = cs.eval("qrA");
+    auto hb = cs.eval("qrB");
+    expect_true("3660 AC1: A is schema-2 hash", ha && is_hash(*ha));
+    expect_true("3660 AC1: B is schema-2 hash", hb && is_hash(*hb));
+    expect_true("3660 AC1: bind mutate B",
+                cs.eval("(define rB (mutate:replace-subtree qrB \"(lambda () 3)\"))").has_value());
+    auto stale_b = cs.eval("(and (pair? rB) (equal? (car rB) \"stale-ref\"))");
+    expect_true("3660 AC1: first mutate B is not stale-ref",
+                stale_b && is_bool(*stale_b) && !as_bool(*stale_b));
+    expect_true("3660 AC1: bind mutate A",
+                cs.eval("(define rA (mutate:replace-subtree qrA \"(lambda () 9)\"))").has_value());
+    auto stale_a = cs.eval("(and (pair? rA) (equal? (car rA) \"stale-ref\"))");
+    expect_true("3660 AC1: unmodified A is not stale-ref",
+                stale_a && is_bool(*stale_a) && !as_bool(*stale_a));
+    apply_dev_audit_defaults();
+}
+
+void test_ac3660_2_query_epoch_in_flight() {
+    std::print("AC3660/AC2 -- QueryEpoch in-flight generation change still query-epoch-stale\n");
+    std::ifstream f("src/compiler/evaluator_primitives_query_workspace.cpp");
+    std::string qws((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    expect_true("3660 AC2: finish_query_epoch kept",
+                qws.find("finish_query_epoch") != std::string::npos);
+    expect_true("3660 AC2: query-epoch-stale kept",
+                qws.find("query-epoch-stale") != std::string::npos);
+}
+
+void test_ac3660_3_tenant_fiber_cow_reserved() {
+    std::print("AC3660/AC3 -- tenant/fiber/cow/schema-2 reserved gates stay\n");
+    std::ifstream f("src/compiler/query_result_decode.hh");
+    std::string dec((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    expect_true("3660 AC3: InvalidTenant", dec.find("InvalidTenant") != std::string::npos);
+    expect_true("3660 AC3: InvalidFiber", dec.find("InvalidFiber") != std::string::npos);
+    expect_true("3660 AC3: InvalidCowLayer", dec.find("InvalidCowLayer") != std::string::npos);
+    expect_true("3660 AC3: schema-2 prod reserved",
+                dec.find("kQueryResultMatchSchema2Prod") != std::string::npos);
+}
+
+void test_ac3660_4_no_uint32_epoch_stamp() {
+    std::print("AC3660/AC4 -- stamp no longer uint32-truncates Mutation epoch\n");
+    std::ifstream f("src/compiler/evaluator_primitives_query_workspace.cpp");
+    std::string qws((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    const auto stamp = qws.find("stamp_query_result_full_provenance");
+    expect_true("3660 AC4: stamp helper", stamp != std::string::npos);
+    const auto win = stamp == std::string::npos ? std::string{} : qws.substr(stamp, 1800);
+    expect_true("3660 AC4: Issue #3660 cite in stamp",
+                win.find("Issue #3660") != std::string::npos);
+    expect_true("3660 AC4: no uint32 current_mutation_epoch stamp",
+                win.find("static_cast<std::uint32_t>(aura::core::current_mutation_epoch())") ==
+                    std::string::npos);
+    std::ifstream fd("src/compiler/query_result_decode.hh");
+    std::string dec((std::istreambuf_iterator<char>(fd)), std::istreambuf_iterator<char>());
+    expect_true("3660 AC4: no live_mutation equality",
+                dec.find("m.mutation_id_at_capture != live_mutation") == std::string::npos &&
+                    dec.find("uint64_t>(m.mutation_id_at_capture) != live_mutation") ==
+                        std::string::npos);
+}
+
+void test_ac3660_5_soft_empty_fresh_and_linter() {
+    std::print("AC3660/AC5 -- Soft empty Fresh; linter; no invent; epoch stats key kept\n");
+    std::ifstream fd("src/compiler/query_result_decode.hh");
+    std::string dec((std::istreambuf_iterator<char>(fd)), std::istreambuf_iterator<char>());
+    expect_true("3660 AC5: empty matches Fresh first",
+                dec.find("if (qr.match_count == 0)") != std::string::npos);
+    std::ifstream fb("build.py");
+    std::string build((std::istreambuf_iterator<char>(fb)), std::istreambuf_iterator<char>());
+    expect_true("3660 AC5: linter wired",
+                build.find("check_query_result_per_match_fresh_3660") != std::string::npos);
+    std::ifstream fq("src/compiler/evaluator_primitives_query_workspace.cpp");
+    std::string qws((std::istreambuf_iterator<char>(fq)), std::istreambuf_iterator<char>());
+    expect_true("3660 AC5: query:query-epoch-stats retained",
+                qws.find("query:query-epoch-stats") != std::string::npos);
+    {
+        std::ifstream f("tests/compiler/test_issue_3660.cpp");
+        expect_true("3660 AC5: no invent", !f.good());
+    }
+    {
+        std::ifstream f("docs/design/3660-query-result-per-match.md");
+        expect_true("3660 AC5: no docs/design", !f.good());
+    }
+}
+
 int main() {
     std::print("Issue #3103 + #3137 + #3231 -- QueryResult full-provenance path (schema-2)\n");
     set_strategy(AuditStrategy::Full);
@@ -999,6 +1068,11 @@ int main() {
     test_ac3311_live_soft_canary_then_prod_requery();
     test_ac3286_production_bare_list_auto_upgraded();
     test_ac3286_soft_bare_list_unchanged();
+    test_ac3660_1_unrelated_mutate_keeps_unmodified_match();
+    test_ac3660_2_query_epoch_in_flight();
+    test_ac3660_3_tenant_fiber_cow_reserved();
+    test_ac3660_4_no_uint32_epoch_stamp();
+    test_ac3660_5_soft_empty_fresh_and_linter();
     // AC3389 source-cite skipped — pre-existing path-dependent crash
     // Issue #3395: AC3395 must run before AC3389 runtime ACs — AC3389 has a
     // pre-existing crash (reproduces on stashed pre-#3395 code) that blocks
@@ -1016,6 +1090,6 @@ int main() {
     test_3395_ac4_non_regress_source_cite();
     // AC3389 runtime ACs skipped — see comment above.
     std::print("All #3103 + #3137 + #3231 + #3286 + #3311 + #3389 + #3395 + #3424 + "
-               "#3449 AC tests PASSED\n");
+               "#3449 + #3660 AC tests PASSED\n");
     return 0;
 }

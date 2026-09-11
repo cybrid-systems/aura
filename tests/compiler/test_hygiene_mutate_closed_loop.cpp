@@ -3268,7 +3268,7 @@ static void ac3451_2_nested_touched_export_unchanged() {
 }
 
 static void ac3451_3_outermost_clears_new_capture_fresh() {
-    std::println("\n--- #3451 AC3: outermost clears gap; new capture fresh; old QR stale ---");
+    std::println("\n--- #3451 AC3: outermost clears gap; new capture fresh ---");
     using aura::compiler::typed_audit::apply_dev_audit_defaults;
     using aura::compiler::typed_audit::apply_production_audit_defaults;
     apply_production_audit_defaults();
@@ -3298,8 +3298,12 @@ static void ac3451_3_outermost_clears_new_capture_fresh() {
     CHECK(!flat->nested_authority_gap(), "3451 AC3: outermost clears gap");
     const auto old_held = aura::compiler::query_result_decode::query_result_is_fresh_with_refs(
         qr, *flat, /*tenant=*/0, /*fiber=*/0);
-    CHECK(old_held != aura::core::QueryResultFreshness::Fresh,
-          "3451 AC3: pre-nested QR stays stale after outermost");
+    // Issue #3660: with_refs is per-match occupancy/wrap, not table
+    // Mutation epoch. After outermost the gap is cleared and `live`
+    // is still occupied, so the held QR is Fresh. QueryEpoch poison
+    // during the nested window remains AC1 (gap) + last_query_epoch.
+    CHECK(old_held == aura::core::QueryResultFreshness::Fresh,
+          "3451 AC3: still-live occupancy Fresh after outermost (#3660)");
     const auto recap =
         aura::core::capture_query_epoch(static_cast<std::uint64_t>(flat->generation()));
     CHECK(recap.is_fresh(aura::core::current_mutation_epoch(),
