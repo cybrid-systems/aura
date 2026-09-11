@@ -6445,6 +6445,22 @@ def cmd_lint():
             "Issue #3302 WAL fail-closed force_wal linter failed — run python3 scripts/coverage/checks/check_wal_fail_closed_force_wal_3302.py"
         )
         return r
+    # Issue #3639: same-mutate WAL append-miss fail-closed (#3493/#3211
+    # residual). The effect gate consumes the mutation WAL append result:
+    # a miss under production fail-closed denies THIS mutate (zero side
+    # effect) and the overflow ring still captures the record (#3109
+    # caller pattern). Soft / FAIL_OPEN fail-open + #3211 next-outermost
+    # schedule-gate unchanged.
+    wfc3639_script = ROOT / "scripts" / "check_wal_append_miss_deny_3639.py"
+    if not wfc3639_script.exists():
+        fail(f"missing {wfc3639_script}")
+        return 1
+    r = run([sys.executable, str(wfc3639_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3639 WAL append-miss same-mutate fail-closed linter failed — run python3 scripts/check_wal_append_miss_deny_3639.py"
+        )
+        return r
     # Issue #3301: atomic-batch batch-level MacroIntroduced fail-closed
     # audit. Dispatcher walks each sub-op's target node-id arg before the
     # sub-op loop and denies the whole batch if a target is MacroIntroduced

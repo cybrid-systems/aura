@@ -294,6 +294,102 @@ int run_test_security_posture_trail() {
         CHECK(!ev.require_effect(kEffectMutate, "test:3493-restricted", 0),
               "3493: Restricted + overflow full → require_effect deny");
 
+        // ── #3639: same-mutate WAL append miss → fail-closed deny ─────
+        {
+            // Deterministic mid join: production require_effect refuses
+            // join-0 (#3594) before the append — give Mutation a nonzero
+            // epoch so AC1's deny can only come from the new append-miss
+            // branch (AC2's from the #3493 entry gate).
+            aura::core::bump_mutation_epoch(0x3639);
+            // Grant under Off: production Restricted/Strict fences Mutate
+            // grants behind TenantAdmin (#3409), so arm the grant while
+            // Soft/Off (no fence) then re-enter Restricted force_wal.
+            // Non-zero tenant + force-bound provenance mirrors the #3594
+            // AC2 durable-row pattern (raw tenant-0 prov does not clear
+            // the production capability check).
+            const auto prev_3639 =
+                aura::core::sandbox::g_sandbox_mode_atomic().load(std::memory_order_acquire);
+            aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+            const auto gprov = aura::core::capability::make_grant_provenance(
+                0x3639, /*force_mutation_bind=*/true, 0, 0);
+            CHECK(g_capability_registry().grant(7, "mut-3639", Effect::Mutate, gprov),
+                  "3639 setup: Mutate grant (tenant 7)");
+            ev.set_capability_tenant_id(7);
+            ::setenv("AURA_SANDBOX", "restricted", 1);
+            aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+            apply_production_security_defaults();
+            // Deterministic inject: park the SE side-car so the #3056
+            // inject lands on the MUTATION WAL append (force_wal pairs
+            // both WALs; whichever appends first consumes the inject).
+            ev.disable_security_event_wal();
+            aura::core::security_event_wal::wal_overflow_ring_clear_for_test();
+            CHECK(aura::core::wal_slo::wal_append_fail_closed_active(),
+                  "3639 setup: fail-closed active (Restricted force_wal)");
+
+            // AC1: inject mutation-WAL append miss (overflow NOT full) →
+            // require_effect(Mutate) denies THIS mutate (zero side
+            // effect); overflow ring captures the lost record (#3109).
+            aura::core::wal_slo::g_wal_append_fail_slo_counters.inject_fail_remaining.store(
+                1, std::memory_order_relaxed);
+            const auto depth0 = aura::core::security_event_wal::wal_overflow_ring_depth();
+            CHECK(depth0 < aura::core::security_event_wal::kWalOverflowRingCapacity,
+                  "3639 AC1: overflow ring not full on entry");
+            CHECK(!ev.require_effect(kEffectMutate, "test:3639-ac1", 0),
+                  "3639 AC1: WAL append miss → require_effect denies this mutate");
+            CHECK(aura::core::wal_slo::g_wal_append_fail_slo_counters.inject_fail_remaining.load(
+                      std::memory_order_relaxed) == 0,
+                  "3639 AC1: inject consumed by the mutation WAL append");
+            CHECK(aura::core::security_event_wal::wal_overflow_ring_depth() == depth0 + 1,
+                  "3639 AC1: overflow ring captured the miss (#3109 caller pattern)");
+
+            // AC2: overflow full still denies (#3493 entry gate intact).
+            aura::core::security_event_wal::wal_overflow_ring_clear_for_test();
+            for (std::uint32_t i = 0; i < aura::core::security_event_wal::kWalOverflowRingCapacity;
+                 ++i) {
+                aura::core::security_event_wal::WalOverflowRecord rec{};
+                rec.mid = i + 1;
+                rec.reason = "test:3639-fill";
+                aura::core::security_event_wal::wal_overflow_ring_push(rec);
+            }
+            CHECK(!ev.require_effect(kEffectMutate, "test:3639-ac2", 0),
+                  "3639 AC2: overflow full still denies (#3493 regression)");
+            aura::core::security_event_wal::wal_overflow_ring_clear_for_test();
+
+            // AC3: Soft / production_defaults off keeps #3056 fail-open.
+            ::setenv("AURA_SANDBOX", "off", 1);
+            aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+            apply_production_security_defaults();
+            CHECK(!aura::core::wal_slo::wal_append_fail_closed_active(),
+                  "3639 AC3: Soft fail-closed inactive");
+            aura::core::wal_slo::g_wal_append_fail_slo_counters.inject_fail_remaining.store(
+                1, std::memory_order_relaxed);
+            CHECK(ev.require_effect(kEffectMutate, "test:3639-ac3", 0),
+                  "3639 AC3: Soft append miss stays fail-open");
+
+            // AC4: explicit FAIL_OPEN restores fail-open under force_wal.
+            ::setenv("AURA_SANDBOX", "restricted", 1);
+            aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+            apply_production_security_defaults();
+            ::setenv("AURA_WAL_APPEND_FAIL_OPEN", "1", 1);
+            CHECK(!aura::core::wal_slo::wal_append_fail_closed_active(),
+                  "3639 AC4: FAIL_OPEN opts out");
+            aura::core::wal_slo::g_wal_append_fail_slo_counters.inject_fail_remaining.store(
+                1, std::memory_order_relaxed);
+            CHECK(ev.require_effect(kEffectMutate, "test:3639-ac4", 0),
+                  "3639 AC4: FAIL_OPEN append miss stays fail-open");
+            ::unsetenv("AURA_WAL_APPEND_FAIL_OPEN");
+
+            // AC5: #3211 next-outermost schedule-gate untouched — this
+            // ticket only extends fail-closed to the same mutate.
+            const auto sloh = read_file("src/core/wal_append_fail_slo.h");
+            CHECK(sloh.find("hard-denies the *next* outermost mutate") != std::string::npos,
+                  "3639 AC5: #3211 next-outermost gate contract intact");
+            const auto sched = read_file("tests/orch/test_security_schedule_gate.cpp");
+            CHECK(!sched.empty(), "3639 AC5: schedule-gate regression binary present");
+
+            aura::core::reset_mutation_epoch_for_test();
+        }
+
         CHECK(href(cs, "schema-3302") == 3302, "3302 AC6: schema-3302");
         CHECK(href(cs, "issue-3302") == 3302, "3302 AC6: issue-3302");
         const auto slo3302 = read_file("src/core/wal_append_fail_slo.h");

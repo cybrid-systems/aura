@@ -89,6 +89,21 @@ def main() -> int:
     must("3493", "AC5 #3493 Restricted overflow deny", test)
     must("kWalOverflowRingCapacity = 256", "AC5 ring capacity", sew)
 
+    # ── #3639 residual: same-mutate append-miss fail-closed ─────────────
+    # The force_wal default-armed fail-closed face now extends to THIS
+    # mutate: the gate consumes the append result; exactly one bare
+    # (void)append remains (emit_mutation_audit observe path).
+    bare_gate_append = ev.count("(void)g_mutation_audit_wal().append(rec);")
+    if bare_gate_append != 1:
+        fails.append(
+            f"3639: expected exactly 1 bare (void) mutation append (emit observe path), found {bare_gate_append}"
+        )
+    if "if (!g_mutation_audit_wal().append(rec))" not in ev:
+        fails.append("3639: gate append result not consumed (same-mutate fail-closed deny)")
+    must("wal_append_missed", "3639 same-mutate miss flag", ev)
+    must('ovr.reason = std::string("mutation_wal_append_miss");', "3639 overflow miss reason stamp", ev)
+    must("3639 AC1", "3639 test marker", test)
+
     # ── AC6 query + lineage + no-invent ─────────────────────────────────
     must('insert_kv("wal-fail-closed-defaulted-by-force-wal"', "AC6 additive key", sec)
     must('insert_kv("schema-3302"', "AC6 schema-3302", sec)
