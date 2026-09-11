@@ -6586,6 +6586,23 @@ def cmd_lint():
     if r != 0:
         fail("Issue #3648 apply window gate linter failed — run python3 scripts/check_apply_window_gate_3648.py")
         return r
+    # Issue #3649 (#2952/#3096/#2690 residual): the storm-exit edge drives
+    # residual coverage-verify. storm_exit_force_full_active now==0 &&
+    # prev!=0 branch runs one maybe_coverage_verify_min_dirty when
+    # production && residual_force_mask()!=0 — an incomplete storm window
+    # no longer leaves residual force-JIT waiting for the #3096 256-exit
+    # belt. Skip contract under storm intact (#2952); Soft/Off zero-cost;
+    # belt retained as belt.
+    secv3649_script = ROOT / "scripts" / "check_storm_exit_coverage_verify_3649.py"
+    if not secv3649_script.exists():
+        fail(f"missing {secv3649_script}")
+        return 1
+    r = run([sys.executable, str(secv3649_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3649 storm exit coverage-verify linter failed — run python3 scripts/check_storm_exit_coverage_verify_3649.py"
+        )
+        return r
     # Issue #3301: atomic-batch batch-level MacroIntroduced fail-closed
     # audit. Dispatcher walks each sub-op's target node-id arg before the
     # sub-op loop and denies the whole batch if a target is MacroIntroduced

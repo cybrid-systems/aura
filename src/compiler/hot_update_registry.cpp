@@ -1823,6 +1823,17 @@ bool HotUpdateRegistry::storm_exit_force_full_active() noexcept {
             // set, zero work otherwise.
             aura_clear_partial_relower_threshold_force();
         }
+        // Issue #3649: the storm-exit edge must not leave residual
+        // coverage-verify waiting for the #3096 256-exit belt — drive one
+        // maybe_coverage_verify_min_dirty here (storm already stopped, the
+        // in-function storm skip cannot fire). Production/Full only (same
+        // probe as the #3101 clear above — Soft/Off zero-cost); residual==0
+        // is the function's idle no-op. The hysteresis exchange above makes
+        // this branch single-shot per exit edge (no double-drive).
+        if (aura::compiler::typed_audit::should_hard_reject_soft_sibling() &&
+            residual_force_mask() != 0) {
+            (void)maybe_coverage_verify_min_dirty();
+        }
     } else if (lost_global && now != 0) {
         // Issue #3515: Both→Shape (deopt throttle drops, Shape stays)
         // skipped #3070 because now!=0. Refresh the 8-consult force-full
