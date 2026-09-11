@@ -6540,6 +6540,21 @@ def cmd_lint():
             "Issue #3644 second recycle linter failed — run python3 scripts/check_reclaimed_slot_second_recycle_3644.py"
         )
         return r
+    # Issue #3645: engine:metrics by-name lookup miss returns a typed
+    # not-found hash (ok=#f / status=not-found / name / schema-3531)
+    # instead of make_void() — a typo'd or unregistered name is now
+    # distinguishable from an empty stats hash / slim-s0 void. Routed
+    # through the #3018 fail-soft builder (never void on capacity);
+    # success shapes unchanged (no ok=#t on old consumers); Soft / s0
+    # get the same typed miss. stats.aura aligned with the C++ seed.
+    wfc3645_script = ROOT / "scripts" / "check_metrics_not_found_3645.py"
+    if not wfc3645_script.exists():
+        fail(f"missing {wfc3645_script}")
+        return 1
+    r = run([sys.executable, str(wfc3645_script)], cwd=ROOT)
+    if r != 0:
+        fail("Issue #3645 metrics not-found linter failed — run python3 scripts/check_metrics_not_found_3645.py")
+        return r
     # Issue #3301: atomic-batch batch-level MacroIntroduced fail-closed
     # audit. Dispatcher walks each sub-op's target node-id arg before the
     # sub-op loop and denies the whole batch if a target is MacroIntroduced

@@ -2117,7 +2117,26 @@ void ObservabilityPrims::register_metrics_facade(PrimRegistrar add, Evaluator& e
                 return (*fn)(rest);
             if (auto fn = ev.primitives_.lookup(name))
                 return (*fn)(rest);
-            return make_void();
+            // Issue #3645: by-name lookup miss → typed not-found hash
+            // (was make_void()). A typo'd or unregistered name must be
+            // distinguishable from an empty stats hash / a slim-s0 void
+            // (#3531/#3603 residual). No production gate on this path —
+            // Soft / s0 get the same typed miss. Success shapes are
+            // unchanged: no ok=#t is added to existing hashes (old
+            // consumers keep their exact keys). Schema stamp follows the
+            // #3531 facade family per the issue sketch.
+            const std::string miss_name = name; // copy: string_heap_ may grow
+            const auto st_idx = ev.string_heap_.size();
+            ev.string_heap_.push_back("not-found");
+            const auto nm_idx = ev.string_heap_.size();
+            ev.string_heap_.push_back(miss_name);
+            const std::vector<std::pair<std::string, EvalValue>> miss_kv = {
+                {"ok", make_bool(false)},
+                {"status", make_string(st_idx)},
+                {"name", make_string(nm_idx)},
+                {"schema-3531", make_int(3531)},
+            };
+            return build_hash(miss_kv);
         }
 
         // Keyword sub-ops: :all | :prefix s | :group g
