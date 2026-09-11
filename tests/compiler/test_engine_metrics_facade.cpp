@@ -421,7 +421,14 @@ int main() {
         // full: hash; s0: void — both OK
         CHECK(is_hash(*r) || is_void(*r), "by-name is hash or void");
         auto miss = cs.eval("(engine:metrics \"query:no-such-stats-zzz\")");
-        CHECK(miss && is_void(*miss), "missing stats name → void");
+        CHECK(miss && is_hash(*miss), "missing stats name → not-found hash (#3645)");
+        auto miss_ok = cs.eval("(hash-ref (engine:metrics \"query:no-such-stats-zzz\") \"ok\")");
+        CHECK(miss_ok && is_bool(*miss_ok) && !as_bool(*miss_ok), "3645: miss hash ok=#f");
+        auto miss_st =
+            cs.eval("(string=? (hash-ref (engine:metrics \"query:no-such-stats-zzz\") \"status\") "
+                    "\"not-found\")");
+        CHECK(miss_st && is_bool(*miss_st) && as_bool(*miss_st),
+              "3645: miss hash status=not-found");
     }
 
     // ── AC5: :all still works ──
@@ -459,8 +466,11 @@ int main() {
               "#3018 AC3: :prefix schema 2");
         CHECK(hash_int(cs, "(engine:metrics :prefix \"query:\")", "overflow") == -1,
               "#3018 AC3: :prefix no overflow under computed cap");
+        // Issue #3645: by-name miss is now the typed not-found hash; the
+        // #3018 void-per-key contract is the :all/:prefix iteration path
+        // (catalog name with missing impl → void value), unchanged there.
         auto miss = cs.eval("(engine:metrics \"query:no-such-stats-zzz\")");
-        CHECK(miss && is_void(*miss), "#3018 AC3: missing impl still void-per-key");
+        CHECK(miss && is_hash(*miss), "#3018 AC3 / #3645: by-name miss is typed not-found hash");
         const auto src = []() -> std::string {
             for (const auto& p :
                  {std::string("src/compiler/evaluator_primitives_obs_jit.cpp"),
@@ -482,6 +492,71 @@ int main() {
               "#3018 AC4: headroom is size*2+8");
         CHECK(src.find("g_engine_metrics_force_hash_cap.load") != std::string::npos,
               "#3018 AC4: Soft extra cost is one force-cap load");
+    }
+
+    // ── Issue #3645: by-name lookup miss → typed not-found hash ──
+    // AC1: typo'd / unregistered name is a stable failure hash (ok=#f,
+    //      status=not-found, name echoed, schema-3531), not void.
+    // AC2: real forensic names keep their existing shapes (non-void, no ok key).
+    // AC3: :prefix "query:" still lists #3603 forensic names; stats:drift-check
+    //      resolves (no regression).
+    // AC4: Soft / s0 get the same typed miss — this suite runs unarmed and
+    //      the miss path has no production gate, so AC1 is the Soft/s0 case.
+    // AC5: source-cite + stats.aura dual-track alignment + no invent.
+    {
+        auto miss = cs.eval("(engine:metrics \"query:no-such-3645\")");
+        CHECK(miss && is_hash(*miss), "3645 AC1: miss returns hash, not void");
+        auto miss_ok = cs.eval("(hash-ref (engine:metrics \"query:no-such-3645\") \"ok\")");
+        CHECK(miss_ok && is_bool(*miss_ok) && !as_bool(*miss_ok), "3645 AC1: ok=#f");
+        auto miss_st =
+            cs.eval("(string=? (hash-ref (engine:metrics \"query:no-such-3645\") \"status\") "
+                    "\"not-found\")");
+        CHECK(miss_st && is_bool(*miss_st) && as_bool(*miss_st), "3645 AC1: status=not-found");
+        auto miss_nm =
+            cs.eval("(string=? (hash-ref (engine:metrics \"query:no-such-3645\") \"name\") "
+                    "\"query:no-such-3645\")");
+        CHECK(miss_nm && is_bool(*miss_nm) && as_bool(*miss_nm), "3645 AC1: name echoed");
+        CHECK(hash_int(cs, "(engine:metrics \"query:no-such-3645\")", "schema-3531") == 3531,
+              "3645 AC1: schema-3531 stamp");
+        // AC2: success path untouched. Resolving forensic names keep their
+        // existing shapes (non-void, no ok key). The issue's AC2 names
+        // query:security-audit; its trail impl registers via the #2054
+        // register_stats_impl sites in fuller builds — this light facade
+        // binary resolves security-posture / evolution-audit-decision, so
+        // those carry the non-void assertion here, and security-audit's
+        // catalog-listing contract is asserted via hash-has-key? (AC3).
+        auto sa = cs.eval("(engine:metrics \"query:security-posture\")");
+        CHECK(sa.has_value() && !is_void(*sa), "3645 AC2: query:security-posture non-void");
+        auto ea = cs.eval("(engine:metrics \"query:evolution-audit-decision\")");
+        CHECK(ea.has_value() && !is_void(*ea), "3645 AC2: evolution-audit-decision non-void");
+        CHECK(hash_int(cs, "(engine:metrics \"query:security-posture\")", "ok") == -1,
+              "3645 AC2: success hashes carry no ok key (#3645 non-goal)");
+        // AC3: catalog prefix still lists the #3603 forensic names (key
+        // presence — the value may be void-per-key in light builds where
+        // the trail impl is not linked); drift-check intact.
+        auto sec =
+            cs.eval("(hash-has-key? (engine:metrics :prefix \"query:\") \"query:security-audit\")");
+        CHECK(sec && is_bool(*sec) && as_bool(*sec),
+              "3645 AC3: :prefix query: lists security-audit");
+        auto dc = cs.eval("(engine:metrics \"stats:drift-check\")");
+        CHECK(dc.has_value() && !is_void(*dc), "3645 AC3: stats:drift-check resolves");
+        // AC5: source-cite + dual-track alignment + no invent.
+        const auto src = read_file("src/compiler/evaluator_primitives_obs_jit.cpp");
+        CHECK(src.find("\"not-found\"") != std::string::npos, "3645 AC5: status token");
+        CHECK(src.find("schema-3531") != std::string::npos, "3645 AC5: failure-hash stamp");
+        CHECK(src.find("Issue #3645") != std::string::npos, "3645 AC5: cite");
+        CHECK(src.find("\"ok\", make_bool(false)") != std::string::npos,
+              "3645 AC5: ok=#f only on the failure shape");
+        const auto stats_aura = read_file("lib/std/stats.aura");
+        CHECK(stats_aura.find("query:security-audit") != std::string::npos,
+              "3645 AC5: stats.aura lists forensic names (dual-track aligned)");
+        CHECK(stats_aura.find("query:evolution-audit-decision") != std::string::npos,
+              "3645 AC5: stats.aura lists evolution-audit-decision");
+        CHECK(read_file("tests/compiler/test_issue_3645.cpp").empty() &&
+                  read_file("tests/issues/test_issue_3645.cpp").empty(),
+              "3645 AC5: no test_issue_3645.cpp per #81967");
+        CHECK(read_file("docs/design/3645-metrics-not-found.md").empty(),
+              "3645 AC5: no docs/design/3645-* per #1655");
     }
 
     // ── Issue #3020: domain query:* hash overflow fail-soft ──

@@ -239,6 +239,19 @@
     "compile:mutation-impact-stats"
     "compile:inline-pass-stats"
     "compile:type-cache-stats"
+    ; ── Issue #3603 — forensic query handlers (register_stats_impl seed) ──
+    ; Issue #3645: stdlib registry aligned with the C++ runtime-catalog
+    ; seed. These resolve via engine:metrics by-name; a by-name miss is a
+    ; typed not-found hash (ok=#f / status=not-found), not void.
+    "query:security-audit"
+    "query:security-posture"
+    "query:security-schedule-gate"
+    "query:reload-recovery-playbook"
+    "query:aot-hotupdate-stats"
+    "query:aot-incremental-reemit-stats"
+    "query:arena-moving-densify-health"
+    ; ── Issue #3114 / #3645 — evolution audit decision (impl-registered) ──
+    "query:evolution-audit-decision"
     "compile:dirty-impact-stats"))
 
 ; ── (stats:get name) → engine facade  [Issue #1439 / #1450] ──────
