@@ -13,9 +13,9 @@ Contract:
      first call after a structural mutation (controlled by
      dense_dirty_), so callers see a consistent snapshot of
      post-mutation children without paying the sync cost up front.
-  AC4 set_child_locked / insert_child_locked / remove_child_locked
-     mark dense_dirty_ = true so the next children_columnar(id)
-     triggers sync_dense_columns_from_pcv().
+  AC4 set_child_locked patches dense in-place (#3453). insert/remove
+     splice one slot when !dense_dirty_ (#3665); never-synced fallback
+     still marks dense_dirty_ so children_columnar full-syncs.
   AC5 sync_dense_columns_from_pcv() rebuilds child_data_ /
      child_begin_ / child_count_ from the legacy children_ vector
      (O(total children); runs once per structural-mutation batch).
@@ -121,26 +121,29 @@ def main() -> int:
             "(stale dense mirror after structural mutation)"
         )
 
-    # AC4: insert_child_locked / remove_child_locked mark dense_dirty_
-    # (arity change). Issue #3453: set_child_locked patches dense
-    # in-place when !dense_dirty_ — do not require unconditional dirty
-    # as the only mutate side effect.
+    # AC4 / #3665: insert/remove splice dense when !dense_dirty_;
+    # never-synced fallback still dirties. Issue #3453: set_child_locked
+    # patches in-place — do not require unconditional dirty as the first
+    # mutate side effect.
     for fn in ("insert_child_locked", "remove_child_locked"):
         fn_idx = ast_stripped.find(f"void {fn}(")
         if fn_idx == -1:
             fails.append(f"AC4: {fn} definition not found in ast.ixx")
             continue
-        window = ast_stripped[fn_idx : fn_idx + 500]
+        window = ast_stripped[fn_idx : fn_idx + 2800]
+        if "!dense_dirty_" not in window:
+            fails.append(f"AC3665: {fn} missing !dense_dirty_ splice gate")
         if "dense_dirty_ = true" not in window:
-            fails.append(
-                f"AC4: {fn} does not mark dense_dirty_ = true "
-                "(next children_columnar call would return stale dense data)"
-            )
+            fails.append(f"AC4: {fn} does not mark dense_dirty_ = true on never-synced fallback")
+        brace = window.find("{")
+        head = window[brace : brace + 180] if brace != -1 else ""
+        if "dense_dirty_ = true" in head and "child_data_" not in head:
+            fails.append(f"AC3665: {fn} still unconditionally dirties dense at entry")
     set_idx = ast_stripped.find("void set_child_locked(")
     if set_idx == -1:
         fails.append("AC4/3453: set_child_locked definition not found")
     else:
-        swin = ast_stripped[set_idx : set_idx + 2800]
+        swin = ast_stripped[set_idx : set_idx + 3600]
         if "!dense_dirty_" not in swin:
             fails.append("AC3453: set_child_locked missing !dense_dirty_ in-place gate")
         if "child_data_[" not in swin:

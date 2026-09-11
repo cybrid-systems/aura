@@ -958,23 +958,25 @@ static void ac3402_dense_children_columns() {
     CHECK(ast_ixx.find("void sync_dense_columns_from_pcv()") != std::string::npos,
           "AC3: sync_dense_columns_from_pcv() helper present");
 
-    // AC4: insert/remove still dirty (arity). #3453: set_child_locked
-    // patches dense in-place when !dense_dirty_.
+    // AC4 / #3665: insert/remove splice dense when !dense_dirty_; fallback
+    // still dirties never-synced. #3453: set_child_locked patches in-place.
     for (const auto* fn : {"insert_child_locked", "remove_child_locked"}) {
         const std::string needle = std::string("void ") + fn + "(";
         const auto pos = ast_ixx.find(needle);
         CHECK(pos != std::string::npos, (std::string("AC4: ") + fn + " definition found").c_str());
         if (pos != std::string::npos) {
-            const auto window = ast_ixx.substr(pos, 500);
+            const auto window = ast_ixx.substr(pos, 2800);
+            CHECK(window.find("!dense_dirty_") != std::string::npos,
+                  (std::string("3665 AC: ") + fn + " splices when !dense_dirty_").c_str());
             CHECK(window.find("dense_dirty_ = true") != std::string::npos,
-                  (std::string("AC4: ") + fn + " marks dense_dirty_ = true").c_str());
+                  (std::string("AC4: ") + fn + " still dirties never-synced fallback").c_str());
         }
     }
     {
         const auto pos = ast_ixx.find("void set_child_locked(");
         CHECK(pos != std::string::npos, "AC4/3453: set_child_locked definition found");
         if (pos != std::string::npos) {
-            const auto window = ast_ixx.substr(pos, 2800);
+            const auto window = ast_ixx.substr(pos, 3600);
             CHECK(window.find("!dense_dirty_") != std::string::npos,
                   "3453 AC1: set_child_locked in-place when !dense_dirty_");
             CHECK(window.find("child_data_[") != std::string::npos,
@@ -1006,6 +1008,10 @@ static void ac3402_dense_children_columns() {
           "3453: issue stamp");
     CHECK(build.find("check_set_child_locked_dense_inplace_3453") != std::string::npos,
           "3453: build.py wires linter");
+    CHECK(ast_ixx.find("kInsertRemoveChildLockedDenseSpliceIssue = 3665") != std::string::npos,
+          "3665: issue stamp");
+    CHECK(build.find("check_insert_remove_child_locked_dense_splice_3665") != std::string::npos,
+          "3665: build.py wires linter");
 }
 
 static void ac3453_equal_length_set_inplace() {
@@ -1035,18 +1041,119 @@ static void ac3453_equal_length_set_inplace() {
     CHECK(kids.size() == 2 && kids[0] == c && kids[1] == b,
           "3453 AC1: walk_children_hot sees patch");
 
-    std::println("--- #3453 AC2: insert/remove still dirty ---");
+    std::println("--- #3453 AC2 / #3665: insert/remove splice dense, no full rebuild ---");
     (void)flat.children_columnar(p);
     CHECK(!flat.dense_children_dirty(), "3453 AC2: re-synced");
+    const auto sz1 = flat.dense_child_data_size();
     const NodeId d = flat.add_literal(4);
     flat.insert_child(p, 2, d);
-    CHECK(flat.dense_children_dirty(), "3453 AC2: insert_child dirties dense");
-    CHECK(flat.get_child(p, 2) == d, "3453 AC2: next columnar walk sees new arity");
-    (void)flat.children_columnar(p);
-    CHECK(!flat.dense_children_dirty(), "3453 AC2: sync after insert");
+    CHECK(!flat.dense_children_dirty(),
+          "3665 AC1: insert on synced tree leaves dense_dirty_ false");
+    CHECK(flat.dense_child_data_size() == sz1 + 1, "3665 AC1: child_data size +1 (no clear)");
+    CHECK(flat.get_child(p, 2) == d, "3665 AC1: next columnar walk sees new arity without rebuild");
+    CHECK(!flat.dense_children_dirty(), "3665 AC1: children_columnar did not child_data_.clear()");
+    const auto sz2 = flat.dense_child_data_size();
     flat.remove_child(p, 2);
-    CHECK(flat.dense_children_dirty(), "3453 AC2: remove_child dirties dense");
-    CHECK(flat.get_child(p, 1) == b, "3453 AC2: remaining child after remove rebuild");
+    CHECK(!flat.dense_children_dirty(),
+          "3665 AC2: remove on synced tree leaves dense_dirty_ false");
+    CHECK(flat.dense_child_data_size() == sz2 - 1, "3665 AC2: child_data size -1 (no clear)");
+    CHECK(flat.get_child(p, 1) == b, "3665 AC2: remaining child after splice");
+}
+
+static void ac3665_insert_remove_dense_splice() {
+    std::println("\n--- #3665 AC1/AC2: insert/remove splice; AC3 set/compact; AC4 Soft ---");
+    using aura::ast::FlatAST;
+    using aura::ast::NodeId;
+    using aura::ast::NodeTag;
+    CHECK(FlatAST::kInsertRemoveChildLockedDenseSpliceIssue == 3665, "3665: stamp");
+
+    FlatAST flat;
+    const NodeId p = flat.add_node(NodeTag::Begin);
+    const NodeId a = flat.add_literal(1);
+    const NodeId b = flat.add_literal(2);
+    const NodeId c = flat.add_literal(3);
+    flat.root = p;
+    flat.insert_child(p, 0, a);
+    flat.insert_child(p, 1, b);
+    (void)flat.children_columnar(p);
+    CHECK(!flat.dense_children_dirty(), "3665 AC1: synced");
+    const auto sz0 = flat.dense_child_data_size();
+    flat.insert_child(p, 0, c);
+    CHECK(!flat.dense_children_dirty(), "3665 AC1: front insert not dirty");
+    CHECK(flat.dense_child_data_size() == sz0 + 1, "3665 AC1: front insert size +1");
+    CHECK(flat.get_child(p, 0) == c && flat.get_child(p, 1) == a && flat.get_child(p, 2) == b,
+          "3665 AC1: front insert shifted later children");
+    std::vector<NodeId> kids;
+    (void)aura::ast::walk_children_hot<NodeId>(flat, p, [&](NodeId x) { kids.push_back(x); });
+    CHECK(kids.size() == 3 && kids[0] == c && kids[1] == a && kids[2] == b,
+          "3665 AC1: walk_children_hot sees spliced arity");
+    CHECK(!flat.dense_children_dirty(), "3665 AC1: hot walk did not rebuild");
+
+    const auto sz1 = flat.dense_child_data_size();
+    flat.remove_child(p, 0);
+    CHECK(!flat.dense_children_dirty(), "3665 AC2: front remove not dirty");
+    CHECK(flat.dense_child_data_size() == sz1 - 1, "3665 AC2: front remove size -1");
+    kids.clear();
+    (void)aura::ast::walk_children_hot<NodeId>(flat, p, [&](NodeId x) { kids.push_back(x); });
+    CHECK(kids.size() == 2 && kids[0] == a && kids[1] == b, "3665 AC2: walk after remove");
+
+    flat.set_child_locked(p, 0, c);
+    CHECK(!flat.dense_children_dirty(), "3665 AC3: #3453 equal-length set still in-place");
+    CHECK(flat.get_child(p, 0) == c, "3665 AC3: set_child slot");
+
+    {
+        FlatAST copy = flat;
+        CHECK(copy.dense_children_dirty(), "3665 AC3: copy still dirties dense");
+    }
+
+    const auto ast = read_file("src/core/ast.ixx");
+    CHECK(ast.find("Issue #3402: compact remaps NodeIds") != std::string::npos,
+          "3665 AC3: compact still full-sync");
+    CHECK(ast.find("Issue #3402: PCV snapshot is the source of truth") != std::string::npos,
+          "3665 AC3: restore still full-sync");
+    CHECK(ast.find("Issue #3402: dest keeps its own runtime_resource_") != std::string::npos,
+          "3665 AC3: copy/move still dirties");
+
+    {
+        const auto ipos = ast.find("void insert_child_locked(");
+        const auto rpos = ast.find("void remove_child_locked(");
+        CHECK(ipos != std::string::npos && rpos != std::string::npos, "3665 AC4: locked helpers");
+        const auto iwin = ast.substr(ipos, 2800);
+        const auto rwin = ast.substr(rpos, 2200);
+        CHECK(iwin.find("flatast_locked_move_out_exclusive_total") != std::string::npos,
+              "3665 AC4: insert exclusive counter kept");
+        CHECK(iwin.find("flatast_locked_move_out_cow_total") != std::string::npos,
+              "3665 AC4: insert cow counter kept");
+        CHECK(rwin.find("flatast_locked_move_out_exclusive_total") != std::string::npos,
+              "3665 AC4: remove exclusive counter kept");
+        CHECK(rwin.find("flatast_locked_move_out_cow_total") != std::string::npos,
+              "3665 AC4: remove cow counter kept");
+        CHECK(ast.find("schema-3665") == std::string::npos, "3665 AC4: no new query key");
+    }
+
+    {
+        FlatAST fresh;
+        const NodeId rp = fresh.add_node(NodeTag::Begin);
+        const NodeId ra = fresh.add_literal(1);
+        CHECK(fresh.dense_children_dirty(), "3665 AC3: never-synced starts dirty");
+        fresh.insert_child(rp, 0, ra);
+        CHECK(fresh.dense_children_dirty(), "3665 AC3: never-synced insert stays dirty");
+        (void)fresh.children_columnar(rp);
+        CHECK(!fresh.dense_children_dirty(), "3665 AC3: first columnar still full-syncs");
+    }
+
+    const auto build = read_file("build.py");
+    CHECK(build.find("check_insert_remove_child_locked_dense_splice_3665") != std::string::npos,
+          "3665 AC5: build.py wires linter");
+    const auto p3664 = build.find("check_replace_pattern_match_sub_no_std_function_3664");
+    const auto p3665 = build.find("check_insert_remove_child_locked_dense_splice_3665");
+    CHECK(p3664 != std::string::npos && p3665 != std::string::npos && p3664 < p3665,
+          "3665 AC5: linter AFTER #3664");
+    CHECK(read_file("tests/core/test_issue_3665.cpp").empty() &&
+              read_file("tests/compiler/test_issue_3665.cpp").empty(),
+          "3665 AC5: no test_issue_3665.cpp");
+    CHECK(read_file("docs/design/3665-insert-remove-dense-splice.md").empty(),
+          "3665 AC5: no docs/design/");
 }
 
 // #3401: eval_flat hot-path intern — production skips the function-scope
@@ -1148,6 +1255,7 @@ int run_test_arena_required_cover_no_value_only() {
     ac3401_eval_flat_hot_path_intern();
     ac3402_dense_children_columns();
     ac3453_equal_length_set_inplace();
+    ac3665_insert_remove_dense_splice();
     ac3403_inline_pass_soa();
     ac3404_arena_auto_arm_soft_fallback();
     ac3405_pure_wrap_dirty_entry();
