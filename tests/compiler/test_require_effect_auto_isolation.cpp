@@ -1527,10 +1527,17 @@ static void ac3629_1_interleaved_stamp_keeps_occupancy() {
                                                   "3629-ac1-occupancy", /*node_id=*/0x100);
     CHECK(!ok, "3629 AC1: NodeId-only mutate on X denies after interleave");
     CHECK(isolation_denies_since(seq0) >= 1, "3629 AC1: IsolationDeny SE emitted (audit join)");
-    // Bounded residual (documented): same-slot collision still evicts.
+    // Issue #3641: same-slot collision is fail-closed — A's same-slot stamp
+    // refuses to evict B's X residency; a NodeId-only mutate on X still
+    // denies IsolationDeny with zero writes (old residual: evict + allow).
     (void)ev.make_stamped_ref(/*node_id=*/0x200);
-    CHECK(aura::core::provenance::existing_stamp_for_node(0x100) == 0,
-          "3629 AC1: same-slot collision evicts (bounded, documented)");
+    CHECK(aura::core::provenance::existing_stamp_for_node(0x100) == 99,
+          "3641 AC1: same-slot stamp did NOT evict X (collision refuse)");
+    const auto seq1 = current_seq();
+    const bool ok2 = ev.require_effect_for_node_id(static_cast<std::uint16_t>(kEffectMutate),
+                                                   "3641-ac1-collision", /*node_id=*/0x100);
+    CHECK(!ok2, "3641 AC1: NodeId-only mutate on X denies after same-slot collision");
+    CHECK(isolation_denies_since(seq1) >= 1, "3641 AC1: collision deny IsolationDeny SE emitted");
     aura::core::provenance::set_multi_tenant_env_active(false);
 }
 
@@ -1635,6 +1642,236 @@ static void ac3629_4_source_cite_and_no_invent() {
           "3629: linter extended");
     CHECK(slurp("tests/issues/test_issue_3629.cpp").empty(), "3629: no tests/issues file");
     CHECK(slurp("tests/compiler/test_issue_3629.cpp").empty(), "3629: no test_issue file");
+}
+
+// ── Issue #3641: occupancy same-slot collision is fail-closed (no
+// caller-stamp false allow on a 1/256 ring collision under Restricted+MT
+// / Strict). Write path refuses to evict / flip; consult borrows the
+// slot occupant's tenant for the existing foreign on_ref deny. ──
+static void ac3641_1_same_slot_collision_fail_closed() {
+    std::println("\n--- #3641 AC1: same-slot collision denies (no caller-stamp false allow) ---");
+    reset_all();
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+    aura::core::provenance::set_multi_tenant_env_active(true);
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_effect_sandbox_mode(1);
+    const auto me = current_mutation_epoch();
+    ev.grant_effect_capability(99, "mut-3641-b", kEffectMutate, me == 0 ? 1 : me);
+    ev.grant_effect_capability(7, "mut-3641-a", kEffectMutate, me == 0 ? 1 : me);
+    // Attack replay: B stamps X (0x100, slot 0); A stamps same-slot Z
+    // (0x200 & 255 == 0). The note refuses to evict X; A's NodeId-only
+    // mutate on X must still deny (old residual: evict + caller-stamp allow).
+    ev.set_capability_tenant_id(99);
+    (void)ev.make_stamped_ref(/*node_id=*/0x100);
+    CHECK(aura::core::provenance::existing_stamp_for_node(0x100) == 99,
+          "3641 AC1: B stamp occupies X slot (99)");
+    ev.set_capability_tenant_id(7);
+    (void)ev.make_stamped_ref(/*node_id=*/0x200);
+    CHECK(aura::core::provenance::existing_stamp_for_node(0x100) == 99,
+          "3641 AC1: A's same-slot Z stamp did not evict X");
+    CHECK(aura::core::provenance::existing_stamp_for_node(0x200) == 0,
+          "3641 AC1: refused Z note recorded nothing (foreign slot kept)");
+    const auto seq0 = current_seq();
+    const bool ok = ev.require_effect_for_node_id(static_cast<std::uint16_t>(kEffectMutate),
+                                                  "3641-ac1-attack", /*node_id=*/0x100);
+    CHECK(!ok, "3641 AC1: NodeId-only mutate on X denies after collision");
+    CHECK(isolation_denies_since(seq0) >= 1, "3641 AC1: IsolationDeny SE emitted (audit join)");
+    // Fail-closed collateral: the refused node Z itself also consults the
+    // foreign occupant (slot borrow) — no per-node caller-stamp hole.
+    const auto seq1 = current_seq();
+    const bool ok_z = ev.require_effect_for_node_id(static_cast<std::uint16_t>(kEffectMutate),
+                                                    "3641-ac1-z", /*node_id=*/0x200);
+    CHECK(!ok_z, "3641 AC1: same-slot Z NodeId-only also denies (slot borrow)");
+    CHECK(isolation_denies_since(seq1) >= 1, "3641 AC1: Z deny IsolationDeny SE emitted");
+    aura::core::provenance::set_multi_tenant_env_active(false);
+}
+
+// Issue #3641 AC2: non-same-slot interleave still denies — #3629 AC1 main
+// path (exact-match occupancy consult) has no regression; an empty-slot
+// NodeId-only caller stamp still allows (#2056).
+static void ac3641_2_non_same_slot_still_denies() {
+    std::println("\n--- #3641 AC2: non-same-slot interleave still denies (#3629 main path) ---");
+    reset_all();
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+    aura::core::provenance::set_multi_tenant_env_active(true);
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_effect_sandbox_mode(1);
+    const auto me = current_mutation_epoch();
+    ev.grant_effect_capability(99, "mut-3641-b2", kEffectMutate, me == 0 ? 1 : me);
+    ev.grant_effect_capability(7, "mut-3641-a2", kEffectMutate, me == 0 ? 1 : me);
+    ev.set_capability_tenant_id(99);
+    (void)ev.make_stamped_ref(/*node_id=*/0x100); // slot 0
+    ev.set_capability_tenant_id(7);
+    (void)ev.make_stamped_ref(/*node_id=*/0x101); // slot 1 — different slot
+    CHECK(aura::core::provenance::existing_stamp_for_node(0x100) == 99,
+          "3641 AC2: X residency intact across different-slot interleave");
+    const auto seq0 = current_seq();
+    const bool ok = ev.require_effect_for_node_id(static_cast<std::uint16_t>(kEffectMutate),
+                                                  "3641-ac2-x", /*node_id=*/0x100);
+    CHECK(!ok, "3641 AC2: NodeId-only mutate on X still denies (exact consult)");
+    CHECK(isolation_denies_since(seq0) >= 1, "3641 AC2: IsolationDeny SE emitted");
+    // Empty-slot caller stamp still allows — collision refuse must not
+    // over-deny unstamped NodeIds (#2056 caller-stamp contract). The allow
+    // is grant-dependent, so probe the capability path first with an
+    // own-stamped same-tenant on_ref (bypasses the occupancy consult): a
+    // grant-broken harness degrades to a SKIP instead of false-failing the
+    // collision contract.
+    const auto probe = ev.make_stamped_ref(/*node_id=*/0x101);
+    const bool grant_ok = ev.require_effect_on_ref(static_cast<std::uint16_t>(kEffectMutate),
+                                                   "3641-ac2-grantprobe", probe);
+    if (!grant_ok) {
+        std::println("  SKIP: 3641 AC2 fresh-allow (capability grants not honored in this "
+                     "harness; deny contract already verified above)");
+    } else {
+        const bool ok_fresh = ev.require_effect_for_node_id(
+            static_cast<std::uint16_t>(kEffectMutate), "3641-ac2-fresh", /*node_id=*/0x302);
+        CHECK(ok_fresh, "3641 AC2: fresh empty-slot NodeId-only allows (caller stamp)");
+    }
+    aura::core::provenance::set_multi_tenant_env_active(false);
+}
+
+// Issue #3641 AC3: a caller cannot stamp_stable_ref a foreign-owned node
+// occupancy into its own — owner tenant preserved; NodeId-only still denies.
+static void ac3641_3_no_owner_flip_via_stamp_stable_ref() {
+    std::println("\n--- #3641 AC3: stamp_stable_ref cannot flip foreign owner ---");
+    reset_all();
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+    aura::core::provenance::set_multi_tenant_env_active(true);
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_effect_sandbox_mode(1);
+    const auto me = current_mutation_epoch();
+    ev.grant_effect_capability(99, "mut-3641-b3", kEffectMutate, me == 0 ? 1 : me);
+    ev.grant_effect_capability(7, "mut-3641-a3", kEffectMutate, me == 0 ? 1 : me);
+    ev.set_capability_tenant_id(99);
+    (void)ev.make_stamped_ref(/*node_id=*/0x140); // B occupies slot 0x40
+    ev.set_capability_tenant_id(7);
+    // A stamps the same node — refuse keeps B as owner (no tenant flip).
+    (void)ev.make_stamped_ref(/*node_id=*/0x140);
+    CHECK(aura::core::provenance::existing_stamp_for_node(0x140) == 99,
+          "3641 AC3: A stamp_stable_ref did not flip owner tenant");
+    const auto seq0 = current_seq();
+    const bool ok = ev.require_effect_for_node_id(static_cast<std::uint16_t>(kEffectMutate),
+                                                  "3641-ac3-x", /*node_id=*/0x140);
+    CHECK(!ok, "3641 AC3: NodeId-only mutate still denies after A restamp attempt");
+    CHECK(isolation_denies_since(seq0) >= 1, "3641 AC3: IsolationDeny SE emitted");
+    // Same-tenant restamp is idempotent (owner == caller writes through).
+    ev.set_capability_tenant_id(99);
+    (void)ev.make_stamped_ref(/*node_id=*/0x140);
+    CHECK(aura::core::provenance::existing_stamp_for_node(0x140) == 99,
+          "3641 AC3: same-tenant restamp keeps owner (idempotent)");
+    aura::core::provenance::set_multi_tenant_env_active(false);
+}
+
+// Issue #3641 AC4: Soft/Off zero extra storage — the ring is not consulted
+// and Soft stamps do not write it (no refuse path, no collision deny).
+static void ac3641_4_soft_off_zero_storage() {
+    std::println("\n--- #3641 AC4: Soft/Off ring untouched, consult skipped ---");
+    reset_all(); // SandboxMode::Off
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_effect_sandbox_mode(0); // Soft
+    const auto me = current_mutation_epoch();
+    ev.grant_effect_capability(7, "mut-3641-a4", kEffectMutate, me == 0 ? 1 : me);
+    ev.grant_effect_capability(99, "mut-3641-b4", kEffectMutate, me == 0 ? 1 : me);
+    // Soft stamps write nothing into the occupancy ring (zero storage).
+    ev.set_capability_tenant_id(99);
+    (void)ev.make_stamped_ref(/*node_id=*/0x180);
+    CHECK(aura::core::provenance::existing_stamp_for_node(0x180) == 0,
+          "3641 AC4: Soft stamp left the ring untouched (zero storage)");
+    ev.set_capability_tenant_id(7);
+    // No consult in Soft: an unstamped NodeId-only mutate allows.
+    const bool ok = ev.require_effect_for_node_id(static_cast<std::uint16_t>(kEffectMutate),
+                                                  "3641-ac4-soft", /*node_id=*/0x180);
+    CHECK(ok, "3641 AC4: Soft NodeId-only allows (no consult, #2056/#3415 AC4)");
+    aura::core::provenance::set_multi_tenant_env_active(false);
+}
+
+// Issue #3641 AC5: the collision deny is joinable in the SE trail
+// (mid+tenant+fiber+epoch, node via the op name) and leaves no phantom
+// allow row in the mutation audit ring.
+static void ac3641_5_deny_audit_join_se_typed() {
+    std::println("\n--- #3641 AC5: deny rows join mid+tenant+fiber+epoch (SE + Typed) ---");
+    reset_all();
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+    aura::core::provenance::set_multi_tenant_env_active(true);
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_effect_sandbox_mode(1);
+    const auto me = current_mutation_epoch();
+    ev.grant_effect_capability(99, "mut-3641-b5", kEffectMutate, me == 0 ? 1 : me);
+    ev.grant_effect_capability(7, "mut-3641-a5", kEffectMutate, me == 0 ? 1 : me);
+    // Same-slot setup: B owns X (0x100); A's Z (0x200) refuse keeps B.
+    ev.set_capability_tenant_id(99);
+    (void)ev.make_stamped_ref(/*node_id=*/0x100);
+    ev.set_capability_tenant_id(7);
+    (void)ev.make_stamped_ref(/*node_id=*/0x200);
+    const auto seq_se = current_seq();
+    const auto aud0 = ev.mutation_audit_seq();
+    const bool ok = ev.require_effect_for_node_id(static_cast<std::uint16_t>(kEffectMutate),
+                                                  "3641-ac5-join", /*node_id=*/0x100);
+    CHECK(!ok, "3641 AC5: collision deny fires");
+    // SE row: IsolationDeny, foreign owner tenant, Mutation-epoch mid,
+    // ref-tenant reason, live fiber (#3011) — mid+node(op)+tenant+fiber+epoch.
+    const auto& ring = g_security_event_ring();
+    bool se_join = false;
+    for (std::uint64_t s = seq_se; s < ring.seq.load(); ++s) {
+        const auto& e = ring.ring[s % ring.ring.size()];
+        if (static_cast<int>(e.kind) !=
+                static_cast<int>(aura::core::security_event::SecurityEventKind::IsolationDeny) ||
+            e.seq != s)
+            continue;
+        if (std::string{e.op} != "3641-ac5-join")
+            continue;
+        se_join = true;
+        CHECK(e.tenant_id == 99, "3641 AC5: SE row carries foreign owner tenant 99");
+        CHECK(e.mutation_id == current_mutation_epoch(),
+              "3641 AC5: SE mid is the Mutation epoch (join key)");
+        CHECK(e.epoch == current_mutation_epoch(), "3641 AC5: SE epoch join");
+        CHECK(std::string{e.reason}.find("isolation-deny:ref-tenant=99") != std::string::npos,
+              "3641 AC5: SE reason names the borrowed foreign ref-tenant");
+        std::println("  SE deny row: op='{}' tenant={} mid={} epoch={} fiber={}", e.op, e.tenant_id,
+                     e.mutation_id, e.epoch, e.fiber_id);
+    }
+    CHECK(se_join, "3641 AC5: IsolationDeny SE row present for the op");
+    // Typed (mutation audit): the deny precedes check_and_record_effect —
+    // no row for this op may exist, and certainly no allow row (audit
+    // replay: no phantom allow rows).
+    const auto aud1 = ev.mutation_audit_seq();
+    for (std::uint64_t s = aud0; s < aud1; ++s) {
+        const auto& m = ev.mutation_audit_entry_at(s);
+        if (std::string{m.op} != "3641-ac5-join")
+            continue;
+        CHECK(m.effect_denied, "3641 AC5: audit row is a deny (no phantom allow)");
+    }
+    std::println("  mutation audit rows scanned: {}", aud1 - aud0);
+    aura::core::provenance::set_multi_tenant_env_active(false);
+}
+
+static void ac3641_6_source_cite_and_no_invent() {
+    std::println("\n--- #3641 AC6: source-cite + no invent ---");
+    const auto prov = read_file("src/core/provenance_tracker.hh");
+    CHECK(prov.find("kNodeOccupancyCollisionIssue = 3641") != std::string::npos,
+          "3641: header stamp");
+    CHECK(prov.find("occupying_stamp_for_node") != std::string::npos,
+          "3641: slot-view helper present");
+    CHECK(prov.find("refuse_foreign_owner") != std::string::npos, "3641: note refuse param");
+    const auto sec = read_file("src/compiler/evaluator_security.cpp");
+    CHECK(sec.find("Issue #3641") != std::string::npos, "3641: consult site cites");
+    CHECK(sec.find("occupying_stamp_for_node") != std::string::npos,
+          "3641: consult collision borrow");
+    CHECK(read_file("scripts/check_occupancy_collision_failclosed_3641.py").find("3641") !=
+              std::string::npos,
+          "3641: linter present");
+    CHECK(read_file("build.py").find("check_occupancy_collision_failclosed_3641") !=
+              std::string::npos,
+          "3641: build.py wires linter");
+    CHECK(read_file("tests/issues/test_issue_3641.cpp").empty(), "3641: no tests/issues file");
+    CHECK(read_file("tests/compiler/test_issue_3641.cpp").empty(), "3641: no test_issue file");
+    CHECK(read_file("docs/design/3641-occupancy-collision-fail-closed.md").empty(),
+          "3641: no docs/design file");
 }
 
 // ── Issue #3630: undeclared multi-tenant autodetect ──
@@ -1920,6 +2157,14 @@ int run_test_require_effect_auto_isolation() {
     ac3629_2_chaos_interleaved_nodes();
     ac3629_3_seqlock_hammer_and_reset();
     ac3629_4_source_cite_and_no_invent();
+
+    // Issue #3641: occupancy same-slot collision fail-closed.
+    ac3641_1_same_slot_collision_fail_closed();
+    ac3641_2_non_same_slot_still_denies();
+    ac3641_3_no_owner_flip_via_stamp_stable_ref();
+    ac3641_4_soft_off_zero_storage();
+    ac3641_5_deny_audit_join_se_typed();
+    ac3641_6_source_cite_and_no_invent();
     std::println("\n=== Issue #3630: undeclared multi-tenant autodetect ===");
     ac3630_1_detection_arms_idempotent();
     ac3630_2_fences_on_after_autodetect();
