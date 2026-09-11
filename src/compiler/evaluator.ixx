@@ -6765,6 +6765,13 @@ public:
                                      std::uint16_t actual_effect_bits, std::string_view op,
                                      ast::NodeId target_node = 0, std::uint64_t tenant_id = 0,
                                      std::uint64_t provenance_mutation_id = 0) noexcept;
+    // Issue #3640: arm/disarm the production audit face from the library
+    // instance. typed_audit counters are header-inline globals; under GCC
+    // module linkage the test TU's copy is distinct from the dispatch
+    // gate's, so tests must arm through this library-side shim
+    // (ac3637-style flips from the test TU arm only the test TU's copy).
+    void arm_production_audit_defaults_for_test() noexcept;
+    void disarm_production_audit_defaults_for_test() noexcept;
     bool grant_effect_capability(std::uint64_t tenant_id, std::string_view name,
                                  std::uint16_t effect_bits,
                                  std::uint64_t provenance_mutation_id = 0,

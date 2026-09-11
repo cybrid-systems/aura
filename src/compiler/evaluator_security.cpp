@@ -728,6 +728,17 @@ bool Evaluator::check_and_record_effect_for_test(std::uint16_t required_effect_b
                                    tenant_id, provenance_mutation_id);
 }
 
+// Issue #3640: library-side arming — see the declaration note. Executed in
+// this TU so the counters the dispatch gate reads are the ones that flip
+// (test-TU stores land on the test TU's header-inline copy).
+void Evaluator::arm_production_audit_defaults_for_test() noexcept {
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+}
+
+void Evaluator::disarm_production_audit_defaults_for_test() noexcept {
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+}
+
 // Issue #1567: enable WAL under persist_dir; replay prior records into ring.
 bool Evaluator::enable_mutation_audit_wal(std::string_view persist_dir) noexcept {
     using namespace ::aura::core::audit_wal;
