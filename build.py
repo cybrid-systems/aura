@@ -5466,6 +5466,19 @@ def cmd_lint():
             "Issue #3662 is_coercible Dynamic production linter failed — run python3 scripts/coverage/checks/check_is_coercible_dynamic_prod_3662.py"
         )
         return r
+    # Issue #3663: Production Move opcode deletion also consults live
+    # elision_ok (abort-in-flight + live commit_readiness). Soft #2263
+    # clean elide kept. Extends escape_move_elision; linter after #3662.
+    lme3663_script = COVERAGE_CHECKS / "check_linear_move_elision_abort_live_3663.py"
+    if not lme3663_script.exists():
+        fail(f"missing {lme3663_script}")
+        return 1
+    r = run([sys.executable, str(lme3663_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3663 linear Move elision abort/live linter failed — run python3 scripts/coverage/checks/check_linear_move_elision_abort_live_3663.py"
+        )
+        return r
     # Issue #3419: JIT typed-entry on every compiled function (anonymous)
     # included). Stub typed-entry is not production (ABI bit 8). Soft omit.
     # Extends persist-rehydrate + steal-complete; linter after #3343.

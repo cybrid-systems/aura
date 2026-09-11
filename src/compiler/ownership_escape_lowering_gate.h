@@ -59,6 +59,10 @@ extern "C" int aura_escape_move_gate_active() noexcept;
 // Issue #3006: unified linear_fast_path_ok for lowering (depth / escape /
 // densify_pending must keep blocking Move/Drop elision after IR emit).
 extern "C" int aura_linear_fast_path_ok() noexcept;
+// Issue #3663: Production Move opcode deletion also consults live
+// abort-in-flight + commit_readiness (same predicate as IR executor).
+// Existing C ABI from aura_jit_bridge — no new function.
+extern "C" int aura_jit_linear_move_drop_elision_ok(void);
 // Soft/Off skip for #3591 Production conjunct (one load then skip).
 extern "C" int aura_production_defaults_active_probe() noexcept;
 // Mid-boundary / densify-pending / rehydrate-miss gen (Issue #3085).
@@ -90,6 +94,10 @@ inline constexpr int kEscapeActiveMoveElisionDepthIssue = 3519;
 // subset aura_linear_fast_path_depth_or_densify_block (epoch arm =
 // linear_fast_path_rehydrate_gen_blocks_elision). Soft/Off skip ok().
 inline constexpr int kLinearElisionEpochFenceIssue = 3591;
+// Issue #3663: Production also ANDs live elision_ok (abort-in-flight +
+// live commit_readiness) before deleting MoveOp. Soft #2263 clean elide
+// unchanged. Drop still always emits DropOp.
+inline constexpr int kLinearMoveElisionAbortLiveIssue = 3663;
 
 // Process atomics (query / tests) — defined once in typed_mutation_audit_hooks.cpp.
 extern std::atomic<std::uint64_t> g_linear_move_elision_blocked_escape_total;

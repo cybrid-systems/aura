@@ -137,12 +137,19 @@ std::optional<std::uint32_t> try_lower_linear_type(LoweringState& state,
                     if (aura_linear_fast_path_depth_or_densify_block() != 0) {
                         // Fall through: emit MoveOp.
                     } else if (aura_production_defaults_active_probe() != 0 &&
-                               aura_linear_fast_path_ok() == 0) {
+                               (aura_linear_fast_path_ok() == 0 ||
+                                aura_jit_linear_move_drop_elision_ok() == 0)) {
                         // Issue #3591: Production never elides without the
                         // full #3006 predicate (epoch arm =
                         // invalidate_gen vs green_bind). Soft/Off: one
                         // probe load then skip (zero extra; #2263 clean
                         // elide unchanged).
+                        // Issue #3663: also consult live elision_ok
+                        // (abort-in-flight + live commit_readiness).
+                        // last_proof can still be green while abort is
+                        // already in-flight; deleting MoveOp would skip
+                        // the #3446 executor gate. Do not OR typed-entry
+                        // into this allow. Drop still always emits.
                     } else {
                         g_linear_move_elided_total.fetch_add(1, std::memory_order_relaxed);
                         ++state.linear_move_elided;

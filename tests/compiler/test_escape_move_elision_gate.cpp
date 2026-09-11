@@ -111,6 +111,29 @@ static std::size_t count_move_ops(const aura::ir::IRModule& mod) {
     return n;
 }
 
+// Issue #3663 AC4: Drop lowering always emits DropOp (no opcode elision).
+static void make_drop_var_flat(aura::ast::ASTArena& arena, StringPool& pool, FlatAST& flat,
+                               const char* name) {
+    (void)arena;
+    auto sym = pool.intern(name);
+    auto var = flat.add_variable(sym);
+    auto d = flat.add_drop(var);
+    flat.root = d;
+}
+
+static std::size_t count_drop_ops(const aura::ir::IRModule& mod) {
+    std::size_t n = 0;
+    for (const auto& f : mod.functions) {
+        for (const auto& b : f.blocks) {
+            for (const auto& ins : b.instructions) {
+                if (ins.opcode == aura::ir::IROpcode::DropOp)
+                    ++n;
+            }
+        }
+    }
+    return n;
+}
+
 static void ac1_escape_blocks_elision() {
     std::println("\n--- AC1: escape-after-move → MoveOp emitted; blocked bumps ---");
     clear_escape_move_elision_gate();
@@ -1651,6 +1674,215 @@ static void ac3591_2_linter_rejects_unsynced_elide() {
           "3591 AC3: no docs/design/");
 }
 
+// ── Issue #3663: Production Move opcode deletion also consults live
+// elision_ok (abort-in-flight + live commit_readiness). Residual of
+// #3186/#3446/#3591. Soft #2263 clean elide unchanged. Drop always emit.
+
+static void ac3663_1_abort_in_flight_emits() {
+    std::println("\n--- #3663 AC1: Production abort-in-flight does not elide Move ---");
+    using aura::compiler::kLinearMoveElisionAbortLiveIssue;
+    using namespace aura::compiler::typed_audit;
+    CHECK(kLinearMoveElisionAbortLiveIssue == 3663, "3663: stamp");
+    reset_fast_path_block_for_elision_test();
+    clear_escape_move_elision_gate();
+    clear_type_linear_commit_proof_for_test();
+    reset_abort_authority_hold_for_test();
+    auto save =
+        g_typed_mutation_audit_counters.production_defaults_active.load(std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.production_defaults_active.store(1, std::memory_order_relaxed);
+    stamp_type_linear_commit_proof(36631);
+    publish_type_linear_proof_outcome(kTypeLinearProofOutcomeStamped);
+    publish_last_proof_face(true, true);
+    // Direct abort face — do not begin_abort_authority_hold (that also
+    // bumps invalidate_gen and would take the #3519 depth/densify arm).
+    g_abort_authority_in_flight.store(1, std::memory_order_release);
+    CHECK(!linear_move_drop_elision_ok(), "3663 AC1: elision_ok false under abort-in-flight");
+    set_escape_move_elision_gate(true, {});
+    const auto elided0 = linear_move_elided_total();
+    {
+        aura::ast::ASTArena arena;
+        auto alloc = arena.allocator();
+        StringPool pool(alloc);
+        FlatAST flat(alloc);
+        make_move_var_flat(arena, pool, flat, "y");
+        auto mod = lower_to_ir(flat, pool, arena);
+        CHECK(count_move_ops(mod) >= 1, "3663 AC1: abort-in-flight emits MoveOp");
+        CHECK(linear_move_elided_total() == elided0, "3663 AC1: linear_move_elided does not bump");
+    }
+    reset_abort_authority_hold_for_test();
+    g_typed_mutation_audit_counters.production_defaults_active.store(save,
+                                                                     std::memory_order_relaxed);
+    clear_escape_move_elision_gate();
+    clear_type_linear_commit_proof_for_test();
+}
+
+static void ac3663_2_3591_3519_still_emit() {
+    std::println("\n--- #3663 AC2: #3591 !ok and #3519 depth/escape still emit ---");
+    const auto lin = read_file("src/compiler/lowering_linear_types_impl.cpp");
+    CHECK(lin.find("Issue #3591") != std::string::npos, "3663 AC2: #3591 cite kept");
+    CHECK(lin.find("aura_linear_fast_path_ok()") != std::string::npos,
+          "3663 AC2: #3591 ok() conjunct kept");
+    CHECK(lin.find("Issue #3519") != std::string::npos, "3663 AC2: #3519 cite kept");
+    CHECK(lin.find("aura_linear_fast_path_depth_or_densify_block()") != std::string::npos,
+          "3663 AC2: #3519 depth arm kept");
+    CHECK(lin.find("escape_blocks_move_elision_for_current") != std::string::npos,
+          "3663 AC2: blocked-escape arm kept");
+    const auto p3519 = lin.find("Issue #3519");
+    const auto p3663 = lin.find("Issue #3663");
+    CHECK(p3519 != std::string::npos && p3663 != std::string::npos && p3519 < p3663,
+          "3663 AC2: depth/densify still before abort/live conjunct");
+    reset_fast_path_block_for_elision_test();
+    clear_escape_move_elision_gate();
+    using namespace aura::compiler::typed_audit;
+    clear_type_linear_commit_proof_for_test();
+    auto save =
+        g_typed_mutation_audit_counters.production_defaults_active.load(std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.production_defaults_active.store(1, std::memory_order_relaxed);
+    set_escape_move_elision_gate(true, {});
+    {
+        aura::ast::ASTArena arena;
+        auto alloc = arena.allocator();
+        StringPool pool(alloc);
+        FlatAST flat(alloc);
+        make_move_var_flat(arena, pool, flat, "y");
+        auto mod = lower_to_ir(flat, pool, arena);
+        CHECK(count_move_ops(mod) >= 1, "3663 AC2: Production !ok still emits");
+    }
+    g_typed_mutation_audit_counters.production_defaults_active.store(save,
+                                                                     std::memory_order_relaxed);
+    clear_escape_move_elision_gate();
+    reset_fast_path_block_for_elision_test();
+    aura::compiler::typed_audit::g_linear_ir_fastpath_boundary_depth_override = 1;
+    set_escape_move_elision_gate(true, {});
+    {
+        aura::ast::ASTArena arena;
+        auto alloc = arena.allocator();
+        StringPool pool(alloc);
+        FlatAST flat(alloc);
+        make_move_var_flat(arena, pool, flat, "y");
+        auto mod = lower_to_ir(flat, pool, arena);
+        CHECK(count_move_ops(mod) >= 1, "3663 AC2: depth/densify still emits");
+    }
+    reset_fast_path_block_for_elision_test();
+    clear_escape_move_elision_gate();
+}
+
+static void ac3663_3_soft_still_elides() {
+    std::println("\n--- #3663 AC3: Soft escape-clean still elides ---");
+    using namespace aura::compiler::typed_audit;
+    reset_fast_path_block_for_elision_test();
+    clear_escape_move_elision_gate();
+    reset_abort_authority_hold_for_test();
+    auto save =
+        g_typed_mutation_audit_counters.production_defaults_active.load(std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.production_defaults_active.store(0, std::memory_order_relaxed);
+    set_strategy(AuditStrategy::Sampled);
+    set_escape_move_elision_gate(true, {});
+    const auto elided0 = linear_move_elided_total();
+    {
+        aura::ast::ASTArena arena;
+        auto alloc = arena.allocator();
+        StringPool pool(alloc);
+        FlatAST flat(alloc);
+        make_move_var_flat(arena, pool, flat, "y");
+        auto mod = lower_to_ir(flat, pool, arena);
+        CHECK(count_move_ops(mod) == 0, "3663 AC3: Soft escape-clean elides");
+        CHECK(linear_move_elided_total() > elided0, "3663 AC3: elided counter advanced");
+    }
+    // Soft + abort-in-flight: still elide (zero-cost; elision_ok not
+    // consulted — abort_or_mid_abort_blocks_elision is Production/Full).
+    g_abort_authority_in_flight.store(1, std::memory_order_release);
+    const auto elided1 = linear_move_elided_total();
+    {
+        aura::ast::ASTArena arena;
+        auto alloc = arena.allocator();
+        StringPool pool(alloc);
+        FlatAST flat(alloc);
+        make_move_var_flat(arena, pool, flat, "y");
+        auto mod = lower_to_ir(flat, pool, arena);
+        CHECK(count_move_ops(mod) == 0, "3663 AC3: Soft abort-in-flight still elides");
+        CHECK(linear_move_elided_total() > elided1, "3663 AC3: Soft abort still bumps elided");
+    }
+    reset_abort_authority_hold_for_test();
+    g_typed_mutation_audit_counters.production_defaults_active.store(save,
+                                                                     std::memory_order_relaxed);
+    clear_escape_move_elision_gate();
+}
+
+static void ac3663_4_drop_and_executor_unchanged() {
+    std::println("\n--- #3663 AC4: Drop always emit; IR/JIT #3446 OR unchanged ---");
+    using namespace aura::compiler::typed_audit;
+    const auto lin = read_file("src/compiler/lowering_linear_types_impl.cpp");
+    const auto drop = lin.find("case aura::ast::NodeTag::Drop:");
+    CHECK(drop != std::string::npos, "3663 AC4: Drop arm present");
+    const auto drop_body = drop == std::string::npos ? std::string{} : lin.substr(drop, 900);
+    CHECK(drop_body.find("IROpcode::DropOp") != std::string::npos, "3663 AC4: Drop emits DropOp");
+    CHECK(drop_body.find("aura_jit_linear_move_drop_elision_ok") == std::string::npos,
+          "3663 AC4: Drop does not consult elision_ok");
+    CHECK(drop_body.find("linear_move_elided") == std::string::npos,
+          "3663 AC4: Drop does not elide opcode");
+    CHECK(lin.find("aura_jit_ir_typed_entry_commit_readiness_ok") == std::string::npos,
+          "3663 AC4: typed-entry not ORed into lowering elision allow");
+
+    reset_fast_path_block_for_elision_test();
+    clear_escape_move_elision_gate();
+    reset_abort_authority_hold_for_test();
+    auto save =
+        g_typed_mutation_audit_counters.production_defaults_active.load(std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.production_defaults_active.store(1, std::memory_order_relaxed);
+    g_abort_authority_in_flight.store(1, std::memory_order_release);
+    set_escape_move_elision_gate(true, {});
+    {
+        aura::ast::ASTArena arena;
+        auto alloc = arena.allocator();
+        StringPool pool(alloc);
+        FlatAST flat(alloc);
+        make_drop_var_flat(arena, pool, flat, "y");
+        auto mod = lower_to_ir(flat, pool, arena);
+        CHECK(count_drop_ops(mod) >= 1, "3663 AC4: Drop still emits DropOp under abort");
+        CHECK(count_move_ops(mod) == 0, "3663 AC4: Drop path does not emit MoveOp");
+    }
+    reset_abort_authority_hold_for_test();
+    g_typed_mutation_audit_counters.production_defaults_active.store(save,
+                                                                     std::memory_order_relaxed);
+    clear_escape_move_elision_gate();
+
+    const auto jit = read_file("src/compiler/aura_jit.cpp");
+    CHECK(jit.find("is_stale = irb->CreateOr(is_stale, fence_elision_blocked)") !=
+              std::string::npos,
+          "3663 AC4: JIT #3446 OR elision_ok kept");
+    CHECK(jit.find("is_stale = irb->CreateOr(is_stale, fence_entry_blocked)") != std::string::npos,
+          "3663 AC4: JIT #3446 OR typed-entry kept");
+    const auto ir = read_file("src/compiler/ir_executor_impl.cpp");
+    CHECK(ir.find("linear_move_drop_elision_ok()") != std::string::npos,
+          "3663 AC4: IR executor AND elision_ok kept");
+}
+
+static void ac3663_5_suite_linter_no_invent() {
+    std::println("\n--- #3663 AC5: suite + linter; no invent / docs / query key ---");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_linear_move_elision_abort_live_3663.py");
+    CHECK(lint.find("Issue #3663") != std::string::npos, "3663 AC5: linter cites #3663");
+    CHECK(lint.find("aura_jit_linear_move_drop_elision_ok") != std::string::npos,
+          "3663 AC5: linter requires elision_ok ABI");
+    const auto build = read_file("build.py");
+    CHECK(build.find("check_linear_move_elision_abort_live_3663") != std::string::npos,
+          "3663 AC5: build.py wires linter");
+    const auto p3662 = build.find("check_is_coercible_dynamic_prod_3662");
+    const auto p3663 = build.find("check_linear_move_elision_abort_live_3663");
+    CHECK(p3662 != std::string::npos && p3663 != std::string::npos && p3662 < p3663,
+          "3663 AC5: linter AFTER #3662");
+    CHECK(read_file("tests/compiler/test_issue_3663.cpp").empty() &&
+              read_file("tests/issues/test_issue_3663.cpp").empty(),
+          "3663 AC5: no test_issue_3663.cpp");
+    CHECK(read_file("docs/design/3663-linear-move-elision-abort.md").empty(),
+          "3663 AC5: no docs/design/");
+    const auto lin = read_file("src/compiler/lowering_linear_types_impl.cpp");
+    CHECK(lin.find("schema-3663") == std::string::npos, "3663 AC5: no schema-3663");
+    const auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
+    CHECK(mut.find("schema-3663") == std::string::npos, "3663 AC5: no new query key");
+}
+
 } // namespace
 
 int run_test_escape_move_elision_gate() {
@@ -1663,6 +1895,12 @@ int run_test_escape_move_elision_gate() {
     std::println("\n=== Issue #3591: linear elision #3006 epoch-fence machine proof ===");
     ac3591_1_elision_routes_predicate();
     ac3591_2_linter_rejects_unsynced_elide();
+    std::println("\n=== Issue #3663: Production Move elision consults elision_ok abort/live ===");
+    ac3663_1_abort_in_flight_emits();
+    ac3663_2_3591_3519_still_emit();
+    ac3663_3_soft_still_elides();
+    ac3663_4_drop_and_executor_unchanged();
+    ac3663_5_suite_linter_no_invent();
     ac4_schema_source();
     ac6_cross_eval_isolation();
     ac7_same_eval_parity();
