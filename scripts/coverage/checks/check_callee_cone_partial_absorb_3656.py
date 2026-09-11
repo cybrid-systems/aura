@@ -73,7 +73,7 @@ def main() -> int:
         "AC2 no 3-arg define mix at peel",
         svc,
     )
-    must("already_dirty_blocks", "AC2 already-dirty only", pre)
+    must("callee_dirty_blocks", "AC2 already-dirty block sum", pre)
     must("absorb_callee_cone_into_impact_ub", "AC2 absorb into ub", svc)
     must("ac3656_2_hub_not_define_count_full", "AC2 cascade test", cas)
     must("ac3584_1_hub_partial_peel", "AC2 3584 retained", cas)

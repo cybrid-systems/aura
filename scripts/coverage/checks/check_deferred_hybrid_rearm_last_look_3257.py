@@ -51,8 +51,9 @@ def main() -> int:
     # the #3257 last-look / fail-closed / attribution patterns past
     # the original 16000-char window). #3484 zero-mask fail-closed
     # pushed last-look past 24000. #3611 attribution reconsult +
-    # peer peel-set block pushed last-look past 28000.
-    rel_win = svc[rel_pos : rel_pos + 32000] if rel_pos >= 0 else ""
+    # peer peel-set block pushed last-look past 28000. #3656 callee
+    # cone absorb pushed last-look past 32000.
+    rel_win = svc[rel_pos : rel_pos + 36000] if rel_pos >= 0 else ""
 
     must("Issue #3257", "AC1 cite", rel_win)
     must("attr_seen_size", "AC1 snapshot", rel_win)
