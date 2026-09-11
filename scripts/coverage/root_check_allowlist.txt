@@ -89,3 +89,4 @@ check_wal_append_miss_deny_3639.py
 check_unpack_spine_gate_3640.py
 check_occupancy_collision_failclosed_3641.py
 check_recv_stale_nullopt_3642.py
+check_scope_join_tree_3643.py

@@ -558,6 +558,78 @@ static void ac3496_tree_settled() {
     CHECK(read_file("tests/orch/test_issue_3496.cpp").empty(), "3496 AC5: no test_issue_3496.cpp");
 }
 
+// ── Issue #3643: optional tree join (join_all stays local by default) ──
+static void ac3643_tree_join() {
+    std::println("\n--- #3643: join_all tree walk (default local) ---");
+    CHECK(aura::orch::kJoinAllTreeJoinIssue == 3643, "3643: issue stamp");
+    Scheduler sched(2);
+    SchedRunner runner(sched);
+    AgentScope root(sched);
+    auto& c0 = root.spawn_child();
+    std::atomic<bool> hold_root{true};
+    std::atomic<bool> hold_child{true};
+    auto& hr = root.spawn(hold_body(hold_root));
+    auto& hc = c0.spawn(hold_body(hold_child));
+    CHECK(hr.ok && hr.fiber && hc.ok && hc.fiber, "3643: spawns ok");
+
+    // AC1: default join is local — root's own handles join, the child
+    // fiber stays live, tree_settled stays false (#3496 AC1).
+    hold_root.store(false, std::memory_order_relaxed);
+    const auto jr_local = root.join_all(std::optional<std::uint64_t>{3000});
+    CHECK(jr_local.status == aura::serve::JoinStatus::Ok, "3643 AC1: root local join Ok");
+    CHECK(hc.fiber && !hc.fiber->is_done(), "3643 AC1: child fiber still live (local join)");
+    CHECK(!root.tree_settled(), "3643 AC1: tree_settled false (child live)");
+
+    // AC2: tree join waits the whole subtree (children_ walk order).
+    hold_child.store(false, std::memory_order_relaxed);
+    const auto jr_tree =
+        root.join_all(aura::orch::JoinPolicy{.primary_ms = std::optional<std::uint64_t>{3000},
+                                             .drain_ms = aura::orch::kDefaultJoinDrainMs},
+                      std::nullopt, /*tree=*/true);
+    CHECK(jr_tree.status == aura::serve::JoinStatus::Ok, "3643 AC2: tree join Ok");
+    CHECK(!hc.fiber || hc.fiber->is_done(), "3643 AC2: child fiber done after tree join");
+    CHECK(root.tree_settled(), "3643 AC2: tree_settled true after tree join");
+
+    // AC3: a child-scope local join never settles/drops the parent tree
+    // (#3496 AC3 — drop is root-only in the primitive; join semantics are
+    // per-scope).
+    auto& c1 = root.spawn_child();
+    std::atomic<bool> hold_c1{true};
+    auto& h1 = c1.spawn(hold_body(hold_c1));
+    CHECK(h1.ok, "3643 AC3: c1 spawn ok");
+    // Under armed production defaults the timed-out child join injects
+    // on_join_fail Cancel (#3208) — the child may settle here; the AC3
+    // property is structural: the child-scope join must NOT drop the
+    // parent tree (root object + links untouched).
+    (void)c1.join_all(std::optional<std::uint64_t>{200});
+    CHECK(root.child_count() >= 1,
+          "3643 AC3: root children intact after child-scope join (no drop)");
+    CHECK(!c1.is_root(), "3643 AC3: c1 still linked under root (no drop)");
+    hold_c1.store(false, std::memory_order_relaxed);
+    (void)c1.join_all(std::optional<std::uint64_t>{3000});
+    CHECK(c1.tree_settled(), "3643 AC3: c1 settled after release");
+
+    std::println("\n--- #3643 AC6: source-cite + no invent ---");
+    const auto scope_src = read_file("src/orch/agent_scope.h");
+    const auto prim_src = read_file("src/compiler/evaluator_primitives_agent.cpp");
+    const auto build_src = read_file("build.py");
+    CHECK(scope_src.find("kJoinAllTreeJoinIssue = 3643") != std::string::npos,
+          "3643 AC6: issue stamp");
+    CHECK(scope_src.find("Issue #3643") != std::string::npos, "3643 AC6: join_all cites");
+    CHECK(scope_src.find("c->join_all(policy, fail, /*tree=*/true)") != std::string::npos,
+          "3643 AC6: tree walk recursion");
+    CHECK(prim_src.find("join_all(policy, fail_pol, tree_join)") != std::string::npos,
+          "3643 AC6: primitive passes tree");
+    CHECK(prim_src.find("Issue #3643") != std::string::npos, "3643 AC6: primitive cites");
+    CHECK(prim_src.find("schema-3643") != std::string::npos, "3643 AC6: hash stamp");
+    CHECK(build_src.find("check_scope_join_tree_3643") != std::string::npos,
+          "3643 AC6: build.py wires linter");
+    CHECK(read_file("tests/orch/test_issue_3643.cpp").empty(), "3643 AC6: no test_issue file");
+    CHECK(read_file("tests/issues/test_issue_3643.cpp").empty(), "3643 AC6: no tests/issues file");
+    CHECK(read_file("docs/design/3643-scope-join-tree.md").empty(),
+          "3643 AC6: no docs/design file");
+}
+
 } // namespace
 
 int run_test_agent_scope_hierarchy() {
@@ -578,9 +650,10 @@ int run_test_agent_scope_hierarchy() {
     ac3444_scope_path_address();
     ac3444_hard_deny_stub();
     ac3496_tree_settled();
+    ac3643_tree_join();
 
-    std::println("\n=== #2537 + #2781 + #3444 results: {} passed, {} failed ===", g_passed,
-                 g_failed);
+    std::println("\n=== #2537 + #2781 + #3444 + #3496 + #3643 results: {} passed, {} failed ===",
+                 g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
 

@@ -99,6 +99,10 @@ inline constexpr int kScopeChildAddressIssue = 3444;
 // Issue #3496: Aura orch:scope-join-all root drop must see descendant
 // handles (join_all/watch_all stay local; cancel_all already recurses).
 inline constexpr int kJoinAllTreeSettledIssue = 3496;
+// Issue #3643: optional tree join — join_all(policy, fail, tree=false)
+// stays local (#3496 AC1); tree=true folds children_ in the same
+// descendant order as cancel_all / directory_snapshot.
+inline constexpr int kJoinAllTreeJoinIssue = 3643;
 // Issue #3497: production same-name spawn over a reclaimed-pending
 // handles_ slot is a typed deny (no emplace). Name-table put already
 // fail-closes; this is the scope-handle plane. Soft / Off: one
@@ -645,22 +649,56 @@ public:
     // passing AgentFailurePolicy honors on_join_fail even if ReportOnly.
     [[nodiscard]] serve::JoinResult
     join_all(JoinPolicy policy, std::optional<AgentFailurePolicy> fail = std::nullopt) {
+        return join_all(policy, fail, /*tree=*/false);
+    }
+
+    // Issue #3643: optional tree join. Default (tree=false) is today's
+    // local contract (#3496 AC1 — root join leaves descendants live).
+    // tree=true joins local handles first, then children_ in the same
+    // descendant order as cancel_all / directory_snapshot, folding the
+    // worst status (first non-Ok in walk order; Ok only when the whole
+    // walked tree is Ok). Each child scope applies its own on_join_fail.
+    [[nodiscard]] serve::JoinResult join_all(JoinPolicy policy,
+                                             std::optional<AgentFailurePolicy> fail, bool tree) {
         ScopeEnterGuard g(this, "join_all(policy)");
-        if (handles_.empty()) {
-            serve::JoinResult r;
-            r.status = serve::JoinStatus::Invalid;
-            return r;
+        serve::JoinResult jr;
+        bool have = false;
+        std::uint64_t wait_us_total = 0;
+        auto fold = [&](serve::JoinResult cr) {
+            wait_us_total += cr.wait_us;
+            if (!have) {
+                jr = cr;
+                have = true;
+            } else if (jr.status == serve::JoinStatus::Ok && cr.status != serve::JoinStatus::Ok) {
+                // First non-Ok in walk order wins.
+                jr.status = cr.status;
+            }
+        };
+        if (!handles_.empty()) {
+            if (!sched_) {
+                g_orch_module_stats.agent_scope_scheduler_dangling_total.fetch_add(
+                    1, std::memory_order_relaxed);
+                release_handles_no_join_();
+                jr.status = serve::JoinStatus::Invalid;
+                have = true;
+            } else {
+                auto local = join_agents(std::span<AgentHandle>(handles_), policy);
+                apply_on_join_fail_unlocked_(fail ? &*fail : nullptr);
+                fold(std::move(local));
+            }
         }
-        if (!sched_) {
-            g_orch_module_stats.agent_scope_scheduler_dangling_total.fetch_add(
-                1, std::memory_order_relaxed);
-            release_handles_no_join_();
-            serve::JoinResult r;
-            r.status = serve::JoinStatus::Invalid;
-            return r;
+        if (tree) {
+            for (auto& c : children_) {
+                if (!c)
+                    continue;
+                // Same thread: ScopeEnterGuard re-entry is depth-increment
+                // only (#2781) — no concurrent-misuse false positive.
+                fold(c->join_all(policy, fail, /*tree=*/true));
+            }
         }
-        auto jr = join_agents(std::span<AgentHandle>(handles_), policy);
-        apply_on_join_fail_unlocked_(fail ? &*fail : nullptr);
+        if (!have)
+            jr.status = serve::JoinStatus::Invalid; // empty scope, no tree walked
+        jr.wait_us = wait_us_total;
         return jr;
     }
 

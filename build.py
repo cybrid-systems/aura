@@ -6510,6 +6510,19 @@ def cmd_lint():
     if r != 0:
         fail("Issue #3642 recv stale nullopt linter failed — run python3 scripts/check_recv_stale_nullopt_3642.py")
         return r
+    # Issue #3643: optional tree join — AgentScope::join_all stays local by
+    # default (#3496 AC1); tree=true folds children_ in cancel_all walk
+    # order with a first-non-Ok-wins fold; orch:scope-join-all parses
+    # :tree #t and passes it through (drop decision stays tree_settled
+    # root-only). No new registry / query key; Soft unchanged.
+    wfc3643_script = ROOT / "scripts" / "check_scope_join_tree_3643.py"
+    if not wfc3643_script.exists():
+        fail(f"missing {wfc3643_script}")
+        return 1
+    r = run([sys.executable, str(wfc3643_script)], cwd=ROOT)
+    if r != 0:
+        fail("Issue #3643 scope join tree linter failed — run python3 scripts/check_scope_join_tree_3643.py")
+        return r
     # Issue #3301: atomic-batch batch-level MacroIntroduced fail-closed
     # audit. Dispatcher walks each sub-op's target node-id arg before the
     # sub-op loop and denies the whole batch if a target is MacroIntroduced
