@@ -6618,6 +6618,24 @@ def cmd_lint():
     if r != 0:
         fail("Issue #3650 rollback MSE linter failed — run python3 scripts/check_rollback_mse_3650.py")
         return r
+    # Issue #3651 (#3062/#3183 residual): the multi-pass macro_expand_all
+    # !expanded_any guard refuses the residual half-tree for EVERY inner
+    # expand deny code via inner_expand_production_limit_deny() (depth/
+    # pass/steal/cap/gensym) — gensym-ceiling / steal-abort /
+    # capability-deny after a successful pass no longer commit a vacuous
+    # half-tree under production. Pass-limit loop-end belt untouched
+    # (#3062); single-clone try_restore paths untouched (#3183); Soft
+    # keeps the historical half-write.
+    ead3651_script = ROOT / "scripts" / "check_expand_all_deny_codes_3651.py"
+    if not ead3651_script.exists():
+        fail(f"missing {ead3651_script}")
+        return 1
+    r = run([sys.executable, str(ead3651_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3651 expand_all deny codes linter failed — run python3 scripts/check_expand_all_deny_codes_3651.py"
+        )
+        return r
     # Issue #3301: atomic-batch batch-level MacroIntroduced fail-closed
     # audit. Dispatcher walks each sub-op's target node-id arg before the
     # sub-op loop and denies the whole batch if a target is MacroIntroduced

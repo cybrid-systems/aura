@@ -3431,8 +3431,15 @@ static aura::ast::NodeId macro_expand_all_body(aura::ast::FlatAST& flat,
             // (depth ceiling in clone_macro_body) — refuse the residual
             // half-tree under production. NameMapCheckpoint already
             // rolled the failed clone.
-            if (production_surface && any_expand &&
-                g_macro_hygiene_last_limit_reason.load(std::memory_order_relaxed) == 2) {
+            // Issue #3651: the deny codes are wider than depth-limit —
+            // gensym-ceiling / steal-abort / capability-deny in a later
+            // pass leave the same vacuous half-tree (pass-0 payload
+            // spliced, later pass refused). Production refuses the
+            // residual half-tree for every inner expand deny code via
+            // inner_expand_production_limit_deny() (depth/pass/steal/
+            // cap/gensym); the pass-limit loop-end restore below stays
+            // the #3062 belt and is untouched.
+            if (production_surface && any_expand && inner_expand_production_limit_deny()) {
                 expand_ckpt.try_restore();
                 return original_root;
             }

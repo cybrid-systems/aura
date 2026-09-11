@@ -489,6 +489,173 @@ static void grant_self_evo_production() {
     set_mode(SandboxMode::Restricted);
 }
 
+// Issue #3651: two-macro tree where pass 0 expands the small body and a
+// later pass hits the gensym ceiling (3 distinct let bindings vs cap 2).
+static void fill_gensym_two_pass_macros(FlatAST& flat, StringPool& pool) {
+    auto y = pool.intern("y");
+    auto d1 = pool.intern("d1");
+    auto d2 = pool.intern("d2");
+    auto a = pool.intern("a");
+    auto b = pool.intern("b");
+    auto c = pool.intern("c");
+    auto one = flat.add_literal(1);
+    auto two = flat.add_literal(2);
+    auto three_c = flat.add_literal(3);
+    auto cvar = flat.add_variable(c);
+    auto inner = flat.add_let(c, three_c, cvar);
+    auto mid = flat.add_let(b, two, inner);
+    auto outer = flat.add_let(a, one, mid);
+    (void)flat.add_macrodef(d2, {y}, outer, false, true);
+    auto d2var = flat.add_variable(d2);
+    auto yvar = flat.add_variable(y);
+    std::array<aura::ast::NodeId, 1> d1_args{yvar};
+    auto d1_body = flat.add_call(d2var, d1_args);
+    (void)flat.add_macrodef(d1, {y}, d1_body, false, true);
+    auto d1call = flat.add_variable(d1);
+    auto three_root = flat.add_literal(3);
+    std::array<aura::ast::NodeId, 1> call_args{three_root};
+    flat.root = flat.add_call(d1call, call_args);
+}
+
+static void ac3651_1_gensym_ceiling_restore() {
+    std::println("\n--- #3651 AC1: gensym-ceiling after pass-0 splice restores ---");
+    reset_all();
+    grant_self_evo_production();
+    StringPool pool;
+    FlatAST flat;
+    fill_gensym_two_pass_macros(flat, pool);
+    const auto orig = flat.root;
+    const auto fp0 = tree_fp(flat, orig);
+    aura_test_set_max_gensym_map_size_for_test(2);
+    g_macro_hygiene_last_limit_reason.store(0, std::memory_order_relaxed);
+    auto out = macro_expand_all(flat, pool, orig, 8);
+    CHECK(out == orig, "3651 AC1: restore returns original_root");
+    CHECK(tree_fp(flat, out) == fp0, "3651 AC1: tree identical to pre-expand");
+    CHECK(g_macro_hygiene_last_limit_reason.load(std::memory_order_relaxed) ==
+              aura::compiler::macro_exp::kHygieneLimitReasonGensymCeiling,
+          "3651 AC1: reason gensym-ceiling");
+    const auto* rs = hygiene_last_limit_reason_string();
+    CHECK(rs != nullptr && std::string(rs) == "hygiene-gensym-ceiling",
+          "3651 AC1: reason string stable");
+    aura_test_set_max_gensym_map_size_for_test(0);
+    reset_all();
+}
+
+static void ac3651_2_deny_codes_widened_predicate() {
+    std::println("\n--- #3651 AC2: steal/cap codes covered by the widened guard ---");
+    const auto cpp = read_file("src/compiler/macro_expansion.cpp");
+    // The widened guard covers every inner deny code via the predicate
+    // (depth/pass/steal/cap/gensym). Steal-abort / capability-deny need
+    // concurrent-fiber / capability machinery to fire end-to-end, so the
+    // codes are pinned at the predicate + reason-string level here.
+    CHECK(cpp.find("production_surface && any_expand && inner_expand_production_limit_deny()") !=
+              std::string::npos,
+          "3651 AC2: widened guard present");
+    CHECK(cpp.find("kHygieneLimitReasonStealAbort") != std::string::npos &&
+              cpp.find("kHygieneLimitReasonCapabilityDeny") != std::string::npos,
+          "3651 AC2: steal/cap codes in the predicate");
+    aura::compiler::macro_exp::note_hygiene_last_limit_reason(
+        aura::compiler::macro_exp::kHygieneLimitReasonStealAbort);
+    const auto* rs1 = hygiene_last_limit_reason_string();
+    CHECK(rs1 != nullptr && std::string(rs1) == "steal-abort",
+          "3651 AC2: steal-abort reason string");
+    aura::compiler::macro_exp::note_hygiene_last_limit_reason(
+        aura::compiler::macro_exp::kHygieneLimitReasonCapabilityDeny);
+    const auto* rs2 = hygiene_last_limit_reason_string();
+    CHECK(rs2 != nullptr && std::string(rs2) == "capability-deny",
+          "3651 AC2: capability-deny reason string");
+    aura::compiler::macro_exp::note_hygiene_last_limit_reason(
+        aura::compiler::macro_exp::kHygieneLimitReasonGensymCeiling);
+    const auto* rs3 = hygiene_last_limit_reason_string();
+    CHECK(rs3 != nullptr && std::string(rs3) == "hygiene-gensym-ceiling",
+          "3651 AC2: gensym reason not rewritten to pass-limit");
+    reset_all();
+}
+
+static void ac3651_3_depth_pass_still_restore() {
+    std::println("\n--- #3651 AC3: depth-limit / pass-limit still restore (#3062 belt) ---");
+    reset_all();
+    grant_self_evo_production();
+    CHECK(set_hygiene_depth_cap(1), "3651 AC3 depth cap=1");
+    {
+        StringPool pool;
+        FlatAST flat;
+        fill_two_pass_macros(flat, pool);
+        const auto orig = flat.root;
+        const auto fp0 = tree_fp(flat, orig);
+        g_macro_hygiene_last_limit_reason.store(0, std::memory_order_relaxed);
+        auto out = macro_expand_all(flat, pool, orig, 8);
+        CHECK(out == orig, "3651 AC3: depth-limit restores");
+        CHECK(tree_fp(flat, out) == fp0, "3651 AC3: depth tree identical");
+        CHECK(g_macro_hygiene_last_limit_reason.load(std::memory_order_relaxed) ==
+                  aura::compiler::macro_exp::kHygieneLimitReasonDepthLimit,
+              "3651 AC3: reason 2 (depth) via widened predicate");
+    }
+    reset_hygiene_runtime_caps_for_test();
+    CHECK(set_hygiene_pass_cap(1), "3651 AC3 pass cap=1");
+    {
+        StringPool pool;
+        FlatAST flat;
+        fill_two_pass_macros(flat, pool);
+        const auto orig = flat.root;
+        g_macro_hygiene_last_limit_reason.store(0, std::memory_order_relaxed);
+        auto out = macro_expand_all(flat, pool, orig, 8);
+        CHECK(out == orig, "3651 AC3: pass-limit restores");
+        CHECK(g_macro_hygiene_last_limit_reason.load(std::memory_order_relaxed) ==
+                  aura::compiler::macro_exp::kHygieneLimitReasonPassLimit,
+              "3651 AC3: reason 3 (pass belt untouched)");
+    }
+    reset_hygiene_runtime_caps_for_test();
+    reset_all();
+}
+
+static void ac3651_4_soft_half_write() {
+    std::println("\n--- #3651 AC4: Soft/Off keeps the historical half-write ---");
+    reset_all();
+    CHECK(set_hygiene_pass_cap(1), "3651 AC4 pass cap=1");
+    StringPool pool;
+    FlatAST flat;
+    fill_two_pass_macros(flat, pool);
+    const auto orig = flat.root;
+    g_macro_hygiene_last_limit_reason.store(0, std::memory_order_relaxed);
+    auto out = macro_expand_all(flat, pool, orig, 8);
+    CHECK(out != orig, "3651 AC4: Soft keeps half-expand (no restore)");
+    reset_hygiene_runtime_caps_for_test();
+    reset_all();
+}
+
+static void ac3651_5_source_wiring() {
+    std::println("\n--- #3651 AC5/AC6: source wiring + single-clone paths intact ---");
+    const auto cpp = read_file("src/compiler/macro_expansion.cpp");
+    CHECK(cpp.find("Issue #3651: the deny codes are wider than depth-limit") != std::string::npos,
+          "3651 AC5: guard cite");
+    CHECK(cpp.find("production_surface && any_expand && inner_expand_production_limit_deny()") !=
+              std::string::npos,
+          "3651 AC5: widened guard");
+    // Single-clone try_restore paths (#3183) untouched — the predicate is
+    // also consulted at the clone walk / restamp sites.
+    CHECK(cpp.find("kHygieneLimitReasonGensymCeiling") != std::string::npos &&
+              cpp.find("kHygieneLimitReasonStealAbort") != std::string::npos &&
+              cpp.find("kHygieneLimitReasonCapabilityDeny") != std::string::npos,
+          "3651 AC5: predicate covers all codes");
+    // The #3062 pass-limit loop-end belt stays.
+    CHECK(cpp.find("note_hygiene_last_limit_reason(kHygieneLimitReasonPassLimit)") !=
+              std::string::npos,
+          "3651 AC5: pass-limit belt");
+    CHECK(cpp.find("hygiene-gensym-ceiling") != std::string::npos &&
+              cpp.find("steal-abort") != std::string::npos &&
+              cpp.find("capability-deny") != std::string::npos,
+          "3651 AC5: reason strings stable");
+    const auto build = read_file("build.py");
+    CHECK(build.find("check_expand_all_deny_codes_3651") != std::string::npos,
+          "3651 AC6: build.py wires linter");
+    const std::string issue_artifact = std::string("test_issue_") + "3651";
+    CHECK(cpp.find(issue_artifact) == std::string::npos, "3651 AC6: no tests/issues artifact");
+    CHECK(read_file("docs/design/3651-expand-all-deny-restore.md").empty(),
+          "3651 AC6: no docs/design/");
+    reset_all();
+}
+
 static void ac3062_no_boundary_refuse_partial() {
     std::println("\n--- #3062 AC1: no-boundary production refuse half-expand ---");
     reset_all();
@@ -927,6 +1094,12 @@ int run_test_macro_hygiene_limits() {
     ac3029_query_and_linter();
     std::println("\n=== Issue #3062: no-boundary pass-limit refuse-partial ===");
     ac3062_no_boundary_refuse_partial();
+    std::println("\n=== Issue #3651: expand_all restores on every inner deny code ===");
+    ac3651_1_gensym_ceiling_restore();
+    ac3651_2_deny_codes_widened_predicate();
+    ac3651_3_depth_pass_still_restore();
+    ac3651_4_soft_half_write();
+    ac3651_5_source_wiring();
     ac3062_boundary_restore();
     ac3062_soft_off_half_expand();
     ac3062_source_wiring();
