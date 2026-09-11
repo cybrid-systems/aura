@@ -3651,9 +3651,18 @@ bool InferenceEngine::is_coercible(TypeId from, TypeId to) {
     if (reg_.linear_of(from) != nullptr || reg_.linear_of(to) != nullptr) {
         return false;
     }
-    // Dynamic coerce to/from anything (gradual core, always allowed)
-    if (from == reg_.dynamic_type() || to == reg_.dynamic_type())
+    // Dynamic coerce to/from anything (gradual core).
+    // Issue #3662: Production / Strict must not re-open CastOp after
+    // #3622 unify already rejected Dynamic~T. Soft / Balanced keep
+    // the gradual core. Linear~Dynamic already returned false above
+    // (#117). Explicit NodeTag::Coercion / (cast ...) does not use
+    // this helper.
+    if (from == reg_.dynamic_type() || to == reg_.dynamic_type()) {
+        if (effective_gradual_permissiveness() == GradualPermissiveness::Strict &&
+            (strict_ || aura::compiler::typed_audit::production_defaults_active()))
+            return false;
         return true;
+    }
     // Issue #79: In strict mode, cross-type coercions are TypeErrors,
     // not silent "Notes" that pass through has_errors() == false. We
     // only allow numeric narrowing (Float → Int) because that's a real

@@ -2240,6 +2240,130 @@ int main() {
             apply_dev_audit_defaults();
         }
 
+        // ── Issue #3662: Production is_coercible(Dynamic, T) matches unify
+        // reject — check_flat must not insert CastOp after #3622. ──
+        {
+            using aura::compiler::ConstraintSystem;
+            using aura::compiler::GradualPermissiveness;
+            using aura::compiler::InferenceEngine;
+            using aura::compiler::TypeChecker;
+            using aura::compiler::typed_audit::apply_dev_audit_defaults;
+            using aura::compiler::typed_audit::apply_production_audit_defaults;
+            using aura::core::TypeRegistry;
+            using aura::diag::ErrorKind;
+
+            struct ProdScope {
+                ProdScope() { apply_production_audit_defaults(); }
+                ~ProdScope() { apply_dev_audit_defaults(); }
+            };
+
+            // AC1: Production is_coercible(Dynamic, Int) == false; Quote vs Int
+            // check_flat is TypeError and take_coercions has no site.
+            {
+                ProdScope prod;
+                TypeRegistry treg;
+                DiagnosticCollector diag;
+                InferenceEngine ie(treg, diag);
+                ie.set_strict(false);
+                ie.set_gradual_permissiveness(GradualPermissiveness::Strict);
+                if (!ie.is_coercible(treg.dynamic_type(), treg.int_type()) &&
+                    !ie.is_coercible(treg.int_type(), treg.dynamic_type())) {
+                    ++ts_passed;
+                    std::println("TS OK: ac3662_1_dynamic_int_not_coercible_prod");
+                } else {
+                    ++ts_failed;
+                    std::println(std::cerr, "TS FAIL: ac3662_1_dynamic_int_not_coercible_prod");
+                }
+
+                TypeChecker tc(treg);
+                tc.set_strict(false);
+                tc.set_gradual_permissiveness(GradualPermissiveness::Strict);
+                aura::diag::DiagnosticCollector d2;
+                aura::ast::ASTArena arena;
+                auto alloc = arena.allocator();
+                aura::ast::StringPool pool(alloc);
+                aura::ast::FlatAST flat(alloc);
+                auto pr = aura::parser::parse_to_flat("(: x Int (quote 1))", flat, pool);
+                if (pr.success && pr.root != aura::ast::NULL_NODE) {
+                    flat.root = pr.root;
+                    (void)tc.infer_flat(flat, pool, pr.root, d2);
+                }
+                bool saw_te = false;
+                for (const auto& d : d2.diagnostics()) {
+                    if (d.kind == ErrorKind::TypeError &&
+                        d.message.find("type mismatch") != std::string::npos)
+                        saw_te = true;
+                }
+                auto cm = tc.take_coercions();
+                if (saw_te && cm.empty()) {
+                    ++ts_passed;
+                    std::println("TS OK: ac3662_5_quote_check_typeerror_no_coercion");
+                } else {
+                    ++ts_failed;
+                    std::println(std::cerr,
+                                 "TS FAIL: ac3662_5_quote_check_typeerror_no_coercion te={} cm={}",
+                                 saw_te, cm.size());
+                }
+            }
+
+            // AC2: #3622 unify Dynamic~Int still false; Linear~Dynamic false.
+            {
+                ProdScope prod;
+                TypeRegistry treg;
+                ConstraintSystem cs(treg);
+                cs.set_unify_gradual_mode(GradualPermissiveness::Strict);
+                const auto lin = treg.register_linear(treg.int_type());
+                if (!cs.consistent_unify(treg.dynamic_type(), treg.int_type()) &&
+                    !cs.consistent_unify(treg.dynamic_type(), lin)) {
+                    ++ts_passed;
+                    std::println("TS OK: ac3662_2_unify_no_regress");
+                } else {
+                    ++ts_failed;
+                    std::println(std::cerr, "TS FAIL: ac3662_2_unify_no_regress");
+                }
+            }
+
+            // AC3: Soft is_coercible(Dynamic, Int)==true; Int~String still on.
+            {
+                apply_dev_audit_defaults();
+                TypeRegistry treg;
+                DiagnosticCollector diag;
+                InferenceEngine ie(treg, diag);
+                ie.set_strict(false);
+                ie.set_gradual_permissiveness(GradualPermissiveness::Balanced);
+                if (ie.is_coercible(treg.dynamic_type(), treg.int_type()) &&
+                    ie.is_coercible(treg.int_type(), treg.string_type())) {
+                    ++ts_passed;
+                    std::println("TS OK: ac3662_3_soft_dynamic_coercible");
+                } else {
+                    ++ts_failed;
+                    std::println(std::cerr, "TS FAIL: ac3662_3_soft_dynamic_coercible");
+                }
+            }
+
+            // AC4: Strict Float→Int still allowed; explicit Coercion tag
+            // does not use is_coercible (source-cite in linter).
+            {
+                ProdScope prod;
+                TypeRegistry treg;
+                DiagnosticCollector diag;
+                InferenceEngine ie(treg, diag);
+                ie.set_strict(true);
+                ie.set_gradual_permissiveness(GradualPermissiveness::Strict);
+                const auto fl = treg.lookup_type("Float");
+                if (ie.is_coercible(fl, treg.int_type()) &&
+                    !ie.is_coercible(treg.dynamic_type(), treg.int_type())) {
+                    ++ts_passed;
+                    std::println("TS OK: ac3662_4_float_int_strict_and_explicit_cast");
+                } else {
+                    ++ts_failed;
+                    std::println(std::cerr, "TS FAIL: ac3662_4_float_int_strict_and_explicit_cast");
+                }
+            }
+
+            apply_dev_audit_defaults();
+        }
+
         // ── Issue #3430: production_defaults forces Strict without set_strict ──
         {
             using aura::compiler::CompilerMetrics;
