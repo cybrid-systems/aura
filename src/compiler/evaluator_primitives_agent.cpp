@@ -4374,6 +4374,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             std::optional<aura::orch::AgentFailurePolicy> fail_pol;
             std::string addr_path;
             std::optional<std::int64_t> addr_child;
+            bool tree_join = false;
             for (std::size_t i = 0; i + 1 < a.size(); i += 2) {
                 auto k = orch_keyword_key(a[i]);
                 auto& val = a[i + 1];
@@ -4402,6 +4403,10 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                     else
                         p.on_join_fail = aura::orch::AgentFailureAction::ReportOnly;
                     fail_pol = p;
+                } else if ((k == "tree") && types::is_bool(val)) {
+                    // Issue #3643: optional tree join — default local
+                    // (#3496 AC1); true joins the whole subtree (AC2).
+                    tree_join = types::as_bool(val);
                 }
             }
             auto* scope = resolve_scope_addr(*root, addr_path, addr_child);
@@ -4409,7 +4414,9 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 return make_scope_addr_fail(2588, "invalid-path",
                                             "orch:scope-join-all: unknown :path / :child-index");
             }
-            const auto jr = scope->join_all(policy, fail_pol);
+            // Issue #3643: :tree #t joins the whole subtree (default local,
+            // #3496 AC1 — root join leaves descendants live).
+            const auto jr = scope->join_all(policy, fail_pol, tree_join);
             // Issue #3051: per-handle auto short-wait on the language
             // surface only (C++ join_all does not inject). Must run
             // before drop so handles_ are still live.
@@ -4423,24 +4430,39 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             std::int64_t must_wait_n = 0;
             std::int64_t reservation_held_n = 0;
             std::int64_t cleanup_pending_n = 0; // Issue #3272: SSOT second-wait owed
-            for (auto& hp : scope->handles_mut()) {
-                // Issue #3595: bounded retry budget (drain-scaled, #2227
-                // shape) — same SSOT wrapper as orch:agent-join.
-                auto_wait_us += aura::orch::maybe_auto_wait_reclaimed_production(
-                    hp, caller_passed_wait, aura::orch::reclaimed_retry_budget_ms(policy.drain_ms));
-                if (hp.wait_reclaimed_used)
-                    any_wait = true;
-                if (hp.wait_reclaimed_timeout)
-                    any_wait_timeout = true;
-                if (hp.reclaimed_deferred_cleanup ||
-                    (hp.fiber && hp.fiber->is_reclaimed() && !hp.fiber->is_done()))
-                    ++reclaimed_n;
-                if (hp.must_wait_reclaimed)
-                    ++must_wait_n;
-                if (hp.reserved_memory_bytes != 0)
-                    ++reservation_held_n;
-                if (hp.must_wait_reclaimed || hp.reclaimed_deferred_cleanup)
-                    ++cleanup_pending_n;
+            auto per_handle_3643 = [&](aura::orch::AgentScope& s) {
+                for (auto& hp : s.handles_mut()) {
+                    // Issue #3595: bounded retry budget (drain-scaled, #2227
+                    // shape) — same SSOT wrapper as orch:agent-join.
+                    auto_wait_us += aura::orch::maybe_auto_wait_reclaimed_production(
+                        hp, caller_passed_wait,
+                        aura::orch::reclaimed_retry_budget_ms(policy.drain_ms));
+                    if (hp.wait_reclaimed_used)
+                        any_wait = true;
+                    if (hp.wait_reclaimed_timeout)
+                        any_wait_timeout = true;
+                    if (hp.reclaimed_deferred_cleanup ||
+                        (hp.fiber && hp.fiber->is_reclaimed() && !hp.fiber->is_done()))
+                        ++reclaimed_n;
+                    if (hp.must_wait_reclaimed)
+                        ++must_wait_n;
+                    if (hp.reserved_memory_bytes != 0)
+                        ++reservation_held_n;
+                    if (hp.must_wait_reclaimed || hp.reclaimed_deferred_cleanup)
+                        ++cleanup_pending_n;
+                }
+            };
+            per_handle_3643(*scope);
+            if (tree_join) {
+                // Issue #3643: same per-handle pass across descendants,
+                // same walk order as the tree join.
+                const auto walk_tree = [&](auto&& self, aura::orch::AgentScope& s) -> void {
+                    for (std::size_t ci = 0; ci < s.child_count(); ++ci) {
+                        per_handle_3643(s.child_at(ci));
+                        self(self, s.child_at(ci));
+                    }
+                };
+                walk_tree(walk_tree, *scope);
             }
             // Issue #3208: capture before drop (empty join drops the slot).
             const auto join_fail_effective = scope->last_on_join_fail_effective();
@@ -4537,6 +4559,10 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 {"restart-ok", make_int(static_cast<std::int64_t>(restart_ok))},
                 {"schema-3250", make_int(aura::orch::kRestartNSpecBoundaryIssue)},
                 {"issue-3250", make_int(aura::orch::kRestartNSpecBoundaryIssue)},
+                // Issue #3643: tree join flag + stamp (additive; append).
+                {"tree", make_bool(tree_join)},
+                {"schema-3643", make_int(aura::orch::kJoinAllTreeJoinIssue)},
+                {"issue-3643", make_int(aura::orch::kJoinAllTreeJoinIssue)},
             };
             return build_orch_hash(kv);
         });
