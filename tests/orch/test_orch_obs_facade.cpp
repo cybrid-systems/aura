@@ -643,10 +643,12 @@ int run_test_orch_obs_facade() {
         const auto reject0 =
             g_mf_mailbox_stats.handoff_reject_total.load(std::memory_order_relaxed);
         auto got = agent_recv(h, /*wait=*/false, /*timeout_ms=*/0);
-        CHECK(got.has_value(), "3565 AC1: popped (queue not stuck)");
-        CHECK(got->payload.empty(), "3565 AC1: stale stable-ref payload cleared");
-        CHECK(got->held_ref_token.has_value() && !got->handoff_completed,
-              "3565 AC1: flags remain for Aura typed fail");
+        // Issue #3642: stale held_ref is no longer surfaced as a success —
+        // nullopt for the C++ host; the stale signal rides the handle for
+        // the Aura typed fail.
+        CHECK(!got.has_value(), "3642 AC1: stale recv is nullopt (not a success)");
+        CHECK(h.last_recv_stale_handoff, "3642 AC1: stale signal rides the handle");
+        h.last_recv_stale_handoff = false;
         CHECK(g_orch_module_stats.agents_recv.load(std::memory_order_relaxed) == recv0,
               "3565 AC1: agents_recv not counted as success");
         CHECK(g_mf_mailbox_stats.handoff_reject_total.load(std::memory_order_relaxed) >=
@@ -706,8 +708,119 @@ int run_test_orch_obs_facade() {
         apply_dev_audit_defaults();
     }
 
-    std::println("\n=== #2589+#2636+2884+#3013+#3212+#3251+#3336+#3565: {}/{} checks passed ===",
-                 g_passed, g_passed + g_failed);
+    // ── #3642: stale held_ref consumes as nullopt (mailbox level + helper) ──
+    {
+        using aura::compiler::typed_audit::apply_dev_audit_defaults;
+        using aura::compiler::typed_audit::apply_production_audit_defaults;
+        using aura::orch::agent_recv;
+        using aura::orch::agent_send;
+        using aura::orch::AgentHandle;
+        using aura::orch::stamp_mail_message_handoff_completed;
+        using aura::serve::Fiber;
+        using aura::serve::mf_mailbox::g_mf_mailbox_stats;
+        using aura::serve::mf_mailbox::MailMessage;
+        using aura::serve::mf_mailbox::MultiFiberMailbox;
+        using aura::serve::mf_mailbox::PushStatus;
+
+        std::println("\n--- #3642 AC1: raw mailbox recv/try_pop consume stale as empty ---");
+        apply_production_audit_defaults();
+        AgentHandle h3642;
+        h3642.ok = true;
+        auto mb = std::make_shared<MultiFiberMailbox>(/*high_water=*/64);
+        h3642.mailbox = mb;
+        MailMessage stamped3642;
+        stamped3642.payload = "stable-ref:11:1";
+        stamp_mail_message_handoff_completed(stamped3642, 11);
+        CHECK(agent_send(h3642, std::move(stamped3642)) == PushStatus::Ok,
+              "3642 AC1: stamped push Ok");
+        Fiber dummy3642([] {});
+        mb->for_each_pending_held_ref_for_fiber(&dummy3642, [](auto& m) {
+            if (m.handoff_completed) {
+                m.handoff_completed = false;
+                aura::serve::mf_mailbox::bump_held_ref_stale_after_steal();
+            }
+        });
+        const auto rejects0 =
+            g_mf_mailbox_stats.handoff_reject_total.load(std::memory_order_relaxed);
+        // Raw C++ mailbox recv (no orchestrator layer): stale is nullopt.
+        auto raw = mb->recv(/*wait=*/false, /*timeout_ms=*/0);
+        CHECK(!raw.has_value(), "3642 AC1: raw mailbox recv is nullopt on stale");
+        CHECK(g_mf_mailbox_stats.handoff_reject_total.load(std::memory_order_relaxed) >=
+                  rejects0 + 1,
+              "3642 AC1: handoff_reject_total bumped on raw consume");
+        // Queue not jammed: a later plain message still pops.
+        MailMessage later3642;
+        later3642.payload = "after-stale-3642";
+        CHECK(agent_send(h3642, std::move(later3642)) == PushStatus::Ok,
+              "3642 AC1: later plain push");
+        auto raw2 = mb->recv(/*wait=*/false, /*timeout_ms=*/0);
+        CHECK(raw2.has_value() && raw2->payload == "after-stale-3642",
+              "3642 AC1: later message pops after stale consume");
+        // try_pop: stale consumed as false.
+        MailMessage stamped3642b;
+        stamped3642b.payload = "stable-ref:12:1";
+        stamp_mail_message_handoff_completed(stamped3642b, 12);
+        CHECK(agent_send(h3642, std::move(stamped3642b)) == PushStatus::Ok,
+              "3642 AC1: second stamped push Ok");
+        mb->for_each_pending_held_ref_for_fiber(&dummy3642, [](auto& m) {
+            if (m.handoff_completed) {
+                m.handoff_completed = false;
+                aura::serve::mf_mailbox::bump_held_ref_stale_after_steal();
+            }
+        });
+        MailMessage popped3642;
+        CHECK(!mb->try_pop(popped3642), "3642 AC1: try_pop on stale returns false");
+        // AC2 plumbing: agent_recv rides the handle flag for the Aura typed
+        // fail (the handoff-required hash itself is asserted by source-cite
+        // below, same as #3565 AC2).
+        MailMessage stamped3642c;
+        stamped3642c.payload = "stable-ref:13:1";
+        stamp_mail_message_handoff_completed(stamped3642c, 13);
+        CHECK(agent_send(h3642, std::move(stamped3642c)) == PushStatus::Ok,
+              "3642 AC2: third stamped push Ok");
+        mb->for_each_pending_held_ref_for_fiber(&dummy3642, [](auto& m) {
+            if (m.handoff_completed) {
+                m.handoff_completed = false;
+                aura::serve::mf_mailbox::bump_held_ref_stale_after_steal();
+            }
+        });
+        auto helper_got = agent_recv(h3642, /*wait=*/false, /*timeout_ms=*/0);
+        CHECK(!helper_got.has_value(), "3642 AC2: agent_recv stale is nullopt (AC1)");
+        CHECK(h3642.last_recv_stale_handoff, "3642 AC2: handle flag set for Aura typed fail");
+        h3642.last_recv_stale_handoff = false;
+
+        std::println("\n--- #3642 AC6: source-cite + no invent ---");
+        const auto mb_src = read_file("src/serve/multi_fiber_mailbox.h");
+        const auto spawn_src = read_file("src/orch/agent_spawn.h");
+        const auto prim_src = read_file("src/compiler/evaluator_primitives_agent.cpp");
+        const auto build_src = read_file("build.py");
+        CHECK(mb_src.find("Issue #3642") != std::string::npos, "3642 AC6: mailbox cites #3642");
+        CHECK(mb_src.find("*stale_handoff = true") != std::string::npos,
+              "3642 AC6: recv stale flag out-param");
+        CHECK(mb_src.find("(void)maybe_clear_stale_held_ref_on_recv") == std::string::npos,
+              "3642 AC6: discarded-return consume sites gone");
+        CHECK(spawn_src.find("bool last_recv_stale_handoff = false") != std::string::npos,
+              "3642 AC6: handle flag field");
+        CHECK(spawn_src.find("Issue #3642") != std::string::npos,
+              "3642 AC6: agent_recv cites #3642");
+        CHECK(prim_src.find("hp->last_recv_stale_handoff") != std::string::npos,
+              "3642 AC6: primitive typed fail rides the flag");
+        CHECK(prim_src.find("handoff-required") != std::string::npos,
+              "3642 AC6: handoff-required surface unchanged (#3565 AC2)");
+        CHECK(build_src.find("check_recv_stale_nullopt_3642") != std::string::npos,
+              "3642 AC6: build.py wires linter");
+        CHECK(read_file("tests/orch/test_issue_3642.cpp").empty(),
+              "3642 AC6: no tests/orch/test_issue file");
+        CHECK(read_file("tests/issues/test_issue_3642.cpp").empty(),
+              "3642 AC6: no tests/issues file");
+        CHECK(read_file("docs/design/3642-recv-stale-nullopt.md").empty(),
+              "3642 AC6: no docs/design file");
+        apply_dev_audit_defaults();
+    }
+
+    std::println(
+        "\n=== #2589+#2636+2884+#3013+#3212+#3251+#3336+#3565+#3642: {}/{} checks passed ===",
+        g_passed, g_passed + g_failed);
     return g_failed == 0 ? 0 : 1;
 }
 

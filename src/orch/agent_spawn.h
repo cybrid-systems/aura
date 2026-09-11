@@ -1533,6 +1533,10 @@ struct AgentHandle {
     std::shared_ptr<AgentLiveness> liveness; // shared body ↔ helper ↔ supervisor
     // True when a Scheduler-owned keepalive helper fiber was started (#2159).
     bool keepalive_active = false;
+    // Issue #3642: last agent_recv consumed a stale held_ref (production
+    // steal-cleared; nullopt to the host, not a success). Consumed once by
+    // the Aura orch:agent-recv typed handoff-required surface (#3565 AC2).
+    bool last_recv_stale_handoff = false;
     // Issue #2159: fiber-native helper (null when disabled / spawn failed).
     // Joined by join_agent after body; cancelled on stop / dtor (no host thread).
     serve::Fiber* keepalive_helper = nullptr;
@@ -3863,10 +3867,24 @@ agent_recv(AgentHandle& h, bool wait = true, int timeout_ms = -1) {
         g_orch_module_stats.recv_empty_total.fetch_add(1, std::memory_order_relaxed);
         return std::nullopt;
     }
-    auto m = h.mailbox->recv(wait, timeout_ms, h.id);
+    bool stale_handoff = false;
+    auto m = h.mailbox->recv(wait, timeout_ms, h.id, &stale_handoff);
+    if (stale_handoff) {
+        // Issue #3642: stale held_ref is not a successful recv (AC1) — bare
+        // C++ hosts see nullopt. The signal rides the handle so the Aura
+        // orch:agent-recv typed handoff-required (#3565 AC2) still fires.
+        // Consume-side counters already bumped by the mailbox gate.
+        h.last_recv_stale_handoff = true;
+        g_orch_module_stats.recv_empty_total.fetch_add(1, std::memory_order_relaxed);
+        return std::nullopt;
+    }
+    h.last_recv_stale_handoff = false;
     if (m) {
         // Issue #3565: production unstamped held_ref is not a successful
         // recv (mailbox already cleared payload). Soft delivers + counts.
+        // (#3642: the mailbox consumes stale as nullopt, so this defensive
+        // path only fires when the mailbox probe and the typed-audit probe
+        // disagree; agents_recv stays honest either way.)
         const bool stale_held = m->held_ref_token.has_value() && !m->handoff_completed &&
                                 aura::compiler::typed_audit::production_defaults_active();
         if (!stale_held)

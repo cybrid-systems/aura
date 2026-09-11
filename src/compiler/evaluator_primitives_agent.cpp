@@ -5057,12 +5057,18 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             if (!wait && timeout_ms < 0)
                 timeout_ms = 0;
             auto msg = aura::orch::agent_recv(*hp, wait, timeout_ms);
-            // Issue #3565: production unstamped held_ref after steal is
-            // not a successful payload (mailbox cleared the stale
-            // stable-ref string). Typed handoff-required, reuse send-side
-            // deny-class. Soft delivers as today.
-            if (msg && msg->held_ref_token.has_value() && !msg->handoff_completed &&
-                aura::compiler::typed_audit::production_defaults_active()) {
+            // Issue #3565 + #3642: production unstamped/stale held_ref after
+            // steal is not a successful payload (mailbox cleared the stale
+            // stable-ref string; #3642 consumes stale as nullopt at the
+            // mailbox and rides the handle flag). Typed handoff-required,
+            // reuse send-side deny-class. Soft delivers as today.
+            const bool stale_handoff_surface =
+                (msg && msg->held_ref_token.has_value() && !msg->handoff_completed &&
+                 aura::compiler::typed_audit::production_defaults_active()) ||
+                (!msg && hp->last_recv_stale_handoff &&
+                 aura::compiler::typed_audit::production_defaults_active());
+            if (stale_handoff_surface) {
+                hp->last_recv_stale_handoff = false; // consumed once
                 auto sidx = ev.string_heap_.size();
                 ev.string_heap_.push_back("handoff-required");
                 auto pidx = ev.string_heap_.size();
