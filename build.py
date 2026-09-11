@@ -5400,6 +5400,20 @@ def cmd_lint():
             "Issue #3657 unslotted string-edge parity linter failed — run python3 scripts/coverage/checks/check_unslotted_string_edge_parity_3657.py"
         )
         return r
+    # Issue #3658: type dirty txn + mirror before IR cascade for
+    # non-rebind structural mutate. Soft skips. Complementary to #3655.
+    # Extends type_dirty_cone_dep_graph + type_dirty_txn_order; linter
+    # after #3657.
+    tdt3658_script = COVERAGE_CHECKS / "check_type_dirty_txn_before_cascade_3658.py"
+    if not tdt3658_script.exists():
+        fail(f"missing {tdt3658_script}")
+        return 1
+    r = run([sys.executable, str(tdt3658_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3658 type dirty txn before cascade linter failed — run python3 scripts/coverage/checks/check_type_dirty_txn_before_cascade_3658.py"
+        )
+        return r
     # Issue #3419: JIT typed-entry on every compiled function (anonymous)
     # included). Stub typed-entry is not production (ABI bit 8). Soft omit.
     # Extends persist-rehydrate + steal-complete; linter after #3343.

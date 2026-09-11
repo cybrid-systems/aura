@@ -3855,6 +3855,15 @@ public:
     [[nodiscard]] bool occurrence_fp_staged() const noexcept {
         return expected_occurrence_fp_staged_;
     }
+    // Issue #3658: this-boundary type dirty txn (invalidate → re-infer →
+    // mirror) already ran. rebind/set-body set it in-body; Guard persist-
+    // front sets it for other prims. Distinguishes "type cone mirrored"
+    // from persist SDO staging (#3655).
+    void note_type_dirty_txn_this_boundary() noexcept { type_dirty_txn_this_boundary_ = true; }
+    void clear_type_dirty_txn_this_boundary() noexcept { type_dirty_txn_this_boundary_ = false; }
+    [[nodiscard]] bool type_dirty_txn_this_boundary() const noexcept {
+        return type_dirty_txn_this_boundary_;
+    }
     [[nodiscard]] bool last_type_solve_solved() const noexcept { return last_type_solve_solved_; }
     void bump_occurrence_persist_fingerprint_mismatch() noexcept {
         if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
@@ -15638,6 +15647,8 @@ private:
     // Issue #3655: infer/SDO ran this boundary (even when fp==0).
     // Append-only at struct end — do not insert mid-Evaluator.
     bool expected_occurrence_fp_staged_ = false;
+    // Issue #3658: type dirty txn + mirror ran this outermost boundary.
+    bool type_dirty_txn_this_boundary_ = false;
 };
 
 

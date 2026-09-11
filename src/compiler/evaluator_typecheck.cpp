@@ -299,6 +299,9 @@ bool Evaluator::run_post_mutate_typecheck_no_lock() {
             const auto reinferred = tc.infer_flat_partial_with_dirty_txn(
                 *workspace_flat_, *workspace_pool_, log.back(), diag);
             (void)reinferred;
+            // Issue #3658: this-boundary type cone is now the IR-cascade
+            // authority (do not re-run on Guard persist-front / rebind).
+            note_type_dirty_txn_this_boundary();
             // Issue #2180/#2220: stash partial CS for composite_txn_commit; with
             // persistent TC the same solve_delta_cs_ is reused next call.
             stash_partial_constraint_state(static_cast<void*>(&tc));
