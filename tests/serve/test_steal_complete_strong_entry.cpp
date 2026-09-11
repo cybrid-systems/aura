@@ -29,6 +29,9 @@ import aura.compiler.value;
 extern "C" int aura_jit_ir_typed_entry_commit_readiness_ok(void);
 extern "C" int aura_jit_linear_move_drop_elision_ok(void);
 extern "C" int aura_jit_linear_post_mutate_enforce(std::uint32_t env_id);
+extern "C" void aura_set_linear_post_mutate_enforce_fn(int (*fn)(void*, std::uint32_t),
+                                                       void* user_data);
+extern "C" void aura_jit_clear_linear_env_context(void);
 
 namespace {
 
@@ -58,6 +61,101 @@ static std::int64_t href(CompilerService& cs, const char* key) {
 }
 
 } // namespace
+
+// ── Issue #3654: unset linear_post_mutate_enforce callback is unsafe ──
+//   AC1: Production/Full + no host callback → enforce returns 1
+//   AC2: Soft / Off → 0 (pass-through)
+//   AC3: registered callback still 0=safe / 1=unsafe (strong bridge only)
+//   AC4: typed-entry and Move/Drop elision stay AND (not OR)
+//   AC5: this suite + persist-rehydrate; no invent / docs / new query key
+namespace {
+static int s_linear_cb_hits = 0;
+static int ac3654_cb_ok(void* /*user*/, std::uint32_t /*env*/) {
+    ++s_linear_cb_hits;
+    return 0;
+}
+static int ac3654_cb_bad(void* /*user*/, std::uint32_t /*env*/) {
+    ++s_linear_cb_hits;
+    return 1;
+}
+} // namespace
+
+static void ac3654_linear_post_mutate_unset_fail_closed() {
+    std::println("\n--- #3654: unset linear_post_mutate_enforce fail-closed ---");
+    const auto br = read_file("src/compiler/aura_jit_bridge.cpp");
+    const auto stub = read_file("src/compiler/aura_jit_bridge_stub.cpp");
+    const auto hdr = read_file("src/compiler/aura_jit_bridge.h");
+    const auto tma = read_file("src/compiler/typed_mutation_audit.h");
+    const auto jit = read_file("src/compiler/aura_jit.cpp");
+    CHECK(br.find("Issue #3654") != std::string::npos, "3654 AC5: strong cite");
+    CHECK(br.find("production_hard_face_active()") != std::string::npos,
+          "3654 AC1: Production/Full hard-face");
+    CHECK(stub.find("Issue #3343 / #3654") != std::string::npos, "3654 AC2: stub cite");
+    CHECK(hdr.find("Production/Full + no callback") != std::string::npos, "3654: header contract");
+
+    aura_jit_clear_linear_env_context();
+    s_linear_cb_hits = 0;
+    aura_set_linear_post_mutate_enforce_fn(&ac3654_cb_ok, nullptr);
+    (void)aura_jit_linear_post_mutate_enforce(1);
+    const bool strong = s_linear_cb_hits > 0;
+    aura_set_linear_post_mutate_enforce_fn(nullptr, nullptr);
+
+    {
+        auto& pda =
+            aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active;
+        const auto saved_pda = pda.load(std::memory_order_relaxed);
+        const auto saved_st = aura::compiler::typed_audit::get_strategy();
+        pda.store(0, std::memory_order_relaxed);
+        aura::compiler::typed_audit::set_strategy(aura::compiler::typed_audit::AuditStrategy::Off);
+        CHECK(aura_jit_linear_post_mutate_enforce(0) == 0,
+              "3654 AC2: Soft unset callback pass-through");
+        CHECK(aura_jit_linear_post_mutate_enforce(0xFFFFFFFFu) == 0,
+              "3654 AC2: Soft unset + null env pass-through");
+        pda.store(1, std::memory_order_relaxed);
+        CHECK(aura_jit_linear_post_mutate_enforce(0) == 1,
+              "3654 AC1: production unset callback unsafe");
+        CHECK(aura_jit_linear_post_mutate_enforce(0xFFFFFFFFu) == 1,
+              "3654 AC1: production unset + null env unsafe");
+        pda.store(0, std::memory_order_relaxed);
+        aura::compiler::typed_audit::set_strategy(aura::compiler::typed_audit::AuditStrategy::Full);
+        if (strong) {
+            CHECK(aura_jit_linear_post_mutate_enforce(0) == 1,
+                  "3654 AC1: Full strategy unset callback unsafe");
+        }
+        pda.store(saved_pda, std::memory_order_relaxed);
+        aura::compiler::typed_audit::set_strategy(saved_st);
+    }
+
+    if (strong) {
+        auto& pda =
+            aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active;
+        const auto saved_pda = pda.load(std::memory_order_relaxed);
+        pda.store(1, std::memory_order_relaxed);
+        s_linear_cb_hits = 0;
+        aura_set_linear_post_mutate_enforce_fn(&ac3654_cb_ok, nullptr);
+        CHECK(aura_jit_linear_post_mutate_enforce(1) == 0,
+              "3654 AC3: registered callback safe stays 0");
+        CHECK(s_linear_cb_hits >= 1, "3654 AC3: registered callback invoked");
+        aura_set_linear_post_mutate_enforce_fn(&ac3654_cb_bad, nullptr);
+        s_linear_cb_hits = 0;
+        CHECK(aura_jit_linear_post_mutate_enforce(1) == 1,
+              "3654 AC3: registered callback unsafe stays 1");
+        pda.store(saved_pda, std::memory_order_relaxed);
+    }
+    aura_set_linear_post_mutate_enforce_fn(nullptr, nullptr);
+    aura_jit_clear_linear_env_context();
+
+    CHECK(tma.find("if (!linear_ir_fastpath_try_skip())") != std::string::npos &&
+              tma.find("if (!cr.would_allow_commit)") != std::string::npos,
+          "3654 AC4: elision still ANDs fast-path + live commit_readiness");
+    CHECK(jit.find("CreateOr(is_unsafe, lin_unsafe)") != std::string::npos,
+          "3654 AC4: #3616 anon still emits linear_post_mutate_enforce");
+    CHECK(read_file("tests/serve/test_issue_3654.cpp").empty(), "3654 AC5: no invent");
+    CHECK(read_file("docs/design/3654-jit-linear-post-mutate-unset.md").empty(),
+          "3654 AC5: no docs/design");
+    CHECK(br.find("schema-3654") == std::string::npos && br.find("g_3654_") == std::string::npos,
+          "3654 AC5: no new query key");
+}
 
 // ── Issue #3619: no-edge force + still-held = production residual ──
 //   AC1: production + latched + no-edge counter != 0 + snapshot held →
@@ -662,8 +760,10 @@ int run_test_steal_complete_strong_entry() {
     }
 
     ac3619_no_edge_held_residual();
-    std::println("\n=== #2377 + #2955 + #3098 + #3195 + #3343 results: {} passed, {} failed ===",
-                 g_passed, g_failed);
+    ac3654_linear_post_mutate_unset_fail_closed();
+    std::println(
+        "\n=== #2377 + #2955 + #3098 + #3195 + #3343 + #3654 results: {} passed, {} failed ===",
+        g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
 

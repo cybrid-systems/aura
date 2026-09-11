@@ -3356,8 +3356,28 @@ extern "C" int aura_jit_linear_post_mutate_enforce(std::uint32_t env_id) {
     std::uint32_t id = env_id;
     if (id == kLinearEnvNull)
         id = g_linear_env_id.load(std::memory_order_acquire);
-    if (!g_linear_enforce_fn || id == kLinearEnvNull)
-        return 0; // no callback / no context → pass-through (safe)
+    if (!g_linear_enforce_fn || id == kLinearEnvNull) {
+        // Issue #3654: Production/Full — missing host callback or env
+        // context is unsafe (deopt). Soft/Off: pass-through (one hard-face
+        // load). Do not treat unset as safe: native can skip Evaluator
+        // linear revalidate (#1540 residual).
+        if (aura::compiler::typed_audit::production_hard_face_active()) {
+            if (aot_metrics()) {
+                aot_metrics()->jit_linear_post_mutate_enforcements_total.fetch_add(
+                    1, std::memory_order_relaxed);
+                aot_metrics()->jit_linear_post_mutate_violations_total.fetch_add(
+                    1, std::memory_order_relaxed);
+                aot_metrics()->linear_ownership_violation_prevented.fetch_add(
+                    1, std::memory_order_relaxed);
+                aot_metrics()->compiler_live_closure_stale_prevented_total.fetch_add(
+                    1, std::memory_order_relaxed);
+            }
+            aura_jit_closure_record_stale_deopt();
+            aura_jit_closure_record_safe_fallback();
+            return 1;
+        }
+        return 0;
+    }
     if (aot_metrics()) {
         aot_metrics()->jit_linear_post_mutate_enforcements_total.fetch_add(
             1, std::memory_order_relaxed);

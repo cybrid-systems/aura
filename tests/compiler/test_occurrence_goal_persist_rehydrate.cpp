@@ -68,6 +68,9 @@ import aura.core.type;
 extern "C" int aura_jit_ir_typed_entry_commit_readiness_ok(void);
 extern "C" int aura_jit_linear_move_drop_elision_ok(void);
 extern "C" int aura_jit_linear_post_mutate_enforce(std::uint32_t env_id);
+extern "C" void aura_set_linear_post_mutate_enforce_fn(int (*fn)(void*, std::uint32_t),
+                                                       void* user_data);
+extern "C" void aura_jit_clear_linear_env_context(void);
 
 namespace {
 
@@ -2874,6 +2877,69 @@ static void ac3343_production_weak_abi_commit_readiness() {
     }
 }
 
+// ── Issue #3654: Production/Full unset callback is unsafe (strong JIT) ──
+//   AC1: production/Full + no host fn → enforce returns 1
+//   AC2: Soft → 0
+//   AC3: registered callback still 0/1 (strong only)
+//   AC4: elision AND typed-entry unchanged; #3616 anon still emits
+//   AC5: this suite + steal-complete; no invent / docs / new query key
+static int s_unset_cb_hits = 0;
+static int ac3654_cb_ok(void*, std::uint32_t) {
+    ++s_unset_cb_hits;
+    return 0;
+}
+static int ac3654_cb_bad(void*, std::uint32_t) {
+    ++s_unset_cb_hits;
+    return 1;
+}
+
+static void ac3654_linear_post_mutate_unset_fail_closed() {
+    std::println("\n--- #3654: unset linear_post_mutate_enforce Production fail-closed ---");
+    const auto br = read_file("src/compiler/aura_jit_bridge.cpp");
+    const auto stub = read_file("src/compiler/aura_jit_bridge_stub.cpp");
+    CHECK(br.find("Issue #3654") != std::string::npos, "3654: strong cite");
+    CHECK(br.find("production_hard_face_active()") != std::string::npos, "3654 AC1: hard-face");
+    CHECK(stub.find("#3654") != std::string::npos, "3654 AC2: stub still production-unsafe");
+
+    aura_jit_clear_linear_env_context();
+    aura_set_linear_post_mutate_enforce_fn(nullptr, nullptr);
+    {
+        apply_dev_audit_defaults();
+        CHECK(aura_jit_linear_post_mutate_enforce(0) == 0, "3654 AC2: Soft unset → 0");
+    }
+    {
+        apply_production_audit_defaults();
+        CHECK(aura_jit_linear_post_mutate_enforce(0) == 1, "3654 AC1: production unset → 1");
+        apply_dev_audit_defaults();
+    }
+
+    s_unset_cb_hits = 0;
+    aura_set_linear_post_mutate_enforce_fn(&ac3654_cb_ok, nullptr);
+    (void)aura_jit_linear_post_mutate_enforce(1);
+    if (s_unset_cb_hits > 0) {
+        apply_production_audit_defaults();
+        s_unset_cb_hits = 0;
+        CHECK(aura_jit_linear_post_mutate_enforce(1) == 0, "3654 AC3: callback safe");
+        aura_set_linear_post_mutate_enforce_fn(&ac3654_cb_bad, nullptr);
+        CHECK(aura_jit_linear_post_mutate_enforce(1) == 1, "3654 AC3: callback unsafe");
+        apply_dev_audit_defaults();
+    }
+    aura_set_linear_post_mutate_enforce_fn(nullptr, nullptr);
+    aura_jit_clear_linear_env_context();
+
+    const auto tma = read_file("src/compiler/typed_mutation_audit.h");
+    CHECK(tma.find("linear_move_drop_elision_ok") != std::string::npos &&
+              tma.find("ir_typed_entry_commit_readiness_ok") != std::string::npos,
+          "3654 AC4: elision and typed-entry remain separate AND gates");
+    const auto jit = read_file("src/compiler/aura_jit.cpp");
+    CHECK(jit.find("can_linear = hard_typed_entry && !can_epoch") != std::string::npos,
+          "3654 AC4: #3616 anon emit kept");
+    CHECK(read_file("tests/compiler/test_issue_3654.cpp").empty(), "3654 AC5: no invent");
+    CHECK(read_file("docs/design/3654-jit-linear-post-mutate-unset.md").empty(),
+          "3654 AC5: no docs/design");
+    CHECK(br.find("schema-3654") == std::string::npos, "3654 AC5: no new query key");
+}
+
 static void ac3419_jit_typed_entry_every_function() {
     std::println("\n--- #3419: JIT typed-entry on every compiled function ---");
     const auto jit = read_file("src/compiler/aura_jit.cpp");
@@ -3565,6 +3631,7 @@ int run_test_occurrence_goal_persist_rehydrate() {
     ac3186_jit_linear_move_drop_elision_probe();
     ac3224_ir_typed_entry_commit_readiness();
     ac3343_production_weak_abi_commit_readiness();
+    ac3654_linear_post_mutate_unset_fail_closed();
     ac3419_jit_typed_entry_every_function();
     ac3616_anon_linear_prologue_enforce();
     ac3446_linear_epoch_fence_elision_typed();

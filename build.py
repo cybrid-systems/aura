@@ -5360,6 +5360,19 @@ def cmd_lint():
             "Issue #3343 production weak-ABI commit_readiness linter failed — run python3 scripts/coverage/checks/check_production_weak_abi_commit_readiness_3343.py"
         )
         return r
+    # Issue #3654: Production/Full unset linear_post_mutate_enforce callback
+    # is unsafe (deopt). Soft / light-link stay pass-through. Extends
+    # persist-rehydrate + steal-complete; linter after #3343.
+    unset3654_script = COVERAGE_CHECKS / "check_jit_linear_post_mutate_unset_3654.py"
+    if not unset3654_script.exists():
+        fail(f"missing {unset3654_script}")
+        return 1
+    r = run([sys.executable, str(unset3654_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3654 JIT linear_post_mutate unset fail-closed linter failed — run python3 scripts/coverage/checks/check_jit_linear_post_mutate_unset_3654.py"
+        )
+        return r
     # Issue #3419: JIT typed-entry on every compiled function (anonymous
     # included). Stub typed-entry is not production (ABI bit 8). Soft omit.
     # Extends persist-rehydrate + steal-complete; linter after #3343.
