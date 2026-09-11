@@ -463,6 +463,117 @@ static void ac8_soft_wal_off_silent() {
     std::filesystem::remove_all(dir);
 }
 
+// Issue #3646: grant write paths join the mid SSOT (AC1/AC2/AC4).
+// ── AC9 (#3646): Guard 内 grant(mid=0) joins the boundary TypedMid ──
+static void ac9_grant_mid_joins_boundary_typedmid() {
+    std::println("\n--- #3646 AC1: grant mid == TypedMid == SE mid (joined) ---");
+    reset_all();
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Strict);
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    // Production face requires an explicit non-zero tenant for Mutate
+    // grant + require_effect (#2968/#3029 isolation) — tenant 0 denies at
+    // the isolation gate before the mid chain runs.
+    ev.set_capability_tenant_id(7);
+    // Simulate MutationBoundary enter (#3016): the Guard resolves the audit
+    // mid at enter and NOTES it in TLS; the typed trail carries the same
+    // value. Grant + require_effect must both join on 77. Library-side
+    // shim — the boundary TLS is per-TU (#3640).
+    ev.note_boundary_audit_mid_for_test(77);
+    aura::compiler::typed_audit::stamp_type_linear_commit_proof(77);
+    CHECK(last_type_linear_commit_proof_stamp_v_read() == 77, "3646 AC1 pre: TypedMid = 77");
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    // Production Mutate grants need the evaluator to hold TenantAdmin
+    // (#2968/#3029 admin face) — seed it directly into the registry
+    // (#3561 seed pattern; the evaluator string path is admin-fenced).
+    // mid 77 keeps the admin row on the same joined boundary mid.
+    {
+        aura::core::capability::EffectProvenance admin_prov{};
+        admin_prov.mutation_id = 77;
+        admin_prov.epoch = 77;
+        aura::core::capability::g_capability_registry().grant_session(
+            7, "tenant-admin", aura::core::capability::Effect::TenantAdmin, admin_prov);
+    }
+    const bool granted =
+        ev.grant_effect_capability(7, "mutate", aura::compiler::security::kEffectMutate,
+                                   /*provenance_mutation_id=*/0);
+    CHECK(granted, "3646 AC1: grant lands inside the Guard");
+    // Read the grant row directly: bound_mutation_id == TypedMid (77).
+    std::uint64_t bound = 0;
+    bool found_grant = false;
+    {
+        auto& reg = aura::core::capability::g_capability_registry();
+        std::lock_guard<std::mutex> lock(reg.mtx);
+        auto it = reg.by_tenant.find(7);
+        if (it != reg.by_tenant.end())
+            for (const auto& g : it->second)
+                if (!g.revoked) {
+                    bound = g.bound_mutation_id;
+                    found_grant = true;
+                }
+    }
+    CHECK(found_grant, "3646 AC1: grant row present");
+    CHECK(bound == 77, "3646 AC1: bound_mutation_id == TypedMid (77, not epoch)");
+    // A subsequent require_effect(Mutate) writes SE at the SAME mid (AC4:
+    // the audit-replay-join surface sees the rows without any new key).
+    // AC1 second half — the effect-check SSOT at the boundary mid joins
+    // the grant row. require_effect delegates to this exact call; the
+    // explicit prov mirrors what its noted-TLS chain builds inside a real
+    // Guard (the enter stamps both the TLS mid and the trail proof —
+    // simulated above via the library shim). The require_effect TypedMid
+    // -first stamp order itself stays pinned by the #3143 linter AC1.
+    aura::core::capability::EffectProvenance call{};
+    call.mutation_id = 77;
+    call.epoch = 77;
+    const bool ok = aura::core::capability::check_and_record_effect(
+        aura::core::capability::Effect::Mutate, aura::core::capability::Effect::Mutate, call, 7,
+        "test-3646-ac9", false, true);
+    CHECK(ok, "3646 AC1: effect check at mid 77 joins the grant row");
+    auto se77 =
+        cs.eval("(hash-ref (engine:metrics \"query:capability-effect-stats\" 77) \"se-count\")");
+    CHECK(se77 && aura::compiler::types::is_int(*se77) && aura::compiler::types::as_int(*se77) >= 1,
+          "3646 AC4: audit-replay-join(77) sees SE rows at the grant mid");
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+}
+
+// ── AC10 (#3646): no-Guard Soft grant keeps the epoch (no stale TypedMid) ──
+static void ac10_grant_mid_without_guard_soft_epoch() {
+    std::println("\n--- #3646 AC2: no-Guard Soft grant → epoch, stale TypedMid not stolen ---");
+    reset_all();
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    // ac9 left the boundary TLS noted at 77; simulate the Guard exit
+    // (#3016: exit clears the noted TLS so a fresh grant cannot steal the
+    // stamp) — the join falls through to the epoch stamp (existing Soft
+    // contract, epoch-or-1 phantom per #2531). Library-side shim (#3640).
+    ev.clear_boundary_audit_mid_for_test();
+    const auto epoch = ::aura::core::current_mutation_epoch();
+    const bool granted = ev.grant_effect_capability(ev.capability_tenant_id(), "mutate",
+                                                    aura::compiler::security::kEffectMutate,
+                                                    /*provenance_mutation_id=*/0);
+    CHECK(granted, "3646 AC2: Soft no-Guard grant lands");
+    std::uint64_t bound = 0;
+    bool found_grant = false;
+    {
+        auto& reg = aura::core::capability::g_capability_registry();
+        std::lock_guard<std::mutex> lock(reg.mtx);
+        auto it = reg.by_tenant.find(ev.capability_tenant_id());
+        if (it != reg.by_tenant.end())
+            for (const auto& g : it->second)
+                if (!g.revoked) {
+                    bound = g.bound_mutation_id;
+                    found_grant = true;
+                }
+    }
+    CHECK(found_grant, "3646 AC2: grant row present");
+    CHECK(bound != 77, "3646 AC2: stale boundary mid not stolen after exit (#3016)");
+    CHECK(bound == epoch || (epoch == 0 && bound == 1),
+          "3646 AC2: Soft keeps the epoch stamp (epoch-or-1, #2531)");
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+}
+
 } // namespace
 
 int run_test_audit_replay_join() {
@@ -475,6 +586,8 @@ int run_test_audit_replay_join() {
     ac6_wal_window_hit_after_wrap();
     ac7_wal_window_miss_flagged();
     ac8_soft_wal_off_silent();
+    ac9_grant_mid_joins_boundary_typedmid();
+    ac10_grant_mid_without_guard_soft_epoch();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }

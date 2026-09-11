@@ -6772,6 +6772,13 @@ public:
     // (ac3637-style flips from the test TU arm only the test TU's copy).
     void arm_production_audit_defaults_for_test() noexcept;
     void disarm_production_audit_defaults_for_test() noexcept;
+    // Issue #3646: library-side boundary-TLS shims — per-TU TLS (#3640)
+    // means tests must note/clear through this TU (the one grant_effect_*
+    // and require_effect read).
+    void note_boundary_audit_mid_for_test(std::uint64_t mid) noexcept;
+    void clear_boundary_audit_mid_for_test() noexcept;
+    std::uint64_t probe_join_mid_for_test() noexcept; // TEMP 3646DBG4
+    bool probe_production_active_for_test() noexcept; // TEMP 3646DBG4
     bool grant_effect_capability(std::uint64_t tenant_id, std::string_view name,
                                  std::uint16_t effect_bits,
                                  std::uint64_t provenance_mutation_id = 0,
