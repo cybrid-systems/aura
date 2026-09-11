@@ -180,6 +180,24 @@ static void ac7_service_smoke() {
     CHECK(href(cs, "schema-2032") == 2032, "schema after");
 }
 
+static void ac3656_threshold_source_cite() {
+    std::println("\n--- #3656: caller partial absorbs callee cone (threshold suite) ---");
+    auto pure = read_file("src/compiler/ir_cache_pure.ixx");
+    auto dirty = read_file("src/compiler/service_dirty.cpp");
+    auto prop = read_file("src/compiler/dirty_propagation.ixx");
+    auto q = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
+    CHECK(pure.find("kPartialRelowerCalleeConeAbsorbIssue = 3656") != std::string::npos,
+          "3656: stamp");
+    CHECK(pure.find("absorb_callee_cone_into_impact_ub") != std::string::npos,
+          "3656: absorb helper");
+    CHECK(prop.find("node_dep_has_fn_edges_for_slot") != std::string::npos,
+          "3656: node fn-edge helper");
+    CHECK(dirty.find("kUnknownCalleeConeBlocks") != std::string::npos, "3656: unknown cone return");
+    CHECK(q.find("query:incremental-relower-stats") != std::string::npos,
+          "3656: query:incremental-relower-stats retained");
+    CHECK(q.find("schema-3656") == std::string::npos, "3656: no schema-3656");
+}
+
 } // namespace
 
 int main() {
@@ -190,8 +208,9 @@ int main() {
     ac5_query_schema();
     ac6_threshold_visible();
     ac7_service_smoke();
+    ac3656_threshold_source_cite();
     if (g_failed)
         return 1;
-    std::println("dep_graph + partial relower threshold (#2032): OK ({} passed)", g_passed);
+    std::println("dep_graph + partial relower threshold (#2032/#3656): OK ({} passed)", g_passed);
     return 0;
 }
