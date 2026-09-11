@@ -1887,7 +1887,9 @@ std::size_t CompilerService::precompute_callee_cascade_for_partial(const std::st
         callees = dit->second.calls;
     }
     DirtySet set;
-    std::size_t already_dirty_blocks = 0;
+    // Issue #3584: return Σ dirty blocks (already-dirty only; #3656
+    // does not count clean hub callees we just marked).
+    std::size_t callee_dirty_blocks = 0;
     for (const auto& callee : callees) {
         if (callee == name)
             continue;
@@ -1895,10 +1897,7 @@ std::size_t CompilerService::precompute_callee_cascade_for_partial(const std::st
         if (cit != ir_cache_v2_.end()) {
             const bool already = cit->second.dirty || cit->second.dirty_block_count() > 0;
             if (already) {
-                // Issue #3656: only already-dirty callee *blocks* enter
-                // impact_ub. Clean hub callees stay 0 so #3584 1-block
-                // hub does not false-full from define count.
-                already_dirty_blocks += cit->second.dirty_block_count();
+                callee_dirty_blocks += cit->second.dirty_block_count();
             } else {
                 cit->second.dirty = true;
                 const auto n = cit->second.mark_body_only_dirty();
@@ -1918,7 +1917,7 @@ std::size_t CompilerService::precompute_callee_cascade_for_partial(const std::st
             (void)cascade_mark_dirty(set, encode_fn_node(slot), graph_snap);
     }
     g_partial_relower_callee_cascade_precompute_total.fetch_add(1, std::memory_order_relaxed);
-    return already_dirty_blocks;
+    return callee_dirty_blocks;
 }
 
 void CompilerService::mark_direct_hybrid_dependents_body_dirty_(const std::string& name) {
