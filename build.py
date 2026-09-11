@@ -5386,6 +5386,20 @@ def cmd_lint():
             "Issue #3655 persist SDO-before-unstaged linter failed — run python3 scripts/coverage/checks/check_persist_sdo_before_unstaged_3655.py"
         )
         return r
+    # Issue #3657: production graphs_consistent treats unslotted string
+    # edges as a parity miss; lockless reject must arm pending UB.
+    # Soft keeps continue. Extends hybrid cascade + cascade-decision
+    # residual; linter after #3655.
+    us3657_script = COVERAGE_CHECKS / "check_unslotted_string_edge_parity_3657.py"
+    if not us3657_script.exists():
+        fail(f"missing {us3657_script}")
+        return 1
+    r = run([sys.executable, str(us3657_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3657 unslotted string-edge parity linter failed — run python3 scripts/coverage/checks/check_unslotted_string_edge_parity_3657.py"
+        )
+        return r
     # Issue #3419: JIT typed-entry on every compiled function (anonymous)
     # included). Stub typed-entry is not production (ABI bit 8). Soft omit.
     # Extends persist-rehydrate + steal-complete; linter after #3343.

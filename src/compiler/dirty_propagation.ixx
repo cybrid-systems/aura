@@ -962,6 +962,13 @@ inline void push_to_block_dirty_matrix(const DirtySet& src,
 // encode_fn_node(caller_slot)) in node_dep. Compares edge counts
 // + per-fn dependent sets.
 //
+// Issue #3657: Production/Full treats an unslotted string edge as a
+// parity miss (return false) so partial peel cannot ignore a never-
+// mirrored cross-fn edge. Soft/Off keep the historical `continue`
+// (never mirrored; not a parity violation) — zero extra. Rebuild still
+// skips unslotted names (string graph remains authority; occupy slot
+// via record_dependency / ensure_dep_fn_slot_ before remirror).
+//
 // name_to_slot maps string names → fn slots (CompilerService maintains
 // this via dep_name_to_slot_; passed in here as a const ref so we
 // don't need a back-pointer into CompilerService).
@@ -984,15 +991,26 @@ template <typename Entry>
                              std::equal_to<>>& name_to_slot) noexcept {
     // For each string-graph callee→caller edge, check corresponding
     // NodeId edge exists. If any missing, return false.
+    // Issue #3657: Production/Full — unslotted string edge is
+    // inconsistent (not "never mirrored, skip"). Soft/Off: continue.
+    const bool hard_unslotted = aura::compiler::typed_audit::production_defaults_active() ||
+                                aura::compiler::typed_audit::get_strategy() ==
+                                    aura::compiler::typed_audit::AuditStrategy::Full;
     for (const auto& [callee, entry] : string_dep) {
         const auto callee_it = name_to_slot.find(callee);
-        if (callee_it == name_to_slot.end())
-            continue; // never mirrored; not a parity violation
+        if (callee_it == name_to_slot.end()) {
+            if (hard_unslotted && !entry.called_by.empty())
+                return false; // Issue #3657: production unslotted string edge
+            continue;         // never mirrored; not a parity violation (Soft)
+        }
         const auto fn_from = encode_fn_node(callee_it->second);
         for (const auto& caller : entry.called_by) {
             const auto caller_it = name_to_slot.find(caller);
-            if (caller_it == name_to_slot.end())
-                continue; // never mirrored; not a parity violation
+            if (caller_it == name_to_slot.end()) {
+                if (hard_unslotted)
+                    return false; // Issue #3657: production unslotted caller
+                continue;         // never mirrored; not a parity violation (Soft)
+            }
             const auto fn_to = encode_fn_node(caller_it->second);
             const auto* deps = node_dep.dependents(fn_from);
             if (!deps)

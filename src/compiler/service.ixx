@@ -12261,6 +12261,9 @@ private:
             // safe to acquire here without risk of inversion).
             std::lock_guard<std::mutex> cascade_guard(cascade_decision_mtx_);
             deferred_hybrid_edges_.emplace_back(caller, callee);
+            // Issue #3657: reject MUST arm so deferred_hybrid_pending_
+            // upper_bound_ (armed==0 → 0) includes this edge on the
+            // next impact_ub consult. Drain clears armed at cascade end.
             deferred_hybrid_armed_.store(1, std::memory_order_release);
             // Issue #3283: bump the queue generation so a concurrent
             // relower decision window can detect the re-arm after its
@@ -12371,6 +12374,8 @@ private:
             // attribution, under-marking the caller cone on a partial peel.
             std::lock_guard<std::mutex> cascade_guard(cascade_decision_mtx_);
             deferred_hybrid_edges_.emplace_back(caller, callee);
+            // Issue #3657: reject MUST arm (same contract as
+            // record_dependency) so pending UB consult sees the edge.
             deferred_hybrid_armed_.store(1, std::memory_order_release);
             deferred_hybrid_gen_.fetch_add(1, std::memory_order_relaxed);
             return;
@@ -13269,6 +13274,21 @@ public:
         (void)ensure_dep_fn_slot_(caller);
         (void)ensure_dep_fn_slot_(callee);
     }
+    // Issue #3657: string called_by without occupying dep_name_to_slot_
+    // (production graphs_consistent must return false; Soft continue).
+    void inject_string_called_by_unslotted_for_test(const std::string& caller,
+                                                    const std::string& callee) {
+        lock_order::OrderedUniqueLock<std::shared_mutex> write(dep_graph_mtx_,
+                                                               lock_order::Level::DepGraph);
+        auto& caller_entry = dep_graph_[caller];
+        if (std::find(caller_entry.calls.begin(), caller_entry.calls.end(), callee) ==
+            caller_entry.calls.end())
+            caller_entry.calls.push_back(callee);
+        auto& callee_entry = dep_graph_[callee];
+        if (std::find(callee_entry.called_by.begin(), callee_entry.called_by.end(), caller) ==
+            callee_entry.called_by.end())
+            callee_entry.called_by.push_back(caller);
+    }
     void inject_node_only_edge_for_test(const std::string& caller, const std::string& callee) {
         lock_order::OrderedUniqueLock<std::shared_mutex> write(dep_graph_mtx_,
                                                                lock_order::Level::DepGraph);
@@ -13288,6 +13308,11 @@ public:
     std::size_t
     public_deferred_hybrid_pending_upper_bound_for_test(const std::string& name) const noexcept {
         return deferred_hybrid_pending_upper_bound_(name);
+    }
+    // Issue #3657: lockless reject must leave armed==1 so pending UB
+    // consults the queued edge (armed==0 → helper returns 0).
+    [[nodiscard]] std::uint32_t public_deferred_hybrid_armed_for_test() const noexcept {
+        return deferred_hybrid_armed_.load(std::memory_order_acquire);
     }
     void public_drop_node_dep_mirror_edge(const std::string& caller, const std::string& callee) {
         lock_order::OrderedUniqueLock<std::shared_mutex> write(dep_graph_mtx_,
