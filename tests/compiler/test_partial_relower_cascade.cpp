@@ -29,6 +29,7 @@ import aura.compiler.value;
 
 namespace {
 
+using aura::compiler::absorb_callee_cone_into_impact_ub;
 using aura::compiler::CompilerMetrics;
 using aura::compiler::CompilerService;
 using aura::compiler::estimate_relower_blocks;
@@ -38,6 +39,8 @@ using aura::compiler::g_partial_relower_callee_cascade_precompute_total;
 using aura::compiler::get_partial_relower_threshold;
 using aura::compiler::incremental_soundness_mismatch_atomic;
 using aura::compiler::kPartialRelowerCalleeCascadeIssue;
+using aura::compiler::kPartialRelowerCalleeConeAbsorbIssue;
+using aura::compiler::kUnknownCalleeConeBlocks;
 using aura::compiler::reset_incremental_soundness_for_test;
 using aura::compiler::reset_partial_relower_threshold_for_test;
 using aura::compiler::set_incremental_soundness_mode;
@@ -580,6 +583,123 @@ static void ac3584_3_soft_no_invent() {
           "3584 AC3: no check_3584.py");
 }
 
+// ── Issue #3656: caller partial must absorb callee cone (block units) ──
+//   AC1: f calls g; mutate g; empty string calls + node fn edges → f
+//        does not peel with a clean Call (forced full or Call dirty).
+//   AC2: #3584 hub 1-block + many clean callees still not define-count full.
+//   AC3: map empty still unknown impact → full (#3310).
+//   AC4: Soft precompute still 0 extra dirty.
+//   AC5: this suite + dep_graph_partial_relower_threshold; no invent / docs /
+//        query:incremental-relower-stats rewrite.
+
+static void ac3656_1_empty_calls_node_fn_forces_full() {
+    std::println(
+        "\n--- #3656 AC1: empty calls + node fn edges → caller not clean-Call partial ---");
+    using namespace aura::compiler::typed_audit;
+    apply_production_audit_defaults();
+    reset_partial_relower_threshold_for_test();
+    CompilerService cs;
+    cs.evaluator().set_effect_sandbox_mode(0);
+    CHECK(cs.eval("(set-code \"(define g (lambda (x) x)) (define f (lambda (x) (g x)))\")")
+              .has_value(),
+          "3656 AC1: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3656 AC1: eval");
+    cs.public_record_dependency("f", "g");
+    cs.inject_drop_string_calls_keep_node_for_test("f", "g");
+    auto* m = static_cast<CompilerMetrics*>(cs.evaluator().compiler_metrics());
+    CHECK(m != nullptr, "3656 AC1: metrics");
+    const auto impact0 = m->partial_forced_full_by_impact_total.load(std::memory_order_relaxed);
+    auto mut = cs.eval("(mutate:set-body \"g\" \"(lambda (x) (+ x 1))\" \"#3656\")");
+    CHECK(mut.has_value() && !is_error(*mut), "3656 AC1: set-body g");
+    cs.public_invalidate_function("f");
+    CHECK(cs.eval("(eval-current)").has_value(), "3656 AC1: re-eval");
+    auto r = cs.eval("(f 1)");
+    CHECK(r && is_int(*r) && as_int(*r) == 2, "3656 AC1: f tracks g (Call not stale clean)");
+    const auto impact1 = m->partial_forced_full_by_impact_total.load(std::memory_order_relaxed);
+    CHECK(impact1 > impact0 || (r && is_int(*r) && as_int(*r) == 2),
+          "3656 AC1: partial_forced_full_by_impact_total or Call block dirty");
+    CHECK(kPartialRelowerCalleeConeAbsorbIssue == 3656, "3656 AC1: stamp");
+    apply_dev_audit_defaults();
+}
+
+static void ac3656_2_hub_not_define_count_full() {
+    std::println(
+        "\n--- #3656 AC2: #3584 hub 1-block + clean callees still not define-count full ---");
+    CHECK(estimate_relower_blocks(1, 8) == 1, "3656 AC2: 1-block stays partial at thr=8");
+    CHECK(estimate_relower_blocks(1, 8, 8) == static_cast<std::size_t>(-1),
+          "3656 AC2: old define-count mix would force full");
+    CHECK(absorb_callee_cone_into_impact_ub(1, 0) == 1,
+          "3656 AC2: clean callee cone does not bump ub");
+    const auto svc = read_file("src/compiler/service.ixx");
+    const auto peel = svc.find("Issue #3584: precompute returns already-dirty callee");
+    CHECK(peel != std::string::npos, "3656 AC2: peel cites #3584 block units");
+    CHECK(svc.find("estimate_relower_blocks(dirty_n, get_partial_relower_threshold())") !=
+              std::string::npos,
+          "3656 AC2: peel uses 2-arg estimate (no define_count)");
+    CHECK(svc.find("estimate_relower_blocks(dirty_n, get_partial_relower_threshold(),") ==
+              std::string::npos,
+          "3656 AC2: peel does not mix define count into thr");
+}
+
+static void ac3656_3_map_empty_unknown_full() {
+    std::println("\n--- #3656 AC3: map empty still unknown impact → full (#3310) ---");
+    const auto dirty = read_file("src/compiler/service_dirty.cpp");
+    CHECK(dirty.find("eit->second.source_to_ir_map.empty()") != std::string::npos,
+          "3656 AC3: precompute map-empty returns 0");
+    CHECK(absorb_callee_cone_into_impact_ub(0, 3) == 0,
+          "3656 AC3: absorb does not hide #3310 ub==0");
+    CHECK(absorb_callee_cone_into_impact_ub(kUnknownCalleeConeBlocks, 3) ==
+              kUnknownCalleeConeBlocks,
+          "3656 AC3: absorb does not hide empty-map sentinel");
+    const auto pure = read_file("src/compiler/ir_cache_pure.ixx");
+    CHECK(pure.find("should_partial_relower_impact_checked_prod") != std::string::npos,
+          "3656 AC3: #3310 prod helper retained");
+}
+
+static void ac3656_4_soft_zero_extra() {
+    std::println("\n--- #3656 AC4: Soft precompute still 0 extra dirty ---");
+    using namespace aura::compiler::typed_audit;
+    apply_dev_audit_defaults();
+    g_typed_mutation_audit_counters.production_defaults_active.store(0, std::memory_order_relaxed);
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define g (lambda (x) x)) (define f (lambda (x) (g x)))\")")
+              .has_value(),
+          "3656 AC4: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3656 AC4: eval");
+    const auto tot0 =
+        g_partial_relower_callee_cascade_precompute_total.load(std::memory_order_relaxed);
+    cs.public_invalidate_function("f");
+    CHECK(cs.eval("(eval-current)").has_value(), "3656 AC4: relower");
+    CHECK(g_partial_relower_callee_cascade_precompute_total.load(std::memory_order_relaxed) == tot0,
+          "3656 AC4: Soft does not bump precompute total");
+}
+
+static void ac3656_5_source_cite_no_invent() {
+    std::println("\n--- #3656 AC5: source-cite + no invent / no query rewrite ---");
+    const auto svc = read_file("src/compiler/service.ixx");
+    const auto dirty = read_file("src/compiler/service_dirty.cpp");
+    const auto pure = read_file("src/compiler/ir_cache_pure.ixx");
+    const auto prop = read_file("src/compiler/dirty_propagation.ixx");
+    const auto q = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
+    CHECK(prop.find("node_dep_has_fn_edges_for_slot") != std::string::npos,
+          "3656 AC5: node fn-edge helper");
+    CHECK(dirty.find("kUnknownCalleeConeBlocks") != std::string::npos,
+          "3656 AC5: precompute unknown cone");
+    CHECK(dirty.find("node_dep_has_fn_edges_for_slot") != std::string::npos,
+          "3656 AC5: precompute consults node graph");
+    CHECK(svc.find("absorb_callee_cone_into_impact_ub") != std::string::npos,
+          "3656 AC5: peel absorbs callee blocks into impact_ub");
+    CHECK(svc.find("inject_drop_string_calls_keep_node_for_test") != std::string::npos,
+          "3656 AC5: empty-calls inject");
+    CHECK(pure.find("kPartialRelowerCalleeConeAbsorbIssue = 3656") != std::string::npos,
+          "3656 AC5: stamp");
+    CHECK(q.find("query:incremental-relower-stats") != std::string::npos,
+          "3656 AC5: query:incremental-relower-stats retained");
+    CHECK(q.find("schema-3656") == std::string::npos, "3656 AC5: no schema-3656");
+    CHECK(read_file("tests/compiler/test_issue_3656.cpp").empty(), "3656 AC5: no invent");
+    CHECK(read_file("docs/design/3656-callee-cone-partial.md").empty(), "3656 AC5: no docs/design");
+}
+
 } // namespace
 
 int run_test_partial_relower_cascade() {
@@ -600,9 +720,14 @@ int run_test_partial_relower_cascade() {
     ac3584_1_hub_partial_peel();
     ac3584_2_soundness_oracle();
     ac3584_3_soft_no_invent();
+    ac3656_1_empty_calls_node_fn_forces_full();
+    ac3656_2_hub_not_define_count_full();
+    ac3656_3_map_empty_unknown_full();
+    ac3656_4_soft_zero_extra();
+    ac3656_5_source_cite_no_invent();
     if (g_failed)
         return 1;
-    std::println("partial re-lower cascade (#2041/#3550/#3584): OK ({} passed)", g_passed);
+    std::println("partial re-lower cascade (#2041/#3550/#3584/#3656): OK ({} passed)", g_passed);
     return 0;
 }
 

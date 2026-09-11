@@ -999,6 +999,12 @@ inline std::atomic<std::uint64_t>& partial_relower_under_shape_storm_total_atomi
 inline constexpr int kPartialRelowerCalleeCascadeIssue = 3550;
 inline std::atomic<std::uint64_t> g_partial_relower_callee_cascade_precompute_total{0};
 inline std::atomic<std::uint64_t> g_partial_relower_callee_cascade_precompute_observe_total{0};
+// Issue #3656: precompute returns this when the source_to_ir_map is
+// nonempty, string `calls` is empty, but node_dep still has fn edges
+// for the caller — unknown callee cone; peel fail-closed full. Not a
+// block count. Distinct from #3584 (do not mix define count into thr).
+inline constexpr int kPartialRelowerCalleeConeAbsorbIssue = 3656;
+inline constexpr std::size_t kUnknownCalleeConeBlocks = static_cast<std::size_t>(-1);
 
 // Issue #3551: Phase-5 abort drops ir_cache V2 irs (sibling of abort
 // fence; not CompilerMetrics middle). Soft observes only.
@@ -1236,6 +1242,20 @@ inline void reset_partial_relower_threshold_for_test() noexcept {
     if (callee_count != 0 && dirty_count > std::numeric_limits<std::size_t>::max() - callee_count)
         return static_cast<std::size_t>(-1);
     return estimate_relower_blocks(dirty_count + callee_count, threshold);
+}
+
+// Issue #3656: fold already-dirty callee *blocks* into impact_ub
+// (same unit as dirty_n). Does not mix define count (#3584). Leaves
+// #3310 unknown (ub==0) and #3068 empty-map sentinel (-1) unchanged.
+[[nodiscard]] constexpr std::size_t
+absorb_callee_cone_into_impact_ub(std::size_t impact_ub, std::size_t callee_cone) noexcept {
+    if (callee_cone == 0 || callee_cone == kUnknownCalleeConeBlocks)
+        return impact_ub;
+    if (impact_ub == 0 || impact_ub == kUnknownCalleeConeBlocks)
+        return impact_ub;
+    if (impact_ub > kUnknownCalleeConeBlocks - callee_cone)
+        return kUnknownCalleeConeBlocks;
+    return impact_ub + callee_cone;
 }
 
 // Issue #426: aggregate stats over many functions'

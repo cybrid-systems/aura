@@ -1847,6 +1847,7 @@ CompilerService::hybrid_node_cascade_(const std::string& root_name,
 }
 
 std::size_t CompilerService::precompute_callee_cascade_for_partial(const std::string& name) {
+    using aura::compiler::kUnknownCalleeConeBlocks;
     using aura::compiler::dirty::cascade_mark_dirty;
     using aura::compiler::dirty::DirtySet;
     using aura::compiler::dirty::encode_fn_node;
@@ -1865,31 +1866,46 @@ std::size_t CompilerService::precompute_callee_cascade_for_partial(const std::st
         return 0;
     std::vector<std::string> callees;
     aura::compiler::dirty::DepGraph graph_snap;
+    std::uint32_t self_slot = UINT32_MAX;
     {
         OrderedSharedLock<std::shared_mutex> dep_read(dep_graph_mtx_, Level::DepGraph);
         auto dit = dep_graph_.find(name);
-        if (dit == dep_graph_.end() || dit->second.calls.empty())
-            return 0;
-        callees = dit->second.calls;
+        auto sit = dep_name_to_slot_.find(name);
+        if (sit != dep_name_to_slot_.end())
+            self_slot = sit->second;
         graph_snap = node_dep_graph_;
+        // Issue #3656: map nonempty + string calls empty is a fake "no
+        // callee" when the node graph still has encode_fn_node edges
+        // (unslotted / lockless miss). Unknown cone — peel fail-closed
+        // full. Do not return 0 (that used to skip the cone).
+        if (dit == dep_graph_.end() || dit->second.calls.empty()) {
+            if (self_slot != UINT32_MAX &&
+                aura::compiler::dirty::node_dep_has_fn_edges_for_slot(graph_snap, self_slot))
+                return kUnknownCalleeConeBlocks;
+            return 0;
+        }
+        callees = dit->second.calls;
     }
     DirtySet set;
-    std::size_t callee_dirty_blocks = 0;
+    std::size_t already_dirty_blocks = 0;
     for (const auto& callee : callees) {
         if (callee == name)
             continue;
         auto cit = ir_cache_v2_.find(callee);
         if (cit != ir_cache_v2_.end()) {
             const bool already = cit->second.dirty || cit->second.dirty_block_count() > 0;
-            if (!already) {
+            if (already) {
+                // Issue #3656: only already-dirty callee *blocks* enter
+                // impact_ub. Clean hub callees stay 0 so #3584 1-block
+                // hub does not false-full from define count.
+                already_dirty_blocks += cit->second.dirty_block_count();
+            } else {
                 cit->second.dirty = true;
                 const auto n = cit->second.mark_body_only_dirty();
                 if (n == 0)
                     cit->second.mark_all_blocks_dirty();
                 finish_cascade_soa_dirty_sync_(cit->second);
             }
-            // Issue #3584: return Σ dirty blocks (not define count).
-            callee_dirty_blocks += cit->second.dirty_block_count();
         }
         std::uint32_t slot = UINT32_MAX;
         {
@@ -1902,7 +1918,7 @@ std::size_t CompilerService::precompute_callee_cascade_for_partial(const std::st
             (void)cascade_mark_dirty(set, encode_fn_node(slot), graph_snap);
     }
     g_partial_relower_callee_cascade_precompute_total.fetch_add(1, std::memory_order_relaxed);
-    return callee_dirty_blocks;
+    return already_dirty_blocks;
 }
 
 void CompilerService::mark_direct_hybrid_dependents_body_dirty_(const std::string& name) {

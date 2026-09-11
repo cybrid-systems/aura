@@ -5533,6 +5533,20 @@ def cmd_lint():
             "Issue #3653 outermost persist audit-order linter failed — run python3 scripts/coverage/checks/check_outermost_persist_audit_order_3653.py"
         )
         return r
+    # Issue #3656: caller partial absorbs callee cone (block units, not
+    # define count). Residual of #3550 (precompute early-return on empty
+    # calls) + #3584 (units fixed, cone still invisible). Soft observe.
+    # Linter after #3653.
+    ccpa3656_script = COVERAGE_CHECKS / "check_callee_cone_partial_absorb_3656.py"
+    if not ccpa3656_script.exists():
+        fail(f"missing {ccpa3656_script}")
+        return 1
+    r = run([sys.executable, str(ccpa3656_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3656 callee-cone partial-absorb linter failed — run python3 scripts/coverage/checks/check_callee_cone_partial_absorb_3656.py"
+        )
+        return r
     # Issue #3419: JIT typed-entry on every compiled function (anonymous)
     # included). Stub typed-entry is not production (ABI bit 8). Soft omit.
     # Extends persist-rehydrate + steal-complete; linter after #3343.

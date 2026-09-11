@@ -545,6 +545,29 @@ struct BlockDepDecode {
     return d;
 }
 
+// Issue #3656: string `calls` empty is not "no callee" when the node
+// graph still has encode_fn_node / block-dep edges for this slot
+// (incoming callee→caller, outgoing as callee, or call-site block-dep).
+// Production partial must treat that as an unknown cone. Pure — no
+// metrics. Soft callers skip the consult.
+[[nodiscard]] inline bool node_dep_has_fn_edges_for_slot(const DepGraph& node_dep,
+                                                         std::uint32_t slot) noexcept {
+    const auto fn = encode_fn_node(slot);
+    if (const auto* deps = node_dep.dependents(fn); deps && !deps->empty())
+        return true;
+    for (const auto& [from, tos] : node_dep.adj) {
+        if (!is_fn_node(from))
+            continue;
+        for (const auto t : tos) {
+            if (t == fn)
+                return true;
+            if (is_block_dep_node(t) && decode_block_dep_node(t).caller_slot == slot)
+                return true;
+        }
+    }
+    return false;
+}
+
 // Issue #2191: AST NodeId cone for type partial ↔ IR cascade unify.
 // Layout (distinct from fn / block-dep / local block encodings):
 //   bit31 = 0, bit30 = 0, bit29 = 1 (kAstDepTag)

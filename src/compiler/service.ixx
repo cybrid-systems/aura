@@ -6448,12 +6448,24 @@ public:
         const bool allow_partial_peel =
             !abort_stale_map && gate_partial_soa_dirty_sync_(it->second);
         // Issue #3550: callee cascade before partial peel / block count.
-        (void)precompute_callee_cascade_for_partial(name);
+        // Issue #3656: unknown cone (calls empty + node fn edges) is not
+        // a successful instr peel — fail-closed full.
+        const auto callee_cone = precompute_callee_cascade_for_partial(name);
+        bool allow_partial = allow_partial_peel;
+        if (allow_partial && callee_cone == kUnknownCalleeConeBlocks &&
+            (aura::compiler::typed_audit::production_defaults_active() ||
+             aura::compiler::typed_audit::get_strategy() ==
+                 aura::compiler::typed_audit::AuditStrategy::Full)) {
+            it->second.mark_all_blocks_dirty();
+            it->second.dirty = true;
+            metrics_.partial_forced_full_by_impact_total.fetch_add(1, std::memory_order_relaxed);
+            allow_partial = false;
+        }
         // Issue #2133: when precise instruction dirty is present and under
         // partial threshold, consume ImpactScope-style instr path (pass peel
         // only; no full AST re-lower). Falls through to block/fn paths if
         // over threshold or no instr precision.
-        if (allow_partial_peel) {
+        if (allow_partial) {
             std::size_t dirty_instr_n = 0;
             ImpactScope synthetic;
             for (std::size_t fi = 0; fi < it->second.irs.size(); ++fi) {
@@ -7772,11 +7784,14 @@ public:
             }
             metrics_.should_partial_relower_consult_total.fetch_add(1, std::memory_order_relaxed);
             // Issue #3550: pre-cascade callees before adaptive / impact check.
-            // Issue #3584: precompute returns callee dirty-block sum (single
-            // block unit). Do not merge-add that sum into this function's
-            // threshold — #3550 added define count, so hub callees≥8−dirty_n
-            // forced full on a 1-block edit. Callees decide independently.
-            (void)precompute_callee_cascade_for_partial(name);
+            // Issue #3584: precompute returns already-dirty callee *blocks*
+            // (single block unit). Do not merge-add define count into this
+            // function's threshold — #3550 mixed define count, so hub
+            // callees≥8−dirty_n forced full on a 1-block edit.
+            // Issue #3656: absorb those blocks into impact_ub (impact_checked
+            // only upgrades to full). Unknown cone (calls empty + node fn
+            // edges) fail-closed full.
+            const auto callee_cone = precompute_callee_cascade_for_partial(name);
             dirty_n = it->second.dirty_block_count();
             // Issue #2127: deopt + density adaptive threshold (base #2032/#2112).
             std::size_t total_blocks = 0;
@@ -7791,6 +7806,18 @@ public:
             // full — do not re-enter partial / skip-as-clean.
             if (zero_mask_forced_full)
                 want_partial = false;
+            // Issue #3656: map nonempty + string calls empty + node fn
+            // edges = unknown callee cone. Fail-closed full (reuse
+            // partial_forced_full_by_impact_total). Soft precompute
+            // returned 0 so this arm never fires.
+            if (want_partial && dirty_n > 0 && callee_cone == kUnknownCalleeConeBlocks) {
+                want_partial = false;
+                it->second.mark_all_blocks_dirty();
+                it->second.dirty = true;
+                metrics_.partial_forced_full_by_impact_total.fetch_add(1,
+                                                                       std::memory_order_relaxed);
+                dirty_n = it->second.dirty_block_count();
+            }
             // Issue #3034: cross-check ImpactScope / hybrid-cascade upper
             // bound. Monotonic — only upgrades partial → full, never lowers
             // (storm gates stay the outer envelope). Zero cost on clean /
@@ -7826,7 +7853,8 @@ public:
                     // zero-cost threshold partial (existing contract). The
                     // map-empty sentinel -1 path through
                     // should_partial_relower_impact_checked is untouched (AC3).
-                    const std::size_t impact_ub = impact_upper_bound_for_entry_(name, it->second);
+                    const std::size_t impact_ub = absorb_callee_cone_into_impact_ub(
+                        impact_upper_bound_for_entry_(name, it->second), callee_cone);
                     const bool production_consult =
                         aura::compiler::typed_audit::production_defaults_active() ||
                         aura::compiler::typed_audit::get_strategy() ==
@@ -7962,7 +7990,8 @@ public:
                             dirty_names.push_back(peer);
                         }
                     }
-                    const std::size_t impact_ub = impact_upper_bound_for_entry_(name, it->second);
+                    const std::size_t impact_ub = absorb_callee_cone_into_impact_ub(
+                        impact_upper_bound_for_entry_(name, it->second), callee_cone);
                     const bool production_consult =
                         aura::compiler::typed_audit::production_defaults_active() ||
                         aura::compiler::typed_audit::get_strategy() ==
@@ -12205,8 +12234,10 @@ private:
     // estimate_relower_blocks / impact_checked cannot miss a lockless
     // batch. Reuses cascade_mark_dirty + mark_body_only_dirty (no
     // second cone). Soft/Off: observe only.
-    // Issue #3584: returns Σ callee dirty_block_count (block unit),
+    // Issue #3584: returns already-dirty callee *blocks* (block unit),
     // not the number of marked defines.
+    // Issue #3656: returns kUnknownCalleeConeBlocks when map nonempty,
+    // string calls empty, but node_dep still has fn edges.
     std::size_t precompute_callee_cascade_for_partial(const std::string& name);
 
     // Issue #3345: production hybrid depth-1 IR dirty of direct called_by
@@ -13293,6 +13324,23 @@ public:
         lock_order::OrderedUniqueLock<std::shared_mutex> write(dep_graph_mtx_,
                                                                lock_order::Level::DepGraph);
         mirror_fn_dep_edge_unlocked_(caller, callee);
+    }
+    // Issue #3656: drop string calls/called_by but keep the NodeId fn
+    // mirror — production precompute must not treat that as "no callee".
+    void inject_drop_string_calls_keep_node_for_test(const std::string& caller,
+                                                     const std::string& callee) {
+        lock_order::OrderedUniqueLock<std::shared_mutex> write(dep_graph_mtx_,
+                                                               lock_order::Level::DepGraph);
+        auto cit = dep_graph_.find(caller);
+        if (cit != dep_graph_.end()) {
+            auto& v = cit->second.calls;
+            v.erase(std::remove(v.begin(), v.end(), callee), v.end());
+        }
+        auto git = dep_graph_.find(callee);
+        if (git != dep_graph_.end()) {
+            auto& v = git->second.called_by;
+            v.erase(std::remove(v.begin(), v.end(), caller), v.end());
+        }
     }
 
     // Issue #3067: test hooks — inject stale reject, drain, fork NodeId, parity.
