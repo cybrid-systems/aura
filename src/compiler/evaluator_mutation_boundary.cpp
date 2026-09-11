@@ -4135,6 +4135,73 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
             }
         }
     }
+    // Issue #3653: Production/Full outermost — this-boundary type +
+    // invariant proof BEFORE persist freeze (#3614/#3517 residual —
+    // order, not a missing restore). #3614 already hoisted linear +
+    // drain; #3517 can flip Guard success after Full deny, but the
+    // persist helper had already published a Stamped green face for
+    // one beat (steal / query:type / IR). Check-only: composite_txn_commit
+    // / boundary_solve_proof_gate / finish_mutate_hard_gate /
+    // run_typed_mutation_invariant_audit return false without restore.
+    // Vacuous (no dirty/log) does not force finish_mutate_hard_gate's
+    // no-CS resync deny — that would abort happy Guards exit currently
+    // accepts. Vacuous still runs the invariant suite so ADT / type
+    // inject deny before freeze. Deny reuses the #3472 un-stamp set
+    // and flips success into the existing abort_restore SSOT. Soft/Off:
+    // this block does not run (persist helper stays zero-cost; no extra
+    // audit walk). Happy path may re-audit in exit_mutation_boundary.
+    if (outermost && success &&
+        (typed_audit::production_defaults_active() ||
+         typed_audit::get_strategy() == typed_audit::AuditStrategy::Full)) {
+        bool mutated = ev_->txn_dirty();
+        if (ev_->workspace_flat_) {
+            mutated = mutated ||
+                      ev_->workspace_flat_->mark_dirty_upward_call_count() > dirty_upward_at_enter_;
+            auto& stk = ev_->active_mutation_stack();
+            if (!stk.empty()) {
+                const auto enter_log = stk.back().mutation_log_size;
+                mutated = mutated || ev_->workspace_flat_->mutation_log_size() > enter_log;
+            }
+        }
+        bool audit_ok = true;
+        const bool batch_active =
+            ev_->workspace_flat_ && ev_->workspace_flat_->atomic_batch_active();
+        typed_audit::InvariantAuditResult inv{};
+        const auto mid_audit = ev_->defuse_version_.load(std::memory_order_relaxed);
+        (void)ev_->run_typed_mutation_invariant_audit(mid_audit, "outermost-pre-persist", 0,
+                                                      mid_audit, mid_audit,
+                                                      /*composite_mode=*/false, &inv);
+        if (!inv.adt_ok)
+            audit_ok = false;
+        if (batch_active) {
+            typed_audit::CompositeTxnCommitResult ccr{};
+            audit_ok = ev_->composite_txn_commit(mid_audit, "outermost-pre-persist", 0, mid_audit,
+                                                 mid_audit,
+                                                 /*nested=*/false, /*batch_active=*/true, &ccr) &&
+                       audit_ok;
+        } else if (mutated) {
+            bool proof_trunc = false;
+            bool proof_force = false;
+            const bool proof_ok = ev_->boundary_solve_proof_gate(
+                /*hard_gate=*/true, linear_ops_present_local, nodes_changed_local, &proof_trunc,
+                &proof_force);
+            audit_ok = audit_ok && proof_ok && !proof_force;
+            if (audit_ok) {
+                audit_ok = ev_->finish_mutate_hard_gate(
+                    nodes_changed_local, linear_ops_present_local, "outermost-pre-persist");
+            }
+        }
+        if (!audit_ok) {
+            typed_audit::clear_type_linear_commit_proof_on_abort();
+            typed_audit::publish_type_linear_proof_outcome(
+                typed_audit::kTypeLinearProofOutcomeReject);
+            aura_clear_occurrence_persist_buffer(ev_);
+            ev_->clear_type_export_authority();
+            ev_->clear_expected_occurrence_snapshot_fp();
+            success = false;
+            success_flag_store(flag_, false);
+        }
+    }
     if (outermost && success) {
         const auto mid = ev_->defuse_version_.load(std::memory_order_relaxed);
         aura_outermost_success_persist_occurrence(ev_, mid);
