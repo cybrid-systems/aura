@@ -175,6 +175,19 @@ inline constexpr int kMovingKnownRootsAutoRegisterIssue = 2889;
 inline void reset_moving_known_roots_auto_registered_for_test() noexcept {
     g_moving_known_roots_auto_registered_total.store(0, std::memory_order_relaxed);
 }
+// Issue #3647 (#3055 residual): known Closure body slots (cl.flat /
+// cl.pool) auto-registered into the Moving densify window by the #2889
+// walk in Evaluator::register_known_moving_densify_root_slots. Additive
+// only — does not gate. Soft / no Moving never reaches the walk; slot
+// XOR canary preserved (#3368 — no dual-note on these slots).
+inline std::atomic<std::uint64_t> g_moving_closure_slots_registered_total{0};
+inline constexpr int kMovingClosureSlotsIssue = 3647;
+[[nodiscard]] inline std::uint64_t moving_closure_slots_registered_total_v_read() noexcept {
+    return g_moving_closure_slots_registered_total.load(std::memory_order_relaxed);
+}
+inline void reset_moving_closure_slots_registered_for_test() noexcept {
+    g_moving_closure_slots_registered_total.store(0, std::memory_order_relaxed);
+}
 // Issue #2935: Agent recovery after sticky densify-off (re-register known
 // roots + clear sticky + optional one-shot Moving densify retry). Additive
 // only — does not gate fail-closed incomplete-remap / production hard arm.

@@ -4000,6 +4000,227 @@ static void ac3633_6_hard_face_sticky_block() {
     (void)p1;
 }
 
+// Node-stable stand-in for a Closure body: arena-allocated, member slots
+// are lasting void** — the exact storage shape the #3647 walk registers
+// (&cl.flat / &cl.pool from unordered_map nodes).
+struct ClosureBodySlots3647 {
+    void* flat = nullptr;
+    void* pool = nullptr;
+};
+
+// AC1: the known-root walk registers live Closure body slots (cl.flat /
+// cl.pool) into the Moving densify window via the existing slot SSOT;
+// additive counter + issue stamp + reset helper declared (#3647).
+static void ac3647_1_closure_body_slots_registered() {
+    std::println("\n--- #3647 AC1: closure body slots enter known-root inventory ---");
+    const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto hdr = read_file("src/core/densify_consistency_report.h");
+    CHECK(mb.find("Issue #3647") != std::string::npos, "AC1: walk cites #3647");
+    CHECK(mb.find("for (auto& [cid, cl] : closures_)") != std::string::npos,
+          "AC1: closures_ walk present in register helper");
+    CHECK(mb.find("known_slots.push_back(reinterpret_cast<void**>(&cl.flat))") !=
+                  std::string::npos &&
+              mb.find("known_slots.push_back(reinterpret_cast<void**>(&cl.pool))") !=
+                  std::string::npos,
+          "AC1: cl.flat / cl.pool pushed as lasting void** slots");
+    CHECK(mb.find("g_moving_closure_slots_registered_total.fetch_add(") != std::string::npos,
+          "AC1: closure-slot counter bumps in the walk");
+    CHECK(mb.find("register_external_root_slot_for_densify_all(slot)") != std::string::npos,
+          "AC1: registration via existing slot SSOT (no second registry)");
+    CHECK(hdr.find("g_moving_closure_slots_registered_total{0}") != std::string::npos,
+          "AC1: counter declared");
+    CHECK(hdr.find("kMovingClosureSlotsIssue = 3647") != std::string::npos,
+          "AC1: issue stamp 3647");
+    CHECK(hdr.find("reset_moving_closure_slots_registered_for_test") != std::string::npos,
+          "AC1: test reset helper declared");
+}
+
+// AC2: slot channel rewrites node-stable struct-member slots (the shape
+// cl.flat / cl.pool get from the #3647 walk) and the window stays green —
+// no canary dual-note interference (#3368). A sibling value-only ptr is
+// still stale fail-closed (canary-only path unchanged).
+static void ac3647_2_slot_rewrite_green_and_value_only_red() {
+    std::println("\n--- #3647 AC2: closure-body slot rewrite green; value-only still red ---");
+    MovingFlagGuard on(1);
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    aura::ast::g_moving_untracked_hard_abort_pref.store(0, std::memory_order_relaxed);
+    {
+        ASTArena arena(64 * 1024);
+        auto* p0 = arena.create<Pod16>(1, 2, 3, 4);
+        auto* p1 = arena.create<Pod16>(5, 6, 7, 8);
+        // Stack-allocated body mirrors the real Closure storage premise:
+        // closures_ nodes are libc-heap stable, NOT arena-moved. Member
+        // slots must outlive the densify window — an arena-allocated body
+        // would itself relocate and dangle the registered &body.flat.
+        ClosureBodySlots3647 body;
+        body.flat = p0;
+        body.pool = p1;
+        arena.register_external_root_slot_for_densify(&body.flat);
+        arena.register_external_root_slot_for_densify(&body.pool);
+        const auto r = arena.live_compact(LiveCompactMode::Moving);
+        CHECK(r.objects_moved > 0, "3647 AC2: objects_moved > 0");
+        void* flat_new = arena.resolve_object_remap(p0);
+        void* pool_new = arena.resolve_object_remap(p1);
+        CHECK(flat_new != nullptr && body.flat == flat_new,
+              "3647 AC2: body flat slot rewritten to new address");
+        CHECK(pool_new != nullptr && body.pool == pool_new,
+              "3647 AC2: body pool slot rewritten to new address");
+        CHECK(!r.moving_incomplete_remap, "3647 AC2: window green (no canary dual-note)");
+        CHECK(!aura::ast::moving_incomplete_remap_sticky_densify_off(),
+              "3647 AC2: sticky stays off for covered slots (#3368)");
+        const auto* moved = static_cast<const Pod16*>(body.flat);
+        CHECK(moved->a == 1 && moved->b == 2, "3647 AC2: payload intact via rewritten flat");
+    }
+    // Sibling window: value-only (no slot) still stale fail-closes.
+    {
+        ASTArena arena(64 * 1024);
+        auto* p0 = arena.create<Pod16>(1, 2, 3, 4);
+        auto* p1 = arena.create<Pod16>(5, 6, 7, 8);
+        void* ext = p0;
+        void* old = ext;
+        arena.register_external_root_for_densify(ext); // value-only → no rewrite
+        const auto r = arena.live_compact(LiveCompactMode::Moving);
+        CHECK(r.objects_moved > 0, "3647 AC2: sibling window moves");
+        CHECK(r.external_roots_stale_unremapped_count >= 1 || r.moving_incomplete_remap,
+              "3647 AC2: value-only still stale/unremapped (canary-only path)");
+        CHECK(ext == old, "3647 AC2: caller storage not rewritten by value-only register");
+        (void)p1;
+    }
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+}
+
+// AC3: Soft / no-move → no closure-slot work; the walk stays gated to
+// Moving windows (Phase-5 flush inside moving_compact_enabled(),
+// known-roots hook inside the production auto-arm Moving arm, recovery
+// behind the same gate).
+static void ac3647_3_soft_zero_work_and_gating() {
+    std::println("\n--- #3647 AC3: Soft / no-move zero closure-slot work ---");
+    MovingFlagGuard off(0);
+    {
+        ASTArena arena(64 * 1024);
+        auto* p0 = arena.create<Pod16>(1, 2, 3, 4);
+        ClosureBodySlots3647 body;
+        body.flat = p0;
+        arena.register_external_root_slot_for_densify(&body.flat);
+        void* before = body.flat;
+        const auto r = arena.live_compact(LiveCompactMode::Soft);
+        CHECK(r.objects_moved == 0, "3647 AC3: Soft moves nothing");
+        CHECK(body.flat == before, "3647 AC3: slot untouched under Soft");
+    }
+    const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto arena_src = read_file("src/core/arena.ixx");
+    const auto helper_call = mb.find("ev_->register_known_moving_densify_root_slots();");
+    const auto moving_pos = mb.find("if (aura::ast::moving_compact_enabled())");
+    CHECK(helper_call != std::string::npos && moving_pos != std::string::npos &&
+              helper_call > moving_pos,
+          "3647 AC3: Phase-5 register helper still inside moving_compact_enabled()");
+    const auto hook_invoke = arena_src.find("invoke_known_roots_hook();");
+    const auto auto_arm = arena_src.find("should_production_auto_arm_moving(frag_before)");
+    CHECK(hook_invoke != std::string::npos && auto_arm != std::string::npos &&
+              hook_invoke > auto_arm,
+          "3647 AC3: known-roots hook inside production auto-arm (Moving only)");
+    CHECK(arena_src.find("live_compact(LiveCompactMode::Moving)") != std::string::npos,
+          "3647 AC3: hook arm requests Moving densify");
+    CHECK(mb.find("if (retry_densify && arena_group_ && aura::ast::moving_compact_enabled())") !=
+              std::string::npos,
+          "3647 AC3: recovery densify stays behind moving gate");
+}
+
+// AC4: no new pin / GC in the walk; slot XOR canary preserved (#3368) —
+// the only canary injection in the register helper remains the temporary
+// inventory drain (comment-stripped body check).
+static void ac3647_4_no_pin_no_dual_note() {
+    std::println("\n--- #3647 AC4: no new pin/GC; no canary dual-note (#3368) ---");
+    const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto begin = mb.find("std::size_t Evaluator::register_known_moving_densify_root_slots()");
+    const auto end = mb.find("recover_moving_sticky_densify_off", begin + 1);
+    CHECK(begin != std::string::npos && end != std::string::npos && end > begin,
+          "AC4: register helper body located");
+    const std::string raw = mb.substr(begin, end - begin);
+    std::string code_only;
+    std::size_t pos = 0;
+    while (pos < raw.size()) {
+        const auto nl = raw.find('\n', pos);
+        const auto stop = (nl == std::string::npos) ? raw.size() : nl;
+        std::string line = raw.substr(pos, stop - pos);
+        const auto cmt = line.find("//");
+        if (cmt != std::string::npos)
+            line.resize(cmt);
+        code_only += line;
+        code_only += '\n';
+        if (nl == std::string::npos)
+            break;
+        pos = nl + 1;
+    }
+    CHECK(code_only.find("note_post_moving_live_ptr_canary_all(") == std::string::npos,
+          "AC4: no canary dual-note call on slots (#3368)");
+    CHECK(code_only.find("note_temporary_moving_live_canaries_all()") != std::string::npos,
+          "AC4: temporary canary drain still the only canary injection");
+    CHECK(code_only.find("pin_") == std::string::npos && code_only.find("gc_") == std::string::npos,
+          "AC4: no new pin/GC API in the walk");
+    const auto lock = raw.find("std::shared_lock<std::shared_mutex> rlock(closures_mtx_)");
+    const auto walk = raw.find("for (auto& [cid, cl] : closures_)");
+    const auto reg = raw.find("register_external_root_slot_for_densify_all(slot)");
+    CHECK(lock != std::string::npos && walk != std::string::npos && reg != std::string::npos &&
+              lock < walk && walk < reg,
+          "AC4: collect under shared closures_mtx_, released before registration");
+}
+
+// AC5: soak — repeated Moving windows with covered closure-body slots stay
+// green (no stale residual accumulates from now-covered slots); suite
+// wiring locked (no test_issue_N file, no design doc).
+static void ac3647_5_soak_windows_and_wiring() {
+    std::println("\n--- #3647 AC5: two-window soak stays green; suite wiring ---");
+    MovingFlagGuard on(1);
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    aura::ast::g_moving_untracked_hard_abort_pref.store(0, std::memory_order_relaxed);
+    {
+        ASTArena arena(64 * 1024);
+        auto* p0 = arena.create<Pod16>(1, 2, 3, 4);
+        auto* p1 = arena.create<Pod16>(5, 6, 7, 8);
+        ClosureBodySlots3647 body;
+        body.flat = p0;
+        body.pool = p1;
+        arena.register_external_root_slot_for_densify(&body.flat);
+        arena.register_external_root_slot_for_densify(&body.pool);
+        const auto r1 = arena.live_compact(LiveCompactMode::Moving);
+        CHECK(r1.objects_moved > 0, "3647 AC5: window 1 moves");
+        CHECK(body.flat == arena.resolve_object_remap(p0) &&
+                  body.pool == arena.resolve_object_remap(p1),
+              "3647 AC5: window 1 rewrote body slots");
+        // Window 2: fresh covered object. Slot lists are per-window
+        // (cleared at each live_compact(Moving) work) and production
+        // re-registers at every densify entry (Phase-5 walk / #3370 hook),
+        // so re-register the body slots here — otherwise window 2's second
+        // move of p0/p1 (hole compaction) would be uncovered.
+        auto* q0 = arena.create<Pod16>(9, 10, 11, 12);
+        void* q0_slot = q0;
+        arena.register_external_root_slot_for_densify(&q0_slot);
+        arena.register_external_root_slot_for_densify(&body.flat);
+        arena.register_external_root_slot_for_densify(&body.pool);
+        void* flat_before_win2 = body.flat;
+        const auto r2 = arena.live_compact(LiveCompactMode::Moving);
+        CHECK(!r2.moving_incomplete_remap, "3647 AC5: window 2 not incomplete");
+        CHECK(!aura::ast::moving_incomplete_remap_sticky_densify_off(),
+              "3647 AC5: no sticky across soak");
+        void* flat_moved2 = arena.resolve_object_remap(flat_before_win2);
+        CHECK(flat_moved2 == nullptr || body.flat == flat_moved2,
+              "3647 AC5: body slot tracks multi-window moves");
+        const auto* moved = static_cast<const Pod16*>(body.flat);
+        CHECK(moved->a == 1 && moved->b == 2, "3647 AC5: payload intact after soak");
+    }
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    const auto t = read_file("tests/core/test_moving_densify_fail_closed.cpp");
+    CHECK(t.find("ac3647_1_closure_body_slots_registered();") != std::string::npos &&
+              t.find("ac3647_2_slot_rewrite_green_and_value_only_red();") != std::string::npos &&
+              t.find("ac3647_3_soft_zero_work_and_gating();") != std::string::npos &&
+              t.find("ac3647_4_no_pin_no_dual_note();") != std::string::npos &&
+              t.find("ac3647_5_soak_windows_and_wiring();") != std::string::npos,
+          "3647 AC5: runner wired");
+    const std::string issue_artifact = std::string("test_issue_") + "3647";
+    CHECK(t.find(issue_artifact) == std::string::npos, "3647 AC5: no tests/issues file");
+}
+
 int run_test_moving_densify_fail_closed() {
     std::println("=== Issue #2495: Moving densify fail-closed on untracked external roots ===");
     std::println(
@@ -4021,6 +4242,8 @@ int run_test_moving_densify_fail_closed() {
     std::println("=== Issue #3055: post-Moving last_object_remap_ residual "
                  "(extends #2495 test file per #81967) ===");
     std::println("=== Issue #3057: FFI opaque slot cover residual of #3022 "
+                 "(extends #2495 test file per #81967) ===");
+    std::println("=== Issue #3647: known Closure body slots enter densify slot SSOT "
                  "(extends #2495 test file per #81967) ===");
 
     ac1_source_cite_live_compact_result();
@@ -4715,6 +4938,13 @@ int run_test_moving_densify_fail_closed() {
     ac3633_4_soft_off_zero_cost();
     ac3633_5_linter_locks_call_site();
     ac3633_6_hard_face_sticky_block();
+    // Issue #3647: known Closure body slots (cl.flat / cl.pool) into the
+    // densify slot SSOT (#3055 residual).
+    ac3647_1_closure_body_slots_registered();
+    ac3647_2_slot_rewrite_green_and_value_only_red();
+    ac3647_3_soft_zero_work_and_gating();
+    ac3647_4_no_pin_no_dual_note();
+    ac3647_5_soak_windows_and_wiring();
 
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
