@@ -6571,6 +6571,21 @@ def cmd_lint():
             "Issue #3647 closure densify slots linter failed — run python3 scripts/check_closure_densify_slots_3647.py"
         )
         return r
+    # Issue #3648 (#3421/#3469 residual): production apply hard-refuses on
+    # an incomplete densify window too. Both apply arms (#3421 closure +
+    # #3602 FFI) consult window_would_allow_mutate (same predicate as
+    # Phase-5 / #2682) after the objects_moved quiet gate — an incomplete
+    # window (untracked kept under moved>0) with a still-green LCP and a
+    # remap-miss stale flat no longer slips through to eval. Counters
+    # reused; Soft / moved==0 keep #2569 recover.
+    awg3648_script = ROOT / "scripts" / "check_apply_window_gate_3648.py"
+    if not awg3648_script.exists():
+        fail(f"missing {awg3648_script}")
+        return 1
+    r = run([sys.executable, str(awg3648_script)], cwd=ROOT)
+    if r != 0:
+        fail("Issue #3648 apply window gate linter failed — run python3 scripts/check_apply_window_gate_3648.py")
+        return r
     # Issue #3301: atomic-batch batch-level MacroIntroduced fail-closed
     # audit. Dispatcher walks each sub-op's target node-id arg before the
     # sub-op loop and denies the whole batch if a target is MacroIntroduced

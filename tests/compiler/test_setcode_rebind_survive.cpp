@@ -67,9 +67,20 @@ struct ProdDensifyWindowGuard {
     std::uint32_t prev_prod;
     std::uint64_t prev_moved;
     std::uint8_t prev_lcp;
+    // Issue #3648: the apply arms also consult the full window axes —
+    // inject and restore them here. Defaults keep the historical
+    // green-window behavior for existing callers (gate passes, falls
+    // through to the LCP / remap checks).
+    std::uint8_t prev_had;
+    std::uint8_t prev_pin;
+    std::uint8_t prev_incomplete;
+    std::uint64_t prev_untracked;
+    std::uint64_t prev_root_fail;
     const void* eval_id = nullptr;
     ProdDensifyWindowGuard(bool prod, std::uint64_t moved, bool lcp_allow,
-                           const void* eval_id = nullptr)
+                           const void* eval_id = nullptr, bool had_moving = true,
+                           bool pin_held = true, bool incomplete = false,
+                           std::uint64_t untracked = 0, std::uint64_t root_fail = 0)
         : eval_id(eval_id) {
         using aura::compiler::typed_audit::g_typed_mutation_audit_counters;
         using aura::core::lifetime_consistency_proof::g_lcp_last_would_allow_commit;
@@ -78,10 +89,30 @@ struct ProdDensifyWindowGuard {
             std::memory_order_relaxed);
         prev_moved = g_last_objects_moved.load(std::memory_order_relaxed);
         prev_lcp = g_lcp_last_would_allow_commit().load(std::memory_order_relaxed);
+        prev_had = aura::core::moving_densify_health::g_last_had_moving_densify.load(
+            std::memory_order_relaxed);
+        prev_pin = aura::core::moving_densify_health::g_last_pin_contract_held.load(
+            std::memory_order_relaxed);
+        prev_incomplete = aura::core::moving_densify_health::g_last_moving_incomplete_remap.load(
+            std::memory_order_relaxed);
+        prev_untracked = aura::core::moving_densify_health::g_last_untracked_kept.load(
+            std::memory_order_relaxed);
+        prev_root_fail = aura::core::moving_densify_health::g_last_root_remap_fail_total.load(
+            std::memory_order_relaxed);
         g_typed_mutation_audit_counters.production_defaults_active.store(prod ? 1u : 0u,
                                                                          std::memory_order_relaxed);
         g_last_objects_moved.store(moved, std::memory_order_relaxed);
         g_lcp_last_would_allow_commit().store(lcp_allow ? 1 : 0, std::memory_order_relaxed);
+        aura::core::moving_densify_health::g_last_had_moving_densify.store(
+            had_moving ? 1 : 0, std::memory_order_relaxed);
+        aura::core::moving_densify_health::g_last_pin_contract_held.store(
+            pin_held ? 1 : 0, std::memory_order_relaxed);
+        aura::core::moving_densify_health::g_last_moving_incomplete_remap.store(
+            incomplete ? 1 : 0, std::memory_order_relaxed);
+        aura::core::moving_densify_health::g_last_untracked_kept.store(untracked,
+                                                                       std::memory_order_relaxed);
+        aura::core::moving_densify_health::g_last_root_remap_fail_total.store(
+            root_fail, std::memory_order_relaxed);
         // Issue #3634: keep the per-eval slot in sync with the fabricated
         // window — the apply arm consults the evaluator's own slot first
         // now, so `lcp_allow` must speak for that slot too.
@@ -100,6 +131,16 @@ struct ProdDensifyWindowGuard {
                                                                          std::memory_order_relaxed);
         g_last_objects_moved.store(prev_moved, std::memory_order_relaxed);
         g_lcp_last_would_allow_commit().store(prev_lcp, std::memory_order_relaxed);
+        aura::core::moving_densify_health::g_last_had_moving_densify.store(
+            prev_had, std::memory_order_relaxed);
+        aura::core::moving_densify_health::g_last_pin_contract_held.store(
+            prev_pin, std::memory_order_relaxed);
+        aura::core::moving_densify_health::g_last_moving_incomplete_remap.store(
+            prev_incomplete, std::memory_order_relaxed);
+        aura::core::moving_densify_health::g_last_untracked_kept.store(prev_untracked,
+                                                                       std::memory_order_relaxed);
+        aura::core::moving_densify_health::g_last_root_remap_fail_total.store(
+            prev_root_fail, std::memory_order_relaxed);
         if (eval_id != nullptr)
             aura::core::lifetime_consistency_proof::reset_lifetime_consistency_proof_for_test();
     }
@@ -534,6 +575,167 @@ static void ac8_3634_per_eval_lcp_consult() {
     lcp::reset_lifetime_consistency_proof_for_test();
 }
 
+// Issue #3648: production apply must also refuse on an incomplete densify
+// window (untracked kept under objects_moved>0) even when the last LCP is
+// still green and the stale flat misses last_object_remap_.
+static void ac9_3648_window_gate_refuse() {
+    std::println(
+        "\n--- #3648 AC1/AC4: incomplete window refuses apply (LCP green, remap miss) ---");
+    const auto flat = read_file("src/compiler/evaluator_eval_flat.cpp");
+    CHECK(flat.find("Issue #3648") != std::string::npos, "3648: eval_flat cites #3648");
+    CHECK(flat.find("window_would_allow_mutate") != std::string::npos,
+          "3648: apply consults the window gate");
+    CHECK(flat.find("g_3648_") == std::string::npos, "3648: no invented g_3648_* counter");
+
+    std::array<aura::compiler::types::EvalValue, 1> args{make_int(1)};
+    // AC1: production + incomplete window (untracked kept ∧ moved>0) + LCP
+    // green + flat NOT a remap key → hard-refuse, no #2569 restamp-eval.
+    {
+        CompilerService cs;
+        auto* m = metrics_of(cs);
+        const auto cid = make_stale_unimpacted_lambda(cs);
+        const auto restamp0 = m->live_closure_epoch_restamp_total.load(std::memory_order_relaxed);
+        const auto stale0 = m->closure_stale_returns.load(std::memory_order_relaxed);
+        ProdDensifyWindowGuard g(/*prod=*/true, /*moved=*/3, /*lcp_allow=*/true, &cs.evaluator(),
+                                 /*had_moving=*/true, /*pin_held=*/true, /*incomplete=*/false,
+                                 /*untracked=*/7, /*root_fail=*/0);
+        auto got = cs.evaluator().apply_closure(cid, args);
+        CHECK(!got.has_value(), "3648 AC1: incomplete window hard-refuses apply");
+        CHECK(m->live_closure_epoch_restamp_total.load(std::memory_order_relaxed) == restamp0,
+              "3648 AC1: no #2569 restamp-eval");
+        CHECK(m->closure_stale_returns.load(std::memory_order_relaxed) > stale0,
+              "3648 AC4: reuses closure_stale_returns");
+    }
+    // AC1 flip: green window (untracked==0) + LCP green + remap miss → the
+    // gate passes and #2569 recover still evaluates (no over-refusal).
+    {
+        CompilerService cs;
+        const auto cid = make_stale_unimpacted_lambda(cs);
+        ProdDensifyWindowGuard g(/*prod=*/true, /*moved=*/2, /*lcp_allow=*/true, &cs.evaluator(),
+                                 /*had_moving=*/true, /*pin_held=*/true, /*incomplete=*/false,
+                                 /*untracked=*/0, /*root_fail=*/0);
+        auto got = cs.evaluator().apply_closure(cid, args);
+        CHECK(got.has_value() && is_int(*got) && as_int(*got) == 2,
+              "3648 AC1: green window does not refuse (gate passes)");
+    }
+}
+
+// Issue #3648 AC2: green window + remap hit still refuses — the window gate
+// is additive on top of the #3421/#3469 half-guards, not a replacement.
+static void ac10_3648_green_window_remap_still_refuse() {
+    std::println("\n--- #3648 AC2: green window + remap hit still refuses ---");
+    std::array<aura::compiler::types::EvalValue, 1> args{make_int(1)};
+    CompilerService cs;
+    auto* m = metrics_of(cs);
+    const auto cid0 = make_stale_unimpacted_lambda(cs);
+    auto snap = cs.evaluator().find_active_closure(cid0);
+    CHECK(snap.has_value(), "3648 AC2: live closure");
+    if (!snap)
+        return;
+    MovingFlagGuard on(1);
+    auto& ar = cs.evaluator().test_arena();
+    auto* p0 = ar.create<Pod16>(1, 2, 3, 4);
+    auto* p1 = ar.create<Pod16>(5, 6, 7, 8);
+    CHECK(p0 && p1, "3648 AC2: tracked objects");
+    void* A = p0;
+    const auto r = ar.live_compact(LiveCompactMode::Moving);
+    CHECK(!r.moving_blocked_precondition && r.objects_moved > 0, "3648 AC2: window moved");
+    CHECK(ar.resolve_object_remap(A) != nullptr, "3648 AC2: A is a remap key");
+    snap->flat = static_cast<decltype(snap->flat)>(A);
+    snap->must_deopt_before_next_call = true;
+    CHECK(cs.evaluator().erase_active_closure(cid0), "3648 AC2: erase original");
+    const auto cid = cs.evaluator().register_active_closure(std::move(*snap));
+    const auto restamp0 = m->live_closure_epoch_restamp_total.load(std::memory_order_relaxed);
+    const auto stale0 = m->closure_stale_returns.load(std::memory_order_relaxed);
+    // Normalize the published window to green: the refuse must come from the
+    // remap hit, not the window gate (proves the gate is additive).
+    ProdDensifyWindowGuard g(/*prod=*/true, /*moved=*/1, /*lcp_allow=*/true, &cs.evaluator(),
+                             /*had_moving=*/true, /*pin_held=*/true, /*incomplete=*/false,
+                             /*untracked=*/0, /*root_fail=*/0);
+    auto got = cs.evaluator().apply_closure(cid, args);
+    CHECK(!got.has_value(), "3648 AC2: remap hit refuses under green window");
+    CHECK(m->live_closure_epoch_restamp_total.load(std::memory_order_relaxed) == restamp0,
+          "3648 AC2: no #2569 restamp");
+    CHECK(m->closure_stale_returns.load(std::memory_order_relaxed) > stale0,
+          "3648 AC2: reuses closure_stale_returns");
+    (void)p1;
+}
+
+// Issue #3648 AC3: Soft / no-Moving / objects_moved==0 keep #2569 recover —
+// the window gate sits behind the production and moved>0 quiet gates.
+static void ac11_3648_soft_no_move_recover() {
+    std::println("\n--- #3648 AC3: Soft / moved==0 / no-window recover unchanged ---");
+    std::array<aura::compiler::types::EvalValue, 1> args{make_int(1)};
+    {
+        CompilerService cs;
+        const auto cid = make_stale_unimpacted_lambda(cs);
+        ProdDensifyWindowGuard g(/*prod=*/false, /*moved=*/3, /*lcp_allow=*/true, &cs.evaluator(),
+                                 /*had_moving=*/true, /*pin_held=*/true, /*incomplete=*/false,
+                                 /*untracked=*/9, /*root_fail=*/0);
+        auto got = cs.evaluator().apply_closure(cid, args);
+        CHECK(got.has_value() && is_int(*got) && as_int(*got) == 2,
+              "3648 AC3: production off keeps #2569 recover");
+    }
+    {
+        CompilerService cs;
+        const auto cid = make_stale_unimpacted_lambda(cs);
+        ProdDensifyWindowGuard g(/*prod=*/true, /*moved=*/0, /*lcp_allow=*/true, &cs.evaluator(),
+                                 /*had_moving=*/true, /*pin_held=*/true, /*incomplete=*/false,
+                                 /*untracked=*/9, /*root_fail=*/0);
+        auto got = cs.evaluator().apply_closure(cid, args);
+        CHECK(got.has_value() && is_int(*got) && as_int(*got) == 2,
+              "3648 AC3: objects_moved==0 keeps #2569 recover");
+    }
+    {
+        CompilerService cs;
+        const auto cid = make_stale_unimpacted_lambda(cs);
+        ProdDensifyWindowGuard g(/*prod=*/true, /*moved=*/3, /*lcp_allow=*/true, &cs.evaluator(),
+                                 /*had_moving=*/false, /*pin_held=*/true, /*incomplete=*/false,
+                                 /*untracked=*/9, /*root_fail=*/0);
+        auto got = cs.evaluator().apply_closure(cid, args);
+        CHECK(got.has_value() && is_int(*got) && as_int(*got) == 2,
+              "3648 AC3: no Moving window (had=0) keeps recover");
+    }
+}
+
+// Issue #3648 AC5: both apply arms consult the window gate (closure + FFI);
+// suite wiring locked; no forbidden artifacts.
+static void ac12_3648_wiring_and_family() {
+    std::println("\n--- #3648 AC5: both arms wired; suite family ---");
+    const auto flat = read_file("src/compiler/evaluator_eval_flat.cpp");
+    const auto begin = flat.find("static bool production_apply_closure_densify_hard_refuse");
+    const auto end = flat.find("static void note_apply_closure_densify_hard_refuse", begin);
+    CHECK(begin != std::string::npos && end != std::string::npos && end > begin,
+          "3648 AC5: closure arm located");
+    const auto closure_arm = flat.substr(begin, end - begin);
+    CHECK(closure_arm.find("Issue #3648") != std::string::npos, "3648 AC5: closure arm cites");
+    CHECK(closure_arm.find("window_would_allow_mutate") != std::string::npos,
+          "3648 AC5: closure arm consults window gate");
+    CHECK(closure_arm.find("g_last_untracked_kept") != std::string::npos,
+          "3648 AC5: closure arm reads untracked axis");
+    const auto moved_pos = flat.find("g_last_objects_moved", begin);
+    const auto gate_rel = closure_arm.find("window_would_allow_mutate");
+    CHECK(moved_pos != std::string::npos && gate_rel != std::string::npos &&
+              moved_pos < begin + gate_rel,
+          "3648 AC5: quiet moved-gate precedes window consult");
+    const auto ffi_begin = flat.find("production_ffi_apply_densify_hard_refuse");
+    const auto ffi_end = flat.find("// Issue #1511", ffi_begin);
+    CHECK(ffi_begin != std::string::npos && ffi_end != std::string::npos && ffi_end > ffi_begin,
+          "3648 AC5: FFI arm located");
+    const auto ffi_body = flat.substr(ffi_begin, ffi_end - ffi_begin);
+    CHECK(ffi_body.find("Issue #3648") != std::string::npos &&
+              ffi_body.find("window_would_allow_mutate") != std::string::npos,
+          "3648 AC5: FFI arm carries the window gate");
+    const auto t = read_file("tests/compiler/test_setcode_rebind_survive.cpp");
+    CHECK(t.find("ac9_3648_window_gate_refuse();") != std::string::npos &&
+              t.find("ac10_3648_green_window_remap_still_refuse();") != std::string::npos &&
+              t.find("ac11_3648_soft_no_move_recover();") != std::string::npos &&
+              t.find("ac12_3648_wiring_and_family();") != std::string::npos,
+          "3648 AC5: runner wired");
+    const std::string issue_artifact = std::string("test_issue_") + "3648";
+    CHECK(t.find(issue_artifact) == std::string::npos, "3648 AC5: no tests/issues file");
+}
+
 } // namespace
 
 int run_test_setcode_rebind_survive() {
@@ -546,7 +748,13 @@ int run_test_setcode_rebind_survive() {
     ac6_3469_two_window_stale_flat_refuse();
     ac7_3602_ffi_densify_refuse();
     ac8_3634_per_eval_lcp_consult();
-    std::println("\n=== #2569/#3421/#3469/#3602/#3634: {} passed, {} failed ===", g_passed,
+    // Issue #3648: apply also refuses on an incomplete densify window
+    // (same gate as Phase-5); LCP-green + remap-miss no longer slips.
+    ac9_3648_window_gate_refuse();
+    ac10_3648_green_window_remap_still_refuse();
+    ac11_3648_soft_no_move_recover();
+    ac12_3648_wiring_and_family();
+    std::println("\n=== #2569/#3421/#3469/#3602/#3634/#3648: {} passed, {} failed ===", g_passed,
                  g_failed);
     return g_failed ? 1 : 0;
 }
