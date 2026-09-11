@@ -44,7 +44,10 @@ def main() -> int:
     pos = mut.find('add_mutate("mutate:atomic-batch"')
     if pos < 0:
         pos = mut.find("mutate:atomic-batch")
-    win = mut[pos : pos + 22000] if pos >= 0 else ""
+    # Issue #3652: the pre-audit opt-out arm gained the #3542 MSE gate
+    # (~1.5KB, incl. its own abort_batch_workspace call) — widen the window
+    # so the throw/!sub_result/!ok abort paths stay counted (was 22000).
+    win = mut[pos : pos + 26000] if pos >= 0 else ""
 
     # AC1
     must("Issue #2796", "AC1", win)

@@ -105,12 +105,17 @@ def main() -> int:
 
     # AC5 — Soft/Off short-circuit: is_macro_introduced first, then
     # get_allow_macro_mutate() || parse (C++ || skips parse when allow).
+    # Issue #3652: the gate now nests — `if (is_macro_introduced(node)) {`
+    # wraps the default-deny (|| parse) plus the MSE allow arm — so accept
+    # either the original single-line `A && B` form or the nested form;
+    # MacroIntroduced still gates before any kwarg parse (Soft/Off: zero).
     must(
         "get_allow_macro_mutate() || parse_allow_macro_opt_out(a)",
         "AC5 || short-circuit",
         flat,
     )
-    must("is_macro_introduced(node) &&", "AC5 is_macro_introduced first", flat)
+    if "is_macro_introduced(node) &&" not in flat and "if (flat.is_macro_introduced(node)) {" not in flat:
+        fails.append("AC5 is_macro_introduced first: gate no longer checks MacroIntroduced before opt-out parse")
     must("3213 AC5", "AC5 test", test)
     must("non-macro replace-value commits", "AC5 non-macro", test)
 

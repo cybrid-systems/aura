@@ -53,7 +53,9 @@ def main() -> int:
     # Issue #3601: the lockless deny site gained the #3543 reason stamp + cite
     # comment inside this function, shifting the IntVal anchor ~300 chars down
     # (original slack was 63). Widen the window accordingly.
-    lwin = flat[lpos : lpos + 3000] if lpos >= 0 else ""
+    # Issue #3652: the deny site gained the nested MSE allow arm (~700 chars
+    # more) — widen to 4000 so the IntVal / #2799 anchors stay in-window.
+    lwin = flat[lpos : lpos + 4000] if lpos >= 0 else ""
 
     # AC1
     must("Issue #2799", "AC1", pwin)
