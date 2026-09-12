@@ -4914,7 +4914,7 @@ static_assert((check_production_soa_dirty_pack_2907(), true),
 // Issue #3488: production DirtyAware PureWrap pack members satisfy
 // ProductionPureWrapPass via run_on_dirty_blocks_only(IRModuleV2&).
 // AoS run_on_dirty_blocks_only(IRFunction&) stays DirtySoAEntryPass
-// (Soft/unit). EscapeAnalysisWrap remains the #3454 grandfather.
+// (Soft/unit). EscapeAnalysisWrap remains the #3454 grandfather (#3701).
 static_assert(ProductionPureWrapPass<ComputeKindWrap>,
               "#3488 ComputeKindWrap SoA dirty entry satisfies ProductionPureWrapPass");
 static_assert(ProductionPureWrapPass<ConstantFoldingWrap>,
@@ -4940,7 +4940,8 @@ static_assert(!ProductionPureWrapPass<pass_soa_detail::AosOnlyPureWrapStub>,
 // to_aos_view / zero set_block_dirty_pred. Call from CompilerService when
 // entry.soa_mod is non-empty after dirty mark. type_reg optional
 // (DCE identity/type rules; nullptr keeps columnar path).
-// EscapeAnalysisWrap remains the #3454 AoS grandfather.
+// EscapeAnalysisWrap remains the #3454 AoS grandfather (#3701: production
+// incremental suite skips Wrap::run when soa_mod nonempty).
 // InlinePass::run_on_dirty_blocks_only(IRModuleV2&) remains the #3403
 // production dispatch target — not added to the AoS incremental suite.
 export inline bool
