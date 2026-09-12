@@ -16,8 +16,10 @@
 //   AC4: no docs/design/3376-*; no test_issue_3376.cpp per #1655 / #81967
 
 #include "test_harness.hpp"
-#include "compiler/typed_mutation_audit.h"
 #include "compiler/dce_elided_deopt_meta.h"
+#include "compiler/mutation_concurrency_health.hh"
+#include "compiler/typed_mutation_audit.h"
+#include "compiler/messaging_bridge.h"
 
 #include <array>
 #include <cstdint>
@@ -59,10 +61,14 @@ using aura::compiler::typed_audit::publish_type_linear_proof_outcome;
 using aura::compiler::typed_audit::reset_for_test;
 using aura::compiler::typed_audit::stamp_type_linear_commit_proof;
 using aura::compiler::typed_audit::undo_apply_coercion_map_recent;
+using aura::compiler::types::as_bool;
 using aura::compiler::types::as_closure_id;
 using aura::compiler::types::as_int;
+using aura::compiler::types::is_bool;
 using aura::compiler::types::is_closure;
+using aura::compiler::types::is_hash;
 using aura::compiler::types::is_int;
+using aura::compiler::types::is_pair;
 using aura::test::g_failed;
 using aura::test::g_passed;
 
@@ -113,6 +119,14 @@ static std::string read_file(const char* path) {
 
 static bool contains(const std::string& hay, const char* needle) {
     return hay.find(needle) != std::string::npos;
+}
+
+Evaluator* g_ev_arm_pending_3697 = nullptr;
+void arm_linear_pending_3697() {
+    if (!g_ev_arm_pending_3697)
+        return;
+    g_ev_arm_pending_3697->note_linear_synth_hard_fail_pending();
+    g_ev_arm_pending_3697->mark_outermost_mutation_failed();
 }
 
 } // namespace
@@ -645,6 +659,90 @@ int run_test_outermost_persist_fail_closed() {
         CHECK(clo_soft && is_closure(*clo_soft), "3688 AC4: Soft TW capture");
         CHECK(cs.evaluator().apply_closure(as_closure_id(*clo_soft), {}).has_value(),
               "3688 AC4: Soft/Off apply_closure still runs");
+        reset_for_test();
+    }
+
+    {
+        std::println("\n--- #3697: add_mutate returns persist-reject after dtor abort_restore ---");
+        const auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
+        CHECK(contains(mut, "Issue #3697"), "3697: add_mutate cites #3697");
+        const auto cite = mut.find("Issue #3697: outermost dtor persist-reject");
+        CHECK(cite != std::string::npos, "3697: add_mutate wrapper cite");
+        const auto win = cite == std::string::npos ? std::string{} : mut.substr(cite, 1800);
+        CHECK(contains(win, "wrapper_guard.reset()"),
+              "3697: dtor persist/abort_restore runs before EDSL return");
+        CHECK(contains(win, "\"persist-reject\""), "3697: structured persist-reject mev");
+        CHECK(contains(win, "wrapper_ok"), "3697: consults the success flag the dtor flips");
+        CHECK(mut.find("\"hold-budget-cancel\"") != std::string::npos,
+              "3697: hold-budget cancel still replaces result");
+        CHECK(mut.find("schema-3697") == std::string::npos, "3697 AC5: no new query key");
+        CHECK(read_file("tests/compiler/test_issue_3697.cpp").empty(),
+              "3697 AC5: no test_issue_3697.cpp");
+        CHECK(read_file("docs/design/3697-add-mutate-persist-reject.md").empty(),
+              "3697 AC5: no docs/design/");
+
+        reset_for_test();
+        apply_dev_audit_defaults();
+        aura::compiler::reset_mutation_concurrency_health_admit_for_test();
+        aura::compiler::MutationConcurrencyHealthSnapshot clean;
+        aura::compiler::set_mutation_concurrency_health_admit_snapshot_for_test(clean);
+        CompilerService cs;
+        CHECK(cs.eval("(+ 1 1)").has_value(), "3697 soak: warm");
+        CHECK(cs.eval("(set-code \"(define t3697 1)\")").has_value(), "3697 soak: set-code");
+        CHECK(cs.eval("(eval-current)").has_value(), "3697 soak: eval");
+        (void)cs.eval("(typecheck-current)");
+        (void)cs.evaluator().ensure_typechecker();
+        (void)cs.evaluator().run_post_mutate_typecheck_no_lock();
+        apply_production_audit_defaults();
+        CHECK(cs.eval("(define qr3697 (query :find \"t3697\"))").has_value(),
+              "3697 soak: bind find hash");
+        auto qr = cs.eval("qr3697");
+        CHECK(qr && is_hash(*qr), "3697 soak: production find is schema-2 hash");
+        CHECK(cs.eval("(define qc3697 (query:filter (query:where :node-type \"LiteralInt\")))")
+                  .has_value(),
+              "3697 soak: bind literal matches");
+        CHECK(aura::compiler::typed_audit::production_defaults_active(),
+              "3697 soak: production defaults");
+        g_ev_arm_pending_3697 = &cs.evaluator();
+        auto* prev_yield = aura::messaging::g_fiber_yield_mutation_boundary;
+        aura::messaging::g_fiber_yield_mutation_boundary = &arm_linear_pending_3697;
+        auto r3697 = cs.eval("(mutate:tweak-literal qc3697 7 :index 0)");
+        aura::messaging::g_fiber_yield_mutation_boundary = prev_yield;
+        g_ev_arm_pending_3697 = nullptr;
+        CHECK(r3697.has_value(), "3697 AC1: mutate returns");
+        CHECK(r3697 && is_pair(*r3697),
+              "3697 AC1: production persist-reject is mev pair, not body's int");
+        CHECK(!(r3697 && is_int(*r3697)), "3697 AC1: not the tweak result int");
+        CHECK(cs.evaluator().last_boundary_rollback_stats().children_column_restored,
+              "3697 AC2: dual-topology restored");
+        auto* ws = cs.evaluator().workspace_flat();
+        CHECK(ws != nullptr, "3697 AC2: workspace");
+        CHECK(find_literal_int(*ws, 1) != aura::ast::NULL_NODE,
+              "3697 AC2: pre-mutate literal 1 still live");
+        CHECK(find_literal_int(*ws, 8) == aura::ast::NULL_NODE,
+              "3697 AC2: rejected tree (tweak 1+7=8) is absent");
+        auto still = cs.eval("(query :find \"t3697\")");
+        CHECK(still && is_hash(*still), "3697 AC2: original Define still queryable");
+        auto absent = cs.eval("(query :find \"n3697\")");
+        CHECK(absent.has_value(), "3697 AC2: query:find new symbol returns");
+        apply_dev_audit_defaults();
+        aura::compiler::reset_mutation_concurrency_health_admit_for_test();
+        aura::compiler::set_mutation_concurrency_health_admit_snapshot_for_test(clean);
+        reset_for_test();
+        CompilerService cs_soft;
+        CHECK(cs_soft.eval("(set-code \"(define s3697 (lambda () 1))\")").has_value(),
+              "3697 AC3/AC4: Soft set-code");
+        CHECK(cs_soft.eval("(eval-current)").has_value(), "3697 AC3/AC4: Soft eval");
+        CHECK(cs_soft.eval("(define r3697s (mutate:set-body \"s3697\" \"(lambda () 9)\"))")
+                  .has_value(),
+              "3697 AC3: Soft mutate returns");
+        auto soft_rej =
+            cs_soft.eval("(and (pair? r3697s) (equal? (car r3697s) \"persist-reject\"))");
+        CHECK(soft_rej && is_bool(*soft_rej) && !as_bool(*soft_rej),
+              "3697 AC4: Soft/Off no extra persist-reject mev");
+        auto* ws_soft = cs_soft.evaluator().workspace_flat();
+        CHECK(ws_soft && find_literal_int(*ws_soft, 9) != aura::ast::NULL_NODE,
+              "3697 AC3: happy persist keeps body's write");
         reset_for_test();
     }
 
