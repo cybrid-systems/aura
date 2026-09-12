@@ -11,6 +11,8 @@
 #define AURA_COMPILER_QUERY_RESULT_DECODE_HH
 
 #include <cstdint>
+#include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 
@@ -71,6 +73,10 @@ query_result_is_fresh_with_refs(const aura::core::QueryResult& qr, const aura::a
             if (m.node_id != 0) {
                 const auto nid = static_cast<aura::ast::NodeId>(m.node_id);
                 if (!flat.is_live_node(nid))
+                    return aura::core::QueryResultFreshness::StaleByEpoch;
+                // Issue #3695: packed child gen is node_gen_; a reused
+                // slot with a different occupant must not resolve as success.
+                if (m.generation != 0 && flat.node_gen_for(nid) != m.generation)
                     return aura::core::QueryResultFreshness::StaleByEpoch;
                 if (m.wrap_epoch != 0 && m.wrap_epoch != live_wrap)
                     return aura::core::QueryResultFreshness::StaleByEpoch;
@@ -204,6 +210,13 @@ template <typename StringHeap, typename PairVec>
                     const auto cdr_ev = pairs[inner].cdr;
                     if (is_int(cdr_ev))
                         node_gen = static_cast<std::uint16_t>(as_int(cdr_ev));
+                    else if (is_pair(cdr_ev)) {
+                        // v2 spine: (id . (gen . (wrap . ...)))
+                        const auto ginner = as_pair_idx(cdr_ev);
+                        if (static_cast<std::size_t>(ginner) < pairs.size() &&
+                            is_int(pairs[ginner].car))
+                            node_gen = static_cast<std::uint16_t>(as_int(pairs[ginner].car));
+                    }
                 }
             }
             if (got) {
@@ -223,14 +236,42 @@ template <typename StringHeap, typename PairVec>
     return true;
 }
 
+// Issue #3695: :index on mutate/query node args that take a QueryResult hash.
+template <typename KeywordTable>
+[[nodiscard]] inline std::optional<std::size_t>
+parse_query_result_match_index(std::span<const types::EvalValue> a, const KeywordTable& kt) {
+    using types::as_int;
+    using types::as_keyword_idx;
+    using types::is_int;
+    using types::is_keyword;
+    for (std::size_t i = 0; i < a.size(); ++i) {
+        if (!is_keyword(a[i]))
+            continue;
+        const auto kidx = as_keyword_idx(a[i]);
+        if (kidx >= kt.size())
+            continue;
+        if (kt[kidx] != ":index")
+            continue;
+        if (i + 1 >= a.size() || !is_int(a[i + 1]))
+            return std::nullopt;
+        const auto n = as_int(a[i + 1]);
+        if (n < 0)
+            return std::nullopt;
+        return static_cast<std::size_t>(n);
+    }
+    return std::nullopt;
+}
+
 // Shared node-operand resolve. NotHash → caller continues pair/int.
 // Ok → out.node is the match identity (no occupancy restamp).
 // Stale / BadArg → caller returns mev(err_kind, err_msg).
+// Issue #3695: singleton still works; N>1 requires explicit :index.
 template <typename StringHeap, typename PairVec>
 [[nodiscard]] inline HashNodeResolve
 resolve_query_result_match(types::EvalValue arg, const StringHeap& heap, const PairVec& pairs,
                            const aura::ast::FlatAST& flat, std::uint64_t tenant,
-                           std::uint64_t fiber, const char* op) {
+                           std::uint64_t fiber, const char* op,
+                           std::optional<std::size_t> match_index = std::nullopt) {
     HashNodeResolve r;
     using types::is_hash;
     if (!is_hash(arg))
@@ -249,14 +290,23 @@ resolve_query_result_match(types::EvalValue arg, const StringHeap& heap, const P
         r.err_msg = std::string(op) + ": QueryResult not fresh";
         return r;
     }
-    if (qr.match_count != 1) {
+    std::size_t pick = 0;
+    if (match_index.has_value()) {
+        if (*match_index >= qr.match_count) {
+            r.kind = HashNodeKind::BadArg;
+            r.err_kind = "bad-arg";
+            r.err_msg = std::string(op) + ": :index out of range";
+            return r;
+        }
+        pick = *match_index;
+    } else if (qr.match_count != 1) {
         r.kind = HashNodeKind::BadArg;
         r.err_kind = "bad-arg";
         r.err_msg = std::string(op) + ": need single match or explicit index";
         return r;
     }
     r.kind = HashNodeKind::Ok;
-    r.node = static_cast<aura::ast::NodeId>(qr.matches[0].node_id);
+    r.node = static_cast<aura::ast::NodeId>(qr.matches[pick].node_id);
     return r;
 }
 #endif // AURA_QUERY_RESULT_DECODE_FRESHNESS_ONLY

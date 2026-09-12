@@ -29,6 +29,7 @@
 
 #include "test_harness.hpp"
 
+#include "compiler/mutation_concurrency_health.hh"
 #include "compiler/typed_mutation_audit.h"
 #include "core/sandbox.hh"
 
@@ -1043,6 +1044,241 @@ void test_ac3660_5_soft_empty_fresh_and_linter() {
     }
 }
 
+// Issue #3695: production QueryResult matches payload is (id . node_gen)
+// pairs, not bare NodeIds / workspace generation_. resolve_query_result_match
+// accepts :index so N>1 can feed mutate without extracting a raw int.
+// Soft/Off keeps the bare list (zero extra). Do not unsink
+// query:result-matches / query:result-fresh?.
+//
+//   AC1 Production query:children-stable of a 3-child node → mutate
+//       child 1 via :index (no bare int).
+//   AC2 Extracted matches NodeId still rejected as bare int (stale-ref).
+//   AC3 Packed child gen is node_gen_; occupancy remake is not success.
+//   AC4 Singleton query:find Define name still resolves from the hash.
+//   AC5 Soft: bare list unchanged.
+//   AC6 No new query key; result-matches stays sink; no invent.
+
+void admit_clean_mutate_for_test() {
+    aura::compiler::reset_mutation_concurrency_health_admit_for_test();
+    aura::compiler::MutationConcurrencyHealthSnapshot clean;
+    aura::compiler::set_mutation_concurrency_health_admit_snapshot_for_test(clean);
+}
+
+bool bind_three_child_stable(CompilerService& cs) {
+    if (!cs.eval("(define qb (query:filter (query:where :node-type \"Begin\")))").has_value())
+        return false;
+    auto qb = cs.eval("qb");
+    if (!qb || !is_hash(*qb))
+        return false;
+    auto n = cs.eval("(length (hash-ref qb \"matches\"))");
+    if (!n || !is_int(*n) || as_int(*n) <= 0)
+        return false;
+    const auto nbegin = as_int(*n);
+    if (nbegin == 1)
+        return cs.eval("(define qc (query :children-stable qb))").has_value();
+    for (std::int64_t i = 0; i < nbegin; ++i) {
+        auto kids = cs.eval(std::string("(length (hash-ref (query :children-stable qb :index ") +
+                            std::to_string(i) + ") \"matches\"))");
+        if (kids && is_int(*kids) && as_int(*kids) == 3) {
+            return cs
+                .eval(std::string("(define qc (query :children-stable qb :index ") +
+                      std::to_string(i) + "))")
+                .has_value();
+        }
+    }
+    return false;
+}
+
+void test_ac3695_1_children_stable_index_mutate() {
+    std::print("AC3695/AC1 -- production children-stable 3-child → mutate :index 1\n");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    apply_dev_audit_defaults();
+    admit_clean_mutate_for_test();
+    CompilerService cs;
+    expect_true("3695 AC1: set-code", cs.eval("(set-code \"(begin 10 20 30)\")").has_value());
+    expect_true("3695 AC1: eval", cs.eval("(eval-current)").has_value());
+    apply_production_audit_defaults();
+    expect_true("3695 AC1: bind 3-child children-stable", bind_three_child_stable(cs));
+    auto qc = cs.eval("qc");
+    expect_true("3695 AC1: children-stable is schema-2 hash", qc && is_hash(*qc));
+    auto n = cs.eval("(length (hash-ref qc \"matches\"))");
+    expect_true("3695 AC1: 3 matches", n && is_int(*n) && as_int(*n) == 3);
+    auto pair0 = cs.eval("(pair? (car (hash-ref qc \"matches\")))");
+    expect_true("3695 AC1: matches payload is pair not bare int",
+                pair0 && is_bool(*pair0) && as_bool(*pair0));
+    expect_true("3695 AC1: bind no-index as-stable-ref",
+                cs.eval("(define r3695ni (query:as-stable-ref qc))").has_value());
+    auto ni = cs.eval("(and (pair? r3695ni) (equal? (car r3695ni) \"bad-arg\"))");
+    expect_true("3695 AC1: N>1 without :index is bad-arg", ni && is_bool(*ni) && as_bool(*ni));
+    expect_true("3695 AC1: bind v2 via :index 1",
+                cs.eval("(define ref3695 (query:as-stable-ref qc :index 1))").has_value());
+    auto ref_car = cs.eval("(car ref3695)");
+    expect_true("3695 AC1: :index 1 packs v2 StableNodeRef (car is NodeId)",
+                ref_car && is_int(*ref_car));
+    expect_true("3695 AC1: bind mutate hash :index 1",
+                cs.eval("(define r3695m (mutate:replace-subtree qc \"21\" :index 1))").has_value());
+    auto mut_stale = cs.eval("(and (pair? r3695m) (equal? (car r3695m) \"stale-ref\"))");
+    auto mut_bad = cs.eval("(and (pair? r3695m) (equal? (car r3695m) \"bad-arg\"))");
+    expect_true("3695 AC1: mutate :index 1 is not stale-ref",
+                mut_stale && is_bool(*mut_stale) && !as_bool(*mut_stale));
+    expect_true("3695 AC1: mutate :index 1 is not bad-arg",
+                mut_bad && is_bool(*mut_bad) && !as_bool(*mut_bad));
+    auto mut_guard = cs.eval("(and (pair? r3695m) (equal? (car r3695m) \"guard-reject\"))");
+    expect_true("3695 AC1: mutate :index 1 is not guard-reject",
+                mut_guard && is_bool(*mut_guard) && !as_bool(*mut_guard));
+    auto mutv = cs.eval("r3695m");
+    expect_true("3695 AC1: mutate :index 1 returned", mutv.has_value());
+    apply_dev_audit_defaults();
+    aura::compiler::reset_mutation_concurrency_health_admit_for_test();
+}
+
+void test_ac3695_2_extracted_nodeid_still_stale_ref() {
+    std::print("AC3695/AC2 -- extracted matches NodeId still stale-ref bare-int reject\n");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    apply_dev_audit_defaults();
+    CompilerService cs;
+    expect_true("3695 AC2: set-code", cs.eval("(set-code \"(begin 11 22 33)\")").has_value());
+    expect_true("3695 AC2: eval", cs.eval("(eval-current)").has_value());
+    apply_production_audit_defaults();
+    expect_true("3695 AC2: bind 3-child children-stable", bind_three_child_stable(cs));
+    expect_true("3695 AC2: bind extracted NodeId",
+                cs.eval("(define nid3695 (car (car (hash-ref qc \"matches\"))))").has_value());
+    auto nid = cs.eval("nid3695");
+    expect_true("3695 AC2: extracted car is bare int", nid && is_int(*nid));
+    // query:as-stable-ref is the production raw-id gate without MutationBoundary
+    // admission (tweak-literal acquires first and can densify-reject).
+    expect_true("3695 AC2: bind bare-int as-stable-ref",
+                cs.eval("(define r3695bare (query:as-stable-ref nid3695))").has_value());
+    auto stale = cs.eval("(and (pair? r3695bare) (equal? (car r3695bare) \"stale-ref\"))");
+    expect_true("3695 AC2: extracted NodeId is stale-ref",
+                stale && is_bool(*stale) && as_bool(*stale));
+    apply_dev_audit_defaults();
+}
+
+void test_ac3695_3_packed_gen_is_node_gen() {
+    std::print("AC3695/AC3 -- packed child gen is node_gen_; occupancy check in freshness\n");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    apply_dev_audit_defaults();
+    CompilerService cs;
+    expect_true("3695 AC3: set-code", cs.eval("(set-code \"(begin 4 5 6)\")").has_value());
+    expect_true("3695 AC3: eval", cs.eval("(eval-current)").has_value());
+    apply_production_audit_defaults();
+    expect_true("3695 AC3: bind 3-child children-stable", bind_three_child_stable(cs));
+    auto idv = cs.eval("(car (car (hash-ref qc \"matches\")))");
+    auto genv = cs.eval("(car (cdr (car (hash-ref qc \"matches\"))))");
+    expect_true("3695 AC3: packed id is int", idv && is_int(*idv));
+    expect_true("3695 AC3: packed gen is int (nested pair)", genv && is_int(*genv));
+    auto* flat = cs.evaluator().workspace_flat();
+    expect_true("3695 AC3: workspace flat", flat != nullptr);
+    const auto nid = static_cast<aura::ast::NodeId>(as_int(*idv));
+    expect_eq_i64("3695 AC3: packed gen == node_gen_for (not occupancy remake)",
+                  static_cast<std::int64_t>(flat->node_gen_for(nid)), as_int(*genv));
+    apply_dev_audit_defaults();
+}
+
+void test_ac3695_4_singleton_find_still_resolves() {
+    std::print("AC3695/AC4 -- singleton query:find still resolves from the hash\n");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    apply_dev_audit_defaults();
+    admit_clean_mutate_for_test();
+    CompilerService cs;
+    expect_true("3695 AC4: set-code",
+                cs.eval("(set-code \"(define t3695 (lambda () 1))\")").has_value());
+    expect_true("3695 AC4: eval", cs.eval("(eval-current)").has_value());
+    apply_production_audit_defaults();
+    expect_true("3695 AC4: bind find hash",
+                cs.eval("(define qr3695 (query :find \"t3695\"))").has_value());
+    auto qr = cs.eval("qr3695");
+    expect_true("3695 AC4: find is schema-2 hash", qr && is_hash(*qr));
+    auto n = cs.eval("(length (hash-ref qr3695 \"matches\"))");
+    expect_true("3695 AC4: singleton match_count", n && is_int(*n) && as_int(*n) == 1);
+    expect_true(
+        "3695 AC4: bind singleton mutate",
+        cs.eval("(define r3695s (mutate:replace-subtree qr3695 \"(lambda () 9)\"))").has_value());
+    auto stale = cs.eval("(and (pair? r3695s) (equal? (car r3695s) \"stale-ref\"))");
+    expect_true("3695 AC4: singleton hash resolves without :index",
+                stale && is_bool(*stale) && !as_bool(*stale));
+    apply_dev_audit_defaults();
+    aura::compiler::reset_mutation_concurrency_health_admit_for_test();
+}
+
+void test_ac3695_5_soft_bare_list_unchanged() {
+    std::print("AC3695/AC5 -- Soft bare find stays a NodeId list (zero extra)\n");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    apply_dev_audit_defaults();
+    CompilerService cs;
+    expect_true("3695 AC5: set-code",
+                cs.eval("(set-code \"(define s3695 (lambda (x) 1))\")").has_value());
+    expect_true("3695 AC5: eval", cs.eval("(eval-current)").has_value());
+    auto qr = cs.eval("(query :find \"s3695\")");
+    expect_true("3695 AC5: Soft find returns", qr.has_value());
+    expect_true("3695 AC5: Soft find is NOT a hash (bare list)", qr && !is_hash(*qr));
+    auto car = cs.eval("(car (query :find \"s3695\"))");
+    expect_true("3695 AC5: Soft match is bare NodeId int", car && is_int(*car));
+}
+
+void test_ac3695_6_source_cite_no_invent() {
+    std::print("AC3695/AC6 -- source-cite :index / node_gen pack; no new key / unsink\n");
+    std::ifstream f_dec("src/compiler/query_result_decode.hh");
+    std::ifstream f_qws("src/compiler/evaluator_primitives_query_workspace.cpp");
+    std::ifstream f_mut("src/compiler/evaluator_primitives_mutate.cpp");
+    std::string dec((std::istreambuf_iterator<char>(f_dec)), std::istreambuf_iterator<char>());
+    std::string qws((std::istreambuf_iterator<char>(f_qws)), std::istreambuf_iterator<char>());
+    std::string mut((std::istreambuf_iterator<char>(f_mut)), std::istreambuf_iterator<char>());
+    expect_true("3695 AC6: decode readable", !dec.empty());
+    expect_true("3695 AC6: query_workspace readable", !qws.empty());
+    expect_true("3695 AC6: mutate readable", !mut.empty());
+    expect_true("3695 AC6: parse_query_result_match_index",
+                dec.find("parse_query_result_match_index") != std::string::npos);
+    expect_true("3695 AC6: :index operand", dec.find("\":index\"") != std::string::npos);
+    expect_true("3695 AC6: :index out of range",
+                dec.find(":index out of range") != std::string::npos);
+    expect_true("3695 AC6: singleton still works without :index",
+                dec.find("need single match or explicit index") != std::string::npos);
+    expect_true("3695 AC6: occupancy uses node_gen_for",
+                dec.find("flat.node_gen_for(nid) != m.generation") != std::string::npos);
+    {
+        const auto pack = qws.find("Issue #3695: pack node_gen_ from the stamped ref");
+        expect_true("3695 AC6: children-stable packs ref.gen", pack != std::string::npos);
+        const auto win = pack == std::string::npos ? std::string{} : qws.substr(pack, 400);
+        expect_true("3695 AC6: children-stable uses ref.gen not generation_()",
+                    win.find("ref.gen") != std::string::npos &&
+                        win.find("flat.generation()") == std::string::npos);
+    }
+    expect_true("3695 AC6: stamp packed match gen is node_gen",
+                qws.find("packed match gen is node_gen_") != std::string::npos);
+    expect_true("3695 AC6: production matches rewrite to (id . node_gen)",
+                qws.find("production matches payload is (id . node_gen)") != std::string::npos);
+    expect_true("3695 AC6: mutate resolver takes :index",
+                mut.find("parse_query_result_match_index") != std::string::npos);
+    expect_true("3695 AC6: query:result-matches stays sink",
+                qws.find("sink_query_prim(\"query:result-matches\"") != std::string::npos);
+    expect_true("3695 AC6: query:result-fresh? stays sink",
+                qws.find("sink_query_prim(\"query:result-fresh?\"") != std::string::npos);
+    expect_true("3695 AC6: no schema-3695", qws.find("schema-3695") == std::string::npos &&
+                                                mut.find("schema-3695") == std::string::npos &&
+                                                dec.find("schema-3695") == std::string::npos);
+    expect_true("3695 AC6: stale-ref reused", dec.find("\"stale-ref\"") != std::string::npos);
+    expect_true("3695 AC6: query-result-overflow reused (no new key)",
+                qws.find("\"query-result-overflow\"") != std::string::npos);
+    {
+        std::ifstream f("tests/compiler/test_issue_3695.cpp");
+        expect_true("3695 AC6: no test_issue_3695.cpp", !f.good());
+    }
+    {
+        std::ifstream f("tests/issues/test_issue_3695.cpp");
+        expect_true("3695 AC6: no tests/issues/test_issue_3695.cpp", !f.good());
+    }
+    {
+        std::ifstream f("docs/design/3695-query-result-matches-index.md");
+        expect_true("3695 AC6: no docs/design/3695-*", !f.good());
+    }
+}
+
 int main() {
     std::print("Issue #3103 + #3137 + #3231 -- QueryResult full-provenance path (schema-2)\n");
     set_strategy(AuditStrategy::Full);
@@ -1051,6 +1287,12 @@ int main() {
     test_3449_ac3_soft_bare_list();
     test_3449_ac4_prod_keyword_false_not_escape();
     test_3449_ac5_source_and_linter();
+    test_ac3695_1_children_stable_index_mutate();
+    test_ac3695_2_extracted_nodeid_still_stale_ref();
+    test_ac3695_3_packed_gen_is_node_gen();
+    test_ac3695_4_singleton_find_still_resolves();
+    test_ac3695_5_soft_bare_list_unchanged();
+    test_ac3695_6_source_cite_no_invent();
     test_ac1_struct_extension();
     test_ac2_push_match_defaults();
     test_ac3_push_match_full_provenance();
@@ -1090,6 +1332,6 @@ int main() {
     test_3395_ac4_non_regress_source_cite();
     // AC3389 runtime ACs skipped — see comment above.
     std::print("All #3103 + #3137 + #3231 + #3286 + #3311 + #3389 + #3395 + #3424 + "
-               "#3449 + #3660 AC tests PASSED\n");
+               "#3449 + #3660 + #3695 AC tests PASSED\n");
     return 0;
 }
