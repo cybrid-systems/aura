@@ -11661,9 +11661,25 @@ private:
         }
         (void)run_production_incremental_dirty_pipeline(ir_mod, escape_pass, mask_ptr);
 
-        for (auto& func : ir_mod.functions) {
+        // Issue #3689: Production/Full partial peel must DCE with the same
+        // dirty mask as CK/CF/TP. Unmasked AoS DeadCoercion walked clean
+        // blocks against mixed old/new IR (partial relower rewrote only
+        // dirty blocks). Soft/Off keeps full-fn DCE (extra work, not a
+        // hole). mask_ptr==null / size mismatch → whole-fn fallback.
+        // SoA hot pack DCE stays cone-limited (#2907). Do not add
+        // InlinePass to this suite.
+        for (std::size_t fi = 0; fi < ir_mod.functions.size(); ++fi) {
+            auto& func = ir_mod.functions[fi];
             if (func.id == ir_mod.entry_function_id)
                 continue;
+            if (aura::compiler::typed_audit::production_hard_face_active() && mask_ptr &&
+                mask_ptr->block_dirty_per_func && fi < mask_ptr->block_dirty_per_func->size()) {
+                const auto& db = (*mask_ptr->block_dirty_per_func)[fi];
+                if (db.size() == func.blocks.size()) {
+                    run_coercion_elim_on_function(func, db);
+                    continue;
+                }
+            }
             // Issue #538 / #611: DCE after re-lower (full fn when no mask).
             run_coercion_elim_on_function(func);
         }
@@ -11729,8 +11745,14 @@ private:
         // Issue #3007: after CoercionMap rebuild + incremental DCE, Production
         // full-fn residual sweep so identity CastOps outside the dirty cone
         // do not remain in JIT-bound IR. Soft observes only.
-        (void)aura::compiler::opt_registry::sweep_production_hot_residual_castops(
-            func, &type_registry_, pipeline_epoch);
+        // Issue #3689: skip the residual sweep when DCE was cone-limited —
+        // clean blocks must not be DCE'd against mixed old/new IR after a
+        // successful partial peel. Full fallback (no matching mask) still
+        // sweeps.
+        if (!dirty_dce) {
+            (void)aura::compiler::opt_registry::sweep_production_hot_residual_castops(
+                func, &type_registry_, pipeline_epoch);
+        }
     }
 
     // Fast eval for primitive literal args inside the workspace-aware

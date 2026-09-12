@@ -187,6 +187,9 @@ void ac6_suite_helper_source() {
     CHECK(pos != std::string::npos, "helper defined");
     auto dirty = read_file("src/compiler/service_dirty.cpp");
     CHECK(dirty.find("run_incremental_dirty_pass_suite_") != std::string::npos, "cascade uses it");
+    CHECK(svc.find("Issue #3689") != std::string::npos, "3689: suite cites #3689");
+    CHECK(svc.find("run_coercion_elim_on_function(func, db)") != std::string::npos,
+          "3689: masked DCE after partial peel");
 }
 
 } // namespace

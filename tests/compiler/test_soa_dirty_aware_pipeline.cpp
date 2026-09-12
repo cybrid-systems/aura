@@ -603,14 +603,55 @@ int run_test_soa_dirty_aware_pipeline() {
         aura::compiler::typed_audit::apply_dev_audit_defaults();
     }
 
+    // ── Issue #3689: SoA dirty pack DCE does not walk clean-block CastOp ──
+    {
+        std::println("\n=== Issue #3689: partial peel SoA/AoS DCE uses dirty mask ===");
+        const auto svc = read_file("src/compiler/service.ixx");
+        CHECK(svc.find("Issue #3689") != std::string::npos, "3689: suite cites #3689");
+        CHECK(svc.find("run_coercion_elim_on_function(func, db)") != std::string::npos,
+              "3689 AC1: AoS DCE peels dirty blocks");
+        CHECK(svc.find("production_hard_face_active()") != std::string::npos,
+              "3689 AC4: Soft/Off no extra mask peel");
+        CHECK(svc.find("schema-3689") == std::string::npos, "3689 AC5: no new query key");
+        CHECK(read_file("tests/compiler/test_issue_3689.cpp").empty(),
+              "3689: no test_issue_3689.cpp");
+
+        IRModuleV2 mod;
+        auto fi = mod.add_function("f3689", 4);
+        auto bi0 = mod.add_block(fi);
+        mod.add_instruction(fi, IROpcode::ConstI64, {0, 7, 0, 0}, 0, 1, 0, 0);
+        mod.add_instruction(fi, IROpcode::CastOp, {1, 0, 1, 0}, 0, 1, 0, 0, 0, /*narrow*/ 0, 0);
+        mod.seal_block(fi, bi0);
+        auto bi1 = mod.add_block(fi);
+        mod.add_instruction(fi, IROpcode::ConstI64, {2, 0, 0, 0}, 0, 1, 0, 0);
+        // Clean-block CastOp: sibling dirty type change must not elide this.
+        mod.add_instruction(fi, IROpcode::CastOp, {3, 2, 1, 0}, 0, 1, 0, 0, 0, /*narrow*/ 0, 0);
+        mod.seal_block(fi, bi1);
+        auto& fn = mod.functions[fi];
+        fn.block_dirty_.assign(fn.blocks_.size(), 0);
+        if (!fn.block_dirty_.empty())
+            fn.block_dirty_[0] = 1;
+        fn.instruction_dirty_.assign(fn.opcodes_.size(), 0);
+        for (std::uint32_t i = fn.blocks_[0].start_idx; i < fn.blocks_[0].end_idx; ++i)
+            fn.instruction_dirty_[i] = 1;
+        CHECK(run_production_soa_dirty_hot_pack(mod), "3689 soak: SoA dirty pack ok");
+        bool clean_has_cast = false;
+        const auto& b1 = fn.blocks_[1];
+        for (std::uint32_t i = b1.start_idx; i < b1.end_idx && i < fn.opcodes_.size(); ++i) {
+            if (fn.opcodes_[i] == IROpcode::CastOp)
+                clean_has_cast = true;
+        }
+        CHECK(clean_has_cast, "3689 AC1: clean-block CastOp still present after SoA pack");
+    }
+
     ac3583_1_dual_eval_callee_mutate_not_stale();
     ac3583_1b_aot_emit_has_no_inline_pass();
     ac3583_2_reuse_existing_counters();
     ac3583_3_soft_zero_cost();
     ac3583_4_no_invent_no_mangle();
 
-    std::println("\n=== #2143/#2907/#3488/#3502/#3583 results: {} passed, {} failed ===", g_passed,
-                 g_failed);
+    std::println("\n=== #2143/#2907/#3488/#3502/#3583/#3689 results: {} passed, {} failed ===",
+                 g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
 
