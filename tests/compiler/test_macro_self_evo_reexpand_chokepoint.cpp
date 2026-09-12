@@ -75,8 +75,8 @@ int run_test_macro_self_evo_reexpand_chokepoint() {
         CHECK(win.find("check_macro_self_evo") != std::string::npos, "AC1: check_macro_self_evo");
         CHECK(win.find("g_macro_self_evo_denied_total") != std::string::npos,
               "AC1: existing #2023 deny counter reused");
-        CHECK(win.find("g_macro_clone_last_reject_reason") != std::string::npos,
-              "AC1: existing #3028 reason reused");
+        CHECK(win.find("kHygieneLimitReasonCapabilityDeny") != std::string::npos,
+              "AC1: existing #3028 reason reused (last_limit_reason 7; #3683)");
         // Chokepoint must be the FIRST thing after the quiet-path early returns.
         auto quiet = win.find("return 0; // no macros registered");
         auto chokepoint = win.find("Issue #3132: MacroSelfEvo chokepoint");
@@ -114,8 +114,8 @@ int run_test_macro_self_evo_reexpand_chokepoint() {
               "AC2: chokepoint returns 0 on deny (no work performed)");
         CHECK(block.find("g_macro_self_evo_denied_total.fetch_add(1") != std::string::npos,
               "AC2: deny bumps existing #2023 counter");
-        CHECK(block.find("g_macro_clone_last_reject_reason.store(1") != std::string::npos,
-              "AC2: deny sets existing #3028 reason surface");
+        CHECK(block.find("kHygieneLimitReasonCapabilityDeny") != std::string::npos,
+              "AC2: deny stamps last_limit_reason 7 (no clone code 1; #3683)");
     }
 
     // ── AC3: with grant_macro_self_evo → allow (existing macro_self_evo_capability
@@ -140,8 +140,8 @@ int run_test_macro_self_evo_reexpand_chokepoint() {
         // g_macro_self_evo_denied_total + g_macro_clone_last_reject_reason.
         CHECK(win.find("g_macro_self_evo_denied_total.fetch_add(1") != std::string::npos,
               "AC5: existing #2023 counter reused");
-        CHECK(win.find("g_macro_clone_last_reject_reason.store(1") != std::string::npos,
-              "AC5: existing #3028 reason reused");
+        CHECK(win.find("note_hygiene_last_limit_reason") != std::string::npos,
+              "AC5: existing #3028 reason reused (note API; #3683)");
         // Negative: no new std::atomic<uint64_t> declarations in the chokepoint.
         CHECK(win.find("std::atomic<std::uint64_t>") == std::string::npos,
               "AC5: no new atomic counters declared");

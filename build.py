@@ -6855,6 +6855,27 @@ def cmd_lint():
         fail(
             "Issue #3682 last-success evidence linter failed — run python3 scripts/check_last_success_coverage_evidence_3682.py"
         )
+    # Issue #3683 (#2961/#3027/#3542 residual): the Agent-facing deny face
+    # for MacroIntroduced default-reject was dual-track — ("hygiene", ...)
+    # vs hygiene_protected_error's ("hygiene-protected", ...) vs the
+    # lockless Diagnostic{InternalError} face — so replay keying on the
+    # tagged kind could not fold one self-evo deny; the capability deny
+    # also published clone last_reject_reason=1 (gensym-ceiling code).
+    # Gate pins: one tagged kind ("hygiene-protected") across reject_structural
+    # / inline / rename-symbol / batch walk / sub-op conversion; capability
+    # deny publishes only last_limit_reason 7 (no clone code 1); the #3542
+    # MSE opt-out face and the Soft/Off short-circuit are retained; tests
+    # extended (closed-loop ac3683 + capability-uniformity).
+    hdk3683_script = ROOT / "scripts" / "check_hygiene_deny_kind_uniformity_3683.py"
+    if not hdk3683_script.exists():
+        fail(f"missing {hdk3683_script}")
+        return 1
+    r = run([sys.executable, str(hdk3683_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3683 hygiene deny kind uniformity linter failed — run python3 scripts/check_hygiene_deny_kind_uniformity_3683.py"
+        )
+        return r
         return r
     # Issue #3649 (#2952/#3096/#2690 residual): the storm-exit edge drives
     # residual coverage-verify. storm_exit_force_full_active now==0 &&

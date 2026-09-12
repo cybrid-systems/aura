@@ -1794,7 +1794,6 @@ static aura::ast::NodeId clone_macro_body_at_depth(
                 g_macro_self_evo_denied_total.fetch_add(1, std::memory_order_relaxed);
                 // Issue #3028: member flag — not TLS sentinel -1 (fiber leak).
                 denied_ = true;
-                g_macro_clone_last_reject_reason.store(1, std::memory_order_relaxed);
                 return;
             }
             // Issue #2241: per-fiber hygiene violation budget gate
@@ -1818,7 +1817,6 @@ static aura::ast::NodeId clone_macro_body_at_depth(
                                  cur_fid);
                 }
                 denied_ = true;
-                g_macro_clone_last_reject_reason.store(1, std::memory_order_relaxed);
                 return;
             }
             armed = true;

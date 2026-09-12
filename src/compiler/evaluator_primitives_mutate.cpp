@@ -732,8 +732,9 @@ namespace {
     }
 
     // Issue #3027: residual structural-prim MacroIntroduced gate.
-    // Same deny face as rename-symbol (#2961): kind "hygiene",
-    // "cannot <prim> MacroIntroduced without :allow-macro? #t".
+    // Same deny face as rename-symbol (#2961): kind "hygiene-protected"
+    // (#3683 unified tag), "cannot <prim> MacroIntroduced without
+    // :allow-macro? #t".
     // Soft / non-macro: one is_macro_introduced load.
     // Issue #3344: continuous coverage check
     // (check_mutate_hygiene_continuous_gate_3344.py) requires every
@@ -765,8 +766,13 @@ namespace {
         typed_audit::capture_macro_hygiene_audit(
             "hygiene-protected", typed_audit::AuditOutcome::Error, static_cast<std::uint32_t>(id),
             static_cast<std::int64_t>(aura_fiber_current_id()), ev.capability_tenant_id());
-        return mev("hygiene",
-                   std::string("cannot ") + prim + " MacroIntroduced without :allow-macro? #t");
+        // Issue #3683: deny kind unified with hygiene_protected_error —
+        // one Agent-stable tagged pair for MacroIntroduced default-reject;
+        // replay keys on "hygiene-protected" instead of the old "hygiene".
+        return mev("hygiene-protected", "target node " + std::to_string(id) +
+                                            " was produced by a hygienic macro expansion; "
+                                            "pass :allow-macro? #t or call "
+                                            "(hygiene:set-allow-macro-mutate! #t) to opt out");
     }
 
     static aura::ast::NodeId first_macro_introduced_in_subtree(const aura::ast::FlatAST& flat,
@@ -4085,8 +4091,12 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                                 if (auto err = reject_structural_macro_hygiene(
                                         ev, flat, body_hit, /*allow=*/false, "set-body", mev))
                                     return *err;
-                                return mev("hygiene", "cannot set-body MacroIntroduced without "
-                                                      ":allow-macro? #t");
+                                return mev(
+                                    "hygiene-protected",
+                                    "target node " + std::to_string(id) +
+                                        " was produced by a hygienic macro expansion; "
+                                        "pass :allow-macro? #t or call "
+                                        "(hygiene:set-allow-macro-mutate! #t) to opt out"); // #3683
                             }
                         }
                     }
@@ -4405,8 +4415,11 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                     if (auto err = reject_structural_macro_hygiene(
                             ev, flat, child_hit, /*allow=*/false, "insert-child", mev))
                         return *err;
-                    return mev("hygiene",
-                               "cannot insert-child MacroIntroduced without :allow-macro? #t");
+                    return mev("hygiene-protected",
+                               "target node " + std::to_string(child_hit) +
+                                   " was produced by a hygienic macro expansion; "
+                                   "pass :allow-macro? #t or call "
+                                   "(hygiene:set-allow-macro-mutate! #t) to opt out"); // #3683
                 }
             }
 
@@ -5848,7 +5861,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                                 ev.rollback_atomic_batch_pinning();
                                 guard_ok = false;
                                 return ev.make_merr(
-                                    "hygiene",
+                                    "hygiene-protected",
                                     ("mutate:atomic-batch: target node " + std::to_string(node) +
                                      " was produced by a hygienic macro expansion; the "
                                      ":allow-macro? opt-out requires MacroSelfEvo capability "
@@ -5882,11 +5895,12 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                         ev.rollback_atomic_batch_pinning();
                         guard_ok = false;
                         return ev.make_merr(
-                            "hygiene", ("mutate:atomic-batch: target node " + std::to_string(node) +
-                                        " was produced by a hygienic macro expansion; pass :*** #t "
-                                        "on the batch form or per sub-op, or call "
-                                        "(hygiene:set-allow-macro-mutate! #t) to opt out")
-                                           .c_str());
+                            "hygiene-protected",
+                            ("mutate:atomic-batch: target node " + std::to_string(node) +
+                             " was produced by a hygienic macro expansion; pass :allow-macro? #t "
+                             "on the batch form or per sub-op, or call "
+                             "(hygiene:set-allow-macro-mutate! #t) to opt out")
+                                .c_str()); // #3683
                     }
                 }
             }
@@ -5989,7 +6003,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                         ev.bump_atomic_batch_snapshot_rollback();
                     ev.rollback_atomic_batch_pinning();
                     guard_ok = false;
-                    return ev.make_merr("hygiene", diag.message.c_str());
+                    return ev.make_merr("hygiene-protected", diag.message.c_str()); // #3683
                 }
                 // Issue #2790: unexpected / EvalResult error — flip both flags
                 // immediately (do not rely solely on post-loop guard_ok assign).
@@ -6863,7 +6877,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                     ev.record_hygiene_violation_attempt();
                     aura::compiler::macro_exp::note_hygiene_last_limit_reason(
                         aura::compiler::macro_exp::kHygieneLimitReasonMacroIntroduced);
-                    return ev.make_merr("hygiene",
+                    return ev.make_merr("hygiene-protected", // #3683
                                         "cannot rename-symbol through MacroIntroduced / MacroDef "
                                         "without :allow-macro? #t");
                 }

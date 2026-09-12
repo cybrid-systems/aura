@@ -137,7 +137,7 @@ int run_test_replace_subtree_new_body_hygiene() {
         auto r = cs.eval(std::format("(mutate:replace-subtree {} \"99\")", target));
         CHECK(r.has_value(), "AC2: returns");
         auto kind = merr_kind(cs, *r);
-        CHECK(kind == "hygiene" || kind == "hygiene-protected",
+        CHECK(kind == "hygiene-protected" || kind == "hygiene-protected",
               "AC2: hygiene reject on MacroIntroduced target");
     }
 
@@ -217,7 +217,7 @@ int run_test_replace_subtree_new_body_hygiene() {
         CHECK(cs.eval(std::format("(syntax:set-marker {} 1)", target)).has_value(),
               "3061 AC1: stamp");
         auto denied = cs.eval(std::format("(mutate:replace-subtree {} \"99\")", target));
-        CHECK(denied.has_value() && merr_kind(cs, *denied) == "hygiene",
+        CHECK(denied.has_value() && merr_kind(cs, *denied) == "hygiene-protected",
               "3061 AC1: default still hygiene");
         auto allowed =
             cs.eval(std::format("(mutate:replace-subtree {} \"99\" :allow-macro? #t)", target));

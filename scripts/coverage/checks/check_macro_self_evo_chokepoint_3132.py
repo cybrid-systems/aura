@@ -77,7 +77,8 @@ def main() -> int:
     if "g_capability_registry().default_tenant.load()" in window:
         fails.append("AC1: process default_tenant read is back in the reexpand choke (#3609 removed it)")
     must("g_macro_self_evo_denied_total.fetch_add(1", "AC1 #2023 counter bump", window)
-    must("g_macro_clone_last_reject_reason.store(1", "AC1 #3028 reason set", window)
+    # Issue #3683: capability deny publishes only last_limit_reason 7.
+    must("kHygieneLimitReasonCapabilityDeny", "AC1 #3028 reason set", window)
     # Chokepoint must come AFTER the quiet-path early return, BEFORE the
     # affected-collector work. Anchor on the quiet-path return.
     quiet_pos = window.find("return 0; // no macros registered")
@@ -98,7 +99,8 @@ def main() -> int:
     # ── AC2: no new metric keys — existing counters reused ──
     must_all = [
         must("g_macro_self_evo_denied_total", "AC2 #2023 counter reused", window),
-        must("g_macro_clone_last_reject_reason", "AC2 #3028 reason reused", window),
+        # Issue #3683: the reason now flows through the note API.
+        must("note_hygiene_last_limit_reason", "AC2 #3028 reason reused", window),
     ]
     for _ in must_all:
         pass
