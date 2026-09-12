@@ -6856,6 +6856,24 @@ def cmd_lint():
     if r != 0:
         fail("Issue #3668 quota tenant keying linter failed — run python3 scripts/check_quota_tenant_keying_3668.py")
         return r
+    # Issue #3669 (#2659 residual): IsolationDeny audit still keyed the
+    # abandoned process-global current.id — layout-only denies (caller set,
+    # ref unstamped) were mislabeled unset-principal and SE.tenant_id ==
+    # target hid the caller. record_audit now takes the caller principal
+    # (entry.current + SE tenant/reason split: unset-principal /
+    # unstamped-ref / ref-tenant), and check_workspace_isolation stamps
+    # last_mutate_error_ from the same reason source (no dual-track).
+    # Soft/Off zero-cost (deny-only SE emit unchanged).
+    iac3669_script = ROOT / "scripts" / "check_isolation_audit_caller_3669.py"
+    if not iac3669_script.exists():
+        fail(f"missing {iac3669_script}")
+        return 1
+    r = run([sys.executable, str(iac3669_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3669 isolation audit caller linter failed — run python3 scripts/check_isolation_audit_caller_3669.py"
+        )
+        return r
     # Issue #3301: atomic-batch batch-level MacroIntroduced fail-closed
     # audit. Dispatcher walks each sub-op's target node-id arg before the
     # sub-op loop and denies the whole batch if a target is MacroIntroduced

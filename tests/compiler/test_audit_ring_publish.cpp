@@ -52,7 +52,11 @@ int run_test_audit_ring_publish() {
         std::println("\n--- AC2: Isolation publish + try_load ---");
         g_workspace_isolation().clear_for_test();
         g_workspace_isolation().set_current_tenant(1, "t1");
-        g_workspace_isolation().record_audit(2, 0, true, false, true, "test-deny", 0);
+        // Issue #3669: caller principal is explicit now (was the stale
+        // process-global read inside record_audit) — 1 matches the
+        // set_current_tenant scenario above.
+        g_workspace_isolation().record_audit(/*caller=*/1, /*target=*/2, /*ref_tenant=*/0, true,
+                                             false, true, "test-deny", 0);
         IsolationAuditEntry e{};
         const auto seq = g_workspace_isolation().load_audit_seq();
         CHECK(seq >= 1, "seq advanced");
@@ -65,7 +69,8 @@ int run_test_audit_ring_publish() {
         g_workspace_isolation().clear_for_test();
         g_workspace_isolation().set_current_tenant(1, "t1");
         for (int i = 0; i < 1100; ++i)
-            g_workspace_isolation().record_audit(2, 0, true, false, false, "storm", 0);
+            g_workspace_isolation().record_audit(/*caller=*/1, /*target=*/2, /*ref_tenant=*/0, true,
+                                                 false, false, "storm", 0);
         const auto seq = g_workspace_isolation().load_audit_seq();
         IsolationAuditEntry e{};
         CHECK(g_workspace_isolation().try_load_audit_seq(seq - 1, e), "latest loadable");
