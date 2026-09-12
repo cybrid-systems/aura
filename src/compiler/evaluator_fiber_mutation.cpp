@@ -1493,26 +1493,34 @@ void Evaluator::mark_outermost_mutation_failed() noexcept {
 // Returns 1 when fail-closed fired, 0 otherwise. Happy path (flag unset):
 // one peek load inside the caller + early out here after reject_enabled
 // and depth checks.
+//
+// Issue #3694: process-wide held + get_query_evaluator TLS-fallback could
+// let an eventfd-woken non-holder flip the holder's success flag while
+// unique_lock stayed with the owner. This-fiber stack depth is SSOT;
+// mark_failed only on g_tls_outermost_guard. Do not call
+// mark_outermost_mutation_failed via the process query Evaluator here.
 extern "C" int aura_evaluator_try_hold_budget_fail_closed_at_safepoint() noexcept {
     using namespace aura::compiler;
     auto* cur = aura::serve::g_current_fiber;
     if (!cur)
         return 0;
-    // AC2: Soft / sandbox=off metric-only unless hard env.
+    // AC2 / #3694 AC4: Soft / sandbox=off metric-only unless hard env.
     if (!mutation_hold_budget_reject_enabled())
         return 0;
-    // Only meaningful while a mutation boundary is live on this fiber.
-    if (aura_evaluator_mutation_boundary_depth() == 0 &&
-        aura_evaluator_mutation_boundary_held() == 0)
+    // Issue #3694: this-fiber stack SSOT. Ignore process-held here
+    // (that signal is push-defer / eventfd-wake, not "this fiber owns Guard").
+    if (aura_evaluator_mutation_boundary_depth() == 0)
         return 0;
     // One-shot consume (same CAS as Phase-5). If Phase-5 already consumed,
     // this is a no-op (return 0).
     if (!cur->consume_hold_budget_cancel())
         return 0;
-    // Outermost-only failure marking (AC3: nested never independently
-    // force-fail — mark_outermost targets the outermost success flag).
-    if (auto* ev = Evaluator::get_query_evaluator())
-        ev->mark_outermost_mutation_failed();
+    // Outermost-only: this fiber's TLS Guard. Nested never independently
+    // force-fail. No TLS Guard → do not touch process query Evaluator.
+    auto* g = Evaluator::MutationBoundaryGuard::this_fiber_outermost();
+    if (!g)
+        return 0;
+    g->mark_failed();
     // Cooperative Phase-5 consume counter stays in sync for Agent health
     // (fired vs consumed). Distinct forced-fail-closed total records that
     // the fail closed at a safepoint edge rather than voluntary Phase-5.

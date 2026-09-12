@@ -3453,6 +3453,11 @@ void Evaluator::MutationBoundaryGuard::force_release_hold_after_cancel_() noexce
 // edge. Dual-restore (abort path, same as panic/abort) then unlock + depth 0
 // so densify×steal cannot observe half-topology after the lock drops.
 // Idempotent with dtor via inbody_force_exited_ / cancel_force_released_.
+Evaluator::MutationBoundaryGuard*
+Evaluator::MutationBoundaryGuard::this_fiber_outermost() noexcept {
+    return g_tls_outermost_guard;
+}
+
 void Evaluator::MutationBoundaryGuard::force_release_hold_budget_inbody() noexcept {
     mark_failed(); // Issue #3268: exchange-false via atomic_ref
     if (ev_ && !inbody_force_exited_) {

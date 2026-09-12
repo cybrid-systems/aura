@@ -15292,6 +15292,10 @@ public:
         // non-cooperative body cannot leave half-topology after the lock drops.
         // Impl: evaluator_mutation_boundary.cpp
         void force_release_hold_budget_inbody() noexcept;
+        // Issue #3694: this-fiber outermost Guard, or nullptr if this
+        // fiber does not own the live Guard (do not use process query
+        // Evaluator to fail a peer's mutate).
+        [[nodiscard]] static MutationBoundaryGuard* this_fiber_outermost() noexcept;
 
     private:
         struct AcquireTag {};
