@@ -6874,6 +6874,21 @@ def cmd_lint():
             "Issue #3669 isolation audit caller linter failed — run python3 scripts/check_isolation_audit_caller_3669.py"
         )
         return r
+    # Issue #3670 (#3594 leftover): the resume IsolationDeny path still
+    # stamped phantom mid=1 when the Mutation epoch was 0 — steal×resume
+    # blame false-joined mid=1 grant/session rows. Both emit sites now join
+    # the SSOT mid (join_audit_and_se_mid(0)); production keeps epoch 0 as
+    # 0 and Restricted/Strict-observe without production defaults keeps the
+    # legacy mid=1 stamp. Reasons unchanged; require_effect refuse
+    # contract (#3594/#3462) and session revoke (#3320) untouched.
+    rmj3670_script = ROOT / "scripts" / "check_resume_mid_join_3670.py"
+    if not rmj3670_script.exists():
+        fail(f"missing {rmj3670_script}")
+        return 1
+    r = run([sys.executable, str(rmj3670_script)], cwd=ROOT)
+    if r != 0:
+        fail("Issue #3670 resume mid join linter failed — run python3 scripts/check_resume_mid_join_3670.py")
+        return r
     # Issue #3301: atomic-batch batch-level MacroIntroduced fail-closed
     # audit. Dispatcher walks each sub-op's target node-id arg before the
     # sub-op loop and denies the whole batch if a target is MacroIntroduced

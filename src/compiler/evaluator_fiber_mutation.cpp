@@ -3371,7 +3371,15 @@ extern "C" void aura_fiber_install_tenant_scope_for_resume(void* fiber_ptr) noex
                 using ::aura::core::security_event::SecurityEventKind;
                 using ::aura::core::security_event_wal::emit_security_event_durable;
                 const auto epoch = ::aura::core::current_mutation_epoch();
-                const auto mid = epoch != 0 ? epoch : static_cast<std::uint64_t>(1);
+                // Issue #3670: #3594 mid contract on the resume path — join
+                // the live TypedMid/session mid via the SSOT. Production:
+                // epoch 0 stays 0 (no phantom 1 to false-join mid=1
+                // grant/session rows). Restricted/Strict without production
+                // defaults keeps the legacy mid=1 observe stamp when nothing
+                // is live.
+                auto mid = typed_audit::join_audit_and_se_mid(0);
+                if (!typed_audit::production_defaults_active() && mid == 0)
+                    mid = 1;
                 emit_security_event_durable(SecurityEventKind::IsolationDeny,
                                             ev->capability_tenant_id(), mid, epoch,
                                             /*effect_bits=*/0, /*op=*/"fiber-principal-mismatch",
@@ -3416,7 +3424,14 @@ extern "C" void aura_fiber_install_tenant_scope_for_resume(void* fiber_ptr) noex
             using ::aura::core::security_event::SecurityEventKind;
             using ::aura::core::security_event_wal::emit_security_event_durable;
             const auto epoch = ::aura::core::current_mutation_epoch();
-            const auto mid = epoch != 0 ? epoch : static_cast<std::uint64_t>(1);
+            // Issue #3670: #3594 mid contract on the resume path — join the
+            // live TypedMid/session mid via the SSOT. Production: epoch 0
+            // stays 0 (no phantom 1 to false-join mid=1 grant/session
+            // rows). Restricted/Strict without production defaults keeps
+            // the legacy mid=1 observe stamp when nothing is live.
+            auto mid = typed_audit::join_audit_and_se_mid(0);
+            if (!typed_audit::production_defaults_active() && mid == 0)
+                mid = 1;
             // Signature: kind, tenant, mid, epoch, effect_bits, op, reason, denied, fiber_id
             emit_security_event_durable(SecurityEventKind::IsolationDeny, assigned, mid, epoch,
                                         /*effect_bits=*/0, /*op=*/"fiber-principal-mismatch",
