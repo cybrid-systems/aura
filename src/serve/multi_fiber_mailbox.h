@@ -1517,7 +1517,8 @@ public:
     // delivery — bare C++ hosts see nullopt; the orchestrator layer uses the
     // flag for the Aura typed handoff-required surface (#3565 AC2).
     [[nodiscard]] std::optional<MailMessage> recv(bool wait, int timeout_ms,
-                                                  std::uint64_t for_fiber, bool* stale_handoff) {
+                                                  std::uint64_t for_fiber, bool* stale_handoff,
+                                                  bool* rejected_boundary = nullptr) {
         const auto deadline = timeout_ms > 0 ? std::chrono::steady_clock::now() +
                                                    std::chrono::milliseconds(timeout_ms)
                                              : std::chrono::steady_clock::time_point::max();
@@ -1587,6 +1588,12 @@ public:
                         aura_evaluator_mark_outermost_mutation_failed();
                     }
                 }
+                // Issue #3673: surface the Guard-live reject to the caller —
+                // orch:agent-recv maps it to a typed deny instead of a quiet
+                // empty so Agents can branch instead of busy-looping.
+                // Policy A itself stays: no park, no Fiber::yield.
+                if (rejected_boundary)
+                    *rejected_boundary = true;
                 // Policy A: non-blocking empty (no park, no Fiber::yield).
                 return std::nullopt;
             }

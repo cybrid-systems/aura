@@ -138,7 +138,19 @@ static void ac1_recv_rejected_under_guard() {
         CHECK(g_mf_mailbox_stats.recv_rejected_in_mutation_boundary.load(
                   std::memory_order_relaxed) > rej1,
               "reject counter grows on repeated gated recv");
+        // Issue #3673: the Guard-live reject rides a per-recv out-flag so
+        // orch:agent-recv can type the deny instead of empty=#t.
+        bool boundary_reject = false;
+        (void)mb.recv(/*wait=*/true, /*timeout_ms=*/50, /*for_fiber=*/0,
+                      /*stale_handoff=*/nullptr, &boundary_reject);
+        CHECK(boundary_reject, "3673: recv sets rejected_boundary out-flag under Guard");
     }
+    // Issue #3673: quiet empty leaves the flag untouched (the try path
+    // returns before the boundary check and never writes it).
+    bool quiet_reject = false;
+    (void)mb.recv(/*wait=*/false, /*timeout_ms=*/0, /*for_fiber=*/0,
+                  /*stale_handoff=*/nullptr, &quiet_reject);
+    CHECK(!quiet_reject, "3673: quiet empty does not set rejected_boundary");
     CHECK(aura_evaluator_mutation_boundary_depth() == 0, "depth 0 after Guard exit");
 }
 

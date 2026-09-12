@@ -5133,6 +5133,29 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                                /*emit_retry=*/false);
                 return build_orch_hash(kv);
             }
+            // Issue #3673: Guard-live Policy A reject is not a quiet empty —
+            // typed deny (deny-class=other / deny-detail=recv-under-boundary,
+            // #3251 intern, emit_retry=#t) so Agents can branch instead of
+            // busy-looping (#2347). Policy A stays (no park); the mailbox
+            // bumped its soft/hard counters per face as before. Soft / Off:
+            // falls through to empty=#t unchanged (zero extra intern).
+            if (!msg && hp->last_recv_boundary_reject &&
+                aura::compiler::typed_audit::production_defaults_active()) {
+                hp->last_recv_boundary_reject = false; // consumed once
+                auto sidx = ev.string_heap_.size();
+                ev.string_heap_.push_back("recv-under-boundary");
+                auto pidx = ev.string_heap_.size();
+                ev.string_heap_.push_back("");
+                std::vector<std::pair<std::string, EvalValue>> kv = {
+                    {"ok", make_bool(false)},        {"empty", make_bool(false)},
+                    {"status", make_string(sidx)},   {"payload", make_string(pidx)},
+                    {"schema", make_int(1588)},      {"schema-2011", make_int(2011)},
+                    {"schema-2188", make_int(2188)}, {"schema-2347", make_int(2347)},
+                };
+                add_deny_class(kv, aura::orch::AgentDenyClass::Other, "recv-under-boundary", 0,
+                               /*emit_retry=*/true);
+                return build_orch_hash(kv);
+            }
             if (!msg) {
                 std::vector<std::pair<std::string, EvalValue>> kv = {
                     {"ok", make_bool(false)},
