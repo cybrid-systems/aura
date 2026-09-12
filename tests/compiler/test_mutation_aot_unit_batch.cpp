@@ -151,6 +151,7 @@ namespace aura_mut_run_aot_hotupdate_audit_1882 {
 //        coverage-bp == 10000 and trail_writes rise
 //   AC4: mutate boundary still advances invariant_audits (sampled path intact)
 //   AC5: query:typed-mutation-audit-trail exposes aot-hotupdate-audit-wired
+//   AC6: #3675 — AOT audit joins composite/batch pin SSOT (join_audit_and_se_mid)
 
 
 // Declared in aura_jit_bridge.h (C linkage); include path may vary by target.
@@ -273,6 +274,97 @@ namespace {
 
 } // namespace
 
+// Issue #3675: AOT hot-update audit must join the composite/batch pin
+// SSOT (#3066/#3546) so a reemit inside a composite/atomic-batch stamps
+// the same mid as the mutate SE / grant.bound_mutation_id — one replay
+// key for "mutate + reemit". Composite-unset order (caller → boundary →
+// resolve) is unchanged; production refuse + Sampled success gate stay.
+void ac6_3675_composite_pin_join() {
+    std::println("\n--- AC6 (#3675): AOT audit joins composite pin ---");
+    namespace ta = aura::compiler::typed_audit;
+    auto read_repo_file = [](const std::string& rel) {
+        for (const auto& p : {rel, std::string("../") + rel, std::string("../../") + rel}) {
+            std::ifstream in(p);
+            if (!in)
+                continue;
+            return std::string((std::istreambuf_iterator<char>(in)),
+                               std::istreambuf_iterator<char>());
+        }
+        return std::string{};
+    };
+    reset_for_test();
+    ta::clear_boundary_audit_mid();
+    set_strategy(AuditStrategy::Full);
+    set_sample_ratio(1);
+    // AC1: composite pin live + AOT fail → typed AotHotUpdate row mid ==
+    // join_audit_and_se_mid(0) (same key as the mutate SE / grant).
+    constexpr std::uint64_t kCompositeMid = 0x3675'CAFEull;
+    CHECK(ta::pin_composite_batch_join_mid(kCompositeMid) == kCompositeMid,
+          "AC6: composite pin set");
+    CHECK(ta::join_audit_and_se_mid(0) == kCompositeMid, "AC6: join → composite pin");
+    const auto fail0 = load_u64(g_typed_mutation_audit_counters.aot_hotupdate_fail);
+    capture_aot_hotupdate_audit(/*success=*/false, /*before_epoch=*/7, /*after_epoch=*/7,
+                                "aot-hotupdate-composite-fail");
+    CHECK(load_u64(g_typed_mutation_audit_counters.aot_hotupdate_fail) == fail0 + 1,
+          "AC6: always-on fail trail +1");
+    ta::TypedMutationAuditEvent row{};
+    CHECK(ta::trail_latest(row), "AC6: trail row present");
+    CHECK(row.kind == ta::MutationKind::AotHotUpdate, "AC6: row kind AotHotUpdate");
+    CHECK(row.mutation_id == kCompositeMid, "AC6: row mid == composite pin (#3675)");
+
+    // AC2: composite-unset → caller/boundary/epoch vocabulary unchanged.
+    ta::clear_boundary_audit_mid();
+    constexpr std::uint64_t kEpochMid = 0x3675'E90Call;
+    ta::note_boundary_audit_mid(kEpochMid);
+    CHECK(ta::join_audit_and_se_mid(0) == kEpochMid, "AC6: no pin → boundary/epoch mid");
+    capture_aot_hotupdate_audit(/*success=*/false, 11, 12, "aot-hotupdate-epoch-fail");
+    CHECK(ta::trail_latest(row), "AC6: epoch trail row present");
+    CHECK(row.mutation_id == kEpochMid, "AC6: row mid == epoch (AC2 unchanged)");
+    ta::clear_boundary_audit_mid();
+
+    // AC4: success stays Sampled-gated — the pin changes the key, not
+    // the gate. Pick a deterministic non-sampled mid for this ratio.
+    set_strategy(AuditStrategy::Sampled);
+    set_sample_ratio(4096);
+    std::uint64_t skip_mid = 1;
+    while (ta::should_audit(skip_mid))
+        ++skip_mid;
+    CHECK(ta::pin_composite_batch_join_mid(skip_mid) == skip_mid,
+          "AC6: non-sampled composite pin set");
+    const auto att0 = load_u64(g_typed_mutation_audit_counters.aot_hotupdate_attempts);
+    const auto aud0 = load_u64(g_typed_mutation_audit_counters.aot_hotupdate_audits);
+    capture_aot_hotupdate_audit(/*success=*/true, 9, 10, "aot-hotupdate-sampled-skip");
+    CHECK(load_u64(g_typed_mutation_audit_counters.aot_hotupdate_attempts) == att0 + 1,
+          "AC6: success attempt +1");
+    CHECK(load_u64(g_typed_mutation_audit_counters.aot_hotupdate_audits) == aud0,
+          "AC6: Sampled skip → no success row (AC4)");
+    set_strategy(AuditStrategy::Full);
+    set_sample_ratio(1);
+    ta::clear_boundary_audit_mid();
+
+    // AC3 + AC5: source-cite — success Sampled gate + production mid==0
+    // refuse guard intact around the join; jit_bridge call sites present.
+    const auto tmh = read_repo_file("src/compiler/typed_mutation_audit.h");
+    CHECK(!tmh.empty(), "AC6: typed_mutation_audit.h readable");
+    CHECK(tmh.find("Issue #3675") != std::string::npos, "AC6: header cites #3675");
+    const auto cap = tmh.find("inline void capture_aot_hotupdate_audit(bool success");
+    CHECK(cap != std::string::npos, "AC6: capture fn present");
+    const auto body = tmh.substr(cap, 3000);
+    CHECK(body.find("join_audit_and_se_mid(0)") != std::string::npos,
+          "AC6: capture joins composite SSOT");
+    CHECK(body.find("if (!should_audit(mid))") != std::string::npos,
+          "AC6: success Sampled gate intact (AC4)");
+    CHECK(body.find("if (mid != 0)") != std::string::npos,
+          "AC6: production mid==0 SE refuse guard intact (AC3)");
+    const auto jbr = read_repo_file("src/compiler/aura_jit_bridge.cpp");
+    CHECK(!jbr.empty(), "AC6: aura_jit_bridge.cpp readable");
+    std::size_t sites = 0;
+    for (auto pos = jbr.find("capture_aot_hotupdate_audit("); pos != std::string::npos;
+         pos = jbr.find("capture_aot_hotupdate_audit(", pos + 1))
+        ++sites;
+    CHECK(sites >= 4, "AC6: jit_bridge call sites present (AC5)");
+}
+
 int run_aot_hotupdate_audit_1882() {
     std::println("=== Issue #1882: TypedMutationAudit AOT/JIT wire-up ===");
     CompilerService cs;
@@ -281,6 +373,7 @@ int run_aot_hotupdate_audit_1882() {
     ac3_full_strategy_coverage_loop();
     ac4_mutate_boundary_still_works(cs);
     ac5_trail_wire_flags(cs);
+    ac6_3675_composite_pin_join();
     std::println("\n=== #1882: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
