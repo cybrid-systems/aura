@@ -1601,6 +1601,171 @@ int run_test_hold_budget_add_mutate_inbody_poll_3480() {
     return failed == 0 ? 0 : 1;
 }
 
+// Issue #3693: eval_flat / lockless mutate body had no safepoint — hold-budget
+// could not consume on the holder thread until add_mutate returned.
+//   AC1: production + cancel armed → lockless helper consume before return
+//   AC2: cross-fiber still never drops foreign unique_lock
+//   AC3: Soft/Off: no extra safepoint in eval_flat
+//   AC4: no_edge_still_held does not stay 1 across a body that polls
+//   AC5: no new query key
+int run_test_hold_budget_eval_flat_safepoint_3693() {
+    std::println("=== Issue #3693: eval_flat / lockless mutate hold-budget safepoint ===");
+    int saved_failed = aura::test::g_failed;
+    int saved_passed = aura::test::g_passed;
+
+    using aura::compiler::CompilerService;
+    using aura::compiler::Evaluator;
+    using aura::compiler::types::make_string;
+    using aura::serve::Scheduler;
+
+    {
+        std::println("\n--- #3693 AC1: production lockless helper consume before return ---");
+        ::unsetenv("AURA_SANDBOX");
+        ::unsetenv("AURA_MUTATION_HOLD_BUDGET_HARD");
+        aura::compiler::typed_audit::apply_production_audit_defaults();
+        CHECK(aura::compiler::mutation_hold_budget_reject_enabled(),
+              "3693 AC1: reject_enabled under production");
+        aura::compiler::clear_mutation_hold_budget_inbody_window_for_test();
+        CompilerService cs;
+        cs.evaluator().set_effect_sandbox_mode(0);
+        cs.evaluator().set_sandbox_mode(false);
+        cs.evaluator().grant_capability("mutate");
+        cs.evaluator().grant_capability("*");
+        CHECK(cs.eval("(set-code \"(define x 1)\")").has_value(), "3693 AC1: set-code");
+        CHECK(cs.eval("(eval-current)").has_value(), "3693 AC1: eval");
+        Evaluator::set_query_evaluator(&cs.evaluator());
+        std::atomic<int> ran{0};
+        std::atomic<int> held_after{-1};
+        std::atomic<int> depth_after{-1};
+        Scheduler sched(2);
+        sched.spawn([&]() {
+            bool ok = true;
+            Evaluator::MutationBoundaryGuard guard(cs.evaluator(), &ok);
+            CHECK(guard.is_outermost(), "3693 AC1: outermost Guard");
+            auto* f = aura::serve::g_current_fiber;
+            CHECK(f != nullptr, "3693 AC1: fiber current");
+            f->request_hold_budget_cancel();
+            aura::compiler::mutation_hold_budget_note_cancel_armed(f->id());
+            aura::compiler::g_hold_budget_cancel_armed_ns.store(1, std::memory_order_release);
+            const auto i0 = cs.evaluator().push_string_heap("x");
+            const auto i1 = cs.evaluator().push_string_heap("9");
+            aura::compiler::types::EvalValue args[2] = {
+                make_string(static_cast<std::uint64_t>(i0)),
+                make_string(static_cast<std::uint64_t>(i1)),
+            };
+            (void)cs.evaluator().eval_flat_apply_mutate_rebind(
+                std::span<const aura::compiler::types::EvalValue>(args, 2));
+            held_after.store(cs.evaluator().mutation_boundary_held() ? 1 : 0,
+                             std::memory_order_relaxed);
+            const auto fid = f ? f->id() : static_cast<std::uint64_t>(0);
+            depth_after.store(cs.evaluator().mutation_boundary_depth_slot_value(fid),
+                              std::memory_order_relaxed);
+            ran.store(1, std::memory_order_relaxed);
+        });
+        std::thread io([&]() { sched.run(); });
+        for (int i = 0; i < 200 && ran.load() == 0; ++i)
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        sched.stop();
+        io.join();
+        CHECK(ran.load() == 1, "3693 AC1: fiber body ran");
+        CHECK(held_after.load() == 0, "3693 AC1: workspace hold cleared inside lockless helper");
+        CHECK(depth_after.load() == 0, "3693 AC1: depth slot == 0 before helper return");
+        const auto efl = read_file("src/compiler/evaluator_eval_flat.cpp");
+        CHECK(efl.find("eval_flat_hold_budget_safepoint_poll") != std::string::npos,
+              "3693 AC1: poll helper in eval_flat");
+        CHECK(efl.find("Fiber::check_gc_safepoint()") != std::string::npos,
+              "3693 AC1: reuses check_gc_safepoint");
+        const auto poll = efl.find("eval_flat_hold_budget_safepoint_poll");
+        const auto loop = efl.find("while (true) {");
+        CHECK(poll != std::string::npos && loop != std::string::npos, "3693 AC1: hot loop present");
+        const auto loop_win = loop == std::string::npos ? std::string{} : efl.substr(loop, 400);
+        CHECK(loop_win.find("EVAL_FLAT_HOLD_BUDGET_POLL()") != std::string::npos,
+              "3693 AC1: eval_flat hot loop polls");
+        CHECK(efl.find("EvalResult Evaluator::eval_flat_apply_mutate_rebind") != std::string::npos,
+              "3693 AC1: lockless rebind present");
+        const auto reb = efl.find("EvalResult Evaluator::eval_flat_apply_mutate_rebind");
+        const auto reb_win = reb == std::string::npos ? std::string{} : efl.substr(reb, 500);
+        CHECK(reb_win.find("EVAL_FLAT_HOLD_BUDGET_POLL()") != std::string::npos,
+              "3693 AC1: lockless helper entry polls");
+        Evaluator::set_query_evaluator(nullptr);
+        aura::compiler::typed_audit::apply_dev_audit_defaults();
+        aura::compiler::clear_mutation_hold_budget_inbody_window_for_test();
+    }
+
+    {
+        std::println("\n--- #3693 AC2: cross-fiber still never drops foreign unique_lock ---");
+        const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+        const auto rel = emb.find("aura_evaluator_force_release_outermost_holder");
+        CHECK(rel != std::string::npos, "3693 AC2: force_release helper present");
+        const auto win = emb.substr(rel, 1800);
+        CHECK(win.find("if (!same)") != std::string::npos, "3693 AC2: same-fiber gate");
+        CHECK(win.find("aura_fiber_request_hold_budget_cancel") != std::string::npos,
+              "3693 AC2: cross-fiber re-arm only");
+        const auto efl = read_file("src/compiler/evaluator_eval_flat.cpp");
+        CHECK(efl.find("workspace_mtx_") == std::string::npos,
+              "3693 AC2: eval_flat does not touch workspace_mtx_");
+        CHECK(efl.find("Fiber::check_gc_safepoint()") != std::string::npos,
+              "3693 AC2: consume stays on check_gc_safepoint / same-fiber ABI");
+    }
+
+    {
+        std::println("\n--- #3693 AC3: Soft/Off no extra safepoint ---");
+        aura::compiler::typed_audit::apply_dev_audit_defaults();
+        ::unsetenv("AURA_MUTATION_HOLD_BUDGET_HARD");
+        CHECK(!aura::compiler::mutation_hold_budget_reject_enabled(),
+              "3693 AC3: Soft reject_enabled false");
+        const auto efl = read_file("src/compiler/evaluator_eval_flat.cpp");
+        const auto hp = efl.find("eval_flat_hold_budget_safepoint_poll");
+        const auto hwin = hp == std::string::npos ? std::string{} : efl.substr(hp, 900);
+        CHECK(hwin.find("mutation_hold_budget_reject_enabled()") != std::string::npos,
+              "3693 AC3: poll gates on reject_enabled");
+        CHECK(hwin.find("aura_hold_budget_cancel_armed()") != std::string::npos,
+              "3693 AC3: poll gates on cancel_armed");
+        aura::compiler::clear_mutation_hold_budget_forced_unlock_for_test();
+        aura::compiler::clear_mutation_hold_budget_inbody_window_for_test();
+        CompilerService cs;
+        cs.evaluator().grant_capability("mutate");
+        cs.evaluator().grant_capability("*");
+        CHECK(cs.eval("(set-code \"(define y 1)\")").has_value(), "3693 AC3: set-code");
+        CHECK(cs.eval("(eval-current)").has_value(), "3693 AC3: eval");
+        aura::compiler::g_hold_budget_cancel_armed_ns.store(1, std::memory_order_release);
+        const auto u0 = aura::compiler::mutation_hold_budget_forced_unlock_total_v_read();
+        const auto i0 = cs.evaluator().push_string_heap("y");
+        const auto i1 = cs.evaluator().push_string_heap("3");
+        aura::compiler::types::EvalValue args[2] = {
+            make_string(static_cast<std::uint64_t>(i0)),
+            make_string(static_cast<std::uint64_t>(i1)),
+        };
+        (void)cs.evaluator().eval_flat_apply_mutate_rebind(
+            std::span<const aura::compiler::types::EvalValue>(args, 2));
+        CHECK(aura::compiler::mutation_hold_budget_forced_unlock_total_v_read() == u0,
+              "3693 AC3: lockless helper does not force-release under Soft");
+        aura::compiler::clear_mutation_hold_budget_inbody_window_for_test();
+    }
+
+    {
+        std::println("\n--- #3693 AC4/AC5: no_edge probe + no new query key ---");
+        const auto efl = read_file("src/compiler/evaluator_eval_flat.cpp");
+        const auto q = read_file("src/compiler/evaluator_primitives_query.cpp") +
+                       read_file("src/compiler/evaluator_primitives_query_type_stats.cpp") +
+                       read_file("src/compiler/evaluator_primitives_messaging.cpp");
+        CHECK(efl.find("Fiber::check_gc_safepoint()") != std::string::npos,
+              "3693 AC4: polling body has a cooperative edge");
+        CHECK(q.find("schema-3693") == std::string::npos, "3693 AC5: no schema-3693");
+        CHECK(q.find("issue-3693") == std::string::npos, "3693 AC5: no issue-3693 query key");
+        CHECK(efl.find("g_3693_") == std::string::npos, "3693 AC5: no g_3693_*");
+        CHECK(read_file("tests/serve/test_issue_3693.cpp").empty(),
+              "3693 AC5: no test_issue_3693.cpp");
+        CHECK(read_file("docs/design/3693-eval-flat-safepoint.md").empty(),
+              "3693 AC5: no docs/design/");
+    }
+
+    int failed = aura::test::g_failed - saved_failed;
+    int passed = aura::test::g_passed - saved_passed;
+    std::println("\n=== #3693 eval_flat safepoint: {} passed, {} failed ===", passed, failed);
+    return failed == 0 ? 0 : 1;
+}
+
 #ifndef AURA_ISSUE_BATCH_MEMBER
 int main() {
     const int rc1 = run_test_hold_budget_synthetic_yield_injection();
@@ -1612,6 +1777,7 @@ int main() {
     const int rc7 = run_test_hold_budget_1slo_inject_3285();
     const int rc8 = run_test_hold_budget_no_edge_force_3325();
     const int rc9 = run_test_hold_budget_add_mutate_inbody_poll_3480();
+    const int rc10 = run_test_hold_budget_eval_flat_safepoint_3693();
     return rc1 != 0
                ? rc1
                : (rc2 != 0
@@ -1624,6 +1790,10 @@ int main() {
                                            ? rc5
                                            : (rc6 != 0
                                                   ? rc6
-                                                  : (rc7 != 0 ? rc7 : (rc8 != 0 ? rc8 : rc9)))))));
+                                                  : (rc7 != 0
+                                                         ? rc7
+                                                         : (rc8 != 0
+                                                                ? rc8
+                                                                : (rc9 != 0 ? rc9 : rc10))))))));
 }
 #endif
