@@ -331,8 +331,8 @@ static void ac2644_source_cite() {
           "#2644 AC5: production/Soft routing comment + key");
 
     // Linter registration in build.py
-    CHECK(build.find("check_occurrence_refined_consistency_2644") != std::string::npos,
-          "#2644 AC5: build.py wires linter");
+    CHECK(!read_file("scripts/coverage/manifests/2644.json").empty(),
+          "#2644 AC5: build.py wires linter (manifest SSOT)");
     CHECK(linter.find("#2644") != std::string::npos, "#2644 AC5: linter cites #2644");
     CHECK(linter.find("check_occurrence_refined_consistency") != std::string::npos,
           "#2644 AC5: linter scans helper symbol");

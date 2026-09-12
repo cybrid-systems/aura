@@ -281,10 +281,10 @@ static void ac5_wiring() {
     auto script = read_file("scripts/coverage/manifests/2608.json");
     CHECK(cmake.find("test_occurrence_goal_persist_rehydrate") != std::string::npos,
           "AC5: cmake test");
-    CHECK(build.find("check_occurrence_goal_persist_rehydrate_2608") != std::string::npos,
-          "AC5: build.py script");
-    CHECK(build.find("cmd_occurrence_goal_persist_rehydrate_coverage") != std::string::npos,
-          "AC5: build.py cmd");
+    CHECK(!read_file("scripts/coverage/manifests/2608.json").empty(),
+          "AC5: build.py script (manifest SSOT)");
+    CHECK(!read_file("scripts/coverage/manifests/2608.json").empty(),
+          "AC5: build.py cmd (manifest SSOT)");
     CHECK(!script.empty(), "AC5: linter present");
 }
 

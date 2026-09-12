@@ -48,8 +48,11 @@ def main() -> int:
     else:
         body = hot[pipe : pipe + 3200]
     must("Issue #3466", "AC1 marker", body)
-    must("last_force_jit_reason_", "AC1 last_force_jit_reason", body)
-    must("aot_reload_fail_to_force_jit_mask", "AC1 reason-group map", body)
+    # Issue #3682: idle override stamps nothing — last_force_jit_reason is
+    # the global fail reason, not "this emit healed that reason". The
+    # inference (aot_reload_fail_to_force_jit_mask(fail) & demoted) is gone;
+    # positive coverage enters via the Agent override only.
+    must("Issue #3682", "AC1 #3682 no-inference contract", body)
     must("reemit_success_coverage_override_", "AC1 override still first", body)
     must_not(
         "covered = candidates & emit_region_mask_.load",
@@ -61,8 +64,8 @@ def main() -> int:
         "AC5 pipeline must not fall back to full demoted",
         body,
     )
-    if "if (covered == 0)" not in body:
-        fails.append("AC1: unset override must fall through to last_force_jit_reason")
+    if "aot_reload_fail_to_force_jit_mask(fail)" in hot:
+        fails.append("AC1: last_force_jit_reason inference must stay removed (#3682)")
     if "if (covered != 0)" not in body:
         fails.append("AC1: store last_success only when covered != 0")
     if "if (demoted != 0)" not in body:

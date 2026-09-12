@@ -500,11 +500,11 @@ static void ac3059_2_cascade_coverage_matches_pipeline() {
     reg.on_force_jit_for_reason(AotReloadFail::Defuse);
     CHECK((reg.force_jit_regions_mask() & defuse_bit) != 0, "3059 AC2: force bit set");
     // Issue #3445: candidates is a COUNT, not a reason mask. Issue #3466:
-    // success stamps last_force_jit_reason's group bit (Defuse), never
-    // the count itself or the full demoted mask.
+    // success coverage is Agent opt-in. Issue #3682: idle override stamps
+    // nothing — last_force_jit_reason is not "this emit healed that reason".
     reg.on_reemit_pipeline_call(3, 1);
-    CHECK(reg.last_reemit_success_region_mask() == defuse_bit,
-          "3059 AC2: pipeline stamps last_force_jit_reason group, not count");
+    CHECK(reg.last_reemit_success_region_mask() == 0,
+          "3059 AC2: idle-override cascade invents no coverage (#3682)");
     CHECK(reg.last_reemit_success_region_mask() != 3,
           "3059 AC2: candidates count is not a coverage mask");
 

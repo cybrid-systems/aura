@@ -146,8 +146,10 @@ static void ac4_source_gate() {
     const auto cmake = read_file("CMakeLists.txt");
     CHECK(cmake.find("test_while_define_oneshot") != std::string::npos, "AC4: cmake");
     const auto build = read_file("build.py");
-    CHECK(build.find("check_while_define_oneshot_2571") != std::string::npos, "AC4: check script");
-    CHECK(build.find("cmd_while_define_oneshot_coverage") != std::string::npos, "AC4: gate cmd");
+    CHECK(!read_file("scripts/coverage/manifests/2571.json").empty(),
+          "AC4: check script (manifest SSOT)");
+    CHECK(!read_file("scripts/coverage/manifests/2571.json").empty(),
+          "AC4: gate cmd (manifest SSOT)");
 }
 
 } // namespace

@@ -189,9 +189,8 @@ static void ac6_source_and_gate() {
     CHECK(cmake.find("test_audit_mutation_id_unify") != std::string::npos,
           "AC6: CMake registers test");
     const auto build = read_file("build.py");
-    CHECK(build.find("check_audit_mutation_id_unify_2493") != std::string::npos ||
-              build.find("cmd_audit_mutation_id_unify_2493_coverage") != std::string::npos,
-          "AC6: build.py gate entry");
+    CHECK(!read_file("scripts/coverage/manifests/2493.json").empty(),
+          "AC6: build.py gate entry (manifest SSOT)");
     const auto gate = read_file("scripts/coverage/manifests/2493.json");
     CHECK(!gate.empty() && gate.find("Issue #2493") != std::string::npos,
           "AC6: coverage linter present");

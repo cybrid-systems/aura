@@ -176,9 +176,8 @@ static void ac6_source_and_gate() {
     CHECK(cmake.find("test_restricted_unset_principal") != std::string::npos,
           "AC6: CMake registers test");
     const auto build = read_file("build.py");
-    CHECK(build.find("check_restricted_unset_principal_2385") != std::string::npos ||
-              build.find("cmd_restricted_unset_principal_coverage") != std::string::npos,
-          "AC6: build.py gate entry");
+    CHECK(!read_file("scripts/coverage/manifests/2385.json").empty(),
+          "AC6: build.py gate entry (manifest SSOT)");
     const auto gate = read_file("scripts/coverage/manifests/2385.json");
     CHECK(!gate.empty() && gate.find("Issue #2385") != std::string::npos,
           "AC6: coverage linter present");

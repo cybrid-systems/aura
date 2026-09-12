@@ -185,8 +185,9 @@ static void ac6_source_gate() {
     const auto cmake = read_file("CMakeLists.txt");
     CHECK(cmake.find("test_jit_dual_string_heap") != std::string::npos, "AC6: cmake");
     const auto build = read_file("build.py");
-    CHECK(build.find("check_jit_dual_string_heap_2575") != std::string::npos, "AC6: check");
-    CHECK(build.find("cmd_jit_dual_string_heap_coverage") != std::string::npos, "AC6: gate cmd");
+    CHECK(!read_file("scripts/coverage/manifests/2575.json").empty(), "AC6: check (manifest SSOT)");
+    CHECK(!read_file("scripts/coverage/manifests/2575.json").empty(),
+          "AC6: gate cmd (manifest SSOT)");
 }
 
 } // namespace

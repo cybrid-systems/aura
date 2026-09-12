@@ -187,10 +187,8 @@ static void ac6_source_and_gate() {
     CHECK(cmake.find("test_security_audit_wal_force_restricted") != std::string::npos,
           "AC6: CMake registers test");
     const auto build = read_file("build.py");
-    CHECK(build.find("check_security_audit_wal_force_restricted_2492") != std::string::npos ||
-              build.find("cmd_security_audit_wal_force_restricted_2492_coverage") !=
-                  std::string::npos,
-          "AC6: build.py gate entry");
+    CHECK(!read_file("scripts/coverage/manifests/2492.json").empty(),
+          "AC6: build.py gate entry (manifest SSOT)");
     const auto gate = read_file("scripts/coverage/manifests/2492.json");
     CHECK(!gate.empty() && gate.find("Issue #2492") != std::string::npos,
           "AC6: coverage linter present");

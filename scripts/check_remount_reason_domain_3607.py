@@ -65,7 +65,10 @@ def main() -> int:
     must("ac3607_1_covered_define_domain", "AC1 test row", test)
 
     # AC2
-    must("aot_reload_fail_to_force_jit_mask(fail) & demoted", "AC2 reason stamp", reg)
+    # Issue #3682: the idle-override inference (fail & demoted) is gone —
+    # last_success stamps from the Agent override only; the reason-group
+    # bitmap domain itself is unchanged.
+    must("Issue #3682", "AC2 reason stamp", reg)
     must("last_reemit_success is a reason-group bitmap", "AC2 #3445 comment", reg)
     must("it is NOT a sid", "AC2 domain comment", rt)
     must("ac3607_2_reason_domain_untouched", "AC2 test row", test)

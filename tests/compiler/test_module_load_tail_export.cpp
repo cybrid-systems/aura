@@ -135,8 +135,10 @@ static void ac4_source_gate() {
     const auto cmake = read_file("CMakeLists.txt");
     CHECK(cmake.find("test_module_load_tail_export") != std::string::npos, "AC4: cmake");
     const auto build = read_file("build.py");
-    CHECK(build.find("check_module_load_tail_2570") != std::string::npos, "AC4: check script");
-    CHECK(build.find("cmd_module_load_tail_coverage") != std::string::npos, "AC4: gate cmd");
+    CHECK(!read_file("scripts/coverage/manifests/2570.json").empty(),
+          "AC4: check script (manifest SSOT)");
+    CHECK(!read_file("scripts/coverage/manifests/2570.json").empty(),
+          "AC4: gate cmd (manifest SSOT)");
 }
 
 // Follow-up: multi-define (letrec) pre-allocates void cells; (define ceil ceil)

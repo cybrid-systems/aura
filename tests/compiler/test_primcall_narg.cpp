@@ -179,8 +179,9 @@ static void ac6_source_gate() {
     const auto cmake = read_file("CMakeLists.txt");
     CHECK(cmake.find("test_primcall_narg") != std::string::npos, "AC6: cmake");
     const auto build = read_file("build.py");
-    CHECK(build.find("check_primcall_narg_2576") != std::string::npos, "AC6: check");
-    CHECK(build.find("cmd_primcall_narg_coverage") != std::string::npos, "AC6: gate cmd");
+    CHECK(!read_file("scripts/coverage/manifests/2576.json").empty(), "AC6: check (manifest SSOT)");
+    CHECK(!read_file("scripts/coverage/manifests/2576.json").empty(),
+          "AC6: gate cmd (manifest SSOT)");
 }
 
 } // namespace

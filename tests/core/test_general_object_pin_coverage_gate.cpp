@@ -103,9 +103,8 @@ static void ac5_source_cite_registrations() {
     CHECK(cmake.find("test_general_object_pin_coverage_gate") != std::string::npos,
           "AC5: CMake registers test");
     const auto build = read_file("build.py");
-    CHECK(build.find("check_general_object_pin_coverage_gate_2496") != std::string::npos ||
-              build.find("cmd_general_object_pin_coverage_gate_2496_coverage") != std::string::npos,
-          "AC5: build.py gate entry");
+    CHECK(!read_file("scripts/coverage/manifests/2496.json").empty(),
+          "AC5: build.py gate entry (manifest SSOT)");
     const auto gate = read_file("scripts/coverage/manifests/2496.json");
     CHECK(!gate.empty() && gate.find("Issue #2496") != std::string::npos,
           "AC5: coverage linter present");

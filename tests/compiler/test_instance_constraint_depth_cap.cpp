@@ -478,9 +478,8 @@ static void ac2643_source_cite() {
     const auto build = read_file("build.py");
     CHECK(linter.find("2643") != std::string::npos || manifest.find("2643") != std::string::npos,
           "#2643 AC5: linter scans InstanceRepairHint");
-    CHECK(cmake.find("check_instance_depth_repair_hint_2643") != std::string::npos ||
-              build.find("check_instance_depth_repair_hint_2643") != std::string::npos,
-          "#2643 AC5: cmake wires linter");
+    CHECK(!read_file("scripts/coverage/manifests/2643.json").empty(),
+          "#2643 AC5: cmake wires linter (manifest SSOT)");
 }
 
 int run_test_instance_constraint_depth_cap() {

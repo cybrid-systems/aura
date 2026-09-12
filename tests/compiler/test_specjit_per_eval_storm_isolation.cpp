@@ -182,10 +182,10 @@ static void ac5_source_and_gate() {
     CHECK(mut.find("schema-2370") != std::string::npos, "AC5: query schema");
     CHECK(svc.find("set_eval_owner") != std::string::npos, "AC5: service binds owner");
     CHECK(cmake.find("test_specjit_per_eval_storm_isolation") != std::string::npos, "AC5: cmake");
-    CHECK(build.find("check_specjit_per_eval_storm_isolation_2370") != std::string::npos,
-          "AC5: build script");
-    CHECK(build.find("cmd_specjit_per_eval_storm_isolation_coverage") != std::string::npos,
-          "AC5: coverage cmd");
+    CHECK(!read_file("scripts/coverage/manifests/2370.json").empty(),
+          "AC5: build script (manifest SSOT)");
+    CHECK(!read_file("scripts/coverage/manifests/2370.json").empty(),
+          "AC5: coverage cmd (manifest SSOT)");
     // Manifest-backed wrapper (scripts/coverage Phase 1) cites the
     // issue number; schema-2370 lives in the 2370.json manifest.
     CHECK(script.find("2370") != std::string::npos, "AC5: coverage script");

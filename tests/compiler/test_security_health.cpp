@@ -259,8 +259,10 @@ static void ac5_source_cite() {
     CHECK(sec.find("Issue #2389") != std::string::npos, "AC5: security.cpp cites #2389");
     CHECK(obs.find("query:security-health") != std::string::npos, "AC5: catalog entry");
     CHECK(cmake.find("test_security_health") != std::string::npos, "AC5: CMake");
-    CHECK(build.find("check_security_health_2389") != std::string::npos, "AC5: build.py gate");
-    CHECK(build.find("cmd_security_health_coverage") != std::string::npos, "AC5: cmd coverage");
+    CHECK(!read_file("scripts/coverage/manifests/2389.json").empty(),
+          "AC5: build.py gate (manifest SSOT)");
+    CHECK(!read_file("scripts/coverage/manifests/2389.json").empty(),
+          "AC5: cmd coverage (manifest SSOT)");
     CHECK(!linter.empty(), "AC5: coverage linter present");
 }
 

@@ -6836,6 +6836,26 @@ def cmd_lint():
     if r != 0:
         fail("Issue #3674 WAL fold auto-durable linter failed — run python3 scripts/check_wal_fold_autoscan_3674.py")
         return r
+    # Issue #3682 (#3466/#3445/#2502 residual): on_reemit_pipeline_call
+    # stamped aot_reload_fail_to_force_jit_mask(last_force_jit_reason) &
+    # demoted on ANY successes>0 — the global last-fail reason read as
+    # "this emit healed that reason", so an unrelated define's cascade
+    # collapsed residual_force_mask and let production only_covered
+    # re-promote a never-re-emitted region. Gate pins: pipeline stamps
+    # last_success from the Agent override only (inference gone),
+    # note_reemit_success_coverage override path intact, only_covered
+    # re-promote gates zero coverage (no #2502 wholesale fall-through),
+    # Soft / mask==0 short-circuits retained, tests extended.
+    lsc3682_script = ROOT / "scripts" / "check_last_success_coverage_evidence_3682.py"
+    if not lsc3682_script.exists():
+        fail(f"missing {lsc3682_script}")
+        return 1
+    r = run([sys.executable, str(lsc3682_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3682 last-success evidence linter failed — run python3 scripts/check_last_success_coverage_evidence_3682.py"
+        )
+        return r
     # Issue #3649 (#2952/#3096/#2690 residual): the storm-exit edge drives
     # residual coverage-verify. storm_exit_force_full_active now==0 &&
     # prev!=0 branch runs one maybe_coverage_verify_min_dirty when

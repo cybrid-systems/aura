@@ -202,10 +202,10 @@ static void ac6_source_and_schema() {
     CHECK(q.find("type-dep-steal-prune-total") != std::string::npos, "AC6: type_dep counter");
     CHECK(!lint.empty(), "AC6: linter present");
     CHECK(cmake.find("test_type_freshness_steal_densify") != std::string::npos, "AC6: cmake");
-    CHECK(build.find("check_type_freshness_steal_densify_2552") != std::string::npos,
-          "AC6: build script");
-    CHECK(build.find("cmd_type_freshness_steal_densify_coverage") != std::string::npos,
-          "AC6: build cmd");
+    CHECK(!read_file("scripts/coverage/manifests/2552.json").empty(),
+          "AC6: build script (manifest SSOT)");
+    CHECK(!read_file("scripts/coverage/manifests/2552.json").empty(),
+          "AC6: build cmd (manifest SSOT)");
 
     CompilerService cs;
     CHECK(cs.eval("(+ 1 1)").has_value(), "warm");

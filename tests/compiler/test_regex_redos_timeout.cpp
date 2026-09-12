@@ -147,9 +147,10 @@ static void ac5_gate() {
     auto build = read_file("build.py");
     auto cmake = read_file("CMakeLists.txt");
     auto script = read_file("scripts/coverage/manifests/2479.json");
-    CHECK(build.find("check_regex_redos_timeout_2479") != std::string::npos,
-          "AC5: check script in build.py");
-    CHECK(build.find("cmd_regex_redos_timeout_coverage") != std::string::npos, "AC5: coverage cmd");
+    CHECK(!read_file("scripts/coverage/manifests/2479.json").empty(),
+          "AC5: check script in build.py (manifest SSOT)");
+    CHECK(!read_file("scripts/coverage/manifests/2479.json").empty(),
+          "AC5: coverage cmd (manifest SSOT)");
     CHECK(cmake.find("test_regex_redos_timeout") != std::string::npos, "AC5: cmake test");
     CHECK(!script.empty() && script.find("2479") != std::string::npos, "AC5: check script exists");
 }

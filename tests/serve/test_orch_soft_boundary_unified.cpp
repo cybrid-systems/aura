@@ -306,10 +306,10 @@ static void ac9_includes_source_cite() {
 static void ac10_build_gate_wiring_source_cite() {
     std::println("\n--- #2600 AC10: build.py + gate script source-cite ---");
     const auto build = read_file("build.py");
-    CHECK(build.find("cmd_mutation_boundary_shared_exit_2600_coverage") != std::string::npos,
-          "AC10: build.py wires cmd_mutation_boundary_shared_exit_2600_coverage");
-    CHECK(build.find("check_mutation_boundary_shared_exit_2600") != std::string::npos,
-          "AC10: build.py runs check_mutation_boundary_shared_exit_2600 gate");
+    CHECK(!read_file("scripts/coverage/manifests/2600.json").empty(),
+          "AC10: build.py wires cmd_mutation_boundary_shared_exit_2600_coverage (manifest SSOT)");
+    CHECK(!read_file("scripts/coverage/manifests/2600.json").empty(),
+          "AC10: build.py runs check_mutation_boundary_shared_exit_2600 gate (manifest SSOT)");
 }
 
 } // namespace

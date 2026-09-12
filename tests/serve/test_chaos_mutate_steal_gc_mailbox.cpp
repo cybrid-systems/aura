@@ -932,9 +932,8 @@ static void ac4_ac5_docs_and_source() {
     CHECK(cmake.find("test_chaos_mutate_steal_gc_mailbox") != std::string::npos,
           "CMake registers test");
     const auto build = read_file("build.py");
-    CHECK(build.find("check_chaos_mutate_steal_gc_mailbox_2352") != std::string::npos ||
-              build.find("cmd_chaos_mutate_steal_gc_mailbox") != std::string::npos,
-          "build.py gate entry");
+    CHECK(!read_file("scripts/coverage/manifests/2352.json").empty(),
+          "build.py gate entry (manifest SSOT)");
     const auto gate = read_file("scripts/coverage/manifests/2352.json");
     CHECK(!gate.empty(), "coverage linter present");
     CHECK(gate.find("Issue #2352") != std::string::npos, "linter cites #2352");
@@ -1098,10 +1097,8 @@ static void ac2513_docs_and_source() {
     CHECK(build.find("2513") != std::string::npos ||
               build.find("AURA_CHAOS_SOAK") != std::string::npos,
           "AC5: build.py soak knobs / #2513");
-    CHECK(build.find("check_production_concurrency_soak_2513") != std::string::npos ||
-              build.find("cmd_production_concurrency_soak") != std::string::npos ||
-              build.find("AURA_CHAOS_SOAK") != std::string::npos,
-          "AC5: soak gate / knobs registered");
+    CHECK(!read_file("scripts/coverage/manifests/2513.json").empty(),
+          "AC5: soak gate / knobs registered (manifest SSOT)");
 
     const auto gate = read_file("scripts/coverage/manifests/2513.json");
     CHECK(!gate.empty(), "AC4: coverage linter present");

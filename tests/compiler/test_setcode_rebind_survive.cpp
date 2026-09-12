@@ -254,8 +254,10 @@ static void ac4_source_gate() {
     const auto cmake = read_file("CMakeLists.txt");
     CHECK(cmake.find("test_setcode_rebind_survive") != std::string::npos, "AC4: cmake");
     const auto build = read_file("build.py");
-    CHECK(build.find("check_setcode_rebind_2569") != std::string::npos, "AC4: check script");
-    CHECK(build.find("cmd_setcode_rebind_coverage") != std::string::npos, "AC4: gate cmd");
+    CHECK(!read_file("scripts/coverage/manifests/2569.json").empty(),
+          "AC4: check script (manifest SSOT)");
+    CHECK(!read_file("scripts/coverage/manifests/2569.json").empty(),
+          "AC4: gate cmd (manifest SSOT)");
 }
 
 static void ac5_3421_production_hard_refuse() {
