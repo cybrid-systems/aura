@@ -496,19 +496,24 @@ def _run_one_attempt(bin_name: str, timeout: int) -> tuple[str, int, int, int, s
     # Always keep stderr snippets so pre-existing member classification
     # can match "bundle member X failed/crashed" lines from the driver.
     stderr_tail = (r.stderr or "")[-2000:]
+    # Harness CHECK failures print to stderr (test_harness.hpp -> std::cerr).
+    # Scan both streams for the exact failing labels up front: the 2000-char
+    # stderr tail is dominated by aot_log retry noise from later suites, which
+    # is exactly where the FAIL line got lost on red runs (e.g. the
+    # test_aot_reload_primitive 2026-09-12 intermittent showed only
+    # stale-defuse retry logs).
+    check_fails = _member_check_fail_lines((r.stdout or "") + "\n" + (r.stderr or ""))
     if passed + failed == 0:
         if r.returncode == 0:
             return bin_name, 1, 0, 0, ""
-        return bin_name, 0, 1, r.returncode, stderr_tail if stderr_tail else "no output"
+        err = stderr_tail if stderr_tail else "no output"
+        if check_fails:
+            err = "\n".join(check_fails) + ("\n" + err if err else "")
+        return bin_name, 0, 1, r.returncode, err
     err = ""
     isolate_fails = _isolate_member_fail_lines(r.stdout or "")
     if isolate_fails:
         err = "; ".join(isolate_fails)
-        # CHECK failures print to STDERR (test_harness.hpp CHECK -> std::cerr),
-        # so scan both streams — the aot batch's stderr tail is dominated by
-        # later members' aot_log lines, which is exactly where the label was
-        # getting lost.
-        check_fails = _member_check_fail_lines((r.stdout or "") + "\n" + (r.stderr or ""))
         if check_fails:
             err = f"{err}\n" + "\n".join(check_fails)
         if stderr_tail:
@@ -522,7 +527,7 @@ def _run_one_attempt(bin_name: str, timeout: int) -> tuple[str, int, int, int, s
         else:
             err = "no output"
     elif r.returncode != 0 and stderr_tail:
-        err = stderr_tail
+        err = ("\n".join(check_fails) + "\n" if check_fails else "") + stderr_tail
     return bin_name, passed, failed, r.returncode, err
 
 
