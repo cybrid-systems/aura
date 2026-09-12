@@ -68,6 +68,7 @@ def main() -> int:
         [
             "h.bp_scope_id = std::move(spec.bp_scope_id);",
             "h.bp_scope_id = resolve_bare_bp_scope_id(spec.bp_scope_id);",
+            "h.bp_scope_id = resolve_bare_bp_scope_id(spec.bp_scope_id, spawn_tenant);",
         ],
         "AC1 spawn propagates spec.bp_scope_id → handle (#3147 std::move or #3179 resolver)",
         spawn,

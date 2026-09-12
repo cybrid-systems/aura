@@ -1542,6 +1542,79 @@ int run_test_mailbox_bp_admit() {
         (void)aura::orch::reset_scope_bp_map_for_test();
     }
 
+    // ── Issue #3672: bare BP key aggregates per spawn tenant (spawn path)
+    {
+        std::println("\n--- #3672: spawn_agent_with_mailbox per-tenant admit ---");
+        // Restricted arms production_scope_bp_inherit (issue runner default
+        // is AURA_SANDBOX=off). Save + restore the previous sandbox face.
+        const char* sb_prev = getenv("AURA_SANDBOX");
+        const bool had_sb = sb_prev != nullptr;
+        const std::string sb_prev_val = had_sb ? sb_prev : "";
+        setenv("AURA_SANDBOX", "restricted", 1);
+        aura::compiler::typed_audit::apply_production_audit_defaults();
+        CHECK(aura::orch::production_scope_bp_inherit(),
+              "3672 setup: inherit armed under Restricted + production defaults");
+
+        Scheduler sched(1);
+        // AC1: tenant 7 (the language prim derives the same value from
+        // capability_tenant_id) → handle key "t:7"; a second spawn shares it.
+        AgentSpec t7a;
+        t7a.name = "3672-t7-a";
+        t7a.body = [] {};
+        t7a.attach_mailbox = true;
+        t7a.tenant_id = 7;
+        const auto ha = spawn_agent_with_mailbox(sched, t7a);
+        CHECK(ha.ok, "3672 AC1: tenant-7 spawn admits");
+        CHECK(ha.bp_scope_id == "t:7", "3672 AC1: bp_scope_id == t:7 (not bare:N)");
+        AgentSpec t7b;
+        t7b.name = "3672-t7-b";
+        t7b.body = [] {};
+        t7b.attach_mailbox = true;
+        t7b.tenant_id = 7;
+        const auto hb = spawn_agent_with_mailbox(sched, t7b);
+        CHECK(hb.ok && hb.bp_scope_id == "t:7", "3672 AC1: second tenant-7 spawn shares t:7");
+
+        // AC2: storm — drive the t:7 gauge to the admit threshold, then the
+        // same-tenant spawn soft-rejects (deny-class=bp-admit family:
+        // quota_exceeded + mailbox-bp + AdmissionRejected) while tenant 9
+        // (t:9, fresh gauge) still admits.
+        setenv("AURA_ORCH_BP_ADMIT_THRESHOLD", "1", 1);
+        const auto scope_reject_before =
+            g_orch_module_stats.spawn_bp_admit_reject_scope_total.load(std::memory_order_relaxed);
+        aura::orch::note_mailbox_bp_recent_event("t:7", 4242);
+        AgentSpec t7c;
+        t7c.name = "3672-t7-c";
+        t7c.body = [] {};
+        t7c.attach_mailbox = true;
+        t7c.tenant_id = 7;
+        const auto hc = spawn_agent_with_mailbox(sched, t7c);
+        CHECK(!hc.ok, "3672 AC2: same-tenant spawn soft-rejects at threshold");
+        CHECK(hc.quota_exceeded, "3672 AC2: quota_exceeded == true");
+        CHECK(hc.quota_dimension == "mailbox-bp", "3672 AC2: quota_dimension == 'mailbox-bp'");
+        CHECK(hc.error.find("AdmissionRejected") != std::string::npos,
+              "3672 AC2: error contains AdmissionRejected");
+        CHECK(g_orch_module_stats.spawn_bp_admit_reject_scope_total.load(
+                  std::memory_order_relaxed) > scope_reject_before,
+              "3672 AC2: spawn_bp_admit_reject_scope_total bumps");
+        AgentSpec t9;
+        t9.name = "3672-t9-a";
+        t9.body = [] {};
+        t9.attach_mailbox = true;
+        t9.tenant_id = 9;
+        const auto h9 = spawn_agent_with_mailbox(sched, t9);
+        CHECK(h9.ok, "3672 AC2: tenant-9 spawn still admits (fresh t:9 gauge)");
+        CHECK(h9.bp_scope_id == "t:9", "3672 AC2: tenant-9 key is t:9");
+        CHECK(!h9.quota_exceeded, "3672 AC2: tenant-9 not rejected");
+
+        unsetenv("AURA_ORCH_BP_ADMIT_THRESHOLD");
+        (void)aura::orch::reset_scope_bp_map_for_test();
+        if (had_sb)
+            setenv("AURA_SANDBOX", sb_prev_val.c_str(), 1);
+        else
+            unsetenv("AURA_SANDBOX");
+        aura::compiler::typed_audit::apply_dev_audit_defaults();
+    }
+
     return aura::test::g_failed ? 1 : 0;
 }
 

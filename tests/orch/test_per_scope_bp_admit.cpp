@@ -608,7 +608,8 @@ int run_test_per_scope_bp_admit() {
               "3147 AC8: agent_spawn.h cites Issue #3147");
         CHECK(spawn3147.find("std::string bp_scope_id{};") != std::string::npos,
               "3147 AC8: AgentHandle::bp_scope_id field present (layout-stable end of struct)");
-        CHECK(spawn3147.find("h.bp_scope_id = resolve_bare_bp_scope_id(spec.bp_scope_id)") !=
+        CHECK(spawn3147.find(
+                  "h.bp_scope_id = resolve_bare_bp_scope_id(spec.bp_scope_id, spawn_tenant)") !=
                   std::string::npos,
               "3147 AC8: spawn persists resolved spec.bp_scope_id → handle (#3179)");
         CHECK(spawn3147.find("note_mailbox_bp_recent_event(h.bp_scope_id)") != std::string::npos,

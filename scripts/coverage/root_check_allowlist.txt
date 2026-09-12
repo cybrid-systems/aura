@@ -102,3 +102,4 @@ check_quota_tenant_keying_3668.py
 check_isolation_audit_caller_3669.py
 check_resume_mid_join_3670.py
 check_scope_join_tree_visibility_3671.py
+check_bp_scope_tenant_3672.py
