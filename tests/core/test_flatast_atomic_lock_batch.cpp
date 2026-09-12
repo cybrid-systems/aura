@@ -6,6 +6,32 @@
 
 #include <print>
 
+// CI diagnosis: x86_64 CI-only intermittent load-time SIGSEGV (rc=-11, zero
+// output despite harness stdbuf -oL/-eL) — install fatal-signal handlers
+// from a constructor so the next CI failure carries a backtrace plus a
+// load marker (aura-ci-silent-death-diagnosis step 6). Test-only; the
+// happy path is untouched (handlers are no-ops until a signal fires).
+#include <csignal>
+#include <unistd.h>
+#include <execinfo.h>
+
+extern "C" void flatast_fatal_signal_handler(int sig) noexcept {
+    void* bt[32];
+    const int n = ::backtrace(bt, 32);
+    static const char msg[] = "\nflatast_atomic_lock_batch: fatal signal — backtrace:\n";
+    ::write(2, msg, sizeof(msg) - 1);
+    ::backtrace_symbols_fd(bt, n, 2);
+    ::_exit(128 + sig);
+}
+
+__attribute__((constructor)) static void flatast_install_fatal_handlers() {
+    std::println(stderr, "flatast: ctors + fatal-signal handlers installed");
+    std::signal(SIGSEGV, flatast_fatal_signal_handler);
+    std::signal(SIGABRT, flatast_fatal_signal_handler);
+    std::signal(SIGBUS, flatast_fatal_signal_handler);
+    std::signal(SIGILL, flatast_fatal_signal_handler);
+}
+
 import std;
 
 extern int run_test_add_node_builder_contract();
