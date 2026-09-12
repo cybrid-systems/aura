@@ -499,6 +499,71 @@ static_assert(DirtySoAEntryPass<EscapeAnalysisWrap>,
               "Issue #3454: EscapeAnalysisWrap stays DirtySoAEntryPass (grandfather)");
 static_assert(!ProductionPureWrapPass<EscapeAnalysisWrap>,
               "Issue #3454: EscapeAnalysisWrap AoS grandfather fails ProductionPureWrapPass");
+// Issue #3701: Production + soa_mod skips EscapeAnalysisWrap AoS run in
+// the incremental suite. Columnar dirty-block escape; shape-stable
+// functions reuse last maps. Soft keeps the AoS grandfather. Pack
+// still rejects this Wrap until a SoA entry lands.
+
+export inline std::size_t run_dirty_escape_on_soa(IRModuleV2& soa_mod,
+                                                  std::vector<std::vector<std::uint8_t>>& maps) {
+    if (!g_use_arena) {
+        maps.clear();
+        return 0;
+    }
+    if (maps.size() < soa_mod.functions.size())
+        maps.resize(soa_mod.functions.size());
+    std::size_t updated = 0;
+    for (std::size_t fi = 0; fi < soa_mod.functions.size(); ++fi) {
+        auto& fn = soa_mod.functions[fi];
+        if (fn.dirty_block_count() == 0) {
+            aura::compiler::ir_soa_migration::record_dirty_block_skip(fn.blocks_.size());
+            continue;
+        }
+        if (g_fn_shape_stable_probe && g_fn_shape_stable_probe(fn.name)) {
+            aura::compiler::ir_soa_migration::record_dirty_block_skip(fn.blocks_.size());
+            continue;
+        }
+        std::vector<std::vector<aura::jit::FlatInstruction>> flat_instrs(fn.blocks_.size());
+        auto [runs, skips] = fn.for_each_block(
+            [&](std::uint32_t bid, BasicBlockSoA& block) {
+                if (bid >= flat_instrs.size())
+                    flat_instrs.resize(bid + 1);
+                auto& dest = flat_instrs[bid];
+                dest.reserve(block.end_idx > block.start_idx ? block.end_idx - block.start_idx : 0);
+                for (std::uint32_t i = block.start_idx; i < block.end_idx && i < fn.opcodes_.size();
+                     ++i) {
+                    const std::uint8_t lin = i < fn.linear_ownership_states_.size()
+                                                 ? fn.linear_ownership_states_[i]
+                                                 : std::uint8_t{0};
+                    const std::uint32_t ne =
+                        i < fn.narrow_evidence_.size() ? fn.narrow_evidence_[i] : 0u;
+                    if (lin != 0 && ne != 0)
+                        linear_occurrence_mutate::record_escape_violation_prevented();
+                    dest.push_back(
+                        {static_cast<std::uint32_t>(fn.opcodes_[i]),
+                         {i < fn.operand0_.size() ? fn.operand0_[i] : 0u,
+                          i < fn.operand1_.size() ? fn.operand1_[i] : 0u,
+                          i < fn.operand2_.size() ? fn.operand2_[i] : 0u,
+                          i < fn.operand3_.size() ? fn.operand3_[i] : 0u},
+                         i < fn.shape_ids_.size() ? fn.shape_ids_[i] : 0u,
+                         ne,
+                         i < fn.type_ids_.size() ? fn.type_ids_[i] : 0u,
+                         lin,
+                         std::uint8_t{0},
+                         i < fn.source_markers_.size() ? fn.source_markers_[i] : std::uint8_t{0},
+                         0u});
+                }
+            },
+            /*dirty_only=*/true);
+        if (skips)
+            aura::compiler::ir_soa_migration::record_dirty_block_skip(skips);
+        if (runs)
+            aura::compiler::ir_soa_migration::record_dirty_block_run(runs);
+        aura::jit::run_escape_analysis(flat_instrs, fn.local_count, maps[fi]);
+        ++updated;
+    }
+    return updated;
+}
 
 // CompilerService — owns a full compilation session's lifecycle.
 //
@@ -11640,14 +11705,14 @@ private:
         ConstantFoldingWrap cf_pass;
         TypePropagationPass tp_pass;
         ShapeWrap shape_pass;
-        EscapeAnalysisWrap escape_pass;
 
         // Issue #3454 AC3 grandfather (length-capped 5): ComputeKindWrap,
         // ConstantFoldingWrap, TypePropagationPass, ShapeWrap,
         // EscapeAnalysisWrap. Soft/unit keep AoS DirtySoAEntryPass.
         // Issue #3488: under production_defaults + soa_mod, CK/CF/TP/Shape
         // peel SoA dirty blocks (ProductionPureWrapPass) and skip the AoS
-        // walk. EscapeAnalysisWrap stays the AoS grandfather. New pack
+        // walk. Issue #3701: EscapeAnalysisWrap AoS run is also skipped
+        // (columnar run_dirty_escape_on_soa / shape-stable reuse). New pack
         // members must satisfy ProductionPureWrapPass — not a silent 6th
         // AoS Wrap. InlinePass SoA stays the #3403 production dispatch
         // target; do not add it to this AoS suite.
@@ -11678,12 +11743,15 @@ private:
             }
         }
         if (!prod_soa) {
+            EscapeAnalysisWrap escape_pass;
             (void)run_production_incremental_dirty_pipeline(ir_mod, ck_pass, mask_ptr);
             (void)run_production_incremental_dirty_pipeline(ir_mod, cf_pass, mask_ptr);
             (void)run_production_incremental_dirty_pipeline(ir_mod, tp_pass, mask_ptr);
             (void)run_production_incremental_dirty_pipeline(ir_mod, shape_pass, mask_ptr);
+            (void)run_production_incremental_dirty_pipeline(ir_mod, escape_pass, mask_ptr);
+        } else {
+            (void)run_dirty_escape_on_soa(*soa_mod, last_escape_maps_);
         }
-        (void)run_production_incremental_dirty_pipeline(ir_mod, escape_pass, mask_ptr);
 
         // Issue #3689: Production/Full partial peel must DCE with the same
         // dirty mask as CK/CF/TP. Unmasked AoS DeadCoercion walked clean
