@@ -305,12 +305,31 @@ struct WorkspaceIsolationPolicy {
         return it->second;
     }
 
+    // Issue #3669: single source for the IsolationDeny reason split —
+    // foreign stamped ref → ref-tenant=N (#2156); caller unset →
+    // unset-principal (#2385); caller set + layout-only ref → unstamped-ref
+    // (after #2659 the process-global current.id is abandoned and must not
+    // relabel a principal-carrying deny as unset-principal).
+    [[nodiscard]] static const char* isolation_deny_reason(TenantId caller, TenantId ref_tenant,
+                                                           char (&buf)[64]) noexcept {
+        if (ref_tenant != 0) {
+            std::snprintf(buf, sizeof(buf), "isolation-deny:ref-tenant=%llu",
+                          static_cast<unsigned long long>(ref_tenant));
+            return buf;
+        }
+        if (caller == 0)
+            return "isolation-deny:unset-principal";
+        return "isolation-deny:unstamped-ref";
+    }
+
     // Issue #2388 / #2530: private kAuditRing (1024) + dual-write IsolationDeny
     // into SecurityEvent/WAL when denied. Publish_seq + shared_mutex double-check
     // mirrors Capability ring (#2425). Allows stay private-ring only.
     // Soft/Off: zero extra cost when this is never called.
-    void record_audit(TenantId target, TenantId ref_tenant, bool denied, bool prov_deny,
-                      bool cap_deny, std::string_view op,
+    // Issue #3669: `caller` is the per-Evaluator principal (#2659 authority) —
+    // keys entry.current + the SE tenant/reason split.
+    void record_audit(TenantId caller, TenantId target, TenantId ref_tenant, bool denied,
+                      bool prov_deny, bool cap_deny, std::string_view op,
                       std::uint16_t required_effects = 0) noexcept {
         using ::aura::core::current_mutation_epoch;
         const auto epoch = current_mutation_epoch();
@@ -322,7 +341,11 @@ struct WorkspaceIsolationPolicy {
         const auto seq = audit_seq.fetch_add(1, std::memory_order_release);
         IsolationAuditEntry entry{};
         entry.seq = seq;
-        entry.current = current.id;
+        // Issue #3669: per-Evaluator caller principal — process-global
+        // current.id is no longer written by set_tenant_principal /
+        // TenantScope (#2659) and reads 0 in dual-Evaluator runs, which
+        // false-joined every deny row to unset-principal.
+        entry.current = caller;
         entry.target = target;
         entry.ref_tenant = ref_tenant;
         entry.denied = denied;
@@ -359,23 +382,21 @@ struct WorkspaceIsolationPolicy {
         (void)kIsolationAuditMidIssue;
         (void)kSecurityAuditFoldIssue;
         char reason_buf[64];
-        const char* reason = "isolation-deny";
-        // Issue #2156: foreign principal lives in the reason string (not
-        // mid). Prefer ref-tenant when present so a per-Evaluator
-        // principal (#2659) is not mis-reported as unset-principal just
-        // because the process-global current.id is still 0.
-        if (ref_tenant != 0) {
-            std::snprintf(reason_buf, sizeof(reason_buf), "isolation-deny:ref-tenant=%llu",
-                          static_cast<unsigned long long>(ref_tenant));
-            reason = reason_buf;
-        } else if (current.id == 0) {
-            reason = "isolation-deny:unset-principal";
-        }
+        // Issue #2156 + #3669: foreign principal lives in the reason string
+        // (not mid). ref-tenant first; unset-principal only when the caller
+        // principal is truly unset; layout-only (ref unstamped, caller set)
+        // is its own class — the stale process-global current.id must not
+        // relabel it (blame split: unset vs layout-only vs foreign).
+        const char* reason = isolation_deny_reason(caller, ref_tenant, reason_buf);
         // Tenant stays in tenant_id field; mid is Mutation epoch (#2156).
         // effect_bits preserves required side-effect mask for forensic join.
         // Issue #3011: fiber_id is the live / override id (never hard 0).
-        emit_security_event_durable(SecurityEventKind::IsolationDeny, target, mid, mid,
-                                    required_effects, op, reason, /*denied=*/true, entry.fiber_id);
+        // Issue #3669: SE tenant keyed by the caller principal (target
+        // fallback when unset) so query:security-audit joins deny rows by
+        // caller tenant — SE.tenant_id == target hid the blame.
+        emit_security_event_durable(SecurityEventKind::IsolationDeny, caller != 0 ? caller : target,
+                                    mid, mid, required_effects, op, reason, /*denied=*/true,
+                                    entry.fiber_id);
     }
 
     // Issue #2530: TSAN-clean load of slot for `seq` (seq % kAuditRing).
@@ -471,7 +492,8 @@ struct WorkspaceIsolationPolicy {
             if (cur == 0) {
                 const bool need_principal = strict || (sandbox_restricted && required_effects != 0);
                 if (!need_principal) {
-                    record_audit(target, ref_tenant, false, false, false, op, required_effects);
+                    record_audit(cur, target, ref_tenant, false, false, false, op,
+                                 required_effects);
                     return true;
                 }
                 // Deny: isolation-deny:unset-principal (reason dual-written
@@ -482,7 +504,7 @@ struct WorkspaceIsolationPolicy {
                                                                         std::memory_order_relaxed);
                 if (strict)
                     met.strict_sandbox_isolation_denials.fetch_add(1, std::memory_order_relaxed);
-                record_audit(target, ref_tenant, true, false, false, op, required_effects);
+                record_audit(cur, target, ref_tenant, true, false, false, op, required_effects);
                 return false;
             }
             // Issue #3010: *writing* allow_cross_tenant_ is gated at
@@ -493,7 +515,7 @@ struct WorkspaceIsolationPolicy {
             // still cross_grants + ref provenance (#2968 SSOT). Soft/Off keep
             // the zero-cost bypass (AC5; no extra lock/counter).
             if (allow_cross_tenant && !(strict || sandbox_restricted)) {
-                record_audit(target, ref_tenant, false, false, false, op, required_effects);
+                record_audit(cur, target, ref_tenant, false, false, false, op, required_effects);
                 return true;
             }
             // Issue #2056 / resolve_stamped AC4: under Strict with a non-zero
@@ -555,7 +577,8 @@ struct WorkspaceIsolationPolicy {
                 if (strict)
                     met.strict_sandbox_isolation_denials.fetch_add(1, std::memory_order_relaxed);
             }
-            record_audit(target, ref_tenant, !allowed, prov_deny, cap_deny, op, required_effects);
+            record_audit(cur, target, ref_tenant, !allowed, prov_deny, cap_deny, op,
+                         required_effects);
         }
         return allowed;
     }

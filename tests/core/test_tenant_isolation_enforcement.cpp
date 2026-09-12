@@ -2315,7 +2315,10 @@ int main() {
         ev.set_capability_tenant_id(7);
         CHECK(!ev.check_workspace_isolation(99, 0, kEffectMutate, "test:3011-filter"),
               "AC4: deny to seed IsolationDeny");
-        auto q = cs.eval(R"((engine:metrics "query:security-audit" 16 99 42))");
+        // Issue #3669: SE tenant_id is the CALLER principal now (was target);
+        // filter by caller 7 + fiber 42 — the #3011 fiber join on the new
+        // blame key.
+        auto q = cs.eval(R"((engine:metrics "query:security-audit" 16 7 42))");
         CHECK(q.has_value(), "AC4: query:security-audit fiber filter callable");
         bool saw_fiber = false;
         if (q) {
@@ -2837,6 +2840,181 @@ int main() {
               "3668 AC4: tenant=0 consume stays process-global");
         reset_process_resource_quota_for_test();
     }
+    {
+        std::println(
+            "\n--- #3669 AC1/AC6: layout-only deny keys caller principal (unstamped-ref) ---");
+        reset_all();
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+        const auto& ring = g_security_event_ring();
+        const auto se_base = ring.seq.load(std::memory_order_acquire);
+        const auto iso_base = current_iso_seq();
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.set_effect_sandbox_mode(2); // Strict — #3365 layout-only deny arm
+        ev.set_capability_tenant_id(7);
+        aura::core::capability::set_effect_fiber_id_override(3011); // #3011 join probe
+        CHECK(!ev.check_workspace_isolation(0, 0, kEffectMutate, "test:3669-ac1"),
+              "3669 AC1: layout-only mutate denied (Strict, principal 7)");
+        bool row_found = false;
+        for (std::uint64_t s = iso_base;
+             s < g_workspace_isolation().audit_seq.load(std::memory_order_acquire); ++s) {
+            aura::core::workspace_isolation::IsolationAuditEntry e{};
+            if (!g_workspace_isolation().try_load_audit_seq(s, e))
+                continue;
+            if (std::string_view(e.op) != "test:3669-ac1")
+                continue;
+            row_found = true;
+            CHECK(e.current == 7, "3669 AC1: entry.current == caller principal 7");
+            CHECK(e.fiber_id == 3011, "3669 AC1: fiber still resolved (#3011 override probe)");
+            CHECK(e.mutation_id == aura::core::current_mutation_epoch(),
+                  "3669 AC1: mid is Mutation epoch, 0 stays 0 (#3594)");
+        }
+        CHECK(row_found, "3669 AC1: isolation audit row in ring");
+        bool se_found = false;
+        for (std::uint64_t s = se_base; s < ring.seq.load(std::memory_order_acquire); ++s) {
+            const auto& e = ring.ring[s % ring.ring.size()];
+            if (static_cast<int>(e.kind) !=
+                    static_cast<int>(
+                        aura::core::security_event::SecurityEventKind::IsolationDeny) ||
+                e.seq != s)
+                continue;
+            se_found = true;
+            CHECK(std::string_view(e.reason).find("isolation-deny:unstamped-ref") !=
+                      std::string_view::npos,
+                  "3669 AC1: SE reason isolation-deny:unstamped-ref (not unset-principal)");
+            CHECK(e.tenant_id == 7, "3669 AC1: SE tenant keyed by caller principal");
+        }
+        CHECK(se_found, "3669 AC1: IsolationDeny SE in ring");
+        // AC6: Agent error agrees with the SE reason (stamped, no dual-track).
+        CHECK(ev.last_mutate_error().find("isolation-deny:unstamped-ref") != std::string::npos,
+              "3669 AC6: Agent error carries isolation-deny:unstamped-ref");
+        aura::core::capability::set_effect_fiber_id_override(0);
+    }
+
+    {
+        std::println("\n--- #3669 AC2: unset principal keeps isolation-deny:unset-principal ---");
+        reset_all();
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+        const auto& ring = g_security_event_ring();
+        const auto se_base = ring.seq.load(std::memory_order_acquire);
+        const auto iso_base = current_iso_seq();
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.set_effect_sandbox_mode(1); // Restricted + Mutate bits → #2385
+        ev.set_capability_tenant_id(0);
+        CHECK(!ev.check_workspace_isolation(0, 0, kEffectMutate, "test:3669-ac2"),
+              "3669 AC2: unset-principal deny still fires");
+        for (std::uint64_t s = iso_base;
+             s < g_workspace_isolation().audit_seq.load(std::memory_order_acquire); ++s) {
+            aura::core::workspace_isolation::IsolationAuditEntry e{};
+            if (!g_workspace_isolation().try_load_audit_seq(s, e))
+                continue;
+            if (std::string_view(e.op) != "test:3669-ac2")
+                continue;
+            CHECK(e.current == 0, "3669 AC2: entry.current == 0 (principal truly unset)");
+        }
+        for (std::uint64_t s = se_base; s < ring.seq.load(std::memory_order_acquire); ++s) {
+            const auto& e = ring.ring[s % ring.ring.size()];
+            if (static_cast<int>(e.kind) !=
+                    static_cast<int>(
+                        aura::core::security_event::SecurityEventKind::IsolationDeny) ||
+                e.seq != s)
+                continue;
+            CHECK(std::string_view(e.reason).find("isolation-deny:unset-principal") !=
+                      std::string_view::npos,
+                  "3669 AC2: reason unchanged (isolation-deny:unset-principal)");
+        }
+    }
+
+    {
+        std::println("\n--- #3669 AC3: foreign stamped ref keeps ref-tenant=N ---");
+        reset_all();
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+        const auto& ring = g_security_event_ring();
+        const auto se_base = ring.seq.load(std::memory_order_acquire);
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.set_effect_sandbox_mode(1);
+        ev.set_capability_tenant_id(7);
+        CHECK(!ev.check_workspace_isolation(0, 99, kEffectMutate, "test:3669-ac3"),
+              "3669 AC3: foreign-stamped ref denied");
+        for (std::uint64_t s = se_base; s < ring.seq.load(std::memory_order_acquire); ++s) {
+            const auto& e = ring.ring[s % ring.ring.size()];
+            if (static_cast<int>(e.kind) !=
+                    static_cast<int>(
+                        aura::core::security_event::SecurityEventKind::IsolationDeny) ||
+                e.seq != s)
+                continue;
+            CHECK(std::string_view(e.reason).find("isolation-deny:ref-tenant=99") !=
+                      std::string_view::npos,
+                  "3669 AC3: reason unchanged (isolation-deny:ref-tenant=99)");
+            CHECK(e.tenant_id == 7, "3669 AC3: SE tenant keyed by caller (7)");
+        }
+    }
+
+    {
+        std::println("\n--- #3669 AC4: dual-Evaluator rows carry their own principal ---");
+        reset_all();
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+        const auto iso_base = current_iso_seq();
+        const auto& ring = g_security_event_ring();
+        const auto se_base = ring.seq.load(std::memory_order_acquire);
+        CompilerService csa;
+        auto& eva = csa.evaluator();
+        eva.set_effect_sandbox_mode(2);
+        eva.set_capability_tenant_id(7);
+        CompilerService csb;
+        auto& evb = csb.evaluator();
+        evb.set_effect_sandbox_mode(2);
+        evb.set_capability_tenant_id(9);
+        CHECK(!eva.check_workspace_isolation(0, 0, kEffectMutate, "test:3669-ac4-a"),
+              "3669 AC4: evaluator A denied");
+        CHECK(!evb.check_workspace_isolation(0, 0, kEffectMutate, "test:3669-ac4-b"),
+              "3669 AC4: evaluator B denied");
+        std::uint64_t cur_a = 0, cur_b = 0;
+        for (std::uint64_t s = iso_base;
+             s < g_workspace_isolation().audit_seq.load(std::memory_order_acquire); ++s) {
+            aura::core::workspace_isolation::IsolationAuditEntry e{};
+            if (!g_workspace_isolation().try_load_audit_seq(s, e))
+                continue;
+            if (std::string_view(e.op) == "test:3669-ac4-a")
+                cur_a = e.current;
+            if (std::string_view(e.op) == "test:3669-ac4-b")
+                cur_b = e.current;
+        }
+        CHECK(cur_a == 7 && cur_b == 9,
+              "3669 AC4: each row keys its own Evaluator principal (7 / 9)");
+        bool se_a = false, se_b = false;
+        for (std::uint64_t s = se_base; s < ring.seq.load(std::memory_order_acquire); ++s) {
+            const auto& e = ring.ring[s % ring.ring.size()];
+            if (static_cast<int>(e.kind) !=
+                    static_cast<int>(
+                        aura::core::security_event::SecurityEventKind::IsolationDeny) ||
+                e.seq != s)
+                continue;
+            if (e.tenant_id == 7)
+                se_a = true;
+            if (e.tenant_id == 9)
+                se_b = true;
+        }
+        CHECK(se_a && se_b, "3669 AC4: SE rows keyed by caller tenants 7 and 9");
+    }
+
+    {
+        std::println("\n--- #3669 AC5: Soft allow emits no IsolationDeny SE ---");
+        reset_all();
+        const auto& ring = g_security_event_ring();
+        const auto se_base = ring.seq.load(std::memory_order_acquire);
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.set_effect_sandbox_mode(0); // Off/Soft
+        ev.set_capability_tenant_id(7);
+        CHECK(ev.check_workspace_isolation(0, 0, kEffectMutate, "test:3669-ac5"),
+              "3669 AC5: Soft path still allows");
+        CHECK(ring.seq.load(std::memory_order_acquire) == se_base,
+              "3669 AC5: allow emits no IsolationDeny SE");
+    }
+
     {
         std::println("\n--- #3049 AC4/AC6: posture + source-cite + no invent ---");
         const auto rq = read_file("src/core/resource_quota.hh");

@@ -1793,10 +1793,19 @@ bool Evaluator::check_workspace_isolation(std::uint64_t target_tenant, std::uint
                                    required_effects, strict, op, restricted);
     if (!ok) {
         bump_capability_denial();
+        // Issue #3669: stamp the Agent-visible error with the SAME reason
+        // the IsolationDeny SE carries (single source:
+        // isolation_deny_reason) so resolve_stamped does not invent a
+        // second string (AC6 no dual-track).
+        char iso_reason_buf[64];
+        last_mutate_error_ = std::string(op) + ": " +
+                             g_workspace_isolation().isolation_deny_reason(
+                                 capability_tenant_id_, ref_tenant, iso_reason_buf);
         // Issue #2388: IsolationDeny SecurityEvent + WAL dual-written from
         // WorkspaceIsolationPolicy::record_audit (single path — AC2 no
-        // double-count). Reasons (unset-principal / ref-tenant) stamped
-        // there; mid = Mutation epoch (#2156). Keep TypedMutationAudit only.
+        // double-count). Reasons (unset-principal / unstamped-ref /
+        // ref-tenant) stamped there; mid = Mutation epoch (#2156). Keep
+        // TypedMutationAudit only.
         using ::aura::core::security_event::kIsolationAuditMidIssue;
         using ::aura::core::security_event::kSecurityAuditFoldIssue;
         (void)kIsolationAuditMidIssue;
