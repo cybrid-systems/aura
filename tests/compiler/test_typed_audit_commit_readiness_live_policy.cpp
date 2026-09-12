@@ -200,6 +200,10 @@ int run_test_typed_audit_commit_readiness_live_policy() {
             h, "inline CommitReadinessInput commit_readiness_live_policy() noexcept {", 12000);
         CHECK(live_policy_body.find("aura_typed_audit_fill_from_live_tc") != std::string::npos,
               "AC4: live_policy still invokes fill bridge (Agent observe under Soft)");
+        const auto efl = read_file("src/compiler/evaluator_eval_flat.cpp");
+        CHECK(efl.find("production_hard_face_active()") != std::string::npos &&
+                  efl.find("production_eval_flat_commit_readiness_refuse") != std::string::npos,
+              "3688 AC4: apply_closure Soft/Off skips commit_readiness load");
     }
 
     // ── AC5: no new query schema; existing health codes 0..16 unchanged ──

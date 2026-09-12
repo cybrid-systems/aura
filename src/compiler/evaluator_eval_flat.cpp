@@ -352,6 +352,28 @@ static void note_apply_closure_densify_hard_refuse(CompilerMetrics* metrics,
     ev.bump_compiler_root_dangling_prevented();
 }
 
+// Issue #3688: Production/Full apply_closure / eval_flat of workspace
+// Apply/Call must refuse when IR/JIT typed-entry would refuse at the
+// same depth (persist-reject / mid-boundary Reject / would_allow==0).
+// Soft/Off: production_hard_face_active is false — no commit_readiness
+// load on the apply hot path. query:* / engine:metrics at depth==0 stay
+// on the existing #3568 quiet allow (helper, not a second proof model).
+inline constexpr int kEvalFlatCommitReadinessIssue = 3688;
+
+static bool production_eval_flat_commit_readiness_refuse(CompilerMetrics* metrics) noexcept {
+    if (!aura::compiler::typed_audit::production_hard_face_active())
+        return false;
+    if (aura::compiler::typed_audit::ir_typed_entry_commit_readiness_ok())
+        return false;
+    if (metrics)
+        metrics->linear_post_mutate_force_rollback_total.fetch_add(1, std::memory_order_relaxed);
+    return true;
+}
+
+static EvalResult eval_flat_commit_readiness_refused() {
+    return std::unexpected(Diagnostic{ErrorKind::TypeError, "commit-readiness-refused"});
+}
+
 // Issue #3602: the FFI return path shares the #3421 predicate. The TW/IR
 // arms hard-refuse densify-stale closures; this arm marshaled + called
 // native without consulting last_object_remap_. Opaque args resolve through
@@ -510,6 +532,11 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const
     AURA_HOT_RECORD();
     types::note_value_tag_hot_path();
     soa_view::record_edsl_apply_soa_path();
+    // Issue #3688: do not eval_flat a half-green body when IR/JIT would
+    // refuse typed-entry at this depth. Soft/Off: one hard-face load.
+    if (production_eval_flat_commit_readiness_refuse(
+            static_cast<CompilerMetrics*>(compiler_metrics_)))
+        return std::nullopt;
     // Issue #3626 (#252/#3421 residual): process-wide fetch_add on every
     // apply is I1 eval tax under the production pack — the dashboard
     // counter rode inter-core coherency on the shared entry. Soft/unit
@@ -2198,6 +2225,11 @@ EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env&
         auto result = apply_closure(cid, {});
         if (result)
             return *result;
+        // Issue #3688: apply_closure nullopt on persist-reject must not
+        // fall through to eval_flat of the pre-restore body.
+        if (production_eval_flat_commit_readiness_refuse(
+                static_cast<CompilerMetrics*>(compiler_metrics_)))
+            return eval_flat_commit_readiness_refused();
 
         // Fallback: manual closure apply via eval_flat.
         // Issue #3021: never re-apply a slot apply_closure already
@@ -4358,6 +4390,10 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                     auto callee = f->get(callee_id);
                     // Inline lambda (arg evals are recursive; body is tail)
                     if (callee.tag == aura::ast::NodeTag::Lambda) {
+                        // Issue #3688: workspace lambda Apply — same face as IR.
+                        if (production_eval_flat_commit_readiness_refuse(
+                                static_cast<CompilerMetrics*>(compiler_metrics_)))
+                            return eval_flat_commit_readiness_refused();
                         auto pspan = callee.params;
                         bool dotted = callee.int_value != 0;
                         std::size_t named_count =
@@ -5139,6 +5175,12 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                             return std::unexpected(Diagnostic{ErrorKind::InvalidClosure,
                                                               "eval_flat: foreign call failed"});
                         }
+                        // Issue #3688: TW TCO inlines the body without
+                        // apply_closure — refuse here so persist-reject
+                        // cannot eval_flat a half-green Define.
+                        if (production_eval_flat_commit_readiness_refuse(
+                                static_cast<CompilerMetrics*>(compiler_metrics_)))
+                            return eval_flat_commit_readiness_refused();
                         // Issue #252: eval_flat's inline TW closure
                         // call path does NOT go through apply_closure
                         // (it inlines the body for TCO). Bump the
