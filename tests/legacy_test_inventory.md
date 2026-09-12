@@ -33,13 +33,13 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | Theme | Title | Issues | Root | Domain | Total | Migration priority |
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
 | `arena_compaction` | Arena / compaction / GC | 0 | 0 | 92 | 92 | P0 — well-contained, batch drivers already exist |
-| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 270 | 270 | P0 — high volume; strong domain suite foothold |
+| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 271 | 271 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 108 | 108 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 26 | 26 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 59 | 59 | P1 — domain hygiene suite exists |
 | `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 87 | 87 | P2 — link-profile heavy; migrate AC smoke first |
 | `shape_soa` | Shape / SoA / column layout | 0 | 0 | 53 | 53 | P2 — small-medium; soa_batch precedent |
-| `observability` | Observability / metrics / query:*-stats | 0 | 0 | 133 | 133 | P2 — often thin schema probes; collapse into obs matrix |
+| `observability` | Observability / metrics / query:*-stats | 0 | 0 | 132 | 132 | P2 — often thin schema probes; collapse into obs matrix |
 | `uncategorized` | Uncategorized / mixed | 0 | 0 | 59 | 59 | P3 — review case-by-case |
 
 ## Patterns, harness usage, coupling
@@ -1206,13 +1206,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_type_dep_epoch_prune.cpp` (—) [domain_suite, theme_compiler] — AC1: After set_cache_epoch(e+1), edges stamped at epoch e (e>0) drop;
 - `tests/compiler/test_workspace_switch.cpp` (—) [domain_suite, theme_compiler] — AC1: switch binds flat/pool + set_workspace_cow_epoch in one block
 
-### `mutation_dirty` — Mutation / dirty propagation / provenance (270)
+### `mutation_dirty` — Mutation / dirty propagation / provenance (271)
 
 **Target:** tests/core/test_mutation_boundary_batch (domain/ pilot abandoned in R1)
 
 **Priority:** P0 — high volume; strong domain suite foothold
 
-#### domain/ (270)
+#### domain/ (271)
 
 - `tests/compiler/test_abort_ir_cache_fence_first.cpp` (—) [large, domain_suite, theme_compiler] — AC1: All 3 abort entry points in evaluator_mutation_boundary.cpp
 - `tests/core/test_add_node_builder_contract.cpp` (—) [domain_suite, theme_core] — AC1: single-threaded add_* path unchanged (builders work)
@@ -1238,6 +1238,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_aura_sandbox_env.cpp` (—) [domain_suite, theme_compiler] — Issue #2076 — production default Restricted sandbox + Agent-readable
 - `tests/compiler/test_batch_dirty_cascade.cpp` (—) [batch_driver, domain_suite, theme_compiler] — AC1: Batch API exists; one generation bump per call regardless of N
 - `tests/compiler/test_batch_dirty_discipline.cpp` (—) [large, batch_driver, domain_suite, theme_compiler] — Issue #2773 — unified logical invalidation epoch (extend per #81967).
+- `tests/compiler/test_bidirectional_match_check.cpp` (—) [large, domain_suite, theme_compiler] — AC1: Match check-mode — annotated (match ...) bodies checked under
 - `tests/compiler/test_blame_complete_commit_gate.cpp` (—) [domain_suite, theme_compiler] — AC1: Production defaults enable reject-on-miss + require-blame-on-commit;
 - `tests/compiler/test_blame_occurrence_agent_ratios.cpp` (—) [domain_suite, theme_compiler] — AC1: source cites #2030; ratio keys on self-evo-stats + fidelity-stats
 - `tests/compiler/test_blame_soft_recover.cpp` (—) [domain_suite, theme_compiler] — AC1: Sampled incomplete → recover restores dual fields OR escalate
@@ -1863,13 +1864,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_value_tag_hot_path.cpp` (—) [domain_suite, theme_compiler] — AC1: Pure is_* (is_fixnum_hot / is_int) match classify; single low2 path
 - `tests/compiler/test_workspace_delete_child.cpp` (—) [domain_suite, theme_compiler] — tests/compiler/test_workspace_delete_child.cpp — Issue #1770: WorkspaceTree delete_child test.
 
-### `observability` — Observability / metrics / query:*-stats (133)
+### `observability` — Observability / metrics / query:*-stats (132)
 
 **Target:** tests/compiler/test_obs_schema_matrix.cpp + tests/compiler/obs_schema_cases.hpp
 
 **Priority:** P2 — often thin schema probes; collapse into obs matrix
 
-#### domain/ (133)
+#### domain/ (132)
 
 - `tests/compiler/test_adaptive_reverify_limit.cpp` (—) [domain_suite, theme_compiler] — Issue #2939 — dep-closure reverify (BFS over var_to_constraints_) to
 - `tests/compiler/test_adt_exhaustiveness_production_hard.cpp` (—) [domain_suite, theme_compiler] — test_adt_exhaustiveness_production_hard.cpp -- source-cite AC for Issue #3559
@@ -1879,7 +1880,6 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/core/test_ast_ops_stats_workspace_lock.cpp` (—) [domain_suite, theme_core] — Issue #1729/#1851/#1852 (#1978 renamed): issue# moved from filename to header.
 - `tests/serve/test_atomic_mark_bitvector.cpp` (—) [domain_suite, theme_serve] — AC1: multi-thread concurrent set same/adjacent bits → all set (no lost update)
 - `tests/compiler/test_audit_trail_lockfree.cpp` (—) [domain_suite, theme_compiler] — AC1: capture_audit_event_forced cites #2819; lock-free write; no lock_guard
-- `tests/compiler/test_bidirectional_match_check.cpp` (—) [large, domain_suite, theme_compiler] — AC1: Match check-mode — annotated (match ...) bodies checked under
 - `tests/core/test_bidirectional_stats.cpp` (—) [domain_suite, theme_core] — tests/test_bidirectional_stats.cpp — Issue #1420 AC3:
 - `tests/compiler/test_blame_stamp_on_degrade.cpp` (—) [small, domain_suite, theme_compiler] — Issue #2064 — blame / provenance stamping on Dynamic degrade + CoercionMap
 - `tests/compiler/test_blame_tracking_typed_mutate.cpp` (—) [domain_suite, theme_compiler] — Issue #1617/#1924 (#1978 renamed): issue# moved from filename to header.
