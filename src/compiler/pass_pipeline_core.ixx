@@ -275,6 +275,21 @@ export inline constexpr int kPassPurityGateIssue = 3329;
 // selects no block (Soft keeps DefaultAllDirty).
 export inline constexpr int kUnwiredPredProductionIssue = 3502;
 
+// Issue #3690: Production last-look at DirtyAware entry. Consults
+// should_partial_relower_storm_aware (metrics). Soft/Off: false (mask
+// unchanged). Production + dirty_n>0 + Global / storm-exit force-full:
+// true → caller treats the mask as all-dirty for this suite.
+export inline constexpr int kDirtyAwareStormLastLookIssue = 3690;
+export [[nodiscard]] inline bool
+production_dirty_aware_storm_force_full(std::size_t dirty_n) noexcept {
+    const bool allow_partial = should_partial_relower_storm_aware(dirty_n);
+    if (dirty_n == 0)
+        return false;
+    if (aura_production_defaults_active_probe() == 0)
+        return false;
+    return !allow_partial;
+}
+
 static_assert(std::is_trivially_copyable_v<BlockDirtyPred>,
               "BlockDirtyPred must be inlineable (no std::function) (#3042)");
 static_assert(std::is_trivially_copyable_v<InstructionDirtyPred>,
@@ -717,13 +732,21 @@ bool run_incremental_dirty_pipeline(aura::ir::IRModule& mod, P& pass,
     // Issue #2109 / #2190: consult storm-aware partial gate at DirtyAware
     // entry so Agents can correlate partial vs full with pass skip metrics
     // and StormLevel Global force-full.
+    // Issue #3690: Production last-look — if Global / storm-exit force-full
+    // after consult_workload snapshot, treat the mask as all-dirty for this
+    // invocation (no clean-block skip). Soft/Off: consult-only.
+    std::vector<std::vector<std::uint8_t>> storm_full_bits;
+    DefineDirtyMaskView storm_full_view;
     if (define_cache && define_cache->block_dirty_per_func) {
-        std::size_t dirty_n = 0;
-        for (const auto& fb : *define_cache->block_dirty_per_func)
-            for (auto b : fb)
-                if (b)
-                    ++dirty_n;
-        (void)should_partial_relower_storm_aware(dirty_n); // #2190 Global gate
+        const auto dirty_n = static_cast<std::size_t>(define_cache->dirty_block_count());
+        if (production_dirty_aware_storm_force_full(dirty_n)) {
+            storm_full_bits = *define_cache->block_dirty_per_func;
+            for (auto& fb : storm_full_bits)
+                for (auto& b : fb)
+                    b = 1;
+            storm_full_view.block_dirty_per_func = &storm_full_bits;
+            define_cache = &storm_full_view;
+        }
     }
 
     // AC3 (#1574): early-skip whole pass when define-level mask is clean.

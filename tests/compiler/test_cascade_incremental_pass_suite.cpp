@@ -190,6 +190,9 @@ void ac6_suite_helper_source() {
     CHECK(svc.find("Issue #3689") != std::string::npos, "3689: suite cites #3689");
     CHECK(svc.find("run_coercion_elim_on_function(func, db)") != std::string::npos,
           "3689: masked DCE after partial peel");
+    CHECK(svc.find("Issue #3690") != std::string::npos, "3690: suite last-look");
+    CHECK(svc.find("production_dirty_aware_storm_force_full") != std::string::npos,
+          "3690: suite reuses last-look helper");
 }
 
 } // namespace

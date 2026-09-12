@@ -11653,6 +11653,30 @@ private:
         // target; do not add it to this AoS suite.
         const bool soa_hot = soa_mod && !soa_mod->functions.empty();
         const bool prod_soa = soa_hot && aura::compiler::typed_audit::production_defaults_active();
+        // Issue #3690: Production last-look at the suite envelope so DCE
+        // (#3689 mask peel) and SoA pack cannot cone-skip after Global /
+        // storm-exit trips between consult_workload and DirtyAware entry.
+        // Soft/Off: production_dirty_aware_storm_force_full is consult-only.
+        std::vector<std::vector<std::uint8_t>> storm_full_bits;
+        DefineDirtyMaskView storm_full_view;
+        if (mask_ptr && mask_ptr->block_dirty_per_func) {
+            const auto dirty_n = static_cast<std::size_t>(mask_ptr->dirty_block_count());
+            if (production_dirty_aware_storm_force_full(dirty_n)) {
+                storm_full_bits = *mask_ptr->block_dirty_per_func;
+                for (auto& fb : storm_full_bits)
+                    for (auto& b : fb)
+                        b = 1;
+                storm_full_view.block_dirty_per_func = &storm_full_bits;
+                mask_ptr = &storm_full_view;
+                if (soa_mod) {
+                    for (auto& fn : soa_mod->functions) {
+                        if (fn.block_dirty_.size() < fn.blocks_.size())
+                            fn.block_dirty_.resize(fn.blocks_.size(), 0);
+                        fn.mark_all_blocks_dirty();
+                    }
+                }
+            }
+        }
         if (!prod_soa) {
             (void)run_production_incremental_dirty_pipeline(ir_mod, ck_pass, mask_ptr);
             (void)run_production_incremental_dirty_pipeline(ir_mod, cf_pass, mask_ptr);

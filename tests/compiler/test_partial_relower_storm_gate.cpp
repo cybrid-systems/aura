@@ -10,6 +10,7 @@
 
 #include "test_harness.hpp"
 #include "compiler/hot_update_registry.hh"
+#include "compiler/typed_mutation_audit.h"
 
 #include <cstdint>
 #include <fstream>
@@ -20,12 +21,17 @@
 import std;
 import aura.compiler.service;
 import aura.compiler.ir_cache_pure;
+import aura.compiler.pass_manager;
+import aura.compiler.ir;
 import aura.compiler.value;
 
 namespace {
 
 using aura::compiler::apply_partial_relower_storm_gate;
 using aura::compiler::CompilerService;
+using aura::compiler::ConstantFoldingWrap;
+using aura::compiler::DefineDirtyMaskView;
+using aura::compiler::dirty_only_blocks_skipped_total;
 using aura::compiler::get_partial_relower_threshold;
 using aura::compiler::hot_update_registry;
 using aura::compiler::kDefaultPartialRelowerThreshold;
@@ -33,11 +39,15 @@ using aura::compiler::kStormLevelGlobal;
 using aura::compiler::kStormLevelShape;
 using aura::compiler::partial_relower_storm_forced_full_total_atomic;
 using aura::compiler::partial_relower_storm_gate_consult_total_atomic;
+using aura::compiler::production_dirty_aware_storm_force_full;
 using aura::compiler::reset_partial_relower_threshold_for_test;
+using aura::compiler::run_incremental_dirty_pipeline;
 using aura::compiler::set_partial_relower_threshold;
 using aura::compiler::should_partial_relower;
 using aura::compiler::should_partial_relower_storm_aware;
 using aura::compiler::storm_level_has_global;
+using aura::compiler::typed_audit::apply_dev_audit_defaults;
+using aura::compiler::typed_audit::apply_production_audit_defaults;
 using aura::compiler::types::as_int;
 using aura::compiler::types::is_int;
 using aura::test::g_failed;
@@ -372,6 +382,113 @@ int run_test_partial_relower_storm_gate() {
               "pass_manager storm-aware");
         CHECK(low.find("should_partial_relower_storm_aware") != std::string::npos,
               "lowering storm-aware");
+        CHECK(pm.find("Issue #3690") != std::string::npos, "3690: pipeline last-look");
+        CHECK(pm.find("production_dirty_aware_storm_force_full") != std::string::npos,
+              "3690: last-look helper");
+        CHECK(svc.find("Issue #3690") != std::string::npos, "3690: suite last-look");
+        CHECK(pm.find("schema-3690") == std::string::npos, "3690 AC5: no new query key");
+        CHECK(read_file("tests/compiler/test_issue_3690.cpp").empty(),
+              "3690: no test_issue_3690.cpp");
+        CHECK(read_file("docs/design/3690-dirty-aware-storm-last-look.md").empty(),
+              "3690: no docs/design/");
+    }
+
+    // ── Issue #3690: Production DirtyAware last-look honors Global ──
+    {
+        std::println("\n--- #3690: DirtyAware last-look expands mask under Global ---");
+        using aura::ir::IRModule;
+        using aura::ir::IROpcode;
+        apply_dev_audit_defaults();
+        reset_partial_relower_threshold_for_test();
+        clear_storm();
+
+        auto make_mod = [](std::size_t nblocks) {
+            IRModule mod;
+            aura::ir::IRFunction fn;
+            fn.name = "f3690";
+            fn.local_count = 2;
+            for (std::size_t i = 0; i < nblocks; ++i) {
+                aura::ir::BasicBlock b;
+                b.id = static_cast<std::uint32_t>(i);
+                b.instructions.push_back(aura::ir::IRInstruction{
+                    .opcode = IROpcode::ConstI64,
+                    .operands = {0, 1, 0, 0},
+                });
+                fn.blocks.push_back(std::move(b));
+            }
+            mod.functions.push_back(std::move(fn));
+            return mod;
+        };
+
+        std::vector<std::vector<std::uint8_t>> sparse(1, std::vector<std::uint8_t>(4, 0));
+        sparse[0][0] = 1;
+        DefineDirtyMaskView view;
+        view.block_dirty_per_func = &sparse;
+
+        CHECK(!production_dirty_aware_storm_force_full(1),
+              "3690 AC4: Soft consult-only (no force-full)");
+        {
+            auto mod = make_mod(4);
+            const auto skip0 = dirty_only_blocks_skipped_total.load(std::memory_order_relaxed);
+            ConstantFoldingWrap cf;
+            CHECK(run_incremental_dirty_pipeline(mod, cf, &view), "3690 AC4: Soft sparse ok");
+            CHECK(dirty_only_blocks_skipped_total.load(std::memory_order_relaxed) >= skip0 + 3,
+                  "3690 AC4: Soft still cone-skips clean blocks");
+        }
+
+        apply_production_audit_defaults();
+        aura_hot_update_set_shape_storm_active(1);
+        CHECK(!storm_level_has_global(), "3690 AC2: Shape-only (no Global)");
+        CHECK(!production_dirty_aware_storm_force_full(1),
+              "3690 AC2: Shape-only still prefers partial");
+        {
+            auto mod = make_mod(4);
+            const auto skip0 = dirty_only_blocks_skipped_total.load(std::memory_order_relaxed);
+            ConstantFoldingWrap cf;
+            CHECK(run_incremental_dirty_pipeline(mod, cf, &view), "3690 AC2: Shape sparse ok");
+            CHECK(dirty_only_blocks_skipped_total.load(std::memory_order_relaxed) >= skip0 + 3,
+                  "3690 AC2: Shape-only still cone-skips");
+        }
+        aura_hot_update_set_shape_storm_active(0);
+
+        trip_global_storm();
+        CHECK(storm_level_has_global(), "3690 AC1: Global live");
+        const auto forced0 = partial_relower_storm_forced_full_total_atomic().load();
+        CHECK(production_dirty_aware_storm_force_full(1),
+              "3690 AC1: Production+Global last-look force-full");
+        CHECK(partial_relower_storm_forced_full_total_atomic().load() > forced0,
+              "3690 AC3: forced_full correlated with last-look");
+        {
+            auto mod = make_mod(4);
+            const auto skip0 = dirty_only_blocks_skipped_total.load(std::memory_order_relaxed);
+            ConstantFoldingWrap cf;
+            CHECK(run_incremental_dirty_pipeline(mod, cf, &view), "3690 AC1: Global sparse ok");
+            CHECK(dirty_only_blocks_skipped_total.load(std::memory_order_relaxed) == skip0,
+                  "3690 AC1: no clean-block skip under Global");
+        }
+        clear_storm();
+
+        // Storm-exit hysteresis: Shape→None with residual deopt window.
+        aura_hot_update_set_deopt_storm_threshold(1000, 10000);
+        for (int i = 0; i < 4; ++i)
+            aura_hot_update_note_deopt();
+        aura_hot_update_set_shape_storm_active(1);
+        CHECK(!production_dirty_aware_storm_force_full(1), "3690: Shape still partial");
+        aura_hot_update_set_shape_storm_active(0);
+        CHECK(production_dirty_aware_storm_force_full(1),
+              "3690 AC1: storm-exit force-full last-look");
+        {
+            auto mod = make_mod(4);
+            const auto skip0 = dirty_only_blocks_skipped_total.load(std::memory_order_relaxed);
+            ConstantFoldingWrap cf;
+            CHECK(run_incremental_dirty_pipeline(mod, cf, &view), "3690 AC1: exit-full sparse ok");
+            CHECK(dirty_only_blocks_skipped_total.load(std::memory_order_relaxed) == skip0,
+                  "3690 AC1: no cone-skip under storm-exit force-full");
+        }
+
+        apply_dev_audit_defaults();
+        clear_storm();
+        reset_partial_relower_threshold_for_test();
     }
 
     // ── Service smoke under Global storm ──
