@@ -396,6 +396,11 @@ static void ac3046_nonidentity_density_cite() {
     CHECK(opt.find("count_all_castops") != std::string::npos, "3046: count leftover CastOps");
     CHECK(opt.find("note_hot_residual_nonidentity_castops") != std::string::npos,
           "3046: density keep after identity sweep");
+    CHECK(opt.find("note_identity_residual_must_deopt") != std::string::npos,
+          "3699 AC1: leftover identity MustDeopt");
+    CHECK(opt.find("note_hot_residual_fail_close") != std::string::npos,
+          "3699 AC2: leftover non-id fail-close");
+    CHECK(opt.find("Issue #3699") != std::string::npos, "3699: sweep cites #3699");
     CHECK(opt.find("#3046") != std::string::npos, "3046: opt cites #3046");
     CHECK(read_file("src/compiler/castop_density_policy.hh")
                   .find("note_hot_residual_nonidentity_castops") != std::string::npos,
