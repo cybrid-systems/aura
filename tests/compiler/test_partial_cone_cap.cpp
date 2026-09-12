@@ -346,6 +346,17 @@ int run_test_partial_cone_cap() {
 
     ac3189_partial_impact_upper_bound_unified();
 
+    std::println("\n--- #3686 AC4: unioned cone still hits #2560 cap ---");
+    {
+        const auto impl = read_file("src/compiler/type_checker_impl.cpp");
+        const auto union_pos = impl.find("Issue #3686: Production/Full post-mutate unions");
+        const auto cap_pos = impl.find("Issue #2560: partial cone soft/hard SLA");
+        CHECK(union_pos != std::string::npos && cap_pos != std::string::npos && union_pos < cap_pos,
+              "3686 AC4: extra_recs union before cone cap (TIMEOUT escalate unchanged)");
+        CHECK(impl.find("extra_recs.size() * 2") != std::string::npos,
+              "3686 AC4: extra targets preserved as cap seeds");
+    }
+
     apply_dev_audit_defaults();
     std::println("\n=== #2560 + #3189: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;

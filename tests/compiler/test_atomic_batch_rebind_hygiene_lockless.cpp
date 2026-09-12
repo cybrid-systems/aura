@@ -150,6 +150,23 @@ int run_test_atomic_batch_rebind_hygiene_lockless() {
               "AC6: no tests/issues/test_issue_3374.cpp (R1 abandoned scheme)");
     }
 
+    // Issue #3686: lockless atomic-batch two Defines — Production/Full
+    // unions every MutationRecord (not only log.back()). Hygiene suite
+    // source-cites the seed; soak lives in partial_cone_commit_gate.
+    {
+        std::println("\n--- #3686: lockless batch union seed (hygiene suite) ---");
+        const auto etc = read_file("src/compiler/evaluator_typecheck.cpp");
+        const auto efl = read_file("src/compiler/evaluator_eval_flat.cpp");
+        CHECK(etc.find("Issue #3686") != std::string::npos, "3686: post-mutate union cite");
+        CHECK(etc.find("production_hard_face_active()") != std::string::npos,
+              "3686: Soft/Off keep log.back()");
+        CHECK(contains(efl, "add_mutation_with_rollback") &&
+                  contains(efl, "mark_dirty_upward_fast"),
+              "3686: lockless helpers still add_mutation + dirty (no infer)");
+        CHECK(read_file("tests/compiler/test_issue_3686.cpp").empty(),
+              "3686: no test_issue_3686.cpp");
+    }
+
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

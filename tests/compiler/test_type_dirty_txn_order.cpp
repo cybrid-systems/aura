@@ -191,6 +191,18 @@ int run_test_type_dirty_txn_order() {
               "3658 AC2: Guard skip flag");
         CHECK(dtor.find("Issue #3658") != std::string::npos, "3658 AC2: Guard cite");
     }
+    std::println("\n--- #3686: extra_recs union on dirty-txn entry ---");
+    {
+        const auto tch = read_file("src/compiler/type_checker.ixx");
+        const auto tci = read_file("src/compiler/type_checker_impl.cpp");
+        const auto etc = read_file("src/compiler/evaluator_typecheck.cpp");
+        CHECK(tch.find("extra_recs") != std::string::npos, "3686: dirty-txn extra_recs");
+        CHECK(tci.find("affected_subtree_from_mutation(flat, extra)") != std::string::npos,
+              "3686: per-record affected union");
+        CHECK(etc.find("production_hard_face_active()") != std::string::npos,
+              "3686: Production/Full gate at post-mutate");
+        CHECK(etc.find("schema-3686") == std::string::npos, "3686: no new query key");
+    }
     std::println("\n=== #2516: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }

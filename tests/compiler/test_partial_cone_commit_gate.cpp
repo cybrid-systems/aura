@@ -15,6 +15,7 @@
 #include <atomic>
 #include <cstdint>
 #include <cstdlib>
+#include <format>
 #include <fstream>
 #include <print>
 #include <string>
@@ -23,6 +24,7 @@
 import std;
 import aura.compiler.service;
 import aura.compiler.value;
+import aura.core.ast;
 
 // Issue #3623 refined-drift ACs drive the occurrence-recover hook through
 // the production TLS-override chain (aura_typed_audit_test_install_recover_
@@ -64,7 +66,13 @@ using aura::compiler::typed_audit::soft_truncated_silent_dep_escalate_total_v_re
 // `using namespace X` only exposes X's members; for `typed_audit::foo` qualified
 // lookups we need a namespace alias.
 namespace typed_audit = ::aura::compiler::typed_audit;
+using aura::compiler::typed_audit::AuditStrategy;
+using aura::compiler::typed_audit::get_strategy;
+using aura::compiler::typed_audit::production_hard_face_active;
+using aura::compiler::typed_audit::set_strategy;
+using aura::compiler::types::as_bool;
 using aura::compiler::types::as_int;
+using aura::compiler::types::is_bool;
 using aura::compiler::types::is_int;
 using aura::test::g_failed;
 using aura::test::g_passed;
@@ -1023,6 +1031,115 @@ static void ac3623_4_soft_observe_allow() {
     ac3623_set_mock_recover(false);
 }
 
+// ── Issue #3686: Production/Full post-mutate unions every MutationRecord
+//    under this Guard (not only log.back()). Soft/Off: log.back() only.
+static aura::ast::NodeId find_literal_int_3686(aura::ast::FlatAST& flat, std::int64_t want) {
+    using aura::ast::NodeId;
+    using aura::ast::NodeTag;
+    using aura::ast::NULL_NODE;
+    for (NodeId id = 0; id < flat.size(); ++id) {
+        if (!flat.is_live_node(id))
+            continue;
+        auto v = flat.get(id);
+        if (v.tag == NodeTag::LiteralInt && v.int_value == want)
+            return id;
+    }
+    return NULL_NODE;
+}
+
+static void ac3686_source_and_gate() {
+    std::println("\n--- #3686 AC2/AC3/AC4/AC5: source-cite union + Soft/Off + cap + no query ---");
+    const auto etc = read_file("src/compiler/evaluator_typecheck.cpp");
+    const auto impl = read_file("src/compiler/type_checker_impl.cpp");
+    const auto ixx = read_file("src/compiler/type_checker.ixx");
+    CHECK(etc.find("Issue #3686") != std::string::npos, "3686: typecheck cites #3686");
+    CHECK(etc.find("production_hard_face_active()") != std::string::npos,
+          "3686 AC3: union gated on Production/Full");
+    CHECK(etc.find("stk.back().mutation_log_size") != std::string::npos,
+          "3686: Guard enter checkpoint");
+    CHECK(etc.find("log.size() - enter) > 1") != std::string::npos,
+          "3686 AC2: single-op extra empty (O(delta))");
+    CHECK(impl.find("Issue #3686") != std::string::npos, "3686: impl cites #3686");
+    CHECK(impl.find("affected_subtree_from_mutation(flat, extra)") != std::string::npos,
+          "3686: reuse affected_subtree_from_mutation per record");
+    CHECK(impl.find("extra_recs.size() * 2") != std::string::npos,
+          "3686 AC4: extra targets are cone-cap seeds");
+    const auto cap_pos = impl.find("Issue #2560: partial cone soft/hard SLA");
+    const auto union_pos = impl.find("Issue #3686: Production/Full post-mutate unions");
+    CHECK(union_pos != std::string::npos && cap_pos != std::string::npos && union_pos < cap_pos,
+          "3686 AC4: union before #2560 cone cap (TIMEOUT escalate unchanged)");
+    CHECK(ixx.find("extra_recs") != std::string::npos, "3686: extra_recs on dirty-txn entry");
+    CHECK(etc.find("schema-3686") == std::string::npos &&
+              impl.find("schema-3686") == std::string::npos &&
+              ixx.find("query:type-linear-commit-health") == std::string::npos,
+          "3686 AC5: no new query key");
+    CHECK(read_file("tests/compiler/test_issue_3686.cpp").empty(),
+          "3686: no test_issue_3686.cpp per #1655");
+    CHECK(read_file("docs/design/3686-post-mutate-union.md").empty(), "3686: no docs/design/");
+}
+
+static void ac3686_soak_two_defines() {
+    std::println("\n--- #3686 AC1: Production/Full atomic-batch two Defines both re-inferred ---");
+    const auto prev = get_strategy();
+    set_strategy(AuditStrategy::Full);
+    CHECK(production_hard_face_active(), "3686 AC1: Full hard-face on");
+
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(begin (define a 1) (define b 2))\")").has_value(),
+          "3686 AC1: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3686 AC1: eval-current");
+    (void)cs.eval("(typecheck-current)");
+    auto* ws = cs.evaluator().workspace_flat();
+    CHECK(ws != nullptr, "3686 AC1: workspace");
+    if (!ws) {
+        set_strategy(prev);
+        return;
+    }
+    const auto a_lit = find_literal_int_3686(*ws, 1);
+    const auto b_lit = find_literal_int_3686(*ws, 2);
+    CHECK(a_lit != aura::ast::NULL_NODE && b_lit != aura::ast::NULL_NODE && a_lit != b_lit,
+          "3686 AC1: sibling literals");
+    if (a_lit == aura::ast::NULL_NODE || b_lit == aura::ast::NULL_NODE) {
+        set_strategy(prev);
+        return;
+    }
+    const auto gen_a0 = ws->type_cache_gen(a_lit);
+    const auto gen_b0 = ws->type_cache_gen(b_lit);
+    const auto tid_a0 = ws->type_id(a_lit);
+    const auto tid_b0 = ws->type_id(b_lit);
+
+    auto batch =
+        cs.eval(std::format("(mutate:atomic-batch (list (list \"mutate:tweak-literal\" {} 10) "
+                            "(list \"mutate:tweak-literal\" {} 20)))",
+                            static_cast<long long>(a_lit), static_cast<long long>(b_lit)));
+    CHECK(batch.has_value(), "3686 AC1: batch returns");
+    CHECK(!(batch && is_bool(*batch) && !as_bool(*batch)), "3686 AC1: batch not false");
+
+    const auto gen_a1 = ws->type_cache_gen(a_lit);
+    const auto gen_b1 = ws->type_cache_gen(b_lit);
+    CHECK(gen_a1 != gen_a0, "3686 AC1: A type_id/gen refreshed (not skipped as non-log.back())");
+    CHECK(gen_b1 != gen_b0, "3686 AC1: B (log.back()) type_id/gen refreshed");
+    CHECK(ws->type_id(a_lit) != 0 && ws->type_id(b_lit) != 0, "3686 AC1: both still typed");
+    (void)tid_a0;
+    (void)tid_b0;
+    CHECK(cs.evaluator().last_type_solve_solved(),
+          "3686 AC1: commit_readiness not vacuous SOLVED on first-only");
+
+    set_strategy(prev);
+}
+
+static void ac3686_soft_log_back_only() {
+    std::println("\n--- #3686 AC3: Soft/Off still log.back() only ---");
+    apply_dev_audit_defaults();
+    CHECK(!production_hard_face_active(), "3686 AC3: Soft hard-face off");
+    const auto etc = read_file("src/compiler/evaluator_typecheck.cpp");
+    const auto gate = etc.find("if (aura::compiler::typed_audit::production_hard_face_active())");
+    const auto extra = etc.find("std::span<const aura::ast::MutationRecord> extra{}");
+    CHECK(gate != std::string::npos && extra != std::string::npos && extra < gate,
+          "3686 AC3: extra defaults empty; union only under Production/Full");
+    apply_dev_audit_defaults();
+}
+
 int run_test_partial_cone_commit_gate() {
     std::println("=== Issue #2621: partial cone truncate commit gate ===");
     ac1_soft_observe_allow();
@@ -1106,7 +1223,11 @@ int run_test_partial_cone_commit_gate() {
     ac2962_3_soft_quiet();
     ac2962_4_schema_and_source();
     ac2962_5_linter_no_design();
-    std::println("\n=== #2621..#2962: {} passed, {} failed ===", g_passed, g_failed);
+    std::println("\n=== Issue #3686: post-mutate union Guard mutation log ===");
+    ac3686_source_and_gate();
+    ac3686_soak_two_defines();
+    ac3686_soft_log_back_only();
+    std::println("\n=== #2621..#3686: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
 

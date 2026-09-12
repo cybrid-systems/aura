@@ -23,6 +23,8 @@
 
 #include <atomic>
 #include <cstdint>
+#include <fstream>
+#include <iterator>
 #include <string>
 
 import std;
@@ -464,6 +466,28 @@ static void run_466() {
         CHECK(r && is_int(*r), "eval after multi-mutate incremental infer");
         if (r && is_int(*r))
             CHECK(as_int(*r) == 7, "narrow-dependent semantics preserved");
+    }
+
+    // Issue #3686: solve_delta suite — Production/Full post-mutate unions
+    // every Guard MutationRecord so sibling Defines are not skipped.
+    {
+        std::println("\n--- #3686: post-mutate union seed (solve_delta suite) ---");
+        std::string etc;
+        for (const char* p :
+             {"src/compiler/evaluator_typecheck.cpp", "../src/compiler/evaluator_typecheck.cpp",
+              "../../src/compiler/evaluator_typecheck.cpp"}) {
+            std::ifstream in(p);
+            if (!in)
+                continue;
+            etc.assign((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+            if (!etc.empty())
+                break;
+        }
+        CHECK(etc.find("Issue #3686") != std::string::npos, "3686: post-mutate cites #3686");
+        CHECK(etc.find("production_hard_face_active()") != std::string::npos,
+              "3686: Production/Full union gate");
+        CHECK(etc.find("infer_flat_partial_with_dirty_txn") != std::string::npos,
+              "3686: still solve_delta via dirty-txn (no new solver)");
     }
 }
 

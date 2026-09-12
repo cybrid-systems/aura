@@ -3014,7 +3014,8 @@ export struct TypeChecker {
     std::size_t infer_flat_partial(aura::ast::FlatAST& flat, const aura::ast::StringPool& pool,
                                    const aura::ast::MutationRecord& rec,
                                    aura::diag::DiagnosticCollector& diag,
-                                   void* per_defuse_index_tracker);
+                                   void* per_defuse_index_tracker,
+                                   std::span<const aura::ast::MutationRecord> extra_recs = {});
 
     // Issue #2516: documented dirty-transaction entry for typed_mutate
     // partial paths. Same implementation as infer_flat_partial; the name
@@ -3032,12 +3033,17 @@ export struct TypeChecker {
     // merge), soft/hard cone caps apply before phase 1 (env
     // AURA_PARTIAL_CONE_SOFT / HARD; per-TypeId fan-out
     // AURA_TYPE_DEP_FANOUT_CAP). Order of #2516 phases is unchanged.
-    std::size_t infer_flat_partial_with_dirty_txn(aura::ast::FlatAST& flat,
-                                                  const aura::ast::StringPool& pool,
-                                                  const aura::ast::MutationRecord& rec,
-                                                  aura::diag::DiagnosticCollector& diag,
-                                                  void* per_defuse_index_tracker = nullptr) {
-        return infer_flat_partial(flat, pool, rec, diag, per_defuse_index_tracker);
+    //
+    // Issue #3686: extra_recs unions additional MutationRecords into the
+    // partial cone (Production/Full outermost Guard batch). Empty span
+    // (Soft/Off or single-op) is zero extra — still log.back() only.
+    std::size_t
+    infer_flat_partial_with_dirty_txn(aura::ast::FlatAST& flat, const aura::ast::StringPool& pool,
+                                      const aura::ast::MutationRecord& rec,
+                                      aura::diag::DiagnosticCollector& diag,
+                                      void* per_defuse_index_tracker = nullptr,
+                                      std::span<const aura::ast::MutationRecord> extra_recs = {}) {
+        return infer_flat_partial(flat, pool, rec, diag, per_defuse_index_tracker, extra_recs);
     }
 
     // Issue #116: deferred CoercionNode insertion. infer_flat
