@@ -424,6 +424,62 @@ int aura_issue_1413_run() {
         apply_dev_audit_defaults();
     }
 
+    // ── #3698: check_flat Let/Define annotated value ---
+    {
+        using aura::compiler::kCheckFlatLetDefineAnnotationIssue;
+        using aura::compiler::typed_audit::apply_dev_audit_defaults;
+        using aura::compiler::typed_audit::apply_production_audit_defaults;
+
+        struct ProdScope {
+            ProdScope() { apply_production_audit_defaults(); }
+            ~ProdScope() { apply_dev_audit_defaults(); }
+        };
+
+        CHECK(kCheckFlatLetDefineAnnotationIssue == 3698, "3698 stamp");
+
+        {
+            std::println("\n--- #3698 AC1: production annotated let mismatch TypeError ---");
+            ProdScope prod;
+            aura::diag::DiagnosticCollector diag;
+            infer_code("(check (letrec ((x (check \"hi\" : Int))) 1) : Int)",
+                       aura::compiler::GradualPermissiveness::Strict, /*strict=*/false, diag);
+            CHECK(has_kind_msg(diag, aura::diag::ErrorKind::TypeError, "type mismatch") ||
+                      has_kind_msg(diag, aura::diag::ErrorKind::TypeError,
+                                   "incompatible ground types"),
+                  "3698 AC1: production letrec annotated mismatch TypeError");
+        }
+        {
+            std::println("\n--- #3698 AC2: production define body mismatch TypeError ---");
+            ProdScope prod;
+            aura::diag::DiagnosticCollector diag;
+            infer_code("(check (define d3698 \"hi\") : Int)",
+                       aura::compiler::GradualPermissiveness::Strict, /*strict=*/false, diag);
+            CHECK(has_kind_msg(diag, aura::diag::ErrorKind::TypeError, "type mismatch") ||
+                      has_kind_msg(diag, aura::diag::ErrorKind::TypeError,
+                                   "incompatible ground types"),
+                  "3698 AC2: production define value vs Int TypeError");
+        }
+        {
+            std::println("\n--- #3698 AC3: unannotated let still infers ---");
+            ProdScope prod;
+            aura::diag::DiagnosticCollector diag;
+            infer_code("(let ((x 1)) (+ x 2))", aura::compiler::GradualPermissiveness::Strict,
+                       /*strict=*/false, diag);
+            CHECK(!has_kind_msg(diag, aura::diag::ErrorKind::TypeError, "type mismatch"),
+                  "3698 AC3: unannotated let no TypeError");
+        }
+        {
+            std::println("\n--- #3698 AC5: Soft unannotated no extra TypeError ---");
+            apply_dev_audit_defaults();
+            aura::diag::DiagnosticCollector diag;
+            infer_code("(let ((x \"hi\")) x)", aura::compiler::GradualPermissiveness::Balanced,
+                       /*strict=*/false, diag);
+            CHECK(!has_kind_msg(diag, aura::diag::ErrorKind::TypeError, "type mismatch"),
+                  "3698 AC5: Soft unannotated let no extra TypeError");
+        }
+        apply_dev_audit_defaults();
+    }
+
     if (g_failed == 0) {
         std::println("\n=== ALL ACs PASS ===");
         return 0;

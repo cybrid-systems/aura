@@ -229,6 +229,21 @@ static bool is_type_hole(std::string_view type_name) {
     return false;
 }
 
+// Issue #3698: TypeAnnotation on a let/define value is the binder sig.
+// Holes (`_` / `:?`) are not a declared sig — caller synthesizes.
+static TypeId annotation_type_of(TypeRegistry& reg, const FlatAST& flat, const StringPool& pool,
+                                 NodeId id) {
+    if (id == NULL_NODE || id >= flat.size())
+        return {};
+    auto v = flat.get(id);
+    if (v.tag != NodeTag::TypeAnnotation)
+        return {};
+    auto type_name = pool.resolve(v.sym_id);
+    if (type_name.empty() || is_type_hole(type_name))
+        return {};
+    return reg.lookup_type(std::string(type_name));
+}
+
 static std::string closest_match(std::string_view name, const std::vector<std::string>& candidates,
                                  std::size_t max_dist = 3) {
     std::string best;
@@ -7700,13 +7715,29 @@ void InferenceEngine::check_flat(FlatAST& flat, StringPool& pool, NodeId id, Typ
         std::string var_name(name);
         env_.push_scope();
         ownership_env_.push_scope();
+        TypeId rec_fwd{};
+        if (is_rec) {
+            rec_fwd = cs_.fresh_var();
+            env_.bind(var_name, rec_fwd);
+        }
         if (!v.children.empty() && v.child(0) != NULL_NODE) {
             auto val_id = v.child(0);
-            // Check the value expression against expected if annotated
-            // For now: synthesize val, bind it
-            TypeId val_type =
-                is_rec ? cs_.fresh_var() : synthesize_flat(flat, pool, val_id, flat.get(val_id));
-            env_.bind(var_name, val_type);
+            // Issue #3698: TypeAnnotation / declared sig → check_flat the
+            // value against that type (reuse consistent_unify via the
+            // check arm). Unannotated: synthesize-only (AC3 / AC5 Soft).
+            TypeId val_expected = annotation_type_of(reg_, flat, pool, val_id);
+            if (val_expected.valid()) {
+                check_flat(flat, pool, val_id, val_expected);
+                TypeId val_type = val_expected;
+                if (auto cached = synthesize_flat_try_cache(flat, val_id))
+                    val_type = *cached;
+                if (is_rec)
+                    cs_.consistent_unify(rec_fwd, val_type);
+                env_.bind(var_name, val_type);
+            } else if (!is_rec) {
+                TypeId val_type = synthesize_flat(flat, pool, val_id, flat.get(val_id));
+                env_.bind(var_name, val_type);
+            }
         }
         if (v.children.size() >= 2 && v.child(1) != NULL_NODE)
             check_flat(flat, pool, v.child(1), expected);
@@ -7789,15 +7820,28 @@ void InferenceEngine::check_flat(FlatAST& flat, StringPool& pool, NodeId id, Typ
             maybe_report_ground_inconsistency(val_type, expected);
         }
     } else if (v.tag == NodeTag::Define) {
-        // (define name value): check value against expected if matched
+        // Issue #3698: (define name value) — check the value against a
+        // TypeAnnotation / surrounding expected when a sig exists.
+        // Define itself returns Void; do not unify the Define node with
+        // expected. Soft unannotated: synthesize-only.
         if (v.children.size() >= 1 && v.child(0) != NULL_NODE) {
             auto val_id = v.child(0);
-            auto val_type = synthesize_flat(flat, pool, val_id, flat.get(val_id));
-            // For define, check that value type is consistent with expected context
-            // (define is a declaration, not an expression, so the expected context
-            //  is about the defined value, not the define node itself)
+            TypeId val_expected = annotation_type_of(reg_, flat, pool, val_id);
+            if (!val_expected.valid() && expected.valid() && expected != reg_.void_type())
+                val_expected = expected;
+            TypeId val_type;
+            if (val_expected.valid()) {
+                check_flat(flat, pool, val_id, val_expected);
+                val_type = val_expected;
+                if (auto cached = synthesize_flat_try_cache(flat, val_id))
+                    val_type = *cached;
+            } else {
+                val_type = synthesize_flat(flat, pool, val_id, flat.get(val_id));
+            }
+            auto def_name = pool.resolve(v.sym_id);
+            if (def_name.size() > 0)
+                env_.bind(std::string(def_name), val_type);
         }
-        // Define returns Void — no check against expected needed
     } else {
         // Issue #3044: remaining tags (literals, Linear, SV, …) go through
         // synthesize_flat. Uncovered / future tags hit the default: gate
