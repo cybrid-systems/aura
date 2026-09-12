@@ -139,6 +139,55 @@ void ac3666_pack_hot_check_compile_armed() {
           "3666 AC1: as_int call site unchanged");
 }
 
+void ac3702_pack_happy_no_record() {
+    std::printf("\n--- #3702 AC1: pack CONTRACT happy path has no sampled RECORD ---\n");
+    CHECK(aura::core::cpp26::kHotContractPackHappyNoRecordIssue == 3702, "3702 stamp");
+    auto hh = read_file("src/core/cpp26_contract_stats.h");
+    CHECK(hh.find("kHotContractPackHappyNoRecordIssue = 3702") != std::string::npos,
+          "3702: header stamp");
+    const auto pack = hh.find("#if defined(AURA_HOT_MODE_OFF) && defined(AURA_PRODUCTION_PACK)");
+    CHECK(pack != std::string::npos, "3702: pack redefine present");
+    const auto pack_end = hh.find("#endif", pack == std::string::npos ? 0 : pack);
+    const auto pwin = (pack != std::string::npos && pack_end > pack)
+                          ? hh.substr(pack, pack_end - pack)
+                          : std::string{};
+    const auto cpos = pwin.find("#define AURA_HOT_CONTRACT");
+    CHECK(cpos != std::string::npos, "3702 AC1: pack CONTRACT");
+    const auto cbody = pwin.substr(cpos);
+    CHECK(cbody.find("record_hotpath_invariant_hit_sampled") == std::string::npos,
+          "3702 AC1: pack CONTRACT has no sampled RECORD");
+    CHECK(cbody.find("AURA_HOT_RECORD") == std::string::npos,
+          "3702 AC1: pack CONTRACT does not RECORD on success");
+    CHECK(cbody.find("[[unlikely]]") != std::string::npos, "3702 AC1: unlikely abort");
+    CHECK(cbody.find("std::abort()") != std::string::npos, "3702 AC2: false still abort");
+    CHECK(cbody.find("record_hotpath_contract_harden_trap") != std::string::npos,
+          "3702 AC2: false still trap counter");
+    auto val = read_file("src/compiler/value.ixx");
+    CHECK(val.find("AURA_HOT_CONTRACT(is_int(v))") != std::string::npos,
+          "3702 AC1: as_int still CONTRACT");
+    auto soa = read_file("src/compiler/ir_soa.ixx");
+    const auto vat = soa.find("IRInstructionView view_at(");
+    const auto addb = soa.find("add_block", vat == std::string::npos ? 0 : vat);
+    const auto vwin =
+        (vat != std::string::npos && addb > vat) ? soa.substr(vat, addb - vat) : std::string{};
+    CHECK(vwin.find("AURA_HOT_CONTRACT") != std::string::npos, "3702 AC4: view_at same CONTRACT");
+    CHECK(hh.find("schema-3702") == std::string::npos, "3702 AC5: no new query key");
+    CHECK(read_file("tests/compiler/test_issue_3702.cpp").empty(), "3702 AC5: no invent");
+    CHECK(read_file("docs/design/3702-pack-happy-no-record.md").empty(),
+          "3702 AC5: no docs/design");
+
+    const auto h0 = aura::core::cpp26::hotpath_invariant_hits_total.load(std::memory_order_relaxed);
+    for (int i = 0; i < 1024; ++i)
+        AURA_HOT_CONTRACT(true);
+#if defined(AURA_HOT_MODE_OFF)
+    CHECK(aura::core::cpp26::hotpath_invariant_hits_total.load(std::memory_order_relaxed) == h0,
+          "3702 AC1: pack happy path RECORD count stays 0");
+#else
+    (void)h0;
+    CHECK(true, "3702 AC1: source-cite (Debug pack is ENFORCE, not NDEBUG OFF)");
+#endif
+}
+
 } // namespace
 
 int main() {
@@ -148,6 +197,7 @@ int main() {
     ac3627_pack_ignores_dev_flag();
     ac3627_operator_wins();
     ac3666_pack_hot_check_compile_armed();
+    ac3702_pack_happy_no_record();
     std::printf("\n=== Results: %d passed, %d failed ===\n", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

@@ -767,9 +767,50 @@ int run_test_hot_contract_placement() {
         CHECK(hh.find("AURA_COLD_CONTRACT") != std::string::npos, "3666 AC5: cold unchanged");
     }
 
-    std::println(
-        "\n=== #2435/#3043/#3106/#3139/#3313/#3428/#3490/#3666 results: {} passed, {} failed ===",
-        g_passed, g_failed);
+    // ── Issue #3702: pack happy-path CONTRACT has no sampled RECORD ──
+    {
+        std::println("\n--- #3702: pack CONTRACT unlikely abort, Soft unarmed skip ---");
+        auto hh = read_file("src/core/cpp26_contract_stats.h");
+        CHECK(aura::core::cpp26::kHotContractPackHappyNoRecordIssue == 3702, "3702: stamp");
+        CHECK(hh.find("kHotContractPackHappyNoRecordIssue = 3702") != std::string::npos,
+              "3702: header stamp");
+        const auto pack =
+            hh.find("#if defined(AURA_HOT_MODE_OFF) && defined(AURA_PRODUCTION_PACK)");
+        CHECK(pack != std::string::npos, "3702: pack OFF redefine");
+        const auto pack_end = hh.find("#endif", pack == std::string::npos ? 0 : pack);
+        const auto pwin = (pack != std::string::npos && pack_end > pack)
+                              ? hh.substr(pack, pack_end - pack)
+                              : std::string{};
+        const auto cpos = pwin.find("#define AURA_HOT_CONTRACT");
+        const auto cbody = cpos == std::string::npos ? std::string{} : pwin.substr(cpos);
+        CHECK(cbody.find("record_hotpath_invariant_hit_sampled") == std::string::npos,
+              "3702 AC1: pack CONTRACT no sampled RECORD");
+        CHECK(cbody.find("AURA_HOT_RECORD") == std::string::npos,
+              "3702 AC1: pack CONTRACT no success RECORD");
+        CHECK(cbody.find("[[unlikely]]") != std::string::npos, "3702 AC1: unlikely");
+        CHECK(cbody.find("std::abort()") != std::string::npos, "3702 AC2: still abort");
+        CHECK(cbody.find("record_hotpath_contract_harden_trap") != std::string::npos,
+              "3702 AC2: still trap");
+        CHECK(hh.find("expr not evaluated") != std::string::npos,
+              "3702 AC3: Soft/unit NDEBUG OFF skip kept");
+        auto val = read_file("src/compiler/value.ixx");
+        CHECK(val.find("AURA_HOT_CONTRACT(is_int(v))") != std::string::npos,
+              "3702 AC1: as_int CONTRACT");
+        auto soa = read_file("src/compiler/ir_soa.ixx");
+        const auto vat = soa.find("IRInstructionView view_at(");
+        const auto addb = soa.find("add_block", vat == std::string::npos ? 0 : vat);
+        const auto vwin =
+            (vat != std::string::npos && addb > vat) ? soa.substr(vat, addb - vat) : std::string{};
+        CHECK(vwin.find("AURA_HOT_CONTRACT") != std::string::npos,
+              "3702 AC4: view_at same as as_int");
+        CHECK(hh.find("schema-3702") == std::string::npos, "3702 AC5: no new query key");
+        CHECK(read_file("docs/design/3702-pack-happy-no-record.md").empty(), "3702 AC5: no docs");
+        CHECK(read_file("tests/compiler/test_issue_3702.cpp").empty(), "3702 AC5: no invent");
+    }
+
+    std::println("\n=== #2435/#3043/#3106/#3139/#3313/#3428/#3490/#3666/#3702 results: {} passed, "
+                 "{} failed ===",
+                 g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
 
