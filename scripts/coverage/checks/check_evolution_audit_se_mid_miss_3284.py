@@ -74,8 +74,11 @@ def main() -> int:
     # Issue #3298: durable read-back gate aligned to the Full hard face —
     # production_defaults_active() || get_strategy() == AuditStrategy::Full.
     # Soft / Sampled (non-production, non-Full) still skip disk I/O (AC3).
+    # Issue #3674: the gate admits the auto_durable arm beside the explicit
+    # force — auto_durable carries its own production/Full + both-rings-miss
+    # + WAL-enabled terms, so the Soft contract below is unchanged.
     must(
-        "want_durable && join_mid != 0" in src
+        "(want_durable || auto_durable) && join_mid != 0" in src
         and "production_defaults_active() || get_strategy() == AuditStrategy::Full" in src,
         "G6: durable WAL path gated on production/Full (AC3 zero disk I/O for Soft)",
     )

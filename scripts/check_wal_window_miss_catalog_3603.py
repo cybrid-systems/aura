@@ -177,10 +177,13 @@ def run_checks() -> list[str]:
         failures.append("3603 AC1: synthetic miss line formats the flag value")
 
     # AC2: the flag computation sits inside the durable gate (after
-    # "want_durable && join_mid != 0" and before insert_kv of the key).
+    # "(want_durable || auto_durable) && join_mid != 0" and before
+    # insert_kv of the key). #3674: the gate admits the production/Full
+    # auto-durable arm beside the explicit :durable force — same block,
+    # same window-miss computation inside it.
     # Match the computation (not the "= 0" declaration, which precedes
     # the gate).
-    gate2 = flat.find("if (want_durable && join_mid != 0 &&")
+    gate2 = flat.find("if ((want_durable || auto_durable) && join_mid != 0 &&")
     comp = flat.find("(durable_hit == 0 && typed_summary_from_wal == 0) ? 1 : 0")
     ins = flat.find('insert_kv("wal-lookup-window-miss"')
     if gate2 == -1 or comp == -1 or ins == -1:

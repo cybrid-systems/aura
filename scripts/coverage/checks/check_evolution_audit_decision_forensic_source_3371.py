@@ -86,13 +86,15 @@ def main() -> int:
     )
 
     # ── AC2: the old unconditional < 3 → 3 bump must be gone from ──────
-    # the default path. It still exists inside the `want_durable` keyword
-    # block (Issue #3205) — that's correct (user explicitly asked for
-    # durable forensic). Verify the bump is *scoped* to want_durable.
-    # We do NOT require absence (durable path keeps it) — we require the
-    # default path to use the new priority order (covered above).
+    # the default path. It still exists inside the durable block (Issue
+    # #3205 explicit force; #3674 widened the gate to admit the
+    # production/Full auto_durable arm beside it) — that's correct (same
+    # block, same WAL find_recent path). Verify the durable block itself
+    # is present. We do NOT require absence (durable path keeps it) — we
+    # require the default path to use the new priority order (covered
+    # above).
     must(
-        "if (want_durable && join_mid != 0 &&",
+        "if ((want_durable || auto_durable) && join_mid != 0 &&",
         "AC1/AC2 want_durable keyword path preserved (#3205)",
         eps,
     )

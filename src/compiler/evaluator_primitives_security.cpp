@@ -6000,10 +6000,15 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 posture_degraded = d.would_arm_degraded || wrap_risk;
             }
 
-            // Issue #3205: optional :durable mid point-query. Default
-            // (no keyword) still no WAL scan. Soft / Off refuse I/O even
-            // with :durable. Join key is join_mid (explicit mid or last
-            // stamped) — never a synthetic process-origin mid.
+            // Issue #3205: optional :durable mid point-query. Join key is join_mid
+            // (explicit mid or last stamped) — never a synthetic process-origin mid.
+            // Soft / Off refuse I/O even with :durable.
+            // Issue #3674: the default path is no longer an unconditional
+            // no-scan under production/Full — after the typed (256) + SE
+            // (1024) rings wrap, a still-durable mid must not read as "no
+            // evidence" on the one-query Agent fold (auto_durable below;
+            // query:security-audit already auto-scans the same face,
+            // #3498/#3603). Soft / Off default keeps zero WAL I/O.
             std::int64_t durable_hit = 0;
             // Issue #3603: durable scan ran + explicit mid + every
             // find_recent_* missed → the mid likely lives beyond the lookup
@@ -6036,7 +6041,20 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                         want_durable = true;
                 }
             }
-            if (want_durable && join_mid != 0 &&
+            // Issue #3674: production/Full auto-durable fold. When BOTH
+            // in-memory faces miss (typed_hit==false && !se_ring_has_mid)
+            // and WAL is enabled, run the same bounded find_recent_* scan
+            // query:security-audit already uses (#3498/#3603) instead of
+            // publishing forensic-source=3 / durable-hit=0 with an empty
+            // reason (the wrap lie). Soft / Off: auto_durable is false
+            // (production/Full term) → no WAL I/O, contract unchanged.
+            // :durable stays an explicit force; typed-trail-miss is never
+            // rewritten into a typed hit (#3498 rule — WAL is not the
+            // typed trail; sidecar fill stays additive).
+            const bool auto_durable =
+                (production_defaults_active() || get_strategy() == AuditStrategy::Full) &&
+                join_mid != 0 && !typed_hit && !se_ring_has_mid && wal_enabled;
+            if ((want_durable || auto_durable) && join_mid != 0 &&
                 (production_defaults_active() || get_strategy() == AuditStrategy::Full)) {
                 using ::aura::core::audit_wal::g_mutation_audit_wal;
                 using ::aura::core::security_event_wal::g_security_event_wal;

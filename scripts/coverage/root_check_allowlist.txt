@@ -107,3 +107,4 @@ check_recv_under_boundary_3673.py
 check_envframe_scan_order_3679.py
 check_compact_owner_scope_3680.py
 check_apply_pre_reemit_refuse_3681.py
+check_wal_fold_autoscan_3674.py

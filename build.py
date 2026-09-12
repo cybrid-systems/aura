@@ -6819,6 +6819,23 @@ def cmd_lint():
     if r != 0:
         fail("Issue #3681 apply pre-reemit linter failed — run python3 scripts/check_apply_pre_reemit_refuse_3681.py")
         return r
+    # Issue #3674 (#3205/#3498/#3603 residual): the evolution-audit-decision
+    # fold defaulted to no WAL scan — after typed 256 + SE 1024 wrap a
+    # still-durable mid read forensic-source=3 / durable-hit=0 with an
+    # empty reason (the one-query Agent fold lied while query:security-audit
+    # auto-scanned the same face). Gate pins: auto_durable arm (production/
+    # Full + both rings miss + WAL enabled) admitted beside :durable, scan
+    # block still production/Full-gated (Soft zero-I/O), additive faces
+    # preserved (typed-trail-miss / observe-only / suggested-next),
+    # security-audit bounded-window shape unchanged, tests extended.
+    wfa3674_script = ROOT / "scripts" / "check_wal_fold_autoscan_3674.py"
+    if not wfa3674_script.exists():
+        fail(f"missing {wfa3674_script}")
+        return 1
+    r = run([sys.executable, str(wfa3674_script)], cwd=ROOT)
+    if r != 0:
+        fail("Issue #3674 WAL fold auto-durable linter failed — run python3 scripts/check_wal_fold_autoscan_3674.py")
+        return r
     # Issue #3649 (#2952/#3096/#2690 residual): the storm-exit edge drives
     # residual coverage-verify. storm_exit_force_full_active now==0 &&
     # prev!=0 branch runs one maybe_coverage_verify_min_dirty when
