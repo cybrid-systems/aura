@@ -4360,7 +4360,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
     // reclaimed_deferred_cleanup) and on subsequent orch:scope-resolve.
     add("orch:scope-join-all",
         [&ev, build_orch_hash, orch_keyword_key, parse_scope_addr_kw, resolve_scope_addr,
-         make_scope_addr_fail](std::span<const EvalValue> a) -> EvalValue {
+         make_scope_addr_fail, add_deny_class](std::span<const EvalValue> a) -> EvalValue {
             orch_sched.ensure(2);
             auto* root = aura::orch::find_agent_scope(static_cast<void*>(&ev));
             if (!root) {
@@ -4485,9 +4485,18 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             // not only this layer's handles_ — empty root + live child
             // used to drop_agent_scope and ~AgentScope tore down the
             // child fibers. join_all stays local; drop sees tree_settled.
+            // Issue #3671: tree_settled was computed for the drop gate and
+            // thrown away — the Agent hash said ok=#t while descendants
+            // still lived (three-plane collision with directory /
+            // scope-resolve). Publish it additively + production
+            // fail-closed on non-tree joins with live descendants (Soft:
+            // observe-only — bools populate, no deny intern).
+            const bool tree_settled_now = scope->tree_settled();
+            const bool descendants_live = !tree_settled_now && scope->child_count() > 0;
+            const bool join_guard_deny = descendants_live && !tree_join &&
+                                         aura::compiler::typed_audit::production_defaults_active();
             if (scope == root) {
-                const bool all_settled = scope->tree_settled();
-                if (all_settled)
+                if (tree_settled_now)
                     aura::orch::drop_agent_scope(static_cast<void*>(&ev));
             }
             const char* st = "ok";
@@ -4515,7 +4524,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             aura::orch::g_orch_module_stats.scope_join_all_total.fetch_add(
                 1, std::memory_order_relaxed);
             std::vector<std::pair<std::string, EvalValue>> kv = {
-                {"ok", make_bool(jr.status == aura::serve::JoinStatus::Ok)},
+                {"ok", make_bool(jr.status == aura::serve::JoinStatus::Ok && !join_guard_deny)},
                 {"status", make_string(sidx)},
                 {"wait-us", make_int(static_cast<std::int64_t>(jr.wait_us + auto_wait_us))},
                 {"drain-ms", make_int(static_cast<std::int64_t>(policy.drain_ms))},
@@ -4563,7 +4572,17 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 {"tree", make_bool(tree_join)},
                 {"schema-3643", make_int(aura::orch::kJoinAllTreeJoinIssue)},
                 {"issue-3643", make_int(aura::orch::kJoinAllTreeJoinIssue)},
+                // Issue #3671: blame fields for the local-join residual —
+                // production + !tree + live descendants flips ok=#f with
+                // deny-class=other / deny-detail=descendants-live (#3251).
+                {"tree-settled", make_bool(tree_settled_now)},
+                {"descendants-live", make_bool(descendants_live)},
             };
+            // Issue #3671: production guard — see the kv fields above.
+            if (join_guard_deny)
+                add_deny_class(kv, aura::orch::AgentDenyClass::Other, "descendants-live",
+                               /*retry_ms=*/0,
+                               /*emit_retry=*/false);
             return build_orch_hash(kv);
         });
 

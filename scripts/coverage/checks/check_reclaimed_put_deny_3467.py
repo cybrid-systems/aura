@@ -60,9 +60,11 @@ AGENT_PRIMS_REQUIRED: tuple[str, ...] = (
     "add_reclaimed_pending_lifecycle(rkv, /*pending=*/true)",
     "host_forget_reclaimed_risk_total",
     # Scope-join-all B1 guarded drop (AC3): root only; drop only when
-    # all_settled. Issue #3496: settled is the TREE via tree_settled()
-    # (live-fiber + pending flags live in agent_scope.h).
-    "all_settled",
+    # settled. Issue #3496: settled is the TREE via tree_settled()
+    # (live-fiber + pending flags live in agent_scope.h). Issue #3671:
+    # the local was renamed tree_settled_now when the join hash grew
+    # tree-settled / descendants-live blame fields.
+    "tree_settled_now",
     "tree_settled()",
     "if (scope == root)",
 )

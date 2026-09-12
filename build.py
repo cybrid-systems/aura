@@ -6889,6 +6889,23 @@ def cmd_lint():
     if r != 0:
         fail("Issue #3670 resume mid join linter failed — run python3 scripts/check_resume_mid_join_3670.py")
         return r
+    # Issue #3671 (#3496/#3643 residual): the scope-join-all hash said
+    # ok=#t while descendants still lived — tree_settled was computed for
+    # the drop gate and thrown away. The hash now carries tree-settled /
+    # descendants-live blame fields, and production + !tree + live
+    # descendants flips ok=#f with deny-class=other (#3251 intern).
+    # Soft/Off: observe-only — bools populate, no deny intern. C++
+    # join_all default stays local (#3496 AC1 unchanged).
+    sjtv3671_script = ROOT / "scripts" / "check_scope_join_tree_visibility_3671.py"
+    if not sjtv3671_script.exists():
+        fail(f"missing {sjtv3671_script}")
+        return 1
+    r = run([sys.executable, str(sjtv3671_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3671 scope join tree visibility linter failed — run python3 scripts/check_scope_join_tree_visibility_3671.py"
+        )
+        return r
     # Issue #3301: atomic-batch batch-level MacroIntroduced fail-closed
     # audit. Dispatcher walks each sub-op's target node-id arg before the
     # sub-op loop and denies the whole batch if a target is MacroIntroduced

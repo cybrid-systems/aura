@@ -77,7 +77,7 @@ def main() -> int:
     must("parse_scope_addr_kw" in resolve_b, "AC2: resolve parses :path")
     must("resolve_scope_addr" in spawn_b, "AC2: spawn resolves child")
     must("if (scope == root)" in join_b, "AC2: join child does not drop root")
-    must("all_settled" in join_b, "AC2: drop root only when handles settled")
+    must("tree_settled_now" in join_b, "AC2: drop root only when handles settled")
 
     must("class AgentRegistry" not in agent, "AC5: no AgentRegistry in prims")
     must("class AgentRegistry" not in scope_h, "AC5: no AgentRegistry in agent_scope.h")
