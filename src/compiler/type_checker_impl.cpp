@@ -5075,7 +5075,7 @@ TypeId InferenceEngine::synthesize_flat(FlatAST& flat, StringPool& pool, NodeId 
             break;
         }
         case Tag::Quote:
-            result = reg_.dynamic_type();
+            result = synthesize_flat_quote(flat, pool, v); // Issue #3700
             break;
         case Tag::MacroDef:
             result = synthesize_flat_macro_def(flat, pool, v);
@@ -7570,6 +7570,22 @@ bool InferenceEngine::note_uncovered_bidirectional_tag(FlatAST& flat, NodeId nod
     return hard;
 }
 
+// Issue #3700: Quote peel — Production walks inner Calls/Lets so a
+// mutate under Quote re-infers; caches fresh_var (not Dynamic). Soft
+// keeps Dynamic and does not require a child walk.
+TypeId InferenceEngine::synthesize_flat_quote(FlatAST& flat, StringPool& pool, NodeView v) {
+    // Issue #3700
+    if (aura::compiler::typed_audit::production_defaults_active()) {
+        for (std::size_t i = 0; i < v.children.size(); ++i) {
+            auto child_id = v.child(static_cast<std::uint32_t>(i));
+            if (child_id != NULL_NODE)
+                (void)synthesize_flat(flat, pool, child_id, flat.get(child_id));
+        }
+        return cs_.fresh_var();
+    }
+    return reg_.dynamic_type();
+}
+
 // Issue #903 Phase 1: ownership-op peels from synthesize_flat switch.
 // Issue #2357: Move/Drop/MutBorrow violations fail synthesize hard under
 // production/strict (not only post-mutate audit).
@@ -7755,6 +7771,24 @@ void InferenceEngine::check_flat(FlatAST& flat, StringPool& pool, NodeId id, Typ
             } else {
                 synthesize_flat(flat, pool, child_id, flat.get(child_id));
             }
+        }
+    } else if (v.tag == NodeTag::Quote) {
+        // Issue #3700: synthesize walks inner under production. Quote as a
+        // value in a ground expected context still fail-closes via
+        // Dynamic~T (AC2) — do not let fresh_var bind to Int.
+        TypeId inferred = synthesize_flat(flat, pool, id, v);
+        if (aura::compiler::typed_audit::production_defaults_active()) {
+            if (!cs_.consistent_unify(reg_.dynamic_type(), expected)) {
+                auto msg = "type mismatch: expected " + std::string(reg_.format_type(expected)) +
+                           ", got Quote";
+                diag_.report(Diagnostic(ErrorKind::TypeError, std::move(msg), cur_loc_)
+                                 .with_blame(BlameInfo{BlameParty::Annotation, "", "compile"}));
+            } else {
+                maybe_report_ground_inconsistency(reg_.dynamic_type(), expected);
+            }
+        } else {
+            cs_.consistent_unify(inferred, expected);
+            maybe_report_ground_inconsistency(inferred, expected);
         }
     } else if (v.tag == NodeTag::TypeAnnotation) {
         // Annotation in check mode: check inner against expected,

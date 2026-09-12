@@ -66,6 +66,10 @@ export inline constexpr int kCheckFlatLetDefineAnnotationIssue = 3698;
 // Issue #3518: empty Linear / empty Call must not synthesize Dynamic
 // (same residual as empty Pair #3432). Covered tags; use fresh_var.
 export inline constexpr int kBidirectionalEmptyLinearCallNoDynamicIssue = 3518;
+// Issue #3700: covered Quote must not cache Dynamic without walking
+// children. Production synthesizes inner Calls/Lets then fresh_var.
+// Soft keeps Dynamic Quote. Dynamic~T reject for Quote-in-Int is AC2.
+export inline constexpr int kBidirectionalQuoteWalkIssue = 3700;
 
 export [[nodiscard]] constexpr bool is_bidirectional_tag_covered(aura::ast::NodeTag tag) noexcept {
     using T = aura::ast::NodeTag;
@@ -2377,6 +2381,11 @@ private:
     aura::core::TypeId synthesize_flat_annotation(aura::ast::FlatAST& flat,
                                                   aura::ast::StringPool& pool,
                                                   aura::ast::NodeView v);
+    // Issue #3700: peel Quote from synthesize_flat so the switch stays
+    // inside the #3044/#3330 source-cite window. Production walks
+    // children then fresh_var; Soft keeps Dynamic.
+    aura::core::TypeId synthesize_flat_quote(aura::ast::FlatAST& flat, aura::ast::StringPool& pool,
+                                             aura::ast::NodeView v);
     // Issue #903 Phase 1: peel ownership-ops from synthesize_flat switch.
     aura::core::TypeId synthesize_flat_move(aura::ast::FlatAST& flat, aura::ast::StringPool& pool,
                                             aura::ast::NodeView v);
