@@ -14,6 +14,7 @@
 #include "core/moving_densify_health.hh"
 
 #include <array>
+#include <cstdlib>
 #include <fstream>
 #include <print>
 #include <string>
@@ -738,6 +739,8 @@ static void ac12_3648_wiring_and_family() {
 
 } // namespace
 
+static void ac13_3678_ffi_pointer_class_refuse();
+
 int run_test_setcode_rebind_survive() {
     std::println("=== Issue #2569: set-code/rebind closure+hash survival ===");
     ac1_closure_survive();
@@ -754,9 +757,92 @@ int run_test_setcode_rebind_survive() {
     ac10_3648_green_window_remap_still_refuse();
     ac11_3648_soft_no_move_recover();
     ac12_3648_wiring_and_family();
+    ac13_3678_ffi_pointer_class_refuse();
     std::println("\n=== #2569/#3421/#3469/#3602/#3634/#3648: {} passed, {} failed ===", g_passed,
                  g_failed);
     return g_failed ? 1 : 0;
+}
+
+// Issue #3678: the FFI refuse joins EVERY pointer-class register — not only
+// the Opaque arm. The Int arm (default / unknown codes) passes raw values
+// through, so a JIT / escaped native addr stashed as an int rides into the
+// native call unchecked (UAF in native, not in apply_closure).
+static void ac13_3678_ffi_pointer_class_refuse() {
+    std::println("\n--- #3678: FFI refuse joins every pointer-class register ---");
+    const auto flat = read_file("src/compiler/evaluator_eval_flat.cpp");
+    CHECK(flat.find("Issue #3678") != std::string::npos, "3678: eval_flat cites #3678");
+    CHECK(flat.find("every pointer-class register joins the refuse") != std::string::npos,
+          "3678: args loop checks every pointer-class register (source-cite)");
+
+    // AC1: production + moved>0 + window green + LCP allow + FFI arg declared
+    // Int carrying a remap-key value (escaped opaque copy) -> apply refuses;
+    // closure_stale_returns bumps. No native call.
+    {
+        CompilerService cs;
+        auto* m = metrics_of(cs);
+        MovingFlagGuard on(1);
+        auto& ar = cs.evaluator().test_arena();
+        auto* p = ar.create<Pod16>(7, 8, 9, 10);
+        auto* p1 = ar.create<Pod16>(11, 12, 13, 14);
+        CHECK(p != nullptr && p1 != nullptr, "3678 AC1: arena objects");
+        void* old = p;
+        aura::compiler::register_root_remap_stable_slot(&old);
+        ar.destroy(p1);
+        const auto r = ar.live_compact(LiveCompactMode::Moving);
+        CHECK(!r.moving_blocked_precondition, "3678 AC1: Moving not blocked");
+        CHECK(ar.resolve_object_remap(old) != nullptr, "3678 AC1: old is a remap key");
+        CHECK(cs.eval("(require \"std/ffi\")").has_value(), "3678 AC1: require std/ffi");
+        auto cid_r = cs.eval("(c-func -1 \"abs\" \"(Int) -> Int\")");
+        CHECK(cid_r && is_closure(*cid_r), "3678 AC1: int fn registered");
+        std::array<aura::compiler::types::EvalValue, 1> iargs{
+            make_int(static_cast<std::int64_t>(reinterpret_cast<std::intptr_t>(old)))};
+        ProdDensifyWindowGuard g(/*prod=*/true, /*moved=*/1, /*lcp_allow=*/true, &cs.evaluator());
+        const auto stale0 = m->closure_stale_returns.load(std::memory_order_relaxed);
+        auto got = cs.evaluator().apply_closure(0, iargs);
+        CHECK(!got.has_value(), "3678 AC1: remap-key Int arg refuses FFI call");
+        CHECK(m->closure_stale_returns.load(std::memory_order_relaxed) > stale0,
+              "3678 AC1: reuses closure_stale_returns");
+    }
+
+    // AC2: a true libc-heap ptr that is NOT a remap key stays EXEMPT — no
+    // pin, no refuse: the native call proceeds under production.
+    {
+        CompilerService cs;
+        CHECK(cs.eval("(require \"std/ffi\")").has_value(), "3678 AC2: require std/ffi");
+        auto cid_r = cs.eval("(c-func -1 \"abs\" \"(Int) -> Int\")");
+        CHECK(cid_r && is_closure(*cid_r), "3678 AC2: int fn registered");
+        void* libc = std::malloc(32);
+        CHECK(libc != nullptr, "3678 AC2: libc buffer allocated");
+        std::array<aura::compiler::types::EvalValue, 1> largs{
+            make_int(static_cast<std::int64_t>(reinterpret_cast<std::intptr_t>(libc)))};
+        ProdDensifyWindowGuard g(/*prod=*/true, /*moved=*/1, /*lcp_allow=*/true, &cs.evaluator());
+        auto got = cs.evaluator().apply_closure(0, largs);
+        CHECK(got.has_value(), "3678 AC2: non-key libc ptr applies (EXEMPT, no pin)");
+        std::free(libc);
+    }
+
+    // Soft: no extra refuse — the same remap-key Int arg without the
+    // production face applies (Soft/Off observe-only contract).
+    {
+        CompilerService cs;
+        CHECK(cs.eval("(require \"std/ffi\")").has_value(), "3678 Soft: require std/ffi");
+        auto cid_r = cs.eval("(c-func -1 \"abs\" \"(Int) -> Int\")");
+        CHECK(cid_r && is_closure(*cid_r), "3678 Soft: int fn registered");
+        MovingFlagGuard on(1);
+        auto& ar = cs.evaluator().test_arena();
+        auto* p = ar.create<Pod16>(1, 2, 3, 4);
+        auto* p1 = ar.create<Pod16>(5, 6, 7, 8);
+        void* old = p;
+        aura::compiler::register_root_remap_stable_slot(&old);
+        ar.destroy(p1);
+        const auto r = ar.live_compact(LiveCompactMode::Moving);
+        CHECK(ar.resolve_object_remap(old) != nullptr, "3678 Soft: old is a remap key");
+        std::array<aura::compiler::types::EvalValue, 1> iargs{
+            make_int(static_cast<std::int64_t>(reinterpret_cast<std::intptr_t>(old)))};
+        ProdDensifyWindowGuard g(/*prod=*/false, /*moved=*/1, /*lcp_allow=*/true, &cs.evaluator());
+        auto got = cs.evaluator().apply_closure(0, iargs);
+        CHECK(got.has_value(), "3678 Soft: no extra refuse without production face");
+    }
 }
 
 #ifndef AURA_ISSUE_BATCH_MEMBER

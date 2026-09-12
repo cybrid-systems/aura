@@ -404,8 +404,14 @@ static bool production_ffi_apply_densify_hard_refuse(ast::ASTArena* arena, const
     const auto n =
         arg_types.size() < marshalled.i_vals.size() ? arg_types.size() : marshalled.i_vals.size();
     for (std::size_t i = 0; i < n; ++i) {
-        if (arg_types[i] != 4)
-            continue; // Opaque arm - the only register carrying a live addr
+        // Issue #3678: every pointer-class register joins the refuse — not
+        // only the Opaque arm. The Int arm (default / unknown codes) passes
+        // raw values through, so a JIT / escaped native addr stashed as an
+        // int rides into the call unchecked. Float is numeric truncation and
+        // String's i_val points at the marshal-owned str_bufs copy — neither
+        // can name an arena address.
+        if (arg_types[i] == 2 || arg_types[i] == 3)
+            continue; // Float (numeric) / String (marshal-owned copy)
         auto live = reinterpret_cast<void*>(static_cast<std::intptr_t>(marshalled.i_vals[i]));
         if (live && arena && arena->resolve_object_remap(live))
             return true;
