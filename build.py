@@ -6803,6 +6803,22 @@ def cmd_lint():
     if r != 0:
         fail("Issue #3680 compact owner-scope linter failed — run python3 scripts/check_compact_owner_scope_3680.py")
         return r
+    # Issue #3681 (#2578/#2569/#3421 residual): apply_closure washed
+    # must_deopt_before_next_call / epoch-stale into eval_flat of the
+    # pre-reemit body under production defaults (mutate×reemit without a
+    # densify window). Gate pins: MustDeopt arm refuses after the #3421
+    # refuse (keep flag + poison epoch + IR bridge), the safe-fallback arm
+    # refuses when the closure's define was dirtied this epoch via the
+    # facade-published dirty surface, #3421 helper intact, JIT dispatch
+    # untouched, no second closure table.
+    apr3681_script = ROOT / "scripts" / "check_apply_pre_reemit_refuse_3681.py"
+    if not apr3681_script.exists():
+        fail(f"missing {apr3681_script}")
+        return 1
+    r = run([sys.executable, str(apr3681_script)], cwd=ROOT)
+    if r != 0:
+        fail("Issue #3681 apply pre-reemit linter failed — run python3 scripts/check_apply_pre_reemit_refuse_3681.py")
+        return r
     # Issue #3649 (#2952/#3096/#2690 residual): the storm-exit edge drives
     # residual coverage-verify. storm_exit_force_full_active now==0 &&
     # prev!=0 branch runs one maybe_coverage_verify_min_dirty when

@@ -740,6 +740,7 @@ static void ac12_3648_wiring_and_family() {
 } // namespace
 
 static void ac13_3678_ffi_pointer_class_refuse();
+static void ac14_3681_production_pre_reemit_refuse();
 
 int run_test_setcode_rebind_survive() {
     std::println("=== Issue #2569: set-code/rebind closure+hash survival ===");
@@ -758,6 +759,9 @@ int run_test_setcode_rebind_survive() {
     ac11_3648_soft_no_move_recover();
     ac12_3648_wiring_and_family();
     ac13_3678_ffi_pointer_class_refuse();
+    // Issue #3681: production refuses MustDeopt/dirty-stale wash onto the
+    // pre-reemit body; unimpacted rebinds keep the #2569 recover.
+    ac14_3681_production_pre_reemit_refuse();
     std::println("\n=== #2569/#3421/#3469/#3602/#3634/#3648: {} passed, {} failed ===", g_passed,
                  g_failed);
     return g_failed ? 1 : 0;
@@ -842,6 +846,84 @@ static void ac13_3678_ffi_pointer_class_refuse() {
         ProdDensifyWindowGuard g(/*prod=*/false, /*moved=*/1, /*lcp_allow=*/true, &cs.evaluator());
         auto got = cs.evaluator().apply_closure(0, iargs);
         CHECK(got.has_value(), "3678 Soft: no extra refuse without production face");
+    }
+}
+
+// ── Issue #3681: production apply_closure refuses pre-reemit body ──
+// MustDeopt / epoch-stale on a closure whose define was dirtied this
+// epoch must not wash into eval_flat of the pre-reemit body under
+// production defaults (#3421 does not fire without a densify window).
+// Unimpacted rebind of *other* defines keeps the #2569/#2578 recover.
+static void ac14_3681_production_pre_reemit_refuse() {
+    std::println("\n--- #3681: production MustDeopt/dirty refuse; unimpacted recover ---");
+    const auto flat = read_file("src/compiler/evaluator_eval_flat.cpp");
+    CHECK(flat.find("Issue #3681") != std::string::npos, "3681: apply arms cite #3681");
+    const auto h3421 = flat.find("production_apply_closure_densify_hard_refuse(arena_, cl_copy,");
+    const auto g3681 = flat.find("typed_audit::production_defaults_active()", h3421);
+    CHECK(h3421 != std::string::npos && g3681 != std::string::npos && g3681 > h3421,
+          "3681 AC3: #3681 gates ordered after the #3421 refuse");
+    CHECK(flat.find("is_define_dirty_fn_") != std::string::npos,
+          "3681 AC5: reuses the facade-published dirty surface (no second table)");
+
+    std::array<aura::compiler::types::EvalValue, 1> args{make_int(1)};
+
+    // AC1: production + set-body of F (define dirtied this epoch) + live
+    // named closure of F → apply refuses the pre-reemit body; no #2569
+    // restamp wash.
+    {
+        CompilerService cs;
+        auto* m = metrics_of(cs);
+        CHECK(cs.eval("(define (f3681 x) (* x 10))").has_value(), "AC1: define F");
+        auto cf = cs.eval("f3681");
+        CHECK(cf && is_closure(*cf), "AC1: closure of F");
+        const auto cid_f = as_closure_id(*cf);
+        auto pre = cs.evaluator().apply_closure(cid_f, args);
+        CHECK(pre.has_value() && is_int(*pre) && as_int(*pre) == 10,
+              "AC1 pre: F applies the current body before set-body");
+        CHECK(cs.eval("(mutate:set-body \"f3681\" \"(lambda (x) (* x 20))\")").has_value(),
+              "AC1: set-body F (define dirtied this epoch)");
+        const auto restamp0 = m->live_closure_epoch_restamp_total.load(std::memory_order_relaxed);
+        ProdDensifyWindowGuard g(/*prod=*/true, /*moved=*/0, /*lcp_allow=*/true, &cs.evaluator());
+        auto got = cs.evaluator().apply_closure(cid_f, args);
+        CHECK(!got.has_value(), "AC1: production refuses pre-reemit body of dirtied F");
+        CHECK(m->live_closure_epoch_restamp_total.load(std::memory_order_relaxed) == restamp0,
+              "AC1: no #2569 restamp wash");
+    }
+
+    // AC2: production + rebind of OTHER define G — closure of unimpacted
+    // named F still recovers onto its (still-current) body.
+    {
+        CompilerService cs;
+        auto* m = metrics_of(cs);
+        CHECK(cs.eval("(define (g3681f x) (* x 10))").has_value(), "AC2: define F (unimpacted)");
+        CHECK(cs.eval("(define (g3681g x) (* x 1))").has_value(), "AC2: define G (rebind target)");
+        auto cf = cs.eval("g3681f");
+        CHECK(cf && is_closure(*cf), "AC2: closure of F");
+        const auto cid_f = as_closure_id(*cf);
+        CHECK(cs.evaluator().apply_closure(cid_f, args).has_value(), "AC2 pre: F applies");
+        ProdDensifyWindowGuard g(/*prod=*/true, /*moved=*/0, /*lcp_allow=*/true, &cs.evaluator());
+        CHECK(cs.eval("(mutate:rebind \"g3681g\" \"(lambda (x) (* x 2))\" \"t\")").has_value(),
+              "AC2: rebind other define G");
+        CHECK(cs.eval("(eval-current)").has_value(), "AC2: eval-current after rebind");
+        const auto restamp0 = m->live_closure_epoch_restamp_total.load(std::memory_order_relaxed);
+        auto got = cs.evaluator().apply_closure(cid_f, args);
+        CHECK(got.has_value() && is_int(*got) && as_int(*got) == 10,
+              "AC2: unimpacted F still recovers + runs its current body");
+        CHECK(m->live_closure_epoch_restamp_total.load(std::memory_order_relaxed) >= restamp0,
+              "AC2: #2569 restamp allowed for unimpacted define");
+    }
+
+    // AC5: Soft/Off — same set-body scenario keeps the soft-recover.
+    {
+        CompilerService cs;
+        CHECK(cs.eval("(define (s3681 x) (* x 10))").has_value(), "AC5: define F (Soft)");
+        auto cf = cs.eval("s3681");
+        CHECK(cf && is_closure(*cf), "AC5: closure of F");
+        const auto cid_f = as_closure_id(*cf);
+        CHECK(cs.eval("(mutate:set-body \"s3681\" \"(lambda (x) (* x 30))\")").has_value(),
+              "AC5: set-body F (Soft, dirty)");
+        auto got = cs.evaluator().apply_closure(cid_f, args);
+        CHECK(got.has_value(), "AC5: Soft keeps the soft-recover (no production refuse)");
     }
 }
 

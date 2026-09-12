@@ -75,7 +75,11 @@ def main() -> int:
         if pos < 0:
             fails.append(f"AC1: missing {label} site {needle!r}")
             continue
-        win = flat[pos : pos + 1200] if not before else flat[max(0, pos - 2800) : pos + 80]
+        # Issue #3681: the production pre-reemit refuse legitimately sits
+        # between the #3421 refuse and the recover (same arm, same probe),
+        # so the lookback window accepts the wider ordering while the
+        # refuse-before-recover contract stays asserted.
+        win = flat[pos : pos + 1200] if not before else flat[max(0, pos - 4600) : pos + 80]
         if "production_apply_closure_densify_hard_refuse(" not in win:
             fails.append(f"AC1: {label} must consult densify hard-refuse before recover")
 
