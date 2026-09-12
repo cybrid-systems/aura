@@ -82,10 +82,10 @@ static std::string read_file(const char* path) {
     return {};
 }
 
-// AC1 + AC2: All 3 abort sites in evaluator_mutation_boundary.cpp have
-// fence BEFORE topology AND force_dirty AFTER topology. The 3 sites are
-// the 3 calls to `workspace_flat_->abort_restore_dual_topology(...)` in
-// the file.
+// AC1 + AC2: All abort sites in evaluator_mutation_boundary.cpp have
+// fence BEFORE topology AND force_dirty AFTER topology. Sites are the
+// calls to `workspace_flat_->abort_restore_dual_topology(...)` in
+// the file (3 abort entries + persist-reject #3687).
 static void ac1_2_three_abort_sites_ordering() {
     std::println("\n--- #3159 AC1+AC2: 3 abort sites have fence BEFORE topology, "
                  "force_dirty AFTER ---");
@@ -99,9 +99,10 @@ static void ac1_2_three_abort_sites_ordering() {
         ++topology_count;
         tp = boundary_cpp.find("abort_restore_dual_topology(", tp + 1);
     }
-    CHECK(topology_count == 3,
-          "AC1+AC2: exactly 3 abort_restore_dual_topology call sites "
-          "(MutationBoundary abort + typed_mutate fail + dual-topology restore hook)");
+    CHECK(topology_count == 4,
+          "AC1+AC2: exactly 4 abort_restore_dual_topology call sites "
+          "(MutationBoundary abort + typed_mutate fail + dual-topology restore hook "
+          "+ persist-reject #3687)");
 
     // Count fence (begin_force) calls — must be exactly 3.
     std::size_t fence_count = 0;

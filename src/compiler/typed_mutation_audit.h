@@ -1940,6 +1940,11 @@ inline void note_3158_occurrence_abort_observe() noexcept {
 // (dual topology + coercion rewind + #3158 occurrence restore) stays
 // SSOT. TLS flag, not a new metric key / query schema. Production/Full
 // only; Soft/Off note is a no-op (quiet SOLVED: one TLS load).
+// Issue #3687: the persist helper also runs abort_restore_dual_topology
+// in the same note_3440_restore transaction as CoercionMap undo (before
+// return / any observer). exit_mutation_boundary then no-ops dual-topology
+// if the checkpoint is already restored. No second restore helper / no
+// new query key.
 inline constexpr int kOutermostPersistRejectRestoreIssue = 3440;
 inline thread_local bool g_tls_outermost_persist_reject_needs_restore = false;
 inline void note_outermost_persist_reject_needs_restore() noexcept {
@@ -1965,6 +1970,8 @@ inline constexpr int kCoercionMapPersistRejectUndoIssue = 3545;
 // (dce_elided_deopt_meta.h) — this header stays ring-free.
 inline constexpr int kDeadCoercionDecisionReverifyIssue = 3547;
 extern "C" std::uint32_t aura_tls_workspace_type_id(std::uint32_t node) noexcept;
+extern "C" void aura_outermost_success_persist_occurrence(void* ev_ptr,
+                                                          std::uint64_t mutation_id) noexcept;
 extern "C" void aura_undo_apply_coercion_map_recent(void* ev_ptr, std::uint64_t mid) noexcept;
 inline void undo_apply_coercion_map_recent(void* ev_ptr, std::uint64_t mid) noexcept {
     aura_undo_apply_coercion_map_recent(ev_ptr, mid);

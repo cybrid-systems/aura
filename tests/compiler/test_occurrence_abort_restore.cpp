@@ -124,8 +124,8 @@ static void ac3_all_three_abort_sites() {
         ++count;
         p = boundary_cpp.find("restore_or_clear_occurrence_to_entry(", p + 1);
     }
-    CHECK(count == 3,
-          "AC3: restore_or_clear_occurrence_to_entry called from exactly 3 abort sites");
+    CHECK(count == 4, "AC3: restore_or_clear_occurrence_to_entry called from 3 abort sites + "
+                      "persist-reject #3687 (reuse, not a second Occurrence log)");
 
     // Count the number of times note_3158_occurrence_abort_observe is called.
     // Should be 3 (one per abort site, in the else Soft branch).
@@ -147,9 +147,8 @@ static void ac3_all_three_abort_sites() {
         ++restore_count;
         rp = boundary_cpp.find("note_3158_occurrence_abort_restore(", rp + 1);
     }
-    CHECK(restore_count == 3,
-          "AC3: note_3158_occurrence_abort_restore called from exactly 3 abort sites "
-          "(production/Full path)");
+    CHECK(restore_count == 4, "AC3: note_3158_occurrence_abort_restore called from 3 abort sites + "
+                              "persist-reject #3687 (production/Full path)");
 }
 
 // AC4: New counters + helpers in typed_mutation_audit.h.
@@ -286,7 +285,8 @@ static void ac3440_persist_reject_flips_success_into_abort_restore() {
         ++occ_n;
         op = boundary_cpp.find("restore_or_clear_occurrence_to_entry(", op + 1);
     }
-    CHECK(occ_n == 3, "3440 AC3: still exactly 3 #3158 abort sites (reuse, not a 4th restore)");
+    CHECK(occ_n == 4, "3440 AC3: 3 abort sites + persist-reject #3687 reuse of #3158 "
+                      "(not a second Occurrence log)");
 
     std::println("\n--- #3440 AC4: Soft/Off note is a no-op ---");
     CHECK(audit_h.find("Soft/Off note is a no-op") != std::string::npos ||
@@ -307,6 +307,18 @@ static void ac3440_persist_reject_flips_success_into_abort_restore() {
     CHECK(read_file("tests/compiler/test_issue_3440.cpp").empty() &&
               read_file("tests/issues/test_issue_3440.cpp").empty(),
           "3440 AC5: no test_issue_3440.cpp per #81934");
+
+    std::println("\n--- #3687: persist-reject restores topology in note_3440 ---");
+    CHECK(boundary_cpp.find("Issue #3687") != std::string::npos, "3687: boundary cites #3687");
+    CHECK(boundary_cpp.find("restore_checkpoint_topology_for_persist_reject") != std::string::npos,
+          "3687: topology restore helper");
+    CHECK(helper_body.find("restore_checkpoint_topology_for_persist_reject") != std::string::npos,
+          "3687: called from persist helper note_3440");
+    CHECK(boundary_cpp.find("if (!cp.topology_restored)") != std::string::npos,
+          "3687: abort body no-ops if already restored");
+    CHECK(boundary_cpp.find("abort_restore_dual_topology_persist_reject") == std::string::npos,
+          "3687: no second restore helper");
+    CHECK(audit_h.find("Issue #3687") != std::string::npos, "3687: audit header cite");
 }
 
 } // namespace

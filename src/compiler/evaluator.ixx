@@ -13914,6 +13914,10 @@ public:
         // face after a failed high-freq mutate). Soft / Quiet / no
         // TypeChecker: 0 baseline; abort path bumps observe counter only.
         std::size_t occurrence_entry_size = 0;
+        // Issue #3687: persist-reject restored dual-topology in the persist
+        // helper (same transaction as CoercionMap undo). exit_mutation_boundary
+        // then no-ops abort_restore_dual_topology (snapshot already moved).
+        bool topology_restored = false;
     };
     // Issue #264: snapshot taken at fiber yield while a mutation
     // boundary may be active (per-fiber stack on Fiber).
@@ -13985,6 +13989,13 @@ public:
     [[nodiscard]] BoundaryRollbackStats last_boundary_rollback_stats() const noexcept {
         return last_boundary_rollback_stats_;
     }
+
+    // Issue #3687: persist-reject restores AST dual-topology + #3158
+    // occurrence in the same function as CoercionMap undo, before return
+    // (one fail-closed transaction; steal/eval_flat cannot observe a
+    // split). Idempotent: exit_mutation_boundary skips dual-topology
+    // when the live checkpoint already restored. Soft/Off: no-op.
+    void restore_checkpoint_topology_for_persist_reject() noexcept;
 
     // Wave 4: bodies live in evaluator_mutation_boundary.cpp (with Guard).
     void enter_mutation_boundary();

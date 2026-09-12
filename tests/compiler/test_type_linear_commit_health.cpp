@@ -1573,7 +1573,7 @@ static void ac3472_2_persist_reject_unchanged() {
     for (auto p = emb.find("restore_or_clear_occurrence_to_entry("); p != std::string::npos;
          p = emb.find("restore_or_clear_occurrence_to_entry(", p + 1))
         ++occ_n;
-    CHECK(occ_n == 3, "3472 AC2: still exactly 3 #3158 abort sites");
+    CHECK(occ_n == 4, "3472 AC2: 3 abort sites + persist-reject #3687 #3158 reuse");
 }
 
 static void ac3472_3_happy_stamped() {
@@ -1840,7 +1840,13 @@ static void ac3653_2_source_order_audit_before_persist() {
     for (auto p = emb.find("restore_or_clear_occurrence_to_entry("); p != std::string::npos;
          p = emb.find("restore_or_clear_occurrence_to_entry(", p + 1))
         ++occ_n;
-    CHECK(occ_n == 3, "3653 AC2: still exactly 3 #3158 abort sites");
+    CHECK(occ_n == 4, "3653 AC2: 3 abort sites + persist-reject #3687 #3158 reuse");
+    CHECK(emb.find("Issue #3687") != std::string::npos, "3687: persist-reject topology txn");
+    CHECK(emb.find("restore_checkpoint_topology_for_persist_reject") != std::string::npos,
+          "3687: topology restore in persist helper");
+    const auto tma = read_file("src/compiler/typed_mutation_audit.h");
+    CHECK(tma.find("strip_green_face_on_remount_last_zero") != std::string::npos,
+          "3687 AC4: remount last==0 strip unchanged");
 }
 
 static void ac3653_3_happy_persist_stamped() {

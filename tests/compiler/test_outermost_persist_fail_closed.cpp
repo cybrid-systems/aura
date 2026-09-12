@@ -20,7 +20,9 @@
 #include "compiler/dce_elided_deopt_meta.h"
 
 #include <array>
+#include <cstdint>
 #include <cstring>
+#include <format>
 #include <fstream>
 #include <print>
 #include <string>
@@ -32,6 +34,7 @@ import aura.compiler.coercion_map;
 import aura.compiler.dirty_propagation;
 import aura.compiler.service;
 import aura.compiler.evaluator;
+import aura.compiler.type_checker;
 import aura.compiler.value;
 
 namespace {
@@ -39,20 +42,46 @@ namespace {
 using aura::compiler::CompilerService;
 using aura::compiler::Evaluator;
 namespace typed_audit = aura::compiler::typed_audit;
+using aura::compiler::TypeChecker;
 using aura::compiler::typed_audit::apply_dev_audit_defaults;
 using aura::compiler::typed_audit::apply_production_audit_defaults;
+using aura::compiler::typed_audit::AuditStrategy;
+using aura::compiler::typed_audit::get_strategy;
 using aura::compiler::typed_audit::ir_typed_entry_commit_readiness_ok;
 using aura::compiler::typed_audit::kCoercionMapPersistRejectUndoIssue;
 using aura::compiler::typed_audit::kTypeLinearProofOutcomeReject;
 using aura::compiler::typed_audit::last_proof_stamper_bound_v_read;
 using aura::compiler::typed_audit::last_type_linear_proof_outcome_v_read;
 using aura::compiler::typed_audit::linear_move_drop_elision_ok;
+using aura::compiler::typed_audit::production_hard_face_active;
 using aura::compiler::typed_audit::reset_for_test;
 using aura::compiler::typed_audit::undo_apply_coercion_map_recent;
 using aura::compiler::types::as_int;
 using aura::compiler::types::is_int;
 using aura::test::g_failed;
 using aura::test::g_passed;
+
+static std::int64_t href_health(CompilerService& cs, std::string_view key) {
+    auto r = cs.eval(
+        std::format("(hash-ref (engine:metrics \"query:type-linear-commit-health\") \"{}\")", key));
+    if (!r || !is_int(*r))
+        return -1;
+    return as_int(*r);
+}
+
+static aura::ast::NodeId find_literal_int(aura::ast::FlatAST& flat, std::int64_t want) {
+    using aura::ast::NodeId;
+    using aura::ast::NodeTag;
+    using aura::ast::NULL_NODE;
+    for (NodeId id = 0; id < flat.size(); ++id) {
+        if (!flat.is_live_node(id))
+            continue;
+        auto v = flat.get(id);
+        if (v.tag == NodeTag::LiteralInt && v.int_value == want)
+            return id;
+    }
+    return NULL_NODE;
+}
 
 static std::string read_file(const char* path) {
     for (const auto& p :
@@ -451,6 +480,85 @@ int run_test_outermost_persist_fail_closed() {
         typed_audit::g_linear_ir_fastpath_boundary_depth_override = 1;
         CHECK(!ir_typed_entry_commit_readiness_ok(), "3472 live: IR typed-entry refused");
         typed_audit::g_linear_ir_fastpath_boundary_depth_override = -1;
+        apply_dev_audit_defaults();
+        reset_for_test();
+    }
+
+    {
+        std::println("\n--- #3687: persist-reject AST+CoercionMap+Occurrence one transaction ---");
+        const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+        const auto tma = read_file("src/compiler/typed_mutation_audit.h");
+        CHECK(contains(emb, "Issue #3687"), "3687: persist helper cites #3687");
+        CHECK(contains(emb, "restore_checkpoint_topology_for_persist_reject"),
+              "3687: topology restore in persist-reject txn");
+        const auto fn_pos =
+            emb.find("extern \"C\" void aura_outermost_success_persist_occurrence(");
+        const auto helper = (fn_pos == std::string::npos) ? std::string{} : emb.substr(fn_pos);
+        const auto end_helper =
+            helper.find("extern \"C\" void aura_clear_occurrence_persist_buffer");
+        const auto helper_body =
+            end_helper == std::string::npos ? helper : helper.substr(0, end_helper);
+        const auto topo = helper_body.find("restore_checkpoint_topology_for_persist_reject");
+        const auto undo = helper_body.find("undo_apply_coercion_map_recent");
+        CHECK(topo != std::string::npos && undo != std::string::npos && topo < undo,
+              "3687 AC1: AST restore before CoercionMap undo in note_3440 (same function)");
+        CHECK(contains(emb, "if (!cp.topology_restored)"),
+              "3687: exit_mutation_boundary no-ops dual-topology if already restored");
+        CHECK(contains(tma, "Issue #3687"), "3687: typed_audit cites #3687");
+        CHECK(emb.find("abort_restore_dual_topology_persist_reject") == std::string::npos,
+              "3687: no second restore helper name");
+        CHECK(emb.find("schema-3687") == std::string::npos &&
+                  tma.find("schema-3687") == std::string::npos,
+              "3687 AC5: no new query key");
+        CHECK(tma.find("strip_green_face_on_remount_last_zero") != std::string::npos,
+              "3687 AC4: remount last==0 strip_green_face unchanged");
+        CHECK(read_file("tests/compiler/test_issue_3687.cpp").empty(),
+              "3687: no test_issue_3687.cpp");
+        CHECK(read_file("docs/design/3687-persist-reject-txn.md").empty(), "3687: no docs/design/");
+
+        reset_for_test();
+        apply_dev_audit_defaults();
+        typed_audit::clear_type_linear_proof_outcome_for_test();
+        typed_audit::clear_type_linear_commit_proof_for_test();
+        CompilerService cs;
+        CHECK(cs.eval("(+ 1 1)").has_value(), "3687 soak: warm");
+        CHECK(cs.eval("(set-code \"(define f 1)\")").has_value(), "3687 soak: set-code");
+        CHECK(cs.eval("(eval-current)").has_value(), "3687 soak: eval");
+        (void)cs.eval("(typecheck-current)");
+        (void)cs.evaluator().ensure_typechecker();
+        (void)cs.evaluator().run_post_mutate_typecheck_no_lock();
+        apply_production_audit_defaults();
+        auto* ws = cs.evaluator().workspace_flat();
+        CHECK(ws != nullptr, "3687 soak: workspace");
+        const auto lit = ws ? find_literal_int(*ws, 1) : aura::ast::NULL_NODE;
+        CHECK(lit != aura::ast::NULL_NODE, "3687 soak: literal 1");
+        bool ok = true;
+        {
+            Evaluator::MutationBoundaryGuard g(cs.evaluator(), &ok);
+            if (ws && lit != aura::ast::NULL_NODE) {
+                const auto old_val = ws->get(lit).int_value;
+                (void)ws->add_mutation_with_rollback(
+                    lit, "tweak-literal", "Int", "Int", "3687",
+                    aura::ast::MutationStatus::Committed,
+                    static_cast<std::uint32_t>(aura::ast::MutationSoAField::IntVal),
+                    static_cast<std::uint64_t>(old_val), static_cast<std::uint64_t>(old_val + 7),
+                    true);
+                ws->set_int(lit, old_val + 7);
+                ws->mark_dirty_upward_fast(lit);
+            }
+        }
+        (void)ok;
+        CHECK(href_health(cs, "would-allow-commit") == 0,
+              "3687 soak: query:type-linear-commit-health would_allow=0");
+        CHECK(cs.eval("(eval-current)").has_value(), "3687 soak: eval_flat after persist-reject");
+        apply_dev_audit_defaults();
+        CHECK(!production_hard_face_active(), "3687 AC3: Soft/Off hard-face off");
+        CHECK(get_strategy() != AuditStrategy::Full, "3687 AC3: Soft is not Full");
+        const auto note_fn = tma.find("inline void note_outermost_persist_reject_needs_restore");
+        const auto note_body =
+            note_fn == std::string::npos ? std::string{} : tma.substr(note_fn, 400);
+        CHECK(note_body.find("production_defaults_active()") != std::string::npos,
+              "3687 AC3: persist-reject note is no-op unless Production/Full");
         apply_dev_audit_defaults();
         reset_for_test();
     }
