@@ -1079,6 +1079,72 @@ static void ac3608_6_source_and_linter() {
 
 } // namespace
 
+
+// ── Issue #3684: inner-expand deny helper covers 8/9/10; splice refused ──
+static void ac3684_deny_codes() {
+    std::println("\n--- #3684: inner_expand_production_limit_deny covers 8/9/10 ---");
+    reset_all();
+    for (auto code : {std::uint8_t{1}, std::uint8_t{2}, std::uint8_t{3}, std::uint8_t{6},
+                      std::uint8_t{7}, std::uint8_t{8}, std::uint8_t{9}, std::uint8_t{10}}) {
+        note_hygiene_last_limit_reason(code);
+        CHECK(aura::compiler::macro_exp::inner_expand_production_limit_deny(),
+              "3684: deny codes 1/2/3/6/7/8/9/10 refuse");
+    }
+    for (auto code : {std::uint8_t{0}, std::uint8_t{4}, std::uint8_t{5}}) {
+        note_hygiene_last_limit_reason(code);
+        CHECK(!aura::compiler::macro_exp::inner_expand_production_limit_deny(),
+              "3684: non-deny codes 0/4/5 do not refuse");
+    }
+    reset_all();
+}
+
+static void ac3684_inner_depth_restore() {
+    std::println("\n--- #3684: production refuses to splice a half-expanded clone ---");
+    reset_all();
+    grant_self_evo_production();
+    StringPool pool;
+    FlatAST flat;
+
+    // Macro m: body is another call to m — self-nesting, so inner expand
+    // recurses until the depth ceiling and stamps DepthLimit (2).
+    auto m = pool.intern("m");
+    auto one = pool.intern("one");
+    FlatAST body_flat;
+    StringPool body_pool;
+    auto m_body_var = body_pool.intern("m");
+    auto m_body_lit = body_pool.intern("1");
+    auto m_body_one = body_flat.add_literal(1);
+    auto m_body_self = body_flat.add_variable(m_body_var);
+    std::array<aura::ast::NodeId, 1> body_args{m_body_one};
+    auto m_body_call = body_flat.add_call(m_body_self, body_args);
+    (void)m_body_lit;
+
+    std::unordered_map<std::string, aura::compiler::macro_exp::MacroExpansionDef,
+                       aura::core::TransparentStringHash, std::equal_to<>>
+        macros;
+    macros["m"] = aura::compiler::macro_exp::MacroExpansionDef{
+        {"one"}, false, &body_flat, &body_pool, m_body_call};
+
+    auto m_var = pool.intern("m");
+    auto one_id = flat.add_literal(1);
+    std::array<aura::ast::NodeId, 1> call_args{one_id};
+    auto root_call = flat.add_call(flat.add_variable(m_var), call_args);
+    flat.root = root_call;
+    g_macro_hygiene_last_limit_reason.store(0, std::memory_order_relaxed);
+
+    auto out = expand_inner_macros(&flat, &pool, flat.root, /*depth=*/0,
+                                   /*max_depth=*/2, macros);
+    CHECK(out == root_call, "3684: denied expand returns the original call root");
+    auto rv = flat.get(root_call);
+    CHECK(rv.tag == aura::ast::NodeTag::Call && !rv.children.empty() &&
+              flat.get(rv.children[0]).tag == aura::ast::NodeTag::Variable &&
+              pool.resolve(flat.get(rv.children[0]).sym_id) == "m",
+          "3684: root stays the unexpanded (m 1) call — no half tree spliced");
+    CHECK(g_macro_hygiene_last_limit_reason.load(std::memory_order_relaxed) == 2,
+          "3684: last_limit_reason 2 (hygiene-depth-limit)");
+    reset_all();
+}
+
 int run_test_macro_hygiene_limits() {
     std::println("=== Issue #2101: runtime hygiene depth/pass caps ===");
     ac1_runtime_cap_clamps();
@@ -1091,6 +1157,8 @@ int run_test_macro_hygiene_limits() {
     ac3029_depth_reason();
     ac3029_ceiling_reason();
     ac3029_pass_reason();
+    ac3684_deny_codes();
+    ac3684_inner_depth_restore();
     ac3029_query_and_linter();
     std::println("\n=== Issue #3062: no-boundary pass-limit refuse-partial ===");
     ac3062_no_boundary_refuse_partial();

@@ -52,7 +52,12 @@ export int hard_hygiene_depth_limit() noexcept;    // == MAX_HYGIENE_DEPTH
 export int runtime_hygiene_depth_cap() noexcept;   // process-wide setter value
 export int runtime_hygiene_pass_cap() noexcept;    // 0 = no runtime pass clamp
 export bool set_hygiene_depth_cap(int n) noexcept; // reject if n∉[1,MAX]
-export bool set_hygiene_pass_cap(int n) noexcept;  // reject if n<0; 0 clears
+// Issue #3684: production face — true when the last hygiene stamp is an
+// inner-expand deny code (depth/pass/steal/cap/gensym + same-flat/
+// name-map-shared/concurrent-top-level). eval_flat consults after
+// expand_inner_macros so a half-expanded body is never evaluated.
+export bool inner_expand_production_limit_deny() noexcept;
+export bool set_hygiene_pass_cap(int n) noexcept; // reject if n<0; 0 clears
 export void reset_hygiene_runtime_caps_for_test() noexcept;
 // Live effective limit that the next expand / clone will enforce:
 // min(hard, runtime depth cap, capability max_depth when tightening).

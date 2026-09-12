@@ -110,3 +110,4 @@ check_apply_pre_reemit_refuse_3681.py
 check_wal_fold_autoscan_3674.py
 check_last_success_coverage_evidence_3682.py
 check_hygiene_deny_kind_uniformity_3683.py
+check_inner_expand_refuse_3684.py
