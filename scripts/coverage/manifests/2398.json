@@ -1,7 +1,7 @@
 {
   "issue": 2398,
   "title": "Issue #2398: mailbox_bp_recent_total quiet-period window / decay.",
-  "ok": "OK: Issue #2398 mailbox BP recent window \u2014 all AC rows satisfied",
+  "ok": "OK: Issue #2398 mailbox BP recent window — all AC rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -98,19 +98,10 @@
     },
     {
       "ac": "AC5",
-      "path": "build.py",
-      "contains": [
-        "check_mailbox_bp_recent_window_2398",
-        "cmd_mailbox_bp_recent_window_coverage"
-      ]
-    },
-    {
-      "ac": "AC5",
       "path": "CMakeLists.txt",
       "contains": [
         "tests/orch/test_mailbox_bp_admit.cpp"
       ]
     }
-  ],
-  "source_script": "scripts/coverage/checks/check_mailbox_bp_recent_window_2398.py"
+  ]
 }

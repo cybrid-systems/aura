@@ -85,19 +85,10 @@
     },
     {
       "ac": "gate",
-      "path": "build.py",
-      "contains": [
-        "check_truncate_commit_gate_2458",
-        "cmd_truncate_commit_gate_coverage"
-      ]
-    },
-    {
-      "ac": "gate",
       "path": "CMakeLists.txt",
       "contains": [
         "tests/compiler/test_truncate_commit_gate.cpp"
       ]
     }
-  ],
-  "source_script": "scripts/coverage/checks/check_truncate_commit_gate_2458.py"
+  ]
 }

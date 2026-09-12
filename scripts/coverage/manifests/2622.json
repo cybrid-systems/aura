@@ -1,7 +1,7 @@
 {
   "issue": 2622,
   "title": "occurrence dirty-key authority",
-  "ok": "OK: Issue #2622 occurrence dirty-key authority \u2014 all AC rows satisfied",
+  "ok": "OK: Issue #2622 occurrence dirty-key authority — all AC rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -147,14 +147,6 @@
       "path": "CMakeLists.txt",
       "contains": [
         "tests/compiler/test_occurrence_dirty_key_authority.cpp"
-      ]
-    },
-    {
-      "ac": "AC6",
-      "path": "build.py",
-      "contains": [
-        "check_occurrence_dirty_key_authority_2622",
-        "cmd_occurrence_dirty_key_authority_coverage"
       ]
     },
     {

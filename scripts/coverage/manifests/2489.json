@@ -1,7 +1,7 @@
 {
   "issue": 2489,
   "title": "Issue #2489: promote remaining high-risk string-only caps into the Effect",
-  "ok": "OK: Issue #2489 high-risk cap promotion \u2014 all AC rows satisfied",
+  "ok": "OK: Issue #2489 high-risk cap promotion — all AC rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -56,14 +56,6 @@
       "path": "CMakeLists.txt",
       "contains": [
         "tests/compiler/test_capability_high_risk_promote.cpp"
-      ]
-    },
-    {
-      "ac": "AC6",
-      "path": "build.py",
-      "contains": [
-        "check_capability_high_risk_promote_2489",
-        "cmd_capability_high_risk_promote_2489_coverage"
       ]
     },
     {
@@ -126,6 +118,5 @@
         "kEffectSyscall"
       ]
     }
-  ],
-  "source_script": "scripts/coverage/checks/check_capability_high_risk_promote_2489.py"
+  ]
 }

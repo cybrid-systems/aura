@@ -1,7 +1,7 @@
 {
   "issue": 2491,
   "title": "Issue #2491: mandate TenantScope at fiber spawn/resume entry",
-  "ok": "OK: Issue #2491 TenantScope fiber mandate \u2014 all AC rows satisfied",
+  "ok": "OK: Issue #2491 TenantScope fiber mandate — all AC rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -126,15 +126,6 @@
       "contains": [
         "tests/compiler/test_tenant_scope_fiber_mandate.cpp"
       ]
-    },
-    {
-      "ac": "AC7",
-      "path": "build.py",
-      "contains": [
-        "check_tenant_scope_fiber_mandate_2491",
-        "cmd_tenant_scope_fiber_mandate_2491_coverage"
-      ]
     }
-  ],
-  "source_script": "scripts/coverage/checks/check_tenant_scope_fiber_mandate_2491.py"
+  ]
 }

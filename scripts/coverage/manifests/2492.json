@@ -1,7 +1,7 @@
 {
   "issue": 2492,
   "title": "Issue #2492: force SecurityEvent WAL under Restricted (not only",
-  "ok": "OK: Issue #2492 SecurityEvent WAL force under Restricted \u2014 all AC rows satisfied",
+  "ok": "OK: Issue #2492 SecurityEvent WAL force under Restricted — all AC rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -93,15 +93,6 @@
       "contains": [
         "tests/compiler/test_security_audit_wal_force_restricted.cpp"
       ]
-    },
-    {
-      "ac": "AC6",
-      "path": "build.py",
-      "contains": [
-        "check_security_audit_wal_force_restricted_2492",
-        "cmd_security_audit_wal_force_restricted_2492_coverage"
-      ]
     }
-  ],
-  "source_script": "scripts/coverage/checks/check_security_audit_wal_force_restricted_2492.py"
+  ]
 }

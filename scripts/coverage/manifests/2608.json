@@ -1,7 +1,7 @@
 {
   "issue": 2608,
   "title": "Issue #2608: optional OccurrenceGoal persist / rehydrate.",
-  "ok": "OK: Issue #2608 + #2641 OccurrenceGoal persist/rehydrate \u2014 all AC rows satisfied",
+  "ok": "OK: Issue #2608 + #2641 OccurrenceGoal persist/rehydrate — all AC rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -129,14 +129,6 @@
       ]
     },
     {
-      "ac": "AC5",
-      "path": "build.py",
-      "contains": [
-        "check_occurrence_goal_persist_rehydrate_2608",
-        "cmd_occurrence_goal_persist_rehydrate_coverage"
-      ]
-    },
-    {
       "ac": "AC6",
       "path": "src/compiler/type_checker.ixx",
       "contains": [
@@ -185,6 +177,5 @@
         "ac2641_6_source_cite"
       ]
     }
-  ],
-  "source_script": "scripts/coverage/checks/check_occurrence_goal_persist_rehydrate_2608.py"
+  ]
 }

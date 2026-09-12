@@ -1,7 +1,7 @@
 {
   "issue": 2623,
   "title": "cross-closure depth + trunc fail-closed",
-  "ok": "OK: Issue #2623 cross-closure depth + trunc fail-closed \u2014 all AC rows satisfied",
+  "ok": "OK: Issue #2623 cross-closure depth + trunc fail-closed — all AC rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -158,14 +158,6 @@
       "path": "CMakeLists.txt",
       "contains": [
         "test_linear_cross_closure"
-      ]
-    },
-    {
-      "ac": "AC6",
-      "path": "build.py",
-      "contains": [
-        "check_linear_cross_closure_depth_trunc_2623",
-        "cmd_linear_cross_closure_depth_trunc_coverage"
       ]
     },
     {

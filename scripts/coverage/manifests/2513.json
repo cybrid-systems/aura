@@ -44,14 +44,6 @@
       ]
     },
     {
-      "ac": "AC4",
-      "path": "build.py",
-      "contains": [
-        "check_production_concurrency_soak_2513",
-        "cmd_production_concurrency_soak_coverage"
-      ]
-    },
-    {
       "ac": "AC5",
       "path": "build.py",
       "contains": [
@@ -75,6 +67,5 @@
         "AURA_PRODUCTION_CONCURRENCY_GATE"
       ]
     }
-  ],
-  "source_script": "scripts/coverage/checks/check_production_concurrency_soak_2513.py"
+  ]
 }

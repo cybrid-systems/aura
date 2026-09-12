@@ -61,15 +61,6 @@
         "ac10_build_gate_wiring_source_cite",
         "shared exit helper (soft fiber + full Guard)"
       ]
-    },
-    {
-      "ac": "AC10",
-      "path": "build.py",
-      "contains": [
-        "cmd_mutation_boundary_shared_exit_2600_coverage",
-        "check_mutation_boundary_shared_exit_2600"
-      ]
     }
-  ],
-  "source_script": "scripts/coverage/checks/check_mutation_boundary_shared_exit_2600.py"
+  ]
 }

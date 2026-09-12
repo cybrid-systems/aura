@@ -33,19 +33,10 @@
     },
     {
       "ac": "gate",
-      "path": "build.py",
-      "contains": [
-        "check_mutation_log_cow_copy_2457",
-        "cmd_mutation_log_cow_copy_coverage"
-      ]
-    },
-    {
-      "ac": "gate",
       "path": "CMakeLists.txt",
       "contains": [
         "tests/core/test_mutation_log_cow_copy.cpp"
       ]
     }
-  ],
-  "source_script": "scripts/coverage/checks/check_mutation_log_cow_copy_2457.py"
+  ]
 }

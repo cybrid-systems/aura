@@ -1,7 +1,7 @@
 {
   "issue": 2660,
   "title": "Issue #2660: wire evaluate_security_schedule into agent-body / parallel-intend / mutate admit.",
-  "ok": "OK: Issue #2660 security-schedule production admit wiring \u2014 all 6 AC contract rows satisfied",
+  "ok": "OK: Issue #2660 security-schedule production admit wiring — all 6 AC contract rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -113,6 +113,5 @@
         "security-schedule production admit wiring"
       ]
     }
-  ],
-  "source_script": "scripts/coverage/checks/check_2660.py"
+  ]
 }

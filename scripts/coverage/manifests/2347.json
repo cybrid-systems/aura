@@ -125,15 +125,6 @@
       "contains": [
         "ac2347_schema_and_contract"
       ]
-    },
-    {
-      "ac": "AC5",
-      "path": "build.py",
-      "contains": [
-        "check_mutate_mailbox_strict_2347",
-        "cmd_mutate_mailbox_strict_coverage"
-      ]
     }
-  ],
-  "source_script": "scripts/coverage/checks/check_mutate_mailbox_strict_2347.py"
+  ]
 }

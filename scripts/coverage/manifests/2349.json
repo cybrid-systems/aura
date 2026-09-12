@@ -1,7 +1,7 @@
 {
   "issue": 2349,
   "title": "Issue #2349: outermost hold SLO circuit-breaker (production default fail).",
-  "ok": "OK: Issue #2349 hold SLO circuit-breaker \u2014 all AC rows satisfied",
+  "ok": "OK: Issue #2349 hold SLO circuit-breaker — all AC rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -115,15 +115,6 @@
       "contains": [
         "tests/compiler/test_mutation_hold_slo.cpp"
       ]
-    },
-    {
-      "ac": "AC5",
-      "path": "build.py",
-      "contains": [
-        "check_mutation_hold_slo_2349",
-        "cmd_mutation_hold_slo_coverage"
-      ]
     }
-  ],
-  "source_script": "scripts/coverage/checks/check_mutation_hold_slo_2349.py"
+  ]
 }

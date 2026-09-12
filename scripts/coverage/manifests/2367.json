@@ -1,7 +1,7 @@
 {
   "issue": 2367,
   "title": "Issue #2367: ReloadRecovery query primitive + recovery-state snapshot.",
-  "ok": "OK: Issue #2367 ReloadRecovery query primitive \u2014 all AC rows satisfied",
+  "ok": "OK: Issue #2367 ReloadRecovery query primitive — all AC rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -118,19 +118,10 @@
     },
     {
       "ac": "AC5",
-      "path": "build.py",
-      "contains": [
-        "check_reload_recovery_query_2367",
-        "cmd_reload_recovery_query_coverage"
-      ]
-    },
-    {
-      "ac": "AC5",
       "path": "tests/compiler/test_reload_recovery_query.cpp",
       "contains": [
         "ac5_source_and_gate"
       ]
     }
-  ],
-  "source_script": "scripts/coverage/checks/check_reload_recovery_query_2367.py"
+  ]
 }

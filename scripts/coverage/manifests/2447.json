@@ -38,19 +38,10 @@
     },
     {
       "ac": "gate",
-      "path": "build.py",
-      "contains": [
-        "check_region_sym_map_race_2447",
-        "cmd_region_sym_map_race_coverage"
-      ]
-    },
-    {
-      "ac": "gate",
       "path": "CMakeLists.txt",
       "contains": [
         "test_ast_concurrency"
       ]
     }
-  ],
-  "source_script": "scripts/coverage/checks/check_region_sym_map_race_2447.py"
+  ]
 }

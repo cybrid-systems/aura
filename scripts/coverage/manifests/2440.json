@@ -79,19 +79,10 @@
     },
     {
       "ac": "gate",
-      "path": "build.py",
-      "contains": [
-        "check_soa_column_atomic_2440",
-        "cmd_soa_column_atomic_coverage"
-      ]
-    },
-    {
-      "ac": "gate",
       "path": "CMakeLists.txt",
       "contains": [
         "tests/core/test_soa_column_atomic.cpp"
       ]
     }
-  ],
-  "source_script": "scripts/coverage/checks/check_soa_column_atomic_2440.py"
+  ]
 }

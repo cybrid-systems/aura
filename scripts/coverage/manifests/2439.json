@@ -74,19 +74,10 @@
     },
     {
       "ac": "gate",
-      "path": "build.py",
-      "contains": [
-        "check_verification_dirty_bits_lock_2439",
-        "cmd_verification_dirty_bits_lock_coverage"
-      ]
-    },
-    {
-      "ac": "gate",
       "path": "CMakeLists.txt",
       "contains": [
         "tests/core/test_verification_dirty_bits_lock.cpp"
       ]
     }
-  ],
-  "source_script": "scripts/coverage/checks/check_verification_dirty_bits_lock_2439.py"
+  ]
 }

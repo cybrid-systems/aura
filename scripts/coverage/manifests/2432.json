@@ -88,19 +88,10 @@
     },
     {
       "ac": "gate",
-      "path": "build.py",
-      "contains": [
-        "check_ir_soa_layout_stamp_2432",
-        "cmd_ir_soa_layout_stamp_coverage"
-      ]
-    },
-    {
-      "ac": "gate",
       "path": "CMakeLists.txt",
       "contains": [
         "tests/compiler/test_ir_soa_layout_stamp.cpp"
       ]
     }
-  ],
-  "source_script": "scripts/coverage/checks/check_ir_soa_layout_stamp_2432.py"
+  ]
 }

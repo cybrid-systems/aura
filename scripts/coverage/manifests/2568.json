@@ -1,7 +1,7 @@
 {
   "issue": 2568,
   "title": "Issue #2568: symbol eq?/equal? for quoted symbols (agent decision tags).",
-  "ok": "OK: Issue #2568 symbol eq? \u2014 all AC rows satisfied",
+  "ok": "OK: Issue #2568 symbol eq? — all AC rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -78,15 +78,6 @@
       "contains": [
         "tests/compiler/test_symbol_eq.cpp"
       ]
-    },
-    {
-      "ac": "AC5",
-      "path": "build.py",
-      "contains": [
-        "check_symbol_eq_2568",
-        "cmd_symbol_eq_coverage"
-      ]
     }
-  ],
-  "source_script": "scripts/coverage/checks/check_symbol_eq_2568.py"
+  ]
 }

@@ -23,14 +23,6 @@
       "contains": [
         "tests/compiler/test_cap_write_effect_matrix.cpp"
       ]
-    },
-    {
-      "ac": "AC6",
-      "path": "build.py",
-      "contains": [
-        "check_2532"
-      ]
     }
-  ],
-  "source_script": "scripts/coverage/checks/check_2532.py"
+  ]
 }

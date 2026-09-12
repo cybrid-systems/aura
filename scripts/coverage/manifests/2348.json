@@ -1,7 +1,7 @@
 {
   "issue": 2348,
   "title": "Issue #2348: bidirectional check-mode for ADT match + GuardShape.",
-  "ok": "OK: Issue #2348 bidirectional match check-mode \u2014 all AC rows satisfied",
+  "ok": "OK: Issue #2348 bidirectional match check-mode — all AC rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -112,19 +112,10 @@
     },
     {
       "ac": "AC5",
-      "path": "build.py",
-      "contains": [
-        "check_bidirectional_match_2348",
-        "cmd_bidirectional_match_coverage"
-      ]
-    },
-    {
-      "ac": "AC5",
       "path": "src/compiler/type_checker_impl.cpp",
       "contains": [
         "Issue #2348"
       ]
     }
-  ],
-  "source_script": "scripts/coverage/checks/check_bidirectional_match_2348.py"
+  ]
 }

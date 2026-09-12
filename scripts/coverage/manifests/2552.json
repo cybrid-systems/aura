@@ -1,7 +1,7 @@
 {
   "issue": 2552,
   "title": "Issue #2552: steal/densify joint OccurrenceGoal + type_dep freshness fence.",
-  "ok": "OK: Issue #2552 type freshness steal/densify fence \u2014 all AC rows satisfied",
+  "ok": "OK: Issue #2552 type freshness steal/densify fence — all AC rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -116,19 +116,10 @@
     },
     {
       "ac": "AC6",
-      "path": "build.py",
-      "contains": [
-        "check_type_freshness_steal_densify_2552",
-        "cmd_type_freshness_steal_densify_coverage"
-      ]
-    },
-    {
-      "ac": "AC6",
       "path": "tests/compiler/test_type_freshness_steal_densify.cpp",
       "contains": [
         "ac6_source_and_schema"
       ]
     }
-  ],
-  "source_script": "scripts/coverage/checks/check_type_freshness_steal_densify_2552.py"
+  ]
 }

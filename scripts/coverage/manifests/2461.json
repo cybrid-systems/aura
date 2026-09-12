@@ -1,6 +1,6 @@
 {
   "issue": 2461,
-  "title": "Issue #2461: per-If stable narrowing cache key (shape \u00d7 epoch \u00d7 refined).",
+  "title": "Issue #2461: per-If stable narrowing cache key (shape × epoch × refined).",
   "ok": "OK: occurrence cache key #2461 coverage contract clean",
   "checks": [
     {
@@ -102,20 +102,11 @@
       ]
     },
     {
-      "ac": "gate",
-      "path": "build.py",
-      "contains": [
-        "check_occurrence_cache_key_2461",
-        "cmd_occurrence_cache_key_coverage"
-      ]
-    },
-    {
       "ac": "AC5",
       "path": "tests/compiler/test_occurrence_cache_key.cpp",
       "contains": [
         "AC5: schema-2461"
       ]
     }
-  ],
-  "source_script": "scripts/coverage/checks/check_occurrence_cache_key_2461.py"
+  ]
 }

@@ -1,7 +1,7 @@
 {
   "issue": 2569,
   "title": "Issue #2569: set-code / mutate:rebind must not kill unimpacted closures or hash state.",
-  "ok": "OK: Issue #2569 set-code/rebind survival \u2014 all AC rows satisfied",
+  "ok": "OK: Issue #2569 set-code/rebind survival — all AC rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -64,15 +64,6 @@
       "contains": [
         "tests/compiler/test_setcode_rebind_survive.cpp"
       ]
-    },
-    {
-      "ac": "AC4",
-      "path": "build.py",
-      "contains": [
-        "check_setcode_rebind_2569",
-        "cmd_setcode_rebind_coverage"
-      ]
     }
-  ],
-  "source_script": "scripts/coverage/checks/check_setcode_rebind_2569.py"
+  ]
 }

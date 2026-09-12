@@ -1,7 +1,7 @@
 {
   "issue": 2518,
-  "title": "Issue #2518: MutationSafetySnapshot sequence ticket (sample\u2192resume).",
-  "ok": "OK: Issue #2518 steal safety ticket \u2014 all AC rows satisfied",
+  "title": "Issue #2518: MutationSafetySnapshot sequence ticket (sample→resume).",
+  "ok": "OK: Issue #2518 steal safety ticket — all AC rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -124,19 +124,10 @@
     },
     {
       "ac": "AC5",
-      "path": "build.py",
-      "contains": [
-        "check_steal_safety_ticket_2518",
-        "cmd_steal_safety_ticket_coverage"
-      ]
-    },
-    {
-      "ac": "AC5",
       "path": "tests/serve/test_steal_safety_ticket.cpp",
       "contains": [
         "ac5_source_wiring"
       ]
     }
-  ],
-  "source_script": "scripts/coverage/checks/check_steal_safety_ticket_2518.py"
+  ]
 }

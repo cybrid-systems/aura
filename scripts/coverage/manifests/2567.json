@@ -1,7 +1,7 @@
 {
   "issue": 2567,
   "title": "Issue #2567: try/catch binds catch parameter for handler use.",
-  "ok": "OK: Issue #2567 try/catch bind \u2014 all AC rows satisfied",
+  "ok": "OK: Issue #2567 try/catch bind — all AC rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -75,15 +75,6 @@
       "contains": [
         "tests/compiler/test_try_catch_bind.cpp"
       ]
-    },
-    {
-      "ac": "AC5",
-      "path": "build.py",
-      "contains": [
-        "check_try_catch_bind_2567",
-        "cmd_try_catch_bind_coverage"
-      ]
     }
-  ],
-  "source_script": "scripts/coverage/checks/check_try_catch_bind_2567.py"
+  ]
 }

@@ -1,7 +1,7 @@
 {
   "issue": 2658,
   "title": "Issue #2658: require_effect must accept optional ref_tenant for cross-tenant side-effect provenance.",
-  "ok": "OK: Issue #2658 require_effect ref_tenant gate \u2014 all 6 AC contract rows satisfied",
+  "ok": "OK: Issue #2658 require_effect ref_tenant gate — all 6 AC contract rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -84,6 +84,5 @@
         "ref_tenant"
       ]
     }
-  ],
-  "source_script": "scripts/coverage/checks/check_2658.py"
+  ]
 }

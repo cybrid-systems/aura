@@ -94,19 +94,10 @@
     },
     {
       "ac": "AC5",
-      "path": "build.py",
-      "contains": [
-        "check_mutation_hold_estimate_2405",
-        "cmd_mutation_hold_estimate_coverage"
-      ]
-    },
-    {
-      "ac": "AC5",
       "path": "CMakeLists.txt",
       "contains": [
         "tests/compiler/test_mutation_hold_estimate.cpp"
       ]
     }
-  ],
-  "source_script": "scripts/coverage/checks/check_mutation_hold_estimate_2405.py"
+  ]
 }

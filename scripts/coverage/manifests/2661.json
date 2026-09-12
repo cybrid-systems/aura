@@ -1,7 +1,7 @@
 {
   "issue": 2661,
-  "title": "Issue #2661: JoinStatus::Reclaimed resource safety \u2014 unify orphan roots + agent reservation + mailbox detach.",
-  "ok": "OK: Issue #2661 Reclaimed resource safety \u2014 all 6 AC contract rows satisfied",
+  "title": "Issue #2661: JoinStatus::Reclaimed resource safety — unify orphan roots + agent reservation + mailbox detach.",
+  "ok": "OK: Issue #2661 Reclaimed resource safety — all 6 AC contract rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -68,6 +68,5 @@
         "Reclaimed resource safety"
       ]
     }
-  ],
-  "source_script": "scripts/coverage/checks/check_2661.py"
+  ]
 }

@@ -1,7 +1,7 @@
 {
   "issue": 2522,
-  "title": "Issue #2522: batch dirty cascade API \u2014 mark_blocks_dirty + single bump.",
-  "ok": "OK: Issue #2522 batch dirty cascade \u2014 all AC rows satisfied",
+  "title": "Issue #2522: batch dirty cascade API — mark_blocks_dirty + single bump.",
+  "ok": "OK: Issue #2522 batch dirty cascade — all AC rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -100,14 +100,6 @@
     },
     {
       "ac": "AC5",
-      "path": "build.py",
-      "contains": [
-        "check_batch_dirty_cascade_2522",
-        "cmd_batch_dirty_cascade_coverage"
-      ]
-    },
-    {
-      "ac": "AC5",
       "path": "tests/compiler/test_batch_dirty_cascade.cpp",
       "contains": [
         "ac5_finish_dirty_sync"
@@ -127,6 +119,5 @@
         "finish_dirty_sync"
       ]
     }
-  ],
-  "source_script": "scripts/coverage/checks/check_batch_dirty_cascade_2522.py"
+  ]
 }

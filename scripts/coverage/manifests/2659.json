@@ -1,7 +1,7 @@
 {
   "issue": 2659,
   "title": "Issue #2659: process-global WorkspaceIsolationPolicy current principal is unsafe under multi-Evaluator.",
-  "ok": "OK: Issue #2659 per-Evaluator principal \u2014 all 6 AC contract rows satisfied",
+  "ok": "OK: Issue #2659 per-Evaluator principal — all 6 AC contract rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -96,6 +96,5 @@
         "per-Evaluator principal"
       ]
     }
-  ],
-  "source_script": "scripts/coverage/checks/check_2659.py"
+  ]
 }

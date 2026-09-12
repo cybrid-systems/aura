@@ -52,19 +52,10 @@
     },
     {
       "ac": "gate",
-      "path": "build.py",
-      "contains": [
-        "check_tag_arity_index_lock_2419",
-        "cmd_tag_arity_index_lock_coverage"
-      ]
-    },
-    {
-      "ac": "gate",
       "path": "CMakeLists.txt",
       "contains": [
         "tests/core/test_tag_arity_index_lock.cpp"
       ]
     }
-  ],
-  "source_script": "scripts/coverage/checks/check_tag_arity_index_lock_2419.py"
+  ]
 }

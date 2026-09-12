@@ -1,7 +1,7 @@
 {
   "issue": 2345,
   "title": "Issue #2345: production composite empty-CS hard-reject coverage.",
-  "ok": "OK: Issue #2345 composite empty-CS hard-reject \u2014 all AC rows satisfied",
+  "ok": "OK: Issue #2345 composite empty-CS hard-reject — all AC rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -110,6 +110,5 @@
         "tests/compiler/test_partial_cs_single_source.cpp"
       ]
     }
-  ],
-  "source_script": "scripts/coverage/checks/check_composite_empty_cs_hard_2345.py"
+  ]
 }

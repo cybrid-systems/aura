@@ -1,7 +1,7 @@
 {
   "issue": 2574,
   "title": "Issue #2574: Scheme write string escape (JIT + TW).",
-  "ok": "OK: Issue #2574 write string escape \u2014 all AC rows satisfied",
+  "ok": "OK: Issue #2574 write string escape — all AC rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -38,15 +38,6 @@
       "contains": [
         "tests/compiler/test_write_string_escape.cpp"
       ]
-    },
-    {
-      "ac": "AC4",
-      "path": "build.py",
-      "contains": [
-        "check_write_string_escape_2574",
-        "cmd_write_string_escape_coverage"
-      ]
     }
-  ],
-  "source_script": "scripts/coverage/checks/check_write_string_escape_2574.py"
+  ]
 }

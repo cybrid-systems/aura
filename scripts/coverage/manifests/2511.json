@@ -1,7 +1,7 @@
 {
   "issue": 2511,
   "title": "Issue #2511: outermost Guard exit forced mailbox deferred drain under budget.",
-  "ok": "OK: Issue #2511 mailbox hold-exit drain \u2014 all AC rows satisfied",
+  "ok": "OK: Issue #2511 mailbox hold-exit drain — all AC rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -108,19 +108,10 @@
     },
     {
       "ac": "AC5",
-      "path": "build.py",
-      "contains": [
-        "check_mailbox_hold_exit_drain_2511",
-        "cmd_mailbox_hold_exit_drain_coverage"
-      ]
-    },
-    {
-      "ac": "AC5",
       "path": "src/compiler/evaluator_primitives_messaging.cpp",
       "contains": [
         "schema-2378"
       ]
     }
-  ],
-  "source_script": "scripts/coverage/checks/check_mailbox_hold_exit_drain_2511.py"
+  ]
 }

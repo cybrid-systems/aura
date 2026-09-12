@@ -1,7 +1,7 @@
 {
   "issue": 2496,
   "title": "Issue #2496: GeneralObjectPin adoption coverage gate (inventory vs wire_total).",
-  "ok": "OK: Issue #2496 GeneralObjectPin adoption coverage gate \u2014 all AC rows satisfied",
+  "ok": "OK: Issue #2496 GeneralObjectPin adoption coverage gate — all AC rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -89,15 +89,6 @@
       "contains": [
         "tests/core/test_general_object_pin_coverage_gate.cpp"
       ]
-    },
-    {
-      "ac": "AC5",
-      "path": "build.py",
-      "contains": [
-        "check_general_object_pin_coverage_gate_2496",
-        "cmd_general_object_pin_coverage_gate_2496_coverage"
-      ]
     }
-  ],
-  "source_script": "scripts/coverage/checks/check_general_object_pin_coverage_gate_2496.py"
+  ]
 }

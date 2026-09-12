@@ -137,19 +137,10 @@
     },
     {
       "ac": "AC5",
-      "path": "build.py",
-      "contains": [
-        "check_linear_cross_closure_escape_2563",
-        "cmd_linear_cross_closure_escape_coverage"
-      ]
-    },
-    {
-      "ac": "AC5",
       "path": "tests/compiler/test_linear_cross_closure.cpp",
       "contains": [
         "ac5_cone_cap"
       ]
     }
-  ],
-  "source_script": "scripts/coverage/checks/check_linear_cross_closure_escape_2563.py"
+  ]
 }

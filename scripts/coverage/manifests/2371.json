@@ -1,7 +1,7 @@
 {
   "issue": 2371,
   "title": "Issue #2371: cross-COW dual-epoch soft restamp vs hard-reject.",
-  "ok": "OK: Issue #2371 cross-COW soft migrate \u2014 all AC rows satisfied",
+  "ok": "OK: Issue #2371 cross-COW soft migrate — all AC rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -83,19 +83,10 @@
     },
     {
       "ac": "AC5",
-      "path": "build.py",
-      "contains": [
-        "check_cross_cow_soft_migrate_2371",
-        "cmd_cross_cow_soft_migrate_coverage"
-      ]
-    },
-    {
-      "ac": "AC5",
       "path": "tests/compiler/test_cross_cow_soft_migrate.cpp",
       "contains": [
         "ac5_source_and_gate"
       ]
     }
-  ],
-  "source_script": "scripts/coverage/checks/check_cross_cow_soft_migrate_2371.py"
+  ]
 }

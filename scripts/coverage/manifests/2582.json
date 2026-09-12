@@ -1,7 +1,7 @@
 {
   "issue": 2582,
   "title": "Issue #2582: pure-Aura hot strategy contracts.",
-  "ok": "OK: Issue #2582 pure-Aura hot strategy \u2014 all AC rows satisfied",
+  "ok": "OK: Issue #2582 pure-Aura hot strategy — all AC rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -46,18 +46,10 @@
     },
     {
       "ac": "AC4",
-      "path": "build.py",
-      "contains": [
-        "check_hot_strategy_2582"
-      ]
-    },
-    {
-      "ac": "AC4",
       "path": "tests/compiler/test_hot_strategy.cpp",
       "contains": [
         "ac1_swap"
       ]
     }
-  ],
-  "source_script": "scripts/coverage/checks/check_hot_strategy_2582.py"
+  ]
 }

@@ -1,7 +1,7 @@
 {
   "issue": 2396,
   "title": "Issue #2396: production tick periodically reaps orphan fibers.",
-  "ok": "OK: Issue #2396 orphan reap on production tick \u2014 all AC rows satisfied",
+  "ok": "OK: Issue #2396 orphan reap on production tick — all AC rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -85,19 +85,10 @@
     },
     {
       "ac": "AC5",
-      "path": "build.py",
-      "contains": [
-        "check_orphan_reap_tick_2396",
-        "cmd_orphan_reap_tick_coverage"
-      ]
-    },
-    {
-      "ac": "AC5",
       "path": "CMakeLists.txt",
       "contains": [
         "tests/orch/test_join_drain_reclaim.cpp"
       ]
     }
-  ],
-  "source_script": "scripts/coverage/checks/check_orphan_reap_tick_2396.py"
+  ]
 }

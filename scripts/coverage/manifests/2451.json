@@ -52,19 +52,10 @@
     },
     {
       "ac": "gate",
-      "path": "build.py",
-      "contains": [
-        "check_param_begin_count_publish_2451",
-        "cmd_param_begin_count_publish_coverage"
-      ]
-    },
-    {
-      "ac": "gate",
       "path": "CMakeLists.txt",
       "contains": [
         "tests/core/test_param_begin_count_publish.cpp"
       ]
     }
-  ],
-  "source_script": "scripts/coverage/checks/check_param_begin_count_publish_2451.py"
+  ]
 }

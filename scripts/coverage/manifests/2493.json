@@ -1,7 +1,7 @@
 {
   "issue": 2493,
-  "title": "Issue #2493: unify mutation_id source \u2014 WorkspaceEpoch Mutation over",
-  "ok": "OK: Issue #2493 audit mutation_id unify \u2014 all AC rows satisfied",
+  "title": "Issue #2493: unify mutation_id source — WorkspaceEpoch Mutation over",
+  "ok": "OK: Issue #2493 audit mutation_id unify — all AC rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -94,15 +94,6 @@
       "contains": [
         "tests/compiler/test_audit_mutation_id_unify.cpp"
       ]
-    },
-    {
-      "ac": "AC6",
-      "path": "build.py",
-      "contains": [
-        "check_audit_mutation_id_unify_2493",
-        "cmd_audit_mutation_id_unify_2493_coverage"
-      ]
     }
-  ],
-  "source_script": "scripts/coverage/checks/check_audit_mutation_id_unify_2493.py"
+  ]
 }

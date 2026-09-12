@@ -58,19 +58,10 @@
     },
     {
       "ac": "gate",
-      "path": "build.py",
-      "contains": [
-        "check_arena_compact_notify_lifecycle_2438",
-        "cmd_arena_compact_notify_lifecycle_coverage"
-      ]
-    },
-    {
-      "ac": "gate",
       "path": "CMakeLists.txt",
       "contains": [
         "tests/core/test_arena_compact_notify_lifecycle.cpp"
       ]
     }
-  ],
-  "source_script": "scripts/coverage/checks/check_arena_compact_notify_lifecycle_2438.py"
+  ]
 }

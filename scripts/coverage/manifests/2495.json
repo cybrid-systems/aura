@@ -1,7 +1,7 @@
 {
   "issue": 2495,
   "title": "Issue #2495: Moving densify fail-closed on untracked external roots.",
-  "ok": "OK: Issue #2495 moving densify fail-closed \u2014 all AC rows satisfied",
+  "ok": "OK: Issue #2495 moving densify fail-closed — all AC rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -68,15 +68,6 @@
       "contains": [
         "tests/core/test_moving_densify_fail_closed.cpp"
       ]
-    },
-    {
-      "ac": "AC5",
-      "path": "build.py",
-      "contains": [
-        "check_moving_densify_fail_closed_2495",
-        "cmd_moving_densify_fail_closed_2495_coverage"
-      ]
     }
-  ],
-  "source_script": "scripts/coverage/checks/check_moving_densify_fail_closed_2495.py"
+  ]
 }

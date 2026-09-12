@@ -8519,33 +8519,6 @@ def cmd_lint():
             "mid-fallback hard-deny coverage linter failed — run python3 scripts/coverage/checks/check_mid_fallback_hard_deny_2635.py"
         )
         return r
-    # Issue #2643: INSTANCE depth budget + Agent-visible repair surface on
-    # TIMEOUT (bounded sample, additive keys on type-timeout-repair-stats,
-    # zero cost on SOLVED / no INSTANCE). Builds on #2607 minimal INSTANCE
-    # so Agents can re-instantiate polymorphic call sites before full solve.
-    idrh_script = COVERAGE_CHECKS / "check_instance_depth_repair_hint_2643.py"
-    if not idrh_script.exists():
-        fail(f"missing {idrh_script}")
-        return 1
-    r = run([sys.executable, str(idrh_script)], cwd=ROOT)
-    if r != 0:
-        fail(
-            "instance depth repair hint (#2643) coverage linter failed — run python3 scripts/coverage/checks/check_instance_depth_repair_hint_2643.py"
-        )
-        return r
-    # Issue #2644: batch-level TypeVar refined consistency (anti
-    # SOLVED-but-drift under composite / atomic_batch). Soft path bumps
-    # observe only; production/Full rejects with type_scheme_drift.
-    idr_script = COVERAGE_CHECKS / "check_occurrence_refined_consistency_2644.py"
-    if not idr_script.exists():
-        fail(f"missing {idr_script}")
-        return 1
-    r = run([sys.executable, str(idr_script)], cwd=ROOT)
-    if r != 0:
-        fail(
-            "occurrence refined consistency (#2644) coverage linter failed — run python3 scripts/coverage/checks/check_occurrence_refined_consistency_2644.py"
-        )
-        return r
     # Issue #2645: layered dead-coercion evidence chain lock (AST elision
     # × IR DCE × deopt meta) — src-aligned E2E lock that asserts the three
     # layers stay coherent under Soft vs evidence-backed paths.
@@ -10890,100 +10863,6 @@ def cmd_require_effect_auto_isolation_2490_coverage():
     return 0
 
 
-def cmd_tenant_scope_fiber_mandate_2491_coverage():
-    """Issue #2491: TenantScope mandated at fiber spawn/resume entry.
-
-    assigned_tenant_id_ on Fiber + bridge hooks
-    aura_fiber_install_tenant_scope_for_resume / aura_fiber_release_tenant_scope_after_yield
-    on Fiber::resume / yield boundary. No residual principal across worker
-    reuse; Off sandbox skips force (Soft unit path unchanged).
-    """
-    print(f"{B}=== tenant scope fiber mandate coverage (#2491) ==={N}")
-    script = COVERAGE_CHECKS / "check_tenant_scope_fiber_mandate_2491.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("tenant scope fiber mandate (#2491) coverage contract rows failed")
-        return 1
-    ok("tenant scope fiber mandate (#2491) coverage clean")
-    return 0
-
-
-def cmd_security_audit_wal_force_restricted_2492_coverage():
-    """Issue #2492: force SecurityEvent WAL under Restricted.
-
-    Production default Restricted (#2076) without AURA_MULTI_TENANT was
-    silent under deny storms — single-tenant commercial deploys lost
-    early forensic events to ring wrap (1024 entries). Adding `restricted`
-    to force_wal closes the gap. New metric
-    audit_wal_forced_by_restricted_total distinguishes Restricted-only
-    force from multi-tenant/Strict for dashboards.
-    """
-    print(f"{B}=== security audit WAL force restricted coverage (#2492) ==={N}")
-    script = COVERAGE_CHECKS / "check_security_audit_wal_force_restricted_2492.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("security audit WAL force restricted (#2492) coverage contract rows failed")
-        return 1
-    ok("security audit WAL force restricted (#2492) coverage clean")
-    return 0
-
-
-def cmd_audit_mutation_id_unify_2493_coverage():
-    """Issue #2493: unify mutation_id source — WorkspaceEpoch Mutation.
-
-    Audit paths that didn't thread a caller mid previously allocated from
-    audit_mutation_id_gen (parallel vocabulary), weakening join against
-    grants bound to Mutation epoch. resolve_audit_mutation_id() enforces
-    preference order: caller mid → current_mutation_epoch → ResourceQuota
-    host mid → last-resort audit gen + audit_mid_fallback_gen_total bump.
-    capture_security_correlated_audit / AOT / JIT adopt the same order.
-    """
-    print(f"{B}=== audit mutation_id unify coverage (#2493) ==={N}")
-    script = COVERAGE_CHECKS / "check_audit_mutation_id_unify_2493.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("audit mutation_id unify (#2493) coverage contract rows failed")
-        return 1
-    ok("audit mutation_id unify (#2493) coverage clean")
-    return 0
-
-
-def cmd_side_effect_security_gate_hardfail_2494_coverage():
-    """Issue #2494: hard-fail check_side_effect_security.py for new prims.
-
-    PR CI hard-fail (build.py gate runs the script with --strict). Tests
-    confirm a fixture prim (side-effect name + no coverage marker) trips
-    the gate, and the allowlist reason-format enforcement is operational.
-    """
-    print(f"{B}=== side-effect security gate hard-fail coverage (#2494) ==={N}")
-    script = COVERAGE_CHECKS / "check_side_effect_security_gate_hardfail_2494.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("side-effect security gate hard-fail (#2494) coverage contract rows failed")
-        return 1
-    ok("side-effect security gate hard-fail (#2494) coverage clean")
-    return 0
-
-
-def cmd_moving_densify_fail_closed_2495_coverage():
-    """Issue #2495: Moving densify fail-closed on untracked external roots.
-
-    LiveCompactResult.{moving_incomplete_remap, untracked_kept_count} +
-    g_moving_untracked_external_roots_total counter. Phase 5 (already
-    gating on pin_contract_held) suppresses success metrics when densify
-    moved live objects but untracked candidates existed. AURA_MOVING_UNTRACKED=hard
-    aborts under production security defaults.
-    """
-    print(f"{B}=== moving densify fail-closed coverage (#2495) ==={N}")
-    script = COVERAGE_CHECKS / "check_moving_densify_fail_closed_2495.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("moving densify fail-closed (#2495) coverage contract rows failed")
-        return 1
-    ok("moving densify fail-closed (#2495) coverage clean")
-    return 0
-
-
 def cmd_densify_ownership_scan_fail_gate_2497_coverage():
     """Issue #2497: Phase 5 hard-bind densify ownership scan fail → suppress
     outermost success metrics.
@@ -11024,125 +10903,6 @@ def cmd_fiber_reclaim_orphan_release_2498_coverage():
         fail("Fiber reclaim orphan release (#2498) coverage contract rows failed")
         return 1
     ok("Fiber reclaim orphan release (#2498) coverage clean")
-    return 0
-
-
-def cmd_check_2529_coverage():
-    """Issue #2529: Restricted grant_epoch_retain K=16."""
-    print(f"{B}=== grant epoch retain Restricted coverage (#2529) ==={N}")
-    script = COVERAGE_CHECKS / "check_2529.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("grant epoch retain Restricted (#2529) coverage failed")
-        return 1
-    ok("grant epoch retain Restricted (#2529) coverage clean")
-    return 0
-
-
-def cmd_check_2530_coverage():
-    """Issue #2530: audit ring 1024 + Isolation publish_seq."""
-    print(f"{B}=== audit ring publish coverage (#2530) ==={N}")
-    script = COVERAGE_CHECKS / "check_2530.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("audit ring publish (#2530) coverage failed")
-        return 1
-    ok("audit ring publish (#2530) coverage clean")
-    return 0
-
-
-def cmd_check_2531_coverage():
-    """Issue #2531: force non-zero bound_mutation_id."""
-    print(f"{B}=== grant bound mid force coverage (#2531) ==={N}")
-    script = COVERAGE_CHECKS / "check_2531.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("grant bound mid force (#2531) coverage failed")
-        return 1
-    ok("grant bound mid force (#2531) coverage clean")
-    return 0
-
-
-def cmd_check_2532_coverage():
-    """Issue #2532: write caps into Effect matrix."""
-    print(f"{B}=== cap write effect matrix coverage (#2532) ==={N}")
-    script = COVERAGE_CHECKS / "check_2532.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("cap write effect matrix (#2532) coverage failed")
-        return 1
-    ok("cap write effect matrix (#2532) coverage clean")
-    return 0
-
-
-def cmd_check_2533_coverage():
-    """Issue #2533: residual force safepoint."""
-    print(f"{B}=== residual force safepoint coverage (#2533) ==={N}")
-    script = COVERAGE_CHECKS / "check_2533.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("residual force safepoint (#2533) coverage failed")
-        return 1
-    ok("residual force safepoint (#2533) coverage clean")
-    return 0
-
-
-def cmd_check_2536_coverage():
-    """Issue #2536: Restricted hard-fiber optional policy."""
-    print(f"{B}=== hard-fiber Restricted policy coverage (#2536) ==={N}")
-    script = COVERAGE_CHECKS / "check_2536.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("hard-fiber Restricted policy (#2536) coverage failed")
-        return 1
-    ok("hard-fiber Restricted policy (#2536) coverage clean")
-    return 0
-
-
-def cmd_check_2535_coverage():
-    """Issue #2535: production default mild mailbox BP admit (threshold=32)."""
-    print(f"{B}=== mailbox BP admit default-on coverage (#2535) ==={N}")
-    script = COVERAGE_CHECKS / "check_2535.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("mailbox BP admit default-on (#2535) coverage failed")
-        return 1
-    ok("mailbox BP admit default-on (#2535) coverage clean")
-    return 0
-
-
-def cmd_check_2534_coverage():
-    """Issue #2534: security-posture + correlated-trail."""
-    print(f"{B}=== security posture trail coverage (#2534) ==={N}")
-    script = COVERAGE_CHECKS / "check_2534.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("security posture trail (#2534) coverage failed")
-        return 1
-    ok("security posture trail (#2534) coverage clean")
-    return 0
-
-
-def cmd_root_remap_pin_contract_unified_2499_coverage():
-    """Issue #2499: unify RootRemapPass fail with pin_contract_held (single Moving
-    success gate).
-
-    #2294 / #2365 / #2368 RootRemapPass writes per-call fail totals into
-    LiveCompactResult.root_remap_*_fail_total. Phase 5 in
-    evaluator_mutation_boundary.cpp gates on compact_r.pin_contract_held only
-    — Agents see "pin ok + root_remap fail cumulative" mixed signal.
-    AdaptiveCompactResult now aggregates per-call fail totals; Phase 5 ANDs
-    (root_remap_*_fail_total == 0) into pin_contract_held so the unified
-    gate surfaces the mixed-signal gap. Linter fails when the gate is
-    missing or when LiveCompactResult / AdaptiveCompactResult fields regress.
-    """
-    print(f"{B}=== RootRemap pin_contract unified coverage (#2499) ==={N}")
-    script = COVERAGE_CHECKS / "check_root_remap_pin_contract_unified_2499.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("RootRemap pin_contract unified (#2499) coverage contract rows failed")
-        return 1
-    ok("RootRemap pin_contract unified (#2499) coverage clean")
     return 0
 
 
@@ -11194,42 +10954,6 @@ def cmd_restamp_sla_observability_2528_coverage():
     return 0
 
 
-def cmd_general_object_pin_coverage_gate_2496_coverage():
-    """Issue #2496: GeneralObjectPin adoption coverage gate.
-
-    Inventory vs wire_total — kGeneralObjectPinAdoptSiteCount tracks the
-    documented sites (mutate/batch/require/query×2/load/eval-expr).
-    Linter fails when a listed site lacks wire call
-    (note_general_object_pin_mutate_wire / wire_general_object_create_pair).
-    Optional AURA_GENERAL_OBJECT_PIN=required fail-closed runtime mode
-    for new densify-tracked intermediate creates.
-    """
-    print(f"{B}=== GeneralObjectPin coverage gate coverage (#2496) ==={N}")
-    script = COVERAGE_CHECKS / "check_general_object_pin_coverage_gate_2496.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("GeneralObjectPin coverage gate (#2496) coverage contract rows failed")
-        return 1
-    ok("GeneralObjectPin coverage gate (#2496) coverage clean")
-    return 0
-
-
-def cmd_restricted_unset_principal_coverage():
-    """Issue #2385: Restricted denies side-effects when principal unset.
-
-    Production default Restricted must not silently skip isolation when
-    set_tenant_principal was never called. Pure reads (effects=0) stay ok.
-    """
-    print(f"{B}=== Restricted unset principal coverage (#2385) ==={N}")
-    script = COVERAGE_CHECKS / "check_restricted_unset_principal_2385.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("Restricted unset principal (#2385) coverage contract rows failed")
-        return 1
-    ok("Restricted unset principal (#2385) coverage clean")
-    return 0
-
-
 def cmd_grant_macro_self_evo_stamp_coverage():
     """Issue #2386: grant_macro_self_evo stamps grant_epoch + fiber (#2055).
 
@@ -11261,24 +10985,6 @@ def cmd_capability_string_matrix_unify_coverage():
     return 0
 
 
-def cmd_capability_high_risk_promote_2489_coverage():
-    """Issue #2489: remaining high-risk caps into Effect matrix.
-
-    self-evo / synthesize / strategy → MacroSelfEvo; sys-open / sys-write /
-    sys-read → Syscall | Read/Write; agent / capability → TenantAdmin. Closes
-    the dual-track self-mod / syscall / meta-privilege surface; revoke clears
-    both sides; epoch fence + hard fiber isolation deny via single authority.
-    """
-    print(f"{B}=== capability high-risk promote coverage (#2489) ==={N}")
-    script = COVERAGE_CHECKS / "check_capability_high_risk_promote_2489.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("capability high-risk promote (#2489) coverage contract rows failed")
-        return 1
-    ok("capability high-risk promote (#2489) coverage clean")
-    return 0
-
-
 def cmd_security_audit_fold_coverage():
     """Issue #2388: fold Capability + Isolation audit into SecurityEvent WAL.
 
@@ -11292,22 +10998,6 @@ def cmd_security_audit_fold_coverage():
         fail("security audit fold (#2388) coverage contract rows failed")
         return 1
     ok("security audit fold (#2388) coverage clean")
-    return 0
-
-
-def cmd_security_health_coverage():
-    """Issue #2389: query:security-health single Agent score.
-
-    Aggregates effect/isolation deny rates, epoch-fence health, WAL posture,
-    and ring-wrap pressure into health-bp + force-reason.
-    """
-    print(f"{B}=== security-health coverage (#2389) ==={N}")
-    script = COVERAGE_CHECKS / "check_security_health_2389.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("security-health (#2389) coverage contract rows failed")
-        return 1
-    ok("security-health (#2389) coverage clean")
     return 0
 
 
@@ -11391,22 +11081,6 @@ def cmd_stable_ref_wire_endian_coverage():
     return 0
 
 
-def cmd_orphan_reap_tick_coverage():
-    """Issue #2396: production tick periodically reaps orphan fibers.
-
-    Wire maybe_reap_orphans_on_tick into Scheduler::run; zero cost when
-    orphan_count_cached_ == 0; AURA_ORPHAN_REAP_INTERVAL_MS (default 50).
-    """
-    print(f"{B}=== orphan reap tick coverage (#2396) ==={N}")
-    script = COVERAGE_CHECKS / "check_orphan_reap_tick_2396.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("orphan reap tick (#2396) coverage contract rows failed")
-        return 1
-    ok("orphan reap tick (#2396) coverage clean")
-    return 0
-
-
 def cmd_storm_clear_health_pass_coverage():
     """Issue #2639: storm-clear → forced region health check + auto min-dirty / deferred drain.
 
@@ -11485,57 +11159,6 @@ def cmd_sync_remount_anon_coverage():
         fail("sync remount anon (#2637) coverage contract rows failed")
         return 1
     ok("sync remount anon (#2637) coverage clean")
-    return 0
-
-
-def cmd_join_drain_reclaim_still_running_coverage():
-    """Issue #2397: reclaimed vs body-still-running after join-drain residual.
-
-    still-running gauge + body-retired counter; query:orch-module-stats keys;
-    zero cost on Ok join path.
-    """
-    print(f"{B}=== join-drain reclaim still-running coverage (#2397) ==={N}")
-    script = COVERAGE_CHECKS / "check_join_drain_reclaim_still_running_2397.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("join-drain reclaim still-running (#2397) coverage contract rows failed")
-        return 1
-    ok("join-drain reclaim still-running (#2397) coverage clean")
-    return 0
-
-
-def cmd_residual_body_age_coverage():
-    """Issue #2636: residual reclaim observability — body-age + env-opt-in force-safepoint.
-
-    Per-fiber body_reclaim_start_ns timestamp at mark_reclaimed; finalize
-    on body exit or Fiber dtor (CAS-update age_ms_max, age_ms_sum,
-    age_samples); OrchModuleStats mirror; env-flag-gated force-safepoint
-    on the env-opt-in path (default ON preserves #2533 production);
-    query:orch-module-stats keys + schema/issue/wired sentinels.
-    """
-    print(f"{B}=== residual body-age coverage (#2636) ==={N}")
-    script = COVERAGE_CHECKS / "check_residual_body_age_coverage.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("residual body-age (#2636) coverage contract rows failed")
-        return 1
-    ok("residual body-age (#2636) coverage clean")
-    return 0
-
-
-def cmd_mailbox_bp_recent_window_coverage():
-    """Issue #2398: mailbox_bp_recent_total quiet-period window for BP admit.
-
-    Sliding quiet period after last BP so spawn admit recovers without restart;
-    send_backpressure_total stays cumulative; threshold=0 zero cost.
-    """
-    print(f"{B}=== mailbox BP recent window coverage (#2398) ==={N}")
-    script = COVERAGE_CHECKS / "check_mailbox_bp_recent_window_2398.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("mailbox BP recent window (#2398) coverage contract rows failed")
-        return 1
-    ok("mailbox BP recent window (#2398) coverage clean")
     return 0
 
 
@@ -11753,22 +11376,6 @@ def cmd_reload_recovery_playbook_2953_coverage():
     return 0
 
 
-def cmd_parallel_isolation_level_coverage():
-    """Issue #2400: parallel-intend batch hash isolation-level enum.
-
-    serialized | best-effort-pure | none; additive keys; pure is never
-    advertised as transactional isolation.
-    """
-    print(f"{B}=== parallel isolation-level coverage (#2400) ==={N}")
-    script = COVERAGE_CHECKS / "check_parallel_isolation_level_2400.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("parallel isolation-level (#2400) coverage contract rows failed")
-        return 1
-    ok("parallel isolation-level (#2400) coverage clean")
-    return 0
-
-
 def cmd_pure_parallel_isolation_wording_coverage():
     """Issue #2593: forbid advertising parallel-intend :pure #t as
     transactional isolation (wording-drift gate).
@@ -11787,86 +11394,6 @@ def cmd_pure_parallel_isolation_wording_coverage():
         fail("pure parallel isolation wording (#2593) drift detected")
         return 1
     ok("pure parallel isolation wording (#2593) clean (no drift)")
-    return 0
-
-
-def cmd_audit_mid_fallback_slo_2594_coverage():
-    """Issue #2594: audit mid-fallback 率 SLO → security-health 降级标志.
-
-    Pure gate: rate_bp = 10000 * fallback_gen / max(1, contextual_total).
-    Production + rate > SLO → arm degraded posture / `mid-fallback-slo-breach`.
-    Soft / sandbox=off → observe only (never arm). SLO env override
-    AURA_MID_FALLBACK_SLO_BP (default 500 = 5%).
-    """
-    print(f"{B}=== audit mid-fallback SLO coverage (#2594) ==={N}")
-    script = COVERAGE_CHECKS / "check_audit_mid_fallback_slo_2594.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("audit mid-fallback SLO (#2594) coverage contract rows failed")
-        return 1
-    ok("audit mid-fallback SLO (#2594) coverage clean")
-    return 0
-
-
-def cmd_densify_unified_gate_2595_coverage():
-    """Issue #2595: unify densify success gate
-    (pin ∧ untracked ∧ RootRemap ∧ EnvFrame scan ∧ panic residual).
-
-    Closes the half-green densify window: DensifyConsistencyReport gains
-    untracked_ok + panic_residual_ok axes (8 total). Phase 5 captures
-    baselines before compact, computes deltas, ANDs into overall_ok().
-    Additive schema key densify_unified_gate_fail_total bumps in
-    !overall_ok() block. Production default denies new mutate on
-    unified-gate fail (mirrors pin_contract_held gating at #2266).
-    """
-    print(f"{B}=== densify unified gate coverage (#2595) ==={N}")
-    script = COVERAGE_CHECKS / "check_densify_unified_gate_2595.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("densify unified gate (#2595) coverage contract rows failed")
-        return 1
-    ok("densify unified gate (#2595) coverage clean")
-    return 0
-
-
-def cmd_moving_untracked_production_hard_2596_coverage():
-    """Issue #2596: production default AURA_MOVING_UNTRACKED=hard
-    (align with Moving default ON, #2256).
-
-    Closes silent-UAF risk: #2256 made Moving production default ON but
-    #2495 only hard-aborted when explicitly env=hard. Production lock
-    forces the hard abort path so incomplete-remap always blocks under
-    production, with explicit env=off as the operator override. Soft /
-    sandbox=off + env unset keeps observe-only.
-    """
-    print(f"{B}=== moving untracked production hard coverage (#2596) ==={N}")
-    script = COVERAGE_CHECKS / "check_moving_untracked_production_hard_2596.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("moving untracked production hard (#2596) coverage contract rows failed")
-        return 1
-    ok("moving untracked production hard (#2596) coverage clean")
-    return 0
-
-
-def cmd_general_object_pin_auto_wire_2597_coverage():
-    """Issue #2597: auto-wire GeneralObjectPin for all densify-tracked
-    intermediate creates (production default AURA_GENERAL_OBJECT_PIN=required).
-
-    Closes the GeneralObjectPin vs render dual-track gap that lets new
-    mutate/agent/scratch creates land without a pin wire (creating Moving
-    densify untracked externals — #2495). Production lock + operator
-    env always wins (mirror #2596 pattern). GENERAL_OBJECT_PIN_EXEMPT
-    marker documents sites that don't need a wire call (stable handle /
-    RootRemap-registered only).
-    """
-    print(f"{B}=== general object pin auto wire coverage (#2597) ==={N}")
-    script = COVERAGE_CHECKS / "check_general_object_pin_auto_wire_2597.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("general object pin auto wire (#2597) coverage contract rows failed")
-        return 1
-    ok("general object pin auto wire (#2597) coverage clean")
     return 0
 
 
@@ -13562,69 +13089,6 @@ def cmd_type_linear_commit_proof_stamp_2717_coverage():
     return 0
 
 
-def cmd_panic_residual_densify_hard_2598_coverage():
-    """Issue #2598: production densify-after panic residual → hard
-    (align with steal residual hard-AND).
-
-    Closes the #2364 audit_panic_defer_after_densify half-green window
-    under production. Pre-existing soft-clear path is fine for Soft /
-    sandbox, but production / Restricted needs hard-fail when residual
-    panic defer outlives a cleared PanicCheckpoint (long agent loops can
-    Soft-clear residual after densify and hide checkpoint lifecycle bugs).
-    Operator env AURA_PANIC_CONTRACT=soft forces Soft (override).
-    Aligns with steal residual hard-AND #2546.
-    """
-    print(f"{B}=== panic residual densify hard coverage (#2598) ==={N}")
-    script = COVERAGE_CHECKS / "check_panic_residual_densify_hard_2598.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("panic residual densify hard (#2598) coverage contract rows failed")
-        return 1
-    ok("panic residual densify hard (#2598) coverage clean")
-    return 0
-
-
-def cmd_envframe_densify_scan_commit_barrier_2599_coverage():
-    """Issue #2599: EnvFrame densify ownership scan fail enters outermost
-    commit barrier (production-only gating).
-
-    Closes half-green window where densify moved objects + EnvFrame scan
-    fail kept densify_ok=true under production (commit could publish
-    success with stale EnvFrame roots). Soft / sandbox=off → metric only
-    (existing #2497 inject path keeps test ergonomics). Force_rollback
-    authority follows #2545 / #2563 pattern.
-    """
-    print(f"{B}=== envframe densify scan commit barrier coverage (#2599) ==={N}")
-    script = COVERAGE_CHECKS / "check_envframe_densify_scan_commit_barrier_2599.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("envframe densify scan commit barrier (#2599) coverage contract rows failed")
-        return 1
-    ok("envframe densify scan commit barrier (#2599) coverage clean")
-    return 0
-
-
-def cmd_mutation_boundary_shared_exit_2600_coverage():
-    """Issue #2600: shared exit helper for soft fiber boundary + full Guard
-    outermost success paths (refactor closes dual-rail drift).
-
-    Extracts a single stack-light idempotent helper used by both
-    orch_soft_boundary_exit (soft fiber path) and ResidualPolicy::Clear
-    (full Guard outermost). Both perform per-evaluator force-clear +
-    MutationHold release + reconcile. Mirror publish + linear probe remain
-    caller-side (preserves #2515 symmetric mirror + #2545 no-double-count
-    on linear). Soft path keeps #1881 stack-light contract.
-    """
-    print(f"{B}=== mutation boundary shared exit coverage (#2600) ==={N}")
-    script = COVERAGE_CHECKS / "check_mutation_boundary_shared_exit_2600.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("mutation boundary shared exit (#2600) coverage contract rows failed")
-        return 1
-    ok("mutation boundary shared exit (#2600) coverage clean")
-    return 0
-
-
 def cmd_agent_reply_coverage():
     """Issue #2401: agent-reply helper + orch:agent-reply Aura primitive.
 
@@ -13638,38 +13102,6 @@ def cmd_agent_reply_coverage():
         fail("agent-reply (#2401) coverage contract rows failed")
         return 1
     ok("agent-reply (#2401) coverage clean")
-    return 0
-
-
-def cmd_restamp_incremental_coverage():
-    """Issue #2402: incremental restamp default + wrap cost control.
-
-    AURA_RESTAMP_POLICY=full|incremental|auto; last-call cost keys;
-    schema-2402 on query:generation-stats.
-    """
-    print(f"{B}=== restamp incremental coverage (#2402) ==={N}")
-    script = COVERAGE_CHECKS / "check_restamp_incremental_2402.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("restamp incremental (#2402) coverage contract rows failed")
-        return 1
-    ok("restamp incremental (#2402) coverage clean")
-    return 0
-
-
-def cmd_query_index_composite_coverage():
-    """Issue #2403: composite index + shared_lock hold SLO for pattern/where.
-
-    Constrained tag+arity±marker hits composite index; miss only on
-    unconstrained; query-index-hit-rate + shared-lock-us keys schema-2403.
-    """
-    print(f"{B}=== query-index composite coverage (#2403) ==={N}")
-    script = COVERAGE_CHECKS / "check_query_index_composite_2403.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("query-index composite (#2403) coverage contract rows failed")
-        return 1
-    ok("query-index composite (#2403) coverage clean")
     return 0
 
 
@@ -13939,70 +13371,6 @@ def cmd_lifetime_contract_snapshot_coverage():
     return 0
 
 
-def cmd_type_timeout_repair_graph_coverage():
-    """Issue #2343: TIMEOUT/CONFLICT var↔constraint graph for Agent repair.
-
-    Validates UnresolvedGraphEdge export, suggested_roots ranking, SOLVED
-    zero-cost path, additive schema-2343 query keys, #2284 lineage retained.
-    """
-    print(f"{B}=== type-timeout-repair graph coverage (#2343) ==={N}")
-    script = COVERAGE_CHECKS / "check_type_timeout_repair_graph_2343.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("type-timeout-repair graph coverage contract rows failed")
-        return 1
-    ok("type-timeout-repair graph coverage clean")
-    return 0
-
-
-def cmd_escape_gate_key_contract_coverage():
-    """Issue #2344: escape-gate publish key ↔ lower key contract (Option A).
-
-    Wrong-key miss must never elide a binding blocked under any live summary;
-    matching key retains #2286 isolation + zero-cost happy path.
-    """
-    print(f"{B}=== escape-gate key contract coverage (#2344) ==={N}")
-    script = COVERAGE_CHECKS / "check_escape_gate_key_contract_2344.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("escape-gate key contract coverage contract rows failed")
-        return 1
-    ok("escape-gate key contract coverage clean")
-    return 0
-
-
-def cmd_composite_empty_cs_hard_coverage():
-    """Issue #2345: production composite empty-CS hard-reject (anti false-green).
-
-    expected_partial + empty CS → hard miss under production/Full; soft
-    observe under Sampled/dev; vacuous structural batches stay OK.
-    """
-    print(f"{B}=== composite empty-CS hard-reject coverage (#2345) ==={N}")
-    script = COVERAGE_CHECKS / "check_composite_empty_cs_hard_2345.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("composite empty-CS hard-reject coverage contract rows failed")
-        return 1
-    ok("composite empty-CS hard-reject coverage clean")
-    return 0
-
-
-def cmd_composite_cs_signature_matrix_coverage():
-    """Issue #2509: symmetric expected_partial ↔ commit_cs_has_work matrix.
-
-    true|false hard-miss (#2345); true|true must SDO; false|false structural;
-    false|true unexpected_cs_work observe + never silent skip under Full.
-    """
-    print(f"{B}=== composite CS signature matrix coverage (#2509) ==={N}")
-    script = COVERAGE_CHECKS / "check_composite_cs_signature_matrix_2509.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("composite CS signature matrix coverage contract rows failed")
-        return 1
-    ok("composite CS signature matrix coverage clean")
-    return 0
-
-
 def cmd_steal_snapshot_hard_invariant_coverage():
     """Issue #2346: resume MutationSafetySnapshot hard-invariant (fail-closed).
 
@@ -14016,22 +13384,6 @@ def cmd_steal_snapshot_hard_invariant_coverage():
         fail("steal-snapshot hard-invariant coverage contract rows failed")
         return 1
     ok("steal-snapshot hard-invariant coverage clean")
-    return 0
-
-
-def cmd_steal_safety_ticket_coverage():
-    """Issue #2518: MutationSafetySnapshot sequence ticket (sample→resume).
-
-    Steal stamps ticket from even safety_seq_; resume mismatch after mid-window
-    Guard publish → hard-fail under production; Soft metric-only.
-    """
-    print(f"{B}=== steal safety ticket coverage (#2518) ==={N}")
-    script = COVERAGE_CHECKS / "check_steal_safety_ticket_2518.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("steal safety ticket (#2518) coverage contract rows failed")
-        return 1
-    ok("steal safety ticket (#2518) coverage clean")
     return 0
 
 
@@ -14116,22 +13468,6 @@ def cmd_steal_complete_strong_entry_coverage():
     return 0
 
 
-def cmd_mutate_mailbox_strict_coverage():
-    """Issue #2347: MultiFiberMailbox Guard-live blocking recv hard audit.
-
-    Soft: Policy A soft counter only. Strict / production: hard-total +
-    optional Guard-window threshold force-rollback. Happy path: depth==0.
-    """
-    print(f"{B}=== mutate-mailbox Strict hard audit coverage (#2347) ==={N}")
-    script = COVERAGE_CHECKS / "check_mutate_mailbox_strict_2347.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("mutate-mailbox Strict hard audit coverage contract rows failed")
-        return 1
-    ok("mutate-mailbox Strict hard audit coverage clean")
-    return 0
-
-
 def cmd_mailbox_defer_drain_sla_coverage():
     """Issue #2378: mailbox defer drain SLA + hold-blocked latency.
 
@@ -14145,22 +13481,6 @@ def cmd_mailbox_defer_drain_sla_coverage():
         fail("mailbox defer drain SLA (#2378) coverage contract rows failed")
         return 1
     ok("mailbox defer drain SLA (#2378) coverage clean")
-    return 0
-
-
-def cmd_mailbox_hold_exit_drain_coverage():
-    """Issue #2511: outermost Guard exit forced mailbox deferred drain.
-
-    Budget AURA_MAILBOX_HOLD_DRAIN_BUDGET_US (default 1000 µs). Soft: retain
-    + starvation. Strict/production: force-resolve. Free when depth 0.
-    """
-    print(f"{B}=== mailbox hold-exit drain coverage (#2511) ==={N}")
-    script = COVERAGE_CHECKS / "check_mailbox_hold_exit_drain_2511.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("mailbox hold-exit drain (#2511) coverage contract rows failed")
-        return 1
-    ok("mailbox hold-exit drain (#2511) coverage clean")
     return 0
 
 
@@ -14188,22 +13508,6 @@ def cmd_mailbox_under_boundary_wait_2903():
     return cmd_mailbox_under_boundary_wait_2903_coverage()
 
 
-def cmd_bidirectional_match_coverage():
-    """Issue #2348: bidirectional check-mode for ADT match + GuardShape.
-
-    Match check_flat_match under expected types; GuardShape If narrowing;
-    opt-out when bidirectional_mode=false; schema-2348 observability.
-    """
-    print(f"{B}=== bidirectional match check-mode coverage (#2348) ==={N}")
-    script = COVERAGE_CHECKS / "check_bidirectional_match_2348.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("bidirectional match check-mode coverage contract rows failed")
-        return 1
-    ok("bidirectional match check-mode coverage clean")
-    return 0
-
-
 def cmd_empty_pair_no_dynamic_3432_coverage():
     """Issue #3432: covered Pair empty arm must not cache Dynamic.
 
@@ -14221,85 +13525,6 @@ def cmd_empty_pair_no_dynamic_3432_coverage():
         fail("empty Pair no-Dynamic (#3432) coverage contract rows failed")
         return 1
     ok("empty Pair no-Dynamic (#3432) coverage clean")
-    return 0
-
-
-def cmd_mutation_hold_slo_coverage():
-    """Issue #2349: outermost hold SLO circuit-breaker (production fail path).
-
-    Soft/sandbox: metric only. Production default: hold > SLO → success_flag
-    false. Env AURA_MUTATION_HOLD_SLO_US=0 disables. No second timer.
-    """
-    print(f"{B}=== mutation hold SLO circuit-breaker coverage (#2349) ==={N}")
-    script = COVERAGE_CHECKS / "check_mutation_hold_slo_2349.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("mutation hold SLO circuit-breaker coverage contract rows failed")
-        return 1
-    ok("mutation hold SLO circuit-breaker coverage clean")
-    return 0
-
-
-def cmd_mutation_hold_estimate_coverage():
-    """Issue #2405: query:mutation-hold-estimate for Agent batch planning.
-
-    Recent outermost hold p50/p99 sample ring; budget/slo; dirty estimate;
-    recommend-split heuristic; schema-2405.
-    """
-    print(f"{B}=== mutation hold estimate coverage (#2405) ==={N}")
-    script = COVERAGE_CHECKS / "check_mutation_hold_estimate_2405.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("mutation hold estimate (#2405) coverage contract rows failed")
-        return 1
-    ok("mutation hold estimate (#2405) coverage clean")
-    return 0
-
-
-def cmd_mutation_hold_live_coverage():
-    """Issue #2517: real-time longest outermost MutationBoundary hold probe.
-
-    Process-wide fiber_id + start_ns + duration for Agent self-degrade;
-    coexist with #2405 estimate; best-effort CAS.
-    """
-    print(f"{B}=== mutation hold live coverage (#2517) ==={N}")
-    script = COVERAGE_CHECKS / "check_mutation_hold_live_2517.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("mutation hold live (#2517) coverage contract rows failed")
-        return 1
-    ok("mutation hold live (#2517) coverage clean")
-    return 0
-
-
-def cmd_pcv_tls_scratch_coverage():
-    """Issue #2406: TLS freelist for exclusive PCV unique-inplace.
-
-    Foundation for #2521 production default ON; tests use override for
-    on/off. SafePCVSpan unchanged; schema-2406 on query:pcv-hotpath-stats.
-    """
-    print(f"{B}=== pcv TLS scratch coverage (#2406) ==={N}")
-    script = COVERAGE_CHECKS / "check_pcv_tls_scratch_2406.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("pcv TLS scratch (#2406) coverage contract rows failed")
-        return 1
-    ok("pcv TLS scratch (#2406) coverage clean")
-    return 0
-
-
-def cmd_pcv_tls_default_on_coverage():
-    """Issue #2521: production default-on PCV TLS freelist.
-
-    AURA_PCV_TLS=0 forces off; exclusive stress TLS hits; schema-2521.
-    """
-    print(f"{B}=== pcv TLS default-on coverage (#2521) ==={N}")
-    script = COVERAGE_CHECKS / "check_pcv_tls_default_on_2521.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("pcv TLS default-on (#2521) coverage contract rows failed")
-        return 1
-    ok("pcv TLS default-on (#2521) coverage clean")
     return 0
 
 
@@ -14357,9 +13582,14 @@ def cmd_pcv_span_stale_coverage_3167():
     span (AC2 zero extra). Production contract; Soft/Off unchanged.
     #2906 (flatast-locked-move-out) MUST NOT regress — fingerprint is
     observation-only, additive counter only.
+    #3167 wrapper relocated to top-level scripts/ by the coverage
+    restructure (d375fc915) — path corrected accordingly (#cleanup).
     """
     print(f"{B}=== pcv span stale coverage (#3167) ==={N}")
-    script = COVERAGE_CHECKS / "check_pcv_span_stale_coverage_3167.py"
+    script = ROOT / "scripts" / "check_pcv_span_stale_coverage_3167.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
     r = _coverage_run(script)
     if r.returncode != 0:
         fail("pcv span stale (#3167) coverage contract rows failed")
@@ -14405,21 +13635,6 @@ def cmd_cascade_rearm_new_edge_only_3168():
         fail("cascade rearm new-edge-only (#3168) coverage contract rows failed")
         return 1
     ok("cascade rearm new-edge-only (#3168) coverage clean")
-    return 0
-
-
-def cmd_batch_dirty_cascade_coverage():
-    """Issue #2522: batch dirty cascade (mark_blocks_dirty + single bump).
-
-    One generation/fence advance per batch; finish_dirty_sync retained.
-    """
-    print(f"{B}=== batch dirty cascade coverage (#2522) ==={N}")
-    script = COVERAGE_CHECKS / "check_batch_dirty_cascade_2522.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("batch dirty cascade (#2522) coverage contract rows failed")
-        return 1
-    ok("batch dirty cascade (#2522) coverage clean")
     return 0
 
 
@@ -15659,21 +14874,6 @@ def cmd_pending_recovery_drain_2690_coverage():
     return 0
 
 
-def cmd_workspace_mtx_contention_coverage():
-    """Issue #2523: residual workspace_mtx contention stats + soft path.
-
-    query:workspace-mtx-contention-stats; optimistic hits; region soft path.
-    """
-    print(f"{B}=== workspace_mtx contention residual coverage (#2523) ==={N}")
-    script = COVERAGE_CHECKS / "check_workspace_mtx_contention_2523.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("workspace_mtx contention residual (#2523) coverage contract rows failed")
-        return 1
-    ok("workspace_mtx contention residual (#2523) coverage clean")
-    return 0
-
-
 def cmd_module_partition_map_coverage():
     """Issue #2524: giant module partition map + pass_manager Phase C.
 
@@ -15686,36 +14886,6 @@ def cmd_module_partition_map_coverage():
         fail("module partition map (#2524) coverage contract rows failed")
         return 1
     ok("module partition map (#2524) coverage clean")
-    return 0
-
-
-def cmd_query_hygiene_default_coverage():
-    """Issue #2525: unconstrained query hygiene residual default skip.
-
-    query:filter + pattern MacroIntroduced skip; schema-2525 stats.
-    """
-    print(f"{B}=== query hygiene residual default coverage (#2525) ==={N}")
-    script = COVERAGE_CHECKS / "check_query_hygiene_default_2525.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("query hygiene residual default (#2525) coverage contract rows failed")
-        return 1
-    ok("query hygiene residual default (#2525) coverage clean")
-    return 0
-
-
-def cmd_shape_storm_adaptive_coverage():
-    """Issue #2526: adaptive deopt-storm threshold × LayoutStamp.
-
-    Compact-dominated stable pressure raises thr / suppresses global storm.
-    """
-    print(f"{B}=== shape storm adaptive coverage (#2526) ==={N}")
-    script = COVERAGE_CHECKS / "check_shape_storm_adaptive_2526.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("shape storm adaptive (#2526) coverage contract rows failed")
-        return 1
-    ok("shape storm adaptive (#2526) coverage clean")
     return 0
 
 
@@ -15900,21 +15070,6 @@ def cmd_structural_metadata_lock_order_coverage():
     return 0
 
 
-def cmd_tag_arity_index_lock_coverage():
-    """Issue #2419: tag_arity_index_ map lock vs concurrent rebuild.
-
-    Dedicated shared_mutex; find shared, rebuild exclusive.
-    """
-    print(f"{B}=== tag_arity_index lock coverage (#2419) ==={N}")
-    script = COVERAGE_CHECKS / "check_tag_arity_index_lock_2419.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("tag_arity_index lock (#2419) coverage contract rows failed")
-        return 1
-    ok("tag_arity_index lock (#2419) coverage clean")
-    return 0
-
-
 def cmd_tag_arity_key_hash_coverage():
     """Issue #2420: TagArityKeyHash pack + splitmix finalizer.
 
@@ -16073,36 +15228,6 @@ def cmd_gc_defer_arm_fetch_or_coverage():
     return 0
 
 
-def cmd_gc_defer_overflow_policy_atomic_coverage():
-    """Issue #2429: overflow policy check+arm atomic (HardFail no bypass race).
-
-    Policy setters take g_gc_defer_armed_mtx with try_arm overflow path.
-    """
-    print(f"{B}=== gc defer overflow policy atomic coverage (#2429) ==={N}")
-    script = COVERAGE_CHECKS / "check_gc_defer_overflow_policy_atomic_2429.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("gc defer overflow policy atomic (#2429) coverage contract rows failed")
-        return 1
-    ok("gc defer overflow policy atomic (#2429) coverage clean")
-    return 0
-
-
-def cmd_capability_effect_stats_snapshot_coverage():
-    """Issue #2430: snapshot_capability_effect_stats double-check (#1840).
-
-    16-retry acquire loads; verify enforced/denied/grants/checks stable.
-    """
-    print(f"{B}=== capability effect stats snapshot coverage (#2430) ==={N}")
-    script = COVERAGE_CHECKS / "check_capability_effect_stats_snapshot_2430.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("capability effect stats snapshot (#2430) coverage contract rows failed")
-        return 1
-    ok("capability effect stats snapshot (#2430) coverage clean")
-    return 0
-
-
 def cmd_dead_coercion_columnar_coverage():
     """Issue #2431: pure columnar DeadCoercionElimination on IRModuleV2.
 
@@ -16115,21 +15240,6 @@ def cmd_dead_coercion_columnar_coverage():
         fail("dead coercion columnar (#2431) coverage contract rows failed")
         return 1
     ok("dead coercion columnar (#2431) coverage clean")
-    return 0
-
-
-def cmd_ir_soa_layout_stamp_coverage():
-    """Issue #2432: IR SoA generation fence on LayoutStamp (fiber resume).
-
-    8th field ir_soa_generation; ir_generation_fence_hit_total metric.
-    """
-    print(f"{B}=== ir soa layout stamp coverage (#2432) ==={N}")
-    script = COVERAGE_CHECKS / "check_ir_soa_layout_stamp_2432.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("ir soa layout stamp (#2432) coverage contract rows failed")
-        return 1
-    ok("ir soa layout stamp (#2432) coverage clean")
     return 0
 
 
@@ -16187,37 +15297,6 @@ def cmd_soa_residual_production_smoke_coverage():
         fail("soa residual production smoke (#2618) coverage contract rows failed")
         return 1
     ok("soa residual production smoke (#2618) coverage clean")
-    return 0
-
-
-def cmd_arena_moving_densify_health_coverage():
-    """Issue #2619: Agent-visible Moving densify health (pairs #2596).
-
-    query:arena-moving-densify-health exposes pin/untracked/production-hard
-    and would-allow-mutate; soft throttle under production hard only.
-    """
-    print(f"{B}=== arena moving densify health coverage (#2619) ==={N}")
-    script = COVERAGE_CHECKS / "check_arena_moving_densify_health_2619.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("arena moving densify health (#2619) coverage contract rows failed")
-        return 1
-    ok("arena moving densify health (#2619) coverage clean")
-    return 0
-
-
-def cmd_coercion_unify_incomplete_skip_coverage():
-    """Issue #2620: Soft never inserts incomplete CoercionNodes (unify surface).
-
-    Default skip + force-Full arm; dual-require drop retained; #2317 canary env.
-    """
-    print(f"{B}=== coercion unify incomplete skip coverage (#2620) ==={N}")
-    script = COVERAGE_CHECKS / "check_coercion_unify_incomplete_skip_2620.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("coercion unify incomplete skip (#2620) coverage contract rows failed")
-        return 1
-    ok("coercion unify incomplete skip (#2620) coverage clean")
     return 0
 
 
@@ -16652,36 +15731,6 @@ def cmd_query_result_soft_prod_transition_coverage():
     return 0
 
 
-def cmd_partial_cone_commit_gate_coverage():
-    """Issue #2621: partial cone truncate → commit fidelity (no silent prod success).
-
-    Soft observe; production / AURA_PARTIAL_CONE_COMMIT_HARD deny cone_truncate.
-    """
-    print(f"{B}=== partial cone commit gate coverage (#2621) ==={N}")
-    script = COVERAGE_CHECKS / "check_partial_cone_commit_gate_2621.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("partial cone commit gate (#2621) coverage contract rows failed")
-        return 1
-    ok("partial cone commit gate (#2621) coverage clean")
-    return 0
-
-
-def cmd_occurrence_dirty_key_authority_coverage():
-    """Issue #2622: single dirty-key authority for OccurrenceGoal + predicate_memo.
-
-    sync_occurrence_after_dirty joint invalidate; steal fence memo joint clear.
-    """
-    print(f"{B}=== occurrence dirty-key authority coverage (#2622) ==={N}")
-    script = COVERAGE_CHECKS / "check_occurrence_dirty_key_authority_2622.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("occurrence dirty-key authority (#2622) coverage contract rows failed")
-        return 1
-    ok("occurrence dirty-key authority (#2622) coverage clean")
-    return 0
-
-
 def cmd_layout_stamp_equality_8field_coverage():
     """Issue #2519: LayoutStamp::operator== full 8-field equality.
 
@@ -16695,21 +15744,6 @@ def cmd_layout_stamp_equality_8field_coverage():
         fail("layout stamp equality 8-field (#2519) coverage contract rows failed")
         return 1
     ok("layout stamp equality 8-field (#2519) coverage clean")
-    return 0
-
-
-def cmd_shape_high_mutation_storm_coverage():
-    """Issue #2433: HighMutation default-on + deopt-storm × LayoutStamp.
-
-    apply_preset knobs, storm enter isolation, query:shape-storm-health.
-    """
-    print(f"{B}=== shape high mutation storm coverage (#2433) ==={N}")
-    script = COVERAGE_CHECKS / "check_shape_high_mutation_storm_2433.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("shape high mutation storm (#2433) coverage contract rows failed")
-        return 1
-    ok("shape high mutation storm (#2433) coverage clean")
     return 0
 
 
@@ -16735,21 +15769,6 @@ def cmd_hot_pass_hard_dod_coverage():
         fail("production pipeline purity (#3329) coverage contract rows failed")
         return 1
     ok("production pipeline purity (#3329) coverage clean")
-    return 0
-
-
-def cmd_hot_children_columnar_coverage():
-    """Issue #2614: force ChildColumnar/SoAColumnarFull on walk/query/PCV hot templates.
-
-    Compile-time requires + static_assert; walk_children_hot; no design docs.
-    """
-    print(f"{B}=== hot children columnar coverage (#2614) ==={N}")
-    script = COVERAGE_CHECKS / "check_hot_children_columnar_2614.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("hot children columnar (#2614) coverage contract rows failed")
-        return 1
-    ok("hot children columnar (#2614) coverage clean")
     return 0
 
 
@@ -17584,141 +16603,6 @@ def cmd_hot_contract_view_at_harden_3428_coverage():
     return 0
 
 
-def cmd_post_compact_lifecycle_coverage():
-    """Issue #2436: post-compact Arena × IR SoA × Shape × fiber lifecycle.
-
-    Ordered steps; LayoutStamp after compact; soft_skip zero-cost path.
-    """
-    print(f"{B}=== post compact lifecycle coverage (#2436) ==={N}")
-    script = COVERAGE_CHECKS / "check_post_compact_lifecycle_2436.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("post compact lifecycle (#2436) coverage contract rows failed")
-        return 1
-    ok("post compact lifecycle (#2436) coverage clean")
-    return 0
-
-
-def cmd_gc_defer_reconcile_cas_coverage():
-    """Issue #2437: reconcile_gc_defer_bits_after_clear CAS fence + repair.
-
-    Concurrent arm must not lose Panic bit; orphan clear still works.
-    """
-    print(f"{B}=== gc defer reconcile cas coverage (#2437) ==={N}")
-    script = COVERAGE_CHECKS / "check_gc_defer_reconcile_cas_2437.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("gc defer reconcile cas (#2437) coverage contract rows failed")
-        return 1
-    ok("gc defer reconcile cas (#2437) coverage clean")
-    return 0
-
-
-def cmd_arena_compact_notify_lifecycle_coverage():
-    """Issue #2438: arena compact notify_* TOCTOU / teardown drain.
-
-    clear_arena_compact_notify_hooks + in_flight wait before free.
-    """
-    print(f"{B}=== arena compact notify lifecycle coverage (#2438) ==={N}")
-    script = COVERAGE_CHECKS / "check_arena_compact_notify_lifecycle_2438.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("arena compact notify lifecycle (#2438) coverage contract rows failed")
-        return 1
-    ok("arena compact notify lifecycle (#2438) coverage clean")
-    return 0
-
-
-def cmd_verification_dirty_bits_lock_coverage():
-    """Issue #2439: apply_verification_dirty_bits metric double-count fix.
-
-    Exclusive dirty_column_mtx_ around newly_set RMW.
-    """
-    print(f"{B}=== verification dirty bits lock coverage (#2439) ==={N}")
-    script = COVERAGE_CHECKS / "check_verification_dirty_bits_lock_2439.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("verification dirty bits lock (#2439) coverage contract rows failed")
-        return 1
-    ok("verification dirty bits lock (#2439) coverage clean")
-    return 0
-
-
-def cmd_soa_column_atomic_coverage():
-    """Issue #2440: 4 SoA side-table columns atomic_ref + dirty_column_mtx_.
-
-    verify_dirty_ / verification_dirty_ / last_seen_epoch_ / occ_stale_.
-    """
-    print(f"{B}=== SoA column atomic coverage (#2440) ==={N}")
-    script = COVERAGE_CHECKS / "check_soa_column_atomic_2440.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("SoA column atomic (#2440) coverage contract rows failed")
-        return 1
-    ok("SoA column atomic (#2440) coverage clean")
-    return 0
-
-
-def cmd_macro_dirty_bits_lock_coverage():
-    """Issue #2441: apply_macro_dirty_bits metric double-count fix.
-
-    Exclusive dirty_column_mtx_ + atomic fetch_or for newly_set.
-    """
-    print(f"{B}=== macro dirty bits lock coverage (#2441) ==={N}")
-    script = COVERAGE_CHECKS / "check_macro_dirty_bits_lock_2441.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("macro dirty bits lock (#2441) coverage contract rows failed")
-        return 1
-    ok("macro dirty bits lock (#2441) coverage clean")
-    return 0
-
-
-def cmd_clear_macro_dirty_concurrent_coverage():
-    """Issue #2442: clear_macro_dirty_all concurrent-safe vs macro_dirty readers.
-
-    Exclusive dirty_column_mtx_ + atomic store per cell.
-    """
-    print(f"{B}=== clear_macro_dirty concurrent coverage (#2442) ==={N}")
-    script = COVERAGE_CHECKS / "check_clear_macro_dirty_concurrent_2442.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("clear_macro_dirty concurrent (#2442) coverage contract rows failed")
-        return 1
-    ok("clear_macro_dirty concurrent (#2442) coverage clean")
-    return 0
-
-
-def cmd_region_dense_atomic_coverage():
-    """Issue #2443: region_by_sym/lambda_dense atomic_ref + region_table_mtx_.
-
-    Concurrent parser write + lowering read without torn uint8.
-    """
-    print(f"{B}=== region dense atomic coverage (#2443) ==={N}")
-    script = COVERAGE_CHECKS / "check_region_dense_atomic_2443.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("region dense atomic (#2443) coverage contract rows failed")
-        return 1
-    ok("region dense atomic (#2443) coverage clean")
-    return 0
-
-
-def cmd_region_sym_dense_race_coverage():
-    """Issue #2444: region_by_sym_dense_ race-free vs concurrent set/get.
-
-    region_table_mtx_ + atomic_ref; test extended in test_ast_concurrency.
-    """
-    print(f"{B}=== region_by_sym_dense race coverage (#2444) ==={N}")
-    script = COVERAGE_CHECKS / "check_region_sym_dense_race_2444.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("region_by_sym_dense race (#2444) coverage contract rows failed")
-        return 1
-    ok("region_by_sym_dense race (#2444) coverage clean")
-    return 0
-
-
 def cmd_add_node_builder_contract_coverage():
     """Issue #2445: add_node + add_* builder single-threaded mutation contract.
 
@@ -17731,36 +16615,6 @@ def cmd_add_node_builder_contract_coverage():
         fail("add_node builder contract (#2445) coverage contract rows failed")
         return 1
     ok("add_node builder contract (#2445) coverage clean")
-    return 0
-
-
-def cmd_region_lambda_dense_race_coverage():
-    """Issue #2446: region_by_lambda_dense_ + map race-free vs concurrent set/get.
-
-    region_table_mtx_ + atomic_ref; test extended in test_ast_concurrency.
-    """
-    print(f"{B}=== region_by_lambda_dense race coverage (#2446) ==={N}")
-    script = COVERAGE_CHECKS / "check_region_lambda_dense_race_2446.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("region_by_lambda_dense race (#2446) coverage contract rows failed")
-        return 1
-    ok("region_by_lambda_dense race (#2446) coverage clean")
-    return 0
-
-
-def cmd_region_sym_map_race_coverage():
-    """Issue #2447: region_by_sym_ concurrent insert + find race-free.
-
-    region_table_mtx_ exclusive insert / shared find; map path via high SymId.
-    """
-    print(f"{B}=== region_by_sym_ map race coverage (#2447) ==={N}")
-    script = COVERAGE_CHECKS / "check_region_sym_map_race_2447.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("region_by_sym_ map race (#2447) coverage contract rows failed")
-        return 1
-    ok("region_by_sym_ map race (#2447) coverage clean")
     return 0
 
 
@@ -17779,51 +16633,6 @@ def cmd_defines_referencing_sym_coverage():
     return 0
 
 
-def cmd_param_data_mutation_contract_coverage():
-    """Issue #2449: param_data_ single-threaded mutation contract.
-
-    Builder insert under parser-only contract; slice readers post-parse.
-    """
-    print(f"{B}=== param_data_ mutation contract coverage (#2449) ==={N}")
-    script = COVERAGE_CHECKS / "check_param_data_mutation_contract_2449.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("param_data_ mutation contract (#2449) coverage contract rows failed")
-        return 1
-    ok("param_data_ mutation contract (#2449) coverage clean")
-    return 0
-
-
-def cmd_param_annot_mutation_contract_coverage():
-    """Issue #2450: param_annot_data_ single-threaded mutation contract.
-
-    Builder resize under parser-only contract; tandem with param_data_ (#2449).
-    """
-    print(f"{B}=== param_annot_data_ mutation contract coverage (#2450) ==={N}")
-    script = COVERAGE_CHECKS / "check_param_annot_mutation_contract_2450.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("param_annot_data_ mutation contract (#2450) coverage contract rows failed")
-        return 1
-    ok("param_annot_data_ mutation contract (#2450) coverage clean")
-    return 0
-
-
-def cmd_param_begin_count_publish_coverage():
-    """Issue #2451: param_begin_ + param_count_ publish order (TOCTOU).
-
-    Count last after arena fill; post-parse reader contract.
-    """
-    print(f"{B}=== param_begin_count publish coverage (#2451) ==={N}")
-    script = COVERAGE_CHECKS / "check_param_begin_count_publish_2451.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("param_begin_count publish (#2451) coverage contract rows failed")
-        return 1
-    ok("param_begin_count publish (#2451) coverage clean")
-    return 0
-
-
 def cmd_incoming_parent_dirty_atomic_2452_coverage():
     """Issue #2452: incoming_parent_index_dirty_ atomic (stale-free edges).
 
@@ -17836,36 +16645,6 @@ def cmd_incoming_parent_dirty_atomic_2452_coverage():
         fail("incoming_parent_dirty atomic (#2452) coverage contract rows failed")
         return 1
     ok("incoming_parent_dirty atomic (#2452) coverage clean")
-    return 0
-
-
-def cmd_get_nodeview_snapshot_coverage():
-    """Issue #2453: get(NodeId) NodeView multi-column snapshot contract.
-
-    Post-parse / workspace_mtx serial; concurrent multi-reader on stable flat.
-    """
-    print(f"{B}=== get NodeView snapshot coverage (#2453) ==={N}")
-    script = COVERAGE_CHECKS / "check_get_nodeview_snapshot_2453.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("get NodeView snapshot (#2453) coverage contract rows failed")
-        return 1
-    ok("get NodeView snapshot (#2453) coverage clean")
-    return 0
-
-
-def cmd_raii_guard_flatast_lifetime_coverage():
-    """Issue #2454: RAII mutation guards FlatAST-move lifetime contract.
-
-    Guards must not outlive FlatAST; drop before move/swap.
-    """
-    print(f"{B}=== RAII guard FlatAST lifetime coverage (#2454) ==={N}")
-    script = COVERAGE_CHECKS / "check_raii_guard_flatast_lifetime_2454.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("RAII guard FlatAST lifetime (#2454) coverage contract rows failed")
-        return 1
-    ok("RAII guard FlatAST lifetime (#2454) coverage clean")
     return 0
 
 
@@ -17896,68 +16675,6 @@ def cmd_subtree_uses_sym_template_bloat_coverage():
         fail("subtree_uses_sym single-TU template hoist (#2456) coverage contract rows failed")
         return 1
     ok("subtree_uses_sym single-TU template hoist (#2456) coverage clean")
-    return 0
-
-
-def cmd_mutation_log_cow_copy_coverage():
-    """Issue #2457: FlatAST copy shares mutation_log_ / narrowing_log_ via COW.
-
-    CowPmrVector shared_ptr share-on-copy; first mutate detaches.
-    """
-    print(f"{B}=== mutation_log COW copy coverage (#2457) ==={N}")
-    script = COVERAGE_CHECKS / "check_mutation_log_cow_copy_2457.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("mutation_log COW copy (#2457) coverage contract rows failed")
-        return 1
-    ok("mutation_log COW copy (#2457) coverage clean")
-    return 0
-
-
-def cmd_truncate_commit_gate_coverage():
-    """Issue #2458: truncate-commit Soft observe / Hard full-solve-or-reject.
-
-    Anti half-green: Soft observes; production/Full/HARD full-solves or rejects.
-    """
-    print(f"{B}=== truncate-commit gate coverage (#2458) ==={N}")
-    script = COVERAGE_CHECKS / "check_truncate_commit_gate_2458.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("truncate-commit gate (#2458) coverage contract rows failed")
-        return 1
-    ok("truncate-commit gate (#2458) coverage clean")
-    return 0
-
-
-def cmd_type_system_health_coverage():
-    """Issue #2350: query:type-system-health single Agent score.
-
-    Aggregates provenance completeness, timeout reject rate, linear pin
-    miss rate, layered DCE efficiency into health-bp + force-reason.
-    """
-    print(f"{B}=== type-system-health coverage (#2350) ==={N}")
-    script = COVERAGE_CHECKS / "check_type_system_health_2350.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("type-system-health coverage contract rows failed")
-        return 1
-    ok("type-system-health coverage clean")
-    return 0
-
-
-def cmd_type_system_health_next_action_coverage():
-    """Issue #2462: type-system-health next-action + repair_nodes closed-loop.
-
-    Pure decide_type_system_next_action; additive next-action / repair keys
-    on query:type-system-health without breaking #2350.
-    """
-    print(f"{B}=== type-system-health next-action coverage (#2462) ==={N}")
-    script = COVERAGE_CHECKS / "check_type_system_health_next_action_2462.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("type-system-health next-action (#2462) coverage contract rows failed")
-        return 1
-    ok("type-system-health next-action (#2462) coverage clean")
     return 0
 
 
@@ -18103,21 +16820,6 @@ def cmd_command_line_cap_io_read_coverage():
     return 0
 
 
-def cmd_regex_redos_timeout_coverage():
-    """Issue #2479: regex-* ReDoS wall-clock timeout + size caps.
-
-    AURA_REGEX_TIMEOUT_MS (default 100) + regex_timeout_total metric.
-    """
-    print(f"{B}=== regex ReDoS timeout coverage (#2479) ==={N}")
-    script = COVERAGE_CHECKS / "check_regex_redos_timeout_2479.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("regex ReDoS timeout (#2479) coverage contract rows failed")
-        return 1
-    ok("regex ReDoS timeout (#2479) coverage clean")
-    return 0
-
-
 def cmd_json_parse_number_exception_coverage():
     """Issue #2480: json-parse parse_number catches stod/stoll exceptions.
 
@@ -18220,38 +16922,6 @@ def cmd_gc_heap_cells_clear_coverage():
         fail("gc-heap cells clear (#2486) coverage contract rows failed")
         return 1
     ok("gc-heap cells clear (#2486) coverage clean")
-    return 0
-
-
-def cmd_mutation_concurrency_health_coverage():
-    """Issue #2379: query:mutation-concurrency-health single Agent score.
-
-    Aggregates hold SLO, steal force-deopt, residual defer, densify fail,
-    mailbox starvation into health-bp + force-reason priority.
-    """
-    print(f"{B}=== mutation-concurrency-health coverage (#2379) ==={N}")
-    script = COVERAGE_CHECKS / "check_mutation_concurrency_health_2379.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("mutation-concurrency-health coverage contract rows failed")
-        return 1
-    ok("mutation-concurrency-health coverage clean")
-    return 0
-
-
-def cmd_steal_layout_stamp_coverage():
-    """Issue #2351: steal-complete LayoutStamp dual-check before resume.
-
-    Matching stamp: no mismatch. Mismatch: steal counter + force dual-check.
-    No stamp: zero cost. Schema-2351 additive.
-    """
-    print(f"{B}=== steal LayoutStamp dual-check coverage (#2351) ==={N}")
-    script = COVERAGE_CHECKS / "check_steal_layout_stamp_2351.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("steal LayoutStamp dual-check coverage contract rows failed")
-        return 1
-    ok("steal LayoutStamp dual-check coverage clean")
     return 0
 
 
@@ -18382,22 +17052,6 @@ def cmd_occurrence_cone_truncate_drift_2672_coverage():
     return 0
 
 
-def cmd_anonymous_residual_stable_id_policy_coverage():
-    """Issue #2605: explicit anonymous / residual sid=0 policy.
-
-    Named create sid≠0; residual one-shot backfill; anonymous MustDeopt;
-    query assign/preserve/residual_backfill axes.
-    """
-    print(f"{B}=== anonymous residual stable_id policy coverage (#2605) ==={N}")
-    script = COVERAGE_CHECKS / "check_anonymous_residual_stable_id_policy_2605.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("anonymous residual stable_id policy (#2605) coverage contract rows failed")
-        return 1
-    ok("anonymous residual stable_id policy (#2605) coverage clean")
-    return 0
-
-
 def cmd_pereval_reemit_region_independence_coverage():
     """Issue #2606: PerEval / multi-AotState reemit + invalidate independence.
 
@@ -18411,38 +17065,6 @@ def cmd_pereval_reemit_region_independence_coverage():
         fail("PerEval reemit region independence (#2606) coverage contract rows failed")
         return 1
     ok("PerEval reemit region independence (#2606) coverage clean")
-    return 0
-
-
-def cmd_instance_constraint_depth_cap_coverage():
-    """Issue #2607: minimal INSTANCE constraint + depth-capped instantiate.
-
-    Polymorphic INSTANCE mono SOLVED; depth cap → TIMEOUT; soft vs CONFLICT;
-    schema-2607 query surface.
-    """
-    print(f"{B}=== INSTANCE constraint depth-cap coverage (#2607) ==={N}")
-    script = COVERAGE_CHECKS / "check_instance_constraint_depth_cap_2607.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("INSTANCE constraint depth-cap (#2607) coverage contract rows failed")
-        return 1
-    ok("INSTANCE constraint depth-cap (#2607) coverage clean")
-    return 0
-
-
-def cmd_occurrence_goal_persist_rehydrate_coverage():
-    """Issue #2608: optional OccurrenceGoal persist / rehydrate.
-
-    Soft default OFF; production/env snapshot + rehydrate after epoch prune;
-    cap truncations; schema-2608 fidelity keys.
-    """
-    print(f"{B}=== OccurrenceGoal persist/rehydrate coverage (#2608) ==={N}")
-    script = COVERAGE_CHECKS / "check_occurrence_goal_persist_rehydrate_2608.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("OccurrenceGoal persist/rehydrate (#2608) coverage contract rows failed")
-        return 1
-    ok("OccurrenceGoal persist/rehydrate (#2608) coverage clean")
     return 0
 
 
@@ -18565,38 +17187,6 @@ def cmd_occurrence_goal_vacuous_solve_prevent_coverage():
     return 0
 
 
-def cmd_steal_densify_linear_type_hard_and_coverage():
-    """Issue #2609: steal/densify hard-AND residual + linear + type fence.
-
-    Pure evaluate priority; Hard cancel; Soft observe; schema-2609;
-    coordinates #2546 residual, #2552 type fence, #2595 densify gate.
-    """
-    print(f"{B}=== steal/densify linear+type hard-AND coverage (#2609) ==={N}")
-    script = COVERAGE_CHECKS / "check_steal_densify_linear_type_hard_and_2609.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("steal/densify linear+type hard-AND (#2609) coverage contract rows failed")
-        return 1
-    ok("steal/densify linear+type hard-AND (#2609) coverage clean")
-    return 0
-
-
-def cmd_composite_auto_partial_from_cone_coverage():
-    """Issue #2610: auto-detect expected_partial from dirty cone.
-
-    Production under-mark + cone → hard empty-CS; Soft observe;
-    commit_readiness auto_partial reason; schema-2610.
-    """
-    print(f"{B}=== composite auto-partial from cone coverage (#2610) ==={N}")
-    script = COVERAGE_CHECKS / "check_composite_auto_partial_from_cone_2610.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("composite auto-partial from cone (#2610) coverage contract rows failed")
-        return 1
-    ok("composite auto-partial from cone (#2610) coverage clean")
-    return 0
-
-
 def cmd_dce_elided_deopt_meta_coverage():
     """Issue #2611: stamp mid + narrow_evidence on elided CastOp deopt meta.
 
@@ -18610,21 +17200,6 @@ def cmd_dce_elided_deopt_meta_coverage():
         fail("dce elided cast deopt meta (#2611) coverage contract rows failed")
         return 1
     ok("dce elided cast deopt meta (#2611) coverage clean")
-    return 0
-
-
-def cmd_castop_typed_meta_coverage():
-    """Issue #2624 Phase A: CastOp type_id + narrow_evidence downflow side table.
-
-    Non-elided lower stamps src/dst; Soft zero-cost when absent; no executor change.
-    """
-    print(f"{B}=== castop typed meta Phase A coverage (#2624) ==={N}")
-    script = COVERAGE_CHECKS / "check_castop_typed_meta_2624.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("castop typed meta (#2624) coverage contract rows failed")
-        return 1
-    ok("castop typed meta Phase A (#2624) coverage clean")
     return 0
 
 
@@ -18651,22 +17226,6 @@ def cmd_issue_coverage():
         fail("issue coverage manifest runner failed")
         return 1
     ok("issue coverage manifests clean")
-    return 0
-
-
-def cmd_type_linear_commit_health_coverage():
-    """Issue #2613: query:type-linear-commit-health unified Agent face.
-
-    Folds commit_readiness × coercion SLO × linear force × occurrence stale;
-    pure aggregation; schema-2613.
-    """
-    print(f"{B}=== type-linear-commit-health coverage (#2613) ==={N}")
-    script = COVERAGE_CHECKS / "check_type_linear_commit_health_2613.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("type-linear-commit-health (#2613) coverage contract rows failed")
-        return 1
-    ok("type-linear-commit-health (#2613) coverage clean")
     return 0
 
 
@@ -20778,54 +19337,6 @@ def cmd_chaos_release_blocker_2902():
     return 0
 
 
-def cmd_mailbox_hold_starvation_hard_coverage():
-    """Issue #2551: hold-exit residual under production → hard + Agent throttle.
-
-    Production/Strict residual after budgeted drain bumps hard counter and
-    agent_throttle_for_mailbox_starvation; Soft metric-only; free drain clears.
-    """
-    print(f"{B}=== mailbox hold starvation hard coverage (#2551) ==={N}")
-    script = COVERAGE_CHECKS / "check_mailbox_hold_starvation_hard_2551.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("mailbox hold starvation hard (#2551) coverage contract rows failed")
-        return 1
-    ok("mailbox hold starvation hard (#2551) coverage clean")
-    return 0
-
-
-def cmd_type_freshness_steal_densify_coverage():
-    """Issue #2552: steal/densify joint OccurrenceGoal + type_dep freshness.
-
-    On successful steal restamp / Moving densify, advance type cache_epoch
-    and prune occurrence goals + type_dep edges. Hard-fail steal skips.
-    """
-    print(f"{B}=== type freshness steal/densify coverage (#2552) ==={N}")
-    script = COVERAGE_CHECKS / "check_type_freshness_steal_densify_2552.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("type freshness steal/densify (#2552) coverage contract rows failed")
-        return 1
-    ok("type freshness steal/densify (#2552) coverage clean")
-    return 0
-
-
-def cmd_commit_readiness_score_coverage():
-    """Issue #2553: single Agent commit-readiness score.
-
-    Pure commit_readiness(solve × linear × blame × truncate) with
-    empty_cs priority; Soft observe vs production hard bands.
-    """
-    print(f"{B}=== commit-readiness score coverage (#2553) ==={N}")
-    script = COVERAGE_CHECKS / "check_commit_readiness_score_2553.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("commit-readiness score (#2553) coverage contract rows failed")
-        return 1
-    ok("commit-readiness score (#2553) coverage clean")
-    return 0
-
-
 def cmd_transaction_guard_migration_coverage():
     """Issue #2555: real TransactionGuard host path + migration coverage.
 
@@ -20842,22 +19353,6 @@ def cmd_transaction_guard_migration_coverage():
     return 0
 
 
-def cmd_dead_coercion_dirty_cone_coverage():
-    """Issue #2556: DeadCoercion DCE scan limited to type∪IR dirty cone.
-
-    CastOp sites outside the dirty cone bump dirty-cone-skips; soft empty
-    cone avoids dirty-mask allocation; full-scan path unchanged without cone.
-    """
-    print(f"{B}=== DCE dirty-cone scan limit coverage (#2556) ==={N}")
-    script = COVERAGE_CHECKS / "check_dead_coercion_dirty_cone_2556.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("DCE dirty-cone scan limit (#2556) coverage contract rows failed")
-        return 1
-    ok("DCE dirty-cone scan limit (#2556) coverage clean")
-    return 0
-
-
 def cmd_dead_coercion_hot_residual_3007_coverage():
     """Issue #3007: Production residual identity CastOp sweep on hot / post-mutate IR.
 
@@ -20870,374 +19365,6 @@ def cmd_dead_coercion_hot_residual_3007_coverage():
         fail("DCE hot residual CastOp (#3007) coverage contract rows failed")
         return 1
     ok("DCE hot residual CastOp (#3007) coverage clean")
-    return 0
-
-
-def cmd_lock_order_production_soft_coverage():
-    """Issue #2557: production soft lock-order audit (metrics-only).
-
-    Restricted/Strict → soft audit; sandbox=off → OFF; canary remains opt-in hard.
-    """
-    print(f"{B}=== production soft lock-order audit coverage (#2557) ==={N}")
-    script = COVERAGE_CHECKS / "check_lock_order_production_soft_2557.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("production soft lock-order audit (#2557) coverage contract rows failed")
-        return 1
-    ok("production soft lock-order audit (#2557) coverage clean")
-    return 0
-
-
-def cmd_coercion_prov_slo_coverage():
-    """Issue #2558: coercion provenance completeness SLO → force Full audit.
-
-    Production Sampled miss pressure arms force Full on next outermost boundary;
-    Soft observes only; vacuous 10000 bp with no samples.
-    """
-    print(f"{B}=== coercion provenance SLO coverage (#2558) ==={N}")
-    script = COVERAGE_CHECKS / "check_coercion_prov_slo_2558.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("coercion provenance SLO (#2558) coverage contract rows failed")
-        return 1
-    ok("coercion provenance SLO (#2558) coverage clean")
-    return 0
-
-
-def cmd_blame_soft_recover_coverage():
-    """Issue #2561: Soft/Sampled blame chain recover + miss escalate.
-
-    Recover re-fills dual provenance for mid dirty cone; escalate one Full
-    sample under AURA_BLAME_SOFT_ESCALATE=1 or production_defaults; Soft
-    default remains observe-only.
-    """
-    print(f"{B}=== Soft blame recover/escalate coverage (#2561) ==={N}")
-    script = COVERAGE_CHECKS / "check_blame_soft_recover_2561.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("Soft blame recover/escalate (#2561) coverage contract rows failed")
-        return 1
-    ok("Soft blame recover/escalate (#2561) coverage clean")
-    return 0
-
-
-def cmd_coercion_dual_require_coverage():
-    """Issue #2562: dual-field (pred+mid) require-or-drop under production.
-
-    Incomplete dual after fill drops CoercionNode insert when dual-require
-    is active (production/Full/env); Soft keeps #2317 insert path.
-    """
-    print(f"{B}=== dual-field require-or-drop coverage (#2562) ==={N}")
-    script = COVERAGE_CHECKS / "check_coercion_dual_require_2562.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("dual-field require-or-drop (#2562) coverage contract rows failed")
-        return 1
-    ok("dual-field require-or-drop (#2562) coverage clean")
-    return 0
-
-
-def cmd_linear_cross_closure_escape_coverage():
-    """Issue #2563: cross-closure linear escape discovery + force authority.
-
-    One-level free-capture of dirty linears into Lambda; Soft observe-only;
-    production/Full/env hard forces via force_linear_rollback CrossClosureEscape.
-    """
-    print(f"{B}=== cross-closure linear escape coverage (#2563) ==={N}")
-    script = COVERAGE_CHECKS / "check_linear_cross_closure_escape_2563.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("cross-closure linear escape (#2563) coverage contract rows failed")
-        return 1
-    ok("cross-closure linear escape (#2563) coverage clean")
-    return 0
-
-
-def cmd_linear_cross_closure_depth2_coverage():
-    """Issue #2612: optional depth-2 cross-closure free-capture (cone-capped).
-
-    AURA_LINEAR_CROSS_CLOSURE_DEPTH default 1; max 2; Soft observe unless hard.
-    """
-    print(f"{B}=== cross-closure depth-2 free-capture coverage (#2612) ==={N}")
-    script = COVERAGE_CHECKS / "check_linear_cross_closure_depth2_2612.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("cross-closure depth-2 free-capture (#2612) coverage contract rows failed")
-        return 1
-    ok("cross-closure depth-2 free-capture (#2612) coverage clean")
-    return 0
-
-
-def cmd_linear_cross_closure_depth_trunc_coverage():
-    """Issue #2623: configurable cross-closure depth + production fail-closed trunc.
-
-    Soft depth 1 / production default 2 / hard max 3; DEPTH=0 disables;
-    cone truncation under hard → CrossClosureEscape force.
-    """
-    print(f"{B}=== cross-closure depth + trunc fail-closed coverage (#2623) ==={N}")
-    script = COVERAGE_CHECKS / "check_linear_cross_closure_depth_trunc_2623.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("cross-closure depth+trunc (#2623) coverage contract rows failed")
-        return 1
-    ok("cross-closure depth + trunc fail-closed (#2623) coverage clean")
-    return 0
-
-
-def cmd_adt_match_goal_table_coverage():
-    """Issue #2564: ADT match exhaustiveness goal table + delta reverify roots.
-
-    First-class ADT match goals seed Soft delta reverify when variants mutate;
-    table capped; existing hard-gate remains authoritative.
-    """
-    print(f"{B}=== ADT match goal table coverage (#2564) ==={N}")
-    script = COVERAGE_CHECKS / "check_adt_match_goal_table_2564.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("ADT match goal table (#2564) coverage contract rows failed")
-        return 1
-    ok("ADT match goal table (#2564) coverage clean")
-    return 0
-
-
-def cmd_module_require_freevar_coverage():
-    """Issue #2566: non-std module free-var resolve of required std bindings.
-
-    Nested (require)/(import) injects into the loading module env so closures
-    capture free vars (e.g. mutate:*) with top-level parity.
-    """
-    print(f"{B}=== module require free-var coverage (#2566) ==={N}")
-    script = COVERAGE_CHECKS / "check_module_require_freevar_2566.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("module require free-var (#2566) coverage contract rows failed")
-        return 1
-    ok("module require free-var (#2566) coverage clean")
-    return 0
-
-
-def cmd_try_catch_bind_coverage():
-    """Issue #2567: try/catch binds catch parameter for handler use.
-
-    Diagnostic unexpected and (error …) failures bind a first-class payload
-    so (catch (e) e) / string? / list work (stdlib agent/mutate pattern).
-    """
-    print(f"{B}=== try/catch bind coverage (#2567) ==={N}")
-    script = COVERAGE_CHECKS / "check_try_catch_bind_2567.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("try/catch bind (#2567) coverage contract rows failed")
-        return 1
-    ok("try/catch bind (#2567) coverage clean")
-    return 0
-
-
-def cmd_symbol_eq_coverage():
-    """Issue #2568: symbol eq?/equal? for quoted symbols (agent decision tags).
-
-    short_str_cache intern + Quote value-define tree-walk before IR + IR
-    Quote Variable→ConstString so (define d 'commit)(eq? d 'commit) is #t.
-    """
-    print(f"{B}=== symbol eq? coverage (#2568) ==={N}")
-    script = COVERAGE_CHECKS / "check_symbol_eq_2568.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("symbol eq? (#2568) coverage contract rows failed")
-        return 1
-    ok("symbol eq? (#2568) coverage clean")
-    return 0
-
-
-def cmd_setcode_rebind_coverage():
-    """Issue #2569: set-code / mutate:rebind must not kill unimpacted state.
-
-    Soft expire restamps IR/TW closures with live bodies; hash-ref 3-arg
-    honors default (no MakePair packing). Aether closed-loop telemetry.
-    """
-    print(f"{B}=== set-code/rebind survival coverage (#2569) ==={N}")
-    script = COVERAGE_CHECKS / "check_setcode_rebind_2569.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("set-code/rebind (#2569) coverage contract rows failed")
-        return 1
-    ok("set-code/rebind (#2569) coverage clean")
-    return 0
-
-
-def cmd_aether_denseness_coverage():
-    """Issue #2578: Aether denseness host residuals (H1/H5/H6).
-
-    Namespaced .aura-type parse, FuncType.variadic dotted-rest,
-    module free-vars survive unimpacted mutate:rebind (orch:parallel).
-    """
-    print(f"{B}=== Aether denseness residual coverage (#2578) ==={N}")
-    script = COVERAGE_CHECKS / "check_aether_denseness_2578.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("Aether denseness (#2578) coverage contract rows failed")
-        return 1
-    ok("Aether denseness (#2578) coverage clean")
-    return 0
-
-
-def cmd_module_rebind_residual_coverage():
-    """Issue #2579: multi-define value init + split-module rebind survival.
-
-    Stop eager IR env bind on set-code populate; sequential multi-define
-    for non-lambda values; sync value cells after eval-current.
-    """
-    print(f"{B}=== module rebind residual coverage (#2579) ==={N}")
-    script = COVERAGE_CHECKS / "check_module_rebind_2579.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("module rebind residual (#2579) coverage contract rows failed")
-        return 1
-    ok("module rebind residual (#2579) coverage clean")
-    return 0
-
-
-def cmd_hot_strategy_coverage():
-    """Issue #2582: pure-Aura hot strategy vs AOT hot-update.
-
-    std/hot-strategy (rebind+snapshot) documented as denseness path;
-    std/hot-update remains AOT .so oriented.
-    """
-    print(f"{B}=== pure-Aura hot strategy coverage (#2582) ==={N}")
-    script = COVERAGE_CHECKS / "check_hot_strategy_2582.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("hot strategy (#2582) coverage contract rows failed")
-        return 1
-    ok("hot strategy (#2582) coverage clean")
-    return 0
-
-
-def cmd_module_load_tail_coverage():
-    """Issue #2570: module load fail-closed; trailing defines export.
-
-    Mid-body eval failure must not cache half-loaded modules; nested
-    require errors fail the outer load; tail defines always export.
-    """
-    print(f"{B}=== module load tail export coverage (#2570) ==={N}")
-    script = COVERAGE_CHECKS / "check_module_load_tail_2570.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("module load tail (#2570) coverage contract rows failed")
-        return 1
-    ok("module load tail (#2570) coverage clean")
-    return 0
-
-
-def cmd_while_define_oneshot_coverage():
-    """Issue #2571: while + define loop-counter footgun.
-
-    set! must resolve the newest cell; multi-define in while reuses cells;
-    education warning + preferred outer-define + set! pattern documented.
-    """
-    print(f"{B}=== while+define oneshot coverage (#2571) ==={N}")
-    script = COVERAGE_CHECKS / "check_while_define_oneshot_2571.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("while+define oneshot (#2571) coverage contract rows failed")
-        return 1
-    ok("while+define oneshot (#2571) coverage clean")
-    return 0
-
-
-def cmd_module_export_display_coverage():
-    """Issue #2572: module-export multi-display ConstString pool.
-
-    cache_module must persist ir_cache_strings_ so call-site IR remaps
-    body string literals; JIT PrimDisplay uses tagged aura_display_value.
-    """
-    print(f"{B}=== module export multi-display coverage (#2572) ==={N}")
-    script = COVERAGE_CHECKS / "check_module_export_display_2572.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("module export multi-display (#2572) coverage contract rows failed")
-        return 1
-    ok("module export multi-display (#2572) coverage clean")
-    return 0
-
-
-def cmd_ir_const_string_intern_coverage():
-    """Issue #2573: IR ConstString intern — no O(N) string_heap growth.
-
-    IR interpreter caches ConstString by module string_pool index so
-    hot loops with body literals reuse one heap entry.
-    """
-    print(f"{B}=== IR ConstString intern coverage (#2573) ==={N}")
-    script = COVERAGE_CHECKS / "check_ir_const_string_intern_2573.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("IR ConstString intern (#2573) coverage contract rows failed")
-        return 1
-    ok("IR ConstString intern (#2573) coverage clean")
-    return 0
-
-
-def cmd_write_string_escape_coverage():
-    """Issue #2574: Scheme write string escape (JIT + TW).
-
-    write must escape quotes/backslash/controls; display stays raw;
-    TW io_print_val and JIT aura_display_value agree.
-    """
-    print(f"{B}=== write string escape coverage (#2574) ==={N}")
-    script = COVERAGE_CHECKS / "check_write_string_escape_2574.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("write string escape (#2574) coverage contract rows failed")
-        return 1
-    ok("write string escape (#2574) coverage clean")
-    return 0
-
-
-def cmd_jit_dual_string_heap_coverage():
-    """Issue #2575: dual string heaps — PrimCall re-intern.
-
-    Evaluator prims allocate on string_heap_; JIT display uses
-    g_string_pool. PrimCall converts args JIT→eval and results
-    eval→JIT (aura_alloc_string).
-    """
-    print(f"{B}=== dual string heap PrimCall coverage (#2575) ==={N}")
-    script = COVERAGE_CHECKS / "check_jit_dual_string_heap_2575.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("dual string heap (#2575) coverage contract rows failed")
-        return 1
-    ok("dual string heap (#2575) coverage clean")
-    return 0
-
-
-def cmd_primcall_narg_coverage():
-    """Issue #2576: JIT PrimCall N-arg ABI.
-
-    Packs frame locals into a stack buffer; aura_prim_call(slot, args*,
-    count) forwards all args (cap 32). Fixes string-append/substring 3+.
-    """
-    print(f"{B}=== PrimCall N-arg coverage (#2576) ==={N}")
-    script = COVERAGE_CHECKS / "check_primcall_narg_2576.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("PrimCall N-arg (#2576) coverage contract rows failed")
-        return 1
-    ok("PrimCall N-arg (#2576) coverage clean")
-    return 0
-
-
-def cmd_primcall_str_intern_coverage():
-    """Issue #2577: PrimCall string re-intern content intern.
-
-    convert_str_for_eval caches JIT idx→eval; aura_alloc_string interns
-    by content so hot fixed-arg PrimCall loops do not grow heaps O(N).
-    """
-    print(f"{B}=== PrimCall str intern coverage (#2577) ==={N}")
-    script = COVERAGE_CHECKS / "check_primcall_str_intern_2577.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("PrimCall str intern (#2577) coverage contract rows failed")
-        return 1
-    ok("PrimCall str intern (#2577) coverage clean")
     return 0
 
 
@@ -21271,87 +19398,6 @@ def cmd_partial_cone_cap_coverage():
         fail("partial cone soft/hard cap (#2560) coverage contract rows failed")
         return 1
     ok("partial cone soft/hard cap (#2560) coverage clean")
-    return 0
-
-
-def cmd_post_densify_linear_type_revalidate_coverage():
-    """Issue #2353: post-densify / post-steal Linear+Type revalidate phase.
-
-    Complements #2341 DensifyConsistencyReport with ownership + type axis.
-    Soft / no densify / no linear → zero cost; fail-closed suppresses Phase 5 success.
-    """
-    print(f"{B}=== post-densify Linear+Type revalidate coverage (#2353) ==={N}")
-    script = COVERAGE_CHECKS / "check_post_densify_linear_type_revalidate_2353.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("post-densify Linear+Type revalidate coverage contract rows failed")
-        return 1
-    ok("post-densify Linear+Type revalidate coverage clean")
-    return 0
-
-
-def cmd_lock_order_audit_2354_coverage():
-    """Issue #2354: debug lock-order audit for scheduler / workspace / closures.
-
-    Rank table + AURA_LOCK_ORDER_AUDIT soft mode + canary hard abort;
-    instrumented Scheduler wait_map/joiner/orphan/owned + Worker fiber_registry.
-    """
-    print(f"{B}=== lock-order audit coverage (#2354) ==={N}")
-    script = COVERAGE_CHECKS / "check_lock_order_audit_2354.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("lock-order audit (#2354) coverage contract rows failed")
-        return 1
-    ok("lock-order audit (#2354) coverage clean")
-    return 0
-
-
-def cmd_type_dep_epoch_prune_coverage():
-    """Issue #2355: type_dep_graph_ epoch prune + NodeId invalidation.
-
-    TypeDepEdge stamps cache_epoch_; set_cache_epoch drops older edges;
-    dirty invalidate + per-bucket cap bound long AI sessions.
-    """
-    print(f"{B}=== type_dep epoch prune coverage (#2355) ==={N}")
-    script = COVERAGE_CHECKS / "check_type_dep_epoch_prune_2355.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("type_dep epoch prune (#2355) coverage contract rows failed")
-        return 1
-    ok("type_dep epoch prune (#2355) coverage clean")
-    return 0
-
-
-def cmd_reverify_expand_coverage():
-    """Issue #2356: truncated reverify one-shot expand for occurrence/let-poly.
-
-    When reverify hits the scan cap and priority roots are non-empty, run
-    exactly one expanded pass; empty priority → zero cost; TIMEOUT escalate unchanged.
-    """
-    print(f"{B}=== reverify expand coverage (#2356) ==={N}")
-    script = COVERAGE_CHECKS / "check_reverify_expand_2356.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("reverify expand (#2356) coverage contract rows failed")
-        return 1
-    ok("reverify expand (#2356) coverage clean")
-    return 0
-
-
-def cmd_linear_synth_violation_coverage():
-    """Issue #2357: Phase-1 linear Move/Drop first-class synthesize violation.
-
-    can_move/can_drop fail during synthesize reports TypeError under
-    production/strict (Warning soft); set_node_error + counters; post-mutate
-    audit remains defense-in-depth.
-    """
-    print(f"{B}=== linear synth violation coverage (#2357) ==={N}")
-    script = COVERAGE_CHECKS / "check_linear_synth_violation_2357.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("linear synth violation (#2357) coverage contract rows failed")
-        return 1
-    ok("linear synth violation (#2357) coverage clean")
     return 0
 
 
@@ -21404,54 +19450,6 @@ def cmd_type_dirty_txn_order_coverage():
     return 0
 
 
-def cmd_linear_partial_revalidate_coverage():
-    """Issue #2460: Phase-2 dirty OwnershipEnv re-sim during infer_flat_partial.
-
-    Non-empty dirty linear set → validate_ownership; production/strict
-    TypeError + set_node_error; Soft Warning; empty set zero cost.
-    """
-    print(f"{B}=== linear partial revalidate coverage (#2460) ==={N}")
-    script = COVERAGE_CHECKS / "check_linear_partial_revalidate_2460.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("linear partial revalidate (#2460) coverage contract rows failed")
-        return 1
-    ok("linear partial revalidate (#2460) coverage clean")
-    return 0
-
-
-def cmd_occurrence_cache_key_coverage():
-    """Issue #2461: per-If stable narrowing cache key (shape × epoch × refined).
-
-    Hit only when cond_shape_hash + epoch match; note_occurrence_goal on miss;
-    schema-2461 on fidelity-stats.
-    """
-    print(f"{B}=== occurrence cache key coverage (#2461) ==={N}")
-    script = COVERAGE_CHECKS / "check_occurrence_cache_key_2461.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("occurrence cache key (#2461) coverage contract rows failed")
-        return 1
-    ok("occurrence cache key (#2461) coverage clean")
-    return 0
-
-
-def cmd_castop_density_hard_coverage():
-    """Issue #2358: CastOp density HARD force-JIT policy.
-
-    AURA_CASTOP_DENSITY_HARD=1 + dens>budget → force-JIT (codegen degrade);
-    mutate still succeeds; HARD=0 soft-only; under budget zero extra action.
-    """
-    print(f"{B}=== castop density HARD policy coverage (#2358) ==={N}")
-    script = COVERAGE_CHECKS / "check_castop_density_hard_2358.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("castop density HARD (#2358) coverage contract rows failed")
-        return 1
-    ok("castop density HARD (#2358) coverage clean")
-    return 0
-
-
 def cmd_castop_density_closed_loop_coverage():
     """Issue #2459: production CastOp density closed-loop (streak + gate).
 
@@ -21465,22 +19463,6 @@ def cmd_castop_density_closed_loop_coverage():
         fail("castop density closed-loop (#2459) coverage contract rows failed")
         return 1
     ok("castop density closed-loop (#2459) coverage clean")
-    return 0
-
-
-def cmd_memo_goal_epoch_health_coverage():
-    """Issue #2359: occurrence_goals + predicate_memo epoch health query.
-
-    Pure read keys on query:type-incremental-fidelity-stats (cache-epoch,
-    goals-live, memo-live/stale, delta, wired). No solver behavior change.
-    """
-    print(f"{B}=== memo-goal epoch health coverage (#2359) ==={N}")
-    script = COVERAGE_CHECKS / "check_memo_goal_epoch_health_2359.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("memo-goal epoch health (#2359) coverage contract rows failed")
-        return 1
-    ok("memo-goal epoch health (#2359) coverage clean")
     return 0
 
 
@@ -21548,87 +19530,6 @@ def cmd_general_object_pin_adopt_coverage():
     return 0
 
 
-def cmd_panic_defer_after_densify_coverage():
-    """Issue #2364: PanicCheckpoint residual × densify closed loop.
-
-    Post-densify audit: re-arm if CP live, force-clear residual if CP gone;
-    Soft free; AURA_PANIC_CONTRACT=hard fail-closed.
-    """
-    print(f"{B}=== panic defer after densify coverage (#2364) ==={N}")
-    script = COVERAGE_CHECKS / "check_panic_defer_after_densify_2364.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("panic defer after densify (#2364) coverage contract rows failed")
-        return 1
-    ok("panic defer after densify (#2364) coverage clean")
-    return 0
-
-
-def cmd_densify_root_closure_closed_loop_coverage():
-    """Issue #2365: RootRemap + densify Closure/EnvFrame dual-epoch closed-loop.
-
-    Last-call root_remap_ok / closure_remount_ok; Soft vacuous; dual-epoch
-    revalidate after densify; documented densify-success order.
-    """
-    print(f"{B}=== densify root+closure closed-loop coverage (#2365) ==={N}")
-    script = COVERAGE_CHECKS / "check_densify_root_closure_closed_loop_2365.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("densify root+closure closed-loop (#2365) coverage contract rows failed")
-        return 1
-    ok("densify root+closure closed-loop (#2365) coverage clean")
-    return 0
-
-
-def cmd_epoch_invariant_walk_coverage():
-    """Issue #2366: per-entry epoch invariant walk + MustDeopt (#2304 follow-up).
-
-    Soft metric-only / hard abort; AOT live-behind + IR stamp + closure
-    MustDeopt walk after atomic_bump_epochs_and_stamp_bridge.
-    """
-    print(f"{B}=== epoch invariant walk coverage (#2366) ==={N}")
-    script = COVERAGE_CHECKS / "check_epoch_invariant_walk_2366.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("epoch invariant walk (#2366) coverage contract rows failed")
-        return 1
-    ok("epoch invariant walk (#2366) coverage clean")
-    return 0
-
-
-def cmd_epoch_invariant_periodic_coverage():
-    """Issue #2640: production Restricted default periodic epoch-invariant
-    soft walk (physically clear generation-behind AOT slots + MustDeopt
-    stale live closures on a steady-clock interval under production Soft
-    mode). Hook at MutationBoundaryGuard outermost success exit, gated
-    by mode=Soft + production_defaults_active + period_ms rate limit.
-    """
-    print(f"{B}=== epoch invariant periodic coverage (#2640) ==={N}")
-    script = COVERAGE_CHECKS / "check_epoch_invariant_periodic_coverage.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("epoch invariant periodic (#2640) coverage contract rows failed")
-        return 1
-    ok("epoch invariant periodic (#2640) coverage clean")
-    return 0
-
-
-def cmd_reload_recovery_query_coverage():
-    """Issue #2367: ReloadRecovery query primitive + recovery-state snapshot.
-
-    query:reload-recovery-state (+ alias) surfaces ReloadRecoveryState,
-    StormLevel, region masks, reemit policy, last force-JIT reason/epoch.
-    """
-    print(f"{B}=== reload recovery query coverage (#2367) ==={N}")
-    script = COVERAGE_CHECKS / "check_reload_recovery_query_2367.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("reload recovery query (#2367) coverage contract rows failed")
-        return 1
-    ok("reload recovery query (#2367) coverage clean")
-    return 0
-
-
 def cmd_densify_remap_pairing_coverage():
     """Issue #2368: force densify remap-context pairing on Moving success.
 
@@ -21661,87 +19562,6 @@ def cmd_live_closure_stable_id_only_coverage():
     return 0
 
 
-def cmd_specjit_per_eval_storm_isolation_coverage():
-    """Issue #2370: real PerEval storm isolation for SpecJIT.
-
-    Per-eval isolation epoch + TLS storm eval context; foreign storms skip;
-    ShapeProfiler does not bump global shape_version under PerEval.
-    """
-    print(f"{B}=== SpecJIT PerEval storm isolation coverage (#2370) ==={N}")
-    script = COVERAGE_CHECKS / "check_specjit_per_eval_storm_isolation_2370.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("SpecJIT PerEval storm isolation (#2370) coverage contract rows failed")
-        return 1
-    ok("SpecJIT PerEval storm isolation (#2370) coverage clean")
-    return 0
-
-
-def cmd_specjit_pereval_storm_e2e_coverage():
-    """Issue #2504: e2e dual-eval PerEval SpecJIT storm isolation gate.
-
-    Hard regression: dual controllers + hit path + Global clear both +
-    no process-global shape_version bump under PerEval + concurrent foreign skips.
-    """
-    print(f"{B}=== SpecJIT PerEval storm e2e isolation coverage (#2504) ==={N}")
-    script = COVERAGE_CHECKS / "check_specjit_pereval_storm_e2e_2504.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("SpecJIT PerEval storm e2e isolation (#2504) coverage contract rows failed")
-        return 1
-    ok("SpecJIT PerEval storm e2e isolation (#2504) coverage clean")
-    return 0
-
-
-def cmd_cross_cow_soft_migrate_coverage():
-    """Issue #2371: cross-COW dual-epoch soft restamp vs hard-reject.
-
-    Soft migrate restamps bridge+defuse (+ remount) when safe; hard reject
-    for freed / linear-moved / far-behind. Production default soft on.
-    """
-    print(f"{B}=== cross-COW soft migrate coverage (#2371) ==={N}")
-    script = COVERAGE_CHECKS / "check_cross_cow_soft_migrate_2371.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("cross-COW soft migrate (#2371) coverage contract rows failed")
-        return 1
-    ok("cross-COW soft migrate (#2371) coverage clean")
-    return 0
-
-
-def cmd_cross_cow_drift_contract_coverage():
-    """Issue #2505: cross-COW soft-migrate drift K + hard-reject reason breakdown.
-
-    Documents call-time single-workspace MVP; near-drift soft, far/linear/
-    disabled hard with Agent-facing reason counters + query keys.
-    """
-    print(f"{B}=== cross-COW drift contract coverage (#2505) ==={N}")
-    script = COVERAGE_CHECKS / "check_cross_cow_drift_contract_2505.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("cross-COW drift contract (#2505) coverage contract rows failed")
-        return 1
-    ok("cross-COW drift contract (#2505) coverage clean")
-    return 0
-
-
-def cmd_chaos_mutate_steal_gc_mailbox_coverage():
-    """Issue #2352: chaos mutate × steal × GC × mailbox production gate.
-
-    Smoke always (≤90s); full 30s via AURA_CHAOS_FULL=1. Pass: 0 hang,
-    residual defer clean, snapshot mismatch delta 0. Inject residual /
-    mismatch self-tests prove fail criteria.
-    """
-    print(f"{B}=== chaos mutate×steal×GC×mailbox coverage (#2352) ==={N}")
-    script = COVERAGE_CHECKS / "check_chaos_mutate_steal_gc_mailbox_2352.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("chaos mutate×steal×GC×mailbox coverage contract rows failed")
-        return 1
-    ok("chaos mutate×steal×GC×mailbox coverage clean")
-    return 0
-
-
 def cmd_production_concurrency_coverage():
     """Issue #2380/#2513: production-concurrency gate static contract rows.
 
@@ -21756,20 +19576,6 @@ def cmd_production_concurrency_coverage():
         fail("production-concurrency coverage contract rows failed")
         return 1
     ok("production-concurrency coverage clean")
-    # Issue #2513 soak extension contract (same binary / gate).
-    return cmd_production_concurrency_soak_coverage()
-
-
-def cmd_production_concurrency_soak_coverage():
-    """Issue #2513: multi-fiber soak extension static AC contract rows."""
-    print(f"{B}=== production-concurrency soak coverage (#2513) ==={N}")
-    script = COVERAGE_CHECKS / "check_production_concurrency_soak_2513.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("production-concurrency soak (#2513) coverage contract rows failed")
-        return 1
-    ok("production-concurrency soak (#2513) coverage clean")
-    return 0
 
 
 def cmd_chaos_pr_hard_fail_coverage():
@@ -23671,23 +21477,6 @@ def cmd_occurrence_densify_root_scan_2642_coverage():
     return 0
 
 
-def cmd_instance_depth_repair_hint_2643_coverage():
-    """Issue #2643: INSTANCE depth budget + Agent-visible repair surface on TIMEOUT.
-    Schema + source-cite + coverage gate (extends the typecheck/timeout-repair
-    check scripts). Per #2607 minimal INSTANCE, this adds a bounded repair-hint
-    sample on TIMEOUT so Agents can re-instantiate polymorphic call sites before
-    full solve. Zero cost on SOLVED / no INSTANCE.
-    """
-    print(f"{B}=== instance depth repair hint (#2643) ==={N}")
-    script = COVERAGE_CHECKS / "check_instance_depth_repair_hint_2643.py"
-    r = _coverage_run(script)
-    if r.returncode != 0:
-        fail("instance depth repair hint (#2643) coverage failed")
-        return 1
-    ok("instance depth repair hint (#2643) coverage clean")
-    return 0
-
-
 def run_bench_llm():
     """Run LLM benchmarks (DeepSeek / MiniMax / Grok) in parallel."""
     print(f"{B}═══ LLM Benchmark (3 models in parallel) ═══{N}")
@@ -23843,13 +21632,9 @@ def main():
         "chaos-soak-hard-gate-2722-coverage": cmd_chaos_soak_hard_gate_2722_coverage,
         "chaos-soak-residual-zero-2755-coverage": cmd_chaos_soak_residual_zero_2755_coverage,
         "transaction-guard-migration": cmd_transaction_guard_migration_coverage,
-        "dead-coercion-dirty-cone": cmd_dead_coercion_dirty_cone_coverage,
         "dead-coercion-hot-residual-3007": cmd_dead_coercion_hot_residual_3007_coverage,
         "dce-elided-deopt-meta": cmd_dce_elided_deopt_meta_coverage,
-        "castop-typed-meta": cmd_castop_typed_meta_coverage,
         "issue-coverage": cmd_issue_coverage,
-        "type-linear-commit-health": cmd_type_linear_commit_health_coverage,
-        "hot-children-columnar": cmd_hot_children_columnar_coverage,
         "batch-dirty-discipline": cmd_batch_dirty_discipline_coverage,
         "batch-dirty-production-multi-only-2936": cmd_batch_dirty_production_multi_only_2936,
         "batch-dirty-production-multi-only-2936-coverage": cmd_batch_dirty_production_multi_only_2936_coverage,
@@ -24164,8 +21949,6 @@ def main():
         "soa-residual-production-smoke": cmd_soa_residual_production_smoke_coverage,
         "soa-sunset-bridge-2907": cmd_soa_sunset_bridge_2907,
         "soa-sunset-bridge-2907-coverage": cmd_soa_sunset_bridge_2907_coverage,
-        "arena-moving-densify-health": cmd_arena_moving_densify_health_coverage,
-        "coercion-unify-incomplete-skip": cmd_coercion_unify_incomplete_skip_coverage,
         "coercion-evidence-loss-slo": cmd_coercion_evidence_loss_slo_coverage,
         "fiber-eval-depth-isolation": cmd_fiber_eval_depth_isolation_coverage,
         "module-path-refuse": cmd_module_path_refuse_coverage,
@@ -24192,7 +21975,6 @@ def main():
         "as-stable-ref-prod-int-reject": cmd_as_stable_ref_prod_int_reject_coverage,
         "stable-ref-probe-3400": cmd_stable_ref_probe_3400_coverage,
         "query-result-soft-prod-transition": cmd_query_result_soft_prod_transition_coverage,
-        "partial-cone-commit-gate": cmd_partial_cone_commit_gate_coverage,
         "cone-truncate-force-closure-2909": cmd_cone_truncate_force_closure_2909,
         "cone-truncate-force-closure-2909-coverage": cmd_cone_truncate_force_closure_2909_coverage,
         "cone-outside-goal-drop-recover-reject-2962": cmd_cone_outside_goal_drop_recover_reject_2962_coverage,
@@ -24211,30 +21993,6 @@ def main():
         "occurrence-commit-health-2995-coverage": cmd_occurrence_commit_health_2995_coverage,
         "refined-consistency-commit-gate-2911": cmd_refined_consistency_commit_gate_2911,
         "refined-consistency-commit-gate-2911-coverage": cmd_refined_consistency_commit_gate_2911_coverage,
-        "occurrence-dirty-key-authority": cmd_occurrence_dirty_key_authority_coverage,
-        "lock-order-production-soft": cmd_lock_order_production_soft_coverage,
-        "coercion-prov-slo": cmd_coercion_prov_slo_coverage,
-        "blame-soft-recover": cmd_blame_soft_recover_coverage,
-        "coercion-dual-require": cmd_coercion_dual_require_coverage,
-        "linear-cross-closure-escape": cmd_linear_cross_closure_escape_coverage,
-        "linear-cross-closure-depth2": cmd_linear_cross_closure_depth2_coverage,
-        "linear-cross-closure-depth-trunc": cmd_linear_cross_closure_depth_trunc_coverage,
-        "adt-match-goal-table": cmd_adt_match_goal_table_coverage,
-        "module-require-freevar": cmd_module_require_freevar_coverage,
-        "try-catch-bind": cmd_try_catch_bind_coverage,
-        "symbol-eq": cmd_symbol_eq_coverage,
-        "setcode-rebind": cmd_setcode_rebind_coverage,
-        "aether-denseness": cmd_aether_denseness_coverage,
-        "module-rebind-residual": cmd_module_rebind_residual_coverage,
-        "hot-strategy": cmd_hot_strategy_coverage,
-        "module-load-tail": cmd_module_load_tail_coverage,
-        "while-define-oneshot": cmd_while_define_oneshot_coverage,
-        "module-export-display": cmd_module_export_display_coverage,
-        "ir-const-string-intern": cmd_ir_const_string_intern_coverage,
-        "write-string-escape": cmd_write_string_escape_coverage,
-        "jit-dual-string-heap": cmd_jit_dual_string_heap_coverage,
-        "primcall-narg": cmd_primcall_narg_coverage,
-        "primcall-str-intern": cmd_primcall_str_intern_coverage,
         "linear-three-layer-wire": cmd_linear_three_layer_wire_coverage,
         "partial-cone-cap": cmd_partial_cone_cap_coverage,
         "test": lambda: cmd_test(args or ["ci"]),

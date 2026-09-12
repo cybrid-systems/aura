@@ -100,14 +100,6 @@
       "contains": [
         "tests/compiler/test_root_remap_pin_contract_unified.cpp"
       ]
-    },
-    {
-      "ac": "AC5",
-      "path": "build.py",
-      "contains": [
-        "check_root_remap_pin_contract_unified_2499"
-      ]
     }
-  ],
-  "source_script": "scripts/coverage/checks/check_root_remap_pin_contract_unified_2499.py"
+  ]
 }
