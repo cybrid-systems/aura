@@ -67,9 +67,10 @@ query_result_is_fresh_with_refs(const aura::core::QueryResult& qr, const aura::a
                 aura::core::note_query_result_full_provenance_cow_mismatch();
                 return aura::core::QueryResultFreshness::InvalidCowLayer;
             }
-            // Issue #3660: freshness is per-match occupancy / wrap, not
-            // whole-table mutation_id_at_capture == current_mutation_epoch
-            // (an unrelated mutate:* must not kill unmodified matches).
+            // Issue #3660 / #3696: freshness is per-match occupancy / wrap,
+            // not whole-table mutation_id_at_capture / hash mutation-epoch /
+            // bridge-epoch (Agent hash-field compare is not the operand
+            // SSOT; a reused NodeId with equal Mutation epoch is stale).
             if (m.node_id != 0) {
                 const auto nid = static_cast<aura::ast::NodeId>(m.node_id);
                 if (!flat.is_live_node(nid))
@@ -176,6 +177,8 @@ template <typename StringHeap, typename PairVec>
         else if (s == "fiber-id")
             fiber = n;
         else if (s == "mutation-id-at-capture")
+            // Issue #3696: production omits this key. Soft hashes may
+            // still carry it; occupancy resolve does not consult mid.
             mid = n;
     }
     if (tag == 0 && schema3137 == 0 && mut < 0)
