@@ -4563,7 +4563,12 @@ inline void capture_aot_hotupdate_audit(bool success, std::uint64_t before_epoch
     // Issue #2493: prefer Mutation epoch / ResourceQuota host mid over the
     // last-resort audit gen so AOT trail joins the same mid vocabulary as
     // require_effect / grant / isolation SE.
-    const std::uint64_t mid = resolve_audit_mutation_id();
+    // Issue #3675: join the composite/batch pin SSOT (#3066/#3546) so a
+    // reemit inside a composite/atomic-batch stamps the same mid as the
+    // mutate SE / grant.bound_mutation_id — one replay key for
+    // "mutate + reemit". Composite-unset falls through caller/boundary to
+    // resolve exactly as before (production refuse stays mid == 0).
+    const std::uint64_t mid = join_audit_and_se_mid(0);
     if (success) {
         if (!should_audit(mid))
             return;
