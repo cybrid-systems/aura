@@ -778,7 +778,7 @@ static void ac3232_3_source_cite_dual_restore_rehydrate() {
         const auto hold = mb.rfind("AbortAuthorityHold abort_authority", p);
         CHECK(hold != std::string::npos && hold < p, "3232 AC3: hold before dual_restore");
     }
-    CHECK(dual == 3, "3232 AC3: three dual_restore sites");
+    CHECK(dual == 4, "3232 AC3: four dual_restore sites (3 abort + persist-reject #3687)");
     CHECK(impl.find("abort_authority_blocks_rehydrate") != std::string::npos,
           "3232 AC3: rehydrate consult");
     CHECK(impl.find("Issue #3232") != std::string::npos, "3232 AC3: rehydrate cite");

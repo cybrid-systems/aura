@@ -66,8 +66,8 @@ def main() -> int:
     must_not("abort_restore_dual_topology_3472", "AC2 no second restore", emb)
     must_not("abort_restore_dual_topology_persist_reject", "AC2 no persist-reject restore", emb)
     occ_n = emb.count("restore_or_clear_occurrence_to_entry(")
-    if occ_n != 3:
-        fails.append(f"AC2: #3158 abort sites count={occ_n}, expected 3 (reuse SSOT)")
+    if occ_n != 4:
+        fails.append(f"AC2: #3158 sites count={occ_n}, expected 4 (3 abort + persist-reject #3687)")
     must("consume_outermost_persist_reject_needs_restore()", "AC2 consume kept", emb)
 
     must("3472 AC1: success==false", "AC5 linear AC1", t_lin)

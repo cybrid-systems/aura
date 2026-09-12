@@ -100,8 +100,8 @@ def main() -> int:
     must("note_outermost_persist_reject_needs_restore", "AC2 3440 note", dtor)
     must("undo_apply_coercion_map_recent", "AC2 3545 undo", dtor)
     must("consume_outermost_audit_rollback_needs_fail", "AC2 3517 consume", dtor)
-    if _count(dtor, "restore_or_clear_occurrence_to_entry(") != 3:
-        fails.append("AC2: #3158 restore site count != 3")
+    if _count(dtor, "restore_or_clear_occurrence_to_entry(") != 4:
+        fails.append("AC2: #3158 restore site count != 4 (3 abort + persist-reject #3687)")
     must_not("abort_restore_3653", "AC2 no second restore", dtor)
     must_not("abort_restore_dual_topology_3653", "AC2 no second restore (full)", dtor)
     must("ac3653_2_source_order_audit_before_persist", "AC2 health order", health)
