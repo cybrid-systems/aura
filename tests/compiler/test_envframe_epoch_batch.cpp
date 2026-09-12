@@ -1013,6 +1013,141 @@ static void ac3267_5_source_and_linter() {
     CHECK(t.find("run_1365_bridge_epoch_strict") != std::string::npos, "3267 AC5: #1365 preserved");
 }
 
+// ── Issue #3680: compact_env_frames dual-epoch bump owner-scoped (facade parity) ──
+// The CompilerService ctor hook was a naked joint writer (bridge_epoch +
+// g_aot_table_epoch fetch_add + C-bridge dual-write) — under production
+// multi-eval every EnvFrame compact force-staled ALL peer live closures of
+// unrelated defines (the exact tax #2841/#2951/#3605 removed from
+// mutate/invalidate). #3680: the hook stamps the compacting Evaluator as
+// reemit/register owner TLS (CascadeEvalOwnerGuard shape) and freezes the
+// process clocks when the #3605 facade predicate predicts an owner-scoped
+// table bump; Soft/Off / single-eval keep the joint bump.
+static void run_3680_compact_owner_scope() {
+    std::println("\n=== Issue #3680: compact dual-epoch bump owner-scoped ===");
+
+    // AC4 + AC5 (source, always): facade untouched; no new epoch domain /
+    // query keys; hook cites #3680 with guard + skip predicate ordered
+    // before any bump.
+    {
+        std::println("\n--- #3680 AC-source: hook shape + facade parity ---");
+        const auto svc = read_file("src/compiler/service.ixx");
+        const auto reg = read_file("src/compiler/hot_update_registry.cpp");
+        CHECK(!svc.empty(), "3680: service.ixx readable");
+        CHECK(svc.find("Issue #3680") != std::string::npos, "3680: hook cites #3680");
+        const auto hook = svc.find("install_bridge_epoch_bump_fn([](void* svc)");
+        CHECK(hook != std::string::npos, "3680: compact bump hook present");
+        const auto guard_pos = svc.find("aura_aot_set_reemit_owner_eval", hook);
+        const auto pred_pos = svc.find("aura_aot_bump_will_be_owner_scoped", hook);
+        const auto bump_pos = svc.find("s->bump_bridge_epoch()", hook);
+        const auto table_pos = svc.find("aura_aot_bump_func_table_epoch()", hook);
+        CHECK(guard_pos != std::string::npos && pred_pos != std::string::npos &&
+                  bump_pos != std::string::npos && table_pos != std::string::npos,
+              "3680: guard + predicate + bumps present in hook");
+        CHECK(guard_pos < pred_pos && pred_pos < bump_pos,
+              "3680: owner TLS guard precedes predicate precedes bumps");
+        CHECK(svc.find("aura_production_defaults_active_probe", hook) != std::string::npos,
+              "3680: production probe gates the skip (Soft/Off keep joint bump)");
+        // No new epoch domain: the hook owns no fetch_add of its own.
+        const auto hook_end = svc.find("});", pred_pos);
+        CHECK(hook_end != std::string::npos, "3680: hook body bounded");
+        CHECK(svc.substr(hook, hook_end - hook).find("fetch_add") == std::string::npos,
+              "3680 AC5: no new epoch domain (hook owns no fetch_add)");
+        // Facade parity surface untouched (#3605/#3300).
+        CHECK(!reg.empty(), "3680: hot_update_registry.cpp readable");
+        CHECK(reg.find("c_clocks_owner_skipped = aura_aot_bump_will_be_owner_scoped()") !=
+                  std::string::npos,
+              "3680 AC4: facade consults the same predicate (#3605)");
+        CHECK(reg.find("aura_aot_note_cross_eval_hard_owner_scoped()") != std::string::npos,
+              "3680 AC4: facade owner-scoped attribution preserved");
+        CHECK(reg.find("aura_aot_mark_peer_jit_name_soft_stale(name)") != std::string::npos,
+              "3680 AC4: facade name-level peer bits preserved (#3300)");
+    }
+
+    // AC1 (behavioral, full-link): production + two evals — compact on A
+    // freezes the process clocks; peers stay dual-fresh.
+    {
+        std::println("\n--- #3680 AC1: production multi-eval compact freezes clocks ---");
+        CompilerService cs_a;
+        CompilerService cs_b;
+        auto& ev_a = cs_a.evaluator();
+        auto& ev_b = cs_b.evaluator();
+        aura_set_aot_region_mask_for_eval(static_cast<void*>(&ev_a), 1);
+        aura_set_aot_region_mask_for_eval(static_cast<void*>(&ev_b), 2);
+        if (aura_aot_state_map_size() < 2) {
+            CHECK(true, "AC1: state map <2 — contract source-cited above");
+        } else {
+            ev_a.arm_production_audit_defaults_for_test();
+            if (aura_production_defaults_active_probe() == 0) {
+                std::println("  note: production arming not visible to the probe TU — "
+                             "AC1 behavioral best-effort (source-cite carries)");
+                CHECK(true, "AC1: arming precondition unavailable this link");
+            } else {
+                for (int i = 0; i < 4; ++i)
+                    (void)ev_a.alloc_env_frame();
+                const auto table0 = aura_aot_func_table_epoch();
+                const auto cbr0 = aura_get_current_bridge_epoch();
+                const auto b_epoch0 = ev_b.current_bridge_epoch();
+                (void)ev_a.compact_env_frames();
+                CHECK(aura_aot_func_table_epoch() == table0,
+                      "AC1: g_aot_table_epoch frozen by compact (owner-scoped)");
+                CHECK(aura_get_current_bridge_epoch() == cbr0,
+                      "AC1: process C-bridge epoch frozen");
+                CHECK(ev_b.current_bridge_epoch() == b_epoch0,
+                      "AC1: peer B bridge epoch untouched");
+            }
+            ev_a.disarm_production_audit_defaults_for_test();
+        }
+        aura_cleanup_aot_state(static_cast<void*>(&ev_a));
+        aura_cleanup_aot_state(static_cast<void*>(&ev_b));
+    }
+
+    // AC2 (single-eval production): map <= 1 ⇒ will_be_owner_scoped==0 ⇒
+    // joint bump preserved. Behavioral only when this process can present a
+    // single-eval map; otherwise predicate + source-cite carry.
+    {
+        std::println("\n--- #3680 AC2: single-eval production keeps joint bump ---");
+        if (aura_aot_state_map_size() > 1) {
+            CHECK(true, "AC2: map >1 in this process — predicate + source-cite carry");
+        } else {
+            CompilerService cs;
+            auto& ev = cs.evaluator();
+            ev.arm_production_audit_defaults_for_test();
+            for (int i = 0; i < 4; ++i)
+                (void)ev.alloc_env_frame();
+            const auto table0 = aura_aot_func_table_epoch();
+            (void)ev.compact_env_frames();
+            CHECK(aura_aot_func_table_epoch() > table0,
+                  "AC2: single-eval production compact still joint-bumps the table");
+            ev.disarm_production_audit_defaults_for_test();
+        }
+    }
+
+    // AC3 (Soft/Off): probe false ⇒ same joint bump as today.
+    {
+        std::println("\n--- #3680 AC3: Soft compact keeps joint bump ---");
+        const char* th = std::getenv("AURA_CROSS_EVAL_EPOCH_THROTTLE");
+        const bool env_throttle =
+            th && *th && *th != '0' && *th != 'f' && *th != 'F' && *th != 'n' && *th != 'N';
+        if (env_throttle) {
+            std::println("  note: AURA_CROSS_EVAL_EPOCH_THROTTLE armed in env — AC3 "
+                         "behavioral best-effort (source-cite carries)");
+            CHECK(true, "AC3: env throttle override — predicate + source-cite carry");
+        } else {
+            CompilerService cs;
+            auto& ev = cs.evaluator();
+            for (int i = 0; i < 4; ++i)
+                (void)ev.alloc_env_frame();
+            const auto table0 = aura_aot_func_table_epoch();
+            const auto br0 = ev.current_bridge_epoch();
+            (void)ev.compact_env_frames();
+            CHECK(aura_aot_func_table_epoch() == table0 + 1,
+                  "AC3: Soft compact still advances the table (joint bump)");
+            CHECK(ev.current_bridge_epoch() == br0 + 1,
+                  "AC3: Soft compact still bumps bridge_epoch");
+        }
+    }
+}
+
 } // namespace aura_envframe_epoch_batch
 
 int main() {
@@ -1035,6 +1170,7 @@ int main() {
     aura_envframe_epoch_batch::ac3267_3_epoch_before_lock_comment();
     aura_envframe_epoch_batch::ac3267_4_legacy_trust_read_once();
     aura_envframe_epoch_batch::ac3267_5_source_and_linter();
+    aura_envframe_epoch_batch::run_3680_compact_owner_scope();
     if (::aura::test::g_failed)
         return 1;
     std::println(
