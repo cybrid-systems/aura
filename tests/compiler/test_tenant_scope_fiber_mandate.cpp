@@ -1041,6 +1041,104 @@ static void ac3668_4_off_resume_no_rebind() {
     CHECK(current_quota_tenant() == 5, "3668 AC4: Off yield leaves quota TLS untouched");
 }
 
+// ── #3670 AC1/AC2/AC3: resume IsolationDeny mid joins SSOT (no phantom 1) ──
+static void ac3670_1_resume_mid_join_no_phantom() {
+    std::println("\n--- #3670 AC1/AC2/AC3: production resume mid == epoch / live join ---");
+    reset_all();
+    set_mode(SandboxMode::Restricted);
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+
+    const auto& ring = aura::core::security_event::g_security_event_ring();
+    const auto se_base = ring.seq.load(std::memory_order_acquire);
+
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_effect_sandbox_mode(1);
+    ev.set_capability_tenant_id(7);
+
+    // AC1: epoch straight through — SE mid == Mutation epoch (never phantom 1).
+    auto fiber_owned = std::make_unique<aura::serve::Fiber>([] {});
+    fiber_owned->set_assigned_tenant_id(42); // mismatch vs worker 7
+    aura_fiber_install_tenant_scope_for_resume(fiber_owned.get());
+    CHECK(fiber_owned->resume_had_mismatch(), "3670 AC1: mismatch flag set");
+    const auto epoch = aura::core::current_mutation_epoch();
+    bool ac1_found = false;
+    for (std::uint64_t s = se_base; s < ring.seq.load(std::memory_order_acquire); ++s) {
+        const auto& e = ring.ring[s % ring.ring.size()];
+        if (static_cast<int>(e.kind) !=
+                static_cast<int>(aura::core::security_event::SecurityEventKind::IsolationDeny) ||
+            e.seq != s)
+            continue;
+        ac1_found = true;
+        CHECK(e.mutation_id == epoch,
+              "3670 AC1: SE mid == Mutation epoch (no phantom 1 at epoch 0)");
+    }
+    CHECK(ac1_found, "3670 AC1: resume IsolationDeny SE in ring");
+
+    // AC2: live boundary TLS mid joins via the SSOT (wins over epoch).
+    aura::compiler::typed_audit::g_tls_composite_batch_join_mid = 0;
+    aura::compiler::typed_audit::g_tls_boundary_audit_noted = true;
+    aura::compiler::typed_audit::g_tls_boundary_audit_mid = 777;
+    auto fiber_live = std::make_unique<aura::serve::Fiber>([] {});
+    fiber_live->set_assigned_tenant_id(42);
+    const auto se_live_base = ring.seq.load(std::memory_order_acquire);
+    aura_fiber_install_tenant_scope_for_resume(fiber_live.get());
+    bool ac2_found = false;
+    for (std::uint64_t s = se_live_base; s < ring.seq.load(std::memory_order_acquire); ++s) {
+        const auto& e = ring.ring[s % ring.ring.size()];
+        if (static_cast<int>(e.kind) !=
+                static_cast<int>(aura::core::security_event::SecurityEventKind::IsolationDeny) ||
+            e.seq != s)
+            continue;
+        ac2_found = true;
+        CHECK(e.mutation_id == 777, "3670 AC2: SE mid joins the live boundary mid (777)");
+    }
+    CHECK(ac2_found, "3670 AC2: live-join IsolationDeny SE in ring");
+    aura::compiler::typed_audit::g_tls_boundary_audit_noted = false;
+    aura::compiler::typed_audit::g_tls_boundary_audit_mid = 0;
+
+    // AC3: require_effect still hard-denies on resume_had_mismatch — the
+    // mid==0 refuse adds no phantom EffectDeny row (#3594/#3462).
+    CHECK(!ev.require_effect(static_cast<std::uint16_t>(aura::compiler::security::kEffectMutate),
+                             std::string_view("3670-ac3")),
+          "3670 AC3: require_effect still hard-denies after mismatch resume");
+    aura::compiler::typed_audit::apply_dev_audit_defaults(); // restore dev face
+}
+
+// ── #3670 AC4: Restricted-observe (no production defaults) keeps mid=1 stamp ──
+static void ac3670_4_soft_observe_keeps_stamp() {
+    std::println("\n--- #3670 AC4: observe face keeps legacy mid=1 stamp ---");
+    reset_all();
+    set_mode(SandboxMode::Restricted);
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+    // NO apply_production_audit_defaults — observe face (#3670 AC4).
+    const auto& ring = aura::core::security_event::g_security_event_ring();
+    const auto se_base = ring.seq.load(std::memory_order_acquire);
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_effect_sandbox_mode(1);
+    ev.set_capability_tenant_id(7);
+    auto fiber_owned = std::make_unique<aura::serve::Fiber>([] {});
+    fiber_owned->set_assigned_tenant_id(42);
+    aura_fiber_install_tenant_scope_for_resume(fiber_owned.get());
+    bool found = false;
+    for (std::uint64_t s = se_base; s < ring.seq.load(std::memory_order_acquire); ++s) {
+        const auto& e = ring.ring[s % ring.ring.size()];
+        if (static_cast<int>(e.kind) !=
+                static_cast<int>(aura::core::security_event::SecurityEventKind::IsolationDeny) ||
+            e.seq != s)
+            continue;
+        found = true;
+        CHECK(e.mutation_id == 1 || e.mutation_id == aura::core::current_mutation_epoch(),
+              "3670 AC4: observe face keeps legacy mid=1 stamp (or epoch)");
+    }
+    CHECK(found, "3670 AC4: IsolationDeny SE in ring");
+    // AC5: steal × abort × resume safety-ticket session revoke stays a
+    // commutative no-op — covered by ac3434_3_session_revoke_on_resume +
+    // ac3275_3_soft_no_abort_path above (no mid path touched by #3670).
+}
+
 } // namespace
 
 int run_test_fiber_assigned_tenant_inherit() {
@@ -1093,6 +1191,9 @@ int run_test_tenant_scope_fiber_mandate() {
     std::println("\n=== Issue #3668: quota TLS rebind on resume ===");
     ac3668_3_resume_binds_quota_tls();
     ac3668_4_off_resume_no_rebind();
+    std::println("\n=== Issue #3670: resume mid join (no phantom 1) ===");
+    ac3670_1_resume_mid_join_no_phantom();
+    ac3670_4_soft_observe_keeps_stamp();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
