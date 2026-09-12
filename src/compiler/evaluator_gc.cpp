@@ -1012,7 +1012,7 @@ Evaluator::CompactSweepResult Evaluator::compact_sweep(void* sweep_buffers) {
         return result; // all zeros — reclaim skipped
     }
 
-    std::lock_guard<std::mutex> lock(heap_mutex());
+    std::unique_lock<std::mutex> lock(heap_mutex());
 
     // Issue #2000: invalidate pinned FFI buffers during sweep. Pins may
     // reference swept closure / heap state — conservatively mark them
@@ -1143,9 +1143,10 @@ Evaluator::CompactSweepResult Evaluator::compact_sweep(void* sweep_buffers) {
         // Issue #2265 Phase 3: remap honors under Moving densify.
         m->arena_live_compact_remapped_pins_total.fetch_add(lc.remapped_pins,
                                                             std::memory_order_relaxed);
-        // Issue #2266: pin contract fail-closed (verify returned false).
-        m->moving_compact_pin_contract_fail_total.fetch_add(lc.pin_contract_held ? 0 : 1,
-                                                            std::memory_order_relaxed);
+        // Issue #3677: the Moving pin-contract counter stays Moving-only —
+        // Soft pin_contract_held is vacuous default-true (the verify walk
+        // runs for moved_live_objects only), so it must not feed this
+        // counter from the Soft sweep path.
         // Issue #2267: RootRemapPass per-arena counters (mirrors ArenaStats).
         m->root_remap_stable_ref_total.fetch_add(
             static_cast<std::uint64_t>(lc.root_remap_stable_ref_total), std::memory_order_relaxed);
@@ -1168,6 +1169,19 @@ Evaluator::CompactSweepResult Evaluator::compact_sweep(void* sweep_buffers) {
     // next owned depth>0 gate / Agent poll consume the result; not an
     // immediate commit-barrier. Quiet means unknown, not invalid/green.
     (void)typed_audit::rebind_linear_proof_after_root_migration();
+
+    // Issue #3677: a Soft compact that bumped the arena gen / invalidated
+    // LifetimePins must restamp the IR/JIT triad immediately — compact_sweep
+    // runs at a GC safepoint with no guaranteed following mutate/steal, so
+    // pins would sit fail-closed (red) until the next boundary restamp.
+    // Same site vocabulary as the Phase-5 Moving densify restamp. Soft does
+    // NOT publish a Moving window (had_moving_densify keeps the last Moving
+    // publish — Phase-5 stays the only window writer). Unlock first: the
+    // restamp triad does not take heap_mutex and must not run under it.
+    lock.unlock();
+    if (lc.invalidates_pins) {
+        (void)unified_restamp_after_boundary(UnifiedRestampSite::Densify);
+    }
 
     return result;
 }

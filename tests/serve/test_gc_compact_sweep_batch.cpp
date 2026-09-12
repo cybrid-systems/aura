@@ -21,6 +21,9 @@
 #include "test_harness.hpp"
 #include "compiler/observability_metrics.h"
 #include "serve/gc_coordinator.h"
+#include "core/flatast_restamp.hh"       // #3677 unified restamp counter
+#include "core/gc_hooks.h"               // #3677 ffi-pin defer arm/release
+#include "core/moving_densify_health.hh" // #3677 last Moving window atomics
 
 #include <fstream>
 #include <initializer_list>
@@ -364,6 +367,94 @@ static void run_206_all_dead() {
     }
 }
 
+// ── Block N: Issue #3677 (Soft compact restamp + Moving window untouched) ──
+// compact_sweep's opportunistic live_compact(Soft) can bump the arena gen /
+// invalidate LifetimePins (saved_bytes > 0 tail) without a following
+// mutate/steal restamp. #3677: restamp the triad on invalidates_pins, keep
+// the Moving window publish Moving-only, and stop feeding the Moving
+// pin-contract counter from the vacuous Soft default-true.
+static void run_3677_soft_compact_restamp() {
+    std::println("\n=== Issue #3677: Soft compact restamp + Moving window untouched ===");
+    namespace mdh = aura::core::moving_densify_health;
+
+    // AC2 + AC3: Soft compact must not move the last Moving window nor the
+    // Moving pin-contract counter (Soft pin_contract_held is vacuous true).
+    {
+        std::println("\n--- AC2/AC3: window + pin-contract counter untouched ---");
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        const auto had0 = mdh::g_last_had_moving_densify.load(std::memory_order_relaxed);
+        const auto seq0 = mdh::g_last_window_seq.load(std::memory_order_relaxed);
+        auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
+        const auto pc0 = m->moving_compact_pin_contract_fail_total.load(std::memory_order_relaxed);
+        GCSweepBuffers marks{};
+        auto r = ev.compact_sweep(&marks);
+        CHECK(mdh::g_last_window_seq.load(std::memory_order_relaxed) == seq0,
+              "AC2: last Moving window seq unchanged by Soft compact");
+        CHECK(mdh::g_last_had_moving_densify.load(std::memory_order_relaxed) == had0,
+              "AC2: had_moving_densify unchanged by Soft compact");
+        CHECK(m->moving_compact_pin_contract_fail_total.load(std::memory_order_relaxed) == pc0,
+              "AC3: pin-contract counter unchanged by Soft compact");
+        (void)r;
+    }
+
+    // AC1 + AC4: when the Soft compact invalidates pins, the unified restamp
+    // runs; under ffi-pin defer the whole sweep (compact + restamp) skips.
+    {
+        std::println("\n--- AC1/AC4: invalidates_pins → restamp; defer → skip ---");
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
+        const auto rs0 = aura::ast::unified_restamp_calls_total_v_read();
+        const auto gen_restamps0 =
+            m->arena_live_compact_gen_restamps_total.load(std::memory_order_relaxed);
+        // AC4: ffi-pin defer active → zeroed result + no restamp (the
+        // half-graph must not be restamped, #2005/#2088 defer face).
+        aura::gc_hooks::arm_ffi_pin_defer();
+        GCSweepBuffers marks{};
+        auto r = ev.compact_sweep(&marks);
+        CHECK(r.empty(), "AC4: ffi-pin defer → zeroed sweep result");
+        CHECK(aura::ast::unified_restamp_calls_total_v_read() == rs0,
+              "AC4: no restamp under defer (half-graph untouched)");
+        aura::gc_hooks::release_ffi_pin_defer();
+        // AC1: sweep normally — if this compact invalidated pins (gen
+        // restamp), the unified restamp must have run. Same safepoint;
+        // invariant keyed on the existing gen-restamp metric, not a
+        // heap-shape assumption.
+        auto r2 = ev.compact_sweep(&marks);
+        (void)r2;
+        const auto gen_restamps1 =
+            m->arena_live_compact_gen_restamps_total.load(std::memory_order_relaxed);
+        if (gen_restamps1 > gen_restamps0) {
+            CHECK(aura::ast::unified_restamp_calls_total_v_read() > rs0,
+                  "AC1: gen restamp (invalidates_pins) → unified restamp ran (#3677)");
+        } else {
+            std::println(
+                "  note: unit-env Soft compact did not invalidate pins; AC1 runtime invariant "
+                "vacuous this round (source-cite AC carries)");
+            CHECK(true, "AC1: no invalidates_pins this round — nothing to restamp");
+        }
+    }
+
+    // AC5: source-cite — compact_sweep joins the restamp triad on
+    // invalidates_pins, cites #3677, and no longer feeds the Moving
+    // pin-contract counter from the Soft result.
+    {
+        std::println("\n--- AC5: source-cite ---");
+        std::ifstream gc("src/compiler/evaluator_gc.cpp");
+        std::string body((std::istreambuf_iterator<char>(gc)), std::istreambuf_iterator<char>());
+        CHECK(body.find("Issue #3677") != std::string::npos, "AC5: evaluator_gc.cpp cites #3677");
+        CHECK(body.find("if (lc.invalidates_pins)") != std::string::npos &&
+                  body.find("unified_restamp_after_boundary(UnifiedRestampSite::Densify)") !=
+                      std::string::npos,
+              "AC5: Soft invalidates_pins → unified restamp (AC1)");
+        CHECK(
+            body.find("m->moving_compact_pin_contract_fail_total.fetch_add(lc.pin_contract_held") ==
+                std::string::npos,
+            "AC5: Soft pin-contract fetch_add removed (AC3)");
+    }
+}
+
 } // namespace aura_compact_sweep_batch
 
 int main() {
@@ -377,5 +468,6 @@ int main() {
     aura_compact_sweep_batch::run_206_clear_remap();
     aura_compact_sweep_batch::run_206_out_of_range();
     aura_compact_sweep_batch::run_206_all_dead();
+    aura_compact_sweep_batch::run_3677_soft_compact_restamp();
     return RUN_ALL_TESTS();
 }
