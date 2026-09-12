@@ -64,7 +64,8 @@ def _rows(me: str, test: str, build: str) -> list[str]:
     must("return original_root;", "AC1 return original_root", me[guard_pos : guard_pos + 400])
 
     # AC2 — predicate covers every deny code.
-    pred_begin = me.find("[[nodiscard]] static bool inner_expand_production_limit_deny()")
+    # Issue #3684: the helper is exported (de-static) and ORs 8/9/10.
+    pred_begin = me.find("bool inner_expand_production_limit_deny()")
     pred_end = me.find("namespace detail {", pred_begin)
     if pred_begin < 0 or pred_end < 0 or pred_end <= pred_begin:
         fails.append("AC2: predicate body not located")

@@ -6876,6 +6876,23 @@ def cmd_lint():
             "Issue #3683 hygiene deny kind uniformity linter failed — run python3 scripts/check_hygiene_deny_kind_uniformity_3683.py"
         )
         return r
+    # Issue #3684 (#3062/#3651/#3470 residual): production could commit a
+    # half-expanded MacroIntroduced tree — expand_inner_macros spliced a
+    # cloned body even when the recursive inner expand hit a deny (depth
+    # ceiling) and eval_flat evaluated it; the deny helper matched only
+    # 2/3/6/7/1 so a later pass refusing via 8/9/10 kept the pass-0 tree.
+    # Gate pins: the deny helper ORs 8/9/10; the clone path refuses to
+    # splice on deny (try_restore + return root); eval_flat skips eval of a
+    # half-expanded body (production-gated); Soft/Off contract unchanged;
+    # tests extended (limits ac3684 + closed-loop ac3684).
+    ier3684_script = ROOT / "scripts" / "check_inner_expand_refuse_3684.py"
+    if not ier3684_script.exists():
+        fail(f"missing {ier3684_script}")
+        return 1
+    r = run([sys.executable, str(ier3684_script)], cwd=ROOT)
+    if r != 0:
+        fail("Issue #3684 inner expand refuse linter failed — run python3 scripts/check_inner_expand_refuse_3684.py")
+        return r
         return r
     # Issue #3649 (#2952/#3096/#2690 residual): the storm-exit edge drives
     # residual coverage-verify. storm_exit_force_full_active now==0 &&

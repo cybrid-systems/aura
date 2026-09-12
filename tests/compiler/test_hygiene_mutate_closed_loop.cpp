@@ -5472,6 +5472,31 @@ static void ac3683_deny_kind_unified() {
           "3683 AC5: provenance-stats key unchanged");
 }
 
+
+// ── Issue #3684: eval_flat / inner expand refuse half-expanded trees ──
+static void ac3684_inner_expand_refuse() {
+    std::println("\n--- #3684: deny consult after clone + eval_flat; 8/9/10 in helper ---");
+    const auto me = read_file("src/compiler/macro_expansion.cpp");
+    const auto flat = read_file("src/compiler/evaluator_eval_flat.cpp");
+    const auto ixx = read_file("src/compiler/macro_expansion.ixx");
+
+    // Patch 1: the deny helper covers the ConcurrentCloneGuard refuse codes.
+    CHECK(me.find("kHygieneLimitReasonSameFlatReject") != std::string::npos &&
+              me.find("kHygieneLimitReasonNameMapShared") != std::string::npos &&
+              me.find("kHygieneLimitReasonConcurrentTopLevel") != std::string::npos,
+          "3684: deny helper ORs 8/9/10");
+    CHECK(ixx.find("inner_expand_production_limit_deny") != std::string::npos,
+          "3684: deny helper exported (eval_flat consults)");
+
+    // Patch 2: expand_inner_macros refuses to splice a half-expanded clone.
+    CHECK(me.find("half-expanded clone") != std::string::npos,
+          "3684: clone-path splice refused on deny");
+
+    // Patch 3: eval_flat never evaluates a half-expanded body.
+    CHECK(flat.find("half-expanded body") != std::string::npos,
+          "3684: eval_flat skips eval on deny");
+}
+
 static void ac3650_5_source_and_no_artifacts() {
     std::println("\n--- #3650 AC5: source-cite + no forbidden artifacts ---");
     const auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
@@ -5701,6 +5726,7 @@ int main() {
     ac3650_4_soft_rollback_unchanged();
     ac3650_5_source_and_no_artifacts();
     ac3683_deny_kind_unified();
+    ac3684_inner_expand_refuse();
     std::println("\n=== {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

@@ -4603,6 +4603,19 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                                 expanded = expand_inner_macros(f, p, expanded, /*depth=*/0,
                                                                /*max_depth=*/10,
                                                                as_expansion_registry(macros_));
+                                // Issue #3684: production refuses to eval a
+                                // half-expanded body — if the inner expand hit
+                                // a deny (depth/pass/steal/cap/gensym/
+                                // same-flat/name-map/concurrent-top-level),
+                                // return void without evaluating; the deny
+                                // site already stamped last_limit_reason so
+                                // the Agent sees hygiene-depth-limit via
+                                // query:macro-hygiene-provenance-stats.
+                                // Soft/Off keeps the historical
+                                // expand-then-eval (contract).
+                                if (aura::core::sandbox::is_sandbox_active() &&
+                                    macro_exp::inner_expand_production_limit_deny())
+                                    return make_void();
                                 // Issue #2019: full restamp for all live nodes after
                                 // structural splice + MacroIntroduced-only parent/dirty fix.
                                 f->restamp_all_node_generations();

@@ -107,11 +107,16 @@ namespace aura::compiler::macro_exp {
 // set_child. clone / macro_expand_all_body own the expand checkpoint;
 // expand_inner_macros only try_restore + belt-restore the parent slot
 // (no second install / no extra Soft walk).
-[[nodiscard]] static bool inner_expand_production_limit_deny() noexcept {
+[[nodiscard]] bool inner_expand_production_limit_deny() noexcept {
     const auto r = g_macro_hygiene_last_limit_reason.load(std::memory_order_relaxed);
+    // Issue #3684: the ConcurrentCloneGuard production refuses (8/9/10:
+    // same-flat / name-map-shared / concurrent-top-level) are inner-expand
+    // denials too — a later pass hitting them after a pass-0 splice must
+    // restore original_root, not keep the pass-0 tree.
     return r == kHygieneLimitReasonDepthLimit || r == kHygieneLimitReasonPassLimit ||
            r == kHygieneLimitReasonStealAbort || r == kHygieneLimitReasonCapabilityDeny ||
-           r == kHygieneLimitReasonGensymCeiling;
+           r == kHygieneLimitReasonGensymCeiling || r == kHygieneLimitReasonSameFlatReject ||
+           r == kHygieneLimitReasonNameMapShared || r == kHygieneLimitReasonConcurrentTopLevel;
 }
 
 namespace detail {
@@ -3112,6 +3117,16 @@ aura::ast::NodeId expand_inner_macros(
                         return root;
                     // Recursively expand inner macros in the cloned body
                     cloned = expand_inner_macros(flat, pool, cloned, depth + 1, max_depth, macros);
+                    // Issue #3684: production refuses to splice a
+                    // half-expanded clone — if the recursive inner expand
+                    // hit a deny, try_restore the expand checkpoint and
+                    // return the original (unexpanded) call root; the
+                    // parent set_child below is skipped so no half tree is
+                    // committed. Soft/Off keeps the splice (contract).
+                    if (production_surface && inner_expand_production_limit_deny()) {
+                        (void)aura_evaluator_try_restore_macro_expand_checkpoint();
+                        return root;
+                    }
                     // Rewrite the parent's child to use the cloned body
                     auto parent_id = flat->parent_of(root);
                     if (parent_id != NULL_NODE) {
