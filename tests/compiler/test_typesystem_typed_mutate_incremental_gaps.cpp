@@ -156,12 +156,26 @@ static void ac3655_non_rebind_persist_sdo() {
     aura::compiler::typed_audit::apply_dev_audit_defaults();
 }
 
+static void ac3686_post_mutate_union_seed() {
+    std::println("\n--- #3686: post-mutate Guard log union (typed_mutation_audit suite) ---");
+    const auto etc = read_file("src/compiler/evaluator_typecheck.cpp");
+    const auto impl = read_file("src/compiler/type_checker_impl.cpp");
+    CHECK(etc.find("Issue #3686") != std::string::npos, "3686: typecheck cite");
+    CHECK(etc.find("production_hard_face_active()") != std::string::npos,
+          "3686: Production/Full gate");
+    CHECK(impl.find("affected_subtree_from_mutation(flat, extra)") != std::string::npos,
+          "3686: per-record affected union");
+    CHECK(etc.find("schema-3686") == std::string::npos, "3686: no new query key");
+    CHECK(read_file("tests/compiler/test_issue_3686.cpp").empty(), "3686: no invent test_issue_N");
+}
+
 } // namespace aura_659_detail
 
 int aura_issue_typesystem_typed_mutate_incremental_gaps_run() {
     aura::compiler::CompilerService cs;
     aura_659_detail::run_matrix(cs);
     aura_659_detail::ac3655_non_rebind_persist_sdo();
+    aura_659_detail::ac3686_post_mutate_union_seed();
     return RUN_ALL_TESTS();
 }
 

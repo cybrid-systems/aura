@@ -15556,6 +15556,9 @@ public:
     // Issue #526: selective infer_flat_partial on the latest
     // MutationRecord when the log is non-empty; full infer_flat
     // fallback otherwise. Applies CoercionMap before return.
+    // Issue #3686: Production/Full unions every MutationRecord written
+    // under this Guard (enter checkpoint → end) into the partial cone;
+    // Soft/Off stays log.back() only.
     // Issue #1769: exception-safe (see run_typecheck_no_lock).
     bool run_post_mutate_typecheck_no_lock();
 

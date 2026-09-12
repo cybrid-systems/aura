@@ -225,6 +225,10 @@ bool Evaluator::run_post_mutate_typecheck_no_lock() {
     // latest record (solve_delta + occurrence re-narrow on the
     // affected subtree only). Fall back to full infer_flat when
     // the log is empty (degenerate / pre-log mutations).
+    // Issue #3686: Production/Full unions every MutationRecord
+    // written under this Guard (enter checkpoint → end) so a
+    // lockless atomic-batch of sibling Defines re-infers all of
+    // them, not only log.back(). Soft/Off: keep log.back() only.
     // Issue #1769: never throw into mutate Guard paths.
     try {
         // Issue #2219: every post-mutate typecheck entry (for query/tests).
@@ -295,9 +299,21 @@ bool Evaluator::run_post_mutate_typecheck_no_lock() {
             // dirty txn so under-mark cones still re-typecheck leftover
             // sites. Soft persist empty → 0 extra.
             (void)aura::compiler::dirty::force_residual_castop_undermark_into_cone();
+            // Issue #3686: Production/Full union log[enter .. end) into the
+            // partial cone. Soft/Off and single-op: extra empty (log.back()).
+            std::span<const aura::ast::MutationRecord> extra{};
+            if (aura::compiler::typed_audit::production_hard_face_active()) {
+                auto& stk = active_mutation_stack();
+                if (!stk.empty()) {
+                    const auto enter = stk.back().mutation_log_size;
+                    if (enter < log.size() && (log.size() - enter) > 1)
+                        extra = std::span<const aura::ast::MutationRecord>(log.data() + enter,
+                                                                           log.size() - enter);
+                }
+            }
             // Issue #2516: dirty txn entry (invalidate → re-infer → mirror).
             const auto reinferred = tc.infer_flat_partial_with_dirty_txn(
-                *workspace_flat_, *workspace_pool_, log.back(), diag);
+                *workspace_flat_, *workspace_pool_, log.back(), diag, nullptr, extra);
             (void)reinferred;
             // Issue #3658: this-boundary type cone is now the IR-cascade
             // authority (do not re-run on Guard persist-front / rebind).
