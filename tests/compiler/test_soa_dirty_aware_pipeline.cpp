@@ -44,12 +44,15 @@ using aura::compiler::ConstantFoldingWrap;
 using aura::compiler::DeadCoercionEliminationPass;
 using aura::compiler::DirtyAwarePass;
 using aura::compiler::DirtySoAEntryPass;
+using aura::compiler::EscapeAnalysisWrap;
 using aura::compiler::IRModuleV2;
 using aura::compiler::ProductionPureWrapPass;
+using aura::compiler::run_dirty_escape_on_soa;
 using aura::compiler::run_dirty_pipeline;
 using aura::compiler::run_pipeline;
 using aura::compiler::run_production_soa_dirty_hot_pack;
 using aura::compiler::run_production_soa_pure_wrap_pack;
+using aura::compiler::set_fn_shape_stable_probe;
 using aura::compiler::ShapeWrap;
 using aura::compiler::SoaDirtyAwarePass;
 using aura::compiler::TypePropagationPass;
@@ -566,6 +569,90 @@ int run_test_soa_dirty_aware_pipeline() {
         CHECK(impls.find("schema-3488") == std::string::npos, "3488 AC5: no new query key");
     }
 
+    // ── Issue #3701: production dirty pack skips AoS EscapeAnalysisWrap ──
+    {
+        std::println("\n=== Issue #3701: Production SoA dirty escape, no AoS Wrap run ===");
+        CHECK(aura::compiler::pass_concepts::kProductionDirtyEscapeSoaIssue == 3701,
+              "3701: issue stamp");
+        static_assert(!ProductionPureWrapPass<EscapeAnalysisWrap>);
+        static_assert(DirtySoAEntryPass<EscapeAnalysisWrap>);
+        CHECK(!static_cast<bool>(ProductionPureWrapPass<EscapeAnalysisWrap>),
+              "3701 AC4: pack still rejects EscapeAnalysisWrap");
+        CHECK(static_cast<bool>(DirtySoAEntryPass<EscapeAnalysisWrap>),
+              "3701 AC3: Soft DirtySoAEntryPass grandfather kept");
+
+        const auto svc = read_file("src/compiler/service.ixx");
+        const auto prod = svc.find("const bool prod_soa");
+        CHECK(prod != std::string::npos, "3701: prod_soa");
+        const auto win = svc.substr(prod, 2800);
+        const auto aos = win.find("if (!prod_soa)");
+        CHECK(aos != std::string::npos, "3701 AC3: Soft AoS suite kept");
+        const auto else_pos = win.find("} else {", aos);
+        CHECK(else_pos != std::string::npos, "3701 AC1: production else arm");
+        const auto aos_body = win.substr(aos, else_pos - aos);
+        CHECK(aos_body.find("escape_pass") != std::string::npos,
+              "3701 AC3: Soft still runs EscapeAnalysisWrap pipeline");
+        CHECK(aos_body.find("run_production_incremental_dirty_pipeline(ir_mod, escape_pass") !=
+                  std::string::npos,
+              "3701 AC3: AoS grandfather pipeline");
+        const auto else_body = win.substr(else_pos, 400);
+        CHECK(else_body.find("run_dirty_escape_on_soa") != std::string::npos,
+              "3701 AC1: Production + soa_mod uses SoA escape");
+        CHECK(else_body.find("escape_pass") == std::string::npos,
+              "3701 AC1: Production + soa_mod does not invoke Wrap AoS run");
+        CHECK(svc.find("Issue #3701") != std::string::npos, "3701: suite cites #3701");
+        CHECK(svc.find("schema-3701") == std::string::npos, "3701 AC5: no new query key");
+        CHECK(read_file("docs/design/3701-soa-dirty-escape.md").empty(),
+              "3701 AC5: no docs/design");
+        CHECK(read_file("tests/compiler/test_issue_3701.cpp").empty(), "3701 AC5: no invent");
+
+        IRModuleV2 mod;
+        auto fi0 = mod.add_function("dirty3701", 4);
+        auto b0 = mod.add_block(fi0);
+        mod.add_instruction(fi0, IROpcode::ConstI64, {0, 7, 0, 0}, 0, 1, 0, 0);
+        mod.seal_block(fi0, b0);
+        auto b1 = mod.add_block(fi0);
+        mod.add_instruction(fi0, IROpcode::ConstI64, {1, 0, 0, 0}, 0, 1, 0, 0);
+        mod.seal_block(fi0, b1);
+        auto& dirty_fn = mod.functions[fi0];
+        dirty_fn.block_dirty_.assign(dirty_fn.blocks_.size(), 0);
+        if (!dirty_fn.block_dirty_.empty())
+            dirty_fn.block_dirty_[0] = 1;
+        auto fi1 = mod.add_function("clean3701", 2);
+        auto c0 = mod.add_block(fi1);
+        mod.add_instruction(fi1, IROpcode::ConstI64, {0, 1, 0, 0}, 0, 1, 0, 0);
+        mod.seal_block(fi1, c0);
+        auto& clean_fn = mod.functions[fi1];
+        clean_fn.block_dirty_.assign(clean_fn.blocks_.size(), 0);
+
+        std::vector<std::vector<std::uint8_t>> maps(2);
+        maps[0] = {9};
+        maps[1] = {8};
+        const auto skips0 = aura::compiler::ir_soa_migration::dirty_block_driven_skips.load(
+            std::memory_order_relaxed);
+        const auto runs0 = aura::compiler::ir_soa_migration::dirty_block_driven_runs.load(
+            std::memory_order_relaxed);
+        const auto n = run_dirty_escape_on_soa(mod, maps);
+        CHECK(n == 1, "3701 AC2: only dirty function escape facts update");
+        CHECK(maps[0].size() == dirty_fn.local_count, "3701 AC2: dirty fn map rebuilt");
+        CHECK(maps[1].size() == 1 && maps[1][0] == 8, "3701 AC2: clean fn reuses last map");
+        CHECK(aura::compiler::ir_soa_migration::dirty_block_driven_skips.load(
+                  std::memory_order_relaxed) > skips0,
+              "3701: clean blocks skipped (not O(all functions))");
+        CHECK(aura::compiler::ir_soa_migration::dirty_block_driven_runs.load(
+                  std::memory_order_relaxed) > runs0,
+              "3701 AC2: dirty blocks peeled");
+
+        maps[0] = {9};
+        maps[1] = {8};
+        set_fn_shape_stable_probe(+[](std::string_view) noexcept { return true; });
+        const auto n_stable = run_dirty_escape_on_soa(mod, maps);
+        set_fn_shape_stable_probe(nullptr);
+        CHECK(n_stable == 0, "3701 AC2: shape-stable reuses last maps");
+        CHECK(maps[0].size() == 1 && maps[0][0] == 9,
+              "3701 AC2: shape-stable dirty fn not rebuilt");
+    }
+
     // ── Issue #3502: production unwired pred ≠ DefaultAllDirty ──
     {
         std::println("\n=== Issue #3502: production unwired BlockDirtyPred ===");
@@ -650,8 +737,9 @@ int run_test_soa_dirty_aware_pipeline() {
     ac3583_3_soft_zero_cost();
     ac3583_4_no_invent_no_mangle();
 
-    std::println("\n=== #2143/#2907/#3488/#3502/#3583/#3689 results: {} passed, {} failed ===",
-                 g_passed, g_failed);
+    std::println(
+        "\n=== #2143/#2907/#3488/#3502/#3583/#3689/#3701 results: {} passed, {} failed ===",
+        g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
 

@@ -12,6 +12,7 @@
 //   Issue #3488: production CK/CF/TP/Shape wraps satisfy
 //   ProductionPureWrapPass via SoA dirty peel (live-covered in
 //   test_soa_dirty_aware_pipeline). AoS DirtySoAEntryPass stays Soft.
+//   Issue #3701: production + soa_mod skips EscapeAnalysisWrap AoS run.
 
 #include "test_harness.hpp"
 

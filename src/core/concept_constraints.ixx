@@ -38,6 +38,10 @@ inline constexpr int kPassPurityGateIssue = 3329;
 inline constexpr int kProductionPureWrapSoaIssue = 3454;
 // Issue #3488: production DirtyAware PureWrap pack peels SoA dirty blocks.
 inline constexpr int kProductionPureWrapHotPackIssue = 3488;
+// Issue #3701: Production + soa_mod does not invoke EscapeAnalysisWrap
+// AoS run in the incremental suite. Wrap stays DirtySoAEntryPass /
+// !ProductionPureWrapPass until a SoA entry lands.
+inline constexpr int kProductionDirtyEscapeSoaIssue = 3701;
 
 inline std::atomic<std::uint64_t> concept_constraints_import_hits{0};
 
@@ -432,5 +436,8 @@ static_assert(pass_soa_sig::kProductionPureWrapSoaIssue == 3454,
 static_assert(pass_soa_sig::kProductionPureWrapHotPackIssue == 3488,
               "Issue #3488 pass_soa_sig.hh stamp");
 static_assert(pass_concepts::kProductionPureWrapHotPackIssue == 3488, "Issue #3488 stamp");
+static_assert(pass_soa_sig::kProductionDirtyEscapeSoaIssue == 3701,
+              "Issue #3701 pass_soa_sig.hh stamp");
+static_assert(pass_concepts::kProductionDirtyEscapeSoaIssue == 3701, "Issue #3701 stamp");
 
 } // namespace aura::compiler

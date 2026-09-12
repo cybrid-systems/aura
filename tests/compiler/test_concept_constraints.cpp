@@ -102,6 +102,10 @@ static void ac2_positive_negative() {
                             aura::compiler::pass_soa_detail::SoaDirtyPureWrapStub>),
           "3454 AC1: IRModuleV2 dirty entry satisfies ProductionPureWrapPass");
     CHECK(aura::compiler::pass_concepts::kProductionPureWrapSoaIssue == 3454, "3454 stamp");
+    CHECK(aura::compiler::pass_concepts::kProductionDirtyEscapeSoaIssue == 3701, "3701 stamp");
+    CHECK(!static_cast<bool>(
+              aura::compiler::ProductionPureWrapPass<aura::compiler::EscapeAnalysisWrap>),
+          "3701 AC4: EscapeAnalysisWrap still fails ProductionPureWrapPass");
 }
 
 static void ac3_reexport_via_pass_manager() {

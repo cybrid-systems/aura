@@ -22,5 +22,10 @@ namespace aura::compiler::pass_soa_sig {
 
 inline constexpr int kProductionPureWrapSoaIssue = 3454;
 inline constexpr int kProductionPureWrapHotPackIssue = 3488;
+// Issue #3701: Production dirty pack skips EscapeAnalysisWrap AoS run
+// when soa_mod is nonempty; columnar dirty-block escape instead.
+// ProductionPureWrapPass pack still rejects the Wrap until it grows
+// a SoA entry. Soft keeps the AoS grandfather.
+inline constexpr int kProductionDirtyEscapeSoaIssue = 3701;
 
 } // namespace aura::compiler::pass_soa_sig
