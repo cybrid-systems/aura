@@ -724,6 +724,40 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const
                 note_apply_closure_densify_hard_refuse(metrics, *this);
                 return std::nullopt;
             }
+            // Issue #3681: production refuses to wash MustDeopt. The flag
+            // is set by expire_stale_live_closures_ after the facade
+            // invalidated this define (mutate×reemit without a densify
+            // window — the #3421 refuse above does not fire when nothing
+            // moved), and falling through to eval_flat would run the
+            // pre-reemit body. Keep the flag SET, poison the bridge epoch
+            // so dual-path also refuses stale views, try the IR bridge,
+            // refuse. AC4 parity: JIT
+            // aura_closure_dispatch_native_checked already leaves native on
+            // MustDeopt. Soft/Off keeps the #2578/#2581 recover below (one
+            // production probe; zero extra when it reads 0).
+            if (aura::compiler::typed_audit::production_defaults_active()) {
+                if (metrics) {
+                    metrics->compiler_closure_safe_fallbacks.fetch_add(1,
+                                                                       std::memory_order_relaxed);
+                    metrics->closure_safe_fallback_apply_count_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                }
+                {
+                    std::unique_lock<std::shared_mutex> wlock(closures_mtx_);
+                    auto it = closures_.find(cid);
+                    if (it != closures_.end()) {
+                        // keep must_deopt_before_next_call SET — do not wash.
+                        it->second.bridge_epoch = 0;
+                        cl_copy = it->second;
+                    } else {
+                        cl_copy.bridge_epoch = 0;
+                    }
+                }
+                if (auto bridged = invoke_closure_bridge_checked(*this, closure_bridge_, cid, args,
+                                                                 metrics, &cl_copy))
+                    return bridged;
+                return std::nullopt;
+            }
             const bool body_live_md = cl_copy.flat && cl_copy.pool &&
                                       cl_copy.body_id != aura::ast::NULL_NODE &&
                                       cl_copy.body_id < cl_copy.flat->size();
@@ -819,6 +853,29 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const
             if (production_apply_closure_densify_hard_refuse(arena_, cl_copy,
                                                              static_cast<const void*>(this))) {
                 note_apply_closure_densify_hard_refuse(metrics, *this);
+                return std::nullopt;
+            }
+            // Issue #3681: production + this closure's define was dirtied
+            // this epoch (v2 dirty flag via is_define_dirty_fn_ — the same
+            // surface the production facade publishes for set-body/rebind)
+            // → epoch-stale must not recover onto the pre-reemit body
+            // either. Rebind of *other* defines keeps the #2569/#2578
+            // recover below (AC2); lambdas (empty name) are not
+            // define-bound and keep the recover.
+            if (aura::compiler::typed_audit::production_defaults_active() &&
+                !cl_copy.name.empty() && is_define_dirty_fn_ && is_define_dirty_fn_(cl_copy.name)) {
+                if (metrics) {
+                    metrics->compiler_closure_safe_fallbacks.fetch_add(1,
+                                                                       std::memory_order_relaxed);
+                    metrics->closure_safe_fallback_apply_count_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                }
+                if (auto bridged = invoke_closure_bridge_checked(*this, closure_bridge_, cid, args,
+                                                                 metrics, &cl_copy))
+                    return bridged;
+                if (metrics)
+                    metrics->closure_stale_returns.fetch_add(1, std::memory_order_relaxed);
+                bump_compiler_root_dangling_prevented();
                 return std::nullopt;
             }
             const bool body_live = cl_copy.flat && cl_copy.pool &&
