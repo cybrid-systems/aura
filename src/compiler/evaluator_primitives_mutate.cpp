@@ -1391,18 +1391,26 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
     });
 
     auto resolve_mutate_node_arg = [&ev, mev, unpack_stable_ref_arg,
-                                    safe_str](aura::ast::FlatAST& flat, const EvalValue& arg,
-                                              const char* op, bool* ok,
-                                              aura::ast::NodeId& out_node) -> EvalValue {
+                                    safe_str](aura::ast::FlatAST& flat,
+                                              std::span<const EvalValue> a, const char* op,
+                                              bool* ok, aura::ast::NodeId& out_node) -> EvalValue {
+        if (a.empty()) {
+            *ok = false;
+            return mev("bad-arg", std::string(op) + ": missing node argument");
+        }
+        const EvalValue& arg = a[0];
         // Issue #3424: production query:* returns schema-2 hash; accept it
         // as a node operand. Freshness via query_result_is_fresh_with_refs.
         // Do not hash → int → make_stamped_ref (occupancy).
+        // Issue #3695: N>1 matches require :index.
         if (is_hash(arg)) {
             using aura::compiler::query_result_decode::HashNodeKind;
+            using aura::compiler::query_result_decode::parse_query_result_match_index;
             using aura::compiler::query_result_decode::resolve_query_result_match;
             auto hr = resolve_query_result_match(
                 arg, ev.string_heap_, ev.pairs_, flat, ev.capability_tenant_id(),
-                static_cast<std::uint64_t>(aura_fiber_current_id()), op);
+                static_cast<std::uint64_t>(aura_fiber_current_id()), op,
+                parse_query_result_match_index(a, ev.keyword_table()));
             if (hr.kind == HashNodeKind::Ok) {
                 out_node = hr.node;
                 return make_void();
@@ -1568,7 +1576,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                    auto& flat = *ev.workspace_flat_;
                    aura::ast::NodeId node = aura::ast::NULL_NODE;
                    if (auto resolve_err =
-                           resolve_mutate_node_arg(flat, a[0], "mutate:replace-type", &ok, node);
+                           resolve_mutate_node_arg(flat, a, "mutate:replace-type", &ok, node);
                        !is_void(resolve_err))
                        return resolve_err;
                    // Issue #3115: scalar type rewrite is still a mutate of
@@ -1672,7 +1680,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             auto& flat = *ev.workspace_flat_;
             aura::ast::NodeId node = aura::ast::NULL_NODE;
             if (auto resolve_err =
-                    resolve_mutate_node_arg(flat, a[0], "mutate:replace-value", &ok, node);
+                    resolve_mutate_node_arg(flat, a, "mutate:replace-value", &ok, node);
                 !is_void(resolve_err))
                 return resolve_err;
             // Issue #3115: scalar value rewrite is still a mutate of a
@@ -1824,7 +1832,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                                     "usage: (mutate:record-patch node-id op-name summary)");
             }
             aura::ast::NodeId node = aura::ast::NULL_NODE;
-            if (auto err = resolve_mutate_node_arg(*ev.workspace_flat_, a[0], "mutate:record-patch",
+            if (auto err = resolve_mutate_node_arg(*ev.workspace_flat_, a, "mutate:record-patch",
                                                    &ok, node);
                 !is_void(err)) {
                 ok = false;
@@ -2943,7 +2951,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                     "usage: (mutate:rollback-macro-introduced root-id [:keep-provenance? #f])");
             }
             aura::ast::NodeId root = aura::ast::NULL_NODE;
-            if (auto err = resolve_mutate_node_arg(*ev.workspace_flat_, a[0],
+            if (auto err = resolve_mutate_node_arg(*ev.workspace_flat_, a,
                                                    "mutate:rollback-macro-introduced", &ok, root);
                 !is_void(err)) {
                 ok = false;
@@ -3207,10 +3215,12 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         auto& flat = *ev.workspace_flat_;
         if (is_hash(a[0])) {
             using aura::compiler::query_result_decode::HashNodeKind;
+            using aura::compiler::query_result_decode::parse_query_result_match_index;
             using aura::compiler::query_result_decode::resolve_query_result_match;
             auto hr = resolve_query_result_match(
                 a[0], ev.string_heap_, ev.pairs_, flat, ev.capability_tenant_id(),
-                static_cast<std::uint64_t>(aura_fiber_current_id()), "query:as-stable-ref");
+                static_cast<std::uint64_t>(aura_fiber_current_id()), "query:as-stable-ref",
+                parse_query_result_match_index(a, ev.keyword_table()));
             if (hr.kind != HashNodeKind::Ok)
                 return mev(hr.err_kind, hr.err_msg);
             if (!ev.allow_query_stable_ref_export(hr.node))
@@ -4245,7 +4255,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 return mev("bad-arg", "usage: (mutate:remove-node node-id [:allow-macro? #t])");
             }
             aura::ast::NodeId target = aura::ast::NULL_NODE;
-            if (auto err = resolve_mutate_node_arg(*ev.workspace_flat_, a[0], "mutate:remove-node",
+            if (auto err = resolve_mutate_node_arg(*ev.workspace_flat_, a, "mutate:remove-node",
                                                    &ok, target);
                 !is_void(err)) {
                 ok = false;
@@ -4343,7 +4353,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                                       "[:allow-macro? #t] [summary])");
             }
             aura::ast::NodeId parent = aura::ast::NULL_NODE;
-            if (auto err = resolve_mutate_node_arg(*ev.workspace_flat_, a[0], "mutate:insert-child",
+            if (auto err = resolve_mutate_node_arg(*ev.workspace_flat_, a, "mutate:insert-child",
                                                    &ok, parent);
                 !is_void(err)) {
                 ok = false;
@@ -4509,7 +4519,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             auto& flat = *ev.workspace_flat_;
             aura::ast::NodeId node = aura::ast::NULL_NODE;
             if (auto resolve_err =
-                    resolve_mutate_node_arg(flat, a[0], "mutate:tweak-literal", &ok, node);
+                    resolve_mutate_node_arg(flat, a, "mutate:tweak-literal", &ok, node);
                 !is_void(resolve_err))
                 return resolve_err;
             // Issue #373: hygiene guard. If `node` is
@@ -5164,8 +5174,8 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                                       "[:allow-macro? #t])");
             }
             aura::ast::NodeId target = aura::ast::NULL_NODE;
-            if (auto err = resolve_mutate_node_arg(*ev.workspace_flat_, a[0],
-                                                   "mutate:replace-subtree", &ok, target);
+            if (auto err = resolve_mutate_node_arg(*ev.workspace_flat_, a, "mutate:replace-subtree",
+                                                   &ok, target);
                 !is_void(err)) {
                 ok = false;
                 return err;
@@ -6176,8 +6186,8 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                                                "code-strings... [:allow-macro? #t] [summary])");
             }
             aura::ast::NodeId parent = aura::ast::NULL_NODE;
-            if (auto err = resolve_mutate_node_arg(*ev.workspace_flat_, a[0], "mutate:splice", &ok,
-                                                   parent);
+            if (auto err =
+                    resolve_mutate_node_arg(*ev.workspace_flat_, a, "mutate:splice", &ok, parent);
                 !is_void(err)) {
                 ok = false;
                 return err;
@@ -6328,7 +6338,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             }
             aura::ast::NodeId node = aura::ast::NULL_NODE;
             if (auto err =
-                    resolve_mutate_node_arg(*ev.workspace_flat_, a[0], "mutate:wrap", &ok, node);
+                    resolve_mutate_node_arg(*ev.workspace_flat_, a, "mutate:wrap", &ok, node);
                 !is_void(err)) {
                 ok = false;
                 return err;
@@ -6514,7 +6524,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                                     "usage: (mutate:refactor/extract node-id new-name [summary])");
             }
             aura::ast::NodeId node = aura::ast::NULL_NODE;
-            if (auto err = resolve_mutate_node_arg(*ev.workspace_flat_, a[0],
+            if (auto err = resolve_mutate_node_arg(*ev.workspace_flat_, a,
                                                    "mutate:refactor/extract", &ok, node);
                 !is_void(err)) {
                 ok = false;
@@ -6990,15 +7000,15 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                                     "usage: (mutate:move-node node parent pos [:allow-macro? #t])");
             }
             aura::ast::NodeId node = aura::ast::NULL_NODE;
-            if (auto err = resolve_mutate_node_arg(*ev.workspace_flat_, a[0], "mutate:move-node",
-                                                   &ok, node);
+            if (auto err =
+                    resolve_mutate_node_arg(*ev.workspace_flat_, a, "mutate:move-node", &ok, node);
                 !is_void(err)) {
                 ok = false;
                 return err;
             }
             aura::ast::NodeId new_parent = aura::ast::NULL_NODE;
-            if (auto err = resolve_mutate_node_arg(*ev.workspace_flat_, a[1], "mutate:move-node",
-                                                   &ok, new_parent);
+            if (auto err = resolve_mutate_node_arg(*ev.workspace_flat_, a.subspan(1),
+                                                   "mutate:move-node", &ok, new_parent);
                 !is_void(err)) {
                 ok = false;
                 return err;
@@ -7125,7 +7135,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 return ev.make_merr(
                     "bad-arg", "usage: (mutate:extract-function node-id name [:allow-macro? #t])");
             aura::ast::NodeId node = aura::ast::NULL_NODE;
-            if (auto err = resolve_mutate_node_arg(*ev.workspace_flat_, a[0],
+            if (auto err = resolve_mutate_node_arg(*ev.workspace_flat_, a,
                                                    "mutate:extract-function", &ok, node);
                 !is_void(err)) {
                 ok = false;
@@ -7329,7 +7339,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                                     "usage: (mutate:inline-call call-node-id [:allow-macro? #t])");
             }
             aura::ast::NodeId call_id = aura::ast::NULL_NODE;
-            if (auto err = resolve_mutate_node_arg(*ev.workspace_flat_, a[0], "mutate:inline-call",
+            if (auto err = resolve_mutate_node_arg(*ev.workspace_flat_, a, "mutate:inline-call",
                                                    &ok, call_id);
                 !is_void(err)) {
                 ok = false;
