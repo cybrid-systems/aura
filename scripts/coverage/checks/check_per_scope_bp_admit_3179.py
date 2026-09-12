@@ -89,7 +89,7 @@ def main() -> int:
     # both C++ surface and Aura orch:spawn-agent primitive).
     must_any(
         [
-            "h.bp_scope_id = resolve_bare_bp_scope_id(spec.bp_scope_id);",
+            "h.bp_scope_id = resolve_bare_bp_scope_id(spec.bp_scope_id, spawn_tenant);",
             "h.bp_scope_id = std::move(spec.bp_scope_id);",
         ],
         "AC1 spawn_agent_with_mailbox wires bp_scope_id (#3179 resolver or #3147 std::move)",

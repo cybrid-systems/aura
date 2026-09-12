@@ -182,7 +182,8 @@ int run_test_bare_bp_resolve_3179() {
               "AC4: #3015 Scope inherit unchanged");
         CHECK(scope_src.find("spec.bp_scope_id = bp_scope_id_;") != std::string::npos,
               "AC4: Scope uses its own bp_scope_id_, not the bare resolver");
-        CHECK(spawn_src.find("h.bp_scope_id = resolve_bare_bp_scope_id(spec.bp_scope_id);") !=
+        CHECK(spawn_src.find(
+                  "h.bp_scope_id = resolve_bare_bp_scope_id(spec.bp_scope_id, spawn_tenant);") !=
                   std::string::npos,
               "AC4: spawn_agent_with_mailbox calls the bare resolver (single wire point)");
     }
@@ -225,6 +226,54 @@ int run_test_bare_bp_resolve_3179() {
         auto* stored = table.find("agent-3461-soft");
         CHECK(stored != nullptr && stored->bp_scope_id.empty(),
               "3461 AC3: empty id survives move (process bucket unchanged)");
+    }
+
+    // ── Issue #3672: bare BP key aggregates per spawn tenant ────────
+    {
+        std::println("\n--- #3672: bare resolver prefers the spawn tenant ---");
+        // Restricted arms production_scope_bp_inherit (issue runner default
+        // is AURA_SANDBOX=off, which would silently skip the resolver).
+        SandboxRestore prod{"restricted"};
+        apply_production_audit_defaults();
+        CHECK(aura::orch::production_scope_bp_inherit(),
+              "3672 setup: inherit armed under Restricted + production defaults");
+
+        // AC1: production + empty explicit + spawn tenant 7 → "t:7"
+        // (NOT bare:N). Same tenant → same key (shared gauge).
+        CHECK(resolve_bare_bp_scope_id("", 7) == std::string("t:7"),
+              "3672 AC1: spec_tenant=7 → t:7 (not bare:N)");
+        CHECK(resolve_bare_bp_scope_id("", 7) == std::string("t:7"),
+              "3672 AC1: same tenant resolves to the same key (shared gauge)");
+
+        // AC2 (cross-tenant): a different tenant gets its own key.
+        CHECK(resolve_bare_bp_scope_id("", 9) == std::string("t:9"),
+              "3672 AC2: spec_tenant=9 → t:9 (no cross-tenant gauge sharing)");
+
+        // AC3: explicit :bp-scope-id still wins, no double-prefix (#3015).
+        CHECK(resolve_bare_bp_scope_id("explicit-3672", 7) == std::string("explicit-3672"),
+              "3672 AC3: explicit id wins even with a spawn tenant bound");
+
+        // AC1 end-to-end: spawn_agent_with_mailbox stamps the resolved
+        // tenant onto the handle (the language prim derives the same value
+        // from capability_tenant_id into spec.tenant_id).
+        {
+            Scheduler sched;
+            AgentSpec spec;
+            spec.name = "agent-3672-t7";
+            spec.attach_mailbox = true;
+            spec.tenant_id = 7;
+            spec.body = [] {};
+            auto h = aura::orch::spawn_agent_with_mailbox(sched, std::move(spec));
+            CHECK(h.ok, "3672 AC1 setup: tenant-7 spawn admits");
+            CHECK(h.bp_scope_id == "t:7", "3672 AC1: handle bp_scope_id == t:7 on the spawn path");
+        }
+
+        // AC4: Soft / sandbox=off — empty stays empty; spec_tenant must
+        // NOT bypass Soft (zero-cost process-bucket contract).
+        SandboxRestore soft{"off"};
+        CHECK(resolve_bare_bp_scope_id("", 7).empty(),
+              "3672 AC4: Soft keeps the process bucket even with a spawn tenant");
+        apply_dev_audit_defaults();
     }
 
     // ── Source-cite ──────────────────────────────────────────────────

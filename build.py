@@ -6906,6 +6906,20 @@ def cmd_lint():
             "Issue #3671 scope join tree visibility linter failed — run python3 scripts/check_scope_join_tree_visibility_3671.py"
         )
         return r
+    # Issue #3672 (#3179/#3015 residual): resolve_bare_bp_scope_id ignored
+    # the spawn tenant — bare orch:spawn-agent agents each got bare:<seq>,
+    # so BP admit never aggregated per tenant (admit dark on the primary
+    # Aura spawn path). The resolver now takes the resolved spawn tenant
+    # (spec.tenant_id → parent assigned → TLS) before the explicit-id win;
+    # Soft stays {} (process bucket, zero cost).
+    bpt3672_script = ROOT / "scripts" / "check_bp_scope_tenant_3672.py"
+    if not bpt3672_script.exists():
+        fail(f"missing {bpt3672_script}")
+        return 1
+    r = run([sys.executable, str(bpt3672_script)], cwd=ROOT)
+    if r != 0:
+        fail("Issue #3672 bp scope tenant linter failed — run python3 scripts/check_bp_scope_tenant_3672.py")
+        return r
     # Issue #3301: atomic-batch batch-level MacroIntroduced fail-closed
     # audit. Dispatcher walks each sub-op's target node-id arg before the
     # sub-op loop and denies the whole batch if a target is MacroIntroduced

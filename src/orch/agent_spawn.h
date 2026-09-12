@@ -317,21 +317,28 @@ inline constexpr std::string_view kBpScopeProcessBucket = "-";
 // point covers both). Soft / AURA_SANDBOX=off stays zero-cost (resolver
 // returns {} → process bucket, AC2). Explicit :bp-scope-id wins (AC3).
 // Scope path unchanged — #3015 inherit still authoritative, no
-// double-prefix (AC4). Production prefers the TLS quota tenant id
+// double-prefix (AC4). Production prefers the spawn's resolved tenant
+// first (Issue #3672 — the caller passes the spec.tenant_id / parent /
+// TLS ladder result), then the TLS quota tenant id
 // ("t:<tid>") so two concurrent tenants do not share a gauge (AC1 /
 // AC5). Last-resort fallback uses a process-global monotonic counter
 // ("bare:<seq>") so each new bare spawn gets a unique key when no
 // tenant context is bound. No new global registry; keys are
 // caller-scoped and die with the Spawn site.
-[[nodiscard]] inline std::string resolve_bare_bp_scope_id(std::string_view explicit_id) noexcept {
+[[nodiscard]] inline std::string resolve_bare_bp_scope_id(std::string_view explicit_id,
+                                                          std::uint64_t spec_tenant = 0) noexcept {
     if (!explicit_id.empty())
         return std::string(explicit_id);
     if (!production_scope_bp_inherit())
         return {}; // Soft / sandbox=off (AC2)
-    // Production: prefer TLS quota tenant when bound. Matches
-    // orch admission preflight (`current_quota_tenant()`) so the BP
-    // gauge and the fiber-quota gauge see the same isolation key.
-    const auto tid = aura::core::resource_quota::current_quota_tenant();
+    // Production: prefer the spawn's own resolved tenant (Issue #3672 —
+    // the caller passes the spec.tenant_id → parent assigned → TLS ladder
+    // result so bare orch:spawn-agent agents of one tenant share a gauge),
+    // then the TLS quota tenant when bound. Matches orch admission
+    // preflight (`current_quota_tenant()`) so the BP gauge and the
+    // fiber-quota gauge see the same isolation key.
+    const auto tid =
+        spec_tenant != 0 ? spec_tenant : aura::core::resource_quota::current_quota_tenant();
     if (tid != 0) {
         // #3179 AC1 / AC5: distinct tenants under production get
         // distinct non-empty non-process keys — a BP storm in tenant A
@@ -2211,7 +2218,30 @@ inline void finalize_spawn_quota_reject(AgentHandle& h) noexcept {
     // process bucket, AC2). Explicit :bp-scope-id wins (AC3). Scope
     // path unchanged — #3015 inherit still authoritative, no
     // double-prefix (AC4).
-    h.bp_scope_id = resolve_bare_bp_scope_id(spec.bp_scope_id);
+    // Issue #3049: orch admission keys by TLS / parent fiber tenant.
+    // Issue #3434: production spawn must stamp Fiber::assigned_tenant_id so
+    // the TenantScope resume mandate (#2491/#3275/#2883/#3320) arms on the
+    // orch spawn path, not just test-stamped fibers. Resolve tenant:
+    // spec.tenant_id → parent fiber assigned_tenant_id → quota TLS tenant.
+    // Under production Restricted+MT / Strict+MT, a spawn that still
+    // resolves to 0 is denied ("tenant-required", same family as
+    // unset-principal); Soft/Off and Restricted/Strict single-tenant
+    // keep the legacy zero-cost path (AC4/AC5). Stamp happens after
+    // Scheduler::spawn succeeds below.
+    // Issue #3672: the tenant ladder resolves BEFORE the bp_scope_id so a
+    // bare production spawn aggregates per tenant ("t:<spawn_tenant>")
+    // instead of a unique bare:<seq> key per agent — BP admit was dark on
+    // the orch:spawn-agent path. Soft / sandbox=off: the resolver still
+    // returns {} (process bucket) — spawn_tenant must not bypass Soft.
+    auto orch_tenant = aura::core::resource_quota::current_quota_tenant();
+    if (orch_tenant == 0 && serve::g_current_fiber)
+        orch_tenant = serve::g_current_fiber->assigned_tenant_id();
+    std::uint64_t spawn_tenant = spec.tenant_id;
+    if (spawn_tenant == 0 && serve::g_current_fiber)
+        spawn_tenant = serve::g_current_fiber->assigned_tenant_id();
+    if (spawn_tenant == 0)
+        spawn_tenant = orch_tenant;
+    h.bp_scope_id = resolve_bare_bp_scope_id(spec.bp_scope_id, spawn_tenant);
     spec.bp_scope_id = h.bp_scope_id;
     if (!spec.body) {
         g_orch_module_stats.spawn_failures.fetch_add(1, std::memory_order_relaxed);
@@ -2230,24 +2260,8 @@ inline void finalize_spawn_quota_reject(AgentHandle& h) noexcept {
     // Issue #1880 / #2159: fiber capacity preflight (check only; Scheduler::spawn
     // also consumes). Mailbox keepalive needs body + helper fiber (#2159).
     const std::uint64_t fiber_preflight = want_keepalive ? 2u : 1u;
-    // Issue #3049: orch admission keys by TLS / parent fiber tenant.
-    auto orch_tenant = aura::core::resource_quota::current_quota_tenant();
-    if (orch_tenant == 0 && serve::g_current_fiber)
-        orch_tenant = serve::g_current_fiber->assigned_tenant_id();
-    // Issue #3434: production spawn must stamp Fiber::assigned_tenant_id so
-    // the TenantScope resume mandate (#2491/#3275/#2883/#3320) arms on the
-    // orch spawn path, not just test-stamped fibers. Resolve tenant:
-    // spec.tenant_id → parent fiber assigned_tenant_id → quota TLS tenant.
-    // Under production Restricted+MT / Strict+MT, a spawn that still
-    // resolves to 0 is denied ("tenant-required", same family as
-    // unset-principal); Soft/Off and Restricted/Strict single-tenant
-    // keep the legacy zero-cost path (AC4/AC5). Stamp happens after
-    // Scheduler::spawn succeeds below.
-    std::uint64_t spawn_tenant = spec.tenant_id;
-    if (spawn_tenant == 0 && serve::g_current_fiber)
-        spawn_tenant = serve::g_current_fiber->assigned_tenant_id();
-    if (spawn_tenant == 0)
-        spawn_tenant = orch_tenant;
+    // Issue #3049/#3434/#3672: the orch_tenant / spawn_tenant ladder moved
+    // above the bp_scope_id resolver (same values, one resolution).
     // Strict / Restricted without AURA_MULTI_TENANT is still
     // single-tenant: tenant 0 is the host/kernel principal. Require a
     // non-zero stamp only when the process is actually multi-tenant
