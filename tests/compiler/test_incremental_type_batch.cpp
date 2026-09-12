@@ -117,6 +117,9 @@ static void run_526() {
         CHECK(func.blocks[0].instructions[1].opcode == IROpcode::Local,
               "dirty block CastOp elided");
         CHECK(func.blocks[1].instructions[1].opcode == IROpcode::CastOp, "clean block untouched");
+        // Issue #3689: same dirty-mask DCE is what the incremental suite
+        // must use after a successful partial peel (unmasked AoS DCE was
+        // the residual).
         // Issue #3228: dirty-only DCE leaves clean-block CastOp for remirror.
         // Issue #3347: leftover CastOp still remirrors before commit_readiness.
 

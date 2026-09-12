@@ -37,6 +37,7 @@ import aura.compiler.dirty_propagation;
 import aura.compiler.optimization_passes;
 import aura.compiler.coercion_map;
 import aura.compiler.service;
+import aura.compiler.pass_manager;
 import aura.compiler.value;
 import aura.compiler.ir;
 import aura.compiler.ir_cache_pure; // #3068 source_to_ir_map_missing_instr_loc
@@ -45,6 +46,7 @@ import aura.core.ast;
 namespace {
 
 using aura::compiler::CompilerService;
+using aura::compiler::DeadCoercionEliminationPass;
 using aura::compiler::dirty::clear_residual_castop_undermark_pending;
 using aura::compiler::dirty::dead_coercion_decision_invalidate_gen;
 using aura::compiler::dirty::dead_coercion_elim_cone_force_total;
@@ -76,6 +78,7 @@ using aura::compiler::opt_registry::kDeadCoercionDecisionReverifyIssue;
 using aura::compiler::opt_registry::kDeadCoercionHotResidualIssue;
 using aura::compiler::opt_registry::sweep_production_hot_residual_castops;
 using aura::compiler::types::as_int;
+using aura::compiler::types::is_error;
 using aura::compiler::types::is_int;
 using aura::ir::BasicBlock;
 using aura::ir::IRFunction;
@@ -1457,6 +1460,70 @@ static void ac3581_2_double_miss_unreachable() {
                                                                      std::memory_order_relaxed);
 }
 
+static void ac3689_partial_peel_aos_dce_uses_mask() {
+    std::println("\n--- #3689: partial peel AoS DCE uses dirty mask ---");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    using aura::compiler::typed_audit::production_hard_face_active;
+
+    const auto svc = read_file("src/compiler/service.ixx");
+    CHECK(svc.find("Issue #3689") != std::string::npos, "3689: suite cites #3689");
+    const auto suite_pos = svc.find("std::size_t run_incremental_dirty_pass_suite_");
+    const auto suite = suite_pos == std::string::npos ? std::string{} : svc.substr(suite_pos, 4500);
+    CHECK(suite.find("production_hard_face_active()") != std::string::npos,
+          "3689 AC4: Soft/Off skips extra DCE mask peel");
+    CHECK(suite.find("run_coercion_elim_on_function(func, db)") != std::string::npos,
+          "3689 AC1: masked DCE when mask_ptr matches");
+    CHECK(suite.find("run_coercion_elim_on_function(func)") != std::string::npos,
+          "3689 AC3: full-fn DCE fallback");
+    CHECK(suite.find("InlinePass") == std::string::npos ||
+              suite.find("do not add it to this AoS suite") != std::string::npos,
+          "3689: no InlinePass added to suite");
+    CHECK(svc.find("Issue #3618") != std::string::npos,
+          "3689 AC2: persist CastOp under-attribution still fail-closed");
+    CHECK(svc.find("mark_all_blocks_dirty()") != std::string::npos,
+          "3689 AC2: #3618 still mark_all_blocks_dirty");
+    CHECK(svc.find("if (!dirty_dce)") != std::string::npos,
+          "3689: residual sweep skipped on cone-limited DCE");
+    CHECK(svc.find("schema-3689") == std::string::npos, "3689 AC5: no new query key");
+    CHECK(read_file("tests/compiler/test_issue_3689.cpp").empty(), "3689: no test_issue_3689.cpp");
+    CHECK(read_file("docs/design/3689-partial-peel-aos-dce.md").empty(), "3689: no docs/design/");
+
+    // Soak: dirty-block CastOp elides; clean-block CastOp stays (sibling
+    // type change must not DCE the clean block).
+    IRFunction fn = make_two_block_fn_with_casts();
+    std::vector<std::uint8_t> dirty{1, 0};
+    DeadCoercionEliminationPass dce;
+    dce.run_function(fn, dirty);
+    bool dirty_elided = true;
+    for (const auto& instr : fn.blocks[0].instructions) {
+        if (instr.opcode == IROpcode::CastOp)
+            dirty_elided = false;
+    }
+    bool clean_has_cast = false;
+    for (const auto& instr : fn.blocks[1].instructions) {
+        if (instr.opcode == IROpcode::CastOp)
+            clean_has_cast = true;
+    }
+    CHECK(dirty_elided, "3689 AC1: dirty-block CastOp elided");
+    CHECK(clean_has_cast, "3689 AC1: clean-block CastOp not eliminated");
+
+    apply_production_audit_defaults();
+    CompilerService cs;
+    cs.evaluator().set_effect_sandbox_mode(0);
+    CHECK(cs.eval("(+ 1 1)").has_value(), "3689 soak: warm");
+    CHECK(cs.eval("(set-code \"(define f (lambda () 1))\")").has_value(), "3689 soak: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3689 soak: eval");
+    auto mut = cs.eval("(mutate:set-body \"f\" \"(lambda () 9)\" \"#3689\")");
+    CHECK(mut.has_value() && !is_error(*mut), "3689 soak: mutate body");
+    CHECK(cs.eval("(eval-current)").has_value(), "3689 soak: partial peel re-eval");
+    auto r = cs.eval("(f)");
+    CHECK(r && is_int(*r) && as_int(*r) == 9, "3689 soak: mutated body");
+    CHECK(production_hard_face_active(), "3689 soak: Production/Full");
+    apply_dev_audit_defaults();
+    CHECK(!production_hard_face_active(), "3689 AC4: Soft/Off hard-face off");
+}
+
 static void ac3581_3_dual_owner_source_cite() {
     std::println("\n--- #3581 AC3: dual-owner source-cite #3065 / #3068 ---");
     const auto dirty = read_file("src/compiler/dirty_propagation.ixx");
@@ -1524,9 +1591,10 @@ int run_test_dead_coercion_dirty_cone() {
     ac3581_1_castop_type_change_cone_skip_either_owner();
     ac3581_2_double_miss_unreachable();
     ac3581_3_dual_owner_source_cite();
+    ac3689_partial_peel_aos_dce_uses_mask();
     reset_residual_castop_persist_for_test();
-    std::println("\n=== #2556/#3007/#3046/#3065/#3120/#3228/#3347/#3349/#3547/#3581: {} passed, {} "
-                 "failed ===",
+    std::println("\n=== #2556/#3007/#3046/#3065/#3120/#3228/#3347/#3349/#3547/#3581/#3689: {} "
+                 "passed, {} failed ===",
                  g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
