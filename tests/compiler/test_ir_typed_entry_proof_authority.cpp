@@ -67,7 +67,7 @@ int run_test_ir_typed_entry_proof_authority() {
         if (fn_pos == std::string::npos) {
             CHECK(false, "AC1: ir_typed_entry_commit_readiness_ok not found");
         } else {
-            const std::string scope = h.substr(fn_pos, 5000);
+            const std::string scope = h.substr(fn_pos, 8000);
             CHECK(scope.find("g_last_type_linear_proof_outcome") != std::string::npos,
                   "AC1: ir_typed_entry_commit_readiness_ok consults "
                   "g_last_type_linear_proof_outcome");
@@ -196,6 +196,33 @@ int run_test_ir_typed_entry_proof_authority() {
         }
         CHECK(read_file("tests/compiler/test_issue_3416.cpp").empty(),
               "3416: no invent test_issue_3416");
+    }
+
+    {
+        std::println("\n--- #3688: eval_flat / apply_closure consults same typed-entry helper ---");
+        const auto efl = read_file("src/compiler/evaluator_eval_flat.cpp");
+        CHECK(efl.find("Issue #3688") != std::string::npos, "3688: eval_flat cites #3688");
+        CHECK(efl.find("production_eval_flat_commit_readiness_refuse") != std::string::npos,
+              "3688: shared refuse helper");
+        CHECK(efl.find("ir_typed_entry_commit_readiness_ok()") != std::string::npos,
+              "3688: reuses IR/JIT helper (no second proof model)");
+        CHECK(efl.find("production_hard_face_active()") != std::string::npos,
+              "3688 AC4: Soft/Off no commit_readiness load on apply_closure");
+        CHECK(efl.find("commit-readiness-refused") != std::string::npos,
+              "3688: same TypeError face as IR execute");
+        const auto apply_pos = efl.find("Evaluator::apply_closure(");
+        CHECK(apply_pos != std::string::npos, "3688: apply_closure present");
+        const auto apply_win =
+            apply_pos == std::string::npos ? std::string{} : efl.substr(apply_pos, 2500);
+        CHECK(apply_win.find("production_eval_flat_commit_readiness_refuse") != std::string::npos,
+              "3688 AC1: apply_closure consults refuse helper");
+        CHECK(efl.find("schema-3688") == std::string::npos, "3688 AC5: no new query key");
+        CHECK(read_file("tests/compiler/test_issue_3688.cpp").empty(),
+              "3688: no test_issue_3688.cpp");
+        CHECK(read_file("docs/design/3688-eval-flat-commit-readiness.md").empty(),
+              "3688: no docs/design/");
+        CHECK(h.find("strip_green_face_on_remount_last_zero") != std::string::npos,
+              "3688: remount last==0 strip unchanged");
     }
 
     std::println("\n=== Issue #3305 done ===");

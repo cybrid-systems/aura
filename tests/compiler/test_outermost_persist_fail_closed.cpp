@@ -54,9 +54,14 @@ using aura::compiler::typed_audit::last_proof_stamper_bound_v_read;
 using aura::compiler::typed_audit::last_type_linear_proof_outcome_v_read;
 using aura::compiler::typed_audit::linear_move_drop_elision_ok;
 using aura::compiler::typed_audit::production_hard_face_active;
+using aura::compiler::typed_audit::publish_last_proof_face;
+using aura::compiler::typed_audit::publish_type_linear_proof_outcome;
 using aura::compiler::typed_audit::reset_for_test;
+using aura::compiler::typed_audit::stamp_type_linear_commit_proof;
 using aura::compiler::typed_audit::undo_apply_coercion_map_recent;
+using aura::compiler::types::as_closure_id;
 using aura::compiler::types::as_int;
+using aura::compiler::types::is_closure;
 using aura::compiler::types::is_int;
 using aura::test::g_failed;
 using aura::test::g_passed;
@@ -78,6 +83,18 @@ static aura::ast::NodeId find_literal_int(aura::ast::FlatAST& flat, std::int64_t
             continue;
         auto v = flat.get(id);
         if (v.tag == NodeTag::LiteralInt && v.int_value == want)
+            return id;
+    }
+    return NULL_NODE;
+}
+
+static aura::ast::NodeId find_first_tag(aura::ast::FlatAST& flat, aura::ast::NodeTag tag) {
+    using aura::ast::NodeId;
+    using aura::ast::NULL_NODE;
+    for (NodeId id = 0; id < flat.size(); ++id) {
+        if (!flat.is_live_node(id))
+            continue;
+        if (flat.get(id).tag == tag)
             return id;
     }
     return NULL_NODE;
@@ -560,6 +577,74 @@ int run_test_outermost_persist_fail_closed() {
         CHECK(note_body.find("production_defaults_active()") != std::string::npos,
               "3687 AC3: persist-reject note is no-op unless Production/Full");
         apply_dev_audit_defaults();
+        reset_for_test();
+    }
+
+    {
+        std::println("\n--- #3688: apply_closure / eval_flat refuse half-green like IR ---");
+        const auto efl = read_file("src/compiler/evaluator_eval_flat.cpp");
+        CHECK(contains(efl, "Issue #3688"), "3688: eval_flat cites #3688");
+        CHECK(contains(efl, "production_eval_flat_commit_readiness_refuse"), "3688: refuse helper");
+        CHECK(contains(efl, "ir_typed_entry_commit_readiness_ok()"), "3688: reuses IR helper");
+        CHECK(contains(efl, "production_hard_face_active()"),
+              "3688 AC4: Soft skips commit_readiness");
+        CHECK(contains(efl, "commit-readiness-refused"), "3688: same TypeError as IR");
+        CHECK(efl.find("schema-3688") == std::string::npos, "3688 AC5: no new query key");
+        CHECK(read_file("tests/compiler/test_issue_3688.cpp").empty(), "3688: no invent");
+
+        reset_for_test();
+        apply_dev_audit_defaults();
+        CompilerService cs;
+        CHECK(cs.eval("(+ 1 1)").has_value(), "3688 soak: warm");
+        // Workspace Call+Lambda: eval_flat of Lambda allocates a TW closures_
+        // slot (cs.eval compiles through IR, whose ClosureId is not in
+        // closures_ — apply_closure would nullopt even before reject).
+        CHECK(cs.eval("(set-code \"((lambda () 42))\")").has_value(), "3688 soak: set-code Call");
+        auto* ws = cs.evaluator().workspace_flat();
+        auto* pool = cs.evaluator().workspace_pool();
+        CHECK(ws && pool, "3688 soak: workspace attached");
+        const auto call = ws ? find_first_tag(*ws, aura::ast::NodeTag::Call) : aura::ast::NULL_NODE;
+        const auto lam =
+            ws ? find_first_tag(*ws, aura::ast::NodeTag::Lambda) : aura::ast::NULL_NODE;
+        CHECK(call != aura::ast::NULL_NODE, "3688 soak: Call node");
+        CHECK(lam != aura::ast::NULL_NODE, "3688 soak: Lambda node");
+        auto clo = cs.evaluator().eval_flat(*ws, *pool, lam, cs.evaluator().top_env());
+        CHECK(clo && is_closure(*clo), "3688 soak: TW capture");
+        const auto cid = clo && is_closure(*clo) ? as_closure_id(*clo) : 0;
+        CHECK(cs.evaluator().apply_closure(cid, {}).has_value(),
+              "3688 soak: apply_closure before reject");
+        apply_production_audit_defaults();
+        typed_audit::clear_type_linear_proof_outcome_for_test();
+        typed_audit::clear_type_linear_commit_proof_for_test();
+        bool ok = true;
+        {
+            Evaluator::MutationBoundaryGuard g(cs.evaluator(), &ok);
+            typed_audit::g_linear_ir_fastpath_boundary_depth_override = 1;
+            stamp_type_linear_commit_proof(3688);
+            publish_type_linear_proof_outcome(kTypeLinearProofOutcomeReject);
+            publish_last_proof_face(false, false);
+            CHECK(!ir_typed_entry_commit_readiness_ok(), "3688: helper refuses at the same depth");
+            CHECK(!cs.evaluator().apply_closure(cid, {}).has_value(),
+                  "3688 AC1: apply_closure refuses half-green body");
+            auto er = cs.evaluator().eval_flat(*ws, *pool, call, cs.evaluator().top_env());
+            CHECK(!er.has_value(), "3688 AC2: eval_flat refuses half-green Call");
+            if (!er)
+                CHECK(er.error().message.find("commit-readiness-refused") != std::string::npos,
+                      "3688 AC2: same TypeError as IR execute");
+            typed_audit::g_linear_ir_fastpath_boundary_depth_override = -1;
+        }
+        (void)ok;
+        auto metrics = cs.eval("(engine:metrics \"query:type-linear-commit-health\")");
+        CHECK(metrics.has_value(), "3688 AC3: engine:metrics at depth==0 still succeeds");
+        CHECK(href_health(cs, "would-allow-commit") == 0,
+              "3688 soak: query:type-linear-commit-health would_allow=0");
+        apply_dev_audit_defaults();
+        typed_audit::clear_type_linear_proof_outcome_for_test();
+        typed_audit::clear_type_linear_commit_proof_for_test();
+        auto clo_soft = cs.evaluator().eval_flat(*ws, *pool, lam, cs.evaluator().top_env());
+        CHECK(clo_soft && is_closure(*clo_soft), "3688 AC4: Soft TW capture");
+        CHECK(cs.evaluator().apply_closure(as_closure_id(*clo_soft), {}).has_value(),
+              "3688 AC4: Soft/Off apply_closure still runs");
         reset_for_test();
     }
 
