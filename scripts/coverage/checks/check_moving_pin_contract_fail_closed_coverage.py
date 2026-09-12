@@ -121,9 +121,16 @@ def check() -> list:
         "AC4: CompilerMetrics.moving_compact_pin_contract_fail_total atomic missing",
         fails,
     )
+    # Issue #3677: compact_sweep's Soft path is Moving-counter-free — the
+    # Soft pin_contract_held is vacuous default-true and must not feed the
+    # Moving pin-contract counter; invalidates_pins joins the unified
+    # restamp triad instead.
     _must(
-        "moving_compact_pin_contract_fail_total" in gc,
-        "AC4: evaluator_gc.cpp must mirror moving_compact_pin_contract_fail_total",
+        "moving_compact_pin_contract_fail_total" not in gc
+        and "unified_restamp_after_boundary(UnifiedRestampSite::Densify)" in gc
+        and "Issue #3677" in gc,
+        "AC4: evaluator_gc.cpp Soft sweep must not feed moving_compact_pin_contract_fail_total "
+        "(Moving-only, #3677) and must restamp on invalidates_pins",
         fails,
     )
     _must(
