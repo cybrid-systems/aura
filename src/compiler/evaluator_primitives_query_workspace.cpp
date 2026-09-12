@@ -130,6 +130,8 @@ stamp_query_result_full_provenance(aura::core::QueryResult& qr, Evaluator& ev,
         ev.stamp_query_stable_ref_export(scratch_ref);
         if (scratch_ref.id == aura::ast::NULL_NODE)
             return false;
+        // Issue #3695: packed match gen is node_gen_, not workspace generation_.
+        qr.matches[i].generation = scratch_ref.gen;
         qr.matches[i].wrap_epoch = static_cast<std::uint16_t>(scratch_ref.wrap_epoch);
         qr.matches[i].cow_epoch_at_capture =
             static_cast<std::uint16_t>(scratch_ref.cow_epoch_at_capture);
@@ -270,7 +272,7 @@ void register_workspace_query_primitives(
                 }
             }
         };
-        insert_kv("matches", matches);
+        EvalValue matches_out = matches;
         insert_kv("mutation-epoch", make_int(static_cast<std::int64_t>(epoch.mutation_epoch)));
         insert_kv("generation", make_int(static_cast<std::int64_t>(epoch.generation)));
         insert_kv("bridge-epoch", make_int(static_cast<std::int64_t>(epoch.bridge_epoch)));
@@ -312,6 +314,7 @@ void register_workspace_query_primitives(
                 bool got = false;
                 if (is_int(car)) {
                     node_id = static_cast<std::uint32_t>(as_int(car));
+                    gen = ws.workspace_flat->node_gen_for(static_cast<aura::ast::NodeId>(node_id));
                     got = true;
                 } else if (is_pair(car)) {
                     const auto inner = as_pair_idx(car);
@@ -370,6 +373,24 @@ void register_workspace_query_primitives(
                                "(Issue #3231 / #3103)");
                 }
                 if (qr.matches[0].has_full_provenance()) {
+                    // Issue #3695: production matches payload is (id . node_gen)
+                    // not bare NodeIds — Agent uses :index or the pair, never
+                    // a raw int (bare-int reject stays). Soft never enters here.
+                    EvalValue packed = make_void();
+                    for (int mi = static_cast<int>(qr.match_count) - 1; mi >= 0; --mi) {
+                        const auto gidx = ws.pairs.size();
+                        ws.pairs.push_back(
+                            {make_int(static_cast<std::int64_t>(qr.matches[mi].generation)),
+                             make_void()});
+                        const auto pidx = ws.pairs.size();
+                        ws.pairs.push_back(
+                            {make_int(static_cast<std::int64_t>(qr.matches[mi].node_id)),
+                             make_pair(static_cast<int>(gidx))});
+                        const auto lidx = ws.pairs.size();
+                        ws.pairs.push_back({make_pair(static_cast<int>(pidx)), packed});
+                        packed = make_pair(static_cast<int>(lidx));
+                    }
+                    matches_out = packed;
                     // Expose schema-2 fields as hash keys. The first match
                     // carries the canonical wrap_epoch / tenant_id for the
                     // result (multi-match results aggregate at the Agent's
@@ -387,6 +408,7 @@ void register_workspace_query_primitives(
                 }
             }
         }
+        insert_kv("matches", matches_out);
         aura::core::note_query_result_created();
         auto hidx = g_hash_tables.size();
         g_hash_tables.push_back(ht);
@@ -525,8 +547,13 @@ void register_workspace_query_primitives(
         return ref;
     };
     auto resolve_query_node_arg = [&ev, mev, unpack_query_stable_ref,
-                                   ws](const EvalValue& arg, const char* op, bool* ok,
+                                   ws](std::span<const EvalValue> a, const char* op, bool* ok,
                                        aura::ast::NodeId& out_node) -> EvalValue {
+        if (a.empty()) {
+            *ok = false;
+            return mev("bad-arg", std::string(op) + ": missing node argument");
+        }
+        const EvalValue& arg = a[0];
         if (!ws.workspace_flat) {
             *ok = false;
             return mev("no-workspace", std::string(op) + ": no workspace AST loaded");
@@ -536,10 +563,12 @@ void register_workspace_query_primitives(
         // as a node operand. Mirror of resolve_mutate_node_arg.
         if (is_hash(arg)) {
             using aura::compiler::query_result_decode::HashNodeKind;
+            using aura::compiler::query_result_decode::parse_query_result_match_index;
             using aura::compiler::query_result_decode::resolve_query_result_match;
             auto hr = resolve_query_result_match(
                 arg, ws.string_heap, ws.pairs, flat, ev.capability_tenant_id(),
-                static_cast<std::uint64_t>(aura_fiber_current_id()), op);
+                static_cast<std::uint64_t>(aura_fiber_current_id()), op,
+                parse_query_result_match_index(a, ws.keyword_table));
             if (hr.kind == HashNodeKind::Ok) {
                 out_node = hr.node;
                 return make_void();
@@ -730,7 +759,7 @@ void register_workspace_query_primitives(
                 return mev("bad-arg", "usage: (query :children node-id|stable-ref)");
             bool ok = true;
             aura::ast::NodeId node = aura::ast::NULL_NODE;
-            auto err = resolve_query_node_arg(a[0], "query:children", &ok, node);
+            auto err = resolve_query_node_arg(a, "query:children", &ok, node);
             if (!ok)
                 return err;
             auto& flat = *ws.workspace_flat;
@@ -769,7 +798,7 @@ void register_workspace_query_primitives(
                        "usage: (query :children-stable node-id|stable-ref [:as-query-result])");
         bool ok = true;
         aura::ast::NodeId node = aura::ast::NULL_NODE;
-        auto err = resolve_query_node_arg(a[0], "query:children-stable", &ok, node);
+        auto err = resolve_query_node_arg(a, "query:children-stable", &ok, node);
         if (!ok)
             return err;
         // Issue #2933: optional QueryResult; pin=true (SafePCVSpan-stable path).
@@ -838,7 +867,6 @@ void register_workspace_query_primitives(
         // We pre-allocate 3*N entries directly in ws.pairs
         // (no temp vector), fill them via the callback, then
         // thread the list-node cdrs in a second O(N) walk.
-        auto gen = flat.generation();
         std::size_t n = flat.stable_child_count(node);
         if (n == 0)
             return end_query_epoch_maybe_result(qe, &flat, make_void(), as_query_result,
@@ -865,7 +893,9 @@ void register_workspace_query_primitives(
             const auto gen_idx = static_cast<int>(base + 3 * i);
             const auto pair_idx = static_cast<int>(base + 3 * i + 1);
             const auto list_idx = static_cast<int>(base + 3 * i + 2);
-            ws.pairs[gen_idx] = {make_int(static_cast<std::int64_t>(gen)), make_void()};
+            // Issue #3695: pack node_gen_ from the stamped ref, not
+            // workspace generation_ (occupancy identity).
+            ws.pairs[gen_idx] = {make_int(static_cast<std::int64_t>(ref.gen)), make_void()};
             ws.pairs[pair_idx] = {make_int(static_cast<std::int64_t>(ref.id)), make_pair(gen_idx)};
             // The list-node cdr is filled below (we don't know
             // the next list-node index until the loop ends).
@@ -902,7 +932,7 @@ void register_workspace_query_primitives(
             return mev("bad-arg", "usage: (query :parent-stable node-id|stable-ref)");
         bool ok = true;
         aura::ast::NodeId node = aura::ast::NULL_NODE;
-        auto err = resolve_query_node_arg(a[0], "query:parent-stable", &ok, node);
+        auto err = resolve_query_node_arg(a, "query:parent-stable", &ok, node);
         if (!ok)
             return err;
         auto& flat = *ws.workspace_flat;
@@ -964,7 +994,7 @@ void register_workspace_query_primitives(
                 return mev("no-workspace", "no workspace AST loaded");
             bool ok = true;
             aura::ast::NodeId node = aura::ast::NULL_NODE;
-            auto err = resolve_query_node_arg(a[0], "query:node", &ok, node);
+            auto err = resolve_query_node_arg(a, "query:node", &ok, node);
             if (!ok)
                 return err;
             auto& flat = *ws.workspace_flat;
@@ -1343,7 +1373,7 @@ void register_workspace_query_primitives(
                 return mev("no-workspace", "no workspace AST loaded");
             bool ok = true;
             aura::ast::NodeId target = aura::ast::NULL_NODE;
-            auto err = resolve_query_node_arg(a[0], "query:parent", &ok, target);
+            auto err = resolve_query_node_arg(a, "query:parent", &ok, target);
             if (!ok)
                 return err;
             auto& flat = *ws.workspace_flat;
@@ -1854,7 +1884,7 @@ void register_workspace_query_primitives(
             return mev("no-workspace", "no workspace AST loaded");
         bool ok = true;
         aura::ast::NodeId id = aura::ast::NULL_NODE;
-        auto err = resolve_query_node_arg(a[0], "query:node-marker", &ok, id);
+        auto err = resolve_query_node_arg(a, "query:node-marker", &ok, id);
         if (!ok)
             return err;
         auto& flat = *ws.workspace_flat;
@@ -1894,7 +1924,7 @@ void register_workspace_query_primitives(
                 return mev("no-workspace", "no workspace AST loaded");
             bool ok = true;
             aura::ast::NodeId node = aura::ast::NULL_NODE;
-            auto err = resolve_query_node_arg(a[0], "query:reflect-node-members", &ok, node);
+            auto err = resolve_query_node_arg(a, "query:reflect-node-members", &ok, node);
             if (!ok)
                 return err;
             auto& flat = *ws.workspace_flat;
@@ -2298,7 +2328,7 @@ void register_workspace_query_primitives(
             auto& flat = *ws.workspace_flat;
             bool ok = true;
             aura::ast::NodeId nid = aura::ast::NULL_NODE;
-            auto err = resolve_query_node_arg(a[0], "query:node-provenance", &ok, nid);
+            auto err = resolve_query_node_arg(a, "query:node-provenance", &ok, nid);
             if (!ok)
                 return err;
 
