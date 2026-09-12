@@ -1360,6 +1360,19 @@ static void ac3323_2_concurrent_call_no_stale_native() {
     CHECK(g_3323_native_hits.load(std::memory_order_relaxed) == hits_after_join,
           "3323 AC2: no native after overflow returned");
     CHECK(aura_get_closure_bridge_epoch(cid) == 0, "3323 AC2: epoch stays poisoned");
+    // Issue #3323 CI follow-up (2026-09-12): the storm may consume MustDeopt
+    // (#2128 force-deopt) before join — scheduling-dependent, which is why
+    // this AC only failed on loaded CI runners (post-join call dispatched
+    // native after consumption; inactive epoch clocks make the bridge=0
+    // poison indistinguishable from the unstamped birth state). Force the
+    // consumed state deterministically: the overflow fence must survive
+    // MustDeopt flag consumption.
+    aura_closure_set_must_deopt(cid, 0);
+    const auto hits_after_consume = g_3323_native_hits.load(std::memory_order_relaxed);
+    CHECK(aura_closure_call(cid, nullptr, 0) == 0, "3323 AC2: post-consume call leaves native");
+    CHECK(g_3323_native_hits.load(std::memory_order_relaxed) == hits_after_consume,
+          "3323 AC2: no native after MustDeopt consumed");
+    CHECK(aura_get_closure_bridge_epoch(cid) == 0, "3323 AC2: epoch stays poisoned after consume");
     prod.store(prev, std::memory_order_relaxed);
     aura_test_reset_pure_anon_bg_queue();
 }

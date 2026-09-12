@@ -966,6 +966,14 @@ static std::vector<std::uint32_t> g_closure_stable_func_ids;
 // aura_get_closure_must_deopt_before_next_call as consume.
 // Parallel to func_ids (0 = clear, 1 = must deopt before next native call).
 static std::vector<std::uint8_t> g_closure_must_deopt;
+// Issue #3323 (CI follow-up): sticky pure-anon overflow fence. The overflow
+// stamps MustDeopt + bridge_epoch=0, but in processes with inactive epoch
+// clocks bridge=0 equals the closure's unstamped birth state, and the first
+// concurrent call consumes MustDeopt (#2128 force-deopt) — after which
+// nothing fenced native dispatch. Set by the overflow helper; cleared only
+// by remount heal observing dual-fresh green, or slot free/reuse. Parallel
+// to func_ids (0 = clear, 1 = overflow fail-closed armed). Soft never arms.
+static std::vector<std::uint8_t> g_closure_pure_anon_overflow_armed;
 // Issue #2129: per-closure linear_ownership aggregate (0=Untracked).
 // Stamped at alloc from host fingerprint; dual-checked on call.
 static std::vector<std::uint8_t> g_closure_linear_state;
@@ -1298,6 +1306,10 @@ static void note_capture_remount_ok_keep_epochs_unlocked(std::size_t cid,
     if (aura_is_jit_closure_fresh(cap_bridge, cap_defuse, cap_table)) {
         if (cid < g_closure_must_deopt.size())
             g_closure_must_deopt[cid] = 0;
+        // Issue #3323: remount heal with dual-fresh green disarms the
+        // sticky overflow fence (same heal as MustDeopt above).
+        if (cid < g_closure_pure_anon_overflow_armed.size())
+            g_closure_pure_anon_overflow_armed[cid] = 0;
     }
     invalidate_closure_cache_for(static_cast<std::int64_t>(cid));
 }
@@ -1664,6 +1676,8 @@ static int64_t alloc_closure_slot_locked(int64_t func_id, std::uint8_t is_arena)
             g_closure_stable_func_ids[cid] = 0;
         if (cid < g_closure_must_deopt.size())
             g_closure_must_deopt[cid] = 0; // Issue #2128
+        if (cid < g_closure_pure_anon_overflow_armed.size())
+            g_closure_pure_anon_overflow_armed[cid] = 0; // #3323: fence not inherited
         if (cid < g_closure_linear_state.size())
             g_closure_linear_state[cid] = aura_get_aot_live_linear_state_fingerprint(); // #2129
         stamp_closure_provenance_locked(cid);
@@ -1750,6 +1764,8 @@ void aura_free_closure(int64_t closure_id) {
         g_closure_defuse_versions[cid] = 0;
     if (cid < g_closure_must_deopt.size())
         g_closure_must_deopt[cid] = 0; // Issue #2128
+    if (cid < g_closure_pure_anon_overflow_armed.size())
+        g_closure_pure_anon_overflow_armed[cid] = 0; // #3323: fence dies with slot
     if (cid < g_closure_linear_state.size())
         g_closure_linear_state[cid] = 0; // Issue #2129
     if (cid < g_closure_cow_gens.size())
@@ -2663,6 +2679,11 @@ static void pure_anon_bg_overflow_force_leave_native(std::int64_t closure_id) no
     if (g_closure_bridge_epochs.size() <= cid)
         g_closure_bridge_epochs.resize(g_closure_func_ids.size(), 0);
     g_closure_bridge_epochs[cid] = 0;
+    // Issue #3323: arm the sticky fence — survives MustDeopt consumption
+    // by a concurrent caller (#2128 force-deopt) until remount heal.
+    if (g_closure_pure_anon_overflow_armed.size() <= cid)
+        g_closure_pure_anon_overflow_armed.resize(g_closure_func_ids.size(), 0);
+    g_closure_pure_anon_overflow_armed[cid] = 1;
     invalidate_closure_cache_for(closure_id);
     aura::util::thread_fence(std::memory_order_release);
     g_pure_anon_overflow_epoch.fetch_add(1, std::memory_order_release);
@@ -3810,6 +3831,23 @@ extern "C" int64_t aura_closure_dispatch_native_checked(int64_t closure_id, int6
             if (cid < g_closure_must_deopt.size() && g_closure_must_deopt[cid] != 0)
                 aura_bump_must_deopt_force_deopt_fail_total(1);
             aura_unlock_workspace_read();
+            return 0;
+        }
+    }
+
+    // Issue #3323 (CI AC2 follow-up 2026-09-12): sticky overflow fence.
+    // Production fail-closed must survive MustDeopt consumption by a
+    // concurrent caller (#2128). Cleared only by remount heal observing
+    // dual-fresh green, or slot free/reuse. Soft never arms it.
+    if (aura::compiler::typed_audit::production_defaults_active()) {
+        const size_t armed_cid = static_cast<size_t>(closure_id);
+        if (armed_cid < g_closure_pure_anon_overflow_armed.size() &&
+            g_closure_pure_anon_overflow_armed[armed_cid] != 0) {
+            tlock.unlock();
+            aura_unlock_workspace_read();
+            aura_jit_closure_record_stale_deopt();
+            aura_jit_closure_record_safe_fallback();
+            aura_deopt_inc();
             return 0;
         }
     }
