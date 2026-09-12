@@ -741,6 +741,65 @@ static void ac3541_source_query() {
           "3541 AC5: schema-2895 retained");
 }
 
+// ── #3682: idle-override cascade invents no last_success coverage ──
+static void ac3682_idle_cascade_no_coverage() {
+    std::println("\n--- #3682 AC1: unrelated cascade n>0 does not stamp fail-reason bit ---");
+    auto& reg = aura::compiler::hot_update_registry();
+    clear_idle(reg);
+    reg.set_force_jit_repromote_window(4);
+    reg.on_force_jit_for_reason(AotReloadFail::Env);
+    const auto env_bit = aot_reload_fail_to_force_jit_mask(AotReloadFail::Env);
+    CHECK((reg.reload_recovery_state().force_jit_regions_mask & env_bit) != 0,
+          "3682 AC1: Env force bit live");
+    CHECK(reg.last_reemit_success_region_mask() == 0, "3682 AC1: last_success starts 0");
+
+    // AC1: unrelated define's cascade n>0 (idle override) — must NOT claim
+    // the prior reload-fail group bit.
+    reg.on_reemit_pipeline_call(/*candidates=*/3, /*successes=*/2);
+    CHECK(reg.last_reemit_success_region_mask() == 0,
+          "3682 AC1: idle-override cascade invents no coverage");
+    CHECK(reg.residual_force_mask() == env_bit,
+          "3682 AC1: residual keeps the Env bit (never re-emitted)");
+
+    // AC2: Agent override still wins (sticky, #3466).
+    reg.note_reemit_success_coverage(env_bit);
+    reg.on_reemit_pipeline_call(3, 2);
+    CHECK(reg.last_reemit_success_region_mask() == env_bit,
+          "3682 AC2: override stamps and wins when set");
+
+    // AC3: only_covered re-promote with zero coverage must NOT fall through
+    // to the #2502 wholesale clear — the never-re-emitted force bit survives
+    // the window and the streak resets (Agent re-arms evidence instead).
+    clear_idle(reg);
+    reg.set_force_jit_repromote_window(2);
+    reg.set_force_jit_repromote_only_covered_bits(true);
+    reg.on_force_jit_for_reason(AotReloadFail::Defuse);
+    const auto defuse_bit = aot_reload_fail_to_force_jit_mask(AotReloadFail::Defuse);
+    const auto full0 = reg.force_jit_repromote_total();
+    reg.on_reemit_pipeline_call(1, 1);
+    reg.on_reemit_pipeline_call(1, 1); // window=2 met with zero coverage
+    CHECK(reg.force_jit_repromote_total() == full0,
+          "3682 AC3: no wholesale re-promote without positive coverage");
+    CHECK((reg.reload_recovery_state().force_jit_regions_mask & defuse_bit) != 0,
+          "3682 AC3: force bit survives (never re-emitted this window)");
+    CHECK(reg.force_jit_stable_successes() == 0, "3682 AC3: streak reset after refusal");
+
+    // AC3b: with the override, the same window DOES clear (positive evidence).
+    reg.note_reemit_success_coverage(defuse_bit);
+    reg.on_reemit_pipeline_call(1, 1);
+    reg.on_reemit_pipeline_call(1, 1);
+    CHECK((reg.reload_recovery_state().force_jit_regions_mask & defuse_bit) == 0,
+          "3682 AC3b: override-covered bit clears via partial path");
+
+    // AC4: force_mask == 0 idle — no stamps, streak stays 0 (zero-cost).
+    clear_idle(reg);
+    reg.on_reemit_pipeline_call(/*candidates=*/2, /*successes=*/2);
+    CHECK(reg.last_reemit_success_region_mask() == 0, "3682 AC4: idle mask stays 0");
+    CHECK(reg.force_jit_stable_successes() == 0, "3682 AC4: idle streak stays 0");
+
+    clear_idle(reg);
+}
+
 } // namespace
 
 int run_test_force_jit_repromote() {
@@ -761,6 +820,7 @@ int run_test_force_jit_repromote() {
     ac3541_idle_zero_cost();
     ac3541_soft_no_abort();
     ac3541_source_query();
+    ac3682_idle_cascade_no_coverage();
     if (g_failed)
         return 1;
     std::println("force-jit re-promote #2502/#2895/#2949/#2978/#3541: OK ({} passed)", g_passed);

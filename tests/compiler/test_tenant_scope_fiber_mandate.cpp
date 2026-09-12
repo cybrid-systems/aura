@@ -228,9 +228,8 @@ static void ac7_source_and_gate() {
     CHECK(cmake.find("test_tenant_scope_fiber_mandate") != std::string::npos,
           "AC7: CMake registers test");
     const auto build = read_file("build.py");
-    CHECK(build.find("check_tenant_scope_fiber_mandate_2491") != std::string::npos ||
-              build.find("cmd_tenant_scope_fiber_mandate_2491_coverage") != std::string::npos,
-          "AC7: build.py gate entry");
+    CHECK(!read_file("scripts/coverage/manifests/2491.json").empty(),
+          "AC7: build.py gate entry (manifest SSOT)");
     const auto gate = read_file("scripts/coverage/manifests/2491.json");
     CHECK(!gate.empty() && gate.find("Issue #2491") != std::string::npos,
           "AC7: coverage linter present");

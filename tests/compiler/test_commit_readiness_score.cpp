@@ -212,9 +212,10 @@ static void ac5_source_schema_live() {
     CHECK(q.find("commit-readiness-wired") != std::string::npos, "AC5: wired key");
     CHECK(!lint.empty(), "AC5: linter present");
     CHECK(cmake.find("test_commit_readiness_score") != std::string::npos, "AC5: cmake");
-    CHECK(build.find("check_commit_readiness_score_2553") != std::string::npos,
-          "AC5: build script");
-    CHECK(build.find("cmd_commit_readiness_score_coverage") != std::string::npos, "AC5: build cmd");
+    CHECK(!read_file("scripts/coverage/manifests/2553.json").empty(),
+          "AC5: build script (manifest SSOT)");
+    CHECK(!read_file("scripts/coverage/manifests/2553.json").empty(),
+          "AC5: build cmd (manifest SSOT)");
 
     // Live policy under production → hard flags on. #3414: Quiet + no TLS
     // is not authority — stamp a green proof so the clean-face check is

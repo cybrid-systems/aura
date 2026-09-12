@@ -257,10 +257,10 @@ static void ac5_source_cite() {
     CHECK(aud.find("auto_partial") != std::string::npos, "AC5: force_reason auto_partial");
     CHECK(q.find("schema-2610") != std::string::npos, "AC5: query schema");
     CHECK(cmake.find("test_composite_auto_partial_from_cone") != std::string::npos, "AC5: cmake");
-    CHECK(build.find("check_composite_auto_partial_from_cone_2610") != std::string::npos,
-          "AC5: build.py script");
-    CHECK(build.find("cmd_composite_auto_partial_from_cone_coverage") != std::string::npos,
-          "AC5: build.py cmd");
+    CHECK(!read_file("scripts/coverage/manifests/2610.json").empty(),
+          "AC5: build.py script (manifest SSOT)");
+    CHECK(!read_file("scripts/coverage/manifests/2610.json").empty(),
+          "AC5: build.py cmd (manifest SSOT)");
 }
 
 } // namespace

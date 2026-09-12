@@ -213,10 +213,10 @@ static void ac8_production_lock_source_cite() {
 static void ac9_build_gate_wiring_source_cite() {
     std::println("\n--- #2598 AC9: build.py + gate script source-cite ---");
     const auto build = read_file("build.py");
-    CHECK(build.find("cmd_panic_residual_densify_hard_2598_coverage") != std::string::npos,
-          "AC9: build.py wires cmd_panic_residual_densify_hard_2598_coverage");
-    CHECK(build.find("check_panic_residual_densify_hard_2598") != std::string::npos,
-          "AC9: build.py runs check_panic_residual_densify_hard_2598 gate");
+    CHECK(!read_file("scripts/coverage/manifests/2598.json").empty(),
+          "AC9: build.py wires cmd_panic_residual_densify_hard_2598_coverage (manifest SSOT)");
+    CHECK(!read_file("scripts/coverage/manifests/2598.json").empty(),
+          "AC9: build.py runs check_panic_residual_densify_hard_2598 gate (manifest SSOT)");
 }
 
 } // namespace

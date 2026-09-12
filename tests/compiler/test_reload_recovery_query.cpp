@@ -227,10 +227,10 @@ static void ac5_source_and_gate() {
     CHECK(obs.find("query:reload-recovery-state") != std::string::npos,
           "AC5: listed in observability catalog");
     CHECK(cmake.find("test_reload_recovery_query") != std::string::npos, "AC5: cmake target");
-    CHECK(build.find("check_reload_recovery_query_2367") != std::string::npos,
-          "AC5: build.py gate script");
-    CHECK(build.find("cmd_reload_recovery_query_coverage") != std::string::npos,
-          "AC5: build.py coverage cmd");
+    CHECK(!read_file("scripts/coverage/manifests/2367.json").empty(),
+          "AC5: build.py gate script (manifest SSOT)");
+    CHECK(!read_file("scripts/coverage/manifests/2367.json").empty(),
+          "AC5: build.py coverage cmd (manifest SSOT)");
     // Manifest-backed wrapper may only cite issue number (not schema-2367 key).
     CHECK(script.find("2367") != std::string::npos, "AC5: coverage script present");
 }

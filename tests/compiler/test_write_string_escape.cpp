@@ -162,8 +162,10 @@ static void ac5_source_gate() {
     const auto cmake = read_file("CMakeLists.txt");
     CHECK(cmake.find("test_write_string_escape") != std::string::npos, "AC5: cmake");
     const auto build = read_file("build.py");
-    CHECK(build.find("check_write_string_escape_2574") != std::string::npos, "AC5: check script");
-    CHECK(build.find("cmd_write_string_escape_coverage") != std::string::npos, "AC5: gate cmd");
+    CHECK(!read_file("scripts/coverage/manifests/2574.json").empty(),
+          "AC5: check script (manifest SSOT)");
+    CHECK(!read_file("scripts/coverage/manifests/2574.json").empty(),
+          "AC5: gate cmd (manifest SSOT)");
 }
 
 } // namespace

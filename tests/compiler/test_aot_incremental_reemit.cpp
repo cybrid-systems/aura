@@ -2020,14 +2020,17 @@ int main() {
         CHECK(env_bit == (1ULL << 1), "3445 AC1: Env is reason bit 1");
         // Without override, candidates=3 ∩ emit_mask(~0) == 3 would have
         // set bits 0+1. #3445: must not invent bit 0 from the count.
-        // #3466: last_force_jit_reason is Env → stamp bit 1 only.
+        // Issue #3682: idle override stamps nothing — last_force_jit_reason
+        // is the global fail reason, not "this emit healed that reason";
+        // the unrelated-cascade n>0 must not claim the Env bit either.
         CHECK(reg.last_reemit_success_region_mask() == 0, "3445 AC1: last_success starts 0");
         reg.on_reemit_pipeline_call(/*candidates=*/3, /*successes=*/1);
-        CHECK(reg.last_reemit_success_region_mask() == env_bit,
-              "3445 AC1: 3-candidate emit stamps last_force_jit_reason (Env), not count ∩ emit");
+        CHECK(reg.last_reemit_success_region_mask() == 0,
+              "3445 AC1: idle-override cascade invents no coverage (#3682)");
         CHECK((reg.last_reemit_success_region_mask() & defuse_bit) == 0,
               "3445 AC1: bit 0 not invented from candidates=3");
-        CHECK(reg.residual_force_mask() == defuse_bit, "3445 AC1: residual Defuse (Env covered)");
+        CHECK(reg.residual_force_mask() == both,
+              "3445 AC1: residual keeps both bits (nothing healed)");
 
         // Agent opt-in covers bit 0 only; pipeline(3,1) must not OR extra bits.
         reg.note_reemit_success_coverage(defuse_bit);
@@ -2192,13 +2195,22 @@ int main() {
         CHECK(reg.last_force_jit_reason() == static_cast<std::uint8_t>(AotReloadFail::Defuse),
               "3466 AC1: last force-JIT reason is Defuse (bit 0)");
         reg.on_reemit_pipeline_call(/*candidates=*/1, /*successes=*/1);
-        CHECK(reg.last_reemit_success_region_mask() == defuse_bit,
-              "3466 AC1: last_success has bit 0 only");
-        CHECK(reg.residual_force_mask() == env_bit, "3466 AC1: residual still bit 1");
-        CHECK(reg.last_reemit_success_region_mask() != 0,
-              "3466 AC2: success_count>0 does not leave last_success==0");
+        // Issue #3682: idle override stamps nothing — the global fail reason
+        // is not "this emit healed that reason"; residual keeps BOTH bits.
+        CHECK(reg.last_reemit_success_region_mask() == 0,
+              "3466 AC1: idle-override cascade invents no coverage (#3682)");
+        CHECK(reg.residual_force_mask() == both, "3466 AC1: residual keeps both bits");
+        CHECK(reg.last_reemit_success_region_mask() == 0,
+              "3466 AC2: success_count>0 does not stamp last_success without evidence");
 
-        std::println("\n--- #3466 AC3: only_covered re-promote clears only stamped bit ---");
+        // AC2b: Agent override still wins (#3466) — sticky coverage stamps.
+        reg.note_reemit_success_coverage(defuse_bit);
+        reg.on_reemit_pipeline_call(1, 1);
+        CHECK(reg.last_reemit_success_region_mask() == defuse_bit,
+              "3466 AC2b: override stamps bit 0 only");
+        CHECK(reg.residual_force_mask() == env_bit, "3466 AC2b: residual still bit 1");
+
+        std::println("\n--- #3466 AC3: only_covered refuses zero coverage; override heals ---");
         reg.on_reload_success();
         reg.reset_force_jit_repromote_for_test();
         reg.set_force_jit_repromote_window(1);
@@ -2207,7 +2219,17 @@ int main() {
         reg.on_force_jit_for_reason(AotReloadFail::Env);
         reg.on_force_jit_for_reason(AotReloadFail::Defuse);
         const auto part0 = reg.force_jit_repromote_partial_total();
-        reg.on_reemit_pipeline_call(1, 1); // window=1 → partial clear of bit 0
+        // Issue #3682: window met with zero positive coverage → refuse (no
+        // partial, no wholesale fall-through); both bits stay force-JIT.
+        reg.on_reemit_pipeline_call(1, 1); // window=1, idle override
+        CHECK((reg.force_jit_regions_mask() & both) == both,
+              "3466 AC3: no re-promote without evidence (#3682)");
+        CHECK(reg.residual_force_mask() == both, "3466 AC3: residual unchanged");
+        CHECK(reg.force_jit_repromote_partial_total() == part0,
+              "3466 AC3: no partial without coverage");
+        // Override covers Defuse → window met → partial clear of bit 0 only.
+        reg.note_reemit_success_coverage(defuse_bit);
+        reg.on_reemit_pipeline_call(1, 1);
         CHECK((reg.force_jit_regions_mask() & defuse_bit) == 0,
               "3466 AC3: covered Defuse re-promoted");
         CHECK((reg.force_jit_regions_mask() & env_bit) != 0,
@@ -2262,10 +2284,14 @@ int main() {
         reg.on_force_jit_for_reason(AotReloadFail::Env); // last reason → bit 1
         CHECK(reg.last_reemit_success_region_mask() == 0, "3466 AC5: last_success starts 0");
         reg.on_reemit_pipeline_call(/*candidates=*/3, /*successes=*/1);
-        CHECK(reg.last_reemit_success_region_mask() == env_bit,
-              "3466 AC5: stamps Env (last reason), not candidates=3");
+        // Issue #3682: idle override stamps nothing — the last fail reason is
+        // not "this emit healed that reason"; no count invention either.
+        CHECK(reg.last_reemit_success_region_mask() == 0,
+              "3466 AC5: idle-override cascade invents no coverage (#3682)");
         CHECK((reg.last_reemit_success_region_mask() & defuse_bit) == 0,
-              "3466 AC5: bit 0 not set because 3 & mask != 0");
+              "3466 AC5: bit 0 not set (no inference, no count invention)");
+        CHECK(reg.residual_force_mask() == (defuse_bit | env_bit),
+              "3466 AC5: residual keeps both bits");
 
         std::println("\n--- #3466 AC6: Soft / Off / idle force mask → zero extra stores ---");
         reg.on_reload_success();
@@ -2283,8 +2309,10 @@ int main() {
         CHECK(hot.find("Issue #3413") != std::string::npos, "3466 AC7: #3413 skip kept");
         CHECK(hot.find("covered = candidates & emit_region_mask_.load") == std::string::npos,
               "3466 AC7: count ∩ emit stamp still deleted");
-        CHECK(hot.find("aot_reload_fail_to_force_jit_mask(fail) & demoted") != std::string::npos,
-              "3466 AC7: reason-group stamp ∩ live force mask");
+        // Issue #3682: the idle-override inference is gone — evidence-based
+        // stamping (Agent override) replaces the last-fail-reason heuristic.
+        CHECK(hot.find("aot_reload_fail_to_force_jit_mask(fail) & demoted") == std::string::npos,
+              "3466 AC7: idle-override inference removed (#3682)");
         CHECK(read_file("docs/design/3466-pipeline-reason-heal.md").empty(),
               "3466 AC7: no docs/design/3466-* per #1655");
         CHECK(read_file("tests/compiler/test_issue_3466.cpp").empty() &&

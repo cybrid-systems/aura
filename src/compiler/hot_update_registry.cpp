@@ -283,15 +283,16 @@ void HotUpdateRegistry::on_reemit_pipeline_call(std::uint64_t candidates,
             // #3413 named). Relower hashed-name bits stay on the define
             // side set (#3136 / #3229), not this reason word.
             // Issue #3466: Agent override stays sticky opt-in and wins
-            // when set. When unset, stamp the last_force_jit_reason
-            // group bit ∩ live force mask so production only_covered
-            // can re-promote the bit this emit actually healed.
-            auto covered = reemit_success_coverage_override_.load(std::memory_order_relaxed);
-            if (covered == 0) {
-                const auto fail = static_cast<AotReloadFail>(
-                    last_force_jit_reason_.load(std::memory_order_relaxed));
-                covered = aot_reload_fail_to_force_jit_mask(fail) & demoted;
-            }
+            // when set. Issue #3682: idle override stamps NOTHING —
+            // last_force_jit_reason_ is the global last force-JIT reason,
+            // not "this emit healed that reason". An unrelated define's
+            // cascade n>0 must not claim the prior reload-fail group bit
+            // (residual_force_mask would collapse and production
+            // only_covered would re-promote a never-re-emitted region).
+            // Positive coverage enters via the Agent override
+            // (note_reemit_success_coverage) only; count ∩ emit and the
+            // full demoted mask stay forbidden (#3445/#3413).
+            const auto covered = reemit_success_coverage_override_.load(std::memory_order_relaxed);
             if (covered != 0) {
                 last_reemit_success_region_mask_.store(covered, std::memory_order_relaxed);
                 stamp_eval_last_success(force_owner_tls(), covered);
@@ -647,6 +648,16 @@ void HotUpdateRegistry::maybe_force_jit_repromote_on_clean_success() noexcept {
     const auto reason = last_force_jit_reason_.load(std::memory_order_relaxed);
     const auto last_cov = last_reemit_success_region_mask_.load(std::memory_order_relaxed);
     const bool partial = resolve_force_jit_repromote_only_covered();
+    if (partial && last_cov == 0) {
+        // Issue #3682: production only_covered with no positive coverage —
+        // do not fall through to the #2502 wholesale clear (that would
+        // clear force bits whose reason never re-emitted this window).
+        // Agent must set the override (note_reemit_success_coverage)
+        // before any re-promote; reset the streak so the window rebuilds
+        // on actual covered successes.
+        force_jit_stable_successes_.store(0, std::memory_order_relaxed);
+        return;
+    }
     if (partial && last_cov != 0) {
         // Issue #3229: hashed-name 6-bit coverage is not define-complete.
         // Do not clear force-JIT bits while the define-id side set is

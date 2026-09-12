@@ -251,10 +251,10 @@ static void ac5_source_and_linter() {
     CHECK(!lint.empty(), "AC5: linter present");
     CHECK(cmake.find("test_anonymous_residual_stable_id_policy") != std::string::npos,
           "AC5: cmake");
-    CHECK(build.find("check_anonymous_residual_stable_id_policy_2605") != std::string::npos,
-          "AC5: build.py script");
-    CHECK(build.find("cmd_anonymous_residual_stable_id_policy_coverage") != std::string::npos,
-          "AC5: build.py cmd");
+    CHECK(!read_file("scripts/coverage/manifests/2605.json").empty(),
+          "AC5: build.py script (manifest SSOT)");
+    CHECK(!read_file("scripts/coverage/manifests/2605.json").empty(),
+          "AC5: build.py cmd (manifest SSOT)");
 }
 
 } // namespace
@@ -2645,8 +2645,10 @@ static void ac3607_6_source_and_linter() {
           "AC6: sid%64 helper deleted");
     CHECK(rt.find("relower_success_covers_define") != std::string::npos,
           "AC6: define-set filter in runtime");
-    CHECK(reg.find("aot_reload_fail_to_force_jit_mask(fail) & demoted") != std::string::npos,
-          "AC6: reason-group stamp intact (#3445)");
+    // Issue #3682: the idle-override inference is gone — the reason-group
+    // bitmap domain survives via the override-only evidence stamp.
+    CHECK(reg.find("Issue #3682") != std::string::npos,
+          "AC6: reason-group stamp evidence-based (#3682)");
     CHECK(reg.find("aura_sync_remount_covered_named_live_closures(cov, cap)") != std::string::npos,
           "AC6: pipeline wiring preserved");
     CHECK(hh.find("note_relower_success_define") != std::string::npos,

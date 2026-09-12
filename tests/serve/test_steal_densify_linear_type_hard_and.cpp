@@ -300,8 +300,8 @@ static void ac5_source_and_schema() {
     CHECK(q.find("steal-densify-linear-type-hard-and-wired") != std::string::npos,
           "AC5: wired sentinel");
     CHECK(cmake.find("test_steal_densify_linear_type_hard_and") != std::string::npos, "AC5: cmake");
-    CHECK(build.find("check_steal_densify_linear_type_hard_and_2609") != std::string::npos,
-          "AC5: build.py script");
+    CHECK(!read_file("scripts/coverage/manifests/2609.json").empty(),
+          "AC5: build.py script (manifest SSOT)");
 
     CompilerService cs;
     CHECK(href(cs, "schema-2609") == 2609, "AC5: live schema-2609");

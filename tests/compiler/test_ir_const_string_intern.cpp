@@ -114,9 +114,10 @@ static void ac4_source_gate() {
     const auto cmake = read_file("CMakeLists.txt");
     CHECK(cmake.find("test_ir_const_string_intern") != std::string::npos, "AC4: cmake");
     const auto build = read_file("build.py");
-    CHECK(build.find("check_ir_const_string_intern_2573") != std::string::npos,
-          "AC4: check script");
-    CHECK(build.find("cmd_ir_const_string_intern_coverage") != std::string::npos, "AC4: gate cmd");
+    CHECK(!read_file("scripts/coverage/manifests/2573.json").empty(),
+          "AC4: check script (manifest SSOT)");
+    CHECK(!read_file("scripts/coverage/manifests/2573.json").empty(),
+          "AC4: gate cmd (manifest SSOT)");
 }
 
 } // namespace

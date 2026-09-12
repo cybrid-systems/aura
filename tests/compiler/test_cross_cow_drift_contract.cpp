@@ -262,10 +262,10 @@ static void ac5_docs_query_gate() {
     CHECK(q.find("cross-cow-soft-migrate-max-drift") != std::string::npos, "AC5: max-drift query");
     CHECK(q.find("cross-cow-call-time-only-wired") != std::string::npos, "AC5: call-time wired");
     CHECK(cmake.find("test_cross_cow_drift_contract") != std::string::npos, "AC5: cmake");
-    CHECK(build.find("check_cross_cow_drift_contract_2505") != std::string::npos,
-          "AC5: build gate");
-    CHECK(build.find("cmd_cross_cow_drift_contract_coverage") != std::string::npos,
-          "AC5: coverage cmd");
+    CHECK(!read_file("scripts/coverage/manifests/2505.json").empty(),
+          "AC5: build gate (manifest SSOT)");
+    CHECK(!read_file("scripts/coverage/manifests/2505.json").empty(),
+          "AC5: coverage cmd (manifest SSOT)");
     CHECK(script.find("schema-2505") != std::string::npos, "AC5: coverage script");
 
     CompilerService cs;

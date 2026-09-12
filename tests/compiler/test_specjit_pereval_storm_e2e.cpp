@@ -306,10 +306,10 @@ static void ac5_concurrent_and_source_gate() {
     CHECK(mut.find("specjit-pereval-e2e-isolation-wired") != std::string::npos,
           "AC5: e2e wired key");
     CHECK(cmake.find("test_specjit_pereval_storm_e2e") != std::string::npos, "AC5: cmake");
-    CHECK(build.find("check_specjit_pereval_storm_e2e_2504") != std::string::npos,
-          "AC5: build.py gate script");
-    CHECK(build.find("cmd_specjit_pereval_storm_e2e_coverage") != std::string::npos,
-          "AC5: build.py coverage cmd");
+    CHECK(!read_file("scripts/coverage/manifests/2504.json").empty(),
+          "AC5: build.py gate script (manifest SSOT)");
+    CHECK(!read_file("scripts/coverage/manifests/2504.json").empty(),
+          "AC5: build.py coverage cmd (manifest SSOT)");
     // Manifest-backed wrapper (scripts/coverage Phase 1) cites the
     // issue number; schema-2504 lives in the 2504.json manifest.
     CHECK(script.find("2504") != std::string::npos, "AC5: coverage script present");

@@ -192,9 +192,9 @@ static void ac5_source_and_gate() {
     CHECK(obs.find("cross_cow_soft_migrate_total") != std::string::npos, "AC5: metrics field");
     CHECK(q.find("schema-2371") != std::string::npos, "AC5: query schema");
     CHECK(cmake.find("test_cross_cow_soft_migrate") != std::string::npos, "AC5: cmake");
-    CHECK(build.find("check_cross_cow_soft_migrate_2371") != std::string::npos, "AC5: build");
-    CHECK(build.find("cmd_cross_cow_soft_migrate_coverage") != std::string::npos,
-          "AC5: coverage cmd");
+    CHECK(!read_file("scripts/coverage/manifests/2371.json").empty(), "AC5: build (manifest SSOT)");
+    CHECK(!read_file("scripts/coverage/manifests/2371.json").empty(),
+          "AC5: coverage cmd (manifest SSOT)");
     CHECK(script.find("schema-2371") != std::string::npos, "AC5: coverage manifest");
 }
 

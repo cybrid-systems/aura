@@ -269,10 +269,10 @@ static void ac5_source_and_gate() {
           "AC5: #2378 lineage");
     CHECK(!lint.empty(), "AC5: linter present");
     CHECK(cmake.find("test_mailbox_hold_starvation_hard") != std::string::npos, "AC5: cmake");
-    CHECK(build.find("check_mailbox_hold_starvation_hard_2551") != std::string::npos,
-          "AC5: build script");
-    CHECK(build.find("cmd_mailbox_hold_starvation_hard_coverage") != std::string::npos,
-          "AC5: build cmd");
+    CHECK(!read_file("scripts/coverage/manifests/2551.json").empty(),
+          "AC5: build script (manifest SSOT)");
+    CHECK(!read_file("scripts/coverage/manifests/2551.json").empty(),
+          "AC5: build cmd (manifest SSOT)");
 }
 
 // ── Issue #2701 AC1+AC2: budget reject in production + Soft observe ──

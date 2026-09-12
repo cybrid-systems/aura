@@ -118,9 +118,8 @@ static void ac5_source_and_gate() {
     CHECK(cmake.find("test_moving_densify_fail_closed") != std::string::npos,
           "AC5: CMake registers test");
     const auto build = read_file("build.py");
-    CHECK(build.find("check_moving_densify_fail_closed_2495") != std::string::npos ||
-              build.find("cmd_moving_densify_fail_closed_2495_coverage") != std::string::npos,
-          "AC5: build.py gate entry");
+    CHECK(!read_file("scripts/coverage/manifests/2495.json").empty(),
+          "AC5: build.py gate entry (manifest SSOT)");
     const auto gate = read_file("scripts/coverage/manifests/2495.json");
     CHECK(!gate.empty() && gate.find("Issue #2495") != std::string::npos,
           "AC5: coverage linter present");

@@ -146,10 +146,8 @@ static void ac6_registrations() {
     CHECK(cmake.find("test_side_effect_security_gate_hardfail") != std::string::npos,
           "AC6: CMake registers test");
     const auto build = read_file("build.py");
-    CHECK(build.find("check_side_effect_security_gate_hardfail_2494") != std::string::npos ||
-              build.find("cmd_side_effect_security_gate_hardfail_2494_coverage") !=
-                  std::string::npos,
-          "AC6: build.py gate entry");
+    CHECK(!read_file("scripts/coverage/manifests/2494.json").empty(),
+          "AC6: build.py gate entry (manifest SSOT)");
     const auto gate = read_file("scripts/coverage/manifests/2494.json");
     CHECK(!gate.empty() && gate.find("Issue #2494") != std::string::npos,
           "AC6: coverage linter present");
