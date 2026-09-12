@@ -2788,6 +2788,56 @@ int main() {
         reset_process_resource_quota_for_test();
     }
     {
+        std::println(
+            "\n--- #3668 AC1/AC2/AC5: Mutations dim keyed by tenant (boundary + resume) ---");
+        using aura::core::resource_quota::Dimension;
+        using aura::core::resource_quota::process_resource_quota;
+        using aura::core::resource_quota::reset_process_resource_quota_for_test;
+        using aura::core::resource_quota::set_quota_per_tenant_enabled_for_test;
+        reset_process_resource_quota_for_test();
+        set_quota_per_tenant_enabled_for_test(true);
+        auto& pq = process_resource_quota();
+        // Process ceiling 10; tenant budgets: 7→4, 9→8. The MutationBoundary
+        // mirror now passes the capability/resume tenant (#3668), so tenant-7
+        // consumes land in slot 7 and the #3049 partition is live on mutate.
+        pq.set_limit(Dimension::Mutations, 10);
+        pq.set_tenant_limit(7, Dimension::Mutations, 4);
+        pq.set_tenant_limit(9, Dimension::Mutations, 8);
+        // Tenant 7 saturates its own budget.
+        CHECK(!pq.check_and_consume(Dimension::Mutations, 4, /*tenant=*/7).has_value(),
+              "3668 AC1: tenant 7 consumes within own budget");
+        auto e7 = pq.check_and_consume(Dimension::Mutations, 1, /*tenant=*/7);
+        CHECK(e7.has_value(), "3668 AC1: tenant 7 saturates at own limit");
+        // AC5: deny reason stays quota-exceeded:tenant=N on the per-tenant arm.
+        if (e7) {
+            CHECK(e7->message.find("quota-exceeded:tenant=7") != std::string::npos,
+                  "3668 AC5: deny reason quota-exceeded:tenant=7");
+        }
+        CHECK(pq.tenant_used(7, Dimension::Mutations) == 4,
+              "3668 AC2: consume keyed 7 — 7's slot holds 7's used");
+        // Tenant 9 still admits within its own limit after 7 saturated.
+        CHECK(!pq.check_and_consume(Dimension::Mutations, 5, /*tenant=*/9).has_value(),
+              "3668 AC1: tenant 9 admits within own limit (7 saturated)");
+        // Process ceiling: 4 + 5 = 9 used; +2 → 11 > 10 → reject with tenant rollback.
+        auto ep = pq.check_and_consume(Dimension::Mutations, 2, /*tenant=*/9);
+        CHECK(ep.has_value(), "3668 AC1: process ceiling rejects when sum exceeds global");
+        if (ep) {
+            CHECK(ep->message.find("quota-exceeded:tenant=") == std::string::npos,
+                  "3668 AC1: process-ceiling reject is not a tenant deny");
+        }
+        CHECK(pq.tenant_used(9, Dimension::Mutations) == 5,
+              "3668 AC2: process reject rolls back 9's tenant slot");
+        // Release with the same key the consume used — no leak into 0 / 9.
+        pq.release(Dimension::Mutations, 4, /*tenant=*/7);
+        CHECK(pq.tenant_used(7, Dimension::Mutations) == 0,
+              "3668 AC2: release with same tenant drains 7's slot");
+        CHECK(pq.tenant_used(9, Dimension::Mutations) == 5, "3668 AC2: 9 untouched by 7's release");
+        // tenant=0 stays process-global (map dark for 0; AC4 seam).
+        CHECK(!pq.check_and_consume(Dimension::Mutations, 1, /*tenant=*/0).has_value(),
+              "3668 AC4: tenant=0 consume stays process-global");
+        reset_process_resource_quota_for_test();
+    }
+    {
         std::println("\n--- #3049 AC4/AC6: posture + source-cite + no invent ---");
         const auto rq = read_file("src/core/resource_quota.hh");
         const auto sched = read_file("src/serve/scheduler.cpp");

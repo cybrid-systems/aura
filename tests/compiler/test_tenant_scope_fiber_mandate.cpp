@@ -23,7 +23,8 @@
 #include "compiler/security_capabilities.h"
 #include "compiler/typed_mutation_audit.h" // apply_production/dev_audit_defaults (#3434)
 #include "core/capability_model.hh"
-#include "core/gc_hooks.h" // Issue #3275: tenant_scope_resume_missing_total accessors
+#include "core/gc_hooks.h"        // Issue #3275: tenant_scope_resume_missing_total accessors
+#include "core/resource_quota.hh" // Issue #3668: quota TLS rebind ACs
 #include "core/sandbox.hh"
 #include "core/security_event.hh"
 #include "core/workspace_epoch.hh"
@@ -978,6 +979,68 @@ int run_3525_inherit_body() {
     return aura::test::g_failed ? 1 : 0;
 }
 
+// ── #3668 AC3: resume binds quota TLS to the fiber tenant; yield restores ──
+static void ac3668_3_resume_binds_quota_tls() {
+    std::println("\n--- #3668 AC3: resume binds quota TLS, yield restores ---");
+    reset_all();
+    set_mode(SandboxMode::Restricted);
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_effect_sandbox_mode(1);
+    ev.set_capability_tenant_id(7);
+
+    using aura::core::resource_quota::current_quota_tenant;
+    using aura::core::resource_quota::set_current_quota_tenant;
+    // Worker ambient quota TLS is 0 (stolen onto a fresh worker).
+    set_current_quota_tenant(0);
+
+    auto fiber_owned = std::make_unique<aura::serve::Fiber>([] {});
+    fiber_owned->set_assigned_tenant_id(7);
+    fiber_owned->set_quota_tenant_id(7); // spawn-reserve key (#3049)
+
+    aura_fiber_install_tenant_scope_for_resume(fiber_owned.get());
+    CHECK(current_quota_tenant() == 7, "3668 AC3: resume binds quota TLS to fiber tenant 7");
+
+    aura_fiber_release_tenant_scope_after_yield();
+    CHECK(current_quota_tenant() == 0, "3668 AC3: yield restores prior TLS (0)");
+
+    // quota_tenant_id_ unset (0) → falls back to the assigned principal.
+    set_current_quota_tenant(0);
+    auto fiber_fb = std::make_unique<aura::serve::Fiber>([] {});
+    fiber_fb->set_assigned_tenant_id(9);
+    aura_fiber_install_tenant_scope_for_resume(fiber_fb.get());
+    CHECK(current_quota_tenant() == 9, "3668 AC3: quota_tenant_id 0 falls back to assigned");
+    aura_fiber_release_tenant_scope_after_yield();
+    CHECK(current_quota_tenant() == 0, "3668 AC3: release restores after fallback bind");
+}
+
+// ── #3668 AC4: Soft/Off resume skips the quota rebind (mode==0 return) ──
+static void ac3668_4_off_resume_no_rebind() {
+    std::println("\n--- #3668 AC4: Off resume does not rebind quota TLS ---");
+    reset_all();
+    set_mode(SandboxMode::Off);
+
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_effect_sandbox_mode(0); // Off — install returns before the rebind
+    ev.set_capability_tenant_id(7);
+
+    using aura::core::resource_quota::current_quota_tenant;
+    using aura::core::resource_quota::set_current_quota_tenant;
+    set_current_quota_tenant(5); // ambient baseline must survive
+
+    auto fiber_owned = std::make_unique<aura::serve::Fiber>([] {});
+    fiber_owned->set_assigned_tenant_id(7);
+    fiber_owned->set_quota_tenant_id(7);
+
+    aura_fiber_install_tenant_scope_for_resume(fiber_owned.get());
+    CHECK(current_quota_tenant() == 5, "3668 AC4: Off resume leaves quota TLS untouched");
+    aura_fiber_release_tenant_scope_after_yield();
+    CHECK(current_quota_tenant() == 5, "3668 AC4: Off yield leaves quota TLS untouched");
+}
+
 } // namespace
 
 int run_test_fiber_assigned_tenant_inherit() {
@@ -1027,6 +1090,9 @@ int run_test_tenant_scope_fiber_mandate() {
     ac3525_2_no_parent_unset_sentinel();
     ac3525_3_unset_baseline_mismatch_restricted();
     ac3525_4_off_unset_no_deny();
+    std::println("\n=== Issue #3668: quota TLS rebind on resume ===");
+    ac3668_3_resume_binds_quota_tls();
+    ac3668_4_off_resume_no_rebind();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

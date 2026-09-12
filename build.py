@@ -6840,6 +6840,22 @@ def cmd_lint():
     if r != 0:
         fail("Issue #3652 lockless allow-arm MSE linter failed — run python3 scripts/check_lockless_allow_mse_3652.py")
         return r
+    # Issue #3668 (#3049 residual): MutationBoundary mirror + resume quota
+    # TLS never keyed ResourceQuota by tenant — the #3049 map stayed dark on
+    # the mutate dim (noisy-neighbor DoS under Restricted+MT). Both
+    # try_acquire mirrors now derive the tenant (capability principal
+    # first, resume-bound quota TLS fallback) and the resume install binds
+    # quota TLS next to TenantScope (snapshot-once; after_yield restores).
+    # Soft/Off zero-cost (tenant arm gated by quota_per_tenant_enabled();
+    # mode==0 returns before the rebind).
+    qtk3668_script = ROOT / "scripts" / "check_quota_tenant_keying_3668.py"
+    if not qtk3668_script.exists():
+        fail(f"missing {qtk3668_script}")
+        return 1
+    r = run([sys.executable, str(qtk3668_script)], cwd=ROOT)
+    if r != 0:
+        fail("Issue #3668 quota tenant keying linter failed — run python3 scripts/check_quota_tenant_keying_3668.py")
+        return r
     # Issue #3301: atomic-batch batch-level MacroIntroduced fail-closed
     # audit. Dispatcher walks each sub-op's target node-id arg before the
     # sub-op loop and denies the whole batch if a target is MacroIntroduced
