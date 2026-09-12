@@ -15,6 +15,7 @@
 
 #include "test_harness.hpp"
 
+#include "compiler/typed_mutation_audit.h"
 #include "core/densify_consistency_report.h"
 #include "core/gc_hooks.h"
 #include "core/lifetime_consistency_proof.hh"
@@ -36,6 +37,7 @@
 #include <vector>
 
 import std;
+import aura.compiler.evaluator;
 import aura.compiler.service;
 import aura.compiler.value;
 
@@ -46,6 +48,7 @@ extern "C" void aura_test_call_steal_complete(void* stolen) noexcept;
 // Test helper: seed fiber yield-checkpoint evaluator_id then call steal-complete.
 extern "C" void aura_evaluator_test_seed_yield_cp_and_steal_complete(void* fiber_ptr,
                                                                      void* eval_id) noexcept;
+extern "C" int aura_evaluator_try_hold_budget_fail_closed_at_safepoint() noexcept;
 
 namespace {
 
@@ -655,6 +658,45 @@ static void ac3617_eval_keyed_residual() {
     CHECK(read_file("tests/serve/test_issue_3617.cpp").empty(), "3617: no invent");
 }
 
+static void ac3694_safepoint_fail_closed_this_fiber() {
+    std::println("\n--- #3694: safepoint fail-closed is this-fiber Guard only ---");
+    const auto efm = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+    const auto sch = read_file("src/serve/scheduler.cpp");
+    const auto fn = efm.find("aura_evaluator_try_hold_budget_fail_closed_at_safepoint() noexcept");
+    CHECK(fn != std::string::npos, "3694: ABI present");
+    const auto win = fn == std::string::npos ? std::string{} : efm.substr(fn, 2200);
+    CHECK(win.find("this_fiber_outermost()") != std::string::npos, "3694: this-fiber TLS Guard");
+    CHECK(win.find("Evaluator::get_query_evaluator") == std::string::npos,
+          "3694: ABI does not use process query Evaluator");
+    CHECK(win.find("aura_evaluator_mutation_boundary_held()") == std::string::npos,
+          "3694: ABI ignores process-held");
+    CHECK(sch.find("aura_process_mutation_boundary_held_count()") != std::string::npos,
+          "3694: eventfd wake may stay (process-held)");
+    CHECK(sch.find("request_force_safepoint()") != std::string::npos,
+          "3694: eventfd wake still force-safepoint (must not impersonate holder)");
+
+    using aura::compiler::CompilerService;
+    using aura::compiler::Evaluator;
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    CompilerService cs;
+    Evaluator::set_query_evaluator(&cs.evaluator());
+    std::atomic<int> peer_rc{-1};
+    bool ok = true;
+    {
+        Evaluator::MutationBoundaryGuard guard(cs.evaluator(), &ok);
+        std::thread peer([&]() {
+            peer_rc.store(aura_evaluator_try_hold_budget_fail_closed_at_safepoint(),
+                          std::memory_order_relaxed);
+        });
+        peer.join();
+        CHECK(ok, "3694: A's success flag unchanged by B's safepoint");
+    }
+    CHECK(peer_rc.load() == 0, "3694: non-holder ABI returns 0");
+    Evaluator::set_query_evaluator(nullptr);
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    CHECK(read_file("tests/serve/test_issue_3694.cpp").empty(), "3694: no invent");
+}
+
 int run_test_steal_complete_gc_defer() {
     std::println("=== Issue #2203: steal-complete single entry (clear_gc_defer + metric) ===");
     std::println("=== Issue #2314: residual defer clear interlock (share helper, idempotent) ===");
@@ -679,6 +721,8 @@ int run_test_steal_complete_gc_defer() {
     ac3552_signature_and_callers_source_cite();
     ac3552_fiber_id_zero_legacy_path_source_cite();
     ac3617_eval_keyed_residual();
+    std::println("\n=== Issue #3694: safepoint fail-closed is this-fiber Guard only ===");
+    ac3694_safepoint_fail_closed_this_fiber();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

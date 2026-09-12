@@ -1766,6 +1766,97 @@ int run_test_hold_budget_eval_flat_safepoint_3693() {
     return failed == 0 ? 0 : 1;
 }
 
+extern "C" int aura_evaluator_try_hold_budget_fail_closed_at_safepoint() noexcept;
+
+// Issue #3694: safepoint fail-closed used process-held + process query Evaluator.
+//   AC1: A holds Guard; B force_safepoint / fail-closed ABI → A's flag unchanged
+//   AC2: holder's own check_gc_safepoint still consume + mark-failed
+//   AC3: get_query_evaluator process fallback not used from this ABI
+//   AC4: Soft/Off still early-returns on !reject_enabled
+//   AC5: no new query key
+int run_test_hold_budget_safepoint_this_fiber_3694() {
+    std::println("=== Issue #3694: safepoint fail-closed is this-fiber Guard only ===");
+    int saved_failed = aura::test::g_failed;
+    int saved_passed = aura::test::g_passed;
+
+    using aura::compiler::CompilerService;
+    using aura::compiler::Evaluator;
+    using aura::serve::Fiber;
+    using aura::serve::Scheduler;
+
+    {
+        std::println("\n--- #3694 AC1: non-holder fail-closed does not flip holder ---");
+        ::unsetenv("AURA_SANDBOX");
+        ::unsetenv("AURA_MUTATION_HOLD_BUDGET_HARD");
+        aura::compiler::typed_audit::apply_production_audit_defaults();
+        CHECK(aura::compiler::mutation_hold_budget_reject_enabled(),
+              "3694 AC1: reject_enabled under production");
+        CompilerService cs;
+        Evaluator::set_query_evaluator(&cs.evaluator());
+        std::atomic<int> peer_rc{-1};
+        bool ok = true;
+        {
+            Evaluator::MutationBoundaryGuard guard(cs.evaluator(), &ok);
+            CHECK(guard.is_outermost(), "3694 AC1: outermost Guard on A");
+            CHECK(aura_evaluator_mutation_boundary_held() != 0, "3694 AC1: process-held live");
+            // Peer is a plain thread: g_current_fiber is null so the ABI
+            // must return 0 even though process-held is live and the
+            // process query Evaluator is A's. Do not start Scheduler
+            // under a live Guard (multi-worker Ready residual-zero abort).
+            std::thread peer([&]() {
+                peer_rc.store(aura_evaluator_try_hold_budget_fail_closed_at_safepoint(),
+                              std::memory_order_relaxed);
+            });
+            peer.join();
+            CHECK(ok, "3694 AC1: A's success flag unchanged");
+        }
+        CHECK(peer_rc.load() == 0, "3694 AC1: non-holder ABI returns 0");
+        Evaluator::set_query_evaluator(nullptr);
+        aura::compiler::typed_audit::apply_dev_audit_defaults();
+    }
+
+    {
+        std::println("\n--- #3694 AC2/AC3: holder consume + no process query Evaluator ---");
+        const auto efm = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+        const auto fn =
+            efm.find("aura_evaluator_try_hold_budget_fail_closed_at_safepoint() noexcept");
+        CHECK(fn != std::string::npos, "3694 AC2: ABI present");
+        const auto win = fn == std::string::npos ? std::string{} : efm.substr(fn, 2200);
+        CHECK(win.find("this_fiber_outermost()") != std::string::npos,
+              "3694 AC2: this-fiber TLS Guard");
+        CHECK(win.find("mark_failed()") != std::string::npos, "3694 AC2: holder mark_failed");
+        CHECK(win.find("Evaluator::get_query_evaluator") == std::string::npos,
+              "3694 AC3: ABI does not use process query Evaluator");
+        CHECK(win.find("aura_evaluator_mutation_boundary_held()") == std::string::npos,
+              "3694 AC3: ABI ignores process-held");
+        CHECK(win.find("aura_evaluator_mutation_boundary_depth() == 0") != std::string::npos,
+              "3694 AC2: this-fiber depth SSOT");
+        CHECK(efm.find("g_mutation_hold_budget_forced_fail_closed_total") != std::string::npos,
+              "3694 AC2: reuse forced-fail-closed counter");
+    }
+
+    {
+        std::println("\n--- #3694 AC4/AC5: Soft gate + no new query key ---");
+        const auto efm = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+        CHECK(efm.find("mutation_hold_budget_reject_enabled()") != std::string::npos,
+              "3694 AC4: Soft/Off still gates reject_enabled");
+        const auto q = read_file("src/compiler/evaluator_primitives_query.cpp") +
+                       read_file("src/compiler/evaluator_primitives_query_type_stats.cpp");
+        CHECK(q.find("schema-3694") == std::string::npos, "3694 AC5: no schema-3694");
+        CHECK(q.find("issue-3694") == std::string::npos, "3694 AC5: no issue-3694 query key");
+        CHECK(efm.find("g_3694_") == std::string::npos, "3694 AC5: no g_3694_*");
+        CHECK(read_file("tests/serve/test_issue_3694.cpp").empty(),
+              "3694 AC5: no test_issue_3694.cpp");
+        CHECK(read_file("docs/design/3694-safepoint-this-fiber.md").empty(),
+              "3694 AC5: no docs/design/");
+    }
+
+    int failed = aura::test::g_failed - saved_failed;
+    int passed = aura::test::g_passed - saved_passed;
+    std::println("\n=== #3694 this-fiber fail-closed: {} passed, {} failed ===", passed, failed);
+    return failed == 0 ? 0 : 1;
+}
+
 #ifndef AURA_ISSUE_BATCH_MEMBER
 int main() {
     const int rc1 = run_test_hold_budget_synthetic_yield_injection();
@@ -1778,6 +1869,7 @@ int main() {
     const int rc8 = run_test_hold_budget_no_edge_force_3325();
     const int rc9 = run_test_hold_budget_add_mutate_inbody_poll_3480();
     const int rc10 = run_test_hold_budget_eval_flat_safepoint_3693();
+    const int rc11 = run_test_hold_budget_safepoint_this_fiber_3694();
     return rc1 != 0
                ? rc1
                : (rc2 != 0
@@ -1794,6 +1886,9 @@ int main() {
                                                          ? rc7
                                                          : (rc8 != 0
                                                                 ? rc8
-                                                                : (rc9 != 0 ? rc9 : rc10))))))));
+                                                                : (rc9 != 0
+                                                                       ? rc9
+                                                                       : (rc10 != 0 ? rc10
+                                                                                    : rc11)))))))));
 }
 #endif
