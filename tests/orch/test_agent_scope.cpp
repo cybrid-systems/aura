@@ -179,11 +179,34 @@ static void ac1_spawn_join_cancel() {
          ++i) {
         std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }
+    // Residual after the non-Ok join: under CI preemption a body can miss
+    // both the first join's 2s drain and this poll; join_agents then arms
+    // the #2227 orphan hard-reclaim (drain*8 = 16s > the 5s rejoin budget)
+    // and reclaimed bodies are never re-dispatched (#2468), so is_done()
+    // never converges on its own. Drive the same reclaim deterministically
+    // instead of waiting out the deadline: refresh each residual fiber's
+    // hard deadline to now+20ms, sleep past it, then take the eager reap
+    // (scheduler.h: tests may call reap_orphans_now() eagerly). Queued
+    // live fibers are abandoned, not destroyed (#2468), so handle fiber
+    // pointers stay valid; #2467 makes Reclaimed the joiner-visible
+    // terminal state for such bodies.
+    bool residual = false;
+    for (auto& h : scope.handles()) {
+        if (h.fiber && !h.fiber->is_done() && !h.fiber->is_reclaimed()) {
+            sched.note_orphan_fiber(h.fiber, 20);
+            residual = true;
+        }
+    }
+    if (residual) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(40));
+        (void)sched.reap_orphans_now();
+    }
     auto jr2 = scope.join_all(std::optional<std::uint64_t>{5000});
     const bool drained =
         jr2.status == JoinStatus::Ok ||
-        std::all_of(scope.handles().begin(), scope.handles().end(),
-                    [](const AgentHandle& h) { return !h.fiber || h.fiber->is_done(); });
+        std::all_of(scope.handles().begin(), scope.handles().end(), [](const AgentHandle& h) {
+            return !h.fiber || h.fiber->is_done() || h.fiber->is_reclaimed();
+        });
     CHECK(drained, "join_all drained after release");
 }
 
