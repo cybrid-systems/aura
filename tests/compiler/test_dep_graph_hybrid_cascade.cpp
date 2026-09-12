@@ -1453,6 +1453,9 @@ static void ac3580_4_source_cite_no_invent() {
     CHECK(svc.find("should_partial_relower_impact_checked_prod(dirty_n, impact_ub") !=
               std::string::npos,
           "3580 AC4: peel consults #3310 prod helper");
+    const auto dirty = read_file("src/compiler/service_dirty.cpp");
+    CHECK(dirty.find("should_partial_relower_impact_checked_prod") != std::string::npos,
+          "3691: quote/lambda + cascade consult _prod");
     CHECK(t.find("ac3580_1_divergence_injection_visible") != std::string::npos,
           "3580 AC4: AC1 present");
     CHECK(t.find("ac3580_2_production_never_silent_partial") != std::string::npos,

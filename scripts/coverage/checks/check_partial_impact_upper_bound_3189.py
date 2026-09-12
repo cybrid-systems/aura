@@ -95,7 +95,10 @@ def main() -> int:
     build = _read(BUILD_PY)
 
     # ── AC1: every production partial decision site calls the helper ──
-    ac1_try_partial = "should_partial_relower_impact_checked(dirty_n, impact_ub)" in svc
+    ac1_try_partial = (
+        "should_partial_relower_impact_checked(dirty_n, impact_ub)" in svc
+        or "should_partial_relower_impact_checked_prod(dirty_n, impact_ub" in svc
+    )
     # Issue #3310: apply_partial_relower_storm_gate partial branch
     # may now route through should_partial_relower_impact_checked_prod
     # (which delegates to should_partial_relower_impact_checked). The
@@ -106,7 +109,11 @@ def main() -> int:
         "should_partial_relower_impact_checked(dirty_n, impact_ub)" in sixx
         or "should_partial_relower_impact_checked_prod(dirty_n, impact_ub," in sixx
     )
-    ac1_invalidate_bridge = "should_partial_relower_impact_checked(dirty_count_est, impact_ub)" in svc
+    ac1_invalidate_bridge = (
+        "should_partial_relower_impact_checked(dirty_count_est, impact_ub)" in svc
+        or "should_partial_relower_impact_checked_prod(\n                dirty_count_est, impact_ub" in svc
+        or "should_partial_relower_impact_checked_prod(dirty_count_est, impact_ub" in svc
+    )
     ac1_helper_defined = "should_partial_relower_impact_checked" in ixx
     ac1_ok = ac1_try_partial and ac1_apply_partial and ac1_invalidate_bridge and ac1_helper_defined
     if not ac1_helper_defined:
