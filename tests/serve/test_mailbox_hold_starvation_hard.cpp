@@ -2941,6 +2941,65 @@ static void ac3613_2_peer_send_still_defers() {
     aura::compiler::Evaluator::set_query_evaluator(nullptr);
 }
 
+static void ac3692_peer_recv_does_not_fail_holder() {
+    std::println("\n--- #3692: peer recv ×8 does not fail-close holder Guard ---");
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    ::setenv("AURA_MUTATE_MAILBOX_STRICT", "1", 1);
+    ::setenv("AURA_MUTATE_MAILBOX_REJECT_THRESHOLD", "8", 1);
+    aura::serve::mf_mailbox::clear_recv_boundary_reject_window();
+    aura::compiler::CompilerService cs;
+    aura::compiler::Evaluator::set_query_evaluator(&cs.evaluator());
+    aura::serve::mf_mailbox::MultiFiberMailbox mailbox(64);
+    std::atomic<int> guard_live{0};
+    std::atomic<int> peer_done{0};
+    std::atomic<int> peer_empty{0};
+    std::atomic<int> ran{0};
+    std::atomic<int> holder_ok{1};
+    const auto force0 =
+        aura::serve::mf_mailbox::g_mf_mailbox_stats.recv_boundary_force_rollback_total.load(
+            std::memory_order_relaxed);
+    aura::serve::Scheduler sched(2);
+    sched.spawn([&]() {
+        bool ok = true;
+        {
+            aura::compiler::Evaluator::MutationBoundaryGuard g(cs.evaluator(), &ok);
+            CHECK(g.is_outermost(), "3692: outermost Guard on holder");
+            guard_live.store(1, std::memory_order_release);
+            for (int i = 0; i < 8000000 && peer_done.load(std::memory_order_acquire) == 0; ++i) {
+            }
+            holder_ok.store(ok ? 1 : 0, std::memory_order_relaxed);
+        }
+        ran.store(1, std::memory_order_relaxed);
+    });
+    std::thread io([&]() { sched.run(); });
+    std::thread peer([&]() {
+        for (int i = 0; i < 8000000 && guard_live.load(std::memory_order_acquire) == 0; ++i) {
+        }
+        if (guard_live.load(std::memory_order_acquire) != 0) {
+            for (int i = 0; i < 8; ++i) {
+                auto msg = mailbox.recv(/*wait=*/true, /*timeout_ms=*/50);
+                if (!msg.has_value())
+                    peer_empty.fetch_add(1, std::memory_order_relaxed);
+            }
+        }
+        peer_done.store(1, std::memory_order_release);
+    });
+    peer.join();
+    for (int i = 0; i < 200 && ran.load() == 0; ++i)
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    sched.stop();
+    io.join();
+    CHECK(peer_empty.load() == 8, "3692: peer recv ×8 all empty");
+    CHECK(holder_ok.load() == 1, "3692: holder success_flag stays true");
+    CHECK(aura::serve::mf_mailbox::g_mf_mailbox_stats.recv_boundary_force_rollback_total.load(
+              std::memory_order_relaxed) == force0,
+          "3692: peer did not force-rollback holder");
+    aura::compiler::Evaluator::set_query_evaluator(nullptr);
+    ::unsetenv("AURA_MUTATE_MAILBOX_STRICT");
+    ::unsetenv("AURA_MUTATE_MAILBOX_REJECT_THRESHOLD");
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+}
+
 static void ac3613_3_soft_still_bp() {
     std::println("\n--- #3613 AC4: Soft still BP on live boundary (gate not weakened) ---");
     aura::compiler::typed_audit::apply_dev_audit_defaults();
@@ -3141,6 +3200,8 @@ int run_test_mailbox_hold_starvation_hard() {
     ac3613_2_peer_send_still_defers();
     ac3613_3_soft_still_bp();
     ac3613_4_source_and_linter();
+    std::println("\n=== Issue #3692: peer recv must not fail-close holder Guard ===");
+    ac3692_peer_recv_does_not_fail_holder();
     std::println(
         "\n=== #2551..#2761 + #2847 + #3289 + #3485 + #3588 + #3613: {} passed, {} failed ===",
         g_passed, g_failed);

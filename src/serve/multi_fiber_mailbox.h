@@ -6,12 +6,16 @@
 // #2010: shared linear filter on all entry points; fanout backpressure
 //        observability (+ orch hook for dashboards).
 // #2188: forbid blocking recv / Fiber::yield while MutationBoundary is live
-//        (depth>0 or held) — Policy A: non-blocking empty + metric, no park.
+//        (this-fiber depth>0) — Policy A: non-blocking empty + metric, no park.
 // #2347: Guard-live blocking recv → hard audit under Strict/production.
 //        Agent contract: **Guard 内禁止 blocking recv**; use try_recv /
 //        recv(wait=false) or exit MutationBoundary first. Policy A stays
 //        non-blocking; Strict bumps hard counter and may force-rollback
 //        after N rejects in one outermost Guard window.
+// #3692: process-wide held is the *push* defer signal. Peer recv (depth==0
+//        while another fiber holds Guard) Policy A empty, never
+//        mark_outermost_mutation_failed (would flip the holder's success
+//        flag via get_query_evaluator TLS-fallback).
 // #2312: push/fanout defer (Backpressure) when target holds MutationBoundary.
 // #2378: defer drain SLA — deferred_depth / HWM, flush latency after
 //        outermost Guard exit, starvation signal if depth stays open.
@@ -179,7 +183,8 @@ struct MultiFiberMailboxStats {
     // Issue #2010: fanout-specific backpressure (also counted in backpressure_rejects).
     std::atomic<std::uint64_t> fanout_backpressure_rejects{0};
     // Issue #2188: blocking recv refused while MutationBoundary is live
-    // (depth>0 or held) — Policy A non-blocking empty return.
+    // (this-fiber depth>0) — Policy A non-blocking empty return.
+    // Issue #3692: process-wide held is peer empty, not mark-failed.
     std::atomic<std::uint64_t> recv_rejected_in_mutation_boundary{0};
     // Issue #2347: Strict / production hard path for the same Policy A
     // reject (Agents must poll this; Soft path leaves it at 0).
@@ -1496,13 +1501,15 @@ public:
     // for_fiber: if non-zero, prefer messages with matching to_fiber or broadcast (0).
     //
     // Issue #2188 / #2347 (Policy A + hard audit):
-    // While MutationBoundary is live (depth>0 or held), never park /
+    // While this fiber's MutationBoundary is live (depth>0), never park /
     // Fiber::yield — return empty immediately and bump soft reject counter.
     // Agent contract: **do not blocking-recv under Guard** — use try_recv /
     // recv(wait=false) or exit the boundary first (prevents livelock spin).
     // Strict / production (AURA_MUTATE_MAILBOX_STRICT=1 or production
     // canary): also bump hard counter; after N rejects in one Guard window
     // force outermost mutation mark-failed (threshold, default 8).
+    // Issue #3692: process-wide held (peer Guard) is Policy A empty without
+    // mark-failed — only this_fiber_holds may threshold the live Guard.
     // Soft / default: Policy A soft counter only (AC1). Depth==0 unchanged.
     // Gate sits next to the #2010 linear-viol pure-string filter contract
     // (both are hot-path safety fences before any blocking wait).
@@ -1560,33 +1567,46 @@ public:
                 return std::nullopt;
             }
 
-            // Issue #2188: hard gate — no yield-while-Guard (depth or held).
-            // Mirrors #362 skip of mutation-boundary yield, but covers the
-            // generic Explicit/BlockingIO park used by Agent message loops.
-            const bool boundary_live = aura_evaluator_mutation_boundary_depth() > 0 ||
-                                       aura_evaluator_mutation_boundary_held() != 0;
-            if (boundary_live) {
+            // Issue #2188: hard gate — no yield-while-Guard (this fiber).
+            // Combined authority (steal / push still use this OR):
+            //   boundary_live = aura_evaluator_mutation_boundary_depth() > 0
+            //                   || aura_evaluator_mutation_boundary_held() != 0
+            // Issue #3692: process-wide held is the *push* defer signal, not
+            // "this fiber owns outermost Guard". Peer recv Policy A empty
+            // without mark_outermost_mutation_failed (would flip the holder's
+            // success flag via get_query_evaluator TLS-fallback).
+            const bool this_fiber_holds = aura_evaluator_mutation_boundary_depth() > 0;
+            const bool process_held = aura_evaluator_mutation_boundary_held() != 0;
+            if (this_fiber_holds || process_held) {
                 g_mf_mailbox_stats.recv_rejected_in_mutation_boundary.fetch_add(
                     1, std::memory_order_relaxed);
                 local_stats_.recv_rejected_in_mutation_boundary.fetch_add(
                     1, std::memory_order_relaxed);
-                // Issue #2347: window accumulate (all modes; Soft for dashboard).
-                ++g_recv_boundary_reject_window;
-                // Strict / production hard audit (AC2) + optional threshold (AC3).
-                if (is_mutate_mailbox_strict()) {
+                if (this_fiber_holds) {
+                    // Issue #2347: window accumulate (all modes; Soft for dashboard).
+                    ++g_recv_boundary_reject_window;
+                    // Strict / production hard audit (AC2) + optional threshold (AC3).
+                    if (is_mutate_mailbox_strict()) {
+                        g_mf_mailbox_stats.recv_rejected_in_mutation_boundary_hard_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                        local_stats_.recv_rejected_in_mutation_boundary_hard_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                        const auto thr = mutate_mailbox_reject_threshold();
+                        if (thr > 0 && g_recv_boundary_reject_window >= thr) {
+                            g_mf_mailbox_stats.recv_boundary_force_rollback_total.fetch_add(
+                                1, std::memory_order_relaxed);
+                            local_stats_.recv_boundary_force_rollback_total.fetch_add(
+                                1, std::memory_order_relaxed);
+                            // Prefer mark-failed over re-parking (Policy A stays).
+                            aura_evaluator_mark_outermost_mutation_failed();
+                        }
+                    }
+                } else if (is_mutate_mailbox_strict()) {
+                    // Peer hold: reuse hard-total; NEVER mark-failed / window.
                     g_mf_mailbox_stats.recv_rejected_in_mutation_boundary_hard_total.fetch_add(
                         1, std::memory_order_relaxed);
                     local_stats_.recv_rejected_in_mutation_boundary_hard_total.fetch_add(
                         1, std::memory_order_relaxed);
-                    const auto thr = mutate_mailbox_reject_threshold();
-                    if (thr > 0 && g_recv_boundary_reject_window >= thr) {
-                        g_mf_mailbox_stats.recv_boundary_force_rollback_total.fetch_add(
-                            1, std::memory_order_relaxed);
-                        local_stats_.recv_boundary_force_rollback_total.fetch_add(
-                            1, std::memory_order_relaxed);
-                        // Prefer mark-failed over re-parking (Policy A stays).
-                        aura_evaluator_mark_outermost_mutation_failed();
-                    }
                 }
                 // Issue #3673: surface the Guard-live reject to the caller —
                 // orch:agent-recv maps it to a typed deny instead of a quiet

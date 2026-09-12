@@ -725,6 +725,9 @@ static void ac2680_source_cite_rows() {
     CHECK(mb.find("boundary_live = aura_evaluator_mutation_boundary_depth() > 0") !=
               std::string::npos,
           "AC2: recv() boundary_live cited as authority reference");
+    CHECK(mb.find("this_fiber_holds = aura_evaluator_mutation_boundary_depth() > 0") !=
+              std::string::npos,
+          "3692: recv splits this-fiber depth from process-held");
     // AC3: cross-fiber scenario covered (counter for Agents to observe pressure).
     CHECK(mb.find("mailbox_shared_evaluator_deferred_hard_total") != std::string::npos,
           "AC3: production hard counter");
@@ -1185,6 +1188,138 @@ static void ac3036_5_source_linter_chaos() {
     CHECK(read_file("docs/design/3036-mailbox-residual-hard-reject.md").empty(),
           "3036 AC5: no docs/design/");
     CHECK(read_file("tests/serve/test_issue_3036.cpp").empty(), "3036 AC5: no invent test");
+}
+
+// ── Issue #3692: production recv mark-failed only on this-fiber Guard ──
+// AC1: fiber A outermost Guard live; peer B recv ×8 → empty; A's success
+//      flag stays true (B never mark-failed the holder).
+// AC2: holder blocking recv still Policy A; threshold still mark-failed
+//      that Guard (existing #2347 AC3).
+// AC3: push/fanout still BP on process-held (note_mailbox_deferred_under_boundary).
+// AC4: Soft/Off: no mark-failed.
+// AC5: no new query key.
+
+static void ac3692_1_peer_recv_does_not_fail_holder() {
+    std::println("\n--- #3692 AC1: peer recv ×8 does not fail-close holder Guard ---");
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    ::setenv("AURA_MUTATE_MAILBOX_STRICT", "1", 1);
+    ::setenv("AURA_MUTATE_MAILBOX_REJECT_THRESHOLD", "8", 1);
+    clear_recv_boundary_reject_window();
+    CompilerService cs;
+    CHECK(cs.eval("(+ 1 1)").has_value(), "3692 AC1: warm");
+    Evaluator::set_query_evaluator(&cs.evaluator());
+    MultiFiberMailbox mb(/*high_water=*/16);
+    std::atomic<int> peer_empty{0};
+    const auto force0 =
+        g_mf_mailbox_stats.recv_boundary_force_rollback_total.load(std::memory_order_relaxed);
+    const auto hard0 = g_mf_mailbox_stats.recv_rejected_in_mutation_boundary_hard_total.load(
+        std::memory_order_relaxed);
+    bool ok = true;
+    {
+        Evaluator::MutationBoundaryGuard guard(cs.evaluator(), &ok);
+        CHECK(guard.is_outermost(), "3692 AC1: outermost Guard");
+        CHECK(aura_evaluator_mutation_boundary_depth() > 0, "3692 AC1: holder depth > 0");
+        std::thread peer([&]() {
+            for (int i = 0; i < 8; ++i) {
+                auto msg = mb.recv(/*wait=*/true, /*timeout_ms=*/50);
+                if (!msg.has_value())
+                    peer_empty.fetch_add(1, std::memory_order_relaxed);
+            }
+        });
+        peer.join();
+        CHECK(ok, "3692 AC1: holder success_flag stays true after peer recv ×8");
+    }
+    CHECK(peer_empty.load() == 8, "3692 AC1: peer recv ×8 all empty");
+    CHECK(g_mf_mailbox_stats.recv_boundary_force_rollback_total.load(std::memory_order_relaxed) ==
+              force0,
+          "3692 AC1: peer did not bump force-rollback");
+    CHECK(g_mf_mailbox_stats.recv_rejected_in_mutation_boundary_hard_total.load(
+              std::memory_order_relaxed) >= hard0 + 8,
+          "3692 AC1: peer production empty reuses hard-total");
+    Evaluator::set_query_evaluator(nullptr);
+    ::unsetenv("AURA_MUTATE_MAILBOX_STRICT");
+    ::unsetenv("AURA_MUTATE_MAILBOX_REJECT_THRESHOLD");
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+}
+
+static void ac3692_2_holder_threshold_still_marks_failed() {
+    std::println("\n--- #3692 AC2: holder Policy A threshold still mark-failed ---");
+    // Existing #2347 AC3 covers the holder path; cite it plus the 3692 split.
+    const auto mb = read_file("src/serve/multi_fiber_mailbox.h");
+    CHECK(mb.find("this_fiber_holds") != std::string::npos, "3692 AC2: this_fiber_holds gate");
+    const auto n3692 = mb.find("Issue #3692: process-wide held is the *push*");
+    const auto win = n3692 == std::string::npos ? std::string{} : mb.substr(n3692, 2800);
+    CHECK(win.find("aura_evaluator_mark_outermost_mutation_failed()") != std::string::npos,
+          "3692 AC2: holder still mark-failed");
+    const auto mark = win.find("aura_evaluator_mark_outermost_mutation_failed()");
+    const auto this_h = win.find("if (this_fiber_holds)");
+    CHECK(this_h != std::string::npos && mark != std::string::npos && this_h < mark,
+          "3692 AC2: mark-failed nested under this_fiber_holds");
+}
+
+static void ac3692_3_push_still_bp_on_process_held() {
+    std::println("\n--- #3692 AC3: push/fanout still BP on process-held ---");
+    const auto mb = read_file("src/serve/multi_fiber_mailbox.h");
+    CHECK(mb.find("note_mailbox_deferred_under_boundary") != std::string::npos,
+          "3692 AC3: push helper retained");
+    const auto helper = mb.find("note_mailbox_deferred_under_boundary(MultiFiberMailboxStats");
+    const auto win = helper == std::string::npos ? std::string{} : mb.substr(helper, 1800);
+    CHECK(win.find("aura_evaluator_mutation_boundary_depth() > 0") != std::string::npos,
+          "3692 AC3: push still consults depth");
+    CHECK(win.find("aura_evaluator_mutation_boundary_held() != 0") != std::string::npos,
+          "3692 AC3: push still consults process-held");
+}
+
+static void ac3692_4_soft_no_mark_failed() {
+    std::println("\n--- #3692 AC4: Soft/Off peer recv never mark-failed ---");
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    ::unsetenv("AURA_MUTATE_MAILBOX_STRICT");
+    clear_recv_boundary_reject_window();
+    CompilerService cs;
+    CHECK(cs.eval("(+ 1 1)").has_value(), "3692 AC4: warm");
+    Evaluator::set_query_evaluator(&cs.evaluator());
+    MultiFiberMailbox mb(/*high_water=*/8);
+    const auto force0 =
+        g_mf_mailbox_stats.recv_boundary_force_rollback_total.load(std::memory_order_relaxed);
+    const auto hard0 = g_mf_mailbox_stats.recv_rejected_in_mutation_boundary_hard_total.load(
+        std::memory_order_relaxed);
+    bool ok = true;
+    std::atomic<int> peer_empty{0};
+    {
+        auto guard_r =
+            Evaluator::MutationBoundaryGuard::try_acquire(cs.evaluator(), /*pending=*/1, &ok);
+        CHECK(guard_r.has_value(), "3692 AC4: holder Guard");
+        auto guard = std::move(*guard_r);
+        std::thread peer([&]() {
+            for (int i = 0; i < 8; ++i) {
+                auto msg = mb.recv(/*wait=*/true, /*timeout_ms=*/50);
+                if (!msg.has_value())
+                    peer_empty.fetch_add(1, std::memory_order_relaxed);
+            }
+        });
+        peer.join();
+        CHECK(ok, "3692 AC4: Soft holder success_flag stays true");
+    }
+    CHECK(peer_empty.load() == 8, "3692 AC4: Soft peer empty ×8");
+    CHECK(g_mf_mailbox_stats.recv_boundary_force_rollback_total.load(std::memory_order_relaxed) ==
+              force0,
+          "3692 AC4: no force-rollback");
+    CHECK(g_mf_mailbox_stats.recv_rejected_in_mutation_boundary_hard_total.load(
+              std::memory_order_relaxed) == hard0,
+          "3692 AC4: hard-total unchanged under Soft");
+    Evaluator::set_query_evaluator(nullptr);
+}
+
+static void ac3692_5_no_new_query_key() {
+    std::println("\n--- #3692 AC5: no new query key ---");
+    const auto q = read_query_srcs();
+    CHECK(q.find("schema-3692") == std::string::npos, "3692 AC5: no schema-3692");
+    CHECK(q.find("issue-3692") == std::string::npos, "3692 AC5: no issue-3692 query key");
+    const auto mb = read_file("src/serve/multi_fiber_mailbox.h");
+    CHECK(mb.find("recv_rejected_in_mutation_boundary_hard_total") != std::string::npos,
+          "3692 AC5: reuse hard-total");
+    CHECK(read_file("tests/serve/test_issue_3692.cpp").empty(), "3692 AC5: no test_issue_3692.cpp");
+    CHECK(read_file("docs/design/3692-recv-peer-guard.md").empty(), "3692 AC5: no docs/design/");
 }
 
 static void ac2849_6_soft_never_weakens() {
@@ -2070,6 +2205,12 @@ int run_test_mailbox_recv_mutation_boundary() {
     ac3256_3_residual_hard_and_preserved();
     ac3256_4_soft_observe_only();
     ac3256_5_source_and_linter();
+    std::println("\n=== Issue #3692: peer recv must not fail-close holder Guard ===");
+    ac3692_1_peer_recv_does_not_fail_holder();
+    ac3692_2_holder_threshold_still_marks_failed();
+    ac3692_3_push_still_bp_on_process_held();
+    ac3692_4_soft_no_mark_failed();
+    ac3692_5_no_new_query_key();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
