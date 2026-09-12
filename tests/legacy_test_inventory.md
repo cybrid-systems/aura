@@ -1154,7 +1154,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/serve/test_gc_batch.cpp` (—) [large, batch_driver, domain_suite, theme_serve] — tests/serve/test_gc_batch.cpp — GC batch driver (arena theme; default-build).
 - `tests/compiler/test_gc_closures_mtx_flush_sweep.cpp` (—) [domain_suite, theme_compiler] — AC1: concurrent gc_root_count + register_active_closure + compact_sweep
 - `tests/serve/test_gc_compact_batch.cpp` (—) [large, batch_driver, domain_suite, theme_serve] — tests/serve/test_gc_compact_batch.cpp — GC compact family batch driver.
-- `tests/serve/test_gc_compact_sweep_batch.cpp` (—) [batch_driver, domain_suite, theme_serve] — tests/serve/test_gc_compact_sweep_batch.cpp — GC compact sweep batch driver.
+- `tests/serve/test_gc_compact_sweep_batch.cpp` (—) [large, batch_driver, domain_suite, theme_serve] — tests/serve/test_gc_compact_sweep_batch.cpp — GC compact sweep batch driver.
 - `tests/compiler/test_gc_coord_scope.cpp` (—) [domain_suite, theme_compiler] — AC1: source cites #2131; GcCoordScope + PrePin/Cascade/PostAudit order
 - `tests/core/test_gc_defer_arm_fetch_or.cpp` (—) [domain_suite, theme_core] — AC1: arm_defer uses fetch_or (no separate load before note)
 - `tests/core/test_gc_defer_overflow_policy_atomic.cpp` (—) [domain_suite, theme_core] — AC1: policy check + arm/reject atomic under g_gc_defer_armed_mtx

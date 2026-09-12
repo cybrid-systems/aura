@@ -104,3 +104,4 @@ check_resume_mid_join_3670.py
 check_scope_join_tree_visibility_3671.py
 check_bp_scope_tenant_3672.py
 check_recv_under_boundary_3673.py
+check_envframe_scan_order_3679.py

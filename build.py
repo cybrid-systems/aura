@@ -6773,6 +6773,21 @@ def cmd_lint():
     if r != 0:
         fail("Issue #3648 apply window gate linter failed — run python3 scripts/check_apply_window_gate_3648.py")
         return r
+    # Issue #3679 (#2003/#2340 residual): compact_sweep ran the EnvFrame
+    # Guard + densify ownership scan at ENTRY while the helper comment
+    # claimed post-remap-table ordering — the scan walked pre-compact
+    # slots and Soft live_compact could bump the gen / remap pins with no
+    # restamp unless invalidates_pins fired. Gate pins: single post-compact
+    # call site (live_compact → Guard/scan → restamp), remapped_pins > 0
+    # in the restamp condition, defer early-return intact, comment matches.
+    eso3679_script = ROOT / "scripts" / "check_envframe_scan_order_3679.py"
+    if not eso3679_script.exists():
+        fail(f"missing {eso3679_script}")
+        return 1
+    r = run([sys.executable, str(eso3679_script)], cwd=ROOT)
+    if r != 0:
+        fail("Issue #3679 envframe scan order linter failed — run python3 scripts/check_envframe_scan_order_3679.py")
+        return r
     # Issue #3649 (#2952/#3096/#2690 residual): the storm-exit edge drives
     # residual coverage-verify. storm_exit_force_full_active now==0 &&
     # prev!=0 branch runs one maybe_coverage_verify_min_dirty when
