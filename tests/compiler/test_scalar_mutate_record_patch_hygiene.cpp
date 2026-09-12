@@ -114,7 +114,7 @@ int run_test_scalar_mutate_record_patch_hygiene() {
               "AC2: stamp MacroIntroduced");
         auto r = cs.eval(std::format("(mutate:record-patch {} \"op-name\" \"summary\")", nid));
         CHECK(r.has_value(), "AC2: record-patch returns");
-        CHECK(is_pair(*r) && merr_kind(cs, *r) == "hygiene",
+        CHECK(is_pair(*r) && merr_kind(cs, *r) == "hygiene-protected",
               "AC2: hygiene reason on MacroIntroduced target");
     }
 
@@ -130,7 +130,7 @@ int run_test_scalar_mutate_record_patch_hygiene() {
         CHECK(cs.eval(std::format("(syntax:set-marker {} 1)", nid)).has_value(),
               "AC3: stamp MacroIntroduced");
         auto denied = cs.eval(std::format("(mutate:record-patch {} \"op-name\" \"summary\")", nid));
-        CHECK(denied.has_value() && merr_kind(cs, *denied) == "hygiene",
+        CHECK(denied.has_value() && merr_kind(cs, *denied) == "hygiene-protected",
               "AC3: denied without allow");
         auto allowed = cs.eval(
             std::format("(mutate:record-patch {} \"op-name\" \"summary\" :allow-macro? #t)", nid));
@@ -152,7 +152,7 @@ int run_test_scalar_mutate_record_patch_hygiene() {
               "AC4: stamp MacroIntroduced");
         // First confirm default deny (baseline).
         auto denied = cs.eval(std::format("(mutate:record-patch {} \"op-name\" \"summary\")", nid));
-        CHECK(denied.has_value() && merr_kind(cs, *denied) == "hygiene",
+        CHECK(denied.has_value() && merr_kind(cs, *denied) == "hygiene-protected",
               "AC4: denied before global flag");
         CHECK(cs.eval("(hygiene:set-allow-macro-mutate! #t)").has_value(),
               "AC4: set global allow_macro_mutate_");
@@ -181,7 +181,7 @@ int run_test_scalar_mutate_record_patch_hygiene() {
         CHECK(cs.eval(std::format("(syntax:set-marker {} 1)", nid)).has_value(),
               "AC5: stamp MacroIntroduced");
         auto denied = cs.eval(std::format("(mutate:record-patch {} \"op-name\" \"summary\")", nid));
-        CHECK(denied.has_value() && merr_kind(cs, *denied) == "hygiene",
+        CHECK(denied.has_value() && merr_kind(cs, *denied) == "hygiene-protected",
               "AC5: deny fires + reason hygiene");
         // The hash key for last_hygiene_blame_node — kebab-case mapping.
         // Confirm blame points to the rejected nid (existing key, no new keys).

@@ -1049,24 +1049,27 @@ static void ac3027_1_default_reject_all_prims() {
     }
 
     auto sb = cs.eval("(mutate:set-body \"f\" \"(lambda (x) (+ x 2))\")");
-    CHECK(sb.has_value() && merr_kind_3027(cs, *sb) == "hygiene", "3027 AC1: set-body hygiene");
+    CHECK(sb.has_value() && merr_kind_3027(cs, *sb) == "hygiene-protected",
+          "3027 AC1: set-body hygiene");
 
     auto parented = first_parented(ws);
     CHECK(parented != aura::ast::NULL_NODE, "3027 AC1: parented node");
     CHECK(cs.eval(std::format("(syntax:set-marker {} 1)", parented)).has_value(),
           "3027 AC1: stamp parented");
     auto rm = cs.eval(std::format("(mutate:remove-node {})", parented));
-    CHECK(rm.has_value() && merr_kind_3027(cs, *rm) == "hygiene", "3027 AC1: remove-node hygiene");
+    CHECK(rm.has_value() && merr_kind_3027(cs, *rm) == "hygiene-protected",
+          "3027 AC1: remove-node hygiene");
 
     auto lam = first_tag(ws, aura::ast::NodeTag::Lambda);
     if (lam != aura::ast::NULL_NODE) {
         CHECK(cs.eval(std::format("(syntax:set-marker {} 1)", lam)).has_value(),
               "3027 AC1: stamp lambda");
         auto ins = cs.eval(std::format("(mutate:insert-child {} 0 \"0\")", lam));
-        CHECK(ins.has_value() && merr_kind_3027(cs, *ins) == "hygiene",
+        CHECK(ins.has_value() && merr_kind_3027(cs, *ins) == "hygiene-protected",
               "3027 AC1: insert-child hygiene");
         auto spl = cs.eval(std::format("(mutate:splice {} 0 \"1\")", lam));
-        CHECK(spl.has_value() && merr_kind_3027(cs, *spl) == "hygiene", "3027 AC1: splice hygiene");
+        CHECK(spl.has_value() && merr_kind_3027(cs, *spl) == "hygiene-protected",
+              "3027 AC1: splice hygiene");
     }
 
     auto wrap_tgt = first_parented(ws);
@@ -1074,9 +1077,10 @@ static void ac3027_1_default_reject_all_prims() {
         CHECK(cs.eval(std::format("(syntax:set-marker {} 1)", wrap_tgt)).has_value(),
               "3027 AC1: stamp wrap target");
         auto wr = cs.eval(std::format("(mutate:wrap {} \"(begin _)\")", wrap_tgt));
-        CHECK(wr.has_value() && merr_kind_3027(cs, *wr) == "hygiene", "3027 AC1: wrap hygiene");
+        CHECK(wr.has_value() && merr_kind_3027(cs, *wr) == "hygiene-protected",
+              "3027 AC1: wrap hygiene");
         auto ex = cs.eval(std::format("(mutate:extract-function {} \"h3027\")", wrap_tgt));
-        CHECK(ex.has_value() && merr_kind_3027(cs, *ex) == "hygiene",
+        CHECK(ex.has_value() && merr_kind_3027(cs, *ex) == "hygiene-protected",
               "3027 AC1: extract-function hygiene");
     }
 
@@ -1085,7 +1089,7 @@ static void ac3027_1_default_reject_all_prims() {
         CHECK(cs.eval(std::format("(syntax:set-marker {} 1)", call)).has_value(),
               "3027 AC1: stamp call");
         auto inl = cs.eval(std::format("(mutate:inline-call {})", call));
-        CHECK(inl.has_value() && merr_kind_3027(cs, *inl) == "hygiene",
+        CHECK(inl.has_value() && merr_kind_3027(cs, *inl) == "hygiene-protected",
               "3027 AC1: inline-call hygiene");
     }
 }
@@ -1101,7 +1105,7 @@ static void ac3027_2_allow_macro_permits() {
     CHECK(cs.eval(std::format("(syntax:set-marker {} 1)", as_int(*find_f))).has_value(),
           "3027 AC2: stamp f");
     auto denied = cs.eval("(mutate:set-body \"f\" \"(lambda (x) (+ x 9))\")");
-    CHECK(denied.has_value() && merr_kind_3027(cs, *denied) == "hygiene",
+    CHECK(denied.has_value() && merr_kind_3027(cs, *denied) == "hygiene-protected",
           "3027 AC2: denied without allow");
     auto allowed = cs.eval("(mutate:set-body \"f\" \"(lambda (x) (+ x 9))\" :allow-macro? #t)");
     CHECK(allowed.has_value() && merr_kind_3027(cs, *allowed) != "hygiene",
@@ -1696,9 +1700,10 @@ static void ac3115_1_default_reject() {
           "3115 AC1: stamp MacroIntroduced");
     CHECK(ws->is_macro_introduced(lit), "3115 AC1: marker set");
     auto rt = cs.eval(std::format("(mutate:replace-type {} \"Int\")", lit));
-    CHECK(rt.has_value() && merr_kind_3027(cs, *rt) == "hygiene", "3115 AC1: replace-type hygiene");
+    CHECK(rt.has_value() && merr_kind_3027(cs, *rt) == "hygiene-protected",
+          "3115 AC1: replace-type hygiene");
     auto rv = cs.eval(std::format("(mutate:replace-value {} 99 \"3115-deny\")", lit));
-    CHECK(rv.has_value() && merr_kind_3027(cs, *rv) == "hygiene",
+    CHECK(rv.has_value() && merr_kind_3027(cs, *rv) == "hygiene-protected",
           "3115 AC1: replace-value hygiene");
 }
 
@@ -1713,7 +1718,7 @@ static void ac3115_2_allow_macro_permits() {
     CHECK(lit != aura::ast::NULL_NODE, "3115 AC2: LiteralInt");
     CHECK(cs.eval(std::format("(syntax:set-marker {} 1)", lit)).has_value(), "3115 AC2: stamp");
     auto denied = cs.eval(std::format("(mutate:replace-value {} 11 \"3115-pre\")", lit));
-    CHECK(denied.has_value() && merr_kind_3027(cs, *denied) == "hygiene",
+    CHECK(denied.has_value() && merr_kind_3027(cs, *denied) == "hygiene-protected",
           "3115 AC2: denied without allow");
     auto okv =
         cs.eval(std::format("(mutate:replace-value {} 42 \"3115-allow\" :allow-macro? #t)", lit));
@@ -1881,10 +1886,10 @@ static void ac3191_5_existing_surfaces_preserved() {
     CHECK(lit != aura::ast::NULL_NODE, "3191 AC5: LiteralInt");
     CHECK(cs.eval(std::format("(syntax:set-marker {} 1)", lit)).has_value(), "3191 AC5: stamp");
     auto rt = cs.eval(std::format("(mutate:replace-type {} \"Int\")", lit));
-    CHECK(rt.has_value() && merr_kind_3027(cs, *rt) == "hygiene",
+    CHECK(rt.has_value() && merr_kind_3027(cs, *rt) == "hygiene-protected",
           "3191 AC5: #3115 replace-type still rejects");
     auto rv = cs.eval(std::format("(mutate:replace-value {} 99 \"3191-p\")", lit));
-    CHECK(rv.has_value() && merr_kind_3027(cs, *rv) == "hygiene",
+    CHECK(rv.has_value() && merr_kind_3027(cs, *rv) == "hygiene-protected",
           "3191 AC5: #3115 replace-value still rejects");
     // #3027 / #3115 / #3131 lineage keys are additive when present on
     // query:macro-hygiene-provenance-stats; missing (-1) means the
@@ -2301,7 +2306,7 @@ static void ac3301_1_batch_level_deny_production() {
         "\"3301-deny\")",
         a));
     CHECK(r.has_value(), "3301 AC1: batch returns");
-    CHECK(merr_kind_3027(cs, *r) == "hygiene", "3301 AC1: batch-level hygiene deny");
+    CHECK(merr_kind_3027(cs, *r) == "hygiene-protected", "3301 AC1: batch-level hygiene deny");
     CHECK(ws->get(a).int_value == old_a, "3301 AC1: value unchanged after batch deny");
     const auto* rs = aura::compiler::macro_exp::hygiene_last_limit_reason_string();
     CHECK(rs != nullptr && std::string(rs) == "hygiene-macro-introduced",
@@ -4385,7 +4390,7 @@ static void ac3468_rest_remaining_not_hygiene_blocked() {
                                                                        std::memory_order_relaxed);
     auto spine = cs.eval(std::format("(mutate:replace-value {} 99 \"3468-spine\")", list_var));
     CHECK(spine.has_value(), "3468: replace-value spine returns");
-    CHECK(merr_kind_3027(cs, *spine) == "hygiene", "3468: spine kind hygiene");
+    CHECK(merr_kind_3027(cs, *spine) == "hygiene-protected", "3468: spine kind hygiene");
     const auto* rs = aura::compiler::macro_exp::hygiene_last_limit_reason_string();
     CHECK(rs != nullptr && std::string(rs) == "hygiene-macro-introduced",
           "3468: mutate list spine still hygiene-macro-introduced");
@@ -4433,7 +4438,7 @@ static void ac3509_batch_default_deny() {
                           "(query:where :marker \"MacroIntroduced\") \"99\")");
     CHECK(denied.has_value(), "3509 AC1: batch returns");
     CHECK(merr_kind_3027(cs, *denied) == "hygiene-protected" ||
-              merr_kind_3027(cs, *denied) == "hygiene",
+              merr_kind_3027(cs, *denied) == "hygiene-protected",
           "3509 AC1: default-deny helper merr");
     const auto* rs = aura::compiler::macro_exp::hygiene_last_limit_reason_string();
     CHECK(rs != nullptr && std::string(rs) == "hygiene-macro-introduced",
@@ -4614,7 +4619,7 @@ static void ac3652_1_batch_allow_denied_without_mse() {
                                   "\"3652-a\")) \"s\" :allow-macro? #t)",
                                   as_int(*find_f)));
     CHECK(d1.has_value(), "3652 AC1a: returns");
-    CHECK(merr_kind_3027(cs, *d1) == "hygiene", "3652 AC1a: batch hygiene merr");
+    CHECK(merr_kind_3027(cs, *d1) == "hygiene-protected", "3652 AC1a: batch hygiene merr");
     CHECK(ring_has_reason_3542("macro-mutate-needs-macro-self-evo"), "3652 AC1a: SE reason");
     // (b) per-sub-op :allow-macro? #t — op_opt_out arm, same MSE face.
     // Single-use Mutate grants: the d1 wrapper consumed them — re-arm.
@@ -4625,7 +4630,8 @@ static void ac3652_1_batch_allow_denied_without_mse() {
     auto d2 = cs.eval(std::format("(mutate:atomic-batch (list (list \"mutate:replace-value\" {} 42 "
                                   "\"3652-b\" :allow-macro? #t)) \"s\")",
                                   as_int(*find_f)));
-    CHECK(d2.has_value() && merr_kind_3027(cs, *d2) == "hygiene", "3652 AC1b: per-op kwarg denied");
+    CHECK(d2.has_value() && merr_kind_3027(cs, *d2) == "hygiene-protected",
+          "3652 AC1b: per-op kwarg denied");
     CHECK(ring_has_reason_3542("macro-mutate-needs-macro-self-evo"), "3652 AC1b: SE reason");
     // (c) name-based :rebind (target_arg = -1, pre-audit cannot see it) —
     // the eval_flat allow gate fires inside the sub-op; batch surfaces the
@@ -4638,7 +4644,7 @@ static void ac3652_1_batch_allow_denied_without_mse() {
     auto d3 =
         cs.eval("(mutate:atomic-batch (list (list \"mutate:rebind\" \"f\" \"(lambda (x) (+ x 2))\" "
                 ":allow-macro? #t)) \"s\")");
-    CHECK(d3.has_value() && merr_kind_3027(cs, *d3) == "hygiene",
+    CHECK(d3.has_value() && merr_kind_3027(cs, *d3) == "hygiene-protected",
           "3652 AC1c: rebind sub-op denied");
     CHECK(ring_has_reason_3542("macro-mutate-needs-macro-self-evo"), "3652 AC1c: SE reason");
     // Rollback: binding intact, node id unchanged, still evaluable.
@@ -4873,7 +4879,7 @@ static bool error_names_prim_3576(CompilerService& cs, const EvalValue& v, std::
     // replace-pattern / query-and-replace*). Kind + helper phrase is
     // the documented reject string; do not change that helper.
     const auto kind = merr_kind_3027(cs, v);
-    if ((kind == "hygiene" || kind == "hygiene-protected") &&
+    if ((kind == "hygiene-protected" || kind == "hygiene-protected") &&
         (msg.find("hygienic macro expansion") != std::string::npos ||
          msg.find("MacroIntroduced") != std::string::npos))
         return true;
@@ -4942,8 +4948,8 @@ static bool invoke_until_hygiene_3576(CompilerService& cs, std::string_view name
                 return false;
             }
             const auto kind = merr_kind_3027(cs, *r);
-            const bool rejected =
-                kind == "hygiene" || kind == "hygiene-protected" || (is_bool(*r) && !as_bool(*r));
+            const bool rejected = kind == "hygiene-protected" || kind == "hygiene-protected" ||
+                                  (is_bool(*r) && !as_bool(*r));
             CHECK(rejected, std::string("3576 AC2: ") + std::string(name) +
                                 " recorded hygiene (kind=" + kind + ")");
             CHECK(error_names_prim_3576(cs, *r, name),
@@ -5427,6 +5433,45 @@ static void ac3650_4_soft_rollback_unchanged() {
           "3650 AC4: Soft set-marker clear unchanged");
 }
 
+
+// ── Issue #3683: MacroIntroduced deny kind unified (hygiene-protected) ──
+static void ac3683_deny_kind_unified() {
+    std::println("\n--- #3683: deny kind unified across reject_structural / lockless / batch ---");
+    const auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
+    const auto flat = read_file("src/compiler/evaluator_eval_flat.cpp");
+    const auto me = read_file("src/compiler/macro_expansion.cpp");
+    const auto obs = read_file("src/compiler/evaluator_primitives_obs_jit.cpp");
+
+    // AC1: every MacroIntroduced default-reject stamps the same tagged
+    // pair ("hygiene-protected", ...) — no un-unified "hygiene" face.
+    CHECK(mut.find("mev(\"hygiene\",") == std::string::npos &&
+              mut.find("make_merr(\"hygiene\",") == std::string::npos,
+          "3683 AC1: no un-unified deny kind in mutate prims");
+    CHECK(mut.find("return mev(\"hygiene-protected\"") != std::string::npos,
+          "3683 AC1: unified kind present on reject paths");
+
+    // AC2: capability deny does not publish clone last_reject_reason=1
+    // (gensym-ceiling stays unclaimed); last_limit_reason 7 kept.
+    CHECK(flat.find("g_macro_clone_last_reject_reason.store(1,") == std::string::npos &&
+              me.find("g_macro_clone_last_reject_reason.store(1,") == std::string::npos,
+          "3683 AC2: capability deny does not stamp clone last_reject_reason=1");
+    CHECK(me.find("kHygieneLimitReasonCapabilityDeny") != std::string::npos &&
+              flat.find("kHygieneLimitReasonCapabilityDeny") != std::string::npos,
+          "3683 AC2: last_limit_reason 7 kept on capability deny");
+
+    // AC3: :allow-macro? without MacroSelfEvo still denied (MSE face).
+    CHECK(mut.find("deny_macro_opt_out_without_mse") != std::string::npos,
+          "3683 AC3: MSE opt-out deny face present");
+
+    // AC4: Soft/Off — one is_macro_introduced load then return.
+    CHECK(mut.find("!flat.is_macro_introduced(id)") != std::string::npos,
+          "3683 AC4: non-macro short-circuit retained");
+
+    // AC5: query surface unchanged.
+    CHECK(obs.find("query:macro-hygiene-provenance-stats") != std::string::npos,
+          "3683 AC5: provenance-stats key unchanged");
+}
+
 static void ac3650_5_source_and_no_artifacts() {
     std::println("\n--- #3650 AC5: source-cite + no forbidden artifacts ---");
     const auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
@@ -5655,6 +5700,7 @@ int main() {
     ac3650_3_rollback_with_mse_unstamps();
     ac3650_4_soft_rollback_unchanged();
     ac3650_5_source_and_no_artifacts();
+    ac3683_deny_kind_unified();
     std::println("\n=== {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

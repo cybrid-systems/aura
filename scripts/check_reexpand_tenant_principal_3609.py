@@ -76,7 +76,9 @@ def main() -> int:
 
     # AC3
     must("g_macro_self_evo_denied_total.fetch_add(1", "AC3 deny counter", efl)
-    must("g_macro_clone_last_reject_reason.store(1", "AC3 reason surface", efl)
+    # Issue #3683: capability deny publishes only last_limit_reason 7 —
+    # clone last_reject_reason=1 (gensym-ceiling) stays unclaimed.
+    must("kHygieneLimitReasonCapabilityDeny", "AC3 reason surface", efl)
     must("join_audit_and_se_mid(0)", "AC3 #3594 join mid", efl)
 
     # AC4

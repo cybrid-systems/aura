@@ -234,7 +234,7 @@ int run_test_tweak_literal_audit_consistency() {
         auto lpos = flat.find("eval_flat_apply_mutate_tweak_literal");
         CHECK(lpos != std::string::npos, "AC1: lockless helper");
         auto lwin =
-            flat.substr(lpos, 3000); // #3601: deny-site stamp pushed anchors ~300 chars down
+            flat.substr(lpos, 6000); // #3601/#3683: deny-site stamps pushed anchors further down
         CHECK(lwin.find("Issue #2799") != std::string::npos, "AC1: lockless cites #2799");
         CHECK(lwin.find("MutationSoAField::IntVal") != std::string::npos, "AC1: lockless IntVal");
         CHECK(lwin.find("rollback_record_for_boundary_abort") != std::string::npos ||
@@ -368,7 +368,8 @@ int run_test_tweak_literal_audit_consistency() {
                      ws2 == ws, ws2 != nullptr && ws2->is_macro_introduced(lit),
                      ws2 != nullptr ? ws2->get(lit).int_value : -999,
                      cs.evaluator().get_allow_macro_mutate());
-        CHECK(is_pair(*batch) && merr_kind(cs, *batch) == "hygiene", "#3601 AC1: hygiene face");
+        CHECK(is_pair(*batch) && merr_kind(cs, *batch) == "hygiene-protected",
+              "#3601 AC1: hygiene face");
         CHECK(ws->get(lit).int_value == old_val, "#3601 AC1: workspace unchanged on deny");
         CHECK(g_hygiene_violation_se_emit_total.load() >= se0 + 2,
               "#3601 AC1: MacroHygiene SE stamps (sub-op site + boundary)");
@@ -425,7 +426,8 @@ int run_test_tweak_literal_audit_consistency() {
             std::format("(mutate:atomic-batch (list (list \"mutate:tweak-literal\" {} 7)))", lit));
         CHECK(batch.has_value() && !(is_bool(*batch) && as_bool(*batch)),
               "#3601 AC3: batch still denied");
-        CHECK(is_pair(*batch) && merr_kind(cs, *batch) == "hygiene", "#3601 AC3: hygiene face");
+        CHECK(is_pair(*batch) && merr_kind(cs, *batch) == "hygiene-protected",
+              "#3601 AC3: hygiene face");
         CHECK(ws->get(lit).int_value == old_val, "#3601 AC3: workspace unchanged");
         CHECK(g_hygiene_violation_se_emit_total.load() == se0, "#3601 AC3: zero SE emit counter");
         CHECK(new_hygiene_deny_rows(seq0).empty(), "#3601 AC3: no ring rows appended");
@@ -486,7 +488,8 @@ int run_test_tweak_literal_audit_consistency() {
               "#3601 AC5: batch denied");
         std::println("#3601 AC5 probe: kind='{}' sandbox_active={} msg='{}'", merr_kind(cs, *batch),
                      aura::core::sandbox::is_sandbox_active(), merr_msg(cs, *batch));
-        CHECK(is_pair(*batch) && merr_kind(cs, *batch) == "hygiene", "#3601 AC5: hygiene face");
+        CHECK(is_pair(*batch) && merr_kind(cs, *batch) == "hygiene-protected",
+              "#3601 AC5: hygiene face");
         CHECK(ws->get(lit).int_value == old_val, "#3601 AC5: workspace unchanged");
 
         auto rows = new_hygiene_deny_rows(seq0);

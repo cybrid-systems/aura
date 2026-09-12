@@ -6776,7 +6776,6 @@ std::size_t Evaluator::post_mutation_macro_reexpand(aura::ast::FlatAST& flat,
             /*call_fiber_id=*/0, aura::compiler::typed_audit::join_audit_and_se_mid(0));
         if (!chk.allowed) {
             g_macro_self_evo_denied_total.fetch_add(1, std::memory_order_relaxed);
-            g_macro_clone_last_reject_reason.store(1, std::memory_order_relaxed);
             // Issue #3609: principal-accurate replay face — same #3304
             // capability-deny sentinel as every other MacroSelfEvo deny.
             macro_exp::note_hygiene_last_limit_reason(macro_exp::kHygieneLimitReasonCapabilityDeny);

@@ -109,3 +109,4 @@ check_compact_owner_scope_3680.py
 check_apply_pre_reemit_refuse_3681.py
 check_wal_fold_autoscan_3674.py
 check_last_success_coverage_evidence_3682.py
+check_hygiene_deny_kind_uniformity_3683.py

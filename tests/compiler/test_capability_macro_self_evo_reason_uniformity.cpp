@@ -261,6 +261,14 @@ int run_test_capability_macro_self_evo_reason_uniformity() {
               "AC8: capability_model.hh does not reference docs/design/3304-*");
     }
 
+    // ── Issue #3683: capability deny does not publish clone
+    // last_reject_reason=1 (gensym-ceiling code stays unclaimed);
+    // unified last_limit_reason 7 remains the query surface.
+    CHECK(me.find("g_macro_clone_last_reject_reason.store(1,") == std::string::npos,
+          "3683: capability deny does not stamp clone last_reject_reason=1");
+    CHECK(me.find("kHygieneLimitReasonCapabilityDeny") != std::string::npos,
+          "3683: capability deny still stamps last_limit_reason 7");
+
     std::println("\n=== Issue #3304 done ===");
     return g_failed == 0 ? 0 : 1;
 }

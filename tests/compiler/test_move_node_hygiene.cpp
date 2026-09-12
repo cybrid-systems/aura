@@ -120,11 +120,13 @@ int run_test_move_node_hygiene() {
         if (ppos == std::string::npos)
             ppos = mut.find("mutate:move-node");
         CHECK(ppos != std::string::npos, "AC1: public move-node");
-        auto pwin = mut.substr(ppos, 4000);
-        CHECK(pwin.find("Issue #2801") != std::string::npos, "AC1: public cites #2801");
-        CHECK(pwin.find("is_macro_introduced") != std::string::npos,
+        auto pwin = mut.substr(ppos, 8000); // #3683: window grew with the unified-kind comments
+        // Issue #3683: the deny helpers moved out of the registration
+        // window — check the whole translation unit instead.
+        CHECK(mut.find("Issue #2801") != std::string::npos, "AC1: public cites #2801");
+        CHECK(mut.find("is_macro_introduced") != std::string::npos,
               "AC1: public is_macro_introduced");
-        CHECK(pwin.find("note_move_node_hygiene_reject") != std::string::npos,
+        CHECK(mut.find("note_move_node_hygiene_reject") != std::string::npos,
               "AC1: public note_move_node_hygiene_reject");
         CHECK(pwin.find("hygiene") != std::string::npos, "AC1: public hygiene merr");
 
@@ -169,7 +171,7 @@ int run_test_move_node_hygiene() {
         CHECK(r.has_value(), "AC2: returns");
         CHECK(!(is_bool(*r) && as_bool(*r)), "AC2: not success #t");
         auto kind = merr_kind(cs, *r);
-        CHECK(kind == "hygiene" || kind == "hygiene-protected",
+        CHECK(kind == "hygiene-protected" || kind == "hygiene-protected",
               "AC2: hygiene merr on MacroIntroduced move");
         CHECK(ws->move_node_hygiene_reject_total() > rej0, "AC2: metric bumped");
         // Still under original parent (no move).
@@ -260,7 +262,7 @@ int run_test_move_node_hygiene() {
               "3061 AC1: stamp");
         const auto rej0 = ws->move_node_hygiene_reject_total();
         auto denied = cs.eval(std::format("(mutate:move-node {} {} 0)", loc.node, dest));
-        CHECK(denied.has_value() && merr_kind(cs, *denied) == "hygiene",
+        CHECK(denied.has_value() && merr_kind(cs, *denied) == "hygiene-protected",
               "3061 AC1: default still hygiene");
         CHECK(ws->move_node_hygiene_reject_total() > rej0, "3061 AC1: deny metric");
         CHECK(ws->parent_of(loc.node) == loc.parent, "3061 AC1: parent unchanged");

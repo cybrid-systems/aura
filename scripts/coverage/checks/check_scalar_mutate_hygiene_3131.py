@@ -126,16 +126,20 @@ def main() -> int:
     must("Issue #373", "AC3 tweak-literal cite", mut)
 
     # ── AC4: stable reasons — no new strings introduced ──
-    must('mev("hygiene",', "AC4 hygiene reason", mut)
+    # Issue #3683: the dual-track ("hygiene", ...) deny kind is retired —
+    # one tagged kind ("hygiene-protected", ...) across all mutate faces.
     must('mev("hygiene-protected",', "AC4 hygiene-protected reason", mut)
-    # Specifically: reject_structural_macro_hygiene returns "hygiene".
+    # Specifically: reject_structural_macro_hygiene returns "hygiene-protected".
     helper = _window(
         mut,
         "static std::optional<EvalValue> reject_structural_macro_hygiene(",
         "static aura::ast::NodeId first_macro_introduced_in_subtree(",
     )
-    must('mev("hygiene",', "AC4 reject_structural_macro_hygiene returns hygiene", helper)
-    must("cannot ", "AC4 reject_structural_macro_hygiene reason phrase", helper)
+    # Issue #3683: reject_structural routes through the unified
+    # ("hygiene-protected", ...) tagged pair — same face as
+    # hygiene_protected_error.
+    must('mev("hygiene-protected",', "AC4 reject_structural_macro_hygiene returns hygiene-protected", helper)
+    must("hygienic macro expansion", "AC4 reject_structural_macro_hygiene reason phrase", helper)
     if "Issue #3131" in mut and 'mev("hygiene-3131"' in mut:
         fails.append("AC4: new reason string 'hygiene-3131' introduced (forbidden)")
 
