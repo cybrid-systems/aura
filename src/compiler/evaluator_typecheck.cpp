@@ -4,11 +4,12 @@
 module;
 
 #include "observability_metrics.h"
-#include "typed_mutation_audit.h"        // Issue #1614 / #2145 invariant audit + hard-gate
-#include "security_capabilities.h"       // aura_fiber_current_id
-#include "mutate_type_gate.hh"           // Issue #2219 Soft/Hard post-mutate type gate
-#include "coercion_provenance_policy.hh" // Issue #2221 require_blame_complete_on_commit
-#include "core/sandbox.hh"               // Issue #2145 Strict sandbox hard-gate
+#include "typed_mutation_audit.h"            // Issue #1614 / #2145 invariant audit + hard-gate
+#include "security_capabilities.h"           // aura_fiber_current_id
+#include "mutate_type_gate.hh"               // Issue #2219 Soft/Hard post-mutate type gate
+#include "compiler/castop_density_policy.hh" // Issue #3699: density streak gate reject pending
+#include "coercion_provenance_policy.hh"     // Issue #2221 require_blame_complete_on_commit
+#include "core/sandbox.hh"                   // Issue #2145 Strict sandbox hard-gate
 #include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 #include "linear_occurrence_mutate_stats.h" // Issue #2144 / #747
 #include "ownership_escape_lowering_gate.h" // Issue #2309: aura_escape_move_gate_clear + rollback counter
@@ -2480,6 +2481,15 @@ bool Evaluator::finish_mutate_hard_gate(std::uint64_t nodes_changed, bool linear
     // All hard-gate linear deny paths route through force_linear_rollback.
     if (force_linear_rollback(op))
         return false;
+    // Issue #3699: Production density streak gate → mutate commit false
+    // (reuse MutateTypeGate hard face). Soft never arms the pending.
+    if ((typed_audit::production_defaults_active() || mutate_type_gate::is_hard()) &&
+        aura::compiler::castop_density::consume_density_gate_reject_pending()) {
+        last_mutate_error_ =
+            "typecheck after mutate: CastOp density streak gate (production fail-closed)";
+        ac.hard_gate_force_rollback_total.fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
     const bool strict = aura::core::sandbox::is_strict();
     // Issue #2223: force hard-gate when workspace has match sites (Sampled
     // must not under-sample ADT self-mod), mirror linear_ops_present.
