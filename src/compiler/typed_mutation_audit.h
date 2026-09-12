@@ -22,6 +22,7 @@
 #include "core/atomic_fence_port.h"
 #include "core/resource_quota.hh"     // process_resource_quota_manager (#2493 mid resolve)
 #include "core/security_event_wal.hh" // #3054 emit_security_event_durable on refuse
+#include "security_capabilities.h"    // #3676 aura_fiber_current_id (C ABI) for SE join
 #include "core/workspace_epoch.hh"    // current_mutation_epoch (#2493 mid resolve)
 // Issue #3375: force_wal block in apply_production_audit_defaults needs the
 // sandbox + capability + mutation_audit_wal + wal_slo facades. The same
@@ -1235,6 +1236,16 @@ inline void maybe_warn_sampled_without_opt_in() noexcept {
 // Thread-safe Full / Sampled / Off gate.
 // Sampled: audit when mutation_id % sample_ratio == 0.
 // Issue #2818: cold-start default is Full (no under-sample).
+// Issue #3676: SE join context for production skip/refuse rows. Fiber is
+// override-aware (#2151) + live TLS fiber; tenant stays 0 (honest unset —
+// capability_tenant_id is per-Evaluator, no process TLS principal); epoch
+// comes from ::aura::core::current_mutation_epoch() at each emit site
+// (0 stays 0, #3594 vocabulary).
+[[nodiscard]] inline std::int64_t audit_se_join_fiber_id() noexcept {
+    return static_cast<std::int64_t>(::aura::core::capability::effect_fiber_id_or(
+        static_cast<std::uint32_t>(aura_fiber_current_id())));
+}
+
 [[nodiscard]] inline bool should_audit(std::uint64_t mutation_id) noexcept {
     g_typed_mutation_audit_counters.audits_considered.fetch_add(1, std::memory_order_relaxed);
     const auto s = get_strategy();
@@ -1255,9 +1266,9 @@ inline void maybe_warn_sampled_without_opt_in() noexcept {
             using ::aura::core::security_event::SecurityEventKind;
             using ::aura::core::security_event_wal::emit_security_event_durable;
             emit_security_event_durable(SecurityEventKind::InvariantFail, /*tenant=*/0, mutation_id,
-                                        /*epoch=*/0, /*effect_bits=*/0, "audit-skipped",
-                                        "sampled-ratio-skip",
-                                        /*denied=*/false, /*fiber=*/0);
+                                        /*epoch=*/::aura::core::current_mutation_epoch(),
+                                        /*effect_bits=*/0, "audit-skipped", "sampled-ratio-skip",
+                                        /*denied=*/false, /*fiber=*/audit_se_join_fiber_id());
         }
         return false;
     }
@@ -4137,7 +4148,7 @@ resolve_audit_mutation_id(std::uint64_t caller_mid = 0) noexcept {
             emit_security_event_durable(SecurityEventKind::InvariantFail, /*tenant=*/0,
                                         /*mid=*/0, /*epoch=*/ep, /*effect_bits=*/0,
                                         "resolve-audit-mid", "mid-fallback-refused",
-                                        /*denied=*/true, /*fiber=*/0);
+                                        /*denied=*/true, /*fiber=*/audit_se_join_fiber_id());
             const auto seq = g_security_event_ring().seq.load(std::memory_order_relaxed);
             g_typed_mutation_audit_counters.audit_mid_fallback_refuse_se_seq.store(
                 seq == 0 ? 0 : seq - 1, std::memory_order_relaxed);

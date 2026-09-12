@@ -152,6 +152,7 @@ namespace aura_mut_run_aot_hotupdate_audit_1882 {
 //   AC4: mutate boundary still advances invariant_audits (sampled path intact)
 //   AC5: query:typed-mutation-audit-trail exposes aot-hotupdate-audit-wired
 //   AC6: #3675 — AOT audit joins composite/batch pin SSOT (join_audit_and_se_mid)
+//   AC7: #3676 — production skip/refuse SE rows join fiber + Mutation epoch
 
 
 // Declared in aura_jit_bridge.h (C linkage); include path may vary by target.
@@ -365,6 +366,111 @@ void ac6_3675_composite_pin_join() {
     CHECK(sites >= 4, "AC6: jit_bridge call sites present (AC5)");
 }
 
+// Issue #3676: production skip/refuse SE rows must carry the live fiber
+// (override-aware #2151) + Mutation epoch join keys — mid alone could not
+// answer Q1 (who/where). Tenant stays 0 (honest unset) in unit tests.
+void ac7_3676_skip_refuse_join_context() {
+    std::println("\n--- AC7 (#3676): skip/refuse SE fiber+epoch join ---");
+    namespace ta = aura::compiler::typed_audit;
+    namespace sec = ::aura::core::security_event;
+    reset_for_test();
+    ta::clear_boundary_audit_mid();
+    auto& ring = sec::g_security_event_ring();
+    const auto latest = [&]() {
+        const auto head = ring.seq.load(std::memory_order_relaxed);
+        return ring.ring[(head - 1) % sec::kSecurityEventRingSize];
+    };
+    // Production face seam: the same flag should_audit reads (#3530/#3319).
+    g_typed_mutation_audit_counters.production_defaults_active.store(1);
+    set_strategy(AuditStrategy::Sampled);
+    set_sample_ratio(4096);
+    constexpr std::uint32_t kFiber = 0x3676'F1B3u;
+    ::aura::core::capability::set_effect_fiber_id_override(kFiber);
+
+    // AC1: leftover Sampled skip → sampled-ratio-skip SE joins live fiber
+    // + Mutation epoch (0 stays 0). should_audit drives the emit directly.
+    std::uint64_t skip_mid = 1;
+    while (ta::should_audit(skip_mid))
+        ++skip_mid;
+    const auto skip_row = latest();
+    CHECK(std::string_view(skip_row.reason) == "sampled-ratio-skip", "AC7: skip row reason");
+    CHECK(skip_row.mutation_id == skip_mid, "AC7: skip row mid");
+    CHECK(skip_row.fiber_id == static_cast<std::int64_t>(kFiber),
+          "AC7: skip row fiber = live override (#3676)");
+    CHECK(skip_row.tenant_id == 0, "AC7: skip row tenant honest unset");
+    CHECK(skip_row.epoch == ::aura::core::current_mutation_epoch(),
+          "AC7: skip row epoch == Mutation epoch (0 stays 0)");
+
+    // AC2: production refuse (TypedMid=0) → mid-fallback-refused stays
+    // mid=0 and joins the live fiber; tenant stays 0 (no principal).
+    set_strategy(AuditStrategy::Full);
+    ta::clear_boundary_audit_mid(); // one-shot refuse SE TLS: allow emit
+    const auto refuse0 =
+        load_u64(g_typed_mutation_audit_counters.audit_mid_fallback_refuse_se_total);
+    const auto mid = ta::resolve_audit_mutation_id();
+    CHECK(mid == 0, "AC7: production process-origin refuse → mid=0");
+    CHECK(load_u64(g_typed_mutation_audit_counters.audit_mid_fallback_refuse_se_total) ==
+              refuse0 + 1,
+          "AC7: refuse SE emitted once");
+    const auto refuse_row = latest();
+    CHECK(std::string_view(refuse_row.reason) == "mid-fallback-refused", "AC7: refuse row reason");
+    CHECK(refuse_row.mutation_id == 0, "AC7: refuse row mid=0 (AC2)");
+    CHECK(refuse_row.fiber_id == static_cast<std::int64_t>(kFiber),
+          "AC7: refuse row fiber filled (AC2)");
+    CHECK(refuse_row.tenant_id == 0, "AC7: refuse row tenant stays 0 (no principal)");
+    CHECK(refuse_row.epoch == ::aura::core::current_mutation_epoch(), "AC7: refuse row epoch");
+
+    // AC3: Full + ratio=1 → the skip emit never runs.
+    set_strategy(AuditStrategy::Full);
+    set_sample_ratio(1);
+    const auto skipped0 = load_u64(g_typed_mutation_audit_counters.samples_skipped);
+    CHECK(ta::should_audit(0xABCDEF), "AC7: Full + ratio=1 audits everything");
+    CHECK(load_u64(g_typed_mutation_audit_counters.samples_skipped) == skipped0,
+          "AC7: no skip count under Full ratio=1 (AC3)");
+    const auto full_row = latest();
+    CHECK(std::string_view(full_row.reason) == "mid-fallback-refused",
+          "AC7: no sampled-ratio-skip SE under Full (AC3)");
+
+    // AC4: production_defaults OFF → Sampled skip emits nothing.
+    g_typed_mutation_audit_counters.production_defaults_active.store(0);
+    set_strategy(AuditStrategy::Sampled);
+    set_sample_ratio(4096);
+    std::uint64_t soft_skip_mid = 1;
+    while (ta::should_audit(soft_skip_mid))
+        ++soft_skip_mid;
+    const auto soft_row = latest();
+    CHECK(std::string_view(soft_row.reason) != "sampled-ratio-skip",
+          "AC7: Soft skip emits no SE (AC4)");
+
+    // AC5: source-cite — fiber helper + both emit sites cite #3676;
+    // reason strings unchanged (no key rename).
+    auto read_repo_file = [](const std::string& rel) {
+        for (const auto& p : {rel, std::string("../") + rel, std::string("../../") + rel}) {
+            std::ifstream in(p);
+            if (!in)
+                continue;
+            return std::string((std::istreambuf_iterator<char>(in)),
+                               std::istreambuf_iterator<char>());
+        }
+        return std::string{};
+    };
+    const auto tmh = read_repo_file("src/compiler/typed_mutation_audit.h");
+    CHECK(!tmh.empty(), "AC7: typed_mutation_audit.h readable");
+    CHECK(tmh.find("Issue #3676") != std::string::npos, "AC7: header cites #3676");
+    CHECK(tmh.find("audit_se_join_fiber_id") != std::string::npos,
+          "AC7: fiber join helper present");
+    CHECK(tmh.find("\"sampled-ratio-skip\"") != std::string::npos &&
+              tmh.find("\"mid-fallback-refused\"") != std::string::npos,
+          "AC7: reason strings unchanged (no key rename)");
+
+    // Cleanup: production seam + fiber override + one-shot refuse TLS.
+    g_typed_mutation_audit_counters.production_defaults_active.store(0);
+    ::aura::core::capability::set_effect_fiber_id_override(0);
+    set_strategy(AuditStrategy::Full);
+    set_sample_ratio(1);
+    ta::clear_boundary_audit_mid();
+}
+
 int run_aot_hotupdate_audit_1882() {
     std::println("=== Issue #1882: TypedMutationAudit AOT/JIT wire-up ===");
     CompilerService cs;
@@ -374,6 +480,7 @@ int run_aot_hotupdate_audit_1882() {
     ac4_mutate_boundary_still_works(cs);
     ac5_trail_wire_flags(cs);
     ac6_3675_composite_pin_join();
+    ac7_3676_skip_refuse_join_context();
     std::println("\n=== #1882: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
