@@ -2,6 +2,7 @@
 // aura.compiler.evaluator module partition; registered via evaluator_primitives_registry.cpp.
 
 module;
+#include <atomic>
 #include <bit>
 #include <cstdlib> // #2988 AURA_MUTATE_INVALIDATE_COARSE
 
@@ -1193,6 +1194,20 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                     } else {
                         m->mutate_guard_enforced.fetch_add(1, std::memory_order_relaxed);
                     }
+                }
+                // Issue #3697: outermost dtor persist-reject / abort_restore
+                // must run before the EDSL return. `return result` left the
+                // body's #t in the return slot, then unique_ptr dtor flipped
+                // wrapper_ok and restored AST — Agent saw committed mutate
+                // while the next query saw the pre-mutate tree. Hold-budget
+                // cancel already replaced the result before dtor; persist-
+                // reject had no equivalent. Soft/Off: dtor observe-only,
+                // wrapper_ok stays true, return unchanged.
+                if (!guard_exempt) {
+                    wrapper_guard.reset();
+                    if (!std::atomic_ref<bool>(wrapper_ok).load(std::memory_order_acquire))
+                        return mev("persist-reject",
+                                   std::string(op) + " aborted; topology restored");
                 }
                 return result;
             });
