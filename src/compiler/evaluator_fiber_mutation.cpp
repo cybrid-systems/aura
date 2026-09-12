@@ -16,6 +16,7 @@ module;
 #include "observability_metrics.h"
 #include "orch/agent_spawn.h" // #2010: g_orch_module_stats for mailbox BP mirror
 #include "core/gc_hooks.h"
+#include "core/resource_quota.hh" // Issue #3668: quota TLS rebind on resume
 #include "core/provenance_tracker.hh"
 #include "core/sandbox.hh"                   // #2056: is_strict for cross-tenant ensure
 #include "compiler/hot_update_registry.hh"   // Issue #2162: aura_hot_update_has_deferred_reemit
@@ -3304,7 +3305,12 @@ extern "C" void aura_orch_note_mailbox_backpressure() {
 // (until release on yield / completion).
 namespace {
     thread_local std::unique_ptr<Evaluator::TenantScope> g_fiber_tenant_scope{};
-}
+    // Issue #3668: quota TLS snapshot for the resume rebind below — the
+    // yield/completion release restores the previous worker tenant so the
+    // next fiber resumed on this worker does not inherit the bound tenant.
+    thread_local std::uint64_t g_fiber_prev_quota_tenant{0};
+    thread_local bool g_fiber_quota_tenant_bound{false};
+} // namespace
 
 extern "C" void aura_fiber_install_tenant_scope_for_resume(void* fiber_ptr) noexcept {
     if (!fiber_ptr)
@@ -3423,6 +3429,23 @@ extern "C" void aura_fiber_install_tenant_scope_for_resume(void* fiber_ptr) noex
                 /*target_node=*/0, static_cast<std::int64_t>(f->id()));
         }
     }
+    // Issue #3668: bind the quota TLS next to the capability principal so
+    // MutationBoundary consumes key the #3049 per-tenant map after
+    // steal×resume — a worker with ambient TLS 0 must not charge tenant-7
+    // mutate into the process-global bucket. quota_tenant_id_ is the
+    // spawn-reserve key (#3049, stamped before the orch principal);
+    // fall back to the assigned principal. Re-entry (keepalive / mailbox
+    // deliver) re-binds the same tenant; the ambient snapshot is taken
+    // only on first bind so release restores the true pre-resume tenant.
+    // Off already returned above (mode==0) — zero extra under Soft.
+    const auto qtid = f->quota_tenant_id() != 0 ? f->quota_tenant_id() : assigned;
+    if (qtid != 0 && qtid != aura::serve::kUnsetTenant) {
+        if (!g_fiber_quota_tenant_bound) {
+            g_fiber_prev_quota_tenant = aura::core::resource_quota::current_quota_tenant();
+            g_fiber_quota_tenant_bound = true;
+        }
+        aura::core::resource_quota::set_current_quota_tenant(qtid);
+    }
     // Install scope (release any prior scope first — defensive).
     // Issue #2839: re-bind principal to assigned even after mismatch
     // (steal / keepalive / mailbox deliver re-entry).
@@ -3431,6 +3454,13 @@ extern "C" void aura_fiber_install_tenant_scope_for_resume(void* fiber_ptr) noex
 }
 
 extern "C" void aura_fiber_release_tenant_scope_after_yield() noexcept {
+    // Issue #3668: restore the pre-resume quota TLS (pairs with the
+    // rebind in the resume install) so the next fiber on this worker
+    // starts from the ambient tenant baseline, not the yielded tenant.
+    if (g_fiber_quota_tenant_bound) {
+        aura::core::resource_quota::set_current_quota_tenant(g_fiber_prev_quota_tenant);
+        g_fiber_quota_tenant_bound = false;
+    }
     // Release (does not destroy) — restore previous principal so a
     // subsequent resume of a different fiber on the same worker starts
     // from a clean baseline.

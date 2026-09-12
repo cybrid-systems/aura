@@ -2669,9 +2669,18 @@ Evaluator::MutationBoundaryGuard::try_acquire(Evaluator& ev, std::uint64_t pendi
     }
     ev.mutation_quota_used_.fetch_add(pending_count, std::memory_order_relaxed);
     // Mirror consume into process Mutations dim for manager dashboards.
+    // Issue #3668: key the dim by the Evaluator's capability principal
+    // (fallback: resume-bound quota TLS) so the #3049 per-tenant map is
+    // live on the boundary path — tenant-7 mutate no longer charges the
+    // global bucket. Soft / map-off lands process-global inside
+    // check_and_consume (tenant arm gated by quota_per_tenant_enabled());
+    // the process ceiling still applies after the tenant budget.
     if (ev.resource_quota_mutations_ != 0) {
+        const auto qtid = ev.capability_tenant_id() != 0
+                              ? static_cast<std::uint64_t>(ev.capability_tenant_id())
+                              : aura::core::resource_quota::current_quota_tenant();
         (void)aura::core::resource_quota::process_resource_quota().check_and_consume(
-            aura::core::resource_quota::Dimension::Mutations, pending_count);
+            aura::core::resource_quota::Dimension::Mutations, pending_count, qtid);
     }
     // Issue #2686 / #2738: nested mutate under (eval-current) pin — fail closed
     // before Guard ctor so Agents get a structured error (not partial apply).
@@ -2808,8 +2817,13 @@ Evaluator::MutationBoundaryGuard::try_acquire_for_region(Evaluator& ev, std::uin
     }
     ev.mutation_quota_used_.fetch_add(pending_count, std::memory_order_relaxed);
     if (ev.resource_quota_mutations_ != 0) {
+        // Issue #3668: same tenant keying as the primary try_acquire site —
+        // capability principal first, resume-bound quota TLS fallback.
+        const auto qtid = ev.capability_tenant_id() != 0
+                              ? static_cast<std::uint64_t>(ev.capability_tenant_id())
+                              : aura::core::resource_quota::current_quota_tenant();
         (void)aura::core::resource_quota::process_resource_quota().check_and_consume(
-            aura::core::resource_quota::Dimension::Mutations, pending_count);
+            aura::core::resource_quota::Dimension::Mutations, pending_count, qtid);
     }
     // Issue #2724 + #2754 + #2757 + #2760 + #2761: region/subtree-scoped
     // concurrent admit. Check if the requested region_key (+ cone/
