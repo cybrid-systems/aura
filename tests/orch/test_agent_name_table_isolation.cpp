@@ -347,7 +347,10 @@ static void ac3467_put_deny_pending() {
           "3467 AC: evaluator_primitives_agent.cpp cites #3467");
     CHECK(src.find("name-reuse-while-reclaimed-pending") != std::string::npos,
           "3467 AC1: spawn deny carries deny-detail (AgentDenyClass::Other)");
-    CHECK(src.find("all_settled") != std::string::npos,
+    // Issue #3671: the guarded-drop variable is tree_settled_now (was
+    // all_settled) — same #3496 gate, now also feeding the hash blame
+    // fields.
+    CHECK(src.find("tree_settled_now") != std::string::npos,
           "3467 AC4: scope-join-all guarded drop present");
     CHECK(read_file("tests/orch/test_issue_3467.cpp").empty() &&
               read_file("tests/issues/test_issue_3467.cpp").empty(),

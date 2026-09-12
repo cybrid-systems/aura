@@ -3488,6 +3488,7 @@ add_executable(test_orch_agent_batch
     tests/orch/test_per_scope_bp_admit.cpp
     tests/orch/test_bare_bp_resolve.cpp
     tests/orch/test_security_schedule_gate.cpp
+    tests/orch/test_scope_join_tree_visibility.cpp
 )
 set_property(TARGET test_orch_agent_batch PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_orch_agent_batch PRIVATE src tests)

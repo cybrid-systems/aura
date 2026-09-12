@@ -48,6 +48,7 @@ extern int run_test_parallel_intend_pure_contract();
 extern int run_test_per_scope_bp_admit();
 extern int run_test_bare_bp_resolve_3179();
 extern int run_test_security_schedule_gate();
+extern int run_test_scope_join_tree_visibility();
 
 int main() {
     using aura::test::g_failed;
@@ -138,6 +139,7 @@ int main() {
     run("test_failure_policy_bridge", run_test_failure_policy_bridge);
     run("test_orch_obs_facade", run_test_orch_obs_facade);
     run("test_security_schedule_gate", run_test_security_schedule_gate);
+    run("test_scope_join_tree_visibility", run_test_scope_join_tree_visibility);
     // Leftover (not a new identity-plane hole): isolate surfaces
     // tree-cancel deadlock, #3442 AC5, and #2163/#2886 parallel-intend
     // hangs that previously consumed the 600s ci/issues timeout.
