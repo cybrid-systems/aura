@@ -104,14 +104,6 @@
     },
     {
       "ac": "AC5",
-      "path": "build.py",
-      "contains": [
-        "check_linear_cross_closure_depth2_2612",
-        "cmd_linear_cross_closure_depth2_coverage"
-      ]
-    },
-    {
-      "ac": "AC5",
       "path": "tests/compiler/test_linear_cross_closure.cpp",
       "contains": [
         "ac5_schema_source"
@@ -125,6 +117,5 @@
         "docs/linear_cross_closure_depth2_2612.md"
       ]
     }
-  ],
-  "source_script": "scripts/coverage/checks/check_linear_cross_closure_depth2_2612.py"
+  ]
 }

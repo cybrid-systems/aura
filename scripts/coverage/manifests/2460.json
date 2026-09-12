@@ -109,20 +109,11 @@
       ]
     },
     {
-      "ac": "gate",
-      "path": "build.py",
-      "contains": [
-        "check_linear_partial_revalidate_2460",
-        "cmd_linear_partial_revalidate_coverage"
-      ]
-    },
-    {
       "ac": "AC5",
       "path": "tests/compiler/test_linear_partial_revalidate.cpp",
       "contains": [
         "AC5: empty dirty + schema-2460"
       ]
     }
-  ],
-  "source_script": "scripts/coverage/checks/check_linear_partial_revalidate_2460.py"
+  ]
 }

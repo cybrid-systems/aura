@@ -45,19 +45,10 @@
     },
     {
       "ac": "gate",
-      "path": "build.py",
-      "contains": [
-        "check_get_nodeview_snapshot_2453",
-        "cmd_get_nodeview_snapshot_coverage"
-      ]
-    },
-    {
-      "ac": "gate",
       "path": "CMakeLists.txt",
       "contains": [
         "tests/core/test_get_nodeview_snapshot.cpp"
       ]
     }
-  ],
-  "source_script": "scripts/coverage/checks/check_get_nodeview_snapshot_2453.py"
+  ]
 }

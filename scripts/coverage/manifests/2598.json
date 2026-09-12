@@ -41,15 +41,6 @@
         "panic_contract_soft_override",
         "production_lock && !soft_override"
       ]
-    },
-    {
-      "ac": "build",
-      "path": "build.py",
-      "contains": [
-        "cmd_panic_residual_densify_hard_2598_coverage",
-        "check_panic_residual_densify_hard_2598"
-      ]
     }
-  ],
-  "source_script": "scripts/coverage/checks/check_panic_residual_densify_hard_2598.py"
+  ]
 }

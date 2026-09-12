@@ -50,18 +50,10 @@
     },
     {
       "ac": "AC6",
-      "path": "build.py",
-      "contains": [
-        "check_2536"
-      ]
-    },
-    {
-      "ac": "AC6",
       "path": "tests/compiler/test_hard_fiber_restricted.cpp",
       "contains": [
         "AC1"
       ]
     }
-  ],
-  "source_script": "scripts/coverage/checks/check_2536.py"
+  ]
 }

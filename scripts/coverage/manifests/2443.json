@@ -54,19 +54,10 @@
     },
     {
       "ac": "gate",
-      "path": "build.py",
-      "contains": [
-        "check_region_dense_atomic_2443",
-        "cmd_region_dense_atomic_coverage"
-      ]
-    },
-    {
-      "ac": "gate",
       "path": "CMakeLists.txt",
       "contains": [
         "tests/core/test_region_dense_atomic.cpp"
       ]
     }
-  ],
-  "source_script": "scripts/coverage/checks/check_region_dense_atomic_2443.py"
+  ]
 }

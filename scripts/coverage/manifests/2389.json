@@ -1,7 +1,7 @@
 {
   "issue": 2389,
   "title": "Issue #2389: query:security-health single Agent score.",
-  "ok": "OK: Issue #2389 security-health \u2014 all AC rows satisfied",
+  "ok": "OK: Issue #2389 security-health — all AC rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -101,19 +101,10 @@
     },
     {
       "ac": "AC5",
-      "path": "build.py",
-      "contains": [
-        "check_security_health_2389",
-        "cmd_security_health_coverage"
-      ]
-    },
-    {
-      "ac": "AC5",
       "path": "tests/compiler/test_security_health.cpp",
       "contains": [
         "ac5_source_cite"
       ]
     }
-  ],
-  "source_script": "scripts/coverage/checks/check_security_health_2389.py"
+  ]
 }

@@ -1,7 +1,7 @@
 {
   "issue": 2640,
   "title": "Issue #2640: production Restricted default periodic epoch-invariant soft walk",
-  "ok": "OK: Issue #2640 production Restricted default periodic epoch-invariant soft walk \u2014 all AC rows satisfied",
+  "ok": "OK: Issue #2640 production Restricted default periodic epoch-invariant soft walk — all AC rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -93,16 +93,6 @@
       "contains": [
         "tests/compiler/test_epoch_invariant_walk.cpp"
       ]
-    },
-    {
-      "ac": "AC6",
-      "path": "build.py",
-      "contains": [
-        "cmd_epoch_invariant_periodic_coverage",
-        "check_epoch_invariant_periodic_coverage.py",
-        "cmd_epoch_invariant_periodic_coverage()"
-      ]
     }
-  ],
-  "source_script": "scripts/coverage/checks/check_epoch_invariant_periodic_coverage.py"
+  ]
 }

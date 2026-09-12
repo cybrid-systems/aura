@@ -1,7 +1,7 @@
 {
   "issue": 2359,
   "title": "Issue #2359: occurrence_goals + predicate_memo epoch health query surface.",
-  "ok": "OK: Issue #2359 memo-goal epoch health \u2014 all AC rows satisfied",
+  "ok": "OK: Issue #2359 memo-goal epoch health — all AC rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -97,19 +97,10 @@
     },
     {
       "ac": "AC5",
-      "path": "build.py",
-      "contains": [
-        "check_memo_goal_epoch_health_2359",
-        "cmd_memo_goal_epoch_health_coverage"
-      ]
-    },
-    {
-      "ac": "AC5",
       "path": "tests/compiler/test_memo_goal_epoch_health.cpp",
       "contains": [
         "ac5_source_cite"
       ]
     }
-  ],
-  "source_script": "scripts/coverage/checks/check_memo_goal_epoch_health_2359.py"
+  ]
 }

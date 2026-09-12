@@ -1,7 +1,7 @@
 {
   "issue": 2566,
   "title": "Issue #2566: non-std module free-var resolve of required std bindings.",
-  "ok": "OK: Issue #2566 module free-var require inject \u2014 all AC rows satisfied",
+  "ok": "OK: Issue #2566 module free-var require inject — all AC rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -84,19 +84,10 @@
     },
     {
       "ac": "AC5",
-      "path": "build.py",
-      "contains": [
-        "check_module_require_freevar_2566",
-        "cmd_module_require_freevar_coverage"
-      ]
-    },
-    {
-      "ac": "AC5",
       "path": "tests/compiler/test_module_require_freevar.cpp",
       "contains": [
         "ac5_gate"
       ]
     }
-  ],
-  "source_script": "scripts/coverage/checks/check_module_require_freevar_2566.py"
+  ]
 }

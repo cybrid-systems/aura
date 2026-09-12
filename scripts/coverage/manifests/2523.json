@@ -1,7 +1,7 @@
 {
   "issue": 2523,
   "title": "Issue #2523: residual workspace_mtx contention stats + soft path.",
-  "ok": "OK: Issue #2523 workspace_mtx residual contention \u2014 all AC rows satisfied",
+  "ok": "OK: Issue #2523 workspace_mtx residual contention — all AC rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -121,14 +121,6 @@
       ]
     },
     {
-      "ac": "AC7",
-      "path": "build.py",
-      "contains": [
-        "check_workspace_mtx_contention_2523",
-        "cmd_workspace_mtx_contention_coverage"
-      ]
-    },
-    {
       "ac": "retain",
       "path": "src/compiler/evaluator_primitives_obs_eval.cpp",
       "contains": [
@@ -142,6 +134,5 @@
         "workspace_region_acquire_total"
       ]
     }
-  ],
-  "source_script": "scripts/coverage/checks/check_workspace_mtx_contention_2523.py"
+  ]
 }

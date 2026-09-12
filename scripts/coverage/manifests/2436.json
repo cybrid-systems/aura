@@ -1,6 +1,6 @@
 {
   "issue": 2436,
-  "title": "Issue #2436: post-compact Arena \u00d7 IR SoA \u00d7 Shape \u00d7 fiber lifecycle.",
+  "title": "Issue #2436: post-compact Arena × IR SoA × Shape × fiber lifecycle.",
   "ok": "OK: post compact lifecycle #2436 coverage contract clean",
   "checks": [
     {
@@ -112,19 +112,10 @@
     },
     {
       "ac": "gate",
-      "path": "build.py",
-      "contains": [
-        "check_post_compact_lifecycle_2436",
-        "cmd_post_compact_lifecycle_coverage"
-      ]
-    },
-    {
-      "ac": "gate",
       "path": "CMakeLists.txt",
       "contains": [
         "tests/compiler/test_post_compact_lifecycle.cpp"
       ]
     }
-  ],
-  "source_script": "scripts/coverage/checks/check_post_compact_lifecycle_2436.py"
+  ]
 }

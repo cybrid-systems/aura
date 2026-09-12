@@ -1,7 +1,7 @@
 {
   "issue": 2576,
   "title": "Issue #2576: JIT PrimCall N-arg ABI.",
-  "ok": "OK: Issue #2576 PrimCall N-arg \u2014 all AC rows satisfied",
+  "ok": "OK: Issue #2576 PrimCall N-arg — all AC rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -42,15 +42,6 @@
       "contains": [
         "tests/compiler/test_primcall_narg.cpp"
       ]
-    },
-    {
-      "ac": "AC4",
-      "path": "build.py",
-      "contains": [
-        "check_primcall_narg_2576",
-        "cmd_primcall_narg_coverage"
-      ]
     }
-  ],
-  "source_script": "scripts/coverage/checks/check_primcall_narg_2576.py"
+  ]
 }

@@ -1,7 +1,7 @@
 {
   "issue": 2556,
   "title": "Issue #2556: DeadCoercion DCE dirty-cone scan limit coverage.",
-  "ok": "OK: Issue #2556 DCE dirty-cone scan limit \u2014 all AC rows satisfied",
+  "ok": "OK: Issue #2556 DCE dirty-cone scan limit — all AC rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -76,19 +76,10 @@
     },
     {
       "ac": "AC5",
-      "path": "build.py",
-      "contains": [
-        "check_dead_coercion_dirty_cone_2556",
-        "cmd_dead_coercion_dirty_cone_coverage"
-      ]
-    },
-    {
-      "ac": "AC5",
       "path": "tests/compiler/test_dead_coercion_dirty_cone.cpp",
       "contains": [
         "ac5_source_schema"
       ]
     }
-  ],
-  "source_script": "scripts/coverage/checks/check_dead_coercion_dirty_cone_2556.py"
+  ]
 }

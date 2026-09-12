@@ -1,7 +1,7 @@
 {
   "issue": 2575,
-  "title": "Issue #2575: dual string heaps \u2014 PrimCall re-interns eval\u2192JIT.",
-  "ok": "OK: Issue #2575 dual string heap \u2014 all AC rows satisfied",
+  "title": "Issue #2575: dual string heaps — PrimCall re-interns eval→JIT.",
+  "ok": "OK: Issue #2575 dual string heap — all AC rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -49,15 +49,6 @@
       "contains": [
         "tests/compiler/test_jit_dual_string_heap.cpp"
       ]
-    },
-    {
-      "ac": "AC4",
-      "path": "build.py",
-      "contains": [
-        "check_jit_dual_string_heap_2575",
-        "cmd_jit_dual_string_heap_coverage"
-      ]
     }
-  ],
-  "source_script": "scripts/coverage/checks/check_jit_dual_string_heap_2575.py"
+  ]
 }

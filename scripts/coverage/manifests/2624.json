@@ -1,7 +1,7 @@
 {
   "issue": 2624,
   "title": "CastOp typed meta Phase A",
-  "ok": "OK: Issue #2624 CastOp typed meta Phase A \u2014 all AC rows satisfied",
+  "ok": "OK: Issue #2624 CastOp typed meta Phase A — all AC rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -111,14 +111,6 @@
       "path": "CMakeLists.txt",
       "contains": [
         "tests/compiler/test_castop_typed_meta.cpp"
-      ]
-    },
-    {
-      "ac": "AC6",
-      "path": "build.py",
-      "contains": [
-        "check_castop_typed_meta_2624",
-        "cmd_castop_typed_meta_coverage"
       ]
     },
     {

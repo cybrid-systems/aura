@@ -1,7 +1,7 @@
 {
   "issue": 2564,
   "title": "Issue #2564: ADT match exhaustiveness goal table coverage.",
-  "ok": "OK: Issue #2564 ADT match goal table \u2014 all AC rows satisfied",
+  "ok": "OK: Issue #2564 ADT match goal table — all AC rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -105,19 +105,10 @@
     },
     {
       "ac": "AC5",
-      "path": "build.py",
-      "contains": [
-        "check_adt_match_goal_table_2564",
-        "cmd_adt_match_goal_table_coverage"
-      ]
-    },
-    {
-      "ac": "AC5",
       "path": "tests/compiler/test_adt_match_goal_table.cpp",
       "contains": [
         "ac5_hard_gate_retained"
       ]
     }
-  ],
-  "source_script": "scripts/coverage/checks/check_adt_match_goal_table_2564.py"
+  ]
 }

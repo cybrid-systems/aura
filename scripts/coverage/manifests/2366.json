@@ -1,7 +1,7 @@
 {
   "issue": 2366,
   "title": "Issue #2366: per-entry epoch invariant walk + MustDeopt (#2304 follow-up).",
-  "ok": "OK: Issue #2366 epoch invariant per-entry walk \u2014 all AC rows satisfied",
+  "ok": "OK: Issue #2366 epoch invariant per-entry walk — all AC rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -97,19 +97,10 @@
     },
     {
       "ac": "AC5",
-      "path": "build.py",
-      "contains": [
-        "check_epoch_invariant_walk_2366",
-        "cmd_epoch_invariant_walk_coverage"
-      ]
-    },
-    {
-      "ac": "AC5",
       "path": "tests/compiler/test_epoch_invariant_walk.cpp",
       "contains": [
         "ac5_source_and_query"
       ]
     }
-  ],
-  "source_script": "scripts/coverage/checks/check_epoch_invariant_walk_2366.py"
+  ]
 }

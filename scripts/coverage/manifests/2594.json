@@ -1,7 +1,7 @@
 {
   "issue": 2594,
-  "title": "Issue #2594: audit mid-fallback \u7387 SLO \u2192 security-health \u964d\u7ea7\u6807\u5fd7.",
-  "ok": "OK: Issue #2594 audit mid-fallback SLO \u2014 all AC rows satisfied",
+  "title": "Issue #2594: audit mid-fallback 率 SLO → security-health 降级标志.",
+  "ok": "OK: Issue #2594 audit mid-fallback SLO — all AC rows satisfied",
   "checks": [
     {
       "ac": "header",
@@ -69,20 +69,11 @@
       ]
     },
     {
-      "ac": "build",
-      "path": "build.py",
-      "contains": [
-        "cmd_audit_mid_fallback_slo_2594_coverage",
-        "check_audit_mid_fallback_slo_2594"
-      ]
-    },
-    {
       "ac": "cmake",
       "path": "CMakeLists.txt",
       "contains": [
         "tests/compiler/test_audit_mid_fallback_slo.cpp"
       ]
     }
-  ],
-  "source_script": "scripts/coverage/checks/check_audit_mid_fallback_slo_2594.py"
+  ]
 }

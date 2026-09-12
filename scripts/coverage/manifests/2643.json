@@ -125,14 +125,6 @@
         "ac2643_query_surface",
         "ac2643_source_cite"
       ]
-    },
-    {
-      "ac": "AC6",
-      "path": "build.py",
-      "contains": [
-        "check_instance_depth_repair_hint_2643"
-      ]
     }
-  ],
-  "source_script": "scripts/coverage/checks/check_instance_depth_repair_hint_2643.py"
+  ]
 }

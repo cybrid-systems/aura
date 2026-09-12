@@ -43,18 +43,10 @@
     },
     {
       "ac": "AC6",
-      "path": "build.py",
-      "contains": [
-        "check_2535"
-      ]
-    },
-    {
-      "ac": "AC6",
       "path": "tests/orch/test_mailbox_bp_admit_default.cpp",
       "contains": [
         "AC1"
       ]
     }
-  ],
-  "source_script": "scripts/coverage/checks/check_2535.py"
+  ]
 }

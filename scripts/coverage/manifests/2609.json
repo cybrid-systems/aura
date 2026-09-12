@@ -1,7 +1,7 @@
 {
   "issue": 2609,
   "title": "Issue #2609: steal/densify hard-AND residual + linear + type fence.",
-  "ok": "OK: Issue #2609 steal/densify linear+type hard-AND \u2014 all AC rows satisfied",
+  "ok": "OK: Issue #2609 steal/densify linear+type hard-AND — all AC rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -158,15 +158,6 @@
       "contains": [
         "tests/serve/test_steal_densify_linear_type_hard_and.cpp"
       ]
-    },
-    {
-      "ac": "AC5",
-      "path": "build.py",
-      "contains": [
-        "check_steal_densify_linear_type_hard_and_2609",
-        "cmd_steal_densify_linear_type_hard_and_coverage"
-      ]
     }
-  ],
-  "source_script": "scripts/coverage/checks/check_steal_densify_linear_type_hard_and_2609.py"
+  ]
 }

@@ -1,7 +1,7 @@
 {
   "issue": 2572,
   "title": "Issue #2572: module-export multi-display ConstString pool + JIT display.",
-  "ok": "OK: Issue #2572 module export multi-display \u2014 all AC rows satisfied",
+  "ok": "OK: Issue #2572 module export multi-display — all AC rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -60,14 +60,6 @@
       ]
     },
     {
-      "ac": "AC4",
-      "path": "build.py",
-      "contains": [
-        "check_module_export_display_2572",
-        "cmd_module_export_display_coverage"
-      ]
-    },
-    {
       "ac": "AC5",
       "path": "src/compiler/service.ixx",
       "contains": [
@@ -75,6 +67,5 @@
         "#2572"
       ]
     }
-  ],
-  "source_script": "scripts/coverage/checks/check_module_export_display_2572.py"
+  ]
 }

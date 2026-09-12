@@ -32,14 +32,6 @@
       "contains": [
         "tests/compiler/test_audit_ring_publish.cpp"
       ]
-    },
-    {
-      "ac": "AC6",
-      "path": "build.py",
-      "contains": [
-        "check_2530"
-      ]
     }
-  ],
-  "source_script": "scripts/coverage/checks/check_2530.py"
+  ]
 }

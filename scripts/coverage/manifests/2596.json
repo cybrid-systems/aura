@@ -61,15 +61,6 @@
         "production default AURA_MOVING_UNTRACKED=hard",
         "AURA_MOVING_UNTRACKED"
       ]
-    },
-    {
-      "ac": "build",
-      "path": "build.py",
-      "contains": [
-        "cmd_moving_untracked_production_hard_2596_coverage",
-        "check_moving_untracked_production_hard_2596"
-      ]
     }
-  ],
-  "source_script": "scripts/coverage/checks/check_moving_untracked_production_hard_2596.py"
+  ]
 }

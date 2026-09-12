@@ -46,19 +46,10 @@
     },
     {
       "ac": "gate",
-      "path": "build.py",
-      "contains": [
-        "check_raii_guard_flatast_lifetime_2454",
-        "cmd_raii_guard_flatast_lifetime_coverage"
-      ]
-    },
-    {
-      "ac": "gate",
       "path": "CMakeLists.txt",
       "contains": [
         "tests/core/test_raii_guard_flatast_lifetime.cpp"
       ]
     }
-  ],
-  "source_script": "scripts/coverage/checks/check_raii_guard_flatast_lifetime_2454.py"
+  ]
 }

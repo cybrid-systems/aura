@@ -52,19 +52,10 @@
     },
     {
       "ac": "gate",
-      "path": "build.py",
-      "contains": [
-        "check_param_data_mutation_contract_2449",
-        "cmd_param_data_mutation_contract_coverage"
-      ]
-    },
-    {
-      "ac": "gate",
       "path": "CMakeLists.txt",
       "contains": [
         "tests/core/test_param_data_mutation_contract.cpp"
       ]
     }
-  ],
-  "source_script": "scripts/coverage/checks/check_param_data_mutation_contract_2449.py"
+  ]
 }

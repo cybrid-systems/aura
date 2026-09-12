@@ -84,19 +84,10 @@
     },
     {
       "ac": "AC5",
-      "path": "build.py",
-      "contains": [
-        "check_pcv_tls_scratch_2406",
-        "cmd_pcv_tls_scratch_coverage"
-      ]
-    },
-    {
-      "ac": "AC5",
       "path": "CMakeLists.txt",
       "contains": [
         "tests/core/test_pcv_tls_scratch.cpp"
       ]
     }
-  ],
-  "source_script": "scripts/coverage/checks/check_pcv_tls_scratch_2406.py"
+  ]
 }

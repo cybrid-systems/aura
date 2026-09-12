@@ -17,14 +17,6 @@
       "contains": [
         "tests/compiler/test_grant_bound_mid_force.cpp"
       ]
-    },
-    {
-      "ac": "AC6",
-      "path": "build.py",
-      "contains": [
-        "check_2531"
-      ]
     }
-  ],
-  "source_script": "scripts/coverage/checks/check_2531.py"
+  ]
 }

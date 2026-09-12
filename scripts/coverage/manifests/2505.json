@@ -1,7 +1,7 @@
 {
   "issue": 2505,
   "title": "Issue #2505: cross-COW soft-migrate drift threshold vs hard safe-fallback.",
-  "ok": "OK: Issue #2505 cross-COW drift contract \u2014 all AC rows satisfied",
+  "ok": "OK: Issue #2505 cross-COW drift contract — all AC rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -113,19 +113,10 @@
     },
     {
       "ac": "AC5",
-      "path": "build.py",
-      "contains": [
-        "check_cross_cow_drift_contract_2505",
-        "cmd_cross_cow_drift_contract_coverage"
-      ]
-    },
-    {
-      "ac": "AC5",
       "path": "tests/compiler/test_cross_cow_drift_contract.cpp",
       "contains": [
         "ac5_docs_query_gate"
       ]
     }
-  ],
-  "source_script": "scripts/coverage/checks/check_cross_cow_drift_contract_2505.py"
+  ]
 }

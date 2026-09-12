@@ -18,14 +18,6 @@
       "contains": [
         "tests/compiler/test_security_posture_trail.cpp"
       ]
-    },
-    {
-      "ac": "AC6",
-      "path": "build.py",
-      "contains": [
-        "check_2534"
-      ]
     }
-  ],
-  "source_script": "scripts/coverage/checks/check_2534.py"
+  ]
 }

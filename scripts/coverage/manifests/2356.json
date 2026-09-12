@@ -1,7 +1,7 @@
 {
   "issue": 2356,
   "title": "Issue #2356: truncated reverify one-shot expand coverage.",
-  "ok": "OK: Issue #2356 reverify expand \u2014 all AC rows satisfied",
+  "ok": "OK: Issue #2356 reverify expand — all AC rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -95,19 +95,10 @@
     },
     {
       "ac": "AC5",
-      "path": "build.py",
-      "contains": [
-        "check_reverify_expand_2356",
-        "cmd_reverify_expand_coverage"
-      ]
-    },
-    {
-      "ac": "AC5",
       "path": "tests/compiler/test_reverify_expand.cpp",
       "contains": [
         "ac5_query_and_source"
       ]
     }
-  ],
-  "source_script": "scripts/coverage/checks/check_reverify_expand_2356.py"
+  ]
 }

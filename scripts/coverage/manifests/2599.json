@@ -43,15 +43,6 @@
         "envframe_block = prod_for_densify && scan_fail_delta",
         "EnvFrameDensifyOwnership"
       ]
-    },
-    {
-      "ac": "build",
-      "path": "build.py",
-      "contains": [
-        "cmd_envframe_densify_scan_commit_barrier_2599_coverage",
-        "check_envframe_densify_scan_commit_barrier_2599"
-      ]
     }
-  ],
-  "source_script": "scripts/coverage/checks/check_envframe_densify_scan_commit_barrier_2599.py"
+  ]
 }

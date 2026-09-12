@@ -59,14 +59,6 @@
     },
     {
       "ac": "gate",
-      "path": "build.py",
-      "contains": [
-        "check_regex_redos_timeout_2479",
-        "cmd_regex_redos_timeout_coverage"
-      ]
-    },
-    {
-      "ac": "gate",
       "path": "CMakeLists.txt",
       "contains": [
         "tests/compiler/test_regex_redos_timeout.cpp"
@@ -79,6 +71,5 @@
         "2479 AC5"
       ]
     }
-  ],
-  "source_script": "scripts/coverage/checks/check_regex_redos_timeout_2479.py"
+  ]
 }

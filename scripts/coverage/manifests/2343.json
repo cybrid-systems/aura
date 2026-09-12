@@ -1,7 +1,7 @@
 {
   "issue": 2343,
-  "title": "Issue #2343: TIMEOUT/CONFLICT var\u2194constraint graph export coverage.",
-  "ok": "OK: Issue #2343 TIMEOUT unresolved graph \u2014 all 5 AC contract rows satisfied",
+  "title": "Issue #2343: TIMEOUT/CONFLICT var↔constraint graph export coverage.",
+  "ok": "OK: Issue #2343 TIMEOUT unresolved graph — all 5 AC contract rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -106,6 +106,5 @@
         "tests/compiler/test_type_timeout_repair.cpp"
       ]
     }
-  ],
-  "source_script": "scripts/coverage/checks/check_type_timeout_repair_graph_2343.py"
+  ]
 }

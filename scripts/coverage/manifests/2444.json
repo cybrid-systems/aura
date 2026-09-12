@@ -36,19 +36,10 @@
     },
     {
       "ac": "gate",
-      "path": "build.py",
-      "contains": [
-        "check_region_sym_dense_race_2444",
-        "cmd_region_sym_dense_race_coverage"
-      ]
-    },
-    {
-      "ac": "gate",
       "path": "CMakeLists.txt",
       "contains": [
         "test_ast_concurrency"
       ]
     }
-  ],
-  "source_script": "scripts/coverage/checks/check_region_sym_dense_race_2444.py"
+  ]
 }

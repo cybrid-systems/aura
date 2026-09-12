@@ -71,15 +71,6 @@
         "g_gc_defer_pending_panic_depth",
         "gc_deferred_for_evaluator"
       ]
-    },
-    {
-      "ac": "build",
-      "path": "build.py",
-      "contains": [
-        "cmd_densify_unified_gate_2595_coverage",
-        "check_densify_unified_gate_2595"
-      ]
     }
-  ],
-  "source_script": "scripts/coverage/checks/check_densify_unified_gate_2595.py"
+  ]
 }

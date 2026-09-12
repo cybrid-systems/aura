@@ -1,7 +1,7 @@
 {
   "issue": 2494,
   "title": "Issue #2494: hard-fail check_side_effect_security.py for new prims without",
-  "ok": "OK: Issue #2494 side-effect security gate hard-fail \u2014 all AC rows satisfied",
+  "ok": "OK: Issue #2494 side-effect security gate hard-fail — all AC rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -97,15 +97,6 @@
       "contains": [
         "tests/compiler/test_side_effect_security_gate_hardfail.cpp"
       ]
-    },
-    {
-      "ac": "AC6",
-      "path": "build.py",
-      "contains": [
-        "check_side_effect_security_gate_hardfail_2494",
-        "cmd_side_effect_security_gate_hardfail_2494_coverage"
-      ]
     }
-  ],
-  "source_script": "scripts/coverage/checks/check_side_effect_security_gate_hardfail_2494.py"
+  ]
 }

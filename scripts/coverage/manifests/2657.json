@@ -1,7 +1,7 @@
 {
   "issue": 2657,
-  "title": "Issue #2657: single authority for SandboxMode \u2014 eliminate triple-state drift.",
-  "ok": "OK: Issue #2657 sandbox-mode authority \u2014 all 6 AC contract rows satisfied",
+  "title": "Issue #2657: single authority for SandboxMode — eliminate triple-state drift.",
+  "ok": "OK: Issue #2657 sandbox-mode authority — all 6 AC contract rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -94,6 +94,5 @@
         "tests/compiler/test_sandbox_mode_authority.cpp"
       ]
     }
-  ],
-  "source_script": "scripts/coverage/checks/check_2657.py"
+  ]
 }

@@ -1,7 +1,7 @@
 {
   "issue": 2365,
   "title": "Issue #2365: RootRemap + densify Closure/EnvFrame dual-epoch closed-loop.",
-  "ok": "OK: Issue #2365 densify RootRemap+closure dual-epoch \u2014 all AC rows satisfied",
+  "ok": "OK: Issue #2365 densify RootRemap+closure dual-epoch — all AC rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -106,19 +106,10 @@
     },
     {
       "ac": "AC5",
-      "path": "build.py",
-      "contains": [
-        "check_densify_root_closure_closed_loop_2365",
-        "cmd_densify_root_closure_closed_loop_coverage"
-      ]
-    },
-    {
-      "ac": "AC5",
       "path": "tests/compiler/test_densify_root_closure_closed_loop.cpp",
       "contains": [
         "ac5_source_cite"
       ]
     }
-  ],
-  "source_script": "scripts/coverage/checks/check_densify_root_closure_closed_loop_2365.py"
+  ]
 }

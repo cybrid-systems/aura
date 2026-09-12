@@ -1,7 +1,7 @@
 {
   "issue": 2358,
   "title": "Issue #2358: CastOp density HARD force-JIT policy coverage.",
-  "ok": "OK: Issue #2358 CastOp density HARD policy \u2014 all AC rows satisfied",
+  "ok": "OK: Issue #2358 CastOp density HARD policy — all AC rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -104,19 +104,10 @@
     },
     {
       "ac": "AC5",
-      "path": "build.py",
-      "contains": [
-        "check_castop_density_hard_2358",
-        "cmd_castop_density_hard_coverage"
-      ]
-    },
-    {
-      "ac": "AC5",
       "path": "tests/compiler/test_castop_density_hard.cpp",
       "contains": [
         "ac5_query_and_source"
       ]
     }
-  ],
-  "source_script": "scripts/coverage/checks/check_castop_density_hard_2358.py"
+  ]
 }

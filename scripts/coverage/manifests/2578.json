@@ -1,7 +1,7 @@
 {
   "issue": 2578,
   "title": "Issue #2578: Aether denseness host residual contracts (H1/H5/H6).",
-  "ok": "OK: Issue #2578 Aether denseness residuals \u2014 all AC rows satisfied",
+  "ok": "OK: Issue #2578 Aether denseness residuals — all AC rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -59,19 +59,10 @@
     },
     {
       "ac": "AC5",
-      "path": "build.py",
-      "contains": [
-        "check_aether_denseness_2578",
-        "cmd_aether_denseness_coverage"
-      ]
-    },
-    {
-      "ac": "AC5",
       "path": "tests/compiler/test_aether_denseness_residual.cpp",
       "contains": [
         "ac2_orch_freevar_survive_rebind"
       ]
     }
-  ],
-  "source_script": "scripts/coverage/checks/check_aether_denseness_2578.py"
+  ]
 }

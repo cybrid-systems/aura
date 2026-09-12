@@ -31,14 +31,6 @@
       "contains": [
         "tests/serve/test_residual_force_safepoint.cpp"
       ]
-    },
-    {
-      "ac": "AC6",
-      "path": "build.py",
-      "contains": [
-        "check_2533"
-      ]
     }
-  ],
-  "source_script": "scripts/coverage/checks/check_2533.py"
+  ]
 }

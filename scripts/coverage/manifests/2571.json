@@ -1,7 +1,7 @@
 {
   "issue": 2571,
   "title": "Issue #2571: (define) inside (while) body loop-counter footgun.",
-  "ok": "OK: Issue #2571 while+define oneshot \u2014 all AC rows satisfied",
+  "ok": "OK: Issue #2571 while+define oneshot — all AC rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -38,7 +38,7 @@
       "path": "src/compiler/evaluator_eval_flat.cpp",
       "contains": [
         "#2571",
-        "define \u2026) inside (while"
+        "define …) inside (while"
       ]
     },
     {
@@ -66,19 +66,10 @@
     },
     {
       "ac": "AC5",
-      "path": "build.py",
-      "contains": [
-        "check_while_define_oneshot_2571",
-        "cmd_while_define_oneshot_coverage"
-      ]
-    },
-    {
-      "ac": "AC5",
       "path": "tests/compiler/test_while_define_oneshot.cpp",
       "contains": [
         "ac4_source_gate"
       ]
     }
-  ],
-  "source_script": "scripts/coverage/checks/check_while_define_oneshot_2571.py"
+  ]
 }

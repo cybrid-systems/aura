@@ -166,7 +166,11 @@ def main() -> int:
     # AC5: wired into build.py as optional long job
     # ============================================================
     must("cmd_chaos_pr_hard_fail_gate", "AC5", build)
-    must("cmd_chaos_mutate_steal_gc_mailbox_coverage", "AC5", build)
+    # #2352 chaos-soak lineage: the substring wrapper was dropped by the
+    # coverage restructure (e2575acad) — its contract now lives in the
+    # manifest; pin the manifest instead of the removed build.py wiring.
+    if not (ROOT / "scripts" / "coverage" / "manifests" / "2352.json").is_file():
+        fails.append("AC5: #2352 chaos soak lineage manifest missing")
     must("cmd_production_concurrency", "AC5", build)
     must("production_concurrency", "AC5", build)
     # PR gate: short chaos hard-fail.

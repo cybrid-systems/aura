@@ -1,7 +1,7 @@
 {
   "issue": 2354,
   "title": "Issue #2354: debug lock-order audit coverage (scheduler / workspace /",
-  "ok": "OK: Issue #2354 lock-order audit \u2014 all AC rows satisfied",
+  "ok": "OK: Issue #2354 lock-order audit — all AC rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -121,19 +121,10 @@
     },
     {
       "ac": "AC5",
-      "path": "build.py",
-      "contains": [
-        "check_lock_order_audit_2354",
-        "cmd_lock_order_audit_2354_coverage"
-      ]
-    },
-    {
-      "ac": "AC5",
       "path": "tests/compiler/test_lock_order_audit_hard.cpp",
       "contains": [
         "ac5_env_and_mode"
       ]
     }
-  ],
-  "source_script": "scripts/coverage/checks/check_lock_order_audit_2354.py"
+  ]
 }

@@ -1,7 +1,7 @@
 {
   "issue": 2619,
   "title": "Issue #2619: Agent-visible Moving densify health (pairs #2596).",
-  "ok": "OK: Issue #2619 arena moving densify health \u2014 all AC rows satisfied",
+  "ok": "OK: Issue #2619 arena moving densify health — all AC rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -128,14 +128,6 @@
     },
     {
       "ac": "AC5",
-      "path": "build.py",
-      "contains": [
-        "check_arena_moving_densify_health_2619",
-        "cmd_arena_moving_densify_health_coverage"
-      ]
-    },
-    {
-      "ac": "AC5",
       "path": "tests/compiler/test_arena_moving_densify_health.cpp",
       "contains": [
         "ac5_source_cite"
@@ -149,6 +141,5 @@
         "docs/design/arena_moving_densify_health_2619.md"
       ]
     }
-  ],
-  "source_script": "scripts/coverage/checks/check_arena_moving_densify_health_2619.py"
+  ]
 }

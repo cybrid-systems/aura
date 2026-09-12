@@ -1,7 +1,7 @@
 {
   "issue": 2352,
-  "title": "Issue #2352: chaos mutate \u00d7 steal \u00d7 GC \u00d7 mailbox production gate.",
-  "ok": "OK: Issue #2352 chaos mutate\u00d7steal\u00d7GC\u00d7mailbox \u2014 all AC rows satisfied",
+  "title": "Issue #2352: chaos mutate × steal × GC × mailbox production gate.",
+  "ok": "OK: Issue #2352 chaos mutate×steal×GC×mailbox — all AC rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -61,15 +61,6 @@
       "contains": [
         "tests/serve/test_chaos_mutate_steal_gc_mailbox.cpp"
       ]
-    },
-    {
-      "ac": "AC5",
-      "path": "build.py",
-      "contains": [
-        "check_chaos_mutate_steal_gc_mailbox_2352",
-        "cmd_chaos_mutate_steal_gc_mailbox_coverage"
-      ]
     }
-  ],
-  "source_script": "scripts/coverage/checks/check_chaos_mutate_steal_gc_mailbox_2352.py"
+  ]
 }

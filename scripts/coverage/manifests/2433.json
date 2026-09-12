@@ -1,6 +1,6 @@
 {
   "issue": 2433,
-  "title": "Issue #2433: HighMutation default-on + deopt-storm \u00d7 LayoutStamp.",
+  "title": "Issue #2433: HighMutation default-on + deopt-storm × LayoutStamp.",
   "ok": "OK: shape high mutation storm #2433 coverage contract clean",
   "checks": [
     {
@@ -109,19 +109,10 @@
     },
     {
       "ac": "gate",
-      "path": "build.py",
-      "contains": [
-        "check_shape_high_mutation_storm_2433",
-        "cmd_shape_high_mutation_storm_coverage"
-      ]
-    },
-    {
-      "ac": "gate",
       "path": "CMakeLists.txt",
       "contains": [
         "tests/compiler/test_shape_high_mutation_storm.cpp"
       ]
     }
-  ],
-  "source_script": "scripts/coverage/checks/check_shape_high_mutation_storm_2433.py"
+  ]
 }

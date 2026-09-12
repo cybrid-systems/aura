@@ -1,7 +1,7 @@
 {
   "issue": 2521,
   "title": "Issue #2521: production default-on PCV TLS freelist.",
-  "ok": "OK: Issue #2521 PCV TLS production default ON \u2014 all AC rows satisfied",
+  "ok": "OK: Issue #2521 PCV TLS production default ON — all AC rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -91,14 +91,6 @@
     },
     {
       "ac": "AC5",
-      "path": "build.py",
-      "contains": [
-        "check_pcv_tls_default_on_2521",
-        "cmd_pcv_tls_default_on_coverage"
-      ]
-    },
-    {
-      "ac": "AC5",
       "path": "tests/core/test_pcv_tls_default_on.cpp",
       "contains": [
         "ac5_query"
@@ -118,6 +110,5 @@
         "schema-2406"
       ]
     }
-  ],
-  "source_script": "scripts/coverage/checks/check_pcv_tls_default_on_2521.py"
+  ]
 }

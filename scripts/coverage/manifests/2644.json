@@ -100,14 +100,6 @@
         "ac2644_empty_cs_no_drift_bump",
         "ac2644_source_cite"
       ]
-    },
-    {
-      "ac": "AC5",
-      "path": "build.py",
-      "contains": [
-        "check_occurrence_refined_consistency_2644"
-      ]
     }
-  ],
-  "source_script": "scripts/coverage/checks/check_occurrence_refined_consistency_2644.py"
+  ]
 }

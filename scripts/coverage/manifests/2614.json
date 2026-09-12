@@ -1,7 +1,7 @@
 {
   "issue": 2614,
   "title": "Issue #2614: force ChildColumnar/SoAColumnarFull on walk/query/PCV hot templates.",
-  "ok": "OK: Issue #2614 hot children ChildColumnar force \u2014 all AC rows satisfied",
+  "ok": "OK: Issue #2614 hot children ChildColumnar force — all AC rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -98,14 +98,6 @@
     },
     {
       "ac": "AC5",
-      "path": "build.py",
-      "contains": [
-        "check_hot_children_columnar_2614",
-        "cmd_hot_children_columnar_coverage"
-      ]
-    },
-    {
-      "ac": "AC5",
       "path": "tests/core/test_hot_children_columnar.cpp",
       "contains": [
         "ac5_walk_smoke"
@@ -119,6 +111,5 @@
         "docs/hot_children_columnar_2614.md"
       ]
     }
-  ],
-  "source_script": "scripts/coverage/checks/check_hot_children_columnar_2614.py"
+  ]
 }

@@ -1,7 +1,7 @@
 {
   "issue": 2370,
   "title": "Issue #2370: real PerEval storm isolation for SpecJIT + shape version.",
-  "ok": "OK: Issue #2370 SpecJIT PerEval storm isolation \u2014 all AC rows satisfied",
+  "ok": "OK: Issue #2370 SpecJIT PerEval storm isolation — all AC rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -102,19 +102,10 @@
     },
     {
       "ac": "AC5",
-      "path": "build.py",
-      "contains": [
-        "check_specjit_per_eval_storm_isolation_2370",
-        "cmd_specjit_per_eval_storm_isolation_coverage"
-      ]
-    },
-    {
-      "ac": "AC5",
       "path": "tests/compiler/test_specjit_per_eval_storm_isolation.cpp",
       "contains": [
         "ac5_source_and_gate"
       ]
     }
-  ],
-  "source_script": "scripts/coverage/checks/check_specjit_per_eval_storm_isolation_2370.py"
+  ]
 }

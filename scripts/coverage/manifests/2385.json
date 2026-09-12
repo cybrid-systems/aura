@@ -1,7 +1,7 @@
 {
   "issue": 2385,
   "title": "Issue #2385: Restricted sandbox denies side-effects when principal unset.",
-  "ok": "OK: Issue #2385 Restricted unset principal deny \u2014 all AC rows satisfied",
+  "ok": "OK: Issue #2385 Restricted unset principal deny — all AC rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -59,14 +59,6 @@
     },
     {
       "ac": "AC6",
-      "path": "build.py",
-      "contains": [
-        "check_restricted_unset_principal_2385",
-        "cmd_restricted_unset_principal_coverage"
-      ]
-    },
-    {
-      "ac": "AC6",
       "path": "tests/core/test_restricted_unset_principal.cpp",
       "contains": [
         "ac6_source_and_gate",
@@ -87,6 +79,5 @@
         "Issue #2388"
       ]
     }
-  ],
-  "source_script": "scripts/coverage/checks/check_restricted_unset_principal_2385.py"
+  ]
 }

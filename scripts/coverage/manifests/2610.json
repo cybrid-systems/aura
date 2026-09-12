@@ -1,7 +1,7 @@
 {
   "issue": 2610,
   "title": "Issue #2610: auto-detect expected_partial from dirty cone.",
-  "ok": "OK: Issue #2610 composite auto-partial from cone \u2014 all AC rows satisfied",
+  "ok": "OK: Issue #2610 composite auto-partial from cone — all AC rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -118,14 +118,6 @@
       ]
     },
     {
-      "ac": "AC5",
-      "path": "build.py",
-      "contains": [
-        "check_composite_auto_partial_from_cone_2610",
-        "cmd_composite_auto_partial_from_cone_coverage"
-      ]
-    },
-    {
       "ac": "retain",
       "path": "src/compiler/evaluator_typecheck.cpp",
       "contains": [
@@ -133,6 +125,5 @@
         "composite_commit_empty_cs_hard_miss_total"
       ]
     }
-  ],
-  "source_script": "scripts/coverage/checks/check_composite_auto_partial_from_cone_2610.py"
+  ]
 }

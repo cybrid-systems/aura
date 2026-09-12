@@ -1,7 +1,7 @@
 {
   "issue": 2357,
   "title": "Issue #2357: Phase-1 linear Move/Drop first-class synthesize violation.",
-  "ok": "OK: Issue #2357 linear synth violation \u2014 all AC rows satisfied",
+  "ok": "OK: Issue #2357 linear synth violation — all AC rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -104,19 +104,10 @@
     },
     {
       "ac": "AC5",
-      "path": "build.py",
-      "contains": [
-        "check_linear_synth_violation_2357",
-        "cmd_linear_synth_violation_coverage"
-      ]
-    },
-    {
-      "ac": "AC5",
       "path": "tests/compiler/test_linear_synth_violation.cpp",
       "contains": [
         "ac5_query_and_source"
       ]
     }
-  ],
-  "source_script": "scripts/coverage/checks/check_linear_synth_violation_2357.py"
+  ]
 }

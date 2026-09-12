@@ -1,7 +1,7 @@
 {
   "issue": 2351,
   "title": "Issue #2351: steal-complete LayoutStamp dual-check before resume.",
-  "ok": "OK: Issue #2351 steal LayoutStamp dual-check \u2014 all AC rows satisfied",
+  "ok": "OK: Issue #2351 steal LayoutStamp dual-check — all AC rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -121,15 +121,6 @@
       "contains": [
         "tests/serve/test_steal_layout_stamp.cpp"
       ]
-    },
-    {
-      "ac": "AC5",
-      "path": "build.py",
-      "contains": [
-        "check_steal_layout_stamp_2351",
-        "cmd_steal_layout_stamp_coverage"
-      ]
     }
-  ],
-  "source_script": "scripts/coverage/checks/check_steal_layout_stamp_2351.py"
+  ]
 }

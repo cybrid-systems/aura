@@ -1,7 +1,7 @@
 {
   "issue": 2607,
   "title": "Issue #2607: minimal INSTANCE constraint + depth-capped instantiate.",
-  "ok": "OK: Issue #2607 INSTANCE depth-cap constraint \u2014 all AC rows satisfied",
+  "ok": "OK: Issue #2607 INSTANCE depth-cap constraint — all AC rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -108,15 +108,6 @@
       "contains": [
         "tests/compiler/test_instance_constraint_depth_cap.cpp"
       ]
-    },
-    {
-      "ac": "AC5",
-      "path": "build.py",
-      "contains": [
-        "check_instance_constraint_depth_cap_2607",
-        "cmd_instance_constraint_depth_cap_coverage"
-      ]
     }
-  ],
-  "source_script": "scripts/coverage/checks/check_instance_constraint_depth_cap_2607.py"
+  ]
 }
