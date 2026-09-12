@@ -654,6 +654,8 @@ static void ac3656_3_map_empty_unknown_full() {
     const auto pure = read_file("src/compiler/ir_cache_pure.ixx");
     CHECK(pure.find("should_partial_relower_impact_checked_prod") != std::string::npos,
           "3656 AC3: #3310 prod helper retained");
+    CHECK(dirty.find("should_partial_relower_impact_checked_prod") != std::string::npos,
+          "3691: invalidate cascade uses _prod");
 }
 
 static void ac3656_4_soft_zero_extra() {
