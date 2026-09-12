@@ -1131,7 +1131,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/core/test_arena_required_cover_no_value_only.cpp` (—) [large, domain_suite, theme_core] — Off / render-hotpath single-load zero-cost contract preserved (AC3).
 - `tests/compiler/test_ast_column_compaction_closed_loop.cpp` (—) [domain_suite, theme_compiler] — Issue #261/#405/#414/#416 (#1978 renamed): issue# moved from filename to header.
 - `tests/orch/test_bare_bp_resolve.cpp` (—) [domain_suite, theme_orch] — tests/orch/test_bare_bp_resolve_3179.cpp
-- `tests/compiler/test_bidirectional_annotation.cpp` (—) [domain_suite, theme_compiler] — tests/test_bidirectional_annotation.cpp — Issue #1413: True
+- `tests/compiler/test_bidirectional_annotation.cpp` (—) [large, domain_suite, theme_compiler] — tests/test_bidirectional_annotation.cpp — Issue #1413: True
 - `tests/compiler/test_closure_batch.cpp` (—) [batch_driver, domain_suite, theme_compiler] — test_closure_batch.cpp
 - `tests/compiler/test_closure_call_must_deopt_toctou.cpp` (—) [domain_suite, theme_compiler] — AC1: multi-step free+realloc under concurrent MustDeopt callers —
 - `tests/core/test_compact_nodes_provenance_schema_remap.cpp` (—) [domain_suite, theme_core] — Agent closed-loop tracking.

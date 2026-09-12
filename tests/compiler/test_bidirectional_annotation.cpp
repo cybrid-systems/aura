@@ -480,6 +480,52 @@ int aura_issue_1413_run() {
         apply_dev_audit_defaults();
     }
 
+    // ── #3700: Production Quote walks children ---
+    {
+        using aura::compiler::kBidirectionalQuoteWalkIssue;
+        using aura::compiler::typed_audit::apply_dev_audit_defaults;
+        using aura::compiler::typed_audit::apply_production_audit_defaults;
+
+        struct ProdScope {
+            ProdScope() { apply_production_audit_defaults(); }
+            ~ProdScope() { apply_dev_audit_defaults(); }
+        };
+
+        CHECK(kBidirectionalQuoteWalkIssue == 3700, "3700 stamp");
+        {
+            std::println("\n--- #3700 AC1: production quoted (+ 1 \"x\") TypeError ---");
+            ProdScope prod;
+            aura::diag::DiagnosticCollector diag;
+            infer_code("(quote ((lambda ((x : Int)) x) \"hi\"))",
+                       aura::compiler::GradualPermissiveness::Strict, /*strict=*/false, diag);
+            CHECK(has_kind_msg(diag, aura::diag::ErrorKind::TypeError, "type mismatch") ||
+                      has_kind_msg(diag, aura::diag::ErrorKind::TypeError,
+                                   "incompatible ground types") ||
+                      has_kind_msg(diag, aura::diag::ErrorKind::TypeError, "argument"),
+                  "3700 AC1: inner Call Int~String TypeError");
+        }
+        {
+            std::println("\n--- #3700 AC2: Quote in expected Int TypeError ---");
+            ProdScope prod;
+            aura::diag::DiagnosticCollector diag;
+            infer_code("(check (quote 1) : Int)", aura::compiler::GradualPermissiveness::Strict,
+                       /*strict=*/false, diag);
+            CHECK(has_kind_msg(diag, aura::diag::ErrorKind::TypeError, "type mismatch") ||
+                      has_kind_msg(diag, aura::diag::ErrorKind::TypeError, "Quote"),
+                  "3700 AC2: Quote vs Int TypeError");
+        }
+        {
+            std::println("\n--- #3700 AC3: Soft Quote no extra TypeError ---");
+            apply_dev_audit_defaults();
+            aura::diag::DiagnosticCollector diag;
+            infer_code("(quote ((lambda ((x : Int)) x) \"hi\"))",
+                       aura::compiler::GradualPermissiveness::Balanced, /*strict=*/false, diag);
+            CHECK(!has_kind_msg(diag, aura::diag::ErrorKind::TypeError, "type mismatch"),
+                  "3700 AC3: Soft Quote children not required");
+        }
+        apply_dev_audit_defaults();
+    }
+
     if (g_failed == 0) {
         std::println("\n=== ALL ACs PASS ===");
         return 0;

@@ -656,6 +656,145 @@ static void ac3698_let_define_annotation() {
     }
 }
 
+static void ac3700_quote_walk_children() {
+    std::println("\n--- #3700: Production Quote walks children; not lying Dynamic ---");
+    using aura::compiler::kBidirectionalQuoteWalkIssue;
+    using aura::compiler::TypeChecker;
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    using aura::compiler::typed_audit::reset_for_test;
+    using aura::core::TypeTag;
+
+    CHECK(kBidirectionalQuoteWalkIssue == 3700, "3700: issue stamp");
+    const auto impl = read_file("src/compiler/type_checker_impl.cpp");
+    const auto hdr = read_file("src/compiler/type_checker.ixx");
+    CHECK(hdr.find("kBidirectionalQuoteWalkIssue = 3700") != std::string::npos,
+          "3700: header stamp");
+    const auto qpos = impl.find("case Tag::Quote:");
+    CHECK(qpos != std::string::npos, "3700: Quote case");
+    const auto qnext = impl.find("case Tag::MacroDef:", qpos);
+    const auto qcase = impl.substr(qpos, qnext == std::string::npos ? 200 : qnext - qpos);
+    CHECK(qcase.find("synthesize_flat_quote") != std::string::npos, "3700: Quote peels to helper");
+    CHECK(qcase.find("Issue #3700") != std::string::npos, "3700: Quote cites #3700");
+    const auto qfn = impl.find("InferenceEngine::synthesize_flat_quote");
+    CHECK(qfn != std::string::npos, "3700: Quote helper");
+    const auto qbody = impl.substr(qfn, 700);
+    CHECK(qbody.find("Issue #3700") != std::string::npos, "3700: helper cites #3700");
+    CHECK(qbody.find("synthesize_flat(flat, pool, child_id") != std::string::npos,
+          "3700: Production walks Quote children");
+    CHECK(qbody.find("cs_.fresh_var()") != std::string::npos,
+          "3700: Production Quote is fresh_var not Dynamic");
+    CHECK(qbody.find("reg_.dynamic_type()") != std::string::npos, "3700 AC3: Soft keeps Dynamic");
+    const auto pair_pos = impl.find("case Tag::Pair:");
+    const auto pair_body = impl.substr(pair_pos, 400);
+    CHECK(pair_body.find("cs_.fresh_var()") != std::string::npos, "3700 AC4: empty Pair fresh_var");
+    CHECK(impl.find("Issue #3518: empty Call is incomplete") != std::string::npos,
+          "3700 AC4: empty Call path unchanged");
+    CHECK(impl.find("Issue #3518: empty Linear is incomplete") != std::string::npos ||
+              impl.find("empty Linear") != std::string::npos,
+          "3700 AC4: empty Linear path unchanged");
+    CHECK(impl.find("schema-3700") == std::string::npos, "3700 AC5: no new query key");
+    CHECK(read_file("docs/design/3700-quote-walk-children.md").empty(), "3700 AC5: no docs/design");
+    CHECK(read_file("tests/compiler/test_issue_3700.cpp").empty(), "3700 AC5: no invent");
+
+    auto infer_has_typeerror = [](const std::string& code, bool production) -> bool {
+        if (production)
+            apply_production_audit_defaults();
+        else
+            apply_dev_audit_defaults();
+        aura::core::TypeRegistry reg;
+        aura::diag::DiagnosticCollector diag;
+        TypeChecker tc(reg);
+        aura::ast::ASTArena arena;
+        auto alloc = arena.allocator();
+        aura::ast::StringPool pool(alloc);
+        aura::ast::FlatAST flat(alloc);
+        auto pr = aura::parser::parse_to_flat(code, flat, pool);
+        if (!pr.success || pr.root == aura::ast::NULL_NODE)
+            return false;
+        flat.root = pr.root;
+        (void)tc.infer_flat(flat, pool, pr.root, diag);
+        bool err = false;
+        for (const auto& d : diag.diagnostics()) {
+            if (d.kind == aura::diag::ErrorKind::TypeError)
+                err = true;
+        }
+        apply_dev_audit_defaults();
+        return err;
+    };
+
+    CHECK(infer_has_typeerror("(quote ((lambda ((x : Int)) x) \"hi\"))", true),
+          "3700 AC1: production Quote inner Call Int~String is TypeError");
+    CHECK(infer_has_typeerror("(check (quote 1) : Int)", true),
+          "3700 AC2: Quote in expected Int is TypeError");
+    CHECK(!infer_has_typeerror("(quote 1)", false), "3700 AC3: Soft Quote no extra TypeError");
+    CHECK(!infer_has_typeerror("(quote ((lambda ((x : Int)) x) \"hi\"))", false),
+          "3700 AC3: Soft Quote does not require child walk TypeError");
+
+    {
+        std::println("\n--- #3700 AC3: Soft Quote still Dynamic ---");
+        apply_dev_audit_defaults();
+        aura::core::TypeRegistry reg;
+        aura::diag::DiagnosticCollector diag;
+        TypeChecker tc(reg);
+        aura::ast::ASTArena arena;
+        auto alloc = arena.allocator();
+        aura::ast::StringPool pool(alloc);
+        aura::ast::FlatAST flat(alloc);
+        auto pr = aura::parser::parse_to_flat("(quote 1)", flat, pool);
+        CHECK(pr.success && pr.root != aura::ast::NULL_NODE, "3700 AC3: parse");
+        auto ty = tc.infer_flat(flat, pool, pr.root, diag);
+        CHECK(ty == reg.dynamic_type() || reg.tag_of(ty) == TypeTag::DYNAMIC,
+              "3700 AC3: Soft Quote is Dynamic");
+        apply_dev_audit_defaults();
+    }
+    {
+        std::println("\n--- #3700: Production Quote is not Dynamic ---");
+        apply_production_audit_defaults();
+        aura::core::TypeRegistry reg;
+        aura::diag::DiagnosticCollector diag;
+        TypeChecker tc(reg);
+        aura::ast::ASTArena arena;
+        auto alloc = arena.allocator();
+        aura::ast::StringPool pool(alloc);
+        aura::ast::FlatAST flat(alloc);
+        auto pr = aura::parser::parse_to_flat("(quote 1)", flat, pool);
+        CHECK(pr.success && pr.root != aura::ast::NULL_NODE, "3700: parse prod Quote");
+        auto ty = tc.infer_flat(flat, pool, pr.root, diag);
+        CHECK(ty != reg.dynamic_type(), "3700: Production Quote not Dynamic");
+        CHECK(reg.is_var(ty) || reg.tag_of(ty) != TypeTag::DYNAMIC,
+              "3700: Production Quote fresh_var");
+        apply_dev_audit_defaults();
+    }
+
+    {
+        std::println("\n--- #3700 soak: mutate quoted (+ 1 \"x\") under production ---");
+        reset_for_test();
+        apply_dev_audit_defaults();
+        aura::compiler::reset_mutation_concurrency_health_admit_for_test();
+        aura::compiler::MutationConcurrencyHealthSnapshot clean;
+        aura::compiler::set_mutation_concurrency_health_admit_snapshot_for_test(clean);
+        CompilerService cs;
+        CHECK(cs.eval("(+ 1 1)").has_value(), "3700 soak: warm");
+        CHECK(cs.eval("(set-code \"(define t3700 (lambda () (quote ((lambda ((x : Int)) x) "
+                      "1))))\")")
+                  .has_value(),
+              "3700 soak: set-code");
+        CHECK(cs.eval("(eval-current)").has_value(), "3700 soak: eval matching quote");
+        apply_production_audit_defaults();
+        auto mut = cs.eval(
+            R"lisp((mutate:set-body "t3700" "(lambda () (quote ((lambda ((x : Int)) x) \"hi\")))"))lisp");
+        CHECK(mut.has_value(), "3700 soak: mutate returns");
+        CHECK(!(mut && is_bool(*mut) && as_bool(*mut)), "3700 AC1: Guard fail, not #t");
+        CHECK(!cs.evaluator().last_type_solve_solved(), "3700 soak: not last_type_solve_solved");
+        CHECK(!cs.evaluator().type_export_authoritative(),
+              "3700 soak: query:type not-authoritative");
+        apply_dev_audit_defaults();
+        aura::compiler::reset_mutation_concurrency_health_admit_for_test();
+        reset_for_test();
+    }
+}
+
 } // namespace
 
 int run_test_bidirectional_match_check() {
@@ -690,6 +829,7 @@ int run_test_bidirectional_match_check() {
         CHECK(read_file("tests/compiler/test_issue_3516.cpp").empty(), "3516: no invent");
     }
     ac3698_let_define_annotation();
+    ac3700_quote_walk_children();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
