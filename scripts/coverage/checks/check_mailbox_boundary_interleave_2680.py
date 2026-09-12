@@ -93,11 +93,15 @@ def main() -> int:
     must("aura_evaluator_mutation_boundary_held()", "AC2", mb)
     must("aura_evaluator_mutation_boundary_depth()", "AC2", mb)
     # recv() authority reference (must be cited as the canonical pattern).
+    # Issue #3692 split this-fiber depth vs process-held; the combined
+    # OR remains the steal/push authority (comment + this_fiber_holds).
     must(
         "boundary_live = aura_evaluator_mutation_boundary_depth() > 0",
         "AC2",
         mb,
     )
+    must("this_fiber_holds = aura_evaluator_mutation_boundary_depth() > 0", "AC2 #3692", mb)
+    must("process_held = aura_evaluator_mutation_boundary_held() != 0", "AC2 #3692", mb)
     # Hooks must be defined in evaluator_fiber_mutation.cpp (the C ABI shim
     # authority module).
     must('extern "C" std::size_t aura_evaluator_mutation_boundary_depth()', "AC2", efm)
