@@ -35,6 +35,7 @@
 import std;
 import aura.compiler.evaluator;
 import aura.compiler.service;
+import aura.core.envframe_lifetime; // #3679 densify ownership scan counter
 
 namespace aura_compact_sweep_batch {
 
@@ -455,6 +456,126 @@ static void run_3677_soft_compact_restamp() {
     }
 }
 
+// ── Block N+1: Issue #3679 (Guard/scan AFTER pair compact + Soft live_compact) ──
+// compact_sweep ran the EnvFrame Guard + densify ownership scan at ENTRY
+// while its helper comment claimed post-remap-table ordering — the scan
+// walked pre-compact slots, and Soft live_compact could bump the arena gen
+// / remap pins with no restamp unless invalidates_pins fired. #3679: the
+// helper moves after pair compact + live_compact(Soft) (before the unified
+// restamp), the restamp condition gains remapped_pins > 0, and the
+// panic/ffi defer early-returns still skip the scan entirely.
+static void run_3679_guard_scan_order() {
+    std::println("\n=== Issue #3679: Guard/scan after pair compact + Soft live_compact ===");
+    namespace mdh = aura::core::moving_densify_health;
+    namespace efl = aura::core::envframe_lifetime;
+
+    // AC1: source order — exactly one helper call site, after live_compact
+    // (Soft) and before the unified restamp; entry call gone; restamp
+    // condition includes remapped_pins; the file cites #3679.
+    {
+        std::println("\n--- AC1: source-cite order ---");
+        const std::string body =
+            read_first({"src/compiler/evaluator_gc.cpp", "../src/compiler/evaluator_gc.cpp"});
+        CHECK(!body.empty(), "AC1: evaluator_gc.cpp readable");
+        const std::string call = "(void)run_envframe_lifetime_guard_compact_sweep_helper(*this);";
+        std::size_t pos = 0;
+        int call_sites = 0;
+        std::size_t call_pos = std::string::npos;
+        while ((pos = body.find(call, pos)) != std::string::npos) {
+            ++call_sites;
+            if (call_pos == std::string::npos)
+                call_pos = pos;
+            pos += call.size();
+        }
+        CHECK(call_sites == 1, "AC1: exactly one helper call site (entry call removed)");
+        const auto lc_pos = body.find("live_compact(aura::ast::LiveCompactMode::Soft)");
+        const auto defer_pos = body.find("should_defer_destructive_gc()");
+        const auto restamp_pos =
+            body.find("unified_restamp_after_boundary(UnifiedRestampSite::Densify)");
+        CHECK(lc_pos != std::string::npos && defer_pos != std::string::npos &&
+                  restamp_pos != std::string::npos && call_pos != std::string::npos,
+              "AC1: all order anchors present");
+        CHECK(call_pos > defer_pos, "AC1: defer check precedes the Guard scan (AC3 order)");
+        CHECK(call_pos > lc_pos, "AC1: Guard scan runs after live_compact(Soft)");
+        CHECK(call_pos < restamp_pos, "AC1: Guard scan precedes the unified restamp");
+        CHECK(body.find("lc.invalidates_pins || lc.remapped_pins > 0") != std::string::npos,
+              "AC1: restamp condition includes remapped_pins (#3679)");
+        CHECK(body.find("Issue #3679") != std::string::npos, "AC1: evaluator_gc.cpp cites #3679");
+    }
+
+    // AC2: when the Soft compact invalidates pins OR remaps pins, the
+    // unified restamp runs (extends the #3677 invalidates_pins-only
+    // invariant). Keyed on the existing live-compact metrics, not a
+    // heap-shape assumption (same safepoint pattern as #3677 AC1).
+    {
+        std::println("\n--- AC2: restamp on invalidates_pins or remapped_pins ---");
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
+        const auto rs0 = aura::ast::unified_restamp_calls_total_v_read();
+        const auto gen0 = m->arena_live_compact_gen_restamps_total.load(std::memory_order_relaxed);
+        const auto remap0 =
+            m->arena_live_compact_remapped_pins_total.load(std::memory_order_relaxed);
+        GCSweepBuffers marks{};
+        auto r = ev.compact_sweep(&marks);
+        (void)r;
+        const auto gen1 = m->arena_live_compact_gen_restamps_total.load(std::memory_order_relaxed);
+        const auto remap1 =
+            m->arena_live_compact_remapped_pins_total.load(std::memory_order_relaxed);
+        if (gen1 > gen0 || remap1 > remap0) {
+            CHECK(aura::ast::unified_restamp_calls_total_v_read() > rs0,
+                  "AC2: invalidates_pins/remapped_pins → unified restamp ran (#3679)");
+        } else {
+            std::println("  note: unit-env Soft compact pinned/remapped nothing; AC2 runtime "
+                         "invariant vacuous this round (source-cite AC carries)");
+            CHECK(true, "AC2: no pin invalidation this round — nothing to restamp");
+        }
+    }
+
+    // AC3: panic/ffi defer → zeroed result, no compact, and NO Guard /
+    // scan_skip_freed walk of the unmoved state (guard_runs + densify
+    // ownership scan stay flat).
+    {
+        std::println("\n--- AC3: defer skips compact AND the Guard/scan ---");
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
+        const auto guard0 = m->envframe_lifetime_guard_runs_total.load(std::memory_order_relaxed);
+        const auto scan0 = efl::envframe_lifetime_densify_ownership_scan_total();
+        aura::gc_hooks::arm_ffi_pin_defer();
+        GCSweepBuffers marks{};
+        auto r = ev.compact_sweep(&marks);
+        CHECK(r.empty(), "AC3: ffi-pin defer → zeroed sweep result");
+        CHECK(m->envframe_lifetime_guard_runs_total.load(std::memory_order_relaxed) == guard0,
+              "AC3: no Guard run under defer (scan_skip_freed not walked)");
+        CHECK(efl::envframe_lifetime_densify_ownership_scan_total() == scan0,
+              "AC3: no post-compact ownership scan under defer");
+        aura::gc_hooks::release_ffi_pin_defer();
+    }
+
+    // AC4: Soft / no-arena_group unit env — helper still runs on a plain
+    // sweep (Guard dtor + densify ownership scan bump) and no Moving
+    // relocate happens.
+    {
+        std::println("\n--- AC4: helper runs on plain Soft sweep; no Moving relocate ---");
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
+        const auto guard0 = m->envframe_lifetime_guard_runs_total.load(std::memory_order_relaxed);
+        const auto scan0 = efl::envframe_lifetime_densify_ownership_scan_total();
+        const auto seq0 = mdh::g_last_window_seq.load(std::memory_order_relaxed);
+        GCSweepBuffers marks{};
+        auto r = ev.compact_sweep(&marks);
+        (void)r;
+        CHECK(m->envframe_lifetime_guard_runs_total.load(std::memory_order_relaxed) > guard0,
+              "AC4: Guard + scan_skip_freed ran on the post-compact state");
+        CHECK(efl::envframe_lifetime_densify_ownership_scan_total() > scan0,
+              "AC4: densify ownership scan ran at the CompactSweep site (#2340 AC4)");
+        CHECK(mdh::g_last_window_seq.load(std::memory_order_relaxed) == seq0,
+              "AC4: no Moving relocate from the Soft sweep");
+    }
+}
+
 } // namespace aura_compact_sweep_batch
 
 int main() {
@@ -469,5 +590,6 @@ int main() {
     aura_compact_sweep_batch::run_206_out_of_range();
     aura_compact_sweep_batch::run_206_all_dead();
     aura_compact_sweep_batch::run_3677_soft_compact_restamp();
+    aura_compact_sweep_batch::run_3679_guard_scan_order();
     return RUN_ALL_TESTS();
 }

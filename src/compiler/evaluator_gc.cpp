@@ -959,7 +959,7 @@ void Evaluator::collect_compiler_managed_gc_roots(std::vector<std::int64_t>& clo
 static int run_envframe_lifetime_guard_compact_sweep_helper(Evaluator& ev);
 
 Evaluator::CompactSweepResult Evaluator::compact_sweep(void* sweep_buffers) {
-    (void)run_envframe_lifetime_guard_compact_sweep_helper(*this);
+    // Issue #3679: EnvFrame Guard/scan moved below (post-compact, before restamp).
     // Issue #1732: typed CompactSweepResult (by value) — no void* cast
     // at call sites. Layout is 4×size_t, matching messaging_bridge.h
     // GCSweepResultMsg for optional bridge conversion.
@@ -1178,8 +1178,20 @@ Evaluator::CompactSweepResult Evaluator::compact_sweep(void* sweep_buffers) {
     // NOT publish a Moving window (had_moving_densify keeps the last Moving
     // publish — Phase-5 stays the only window writer). Unlock first: the
     // restamp triad does not take heap_mutex and must not run under it.
+    // Issue #3679: EnvFrame Guard + mandatory scan_skip_freed + densify
+    // ownership-exit scan now run AFTER pair compact + live_compact(Soft) —
+    // the Guard dtor sees post-compact remap tables (the position its
+    // comment always claimed). Outside heap_mutex: same lockless discipline
+    // as the pre-#3679 entry call, and consistent with #3677's rule that
+    // the restamp triad must not run under heap_mutex. The defer /
+    // null-marks early-returns above mean a deferred or empty sweep never
+    // scans a half-graph (#2005/#2088 defer face kept intact).
     lock.unlock();
-    if (lc.invalidates_pins) {
+    (void)run_envframe_lifetime_guard_compact_sweep_helper(*this);
+    // Issue #3679: remapped_pins > 0 also restamps — a GC cycle with no
+    // steal would otherwise leave pinned StableNodeRef / LifetimePin at
+    // the pre-Soft-compact gen until the next mutate boundary restamps.
+    if (lc.invalidates_pins || lc.remapped_pins > 0) {
         (void)unified_restamp_after_boundary(UnifiedRestampSite::Densify);
     }
 
@@ -1188,9 +1200,12 @@ Evaluator::CompactSweepResult Evaluator::compact_sweep(void* sweep_buffers) {
 
 // Issue #2003: EnvFrame explicit lifetime protocol — compact_sweep itself
 // runs the guard. The guard's dtor invokes host.scan_skip_freed (which
-// dispatches to run_envframe_lifetime_guard(CompactSweep)). Scope-bound
-// below the result finalization so the scan runs after remap tables are
-// fully populated + bridge_epoch bump committed.
+// dispatches to run_envframe_lifetime_guard(CompactSweep)). Issue #3679:
+// scope-bound at the END of compact_sweep — after pair compact + Soft
+// live_compact, before the optional unified restamp — so the scan runs
+// after remap tables are fully populated + the Soft gen bump / bridge
+// epoch commit. The pre-#3679 call site ran at compact_sweep entry,
+// walking pre-compact EnvFrame/Closure slots against this comment.
 static int run_envframe_lifetime_guard_compact_sweep_helper(Evaluator& ev) {
     using namespace aura::core::envframe_lifetime;
     EnvFrameLifetimeGuard guard{make_envframe_lifetime_host(ev),
