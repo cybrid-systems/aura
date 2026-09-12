@@ -4947,6 +4947,21 @@ export inline bool
 run_production_soa_dirty_hot_pack(IRModuleV2& mod,
                                   const aura::core::TypeRegistry* type_reg = nullptr) {
     production_soa_dirty_hot_pack_invocations_total.fetch_add(1, std::memory_order_relaxed);
+    // Issue #3690: Production last-look — Global / storm-exit after the
+    // consult_workload snapshot must not SoA-peel a stale partial mask.
+    // Soft/Off: consult-only (production_dirty_aware_storm_force_full).
+    std::size_t dirty_n = 0;
+    for (const auto& fn : mod.functions)
+        for (auto b : fn.block_dirty_)
+            if (b)
+                ++dirty_n;
+    if (production_dirty_aware_storm_force_full(dirty_n)) {
+        for (auto& fn : mod.functions) {
+            if (fn.block_dirty_.size() < fn.blocks_.size())
+                fn.block_dirty_.resize(fn.blocks_.size(), 0);
+            fn.mark_all_blocks_dirty();
+        }
+    }
     ComputeKindWrap ck;
     ConstantFoldingWrap cf;
     TypePropagationPass tp;

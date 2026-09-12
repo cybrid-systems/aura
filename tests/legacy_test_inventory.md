@@ -1779,7 +1779,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/core/test_pair_slot_lock.cpp` (—) [domain_suite, theme_core] — test_pair_slot_lock.cpp -- runtime smoke test for B-024 / #1998
 - `tests/compiler/test_partial_relower_cascade.cpp` (—) [large, domain_suite, theme_compiler] — Issue #2041 — Partial re-lower + JIT hot-swap end-to-end on
 - `tests/compiler/test_partial_relower_impact_production.cpp` (—) [domain_suite, theme_compiler] — zero-cost threshold partial when ub==0 (existing contract). The
-- `tests/compiler/test_partial_relower_storm_gate.cpp` (—) [domain_suite, theme_compiler] — AC1: Global storm + small dirty → full + forced_full metric
+- `tests/compiler/test_partial_relower_storm_gate.cpp` (—) [large, domain_suite, theme_compiler] — AC1: Global storm + small dirty → full + forced_full metric
 - `tests/compiler/test_peer_jit_name_soft_stale.cpp` (—) [domain_suite, theme_compiler] — AC1: aura_aot_mark_peer_jit_name_soft_stale / is_soft_stale / clear
 - `tests/compiler/test_pereval_reemit_region_independence.cpp` (—) [domain_suite, theme_compiler] — AC1: Dual eval; dirty candidates A+B under reemit owner A → only A
 - `tests/compiler/test_primcall_narg.cpp` (—) [domain_suite, theme_compiler] — AC1: string-append 3 strings → ABC under default JIT
