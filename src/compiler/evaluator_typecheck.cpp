@@ -330,6 +330,9 @@ bool Evaluator::run_post_mutate_typecheck_no_lock() {
                 clear_type_export_authority();
                 last_mutate_error_ =
                     "typecheck after mutate: solve_delta not SOLVED (production fail-closed)";
+                // Issue #3700: Quote-inner TypeError / not-SOLVED must
+                // flip last_type_solve_solved so query:type is not green.
+                note_infer_solve_solved(false);
                 return false;
             }
             // Issue #3004: Production infer SOLVED is in-flight until
@@ -659,6 +662,8 @@ bool Evaluator::run_post_mutate_typecheck_no_lock() {
             for (auto& d : local_diags)
                 err += " " + d.format() + ";";
             last_mutate_error_ = err;
+            // Issue #3700: TypeError reject is not a solved type face.
+            note_infer_solve_solved(false);
             return false;
         }
         if (local_diags.empty()) {
@@ -671,6 +676,7 @@ bool Evaluator::run_post_mutate_typecheck_no_lock() {
         for (auto& d : local_diags)
             err += " " + d.format() + ";";
         last_mutate_error_ = err;
+        note_infer_solve_solved(false);
         return false;
     } catch (const std::exception& e) {
         // [SILENCE-PRIM-#1769] convert throw → fail for mutate Guard paths.
