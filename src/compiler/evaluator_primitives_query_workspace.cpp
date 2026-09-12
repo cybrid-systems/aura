@@ -137,10 +137,10 @@ stamp_query_result_full_provenance(aura::core::QueryResult& qr, Evaluator& ev,
             static_cast<std::uint16_t>(scratch_ref.cow_epoch_at_capture);
         qr.matches[i].tenant_id = static_cast<std::uint32_t>(scratch_ref.tenant_id);
         qr.matches[i].fiber_id = scratch_ref.fiber_id;
-        // Issue #3660: do not store current_mutation_epoch() in uint32
-        // mutation_id_at_capture (truncation can fake Fresh; equality
-        // killed unmodified matches). Match wrap/gen + occupancy are
-        // the freshness authority. Leave the field 0.
+        // Issue #3660 / #3696: do not store current_mutation_epoch() in
+        // uint32 mutation_id_at_capture (truncation can fake Fresh). Match
+        // wrap/gen + occupancy are the freshness authority. Leave the
+        // field 0; production hash omits the Agent-facing key.
         qr.matches[i].mutation_id_at_capture = 0;
         qr.matches[i].boundary_pinned = 0;
         // Issue #3231: schema-2 marker even if wrap/tenant/fiber/cow/mid
@@ -275,7 +275,13 @@ void register_workspace_query_primitives(
         EvalValue matches_out = matches;
         insert_kv("mutation-epoch", make_int(static_cast<std::int64_t>(epoch.mutation_epoch)));
         insert_kv("generation", make_int(static_cast<std::int64_t>(epoch.generation)));
-        insert_kv("bridge-epoch", make_int(static_cast<std::int64_t>(epoch.bridge_epoch)));
+        // Issue #3696: production QueryResult memory clock is occupancy +
+        // Mutation/generation. Do not publish bridge-epoch (JIT/Bridge) as
+        // an Agent-facing freshness field — QueryEpoch::is_fresh already
+        // ignores it; the key invited Agents to mix clocks. Soft keeps
+        // the extra key (AC4).
+        if (!aura::compiler::typed_audit::production_defaults_active())
+            insert_kv("bridge-epoch", make_int(static_cast<std::int64_t>(epoch.bridge_epoch)));
         insert_kv("workspace-id", make_int(static_cast<std::int64_t>(epoch.workspace_id)));
         insert_kv("pinned", make_int(pinned ? 1 : 0));
         insert_kv("query-result-tag", make_int(1));
@@ -401,8 +407,10 @@ void register_workspace_query_primitives(
                               make_int(static_cast<std::int64_t>(m.cow_epoch_at_capture)));
                     insert_kv("tenant-id", make_int(static_cast<std::int64_t>(m.tenant_id)));
                     insert_kv("fiber-id", make_int(static_cast<std::int64_t>(m.fiber_id)));
-                    insert_kv("mutation-id-at-capture",
-                              make_int(static_cast<std::int64_t>(m.mutation_id_at_capture)));
+                    // Issue #3696: do not publish mutation-id-at-capture as a
+                    // lying 0 (uint32 field stays unused after #3660). The
+                    // Agent-visible Mutation clock is mutation-epoch (uint64
+                    // QueryEpoch). Operand resolve stays occupancy SSOT.
                     insert_kv("schema-3137", make_int(3137));
                     insert_kv("query-result-wired-full", make_int(1));
                 }

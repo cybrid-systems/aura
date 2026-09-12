@@ -1279,6 +1279,159 @@ void test_ac3695_6_source_cite_no_invent() {
     }
 }
 
+// Issue #3696: one Agent-visible QueryResult freshness — occupancy +
+// Mutation/generation. Production hash does not publish bridge-epoch as a
+// memory clock. mutation-id-at-capture is omitted (never a lying uint32 0).
+// Operand resolve stays occupancy SSOT. Soft may keep extra keys.
+//
+//   AC1 Production hash has no Agent-facing bridge-epoch.
+//   AC2 Occupancy reuse of NodeId → operand stale-ref even if hash
+//       mutation-epoch still equals live Mutation epoch.
+//   AC3 mutation-id-at-capture hash key is omitted (not a lying 0).
+//   AC4 Soft: hash may keep extra keys; resolve still occupancy.
+//   AC5 No new query key; result-fresh? stays sink; no invent.
+
+void test_ac3696_1_prod_no_bridge_epoch_clock() {
+    std::print("AC3696/AC1 -- production QueryResult has no bridge-epoch memory clock\n");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    apply_dev_audit_defaults();
+    CompilerService cs;
+    expect_true("3696 AC1: set-code",
+                cs.eval("(set-code \"(define t3696 (lambda () 1))\")").has_value());
+    expect_true("3696 AC1: eval", cs.eval("(eval-current)").has_value());
+    apply_production_audit_defaults();
+    expect_true("3696 AC1: bind find hash",
+                cs.eval("(define qr3696 (query :find \"t3696\"))").has_value());
+    auto qr = cs.eval("qr3696");
+    expect_true("3696 AC1: find is schema-2 hash", qr && is_hash(*qr));
+    auto has_bridge = cs.eval("(hash-has-key? qr3696 \"bridge-epoch\")");
+    expect_true("3696 AC1: no Agent-facing bridge-epoch",
+                has_bridge && is_bool(*has_bridge) && !as_bool(*has_bridge));
+    auto has_mut = cs.eval("(hash-has-key? qr3696 \"mutation-epoch\")");
+    expect_true("3696 AC1: mutation-epoch uint64 clock present",
+                has_mut && is_bool(*has_mut) && as_bool(*has_mut));
+    auto mut = cs.eval("(hash-ref qr3696 \"mutation-epoch\")");
+    expect_true("3696 AC1: mutation-epoch is int (full epoch, not truncated 0-key)",
+                mut && is_int(*mut));
+    apply_dev_audit_defaults();
+}
+
+void test_ac3696_2_occupancy_stale_despite_mutation_epoch() {
+    std::print("AC3696/AC2 -- occupancy reuse stale-ref even if mutation-epoch equals live\n");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    apply_dev_audit_defaults();
+    CompilerService cs;
+    expect_true("3696 AC2: set-code",
+                cs.eval("(set-code \"(define u3696 (lambda () 1))\")").has_value());
+    expect_true("3696 AC2: eval", cs.eval("(eval-current)").has_value());
+    apply_production_audit_defaults();
+    expect_true("3696 AC2: bind find hash",
+                cs.eval("(define qr3696o (query :find \"u3696\"))").has_value());
+    auto qr = cs.eval("qr3696o");
+    expect_true("3696 AC2: hash", qr && is_hash(*qr));
+    auto* flat = cs.evaluator().workspace_flat();
+    expect_true("3696 AC2: workspace flat", flat != nullptr);
+    const auto live_mut = static_cast<std::int64_t>(aura::core::current_mutation_epoch());
+    auto mid = cs.eval("(hash-ref qr3696o \"mutation-epoch\")");
+    expect_true("3696 AC2: mutation-epoch readable", mid && is_int(*mid));
+    // Reuse occupancy without bumping Mutation epoch: bump FlatAST
+    // generation_ and restamp node_gen_ so the captured match gen is a
+    // previous occupant. Hash mutation-epoch still equals live Mutation.
+    flat->bump_generation();
+    flat->restamp_all_node_generations();
+    expect_eq_i64("3696 AC2: hash mutation-epoch still equals live Mutation epoch", live_mut,
+                  as_int(*mid));
+    expect_eq_i64("3696 AC2: live Mutation epoch unchanged by occupancy restamp", live_mut,
+                  static_cast<std::int64_t>(aura::core::current_mutation_epoch()));
+    expect_true("3696 AC2: bind occupancy resolve",
+                cs.eval("(define r3696o (query:as-stable-ref qr3696o))").has_value());
+    auto stale = cs.eval("(and (pair? r3696o) (equal? (car r3696o) \"stale-ref\"))");
+    expect_true("3696 AC2: occupancy reuse is stale-ref (not hash mutation-epoch Fresh)",
+                stale && is_bool(*stale) && as_bool(*stale));
+    apply_dev_audit_defaults();
+}
+
+void test_ac3696_3_omit_lying_mutation_id_at_capture() {
+    std::print("AC3696/AC3 -- mutation-id-at-capture omitted (not a lying 0)\n");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    apply_dev_audit_defaults();
+    CompilerService cs;
+    expect_true("3696 AC3: set-code",
+                cs.eval("(set-code \"(define v3696 (lambda () 1))\")").has_value());
+    expect_true("3696 AC3: eval", cs.eval("(eval-current)").has_value());
+    apply_production_audit_defaults();
+    expect_true("3696 AC3: bind find hash",
+                cs.eval("(define qr3696c (query :find \"v3696\"))").has_value());
+    auto has_mid = cs.eval("(hash-has-key? qr3696c \"mutation-id-at-capture\")");
+    expect_true("3696 AC3: mutation-id-at-capture key omitted",
+                has_mid && is_bool(*has_mid) && !as_bool(*has_mid));
+    apply_dev_audit_defaults();
+}
+
+void test_ac3696_4_soft_extra_keys_resolve_occupancy() {
+    std::print("AC3696/AC4 -- Soft hash may keep extra keys; resolve still occupancy\n");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    apply_dev_audit_defaults();
+    CompilerService cs;
+    expect_true("3696 AC4: set-code",
+                cs.eval("(set-code \"(define s3696 (lambda () 1))\")").has_value());
+    expect_true("3696 AC4: eval", cs.eval("(eval-current)").has_value());
+    auto qr = cs.eval("(query :find \"s3696\" :as-query-result)");
+    expect_true("3696 AC4: Soft :as-query-result is hash", qr && is_hash(*qr));
+    expect_true("3696 AC4: bind Soft hash",
+                cs.eval("(define qr3696s (query :find \"s3696\" :as-query-result))").has_value());
+    auto has_bridge = cs.eval("(hash-has-key? qr3696s \"bridge-epoch\")");
+    expect_true("3696 AC4: Soft may keep bridge-epoch extra key",
+                has_bridge && is_bool(*has_bridge) && as_bool(*has_bridge));
+    auto bare = cs.eval("(query :find \"s3696\")");
+    expect_true("3696 AC4: Soft default find is still a bare list", bare && !is_hash(*bare));
+}
+
+void test_ac3696_5_source_cite_no_invent() {
+    std::print("AC3696/AC5 -- source-cite omit clocks; occupancy SSOT; no new key\n");
+    std::ifstream f_qws("src/compiler/evaluator_primitives_query_workspace.cpp");
+    std::ifstream f_dec("src/compiler/query_result_decode.hh");
+    std::string qws((std::istreambuf_iterator<char>(f_qws)), std::istreambuf_iterator<char>());
+    std::string dec((std::istreambuf_iterator<char>(f_dec)), std::istreambuf_iterator<char>());
+    expect_true("3696 AC5: query_workspace readable", !qws.empty());
+    expect_true("3696 AC5: decode readable", !dec.empty());
+    {
+        const auto ins = qws.find("insert_kv(\"bridge-epoch\"");
+        expect_true("3696 AC5: bridge-epoch insert still in TU (Soft extra key)",
+                    ins != std::string::npos);
+        const auto win =
+            ins == std::string::npos ? std::string{} : qws.substr(ins > 800 ? ins - 800 : 0, 1200);
+        expect_true("3696 AC5: production skips bridge-epoch",
+                    win.find("Issue #3696") != std::string::npos &&
+                        win.find("production_defaults_active()") != std::string::npos);
+    }
+    expect_true("3696 AC5: production omits mutation-id-at-capture hash key",
+                qws.find("do not publish mutation-id-at-capture as a") != std::string::npos);
+    expect_true("3696 AC5: occupancy SSOT cites #3696",
+                dec.find("Issue #3660 / #3696") != std::string::npos);
+    expect_true("3696 AC5: occupancy still uses node_gen_for",
+                dec.find("flat.node_gen_for(nid) != m.generation") != std::string::npos);
+    expect_true("3696 AC5: query:result-fresh? stays sink",
+                qws.find("sink_query_prim(\"query:result-fresh?\"") != std::string::npos);
+    expect_true("3696 AC5: no schema-3696", qws.find("schema-3696") == std::string::npos &&
+                                                dec.find("schema-3696") == std::string::npos);
+    {
+        std::ifstream f("tests/compiler/test_issue_3696.cpp");
+        expect_true("3696 AC5: no test_issue_3696.cpp", !f.good());
+    }
+    {
+        std::ifstream f("tests/issues/test_issue_3696.cpp");
+        expect_true("3696 AC5: no tests/issues/test_issue_3696.cpp", !f.good());
+    }
+    {
+        std::ifstream f("docs/design/3696-query-result-freshness-clocks.md");
+        expect_true("3696 AC5: no docs/design/3696-*", !f.good());
+    }
+}
+
 int main() {
     std::print("Issue #3103 + #3137 + #3231 -- QueryResult full-provenance path (schema-2)\n");
     set_strategy(AuditStrategy::Full);
@@ -1293,6 +1446,11 @@ int main() {
     test_ac3695_4_singleton_find_still_resolves();
     test_ac3695_5_soft_bare_list_unchanged();
     test_ac3695_6_source_cite_no_invent();
+    test_ac3696_1_prod_no_bridge_epoch_clock();
+    test_ac3696_2_occupancy_stale_despite_mutation_epoch();
+    test_ac3696_3_omit_lying_mutation_id_at_capture();
+    test_ac3696_4_soft_extra_keys_resolve_occupancy();
+    test_ac3696_5_source_cite_no_invent();
     test_ac1_struct_extension();
     test_ac2_push_match_defaults();
     test_ac3_push_match_full_provenance();
@@ -1332,6 +1490,6 @@ int main() {
     test_3395_ac4_non_regress_source_cite();
     // AC3389 runtime ACs skipped — see comment above.
     std::print("All #3103 + #3137 + #3231 + #3286 + #3311 + #3389 + #3395 + #3424 + "
-               "#3449 + #3660 + #3695 AC tests PASSED\n");
+               "#3449 + #3660 + #3695 + #3696 AC tests PASSED\n");
     return 0;
 }
