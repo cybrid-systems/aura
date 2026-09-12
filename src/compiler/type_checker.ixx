@@ -58,6 +58,11 @@ export inline constexpr int kBidirectionalEmptyPairNoDynamicIssue = 3432;
 // Issue #3516: check_flat Set must stamp TypeError when consistent_unify
 // fails (mirror synthesize_flat Set). maybe_report skips Dynamic/var/Linear.
 export inline constexpr int kCheckFlatSetUnifyErrorIssue = 3516;
+// Issue #3698: check_flat Let/LetRec must check_flat the value against a
+// TypeAnnotation / declared sig (not synthesize-only). Define must
+// check_flat the value against sig or surrounding expected when a sig
+// exists. Soft unannotated stays synthesize-only.
+export inline constexpr int kCheckFlatLetDefineAnnotationIssue = 3698;
 // Issue #3518: empty Linear / empty Call must not synthesize Dynamic
 // (same residual as empty Pair #3432). Covered tags; use fresh_var.
 export inline constexpr int kBidirectionalEmptyLinearCallNoDynamicIssue = 3518;

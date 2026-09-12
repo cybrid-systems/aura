@@ -14,6 +14,7 @@
 //   #3432: covered empty Pair must not synthesize/cache Dynamic
 
 #include "test_harness.hpp"
+#include "compiler/mutation_concurrency_health.hh"
 #include "compiler/typed_mutation_audit.h"
 
 #include <cstdint>
@@ -27,13 +28,17 @@ import aura.compiler.service;
 import aura.compiler.value;
 import aura.compiler.type_checker;
 import aura.core;
+import aura.core.ast;
 import aura.core.type;
 import aura.diag;
+import aura.parser.parser;
 
 namespace {
 
 using aura::compiler::CompilerService;
+using aura::compiler::types::as_bool;
 using aura::compiler::types::as_int;
+using aura::compiler::types::is_bool;
 using aura::compiler::types::is_int;
 using aura::test::g_failed;
 using aura::test::g_passed;
@@ -527,6 +532,130 @@ static void ac3518_empty_linear_call_no_dynamic() {
     apply_dev_audit_defaults();
 }
 
+static void ac3698_let_define_annotation() {
+    std::println("\n--- #3698: check_flat Let/Define checks annotated value ---");
+    using aura::compiler::kCheckFlatLetDefineAnnotationIssue;
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    using aura::compiler::typed_audit::reset_for_test;
+
+    CHECK(kCheckFlatLetDefineAnnotationIssue == 3698, "3698: issue stamp");
+
+    const auto impl = read_file("src/compiler/type_checker_impl.cpp");
+    const auto hdr = read_file("src/compiler/type_checker.ixx");
+    CHECK(hdr.find("kCheckFlatLetDefineAnnotationIssue = 3698") != std::string::npos,
+          "3698: header stamp");
+    const auto check_pos = impl.find("InferenceEngine::check_flat(");
+    CHECK(check_pos != std::string::npos, "3698: check_flat");
+    const auto check_after = impl.substr(check_pos);
+    const auto let_pos = check_after.find("NodeTag::Let || v.tag == NodeTag::LetRec");
+    CHECK(let_pos != std::string::npos, "3698: Let/LetRec branch");
+    const auto begin_pos = check_after.find("NodeTag::Begin", let_pos);
+    const auto let_branch = check_after.substr(
+        let_pos, begin_pos == std::string::npos ? std::string::npos : begin_pos - let_pos);
+    CHECK(let_branch.find("Issue #3698") != std::string::npos, "3698: Let cites #3698");
+    CHECK(let_branch.find("check_flat(flat, pool, val_id, val_expected)") != std::string::npos,
+          "3698: Let check_flat value against annotation");
+    CHECK(let_branch.find("annotation_type_of") != std::string::npos,
+          "3698: Let uses annotation_of");
+    CHECK(let_branch.find("__match_tmp") != std::string::npos,
+          "3698 AC4: __match_tmp still routed before Let value check");
+    CHECK(let_branch.find("check_flat_match") != std::string::npos,
+          "3698 AC4: __match_tmp still check_flat_match");
+    const auto def_pos = check_after.find("NodeTag::Define");
+    CHECK(def_pos != std::string::npos, "3698: Define branch");
+    const auto def_end = check_after.find("} else {", def_pos);
+    const auto def_branch = check_after.substr(
+        def_pos, def_end == std::string::npos ? std::string::npos : def_end - def_pos);
+    CHECK(def_branch.find("Issue #3698") != std::string::npos, "3698: Define cites #3698");
+    CHECK(def_branch.find("check_flat(flat, pool, val_id, val_expected)") != std::string::npos,
+          "3698: Define check_flat value against sig/expected");
+    CHECK(impl.find("schema-3698") == std::string::npos, "3698 AC6: no new query key");
+    CHECK(read_file("docs/design/3698-check-flat-let-define.md").empty(), "3698: no docs/design");
+    CHECK(read_file("tests/compiler/test_issue_3698.cpp").empty(), "3698 AC6: no invent");
+
+    auto infer_has_typeerror = [](const std::string& code, bool production) -> bool {
+        if (production)
+            apply_production_audit_defaults();
+        else
+            apply_dev_audit_defaults();
+        aura::core::TypeRegistry reg;
+        aura::diag::DiagnosticCollector diag;
+        aura::compiler::TypeChecker tc(reg);
+        aura::ast::ASTArena arena;
+        auto alloc = arena.allocator();
+        aura::ast::StringPool pool(alloc);
+        aura::ast::FlatAST flat(alloc);
+        auto pr = aura::parser::parse_to_flat(code, flat, pool);
+        if (!pr.success || pr.root == aura::ast::NULL_NODE)
+            return false;
+        flat.root = pr.root;
+        (void)tc.infer_flat(flat, pool, pr.root, diag);
+        bool err = false;
+        for (const auto& d : diag.diagnostics()) {
+            if (d.kind == aura::diag::ErrorKind::TypeError)
+                err = true;
+        }
+        apply_dev_audit_defaults();
+        return err;
+    };
+
+    // AC1: Production annotated let value mismatch → TypeError, not SOLVED.
+    // Body is Int so a synthesize-only value walk would still SOLVE.
+    CHECK(infer_has_typeerror("(check (letrec ((x (check \"hi\" : Int))) 1) : Int)", true),
+          "3698 AC1: production letrec annotated mismatch is TypeError");
+    CHECK(infer_has_typeerror("(check (let ((x (check \"hi\" : Int))) 1) : Int)", true),
+          "3698 AC1: production let annotated mismatch is TypeError");
+
+    // AC2: Annotated define body mismatch → TypeError.
+    CHECK(infer_has_typeerror("(check (define d3698 \"hi\") : Int)", true),
+          "3698 AC2: production define value vs expected Int is TypeError");
+    CHECK(infer_has_typeerror("(check (define d3698b (check \"hi\" : Int)) : Int)", true),
+          "3698 AC2: production define TypeAnnotation mismatch is TypeError");
+
+    // AC3: Unannotated let still synthesizes + binds.
+    CHECK(!infer_has_typeerror("(let ((x 1)) (+ x 2))", true),
+          "3698 AC3: unannotated let still infers");
+    CHECK(!infer_has_typeerror("(check (let ((x 1)) x) : Int)", true),
+          "3698 AC3: unannotated let in check mode still infers");
+
+    // AC5: Soft unannotated — no extra TypeError.
+    CHECK(!infer_has_typeerror("(let ((x \"hi\")) x)", false),
+          "3698 AC5: Soft unannotated let no extra TypeError");
+    CHECK(!infer_has_typeerror("(define s3698 \"hi\")", false),
+          "3698 AC5: Soft unannotated define no extra TypeError");
+
+    // Soak: mutate annotated let value to wrong ground → Guard fail;
+    // get-inferred-type not-authoritative.
+    {
+        std::println("\n--- #3698 soak: mutate annotated let value to wrong ground ---");
+        reset_for_test();
+        apply_dev_audit_defaults();
+        aura::compiler::reset_mutation_concurrency_health_admit_for_test();
+        aura::compiler::MutationConcurrencyHealthSnapshot clean;
+        aura::compiler::set_mutation_concurrency_health_admit_snapshot_for_test(clean);
+        CompilerService cs;
+        CHECK(cs.eval("(+ 1 1)").has_value(), "3698 soak: warm");
+        CHECK(cs.eval("(set-code \"(define t3698 (lambda () (check (letrec ((x (check 1 : "
+                      "Int))) x) : Int)))\")")
+                  .has_value(),
+              "3698 soak: set-code");
+        CHECK(cs.eval("(eval-current)").has_value(), "3698 soak: eval matching");
+        apply_production_audit_defaults();
+        auto mut = cs.eval(
+            R"lisp((mutate:set-body "t3698" "(lambda () (check (letrec ((x (check \"hi\" : Int))) x) : Int))"))lisp");
+        CHECK(mut.has_value(), "3698 soak: mutate returns");
+        CHECK(!(mut && is_bool(*mut) && as_bool(*mut)), "3698 soak: production mutate is not #t");
+        CHECK(!cs.evaluator().type_export_authoritative(),
+              "3698 soak: get-inferred-type not-authoritative");
+        auto git = cs.eval("(get-inferred-type 0)");
+        CHECK(git.has_value(), "3698 soak: get-inferred-type returns");
+        apply_dev_audit_defaults();
+        aura::compiler::reset_mutation_concurrency_health_admit_for_test();
+        reset_for_test();
+    }
+}
+
 } // namespace
 
 int run_test_bidirectional_match_check() {
@@ -560,6 +689,7 @@ int run_test_bidirectional_match_check() {
         CHECK(read_file("docs/design/3516-check-flat-set-unify.md").empty(), "3516: no design");
         CHECK(read_file("tests/compiler/test_issue_3516.cpp").empty(), "3516: no invent");
     }
+    ac3698_let_define_annotation();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

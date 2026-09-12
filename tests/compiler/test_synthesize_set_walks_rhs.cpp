@@ -269,6 +269,34 @@ int run_test_synthesize_set_walks_rhs() {
         CHECK(read_file("tests/compiler/test_issue_3516.cpp").empty(), "3516 AC5: no invent");
     }
 
+    // --- #3698: check_flat Let/Define checks annotated value ---
+    {
+        std::println("\n--- #3698: check_flat Let/Define checks annotated value ---");
+        const auto tci2 = read_file("src/compiler/type_checker_impl.cpp");
+        const auto check_pos = tci2.find("InferenceEngine::check_flat(");
+        CHECK(check_pos != std::string::npos, "3698: check_flat present");
+        const auto check_after = tci2.substr(check_pos);
+        const auto let_pos = check_after.find("NodeTag::Let || v.tag == NodeTag::LetRec");
+        CHECK(let_pos != std::string::npos, "3698: Let/LetRec branch");
+        const auto begin_pos = check_after.find("NodeTag::Begin", let_pos);
+        const auto let_branch = check_after.substr(
+            let_pos, begin_pos == std::string::npos ? std::string::npos : begin_pos - let_pos);
+        CHECK(contains(let_branch, "Issue #3698"), "3698: Let cites #3698");
+        CHECK(contains(let_branch, "check_flat(flat, pool, val_id, val_expected)"),
+              "3698: Let check_flat value");
+        CHECK(contains(let_branch, "check_flat_match"), "3698 AC4: __match_tmp still match");
+        const auto def_pos = check_after.find("NodeTag::Define");
+        const auto def_end = check_after.find("} else {", def_pos);
+        const auto def_branch = check_after.substr(
+            def_pos, def_end == std::string::npos ? std::string::npos : def_end - def_pos);
+        CHECK(contains(def_branch, "Issue #3698"), "3698: Define cites #3698");
+        CHECK(contains(def_branch, "check_flat(flat, pool, val_id, val_expected)"),
+              "3698: Define check_flat value");
+        CHECK(read_file("docs/design/3698-check-flat-let-define.md").empty(),
+              "3698: no docs/design");
+        CHECK(read_file("tests/compiler/test_issue_3698.cpp").empty(), "3698: no invent");
+    }
+
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
