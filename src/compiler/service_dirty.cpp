@@ -1257,23 +1257,27 @@ void CompilerService::invalidate_function(const std::string& name) {
             // Issue #3189 AC1: every production partial decision entry
             // must consult should_partial_relower_impact_checked. Here
             // the entry is `invalidate_bridge_with_impact` (quote/lambda
-            // path inside invalidate_function). If impact_ub >
-            // dirty_count the partial estimate under-counted (e.g. cross-fn
-            // callee via compute_impact_scope crossed into a caller that
-            // block_dirty alone can't see) — bump the forced-full metric
-            // so Agent / CI observability picks up the under-estimate. The
-            // existing partial path still runs (bridge is selective, not
-            // AoS wipe) but the metric flags the gap. Mirrors the
-            // #3034 contract used by try_partial_invalidate_relower
-            // (L1270) and the #2246 contract used by service.ixx:7021.
+            // path inside invalidate_function). Issue #3691: use the
+            // production helper (unknown ub==0 / ub>dirty fail-closed)
+            // and on false actually mark_all_blocks_dirty — do not
+            // apply_impact_scope_dirty a subset after the metric bump.
+            // Soft/Off: keep selective impact peel (zero extra fail-closed).
             const std::size_t dirty_count_est =
                 scope.affected_blocks.size() + scope.affected_instrs.size();
             const std::size_t impact_ub = impact_upper_bound_for_entry_(affected_name, cit->second);
-            if (!should_partial_relower_impact_checked(dirty_count_est, impact_ub)) {
+            const bool production_consult =
+                aura::compiler::typed_audit::production_defaults_active() ||
+                aura::compiler::typed_audit::get_strategy() ==
+                    aura::compiler::typed_audit::AuditStrategy::Full;
+            const bool allow_partial = should_partial_relower_impact_checked_prod(
+                dirty_count_est, impact_ub, production_consult);
+            if (dirty_count_est > 0 && !allow_partial && production_consult) {
+                cit->second.mark_all_blocks_dirty();
+                cit->second.dirty = true;
+                finish_cascade_soa_dirty_sync_(cit->second);
                 metrics_.partial_forced_full_by_impact_total.fetch_add(1,
                                                                        std::memory_order_relaxed);
-            }
-            if (instr_ok || block_ok) {
+            } else if (instr_ok || block_ok) {
                 (void)apply_impact_scope_dirty(cit->second, scope);
                 metrics_.instr_level_impact_prefer_total.fetch_add(1, std::memory_order_relaxed);
             } else {
@@ -1380,7 +1384,15 @@ void CompilerService::invalidate_function(const std::string& name) {
             // Soft / empty persist → 0 extra.
             (void)aura::compiler::dirty::force_residual_castop_undermark_into_cone();
             const std::size_t impact_ub = impact_upper_bound_for_entry_(fname, vit->second);
-            if (!should_partial_relower_impact_checked(dirty_n, impact_ub)) {
+            // Issue #3691: production unknown-ub / ub>dirty must fail-closed
+            // (same helper as relower_dirty_defines_from_workspace). Returning
+            // false takes the full-lower path; bump only when that happens.
+            const bool production_consult =
+                aura::compiler::typed_audit::production_defaults_active() ||
+                aura::compiler::typed_audit::get_strategy() ==
+                    aura::compiler::typed_audit::AuditStrategy::Full;
+            if (!should_partial_relower_impact_checked_prod(dirty_n, impact_ub,
+                                                            production_consult)) {
                 metrics_.partial_forced_full_by_impact_total.fetch_add(1,
                                                                        std::memory_order_relaxed);
                 note_fb(RelowerFallbackReason::Threshold);

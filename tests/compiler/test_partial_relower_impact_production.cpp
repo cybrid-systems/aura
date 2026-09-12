@@ -35,15 +35,19 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <fstream>
 #include <print>
 #include <string>
 #include <string_view>
 
 import std;
 import aura.compiler.ir_cache_pure;
+import aura.compiler.service;
+import aura.compiler.value;
 
 namespace {
 
+using aura::compiler::CompilerService;
 using aura::compiler::should_partial_relower_impact_checked;
 using aura::compiler::should_partial_relower_impact_checked_prod;
 using aura::compiler::typed_audit::apply_dev_audit_defaults;
@@ -51,8 +55,22 @@ using aura::compiler::typed_audit::apply_production_audit_defaults;
 using aura::compiler::typed_audit::AuditStrategy;
 using aura::compiler::typed_audit::get_strategy;
 using aura::compiler::typed_audit::production_defaults_active;
+using aura::compiler::types::as_int;
+using aura::compiler::types::is_error;
+using aura::compiler::types::is_int;
 using aura::test::g_failed;
 using aura::test::g_passed;
+
+static std::string read_file(const char* path) {
+    for (const auto& p :
+         {std::string(path), std::string("../") + path, std::string("../../") + path}) {
+        std::ifstream in(p);
+        if (!in)
+            continue;
+        return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    }
+    return {};
+}
 
 // AC1 + AC4: production + ub == 0 + dirty_n > 0 → false (force full).
 // Soft + ub == 0 + dirty_n > 0 → matches existing helper (zero-cost).
@@ -152,6 +170,54 @@ static void ac5_production_consult_reflects_strategy() {
     apply_dev_audit_defaults();
 }
 
+static void ac3691_quote_lambda_impact_uses_prod_helper() {
+    std::println("\n--- #3691: quote/lambda + invalidate cascade use impact_checked_prod ---");
+    const auto dirty = read_file("src/compiler/service_dirty.cpp");
+    const auto sixx = read_file("src/compiler/service.ixx");
+    CHECK(dirty.find("Issue #3691") != std::string::npos, "3691: dirty cites #3691");
+    CHECK(dirty.find("should_partial_relower_impact_checked_prod") != std::string::npos,
+          "3691 AC1: quote/lambda + cascade use _prod");
+    const auto n3691 = dirty.find("Issue #3691: use the");
+    const auto n3691_win = n3691 == std::string::npos ? std::string{} : dirty.substr(n3691, 2200);
+    CHECK(n3691_win.find("should_partial_relower_impact_checked_prod") != std::string::npos,
+          "3691 AC1: invalidate_bridge_with_impact uses _prod");
+    CHECK(n3691_win.find("mark_all_blocks_dirty()") != std::string::npos,
+          "3691 AC1: production fail-closed marks all blocks");
+    // Match call sites (trailing '(' / '()'), not the comment that names
+    // apply_impact_scope_dirty before the mark_all statement.
+    const auto mark = n3691_win.find("mark_all_blocks_dirty()");
+    const auto apply = n3691_win.find("apply_impact_scope_dirty(");
+    CHECK(mark != std::string::npos && apply != std::string::npos && mark < apply,
+          "3691 AC1: mark_all before subset apply (no subset peel after fail-closed)");
+    CHECK(n3691_win.find("production_consult") != std::string::npos,
+          "3691 AC3: Soft/Off consult is production_consult");
+    CHECK(dirty.find("should_partial_relower_impact_checked_prod(dirty_n, impact_ub") !=
+              std::string::npos,
+          "3691 AC1: try_partial_invalidate_relower uses _prod");
+    CHECK(sixx.find("should_partial_relower_impact_checked_prod(dirty_n, impact_ub") !=
+              std::string::npos,
+          "3691 AC2: eval-path impact_checked_prod unchanged");
+    CHECK(dirty.find("schema-3691") == std::string::npos, "3691 AC5: no new query key");
+    CHECK(read_file("tests/compiler/test_issue_3691.cpp").empty(), "3691: no test_issue_3691.cpp");
+    CHECK(read_file("docs/design/3691-quote-lambda-impact-prod.md").empty(),
+          "3691: no docs/design/");
+
+    apply_dev_audit_defaults();
+    CompilerService cs;
+    cs.evaluator().set_effect_sandbox_mode(0);
+    CHECK(cs.eval("(+ 1 1)").has_value(), "3691 soak: warm");
+    CHECK(cs.eval("(set-code \"(define f (lambda () 1))\")").has_value(), "3691 soak: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3691 soak: eval");
+    apply_production_audit_defaults();
+    auto mut = cs.eval("(mutate:set-body \"f\" \"(lambda () 9)\" \"#3691\")");
+    CHECK(mut.has_value() && !is_error(*mut), "3691 soak: mutate lambda body");
+    CHECK(cs.eval("(eval-current)").has_value(), "3691 soak: re-eval");
+    auto r = cs.eval("(f)");
+    CHECK(r && is_int(*r) && as_int(*r) == 9, "3691 soak: mutated lambda");
+    apply_dev_audit_defaults();
+    CHECK(cs.eval("(f)").has_value(), "3691 AC3: Soft still evals");
+}
+
 } // namespace
 
 int run_test_issue_3310() {
@@ -163,6 +229,7 @@ int run_test_issue_3310() {
     ac3_production_sentinel_minus_one();
     ac4_clean_window_zero_cost();
     ac5_production_consult_reflects_strategy();
+    ac3691_quote_lambda_impact_uses_prod_helper();
 
     std::print("[test_issue_3310] passed={} failed={}\n", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
