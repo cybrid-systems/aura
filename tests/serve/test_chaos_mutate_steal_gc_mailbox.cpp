@@ -2237,9 +2237,25 @@ static void ac3620_2_windows_source_cite() {
           "3620: no docs/design (per #1655)");
 }
 
+static void ac3693_eval_flat_hold_budget_edge_cite() {
+    std::println("\n--- #3693: eval_flat / lockless mutate polls hold-budget safepoint ---");
+    const auto efl = read_file("src/compiler/evaluator_eval_flat.cpp");
+    CHECK(efl.find("Issue #3693") != std::string::npos ||
+              efl.find("eval_flat_hold_budget_safepoint_poll") != std::string::npos,
+          "3693: eval_flat cites hold-budget poll");
+    CHECK(efl.find("Fiber::check_gc_safepoint()") != std::string::npos,
+          "3693: reuses check_gc_safepoint (same-fiber consume)");
+    CHECK(efl.find("mutation_hold_budget_reject_enabled()") != std::string::npos,
+          "3693: Soft/Off skips extra safepoint");
+    CHECK(efl.find("EVAL_FLAT_HOLD_BUDGET_POLL()") != std::string::npos,
+          "3693: lockless helper / hot loop poll");
+    CHECK(read_file("tests/serve/test_issue_3693.cpp").empty(), "3693: no invent test_issue_3693");
+}
+
 int run_test_chaos_mutate_steal_gc_mailbox() {
     std::println("=== Issue #2352/#2380/#2513/#2554/#2902: chaos mutate×steal×GC×mailbox "
                  "production gate ===");
+    ac3693_eval_flat_hold_budget_edge_cite();
 
     // Issue #2902: build.py release blocker runs only the clean multi-fiber
     // hard-fail profile (fast enough for pre-push; FULL/SOAK unchanged).
