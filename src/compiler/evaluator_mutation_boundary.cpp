@@ -87,6 +87,7 @@ module;
 #include "compiler/shape_profiler.h"               // Issue #2255: current_global_shape_version
 #include "orch/security_schedule_gate.h"           // Issue #2630: evaluate_security_schedule admit
 #include "compiler/mutation_concurrency_health.hh" // Issue #2985: health admit gate
+#include "compiler/castop_density_policy.hh" // Issue #3699: density streak gate reject pending
 
 // Issue #3102: import aura.compiler.dirty_propagation. The 3 abort sites plus
 // boundary enter call aura::compiler::dirty::truncate_type_cone_to_size plus
@@ -4129,7 +4130,10 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
                 pre_gate_tc->constraint_system().drain_pending_full_solve_before_commit(
                     &pre_gate_unresolved) == aura::compiler::SolveResult::SOLVED;
         }
-        if (!lin.all_safe || ev_->linear_synth_hard_fail_pending() || !drain_pre_persist_ok) {
+        const bool density_gate =
+            aura::compiler::castop_density::consume_density_gate_reject_pending();
+        if (!lin.all_safe || ev_->linear_synth_hard_fail_pending() || !drain_pre_persist_ok ||
+            density_gate) {
             typed_audit::clear_type_linear_commit_proof_on_abort();
             typed_audit::publish_type_linear_proof_outcome(
                 typed_audit::kTypeLinearProofOutcomeReject);
@@ -4301,7 +4305,8 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
         const auto lin = ev_->enforce_linear_boundary_consistency(
             Evaluator::kLinearGcRootAuditTypedMutate, /*mark_all_linear=*/false);
         linear_pre_exit_enforced = true;
-        if (!lin.all_safe || ev_->linear_synth_hard_fail_pending()) {
+        if (!lin.all_safe || ev_->linear_synth_hard_fail_pending() ||
+            aura::compiler::castop_density::consume_density_gate_reject_pending()) {
             typed_audit::clear_type_linear_commit_proof_on_abort();
             typed_audit::publish_type_linear_proof_outcome(
                 typed_audit::kTypeLinearProofOutcomeReject);

@@ -146,13 +146,40 @@ inline std::size_t sweep_production_hot_residual_castops(aura::ir::IRFunction& f
                                                     std::memory_order_relaxed);
         }
         const auto left = count_identity_castops(f);
-        if (left > 0)
+        if (left > 0) {
             dead_coercion_hot_residual_reject_total.fetch_add(1, std::memory_order_relaxed);
+            // Issue #3699: leftover identity after DCE → MustDeopt /
+            // refuse native, not only a counter.
+            aura::compiler::castop_density::note_identity_residual_must_deopt(
+                f.name.empty() ? nullptr : f.name.c_str());
+        }
     }
     // #3046: remaining CastOps are non-elidable. Production records a
     // density-policy keep + force-JIT/relower; leftover==0 is Quiet.
+    // Issue #3699: leftover non-identity at density streak gate rejects
+    // the mutate commit (MutateTypeGate), unless annotated blame.
+    const auto leftover_all = count_all_castops(f);
+    const auto leftover_id = count_identity_castops(f);
+    const auto leftover_non_id = leftover_all > leftover_id ? leftover_all - leftover_id : 0;
+    bool unannotated = true;
+    if (leftover_non_id > 0) {
+        for (const auto& block : f.blocks) {
+            for (const auto& instr : block.instructions) {
+                if (instr.opcode != aura::ir::IROpcode::CastOp)
+                    continue;
+                if (instr.narrow_evidence != 0) {
+                    unannotated = false;
+                    break;
+                }
+            }
+            if (!unannotated)
+                break;
+        }
+    }
+    const char* fn = f.name.empty() ? nullptr : f.name.c_str();
     (void)aura::compiler::castop_density::note_hot_residual_nonidentity_castops(
-        count_all_castops(f));
+        leftover_all, nullptr, /*production_override=*/-1, fn);
+    aura::compiler::castop_density::note_hot_residual_fail_close(leftover_non_id, unannotated);
     // Issue #3065 / #3120: residual CastOp takes the same dirty-column
     // path as a type change — remirror source AST nodes (or containing
     // IR blocks) so the next remutate re-enters typecheck. Persist the

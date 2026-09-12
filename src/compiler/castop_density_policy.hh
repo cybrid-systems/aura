@@ -44,6 +44,23 @@ inline std::atomic<std::uint64_t>& g_gate_reject_total() noexcept {
     return s;
 }
 
+// Issue #3699: streak-gate reject is sticky until Guard persist / hard-gate
+// consumes it. Soft never stores. Declared here so apply_density_closed_loop
+// can arm it.
+inline std::atomic<std::uint32_t> g_density_gate_reject_pending{0};
+
+[[nodiscard]] inline bool density_gate_reject_pending() noexcept {
+    return g_density_gate_reject_pending.load(std::memory_order_acquire) != 0;
+}
+
+inline bool consume_density_gate_reject_pending() noexcept {
+    return g_density_gate_reject_pending.exchange(0, std::memory_order_acq_rel) != 0;
+}
+
+inline void reset_density_gate_reject_pending_for_test() noexcept {
+    g_density_gate_reject_pending.store(0, std::memory_order_relaxed);
+}
+
 // hard_override: -1 = read env, 0 = force soft, 1 = force hard (tests).
 [[nodiscard]] inline bool hard_env_enabled(int hard_override = -1) noexcept {
     if (hard_override >= 0)
@@ -146,6 +163,9 @@ inline ClosedLoopResult apply_density_closed_loop(CompilerMetrics& m, std::uint6
                 mutate_type_gate::g_hard_type_error_reject_total.fetch_add(
                     1, std::memory_order_relaxed);
                 r.gate_reject = true;
+                // Issue #3699: streak gate must fail the mutate commit,
+                // not only bump reject pressure / force-JIT.
+                g_density_gate_reject_pending.store(1, std::memory_order_release);
             } else {
                 m.castop_density_soft_warn_total.fetch_add(1, std::memory_order_relaxed);
                 r.soft_warn = true;
@@ -207,6 +227,40 @@ inline std::atomic<std::uint32_t> g_hot_residual_soft_must_deopt_wired{1};
 inline constexpr int kCastOpHotResidualSoftRelowerIssue = 3107;
 inline std::atomic<std::uint64_t> g_hot_residual_soft_relower_total{0};
 inline std::atomic<std::uint32_t> g_hot_residual_soft_relower_wired{1};
+// Issue #3699: Production leftover identity CastOp after DCE MustDeopt /
+// refuse native (not only reject_total). Leftover non-identity at
+// density streak gate sets pending MutateTypeGate reject so Guard
+// persist fail-closes the mutate (not only force-JIT). Soft: observe.
+// No new query key.
+inline constexpr int kCastOpHotResidualFailCloseIssue = 3699;
+inline std::atomic<std::uint64_t> g_hot_residual_identity_must_deopt_total{0};
+
+inline void note_identity_residual_must_deopt(const char* fn_name) noexcept {
+    g_hot_residual_identity_must_deopt_total.fetch_add(1, std::memory_order_relaxed);
+    if (fn_name && fn_name[0] != '\0')
+        (void)aura_jit_batch_deopt_for(fn_name, 0);
+    else
+        hot_update_registry().on_stale_deopt();
+}
+
+// Production leftover non-identity: increment density streak; at gate,
+// pending MutateTypeGate reject (Guard persist consumes). Annotated
+// leftover (narrow_evidence / joinable blame) skips streak (AC4).
+inline void note_hot_residual_fail_close(std::size_t leftover_non_id, bool unannotated,
+                                         int production_override = -1) noexcept {
+    if (leftover_non_id == 0)
+        return;
+    if (!production_path_enabled(production_override))
+        return;
+    if (!unannotated)
+        return;
+    const auto streak = g_density_streak().fetch_add(1, std::memory_order_relaxed) + 1;
+    if (streak < streak_gate_threshold())
+        return;
+    g_gate_reject_total().fetch_add(1, std::memory_order_relaxed);
+    mutate_type_gate::g_hard_type_error_reject_total.fetch_add(1, std::memory_order_relaxed);
+    g_density_gate_reject_pending.store(1, std::memory_order_release);
+}
 
 [[nodiscard]] inline bool hot_residual_soft_must_deopt_pending() noexcept {
     return g_hot_residual_soft_must_deopt_pending.load(std::memory_order_acquire) != 0;

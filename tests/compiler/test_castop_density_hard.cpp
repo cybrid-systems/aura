@@ -12,7 +12,9 @@
 
 #include "compiler/castop_density_policy.hh"
 #include "compiler/hot_update_registry.hh"
+#include "compiler/mutation_concurrency_health.hh"
 #include "compiler/observability_metrics.h"
+#include "compiler/typed_mutation_audit.h"
 
 #include <cstdint>
 #include <fstream>
@@ -30,16 +32,24 @@ using aura::compiler::CompilerMetrics;
 using aura::compiler::CompilerService;
 using aura::compiler::hot_update_registry;
 using aura::compiler::castop_density::apply_hard_policy;
+using aura::compiler::castop_density::consume_density_gate_reject_pending;
+using aura::compiler::castop_density::density_gate_reject_pending;
 using aura::compiler::castop_density::g_hot_residual_density_keep_total;
+using aura::compiler::castop_density::g_hot_residual_identity_must_deopt_total;
 using aura::compiler::castop_density::g_hot_residual_nonidentity_total;
 using aura::compiler::castop_density::g_hot_residual_relower_total;
 using aura::compiler::castop_density::g_hot_residual_soft_must_deopt_pending;
 using aura::compiler::castop_density::g_hot_residual_soft_must_deopt_total;
 using aura::compiler::castop_density::hard_env_enabled;
 using aura::compiler::castop_density::hot_residual_soft_must_deopt_pending;
+using aura::compiler::castop_density::kCastOpHotResidualFailCloseIssue;
 using aura::compiler::castop_density::kCastOpHotResidualNonidentityIssue;
 using aura::compiler::castop_density::kCastOpHotResidualSoftMustDeoptIssue;
+using aura::compiler::castop_density::note_hot_residual_fail_close;
 using aura::compiler::castop_density::note_hot_residual_nonidentity_castops;
+using aura::compiler::castop_density::note_identity_residual_must_deopt;
+using aura::compiler::castop_density::reset_density_gate_reject_pending_for_test;
+using aura::compiler::castop_density::reset_streak_for_test;
 using aura::compiler::castop_meta::castop_typed_meta_phase_c_deopt_total;
 using aura::compiler::castop_meta::castop_typed_meta_phase_c_lags;
 using aura::compiler::castop_meta::castop_typed_meta_phase_c_wired;
@@ -50,7 +60,9 @@ using aura::compiler::castop_meta::make_site_key;
 using aura::compiler::castop_meta::reset_castop_typed_meta_phase_c_for_test;
 using aura::compiler::castop_meta::set_castop_typed_meta_phase_c_wired_for_test;
 using aura::compiler::castop_meta::stamp_castop_typed_meta;
+using aura::compiler::types::as_bool;
 using aura::compiler::types::as_int;
+using aura::compiler::types::is_bool;
 using aura::compiler::types::is_int;
 using aura::test::g_failed;
 using aura::test::g_passed;
@@ -561,6 +573,110 @@ static void ac3140_5_additive_counter_and_source_cite() {
           "3140 AC5: no tests/issues/test_issue_3140.cpp");
 }
 
+static void ac3699_identity_must_deopt_and_streak_reject() {
+    std::println("\n--- #3699: leftover identity MustDeopt + streak gate reject mutate ---");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    using aura::compiler::typed_audit::reset_for_test;
+
+    CHECK(kCastOpHotResidualFailCloseIssue == 3699, "3699: issue stamp");
+    const auto pol = read_file("src/compiler/castop_density_policy.hh");
+    const auto opt = read_file("src/compiler/optimization_passes.ixx");
+    const auto bdy = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto tc = read_file("src/compiler/evaluator_typecheck.cpp");
+    CHECK(pol.find("Issue #3699") != std::string::npos, "3699: policy cites #3699");
+    CHECK(pol.find("note_identity_residual_must_deopt") != std::string::npos,
+          "3699 AC1: identity MustDeopt helper");
+    CHECK(pol.find("note_hot_residual_fail_close") != std::string::npos,
+          "3699 AC2: leftover fail-close helper");
+    CHECK(pol.find("g_density_gate_reject_pending") != std::string::npos,
+          "3699 AC2: pending MutateTypeGate reject");
+    CHECK(opt.find("Issue #3699") != std::string::npos, "3699: sweep cites #3699");
+    CHECK(opt.find("note_identity_residual_must_deopt") != std::string::npos,
+          "3699 AC1: sweep MustDeopt leftover identity");
+    CHECK(opt.find("note_hot_residual_fail_close") != std::string::npos,
+          "3699 AC2: sweep fail-close leftover non-id");
+    CHECK(bdy.find("consume_density_gate_reject_pending") != std::string::npos,
+          "3699 AC2: Guard persist consumes pending");
+    CHECK(tc.find("consume_density_gate_reject_pending") != std::string::npos,
+          "3699 AC2: hard-gate consumes pending");
+    CHECK(opt.find("narrow_evidence") != std::string::npos,
+          "3699 AC4: annotated leftover skips streak");
+    CHECK(pol.find("schema-3699") == std::string::npos, "3699 AC5: no new query key in policy");
+    CHECK(opt.find("schema-3699") == std::string::npos, "3699 AC5: no new query key in sweep");
+    CHECK(read_file("docs/design/3699-castop-residual-fail-close.md").empty(),
+          "3699 AC5: no docs/design");
+    CHECK(read_file("tests/compiler/test_issue_3699.cpp").empty(), "3699 AC5: no invent");
+
+    {
+        std::println("\n--- #3699 AC1: leftover identity → MustDeopt ---");
+        const auto d0 = g_hot_residual_identity_must_deopt_total.load();
+        note_identity_residual_must_deopt("t3699_identity");
+        CHECK(g_hot_residual_identity_must_deopt_total.load() == d0 + 1,
+              "3699 AC1: identity MustDeopt counter");
+    }
+
+    {
+        std::println("\n--- #3699 AC2/AC3: streak gate pending; Soft no pending ---");
+        reset_for_test();
+        apply_dev_audit_defaults();
+        reset_streak_for_test();
+        reset_density_gate_reject_pending_for_test();
+        note_hot_residual_fail_close(1, /*unannotated=*/true, /*production=*/0);
+        CHECK(!density_gate_reject_pending(), "3699 AC3: Soft leftover no pending");
+        note_hot_residual_fail_close(1, true, 0);
+        CHECK(!density_gate_reject_pending(), "3699 AC3: Soft second leftover still no pending");
+
+        apply_production_audit_defaults();
+        reset_streak_for_test();
+        reset_density_gate_reject_pending_for_test();
+        note_hot_residual_fail_close(1, true, /*production=*/1);
+        CHECK(!density_gate_reject_pending(), "3699 AC2: first leftover no reject yet");
+        note_hot_residual_fail_close(1, true, 1);
+        CHECK(density_gate_reject_pending(), "3699 AC2: streak gate arms pending");
+        note_hot_residual_fail_close(1, /*unannotated=*/false, 1);
+        CHECK(density_gate_reject_pending(), "3699 AC4: annotated leftover does not clear pending");
+        (void)consume_density_gate_reject_pending();
+        reset_streak_for_test();
+        reset_density_gate_reject_pending_for_test();
+        note_hot_residual_fail_close(1, /*unannotated=*/false, 1);
+        note_hot_residual_fail_close(1, false, 1);
+        CHECK(!density_gate_reject_pending(), "3699 AC4: annotated leftover never arms pending");
+        apply_dev_audit_defaults();
+        reset_for_test();
+    }
+
+    {
+        std::println("\n--- #3699 soak: production leftover past streak → Guard not success ---");
+        reset_for_test();
+        apply_dev_audit_defaults();
+        aura::compiler::reset_mutation_concurrency_health_admit_for_test();
+        aura::compiler::MutationConcurrencyHealthSnapshot clean;
+        aura::compiler::set_mutation_concurrency_health_admit_snapshot_for_test(clean);
+        CompilerService cs;
+        CHECK(cs.eval("(+ 1 1)").has_value(), "3699 soak: warm");
+        CHECK(cs.eval("(set-code \"(define t3699 (lambda () 1))\")").has_value(),
+              "3699 soak: set-code");
+        CHECK(cs.eval("(eval-current)").has_value(), "3699 soak: eval");
+        apply_production_audit_defaults();
+        reset_streak_for_test();
+        reset_density_gate_reject_pending_for_test();
+        note_hot_residual_fail_close(1, true, 1);
+        note_hot_residual_fail_close(1, true, 1);
+        CHECK(density_gate_reject_pending(), "3699 soak: pending armed");
+        auto mut = cs.eval(R"lisp((mutate:set-body "t3699" "(lambda () 2)"))lisp");
+        CHECK(mut.has_value(), "3699 soak: mutate returns");
+        CHECK(!(mut && is_bool(*mut) && as_bool(*mut)), "3699 soak: Guard not success");
+        CHECK(!cs.evaluator().type_export_authoritative(),
+              "3699 soak: get-inferred-type not-authoritative");
+        apply_dev_audit_defaults();
+        aura::compiler::reset_mutation_concurrency_health_admit_for_test();
+        reset_density_gate_reject_pending_for_test();
+        reset_streak_for_test();
+        reset_for_test();
+    }
+}
+
 int run_test_castop_density_hard() {
     std::println("=== Issue #2358: CastOp density HARD force-JIT policy ===");
     ac5_query_and_source();
@@ -584,7 +700,8 @@ int run_test_castop_density_hard() {
     ac3140_3_soft_path_zero_cost();
     ac3140_4_quiet_epoch_match_zero_extra();
     ac3140_5_additive_counter_and_source_cite();
-    std::println("\n=== #2358/#3046/#3084/#3107/#3140: {} passed, {} failed ===", g_passed,
+    ac3699_identity_must_deopt_and_streak_reject();
+    std::println("\n=== #2358/#3046/#3084/#3107/#3140/#3699: {} passed, {} failed ===", g_passed,
                  g_failed);
     return g_failed == 0 ? 0 : 1;
 }

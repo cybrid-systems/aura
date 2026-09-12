@@ -115,6 +115,9 @@ static void ac4_then_ac2_streak_gate() {
     CHECK(r2.streak >= 2, "AC2: streak ≥ threshold");
     CHECK(r2.gate_reject, "AC2: gate reject after streak");
     CHECK(m.castop_density_gate_reject_total.load() >= 1, "AC2: gate_reject_total ≥ 1");
+    CHECK(aura::compiler::castop_density::density_gate_reject_pending(),
+          "3699 AC2: streak gate arms mutate-commit reject pending");
+    (void)aura::compiler::castop_density::consume_density_gate_reject_pending();
 }
 
 // ── AC3: under budget resets streak ──
