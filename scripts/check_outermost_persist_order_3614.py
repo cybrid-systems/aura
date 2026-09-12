@@ -107,8 +107,8 @@ def _rows(mb: str, health: str, reh: str, build: str, query: str, obs: str, allo
         fails.append("AC2: order gate → persist → consume → #3472 belt → exit broken")
     if _count(mb, "note_occurrence_commit_snapshot_written(") != 1:
         fails.append("AC2: sole snapshot writer count != 1 (persist helper)")
-    if _count(mb, "restore_or_clear_occurrence_to_entry(") != 3:
-        fails.append("AC2: #3158 restore site count != 3")
+    if _count(mb, "restore_or_clear_occurrence_to_entry(") != 4:
+        fails.append("AC2: #3158 restore site count != 4 (3 abort + persist-reject #3687)")
     must_not("abort_restore_3614", "AC2 no second restore", mb)
     must_not("abort_restore_dual_topology_3614", "AC2 no second restore (full)", mb)
 
@@ -167,7 +167,7 @@ def main() -> int:
             + "\n"
             + "note_occurrence_commit_snapshot_written(\n"
             + "restore_or_clear_occurrence_to_entry(a)restore_or_clear_occurrence_to_entry(b)"
-            + "restore_or_clear_occurrence_to_entry(c)\n"
+            + "restore_or_clear_occurrence_to_entry(c)restore_or_clear_occurrence_to_entry(d)\n"
             + "note_outermost_persist_reject_needs_restore\n"
             + "undo_apply_coercion_map_recent\n"
         )

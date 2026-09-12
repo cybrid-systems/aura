@@ -70,8 +70,8 @@ def main() -> int:
         if hold < 0:
             fails.append(f"AC3: dual_restore site {dual} missing preceding hold")
         pos = p + 1
-    if dual != 3:
-        fails.append(f"AC3: expected 3 dual_restore sites, found {dual}")
+    if dual != 4:
+        fails.append(f"AC3: expected 4 dual_restore sites (3 abort + persist-reject #3687), found {dual}")
     must("abort_authority_blocks_rehydrate", "AC3 rehydrate", impl)
     must("Issue #3232", "AC3 rehydrate cite", impl)
     must("Issue #3232", "AC3 densify cite", ixx)

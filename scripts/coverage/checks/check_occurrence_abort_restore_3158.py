@@ -30,10 +30,11 @@ This linter is the regression guard for `#3158`:
     exists and truncates via `occurrence_goals_.resize(entry_size)` with
     underflow guard returning 0.
 
-  * ALL_3_ABORT_SITES — evaluator_mutation_boundary.cpp calls
-    `restore_or_clear_occurrence_to_entry` from exactly 3 abort sites,
+  * ALL_ABORT_SITES — evaluator_mutation_boundary.cpp calls
+    `restore_or_clear_occurrence_to_entry` from 3 abort sites + persist-reject
+    #3687 (reuse, not a second Occurrence log),
     paired with `note_3158_occurrence_abort_restore` (production/Full
-    path) + `note_3158_occurrence_abort_observe` (Soft / Off path).
+    path) + `note_3158_occurrence_abort_observe` (Soft / Off path, 3 sites).
 
   * COUNTERS — typed_mutation_audit.h declares
     `g_3158_occurrence_abort_restore_total`,
@@ -135,17 +136,17 @@ REQUIRED_PATTERNS = (
         1,
         TYPE_CHECKER_IXX,
     ),
-    # --- AC3: 3 abort sites wired (presence checks; counts verified in test) ---
+    # --- AC3: 3 abort sites + persist-reject #3687 (presence; counts in test) ---
     (
         "restore_or_clear_occurrence_to_entry call present in boundary cpp",
         re.compile(r"restore_or_clear_occurrence_to_entry\s*\("),
-        3,
+        4,
         EVALUATOR_MUTATION_BOUNDARY_CPP,
     ),
     (
         "note_3158_occurrence_abort_restore call present in boundary cpp",
         re.compile(r"note_3158_occurrence_abort_restore\s*\("),
-        3,
+        4,
         EVALUATOR_MUTATION_BOUNDARY_CPP,
     ),
     (

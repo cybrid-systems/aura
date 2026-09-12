@@ -436,6 +436,11 @@ extern "C" void aura_outermost_success_persist_occurrence(void* ev_ptr,
     // stays SSOT. Soft/Off: note is a no-op (flag stays false).
     auto note_3440_restore = [ev, mutation_id]() noexcept {
         aura::compiler::typed_audit::note_outermost_persist_reject_needs_restore();
+        // Issue #3687: AST dual-topology restore in the same transaction
+        // as CoercionMap undo (before return / any observer). Soft/Off:
+        // restore helper is a no-op. exit_mutation_boundary then no-ops
+        // dual-topology if the checkpoint is already restored.
+        ev->restore_checkpoint_topology_for_persist_reject();
         // Issue #3545: CoercionMap / DeadCoercion / stamper undo on the
         // persist-reject path (do not wait for dtor abort_restore).
         aura::compiler::typed_audit::undo_apply_coercion_map_recent(ev, mutation_id);
@@ -810,6 +815,51 @@ extern "C" void aura_clear_occurrence_persist_buffer(void* ev_ptr) noexcept {
 }
 
 namespace aura::compiler {
+
+// Issue #3687: persist-reject must restore AST dual-topology in the same
+// function as CoercionMap undo (before return / any observer). Soft/Off:
+// no extra restore. Idempotent: later exit_mutation_boundary skips
+// abort_restore_dual_topology when topology_restored is set.
+void Evaluator::restore_checkpoint_topology_for_persist_reject() noexcept {
+    if (!(typed_audit::production_defaults_active() ||
+          typed_audit::get_strategy() == typed_audit::AuditStrategy::Full))
+        return;
+    if (!workspace_flat_)
+        return;
+    auto& stk = active_mutation_stack();
+    if (stk.empty())
+        return;
+    auto& cp = stk.back();
+    if (cp.topology_restored)
+        return;
+    // Issue #3159: fence BEFORE topology (same order as the 3 abort sites).
+    if (abort_ir_cache_begin_force_fn_)
+        abort_ir_cache_begin_force_fn_();
+    // Issue #3232: abort authority hold before dual-topology restore.
+    typed_audit::AbortAuthorityHold abort_authority;
+    const auto mid_abort_ver = typed_audit::begin_mid_abort_authority(cp.audit_mid);
+    (void)mid_abort_ver;
+    BoundaryRollbackStats stats;
+    stats.field_records_rolled = workspace_flat_->abort_restore_dual_topology(
+        cp.mutation_log_size, std::move(cp.children_snapshot));
+    stats.children_column_restored = true;
+    if (stats.field_records_rolled > 0)
+        bump_mutation_log_rollback_count();
+    // Issue #3159: force_dirty AFTER topology.
+    if (abort_ir_cache_force_dirty_fn_)
+        abort_ir_cache_force_dirty_fn_();
+    // Issue #3158: occurrence restore in the same transaction (reuse, not
+    // a second Occurrence log). Second call in abort body is a no-op
+    // (live <= entry_size).
+    if (auto* tc = static_cast<TypeChecker*>(commit_type_checker_handle())) {
+        const auto dropped =
+            tc->constraint_system().restore_or_clear_occurrence_to_entry(cp.occurrence_entry_size);
+        typed_audit::note_3158_occurrence_abort_restore(dropped);
+    }
+    cp.topology_restored = true;
+    last_boundary_rollback_stats_ = stats;
+    typed_audit::end_mid_abort_authority(cp.audit_mid);
+}
 
 // ── Issue #2137: render hotpath + frame budget ───────────────────────────
 void Evaluator::enter_render_hotpath() const noexcept {
@@ -1212,12 +1262,19 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
         // forces full clear + reject proof.
         const auto mid_abort_ver = typed_audit::begin_mid_abort_authority(cp.audit_mid);
         BoundaryRollbackStats stats;
-        stats.field_records_rolled = workspace_flat_->abort_restore_dual_topology(
-            cp.mutation_log_size, std::move(cp.children_snapshot));
-        if (stats.field_records_rolled > 0) {
-            bump_mutation_log_rollback_count();
-            if (nested_boundary)
-                bump_edsl_nested_atomic_rollback();
+        // Issue #3687: persist-reject already restored dual-topology under
+        // the same mutate lock (snapshot moved). Skip a second restore so
+        // empty children_snapshot cannot wipe the enter checkpoint.
+        if (!cp.topology_restored) {
+            stats.field_records_rolled = workspace_flat_->abort_restore_dual_topology(
+                cp.mutation_log_size, std::move(cp.children_snapshot));
+            if (stats.field_records_rolled > 0) {
+                bump_mutation_log_rollback_count();
+                if (nested_boundary)
+                    bump_edsl_nested_atomic_rollback();
+            }
+        } else if (last_boundary_rollback_stats_.children_column_restored) {
+            stats = last_boundary_rollback_stats_;
         }
         // Issue #1281 / #1502: dual restore sealed inside abort_restore_dual_topology.
         stats.children_column_restored = true;
