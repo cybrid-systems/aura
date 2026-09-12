@@ -8,11 +8,12 @@ module;
 #include "observability_metrics.h"
 #include "reflect/hygiene_validate.hh" // Issue #1611: MutationReflectHealth
 #include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
-#include "compiler/value_tags.h"         // Issue #2259: pure tag hot path + metrics
-#include "core/cpp26_contract_stats.h"   // Issue #2259: AURA_HOT_RECORD on apply_closure
-#include "serve/fiber.h"                 // Issue #2650: aura_eval_c_stack_depth_slot (fiber-local)
-#include "typed_mutation_audit.h"        // Issue #3066: pin composite/batch join mid
-#include "core/capability_model.hh"      // Issue #3132: check_macro_self_evo
+#include "compiler/value_tags.h"       // Issue #2259: pure tag hot path + metrics
+#include "core/cpp26_contract_stats.h" // Issue #2259: AURA_HOT_RECORD on apply_closure
+#include "serve/fiber.h"               // Issue #2650: aura_eval_c_stack_depth_slot (fiber-local)
+#include "compiler/mutation_hold_budget.h" // Issue #3693: reject_enabled gate for eval_flat poll
+#include "typed_mutation_audit.h"          // Issue #3066: pin composite/batch join mid
+#include "core/capability_model.hh"        // Issue #3132: check_macro_self_evo
 #include "security_capabilities.h"       // Issue #3652: kEffectMacroSelfEvo (allow-arm MSE mirror)
 #include "core/security_event.hh"        // Issue #3652: allow-arm MSE mirror (#3542 face)
 #include "core/security_event_wal.hh"    // Issue #3652: macro-mutate-needs-macro-self-evo
@@ -138,6 +139,29 @@ static std::string closest_match(std::string_view name, std::span<const std::str
         auto _ev_ = (expr);                                                                        \
         f->set_cached_value(current_id, _ev_.val);                                                 \
         return _ev_;                                                                               \
+    } while (0)
+
+// Issue #3693: production hold-budget consume on the holder thread
+// during eval_flat / lockless mutate bodies. Soft/Off: one load, no
+// check_gc_safepoint. Happy path (cancel not armed): two loads.
+// After consume, callers must not keep writing — return the Diagnostic.
+[[nodiscard]] static std::optional<Diagnostic> eval_flat_hold_budget_safepoint_poll() noexcept {
+    if (!mutation_hold_budget_reject_enabled())
+        return std::nullopt;
+    if (aura::serve::aura_hold_budget_cancel_armed() == 0)
+        return std::nullopt;
+    const bool held = aura_evaluator_mutation_boundary_depth() > 0;
+    aura::serve::Fiber::check_gc_safepoint();
+    if (held && aura_evaluator_mutation_boundary_depth() == 0) {
+        return Diagnostic{ErrorKind::InternalError, "hold-budget-cancel: outermost force-released"};
+    }
+    return std::nullopt;
+}
+
+#define EVAL_FLAT_HOLD_BUDGET_POLL()                                                               \
+    do {                                                                                           \
+        if (auto _hb3693 = eval_flat_hold_budget_safepoint_poll())                                 \
+            return std::unexpected(*_hb3693);                                                      \
     } while (0)
 
 // Issue #739: acquire fence before epoch load so invalidate_function's
@@ -2396,6 +2420,7 @@ static bool deny_macro_opt_out_without_mse(Evaluator& ev, aura::ast::NodeId id) 
 }
 
 EvalResult Evaluator::eval_flat_apply_mutate_rebind(std::span<const types::EvalValue> a) {
+    EVAL_FLAT_HOLD_BUDGET_POLL();
     if (a.size() < 2 || !is_string(a[0]) || !is_string(a[1]))
         return std::unexpected(
             aura::diag::Diagnostic{aura::diag::ErrorKind::ArityMismatch,
@@ -2413,6 +2438,8 @@ EvalResult Evaluator::eval_flat_apply_mutate_rebind(std::span<const types::EvalV
     auto sym = canonical_pool()->intern(name);
     aura::ast::NodeId old_define = aura::ast::NULL_NODE;
     for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
+        if ((id & 63u) == 0)
+            EVAL_FLAT_HOLD_BUDGET_POLL();
         if (flat.is_free_slot(id))
             continue;
         auto v = flat.get(id);
@@ -2536,6 +2563,7 @@ EvalResult Evaluator::eval_flat_apply_mutate_rebind(std::span<const types::EvalV
 }
 
 EvalResult Evaluator::eval_flat_apply_mutate_replace_value(std::span<const types::EvalValue> a) {
+    EVAL_FLAT_HOLD_BUDGET_POLL();
     if (a.size() < 3 || !is_int(a[0]) || !is_string(a[2]))
         return std::unexpected(aura::diag::Diagnostic{
             aura::diag::ErrorKind::ArityMismatch,
@@ -2641,6 +2669,7 @@ EvalResult Evaluator::eval_flat_apply_mutate_replace_value(std::span<const types
 }
 
 EvalResult Evaluator::eval_flat_apply_mutate_tweak_literal(std::span<const types::EvalValue> a) {
+    EVAL_FLAT_HOLD_BUDGET_POLL();
     if (a.size() < 2 || !is_int(a[0]) || !is_int(a[1]) || !workspace_flat_)
         return std::unexpected(
             aura::diag::Diagnostic{aura::diag::ErrorKind::ArityMismatch,
@@ -2706,6 +2735,7 @@ EvalResult Evaluator::eval_flat_apply_mutate_tweak_literal(std::span<const types
 // (mutate:atomic-batch) for the "mutate:remove-node" sub-op.
 // Issue #1688: removes target from ALL parents (DAG), same as public.
 EvalResult Evaluator::eval_flat_apply_mutate_remove_node(std::span<const types::EvalValue> a) {
+    EVAL_FLAT_HOLD_BUDGET_POLL();
     if (a.empty() || !is_int(a[0]))
         return std::unexpected(aura::diag::Diagnostic{
             aura::diag::ErrorKind::ArityMismatch, "batch :remove-node requires a node-id (int)"});
@@ -2757,6 +2787,7 @@ EvalResult Evaluator::eval_flat_apply_mutate_remove_node(std::span<const types::
 // (so all existing IDs stay valid) then routes through
 // InsertChildMutator. Returns the parsed new-child NodeId.
 EvalResult Evaluator::eval_flat_apply_mutate_insert_child(std::span<const types::EvalValue> a) {
+    EVAL_FLAT_HOLD_BUDGET_POLL();
     if (a.size() < 3 || !is_int(a[0]) || !is_int(a[1]) || !is_string(a[2]))
         return std::unexpected(aura::diag::Diagnostic{
             aura::diag::ErrorKind::ArityMismatch,
@@ -2836,6 +2867,7 @@ EvalResult Evaluator::eval_flat_apply_mutate_insert_child(std::span<const types:
 // read-only + hygiene + lazy COW + dep-graph query + typecheck +
 // ownership validation + mark_define_dirty_fn + repopulate_dep_graph.
 EvalResult Evaluator::eval_flat_apply_mutate_set_body(std::span<const types::EvalValue> a) {
+    EVAL_FLAT_HOLD_BUDGET_POLL();
     if (a.size() < 2 || !is_string(a[0]) || !is_string(a[1]) || !workspace_flat_ ||
         !workspace_pool_)
         return std::unexpected(aura::diag::Diagnostic{
@@ -2988,6 +3020,7 @@ EvalResult Evaluator::eval_flat_apply_mutate_set_body(std::span<const types::Eva
 // GeneralObjectPin only wires create-pair lifetime, not sibling isolation.
 // Metric: replace_pattern_temp_arena_corruption_prevented_total.
 EvalResult Evaluator::eval_flat_apply_mutate_replace_pattern(std::span<const types::EvalValue> a) {
+    EVAL_FLAT_HOLD_BUDGET_POLL();
     if (a.size() < 2 || !is_string(a[0]) || !is_string(a[1]) || !workspace_flat_ ||
         !workspace_pool_)
         return std::unexpected(aura::diag::Diagnostic{
@@ -3091,6 +3124,8 @@ EvalResult Evaluator::eval_flat_apply_mutate_replace_pattern(std::span<const typ
     std::vector<StableNodeRef> matches;
     matches.reserve(static_cast<std::size_t>(end_id) / 4 + 1);
     for (aura::ast::NodeId id = 0; id < end_id; ++id) {
+        if ((id & 63u) == 0)
+            EVAL_FLAT_HOLD_BUDGET_POLL();
         if (flat.root != aura::ast::NULL_NODE && id != flat.root &&
             flat.parent_of(id) == aura::ast::NULL_NODE && !flat.is_macro_introduced(id))
             continue;
@@ -3254,6 +3289,7 @@ EvalResult Evaluator::eval_flat_apply_mutate_replace_pattern(std::span<const typ
 // Issue #1900: lockless variant of (mutate:replace-subtree).
 // Hygiene gate kept inline (per-#142 contract).
 EvalResult Evaluator::eval_flat_apply_mutate_replace_subtree(std::span<const types::EvalValue> a) {
+    EVAL_FLAT_HOLD_BUDGET_POLL();
     if (a.size() < 2 || !is_int(a[0]) || !is_string(a[1]) || !workspace_flat_ || !workspace_pool_)
         return std::unexpected(aura::diag::Diagnostic{
             aura::diag::ErrorKind::ArityMismatch,
@@ -3397,6 +3433,7 @@ EvalResult Evaluator::eval_flat_apply_mutate_replace_subtree(std::span<const typ
 
 // Issue #1900: lockless variant of (mutate:splice).
 EvalResult Evaluator::eval_flat_apply_mutate_splice(std::span<const types::EvalValue> a) {
+    EVAL_FLAT_HOLD_BUDGET_POLL();
     if (a.size() < 3 || !is_int(a[0]) || !is_int(a[1]) || !workspace_flat_ || !workspace_pool_)
         return std::unexpected(
             aura::diag::Diagnostic{aura::diag::ErrorKind::ArityMismatch,
@@ -3488,6 +3525,7 @@ EvalResult Evaluator::eval_flat_apply_mutate_splice(std::span<const types::EvalV
 // Issue #1700: re-validate parent_of_target after parse; resolve parents
 // via parent_of (not O(N×C)); is_live_node not is_valid_in post-restamp.
 EvalResult Evaluator::eval_flat_apply_mutate_wrap(std::span<const types::EvalValue> a) {
+    EVAL_FLAT_HOLD_BUDGET_POLL();
     if (a.size() < 2 || !is_int(a[0]) || !is_string(a[1]) || !workspace_flat_ || !workspace_pool_)
         return std::unexpected(aura::diag::Diagnostic{
             aura::diag::ErrorKind::ArityMismatch,
@@ -3624,6 +3662,7 @@ EvalResult Evaluator::eval_flat_apply_mutate_wrap(std::span<const types::EvalVal
 // :allow-macro? #t or global allow unlocks. mark_dirty_upward + restamp
 // after success.
 EvalResult Evaluator::eval_flat_apply_mutate_rename_symbol(std::span<const types::EvalValue> a) {
+    EVAL_FLAT_HOLD_BUDGET_POLL();
     if (a.size() < 2 || !is_string(a[0]) || !is_string(a[1]) || !workspace_flat_ ||
         !workspace_pool_)
         return std::unexpected(
@@ -3722,6 +3761,7 @@ EvalResult Evaluator::eval_flat_apply_mutate_rename_symbol(std::span<const types
 // replace-subtree). Moving a macro-internal node into a non-macro
 // parent would hoist macro scope bindings — hygiene contract leak.
 EvalResult Evaluator::eval_flat_apply_mutate_move_node(std::span<const types::EvalValue> a) {
+    EVAL_FLAT_HOLD_BUDGET_POLL();
     if (a.size() < 3 || !is_int(a[0]) || !is_int(a[1]) || !is_int(a[2]) || !workspace_flat_)
         return std::unexpected(aura::diag::Diagnostic{
             aura::diag::ErrorKind::ArityMismatch,
@@ -3811,6 +3851,7 @@ EvalResult Evaluator::eval_flat_apply_mutate_move_node(std::span<const types::Ev
 
 // Issue #1900: lockless variant of (mutate:inline-call).
 EvalResult Evaluator::eval_flat_apply_mutate_inline_call(std::span<const types::EvalValue> a) {
+    EVAL_FLAT_HOLD_BUDGET_POLL();
     if (a.empty() || !is_int(a[0]) || !workspace_flat_ || !workspace_pool_)
         return std::unexpected(aura::diag::Diagnostic{aura::diag::ErrorKind::ArityMismatch,
                                                       "batch :inline-call requires call-node-id"});
@@ -4218,6 +4259,7 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
         }
 
         while (true) {
+            EVAL_FLAT_HOLD_BUDGET_POLL();
             current_flat_ = f;
             current_pool_ = p;
             // Issue #3457: SymId intern is pool-local. TCO / nested
