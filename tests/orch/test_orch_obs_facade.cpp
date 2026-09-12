@@ -818,6 +818,71 @@ int run_test_orch_obs_facade() {
         apply_dev_audit_defaults();
     }
 
+    // ── Issue #3673: Guard-live Policy A reject → typed deny (not empty=#t)
+    {
+        std::println("\n--- #3673: agent-recv under-boundary typed deny ---");
+        CompilerService cs3673;
+        aura::compiler::typed_audit::apply_production_audit_defaults();
+        CHECK(cs3673.eval(R"((orch:spawn-agent "3673-a" (lambda () 0) :attach-mailbox #t))")
+                  .has_value(),
+              "3673 setup: mailbox agent spawned");
+        auto& ev3673 = cs3673.evaluator();
+        using Evaluator3673 = std::remove_reference_t<decltype(ev3673)>;
+        bool guard_ok = true;
+        {
+            auto guard_r =
+                Evaluator3673::MutationBoundaryGuard::try_acquire(ev3673, /*pending=*/1, &guard_ok);
+            CHECK(guard_r.has_value(), "3673 setup: Guard try_acquire");
+            if (guard_r) {
+                auto guard = std::move(*guard_r);
+                // AC1: production + Guard-live + wait=#t → typed deny, not empty.
+                const auto ok1 =
+                    cs3673.eval(R"((hash-ref (orch:agent-recv "3673-a" :wait #t) "ok"))");
+                CHECK(ok1 && is_bool(*ok1) && !as_bool(*ok1), "3673 AC1: ok=#f under Guard");
+                const auto empty1 =
+                    cs3673.eval(R"((hash-ref (orch:agent-recv "3673-a" :wait #t) "empty"))");
+                CHECK(empty1 && is_bool(*empty1) && !as_bool(*empty1),
+                      "3673 AC1: empty=#f (typed deny, not quiet empty)");
+                const auto deny1 =
+                    cs3673.eval(R"((hash-ref (orch:agent-recv "3673-a" :wait #t) "deny-detail"))");
+                CHECK(deny1 && is_string(*deny1),
+                      "3673 AC1: deny-detail present (recv-under-boundary)");
+                const auto s3251 =
+                    cs3673.eval(R"((hash-ref (orch:agent-recv "3673-a" :wait #t) "schema-3251"))");
+                CHECK(s3251 && is_int(*s3251) && as_int(*s3251) == 3251,
+                      "3673 AC1: deny interned (#3251)");
+                const auto s2347 =
+                    cs3673.eval(R"((hash-ref (orch:agent-recv "3673-a" :wait #t) "schema-2347"))");
+                CHECK(s2347 && is_int(*s2347) && as_int(*s2347) == 2347,
+                      "3673 AC1: schema-2347 row (#2188/#2347 lineage)");
+            }
+        }
+        // AC2: no Guard, quiet empty (try semantics — wait #t would park
+        // forever on a quiet mailbox; Policy A only short-circuits under
+        // Guard) → empty=#t, no deny intern.
+        const auto empty2 =
+            cs3673.eval(R"((hash-ref (orch:agent-recv "3673-a" :wait #f) "empty"))");
+        CHECK(empty2 && is_bool(*empty2) && as_bool(*empty2),
+              "3673 AC2: quiet empty stays empty=#t");
+        const auto no_deny =
+            cs3673.eval(R"((hash-ref (orch:agent-recv "3673-a" :wait #f) "schema-3251"))");
+        CHECK(!(no_deny && is_int(*no_deny)), "3673 AC2: no deny-class on quiet empty");
+        // AC4: Soft / Off — even under Guard, empty=#t (zero extra intern;
+        // the spawn tenant of the deny path is production-gated).
+        aura::compiler::typed_audit::apply_dev_audit_defaults();
+        {
+            auto guard_r2 =
+                Evaluator3673::MutationBoundaryGuard::try_acquire(ev3673, /*pending=*/1, &guard_ok);
+            if (guard_r2) {
+                auto guard2 = std::move(*guard_r2);
+                const auto empty4 =
+                    cs3673.eval(R"((hash-ref (orch:agent-recv "3673-a" :wait #t) "empty"))");
+                CHECK(empty4 && is_bool(*empty4) && as_bool(*empty4),
+                      "3673 AC4: Soft + Guard-live stays empty=#t (no typed deny)");
+            }
+        }
+    }
+
     std::println(
         "\n=== #2589+#2636+2884+#3013+#3212+#3251+#3336+#3565+#3642: {}/{} checks passed ===",
         g_passed, g_passed + g_failed);

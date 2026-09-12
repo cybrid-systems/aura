@@ -53,7 +53,7 @@ def main() -> int:
     must("Issue #3642", "AC1 mailbox cites", mb)
     # Format-robust: locate the stale_handoff parameter, then walk back to
     # the recv definition (clang-format may reflow the signature lines).
-    sig = mb.find("bool* stale_handoff)")
+    sig = mb.find("bool* stale_handoff")
     rstart = mb.rfind("std::optional<MailMessage> recv(", 0, sig) if sig >= 0 else -1
     if sig < 0 or rstart < 0:
         fails.append("AC1: 4-arg recv overload missing")
@@ -82,7 +82,7 @@ def main() -> int:
         fails.append("AC2: agent_recv stale plumbing missing")
     else:
         aw = spawn[aidx : aidx + 1400]
-        if "h.mailbox->recv(wait, timeout_ms, h.id, &stale_handoff)" not in aw:
+        if "h.mailbox->recv(wait, timeout_ms, h.id, &stale_handoff" not in aw:
             fails.append("AC2: agent_recv not passing stale out-param")
         if "h.last_recv_stale_handoff = true;" not in aw:
             fails.append("AC2: handle flag not set on stale")

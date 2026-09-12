@@ -6920,6 +6920,21 @@ def cmd_lint():
     if r != 0:
         fail("Issue #3672 bp scope tenant linter failed — run python3 scripts/check_bp_scope_tenant_3672.py")
         return r
+    # Issue #3673 (#2188/#2347/#3565 residual): orch:agent-recv mapped the
+    # Guard-live Policy A reject to a quiet empty=#t — Agents busy-looped
+    # with no deny-class. The mailbox surfaces a per-recv rejected_boundary
+    # flag, agent_recv rides it on the handle (same shape as the #3642
+    # stale flag), and production recv maps it to a typed deny
+    # (deny-class=other / deny-detail=recv-under-boundary, #3251 intern,
+    # emit_retry=#t). Policy A stays (no park); Soft stays empty=#t.
+    rub3673_script = ROOT / "scripts" / "check_recv_under_boundary_3673.py"
+    if not rub3673_script.exists():
+        fail(f"missing {rub3673_script}")
+        return 1
+    r = run([sys.executable, str(rub3673_script)], cwd=ROOT)
+    if r != 0:
+        fail("Issue #3673 recv under boundary linter failed — run python3 scripts/check_recv_under_boundary_3673.py")
+        return r
     # Issue #3301: atomic-batch batch-level MacroIntroduced fail-closed
     # audit. Dispatcher walks each sub-op's target node-id arg before the
     # sub-op loop and denies the whole batch if a target is MacroIntroduced

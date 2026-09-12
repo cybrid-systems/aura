@@ -1551,6 +1551,11 @@ struct AgentHandle {
     // steal-cleared; nullopt to the host, not a success). Consumed once by
     // the Aura orch:agent-recv typed handoff-required surface (#3565 AC2).
     bool last_recv_stale_handoff = false;
+    // Issue #3673: last agent_recv hit the #2188 Guard-live Policy A
+    // reject (boundary live, non-blocking empty). Rides the handle like
+    // last_recv_stale_handoff so orch:agent-recv can surface a typed
+    // deny instead of empty=#t busy-loop bait.
+    bool last_recv_boundary_reject = false;
     // Issue #2159: fiber-native helper (null when disabled / spawn failed).
     // Joined by join_agent after body; cancelled on stop / dtor (no host thread).
     serve::Fiber* keepalive_helper = nullptr;
@@ -3942,17 +3947,23 @@ agent_recv(AgentHandle& h, bool wait = true, int timeout_ms = -1) {
         return std::nullopt;
     }
     bool stale_handoff = false;
-    auto m = h.mailbox->recv(wait, timeout_ms, h.id, &stale_handoff);
+    bool boundary_reject = false;
+    auto m = h.mailbox->recv(wait, timeout_ms, h.id, &stale_handoff, &boundary_reject);
     if (stale_handoff) {
         // Issue #3642: stale held_ref is not a successful recv (AC1) — bare
         // C++ hosts see nullopt. The signal rides the handle so the Aura
         // orch:agent-recv typed handoff-required (#3565 AC2) still fires.
         // Consume-side counters already bumped by the mailbox gate.
         h.last_recv_stale_handoff = true;
+        h.last_recv_boundary_reject = false;
         g_orch_module_stats.recv_empty_total.fetch_add(1, std::memory_order_relaxed);
         return std::nullopt;
     }
     h.last_recv_stale_handoff = false;
+    // Issue #3673: the Guard-live Policy A reject rides the handle too
+    // (same shape as the #3642 stale flag) so orch:agent-recv can surface
+    // a typed deny instead of empty=#t busy-loop bait.
+    h.last_recv_boundary_reject = boundary_reject;
     if (m) {
         // Issue #3565: production unstamped held_ref is not a successful
         // recv (mailbox already cleared payload). Soft delivers + counts.
