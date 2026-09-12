@@ -82,6 +82,13 @@ import aura.compiler.cache;
 import aura.diag;
 import aura.core.error; // Issue #807/#808: AuraResult bridge
 
+// Issue #3680: weak probe — JIT-less links may not resolve the strong
+// definition (typed_mutation_audit_hooks.cpp); null ⇒ fail open to the
+// joint bump (Soft/Off semantics). Purview placement AFTER the contiguous
+// import block (post-module-declaration imports must be contiguous), not
+// the GMF (only preprocessor inclusions allowed there).
+extern "C" int aura_production_defaults_active_probe() noexcept __attribute__((weak));
+
 // Issue #1885: CompilerService is the primary Compiler-layer entry.
 // Dependency direction: Compiler → Core + Parser (not reverse).
 // Layering authority: src/core/module_boundary.ixx — update it when
@@ -818,10 +825,50 @@ public:
         // bridge_epoch + AOT func table (lockstep with defuse_version_
         // inside compact). Survivors then restamp Closure::bridge_epoch
         // to the new value under the same interlock.
+        // Issue #3680: the bump is owner-scoped like the #3605 facade.
+        // Stamp the compacting Evaluator as reemit/register owner TLS
+        // (same CascadeEvalOwnerGuard shape as
+        // atomic_bump_epochs_and_stamp_bridge), then freeze the process
+        // clocks entirely when the facade predicate
+        // (aura_aot_bump_will_be_owner_scoped) predicts an owner-scoped
+        // table bump: no C-bridge dual-write, no g_aot_table_epoch
+        // fetch_add, no notify — peers' dual-fresh stays green on
+        // unrelated defines (#2841/#2951/#3605 tax removed from compact).
+        // Soft / Off / single-eval keep the joint bump (probe false or
+        // map <= 1). No second epoch domain: the skip path advances
+        // nothing and compact survivors restamp to the unchanged current
+        // epoch via the existing #1526 restamp (no-op value-wise);
+        // defuse_version_ stays evaluator-local. Shared hook callers
+        // (truncate #1739, commit_panic_checkpoint #1728) inherit the
+        // same owner-scoping.
         evaluator_.install_bridge_epoch_bump_fn([](void* svc) {
             if (!svc)
                 return;
             auto* s = static_cast<CompilerService*>(svc);
+            struct CompactBumpOwnerGuard {
+                void* prev_reemit;
+                void* prev_reg;
+                explicit CompactBumpOwnerGuard(void* e) noexcept
+                    : prev_reemit(aura_aot_get_reemit_owner_eval())
+                    , prev_reg(aura_aot_get_register_owner_eval()) {
+                    aura_aot_set_reemit_owner_eval(e);
+                    aura_aot_set_register_owner_eval(e);
+                }
+                ~CompactBumpOwnerGuard() noexcept {
+                    aura_aot_set_reemit_owner_eval(prev_reemit);
+                    aura_aot_set_register_owner_eval(prev_reg);
+                }
+                CompactBumpOwnerGuard(const CompactBumpOwnerGuard&) = delete;
+                CompactBumpOwnerGuard& operator=(const CompactBumpOwnerGuard&) = delete;
+            } owner_guard(static_cast<void*>(&s->evaluator_));
+            // Issue #3680: freeze process clocks when the facade predicate
+            // says the table bump would be owner-scoped anyway (production
+            // multi-eval throttle armed). Probe via weak symbol with a
+            // null-check so JIT-less links fail open to the joint bump.
+            if (aura_production_defaults_active_probe != nullptr &&
+                aura_production_defaults_active_probe() != 0 &&
+                aura_aot_bump_will_be_owner_scoped() != 0)
+                return;
             s->bump_bridge_epoch();
             // Dual-domain with JIT aura_closure_call (#1508 / #1524).
             aura_aot_bump_func_table_epoch();

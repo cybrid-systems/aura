@@ -6788,6 +6788,21 @@ def cmd_lint():
     if r != 0:
         fail("Issue #3679 envframe scan order linter failed — run python3 scripts/check_envframe_scan_order_3679.py")
         return r
+    # Issue #3680 (#2841/#2951/#3605 residual): the CompilerService ctor
+    # hook installed the compact_env_frames dual-epoch bump as a naked
+    # joint writer — under production multi-eval every EnvFrame compact
+    # force-staled ALL peer live closures of unrelated defines. Gate pins:
+    # hook owner TLS guard -> facade predicate -> bumps order, the probe +
+    # will_be_owner_scoped skip returning before any process-clock bump,
+    # the #3605/#3300 facade surface untouched, and no new epoch domain.
+    cos3680_script = ROOT / "scripts" / "check_compact_owner_scope_3680.py"
+    if not cos3680_script.exists():
+        fail(f"missing {cos3680_script}")
+        return 1
+    r = run([sys.executable, str(cos3680_script)], cwd=ROOT)
+    if r != 0:
+        fail("Issue #3680 compact owner-scope linter failed — run python3 scripts/check_compact_owner_scope_3680.py")
+        return r
     # Issue #3649 (#2952/#3096/#2690 residual): the storm-exit edge drives
     # residual coverage-verify. storm_exit_force_full_active now==0 &&
     # prev!=0 branch runs one maybe_coverage_verify_min_dirty when
