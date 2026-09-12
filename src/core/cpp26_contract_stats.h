@@ -32,7 +32,8 @@ extern "C" int aura_production_defaults_active_probe() noexcept;
 //   AURA_HOT_RECORD()           — bump hotpath_invariant_hits_total
 //   AURA_HOT_CHECK(expr)        — enforce / observe / no-op per hot mode
 //   AURA_HOT_CONTRACT(expr)     — RECORD + CHECK (preferred one-liner;
-//                                 NDEBUG OFF: one armed() load, #3501)
+//                                 NDEBUG OFF: one armed() load, #3501;
+//                                 PACK: unlikely abort, no success RECORD #3702)
 //   AURA_COLD_CONTRACT(expr)    — cold-edge enforce (debug/enforce only)
 //   AURA_HOT_CHECK_CONSTEXPR    — constexpr-friendly column bounds (hot)
 //
@@ -135,6 +136,9 @@ inline constexpr int kHotContractSingleLoadIssue = 3501;
 // Issue #3666: AURA_PRODUCTION_PACK compiles Harden as a constant so
 // as_int / view_at / opcode() do not load hot_contract_harden_armed_cache.
 inline constexpr int kHotContractProductionPackIssue = 3666;
+// Issue #3702: pack happy-path CONTRACT is unlikely abort only — no
+// sampled RECORD atomic on as_int / view_at success.
+inline constexpr int kHotContractPackHappyNoRecordIssue = 3702;
 #if defined(AURA_PRODUCTION_PACK)
 inline constexpr bool kHotContractProductionPackCompileArmed = true;
 #else
@@ -434,13 +438,17 @@ inline void record_hotpath_invariant_hit_sampled() noexcept {
 // Soft-observe+Harden as a constant. as_int / view_at / opcode() do not
 // load hot_contract_harden_armed_cache. Soft/unit keep the #3490 cache
 // (tests may flip apply_production). Failure still observe + trap + abort.
+// Issue #3702: happy-path CONTRACT/CHECK is [[unlikely]] abort only —
+// no sampled RECORD atomic on success (RECORD stays on AURA_HOT_RECORD
+// sites and debug builds). Unarmed NDEBUG without PACK is still the
+// #3501 one-load skip.
 #if defined(AURA_HOT_MODE_OFF) && defined(AURA_PRODUCTION_PACK)
 #undef AURA_HOT_RECORD
 #define AURA_HOT_RECORD() ::aura::core::cpp26::record_hotpath_invariant_hit_sampled()
 #undef AURA_HOT_CHECK
 #define AURA_HOT_CHECK(expr)                                                                       \
     do {                                                                                           \
-        if (!(expr)) {                                                                             \
+        if (!(expr)) [[unlikely]] {                                                                \
             ::aura::core::cpp26::observe_hot_contract_false();                                     \
             ::aura::core::cpp26::record_hotpath_contract_harden_trap();                            \
             std::abort();                                                                          \
@@ -449,8 +457,11 @@ inline void record_hotpath_invariant_hit_sampled() noexcept {
 #undef AURA_HOT_CONTRACT
 #define AURA_HOT_CONTRACT(expr)                                                                    \
     do {                                                                                           \
-        AURA_HOT_RECORD();                                                                         \
-        AURA_HOT_CHECK(expr);                                                                      \
+        if (!(expr)) [[unlikely]] {                                                                \
+            ::aura::core::cpp26::observe_hot_contract_false();                                     \
+            ::aura::core::cpp26::record_hotpath_contract_harden_trap();                            \
+            std::abort();                                                                          \
+        }                                                                                          \
     } while (0)
 #endif
 
