@@ -30,6 +30,12 @@
 //   AC8 (#3603): Soft / WAL-off — ring hit line carries miss=0; ring
 //        miss emits no synthetic line; WAL on + Soft strategy → no
 //        fallback / no miss line (no extra I/O).
+//   AC11 (#3674): production + WAL + both in-memory faces miss → the
+//        default evolution-audit-decision fold (NO :durable) auto-durables:
+//        durable-hit=1, last-se-reason filled, typed-summary-from-wal=1,
+//        typed-trail-miss stays 1, observe-only unchanged.
+//   AC12 (#3674): Soft + WAL on → default fold durable-hit=0 (no auto
+//        scan / no I/O); explicit :durable under Soft still refused.
 
 #include "test_harness.hpp"
 
@@ -574,6 +580,108 @@ static void ac10_grant_mid_without_guard_soft_epoch() {
     aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
 }
 
+// ── AC11 (#3674): production + WAL + rings miss → fold auto-durable ──
+static void ac11_wal_fold_autoscan_3674() {
+    std::println("\n--- #3674 AC11: default fold auto-durable under production ---");
+    reset_all();
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    CHECK(aura::core::wal_slo::wal_mid_lookup_segments() == 8,
+          "AC11 pre: production lookup window = 8 segments");
+    const auto dir = fresh_wal_dir_3603("ac11-3674");
+    CHECK(ev.enable_security_event_wal(dir.string()), "AC11: SE WAL enabled");
+    CHECK(ev.enable_mutation_audit_wal(dir.string()), "AC11: mutation WAL enabled");
+    auto& ring = ::aura::core::security_event::g_security_event_ring();
+    const auto ts = now_ms_3603();
+    // TARGET durable: SE WAL row + typed-summary sidecar row at mid 4242.
+    CHECK(persist_se_3603(4242, "test:3674", "3674-target", ts), "AC11: TARGET persisted");
+    append_se_3603(ring, /*deny=*/false, 4242, "test:3674", "3674-target");
+    aura::core::audit_wal::TypedSummaryWalRecord tsr{};
+    tsr.mutation_id = 4242;
+    tsr.seq = 1;
+    tsr.timestamp_ms = ts;
+    tsr.outcome = 0; // AuditOutcome::Success
+    CHECK(aura::core::audit_wal::g_mutation_audit_wal().append_typed_summary(tsr),
+          "AC11: typed-summary sidecar row appended");
+    // Wrap the in-memory SE ring (typed trail never held 4242 →
+    // typed_hit=0; ring wrap → se_ring_has_mid=0). Ring-only appends —
+    // the WAL window stays tight around TARGET (#3603 geometry).
+    for (std::uint64_t i = 0; i < 1030; ++i)
+        append_se_3603(ring, /*deny=*/true, 8000 + i, "test:3674-wrap", "wrap");
+    // Default fold — NO :durable keyword (#3674 contract).
+    auto href = [&](std::string_view key) -> std::int64_t {
+        auto r = cs.eval(std::format(
+            "(hash-ref (engine:metrics \"query:evolution-audit-decision\" 4242) \"{}\")", key));
+        if (!r || !is_int(*r))
+            return -1;
+        return as_int(*r);
+    };
+    CHECK(href("durable-hit") == 1,
+          "AC11: default fold auto-durable after wrap (durable-hit=1, no :durable)");
+    CHECK(href("forensic-source") == 3, "AC11: forensic-source=3 (durable evidence)");
+    CHECK(href("typed-summary-from-wal") == 1,
+          "AC11: typed-summary-from-wal=1 (sidecar hit, additive #3242)");
+    CHECK(href("typed-outcome") == 1, "AC11: typed-outcome filled from sidecar (Success)");
+    CHECK(href("typed-trail-miss") == 1,
+          "AC11: typed-trail-miss stays 1 (WAL is not the typed trail, #3498)");
+    CHECK(href("se-mid-miss") == 1,
+          "AC11: ring wrap keeps se-mid-miss face (additive #3284, unchanged)");
+    CHECK(href("observe-only") == 1, "AC11: observe-only face unchanged (#3114)");
+    CHECK(href("suggested-next-code") >= 0,
+          "AC11: suggested-next fold still wired (no playbook exec, #3246)");
+    // last-se-reason filled from the SE WAL record (not empty — the wrap
+    // no longer reads as "no evidence / idle" on the one-query fold).
+    auto rsn = cs.eval(
+        "(hash-ref (engine:metrics \"query:evolution-audit-decision\" 4242) \"last-se-reason\")");
+    bool reason_filled = false;
+    if (rsn && is_string(*rsn)) {
+        auto heap = ev.string_heap();
+        const auto sidx = as_string_idx(*rsn);
+        reason_filled = sidx < heap.size() && heap[sidx].find("3674-target") != std::string::npos;
+    }
+    CHECK(reason_filled, "AC11: last-se-reason filled from WAL (not empty)");
+    ev.disable_security_event_wal();
+    ev.disable_mutation_audit_wal();
+    std::filesystem::remove_all(dir);
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+}
+
+// ── AC12 (#3674): Soft + WAL on → no auto scan; :durable refused ──
+static void ac12_soft_no_autoscan_3674() {
+    std::println("\n--- #3674 AC12: Soft / WAL-on keeps zero-I/O contract ---");
+    reset_all();
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    const auto dir = fresh_wal_dir_3603("ac12-3674");
+    CHECK(ev.enable_security_event_wal(dir.string()), "AC12: SE WAL enabled (dev)");
+    CHECK(ev.enable_mutation_audit_wal(dir.string()), "AC12: mutation WAL enabled (dev)");
+    const auto ts = now_ms_3603();
+    CHECK(persist_se_3603(4242, "test:3674", "3674-target", ts), "AC12: TARGET persisted");
+    // No ring append at all: both in-memory faces miss. Soft must NOT
+    // auto-scan (no disk I/O) and must refuse explicit :durable.
+    auto href = [&](std::string_view extra, std::string_view key) -> std::int64_t {
+        auto r = cs.eval(std::format(
+            "(hash-ref (engine:metrics \"query:evolution-audit-decision\" 4242{}) \"{}\")", extra,
+            key));
+        if (!r || !is_int(*r))
+            return -1;
+        return as_int(*r);
+    };
+    CHECK(href("", "durable-hit") == 0,
+          "AC12: Soft default fold keeps durable-hit=0 (no auto scan / no I/O)");
+    CHECK(href(" \"durable\"", "durable-hit") == 0,
+          "AC12: explicit :durable under Soft still refused (durable-hit=0)");
+    CHECK(href("", "wal-lookup-window-miss") == 0,
+          "AC12: no scan ran under Soft (window-miss face stays 0)");
+    ev.disable_security_event_wal();
+    ev.disable_mutation_audit_wal();
+    std::filesystem::remove_all(dir);
+}
+
 } // namespace
 
 int run_test_audit_replay_join() {
@@ -588,6 +696,8 @@ int run_test_audit_replay_join() {
     ac8_soft_wal_off_silent();
     ac9_grant_mid_joins_boundary_typedmid();
     ac10_grant_mid_without_guard_soft_epoch();
+    ac11_wal_fold_autoscan_3674();
+    ac12_soft_no_autoscan_3674();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }

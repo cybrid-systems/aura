@@ -191,8 +191,10 @@ static void ac8_3284_se_mid_miss() {
     CHECK(src.find("insert_kv(\"se-mid-miss\", se_mid_miss)") != std::string::npos,
           "se-mid-miss key inserted");
     // Soft / no :durable still zero disk I/O: the WAL path remains gated on
-    // want_durable + (production_defaults_active() || Full strategy), per #3298.
-    CHECK(src.find("if (want_durable && join_mid != 0 &&") != std::string::npos,
+    // (want_durable || auto_durable) + (production_defaults_active() || Full
+    // strategy), per #3298/#3674 — auto_durable itself requires
+    // production/Full, so Soft reaches find_recent_* neither way.
+    CHECK(src.find("if ((want_durable || auto_durable) && join_mid != 0 &&") != std::string::npos,
           "durable WAL path still gated (AC3 zero disk I/O)");
     CHECK(src.find("(production_defaults_active() || get_strategy() == AuditStrategy::Full)") !=
               std::string::npos,
@@ -211,7 +213,7 @@ static void ac9_wal_window_miss_3603() {
     CHECK(kv != std::string::npos, "insert_kv(\"wal-lookup-window-miss\", ...) present");
     // Gate alignment: computed inside the want_durable + production/Full
     // + WAL-enabled block (Soft / observe-only keeps 0, no extra I/O).
-    const auto gate = src.find("if (want_durable && join_mid != 0 &&");
+    const auto gate = src.find("if ((want_durable || auto_durable) && join_mid != 0 &&");
     CHECK(gate != std::string::npos, "durable WAL gate unchanged");
     CHECK(kv != std::string::npos && gate != std::string::npos && kv > gate,
           "window-miss insert sits after the durable gate");
@@ -226,6 +228,48 @@ static void ac9_wal_window_miss_3603() {
     CHECK(src.find("insert_kv(\"observe-only\", 1)") != std::string::npos, "observe-only stays 1");
 }
 
+// AC10 (#3674): production/Full auto-durable fold — the default (no
+// :durable) one-query fold runs the same bounded find_recent_* window
+// security-audit uses when BOTH in-memory rings miss; Soft/Off keep zero
+// WAL I/O; typed-trail-miss is never rewritten; observe-only untouched.
+static void ac10_wal_fold_autoscan_3674() {
+    std::println("\n--- AC10 (#3674): production auto-durable fold ---");
+    auto src = read_file("src/compiler/evaluator_primitives_security.cpp");
+    CHECK(!src.empty(), "evaluator_primitives_security.cpp readable");
+    CHECK(src.find("Issue #3674") != std::string::npos, "cites #3674");
+    CHECK(src.find("const bool auto_durable") != std::string::npos, "auto_durable arm present");
+    CHECK(src.find("join_mid != 0 && !typed_hit && !se_ring_has_mid && wal_enabled") !=
+              std::string::npos,
+          "auto_durable gated on both rings miss + WAL enabled");
+    CHECK(src.find("if ((want_durable || auto_durable) && join_mid != 0 &&") != std::string::npos,
+          "durable gate admits auto_durable beside :durable");
+    // Soft zero-I/O preserved: the scan block itself stays production/Full
+    // -gated (Soft reaches find_recent_* neither via :durable nor auto).
+    const auto gate = src.find("if ((want_durable || auto_durable) && join_mid != 0 &&");
+    CHECK(gate != std::string::npos, "gate present");
+    if (gate != std::string::npos) {
+        const auto window_end = std::min<std::size_t>(gate + 240, src.size());
+        const std::string window(src, gate, window_end - gate);
+        CHECK(
+            window.find("production_defaults_active() || get_strategy() == AuditStrategy::Full") !=
+                std::string::npos,
+            "scan block still production/Full-gated (Soft: no I/O)");
+    }
+    // Additive faces preserved: typed-trail-miss never rewritten (#3498);
+    // sidecar fill stays additive (#3242); observe-only + suggested-next
+    // unchanged (#3114/#3246).
+    CHECK(src.find("insert_kv(\"typed-trail-miss\", typed_miss)") != std::string::npos,
+          "typed-trail-miss stays the miss face (WAL is not the typed trail)");
+    CHECK(src.find("insert_kv(\"observe-only\", 1)") != std::string::npos,
+          "observe-only unchanged");
+    CHECK(src.find("decide_evolution_suggested_next") != std::string::npos,
+          "suggested-next fold untouched");
+    // Bounded scan: same lookup window as security-audit (no new unbounded
+    // path; wal_mid_lookup_segments() untouched per #3674 non-goals).
+    CHECK(src.find("wal_mid_lookup_segments()") != std::string::npos,
+          "bounded wal_mid_lookup_segments() window reused");
+}
+
 } // namespace
 
 int main() {
@@ -238,6 +282,7 @@ int main() {
     ac7_typed_summary_3242();
     ac8_3284_se_mid_miss();
     ac9_wal_window_miss_3603();
+    ac10_wal_fold_autoscan_3674();
     if (g_failed)
         return 1;
     std::println("evolution-audit-decision forensic-source (#3152): OK ({} passed)", g_passed);
