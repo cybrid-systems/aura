@@ -8677,7 +8677,8 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
                                             const aura::ast::StringPool& pool,
                                             const aura::ast::MutationRecord& rec,
                                             aura::diag::DiagnosticCollector& diag,
-                                            void* per_defuse_index_tracker) {
+                                            void* per_defuse_index_tracker,
+                                            std::span<const aura::ast::MutationRecord> extra_recs) {
     // Issue #3003: start of partial is authoritative until a not-SOLVED
     // Production/Full solve flips the engine flag.
     last_type_export_authoritative_ = true;
@@ -8908,6 +8909,23 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
             }
         }
     }
+    // Issue #3686: Production/Full post-mutate unions every MutationRecord
+    // written under this outermost Guard. extra_recs is empty on Soft/Off
+    // and on single-op (zero extra — still the primary `rec` / log.back()).
+    // Reuse affected_subtree_from_mutation per record; cone cap (#2560)
+    // still applies on the unioned set below.
+    if (!extra_recs.empty()) {
+        std::unordered_set<NodeId> seen(affected.begin(), affected.end());
+        for (const auto& extra : extra_recs) {
+            if (&extra == &rec)
+                continue;
+            auto local = affected_subtree_from_mutation(flat, extra);
+            for (auto id : local) {
+                if (seen.insert(id).second)
+                    affected.push_back(id);
+            }
+        }
+    }
     if (affected.empty()) {
         // Issue #3228: residual CastOp persist + empty mutation cone
         // (columnar under-mark). Remirror then pull cascade so residual
@@ -8963,6 +8981,13 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
         std::vector<NodeId> seeds = affected;
         if (rec.target_node != aura::ast::NULL_NODE && rec.target_node < flat.size())
             seeds.push_back(rec.target_node);
+        // Issue #3686: earlier Guard records seed type_dep expand too.
+        for (const auto& extra : extra_recs) {
+            if (&extra == &rec)
+                continue;
+            if (extra.target_node != aura::ast::NULL_NODE && extra.target_node < flat.size())
+                seeds.push_back(extra.target_node);
+        }
         std::uint64_t expanded = 0;
         std::unordered_set<std::uint32_t> seed_tids;
         for (auto id : seeds) {
@@ -9039,6 +9064,17 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
     if (rec.parent_id != NULL_NODE && rec.parent_id < flat.size())
         collect_occurrence_dirty_if_exprs_in_subtree(flat, rec.parent_id, occurrence_targets,
                                                      occurrence_seen);
+    // Issue #3686: occurrence dirty Ifs under earlier Guard records.
+    for (const auto& extra : extra_recs) {
+        if (&extra == &rec)
+            continue;
+        if (extra.target_node != NULL_NODE && extra.target_node < flat.size())
+            collect_occurrence_dirty_if_exprs_in_subtree(flat, extra.target_node,
+                                                         occurrence_targets, occurrence_seen);
+        if (extra.parent_id != NULL_NODE && extra.parent_id < flat.size())
+            collect_occurrence_dirty_if_exprs_in_subtree(flat, extra.parent_id, occurrence_targets,
+                                                         occurrence_seen);
+    }
     // Issue #689: deep and/or/not predicates in mutation-affected subtrees.
     for (auto id : affected)
         collect_deep_predicate_if_exprs_in_subtree(flat, pool, id, occurrence_targets,
@@ -9074,6 +9110,12 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
         }
         // Rebinding type change (rec.target_node).
         add_tid_from_node(rec.target_node);
+        // Issue #3686: earlier Guard records' type changes too.
+        for (const auto& extra : extra_recs) {
+            if (&extra == &rec)
+                continue;
+            add_tid_from_node(extra.target_node);
+        }
 
         if (!touched_type_ids.empty()) {
             std::unordered_set<NodeId> seen(affected.begin(), affected.end());
@@ -9128,18 +9170,26 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
         const auto soft = partial_cone_soft_cap();
         const auto hard = partial_cone_hard_cap();
         // Seeds: mutation primary + parent (locality for truncate).
-        std::array<aura::ast::NodeId, 4> seed_buf{};
-        std::size_t seed_n = 0;
+        // Issue #3686: preserve extra Guard-record targets under truncate
+        // so a two-Define batch cannot drop the earlier sibling.
+        std::vector<aura::ast::NodeId> seed_buf;
+        seed_buf.reserve(4 + extra_recs.size() * 2);
         auto push_seed = [&](aura::ast::NodeId id) {
-            if (id == aura::ast::NULL_NODE || seed_n >= seed_buf.size())
+            if (id == aura::ast::NULL_NODE)
                 return;
-            seed_buf[seed_n++] = id;
+            seed_buf.push_back(id);
         };
         push_seed(rec.target_node);
         push_seed(rec.parent_id);
         if (!affected.empty())
             push_seed(affected.front());
-        const auto seeds = std::span<const aura::ast::NodeId>(seed_buf.data(), seed_n);
+        for (const auto& extra : extra_recs) {
+            if (&extra == &rec)
+                continue;
+            push_seed(extra.target_node);
+            push_seed(extra.parent_id);
+        }
+        const auto seeds = std::span<const aura::ast::NodeId>(seed_buf.data(), seed_buf.size());
 
         const auto orig_sz = affected.size();
         if (m)
