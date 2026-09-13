@@ -2334,6 +2334,24 @@ SolveResult ConstraintSystem::solve_delta_impl(std::vector<Constraint>* unresolv
     // leftover-worklist re-escalate via production_escalated_).
     production_escalated_ = false;
     forced_timeout_this_call_ = false;
+    // Issue #3757: production #3169 partial-clear zeros the worklist so
+    // query:type cannot see leftover roots, but unsolved EQUALs stay in
+    // constraints_. Without this latch the dirty_count_==0 path vacuous-
+    // SOLVEs the next empty delta. Consume on leftover SOLVED only —
+    // CONFLICT / TIMEOUT keep the latch so a later empty delta cannot
+    // stamp green. Soft never sets the flag (helper no-op). Live
+    // occurrence goals still fall through to #2647 after leftover SOLVED.
+    if (pending_full_after_partial_clear_) {
+        if (!constraints_.empty()) {
+            const SolveResult leftover = solve(unresolved_out);
+            if (leftover != SolveResult::SOLVED)
+                return leftover;
+            pending_full_after_partial_clear_ = false;
+            mark_clean();
+        } else {
+            pending_full_after_partial_clear_ = false;
+        }
+    }
     // Issue #2647: empty dirty worklist is NOT proof of SOLVED when live
     // OccurrenceGoals (or residual priority roots) still need revalidation
     // against Union-Find. Vacuous green after clear_blame_context left goals
@@ -3199,7 +3217,12 @@ void ConstraintSystem::clear_partial_goals_and_unresolved() noexcept {
     pending_full_solve_roots_.clear();
     occurrence_priority_roots_.clear();
     let_poly_dirty_roots_.clear();
-    dirty_count_ = 0;
+    // Issue #3757: lockstep empty worklist — dirty_count_==0 with leftover
+    // constraint_dirty_ bits let the next solve_delta vacuous-SOLVE.
+    mark_clean();
+    dirty_count_ = 0; // keep #3169 linter needle
+    if (!constraints_.empty())
+        pending_full_after_partial_clear_ = true;
     production_escalated_ = true;
     if (metrics_) {
         static_cast<struct CompilerMetrics*>(metrics_)->solve_delta_partial_cleared_total.fetch_add(

@@ -2038,6 +2038,213 @@ static void ac3169_6_source_and_linter() {
           "3169 AC6: build.py wires linter");
 }
 
+// ── Issue #3757: clear_partial_goals must mark_clean + leftover full re-unify ──
+// Residual of #3169: production TIMEOUT/CONFLICT clear zeroed dirty_count_
+// without constraint_dirty_ lockstep. Next empty solve_delta vacuous-SOLVED
+// while unsolved EQUALs sat in constraints_. Soft helper still no-ops.
+// Live occurrence goals still force #2647 reverify. No new query key.
+static void ac3757_1_production_clear_no_vacuous_solved() {
+    std::println("\n--- #3757 AC1: production TIMEOUT clear; next delta not vacuous SOLVED ---");
+    using aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+    auto save =
+        g_typed_mutation_audit_counters.production_defaults_active.load(std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.production_defaults_active.store(1, std::memory_order_relaxed);
+
+    TypeRegistry reg;
+    ConstraintSystem cs(reg);
+    CompilerMetrics metrics;
+    cs.set_metrics(&metrics);
+    cs.set_unify_gradual_mode(aura::compiler::GradualPermissiveness::Strict);
+    auto v = cs.fresh_var();
+    Constraint eq1;
+    eq1.kind = Constraint::EQUAL;
+    eq1.lhs = v;
+    eq1.rhs = reg.int_type();
+    Constraint eq2;
+    eq2.kind = Constraint::EQUAL;
+    eq2.lhs = v;
+    eq2.rhs = reg.bool_type();
+    cs.add_delta(std::move(eq1));
+    cs.add_delta(std::move(eq2));
+    CHECK(cs.occurrence_goals_size() == 0, "3757 AC1: no occurrence goals");
+    cs.force_next_delta_timeout_for_test(true);
+    auto injected = cs.solve_delta();
+    CHECK(injected == SolveResult::TIMEOUT, "3757 AC1: force-timeout stays raw TIMEOUT");
+    auto post = cs.escalate_if_production(injected);
+    CHECK(post != SolveResult::SOLVED, "3757 AC1: production escalate not SOLVED on conflict");
+    CHECK(!cs.is_dirty(), "3757 AC1: dirty_count_==0 after #3169 clear");
+    CHECK(!cs.has_constraint_dirty_bit_for_test(),
+          "3757 AC1: no leftover constraint_dirty_ bits (mark_clean lockstep)");
+    CHECK(cs.pending_full_after_partial_clear_for_test(),
+          "3757 AC1: leftover EQUALs latch pending full re-unify");
+    CHECK(cs.occurrence_goals_size() == 0, "3757 AC1: still no occurrence goals");
+
+    auto next = cs.solve_delta();
+    CHECK(next != SolveResult::SOLVED,
+          "3757 AC1: next empty delta is not vacuous SOLVED (leftover EQUAL re-unify)");
+    CHECK(next == SolveResult::CONFLICT || next == SolveResult::TIMEOUT,
+          "3757 AC1: leftover inconsistent EQUALs are CONFLICT or TIMEOUT");
+    CHECK(cs.pending_full_after_partial_clear_for_test(),
+          "3757 AC1: latch stays until leftover SOLVED (next empty delta cannot green)");
+    auto again = cs.solve_delta();
+    CHECK(again != SolveResult::SOLVED,
+          "3757 AC1: subsequent empty delta still not vacuous SOLVED");
+
+    g_typed_mutation_audit_counters.production_defaults_active.store(save,
+                                                                     std::memory_order_relaxed);
+}
+
+static void ac3757_2_live_goals_still_force_reverify() {
+    std::println("\n--- #3757 AC2: live occurrence goals still force reverify (#2647) ---");
+    using aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+    auto save =
+        g_typed_mutation_audit_counters.production_defaults_active.load(std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.production_defaults_active.store(1, std::memory_order_relaxed);
+    const auto prev_tier = aura::compiler::typecheck_metrics_tier();
+    aura::compiler::set_typecheck_metrics_tier(aura::compiler::TypecheckMetricsTier::Full);
+
+    // Independent of the leftover latch: empty dirty + live goal still
+    // enters #2647 forced reverify (solve_delta_impl must not skip this
+    // after the #3757 leftover-full check).
+    TypeRegistry reg;
+    ConstraintSystem cs(reg);
+    CompilerMetrics metrics;
+    cs.set_metrics(&metrics);
+    auto v = cs.fresh_var();
+    cs.note_occurrence_goal(v, v, /*pred=*/1, /*mut=*/3757, /*epoch=*/0);
+    cs.mark_clean();
+    CHECK(!cs.is_dirty(), "3757 AC2: dirty cleared");
+    CHECK(!cs.pending_full_after_partial_clear_for_test(),
+          "3757 AC2: no leftover-clear latch on mark_clean");
+    const auto forced0 = metrics.occurrence_goal_forced_reverify_total.load();
+    const auto prev0 = metrics.occurrence_goal_vacuous_solve_prevented_total.load();
+    auto r = solve_delta_occurrence(cs, {}, nullptr, &metrics);
+    CHECK(metrics.occurrence_goal_forced_reverify_total.load() >= forced0 + 1,
+          "3757 AC2: occurrence_goal_forced_reverify_total +1");
+    CHECK(metrics.occurrence_goal_vacuous_solve_prevented_total.load() >= prev0 + 1,
+          "3757 AC2: vacuous_solve_prevented +1");
+    (void)r;
+
+    // After production partial-clear, occurrence_goals_ are not dropped
+    // (#3169 clears roots, not the goal table) so live goals remain.
+    TypeRegistry reg2;
+    ConstraintSystem cs2(reg2);
+    CompilerMetrics metrics2;
+    cs2.set_metrics(&metrics2);
+    cs2.set_unify_gradual_mode(aura::compiler::GradualPermissiveness::Strict);
+    auto w = cs2.fresh_var();
+    Constraint e1;
+    e1.kind = Constraint::EQUAL;
+    e1.lhs = w;
+    e1.rhs = reg2.int_type();
+    Constraint e2;
+    e2.kind = Constraint::EQUAL;
+    e2.lhs = w;
+    e2.rhs = reg2.bool_type();
+    cs2.add_delta(std::move(e1));
+    cs2.add_delta(std::move(e2));
+    cs2.note_occurrence_goal(w, w, /*pred=*/2, /*mut=*/3757, /*epoch=*/0);
+    CHECK(cs2.occurrence_goals_size() >= 1, "3757 AC2: goal table live before clear");
+    cs2.force_next_delta_timeout_for_test(true);
+    (void)cs2.escalate_if_production(cs2.solve_delta());
+    CHECK(cs2.occurrence_goals_size() >= 1,
+          "3757 AC2: #3169/#3757 clear does not drop occurrence_goals_");
+    auto next = cs2.solve_delta();
+    CHECK(next != SolveResult::SOLVED,
+          "3757 AC2: leftover EQUALs + live goals cannot vacuous-SOLVE");
+
+    aura::compiler::set_typecheck_metrics_tier(prev_tier);
+    g_typed_mutation_audit_counters.production_defaults_active.store(save,
+                                                                     std::memory_order_relaxed);
+}
+
+static void ac3757_3_soft_helper_noops() {
+    std::println("\n--- #3757 AC3: Soft helper still no-ops ---");
+    using aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+    auto save =
+        g_typed_mutation_audit_counters.production_defaults_active.load(std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.production_defaults_active.store(0, std::memory_order_relaxed);
+
+    TypeRegistry reg;
+    ConstraintSystem cs(reg);
+    CompilerMetrics metrics;
+    cs.set_metrics(&metrics);
+    auto v = cs.fresh_var();
+    Constraint eq;
+    eq.kind = Constraint::EQUAL;
+    eq.lhs = v;
+    eq.rhs = reg.int_type();
+    cs.add_delta(std::move(eq));
+    CHECK(cs.is_dirty(), "3757 AC3: Soft dirty after add_delta");
+    CHECK(cs.has_constraint_dirty_bit_for_test(), "3757 AC3: Soft dirty bit set");
+    cs.force_next_delta_timeout_for_test(true);
+    auto injected = cs.solve_delta();
+    CHECK(injected == SolveResult::TIMEOUT, "3757 AC3: Soft keeps TIMEOUT");
+    auto post = cs.escalate_if_production(injected);
+    CHECK(post == SolveResult::TIMEOUT, "3757 AC3: Soft escalate is pass-through");
+    CHECK(cs.is_dirty(), "3757 AC3: helper no-op — dirty_count_ stays");
+    CHECK(cs.has_constraint_dirty_bit_for_test(),
+          "3757 AC3: helper no-op — constraint_dirty_ bits stay");
+    CHECK(!cs.pending_full_after_partial_clear_for_test(),
+          "3757 AC3: Soft never latches pending_full_after_partial_clear_");
+
+    const auto impl = read_file("src/compiler/type_checker_impl.cpp");
+    const auto helper_pos =
+        impl.find("void ConstraintSystem::clear_partial_goals_and_unresolved() noexcept");
+    CHECK(helper_pos != std::string::npos, "3757 AC3: helper present");
+    if (helper_pos != std::string::npos) {
+        const auto helper_block = impl.substr(helper_pos, 1600);
+        CHECK(
+            helper_block.find("if (!aura::compiler::typed_audit::production_defaults_active())") !=
+                std::string::npos,
+            "3757 AC3: production gate still first in helper");
+        CHECK(helper_block.find("mark_clean()") != std::string::npos,
+              "3757 AC3: mark_clean is inside the production-gated helper");
+    }
+
+    g_typed_mutation_audit_counters.production_defaults_active.store(save,
+                                                                     std::memory_order_relaxed);
+}
+
+static void ac3757_4_source_cite_no_invent() {
+    std::println("\n--- #3757 AC4: source-cite + no invent / no new query key ---");
+    const auto ixx = read_file("src/compiler/type_checker.ixx");
+    const auto impl = read_file("src/compiler/type_checker_impl.cpp");
+    const auto t = read_file("tests/compiler/test_solve_delta_unresolved_export.cpp");
+    CHECK(ixx.find("pending_full_after_partial_clear_") != std::string::npos,
+          "3757 AC4: latch member in type_checker.ixx");
+    CHECK(ixx.find("Issue #3757") != std::string::npos, "3757 AC4: ixx cites #3757");
+    CHECK(impl.find("pending_full_after_partial_clear_") != std::string::npos,
+          "3757 AC4: latch consumed in solve_delta_impl");
+    const auto helper_pos =
+        impl.find("void ConstraintSystem::clear_partial_goals_and_unresolved() noexcept");
+    CHECK(helper_pos != std::string::npos, "3757 AC4: #3169 helper retained");
+    if (helper_pos != std::string::npos) {
+        const auto helper_block = impl.substr(helper_pos, 1600);
+        CHECK(helper_block.find("mark_clean()") != std::string::npos,
+              "3757 AC4: helper calls mark_clean");
+        CHECK(helper_block.find("dirty_count_ = 0;") != std::string::npos,
+              "3757 AC4: keep #3169 dirty_count_ = 0 needle");
+        CHECK(helper_block.find("pending_full_after_partial_clear_ = true") != std::string::npos,
+              "3757 AC4: helper latches leftover full re-unify");
+    }
+    CHECK(impl.find("Issue #2647: empty dirty worklist is NOT proof of SOLVED") !=
+              std::string::npos,
+          "3757 AC4: #2647 live-goal reverify path retained");
+    CHECK(t.find("ac3757_1_production_clear_no_vacuous_solved") != std::string::npos,
+          "3757 AC4: AC1 in this suite");
+    CHECK(read_file("tests/compiler/test_issue_3757.cpp").empty(),
+          "3757 AC4: no invent test_issue_3757.cpp");
+    CHECK(read_file("tests/issues/test_issue_3757.cpp").empty(),
+          "3757 AC4: no tests/issues/test_issue_3757.cpp");
+    CHECK(read_file("docs/design/3757-partial-clear-dirty-lockstep.md").empty(),
+          "3757 AC4: no docs/design");
+    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp") +
+                   read_file("src/compiler/evaluator_primitives_query_type_stats.cpp");
+    CHECK(q.find("schema-3757") == std::string::npos && q.find("issue-3757") == std::string::npos,
+          "3757 AC4: no new query key");
+}
+
 // ── Issue #3331: Soft allow_timeout_commit TIMEOUT quarantines residual roots ──
 // AC1 Soft + allow_timeout_commit + TIMEOUT → next empty solve_delta SOLVED /
 //        zero priority/pending/touched/let-poly roots (no live residual seed).
@@ -4085,6 +4292,11 @@ int run_test_solve_delta_unresolved_export() {
     ac3169_4_additive_counter_only();
     ac3169_5_existing_3003_2963_2913_preserved();
     ac3169_6_source_and_linter();
+    std::println("\n=== Issue #3757: partial-clear lockstep dirty + leftover re-unify ===");
+    ac3757_1_production_clear_no_vacuous_solved();
+    ac3757_2_live_goals_still_force_reverify();
+    ac3757_3_soft_helper_noops();
+    ac3757_4_source_cite_no_invent();
     std::println("\n=== Issue #3331: Soft TIMEOUT allow_timeout_commit quarantines residual ===");
     ac3331_1_soft_timeout_quarantines_roots();
     ac3331_2_timeout_unresolved_not_authoritative();
