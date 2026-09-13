@@ -10,6 +10,7 @@
 
 #include "test_harness.hpp"
 
+#include <format>
 #include <fstream>
 #include <print>
 #include <string>
@@ -21,6 +22,8 @@
 
 import std;
 import aura.compiler.macro_expansion;
+import aura.compiler.service;
+import aura.compiler.value;
 import aura.core;
 import aura.core.ast;
 
@@ -32,9 +35,14 @@ using aura::ast::NodeTag;
 using aura::ast::NULL_NODE;
 using aura::ast::StringPool;
 using aura::ast::SyntaxMarker;
+using aura::compiler::CompilerService;
 using aura::compiler::macro_exp::clone_macro_body;
 using aura::compiler::macro_exp::g_macro_rest_param_nested_qq_hits_total;
 using aura::compiler::macro_exp::g_unquote_splicing_hygiene_mismatch_total;
+using aura::compiler::types::as_pair_idx;
+using aura::compiler::types::as_string_idx;
+using aura::compiler::types::is_pair;
+using aura::compiler::types::is_string;
 using aura::test::g_failed;
 using aura::test::g_passed;
 
@@ -131,6 +139,23 @@ static NodeId build_qq_let_unquote(FlatAST& src, StringPool& sp) {
     return src.add_call(qq_var, std::span<const NodeId>{qq_args});
 }
 
+// Issue #3754: `(let ((y 1)) ,'(let ((y 2)) y))
+// (quasiquote (let ((y 1)) (unquote (quote (let ((y 2)) y)))))
+static NodeId build_qq_let_unquote_quoted_let(FlatAST& src, StringPool& sp) {
+    auto y = sp.intern("y");
+    auto inner_let = src.add_let(y, src.add_literal(2), src.add_variable(y));
+    auto quote_var = src.add_variable(sp.intern("quote"));
+    const NodeId quote_args[] = {inner_let};
+    auto quoted = src.add_call(quote_var, std::span<const NodeId>{quote_args});
+    auto uq_var = src.add_variable(sp.intern("unquote"));
+    const NodeId uq_args[] = {quoted};
+    auto uq = src.add_call(uq_var, std::span<const NodeId>{uq_args});
+    auto outer_let = src.add_let(y, src.add_literal(1), uq);
+    auto qq_var = src.add_variable(sp.intern("quasiquote"));
+    const NodeId qq_args[] = {outer_let};
+    return src.add_call(qq_var, std::span<const NodeId>{qq_args});
+}
+
 // ── Issue #3183: mid-clone gensym ceiling / depth deny rollback + rest path
 // shares the ceiling. Source-cite (extends src/-aligned suite per #81934).
 // No tests/issues/test_issue_3183.cpp; no docs/design/3183-* per #1655.
@@ -175,7 +200,7 @@ static void ac3183_2_rest_path_shares_ceiling() {
         if (lim_pos != std::string::npos && ret_pos != std::string::npos) {
             // Cap check + #3183 cite sit above the note_* call; include lead-in.
             const auto win = me.substr(rest_pos, ret_pos - rest_pos);
-            CHECK(win.find("effective_max_gensym_map_size()") != std::string::npos,
+            CHECK(win.find("effective_max_gensym_map_size(") != std::string::npos,
                   "AC2: rest path checks effective_max_gensym_map_size()");
             CHECK(win.find("name_map->size() >= ") != std::string::npos,
                   "AC2: rest path checks name_map->size() >= cap");
@@ -300,7 +325,7 @@ static void ac3606_nested_qq_depth() {
           "3606 AC1: pre_scan unquote recurses at depth > 1");
     CHECK(me.find("kUnquoteCallerScopeDepth") != std::string::npos,
           "3606 AC1: caller-scope verbatim sentinel defined");
-    CHECK(me.find("bool in_quote = false, int qq_depth = 0);") != std::string::npos,
+    CHECK(me.find("bool in_quote = false, int qq_depth = 0,") != std::string::npos,
           "3606 AC1: clone signature threads int qq_depth");
     {
         auto pos = me.find("if (cname == \"unquote-splicing\") {");
@@ -667,8 +692,8 @@ int run_test_unquote_splicing_hygiene() {
             std::println("\n--- AC3181.5: source-cite in_quote param + local_in_quote ---");
             auto me = read_file("src/compiler/macro_expansion.cpp");
             CHECK(!me.empty(), "AC3181.5: macro_expansion.cpp readable");
-            auto pos_def = me.find("bool in_quote, int qq_depth) {");
-            auto pos_decl = me.find("bool in_quote = false, int qq_depth = 0);");
+            auto pos_def = me.find("bool in_quote, int qq_depth, CloneSessionPolicy session) {");
+            auto pos_decl = me.find("bool in_quote = false, int qq_depth = 0,");
             CHECK(pos_def != std::string::npos,
                   "AC3181.5: clone_macro_body_at_depth definition has in_quote param");
             CHECK(pos_decl != std::string::npos,
@@ -731,6 +756,123 @@ int run_test_unquote_splicing_hygiene() {
     // at depth > 1 is outer-template scope (qq_depth decrements); at
     // depth ≤ 1 caller-scope (#2807 preserved).
     ac3606_nested_qq_depth();
+
+    std::println("\n=== Issue #3754: nested pre_scan inherits qq_depth / quote Call stop ===");
+    {
+        const auto me = read_file("src/compiler/macro_expansion.cpp");
+        CHECK(me.find("Issue #3754") != std::string::npos, "3754: cites #3754");
+        CHECK(me.find("pre_scan(body_id, qq_depth)") != std::string::npos,
+              "3754: nested pre_scan inherits walk qq_depth");
+        CHECK(me.find("!local_in_quote && !local_in_unquote") != std::string::npos,
+              "3754: skip pre_scan in unquote caller-scope");
+        const auto pre = me.find("std::function<void(NodeId, int)> pre_scan = ");
+        CHECK(pre != std::string::npos, "3754: pre_scan present");
+        if (pre != std::string::npos) {
+            const auto win = me.substr(pre, 4500);
+            CHECK(win.find("cname == \"quote\"") != std::string::npos,
+                  "3754: Call-head quote stops pre_scan");
+            CHECK(win.find("qq_depth == kUnquoteCallerScopeDepth") != std::string::npos,
+                  "3754: pre_scan returns in caller-scope zone");
+        }
+    }
+    {
+        std::println("\n--- #3754 AC1: unquote-of-quoted-let — inner y User, outer gensym ---");
+        FlatAST src;
+        StringPool sp;
+        auto root = build_qq_let_unquote_quoted_let(src, sp);
+        FlatAST target;
+        StringPool tp;
+        NameMap nm;
+        auto c = clone_macro_body(target, tp, src, sp, root, nullptr, &nm,
+                                  SyntaxMarker::MacroIntroduced);
+        CHECK(c != NULL_NODE, "3754 AC1: clone ok");
+        auto mit = nm.find("y");
+        CHECK(mit != nm.end() && mit->second.rfind("__y_", 0) == 0,
+              "3754 AC1: outer template y gensym'd");
+        auto cv = target.get(c);
+        CHECK(cv.tag == NodeTag::Call && cv.children.size() >= 2, "3754 AC1: qq Call");
+        auto outer_let = target.get(cv.children[1]);
+        CHECK(outer_let.tag == NodeTag::Let, "3754 AC1: outer Let");
+        CHECK(std::string(tp.resolve(outer_let.sym_id)) != "y",
+              "3754 AC1: outer binding is gensym");
+        CHECK(outer_let.children.size() >= 2, "3754 AC1: outer Let has body");
+        auto uq = target.get(outer_let.children[1]);
+        CHECK(uq.tag == NodeTag::Call && uq.children.size() >= 2, "3754 AC1: unquote Call");
+        auto quoted = target.get(uq.children[1]);
+        NodeId inner_let_id = aura::ast::NULL_NODE;
+        if (quoted.tag == NodeTag::Call && quoted.children.size() >= 2)
+            inner_let_id = quoted.children[1];
+        else if (quoted.tag == NodeTag::Quote && !quoted.children.empty())
+            inner_let_id = quoted.children[0];
+        CHECK(inner_let_id != NULL_NODE, "3754 AC1: inner let");
+        auto inner_let = target.get(inner_let_id);
+        CHECK(inner_let.tag == NodeTag::Let, "3754 AC1: inner is Let");
+        CHECK(std::string(tp.resolve(inner_let.sym_id)) == "y",
+              "3754 AC1: inner binding stays User y");
+        CHECK(inner_let.children.size() >= 2, "3754 AC1: inner Let has body");
+        auto inner_ref = target.get(inner_let.children[1]);
+        CHECK(inner_ref.tag == NodeTag::Variable, "3754 AC1: inner ref Variable");
+        CHECK(inner_let.sym_id == inner_ref.sym_id, "3754 AC1: inner binding == ref (no split)");
+        CHECK(std::string(tp.resolve(inner_ref.sym_id)) == "y", "3754 AC1: inner ref stays y");
+    }
+    {
+        std::println("\n--- #3754 AC2: Call-head quote does not insert into name_map ---");
+        FlatAST src;
+        StringPool sp;
+        auto root = build_quote_call_let(src, sp);
+        FlatAST target;
+        StringPool tp;
+        NameMap nm;
+        auto c = clone_macro_body(target, tp, src, sp, root, nullptr, &nm,
+                                  SyntaxMarker::MacroIntroduced);
+        CHECK(c != NULL_NODE, "3754 AC2: clone ok");
+        CHECK(nm.find("x") == nm.end(), "3754 AC2: quoted x not in name_map");
+    }
+    {
+        std::println("\n--- #3754: template gensym still hygiene-protected ---");
+        CompilerService cs;
+        CHECK(cs.eval("(set-code \"(define-hygienic-macro (m3754) (let ((y 1)) y)) (m3754)\")")
+                  .has_value(),
+              "3754: set-code");
+        (void)cs.eval("(eval-current)");
+        auto* ws = cs.evaluator().workspace_flat();
+        CHECK(ws != nullptr, "3754: workspace");
+        aura::ast::NodeId gensym_let = NULL_NODE;
+        for (NodeId id = 0; id < ws->size(); ++id) {
+            if (!ws->is_live_node(id))
+                continue;
+            if (ws->tag(id) != NodeTag::Let)
+                continue;
+            auto* pool = cs.evaluator().workspace_pool();
+            if (!pool)
+                continue;
+            auto name = std::string(pool->resolve(ws->get(id).sym_id));
+            if (name.rfind("__y_", 0) == 0) {
+                gensym_let = id;
+                break;
+            }
+        }
+        if (gensym_let == NULL_NODE) {
+            CHECK(true, "3754: no expanded gensym Let in workspace (eval path skip)");
+        } else {
+            CHECK(ws->is_macro_introduced(gensym_let), "3754: template gensym is MacroIntroduced");
+            auto rv = cs.eval(std::format("(mutate:replace-value {} 99 \"3754-deny\")",
+                                          static_cast<unsigned>(gensym_let)));
+            std::string kind;
+            if (rv && is_pair(*rv)) {
+                auto idx = as_pair_idx(*rv);
+                auto& pairs = cs.evaluator().pairs();
+                if (idx < pairs.size() && is_string(pairs[idx].car)) {
+                    auto sidx = as_string_idx(pairs[idx].car);
+                    auto heap = cs.evaluator().string_heap();
+                    if (sidx < heap.size())
+                        kind = std::string(heap[sidx]);
+                }
+            }
+            CHECK(kind == "hygiene-protected", "3754: mutate on template gensym hygiene-protected");
+        }
+    }
+
     std::println("\n=== #2807 unquote-splicing hygiene: {} passed, {} failed ===", g_passed,
                  g_failed);
     return g_failed == 0 ? 0 : 1;

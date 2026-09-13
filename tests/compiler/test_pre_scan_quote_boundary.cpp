@@ -25,6 +25,7 @@
 
 #include "test_harness.hpp"
 
+#include <fstream>
 #include <print>
 #include <string>
 #include <string_view>
@@ -59,7 +60,7 @@ static void ac1_pre_scan_quote_boundary() {
     const auto pre_scan_pos = mxcpp.find("std::function<void(NodeId, int)> pre_scan = ");
     CHECK(pre_scan_pos != std::string::npos, "pre_scan closure found");
     if (pre_scan_pos != std::string::npos) {
-        const auto window_end = std::min<std::size_t>(pre_scan_pos + 4500, mxcpp.size());
+        const auto window_end = std::min<std::size_t>(pre_scan_pos + 7000, mxcpp.size());
         const std::string window(mxcpp, pre_scan_pos, window_end - pre_scan_pos);
         // Quote early-return present.
         CHECK(window.find("nv.tag == NodeTag::Quote") != std::string::npos,
@@ -170,8 +171,25 @@ static void ac4_soft_off_preserved() {
     // Single shared pre_scan closure — no second hygiene model.
     CHECK(mxcpp.find("std::function<void(NodeId, int)> pre_scan = ") != std::string::npos,
           "pre_scan closure present (single hygiene model)");
-    CHECK(mxcpp.find("pre_scan(body_id, /*qq_depth=*/0)") != std::string::npos,
-          "pre_scan entry point still pre_scan(body_id, qq_depth=0)");
+    CHECK(mxcpp.find("pre_scan(body_id, qq_depth)") != std::string::npos,
+          "pre_scan entry inherits walk qq_depth (#3754)");
+}
+
+static void ac3754_call_head_quote_stop() {
+    std::println("\n--- #3754: Call-head quote stops pre_scan like NodeTag::Quote ---");
+    auto mxcpp = read_file("src/compiler/macro_expansion.cpp");
+    CHECK(!mxcpp.empty(), "macro_expansion.cpp readable");
+    const auto pre_scan_pos = mxcpp.find("std::function<void(NodeId, int)> pre_scan = ");
+    CHECK(pre_scan_pos != std::string::npos, "pre_scan closure found");
+    if (pre_scan_pos != std::string::npos) {
+        const auto window = mxcpp.substr(pre_scan_pos, 4500);
+        CHECK(window.find("cname == \"quote\"") != std::string::npos,
+              "3754: Call-head quote in pre_scan");
+        const auto qcall = window.find("cname == \"quote\"");
+        const auto qtag = window.find("nv.tag == NodeTag::Quote");
+        CHECK(qcall != std::string::npos && qtag != std::string::npos && qcall < qtag,
+              "3754: Call-head quote stop before NodeTag::Quote");
+    }
 }
 
 } // namespace
@@ -181,6 +199,7 @@ int main() {
     ac2_quote_body_no_gensym();
     ac3_qq_unquote_splicing_unchanged();
     ac4_soft_off_preserved();
+    ac3754_call_head_quote_stop();
     if (g_failed)
         return 1;
     std::println("pre_scan Quote boundary (#3154): OK ({} passed)", g_passed);
