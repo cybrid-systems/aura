@@ -63,6 +63,17 @@ struct MovingFlagGuard {
     ~MovingFlagGuard() { set_moving_compact_enabled(prev); }
 };
 
+struct AutoArmPrefGuard3739 {
+    int prev = -1;
+    explicit AutoArmPrefGuard3739(int enable) {
+        prev = aura::ast::g_production_auto_arm_moving_pref.load(std::memory_order_acquire);
+        aura::ast::g_production_auto_arm_moving_pref.store(enable, std::memory_order_release);
+    }
+    ~AutoArmPrefGuard3739() {
+        aura::ast::g_production_auto_arm_moving_pref.store(prev, std::memory_order_release);
+    }
+};
+
 // Issue #3421: inject production + last densify window, restore on scope exit.
 struct ProdDensifyWindowGuard {
     std::uint32_t prev_prod;
@@ -743,6 +754,7 @@ static void ac12_3648_wiring_and_family() {
 
 static void ac13_3678_ffi_pointer_class_refuse();
 static void ac14_3681_production_pre_reemit_refuse();
+static void ac15_3739_auto_arm_apply_closure_refuse();
 
 int run_test_setcode_rebind_survive() {
     std::println("=== Issue #2569: set-code/rebind closure+hash survival ===");
@@ -764,8 +776,9 @@ int run_test_setcode_rebind_survive() {
     // Issue #3681: production refuses MustDeopt/dirty-stale wash onto the
     // pre-reemit body; unimpacted rebinds keep the #2569 recover.
     ac14_3681_production_pre_reemit_refuse();
-    std::println("\n=== #2569/#3421/#3469/#3602/#3634/#3648: {} passed, {} failed ===", g_passed,
-                 g_failed);
+    ac15_3739_auto_arm_apply_closure_refuse();
+    std::println("\n=== #2569/#3421/#3469/#3602/#3634/#3648: #3739 {} passed, {} failed ===",
+                 g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
 
@@ -931,6 +944,52 @@ static void ac14_3681_production_pre_reemit_refuse() {
         CHECK(got.has_value() && is_int(*got) && as_int(*got) == 2,
               "AC5: Soft keeps the #2569 recover (probe adds nothing)");
     }
+}
+
+// Issue #3739 AC2: production auto-arm Moving that relocates must
+// publish the densify window so apply_closure of a pre-move stale
+// closure is hard-refused (#3421 window or remap), not UAF.
+static void ac15_3739_auto_arm_apply_closure_refuse() {
+    std::println("\n--- #3739 AC2: auto-arm window publish hard-refuses apply_closure ---");
+    const auto arena_src = read_file("src/core/arena.ixx");
+    CHECK(arena_src.find("Issue #3739") != std::string::npos, "3739: auto-arm cites #3739");
+    CHECK(arena_src.find("publish_last_moving_densify_window") != std::string::npos,
+          "3739: auto-arm publishes densify window");
+    CHECK(read_file("tests/compiler/test_issue_3739.cpp").empty(),
+          "3739 AC4: no test_issue_3739.cpp");
+
+    std::array<aura::compiler::types::EvalValue, 1> args{make_int(1)};
+    CompilerService cs;
+    auto* m = metrics_of(cs);
+    const auto cid = make_stale_unimpacted_lambda(cs);
+    MovingFlagGuard on(1);
+    AutoArmPrefGuard3739 prod(1);
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    aura::core::moving_densify_health::reset_moving_densify_health_for_test();
+    aura::ast::g_last_moving_compact_ms.store(0, std::memory_order_release);
+    auto& ar = cs.evaluator().test_arena();
+    ar.request_defrag();
+    Pod16* objs[6]{};
+    void* slots[6]{};
+    for (int i = 0; i < 6; ++i)
+        objs[i] = ar.create_with_cover<Pod16>(&slots[i], nullptr, i, i + 1, i + 2, i + 3);
+    if (objs[0])
+        ar.destroy(objs[0]);
+    aura::ast::g_last_moving_compact_ms.store(0, std::memory_order_release);
+    void* extra{};
+    (void)ar.create_with_cover<Pod16>(&extra, nullptr, 9, 9, 9, 9);
+    CHECK(aura::core::moving_densify_health::g_last_auto_arm_fired.load(
+              std::memory_order_relaxed) != 0,
+          "3739 AC2: auto-arm fired");
+    CHECK(aura::core::moving_densify_health::g_last_had_moving_densify.load(
+              std::memory_order_relaxed) != 0,
+          "3739 AC2: auto-arm published Moving window");
+    const auto stale0 = m->closure_stale_returns.load(std::memory_order_relaxed);
+    auto got = cs.evaluator().apply_closure(cid, args);
+    CHECK(!got.has_value(), "3739 AC2: production apply_closure hard-refuses pre-move closure");
+    CHECK(m->closure_stale_returns.load(std::memory_order_relaxed) > stale0,
+          "3739 AC2: refuse uses #3421 closure_stale_returns");
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
 }
 
 #ifndef AURA_ISSUE_BATCH_MEMBER

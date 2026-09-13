@@ -9,7 +9,9 @@
 //   AC5: Schema additive; source-cite #2596 / #2495 / #2619
 
 #include "core/arena_auto_policy_stats.h"
+#include "core/flatast_restamp.hh"
 #include "core/moving_densify_health.hh"
+#include "compiler/typed_mutation_audit.h"
 #include "test_harness.hpp"
 
 #include <cstdint>
@@ -857,6 +859,131 @@ static void ac3633_health_probe_and_publish() {
           "3633: health publish face consumes the reconciliation flags");
 }
 
+// Issue #3739: production auto-arm live_compact(Moving) must publish the
+// densify window and Densify-restamp (same sites as Phase-5). Compact-hook
+// re_pin skips restamp when workspace_flat() is null.
+static void dummy_known_roots_3739(void*) noexcept {}
+
+static void punch_and_alloc_auto_arm(ASTArena& arena) {
+    arena.request_defrag();
+    aura::ast::g_last_moving_compact_ms.store(0, std::memory_order_release);
+    Pod16_3123* objs[8]{};
+    void* slots[8]{};
+    for (int i = 0; i < 8; ++i)
+        objs[i] = arena.create_with_cover<Pod16_3123>(&slots[i], nullptr, i, i + 1, i + 2, i + 3);
+    if (objs[0])
+        arena.destroy(objs[0]);
+    aura::ast::g_last_moving_compact_ms.store(0, std::memory_order_release);
+    void* extra[4]{};
+    for (int i = 0; i < 4; ++i)
+        (void)arena.create_with_cover<Pod16_3123>(&extra[i], nullptr, i + 10, i, i, i);
+}
+
+static void ac3739_auto_arm_publishes_window() {
+    std::println("\n--- #3739: auto-arm Moving publishes window + Densify restamp ---");
+    const auto arena_src = read_file("src/core/arena.ixx");
+    const auto fib = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+    CHECK(arena_src.find("Issue #3739") != std::string::npos, "3739: arena.ixx cites #3739");
+    CHECK(arena_src.find("publish_last_moving_densify_window") != std::string::npos &&
+              arena_src.find("g_arena_unified_restamp_densify_fn") != std::string::npos,
+          "3739: auto-arm publishes window and restamp probe");
+    CHECK(fib.find("set_arena_unified_restamp_densify_fn") != std::string::npos &&
+              fib.find("UnifiedRestampSite::Densify") != std::string::npos,
+          "3739: Evaluator wires Densify restamp for auto-arm");
+    CHECK(read_file("tests/compiler/test_issue_3739.cpp").empty(),
+          "3739 AC4: no test_issue_3739.cpp");
+    CHECK(read_file("docs/design/3739-auto-arm-window.md").empty(),
+          "3739 AC4: no docs/design/3739-*");
+
+    // AC1: hook + production pack + objects_moved>0 → published window
+    // matches that Moving result; Densify restamp bumps.
+    {
+        MovingFlagGuard3123 on(1);
+        AutoArmPrefGuard prod(1);
+        mdh::reset_moving_densify_health_for_test();
+        mdh::g_last_auto_arm_moving_success.store(0, std::memory_order_relaxed);
+        mdh::g_last_auto_arm_no_hook_fallback.store(0, std::memory_order_relaxed);
+        aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+        aura::ast::g_last_moving_compact_ms.store(0, std::memory_order_release);
+        CompilerService cs;
+        aura::compiler::typed_audit::apply_production_audit_defaults();
+        auto& arena = cs.arena();
+        CHECK(arena.has_known_roots_hook(), "3739 AC1: Evaluator known-roots hook bound");
+        const auto rs0 = aura::ast::unified_restamp_calls_total_v_read();
+        const auto moved0 = mdh::g_last_objects_moved.load(std::memory_order_relaxed);
+        punch_and_alloc_auto_arm(arena);
+        CHECK(mdh::g_last_auto_arm_fired.load(std::memory_order_relaxed) != 0,
+              "3739 AC1: auto-arm fired");
+        const auto published = mdh::g_last_objects_moved.load(std::memory_order_relaxed);
+        CHECK(mdh::g_last_had_moving_densify.load(std::memory_order_relaxed) != 0,
+              "3739 AC1: auto-arm Moving published had_moving_densify");
+        CHECK(published != moved0 ||
+                  mdh::g_last_auto_arm_moving_success.load(std::memory_order_relaxed) != 0 ||
+                  published == 0,
+              "3739 AC1: g_last_objects_moved is the auto-arm window");
+        CHECK(aura::ast::unified_restamp_calls_total_v_read() > rs0,
+              "3739 AC1: Densify restamp bumped unified_restamp_calls_total");
+        aura::compiler::typed_audit::apply_dev_audit_defaults();
+        (void)published;
+    }
+
+    // AC3: no hook → Soft fallback, no Moving relocate, no window publish.
+    {
+        MovingFlagGuard3123 on(1);
+        AutoArmPrefGuard prod(1);
+        mdh::reset_moving_densify_health_for_test();
+        mdh::g_last_auto_arm_moving_success.store(0, std::memory_order_relaxed);
+        mdh::g_last_auto_arm_no_hook_fallback.store(0, std::memory_order_relaxed);
+        aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+        aura::ast::g_last_moving_compact_ms.store(0, std::memory_order_release);
+        ASTArena arena(64 * 1024);
+        CHECK(!arena.has_known_roots_hook(), "3739 AC3: no known-roots hook");
+        punch_and_alloc_auto_arm(arena);
+        CHECK(mdh::g_last_auto_arm_no_hook_fallback.load(std::memory_order_relaxed) != 0 ||
+                  mdh::g_last_auto_arm_fired.load(std::memory_order_relaxed) != 0,
+              "3739 AC3: auto-arm attempted");
+        CHECK(mdh::g_last_auto_arm_moving_success.load(std::memory_order_relaxed) == 0,
+              "3739 AC3: no Moving success without hook");
+        CHECK(mdh::g_last_objects_moved.load(std::memory_order_relaxed) == 0,
+              "3739 AC3: no Moving window publish without hook");
+        CHECK(mdh::g_last_had_moving_densify.load(std::memory_order_relaxed) == 0,
+              "3739 AC3: had_moving_densify stays 0");
+    }
+
+    // AC3 with dummy hook: Moving may relocate; window must publish.
+    {
+        MovingFlagGuard3123 on(1);
+        AutoArmPrefGuard prod(1);
+        mdh::reset_moving_densify_health_for_test();
+        mdh::g_last_auto_arm_moving_success.store(0, std::memory_order_relaxed);
+        mdh::g_last_auto_arm_no_hook_fallback.store(0, std::memory_order_relaxed);
+        aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+        aura::ast::g_last_moving_compact_ms.store(0, std::memory_order_release);
+        ASTArena arena(64 * 1024);
+        arena.set_known_roots_hook(&dummy_known_roots_3739, nullptr);
+        punch_and_alloc_auto_arm(arena);
+        CHECK(mdh::g_last_auto_arm_fired.load(std::memory_order_relaxed) != 0,
+              "3739 AC1: dummy-hook auto-arm fired");
+        CHECK(mdh::g_last_had_moving_densify.load(std::memory_order_relaxed) != 0,
+              "3739 AC1: dummy-hook Moving published had_moving_densify");
+    }
+
+    // AC4: Soft/Off never auto-arms.
+    {
+        MovingFlagGuard3123 on(1);
+        AutoArmPrefGuard off(0);
+        mdh::reset_moving_densify_health_for_test();
+        aura::ast::g_last_moving_compact_ms.store(0, std::memory_order_release);
+        ASTArena arena(64 * 1024);
+        arena.set_known_roots_hook(&dummy_known_roots_3739, nullptr);
+        punch_and_alloc_auto_arm(arena);
+        CHECK(mdh::g_last_auto_arm_fired.load(std::memory_order_relaxed) == 0,
+              "3739 AC4: Soft/Off does not auto-arm");
+        CHECK(mdh::g_last_had_moving_densify.load(std::memory_order_relaxed) == 0,
+              "3739 AC4: no window publish");
+    }
+}
+
 int run_test_arena_moving_densify_health() {
     std::println("=== Issue #2619 + #2682 + #2775: Agent Moving densify health ===");
     ac1_query_exposes_window();
@@ -961,8 +1088,10 @@ int run_test_arena_moving_densify_health() {
         CHECK(t3370_self.find("3370 AC") != std::string::npos,
               "3370 AC6: existing test file cites #3370");
     }
-    std::println("\n=== #2619/#2682/#2775/#3123/#3200/#3368/#3370/#3633: {} passed, {} failed ===",
-                 g_passed, g_failed);
+    ac3739_auto_arm_publishes_window();
+    std::println(
+        "\n=== #2619/#2682/#2775/#3123/#3200/#3368/#3370/#3633/#3739: {} passed, {} failed ===",
+        g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
 

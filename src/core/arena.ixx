@@ -67,6 +67,17 @@ export inline void set_arena_mutation_boundary_depth_fn(ArenaMutationBoundaryDep
     return fn ? fn() : 0;
 }
 
+// Issue #3739: production auto-arm live_compact(Moving) restamp. Compact-hook
+// re_pin skips unified_restamp when workspace_flat() is null (alloc-path
+// auto-arm often has no workspace). Same Densify site as Phase-5 / #3677.
+// Optional probe (no-op when unset / evaluator not linked).
+using ArenaUnifiedRestampDensifyFn = void (*)(void* eval) noexcept;
+export inline std::atomic<ArenaUnifiedRestampDensifyFn> g_arena_unified_restamp_densify_fn{nullptr};
+
+export inline void set_arena_unified_restamp_densify_fn(ArenaUnifiedRestampDensifyFn fn) noexcept {
+    g_arena_unified_restamp_densify_fn.store(fn, std::memory_order_relaxed);
+}
+
 namespace arena_no_safepoint_detail {
     export inline std::atomic<bool>& no_safepoint_warned_flag() noexcept {
         static std::atomic<bool> flag{false};
@@ -3714,13 +3725,36 @@ public:
                             } else if (small_pool_.free_slot_count() == 0) {
                                 saved = 1;
                             }
-                        } else if (r.slots_recycled > 0 || r.objects_moved > 0 ||
-                                   r.bytes_reclaimed > 0) {
-                            // Issue #3404 AC1: real Moving success.
-                            aura::core::moving_densify_health::
-                                note_production_auto_arm_moving_success();
-                            real_reclaim = true;
-                            saved = 1;
+                        } else {
+                            // Issue #3739: auto-arm Moving remapped slots
+                            // but skipped the Phase-5 window publish +
+                            // Densify restamp. apply_closure then bailed
+                            // on g_last_objects_moved==0 (vacuous last
+                            // Phase-5 window) while last_object_remap_
+                            // still held moved keys.
+                            const auto root_fail =
+                                static_cast<std::uint64_t>(r.root_remap_stable_ref_fail_total +
+                                                           r.root_remap_closure_capture_fail_total);
+                            aura::core::moving_densify_health::publish_last_moving_densify_window(
+                                /*had_moving_densify=*/true, r.pin_contract_held,
+                                r.moving_incomplete_remap,
+                                static_cast<std::uint64_t>(r.objects_moved),
+                                static_cast<std::uint64_t>(r.untracked_kept_count), root_fail,
+                                static_cast<std::uint64_t>(
+                                    r.external_roots_prep_registered_cleared));
+                            if (void* owner = arena_owner()) {
+                                if (auto* restamp = g_arena_unified_restamp_densify_fn.load(
+                                        std::memory_order_relaxed))
+                                    restamp(owner);
+                            }
+                            if (r.slots_recycled > 0 || r.objects_moved > 0 ||
+                                r.bytes_reclaimed > 0) {
+                                // Issue #3404 AC1: real Moving success.
+                                aura::core::moving_densify_health::
+                                    note_production_auto_arm_moving_success();
+                                real_reclaim = true;
+                                saved = 1;
+                            }
                         }
                     } else {
                         // No inventory bound — do not move. Soft fallback only.
