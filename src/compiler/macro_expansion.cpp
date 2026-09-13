@@ -109,13 +109,22 @@ namespace aura::compiler::macro_exp {
 // (no second install / no extra Soft walk).
 [[nodiscard]] bool inner_expand_production_limit_deny() noexcept {
     const auto r = g_macro_hygiene_last_limit_reason.load(std::memory_order_relaxed);
-    // Issue #3684: the ConcurrentCloneGuard production refuses (8/9/10:
-    // same-flat / name-map-shared / concurrent-top-level) are inner-expand
-    // denials too — a later pass hitting them after a pass-0 splice must
-    // restore original_root, not keep the pass-0 tree.
+    // Issue #3685: only codes stamped BY THIS WALK (depth/pass/steal/cap/
+    // gensym). The ConcurrentCloneGuard refuses (8/9/10) are stamped
+    // GLOBALLY by sibling threads — consulting them here let a sibling's
+    // concurrent-refuse spuriously abort an in-flight clone (3544 soak).
     return r == kHygieneLimitReasonDepthLimit || r == kHygieneLimitReasonPassLimit ||
            r == kHygieneLimitReasonStealAbort || r == kHygieneLimitReasonCapabilityDeny ||
-           r == kHygieneLimitReasonGensymCeiling || r == kHygieneLimitReasonSameFlatReject ||
+           r == kHygieneLimitReasonGensymCeiling;
+}
+
+// Issue #3684: the macro_expand_all_body pass-loop consult — the 8/9/10
+// ConcurrentCloneGuard refuse codes ARE pass denies there (single-thread
+// pass context: the stamp comes from this pass's own clone work), so a
+// later pass refusing after a pass-0 splice restores original_root.
+[[nodiscard]] bool inner_expand_production_limit_deny_all() noexcept {
+    const auto r = g_macro_hygiene_last_limit_reason.load(std::memory_order_relaxed);
+    return inner_expand_production_limit_deny() || r == kHygieneLimitReasonSameFlatReject ||
            r == kHygieneLimitReasonNameMapShared || r == kHygieneLimitReasonConcurrentTopLevel;
 }
 
@@ -301,11 +310,25 @@ thread_local std::uint32_t s_max_violations_per_fiber = 0;
 static std::atomic<std::uint32_t> g_test_max_gensym_map_size_override{0};
 
 // Effective gensym-map-size cap (TLS policy or test override).
-static std::uint32_t effective_max_gensym_map_size() noexcept {
+// Issue #3685: session policy for a clone walk — captured at top-level
+// entry from check_macro_self_evo and threaded through the nested
+// at_depth recursion (same explicit-parameter pattern as hygiene_depth,
+// #2806). TLS mirrors (s_allow_rest_hygiene / s_max_gensym_map_size /
+// s_force_hygienic) stay diagnostics-only: a fiber yield mid-walk must
+// not let another fiber's top-level clone overwrite this walk's policy.
+struct CloneSessionPolicy {
+    bool allow_rest_hygiene = true;
+    std::uint32_t max_gensym_map_size = 0;
+    bool force_hygienic = false;
+};
+
+// Issue #3685: session-aware ceiling — process-wide test override wins,
+// else the walk's captured session cap (not TLS).
+static std::uint32_t effective_max_gensym_map_size(const CloneSessionPolicy& session) noexcept {
     const auto o = g_test_max_gensym_map_size_override.load(std::memory_order_relaxed);
     if (o > 0)
         return o;
-    return s_max_gensym_map_size;
+    return session.max_gensym_map_size;
 }
 
 // Issue #2101: process-wide runtime caps (atomics for concurrent set+expand).
@@ -1586,7 +1609,7 @@ static aura::ast::NodeId clone_macro_body_at_depth(
     std::unordered_map<std::string, std::string, aura::core::TransparentStringHash,
                        std::equal_to<>>* name_map,
     aura::ast::SyntaxMarker cloned_marker, int hygiene_depth, int session_depth_limit,
-    bool in_quote = false, int qq_depth = 0);
+    bool in_quote = false, int qq_depth = 0, CloneSessionPolicy session = CloneSessionPolicy{});
 
 aura::ast::NodeId clone_macro_body(
     aura::ast::FlatAST& target, aura::ast::StringPool& target_pool, aura::ast::FlatAST& source,
@@ -1602,7 +1625,7 @@ aura::ast::NodeId clone_macro_body(
                                      name_map, cloned_marker, /*hygiene_depth=*/0,
                                      /*session_depth_limit=*/0,
                                      /*in_quote=*/false,
-                                     /*qq_depth=*/0);
+                                     /*qq_depth=*/0, CloneSessionPolicy{});
 }
 
 static aura::ast::NodeId clone_macro_body_at_depth(
@@ -1613,7 +1636,7 @@ static aura::ast::NodeId clone_macro_body_at_depth(
     std::unordered_map<std::string, std::string, aura::core::TransparentStringHash,
                        std::equal_to<>>* name_map,
     aura::ast::SyntaxMarker cloned_marker, int hygiene_depth, int session_depth_limit,
-    bool in_quote, int qq_depth) {
+    bool in_quote, int qq_depth, CloneSessionPolicy session) {
     using namespace aura::ast;
     // Issue #2806: residual TLS mirror for diagnostics only (not authority).
     s_hygiene_depth = hygiene_depth;
@@ -1845,6 +1868,9 @@ static aura::ast::NodeId clone_macro_body_at_depth(
             s_max_gensym_map_size = chk.effective.max_gensym_map_size;
             s_max_violations_per_fiber = chk.effective.max_violations_per_fiber;
             aura_macro_self_evo_set_fiber_violation_budget(s_max_violations_per_fiber);
+            session =
+                CloneSessionPolicy{chk.effective.allow_rest_hygiene,
+                                   chk.effective.max_gensym_map_size, chk.effective.force_hygienic};
         }
         ~TopLevelMacroCapGuard() noexcept {
             if (!armed)
@@ -1860,8 +1886,15 @@ static aura::ast::NodeId clone_macro_body_at_depth(
         }
         TopLevelMacroCapGuard(const TopLevelMacroCapGuard&) = delete;
         TopLevelMacroCapGuard& operator=(const TopLevelMacroCapGuard&) = delete;
+        // Issue #3685: session policy captured at arm — the walk reads this,
+        // not TLS (fiber-yield immunity; TLS mirrors stay diagnostics).
+        CloneSessionPolicy session{};
         [[nodiscard]] bool denied() const noexcept { return denied_; }
     } top_cap_guard{hygiene_depth};
+    // Issue #3685: depth==0 armed the guard and captured the session from
+    // check_macro_self_evo; nested calls keep the caller's session.
+    if (hygiene_depth == 0)
+        session = top_cap_guard.session;
     if (top_cap_guard.denied()) {
         if (detail::macro_self_evo_verbose()) {
             std::fprintf(stderr,
@@ -1922,7 +1955,7 @@ static aura::ast::NodeId clone_macro_body_at_depth(
         // falling back to the unhygienic (original-name) substitution path on
         // depth-limit. Bumps force_hygienic_denied_total + macro_origin
         // provenance error counter; outer call returns NULL_NODE.
-        if (s_force_hygienic) {
+        if (session.force_hygienic) {
             g_macro_self_evo_force_hygienic_denied_total.fetch_add(1, std::memory_order_relaxed);
             g_macro_self_evo_denied_total.fetch_add(1, std::memory_order_relaxed);
             g_macro_origin_provenance_errors.fetch_add(1, std::memory_order_relaxed);
@@ -1948,7 +1981,7 @@ static aura::ast::NodeId clone_macro_body_at_depth(
         // Issue #2243: force_hygienic elevates invalid-body to a deny
         // instead of silent NULL_NODE; outermost caller returns NULL with
         // sentinel.
-        if (s_force_hygienic) {
+        if (session.force_hygienic) {
             g_macro_self_evo_force_hygienic_denied_total.fetch_add(1, std::memory_order_relaxed);
             g_macro_self_evo_denied_total.fetch_add(1, std::memory_order_relaxed);
             g_macro_origin_provenance_errors.fetch_add(1, std::memory_order_relaxed);
@@ -2212,7 +2245,7 @@ static aura::ast::NodeId clone_macro_body_at_depth(
         // deny still advanced the serial while leaving name_map empty →
         // serial drift + clone-walk Variable resolve to NULL_NODE for the
         // unmapped binding.
-        const auto gensym_cap = effective_max_gensym_map_size();
+        const auto gensym_cap = effective_max_gensym_map_size(session);
         if (gensym_cap > 0 && name_map && name_map->size() >= gensym_cap) {
             note_hygiene_last_limit_reason(kHygieneLimitReasonGensymCeiling);
             g_macro_self_evo_gensym_map_size_exceeded_total.fetch_add(1, std::memory_order_relaxed);
@@ -2244,7 +2277,7 @@ static aura::ast::NodeId clone_macro_body_at_depth(
         if (sid == INVALID_SYM || !name_map)
             return transplant(sid);
         // Issue #2023: MacroSelfEvo policy may disable rest hygiene (opt-out).
-        if (!s_allow_rest_hygiene)
+        if (!session.allow_rest_hygiene)
             return transplant(sid);
         auto name = std::string(source_pool.resolve(sid));
         if (detail::hygiene_builtins().count(name))
@@ -2256,7 +2289,7 @@ static aura::ast::NodeId clone_macro_body_at_depth(
         // rename_binding_pre enforces — drift + spurious deny when later
         // bindings hit the cap. Deny BEFORE advancing the serial, with
         // same rollback surface as ceiling mid-walk deny in rename_binding_pre.
-        const auto gensym_cap_rest = effective_max_gensym_map_size();
+        const auto gensym_cap_rest = effective_max_gensym_map_size(session);
         if (gensym_cap_rest > 0 && name_map->size() >= gensym_cap_rest) {
             note_hygiene_last_limit_reason(kHygieneLimitReasonGensymCeiling);
             g_macro_self_evo_gensym_map_size_exceeded_total.fetch_add(1, std::memory_order_relaxed);
@@ -2438,7 +2471,7 @@ static aura::ast::NodeId clone_macro_body_at_depth(
         // Issue #2804: gensym-map-size ceiling — parity with rename_binding_pre.
         // Clone walk can still allocate names pre-scan missed or refused;
         // without this check max_gensym_map_size is only half-enforced.
-        const auto gensym_cap = effective_max_gensym_map_size();
+        const auto gensym_cap = effective_max_gensym_map_size(session);
         if (gensym_cap > 0 && name_map->size() >= gensym_cap) {
             note_hygiene_last_limit_reason(kHygieneLimitReasonGensymCeiling);
             g_macro_self_evo_gensym_map_size_exceeded_total.fetch_add(1, std::memory_order_relaxed);
@@ -2491,7 +2524,7 @@ static aura::ast::NodeId clone_macro_body_at_depth(
         }
         const auto cloned = clone_macro_body_at_depth(
             target, target_pool, source, source_pool, cid, subst, name_map, cloned_marker,
-            hygiene_depth + 1, depth_limit, local_in_quote, child_qq_depth);
+            hygiene_depth + 1, depth_limit, local_in_quote, child_qq_depth, session);
         child_ids.push_back(cloned);
         // Issue #3321: production fail-fast after nested steal-abort.
         // Issue #3506: same restore for nested depth / gensym / cap / pass.
@@ -2563,7 +2596,7 @@ static aura::ast::NodeId clone_macro_body_at_depth(
             // the quote boundary). param_syms.back() is verbatim.
             if (!child_ids.empty()) {
                 const bool dotted = v.int_value != 0;
-                if (dotted && !param_syms.empty() && name_map && s_allow_rest_hygiene &&
+                if (dotted && !param_syms.empty() && name_map && session.allow_rest_hygiene &&
                     !local_in_quote) {
                     auto rest_name = std::string(target_pool.resolve(param_syms.back()));
                     if (rest_name.rfind("__rest_", 0) != 0) {
@@ -3452,7 +3485,7 @@ static aura::ast::NodeId macro_expand_all_body(aura::ast::FlatAST& flat,
             // inner_expand_production_limit_deny() (depth/pass/steal/
             // cap/gensym); the pass-limit loop-end restore below stays
             // the #3062 belt and is untouched.
-            if (production_surface && any_expand && inner_expand_production_limit_deny()) {
+            if (production_surface && any_expand && inner_expand_production_limit_deny_all()) {
                 expand_ckpt.try_restore();
                 return original_root;
             }

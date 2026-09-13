@@ -47,8 +47,8 @@ REQUIRED: tuple[tuple[str, str, str], ...] = (
     ),
     (
         ME,
-        r"bool in_quote = false, int qq_depth = 0\);",
-        "3606 AC1: clone signature threads int qq_depth (fwd decl)",
+        r"CloneSessionPolicy session = CloneSessionPolicy\{\}\);",
+        "3606 AC1: clone signature threads int qq_depth (fwd decl; #3685 session)",
     ),
     (
         ME,
@@ -134,7 +134,7 @@ def run_checks() -> list[str]:
     # AC1: per-child depth — quasiquote arg +1, unquote arg sentinel /
     # depth-1. The assignment block must precede the recursive call.
     child_pos = flat.find("int child_qq_depth = qq_depth;")
-    call_pos = flat.find("hygiene_depth + 1, depth_limit, local_in_quote, child_qq_depth);")
+    call_pos = flat.find("hygiene_depth + 1, depth_limit, local_in_quote, child_qq_depth, session);")
     if child_pos < 0 or call_pos < 0 or not (child_pos < call_pos):
         failures.append("3606 AC1: per-child depth must precede the recursive clone call")
     else:

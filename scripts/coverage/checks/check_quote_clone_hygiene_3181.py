@@ -99,8 +99,9 @@ def main() -> int:
     # threading contract is unchanged. Search for the full signature so
     # the linter doesn't false-positive against the older single-flag
     # signature.
-    pos_def = me.find("bool in_quote, int qq_depth) {")
-    pos_decl = me.find("bool in_quote = false, int qq_depth = 0);")
+    # Issue #3685: the at_depth tail carries the session param.
+    pos_def = me.find("bool in_quote, int qq_depth, CloneSessionPolicy session) {")
+    pos_decl = me.find("int qq_depth = 0, CloneSessionPolicy session = CloneSessionPolicy{});")
     ac1_ok = pos_def != -1 and pos_decl != -1
     if not ac1_ok:
         fails.append("AC1: clone_macro_body_at_depth missing `bool in_quote` parameter")
@@ -175,8 +176,9 @@ def main() -> int:
     ac4_def = "local_in_quote" in def_window and "transplant(v.sym_id)" in def_window
     pos_set_local = me.find("if (!local_in_quote && subst) {")
     pos_params_local = me.find("param_syms.push_back(local_in_quote ? transplant(pid) : rename_binding(pid));")
+    # Issue #3685: the fallback gate reads the session policy.
     pos_lambda_rest_local = me.find(
-        "if (dotted && !param_syms.empty() && name_map && s_allow_rest_hygiene &&\n                    !local_in_quote)"
+        "if (dotted && !param_syms.empty() && name_map && session.allow_rest_hygiene &&\n                    !local_in_quote)"
     )
     ac4_var = pos_var_local != -1
     ac4_set = pos_set_local != -1

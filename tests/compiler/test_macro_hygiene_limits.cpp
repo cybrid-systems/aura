@@ -548,9 +548,12 @@ static void ac3651_2_deny_codes_widened_predicate() {
     // (depth/pass/steal/cap/gensym). Steal-abort / capability-deny need
     // concurrent-fiber / capability machinery to fire end-to-end, so the
     // codes are pinned at the predicate + reason-string level here.
-    CHECK(cpp.find("production_surface && any_expand && inner_expand_production_limit_deny()") !=
-              std::string::npos,
-          "3651 AC2: widened guard present");
+    // Issue #3685: the widened pass-loop guard moved to the all-variant
+    // (the base predicate consults only own-walk codes — sibling-refuse
+    // stamps must not abort an in-flight clone).
+    CHECK(cpp.find("production_surface && any_expand &&\n                "
+                   "inner_expand_production_limit_deny_all()") != std::string::npos,
+          "3651 AC2: widened guard present (deny_all; #3685)");
     CHECK(cpp.find("kHygieneLimitReasonStealAbort") != std::string::npos &&
               cpp.find("kHygieneLimitReasonCapabilityDeny") != std::string::npos,
           "3651 AC2: steal/cap codes in the predicate");
@@ -629,9 +632,8 @@ static void ac3651_5_source_wiring() {
     const auto cpp = read_file("src/compiler/macro_expansion.cpp");
     CHECK(cpp.find("Issue #3651: the deny codes are wider than depth-limit") != std::string::npos,
           "3651 AC5: guard cite");
-    CHECK(cpp.find("production_surface && any_expand && inner_expand_production_limit_deny()") !=
-              std::string::npos,
-          "3651 AC5: widened guard");
+    CHECK(cpp.find("inner_expand_production_limit_deny_all()") != std::string::npos,
+          "3651 AC5: widened guard (deny_all; #3685)");
     // Single-clone try_restore paths (#3183) untouched — the predicate is
     // also consulted at the clone walk / restamp sites.
     CHECK(cpp.find("kHygieneLimitReasonGensymCeiling") != std::string::npos &&
@@ -1082,13 +1084,25 @@ static void ac3608_6_source_and_linter() {
 
 // ── Issue #3684: inner-expand deny helper covers 8/9/10; splice refused ──
 static void ac3684_deny_codes() {
-    std::println("\n--- #3684: inner_expand_production_limit_deny covers 8/9/10 ---");
+    std::println("\n--- #3684: deny helpers split (#3685): own-walk vs pass-loop ---");
     reset_all();
-    for (auto code : {std::uint8_t{1}, std::uint8_t{2}, std::uint8_t{3}, std::uint8_t{6},
-                      std::uint8_t{7}, std::uint8_t{8}, std::uint8_t{9}, std::uint8_t{10}}) {
+    // Base helper: own-walk codes only — a sibling thread's
+    // ConcurrentCloneGuard refuse stamp (8/9/10, global last-write) must
+    // NOT abort an in-flight clone.
+    for (auto code :
+         {std::uint8_t{1}, std::uint8_t{2}, std::uint8_t{3}, std::uint8_t{6}, std::uint8_t{7}}) {
         note_hygiene_last_limit_reason(code);
         CHECK(aura::compiler::macro_exp::inner_expand_production_limit_deny(),
-              "3684: deny codes 1/2/3/6/7/8/9/10 refuse");
+              "3684/3685: own-walk codes 1/2/3/6/7 refuse");
+        CHECK(aura::compiler::macro_exp::inner_expand_production_limit_deny_all(),
+              "3684/3685: all-variant refuses own-walk codes too");
+    }
+    for (auto code : {std::uint8_t{8}, std::uint8_t{9}, std::uint8_t{10}}) {
+        note_hygiene_last_limit_reason(code);
+        CHECK(!aura::compiler::macro_exp::inner_expand_production_limit_deny(),
+              "3685: sibling-refuse codes 8/9/10 do NOT abort an in-flight clone");
+        CHECK(aura::compiler::macro_exp::inner_expand_production_limit_deny_all(),
+              "3685: pass-loop all-variant refuses 8/9/10");
     }
     for (auto code : {std::uint8_t{0}, std::uint8_t{4}, std::uint8_t{5}}) {
         note_hygiene_last_limit_reason(code);

@@ -712,6 +712,45 @@ int run_test_concurrent_clone_hygiene_depth() {
     std::println("\n=== #2806 + #3028 + #3094 + #3507 + #3544 + #3574 concurrent clone hygiene "
                  "depth: {} passed, {} failed ===",
                  g_passed, g_failed);
+
+    // ── Issue #3685: session policy rides explicit params, not TLS ──
+    {
+        std::println("\n--- #3685: CloneSessionPolicy threading (fiber-yield immunity) ---");
+        auto me = read_file("src/compiler/macro_expansion.cpp");
+        CHECK(me.find("struct CloneSessionPolicy") != std::string::npos,
+              "3685: CloneSessionPolicy struct");
+        CHECK(me.find("const CloneSessionPolicy& session") != std::string::npos,
+              "3685: at_depth takes the session by param");
+        // The walk reads the session, not TLS.
+        CHECK(me.find("if (session.force_hygienic) {") != std::string::npos,
+              "3685: force_hygienic read from session");
+        CHECK(me.find("effective_max_gensym_map_size(session)") != std::string::npos,
+              "3685: gensym ceiling read from session");
+        CHECK(me.find("if (!session.allow_rest_hygiene)") != std::string::npos,
+              "3685: rest hygiene read from session");
+        CHECK(me.find("session.allow_rest_hygiene &&") != std::string::npos,
+              "3685: rest fallback gate reads session");
+        // No un-threaded TLS policy reads remain in the walk.
+        CHECK(me.find("if (s_force_hygienic) {") == std::string::npos &&
+                  me.find("effective_max_gensym_map_size()") == std::string::npos &&
+                  me.find("if (!s_allow_rest_hygiene)") == std::string::npos,
+              "3685: no un-threaded TLS policy reads");
+        // Recursion threads the session; wrapper passes defaults.
+        CHECK(me.find("child_qq_depth, session);") != std::string::npos,
+              "3685: recursion threads session");
+        CHECK(me.find("/*qq_depth=*/0, CloneSessionPolicy{});") != std::string::npos,
+              "3685: wrapper passes default session");
+        // Guard captures at arm (depth==0) and syncs.
+        CHECK(me.find("session = top_cap_guard.session;") != std::string::npos &&
+                  me.find("if (hygiene_depth == 0)") != std::string::npos,
+              "3685: guard captures session at top-level entry");
+        // TLS mirrors stay written (diagnostics preserved).
+        CHECK(me.find("s_force_hygienic = chk.effective.force_hygienic;") != std::string::npos,
+              "3685: TLS mirrors kept for diagnostics");
+        // Depth stays the explicit argument (no TLS depth authority).
+        CHECK(me.find("hygiene_depth + 1") != std::string::npos, "3685: depth still explicit");
+    }
+
     return g_failed == 0 ? 0 : 1;
 }
 
