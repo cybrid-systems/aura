@@ -874,6 +874,48 @@ static void ac15_soft_emit_no_overflow_3734() {
           "3734 AC4: durable fold joins overflow mid");
 }
 
+// ── AC16 (#3738): explicit mid=0 joins refuse rows on the fold ──
+static void ac16_mid0_refuse_fold_3738() {
+    std::println("\n--- #3738 AC2: evolution-audit-decision 0 joins mid-fallback-refused ---");
+    reset_all();
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    aura::compiler::typed_audit::clear_boundary_audit_mid();
+    aura::compiler::typed_audit::clear_type_linear_commit_proof_for_test();
+    aura::core::reset_mutation_epoch_for_test();
+    ::setenv("AURA_SANDBOX", "off", 1);
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+    CompilerService cs;
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    CHECK(aura::compiler::typed_audit::join_audit_and_se_mid(0) == 0,
+          "3738 AC2 pre: join refuse mid=0");
+    CHECK(aura::compiler::typed_audit::resolve_audit_mutation_id(0) == 0,
+          "3738 AC2: resolve refuse mid=0");
+    auto mid = cs.eval(
+        "(hash-ref (engine:metrics \"query:evolution-audit-decision\" 0) \"last-audit-mid\")");
+    CHECK(mid && aura::compiler::types::is_int(*mid) && aura::compiler::types::as_int(*mid) == 0,
+          "3738 AC2: last-audit-mid=0");
+    auto rsn = cs.eval(
+        "(hash-ref (engine:metrics \"query:evolution-audit-decision\" 0) \"last-se-reason\")");
+    bool reason_ok = false;
+    if (rsn && aura::compiler::types::is_string(*rsn)) {
+        auto heap = cs.evaluator().string_heap();
+        const auto sidx = aura::compiler::types::as_string_idx(*rsn);
+        reason_ok =
+            sidx < heap.size() && heap[sidx].find("mid-fallback-refused") != std::string::npos;
+    }
+    CHECK(reason_ok, "3738 AC2: last-se-reason contains mid-fallback-refused");
+    auto obs = cs.eval(
+        "(hash-ref (engine:metrics \"query:evolution-audit-decision\" 0) \"observe-only\")");
+    CHECK(obs && aura::compiler::types::is_int(*obs) && aura::compiler::types::as_int(*obs) == 1,
+          "3738 AC3: observe-only stays 1");
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    auto dh =
+        cs.eval("(hash-ref (engine:metrics \"query:evolution-audit-decision\" 0) \"durable-hit\")");
+    CHECK(dh && aura::compiler::types::is_int(*dh) && aura::compiler::types::as_int(*dh) == 0,
+          "3738 AC4: Soft no WAL scan (durable-hit=0)");
+    CHECK(read_file("tests/core/test_issue_3738.cpp").empty(), "3738 AC4: no test_issue_3738.cpp");
+}
+
 } // namespace
 
 int run_test_audit_replay_join() {
@@ -893,6 +935,7 @@ int run_test_audit_replay_join() {
     ac13_emit_wal_miss_overflow_join_3734();
     ac14_effect_gate_fail_closed_unchanged_3734();
     ac15_soft_emit_no_overflow_3734();
+    ac16_mid0_refuse_fold_3738();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }

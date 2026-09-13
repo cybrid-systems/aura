@@ -184,9 +184,11 @@ static void ac8_3284_se_mid_miss() {
     CHECK(src.find("Issue #3284") != std::string::npos, "cites #3284");
     // Filter is join_mid-scoped (not filt_mid-scoped): default last-stamped
     // path must also refuse a different mid's SE beside a typed hit.
-    CHECK(src.find("join_mid != 0 && e.mutation_id != join_mid") != std::string::npos,
+    CHECK(src.find("se_filter_by_mid = filt_mid || join_mid != 0") != std::string::npos,
+          "SE walk join-scoped (explicit 0 or last-stamped, not filt_mid-only)");
+    CHECK(src.find("se_filter_by_mid && e.mutation_id != join_mid") != std::string::npos,
           "SE walk filters by join_mid (not filt_mid)");
-    CHECK(src.find("se_mid_miss = (join_mid != 0 && !se_mid_hit) ? 1 : 0") != std::string::npos,
+    CHECK(src.find("se_mid_miss = (se_filter_by_mid && !se_mid_hit) ? 1 : 0") != std::string::npos,
           "se_mid_miss set when no same-mid SE row");
     CHECK(src.find("insert_kv(\"se-mid-miss\", se_mid_miss)") != std::string::npos,
           "se-mid-miss key inserted");

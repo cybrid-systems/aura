@@ -1269,6 +1269,43 @@ namespace primitives_detail {
         return false;
     }
 
+    // Issue #3738: string values (last-se-reason / suggested-next) take the
+    // same overflow path as ints. Probe-miss without overflowed left the
+    // matchable reason silently gone while hash-overflow stayed 0.
+    template <class StringHeap>
+    inline bool insert_kv_checked_str(FlatHashTable* ht, StringHeap& string_heap,
+                                      std::string_view k, std::string_view v) {
+        if (!ht)
+            return false;
+        std::uint64_t h = 0xcbf29ce484222325ull;
+        for (unsigned char c : k)
+            h = (h ^ c) * 0x100000001b3ull;
+        auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+        if (fp == 0xFF)
+            fp = 0xFE;
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        const auto hcap = ht->capacity;
+        const auto kidx = string_heap.size();
+        string_heap.push_back(std::string(k));
+        const auto key_ev = types::make_string(static_cast<std::uint64_t>(kidx));
+        const auto vidx = string_heap.size();
+        string_heap.push_back(std::string(v));
+        const auto val_ev = types::make_string(static_cast<std::uint64_t>(vidx));
+        for (std::size_t at = 0; at < hcap; ++at) {
+            const auto idx = ((h >> 1) + at) & (hcap - 1);
+            if (meta[idx] == 0xFF) {
+                meta[idx] = fp;
+                keys[idx] = key_ev.val;
+                vals[idx] = val_ev.val;
+                ht->size++;
+                return true;
+            }
+        }
+        return false;
+    }
+
     template <class StringHeap>
     inline void query_hash_stamp_overflow(FlatHashTable* ht, StringHeap& string_heap) {
         if (!ht)
