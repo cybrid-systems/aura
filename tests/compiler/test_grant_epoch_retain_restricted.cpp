@@ -24,6 +24,7 @@ import aura.compiler.service;
 namespace {
 using aura::compiler::security::apply_production_security_defaults;
 using aura::core::bump_mutation_epoch;
+using aura::core::current_mutation_epoch;
 using aura::core::capability::Effect;
 using aura::core::capability::EffectProvenance;
 using aura::core::capability::g_capability_effect_metrics;
@@ -219,6 +220,55 @@ int run_test_grant_epoch_retain_restricted() {
             std::ifstream f(p);
             CHECK(!f.good(), "AC6: no design doc at " + std::string(p));
         }
+    }
+
+
+    // ── AC7 (#3721): production MSE policy row is session-bound + single-use ──
+    {
+        std::println("\n--- AC7 (#3721): MSE row session-bound (same lifetime as high-risk) ---");
+        reset_all();
+        set_env("AURA_SANDBOX", "restricted");
+        apply_production_security_defaults();
+        const auto tenant = std::uint64_t{7};
+        // Seed TenantAdmin on the default caller principal (#3029 fence).
+        bump_mutation_epoch();
+        const auto mid = current_mutation_epoch();
+        (void)g_capability_registry().grant(0, "tenant-admin", Effect::TenantAdmin,
+                                            make_grant_provenance(mid, false, 0, 0));
+        EffectProvenance prov;
+        prov.mutation_id = mid;
+        prov.epoch = mid;
+        CHECK(g_capability_registry().grant_macro_self_evo(tenant, {}, prov, 0),
+              "3721: production MSE grant succeeds (TA fence ok)");
+        CHECK((g_capability_registry().effects_for(tenant) & Effect::MacroSelfEvo) != Effect::None,
+              "3721: MacroSelfEvo live before session exit");
+        // Outermost MutationBoundary exit: session-bound rows bound to this
+        // mid are revoked (the Guard dtor calls this).
+        (void)g_capability_registry().revoke_session_grants_for_mid(mid);
+        CHECK((g_capability_registry().effects_for(tenant) & Effect::MacroSelfEvo) == Effect::None,
+              "3721: MSE row dies at session mid exit (dual-track leak closed)");
+    }
+    {
+        std::println("\n--- AC7b (#3721): Soft keeps legacy flags; production mid=0 refuses ---");
+        reset_all();
+        const auto tenant = std::uint64_t{8};
+        bump_mutation_epoch();
+        const auto epoch = current_mutation_epoch();
+        EffectProvenance prov; // mid=0 → Soft front synthesizes from epoch
+        prov.epoch = epoch;
+        CHECK(g_capability_registry().grant_macro_self_evo(tenant, {}, prov, 0),
+              "3721: Soft MSE grant ok (no TA fence under Off)");
+        bump_mutation_epoch();
+        const auto mid2 = current_mutation_epoch();
+        (void)g_capability_registry().revoke_session_grants_for_mid(mid2);
+        CHECK((g_capability_registry().effects_for(tenant) & Effect::MacroSelfEvo) != Effect::None,
+              "3721: Soft row survives session revoke (no session_bound force; AC5)");
+        reset_all();
+        set_env("AURA_SANDBOX", "restricted");
+        apply_production_security_defaults();
+        EffectProvenance zero_mid; // mid=0 → production refuse (#3459)
+        CHECK(!g_capability_registry().grant_macro_self_evo(9, {}, zero_mid, 0),
+              "3721: production mid=0 refuse before any write");
     }
 
     std::println("\n=== #2529/#2688: {} passed, {} failed ===", g_passed, g_failed);

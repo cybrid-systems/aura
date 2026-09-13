@@ -6928,6 +6928,23 @@ def cmd_lint():
             "Issue #3703 quote intern / lock scope linter failed — run python3 scripts/check_quote_intern_lock_3703.py"
         )
         return r
+    # Issue #3721 (#2882/#3561/#3459 residual): the "macro-self-evo"
+    # policy row from grant_macro_self_evo never got session_bound /
+    # single_use and bound mid=0, so the outermost MutationBoundary
+    # dtor's session revoke missed it — a TA-gated MSE grant stayed
+    # consumable across later mutations (dual-track with the named
+    # grant_effect_* row). Gate pins: the MSE arm joins the #3143 mid
+    # SSOT before grant_macro_self_evo; the apply stamps session_bound +
+    # single_use under Restricted/Strict; the durable admin path does
+    # not route through grant_macro_self_evo; tests cite #3721.
+    msb3721_script = ROOT / "scripts" / "check_mse_session_bound_3721.py"
+    if not msb3721_script.exists():
+        fail(f"missing {msb3721_script}")
+        return 1
+    r = run([sys.executable, str(msb3721_script)], cwd=ROOT)
+    if r != 0:
+        fail("Issue #3721 MSE session-bound linter failed — run python3 scripts/check_mse_session_bound_3721.py")
+        return r
     # Issue #3649 (#2952/#3096/#2690 residual): the storm-exit edge drives
     # residual coverage-verify. storm_exit_force_full_active now==0 &&
     # prev!=0 branch runs one maybe_coverage_verify_min_dirty when
