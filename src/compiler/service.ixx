@@ -13389,6 +13389,14 @@ public:
         std::shared_lock cache_read(jit_cache_mtx_);
         return jit_cache_.find(name) != jit_cache_.end();
     }
+    // Issue #3749: seed a dummy jit_cache_ entry so light-link tests
+    // can observe production facade eviction without a real compile.
+    void public_jit_cache_insert_dummy_for_test(const std::string& name) {
+        std::unique_lock cache_write(jit_cache_mtx_);
+        auto [it, _ins] = jit_cache_.try_emplace(name);
+        it->second.fn_ptr.store(nullptr, std::memory_order_release);
+        it->second.last_seen_epoch_ = aura::core::current_mutation_epoch();
+    }
 
     // Issue #1377: opt-in SoA dual-emit (default off). When false,
     // lower_to_ir skips IRFunctionSoA columns + bridge counters.
@@ -14206,6 +14214,19 @@ public:
         run_epoch_invariant_if_enabled();
     }
 
+    // Issue #3749: production facade early-return skipped jit_cache_
+    // erase. try_jit_execute then cache-hit pre-mutate ScalarFn.
+    // Same jit_cache_mtx_ window as Soft #1378 (erase + AuraJIT
+    // invalidate + prefix). Soft never reaches this.
+    void evict_jit_cache_after_production_facade_(const std::string& name) {
+        std::unique_lock cache_write(jit_cache_mtx_);
+        if (jit_cache_.erase(name) > 0)
+            metrics_.jit_cache_evictions.fetch_add(1, std::memory_order_relaxed);
+        jit_.invalidate(name.c_str());
+        jit_.invalidate_prefix(name.c_str());
+        metrics_.jit_hotswap_invalidate_total.fetch_add(1, std::memory_order_relaxed);
+    }
+
     // Issue #2304 / #2366 / #2501 / #2541: post-bump epoch invariant walk.
     //
     // Mode source: process-level aura_epoch_invariant_mode() (env +
@@ -14617,6 +14638,9 @@ public:
                         // hot-recompile path: needs unique lock
                     } else if (jit_cache_shape_version_stale(cache_it->second, fn_key)) {
                         shape::jit_shape_miss_count.fetch_add(1, std::memory_order_relaxed);
+                    } else if (aura_jit_is_deopt_pending(ir_fn.name.c_str()) != 0) {
+                        // Issue #3749: cache-hit must not invoke pre-mutate
+                        // native while AuraJIT trackers are batch-deopted.
                     } else {
                         fn_ptr = cache_it->second.fn_ptr.load(std::memory_order_acquire);
                         need_compile = false;
@@ -14635,6 +14659,11 @@ public:
                 } else if (cache_it != jit_cache_.end() &&
                            jit_cache_shape_version_stale(cache_it->second, fn_key)) {
                     // Issue #605: drop stale shape-specialized entry.
+                    jit_cache_.erase(cache_it);
+                } else if (cache_it != jit_cache_.end() &&
+                           aura_jit_is_deopt_pending(ir_fn.name.c_str()) != 0) {
+                    // Issue #3749: unique-lock re-probe still refuses
+                    // batch-deopted native.
                     jit_cache_.erase(cache_it);
                 } else if (cache_it != jit_cache_.end()) {
                     fn_ptr = cache_it->second.fn_ptr.load(std::memory_order_acquire);

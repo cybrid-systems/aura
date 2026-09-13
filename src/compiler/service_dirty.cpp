@@ -362,6 +362,10 @@ void CompilerService::mark_define_dirty(const std::string& name) {
             // re-bump AOT table epoch (owner-scoped #2951). Soft/Off
             // never reach this (facade returns false).
             stamp_eval_core_joint_after_production_facade_(name);
+            // Issue #3749: evict CompilerService jit_cache_ + AuraJIT
+            // native in the same lock as Soft #1378 so try_jit_execute
+            // cannot cache-hit pre-mutate ScalarFn.
+            evict_jit_cache_after_production_facade_(name);
             // Issue #3188 AC1: residual of #3150 — facade owns joint epoch
             // + AOT dirty + reemit, but `notify_dirty_define` is listener
             // fan-out only (does NOT mark ir_cache_v2_ body-dirty or walk
@@ -894,6 +898,10 @@ void CompilerService::invalidate_function(const std::string& name) {
             // mark_define_dirty after facade success (C-ABI already
             // advanced). Does not re-bump AOT table epoch.
             stamp_eval_core_joint_after_production_facade_(name);
+            // Issue #3749: evict CompilerService jit_cache_ + AuraJIT
+            // native in the same lock as Soft #1378 so try_jit_execute
+            // cannot cache-hit pre-mutate ScalarFn.
+            evict_jit_cache_after_production_facade_(name);
             // Issue #3188 AC1: residual of #3150 — same minimal IR/shape
             // step as mark_define_dirty. Facade owns joint epoch + AOT
             // dirty + reemit; we still need IR cache body-dirty + shape
