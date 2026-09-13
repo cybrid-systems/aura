@@ -150,6 +150,14 @@ int run_test_side_effect_inherit() {
         CHECK(infer_required_effects_from_name("mutate:x") == kEffectMutate, "infer mutate");
         CHECK(infer_required_effects_from_name("write-file") & kEffectWrite, "infer write");
         CHECK(infer_required_effects_from_name("query:x") == kEffectNone, "infer none");
+        CHECK(infer_required_effects_from_name("hash-set!") == kEffectMutate,
+              "3720: hash-set! infers Mutate");
+        CHECK(infer_required_effects_from_name("hash-remove!") == kEffectMutate,
+              "3720: hash-remove! infers Mutate");
+        CHECK(infer_required_effects_from_name("vector-set!") == kEffectMutate,
+              "3720: vector-set! infers Mutate");
+        CHECK(infer_required_effects_from_name("hash-ref") == kEffectNone,
+              "3720: hash-ref stays read");
         CHECK(std::string_view(kSideEffectPrimPatternToken) == "AURA_SIDE_EFFECT_PRIM",
               "pattern token");
     }

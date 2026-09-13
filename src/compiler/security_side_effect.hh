@@ -81,6 +81,13 @@ infer_required_effects_from_name(std::string_view name) noexcept {
     if (name.starts_with("agent:") || name.starts_with("synthesize:") ||
         name.starts_with("strategy:"))
         return static_cast<std::uint16_t>(kEffectMutate | kEffectMacroSelfEvo);
+    // Issue #3720: heap-mutate names are not mutate: prefixed, so the
+    // dispatch auto-stamp skipped require_effect. Interpreter (hash-set!)
+    // / (hash-remove!) / (vector-set!) and their IR/JIT lowerings write
+    // process-global tables with zero Mutate grant under Restricted+MT.
+    // Hash-ref (read) stays kEffectNone.
+    if (name == "hash-set!" || name == "hash-remove!" || name == "vector-set!")
+        return kEffectMutate;
     return kEffectNone;
 }
 

@@ -1363,14 +1363,27 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                     if (pfn) {
                         auto& hash_val = locals[ops[1]];
                         auto& key_val = locals[ops[2]];
-                        locals[ops[0]] = (*pfn)({hash_val, key_val});
+                        // Read: telemetry when an owner is wired (req=0, no
+                        // Mutate). Soft/unwired keeps the raw pfn.
+                        if (context_.evaluator) {
+                            locals[ops[0]] = context_.evaluator->invoke_prim_with_telemetry(
+                                "hash-ref", [&]() { return (*pfn)({hash_val, key_val}); });
+                        } else {
+                            locals[ops[0]] = (*pfn)({hash_val, key_val});
+                        }
                     } else {
                         locals[ops[0]] = make_void();
                     }
                     break;
                 }
                 case IROpcode::HashSet: {
+                    // Issue #3720: HashSet was a raw (*pfn) dual-track that
+                    // skipped invoke_prim_with_telemetry / require_effect.
+                    // Writes go through the same choke as PrimCall. Production
+                    // + no owner: no silent heap write (fail-closed). Soft
+                    // unwired keeps the historical raw pfn.
                     auto pfn = context_.primitives.lookup("hash-set!");
+                    EvalValue out = make_void();
                     if (pfn) {
                         auto& hash_val = locals[ops[1]];
                         auto& pair_val = locals[ops[2]];
@@ -1379,10 +1392,15 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                         if (cfn && dfn) {
                             auto key = (*cfn)({pair_val});
                             auto val = (*dfn)({pair_val});
-                            (*pfn)({hash_val, key, val});
+                            if (context_.evaluator) {
+                                out = context_.evaluator->invoke_prim_with_telemetry(
+                                    "hash-set!", [&]() { return (*pfn)({hash_val, key, val}); });
+                            } else if (!aura::compiler::typed_audit::production_defaults_active()) {
+                                (*pfn)({hash_val, key, val});
+                            }
                         }
                     }
-                    locals[ops[0]] = make_void();
+                    locals[ops[0]] = out;
                     break;
                 }
                 case IROpcode::HashRemove: {
@@ -1390,7 +1408,14 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                     if (pfn) {
                         auto& hash_val = locals[ops[1]];
                         auto& key_val = locals[ops[2]];
-                        locals[ops[0]] = (*pfn)({hash_val, key_val});
+                        if (context_.evaluator) {
+                            locals[ops[0]] = context_.evaluator->invoke_prim_with_telemetry(
+                                "hash-remove!", [&]() { return (*pfn)({hash_val, key_val}); });
+                        } else if (aura::compiler::typed_audit::production_defaults_active()) {
+                            locals[ops[0]] = make_void();
+                        } else {
+                            locals[ops[0]] = (*pfn)({hash_val, key_val});
+                        }
                     } else {
                         locals[ops[0]] = make_void();
                     }

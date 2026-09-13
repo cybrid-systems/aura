@@ -12,8 +12,11 @@
 
 #include "compiler/mutation_concurrency_health.hh"
 #include "compiler/observability_metrics.h"
+#include "compiler/security_capabilities.h"
 #include "compiler/security_defaults.hh"
 #include "compiler/typed_mutation_audit.h"
+#include "core/capability_model.hh"
+#include "core/workspace_epoch.hh"
 
 #include <cstdlib>
 #include <fstream>
@@ -152,9 +155,19 @@ static void ac3235_3_production_guard() {
     aura::compiler::MutationConcurrencyHealthSnapshot clean;
     aura::compiler::set_mutation_concurrency_health_admit_snapshot_for_test(clean);
     ::setenv("AURA_PIPELINE_STRICT", "0", 1);
+    aura::core::bump_mutation_epoch(1);
+    const auto live_mid = aura::core::current_mutation_epoch();
+    // Issue #3720: hash/vector-set! now require Mutate at dispatch. Seed
+    // the grant while Off (fence-free, #3596) so production Restricted
+    // still measures Guard acquire on a legal write.
+    aura::core::capability::g_capability_registry().grant(
+        3235, "mutate",
+        static_cast<aura::core::capability::Effect>(aura::compiler::security::kEffectMutate),
+        aura::core::capability::make_grant_provenance(live_mid, true, 0, 0));
     aura::compiler::typed_audit::apply_production_audit_defaults();
     aura::compiler::security::apply_production_security_defaults();
     CompilerService cs;
+    cs.evaluator().set_capability_tenant_id(3235);
     auto* m = static_cast<CompilerMetrics*>(cs.evaluator().compiler_metrics());
     CHECK(m != nullptr, "3235 AC3: metrics");
     const auto acq0 = m->mutation_guard_try_acquire_total.load(std::memory_order_relaxed);

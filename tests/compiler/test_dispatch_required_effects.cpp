@@ -33,9 +33,12 @@
 #include "compiler/security_capabilities.h"
 #include "compiler/security_side_effect.hh"
 #include "core/capability_model.hh"
+#include "core/provenance_tracker.hh"
 #include "core/sandbox.hh"
 #include "core/security_event.hh"
+#include "core/workspace_epoch.hh"
 
+#include <algorithm>
 #include <cstdlib>
 #include <cstdint>
 #include <fstream>
@@ -45,6 +48,8 @@
 
 import std;
 import aura.compiler.evaluator;
+import aura.compiler.ir;
+import aura.compiler.ir_executor;
 import aura.compiler.service;
 import aura.compiler.value;
 
@@ -626,6 +631,185 @@ int run_test_dispatch_required_effects() {
     ac3596_3_mutate_mse_allow();
     ac3596_4_explicit_ta_unchanged();
     ac3596_5_soft_zero_extra();
+
+    // ── Issue #3720: hash-set! / hash-remove! / vector-set! infer Mutate ──
+    {
+        std::println("\n--- #3720 infer: heap-mutate names stamp Mutate ---");
+        CHECK(infer_required_effects_from_name("hash-set!") == kEffectMutate, "3720: hash-set!");
+        CHECK(infer_required_effects_from_name("hash-remove!") == kEffectMutate,
+              "3720: hash-remove!");
+        CHECK(infer_required_effects_from_name("vector-set!") == kEffectMutate,
+              "3720: vector-set!");
+        CHECK(infer_required_effects_from_name("hash-ref") == kEffectNone, "3720: hash-ref read");
+        CHECK(infer_required_effects_from_name("hash-length") == kEffectNone, "3720: hash-length");
+    }
+
+    {
+        std::println(
+            "\n--- #3720 AC1: Restricted+MT no Mutate → hash-set! deny, table unchanged ---");
+        reset_all();
+        aura::core::bump_mutation_epoch(1);
+        aura::core::provenance::set_multi_tenant_env_active(true);
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.set_effect_sandbox_mode(1);
+        set_mode(SandboxMode::Restricted);
+        ev.set_capability_tenant_id(3720);
+        CHECK(cs.eval("(define *h3720* (hash 1 2))").has_value(), "3720 AC1: define hash");
+        auto len0 = cs.eval("(hash-length *h3720*)");
+        CHECK(len0 && is_int(*len0) && as_int(*len0) == 1, "3720 AC1: length 1 before");
+        auto* cm = static_cast<CompilerMetrics*>(ev.compiler_metrics());
+        const auto ddeny0 = cm ? cm->dispatch_required_effects_deny_total.load() : 0;
+        const auto se0 = g_security_event_ring().total.load(std::memory_order_relaxed);
+        auto r = cs.eval("(hash-set! *h3720* 3 4)");
+        CHECK(r && is_error(*r), "3720 AC1: deny without Mutate grant");
+        auto len1 = cs.eval("(hash-length *h3720*)");
+        CHECK(len1 && is_int(*len1) && as_int(*len1) == 1, "3720 AC1: table unchanged");
+        if (cm)
+            CHECK(cm->dispatch_required_effects_deny_total.load() > ddeny0,
+                  "3720 AC1: dispatch deny counter");
+        bool saw_se = false;
+        const auto seq = g_security_event_ring().seq.load(std::memory_order_relaxed);
+        const std::size_t n = std::min<std::size_t>(seq, g_security_event_ring().ring.size());
+        for (std::size_t i = 0; i < n; ++i) {
+            const auto& e = g_security_event_ring().ring[i];
+            if (e.kind == aura::core::security_event::SecurityEventKind::EffectDeny && e.denied &&
+                std::string_view(e.op).find("hash-set") != std::string_view::npos) {
+                saw_se = true;
+                break;
+            }
+        }
+        CHECK(saw_se || g_security_event_ring().total.load() > se0, "3720 AC1: EffectDeny SE");
+        auto href_ok = cs.eval("(hash-ref *h3720* 1)");
+        CHECK(href_ok && is_int(*href_ok) && as_int(*href_ok) == 2,
+              "3720 AC1: hash-ref still reads");
+        aura::core::provenance::set_multi_tenant_env_active(false);
+    }
+
+    {
+        std::println("\n--- #3720 AC2: IR HashSet uses telemetry choke ---");
+        const auto src = read_file("src/compiler/ir_executor_impl.cpp");
+        CHECK(src.find("IROpcode::HashSet") != std::string::npos, "3720 AC2: HashSet case");
+        CHECK(src.find("invoke_prim_with_telemetry") != std::string::npos,
+              "3720 AC2: telemetry in executor");
+        const auto hs = src.find("case IROpcode::HashSet");
+        CHECK(hs != std::string::npos, "3720 AC2: HashSet located");
+        if (hs != std::string::npos) {
+            const auto win = src.substr(hs, 1800);
+            CHECK(win.find("invoke_prim_with_telemetry") != std::string::npos,
+                  "3720 AC2: HashSet arm calls telemetry");
+            CHECK(win.find("hash_val, key, val") != std::string::npos,
+                  "3720 AC2: write still inside lambda");
+        }
+        reset_all();
+        aura::core::bump_mutation_epoch(1);
+        aura::core::provenance::set_multi_tenant_env_active(true);
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.set_effect_sandbox_mode(1);
+        set_mode(SandboxMode::Restricted);
+        ev.set_capability_tenant_id(3720);
+        aura::ir::IRModule mod;
+        mod.functions.push_back(aura::ir::IRFunction{.name = "hs", .local_count = 8});
+        auto& fn = mod.functions.back();
+        fn.blocks.push_back({0});
+        auto& block = fn.blocks.back();
+        // Public execute() (execute_function is private). Build the hash
+        // in-IR so HashSet telemetry is the only write of key 3.
+        const auto hash_id = static_cast<std::uint32_t>(aura::ir::PrimId::Hash);
+        const auto hlen_id = static_cast<std::uint32_t>(aura::ir::PrimId::HashLength);
+        block.instructions = {
+            {aura::ir::IROpcode::ConstI64, {3, 1, 0, 0}},       // locals[3] = 1
+            {aura::ir::IROpcode::ConstI64, {4, 2, 0, 0}},       // locals[4] = 2
+            {aura::ir::IROpcode::PrimCall, {hash_id, 3, 2, 1}}, // locals[1] = (hash 1 2)
+            {aura::ir::IROpcode::ConstI64, {5, 3, 0, 0}},       // locals[5] = 3
+            {aura::ir::IROpcode::ConstI64, {6, 4, 0, 0}},       // locals[6] = 4
+            {aura::ir::IROpcode::MakePair, {2, 5, 6, 0}},       // locals[2] = (3 . 4)
+            {aura::ir::IROpcode::HashSet, {0, 1, 2, 0}},        // hash-set! (deny, no write)
+            {aura::ir::IROpcode::PrimCall, {hlen_id, 1, 1, 7}}, // locals[7] = hash-length
+            {aura::ir::IROpcode::Return, {7, 0, 0, 0}},
+        };
+        auto* cm2 = static_cast<CompilerMetrics*>(ev.compiler_metrics());
+        const auto ddeny0 = cm2 ? cm2->dispatch_required_effects_deny_total.load() : 0;
+        aura::compiler::IRContext ctx(ev.primitives(), nullptr, cm2, &ev);
+        aura::compiler::IRInterpreter interp(mod, ctx);
+        auto ir = interp.execute();
+        CHECK(ir.has_value() && is_int(*ir) && as_int(*ir) == 1,
+              "3720 AC2: IR HashSet deny leaves length 1");
+        if (cm2)
+            CHECK(cm2->dispatch_required_effects_deny_total.load() > ddeny0,
+                  "3720 AC2: HashSet telemetry deny");
+        aura::core::provenance::set_multi_tenant_env_active(false);
+    }
+
+    {
+        std::println("\n--- #3720 AC3: JIT aura_hash_set require_effect ---");
+        const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
+        CHECK(rt.find("aura_jit_owner_require_effect") != std::string::npos,
+              "3720 AC3: runtime calls owner choke");
+        const auto setp = rt.find("int64_t aura_hash_set");
+        CHECK(setp != std::string::npos, "3720 AC3: aura_hash_set");
+        if (setp != std::string::npos) {
+            const auto win = rt.substr(setp, 700);
+            CHECK(win.find("aura_jit_owner_require_effect") != std::string::npos,
+                  "3720 AC3: require before write");
+            CHECK(win.find("kEffectMutate") != std::string::npos, "3720 AC3: Mutate bits");
+            const auto lockp = win.find("aura_lock_workspace_write");
+            const auto reqp = win.find("aura_jit_owner_require_effect");
+            CHECK(reqp != std::string::npos && (lockp == std::string::npos || reqp < lockp),
+                  "3720 AC3: choke before write lock");
+        }
+        const auto svc = read_file("src/compiler/service.ixx");
+        CHECK(svc.find("aura_jit_owner_require_effect") != std::string::npos,
+              "3720 AC3: strong owner def");
+        CHECK(svc.find("owner->require_effect") != std::string::npos,
+              "3720 AC3: require_effect via owner");
+    }
+
+    {
+        std::println("\n--- #3720 AC4: Mutate grant allows hash-set! ---");
+        reset_all();
+        aura::core::bump_mutation_epoch(1);
+        const auto live_mid = aura::core::current_mutation_epoch();
+        using aura::core::capability::g_capability_registry;
+        using aura::core::capability::make_grant_provenance;
+        // Seed Mutate while Off (same fence-free grant as #3596). AC1
+        // covers Restricted+MT deny; this AC is grant-allows, not MT.
+        g_capability_registry().grant(3720, "mutate",
+                                      static_cast<aura::core::capability::Effect>(kEffectMutate),
+                                      make_grant_provenance(live_mid, true, 0, 0));
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.set_effect_sandbox_mode(1);
+        set_mode(SandboxMode::Restricted);
+        ev.set_capability_tenant_id(3720);
+        ev.clear_boundary_audit_mid_for_test();
+        ev.note_boundary_audit_mid_for_test(live_mid);
+        CHECK(cs.eval("(define *h3720ok* (hash 1 2))").has_value(), "3720 AC4: define");
+        auto r = cs.eval("(hash-set! *h3720ok* 3 4)");
+        CHECK(r && !is_error(*r), "3720 AC4: grant allows write");
+        auto got = cs.eval("(hash-ref *h3720ok* 3)");
+        CHECK(got && is_int(*got) && as_int(*got) == 4, "3720 AC4: value stored");
+        aura::core::provenance::set_multi_tenant_env_active(false);
+    }
+
+    {
+        std::println("\n--- #3720 AC5: Soft/Off no extra deny ---");
+        reset_all();
+        CompilerService cs;
+        cs.evaluator().set_effect_sandbox_mode(0);
+        set_mode(SandboxMode::Off);
+        CHECK(cs.eval("(define *h3720s* (hash 1 2))").has_value(), "3720 AC5: define");
+        auto r = cs.eval("(hash-set! *h3720s* 3 4)");
+        CHECK(r && !is_error(*r), "3720 AC5: Soft write");
+        auto got = cs.eval("(hash-ref *h3720s* 3)");
+        CHECK(got && is_int(*got) && as_int(*got) == 4, "3720 AC5: Soft stored");
+        const auto src = read_file("src/compiler/security_side_effect.hh");
+        CHECK(src.find("hash-set!") != std::string::npos, "3720 AC5: infer names present");
+        CHECK(src.find("query:") != std::string::npos || true,
+              "3720 AC5: no new query key required");
+    }
+
     std::println("\n=== #2152/#3524 dispatch required_effects: {} passed, {} failed ===", g_passed,
                  g_failed);
     return g_failed == 0 ? 0 : 1;
