@@ -55,6 +55,7 @@ extern int run_test_require_effect_auto_isolation();
 extern int run_test_occupancy_deny_path_3724();
 extern int run_test_require_effect_three_arg_default();
 extern int run_test_require_effect_live_mid();
+extern int run_test_std_ffi_per_call_3725();
 extern int run_test_security_audit_fold();
 extern int run_test_security_audit_trail();
 extern int run_test_security_audit_unify();
@@ -251,10 +252,17 @@ int main() {
         std::println("OK member test_require_effect_three_arg_default ({} checks)", g_passed);
     }
 
-    std::println("\n──── test_require_effect_live_mid ────");
-    CHECK(true, "skip leftover require_effect live-mid AC");
-    ++members_passed;
-    std::println("OK member test_require_effect_live_mid (skip leftover AC)");
+    std::println("\n──── test_require_effect_live_mid (#3725 std/ffi per-call) ────");
+    reset_member_face();
+    g_passed = 0;
+    g_failed = 0;
+    if (run_test_std_ffi_per_call_3725() != 0 || g_failed != 0) {
+        ++members_failed;
+        std::println("FAIL member test_require_effect_live_mid ({}/{})", g_passed, g_failed);
+    } else {
+        ++members_passed;
+        std::println("OK member test_require_effect_live_mid ({} checks)", g_passed);
+    }
 
     std::println("\n──── test_security_audit_fold ────");
     reset_member_face();
