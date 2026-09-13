@@ -5861,6 +5861,16 @@ def cmd_lint():
     # Issue #3018: engine:metrics :all / :prefix fail-soft on hash insert
     # miss (never void for capacity). Extends test_engine_metrics_facade
     # + engine_metrics.aura (#81967); no docs/design/ (#1655).
+    emho3737_script = COVERAGE_CHECKS / "check_compiler_metrics_fields_3737.py"
+    if not emho3737_script.exists():
+        fail(f"missing {emho3737_script}")
+        return 1
+    r = run([sys.executable, str(emho3737_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3737 compiler_metrics_fields.inc linter failed — run python3 scripts/coverage/checks/check_compiler_metrics_fields_3737.py"
+        )
+        return r
     emho_script = COVERAGE_CHECKS / "check_engine_metrics_hash_overflow_3018.py"
     if not emho_script.exists():
         fail(f"missing {emho_script}")
@@ -14046,6 +14056,24 @@ def cmd_moving_temporary_canary_3210():
     return cmd_moving_temporary_canary_3210_coverage()
 
 
+def cmd_compiler_metrics_fields_3737_coverage():
+    """Issue #3737: compiler_metrics_fields.inc matches CompilerMetrics atomics (static)."""
+    print(f"{B}=== compiler_metrics_fields.inc coverage (#3737) ==={N}")
+    script = COVERAGE_CHECKS / "check_compiler_metrics_fields_3737.py"
+    r = _coverage_run(script)
+    if r.returncode != 0:
+        fail("compiler_metrics_fields.inc (#3737) coverage contract rows failed")
+        return 1
+    ok("compiler_metrics_fields.inc (#3737) coverage clean")
+    return 0
+
+
+def cmd_compiler_metrics_fields_3737():
+    """Issue #3737: grouped engine:metrics dump lists every CompilerMetrics atomic."""
+    print(f"{B}=== compiler_metrics_fields.inc (#3737) ==={N}")
+    return cmd_compiler_metrics_fields_3737_coverage()
+
+
 def cmd_engine_metrics_hash_overflow_3018_coverage():
     """Issue #3018: engine:metrics hash overflow fail-soft (static)."""
     print(f"{B}=== engine:metrics hash overflow coverage (#3018) ==={N}")
@@ -21774,6 +21802,8 @@ def main():
         "moving-post-moving-stale-3055-coverage": cmd_moving_post_moving_stale_3055_coverage,
         "moving-temporary-canary-3210": cmd_moving_temporary_canary_3210,
         "moving-temporary-canary-3210-coverage": cmd_moving_temporary_canary_3210_coverage,
+        "compiler-metrics-fields-3737": cmd_compiler_metrics_fields_3737,
+        "compiler-metrics-fields-3737-coverage": cmd_compiler_metrics_fields_3737_coverage,
         "engine-metrics-hash-overflow-3018": cmd_engine_metrics_hash_overflow_3018,
         "engine-metrics-hash-overflow-3018-coverage": cmd_engine_metrics_hash_overflow_3018_coverage,
         "unified-restamp-3019": cmd_unified_restamp_3019,

@@ -765,6 +765,37 @@ int main() {
               "3371 AC5: existing test file cites #3371");
     }
 
+    // ── Issue #3737: grouped dump includes lagged CompilerMetrics atomics ──
+    {
+        std::println("\n--- #3737: compiler_metrics_fields.inc on engine:metrics groups ---");
+        CHECK(hash_int(cs, "(engine:metrics)", "schema") == 2, "3737 AC2: schema 2 unchanged");
+        auto g = cs.eval("(engine:metrics :group \"mutate\")");
+        CHECK(g && is_hash(*g), "3737 AC1: :group mutate is hash");
+        auto handoff = cs.eval(
+            "(hash-ref (engine:metrics :group \"mutate\") \"stable_ref_handoff_reject_total\")");
+        CHECK(handoff && is_int(*handoff),
+              "3737 AC1: stable_ref_handoff_reject_total in mutate group");
+        auto tail = cs.eval("(hash-ref (engine:metrics :group \"mutate\") "
+                            "\"mutation_boundary_macro_hygiene_backstop_total\")");
+        CHECK(tail && is_int(*tail), "3737 AC1: struct-end atomic in mutate group");
+        auto jit = cs.eval("(hash-ref (engine:metrics :group \"jit\") \"jit_compilations\")");
+        CHECK(jit && is_int(*jit), "3737 AC2: existing jit group key unchanged");
+        const auto inc = read_file("src/compiler/compiler_metrics_fields.inc");
+        CHECK(inc.find("stable_ref_handoff_reject_total") != std::string::npos,
+              "3737 AC1: .inc lists handoff reject");
+        CHECK(inc.find("mutation_boundary_macro_hygiene_backstop_total") != std::string::npos,
+              "3737 AC1: .inc lists struct-end atomic");
+        const auto jit_src = read_file("src/compiler/evaluator_primitives_obs_jit.cpp");
+        CHECK(jit_src.find("Issue #3737") != std::string::npos, "3737 AC3: dump site cites #3737");
+        CHECK(read_file("tests/compiler/test_issue_3737.cpp").empty(),
+              "3737 AC3: no test_issue_3737.cpp");
+        CHECK(read_file("docs/design/3737-compiler-metrics-fields.md").empty(),
+              "3737 AC3: no docs/design/3737-*");
+        const auto build = read_file("build.py");
+        CHECK(build.find("check_compiler_metrics_fields_3737") != std::string::npos,
+              "3737 AC3: build.py wires linter");
+    }
+
     if (::aura::test::g_failed) {
         std::println(std::cerr, "engine metrics facade #1433: FAIL ({} failed, {} passed)",
                      ::aura::test::g_failed, ::aura::test::g_passed);
