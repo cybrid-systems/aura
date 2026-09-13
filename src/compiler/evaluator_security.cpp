@@ -717,6 +717,7 @@ bool Evaluator::require_effect_for_node_id(std::uint16_t req_bits, std::string_v
         }
     }
     const auto caller = static_cast<std::uint64_t>(capability_tenant_id_);
+    const auto fiber = static_cast<std::uint32_t>(aura_fiber_current_id());
     if (consult && existing != 0 && existing != caller) {
         if (workspace_flat_)
             ref = workspace_flat_->make_ref_layout(node_id);
@@ -724,15 +725,23 @@ bool Evaluator::require_effect_for_node_id(std::uint16_t req_bits, std::string_v
             ref.id = node_id;
         ref.tenant_id = existing;
     } else {
-        ref = make_stamped_ref(node_id);
+        // Issue #3724: field stamp only; occupancy after allow.
+        if (workspace_flat_)
+            ref = workspace_flat_->make_ref_layout(node_id);
+        else
+            ref.id = node_id;
+        ::aura::core::provenance::stamp_stable_ref_fields(ref, capability_tenant_id_, fiber);
     }
     const bool ok = require_effect_on_ref(req_bits, op, ref);
     if (!ok) {
         using ::aura::core::workspace_isolation::g_tenant_isolation_metrics;
         g_tenant_isolation_metrics().nodeid_only_entry_prevented_total.fetch_add(
             1, std::memory_order_relaxed);
+        return false;
     }
-    return ok;
+    if (existing == 0)
+        ref = make_stamped_ref(node_id); // #3724 occupancy after allow
+    return true;
 }
 
 // Issue #2706: test-only public surface — forwards to private

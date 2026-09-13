@@ -1003,7 +1003,18 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 std::uint64_t ref_tenant = 0;
                 if (!a.empty()) {
                     if (is_int(a[0])) {
-                        target_node = static_cast<aura::ast::NodeId>(as_int(a[0]));
+                        // Issue #3724: Restricted+MT / Strict bare int must
+                        // not occupancy-stamp via for_node_id. Body #3395
+                        // reject is the production SSOT; occupancy stays
+                        // empty so a later owner packed mutate is not
+                        // IsolationDeny'd as if the denier owned the slot.
+                        const bool consult_bare =
+                            (ev.effect_sandbox_mode() == 2 || aura::core::sandbox::is_strict()) ||
+                            (ev.effect_sandbox_mode() == 1 &&
+                             (aura::core::provenance::hard_capture_tenant_active() ||
+                              aura::core::provenance::multi_tenant_env_active()));
+                        if (!consult_bare)
+                            target_node = static_cast<aura::ast::NodeId>(as_int(a[0]));
                     } else if (is_pair(a[0])) {
                         // Issue #3640: single spine — the isolation gate MUST
                         // parse packed StableNodeRefs through the same

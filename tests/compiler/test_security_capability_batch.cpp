@@ -52,6 +52,7 @@ extern int run_test_hard_fiber_isolation();
 extern int run_test_isolation_audit_mid();
 extern int run_test_hard_fiber_restricted();
 extern int run_test_require_effect_auto_isolation();
+extern int run_test_occupancy_deny_path_3724();
 extern int run_test_require_effect_three_arg_default();
 extern int run_test_require_effect_live_mid();
 extern int run_test_security_audit_fold();
@@ -225,10 +226,17 @@ int main() {
     ++members_passed;
     std::println("OK member test_hard_fiber_restricted (skip leftover AC)");
 
-    std::println("\n──── test_require_effect_auto_isolation ────");
-    CHECK(true, "skip leftover require_effect isolation AC");
-    ++members_passed;
-    std::println("OK member test_require_effect_auto_isolation (skip leftover AC)");
+    std::println("\n──── test_require_effect_auto_isolation (#3724 occupancy deny) ────");
+    reset_member_face();
+    g_passed = 0;
+    g_failed = 0;
+    if (run_test_occupancy_deny_path_3724() != 0 || g_failed != 0) {
+        ++members_failed;
+        std::println("FAIL member test_require_effect_auto_isolation ({}/{})", g_passed, g_failed);
+    } else {
+        ++members_passed;
+        std::println("OK member test_require_effect_auto_isolation ({} checks)", g_passed);
+    }
 
     std::println("\n──── test_require_effect_three_arg_default (#3526) ────");
     reset_member_face();
