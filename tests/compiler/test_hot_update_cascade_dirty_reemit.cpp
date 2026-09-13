@@ -560,6 +560,136 @@ static void ac3059_4_linter_no_invent() {
           "3059 AC5: no docs/design/3059-* per #1655");
 }
 
+// ── Issue #3744: emit-mask vs force-reason-mask + storm-clear ring cap ──
+static void ac3744_body_cascade_does_not_stamp_env_bit() {
+    std::println("\n--- #3744 AC1: body-only cascade does not stamp last_success bit 1 ---");
+    auto& reg = hot_update_registry();
+    reg.on_reload_success();
+    reg.reset_force_jit_repromote_for_test();
+    const auto defuse = aot_reload_fail_to_force_jit_mask(AotReloadFail::Defuse);
+    const auto env = aot_reload_fail_to_force_jit_mask(AotReloadFail::Env);
+    CHECK(env == (1ULL << 1), "3744 AC1: Env reason-group is bit 1");
+    CHECK((1ULL << 1) == env, "3744 AC1: IR body emit bit collides numerically with Env");
+    reg.on_force_jit_for_reason(AotReloadFail::Defuse);
+    reg.on_force_jit_for_reason(AotReloadFail::Env);
+    CHECK((reg.force_jit_regions_mask() & (defuse | env)) == (defuse | env),
+          "3744 AC1: Defuse+Env demoted");
+    reg.set_emit_region_mask(1ULL << 1); // body / Performance dirty
+    reg.on_reemit_pipeline_call(3, 1);
+    CHECK(reg.last_reemit_success_region_mask() == 0,
+          "3744 AC1: last_success does not gain emit bit 1 (not a reason-group stamp)");
+    CHECK((reg.residual_force_mask() & defuse) != 0,
+          "3744 AC1: residual Defuse remains until a Defuse-group reemit");
+    CHECK((reg.residual_force_mask() & env) != 0, "3744 AC1: residual Env remains");
+    const auto dirty = read_file("src/compiler/service_dirty.cpp");
+    CHECK(dirty.find("Issue #3744") != std::string::npos, "3744 AC1: cascade cites #3744");
+    CHECK(dirty.find("last_reemit_success_region_mask") != std::string::npos,
+          "3744 AC1: cascade documents not ORing emit into last_success");
+    reg.on_reload_success();
+    reg.reset_force_jit_repromote_for_test();
+}
+
+static void ac3744_storm_clear_caps_ring() {
+    std::println("\n--- #3744 AC2: storm-clear reemit is bounded (not full ring dump) ---");
+    const auto cpp = read_file("src/compiler/hot_update_registry.cpp");
+    const auto brh = read_file("src/compiler/aura_jit_bridge.h");
+    CHECK(brh.find("kStormClearDirtyRingBudget") != std::string::npos,
+          "3744 AC2: storm-clear ring budget constant");
+    CHECK(brh.find("aura_production_dirty_ring_trim_to") != std::string::npos,
+          "3744 AC2: trim C ABI");
+    CHECK(cpp.find("aura_production_dirty_ring_trim_to") != std::string::npos,
+          "3744 AC2: storm-clear / drain trim the ring");
+    CHECK(cpp.find("ReemitReason::StormClear") != std::string::npos,
+          "3744 AC2: coverage-verify uses StormClear reason");
+
+    auto& reg = hot_update_registry();
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    aura_production_dirty_ring_reset_for_test();
+    reg.reset_deopt_storm_state_for_test();
+    reg.set_shape_storm_active(false);
+    reg.reset_storm_clear_health_pass_for_test();
+    for (int i = 0; i < 32; ++i) {
+        const auto name = std::format("d3744_{}", i);
+        CHECK(aura_production_dirty_ring_push(name.c_str(), 1ULL << 1, 0) == 1,
+              "3744 AC2: ring push");
+    }
+    CHECK(aura_production_dirty_ring_depth() == 32, "3744 AC2: ring filled to 32");
+    const auto dropped0 = aura_production_dirty_ring_dropped_total();
+    const auto popped0 = aura_production_dirty_ring_popped_total();
+    reg.on_region_mask_from_dirty(1ULL << 1); // pending so health pass fires
+    reg.set_shape_storm_active(true);
+    reg.maybe_storm_clear_health_pass(); // prev None → Shape (not leaving)
+    reg.set_shape_storm_active(false);
+    reg.maybe_storm_clear_health_pass(); // Shape → None: trim + drain
+    CHECK(aura_production_dirty_ring_depth() <= kStormClearDirtyRingBudget,
+          "3744 AC2: storm-clear depth <= budget (not 32)");
+    CHECK(aura_production_dirty_ring_dropped_total() >=
+              dropped0 + (32 - kStormClearDirtyRingBudget),
+          "3744 AC2: trim dropped the overflow oldest");
+    CHECK(aura_production_dirty_ring_popped_total() - popped0 <= kStormClearDirtyRingBudget,
+          "3744 AC2: reemit consume in this tick is not the full ring cap");
+    aura_production_dirty_ring_reset_for_test();
+    reg.reset_storm_clear_health_pass_for_test();
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+}
+
+static void ac3744_stats_distinguish_emit_vs_force() {
+    std::println("\n--- #3744 AC3: stats distinguish emit vs force (existing keys) ---");
+    CompilerService cs;
+    CHECK(cs.eval("(+ 1 1)").has_value(), "3744 AC3: warm");
+    CHECK(href(cs, "emit-region-mask") >= 0, "3744 AC3: emit-region-mask key");
+    CHECK(href(cs, "force-jit-regions-mask") >= 0, "3744 AC3: force-jit-regions-mask key");
+    CHECK(href(cs, "last-reemit-success-region-mask") >= 0,
+          "3744 AC3: last-reemit-success-region-mask key");
+    CHECK(href(cs, "emit-mask-dirty-region-wired") == 1, "3744 AC3: emit dirty-region wired");
+    CHECK(href(cs, "force-reason-mask-wired") == 1, "3744 AC3: force reason-group wired");
+    CHECK(href(cs, "last-reemit-success-is-reason-group") == 1,
+          "3744 AC3: last_success is reason-group");
+    CHECK(href(cs, "emit-region-bit-body") == 1, "3744 AC3: body emit bit documented");
+    CHECK(href(cs, "force-jit-bit-env") == 1, "3744 AC3: Env reason bit documented");
+    CHECK(href(cs, "storm-clear-dirty-ring-budget") ==
+              static_cast<std::int64_t>(kStormClearDirtyRingBudget),
+          "3744 AC3: storm-clear budget on existing hash");
+    CHECK(href(cs, "schema-3744") == 3744, "3744 AC3: schema-3744 additive");
+    CHECK(href(cs, "schema-2035") == 2035, "3744 AC3: schema-2035 preserved");
+}
+
+static void ac3744_soft_no_extra() {
+    std::println("\n--- #3744 AC4: Soft no extra + no invent ---");
+    const auto cpp = read_file("src/compiler/hot_update_registry.cpp");
+    CHECK(cpp.find("aura_production_defaults_active_probe() != 0") != std::string::npos &&
+              cpp.find("aura_production_dirty_ring_trim_to") != std::string::npos,
+          "3744 AC4: trim gated on production probe");
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    aura_production_dirty_ring_reset_for_test();
+    auto& reg = hot_update_registry();
+    reg.reset_deopt_storm_state_for_test();
+    reg.set_shape_storm_active(false);
+    reg.reset_storm_clear_health_pass_for_test();
+    for (int i = 0; i < 16; ++i) {
+        const auto name = std::format("s3744_{}", i);
+        (void)aura_production_dirty_ring_push(name.c_str(), 1ULL << 1, 0);
+    }
+    CHECK(aura_production_dirty_ring_depth() == 16, "3744 AC4: ring filled under Soft");
+    const auto dropped0 = aura_production_dirty_ring_dropped_total();
+    reg.on_region_mask_from_dirty(1ULL << 1);
+    reg.set_shape_storm_active(true);
+    reg.maybe_storm_clear_health_pass();
+    reg.set_shape_storm_active(false);
+    reg.maybe_storm_clear_health_pass();
+    CHECK(aura_production_dirty_ring_depth() == 16, "3744 AC4: Soft storm-clear does not trim");
+    CHECK(aura_production_dirty_ring_dropped_total() == dropped0,
+          "3744 AC4: Soft no extra ring drops");
+    aura_production_dirty_ring_reset_for_test();
+    reg.reset_storm_clear_health_pass_for_test();
+    CHECK(read_file("tests/compiler/test_issue_3744.cpp").empty(),
+          "3744 AC4: no test_issue_3744.cpp");
+    CHECK(read_file("docs/design/3744-emit-vs-force-mask.md").empty(),
+          "3744 AC4: no docs/design/3744-*");
+    const auto q = read_file("src/compiler/evaluator_primitives_mutate.cpp");
+    CHECK(q.find("schema-3744") != std::string::npos, "3744 AC4: additive schema on existing hash");
+}
+
 // ── Issue #3573: mutate×reemit bounded soak — proof hygiene + residual ──
 // Repeated facade rounds (mark dirty → reemit → success) must never leave
 // a fail-stamped proof behind (#2845 face), a sticky force bit, or new
@@ -750,6 +880,14 @@ int main() {
     ac3636_scoped_storm();
     reset_runtime_after_cs();
     ac3636_advisory();
+    reset_runtime_after_cs();
+    ac3744_body_cascade_does_not_stamp_env_bit();
+    reset_runtime_after_cs();
+    ac3744_storm_clear_caps_ring();
+    reset_runtime_after_cs();
+    ac3744_stats_distinguish_emit_vs_force();
+    reset_runtime_after_cs();
+    ac3744_soft_no_extra();
     reset_runtime_after_cs();
     std::println("\n=== {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;

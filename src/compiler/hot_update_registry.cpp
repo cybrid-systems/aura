@@ -385,6 +385,13 @@ void HotUpdateRegistry::maybe_storm_clear_health_pass() noexcept {
         last_region_mask_from_dirty_.load(std::memory_order_relaxed) == 0)
         return; // No pending work to drain — still no extra cost
 
+    // Issue #3744: cap the production dirty-ring drain to the storm-clear
+    // budget before unified drain / decide_and_reemit. Cascade still
+    // pushed names under storm (C ABI no-ops); without this trim, clear
+    // dumps up to 256 names in one tick. Soft never filled the ring.
+    if (aura_production_defaults_active_probe() != 0)
+        aura_production_dirty_ring_trim_to(kStormClearDirtyRingBudget);
+
     // Issue #2690: unified drain. Exchange the pending recovery bits and
     // drive the 3 branches atomically. Storm re-entry mid-drain bumps
     // skipped_reentered and does NOT drop deferred (exchange semantics).
@@ -422,7 +429,7 @@ void HotUpdateRegistry::maybe_storm_clear_health_pass() noexcept {
         // Issue #2952: production residual coverage-verify may re-seed
         // min-dirty for force & ~last_success and drive one #2601 retry.
         // Soft / residual==0 → falls through to existing #2601 path.
-        if (!maybe_coverage_verify_min_dirty()) {
+        if (!maybe_coverage_verify_min_dirty(ReemitReason::StormClear)) {
             // #2601 one-shot retry. Bridge owns decide_exhausted_min_dirty_retry
             // + aura_reemit_aot_for_dirty. Success is observable via the
             // existing aot_exhausted_min_dirty_retry_success_total counter.
@@ -2221,6 +2228,15 @@ HotUpdateRegistry::PendingRecovery HotUpdateRegistry::exchange_pending_recovery(
 // semantics ensure the second drain in the same ms observes `kinds == 0`
 // (cheap) and bumps `double_drain_prevented` to surface the race.
 void HotUpdateRegistry::drain_pending_recovery(std::uint8_t why) noexcept {
+    // Issue #3744: StormClear always caps the ring. BoundaryExit caps
+    // only inside the storm-exit force-full window so a clear+dtor
+    // cannot dump the 256-name ring in one tick. Soft: probe false.
+    const bool storm_clear = why == static_cast<std::uint8_t>(DrainReason::StormClear);
+    const bool storm_exit_boundary =
+        why == static_cast<std::uint8_t>(DrainReason::BoundaryExit) &&
+        storm_exit_force_full_remaining_.load(std::memory_order_relaxed) != 0;
+    if ((storm_clear || storm_exit_boundary) && aura_production_defaults_active_probe() != 0)
+        aura_production_dirty_ring_trim_to(kStormClearDirtyRingBudget);
     auto p = exchange_pending_recovery();
     if (p.kinds == 0) {
         // Quiet path — no pending work, zero extra cost (AC2).
