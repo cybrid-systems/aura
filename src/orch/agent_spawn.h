@@ -2246,6 +2246,12 @@ inline void finalize_spawn_quota_reject(AgentHandle& h) noexcept {
         spawn_tenant = serve::g_current_fiber->assigned_tenant_id();
     if (spawn_tenant == 0)
         spawn_tenant = orch_tenant;
+    // Issue #3731: one tenant for fiber preflight, arena charge,
+    // reserved_quota_tenant, BP key, and Fiber::assigned_tenant_id.
+    // Aura fills spec.tenant_id while quota TLS is often 0 — charging
+    // orch_tenant then stamping spawn_tenant made join release the
+    // wrong bucket. Prefer spawn_tenant (spec → parent → TLS).
+    const auto tenant = spawn_tenant != 0 ? spawn_tenant : orch_tenant;
     h.bp_scope_id = resolve_bare_bp_scope_id(spec.bp_scope_id, spawn_tenant);
     spec.bp_scope_id = h.bp_scope_id;
     if (!spec.body) {
@@ -2290,7 +2296,7 @@ inline void finalize_spawn_quota_reject(AgentHandle& h) noexcept {
         finalize_spawn_quota_reject(h);
         return h;
     }
-    if (auto ferr = pq.check_orchestration_fibers(/*amount=*/fiber_preflight, orch_tenant)) {
+    if (auto ferr = pq.check_orchestration_fibers(/*amount=*/fiber_preflight, tenant)) {
         g_orch_module_stats.spawn_failures.fetch_add(1, std::memory_order_relaxed);
         g_orch_module_stats.spawn_quota_rejects.fetch_add(1, std::memory_order_relaxed);
         g_orch_module_stats.resource_quota_rejects_total.fetch_add(1, std::memory_order_relaxed);
@@ -2312,7 +2318,7 @@ inline void finalize_spawn_quota_reject(AgentHandle& h) noexcept {
 
     // Issue #1880: arena + mailbox high-water memory reservation.
     const auto mem_cost = estimate_agent_memory_bytes(spec.mailbox_high_water, spec.attach_mailbox);
-    if (auto merr = pq.try_consume_agent_arena(mem_cost, orch_tenant)) {
+    if (auto merr = pq.try_consume_agent_arena(mem_cost, tenant)) {
         g_orch_module_stats.spawn_failures.fetch_add(1, std::memory_order_relaxed);
         g_orch_module_stats.spawn_quota_rejects.fetch_add(1, std::memory_order_relaxed);
         g_orch_module_stats.resource_quota_rejects_total.fetch_add(1, std::memory_order_relaxed);
@@ -2330,7 +2336,7 @@ inline void finalize_spawn_quota_reject(AgentHandle& h) noexcept {
         return h;
     }
     h.reserved_memory_bytes = mem_cost;
-    h.reserved_quota_tenant = orch_tenant;
+    h.reserved_quota_tenant = tenant;
 
     // Issue #2228: mailbox-backpressure admission preflight. When
     // attach_mailbox is requested AND the process-wide BP event count
