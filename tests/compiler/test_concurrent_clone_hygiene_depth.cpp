@@ -48,12 +48,15 @@ using aura::compiler::macro_exp::clone_macro_body;
 using aura::compiler::macro_exp::g_clone_macro_body_concurrent_refused_total;
 using aura::compiler::macro_exp::g_clone_macro_body_concurrent_top_level_total;
 using aura::compiler::macro_exp::g_macro_clone_in_flight;
+using aura::compiler::macro_exp::g_macro_clone_last_reject_reason;
 using aura::compiler::macro_exp::g_macro_clone_same_flat_reject_total;
 using aura::compiler::macro_exp::g_macro_hygiene_last_limit_reason;
 using aura::compiler::macro_exp::g_macro_origin_provenance_errors;
 using aura::compiler::macro_exp::get_fiber_hygiene_metrics;
 using aura::compiler::macro_exp::hygiene_last_limit_reason_string;
+using aura::compiler::macro_exp::inner_expand_production_limit_deny_all;
 using aura::compiler::macro_exp::kHygieneLimitReasonDepthLimit;
+using aura::compiler::macro_exp::kHygieneLimitReasonNameMapShared;
 using aura::compiler::macro_exp::reset_hygiene_runtime_caps_for_test;
 using aura::compiler::macro_exp::set_hygiene_depth_cap;
 using aura::test::g_failed;
@@ -626,6 +629,140 @@ int run_test_concurrent_clone_hygiene_depth() {
         CHECK(read_file("docs/design/3544-concurrent-clone-mutex.md").empty(),
               "3544 AC5: no docs/design");
         CHECK(aura_clone_macro_body_concurrent_refused_total_v_read() >= 0, "3544 AC5: v_read");
+    }
+
+    std::println("\n=== Issue #3756: shared name_map reject aborts like same-flat ===");
+    {
+        std::println("\n--- #3756 AC1: Restricted shared name_map — loser NULL_NODE ---");
+        using aura::core::capability::Effect;
+        using aura::core::capability::g_capability_registry;
+        using aura::core::capability::MacroSelfEvoPolicy;
+        using aura::core::capability::reset_capability_effects_for_test;
+        reset_capability_effects_for_test();
+        MacroSelfEvoPolicy pol;
+        pol.max_expansion_passes = 8;
+        pol.max_depth = 256;
+        pol.allow_rest_hygiene = true;
+        pol.allow_concurrent_fiber = true;
+        g_capability_registry().grant(0, "tenant-admin", Effect::TenantAdmin,
+                                      aura_test_grant_prov());
+        g_capability_registry().grant_macro_self_evo(0, pol, aura_test_grant_prov());
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+        aura_test_reset_macro_hygiene_last_limit_reason_for_test();
+        aura::ast::ASTArena src_arena;
+        StringPool sp(src_arena.allocator());
+        FlatAST src(src_arena.allocator());
+        auto leaf = src.add_variable(sp.intern("x"));
+        aura::ast::NodeId body = leaf;
+        for (int i = 0; i < 32; ++i)
+            body = src.add_let(sp.intern(std::format("t{}", i)), leaf, body);
+        NameMap shared;
+        std::atomic<int> ok_n{0};
+        std::atomic<int> null_n{0};
+        std::atomic<std::size_t> winner_size{0};
+        for (int attempt = 0; attempt < 8 && (ok_n.load() != 1 || null_n.load() != 1); ++attempt) {
+            ok_n.store(0, std::memory_order_relaxed);
+            null_n.store(0, std::memory_order_relaxed);
+            shared.clear();
+            aura_test_reset_macro_hygiene_last_limit_reason_for_test();
+            std::thread winner([&]() {
+                aura::ast::ASTArena ta;
+                StringPool tp(ta.allocator());
+                FlatAST tgt(ta.allocator());
+                auto c = clone_macro_body(tgt, tp, src, sp, body, nullptr, &shared,
+                                          SyntaxMarker::MacroIntroduced);
+                if (c != NULL_NODE) {
+                    ok_n.fetch_add(1, std::memory_order_relaxed);
+                    winner_size.store(shared.size(), std::memory_order_relaxed);
+                } else {
+                    null_n.fetch_add(1, std::memory_order_relaxed);
+                }
+            });
+            std::thread loser([&]() {
+                while (g_macro_clone_in_flight.load(std::memory_order_relaxed) == 0)
+                    std::this_thread::yield();
+                aura::ast::ASTArena ta;
+                StringPool tp(ta.allocator());
+                FlatAST tgt(ta.allocator());
+                auto c = clone_macro_body(tgt, tp, src, sp, body, nullptr, &shared,
+                                          SyntaxMarker::MacroIntroduced);
+                if (c == NULL_NODE)
+                    null_n.fetch_add(1, std::memory_order_relaxed);
+                else
+                    ok_n.fetch_add(1, std::memory_order_relaxed);
+            });
+            winner.join();
+            loser.join();
+        }
+        CHECK(ok_n.load() == 1, "3756 AC1: one proceeds");
+        CHECK(null_n.load() == 1, "3756 AC1: other NULL_NODE");
+        CHECK(shared.size() == winner_size.load(), "3756 AC1: map size matches winner only");
+        const auto* rs = hygiene_last_limit_reason_string();
+        const auto code = g_macro_hygiene_last_limit_reason.load(std::memory_order_relaxed);
+        const auto last_rej = g_macro_clone_last_reject_reason.load(std::memory_order_relaxed);
+        CHECK(null_n.load() == 1 &&
+                  (last_rej == 4 || std::string(rs ? rs : "") == "name-map-shared" ||
+                   code == kHygieneLimitReasonNameMapShared || code == 0),
+              "3756 AC1: loser reason name-map-shared (or winner cleared sticky 9)");
+        aura::ast::ASTArena ta2;
+        StringPool tp2(ta2.allocator());
+        FlatAST tgt2(ta2.allocator());
+        NameMap other;
+        auto later = clone_macro_body(tgt2, tp2, src, sp, body, nullptr, &other,
+                                      SyntaxMarker::MacroIntroduced);
+        CHECK(later != NULL_NODE, "3756 AC1: later expand on another map succeeds");
+        CHECK(!inner_expand_production_limit_deny_all(),
+              "3756 AC1: last_limit 8/9/10 not sticky after success");
+        const auto abort = read_file("src/compiler/macro_expansion.cpp");
+        CHECK(abort.find("rejected_shared_name_map") != std::string::npos,
+              "3756 AC1: abort consults shared-map flag");
+        CHECK(abort.find("concurrent_guard.rejected_shared_name_map") != std::string::npos,
+              "3756 AC1: abort if includes rejected_shared_name_map");
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+        reset_capability_effects_for_test();
+    }
+    {
+        std::println("\n--- #3756 AC2: same-flat / concurrent-top-level abort unchanged ---");
+        const auto me = read_file("src/compiler/macro_expansion.cpp");
+        CHECK(me.find("rejected_same_flat") != std::string::npos, "3756 AC2: same-flat flag");
+        CHECK(me.find("rejected_concurrent_top_level") != std::string::npos,
+              "3756 AC2: concurrent-top-level flag");
+        const auto abort = me.find("if (concurrent_guard.rejected_same_flat");
+        CHECK(abort != std::string::npos, "3756 AC2: abort if present");
+        const auto win = me.substr(abort, 280);
+        CHECK(win.find("rejected_concurrent_top_level") != std::string::npos,
+              "3756 AC2: concurrent-top-level still aborts");
+        CHECK(win.find("rejected_shared_name_map") != std::string::npos,
+              "3756 AC2: shared-map now aborts with them");
+    }
+    {
+        std::println("\n--- #3756 AC3: Soft/Off claim not taken ---");
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+        aura::ast::ASTArena sa;
+        StringPool sp(sa.allocator());
+        FlatAST src(sa.allocator());
+        auto pr = aura::parser::parse_to_flat("(lambda (x) x)", src, sp);
+        CHECK(pr.success, "3756 AC3: parse");
+        NameMap shared;
+        std::atomic<int> ok_n{0};
+        std::vector<std::thread> th;
+        for (int t = 0; t < 2; ++t) {
+            th.emplace_back([&]() {
+                aura::ast::ASTArena ta;
+                StringPool tp(ta.allocator());
+                FlatAST tgt(ta.allocator());
+                auto c = clone_macro_body(tgt, tp, src, sp, pr.root, nullptr, &shared,
+                                          SyntaxMarker::MacroIntroduced);
+                if (c != NULL_NODE)
+                    ok_n.fetch_add(1, std::memory_order_relaxed);
+            });
+        }
+        for (auto& t : th)
+            t.join();
+        CHECK(ok_n.load() == 2, "3756 AC3: Soft overlap observation only — both succeed");
+        CHECK(read_file("tests/compiler/test_issue_3756.cpp").empty(), "3756 AC4: no test_issue");
+        CHECK(read_file("docs/design/3756-shared-name-map-abort.md").empty(),
+              "3756 AC4: no docs/design");
     }
 
     // Issue #3574: no-boundary depth-exceed NULL_NODE hole + caller contract.
