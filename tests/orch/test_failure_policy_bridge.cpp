@@ -23,11 +23,14 @@
 #include "test_harness.hpp"
 
 #include "compiler/typed_mutation_audit.h"
+#include "core/provenance_tracker.hh"
+#include "core/sandbox.hh"
 #include "orch/agent_scope.h"
 #include "orch/agent_spawn.h"
 #include "orch/orch.h"
 #include "serve/parallel_orch.h"
 
+#include <atomic>
 #include <cstdint>
 #include <fstream>
 #include <iterator>
@@ -84,6 +87,8 @@ static void ac2974_run_added_tests();
 static void ac3206_run_added_tests();
 // Issue #3495: Aura supervise-batch / run-workflow call apply_workflow.
 static void ac3495_run_added_tests();
+// Issue #3726: supervise-batch population split (child scope).
+static void ac3726_run_added_tests();
 
 int run_test_failure_policy_bridge() {
     std::println("=== Issue #2539: FailurePolicy → AgentFailurePolicy bridge ===");
@@ -408,6 +413,8 @@ int run_test_failure_policy_bridge() {
     ac3206_run_added_tests();
     // Issue #3495: Aura sugar calls apply_workflow (per #81967).
     ac3495_run_added_tests();
+    // Issue #3726: one population per apply_workflow call.
+    ac3726_run_added_tests();
 
     // Issue #3052: RetryN projects on_join_fail; explicit policy not overwritten.
     {
@@ -1196,6 +1203,199 @@ static void ac3495_run_added_tests() {
     ac3495_3_policy_not_dropped();
     ac3495_4_watch_scope_false();
     ac3495_5_extend_no_invent();
+}
+
+// ── Issue #3726: supervise-batch must not watch/cancel session-root S ──
+
+struct Ac3726KeepaliveS {
+    std::atomic<bool> stop{false};
+    aura::serve::Fiber* fiber = nullptr;
+    aura::orch::AgentScope* root = nullptr;
+};
+
+static bool ac3726_arm_s(aura::compiler::CompilerService& cs, Ac3726KeepaliveS& s) {
+    // Probe creates orch_sched + session root. S is a named root handle.
+    // Do not park a live yield loop on the 2-worker orch scheduler — that
+    // starves supervise-batch. cancel_all skips Done fibers; the oracle
+    // is "S stays on root + batch uses a child".
+    auto probe = cs.eval(R"((orch:scope-spawn "probe-3726"))");
+    (void)probe;
+    s.root = aura::orch::find_agent_scope(static_cast<void*>(&cs.evaluator()));
+    if (!s.root)
+        return false;
+    aura::orch::AgentSpec spec;
+    spec.name = "S-3726";
+    spec.body = [] {};
+    spec.keepalive_interval_ms = 0;
+    spec.attach_mailbox = true;
+    spec.mutation_boundary = false;
+    auto& h = s.root->spawn(spec);
+    s.fiber = h.fiber;
+    return h.ok && s.fiber != nullptr;
+}
+
+static void ac3726_disarm(Ac3726KeepaliveS& s) {
+    s.stop.store(true, std::memory_order_relaxed);
+    aura::orch::reset_all_agent_scopes_for_test();
+}
+
+static void ac3726_1_s_not_cancelled_on_batch_residual() {
+    std::println("\n--- #3726 AC1: session S survives supervise-batch FailFast residual ---");
+    using aura::compiler::CompilerService;
+    using aura::compiler::types::as_int;
+    using aura::compiler::types::is_int;
+    using aura::orch::reset_all_agent_scopes_for_test;
+    reset_all_agent_scopes_for_test();
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+    aura::core::provenance::set_multi_tenant_env_active(false);
+    CompilerService cs;
+    Ac3726KeepaliveS s;
+    CHECK(ac3726_arm_s(cs, s), "3726 AC1: session-root S armed");
+    // Residual Cancel acts under production defaults (#3206), same face as
+    // #3495 AC1. Restricted+MT does not change the child-population split.
+    ac3206_set_prod(true);
+    CHECK(s.fiber && !s.fiber->is_cancel_requested(), "3726 AC1: S not cancelled before batch");
+    auto r = cs.eval(R"(
+        (let ((pol (orch:compose-workflow 'fail-fast :residual 'cancel))
+              (tasks (list (lambda () (error "boom")))))
+          (let ((h (orch:supervise-batch tasks pol :watch-scope #f)))
+            (if (string=? (hash-ref h "residual-action") "cancel") 1 0)))
+    )");
+    CHECK(r && is_int(*r) && as_int(*r) == 1, "3726 AC1: FailFast residual-action=cancel");
+    bool s_on_root = false;
+    if (s.root) {
+        for (const auto& h : s.root->handles()) {
+            if (h.name == "S-3726")
+                s_on_root = true;
+        }
+    }
+    CHECK(s_on_root, "3726 AC1: S handle remains on session root after residual cancel");
+    CHECK(s.fiber && !s.fiber->is_cancel_requested(),
+          "3726 AC1: S was not request_cancel'd (population split)");
+    auto r2 = cs.eval(R"(
+        (let ((pol (orch:compose-workflow 'fail-fast :residual 'cancel))
+              (tasks (list (lambda () (error "boom")))))
+          (let ((h (orch:supervise-batch tasks pol :watch-scope #t)))
+            (if (hash-ref h "ok") 0 1)))
+    )");
+    CHECK(r2 && is_int(*r2), "3726 AC1: watch-scope=#t batch returned");
+    CHECK(s.fiber && !s.fiber->is_cancel_requested(),
+          "3726 AC1: watch_scope batch did not cancel S");
+    CHECK(s.root && s.root->child_count() >= 1,
+          "3726 AC1: supervise-batch used a child scope (session root untouched)");
+    ac3726_disarm(s);
+    ac3206_set_prod(false);
+}
+
+static void ac3726_2_restartn_has_batch_specs_not_s() {
+    std::println("\n--- #3726 AC2: RestartN fuel is batch child specs, not S ---");
+    using aura::compiler::CompilerService;
+    using aura::orch::reset_all_agent_scopes_for_test;
+    reset_all_agent_scopes_for_test();
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+    aura::core::provenance::set_multi_tenant_env_active(false);
+    CompilerService cs;
+    Ac3726KeepaliveS s;
+    CHECK(ac3726_arm_s(cs, s), "3726 AC2: session-root S armed");
+    ac3206_set_prod(true);
+    auto r = cs.eval(R"(
+        (let ((pol (orch:compose-workflow 'retry-n :residual 'cancel :max-retries 2))
+              (tasks (list (lambda () (error "boom")))))
+          (orch:supervise-batch tasks pol :watch-scope #t))
+    )");
+    CHECK(r.has_value(), "3726 AC2: retry-n watch-scope batch ran");
+    CHECK(s.fiber && !s.fiber->is_cancel_requested(), "3726 AC2: RestartN did not cancel S");
+    CHECK(s.root && s.root->child_count() >= 1, "3726 AC2: child population exists");
+    bool s_on_root = false;
+    bool batch_on_child = false;
+    if (s.root) {
+        for (const auto& h : s.root->handles()) {
+            if (h.name == "S-3726")
+                s_on_root = true;
+        }
+        if (s.root->child_count() >= 1) {
+            auto& child = s.root->child_at(s.root->child_count() - 1);
+            for (const auto& h : child.handles()) {
+                if (h.name.find("supervise-batch-") == 0)
+                    batch_on_child = true;
+            }
+        }
+    }
+    CHECK(s_on_root, "3726 AC2: S stays on session root (not RestartN'd into child)");
+    CHECK(batch_on_child, "3726 AC2: batch closures spawned into child (specs_/handles)");
+    const auto q = read_file("src/compiler/evaluator_primitives_agent.cpp");
+    CHECK(q.find("child.spawn(std::move(spec))") != std::string::npos,
+          "3726 AC2: watch_scope path spawns AgentSpec into child");
+    CHECK(q.find("apply_workflow(*orch_sched.sched, child, tasks, w") != std::string::npos,
+          "3726 AC2: apply_workflow watches the child, not session root");
+    ac3726_disarm(s);
+    ac3206_set_prod(false);
+}
+
+static void ac3726_3_soft_observe() {
+    std::println("\n--- #3726 AC3: Soft/Report residual still observe-only ---");
+    using aura::compiler::CompilerService;
+    using aura::compiler::types::as_int;
+    using aura::compiler::types::is_int;
+    using aura::orch::reset_all_agent_scopes_for_test;
+    ac3206_set_prod(false);
+    reset_all_agent_scopes_for_test();
+    const auto c0 = g_orch_module_stats.workflow_residual_cancel_total.load();
+    CompilerService cs;
+    ac3206_set_prod(false);
+    Ac3726KeepaliveS s;
+    CHECK(ac3726_arm_s(cs, s), "3726 AC3: session-root S armed");
+    auto r = cs.eval(R"(
+        (let ((pol (orch:compose-workflow 'fail-fast :residual 'cancel))
+              (tasks (list (lambda () (error "boom")))))
+          (let ((h (orch:supervise-batch tasks pol :watch-scope #f)))
+            (if (string=? (hash-ref h "residual-action") "observe") 1 0)))
+    )");
+    CHECK(r && is_int(*r) && as_int(*r) == 1, "3726 AC3: Soft Cancel still observe (#2661)");
+    CHECK(s.fiber && !s.fiber->is_cancel_requested(), "3726 AC3: Soft did not cancel S");
+    CHECK(g_orch_module_stats.workflow_residual_cancel_total.load() == c0,
+          "3726 AC3: zero extra cancel under Soft");
+    ac3726_disarm(s);
+}
+
+static void ac3726_4_decide_isolation_ssot() {
+    std::println("\n--- #3726 AC4: decide_isolation still SSOT; default 0 Serialized ---");
+    const auto q = read_file("src/compiler/evaluator_primitives_agent.cpp");
+    const auto orch = read_file("src/serve/parallel_orch.h");
+    const auto spec = read_file("src/orch/agent_spawn.h");
+    CHECK(orch.find("decide_isolation") != std::string::npos, "3726 AC4: decide_isolation SSOT");
+    CHECK(orch.find("std::uint64_t region_key = 0") != std::string::npos,
+          "3726 AC4: TaskSpec region_key defaults 0");
+    CHECK(spec.find("struct AgentSpec") != std::string::npos, "3726 AC4: AgentSpec exists");
+    CHECK(spec.find("region_key") == std::string::npos,
+          "3726 AC4: AgentSpec has no region_key (Serialized default stays)");
+    CHECK(q.find("Issue #3726") != std::string::npos, "3726 AC4: prim cites #3726");
+    CHECK(q.find("decide_isolation") != std::string::npos ||
+              q.find("default 0 = Serialized") != std::string::npos,
+          "3726 AC4: Serialized default documented on this path");
+}
+
+static void ac3726_5_no_invent() {
+    std::println("\n--- #3726 AC5: no new query key; no test_issue_N; no AgentRegistry ---");
+    const auto q = read_file("src/compiler/evaluator_primitives_agent.cpp");
+    const auto t = read_file("tests/orch/test_failure_policy_bridge.cpp");
+    const auto header = read_file("src/orch/agent_spawn.h");
+    CHECK(t.find("ac3726_1_s_not_cancelled_on_batch_residual") != std::string::npos,
+          "3726 AC5: population-split soak in this file");
+    CHECK(q.find("query:supervise-batch") == std::string::npos, "3726 AC5: no new query key");
+    CHECK(q.find("query:3726") == std::string::npos, "3726 AC5: no query:3726");
+    CHECK(header.find("class AgentRegistry") == std::string::npos, "3726 AC5: no AgentRegistry");
+    CHECK(read_file("tests/orch/test_issue_3726.cpp").empty(), "3726 AC5: no test_issue_3726.cpp");
+    CHECK(read_file("docs/design/3726-supervise-batch-population.md").empty(),
+          "3726 AC5: no docs/design/3726-*");
+}
+
+static void ac3726_run_added_tests() {
+    ac3726_1_s_not_cancelled_on_batch_residual();
+    ac3726_2_restartn_has_batch_specs_not_s();
+    ac3726_3_soft_observe();
+    ac3726_4_decide_isolation_ssot();
+    ac3726_5_no_invent();
 }
 
 #ifndef AURA_ISSUE_BATCH_MEMBER
