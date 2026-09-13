@@ -466,10 +466,11 @@ static void emit_hygiene_limit_se(std::uint8_t code, std::uint32_t fiber_id) noe
         return;
     using ::aura::core::security_event::SecurityEventKind;
     using ::aura::core::security_event_wal::emit_security_event_durable;
-    auto mid = aura::compiler::typed_audit::join_audit_and_se_mid(0);
+    const auto mid = aura::compiler::typed_audit::join_audit_and_se_mid(0);
     const auto epoch = aura::core::current_mutation_epoch();
-    if (mid == 0)
-        mid = epoch != 0 ? epoch : 1;
+    // Issue #3735: production refuse mid==0 is the join key (the
+    // mid-fallback-refused SE). Do not synthesize epoch or 1 — those
+    // diverge from query:security-audit mutation-id=0.
     emit_security_event_durable(SecurityEventKind::MacroHygiene, tenant_for_macro_self_evo_check(),
                                 mid, epoch,
                                 /*effect_bits=*/0, "macro-hygiene", reason,

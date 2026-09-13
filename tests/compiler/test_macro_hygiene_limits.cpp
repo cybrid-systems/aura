@@ -16,10 +16,12 @@
 #include "compiler/aura_jit_bridge.h"
 #include "compiler/grant_test_support.hh"
 #include "compiler/security_capabilities.h"
+#include "compiler/typed_mutation_audit.h"
 #include "core/capability_model.hh"
 #include "core/sandbox.hh"
 #include "core/security_event.hh"
 #include "core/transparent_string_hash.hh"
+#include "core/workspace_epoch.hh"
 
 #include <array>
 #include <atomic>
@@ -69,8 +71,12 @@ using aura::compiler::macro_exp::runtime_hygiene_pass_cap;
 using aura::compiler::macro_exp::set_hygiene_depth_cap;
 using aura::compiler::macro_exp::set_hygiene_pass_cap;
 using aura::compiler::types::as_int;
+using aura::compiler::types::as_pair_idx;
+using aura::compiler::types::as_string_idx;
 using aura::compiler::types::is_hash;
 using aura::compiler::types::is_int;
+using aura::compiler::types::is_pair;
+using aura::compiler::types::is_string;
 using aura::core::capability::Effect;
 using aura::core::capability::EffectSandboxMode;
 using aura::core::capability::g_capability_registry;
@@ -969,6 +975,120 @@ static void ac3543_source_query() {
           "3543 AC5: provenance-stats key family unchanged");
 }
 
+// ── Issue #3735: hygiene SE must not invent mid=1 after join refuse-0 ──
+static void ac3735_hygiene_se_keeps_join_mid() {
+    std::println("\n--- #3735 AC1: Restricted+Full no-boundary hygiene SE at mid=0 ---");
+    using aura::core::security_event::g_security_event_ring;
+    using aura::core::security_event::kSecurityEventRingSize;
+    using aura::core::security_event::reset_security_event_ring_for_test;
+    using aura::core::security_event::SecurityEventKind;
+    reset_all();
+    reset_security_event_ring_for_test();
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    aura::compiler::typed_audit::clear_boundary_audit_mid();
+    aura::compiler::typed_audit::clear_type_linear_commit_proof_for_test();
+    aura::core::reset_mutation_epoch_for_test();
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+    CHECK(aura::compiler::typed_audit::join_audit_and_se_mid(0) == 0,
+          "3735 AC1 pre: join refuse mid=0");
+    const auto seq0 = g_security_event_ring().seq.load(std::memory_order_relaxed);
+    note_hygiene_last_limit_reason(kHygieneLimitReasonMacroIntroduced);
+    CHECK(hygiene_last_limit_reason_string() != nullptr &&
+              std::string(hygiene_last_limit_reason_string()) == "hygiene-macro-introduced",
+          "3735 AC1: reason stays hygiene-macro-introduced");
+    bool saw_mid0 = false, saw_mid1 = false, saw_hygiene0 = false;
+    {
+        auto& ring = g_security_event_ring();
+        const auto head = ring.seq.load(std::memory_order_relaxed);
+        const auto scan = head < kSecurityEventRingSize ? head : kSecurityEventRingSize;
+        for (std::uint64_t s = head; s > head - scan; --s) {
+            if (s == 0)
+                break;
+            const auto& e = ring.ring[(s - 1) % kSecurityEventRingSize];
+            if (e.seq < seq0)
+                continue;
+            if (e.mutation_id == 1)
+                saw_mid1 = true;
+            if (e.kind == SecurityEventKind::MacroHygiene && e.mutation_id == 0 &&
+                std::string_view(e.reason) == "hygiene-macro-introduced")
+                saw_hygiene0 = true;
+            if (e.mutation_id == 0)
+                saw_mid0 = true;
+        }
+    }
+    CHECK(saw_mid0, "3735 AC1: refuse/hygiene rows share mid=0");
+    CHECK(saw_hygiene0, "3735 AC1: hygiene-macro-introduced at mutation_id=0");
+    CHECK(!saw_mid1, "3735 AC3: no SE with mutation_id=1 from this path");
+
+    ::setenv("AURA_SANDBOX", "off", 1);
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    CompilerService cs_q;
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    auto q = cs_q.eval(
+        R"((engine:metrics "query:security-audit" 16 0 0 0 0 "hygiene-macro-introduced"))");
+    bool q_hit = false;
+    if (q) {
+        auto cur = *q;
+        int guard = 0;
+        auto& ev = cs_q.evaluator();
+        auto& pairs = ev.pairs();
+        auto heap = ev.string_heap();
+        while (is_pair(cur) && guard++ < 64) {
+            const auto idx = as_pair_idx(cur);
+            if (idx >= pairs.size())
+                break;
+            if (is_string(pairs[idx].car)) {
+                const auto sidx = as_string_idx(pairs[idx].car);
+                if (sidx < heap.size() &&
+                    heap[sidx].find("hygiene-macro-introduced") != std::string::npos &&
+                    heap[sidx].find("mutation_id=0") != std::string::npos)
+                    q_hit = true;
+            }
+            cur = pairs[idx].cdr;
+        }
+    }
+    CHECK(q_hit, "3735 AC1: query:security-audit mutation-id=0 contains hygiene-macro-introduced");
+
+    aura::compiler::typed_audit::stamp_type_linear_commit_proof(99);
+    auto ed = cs_q.eval("(hash-ref (engine:metrics \"query:evolution-audit-decision\" 99) "
+                        "\"last-se-reason\")");
+    bool phantom = false;
+    if (ed && is_string(*ed)) {
+        auto heap = cs_q.evaluator().string_heap();
+        const auto sidx = as_string_idx(*ed);
+        phantom =
+            sidx < heap.size() && heap[sidx].find("hygiene-macro-introduced") != std::string::npos;
+    }
+    CHECK(!phantom, "3735 AC1: evolution-audit-decision 99 does not bind phantom hygiene row");
+
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+    reset_all();
+}
+
+static void ac3735_soft_and_source() {
+    std::println("\n--- #3735 AC4: Soft/Off no hygiene SE; no invent ---");
+    using aura::core::security_event::reset_security_event_ring_for_test;
+    reset_all();
+    reset_security_event_ring_for_test();
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    CHECK(!aura::core::sandbox::is_sandbox_active(), "3735 AC4: Off");
+    const auto se0 = g_hygiene_violation_se_emit_total.load();
+    note_hygiene_last_limit_reason(kHygieneLimitReasonMacroIntroduced);
+    CHECK(g_hygiene_violation_se_emit_total.load() == se0, "3735 AC4: Soft no hygiene SE");
+    const auto cpp = read_file("src/compiler/macro_expansion.cpp");
+    CHECK(cpp.find("mid = epoch != 0 ? epoch : 1") == std::string::npos,
+          "3735 AC4: no epoch/1 synthesis");
+    CHECK(cpp.find("join_audit_and_se_mid(0)") != std::string::npos,
+          "3735 AC4: hygiene SE uses join SSOT");
+    CHECK(read_file("tests/compiler/test_issue_3735.cpp").empty(),
+          "3735 AC4: no test_issue_3735.cpp");
+    CHECK(read_file("docs/design/3735-hygiene-mid-refuse.md").empty(),
+          "3735 AC4: no docs/design/3735-*");
+    reset_all();
+}
+
 // ── Issue #3608: no-Evaluator production expand rollback (truncate brick) ──
 
 static void ac3608_1_depth_no_evaluator_size_unchanged() {
@@ -1217,6 +1337,9 @@ int run_test_macro_hygiene_limits() {
     ac3608_4_boundary_ssot();
     ac3608_5_soft_half_write_preserved();
     ac3608_6_source_and_linter();
+    std::println("\n=== Issue #3735: hygiene SE keeps join mid (no phantom 1) ===");
+    ac3735_hygiene_se_keeps_join_mid();
+    ac3735_soft_and_source();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

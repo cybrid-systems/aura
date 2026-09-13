@@ -308,6 +308,10 @@ extern "C" const char* aura_classify_mid0_se_reason(const char* reason) noexcept
         r == "grant-effect-needs-explicit-tenant-admin" || r == "allow-cross-needs-tenant-admin" ||
         r == kAuditMidSsotMissReason)
         return reason ? reason : "";
+    // Issue #3735: hygiene deny at join-0 keeps hygiene_limit_reason_string_for
+    // (not caller-misuse rewrite). Prefix covers the #3029/#3215 family.
+    if (r.starts_with("hygiene-"))
+        return reason ? reason : "";
     if (!(production_defaults_active() || get_strategy() == AuditStrategy::Full))
         return reason ? reason : "";
     g_typed_mutation_audit_counters.audit_mid_ssot_miss_total.fetch_add(1,
