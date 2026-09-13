@@ -17,6 +17,7 @@
 #include "test_harness.hpp"
 #include "compiler/observability_metrics.h"
 #include "compiler/runtime_shared.h"
+#include "compiler/typed_mutation_audit.h"
 #include <cstdint>
 #include <fstream>
 #include <iterator>
@@ -549,26 +550,30 @@ static void ac3021_freed_reapply_canary() {
 }
 
 static void ac3535_1_mismatch_skips_scan() {
-    std::println("\n--- #3535 AC1: mismatch skips scan + counter ---");
+    std::println("\n--- #3535/#3741 AC1: mismatch scans expected (bound eval) ---");
     using namespace aura::core::envframe_lifetime;
     reset_envframe_lifetime_stats();
     static std::atomic<int> scans{0};
+    static void* scanned = nullptr;
     scans.store(0, std::memory_order_relaxed);
+    scanned = nullptr;
     static int ctx_a = 1;
     static int ctx_b = 2;
     EnvFrameLifetimeHost h{};
-    h.ctx = &ctx_a;
-    h.expected_evaluator_id = &ctx_b;
-    h.scan_skip_freed = [](void*, EnvFrameLifetimeSite) {
+    h.ctx = &ctx_a;                   // swapped current
+    h.expected_evaluator_id = &ctx_b; // bound / save-side
+    h.scan_skip_freed = [](void* p, EnvFrameLifetimeSite) {
+        scanned = p;
         scans.fetch_add(1, std::memory_order_relaxed);
     };
     {
         EnvFrameLifetimeGuard guard{h, EnvFrameLifetimeSite::FiberSteal};
         (void)guard.site();
     }
-    CHECK(scans.load(std::memory_order_relaxed) == 0, "3535 AC1: scan skipped");
+    CHECK(scans.load(std::memory_order_relaxed) == 1, "3741 AC1: scan still runs");
+    CHECK(scanned == &ctx_b, "3741 AC1: scan_skip_freed(expected), not ctx");
     CHECK(envframe_lifetime_cross_evaluator_skip_total() == 1, "3535 AC1: skip_total");
-    CHECK(envframe_lifetime_scans_run() == 0, "3535 AC1: scans_run stays 0");
+    CHECK(envframe_lifetime_scans_run() == 1, "3741 AC1: scans_run counts the walk");
 }
 
 static void ac3535_2_match_runs_scan() {
@@ -611,8 +616,9 @@ static void ac3535_3_chaos_mismatch() {
         EnvFrameLifetimeGuard guard{h, EnvFrameLifetimeSite::CompactSweep};
         (void)guard.site();
     }
-    CHECK(scans.load(std::memory_order_relaxed) == 0, "3535 AC3: no scans");
+    CHECK(scans.load(std::memory_order_relaxed) == 1000, "3741: 1000 mismatch still scan expected");
     CHECK(envframe_lifetime_cross_evaluator_skip_total() == 1000, "3535 AC3: skip_total == 1000");
+    CHECK(envframe_lifetime_scans_run() == 1000, "3741: scans_run == 1000");
 }
 
 static void ac3535_4_soft_null_expected_scans() {
@@ -645,6 +651,13 @@ static void ac3535_5_source_cite_no_invent() {
     const auto obs = read_src("src/compiler/evaluator_primitives_obs_eval.cpp");
     CHECK(efl.find("expected_evaluator_id") != std::string::npos, "3535 AC5: host field");
     CHECK(efl.find("cross_evaluator_skip_total") != std::string::npos, "3535 AC5: counter END");
+    CHECK(efl.find("host_.scan_skip_freed(host_.expected_evaluator_id, site_)") !=
+              std::string::npos,
+          "3741: mismatch scans expected");
+    CHECK(efl.find("abort_restore_dual_topology") == std::string::npos,
+          "3741 canary: abort_restore not merged into EnvFrame RAII");
+    CHECK(read_src("tests/core/test_issue_3741.cpp").empty(), "3741: no test_issue_N.cpp");
+    CHECK(obs.find("query:envframe-cross-evaluator") == std::string::npos, "3741: no new query:*");
     CHECK(panic.find("expected_evaluator_id") != std::string::npos,
           "3535 AC5: PanicCheckpoint #1393 mirror");
     CHECK(obs.find("schema-3535") != std::string::npos, "3535 AC5: schema-3535");
@@ -667,6 +680,82 @@ static void ac3535_5_source_cite_no_invent() {
           "3535 AC5: schema-3535 queryable or hash-ref skip");
 }
 
+static void ac3741_compact_sweep_scans_expected_and_refuse_apply() {
+    std::println("\n--- #3741: CompactSweep expected=A ctx=B scans A; apply refuses ---");
+    using namespace aura::core::envframe_lifetime;
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    using aura::compiler::typed_audit::production_defaults_active;
+
+    apply_production_audit_defaults();
+    CHECK(production_defaults_active(), "3741: production face");
+
+    reset_envframe_lifetime_stats();
+    static void* scanned = nullptr;
+    static EnvFrameLifetimeSite scanned_site = EnvFrameLifetimeSite::BoundaryExit;
+    static int eval_a = 1;
+    static int eval_b = 2;
+    scanned = nullptr;
+    EnvFrameLifetimeHost h{};
+    h.ctx = &eval_b;
+    h.expected_evaluator_id = &eval_a;
+    h.scan_skip_freed = [](void* p, EnvFrameLifetimeSite site) {
+        scanned = p;
+        scanned_site = site;
+    };
+    {
+        EnvFrameLifetimeGuard guard{h, EnvFrameLifetimeSite::CompactSweep};
+        (void)guard.site();
+    }
+    CHECK(scanned == &eval_a, "3741 AC1: scan_skip_freed(A) CompactSweep");
+    CHECK(scanned_site == EnvFrameLifetimeSite::CompactSweep, "3741 AC1: CompactSweep site");
+    CHECK(envframe_lifetime_cross_evaluator_skip_total() == 1, "3741 AC1: skip_total");
+    CHECK(envframe_lifetime_scans_run() == 1, "3741 AC1: scans_run");
+    apply_dev_audit_defaults();
+
+    CompilerService cs_a;
+    CompilerService cs_b;
+    auto& ev_a = cs_a.evaluator();
+    auto& ev_b = cs_b.evaluator();
+    cs_a.public_mark_define_dirty("__3741_a__");
+    CHECK(ev_a.current_bridge_epoch() != 0, "3741: A tracking active");
+    auto cid = make_moved_tw(ev_a);
+    auto* ma = metrics_of(cs_a);
+    auto* mb = metrics_of(cs_b);
+    const auto mark_a0 = load_u64(ma->linear_live_closures_marked_invalid_total);
+    const auto mark_b0 = load_u64(mb->linear_live_closures_marked_invalid_total);
+    const auto reject0 =
+        aura::compiler::g_closure_apply_use_site_reject_total.load(std::memory_order_relaxed);
+
+    reset_envframe_lifetime_stats();
+    EnvFrameLifetimeHost host{};
+    host.ctx = &ev_b;
+    host.expected_evaluator_id = &ev_a;
+    host.scan_skip_freed = &Evaluator::envframe_lifetime_trampoline;
+    {
+        EnvFrameLifetimeGuard guard{host, EnvFrameLifetimeSite::CompactSweep};
+        (void)guard.armed();
+    }
+    CHECK(envframe_lifetime_scans_run() == 1, "3741 AC1: trampoline walk counted");
+    CHECK(load_u64(ma->linear_live_closures_marked_invalid_total) > mark_a0,
+          "3741 AC2: scan marked A's moved closure");
+    CHECK(load_u64(mb->linear_live_closures_marked_invalid_total) == mark_b0,
+          "3741 AC2: B not scanned");
+    auto live = ev_a.find_active_closure(cid);
+    CHECK(live.has_value(), "3741: slot still registered after skip-freed walk");
+    CHECK(live->bridge_epoch == 0, "3741 AC2: epoch-stale / force-drop on A");
+    ev_a.walk_active_closures([&](ClosureId id, Closure& cl) {
+        if (id == cid)
+            cl.tombstone_for_views();
+    });
+    auto applied = ev_a.apply_closure(cid, {});
+    CHECK(!applied.has_value(), "3741 AC2: freed closure cannot apply_closure");
+    CHECK(aura::compiler::g_closure_apply_use_site_reject_total.load(std::memory_order_relaxed) >
+              reject0,
+          "3741 AC2: use-site reject, no UAF");
+    apply_dev_audit_defaults();
+}
+
 int main() {
     std::println("=== Issue #1665 / #2164 / #3021: scan_skip_freed + apply protocol ===");
     ac1_first_mark();
@@ -687,6 +776,7 @@ int main() {
     ac3535_3_chaos_mismatch();
     ac3535_4_soft_null_expected_scans();
     ac3535_5_source_cite_no_invent();
+    ac3741_compact_sweep_scans_expected_and_refuse_apply();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

@@ -40,8 +40,8 @@ export namespace aura::core::envframe_lifetime {
 // Issue #2164: Phase 3 — hold-pin (active registry + compact gate).
 // Phase 2 lineage (#2087) retained in schema-2087 query keys.
 inline constexpr int kEnvFrameLifetimePhase = 3;
-// Issue #3535: scan_skip_freed skips when expected_evaluator_id != ctx
-// (PanicCheckpoint #1393 mirror). Soft is one nullptr compare.
+// Issue #3535 / #3741: discriminator mismatch still scans the bound
+// evaluator (expected). Soft expected==nullptr is one compare + scan ctx.
 inline constexpr int kEnvFrameCrossEvaluatorSkipIssue = 3535;
 
 enum class EnvFrameLifetimeSite : std::uint8_t {
@@ -56,9 +56,10 @@ enum class EnvFrameLifetimeSite : std::uint8_t {
 // scan_skip_freed(ctx, site) when both are non-null.
 struct EnvFrameLifetimeHost {
     void* ctx = nullptr;
-    // Issue #3535: cross-Evaluator discriminator (PanicCheckpoint #1393
-    // mirror). nullptr = no verification (existing callers). When set
-    // and != ctx, Guard dtor skips scan_skip_freed (stale ctx).
+    // Issue #3535 / #3741: cross-Evaluator discriminator (PanicCheckpoint
+    // #1393 mirror). nullptr = no verification (Soft / existing callers).
+    // When set and != ctx, Guard dtor still scans expected (bound eval)
+    // — skipping the walk left freed slots live until a matching Guard.
     void* expected_evaluator_id = nullptr;
     // Mandatory: scan live closures + skip freed/tombstoned slots +
     // enforce dual-path consistency. Called from guard dtor.
@@ -99,8 +100,9 @@ struct EnvFrameLifetimeStats {
     // miss, dual-path lag, or test inject). Gates
     // DensifyConsistencyReport.envframe_ok fail-closed.
     std::uint64_t densify_ownership_scan_fail_total = 0;
-    // Issue #3535: scan_skip_freed skipped — expected_evaluator_id != ctx.
+    // Issue #3535 / #3741: discriminator mismatch (expected != ctx).
     // Append END per #2906. Soft / unset expected never increments.
+    // #3741 still runs scan_skip_freed(expected) and bumps scans_run.
     std::uint64_t cross_evaluator_skip_total = 0;
 };
 
@@ -264,11 +266,17 @@ public:
                 break;
         }
         ++g_envframe_lifetime_stats.guards_destructed;
-        // Issue #3535: skip scan (and hold_generation on ctx) when the
-        // discriminator is armed and ctx is not the bound Evaluator.
-        // Soft / expected==nullptr: one compare, then existing scan.
+        // Issue #3535 / #3741: discriminator armed and ctx is not the
+        // bound Evaluator. Still scan expected (save-side / bound eval)
+        // — CompactSweep / FiberSteal / BoundaryExit must not drop the
+        // skip-freed walk. Do not scan ctx (stale / swapped). Soft
+        // expected==nullptr: one compare, then existing scan(ctx).
         if (host_.expected_evaluator_id != nullptr && host_.expected_evaluator_id != host_.ctx) {
             ++g_envframe_lifetime_stats.cross_evaluator_skip_total;
+            if (host_.scan_skip_freed) {
+                host_.scan_skip_freed(host_.expected_evaluator_id, site_);
+                ++g_envframe_lifetime_stats.scans_run;
+            }
             return;
         }
         // Mandatory exit scan (do not remove — #2003 / #2164 safety net).
