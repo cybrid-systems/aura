@@ -8643,48 +8643,77 @@ public:
 
     // Unload a module: reset its arena and remove cached defines.
     // Does NOT remove evaluator env bindings (they persist for the session).
+    // Issue #3762: production incremental serve is ir_cache_v2_ +
+    // lookup_define_v2. V1-era erase of ir_cache_ / jit_cache_ / string
+    // dep_graph_ left V2 callers as clean hits of the unloaded encoding
+    // and left node_dep_graph_ with extra edges (graphs_consistent is
+    // one-way). Snapshot called_by before string erase, drop V2, remirror
+    // node_dep from the post-unload string graph, mark remaining callers
+    // dirty. Soft/Off tear V2 down too (AC3).
     void unload_module(const std::string& name) {
         arena_group_.reset_module(name);
 
-        // Collect all cached defines belonging to this module and remove them.
-        // Since function_sources_ stores per-define source, we rebuild:
-        // find all cached functions whose source matches the module source.
         std::vector<std::string> to_remove;
-        for (auto& [fname, src] : function_sources_) {
-            // Simple heuristic: check if this function was cached from this module.
-            // We track module_name → function names via module_functions_ map.
-            (void)src;
+        if (auto it = module_functions_.find(name); it != module_functions_.end()) {
+            to_remove = it->second;
+            module_functions_.erase(it);
         }
 
-        // Track module function membership via a reverse map
-        if (auto it = module_functions_.find(name); it != module_functions_.end()) {
-            for (auto& fname : it->second)
-                to_remove.push_back(fname);
-            module_functions_.erase(it);
+        using lock_order::Level;
+        using lock_order::OrderedUniqueLock;
+        OrderedUniqueLock<std::shared_mutex> mutate_lock =
+            OrderedUniqueLock<std::shared_mutex>::acquire_if_needed(mutate_mtx_, Level::Mutate);
+
+        std::unordered_set<std::string> callers_to_dirty;
+        {
+            OrderedUniqueLock<std::shared_mutex> dep_write(dep_graph_mtx_, Level::DepGraph);
+            std::unordered_set<std::string> removing(to_remove.begin(), to_remove.end());
+            for (const auto& fname : to_remove) {
+                auto dit = dep_graph_.find(fname);
+                if (dit == dep_graph_.end())
+                    continue;
+                const auto callers = dit->second.called_by;
+                const auto callees = dit->second.calls;
+                dep_graph_.erase(dit);
+                for (const auto& caller : callers) {
+                    if (!removing.count(caller))
+                        callers_to_dirty.insert(caller);
+                    auto cit = dep_graph_.find(caller);
+                    if (cit != dep_graph_.end()) {
+                        auto& v = cit->second.calls;
+                        v.erase(std::remove(v.begin(), v.end(), fname), v.end());
+                    }
+                }
+                for (const auto& callee : callees) {
+                    auto git = dep_graph_.find(callee);
+                    if (git == dep_graph_.end())
+                        continue;
+                    auto& cb = git->second.called_by;
+                    cb.erase(std::remove(cb.begin(), cb.end(), fname), cb.end());
+                }
+            }
+            aura::compiler::dirty::rebuild_node_dep_graph_from_string(node_dep_graph_, dep_graph_,
+                                                                      dep_name_to_slot_);
+            dep_graph_generation_.fetch_add(1, std::memory_order_release);
+            metrics_.dep_graph_generation_total.fetch_add(1, std::memory_order_relaxed);
         }
 
         for (auto& fname : to_remove) {
             ir_cache_.erase(fname);
             ir_cache_bridge_.erase(fname);
             ir_cache_strings_.erase(fname);
+            ir_cache_v2_.erase(fname);
             {
                 std::unique_lock cache_write(jit_cache_mtx_);
                 jit_cache_.erase(fname);
             }
             function_sources_.erase(fname);
-            // Clean dep_graph (Issue #1376: exclusive lock)
-            {
-                std::unique_lock dep_write(dep_graph_mtx_);
-                auto dit = dep_graph_.find(fname);
-                if (dit != dep_graph_.end()) {
-                    for (auto& callee : dit->second.calls) {
-                        dep_graph_[callee].called_by.erase(
-                            std::remove(dep_graph_[callee].called_by.begin(),
-                                        dep_graph_[callee].called_by.end(), fname),
-                            dep_graph_[callee].called_by.end());
-                    }
-                    dep_graph_.erase(dit);
-                }
+        }
+        for (const auto& caller : callers_to_dirty) {
+            auto cit = ir_cache_v2_.find(caller);
+            if (cit != ir_cache_v2_.end()) {
+                (void)cit->second.mark_caller_body_dirty();
+                finish_cascade_soa_dirty_sync_(cit->second);
             }
         }
 
@@ -13639,6 +13668,11 @@ public:
     bool public_fail_closed_cone_parity_for_test(std::vector<std::string>& cone_names,
                                                  bool& want_partial) {
         return fail_closed_soft_dual_graph_parity_before_partial_cone_(cone_names, want_partial);
+    }
+    // Issue #3762: register fname as belonging to `module` so unload_module
+    // tears that define without unloading the caller's REPL module.
+    void public_note_module_function_for_test(const std::string& module, const std::string& fname) {
+        module_functions_[module].push_back(fname);
     }
     // Issue #3656: drop string calls/called_by but keep the NodeId fn
     // mirror — production precompute must not treat that as "no callee".

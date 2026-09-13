@@ -1351,6 +1351,100 @@ static void ac3761_3_soft_no_extra_consult() {
     apply_dev_audit_defaults();
 }
 
+// ── Issue #3762: unload_module must tear down V2 + remirror node_dep ──
+static void ac3762_1_unload_dirties_caller() {
+    std::println("\n--- #3762 AC1: unload f's module → lookup(g)==1, (g) not pre-unload f ---");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    apply_production_audit_defaults();
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define f (lambda () 1)) (define g (lambda () (f)))\")").has_value(),
+          "3762 AC1: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3762 AC1: eval");
+    if (!cs.get_define_v2("g"))
+        (void)cs.eval("(compile:cache-define \"g\")");
+    if (!cs.get_define_v2("f"))
+        (void)cs.eval("(compile:cache-define \"f\")");
+    CHECK(cs.get_define_v2("f") != nullptr, "3762 AC1: f cached");
+    CHECK(cs.get_define_v2("g") != nullptr, "3762 AC1: g cached");
+    cs.public_record_dependency("g", "f");
+    const auto hash_g = cs.get_define_v2("g")->source_hash;
+    const auto hash_f = cs.get_define_v2("f")->source_hash;
+    cs.public_note_module_function_for_test("mod-3762", "f");
+    cs.unload_module("mod-3762");
+    CHECK(cs.lookup_define_v2("f", hash_f) == 2, "3762 AC1: unloaded f is a V2 miss");
+    CHECK(cs.get_define_v2("f") == nullptr, "3762 AC1: f V2 erased");
+    CHECK(cs.lookup_define_v2("g", hash_g) == 1, "3762 AC1: lookup_define_v2(g)==1");
+    const auto* ge = cs.get_define_v2("g");
+    CHECK(ge && (ge->dirty || ge->dirty_block_count() > 0), "3762 AC1: g is body-dirty");
+    CHECK(cs.public_graphs_consistent(), "3762 AC1: graphs_consistent after remirror");
+    auto mut = cs.eval("(mutate:set-body \"f\" \"(lambda () 2)\" \"#3762\")");
+    CHECK(mut.has_value(), "3762 AC1: set-body f");
+    CHECK(cs.eval("(eval-current)").has_value(), "3762 AC1: peel dirty g");
+    auto r = cs.eval("(g)");
+    CHECK(r && is_int(*r) && as_int(*r) == 2,
+          "3762 AC1: (g) is post-rebind f, not pre-unload encoding");
+    apply_dev_audit_defaults();
+}
+
+static void ac3762_2_graphs_consistent_after_unload() {
+    std::println("\n--- #3762 AC2: node remirror after unload ---");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    apply_production_audit_defaults();
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define f (lambda () 1)) (define g (lambda () (f)))\")").has_value(),
+          "3762 AC2: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3762 AC2: eval");
+    cs.public_record_dependency("g", "f");
+    CHECK(cs.public_node_dep_has_mirror_edge("g", "f"), "3762 AC2: node G←F before unload");
+    cs.public_note_module_function_for_test("mod-3762", "f");
+    cs.unload_module("mod-3762");
+    CHECK(cs.public_graphs_consistent(), "3762 AC2: graphs_consistent");
+    CHECK(!cs.public_node_dep_has_mirror_edge("g", "f"), "3762 AC2: node G←F dropped by remirror");
+    const auto svc = read_file("src/compiler/service.ixx");
+    const auto cite = svc.find("Issue #3762: production incremental serve");
+    CHECK(cite != std::string::npos, "3762 AC2: cite");
+    CHECK(svc.find("void unload_module(const std::string& name)") != std::string::npos,
+          "3762 AC2: unload_module present");
+    if (cite != std::string::npos) {
+        const auto win = svc.substr(cite, 4200);
+        CHECK(win.find("ir_cache_v2_.erase") != std::string::npos, "3762 AC2: V2 erase");
+        CHECK(win.find("rebuild_node_dep_graph_from_string") != std::string::npos,
+              "3762 AC2: remirror");
+        CHECK(win.find("mark_caller_body_dirty") != std::string::npos, "3762 AC2: caller dirty");
+        const auto snap = win.find("called_by");
+        const auto reb = win.find("rebuild_node_dep_graph_from_string");
+        CHECK(snap != std::string::npos && reb != std::string::npos && snap < reb,
+              "3762 AC2: snapshot called_by before remirror");
+    }
+    apply_dev_audit_defaults();
+}
+
+static void ac3762_3_soft_v2_torn_down() {
+    std::println("\n--- #3762 AC3: Soft also tears V2 down ---");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+    apply_dev_audit_defaults();
+    g_typed_mutation_audit_counters.production_defaults_active.store(0, std::memory_order_relaxed);
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define f (lambda () 1)) (define g (lambda () (f)))\")").has_value(),
+          "3762 AC3: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3762 AC3: eval");
+    cs.public_record_dependency("g", "f");
+    const auto hash_f = cs.get_define_v2("f") ? cs.get_define_v2("f")->source_hash : 0;
+    cs.public_note_module_function_for_test("mod-3762", "f");
+    cs.unload_module("mod-3762");
+    CHECK(cs.lookup_define_v2("f", hash_f) == 2, "3762 AC3: Soft V2 f erased");
+    const auto* ge = cs.get_define_v2("g");
+    CHECK(ge && (ge->dirty || ge->dirty_block_count() > 0), "3762 AC3: Soft still dirties caller");
+    const auto svc = read_file("src/compiler/service.ixx");
+    CHECK(svc.find("schema-3762") == std::string::npos, "3762 AC3: no new query key");
+    CHECK(read_file("tests/compiler/test_issue_3762.cpp").empty(), "3762 AC3: no invent");
+    CHECK(read_file("docs/design/3762-unload-v2-teardown.md").empty(), "3762 AC3: no docs/design");
+    apply_dev_audit_defaults();
+}
+
 static void ac3486_5_linter_no_invent() {
     std::println("\n--- #3486 AC5: no new query key; linter; no invent ---");
     const auto svc = read_file("src/compiler/service.ixx");
@@ -1741,6 +1835,10 @@ int run_test_dep_graph_hybrid_cascade() {
     ac3761_1_node_only_caller_this_sweep();
     ac3761_2_ghost_node_only_still_remirrors();
     ac3761_3_soft_no_extra_consult();
+    // Issue #3762: unload_module tears down V2 + remirrors node_dep.
+    ac3762_1_unload_dirties_caller();
+    ac3762_2_graphs_consistent_after_unload();
+    ac3762_3_soft_v2_torn_down();
     // Issue #3657: unslotted string called_by is a production parity miss;
     // Soft keeps continue. #3165 slotted soak stays.
     ac3657_1_unslotted_production_inconsistent();
