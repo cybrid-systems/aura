@@ -20,6 +20,7 @@
 
 #include "test_harness.hpp"
 #include "compiler/observability_metrics.h"
+#include "compiler/typed_mutation_audit.h"
 #include "serve/gc_coordinator.h"
 #include "core/flatast_restamp.hh"       // #3677 unified restamp counter
 #include "core/gc_hooks.h"               // #3677 ffi-pin defer arm/release
@@ -35,6 +36,7 @@
 import std;
 import aura.compiler.evaluator;
 import aura.compiler.service;
+import aura.compiler.value;
 import aura.core.envframe_lifetime; // #3679 densify ownership scan counter
 
 namespace aura_compact_sweep_batch {
@@ -500,7 +502,10 @@ static void run_3679_guard_scan_order() {
         CHECK(call_pos < restamp_pos, "AC1: Guard scan precedes the unified restamp");
         CHECK(body.find("lc.invalidates_pins || lc.remapped_pins > 0") != std::string::npos,
               "AC1: restamp condition includes remapped_pins (#3679)");
+        CHECK(body.find("lc.new_gen != 0 && lc.new_gen != gen_at_entry") != std::string::npos,
+              "AC1: restamp also when Soft new_gen advanced (#3742)");
         CHECK(body.find("Issue #3679") != std::string::npos, "AC1: evaluator_gc.cpp cites #3679");
+        CHECK(body.find("Issue #3742") != std::string::npos, "AC1: evaluator_gc.cpp cites #3742");
     }
 
     // AC2: when the Soft compact invalidates pins OR remaps pins, the
@@ -576,6 +581,116 @@ static void run_3679_guard_scan_order() {
     }
 }
 
+// ── Issue #3742: Soft gen-advance restamp + pair-id rewrite after compact_pairs ──
+static void run_3742_gen_restamp_and_pair_idx() {
+    std::println("\n=== Issue #3742: gen-advance restamp + pair-idx rewrite ===");
+    using aura::compiler::Closure;
+    using aura::compiler::ClosureId;
+    using aura::compiler::NULL_ENV_ID;
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    using aura::compiler::typed_audit::production_defaults_active;
+    using aura::compiler::types::as_pair_idx;
+    using aura::compiler::types::is_pair;
+    using aura::compiler::types::is_void;
+    using aura::compiler::types::make_int;
+    using aura::compiler::types::make_pair;
+
+    // AC1: production compact_sweep that advances arena gen restamps.
+    {
+        std::println("\n--- #3742 AC1: gen advance → restamp ---");
+        apply_production_audit_defaults();
+        CHECK(production_defaults_active(), "3742 AC1: production face");
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        std::uint64_t aid = 0, gen0 = 0;
+        const bool has_arena = ev.arena_group().primary_arena_id_and_gen(aid, gen0);
+        const auto rs0 = aura::ast::unified_restamp_calls_total_v_read();
+        GCSweepBuffers marks{};
+        (void)ev.compact_sweep(&marks);
+        std::uint64_t gen1 = 0;
+        (void)ev.arena_group().primary_arena_id_and_gen(aid, gen1);
+        if (has_arena && gen1 != gen0) {
+            CHECK(aura::ast::unified_restamp_calls_total_v_read() > rs0,
+                  "3742 AC1: arena gen advanced → unified restamp");
+        } else {
+            CHECK(true, "3742 AC1: no gen bump this round (source-cite carries)");
+        }
+        apply_dev_audit_defaults();
+        const auto gc =
+            read_first({"src/compiler/evaluator_gc.cpp", "../src/compiler/evaluator_gc.cpp"});
+        CHECK(gc.find("lc.new_gen != 0 && lc.new_gen != gen_at_entry") != std::string::npos,
+              "3742 AC1: restamp on new_gen advance");
+        CHECK(gc.find("rewrite") != std::string::npos &&
+                  gc.find("pair_remap_") != std::string::npos,
+              "3742 AC1: compact_pairs rewrites pair_remap_ consumers");
+    }
+
+    // AC2: closure/env holding a compacted-away pair idx cannot UAF.
+    {
+        std::println("\n--- #3742 AC2: dead pair idx tombstoned / remapped ---");
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        const auto i0 = static_cast<std::uint64_t>(ev.push_pair(make_int(10), make_int(11)));
+        const auto i1 = static_cast<std::uint64_t>(ev.push_pair(make_int(20), make_int(21)));
+        const auto i2 = static_cast<std::uint64_t>(ev.push_pair(make_int(30), make_int(31)));
+        CHECK(i0 == 0 && i1 == 1 && i2 == 2, "3742 AC2: three consecutive pair slots");
+        auto eid = ev.alloc_env_frame(NULL_ENV_ID);
+        auto* fr = ev.resolve_env_frame_mut(eid);
+        CHECK(fr != nullptr, "3742 AC2: env frame");
+        fr->bind("dead", make_pair(i1));
+        fr->bind("live", make_pair(i2));
+        Closure cl;
+        cl.env_id = eid;
+        auto cid = ev.register_active_closure(std::move(cl));
+        (void)cid;
+        std::vector<bool> mask = {true, false, true};
+        const auto n = ev.compact_pairs(mask);
+        CHECK(n == 2, "3742 AC2: two live pairs remain");
+        CHECK(ev.resolve_pair(i1) == -1, "3742 AC2: old 1 compacted away");
+        CHECK(ev.resolve_pair(i2) == 1, "3742 AC2: old 2 remapped to 1");
+        fr = ev.resolve_env_frame_mut(eid);
+        CHECK(fr != nullptr, "3742 AC2: frame still live");
+        bool saw_dead_void = false;
+        bool saw_live_remap = false;
+        auto scan_bindings = [&](const auto& bindings) {
+            for (auto& b : bindings) {
+                if (is_void(b.second))
+                    saw_dead_void = true;
+                if (is_pair(b.second)) {
+                    const auto idx = as_pair_idx(b.second);
+                    CHECK(idx < ev.pairs().size(), "3742 AC2: live pair idx in range (no UAF)");
+                    if (idx == 1)
+                        saw_live_remap = true;
+                }
+            }
+        };
+        scan_bindings(fr->bindings_symid_);
+        scan_bindings(fr->bindings_);
+        CHECK(saw_dead_void, "3742 AC2: compacted-away pair binding tombstoned to void");
+        CHECK(saw_live_remap, "3742 AC2: surviving pair idx rewritten via pair_remap_");
+        auto applied = ev.apply_closure(cid, {});
+        (void)applied;
+        CHECK(true, "3742 AC2: apply after pair compact did not UAF");
+        CHECK(read_file("tests/serve/test_issue_3742.cpp").empty(), "3742: no test_issue_N.cpp");
+    }
+
+    // AC3: MutationBoundary still soft-gates live_compact (existing).
+    {
+        std::println("\n--- #3742 AC3: MutationBoundary still skips live_compact ---");
+        const auto arena = read_first({"src/core/arena.ixx", "../src/core/arena.ixx"});
+        CHECK(arena.find("arena_mutation_boundary_depth() > 0") != std::string::npos,
+              "3742 AC3: Soft live_compact still gates on MutationBoundary");
+        CHECK(arena.find("LiveCompactMode::Soft") != std::string::npos, "3742 AC3: Soft mode kept");
+        const auto gc =
+            read_first({"src/compiler/evaluator_gc.cpp", "../src/compiler/evaluator_gc.cpp"});
+        CHECK(gc.find("live_compact(aura::ast::LiveCompactMode::Soft)") != std::string::npos,
+              "3742 AC3: compact_sweep still Soft (not Moving)");
+        CHECK(gc.find("compact_all_moving_pinned") == std::string::npos,
+              "3742 AC3: sweep does not treat Soft as Moving");
+    }
+}
+
 } // namespace aura_compact_sweep_batch
 
 int main() {
@@ -591,5 +706,6 @@ int main() {
     aura_compact_sweep_batch::run_206_all_dead();
     aura_compact_sweep_batch::run_3677_soft_compact_restamp();
     aura_compact_sweep_batch::run_3679_guard_scan_order();
+    aura_compact_sweep_batch::run_3742_gen_restamp_and_pair_idx();
     return RUN_ALL_TESTS();
 }

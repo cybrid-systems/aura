@@ -4271,6 +4271,9 @@ public:
             agg.new_gen = std::max(agg.new_gen, r.new_gen);
             agg.soft_gated = agg.soft_gated || r.soft_gated;
             agg.invalidates_pins = agg.invalidates_pins || r.invalidates_pins;
+            // Issue #3742: remapped_pins was dropped on ArenaGroup aggregate
+            // so compact_sweep's remapped_pins restamp arm was dead.
+            agg.remapped_pins += r.remapped_pins;
             // Issue #2089 / #2166: aggregate Moving + non-moving flags.
             agg.moved_live_objects = agg.moved_live_objects || r.moved_live_objects;
             agg.objects_moved += r.objects_moved;
