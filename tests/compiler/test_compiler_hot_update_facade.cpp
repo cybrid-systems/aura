@@ -1057,6 +1057,102 @@ static void ac3605_owner_scope_clock_isolation() {
     apply_dev_audit_defaults();
 }
 
+// ── Issue #3749: production facade must evict jit_cache_ so
+// try_jit_execute cannot cache-hit pre-mutate native.
+//   AC1: facade invalidate/dirty → jit_cache_ has no F
+//   AC2: aura_closure_call still consults deopt_pending (#3441)
+//   AC3: Soft erase+invalidate path unchanged
+//   AC4: no test_issue_N.cpp / no new query key
+static void ac3749_production_facade_evicts_jit_cache() {
+    std::println("\n--- #3749: production facade evicts jit_cache_ ---");
+    const auto svc = read_file("src/compiler/service_dirty.cpp");
+    const auto ixx = read_file("src/compiler/service.ixx");
+    const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
+
+    CHECK(ixx.find("evict_jit_cache_after_production_facade_") != std::string::npos,
+          "3749 AC1: helper declared");
+    CHECK(ixx.find("Issue #3749") != std::string::npos, "3749 AC1: service.ixx cites #3749");
+    {
+        const auto hpos = ixx.find("void evict_jit_cache_after_production_facade_");
+        CHECK(hpos != std::string::npos, "3749 AC1: helper definition");
+        const auto hwin = (hpos == std::string::npos) ? std::string{} : ixx.substr(hpos, 900);
+        CHECK(hwin.find("jit_cache_.erase(name)") != std::string::npos,
+              "3749 AC1: erases jit_cache_");
+        CHECK(hwin.find("jit_.invalidate(name.c_str())") != std::string::npos,
+              "3749 AC1: AuraJIT invalidate");
+        CHECK(hwin.find("jit_.invalidate_prefix(name.c_str())") != std::string::npos,
+              "3749 AC1: prefix invalidate");
+        CHECK(hwin.find("std::unique_lock cache_write(jit_cache_mtx_)") != std::string::npos,
+              "3749 AC1: same jit_cache_mtx_ window as #1378");
+    }
+    CHECK(svc.find("evict_jit_cache_after_production_facade_(name)") != std::string::npos,
+          "3749 AC1: service_dirty calls helper after facade");
+    {
+        const auto md_pos = svc.find("void CompilerService::mark_define_dirty");
+        const auto md_end = svc.find("\nvoid CompilerService::", md_pos + 1);
+        const auto md_win =
+            svc.substr(md_pos, (md_end == std::string::npos ? 8000 : md_end - md_pos));
+        const auto stamp = md_win.find("stamp_eval_core_joint_after_production_facade_(name)");
+        const auto evict = md_win.find("evict_jit_cache_after_production_facade_(name)");
+        CHECK(stamp != std::string::npos && evict != std::string::npos && evict > stamp,
+              "3749 AC1: mark_define_dirty evicts after stamp");
+    }
+    {
+        const auto if_pos = svc.find("void CompilerService::invalidate_function");
+        const auto if_end = svc.find("\nvoid CompilerService::", if_pos + 1);
+        const auto if_win =
+            svc.substr(if_pos, (if_end == std::string::npos ? 12000 : if_end - if_pos));
+        const auto stamp = if_win.find("stamp_eval_core_joint_after_production_facade_(name)");
+        const auto evict = if_win.find("evict_jit_cache_after_production_facade_(name)");
+        CHECK(stamp != std::string::npos && evict != std::string::npos && evict > stamp,
+              "3749 AC1: invalidate_function evicts after stamp");
+    }
+    CHECK(ixx.find("aura_jit_is_deopt_pending(ir_fn.name.c_str())") != std::string::npos,
+          "3749 AC1: try_jit_execute cache-hit refuses deopt_pending");
+
+    CHECK(rt.find("aura_jit_is_deopt_pending(slow_cname.c_str())") != std::string::npos,
+          "3749 AC2: aura_closure_call still consults deopt_pending (#3441/#3412)");
+    CHECK(rt.find("Issue #3441") != std::string::npos, "3749 AC2: #3441 needle kept");
+
+    CHECK(svc.find("Issue #491 + #1378: erase jit_cache_ AND jit_.invalidate") != std::string::npos,
+          "3749 AC3: Soft same-lock erase+invalidate kept");
+    CHECK(svc.find("jit_.invalidate_prefix(name.c_str())") != std::string::npos,
+          "3749 AC3: Soft prefix invalidate kept");
+
+    CHECK(read_file("tests/compiler/test_issue_3749.cpp").empty(),
+          "3749 AC4: no test_issue_3749.cpp");
+    CHECK(read_file("docs/design/3749-jit-cache-facade.md").empty(),
+          "3749 AC4: no docs/design/3749-*");
+    CHECK(svc.find("schema-3749") == std::string::npos &&
+              ixx.find("schema-3749") == std::string::npos,
+          "3749 AC4: no new query key");
+
+    apply_production_audit_defaults();
+    CHECK(aura_production_defaults_active_probe() != 0, "3749 AC1: production face");
+    {
+        CompilerService cs;
+        cs.public_jit_cache_insert_dummy_for_test("ac3749_F");
+        CHECK(cs.public_jit_cache_contains("ac3749_F"), "3749 AC1: dummy seeded");
+        cs.public_invalidate_function("ac3749_F");
+        CHECK(!cs.public_jit_cache_contains("ac3749_F"),
+              "3749 AC1: invalidate_function evicts jit_cache_");
+        cs.public_jit_cache_insert_dummy_for_test("ac3749_G");
+        CHECK(cs.public_jit_cache_contains("ac3749_G"), "3749 AC1: dummy G seeded");
+        cs.public_mark_define_dirty("ac3749_G");
+        CHECK(!cs.public_jit_cache_contains("ac3749_G"),
+              "3749 AC1: mark_define_dirty evicts jit_cache_");
+    }
+    apply_dev_audit_defaults();
+    {
+        CompilerService cs;
+        cs.public_jit_cache_insert_dummy_for_test("ac3749_soft");
+        CHECK(cs.public_jit_cache_contains("ac3749_soft"), "3749 AC3: Soft dummy seeded");
+        cs.public_invalidate_function("ac3749_soft");
+        CHECK(!cs.public_jit_cache_contains("ac3749_soft"),
+              "3749 AC3: Soft invalidate still erases jit_cache_");
+    }
+}
+
 int run_test_issue_3112() {
     std::print("[test_issue_3112] running 5 ACs + #3129 + #3150 extensions\n");
 
@@ -1107,6 +1203,10 @@ int run_test_issue_3112() {
     // #3345 stays depth-1. Peel union is transitive. Soft teardown
     // unchanged.
     ac3474_production_called_by_cone();
+
+    // Issue #3749: production facade must evict jit_cache_ so
+    // try_jit_execute cannot cache-hit pre-mutate native.
+    ac3749_production_facade_evicts_jit_cache();
 
     // Issue #3227: remount ok path rebinds linear proof (densify/steal gen).
     {
