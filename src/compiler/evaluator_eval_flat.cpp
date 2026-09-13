@@ -1182,10 +1182,18 @@ EvalValue Evaluator::ast_to_data(const aura::ast::FlatAST& flat, const aura::ast
         case ast::NodeTag::LiteralFloat:
             return make_float(v.float_value);
         case ast::NodeTag::LiteralString: {
+            // Issue #3703: intern by sym_id — the same hit path as eval_flat
+            // LiteralString (#3401/#3457). Quote literals of the same sym_id
+            // share one string_heap_ index (eq? true) without per-quote heap
+            // growth or the Variable path's linear scan.
+            if (const auto* e = string_intern_by_sym_.get(v.sym_id))
+                return *e;
             auto name = std::string(pool.resolve(v.sym_id));
             auto idx = string_heap_.size();
             string_heap_.push_back(std::move(name));
-            return make_string(idx);
+            auto val = make_string(idx);
+            string_intern_by_sym_.set(v.sym_id, val);
+            return val;
         }
         case ast::NodeTag::Variable: {
             auto name = std::string(pool.resolve(v.sym_id));
@@ -1216,13 +1224,18 @@ EvalValue Evaluator::ast_to_data(const aura::ast::FlatAST& flat, const aura::ast
             return make_string(static_cast<std::int64_t>(idx));
         }
         case ast::NodeTag::Call: {
-            // Issue #1397: size() read + push_back() in the per-iter
-            // loop must be atomic to keep the returned pair_idx stable
-            // across concurrent fiber:spawn workers.
+            // Issue #3703: recurse WITHOUT alloc_storage_lock_ — the
+            // evaluator-wide mutex must not be held across the ast_to_data
+            // recursion (multi-fiber quote of disjoint lists serializes on
+            // it). Lock only the pairs_.push_back slots (Issue #1397's
+            // size+push atomicity is kept per slot).
+            std::vector<EvalValue> items;
+            items.reserve(v.children.size());
+            for (auto it = v.children.rbegin(); it != v.children.rend(); ++it)
+                items.push_back(ast_to_data(flat, pool, *it));
             std::lock_guard lock(alloc_storage_lock_);
             EvalValue tail = make_void();
-            for (auto it = v.children.rbegin(); it != v.children.rend(); ++it) {
-                auto item = ast_to_data(flat, pool, *it);
+            for (auto& item : items) {
                 auto pair_idx = pairs_.size();
                 pairs_.push_back(Pair{std::move(item), tail});
                 tail = make_pair(pair_idx);
@@ -1230,10 +1243,14 @@ EvalValue Evaluator::ast_to_data(const aura::ast::FlatAST& flat, const aura::ast
             return tail;
         }
         case ast::NodeTag::Begin: {
+            // Issue #3703: same unlocked-recursion shape as Call.
+            std::vector<EvalValue> items;
+            items.reserve(v.children.size());
+            for (auto it = v.children.rbegin(); it != v.children.rend(); ++it)
+                items.push_back(ast_to_data(flat, pool, *it));
             std::lock_guard lock(alloc_storage_lock_);
             EvalValue tail = make_void();
-            for (auto it = v.children.rbegin(); it != v.children.rend(); ++it) {
-                auto item = ast_to_data(flat, pool, *it);
+            for (auto& item : items) {
                 auto pair_idx = pairs_.size();
                 pairs_.push_back(Pair{std::move(item), tail});
                 tail = make_pair(pair_idx);
