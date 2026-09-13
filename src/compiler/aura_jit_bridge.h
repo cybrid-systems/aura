@@ -821,6 +821,9 @@ std::uint64_t cross_eval_hard_global_bump_total_v_read(void);
 std::uint64_t reemit_owner_missing_reject_total_v_read(void);
 // Issue #3070: peer soft-stale after owner-scoped invalidate (no epoch bump).
 void aura_aot_mark_peer_slots_soft_stale(void* owner);
+// Issue #3750: name-precise peer AOT slot stale (not all-slot #3070).
+void aura_aot_soft_stale_peer_slots_for_name(const char* name, void* owner);
+int aura_aot_peer_jit_name_hash_is_soft_stale(std::uint64_t name_hash);
 // Issue #3377: owner-scoped hard invalidate must physically clear the
 // owner AOT slot for the mutated define, not just rely on the
 // generation-behind predicate. Zero fn_ptr + soft_stale=1 on the OWNER

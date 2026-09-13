@@ -243,6 +243,12 @@ extern "C" __attribute__((weak)) std::uint64_t reemit_owner_missing_reject_total
     return 0;
 }
 extern "C" __attribute__((weak)) void aura_aot_mark_peer_slots_soft_stale(void* /*owner*/) {}
+extern "C" __attribute__((weak)) void aura_aot_soft_stale_peer_slots_for_name(const char* /*name*/,
+                                                                              void* /*owner*/) {}
+extern "C" __attribute__((weak)) int
+aura_aot_peer_jit_name_hash_is_soft_stale(std::uint64_t /*name_hash*/) {
+    return 0;
+}
 // Issue #3377: production impl is in aura_jit_bridge.cpp. Light JIT
 // binaries (libaura_jit_light_test_objects.so) must still satisfy
 // --no-allow-shlib-undefined for hot_update_registry.cpp's call from

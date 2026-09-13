@@ -26,6 +26,7 @@
 //        g_aot_table_epoch unchanged.
 
 #include "test_harness.hpp"
+#include "compiler/aura_jit_bridge.h"
 #include "compiler/hot_update_registry.hh"
 
 #include <atomic>
@@ -156,6 +157,14 @@ static void ac6_peer_jit_soak() {
     const auto mark0 = peer_jit_name_soft_stale_mark_total_v_read();
     const auto live0 = peer_jit_name_soft_stale_live_v_read();
 
+    int preserved = 0;
+    aura_aot_set_register_owner_eval(eval_b);
+    const auto fid_b =
+        static_cast<std::int64_t>(aura_get_or_preserve_stable_func_id(kName, &preserved));
+    constexpr std::uintptr_t kPtrB = 0xB3300B330ULL;
+    aura_register_fn_tracked(fid_b, static_cast<std::int64_t>(kPtrB));
+    aura_aot_set_register_owner_eval(nullptr);
+
     // Owner-scoped hard invalidate of a shared define on eval-A.
     aura_aot_set_reemit_owner_eval(eval_a);
     aura_aot_set_register_owner_eval(eval_a);
@@ -171,6 +180,12 @@ static void ac6_peer_jit_soak() {
     CHECK(live1 > live0, "AC6: side-table live count advances");
     CHECK(aura_aot_peer_jit_name_is_soft_stale(kName) == 1,
           "AC6: peer pure-JIT name is soft-stale after owner hard invalidate");
+    if (aura_aot_probe_fn_ptr_raw(fid_b) == kPtrB) {
+        CHECK(aura_aot_probe_fn_ptr(fid_b) == 0,
+              "3750/AC6: peer AOT probe of mutated F is 0 (name table)");
+    } else {
+        CHECK(true, "3750/AC6: light-link slot table — name-bit assert kept");
+    }
 
     // Successful local register (peer eval-B) clears the bit.
     aura_aot_clear_peer_jit_name_soft_stale(kName);

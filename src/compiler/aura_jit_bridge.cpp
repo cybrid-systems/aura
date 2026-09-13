@@ -976,6 +976,9 @@ static std::unordered_map<void*,
                                              aura::core::TransparentStringHash, std::equal_to<>>>
     g_eval_to_stable_func_id;
 static std::atomic<std::uint32_t> g_next_stable_func_id{1};
+// Issue #3750: func_id → name-hash so aura_aot_probe_fn_ptr can consult
+// the #3300 peer JIT name table without a slot name string.
+static void stamp_func_id_name_hash(std::uint32_t id, const char* name) noexcept;
 
 // Issue #3549: per-eval recycle pool (same g_stable_func_id_mtx). Live
 // evals still take distinct sids from the process counter (#2670).
@@ -1025,6 +1028,7 @@ static std::uint32_t preserve_stable_func_id_for_eval_locked(void* eval_ptr, con
         if (it != inner.end()) {
             if (out_preserved)
                 *out_preserved = 1;
+            stamp_func_id_name_hash(it->second.id, name);
             return it->second.id;
         }
     }
@@ -1045,6 +1049,7 @@ static std::uint32_t preserve_stable_func_id_for_eval_locked(void* eval_ptr, con
     }
     const auto epoch = g_aot_table_epoch.load(std::memory_order_relaxed);
     inner.emplace(name, StableFuncIdBinding{id, epoch});
+    stamp_func_id_name_hash(id, name);
     return id;
 }
 
@@ -1377,6 +1382,10 @@ struct AotFuncSlot {
 };
 
 AotFuncSlot g_aot_func_slots[kMaxAotFuncs];
+// Issue #3750: FNV-1a name hash per func_id (0 = unstamped). Probe
+// consults the #3300 name table so a peer slot for mutated F is
+// refused without all-slot #3070 fanout.
+std::atomic<std::uint64_t> g_func_id_name_hash[kMaxAotFuncs]{};
 // g_aot_table_epoch is SSOT in runtime_ssot.cpp (runtime_shared.h).
 // Issue #971: count silent drops when func_id >= kMaxAotFuncs.
 std::atomic<std::uint64_t> g_aot_register_dropped{0};
@@ -1737,6 +1746,10 @@ void note_reload_rollback() noexcept {
 
 // aura_aot_func_table_epoch lives in runtime_ssot.cpp.
 
+// Issue #3750: name-table probe by precomputed FNV hash (defined with
+// the #3300 side-table). Used by aura_aot_probe_fn_ptr.
+extern "C" int aura_aot_peer_jit_name_hash_is_soft_stale(std::uint64_t name_hash);
+
 // Issue #2012 / #2046: diagnostics / tests — read live fn_ptr.
 // Returns 0 for out-of-range, empty, or generation-behind slots.
 // After soft/hard invalidate, aura_aot_bump_func_table_epoch advances
@@ -1767,6 +1780,22 @@ extern "C" std::uintptr_t aura_aot_probe_fn_ptr(std::int64_t func_id) {
         return 0; // Issue #2252 AC1: hard-reject native (nullptr) —
                   // never execute generation-behind AOT code.
                   // Issue #3070: same reject for peer soft-stale (no epoch bump).
+    }
+    // Issue #3750: owner-scoped hard invalidate freezes table epoch
+    // and skips all-slot peer mark (#3605). JIT apply of F is gated
+    // by the #3300 name table; AOT probe must consult it too so a
+    // peer slot for the same define cannot return pre-invalidate
+    // native. Unrelated names stay live.
+    const auto nh = g_func_id_name_hash[idx].load(std::memory_order_acquire);
+    if (nh != 0 && aura_aot_peer_jit_name_hash_is_soft_stale(nh) != 0) {
+        if (aot_metrics()) {
+            aot_metrics()->aot_stale_probe_hard_reject_total.fetch_add(1,
+                                                                       std::memory_order_relaxed);
+            aot_metrics()->aot_slot_stale_reject_total.fetch_add(1, std::memory_order_relaxed);
+            aot_metrics()->aot_forced_recompile_on_mismatch_total.fetch_add(
+                1, std::memory_order_relaxed);
+        }
+        return 0;
     }
     return ptr;
 }
@@ -2271,6 +2300,34 @@ extern "C" void aura_aot_mark_peer_slots_soft_stale(void* owner) {
     }
 }
 
+// Issue #3750: name-precise peer AOT slot stale for define `name`.
+// Not #3070 all-slot fanout. Owner slot skipped (#3377 already
+// physically clears it). Probe already rejects soft_stale.
+extern "C" void aura_aot_soft_stale_peer_slots_for_name(const char* name, void* owner) {
+    if (!name || !*name)
+        return;
+    if (aura_aot_state_map_size() <= 1)
+        return;
+    std::lock_guard<std::mutex> lock(g_stable_func_id_mtx);
+    const auto want = reinterpret_cast<std::uintptr_t>(owner);
+    for (const auto& [eval, inner] : g_eval_to_stable_func_id) {
+        (void)eval;
+        auto it = inner.find(name);
+        if (it == inner.end())
+            continue;
+        const auto fid = it->second.id;
+        if (fid == 0 || fid >= kMaxAotFuncs)
+            continue;
+        auto& slot = g_aot_func_slots[fid];
+        if (slot.fn_ptr.load(std::memory_order_acquire) == 0)
+            continue;
+        const auto slot_owner = slot.owner_eval.load(std::memory_order_acquire);
+        if (want != 0 && slot_owner == want)
+            continue;
+        slot.soft_stale.store(1, std::memory_order_release);
+    }
+}
+
 extern "C" int aura_aot_slot_is_soft_stale(std::int64_t func_id) {
     if (func_id < 0)
         return 1;
@@ -2296,6 +2353,9 @@ extern "C" int aura_aot_slot_is_soft_stale(std::int64_t func_id) {
 // Zero-cost when empty: g_peer_jit_name_soft_stale_live == 0 → probe
 // returns 0 after one relaxed load. Single-eval / Soft / Off skip
 // fanout entirely (mark is a no-op unless multi-eval live > 1).
+// Issue #3514: table-full must fail-closed (not drop). Shared by JIT + IR
+// name tables. Probe / lookup treat overflow as stale until live==0.
+static std::atomic<std::uint8_t> g_peer_name_stale_overflow{0};
 namespace {
 constexpr unsigned kPeerJitNameSoftStaleCap = 256;
 
@@ -2319,11 +2379,35 @@ std::uint64_t peer_jit_name_hash(const char* name) noexcept {
     }
     return h;
 }
+
+int peer_jit_name_hash_is_soft_stale(std::uint64_t h) noexcept {
+    if (g_peer_name_stale_overflow.load(std::memory_order_acquire) != 0)
+        return 1;
+    if (h == 0)
+        return 0;
+    if (g_peer_jit_name_soft_stale_live.load(std::memory_order_acquire) == 0)
+        return 0;
+    for (unsigned i = 0; i < kPeerJitNameSoftStaleCap; ++i) {
+        const auto& slot = g_peer_jit_name_soft_stale[(h + i) % kPeerJitNameSoftStaleCap];
+        const std::uint64_t cur = slot.name_hash.load(std::memory_order_acquire);
+        if (cur == 0)
+            return 0;
+        if (cur == h)
+            return slot.stale.load(std::memory_order_acquire) != 0 ? 1 : 0;
+    }
+    return 0;
+}
 } // namespace
 
-// Issue #3514: table-full must fail-closed (not drop). Shared by JIT + IR
-// name tables. Probe / lookup treat overflow as stale until live==0.
-static std::atomic<std::uint8_t> g_peer_name_stale_overflow{0};
+static void stamp_func_id_name_hash(std::uint32_t id, const char* name) noexcept {
+    if (!name || !*name || id == 0 || id >= kMaxAotFuncs)
+        return;
+    g_func_id_name_hash[id].store(peer_jit_name_hash(name), std::memory_order_release);
+}
+
+extern "C" int aura_aot_peer_jit_name_hash_is_soft_stale(std::uint64_t name_hash) {
+    return peer_jit_name_hash_is_soft_stale(name_hash);
+}
 
 // Issue #3300: arm name-level peer soft-stale. Only acts when multi-eval
 // live (>1) — single-eval / Soft / Off stay zero-cost. Called on the
@@ -2367,18 +2451,7 @@ extern "C" int aura_aot_peer_jit_name_is_soft_stale(const char* name) {
         return 1;
     if (!name || !*name)
         return 0;
-    if (g_peer_jit_name_soft_stale_live.load(std::memory_order_acquire) == 0)
-        return 0;
-    const std::uint64_t h = peer_jit_name_hash(name);
-    for (unsigned i = 0; i < kPeerJitNameSoftStaleCap; ++i) {
-        const auto& slot = g_peer_jit_name_soft_stale[(h + i) % kPeerJitNameSoftStaleCap];
-        const std::uint64_t cur = slot.name_hash.load(std::memory_order_acquire);
-        if (cur == 0)
-            return 0;
-        if (cur == h)
-            return slot.stale.load(std::memory_order_acquire) != 0 ? 1 : 0;
-    }
-    return 0;
+    return peer_jit_name_hash_is_soft_stale(peer_jit_name_hash(name));
 }
 
 // Issue #3300: clear name-level soft-stale on successful local reemit /
