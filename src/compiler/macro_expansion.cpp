@@ -1801,7 +1801,12 @@ static aura::ast::NodeId clone_macro_body_at_depth(
         ConcurrentCloneGuard(const ConcurrentCloneGuard&) = delete;
         ConcurrentCloneGuard& operator=(const ConcurrentCloneGuard&) = delete;
     } concurrent_guard{name_map, hygiene_depth, &target};
-    if (concurrent_guard.rejected_same_flat || concurrent_guard.rejected_concurrent_top_level)
+    // Issue #3756: shared name_map reject must abort like same-flat —
+    // the ctor stamps reason 9 and releases claims, then returned
+    // before try_lock. Ignoring the flag let the second fiber keep
+    // walking the same unordered_map (UB) and skip the top-level mutex.
+    if (concurrent_guard.rejected_same_flat || concurrent_guard.rejected_concurrent_top_level ||
+        concurrent_guard.rejected_shared_name_map)
         return NULL_NODE;
     // Issue #2023: top-level clone entry also consults MacroSelfEvo so
     // direct clone_macro_body (without macro_expand_all) cannot bypass
@@ -2895,6 +2900,18 @@ static aura::ast::NodeId clone_macro_body_at_depth(
         // Commit name_map only at depth==0 (nested inherits top-level).
         if (hygiene_depth == 0)
             nm_ckpt.commit();
+    }
+    // Issue #3756: a sibling's shared-map / same-flat / concurrent-top
+    // refuse stamps process-global last_limit 8/9/10. Successful expand
+    // on this map must not leave that sticky so a later pass-loop
+    // deny_all cannot refuse an unrelated clone.
+    if (hygiene_depth == 0 && new_id != NULL_NODE) {
+        auto r = g_macro_hygiene_last_limit_reason.load(std::memory_order_relaxed);
+        if (r == kHygieneLimitReasonSameFlatReject || r == kHygieneLimitReasonNameMapShared ||
+            r == kHygieneLimitReasonConcurrentTopLevel) {
+            g_macro_hygiene_last_limit_reason.compare_exchange_strong(
+                r, 0, std::memory_order_relaxed, std::memory_order_relaxed);
+        }
     }
     return new_id;
 }
