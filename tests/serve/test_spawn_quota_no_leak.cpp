@@ -13,13 +13,16 @@
 
 #include "compiler/agent_name_table.h"
 #include "compiler/typed_mutation_audit.h"
+#include "core/provenance_tracker.hh"
 #include "core/resource_quota.hh"
+#include "core/sandbox.hh"
 #include "orch/agent_spawn.h"
 #include "serve/fiber.h"
 #include "serve/scheduler.h"
 
 #include <atomic>
 #include <cstdint>
+#include <cstdlib>
 #include <fstream>
 #include <print>
 #include <string>
@@ -99,6 +102,22 @@ std::string read_file(const char* path) {
 
 void reset_quota() {
     reset_process_resource_quota_for_test();
+}
+
+void ac3731_arm_per_tenant() {
+    aura::core::resource_quota::set_quota_per_tenant_enabled_for_test(true);
+    aura::core::resource_quota::refresh_quota_per_tenant_cache();
+    aura::core::provenance::set_multi_tenant_env_active(true);
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    aura::core::resource_quota::set_current_quota_tenant(0);
+}
+
+void ac3731_disarm_per_tenant() {
+    aura::core::resource_quota::clear_quota_per_tenant_test_override();
+    aura::core::resource_quota::refresh_quota_per_tenant_cache();
+    aura::core::provenance::set_multi_tenant_env_active(false);
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    aura::core::resource_quota::set_current_quota_tenant(0);
 }
 
 } // namespace
@@ -343,6 +362,134 @@ int run_test_spawn_quota_no_leak() {
             cs.eval(R"((hash-ref (orch:spawn-agent "q3251s" (lambda () 0)) "schema-3251"))");
         CHECK(!dc_soft || !is_int(*dc_soft), "3251: Soft spawn hash no deny-class intern");
 
+        reset_quota();
+    }
+
+    // ── Issue #3731: spec.tenant_id is the arena/BP/release tenant ──
+    {
+        std::println("\n--- #3731 AC1: :tenant-id 7 charges tenant 7, join releases it ---");
+        reset_quota();
+        ac3731_arm_per_tenant();
+        auto& pq = process_resource_quota();
+        pq.set_limit(Dimension::Memory, 1 << 20);
+        pq.set_limit(Dimension::Fibers, 64);
+        CHECK(pq.tenant_used(7, Dimension::Memory) == 0, "3731 AC1: tenant 7 unused before spawn");
+        Scheduler sched(1);
+        SchedRunner run(sched);
+        AgentSpec spec;
+        spec.name = "t7-3731";
+        spec.tenant_id = 7;
+        spec.attach_mailbox = true;
+        spec.body = [] {};
+        CHECK(aura::core::resource_quota::current_quota_tenant() == 0, "3731 AC1: TLS 0");
+        {
+            auto h = spawn_agent_with_mailbox(sched, std::move(spec));
+            CHECK(h.ok, "3731 AC1: spawn ok");
+            CHECK(h.reserved_quota_tenant == 7, "3731 AC1: reserved_quota_tenant is 7");
+            CHECK(pq.tenant_used(7, Dimension::Memory) > 0, "3731 AC1: arena used on tenant 7");
+            CHECK(pq.tenant_used(8, Dimension::Memory) == 0, "3731 AC1: tenant 8 untouched");
+            (void)aura::orch::join_agent(h, std::optional<std::uint64_t>{200});
+        }
+        CHECK(pq.tenant_used(7, Dimension::Memory) == 0, "3731 AC1: join released tenant 7");
+
+        std::println("\n--- #3731 AC1 Aura: orch:spawn-agent :tenant-id 7 ---");
+        ::setenv("AURA_SANDBOX", "off", 1);
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+        ac3731_arm_per_tenant(); // override still arms the map under sandbox=off
+        {
+            CompilerService cs;
+            auto r = cs.eval(
+                R"((hash-ref (orch:spawn-agent "aura-t7-3731" (lambda () 1) :tenant-id 7) "ok"))");
+            CHECK(r && is_bool(*r) && as_bool(*r), "3731 AC1: Aura spawn ok");
+            CHECK(pq.tenant_used(7, Dimension::Memory) > 0,
+                  "3731 AC1: Aura :tenant-id 7 charged tenant 7");
+        }
+        CHECK(pq.tenant_used(7, Dimension::Memory) == 0,
+              "3731 AC1: Aura Evaluator dtor released tenant 7");
+
+        std::println("\n--- #3731 AC2: BP admit key is t:7 ---");
+        {
+            ::unsetenv("AURA_SANDBOX");
+            ac3731_arm_per_tenant();
+            CHECK(aura::orch::production_scope_bp_inherit(), "3731 AC2: inherit armed");
+            AgentSpec spec_bp;
+            spec_bp.name = "bp-t7-3731";
+            spec_bp.tenant_id = 7;
+            spec_bp.attach_mailbox = true;
+            spec_bp.body = [] {};
+            auto h = spawn_agent_with_mailbox(sched, std::move(spec_bp));
+            CHECK(h.ok, "3731 AC2: spawn ok");
+            CHECK(h.bp_scope_id == "t:7", "3731 AC2: BP key is t:7 not process bucket");
+            (void)aura::orch::join_agent(h, std::optional<std::uint64_t>{200});
+        }
+
+        std::println("\n--- #3731 AC3: quota deny still no put, reserved=0 ---");
+        {
+            ::setenv("AURA_SANDBOX", "off", 1);
+            aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+            ac3731_arm_per_tenant();
+            pq.set_tenant_limit(7, Dimension::Memory, 100);
+            CompilerService cs;
+            auto& names = *cs.evaluator().agent_names_;
+            const auto size0 = names.size();
+            auto r = cs.eval(
+                R"((hash-ref (orch:spawn-agent "deny-t7-3731" (lambda () 1) :tenant-id 7) "ok"))");
+            CHECK(r && is_bool(*r) && !as_bool(*r), "3731 AC3: Aura quota deny");
+            CHECK(names.size() == size0, "3731 AC3: no name-table put");
+            CHECK(names.find("deny-t7-3731") == nullptr, "3731 AC3: name absent");
+            AgentSpec spec_d;
+            spec_d.name = "deny-t7-cpp-3731";
+            spec_d.tenant_id = 7;
+            spec_d.attach_mailbox = true;
+            spec_d.body = [] {};
+            auto hd = spawn_agent_with_mailbox(sched, std::move(spec_d));
+            CHECK(!hd.ok, "3731 AC3: C++ deny");
+            CHECK(hd.reserved_memory_bytes == 0, "3731 AC3: reserved=0");
+            CHECK(hd.quota_exceeded, "3731 AC3: quota_exceeded");
+        }
+
+        std::println("\n--- #3731 AC4: Soft/Off TLS 0 stays process-global ---");
+        ac3731_disarm_per_tenant();
+        ::setenv("AURA_SANDBOX", "off", 1);
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+        aura::core::resource_quota::set_quota_per_tenant_enabled_for_test(false);
+        aura::core::resource_quota::refresh_quota_per_tenant_cache();
+        CHECK(!aura::core::resource_quota::quota_per_tenant_enabled(),
+              "3731 AC4: per-tenant map off");
+        reset_quota();
+        pq.set_limit(Dimension::Memory, 1 << 20);
+        pq.set_limit(Dimension::Fibers, 64);
+        const auto mem0 = pq.used(Dimension::Memory);
+        {
+            AgentSpec spec_s;
+            spec_s.name = "soft-3731";
+            spec_s.tenant_id = 0;
+            spec_s.attach_mailbox = true;
+            spec_s.body = [] {};
+            auto hs = spawn_agent_with_mailbox(sched, std::move(spec_s));
+            CHECK(hs.ok, "3731 AC4: Soft spawn ok");
+            CHECK(hs.reserved_quota_tenant == 0, "3731 AC4: reserved tenant 0");
+            CHECK(pq.used(Dimension::Memory) > mem0, "3731 AC4: process-global charge");
+            CHECK(pq.tenant_used(7, Dimension::Memory) == 0, "3731 AC4: no tenant-7 slot");
+            (void)aura::orch::join_agent(hs, std::optional<std::uint64_t>{200});
+        }
+
+        std::println("\n--- #3731 AC5: no invent ---");
+        const auto spawn_src = read_file("src/orch/agent_spawn.h");
+        CHECK(spawn_src.find("Issue #3731") != std::string::npos, "3731 AC5: spawn cites #3731");
+        CHECK(spawn_src.find("try_consume_agent_arena(mem_cost, tenant)") != std::string::npos,
+              "3731 AC5: arena consume uses SSOT tenant");
+        CHECK(spawn_src.find("reserved_quota_tenant = tenant") != std::string::npos,
+              "3731 AC5: release tenant matches charge");
+        const auto prim = read_file("src/compiler/evaluator_primitives_agent.cpp");
+        CHECK(prim.find("query:3731") == std::string::npos, "3731 AC5: no new query key");
+        CHECK(prim.find("class AgentRegistry") == std::string::npos, "3731 AC5: no AgentRegistry");
+        CHECK(read_file("tests/orch/test_issue_3731.cpp").empty() &&
+                  read_file("tests/serve/test_issue_3731.cpp").empty(),
+              "3731 AC5: no test_issue_3731.cpp");
+        CHECK(read_file("docs/design/3731-spawn-tenant.md").empty(), "3731 AC5: no docs/design");
+
+        ac3731_disarm_per_tenant();
         reset_quota();
     }
 
