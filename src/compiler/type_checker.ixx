@@ -744,6 +744,15 @@ private:
     // without re-running escalate_if_production (which mutates state).
     // Issue #2913: also flipped when locality-SLO escalate runs full solve.
     bool production_escalated_ = false;
+    // Issue #3757: set only by clear_partial_goals_and_unresolved after
+    // a production TIMEOUT / CONFLICT partial-clear. Next solve_delta_impl
+    // must full-solve leftover constraints_ instead of vacuous-SOLVED on
+    // dirty_count_==0. Consumed on leftover SOLVED (keep latched on
+    // CONFLICT / TIMEOUT so a later empty delta cannot stamp green).
+    // Soft / Off never set this (helper early-returns). Not the same as
+    // production_escalated_ — a successful production escalate SOLVED
+    // leaves constraints_ populated and must still allow empty-delta SOLVED.
+    bool pending_full_after_partial_clear_ = false;
     // Issue #2913: last solve_delta locality residual (dirty constraints
     // deferred outside the local root worklist). Soft observes; production
     // / Full escalate to full solve (or reject if still unsolved).
@@ -786,6 +795,9 @@ private:
     // + non-SOLVED path — zero extra atomics on the happy SOLVED path
     // (AC3). Bumps solve_delta_partial_cleared_total on metrics_ when
     // production_defaults_active() (AC4 additive observability).
+    // Issue #3757: also mark_clean() so constraint_dirty_ stays in
+    // lockstep with dirty_count_, and latch pending_full_after_partial_clear_
+    // so the next solve_delta cannot vacuous-SOLVE leftover EQUALs.
     void clear_partial_goals_and_unresolved() noexcept;
     // Issue #3331 / #3360: Soft-only quarantine after allow_timeout_commit
     // TIMEOUT export. Clears the same four root sets as #3169 plus
@@ -1350,6 +1362,19 @@ public:
     // O(1) "is the constraint set dirty?". True iff
     // add_delta has been called since the last clear or solve.
     bool is_dirty() const { return dirty_count_ > 0; }
+    // Issue #3757: test-only walk of constraint_dirty_ (private bits).
+    // After production partial-clear, dirty_count_==0 must also mean
+    // no leftover dirty bits (lockstep with mark_clean).
+    [[nodiscard]] bool has_constraint_dirty_bit_for_test() const noexcept {
+        for (bool b : constraint_dirty_) {
+            if (b)
+                return true;
+        }
+        return false;
+    }
+    [[nodiscard]] bool pending_full_after_partial_clear_for_test() const noexcept {
+        return pending_full_after_partial_clear_;
+    }
     // Issue #2180: import dirty constraints + priority roots + blame
     // anchors from a short-lived InferenceEngine CS into the long-lived
     // TypeChecker / Evaluator commit CS so composite_txn_commit can
