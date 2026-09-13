@@ -641,6 +641,11 @@ extern "C" std::uint64_t aura_production_dirty_ring_pushed_total(void);
 extern "C" std::uint64_t aura_production_dirty_ring_dropped_total(void);
 extern "C" std::uint64_t aura_production_dirty_ring_popped_total(void);
 extern "C" std::uint64_t aura_production_dirty_ring_depth(void);
+// Issue #3744: storm-clear / storm-exit BoundaryExit cap the production
+// dirty-ring drain so decide_and_reemit cannot dump the full 256-name
+// ring in one tick. Soft never fills the ring (push is production-gated).
+inline constexpr std::uint64_t kStormClearDirtyRingBudget = 8;
+extern "C" void aura_production_dirty_ring_trim_to(std::uint64_t keep);
 
 // Issue #1952 / #1930: actual LLVM re-emit callback. The host
 // (Evaluator / CompilerService) wires a function that takes the dirty

@@ -8925,7 +8925,8 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             aura_hot_update_registry_snapshot snap{};
             aura_hot_update_registry_get_snapshot(&snap);
             // #2035 cascade + #2367 recovery keys — room for ~90 inserts.
-            auto* ht = FlatHashTable::create(query_hash_capacity_for(174));
+            // Issue #3744: emit-mask vs force-reason-mask sentinels (+8).
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(192));
             if (!ht)
                 return make_void();
             bool overflowed = false;
@@ -9216,6 +9217,17 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 insert_kv("schema-2601", 2601);
                 insert_kv("issue-2601", 2601);
             }
+            // Issue #3744: emit-region-mask is IR dirty (body often bit 1);
+            // force-jit-regions-mask / last-reemit-success are reason-group
+            // bits 0–4 (Env is also bit 1). Keep both keys; do not merge.
+            insert_kv("emit-region-bit-body", 1);
+            insert_kv("force-jit-bit-env", 1);
+            insert_kv("emit-mask-dirty-region-wired", 1);
+            insert_kv("force-reason-mask-wired", 1);
+            insert_kv("last-reemit-success-is-reason-group", 1);
+            insert_kv("storm-clear-dirty-ring-budget", 8); // kStormClearDirtyRingBudget
+            insert_kv("schema-3744", 3744);
+            insert_kv("issue-3744", 3744);
             return query_hash_finish(ht, ev.string_heap_, overflowed);
         });
 

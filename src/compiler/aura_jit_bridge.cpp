@@ -1199,6 +1199,23 @@ extern "C" std::uint64_t aura_production_dirty_ring_depth(void) {
     return kProductionDirtyRingCap - (g_production_dirty_ring_head - g_production_dirty_ring_tail);
 }
 
+// Issue #3744: drop oldest until depth <= keep. Overflow-style drop
+// (dropped_total, not popped_total) so Agents can tell trim from reemit
+// consume. keep==0 empties the ring. Soft callers see an empty ring.
+extern "C" void aura_production_dirty_ring_trim_to(std::uint64_t keep) {
+    std::lock_guard<std::mutex> lock(g_production_dirty_ring_mtx);
+    auto depth = [&]() -> std::uint64_t {
+        if (g_production_dirty_ring_tail >= g_production_dirty_ring_head)
+            return g_production_dirty_ring_tail - g_production_dirty_ring_head;
+        return kProductionDirtyRingCap -
+               (g_production_dirty_ring_head - g_production_dirty_ring_tail);
+    };
+    while (depth() > keep) {
+        g_production_dirty_ring_head = (g_production_dirty_ring_head + 1) % kProductionDirtyRingCap;
+        g_production_dirty_ring_dropped_total.fetch_add(1, std::memory_order_relaxed);
+    }
+}
+
 // Install the production candidate iterator (idempotent; gated on
 // production active). Returns 1 on install, 0 if Soft/Off (zero-cost
 // contract). Called from CompilerService ctor (#3373 AC1).

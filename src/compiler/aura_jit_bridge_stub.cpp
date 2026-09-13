@@ -477,6 +477,7 @@ extern "C" __attribute__((weak)) std::uint64_t aura_production_dirty_ring_popped
 extern "C" __attribute__((weak)) std::uint64_t aura_production_dirty_ring_depth(void) {
     return 0;
 }
+extern "C" __attribute__((weak)) void aura_production_dirty_ring_trim_to(std::uint64_t /*keep*/) {}
 extern "C" __attribute__((weak)) std::uint32_t
 aura_get_or_preserve_stable_func_id(const char* /*name*/, int* out_preserved) {
     if (out_preserved)

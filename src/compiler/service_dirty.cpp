@@ -156,6 +156,9 @@ void CompilerService::notify_hot_update_after_cascade_(const std::string& name,
     }
     if (mask != 0) {
         // Strips Evolution bit (1<<2) inside aura_set_aot_emit_region_mask.
+        // Issue #3744: this is the IR-dirty emit filter (body often 1<<1),
+        // not the force-JIT reason-group word (bits 0–4). Do not OR emit
+        // bits into last_reemit_success_region_mask (#3445).
         reg.set_emit_region_mask(mask);
         reg.on_region_mask_from_dirty(mask);
     }
