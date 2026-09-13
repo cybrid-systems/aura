@@ -1188,8 +1188,8 @@ static void ac3463_1_source_cite_routes_through_resolve_aura_agent() {
     // The name-table-only find must be gone from this prim body. Window
     // the check inside the orch:agent-wait-reclaimed prim only — other
     // prims (orch:agent-touch / orch:agent-poll / orch:agent-export-via-token)
-    // legitimately keep the raw find by contract, so a file-wide grep
-    // would false-positive on those sites.
+    // now also route through resolve_aura_agent (#3727); a file-wide grep
+    // would still false-positive on resolve_aura_agent's own name-table find.
     const auto start = prim.find("add(\"orch:agent-wait-reclaimed\"");
     CHECK(start != std::string::npos, "3463 AC1: orch:agent-wait-reclaimed prim located");
     if (start != std::string::npos) {
