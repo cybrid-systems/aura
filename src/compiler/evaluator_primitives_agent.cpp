@@ -6066,35 +6066,21 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                   : 0;
             const auto cm_lin =
                 m ? m->orch_linear_violation_prevented_total.load(std::memory_order_relaxed) : 0;
-            // Capacity 1024: 256 overflowed (~285 insert_kv); 512 then
-            // dropped tail sentinels again as #3208/#3220/#3250 keys
-            // appended. 1024 headroom keeps schema/wired sentinels present.
-            auto* ht = FlatHashTable::create(1024);
+            // Issue #3733: same overflow contract as security-posture
+            // (#3282): query_hash_capacity_for + insert_kv_checked +
+            // query_hash_finish (hash-overflow=1, never silent drop).
+            // Live ~390 insert_kv + hot-scope extras + 8 headroom.
+            // planned=256 → cap 512 already dropped tail sentinels
+            // (#3208/#3220/#3250); raise when appending. Soft/Off extra
+            // cost is one force-cap load. No second metrics bus.
+            constexpr std::size_t kOrchModuleStatsPlannedKeys = 512;
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(kOrchModuleStatsPlannedKeys));
             if (!ht)
                 return make_void();
-            auto meta = ht->metadata();
-            auto keys = ht->keys();
-            auto vals = ht->values();
-            auto hcap = ht->capacity;
+            bool overflowed = false;
             auto insert_kv = [&](const char* k_str, std::int64_t v) {
-                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-                for (const char* p = k_str; *p; ++p)
-                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                if (fp == 0xFF)
-                    fp = 0xFE;
-                for (std::size_t at = 0; at < hcap; ++at) {
-                    auto idx = ((h >> 1) + at) & (hcap - 1);
-                    if (meta[idx] == 0xFF) {
-                        meta[idx] = fp;
-                        auto kidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(k_str);
-                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                        vals[idx] = make_int(v).val;
-                        ht->size++;
-                        return;
-                    }
-                }
+                if (!insert_kv_checked(ht, ev.string_heap_, k_str, v))
+                    overflowed = true;
             };
             auto& os = aura::orch::g_orch_module_stats;
             insert_kv("agents-spawned", static_cast<std::int64_t>(spawned));
@@ -6980,9 +6966,34 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             // Issue #3564: name-table / Scope find+put recycle (same counter).
             insert_kv("schema-3564", aura::orch::kReclaimedNameTableQuotaRecycleIssue);
             insert_kv("issue-3564", aura::orch::kReclaimedNameTableQuotaRecycleIssue);
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
+            // Issue #3733: live OrchModuleStats atomics that C++ tests
+            // already read but the Agent facade omitted. APPEND only;
+            // do not insert in the middle of prior keys / the struct.
+            insert_kv("spawn-tenant-required-total",
+                      static_cast<std::int64_t>(
+                          os.spawn_tenant_required_total.load(std::memory_order_relaxed)));
+            insert_kv("spawn-bp-admit-reject-override-total",
+                      static_cast<std::int64_t>(
+                          os.spawn_bp_admit_reject_override_total.load(std::memory_order_relaxed)));
+            insert_kv("join-reclaimed-deferred-cleanup-total",
+                      static_cast<std::int64_t>(os.join_reclaimed_deferred_cleanup_total.load(
+                          std::memory_order_relaxed)));
+            insert_kv("handoff-join-via-token-total",
+                      static_cast<std::int64_t>(
+                          os.handoff_join_via_token_total.load(std::memory_order_relaxed)));
+            insert_kv("handoff-join-via-token-timeout-total",
+                      static_cast<std::int64_t>(
+                          os.handoff_join_via_token_timeout_total.load(std::memory_order_relaxed)));
+            insert_kv("reclaimed-dtor-under-account-total",
+                      static_cast<std::int64_t>(
+                          os.reclaimed_dtor_under_account_total.load(std::memory_order_relaxed)));
+            insert_kv(
+                "workflow-apply-total",
+                static_cast<std::int64_t>(os.workflow_apply_total.load(std::memory_order_relaxed)));
+            insert_kv("schema-3733", 3733);
+            insert_kv("issue-3733", 3733);
+            insert_kv("orch-module-stats-overflow-wired", 1);
+            return query_hash_finish(ht, ev.string_heap_, overflowed);
         });
 
     // Issue #3089: cross-Evaluator handoff — Aura surface.
