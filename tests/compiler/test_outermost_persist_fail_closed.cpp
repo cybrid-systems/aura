@@ -51,6 +51,7 @@ using aura::compiler::typed_audit::apply_production_audit_defaults;
 using aura::compiler::typed_audit::AuditStrategy;
 using aura::compiler::typed_audit::get_strategy;
 using aura::compiler::typed_audit::ir_typed_entry_commit_readiness_ok;
+using aura::compiler::typed_audit::jit_execute_commit_readiness_blocked;
 using aura::compiler::typed_audit::kCoercionMapPersistRejectUndoIssue;
 using aura::compiler::typed_audit::kTypeLinearProofOutcomeReject;
 using aura::compiler::typed_audit::last_proof_stamper_bound_v_read;
@@ -646,6 +647,10 @@ int run_test_outermost_persist_fail_closed() {
             if (!er)
                 CHECK(er.error().message.find("commit-readiness-refused") != std::string::npos,
                       "3688 AC2: same TypeError as IR execute");
+            CHECK(jit_execute_commit_readiness_blocked(),
+                  "3758 AC1: execute catalog blocked after persist-reject");
+            CHECK(cs.public_try_jit_execute_counting_scalar_for_test() == 0,
+                  "3758 AC1: try_jit_execute does not invoke ScalarFn after persist-reject");
             typed_audit::g_linear_ir_fastpath_boundary_depth_override = -1;
         }
         (void)ok;
@@ -660,7 +665,51 @@ int run_test_outermost_persist_fail_closed() {
         CHECK(clo_soft && is_closure(*clo_soft), "3688 AC4: Soft TW capture");
         CHECK(cs.evaluator().apply_closure(as_closure_id(*clo_soft), {}).has_value(),
               "3688 AC4: Soft/Off apply_closure still runs");
+        CHECK(!jit_execute_commit_readiness_blocked(),
+              "3758 AC3: Soft execute catalog not blocked");
+        CHECK(cs.public_try_jit_execute_counting_scalar_for_test() == 1,
+              "3758 AC3: Soft try_jit_execute still invokes ScalarFn");
         reset_for_test();
+    }
+
+    {
+        std::println("\n--- #3758: try_jit_execute consults commit_readiness before ScalarFn ---");
+        const auto ixx = read_file("src/compiler/service.ixx");
+        const auto ir = read_file("src/compiler/ir_executor_impl.cpp");
+        const auto tma = read_file("src/compiler/typed_mutation_audit.h");
+        const auto jit = read_file("src/compiler/aura_jit.cpp");
+        CHECK(contains(tma, "kJitExecuteCommitReadinessIssue = 3758"), "3758: issue stamp");
+        CHECK(contains(tma, "jit_execute_commit_readiness_blocked"),
+              "3758: shared execute-catalog helper");
+        CHECK(contains(tma, "production_hard_face_active()"),
+              "3758 AC3: Soft skips commit_readiness load");
+        {
+            const auto cite =
+                ixx.find("Issue #3758: same execute catalog as IRInterpreter::execute");
+            CHECK(cite != std::string::npos, "3758: try_jit_execute present");
+            const auto win = cite == std::string::npos ? std::string{} : ixx.substr(cite, 1200);
+            const auto gate = win.find("jit_execute_commit_readiness_blocked()");
+            const auto call = win.find("reinterpret_cast<aura::jit::ScalarFn>(fn_ptr)");
+            CHECK(gate != std::string::npos, "3758 AC1: try_jit_execute consults helper");
+            CHECK(call != std::string::npos, "3758 AC1: ScalarFn invoke site");
+            CHECK(gate < call, "3758 AC1: gate is before ScalarFn");
+        }
+        CHECK(contains(ir, "ir_typed_entry_blocked_result(context_.metrics)"),
+              "3758 AC1: IRInterpreter::execute still refuses at C++ entry");
+        CHECK(contains(jit, "fn_ir_typed_entry_commit_readiness_ok"),
+              "3758 AC2: compile-time prologue retained (defense-in-depth)");
+        CHECK(
+            contains(
+                jit,
+                "can_typed = hard_typed_entry && builder.fn_ir_typed_entry_commit_readiness_ok") ||
+                contains(jit, "const bool can_typed = hard_typed_entry"),
+            "3758 AC2: can_typed prologue still emitted under production/Full");
+        CHECK(ixx.find("schema-3758") == std::string::npos &&
+                  tma.find("schema-3758") == std::string::npos,
+              "3758: no new query key");
+        CHECK(read_file("tests/compiler/test_issue_3758.cpp").empty(), "3758: no invent");
+        CHECK(read_file("docs/design/3758-jit-execute-commit-readiness.md").empty(),
+              "3758: no docs/design");
     }
 
     {

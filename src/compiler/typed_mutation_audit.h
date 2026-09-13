@@ -2664,6 +2664,25 @@ inline constexpr int kRealQuietLiveTcTypedEntryIssue = 3610;
     return false;
 }
 
+// Issue #3758: execute-catalog consult before ScalarFn (try_jit_execute /
+// exec_jit). Same restore-override dance as IRInterpreter::
+// ir_typed_entry_blocked_result so a unit-test override==0 cannot refuse
+// the rest of the batch. Soft/Off: production_hard_face_active is false —
+// no commit_readiness load (AC3). Does not bump
+// linear_post_mutate_force_rollback_total; try_jit_execute returns
+// nullopt and the interpreter fallback owns the bump (no double-count
+// vs execute() / compile-time prologue).
+inline constexpr int kJitExecuteCommitReadinessIssue = 3758;
+[[nodiscard]] inline bool jit_execute_commit_readiness_blocked() noexcept {
+    if (!production_hard_face_active())
+        return false;
+    const auto saved = g_linear_ir_fastpath_boundary_depth_override;
+    g_linear_ir_fastpath_boundary_depth_override = -1;
+    const bool ok = ir_typed_entry_commit_readiness_ok();
+    g_linear_ir_fastpath_boundary_depth_override = saved;
+    return !ok;
+}
+
 // Issue #3030: abort / force-rollback must drop the last TypeLinearCommitProof
 // + linear_fast_path face so a later IR Move/Drop cannot elide on a
 // pre-abort stamp (half-green). Reuses the existing stamp/face/outcome
