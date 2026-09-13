@@ -821,6 +821,10 @@ namespace aura::compiler {
 // function as CoercionMap undo (before return / any observer). Soft/Off:
 // no extra restore. Idempotent: later exit_mutation_boundary skips
 // abort_restore_dual_topology when topology_restored is set.
+// Issue #3743: AbortRestore restamp is in this same restore transaction
+// so persist-reject / wrapper reset cannot export a green stale pin
+// (post-mutate gen against the rolled-back tree) before the Guard dtor
+// triad. Soft/Off: this helper already returned (zero extra).
 void Evaluator::restore_checkpoint_topology_for_persist_reject() noexcept {
     if (!(typed_audit::production_defaults_active() ||
           typed_audit::get_strategy() == typed_audit::AuditStrategy::Full))
@@ -846,6 +850,11 @@ void Evaluator::restore_checkpoint_topology_for_persist_reject() noexcept {
     stats.children_column_restored = true;
     if (stats.field_records_rolled > 0)
         bump_mutation_log_rollback_count();
+    // Issue #3743: restamp pins / node_gen against the restored tree
+    // before this helper returns (observers / wrapper reset). Production
+    // gate is the function entry; AbortRestore is a boundary site so the
+    // walk is not the Soft steal/densify skip-extra path.
+    (void)unified_restamp_after_boundary(UnifiedRestampSite::AbortRestore);
     // Issue #3159: force_dirty AFTER topology.
     if (abort_ir_cache_force_dirty_fn_)
         abort_ir_cache_force_dirty_fn_();
@@ -1274,6 +1283,13 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
                 if (nested_boundary)
                     bump_edsl_nested_atomic_rollback();
             }
+            // Issue #3743: inbody force-exit / abort restore restamp before
+            // this function returns (Guard dtor triad is later; Agent can
+            // observe after force_release_hold_budget_inbody). Soft/Off:
+            // outermost dtor still restamps; skip extra atomics here.
+            if (typed_audit::production_defaults_active() ||
+                typed_audit::get_strategy() == typed_audit::AuditStrategy::Full)
+                (void)unified_restamp_after_boundary(UnifiedRestampSite::AbortRestore);
         } else if (last_boundary_rollback_stats_.children_column_restored) {
             stats = last_boundary_rollback_stats_;
         }
@@ -2149,6 +2165,13 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
                                     bump_edsl_nested_atomic_rollback();
                             }
                             stats.children_column_restored = true;
+                            // Issue #3743: force-rollback restamp before the
+                            // early return (Phase-1 probes must not see a
+                            // post-mutate pin gen on the restored tree).
+                            if (typed_audit::production_defaults_active() ||
+                                typed_audit::get_strategy() == typed_audit::AuditStrategy::Full)
+                                (void)unified_restamp_after_boundary(
+                                    UnifiedRestampSite::AbortRestore);
                             // Issue #3095: post-restore macro hygiene invariant
                             // enforcement (paired with #2959 dual-topology abort).
                             (void)check_macro_hygiene_invariant_post_restore(
@@ -2327,6 +2350,11 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
                             bump_edsl_nested_atomic_rollback();
                     }
                     stats.children_column_restored = true;
+                    // Issue #3743: Strict reflect-validate rollback restamp
+                    // before the early return (same window as force-rollback).
+                    if (typed_audit::production_defaults_active() ||
+                        typed_audit::get_strategy() == typed_audit::AuditStrategy::Full)
+                        (void)unified_restamp_after_boundary(UnifiedRestampSite::AbortRestore);
                     // Issue #3095: post-restore macro hygiene invariant
                     // enforcement (Strict path).
                     (void)check_macro_hygiene_invariant_post_restore(
@@ -3543,6 +3571,7 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
             session_mid_at_enter_ = 0;
         }
         return; // Issue #1590: quota soft-reject never entered a boundary
+                // Issue #3743: never-entered inert does not restamp (no gen bump).
     }
     // Issue #1897 / #1818 class: auto-flip success_flag when an
     // exception is unwinding through the Guard and the caller did
@@ -4492,6 +4521,9 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
         // Abort restore uses the same entry (AbortRestore).
         // Issue #3259: production over-budget restamp eager-restamps
         // the hot cone here (outermost only) before Agent export.
+        // Issue #3743: persist-reject / inbody force-exit / force-rollback
+        // already restamped at the restore site; this outermost triad is
+        // the belt (nested abort never reaches here).
         const auto ur = ev_->unified_restamp_after_boundary(
             success ? Evaluator::UnifiedRestampSite::BoundarySuccess
                     : Evaluator::UnifiedRestampSite::AbortRestore);
