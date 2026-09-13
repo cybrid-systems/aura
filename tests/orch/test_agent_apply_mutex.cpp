@@ -10,6 +10,7 @@
 
 #include "test_harness.hpp"
 
+#include "compiler/typed_mutation_audit.h"
 #include "orch/agent_spawn.h"
 #include "serve/fiber.h"
 #include "serve/scheduler.h"
@@ -17,6 +18,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <filesystem>
 #include <fstream>
 #include <print>
 #include <string>
@@ -264,7 +266,112 @@ int run_test_agent_apply_mutex() {
               "AC5: body documents reject-before-lock");
     }
 
-    std::println("\n=== #2158 agent apply per-eval mutex: {} passed, {} failed ===", g_passed,
+    // ── Issue #3728: region-concurrent spawn skips agent_apply_mu_ ──
+    auto set_prod_3728 = [](bool on) {
+        aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active
+            .store(on ? 1u : 0u, std::memory_order_relaxed);
+    };
+
+    {
+        std::println("\n--- #3728 AC1: distinct region keys skip apply mu ---");
+        set_prod_3728(true);
+        CompilerService cs;
+        cs.evaluator().set_workspace_region_concurrency_enabled(true);
+        CHECK(cs.eval("(+ 1 1)").has_value(), "3728 AC1: warm");
+        const auto acq0 =
+            g_orch_module_stats.agent_apply_lock_acquisitions_total.load(std::memory_order_relaxed);
+        const auto t0 = std::chrono::steady_clock::now();
+        auto r = cs.eval(R"(
+            (begin
+              (orch:spawn-agent "a-3728"
+                (lambda () (let loop ((i 0)) (if (< i 4000000) (loop (+ i 1)) i)))
+                :region-key 11)
+              (orch:spawn-agent "b-3728"
+                (lambda () (let loop ((i 0)) (if (< i 4000000) (loop (+ i 1)) i)))
+                :region-key 22)
+              (let ((ja (orch:agent-join "a-3728" :timeout-ms 2000))
+                    (jb (orch:agent-join "b-3728" :timeout-ms 2000)))
+                (if (and (hash-ref ja "ok") (hash-ref jb "ok")) 1 0)))
+        )");
+        const auto wall_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                 std::chrono::steady_clock::now() - t0)
+                                 .count();
+        CHECK(r && is_int(*r) && as_int(*r) == 1, "3728 AC1: both region-key agents joined");
+        const auto acq1 =
+            g_orch_module_stats.agent_apply_lock_acquisitions_total.load(std::memory_order_relaxed);
+        CHECK(acq1 == acq0, "3728 AC1: distinct non-zero region keys did not take agent_apply_mu_");
+        CHECK(wall_ms < 1800, "3728 AC1: wall is not a serialized join timeout");
+        std::println("  3728 AC1 wall={}ms acq {}→{}", wall_ms, acq0, acq1);
+        set_prod_3728(false);
+    }
+
+    {
+        std::println("\n--- #3728 AC2: missing region_key stays serialized ---");
+        set_prod_3728(true);
+        CompilerService cs;
+        cs.evaluator().set_workspace_region_concurrency_enabled(true);
+        CHECK(cs.eval("(+ 1 1)").has_value(), "3728 AC2: warm");
+        const auto acq0 =
+            g_orch_module_stats.agent_apply_lock_acquisitions_total.load(std::memory_order_relaxed);
+        auto r = cs.eval(R"(
+            (begin
+              (orch:spawn-agent "c-3728" (lambda () 1))
+              (orch:spawn-agent "d-3728" (lambda () 1))
+              (let ((jc (orch:agent-join "c-3728" :timeout-ms 2000))
+                    (jd (orch:agent-join "d-3728" :timeout-ms 2000)))
+                (if (and (hash-ref jc "ok") (hash-ref jd "ok")) 1 0)))
+        )");
+        CHECK(r && is_int(*r) && as_int(*r) == 1, "3728 AC2: omitted-key agents joined");
+        const auto acq1 =
+            g_orch_module_stats.agent_apply_lock_acquisitions_total.load(std::memory_order_relaxed);
+        CHECK(acq1 >= acq0 + 2, "3728 AC2: missing region_key still takes agent_apply_mu_");
+        set_prod_3728(false);
+    }
+
+    {
+        std::println("\n--- #3728 AC3: try_acquire deny still skips apply mu ---");
+        const auto spawn_src = read_file("src/orch/agent_spawn.h");
+        const auto agent_src = read_file("src/compiler/evaluator_primitives_agent.cpp");
+        CHECK(spawn_src.find("aura_orch_agent_body_try_acquire_ex") != std::string::npos,
+              "3728 AC3: wrapper still try_acquire_ex before body");
+        CHECK(agent_src.find("never hold agent_apply_mu_ on quota-reject") != std::string::npos,
+              "3728 AC3: quota-reject still documented as no mu");
+        CHECK(agent_src.find("apply_spawn_closure_maybe_locked") != std::string::npos,
+              "3728 AC3: apply helper is the body path (after acquire)");
+    }
+
+    {
+        std::println("\n--- #3728 AC4: Soft keeps mutex; no invent ---");
+        set_prod_3728(false);
+        CompilerService cs;
+        cs.evaluator().set_workspace_region_concurrency_enabled(true);
+        CHECK(cs.eval("(+ 1 1)").has_value(), "3728 AC4: warm");
+        const auto acq0 =
+            g_orch_module_stats.agent_apply_lock_acquisitions_total.load(std::memory_order_relaxed);
+        auto r = cs.eval(R"(
+            (begin
+              (orch:spawn-agent "e-3728" (lambda () 1) :region-key 11)
+              (orch:spawn-agent "f-3728" (lambda () 1) :region-key 22)
+              (let ((je (orch:agent-join "e-3728" :timeout-ms 2000))
+                    (jf (orch:agent-join "f-3728" :timeout-ms 2000)))
+                (if (and (hash-ref je "ok") (hash-ref jf "ok")) 1 0)))
+        )");
+        CHECK(r && is_int(*r) && as_int(*r) == 1, "3728 AC4: Soft region-key agents joined");
+        const auto acq1 =
+            g_orch_module_stats.agent_apply_lock_acquisitions_total.load(std::memory_order_relaxed);
+        CHECK(acq1 >= acq0 + 2, "3728 AC4: Soft/Off still takes agent_apply_mu_");
+        const auto agent_src = read_file("src/compiler/evaluator_primitives_agent.cpp");
+        CHECK(agent_src.find("Issue #3728") != std::string::npos, "3728 AC4: prim cites #3728");
+        CHECK(agent_src.find("apply_spawn_closure_maybe_locked") != std::string::npos,
+              "3728 AC4: helper present");
+        CHECK(agent_src.find("query:3728") == std::string::npos, "3728 AC4: no new query key");
+        CHECK(!std::filesystem::exists("tests/orch/test_issue_3728.cpp"),
+              "3728 AC4: no test_issue_3728.cpp");
+        CHECK(!std::filesystem::exists("docs/design/3728-region-apply-mu.md"),
+              "3728 AC4: no docs/design/3728-*");
+    }
+
+    std::println("\n=== #2158/#3728 agent apply per-eval mutex: {} passed, {} failed ===", g_passed,
                  g_failed);
     return g_failed == 0 ? 0 : 1;
 }

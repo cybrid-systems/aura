@@ -223,6 +223,56 @@ namespace {
         bool valid_;
     };
 
+    // Issue #3728: Aura spawn apply. Serialized default (region_key==0 /
+    // Soft/Off / region concurrency off) still takes per-Evaluator
+    // agent_apply_mu_. Production + region concurrency + non-zero key:
+    // skip the mutex so disjoint-region bodies are not 1-wide. Does not
+    // call decide_isolation (spawn is not a batch). Quota try_acquire
+    // reject never reaches here (#2158 AC5).
+    // Placed after WorkspaceSwapGuard so #3442 AC3 (resolve_aura_agent
+    // window has no extra atomic) stays a pointer walk.
+    void apply_spawn_closure_maybe_locked(Evaluator& ev, std::uint64_t cid,
+                                          std::uint64_t region_key) {
+        if (cid == 0)
+            return;
+        if (region_key == 0)
+            region_key = Evaluator::parallel_task_region_key();
+        const auto prev_tls = Evaluator::parallel_task_region_key();
+        const bool stamped = region_key != 0 && region_key != prev_tls;
+        if (stamped)
+            Evaluator::note_parallel_task_region_key(region_key);
+        const bool skip_mu = aura::compiler::typed_audit::production_defaults_active() &&
+                             ev.workspace_region_concurrency_enabled() && region_key != 0;
+        auto run = [&ev, cid]() {
+            if (!agent_cid_live(ev, cid)) {
+                agent_note_closure_freed_call(ev);
+                return;
+            }
+            (void)ev.apply_closure(cid, {});
+        };
+        if (skip_mu) {
+            run();
+        } else {
+            const auto t0 = std::chrono::steady_clock::now();
+            std::lock_guard lock(ev.agent_apply_mu_);
+            const auto wait_us =
+                static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(
+                                               std::chrono::steady_clock::now() - t0)
+                                               .count());
+            aura::orch::g_orch_module_stats.agent_apply_lock_acquisitions_total.fetch_add(
+                1, std::memory_order_relaxed);
+            aura::orch::g_orch_module_stats.agent_apply_lock_wait_us_total.fetch_add(
+                wait_us, std::memory_order_relaxed);
+            run();
+        }
+        if (stamped) {
+            if (prev_tls != 0)
+                Evaluator::note_parallel_task_region_key(prev_tls);
+            else
+                Evaluator::clear_parallel_task_region_key();
+        }
+    }
+
     // Issue #1236: JSON string escape for LLM payload construction.
     std::string json_escape(std::string_view s) {
         std::string out;
@@ -3262,6 +3312,10 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             // Evaluator capability tenant (fallback below), then parent
             // fiber assigned_tenant_id / quota TLS inside spawn_agent_with_mailbox.
             std::uint64_t tenant_id = 0;
+            // Issue #3728: optional :region-key. 0 / omit → Serialized
+            // (agent_apply_mu_). Non-zero under production region
+            // concurrency skips the mutex (disjoint apply).
+            std::uint64_t region_key = 0;
             for (; i + 1 < a.size(); i += 2) {
                 auto k = orch_keyword_key(a[i]);
                 auto& val = a[i + 1];
@@ -3311,6 +3365,10 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                     // Issue #3434: explicit tenant for this spawn. 0 →
                     // Evaluator capability tenant fallback below.
                     tenant_id =
+                        static_cast<std::uint64_t>(std::max<std::int64_t>(0, types::as_int(val)));
+                } else if ((k == "region-key" || k == "region_key") && types::is_int(val)) {
+                    // Issue #3728: disjoint-region apply skip of agent_apply_mu_.
+                    region_key =
                         static_cast<std::uint64_t>(std::max<std::int64_t>(0, types::as_int(val)));
                 }
             }
@@ -3363,7 +3421,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             }
 
             orch_sched.ensure(2);
-            auto body = [&ev, cid]() {
+            auto body = [&ev, cid, region_key]() {
                 if (!cid)
                     return;
                 try {
@@ -3371,22 +3429,10 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                     // try_acquire reject path never reaches this body (agent_spawn.h
                     // wraps body after aura_orch_agent_body_try_acquire_ex succeeds),
                     // so we never hold agent_apply_mu_ on quota-reject (AC5).
-                    const auto t0 = std::chrono::steady_clock::now();
-                    std::lock_guard lock(ev.agent_apply_mu_);
-                    const auto wait_us = static_cast<std::uint64_t>(
-                        std::chrono::duration_cast<std::chrono::microseconds>(
-                            std::chrono::steady_clock::now() - t0)
-                            .count());
-                    aura::orch::g_orch_module_stats.agent_apply_lock_acquisitions_total.fetch_add(
-                        1, std::memory_order_relaxed);
-                    aura::orch::g_orch_module_stats.agent_apply_lock_wait_us_total.fetch_add(
-                        wait_us, std::memory_order_relaxed);
-                    // Issue #1719: refuse apply on freed thunk closure.
-                    if (!agent_cid_live(ev, *cid)) {
-                        agent_note_closure_freed_call(ev);
-                        return;
-                    }
-                    (void)ev.apply_closure(*cid, {});
+                    // Issue #3728: skip the mutex when a non-zero region key
+                    // is already the isolation token (production region
+                    // concurrency). Soft/Off / key==0 keep the lock.
+                    apply_spawn_closure_maybe_locked(ev, *cid, region_key);
                 } catch (...) {
                     // [SILENCE-PRIM-#615] swallow: agent body errors surface
                     // via join/status only (#1669 class B intentional-state).
@@ -3903,6 +3949,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             // Issue #3444: optional :path / :child-index. Omit → root.
             std::string addr_path;
             std::optional<std::int64_t> addr_child;
+            std::uint64_t region_key = 0; // Issue #3728
             for (; i + 1 < a.size(); i += 2) {
                 auto k = orch_keyword_key(a[i]);
                 auto& val = a[i + 1];
@@ -3920,6 +3967,9 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                     // Issue #3434: explicit tenant for this spawn. 0 →
                     // Evaluator capability tenant fallback below.
                     tenant_id =
+                        static_cast<std::uint64_t>(std::max<std::int64_t>(0, types::as_int(val)));
+                } else if ((k == "region-key" || k == "region_key") && types::is_int(val)) {
+                    region_key =
                         static_cast<std::uint64_t>(std::max<std::int64_t>(0, types::as_int(val)));
                 }
             }
@@ -3966,17 +4016,13 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 }
             }
 
-            auto body = [&ev, cid]() {
+            auto body = [&ev, cid, region_key]() {
                 if (!cid)
                     return;
                 try {
                     // Same per-Evaluator apply gate as orch:spawn-agent.
-                    std::lock_guard lock(ev.agent_apply_mu_);
-                    if (!agent_cid_live(ev, *cid)) {
-                        agent_note_closure_freed_call(ev);
-                        return;
-                    }
-                    (void)ev.apply_closure(*cid, {});
+                    // Issue #3728: skip agent_apply_mu_ for disjoint region keys.
+                    apply_spawn_closure_maybe_locked(ev, *cid, region_key);
                 } catch (...) {
                     // [SILENCE-PRIM-#615]: agent body errors surface via
                     // join/status only (#1669 class B intentional-state).
