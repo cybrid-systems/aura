@@ -1200,6 +1200,82 @@ static void ac13c_reemit_query() {
     aura_set_aot_emit_region_mask(0);
 }
 
+// Issue #3736: winning hash carries LLVM emit + dirty-region reemit.
+static void ac3736_dirty_region_on_winning_hash() {
+    std::println("\n--- #3736 AC1: dirty-region + LLVM families on one hash ---");
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    aura_hot_update_set_reemit_boundary_policy(0);
+    CompilerService cs;
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    auto* m = static_cast<CompilerMetrics*>(cs.evaluator().compiler_metrics());
+    CHECK(m != nullptr, "3736 AC1: CompilerMetrics");
+    aura_set_aot_metrics(m);
+    aura_clear_stable_func_id_map();
+    aura_set_aot_emit_region_mask(0);
+    ReemitFixture rf;
+    rf.candidates = {{"a", 1, false}, {"b", 4, true}, {"c", 3, false}};
+    EmitFixture ef;
+    ef.fail_names.insert("b");
+    aura_set_reemit_candidate_fn(&reemit_candidate_iter, &rf);
+    aura_set_aot_emit_fn(&emit_fn, &ef);
+    const auto dirty0 = m->aot_incremental_reemit_count.load();
+    const auto llvm0 = m->aot_incremental_llvm_emit_total.load();
+    (void)aura_reemit_aot_for_dirty(0);
+    CHECK(m->aot_incremental_reemit_count.load() > dirty0, "3736 AC1: dirty-region count bumped");
+    auto st = cs.eval("(engine:metrics \"query:aot-incremental-reemit-stats\")");
+    CHECK(st && is_hash(*st), "3736 AC1: hash");
+    CHECK(href(cs, "query:aot-incremental-reemit-stats", "aot-incremental-llvm-emit-total") >=
+              static_cast<std::int64_t>(llvm0),
+          "3736 AC1: old LLVM emit key present");
+    CHECK(href(cs, "query:aot-incremental-reemit-stats", "dirty-region-reemit-total") >= 1,
+          "3736 AC1: dirty-region-reemit-total ≥ 1");
+    CHECK(href(cs, "query:aot-incremental-reemit-stats", "dirty-region-reemit-success-total") >= 0,
+          "3736 AC1: dirty-region-reemit-success-total");
+    CHECK(href(cs, "query:aot-incremental-reemit-stats", "schema-3736") == 3736,
+          "3736 AC1: schema-3736");
+    CHECK(href(cs, "query:aot-incremental-reemit-stats", "hash-overflow") != 1,
+          "3736 AC1: hash-overflow not stamped (planned raise)");
+    CHECK(href(cs, "stats:drift-check", "missing-impl-count") == 0,
+          "3736 AC1: stats:drift-check missing-impl=0");
+
+    auto read_src = [](const char* rel) {
+        auto s = read_file(rel);
+        if (s.empty())
+            s = read_file((std::string("../") + rel).c_str());
+        return s;
+    };
+    const auto tail = read_src("src/compiler/evaluator_primitives_query_tail.cpp");
+    const auto obs = read_src("src/compiler/evaluator_primitives_obs_eval.cpp");
+    const auto cat = read_src("src/compiler/evaluator_primitives_observability.cpp");
+    auto count_reg = [](const std::string& s) {
+        std::size_t n = 0, pos = 0;
+        const auto needle = "\"query:aot-incremental-reemit-stats\"";
+        while ((pos = s.find(needle, pos)) != std::string::npos) {
+            ++n;
+            pos += 1;
+        }
+        return n;
+    };
+    CHECK(count_reg(obs) == 1, "3736 AC2: one register_stats_impl in obs_eval");
+    CHECK(tail.find("register_stats_impl") == std::string::npos ||
+              tail.find("\"query:aot-incremental-reemit-stats\"") == std::string::npos ||
+              tail.find("Do not re-register") != std::string::npos,
+          "3736 AC2: query_tail does not re-register the name");
+    CHECK(cat.find("query:aot-incremental-reemit-stats") != std::string::npos,
+          "3736 AC3: catalog seed still lists the one name");
+    CHECK(read_file("../tests/compiler/test_issue_3736.cpp").empty() &&
+              read_file("tests/compiler/test_issue_3736.cpp").empty(),
+          "3736 AC4: no test_issue_3736.cpp");
+    CHECK(read_file("../docs/design/3736-dirty-region-reemit.md").empty(),
+          "3736 AC4: no docs/design/3736-*");
+
+    aura_set_aot_emit_fn(nullptr, nullptr);
+    aura_set_reemit_candidate_fn(nullptr, nullptr);
+    aura_set_aot_metrics(nullptr);
+    aura_clear_stable_func_id_map();
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+}
+
 // Issue #2233: post-reemit live-closure stamp metrics (hit / miss
 // split). The restamp logic is already in aura_jit_runtime.cpp
 // aura_remap_live_closures_after_reemit; this AC verifies the
@@ -1769,6 +1845,7 @@ int main() {
     ac13a_reemit_fail_counter();
     ac13b_reemit_keep_fail();
     ac13c_reemit_query();
+    ac3736_dirty_region_on_winning_hash();
     ac14_specjit_shape_conservative();
     ac_restamp_hit();
     ac_restamp_miss();
