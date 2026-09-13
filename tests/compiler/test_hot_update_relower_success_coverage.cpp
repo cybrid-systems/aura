@@ -407,10 +407,13 @@ int run_test_hot_update_relower_success_coverage() {
         CHECK(r1 == r0, "3505 AC2: residual_force_mask unchanged by hashed note");
 
         std::println("\n--- #3505 AC3/AC4: pipeline reason stamp + #3229 side set kept ---");
+        // Issue #3682: the idle-override inference is gone — the pipeline
+        // stamps from the Agent override only; reason ∩ demoted stays
+        // forbidden in hot_update_registry.cpp.
         CHECK(read_file("src/compiler/hot_update_registry.cpp")
-                      .find("aot_reload_fail_to_force_jit_mask(fail) & demoted") !=
+                      .find("aot_reload_fail_to_force_jit_mask(fail) & demoted") ==
                   std::string::npos,
-              "3505 AC3: pipeline reason ∩ demoted");
+              "3505 AC3: pipeline reason ∩ demoted (inference removed; #3682)");
         CHECK(hur3505.find("note_relower_success_define") != std::string::npos,
               "3505 AC4: #3229 define side set");
         CHECK(hur3505.find("relower_success_covers_define") != std::string::npos,

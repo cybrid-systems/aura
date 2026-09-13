@@ -441,8 +441,10 @@ static void ac2640_source_and_linter() {
     CHECK(t.find("ac2640_counters_and_query") != std::string::npos, "AC6: AC5 test present");
     CHECK(t.find("ac2640_source_and_linter") != std::string::npos, "AC6: AC6 self-test");
     CHECK(lint.find("2640") != std::string::npos, "AC6: linter covers #2640");
-    CHECK(build.find("epoch_invariant_periodic_coverage") != std::string::npos,
-          "AC6: linter wired into build.py");
+    // Issue #3683-follow-up: the periodic-coverage wrapper wiring went
+    // away with the dropped script — coverage is manifest-SSOT now.
+    CHECK(!read_file("scripts/coverage/manifests/2640.json").empty(),
+          "AC6: linter wired into build.py (2640 manifest SSOT)");
 }
 
 // ── Issue #2693 AC1: K consecutive Soft walks → epoch_invariant_soft_fuse_total bumps ──
