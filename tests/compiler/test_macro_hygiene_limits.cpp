@@ -1294,6 +1294,27 @@ static void ac3684_inner_depth_restore() {
     reset_all();
 }
 
+static void ac3753_reexpand_call_inner_deny_no_splice() {
+    std::println("\n--- #3753 AC2: reexpand_call inner deny does not splice ---");
+    reset_all();
+    const auto eef = read_file("src/compiler/evaluator_eval_flat.cpp");
+    CHECK(eef.find("Issue #3753") != std::string::npos, "3753 AC2: reexpand cites #3753");
+    const auto exp_pos = eef.find("expand_inner_macros(&flat, &pool, expanded, 0, 10,");
+    CHECK(exp_pos != std::string::npos, "3753 AC2: reexpand calls expand_inner_macros");
+    const auto win = eef.substr(exp_pos, 1200);
+    CHECK(win.find("if (expanded == NULL_NODE)") != std::string::npos,
+          "3753 AC2: NULL_NODE still refuses");
+    CHECK(win.find("inner_expand_production_limit_deny()") != std::string::npos,
+          "3753 AC2: deny consult is after expand_inner (clone root is not NULL)");
+    CHECK(win.find("is_sandbox_active()") != std::string::npos,
+          "3753 AC2: Soft half-write remains (one sandbox load)");
+    CHECK(win.find("return false") != std::string::npos,
+          "3753 AC2: deny returns false — no parent splice");
+    // expand_inner production deny itself is ac3684_inner_depth_restore
+    // (returns original call root, reason hygiene-depth-limit).
+    reset_all();
+}
+
 int run_test_macro_hygiene_limits() {
     std::println("=== Issue #2101: runtime hygiene depth/pass caps ===");
     ac1_runtime_cap_clamps();
@@ -1308,6 +1329,7 @@ int run_test_macro_hygiene_limits() {
     ac3029_pass_reason();
     ac3684_deny_codes();
     ac3684_inner_depth_restore();
+    ac3753_reexpand_call_inner_deny_no_splice();
     ac3029_query_and_linter();
     std::println("\n=== Issue #3062: no-boundary pass-limit refuse-partial ===");
     ac3062_no_boundary_refuse_partial();

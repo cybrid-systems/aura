@@ -39,6 +39,7 @@ import aura.compiler.soa_view;
 
 namespace aura::compiler {
 
+using aura::compiler::macro_exp::inner_expand_production_limit_deny;
 using aura::compiler::macro_exp::stamp_rest_param_hygiene;
 
 namespace primitives_detail {
@@ -6948,24 +6949,24 @@ std::size_t Evaluator::post_mutation_macro_reexpand(aura::ast::FlatAST& flat,
             rename_map;
         for (std::size_t i = 0; i < md.params.size() && i < call_args.size(); ++i)
             subst_map[md.params[i]] = call_args[i];
-        if (md.dotted && !md.params.empty() && call_args.size() >= md.params.size()) {
-            std::size_t first_rest_idx = md.params.size() - 1;
+        if (md.dotted && !md.params.empty()) {
             aura::ast::NodeId list_end = aura::ast::NULL_NODE;
-            for (std::size_t k = call_args.size(); k > first_rest_idx; --k) {
-                std::size_t i = k - 1;
-                list_end = flat.add_pair(call_args[i], list_end);
+            if (call_args.size() >= md.params.size()) {
+                std::size_t first_rest_idx = md.params.size() - 1;
+                for (std::size_t k = call_args.size(); k > first_rest_idx; --k) {
+                    std::size_t i = k - 1;
+                    list_end = flat.add_pair(call_args[i], list_end);
+                }
             }
-            // Issue #3153: stamp the freshly allocated pair-spine root
-            // (list_end) with kMacroExpansion dirty + MacroIntroduced
-            // marker + provenance + schema_cache. Same helper as the
-            // eval_flat dotted-rest path (which uses (list a b ...) shape)
-            // and as macro_expand_all / expand_inner_macros. Without the
-            // stamp, pair-spine rest nodes are missing MacroIntroduced
-            // marker and mutate:replace-subtree / rebind gates can't
-            // reject them — self-evo can rewrite rest structure without
-            // :allow-macro?. md.flat may be null (programmatic macro def);
-            // fall back to current flat in that case (same defensive
-            // pattern as src_flat below).
+            // Issue #3753: zero extras still bind rest to a stamped empty
+            // (list) — same as eval_flat dotted. Leaving rest unbound was
+            // a caller-env capture. Non-empty pair-spine stamp is #3153.
+            if (list_end == aura::ast::NULL_NODE) {
+                auto list_var = flat.add_variable(pool.intern("list"));
+                std::vector<aura::ast::NodeId> empty_rest;
+                list_end = flat.add_call(list_var, empty_rest);
+            }
+            // Issue #3153: stamp the rest spine (pair or empty (list)).
             if (list_end != aura::ast::NULL_NODE) {
                 stamp_rest_param_hygiene(flat, md.flat ? *md.flat : flat, md.body_id, list_end);
             }
@@ -6982,6 +6983,12 @@ std::size_t Evaluator::post_mutation_macro_reexpand(aura::ast::FlatAST& flat,
         expanded =
             expand_inner_macros(&flat, &pool, expanded, 0, 10, as_expansion_registry(macros_));
         if (expanded == NULL_NODE)
+            return false;
+        // Issue #3753: expand_inner_macros on production deny returns the
+        // clone root, not NULL_NODE. eval_flat refuses to eval that half
+        // tree; reexpand_call must not splice it into the Call parent.
+        // Soft/Off: historical half-write may remain (one sandbox load).
+        if (aura::core::sandbox::is_sandbox_active() && inner_expand_production_limit_deny())
             return false;
 
         // Issue #2762: splice expanded root into the Call's parent slot
