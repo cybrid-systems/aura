@@ -2336,10 +2336,14 @@ static aura::ast::NodeId clone_macro_body_at_depth(
     // Issue #2018: Lambda / MacroDef with dotted rest — last param is a
     // rest binding; gensym via rename_rest_binding_pre (`__rest_` prefix).
     // Issue #3181: skip pre_scan when local_in_quote — quoted data has no
-    // binding gensym. pre_scan #3154 already stops at NodeTag::Quote; this
-    // guard also covers Call-head "quote" (not handled by pre_scan, would
-    // otherwise leak name_map entries into siblings outside the quote).
-    if (name_map && !local_in_quote) {
+    // binding gensym. Issue #3754: also skip when local_in_unquote
+    // (caller-scope verbatim zone). Nested clone frames used to start
+    // pre_scan at qq depth zero, gensym'ing Let/Lambda/Define under
+    // unquote into name_map while Variable refs still transplant
+    // → binding/ref split. Inherit walk qq_depth so nested-qq unquote
+    // at depth > 1 still decrements. Call-head "quote" is now a
+    // pre_scan stop (parity with NodeTag::Quote / #3154).
+    if (name_map && !local_in_quote && !local_in_unquote) {
         // Issue #2239 / #2807: qq-aware pre_scan. Tracks `(quasiquote ...)`,
         // `(unquote ...)`, and `(unquote-splicing ...)` boundaries so
         // rest-param bindings nested inside qq templates get gensym'd
@@ -2349,6 +2353,10 @@ static aura::ast::NodeId clone_macro_body_at_depth(
         // Lambda/MacroDef is discovered inside qq (qq_depth > 0).
         std::function<void(NodeId, int)> pre_scan = [&](NodeId nid, int qq_depth) {
             if (nid == NULL_NODE || nid >= source.size())
+                return;
+            // Issue #3754: already in the unquote caller-scope zone —
+            // do not gensym bindings (clone walk transplants refs).
+            if (qq_depth == kUnquoteCallerScopeDepth)
                 return;
             auto nv = source.get(nid);
             // Quasiquote / unquote / unquote-splicing boundary detection.
@@ -2394,6 +2402,12 @@ static aura::ast::NodeId clone_macro_body_at_depth(
                         }
                         return;
                     }
+                    // Issue #3754: Call-head "quote" is a data boundary,
+                    // same stop as NodeTag::Quote (#3154). Parser quote
+                    // is NodeTag::Quote; generated `(quote …)` is a Call
+                    // and used to leak quoted bindings into name_map.
+                    if (cname == "quote")
+                        return;
                 }
             }
             // Issue #3154: NodeTag::Quote is a data boundary, not code.
@@ -2447,7 +2461,7 @@ static aura::ast::NodeId clone_macro_body_at_depth(
             for (auto c : scan_children)
                 pre_scan(c, qq_depth);
         };
-        pre_scan(body_id, /*qq_depth=*/0);
+        pre_scan(body_id, qq_depth);
         // Issue #3506: pre_scan ignores rename_*_pre NULL_NODE; a ceiling
         // deny already try_restore'd. Abort the clone walk so later add_*
         // are not unguarded (checkpoint consumed). Soft/Off: continue.
@@ -2545,7 +2559,8 @@ static aura::ast::NodeId clone_macro_body_at_depth(
     // the default.
     std::vector<aura::ast::SymId> param_syms;
     for (auto pid : v.params)
-        param_syms.push_back(local_in_quote ? transplant(pid) : rename_binding(pid));
+        param_syms.push_back((local_in_quote || local_in_unquote) ? transplant(pid)
+                                                                  : rename_binding(pid));
 
     aura::ast::NodeId new_id = NULL_NODE;
     switch (v.tag) {
@@ -2598,7 +2613,7 @@ static aura::ast::NodeId clone_macro_body_at_depth(
             if (!child_ids.empty()) {
                 const bool dotted = v.int_value != 0;
                 if (dotted && !param_syms.empty() && name_map && session.allow_rest_hygiene &&
-                    !local_in_quote) {
+                    !local_in_quote && !local_in_unquote) {
                     auto rest_name = std::string(target_pool.resolve(param_syms.back()));
                     if (rest_name.rfind("__rest_", 0) != 0) {
                         const std::string src_nm =
@@ -2637,10 +2652,11 @@ static aura::ast::NodeId clone_macro_body_at_depth(
         case NodeTag::Let:
         case NodeTag::LetRec: {
             // Issue #3181: under quote, binding name is transplanted
-            // verbatim (no rename_binding). Outside quote, rename_binding
-            // (which consults name_map for pre-scan gensyms) is the default.
+            // verbatim (no rename_binding). Issue #3754: unquote
+            // caller-scope is the same (Variable refs already transplant).
             if (child_ids.size() >= 2) {
-                SymId s = local_in_quote ? transplant(v.sym_id) : rename_binding(v.sym_id);
+                SymId s = (local_in_quote || local_in_unquote) ? transplant(v.sym_id)
+                                                               : rename_binding(v.sym_id);
                 new_id = (v.tag == NodeTag::Let) ? target.add_let(s, child_ids[0], child_ids[1])
                                                  : target.add_letrec(s, child_ids[0], child_ids[1]);
             }
@@ -2692,9 +2708,10 @@ static aura::ast::NodeId clone_macro_body_at_depth(
             break;
         case NodeTag::Define: {
             // Issue #3181: under quote, binding name is transplanted
-            // verbatim (no rename_binding).
+            // verbatim (no rename_binding). Issue #3754: unquote too.
             if (!child_ids.empty()) {
-                SymId s = local_in_quote ? transplant(v.sym_id) : rename_binding(v.sym_id);
+                SymId s = (local_in_quote || local_in_unquote) ? transplant(v.sym_id)
+                                                               : rename_binding(v.sym_id);
                 new_id = target.add_define(s, child_ids[0]);
             }
             break;
