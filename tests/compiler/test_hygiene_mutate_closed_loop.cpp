@@ -4790,6 +4790,139 @@ static void ac3652_6_source_cite() {
           "3652 AC6: linter registered");
 }
 
+// ── Issue #3755: public mutate:rename-symbol :allow-macro? still MSE ──
+static void ac3755_1_public_rename_allow_denied_without_mse() {
+    std::println("\n--- #3755 AC1: public rename-symbol :allow-macro? denied without MSE ---");
+    using aura::core::capability::g_capability_effect_metrics;
+    using aura::core::capability::reset_capability_effects_for_test;
+    using aura::core::security_event::reset_security_event_ring_for_test;
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    reset_capability_effects_for_test();
+    reset_security_event_ring_for_test();
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define f (lambda (x) (+ x 1)))\")").has_value(),
+          "3755 AC1: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3755 AC1: eval");
+    auto find_f = cs.eval("(car (query :find \"f\"))");
+    CHECK(find_f && is_int(*find_f), "3755 AC1: find f");
+    CHECK(cs.eval(std::format("(syntax:set-marker {} 1)", as_int(*find_f))).has_value(),
+          "3755 AC1: stamp MacroIntroduced");
+    grant_3301_production_mutate(cs);
+    aura::core::capability::g_capability_registry().revoke(cs.evaluator().capability_tenant_id(),
+                                                           "tenant-admin");
+    const auto deny0 = g_capability_effect_metrics().macro_mutate_capability_deny_total.load();
+    auto denied = cs.eval("(mutate:rename-symbol \"f\" \"g\" \"3755-deny\" :allow-macro? #t)");
+    CHECK(denied.has_value(), "3755 AC1: returns");
+    CHECK(merr_kind_3027(cs, *denied) == "hygiene-protected", "3755 AC1: MSE deny kind");
+    CHECK(g_capability_effect_metrics().macro_mutate_capability_deny_total.load() > deny0,
+          "3755 AC1: deny counter");
+    CHECK(ring_has_reason_3542("macro-mutate-needs-macro-self-evo"), "3755 AC1: SE reason");
+    auto still = cs.eval("(car (query :find \"f\"))");
+    CHECK(still && is_int(*still) && as_int(*still) == as_int(*find_f),
+          "3755 AC1: sym_id unchanged");
+    auto gone = cs.eval("(car (query :find \"g\"))");
+    CHECK(!gone || !is_int(*gone), "3755 AC1: g not bound");
+    reset_capability_effects_for_test();
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+}
+
+static void ac3755_2_mse_grant_rename_ok() {
+    std::println("\n--- #3755 AC2: Restricted + MSE + allow rename commits ---");
+    using aura::core::capability::MacroSelfEvoPolicy;
+    using aura::core::capability::reset_capability_effects_for_test;
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    reset_capability_effects_for_test();
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define f (lambda (x) (+ x 1)))\")").has_value(),
+          "3755 AC2: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3755 AC2: eval");
+    auto find_f = cs.eval("(car (query :find \"f\"))");
+    CHECK(find_f && is_int(*find_f), "3755 AC2: find f");
+    CHECK(cs.eval(std::format("(syntax:set-marker {} 1)", as_int(*find_f))).has_value(),
+          "3755 AC2: stamp");
+    grant_3301_production_mutate(cs);
+    const auto tenant = cs.evaluator().capability_tenant_id();
+    aura::core::capability::g_capability_registry().grant_macro_self_evo(
+        tenant, MacroSelfEvoPolicy{}, aura_test_grant_prov(), tenant);
+    auto ok = cs.eval("(mutate:rename-symbol \"f\" \"g\" \"3755-ok\" :allow-macro? #t)");
+    CHECK(ok.has_value() && is_bool(*ok) && as_bool(*ok), "3755 AC2: rename commits");
+    auto g = cs.eval("(car (query :find \"g\"))");
+    CHECK(g && is_int(*g), "3755 AC2: g bound");
+    reset_capability_effects_for_test();
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+}
+
+static void ac3755_3_lockless_twin_unchanged() {
+    std::println("\n--- #3755 AC3: lockless / atomic-batch twin still MSE ---");
+    using aura::core::capability::reset_capability_effects_for_test;
+    using aura::core::security_event::reset_security_event_ring_for_test;
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    reset_capability_effects_for_test();
+    reset_security_event_ring_for_test();
+    const auto efl = read_file("src/compiler/evaluator_eval_flat.cpp");
+    CHECK(efl.find("batch :rename-symbol: MacroIntroduced site requires MacroSelfEvo") !=
+              std::string::npos,
+          "3755 AC3: lockless rename MSE face kept");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define f (lambda (x) (+ x 1)))\")").has_value(),
+          "3755 AC3: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3755 AC3: eval");
+    auto find_f = cs.eval("(car (query :find \"f\"))");
+    CHECK(find_f && is_int(*find_f), "3755 AC3: find f");
+    CHECK(cs.eval(std::format("(syntax:set-marker {} 1)", as_int(*find_f))).has_value(),
+          "3755 AC3: stamp");
+    grant_3301_production_mutate(cs);
+    aura::core::capability::g_capability_registry().revoke(cs.evaluator().capability_tenant_id(),
+                                                           "tenant-admin");
+    auto d = cs.eval("(mutate:atomic-batch (list (list \"mutate:rename-symbol\" \"f\" \"g\" "
+                     "\"3755-batch\" :allow-macro? #t)) \"s\")");
+    CHECK(d.has_value() && merr_kind_3027(cs, *d) == "hygiene-protected",
+          "3755 AC3: batch rename-symbol still MSE denied");
+    auto still = cs.eval("(car (query :find \"f\"))");
+    CHECK(still && is_int(*still) && as_int(*still) == as_int(*find_f),
+          "3755 AC3: batch rollback leaves f");
+    reset_capability_effects_for_test();
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+}
+
+static void ac3755_4_soft_allow_without_mse() {
+    std::println("\n--- #3755 AC4: Soft allow without MSE still works ---");
+    using aura::core::capability::reset_capability_effects_for_test;
+    reset_capability_effects_for_test();
+    CompilerService cs;
+    CHECK(cs.evaluator().effect_sandbox_mode() == 0, "3755 AC4: Soft sandbox");
+    CHECK(cs.eval("(set-code \"(define f (lambda (x) (+ x 1)))\")").has_value(),
+          "3755 AC4: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3755 AC4: eval");
+    auto find_f = cs.eval("(car (query :find \"f\"))");
+    CHECK(find_f && is_int(*find_f), "3755 AC4: find f");
+    CHECK(cs.eval(std::format("(syntax:set-marker {} 1)", as_int(*find_f))).has_value(),
+          "3755 AC4: stamp");
+    auto ok = cs.eval("(mutate:rename-symbol \"f\" \"g\" \"3755-soft\" :allow-macro? #t)");
+    CHECK(ok.has_value() && is_bool(*ok) && as_bool(*ok),
+          "3755 AC4: Soft allow-macro rename without MSE");
+    auto g = cs.eval("(car (query :find \"g\"))");
+    CHECK(g && is_int(*g), "3755 AC4: g bound");
+    reset_capability_effects_for_test();
+}
+
+static void ac3755_5_source_and_no_artifacts() {
+    std::println("\n--- #3755 AC5: source-cite + no artifacts ---");
+    const auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
+    const auto rs = mut.find("add_mutate(\"mutate:rename-symbol\"");
+    CHECK(rs != std::string::npos, "3755 AC5: public prim present");
+    const auto cite = mut.find("Issue #3755", rs);
+    CHECK(cite != std::string::npos, "3755 AC5: public prim cites #3755");
+    const auto win_from = cite > 200 ? cite - 200 : rs;
+    const auto win = mut.substr(win_from, 1400);
+    CHECK(win.find("deny_macro_opt_out_without_mse(ev, id, mev)") != std::string::npos,
+          "3755 AC5: public allow-arm reuses MSE helper");
+    CHECK(win.find("effect_sandbox_mode() != 0") != std::string::npos,
+          "3755 AC5: Soft one-load gate");
+    CHECK(read_file("tests/compiler/test_issue_3755.cpp").empty(), "3755 AC5: no test_issue");
+    CHECK(read_file("docs/design/3755-rename-symbol-mse.md").empty(), "3755 AC5: no docs/design");
+}
+
 // ── Issue #3576: enumerative mutate:* MacroIntroduced default-deny ──
 // List is generated from primitives() registration (slot_count /
 // name_for_slot, names starting with "mutate:"), not a hand-copied
@@ -5864,6 +5997,12 @@ int main() {
     ac3652_4_soft_off_unchanged();
     ac3652_5_set_allow_flag_gate();
     ac3652_6_source_cite();
+    std::println("\n=== Issue #3755: public rename-symbol :allow-macro? still MSE ===");
+    ac3755_1_public_rename_allow_denied_without_mse();
+    ac3755_2_mse_grant_rename_ok();
+    ac3755_3_lockless_twin_unchanged();
+    ac3755_4_soft_allow_without_mse();
+    ac3755_5_source_and_no_artifacts();
     std::println("\n=== Issue #3576: enumerative mutate:* default-reject MacroIntroduced ===");
     ac3576_1_list_from_registration();
     ac3576_2_each_non_exempt_default_rejects();

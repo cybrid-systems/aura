@@ -6847,7 +6847,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
     // Issue #2961: MacroIntroduced / MacroDef sites default-reject
     // without :allow-macro?; success restamps all node gens so
     // query:*-stable does not leak pre-rename StableNodeRefs.
-    add_mutate("mutate:rename-symbol", [&ev, safe_str](const auto& a) -> EvalValue {
+    add_mutate("mutate:rename-symbol", [&ev, mev, safe_str](const auto& a) -> EvalValue {
         using namespace aura::ast;
         bool ok = true;
         // Issue #2124 / #2961: force try_acquire (quota + metrics); no legacy ctor.
@@ -6916,6 +6916,31 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                     return ev.make_merr("hygiene-protected", // #3683
                                         "cannot rename-symbol through MacroIntroduced / MacroDef "
                                         "without :allow-macro? #t");
+                }
+            }
+        } else if (ev.effect_sandbox_mode() != 0) {
+            // Issue #3755: public :allow-macro? arm still consults
+            // MacroSelfEvo (lockless twin already does). Hand-written
+            // MacroDef sites keep the historical allow face. Soft: one
+            // sandbox-mode load, no MSE scan.
+            for (NodeId id = 0; id < flat.size(); ++id) {
+                if (!flat.is_live_node(id))
+                    continue;
+                bool hit = (flat.sym_id(id) == old_sym);
+                if (!hit && flat.tag(id) == NodeTag::Lambda) {
+                    auto v = flat.get(id);
+                    for (std::size_t pi = 0; pi < v.params.size(); ++pi) {
+                        if (v.params[pi] == old_sym) {
+                            hit = true;
+                            break;
+                        }
+                    }
+                }
+                if (!hit || !flat.is_macro_introduced(id))
+                    continue;
+                if (auto denied = deny_macro_opt_out_without_mse(ev, id, mev)) {
+                    ok = false;
+                    return *denied;
                 }
             }
         }
