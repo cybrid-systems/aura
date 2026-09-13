@@ -953,8 +953,11 @@ private:
     // Issue #2895 / #2949: coverage + partial re-promote.
     //   last_reemit_success_region_mask_: force-JIT reason bits covered by
     //     the last clean reemit success (stamped when successes > 0 and
-    //     demoted != 0 from override or last_force_jit_reason group —
-    //     #3466; or via note_reemit_success_coverage).
+    //     demoted != 0 from Agent override, or — Issue #3745 — one
+    //     last_force_jit_reason group bit on heal-path reemit
+    //     ReloadRecovery / CoverageVerify / StormClear / ResidualForceHeal
+    //     / ExhaustedMinDirty). Cascade dirty must not stamp (#3682).
+    //     note_reemit_success_coverage still overrides.
     //     Issue #2977: residual remount prefer ORs this with force_jit.
     //     Issue #2978: reemit-success sync covered-named remount reads this.
     //   force_jit_repromote_only_covered_bits_: sticky value when override
@@ -1006,6 +1009,12 @@ private:
     EvalForceSlot* find_eval_force_slot(void* ev, bool create) noexcept;
     void or_eval_force_bit(void* ev, std::uint64_t bit) noexcept;
     void stamp_eval_last_success(void* ev, std::uint64_t cov) noexcept;
+    // Issue #3745: production heal-path reemit (ReloadRecovery /
+    // CoverageVerify / StormClear / ResidualForceHeal / ExhaustedMinDirty)
+    // may stamp last_force_jit_reason's one group bit into last_success
+    // when override is idle. Cascade / BoundaryExit / ResidualPipeline
+    // do not (#3682). Soft: no extra. Not the full demoted mask (#3413).
+    void maybe_stamp_heal_reason_last_success(std::uint64_t demoted) noexcept;
     void clear_eval_force_slots() noexcept;
     std::uint64_t rebuild_force_mask_from_slots() noexcept;
     bool try_partial_clear_eval_force(std::uint64_t last_cov, std::uint64_t* out_residual,

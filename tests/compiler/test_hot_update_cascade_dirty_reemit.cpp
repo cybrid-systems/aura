@@ -690,6 +690,153 @@ static void ac3744_soft_no_extra() {
     CHECK(q.find("schema-3744") != std::string::npos, "3744 AC4: additive schema on existing hash");
 }
 
+// ── Issue #3745: heal-path n>0 stamps one last_force_jit_reason bit ──
+static void ac3745_heal_path_stamps_one_group_bit() {
+    std::println("\n--- #3745 AC1: CoverageVerify n>0 stamps Defuse bit, residual shrinks ---");
+    const auto cpp = read_file("src/compiler/hot_update_registry.cpp");
+    CHECK(cpp.find("maybe_stamp_heal_reason_last_success") != std::string::npos,
+          "3745 AC1: heal-path stamp helper");
+    CHECK(cpp.find("ReemitReason::CoverageVerify") != std::string::npos &&
+              cpp.find("ReemitReason::StormClear") != std::string::npos &&
+              cpp.find("ReemitReason::ReloadRecovery") != std::string::npos,
+          "3745 AC1: stamp tied to heal reasons, not Cascade");
+    CHECK(cpp.find("schema-3745") == std::string::npos, "3745 AC1: no new query key");
+
+    auto& reg = hot_update_registry();
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    reg.on_reload_success();
+    reg.reset_force_jit_repromote_for_test();
+    reg.set_force_jit_repromote_window(1);
+    reg.set_force_jit_repromote_only_covered_bits(true);
+    reg.set_force_jit_repromote_require_pending_idle(false);
+    reg.on_force_jit_for_reason(AotReloadFail::Defuse);
+    const auto defuse = aot_reload_fail_to_force_jit_mask(AotReloadFail::Defuse);
+    CHECK((reg.force_jit_regions_mask() & defuse) != 0, "3745 AC1: Defuse force bit set");
+    CHECK(reg.last_reemit_success_region_mask() == 0, "3745 AC1: last_success starts 0");
+    CHECK(reg.residual_force_mask() == reg.force_jit_regions_mask(),
+          "3745 AC1: residual == full force while last_success is 0");
+
+    aura_hot_update_set_reemit_boundary_policy(0); // SoftEnter so ABI can proceed
+    static ReemitFeed feed;
+    feed.names = {"__hu_3745_heal"};
+    feed.regions = {1};
+    feed.cursor = 0;
+    aura_set_reemit_candidate_fn(&reemit_candidate_iter, &feed);
+    aura_set_aot_emit_fn(&emit_ok, nullptr);
+    reg.on_emit_region_mask_set(~0ULL);
+    (void)reg.decide_and_reemit(1, aura::compiler::HotUpdateRegistry::ReemitReason::CoverageVerify);
+    CHECK(reg.last_reemit_reason() ==
+              aura::compiler::HotUpdateRegistry::ReemitReason::CoverageVerify,
+          "3745 AC1: last_reemit_reason is CoverageVerify");
+    // ABI may no-op (Defer / owner / empty ring). Pipeline success is how
+    // aura_reemit_aot_for_dirty reports n>0 into last_success.
+    if (reg.last_reemit_success_region_mask() == 0)
+        reg.on_reemit_pipeline_call(/*candidates=*/1, /*successes=*/1);
+    CHECK((reg.last_reemit_success_region_mask() & defuse) != 0,
+          "3745 AC1: last_success has Defuse bit without Agent override");
+    CHECK((reg.residual_force_mask() & defuse) == 0,
+          "3745 AC1: residual Defuse shrinks (stamped, and/or only_covered re-promote)");
+    aura_set_aot_emit_fn(nullptr, nullptr);
+    aura_set_reemit_candidate_fn(nullptr, nullptr);
+    reg.on_reload_success();
+    reg.reset_force_jit_repromote_for_test();
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+}
+
+static void ac3745_cascade_does_not_stamp() {
+    std::println("\n--- #3745 AC2: Cascade dirty n>0 does not stamp last_success (#3682) ---");
+    auto& reg = hot_update_registry();
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    reg.on_reload_success();
+    reg.reset_force_jit_repromote_for_test();
+    reg.on_force_jit_for_reason(AotReloadFail::Defuse);
+    const auto defuse = aot_reload_fail_to_force_jit_mask(AotReloadFail::Defuse);
+    aura_hot_update_set_reemit_boundary_policy(0);
+    static ReemitFeed feed;
+    feed.names = {"__hu_3745_cascade"};
+    feed.regions = {1};
+    feed.cursor = 0;
+    aura_set_reemit_candidate_fn(&reemit_candidate_iter, &feed);
+    aura_set_aot_emit_fn(&emit_ok, nullptr);
+    reg.on_emit_region_mask_set(~0ULL);
+    (void)reg.decide_and_reemit(1, aura::compiler::HotUpdateRegistry::ReemitReason::Cascade);
+    CHECK(reg.last_reemit_reason() == aura::compiler::HotUpdateRegistry::ReemitReason::Cascade,
+          "3745 AC2: last_reemit_reason is Cascade");
+    if (reg.last_reemit_success_region_mask() == 0)
+        reg.on_reemit_pipeline_call(/*candidates=*/1, /*successes=*/1);
+    CHECK(reg.last_reemit_success_region_mask() == 0,
+          "3745 AC2: unrelated cascade does not stamp last_success");
+    CHECK((reg.residual_force_mask() & defuse) != 0, "3745 AC2: residual Defuse remains");
+    aura_set_aot_emit_fn(nullptr, nullptr);
+    aura_set_reemit_candidate_fn(nullptr, nullptr);
+    reg.on_reload_success();
+    reg.reset_force_jit_repromote_for_test();
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+}
+
+static void ac3745_agent_override_wins() {
+    std::println("\n--- #3745 AC3: Agent note_reemit_success_coverage still overrides ---");
+    auto& reg = hot_update_registry();
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    reg.on_reload_success();
+    reg.reset_force_jit_repromote_for_test();
+    reg.on_force_jit_for_reason(AotReloadFail::Defuse);
+    reg.on_force_jit_for_reason(AotReloadFail::Env);
+    const auto defuse = aot_reload_fail_to_force_jit_mask(AotReloadFail::Defuse);
+    const auto env = aot_reload_fail_to_force_jit_mask(AotReloadFail::Env);
+    reg.note_reemit_success_coverage(env);
+    CHECK(reg.last_reemit_success_region_mask() == env, "3745 AC3: override stamps Env");
+    aura_hot_update_set_reemit_boundary_policy(0);
+    static ReemitFeed feed;
+    feed.names = {"__hu_3745_ovr"};
+    feed.regions = {1};
+    feed.cursor = 0;
+    aura_set_reemit_candidate_fn(&reemit_candidate_iter, &feed);
+    aura_set_aot_emit_fn(&emit_ok, nullptr);
+    reg.on_emit_region_mask_set(~0ULL);
+    (void)reg.decide_and_reemit(1, aura::compiler::HotUpdateRegistry::ReemitReason::CoverageVerify);
+    reg.on_reemit_pipeline_call(/*candidates=*/1, /*successes=*/1);
+    CHECK(reg.last_reemit_success_region_mask() == env,
+          "3745 AC3: override wins over last_force_jit_reason auto-stamp");
+    CHECK((reg.last_reemit_success_region_mask() & defuse) == 0,
+          "3745 AC3: Defuse not invented on top of override");
+    aura_set_aot_emit_fn(nullptr, nullptr);
+    aura_set_reemit_candidate_fn(nullptr, nullptr);
+    reg.on_reload_success();
+    reg.reset_force_jit_repromote_for_test();
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+}
+
+static void ac3745_soft_wholesale_unchanged() {
+    std::println("\n--- #3745 AC4: Soft wholesale does not auto-stamp ---");
+    auto& reg = hot_update_registry();
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    reg.on_reload_success();
+    reg.reset_force_jit_repromote_for_test();
+    reg.on_force_jit_for_reason(AotReloadFail::Defuse);
+    aura_hot_update_set_reemit_boundary_policy(0);
+    static ReemitFeed feed;
+    feed.names = {"__hu_3745_soft"};
+    feed.regions = {1};
+    feed.cursor = 0;
+    aura_set_reemit_candidate_fn(&reemit_candidate_iter, &feed);
+    aura_set_aot_emit_fn(&emit_ok, nullptr);
+    reg.on_emit_region_mask_set(~0ULL);
+    (void)reg.decide_and_reemit(1, aura::compiler::HotUpdateRegistry::ReemitReason::CoverageVerify);
+    if (reg.last_reemit_success_region_mask() == 0)
+        reg.on_reemit_pipeline_call(/*candidates=*/1, /*successes=*/1);
+    CHECK(reg.last_reemit_success_region_mask() == 0,
+          "3745 AC4: Soft does not auto-stamp last_success");
+    aura_set_aot_emit_fn(nullptr, nullptr);
+    aura_set_reemit_candidate_fn(nullptr, nullptr);
+    CHECK(read_file("tests/compiler/test_issue_3745.cpp").empty(),
+          "3745 AC4: no test_issue_3745.cpp");
+    CHECK(read_file("docs/design/3745-heal-reason-last-success.md").empty(),
+          "3745 AC4: no docs/design/3745-*");
+    reg.on_reload_success();
+    reg.reset_force_jit_repromote_for_test();
+}
+
 // ── Issue #3573: mutate×reemit bounded soak — proof hygiene + residual ──
 // Repeated facade rounds (mark dirty → reemit → success) must never leave
 // a fail-stamped proof behind (#2845 face), a sticky force bit, or new
@@ -888,6 +1035,14 @@ int main() {
     ac3744_stats_distinguish_emit_vs_force();
     reset_runtime_after_cs();
     ac3744_soft_no_extra();
+    reset_runtime_after_cs();
+    ac3745_heal_path_stamps_one_group_bit();
+    reset_runtime_after_cs();
+    ac3745_cascade_does_not_stamp();
+    reset_runtime_after_cs();
+    ac3745_agent_override_wins();
+    reset_runtime_after_cs();
+    ac3745_soft_wholesale_unchanged();
     reset_runtime_after_cs();
     std::println("\n=== {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;

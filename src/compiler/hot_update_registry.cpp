@@ -114,12 +114,12 @@ std::uint64_t HotUpdateRegistry::decide_and_reemit(std::uint64_t defuse_version,
                 // Issue #3413: skip the fallback `covered = demoted` stamp.
                 // Issue #3445: never stamp `candidates & emit_region_mask_`
                 // (count is not a mask) and never the full demoted mask.
-                // Issue #3466: the pipeline stamps last_success from Agent
-                // override or last_force_jit_reason's reason-group bit.
-                // If last_success is still 0 here, there were no successes
-                // to claim coverage for — do not invent the full demoted
-                // mask (residual_force_mask would go 0 for groups never
-                // re-emitted).
+                // Issue #3745: heal-path n>0 (CoverageVerify / StormClear /
+                // ReloadRecovery / ResidualForceHeal / ExhaustedMinDirty)
+                // may stamp last_force_jit_reason's one group bit. Cascade
+                // dirty still must not (#3682). Pipeline usually stamped
+                // first; this is the belt if last_success is still 0.
+                maybe_stamp_heal_reason_last_success(demoted);
             }
         }
     }
@@ -283,19 +283,19 @@ void HotUpdateRegistry::on_reemit_pipeline_call(std::uint64_t candidates,
             // #3413 named). Relower hashed-name bits stay on the define
             // side set (#3136 / #3229), not this reason word.
             // Issue #3466: Agent override stays sticky opt-in and wins
-            // when set. Issue #3682: idle override stamps NOTHING —
-            // last_force_jit_reason_ is the global last force-JIT reason,
-            // not "this emit healed that reason". An unrelated define's
-            // cascade n>0 must not claim the prior reload-fail group bit
-            // (residual_force_mask would collapse and production
-            // only_covered would re-promote a never-re-emitted region).
-            // Positive coverage enters via the Agent override
-            // (note_reemit_success_coverage) only; count ∩ emit and the
-            // full demoted mask stay forbidden (#3445/#3413).
+            // when set. Issue #3682: idle override + Cascade dirty n>0
+            // stamps NOTHING — last_force_jit_reason_ is not "this emit
+            // healed that reason". Issue #3745: heal-path reemit
+            // (CoverageVerify / StormClear / ReloadRecovery / …) may
+            // stamp that one group bit so only_covered is not stuck
+            // until the 256-exit ResidualForceHeal belt. Count ∩ emit
+            // and the full demoted mask stay forbidden (#3445/#3413).
             const auto covered = reemit_success_coverage_override_.load(std::memory_order_relaxed);
             if (covered != 0) {
                 last_reemit_success_region_mask_.store(covered, std::memory_order_relaxed);
                 stamp_eval_last_success(force_owner_tls(), covered);
+            } else {
+                maybe_stamp_heal_reason_last_success(demoted);
             }
         }
         // Issue #3513: coverage stamp stays (#3445). Do not re-promote or
@@ -763,6 +763,7 @@ void HotUpdateRegistry::reset_force_jit_repromote_for_test() noexcept {
     // Issue #2895 / #2949: coverage + partial knobs / counters.
     // Auto mode (override=0) → Soft wholesale; production injects only_covered.
     last_reemit_success_region_mask_.store(0, std::memory_order_relaxed);
+    last_reemit_reason_.store(0, std::memory_order_relaxed);
     clear_eval_force_slots();
     force_mask_peer_residual_total_.store(0, std::memory_order_relaxed);
     clear_relower_success_defines();
@@ -985,6 +986,31 @@ void HotUpdateRegistry::stamp_eval_last_success(void* ev, std::uint64_t cov) noe
     if (!s)
         return;
     s->last_success.store(cov, std::memory_order_relaxed);
+}
+
+void HotUpdateRegistry::maybe_stamp_heal_reason_last_success(std::uint64_t demoted) noexcept {
+    if (demoted == 0)
+        return;
+    if (reemit_success_coverage_override_.load(std::memory_order_relaxed) != 0)
+        return;
+    if (last_reemit_success_region_mask_.load(std::memory_order_relaxed) != 0)
+        return;
+    // Soft / Off: wholesale re-promote does not need last_success; skip
+    // extra stores (AC4).
+    if (aura_production_defaults_active_probe() == 0)
+        return;
+    const auto why = static_cast<ReemitReason>(last_reemit_reason_.load(std::memory_order_relaxed));
+    if (why != ReemitReason::ReloadRecovery && why != ReemitReason::CoverageVerify &&
+        why != ReemitReason::StormClear && why != ReemitReason::ResidualForceHeal &&
+        why != ReemitReason::ExhaustedMinDirty)
+        return;
+    const auto fail =
+        static_cast<AotReloadFail>(last_force_jit_reason_.load(std::memory_order_relaxed));
+    const auto bit = aot_reload_fail_to_force_jit_mask(fail);
+    if (bit == 0 || (demoted & bit) == 0)
+        return;
+    last_reemit_success_region_mask_.store(bit, std::memory_order_relaxed);
+    stamp_eval_last_success(force_owner_tls(), bit);
 }
 
 void HotUpdateRegistry::clear_eval_force_slots() noexcept {
