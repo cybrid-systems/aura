@@ -105,6 +105,55 @@ std::size_t Evaluator::compact_pairs(const std::vector<bool>& live_mask) {
         }
     }
     pairs_ = std::move(new_pairs);
+    // Issue #3742: compact_pairs only densifies the pairs_ vector.
+    // Live Closure/EnvFrame/cell/vector EvalValues still hold old pair
+    // indices (RootRemapPass is object-remap, not pair-id). Rewrite via
+    // pair_remap_ or tombstone to void so apply/lookup cannot UAF a
+    // compacted-away slot. Identity remap (all-live) is a no-op walk skip.
+    bool remap_moved = false;
+    for (std::size_t i = 0; i < pair_remap_.size(); ++i) {
+        if (pair_remap_[i] != static_cast<std::int64_t>(i)) {
+            remap_moved = true;
+            break;
+        }
+    }
+    if (remap_moved) {
+        auto rewrite = [this](EvalValue& v) noexcept {
+            if (!is_pair(v))
+                return;
+            const auto old = as_pair_idx(v);
+            if (old >= pair_remap_.size()) {
+                v = make_void();
+                return;
+            }
+            const auto np = pair_remap_[old];
+            if (np < 0)
+                v = make_void();
+            else if (static_cast<std::uint64_t>(np) != old)
+                v = make_pair(static_cast<std::uint64_t>(np));
+        };
+        for (auto& p : pairs_) {
+            rewrite(p.car);
+            rewrite(p.cdr);
+        }
+        {
+            aura::compiler::lock_order::AuditScope lo_env(
+                aura::compiler::lock_order::Level::EnvFrames);
+            std::unique_lock<std::shared_mutex> env_lock(env_frames_mtx_);
+            for (auto& fr : env_frames_) {
+                for (auto& b : fr.bindings_symid_)
+                    rewrite(b.second);
+                for (auto& b : fr.bindings_)
+                    rewrite(b.second);
+            }
+        }
+        for (auto& c : cells_)
+            rewrite(c);
+        for (auto& vec : vector_heap_) {
+            for (auto& e : vec)
+                rewrite(e);
+        }
+    }
     return pairs_.size();
 }
 // Issue #2001: Evaluator::compact_strings. Mirror of compact_pairs for
@@ -1129,6 +1178,15 @@ Evaluator::CompactSweepResult Evaluator::compact_sweep(void* sweep_buffers) {
     if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics())) {
         m->arena_live_compact_soft_count.fetch_add(1, std::memory_order_relaxed);
     }
+    // Issue #3742: snapshot primary arena gen before Soft live_compact so
+    // a mark-only freelist / gen bump that fails to set invalidates_pins
+    // still restamps (lc.new_gen != gen_at_entry). Soft-gated skip reports
+    // the current gen unchanged → no extra restamp.
+    std::uint64_t gen_at_entry = 0;
+    if (arena_group_) {
+        std::uint64_t aid = 0;
+        (void)arena_group_->primary_arena_id_and_gen(aid, gen_at_entry);
+    }
     const aura::ast::LiveCompactResult lc =
         arena_group_ ? arena_group_->live_compact(aura::ast::LiveCompactMode::Soft)
                      : aura::ast::LiveCompactResult{};
@@ -1192,7 +1250,10 @@ Evaluator::CompactSweepResult Evaluator::compact_sweep(void* sweep_buffers) {
     // Issue #3679: remapped_pins > 0 also restamps — a GC cycle with no
     // steal would otherwise leave pinned StableNodeRef / LifetimePin at
     // the pre-Soft-compact gen until the next mutate boundary restamps.
-    if (lc.invalidates_pins || lc.remapped_pins > 0) {
+    // Issue #3742: also restamp when Soft live_compact advanced new_gen
+    // (mark-only freelist / gen bump with invalidates_pins false).
+    if (lc.invalidates_pins || lc.remapped_pins > 0 ||
+        (lc.new_gen != 0 && lc.new_gen != gen_at_entry)) {
         (void)unified_restamp_after_boundary(UnifiedRestampSite::Densify);
     }
 
