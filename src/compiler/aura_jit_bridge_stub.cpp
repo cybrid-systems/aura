@@ -306,6 +306,7 @@ aura_is_jit_closure_fresh(std::uint64_t captured_bridge_epoch,
     // closures reach the cross-COW soft/hard path instead of skipping it.
     // Issue #3447: C-bridge AND table (owner-scoped table may stay frozen).
     // Issue #3471: independent table stamp; no C-bridge wash.
+    // Issue #3748: captured_table==0 while table tracking is on is stale.
     auto domain_ok = [](std::uint64_t captured, std::uint64_t current) noexcept {
         if (current == 0)
             return true; // tracking inactive for this domain
@@ -319,6 +320,8 @@ aura_is_jit_closure_fresh(std::uint64_t captured_bridge_epoch,
         table_ok = domain_ok(captured_table_epoch, cur_b);
     else if (cur_c == 0)
         table_ok = domain_ok(captured_bridge_epoch, cur_b);
+    else
+        table_ok = domain_ok(0, cur_b);
     return c_ok && table_ok && domain_ok(captured_defuse_or_env_version, cur_d);
 }
 extern "C" __attribute__((weak)) void aura_jit_closure_record_dual_check(void) {}

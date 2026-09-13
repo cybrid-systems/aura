@@ -2431,7 +2431,7 @@ int main() {
         CHECK(!aura_is_jit_closure_fresh(t1 - 1, defuse),
               "3447 AC1: table miss is stale (C inactive)");
         aura_set_current_bridge_epoch(t1);
-        CHECK(aura_is_jit_closure_fresh(t1, defuse),
+        CHECK(aura_is_jit_closure_fresh(t1, defuse, t1),
               "3447 AC1: matching C-bridge AND table is fresh");
 
         std::println("\n--- #3447 AC2: owner-scoped table frozen, C-bridge miss ---");
@@ -2440,7 +2440,7 @@ int main() {
         CHECK(!aura_is_jit_closure_fresh(t1, defuse),
               "3447 AC2: C-bridge miss even though table matches");
         const auto c_remount = aura_get_current_bridge_epoch();
-        CHECK(aura_is_jit_closure_fresh(c_remount, defuse),
+        CHECK(aura_is_jit_closure_fresh(c_remount, defuse, t1),
               "3447 AC2: remount restamp to C-bridge is green (table frozen)");
 
         std::println("\n--- #3447 AC3: no table force-bump; #3300 peer name kept ---");
@@ -2512,8 +2512,8 @@ int main() {
               "3471: C-bridge match does not wash table stamp miss");
         CHECK(aura_is_jit_closure_fresh(c_now, defuse, t2),
               "3471: matching independent table stamp is fresh");
-        CHECK(aura_is_jit_closure_fresh(c_now, defuse, 0),
-              "3471: no table stamp skips table AND (not a wash)");
+        CHECK(!aura_is_jit_closure_fresh(c_now, defuse, 0),
+              "3748: table stamp 0 + table tracking on is stale (not a skip)");
         CHECK(!aura_is_jit_closure_fresh(0, defuse, t2),
               "3471: captured==0 + C-bridge tracking still stale (#2930)");
         CHECK(read_file("docs/design/3471-jit-table-stamp.md").empty(),
@@ -2524,6 +2524,49 @@ int main() {
         CHECK(read_file("src/compiler/evaluator_primitives_mutate.cpp").find("schema-3471") ==
                   std::string::npos,
               "3471: no new query key");
+
+        std::println("\n--- #3748: captured_table==0 while table tracking on is stale ---");
+        CHECK(br.find("Issue #3748") != std::string::npos, "3748 AC1: dual-fresh cites #3748");
+        CHECK(br.find("domain_ok(0, cur_table") != std::string::npos,
+              "3748 AC1: unstamped table uses domain_ok(0, cur_table)");
+        CHECK(read_file("src/compiler/evaluator_primitives_mutate.cpp").find("schema-3748") ==
+                  std::string::npos,
+              "3748 AC1: no new query key");
+        aura::compiler::typed_audit::apply_production_audit_defaults();
+        if (aura_aot_func_table_epoch() == 0)
+            aura_aot_bump_func_table_epoch();
+        const auto t_now = aura_aot_func_table_epoch();
+        aura_set_current_bridge_epoch(c_now);
+        CHECK(t_now != 0, "3748 AC1: table tracking on");
+        CHECK(!aura_is_jit_closure_fresh(c_now, defuse, 0),
+              "3748 AC1: C-bridge match + table==0 is not fresh");
+        const auto cid = aura_alloc_closure(/*func_id=*/0);
+        CHECK(cid >= 0, "3748 AC1: alloc");
+        aura_test_set_closure_table_epoch(cid, 0);
+        aura_closure_set_must_deopt(cid, 0);
+        CHECK(!aura_is_jit_closure_fresh(aura_get_closure_bridge_epoch(cid),
+                                         aura_get_closure_defuse_version(cid), 0),
+              "3748 AC1: live slot table==0 is stale");
+        std::int64_t args3748[1] = {0};
+        CHECK(aura_closure_dispatch_native_checked(cid, args3748, 0) == 0,
+              "3748 AC1: dispatch leaves native");
+        aura_test_set_closure_table_epoch(cid, t_now);
+        CHECK(aura_is_jit_closure_fresh(aura_get_closure_bridge_epoch(cid),
+                                        aura_get_closure_defuse_version(cid), t_now),
+              "3748 AC2: alloc/remap table stamp may be fresh");
+        CHECK(rt3471.find("stamp_closure_table_epoch_locked(cid); // Issue #3471: remap retargeted "
+                          "catalog") != std::string::npos,
+              "3748 AC2: remap-retarget still stamps table");
+        CHECK(rt3471.find("No table") != std::string::npos &&
+                  rt3471.find("restamp here (#3503)") != std::string::npos,
+              "3748 AC3: capture remount does not restamp table");
+        CHECK(br.find("AURA_BRIDGE_EPOCH_LEGACY_TRUST") != std::string::npos,
+              "3748 AC4: Soft LEGACY_TRUST may still trust 0");
+        CHECK(read_file("tests/compiler/test_issue_3748.cpp").empty(),
+              "3748 AC4: no test_issue_3748.cpp");
+        CHECK(read_file("docs/design/3748-table-zero-stale.md").empty(),
+              "3748 AC4: no docs/design/3748-*");
+        aura::compiler::typed_audit::apply_dev_audit_defaults();
 
         aura_set_current_bridge_epoch(c0);
         aura_set_aot_defuse_version(d0);
