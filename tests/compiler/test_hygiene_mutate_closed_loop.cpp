@@ -5520,6 +5520,162 @@ static void ac3650_5_source_and_no_artifacts() {
           "3650 AC5: no docs/design/");
 }
 
+// ── Issue #3752: syntax:propagate-marker clear requires MacroSelfEvo ──
+static void ac3752_1_propagate_clear_denied_without_mse() {
+    std::println(
+        "\n--- #3752 AC1: propagate-marker 0 denied without MSE; mutate still protected ---");
+    using aura::core::capability::g_capability_effect_metrics;
+    using aura::core::capability::reset_capability_effects_for_test;
+    using aura::core::security_event::reset_security_event_ring_for_test;
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    reset_capability_effects_for_test();
+    reset_security_event_ring_for_test();
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define f (lambda (x) (+ x 1)))\")").has_value(),
+          "3752 AC1: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3752 AC1: eval");
+    auto find_f = cs.eval("(car (query :find \"f\"))");
+    CHECK(find_f && is_int(*find_f), "3752 AC1: find f");
+    const auto id = static_cast<aura::ast::NodeId>(as_int(*find_f));
+    grant_3301_production_mutate(cs);
+    aura::core::capability::g_capability_registry().revoke(cs.evaluator().capability_tenant_id(),
+                                                           "tenant-admin");
+    auto& ws = *cs.evaluator().workspace_flat();
+    // Forge (User → MacroIntroduced) stays Mutate-only — before any MI stamp.
+    const auto lit0 = first_lit_int(&ws);
+    CHECK(lit0 != aura::ast::NULL_NODE, "3752 AC1: LiteralInt");
+    CHECK(!ws.is_macro_introduced(lit0), "3752 AC1: lit is User");
+    auto forge =
+        cs.eval(std::format("(syntax:propagate-marker {} 1)", static_cast<unsigned>(lit0)));
+    CHECK(forge.has_value() && is_int(*forge) && as_int(*forge) >= 1,
+          "3752 AC1: forge propagate 1 allowed without MSE");
+    aura::ast::NodeId child = aura::ast::NULL_NODE;
+    {
+        auto v = ws.get(id);
+        for (auto c : v.children) {
+            if (c != aura::ast::NULL_NODE && c < ws.size()) {
+                child = c;
+                break;
+            }
+        }
+    }
+    CHECK(child != aura::ast::NULL_NODE, "3752 AC1: define has a child");
+    CHECK(!ws.is_macro_introduced(id), "3752 AC1: root starts User");
+    // Child-only stamp: root User, child MacroIntroduced — a root-only
+    // check would miss and unstamp the child.
+    CHECK(
+        cs.eval(std::format("(syntax:set-marker {} 1)", static_cast<unsigned>(child))).has_value(),
+        "3752 AC1: stamp child MacroIntroduced");
+    CHECK(ws.is_macro_introduced(child), "3752 AC1: child stamped");
+    const auto deny0 = g_capability_effect_metrics().macro_mutate_capability_deny_total.load();
+    auto denied_child = cs.eval(std::format("(syntax:propagate-marker {} 0)", as_int(*find_f)));
+    CHECK(denied_child.has_value() && merr_kind_3027(cs, *denied_child) == "hygiene-protected",
+          "3752 AC1: child-only MI propagate 0 denied");
+    CHECK(ws.is_macro_introduced(child), "3752 AC1: child marker unchanged");
+    CHECK(!ws.is_macro_introduced(id), "3752 AC1: root stayed User");
+    CHECK(g_capability_effect_metrics().macro_mutate_capability_deny_total.load() > deny0,
+          "3752 AC1: deny counter");
+    CHECK(ring_has_reason_3542("macro-mutate-needs-macro-self-evo"), "3752 AC1: SE reason");
+    auto stamp_root = cs.eval(std::format("(syntax:set-marker {} 1)", as_int(*find_f)));
+    CHECK(stamp_root.has_value() && is_bool(*stamp_root) && as_bool(*stamp_root),
+          "3752 AC1: stamp root MacroIntroduced");
+    CHECK(ws.is_macro_introduced(id), "3752 AC1: root stamped");
+    auto denied = cs.eval(std::format("(syntax:propagate-marker {} 0)", as_int(*find_f)));
+    CHECK(denied.has_value() && merr_kind_3027(cs, *denied) == "hygiene-protected",
+          "3752 AC1: root MI propagate 0 denied");
+    CHECK(ws.is_macro_introduced(id), "3752 AC1: root marker unchanged");
+    auto rs =
+        cs.eval(std::format("(mutate:replace-subtree {} \"99\")", static_cast<unsigned>(child)));
+    CHECK(rs.has_value() && merr_kind_3027(cs, *rs) == "hygiene-protected",
+          "3752 AC1: subsequent replace-subtree still hygiene-protected");
+    reset_capability_effects_for_test();
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+}
+
+static void ac3752_2_propagate_clear_with_mse() {
+    std::println("\n--- #3752 AC2: propagate-marker 0 with MacroSelfEvo unstamps ---");
+    using aura::core::capability::g_capability_registry;
+    using aura::core::capability::MacroSelfEvoPolicy;
+    using aura::core::capability::reset_capability_effects_for_test;
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    reset_capability_effects_for_test();
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define f (lambda (x) (+ x 1)))\")").has_value(),
+          "3752 AC2: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3752 AC2: eval");
+    auto find_f = cs.eval("(car (query :find \"f\"))");
+    CHECK(find_f && is_int(*find_f), "3752 AC2: find f");
+    const auto id = static_cast<aura::ast::NodeId>(as_int(*find_f));
+    CHECK(cs.eval(std::format("(syntax:set-marker {} 1)", as_int(*find_f))).has_value(),
+          "3752 AC2: stamp MacroIntroduced");
+    grant_3301_production_mutate(cs);
+    const auto tenant = cs.evaluator().capability_tenant_id();
+    g_capability_registry().grant_macro_self_evo(tenant, MacroSelfEvoPolicy{},
+                                                 aura_test_grant_prov(), tenant);
+    auto cleared = cs.eval(std::format("(syntax:propagate-marker {} 0)", as_int(*find_f)));
+    CHECK(cleared.has_value() && is_int(*cleared) && as_int(*cleared) >= 1,
+          "3752 AC2: propagate 0 succeeds with MSE");
+    auto& ws = *cs.evaluator().workspace_flat();
+    CHECK(!ws.is_macro_introduced(id), "3752 AC2: root marker User");
+    reset_capability_effects_for_test();
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+}
+
+static void ac3752_3_set_marker_gate_unchanged() {
+    std::println("\n--- #3752 AC3: syntax:set-marker clear gate unchanged (#3650) ---");
+    const auto cmp = read_file("src/compiler/evaluator_primitives_compile.cpp");
+    const auto set_pos = cmp.find("add(\"syntax:set-marker\"");
+    CHECK(set_pos != std::string::npos, "3752 AC3: set-marker present");
+    const auto set_win = cmp.substr(set_pos, 2500);
+    CHECK(set_win.find("deny_marker_clear_without_mse") != std::string::npos,
+          "3752 AC3: set-marker still calls deny_marker_clear_without_mse");
+    CHECK(set_win.find("marker_val != 1 && ev.workspace_flat_->is_macro_introduced(id)") !=
+              std::string::npos,
+          "3752 AC3: set-marker still gates only the clear direction");
+}
+
+static void ac3752_4_soft_propagate_unchanged() {
+    std::println("\n--- #3752 AC4: Soft propagate-marker 0 unstamps without MSE ---");
+    using aura::core::capability::reset_capability_effects_for_test;
+    reset_capability_effects_for_test();
+    CompilerService cs;
+    CHECK(cs.evaluator().effect_sandbox_mode() == 0, "3752 AC4: Soft sandbox");
+    CHECK(cs.eval("(set-code \"(define f (lambda (x) (+ x 1)))\")").has_value(),
+          "3752 AC4: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3752 AC4: eval");
+    auto find_f = cs.eval("(car (query :find \"f\"))");
+    CHECK(find_f && is_int(*find_f), "3752 AC4: find f");
+    const auto id = static_cast<aura::ast::NodeId>(as_int(*find_f));
+    CHECK(cs.eval(std::format("(syntax:set-marker {} 1)", as_int(*find_f))).has_value(),
+          "3752 AC4: stamp allowed under Soft");
+    auto cleared = cs.eval(std::format("(syntax:propagate-marker {} 0)", as_int(*find_f)));
+    CHECK(cleared.has_value() && is_int(*cleared) && as_int(*cleared) >= 1,
+          "3752 AC4: Soft propagate 0 unstamps without MSE");
+    auto& ws = *cs.evaluator().workspace_flat();
+    CHECK(!ws.is_macro_introduced(id), "3752 AC4: marker cleared under Soft");
+}
+
+static void ac3752_5_source_and_no_artifacts() {
+    std::println("\n--- #3752 AC5: source-cite + no forbidden artifacts ---");
+    const auto cmp = read_file("src/compiler/evaluator_primitives_compile.cpp");
+    const auto prop = cmp.find("add(\"syntax:propagate-marker\"");
+    CHECK(prop != std::string::npos, "3752 AC5: propagate-marker present");
+    const auto win = cmp.substr(prop, 3500);
+    CHECK(win.find("Issue #3752") != std::string::npos, "3752 AC5: propagate cites #3752");
+    CHECK(win.find("deny_marker_clear_without_mse") != std::string::npos,
+          "3752 AC5: reuses deny helper");
+    CHECK(win.find("subtree_has_macro_introduced") != std::string::npos,
+          "3752 AC5: subtree walker");
+    CHECK(win.find("effect_sandbox_mode() != 0") != std::string::npos,
+          "3752 AC5: Soft one-load gate");
+    CHECK(cmp.find("schema-3752") == std::string::npos, "3752 AC5: no new query key");
+    const std::string issue_artifact = std::string("test_issue_") + "3752";
+    CHECK(read_file((std::string("tests/compiler/") + issue_artifact + ".cpp").c_str()).empty(),
+          "3752 AC5: no test_issue_3752.cpp");
+    CHECK(read_file("docs/design/3752-propagate-marker-mse.md").empty(),
+          "3752 AC5: no docs/design/");
+}
+
 int main() {
     std::println("=== test_hygiene_mutate_closed_loop (#2037 + #2762 + #2858 + #2863 + #2864 + "
                  "#2961 + #3000 + #3027 + #3037 + #3076 + #3121) ===");
@@ -5725,6 +5881,12 @@ int main() {
     ac3650_3_rollback_with_mse_unstamps();
     ac3650_4_soft_rollback_unchanged();
     ac3650_5_source_and_no_artifacts();
+    std::println("\n=== Issue #3752: propagate-marker clear requires MacroSelfEvo ===");
+    ac3752_1_propagate_clear_denied_without_mse();
+    ac3752_2_propagate_clear_with_mse();
+    ac3752_3_set_marker_gate_unchanged();
+    ac3752_4_soft_propagate_unchanged();
+    ac3752_5_source_and_no_artifacts();
     ac3683_deny_kind_unified();
     ac3684_inner_expand_refuse();
     std::println("\n=== {} passed, {} failed ===", g_passed, g_failed);

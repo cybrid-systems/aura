@@ -212,6 +212,33 @@ static bool deny_marker_clear_without_mse(Evaluator& ev, aura::ast::NodeId id) {
     return true;
 }
 
+// Issue #3752: same subtree would-clear predicate as mutate.cpp #3650
+// (file-local; this TU cannot see mutate's static). True when any live
+// node under root still carries MacroIntroduced. Iterative + seen-set
+// (#1782: FlatAST children can form cycles). Soft callers skip the
+// scan via effect_sandbox_mode()==0 before calling this.
+static bool subtree_has_macro_introduced(const aura::ast::FlatAST& flat, aura::ast::NodeId root) {
+    if (root == aura::ast::NULL_NODE || root >= flat.size())
+        return false;
+    std::vector<char> seen(flat.size(), 0);
+    std::vector<aura::ast::NodeId> stack{root};
+    while (!stack.empty()) {
+        const auto id = stack.back();
+        stack.pop_back();
+        if (id == aura::ast::NULL_NODE || id >= flat.size() || seen[id])
+            continue;
+        seen[id] = 1;
+        if (flat.is_macro_introduced(id))
+            return true;
+        auto v = flat.get(id);
+        for (auto c : v.children) {
+            if (c != aura::ast::NULL_NODE)
+                stack.push_back(c);
+        }
+    }
+    return false;
+}
+
 // Issue #1898: pin compiler_service_ for multi-step stats readers.
 // Seqlock-style pin at enter; revalidate after body. On rebind mid-flight
 // bump raw_pointer_uaf_prevented_total + compiler_service_pin_reject_total
@@ -4263,6 +4290,15 @@ void CompilePrims::register_compile_p43(PrimRegistrar add, Evaluator& ev) {
         // Issue #1783: hold exclusive metadata_mtx_ for the whole
         // walk so concurrent set-marker / get-marker cannot tear.
         auto wlock = flat.begin_metadata_mutation();
+        // Issue #3752: clearing MacroIntroduced via the subtree walk is
+        // the same unstamp face as syntax:set-marker (#3650). Forge
+        // (marker_val==1) stays Mutate/tenant-only. Soft: one
+        // effect_sandbox_mode load, no scan.
+        if (marker_val != 1 && ev.effect_sandbox_mode() != 0 &&
+            subtree_has_macro_introduced(flat, root) && deny_marker_clear_without_mse(ev, root)) {
+            return ev.make_merr("hygiene-protected",
+                                "mutation of MacroIntroduced requires MacroSelfEvo capability");
+        }
         std::int64_t count = 0;
         std::vector<aura::ast::NodeId> stack;
         std::vector<std::uint8_t> seen(flat.size(), 0);

@@ -4,9 +4,16 @@
 
 #include "test_harness.hpp"
 #include <cstdint>
+#include <fstream>
 #include <print>
 #include <string>
 #include "compiler/observability_metrics.h"
+#include "compiler/grant_test_support.hh"
+#include "compiler/security_capabilities.h"
+#include "compiler/typed_mutation_audit.h"
+#include "core/capability_model.hh"
+#include "core/sandbox.hh"
+#include "core/workspace_isolation.hh"
 
 import std;
 import aura.compiler.service;
@@ -975,6 +982,119 @@ int run_366_syntax_marker_primitives_smoke() {
     return g_failed ? 1 : 0;
 }
 
+// Issue #3752: Restricted propagate-marker 0 needs MacroSelfEvo.
+static std::string merr_kind_3752(CompilerService& cs, const aura::compiler::types::EvalValue& v) {
+    using aura::compiler::types::as_pair_idx;
+    using aura::compiler::types::as_string_idx;
+    using aura::compiler::types::is_pair;
+    using aura::compiler::types::is_string;
+    if (!is_pair(v))
+        return {};
+    auto idx = as_pair_idx(v);
+    auto& pairs = cs.evaluator().pairs();
+    if (idx >= pairs.size())
+        return {};
+    if (!is_string(pairs[idx].car))
+        return {};
+    auto sidx = as_string_idx(pairs[idx].car);
+    auto heap = cs.evaluator().string_heap();
+    if (sidx >= heap.size())
+        return {};
+    return std::string(heap[sidx]);
+}
+
+static void grant_3752_production_mutate(CompilerService& cs) {
+    auto& ev = cs.evaluator();
+    aura::core::capability::reset_capability_effects_for_test();
+    ev.set_capability_tenant_id(1);
+    aura::core::workspace_isolation::g_workspace_isolation().set_current_tenant(1, "3752-tenant");
+    aura::compiler::typed_audit::clear_type_linear_commit_proof_for_test();
+    aura::core::capability::g_capability_registry().grant(
+        1, "tenant-admin", aura::core::capability::Effect::TenantAdmin, aura_test_grant_prov());
+    aura::core::capability::g_capability_registry().grant(
+        1, aura::compiler::security::kCapWildcard,
+        aura::core::capability::effect_for_cap_name(aura::compiler::security::kCapWildcard),
+        aura_test_grant_prov());
+    ev.grant_capability(std::string(aura::compiler::security::kCapWildcard));
+    ev.set_effect_sandbox_mode(1);
+    aura::core::capability::g_capability_registry().grant(
+        1, "tenant-admin", aura::core::capability::Effect::TenantAdmin, aura_test_grant_prov(),
+        false, false, /*caller_principal=*/1);
+    aura::core::capability::g_capability_registry().grant(
+        1, aura::compiler::security::kCapWildcard,
+        aura::core::capability::effect_for_cap_name(aura::compiler::security::kCapWildcard),
+        aura_test_grant_prov(), false, false, /*caller_principal=*/1);
+}
+
+int run_3752_propagate_marker_mse() {
+    std::println("\n=== #3752: Restricted propagate-marker 0 requires MacroSelfEvo ===");
+    {
+        std::ifstream in("src/compiler/evaluator_primitives_compile.cpp");
+        std::string src((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        if (src.empty()) {
+            std::ifstream in2("../src/compiler/evaluator_primitives_compile.cpp");
+            src.assign((std::istreambuf_iterator<char>(in2)), std::istreambuf_iterator<char>());
+        }
+        CHECK(!src.empty() && src.find("Issue #3752") != std::string::npos,
+              "3752: compile cites #3752");
+        const auto prop = src.find("add(\"syntax:propagate-marker\"");
+        CHECK(prop != std::string::npos, "3752: propagate-marker present");
+        const auto win = src.substr(prop, 3500);
+        CHECK(win.find("deny_marker_clear_without_mse") != std::string::npos,
+              "3752: reuses deny helper");
+    }
+    {
+        aura::compiler::typed_audit::apply_dev_audit_defaults();
+        aura::core::capability::reset_capability_effects_for_test();
+        CompilerService cs;
+        CHECK(cs.eval("(set-code \"(define y 7)\")").has_value(), "3752: set-code");
+        CHECK(cs.eval("(eval-current)").has_value(), "3752: eval");
+        auto find = cs.eval("(car (query :find \"y\"))");
+        CHECK(find && is_int(*find), "3752: find y");
+        const auto id = static_cast<aura::ast::NodeId>(as_int(*find));
+        grant_3752_production_mutate(cs);
+        aura::core::capability::g_capability_registry().revoke(
+            cs.evaluator().capability_tenant_id(), "tenant-admin");
+        CHECK(cs.eval(std::format("(syntax:set-marker {} 1)", as_int(*find))).has_value(),
+              "3752: stamp MacroIntroduced");
+        auto& ws = *cs.evaluator().workspace_flat();
+        CHECK(ws.is_macro_introduced(id), "3752: stamped");
+        auto denied = cs.eval(std::format("(syntax:propagate-marker {} 0)", as_int(*find)));
+        CHECK(denied.has_value() && merr_kind_3752(cs, *denied) == "hygiene-protected",
+              "3752: Restricted no-MSE propagate 0 denied");
+        CHECK(ws.is_macro_introduced(id), "3752: markers stay 1");
+        aura::core::capability::reset_capability_effects_for_test();
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+    }
+    {
+        // Fresh service: TenantAdmin must still be live to grant MacroSelfEvo
+        // (#3029). Matches closed-loop AC2 (no TA revoke).
+        aura::compiler::typed_audit::apply_dev_audit_defaults();
+        aura::core::capability::reset_capability_effects_for_test();
+        CompilerService cs;
+        CHECK(cs.eval("(set-code \"(define y 7)\")").has_value(), "3752: mse set-code");
+        CHECK(cs.eval("(eval-current)").has_value(), "3752: mse eval");
+        auto find = cs.eval("(car (query :find \"y\"))");
+        CHECK(find && is_int(*find), "3752: mse find y");
+        const auto id = static_cast<aura::ast::NodeId>(as_int(*find));
+        CHECK(cs.eval(std::format("(syntax:set-marker {} 1)", as_int(*find))).has_value(),
+              "3752: mse stamp");
+        grant_3752_production_mutate(cs);
+        using aura::core::capability::MacroSelfEvoPolicy;
+        const auto tenant = cs.evaluator().capability_tenant_id();
+        aura::core::capability::g_capability_registry().grant_macro_self_evo(
+            tenant, MacroSelfEvoPolicy{}, aura_test_grant_prov(), tenant);
+        auto cleared = cs.eval(std::format("(syntax:propagate-marker {} 0)", as_int(*find)));
+        CHECK(cleared.has_value() && is_int(*cleared) && as_int(*cleared) >= 1,
+              "3752: Restricted + MSE propagate 0 succeeds");
+        CHECK(!cs.evaluator().workspace_flat()->is_macro_introduced(id),
+              "3752: markers become User");
+        aura::core::capability::reset_capability_effects_for_test();
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+    }
+    return g_failed ? 1 : 0;
+}
+
 } // namespace aura_edsl_run_wave38
 
 
@@ -1860,6 +1980,11 @@ int main() {
     ::aura::test::g_passed = 0;
     std::println("\n######## wave38_366 ########");
     if (int rc = aura_edsl_run_wave38::run_366_syntax_marker_primitives_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## wave38_3752 ########");
+    if (int rc = aura_edsl_run_wave38::run_3752_propagate_marker_mse(); rc != 0)
         return rc;
     ::aura::test::g_failed = 0;
     ::aura::test::g_passed = 0;
