@@ -3869,6 +3869,14 @@ public:
 
         auto& entry = *entry_it;
         std::vector<std::int64_t> locals(entry.local_count, 0);
+        // Issue #3758: execute catalog before ScalarFn (exec_jit has no
+        // interpreter fallback — TypeError + rollback counter).
+        if (aura::compiler::typed_audit::jit_execute_commit_readiness_blocked()) {
+            metrics_.linear_post_mutate_force_rollback_total.fetch_add(1,
+                                                                       std::memory_order_relaxed);
+            return std::unexpected(aura::diag::Diagnostic{aura::diag::ErrorKind::TypeError,
+                                                          "commit-readiness-refused"});
+        }
         auto fn_ptr = jit_.get_function_ptr(entry.name.c_str());
         if (!fn_ptr) {
             return std::unexpected(aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
@@ -13417,6 +13425,44 @@ public:
         it->second.fn_ptr.store(nullptr, std::memory_order_release);
         it->second.last_seen_epoch_ = aura::core::current_mutation_epoch();
     }
+    // Issue #3758: light-link / no-LLVM get_function_ptr is null. Seed a
+    // named jit_cache_ hit + counting ScalarFn override so try_jit_execute
+    // reaches the execute catalog. Returns how many times ScalarFn ran.
+    std::uint32_t public_try_jit_execute_counting_scalar_for_test() {
+        try_jit_scalar_invokes_for_test_.store(0, std::memory_order_relaxed);
+        try_jit_scalar_override_for_test_ = &counting_scalar_fn_for_test_;
+        constexpr const char* kName = "ac3758_cached";
+        {
+            std::unique_lock cache_write(jit_cache_mtx_);
+            auto [it, _ins] = jit_cache_.try_emplace(kName);
+            it->second.fn_ptr.store(&counting_scalar_fn_for_test_, std::memory_order_release);
+            it->second.local_count = 1;
+            it->second.arg_count = 0;
+            it->second.last_seen_epoch_ = aura::core::current_mutation_epoch();
+        }
+        aura::ir::IRModule mod;
+        aura::ir::IRFunction fn;
+        fn.id = 0;
+        fn.name = kName;
+        fn.local_count = 1;
+        fn.arg_count = 0;
+        aura::ir::BasicBlock block;
+        block.id = 0;
+        aura::ir::IRInstruction ret;
+        ret.opcode = aura::ir::IROpcode::Return;
+        ret.operands[0] = 0;
+        block.instructions.push_back(ret);
+        fn.blocks.push_back(std::move(block));
+        mod.functions.push_back(std::move(fn));
+        mod.entry_function_id = 0;
+        (void)try_jit_execute(mod, nullptr);
+        try_jit_scalar_override_for_test_ = nullptr;
+        {
+            std::unique_lock cache_write(jit_cache_mtx_);
+            jit_cache_.erase(kName);
+        }
+        return try_jit_scalar_invokes_for_test_.load(std::memory_order_relaxed);
+    }
 
     // Issue #1377: opt-in SoA dual-emit (default off). When false,
     // lower_to_ir skips IRFunctionSoA columns + bridge counters.
@@ -13767,6 +13813,14 @@ public:
     };
     std::unordered_map<std::string, JitCachedFn, aura::core::TransparentStringHash, std::equal_to<>>
         jit_cache_;
+    // Issue #3758: light-link get_function_ptr is null. Test override lets
+    // try_jit_execute reach ScalarFn so persist-reject can prove no invoke.
+    aura::jit::ScalarFn try_jit_scalar_override_for_test_ = nullptr;
+    inline static std::atomic<std::uint32_t> try_jit_scalar_invokes_for_test_{0};
+    static int64_t counting_scalar_fn_for_test_(int64_t*, uint32_t) {
+        try_jit_scalar_invokes_for_test_.fetch_add(1, std::memory_order_relaxed);
+        return 42;
+    }
     // Issue #59 Iter 2: shared_mutex for jit_cache_. Read-heavy access
     // pattern (most lookups just probe the cache), so multiple readers
     // can hold the shared lock concurrently. Writers take the unique
@@ -14866,7 +14920,17 @@ public:
 
         auto& entry = *entry_it;
         std::vector<std::int64_t> locals(entry.local_count, 0);
+        // Issue #3758: same execute catalog as IRInterpreter::execute.
+        // Soft-compiled / jit_cache_ hits have no typed-entry prologue;
+        // persist-reject (would_allow==0) must not invoke ScalarFn.
+        // Soft/Off: jit_execute_commit_readiness_blocked is false with
+        // no commit_readiness load. Return nullopt → interpreter fallback
+        // (owns linear_post_mutate_force_rollback_total).
+        if (aura::compiler::typed_audit::jit_execute_commit_readiness_blocked())
+            return std::nullopt;
         auto fn_ptr = jit_.get_function_ptr(entry.name.c_str());
+        if (!fn_ptr && try_jit_scalar_override_for_test_)
+            fn_ptr = reinterpret_cast<void*>(try_jit_scalar_override_for_test_);
         if (!fn_ptr)
             return std::nullopt;
 

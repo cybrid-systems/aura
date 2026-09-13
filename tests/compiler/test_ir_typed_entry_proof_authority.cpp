@@ -26,6 +26,7 @@
 //        test_issue_* prefix per tests/HOMES.md.
 
 #include "test_harness.hpp"
+#include "compiler/typed_mutation_audit.h"
 
 #include <fstream>
 #include <print>
@@ -33,9 +34,21 @@
 #include <string_view>
 
 import std;
+import aura.compiler.evaluator;
+import aura.compiler.service;
 
 namespace {
 
+using aura::compiler::CompilerService;
+namespace typed_audit = aura::compiler::typed_audit;
+using aura::compiler::typed_audit::apply_dev_audit_defaults;
+using aura::compiler::typed_audit::apply_production_audit_defaults;
+using aura::compiler::typed_audit::jit_execute_commit_readiness_blocked;
+using aura::compiler::typed_audit::kTypeLinearProofOutcomeReject;
+using aura::compiler::typed_audit::publish_last_proof_face;
+using aura::compiler::typed_audit::publish_type_linear_proof_outcome;
+using aura::compiler::typed_audit::reset_for_test;
+using aura::compiler::typed_audit::stamp_type_linear_commit_proof;
 using aura::test::g_failed;
 using aura::test::g_passed;
 
@@ -223,6 +236,61 @@ int run_test_ir_typed_entry_proof_authority() {
               "3688: no docs/design/");
         CHECK(h.find("strip_green_face_on_remount_last_zero") != std::string::npos,
               "3688: remount last==0 strip unchanged");
+    }
+
+    {
+        std::println("\n--- #3758: try_jit_execute ScalarFn consults same helper as execute() ---");
+        const auto ixx = read_file("src/compiler/service.ixx");
+        const auto ir = read_file("src/compiler/ir_executor_impl.cpp");
+        CHECK(ixx.find("Issue #3758") != std::string::npos, "3758: try_jit_execute cites #3758");
+        CHECK(ixx.find("jit_execute_commit_readiness_blocked()") != std::string::npos,
+              "3758: try_jit_execute consults execute-catalog helper");
+        CHECK(h.find("jit_execute_commit_readiness_blocked") != std::string::npos,
+              "3758: helper in typed_audit");
+        const auto exec = ir.find("EvalResult IRInterpreter::execute()");
+        CHECK(exec != std::string::npos, "3758: execute() present");
+        if (exec != std::string::npos) {
+            const auto win = ir.substr(exec, 800);
+            CHECK(win.find("ir_typed_entry_blocked_result") != std::string::npos,
+                  "3758: execute() still refuses at C++ entry");
+        }
+        const auto cite = ixx.find("Issue #3758: same execute catalog as IRInterpreter::execute");
+        CHECK(cite != std::string::npos, "3758: try_jit_execute present");
+        if (cite != std::string::npos) {
+            const auto win = ixx.substr(cite, 1200);
+            const auto gate = win.find("jit_execute_commit_readiness_blocked()");
+            const auto call = win.find("reinterpret_cast<aura::jit::ScalarFn>(fn_ptr)");
+            CHECK(gate != std::string::npos && call != std::string::npos && gate < call,
+                  "3758: ScalarFn invoke is after commit_readiness gate");
+        }
+        CHECK(ixx.find("schema-3758") == std::string::npos, "3758: no new query key");
+        CHECK(read_file("tests/compiler/test_issue_3758.cpp").empty(),
+              "3758: no test_issue_3758.cpp");
+
+        reset_for_test();
+        apply_dev_audit_defaults();
+        CompilerService cs;
+        CHECK(cs.public_try_jit_execute_counting_scalar_for_test() == 1,
+              "3758 AC3: Soft cached ScalarFn still runs");
+        apply_production_audit_defaults();
+        typed_audit::clear_type_linear_proof_outcome_for_test();
+        typed_audit::clear_type_linear_commit_proof_for_test();
+        bool ok = true;
+        {
+            aura::compiler::Evaluator::MutationBoundaryGuard g(cs.evaluator(), &ok);
+            typed_audit::g_linear_ir_fastpath_boundary_depth_override = 1;
+            stamp_type_linear_commit_proof(3758);
+            publish_type_linear_proof_outcome(kTypeLinearProofOutcomeReject);
+            publish_last_proof_face(false, false);
+            CHECK(jit_execute_commit_readiness_blocked(),
+                  "3758 AC1: helper blocked under Reject proof");
+            CHECK(cs.public_try_jit_execute_counting_scalar_for_test() == 0,
+                  "3758 AC1: try_jit_execute does not invoke ScalarFn with Reject proof");
+            typed_audit::g_linear_ir_fastpath_boundary_depth_override = -1;
+        }
+        (void)ok;
+        apply_dev_audit_defaults();
+        reset_for_test();
     }
 
     std::println("\n=== Issue #3305 done ===");
