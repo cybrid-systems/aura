@@ -991,6 +991,16 @@ query:orch-module-stats
 internally. The facade is additive — `ParallelOrchStats` remains the
 source of truth for parallel-only regression tests.
 
+Issue #3733: the builder uses `query_hash_capacity_for` +
+`insert_kv_checked` + `query_hash_finish` (same overflow contract as
+`query:security-posture`). Probe miss stamps `hash-overflow=1` /
+`overflow=1` instead of silently dropping tail sentinels. Additive
+keys at the end of the insert list (old keys unchanged):
+`spawn-tenant-required-total`, `spawn-bp-admit-reject-override-total`,
+`join-reclaimed-deferred-cleanup-total`, `handoff-join-via-token-total`,
+`handoff-join-via-token-timeout-total`, `reclaimed-dtor-under-account-total`,
+`workflow-apply-total`. Soft/Off extra cost is one force-cap load.
+
 Regression: `tests/orch/test_orch_obs_facade`.
 
 ## Security schedule gate (Issue #2590)

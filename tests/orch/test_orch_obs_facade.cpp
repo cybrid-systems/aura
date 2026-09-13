@@ -16,6 +16,15 @@
 //        parallel-join-drain-source=0.
 //   AC4: src/orch/README.md documents the unified facade (live-read table).
 //
+// Issue #3733 — query:orch-module-stats overflow contract + missing live
+// OrchModuleStats atomics on the Agent hash (append only; no new query:*).
+//   AC1: aura_query_hash_set_force_cap → hash non-void + overflow sentinel
+//        (never silent drop).
+//   AC2: production tenant-required deny → spawn-tenant-required-total ≥ 1
+//        on engine:metrics "query:orch-module-stats" (not C++ atomic load).
+//   AC3: existing keys (agents-spawned, schema sentinels) unchanged.
+//   AC4: Soft: same hash, no extra atomics. No test_issue_N.cpp.
+//
 // Source-cite (issue #2589):
 //   - src/serve/parallel_orch.h: ParallelOrchStats.join_drain_residual_total /
 //     _reclaim_total / _us_total (lines 130/135/136) — source of truth.
@@ -36,11 +45,16 @@
 
 #include "compiler/agent_name_table.h"
 #include "compiler/typed_mutation_audit.h"
+#include "core/provenance_tracker.hh"
+#include "core/resource_quota.hh"
+#include "core/sandbox.hh"
 #include "orch/agent_spawn.h"
 #include "serve/parallel_orch.h"
+#include "serve/scheduler.h"
 
 #include <atomic>
 #include <cstdint>
+#include <cstdlib>
 #include <fstream>
 #include <print>
 #include <string>
@@ -55,11 +69,14 @@ namespace {
 
 using aura::compiler::CompilerService;
 using aura::compiler::types::as_int;
+using aura::compiler::types::is_hash;
 using aura::compiler::types::is_int;
 using aura::orch::g_orch_module_stats;
 using aura::serve::parallel_orch::g_parallel_orch_stats;
 using aura::test::g_failed;
 using aura::test::g_passed;
+
+extern "C" void aura_query_hash_set_force_cap(std::uint64_t);
 
 static std::string read_file(const char* path) {
     for (const auto& p :
@@ -913,8 +930,140 @@ int run_test_orch_obs_facade() {
         }
     }
 
+    // ── Issue #3733: overflow contract + missing live atomics on the hash ──
+    // Fresh Evaluator: the shared `cs` interned thousands of stats keys
+    // before this block (plus #3673's second service). Query the facade
+    // on a clean string-heap so hash-ref compares the keys just inserted.
+    {
+        aura::compiler::typed_audit::apply_dev_audit_defaults();
+        aura_query_hash_set_force_cap(0);
+        CompilerService cs3733;
+        auto href3733 = [&](std::string_view key) -> std::int64_t {
+            auto r = cs3733.eval(
+                std::format("(hash-ref (engine:metrics \"query:orch-module-stats\") \"{}\")", key));
+            if (!r || !is_int(*r))
+                return -1;
+            return as_int(*r);
+        };
+
+        std::println("\n--- #3733 AC3: existing keys unchanged ---");
+        CHECK(href3733("agents-spawned") >= 0, "3733 AC3: agents-spawned present");
+        CHECK(href3733("schema") == 1588, "3733 AC3: schema sentinel 1588");
+        CHECK(href3733("schema-2589") == 2589, "3733 AC3: schema-2589 unchanged");
+        CHECK(href3733("schema-3529") == 3529, "3733 AC3: schema-3529 unchanged");
+        CHECK(href3733("schema-3564") == 3564, "3733 AC3: schema-3564 unchanged");
+        CHECK(href3733("hash-overflow") != 1, "3733 AC3: production planned cap does not overflow");
+        CHECK(href3733("spawn-tenant-required-total") >= 0,
+              "3733 AC3: spawn-tenant-required-total on hash");
+        CHECK(href3733("spawn-bp-admit-reject-override-total") >= 0,
+              "3733 AC3: spawn-bp-admit-reject-override-total on hash");
+        CHECK(href3733("join-reclaimed-deferred-cleanup-total") >= 0,
+              "3733 AC3: join-reclaimed-deferred-cleanup-total on hash");
+        CHECK(href3733("handoff-join-via-token-total") >= 0,
+              "3733 AC3: handoff-join-via-token-total on hash");
+        CHECK(href3733("handoff-join-via-token-timeout-total") >= 0,
+              "3733 AC3: handoff-join-via-token-timeout-total on hash");
+        CHECK(href3733("reclaimed-dtor-under-account-total") >= 0,
+              "3733 AC3: reclaimed-dtor-under-account-total on hash");
+        CHECK(href3733("workflow-apply-total") >= 0, "3733 AC3: workflow-apply-total on hash");
+        CHECK(href3733("schema-3733") == 3733, "3733 AC3: schema-3733");
+        CHECK(href3733("orch-module-stats-overflow-wired") == 1,
+              "3733 AC3: orch-module-stats-overflow-wired");
+
+        std::println("\n--- #3733 AC1: force-cap never silent-drops ---");
+        {
+            auto r0 = cs3733.eval("(engine:metrics \"query:orch-module-stats\")");
+            CHECK(r0 && is_hash(*r0), "3733 AC1: default hash is non-void");
+            aura_query_hash_set_force_cap(4);
+            auto r = cs3733.eval("(engine:metrics \"query:orch-module-stats\")");
+            CHECK(r && is_hash(*r), "3733 AC1: force-cap hash is non-void (never void/silent)");
+            const auto ov = href3733("overflow");
+            const auto ho = href3733("hash-overflow");
+            CHECK(ov == 1 || ho == 1,
+                  "3733 AC1: overflow=1 or hash-overflow=1 (never silent drop)");
+            aura_query_hash_set_force_cap(0);
+        }
+        CHECK(href3733("agents-spawned") >= 0, "3733 AC1: restore cap restores agents-spawned");
+        CHECK(href3733("hash-overflow") != 1, "3733 AC1: restore cap clears overflow sentinel");
+
+        std::println("\n--- #3733 AC2: production tenant-required deny on engine:metrics ---");
+        {
+            using aura::compiler::typed_audit::apply_dev_audit_defaults;
+            using aura::compiler::typed_audit::apply_production_audit_defaults;
+            using aura::core::sandbox::SandboxMode;
+            using aura::core::sandbox::set_mode;
+            using aura::orch::AgentSpec;
+            using aura::orch::spawn_agent_with_mailbox;
+            const char* prev_sb = std::getenv("AURA_SANDBOX");
+            const std::string prev_sb_s = prev_sb ? prev_sb : "";
+            const auto before = href3733("spawn-tenant-required-total");
+            ::setenv("AURA_SANDBOX", "restricted", 1);
+            apply_production_audit_defaults();
+            set_mode(SandboxMode::Restricted);
+            aura::core::resource_quota::set_current_quota_tenant(0);
+            aura::core::provenance::set_multi_tenant_env_active(true);
+            {
+                aura::serve::Scheduler sched(1);
+                AgentSpec spec;
+                spec.name = "3733-tenant-deny";
+                spec.body = [] {};
+                auto h = spawn_agent_with_mailbox(sched, std::move(spec));
+                CHECK(!h.ok, "3733 AC2: Restricted+MT tenant 0 spawn denied");
+                CHECK(h.error == "tenant-required", "3733 AC2: deny string tenant-required");
+            }
+            aura::core::provenance::set_multi_tenant_env_active(false);
+            apply_dev_audit_defaults();
+            set_mode(SandboxMode::Off);
+            if (!prev_sb_s.empty())
+                ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+            else
+                ::unsetenv("AURA_SANDBOX");
+            CHECK(href3733("spawn-tenant-required-total") >= before + 1,
+                  "3733 AC2: spawn-tenant-required-total ≥ 1 on engine:metrics");
+        }
+
+        std::println("\n--- #3733 AC4: Soft same hash, no extra atomics, no invent ---");
+        {
+            aura::compiler::typed_audit::apply_dev_audit_defaults();
+            CHECK(href3733("spawn-tenant-required-total") >= 0,
+                  "3733 AC4: Soft still exposes spawn-tenant-required-total");
+            CHECK(href3733("workflow-apply-total") >= 0,
+                  "3733 AC4: Soft still exposes workflow-apply-total");
+            CHECK(href3733("agents-spawned") >= 0, "3733 AC4: Soft agents-spawned present");
+            const auto agent = read_file("src/compiler/evaluator_primitives_agent.cpp");
+            CHECK(agent.find("kOrchModuleStatsPlannedKeys") != std::string::npos,
+                  "3733 AC4: planned-keys constant");
+            CHECK(agent.find("insert_kv_checked") != std::string::npos,
+                  "3733 AC4: insert_kv_checked (not silent probe)");
+            CHECK(agent.find("query_hash_finish") != std::string::npos,
+                  "3733 AC4: query_hash_finish");
+            CHECK(agent.find("query_hash_capacity_for(kOrchModuleStatsPlannedKeys)") !=
+                      std::string::npos,
+                  "3733 AC4: capacity from planned keys");
+            const auto key_pos = agent.find("insert_kv(\"spawn-tenant-required-total\"");
+            CHECK(key_pos != std::string::npos, "3733 AC4: spawn-tenant-required-total insert");
+            const auto finish_pos = agent.find("return query_hash_finish(ht, ev.string_heap_");
+            CHECK(finish_pos != std::string::npos && key_pos < finish_pos,
+                  "3733 AC4: new keys append before query_hash_finish");
+            CHECK(agent.find("class AgentRegistry") == std::string::npos &&
+                      agent.find("struct AgentRegistry") == std::string::npos,
+                  "3733 AC4: no AgentRegistry");
+            std::ifstream invent("tests/orch/test_issue_3733.cpp");
+            if (!invent.good())
+                invent.open("../tests/orch/test_issue_3733.cpp");
+            CHECK(!invent.good(), "3733 AC4: no test_issue_3733.cpp");
+            CHECK(read_file("docs/design/3733-orch-module-stats-overflow.md").empty(),
+                  "3733 AC4: no docs/design/3733-*");
+            const auto readme = read_file("src/orch/README.md");
+            CHECK(readme.find("spawn-tenant-required-total") != std::string::npos,
+                  "3733 AC4: README lists spawn-tenant-required-total");
+            CHECK(readme.find("insert_kv_checked") != std::string::npos,
+                  "3733 AC4: README documents overflow contract");
+        }
+    }
+
     std::println(
-        "\n=== #2589+#2636+2884+#3013+#3212+#3251+#3336+#3565+#3642: {}/{} checks passed ===",
+        "\n=== #2589+#2636+2884+#3013+#3212+#3251+#3336+#3565+#3642+#3733: {}/{} checks passed ===",
         g_passed, g_passed + g_failed);
     return g_failed == 0 ? 0 : 1;
 }
