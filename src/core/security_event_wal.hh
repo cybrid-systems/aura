@@ -150,6 +150,25 @@ inline void wal_overflow_ring_clear_for_test() noexcept {
     wal_overflow_ring_head().store(0, std::memory_order_relaxed);
     wal_overflow_ring_count().store(0, std::memory_order_relaxed);
 }
+
+// Issue #3734: join a lost mutation-WAL append by mid. Process-local
+// (same ring as SE fwrite miss); does not replace durable WAL replay.
+// Newest-first. Soft / empty ring: nullptr, no extra I/O.
+[[nodiscard]] inline const WalOverflowRecord* wal_overflow_find_by_mid(std::uint64_t mid) noexcept {
+    if (mid == 0)
+        return nullptr;
+    const auto n = wal_overflow_ring_depth();
+    if (n == 0)
+        return nullptr;
+    const auto* ring = wal_overflow_ring_storage();
+    const auto h = wal_overflow_ring_head().load(std::memory_order_relaxed);
+    for (std::uint32_t i = 0; i < n; ++i) {
+        const auto idx = (h + kWalOverflowRingCapacity - 1 - i) % kWalOverflowRingCapacity;
+        if (ring[idx].mid == mid)
+            return &ring[idx];
+    }
+    return nullptr;
+}
 struct SecurityEventWalMetrics {
     std::atomic<std::uint64_t> security_event_persisted_total{0};
     std::atomic<std::uint64_t> security_event_wal_replay_count{0};

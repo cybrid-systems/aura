@@ -6121,6 +6121,19 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                     // scan keeps 0 — no extra I/O either way.
                     wal_lookup_window_miss =
                         (durable_hit == 0 && typed_summary_from_wal == 0) ? 1 : 0;
+                    // Issue #3734: emit_mutation_audit production WAL miss
+                    // never hit disk; overflow ring is the join key.
+                    // Fill last-se-reason so :durable is not empty while
+                    // wal-lookup-window-miss stays 1 (overflow is not WAL).
+                    // In-memory scan only; this block is production/Full.
+                    if (durable_hit == 0 && last_se_reason_str.empty()) {
+                        if (const auto* ovr =
+                                ::aura::core::security_event_wal::wal_overflow_find_by_mid(
+                                    join_mid)) {
+                            if (!ovr->reason.empty())
+                                last_se_reason_str = ovr->reason;
+                        }
+                    }
                 }
             }
 

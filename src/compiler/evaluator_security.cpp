@@ -265,14 +265,32 @@ void Evaluator::emit_mutation_audit(std::uint32_t nodes_changed, std::uint32_t e
     slot.provenance_mutation_id = mid;
     mutation_audit_total_.fetch_add(1, std::memory_order_relaxed);
     // #1567: WAL append (optional; no-op when disabled)
-    // Issue #3056: append stays fail-open — disk error does not abort
-    // the mutation commit (AC3). Posture arm is observe-only.
+    // Issue #3056: Soft / WAL-off stays fail-open — disk error does not
+    // abort a tree that already persisted (Phase-5 already ran).
+    // Issue #3734: production fail-closed does not unwind the commit
+    // either; the overflow ring carries the join mid so wrap replay
+    // / :durable still sees the structural success. Same reason as
+    // check_and_record_effect (#3639); that path still denies BEFORE
+    // the body. No extra I/O when WAL-off.
     if (g_mutation_audit_wal().is_enabled()) {
         const auto rec = make_record(slot.seq, slot.timestamp_ms, slot.fiber_id, slot.nodes_changed,
                                      slot.epoch_delta, slot.target_node, slot.op, slot.effect_bits,
                                      slot.tenant_id, slot.provenance_mutation_id, slot.epoch,
                                      slot.effect_denied);
-        (void)g_mutation_audit_wal().append(rec);
+        if (::aura::core::wal_slo::wal_append_fail_closed_active()) {
+            if (!g_mutation_audit_wal().append(rec)) {
+                ::aura::core::security_event_wal::WalOverflowRecord ovr{};
+                ovr.mid = rec.provenance_mutation_id;
+                ovr.tenant_id = static_cast<std::uint32_t>(slot.tenant_id);
+                ovr.fiber_id = static_cast<std::uint64_t>(slot.fiber_id);
+                ovr.epoch = slot.epoch;
+                ovr.op = op.empty() ? std::string("emit_mutation_audit") : std::string(op);
+                ovr.reason = "mutation_wal_append_miss";
+                ::aura::core::security_event_wal::wal_overflow_ring_push(ovr);
+            }
+        } else {
+            (void)g_mutation_audit_wal().append(rec);
+        }
     }
 }
 
