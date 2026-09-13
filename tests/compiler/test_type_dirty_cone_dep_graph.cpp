@@ -102,6 +102,12 @@ static void ac3658_1_replace_subtree_mirrors_cone() {
     const auto* ae = cs.get_define_v2("A");
     const auto* be = cs.get_define_v2("B");
     CHECK(ae != nullptr && be != nullptr, "3658 AC1: A/B cached");
+    if (ae == nullptr || be == nullptr) {
+        // CI hardening (#3695/#3688-era regression): a failed cache lookup
+        // must fail this member cleanly, not segfault the whole batch.
+        aura::compiler::typed_audit::apply_dev_audit_defaults();
+        return;
+    }
     const auto hash_a = ae->source_hash;
     const auto hash_b = be->source_hash;
     const auto mir0 = type_dirty_cone_mirrored_total.load();

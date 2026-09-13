@@ -95,19 +95,23 @@ def _rows() -> list[tuple[str, str, bool]]:
             if prim == "move-node":
                 # move-node has two NodeId args (a[0] node + a[1] parent);
                 # both must go through resolve_mutate_node_arg.
-                has_a0 = 'resolve_mutate_node_arg(*ev.workspace_flat_, a[0], "mutate:move-node"' in body
-                has_a1 = 'resolve_mutate_node_arg(*ev.workspace_flat_, a[1], "mutate:move-node"' in body
+                # Issue #3695: the helper takes the whole args span and
+                # selects internally (:index); move-node resolves the node
+                # from a and the parent from a.subspan(1).
+                has_a0 = 'resolve_mutate_node_arg(*ev.workspace_flat_, a, "mutate:move-node"' in body
+                has_a1 = "resolve_mutate_node_arg(*ev.workspace_flat_, a.subspan(1)" in body
                 if has_a0 and has_a1:
                     has_resolve = True
                     break
             elif prim in ("extract-function", "refactor/extract"):
                 # extract-function / refactor/extract have ONE NodeId arg
                 # (a[0] = the function being extracted). Only need a[0] check.
-                if 'resolve_mutate_node_arg(*ev.workspace_flat_, a[0], "mutate:' + prim + '"' in body:
+                # Issue #3695: the span form is the canonical call shape.
+                if 'resolve_mutate_node_arg(*ev.workspace_flat_, a, "mutate:' + prim + '"' in body:
                     has_resolve = True
                     break
             else:
-                if 'resolve_mutate_node_arg(*ev.workspace_flat_, a[0], "mutate:' + prim + '"' in body:
+                if 'resolve_mutate_node_arg(*ev.workspace_flat_, a, "mutate:' + prim + '"' in body:
                     has_resolve = True
                     break
         # Must NOT have a leftover !is_int(a[0]) as the only accept path.
