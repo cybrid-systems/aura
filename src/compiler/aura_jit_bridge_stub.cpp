@@ -710,6 +710,8 @@ extern "C" __attribute__((weak)) void
 aura_test_set_residual_remount_cursor(std::uint64_t /*cursor*/) {}
 extern "C" __attribute__((weak)) void
 aura_test_set_closure_stable_func_id(std::int64_t /*closure_id*/, std::uint32_t /*sid*/) {}
+extern "C" __attribute__((weak)) void aura_test_set_closure_table_epoch(std::int64_t /*closure_id*/,
+                                                                        std::uint64_t /*epoch*/) {}
 // Issue #2978: reemit-success sync covered-named remount weak stubs.
 extern "C" __attribute__((weak)) std::uint64_t aura_reemit_success_sync_covered_cap_default() {
     return 0;

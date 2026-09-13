@@ -1832,6 +1832,113 @@ static void ac3503_5_source_no_invent() {
     CHECK(q.find("schema-3503") == std::string::npos, "3503 AC5: no new query key");
 }
 
+static void ac3746_table_zero_keeps_must_deopt() {
+    std::println("\n--- #3746 AC1: capture remount ok + table_epoch==0 → MustDeopt stays ---");
+    const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
+    CHECK(rt.find("Issue #3746") != std::string::npos, "3746 AC1: runtime cites #3746");
+    CHECK(rt.find("cap_table == 0 && aura_aot_func_table_epoch() != 0") != std::string::npos,
+          "3746 AC1: keep MustDeopt when table unstamped and tracking on");
+    CHECK(rt.find("schema-3746") == std::string::npos, "3746 AC1: no new query key");
+
+    aura::compiler::hot_update_registry().reset_force_jit_repromote_for_test();
+    aura_test_reset_residual_remount_state();
+    aura_test_set_residual_remount_budget(32);
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    const auto c0 = aura_get_current_bridge_epoch();
+    aura_set_current_bridge_epoch(c0 == 0 ? 1 : c0);
+    if (aura_aot_func_table_epoch() == 0)
+        aura_aot_bump_func_table_epoch();
+    CHECK(aura_aot_func_table_epoch() != 0, "3746 AC1: table tracking on");
+    const auto cid = aura_alloc_closure(/*func_id=*/0);
+    CHECK(cid >= 0, "3746 AC1: alloc");
+    aura_test_set_closure_table_epoch(cid, 0);
+    aura_closure_set_must_deopt(cid, 1);
+    CHECK(aura_closure_get_must_deopt(cid) == 1, "3746 AC1: MustDeopt set");
+    const auto ok0 = aura_residual_remount_ok_total_v_read();
+    aura_test_set_residual_remount_cursor(static_cast<std::uint64_t>(cid));
+    aura_residual_live_closure_remount_tick(32);
+    CHECK(aura_residual_remount_ok_total_v_read() > ok0, "3746 AC1: remount heal ran");
+    CHECK(aura_closure_get_must_deopt(cid) == 1,
+          "3746 AC1: MustDeopt stays when cap_table==0 and table tracking on");
+    std::int64_t args[1] = {0};
+    CHECK(aura_closure_dispatch_native_checked(cid, args, 0) == 0,
+          "3746 AC1: dispatch leaves native");
+    aura_set_current_bridge_epoch(c0);
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    aura_test_reset_residual_remount_state();
+}
+
+static void ac3746_remap_stamp_may_clear() {
+    std::println("\n--- #3746 AC2: table stamp then remount may clear MustDeopt ---");
+    const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
+    CHECK(rt.find("stamp_closure_table_epoch_locked(cid)") != std::string::npos,
+          "3746 AC2: remap-retarget still stamps table");
+    aura::compiler::hot_update_registry().reset_force_jit_repromote_for_test();
+    aura_test_reset_residual_remount_state();
+    aura_test_set_residual_remount_budget(32);
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    const auto c0 = aura_get_current_bridge_epoch();
+    aura_set_current_bridge_epoch(c0 == 0 ? 1 : c0);
+    if (aura_aot_func_table_epoch() == 0)
+        aura_aot_bump_func_table_epoch();
+    const auto cid = aura_alloc_closure(/*func_id=*/0);
+    CHECK(cid >= 0, "3746 AC2: alloc");
+    aura_test_set_closure_table_epoch(cid, 0);
+    aura_closure_set_must_deopt(cid, 1);
+    const auto ok0 = aura_residual_remount_ok_total_v_read();
+    aura_test_set_residual_remount_cursor(static_cast<std::uint64_t>(cid));
+    aura_residual_live_closure_remount_tick(32);
+    CHECK(aura_residual_remount_ok_total_v_read() > ok0, "3746 AC2: remount heal ran (unstamped)");
+    CHECK(aura_closure_get_must_deopt(cid) == 1, "3746 AC2: unstamped table keeps MustDeopt");
+    aura_test_set_closure_table_epoch(cid, aura_aot_func_table_epoch());
+    aura_closure_set_must_deopt(cid, 1);
+    const auto ok1 = aura_residual_remount_ok_total_v_read();
+    aura_test_set_residual_remount_cursor(static_cast<std::uint64_t>(cid));
+    aura_residual_live_closure_remount_tick(32);
+    CHECK(aura_residual_remount_ok_total_v_read() > ok1, "3746 AC2: remount heal ran (stamped)");
+    CHECK(aura_closure_get_must_deopt(cid) == 0,
+          "3746 AC2: after table stamp, capture remount may clear MustDeopt");
+    aura_set_current_bridge_epoch(c0);
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    aura_test_reset_residual_remount_state();
+}
+
+static void ac3746_fail_sets_must_deopt() {
+    std::println("\n--- #3746 AC3: remount fail still sets MustDeopt (#3060) ---");
+    const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
+    CHECK(rt.find("Issue #3060: residual / drain fail-closed") != std::string::npos,
+          "3746 AC3: remount fail still #3060 MustDeopt");
+    CHECK(rt.find("g_closure_must_deopt[cid] = 1; // Issue #3060") != std::string::npos ||
+              rt.find("g_closure_must_deopt[cid] = 1; // Issue #3060: residual") !=
+                  std::string::npos,
+          "3746 AC3: fail path store kept");
+}
+
+static void ac3746_soft_no_extra() {
+    std::println("\n--- #3746 AC4: Soft no extra + no invent ---");
+    const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
+    CHECK(rt.find("No table") != std::string::npos &&
+              rt.find("restamp here (#3503)") != std::string::npos,
+          "3746 AC4: capture remount still does not restamp table");
+    CHECK(rt.find("stamp_closure_table_epoch_locked") != std::string::npos,
+          "3746 AC4: remap-retarget stamp kept");
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    aura_test_reset_residual_remount_state();
+    aura_test_set_residual_remount_budget(32);
+    const auto cid = aura_alloc_closure(/*func_id=*/0);
+    CHECK(cid >= 0, "3746 AC4: alloc");
+    aura_closure_set_must_deopt(cid, 1);
+    aura_residual_live_closure_remount_tick(32);
+    // Soft / table_epoch==0: existing dual-fresh may still clear.
+    (void)aura_closure_get_must_deopt(cid);
+    CHECK(read_file("tests/compiler/test_issue_3746.cpp").empty(),
+          "3746 AC4: no test_issue_3746.cpp");
+    CHECK(read_file("docs/design/3746-capture-remount-table-zero.md").empty(),
+          "3746 AC4: no docs/design/3746-*");
+    CHECK(rt.find("schema-3746") == std::string::npos, "3746 AC4: no schema-3746");
+    aura_test_reset_residual_remount_state();
+}
+
 static void ac2928_2_storm_skip() {
     std::println("\n--- #2928 AC2: hard storm / throttle → residual walk skips ---");
     aura_test_reset_residual_remount_state();
@@ -3051,6 +3158,11 @@ int run_test_anonymous_residual_stable_id_policy() {
     ac2928_1_residual_tick_clears_must_deopt();
     ac3503_1_stale_bridge_must_deopt_stays();
     ac3503_5_source_no_invent();
+    std::println("\n=== Issue #3746: capture remount MustDeopt vs table==0 ===");
+    ac3746_table_zero_keeps_must_deopt();
+    ac3746_remap_stamp_may_clear();
+    ac3746_fail_sets_must_deopt();
+    ac3746_soft_no_extra();
     ac2928_2_storm_skip();
     ac2928_3_reemit_success_unchanged();
     ac2928_4_soft_budget_zero();
@@ -3087,7 +3199,7 @@ int run_test_anonymous_residual_stable_id_policy() {
 
     std::println("\n=== "
                  "#2605+#2637+#2638+#2666+#2691+#2714+#2850+#2893+#2928+#2977+#2978+#2980+#3024+#"
-                 "3060+#3323+#3478+#3342: "
+                 "3060+#3323+#3478+#3342+#3746: "
                  "{} "
                  "passed, {} failed ===",
                  g_passed, g_failed);
