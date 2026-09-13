@@ -112,3 +112,4 @@ check_last_success_coverage_evidence_3682.py
 check_hygiene_deny_kind_uniformity_3683.py
 check_inner_expand_refuse_3684.py
 check_clone_session_policy_3685.py
+check_quote_intern_lock_3703.py

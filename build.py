@@ -6909,6 +6909,25 @@ def cmd_lint():
     if r != 0:
         fail("Issue #3685 clone session policy linter failed — run python3 scripts/check_clone_session_policy_3685.py")
         return r
+    # Issue #3703 (#3401/#3457 residual): the ast_to_data quote path
+    # pushed a fresh string_heap_ entry for every quote of the same sym_id
+    # (eval_flat LiteralString interns by sym; the quote path did not), and
+    # Call/Begin held alloc_storage_lock_ across the whole ast_to_data
+    # recursion — multi-fiber quote/eval of lists serialized on the
+    # evaluator-wide mutex. Gate pins: quote LiteralString interns by
+    # sym_id (get hit path, one heap push, set); Call/Begin recurse
+    # WITHOUT the lock (items collected unlocked, push slots locked);
+    # the eval_flat intern-by-sym path unchanged; tests cite #3703.
+    qil3703_script = ROOT / "scripts" / "check_quote_intern_lock_3703.py"
+    if not qil3703_script.exists():
+        fail(f"missing {qil3703_script}")
+        return 1
+    r = run([sys.executable, str(qil3703_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3703 quote intern / lock scope linter failed — run python3 scripts/check_quote_intern_lock_3703.py"
+        )
+        return r
     # Issue #3649 (#2952/#3096/#2690 residual): the storm-exit edge drives
     # residual coverage-verify. storm_exit_force_full_active now==0 &&
     # prev!=0 branch runs one maybe_coverage_verify_min_dirty when

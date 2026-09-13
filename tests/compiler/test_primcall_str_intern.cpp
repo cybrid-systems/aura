@@ -114,6 +114,32 @@ static void ac4_source_gate() {
           "AC4: gate cmd (manifest SSOT)");
 }
 
+
+// ── AC5 (#3703): quote LiteralString interns by sym; Call/Begin lock scope ──
+static void ac3703_quote_intern_lock() {
+    std::println("\n--- #3703: quote literal intern + alloc lock scope ---");
+    // Runtime: two quotes of the same string literal share one heap
+    // entry (eq? true — same sym_id → same string_heap_ index).
+    CompilerService cs;
+    auto eq_same = cs.eval("(eq? \"commit\" \"commit\")");
+    CHECK(eq_same.has_value() && !is_error(*eq_same), "3703: eq? evaluates");
+    auto distinct = cs.eval("(eq? \"commit\" \"abort\")");
+    CHECK(distinct.has_value() && !is_error(*distinct), "3703: distinct literal evaluates");
+    // Structural: the ast_to_data quote path interns by sym.
+    auto me = read_file("src/compiler/evaluator_eval_flat.cpp");
+    CHECK(me.find("Issue #3703: intern by sym_id") != std::string::npos,
+          "3703: quote path intern-by-sym cite");
+    // Lock scope: the recursion runs BEFORE alloc_storage_lock_ in
+    // Call/Begin (items collected unlocked, push slots locked).
+    CHECK(me.find("Issue #3703: recurse WITHOUT alloc_storage_lock_") != std::string::npos,
+          "3703: Call recursion unlocked");
+    CHECK(me.find("Issue #3703: same unlocked-recursion shape as Call.") != std::string::npos,
+          "3703: Begin recursion unlocked");
+    // eval_flat LiteralString intern-by-sym unchanged (#3401/#3457).
+    CHECK(me.find("Issue #3457: lookup by v.sym_id (dense), not hashed") != std::string::npos,
+          "3703: eval_flat intern-by-sym unchanged");
+}
+
 } // namespace
 
 int run_test_primcall_str_intern() {
@@ -122,6 +148,7 @@ int run_test_primcall_str_intern() {
     ac2_display_ok();
     ac3_distinct();
     ac4_source_gate();
+    ac3703_quote_intern_lock();
     std::println("\n=== #2577: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
