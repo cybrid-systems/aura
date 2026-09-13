@@ -1853,6 +1853,9 @@ static const char* metrics_group_for_field(std::string_view name) noexcept {
         return "mutate";
     if (name.size() >= 8 && name.substr(0, 8) == "mutation")
         return "mutate";
+    // Issue #3737: handoff / StableNodeRef rejects are mutate-path.
+    if (name.size() >= 11 && name.substr(0, 11) == "stable_ref_")
+        return "mutate";
     if (name.size() >= 6 && name.substr(0, 6) == "dirty_")
         return "mutate";
     if (name.size() >= 6 && name.substr(0, 6) == "query_")

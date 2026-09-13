@@ -973,6 +973,8 @@ void register_query_tail_primitives(PrimRegistrar add, std::pmr::vector<Pair>& p
     // this name here — dual last-wins hid the mutate→reemit join.
     // Issue #1952 / #1930 schema-1930 lineage stays on the winning hash.
     // Issue #2369 schema-2369 / sole-primary-wired also on obs_eval.
+    // Issue #2297 schema-2297 / closure-capture-cell-remap-ok-total /
+    // capture-cell-remap-wired also on obs_eval.
 
     // Issue #1907: query:reflect-schema.
     // Returns observability for the reflect/EDSL bridge hook. Counters
