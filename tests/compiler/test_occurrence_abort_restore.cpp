@@ -319,6 +319,25 @@ static void ac3440_persist_reject_flips_success_into_abort_restore() {
     CHECK(boundary_cpp.find("abort_restore_dual_topology_persist_reject") == std::string::npos,
           "3687: no second restore helper");
     CHECK(audit_h.find("Issue #3687") != std::string::npos, "3687: audit header cite");
+
+    std::println(
+        "\n--- #3743: persist-reject restore restamps AbortRestore in the same helper ---");
+    const auto helper_fn =
+        boundary_cpp.find("void Evaluator::restore_checkpoint_topology_for_persist_reject()");
+    CHECK(helper_fn != std::string::npos, "3743: persist-reject restore helper present");
+    const auto helper_win =
+        helper_fn == std::string::npos ? std::string{} : boundary_cpp.substr(helper_fn, 2200);
+    const auto topo = helper_win.find("abort_restore_dual_topology(");
+    const auto restamp = helper_win.find("unified_restamp_after_boundary");
+    const auto abort_site = helper_win.find("UnifiedRestampSite::AbortRestore");
+    CHECK(topo != std::string::npos && restamp != std::string::npos && topo < restamp,
+          "3743: AbortRestore restamp AFTER dual-topology restore in persist-reject helper");
+    CHECK(abort_site != std::string::npos && restamp < abort_site + 80,
+          "3743: persist-reject restamp is AbortRestore (not a second restamp API)");
+    CHECK(boundary_cpp.find("schema-3743") == std::string::npos, "3743: no new query key");
+    CHECK(read_file("tests/compiler/test_issue_3743.cpp").empty() &&
+              read_file("tests/issues/test_issue_3743.cpp").empty(),
+          "3743: no test_issue_3743.cpp");
 }
 
 } // namespace

@@ -20,6 +20,7 @@
 #include "compiler/mutation_concurrency_health.hh"
 #include "compiler/typed_mutation_audit.h"
 #include "compiler/messaging_bridge.h"
+#include "core/flatast_restamp.hh"
 
 #include <array>
 #include <cstdint>
@@ -743,6 +744,83 @@ int run_test_outermost_persist_fail_closed() {
         auto* ws_soft = cs_soft.evaluator().workspace_flat();
         CHECK(ws_soft && find_literal_int(*ws_soft, 9) != aura::ast::NULL_NODE,
               "3697 AC3: happy persist keeps body's write");
+        reset_for_test();
+    }
+
+    {
+        std::println("\n--- #3743: persist-reject restore restamps surviving node before dtor ---");
+        const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+        CHECK(contains(emb, "Issue #3743"), "3743: boundary cites #3743");
+        const auto helper_fn =
+            emb.find("void Evaluator::restore_checkpoint_topology_for_persist_reject()");
+        const auto helper_win =
+            helper_fn == std::string::npos ? std::string{} : emb.substr(helper_fn, 2200);
+        CHECK(helper_win.find("unified_restamp_after_boundary") != std::string::npos &&
+                  helper_win.find("UnifiedRestampSite::AbortRestore") != std::string::npos,
+              "3743: persist-reject helper restamps AbortRestore");
+        CHECK(emb.find("schema-3743") == std::string::npos, "3743: no new query key");
+        CHECK(read_file("tests/compiler/test_issue_3743.cpp").empty(),
+              "3743: no test_issue_3743.cpp");
+
+        reset_for_test();
+        apply_dev_audit_defaults();
+        CompilerService cs;
+        CHECK(cs.eval("(+ 1 1)").has_value(), "3743 soak: warm");
+        CHECK(cs.eval("(set-code \"(define f 1)\")").has_value(), "3743 soak: set-code");
+        auto* ws = cs.evaluator().workspace_flat();
+        CHECK(ws != nullptr, "3743 soak: workspace");
+        const auto lit = ws ? find_literal_int(*ws, 1) : aura::ast::NULL_NODE;
+        const auto def =
+            ws ? find_first_tag(*ws, aura::ast::NodeTag::Define) : aura::ast::NULL_NODE;
+        CHECK(lit != aura::ast::NULL_NODE, "3743 soak: literal 1");
+        CHECK(def != aura::ast::NULL_NODE, "3743 soak: Define");
+        apply_production_audit_defaults();
+        const auto calls0 = aura::ast::unified_restamp_calls_total_v_read();
+        bool ok = true;
+        {
+            Evaluator::MutationBoundaryGuard g(cs.evaluator(), &ok);
+            if (ws && lit != aura::ast::NULL_NODE) {
+                const auto old_val = ws->get(lit).int_value;
+                ws->set_int(lit, old_val + 7);
+                ws->mark_dirty_upward_fast(lit);
+            }
+            if (ws && def != aura::ast::NULL_NODE) {
+                const auto extra = ws->add_literal(99);
+                ws->insert_child(def, 0, extra);
+            }
+            cs.evaluator().restore_checkpoint_topology_for_persist_reject();
+            CHECK(ws && ws->node_generation_is_post_mutate(lit),
+                  "3743 AC1: persist-reject restore restamps surviving node "
+                  "before Guard dtor (not a pre-abort gen)");
+            CHECK(aura::ast::unified_restamp_calls_total_v_read() > calls0,
+                  "3743 AC1: AbortRestore unified restamp ran in the restore helper");
+            ok = false;
+        }
+        CHECK(!ok, "3743 AC1: abort Guard");
+        CHECK(ws && ws->node_generation_is_post_mutate(lit),
+              "3743 AC1: surviving node still post-mutate after dtor belt restamp");
+        CHECK(ws && lit != aura::ast::NULL_NODE && ws->is_live_node(lit),
+              "3743 AC1: surviving node stays live after abort restore");
+        apply_dev_audit_defaults();
+        {
+            CompilerService cs_soft;
+            CHECK(cs_soft.eval("(set-code \"(define s 1)\")").has_value(),
+                  "3743 AC3: Soft set-code");
+            auto* ws_soft = cs_soft.evaluator().workspace_flat();
+            const auto lit_s = ws_soft ? find_literal_int(*ws_soft, 1) : aura::ast::NULL_NODE;
+            const auto calls_soft = aura::ast::unified_restamp_calls_total_v_read();
+            bool ok_s = true;
+            {
+                Evaluator::MutationBoundaryGuard g(cs_soft.evaluator(), &ok_s);
+                if (ws_soft && lit_s != aura::ast::NULL_NODE)
+                    ws_soft->set_int(lit_s, 2);
+                cs_soft.evaluator().restore_checkpoint_topology_for_persist_reject();
+                CHECK(aura::ast::unified_restamp_calls_total_v_read() == calls_soft,
+                      "3743 AC3: Soft persist-reject helper is a no-op (no extra restamp)");
+                ok_s = false;
+            }
+            (void)ok_s;
+        }
         reset_for_test();
     }
 

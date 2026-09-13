@@ -14038,6 +14038,9 @@ public:
     // (one fail-closed transaction; steal/eval_flat cannot observe a
     // split). Idempotent: exit_mutation_boundary skips dual-topology
     // when the live checkpoint already restored. Soft/Off: no-op.
+    // Issue #3743: the helper also runs unified_restamp_after_boundary
+    // (AbortRestore) after dual-topology restore so pins / node_gen
+    // cannot stay at the post-mutate gen against the rolled-back tree.
     void restore_checkpoint_topology_for_persist_reject() noexcept;
 
     // Wave 4: bodies live in evaluator_mutation_boundary.cpp (with Guard).

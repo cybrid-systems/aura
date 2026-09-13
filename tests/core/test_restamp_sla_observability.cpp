@@ -673,6 +673,59 @@ static void ac3075_4_schema_and_linter() {
           "AC5: no docs/design/3075-*");
 }
 
+// ── Issue #3743: abort dual-topology restore restamps pins / node_gen ──
+//   AC1: each abort_restore_dual_topology site is followed by AbortRestore
+//        unified restamp (persist-reject / abort body / force-rollback /
+//        Strict reflect-validate). Guard dtor triad remains the belt.
+//   AC2: outermost abort still scoped-unpin (enforce_linear_post_failure);
+//        nested abort still unpin_linear_roots_except.
+//   AC3: Soft steal/densify skip-extra unchanged.
+//   AC4: never-entered inert dtor does not restamp; no test_issue_N; no
+//        new query key.
+static void ac3743_abort_restore_restamps() {
+    std::println("\n--- #3743: abort restore restamp pairing ---");
+    const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto fm = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+    CHECK(!mb.empty(), "3743: evaluator_mutation_boundary.cpp readable");
+
+    std::size_t restore_n = 0;
+    std::size_t paired_n = 0;
+    for (auto p = mb.find("abort_restore_dual_topology("); p != std::string::npos;
+         p = mb.find("abort_restore_dual_topology(", p + 1)) {
+        ++restore_n;
+        const auto win = mb.substr(p, 1200);
+        if (win.find("unified_restamp_after_boundary") != std::string::npos &&
+            win.find("UnifiedRestampSite::AbortRestore") != std::string::npos)
+            ++paired_n;
+    }
+    CHECK(restore_n == 4, "3743 AC1: still exactly 4 abort_restore_dual_topology sites");
+    CHECK(paired_n == 4, "3743 AC1: every restore site restamps AbortRestore in-window");
+    CHECK(mb.find("Issue #3743") != std::string::npos, "3743 AC1: boundary cites #3743");
+
+    CHECK(mb.find("enforce_linear_post_failure") != std::string::npos,
+          "3743 AC2: outermost abort still scoped-unpin via enforce_linear_post_failure");
+    CHECK(mb.find("unpin_linear_roots_except") != std::string::npos,
+          "3743 AC2: nested abort still unpin_linear_roots_except (siblings kept)");
+
+    CHECK(fm.find("skipped_extra = true") != std::string::npos, "3743 AC3: Soft skip-extra kept");
+    CHECK(fm.find("!boundary && !production && !wrap_pending && !last_budget") != std::string::npos,
+          "3743 AC3: Soft steal/densify skip-extra gate unchanged");
+
+    const auto inert = mb.find("if (!ev_ || inert_)");
+    CHECK(inert != std::string::npos, "3743 AC4: inert dtor arm present");
+    const auto inert_win = inert == std::string::npos ? std::string{} : mb.substr(inert, 900);
+    CHECK(inert_win.find("unified_restamp") == std::string::npos,
+          "3743 AC4: never-entered inert dtor does not restamp");
+    CHECK(mb.find("never-entered inert does not restamp") != std::string::npos,
+          "3743 AC4: inert skip documented");
+    CHECK(mb.find("schema-3743") == std::string::npos, "3743 AC4: no new query key");
+    CHECK(read_file("tests/core/test_issue_3743.cpp").empty() &&
+              read_file("tests/compiler/test_issue_3743.cpp").empty(),
+          "3743 AC4: no test_issue_3743.cpp");
+    CHECK(read_file("docs/design/3743-abort-restore-restamp.md").empty(),
+          "3743 AC4: no docs/design/3743-*");
+}
+
 } // namespace
 
 int run_test_restamp_sla_observability() {
@@ -709,7 +762,9 @@ int run_test_restamp_sla_observability() {
     ac3075_1_production_strict_finish_stale();
     ac3075_3_soft_unlimited_no_extra();
     ac3075_4_schema_and_linter();
-    std::println("\n=== #2528+#2934+#3019+#3041+#3058+#3075: see per-AC results above ===");
+    std::println("\n=== Issue #3743: abort restore restamp ---");
+    ac3743_abort_restore_restamps();
+    std::println("\n=== #2528+#2934+#3019+#3041+#3058+#3075+#3743: see per-AC results above ===");
     return aura::test::g_failed ? 1 : 0;
 }
 
