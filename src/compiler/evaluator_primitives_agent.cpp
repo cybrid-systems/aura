@@ -5539,32 +5539,73 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             }
 
             orch_sched.ensure(2);
-            auto& scope =
+            auto& root =
                 aura::orch::get_or_create_agent_scope(static_cast<void*>(&ev), *orch_sched.sched);
+            // Issue #3726: one population per apply_workflow call. Closures
+            // were never AgentScope::spawn'd into the session root that
+            // Phase B watch_all / Phase C cancel_all walked, so RestartN /
+            // Cancel hit unrelated orch:scope-spawn agents (S). Dedicated
+            // child: watch/join/cancel/RestartN stay on this batch; root S
+            // is untouched. AgentSpec has no region_key — decide_isolation
+            // stays SSOT on Phase A TaskSpec (default 0 = Serialized).
+            auto& child = root.spawn_child();
             auto eval_mu = std::make_shared<std::mutex>();
             std::vector<aura::serve::parallel_orch::TaskSpec> tasks;
-            tasks.reserve(cids.size());
-            for (std::size_t ti = 0; ti < cids.size(); ++ti) {
-                const auto cid = cids[ti];
-                tasks.push_back(aura::serve::parallel_orch::TaskSpec{
-                    .body = [&ev, eval_mu, cid, ti]() -> aura::serve::parallel_orch::TaskResult {
-                        std::lock_guard<std::mutex> lock(*eval_mu);
-                        aura::serve::parallel_orch::TaskResult tr;
-                        tr.task_index = ti;
-                        auto opt = ev.apply_closure(cid, {});
-                        if (!opt) {
-                            tr.ok = false;
-                            tr.error = "apply-failed";
-                        } else if (types::is_error(*opt)) {
-                            tr.ok = false;
-                            tr.error = "task-error";
+            if (watch_scope) {
+                // Spawn into the child so watch_all / RestartN have specs_
+                // + handles. Empty Phase A so closures do not run twice.
+                for (std::size_t ti = 0; ti < cids.size(); ++ti) {
+                    const auto cid = cids[ti];
+                    aura::orch::AgentSpec spec;
+                    spec.name = "supervise-batch-" + std::to_string(ti);
+                    spec.body = [&ev, cid]() {
+                        try {
+                            std::lock_guard lock(ev.agent_apply_mu_);
+                            if (!agent_cid_live(ev, cid)) {
+                                agent_note_closure_freed_call(ev);
+                                return;
+                            }
+                            (void)ev.apply_closure(cid, {});
+                        } catch (...) {
+                            // [SILENCE-PRIM-#3726] agent body errors surface
+                            // via join/status only (#1669 class B).
                         }
-                        return tr;
-                    }});
+                    };
+                    spec.attach_mailbox = true;
+                    spec.mailbox_high_water = 256;
+                    spec.mutation_boundary = false;
+                    spec.tenant_id = ev.capability_tenant_id();
+                    (void)child.spawn(std::move(spec));
+                }
+            } else {
+                // watch-scope=#f: keep parallel_intend so FailFast residual
+                // still fires (#3495 AC1). Phase C cancel_all hits this
+                // child (no session-root agent S).
+                tasks.reserve(cids.size());
+                for (std::size_t ti = 0; ti < cids.size(); ++ti) {
+                    const auto cid = cids[ti];
+                    tasks.push_back(aura::serve::parallel_orch::TaskSpec{
+                        .body = [&ev, eval_mu, cid,
+                                 ti]() -> aura::serve::parallel_orch::TaskResult {
+                            std::lock_guard<std::mutex> lock(*eval_mu);
+                            aura::serve::parallel_orch::TaskResult tr;
+                            tr.task_index = ti;
+                            auto opt = ev.apply_closure(cid, {});
+                            if (!opt) {
+                                tr.ok = false;
+                                tr.error = "apply-failed";
+                            } else if (types::is_error(*opt)) {
+                                tr.ok = false;
+                                tr.error = "task-error";
+                            }
+                            return tr;
+                        }});
+                }
             }
 
             // Issue #3495: closed loop is apply_workflow (Phase A/B/C).
-            auto r = aura::orch::apply_workflow(*orch_sched.sched, scope, tasks, w,
+            // Issue #3726: pass the child, never the session root.
+            auto r = aura::orch::apply_workflow(*orch_sched.sched, child, tasks, w,
                                                 stall_timeout_ms, watch_scope);
 
             using aura::serve::parallel_orch::BatchStatus;
