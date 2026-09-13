@@ -195,6 +195,14 @@ bool HotUpdateRegistry::hard_invalidate_via_facade(const char* name, ReemitReaso
         // Issue #3351: same owner-scoped fanout for peer IR-cache. Do not
         // bump g_aot_table_epoch. Mark no-ops unless multi-eval live > 1.
         aura_aot_mark_peer_ir_name_soft_stale(name);
+        // Issue #3750: name-precise peer AOT slot stale so probe_fn_ptr
+        // refuses F without #3070 all-slot fanout. Owner skipped.
+        {
+            void* owner = aura_aot_get_reemit_owner_eval();
+            if (!owner)
+                owner = aura_aot_get_register_owner_eval();
+            aura_aot_soft_stale_peer_slots_for_name(name, owner);
+        }
     }
     // Issue #3377: owner-scoped hard invalidate must physically clear the
     // owner AOT slot for the mutated define. The owner-scoped branch of

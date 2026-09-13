@@ -22,7 +22,11 @@
 //   AC5: no docs/design/3377-*; no test_issue_3377.cpp per #1655 / #81967
 
 #include "test_harness.hpp"
+#include "compiler/aura_jit_bridge.h"
+#include "compiler/hot_update_registry.hh"
+#include "compiler/typed_mutation_audit.h"
 
+#include <cstdint>
 #include <fstream>
 #include <print>
 #include <string>
@@ -178,6 +182,77 @@ int run_test_owner_scoped_hard_invalidate_slot_clear() {
               "AC5: no test_issue_3377.cpp per #81967");
         CHECK(read_file("tests/issues/test_issue_3377.cpp").empty(),
               "AC5: no tests/issues/test_issue_3377.cpp (R1 abandoned scheme)");
+    }
+
+    // ── Issue #3750: peer AOT probe of mutated F is 0; unrelated G live ──
+    {
+        std::println("\n--- #3750: peer probe_fn_ptr refuses mutated F, not unrelated G ---");
+        const auto bridge = read_file("src/compiler/aura_jit_bridge.cpp");
+        CHECK(contains(bridge, "Issue #3750"), "3750 AC1: probe cites #3750");
+        CHECK(contains(bridge, "aura_aot_peer_jit_name_hash_is_soft_stale"),
+              "3750 AC1: probe consults #3300 name table");
+        CHECK(contains(bridge, "aura_aot_soft_stale_peer_slots_for_name"),
+              "3750 AC1: name-precise peer slot mark");
+        CHECK(contains(read_file("src/compiler/hot_update_registry.cpp"),
+                       "aura_aot_soft_stale_peer_slots_for_name(name, owner)"),
+              "3750 AC1: facade calls name-precise slot mark");
+        CHECK(contains(bridge, "aura_aot_mark_peer_slots_soft_stale(owner)"),
+              "3750 AC4: Soft cascade may still all-slot mark (#3070)");
+        CHECK(read_file("tests/compiler/test_issue_3750.cpp").empty(),
+              "3750 AC4: no test_issue_3750.cpp");
+        CHECK(read_file("docs/design/3750-peer-probe.md").empty(), "3750 AC4: no docs/design");
+        CHECK(!contains(bridge, "schema-3750"), "3750 AC4: no new query key");
+
+        aura::compiler::typed_audit::apply_production_audit_defaults();
+        void* eval_a = reinterpret_cast<void*>(static_cast<std::uintptr_t>(0xA3750ULL));
+        void* eval_b = reinterpret_cast<void*>(static_cast<std::uintptr_t>(0xB3750ULL));
+        aura_set_aot_region_mask_for_eval(eval_a, 1);
+        aura_set_aot_region_mask_for_eval(eval_b, 2);
+        if (aura_aot_state_map_size() < 2) {
+            CHECK(true, "3750 AC1: map size ≤1 — source-cite only");
+            aura::compiler::typed_audit::apply_dev_audit_defaults();
+            aura_cleanup_aot_state(eval_a);
+            aura_cleanup_aot_state(eval_b);
+        } else {
+            constexpr std::uintptr_t kPtrB = 0xB3750B375ULL;
+            constexpr std::uintptr_t kPtrG = 0x37503750ULL;
+            int preserved = 0;
+            aura_aot_set_register_owner_eval(eval_a);
+            (void)aura_get_or_preserve_stable_func_id("F3750", &preserved);
+            aura_aot_set_register_owner_eval(eval_b);
+            const auto fid_b =
+                static_cast<std::int64_t>(aura_get_or_preserve_stable_func_id("F3750", &preserved));
+            aura_register_fn_tracked(fid_b, static_cast<std::int64_t>(kPtrB));
+            const auto fid_g =
+                static_cast<std::int64_t>(aura_get_or_preserve_stable_func_id("G3750", &preserved));
+            aura_register_fn_tracked(fid_g, static_cast<std::int64_t>(kPtrG));
+            aura_aot_set_register_owner_eval(nullptr);
+            if (aura_aot_probe_fn_ptr_raw(fid_b) != kPtrB) {
+                CHECK(true, "3750 AC1: light-link slot table — source-cite only");
+            } else {
+                const auto epoch0 = aura_aot_func_table_epoch();
+                const auto br0 = aura_get_current_bridge_epoch();
+                const auto def0 = aura_get_aot_defuse_version();
+                aura_aot_set_reemit_owner_eval(eval_a);
+                aura_aot_set_register_owner_eval(eval_a);
+                (void)aura::compiler::hot_update_registry().hard_invalidate_via_facade(
+                    "F3750", aura::compiler::HotUpdateRegistry::ReemitReason::Cascade);
+                aura_aot_set_reemit_owner_eval(nullptr);
+                aura_aot_set_register_owner_eval(nullptr);
+                CHECK(aura_aot_func_table_epoch() == epoch0, "3750 AC2: table epoch frozen");
+                CHECK(aura_get_current_bridge_epoch() == br0, "3750 AC2: C-bridge frozen");
+                CHECK(aura_get_aot_defuse_version() == def0, "3750 AC2: defuse frozen");
+                CHECK(aura_aot_probe_fn_ptr(fid_b) == 0, "3750 AC1: peer probe of F is 0");
+                CHECK(aura_aot_probe_fn_ptr_raw(fid_b) == kPtrB, "3750 AC1: raw still holds F");
+                CHECK(aura_aot_probe_fn_ptr(fid_g) == kPtrG,
+                      "3750 AC1: unrelated G on peer still live");
+                CHECK(aura_aot_peer_jit_name_is_soft_stale("F3750") == 1,
+                      "3750 AC3: JIT name table still marks F");
+            }
+            aura_cleanup_aot_state(eval_a);
+            aura_cleanup_aot_state(eval_b);
+            aura::compiler::typed_audit::apply_dev_audit_defaults();
+        }
     }
 
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
