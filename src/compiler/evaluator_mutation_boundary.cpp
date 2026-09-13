@@ -3145,6 +3145,23 @@ Evaluator::MutationBoundaryGuard::MutationBoundaryGuard(
             f3438->set_outermost_linear_keep(std::move(keep3438));
         }
     }
+    // Issue #2686 / #3723: shared-pin inert BEFORE session-mid publish.
+    // Publishing then returning inert left session_mid_at_enter_ live
+    // while dtor skipped revoke (publish-then-inert). Session-bound
+    // grants bound to that mid survived "exit" and were not swept as
+    // orphans (the published mid was listed as live).
+    if (outermost && Evaluator::eval_current_holds_shared_pin()) {
+        inert_ = true;
+        success_flag_store(flag_, false);
+        if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics())) {
+            m->mutation_guard_try_acquire_reject_total.fetch_add(1, std::memory_order_relaxed);
+        }
+        if (!on_fiber) {
+            --(*slot);
+        }
+        is_outermost_ = false;
+        return;
+    }
     // Issue #2944: capture Mutation epoch mid for session-grant revoke on
     // outermost exit. Nested boundaries do not stamp (session_mid stays 0).
     if (outermost) {
@@ -3200,23 +3217,6 @@ Evaluator::MutationBoundaryGuard::MutationBoundaryGuard(
         admitted_region_key_ = *region_key;
         admitted_cone_mask_ =
             effective_region_cone_mask(Evaluator::parallel_task_cone_mask(), *region_key);
-    }
-    // Issue #2686: same-thread nested mutate under (eval-current) shared pin
-    // would unique_lock under shared_lock → EDEADLK. Fail-closed so concurrent
-    // fiber rebind remains safe while eval holds the pin for FlatAST walks.
-    if (outermost && Evaluator::eval_current_holds_shared_pin()) {
-        inert_ = true;
-        success_flag_store(flag_, false);
-        if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics())) {
-            m->mutation_guard_try_acquire_reject_total.fetch_add(1, std::memory_order_relaxed);
-        }
-        // Roll back depth bump so yield probes see no held boundary.
-        // Issue #3384: only decrement TLS when off-fiber (we wrote it).
-        if (!on_fiber) {
-            --(*slot);
-        }
-        is_outermost_ = false;
-        return;
     }
     if (outermost) {
         // Issue #1253: start hold-time clock for long-mutation policy.
@@ -3515,6 +3515,32 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
         if (linear_enforce_strict_pushed_) {
             aura::core::provenance::mutation_boundary_pop_linear_enforce_strict();
             linear_enforce_strict_pushed_ = false;
+        }
+        // Issue #3723 belt: if a mid was published before inert (race /
+        // old publish-then-inert order), still revoke + clear so grants
+        // cannot survive the inert dtor.
+        if (inert_ && ev_ && session_mid_at_enter_ != 0) {
+            using ::aura::core::capability::g_capability_registry;
+            auto& reg = g_capability_registry();
+            auto& met = ::aura::core::capability::g_capability_effect_metrics();
+            const auto mode = reg.sandbox_mode.load(std::memory_order_acquire);
+            const bool production =
+                mode == ::aura::core::capability::EffectSandboxMode::Restricted ||
+                mode == ::aura::core::capability::EffectSandboxMode::Strict;
+            if (production ||
+                met.capability_live_session_grants.load(std::memory_order_relaxed) != 0) {
+                std::lock_guard<std::mutex> lock(reg.mtx);
+                const auto fid = static_cast<std::uint32_t>(aura_fiber_current_id());
+                (void)reg.revoke_session_grants_for_mid_locked(session_mid_at_enter_,
+                                                               "session-mid-exit", fid);
+            }
+            aura::serve::clear_current_fiber_session_mid();
+            if (aura::compiler::g_mutation_hold_live_session_mid.load(std::memory_order_acquire) ==
+                session_mid_at_enter_) {
+                aura::compiler::g_mutation_hold_live_session_mid.store(0,
+                                                                       std::memory_order_release);
+            }
+            session_mid_at_enter_ = 0;
         }
         return; // Issue #1590: quota soft-reject never entered a boundary
     }

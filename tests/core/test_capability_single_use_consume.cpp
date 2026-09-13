@@ -29,6 +29,7 @@
 
 #include "test_harness.hpp"
 
+#include "compiler/mutation_hold_budget.h"
 #include "compiler/security_capabilities.h"
 #include "core/capability_model.hh"
 #include "core/sandbox.hh"
@@ -1522,6 +1523,236 @@ static void ac3561_5_source_cite() {
           "3561 AC5: no docs/design/3561-*");
 }
 
+// ── Issue #3723: inert Guard must not publish a session mid ─────────
+// Shared-pin inert used to resolve+publish session_mid_at_enter_ then
+// return without acquiring the hold; dtor skipped revoke. Session-bound
+// grants bound to that mid survived "exit" and were listed as live for
+// #3279 orphan sweep. Fix: inert before publish; belt-revoke if a mid
+// was already published.
+
+static void ac3723_drop_shared_pin() {
+    while (Evaluator::eval_current_holds_shared_pin())
+        Evaluator::note_eval_current_shared_exit();
+}
+
+static void ac3723_1_inert_ctor_does_not_publish_mid() {
+    std::println("\n--- #3723 AC1: shared-pin inert ctor does not publish session mid ---");
+    reset_all();
+    ac3723_drop_shared_pin();
+    aura::compiler::mutation_hold_live_reset_for_test();
+    set_mode(SandboxMode::Restricted);
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+    aura::core::bump_mutation_epoch(1);
+    CompilerService cs1;
+    CompilerService cs2;
+    auto& ev1 = cs1.evaluator();
+    ev1.set_effect_sandbox_mode(1);
+    ev1.clear_boundary_audit_mid_for_test();
+    Evaluator::note_eval_current_shared_enter();
+    bool ok = true;
+    {
+        Evaluator::MutationBoundaryGuard g(ev1, &ok);
+        CHECK(g.is_inert(), "3723 AC1: outermost Guard under shared pin is inert");
+        CHECK(!ok, "3723 AC1: success flag false on inert");
+        CHECK(!g.is_outermost(), "3723 AC1: inert clears is_outermost_");
+        CHECK(aura::serve::current_fiber_session_mid() == 0,
+              "3723 AC1: current_fiber_session_mid() is 0 after inert ctor");
+        CHECK(aura::compiler::g_mutation_hold_live_session_mid.load(std::memory_order_acquire) == 0,
+              "3723 AC1: g_mutation_hold_live_session_mid is 0 after inert ctor");
+    }
+    CHECK(aura::serve::current_fiber_session_mid() == 0,
+          "3723 AC1: fiber session mid still 0 after inert dtor");
+    CHECK(aura::compiler::g_mutation_hold_live_session_mid.load(std::memory_order_acquire) == 0,
+          "3723 AC1: hold session mid still 0 after inert dtor");
+    // Dual-Evaluator: Evaluator-2 must not observe Evaluator-1's
+    // inert-published mid as live (hold snapshot is process-global).
+    auto& ev2 = cs2.evaluator();
+    ev2.set_effect_sandbox_mode(1);
+    ev2.clear_boundary_audit_mid_for_test();
+    CHECK(aura::compiler::g_mutation_hold_live_session_mid.load(std::memory_order_acquire) == 0,
+          "3723 AC1: Evaluator-2 does not observe Evaluator-1 inert hold mid");
+    Evaluator::note_eval_current_shared_exit();
+    ac3723_drop_shared_pin();
+}
+
+static void ac3723_2_prior_session_untouched_inert_mid_unusable() {
+    std::println("\n--- #3723 AC2: prior live session grant unchanged; inert mid unusable ---");
+    reset_all();
+    ac3723_drop_shared_pin();
+    aura::compiler::mutation_hold_live_reset_for_test();
+    set_mode(SandboxMode::Restricted);
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+    aura::core::bump_mutation_epoch(1);
+    const auto prior_mid = aura::core::current_mutation_epoch();
+    constexpr std::uint64_t tenant = 3723;
+    ac3241_grant(tenant, "mut-3723-prior", prior_mid, 0);
+    CHECK(ac3241_grant_live(tenant, "mut-3723-prior"), "3723 AC2 pre: prior grant live");
+    aura::core::bump_mutation_epoch(3);
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_effect_sandbox_mode(1);
+    ev.set_capability_tenant_id(tenant);
+    ev.clear_boundary_audit_mid_for_test();
+    Evaluator::note_eval_current_shared_enter();
+    bool ok = true;
+    {
+        Evaluator::MutationBoundaryGuard g(ev, &ok);
+        CHECK(g.is_inert(), "3723 AC2: Guard inert under shared pin");
+        const auto leaked =
+            aura::compiler::g_mutation_hold_live_session_mid.load(std::memory_order_acquire);
+        CHECK(leaked == 0, "3723 AC2: no inert mid published to grant against");
+        if (leaked != 0) {
+            ac3241_grant(tenant, "mut-3723-inert", leaked, 0);
+        }
+    }
+    Evaluator::note_eval_current_shared_exit();
+    ac3723_drop_shared_pin();
+    CHECK(ac3241_grant_live(tenant, "mut-3723-prior"),
+          "3723 AC2: prior live session Mutate still live after inert dtor");
+    CHECK(ac3241_consume(tenant, prior_mid, 0),
+          "3723 AC2: prior grant still consumable after inert dtor");
+    const auto after_hold =
+        aura::compiler::g_mutation_hold_live_session_mid.load(std::memory_order_acquire);
+    CHECK(after_hold == 0, "3723 AC2: no published inert mid after dtor");
+    CHECK(!ac3241_consume(tenant, 0, 0), "3723 AC2: consume against mid 0 denies (no inert mid)");
+    CHECK(!ac3241_grant_live(tenant, "mut-3723-inert"),
+          "3723 AC2: grant issued against a leaked inert mid cannot stay live after dtor");
+    (void)g_capability_registry().revoke_session_grants_for_mid(prior_mid);
+}
+
+static void ac3723_3_next_live_enter_sweeps_inert_orphan() {
+    std::println("\n--- #3723 AC3: next live outermost enter sweeps aborted inert mid ---");
+    reset_all();
+    ac3723_drop_shared_pin();
+    aura::compiler::mutation_hold_live_reset_for_test();
+    set_mode(SandboxMode::Restricted);
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+    aura::core::bump_mutation_epoch(1);
+    const auto aborted_mid = aura::core::current_mutation_epoch();
+    constexpr std::uint64_t tenant = 37231;
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_effect_sandbox_mode(1);
+    ev.set_capability_tenant_id(tenant);
+    ev.clear_boundary_audit_mid_for_test();
+    Evaluator::note_eval_current_shared_enter();
+    bool inert_ok = true;
+    {
+        Evaluator::MutationBoundaryGuard inert(ev, &inert_ok);
+        CHECK(inert.is_inert(), "3723 AC3: first Guard inert");
+        CHECK(aura::compiler::g_mutation_hold_live_session_mid.load(std::memory_order_acquire) == 0,
+              "3723 AC3: inert mid not listed as live");
+    }
+    Evaluator::note_eval_current_shared_exit();
+    ac3723_drop_shared_pin();
+    ac3241_grant(tenant, "mut-3723-orphan", aborted_mid, 0);
+    CHECK(ac3241_grant_live(tenant, "mut-3723-orphan"), "3723 AC3 pre: orphan row live");
+    aura::core::bump_mutation_epoch(9);
+    ev.clear_boundary_audit_mid_for_test();
+    bool live_ok = true;
+    {
+        Evaluator::MutationBoundaryGuard live(ev, &live_ok);
+        CHECK(!live.is_inert(), "3723 AC3: next outermost Guard is live");
+        CHECK(live.is_outermost(), "3723 AC3: next Guard is outermost (depth not leaked)");
+        CHECK(!ac3241_grant_live(tenant, "mut-3723-orphan"),
+              "3723 AC3: #3279 sweep on live enter revokes aborted inert mid");
+        CHECK(!ac3241_consume(tenant, aborted_mid, 0),
+              "3723 AC3: orphan bound to aborted inert mid is not consumable");
+    }
+    CHECK(!ac3241_grant_live(tenant, "mut-3723-orphan"),
+          "3723 AC3: orphan stays revoked after live Guard dtor");
+    (void)g_capability_registry().revoke_session_grants_for_mid(aborted_mid);
+}
+
+static void ac3723_4_steal_resume_no_false_allow() {
+    std::println("\n--- #3723 AC4: inert Guard does not false-allow on steal × resume ---");
+    reset_all();
+    ac3723_drop_shared_pin();
+    aura::compiler::mutation_hold_live_reset_for_test();
+    set_mode(SandboxMode::Restricted);
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+    aura::core::bump_mutation_epoch(1);
+    const auto prior_mid = aura::core::current_mutation_epoch();
+    constexpr std::uint64_t tenant = 37232;
+    ac3241_grant(tenant, "mut-3723-resume", prior_mid, 0);
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_effect_sandbox_mode(1);
+    ev.set_capability_tenant_id(tenant);
+    ev.clear_boundary_audit_mid_for_test();
+    Evaluator::note_eval_current_shared_enter();
+    bool ok = true;
+    {
+        Evaluator::MutationBoundaryGuard g(ev, &ok);
+        CHECK(g.is_inert(), "3723 AC4: Guard inert");
+    }
+    Evaluator::note_eval_current_shared_exit();
+    ac3723_drop_shared_pin();
+    // Steal/abort against mid 0 (nothing published) is a no-op; must not
+    // create a resume path that false-allows an ungranted effect.
+    const auto n =
+        aura::core::capability::revoke_session_grants_on_steal_or_abort(0, /*steal=*/true);
+    CHECK(n == 0, "3723 AC4: steal against unpublished inert mid revokes 0");
+    CHECK(ac3241_consume(tenant, prior_mid, 0),
+          "3723 AC4: prior grant still allowed (over-deny would also be OK; false-allow is not)");
+    (void)g_capability_registry().revoke_session_grants_for_mid(prior_mid);
+    CHECK(!ev.require_effect(kEffectMutate, "3723-ac4-no-grant"),
+          "3723 AC4: require_effect without a matching grant still denies (no false-allow)");
+    const auto steal = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+    const auto bound = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto pin_mark = bound.find("Issue #2686 / #3723");
+    const auto pin_return = bound.find("return;", pin_mark);
+    const auto publish = bound.find("set_current_fiber_session_mid", pin_mark);
+    CHECK(pin_mark != std::string::npos, "3723 AC4: ctor cites #3723 before publish");
+    CHECK(pin_return != std::string::npos && publish != std::string::npos && pin_return < publish,
+          "3723 AC4: inert return is before set_current_fiber_session_mid");
+    CHECK(steal.find("set_resume_had_mismatch") != std::string::npos,
+          "3723 AC4: steal resume mismatch hook still exists");
+    (void)g_capability_registry().revoke_session_grants_for_mid(prior_mid);
+}
+
+static void ac3723_5_soft_source_and_no_invent() {
+    std::println("\n--- #3723 AC5: Soft/Off unchanged; no new query key; no test_issue_N ---");
+    reset_all();
+    ac3723_drop_shared_pin();
+    aura::compiler::mutation_hold_live_reset_for_test();
+    set_mode(SandboxMode::Off);
+    aura::core::bump_mutation_epoch(1);
+    const auto prior_mid = aura::core::current_mutation_epoch();
+    constexpr std::uint64_t tenant = 37233;
+    ac3241_grant(tenant, "mut-3723-soft", prior_mid, 0);
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.clear_boundary_audit_mid_for_test();
+    Evaluator::note_eval_current_shared_enter();
+    bool ok = true;
+    {
+        Evaluator::MutationBoundaryGuard g(ev, &ok);
+        CHECK(g.is_inert(), "3723 AC5: Soft shared-pin still inert (zero extra publish)");
+        CHECK(aura::compiler::g_mutation_hold_live_session_mid.load(std::memory_order_acquire) == 0,
+              "3723 AC5: Soft inert does not publish hold mid");
+    }
+    Evaluator::note_eval_current_shared_exit();
+    ac3723_drop_shared_pin();
+    CHECK(ac3241_grant_live(tenant, "mut-3723-soft"),
+          "3723 AC5: Soft/Off inert dtor does not revoke prior session grant");
+    const auto bound = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    CHECK(bound.find("Issue #2686 / #3723") != std::string::npos, "3723 AC5: ctor cites #3723");
+    CHECK(bound.find("Issue #3723 belt") != std::string::npos, "3723 AC5: inert dtor belt cites");
+    CHECK(bound.find("revoke_session_grants_for_mid_locked") != std::string::npos,
+          "3723 AC5: belt still revokes if a mid was published");
+    const auto q = read_file("src/compiler/evaluator_primitives_observability.cpp");
+    CHECK(q.find("query:inert-session") == std::string::npos, "3723 AC5: no new query key");
+    CHECK(q.find("query:3723") == std::string::npos, "3723 AC5: no query:3723");
+    CHECK(!std::filesystem::exists("tests/core/test_issue_3723.cpp"),
+          "3723 AC5: no test_issue_3723.cpp");
+    CHECK(!std::filesystem::exists("tests/compiler/test_issue_3723.cpp"),
+          "3723 AC5: no tests/compiler/test_issue_3723.cpp");
+    CHECK(!std::filesystem::exists("docs/design/3723-inert-session-mid.md"),
+          "3723 AC5: no docs/design/3723-*");
+    (void)g_capability_registry().revoke_session_grants_for_mid(prior_mid);
+}
+
 int run_test_capability_single_use_consume() {
     std::println("=== Issue #2586/#3142/#3144: single-use + SessionBound revoke + kCapWildcard "
                  "effects_for strip ===");
@@ -2427,6 +2658,12 @@ int run_test_capability_single_use_consume() {
         ac3436_2_durable_named_no_deadlock();
         ac3436_3_caller_principal_ssot();
         ac3436_4_soft_off_and_source_cite();
+        // Issue #3723: inert Guard must not publish a session mid.
+        ac3723_1_inert_ctor_does_not_publish_mid();
+        ac3723_2_prior_session_untouched_inert_mid_unusable();
+        ac3723_3_next_live_enter_sweeps_inert_orphan();
+        ac3723_4_steal_resume_no_false_allow();
+        ac3723_5_soft_source_and_no_invent();
 
         std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
         return g_failed == 0 ? 0 : 1;
@@ -2441,6 +2678,17 @@ int run_test_grant_effect_capability_session_3561() {
     ac3561_4_string_mirror_keeps_session();
     ac3561_5_source_cite();
     std::println("\n=== #3561 results: {} passed, {} failed ===", g_passed, g_failed);
+    return g_failed == 0 ? 0 : 1;
+}
+
+int run_test_inert_session_mid_3723() {
+    std::println("=== Issue #3723: inert MutationBoundaryGuard does not publish session mid ===");
+    ac3723_1_inert_ctor_does_not_publish_mid();
+    ac3723_2_prior_session_untouched_inert_mid_unusable();
+    ac3723_3_next_live_enter_sweeps_inert_orphan();
+    ac3723_4_steal_resume_no_false_allow();
+    ac3723_5_soft_source_and_no_invent();
+    std::println("\n=== #3723 results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
 
