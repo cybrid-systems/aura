@@ -348,6 +348,24 @@ void CompilerService::mark_define_dirty(const std::string& name) {
     if (aura::compiler::typed_audit::production_defaults_active()) {
         HotUpdateRegistry::g_dual_track_bypass_prevented_total.fetch_add(1,
                                                                          std::memory_order_relaxed);
+        // Issue #3751: stamp reemit-owner TLS so multi-eval C ABI does
+        // not reject the facade decide_and_reemit (empty owner).
+        struct ReemitEvalOwnerGuard {
+            void* prev_reemit;
+            void* prev_reg;
+            explicit ReemitEvalOwnerGuard(void* e) noexcept
+                : prev_reemit(aura_aot_get_reemit_owner_eval())
+                , prev_reg(aura_aot_get_register_owner_eval()) {
+                aura_aot_set_reemit_owner_eval(e);
+                aura_aot_set_register_owner_eval(e);
+            }
+            ~ReemitEvalOwnerGuard() noexcept {
+                aura_aot_set_reemit_owner_eval(prev_reemit);
+                aura_aot_set_register_owner_eval(prev_reg);
+            }
+            ReemitEvalOwnerGuard(const ReemitEvalOwnerGuard&) = delete;
+            ReemitEvalOwnerGuard& operator=(const ReemitEvalOwnerGuard&) = delete;
+        } owner_guard(static_cast<void*>(&evaluator_));
         if (aura::compiler::hot_update_registry().hard_invalidate_via_facade(
                 name.c_str(), HotUpdateRegistry::ReemitReason::Cascade)) {
             // Issue #3221: cascade dirty is Cascade, not ResidualForceHeal
@@ -886,6 +904,24 @@ void CompilerService::invalidate_function(const std::string& name) {
     if (aura::compiler::typed_audit::production_defaults_active()) {
         HotUpdateRegistry::g_dual_track_bypass_prevented_total.fetch_add(1,
                                                                          std::memory_order_relaxed);
+        // Issue #3751: stamp reemit-owner TLS so multi-eval C ABI does
+        // not reject the facade decide_and_reemit (empty owner).
+        struct ReemitEvalOwnerGuard {
+            void* prev_reemit;
+            void* prev_reg;
+            explicit ReemitEvalOwnerGuard(void* e) noexcept
+                : prev_reemit(aura_aot_get_reemit_owner_eval())
+                , prev_reg(aura_aot_get_register_owner_eval()) {
+                aura_aot_set_reemit_owner_eval(e);
+                aura_aot_set_register_owner_eval(e);
+            }
+            ~ReemitEvalOwnerGuard() noexcept {
+                aura_aot_set_reemit_owner_eval(prev_reemit);
+                aura_aot_set_register_owner_eval(prev_reg);
+            }
+            ReemitEvalOwnerGuard(const ReemitEvalOwnerGuard&) = delete;
+            ReemitEvalOwnerGuard& operator=(const ReemitEvalOwnerGuard&) = delete;
+        } owner_guard(static_cast<void*>(&evaluator_));
         if (aura::compiler::hot_update_registry().hard_invalidate_via_facade(
                 name.c_str(), HotUpdateRegistry::ReemitReason::Cascade)) {
             // Issue #3221: hard invalidate is Cascade, not ResidualForceHeal
