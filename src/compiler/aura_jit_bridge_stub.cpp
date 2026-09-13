@@ -1212,6 +1212,9 @@ extern "C" __attribute__((weak)) void aura_force_drain_old_so(void) {}
 extern "C" __attribute__((weak)) std::uint64_t aura_reload_old_so_staged_total_v_read(void) {
     return 0;
 }
+extern "C" __attribute__((weak)) std::uint64_t aura_reload_old_so_pending_v_read(void) {
+    return 0;
+}
 extern "C" __attribute__((weak)) void aura_reset_epoch_invariant_periodic_for_test(void) {}
 
 // Issue #2668: event-driven walk counters (distinct from periodic).
