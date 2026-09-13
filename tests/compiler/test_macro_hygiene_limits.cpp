@@ -551,8 +551,23 @@ static void ac3651_2_deny_codes_widened_predicate() {
     // Issue #3685: the widened pass-loop guard moved to the all-variant
     // (the base predicate consults only own-walk codes — sibling-refuse
     // stamps must not abort an in-flight clone).
-    CHECK(cpp.find("production_surface && any_expand &&\n                "
-                   "inner_expand_production_limit_deny_all()") != std::string::npos,
+    // Whitespace-normalized match: clang-format rewraps the pass-loop
+    // consult between one-line and two-line shapes across passes.
+    std::string flat;
+    flat.reserve(cpp.size());
+    bool prev_ws = false;
+    for (char c : cpp) {
+        if (std::isspace(static_cast<unsigned char>(c)) != 0) {
+            prev_ws = true;
+            continue;
+        }
+        if (prev_ws)
+            flat.push_back(' ');
+        prev_ws = false;
+        flat.push_back(c);
+    }
+    CHECK(flat.find("production_surface && any_expand && "
+                    "inner_expand_production_limit_deny_all()") != std::string::npos,
           "3651 AC2: widened guard present (deny_all; #3685)");
     CHECK(cpp.find("kHygieneLimitReasonStealAbort") != std::string::npos &&
               cpp.find("kHygieneLimitReasonCapabilityDeny") != std::string::npos,
