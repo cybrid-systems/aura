@@ -40,6 +40,7 @@
 #include "test_harness.hpp"
 
 #include "compiler/typed_mutation_audit.h"
+#include "core/sandbox.hh"
 #include "orch/agent_scope.h"
 #include "orch/agent_spawn.h"
 #include "serve/scheduler.h"
@@ -54,18 +55,31 @@
 #include <string_view>
 
 import std;
+import aura.compiler.service;
+import aura.compiler.value;
 
 namespace {
 
+using aura::compiler::CompilerService;
 using aura::compiler::typed_audit::apply_production_audit_defaults;
+using aura::compiler::types::as_bool;
+using aura::compiler::types::as_int;
+using aura::compiler::types::is_bool;
+using aura::compiler::types::is_int;
 using aura::orch::AgentScope;
 using aura::orch::AgentSpec;
 using aura::orch::g_orch_module_stats;
 using aura::orch::load_mailbox_bp_recent;
 using aura::orch::note_mailbox_bp_recent_event;
+using aura::orch::reset_all_agent_scopes_for_test;
 using aura::serve::Scheduler;
 using aura::test::g_failed;
 using aura::test::g_passed;
+
+static void ac3730_set_sandbox_off() {
+    ::setenv("AURA_SANDBOX", "off", 1);
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+}
 
 static std::string read_file(const char* path) {
     for (const auto& p :
@@ -708,7 +722,115 @@ int run_test_per_scope_bp_admit() {
               "3461 AC4: process bucket untouched");
     }
 
-    std::println("\n=== #2591/#2948/#3015/#3147/#3337: {}/{} checks passed ===", g_passed,
+    // ── Issue #3730: orch:scope-spawn BP/producer kwargs + inherit ──
+    {
+        std::println("\n--- #3730 AC1: scope-spawn :producer-bp-budget helper_stop ---");
+        reset_all_agent_scopes_for_test();
+        ac3730_set_sandbox_off();
+        set_prod(false);
+        CompilerService cs1;
+        auto spawned = cs1.eval(R"((hash-ref (orch:scope-spawn "a-3730" :producer-bp-budget 3
+                                            :high-water 1 :keepalive-interval-ms 50) "ok"))");
+        CHECK(spawned && is_bool(*spawned) && as_bool(*spawned), "3730 AC1: scope-spawn ok");
+        auto* sc1 = aura::orch::find_agent_scope(static_cast<void*>(&cs1.evaluator()));
+        CHECK(sc1 && !sc1->handles().empty(), "3730 AC1: scope has the handle");
+        auto& h1 = sc1->handles_mut()[0];
+        CHECK(h1.producer_bp_budget == 3, "3730 AC1: producer_bp_budget landed on the handle");
+        CHECK(h1.mailbox != nullptr, "3730 AC1: mailbox attached");
+        {
+            aura::serve::mf_mailbox::MailMessage fill;
+            fill.payload = "fill0";
+            (void)h1.mailbox->push(std::move(fill));
+        }
+        int bp_n = 0;
+        for (int i = 0; i < 5; ++i) {
+            aura::serve::mf_mailbox::MailMessage m;
+            m.payload = "storm";
+            auto st = aura::orch::agent_send(h1, std::move(m));
+            if (st == aura::serve::mf_mailbox::PushStatus::Backpressure)
+                ++bp_n;
+        }
+        CHECK(bp_n >= 3, "3730 AC1: at least 3 BP outcomes");
+        CHECK(h1.consecutive_bp_count >= 3, "3730 AC1: consecutive BP ≥3");
+        CHECK(h1.liveness && h1.liveness->helper_stop.load(std::memory_order_relaxed),
+              "3730 AC1: helper_stop set (same as spawn-agent)");
+        reset_all_agent_scopes_for_test();
+
+        std::println("\n--- #3730 AC2: :bp-admit-threshold 0 deny-class bp-admit ---");
+        ac3730_set_sandbox_off();
+        set_prod(true);
+        CompilerService cs2;
+        auto rej = cs2.eval(R"(
+            (let ((h (orch:scope-spawn "rej-3730" :bp-admit-threshold 0)))
+              (if (and (not (hash-ref h "ok"))
+                       (string=? (hash-ref h "deny-class" "") "bp-admit"))
+                  1 0))
+        )");
+        CHECK(rej && is_int(*rej) && as_int(*rej) == 1,
+              "3730 AC2: admit-reject deny_class=bp-admit");
+        auto* sc2 = aura::orch::find_agent_scope(static_cast<void*>(&cs2.evaluator()));
+        CHECK(sc2 && !sc2->handles().empty(), "3730 AC2: failed handle recorded");
+        const auto& h2 = sc2->handles()[0];
+        CHECK(!h2.ok, "3730 AC2: handle ok=false");
+        CHECK(h2.reserved_memory_bytes == 0, "3730 AC2: no leaked reservation");
+        CHECK(!h2.fiber || h2.fiber->is_done(), "3730 AC2: no ghost live body");
+        set_prod(false);
+        reset_all_agent_scopes_for_test();
+
+        std::println("\n--- #3730 AC4: #3015 inherit still fills empty; explicit wins ---");
+        {
+            unsetenv("AURA_SANDBOX");
+            set_prod(true);
+            CHECK(aura::orch::production_scope_bp_inherit(), "3730 AC4: inherit armed");
+            AgentScope sa(sched);
+            const auto inh0 =
+                g_orch_module_stats.spawn_bp_scope_inherited_total.load(std::memory_order_relaxed);
+            auto spec_ex = make_spec("ex-3730");
+            spec_ex.bp_scope_id = "explicit-3730";
+            auto& hex = sa.spawn(std::move(spec_ex));
+            CHECK(hex.ok, "3730 AC4: explicit spawn admits");
+            CHECK(hex.bp_scope_id == "explicit-3730", "3730 AC4: explicit id wins");
+            CHECK(g_orch_module_stats.spawn_bp_scope_inherited_total.load(
+                      std::memory_order_relaxed) == inh0,
+                  "3730 AC4: explicit does not bump inherit");
+            auto spec_empty = make_spec("empty-3730");
+            auto& hem = sa.spawn(std::move(spec_empty));
+            CHECK(hem.ok, "3730 AC4: empty spawn admits");
+            CHECK(hem.bp_scope_id == sa.bp_scope_id(), "3730 AC4: empty still inherits");
+            CHECK(g_orch_module_stats.spawn_bp_scope_inherited_total.load(
+                      std::memory_order_relaxed) == inh0 + 1,
+                  "3730 AC4: inherit bumped for empty");
+            set_prod(false);
+        }
+
+        std::println("\n--- #3730 AC5: no invent ---");
+        const auto prim = read_file("src/compiler/evaluator_primitives_agent.cpp");
+        const auto spawn_add = prim.find("add(\"orch:scope-spawn\"");
+        const auto watch_add = prim.find("add(\"orch:scope-watch\"");
+        CHECK(spawn_add != std::string::npos && watch_add != std::string::npos &&
+                  spawn_add < watch_add,
+              "3730 AC5: scope-spawn prim located");
+        if (spawn_add != std::string::npos && watch_add != std::string::npos &&
+            spawn_add < watch_add) {
+            const auto body = prim.substr(spawn_add, watch_add - spawn_add);
+            CHECK(body.find("producer-bp-budget") != std::string::npos,
+                  "3730 AC5: scope-spawn parses :producer-bp-budget");
+            CHECK(body.find("bp-admit-threshold") != std::string::npos,
+                  "3730 AC5: scope-spawn parses :bp-admit-threshold");
+            CHECK(body.find("bp-scope-id") != std::string::npos,
+                  "3730 AC5: scope-spawn parses :bp-scope-id");
+        }
+        CHECK(prim.find("query:3730") == std::string::npos, "3730 AC5: no new query key");
+        CHECK(prim.find("class AgentRegistry") == std::string::npos, "3730 AC5: no AgentRegistry");
+        CHECK(read_file("tests/orch/test_issue_3730.cpp").empty(),
+              "3730 AC5: no test_issue_3730.cpp");
+        CHECK(read_file("docs/design/3730-scope-spawn-bp.md").empty(), "3730 AC5: no docs/design");
+        const auto scope_h = read_file("src/orch/agent_scope.h");
+        CHECK(scope_h.find("Issue #3730") != std::string::npos,
+              "3730 AC5: watch_all cites keepalive=0 skip");
+    }
+
+    std::println("\n=== #2591/#2948/#3015/#3147/#3337/#3730: {}/{} checks passed ===", g_passed,
                  g_passed + g_failed);
     return g_failed == 0 ? 0 : 1;
 }

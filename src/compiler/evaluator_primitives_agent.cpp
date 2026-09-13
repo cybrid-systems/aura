@@ -3953,8 +3953,17 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 ++i;
             }
             // Issue #2588: scope-spawn kw args (parallel to orch:spawn-agent).
+            // Issue #3730: mailbox BP / producer / credit / attach parity —
+            // omitted kwargs keep today's defaults (attach_mailbox=true,
+            // high_water=256, no producer budget, no admit override).
             std::uint32_t keepalive_interval_ms = 0;
             std::uint32_t max_no_yield_ms = 0; // #2540
+            bool attach_mailbox = true;
+            std::size_t high_water = 256;
+            std::optional<std::uint64_t> bp_admit_threshold{};
+            std::string bp_scope_id{};
+            std::uint32_t producer_bp_budget = 0;
+            std::uint32_t mailbox_credit = 0;
             // Issue #3434: explicit tenant for this spawn. 0 = inherit
             // Evaluator capability tenant (fallback below).
             std::uint64_t tenant_id = 0;
@@ -3974,6 +3983,29 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 } else if ((k == "max-no-yield-ms" || k == "max_no_yield_ms") &&
                            types::is_int(val)) {
                     max_no_yield_ms =
+                        static_cast<std::uint32_t>(std::max<std::int64_t>(0, types::as_int(val)));
+                } else if ((k == "attach-mailbox" || k == "attach_mailbox") &&
+                           types::is_bool(val)) {
+                    attach_mailbox = types::as_bool(val);
+                } else if ((k == "high-water" || k == "high_water" || k == "mailbox-high-water") &&
+                           types::is_int(val)) {
+                    high_water =
+                        static_cast<std::size_t>(std::max<std::int64_t>(1, types::as_int(val)));
+                } else if ((k == "bp-admit-threshold" || k == "bp_admit_threshold") &&
+                           types::is_int(val)) {
+                    const auto raw = types::as_int(val);
+                    if (raw >= 0)
+                        bp_admit_threshold = static_cast<std::uint64_t>(raw);
+                } else if ((k == "bp-scope-id" || k == "bp_scope_id") && types::is_string(val)) {
+                    const auto sid = types::as_string_idx(val);
+                    if (sid < ev.string_heap_.size())
+                        bp_scope_id = ev.string_heap_[sid];
+                } else if ((k == "producer-bp-budget" || k == "producer_bp_budget") &&
+                           types::is_int(val)) {
+                    producer_bp_budget =
+                        static_cast<std::uint32_t>(std::max<std::int64_t>(0, types::as_int(val)));
+                } else if ((k == "mailbox-credit" || k == "mailbox_credit") && types::is_int(val)) {
+                    mailbox_credit =
                         static_cast<std::uint32_t>(std::max<std::int64_t>(0, types::as_int(val)));
                 } else if ((k == "tenant-id" || k == "tenant_id") && types::is_int(val)) {
                     // Issue #3434: explicit tenant for this spawn. 0 →
@@ -4043,10 +4075,14 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             aura::orch::AgentSpec spec;
             spec.name = name;
             spec.body = std::move(body);
-            spec.attach_mailbox = true; // scope handles mailbox supervision
-            spec.mailbox_high_water = 256;
+            spec.attach_mailbox = attach_mailbox;
+            spec.mailbox_high_water = high_water;
             spec.keepalive_interval_ms = keepalive_interval_ms;
             spec.max_no_yield_ms = max_no_yield_ms;
+            spec.bp_admit_threshold = bp_admit_threshold; // Issue #3730 / #2591
+            spec.bp_scope_id = std::move(bp_scope_id);    // empty → #3015 inherit
+            spec.producer_bp_budget = producer_bp_budget;
+            spec.mailbox_credit = mailbox_credit;
             // Issue #3434: tenant mandate — explicit :tenant-id wins, else
             // inherit the Evaluator capability tenant (mirrors orch:spawn-agent).
             spec.tenant_id = tenant_id != 0 ? tenant_id : ev.capability_tenant_id();

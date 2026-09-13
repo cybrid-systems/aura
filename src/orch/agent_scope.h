@@ -864,6 +864,16 @@ public:
                     break;
                 case KeepaliveWatchStatus::Closed:
                     ++r.closed;
+                    // Issue #3730: watch_agent_liveness returns Closed when
+                    // keepalive_interval_ms==0, so on_stall=RestartN never
+                    // sees Stalled. Production surfaces the existing skip
+                    // counter rather than a silent Closed. Soft: note_* is
+                    // a production_defaults load only (no extra atomic).
+                    if (policy.on_stall == AgentFailureAction::RestartN &&
+                        h.keepalive_interval_ms == 0) {
+                        ++r.restart_skipped_no_spec;
+                        note_restart_skipped_no_spec_(h, /*cancel=*/false);
+                    }
                     break;
             }
         }

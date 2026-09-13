@@ -627,7 +627,11 @@ See [`docs/architecture.md`](../../docs/architecture.md) · [`docs/wire-formats.
 Aura language surface for the C++ `AgentScope` (#2083 / #2161 / #2537) — multi-agent supervision root bound to Evaluator/session, **no process-global registry** (MVP linter still forbids `AgentRegistry` / `global_agent_registry` / `conduct_parallel`). Name bookkeeping remains `OrchAgentNameTable` only where `orch:spawn-agent` already registers; the scope is a handle container, not an agent map.
 
 ```aura
-(orch:scope-spawn name [body] [:keepalive-ms n] [:max-no-yield-ms n] ...)
+(orch:scope-spawn name [body]
+                  [:keepalive-interval-ms n] [:max-no-yield-ms n]
+                  [:bp-admit-threshold n] [:bp-scope-id s]
+                  [:producer-bp-budget n] [:mailbox-credit n]
+                  [:attach-mailbox bool] ...)
 (orch:scope-watch [:stall-ms n]
                   [:policy 'cancel|'report-only|'restart-n]
                   [:max-restarts n]
@@ -650,8 +654,12 @@ Semantics:
    per-Evaluator slot is dropped (fresh `scope-spawn` re-creates).
 3. **`orch:scope-watch`** — maps to `AgentScope::watch_all(stall_timeout_ms,
    AgentFailurePolicy)`. `RestartN` re-spawns under the same `AgentSpec`
-   (#2229 sibling). Counts: alive / stalled / cancelled / done / closed /
-   restart-count (incremental from RestartN bumps on the same watch call).
+   (#2229 sibling) and needs `keepalive-interval-ms > 0` (mailbox keepalive
+   or ProgressClock + `orch:agent-touch`); keepalive=0 is Closed and
+   production surfaces `restart-skipped-no-spec` rather than a silent
+   restart (#3730 / #3250). Counts: alive / stalled / cancelled / done /
+   closed / restart-count (incremental from RestartN bumps on the same
+   watch call).
 4. **Hierarchy addressing (#2537 / #2631 / #3444)** — `orch:scope-child`
    returns `child-index` / `scope-path` matching `directory_snapshot`
    (`"0"`, `"0/1"`). `orch:scope-spawn` / `watch` / `join-all` /

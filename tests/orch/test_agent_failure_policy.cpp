@@ -1150,6 +1150,49 @@ int run_test_agent_failure_policy() {
         CHECK(true, "3250 AC5: no AgentRegistry / no test_issue_3250.cpp");
     }
 
+    // ── Issue #3730: RestartN + keepalive=0 is observable skip ──
+    {
+        std::println("\n--- #3730 AC3: watch_all RestartN keepalive=0 ---");
+        Scheduler sched(1);
+        SchedRunner runner(sched);
+        AgentScope scope(sched);
+        AgentSpec spec;
+        spec.name = "3730-ka0";
+        spec.attach_mailbox = true;
+        spec.keepalive_interval_ms = 0;
+        spec.body = [] {};
+        auto& h = scope.spawn(std::move(spec));
+        CHECK(h.ok, "3730 AC3: spawn ok");
+        CHECK(h.keepalive_interval_ms == 0, "3730 AC3: keepalive=0");
+        AgentFailurePolicy pol;
+        pol.on_stall = AgentFailureAction::RestartN;
+        pol.max_restarts = 2;
+        const auto rst0 = g_orch_module_stats.agent_restart_total.load(std::memory_order_relaxed);
+        const auto skip0 =
+            g_orch_module_stats.agent_restart_skipped_no_spec_total.load(std::memory_order_relaxed);
+        ac3208_set_prod(false);
+        auto wr_soft = scope.watch_all(20, pol);
+        CHECK(wr_soft.closed >= 1, "3730 AC3: Soft Closed (no stall fuel)");
+        CHECK(wr_soft.restart_ok == 0, "3730 AC3: Soft no silent restart");
+        CHECK(g_orch_module_stats.agent_restart_skipped_no_spec_total.load(
+                  std::memory_order_relaxed) == skip0,
+              "3730 AC3: Soft no extra atomic");
+        CHECK(g_orch_module_stats.agent_restart_total.load(std::memory_order_relaxed) == rst0,
+              "3730 AC3: Soft restart_total unchanged");
+        ac3208_set_prod(true);
+        auto wr_prod = scope.watch_all(20, pol);
+        CHECK(wr_prod.closed >= 1, "3730 AC3: production Closed");
+        CHECK(wr_prod.restart_ok == 0, "3730 AC3: production no silent restart");
+        CHECK(wr_prod.restart_skipped_no_spec >= 1,
+              "3730 AC3: production skip on the watch result");
+        CHECK(g_orch_module_stats.agent_restart_skipped_no_spec_total.load(
+                  std::memory_order_relaxed) == skip0 + 1,
+              "3730 AC3: production restart-skipped-no-spec +1");
+        CHECK(g_orch_module_stats.agent_restart_total.load(std::memory_order_relaxed) == rst0,
+              "3730 AC3: production restart_total unchanged");
+        ac3208_set_prod(false);
+    }
+
     std::println("\n=== Results: {} passed, {} failed ===", aura::test::g_passed,
                  aura::test::g_failed);
     return aura::test::g_failed ? 1 : 0;
