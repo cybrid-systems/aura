@@ -1156,7 +1156,7 @@ static void ac3615_2_soft_erased_hole_take_full() {
     const auto cone_pos = svc.find("fail_closed_soft_dual_graph_parity_before_partial_cone_");
     CHECK(cone_pos != std::string::npos, "3615 AC2: cone helper present");
     if (cone_pos != std::string::npos) {
-        const auto win = svc.substr(cone_pos, 6000);
+        const auto win = svc.substr(cone_pos, 8500);
         // Soft-erased hole detection: walks each root, checks
         // dep_graph_[root].called_by empty + node_dep has encode_fn_node
         // dependents → divergent → parity fail.
@@ -1229,6 +1229,126 @@ static void ac3615_5_linter_self_test() {
     const std::string cmd = "python3 scripts/check_dual_graph_parity_cone_3615.py --self-test";
     const int rc = std::system(cmd.c_str());
     CHECK(rc == 0, "3615 AC5: linter --self-test exits 0");
+}
+
+// ── Issue #3761: hole remirror must dirty node-only callers first ──
+// #3615 detects Soft-erased holes then rebuild_node_dep_graph_from_string
+// (string SSOT). Extra node edges do not fail graphs_consistent. Without
+// a pre-remirror snapshot, G is dropped from node_dep and never marked,
+// so lookup_define_v2(g) stays a clean hit of pre-mutate F.
+
+static void ac3761_1_node_only_caller_this_sweep() {
+    std::println("\n--- #3761 AC1: node-only caller G of F peels this sweep ---");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    apply_production_audit_defaults();
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define f (lambda () 1)) (define g (lambda () (f)))\")").has_value(),
+          "3761 AC1: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3761 AC1: eval");
+    if (!cs.get_define_v2("g"))
+        (void)cs.eval("(compile:cache-define \"g\")");
+    CHECK(cs.get_define_v2("g") != nullptr, "3761 AC1: g cached");
+    cs.public_record_dependency("g", "f");
+    cs.inject_drop_string_calls_keep_node_for_test("g", "f");
+    CHECK(!cs.public_dep_graph_has_edge("g", "f"), "3761 AC1: string called_by of f empty");
+    CHECK(cs.public_node_dep_has_mirror_edge("g", "f"), "3761 AC1: node-only G←F remains");
+    CHECK(cs.public_graphs_consistent(),
+          "3761 AC1: extra node edge is not a string-authority fail");
+    auto& m = cs.metrics();
+    const auto fail0 = m.dual_dep_graph_parity_fail_total.load(std::memory_order_relaxed);
+    const auto hash_g = cs.get_define_v2("g")->source_hash;
+    std::vector<std::string> cone{"f"};
+    bool want = true;
+    CHECK(cs.public_fail_closed_cone_parity_for_test(cone, want),
+          "3761 AC1: hole helper took fail-closed");
+    CHECK(!want, "3761 AC1: want_partial cleared");
+    bool g_in_cone = false;
+    for (const auto& n : cone) {
+        if (n == "g")
+            g_in_cone = true;
+    }
+    CHECK(g_in_cone, "3761 AC1: node-only g entered peel set before remirror");
+    const auto* ge = cs.get_define_v2("g");
+    CHECK(ge && (ge->dirty || ge->dirty_block_count() > 0),
+          "3761 AC1: g is body-dirty (not a clean V2 hit)");
+    CHECK(cs.lookup_define_v2("g", hash_g) == 1, "3761 AC1: lookup_define_v2(g)==1");
+    CHECK(m.dual_dep_graph_parity_fail_total.load() > fail0,
+          "3761 AC1: hole remirror fired (parity fail)");
+    auto mut = cs.eval("(mutate:set-body \"f\" \"(lambda () 2)\" \"#3761\")");
+    CHECK(mut.has_value(), "3761 AC1: set-body f");
+    CHECK(cs.eval("(eval-current)").has_value(), "3761 AC1: peel this sweep");
+    auto r = cs.eval("(g)");
+    CHECK(r && is_int(*r) && as_int(*r) == 2,
+          "3761 AC1: (g) is post-mutate f (not clean V2 hit of pre-mutate Call)");
+    apply_dev_audit_defaults();
+}
+
+static void ac3761_2_ghost_node_only_still_remirrors() {
+    std::println("\n--- #3761 AC2: node-only edge without live V2 caller still remirrors ---");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    apply_production_audit_defaults();
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define f (lambda () 1))\")").has_value(), "3761 AC2: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3761 AC2: eval");
+    cs.inject_node_only_edge_for_test("ghost3761", "f");
+    cs.public_record_dependency("ghost3761", "f");
+    cs.inject_drop_string_calls_keep_node_for_test("ghost3761", "f");
+    CHECK(cs.public_node_dep_has_mirror_edge("ghost3761", "f"), "3761 AC2: node-only injected");
+    CHECK(cs.get_define_v2("ghost3761") == nullptr, "3761 AC2: no live V2 caller");
+    CHECK(cs.public_graphs_consistent(), "3761 AC2: extra node is not a fail");
+    std::vector<std::string> cone{"f"};
+    bool want = true;
+    CHECK(cs.public_fail_closed_cone_parity_for_test(cone, want),
+          "3761 AC2: hole helper ran without a live V2 caller");
+    CHECK(!want, "3761 AC2: fail-closed full");
+    CHECK(cs.public_graphs_consistent(), "3761 AC2: remirror from string");
+    CHECK(!cs.public_node_dep_has_mirror_edge("ghost3761", "f"),
+          "3761 AC2: node-only ghost dropped by string SSOT remirror");
+    const auto svc = read_file("src/compiler/service.ixx");
+    CHECK(svc.find("fail_closed_soft_dual_graph_parity_before_partial_cone_") != std::string::npos,
+          "3761 AC2: cone helper");
+    const auto cite = svc.find("Issue #3761: decode node dependents");
+    CHECK(cite != std::string::npos, "3761 AC2: #3761 cite");
+    if (cite != std::string::npos) {
+        const auto win = svc.substr(cite, 2800);
+        CHECK(win.find("mark_caller_body_dirty") != std::string::npos,
+              "3761 AC2: snapshot marks before remirror");
+        CHECK(win.find("rebuild_node_dep_graph_from_string") != std::string::npos,
+              "3761 AC2: remirror still follows snapshot");
+        const auto mark_pos = win.find("mark_caller_body_dirty");
+        const auto reb_pos = win.find("rebuild_node_dep_graph_from_string");
+        CHECK(mark_pos != std::string::npos && reb_pos != std::string::npos && mark_pos < reb_pos,
+              "3761 AC2: mark_caller_body_dirty before rebuild");
+    }
+    apply_dev_audit_defaults();
+}
+
+static void ac3761_3_soft_no_extra_consult() {
+    std::println("\n--- #3761 AC3: Soft skips cone consult ---");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+    apply_dev_audit_defaults();
+    g_typed_mutation_audit_counters.production_defaults_active.store(0, std::memory_order_relaxed);
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define f (lambda () 1)) (define g (lambda () (f)))\")").has_value(),
+          "3761 AC3: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3761 AC3: eval");
+    cs.public_record_dependency("g", "f");
+    cs.inject_drop_string_calls_keep_node_for_test("g", "f");
+    auto& m = cs.metrics();
+    const auto fail0 = m.dual_dep_graph_parity_fail_total.load(std::memory_order_relaxed);
+    cs.public_mark_define_dirty("f");
+    (void)cs.public_relower_dirty_defines_from_workspace();
+    CHECK(m.dual_dep_graph_parity_fail_total.load() == fail0,
+          "3761 AC3: Soft does not take the production hole remirror");
+    const auto svc = read_file("src/compiler/service.ixx");
+    CHECK(svc.find("schema-3761") == std::string::npos, "3761 AC3: no new query key");
+    CHECK(read_file("tests/compiler/test_issue_3761.cpp").empty(), "3761 AC3: no invent");
+    CHECK(read_file("docs/design/3761-node-only-caller-dirty.md").empty(),
+          "3761 AC3: no docs/design");
+    apply_dev_audit_defaults();
 }
 
 static void ac3486_5_linter_no_invent() {
@@ -1617,6 +1737,10 @@ int run_test_dep_graph_hybrid_cascade() {
     ac3615_3_soft_zero_extra_path();
     ac3615_4_no_new_metrics_or_query_key();
     ac3615_5_linter_self_test();
+    // Issue #3761: node-only caller snapshot before remirror.
+    ac3761_1_node_only_caller_this_sweep();
+    ac3761_2_ghost_node_only_still_remirrors();
+    ac3761_3_soft_no_extra_consult();
     // Issue #3657: unslotted string called_by is a production parity miss;
     // Soft keeps continue. #3165 slotted soak stays.
     ac3657_1_unslotted_production_inconsistent();

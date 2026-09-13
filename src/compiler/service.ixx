@@ -7548,6 +7548,9 @@ public:
     // take-full path as fail_closed_soft_dual_graph_parity_before_partial_
     // (rebuild + bump dual_dep_graph_parity_fail_total + force-dirty all
     // callers + partial_forced_full_by_impact_total++ + want_partial=false).
+    // Issue #3761: remirror drops node-only callers. Snapshot those
+    // dependents into mark_caller_body_dirty + cone_names *before*
+    // rebuild_node_dep_graph_from_string (string stays SSOT).
     // Caller holds cascade_decision_mtx_ (relower path). Soft / Off skip
     // (zero extra — AC3). No new query key (AC4 — reuses
     // dual_dep_graph_parity_fail_total + partial_forced_full_by_impact_total).
@@ -7555,8 +7558,9 @@ public:
     // Non-duplicative vs #3188 (facade skipped IR dirty), #3345 (depth-1),
     // #3381 (one-hop union), #3474 (FIFO cone), #3486 (front-only consult),
     // #3165/#3187 (all-callers on record_dependency fail).
-    bool fail_closed_soft_dual_graph_parity_before_partial_cone_(
-        const std::vector<std::string>& cone_names, bool& want_partial) {
+    bool
+    fail_closed_soft_dual_graph_parity_before_partial_cone_(std::vector<std::string>& cone_names,
+                                                            bool& want_partial) {
         if (!want_partial || cone_names.empty())
             return false;
         // AC3: Soft / Off + clean single-fiber skips the consult entirely.
@@ -7628,6 +7632,48 @@ public:
         }
         if (!still_fail)
             return false;
+        // Issue #3761: decode node dependents of each cone root and
+        // mark_caller_body_dirty (#3474 union) *before* remirror drops
+        // the only record of a node-only caller. Extra node edges do not
+        // fail graphs_consistent; the cone walk is the production observer.
+        {
+            using aura::compiler::dirty::decode_block_dep_node;
+            using aura::compiler::dirty::decode_fn_slot;
+            using aura::compiler::dirty::encode_fn_node;
+            using aura::compiler::dirty::is_block_dep_node;
+            using aura::compiler::dirty::is_fn_node;
+            const std::size_t n_roots = cone_names.size();
+            for (std::size_t i = 0; i < n_roots; ++i) {
+                const auto root = cone_names[i];
+                const auto slot_it = dep_name_to_slot_.find(root);
+                if (slot_it == dep_name_to_slot_.end())
+                    continue;
+                const auto* deps = node_dep_graph_.dependents(encode_fn_node(slot_it->second));
+                if (!deps)
+                    continue;
+                for (const auto n : *deps) {
+                    std::uint32_t slot = UINT32_MAX;
+                    if (is_fn_node(n))
+                        slot = decode_fn_slot(n);
+                    else if (is_block_dep_node(n))
+                        slot = decode_block_dep_node(n).caller_slot;
+                    else
+                        continue;
+                    if (slot >= dep_slot_to_name_.size())
+                        continue;
+                    const auto& nm = dep_slot_to_name_[slot];
+                    if (nm.empty() || nm == root)
+                        continue;
+                    auto cit = ir_cache_v2_.find(nm);
+                    if (cit != ir_cache_v2_.end()) {
+                        (void)cit->second.mark_caller_body_dirty();
+                        finish_cascade_soa_dirty_sync_(cit->second);
+                    }
+                    if (std::find(cone_names.begin(), cone_names.end(), nm) == cone_names.end())
+                        cone_names.push_back(nm);
+                }
+            }
+        }
         aura::compiler::dirty::rebuild_node_dep_graph_from_string(node_dep_graph_, dep_graph_,
                                                                   dep_name_to_slot_);
         metrics_.dual_dep_graph_parity_fail_total.fetch_add(1, std::memory_order_relaxed);
@@ -13587,6 +13633,12 @@ public:
     }
     [[nodiscard]] std::size_t public_precompute_callee_cascade_for_test(const std::string& name) {
         return precompute_callee_cascade_for_partial(name);
+    }
+    // Issue #3761: run the cone hole helper without a full peel so tests
+    // can see node-only callers enter the peel set before remirror.
+    bool public_fail_closed_cone_parity_for_test(std::vector<std::string>& cone_names,
+                                                 bool& want_partial) {
+        return fail_closed_soft_dual_graph_parity_before_partial_cone_(cone_names, want_partial);
     }
     // Issue #3656: drop string calls/called_by but keep the NodeId fn
     // mirror — production precompute must not treat that as "no callee".
