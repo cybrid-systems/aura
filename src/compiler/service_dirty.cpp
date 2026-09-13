@@ -1921,8 +1921,13 @@ std::size_t CompilerService::precompute_callee_cascade_for_partial(const std::st
         return 0;
     }
     auto eit = ir_cache_v2_.find(name);
+    // Issue #3760: empty map is unknown cone, not "no callees". Abort /
+    // #3551 / #3324 clear the map; prepare_source_to_ir_map_for_partial_
+    // may rebuild it later. Returning 0 here let the peel treat
+    // callee_cone as skip and partial without this-sweep callee relower.
+    // Soft already returned 0 above. Keep #3656 nonempty-map empty-calls.
     if (eit == ir_cache_v2_.end() || eit->second.source_to_ir_map.empty())
-        return 0;
+        return kUnknownCalleeConeBlocks;
     std::vector<std::string> callees;
     aura::compiler::dirty::DepGraph graph_snap;
     std::uint32_t self_slot = UINT32_MAX;

@@ -68,6 +68,7 @@ import aura.compiler.value;
 namespace {
 
 using aura::compiler::CompilerService;
+using aura::compiler::kUnknownCalleeConeBlocks;
 using aura::test::g_failed;
 using aura::test::g_passed;
 
@@ -601,6 +602,45 @@ static void ac3551_4_source_cite_no_invent() {
           "3551 AC5: no docs/design");
 }
 
+static void ac3760_1_abort_empty_map_peel_tracks_g() {
+    std::println("\n--- #3760 AC1: abort-cleared map, peel caller this sweep tracks g ---");
+    using namespace aura::compiler::typed_audit;
+    apply_production_audit_defaults();
+    CompilerService cs;
+    cs.evaluator().set_effect_sandbox_mode(0);
+    CHECK(cs.eval("(set-code \"(define g (lambda (x) x)) (define f (lambda (x) (g x)))\")")
+              .has_value(),
+          "3760 abort: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3760 abort: eval");
+    if (!cs.get_define_v2("f"))
+        (void)cs.eval("(compile:cache-define \"f\")");
+    CHECK(cs.get_define_v2("f") != nullptr, "3760 abort: f cached");
+    cs.public_record_dependency("f", "g");
+    cs.public_force_ir_cache_dirty_after_abort();
+    const auto* after = cs.get_define_v2("f");
+    CHECK(after && after->source_to_ir_map.empty(), "3760 abort: map cleared");
+    CHECK(cs.public_precompute_callee_cascade_for_test("f") == kUnknownCalleeConeBlocks,
+          "3760 abort: empty map is unknown cone, not 0");
+    auto mut = cs.eval("(mutate:set-body \"g\" \"(lambda (x) (+ x 1))\" \"#3760\")");
+    CHECK(mut.has_value(), "3760 abort: set-body g");
+    CHECK(cs.eval("(eval-current)").has_value(), "3760 abort: peel this sweep");
+    const auto dirty = read_file("src/compiler/service_dirty.cpp");
+    const auto helper =
+        dirty.find("std::size_t CompilerService::precompute_callee_cascade_for_partial");
+    CHECK(helper != std::string::npos, "3760 abort: precompute present");
+    if (helper != std::string::npos) {
+        const auto cite = dirty.find("Issue #3760", helper);
+        CHECK(cite != std::string::npos, "3760 abort: cite");
+        const auto win_from = cite == std::string::npos || cite < 80 ? helper : cite - 80;
+        const auto win = dirty.substr(win_from, 1400);
+        CHECK(win.find("return kUnknownCalleeConeBlocks") != std::string::npos,
+              "3760 abort: empty-map production return is unknown");
+        CHECK(win.find("source_to_ir_map.empty()") != std::string::npos,
+              "3760 abort: empty-map is the unknown gate");
+    }
+    apply_dev_audit_defaults();
+}
+
 } // namespace
 
 int run_test_abort_ir_cache_fence_first() {
@@ -630,6 +670,8 @@ int run_test_abort_ir_cache_fence_first() {
     ac3551_2_clear_once_per_define();
     ac3551_3_soft_observe_only();
     ac3551_4_source_cite_no_invent();
+    std::println("\n=== Issue #3760: empty source_to_ir_map is unknown callee cone ===");
+    ac3760_1_abort_empty_map_peel_tracks_g();
 
     std::println("\n=== #3159+#3258+#3324+#3551 result: passed={} failed={} ===",
                  aura::test::g_passed, aura::test::g_failed);

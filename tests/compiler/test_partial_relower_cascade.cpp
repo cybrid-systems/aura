@@ -645,7 +645,7 @@ static void ac3656_3_map_empty_unknown_full() {
     std::println("\n--- #3656 AC3: map empty still unknown impact → full (#3310) ---");
     const auto dirty = read_file("src/compiler/service_dirty.cpp");
     CHECK(dirty.find("eit->second.source_to_ir_map.empty()") != std::string::npos,
-          "3656 AC3: precompute map-empty returns 0");
+          "3656 AC3: precompute still consults map-empty");
     CHECK(absorb_callee_cone_into_impact_ub(0, 3) == 0,
           "3656 AC3: absorb does not hide #3310 ub==0");
     CHECK(absorb_callee_cone_into_impact_ub(kUnknownCalleeConeBlocks, 3) ==
@@ -702,6 +702,76 @@ static void ac3656_5_source_cite_no_invent() {
     CHECK(read_file("docs/design/3656-callee-cone-partial.md").empty(), "3656 AC5: no docs/design");
 }
 
+// ── Issue #3760: empty source_to_ir_map is unknown cone, not skip ──
+static void ac3760_1_empty_map_unknown_full() {
+    std::println("\n--- #3760 AC1: abort-cleared / empty map → unknown cone, not skip ---");
+    using namespace aura::compiler::typed_audit;
+    apply_production_audit_defaults();
+    reset_partial_relower_threshold_for_test();
+    CompilerService cs;
+    cs.evaluator().set_effect_sandbox_mode(0);
+    CHECK(cs.eval("(set-code \"(define g (lambda (x) x)) (define f (lambda (x) (g x)))\")")
+              .has_value(),
+          "3760 AC1: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3760 AC1: eval");
+    cs.public_record_dependency("f", "g");
+    CHECK(cs.public_clear_source_to_ir_map_keep_irs_for_test("f"),
+          "3760 AC1: inject empty map, keep irs, abort latch off");
+    const auto cone = cs.public_precompute_callee_cascade_for_test("f");
+    CHECK(cone == kUnknownCalleeConeBlocks,
+          "3760 AC1: production empty map is unknown, not callee_cone=0");
+    auto* m = static_cast<CompilerMetrics*>(cs.evaluator().compiler_metrics());
+    CHECK(m != nullptr, "3760 AC1: metrics");
+    const auto impact0 = m->partial_forced_full_by_impact_total.load(std::memory_order_relaxed);
+    auto mut = cs.eval("(mutate:set-body \"g\" \"(lambda (x) (+ x 1))\" \"#3760\")");
+    CHECK(mut.has_value() && !is_error(*mut), "3760 AC1: set-body g");
+    cs.public_invalidate_function("f");
+    CHECK(cs.eval("(eval-current)").has_value(), "3760 AC1: re-eval this sweep");
+    auto r = cs.eval("(f 1)");
+    CHECK(r && is_int(*r) && as_int(*r) == 2,
+          "3760 AC1: this-sweep peel of f tracks g (not partial with cone=0)");
+    const auto impact1 = m->partial_forced_full_by_impact_total.load(std::memory_order_relaxed);
+    CHECK(impact1 > impact0 || (r && is_int(*r) && as_int(*r) == 2),
+          "3760 AC1: forced-full by impact or Call block dirty this sweep");
+    apply_dev_audit_defaults();
+}
+
+static void ac3760_2_3656_nonempty_empty_calls_unknown() {
+    std::println("\n--- #3760 AC2: #3656 nonempty-map empty-calls still unknown ---");
+    const auto dirty = read_file("src/compiler/service_dirty.cpp");
+    const auto helper =
+        dirty.find("std::size_t CompilerService::precompute_callee_cascade_for_partial");
+    CHECK(helper != std::string::npos, "3760 AC2: precompute present");
+    const auto win = helper == std::string::npos ? std::string{} : dirty.substr(helper, 2800);
+    CHECK(win.find("Issue #3656") != std::string::npos, "3760 AC2: #3656 cite kept");
+    CHECK(win.find("node_dep_has_fn_edges_for_slot") != std::string::npos,
+          "3760 AC2: nonempty-map empty-calls still consults node fn edges");
+    CHECK(win.find("return kUnknownCalleeConeBlocks") != std::string::npos,
+          "3760 AC2: unknown sentinel still returned");
+    CHECK(win.find("Issue #3760") != std::string::npos, "3760 AC2: empty-map cite");
+}
+
+static void ac3760_3_soft_empty_map_zero() {
+    std::println("\n--- #3760 AC3: Soft empty map may return 0 ---");
+    using namespace aura::compiler::typed_audit;
+    apply_dev_audit_defaults();
+    g_typed_mutation_audit_counters.production_defaults_active.store(0, std::memory_order_relaxed);
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define g (lambda (x) x)) (define f (lambda (x) (g x)))\")")
+              .has_value(),
+          "3760 AC3: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3760 AC3: eval");
+    CHECK(cs.public_clear_source_to_ir_map_keep_irs_for_test("f"), "3760 AC3: empty map");
+    CHECK(cs.public_precompute_callee_cascade_for_test("f") == 0,
+          "3760 AC3: Soft empty map returns 0");
+    const auto dirty = read_file("src/compiler/service_dirty.cpp");
+    CHECK(dirty.find("schema-3760") == std::string::npos, "3760 AC3: no new query key");
+    CHECK(read_file("tests/compiler/test_issue_3760.cpp").empty(), "3760 AC3: no invent");
+    CHECK(read_file("docs/design/3760-empty-map-unknown-cone.md").empty(),
+          "3760 AC3: no docs/design");
+    apply_dev_audit_defaults();
+}
+
 } // namespace
 
 int run_test_partial_relower_cascade() {
@@ -727,6 +797,9 @@ int run_test_partial_relower_cascade() {
     ac3656_3_map_empty_unknown_full();
     ac3656_4_soft_zero_extra();
     ac3656_5_source_cite_no_invent();
+    ac3760_1_empty_map_unknown_full();
+    ac3760_2_3656_nonempty_empty_calls_unknown();
+    ac3760_3_soft_empty_map_zero();
     if (g_failed)
         return 1;
     std::println("partial re-lower cascade (#2041/#3550/#3584/#3656): OK ({} passed)", g_passed);
