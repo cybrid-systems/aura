@@ -1874,6 +1874,142 @@ static void ac3641_6_source_cite_and_no_invent() {
           "3641: no docs/design file");
 }
 
+// ── Issue #3724: occupancy note only after allow; bare-int mutate
+// under Restricted+MT must not first-writer hijack the ring. ──
+
+static void ac3724_1_query_root_deny_does_not_occupy() {
+    std::println("\n--- #3724 AC1: query:root int → denied mutate → occupancy not A ---");
+    reset_all();
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+    aura::core::provenance::set_multi_tenant_env_active(true);
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_effect_sandbox_mode(1);
+    CHECK(cs.eval("(set-code \"(define f (lambda (x) (+ x 1)))\")").has_value(),
+          "3724 AC1: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3724 AC1: eval-current");
+    ev.set_capability_tenant_id(7);
+    auto root = cs.eval("(query:root)");
+    CHECK(root.has_value() && aura::compiler::types::is_int(*root),
+          "3724 AC1: query:root returns int");
+    const auto nid = static_cast<std::uint32_t>(aura::compiler::types::as_int(*root));
+    CHECK(aura::core::provenance::existing_stamp_for_node(nid) != 7,
+          "3724 AC1: not occupied by A before mutate");
+    auto r = cs.eval(std::string("(mutate:replace-type ") +
+                     std::to_string(aura::compiler::types::as_int(*root)) + " \"Int\")");
+    CHECK(r.has_value() && aura::compiler::types::is_error(*r), "3724 AC1: bare-int mutate denied");
+    CHECK(aura::core::provenance::existing_stamp_for_node(nid) != 7,
+          "3724 AC1: occupancy slot is not A after deny");
+    CHECK(!ev.require_effect_for_node_id(static_cast<std::uint16_t>(kEffectMutate),
+                                         "3724-ac1-for-node", nid),
+          "3724 AC1: for_node_id no-grant denies");
+    CHECK(aura::core::provenance::existing_stamp_for_node(nid) != 7,
+          "3724 AC1: for_node_id deny does not occupy");
+    aura::core::provenance::set_multi_tenant_env_active(false);
+}
+
+static void ac3724_2_owner_not_isolation_denied_after_a_deny() {
+    std::println("\n--- #3724 AC2: owner packed mutate still allowed after A deny-stamp ---");
+    reset_all();
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    bump_mutation_epoch(1);
+    const auto mid = current_mutation_epoch();
+    using aura::core::capability::g_capability_registry;
+    using aura::core::capability::make_grant_provenance;
+    g_capability_registry().grant(99, "mut-3724-b",
+                                  static_cast<aura::core::capability::Effect>(kEffectMutate),
+                                  make_grant_provenance(mid, true, 0, 0));
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+    aura::core::provenance::set_multi_tenant_env_active(true);
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_effect_sandbox_mode(1);
+    ev.set_capability_tenant_id(99);
+    ev.clear_boundary_audit_mid_for_test();
+    ev.note_boundary_audit_mid_for_test(mid);
+    CHECK(cs.eval("(set-code \"(define f (lambda (x) (+ x 1)))\")").has_value(),
+          "3724 AC2: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3724 AC2: eval-current");
+    auto root = cs.eval("(query:root)");
+    CHECK(root.has_value() && aura::compiler::types::is_int(*root), "3724 AC2: query:root");
+    const auto nid = static_cast<std::uint32_t>(aura::compiler::types::as_int(*root));
+    auto owned = ev.export_ref(nid);
+    CHECK(owned.tenant_id == 99, "3724 AC2: export_ref stamps B");
+    CHECK(aura::core::provenance::existing_stamp_for_node(static_cast<std::uint32_t>(nid)) == 99,
+          "3724 AC2: occupancy is B after export");
+    ev.set_capability_tenant_id(7);
+    auto denied = cs.eval(std::string("(mutate:replace-type ") + std::to_string(nid) + " \"Int\")");
+    CHECK(denied.has_value() && aura::compiler::types::is_error(*denied),
+          "3724 AC2: A bare-int mutate denied");
+    CHECK(aura::core::provenance::existing_stamp_for_node(static_cast<std::uint32_t>(nid)) == 99,
+          "3724 AC2: occupancy still B (A did not hijack)");
+    ev.set_capability_tenant_id(99);
+    ev.clear_boundary_audit_mid_for_test();
+    ev.note_boundary_audit_mid_for_test(mid);
+    const bool ok = ev.require_effect_on_ref(static_cast<std::uint16_t>(kEffectMutate),
+                                             "3724-ac2-owner", owned);
+    CHECK(ok, "3724 AC2: owner on_ref still allows");
+    aura::core::provenance::set_multi_tenant_env_active(false);
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+}
+
+static void ac3724_3_export_ref_still_occupies() {
+    std::println("\n--- #3724 AC3: export_ref / query:as-stable-ref still occupy ---");
+    reset_all();
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+    aura::core::provenance::set_multi_tenant_env_active(true);
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_effect_sandbox_mode(1);
+    CHECK(cs.eval("(set-code \"(define f (lambda (x) (+ x 1)))\")").has_value(),
+          "3724 AC3: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3724 AC3: eval-current");
+    ev.set_capability_tenant_id(99);
+    auto root = cs.eval("(query:root)");
+    CHECK(root.has_value() && aura::compiler::types::is_int(*root), "3724 AC3: query:root");
+    const auto nid = static_cast<std::uint32_t>(aura::compiler::types::as_int(*root));
+    (void)ev.export_ref(nid);
+    CHECK(aura::core::provenance::existing_stamp_for_node(static_cast<std::uint32_t>(nid)) == 99,
+          "3724 AC3: export_ref occupies");
+    aura::core::provenance::set_multi_tenant_env_active(false);
+}
+
+static void ac3724_4_collision_fail_closed_intact() {
+    std::println("\n--- #3724 AC4: #3641 collision borrow still in for_node_id ---");
+    const auto sec = read_file("src/compiler/evaluator_security.cpp");
+    const auto fn = sec.find("bool Evaluator::require_effect_for_node_id");
+    CHECK(fn != std::string::npos, "3724 AC4: for_node_id present");
+    if (fn != std::string::npos) {
+        const auto body = sec.substr(fn, 6000);
+        CHECK(body.find("occupying_stamp_for_node") != std::string::npos,
+              "3724 AC4: collision borrow intact");
+        CHECK(body.find("ref = make_stamped_ref(node_id)") != std::string::npos,
+              "3724 AC4: same-tenant stamp helper kept");
+        const auto gate = body.find("require_effect_on_ref");
+        const auto note = body.find("ref = make_stamped_ref(node_id)");
+        CHECK(gate != std::string::npos && note != std::string::npos && gate < note,
+              "3724 AC4: occupancy note after allow");
+    }
+}
+
+static void ac3724_5_soft_source_and_no_invent() {
+    std::println("\n--- #3724 AC5/AC6: Soft unchanged + no invent ---");
+    const auto sec = read_file("src/compiler/evaluator_security.cpp");
+    const auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
+    CHECK(sec.find("Issue #3724") != std::string::npos, "3724 AC5: security cites");
+    CHECK(mut.find("Issue #3724") != std::string::npos, "3724 AC5: mutate cites");
+    CHECK(mut.find("consult_bare") != std::string::npos, "3724 AC5: bare-int skip under consult");
+    CHECK(sec.find("stamp_stable_ref_fields") != std::string::npos,
+          "3724 AC5: field stamp without occupancy on deny");
+    CHECK(mut.find("schema-3724") == std::string::npos &&
+              sec.find("schema-3724") == std::string::npos,
+          "3724 AC6: no new query key");
+    CHECK(read_file("tests/issues/test_issue_3724.cpp").empty(), "3724 AC6: no tests/issues");
+    CHECK(read_file("tests/compiler/test_issue_3724.cpp").empty(), "3724 AC6: no test_issue");
+    CHECK(read_file("docs/design/3724-occupancy-deny-hijack.md").empty(),
+          "3724 AC6: no docs/design");
+}
+
 // ── Issue #3630: undeclared multi-tenant autodetect ──
 static void ac3630_1_detection_arms_idempotent() {
     std::println("\n--- #3630 AC1: second distinct principal arms undeclared MT ---");
@@ -2165,6 +2301,12 @@ int run_test_require_effect_auto_isolation() {
     ac3641_4_soft_off_zero_storage();
     ac3641_5_deny_audit_join_se_typed();
     ac3641_6_source_cite_and_no_invent();
+    std::println("\n=== Issue #3724: occupancy note only after allow ===");
+    ac3724_1_query_root_deny_does_not_occupy();
+    ac3724_2_owner_not_isolation_denied_after_a_deny();
+    ac3724_3_export_ref_still_occupies();
+    ac3724_4_collision_fail_closed_intact();
+    ac3724_5_soft_source_and_no_invent();
     std::println("\n=== Issue #3630: undeclared multi-tenant autodetect ===");
     ac3630_1_detection_arms_idempotent();
     ac3630_2_fences_on_after_autodetect();
@@ -2175,6 +2317,16 @@ int run_test_require_effect_auto_isolation() {
     ac3640_gate_single_spine_source_cite();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
+}
+
+int run_test_occupancy_deny_path_3724() {
+    std::println("=== Issue #3724: occupancy note only after allow ===");
+    ac3724_1_query_root_deny_does_not_occupy();
+    ac3724_2_owner_not_isolation_denied_after_a_deny();
+    ac3724_3_export_ref_still_occupies();
+    ac3724_4_collision_fail_closed_intact();
+    ac3724_5_soft_source_and_no_invent();
+    return aura::test::g_failed ? 1 : 0;
 }
 
 int run_test_require_effect_three_arg_default() {
