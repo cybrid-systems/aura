@@ -293,6 +293,29 @@ int run_test_ir_typed_entry_proof_authority() {
         reset_for_test();
     }
 
+    {
+        std::println("\n--- #3759: compiled Apply of linear local skips body under Reject ---");
+        const auto jit = read_file("src/compiler/aura_jit.cpp");
+        const auto apply = jit.find("case OpApply:");
+        CHECK(apply != std::string::npos, "3759: OpApply present");
+        if (apply != std::string::npos) {
+            const auto win = jit.substr(apply, 4200);
+            CHECK(win.find("Issue #3759") != std::string::npos, "3759: OpApply cites #3759");
+            CHECK(win.find("begin_linear_epoch_fence()") != std::string::npos,
+                  "3759: linear Apply uses skip-body fence");
+            const auto fence = win.find("begin_linear_epoch_fence()");
+            const auto call = win.find("fn_closure_call");
+            CHECK(fence != std::string::npos && call != std::string::npos && fence < call,
+                  "3759: Apply body is after fence (skipped on typed-entry fail)");
+        }
+        CHECK(jit.find("irb->CreateCondBr(is_stale, bb_stale, bb_ok)") != std::string::npos,
+              "3759: fence still skip-body on stale");
+        const auto ir = read_file("src/compiler/ir_executor_impl.cpp");
+        CHECK(ir.find("commit-readiness-refused") != std::string::npos,
+              "3759: interpreter Apply refuses commit-readiness-refused");
+        CHECK(read_file("tests/compiler/test_issue_3759.cpp").empty(), "3759: no invent");
+    }
+
     std::println("\n=== Issue #3305 done ===");
     return g_failed == 0 ? 0 : 1;
 }
