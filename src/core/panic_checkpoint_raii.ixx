@@ -17,6 +17,18 @@ export module aura.core.panic_checkpoint_raii;
 
 import std;
 
+// Issue #3740: production face for the discriminator-mismatch dtor arm.
+// Strong def in typed_mutation_audit_hooks.cpp; weak no-op in fiber.cpp
+// (light binaries stay Soft / #1727 skip-restore-then-clear). Must live
+// in module purview — global fragment may only include headers.
+extern "C" int aura_production_defaults_active_probe() noexcept __attribute__((weak));
+
+[[nodiscard]] inline bool panic_cp_production_face() noexcept {
+    if (aura_production_defaults_active_probe == nullptr)
+        return false;
+    return aura_production_defaults_active_probe() != 0;
+}
+
 export namespace aura::core::panic_cp {
 
 // Phase 2: real save/restore wiring (was 1 = scaffold-only).
@@ -38,9 +50,10 @@ struct PanicCheckpointStats {
     // bumps this counter and skips restore (no UB) — operators
     // can monitor via the stats accessor or primitive.
     std::uint64_t restores_discriminator_failed = 0;
-    // Issue #1727: discriminator mismatch also clears the stale
+    // Issue #1727 / #3740: Soft mismatch still clears the stale
     // checkpoint (via host.clear) so panic_safe_* / GC defer do not
-    // permanently leak when restore is skipped.
+    // permanently leak when restore is skipped. Production mismatch
+    // bumps this after a successful save-side restore+clear.
     std::uint64_t restores_discriminator_cleared = 0;
     // Issue #3570: restore attempts skipped because the instance at the ctx
     // address was destroyed and replaced (address match, generation
@@ -61,17 +74,19 @@ inline void reset_panic_checkpoint_raii_stats() noexcept {
 //
 // Issue #1393: added `expected_evaluator_id` discriminator.
 // PanicCheckpointGuard dtor verifies host.expected_evaluator_id ==
-// host.ctx; on mismatch it bumps restores_discriminator_failed and
-// skips restore. This catches cross-evaluator restore attempts
-// (aot:reload / persist:load / fiber cross-evaluator body) where
-// the void* ctx is no longer the active Evaluator. The
-// discriminator lives in the host (not Guard) so a Guard that
-// outlives its Evaluator can detect the mismatch on dtor without
+// host.ctx; on mismatch it bumps restores_discriminator_failed.
+// Production (#3740) restores the save-side (ctx) then clears; Soft
+// skips restore and clears (#1727). This catches cross-evaluator
+// restore attempts (aot:reload / persist:load / fiber cross-evaluator
+// body). The discriminator lives in the host (not Guard) so a Guard
+// that outlives its Evaluator can detect the mismatch on dtor without
 // needing a thread_local "current evaluator" pointer.
 //
-// Issue #1727: on the same mismatch path, invoke `clear` (if set)
+// Issue #1727 / #3740: Soft mismatch still invoke `clear` (if set)
 // so the evaluator that received save() does not keep a stale
-// panic_safe_* snapshot / GC-defer arm forever.
+// panic_safe_* snapshot / GC-defer arm forever. Production restores
+// the SAVE-SIDE (ctx — save() always ran there; host is value-copied)
+// then clears; restore miss leaves checkpoint + defer armed.
 // Issue #3570: process-wide monotonic instance generation for ABA-safe
 // cross-instance discrimination. Handed out once per instance construction
 // (Evaluator member init); a recycled address always carries a NEW value,
@@ -161,20 +176,35 @@ public:
             }
             return;
         }
-        // Issue #1393: cross-evaluator discriminator check.
+        // Issue #1393 / #3740: cross-evaluator discriminator check.
         // If expected_evaluator_id is set (non-null) AND differs
-        // from ctx, this Guard was constructed on a different
-        // Evaluator than the host is now bound to. Cross-evaluator
-        // restore would operate on the wrong state → bump the
-        // discriminator-failed counter and skip restore. The user
-        // is expected to manually re-establish the checkpoint on
-        // the new Evaluator if needed.
+        // from ctx, this Guard's discriminator does not match the
+        // save receiver. Bump restores_discriminator_failed. Production
+        // restores the save-side (ctx) then clears; Soft keeps #1727
+        // skip-restore + clear. Do not restore expected (discriminator).
         if (host_.expected_evaluator_id != nullptr && host_.expected_evaluator_id != host_.ctx) {
             ++g_panic_checkpoint_raii_stats.restores_discriminator_failed;
             ++g_panic_checkpoint_raii_stats.auto_rollbacks;
-            // Issue #1727: skip restore (wrong evaluator) but still clear
-            // the checkpoint that save() wrote on host_.ctx — otherwise
-            // panic_safe_* + GC defer can permanently leak.
+            // Issue #3740: save() always ran on host_.ctx (host is
+            // value-copied at ctor — ctx cannot rebind). #1727 skip-restore
+            // then clear(ctx) drops GC defer while the save-side arena/pins
+            // may still be a half-mutated graph; next compact_sweep can
+            // scan it. Production: restore the SAVE-SIDE (ctx) then clear.
+            // Restore miss leaves checkpoint + defer armed (fail-closed:
+            // GCCollector::request stays false). Do NOT restore
+            // expected_evaluator_id — that pointer is the discriminator,
+            // not the save receiver. Soft/Off: keep #1727 skip-restore +
+            // clear (AC4: no extra restore; Soft empty checkpoint).
+            if (panic_cp_production_face() && saved_ && host_.restore && host_.ctx) {
+                if (host_.restore(host_.ctx)) {
+                    ++g_panic_checkpoint_raii_stats.restores_ok;
+                    if (host_.clear && host_.ctx) {
+                        if (host_.clear(host_.ctx))
+                            ++g_panic_checkpoint_raii_stats.restores_discriminator_cleared;
+                    }
+                }
+                return;
+            }
             if (host_.clear && host_.ctx) {
                 if (host_.clear(host_.ctx))
                     ++g_panic_checkpoint_raii_stats.restores_discriminator_cleared;
