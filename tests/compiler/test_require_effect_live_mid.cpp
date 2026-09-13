@@ -13,13 +13,16 @@
 
 #include "compiler/security_capabilities.h"
 #include "compiler/security_defaults.hh"
+#include "compiler/typed_mutation_audit.h"
 #include "core/capability_model.hh"
+#include "core/provenance_tracker.hh"
 #include "core/sandbox.hh"
 #include "core/security_event.hh"
 #include "core/workspace_epoch.hh"
 
 #include <cstdint>
 #include <fstream>
+#include <print>
 #include <string>
 #include <string_view>
 
@@ -31,16 +34,22 @@ import aura.compiler.value;
 namespace {
 
 using aura::compiler::CompilerService;
+using aura::compiler::Evaluator;
 using aura::compiler::security::kEffectFfi;
 using aura::compiler::security::kEffectMutate;
 using aura::compiler::types::is_bool;
+using aura::compiler::types::is_closure;
 using aura::compiler::types::is_error;
 using aura::core::bump_mutation_epoch;
 using aura::core::current_mutation_epoch;
 using aura::core::capability::CapabilityGrant;
+using aura::core::capability::Effect;
 using aura::core::capability::g_capability_effect_metrics;
 using aura::core::capability::g_capability_registry;
+using aura::core::capability::make_grant_provenance;
 using aura::core::capability::reset_capability_effects_for_test;
+using aura::core::sandbox::SandboxMode;
+using aura::core::sandbox::set_mode;
 using aura::core::security_event::g_security_event_ring;
 using aura::core::security_event::reset_security_event_ring_for_test;
 using aura::test::g_failed;
@@ -348,6 +357,126 @@ static void ac3176_std_ffi_surface() {
           "3176: no invent test_issue_3176");
 }
 
+// ── Issue #3725: std/ffi one-shot require_effect; c-* re-enter choke ──
+
+static void ac3725_arm_restricted(CompilerService& cs, std::uint64_t tenant, std::uint64_t mid) {
+    auto& ev = cs.evaluator();
+    ev.set_effect_sandbox_mode(1);
+    set_mode(SandboxMode::Restricted);
+    ev.set_capability_tenant_id(tenant);
+    ev.clear_boundary_audit_mid_for_test();
+    ev.note_boundary_audit_mid_for_test(mid);
+}
+
+static void ac3725_1_single_use_require_then_c_func_denies() {
+    std::println("\n--- #3725 AC1: single-use Ffi consume → c-func deny ---");
+    reset_all();
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    set_mode(SandboxMode::Off);
+    aura::core::provenance::set_multi_tenant_env_active(false);
+    bump_mutation_epoch(1);
+    const auto mid = current_mutation_epoch();
+    CompilerService cs;
+    ac3725_arm_restricted(cs, 3725, mid);
+    auto& ev = cs.evaluator();
+    CHECK(ev.grant_effect_capability(3725, "ffi-3725", kEffectFfi, mid, /*single_use=*/true),
+          "3725 AC1: single-use Ffi grant lands");
+    auto inst = ev.ensure_std_host_prims("std/ffi");
+    CHECK(!is_error(inst), "3725 AC1: require std/ffi consumes single-use Ffi");
+    // One-shot require is over; drop any residual so the next c-* call
+    // hits the per-call choke (grant_effect_capability is also
+    // session_bound — consume may leave the row until revoke/session-exit).
+    g_capability_registry().revoke(3725, "ffi-3725");
+    CHECK(!ev.require_effect(kEffectFfi, "c-func"), "3725 AC1: second Ffi require_effect denies");
+    auto tel = ev.invoke_prim_with_telemetry(
+        "c-func", [&] { return aura::compiler::types::make_bool(true); });
+    CHECK(is_error(tel), "3725 AC1: telemetry deny (no dlsym)");
+    auto r = cs.eval("(c-func -1 \"abs\" \"(Int) -> Int\")");
+    CHECK(!(r && is_closure(*r)), "3725 AC1: eval c-func is not a live closure");
+    aura::core::provenance::set_multi_tenant_env_active(false);
+}
+
+static void ac3725_2_session_exit_denies_c_load() {
+    std::println("\n--- #3725 AC2: session-bound Ffi → Guard dtor → c-load deny ---");
+    reset_all();
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    set_mode(SandboxMode::Off);
+    bump_mutation_epoch(1);
+    const auto mid = current_mutation_epoch();
+    g_capability_registry().grant_session(3725, "ffi-3725-sess", Effect::Ffi,
+                                          make_grant_provenance(mid, true, 0, 0));
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ac3725_arm_restricted(cs, 3725, mid);
+    bool gok = true;
+    {
+        Evaluator::MutationBoundaryGuard guard(ev, &gok);
+        auto inst = ev.ensure_std_host_prims("std/ffi");
+        CHECK(!is_error(inst), "3725 AC2: std/ffi installs under live session");
+    }
+    auto r = cs.eval("(c-load \"libc.so.6\")");
+    CHECK(r.has_value() && is_error(*r), "3725 AC2: c-load denies after session exit");
+    aura::core::provenance::set_multi_tenant_env_active(false);
+}
+
+static void ac3725_3_revoke_denies_while_mask_stays() {
+    std::println("\n--- #3725 AC3: explicit Ffi revoke → c-* deny, prims stay ---");
+    reset_all();
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    set_mode(SandboxMode::Off);
+    bump_mutation_epoch(1);
+    const auto mid = current_mutation_epoch();
+    g_capability_registry().grant(3725, "ffi-3725-dur", Effect::Ffi,
+                                  make_grant_provenance(mid, true, 0, 0));
+    CompilerService cs;
+    ac3725_arm_restricted(cs, 3725, mid);
+    auto inst = cs.evaluator().ensure_std_host_prims("std/ffi");
+    CHECK(!is_error(inst), "3725 AC3: std/ffi installs");
+    g_capability_registry().revoke(3725, "ffi-3725-dur");
+    auto r = cs.eval("(c-func -1 \"abs\" \"(Int) -> Int\")");
+    CHECK(r.has_value() && is_error(*r), "3725 AC3: c-func denies after revoke");
+    auto pred = cs.eval("(c-opaque? 1)");
+    CHECK(pred.has_value() && is_error(*pred), "3725 AC3: c-* still registered, still gated");
+    aura::core::provenance::set_multi_tenant_env_active(false);
+}
+
+static void ac3725_4_live_grant_allows() {
+    std::println("\n--- #3725 AC4: live Ffi grant → c-func works ---");
+    reset_all();
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    set_mode(SandboxMode::Off);
+    bump_mutation_epoch(1);
+    const auto mid = current_mutation_epoch();
+    g_capability_registry().grant(3725, "ffi-3725-live", Effect::Ffi,
+                                  make_grant_provenance(mid, true, 0, 0));
+    CompilerService cs;
+    ac3725_arm_restricted(cs, 3725, mid);
+    auto inst = cs.evaluator().ensure_std_host_prims("std/ffi");
+    CHECK(!is_error(inst), "3725 AC4: std/ffi");
+    const auto se0 = g_security_event_ring().seq.load();
+    auto r = cs.eval("(c-func -1 \"abs\" \"(Int) -> Int\")");
+    CHECK(r.has_value() && is_closure(*r), "3725 AC4: c-func with live Ffi");
+    CHECK(g_security_event_ring().seq.load() > se0, "3725 AC4: SE allow on the call");
+    aura::core::provenance::set_multi_tenant_env_active(false);
+}
+
+static void ac3725_5_soft_off_and_source() {
+    std::println("\n--- #3725 AC5: Soft/Off no extra deny + source ---");
+    reset_all();
+    set_mode(SandboxMode::Off);
+    CompilerService cs;
+    cs.evaluator().set_effect_sandbox_mode(0);
+    auto inst = cs.evaluator().ensure_std_host_prims("std/ffi");
+    CHECK(!is_error(inst), "3725 AC5: Off install");
+    auto r = cs.eval("(c-opaque? 1)");
+    CHECK(r.has_value() && is_bool(*r), "3725 AC5: Off c-* no extra deny");
+    const auto src = read_file("src/compiler/security_side_effect.hh");
+    CHECK(src.find("starts_with(\"c-\")") != std::string::npos, "3725 AC5: infer c-");
+    CHECK(src.find("schema-3725") == std::string::npos, "3725 AC5: no new query key");
+    CHECK(read_file("tests/compiler/test_issue_3725.cpp").empty(), "3725 AC5: no test_issue");
+    CHECK(read_file("docs/design/3725-std-ffi-oneshot.md").empty(), "3725 AC5: no docs/design");
+}
+
 } // namespace
 
 
@@ -474,6 +603,16 @@ static void ac3594_4_dual_refuse_join_mid0() {
     aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
 }
 
+
+int run_test_std_ffi_per_call_3725() {
+    std::println("=== Issue #3725: std/ffi per-call require_effect choke ===");
+    ac3725_1_single_use_require_then_c_func_denies();
+    ac3725_2_session_exit_denies_c_load();
+    ac3725_3_revoke_denies_while_mask_stays();
+    ac3725_4_live_grant_allows();
+    ac3725_5_soft_off_and_source();
+    return aura::test::g_failed ? 1 : 0;
+}
 
 int run_test_require_effect_live_mid() {
     std::println("=== Issue #2384: require_effect live mutation_id provenance ===");

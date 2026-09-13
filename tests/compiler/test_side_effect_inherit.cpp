@@ -35,6 +35,8 @@ using aura::compiler::is_side_effect_prim_name;
 using aura::compiler::kSideEffectInheritIssue;
 using aura::compiler::kSideEffectPrimPatternToken;
 using aura::compiler::PrimMeta;
+using aura::compiler::security::kEffectExec;
+using aura::compiler::security::kEffectFfi;
 using aura::compiler::security::kEffectMutate;
 using aura::compiler::security::kEffectNone;
 using aura::compiler::security::kEffectWrite;
@@ -158,6 +160,11 @@ int run_test_side_effect_inherit() {
               "3720: vector-set! infers Mutate");
         CHECK(infer_required_effects_from_name("hash-ref") == kEffectNone,
               "3720: hash-ref stays read");
+        CHECK(infer_required_effects_from_name("c-load") == kEffectFfi, "3725: c-load infers Ffi");
+        CHECK(infer_required_effects_from_name("c-func") == kEffectFfi, "3725: c-func infers Ffi");
+        CHECK(infer_required_effects_from_name("c-opaque?") == kEffectFfi,
+              "3725: c-* family infers Ffi");
+        CHECK(infer_required_effects_from_name("shell") == kEffectExec, "3725: shell infers Exec");
         CHECK(std::string_view(kSideEffectPrimPatternToken) == "AURA_SIDE_EFFECT_PRIM",
               "pattern token");
     }

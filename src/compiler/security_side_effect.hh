@@ -56,7 +56,9 @@ infer_required_effects_from_name(std::string_view name) noexcept {
     using namespace security;
     if (name.starts_with("mutate:") || name.starts_with("mutate-"))
         return kEffectMutate;
-    if (name.starts_with("ffi:") || name.starts_with("ffi-"))
+    // Issue #3725: c-* (c-load / c-func / …) are not ffi:-prefixed.
+    // std/ffi's one-shot require_effect used to leave them ungated.
+    if (name.starts_with("ffi:") || name.starts_with("ffi-") || name.starts_with("c-"))
         return kEffectFfi;
     // Issue #2625/#2626: render3d/tui/terminal present surface removed.
     // Residual render: / render- names (if any) still map to Render effect.
@@ -88,6 +90,17 @@ infer_required_effects_from_name(std::string_view name) noexcept {
     // Hash-ref (read) stays kEffectNone.
     if (name == "hash-set!" || name == "hash-remove!" || name == "vector-set!")
         return kEffectMutate;
+    // Issue #3725: std/ffi installs c-* after a one-shot require_effect;
+    // c-load/c-func bodies did not re-enter the choke, so revoke /
+    // single-use / session-exit left native dlopen/dlsym live. Infer
+    // stamps required_effects at add() so telemetry require_effect
+    // runs on every call. Registration stays (no uninstall race).
+    // Soft/Off: require_effect is a no-op. Do not also body-check
+    // (would double-consume single-use). Sibling host writes:
+    if (name == "shell" || name.starts_with("command-"))
+        return kEffectExec;
+    if (name == "file-copy" || name == "file-delete" || name == "file-write")
+        return static_cast<std::uint16_t>(kEffectWrite | kEffectExec);
     return kEffectNone;
 }
 
