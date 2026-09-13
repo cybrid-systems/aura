@@ -259,6 +259,9 @@ extern "C" void aura_test_set_residual_remount_budget(std::uint64_t budget) noex
 extern "C" void aura_test_set_residual_remount_cursor(std::uint64_t cursor) noexcept;
 extern "C" void aura_test_set_closure_stable_func_id(std::int64_t closure_id,
                                                      std::uint32_t sid) noexcept;
+// Issue #3746: inject unstamped table epoch (alloc stamps current).
+extern "C" void aura_test_set_closure_table_epoch(std::int64_t closure_id,
+                                                  std::uint64_t epoch) noexcept;
 extern "C" void aura_test_set_residual_remount_force_skip(int v) noexcept;
 extern "C" void aura_test_reset_residual_remount_state() noexcept;
 // Issue #2978: reemit-success sync remount of named closures whose sid

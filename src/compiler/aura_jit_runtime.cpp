@@ -1295,7 +1295,11 @@ static void stamp_closure_table_epoch_locked(size_t cid) noexcept {
 // Issue #3503: capture remount success restamps env_gen only. Clear
 // MustDeopt iff dual-fresh already holds on the unstamped C-bridge /
 // defuse / table (otherwise residual tick would wash leave-native).
-// Caller holds exclusive g_closure_table_mtx.
+// Issue #3746: dual-fresh skips the table domain when cap_table==0 and
+// C-bridge tracking is on — do not clear MustDeopt while the live table
+// is tracking and this closure has no table stamp (pre-reemit fn_ptr).
+// Remap-retarget stamps table; then a later remount may clear. No table
+// restamp here (#3503). Caller holds exclusive g_closure_table_mtx.
 static void note_capture_remount_ok_keep_epochs_unlocked(std::size_t cid,
                                                          std::uint64_t live_env) noexcept {
     if (cid < g_closure_env_gen.size())
@@ -1304,6 +1308,11 @@ static void note_capture_remount_ok_keep_epochs_unlocked(std::size_t cid,
     const auto cap_defuse =
         cid < g_closure_defuse_versions.size() ? g_closure_defuse_versions[cid] : 0;
     const auto cap_table = cid < g_closure_table_epochs.size() ? g_closure_table_epochs[cid] : 0;
+    // Keep MustDeopt when table tracking is live and this slot is unstamped.
+    if (cap_table == 0 && aura_aot_func_table_epoch() != 0) {
+        invalidate_closure_cache_for(static_cast<std::int64_t>(cid));
+        return;
+    }
     if (aura_is_jit_closure_fresh(cap_bridge, cap_defuse, cap_table)) {
         if (cid < g_closure_must_deopt.size())
             g_closure_must_deopt[cid] = 0;
@@ -2933,6 +2942,21 @@ extern "C" void aura_test_set_residual_remount_cursor(std::uint64_t cursor) noex
 
 // Issue #2977: test inject sid so light-link (stable-map stub) can still
 // exercise prefer without aura_get_or_preserve_stable_func_id.
+// Issue #3746: inject an unstamped table epoch so residual capture remount
+// cannot wash MustDeopt while table tracking is on (dual-fresh skip).
+extern "C" void aura_test_set_closure_table_epoch(std::int64_t closure_id,
+                                                  std::uint64_t epoch) noexcept {
+    if (closure_id < 0)
+        return;
+    std::unique_lock<std::shared_mutex> tlock(g_closure_table_mtx);
+    const auto cid = static_cast<std::size_t>(closure_id);
+    if (cid >= g_closure_func_ids.size())
+        return;
+    if (g_closure_table_epochs.size() <= cid)
+        g_closure_table_epochs.resize(g_closure_func_ids.size(), 0);
+    g_closure_table_epochs[cid] = epoch;
+}
+
 extern "C" void aura_test_set_closure_stable_func_id(std::int64_t closure_id,
                                                      std::uint32_t sid) noexcept {
     if (closure_id < 0)
