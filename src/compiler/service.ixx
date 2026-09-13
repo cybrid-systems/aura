@@ -12440,6 +12440,8 @@ private:
     // not the number of marked defines.
     // Issue #3656: returns kUnknownCalleeConeBlocks when map nonempty,
     // string calls empty, but node_dep still has fn edges.
+    // Issue #3760: production empty source_to_ir_map is also unknown
+    // (not 0 / skip cone). Soft still returns 0 at the helper gate.
     std::size_t precompute_callee_cascade_for_partial(const std::string& name);
 
     // Issue #3345: production hybrid depth-1 IR dirty of direct called_by
@@ -13572,6 +13574,19 @@ public:
         lock_order::OrderedUniqueLock<std::shared_mutex> write(dep_graph_mtx_,
                                                                lock_order::Level::DepGraph);
         mirror_fn_dep_edge_unlocked_(caller, callee);
+    }
+    // Issue #3760: empty map + live irs + abort latch off — production
+    // precompute used to return 0 (skip cone). Tests inject this residual.
+    bool public_clear_source_to_ir_map_keep_irs_for_test(const std::string& name) {
+        auto it = ir_cache_v2_.find(name);
+        if (it == ir_cache_v2_.end() || it->second.irs.empty())
+            return false;
+        it->second.source_to_ir_map.clear();
+        it->second.abort_map_invalid = false;
+        return true;
+    }
+    [[nodiscard]] std::size_t public_precompute_callee_cascade_for_test(const std::string& name) {
+        return precompute_callee_cascade_for_partial(name);
     }
     // Issue #3656: drop string calls/called_by but keep the NodeId fn
     // mirror — production precompute must not treat that as "no callee".
