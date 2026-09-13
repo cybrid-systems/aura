@@ -2107,6 +2107,14 @@ namespace {
         ArenaBoundaryDepthWire() {
             aura::ast::set_arena_mutation_boundary_depth_fn(
                 +[]() noexcept -> std::size_t { return Evaluator::mutation_boundary_depth(); });
+            // Issue #3739: auto-arm Moving restamp Densify (same site as
+            // Phase-5 / compact-hook re_pin). Compact-hook re_pin no-ops
+            // when workspace_flat() is null.
+            aura::ast::set_arena_unified_restamp_densify_fn(+[](void* eval) noexcept {
+                if (eval)
+                    static_cast<Evaluator*>(eval)->unified_restamp_after_boundary(
+                        Evaluator::UnifiedRestampSite::Densify);
+            });
         }
     };
     const ArenaBoundaryDepthWire g_arena_boundary_depth_wire{};

@@ -1176,7 +1176,8 @@ Evaluator::CompactSweepResult Evaluator::compact_sweep(void* sweep_buffers) {
     // pins would sit fail-closed (red) until the next boundary restamp.
     // Same site vocabulary as the Phase-5 Moving densify restamp. Soft does
     // NOT publish a Moving window (had_moving_densify keeps the last Moving
-    // publish — Phase-5 stays the only window writer). Unlock first: the
+    // publish — Phase-5 and production auto-arm Moving are the window
+    // writers, #3739). Unlock first: the
     // restamp triad does not take heap_mutex and must not run under it.
     // Issue #3679: EnvFrame Guard + mandatory scan_skip_freed + densify
     // ownership-exit scan now run AFTER pair compact + live_compact(Soft) —
