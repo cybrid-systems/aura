@@ -20,6 +20,7 @@
 #include "core/gc_hooks.h"
 #include "core/lifetime_consistency_proof.hh"
 #include "serve/fiber.h"
+#include "serve/gc_coordinator.h"
 #include "serve/metrics.h"
 #include "serve/runtime_production_abi.h"
 #include "serve/scheduler.h"
@@ -40,6 +41,7 @@ import std;
 import aura.compiler.evaluator;
 import aura.compiler.service;
 import aura.compiler.value;
+import aura.core.panic_checkpoint_raii;
 
 // Strong C ABI (evaluator_fiber_mutation.cpp).
 extern "C" void aura_evaluator_on_steal_complete(void* fiber_ptr) noexcept;
@@ -53,8 +55,16 @@ extern "C" int aura_evaluator_try_hold_budget_fail_closed_at_safepoint() noexcep
 namespace {
 
 using aura::compiler::CompilerService;
+using aura::compiler::Evaluator;
+using aura::compiler::typed_audit::apply_dev_audit_defaults;
+using aura::compiler::typed_audit::apply_production_audit_defaults;
+using aura::compiler::typed_audit::production_defaults_active;
 using aura::compiler::types::as_int;
 using aura::compiler::types::is_int;
+using aura::core::panic_cp::g_panic_checkpoint_raii_stats;
+using aura::core::panic_cp::PanicCheckpointGuard;
+using aura::core::panic_cp::PanicCheckpointHost;
+using aura::core::panic_cp::reset_panic_checkpoint_raii_stats;
 using aura::serve::Fiber;
 using aura::serve::Scheduler;
 using aura::serve::YieldReason;
@@ -697,6 +707,203 @@ static void ac3694_safepoint_fail_closed_this_fiber() {
     CHECK(read_file("tests/serve/test_issue_3694.cpp").empty(), "3694: no invent");
 }
 
+// ── Issue #3740: mismatch skip must restore save-side or keep GC defer ──
+//   AC1: Production save on A, Guard bound to B, dtor → restore save-side
+//        (ctx) OR should_defer_destructive_gc still true for A
+//   AC2: GCCollector::request during that window returns false
+//   AC3: steal-complete still clear_gc_defer_for_evaluator for previous
+//        eval after a successful restore path (#2203 unchanged)
+//   AC4: Soft: no extra restore (#1727 clear retained)
+//   Canary: abort_restore_dual_topology stays the mutate-abort path
+
+namespace {
+struct FakeHost3740 {
+    int saves = 0;
+    int restores = 0;
+    int clears = 0;
+    bool restore_ok = true;
+    static bool save_fn(void* p) noexcept {
+        ++static_cast<FakeHost3740*>(p)->saves;
+        return true;
+    }
+    static bool restore_fn(void* p) noexcept {
+        auto* h = static_cast<FakeHost3740*>(p);
+        ++h->restores;
+        return h->restore_ok;
+    }
+    static bool clear_fn(void* p) noexcept {
+        ++static_cast<FakeHost3740*>(p)->clears;
+        return true;
+    }
+};
+} // namespace
+
+static void ac3740_source_cite() {
+    std::println("\n--- #3740 AC source: save-side restore, not expected ---");
+    const auto raii = read_file("src/core/panic_checkpoint_raii.ixx");
+    CHECK(raii.find("Issue #3740") != std::string::npos, "3740: cites issue in raii");
+    CHECK(raii.find("host_.restore(host_.ctx)") != std::string::npos,
+          "3740: restore SAVE-SIDE ctx");
+    CHECK(raii.find("host_.restore(host_.expected_evaluator_id)") == std::string::npos,
+          "3740: do not restore expected (discriminator, not save receiver)");
+    CHECK(raii.find("panic_cp_production_face") != std::string::npos, "3740: production face gate");
+    CHECK(raii.find("aura_production_defaults_active_probe") != std::string::npos,
+          "3740: reuses production probe (no new query key)");
+    CHECK(raii.find("abort_restore_dual_topology") == std::string::npos,
+          "3740 canary: abort_restore not merged into panic RAII");
+    const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    CHECK(emb.find("abort_restore_dual_topology") != std::string::npos,
+          "3740 canary: mutate-abort still abort_restore_dual_topology");
+    CHECK(read_file("tests/core/test_issue_3740.cpp").empty(), "3740: no test_issue_N.cpp");
+    CHECK(read_file("tests/serve/test_issue_3740.cpp").empty(), "3740: no invent serve binary");
+}
+
+static void ac3740_production_mismatch_restore_or_defer() {
+    std::println("\n--- #3740 AC1/AC2: production mismatch restores save-side or keeps defer ---");
+    apply_production_audit_defaults();
+    CHECK(production_defaults_active(), "3740: production face armed");
+
+    // FakeHost: restore(ctx) then clear — not restore(expected).
+    {
+        reset_panic_checkpoint_raii_stats();
+        FakeHost3740 fake;
+        int other = 0;
+        PanicCheckpointHost host{&fake, &other, &FakeHost3740::save_fn, &FakeHost3740::restore_fn,
+                                 &FakeHost3740::clear_fn};
+        const auto fail0 = g_panic_checkpoint_raii_stats.restores_discriminator_failed;
+        {
+            PanicCheckpointGuard g(host);
+            CHECK(g.saved(), "3740 FakeHost: save on ctx");
+        }
+        CHECK(fake.restores == 1, "3740 AC1: production mismatch restores SAVE-SIDE");
+        CHECK(fake.clears == 1, "3740 AC1: production mismatch clears after restore");
+        CHECK(g_panic_checkpoint_raii_stats.restores_discriminator_failed == fail0 + 1,
+              "3740: discriminator-failed still counted");
+    }
+    // Restore miss: leave checkpoint (no clear) — fail-closed defer analogue.
+    {
+        reset_panic_checkpoint_raii_stats();
+        FakeHost3740 fake;
+        fake.restore_ok = false;
+        int other = 0;
+        PanicCheckpointHost host{&fake, &other, &FakeHost3740::save_fn, &FakeHost3740::restore_fn,
+                                 &FakeHost3740::clear_fn};
+        {
+            PanicCheckpointGuard g(host);
+        }
+        CHECK(fake.restores == 1, "3740: restore attempted on miss");
+        CHECK(fake.clears == 0, "3740: restore miss does not clear (defer stays)");
+    }
+
+    // Real GC defer keyed on the save-side pointer (production current-source
+    // may refuse Evaluator::save_panic_checkpoint; arm via gc_hooks like #3604).
+    struct DeferHost {
+        bool restore_ok = true;
+        static bool save_fn(void* p) noexcept {
+            aura::gc_hooks::arm_gc_defer_pending_panic_for(p);
+            return true;
+        }
+        static bool restore_fn(void* p) noexcept { return static_cast<DeferHost*>(p)->restore_ok; }
+        static bool clear_fn(void* p) noexcept {
+            aura::gc_hooks::release_gc_defer_pending_panic_for(p);
+            return true;
+        }
+    };
+
+    Scheduler sched(1);
+    auto* gc = sched.gc_collector();
+    CHECK(gc != nullptr, "3740: GCCollector");
+    gc->set_alloc_threshold(1);
+    for (int i = 0; i < 16; ++i)
+        gc->record_alloc();
+
+    {
+        DeferHost save_side;
+        int other = 0;
+        PanicCheckpointHost host{&save_side, &other, &DeferHost::save_fn, &DeferHost::restore_fn,
+                                 &DeferHost::clear_fn};
+        (void)aura::gc_hooks::clear_gc_defer_for_evaluator(&save_side);
+        {
+            PanicCheckpointGuard g(host);
+            CHECK(g.saved(), "3740 AC1: save on A");
+            CHECK(aura::gc_hooks::gc_deferred_for_evaluator(&save_side),
+                  "3740 AC2: defer armed during Guard window");
+            CHECK(aura::gc_hooks::should_defer_destructive_gc(), "3740 AC2: process defers");
+            CHECK(!gc->request(), "3740 AC2: GCCollector::request false during window");
+        }
+        CHECK(!aura::gc_hooks::gc_deferred_for_evaluator(&save_side),
+              "3740 AC1: production restore+clear released A's defer");
+    }
+    {
+        DeferHost save_side;
+        save_side.restore_ok = false;
+        int other = 0;
+        PanicCheckpointHost host{&save_side, &other, &DeferHost::save_fn, &DeferHost::restore_fn,
+                                 &DeferHost::clear_fn};
+        (void)aura::gc_hooks::clear_gc_defer_for_evaluator(&save_side);
+        {
+            PanicCheckpointGuard g(host);
+            CHECK(!gc->request(), "3740 AC2: request false during restore-miss window");
+        }
+        CHECK(aura::gc_hooks::gc_deferred_for_evaluator(&save_side),
+              "3740 AC1: restore miss keeps A's defer armed");
+        CHECK(!gc->request(), "3740 AC2: request false while defer held after mismatch");
+        (void)aura::gc_hooks::clear_gc_defer_for_evaluator(&save_side);
+        (void)aura::gc_hooks::reconcile_gc_defer_bits_after_clear();
+    }
+    apply_dev_audit_defaults();
+}
+
+static void ac3740_steal_complete_still_clears_prev() {
+    std::println("\n--- #3740 AC3: steal-complete still clears previous eval ---");
+    apply_production_audit_defaults();
+    CompilerService prev_cs;
+    auto* id_prev = static_cast<void*>(&prev_cs.evaluator());
+    (void)aura::gc_hooks::clear_gc_defer_for_evaluator(id_prev);
+    aura::gc_hooks::arm_gc_defer_pending_panic_for(id_prev);
+    CHECK(aura::gc_hooks::gc_deferred_for_evaluator(id_prev), "3740 AC3: prev armed");
+
+    const auto complete0 = aura::gc_hooks::steal_complete_total();
+    Fiber fiber([]() {}, /*stack_size=*/64 * 1024);
+    aura_evaluator_test_seed_yield_cp_and_steal_complete(&fiber, id_prev);
+    CHECK(aura::gc_hooks::steal_complete_total() > complete0, "3740 AC3: steal_complete advanced");
+    CHECK(!aura::gc_hooks::gc_deferred_for_evaluator(id_prev),
+          "3740 AC3: steal-complete still clear_gc_defer_for_evaluator on previous eval");
+    apply_dev_audit_defaults();
+}
+
+static void ac3740_soft_no_extra_restore() {
+    std::println("\n--- #3740 AC4: Soft no extra restore ---");
+    apply_dev_audit_defaults();
+    CHECK(!production_defaults_active(), "3740 AC4: Soft face");
+
+    reset_panic_checkpoint_raii_stats();
+    FakeHost3740 fake;
+    int other = 0;
+    PanicCheckpointHost host{&fake, &other, &FakeHost3740::save_fn, &FakeHost3740::restore_fn,
+                             &FakeHost3740::clear_fn};
+    {
+        PanicCheckpointGuard g(host);
+        CHECK(g.saved(), "3740 AC4: Soft save");
+    }
+    CHECK(fake.restores == 0, "3740 AC4: Soft no extra restore");
+    CHECK(fake.clears == 1, "3740 AC4: Soft keeps #1727 clear");
+
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define z 1)\")").has_value(), "3740 AC4: seed");
+    CHECK(cs.eval("(eval-current)").has_value(), "3740 AC4: eval-current");
+    auto& ev = cs.evaluator();
+    PanicCheckpointHost ehost = Evaluator::panic_checkpoint_host(ev);
+    ehost.expected_evaluator_id = &other;
+    const auto restore0 = ev.get_panic_checkpoint_restore_count();
+    {
+        PanicCheckpointGuard g(ehost);
+    }
+    CHECK(ev.get_panic_checkpoint_restore_count() == restore0,
+          "3740 AC4: Evaluator Soft no extra restore");
+    CHECK(!ev.has_panic_checkpoint(), "3740 AC4: Soft empty checkpoint");
+}
+
 int run_test_steal_complete_gc_defer() {
     std::println("=== Issue #2203: steal-complete single entry (clear_gc_defer + metric) ===");
     std::println("=== Issue #2314: residual defer clear interlock (share helper, idempotent) ===");
@@ -723,6 +930,11 @@ int run_test_steal_complete_gc_defer() {
     ac3617_eval_keyed_residual();
     std::println("\n=== Issue #3694: safepoint fail-closed is this-fiber Guard only ===");
     ac3694_safepoint_fail_closed_this_fiber();
+    std::println("\n=== Issue #3740: mismatch skip restores save-side or keeps GC defer ===");
+    ac3740_source_cite();
+    ac3740_production_mismatch_restore_or_defer();
+    ac3740_steal_complete_still_clears_prev();
+    ac3740_soft_no_extra_restore();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
