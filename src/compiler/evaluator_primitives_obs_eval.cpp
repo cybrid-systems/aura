@@ -15550,8 +15550,13 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
             keep_enabled = ::aura_reemit_keep_fail_enabled();
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-                // #2369/#2605/#2606/#2850/#2893/#2950 expand this surface.
-                auto* ht = FlatHashTable::create(query_hash_capacity_for(98));
+                // #2369/#2605/#2606/#2850/#2893/#2950/#3736 expand this surface.
+                // Live ~174 keys (169 + 5 additive dirty-region #3736);
+                // planned 256 (≥ live + headroom). query_hash_capacity_for
+                // doubles then rounds to power-of-two.
+                constexpr std::size_t kAotIncrementalReemitStatsPlannedKeys = 256;
+                auto* ht = FlatHashTable::create(
+                    query_hash_capacity_for(kAotIncrementalReemitStatsPlannedKeys));
                 if (!ht)
                     return make_void();
                 bool overflowed = false;
@@ -15720,6 +15725,14 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
                 {"aot_incremental_reemit_success_total",
                  make_int(static_cast<std::int64_t>(reemit_success))},
                 {"aot_incremental_reemit_count", make_int(static_cast<std::int64_t>(reemit_count))},
+                // Issue #3736: additive dirty-region family on the winning
+                // hash (this impl last-wins). Old LLVM keys unchanged.
+                {"dirty-region-reemit-total", make_int(static_cast<std::int64_t>(reemit_count))},
+                {"dirty-region-reemit-success-total",
+                 make_int(static_cast<std::int64_t>(reemit_success))},
+                {"dirty-region-reemit-wired", make_int(1)},
+                {"schema-3736", make_int(3736)},
+                {"issue-3736", make_int(3736)},
                 {"stable_func_id_preserved_total",
                  make_int(static_cast<std::int64_t>(sid_preserve))},
                 {"stable_func_id_assigned_total", make_int(static_cast<std::int64_t>(sid_assign))},
