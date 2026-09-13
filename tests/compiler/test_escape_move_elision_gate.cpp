@@ -1517,6 +1517,118 @@ static void ac3446_5_soft_no_new_key() {
           "3446 AC5: no test_issue_3446.cpp per #81934");
 }
 
+// ── Issue #3759: linear_safety_probe typed-entry fail must skip Apply/Capture ──
+// Residual of #3446: probe deopt_inc then continued into native Capture /
+// Apply. Fence already skipped Move/Drop. Linear locals now reuse the fence.
+static void ac3759_1_apply_capture_linear_uses_fence() {
+    std::println("\n--- #3759 AC1: linear Apply/Capture reuse fence; skip body ---");
+    const auto jit = read_file("src/compiler/aura_jit.cpp");
+    const auto ir = read_file("src/compiler/ir_executor_impl.cpp");
+    const auto efl = read_file("src/compiler/evaluator_eval_flat.cpp");
+    const auto apply = jit.find("case OpApply:");
+    CHECK(apply != std::string::npos, "3759 AC1: OpApply present");
+    const auto apply_body = apply == std::string::npos ? std::string{} : jit.substr(apply, 4200);
+    CHECK(apply_body.find("Issue #3759") != std::string::npos, "3759 AC1: OpApply cites #3759");
+    CHECK(apply_body.find("begin_linear_epoch_fence()") != std::string::npos,
+          "3759 AC1: OpApply uses fence for linear locals");
+    CHECK(apply_body.find("end_linear_epoch_fence(fb)") != std::string::npos,
+          "3759 AC1: OpApply ends fence after body");
+    CHECK(apply_body.find("linear_ownership_state != 0") != std::string::npos,
+          "3759 AC1: fence only when linear (Soft/untyped zero extra IR)");
+    CHECK(apply_body.find("fn_closure_call") != std::string::npos,
+          "3759 AC1: Apply body (closure_call) stays after fence");
+    const auto cap = jit.find("case OpCapture:");
+    CHECK(cap != std::string::npos, "3759 AC1: OpCapture present");
+    const auto cap_body = cap == std::string::npos ? std::string{} : jit.substr(cap, 1800);
+    CHECK(cap_body.find("Issue #3759") != std::string::npos, "3759 AC1: OpCapture cites #3759");
+    CHECK(cap_body.find("begin_linear_epoch_fence()") != std::string::npos,
+          "3759 AC1: OpCapture uses fence");
+    CHECK(cap_body.find("end_linear_epoch_fence(fb)") != std::string::npos,
+          "3759 AC1: OpCapture ends fence after capture");
+    const auto cref = jit.find("case OpCaptureRef:");
+    CHECK(cref != std::string::npos, "3759 AC1: OpCaptureRef present");
+    const auto cref_body = cref == std::string::npos ? std::string{} : jit.substr(cref, 1600);
+    CHECK(cref_body.find("begin_linear_epoch_fence()") != std::string::npos,
+          "3759 AC1: OpCaptureRef uses fence");
+    CHECK(ir.find("ir_typed_entry_blocked_result") != std::string::npos,
+          "3759 AC1: interpreter still refuses at C++ entry");
+    CHECK(ir.find("commit-readiness-refused") != std::string::npos,
+          "3759 AC1: interpreter Apply face is commit-readiness-refused");
+    CHECK(efl.find("production_eval_flat_commit_readiness_refuse") != std::string::npos,
+          "3759 AC1: eval_flat Apply still refuses");
+
+    using namespace aura::compiler::typed_audit;
+    g_linear_ir_fastpath_boundary_depth_override = 1;
+    auto save =
+        g_typed_mutation_audit_counters.production_defaults_active.load(std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.production_defaults_active.store(1, std::memory_order_relaxed);
+    clear_type_linear_commit_proof_for_test();
+    stamp_type_linear_commit_proof(37591);
+    publish_type_linear_proof_outcome(kTypeLinearProofOutcomeReject);
+    publish_last_proof_face(false, false);
+    CHECK(!linear_move_drop_elision_ok(), "3759 AC1: elision blocked after reject");
+    CHECK(!ir_typed_entry_commit_readiness_ok(), "3759 AC1: typed-entry blocked after reject");
+    g_typed_mutation_audit_counters.production_defaults_active.store(save,
+                                                                     std::memory_order_relaxed);
+    clear_type_linear_commit_proof_for_test();
+    clear_type_linear_proof_outcome_for_test();
+    g_linear_ir_fastpath_boundary_depth_override = -1;
+}
+
+static void ac3759_2_move_drop_fence_unchanged() {
+    std::println("\n--- #3759 AC2: Move/Drop fence unchanged ---");
+    const auto jit = read_file("src/compiler/aura_jit.cpp");
+    const auto move = jit.find("case OpMoveOp:");
+    CHECK(move != std::string::npos, "3759 AC2: OpMoveOp present");
+    const auto move_body = move == std::string::npos ? std::string{} : jit.substr(move, 2800);
+    CHECK(move_body.find("begin_linear_epoch_fence()") != std::string::npos,
+          "3759 AC2: Move still uses fence");
+    CHECK(move_body.find("store(inst.ops[1], c64(0))") != std::string::npos,
+          "3759 AC2: Move source-zero still after fence");
+    CHECK(move_body.find("Issue #3446") != std::string::npos, "3759 AC2: #3446 Move cite kept");
+    const auto drop = jit.find("case OpDropOp:");
+    const auto drop_body = drop == std::string::npos ? std::string{} : jit.substr(drop, 1800);
+    CHECK(drop_body.find("begin_linear_epoch_fence()") != std::string::npos,
+          "3759 AC2: Drop still uses fence");
+    const auto fence = jit.find("auto begin_linear_epoch_fence");
+    const auto fence_body = fence == std::string::npos ? std::string{} : jit.substr(fence, 3200);
+    CHECK(fence_body.find("fence_elision_blocked") != std::string::npos,
+          "3759 AC2: fence still ORs elision_ok==0");
+    CHECK(fence_body.find("fence_entry_blocked") != std::string::npos,
+          "3759 AC2: fence still ORs typed-entry==0");
+}
+
+static void ac3759_3_soft_probe_may_continue() {
+    std::println("\n--- #3759 AC3: Soft probe may continue; no invent ---");
+    using namespace aura::compiler::typed_audit;
+    auto save =
+        g_typed_mutation_audit_counters.production_defaults_active.load(std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.production_defaults_active.store(0, std::memory_order_relaxed);
+    set_strategy(AuditStrategy::Sampled);
+    clear_type_linear_commit_proof_for_test();
+    stamp_type_linear_commit_proof(37593);
+    publish_type_linear_proof_outcome(kTypeLinearProofOutcomeStamped);
+    publish_last_proof_face(true, true);
+    g_linear_ir_fastpath_boundary_depth_override = 0;
+    CHECK(ir_typed_entry_commit_readiness_ok(), "3759 AC3: Soft typed-entry allow");
+    CHECK(linear_move_drop_elision_ok() || linear_fast_path_ok(),
+          "3759 AC3: Soft elision/fast-path allow");
+    g_typed_mutation_audit_counters.production_defaults_active.store(save,
+                                                                     std::memory_order_relaxed);
+    clear_type_linear_commit_proof_for_test();
+    g_linear_ir_fastpath_boundary_depth_override = -1;
+
+    const auto jit = read_file("src/compiler/aura_jit.cpp");
+    CHECK(jit.find("irb->CreateCondBr(any_unsafe, bb_deopt, bb_ok)") != std::string::npos,
+          "3759 AC3: probe CFG still continues to bb_ok (GuardShape i1)");
+    CHECK(jit.find("linear_safety_probe();") != std::string::npos,
+          "3759 AC3: non-linear probe call kept (ArenaPop / #3270)");
+    CHECK(jit.find("schema-3759") == std::string::npos, "3759 AC3: no new query key");
+    CHECK(read_file("tests/compiler/test_issue_3759.cpp").empty(), "3759 AC3: no invent");
+    CHECK(read_file("docs/design/3759-linear-safety-probe-skip.md").empty(),
+          "3759 AC3: no docs/design");
+}
+
 // ── Issue #3448: last==0 green face must drop on remount so Move/Drop
 // elision cannot ride a pre-remount stamp (residual of #3227/#2984).
 
@@ -1961,6 +2073,10 @@ int run_test_escape_move_elision_gate() {
     ac3446_3_interpreter_unchanged();
     ac3446_4_prologue_guardshape_kept();
     ac3446_5_soft_no_new_key();
+    std::println("\n=== Issue #3759: linear Apply/Capture skip body on typed-entry fail ---");
+    ac3759_1_apply_capture_linear_uses_fence();
+    ac3759_2_move_drop_fence_unchanged();
+    ac3759_3_soft_probe_may_continue();
     std::println("\n=== Issue #3448: last==0 green face drops on remount ---");
     ac3448_1_last0_green_blocks_elision();
     ac3448_4_soft_no_schema();

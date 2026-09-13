@@ -808,8 +808,10 @@ struct LLVMBuilder {
             irb->CreateBr(bb_ok);
             irb->SetInsertPoint(bb_ok);
             // Issue #3270: return the runtime i1 so OpGuardShape can
-            // fail-close to bb_stale. Other sites keep deopt_inc then
-            // continue (observability). nullptr when no linear state.
+            // fail-close to bb_stale. Probe deopt_inc then continues
+            // (observability). Capture / Apply of linear locals reuse
+            // begin_linear_epoch_fence (#3759) — not this continue path.
+            // nullptr when no linear state.
             return any_unsafe;
         };
         // Issue #1535: dual-epoch fence for Linear* ops (Move/Borrow/Drop).
@@ -818,8 +820,12 @@ struct LLVMBuilder {
         // IR builder at bb_ok; caller emits body then calls end_fence.
         // Issue #3446: also OR live elision_ok + typed-entry into this
         // fail-close (skip body). linear_safety_probe deopt_inc then
-        // continues to bb_ok (observability) — not a substitute. Soft
-        // helpers return allow (one/two loads). Reuses
+        // continues to bb_ok (observability) — not a substitute.
+        // Issue #3759: Capture / CaptureRef / Apply of linear locals reuse
+        // this fence so mid-function persist-reject / remount last==0
+        // skips the native body (interpreter Apply refuses
+        // commit-readiness-refused). Soft helpers return allow
+        // (one/two loads). Reuses
         // g_linear_fast_path_elide_blocked_production_total inside the
         // C ABI — no new query key.
         struct LinearEpochFence {
@@ -1306,7 +1312,13 @@ struct LLVMBuilder {
                 return true;
             }
             case OpCapture: {
-                linear_safety_probe();
+                // Issue #3759: linear locals skip Capture on typed-entry /
+                // elision fail (same fence as Move/Drop). Probe-only
+                // deopt_inc then continue is not a substitute.
+                const bool lin = inst.linear_ownership_state != 0;
+                LinearEpochFence fb{};
+                if (lin)
+                    fb = begin_linear_epoch_fence();
                 if (metrics)
                     metrics->critical_opcode_lowered_total.fetch_add(1, std::memory_order_relaxed);
                 // ops[0] = closure_slot, ops[1] = env_idx, ops[2] = var_slot
@@ -1315,6 +1327,8 @@ struct LLVMBuilder {
                 irb->CreateCall(
                     llvm::FunctionCallee(fn_closure_capture),
                     llvm::ArrayRef<llvm::Value*>{closure_val, c64(inst.ops[1]), env_val});
+                if (lin)
+                    end_linear_epoch_fence(fb);
                 return true;
             }
             // Issue #170 Phase 1 / item #1: CaptureRef captures a
@@ -1331,8 +1345,12 @@ struct LLVMBuilder {
             // capture bridge, two encodings (raw value vs encoded
             // cell-ref), differentiated by the sign of the env val.
             case OpCaptureRef: {
-                // Issue #1917: critical CaptureRef — same linear probe as Capture.
-                linear_safety_probe();
+                // Issue #1917: critical CaptureRef — same linear fence as Capture.
+                // Issue #3759: skip body on typed-entry / elision fail.
+                const bool lin = inst.linear_ownership_state != 0;
+                LinearEpochFence fb{};
+                if (lin)
+                    fb = begin_linear_epoch_fence();
                 if (metrics)
                     metrics->critical_opcode_lowered_total.fetch_add(1, std::memory_order_relaxed);
                 auto closure_val = load(inst.ops[0]);
@@ -1342,6 +1360,8 @@ struct LLVMBuilder {
                 irb->CreateCall(
                     llvm::FunctionCallee(fn_closure_capture),
                     llvm::ArrayRef<llvm::Value*>{closure_val, c64(inst.ops[1]), encoded});
+                if (lin)
+                    end_linear_epoch_fence(fb);
                 return true;
             }
             // Issue #170 Phase 1 / item #1: Apply is the closure
@@ -1356,10 +1376,17 @@ struct LLVMBuilder {
             // different. This is the same pattern as the IR executor
             // (ir_executor_impl.cpp:846-877).
             case OpApply: {
-                // Issue #1917: critical Apply path — linear probe + dual-epoch
-                // site probe (function prologue already fences entry; this
-                // covers mid-function Apply after concurrent invalidate).
-                linear_safety_probe();
+                // Issue #1917: critical Apply path — dual-epoch site probe
+                // (function prologue already fences entry; this covers
+                // mid-function Apply after concurrent invalidate).
+                // Issue #3759: linear locals skip the Apply body on
+                // typed-entry / elision fail (begin_linear_epoch_fence),
+                // matching interpreter commit-readiness-refused. Probe
+                // deopt_inc-then-continue is not a substitute.
+                const bool lin = inst.linear_ownership_state != 0;
+                LinearEpochFence fb{};
+                if (lin)
+                    fb = begin_linear_epoch_fence();
                 if (metrics) {
                     metrics->critical_opcode_lowered_total.fetch_add(1, std::memory_order_relaxed);
                     metrics->apply_site_epoch_probe_total.fetch_add(1, std::memory_order_relaxed);
@@ -1410,6 +1437,8 @@ struct LLVMBuilder {
                     {closure, irb->CreateBitCast(args_arr, llvm::PointerType::getUnqual(ctx)),
                      c64(arg_count)});
                 store(inst.ops[2], call);
+                if (lin)
+                    end_linear_epoch_fence(fb);
                 return true;
             }
             case OpCall: {
