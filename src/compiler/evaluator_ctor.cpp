@@ -20,6 +20,7 @@ module;
 // Issue #2078: header-only AgentNameTable definition (see .h for why
 // not in evaluator.ixx's global fragment).
 #include "compiler/agent_name_table.h"
+#include "compiler/handoff_token_stash.hh"
 
 module aura.compiler.evaluator;
 
@@ -110,6 +111,7 @@ Evaluator::Evaluator() {
     // module's other TUs include this header too; evaluator.ixx does NOT
     // to keep orch → serve/fiber.h out of its global fragment).
     agent_names_ = std::make_unique<AgentNameTable>();
+    handoff_tokens_ = std::make_unique<HandoffTokenStash>();
 
     // Issue #1746: monotonic instance id for TLS maps (depth slot).
     // Never recycled; independent of heap address reuse.
@@ -397,6 +399,10 @@ Evaluator::~Evaluator() {
 // teardown. The process-static scheduler still owns the fiber and
 // cleans up at process exit / OrchSchedHolder teardown.
 void Evaluator::cleanup_orch_agents() noexcept {
+    if (handoff_tokens_) {
+        auto hashes = handoff_tokens_->drain_hashes();
+        aura::compiler::g_handoff_token_stash.unroute_all(hashes);
+    }
     auto handles = agent_names_->drain_for_cleanup();
     for (auto& h : handles) {
         if (h.ok && h.fiber) {

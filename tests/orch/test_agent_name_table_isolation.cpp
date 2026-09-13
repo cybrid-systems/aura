@@ -32,6 +32,7 @@
 #include <string_view>
 
 #include "compiler/agent_name_table.h"
+#include "compiler/handoff_token_stash.hh"
 #include "compiler/typed_mutation_audit.h"
 #include "core/provenance_tracker.hh"
 #include "core/sandbox.hh"
@@ -48,6 +49,7 @@ using aura::compiler::AgentNameTable;
 using aura::compiler::CompilerService;
 using aura::compiler::types::as_bool;
 using aura::compiler::types::as_int;
+using aura::compiler::types::as_string_idx;
 using aura::compiler::types::is_bool;
 using aura::compiler::types::is_int;
 using aura::compiler::types::is_string;
@@ -565,6 +567,125 @@ static void ac3727_5_soft_no_extra_deny_and_source() {
     reset_all_agent_scopes_for_test();
 }
 
+static void ac3729_1_scope_export_import_recv() {
+    std::println("\n--- #3729 AC1: scope-spawn export → import recv ---");
+    reset_all_agent_scopes_for_test();
+    ac3727_set_prod(false);
+    CompilerService cs1;
+    CompilerService cs2;
+    auto spawned = cs1.eval(R"((hash-ref (orch:scope-spawn "src-3729") "ok"))");
+    CHECK(spawned && is_bool(*spawned) && as_bool(*spawned), "3729 AC1: scope-spawn ok");
+    auto src_send = cs1.eval(R"((hash-ref (orch:agent-send "src-3729" "ping-3729") "ok"))");
+    CHECK(src_send && is_bool(*src_send) && as_bool(*src_send),
+          "3729 AC1: source send lands on the scope mailbox");
+    auto tok_v = cs1.eval(R"((orch:agent-export-via-token "src-3729"))");
+    CHECK(tok_v && is_string(*tok_v), "3729 AC1: export of scope-spawned name returns token");
+    const auto idx = as_string_idx(*tok_v);
+    const auto heap = cs1.evaluator().string_heap();
+    CHECK(idx < heap.size() && !heap[idx].empty(), "3729 AC1: export token interned");
+    const auto hash = std::string(heap[idx]);
+    CHECK(cs1.evaluator().handoff_tokens_ && cs1.evaluator().handoff_tokens_->contains(hash),
+          "3729 AC1: source stash holds the token");
+    CHECK(!cs2.evaluator().handoff_tokens_->contains(hash),
+          "3729 AC3: Evaluator-2 map does not contain Evaluator-1 hash");
+    aura::orch::HandoffToken peeked;
+    CHECK(cs1.evaluator().handoff_tokens_->peek(hash, peeked) && peeked.mailbox != nullptr,
+          "3729 AC1: staged token carries the shared mailbox");
+    auto subst_token = [&](std::string src) {
+        const auto pos = src.find("TOKEN");
+        CHECK(pos != std::string::npos, "3729 AC1: TOKEN placeholder present");
+        src.replace(pos, 5, hash);
+        return src;
+    };
+    auto plen = cs2.eval(subst_token(R"((string-length "TOKEN"))"));
+    CHECK(plen && is_int(*plen) && as_int(*plen) == static_cast<std::int64_t>(hash.size()),
+          "3729 AC1: Evaluator-2 reads the returned token string");
+    auto join_cs2 = cs2.eval(subst_token(R"(
+        (let ((r (orch:join-via-token "TOKEN" :timeout-ms 20)))
+          (if (string=? (hash-ref r "status") "invalid") 0 1))
+    )"));
+    CHECK(join_cs2 && is_int(*join_cs2) && as_int(*join_cs2) == 1,
+          "3729 AC1: Evaluator-2 join-via-token observes the returned string");
+    auto recv = cs2.eval(subst_token(R"(
+        (let ((p (orch:agent-import-via-token "TOKEN")))
+          (if (= (string-length p) 0)
+              -1
+              (let ((m (orch:agent-recv p :wait #t :timeout-ms 500)))
+                (if (and (hash-ref m "ok")
+                         (string=? (hash-ref m "payload" "") "ping-3729"))
+                    1 0))))
+    )"));
+    if (!(recv && is_int(*recv) && as_int(*recv) == 1)) {
+        std::println("  debug hash={} plen={} join_cs2={} recv_has={} recv_val={} route={} "
+                     "src_contains={}",
+                     hash, plen && is_int(*plen) ? as_int(*plen) : -2,
+                     join_cs2 && is_int(*join_cs2) ? as_int(*join_cs2) : -2, recv.has_value(),
+                     recv && is_int(*recv) ? as_int(*recv) : -999,
+                     aura::compiler::g_handoff_token_stash.find(hash) != nullptr,
+                     cs1.evaluator().handoff_tokens_->contains(hash));
+    }
+    CHECK(recv && is_int(*recv) && as_int(*recv) == 1,
+          "3729 AC1: import on Evaluator-2 recvs the shared mailbox");
+    reset_all_agent_scopes_for_test();
+}
+
+static void ac3729_2_stash_bounded() {
+    std::println("\n--- #3729 AC2: unimported export is bounded ---");
+    reset_all_agent_scopes_for_test();
+    ac3727_set_prod(true);
+    CompilerService cs;
+    CHECK(cs.eval(R"((hash-ref (orch:spawn-agent "cap-3729") "ok"))").has_value(),
+          "3729 AC2: spawn-agent");
+    for (int i = 0; i < 200; ++i)
+        (void)cs.eval(R"((orch:agent-export-via-token "cap-3729"))");
+    CHECK(cs.evaluator().handoff_tokens_ &&
+              cs.evaluator().handoff_tokens_->size() <= aura::compiler::kHandoffTokenStashCap,
+          "3729 AC2: stash depth bounded (evict oldest)");
+    ac3727_set_prod(false);
+    reset_all_agent_scopes_for_test();
+}
+
+static void ac3729_4_join_observe_only() {
+    std::println("\n--- #3729 AC4: join-via-token stays observation-only ---");
+    reset_all_agent_scopes_for_test();
+    ac3727_set_prod(true);
+    CompilerService cs;
+    CHECK(cs.eval(R"((hash-ref (orch:spawn-agent "join-3729") "ok"))").has_value(),
+          "3729 AC4: spawn");
+    auto r = cs.eval(R"(
+        (let ((tok (orch:agent-export-via-token "join-3729")))
+          (let ((h (orch:join-via-token tok :timeout-ms 20)))
+            (if (and (hash-ref h "observation-only")
+                     (hash-ref h "reservation-held-by-source"))
+                1 0)))
+    )");
+    CHECK(r && is_int(*r) && as_int(*r) == 1,
+          "3729 AC4: observation-only / reservation-held-by-source");
+    ac3727_set_prod(false);
+    reset_all_agent_scopes_for_test();
+}
+
+static void ac3729_5_soft_miss_and_source() {
+    std::println("\n--- #3729 AC5: Soft miss empty string; no invent ---");
+    ac3727_set_prod(false);
+    CompilerService cs;
+    auto miss = cs.eval(R"(
+        (let ((t (orch:agent-export-via-token "no-such-3729")))
+          (if (and (string? t) (= (string-length t) 0)) 1 0))
+    )");
+    CHECK(miss && is_int(*miss) && as_int(*miss) == 1, "3729 AC5: Soft miss stays empty string");
+    const auto prim = read_file("src/compiler/evaluator_primitives_agent.cpp");
+    CHECK(prim.find("Issue #3729") != std::string::npos ||
+              prim.find("handoff_tokens_") != std::string::npos,
+          "3729 AC5: prim cites per-Evaluator stash");
+    CHECK(prim.find("g_handoff_token_stash") != std::string::npos,
+          "3729 AC5: route table name retained (not AgentRegistry)");
+    CHECK(prim.find("class AgentRegistry") == std::string::npos, "3729 AC5: no AgentRegistry");
+    CHECK(prim.find("query:3729") == std::string::npos, "3729 AC5: no new query key");
+    CHECK(read_file("tests/orch/test_issue_3729.cpp").empty(), "3729 AC5: no test_issue_3729.cpp");
+    CHECK(read_file("docs/design/3729-handoff-stash.md").empty(), "3729 AC5: no docs/design");
+}
+
 } // namespace
 
 int run_test_agent_name_table_isolation() {
@@ -583,8 +704,12 @@ int run_test_agent_name_table_isolation() {
     ac3727_3_touch_poll_export_scope_name();
     ac3727_4_directory_scope_only();
     ac3727_5_soft_no_extra_deny_and_source();
-    std::println("\n=== #2078/#3125/#3442/#3467/#3598/#3727: passed={} failed={} ===", g_passed,
-                 g_failed);
+    ac3729_1_scope_export_import_recv();
+    ac3729_2_stash_bounded();
+    ac3729_4_join_observe_only();
+    ac3729_5_soft_miss_and_source();
+    std::println("\n=== #2078/#3125/#3442/#3467/#3598/#3727/#3729: passed={} failed={} ===",
+                 g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
 
