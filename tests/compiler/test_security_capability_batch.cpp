@@ -75,6 +75,7 @@ extern int run_test_capability_audit_publish();
 extern int run_test_capability_effect_stats_snapshot();
 extern int run_test_capability_registry_snapshot();
 extern int run_test_capability_single_use_consume();
+extern int run_test_inert_session_mid_3723();
 extern int run_test_grant_effect_capability_session_3561();
 extern int run_test_restricted_unset_principal();
 extern int run_test_check_and_record_wildcard_strip();
@@ -403,10 +404,17 @@ int main() {
     ++members_passed;
     std::println("OK member test_capability_registry_snapshot (skip leftover AC)");
 
-    std::println("\n──── test_capability_single_use_consume ────");
-    CHECK(true, "skip leftover durable/wildcard-strip AC");
-    ++members_passed;
-    std::println("OK member test_capability_single_use_consume (skip leftover AC)");
+    std::println("\n──── test_capability_single_use_consume (#3723 inert session mid) ────");
+    reset_member_face();
+    g_passed = 0;
+    g_failed = 0;
+    if (run_test_inert_session_mid_3723() != 0 || g_failed != 0) {
+        ++members_failed;
+        std::println("FAIL member test_capability_single_use_consume ({}/{})", g_passed, g_failed);
+    } else {
+        ++members_passed;
+        std::println("OK member test_capability_single_use_consume ({} checks)", g_passed);
+    }
 
     std::println("\n──── test_grant_effect_capability_session_3561 ────");
     reset_member_face();
