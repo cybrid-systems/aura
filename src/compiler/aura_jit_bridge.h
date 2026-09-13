@@ -748,7 +748,10 @@ std::uint64_t aura_aot_bridge_epoch_mismatches(void);
 // all domains are fresh vs current host epochs. Owner-scoped invalidate
 // freezes table epoch; C-bridge still goes stale until remount restamp.
 // Issue #3471: captured==C-bridge must not imply table freshness.
-// captured_table_epoch==0 → no table stamp (skip table AND).
+// Issue #3748: captured_table_epoch==0 while table tracking is on is
+// stale (same shape as C-bridge #2930), not a skip. cur_table==0 is
+// tracking inactive. 2-arg tests (C-bridge off) still use captured_bridge
+// as the table domain.
 // Strict (default): unstamped capture (0) while domain tracking is active
 // (current != 0) is STALE — matches is_bridge_stale / is_env_frame_stale.
 // AURA_BRIDGE_EPOCH_LEGACY_TRUST=1 restores pre-#1491 "0 is ok" trust.
