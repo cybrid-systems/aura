@@ -9,6 +9,7 @@
 #include "compiler/hot_update_registry.hh"
 #include "compiler/observability_metrics.h"
 #include "compiler/runtime_shared.h"
+#include "compiler/typed_mutation_audit.h"
 
 // Issue #2178: C-linkage accessors for the cross-workspace guard + counter.
 // Forward-declared here so the test file can call them without pulling in
@@ -700,6 +701,82 @@ static void ac3539_5_source_cite_no_invent() {
     CHECK(schema == 3539 || schema == -1, "3539 AC5: schema-3539 queryable or hash-ref skip");
 }
 
+static void ac3747_1_prod_reload_pending_zero_without_guard() {
+    std::println("\n--- #3747 AC1: production reload + remount → pending==0, no Guard ---");
+    const auto br = read_file("src/compiler/aura_jit_bridge.cpp");
+    CHECK(br.find("Issue #3747") != std::string::npos, "3747 AC1: bridge cites #3747");
+    CHECK(br.find("production_remount_then_drain_old_so") != std::string::npos,
+          "3747 AC1: reload commit remount-then-drain");
+    CHECK(br.find("Issue #3747: production drain after remount walks") != std::string::npos,
+          "3747 AC1: reemit production drain after remount");
+    CHECK(br.find("schema-3747") == std::string::npos, "3747 AC1: no new query key");
+    aura_force_drain_old_so();
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    const auto so1 = build_test_so(37471);
+    const auto so2 = build_test_so(37472);
+    if (so1.empty() || so2.empty()) {
+        CHECK(true, "3747 AC1: cc unavailable — source-cite only");
+        aura::compiler::typed_audit::apply_dev_audit_defaults();
+        return;
+    }
+    CHECK(aura_reload_aot_module(so1.c_str(), 0) == true, "3747 AC1: first reload");
+    CHECK(aura_reload_aot_module(so2.c_str(), 0) == true, "3747 AC1: second reload");
+    CHECK(aura_reload_old_so_pending_v_read() == 0,
+          "3747 AC1: pending==0 without later mutate Guard");
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+}
+
+static void ac3747_2_must_deopt_even_if_drain_delayed() {
+    std::println("\n--- #3747 AC2: remount-fail MustDeopt; dispatch leaves native ---");
+    const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
+    CHECK(rt.find("g_closure_must_deopt[cid] = 1; // Issue #3060") != std::string::npos,
+          "3747 AC2: remount fail still #3060 MustDeopt");
+    CHECK(rt.find("aura_closure_dispatch_native_checked") != std::string::npos,
+          "3747 AC2: blessed dispatch");
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    aura_force_drain_old_so();
+    const auto cid = aura_alloc_closure(/*func_id=*/0);
+    CHECK(cid >= 0, "3747 AC2: alloc");
+    aura_closure_set_must_deopt(cid, 1);
+    std::int64_t args[1] = {0};
+    CHECK(aura_closure_dispatch_native_checked(cid, args, 0) == 0,
+          "3747 AC2: dispatch leaves native while drain delayed");
+}
+
+static void ac3747_3_soft_staging_unchanged() {
+    std::println("\n--- #3747 AC3: Soft staging/drain unchanged ---");
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    aura_force_drain_old_so();
+    CHECK(aura_reload_old_so_pending_v_read() == 0, "3747 AC3: drain empty");
+    const auto so1 = build_test_so(37473);
+    const auto so2 = build_test_so(37474);
+    if (so1.empty() || so2.empty()) {
+        CHECK(true, "3747 AC3: cc unavailable — source-cite only");
+        return;
+    }
+    CHECK(aura_reload_aot_module(so1.c_str(), 0) == true, "3747 AC3: first reload");
+    CHECK(aura_reload_aot_module(so2.c_str(), 0) == true, "3747 AC3: second reload");
+    CHECK(aura_reload_old_so_pending_v_read() > 0, "3747 AC3: Soft keeps staged pending");
+    aura_force_drain_old_so();
+    CHECK(aura_reload_old_so_pending_v_read() == 0, "3747 AC3: explicit drain still works");
+}
+
+static void ac3747_4_no_invent_fail_dlclose_new() {
+    std::println("\n--- #3747 AC4: no invent; fail still dlclose new handle ---");
+    const auto br = read_file("src/compiler/aura_jit_bridge.cpp");
+    CHECK(br.find("::dlclose(handle)") != std::string::npos,
+          "3747 AC4: fail path dlclose new handle");
+    CHECK(br.find("stage_old_so_for_deferred_close") != std::string::npos,
+          "3747 AC4: success still stages old");
+    CHECK(read_file("tests/compiler/test_issue_3747.cpp").empty(),
+          "3747 AC4: no test_issue_3747.cpp");
+    CHECK(read_file("docs/design/3747-old-so-drain.md").empty(), "3747 AC4: no docs/design/3747-*");
+    CHECK(br.find("schema-3747") == std::string::npos, "3747 AC4: no schema-3747");
+    const auto q = read_file("src/compiler/evaluator_primitives_obs_jit.cpp");
+    CHECK(q.find("schema-3747") == std::string::npos, "3747 AC4: no new query key");
+    CHECK(q.find("old-so-staged-total") != std::string::npos, "3747 AC4: existing staged key kept");
+}
+
 int main() {
     // Issue #2165: production default is auto-retry ON; strict unit checks
     // (Version/Env/Defuse fail counts) need it off until the #2165 block.
@@ -723,6 +800,10 @@ int main() {
     ac3539_3_chaos_drain();
     ac3539_4_soft_pending_zero_load();
     ac3539_5_source_cite_no_invent();
+    ac3747_1_prod_reload_pending_zero_without_guard();
+    ac3747_2_must_deopt_even_if_drain_delayed();
+    ac3747_3_soft_staging_unchanged();
+    ac3747_4_no_invent_fail_dlclose_new();
     ac7_cross_workspace_reject_2178();
 
     // ── Issue #2240: stable cross-workspace reject reason code ──

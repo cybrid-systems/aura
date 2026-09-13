@@ -1517,6 +1517,25 @@ extern "C" void aura_force_drain_old_so(void) {
 extern "C" std::uint64_t aura_reload_old_so_staged_total_v_read(void) {
     return g_aura_reload_old_so_staged_total.load(std::memory_order_relaxed);
 }
+
+extern "C" std::uint64_t aura_reload_old_so_pending_v_read(void) {
+    return g_aura_reload_old_so_pending.load(std::memory_order_relaxed);
+}
+
+// Issue #3747: production remount then drain so pending==0 without a
+// later success Guard. Keep staging across the remount walk (#3539).
+// Soft: zero extra (BoundaryExit periodic walk still the drain site).
+static void production_remount_then_drain_old_so() noexcept {
+    if (!aura::compiler::typed_audit::production_defaults_active())
+        return;
+    std::uint64_t named_ok = 0;
+    std::uint64_t named_fail = 0;
+    aura_sync_remount_named_live_closures(&named_ok, &named_fail);
+    std::uint64_t cap_ok = 0;
+    std::uint64_t cap_fail = 0;
+    aura_sync_remount_anon_captured_live_closures(&cap_ok, &cap_fail);
+    aura_force_drain_old_so();
+}
 static std::uint64_t g_aot_last_commit_epoch = 0;
 static std::uint64_t g_aot_last_module_version = 0;
 // Issue #2178: cross-workspace / cross-COW hot-update reject counter.
@@ -3805,12 +3824,16 @@ static bool aura_reload_aot_module_for_eval_once(void* eval_ptr, const char* pat
     clear_aot_staging();
     // Issue #3539: mark stale live closures before the old .so can
     // unmap. Reuses aura_epoch_invariant_must_deopt_stale_live_closures
-    // (#2501). Then stage the prior handle for BoundaryExit drain —
-    // do not dlclose here (in-flight closures still hold old ptrs).
+    // (#2501). Then stage the prior handle — do not dlclose before
+    // remount (in-flight closures still hold old ptrs).
     (void)aura_epoch_invariant_must_deopt_stale_live_closures();
     if (g_aot_last_handle && g_aot_last_handle != handle)
         stage_old_so_for_deferred_close(g_aot_last_handle);
     g_aot_last_handle = handle;
+    // Issue #3747: production named+captured remount then drain so
+    // query-only / no-Guard hosts do not keep the prior module mapped.
+    // Soft keeps #3539 BoundaryExit staging (period_ms==0 may no-op).
+    production_remount_then_drain_old_so();
     g_aot_last_commit_epoch = g_aot_table_epoch.load(std::memory_order_acquire);
     g_aot_last_module_version = host_module_ver;
     // Issue #452: bump hot-update success counter.
@@ -4796,6 +4819,11 @@ extern "C" std::uint64_t aura_reemit_aot_for_dirty(std::uint64_t current_defuse_
                 aura_sync_remount_pure_anon_live_closures(pure_budget, &pure_ok, &pure_skip);
             }
         }
+        // Issue #3747: production drain after remount walks. In-flight
+        // used remap; MustDeopt leftovers must not need the old .so.
+        // Soft keeps #3539 BoundaryExit staging.
+        if (aura::compiler::typed_audit::production_defaults_active())
+            aura_force_drain_old_so();
     }
 
     // Issue #2016: adaptive region mask based on this call's dirty density
@@ -5801,6 +5829,8 @@ static void aura_2693_soft_fuse_record(std::size_t behind_after_clear) {
 // Gated by mode=Soft + production_defaults_active + period_ms rate limit.
 extern "C" void aura_periodic_epoch_invariant_walk_if_due(void) {
     // Issue #3539: BoundaryExit quiescent drain (pending==0 → one load).
+    // Issue #3747: production also drains after remount; this site
+    // remains the Soft drain (and a belt for leftover pending).
     aura_force_drain_old_so();
     const auto period_ms = g_epoch_invariant_periodic_period_ms.load(std::memory_order_relaxed);
     if (period_ms == 0) {
