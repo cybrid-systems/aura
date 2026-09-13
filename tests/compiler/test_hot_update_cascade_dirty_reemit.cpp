@@ -39,6 +39,7 @@ extern "C" std::uint64_t aura_reemit_success_count(void);
 #include <vector>
 
 import std;
+import aura.compiler.ir;
 import aura.compiler.service;
 import aura.compiler.value;
 
@@ -890,6 +891,77 @@ static void ac_soak_3573_mutate_reemit_hygiene() {
     aura_clear_stable_func_id_map();
 }
 
+// ── Issue #3751: production facade/store must feed the dirty ring ──
+static void ac3751_production_facade_feeds_dirty_ring() {
+    std::println("\n--- #3751: production facade/store feeds dirty ring ---");
+    const auto hur = read_file("src/compiler/hot_update_registry.cpp");
+    const auto svc = read_file("src/compiler/service.ixx");
+    const auto dirty = read_file("src/compiler/service_dirty.cpp");
+    const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
+    CHECK(hur.find("Issue #3751") != std::string::npos, "3751 AC1: facade cites #3751");
+    CHECK(hur.find("aura_production_dirty_ring_push(name, 0, 0)") != std::string::npos,
+          "3751 AC1: facade pushes the ring before decide_and_reemit");
+    CHECK(svc.find("aura_production_dirty_ring_push(name.c_str(), 0, 0)") != std::string::npos,
+          "3751 AC1: store_define_v2 pushes the ring");
+    CHECK(dirty.find("Issue #3751") != std::string::npos,
+          "3751 AC2: service_dirty stamps reemit-owner TLS");
+    CHECK(rt.find("aura_closure_dispatch_native_checked") != std::string::npos,
+          "3751 AC3: blessed dispatch kept");
+    CHECK(hur.find("if (!ir_content_untrusted_for_native())") != std::string::npos,
+          "3751 AC3: remount still gated on #3513 latch");
+    CHECK(dirty.find("notify_hot_update_after_cascade_") != std::string::npos,
+          "3751 AC4: Soft cascade ring-push path kept");
+    CHECK(read_file("tests/compiler/test_issue_3751.cpp").empty(),
+          "3751 AC4: no test_issue_3751.cpp");
+    CHECK(read_file("docs/design/3751-dirty-ring.md").empty(), "3751 AC4: no docs/design");
+    CHECK(hur.find("schema-3751") == std::string::npos &&
+              svc.find("schema-3751") == std::string::npos,
+          "3751 AC4: no new query key");
+
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    CHECK(aura_install_production_dirty_iterator() == 0, "3751 AC4: Soft iterator not installed");
+
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    aura_hot_update_set_reemit_boundary_policy(0);
+    aura_set_aot_emit_fn(&emit_ok, nullptr);
+    aura_production_dirty_ring_reset_for_test();
+    (void)aura_install_production_dirty_iterator();
+    auto& reg = hot_update_registry();
+    {
+        CompilerService cs;
+        CHECK(cs.eval("(set-code \"(define (f3751 x) x)\")").has_value(), "3751 AC1: set-code");
+        CHECK(cs.eval("(eval-current)").has_value(), "3751 AC1: eval-current");
+        const auto pushed0 = aura_production_dirty_ring_pushed_total();
+        const auto succ0 = reg.snapshot().reemit_success_total;
+        cs.public_mark_define_dirty("f3751");
+        CHECK(aura_production_dirty_ring_pushed_total() > pushed0,
+              "3751 AC1: mark_define_dirty pushed the ring");
+        std::vector<aura::ir::IRFunction> empty_irs;
+        cs.store_define_v2("f3751", "(define (f3751 x) x)", std::move(empty_irs), {}, {});
+        CHECK(aura_production_dirty_ring_pushed_total() > pushed0 + 1,
+              "3751 AC1: store_define_v2 pushed the ring");
+        CHECK(reg.snapshot().reemit_success_total > succ0 || aura_reemit_success_count() > 0,
+              "3751 AC1: decide_and_reemit n>0 with emit wired");
+    }
+    {
+        CompilerService a;
+        CompilerService b;
+        aura_set_aot_region_mask_for_eval(static_cast<void*>(&a.evaluator()), 1);
+        aura_set_aot_region_mask_for_eval(static_cast<void*>(&b.evaluator()), 2);
+        const auto rej0 = reemit_owner_missing_reject_total_v_read();
+        a.public_mark_define_dirty("f3751_me");
+        CHECK(reemit_owner_missing_reject_total_v_read() == rej0,
+              "3751 AC2: multi-eval facade does not bump owner-missing reject");
+        std::vector<aura::ir::IRFunction> empty_irs;
+        a.store_define_v2("f3751_me", "(define (f3751_me x) x)", std::move(empty_irs), {}, {});
+        CHECK(reemit_owner_missing_reject_total_v_read() == rej0,
+              "3751 AC2: store closer does not bump owner-missing reject");
+    }
+    aura_set_aot_emit_fn(nullptr, nullptr);
+    aura_set_reemit_candidate_fn(nullptr, nullptr);
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+}
+
 // ── Issue #3636: per-region force watermark + storm attribution ──
 static void ac3636_watermark() {
     std::println("\n--- #3636 AC7: force-arm watermark ---");
@@ -1021,6 +1093,8 @@ int main() {
     }
     reset_runtime_after_cs();
     ac_soak_3573_mutate_reemit_hygiene();
+    reset_runtime_after_cs();
+    ac3751_production_facade_feeds_dirty_ring();
     reset_runtime_after_cs();
     ac3636_watermark();
     reset_runtime_after_cs();

@@ -5349,6 +5349,26 @@ public:
             // so AOT/native can promote against this store, not the
             // pre-mutate emit. Soft skipped by the probe above.
             hot_update_registry().note_ir_content_stored_for_native();
+            // Issue #3751: feed the production dirty ring and stamp
+            // reemit-owner TLS so decide_and_reemit is not n==0 /
+            // owner-missing. Untrusted latch is already cleared.
+            struct ReemitEvalOwnerGuard {
+                void* prev_reemit;
+                void* prev_reg;
+                explicit ReemitEvalOwnerGuard(void* e) noexcept
+                    : prev_reemit(aura_aot_get_reemit_owner_eval())
+                    , prev_reg(aura_aot_get_register_owner_eval()) {
+                    aura_aot_set_reemit_owner_eval(e);
+                    aura_aot_set_register_owner_eval(e);
+                }
+                ~ReemitEvalOwnerGuard() noexcept {
+                    aura_aot_set_reemit_owner_eval(prev_reemit);
+                    aura_aot_set_register_owner_eval(prev_reg);
+                }
+                ReemitEvalOwnerGuard(const ReemitEvalOwnerGuard&) = delete;
+                ReemitEvalOwnerGuard& operator=(const ReemitEvalOwnerGuard&) = delete;
+            } owner_guard(static_cast<void*>(&evaluator_));
+            aura_production_dirty_ring_push(name.c_str(), 0, 0);
             (void)hot_update_registry().decide_and_reemit(aura_get_aot_defuse_version(),
                                                           HotUpdateRegistry::ReemitReason::Cascade);
         }

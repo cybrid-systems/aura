@@ -238,6 +238,13 @@ bool HotUpdateRegistry::hard_invalidate_via_facade(const char* name, ReemitReaso
     // closed loop under production (#3150 AC2). Soft / Off unchanged
     // (returns false before reaching this).
     notify_dirty_define(name);
+    // Issue #3751: notify_dirty_define is listener fan-out only.
+    // Production reemit pops the dirty ring; feed it before
+    // decide_and_reemit so store/facade are not n==0. Soft never
+    // reaches this (facade returns false). Region 0 = no preference
+    // (1ULL<<1 is Evolution *index* 2 and would skip the candidate).
+    if (aura_production_defaults_active_probe() != 0)
+        aura_production_dirty_ring_push(name, 0, 0);
     // decide_and_reemit is the canonical production reemit entry; it
     // forwards to aura_reemit_aot_for_dirty (the low-level C ABI which
     // owns storm / Defer / SoftEnter / owner / provider-not-wired gates)
