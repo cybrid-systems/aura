@@ -34,6 +34,7 @@
 
 #include "test_harness.hpp"
 
+#include "compiler/agent_name_table.h"
 #include "compiler/typed_mutation_audit.h"
 #include "orch/agent_spawn.h"
 #include "serve/parallel_orch.h"
@@ -44,6 +45,7 @@
 #include <print>
 #include <string>
 #include <string_view>
+#include <thread>
 
 import std;
 import aura.compiler.service;
@@ -880,6 +882,34 @@ int run_test_orch_obs_facade() {
                 CHECK(empty4 && is_bool(*empty4) && as_bool(*empty4),
                       "3673 AC4: Soft + Guard-live stays empty=#t (no typed deny)");
             }
+        }
+        // Issue #3732: peer recv while this Evaluator holds Guard still
+        // delivers a pre-queued message (Policy A is this-fiber only).
+        {
+            std::println("\n--- #3732 / #3673: peer recv not recv-under-boundary ---");
+            aura::compiler::typed_audit::apply_production_audit_defaults();
+            auto* hp = cs3673.evaluator().agent_names_->find("3673-a");
+            CHECK(hp && hp->ok && hp->mailbox, "3732 peer: handle");
+            aura::serve::mf_mailbox::MailMessage queued;
+            queued.payload = "peer-3673";
+            CHECK(hp->mailbox->push(queued) == aura::serve::mf_mailbox::PushStatus::Ok,
+                  "3732 peer: queued");
+            bool guard_ok2 = true;
+            std::atomic<int> delivered{0};
+            {
+                auto guard_r3 = Evaluator3673::MutationBoundaryGuard::try_acquire(
+                    ev3673, /*pending=*/1, &guard_ok2);
+                CHECK(guard_r3.has_value(), "3732 peer: Guard");
+                auto guard3 = std::move(*guard_r3);
+                std::thread peer([&]() {
+                    auto got = aura::orch::agent_recv(*hp, /*wait=*/true, /*timeout_ms=*/500);
+                    if (got && got->payload == "peer-3673")
+                        delivered.fetch_add(1, std::memory_order_relaxed);
+                });
+                peer.join();
+            }
+            CHECK(delivered.load() == 1, "3732 peer: queued message delivered");
+            aura::compiler::typed_audit::apply_dev_audit_defaults();
         }
     }
 
