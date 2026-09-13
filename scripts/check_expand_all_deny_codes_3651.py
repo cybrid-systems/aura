@@ -53,8 +53,8 @@ def _rows(me: str, test: str, build: str) -> list[str]:
 
     # AC1 — widened guard replaces the depth-only check.
     must("Issue #3651: the deny codes are wider than depth-limit", "AC1 cite", me)
-    must("production_surface && any_expand && inner_expand_production_limit_deny()", "AC1 widened guard", me)
-    guard_pos = me.find("production_surface && any_expand && inner_expand_production_limit_deny()")
+    must("production_surface && any_expand && inner_expand_production_limit_deny_all()", "AC1 widened guard", me)
+    guard_pos = me.find("production_surface && any_expand && inner_expand_production_limit_deny_all()")
     old_pos = me.find("g_macro_hygiene_last_limit_reason.load(std::memory_order_relaxed) == 2")
     if guard_pos < 0:
         fails.append("AC1: widened guard not located")

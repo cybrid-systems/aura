@@ -155,7 +155,8 @@ def main() -> int:
     ac3_cites = False
     if ac3_lambda_found:
         win = me[lim_pos:ret_pos]
-        ac3_checks_cap = "effective_max_gensym_map_size()" in win
+        # Issue #3685: the ceiling reads the clone session policy.
+        ac3_checks_cap = "effective_max_gensym_map_size(session)" in win
         ac3_checks_size = "name_map->size() >= " in win
         ac3_try_restore = "expand_ckpt.try_restore()" in win
         ac3_no_serial = "g_macro_rest_gensym_serial.fetch_add" not in win

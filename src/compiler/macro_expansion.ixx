@@ -57,6 +57,10 @@ export bool set_hygiene_depth_cap(int n) noexcept; // reject if n∉[1,MAX]
 // name-map-shared/concurrent-top-level). eval_flat consults after
 // expand_inner_macros so a half-expanded body is never evaluated.
 export bool inner_expand_production_limit_deny() noexcept;
+// Issue #3685: pass-loop variant — the base five codes plus the
+// ConcurrentCloneGuard refuse codes (8/9/10) for macro_expand_all's
+// single-thread pass loop.
+export bool inner_expand_production_limit_deny_all() noexcept;
 export bool set_hygiene_pass_cap(int n) noexcept; // reject if n<0; 0 clears
 export void reset_hygiene_runtime_caps_for_test() noexcept;
 // Live effective limit that the next expand / clone will enforce:

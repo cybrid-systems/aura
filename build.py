@@ -6893,6 +6893,21 @@ def cmd_lint():
     if r != 0:
         fail("Issue #3684 inner expand refuse linter failed — run python3 scripts/check_inner_expand_refuse_3684.py")
         return r
+    # Issue #3685 (#2806/#2243/#3028 residual): clone-walk policy knobs
+    # (rest hygiene / gensym ceiling / force_hygienic) were still TLS
+    # authority for the nested walk — a fiber yield mid-walk let another
+    # fiber's top-level clone overwrite TLS and the resumed walk read
+    # foreign tenant policy. Gate pins: CloneSessionPolicy captured at
+    # top-level entry (check_macro_self_evo) and threaded through the
+    # at_depth recursion; the walk reads session, not TLS; TLS mirrors
+    # stay diagnostics; depth stays the explicit argument.
+    csp3685_script = ROOT / "scripts" / "check_clone_session_policy_3685.py"
+    if not csp3685_script.exists():
+        fail(f"missing {csp3685_script}")
+        return 1
+    r = run([sys.executable, str(csp3685_script)], cwd=ROOT)
+    if r != 0:
+        fail("Issue #3685 clone session policy linter failed — run python3 scripts/check_clone_session_policy_3685.py")
         return r
     # Issue #3649 (#2952/#3096/#2690 residual): the storm-exit edge drives
     # residual coverage-verify. storm_exit_force_full_active now==0 &&
