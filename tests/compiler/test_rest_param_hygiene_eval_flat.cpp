@@ -28,12 +28,27 @@
 #include "test_harness.hpp"
 
 #include <atomic>
+#include <format>
+#include <fstream>
 #include <print>
 #include <string>
 #include <string_view>
 
+import std;
+import aura.compiler.service;
+import aura.compiler.value;
+import aura.core.ast;
+
 namespace {
 
+using aura::compiler::CompilerService;
+using aura::compiler::types::as_int;
+using aura::compiler::types::as_pair_idx;
+using aura::compiler::types::as_string_idx;
+using aura::compiler::types::is_bool;
+using aura::compiler::types::is_int;
+using aura::compiler::types::is_pair;
+using aura::compiler::types::is_string;
 using aura::test::g_failed;
 using aura::test::g_passed;
 
@@ -123,11 +138,101 @@ static void ac3_reexpand_call_pair_spine_call() {
         CHECK(window.find("stamp_rest_param_hygiene(flat, md.flat ? *md.flat : flat, md.body_id, "
                           "list_end)") != std::string::npos,
               "reexpand_call pair-spine now calls stamp_rest_param_hygiene");
-        CHECK(window.find("list_end != aura::ast::NULL_NODE") != std::string::npos,
-              "reexpand_call guards stamp on non-null list_end");
         CHECK(window.find("#3153") != std::string::npos,
               "cites #3153 in reexpand_call pair-spine block");
+        CHECK(window.find("Issue #3753") != std::string::npos,
+              "3753: empty rest binds a stamped (list)");
+        CHECK(window.find("empty_rest") != std::string::npos,
+              "3753: zero extras allocate empty (list)");
     }
+}
+
+static std::string merr_kind_3753(CompilerService& cs, const aura::compiler::types::EvalValue& v) {
+    if (!is_pair(v))
+        return {};
+    auto idx = as_pair_idx(v);
+    auto& pairs = cs.evaluator().pairs();
+    if (idx >= pairs.size())
+        return {};
+    if (!is_string(pairs[idx].car))
+        return {};
+    auto sidx = as_string_idx(pairs[idx].car);
+    auto heap = cs.evaluator().string_heap();
+    if (sidx >= heap.size())
+        return {};
+    return std::string(heap[sidx]);
+}
+
+static void ac3753_empty_rest_reexpand_stamped() {
+    std::println("\n--- #3753 AC1: reexpand_call empty rest is stamped (list) ---");
+    CompilerService cs;
+    CHECK(
+        cs.eval("(set-code \"(define-hygienic-macro (m3753 a . rest) rest) (define r (m3753 1))\")")
+            .has_value(),
+        "3753 AC1: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3753 AC1: eval-current");
+    auto* ws = cs.evaluator().workspace_flat();
+    auto* pool = cs.evaluator().workspace_pool();
+    CHECK(ws != nullptr && pool != nullptr, "3753 AC1: workspace");
+    ws->rebuild_parent_links_from_children();
+    aura::ast::NodeId call_id = aura::ast::NULL_NODE;
+    for (aura::ast::NodeId id = 0; id < ws->size(); ++id) {
+        if (!ws->is_live_node(id))
+            continue;
+        auto v = ws->get(id);
+        if (v.tag != aura::ast::NodeTag::Call || v.children.empty())
+            continue;
+        auto callee = ws->get(v.child(0));
+        if (!callee.has_name() || pool->resolve(callee.sym_id) != "m3753")
+            continue;
+        if (ws->parent_of(id) != aura::ast::NULL_NODE) {
+            call_id = id;
+            break;
+        }
+        if (call_id == aura::ast::NULL_NODE)
+            call_id = id;
+    }
+    CHECK(call_id != aura::ast::NULL_NODE, "3753 AC1: find (m3753 1)");
+    const auto pid = ws->parent_of(call_id);
+    std::uint32_t slot = 0;
+    if (pid != aura::ast::NULL_NODE) {
+        auto pv = ws->get(pid);
+        for (std::uint32_t ci = 0; ci < pv.children.size(); ++ci) {
+            if (pv.child(ci) == call_id) {
+                slot = ci;
+                break;
+            }
+        }
+    }
+    aura::ast::MutationRecord rec{};
+    rec.target_node = call_id;
+    rec.parent_id = pid;
+    const auto n = cs.evaluator().post_mutation_macro_reexpand(*ws, *pool, rec);
+    CHECK(n >= 1, "3753 AC1: reexpand_call ran");
+    aura::ast::NodeId spine = aura::ast::NULL_NODE;
+    if (pid != aura::ast::NULL_NODE) {
+        spine = ws->get(pid).child(slot);
+        CHECK(spine != call_id, "3753 AC1: Call spliced");
+    } else {
+        for (aura::ast::NodeId id = 0; id < ws->size(); ++id) {
+            if (!ws->is_live_node(id) || !ws->is_macro_introduced(id))
+                continue;
+            auto v = ws->get(id);
+            if (v.tag == aura::ast::NodeTag::Call && !v.children.empty()) {
+                auto c = ws->get(v.child(0));
+                if (c.has_name() && pool->resolve(c.sym_id) == "list") {
+                    spine = id;
+                    break;
+                }
+            }
+        }
+    }
+    CHECK(spine != aura::ast::NULL_NODE, "3753 AC1: rest spine allocated");
+    CHECK(ws->is_macro_introduced(spine), "3753 AC1: empty rest spine is MacroIntroduced");
+    auto rv = cs.eval(
+        std::format("(mutate:replace-value {} 99 \"3753-deny\")", static_cast<unsigned>(spine)));
+    CHECK(rv.has_value() && merr_kind_3753(cs, *rv) == "hygiene-protected",
+          "3753 AC1: replace-value on spine is hygiene-protected");
 }
 
 // AC4: rest-list spine nodes have is_macro_introduced == true after
@@ -214,6 +319,7 @@ int main() {
     ac1_helper_exposed_cross_tu();
     ac2_eval_flat_dotted_rest_call();
     ac3_reexpand_call_pair_spine_call();
+    ac3753_empty_rest_reexpand_stamped();
     ac4_rest_spine_macro_introduced_parity();
     ac5_marker_set_total_parity();
     ac3468_spine_only_no_remaining_walk();
