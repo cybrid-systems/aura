@@ -24,6 +24,7 @@
 #include "test_harness.hpp"
 
 #include <cstdint>
+#include <cstdlib>
 #include <fstream>
 #include <iterator>
 #include <print>
@@ -31,18 +32,38 @@
 #include <string_view>
 
 #include "compiler/agent_name_table.h"
+#include "compiler/typed_mutation_audit.h"
+#include "core/provenance_tracker.hh"
+#include "core/sandbox.hh"
+#include "orch/agent_scope.h"
 #include "orch/orch.h"
 
 import std;
 import aura.compiler.service;
+import aura.compiler.value;
 
 namespace {
 
 using aura::compiler::AgentNameTable;
 using aura::compiler::CompilerService;
+using aura::compiler::types::as_bool;
+using aura::compiler::types::as_int;
+using aura::compiler::types::is_bool;
+using aura::compiler::types::is_int;
+using aura::compiler::types::is_string;
 using aura::orch::AgentHandle;
+using aura::orch::reset_all_agent_scopes_for_test;
 using aura::test::g_failed;
 using aura::test::g_passed;
+
+static void ac3727_set_prod(bool on) {
+    // Multi-worker orch scheduler (#3586) FATALs unless AURA_SANDBOX=off
+    // or production bootstrap is latched before Scheduler::run.
+    ::setenv("AURA_SANDBOX", "off", 1);
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+    aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active.store(
+        on ? 1u : 0u, std::memory_order_relaxed);
+}
 
 static std::string read_file(const char* path) {
     const std::string rel(path);
@@ -389,6 +410,161 @@ static void ac3598_clean_slot_retire() {
     }
 }
 
+// ── Issue #3727: pending name-table must not shadow live scope-spawn ──
+
+static void ac3727_mark_pending(CompilerService& cs, const char* name) {
+    auto* p = cs.evaluator().agent_names_->find(name);
+    CHECK(p != nullptr, "3727: name-table slot exists to mark pending");
+    if (!p)
+        return;
+    p->must_wait_reclaimed = true;
+    p->reserved_memory_bytes = 64;
+}
+
+static void ac3727_retire_name_table(CompilerService& cs, const char* name) {
+    auto* p = cs.evaluator().agent_names_->find(name);
+    if (!p)
+        return;
+    p->must_wait_reclaimed = false;
+    p->reclaimed_deferred_cleanup = false;
+    p->reserved_memory_bytes = 0;
+    p->fiber = nullptr;
+    (void)cs.evaluator().agent_names_->find(name); // #3598 retire
+}
+
+static void ac3727_1_scope_spawn_denies_pending_name() {
+    std::println("\n--- #3727 AC1: pending name-table → scope-spawn deny ---");
+    reset_all_agent_scopes_for_test();
+    aura::core::provenance::set_multi_tenant_env_active(true);
+    ac3727_set_prod(true);
+    CompilerService cs;
+    auto spawned = cs.eval(R"((hash-ref (orch:spawn-agent "foo-3727") "ok"))");
+    CHECK(spawned && is_bool(*spawned) && as_bool(*spawned), "3727 AC1: spawn-agent foo landed");
+    ac3727_mark_pending(cs, "foo-3727");
+    auto r = cs.eval(R"(
+        (let ((h (orch:scope-spawn "foo-3727")))
+          (if (and (not (hash-ref h "ok"))
+                   (string=? (hash-ref h "deny-detail" "")
+                             "name-reuse-while-reclaimed-pending"))
+              1 0))
+    )");
+    CHECK(r && is_int(*r) && as_int(*r) == 1,
+          "3727 AC1: scope-spawn ok=#f + deny-detail name-reuse-while-reclaimed-pending");
+    ac3727_set_prod(false);
+    aura::core::provenance::set_multi_tenant_env_active(false);
+    reset_all_agent_scopes_for_test();
+}
+
+static void ac3727_2_after_cleanup_scope_spawn_and_send() {
+    std::println("\n--- #3727 AC2: after name-table cleanup, scope-spawn + send ---");
+    reset_all_agent_scopes_for_test();
+    ac3727_set_prod(true);
+    CompilerService cs;
+    CHECK(cs.eval(R"((hash-ref (orch:spawn-agent "foo-3727b") "ok"))").has_value(),
+          "3727 AC2: spawn-agent landed");
+    ac3727_mark_pending(cs, "foo-3727b");
+    auto denied = cs.eval(R"((hash-ref (orch:scope-spawn "foo-3727b") "ok"))");
+    CHECK(denied && is_bool(*denied) && !as_bool(*denied),
+          "3727 AC2 pre: still denied while pending");
+    ac3727_retire_name_table(cs, "foo-3727b");
+    auto r = cs.eval(R"(
+        (let ((h (orch:scope-spawn "foo-3727b")))
+          (if (hash-ref h "ok")
+              (begin
+                (orch:agent-send "foo-3727b" "ping-3727")
+                (let ((m (orch:agent-recv "foo-3727b" :wait #t :timeout-ms 200)))
+                  (if (and (hash-ref m "ok")
+                           (string=? (hash-ref m "payload" "") "ping-3727"))
+                      1 0)))
+              0))
+    )");
+    CHECK(r && is_int(*r) && as_int(*r) == 1,
+          "3727 AC2: scope-spawn succeeds after cleanup; send reaches scope agent");
+    ac3727_set_prod(false);
+    reset_all_agent_scopes_for_test();
+}
+
+static void ac3727_3_touch_poll_export_scope_name() {
+    std::println("\n--- #3727 AC3: touch/poll/export resolve a scope-spawned name ---");
+    reset_all_agent_scopes_for_test();
+    ac3727_set_prod(false);
+    CompilerService cs;
+    auto r = cs.eval(R"(
+        (let ((h (orch:scope-spawn "scope-3727")))
+          (if (hash-ref h "ok")
+              (let ((t (orch:agent-touch "scope-3727"))
+                    (p (orch:agent-poll "scope-3727"))
+                    (tok (orch:agent-export-via-token "scope-3727")))
+                (if (and (hash-ref t "ok") (hash-ref p "ok") (string? tok)
+                         (> (string-length tok) 0))
+                    1 0))
+              0))
+    )");
+    CHECK(r && is_int(*r) && as_int(*r) == 1,
+          "3727 AC3: touch/poll/export-via-token resolve scope-spawned name");
+    reset_all_agent_scopes_for_test();
+}
+
+static void ac3727_4_directory_scope_only() {
+    std::println("\n--- #3727 AC4: directory lists only Scope agents ---");
+    reset_all_agent_scopes_for_test();
+    ac3727_set_prod(false);
+    CompilerService cs;
+    auto r = cs.eval(R"(
+        (begin
+          (orch:spawn-agent "nt-only-3727")
+          (orch:scope-spawn "sc-3727")
+          (let ((d (orch:agent-directory)))
+            (let ((n (hash-ref d "count")))
+              (if (and (> n 0)
+                       (not (hash-ref (orch:scope-resolve "nt-only-3727") "ok")))
+                  1 0))))
+    )");
+    CHECK(r && is_int(*r) && as_int(*r) == 1,
+          "3727 AC4: directory/scope-resolve see Scope agents; name-table-only is not a scope row");
+    reset_all_agent_scopes_for_test();
+}
+
+static void ac3727_5_soft_no_extra_deny_and_source() {
+    std::println("\n--- #3727 AC5: Soft no extra deny; no new query key; no invent ---");
+    reset_all_agent_scopes_for_test();
+    ac3727_set_prod(false);
+    CompilerService cs;
+    CHECK(cs.eval(R"((hash-ref (orch:spawn-agent "soft-3727") "ok"))").has_value(),
+          "3727 AC5: spawn-agent under Soft");
+    ac3727_mark_pending(cs, "soft-3727");
+    auto r = cs.eval(R"((hash-ref (orch:scope-spawn "soft-3727") "ok"))");
+    CHECK(r && is_bool(*r) && as_bool(*r),
+          "3727 AC5: Soft/Off scope-spawn does not extra-deny pending name-table");
+    const auto src = read_file("src/compiler/evaluator_primitives_agent.cpp");
+    CHECK(src.find("Issue #3727") != std::string::npos, "3727 AC5: prim cites #3727");
+    CHECK(src.find("name-reuse-while-reclaimed-pending") != std::string::npos,
+          "3727 AC5: deny-detail reused");
+    const auto touch = src.find("add(\"orch:agent-touch\"");
+    CHECK(touch != std::string::npos, "3727 AC5: touch prim located");
+    if (touch != std::string::npos) {
+        const auto body = src.substr(touch, 800);
+        CHECK(body.find("resolve_aura_agent(ev, name)") != std::string::npos,
+              "3727 AC5: touch uses resolve_aura_agent");
+    }
+    CHECK(src.find("query:3727") == std::string::npos, "3727 AC5: no query:3727");
+    CHECK(src.find("class AgentRegistry") == std::string::npos, "3727 AC5: no AgentRegistry");
+    CHECK(read_file("tests/orch/test_issue_3727.cpp").empty(), "3727 AC5: no test_issue_3727.cpp");
+    CHECK(read_file("docs/design/3727-name-table-scope-shadow.md").empty(),
+          "3727 AC5: no docs/design/3727-*");
+    // Dual-Evaluator: Evaluator-2 pending does not shadow Evaluator-1.
+    CompilerService cs2;
+    auto h2 = make_minimal_handle("peer-3727", 99);
+    h2.must_wait_reclaimed = true;
+    cs2.evaluator().agent_names_->put(std::move(h2));
+    ac3727_set_prod(true);
+    auto peer = cs.eval(R"((hash-ref (orch:scope-spawn "peer-3727") "ok"))");
+    CHECK(peer && is_bool(*peer) && as_bool(*peer),
+          "3727 AC5: Evaluator-2 pending foo does not shadow Evaluator-1 scope-spawn");
+    ac3727_set_prod(false);
+    reset_all_agent_scopes_for_test();
+}
+
 } // namespace
 
 int run_test_agent_name_table_isolation() {
@@ -402,7 +578,12 @@ int run_test_agent_name_table_isolation() {
     ac3442_message_plane_resolve();
     ac3467_put_deny_pending();
     ac3598_clean_slot_retire();
-    std::println("\n=== #2078/#3125/#3442/#3467/#3598: passed={} failed={} ===", g_passed,
+    ac3727_1_scope_spawn_denies_pending_name();
+    ac3727_2_after_cleanup_scope_spawn_and_send();
+    ac3727_3_touch_poll_export_scope_name();
+    ac3727_4_directory_scope_only();
+    ac3727_5_soft_no_extra_deny_and_source();
+    std::println("\n=== #2078/#3125/#3442/#3467/#3598/#3727: passed={} failed={} ===", g_passed,
                  g_failed);
     return g_failed == 0 ? 0 : 1;
 }

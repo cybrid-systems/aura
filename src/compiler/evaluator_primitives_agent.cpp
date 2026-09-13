@@ -3874,8 +3874,9 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
     // Body thunk is optional for MVP (empty body = supervised no-op);
     // closure-ID parsing mirrors orch:spawn-agent pattern.
     add("orch:scope-spawn",
-        [&ev, build_orch_hash, orch_keyword_key, add_deny_class, parse_scope_addr_kw,
-         resolve_scope_addr, make_scope_addr_fail](std::span<const EvalValue> a) -> EvalValue {
+        [&ev, build_orch_hash, orch_keyword_key, add_deny_class, add_reclaimed_pending_lifecycle,
+         parse_scope_addr_kw, resolve_scope_addr,
+         make_scope_addr_fail](std::span<const EvalValue> a) -> EvalValue {
             if (a.empty() || !types::is_string(a[0])) {
                 return make_primitive_error(
                     ev.string_heap_, ev.error_values_,
@@ -3932,6 +3933,38 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                                             "orch:scope-spawn: unknown :path / :child-index");
             }
             auto& scope = *target;
+
+            // Issue #3727: production — a reclaimed-pending name-table slot
+            // must not be shadowed by a live scope-spawn of the same name
+            // (send would hit the pending mailbox first). Same deny class
+            // as orch:spawn-agent (#3467). Soft/Off: skip (zero extra deny).
+            // Two *live* rows stay name-table-wins (#3442).
+            if (aura::compiler::typed_audit::production_defaults_active() && ev.agent_names_ &&
+                !name.empty()) {
+                if (auto* pending = ev.agent_names_->find(name);
+                    pending &&
+                    (pending->must_wait_reclaimed || pending->reclaimed_deferred_cleanup)) {
+                    aura::orch::g_orch_module_stats.host_forget_reclaimed_risk_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                    auto ridx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(name);
+                    auto eidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(
+                        "orch:scope-spawn: name still reclaimed-pending — wait_reclaimed_body "
+                        "or abandon_reclaimed required before reuse");
+                    std::vector<std::pair<std::string, EvalValue>> rkv = {
+                        {"ok", make_bool(false)},        {"id", make_int(0)},
+                        {"name", make_string(ridx)},     {"schema", make_int(2588)},
+                        {"schema-2083", make_int(2083)}, {"schema-2161", make_int(2161)},
+                        {"error", make_string(eidx)},    {"cleanup-pending", make_bool(true)},
+                    };
+                    add_reclaimed_pending_lifecycle(rkv, /*pending=*/true);
+                    add_deny_class(rkv, aura::orch::AgentDenyClass::Other,
+                                   "name-reuse-while-reclaimed-pending", 0,
+                                   /*emit_retry=*/false);
+                    return build_orch_hash(rkv);
+                }
+            }
 
             auto body = [&ev, cid]() {
                 if (!cid)
@@ -5193,7 +5226,9 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                                         ev.primitive_error_counter_ptr());
         }
         auto name = heap_str_from(ev.string_heap_, a[0]);
-        auto* hp = ev.agent_names_->find(name);
+        // Issue #3727: name-table miss → session-local AgentScope::find
+        // (same resolve as send/recv/ask/join). Soft/Off: pointer walk.
+        auto* hp = resolve_aura_agent(ev, name);
         if (!hp || !hp->ok) {
             return make_primitive_error(ev.string_heap_, ev.error_values_,
                                         "orch:agent-touch: unknown agent",
@@ -5220,7 +5255,8 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                                         ev.primitive_error_counter_ptr());
         }
         auto name = heap_str_from(ev.string_heap_, a[0]);
-        auto* hp = ev.agent_names_->find(name);
+        // Issue #3727: name-table miss → session-local AgentScope::find.
+        auto* hp = resolve_aura_agent(ev, name);
         if (!hp || !hp->ok) {
             return make_primitive_error(ev.string_heap_, ev.error_values_,
                                         "orch:agent-poll: unknown agent",
@@ -6871,7 +6907,9 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
         if (name_idx >= ev.string_heap_.size())
             return types::make_string(0);
         const auto& name = ev.string_heap_[name_idx];
-        auto* hp = ev.agent_names_->find(name);
+        // Issue #3727: export a scope-spawned name (name-table miss →
+        // AgentScope::find). No AgentRegistry; stash stays transient.
+        auto* hp = resolve_aura_agent(ev, name);
         if (!hp)
             return types::make_string(0);
         auto tok = aura::orch::agent_export_handoff(*hp);
