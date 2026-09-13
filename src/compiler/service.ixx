@@ -369,6 +369,19 @@ extern "C" std::int64_t aura_jit_prim_dispatch(std::int64_t prim_id, std::int64_
     return aura::compiler::jit_prim_dispatch_impl(prim_id, args, argc);
 }
 
+// Issue #3720: JIT hash-set! / hash-remove! C ABI (aura_hash_set /
+// aura_hash_remove) must share require_effect with interpreter + IR
+// telemetry. Same owner as aura_jit_prim_dispatch. Unwired owner → 0
+// (no silent write). Soft/Off: require_effect is a no-op when owner is
+// wired. Weak stub in aura_jit_prim_dispatch_stub.cpp.
+extern "C" int aura_jit_owner_require_effect(std::uint16_t bits, const char* op) noexcept {
+    auto* prims = g_jit_prim_ctx.load(std::memory_order_acquire);
+    auto* owner = owner_evaluator(prims);
+    if (!owner)
+        return 0;
+    return owner->require_effect(bits, op ? std::string_view(op) : "hash-set!") ? 1 : 0;
+}
+
 // Issue #3593: test hook — drive the JIT C ABI dispatch entry directly.
 // Light-test links can bind a bare aura_jit_prim_dispatch reference to the
 // weak stub in aura_jit_light_test_objects (.so), silently bypassing the

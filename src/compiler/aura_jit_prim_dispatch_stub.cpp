@@ -27,6 +27,15 @@ aura_jit_prim_dispatch(std::int64_t prim_id, std::int64_t* args, std::int32_t ar
     return 0;
 }
 
+// Issue #3720: light-link fallback — no owner Evaluator, no silent
+// heap write (same fail-closed as the prim-dispatch stub).
+extern "C" __attribute__((weak)) int aura_jit_owner_require_effect(std::uint16_t bits,
+                                                                   const char* op) noexcept {
+    (void)bits;
+    (void)op;
+    return 0;
+}
+
 // Do not stub aura_set/get_storm_eval_context here. This TU is in
 // aura_jit_test_objects (DT_NEEDED first for full-JIT tests); a weak
 // no-op in the first DSO wins ELF search over the strong TLS in

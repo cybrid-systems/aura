@@ -5,6 +5,7 @@
 #include "core/atomic_fence_port.h"
 
 #include "compiler/typed_mutation_audit.h" // #2666 production_defaults_active for residual remount default
+#include "compiler/security_capabilities.h" // #3720 kEffectMutate for JIT hash writes
 #include "core/lifetime_pin.hh" // Issue #2293: aura::core::lifetime::pin_linear_root / unpin_linear_root
 #include "observability_metrics.h" // CompilerMetrics full def (aura_get_aot_metrics returns it)
 
@@ -4596,7 +4597,17 @@ extern "C" void aura_set_hash_str_convert_callback(int64_t (*fn)(int64_t)) {
     g_hash_str_convert_fn = fn;
     aura_unlock_workspace_write();
 }
+// Issue #3720: JIT hash writes share the Evaluator require_effect choke
+// (same owner as aura_jit_prim_dispatch). Weak stub in
+// aura_jit_prim_dispatch_stub.cpp returns 0 (fail-closed, no silent write).
+extern "C" int aura_jit_owner_require_effect(std::uint16_t bits, const char* op) noexcept;
+
 int64_t aura_hash_set(int64_t hash_val, int64_t pair_val) {
+    // Issue #3720: require Mutate before any g_hash_tables write. Soft/Off
+    // require_effect is a no-op (owner still must be wired — same fail-closed
+    // as PrimCall null-owner). Deny → unlock not held yet, zero write.
+    if (aura_jit_owner_require_effect(aura::compiler::security::kEffectMutate, "hash-set!") == 0)
+        return 0;
     // Issue #157 Phase 2: write lock — writes g_hash_tables[hidx]
     // and the FlatHashTable internals (resize via rebuild,
     // metadata, keys, values mutations). Must be exclusive vs
@@ -4664,6 +4675,9 @@ int64_t aura_hash_set(int64_t hash_val, int64_t pair_val) {
 }
 
 int64_t aura_hash_remove(int64_t hash_val, int64_t key_val) {
+    // Issue #3720: Mutate choke before tombstone write (parity with hash-set!).
+    if (aura_jit_owner_require_effect(aura::compiler::security::kEffectMutate, "hash-remove!") == 0)
+        return 0;
     // Issue #157 Phase 2: write lock — writes the FlatHashTable
     // metadata (slot -> HASH_TOMBSTONE) and decrements size.
     aura_lock_workspace_write();
