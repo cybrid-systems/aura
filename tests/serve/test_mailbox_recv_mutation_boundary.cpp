@@ -1215,13 +1215,18 @@ static void ac3692_1_peer_recv_does_not_fail_holder() {
     const auto hard0 = g_mf_mailbox_stats.recv_rejected_in_mutation_boundary_hard_total.load(
         std::memory_order_relaxed);
     bool ok = true;
+    for (int i = 0; i < 8; ++i) {
+        MailMessage m;
+        m.payload = "p3692";
+        CHECK(mb.push(m) == PushStatus::Ok, "3692 AC1: pre-hold enqueue");
+    }
     {
         Evaluator::MutationBoundaryGuard guard(cs.evaluator(), &ok);
         CHECK(guard.is_outermost(), "3692 AC1: outermost Guard");
         CHECK(aura_evaluator_mutation_boundary_depth() > 0, "3692 AC1: holder depth > 0");
         std::thread peer([&]() {
             for (int i = 0; i < 8; ++i) {
-                auto msg = mb.recv(/*wait=*/true, /*timeout_ms=*/50);
+                auto msg = mb.recv(/*wait=*/true, /*timeout_ms=*/200);
                 if (!msg.has_value())
                     peer_empty.fetch_add(1, std::memory_order_relaxed);
             }
@@ -1229,13 +1234,13 @@ static void ac3692_1_peer_recv_does_not_fail_holder() {
         peer.join();
         CHECK(ok, "3692 AC1: holder success_flag stays true after peer recv ×8");
     }
-    CHECK(peer_empty.load() == 8, "3692 AC1: peer recv ×8 all empty");
+    CHECK(peer_empty.load() == 0, "3692 AC1: peer delivers queued (not Policy A empty)");
     CHECK(g_mf_mailbox_stats.recv_boundary_force_rollback_total.load(std::memory_order_relaxed) ==
               force0,
           "3692 AC1: peer did not bump force-rollback");
     CHECK(g_mf_mailbox_stats.recv_rejected_in_mutation_boundary_hard_total.load(
-              std::memory_order_relaxed) >= hard0 + 8,
-          "3692 AC1: peer production empty reuses hard-total");
+              std::memory_order_relaxed) == hard0,
+          "3692 AC1: peer does not bump Policy A hard-total");
     Evaluator::set_query_evaluator(nullptr);
     ::unsetenv("AURA_MUTATE_MAILBOX_STRICT");
     ::unsetenv("AURA_MUTATE_MAILBOX_REJECT_THRESHOLD");
@@ -1285,6 +1290,11 @@ static void ac3692_4_soft_no_mark_failed() {
         std::memory_order_relaxed);
     bool ok = true;
     std::atomic<int> peer_empty{0};
+    for (int i = 0; i < 8; ++i) {
+        MailMessage m;
+        m.payload = "s3692";
+        CHECK(mb.push(m) == PushStatus::Ok, "3692 AC4: Soft pre-hold enqueue");
+    }
     {
         auto guard_r =
             Evaluator::MutationBoundaryGuard::try_acquire(cs.evaluator(), /*pending=*/1, &ok);
@@ -1292,7 +1302,7 @@ static void ac3692_4_soft_no_mark_failed() {
         auto guard = std::move(*guard_r);
         std::thread peer([&]() {
             for (int i = 0; i < 8; ++i) {
-                auto msg = mb.recv(/*wait=*/true, /*timeout_ms=*/50);
+                auto msg = mb.recv(/*wait=*/true, /*timeout_ms=*/200);
                 if (!msg.has_value())
                     peer_empty.fetch_add(1, std::memory_order_relaxed);
             }
@@ -1300,7 +1310,7 @@ static void ac3692_4_soft_no_mark_failed() {
         peer.join();
         CHECK(ok, "3692 AC4: Soft holder success_flag stays true");
     }
-    CHECK(peer_empty.load() == 8, "3692 AC4: Soft peer empty ×8");
+    CHECK(peer_empty.load() == 0, "3692 AC4: Soft peer delivers queued");
     CHECK(g_mf_mailbox_stats.recv_boundary_force_rollback_total.load(std::memory_order_relaxed) ==
               force0,
           "3692 AC4: no force-rollback");
@@ -1320,6 +1330,134 @@ static void ac3692_5_no_new_query_key() {
           "3692 AC5: reuse hard-total");
     CHECK(read_file("tests/serve/test_issue_3692.cpp").empty(), "3692 AC5: no test_issue_3692.cpp");
     CHECK(read_file("docs/design/3692-recv-peer-guard.md").empty(), "3692 AC5: no docs/design/");
+}
+
+// ── Issue #3732: Policy A empty only when THIS fiber holds Guard ──
+static void ac3732_1_peer_recv_queued_delivers() {
+    std::println("\n--- #3732 AC1: peer recv wait delivers queued while holder Guard live ---");
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    CompilerService cs;
+    CHECK(cs.eval("(+ 1 1)").has_value(), "3732 AC1: warm");
+    Evaluator::set_query_evaluator(&cs.evaluator());
+    MultiFiberMailbox mb(/*high_water=*/8);
+    MailMessage queued;
+    queued.payload = "peer-3732";
+    CHECK(mb.push(queued) == PushStatus::Ok, "3732 AC1: queued before hold");
+    const auto rej0 =
+        g_mf_mailbox_stats.recv_rejected_in_mutation_boundary.load(std::memory_order_relaxed);
+    bool ok = true;
+    std::atomic<int> delivered{0};
+    std::atomic<int> boundary{0};
+    {
+        Evaluator::MutationBoundaryGuard guard(cs.evaluator(), &ok);
+        CHECK(guard.is_outermost(), "3732 AC1: outermost Guard");
+        CHECK(aura_evaluator_mutation_boundary_held() != 0, "3732 AC1: process held");
+        CHECK(aura_evaluator_mutation_boundary_depth() > 0, "3732 AC1: holder depth");
+        std::thread peer([&]() {
+            bool br = false;
+            auto msg = mb.recv(/*wait=*/true, /*timeout_ms=*/500, /*for_fiber=*/0,
+                               /*stale_handoff=*/nullptr, &br);
+            if (br)
+                boundary.fetch_add(1, std::memory_order_relaxed);
+            if (msg && msg->payload == "peer-3732")
+                delivered.fetch_add(1, std::memory_order_relaxed);
+        });
+        peer.join();
+        CHECK(ok, "3732 AC1: holder success_flag stays true");
+    }
+    CHECK(delivered.load() == 1, "3732 AC1: peer delivered queued payload");
+    CHECK(boundary.load() == 0, "3732 AC1: peer is not recv-under-boundary");
+    CHECK(g_mf_mailbox_stats.recv_rejected_in_mutation_boundary.load(std::memory_order_relaxed) ==
+              rej0,
+          "3732 AC1: peer did not bump Policy A reject");
+    Evaluator::set_query_evaluator(nullptr);
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+}
+
+static void ac3732_2_holder_recv_still_policy_a() {
+    std::println("\n--- #3732 AC2: this-fiber recv under Guard stays Policy A ---");
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    CompilerService cs;
+    CHECK(cs.eval("(+ 1 1)").has_value(), "3732 AC2: warm");
+    Evaluator::set_query_evaluator(&cs.evaluator());
+    MultiFiberMailbox mb(/*high_water=*/4);
+    bool ok = true;
+    {
+        Evaluator::MutationBoundaryGuard guard(cs.evaluator(), &ok);
+        bool br = false;
+        auto msg = mb.recv(/*wait=*/true, /*timeout_ms=*/100, /*for_fiber=*/0,
+                           /*stale_handoff=*/nullptr, &br);
+        CHECK(!msg.has_value(), "3732 AC2: holder recv empty");
+        CHECK(br, "3732 AC2: holder rejected_boundary");
+    }
+    Evaluator::set_query_evaluator(nullptr);
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+}
+
+static void ac3732_3_soft_this_fiber_empty_peer_delivers() {
+    std::println("\n--- #3732 AC3: Soft this-fiber empty; peer wait delivers ---");
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    CompilerService cs;
+    CHECK(cs.eval("(+ 1 1)").has_value(), "3732 AC3: warm");
+    MultiFiberMailbox mb(/*high_water=*/4);
+    MailMessage queued;
+    queued.payload = "soft-3732";
+    CHECK(mb.push(queued) == PushStatus::Ok, "3732 AC3: queued");
+    bool ok = true;
+    MultiFiberMailbox empty_mb(/*high_water=*/4);
+    {
+        auto guard_r =
+            Evaluator::MutationBoundaryGuard::try_acquire(cs.evaluator(), /*pending=*/1, &ok);
+        CHECK(guard_r.has_value(), "3732 AC3: Guard");
+        auto guard = std::move(*guard_r);
+        bool br = false;
+        auto msg = empty_mb.recv(/*wait=*/true, /*timeout_ms=*/50, 0, nullptr, &br);
+        CHECK(!msg.has_value(), "3732 AC3: Soft this-fiber empty");
+        CHECK(br, "3732 AC3: Soft this-fiber Policy A");
+        std::atomic<int> delivered{0};
+        std::thread peer([&]() {
+            bool pbr = false;
+            auto pmsg = mb.recv(/*wait=*/true, /*timeout_ms=*/200, 0, nullptr, &pbr);
+            if (pmsg && pmsg->payload == "soft-3732" && !pbr)
+                delivered.fetch_add(1, std::memory_order_relaxed);
+        });
+        peer.join();
+        CHECK(delivered.load() == 1, "3732 AC3: Soft peer wait delivers");
+    }
+}
+
+static void ac3732_4_send_under_guard_still_bp() {
+    std::println("\n--- #3732 AC4: send under Guard still Backpressure (#3613) ---");
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    CompilerService cs;
+    CHECK(cs.eval("(+ 1 1)").has_value(), "3732 AC4: warm");
+    Evaluator::set_query_evaluator(&cs.evaluator());
+    MultiFiberMailbox mb(/*high_water=*/8);
+    bool ok = true;
+    {
+        Evaluator::MutationBoundaryGuard guard(cs.evaluator(), &ok);
+        MailMessage m;
+        m.payload = "under-guard-3732";
+        CHECK(mb.push(m) == PushStatus::Backpressure, "3732 AC4: push under Guard is BP");
+    }
+    Evaluator::set_query_evaluator(nullptr);
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    const auto mb_src = read_file("src/serve/multi_fiber_mailbox.h");
+    CHECK(mb_src.find("note_mailbox_deferred_under_boundary") != std::string::npos,
+          "3732 AC4: #3613 defer helper retained");
+}
+
+static void ac3732_5_no_invent() {
+    std::println("\n--- #3732 AC5: no invent ---");
+    const auto mb = read_file("src/serve/multi_fiber_mailbox.h");
+    CHECK(mb.find("Issue #3732") != std::string::npos, "3732 AC5: mailbox cites #3732");
+    CHECK(mb.find("if (this_fiber_holds)") != std::string::npos, "3732 AC5: this-fiber Policy A");
+    CHECK(mb.find("if (this_fiber_holds || process_held)") == std::string::npos,
+          "3732 AC5: process_held is not recv Policy A");
+    const auto prim = read_file("src/compiler/evaluator_primitives_agent.cpp");
+    CHECK(prim.find("query:3732") == std::string::npos, "3732 AC5: no new query key");
+    CHECK(read_file("tests/serve/test_issue_3732.cpp").empty(), "3732 AC5: no test_issue_3732.cpp");
+    CHECK(read_file("docs/design/3732-peer-recv.md").empty(), "3732 AC5: no docs/design");
 }
 
 static void ac2849_6_soft_never_weakens() {
@@ -2211,6 +2349,12 @@ int run_test_mailbox_recv_mutation_boundary() {
     ac3692_3_push_still_bp_on_process_held();
     ac3692_4_soft_no_mark_failed();
     ac3692_5_no_new_query_key();
+    std::println("\n=== Issue #3732: peer recv not Policy A empty ===");
+    ac3732_1_peer_recv_queued_delivers();
+    ac3732_2_holder_recv_still_policy_a();
+    ac3732_3_soft_this_fiber_empty_peer_delivers();
+    ac3732_4_send_under_guard_still_bp();
+    ac3732_5_no_invent();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
