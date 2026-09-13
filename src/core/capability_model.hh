@@ -1667,6 +1667,22 @@ struct CapabilityRegistry {
             // above (#3090 parity) returned for production bound_mid==0.
             // Issue #3599: the leftover `grant_epoch ?: 1` tail is gone —
             // production refuses (above), never binds a phantom 1.
+            // Issue #3721: production MSE grant is the same lifetime as
+            // other high-risk grants (#2882/#3561) — session-bound to the
+            // granting mutation and single-use (first successful
+            // check_and_record_effect consumes it, #2586). Soft/Off keeps
+            // the legacy flags (no session_bound force). The explicit
+            // durable admin path (grant_effect_durable) never routes
+            // through this apply, so sticky durable MSE rows are
+            // unaffected.
+            {
+                const auto mode_life = sandbox_mode.load(std::memory_order_acquire);
+                if (mode_life == EffectSandboxMode::Restricted ||
+                    mode_life == EffectSandboxMode::Strict) {
+                    g.session_bound = true;
+                    g.single_use = true;
+                }
+            }
             g.revoke_epoch = 0;
             auto& met = g_capability_effect_metrics();
             met.capability_grant_total.fetch_add(1, std::memory_order_relaxed);

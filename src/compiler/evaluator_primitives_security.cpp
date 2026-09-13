@@ -196,7 +196,15 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             const auto fiber =
                 effect_fiber_id_or(static_cast<std::uint32_t>(aura_fiber_current_id()));
             const bool force_bind = ev.sandbox_mode() || ev.effect_sandbox_mode() != 0;
-            auto prov = make_grant_provenance(/*mid=*/0, force_bind, /*node=*/0, fiber);
+            // Issue #3721: the MSE policy row joins the #3143 Mutation mid
+            // SSOT — the same resolver every other grant arm in this
+            // primitive already uses. Inside a Guard the boundary TypedMid
+            // wins so the policy row's bound_mutation_id ==
+            // session_mid_at_enter_ and the outermost dtor revokes it;
+            // make_grant_provenance(mid=0) rows miss that key and survived
+            // until retain K=64 (the dual-track leak).
+            const auto mid = typed_audit::join_audit_and_se_mid(0);
+            auto prov = make_grant_provenance(mid, force_bind, /*node=*/0, fiber);
             // Issue #3145 AC4: forward this Evaluator's principal
             // (capability_tenant_id_, restored by TenantScope) as the
             // explicit caller so the #3029 admin fence resolves the real

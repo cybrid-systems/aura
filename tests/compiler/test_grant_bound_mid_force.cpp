@@ -192,6 +192,50 @@ int run_test_grant_bound_mid_force() {
         CHECK(linter_out.find("[OK]") != std::string::npos,
               "#3090 AC6: linter check_grant_mid_refused_3090.py stays clean");
     }
+    // ── AC7 (#3721): production MSE policy row is session-bound + single-use ──
+    {
+        std::println("\n--- AC7 (#3721): MSE row session-bound (same lifetime as high-risk) ---");
+        reset_all();
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+        const auto tenant = std::uint64_t{31};
+        aura::core::bump_mutation_epoch();
+        const auto mid = aura::core::current_mutation_epoch();
+        // Seed TenantAdmin on the target tenant (#3029 fence).
+        g_capability_registry().grant(tenant, "tenant-admin", Effect::TenantAdmin,
+                                      make_grant_provenance(mid, false, 0, 0));
+        EffectProvenance prov;
+        prov.mutation_id = mid;
+        prov.epoch = mid;
+        CHECK(g_capability_registry().grant_macro_self_evo(tenant, {}, prov, 0),
+              "3721: production MSE grant succeeds (TA fence ok)");
+        CHECK((g_capability_registry().effects_for(tenant) & Effect::MacroSelfEvo) != Effect::None,
+              "3721: MacroSelfEvo live before session exit");
+        // Outermost MutationBoundary exit: session-bound rows bound to this
+        // mid are revoked (the Guard dtor calls this).
+        (void)g_capability_registry().revoke_session_grants_for_mid(mid);
+        CHECK((g_capability_registry().effects_for(tenant) & Effect::MacroSelfEvo) == Effect::None,
+              "3721: MSE row dies at session mid exit (dual-track leak closed)");
+    }
+    {
+        std::println("\n--- AC7b (#3721): Soft keeps legacy flags; production mid=0 refuses ---");
+        reset_all();
+        const auto tenant = std::uint64_t{32};
+        aura::core::bump_mutation_epoch();
+        EffectProvenance prov; // mid=0 → Soft front synthesizes from epoch
+        prov.epoch = aura::core::current_mutation_epoch();
+        CHECK(g_capability_registry().grant_macro_self_evo(tenant, {}, prov, 0),
+              "3721: Soft MSE grant ok (no TA fence under Off)");
+        aura::core::bump_mutation_epoch();
+        const auto mid2 = aura::core::current_mutation_epoch();
+        (void)g_capability_registry().revoke_session_grants_for_mid(mid2);
+        CHECK((g_capability_registry().effects_for(tenant) & Effect::MacroSelfEvo) != Effect::None,
+              "3721: Soft row survives session revoke (no session_bound force; AC5)");
+        reset_all();
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+        EffectProvenance zero_mid;
+        CHECK(!g_capability_registry().grant_macro_self_evo(33, {}, zero_mid, 0),
+              "3721: production mid=0 refuse before any write");
+    }
     std::println("\n=== #2531 + #3090: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
