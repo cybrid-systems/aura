@@ -31,6 +31,7 @@ using aura::compiler::types::as_int;
 using aura::compiler::types::is_bool;
 using aura::compiler::types::is_hash;
 using aura::compiler::types::is_int;
+using aura::compiler::types::is_string;
 using aura::compiler::types::is_void;
 
 namespace {
@@ -40,6 +41,11 @@ std::int64_t hash_int(CompilerService& cs, std::string_view expr, std::string_vi
     if (!r || !is_int(*r))
         return -1;
     return as_int(*r);
+}
+
+bool hash_has_string(CompilerService& cs, std::string_view expr, std::string_view key) {
+    auto r = cs.eval(std::format("(hash-ref {} \"{}\")", expr, key));
+    return r && is_string(*r);
 }
 
 bool is_hash_expr(CompilerService& cs, std::string_view expr) {
@@ -763,6 +769,48 @@ int main() {
         const auto t3371_self = read_file("tests/compiler/test_engine_metrics_facade.cpp");
         CHECK(t3371_self.find("3371 AC") != std::string::npos,
               "3371 AC5: existing test file cites #3371");
+    }
+
+    // ── Issue #3738: string keys overflow-visible; mid=0 is a join key ──
+    {
+        std::println("\n--- #3738: evolution-audit-decision string overflow + mid=0 ---");
+        aura_query_hash_set_force_cap(0);
+        aura_query_hash_reset_overflow_for_test();
+        CHECK(hash_has_string(cs, "(engine:metrics \"query:evolution-audit-decision\")",
+                              "last-se-reason"),
+              "3738 AC1: last-se-reason present under default cap");
+        CHECK(hash_has_string(cs, "(engine:metrics \"query:evolution-audit-decision\")",
+                              "suggested-next"),
+              "3738 AC1: suggested-next present under default cap");
+        aura_query_hash_set_force_cap(4);
+        // Cap 4 fills before hash-overflow can insert; query_hash_finish
+        // overwrite-stamps overflow=1 (#3018 / #3244). Either overflow
+        // face (or the string still present) is never-silent-drop.
+        const auto ho =
+            hash_int(cs, "(engine:metrics \"query:evolution-audit-decision\")", "hash-overflow");
+        const auto ov =
+            hash_int(cs, "(engine:metrics \"query:evolution-audit-decision\")", "overflow");
+        const bool overflow_visible = ho == 1 || ov == 1;
+        const bool reason_ok = hash_has_string(
+            cs, "(engine:metrics \"query:evolution-audit-decision\")", "last-se-reason");
+        const bool next_ok = hash_has_string(
+            cs, "(engine:metrics \"query:evolution-audit-decision\")", "suggested-next");
+        CHECK(overflow_visible || reason_ok,
+              "3738 AC1: last-se-reason present or overflow visible (never silent drop)");
+        CHECK(overflow_visible || next_ok,
+              "3738 AC1: suggested-next present or overflow visible (never silent drop)");
+        aura_query_hash_set_force_cap(0);
+        aura_query_hash_reset_overflow_for_test();
+        CHECK(hash_int(cs, "(engine:metrics \"query:evolution-audit-decision\")", "observe-only") ==
+                  1,
+              "3738 AC3: observe-only stays 1");
+        const auto evix = read_file("src/compiler/evaluator.ixx");
+        CHECK(evix.find("insert_kv_checked_str") != std::string::npos,
+              "3738 AC1: insert_kv_checked_str helper");
+        CHECK(read_file("tests/compiler/test_issue_3738.cpp").empty(),
+              "3738 AC4: no test_issue_3738.cpp");
+        CHECK(read_file("docs/design/3738-evolution-audit-mid0.md").empty(),
+              "3738 AC4: no docs/design/3738-*");
     }
 
     // ── Issue #3737: grouped dump includes lagged CompilerMetrics atomics ──

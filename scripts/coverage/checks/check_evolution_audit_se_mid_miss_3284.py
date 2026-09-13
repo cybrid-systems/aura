@@ -15,10 +15,11 @@ disk I/O (AC3).
 
 Gate rows:
   G1  evaluator_primitives_security.cpp cites Issue #3284.
-  G2  SE walk filters by join_mid (not filt_mid): the condition contains
-      `join_mid != 0 && e.mutation_id != join_mid`.
+  G2  SE walk filters by join_mid (not filt_mid): se_filter_by_mid
+      (`filt_mid || join_mid != 0`) so explicit 0 (#3738 refuse class)
+      and default last-stamped both refuse a different mid's SE.
   G3  se_mid_miss computed from a same-mid SE hit:
-      `se_mid_miss = (join_mid != 0 && !se_mid_hit) ? 1 : 0`.
+      `se_mid_miss = (se_filter_by_mid && !se_mid_hit) ? 1 : 0`.
   G4  additive se-mid-miss key inserted (`insert_kv("se-mid-miss", ...)`).
   G5  additive schema/issue sentinels schema-3284 + issue-3284 present;
       existing schema/issue sentinels unchanged (no renames).
@@ -64,8 +65,15 @@ def main() -> int:
     build = read("build.py")
 
     must("Issue #3284" in src, "G1: evaluator_primitives_security.cpp cites Issue #3284")
-    must("join_mid != 0 && e.mutation_id != join_mid" in src, "G2: SE walk filters by join_mid (not filt_mid)")
-    must("se_mid_miss = (join_mid != 0 && !se_mid_hit) ? 1 : 0" in src, "G3: se_mid_miss computed from same-mid SE hit")
+    must(
+        "se_filter_by_mid = filt_mid || join_mid != 0" in src
+        and "se_filter_by_mid && e.mutation_id != join_mid" in src,
+        "G2: SE walk filters by join_mid (not filt_mid)",
+    )
+    must(
+        "se_mid_miss = (se_filter_by_mid && !se_mid_hit) ? 1 : 0" in src,
+        "G3: se_mid_miss computed from same-mid SE hit",
+    )
     must('insert_kv("se-mid-miss", se_mid_miss)' in src, "G4: additive se-mid-miss key")
     must(
         'insert_kv("schema-3284", 3284)' in src and 'insert_kv("issue-3284", 3284)' in src,

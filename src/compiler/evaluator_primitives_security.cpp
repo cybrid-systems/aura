@@ -5826,47 +5826,28 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                     overflowed = true;
             };
             // Issue #3149: additive key for the SE reason[64] string
-            // (truncated NUL-safe from the matched SE row). Mirrors the
-            // hash insert pattern used elsewhere (e.g. force-reason in
-            // query:wal-append-fail-slo). Soft / no event → "" (omit-safe;
-            // empty string = last-se-reason-code == 0 semantics, AC3).
-            // Local accessors (ht->metadata / keys / values / capacity)
-            // mirror the existing pattern at line 222-241.
-            const auto ht_meta = ht->metadata();
-            const auto ht_keys = ht->keys();
-            const auto ht_vals = ht->values();
-            const auto hcap = ht->capacity;
+            // (truncated NUL-safe from the matched SE row). Soft / no
+            // event → "" (omit-safe; empty string = last-se-reason-code
+            // == 0 semantics, AC3).
+            // Issue #3738: string insert uses the same overflow path as
+            // ints — probe-miss must set overflowed (never silent drop).
             auto insert_kv_str = [&](const char* k_str, std::string_view v_str) {
-                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-                for (const char* p = k_str; *p; ++p)
-                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                if (fp == 0xFF)
-                    fp = 0xFE;
-                for (std::size_t at = 0; at < hcap; ++at) {
-                    auto idx = ((h >> 1) + at) & (hcap - 1);
-                    if (ht_meta[idx] == 0xFF) {
-                        ht_meta[idx] = fp;
-                        auto kidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(k_str);
-                        ht_keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                        auto vidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(std::string(v_str));
-                        ht_vals[idx] = make_string(static_cast<std::uint64_t>(vidx)).val;
-                        ht->size++;
-                        return;
-                    }
-                }
+                if (!insert_kv_checked_str(ht, ev.string_heap_, k_str, v_str))
+                    overflowed = true;
             };
 
             const std::uint64_t last_stamped =
                 g_last_stamped_audit_mid.load(std::memory_order_relaxed);
             const std::uint64_t proof_mid =
                 g_tls_boundary_audit_noted ? g_tls_boundary_audit_mid : last_stamped;
-            const bool filt_mid = !args.empty() && is_int(args[0]) && as_int(args[0]) != 0;
+            // Issue #3738: explicit 0 is a legal join key (refuse class,
+            // same as query:security-audit #3462). Omitted / non-int still
+            // uses last_stamped.
+            const bool filt_mid = !args.empty() && is_int(args[0]);
             const std::uint64_t want_mid =
                 filt_mid ? static_cast<std::uint64_t>(as_int(args[0])) : last_stamped;
             const std::uint64_t join_mid = want_mid;
+            const bool se_filter_by_mid = filt_mid || join_mid != 0;
 
             std::int64_t last_se_denied = 0;
             std::int64_t last_se_reason_code = 0; // 0=none; else SecurityEventKind+1
@@ -5879,8 +5860,9 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             // on filt_mid, so the default path bound the latest SE row of
             // ANY mid). If no same-mid SE row exists → additive
             // se-mid-miss=1 (mirror typed-trail-miss), SE fields stay
-            // 0/"" (AC1). Pure load — no should_audit, no WAL I/O, no
-            // mutate. Soft/Off zero-cost preserved.
+            // 0/"" (AC1). Explicit mid=0 (#3738) filters refuse rows.
+            // Pure load — no should_audit, no WAL I/O, no mutate.
+            // Soft/Off zero-cost preserved.
             int se_mid_miss = 0;
             {
                 const auto& ring = g_security_event_ring();
@@ -5890,7 +5872,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                     if (head <= i)
                         break;
                     const auto& e = ring.ring[(head - 1 - i) % kSecurityEventRingSize];
-                    if (join_mid != 0 && e.mutation_id != join_mid)
+                    if (se_filter_by_mid && e.mutation_id != join_mid)
                         continue;
                     se_mid_hit = true;
                     last_se_denied = e.denied ? 1 : 0;
@@ -5905,7 +5887,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                     }
                     break;
                 }
-                se_mid_miss = (join_mid != 0 && !se_mid_hit) ? 1 : 0;
+                se_mid_miss = (se_filter_by_mid && !se_mid_hit) ? 1 : 0;
             }
 
             TypedMutationAuditEvent te{};
@@ -5952,7 +5934,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             //   else        → 0
             std::int64_t forensic_source = 0;
             bool se_ring_has_mid = false;
-            if (join_mid != 0 && !typed_hit) {
+            if (se_filter_by_mid && !typed_hit) {
                 const auto& ring2 = g_security_event_ring();
                 const auto head2 = ring2.seq.load(std::memory_order_relaxed);
                 const auto max_i = std::min<std::size_t>(head2, kSecurityEventRingSize);
