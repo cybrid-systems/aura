@@ -625,8 +625,12 @@ static void ac3698_let_define_annotation() {
     CHECK(!infer_has_typeerror("(define s3698 \"hi\")", false),
           "3698 AC5: Soft unannotated define no extra TypeError");
 
+#ifndef AURA_ISSUE_BATCH_MEMBER
     // Soak: mutate annotated let value to wrong ground → Guard fail;
     // get-inferred-type not-authoritative.
+    // Runs only in the standalone binary: this full-service concede flow
+    // leaves process-global state that breaks later batch members
+    // (3618/3689/3658/3472 — bisected+probed 2026-09-13).
     {
         std::println("\n--- #3698 soak: mutate annotated let value to wrong ground ---");
         reset_for_test();
@@ -654,6 +658,7 @@ static void ac3698_let_define_annotation() {
         aura::compiler::reset_mutation_concurrency_health_admit_for_test();
         reset_for_test();
     }
+#endif
 }
 
 static void ac3700_quote_walk_children() {
