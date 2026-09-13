@@ -28,6 +28,7 @@ module;
 // Issue #2078: header-only AgentNameTable definition (see .h for why
 // not in evaluator.ixx's global fragment).
 #include "compiler/agent_name_table.h"
+#include "compiler/handoff_token_stash.hh"
 #include "compiler/aot_hot_update_health.hh" // Issue #2543: hot-update health throttle
 #include "orch/orch.h"
 #include "orch/security_schedule_gate.h" // #2660 make_security_schedule_input_live + admit_security_schedule
@@ -149,15 +150,26 @@ namespace {
         return std::uniform_real_distribution<double>(0.0, 1.0)(agent_prng());
     }
 
-    // Issue #3089: cross-Evaluator handoff token stash. Not AgentRegistry
-    // (check_orch_mvp_scope.py). Transient single-use token stage.
-    std::mutex g_handoff_token_stash_mtx;
-    std::unordered_map<std::string, aura::orch::HandoffToken> g_handoff_token_stash;
-    std::atomic<std::uint64_t> g_handoff_token_counter{0};
-
+    // Issue #3089 / #3729: tokens live on Evaluator::handoff_tokens_
+    // (bounded). Process g_handoff_token_stash is hash→Evaluator* routing
+    // (handoff_token_stash.hh), not AgentRegistry. Name kept for
+    // #3148/#3273 linters. new_handoff_token_hash stays file-scope.
     std::string new_handoff_token_hash() {
-        const auto id = g_handoff_token_counter.fetch_add(1, std::memory_order_relaxed);
-        return std::string("handoff:") + std::to_string(id);
+        return aura::compiler::make_handoff_token_hash();
+    }
+
+    std::string handoff_stash_put(Evaluator& ev, aura::orch::HandoffToken tok) {
+        if (!ev.handoff_tokens_)
+            return {};
+        auto r = ev.handoff_tokens_->insert(std::move(tok));
+        if (!r.evicted.empty())
+            aura::compiler::g_handoff_token_stash.unroute(r.evicted);
+        aura::compiler::g_handoff_token_stash.route(r.hash, &ev);
+        return r.hash;
+    }
+
+    Evaluator* handoff_stash_src(const std::string& hash) {
+        return static_cast<Evaluator*>(aura::compiler::g_handoff_token_stash.find(hash));
     }
 
     // Issue #3442: session-local message-plane resolve. Name-table
@@ -6953,17 +6965,17 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
         if (name_idx >= ev.string_heap_.size())
             return types::make_string(0);
         const auto& name = ev.string_heap_[name_idx];
-        // Issue #3727: export a scope-spawned name (name-table miss →
-        // AgentScope::find). No AgentRegistry; stash stays transient.
+        // Issue #3727 / #3729: export a scope-spawned name via
+        // resolve_aura_agent. Token stages on Evaluator::handoff_tokens_
+        // (bounded). Process g_handoff_token_stash is hash→Evaluator*
+        // routing only — not AgentRegistry.
         auto* hp = resolve_aura_agent(ev, name);
         if (!hp)
             return types::make_string(0);
         auto tok = aura::orch::agent_export_handoff(*hp);
-        const auto hash = new_handoff_token_hash();
-        {
-            std::lock_guard<std::mutex> lock(g_handoff_token_stash_mtx);
-            g_handoff_token_stash[hash] = std::move(tok);
-        }
+        const auto hash = handoff_stash_put(ev, std::move(tok));
+        if (hash.empty())
+            return types::make_string(0);
         const auto idx = ev.string_heap_.size();
         ev.string_heap_.push_back(hash);
         return types::make_string(idx);
@@ -6986,14 +6998,15 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             return types::make_string(0);
         const auto& hash = ev.string_heap_[hash_idx];
         aura::orch::HandoffToken tok;
-        {
-            std::lock_guard<std::mutex> lock(g_handoff_token_stash_mtx);
-            auto it = g_handoff_token_stash.find(hash);
-            if (it == g_handoff_token_stash.end())
-                return types::make_string(0);
-            tok = std::move(it->second);
-            g_handoff_token_stash.erase(it);
+        bool took = ev.handoff_tokens_ && ev.handoff_tokens_->take(hash, tok);
+        if (!took) {
+            auto* src = handoff_stash_src(hash);
+            if (src && src != &ev && src->handoff_tokens_)
+                took = src->handoff_tokens_->take(hash, tok);
         }
+        if (!took)
+            return types::make_string(0);
+        aura::compiler::g_handoff_token_stash.unroute(hash);
         orch_sched.ensure(2);
         auto h = aura::orch::agent_import_handoff(std::move(tok), static_cast<void*>(&ev),
                                                   *orch_sched.sched);
@@ -7057,14 +7070,13 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 return make_invalid_hash();
             const auto& hash = ev.string_heap_[hash_idx];
             aura::orch::HandoffToken tok_snapshot;
-            {
-                std::lock_guard<std::mutex> lock(g_handoff_token_stash_mtx);
-                auto it = g_handoff_token_stash.find(hash);
-                if (it == g_handoff_token_stash.end())
-                    return make_invalid_hash();
-                // Snapshot (token stays in stash — importer may re-observe).
-                tok_snapshot = it->second;
+            auto* src = handoff_stash_src(hash);
+            if (!src || !src->handoff_tokens_ || !src->handoff_tokens_->peek(hash, tok_snapshot)) {
+                aura::compiler::g_handoff_token_stash.unroute(hash);
+                return make_invalid_hash();
             }
+            // Snapshot (token stays in stash — importer may re-observe
+            // until join TTL / cap eviction, #3729).
             aura::orch::JoinViaTokenPolicy jp;
             for (std::size_t i = 1; i + 1 < a.size(); i += 2) {
                 auto k = orch_keyword_key(a[i]);

@@ -69,6 +69,7 @@ module;
 // evaluator_primitives_agent.cpp / the test file (where AgentNameTable's
 // methods are actually invoked).
 #include "compiler/agent_name_table_fwd.h"
+#include "compiler/handoff_token_stash_fwd.h"
 
 export module aura.compiler.evaluator;
 import aura.compiler.macro_expansion;
@@ -6442,6 +6443,11 @@ public:
     // (evaluator_ctor.cpp) since std::make_unique<AgentNameTable> needs
     // the full type at the call site.
     std::unique_ptr<aura::compiler::AgentNameTable> agent_names_;
+
+    // Issue #3729: per-Evaluator bounded HandoffToken staging. Tokens
+    // live here (cap kHandoffTokenStashCap). Process g_handoff_token_stash
+    // is hash→Evaluator* routing only — not AgentRegistry.
+    std::unique_ptr<aura::compiler::HandoffTokenStash> handoff_tokens_;
 
     // Issue #2158: per-Evaluator gate for orch:spawn-agent apply_closure.
     // Replaces process-static `orch_eval_mu` so multi-CompilerService /
