@@ -214,6 +214,7 @@ inline std::string aura_query_prims_source() {
            aura_read_repo_file("src/compiler/evaluator_primitives_query_tail.cpp") +
            aura_read_repo_file("src/compiler/evaluator_primitives_query_defuse.cpp") +
            aura_read_repo_file("src/compiler/evaluator_primitives_obs_jit.cpp") +
+           aura_read_repo_file("src/compiler/evaluator_primitives_obs_eval.cpp") +
            aura_read_repo_file("src/compiler/evaluator_primitives_observability.cpp");
 }
 

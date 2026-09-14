@@ -710,8 +710,9 @@ int run_test_mutation_safety_snapshot_steal() {
               "3384 AC2: Guard ctor has on_fiber branch");
         CHECK(emb.find("fiber_stack.size()") != std::string::npos,
               "3384 AC2: prev computed from fiber stack on fiber");
-        // Inert rollback `--(*slot)` is conditional on `!on_fiber`.
-        CHECK(emb.find("only decrement TLS when off-fiber") != std::string::npos,
+        // Inert rollback `--(*slot)` is conditional on `!on_fiber` — the anchor
+        // comment reworded by #3743/#3723; semantics unchanged.
+        CHECK(emb.find("TLS slot is SSOT only off-fiber") != std::string::npos,
               "3384 AC2: inert rollback conditional");
         // force_release_hold_after_cancel_ gates TLS zero on off-fiber.
         CHECK(emb.find("force_release_hold_after_cancel_") != std::string::npos &&
