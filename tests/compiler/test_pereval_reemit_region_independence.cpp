@@ -58,8 +58,13 @@ static std::string read_file(const char* path) {
 // handler (query_tail.cpp), not primitives_query.cpp — concatenate both
 // so q.find matches wherever the insert_kv actually lives.
 static std::string read_query_srcs() {
+    // #2914 split / #3736 reorg moved the query:aot-incremental-reemit-stats
+    // payload (schema-2606 / issue-2606 / reemit-cross-eval-filter-wired) into
+    // evaluator_primitives_obs_eval.cpp — keep every query-definition source
+    // in the lineage grep.
     return read_file("src/compiler/evaluator_primitives_query.cpp") +
-           read_file("src/compiler/evaluator_primitives_query_tail.cpp");
+           read_file("src/compiler/evaluator_primitives_query_tail.cpp") +
+           read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
 }
 
 static std::int64_t href(CompilerService& cs, const char* key) {
