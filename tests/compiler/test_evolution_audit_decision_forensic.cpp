@@ -92,7 +92,10 @@ static void ac3_soft_zero_cost() {
     if (compute_pos != std::string::npos) {
         const auto window_end = std::min<std::size_t>(compute_pos + 1500, src.size());
         const std::string window(src, compute_pos, window_end - compute_pos);
-        CHECK(window.find("if (join_mid != 0 && !typed_hit)") != std::string::npos,
+        // Issue #3770-era refactor: the raw join_mid guard moved into the
+        // precomputed se_filter_by_mid bool (filt_mid || join_mid != 0) —
+        // same semantics, different spelling.
+        CHECK(window.find("if (se_filter_by_mid && !typed_hit)") != std::string::npos,
               "forensic scan guarded by mid != 0 && !typed_hit");
         CHECK(window.find("is_enabled()") != std::string::npos,
               "WAL is_enabled() bool probe (not a scan)");
