@@ -1517,6 +1517,111 @@ void test_ac3766_3_soft_epoch_and_no_invent() {
     }
 }
 
+// Issue #3767: query:ref-valid? production v2 wrap/tenant oracle.
+// Do not skip wrap via is_valid_id_gen(id, gen) default wrap 0.
+void test_ac3767_1_wrap_mismatch_is_false() {
+    std::print(
+        "AC3767/AC1 -- production v2 wrap mismatch → ref-valid? #f, slot gen still matches\n");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    apply_dev_audit_defaults();
+    CompilerService cs;
+    expect_true("3767 AC1: set-code",
+                cs.eval("(set-code \"(define w3767 (lambda () 1))\")").has_value());
+    expect_true("3767 AC1: eval", cs.eval("(eval-current)").has_value());
+    apply_production_audit_defaults();
+    expect_true("3767 AC1: bind find hash",
+                cs.eval("(define qr3767 (query :find \"w3767\"))").has_value());
+    expect_true("3767 AC1: bind v2 pack",
+                cs.eval("(define r3767 (query:as-stable-ref qr3767))").has_value());
+    auto live = cs.eval("(query:ref-valid? r3767)");
+    expect_true("3767 AC1: live v2 is #t", live && is_bool(*live) && as_bool(*live));
+    auto idv = cs.eval("(car r3767)");
+    auto genv = cs.eval("(car (cdr r3767))");
+    expect_true("3767 AC1: packed id/gen readable", idv && is_int(*idv) && genv && is_int(*genv));
+    auto* flat = cs.evaluator().workspace_flat();
+    expect_true("3767 AC1: workspace flat", flat != nullptr);
+    const auto nid = static_cast<aura::ast::NodeId>(as_int(*idv));
+    expect_eq_i64("3767 AC1: slot gen matches packed gen before poison",
+                  static_cast<std::int64_t>(flat->node_gen_for(nid)), as_int(*genv));
+    apply_dev_audit_defaults();
+    expect_true("3767 AC1: poison wrap", cs.eval("(set-car! (cdr (cdr r3767)) 999)").has_value());
+    auto wrapv = cs.eval("(car (cdr (cdr r3767)))");
+    expect_true("3767 AC1: wrap cell is 999", wrapv && is_int(*wrapv) && as_int(*wrapv) == 999);
+    expect_eq_i64("3767 AC1: slot gen still matches packed gen after wrap poison",
+                  static_cast<std::int64_t>(flat->node_gen_for(nid)), as_int(*genv));
+    apply_production_audit_defaults();
+    auto poll = cs.eval("(query:ref-valid? r3767)");
+    expect_true("3767 AC1: wrap-mismatched v2 is bool", poll && is_bool(*poll));
+    expect_true("3767 AC1: wrap-mismatched v2 is #f", poll && is_bool(*poll) && !as_bool(*poll));
+    apply_dev_audit_defaults();
+}
+
+void test_ac3767_2_foreign_tenant_is_false() {
+    std::print("AC3767/AC2 -- production v2 foreign tenant → ref-valid? #f\n");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    apply_dev_audit_defaults();
+    CompilerService cs;
+    expect_true("3767 AC2: set-code",
+                cs.eval("(set-code \"(define u3767 (lambda () 1))\")").has_value());
+    expect_true("3767 AC2: eval", cs.eval("(eval-current)").has_value());
+    apply_production_audit_defaults();
+    cs.evaluator().set_capability_tenant_id(1);
+    expect_true("3767 AC2: bind find hash",
+                cs.eval("(define qr3767t (query :find \"u3767\"))").has_value());
+    expect_true("3767 AC2: bind v2 pack",
+                cs.eval("(define r3767t (query:as-stable-ref qr3767t))").has_value());
+    auto live = cs.eval("(query:ref-valid? r3767t)");
+    expect_true("3767 AC2: same-tenant v2 is #t", live && is_bool(*live) && as_bool(*live));
+    apply_dev_audit_defaults();
+    expect_true("3767 AC2: poison tenant",
+                cs.eval("(set-car! (cdr (cdr (cdr r3767t))) 99)").has_value());
+    auto tenv = cs.eval("(car (cdr (cdr (cdr r3767t))))");
+    expect_true("3767 AC2: tenant cell is 99", tenv && is_int(*tenv) && as_int(*tenv) == 99);
+    apply_production_audit_defaults();
+    cs.evaluator().set_capability_tenant_id(1);
+    auto poll = cs.eval("(query:ref-valid? r3767t)");
+    expect_true("3767 AC2: foreign-tenant v2 is bool", poll && is_bool(*poll));
+    expect_true("3767 AC2: foreign-tenant v2 is #f", poll && is_bool(*poll) && !as_bool(*poll));
+    cs.evaluator().set_capability_tenant_id(0);
+    apply_dev_audit_defaults();
+}
+
+void test_ac3767_3_soft_id_gen_and_no_invent() {
+    std::print("AC3767/AC3 -- Soft (id . gen) still #t; no new key\n");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    apply_dev_audit_defaults();
+    CompilerService cs;
+    expect_true("3767 AC3: set-code",
+                cs.eval("(set-code \"(define s3767 (lambda () 1))\")").has_value());
+    expect_true("3767 AC3: eval", cs.eval("(eval-current)").has_value());
+    expect_true(
+        "3767 AC3: bind Soft stable-ref",
+        cs.eval("(define r3767s (query:stable-ref (car (query :find \"s3767\"))))").has_value());
+    auto v = cs.eval("(query:ref-valid? r3767s)");
+    expect_true("3767 AC3: Soft (id . gen) is #t when slot gen matches",
+                v && is_bool(*v) && as_bool(*v));
+    std::ifstream f_qws("src/compiler/evaluator_primitives_query_workspace.cpp");
+    std::string qws((std::istreambuf_iterator<char>(f_qws)), std::istreambuf_iterator<char>());
+    expect_true("3767 AC3: Soft still uses is_valid_id_gen",
+                qws.find("is_valid_id_gen") != std::string::npos);
+    expect_true("3767 AC3: production does not skip wrap",
+                qws.find("Do not call is_valid_id_gen(id, gen)") != std::string::npos);
+    expect_true("3767 AC3: production uses is_valid",
+                qws.find("return make_bool(flat.is_valid(ref))") != std::string::npos);
+    expect_true("3767 AC3: no schema-3767", qws.find("schema-3767") == std::string::npos);
+    expect_true("3767 AC3: no g_3767_", qws.find("g_3767_") == std::string::npos);
+    {
+        std::ifstream f("tests/compiler/test_issue_3767.cpp");
+        expect_true("3767 AC3: no test_issue_3767.cpp", !f.good());
+    }
+    {
+        std::ifstream f("docs/design/3767-ref-valid-wrap.md");
+        expect_true("3767 AC3: no docs/design/", !f.good());
+    }
+}
+
 int main() {
     std::print("Issue #3103 + #3137 + #3231 -- QueryResult full-provenance path (schema-2)\n");
     set_strategy(AuditStrategy::Full);
@@ -1539,6 +1644,9 @@ int main() {
     test_ac3766_1_lookup_registered();
     test_ac3766_2_occupancy_poll_agrees_resolve();
     test_ac3766_3_soft_epoch_and_no_invent();
+    test_ac3767_1_wrap_mismatch_is_false();
+    test_ac3767_2_foreign_tenant_is_false();
+    test_ac3767_3_soft_id_gen_and_no_invent();
     test_ac1_struct_extension();
     test_ac2_push_match_defaults();
     test_ac3_push_match_full_provenance();
@@ -1578,6 +1686,6 @@ int main() {
     test_3395_ac4_non_regress_source_cite();
     // AC3389 runtime ACs skipped — see comment above.
     std::print("All #3103 + #3137 + #3231 + #3286 + #3311 + #3389 + #3395 + #3424 + "
-               "#3449 + #3660 + #3695 + #3696 + #3766 AC tests PASSED\n");
+               "#3449 + #3660 + #3695 + #3696 + #3766 + #3767 AC tests PASSED\n");
     return 0;
 }
