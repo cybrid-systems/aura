@@ -4905,22 +4905,27 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                                 if (!last_result)
                                     return last_result;
                             }
-                            // Deep-copy result if it's an arena-allocated pair
+                            // Issue #3771: TLS-arena PairSlot must not escape via
+                            // std::malloc. Intern into Evaluator pairs_ (same heap
+                            // as cons / densify-tracked pair storage) before
+                            // tl_arena_pop. Soft/Off: same path, no second allocator.
                             if (last_result && is_pair(*last_result)) {
                                 auto idx = as_pair_idx(*last_result);
                                 if (idx < g_pair_slots.size() && g_pair_slots[idx]) {
                                     auto* slot = g_pair_slots[idx];
                                     auto arena_end = g_tl_arena.base + g_tl_arena.offset;
-                                    auto ptr = (uint8_t*)slot;
+                                    auto ptr = reinterpret_cast<uint8_t*>(slot);
                                     if (g_tl_arena.base && ptr >= g_tl_arena.base &&
                                         ptr < arena_end) {
-                                        auto* new_slot = (PairSlot*)std::malloc(sizeof(PairSlot));
-                                        new_slot->car = slot->car;
-                                        new_slot->cdr = slot->cdr;
-                                        auto new_id = static_cast<int64_t>(g_pair_slots.size());
-                                        g_pair_slots.push_back(new_slot);
-                                        *last_result =
-                                            types::make_pair(static_cast<std::uint64_t>(new_id));
+                                        // Snapshot car/cdr before pop invalidates slot.
+                                        // Same densify path as cons: pairs_ under
+                                        // alloc_storage_lock_ (no std::malloc / g_pair_slots).
+                                        const auto car_v = types::EvalValue{slot->car};
+                                        const auto cdr_v = types::EvalValue{slot->cdr};
+                                        std::lock_guard lock(alloc_storage_lock_);
+                                        const auto new_id = pairs_.size();
+                                        pairs_.push_back({car_v, cdr_v});
+                                        *last_result = make_pair(new_id);
                                     }
                                 }
                             }
