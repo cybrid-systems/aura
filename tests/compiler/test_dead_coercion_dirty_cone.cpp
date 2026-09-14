@@ -21,6 +21,7 @@
 //              impact_ub (decision-time cone lag after #3120 / #3228).
 
 #include "test_harness.hpp"
+#include "core/densify_consistency_report.h"
 #include "compiler/typed_mutation_audit.h"
 #include "compiler/dce_elided_deopt_meta.h"
 
@@ -1162,6 +1163,13 @@ static void ac3618_persist_attribution_forces_full() {
     // one entry; it lives in this block only — AC2 must see a clean map so
     // the impact branch cannot confound the counter.
     {
+        // #3698: the attributed relower no longer retains the post-relower
+        // IR cache entry for f — re-establish it so the desync inject has a
+        // map to corrupt (this AC tests unmatched-persist → force-full, not
+        // the relower's retention policy).
+        CHECK(cs.eval("(set-code \"(define f (lambda (x) (begin x)))\")").has_value(),
+              "3618 AC1: re-establish f entry post-relower");
+        CHECK(cs.eval("(eval-current)").has_value(), "3618 AC1: lower f into IR cache");
         CHECK(cs.inject_source_to_ir_map_desync_for_test("f"), "3618 AC1: map non-empty (inject)");
         reset_residual_castop_persist_for_test();
         constexpr aura::compiler::dirty::NodeId kGhost = 3618;
@@ -1176,6 +1184,10 @@ static void ac3618_persist_attribution_forces_full() {
         CHECK(cs.metrics().partial_forced_full_by_impact_total.load(std::memory_order_relaxed) >
                   forced1,
               "3618 AC1: unmatched persist + non-empty map → force full");
+        // The ghost entry lives in this block only — clear it so the later
+        // #3689 soak sees a clean persist table (its mutate coherence fails
+        // closed on unmatched foreign entries).
+        reset_residual_castop_persist_for_test();
     }
 
     reset_residual_castop_persist_for_test();
@@ -1557,6 +1569,10 @@ static void ac3581_3_dual_owner_source_cite() {
 } // namespace
 
 int run_test_dead_coercion_dirty_cone() {
+    // Issue #3698 batch: isolate densify-consistency state at member entry
+    // (upstream fail-close members bump the sticky process-global counter,
+    // which trips the #2985 health gate for this member's set-codes).
+    aura::core::densify_consistency::reset_densify_consistency_for_test();
     std::println("=== Issue #2556: DCE dirty-cone scan limit ===");
     ac1_partial_cone();
     ac2_full_scan();
