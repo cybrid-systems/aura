@@ -6974,6 +6974,23 @@ def cmd_lint():
     if r != 0:
         fail("Issue #3722 rollback effect-gate linter failed — run python3 scripts/check_rollback_effect_gate_3722.py")
         return r
+    # Issue #3772 (#3365/#3415 residual): the Agent EDSL (ast:stable-ref)
+    # packs (id . gen) and drops the tenant stamp — ast:ref-get /
+    # ast:ref-valid? / ast:stable-refs-valid? observed FlatAST layout-only
+    # with no isolation consult while the C++ authority (#3365) denies
+    # layout-only refs under Restricted+MT. Gate pins: all three re-entry
+    # prims route through restamp_read_ref (occupancy re-derivation via
+    # the #3415/#3629 ring, #3641 collision borrow) BEFORE any observe;
+    # foreign / unstamped deny (IsolationDeny, fiber-joinable); Soft/Off
+    # keeps the legacy direct path; tests cite #3772.
+    ars3772_script = ROOT / "scripts" / "check_ast_ref_stamp_3772.py"
+    if not ars3772_script.exists():
+        fail(f"missing {ars3772_script}")
+        return 1
+    r = run([sys.executable, str(ars3772_script)], cwd=ROOT)
+    if r != 0:
+        fail("Issue #3772 ast ref stamp linter failed — run python3 scripts/check_ast_ref_stamp_3772.py")
+        return r
     # Issue #3649 (#2952/#3096/#2690 residual): the storm-exit edge drives
     # residual coverage-verify. storm_exit_force_full_active now==0 &&
     # prev!=0 branch runs one maybe_coverage_verify_min_dirty when

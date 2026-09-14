@@ -2183,6 +2183,51 @@ std::optional<ast::NodeView> Evaluator::resolve_stamped(const ast::FlatAST::Stab
     return opt;
 }
 
+// Issue #3772: read-side re-entry for layout-only EDSL refs (see
+// evaluator.ixx declaration). Consult regime mirrors
+// require_effect_for_node_id (#3415/#3629/#3641): foreign occupancy
+// denies via the shared check_workspace_isolation face (IsolationDeny
+// SE, fiber + epoch-mid joinable); unstamped denies for #3365 parity
+// with the C++ authority; same-tenant restamps ref.tenant_id.
+// Soft/Off: consult off -> allow with the ref untouched (zero-cost
+// legacy observe; the caller keeps its raw is_valid/get_safe path).
+bool Evaluator::restamp_read_ref(ast::FlatAST::StableNodeRef& ref, std::string_view op) noexcept {
+    if (!workspace_flat_)
+        return false;
+    const auto mode = effect_sandbox_mode();
+    const bool strict = mode == 2 || ::aura::core::sandbox::is_strict();
+    const bool restricted = mode == 1;
+    const bool mt = ::aura::core::provenance::hard_capture_tenant_active() ||
+                    ::aura::core::provenance::multi_tenant_env_active();
+    if (!(strict || (restricted && mt)))
+        return true; // Soft/Off — legacy direct observe path
+    const auto caller = static_cast<std::uint64_t>(capability_tenant_id_);
+    auto existing =
+        ::aura::core::provenance::existing_stamp_for_node(static_cast<std::uint32_t>(ref.id));
+    if (existing == 0) {
+        const auto& hs = ::aura::core::provenance::g_provenance_tracker().last_hygiene;
+        if (hs.tenant_id != 0 && hs.node_id == static_cast<std::uint32_t>(ref.id))
+            existing = hs.tenant_id;
+    }
+    if (existing == 0) {
+        const auto occ =
+            ::aura::core::provenance::occupying_stamp_for_node(static_cast<std::uint32_t>(ref.id));
+        if (occ.node_id != 0 && occ.node_id != static_cast<std::uint32_t>(ref.id))
+            existing = occ.tenant_id; // #3641 same-slot collision borrow
+    }
+    if (existing != caller) {
+        // Foreign occupancy or unstamped under the consult regime — deny
+        // the read (IsolationDeny SE via the shared check; fiber + epoch
+        // mid joinable, #2156).
+        (void)check_workspace_isolation(caller, existing, /*required=*/0, op);
+        last_mutate_error_ =
+            std::string(op) + ": isolation-deny: ref-tenant=" + std::to_string(existing);
+        return false;
+    }
+    ref.tenant_id = existing;
+    return true;
+}
+
 } // namespace aura::compiler
 
 // apply_aura_sandbox_env / apply_production_security_defaults:

@@ -3975,6 +3975,135 @@ int main() {
               "3722 AC6: no test_issue_3722.cpp per #81934");
     }
 
+    // ── #3772 AC1: Restricted+MT — forged foreign (id . gen) re-entry
+    // denies (void / #f) with joinable IsolationDeny SE ──
+    {
+        std::println("\n--- #3772 AC1: forged foreign ref re-entry denies ---");
+        reset_all();
+        set_mode(SandboxMode::Restricted);
+        aura::core::provenance::set_multi_tenant_env_active(true);
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.set_effect_sandbox_mode(1);
+        ev.set_capability_tenant_id(99);
+        CHECK(cs.eval("(set-code \"(define (n3772a x) x)\")").has_value(), "3772 AC1 set-code");
+        CHECK(cs.eval("(eval-current)").has_value(), "3772 AC1 eval");
+        auto* ws = ev.workspace_flat();
+        CHECK(ws != nullptr, "3772 AC1 workspace");
+        const auto id = first_live(*ws);
+        CHECK(id != NULL_NODE, "3772 AC1 live node");
+        // Tenant 99 holds the node (occupancy via make_stamped_ref — the
+        // same ring entry export_ref seeds). gen99 is the TRUE generation
+        // so the forged re-entry hits the isolation face, not staleness.
+        const auto stamped = ev.make_stamped_ref(id);
+        CHECK(stamped.tenant_id == 99, "3772 AC1: occupancy stamp tenant 99");
+        const auto gen99 = static_cast<std::uint64_t>(stamped.gen);
+        CHECK(gen99 != 0, "3772 AC1: gen resolved");
+        // Tenant 7 forges the leaked wire pair.
+        ev.set_capability_tenant_id(7);
+        const auto& ring = g_security_event_ring();
+        const auto baseline = ring.seq.load(std::memory_order_acquire);
+        const auto rg = cs.eval(std::format("(ast:ref-get {} {})", id, gen99));
+        CHECK(rg.has_value() && aura::compiler::types::is_void(*rg),
+              "3772 AC1: foreign ast:ref-get → void");
+        const auto rv = cs.eval(std::format("(ast:ref-valid? {} {})", id, gen99));
+        CHECK(rv.has_value() && is_bool(*rv) && !as_bool(*rv),
+              "3772 AC1: foreign ast:ref-valid? → #f");
+
+        bool iso_deny = false;
+        for (std::uint64_t s = baseline; s < ring.seq.load(); ++s) {
+            const auto& e = ring.ring[s % ring.ring.size()];
+            if (e.seq == s &&
+                static_cast<int>(e.kind) == static_cast<int>(SecurityEventKind::IsolationDeny)) {
+                iso_deny = true;
+                CHECK(e.mutation_id != 0, "3772 AC1: IsolationDeny mid joinable (#2156)");
+            }
+        }
+        CHECK(iso_deny, "3772 AC1: IsolationDeny SE in ring");
+        // AC3 spot: the write path keeps its #3415 occupancy gate.
+        const auto bumps_before = ws->subtree_bump_count();
+        CHECK(!ev.require_effect_for_node_id(kEffectMutate, "mutate:replace-type", id),
+              "3772 AC3 spot: foreign mutate still denies (#3415)");
+        CHECK(ws->subtree_bump_count() == bumps_before, "3772 AC3 spot: zero write");
+        aura::core::provenance::set_multi_tenant_env_active(false);
+    }
+
+    // ── #3772 AC2: legitimate export → round-trip observes own nodes ──
+    {
+        std::println("\n--- #3772 AC2: own-node export round-trip observes ---");
+        reset_all();
+        set_mode(SandboxMode::Restricted);
+        aura::core::provenance::set_multi_tenant_env_active(true);
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.set_effect_sandbox_mode(1);
+        ev.set_capability_tenant_id(7);
+        CHECK(cs.eval("(set-code \"(define (n3772b x) x)\")").has_value(), "3772 AC2 set-code");
+        CHECK(cs.eval("(eval-current)").has_value(), "3772 AC2 eval");
+        auto* ws = ev.workspace_flat();
+        CHECK(ws != nullptr, "3772 AC2 workspace");
+        const auto id = first_live(*ws);
+        CHECK(id != NULL_NODE, "3772 AC2 live node");
+        const auto sref7 = cs.eval(std::format("(ast:stable-ref {})", id));
+        CHECK(sref7.has_value() && is_pair(*sref7), "3772 AC2: export pair");
+        // Host-side gen: the wire pair is layout-only; the re-entry gate
+        // re-derives occupancy -- the round-trip needs the current gen.
+        const auto gen7 = static_cast<std::uint64_t>(ws->current_generation());
+        CHECK(gen7 != 0, "3772 AC2: gen resolved");
+        const auto rg = cs.eval(std::format("(ast:ref-get {} {})", id, gen7));
+        CHECK(rg.has_value() && is_string(*rg), "3772 AC2: own ast:ref-get observes");
+        const auto rv = cs.eval(std::format("(ast:ref-valid? {} {})", id, gen7));
+        CHECK(rv.has_value() && is_bool(*rv) && as_bool(*rv), "3772 AC2: own ref-valid? allows");
+
+        aura::core::provenance::set_multi_tenant_env_active(false);
+    }
+
+    // ── #3772 AC4: Soft/Off — pair contract unchanged (legacy direct
+    // observe path; no grants, no consult) ──
+    {
+        std::println("\n--- #3772 AC4: Soft/Off pair contract unchanged ---");
+        reset_all(); // Sandbox Off, no grants, no MT consult
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        CHECK(cs.eval("(set-code \"(define (n3772c x) x)\")").has_value(), "3772 AC4 set-code");
+        CHECK(cs.eval("(eval-current)").has_value(), "3772 AC4 eval");
+        auto* ws = ev.workspace_flat();
+        CHECK(ws != nullptr, "3772 AC4 workspace");
+        const auto id = first_live(*ws);
+        CHECK(id != NULL_NODE, "3772 AC4 live node");
+        const auto sref = cs.eval(std::format("(ast:stable-ref {})", id));
+        CHECK(sref.has_value() && is_pair(*sref), "3772 AC4: export pair");
+        const auto gen = static_cast<std::uint64_t>(ws->current_generation());
+        CHECK(gen != 0, "3772 AC4: gen resolved");
+        const auto rg = cs.eval(std::format("(ast:ref-get {} {})", id, gen));
+        CHECK(rg.has_value() && is_string(*rg), "3772 AC4: soft ast:ref-get observes");
+        const auto rv = cs.eval(std::format("(ast:ref-valid? {} {})", id, gen));
+        CHECK(rv.has_value() && is_bool(*rv) && as_bool(*rv), "3772 AC4: soft ref-valid? → #t");
+    }
+
+    // ── #3772 AC5: source-cite — gated re-entry cites #3772, helper in
+    // the security TU; no test_issue file; no docs/design ──
+    {
+        std::println("\n--- #3772 AC5: source-cite ---");
+        const auto prim = read_file("src/compiler/evaluator_primitives_ast.cpp");
+        CHECK(prim.find("#3772") != std::string::npos, "3772 AC5: prims cite #3772");
+        CHECK(prim.find("restamp_read_ref(ref, \"ast:ref-get\")") != std::string::npos,
+              "3772 AC5: ast:ref-get gated");
+        CHECK(prim.find("restamp_read_ref(ref, \"ast:ref-valid?\")") != std::string::npos,
+              "3772 AC5: ast:ref-valid? gated");
+        CHECK(prim.find("restamp_read_ref(sref, \"ast:stable-refs-valid?\")") != std::string::npos,
+              "3772 AC5: bulk gated");
+        const auto sec = read_file("src/compiler/evaluator_security.cpp");
+        CHECK(sec.find("#3772") != std::string::npos, "3772 AC5: helper cites #3772");
+        const auto ixx = read_file("src/compiler/evaluator.ixx");
+        CHECK(ixx.find("restamp_read_ref") != std::string::npos,
+              "3772 AC5: helper declared in evaluator.ixx");
+        CHECK(read_file("docs/design/3772-ast-ref-stamp.md").empty(),
+              "3772 AC5: no docs/design/3772-* per #1655");
+        CHECK(read_file("tests/core/test_issue_3772.cpp").empty(),
+              "3772 AC5: no test_issue_3772.cpp per #81934");
+    }
+
     reset_all();
     std::println("\n=== test_tenant_isolation_enforcement: {} passed, {} failed ===", g_passed,
                  g_failed);
