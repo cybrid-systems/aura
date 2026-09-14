@@ -904,6 +904,61 @@ static void ac3740_soft_no_extra_restore() {
     CHECK(!ev.has_panic_checkpoint(), "3740 AC4: Soft empty checkpoint");
 }
 
+// ── Issue #3765: steal dequeue disposition (inconsistency / RejectHard). ──
+static void ac3765_1_inconsistent_continue_dominated() {
+    std::println("\n--- #3765 AC1: inconsistency continue is enqueue or Done ---");
+    const auto wc = read_file("src/serve/worker.cpp");
+    const auto inc = wc.find("mutation_safety_snapshot_inconsistent(snap)");
+    CHECK(inc != std::string::npos, "3765 AC1: inconsistency arm present");
+    const auto cont = wc.find("continue;", inc);
+    CHECK(cont != std::string::npos && cont > inc, "3765 AC1: continue on that arm");
+    const auto win = wc.substr(inc, cont - inc + 80);
+    CHECK(win.find("victim->enqueue(stolen)") != std::string::npos,
+          "3765 AC1: Soft put-back victim->enqueue(stolen)");
+    CHECK(win.find("set_state(FiberState::Done)") != std::string::npos,
+          "3765 AC1: production Cancel+Done");
+    CHECK(win.find("no soft-enqueue after snapshot sample") != std::string::npos,
+          "3765 AC1: keep #2844 no-thief-enqueue");
+    CHECK(wc.find("Never enqueue a stolen fiber after inconsistency sample") != std::string::npos,
+          "3765 AC1: #2844 never thief-enqueue string kept");
+}
+
+static void ac3765_2_reject_hard_dones_fiber() {
+    std::println("\n--- #3765 AC2: RejectHard Cancel+Done in steal_safety_transaction ---");
+    const auto ss = read_file("src/serve/steal_safety.cpp");
+    CHECK(ss.find("fail_close_stolen_on_reject_hard") != std::string::npos,
+          "3765 AC2: helper in the decision function");
+    CHECK(ss.find("fail_close_stolen_on_reject_hard(stolen)") != std::string::npos,
+          "3765 AC2: helper called with stolen");
+    apply_production_audit_defaults();
+    aura::serve::set_production_multi_worker_latched_for_test(true);
+    aura::serve::g_steal_safety_production_residual_sticky_fail.store(1, std::memory_order_relaxed);
+    Fiber f([]() {}, /*stack_size=*/64 * 1024);
+    f.set_yield_reason(YieldReason::Explicit);
+    f.publish_mutation_safety_mirrors(/*depth=*/0, /*held=*/false, /*defuse=*/0);
+    const auto d = aura::serve::steal_safety_transaction(&f);
+    CHECK(d == aura::serve::StealSafetyDecision::RejectHard, "3765 AC2: sticky RejectHard");
+    CHECK(f.is_done(), "3765 AC2: fiber Done so join does not hang");
+    CHECK(f.is_cancel_requested(), "3765 AC2: cancel requested");
+    aura::serve::g_steal_safety_production_residual_sticky_fail.store(0, std::memory_order_relaxed);
+    aura::serve::set_production_multi_worker_latched_for_test(false);
+    apply_dev_audit_defaults();
+}
+
+static void ac3765_4_eventfd_no_mb_tag() {
+    std::println("\n--- #3765 AC4: eventfd wake does not tag MutationBoundary ---");
+    const auto sched = read_file("src/serve/scheduler.cpp");
+    const auto held = sched.find("aura_process_mutation_boundary_held_count() > 0");
+    CHECK(held != std::string::npos, "3765 AC4: held-count gate");
+    const auto win = sched.substr(held, 900);
+    CHECK(win.find("request_force_safepoint()") != std::string::npos,
+          "3765 AC4: keep force-safepoint intent");
+    CHECK(win.find("set_yield_reason(YieldReason::MutationBoundary)") == std::string::npos,
+          "3765 AC4: BlockingIO waiters stay non-steal-candidates");
+    CHECK(read_file("tests/serve/test_issue_3765.cpp").empty(), "3765: no invent");
+    CHECK(read_file("docs/design/3765-steal-disposition.md").empty(), "3765: no docs/design/");
+}
+
 int run_test_steal_complete_gc_defer() {
     std::println("=== Issue #2203: steal-complete single entry (clear_gc_defer + metric) ===");
     std::println("=== Issue #2314: residual defer clear interlock (share helper, idempotent) ===");
@@ -935,6 +990,10 @@ int run_test_steal_complete_gc_defer() {
     ac3740_production_mismatch_restore_or_defer();
     ac3740_steal_complete_still_clears_prev();
     ac3740_soft_no_extra_restore();
+    std::println("\n=== Issue #3765: steal dequeue disposition ---");
+    ac3765_1_inconsistent_continue_dominated();
+    ac3765_2_reject_hard_dones_fiber();
+    ac3765_4_eventfd_no_mb_tag();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

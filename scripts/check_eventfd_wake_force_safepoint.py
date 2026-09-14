@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 """Issue #3553 linter: enforce that the scheduler eventfd / IO-thread wake
 handler in src/serve/scheduler.cpp consults process_mutation_boundary_held_count
-before enqueueing a woken Fiber for resumption. Forces a force-safepoint +
-synthetic MutationBoundary reason pair when the count > 0 and the waker's
-last_yield_reason is not MutationBoundary.
+before enqueueing a woken Fiber for resumption. Forces a force-safepoint
+when the count > 0 and the waker's last_yield_reason is not MutationBoundary.
+
+Issue #3765: do NOT set YieldReason::MutationBoundary on a non-holder —
+that reclassified BlockingIO waiters as stealable while some other fiber
+holds Guard. Keep request_force_safepoint() only.
 
 Usage:
     python3 scripts/check_eventfd_wake_force_safepoint.py --strict
@@ -12,12 +15,13 @@ Forbidden (production silent-corrupt):
     - scheduler.cpp eventfd wake handler enqueues Fiber without checking
       aura_process_mutation_boundary_held_count() — held Guard holder can
       be forced off-CPU by GC compact while still mid-mutate.
+    - tagging the waker as MutationBoundary (#3765 steal-candidate hole).
 
 Required:
     - file-scope atomic g_eventfd_wake_force_safepoint_total (sibling of
       safepoint_wait_while_mutation_held; NOT in metrics middle).
     - check process_mutation_boundary_held_count() > 0
-    - Fiber::request_force_safepoint + set_yield_reason(MutationBoundary) pair
+    - Fiber::request_force_safepoint (no MutationBoundary yield tag)
     - the existing #3521 is_queued check must precede the force-safepoint
       defer (a fiber already on a worker shouldn't be deferred again).
 """
@@ -42,10 +46,11 @@ RE_HELD_READ = re.compile(
     r"aura_process_mutation_boundary_held_count\(\)\s*>\s*0",
     re.MULTILINE,
 )
-# Wire-3: request_force_safepoint + set_yield_reason(MutationBoundary) pair.
-RE_FORCE_PAIR = re.compile(
-    r"request_force_safepoint\(\)\s*;\s*[^\n]*?set_yield_reason\s*\(\s*YieldReason::MutationBoundary\s*\)",
-    re.MULTILINE | re.DOTALL,
+# Wire-3: request_force_safepoint on the wake path (#3765: no MutationBoundary tag).
+RE_FORCE = re.compile(r"request_force_safepoint\(\)\s*;", re.MULTILINE)
+RE_MB_TAG = re.compile(
+    r"set_yield_reason\s*\(\s*YieldReason::MutationBoundary\s*\)",
+    re.MULTILINE,
 )
 # Wire-4: counter fetch_add (relaxed; sibling family).
 RE_COUNTER_BUMP = re.compile(
@@ -81,8 +86,13 @@ def main() -> int:
     if not RE_HELD_READ.search(text):
         fail(f"{SCHED}: wake handler missing aura_process_mutation_boundary_held_count() > 0 check")
         v += 1
-    if not RE_FORCE_PAIR.search(text):
-        fail(f"{SCHED}: missing request_force_safepoint + set_yield_reason(MutationBoundary) pair")
+    held_pos = text.find("aura_process_mutation_boundary_held_count() > 0")
+    wake_win = text[held_pos : held_pos + 900] if held_pos >= 0 else ""
+    if not RE_FORCE.search(wake_win):
+        fail(f"{SCHED}: missing request_force_safepoint on eventfd wake")
+        v += 1
+    if RE_MB_TAG.search(wake_win):
+        fail(f"{SCHED}: eventfd wake must not set YieldReason::MutationBoundary (#3765)")
         v += 1
     if not RE_COUNTER_BUMP.search(text):
         fail(f"{SCHED}: missing g_eventfd_wake_force_safepoint_total.fetch_add bump")

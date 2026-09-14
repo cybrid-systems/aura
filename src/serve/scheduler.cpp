@@ -1024,8 +1024,10 @@ void Scheduler::run() {
                 // no Fiber holds the boundary (Soft / Off / quiescent path).
                 if (aura_process_mutation_boundary_held_count() > 0 &&
                     fiber->last_yield_reason() != YieldReason::MutationBoundary) {
+                    // Issue #3765: keep force-safepoint intent; do not tag
+                    // BlockingIO waiters as MutationBoundary (that made
+                    // is_steal_candidate true while some other fiber holds Guard).
                     fiber->request_force_safepoint();
-                    fiber->set_yield_reason(YieldReason::MutationBoundary);
                     g_eventfd_wake_force_safepoint_total.fetch_add(1, std::memory_order_relaxed);
                 }
 

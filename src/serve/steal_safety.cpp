@@ -66,6 +66,17 @@ namespace {
     // hard-AND + ticket stamp. Replaces process-wide g_steal_safety_decision_mu
     // so concurrent steals of *different* victims do not serialize.
     // try_begin CAS-spins on rare same-fiber contention (bumps contention_total).
+    // Issue #3765: RejectHard must Cancel+Done the stolen fiber in this
+    // function (the decision site). LayoutStamp / residual leftover may
+    // already be Done inside on_steal_complete — skip if so. Never unlock
+    // unique_lock. Quiet Ok path does not call this (zero extra atomics).
+    void fail_close_stolen_on_reject_hard(Fiber* f) noexcept {
+        if (!f || f->is_done())
+            return;
+        f->request_cancel();
+        f->set_state(FiberState::Done);
+    }
+
     // RAII end_steal_decision on all exit paths (Ok + RejectHard).
     struct StealDecisionGuard {
         Fiber* fiber = nullptr;
@@ -272,6 +283,7 @@ StealSafetyDecision steal_safety_transaction(Fiber* stolen) noexcept {
         g_steal_safety_last_reject_invariant_bits.store(
             steal_invariant_mask(StealInvariant::SnapshotConsistent), std::memory_order_relaxed);
         g_steal_safety_transaction_reject_hard_total.fetch_add(1, std::memory_order_relaxed);
+        fail_close_stolen_on_reject_hard(stolen);
         return StealSafetyDecision::RejectHard;
     }
 
@@ -364,6 +376,7 @@ StealSafetyDecision steal_safety_transaction(Fiber* stolen) noexcept {
             if (aura_runtime_multi_worker_production_latched() != 0) {
                 g_steal_safety_production_residual_sticky_fail.store(1, std::memory_order_relaxed);
             }
+            fail_close_stolen_on_reject_hard(stolen);
             return StealSafetyDecision::RejectHard;
         }
 
@@ -380,6 +393,7 @@ StealSafetyDecision steal_safety_transaction(Fiber* stolen) noexcept {
         if (aura_runtime_multi_worker_production_latched() != 0 &&
             g_steal_safety_production_residual_sticky_fail.load(std::memory_order_relaxed) != 0) {
             g_steal_safety_transaction_reject_hard_total.fetch_add(1, std::memory_order_relaxed);
+            fail_close_stolen_on_reject_hard(stolen);
             return StealSafetyDecision::RejectHard;
         }
 
