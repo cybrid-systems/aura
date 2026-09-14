@@ -255,6 +255,24 @@ namespace {
         auto it = g_fiber_registry.find(id);
         return it != g_fiber_registry.end() ? it->second : nullptr;
     }
+
+    // Issue #3764: no-edge holder disposition (busy-path / join).
+    // Never drops unique_lock from this thread. Running: mark_reclaimed
+    // so join returns Reclaimed without UAF (#2467). Not Running:
+    // Cancel+Done so join does not wait forever (steal-drop is sibling).
+    enum class NoEdgeHolderDispose : std::uint8_t { None, Reclaimed, Done };
+    NoEdgeHolderDispose dispose_no_edge_holder(Fiber* f) noexcept {
+        if (!f || f->is_done())
+            return NoEdgeHolderDispose::None;
+        if (f->state() == FiberState::Running) {
+            if (!f->is_reclaimed())
+                f->mark_reclaimed();
+            return NoEdgeHolderDispose::Reclaimed;
+        }
+        f->request_cancel();
+        f->set_state(FiberState::Done);
+        return NoEdgeHolderDispose::Done;
+    }
 } // namespace
 
 // Issue #2726: C-linkage accessor for the cross-fiber force-degrade
@@ -466,9 +484,14 @@ extern "C" int aura_hold_budget_poll_inbody_window(void) noexcept {
     return 1;
 }
 
+// Issue #3619: strong def below; busy-path / resume consult it.
+extern "C" int aura_mutation_hold_no_edge_still_held(void) noexcept;
+
 // Issue #3588: busy-path holder check (worker run loop after swap-back).
 // Park/idle already poll (#3071/#3325). All-busy + edge-free never parks.
 // Soft / Off: reject_enabled skip. Happy path: one snapshot.
+// Issue #3764: after inbody, if no-edge still held — same-fiber
+// force_release; else Cancel+Done / mark_reclaimed (join must not hang).
 extern "C" int aura_hold_budget_poll_busy_path(void) noexcept {
     using namespace aura::compiler;
     if (!mutation_hold_budget_reject_enabled())
@@ -482,7 +505,20 @@ extern "C" int aura_hold_budget_poll_busy_path(void) noexcept {
         if (snap.start_ns != 0)
             g_hold_budget_cancel_armed_ns.store(snap.start_ns, std::memory_order_release);
     }
-    return aura_hold_budget_poll_inbody_window();
+    const int exceeded = aura_hold_budget_poll_inbody_window();
+    if (aura_mutation_hold_no_edge_still_held() == 0)
+        return exceeded;
+    const auto live = mutation_hold_live_snapshot();
+    if (live.fiber_id == 0)
+        return exceeded;
+    if (auto* cur = g_current_fiber; cur && cur->id() == live.fiber_id) {
+        aura_evaluator_force_release_outermost_holder(live.fiber_id);
+        return exceeded;
+    }
+    std::lock_guard<std::mutex> lock(g_fiber_registry_mtx);
+    if (Fiber* f = find_fiber_by_id_locked_held(live.fiber_id))
+        (void)dispose_no_edge_holder(f);
+    return exceeded;
 }
 
 // Issue #3619: production residual probe — a no-edge force has fired
@@ -1421,6 +1457,13 @@ void Fiber::resume() {
     aura_evaluator_resume_fiber_migration();
     state_.store(FiberState::Running, std::memory_order_release);
 
+    // Issue #3764: next-enter same-fiber consume (no-edge still held).
+    if (aura_mutation_hold_no_edge_still_held() != 0) {
+        const auto hs = aura::compiler::mutation_hold_live_snapshot();
+        if (hs.held && hs.fiber_id == id_)
+            aura_evaluator_force_release_outermost_holder(id_);
+    }
+
     // Swap from worker's loop context to fiber's context
     if (::swapcontext(&wctx->uctx, &ctx_) == -1) {
         std::fprintf(stderr, "fiber[%lu]: resume swapcontext failed: %s\n", (unsigned long)id_,
@@ -1457,6 +1500,13 @@ void Fiber::resume() {
     //   → probe_and_repin_linear_on_steal + restamp_pinned StableNodeRefs
     //   → refresh_stale_macro_frames + clear_resume_refresh_hints.
     aura_evaluator_post_resume_refresh();
+
+    // Issue #3764: swap-back same-fiber consume before TLS restore.
+    if (aura_mutation_hold_no_edge_still_held() != 0) {
+        const auto hs = aura::compiler::mutation_hold_live_snapshot();
+        if (hs.held && hs.fiber_id == id_)
+            aura_evaluator_force_release_outermost_holder(id_);
+    }
 
     if (g_fiber_setter_)
         g_fiber_setter_(prev_fiber_void);
@@ -1930,6 +1980,23 @@ JoinResult Fiber::join(Fiber* target, std::optional<std::uint64_t> timeout_ms) {
 
     if (!target || target == g_current_fiber)
         return finish(JoinStatus::Invalid);
+    // Issue #3764: no-edge holder past 2×SLO — join must not wait forever.
+    // Running: mark_reclaimed (no UAF). Not Running: Cancel+Done.
+    // Same-fiber unique_lock drop stays in force_release. Soft: skip.
+    if (aura::compiler::mutation_hold_budget_reject_enabled() &&
+        aura_mutation_hold_no_edge_still_held() != 0) {
+        const auto hs = aura::compiler::mutation_hold_live_snapshot();
+        if (hs.held && hs.fiber_id == target->id()) {
+            const auto d = dispose_no_edge_holder(target);
+            if (d == NoEdgeHolderDispose::Reclaimed) {
+                target->release_orphan_roots();
+                aura_evaluator_on_fiber_join_session_revoke(static_cast<void*>(target));
+                return finish(JoinStatus::Reclaimed);
+            }
+            if (d == NoEdgeHolderDispose::Done)
+                return finish(JoinStatus::Cancelled);
+        }
+    }
     // Issue #2467: reclaimed-but-not-done path. The body fiber is
     // STILL EXECUTING on a worker (non-yielding tight loop after
     // the cooperative drain window expired). Return Reclaimed
@@ -1983,6 +2050,20 @@ JoinResult Fiber::join(Fiber* target, std::optional<std::uint64_t> timeout_ms) {
         // Wait loop: BlockingIO yield parks until target Done wakes us
         // (or we poll for timeout/cancel via Explicit yields when deadline).
         while (!target->is_done()) {
+            // Issue #3764: no-edge holder — do not park forever.
+            if (aura::compiler::mutation_hold_budget_reject_enabled() &&
+                aura_mutation_hold_no_edge_still_held() != 0) {
+                const auto hs = aura::compiler::mutation_hold_live_snapshot();
+                if (hs.held && hs.fiber_id == target->id()) {
+                    const auto d = dispose_no_edge_holder(target);
+                    g_scheduler->remove_joiner(target->id(), g_current_fiber);
+                    if (d == NoEdgeHolderDispose::Reclaimed) {
+                        target->release_orphan_roots();
+                        return finish(JoinStatus::Reclaimed);
+                    }
+                    return finish(JoinStatus::Cancelled);
+                }
+            }
             // Issue #2467: bail out on reclaim to avoid infinite spin.
             // body will keep running until it eventually yields/returns,
             // but our join is done — caller handles Reclaimed status.
@@ -2024,6 +2105,19 @@ JoinResult Fiber::join(Fiber* target, std::optional<std::uint64_t> timeout_ms) {
 
     // Host-thread path (tests without active fiber context).
     while (!target->is_done()) {
+        // Issue #3764: no-edge holder — do not sleep forever.
+        if (aura::compiler::mutation_hold_budget_reject_enabled() &&
+            aura_mutation_hold_no_edge_still_held() != 0) {
+            const auto hs = aura::compiler::mutation_hold_live_snapshot();
+            if (hs.held && hs.fiber_id == target->id()) {
+                const auto d = dispose_no_edge_holder(target);
+                if (d == NoEdgeHolderDispose::Reclaimed) {
+                    target->release_orphan_roots();
+                    return finish(JoinStatus::Reclaimed);
+                }
+                return finish(JoinStatus::Cancelled);
+            }
+        }
         // Issue #2467: same Reclaimed check on host-thread path.
         if (target->is_reclaimed()) {
             // Issue #2498: drop off-stack orphan roots (see top-level

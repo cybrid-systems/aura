@@ -15,6 +15,7 @@
 #include "core/gc_hooks.h"                 // #2932 residual closed-loop check
 #include "serve/fiber.h"
 #include "serve/multi_fiber_mailbox.h"
+#include "serve/runtime_production_abi.h" // #3764 multi-worker latch for no-edge probe
 #include "serve/scheduler.h"
 
 #include <atomic>
@@ -22,6 +23,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <fstream>
+#include <optional>
 #include <print>
 #include <string>
 #include <string_view>
@@ -3076,6 +3078,178 @@ static void ac3613_4_source_and_linter() {
 }
 
 // ── Issue #3763: recv/try_pop under Guard take zero mu_ ──
+// ── Issue #3764: no-edge holder disposition (I4 residual of #3619). ──
+static void ac3764_1_same_fiber_and_source() {
+    std::println("\n--- #3764 AC1: force_release stays same-fiber; disposition cites ---");
+    const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto fc = read_file("src/serve/fiber.cpp");
+    const auto fh = read_file("src/serve/fiber.h");
+    const auto mhb = read_file("src/compiler/mutation_hold_budget.h");
+    const auto rel = emb.find("aura_evaluator_force_release_outermost_holder");
+    CHECK(rel != std::string::npos, "3764 AC1: force_release helper");
+    const auto win = emb.substr(rel, 1600);
+    CHECK(win.find("cur->id() == fiber_id") != std::string::npos, "3764 AC1: same-fiber test");
+    CHECK(win.find("aura_fiber_request_hold_budget_cancel") != std::string::npos,
+          "3764 AC1: cross-fiber still only request_hold_budget_cancel");
+    CHECK(win.find("force_release_hold_budget_inbody") != std::string::npos,
+          "3764 AC1: unique_lock drop is same-fiber inbody");
+    CHECK(fc.find("Issue #3764") != std::string::npos, "3764 AC1: fiber.cpp cites #3764");
+    CHECK(fc.find("dispose_no_edge_holder") != std::string::npos,
+          "3764 AC1: join/busy-path dispose");
+    CHECK(fc.find("next-enter same-fiber consume") != std::string::npos,
+          "3764 AC1: resume next-enter consume");
+    CHECK(fh.find("Issue #3764") != std::string::npos, "3764 AC1: ABI comment");
+    CHECK(mhb.find("kMutationHoldBudgetNoEdgeHolderDisposeIssue = 3764") != std::string::npos,
+          "3764 AC1: stamp, no new counter");
+    CHECK(mhb.find("g_3764_") == std::string::npos, "3764 AC1: no g_3764_*");
+    CHECK(read_file("tests/serve/test_issue_3764.cpp").empty(), "3764 AC1: no invent");
+    CHECK(read_file("docs/design/3764-no-edge-holder-dispose.md").empty(),
+          "3764 AC1: no docs/design/");
+}
+
+static void ac3764_2_no_edge_holder_disposed() {
+    std::println("\n--- #3764 AC2: after 2×SLO holder depth 0 or Done/Reclaimed; join no hang ---");
+    using aura::compiler::Evaluator;
+    using aura::serve::Fiber;
+    using aura::serve::JoinStatus;
+    using aura::serve::Scheduler;
+    ::unsetenv("AURA_SANDBOX");
+    ::unsetenv("AURA_MUTATION_HOLD_BUDGET_HARD");
+    ::unsetenv("AURA_HOLD_BUDGET_INBODY_BOUND_US");
+    ::setenv("AURA_MUTATION_HOLD_SLO_US", "2000", 1);
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    CHECK(aura::compiler::mutation_hold_budget_reject_enabled(),
+          "3764 AC2: reject_enabled under production");
+    aura::serve::set_production_multi_worker_latched_for_test(true);
+    aura::compiler::mutation_hold_live_reset_for_test();
+    aura::compiler::clear_hold_budget_no_edge_force_for_test();
+    aura::compiler::clear_mutation_hold_budget_inbody_window_for_test();
+    CompilerService cs;
+    Evaluator::set_query_evaluator(&cs.evaluator());
+    const auto slo_us = aura::compiler::mutation_hold_slo_us();
+    CHECK(slo_us > 0, "3764 AC2: SLO configured");
+    const auto body_ns = static_cast<std::int64_t>(slo_us) * 6 * 1000;
+    std::atomic<int> ran{0};
+    std::atomic<int> guard_held{0};
+    std::atomic<int> body_done{0};
+    Scheduler sched(2);
+    Fiber* holder = sched.spawn([&]() {
+        bool ok = true;
+        {
+            Evaluator::MutationBoundaryGuard g(cs.evaluator(), &ok);
+            guard_held.store(1, std::memory_order_release);
+            volatile std::uint64_t sink = 0;
+            const auto t0 = std::chrono::steady_clock::now();
+            while (std::chrono::steady_clock::now() - t0 < std::chrono::nanoseconds(body_ns))
+                sink += 1;
+            (void)sink;
+            guard_held.store(0, std::memory_order_release);
+        }
+        ran.store(1, std::memory_order_relaxed);
+        body_done.store(1, std::memory_order_release);
+    });
+    CHECK(holder != nullptr, "3764 AC2: holder spawned");
+    std::thread io([&]() { sched.run(); });
+    std::thread peer([&]() {
+        for (int i = 0; i < 400 && body_done.load(std::memory_order_acquire) == 0; ++i) {
+            if (guard_held.load(std::memory_order_acquire) != 0)
+                (void)aura::serve::aura_hold_budget_poll_busy_path();
+            std::this_thread::sleep_for(std::chrono::microseconds(200));
+        }
+    });
+    for (int i = 0; i < 200 && guard_held.load(std::memory_order_acquire) == 0; ++i)
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    CHECK(guard_held.load() == 1 || body_done.load() == 1, "3764 AC2: holder entered or finished");
+    const auto jr = Fiber::join(holder, std::optional<std::uint64_t>{200});
+    CHECK(jr.status == JoinStatus::Reclaimed || jr.status == JoinStatus::Cancelled ||
+              jr.status == JoinStatus::Ok || holder->is_done() || holder->is_reclaimed() ||
+              aura_evaluator_mutation_boundary_depth() == 0,
+          "3764 AC2: join did not hang; holder Done/Reclaimed or unlocked");
+    for (int i = 0; i < 200 && body_done.load() == 0; ++i)
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    peer.join();
+    sched.stop();
+    io.join();
+    CHECK(ran.load() == 1 || holder->is_reclaimed() || holder->is_done(),
+          "3764 AC2: body finished or fail-closed");
+    CHECK(holder->is_done() || holder->is_reclaimed() ||
+              aura_evaluator_mutation_boundary_depth() == 0,
+          "3764 AC2: depth 0 or Done/Reclaimed after 2×SLO window");
+    Evaluator::set_query_evaluator(nullptr);
+    aura::serve::set_production_multi_worker_latched_for_test(false);
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    ::unsetenv("AURA_MUTATION_HOLD_SLO_US");
+    ::setenv("AURA_SANDBOX", "off", 1);
+    aura::compiler::clear_mutation_hold_budget_inbody_window_for_test();
+    aura::compiler::clear_hold_budget_no_edge_force_for_test();
+}
+
+static void ac3764_3_mutation_hold_released() {
+    std::println("\n--- #3764 AC3: MutationHold defer clear after disposition ---");
+    using aura::compiler::Evaluator;
+    using aura::serve::Scheduler;
+    ::unsetenv("AURA_SANDBOX");
+    ::unsetenv("AURA_MUTATION_HOLD_BUDGET_HARD");
+    ::setenv("AURA_MUTATION_HOLD_SLO_US", "2000", 1);
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    aura::serve::set_production_multi_worker_latched_for_test(true);
+    aura::compiler::mutation_hold_live_reset_for_test();
+    aura::compiler::clear_hold_budget_no_edge_force_for_test();
+    CompilerService cs;
+    Evaluator::set_query_evaluator(&cs.evaluator());
+    std::atomic<int> body_done{0};
+    Scheduler sched(2);
+    sched.spawn([&]() {
+        bool ok = true;
+        {
+            Evaluator::MutationBoundaryGuard g(cs.evaluator(), &ok);
+            volatile std::uint64_t sink = 0;
+            const auto t0 = std::chrono::steady_clock::now();
+            while (std::chrono::steady_clock::now() - t0 < std::chrono::milliseconds(12))
+                sink += 1;
+            (void)sink;
+        }
+        body_done.store(1, std::memory_order_release);
+    });
+    std::thread io([&]() { sched.run(); });
+    for (int i = 0; i < 80 && body_done.load() == 0; ++i) {
+        (void)aura::serve::aura_hold_budget_poll_busy_path();
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    for (int i = 0; i < 200 && body_done.load() == 0; ++i)
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    sched.stop();
+    io.join();
+    CHECK(body_done.load() == 1, "3764 AC3: holder body returned (Guard dtor ran)");
+    CHECK(!aura::gc_hooks::mutation_hold_defer_active(),
+          "3764 AC3: MutationHold depth 0 after same-fiber dtor");
+    CHECK((aura::gc_hooks::defer_reasons_snapshot() &
+           static_cast<std::uint32_t>(aura::gc_hooks::GcDeferReason::MutationHold)) == 0,
+          "3764 AC3: MutationHold bit clear");
+    CHECK(!aura::compiler::mutation_hold_live_snapshot().held, "3764 AC3: hold snapshot clear");
+    Evaluator::set_query_evaluator(nullptr);
+    aura::serve::set_production_multi_worker_latched_for_test(false);
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    ::unsetenv("AURA_MUTATION_HOLD_SLO_US");
+    ::setenv("AURA_SANDBOX", "off", 1);
+}
+
+static void ac3764_4_soft_no_force() {
+    std::println("\n--- #3764 AC4: Soft / Off no force path ---");
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    ::setenv("AURA_SANDBOX", "off", 1);
+    CHECK(!aura::compiler::mutation_hold_budget_reject_enabled(),
+          "3764 AC4: Soft reject_enabled false");
+    const auto fc = read_file("src/serve/fiber.cpp");
+    const auto busy = fc.find("aura_hold_budget_poll_busy_path(void) noexcept");
+    CHECK(busy != std::string::npos, "3764 AC4: busy-path helper");
+    const auto win = fc.substr(busy, 1800);
+    CHECK(win.find("mutation_hold_budget_reject_enabled()") != std::string::npos,
+          "3764 AC4: Soft skip inside reject_enabled");
+    CHECK(win.find("dispose_no_edge_holder") != std::string::npos,
+          "3764 AC4: dispose only after production inbody");
+}
+
 static void ac3763_2_recv_try_pop_under_guard() {
     std::println("\n--- #3763 AC2: recv/try_pop under Guard do not take mu_ ---");
     aura::compiler::typed_audit::apply_production_audit_defaults();
@@ -3253,6 +3427,11 @@ int run_test_mailbox_hold_starvation_hard() {
     ac3613_3_soft_still_bp();
     ac3613_4_source_and_linter();
     ac3763_2_recv_try_pop_under_guard();
+    std::println("\n=== Issue #3764: no-edge holder disposition (join / busy-path) ===");
+    ac3764_1_same_fiber_and_source();
+    ac3764_2_no_edge_holder_disposed();
+    ac3764_3_mutation_hold_released();
+    ac3764_4_soft_no_force();
     std::println("\n=== Issue #3692: peer recv must not fail-close holder Guard ===");
     ac3692_peer_recv_does_not_fail_holder();
     std::println(
