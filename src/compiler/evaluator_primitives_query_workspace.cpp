@@ -3744,52 +3744,27 @@ void register_workspace_query_primitives(
             return make_bool(true);
         });
 
-    // Issue #2933: (query:result-fresh? qr) — re-check QueryResult epoch
-    // against live mutation_epoch + FlatAST generation. Bumps
-    // query_result_fresh_hits_total / query_result_stale_total.
-    // Soft: returns #f on stale. Strict QueryEpoch mode: returns
-    // structured query-epoch-stale error (AC3).
-    sink_query_prim("query:result-fresh?", [ws, mev](const auto& a) -> EvalValue {
+    // Issue #2933 / Issue #3766: (query:result-fresh? qr) — Agent poll of
+    // QueryResult memory. SlimSurface add() (not sink). Production uses
+    // query_result_is_fresh_with_refs (occupancy + node_gen_ + wrap +
+    // tenant/fiber/cow) — same SSOT as resolve_query_node_arg.
+    // Do not decode via query_result_check_fresh under production_defaults.
+    // Soft: epoch-only #f on stale (zero extra atomics on hash-miss).
+    add("query:result-fresh?", [ws, mev, &ev](const auto& a) -> EvalValue {
         if (a.empty() || !is_hash(a[0]))
             return mev("bad-arg", "usage: (query:result-fresh? query-result-hash)");
         if (!ws.workspace_flat)
             return mev("no-workspace", "no workspace AST loaded");
-        auto hidx = as_hash_idx(a[0]);
-        if (hidx >= g_hash_tables.size() || !g_hash_tables[hidx])
-            return mev("bad-arg", "query:result-fresh?: invalid hash");
-        auto* ht = g_hash_tables[hidx];
-        // Lookup mutation-epoch + generation keys (linear scan of table).
-        std::int64_t mut = -1;
-        std::int64_t gen = -1;
-        std::int64_t tag = 0;
-        auto meta = ht->metadata();
-        auto keys = ht->keys();
-        auto vals = ht->values();
-        for (std::size_t i = 0; i < ht->capacity; ++i) {
-            if (meta[i] == 0xFF)
-                continue;
-            EvalValue k{keys[i]};
-            if (!is_string(k))
-                continue;
-            auto sidx = as_string_idx(k);
-            if (sidx >= ws.string_heap.size())
-                continue;
-            const auto& s = ws.string_heap[sidx];
-            EvalValue v{vals[i]};
-            if (!is_int(v))
-                continue;
-            if (s == "mutation-epoch")
-                mut = as_int(v);
-            else if (s == "generation")
-                gen = as_int(v);
-            else if (s == "query-result-tag" || s == "schema-2933")
-                tag = as_int(v);
-        }
-        if (tag == 0 && mut < 0)
-            return mev("bad-arg", "query:result-fresh?: not a QueryResult (missing schema-2933)");
         aura::core::QueryResult qr;
-        qr.epoch.mutation_epoch = static_cast<std::uint64_t>(mut < 0 ? 0 : mut);
-        qr.epoch.generation = static_cast<std::uint64_t>(gen < 0 ? 0 : gen);
+        if (!aura::compiler::query_result_decode::decode_query_result_hash(a[0], ws.string_heap,
+                                                                           ws.pairs, qr))
+            return mev("bad-arg", "query:result-fresh?: not a QueryResult hash");
+        if (aura::compiler::typed_audit::production_defaults_active()) {
+            const auto fr = query_result_is_fresh_with_refs(
+                qr, *ws.workspace_flat, ev.capability_tenant_id(),
+                static_cast<std::uint64_t>(aura_fiber_current_id()));
+            return make_bool(fr == aura::core::QueryResultFreshness::Fresh);
+        }
         const auto live_gen = static_cast<std::uint64_t>(ws.workspace_flat->generation());
         const bool fresh = aura::core::query_result_check_fresh(qr, live_gen);
         if (!fresh && aura::core::query_epoch_strict())
@@ -3798,10 +3773,10 @@ void register_workspace_query_primitives(
         return make_bool(fresh);
     });
 
-    // Issue #2933: (query:result-matches qr) — extract matches list if
-    // fresh; under strict stale → query-epoch-stale; Soft returns matches
-    // even when epoch advanced (Agent may still inspect, metric bumps).
-    sink_query_prim("query:result-matches", [ws, mev](const auto& a) -> EvalValue {
+    // Issue #2933 / #3766: (query:result-matches qr) — SlimSurface add().
+    // Production occupancy-stale → stale-ref (same kind as resolve).
+    // Soft: epoch-only; returns matches even when epoch advanced.
+    add("query:result-matches", [ws, mev, &ev](const auto& a) -> EvalValue {
         if (a.empty() || !is_hash(a[0]))
             return mev("bad-arg", "usage: (query:result-matches query-result-hash)");
         if (!ws.workspace_flat)
@@ -3840,8 +3815,24 @@ void register_workspace_query_primitives(
         if (!have_matches)
             return mev("bad-arg", "query:result-matches: missing matches key");
         aura::core::QueryResult qr;
-        qr.epoch.mutation_epoch = static_cast<std::uint64_t>(mut < 0 ? 0 : mut);
-        qr.epoch.generation = static_cast<std::uint64_t>(gen < 0 ? 0 : gen);
+        const bool decoded = aura::compiler::query_result_decode::decode_query_result_hash(
+            a[0], ws.string_heap, ws.pairs, qr);
+        if (aura::compiler::typed_audit::production_defaults_active()) {
+            // Empty-match decode miss would be Fresh (match_count==0). Fail
+            // closed the same way resolve_query_result_match does.
+            if (!decoded)
+                return mev("bad-arg", "query:result-matches: not a QueryResult hash");
+            const auto fr = query_result_is_fresh_with_refs(
+                qr, *ws.workspace_flat, ev.capability_tenant_id(),
+                static_cast<std::uint64_t>(aura_fiber_current_id()));
+            if (fr != aura::core::QueryResultFreshness::Fresh)
+                return mev("stale-ref", "query:result-matches: QueryResult not fresh");
+            return matches;
+        }
+        if (!decoded) {
+            qr.epoch.mutation_epoch = static_cast<std::uint64_t>(mut < 0 ? 0 : mut);
+            qr.epoch.generation = static_cast<std::uint64_t>(gen < 0 ? 0 : gen);
+        }
         const auto live_gen = static_cast<std::uint64_t>(ws.workspace_flat->generation());
         const bool fresh = aura::core::query_result_check_fresh(qr, live_gen);
         if (!fresh && aura::core::query_epoch_strict())

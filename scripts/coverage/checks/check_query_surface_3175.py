@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """Issue #3175: prune diagnostic / low-frequency query: primitives.
 
-Public query: add() stays under 30. Hygiene/pin-count/skeleton/templates/
-occurrence-stale/schema-of-marker/primitives-meta/build-index/result-fresh
+Public query: add() stays under 32. Hygiene/pin-count/skeleton/templates/
+occurrence-stale/schema-of-marker/primitives-meta/build-index
 stay as sink_query_prim bodies (C++ + existing engine:metrics) but are
-not registered. Agents use calls/defines/dirty/provenance/by-marker.
+not registered. Agents use calls/defines/dirty/provenance/by-marker
+plus query:result-fresh? / query:result-matches (#3766 occupancy poll).
 
-  AC1 Public query: add() count < 30; core keep list present
+  AC1 Public query: add() count < 32; core keep list present
   AC2 sink_query_prim holds the 15 sunk names; no add("query:hygiene-…
   AC3 Pin/hygiene counters remain on engine:metrics (register_stats_impl)
   AC4 No new public query key; SlimSurface shrinks
@@ -42,8 +43,6 @@ SUNK = (
     "query:primitives-meta",
     "query:build-index",
     "query:macro-provenance-chain",
-    "query:result-fresh?",
-    "query:result-matches",
     "query:primitives-by-category",
     "query:schema-of-primitive",
     "query:sv-interface",
@@ -67,6 +66,8 @@ KEEP = (
     "query:as-stable-ref",
     "query:ref-valid?",
     "query:node-type",
+    "query:result-fresh?",
+    "query:result-matches",
 )
 SCAN_GLOBS = (
     "src/compiler/evaluator_primitives*.cpp",
@@ -102,8 +103,8 @@ def main() -> int:
     q = read_query_prims()
 
     public = [n for n in ADD_RE.findall(src) if n.startswith("query:")]
-    if len(public) >= 30:
-        fails.append(f"AC1: public query: add() count {len(public)} >= 30: {public}")
+    if len(public) >= 32:
+        fails.append(f"AC1: public query: add() count {len(public)} >= 32: {public}")
     for k in KEEP:
         if k not in public:
             fails.append(f"AC1: missing public {k}")

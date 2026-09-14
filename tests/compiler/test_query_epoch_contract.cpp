@@ -299,9 +299,9 @@ int run_test_query_epoch_contract() {
                   "define qr");
             auto bound = cs.eval("qr");
             CHECK(bound.has_value() && is_hash(*bound), "qr is QueryResult hash");
-            // Issue #3175 SlimSurface: query:result-fresh? / query:result-matches
-            // stay compiled (sink_query_prim) and are not public. Freshness is
-            // query_result_check_fresh / is_fresh_with_refs (#2933/#3231).
+            // Issue #3766: query:result-fresh? / query:result-matches are
+            // SlimSurface add() (occupancy poll). Freshness SSOT is
+            // query_result_is_fresh_with_refs under production.
             CHECK(cs.eval("(mutate:set-body \"f\" \"(lambda (x) 2)\")").has_value() ||
                       cs.eval("(set-code \"(define f (lambda (x) 2))\")").has_value(),
                   "mutate/redefine f");
@@ -313,10 +313,10 @@ int run_test_query_epoch_contract() {
             CHECK(!held.is_fresh(current_mutation_epoch(), /*gen=*/1),
                   "soft: held QueryResult not fresh after epoch bump");
             auto qw = read_file("src/compiler/evaluator_primitives_query_workspace.cpp");
-            CHECK(qw.find("sink_query_prim(\"query:result-fresh?\"") != std::string::npos,
-                  "fresh? prim sunk #3175 SlimSurface");
-            CHECK(qw.find("sink_query_prim(\"query:result-matches\"") != std::string::npos,
-                  "matches prim sunk #3175 SlimSurface");
+            CHECK(qw.find("add(\"query:result-fresh?\"") != std::string::npos,
+                  "fresh? prim SlimSurface add #3766");
+            CHECK(qw.find("add(\"query:result-matches\"") != std::string::npos,
+                  "matches prim SlimSurface add #3766");
             CHECK(qw.find("query-epoch-stale") != std::string::npos &&
                       qw.find("query:result-fresh?") != std::string::npos,
                   "strict: result-fresh? wires query-epoch-stale under strict");
@@ -395,8 +395,8 @@ int run_test_query_epoch_contract() {
             bump_mutation_epoch(); // belt: set-code may share gen
             auto qr_hash = cs.eval("qr");
             CHECK(qr_hash.has_value() && is_hash(*qr_hash), "AC2: held QueryResult still a hash");
-            // Issue #3175 SlimSurface: query:result-fresh? is sunk. Production
-            // fail-closed is finish_query_epoch false (C++ canary below).
+            // Issue #3766: query:result-fresh? is SlimSurface add (occupancy).
+            // Production fail-closed is finish_query_epoch false (C++ canary).
             aura::core::QueryResult held{};
             held.epoch = snap;
             CHECK(!held.is_fresh(current_mutation_epoch(), /*gen=*/1),
