@@ -26,7 +26,11 @@ import aura.compiler.service;
 import aura.compiler.type_checker;
 import aura.compiler.dirty_propagation;
 import aura.compiler.value;
+import aura.core;
+import aura.core.ast;
 import aura.core.type;
+import aura.diag;
+import aura.parser.parser;
 
 namespace {
 
@@ -771,6 +775,84 @@ static void ac3005_6_linter_no_design() {
           "3005 AC6: no test_issue_3005.cpp");
 }
 
+// ── Issue #3769: initial check_flat_match / synthesize via_dynamic TypeError ──
+static bool infer_match_dynamic_has_typeerror(const std::string& code, bool production) {
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    if (production)
+        apply_production_audit_defaults();
+    else
+        apply_dev_audit_defaults();
+    TypeRegistry reg;
+    aura::diag::DiagnosticCollector diag;
+    aura::compiler::TypeChecker tc(reg);
+    if (production)
+        tc.set_strict(true);
+    aura::ast::ASTArena arena;
+    auto alloc = arena.allocator();
+    aura::ast::StringPool pool(alloc);
+    aura::ast::FlatAST flat(alloc);
+    auto pr = aura::parser::parse_to_flat(code, flat, pool);
+    if (!pr.success || pr.root == aura::ast::NULL_NODE) {
+        apply_dev_audit_defaults();
+        return false;
+    }
+    flat.root = pr.root;
+    (void)tc.infer_flat(flat, pool, pr.root, diag);
+    bool err = false;
+    for (const auto& d : diag.diagnostics()) {
+        if (d.kind == aura::diag::ErrorKind::TypeError &&
+            (d.message.find("Dynamic subject") != std::string::npos ||
+             d.message.find("exhaustiveness unproven") != std::string::npos))
+            err = true;
+    }
+    apply_dev_audit_defaults();
+    return err;
+}
+
+static void ac3769_1_check_via_dynamic_typeerror() {
+    std::println("\n--- #3769 AC1: Production Dynamic-subject match is TypeError on check ---");
+    const auto tci = read_file("src/compiler/type_checker_impl.cpp");
+    CHECK(tci.find("Issue #3769") != std::string::npos, "3769 AC1: impl cite");
+    CHECK(tci.find("exh.via_dynamic || (!exh.exhaustive") != std::string::npos,
+          "3769 AC1: unproven includes via_dynamic");
+    CHECK(tci.find("check_flat_match") != std::string::npos, "3769 AC1: check_flat_match retained");
+    const char* synth = "(lambda (t) (match t ((A) 1) ((B) 2)))";
+    const char* chk = "(lambda (t) (check (match t ((A) 1) ((B) 2)) : Int))";
+    CHECK(infer_match_dynamic_has_typeerror(synth, true),
+          "3769 AC1: production synthesize match Dynamic subject TypeError");
+    CHECK(infer_match_dynamic_has_typeerror(chk, true),
+          "3769 AC1: production check_flat_match Dynamic subject TypeError");
+    CHECK(!infer_match_dynamic_has_typeerror(synth, false),
+          "3769 AC1: Soft synthesize is not TypeError");
+}
+
+static void ac3769_2_post_mutate_retained() {
+    std::println("\n--- #3769 AC2: post-mutate via_dynamic reject retained ---");
+    const auto ev = read_file("src/compiler/evaluator_typecheck.cpp");
+    const auto dp = read_file("src/compiler/dirty_propagation.ixx");
+    const auto tci = read_file("src/compiler/type_checker_impl.cpp");
+    CHECK(ev.find("via_dynamic") != std::string::npos, "3769 AC2: post-mutate via_dynamic");
+    CHECK(ev.find("exhaustiveness unproven (Dynamic subject)") != std::string::npos,
+          "3769 AC2: post-mutate Dynamic message");
+    CHECK(dp.find("force_adt_exhaust_sites_into_cone") != std::string::npos,
+          "3769 AC2: cone-force unchanged");
+    CHECK(tci.find("adt_exhaust_dynamic_slide_prevented_total") != std::string::npos,
+          "3769 AC2: slide-prevented counter retained");
+}
+
+static void ac3769_3_quiet_no_invent() {
+    std::println("\n--- #3769 AC3: covered quiet; no invent ---");
+    const auto tci = read_file("src/compiler/type_checker_impl.cpp");
+    CHECK(tci.find("schema-3769") == std::string::npos, "3769 AC3: no schema-3769");
+    CHECK(tci.find("g_3769_") == std::string::npos, "3769 AC3: no g_3769_");
+    CHECK(read_file("tests/compiler/test_issue_3769.cpp").empty(), "3769 AC3: no test_issue_3769");
+    CHECK(read_file("docs/design/3769-match-via-dynamic-check.md").empty(),
+          "3769 AC3: no docs/design");
+    CHECK(tci.find("check_match_exhaustiveness") != std::string::npos,
+          "3769 AC3: one exhaust checker");
+}
+
 } // namespace
 
 int run_test_adt_match_goal_table() {
@@ -808,7 +890,10 @@ int run_test_adt_match_goal_table() {
     ac3358_2_production_force_adt();
     ac3358_3_soft_observe();
     ac3358_4_source_linter();
-    std::println("\n=== #2564/#3005/#3045/#3083/#3236/#3317/#3358: {} passed, {} failed ===",
+    ac3769_1_check_via_dynamic_typeerror();
+    ac3769_2_post_mutate_retained();
+    ac3769_3_quiet_no_invent();
+    std::println("\n=== #2564/#3005/#3045/#3083/#3236/#3317/#3358/#3769: {} passed, {} failed ===",
                  g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
