@@ -2143,8 +2143,10 @@ int main() {
         // ── Issue #3622: Production consistent_unify rejects Dynamic~T and
         // non-primitive ground pairs (I1 residual of #3202/#3430). ──
         {
+            using aura::compiler::Constraint;
             using aura::compiler::ConstraintSystem;
             using aura::compiler::GradualPermissiveness;
+            using aura::compiler::SolveResult;
             using aura::compiler::typed_audit::apply_dev_audit_defaults;
             using aura::compiler::typed_audit::apply_production_audit_defaults;
             using aura::core::TypeRegistry;
@@ -2234,6 +2236,105 @@ int main() {
                 } else {
                     ++ts_failed;
                     std::println(std::cerr, "TS FAIL: ac3622_5_linear_dynamic_false");
+                }
+            }
+
+            // ── Issue #3768: Production consistent_subtype Dynamic arms
+            // match consistent_unify so function args cannot slide. ──
+            {
+                ProdScope prod;
+                TypeRegistry treg;
+                ConstraintSystem cs(treg);
+                cs.set_unify_gradual_mode(GradualPermissiveness::Strict);
+                const auto dyn_int = treg.register_func({treg.dynamic_type()}, treg.int_type());
+                const auto int_int = treg.register_func({treg.int_type()}, treg.int_type());
+                if (!cs.consistent_unify(dyn_int, int_int) &&
+                    !cs.consistent_unify(int_int, dyn_int)) {
+                    ++ts_passed;
+                    std::println("TS OK: ac3768_1_func_dynamic_prod_false");
+                } else {
+                    ++ts_failed;
+                    std::println(std::cerr, "TS FAIL: ac3768_1_func_dynamic_prod_false");
+                }
+            }
+            {
+                apply_dev_audit_defaults();
+                TypeRegistry treg;
+                ConstraintSystem cs(treg);
+                cs.set_unify_gradual_mode(GradualPermissiveness::Strict);
+                const auto dyn_int = treg.register_func({treg.dynamic_type()}, treg.int_type());
+                const auto int_int = treg.register_func({treg.int_type()}, treg.int_type());
+                if (cs.consistent_unify(dyn_int, int_int)) {
+                    ++ts_passed;
+                    std::println("TS OK: ac3768_1_func_dynamic_soft_true");
+                } else {
+                    ++ts_failed;
+                    std::println(std::cerr, "TS FAIL: ac3768_1_func_dynamic_soft_true");
+                }
+            }
+            {
+                ProdScope prod;
+                TypeRegistry treg;
+                ConstraintSystem cs(treg);
+                cs.set_unify_gradual_mode(GradualPermissiveness::Strict);
+                if (!cs.consistent_subtype(treg.dynamic_type(), treg.int_type()) &&
+                    !cs.consistent_subtype(treg.int_type(), treg.dynamic_type()) &&
+                    cs.consistent_subtype(treg.dynamic_type(), treg.dynamic_type())) {
+                    ++ts_passed;
+                    std::println("TS OK: ac3768_2_subtype_dynamic_prod_false");
+                } else {
+                    ++ts_failed;
+                    std::println(std::cerr, "TS FAIL: ac3768_2_subtype_dynamic_prod_false");
+                }
+            }
+            {
+                apply_dev_audit_defaults();
+                TypeRegistry treg;
+                ConstraintSystem cs(treg);
+                cs.set_unify_gradual_mode(GradualPermissiveness::Strict);
+                if (cs.consistent_subtype(treg.dynamic_type(), treg.int_type()) &&
+                    cs.consistent_subtype(treg.int_type(), treg.dynamic_type())) {
+                    ++ts_passed;
+                    std::println("TS OK: ac3768_2_subtype_dynamic_soft_true");
+                } else {
+                    ++ts_failed;
+                    std::println(std::cerr, "TS FAIL: ac3768_2_subtype_dynamic_soft_true");
+                }
+            }
+            {
+                ProdScope prod;
+                TypeRegistry treg;
+                ConstraintSystem cs(treg);
+                cs.set_unify_gradual_mode(GradualPermissiveness::Strict);
+                const auto dyn_int = treg.register_func({treg.dynamic_type()}, treg.int_type());
+                const auto int_int = treg.register_func({treg.int_type()}, treg.int_type());
+                Constraint c;
+                c.kind = Constraint::CONSISTENT;
+                c.lhs = dyn_int;
+                c.rhs = int_int;
+                cs.add_delta(std::move(c));
+                if (cs.solve_delta() != SolveResult::SOLVED) {
+                    ++ts_passed;
+                    std::println("TS OK: ac3768_3_solve_delta_consistent_no_commit");
+                } else {
+                    ++ts_failed;
+                    std::println(std::cerr, "TS FAIL: ac3768_3_solve_delta_consistent_no_commit");
+                }
+            }
+            {
+                std::ifstream f("src/compiler/type_checker_impl.cpp");
+                std::string impl((std::istreambuf_iterator<char>(f)),
+                                 std::istreambuf_iterator<char>());
+                std::ifstream fi("tests/compiler/test_issue_3768.cpp");
+                const bool no_invent = impl.find("schema-3768") == std::string::npos &&
+                                       impl.find("g_3768_") == std::string::npos && !fi.good();
+                const bool cite = impl.find("Issue #3768") != std::string::npos;
+                if (no_invent && cite) {
+                    ++ts_passed;
+                    std::println("TS OK: ac3768_3_no_invent");
+                } else {
+                    ++ts_failed;
+                    std::println(std::cerr, "TS FAIL: ac3768_3_no_invent");
                 }
             }
 

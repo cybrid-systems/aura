@@ -1991,18 +1991,34 @@ bool ConstraintSystem::consistent_subtype(TypeId sub, TypeId sup) {
     sub = find(sub);
     sup = find(sup);
 
-    // Any is the top type: everything is a subtype of Any
-    // (including Any itself — reflexivity)
-    if (sup == reg_.dynamic_type())
-        return true;
-    // Nothing is a subtype of a non-Any ground type if sub is Any
-    // (Any <: Int fails — insert runtime check instead)
-    if (sub == reg_.dynamic_type() && sup != reg_.dynamic_type())
-        return true; // consistent_subtype allows it (runtime coercion)
-
-    // Reflexivity
+    // Reflexivity first so Dynamic <: Dynamic stays true under production
+    // (Issue #3768). Do not treat Dynamic as gradual top after find.
     if (sub == sup)
         return true;
+
+    const bool dyn_sub = sub == reg_.dynamic_type();
+    const bool dyn_sup = sup == reg_.dynamic_type();
+    if (dyn_sub || dyn_sup) {
+        // Issue #3768: Production Strict — Dynamic arms match
+        // consistent_unify. Function/ADT args are not the Dynamic
+        // singleton at the unify root; without this gate
+        // `(-> Dynamic Int) ~ (-> Int Int)` slides via contravariance.
+        if (unify_gradual_mode_ == GradualPermissiveness::Strict &&
+            aura::compiler::typed_audit::production_defaults_active()) {
+            if (metrics_ && active_mutation_id_ != 0) {
+                auto* m = static_cast<struct CompilerMetrics*>(metrics_);
+                m->dynamic_degrade_with_blame_total.fetch_add(1, std::memory_order_relaxed);
+            }
+            return false;
+        }
+        // Soft / Balanced: keep gradual top + infection; existing
+        // blame counter when mutation_id is set (zero extra otherwise).
+        if (metrics_ && active_mutation_id_ != 0) {
+            auto* m = static_cast<struct CompilerMetrics*>(metrics_);
+            m->dynamic_degrade_with_blame_total.fetch_add(1, std::memory_order_relaxed);
+        }
+        return true;
+    }
 
     // Type variables: unify them (consistent assignment)
     if (reg_.is_var(sub) || reg_.is_var(sup))
