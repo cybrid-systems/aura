@@ -314,18 +314,65 @@ void register_mutation_primitives(PrimRegistrar add, Evaluator& ev) {
             return result;
         });
 
+    // Issue #3722: rollback / rollback-since are FlatAST writes — under
+    // Restricted/Strict they MUST take the same Mutate + isolation join as
+    // mutate:* BEFORE any topology write. The gate resolves mid → target
+    // node and routes through require_effect_for_node_id (the #2942
+    // mandated helper): capability check + #2490 auto-isolation + #3415/
+    // #3641 occupancy consult fire together, and #2384 stamps the live
+    // Mutation-epoch mid onto the SE so denies/allows stay joinable
+    // (#2156). Deny → #f / 0 with zero topology change. Soft/Off keeps
+    // the require_effect zero-cost short-circuit. No second capability
+    // model, no new query key (#3722 AC6).
     add("rollback", [&ev](std::span<const EvalValue> a) {
+        using ::aura::compiler::security::kEffectMutate;
         if (a.empty() || !is_int(a[0]) || !ev.workspace_flat_)
             return make_bool(false);
-        auto mid = static_cast<std::uint64_t>(as_int(a[0]));
+        const auto mid = static_cast<std::uint64_t>(as_int(a[0]));
+        const auto& log = ev.workspace_flat_->all_mutations();
+        const aura::ast::MutationRecord* rec = nullptr;
+        for (const auto& r : log) {
+            if (r.mutation_id == mid) {
+                rec = &r;
+                break;
+            }
+        }
+        if (rec == nullptr)
+            return make_bool(false);
+        if (rec->target_node == aura::ast::NULL_NODE) {
+            // Degenerate record (no node target): capability-only join via
+            // on_ref with an unstamped ref — no bare 2-arg literal (#2942).
+            aura::ast::FlatAST::StableNodeRef empty_ref{};
+            if (!ev.require_effect_on_ref(kEffectMutate, "rollback", empty_ref))
+                return make_bool(false);
+        } else if (!ev.require_effect_for_node_id(kEffectMutate, "rollback", rec->target_node)) {
+            // #3722 AC1/AC2: EffectDeny / IsolationDeny before any write.
+            return make_bool(false);
+        }
         return make_bool(ev.workspace_flat_->rollback(mid));
     });
 
     add("rollback-since", [&ev](std::span<const EvalValue> a) {
+        using ::aura::compiler::security::kEffectMutate;
         if (a.empty() || !is_int(a[0]) || !ev.workspace_flat_)
             return make_int(0);
-        auto mid = static_cast<std::uint64_t>(as_int(a[0]));
-        return make_int(static_cast<std::int64_t>(ev.workspace_flat_->rollback_since(mid)));
+        const auto since_id = static_cast<std::uint64_t>(as_int(a[0]));
+        // Deny-first (#3722 AC2): rollback_since reverts a RANGE — gate
+        // every committed record in the revert set BEFORE any write so a
+        // foreign mid vetoes the whole batch (no partial undo).
+        for (const auto& r : ev.workspace_flat_->all_mutations()) {
+            if (r.mutation_id < since_id || r.status != aura::ast::MutationStatus::Committed)
+                continue;
+            if (r.target_node == aura::ast::NULL_NODE) {
+                aura::ast::FlatAST::StableNodeRef empty_ref{};
+                if (!ev.require_effect_on_ref(kEffectMutate, "rollback-since", empty_ref))
+                    return make_int(0);
+            } else if (!ev.require_effect_for_node_id(kEffectMutate, "rollback-since",
+                                                      r.target_node)) {
+                return make_int(0);
+            }
+        }
+        return make_int(static_cast<std::int64_t>(ev.workspace_flat_->rollback_since(since_id)));
     });
 
     // (mutation-log:summary) — Issue #278: aggregate stats over the

@@ -6955,6 +6955,25 @@ def cmd_lint():
     if r != 0:
         fail("Issue #3721 MSE session-bound linter failed — run python3 scripts/check_mse_session_bound_3721.py")
         return r
+    # Issue #3722 (#2490/#2658/#2942 residual): rollback / rollback-since
+    # host prims wrote FlatAST with no require_effect / isolation consult —
+    # a Restricted+MT tenant could structurally undo a foreign mutation
+    # from a mid learned via mutation-history (no tenant filter). Gate
+    # pins: both prims resolve mid → target node and gate through
+    # require_effect_for_node_id (capability + #2490 auto-isolation +
+    # #3415/#3641 occupancy consult) BEFORE any FlatAST write; deny →
+    # #f / 0 with zero topology change; rollback-since gates the whole
+    # revert set deny-first; no EXEMPT_2ARG_OPS growth; Soft/Off keeps
+    # the zero-cost short-circuit; runtime ACs in
+    # test_tenant_isolation_enforcement cite #3722.
+    reb3722_script = ROOT / "scripts" / "check_rollback_effect_gate_3722.py"
+    if not reb3722_script.exists():
+        fail(f"missing {reb3722_script}")
+        return 1
+    r = run([sys.executable, str(reb3722_script)], cwd=ROOT)
+    if r != 0:
+        fail("Issue #3722 rollback effect-gate linter failed — run python3 scripts/check_rollback_effect_gate_3722.py")
+        return r
     # Issue #3649 (#2952/#3096/#2690 residual): the storm-exit edge drives
     # residual coverage-verify. storm_exit_force_full_active now==0 &&
     # prev!=0 branch runs one maybe_coverage_verify_min_dirty when

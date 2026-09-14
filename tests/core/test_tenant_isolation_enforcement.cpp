@@ -108,6 +108,20 @@ static NodeId first_live(FlatAST& ws) {
     return aura::ast::NULL_NODE;
 }
 
+// Issue #3722: seed a Committed subtree-marker record (SubtreeMark rollback
+// shape — validate/classify flip status only) so the rollback write path is
+// deterministic without depending on a real mutate eval in the setup.
+static void seed_3722_record(FlatAST& ws, std::uint64_t mid, NodeId node) {
+    aura::ast::MutationRecord rec{};
+    rec.mutation_id = mid;
+    rec.target_node = node;
+    rec.parent_id = node;
+    rec.status = aura::ast::MutationStatus::Committed;
+    rec.operator_name = "replace-type";
+    rec.has_subtree_rollback = true;
+    ws.all_mutations().push_back(rec);
+}
+
 void reset_all() {
     reset_tenant_isolation_for_test();
     // #2968: AC2 grants TenantAdmin into the process-global capability
@@ -3695,6 +3709,270 @@ int main() {
                   block.find("has_capability(aura::compiler::security::kCapWildcard)") ==
                       std::string::npos,
               "3492 AC2: prim no longer treats wildcard as elevate/allow_cross");
+    }
+
+    // ── #3722 AC1: Restricted+MT, tenant holds no Mutate —
+    // (rollback mid) → #f, zero topology write, joinable deny SE ──
+    {
+        std::println("\n--- #3722 AC1: no-Mutate rollback denies before write ---");
+        reset_all();
+        set_mode(SandboxMode::Restricted);
+        aura::core::provenance::set_multi_tenant_env_active(true);
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.set_effect_sandbox_mode(1);
+        ev.set_capability_tenant_id(99);
+        ev.grant_effect_capability(/*tenant=*/99, "rb-3722-b", kEffectMutate, /*mid=*/1);
+        CHECK(cs.eval("(set-code \"(define (n3722a x) x)\")").has_value(), "3722 AC1 set-code");
+        CHECK(cs.eval("(eval-current)").has_value(), "3722 AC1 eval");
+        auto* ws = ev.workspace_flat();
+        CHECK(ws != nullptr, "3722 AC1 workspace");
+        const auto id = first_live(*ws);
+        CHECK(id != NULL_NODE, "3722 AC1 live node");
+        // Fresh high node id — unstamped, outside the cross-section occupancy
+        // ring pollution zone (low ids are stamped by earlier sections).
+        const auto fresh = static_cast<NodeId>(ws->size() - 1);
+        CHECK(fresh != NULL_NODE && fresh != id, "3722 AC1 fresh node id");
+        // Foreign fixture (#3415-proven): tenant 99 stamps the node into the
+        // occupancy ring and seeds a Committed record (host-side setup — the
+        // attack under test is the Agent eval `(rollback mid)`).
+        const auto stamped = ev.make_stamped_ref(fresh);
+        CHECK(stamped.tenant_id == 99, "3722 AC1: occupancy stamp tenant 99");
+        seed_3722_record(*ws, /*mid=*/424242, fresh);
+        // Tenant 7 holds NO Mutate grant — rollback must deny before any
+        // FlatAST write and leave a joinable deny SE behind.
+        ev.set_capability_tenant_id(7);
+        const auto& ring = g_security_event_ring();
+        const auto baseline = ring.seq.load(std::memory_order_acquire);
+        const auto bumps_before = ws->subtree_bump_count();
+        const auto rb = cs.eval("(rollback 424242)");
+        CHECK(rb.has_value() && is_bool(*rb) && !as_bool(*rb), "3722 AC1: (rollback mid) → #f");
+        CHECK(ws->subtree_bump_count() == bumps_before, "3722 AC1: zero topology write");
+        bool rec_untouched = false;
+        for (const auto& r : ws->all_mutations())
+            if (r.mutation_id == 424242)
+                rec_untouched = r.status == aura::ast::MutationStatus::Committed;
+        CHECK(rec_untouched, "3722 AC1: record still Committed (no rollback)");
+        bool deny_se = false;
+        for (std::uint64_t s = baseline; s < ring.seq.load(); ++s) {
+            const auto& e = ring.ring[s % ring.ring.size()];
+            const auto k = static_cast<int>(e.kind);
+            if (e.seq == s && (k == static_cast<int>(SecurityEventKind::EffectDeny) ||
+                               k == static_cast<int>(SecurityEventKind::IsolationDeny))) {
+                deny_se = true;
+                CHECK(e.mutation_id != 0, "3722 AC1: deny SE mid joinable (#2156)");
+            }
+        }
+        CHECK(deny_se, "3722 AC1: deny SE in ring");
+        aura::core::provenance::set_multi_tenant_env_active(false);
+    }
+
+    // ── #3722 AC2: Mutate held, mid is foreign occupancy — isolation
+    // denies first (zero write); foreign rollback-since → 0 ──
+    {
+        std::println("\n--- #3722 AC2: foreign-mid rollback isolation deny ---");
+        reset_all();
+        set_mode(SandboxMode::Restricted);
+        aura::core::provenance::set_multi_tenant_env_active(true);
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.set_effect_sandbox_mode(1);
+        ev.set_capability_tenant_id(99);
+        ev.grant_effect_capability(/*tenant=*/99, "rb-3722-b", kEffectMutate, /*mid=*/1);
+        ev.grant_effect_capability(/*tenant=*/7, "rb-3722-a", kEffectMutate, /*mid=*/1);
+        CHECK(cs.eval("(set-code \"(define (n3722b x) x)\")").has_value(), "3722 AC2 set-code");
+        CHECK(cs.eval("(eval-current)").has_value(), "3722 AC2 eval");
+        auto* ws = ev.workspace_flat();
+        CHECK(ws != nullptr, "3722 AC2 workspace");
+        const auto id = first_live(*ws);
+        CHECK(id != NULL_NODE, "3722 AC2 live node");
+        const auto fresh = static_cast<NodeId>(ws->size() - 1);
+        CHECK(fresh != NULL_NODE && fresh != id, "3722 AC2 fresh node id");
+        const auto stamped = ev.make_stamped_ref(fresh);
+        CHECK(stamped.tenant_id == 99, "3722 AC2: occupancy stamp tenant 99");
+        seed_3722_record(*ws, /*mid=*/424242, fresh);
+        ev.set_capability_tenant_id(7);
+        const auto& ring2 = g_security_event_ring();
+        const auto baseline2 = ring2.seq.load(std::memory_order_acquire);
+        const auto bumps_before = ws->subtree_bump_count();
+        const auto rb = cs.eval("(rollback 424242)");
+        CHECK(rb.has_value() && is_bool(*rb) && !as_bool(*rb),
+              "3722 AC2: foreign-mid rollback → #f despite Mutate grant");
+        CHECK(ws->subtree_bump_count() == bumps_before, "3722 AC2: zero write (isolation first)");
+        // Non-vacuousness: the deny must be the ISOLATION face (require_effect
+        // runs the #2658/#2490 consult before the capability write path) — a
+        // capability deny here would mean the grant arming failed, not that
+        // the isolation veto fired.
+        bool iso_deny = false;
+        for (std::uint64_t s = baseline2; s < ring2.seq.load(); ++s) {
+            const auto& e = ring2.ring[s % ring2.ring.size()];
+            if (e.seq == s &&
+                static_cast<int>(e.kind) == static_cast<int>(SecurityEventKind::IsolationDeny))
+                iso_deny = true;
+        }
+        CHECK(iso_deny, "3722 AC2: IsolationDeny SE (grant alive, isolation vetoed)");
+        const auto rs = cs.eval("(rollback-since 424242)");
+        CHECK(rs.has_value() && is_int(*rs) && as_int(*rs) == 0,
+              "3722 AC2: foreign rollback-since → 0");
+        CHECK(ws->subtree_bump_count() == bumps_before, "3722 AC2: rollback-since zero write");
+        bool rec_untouched = false;
+        for (const auto& r : ws->all_mutations())
+            if (r.mutation_id == 424242)
+                rec_untouched = r.status == aura::ast::MutationStatus::Committed;
+        CHECK(rec_untouched, "3722 AC2: record still Committed (isolation veto)");
+        aura::core::provenance::set_multi_tenant_env_active(false);
+    }
+
+    // ── #3722 AC3: own mid — rollback proceeds; EffectAllow SE mid joins
+    // the Mutation epoch (#2054/#2384), record flips RolledBack ──
+    // Allow arming = closed_loop production recipe: wildcard + tenant-admin
+    // registry rows seeded under Off, then RE-granted after Restricted
+    // arming so bound_mutation_id matches the post-epoch-bump mid the gate
+    // joins (#3409 caller_principal fence). grant_effect_capability is NOT
+    // usable here: production force-promotes Mutate grants to single_use +
+    // session_bound (#2882/#3561) and the bare rollback eval runs outside a
+    // MutationBoundary — unconsumable there.
+    {
+        std::println("\n--- #3722 AC3: own-mid rollback joins Mutation epoch ---");
+        reset_all();
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.set_capability_tenant_id(7);
+        ev.set_capability_tenant_id(7);
+        // Library-side TenantAdmin row (self-grant lands under Restricted;
+        // the sticky fence below only reads its presence).
+        ev.grant_effect_capability(/*tenant=*/7, "tenant-admin-3722",
+                                   aura::compiler::security::kEffectTenantAdmin,
+                                   /*mid=*/1);
+        // Sanctioned sticky escape (#3177): TenantAdmin holder + non-empty
+        // audit reason + env opt-in -> single_use=false, session_bound=false
+        // — consumable outside a MutationBoundary (the bare rollback eval
+        // runs without one).
+        ::setenv("AURA_ALLOW_DURABLE_STICKY", "1", 1);
+        ev.grant_effect_durable_sticky(/*tenant=*/7, "rb-3722-own", kEffectMutate,
+                                       /*mid=*/1, "3722 AC3 own-mid rollback allow");
+        CHECK(cs.eval("(set-code \"(define (n3722c x) x)\")").has_value(), "3722 AC3 set-code");
+        CHECK(cs.eval("(eval-current)").has_value(), "3722 AC3 eval");
+        auto* ws = ev.workspace_flat();
+        CHECK(ws != nullptr, "3722 AC3 workspace");
+        const auto id = first_live(*ws);
+        CHECK(id != NULL_NODE, "3722 AC3 live node");
+        const auto fresh = static_cast<NodeId>(ws->size() - 3);
+        CHECK(fresh != NULL_NODE && fresh != id, "3722 AC3 fresh node id");
+        // Own-mid fixture: tenant 7 owns the node (ring cleared by
+        // reset_all -> deterministic existing==caller allow path).
+        const auto own = ev.make_stamped_ref(fresh);
+        CHECK(own.tenant_id == 7, "3722 AC3: occupancy stamp tenant 7");
+        seed_3722_record(*ws, /*mid=*/424243, fresh);
+        const auto& ring = g_security_event_ring();
+        const auto baseline = ring.seq.load(std::memory_order_acquire);
+        const auto rb = cs.eval("(rollback 424243)");
+        CHECK(rb.has_value() && is_bool(*rb) && as_bool(*rb), "3722 AC3: own rollback → #t");
+        bool rolled = false;
+        for (const auto& r : ws->all_mutations())
+            if (r.mutation_id == 424243)
+                rolled = r.status == aura::ast::MutationStatus::RolledBack;
+        CHECK(rolled, "3722 AC3: record status RolledBack");
+        bool allow_se = false;
+        for (std::uint64_t s = baseline; s < ring.seq.load(); ++s) {
+            const auto& e = ring.ring[s % ring.ring.size()];
+            if (e.seq == s &&
+                static_cast<int>(e.kind) == static_cast<int>(SecurityEventKind::EffectAllow)) {
+                allow_se = true;
+                CHECK(e.mutation_id != 0, "3722 AC3: allow SE mid non-zero (Mutation epoch)");
+            }
+        }
+        CHECK(allow_se, "3722 AC3: EffectAllow SE in ring (correlated success)");
+        aura::core::provenance::set_multi_tenant_env_active(false);
+    }
+
+    // ── #3722 AC4: the foreign mid is visible in the shared log (option B:
+    // mutation-history is a query-surface prim, no tenant filter) — the AC2
+    // gate keeps a leaked mid inert ──
+    {
+        std::println("\n--- #3722 AC4: leaked foreign mid cannot fire rollback ---");
+        reset_all();
+        set_mode(SandboxMode::Restricted);
+        aura::core::provenance::set_multi_tenant_env_active(true);
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.set_effect_sandbox_mode(1);
+        ev.set_capability_tenant_id(99);
+        ev.grant_effect_capability(/*tenant=*/99, "rb-3722-b", kEffectMutate, /*mid=*/1);
+        ev.grant_effect_capability(/*tenant=*/7, "rb-3722-a", kEffectMutate, /*mid=*/1);
+        CHECK(cs.eval("(set-code \"(define (n3722d x) x)\")").has_value(), "3722 AC4 set-code");
+        CHECK(cs.eval("(eval-current)").has_value(), "3722 AC4 eval");
+        auto* ws = ev.workspace_flat();
+        CHECK(ws != nullptr, "3722 AC4 workspace");
+        const auto id = first_live(*ws);
+        CHECK(id != NULL_NODE, "3722 AC4 live node");
+        const auto fresh = static_cast<NodeId>(ws->size() - 1);
+        CHECK(fresh != NULL_NODE && fresh != id, "3722 AC4 fresh node id");
+        const auto stamped = ev.make_stamped_ref(fresh);
+        CHECK(stamped.tenant_id == 99, "3722 AC4: occupancy stamp tenant 99");
+        seed_3722_record(*ws, /*mid=*/424242, fresh);
+        ev.set_capability_tenant_id(7);
+        bool leaked_visible = false;
+        for (const auto& r : ws->all_mutations())
+            if (r.mutation_id == 424242)
+                leaked_visible = r.status == aura::ast::MutationStatus::Committed;
+        CHECK(leaked_visible, "3722 AC4: foreign mid present in shared log (leak surface)");
+        const auto rb = cs.eval("(rollback 424242)");
+        CHECK(rb.has_value() && is_bool(*rb) && !as_bool(*rb),
+              "3722 AC4: leaked foreign mid still inert");
+        aura::core::provenance::set_multi_tenant_env_active(false);
+    }
+
+    // ── #3722 AC5: Soft/Off — gate rides the require_effect zero-cost
+    // short-circuit; rollback works with no grants / no Restricted face ──
+    {
+        std::println("\n--- #3722 AC5: Soft/Off unchanged ---");
+        reset_all(); // Sandbox Off, no grants, no MT consult
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        CHECK(cs.eval("(set-code \"(define (n3722e x) x)\")").has_value(), "3722 AC5 set-code");
+        CHECK(cs.eval("(eval-current)").has_value(), "3722 AC5 eval");
+        auto* ws = ev.workspace_flat();
+        CHECK(ws != nullptr, "3722 AC5 workspace");
+        const auto id = first_live(*ws);
+        CHECK(id != NULL_NODE, "3722 AC5 live node");
+        seed_3722_record(*ws, /*mid=*/424244, id);
+        const auto rb = cs.eval("(rollback 424244)");
+        CHECK(rb.has_value() && is_bool(*rb) && as_bool(*rb),
+              "3722 AC5: soft rollback proceeds without grants");
+        bool rolled = false;
+        for (const auto& r : ws->all_mutations())
+            if (r.mutation_id == 424244)
+                rolled = r.status == aura::ast::MutationStatus::RolledBack;
+        CHECK(rolled, "3722 AC5: record rolled back (no new Soft cost)");
+    }
+
+    // ── #3722 AC6: source-cite — gate cites #3722, mandated #2942 helper
+    // precedes the FlatAST write; no new query key; no test_issue file ──
+    {
+        std::println("\n--- #3722 AC6: source-cite ---");
+        const auto prim = read_file("src/compiler/evaluator_primitives_mutation.cpp");
+        CHECK(prim.find("Issue #3722: rollback / rollback-since") != std::string::npos,
+              "3722 AC6: gate cites #3722");
+        const auto rb_pos = prim.find("add(\"rollback\"");
+        CHECK(rb_pos != std::string::npos, "3722 AC6: rollback prim present");
+        const auto gate_pos = prim.find("require_effect_for_node_id", rb_pos);
+        const auto write_pos = prim.find("rollback(mid)", rb_pos);
+        CHECK(gate_pos != std::string::npos, "3722 AC6: mandated helper in rollback gate");
+        CHECK(write_pos != std::string::npos, "3722 AC6: FlatAST write present");
+        CHECK(gate_pos < write_pos, "3722 AC6: gate precedes rollback write");
+        const auto rs_pos = prim.find("add(\"rollback-since\"");
+        CHECK(rs_pos != std::string::npos, "3722 AC6: rollback-since prim present");
+        const auto rs_gate = prim.find("require_effect_for_node_id", rs_pos);
+        const auto rs_write = prim.find("rollback_since(", rs_pos);
+        CHECK(rs_gate != std::string::npos && rs_write != std::string::npos && rs_gate < rs_write,
+              "3722 AC6: rollback-since gate precedes write");
+        CHECK(prim.find("insert_kv(\"rollback-gate") == std::string::npos,
+              "3722 AC6: no new query key");
+        CHECK(read_file("docs/design/3722-rollback-effect-gate.md").empty(),
+              "3722 AC6: no docs/design/3722-* per #1655");
+        CHECK(read_file("tests/core/test_issue_3722.cpp").empty(),
+              "3722 AC6: no test_issue_3722.cpp per #81934");
     }
 
     reset_all();
