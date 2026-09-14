@@ -1036,7 +1036,12 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
             return make_bool(false);
         auto id = static_cast<aura::ast::NodeId>(as_int(a[0]));
         auto gen = static_cast<std::uint16_t>(as_int(a[1]));
-        return make_bool(ev.workspace_flat_->is_valid(aura::ast::FlatAST::StableNodeRef{id, gen}));
+        // Issue #3772: gated re-entry (see ast:ref-get) — foreign or
+        // unstamped refs read as invalid (#f) under the consult regime.
+        auto ref = aura::ast::FlatAST::StableNodeRef{id, gen};
+        if (!ev.restamp_read_ref(ref, "ast:ref-valid?"))
+            return make_bool(false);
+        return make_bool(ev.workspace_flat_->is_valid(ref));
     });
     // (ast:ref-get id gen) — Issue #191: safely get a node
     // from a stable reference. Returns the node as a value if
@@ -1055,7 +1060,15 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
             return make_void();
         auto id = static_cast<aura::ast::NodeId>(as_int(a[0]));
         auto gen = static_cast<std::uint16_t>(as_int(a[1]));
-        auto opt = ev.workspace_flat_->get_safe(aura::ast::FlatAST::StableNodeRef{id, gen});
+        // Issue #3772: the (id . gen) wire pair is layout-only (tenant
+        // dropped at pack time). Re-entry must re-derive occupancy
+        // (#3415/#3629) and resolve through the shared gate (#3365)
+        // before observe — foreign / unstamped refs deny (IsolationDeny,
+        // fiber-joinable) and read as void.
+        auto ref = aura::ast::FlatAST::StableNodeRef{id, gen};
+        if (!ev.restamp_read_ref(ref, "ast:ref-get"))
+            return make_void();
+        auto opt = ev.resolve_stamped(ref, 0, "ast:ref-get");
         if (!opt)
             return make_void();
         // Issue #1076: use canonical kNodeMeta name (covers SV/linear/etc).
@@ -1204,8 +1217,11 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
                     if (is_int(ref.car) && is_int(ref.cdr)) {
                         auto id = static_cast<aura::ast::NodeId>(as_int(ref.car));
                         auto gen = static_cast<std::uint16_t>(as_int(ref.cdr));
-                        valid_ev =
-                            make_bool(flat.is_valid(aura::ast::FlatAST::StableNodeRef{id, gen}));
+                        // Issue #3772: per-element gated re-entry —
+                        // foreign / unstamped refs yield #f.
+                        auto sref = aura::ast::FlatAST::StableNodeRef{id, gen};
+                        if (ev.restamp_read_ref(sref, "ast:stable-refs-valid?"))
+                            valid_ev = make_bool(flat.is_valid(sref));
                     }
                 }
                 auto cons_pair = ev.pairs_.size();

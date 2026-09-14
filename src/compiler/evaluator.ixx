@@ -7052,6 +7052,17 @@ public:
     [[nodiscard]] std::optional<ast::NodeView>
     resolve_stamped(const ast::FlatAST::StableNodeRef& ref, std::uint16_t required_effects = 0,
                     std::string_view op = "resolve-stamped") noexcept;
+    // Issue #3772: read-side re-entry for layout-only EDSL refs — the
+    // (ast:stable-ref) wire pair (id . gen) drops the tenant stamp.
+    // Re-derives the node's occupancy tenant via the #3415/#3629 ring
+    // (#3641 collision borrow) before any FlatAST observe: foreign
+    // occupancy -> IsolationDeny (fiber-joinable SE) + false; unstamped
+    // under consult -> false (#3365 parity with the C++ authority);
+    // same-tenant -> restamps ref.tenant_id (resolve_stamped then passes).
+    // Soft/Off: consult off -> true, ref untouched (legacy direct observe
+    // path; pair contract unchanged).
+    [[nodiscard]] bool restamp_read_ref(ast::FlatAST::StableNodeRef& ref,
+                                        std::string_view op) noexcept;
     // Issue #211: test accessors for the (tag, arity) index.
     [[nodiscard]] std::size_t tag_arity_index_size() const noexcept {
         // Issue #371: shared_lock for read parity with
