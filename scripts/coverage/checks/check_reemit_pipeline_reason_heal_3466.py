@@ -64,8 +64,12 @@ def main() -> int:
         "AC5 pipeline must not fall back to full demoted",
         body,
     )
-    if "aot_reload_fail_to_force_jit_mask(fail)" in hot:
-        fails.append("AC1: last_force_jit_reason inference must stay removed (#3682)")
+    # Issue #3745 re-introduced the single-bit heal-reason stamp
+    # (maybe_stamp_heal_reason_last_success: reason-qualified, override-
+    # respecting, bit ∈ demoted) — sanctioned. Only the #3682 cascade-claim
+    # inference (mask(fail) & demoted feeding covered) stays banned.
+    if "aot_reload_fail_to_force_jit_mask(fail) & demoted" in hot:
+        fails.append("AC1: last_force_jit_reason cascade inference must stay removed (#3682)")
     if "if (covered != 0)" not in body:
         fails.append("AC1: store last_success only when covered != 0")
     if "if (demoted != 0)" not in body:
