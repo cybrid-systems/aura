@@ -10,6 +10,7 @@
 //   AC5: Tests under tests/compiler/ src-aligned
 
 #include "test_harness.hpp"
+#include "core/densify_consistency_report.h"
 #include "compiler/observability_metrics.h"
 #include "compiler/typed_mutation_audit.h"
 
@@ -206,6 +207,10 @@ static void ac3658_5_linter_no_invent() {
 } // namespace
 
 int run_test_type_dirty_cone_dep_graph() {
+    // Issue #3698 batch: isolate densify-consistency state at member entry
+    // (upstream fail-close members bump the sticky process-global counter,
+    // which trips the #2985 health gate for this member's set-codes).
+    aura::core::densify_consistency::reset_densify_consistency_for_test();
     std::println("=== Issue #2191: type dirty cone ↔ DepGraph cascade ===");
 
     // ── Encode / decode unit ──

@@ -532,6 +532,23 @@ inline void reset_moving_envframe_guard_commit_block_for_test() noexcept {
     g_moving_envframe_guard_commit_block_total.store(0, std::memory_order_relaxed);
 }
 
+// Issue #3698 batch follow-up: g_densify_consistency_fail_total is
+// process-global sticky by design (production dashboards read lifetime
+// fail volume), but batch members that legitimately exercise fail-close
+// axes (#3699 CastOp sweep leaves a live non-deferred PanicCheckpoint;
+// #3472 drives Phase-1 linear deny) bump it and thereby poison every
+// downstream member's #2985 mutation-concurrency-health admit gate
+// (force_reason "densify-fail" rejects all production set-codes).
+// Members whose ACs must observe a clean baseline reset at entry.
+inline void reset_densify_consistency_for_test() noexcept {
+    g_densify_consistency_fail_total.store(0, std::memory_order_relaxed);
+    g_last_densify_envframe_ok.store(1, std::memory_order_relaxed);
+    g_last_densify_root_remap_ok.store(1, std::memory_order_relaxed);
+    g_last_densify_closure_remount_ok.store(1, std::memory_order_relaxed);
+    g_last_densify_envframe_fail_code.store(0, std::memory_order_relaxed);
+    g_last_densify_closure_fail_code.store(0, std::memory_order_relaxed);
+}
+
 } // namespace aura::core::densify_consistency
 
 #endif // AURA_CORE_DENSIFY_CONSISTENCY_REPORT_H

@@ -24,6 +24,7 @@
 
 #include "compiler/coercion_provenance_policy.hh"
 #include "compiler/type_linear_commit_health.hh"
+#include "core/densify_consistency_report.h"
 #include "compiler/typed_mutation_audit.h"
 #include "test_harness.hpp"
 
@@ -2301,6 +2302,10 @@ static void ac3591_3_epoch_arm_and_soft() {
 } // namespace
 
 int run_test_type_linear_commit_health() {
+    // Issue #3698 batch: isolate densify-consistency state at member entry
+    // (upstream fail-close members bump the sticky process-global counter,
+    // which trips the #2985 health gate for this member's set-codes).
+    aura::core::densify_consistency::reset_densify_consistency_for_test();
     std::println("=== Issue #2613: query:type-linear-commit-health ===");
     ac1_query_keys();
     ac2_force_reason_match();
