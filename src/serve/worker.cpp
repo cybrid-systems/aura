@@ -331,7 +331,7 @@ bool WorkerThread::try_steal_from(WorkerThread* victim) {
             Fiber::bump_mutation_steal_snapshot_mismatch();
             // Issue #2310 AC1 / #2372 / #2844: fail-closed on inconsistency.
             // Production lock ignores Soft env (#2372) — force-deopt or abort.
-            // Soft / !production: metric-only; never enqueue (continue).
+            // Soft / !production: metric-only; never thief-enqueue (continue).
             // Missing strong force-deopt ABI under production → abort
             // (never silent continue after mismatch bump only).
             if (!aura::serve::is_steal_snapshot_soft_mode()) {
@@ -346,12 +346,17 @@ bool WorkerThread::try_steal_from(WorkerThread* victim) {
                                          "builds must link the strong ABI\n");
                     std::abort();
                 }
-                // Light/test without production lock: null ABI — still
-                // MUST NOT enqueue (#2844 sole-gate residual). Soft-
-                // continue = next steal attempt only, never push.
+                // Issue #3765: production fail-closed — Cancel+Done so join
+                // does not wait on a fiber that is on no deque.
+                stolen->request_cancel();
+                stolen->set_state(FiberState::Done);
+            } else {
+                // Soft: metric-only continue WITH put-back (#3765). Never
+                // thief Ready enqueue after inconsistency sample.
+                victim->enqueue(stolen);
             }
-            // Soft mode: metric-only soft-continue (#2844 AC Soft).
-            // Never enqueue a stolen fiber after inconsistency sample.
+            // Never enqueue a stolen fiber after inconsistency sample
+            // onto the thief local_queue_ (#2844 sole-gate).
             continue; // #2844: no soft-enqueue after snapshot sample
         }
         // Issue #2549: candidate filter is_stealable(snap)
@@ -433,9 +438,10 @@ bool WorkerThread::try_steal_from(WorkerThread* victim) {
             // !production (handled inside transaction + soft-mode helpers).
             const auto decision = steal_safety_transaction(stolen);
             if (decision != StealSafetyDecision::Ok) {
-                // RejectHard: fiber Cancel+Done / force-deopt / residual
-                // hard-AND (#2546) — do not enqueue Ready
-                // (sample→enqueue→resume window closed). #2844: sole gate.
+                // RejectHard: fiber Cancel+Done inside steal_safety_transaction
+                // (#3765) / force-deopt / residual hard-AND (#2546) — do not
+                // enqueue Ready (sample→enqueue→resume window closed).
+                // #2844: sole gate. Never return with the pointer dropped.
                 return false;
             }
             stolen->bump_steal_success();

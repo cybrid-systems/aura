@@ -1793,8 +1793,15 @@ static void ac3553_1_wake_force_safepoint_source() {
     // #3133 consume path on next check_gc_safepoint).
     CHECK(sched.find("request_force_safepoint") != std::string::npos,
           "3553 AC1: wake handler calls request_force_safepoint");
-    CHECK(sched.find("set_yield_reason(YieldReason::MutationBoundary)") != std::string::npos,
-          "3553 AC1: wake handler sets synthetic MutationBoundary reason");
+    {
+        const auto held = sched.find("aura_process_mutation_boundary_held_count() > 0");
+        CHECK(held != std::string::npos, "3553 AC1: held-count gate");
+        const auto win = sched.substr(held, 900);
+        CHECK(win.find("request_force_safepoint") != std::string::npos,
+              "3553/#3765: wake still force-safepoints");
+        CHECK(win.find("set_yield_reason(YieldReason::MutationBoundary)") == std::string::npos,
+              "3553/#3765: wake must not tag non-holder as MutationBoundary");
+    }
     // AC2: new file-scope atomic sibling of safepoint_wait_while_mutation_held,
     // NOT inserted in metrics middle.
     CHECK(sched.find("g_eventfd_wake_force_safepoint_total") != std::string::npos,

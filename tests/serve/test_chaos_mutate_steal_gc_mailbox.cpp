@@ -2239,6 +2239,11 @@ static void ac3620_2_windows_source_cite() {
           "3620/#3764: busy-path/join dispose no-edge holder (Done or Reclaimed)");
     CHECK(fcpp.find("next-enter same-fiber consume") != std::string::npos,
           "3620/#3764: resume next-enter same-fiber consume");
+    CHECK(read_file("src/serve/worker.cpp").find("Issue #3765") != std::string::npos,
+          "3620/#3765: try_steal_from disposition (Done or victim enqueue)");
+    CHECK(read_file("src/serve/steal_safety.cpp").find("fail_close_stolen_on_reject_hard") !=
+              std::string::npos,
+          "3620/#3765: RejectHard Cancel+Done in steal_safety_transaction");
     CHECK(read_file("tests/serve/test_issue_3620.cpp").empty(),
           "3620: no test_issue_3620.cpp (#81934 — extend existing suites)");
     CHECK(read_file("docs/design/3620-guard-held-mailbox-no-edge-hold.md").empty(),
