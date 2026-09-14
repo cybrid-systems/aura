@@ -2235,6 +2235,10 @@ static void ac3620_2_windows_source_cite() {
           "3620/#3763: recv Policy A before mu_");
     CHECK(sh.find("aura_mutation_hold_no_edge_still_held") != std::string::npos,
           "3620 AC6: steal_safety.h residual-zero reader consults the #3619 probe");
+    CHECK(fcpp.find("dispose_no_edge_holder") != std::string::npos,
+          "3620/#3764: busy-path/join dispose no-edge holder (Done or Reclaimed)");
+    CHECK(fcpp.find("next-enter same-fiber consume") != std::string::npos,
+          "3620/#3764: resume next-enter same-fiber consume");
     CHECK(read_file("tests/serve/test_issue_3620.cpp").empty(),
           "3620: no test_issue_3620.cpp (#81934 — extend existing suites)");
     CHECK(read_file("docs/design/3620-guard-held-mailbox-no-edge-hold.md").empty(),

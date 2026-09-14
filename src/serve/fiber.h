@@ -1466,6 +1466,8 @@ extern "C" int aura_hold_budget_poll_inbody_window(void) noexcept;
 // Issue #3588: busy-path (post-swap) poll. Soft/Off: 0. Happy path
 // (hold ≤ 2×SLO): one snapshot. Over 2×SLO: arm #2726 cancel then
 // reuse #3071/#3325 inbody-window poll.
+// Issue #3764: if no-edge still held after that poll, same-fiber
+// force_release; else Cancel+Done / mark_reclaimed (join must not hang).
 extern "C" int aura_hold_budget_poll_busy_path(void) noexcept;
 extern "C" int aura_hold_budget_cancel_armed(void) noexcept;
 // Issue #3194: same-fiber force-release past inbody window (weak in fiber_bridge).

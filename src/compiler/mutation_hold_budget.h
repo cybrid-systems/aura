@@ -521,6 +521,12 @@ inline constexpr int kMutationHoldBudgetNoncoopForceEdgeIssue = 3254;
 // Soft / sandbox=off: metric-only. New residual counter.
 inline std::atomic<std::uint64_t> g_hold_budget_no_edge_force_total{0};
 inline constexpr int kMutationHoldBudgetNoEdgeForceIssue = 3325;
+// Issue #3764: no-edge still-held past SLO — next-enter same-fiber
+// consume; if the holder never enters, Cancel+Done / mark_reclaimed
+// from busy-path + join. Never unlock unique_lock from a foreign
+// thread. Reuses no_edge_force_total + forced_unlock pair — no new
+// counter / query key.
+inline constexpr int kMutationHoldBudgetNoEdgeHolderDisposeIssue = 3764;
 
 [[nodiscard]] inline std::uint64_t hold_budget_no_edge_force_total_v_read() noexcept {
     return g_hold_budget_no_edge_force_total.load(std::memory_order_relaxed);
