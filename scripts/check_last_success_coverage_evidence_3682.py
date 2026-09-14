@@ -49,9 +49,12 @@ def check_ac1(src: str) -> tuple[bool, str]:
         return False, "on_reemit_pipeline_call body missing"
     # The removed inference had a unique shape (fail-local + mask & demoted);
     # other functions legitimately read last_force_jit_reason_ (retry-reason
-    # preservation, repromote correlation, fail stamping).
-    if "aot_reload_fail_to_force_jit_mask(fail)" in src:
-        return False, "last_force_jit_reason inference still present (fail & demoted)"
+    # preservation, repromote correlation, fail stamping). Issue #3745 later
+    # added maybe_stamp_heal_reason_last_success — a reason-qualified,
+    # override-respecting single-bit stamp; sanctioned. Only the #3682
+    # cascade-claim shape (mask(fail) & demoted feeding covered) is banned.
+    if "aot_reload_fail_to_force_jit_mask(fail) & demoted" in src:
+        return False, "last_force_jit_reason cascade inference still present (fail & demoted)"
     if "reemit_success_coverage_override_.load" not in body:
         return False, "override load missing"
     if "last_reemit_success_region_mask_.store(covered" not in body:
