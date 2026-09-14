@@ -2229,6 +2229,10 @@ static void ac3620_2_windows_source_cite() {
           "3620 AC6: case cites #3619 (fiber.cpp aura_mutation_hold_no_edge_still_held)");
     CHECK(mbh.find("Issue #3613") != std::string::npos,
           "3620 AC6: mailbox push BP gate cites #3613");
+    CHECK(mbh.find("AuditScope mailbox_rank") != std::string::npos,
+          "3620/#3763: mu_ uses AuditScope (Mailbox depth not sticky)");
+    CHECK(mbh.find("Issue #3763: Policy A empty BEFORE mu_") != std::string::npos,
+          "3620/#3763: recv Policy A before mu_");
     CHECK(sh.find("aura_mutation_hold_no_edge_still_held") != std::string::npos,
           "3620 AC6: steal_safety.h residual-zero reader consults the #3619 probe");
     CHECK(read_file("tests/serve/test_issue_3620.cpp").empty(),
