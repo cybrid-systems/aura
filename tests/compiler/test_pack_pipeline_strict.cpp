@@ -188,6 +188,59 @@ void ac3702_pack_happy_no_record() {
 #endif
 }
 
+static std::size_t count_hot_unbox_macros(std::string_view win) {
+    std::size_t n = 0;
+    for (const char* key : {"AURA_HOT_CONTRACT(", "AURA_HOT_CHECK("}) {
+        for (std::size_t p = 0; (p = win.find(key, p)) != std::string::npos; ++p)
+            ++n;
+    }
+    return n;
+}
+
+void ac3770_one_contract_per_unbox() {
+    std::printf("\n--- #3770 AC1: as_int / as_bool / as_string one hot contract ---\n");
+    auto val = read_file("src/compiler/value.ixx");
+    CHECK(val.find("Issue #3770") != std::string::npos, "3770 AC1: cite");
+    const auto i0 = val.find("export inline std::int64_t as_int(");
+    const auto i1 = val.find("export inline EvalValue make_bool(");
+    const auto b0 = val.find("export inline bool as_bool(");
+    const auto b1 = val.find("export inline EvalValue make_void(");
+    const auto s0 = val.find("export inline std::uint64_t as_string_idx(");
+    const auto s1 = val.find("export inline EvalValue make_string_v2(");
+    const auto iwin =
+        (i0 != std::string::npos && i1 > i0) ? val.substr(i0, i1 - i0) : std::string{};
+    const auto bwin =
+        (b0 != std::string::npos && b1 > b0) ? val.substr(b0, b1 - b0) : std::string{};
+    const auto swin =
+        (s0 != std::string::npos && s1 > s0) ? val.substr(s0, s1 - s0) : std::string{};
+    CHECK(count_hot_unbox_macros(iwin) == 1, "3770 AC1: as_int exactly one CONTRACT/CHECK");
+    CHECK(iwin.find("AURA_HOT_CONTRACT(is_int(v))") != std::string::npos,
+          "3770 AC1: as_int CONTRACT(is_int)");
+    CHECK(iwin.find("AURA_HOT_CHECK") == std::string::npos, "3770 AC1: as_int no stacked CHECK");
+    CHECK(count_hot_unbox_macros(bwin) == 1, "3770 AC1: as_bool exactly one CONTRACT/CHECK");
+    CHECK(count_hot_unbox_macros(swin) == 1, "3770 AC1: as_string_idx exactly one CONTRACT/CHECK");
+    CHECK(swin.find("AURA_HOT_CONTRACT(is_string(v))") != std::string::npos,
+          "3770 AC1: as_string_idx CONTRACT(is_string)");
+    CHECK(swin.find("AURA_HOT_CHECK") == std::string::npos,
+          "3770 AC1: as_string_idx no stacked CHECK");
+
+    auto hh = read_file("src/core/cpp26_contract_stats.h");
+    const auto pack = hh.find("#if defined(AURA_HOT_MODE_OFF) && defined(AURA_PRODUCTION_PACK)");
+    const auto pack_end = hh.find("#endif", pack == std::string::npos ? 0 : pack);
+    const auto pwin = (pack != std::string::npos && pack_end > pack)
+                          ? hh.substr(pack, pack_end - pack)
+                          : std::string{};
+    const auto cpos = pwin.find("#define AURA_HOT_CONTRACT");
+    const auto cbody = (cpos != std::string::npos) ? pwin.substr(cpos) : std::string{};
+    CHECK(cbody.find("record_hotpath_invariant_hit_sampled") == std::string::npos,
+          "3770 AC2: pack happy path still no sampled RECORD");
+    CHECK(iwin.find("AURA_HOT_RECORD") == std::string::npos, "3770 AC2: as_int no RECORD");
+    CHECK(cbody.find("std::abort()") != std::string::npos, "3770 AC3: ENFORCE/pack still abort");
+    CHECK(val.find("schema-3770") == std::string::npos, "3770 AC3: no new query key");
+    CHECK(read_file("tests/compiler/test_issue_3770.cpp").empty(), "3770 AC3: no invent");
+    CHECK(read_file("docs/design/3770-as-int-one-contract.md").empty(), "3770 AC3: no docs/design");
+}
+
 } // namespace
 
 int main() {
@@ -198,6 +251,7 @@ int main() {
     ac3627_operator_wins();
     ac3666_pack_hot_check_compile_armed();
     ac3702_pack_happy_no_record();
+    ac3770_one_contract_per_unbox();
     std::printf("\n=== Results: %d passed, %d failed ===\n", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

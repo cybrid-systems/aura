@@ -110,10 +110,9 @@ export inline bool is_int(const EvalValue& v) noexcept {
     return is_fixnum_hot(v.val);
 }
 export inline std::int64_t as_int(const EvalValue& v) noexcept {
-    // Issue #571 / #1622 / #2142 / #2259: tagged fixnum contracts.
-    // Release: contract elided; debug/enforce: fail-closed with source location.
+    // Issue #571 / #1622 / #2142 / #2259. Issue #3770: one hot contract per
+    // unbox (is_fixnum_hot already requires bit0 clear). Pack: no stacked CHECK.
     AURA_HOT_CONTRACT(is_int(v));
-    AURA_HOT_CHECK((v.val & 1) == 0); // fixnum low bit clear
     note_value_tag_hot_path();
     return v.val >> kFixnumShift;
 }
@@ -165,10 +164,9 @@ export inline bool is_string(const EvalValue& v) noexcept {
     return is_string_v2_hot(v.val); // #2259 pure
 }
 export inline std::uint64_t as_string_idx(const EvalValue& v) noexcept {
-    // Issue #1622 / #2142 / #2259: v2 string tag + bias range.
+    // Issue #1622 / #2142 / #2259. Issue #3770: one hot contract per unbox
+    // (is_string_v2_hot already covers low2==2 and STRING_BIAS range).
     AURA_HOT_CONTRACT(is_string(v));
-    AURA_HOT_CHECK((v.val & 3) == 2);
-    AURA_HOT_CHECK(v.val <= STRING_BIAS_VAL_2);
     note_value_tag_hot_path();
     return string_idx_raw_v2(v.val);
 }
