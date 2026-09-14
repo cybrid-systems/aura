@@ -2,7 +2,7 @@
 
 # Primitives (generated)
 
-**423** registrations scanned from `src/**/*.cpp` (0 marked **deprecated** — Issue #1438).
+**425** registrations scanned from `src/**/*.cpp` (0 marked **deprecated** — Issue #1438).
 Runtime canonical list: `(api-reference)` (includes `*deprecated*` section).
 Prefer op-dispatch: `(query :op)` `(mutate :op)` `(workspace :op)` + `(engine:metrics)`.
 
@@ -12,12 +12,12 @@ Prefer op-dispatch: `(query :op)` `(mutate :op)` `(workspace :op)` + `(engine:me
 
 - **mutation-safety**: 55 primitives (13%)
 - **core**: 338 primitives (80%)
-- **internal-observable**: 29 primitives (7%)
+- **internal-observable**: 31 primitives (7%)
 - **convenience**: 1 primitives (0%)
 
 Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.py` (Issue #559 taxonomy: mutation-safety / internal-observable / convenience / core default). Per-primitive classification overrides via `docs/primitive_categories.yaml` were removed per Anqi 2026-07-19 directive (aura philosophy, no per-issue plan docs).
 
-## Query: (29)
+## Query: (31)
 
 - `query:as-stable-ref` *[internal-observable]* — `src/compiler/evaluator_primitives_mutate.cpp`
 - `query:by-marker` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
@@ -43,6 +43,8 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `query:provenance-of*` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:reaches` *[internal-observable]* — `src/compiler/evaluator_primitives_query_defuse.cpp`
 - `query:ref-valid?` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
+- `query:result-fresh?` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
+- `query:result-matches` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:root` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:schema` *[internal-observable]* — `src/compiler/evaluator_primitives_query_tail.cpp`
 - `query:stable-ref` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
@@ -970,7 +972,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `write-file` — `src/compiler/evaluator_primitives_file.cpp`
 - `ws:try-mutation` — `src/compiler/evaluator_primitives_workspace.cpp`
 
-### Internal observable (stats/counters) (29)
+### Internal observable (stats/counters) (31)
 
 - `query:as-stable-ref` — `src/compiler/evaluator_primitives_mutate.cpp`
 - `query:by-marker` — `src/compiler/evaluator_primitives_query_workspace.cpp`
@@ -996,6 +998,8 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `query:provenance-of*` — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:reaches` — `src/compiler/evaluator_primitives_query_defuse.cpp`
 - `query:ref-valid?` — `src/compiler/evaluator_primitives_query_workspace.cpp`
+- `query:result-fresh?` — `src/compiler/evaluator_primitives_query_workspace.cpp`
+- `query:result-matches` — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:root` — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:schema` — `src/compiler/evaluator_primitives_query_tail.cpp`
 - `query:stable-ref` — `src/compiler/evaluator_primitives_query_workspace.cpp`

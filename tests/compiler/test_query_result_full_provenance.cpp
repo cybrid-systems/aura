@@ -1255,10 +1255,10 @@ void test_ac3695_6_source_cite_no_invent() {
                 qws.find("production matches payload is (id . node_gen)") != std::string::npos);
     expect_true("3695 AC6: mutate resolver takes :index",
                 mut.find("parse_query_result_match_index") != std::string::npos);
-    expect_true("3695 AC6: query:result-matches stays sink",
-                qws.find("sink_query_prim(\"query:result-matches\"") != std::string::npos);
-    expect_true("3695 AC6: query:result-fresh? stays sink",
-                qws.find("sink_query_prim(\"query:result-fresh?\"") != std::string::npos);
+    expect_true("3695 AC6: query:result-matches SlimSurface add #3766",
+                qws.find("add(\"query:result-matches\"") != std::string::npos);
+    expect_true("3695 AC6: query:result-fresh? SlimSurface add #3766",
+                qws.find("add(\"query:result-fresh?\"") != std::string::npos);
     expect_true("3695 AC6: no schema-3695", qws.find("schema-3695") == std::string::npos &&
                                                 mut.find("schema-3695") == std::string::npos &&
                                                 dec.find("schema-3695") == std::string::npos);
@@ -1414,8 +1414,10 @@ void test_ac3696_5_source_cite_no_invent() {
                 dec.find("Issue #3660 / #3696") != std::string::npos);
     expect_true("3696 AC5: occupancy still uses node_gen_for",
                 dec.find("flat.node_gen_for(nid) != m.generation") != std::string::npos);
-    expect_true("3696 AC5: query:result-fresh? stays sink",
-                qws.find("sink_query_prim(\"query:result-fresh?\"") != std::string::npos);
+    expect_true("3696 AC5: query:result-fresh? SlimSurface add #3766 occupancy",
+                qws.find("add(\"query:result-fresh?\"") != std::string::npos);
+    expect_true("3696 AC5: production poll uses occupancy SSOT",
+                qws.find("query_result_is_fresh_with_refs") != std::string::npos);
     expect_true("3696 AC5: no schema-3696", qws.find("schema-3696") == std::string::npos &&
                                                 dec.find("schema-3696") == std::string::npos);
     {
@@ -1429,6 +1431,89 @@ void test_ac3696_5_source_cite_no_invent() {
     {
         std::ifstream f("docs/design/3696-query-result-freshness-clocks.md");
         expect_true("3696 AC5: no docs/design/3696-*", !f.good());
+    }
+}
+
+// Issue #3766: query:result-fresh? / query:result-matches on SlimSurface.
+// Production poll uses occupancy SSOT (query_result_is_fresh_with_refs),
+// not epoch-only query_result_check_fresh. Faces agree with resolve.
+void test_ac3766_1_lookup_registered() {
+    std::print("AC3766/AC1 -- SlimSurface lookup query:result-fresh? under production\n");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    apply_dev_audit_defaults();
+    CompilerService cs;
+    expect_true("3766 AC1: set-code",
+                cs.eval("(set-code \"(define w3766 (lambda () 1))\")").has_value());
+    expect_true("3766 AC1: eval", cs.eval("(eval-current)").has_value());
+    apply_production_audit_defaults();
+    expect_true("3766 AC1: bind find hash",
+                cs.eval("(define qr3766 (query :find \"w3766\"))").has_value());
+    auto qr = cs.eval("qr3766");
+    expect_true("3766 AC1: find is schema-2 hash", qr && is_hash(*qr));
+    expect_true("3766 AC1: lookup query:result-fresh? non-null",
+                cs.evaluator().primitives().lookup("query:result-fresh?").has_value());
+    expect_true("3766 AC1: lookup query:result-matches non-null",
+                cs.evaluator().primitives().lookup("query:result-matches").has_value());
+    auto fr = cs.eval("(query:result-fresh? qr3766)");
+    expect_true("3766 AC1: live hash is #t", fr && is_bool(*fr) && as_bool(*fr));
+    apply_dev_audit_defaults();
+}
+
+void test_ac3766_2_occupancy_poll_agrees_resolve() {
+    std::print("AC3766/AC2 -- occupancy stale → fresh? #f and resolve stale-ref\n");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    apply_dev_audit_defaults();
+    CompilerService cs;
+    expect_true("3766 AC2: set-code",
+                cs.eval("(set-code \"(define u3766 (lambda () 1))\")").has_value());
+    expect_true("3766 AC2: eval", cs.eval("(eval-current)").has_value());
+    apply_production_audit_defaults();
+    expect_true("3766 AC2: bind find hash",
+                cs.eval("(define qr3766o (query :find \"u3766\"))").has_value());
+    auto* flat = cs.evaluator().workspace_flat();
+    expect_true("3766 AC2: workspace flat", flat != nullptr);
+    const auto live_mut = static_cast<std::int64_t>(aura::core::current_mutation_epoch());
+    auto mid = cs.eval("(hash-ref qr3766o \"mutation-epoch\")");
+    expect_true("3766 AC2: mutation-epoch readable", mid && is_int(*mid));
+    flat->bump_generation();
+    flat->restamp_all_node_generations();
+    expect_eq_i64("3766 AC2: hash mutation-epoch still equals live Mutation", live_mut,
+                  as_int(*mid));
+    auto poll = cs.eval("(query:result-fresh? qr3766o)");
+    expect_true("3766 AC2: poll is #f despite equal mutation-epoch",
+                poll && is_bool(*poll) && !as_bool(*poll));
+    expect_true("3766 AC2: bind occupancy resolve",
+                cs.eval("(define r3766o (query:as-stable-ref qr3766o))").has_value());
+    auto stale = cs.eval("(and (pair? r3766o) (equal? (car r3766o) \"stale-ref\"))");
+    expect_true("3766 AC2: resolve is stale-ref (faces agree)",
+                stale && is_bool(*stale) && as_bool(*stale));
+    apply_dev_audit_defaults();
+}
+
+void test_ac3766_3_soft_epoch_and_no_invent() {
+    std::print("AC3766/AC3 -- Soft epoch-only #f; no new key\n");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    apply_dev_audit_defaults();
+    CompilerService cs;
+    expect_true("3766 AC3: lookup still registered under Soft",
+                cs.evaluator().primitives().lookup("query:result-fresh?").has_value());
+    std::ifstream f_qws("src/compiler/evaluator_primitives_query_workspace.cpp");
+    std::string qws((std::istreambuf_iterator<char>(f_qws)), std::istreambuf_iterator<char>());
+    expect_true("3766 AC3: Soft still uses query_result_check_fresh",
+                qws.find("query_result_check_fresh") != std::string::npos);
+    expect_true("3766 AC3: production does not use check_fresh under defaults",
+                qws.find("Do not decode via query_result_check_fresh") != std::string::npos);
+    expect_true("3766 AC3: no schema-3766", qws.find("schema-3766") == std::string::npos);
+    expect_true("3766 AC3: no g_3766_", qws.find("g_3766_") == std::string::npos);
+    {
+        std::ifstream f("tests/compiler/test_issue_3766.cpp");
+        expect_true("3766 AC3: no test_issue_3766.cpp", !f.good());
+    }
+    {
+        std::ifstream f("docs/design/3766-query-result-fresh-poll.md");
+        expect_true("3766 AC3: no docs/design/", !f.good());
     }
 }
 
@@ -1451,6 +1536,9 @@ int main() {
     test_ac3696_3_omit_lying_mutation_id_at_capture();
     test_ac3696_4_soft_extra_keys_resolve_occupancy();
     test_ac3696_5_source_cite_no_invent();
+    test_ac3766_1_lookup_registered();
+    test_ac3766_2_occupancy_poll_agrees_resolve();
+    test_ac3766_3_soft_epoch_and_no_invent();
     test_ac1_struct_extension();
     test_ac2_push_match_defaults();
     test_ac3_push_match_full_provenance();
@@ -1490,6 +1578,6 @@ int main() {
     test_3395_ac4_non_regress_source_cite();
     // AC3389 runtime ACs skipped — see comment above.
     std::print("All #3103 + #3137 + #3231 + #3286 + #3311 + #3389 + #3395 + #3424 + "
-               "#3449 + #3660 + #3695 + #3696 AC tests PASSED\n");
+               "#3449 + #3660 + #3695 + #3696 + #3766 AC tests PASSED\n");
     return 0;
 }
