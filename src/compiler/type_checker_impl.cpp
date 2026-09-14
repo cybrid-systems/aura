@@ -7467,16 +7467,25 @@ TypeId InferenceEngine::synthesize_flat_let(FlatAST& flat, StringPool& pool,
             cs_.note_adt_match_goal(static_cast<std::uint32_t>(node_id), subject_type.index,
                                     covered_hash);
         }
-        if (!exh.exhaustive && !exh.missing_constructors.empty()) {
+        // Issue #3769: via_dynamic is unproven on the initial check path
+        // (same predicate as post-mutate walk). Soft Warning; Production /
+        // strict TypeError. Reuse format_match_exhaustiveness_message.
+        const bool unproven =
+            exh.via_dynamic || (!exh.exhaustive && !exh.missing_constructors.empty());
+        if (unproven) {
             if (cs_.metrics_) {
                 auto* m = static_cast<struct CompilerMetrics*>(cs_.metrics_);
                 m->adt_non_exhaustive_caught_total.fetch_add(1, std::memory_order_relaxed);
                 m->non_exhaustive_match_diagnostics_total.fetch_add(1, std::memory_order_relaxed);
             }
             auto msg = format_match_exhaustiveness_message(exh);
-            // Issue #1532: progressive — warn unless strict mode.
-            const auto kind = strict_ ? ErrorKind::TypeError : ErrorKind::Warning;
-            if (exh.missing_constructors.size() == 1) {
+            if (msg.empty())
+                msg = "match: exhaustiveness unproven (Dynamic subject)";
+            const bool hard = strict_ || aura::compiler::typed_audit::production_defaults_active();
+            const auto kind = hard ? ErrorKind::TypeError : ErrorKind::Warning;
+            if (exh.via_dynamic && exh.missing_constructors.empty()) {
+                diag_.report(Diagnostic(kind, std::move(msg), cur_loc_));
+            } else if (exh.missing_constructors.size() == 1) {
                 diag_.report(Diagnostic(kind, msg, cur_loc_)
                                  .with_suggestion("add clause for '" + exh.missing_constructors[0] +
                                                   "' pattern"));
@@ -8323,15 +8332,23 @@ void InferenceEngine::check_flat_match(FlatAST& flat, StringPool& pool, NodeId i
         auto* m = static_cast<struct CompilerMetrics*>(cs_.metrics_);
         m->adt_exhaustiveness_checked_total.fetch_add(1, std::memory_order_relaxed);
     }
-    if (!exh.exhaustive && !exh.missing_constructors.empty()) {
+    // Issue #3769: via_dynamic is unproven on check_flat_match (same
+    // predicate as post-mutate walk / synthesize_flat_let). Soft Warning.
+    const bool unproven = exh.via_dynamic || (!exh.exhaustive && !exh.missing_constructors.empty());
+    if (unproven) {
         if (cs_.metrics_) {
             auto* m = static_cast<struct CompilerMetrics*>(cs_.metrics_);
             m->adt_non_exhaustive_caught_total.fetch_add(1, std::memory_order_relaxed);
             m->non_exhaustive_match_diagnostics_total.fetch_add(1, std::memory_order_relaxed);
         }
         auto msg = format_match_exhaustiveness_message(exh);
-        const auto kind = strict_ ? ErrorKind::TypeError : ErrorKind::Warning;
-        if (exh.missing_constructors.size() == 1) {
+        if (msg.empty())
+            msg = "match: exhaustiveness unproven (Dynamic subject)";
+        const bool hard = strict_ || aura::compiler::typed_audit::production_defaults_active();
+        const auto kind = hard ? ErrorKind::TypeError : ErrorKind::Warning;
+        if (exh.via_dynamic && exh.missing_constructors.empty()) {
+            diag_.report(Diagnostic(kind, std::move(msg), cur_loc_));
+        } else if (exh.missing_constructors.size() == 1) {
             diag_.report(Diagnostic(kind, msg, cur_loc_)
                              .with_suggestion("add clause for '" + exh.missing_constructors[0] +
                                               "' pattern"));
