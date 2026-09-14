@@ -15,8 +15,10 @@
 #include "test_harness.hpp"
 
 #include "compiler/lock_order_audit.h"
+#include "serve/multi_fiber_mailbox.h"
 
 #include <atomic>
+#include <csignal>
 #include <cstdint>
 #include <fstream>
 #include <mutex>
@@ -24,6 +26,8 @@
 #include <shared_mutex>
 #include <string>
 #include <string_view>
+#include <sys/wait.h>
+#include <unistd.h>
 
 import std;
 
@@ -264,6 +268,67 @@ static void ac3119_production_defaults_hard() {
     reset_tls_for_test();
 }
 
+// ── Issue #3763: Mailbox AuditScope pairing; Workspace→Mailbox still visible ──
+static void ac3763_1_audit_scope_pairs_mu() {
+    std::println("\n--- #3763 AC1: every mu_ is AuditScope-paired ---");
+    const auto mb = read_file("src/serve/multi_fiber_mailbox.h");
+    CHECK(mb.find("Issue #3763") != std::string::npos, "3763 AC1: mailbox cites #3763");
+    std::size_t n_scope = 0, n_lock = 0, pos = 0;
+    while ((pos = mb.find("AuditScope mailbox_rank", pos)) != std::string::npos) {
+        ++n_scope;
+        ++pos;
+    }
+    pos = 0;
+    while ((pos = mb.find("std::lock_guard lock(mu_)", pos)) != std::string::npos) {
+        ++n_lock;
+        ++pos;
+    }
+    CHECK(n_scope == n_lock && n_scope >= 12,
+          "3763 AC1: each mu_ lock_guard has an AuditScope on the same region");
+    CHECK(mb.find("(void)::aura::compiler::lock_order::on_acquire") == std::string::npos,
+          "3763 AC1: no unpaired on_acquire(Mailbox) (AuditScope owns the pair)");
+}
+
+static void ac3763_3_depth_zero_and_workspace_then_mailbox() {
+    std::println(
+        "\n--- #3763 AC3: Mailbox depth 0 after size; Workspace then Mailbox detected ---");
+    force_audit_mode_for_test(2); // soft: detect without abort
+    reset_tls_for_test();
+    aura::serve::mf_mailbox::MultiFiberMailbox box(/*high_water=*/8);
+    CHECK(!is_held(Level::Mailbox), "3763 AC3: depth 0 before size");
+    CHECK(box.size() == 0, "3763 AC3: size under audit");
+    CHECK(!is_held(Level::Mailbox), "3763 AC3: Mailbox depth 0 after size returns");
+    CHECK(box.empty(), "3763 AC3: empty");
+    CHECK(!is_held(Level::Mailbox), "3763 AC3: depth 0 after empty returns");
+    CHECK(on_acquire(Level::Workspace), "3763 AC3: Workspace held");
+    const auto inv0 = g_lock_inversion_detected_total.load();
+    (void)box.size(); // AuditScope Mailbox while Workspace held
+    CHECK(g_lock_inversion_detected_total.load() > inv0,
+          "3763 AC3: Workspace then Mailbox inversion is visible (canary would abort)");
+    CHECK(!is_held(Level::Mailbox), "3763 AC3: sticky depth gone after size returns");
+    on_release(Level::Workspace);
+    reset_tls_for_test();
+    force_audit_mode_for_test(3);
+    reset_tls_for_test();
+    const pid_t pid = ::fork();
+    if (pid == 0) {
+        force_audit_mode_for_test(3);
+        reset_tls_for_test();
+        (void)on_acquire(Level::Workspace);
+        aura::serve::mf_mailbox::MultiFiberMailbox child(/*high_water=*/8);
+        (void)child.size();
+        ::_exit(0);
+    }
+    CHECK(pid > 0, "3763 AC3: forked canary child");
+    int st = 0;
+    if (pid > 0)
+        ::waitpid(pid, &st, 0);
+    CHECK(WIFSIGNALED(st) && WTERMSIG(st) == SIGABRT,
+          "3763 AC3: production canary aborts Workspace then Mailbox");
+    force_audit_mode_for_test(1);
+    reset_tls_for_test();
+}
+
 } // namespace
 
 int run_test_lock_order_audit_hard() {
@@ -276,6 +341,8 @@ int run_test_lock_order_audit_hard() {
     ac3b_audited_mutex_reverse();
     ac5_env_and_mode();
     ac3119_production_defaults_hard();
+    ac3763_1_audit_scope_pairs_mu();
+    ac3763_3_depth_zero_and_workspace_then_mailbox();
     force_audit_mode_for_test(1);
     reset_tls_for_test();
     std::println("\n=== #2354: {} passed, {} failed ===", g_passed, g_failed);

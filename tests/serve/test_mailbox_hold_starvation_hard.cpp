@@ -3075,6 +3075,58 @@ static void ac3613_4_source_and_linter() {
           "3613 AC4: no new metrics field");
 }
 
+// ── Issue #3763: recv/try_pop under Guard take zero mu_ ──
+static void ac3763_2_recv_try_pop_under_guard() {
+    std::println("\n--- #3763 AC2: recv/try_pop under Guard do not take mu_ ---");
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    aura::compiler::CompilerService cs;
+    aura::compiler::Evaluator::set_query_evaluator(&cs.evaluator());
+    aura::serve::mf_mailbox::MultiFiberMailbox mailbox(16);
+    aura::serve::mf_mailbox::MailMessage queued{};
+    queued.payload = "queued-3763";
+    CHECK(mailbox.push(queued) == aura::serve::mf_mailbox::PushStatus::Ok, "3763 AC2: pre-queue");
+    const auto rej0 =
+        aura::serve::mf_mailbox::g_mf_mailbox_stats.recv_rejected_in_mutation_boundary.load(
+            std::memory_order_relaxed);
+    const auto viol0 =
+        aura::compiler::lock_order::g_lock_order_violation_total.load(std::memory_order_relaxed);
+    bool ok = true;
+    aura::serve::mf_mailbox::MailMessage popped{};
+    bool try_pop_ok = false;
+    bool recv_empty = false;
+    {
+        aura::compiler::Evaluator::MutationBoundaryGuard g(cs.evaluator(), &ok);
+        CHECK(g.is_outermost(), "3763 AC2: outermost Guard");
+        try_pop_ok = mailbox.try_pop(popped);
+        auto got = mailbox.recv(/*wait=*/true, /*timeout_ms=*/20);
+        recv_empty = !got.has_value();
+    }
+    CHECK(!try_pop_ok, "3763 AC2: try_pop under Guard is empty (no mu_)");
+    CHECK(recv_empty, "3763 AC2: recv under Guard is Policy A empty");
+    CHECK(aura::serve::mf_mailbox::g_mf_mailbox_stats.recv_rejected_in_mutation_boundary.load(
+              std::memory_order_relaxed) > rej0,
+          "3763 AC2: Policy A reject bumped (recv)");
+    CHECK(aura::compiler::lock_order::g_lock_order_violation_total.load(
+              std::memory_order_relaxed) == viol0,
+          "3763 AC2: no Workspace→Mailbox inversion (mu_ not taken)");
+    aura::compiler::Evaluator::set_query_evaluator(nullptr);
+    const auto mb = read_file_3613("src/serve/multi_fiber_mailbox.h");
+    const auto recv_pos = mb.find("Issue #3763: Policy A empty BEFORE mu_");
+    CHECK(recv_pos != std::string::npos, "3763 AC2: recv cite");
+    if (recv_pos != std::string::npos) {
+        const auto win = mb.substr(recv_pos, 2800);
+        const auto p_holds = win.find("if (this_fiber_holds)");
+        const auto p_mu = win.find("std::lock_guard lock(mu_)");
+        CHECK(p_holds != std::string::npos && p_mu != std::string::npos && p_holds < p_mu,
+              "3763 AC2: this_fiber_holds before mu_ in recv");
+    }
+    CHECK(mb.find("try_pop") != std::string::npos &&
+              mb.find("if (aura_evaluator_mutation_boundary_depth() > 0)") != std::string::npos,
+          "3763 AC2: try_pop Guard-skips mu_");
+    CHECK(read_file_3613("tests/compiler/test_issue_3763.cpp").empty(), "3763 AC2: no invent");
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+}
+
 int run_test_mailbox_hold_starvation_hard() {
     std::println("=== Issue #2551: mailbox hold starvation hard + Agent throttle ===");
     ac1_production_hard_signal();
@@ -3200,6 +3252,7 @@ int run_test_mailbox_hold_starvation_hard() {
     ac3613_2_peer_send_still_defers();
     ac3613_3_soft_still_bp();
     ac3613_4_source_and_linter();
+    ac3763_2_recv_try_pop_under_guard();
     std::println("\n=== Issue #3692: peer recv must not fail-close holder Guard ===");
     ac3692_peer_recv_does_not_fail_holder();
     std::println(

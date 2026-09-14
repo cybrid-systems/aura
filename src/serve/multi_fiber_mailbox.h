@@ -40,6 +40,9 @@
 //        AC5: depth==0 → single relaxed load.
 // #2316: wire mu_ acquire to lock_order::on_acquire(Level::Mailbox) for
 //        rank-table audit + AURA_LOCK_ORDER_CANARY inversion detection.
+// #3763: every mu_ uses AuditScope (on_acquire + on_release). Sticky
+//        Mailbox TLS depth was blinding Workspace→Mailbox canary.
+//        recv/try_pop under this-fiber Guard: Policy A empty BEFORE mu_.
 // Header form (like mailbox.h) so serve + tests can include without module churn.
 
 #ifndef AURA_SERVE_MULTI_FIBER_MAILBOX_H
@@ -1166,8 +1169,8 @@ public:
                                              std::memory_order_acquire)) {
             return;
         }
-        (void)::aura::compiler::lock_order::on_acquire(::aura::compiler::lock_order::Level::Mailbox,
-                                                       __builtin_FILE(), __builtin_LINE());
+        ::aura::compiler::lock_order::AuditScope mailbox_rank(
+            ::aura::compiler::lock_order::Level::Mailbox);
         std::lock_guard lock(mu_);
         drop_queued_unlocked_();
         notify_all_unlocked();
@@ -1179,8 +1182,8 @@ public:
         if (!f)
             return;
         // Issue #2316: wire mu_ acquire to lock_order audit.
-        (void)::aura::compiler::lock_order::on_acquire(::aura::compiler::lock_order::Level::Mailbox,
-                                                       __builtin_FILE(), __builtin_LINE());
+        ::aura::compiler::lock_order::AuditScope mailbox_rank(
+            ::aura::compiler::lock_order::Level::Mailbox);
         std::lock_guard lock(mu_);
         for (auto* a : attachers_) {
             if (a == f)
@@ -1201,8 +1204,8 @@ public:
     void detach(Fiber* f) {
         if (!f)
             return;
-        (void)::aura::compiler::lock_order::on_acquire(::aura::compiler::lock_order::Level::Mailbox,
-                                                       __builtin_FILE(), __builtin_LINE());
+        ::aura::compiler::lock_order::AuditScope mailbox_rank(
+            ::aura::compiler::lock_order::Level::Mailbox);
         std::lock_guard lock(mu_);
         attachers_.erase(std::remove(attachers_.begin(), attachers_.end(), f), attachers_.end());
         // Issue #3369: clear the back-pointer iff this mailbox was the
@@ -1213,8 +1216,8 @@ public:
     }
 
     [[nodiscard]] std::size_t attacher_count() const {
-        (void)::aura::compiler::lock_order::on_acquire(::aura::compiler::lock_order::Level::Mailbox,
-                                                       __builtin_FILE(), __builtin_LINE());
+        ::aura::compiler::lock_order::AuditScope mailbox_rank(
+            ::aura::compiler::lock_order::Level::Mailbox);
         std::lock_guard lock(mu_);
         return attachers_.size();
     }
@@ -1234,8 +1237,8 @@ public:
     template <typename Fn> void for_each_pending_held_ref_for_fiber(Fiber* fiber, Fn&& fn) {
         if (!fiber)
             return;
-        (void)::aura::compiler::lock_order::on_acquire(::aura::compiler::lock_order::Level::Mailbox,
-                                                       __builtin_FILE(), __builtin_LINE());
+        ::aura::compiler::lock_order::AuditScope mailbox_rank(
+            ::aura::compiler::lock_order::Level::Mailbox);
         std::lock_guard lock(mu_);
         const auto fid = fiber->id();
         for (auto& msg : queue_) {
@@ -1248,14 +1251,14 @@ public:
     }
 
     [[nodiscard]] std::size_t size() const {
-        (void)::aura::compiler::lock_order::on_acquire(::aura::compiler::lock_order::Level::Mailbox,
-                                                       __builtin_FILE(), __builtin_LINE());
+        ::aura::compiler::lock_order::AuditScope mailbox_rank(
+            ::aura::compiler::lock_order::Level::Mailbox);
         std::lock_guard lock(mu_);
         return queue_.size();
     }
     [[nodiscard]] bool empty() const {
-        (void)::aura::compiler::lock_order::on_acquire(::aura::compiler::lock_order::Level::Mailbox,
-                                                       __builtin_FILE(), __builtin_LINE());
+        ::aura::compiler::lock_order::AuditScope mailbox_rank(
+            ::aura::compiler::lock_order::Level::Mailbox);
         std::lock_guard lock(mu_);
         return queue_.empty();
     }
@@ -1286,8 +1289,10 @@ public:
         // zero cost on the happy path (no live boundary).
         if (note_mailbox_deferred_under_boundary(&local_stats_))
             return PushStatus::Backpressure;
-        (void)::aura::compiler::lock_order::on_acquire(::aura::compiler::lock_order::Level::Mailbox,
-                                                       __builtin_FILE(), __builtin_LINE());
+        // Issue #3763: AuditScope pairs on_acquire(::aura::compiler::lock_order::Level::Mailbox)
+        // with on_release (sticky TLS depth was blinding Workspace→Mailbox canary).
+        ::aura::compiler::lock_order::AuditScope mailbox_rank(
+            ::aura::compiler::lock_order::Level::Mailbox);
         std::lock_guard lock(mu_);
         if (closed_.load(std::memory_order_relaxed))
             return PushStatus::Closed;
@@ -1395,6 +1400,8 @@ public:
             note_self_backpressure(/*from_fanout=*/true);
             return PushStatus::Backpressure;
         }
+        ::aura::compiler::lock_order::AuditScope mailbox_rank(
+            ::aura::compiler::lock_order::Level::Mailbox);
         std::lock_guard lock(mu_);
         if (closed_.load(std::memory_order_relaxed))
             return PushStatus::Closed;
@@ -1472,6 +1479,11 @@ public:
     }
 
     [[nodiscard]] bool try_pop(MailMessage& out) {
+        // Issue #3763: this-fiber Guard must not take mu_ (Workspace→Mailbox).
+        if (aura_evaluator_mutation_boundary_depth() > 0)
+            return false;
+        ::aura::compiler::lock_order::AuditScope mailbox_rank(
+            ::aura::compiler::lock_order::Level::Mailbox);
         std::lock_guard lock(mu_);
         if (!try_pop_unlocked(out, /*for_fiber=*/0))
             return false;
@@ -1532,7 +1544,40 @@ public:
                                              : std::chrono::steady_clock::time_point::max();
 
         for (;;) {
+            // Issue #3763: Policy A empty BEFORE mu_ (Workspace→Mailbox).
+            //   boundary_live = aura_evaluator_mutation_boundary_depth() > 0
+            //                   || aura_evaluator_mutation_boundary_held() != 0
+            // Issue #3692: process-wide held is the *push* defer signal.
+            // Issue #3732: recv Policy A is this_fiber_holds only.
+            const bool this_fiber_holds = aura_evaluator_mutation_boundary_depth() > 0;
+            if (this_fiber_holds) {
+                g_mf_mailbox_stats.recv_rejected_in_mutation_boundary.fetch_add(
+                    1, std::memory_order_relaxed);
+                local_stats_.recv_rejected_in_mutation_boundary.fetch_add(
+                    1, std::memory_order_relaxed);
+                ++g_recv_boundary_reject_window;
+                if (is_mutate_mailbox_strict()) {
+                    g_mf_mailbox_stats.recv_rejected_in_mutation_boundary_hard_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                    local_stats_.recv_rejected_in_mutation_boundary_hard_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                    const auto thr = mutate_mailbox_reject_threshold();
+                    if (thr > 0 && g_recv_boundary_reject_window >= thr) {
+                        g_mf_mailbox_stats.recv_boundary_force_rollback_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                        local_stats_.recv_boundary_force_rollback_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                        aura_evaluator_mark_outermost_mutation_failed();
+                    }
+                }
+                if (rejected_boundary)
+                    *rejected_boundary = true;
+                return std::nullopt;
+            }
+
             {
+                ::aura::compiler::lock_order::AuditScope mailbox_rank(
+                    ::aura::compiler::lock_order::Level::Mailbox);
                 std::lock_guard lock(mu_);
                 MailMessage out;
                 if (try_pop_unlocked(out, for_fiber)) {
@@ -1568,49 +1613,11 @@ public:
                 return std::nullopt;
             }
 
-            // Issue #2188: hard gate — no yield-while-Guard (this fiber).
-            // Combined authority (steal / push still use this OR):
-            //   boundary_live = aura_evaluator_mutation_boundary_depth() > 0
-            //                   || aura_evaluator_mutation_boundary_held() != 0
-            // Issue #3692: process-wide held is the *push* defer signal, not
-            // "this fiber owns outermost Guard". Issue #3732: recv Policy A
-            // empty / typed-deny is this_fiber_holds only — a peer with
-            // depth==0 may wait/park while another agent holds outermost.
-            const bool this_fiber_holds = aura_evaluator_mutation_boundary_depth() > 0;
+            // Issue #3692 / #3732: process-wide held is the push/steal
+            // signal. Recv Policy A already returned above when this
+            // fiber holds Guard. A peer with depth==0 may wait/park.
             const bool process_held = aura_evaluator_mutation_boundary_held() != 0;
-            (void)process_held; // steal/push OR; recv Policy A is this-fiber
-            if (this_fiber_holds) {
-                g_mf_mailbox_stats.recv_rejected_in_mutation_boundary.fetch_add(
-                    1, std::memory_order_relaxed);
-                local_stats_.recv_rejected_in_mutation_boundary.fetch_add(
-                    1, std::memory_order_relaxed);
-                // Issue #2347: window accumulate (all modes; Soft for dashboard).
-                ++g_recv_boundary_reject_window;
-                // Strict / production hard audit (AC2) + optional threshold (AC3).
-                if (is_mutate_mailbox_strict()) {
-                    g_mf_mailbox_stats.recv_rejected_in_mutation_boundary_hard_total.fetch_add(
-                        1, std::memory_order_relaxed);
-                    local_stats_.recv_rejected_in_mutation_boundary_hard_total.fetch_add(
-                        1, std::memory_order_relaxed);
-                    const auto thr = mutate_mailbox_reject_threshold();
-                    if (thr > 0 && g_recv_boundary_reject_window >= thr) {
-                        g_mf_mailbox_stats.recv_boundary_force_rollback_total.fetch_add(
-                            1, std::memory_order_relaxed);
-                        local_stats_.recv_boundary_force_rollback_total.fetch_add(
-                            1, std::memory_order_relaxed);
-                        // Prefer mark-failed over re-parking (Policy A stays).
-                        aura_evaluator_mark_outermost_mutation_failed();
-                    }
-                }
-                // Issue #3673: surface the Guard-live reject to the caller —
-                // orch:agent-recv maps it to a typed deny instead of a quiet
-                // empty so Agents can branch instead of busy-looping.
-                // Policy A itself stays: no park, no Fiber::yield.
-                if (rejected_boundary)
-                    *rejected_boundary = true;
-                // Policy A: non-blocking empty (no park, no Fiber::yield).
-                return std::nullopt;
-            }
+            (void)process_held;
 
             g_mf_mailbox_stats.recv_waits.fetch_add(1, std::memory_order_relaxed);
             if (g_current_fiber != nullptr) {
@@ -1726,6 +1733,8 @@ private:
     }
 
     void notify_all_locked() {
+        ::aura::compiler::lock_order::AuditScope mailbox_rank(
+            ::aura::compiler::lock_order::Level::Mailbox);
         std::lock_guard lock(mu_);
         notify_all_unlocked();
     }
