@@ -732,8 +732,8 @@ int run_test_hot_contract_placement() {
         auto val = read_file("src/compiler/value.ixx");
         CHECK(val.find("AURA_HOT_CONTRACT(is_int(v))") != std::string::npos,
               "3666 AC3: as_int call site unchanged");
-        CHECK(val.find("AURA_HOT_CHECK((v.val & 1) == 0)") != std::string::npos,
-              "3666 AC3: as_int CHECK call site unchanged");
+        CHECK(val.find("AURA_HOT_CHECK((v.val & 1) == 0)") == std::string::npos,
+              "3666 AC3: as_int no stacked CHECK (#3770)");
 
         std::println("\n--- #3666 AC4: apply_production flip is non-pack cache ---");
         CHECK(hh.find("note_hot_contract_harden_armed") != std::string::npos,

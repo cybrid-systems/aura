@@ -64,7 +64,7 @@ def main() -> int:
     must_not("hot_contract_harden_armed()", "AC1 pack no armed()", pwin)
     must_not("hot_contract_harden_armed_cache", "AC1 pack no cache load", pwin)
     must("AURA_HOT_CONTRACT(is_int(v))", "AC1 as_int CONTRACT", val)
-    must("AURA_HOT_CHECK((v.val & 1) == 0)", "AC1 as_int CHECK", val)
+    must_not("AURA_HOT_CHECK((v.val & 1) == 0)", "AC1 as_int no stacked CHECK (#3770)", val)
     must("ac3666_pack_hot_check_compile_armed", "AC1 pack test", pack)
 
     must("3666 AC2: Soft unarmed", "AC2 test", place)
