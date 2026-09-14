@@ -1241,37 +1241,46 @@ void register_workspace_query_primitives(
         return make_hash(hidx);
     });
 
-    // Issue #347 follow-up #1 / #393: (query:ref-valid? stable-ref)
-    // — Verify a stable-ref (the (id . gen) pair shape returned by
-    // (query:stable-ref) / (query :children-stable) /
-    // (query :parent-stable)) is still valid in the current
-    // workspace. Returns #t iff the slot at `id` is in-bounds AND
-    // its stored generation matches `gen` AND the wrap_epoch
-    // matches (Issue #368 second-wrap protection).
-    //
-    // Uses FlatAST::is_valid_id_gen() — the flat-style check from
-    // #393 — rather than the strict is_valid(ref) used by the
-    // older (ast:ref-valid? id gen) from #191. The flat-style
-    // check ONLY consults the slot's stored generation, so it is
-    // NOT invalidated by unrelated subtree bumps (use
-    // (query:ref-valid?* strict) for the strict global-gen check).
-    // This makes it the right primitive for scoped-invalidated
-    // workspaces (EDA, AI agent multi-subtree loops).
-    //
-    // Companion note: (ast:ref-valid? id gen) from #191 still
-    // works and uses the strict is_valid() check; it's the right
-    // primitive for "has the global state changed since capture?"
-    // but produces false positives in scoped-invalidated
-    // workspaces.
-    add("query:ref-valid?", [ws, mev](const auto& a) -> EvalValue {
+    // Issue #347 follow-up #1 / #393 / Issue #3767: (query:ref-valid?
+    // stable-ref). Production packed v2 / QueryResult uses
+    // unpack_query_stable_ref + FlatAST::is_valid (wrap + cow fence)
+    // and capability tenant (same InvalidTenant face as
+    // query_result_is_fresh_with_refs). Do not call is_valid_id_gen(id, gen)
+    // with default wrap 0 under production_defaults.
+    // Soft: historical (id . gen) is_valid_id_gen (zero extra atomics).
+    add("query:ref-valid?", [ws, mev, &ev, unpack_query_stable_ref](const auto& a) -> EvalValue {
         std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
-        if (a.empty() || !is_pair(a[0]))
-            return mev("bad-arg", "usage: (query:ref-valid? (id . gen))");
+        if (a.empty())
+            return mev("bad-arg", "usage: (query:ref-valid? stable-ref)");
         if (!ws.workspace_flat)
             return mev("no-workspace", "no workspace AST loaded");
         auto& flat = *ws.workspace_flat;
-        // Unpack the (id . gen) pair. Same shape as
-        // (query :children-stable)'s return value.
+        if (aura::compiler::typed_audit::production_defaults_active()) {
+            if (is_hash(a[0])) {
+                using aura::compiler::query_result_decode::HashNodeKind;
+                using aura::compiler::query_result_decode::parse_query_result_match_index;
+                using aura::compiler::query_result_decode::resolve_query_result_match;
+                auto hr = resolve_query_result_match(
+                    a[0], ws.string_heap, ws.pairs, flat, ev.capability_tenant_id(),
+                    static_cast<std::uint64_t>(aura_fiber_current_id()), "query:ref-valid?",
+                    parse_query_result_match_index(a, ws.keyword_table));
+                return make_bool(hr.kind == HashNodeKind::Ok);
+            }
+            if (!is_pair(a[0]))
+                return mev("bad-arg", "usage: (query:ref-valid? packed-v2-or-query-result)");
+            auto packed = unpack_query_stable_ref(a[0]);
+            if (!packed)
+                return make_bool(false);
+            const auto& ref = *packed;
+            const auto cur_tenant = ev.capability_tenant_id();
+            if (cur_tenant != 0 && ref.tenant_id != cur_tenant)
+                return make_bool(false);
+            if (ref.workspace_id != 0)
+                return make_bool(ref.is_valid_in_layer(flat, ref.workspace_id));
+            return make_bool(flat.is_valid(ref));
+        }
+        if (!is_pair(a[0]))
+            return mev("bad-arg", "usage: (query:ref-valid? (id . gen))");
         auto& outer = ws.pairs[as_pair_idx(a[0])];
         if (!is_int(outer.car))
             return mev("bad-arg", "stable-ref car must be a node id (int)");
@@ -1282,8 +1291,6 @@ void register_workspace_query_primitives(
         if (!is_int(inner.car))
             return mev("bad-arg", "stable-ref gen must be an int");
         auto gen = static_cast<std::uint16_t>(as_int(inner.car));
-        // Use the flat-style #393 helper: slot check only,
-        // respects scoped invalidation via wrap_epoch.
         return make_bool(flat.is_valid_id_gen(id, gen));
     });
 
