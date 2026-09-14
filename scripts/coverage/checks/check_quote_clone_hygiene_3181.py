@@ -134,7 +134,10 @@ def main() -> int:
     # is NOT added to pre_scan — clone walk's in_quote flag covers it.
     pos_3154_comment = me.find("Issue #3154: NodeTag::Quote is a data boundary")
     pos_prescan_quote = me.find("if (nv.tag == NodeTag::Quote)\n                return;")
-    pos_prescan_wrap = me.find("if (name_map && !local_in_quote)")
+    # Issue #3756: pre_scan invocation is now gated on the unquote boundary
+    # too (`!local_in_unquote`, Issue #2807 threading) — same semantics,
+    # wider boundary.
+    pos_prescan_wrap = me.find("if (name_map && !local_in_quote && !local_in_unquote)")
     ac3_prescan_unchanged = (
         pos_3154_comment != -1
         and pos_prescan_quote != -1
@@ -175,10 +178,12 @@ def main() -> int:
     def_window = me[pos_def_anchor : pos_def_anchor + 400] if pos_def_anchor != -1 else ""
     ac4_def = "local_in_quote" in def_window and "transplant(v.sym_id)" in def_window
     pos_set_local = me.find("if (!local_in_quote && subst) {")
-    pos_params_local = me.find("param_syms.push_back(local_in_quote ? transplant(pid) : rename_binding(pid));")
+    # Issue #3756: params branch on the combined quote|unquote boundary.
+    pos_params_local = me.find("param_syms.push_back((local_in_quote || local_in_unquote) ? transplant(pid)")
     # Issue #3685: the fallback gate reads the session policy.
+    # Issue #3756: the fallback gate now guards the unquote boundary too.
     pos_lambda_rest_local = me.find(
-        "if (dotted && !param_syms.empty() && name_map && session.allow_rest_hygiene &&\n                    !local_in_quote)"
+        "if (dotted && !param_syms.empty() && name_map && session.allow_rest_hygiene &&\n                    !local_in_quote && !local_in_unquote)"
     )
     ac4_var = pos_var_local != -1
     ac4_set = pos_set_local != -1
