@@ -641,6 +641,109 @@ static void ac3760_1_abort_empty_map_peel_tracks_g() {
     apply_dev_audit_defaults();
 }
 
+
+// ── Issue #3821: synth-hard-fail abort must pair begin with force-dirty ──
+static void ac3821_1_synth_hard_fail_pairs_force_dirty() {
+    std::println("\n--- #3821 AC1: synth-hard-fail pairs begin → restore → force_dirty ---");
+    const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    CHECK(!emb.empty(), "3821 AC1: evaluator_mutation_boundary.cpp readable");
+    const auto marker =
+        std::string("force_linear_rollback(composite ? \"composite-linear-synth-hard-fail\"");
+    const auto start = emb.find(marker);
+    CHECK(start != std::string::npos, "3821 AC1: synth-hard-fail arm present");
+    if (start == std::string::npos)
+        return;
+    const auto end = emb.find("return cp;", start);
+    CHECK(end != std::string::npos, "3821 AC1: synth-hard-fail early return");
+    const auto win = emb.substr(start, end - start);
+    CHECK(win.find("Issue #3821") != std::string::npos, "3821 AC1: Issue #3821 cite");
+    const auto bpos = win.find("abort_ir_cache_begin_force_fn_");
+    const auto rpos = win.find("rollback_to_size");
+    const auto dpos = win.find("abort_ir_cache_force_dirty_fn_");
+    CHECK(bpos != std::string::npos, "3821 AC1: begin fence on synth arm");
+    CHECK(rpos != std::string::npos, "3821 AC1: topology restore on synth arm");
+    CHECK(dpos != std::string::npos, "3821 AC1: synth-hard-fail pairs force_dirty");
+    CHECK(bpos < rpos && rpos < dpos, "3821 AC1: begin < restore < force_dirty order");
+}
+
+static void ac3821_2_begin_equals_dirty_count() {
+    std::println("\n--- #3821 AC2: begin_force count == force_dirty count (no unpaired) ---");
+    const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    std::size_t begins = 0;
+    for (auto p = emb.find("abort_ir_cache_begin_force_fn_()"); p != std::string::npos;
+         p = emb.find("abort_ir_cache_begin_force_fn_()", p + 1))
+        ++begins;
+    std::size_t dirtys = 0;
+    for (auto p = emb.find("abort_ir_cache_force_dirty_fn_()"); p != std::string::npos;
+         p = emb.find("abort_ir_cache_force_dirty_fn_()", p + 1))
+        ++dirtys;
+    CHECK(begins >= 5, "3821 AC2: at least 5 begin_force call sites");
+    CHECK(dirtys >= 5, "3821 AC2: at least 5 force_dirty call sites");
+    CHECK(begins == dirtys, "3821 AC2: begin count equals force_dirty count (no unpaired latch)");
+}
+
+static void ac3821_3_force_dirty_clears_in_progress() {
+    std::println("\n--- #3821 AC3: force_dirty clears in_progress; lookup then store ---");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define f3821 (lambda (x) (+ x 1))) (f3821 1)\")").has_value(),
+          "3821 AC3: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3821 AC3: eval");
+    if (!cs.get_define_v2("f3821"))
+        (void)cs.eval("(compile:cache-define \"f3821\")");
+    CHECK(cs.get_define_v2("f3821") != nullptr, "3821 AC3: cached");
+    const auto hash = cs.get_define_v2("f3821")->source_hash;
+
+    // Unpaired begin alone would latch (the pre-#3821 synth-hard-fail bug shape).
+    cs.public_begin_abort_ir_cache_force_fence();
+    CHECK(cs.public_abort_force_in_progress(), "3821 AC3: begin arms in_progress");
+    // Paired force_dirty (post-#3821 synth arm) clears the latch + dirties cache.
+    cs.public_force_ir_cache_dirty_after_abort();
+    CHECK(!cs.public_abort_force_in_progress(),
+          "3821 AC3: abort_force_in_progress==false after force_dirty");
+    const auto* e = cs.get_define_v2("f3821");
+    CHECK(e && (e->abort_map_invalid || e->irs.empty()),
+          "3821 AC3: abort_map_invalid or irs empty after force_dirty");
+    CHECK(cs.lookup_define_v2("f3821", hash) == 1,
+          "3821 AC3: next lookup_define_v2 returns 1 (need-relower)");
+    // One store recovers a clean hit path for subsequent lookups.
+    aura::ir::IRFunction top;
+    top.id = 0;
+    top.name = "__top__";
+    top.blocks.push_back({0, {}, {}});
+    aura::ir::IRFunction body;
+    body.id = 1;
+    body.name = "f3821_body";
+    body.blocks.push_back({0, {}, {}});
+    std::vector<aura::ir::IRFunction> irs;
+    irs.push_back(std::move(top));
+    irs.push_back(std::move(body));
+    cs.store_define_v2("f3821", "(define f3821 (lambda (x) (+ x 1)))", std::move(irs), {}, {});
+    const auto* after = cs.get_define_v2("f3821");
+    CHECK(after && !after->abort_map_invalid, "3821 AC3: clean after one store");
+    CHECK(cs.lookup_define_v2("f3821", after->source_hash) == 0,
+          "3821 AC3: lookup clean after one store");
+}
+
+static void ac3821_4_soak_no_permanent_latch() {
+    std::println("\n--- #3821 AC4 soak: N paired denies do not leave permanent latch ---");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define s3821 (lambda (x) x)) (s3821 0)\")").has_value(),
+          "3821 soak: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3821 soak: eval");
+    if (!cs.get_define_v2("s3821"))
+        (void)cs.eval("(compile:cache-define \"s3821\")");
+    CHECK(cs.get_define_v2("s3821") != nullptr, "3821 soak: cached");
+    constexpr int N = 64;
+    for (int i = 0; i < N; ++i) {
+        cs.public_begin_abort_ir_cache_force_fence();
+        cs.public_force_ir_cache_dirty_after_abort();
+        CHECK(!cs.public_abort_force_in_progress(),
+              "3821 soak: in_progress false after paired deny " + std::to_string(i));
+    }
+    CHECK(!cs.public_abort_force_in_progress(),
+          "3821 soak: no permanent in_progress latch after N paired denies");
+}
+
 } // namespace
 
 int run_test_abort_ir_cache_fence_first() {
@@ -672,8 +775,13 @@ int run_test_abort_ir_cache_fence_first() {
     ac3551_4_source_cite_no_invent();
     std::println("\n=== Issue #3760: empty source_to_ir_map is unknown callee cone ===");
     ac3760_1_abort_empty_map_peel_tracks_g();
+    std::println("\n=== Issue #3821: synth-hard-fail abort pairs force-dirty ===");
+    ac3821_1_synth_hard_fail_pairs_force_dirty();
+    ac3821_2_begin_equals_dirty_count();
+    ac3821_3_force_dirty_clears_in_progress();
+    ac3821_4_soak_no_permanent_latch();
 
-    std::println("\n=== #3159+#3258+#3324+#3551 result: passed={} failed={} ===",
+    std::println("\n=== #3159+#3258+#3324+#3551+#3821 result: passed={} failed={} ===",
                  aura::test::g_passed, aura::test::g_failed);
     return aura::test::g_failed == 0 ? 0 : 1;
 }

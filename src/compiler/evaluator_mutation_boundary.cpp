@@ -1928,6 +1928,13 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
                     }
                     last_boundary_rollback_stats_ = stats;
                     defuse_index_ = nullptr;
+                    // Issue #3821: pair begin fence with force-dirty after
+                    // topology restore (same order as dual-topology abort
+                    // arms). Clears abort_force_in_progress_; drops pre-abort
+                    // irs / stamps abort_map_invalid so lookup cannot thrash
+                    // on a stuck in_progress latch.
+                    if (abort_ir_cache_force_dirty_fn_)
+                        abort_ir_cache_force_dirty_fn_();
                     // Issue #3116: synth-hard-fail rollback is a production abort.
                     dual_clear_coercion_state_on_abort();
                     // Issue #3217 / #3030: proof clear before deny stamp.

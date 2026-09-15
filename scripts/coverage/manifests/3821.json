@@ -1,0 +1,35 @@
+{
+  "issue": 3821,
+  "title": "Issue #3821: synth-hard-fail abort pairs begin fence with force-dirty",
+  "ok": "OK: Issue #3821 synth-hard-fail abort pairs begin→force_dirty",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_mutation_boundary.cpp",
+      "contains": ["Issue #3821", "abort_ir_cache_force_dirty_fn_", "linear-synth-hard-fail"]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/compiler/test_abort_ir_cache_fence_first.cpp",
+      "contains": ["ac3821_2_begin_equals_dirty_count", "begin count equals force_dirty count"]
+    },
+    {
+      "ac": "AC3-runtime",
+      "path": "tests/compiler/test_abort_ir_cache_fence_first.cpp",
+      "contains": ["ac3821_3_force_dirty_clears_in_progress", "abort_force_in_progress==false after force_dirty"]
+    },
+    {
+      "ac": "AC4-soak",
+      "path": "tests/compiler/test_abort_ir_cache_fence_first.cpp",
+      "contains": ["ac3821_4_soak_no_permanent_latch", "no permanent in_progress latch after N paired denies"]
+    },
+    {
+      "ac": "AC5",
+      "forbid": [
+        "tests/compiler/test_issue_3821.cpp",
+        "tests/issues/test_issue_3821.cpp",
+        "docs/design/3821-synth-hard-fail-abort-force-dirty.md"
+      ]
+    }
+  ]
+}
