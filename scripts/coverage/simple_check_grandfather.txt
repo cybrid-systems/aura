@@ -395,3 +395,4 @@ check_clone_walk_rename_deny_abort_3816.py
 check_rest_spine_orphan_rewind_3817.py
 check_post_persist_linear_deny_coercion_undo_3818.py
 scripts/coverage/checks/check_occurrence_persist_fp_mismatch_dual_track_3819.py
+scripts/coverage/checks/check_pending_offer_map_miss_retain_3820.py

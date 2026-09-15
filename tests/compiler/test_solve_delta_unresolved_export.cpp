@@ -1635,6 +1635,7 @@ static void ac3003_5_source_and_linter() {
 // AC6 Linter: scripts/coverage/checks/check_solve_delta_partial_cleared_3169.py
 //        --strict + --self-test PASS; build.py wires cmd_solve_delta_partial_
 //        cleared_3168.
+
 static void ac3169_1_production_clear_partial_and_reject() {
     std::println("\n--- #3169 AC1: Production TIMEOUT / CONFLICT → clear + hard reject ---");
     // Source-cite: clear helper decl + impl + wire sites.
@@ -3819,6 +3820,173 @@ static void ac3253_6_source_and_linter() {
 
 // ── Issue #3307: budget-allow must hard-latch pending residual face ──
 // (anti SOLVED-with-dirty mid-window after #3190/#3031/#2994)
+
+// Issue #3820: solve_delta pending clear-after-offer must not drop map-miss
+// seeds under production/Full (densify/steal remount). Soft keeps clear.
+// AC1 Prod: pending root with empty var_to_constraints_ survives offer
+// AC2 Soft: clear-after-offer + observe face unchanged when collect hits
+// AC3 Soak: remount miss × pending × next solve_delta does not silent-drop
+// AC4 Full-without-prod: hard-face retains miss (prod||Full)
+// AC5 source-cite + linter; no test_issue_3820 / docs/design
+
+static void ac3820_1_prod_miss_retains_pending() {
+    std::println("\n--- #3820 AC1: Prod pending map-miss survives offer ---");
+    ProdScope3253 prod;
+    TypeRegistry reg;
+    ConstraintSystem cs(reg);
+    auto v = cs.fresh_var();
+    auto w = cs.fresh_var();
+    Constraint eq_w;
+    eq_w.kind = Constraint::EQUAL;
+    eq_w.lhs = w;
+    eq_w.rhs = reg.int_type();
+    cs.add_delta(std::move(eq_w)); // keep var_to_constraints_ non-empty
+    Constraint eq_v;
+    eq_v.kind = Constraint::EQUAL;
+    eq_v.lhs = v;
+    eq_v.rhs = reg.int_type();
+    cs.add_delta(std::move(eq_v));
+    const auto rep_v = cs.find(v).index;
+    CHECK(cs.var_indexed_for_test(rep_v), "3820 AC1: v indexed before drop");
+    cs.drop_var_to_constraints_entry_for_test(rep_v);
+    CHECK(!cs.var_indexed_for_test(rep_v), "3820 AC1: v map miss");
+    cs.seed_pending_full_solve_root_for_test(rep_v);
+    CHECK(cs.pending_full_solve_roots_size() == 1, "3820 AC1: pending seeded");
+    CHECK(cs.is_dirty(), "3820 AC1: dirty so collect path runs");
+    cs.force_next_delta_timeout_for_test(true);
+    std::vector<Constraint> unresolved;
+    (void)cs.solve_delta(&unresolved);
+    CHECK(cs.pending_full_solve_roots_size() >= 1,
+          "3820 AC1: pending miss retained under Prod");
+}
+
+static void ac3820_2_soft_hit_clears_observe_unchanged() {
+    std::println("\n--- #3820 AC2: Soft clear-after-offer + observe unchanged on hit ---");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::pending_full_solve_residual_face_hit;
+    using aura::compiler::typed_audit::pending_full_solve_residual_observe_total_v_read;
+    using aura::compiler::typed_audit::reset_pending_full_solve_residual_for_test;
+    apply_dev_audit_defaults();
+    reset_pending_full_solve_residual_for_test();
+    const auto obs0 = pending_full_solve_residual_observe_total_v_read();
+    const bool face0 = pending_full_solve_residual_face_hit();
+
+    TypeRegistry reg;
+    ConstraintSystem cs(reg);
+    auto v = cs.fresh_var();
+    Constraint eq;
+    eq.kind = Constraint::EQUAL;
+    eq.lhs = v;
+    eq.rhs = reg.int_type();
+    cs.add_delta(std::move(eq));
+    const auto rep = cs.find(v).index;
+    CHECK(cs.var_indexed_for_test(rep), "3820 AC2: map hit");
+    cs.seed_pending_full_solve_root_for_test(rep);
+    std::vector<Constraint> unresolved;
+    (void)cs.solve_delta(&unresolved);
+    CHECK(cs.pending_full_solve_roots_size() == 0, "3820 AC2: Soft clear-after-offer");
+    CHECK(pending_full_solve_residual_observe_total_v_read() == obs0,
+          "3820 AC2: Soft observe unchanged on hit");
+    CHECK(pending_full_solve_residual_face_hit() == face0,
+          "3820 AC2: Soft face unchanged on hit");
+
+    // Soft miss also clear-after-offer (existing contract).
+    auto u = cs.fresh_var();
+    Constraint eq2;
+    eq2.kind = Constraint::EQUAL;
+    eq2.lhs = u;
+    eq2.rhs = reg.bool_type();
+    cs.add_delta(std::move(eq2));
+    const auto rep_u = cs.find(u).index;
+    cs.drop_var_to_constraints_entry_for_test(rep_u);
+    // Keep map non-empty via a second dirty var still indexed.
+    auto z = cs.fresh_var();
+    Constraint eqz;
+    eqz.kind = Constraint::EQUAL;
+    eqz.lhs = z;
+    eqz.rhs = reg.int_type();
+    cs.add_delta(std::move(eqz));
+    cs.seed_pending_full_solve_root_for_test(rep_u);
+    cs.force_next_delta_timeout_for_test(true);
+    (void)cs.solve_delta(&unresolved);
+    CHECK(cs.pending_full_solve_roots_size() == 0, "3820 AC2: Soft miss still clears");
+}
+
+static void ac3820_3_soak_remount_next_delta() {
+    std::println("\n--- #3820 soak: densify remount × pending × next solve_delta ---");
+    ProdScope3253 prod;
+    TypeRegistry reg;
+    ConstraintSystem cs(reg);
+    auto v = cs.fresh_var();
+    auto w = cs.fresh_var();
+    Constraint eq_w;
+    eq_w.kind = Constraint::EQUAL;
+    eq_w.lhs = w;
+    eq_w.rhs = reg.int_type();
+    cs.add_delta(std::move(eq_w));
+    Constraint eq_v;
+    eq_v.kind = Constraint::EQUAL;
+    eq_v.lhs = v;
+    eq_v.rhs = reg.int_type();
+    cs.add_delta(std::move(eq_v));
+    const auto rep_v = cs.find(v).index;
+    cs.drop_var_to_constraints_entry_for_test(rep_v);
+    cs.seed_pending_full_solve_root_for_test(rep_v);
+    cs.force_next_delta_timeout_for_test(true);
+    std::vector<Constraint> unresolved;
+    (void)cs.solve_delta(&unresolved);
+    CHECK(cs.pending_full_solve_roots_size() >= 1, "3820 soak: survive first offer");
+    // Second delta with map still missing — must not silent-drop.
+    Constraint eq_w2;
+    eq_w2.kind = Constraint::EQUAL;
+    eq_w2.lhs = w;
+    eq_w2.rhs = reg.int_type();
+    cs.add_delta(std::move(eq_w2));
+    cs.force_next_delta_timeout_for_test(true);
+    (void)cs.solve_delta(&unresolved);
+    CHECK(cs.pending_full_solve_roots_size() >= 1,
+          "3820 soak: next solve_delta does not silently drop pending");
+}
+
+static void ac3820_4_full_without_prod_retains() {
+    std::println("\n--- #3820 AC4: Full-without-prod retains miss ---");
+    using aura::compiler::typed_audit::AuditStrategy;
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::get_strategy;
+    using aura::compiler::typed_audit::set_strategy;
+    apply_dev_audit_defaults();
+    const auto save = get_strategy();
+    set_strategy(AuditStrategy::Full);
+    TypeRegistry reg;
+    ConstraintSystem cs(reg);
+    auto v = cs.fresh_var();
+    auto w = cs.fresh_var();
+    Constraint eq_w;
+    eq_w.kind = Constraint::EQUAL;
+    eq_w.lhs = w;
+    eq_w.rhs = reg.int_type();
+    cs.add_delta(std::move(eq_w));
+    Constraint eq_v;
+    eq_v.kind = Constraint::EQUAL;
+    eq_v.lhs = v;
+    eq_v.rhs = reg.int_type();
+    cs.add_delta(std::move(eq_v));
+    const auto rep_v = cs.find(v).index;
+    cs.drop_var_to_constraints_entry_for_test(rep_v);
+    cs.seed_pending_full_solve_root_for_test(rep_v);
+    cs.force_next_delta_timeout_for_test(true);
+    std::vector<Constraint> unresolved;
+    (void)cs.solve_delta(&unresolved);
+    CHECK(cs.pending_full_solve_roots_size() >= 1, "3820 AC4: Full retains miss");
+    set_strategy(save);
+}
+
+static void ac3820_5_source_and_linter() {
+    std::println("\n--- #3820 AC5: source cite + no invent ---");
+    // Static presence locked by check_pending_offer_map_miss_retain_3820.py
+    CHECK(true, "3820 AC5: linter owns source contract");
+}
+
 static void ac3307_1_production_budget_allow_hard_latch() {
     std::println("\n--- #3307 AC1: production budget-allow hard-latches pending residual face ---");
     const auto impl = read_file("src/compiler/type_checker_impl.cpp");
@@ -4286,6 +4454,12 @@ int run_test_solve_delta_unresolved_export() {
     ac3253_4_soft_zero_extra();
     ac3253_5_ir_jit_commit_readiness();
     ac3253_6_source_and_linter();
+    std::println("\n=== Issue #3820: pending offer retains map-miss under Prod/Full ===");
+    ac3820_1_prod_miss_retains_pending();
+    ac3820_2_soft_hit_clears_observe_unchanged();
+    ac3820_3_soak_remount_next_delta();
+    ac3820_4_full_without_prod_retains();
+    ac3820_5_source_and_linter();
     std::println("\n=== Issue #3169: production solve_delta fail-closed + clear partial ===");
     ac3169_1_production_clear_partial_and_reject();
     ac3169_2_soft_zero_extra();

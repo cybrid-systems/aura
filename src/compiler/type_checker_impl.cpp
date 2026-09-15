@@ -2462,7 +2462,10 @@ SolveResult ConstraintSystem::solve_delta_impl(std::vector<Constraint>* unresolv
         // occurrence-priority + Let-Poly roots first, then touched roots.
         // Issue #1871: also drain pending_full_solve_roots_ from prior
         // local prunes so residual dirty is not starved indefinitely.
-        auto collect_for_root = [&](std::uint32_t root) {
+        // Issue #3820: collect_for_root returns false on var_to_constraints_
+        // miss without marking the root processed — Soft still clear-after-
+        // offer; production/Full retain missed pending seeds (#3253 family).
+        auto collect_for_root = [&](std::uint32_t root) -> bool {
             // Issue #2065: epoch skip — if this root was already
             // collected+processed in the current epoch, skip the
             // re-collection (avoids redundant dirty walks on the
@@ -2473,26 +2476,38 @@ SolveResult ConstraintSystem::solve_delta_impl(std::vector<Constraint>* unresolv
                     auto* m = static_cast<struct CompilerMetrics*>(metrics_);
                     m->solve_delta_epoch_skip_total.fetch_add(1, std::memory_order_relaxed);
                 }
-                return;
+                return true; // already offered this epoch
             }
-            processed_roots_this_epoch_.insert(root);
             auto it = var_to_constraints_.find(root);
             if (it == var_to_constraints_.end())
-                return;
+                return false; // miss — do not mark processed (#3820)
+            processed_roots_this_epoch_.insert(root);
             for (auto idx : it->second)
                 push_dirty(idx);
+            return true;
         };
         for (auto root : occurrence_priority_roots_)
-            collect_for_root(root);
+            (void)collect_for_root(root);
         for (auto root : let_poly_dirty_roots_)
-            collect_for_root(root);
+            (void)collect_for_root(root);
         for (auto root : touched_roots_)
-            collect_for_root(root);
-        for (auto root : pending_full_solve_roots_)
-            collect_for_root(root);
-        // Pending roots have been offered a collection pass; clear so
-        // the next prune can re-queue only what remains non-local.
-        pending_full_solve_roots_.clear();
+            (void)collect_for_root(root);
+        // Issue #3820: pending offer must not silently drop seeds on
+        // var_to_constraints_ miss (densify/steal remount). Soft keeps
+        // clear-after-offer; production/Full retain misses so the next
+        // solve_delta (or #3477 residual latch) still sees them.
+        {
+            using namespace aura::compiler::typed_audit;
+            const bool hard = production_hard_face_active();
+            std::unordered_set<std::uint32_t> retain_miss;
+            for (auto root : pending_full_solve_roots_) {
+                if (!collect_for_root(root) && hard)
+                    retain_miss.insert(root);
+            }
+            pending_full_solve_roots_.swap(retain_miss);
+            // Soft / all-hits: retain_miss empty → clear-after-offer (existing).
+            // Prod/Full miss: seeds survive; optional residual face via #3477.
+        }
         // Also accept dirty constraints that still reference a
         // touched root after Union-Find normalize (covers reps
         // that shifted during a prior unify).
