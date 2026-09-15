@@ -2028,9 +2028,8 @@ static void ac3169_6_source_and_linter() {
     const auto build = read_file("build.py");
     const auto lint =
         read_file("scripts/coverage/checks/check_solve_delta_partial_cleared_3169.py");
-    int rc =
-        std::system("python3 scripts/coverage/checks/check_solve_delta_partial_cleared_3169.py "
-                    "--self-test > /dev/null 2>&1");
+    int rc = aura::test::aura_python_repo_script(
+        "scripts/coverage/checks/check_solve_delta_partial_cleared_3169.py", "--self-test");
     CHECK(rc == 0, "3169 AC6: linter --self-test passes");
     CHECK(!lint.empty() && lint.find("Issue #3169") != std::string::npos,
           "3169 AC6: linter cites #3169");
@@ -3940,7 +3939,8 @@ static void ac3307_6_source_and_linter() {
         CHECK(!std::filesystem::exists(rel, ec),
               std::format("3307 AC6: forbidden {} per #81967", rel));
     }
-    CHECK(std::filesystem::exists("scripts/check_pending_full_solve_residual_hardlatch_3307.py"),
+    CHECK(aura::test::aura_repo_file_exists(
+              "scripts/check_pending_full_solve_residual_hardlatch_3307.py"),
           "3307 AC6: source-cite linter script present");
 }
 
