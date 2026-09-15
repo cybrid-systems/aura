@@ -4524,6 +4524,141 @@ int main() {
         }
     }
 
+
+    // ── Issue #3801: IsolationDeny mid joins TypedMid (no phantom 1) ──
+    {
+        std::println("\n--- #3801 AC1: Guard TypedMid≠epoch → IsolationDeny SE mid == TypedMid ---");
+        reset_all();
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+        aura::compiler::typed_audit::apply_production_audit_defaults();
+        // Divergence: Mutation epoch = 42, TypedMid = 777.
+        aura::core::store_workspace_epoch(aura::core::WorkspaceEpochKind::Mutation, 42);
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.set_effect_sandbox_mode(1);
+        ev.set_capability_tenant_id(7);
+        ev.arm_production_audit_defaults_for_test();
+        ev.note_boundary_audit_mid_for_test(777);
+        // Also stamp process-wide TypedMid so core IsolationDeny hook joins.
+        aura::compiler::typed_audit::stamp_type_linear_commit_proof(777);
+        const auto& ring = g_security_event_ring();
+        const auto se_base = ring.seq.load(std::memory_order_acquire);
+        CHECK(!ev.check_workspace_isolation(/*target=*/42, /*ref_tenant=*/42, kEffectMutate,
+                                            "test:3801-ac1"),
+              "3801 AC1: cross-tenant IsolationDeny fires");
+        bool found = false;
+        for (std::uint64_t s = se_base; s < ring.seq.load(std::memory_order_acquire); ++s) {
+            const auto& e = ring.ring[s % ring.ring.size()];
+            if (static_cast<int>(e.kind) !=
+                    static_cast<int>(aura::core::security_event::SecurityEventKind::IsolationDeny) ||
+                e.seq != s)
+                continue;
+            found = true;
+            CHECK(e.mutation_id == 777,
+                  "3801 AC1: IsolationDeny SE mid == TypedMid 777 (not epoch 42)");
+            CHECK(aura::core::current_mutation_epoch() == 42, "3801 AC1 pre: epoch still 42");
+        }
+        CHECK(found, "3801 AC1: IsolationDeny SE in ring");
+        ev.clear_boundary_audit_mid_for_test();
+        aura::compiler::typed_audit::apply_dev_audit_defaults();
+    }
+
+    {
+        std::println("\n--- #3801 AC2: Restricted+MT epoch=0 deny SE mid=0 (no phantom 1) ---");
+        reset_all();
+        aura::core::reset_mutation_epoch_for_test();
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+        ::setenv("AURA_MULTI_TENANT", "1", 1);
+        aura::core::provenance::set_multi_tenant_env_active(true);
+        aura::compiler::typed_audit::apply_production_audit_defaults();
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.set_effect_sandbox_mode(1);
+        ev.set_capability_tenant_id(7);
+        ev.arm_production_audit_defaults_for_test();
+        const auto& ring = g_security_event_ring();
+        const auto se_base = ring.seq.load(std::memory_order_acquire);
+        CHECK(aura::core::current_mutation_epoch() == 0, "3801 AC2 pre: epoch=0");
+        // allow-cross deny (no TA) — production EffectDeny mid must be 0.
+        ev.set_tenant_principal(7, "ac3801", /*allow_cross=*/true);
+        bool saw_mid0 = false;
+        bool saw_mid1 = false;
+        for (std::uint64_t s = se_base; s < ring.seq.load(std::memory_order_acquire); ++s) {
+            const auto& e = ring.ring[s % ring.ring.size()];
+            if (e.seq != s)
+                continue;
+            if (std::string_view(e.reason).find("allow-cross-needs-tenant-admin") ==
+                std::string_view::npos)
+                continue;
+            if (e.mutation_id == 0)
+                saw_mid0 = true;
+            if (e.mutation_id == 1)
+                saw_mid1 = true;
+        }
+        CHECK(saw_mid0, "3801 AC2: allow-cross deny SE mid=0");
+        CHECK(!saw_mid1, "3801 AC2: no phantom mid=1 on allow-cross deny");
+        // IsolationDeny at epoch=0 also mid=0 (#3594/#3801).
+        const auto se2 = ring.seq.load(std::memory_order_acquire);
+        CHECK(!ev.check_workspace_isolation(42, 42, kEffectMutate, "test:3801-ac2-iso"),
+              "3801 AC2: IsolationDeny fires at epoch=0");
+        bool iso_mid0 = false;
+        bool iso_mid1 = false;
+        for (std::uint64_t s = se2; s < ring.seq.load(std::memory_order_acquire); ++s) {
+            const auto& e = ring.ring[s % ring.ring.size()];
+            if (static_cast<int>(e.kind) !=
+                    static_cast<int>(aura::core::security_event::SecurityEventKind::IsolationDeny) ||
+                e.seq != s)
+                continue;
+            if (e.mutation_id == 0)
+                iso_mid0 = true;
+            if (e.mutation_id == 1)
+                iso_mid1 = true;
+        }
+        CHECK(iso_mid0, "3801 AC2: IsolationDeny mid=0 at epoch=0");
+        CHECK(!iso_mid1, "3801 AC2: no phantom IsolationDeny mid=1");
+        ::unsetenv("AURA_MULTI_TENANT");
+        aura::core::provenance::set_multi_tenant_env_active(false);
+        aura::compiler::typed_audit::apply_dev_audit_defaults();
+    }
+
+    {
+        std::println("\n--- #3801 AC3: Soft/Off observe stamp contract unchanged ---");
+        reset_all();
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+        // Soft require_effect mid=1 observe (#2493) — production_deny helper not used.
+        const auto src = read_file("src/compiler/evaluator_security.cpp");
+        CHECK(src.find("mid = 1; // Soft / standalone: non-zero join stamp") != std::string::npos ||
+                  src.find("mid = 1; // Soft") != std::string::npos ||
+                  src.find("Soft / Off keeps the mid=1 observe stamp") != std::string::npos,
+              "3801 AC3: Soft mid=1 observe stamp preserved in require_effect");
+        CHECK(src.find("epoch != 0 ? epoch : static_cast<std::uint64_t>(1)") != std::string::npos,
+              "3801 AC3: Soft fiber-principal observe arm still has epoch?:1");
+        CHECK(src.find("prov.mutation_id == 0 && !force_bind") != std::string::npos,
+              "3801 AC3: Soft session mid=1 gated behind !force_bind");
+    }
+
+    {
+        std::println("\n--- #3801 AC4: cite-first linter + no new query key ---");
+        const auto iso = read_file("src/core/workspace_isolation.hh");
+        const auto sec = read_file("src/compiler/evaluator_security.cpp");
+        const auto build = read_file("build.py");
+        const auto prim = read_file("src/compiler/evaluator_primitives_security.cpp");
+        CHECK(iso.find("Issue #3801") != std::string::npos, "AC4: workspace_isolation cites #3801");
+        CHECK(iso.find("aura_isolation_deny_se_mid") != std::string::npos,
+              "AC4: IsolationDeny uses aura_isolation_deny_se_mid");
+        CHECK(sec.find("production_deny_se_mid") != std::string::npos,
+              "AC4: production_deny_se_mid helper present");
+        CHECK(sec.find("Issue #3801") != std::string::npos, "AC4: evaluator_security cites #3801");
+        CHECK(build.find("check_isolation_deny_mid_join_3801") != std::string::npos,
+              "AC4: build.py wires #3801 linter");
+        CHECK(prim.find("schema-3801") == std::string::npos, "AC4: no schema-3801 query key");
+        CHECK(prim.find("issue-3801") == std::string::npos, "AC4: no issue-3801 query key");
+        std::ifstream invent("tests/core/test_issue_3801.cpp");
+        if (!invent.good())
+            invent.open("../tests/core/test_issue_3801.cpp");
+        CHECK(!invent.good(), "AC4: no tests/core/test_issue_3801.cpp (forbidden per #81967)");
+    }
+
     reset_all();
     std::println("\n=== test_tenant_isolation_enforcement: {} passed, {} failed ===", g_passed,
                  g_failed);

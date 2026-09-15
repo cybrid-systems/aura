@@ -24,6 +24,10 @@
 #include "core/workspace_epoch.hh"    // #2388 / #2156 isolation mid = Mutation epoch
 
 extern "C" std::uint64_t aura_fiber_current_id();
+// Issue #3801: IsolationDeny mid joins TypedMid-then-epoch (strong def in
+// typed_mutation_audit_hooks.cpp). Weak so core-only / light-link TUs still
+// link; null → Mutation epoch (#3594 mid=0).
+extern "C" std::uint64_t aura_isolation_deny_se_mid() noexcept __attribute__((weak));
 
 namespace aura::core::workspace_isolation {
 
@@ -436,10 +440,15 @@ struct WorkspaceIsolationPolicy {
                       std::uint16_t required_effects = 0) noexcept {
         using ::aura::core::current_mutation_epoch;
         const auto epoch = current_mutation_epoch();
-        // Issue #3594: IsolationDeny at epoch=0 keeps mid=0 (joins the
-        // refuse rows); no phantom mid=1 coercion. Fiber id still resolved
-        // on deny (#3011) below.
-        const auto mid = epoch;
+        // Issue #3801 / #3594: IsolationDeny mid = same resolver family as
+        // require_effect (join_audit_and_se_mid / TypedMid-then-epoch).
+        // Under Guard TypedMid≠epoch the SE joins grant.bound_mutation_id;
+        // epoch=0 stays 0 (no phantom mid=1). Soft/Off keeps TypedMid-then-
+        // epoch with 0 terminal (#2493 Soft mid=1 is EffectDeny Soft arms).
+        // Weak hook → epoch when audit TU not linked.
+        const auto mid = (aura_isolation_deny_se_mid != nullptr)
+                             ? aura_isolation_deny_se_mid()
+                             : epoch;
 
         const auto seq = audit_seq.fetch_add(1, std::memory_order_release);
         IsolationAuditEntry entry{};
@@ -491,7 +500,7 @@ struct WorkspaceIsolationPolicy {
         // is its own class — the stale process-global current.id must not
         // relabel it (blame split: unset vs layout-only vs foreign).
         const char* reason = isolation_deny_reason(caller, ref_tenant, reason_buf);
-        // Tenant stays in tenant_id field; mid is Mutation epoch (#2156).
+        // Tenant stays in tenant_id field; mid is TypedMid-then-epoch (#3801/#2156).
         // effect_bits preserves required side-effect mask for forensic join.
         // Issue #3011: fiber_id is the live / override id (never hard 0).
         // Issue #3669: SE tenant keyed by the caller principal (target

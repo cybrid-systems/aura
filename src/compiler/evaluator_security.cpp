@@ -42,6 +42,34 @@ namespace aura::compiler {
 // Issue #918: explicit using-declarations (no using-namespace).
 using security::kCapWildcard;
 
+// Issue #3801: production deny SE mid — TypedMid-then-epoch / join SSOT;
+// epoch=0 → mid=0 (no phantom 1). Soft Soft-gen / mid=1 observe stays on
+// Soft arms only (#2493). Call sites are Restricted/Strict deny paths.
+[[nodiscard]] static std::uint64_t production_deny_se_mid(std::uint64_t caller_mid = 0) noexcept {
+    using typed_audit::join_audit_and_se_mid;
+    using typed_audit::last_type_linear_commit_proof_stamp_v_read;
+    using typed_audit::production_defaults_active;
+    using typed_audit::get_strategy;
+    using typed_audit::AuditStrategy;
+    if (production_defaults_active() || get_strategy() == AuditStrategy::Full)
+        return join_audit_and_se_mid(caller_mid);
+    if (caller_mid != 0)
+        return caller_mid;
+    const auto tm = last_type_linear_commit_proof_stamp_v_read();
+    if (tm != 0)
+        return tm;
+    return ::aura::core::current_mutation_epoch(); // 0 stays 0
+}
+
+
+// Issue #3801: C ABI for WorkspaceIsolationPolicy::record_audit — same TU as
+// require_effect so TypedMid / boundary join matches grant.bound_mutation_id.
+extern "C" std::uint64_t aura_isolation_deny_se_mid() noexcept {
+    return production_deny_se_mid();
+}
+
+
+
 // Issue #2077 / #2387: unify has_capability string path with Effect matrix
 // (single source of truth). When `effect_for_cap_name(needed) != None`
 // the Effect bit in `g_capability_registry().effects_for(tenant)` is
@@ -680,7 +708,7 @@ bool Evaluator::require_effect_on_ref(std::uint16_t req_bits, std::string_view o
             using ::aura::core::security_event::SecurityEventKind;
             using ::aura::core::security_event_wal::emit_security_event_durable;
             const auto epoch = ::aura::core::current_mutation_epoch();
-            const auto mid = epoch != 0 ? epoch : static_cast<std::uint64_t>(1);
+            const auto mid = production_deny_se_mid(); // #3801: epoch=0 → mid=0
             const auto fiber = static_cast<std::int64_t>(aura_fiber_current_id());
             const auto tenant = ref.tenant_id != 0
                                     ? ref.tenant_id
@@ -1040,9 +1068,7 @@ bool Evaluator::grant_effect_capability(std::uint64_t tenant_id, std::string_vie
             using ::aura::core::security_event::SecurityEventKind;
             using ::aura::core::security_event_wal::emit_security_event_durable;
             const auto epoch = ::aura::core::current_mutation_epoch();
-            const auto mid = provenance_mutation_id != 0
-                                 ? provenance_mutation_id
-                                 : (epoch != 0 ? epoch : static_cast<std::uint64_t>(1));
+            const auto mid = production_deny_se_mid(provenance_mutation_id); // #3801
             const auto fid = static_cast<std::int64_t>(fiber);
             using ::aura::core::workspace_isolation::g_tenant_isolation_metrics;
             g_tenant_isolation_metrics().cross_tenant_grant_deny_total.fetch_add(
@@ -1074,9 +1100,7 @@ bool Evaluator::grant_effect_capability(std::uint64_t tenant_id, std::string_vie
                 using ::aura::core::security_event::SecurityEventKind;
                 using ::aura::core::security_event_wal::emit_security_event_durable;
                 const auto epoch = ::aura::core::current_mutation_epoch();
-                const auto mid = provenance_mutation_id != 0
-                                     ? provenance_mutation_id
-                                     : (epoch != 0 ? epoch : static_cast<std::uint64_t>(1));
+                const auto mid = production_deny_se_mid(provenance_mutation_id); // #3801
                 const auto fid = static_cast<std::int64_t>(fiber);
                 // Reuse the #3141 wildcard-write-fence counter (additive, no
                 // new metric per non-goals).
@@ -1199,9 +1223,7 @@ void Evaluator::grant_effect_durable(std::uint64_t tenant_id, std::string_view n
             using ::aura::core::security_event::SecurityEventKind;
             using ::aura::core::security_event_wal::emit_security_event_durable;
             const auto epoch = ::aura::core::current_mutation_epoch();
-            const auto mid = provenance_mutation_id != 0
-                                 ? provenance_mutation_id
-                                 : (epoch != 0 ? epoch : static_cast<std::uint64_t>(1));
+            const auto mid = production_deny_se_mid(provenance_mutation_id); // #3801
             const auto tenant = tenant_id != 0 ? tenant_id : self_tenant;
             const auto fid = static_cast<std::int64_t>(fiber);
             aura::core::capability::g_capability_effect_metrics()
@@ -1219,9 +1241,7 @@ void Evaluator::grant_effect_durable(std::uint64_t tenant_id, std::string_view n
             using ::aura::core::security_event::SecurityEventKind;
             using ::aura::core::security_event_wal::emit_security_event_durable;
             const auto epoch = ::aura::core::current_mutation_epoch();
-            const auto mid = provenance_mutation_id != 0
-                                 ? provenance_mutation_id
-                                 : (epoch != 0 ? epoch : static_cast<std::uint64_t>(1));
+            const auto mid = production_deny_se_mid(provenance_mutation_id); // #3801
             const auto tenant =
                 tenant_id != 0 ? tenant_id : static_cast<std::uint64_t>(capability_tenant_id_);
             const auto fid = static_cast<std::int64_t>(fiber);
@@ -1329,9 +1349,7 @@ void Evaluator::grant_effect_durable_sticky(std::uint64_t tenant_id, std::string
             using ::aura::core::security_event::SecurityEventKind;
             using ::aura::core::security_event_wal::emit_security_event_durable;
             const auto epoch = ::aura::core::current_mutation_epoch();
-            const auto mid = provenance_mutation_id != 0
-                                 ? provenance_mutation_id
-                                 : (epoch != 0 ? epoch : static_cast<std::uint64_t>(1));
+            const auto mid = production_deny_se_mid(provenance_mutation_id); // #3801
             const auto tenant = tenant_id != 0 ? tenant_id : self_tenant;
             const auto fid = static_cast<std::int64_t>(fiber);
             aura::core::capability::g_capability_effect_metrics()
@@ -1349,9 +1367,7 @@ void Evaluator::grant_effect_durable_sticky(std::uint64_t tenant_id, std::string
             using ::aura::core::security_event::SecurityEventKind;
             using ::aura::core::security_event_wal::emit_security_event_durable;
             const auto epoch = ::aura::core::current_mutation_epoch();
-            const auto mid = provenance_mutation_id != 0
-                                 ? provenance_mutation_id
-                                 : (epoch != 0 ? epoch : static_cast<std::uint64_t>(1));
+            const auto mid = production_deny_se_mid(provenance_mutation_id); // #3801
             const auto tenant =
                 tenant_id != 0 ? tenant_id : static_cast<std::uint64_t>(capability_tenant_id_);
             const auto fid = static_cast<std::int64_t>(fiber);
@@ -1432,8 +1448,9 @@ void Evaluator::grant_effect_session(std::uint64_t tenant_id, std::string_view n
     // resolve returns 0 → the #3090 grant-mid-refused policy fires.
     const auto mid = typed_audit::join_audit_and_se_mid(provenance_mutation_id);
     auto prov = make_grant_provenance(mid, force_bind, /*node_id=*/0, fiber);
-    // Ensure non-zero mid for session binding (Soft may leave zero → force 1).
-    if (prov.mutation_id == 0)
+    // Issue #3801: Soft/Off may leave zero → force 1 observe stamp (#2493).
+    // Production force_bind: leave 0 (grant refuse / join-0) — no phantom 1.
+    if (prov.mutation_id == 0 && !force_bind)
         prov.mutation_id = prov.epoch != 0 ? prov.epoch : 1;
     using aura::compiler::security::kEffectMacroSelfEvo;
     using aura::compiler::security::kEffectMutate;
@@ -1467,9 +1484,7 @@ void Evaluator::grant_effect_session(std::uint64_t tenant_id, std::string_view n
             using ::aura::core::security_event::SecurityEventKind;
             using ::aura::core::security_event_wal::emit_security_event_durable;
             const auto epoch = ::aura::core::current_mutation_epoch();
-            const auto mid = provenance_mutation_id != 0
-                                 ? provenance_mutation_id
-                                 : (epoch != 0 ? epoch : static_cast<std::uint64_t>(1));
+            const auto mid = production_deny_se_mid(provenance_mutation_id); // #3801
             const auto tenant = tenant_id != 0 ? tenant_id : self_tenant;
             const auto fid = static_cast<std::int64_t>(fiber);
             aura::core::capability::g_capability_effect_metrics()
@@ -1532,7 +1547,7 @@ void Evaluator::revoke_effect_capability(std::uint64_t tenant_id, std::string_vi
                 using ::aura::core::security_event::SecurityEventKind;
                 using ::aura::core::security_event_wal::emit_security_event_durable;
                 const auto epoch = aura::core::current_mutation_epoch();
-                const auto mid = epoch != 0 ? epoch : static_cast<std::uint64_t>(1);
+                const auto mid = production_deny_se_mid(); // #3801: epoch=0 → mid=0
                 const auto tenant = tenant_id != 0 ? tenant_id : self_tenant;
                 const auto fid = static_cast<std::int64_t>(
                     effect_fiber_id_or(static_cast<std::uint32_t>(aura_fiber_current_id())));
@@ -1692,7 +1707,7 @@ void Evaluator::set_tenant_principal(std::uint64_t tenant_id, std::string_view /
                 using ::aura::core::security_event_wal::emit_security_event_durable;
                 using ::aura::core::workspace_isolation::g_tenant_isolation_metrics;
                 const auto epoch = ::aura::core::current_mutation_epoch();
-                const auto mid = epoch != 0 ? epoch : static_cast<std::uint64_t>(1);
+                const auto mid = production_deny_se_mid(); // #3801: epoch=0 → mid=0
                 const auto fid =
                     static_cast<std::int64_t>(::aura::core::capability::effect_fiber_id_or(
                         static_cast<std::uint32_t>(aura_fiber_current_id())));
@@ -1731,7 +1746,7 @@ void Evaluator::set_tenant_principal(std::uint64_t tenant_id, std::string_view /
             if (::aura::core::provenance::g_undeclared_mt_se_emitted().exchange(
                     1, std::memory_order_acq_rel) == 0) {
                 const auto epoch = ::aura::core::current_mutation_epoch();
-                const auto mid = epoch != 0 ? epoch : static_cast<std::uint64_t>(1);
+                const auto mid = production_deny_se_mid(); // #3801: epoch=0 → mid=0
                 const auto fid =
                     static_cast<std::int64_t>(::aura::core::capability::effect_fiber_id_or(
                         static_cast<std::uint32_t>(aura_fiber_current_id())));
@@ -1882,15 +1897,15 @@ bool Evaluator::check_workspace_isolation(std::uint64_t target_tenant, std::uint
         // Issue #2388: IsolationDeny SecurityEvent + WAL dual-written from
         // WorkspaceIsolationPolicy::record_audit (single path — AC2 no
         // double-count). Reasons (unset-principal / unstamped-ref /
-        // ref-tenant) stamped there; mid = Mutation epoch (#2156). Keep
-        // TypedMutationAudit only.
+        // ref-tenant) stamped there; mid = TypedMid-then-epoch (#3801/#2156).
+        // Keep TypedMutationAudit only.
         using ::aura::core::security_event::kIsolationAuditMidIssue;
         using ::aura::core::security_event::kSecurityAuditFoldIssue;
         (void)kIsolationAuditMidIssue;
         (void)kSecurityAuditFoldIssue;
         const auto fiber = static_cast<std::int64_t>(aura_fiber_current_id());
         const auto epoch = ::aura::core::current_mutation_epoch();
-        const auto mid = epoch != 0 ? epoch : static_cast<std::uint64_t>(1);
+        const auto mid = production_deny_se_mid(); // #3801: epoch=0 → mid=0
         typed_audit::capture_security_correlated_audit(mid, op, mid, /*denied=*/true,
                                                        /*target_node=*/0, fiber);
     }
