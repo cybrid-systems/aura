@@ -1,0 +1,30 @@
+{
+  "issue": 3820,
+  "title": "Issue #3820: pending offer retains var_to_constraints_ map-miss (prod||Full)",
+  "ok": "OK: Issue #3820 pending offer map-miss retain (prod||Full)",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/type_checker_impl.cpp",
+      "contains": ["Issue #3820", "production_hard_face_active()", "pending_full_solve_roots_.swap(retain_miss)"]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/compiler/test_solve_delta_unresolved_export.cpp",
+      "contains": ["3820 AC2", "Soft observe unchanged on hit"]
+    },
+    {
+      "ac": "AC3-soak",
+      "path": "tests/compiler/test_solve_delta_unresolved_export.cpp",
+      "contains": ["3820 soak", "next solve_delta does not silently drop pending"]
+    },
+    {
+      "ac": "AC4",
+      "forbid": [
+        "tests/compiler/test_issue_3820.cpp",
+        "tests/issues/test_issue_3820.cpp",
+        "docs/design/3820-pending-offer-map-miss.md"
+      ]
+    }
+  ]
+}

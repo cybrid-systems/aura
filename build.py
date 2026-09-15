@@ -4955,6 +4955,20 @@ def cmd_lint():
             "Issue #3819 fingerprint mismatch dual-track linter failed — run python3 scripts/coverage/checks/check_occurrence_persist_fp_mismatch_dual_track_3819.py"
         )
         return r
+    # Issue #3820: solve_delta pending clear-after-offer must retain
+    # var_to_constraints_ map-miss seeds under production/Full (Soft keeps
+    # clear-after-offer). Extends test_solve_delta_unresolved_export (#81967);
+    # no docs/design/.
+    pomr3820_script = COVERAGE_CHECKS / "check_pending_offer_map_miss_retain_3820.py"
+    if not pomr3820_script.exists():
+        fail(f"missing {pomr3820_script}")
+        return 1
+    r = run([sys.executable, str(pomr3820_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3820 pending offer map-miss retain linter failed — run python3 scripts/coverage/checks/check_pending_offer_map_miss_retain_3820.py"
+        )
+        return r
     # Issue #3802: EXEMPT_2ARG write-file/sys-* host-path isolation under
     # Restricted+MT / Strict — resolve under tenant root from
     # capability_tenant_id_; cross-tenant escape → IsolationDeny SE
@@ -14939,6 +14953,26 @@ def cmd_occurrence_persist_fp_mismatch_dual_track_3819():
     """Issue #3819: Occurrence persist fingerprint mismatch reject is prod||Full."""
     print(f"{B}=== occurrence persist fp mismatch dual-track (#3819) ==={N}")
     return cmd_occurrence_persist_fp_mismatch_dual_track_3819_coverage()
+
+
+def cmd_pending_offer_map_miss_retain_3820_coverage():
+    """Issue #3820: pending offer retains map-miss under prod||Full (static)."""
+    print(f"{B}=== pending offer map-miss retain (#3820) ==={N}")
+    script = COVERAGE_CHECKS / "check_pending_offer_map_miss_retain_3820.py"
+    if not script.is_file():
+        fail(f"missing {script}")
+        return 1
+    if run([sys.executable, str(script)], cwd=ROOT) != 0:
+        fail("pending offer map-miss retain (#3820) coverage contract rows failed")
+        return 1
+    ok("pending offer map-miss retain (#3820) coverage clean")
+    return 0
+
+
+def cmd_pending_offer_map_miss_retain_3820():
+    """Issue #3820: solve_delta pending offer retains var_to_constraints_ miss."""
+    print(f"{B}=== pending offer map-miss retain (#3820) ==={N}")
+    return cmd_pending_offer_map_miss_retain_3820_coverage()
 
 
 def cmd_engine_metrics_hash_overflow_3018_coverage():
