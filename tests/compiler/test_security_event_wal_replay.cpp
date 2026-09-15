@@ -952,6 +952,136 @@ int run_test_security_event_wal_replay() {
         apply_dev_audit_defaults();
     }
 
+    // ── Issue #3806: WAL overflow wrap counter + Agent faces ─────────
+    {
+        std::println("\n--- #3806 AC1/AC2/AC3: overflow wrap counter + Agent faces ---");
+        using aura::core::security_event_wal::kWalOverflowRingCapacity;
+        using aura::core::security_event_wal::kWalOverflowWrapIssue;
+        using aura::core::security_event_wal::wal_overflow_find_by_mid;
+        using aura::core::security_event_wal::wal_overflow_ring_clear_for_test;
+        using aura::core::security_event_wal::wal_overflow_ring_depth;
+        using aura::core::security_event_wal::wal_overflow_ring_full;
+        using aura::core::security_event_wal::wal_overflow_ring_push;
+        using aura::core::security_event_wal::wal_overflow_ring_wrap_total;
+        using aura::core::security_event_wal::WalOverflowRecord;
+
+        reset_all();
+        wal_overflow_ring_clear_for_test();
+        CompilerService cs;
+
+        // Soft / Off: wrap=0, depth=0, full=0 (AC3 — no push today).
+        CHECK(wal_overflow_ring_wrap_total().load(std::memory_order_relaxed) == 0,
+              "3806 AC3: wrap_total=0 Soft/Off");
+        CHECK(wal_overflow_ring_depth() == 0, "3806 AC3: depth=0 Soft/Off");
+        CHECK(!wal_overflow_ring_full(), "3806 AC3: full=0 Soft/Off");
+        CHECK(href_posture(cs, "wal-overflow-wrap-total") == 0, "3806 AC2: posture wrap=0 Soft");
+        CHECK(href_posture(cs, "wal-overflow-full") == 0, "3806 AC2: posture full=0 Soft");
+        CHECK(href_posture(cs, "wal-overflow-ring-depth") == 0, "3806 AC2: posture depth=0 Soft");
+        CHECK(href_posture(cs, "schema-3806") == kWalOverflowWrapIssue, "3806 AC2: schema-3806");
+        CHECK(href_posture(cs, "issue-3806") == kWalOverflowWrapIssue, "3806 AC2: issue-3806");
+
+        auto href_audit_stats = [&](std::string_view key) -> std::int64_t {
+            auto r = cs.eval(std::format(
+                "(hash-ref (engine:metrics \"query:security-audit-stats\") \"{}\")", key));
+            if (!r || !is_int(*r))
+                return -1;
+            return as_int(*r);
+        };
+        auto href_evol = [&](std::string_view key) -> std::int64_t {
+            auto r = cs.eval(std::format(
+                "(hash-ref (engine:metrics \"query:evolution-audit-decision\") \"{}\")", key));
+            if (!r || !is_int(*r))
+                return -1;
+            return as_int(*r);
+        };
+        CHECK(href_audit_stats("wal-overflow-wrap-total") == 0, "3806 AC2: audit-stats wrap=0");
+        CHECK(href_evol("wal-overflow-wrap-total") == 0, "3806 AC2: evolution wrap=0 Soft");
+        CHECK(href_wal_stats(cs, "wal-overflow-wrap-total") == 0,
+              "3806 AC2: audit-wal-stats wrap=0 Soft");
+
+        // Fill to capacity — wrap stays 0 (no overwrite yet).
+        for (std::uint32_t i = 0; i < kWalOverflowRingCapacity; ++i) {
+            WalOverflowRecord rec{};
+            rec.mid = i + 1; // earliest mid=1
+            rec.reason = "test:3806-fill";
+            wal_overflow_ring_push(rec);
+        }
+        CHECK(wal_overflow_ring_full(), "3806 AC1: ring full after 256");
+        CHECK(wal_overflow_ring_wrap_total().load(std::memory_order_relaxed) == 0,
+              "3806 AC1: wrap_total=0 before overwrite");
+        CHECK(wal_overflow_find_by_mid(1) != nullptr, "3806 AC1: earliest mid still findable");
+
+        // Push 44 more → wrap >= 44; mid=1 overwritten / gone.
+        constexpr std::uint32_t kExtra = 44;
+        for (std::uint32_t i = 0; i < kExtra; ++i) {
+            WalOverflowRecord rec{};
+            rec.mid = 10000 + i;
+            rec.reason = "test:3806-wrap";
+            wal_overflow_ring_push(rec);
+        }
+        const auto wraps = wal_overflow_ring_wrap_total().load(std::memory_order_relaxed);
+        CHECK(wraps >= kExtra, "3806 AC1: wrap_total >= overwrite count");
+        CHECK(wal_overflow_find_by_mid(1) == nullptr,
+              "3806 AC1: earliest mid vanished after wrap");
+        CHECK(wal_overflow_find_by_mid(10000 + kExtra - 1) != nullptr,
+              "3806 AC1: newest mid still findable");
+        CHECK(href_posture(cs, "wal-overflow-wrap-total") >= static_cast<std::int64_t>(kExtra),
+              "3806 AC2: posture wrap face after storm");
+        CHECK(href_posture(cs, "wal-overflow-full") == 1, "3806 AC2: posture full=1");
+        CHECK(href_posture(cs, "wal-overflow-ring-depth") ==
+                  static_cast<std::int64_t>(kWalOverflowRingCapacity),
+              "3806 AC2: posture depth=capacity");
+        CHECK(href_audit_stats("wal-overflow-wrap-total") >= static_cast<std::int64_t>(kExtra),
+              "3806 AC2: security-audit-stats wrap face");
+        CHECK(href_evol("wal-overflow-wrap-total") >= static_cast<std::int64_t>(kExtra),
+              "3806 AC2: evolution-audit-decision wrap face");
+        CHECK(href_wal_stats(cs, "wal-overflow-wrap-total") >= static_cast<std::int64_t>(kExtra),
+              "3806 AC2: audit-wal-stats wrap face");
+
+        // Inject path also bumps wrap once ring is full (production fail-closed).
+        ::setenv("AURA_WAL_APPEND_FAIL_CLOSED", "1", 1);
+        apply_production_audit_defaults();
+        const auto dir = fresh_wal_dir("3806-inject");
+        CHECK(cs.evaluator().enable_security_event_wal(dir.string()), "3806: enable SE WAL");
+        CHECK(aura::core::wal_slo::wal_append_fail_closed_active(), "3806: fail-closed active");
+        const auto wrap_before =
+            wal_overflow_ring_wrap_total().load(std::memory_order_relaxed);
+        aura::core::wal_slo::g_wal_append_fail_slo_counters.inject_fail_remaining.store(
+            1, std::memory_order_relaxed);
+        const bool fail_ret = aura::core::security_event_wal::persist_security_event(
+            SecurityEventKind::EffectDeny, 7, 0x3806ULL, 1, 0, "test:3806-inject", "inject", true,
+            1, 0);
+        CHECK(!fail_ret, "3806: inject fail returns false");
+        CHECK(wal_overflow_ring_wrap_total().load(std::memory_order_relaxed) == wrap_before + 1,
+              "3806 AC1: inject overwrite bumps wrap");
+        cs.evaluator().disable_security_event_wal();
+        fs::remove_all(dir);
+        ::unsetenv("AURA_WAL_APPEND_FAIL_CLOSED");
+
+        // Source-cite / no-invent.
+        const auto sew = read_repo_file("src/core/security_event_wal.hh");
+        const auto sec = read_repo_file("src/compiler/evaluator_primitives_security.cpp");
+        const auto build = read_repo_file("build.py");
+        CHECK(sew.find("security_event_wal_overflow_wrap_total") != std::string::npos,
+              "3806 AC1: counter name in WAL header");
+        CHECK(sew.find("kWalOverflowWrapIssue = 3806") != std::string::npos, "3806: issue stamp");
+        CHECK(sec.find("wal-overflow-wrap-total") != std::string::npos, "3806 AC2: prim key");
+        CHECK(sec.find("wal-overflow-full") != std::string::npos, "3806 AC2: full key");
+        CHECK(sec.find("\"wal-overflow-ring-depth\"") != std::string::npos,
+              "3806 AC2: depth key not renamed");
+        CHECK(build.find("check_wal_overflow_wrap_3806") != std::string::npos,
+              "3806: build.py wires linter");
+        CHECK(read_repo_file("tests/compiler/test_issue_3806.cpp").empty(),
+              "3806: no invent test_issue_3806.cpp");
+        CHECK(read_repo_file("docs/design/3806-wal-overflow-wrap.md").empty(),
+              "3806: no docs/design/3806-*");
+
+        wal_overflow_ring_clear_for_test();
+        CHECK(wal_overflow_ring_wrap_total().load(std::memory_order_relaxed) == 0,
+              "3806: clear_for_test resets wrap");
+        reset_all();
+    }
+
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

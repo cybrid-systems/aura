@@ -8647,6 +8647,19 @@ def cmd_lint():
             "Issue #3805 abandoned-live name reuse linter failed — run python3 scripts/coverage/checks/check_abandoned_live_name_reuse_3805.py"
         )
         return r
+    # Issue #3806: SE WAL overflow ring wrap/overwrite counter + Agent
+    # faces (depth/wrap-total/full). Extends test_security_event_wal_replay
+    # + test_security_posture_trail (#81967); no docs/design (#1655).
+    wow3806_script = COVERAGE_CHECKS / "check_wal_overflow_wrap_3806.py"
+    if not wow3806_script.exists():
+        fail(f"missing {wow3806_script}")
+        return 1
+    r = run([sys.executable, str(wow3806_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3806 WAL overflow wrap linter failed — run python3 scripts/coverage/checks/check_wal_overflow_wrap_3806.py"
+        )
+        return r
     # Issue #2887: mailbox BP storm — producer degrade hook on
     # AgentScope::watch_all (on_backpressure Cancel/Throttle/RestartN;
     # default ReportOnly). Complements admit soft-reject of new spawns
