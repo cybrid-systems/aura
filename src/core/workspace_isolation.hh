@@ -198,9 +198,9 @@ struct WorkspaceIsolationPolicy {
     // orch helper, test-only path that ships into production, or accidental
     // `g_workspace_isolation().grant_cross_tenant(...)` from a non-Evaluator
     // TU). Production (Restricted/Strict) requires TenantAdmin on the caller
-    // (registry default_tenant) or the target tenant. Soft/Off stays zero-cost
-    // (AC3). Same shape as CapabilityRegistry::grant_macro_self_evo post-#3029
-    // and registry foreign-tenant grant_effect_ post-#2968/#2969.
+    // only (#3800 — target-only TA no longer clears the fence). Soft/Off
+    // stays zero-cost (AC3). Same shape as CapabilityRegistry::grant_macro_self_evo
+    // post-#3029 and registry foreign-tenant grant_effect_ post-#2968/#2969.
     //
     // Issue #3145: `caller_principal` is the explicit caller principal
     // (Evaluator::capability_tenant_id_) — Evaluator::grant_cross_tenant_access
@@ -261,10 +261,11 @@ struct WorkspaceIsolationPolicy {
     }
 
     // Issue #3086: internal deny-path helper for grant_cross_tenant. Returns
-    // true if the caller (or target) holds TenantAdmin under production;
-    // false (with SE + deny-counter bump) otherwise. Soft/Off is zero-cost
-    // allow (AC3). Evaluator::grant_cross_tenant_access becomes a thin
-    // stamp+call — no second policy to keep in sync, no double-count.
+    // true if the caller holds TenantAdmin under production (#3800 —
+    // caller-only; target-only TA is deny); false (with SE + deny-counter
+    // bump) otherwise. Soft/Off is zero-cost allow (AC3).
+    // Evaluator::grant_cross_tenant_access becomes a thin stamp+call — no
+    // second policy to keep in sync, no double-count.
     //
     // Issue #3145 AC1/AC2: under production (Restricted/Strict), the
     // privilege decision must be (a) read under the registry mtx via
@@ -289,9 +290,10 @@ struct WorkspaceIsolationPolicy {
     // wins; fallback to default_tenant only for legacy direct callers
     // without an Evaluator context — the fallback never widens access.
     // SE reason string + counter names unchanged (#2968 stable).
-    // Issue #3797: on allow, `*out_mint_principal` receives the authorizing
-    // principal (caller if holds TA, else target). Caller MUST pass non-null
-    // under production grant_cross_tenant; Soft/Off never reaches here.
+    // Issue #3797 / #3800: on allow, `*out_mint_principal` receives the
+    // authorizing caller (caller-only TA — target-only TA is deny). Caller
+    // MUST pass non-null under production grant_cross_tenant; Soft/Off never
+    // reaches here.
     [[nodiscard]] bool
     try_grant_cross_tenant_privileged(TenantId to, std::uint16_t effect_bits,
                                       TenantId caller_principal,
@@ -301,15 +303,14 @@ struct WorkspaceIsolationPolicy {
                                     ? caller_principal
                                     : reg.default_tenant.load(std::memory_order_acquire);
         const auto caller_eff = reg.effects_for_locked(caller);
-        const auto target_eff = reg.effects_for_locked(to);
         using ::aura::core::capability::Effect;
         using ::aura::core::capability::has_effect;
+        // Issue #3800: caller-only TenantAdmin. Target-only TA must not mint
+        // cross_grants (least-privilege; replaces #3086 AC3 target-admin allow).
         const bool caller_ta = has_effect(caller_eff, Effect::TenantAdmin);
-        const bool target_ta = has_effect(target_eff, Effect::TenantAdmin);
-        const bool is_admin = caller_ta || target_ta;
-        if (is_admin) {
+        if (caller_ta) {
             if (out_mint_principal)
-                *out_mint_principal = caller_ta ? caller : to;
+                *out_mint_principal = caller;
             return true;
         }
         const auto epoch = ::aura::core::current_mutation_epoch();
