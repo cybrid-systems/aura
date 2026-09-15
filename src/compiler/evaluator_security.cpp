@@ -1517,27 +1517,43 @@ void Evaluator::revoke_effect_capability(std::uint64_t tenant_id, std::string_vi
     if (ep == 0)
         ep = 1;
     auto& reg_revoke = g_capability_registry();
+    // Issue #3797: foreign path uses revoke_locked under registry mtx — after
+    // unlock, if the target lost its last TenantAdmin bit, wipe matching
+    // cross_grants (mint_principal join) via the installed hook. Same-tenant
+    // / Soft path goes through CapabilityRegistry::revoke which does the
+    // same notify. Lock order: registry released before isolation (#3597).
+    bool lost_ta = false;
     if (force_bind && foreign_target) {
-        std::lock_guard<std::mutex> lock(reg_revoke.mtx);
-        const auto held = reg_revoke.effects_for_locked(self_tenant);
-        const bool is_admin = has_effect(held, Effect::TenantAdmin);
-        if (!is_admin) {
-            using ::aura::core::security_event::SecurityEventKind;
-            using ::aura::core::security_event_wal::emit_security_event_durable;
-            const auto epoch = aura::core::current_mutation_epoch();
-            const auto mid = epoch != 0 ? epoch : static_cast<std::uint64_t>(1);
-            const auto tenant = tenant_id != 0 ? tenant_id : self_tenant;
-            const auto fid = static_cast<std::int64_t>(
-                effect_fiber_id_or(static_cast<std::uint32_t>(aura_fiber_current_id())));
-            aura::core::capability::g_capability_effect_metrics()
-                .capability_grant_foreign_tenant_deny_total.fetch_add(1, std::memory_order_relaxed);
-            emit_security_event_durable(SecurityEventKind::EffectDeny, tenant, mid, epoch,
-                                        /*effect_bits=*/0, name,
-                                        "grant-foreign-tenant-needs-tenant-admin",
-                                        /*denied=*/true, fid);
-            return; // deny — no revoke, no allow-counter bump (AC4)
+        {
+            std::lock_guard<std::mutex> lock(reg_revoke.mtx);
+            const auto held = reg_revoke.effects_for_locked(self_tenant);
+            const bool is_admin = has_effect(held, Effect::TenantAdmin);
+            if (!is_admin) {
+                using ::aura::core::security_event::SecurityEventKind;
+                using ::aura::core::security_event_wal::emit_security_event_durable;
+                const auto epoch = aura::core::current_mutation_epoch();
+                const auto mid = epoch != 0 ? epoch : static_cast<std::uint64_t>(1);
+                const auto tenant = tenant_id != 0 ? tenant_id : self_tenant;
+                const auto fid = static_cast<std::int64_t>(
+                    effect_fiber_id_or(static_cast<std::uint32_t>(aura_fiber_current_id())));
+                aura::core::capability::g_capability_effect_metrics()
+                    .capability_grant_foreign_tenant_deny_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                emit_security_event_durable(SecurityEventKind::EffectDeny, tenant, mid, epoch,
+                                            /*effect_bits=*/0, name,
+                                            "grant-foreign-tenant-needs-tenant-admin",
+                                            /*denied=*/true, fid);
+                return; // deny — no revoke, no allow-counter bump (AC4)
+            }
+            const bool had_ta =
+                has_effect(reg_revoke.effects_for_locked(tenant_id), Effect::TenantAdmin);
+            reg_revoke.revoke_locked(tenant_id, name, ep);
+            if (had_ta &&
+                !has_effect(reg_revoke.effects_for_locked(tenant_id), Effect::TenantAdmin))
+                lost_ta = true;
         }
-        reg_revoke.revoke_locked(tenant_id, name, ep);
+        if (lost_ta)
+            maybe_notify_tenant_admin_lost(tenant_id);
     } else {
         reg_revoke.revoke(tenant_id, name, ep);
     }
