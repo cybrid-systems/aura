@@ -3974,6 +3974,38 @@ int main() {
               "3722 AC6: no docs/design/3722-* per #1655");
         CHECK(read_file("tests/core/test_issue_3722.cpp").empty(),
               "3722 AC6: no test_issue_3722.cpp per #81934");
+
+        // ── #3790: rollback acquires MutationBoundaryGuard (concurrency half) ──
+        {
+            std::println("\n--- #3790 AC1–AC5: Guard acquire + Soft cite ---");
+            const auto prim = read_file("src/compiler/evaluator_primitives_mutation.cpp");
+            CHECK(prim.find("Issue #3790") != std::string::npos, "3790 AC5: cites #3790");
+            CHECK(prim.find("mutate_dispatch.hh") != std::string::npos,
+                  "3790 AC5: includes dispatch");
+            const auto rb_pos = prim.find("add(\"rollback\"");
+            CHECK(rb_pos != std::string::npos, "3790 AC2: rollback prim");
+            const auto rb_win = prim.substr(rb_pos, 2200);
+            CHECK(rb_win.find("mutate_dispatch_try_acquire") != std::string::npos,
+                  "3790 AC2: rollback acquires Guard");
+            CHECK(rb_win.find("require_effect") != std::string::npos,
+                  "3790 AC1: effect gate retained");
+            const auto acq = rb_win.find("mutate_dispatch_try_acquire");
+            const auto write = rb_win.find("rollback(mid)");
+            CHECK(acq != std::string::npos && write != std::string::npos && acq < write,
+                  "3790 AC3: acquire precedes FlatAST rollback (restamp on Guard exit)");
+            const auto rs_pos = prim.find("add(\"rollback-since\"");
+            CHECK(rs_pos != std::string::npos, "3790 AC2: rollback-since prim");
+            const auto rs_win = prim.substr(rs_pos, 2200);
+            CHECK(rs_win.find("mutate_dispatch_try_acquire") != std::string::npos,
+                  "3790 AC2: rollback-since acquires Guard");
+            CHECK(
+                read_file("scripts/coverage/checks/check_rollback_mutation_boundary_guard_3790.py")
+                        .find("#3790") != std::string::npos,
+                "3790 AC5: coverage linter present");
+            CHECK(read_file("tests/compiler/test_issue_3790.cpp").empty(), "3790 AC5: no invent");
+            CHECK(read_file("docs/design/3790-rollback-guard.md").empty(),
+                  "3790 AC5: no docs/design");
+        }
     }
 
     // ── #3792 AC1/AC2/AC3: mutation-history rows filtered to the caller
