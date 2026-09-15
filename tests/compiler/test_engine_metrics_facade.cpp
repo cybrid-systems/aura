@@ -172,13 +172,14 @@ int main() {
               "3246 AC2: observe-only preserved");
     }
 
-    // ── Issue #3339: Agent decision facade headroom; no hash-overflow ──
+    // ── Issue #3339 / #3807: Agent decision facade headroom; no hash-overflow ──
     // Runs before :prefix catalog dump so a prefix leftover cannot hide ACs.
+    // #3807: orch-module-stats joins the production_defaults overflow hard-fail set.
     {
         using aura::compiler::typed_audit::apply_dev_audit_defaults;
         using aura::compiler::typed_audit::apply_production_audit_defaults;
         using aura::compiler::typed_audit::reset_for_test;
-        std::println("\n--- #3339: Agent decision facade planned_keys headroom ---");
+        std::println("\n--- #3339/#3807: Agent decision facade planned_keys headroom ---");
         aura_query_hash_set_force_cap(0);
         aura_query_hash_reset_overflow_for_test();
         reset_for_test();
@@ -187,7 +188,7 @@ int main() {
         const char* kFacades[] = {
             "query:evolution-audit-decision",  "query:security-posture",
             "query:type-linear-commit-health", "query:type-linear-evolution-snapshot",
-            "query:reload-recovery-playbook",
+            "query:reload-recovery-playbook",  "query:orch-module-stats",
         };
         for (const char* q : kFacades) {
             const auto expr = std::format("(engine:metrics \"{}\")", q);
@@ -218,6 +219,14 @@ int main() {
         CHECK(hash_int(cs, "(engine:metrics \"query:reload-recovery-playbook\")", "schema-2953") ==
                   2953,
               "3339 AC2: reload-recovery-playbook schema-2953");
+        CHECK(hash_int(cs, "(engine:metrics \"query:orch-module-stats\")", "schema") == 1588,
+              "3807 AC2: orch-module-stats schema present");
+        CHECK(hash_int(cs, "(engine:metrics \"query:orch-module-stats\")",
+                       "orch-module-stats-overflow-wired") == 1,
+              "3807 AC2: orch-module-stats-overflow-wired");
+        CHECK(read_file("src/compiler/evaluator_primitives_agent.cpp")
+                      .find("kOrchModuleStatsPlannedKeys = 512") != std::string::npos,
+              "3807 AC1: kOrchModuleStatsPlannedKeys = 512");
 
         const auto evix = read_file("src/compiler/evaluator.ixx");
         CHECK(evix.find("kAgentDecisionFacadeHeadroom = 8") != std::string::npos,

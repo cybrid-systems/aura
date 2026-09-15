@@ -1,15 +1,19 @@
 #!/usr/bin/env python3
-"""Issue #3339: Agent decision facade planned_keys headroom + no overflow.
+"""Issue #3339 / #3807: Agent decision facade planned_keys headroom + no overflow.
 
 Agent single-hash decision facades must keep
 planned_keys >= actual insert_kv count + 8. Additive insert_kv must
 raise planned_keys. hash-overflow on these facades is a hard fail
 (non-Agent catalogs may still stamp #3020 overflow).
 
+Issue #3807: query:orch-module-stats (~390 live insert_kv, planned=512)
+joins the same headroom CI so orch growth cannot silently drop Agent keys.
+
 Contract (one row per AC):
   AC1  planned >= actual + 8 on evolution-audit-decision /
        security-posture / type-linear-commit-health /
-       type-linear-evolution-snapshot / reload-recovery-playbook
+       type-linear-evolution-snapshot / reload-recovery-playbook /
+       orch-module-stats (#3807)
   AC2  tests under production_defaults assert hash-overflow is absent
   AC3  +20 dummy keys without raising planned would fail AC1 on
        evolution-audit-decision
@@ -38,17 +42,36 @@ def _read(rel: str) -> str:
 
 
 def _block(src: str, query: str) -> str:
+    """Slice handler body for *query*.
+
+    Prefer the registration that defines PlannedKeys + insert_kv so
+    comment mentions (e.g. orch-module-stats docs near parallel-intend)
+    do not win over the live query_hash_finish facade (#3807).
+    """
     needle = f'"{query}"'
-    i = src.find(needle)
-    if i < 0:
+    candidates: list[str] = []
+    start = 0
+    while True:
+        i = src.find(needle, start)
+        if i < 0:
+            break
+        ends: list[int] = []
+        for tok in ("return query_hash_finish", "return make_hash"):
+            j = src.find(tok, i + 20)
+            if j > i:
+                ends.append(j)
+        end = min(ends) + 40 if ends else min(len(src), i + 25000)
+        candidates.append(src[i:end])
+        start = i + 1
+    if not candidates:
         return ""
-    ends: list[int] = []
-    for tok in ("return query_hash_finish", "return make_hash"):
-        j = src.find(tok, i + 20)
-        if j > i:
-            ends.append(j)
-    end = min(ends) + 40 if ends else min(len(src), i + 25000)
-    return src[i:end]
+    for c in candidates:
+        if PLANNED_RE.search(c) and ("insert_kv" in c or "insert_kv_checked" in c):
+            return c
+    for c in candidates:
+        if "insert_kv" in c or "insert_kv_checked" in c:
+            return c
+    return candidates[0]
 
 
 def _actual(block: str) -> list[str]:
@@ -67,6 +90,7 @@ def main() -> int:
     ref = _read("src/compiler/evaluator_primitives_query_reflect.cpp")
     mut = _read("src/compiler/evaluator_primitives_mutate.cpp")
     obs = _read("src/compiler/evaluator_primitives_obs_eval.cpp")
+    agent = _read("src/compiler/evaluator_primitives_agent.cpp")
     test = _read("tests/compiler/test_engine_metrics_facade.cpp")
     lint3020 = _read("scripts/coverage/checks/check_query_hash_overflow_3020.py")
     build = _read("build.py")
@@ -81,6 +105,8 @@ def main() -> int:
         ("query:type-linear-commit-health", ref, "kTypeLinearCommitHealthPlannedKeys"),
         ("query:type-linear-evolution-snapshot", ref, "kTypeLinearEvolutionSnapshotPlannedKeys"),
         ("query:reload-recovery-playbook", mut, "kReloadRecoveryPlaybookPlannedKeys"),
+        # Issue #3807: primary Agent soak surface (~390 live / planned 512)
+        ("query:orch-module-stats", agent, "kOrchModuleStatsPlannedKeys"),
     ]
 
     evo_planned = 0
@@ -112,6 +138,13 @@ def main() -> int:
             must('insert_kv("last-audit-mid"', "AC1 last-audit-mid", block)
         if query == "query:security-posture":
             must('insert_kv("schema-2534"', "AC1 posture schema-2534", block)
+        if query == "query:orch-module-stats":
+            must("insert_kv_checked", "AC1 orch insert_kv_checked", block)
+            must("query_hash_finish", "AC1 orch query_hash_finish", block)
+            must('insert_kv("orch-module-stats-overflow-wired"', "AC1 orch overflow-wired", block)
+            # Soft/Off: no second metrics bus / no query key rename (#3807 AC2/AC3)
+            if "query:orch-module-stats-v2" in agent or "query:orch-module-stats2" in agent:
+                fails.append("AC4: orch-module-stats renamed (forbidden)")
 
     obs_block = _block(obs, "query:security-posture")
     must("kSecurityPostureWalPlannedKeys", "AC1 obs posture planned", obs_block)
@@ -126,6 +159,7 @@ def main() -> int:
     must("ac3339_2_no_overflow", "AC2 test", test)
     must("hash-overflow", "AC2 test overflow key", test)
     must("apply_production_audit_defaults", "AC2 production", test)
+    must("query:orch-module-stats", "AC2/#3807 orch in production overflow hard-fail", test)
 
     if evo_actual > 0 and evo_planned >= (evo_actual + 20) + HEADROOM:
         fails.append(
@@ -159,7 +193,7 @@ def main() -> int:
             print(f"FAIL: {f}", file=sys.stderr)
         print(f"\n{len(fails)} contract row(s) failed", file=sys.stderr)
         return 1
-    print("OK: Issue #3339 Agent decision facade headroom — all AC rows satisfied")
+    print("OK: Issue #3339/#3807 Agent decision facade headroom — all AC rows satisfied")
     return 0
 
 
