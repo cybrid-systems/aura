@@ -277,9 +277,13 @@ export inline constexpr int kUnwiredPredProductionIssue = 3502;
 
 // Issue #3690: Production last-look at DirtyAware entry. Consults
 // should_partial_relower_storm_aware (metrics). Soft/Off: false (mask
-// unchanged). Production + dirty_n>0 + Global / storm-exit force-full:
-// true → caller treats the mask as all-dirty for this suite.
+// unchanged).
+// Issue #3831: Cap all-1s rewrite while Global is held — require a second
+// dirty_n threshold (kDefaultPartialRelowerThreshold) before erasing the
+// dirty cone. Storm-exit force-full cooldown (#3070 Shape+deopt) still
+// rewrites at dirty_n>0. Soft consult-only unchanged. No second pipeline.
 export inline constexpr int kDirtyAwareStormLastLookIssue = 3690;
+export inline constexpr int kDirtyAwareStormForceFullCapIssue = 3831;
 export [[nodiscard]] inline bool
 production_dirty_aware_storm_force_full(std::size_t dirty_n) noexcept {
     const bool allow_partial = should_partial_relower_storm_aware(dirty_n);
@@ -287,7 +291,16 @@ production_dirty_aware_storm_force_full(std::size_t dirty_n) noexcept {
         return false;
     if (aura_production_defaults_active_probe() == 0)
         return false;
-    return !allow_partial;
+    if (allow_partial)
+        return false;
+    // !allow_partial ⇒ Global and/or storm-exit cooldown.
+    // Issue #3831: while Global held, sparse cones keep amortizing —
+    // only dense dirty_n (>= default partial threshold) may all-1s rewrite.
+    // Storm-exit (no Global) keeps force-full at any dirty_n>0 (Shape+deopt
+    // hysteresis alignment, no second cooldown pipeline).
+    if (storm_level_has_global() && dirty_n < kDefaultPartialRelowerThreshold)
+        return false;
+    return true;
 }
 
 static_assert(std::is_trivially_copyable_v<BlockDirtyPred>,
@@ -732,9 +745,9 @@ bool run_incremental_dirty_pipeline(aura::ir::IRModule& mod, P& pass,
     // Issue #2109 / #2190: consult storm-aware partial gate at DirtyAware
     // entry so Agents can correlate partial vs full with pass skip metrics
     // and StormLevel Global force-full.
-    // Issue #3690: Production last-look — if Global / storm-exit force-full
-    // after consult_workload snapshot, treat the mask as all-dirty for this
-    // invocation (no clean-block skip). Soft/Off: consult-only.
+    // Issue #3690 / Issue #3831: Production last-look — storm-exit / dense-under-
+    // Global may treat the mask as all-dirty; sparse-under-Global keeps
+    // cone skips (#3831). Soft/Off: consult-only.
     std::vector<std::vector<std::uint8_t>> storm_full_bits;
     DefineDirtyMaskView storm_full_view;
     if (define_cache && define_cache->block_dirty_per_func) {

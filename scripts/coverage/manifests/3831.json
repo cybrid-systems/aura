@@ -1,0 +1,39 @@
+{
+  "issue": 3831,
+  "title": "Issue #3831: Production dirty-aware storm force-full cap (cone amortize)",
+  "ok": "OK #3831 dirty_aware_storm_force_full_cap: all rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/pass_pipeline_core.ixx",
+      "contains": [
+        "Issue #3831",
+        "kDirtyAwareStormForceFullCapIssue = 3831",
+        "kDefaultPartialRelowerThreshold",
+        "storm_level_has_global()"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/compiler/test_partial_relower_storm_gate.cpp",
+      "contains": [
+        "3831 AC2",
+        "dirty-cone skips non-zero while Global held",
+        "cone skips accumulate across storm-held rounds"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/shape_profiler.cpp",
+      "contains": ["last_storm_from_compact_", "deopt_storm_compact_suppressed"]
+    },
+    {
+      "ac": "AC3-forbid",
+      "forbid": [
+        "tests/compiler/test_issue_3831.cpp",
+        "tests/issues/test_issue_3831.cpp",
+        "docs/design/3831-dirty-aware-storm-force-full-cap.md"
+      ]
+    }
+  ]
+}
