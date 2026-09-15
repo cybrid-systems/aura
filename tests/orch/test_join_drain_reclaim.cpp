@@ -2360,8 +2360,7 @@ static void ac3805_3_soft_and_done_path_unchanged() {
 static void ac3805_4_no_body_stack_free_on_retire() {
     using aura::serve::Fiber;
     using aura::serve::mf_mailbox::MultiFiberMailbox;
-    std::println("
---- #3805 AC4: #2661 — retire never frees body-stack while !is_done ---");
+    std::println("--- #3805 AC4: #2661 — retire never frees body-stack while !is_done ---");
     apply_production_audit_defaults();
     const char* prev = std::getenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS");
     std::string prev_s = prev ? prev : "";
