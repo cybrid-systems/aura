@@ -3912,7 +3912,8 @@ static void ac3307_5_existing_surfaces_preserved() {
         CHECK(false, "3307 AC5: commit_readiness_live_policy not found");
         return;
     }
-    const std::string scope = ixx.substr(live_pos, 2500);
+    // #3794: residual OR may wrap past 2500; keep face_hit() in window.
+    const std::string scope = ixx.substr(live_pos, 3200);
     CHECK(scope.find("pending_full_solve_residual_face_hit()") != std::string::npos,
           "3307 AC5: commit_readiness_live_policy still reads "
           "pending_full_solve_residual_face_hit() (no new query key)");
