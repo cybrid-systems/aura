@@ -5025,6 +5025,20 @@ def cmd_lint():
             "Issue #3824 steal force_clear hold foreign linter failed — run python3 scripts/coverage/checks/check_steal_force_clear_hold_foreign_3824.py"
         )
         return r
+    # Issue #3825: safepoint fail-closed must force-release hold (same as
+    # #3254 inbody) — mark_failed-only left workspace_mtx_ + MutationHold
+    # until Guard dtor. Soft path unchanged. Extends
+    # test_hold_budget_synthetic_yield_injection.cpp (#81967); no docs/design/.
+    hbsfr3825_script = COVERAGE_CHECKS / "check_hold_budget_safepoint_force_release_3825.py"
+    if not hbsfr3825_script.exists():
+        fail(f"missing {hbsfr3825_script}")
+        return 1
+    r = run([sys.executable, str(hbsfr3825_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3825 safepoint fail-closed force-release linter failed — run python3 scripts/coverage/checks/check_hold_budget_safepoint_force_release_3825.py"
+        )
+        return r
     # Issue #3802: EXEMPT_2ARG write-file/sys-* host-path isolation under
     # Restricted+MT / Strict — resolve under tenant root from
     # capability_tenant_id_; cross-tenant escape → IsolationDeny SE
@@ -15109,6 +15123,26 @@ def cmd_steal_force_clear_hold_foreign_3824():
     """Issue #3824: steal/force_clear must not drop another Guard's MutationHold."""
     print(f"{B}=== steal force_clear hold foreign (#3824) ==={N}")
     return cmd_steal_force_clear_hold_foreign_3824_coverage()
+
+
+def cmd_hold_budget_safepoint_force_release_3825_coverage():
+    """Issue #3825: safepoint fail-closed force-releases hold (static)."""
+    print(f"{B}=== hold-budget safepoint force-release (#3825) ==={N}")
+    script = COVERAGE_CHECKS / "check_hold_budget_safepoint_force_release_3825.py"
+    if not script.is_file():
+        fail(f"missing {script}")
+        return 1
+    if run([sys.executable, str(script)], cwd=ROOT) != 0:
+        fail("hold-budget safepoint force-release (#3825) coverage contract rows failed")
+        return 1
+    ok("hold-budget safepoint force-release (#3825) coverage clean")
+    return 0
+
+
+def cmd_hold_budget_safepoint_force_release_3825():
+    """Issue #3825: safepoint fail-closed unlocks via force_release_hold_budget_inbody."""
+    print(f"{B}=== hold-budget safepoint force-release (#3825) ==={N}")
+    return cmd_hold_budget_safepoint_force_release_3825_coverage()
 
 
 def cmd_engine_metrics_hash_overflow_3018_coverage():
