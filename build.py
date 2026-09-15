@@ -4765,6 +4765,21 @@ def cmd_lint():
             "Issue #3800 cross-tenant grant caller-only TA linter failed — run python3 scripts/coverage/checks/check_cross_tenant_grant_caller_ta_3800.py"
         )
         return r
+    # Issue #3801: IsolationDeny / production deny SE mid joins TypedMid
+    # (join_audit_and_se_mid / TypedMid-then-epoch). Production epoch?:1
+    # phantom mid mint forbidden outside Soft arms (#2493 Soft observe).
+    # Extends test_tenant_isolation_enforcement.cpp (#81967); no
+    # docs/design/ (#1655). No new posture / query key.
+    idm3801_script = COVERAGE_CHECKS / "check_isolation_deny_mid_join_3801.py"
+    if not idm3801_script.exists():
+        fail(f"missing {idm3801_script}")
+        return 1
+    r = run([sys.executable, str(idm3801_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3801 IsolationDeny mid-join linter failed — run python3 scripts/coverage/checks/check_isolation_deny_mid_join_3801.py"
+        )
+        return r
     # Issue #2969: registry write-fence — under production (Restricted/
     # Strict), grant/revoke targeting a foreign tenant id requires
     # TenantAdmin. Deny → SE reason grant-foreign-tenant-needs-tenant-admin

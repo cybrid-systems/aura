@@ -319,6 +319,14 @@ extern "C" const char* aura_classify_mid0_se_reason(const char* reason) noexcept
     return kAuditMidSsotMissReason.data();
 }
 
+
+// Issue #3801: expose join_audit_and_se_mid to core via C ABI (weak-friendly).
+// IsolationDeny SE mid lives in evaluator_security.cpp (same TU as
+// require_effect / production_deny_se_mid) so TypedMid TLS/atomic join.
+extern "C" std::uint64_t aura_join_audit_and_se_mid(std::uint64_t caller_mid) noexcept {
+    return aura::compiler::typed_audit::join_audit_and_se_mid(caller_mid);
+}
+
 extern "C" void aura_typed_audit_note_predicate_memo_eviction(std::uint64_t n) {
     aura::compiler::typed_audit::note_predicate_memo_eviction(n);
 }

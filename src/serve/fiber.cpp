@@ -736,6 +736,19 @@ extern "C" __attribute__((weak)) int aura_production_defaults_active_probe() noe
     return 0;
 }
 
+// Issue #3801: weak no-op — strong def in typed_mutation_audit_hooks.cpp.
+// Returns Mutation epoch so core IsolationDeny keeps #3594 mid=0 when the
+// audit TU is not linked (light-link / Soft).
+extern "C" __attribute__((weak)) std::uint64_t aura_isolation_deny_se_mid() noexcept {
+    return ::aura::core::current_mutation_epoch();
+}
+
+extern "C" __attribute__((weak)) std::uint64_t aura_join_audit_and_se_mid(std::uint64_t) noexcept {
+    return ::aura::core::current_mutation_epoch();
+}
+
+
+
 extern "C" __attribute__((weak)) void aura_evaluator_enforce_linear_on_densify(void*) noexcept {}
 
 // Issue #3195: weak no-op (single-worker / light-link). Strong def in
