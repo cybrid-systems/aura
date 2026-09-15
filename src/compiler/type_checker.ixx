@@ -70,6 +70,10 @@ export inline constexpr int kBidirectionalEmptyLinearCallNoDynamicIssue = 3518;
 // children. Production synthesizes inner Calls/Lets then fresh_var.
 // Soft keeps Dynamic Quote. Dynamic~T reject for Quote-in-Int is AC2.
 export inline constexpr int kBidirectionalQuoteWalkIssue = 3700;
+// Issue #3830: empty TypeAnnotation must not synthesize Dynamic
+// (same residual as empty Pair #3432 / Linear+Call #3518). Covered
+// tag; use fresh_var. Soft/Production same fresh_var hole.
+export inline constexpr int kBidirectionalEmptyTypeAnnotationNoDynamicIssue = 3830;
 
 export [[nodiscard]] constexpr bool is_bidirectional_tag_covered(aura::ast::NodeTag tag) noexcept {
     using T = aura::ast::NodeTag;

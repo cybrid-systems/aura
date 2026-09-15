@@ -5095,6 +5095,20 @@ def cmd_lint():
             "Issue #3829 dense columnar fingerprint linter failed — run python3 scripts/coverage/checks/check_dense_columnar_fingerprint_3829.py"
         )
         return r
+    # Issue #3830: covered TypeAnnotation empty arm must not cache Dynamic
+    # (residual of #3432/#3518 I1 parity). Soft/Production: fresh_var hole;
+    # non-empty / :? / _ unchanged; #3330 uncovered fail-closed unchanged.
+    # Extends test_bidirectional_match_check; no docs/design / invent.
+    etand3830_script = COVERAGE_CHECKS / "check_empty_type_annotation_no_dynamic_3830.py"
+    if not etand3830_script.exists():
+        fail(f"missing {etand3830_script}")
+        return 1
+    r = run([sys.executable, str(etand3830_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3830 empty TypeAnnotation no-Dynamic linter failed — run python3 scripts/coverage/checks/check_empty_type_annotation_no_dynamic_3830.py"
+        )
+        return r
     # Issue #3802: EXEMPT_2ARG write-file/sys-* host-path isolation under
     # Restricted+MT / Strict — resolve under tenant root from
     # capability_tenant_id_; cross-tenant escape → IsolationDeny SE
@@ -15282,6 +15296,27 @@ def cmd_dense_columnar_fingerprint_3829():
     return cmd_dense_columnar_fingerprint_3829_coverage()
 
 
+def cmd_empty_type_annotation_no_dynamic_3830_coverage():
+    """Issue #3830: covered TypeAnnotation empty arm must not cache Dynamic (static)."""
+    print(f"{B}=== empty TypeAnnotation no-Dynamic (#3830) ==={N}")
+    script = COVERAGE_CHECKS / "check_empty_type_annotation_no_dynamic_3830.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = run([sys.executable, str(script)], cwd=ROOT)
+    if r != 0:
+        fail("empty TypeAnnotation no-Dynamic (#3830) coverage contract rows failed")
+        return r
+    ok("empty TypeAnnotation no-Dynamic (#3830) coverage clean")
+    return 0
+
+
+def cmd_empty_type_annotation_no_dynamic_3830():
+    """Issue #3830: empty TypeAnnotation synthesizes fresh_var (I1 parity)."""
+    print(f"{B}=== empty TypeAnnotation no-Dynamic (#3830) ==={N}")
+    return cmd_empty_type_annotation_no_dynamic_3830_coverage()
+
+
 def cmd_engine_metrics_hash_overflow_3018_coverage():
     """Issue #3018: engine:metrics hash overflow fail-soft (static)."""
     print(f"{B}=== engine:metrics hash overflow coverage (#3018) ==={N}")
@@ -23257,6 +23292,8 @@ def main():
         "mutate-from-feedback-ssot-3828-coverage": cmd_mutate_from_feedback_ssot_3828_coverage,
         "dense-columnar-fingerprint-3829": cmd_dense_columnar_fingerprint_3829,
         "dense-columnar-fingerprint-3829-coverage": cmd_dense_columnar_fingerprint_3829_coverage,
+        "empty-type-annotation-no-dynamic-3830": cmd_empty_type_annotation_no_dynamic_3830,
+        "empty-type-annotation-no-dynamic-3830-coverage": cmd_empty_type_annotation_no_dynamic_3830_coverage,
         "mutate-dispatch-sole-guard-3074-coverage": cmd_mutate_dispatch_sole_guard_3074_coverage,
         "mutate-reg-kind-3452": cmd_mutate_reg_kind_3452_coverage,
         "mutate-reg-kind-3452-coverage": cmd_mutate_reg_kind_3452_coverage,

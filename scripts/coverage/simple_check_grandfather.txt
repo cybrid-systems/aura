@@ -405,3 +405,4 @@ scripts/coverage/checks/check_edge_free_latch_gate_3826.py
 scripts/coverage/checks/check_query_children_parent_schema2_3827.py
 scripts/coverage/checks/check_mutate_from_feedback_ssot_3828.py
 scripts/coverage/checks/check_dense_columnar_fingerprint_3829.py
+scripts/coverage/checks/check_empty_type_annotation_no_dynamic_3830.py

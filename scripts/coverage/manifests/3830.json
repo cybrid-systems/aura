@@ -1,0 +1,35 @@
+{
+  "issue": 3830,
+  "title": "Issue #3830: empty TypeAnnotation must not synthesize Dynamic",
+  "ok": "OK #3830 empty_type_annotation_no_dynamic: all rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/type_checker_impl.cpp",
+      "contains": ["Issue #3830", "cs_.fresh_var()", "synthesize_flat_annotation"]
+    },
+    {
+      "ac": "AC1-stamp",
+      "path": "src/compiler/type_checker.ixx",
+      "contains": ["kBidirectionalEmptyTypeAnnotationNoDynamicIssue = 3830"]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/compiler/test_bidirectional_match_check.cpp",
+      "contains": ["3830 AC2", ":? hole still synthesizes inner", "_ hole still synthesizes inner"]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/compiler/test_bidirectional_match_check.cpp",
+      "contains": ["3830 AC3", "kBidirectionalUncoveredNoDynamicIssue = 3330"]
+    },
+    {
+      "ac": "AC3-forbid",
+      "forbid": [
+        "tests/compiler/test_issue_3830.cpp",
+        "tests/issues/test_issue_3830.cpp",
+        "docs/design/3830-empty-type-annotation-no-dynamic.md"
+      ]
+    }
+  ]
+}

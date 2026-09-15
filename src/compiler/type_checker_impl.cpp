@@ -7535,8 +7535,13 @@ TypeId InferenceEngine::synthesize_flat_begin(FlatAST& flat, StringPool& pool, N
 
 TypeId InferenceEngine::synthesize_flat_annotation(FlatAST& flat, StringPool& pool, NodeView v) {
     // child(0) = inner_expr, sym_id = type name string
+    // Issue #3830: empty TypeAnnotation is incomplete, not Dynamic
+    // (same residual as empty Pair #3432 / Linear+Call #3518). Prefer
+    // fresh_var so later unify can bind (I1 parity). Soft: same
+    // fresh_var; Soft may observe Warning elsewhere. Do not cache
+    // Dynamic on this covered incomplete shape.
     if (v.children.empty())
-        return reg_.dynamic_type();
+        return cs_.fresh_var();
     auto inner_id = v.child(0);
     TypeId inner_type = synthesize_flat(flat, pool, inner_id, flat.get(inner_id));
 
@@ -7856,8 +7861,14 @@ void InferenceEngine::check_flat(FlatAST& flat, StringPool& pool, NodeId id, Typ
     } else if (v.tag == NodeTag::TypeAnnotation) {
         // Annotation in check mode: check inner against expected,
         // then check inner against annotation type
-        if (v.children.empty())
+        // Issue #3830: empty TypeAnnotation — synthesize fresh_var hole
+        // then unify with expected (same as empty Pair check path).
+        if (v.children.empty()) {
+            TypeId inferred = synthesize_flat(flat, pool, id, v);
+            cs_.consistent_unify(inferred, expected);
+            maybe_report_ground_inconsistency(inferred, expected);
             return;
+        }
         auto inner_id = v.child(0);
         auto type_name = pool.resolve(v.sym_id);
         if (!type_name.empty()) {

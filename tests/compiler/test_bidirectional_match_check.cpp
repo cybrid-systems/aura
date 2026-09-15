@@ -12,6 +12,7 @@
 //   #3044: exhaustive NodeTag coverage — Production TypeError / Soft Warning
 //   #3330: Production default must not return/cache Dynamic after uncovered tag
 //   #3432: covered empty Pair must not synthesize/cache Dynamic
+//   #3830: covered empty TypeAnnotation must not synthesize/cache Dynamic
 
 #include "test_harness.hpp"
 #include "compiler/mutation_concurrency_health.hh"
@@ -532,6 +533,136 @@ static void ac3518_empty_linear_call_no_dynamic() {
     apply_dev_audit_defaults();
 }
 
+static void ac3830_empty_type_annotation_no_dynamic() {
+    std::println("\n--- #3830 AC1–AC3: empty TypeAnnotation never Dynamic ---");
+    using aura::ast::NodeTag;
+    using aura::compiler::ConstraintSystem;
+    using aura::compiler::GradualPermissiveness;
+    using aura::compiler::kBidirectionalEmptyTypeAnnotationNoDynamicIssue;
+    using aura::compiler::TypeChecker;
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    using aura::core::TypeTag;
+
+    struct ProdScope {
+        ProdScope() { apply_production_audit_defaults(); }
+        ~ProdScope() { apply_dev_audit_defaults(); }
+    };
+
+    CHECK(kBidirectionalEmptyTypeAnnotationNoDynamicIssue == 3830, "3830: issue stamp");
+    apply_dev_audit_defaults();
+
+    aura::ast::ASTArena arena;
+    auto alloc = arena.allocator();
+    aura::ast::StringPool pool(alloc);
+    aura::ast::FlatAST flat(alloc);
+    aura::core::TypeRegistry treg;
+    aura::diag::DiagnosticCollector diag;
+
+    // AC1 Soft/Production: empty TypeAnnotation synth ≠ Dynamic; check vs Int
+    // behaves like fresh_var hole (unify binds).
+    {
+        std::println("\n--- 3830 AC1: Production empty TypeAnnotation never Dynamic ---");
+        ProdScope prod;
+        TypeChecker tc(treg);
+        diag.clear();
+        auto id = flat.add_node(NodeTag::TypeAnnotation);
+        CHECK(flat.get(id).children.empty(), "3830 AC1: empty TypeAnnotation children");
+        const auto c0 =
+            aura::compiler::g_bidirectional_uncovered_tag_total.load(std::memory_order_relaxed);
+        auto ty = tc.infer_flat(flat, pool, id, diag);
+        CHECK(ty != treg.dynamic_type(), "3830 AC1: empty TypeAnnotation never Dynamic");
+        CHECK(treg.tag_of(ty) != TypeTag::DYNAMIC, "3830 AC1: tag_of != DYNAMIC");
+        CHECK(treg.is_var(ty) || ty == treg.void_type(), "3830 AC1: TYPE_VAR or Void");
+        CHECK(flat.type_id(id) == ty.index, "3830 AC1: cache matches result");
+        CHECK(flat.type_id(id) != treg.dynamic_type().index, "3830 AC1: cache not Dynamic");
+        CHECK(tc.last_uncovered_bidirectional_tag_count() == 0,
+              "3830 AC1: TypeAnnotation covered, default arm not taken");
+        CHECK(aura::compiler::g_bidirectional_uncovered_tag_total.load(std::memory_order_relaxed) ==
+                  c0,
+              "3830 AC3: covered tag zero extra uncovered stores");
+        // fresh_var hole vs Int: unify binds (unlike Dynamic~T refuse under Strict).
+        ConstraintSystem cs(treg);
+        cs.set_unify_gradual_mode(GradualPermissiveness::Strict);
+        auto hole = cs.fresh_var();
+        CHECK(cs.consistent_unify(hole, treg.int_type()),
+              "3830 AC1: fresh_var hole unifies with Int");
+        CHECK(!cs.consistent_unify(treg.dynamic_type(), treg.int_type()),
+              "3830 AC1: Dynamic~Int refuse under Strict (contrast)");
+    }
+    {
+        std::println("\n--- 3830 AC1: Soft empty TypeAnnotation never Dynamic ---");
+        apply_dev_audit_defaults();
+        TypeChecker tc(treg);
+        diag.clear();
+        auto id = flat.add_node(NodeTag::TypeAnnotation);
+        auto ty = tc.infer_flat(flat, pool, id, diag);
+        CHECK(!aura::compiler::typed_audit::production_defaults_active(), "3830 AC1: Soft");
+        CHECK(ty != treg.dynamic_type(), "3830 AC1: Soft empty TypeAnnotation never Dynamic");
+        CHECK(treg.is_var(ty) || ty == treg.void_type(), "3830 AC1: Soft TYPE_VAR or Void");
+        CHECK(aura::compiler::is_bidirectional_tag_covered(NodeTag::TypeAnnotation),
+              "3830 AC1: coverage table lists TypeAnnotation");
+    }
+
+    // AC2: Non-empty annotation / :? / _ holes unchanged.
+    {
+        std::println("\n--- 3830 AC2: non-empty / hole annotations unchanged ---");
+        ProdScope prod;
+        TypeChecker tc(treg);
+        diag.clear();
+        auto inner = flat.add_literal(42);
+        auto int_sym = pool.intern("Int");
+        auto ann = flat.add_type_annotation(int_sym, inner);
+        auto ty = tc.infer_flat(flat, pool, ann, diag);
+        CHECK(ty == treg.int_type() || treg.tag_of(ty) != TypeTag::DYNAMIC,
+              "3830 AC2: non-empty Int annotation still synthesizes");
+        auto hole_sym = pool.intern(":?");
+        auto hole_ann = flat.add_type_annotation(hole_sym, flat.add_literal(7));
+        auto hole_ty = tc.infer_flat(flat, pool, hole_ann, diag);
+        CHECK(hole_ty == treg.int_type() || treg.is_var(hole_ty) ||
+                  treg.tag_of(hole_ty) != TypeTag::DYNAMIC,
+              "3830 AC2: :? hole still synthesizes inner");
+        auto us_sym = pool.intern("_");
+        auto us_ann = flat.add_type_annotation(us_sym, flat.add_literal(9));
+        auto us_ty = tc.infer_flat(flat, pool, us_ann, diag);
+        CHECK(us_ty == treg.int_type() || treg.is_var(us_ty) ||
+                  treg.tag_of(us_ty) != TypeTag::DYNAMIC,
+              "3830 AC2: _ hole still synthesizes inner");
+    }
+
+    // AC3: Uncovered-tag Production fail-closed unchanged (#3330).
+    auto impl = read_file("src/compiler/type_checker_impl.cpp");
+    auto hdr = read_file("src/compiler/type_checker.ixx");
+    CHECK(hdr.find("kBidirectionalEmptyTypeAnnotationNoDynamicIssue = 3830") != std::string::npos,
+          "3830 AC3: header stamp");
+    CHECK(hdr.find("kBidirectionalUncoveredNoDynamicIssue = 3330") != std::string::npos,
+          "3830 AC3: #3330 stamp kept");
+    CHECK(impl.find("note_uncovered_bidirectional_tag") != std::string::npos,
+          "3830 AC3: uncovered helper kept");
+    CHECK(impl.find("Issue #3830") != std::string::npos, "3830 AC3: impl cite");
+    const auto ann_fn = impl.find("TypeId InferenceEngine::synthesize_flat_annotation");
+    CHECK(ann_fn != std::string::npos, "3830 AC3: synthesize_flat_annotation");
+    const auto ann_body = impl.substr(ann_fn, 900);
+    CHECK(ann_body.find("cs_.fresh_var()") != std::string::npos,
+          "3830 AC1: empty TypeAnnotation fresh_var");
+    CHECK(ann_body.find("return reg_.dynamic_type()") == std::string::npos,
+          "3830 AC1: annotation empty arm does not return Dynamic");
+    CHECK(ann_body.find("is_type_hole") != std::string::npos, "3830 AC2: :?/_ hole path kept");
+    const auto check_pos = impl.find("InferenceEngine::check_flat(");
+    const auto check_after = impl.substr(check_pos);
+    const auto ta_pos = check_after.find("NodeTag::TypeAnnotation");
+    const auto ta_branch = check_after.substr(ta_pos, 900);
+    CHECK(ta_branch.find("Issue #3830") != std::string::npos,
+          "3830 AC1: check_flat empty hole cite");
+    CHECK(ta_branch.find("consistent_unify(inferred, expected)") != std::string::npos,
+          "3830 AC1: check vs expected like fresh_var hole");
+    CHECK(read_file("docs/design/3830-empty-type-annotation-no-dynamic.md").empty(),
+          "3830 AC3: no docs/design");
+    CHECK(read_file("tests/compiler/test_issue_3830.cpp").empty(), "3830 AC3: no invent");
+    CHECK(read_file("tests/issues/test_issue_3830.cpp").empty(), "3830 AC3: no issues invent");
+    apply_dev_audit_defaults();
+}
+
 static void ac3698_let_define_annotation() {
     std::println("\n--- #3698: check_flat Let/Define checks annotated value ---");
     using aura::compiler::kCheckFlatLetDefineAnnotationIssue;
@@ -813,6 +944,7 @@ int run_test_bidirectional_match_check() {
     ac3044_exhaustive_tag_coverage();
     ac3432_empty_pair_no_dynamic();
     ac3518_empty_linear_call_no_dynamic();
+    ac3830_empty_type_annotation_no_dynamic();
     {
         std::println("\n--- #3516: check_flat Set stamps TypeError on unify false ---");
         CHECK(aura::compiler::kCheckFlatSetUnifyErrorIssue == 3516, "3516: stamp");
