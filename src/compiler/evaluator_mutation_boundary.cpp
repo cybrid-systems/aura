@@ -725,9 +725,9 @@ extern "C" void aura_outermost_success_persist_occurrence(void* ev_ptr,
     tc->restamp_coercion_epoch_blame();
     // (3) Stamp TypeLinearCommitProof from post-persist CS truth so Agents
     // holding the proof across densify/steal match the durable snapshot.
-    // Soft + empty goals: freeze returns 0/0; stamp still records defuse
-    // epoch (additive, no new writes to persist buffer). Call site always
-    // passes defuse_version as mutation_id.
+    // Soft + empty goals: freeze returns 0/0; stamp records the join mid
+    // (#3778 SSOT — same as Occurrence persist / Typed trail / SE). Soft
+    // observe may still pass a non-join stamp when join mid is 0.
     // Issue #3346: note commit TC for last-look (do not note inside freeze —
     // fingerprint_tc tests use stack TypeCheckers).
     aura::compiler::typed_audit::note_stamp_last_look_tc(tc);
@@ -4329,7 +4329,18 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
         const bool batch_active =
             ev_->workspace_flat_ && ev_->workspace_flat_->atomic_batch_active();
         typed_audit::InvariantAuditResult inv{};
-        const auto mid_audit = ev_->defuse_version_.load(std::memory_order_relaxed);
+        // Issue #3778: join SSOT (cp.audit_mid / session / join_audit_and_se_mid)
+        // — never stamp defuse_version_ as the Typed/SE/Occurrence mid.
+        std::uint64_t mid_audit = 0;
+        {
+            auto& stk = ev_->active_mutation_stack();
+            if (!stk.empty() && stk.back().audit_mid != 0)
+                mid_audit = stk.back().audit_mid;
+            else if (session_mid_at_enter_ != 0)
+                mid_audit = session_mid_at_enter_;
+            else
+                mid_audit = typed_audit::join_audit_and_se_mid(0);
+        }
         (void)ev_->run_typed_mutation_invariant_audit(mid_audit, "outermost-pre-persist", 0,
                                                       mid_audit, mid_audit,
                                                       /*composite_mode=*/false, &inv);
@@ -4363,13 +4374,40 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
         }
     }
     if (outermost && success) {
-        const auto mid = ev_->defuse_version_.load(std::memory_order_relaxed);
-        aura_outermost_success_persist_occurrence(ev_, mid);
-        // Issue #3512: staging is one-shot for this outermost persist.
-        ev_->clear_expected_occurrence_snapshot_fp();
-        if (typed_audit::consume_outermost_persist_reject_needs_restore()) {
+        // Issue #3778: Occurrence persist mid == Typed/SE/grant/WAL join mid.
+        // Production/Full mid==0 refuse — never invent defuse_version_ as a
+        // phantom join key. Soft/Off: prefer join mid; else defuse observe.
+        std::uint64_t mid = 0;
+        {
+            auto& stk = ev_->active_mutation_stack();
+            if (!stk.empty() && stk.back().audit_mid != 0)
+                mid = stk.back().audit_mid;
+            else if (session_mid_at_enter_ != 0)
+                mid = session_mid_at_enter_;
+            else
+                mid = typed_audit::join_audit_and_se_mid(0);
+        }
+        const bool hard_3778 = typed_audit::production_defaults_active() ||
+                               typed_audit::get_strategy() == typed_audit::AuditStrategy::Full;
+        if (hard_3778 && mid == 0) {
+            typed_audit::clear_type_linear_commit_proof_on_abort();
+            typed_audit::publish_type_linear_proof_outcome(
+                typed_audit::kTypeLinearProofOutcomeReject);
+            aura_clear_occurrence_persist_buffer(ev_);
+            ev_->clear_type_export_authority();
+            ev_->clear_expected_occurrence_snapshot_fp();
             success = false;
             success_flag_store(flag_, false);
+        } else {
+            if (!hard_3778 && mid == 0)
+                mid = ev_->defuse_version_.load(std::memory_order_relaxed);
+            aura_outermost_success_persist_occurrence(ev_, mid);
+            // Issue #3512: staging is one-shot for this outermost persist.
+            ev_->clear_expected_occurrence_snapshot_fp();
+            if (typed_audit::consume_outermost_persist_reject_needs_restore()) {
+                success = false;
+                success_flag_store(flag_, false);
+            }
         }
     }
     // Issue #3472: belt-and-suspenders post-persist linear deny. The
@@ -5654,6 +5692,20 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
             // Prefer CS truth (#2842). Soft: helper false.
             const bool empty_fence_2981 = typed_audit::occurrence_empty_after_fence_blocks_proof(
                 densify_goal_truth_2842.live_goal_count);
+            // Issue #3778: densify TypeLinear proof stamp mid joins the same
+            // SSOT as Occurrence / Typed / SE (session_mid / join helper).
+            // Soft/Off keep defuse_version_ as observe stamp (#2717 drift).
+            const bool densify_hard_3778 =
+                typed_audit::production_defaults_active() ||
+                typed_audit::get_strategy() == typed_audit::AuditStrategy::Full;
+            const std::uint64_t densify_join_mid_3778 =
+                session_mid_at_enter_ != 0
+                    ? session_mid_at_enter_
+                    : typed_audit::join_audit_and_se_mid(
+                          typed_audit::g_last_stamped_audit_mid.load(std::memory_order_relaxed));
+            const std::uint64_t densify_stamp_mid_3778 =
+                densify_hard_3778 ? densify_join_mid_3778
+                                  : ev_->defuse_version_.load(std::memory_order_acquire);
             if (reject_path_2854 || empty_fence_2981 || densify_abort_outstanding_3346) {
                 // Mismatch detected → force_linear_rollback bumps
                 // linear_densify_scan_mismatch_total and sets
@@ -5665,7 +5717,7 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
                 if (reject_path_2854)
                     ev_->force_linear_rollback("densify-phase5-linear-scan");
                 (void)typed_audit::build_type_linear_commit_proof_from_live_with_outcome(
-                    ev_->defuse_version_.load(std::memory_order_acquire),
+                    densify_stamp_mid_3778,
                     /*would_allow_commit=*/false, /*linear_ok=*/false,
                     densify_goal_truth_2842.live_goal_count,
                     densify_goal_truth_2842.goal_fingerprint, densify_goal_truth_2842.from_cs,
@@ -5705,7 +5757,7 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
                         densify_goal_truth_2842.goal_fingerprint);
                 const auto densify_proof_3346 =
                     typed_audit::build_type_linear_commit_proof_from_live_with_outcome(
-                        ev_->defuse_version_.load(std::memory_order_acquire),
+                        densify_stamp_mid_3778,
                         /*would_allow_commit=*/true, /*linear_ok=*/true,
                         densify_goal_truth_2842.live_goal_count,
                         densify_goal_truth_2842.goal_fingerprint, densify_goal_truth_2842.from_cs);
@@ -5744,7 +5796,7 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
                 // counter so dashboards see the ordered stamp.
                 const auto densify_soft_proof_3346 =
                     typed_audit::build_type_linear_commit_proof_from_live_with_outcome(
-                        ev_->defuse_version_.load(std::memory_order_acquire),
+                        densify_stamp_mid_3778,
                         /*would_allow_commit=*/true, /*linear_ok=*/true,
                         densify_goal_truth_2842.live_goal_count,
                         densify_goal_truth_2842.goal_fingerprint, densify_goal_truth_2842.from_cs);

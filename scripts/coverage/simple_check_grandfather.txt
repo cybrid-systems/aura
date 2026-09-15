@@ -363,3 +363,4 @@ check_wildcard_grant_effect_fence.py
 check_workflow_residual_action_3206.py
 check_workspace_concurrent_policy_2990.py
 check_workspace_source_ssot_2920.py
+check_occurrence_mid_join_ssot_3778.py

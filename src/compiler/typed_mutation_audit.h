@@ -4201,6 +4201,11 @@ inline thread_local EnforcementLinkKind g_tls_enforcement_link = EnforcementLink
 // (volume metric only). noted=true even when mid==0 (production refuse)
 // so stamp sites do not re-resolve and double-count refused_total.
 inline constexpr int kBoundaryAuditMidIssue = 3016;
+// Issue #3778: Occurrence persist / outermost-pre-persist / densify+steal
+// TypeLinear stamps join via cp.audit_mid / join_audit_and_se_mid /
+// session_mid — never defuse_version_ under production (defuse is
+// EnvFrame freshness only). Soft/Off may keep defuse observe stamps.
+inline constexpr int kOccurrenceMidJoinSsotIssue = 3778;
 
 inline void note_boundary_audit_mid(std::uint64_t mid) noexcept {
     g_tls_boundary_audit_mid = mid;
