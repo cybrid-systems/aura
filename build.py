@@ -4914,6 +4914,19 @@ def cmd_lint():
             "Issue #3816 clone-walk rename deny abort linter failed — run python3 scripts/coverage/checks/check_clone_walk_rename_deny_abort_3816.py"
         )
         return r
+    # Issue #3817: dotted-rest MacroIntroduced spine stamped before clone
+    # checkpoint — production truncate_to(rest_spine_ckpt) on NULL clone.
+    # Extends test_rest_param_hygiene_eval_flat.cpp (#81967); no docs/design/.
+    rsor3817_script = COVERAGE_CHECKS / "check_rest_spine_orphan_rewind_3817.py"
+    if not rsor3817_script.exists():
+        fail(f"missing {rsor3817_script}")
+        return 1
+    r = run([sys.executable, str(rsor3817_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3817 rest-spine orphan rewind linter failed — run python3 scripts/coverage/checks/check_rest_spine_orphan_rewind_3817.py"
+        )
+        return r
     # Issue #3802: EXEMPT_2ARG write-file/sys-* host-path isolation under
     # Restricted+MT / Strict — resolve under tenant root from
     # capability_tenant_id_; cross-tenant escape → IsolationDeny SE
@@ -14838,6 +14851,26 @@ def cmd_clone_walk_rename_deny_abort_3816():
     """Issue #3816: clone-walk rename_binding deny aborts before add_*."""
     print(f"{B}=== clone-walk rename deny abort (#3816) ==={N}")
     return cmd_clone_walk_rename_deny_abort_3816_coverage()
+
+
+def cmd_rest_spine_orphan_rewind_3817_coverage():
+    """Issue #3817: dotted-rest MacroIntroduced spine rewind on clone deny (static)."""
+    print(f"{B}=== rest-spine orphan rewind (#3817) ==={N}")
+    script = COVERAGE_CHECKS / "check_rest_spine_orphan_rewind_3817.py"
+    if not script.is_file():
+        fail(f"missing {script}")
+        return 1
+    if run([sys.executable, str(script)], cwd=ROOT) != 0:
+        fail("rest-spine orphan rewind (#3817) coverage contract rows failed")
+        return 1
+    ok("rest-spine orphan rewind (#3817) coverage clean")
+    return 0
+
+
+def cmd_rest_spine_orphan_rewind_3817():
+    """Issue #3817: production rewind of pre-clone MacroIntroduced rest spine."""
+    print(f"{B}=== rest-spine orphan rewind (#3817) ==={N}")
+    return cmd_rest_spine_orphan_rewind_3817_coverage()
 
 
 def cmd_engine_metrics_hash_overflow_3018_coverage():

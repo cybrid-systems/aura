@@ -4620,7 +4620,17 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                                                                          v.children.end());
                                 auto subst = aura::compiler::pure::compute_macro_subst_pure(
                                     md.params, call_args, /*dotted=*/is_rest);
+                                // Issue #3817: ExpandCheckpointGuard is inside
+                                // clone_macro_body, so rest add_*/stamp before
+                                // clone sits outside size0. Snapshot FlatAST
+                                // size here; on NULL clone under production,
+                                // truncate_to rewinds MacroIntroduced rest
+                                // orphans. Soft/Off keeps historical half-write.
+                                std::size_t rest_spine_ckpt = 0;
+                                bool rest_spine_pending = false;
                                 if (is_rest && !md.params.empty()) {
+                                    rest_spine_ckpt = f->size();
+                                    rest_spine_pending = true;
                                     const std::size_t regular_count = md.params.size() - 1;
                                     std::vector<aura::ast::NodeId> remaining;
                                     for (std::size_t ai = regular_count + 1; ai < call_args.size();
@@ -4661,8 +4671,15 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                                 auto expanded = clone_macro_body(
                                     *f, *p, *md.flat, *src_pool, md.body_id, &subst, &rename_map,
                                     /*cloned_marker=*/aura::ast::SyntaxMarker::MacroIntroduced);
-                                if (expanded == aura::ast::NULL_NODE)
+                                if (expanded == aura::ast::NULL_NODE) {
+                                    // Issue #3817: production rewind pre-clone
+                                    // MacroIntroduced rest spine (clone ckpt
+                                    // cannot see nodes stamped before entry).
+                                    if (rest_spine_pending &&
+                                        aura::core::sandbox::is_sandbox_active())
+                                        f->truncate_to(rest_spine_ckpt);
                                     return make_void();
+                                }
                                 // Issue #230 #2 follow-up: undo the Quote-wrap
                                 // on set! targets. Same rationale as the
                                 // lambda case in eval_data_as_code — the
@@ -6975,7 +6992,14 @@ std::size_t Evaluator::post_mutation_macro_reexpand(aura::ast::FlatAST& flat,
             rename_map;
         for (std::size_t i = 0; i < md.params.size() && i < call_args.size(); ++i)
             subst_map[md.params[i]] = call_args[i];
+        // Issue #3817: checkpoint before rest add_*/stamp — clone's
+        // ExpandCheckpointGuard cannot rewind pre-entry MacroIntroduced
+        // rest spine. Soft/Off keeps historical half-write.
+        std::size_t rest_spine_ckpt = 0;
+        bool rest_spine_pending = false;
         if (md.dotted && !md.params.empty()) {
+            rest_spine_ckpt = flat.size();
+            rest_spine_pending = true;
             aura::ast::NodeId list_end = aura::ast::NULL_NODE;
             if (call_args.size() >= md.params.size()) {
                 std::size_t first_rest_idx = md.params.size() - 1;
@@ -7004,8 +7028,11 @@ std::size_t Evaluator::post_mutation_macro_reexpand(aura::ast::FlatAST& flat,
         auto expanded =
             clone_macro_body(flat, pool, *src_flat, *src_pool, md.body_id, &subst_map, &rename_map,
                              /*cloned_marker=*/aura::ast::SyntaxMarker::MacroIntroduced);
-        if (expanded == NULL_NODE)
+        if (expanded == NULL_NODE) {
+            if (rest_spine_pending && aura::core::sandbox::is_sandbox_active())
+                flat.truncate_to(rest_spine_ckpt);
             return false;
+        }
         expanded =
             expand_inner_macros(&flat, &pool, expanded, 0, 10, as_expansion_registry(macros_));
         if (expanded == NULL_NODE)
