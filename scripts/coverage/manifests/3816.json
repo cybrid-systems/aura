@@ -1,0 +1,29 @@
+{
+  "issue": 3816,
+  "title": "Issue #3816: clone-walk rename_binding deny aborts before add_*/marker",
+  "ok": "OK: Issue #3816 clone-walk rename deny abort",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/macro_expansion.cpp",
+      "contains": ["Issue #3816", "param_syms", "inner_expand_production_limit_deny()"]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/macro_expansion.cpp",
+      "contains": ["abort before add_let", "abort before add_define", "hyg_ctr"]
+    },
+    {
+      "ac": "AC3-tests",
+      "path": "tests/compiler/test_clone_walk_gensym_ceiling.cpp",
+      "contains": ["3816 soak", "flat size restored", "Issue #3816"]
+    },
+    {
+      "ac": "AC4",
+      "forbid": [
+        "tests/compiler/test_issue_3816.cpp",
+        "docs/design/3816-clone-walk-rename-deny.md"
+      ]
+    }
+  ]
+}

@@ -2582,6 +2582,27 @@ static aura::ast::NodeId clone_macro_body_at_depth(
         param_syms.push_back((local_in_quote || local_in_unquote) ? transplant(pid)
                                                                   : rename_binding(pid));
 
+    // Issue #3816: mirror #3506 after param/rename phase. rename_binding on
+    // gensym-map ceiling try_restore + return NULL_NODE without advancing
+    // hyg_ctr (#2811), but the walk still built param_syms and would
+    // add_lambda / set_marker(MacroIntroduced) after the checkpoint was
+    // consumed — unguarded half-write under production. Soft/Off: leave
+    // historical continue/half-write (production_surface false when Off).
+    if (production_surface && inner_expand_production_limit_deny()) {
+        expand_ckpt.try_restore();
+        return aura::ast::NULL_NODE;
+    }
+    // Optional hard abort: NULL SymId in param_syms under production means
+    // a prior rename_binding deny (NULL_NODE == INVALID_SYM sentinel).
+    if (production_surface) {
+        for (auto sid : param_syms) {
+            if (sid == aura::ast::NULL_NODE) {
+                expand_ckpt.try_restore();
+                return aura::ast::NULL_NODE;
+            }
+        }
+    }
+
     aura::ast::NodeId new_id = NULL_NODE;
     switch (v.tag) {
         case NodeTag::LiteralInt:
@@ -2677,6 +2698,13 @@ static aura::ast::NodeId clone_macro_body_at_depth(
             if (child_ids.size() >= 2) {
                 SymId s = (local_in_quote || local_in_unquote) ? transplant(v.sym_id)
                                                                : rename_binding(v.sym_id);
+                // Issue #3816: abort before add_let/add_letrec after rename deny
+                // (checkpoint may already be consumed — no post-deny add_*).
+                if (production_surface &&
+                    (s == aura::ast::NULL_NODE || inner_expand_production_limit_deny())) {
+                    expand_ckpt.try_restore();
+                    return aura::ast::NULL_NODE;
+                }
                 new_id = (v.tag == NodeTag::Let) ? target.add_let(s, child_ids[0], child_ids[1])
                                                  : target.add_letrec(s, child_ids[0], child_ids[1]);
             }
@@ -2732,6 +2760,12 @@ static aura::ast::NodeId clone_macro_body_at_depth(
             if (!child_ids.empty()) {
                 SymId s = (local_in_quote || local_in_unquote) ? transplant(v.sym_id)
                                                                : rename_binding(v.sym_id);
+                // Issue #3816: abort before add_define after rename deny.
+                if (production_surface &&
+                    (s == aura::ast::NULL_NODE || inner_expand_production_limit_deny())) {
+                    expand_ckpt.try_restore();
+                    return aura::ast::NULL_NODE;
+                }
                 new_id = target.add_define(s, child_ids[0]);
             }
             break;
