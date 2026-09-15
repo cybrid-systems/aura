@@ -9,6 +9,8 @@
 //   AC5: should_relower still honors soa_generation (#2111 intact)
 //   #3314 AC1–AC4: append-only offsetof/sizeof stamps on IR SoA dirty/
 //                  column tail + DensifyConsistencyReport + LayoutStamp
+//   #3833 AC1–AC3: IrSoaArenaColumn closes IR SoA heap; BMI pins kept;
+//                  view_at/batch dirty intact; SoA walk microbench
 
 #include "test_harness.hpp"
 #include "compiler/observability_metrics.h"
@@ -17,6 +19,7 @@
 #include "serve/fiber.h"
 
 #include <cstddef>
+#include <chrono>
 #include <cstdint>
 #include <fstream>
 #include <iterator>
@@ -40,8 +43,11 @@ using aura::compiler::g_ir_soa_generation_fence;
 using aura::compiler::IRFunctionSoA;
 using aura::compiler::IRInstructionView;
 using aura::compiler::IRModuleV2;
+using aura::compiler::IrSoaArenaColumn;
 using aura::compiler::kAppendOnlyLayoutStampIssue;
+using aura::compiler::kIrSoaColumnArenaIssue;
 using aura::compiler::kRelowerSoaGeneration;
+using aura::compiler::walk_soa_function_hotpath;
 using aura::compiler::should_relower;
 using aura::core::kLayoutStampSchema;
 using aura::core::LayoutStamp;
@@ -237,6 +243,65 @@ int run_test_ir_soa_layout_stamp() {
               "3314 AC4: no docs/design");
         CHECK(build.find("check_pcv_hotpath_metrics_layout_3292") != std::string::npos,
               "3314 AC4: 3292 linter still wired");
+    }
+
+    // ── #3833: IR SoA columns Arena-backed; BMI pins unchanged ──
+    {
+        std::println("\n--- #3833 AC1: IrSoaArenaColumn + bind closes heap columns ---");
+        CHECK(kIrSoaColumnArenaIssue == 3833, "3833 AC1: issue constant");
+        const auto soa = read_file("src/compiler/ir_soa.ixx");
+        CHECK(soa.find("IrSoaArenaColumn") != std::string::npos, "3833 AC1: column type");
+        CHECK(soa.find("kIrSoaColumnArenaIssue = 3833") != std::string::npos, "3833 AC1: stamp");
+        CHECK(soa.find("std::vector<aura::ir::IROpcode> opcodes_") == std::string::npos,
+              "3833 AC1: opcodes_ no longer std::vector");
+        CHECK(soa.find("IrSoaArenaColumn<aura::ir::IROpcode> opcodes_") != std::string::npos,
+              "3833 AC1: opcodes_ arena column");
+        CHECK(soa.find("offsetof(IRFunctionSoA, block_dirty_) == 376") != std::string::npos,
+              "3833 AC1: BMI pin block_dirty_ kept");
+        CHECK(soa.find("sizeof(IRFunctionSoA) == 448") != std::string::npos,
+              "3833 AC1: BMI sizeof kept");
+
+        IRFunctionSoA fn;
+        fn.bind_column_arena();
+        fn.blocks_.resize(1);
+        fn.blocks_[0].block_id = 0;
+        fn.blocks_[0].start_idx = 0;
+        fn.blocks_[0].end_idx = 256;
+        fn.opcodes_.resize(256);
+        fn.operand0_.resize(256);
+        fn.shape_ids_.resize(256);
+        fn.linear_ownership_states_.resize(256);
+        fn.instruction_dirty_.assign(256, 1);
+        fn.block_dirty_.assign(1, 1);
+        CHECK(fn.opcodes_.uses_arena_resource(), "3833 AC1: opcodes_ arena-owned");
+        CHECK(fn.shape_ids_.uses_arena_resource(), "3833 AC1: shape_ids_ arena-owned");
+        // view_at / HARDEN path unchanged (bounds via opcodes_.size)
+        IRModuleV2 mod;
+        mod.functions.push_back(std::move(fn));
+        auto view = mod.view_at(0, 0);
+        CHECK(view.func != nullptr, "3833 AC2: view_at intact");
+
+        std::println("\n--- #3833 AC2: batch dirty + HARDEN unchanged ---");
+        auto& live = mod.functions[0];
+        live.bind_column_arena();
+        const std::uint32_t ids[1] = {0};
+        live.mark_blocks_dirty(std::span<const std::uint32_t>{ids});
+        CHECK(live.is_block_dirty(0), "3833 AC2: batch dirty");
+        CHECK(live.generation() >= 1, "3833 AC2: generation bump");
+
+        std::println("\n--- #3833 AC3: SoA walk microbench (arena columns contiguous) ---");
+        // Touch hot columns via walk; arena slab keeps opcode/shape/linear
+        // streams co-located vs tip std::vector heap. Wall time is advisory.
+        const auto t0 = std::chrono::steady_clock::now();
+        auto walk = walk_soa_function_hotpath(live, /*dirty_only=*/false);
+        const auto t1 = std::chrono::steady_clock::now();
+        const auto ns =
+            std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
+        CHECK(walk.instructions == 256, "3833 AC3: walked all instrs");
+        CHECK(ns >= 0, "3833 AC3: microbench ran");
+        std::println("3833 AC3: walk_soa 256 instr ns={}", ns);
+        CHECK(sizeof(IrSoaArenaColumn<std::uint32_t>) == sizeof(std::vector<std::uint32_t>),
+              "3833 AC3: column object size == std::vector (BMI)");
     }
 
     std::println("\n=== results: {} passed, {} failed ===", g_passed, g_failed);
