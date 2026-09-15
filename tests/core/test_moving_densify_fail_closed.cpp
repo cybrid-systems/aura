@@ -4032,8 +4032,7 @@ static void ac3781_1_source_cite_this_window_rewrite() {
     CHECK(arena.find("invoke_root_remap_callback_(result, &root_remap_covered_old, "
                      "this_window_remap)") != std::string::npos,
           "AC1: RootRemap gets this_window_remap");
-    CHECK(arena.find("count_post_moving_stale_known_ptrs_(this_window_remap)") !=
-              std::string::npos,
+    CHECK(arena.find("count_post_moving_stale_known_ptrs_(this_window_remap)") != std::string::npos,
           "AC1: stale scan uses this_window_remap");
     // Pin remap must not walk the full tombstone table.
     const auto pin = arena.find("Issue #3781: pin remap walks this-window pairs only");
@@ -4079,7 +4078,8 @@ static void ac3781_2_resolve_keeps_multi_window_tombstones() {
 }
 
 static void ac3781_3_recycled_addr_slot_not_rewritten() {
-    std::println("\n--- #3781 AC3: recycled addr Y unmoved — slot not rewritten to tombstone B ---");
+    std::println(
+        "\n--- #3781 AC3: recycled addr Y unmoved — slot not rewritten to tombstone B ---");
     MovingFlagGuard on(1);
     aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
     aura::ast::g_moving_untracked_hard_abort_pref.store(0, std::memory_order_relaxed);
@@ -4173,8 +4173,8 @@ static void ac3781_5_no_second_registry_or_issue_test() {
           "AC5: no test_issue_3781.cpp");
     CHECK(read_file("docs/design/3781-densify-this-window-rewrite.md").empty(),
           "AC5: no docs/design/3781-*");
-    CHECK(read_file("scripts/coverage/checks/check_densify_this_window_rewrite_3781.py").find(
-              "Issue #3781") != std::string::npos,
+    CHECK(read_file("scripts/coverage/checks/check_densify_this_window_rewrite_3781.py")
+                  .find("Issue #3781") != std::string::npos,
           "AC5: coverage linter present");
 }
 
