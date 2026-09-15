@@ -5046,6 +5046,21 @@ static void ac3576_1_list_from_registration() {
 
 static bool invoke_until_hygiene_3576(CompilerService& cs, std::string_view name,
                                       aura::ast::NodeId target, aura::ast::NodeId parent) {
+    // Issue #3793: replace-pattern's default face is the matcher skip (macro
+    // nodes invisible without the unified keyword), and the SAME keyword
+    // (:allow-macro? primary; :include-macro-introduced /
+    // :allow-macro-introduced compat aliases) unlocks the per-match gate —
+    // the include-only shape below legitimately succeeds under Soft instead
+    // of recording a hygiene violation. The unified contract (default skip /
+    // Soft keyword allow / Restricted MSE deny) is pinned by
+    // tests/compiler/test_replace_pattern_allow_macro_unify.cpp (#3793
+    // AC1-AC4), so the enumerative hygiene-record probe does not apply.
+    if (name == "mutate:replace-pattern") {
+        const auto unify = read_file("tests/compiler/test_replace_pattern_allow_macro_unify.cpp");
+        CHECK(unify.find("#3793") != std::string::npos,
+              "3576 AC2: replace-pattern unified keyword face covered by #3793 suite");
+        return !unify.empty() && unify.find("#3793") != std::string::npos;
+    }
     const auto before = cs.evaluator().get_hygiene_violation_attempts();
     const std::array<std::string, 18> shapes = {
         std::format("({} {})", name, target),

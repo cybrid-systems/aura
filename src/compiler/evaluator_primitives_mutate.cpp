@@ -4641,8 +4641,10 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         // Keywords aligned with query:pattern:
         //   :nested-arity [#t|#f]  — Kleene (default #t after #1374)
         //   :strict-arity [#t]     — alias for :nested-arity #f
-        //   :include-macro-introduced / :allow-macro-introduced /
-        //   :exclude-macro-introduced / :respect-hygiene
+        //   :allow-macro? (Issue #3793 unified primary, same face as
+        //   query:find / query:pattern / other mutate prims) /
+        //   :include-macro-introduced / :allow-macro-introduced (compat
+        //   aliases) / :exclude-macro-introduced / :respect-hygiene
         // Summary string remains an optional trailing string arg.
         // Default nested_arity=true matches query:pattern so AI
         // query-then-mutate pipelines see the same node set.
@@ -4682,7 +4684,12 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                         ++ai;
                     }
                     nested_arity = !v;
-                } else if (kw == ":include-macro-introduced" || kw == ":allow-macro-introduced") {
+                } else if (kw == ":include-macro-introduced" || kw == ":allow-macro-introduced" ||
+                           kw == ":allow-macro?") {
+                    // Issue #3793: :allow-macro? is the unified Agent-facing
+                    // keyword; the old query-side spellings remain compat
+                    // aliases. All three fold into the same include + gate
+                    // bool below (one face across query and mutate).
                     consume_bool(include_macro_introduced, ai);
                 } else if (kw == ":exclude-macro-introduced") {
                     bool exclude = true;
@@ -4715,6 +4722,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 ok = false;
                 return mev("bad-arg", "usage: (mutate:replace-pattern pattern replacement"
                                       " [:nested-arity [#t|#f]] [:strict-arity [#t]]"
+                                      " [:allow-macro? [#t]]"
                                       " [:include-macro-introduced [#t]]"
                                       " [:allow-macro-introduced [#t]]"
                                       " [:exclude-macro-introduced [#t|#f]]"
@@ -4972,10 +4980,16 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         // return + at primitive exit.
         ValidateSchemaGuard schema_guard_rp(ev, parse_validate_schema_on_commit_opt_in(ev, a) ||
                                                     ev.validate_schema_on_commit());
-        // Issue #2961: :include-macro-introduced only controls matcher
-        // visibility. Mutate still requires :allow-macro? / global opt-out
-        // (parity with replace-subtree / move-node #2801).
-        const bool allow_macro_all = ev.get_allow_macro_mutate() || allow_macro_kw;
+        // Issue #2961: the macro keyword controls matcher visibility and
+        // (since #3793) the per-match gate with one face: whatever the Agent
+        // passed to widen visibility (:allow-macro? primary;
+        // :include-macro-introduced / :allow-macro-introduced compat aliases)
+        // also unlocks the gate — same as query:find / query:pattern.
+        // MacroSelfEvo fence (#3542/#3755) still applies on the allowed path
+        // under Restricted/Strict (deny_macro_opt_out_without_mse inside
+        // hygiene_protected_error). No new query key.
+        const bool allow_macro_all =
+            ev.get_allow_macro_mutate() || allow_macro_kw || include_macro_introduced;
         int replaced_count = 0;
         // Collect parents for post-success dirty cascade (#2961).
         std::vector<NodeId> dirty_parents;
