@@ -2226,7 +2226,9 @@ static void ac3055_3_soft_no_scan() {
     const auto arena_src = read_file("src/core/arena.ixx");
     CHECK(arena_src.find("count_post_moving_stale_known_ptrs_") != std::string::npos,
           "AC3: named scan helper");
-    CHECK(arena_src.find("moved_live_objects && !last_object_remap_.empty()") != std::string::npos,
+    // Issue #3781: post-moving stale scan gates on this_window_remap (not
+    // the full #3469 last_object_remap_ tombstone table).
+    CHECK(arena_src.find("moved_live_objects && !this_window_remap.empty()") != std::string::npos,
           "AC3: scan gated on move + remap");
 }
 
@@ -3944,11 +3946,16 @@ static void ac3633_4_soft_off_zero_cost() {
               uncovered_before,
           "AC4: zero extra atomics off the Moving path");
     // Gate is inside the moved_live_objects block (source shape).
+    // Issue #3781: the same objects_moved+relocated_old predicate also builds
+    // this_window_remap *before* the gate — find reconciliation after gate.
     const auto arena_src = read_file("src/core/arena.ixx");
     const auto gate =
         arena_src.find("if (saved_bytes > 0 || relocated > 0 || result.moved_live_objects) {");
-    const auto recon =
-        arena_src.find("if (result.objects_moved > 0 && !last_moving_relocated_old_.empty()) {");
+    const auto recon = (gate == std::string::npos)
+                           ? std::string::npos
+                           : arena_src.find("if (result.objects_moved > 0 && "
+                                            "!last_moving_relocated_old_.empty()) {",
+                                            gate);
     CHECK(gate != std::string::npos && recon != std::string::npos && gate < recon,
           "AC4: reconciliation gated inside the moved_live_objects block");
 }
