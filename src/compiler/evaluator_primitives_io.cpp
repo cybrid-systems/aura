@@ -25,11 +25,14 @@ module;
 #include <dlfcn.h>
 #include <cerrno>
 #include <cstring>
+#include <cstdio>
 #include "runtime_shared.h"
 #include "observability_metrics.h"
 #include "primitives_detail.h"
 #include "primitives_meta.h"
 #include "security_capabilities.h"
+#include "tenant_host_path.hh" // #3802 tenant FS path-prefix
+#include "core/provenance_tracker.hh" // #3802 MT active
 #include "core/arena_auto_policy_stats.h"
 #include "core/gap_buffer.hh"
 #include "core/lifetime_pin.hh" // g_lifetime_pin_stats() for owner-transition counts
@@ -933,10 +936,14 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
         const auto& path = ev.string_heap_[sidx];
         if (aura::compiler::security::path_is_denied(path))
             return make_int(-1);
+        // Issue #3802: Restricted+MT / Strict → resolve under tenant root.
+        std::string resolved;
+        if (!ev.check_tenant_host_path(path, resolved, "sys-open"))
+            return make_int(-1);
         // Optional second arg kept for call-site compatibility
         // (sys-open path [flags]) but is never applied to ::open.
         const int flags = O_RDONLY | O_NOFOLLOW | O_CLOEXEC;
-        int fd = ::open(path.c_str(), flags);
+        int fd = ::open(resolved.c_str(), flags);
         if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
             m->sys_open_calls.fetch_add(1, std::memory_order_relaxed);
         return make_int(fd);
@@ -977,6 +984,36 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
         auto sidx = as_string_idx(a[1]);
         if (sidx >= ev.string_heap_.size())
             return make_int(-1);
+        // Issue #3802: under Restricted+MT / Strict, if /proc/self/fd/N
+        // resolves to a path under the tenant FS base, refuse cross-tenant
+        // targets (sys-open remaps path args; this closes inherited fds into
+        // another tenant prefix). Non-FS fds (pipe:/socket:/anon) and paths
+        // outside the tenant base (tty, legacy) stay allowed.
+        {
+            using aura::compiler::security::path_is_under_root;
+            using aura::compiler::security::tenant_host_path_policy_active;
+            using aura::compiler::security::tenant_host_roots_base;
+            using aura::core::provenance::hard_capture_tenant_active;
+            using aura::core::provenance::multi_tenant_env_active;
+            const auto mode = ev.effect_sandbox_mode();
+            const bool mt = hard_capture_tenant_active() || multi_tenant_env_active();
+            if (tenant_host_path_policy_active(mode, mt)) {
+                char link[64];
+                std::snprintf(link, sizeof(link), "/proc/self/fd/%d", fd);
+                char buf[4096];
+                const auto nlink = ::readlink(link, buf, sizeof(buf) - 1);
+                if (nlink > 0 && buf[0] == '/') {
+                    buf[nlink] = '\0';
+                    const std::string_view target(buf, static_cast<std::size_t>(nlink));
+                    const auto base = tenant_host_roots_base();
+                    if (path_is_under_root(target, base)) {
+                        std::string resolved;
+                        if (!ev.check_tenant_host_path(target, resolved, "sys-write"))
+                            return make_int(-1);
+                    }
+                }
+            }
+        }
         const auto& s = ev.string_heap_[sidx];
         auto n = ::write(fd, s.data(), s.size());
         if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))

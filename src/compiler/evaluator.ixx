@@ -442,6 +442,9 @@ export constexpr std::uint64_t INVALID_VERSION = std::numeric_limits<std::uint64
 // across all module TUs (generic lambda template-body two-phase lookup
 // requires exported namespace-scope symbols, not TU-private inline
 // constexpr). The coverage linter
+// Issue #3802: EXEMPT_2ARG host IO stays 2-arg (inventory size stable);
+// Restricted+MT / Strict path-prefix isolation via check_tenant_host_path
+// (no NodeId redesign / no new query key).
 // (scripts/coverage/checks/check_side_effect_fiber_principal_2839.py)
 // validates these match the actual inventory in EXEMPT_2ARG_OPS +
 // SCOPE_FILES; drift trips the linter before commit. Counts:
@@ -6977,6 +6980,15 @@ public:
                                                  std::uint64_t ref_tenant = 0,
                                                  std::uint16_t required_effects = 0,
                                                  std::string_view op = "workspace") noexcept;
+    // Issue #3802: Restricted+MT / Strict host-path isolation for
+    // EXEMPT_2ARG write-file / sys-* (path-prefix under tenant root).
+    // Soft/Off / single-tenant Restricted → passthrough (out unchanged).
+    // Cross-tenant / escape → deny + IsolationDeny SE (reason
+    // tenant-path-escape), zero write. Returns true on allow; on allow
+    // with remap, `out_resolved` holds the absolute path under the
+    // caller's tenant root. EXEMPT_2ARG inventory size unchanged.
+    [[nodiscard]] bool check_tenant_host_path(std::string_view path, std::string& out_resolved,
+                                              std::string_view op = "write-file") noexcept;
     // Stamp FlatAST::StableNodeRef.tenant_id from current principal.
     // Issue #1566 / #2056: stamp tenant (+ fiber) on StableNodeRef.
     void stamp_ref_tenant(ast::FlatAST::StableNodeRef& ref) const noexcept;

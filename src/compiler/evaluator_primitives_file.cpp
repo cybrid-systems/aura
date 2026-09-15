@@ -12,6 +12,7 @@ module;
 #include "runtime_shared.h"
 #include "security_capabilities.h"
 #include "security_side_effect.hh" // #2057
+#include "tenant_host_path.hh" // #3802 tenant FS path-prefix
 
 module aura.compiler.evaluator;
 
@@ -164,6 +165,12 @@ void register_file_primitives(PrimRegistrar add, Evaluator& ev) {
         // Issue #1163: refuse /proc/self/mem and other process-memory paths.
         if (path_is_denied(path))
             return make_void();
+        // Issue #3802: Restricted+MT / Strict → resolve under tenant root;
+        // cross-tenant / escape → deny + IsolationDeny SE, zero write.
+        std::string resolved_path;
+        if (!ev.check_tenant_host_path(path, resolved_path, "write-file"))
+            return make_void();
+        const std::string& use_path = resolved_path;
         std::string content;
         if (is_string(a[1])) {
             auto cidx = as_string_idx(a[1]);
@@ -175,7 +182,8 @@ void register_file_primitives(PrimRegistrar add, Evaluator& ev) {
             return make_void();
         }
         // O_NOFOLLOW | O_CREAT | O_WRONLY — no symlink follow to sensitive targets.
-        int fd = ::open(path.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW | O_CLOEXEC, 0644);
+        // Issue #3802: use_path is tenant-rooted under Restricted+MT / Strict.
+        int fd = ::open(use_path.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW | O_CLOEXEC, 0644);
         if (fd < 0)
             return make_void();
         struct stat st{};
@@ -262,13 +270,18 @@ void register_file_primitives(PrimRegistrar add, Evaluator& ev) {
         // Issue #1165: validate both source and destination paths.
         if (path_is_denied(src_path) || path_is_denied(dst_path))
             return make_void();
-        if (!is_regular(src_path))
+        // Issue #3802: both ends under caller tenant root (Restricted+MT / Strict).
+        std::string src_resolved, dst_resolved;
+        if (!ev.check_tenant_host_path(src_path, src_resolved, "file-copy") ||
+            !ev.check_tenant_host_path(dst_path, dst_resolved, "file-copy"))
             return make_void();
-        int sfd = ::open(src_path.c_str(), O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+        if (!is_regular(src_resolved))
+            return make_void();
+        int sfd = ::open(src_resolved.c_str(), O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
         if (sfd < 0)
             return make_void();
         int dfd =
-            ::open(dst_path.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW | O_CLOEXEC, 0644);
+            ::open(dst_resolved.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW | O_CLOEXEC, 0644);
         if (dfd < 0) {
             ::close(sfd);
             return make_void();
@@ -318,12 +331,16 @@ void register_file_primitives(PrimRegistrar add, Evaluator& ev) {
                                // where possible.
                                if (path_is_denied(path))
                                    return make_int(0);
+                               // Issue #3802: Restricted+MT / Strict tenant root.
+                               std::string resolved;
+                               if (!ev.check_tenant_host_path(path, resolved, "file-delete"))
+                                   return make_int(0);
                                struct stat st{};
-                               if (::lstat(path.c_str(), &st) != 0)
+                               if (::lstat(resolved.c_str(), &st) != 0)
                                    return make_int(0);
                                if (S_ISDIR(st.st_mode))
                                    return make_int(0); // directories require explicit rmdir API
-                               return make_int(::unlink(path.c_str()) == 0 ? 1 : 0);
+                               return make_int(::unlink(resolved.c_str()) == 0 ? 1 : 0);
                            });
 
     ev.defer_std_host_prim("file-size", [&ev, is_regular, path_is_denied, deny_io](const auto& a) {

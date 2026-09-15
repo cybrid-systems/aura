@@ -6,6 +6,7 @@
 #include "test_harness.hpp"
 
 #include "compiler/security_capabilities.h"
+#include "compiler/tenant_host_path.hh"
 #include "compiler/security_defaults.hh"
 #include "compiler/typed_mutation_audit.h"
 #include "core/provenance_tracker.hh"
@@ -4657,6 +4658,165 @@ int main() {
         if (!invent.good())
             invent.open("../tests/core/test_issue_3801.cpp");
         CHECK(!invent.good(), "AC4: no tests/core/test_issue_3801.cpp (forbidden per #81967)");
+    }
+
+
+    // ── Issue #3802: EXEMPT_2ARG write-file/sys-* tenant host-path isolation ──
+    {
+        std::println("\n--- #3802 AC1: Restricted+MT tenant A cannot write under tenant B prefix ---");
+        reset_all();
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+        ::setenv("AURA_MULTI_TENANT", "1", 1);
+        aura::core::provenance::set_multi_tenant_env_active(true);
+        // Isolate tenant FS base for the oracle.
+        const char* tmp = std::getenv("TMPDIR");
+        const std::string base = std::string(tmp && tmp[0] ? tmp : "/tmp") + "/aura-3802-ac1";
+        ::setenv("AURA_TENANT_FS_ROOT", base.c_str(), 1);
+        using aura::compiler::security::resolve_tenant_host_path;
+        using aura::compiler::security::tenant_host_root_for;
+        using aura::compiler::security::TenantHostPathVerdict;
+        const auto root_a = tenant_host_root_for(7);
+        const auto root_b = tenant_host_root_for(42);
+        const auto escape = root_b + "/clobber.txt";
+        auto denied = resolve_tenant_host_path(escape, /*tenant=*/7, /*active=*/true);
+        CHECK(denied.verdict == TenantHostPathVerdict::Deny,
+              "3802 AC1: lexical resolve denies A→B prefix");
+        auto ok = resolve_tenant_host_path("ok.txt", /*tenant=*/7, /*active=*/true);
+        CHECK(ok.verdict == TenantHostPathVerdict::Resolved, "3802 AC1: relative resolves under A");
+        CHECK(ok.resolved.find(root_a) == 0, "3802 AC1: resolved under tenant A root");
+
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.set_effect_sandbox_mode(1);
+        ev.set_capability_tenant_id(7);
+        const auto& ring = g_security_event_ring();
+        const auto se_base = ring.seq.load(std::memory_order_acquire);
+        std::string out;
+        CHECK(!ev.check_tenant_host_path(escape, out, "write-file"),
+              "3802 AC1: Evaluator denies A→B path");
+        bool saw = false;
+        for (std::uint64_t s = se_base; s < ring.seq.load(std::memory_order_acquire); ++s) {
+            const auto& e = ring.ring[s % ring.ring.size()];
+            if (e.seq != s)
+                continue;
+            if (static_cast<int>(e.kind) !=
+                static_cast<int>(aura::core::security_event::SecurityEventKind::IsolationDeny))
+                continue;
+            if (std::string_view(e.reason).find("tenant-path-escape") != std::string_view::npos) {
+                saw = true;
+                CHECK(e.tenant_id == 7, "3802 AC1: SE tenant is caller A");
+            }
+        }
+        CHECK(saw, "3802 AC1: IsolationDeny SE reason tenant-path-escape");
+        ::unsetenv("AURA_TENANT_FS_ROOT");
+        ::unsetenv("AURA_MULTI_TENANT");
+        aura::core::provenance::set_multi_tenant_env_active(false);
+    }
+
+    {
+        std::println("\n--- #3802 AC2: Soft/Off / single-tenant Restricted passthrough ---");
+        reset_all();
+        using aura::compiler::security::resolve_tenant_host_path;
+        using aura::compiler::security::tenant_host_path_policy_active;
+        using aura::compiler::security::TenantHostPathVerdict;
+        CHECK(!tenant_host_path_policy_active(/*mode=*/0, /*mt=*/false),
+              "3802 AC2: Soft/Off inactive");
+        CHECK(!tenant_host_path_policy_active(/*mode=*/1, /*mt=*/false),
+              "3802 AC2: single-tenant Restricted inactive");
+        CHECK(tenant_host_path_policy_active(/*mode=*/1, /*mt=*/true),
+              "3802 AC2: Restricted+MT active");
+        CHECK(tenant_host_path_policy_active(/*mode=*/2, /*mt=*/false),
+              "3802 AC2: Strict active even without MT");
+        auto soft = resolve_tenant_host_path("/tmp/anywhere.txt", 7, /*active=*/false);
+        CHECK(soft.verdict == TenantHostPathVerdict::Passthrough,
+              "3802 AC2: Soft passthrough keeps absolute path");
+
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+        aura::core::provenance::set_multi_tenant_env_active(false);
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.set_effect_sandbox_mode(0);
+        ev.set_capability_tenant_id(7);
+        std::string out;
+        CHECK(ev.check_tenant_host_path("/tmp/anywhere.txt", out, "write-file"),
+              "3802 AC2: Off check_tenant_host_path allows");
+        CHECK(out == "/tmp/anywhere.txt", "3802 AC2: Off leaves path unchanged");
+
+        // Single-tenant Restricted — no MT flag.
+        ev.set_effect_sandbox_mode(1);
+        CHECK(ev.check_tenant_host_path("/tmp/anywhere.txt", out, "write-file"),
+              "3802 AC2: single-tenant Restricted allows absolute");
+    }
+
+    {
+        std::println("\n--- #3802 AC3: EXEMPT_2ARG inventory size stable; no new query key ---");
+        const auto mandate = read_file("scripts/coverage/checks/check_side_effect_node_id_mandate_2942.py");
+        const auto fiber = read_file("scripts/coverage/checks/check_side_effect_fiber_principal_2839.py");
+        const auto ixx = read_file("src/compiler/evaluator.ixx");
+        const auto prim = read_file("src/compiler/evaluator_primitives_security.cpp");
+        CHECK(mandate.find("EXEMPT_2ARG_OPS") != std::string::npos, "AC3: mandate inventory present");
+        CHECK(ixx.find("kResidualNodeIdExemptOpsCount = 5") != std::string::npos,
+              "AC3: kResidualNodeIdExemptOpsCount stays 5");
+        CHECK(ixx.find("kNodeIdMandateExemptOpsCount = 5") != std::string::npos,
+              "AC3: kNodeIdMandateExemptOpsCount stays 5");
+        CHECK(fiber.find("expected 5") != std::string::npos ||
+                  fiber.find("!= 5") != std::string::npos,
+              "AC3: fiber linter still expects 5 exempt ops");
+        CHECK(prim.find("schema-3802") == std::string::npos, "AC3: no schema-3802 query key");
+        CHECK(prim.find("issue-3802") == std::string::npos, "AC3: no issue-3802 query key");
+    }
+
+    {
+        std::println("\n--- #3802 AC4: cite-first linter + dual-tenant chaos oracle ---");
+        const auto hh = read_file("src/compiler/tenant_host_path.hh");
+        const auto sec = read_file("src/compiler/evaluator_security.cpp");
+        const auto filep = read_file("src/compiler/evaluator_primitives_file.cpp");
+        const auto iop = read_file("src/compiler/evaluator_primitives_io.cpp");
+        const auto build = read_file("build.py");
+        CHECK(hh.find("Issue #3802") != std::string::npos, "AC4: tenant_host_path cites #3802");
+        CHECK(sec.find("check_tenant_host_path") != std::string::npos,
+              "AC4: evaluator_security implements check_tenant_host_path");
+        CHECK(filep.find("check_tenant_host_path") != std::string::npos,
+              "AC4: write-file wires check_tenant_host_path");
+        CHECK(iop.find("check_tenant_host_path") != std::string::npos,
+              "AC4: sys-open/sys-write wire check_tenant_host_path");
+        CHECK(build.find("check_tenant_host_path_isolation_3802") != std::string::npos,
+              "AC4: build.py wires #3802 linter");
+
+        // Dual-tenant chaos: A and B Evaluators; each denied on the other's root.
+        reset_all();
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+        ::setenv("AURA_MULTI_TENANT", "1", 1);
+        aura::core::provenance::set_multi_tenant_env_active(true);
+        const char* tmp = std::getenv("TMPDIR");
+        const std::string base = std::string(tmp && tmp[0] ? tmp : "/tmp") + "/aura-3802-chaos";
+        ::setenv("AURA_TENANT_FS_ROOT", base.c_str(), 1);
+        CompilerService cs_a;
+        CompilerService cs_b;
+        auto& a = cs_a.evaluator();
+        auto& b = cs_b.evaluator();
+        a.set_effect_sandbox_mode(1);
+        b.set_effect_sandbox_mode(1);
+        a.set_capability_tenant_id(11);
+        b.set_capability_tenant_id(22);
+        const auto path_a = aura::compiler::security::tenant_host_root_for(11) + "/x.txt";
+        const auto path_b = aura::compiler::security::tenant_host_root_for(22) + "/y.txt";
+        std::string out;
+        CHECK(!a.check_tenant_host_path(path_b, out, "write-file"),
+              "3802 AC4 chaos: A denied on B prefix");
+        CHECK(!b.check_tenant_host_path(path_a, out, "write-file"),
+              "3802 AC4 chaos: B denied on A prefix");
+        CHECK(a.check_tenant_host_path("local.txt", out, "write-file"),
+              "3802 AC4 chaos: A allows relative under own root");
+        CHECK(out.find("/t-11/") != std::string::npos, "3802 AC4 chaos: A resolved under t-11");
+        ::unsetenv("AURA_TENANT_FS_ROOT");
+        ::unsetenv("AURA_MULTI_TENANT");
+        aura::core::provenance::set_multi_tenant_env_active(false);
+
+        std::ifstream invent("tests/core/test_issue_3802.cpp");
+        if (!invent.good())
+            invent.open("../tests/core/test_issue_3802.cpp");
+        CHECK(!invent.good(), "AC4: no tests/core/test_issue_3802.cpp (forbidden per #81967)");
     }
 
     reset_all();

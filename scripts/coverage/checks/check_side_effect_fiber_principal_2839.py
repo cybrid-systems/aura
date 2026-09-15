@@ -57,7 +57,7 @@ SCOPE_FILES = [
 # #2839: 3 entries. #2881 adds 2 (git-commit, deny_sys) = 5 total.
 EXEMPT_2ARG_OPS = {
     # #2839 originals (3)
-    "write-file",  # filesystem, not workspace node
+    "write-file",  # filesystem, not workspace node (#3802 path-prefix under MT)
     "mutation-log-compact",  # log maintenance, no NodeId target
     "security:check-effect",  # capability probe, not mutate body
     # #2881 residual (2)
