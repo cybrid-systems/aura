@@ -5,7 +5,7 @@
 ProductionPureWrapPass was compile-true only for stubs. Those four wraps
 now provide run_on_dirty_blocks_only(IRModuleV2&) and satisfy
 ProductionPureWrapPass. AoS DirtySoAEntryPass stays Soft/unit.
-EscapeAnalysisWrap remains the #3454 grandfather. No new query key.
+EscapeAnalysisWrap is ProductionPureWrapPass (#3795); Soft AoS DirtySoAEntry retained. No new query key.
 
 Contract:
   AC1 CK/CF/TP/Shape static_assert ProductionPureWrapPass
@@ -95,7 +95,7 @@ def main() -> int:
     must("run_production_soa_pure_wrap_pack(mod, ck, cf, tp, sh)", "AC2 hot pack uses PureWrap", impls)
 
     must("!prod_soa", "AC3 Soft AoS suite kept", svc)
-    must("!ProductionPureWrapPass<EscapeAnalysisWrap>", "AC3 Escape grandfather", svc)
+    must("ProductionPureWrapPass<EscapeAnalysisWrap>", "AC3/#3795 Escape ProductionPureWrap", svc)
     must("DirtySoAEntryPass<EscapeAnalysisWrap>", "AC3 Escape DirtySoAEntry", svc)
 
     must("3488 AC1: CK ProductionPureWrapPass", "AC5 live AC1", t)
