@@ -383,4 +383,5 @@ scripts/coverage/checks/check_occurrence_coercion_ci_ok_3796.py
 check_cross_tenant_grant_caller_ta_3800.py
 check_isolation_deny_mid_join_3801.py
 check_isolation_deny_obs_join_3808.py
+check_boundary_soft_densify_restamp_3809.py
 check_tenant_host_path_isolation_3802.py

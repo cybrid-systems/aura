@@ -4796,6 +4796,21 @@ def cmd_lint():
             "Issue #3808 IsolationDeny obs-join linter failed — run python3 scripts/coverage/checks/check_isolation_deny_obs_join_3808.py"
         )
         return r
+    # Issue #3809: Boundary Soft live_compact after Phase-5 must Densify-
+    # restamp when Soft bumps gen / invalidates pins (dual-track vs
+    # #3677/#3742 Soft GC path). Soft soft-gated no-op → zero extra restamp;
+    # Soft does not publish Moving densify health window. Extends
+    # test_gc_compact_sweep_batch.cpp (#81967); no docs/design/ (#1655).
+    bsdr3809_script = COVERAGE_CHECKS / "check_boundary_soft_densify_restamp_3809.py"
+    if not bsdr3809_script.exists():
+        fail(f"missing {bsdr3809_script}")
+        return 1
+    r = run([sys.executable, str(bsdr3809_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3809 Boundary Soft Densify restamp linter failed — run python3 scripts/coverage/checks/check_boundary_soft_densify_restamp_3809.py"
+        )
+        return r
     # Issue #3802: EXEMPT_2ARG write-file/sys-* host-path isolation under
     # Restricted+MT / Strict — resolve under tenant root from
     # capability_tenant_id_; cross-tenant escape → IsolationDeny SE

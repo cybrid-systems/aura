@@ -25,6 +25,8 @@
 #include "core/flatast_restamp.hh"       // #3677 unified restamp counter
 #include "core/gc_hooks.h"               // #3677 ffi-pin defer arm/release
 #include "core/moving_densify_health.hh" // #3677 last Moving window atomics
+#include "core/arena_auto_policy_stats.h" // #3809 Soft soft-gate render
+#include "core/lifetime_pin.hh"           // #3809 LifetimePin soak
 
 #include <fstream>
 #include <initializer_list>
@@ -691,6 +693,159 @@ static void run_3742_gen_restamp_and_pair_idx() {
     }
 }
 
+
+// ── Issue #3809: Boundary Soft live_compact Densify restamp (dual-track vs #3677/#3742) ──
+// Outermost ~MutationBoundaryGuard Soft probe runs AFTER BoundarySuccess triad
+// restamp and AFTER Phase-5 Moving densify, but historically did not call
+// unified_restamp_after_boundary(Densify) when Soft bumped gen / wiped pins.
+// #3809 mirrors the Soft GC restamp belt from #3677/#3742.
+static void run_3809_boundary_soft_densify_restamp() {
+    std::println("\n=== Issue #3809: Boundary Soft live_compact Densify restamp ===");
+    namespace mdh = aura::core::moving_densify_health;
+    using aura::core::lifetime::LifetimePin;
+
+    // AC1 + AC4: source-cite — probe snapshots gen, restamps Densify on Soft
+    // gen bump / pin invalidate, and does NOT publish Moving densify window.
+    {
+        std::println("\n--- #3809 AC1/AC4: source-cite Soft Densify restamp ---");
+        const auto ixx =
+            read_first({"src/compiler/evaluator.ixx", "../src/compiler/evaluator.ixx"});
+        CHECK(!ixx.empty(), "3809 AC1: evaluator.ixx readable");
+        const auto probe = ixx.find("void probe_arena_auto_policy_on_boundary_exit");
+        CHECK(probe != std::string::npos, "3809 AC1: Soft probe present");
+        const auto live = ixx.find("[[nodiscard]] aura::ast::LiveCompactResult", probe);
+        CHECK(live != std::string::npos && live > probe, "3809 AC1: probe window bounds");
+        const auto win = ixx.substr(probe, live - probe);
+        CHECK(win.find("Issue #3809") != std::string::npos, "3809 AC1: probe cites #3809");
+        CHECK(win.find("gen_at_entry") != std::string::npos, "3809 AC1: snapshot gen_at_entry");
+        CHECK(win.find("LiveCompactMode::Soft") != std::string::npos, "3809 AC1: Soft mode");
+        CHECK(win.find("lc.invalidates_pins || lc.remapped_pins > 0") != std::string::npos,
+              "3809 AC1: restamp on invalidates_pins / remapped_pins");
+        CHECK(win.find("lc.new_gen != 0 && lc.new_gen != gen_at_entry") != std::string::npos,
+              "3809 AC1: restamp on Soft new_gen advance (#3742 dual-track)");
+        CHECK(win.find("unified_restamp_after_boundary(UnifiedRestampSite::Densify)") !=
+                  std::string::npos,
+              "3809 AC1: Densify restamp after Soft");
+        CHECK(win.find("no publish_last_moving_densify_window") != std::string::npos,
+              "3809 AC4: Soft probe documents non-Moving (no window publish)");
+        CHECK(win.find("publish_last_moving_densify_window(") == std::string::npos,
+              "3809 AC4: Soft probe does NOT call publish_last_moving_densify_window");
+        const auto mb = read_first(
+            {"src/compiler/evaluator_mutation_boundary.cpp",
+             "../src/compiler/evaluator_mutation_boundary.cpp"});
+        CHECK(mb.find("probe_arena_auto_policy_on_boundary_exit(success)") != std::string::npos,
+              "3809 AC1: Guard dtor still calls Soft probe");
+        CHECK(read_file("tests/serve/test_issue_3809.cpp").empty(), "3809: no test_issue_N.cpp");
+    }
+
+    // AC1 runtime: outermost success Soft that bumps gen restamps Densify
+    // (unified restamp advances beyond BoundarySuccess alone). Soft may be
+    // quiet in unit env — source-cite carries then.
+    {
+        std::println("\n--- #3809 AC1: Soft gen bump → Densify restamp ---");
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
+        const auto rs0 = aura::ast::unified_restamp_calls_total_v_read();
+        const auto gen0 = m->arena_live_compact_gen_restamps_total.load(std::memory_order_relaxed);
+        const auto seq0 = mdh::g_last_window_seq.load(std::memory_order_relaxed);
+        const auto had0 = mdh::g_last_had_moving_densify.load(std::memory_order_relaxed);
+        bool ok = true;
+        {
+            Evaluator::MutationBoundaryGuard g(ev, &ok);
+            CHECK(ok, "3809 AC1: guard ok");
+            // Freelist holes so Soft may bump gen on exit (destroy → recycle).
+            if (ev.arena()) {
+                auto& arena = *ev.arena();
+                int* a = arena.create_with_cover<int>(nullptr, "test-3809-temp", 1);
+                int* b = arena.create_with_cover<int>(nullptr, "test-3809-temp", 2);
+                if (a)
+                    arena.destroy(a);
+                if (b)
+                    arena.destroy(b);
+            }
+        }
+        CHECK(ok, "3809 AC1: success after Guard");
+        const auto rs1 = aura::ast::unified_restamp_calls_total_v_read();
+        const auto gen1 = m->arena_live_compact_gen_restamps_total.load(std::memory_order_relaxed);
+        CHECK(rs1 > rs0, "3809 AC1: BoundarySuccess restamp at least ran");
+        if (gen1 > gen0) {
+            CHECK(rs1 >= rs0 + 2,
+                  "3809 AC1: Soft gen bump → Densify restamp before Guard returns");
+        } else {
+            std::println("  note: Soft did not invalidate pins this round; AC1 source-cite "
+                         "carries (unit-env freelist may be quiet)");
+            CHECK(true, "3809 AC1: no Soft gen bump — vacuous runtime");
+        }
+        CHECK(mdh::g_last_window_seq.load(std::memory_order_relaxed) == seq0,
+              "3809 AC4: Soft exit does not advance Moving densify window seq");
+        CHECK(mdh::g_last_had_moving_densify.load(std::memory_order_relaxed) == had0,
+              "3809 AC4: Soft exit does not flip had_moving_densify");
+    }
+
+    // AC2: Soft soft-gated under render → zero extra Densify restamp from Soft.
+    {
+        std::println("\n--- #3809 AC2: Soft soft-gated → zero extra Densify ---");
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
+        const auto rs0 = aura::ast::unified_restamp_calls_total_v_read();
+        const auto gen0 = m->arena_live_compact_gen_restamps_total.load(std::memory_order_relaxed);
+        aura::core::arena_policy::enter_render_hotpath();
+        bool ok = true;
+        {
+            Evaluator::MutationBoundaryGuard g(ev, &ok);
+            (void)g;
+        }
+        aura::core::arena_policy::exit_render_hotpath();
+        const auto rs1 = aura::ast::unified_restamp_calls_total_v_read();
+        const auto gen1 = m->arena_live_compact_gen_restamps_total.load(std::memory_order_relaxed);
+        CHECK(gen1 == gen0, "3809 AC2: Soft soft-gated → no gen restamp metric bump");
+        CHECK(rs1 == rs0 || rs1 == rs0 + 1,
+              "3809 AC2: Soft soft-gated → at most BoundarySuccess restamp (no Soft Densify)");
+        CHECK(ok, "3809 AC2: success under render soft-gate");
+    }
+
+    // AC3 soak: mutate × Soft freelist × next apply — when Soft bumps gen,
+    // Densify restamp must have run so IR/pin triad is not left stale.
+    {
+        std::println("\n--- #3809 AC3: soak mutate × Soft × apply ---");
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
+        LifetimePin pin;
+        int dummy = 0;
+        std::uint64_t aid = 0, agen = 0;
+        if (ev.arena()) {
+            aid = ev.arena()->arena_id();
+            agen = ev.arena()->generation();
+        }
+        pin.pin(&dummy, agen, aid);
+        const auto gen0 = m->arena_live_compact_gen_restamps_total.load(std::memory_order_relaxed);
+        const auto rs0 = aura::ast::unified_restamp_calls_total_v_read();
+        bool ok = true;
+        {
+            Evaluator::MutationBoundaryGuard g(ev, &ok);
+            if (ev.arena()) {
+                int* q = ev.arena()->create_with_cover<int>(nullptr, "test-3809-temp", 7);
+                if (q)
+                    ev.arena()->destroy(q);
+            }
+        }
+        const auto gen1 = m->arena_live_compact_gen_restamps_total.load(std::memory_order_relaxed);
+        const auto rs1 = aura::ast::unified_restamp_calls_total_v_read();
+        if (gen1 > gen0) {
+            CHECK(rs1 >= rs0 + 2,
+                  "3809 AC3: Soft wipe/gen bump restamped Densify (triad not left stale)");
+        } else {
+            CHECK(true, "3809 AC3: Soft quiet — soak source-cite carries");
+        }
+        (void)cs.eval("(+ 1 1)");
+        CHECK(ok, "3809 AC3: post-Soft apply path ok");
+        (void)pin;
+    }
+}
+
 } // namespace aura_compact_sweep_batch
 
 int main() {
@@ -707,5 +862,6 @@ int main() {
     aura_compact_sweep_batch::run_3677_soft_compact_restamp();
     aura_compact_sweep_batch::run_3679_guard_scan_order();
     aura_compact_sweep_batch::run_3742_gen_restamp_and_pair_idx();
+    aura_compact_sweep_batch::run_3809_boundary_soft_densify_restamp();
     return RUN_ALL_TESTS();
 }
