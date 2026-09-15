@@ -5123,6 +5123,20 @@ def cmd_lint():
             "Issue #3831 dirty-aware storm force-full cap linter failed — run python3 scripts/coverage/checks/check_dirty_aware_storm_force_full_cap_3831.py"
         )
         return r
+    # Issue #3832: apply_closure TLS cache — happy path skips process-wide
+    # closures_mtx_; densify/erase epoch + window_seq invalidate; tombstone /
+    # densify-stale refuse retained. Extends test_apply_closure_envframe_soa;
+    # no docs/design / invent.
+    actls3832_script = COVERAGE_CHECKS / "check_apply_closure_tls_cache_3832.py"
+    if not actls3832_script.exists():
+        fail(f"missing {actls3832_script}")
+        return 1
+    r = run([sys.executable, str(actls3832_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3832 apply_closure TLS cache linter failed — run python3 scripts/coverage/checks/check_apply_closure_tls_cache_3832.py"
+        )
+        return r
     # Issue #3802: EXEMPT_2ARG write-file/sys-* host-path isolation under
     # Restricted+MT / Strict — resolve under tenant root from
     # capability_tenant_id_; cross-tenant escape → IsolationDeny SE
@@ -15351,6 +15365,27 @@ def cmd_dirty_aware_storm_force_full_cap_3831():
     return cmd_dirty_aware_storm_force_full_cap_3831_coverage()
 
 
+def cmd_apply_closure_tls_cache_3832_coverage():
+    """Issue #3832: apply_closure TLS cache skips process-wide closures_mtx_."""
+    print(f"{B}=== apply_closure TLS cache (#3832) ==={N}")
+    script = COVERAGE_CHECKS / "check_apply_closure_tls_cache_3832.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = run([sys.executable, str(script)], cwd=ROOT)
+    if r != 0:
+        fail("apply_closure TLS cache (#3832) coverage contract rows failed")
+        return r
+    ok("apply_closure TLS cache (#3832) coverage clean")
+    return 0
+
+
+def cmd_apply_closure_tls_cache_3832():
+    """Issue #3832: Epoch-local TLS cache for apply_closure happy path."""
+    print(f"{B}=== apply_closure TLS cache (#3832) ==={N}")
+    return cmd_apply_closure_tls_cache_3832_coverage()
+
+
 
 def cmd_engine_metrics_hash_overflow_3018_coverage():
     """Issue #3018: engine:metrics hash overflow fail-soft (static)."""
@@ -23331,6 +23366,8 @@ def main():
         "empty-type-annotation-no-dynamic-3830-coverage": cmd_empty_type_annotation_no_dynamic_3830_coverage,
         "dirty-aware-storm-force-full-cap-3831": cmd_dirty_aware_storm_force_full_cap_3831,
         "dirty-aware-storm-force-full-cap-3831-coverage": cmd_dirty_aware_storm_force_full_cap_3831_coverage,
+        "apply-closure-tls-cache-3832": cmd_apply_closure_tls_cache_3832,
+        "apply-closure-tls-cache-3832-coverage": cmd_apply_closure_tls_cache_3832_coverage,
         "mutate-dispatch-sole-guard-3074-coverage": cmd_mutate_dispatch_sole_guard_3074_coverage,
         "mutate-reg-kind-3452": cmd_mutate_reg_kind_3452_coverage,
         "mutate-reg-kind-3452-coverage": cmd_mutate_reg_kind_3452_coverage,

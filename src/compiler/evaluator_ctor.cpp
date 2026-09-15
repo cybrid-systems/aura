@@ -369,6 +369,7 @@ Evaluator::~Evaluator() {
     module_cache_.clear();
     module_arena_ptrs_.clear();
     module_names_.clear();
+    bump_closures_apply_epoch(); // Issue #3832
     closures_.clear();
     cells_.clear();
     pairs_.clear();

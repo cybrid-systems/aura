@@ -703,6 +703,7 @@ bool Evaluator::gc_module(const std::string& path) {
     auto arena_it = module_arena_ptrs_.find(path);
     if (arena_it != module_arena_ptrs_.end() && arena_it->second) {
         auto* owner = arena_it->second;
+        bump_closures_apply_epoch(); // Issue #3832 densify/erase TLS invalidate
         for (auto it = closures_.begin(); it != closures_.end();) {
             if (it->second.owner_arena == owner) {
                 // Issue #1888: tombstone before erase for ClosureView lifetime.

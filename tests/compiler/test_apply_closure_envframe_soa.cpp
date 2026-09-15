@@ -11,6 +11,8 @@
 //   AC5: mutate + invalidate + long-lived apply → safe fallback, no crash
 //   AC6: materialize_call_env stress under dirty; schema holds
 //   AC7: #1632 lineage wire flags still present
+//   Issue #3832: TLS apply_closure cache — hot path skips closures_mtx_;
+//                tombstone/densify-stale refuse; contended microbench
 
 #include "test_harness.hpp"
 #include "compiler/observability_metrics.h"
@@ -18,8 +20,12 @@
 #include <array>
 #include <cstdint>
 #include <print>
+#include <fstream>
 #include <string>
 #include <vector>
+#include <thread>
+#include <chrono>
+#include <atomic>
 
 import std;
 import aura.compiler.evaluator;
@@ -213,6 +219,104 @@ static void ac7_lineage() {
     CHECK(href(cs, "dual-check-forced") == 1, "dual-check-forced");
 }
 
+
+static void ac3832_tls_cache_happy_path() {
+    std::println("\n--- #3832 AC1/AC3: TLS cache skips closures_mtx_ on hot apply ---");
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    auto r = cs.eval("(lambda (x) (+ x 1))");
+    CHECK(r && is_closure(*r), "3832: alloc lambda");
+    const auto cid = as_closure_id(*r);
+    std::array<aura::compiler::types::EvalValue, 1> args{make_int(1)};
+
+    // Warm + measure: first apply may mtx-lookup; subsequent same-fiber hits TLS.
+    (void)ev.apply_closure(cid, args);
+    const auto hits0 = ev.apply_closure_tls_hit_total();
+    const auto mtx0 = ev.apply_closure_mtx_lookup_total();
+    constexpr int kN = 2000;
+    for (int i = 0; i < kN; ++i)
+        (void)ev.apply_closure(cid, args);
+    const auto hits1 = ev.apply_closure_tls_hit_total();
+    const auto mtx1 = ev.apply_closure_mtx_lookup_total();
+    CHECK(hits1 >= hits0 + static_cast<std::uint64_t>(kN - 2),
+          "3832 AC1: repeated apply hits TLS (no process-wide mtx on happy path)");
+    CHECK(mtx1 - mtx0 <= 2, "3832 AC1: mtx lookups stay near-zero after warm");
+
+    // Contended multi-worker microbench: TLS hits dominate under N threads.
+    constexpr int kWorkers = 4;
+    constexpr int kPer = 4000;
+    std::atomic<std::uint64_t> ok{0};
+    auto t0 = std::chrono::steady_clock::now();
+    std::vector<std::thread> threads;
+    threads.reserve(kWorkers);
+    for (int w = 0; w < kWorkers; ++w) {
+        threads.emplace_back([&] {
+            std::array<aura::compiler::types::EvalValue, 1> a{make_int(2)};
+            for (int i = 0; i < kPer; ++i) {
+                auto got = ev.apply_closure(cid, a);
+                if (got && is_int(*got) && as_int(*got) == 3)
+                    ok.fetch_add(1, std::memory_order_relaxed);
+            }
+        });
+    }
+    for (auto& t : threads)
+        t.join();
+    auto t1 = std::chrono::steady_clock::now();
+    const auto us =
+        std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count();
+    CHECK(ok.load() == static_cast<std::uint64_t>(kWorkers * kPer),
+          "3832 AC3: contended multi-fiber apply results correct");
+    const auto hits2 = ev.apply_closure_tls_hit_total();
+    const auto mtx2 = ev.apply_closure_mtx_lookup_total();
+    CHECK(hits2 > mtx2, "3832 AC3: under contention TLS hits >> mtx lookups (p99 path)");
+    std::println("3832 microbench: {} workers x {} applies in {} us (tls_hits={} mtx={})",
+                 kWorkers, kPer, us, hits2, mtx2);
+
+    // Epoch bump invalidates TLS → next apply takes mtx again.
+    const auto mtx_before = ev.apply_closure_mtx_lookup_total();
+    ev.bump_closures_apply_epoch_for_test();
+    (void)ev.apply_closure(cid, args);
+    CHECK(ev.apply_closure_mtx_lookup_total() > mtx_before,
+          "3832: epoch bump forces mtx refill");
+}
+
+static void ac3832_tombstone_and_source() {
+    std::println("\n--- #3832 AC2: tombstone refuse + densify-stale family + source ---");
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    auto r = cs.eval("(lambda () 1)");
+    CHECK(r && is_closure(*r), "3832 AC2: alloc");
+    const auto cid = as_closure_id(*r);
+    // Warm TLS then tombstone under unique walk (bumps epoch).
+    (void)ev.apply_closure(cid, {});
+    ev.walk_active_closures([&](ClosureId id, Closure& cl) {
+        if (id == cid)
+            cl.tombstone_for_views();
+    });
+    auto got = ev.apply_closure(cid, {});
+    CHECK(!got.has_value(), "3832 AC2: tombstoned closure still refused");
+
+    const auto flat = [&] {
+        for (const char* p :
+             {"src/compiler/evaluator_eval_flat.cpp", "../src/compiler/evaluator_eval_flat.cpp",
+              "../../src/compiler/evaluator_eval_flat.cpp"}) {
+            std::ifstream in(p);
+            if (!in)
+                continue;
+            return std::string((std::istreambuf_iterator<char>(in)),
+                               std::istreambuf_iterator<char>());
+        }
+        return std::string{};
+    }();
+    CHECK(flat.find("kApplyClosureTlsCacheIssue = 3832") != std::string::npos,
+          "3832: TLS stamp in eval_flat");
+    CHECK(flat.find("try_apply_closure_tls_lookup") != std::string::npos, "3832: TLS lookup");
+    CHECK(flat.find("production_apply_closure_densify_hard_refuse") != std::string::npos,
+          "3832 AC2: densify-stale hard-refuse retained");
+    CHECK(flat.find("g_last_window_seq") != std::string::npos,
+          "3832: densify window_seq invalidates TLS");
+}
+
 } // namespace
 
 int main() {
@@ -224,6 +328,8 @@ int main() {
     ac5_mutate_apply();
     ac6_materialize_stress();
     ac7_lineage();
+    ac3832_tls_cache_happy_path();
+    ac3832_tombstone_and_source();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

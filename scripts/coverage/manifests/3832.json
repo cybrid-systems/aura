@@ -1,0 +1,35 @@
+{
+  "issue": 3832,
+  "title": "Issue #3832: apply_closure TLS cache skips process-wide closures_mtx_",
+  "ok": "OK #3832 apply_closure_tls_cache: all rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_eval_flat.cpp",
+      "contains": [
+        "Issue #3832",
+        "kApplyClosureTlsCacheIssue = 3832",
+        "try_apply_closure_tls_lookup",
+        "store_apply_closure_tls"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/evaluator.ixx",
+      "contains": ["closures_apply_epoch_", "bump_closures_apply_epoch"]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/compiler/test_apply_closure_envframe_soa.cpp",
+      "contains": ["3832 AC1", "3832 AC3", "ac3832_tls_cache_happy_path"]
+    },
+    {
+      "ac": "AC3-forbid",
+      "forbid": [
+        "tests/compiler/test_issue_3832.cpp",
+        "tests/issues/test_issue_3832.cpp",
+        "docs/design/3832-apply-closure-tls-cache.md"
+      ]
+    }
+  ]
+}
