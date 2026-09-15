@@ -388,7 +388,9 @@ int run_test_outermost_persist_fail_closed() {
         const auto fn_pos =
             emb.find("extern \"C\" void aura_outermost_success_persist_occurrence(");
         const auto emb_after = (fn_pos == std::string::npos) ? std::string{} : emb.substr(fn_pos);
-        CHECK(contains(emb_after, "undo_apply_coercion_map_recent"),
+        CHECK(contains(emb, "undo_apply_coercion_map_recent") &&
+                  (contains(emb_after, "aura_persist_reject_undo") ||
+                   contains(emb_after, "undo_apply_coercion_map_recent")),
               "3545 AC2: persist-reject calls undo");
         CHECK(contains(emb, "kCoercionMapPersistRejectUndoIssue") ||
                   contains(read_file("src/compiler/typed_mutation_audit.h"),
@@ -513,6 +515,60 @@ int run_test_outermost_persist_fail_closed() {
         typed_audit::g_linear_ir_fastpath_boundary_depth_override = 1;
         CHECK(!ir_typed_entry_commit_readiness_ok(), "3472 live: IR typed-entry refused");
         typed_audit::g_linear_ir_fastpath_boundary_depth_override = -1;
+        // Issue #3818: #3472 window must call shared reject-undo (#3545 journal).
+        CHECK(contains(win, "aura_persist_reject_undo") ||
+                  contains(win, "undo_apply_coercion_map_recent"),
+              "3818: #3472 post-persist deny calls CoercionMap undo");
+        CHECK(contains(emb, "Issue #3818"), "3818: dtor cites #3818");
+        CHECK(emb.find("schema-3818") == std::string::npos, "3818: no new query key");
+        apply_dev_audit_defaults();
+        reset_for_test();
+    }
+
+    {
+        std::println("\n--- #3818 soak: shared reject-undo restores elim (next CastOp/DCE safe) ---");
+        // Live #3472 flip after green persist is hard to arm without the
+        // #3614 pre-persist gate consuming the same pending/density latch
+        // first. Static window checks above prove #3472 calls
+        // aura_persist_reject_undo; here prove the shared #3545 undo
+        // restores elim counts so a later CastOp/DCE cannot ride inflation.
+        reset_for_test();
+        apply_production_audit_defaults();
+        aura::compiler::dirty::reset_dead_coercion_decision_invalidate_for_test();
+        aura::compiler::clear_coercion_map_abort_rewind_for_test();
+        const auto elided0 = aura::compiler::g_dead_coercion_ast_elided_total.load();
+        aura::ast::StringPool pool;
+        aura::ast::FlatAST flat;
+        auto xv = flat.add_variable(pool.intern("x"));
+        auto lit = flat.add_literal(1);
+        flat.set_type(lit, 7);
+        auto call = flat.add_call(xv, std::array<aura::ast::NodeId, 1>{lit});
+        flat.root = call;
+        aura::compiler::CoercionMap map;
+        map.add(call, 1, lit, 1, 7, 0, 0);
+        aura::compiler::coerced_nodes_tracker_enter_boundary();
+        (void)aura::compiler::apply_coercion_map(flat, map, nullptr, &map);
+        CHECK(map.eliminated_count() >= 1, "3818 soak: identity elision marked");
+        CHECK(aura::compiler::g_dead_coercion_ast_elided_total.load() > elided0,
+              "3818 soak: ast-elided bumped");
+        CompilerService cs;
+        CHECK(cs.eval("(+ 1 1)").has_value(), "3818 soak: warm");
+        // Same undo the #3472 belt invokes via aura_persist_reject_undo.
+        undo_apply_coercion_map_recent(&cs.evaluator(), 3818);
+        aura::compiler::coerced_nodes_tracker_exit_boundary();
+        CHECK(aura::compiler::g_dead_coercion_ast_elided_total.load() == elided0,
+              "3818 soak: ast-elided restored (no inflated elim for next CastOp/DCE)");
+        const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+        const auto issue = emb.find("Issue #3472");
+        const auto exit_pos = emb.find("ev_->exit_mutation_boundary(success)");
+        const auto win =
+            (issue == std::string::npos || exit_pos == std::string::npos || issue > exit_pos)
+                ? std::string{}
+                : emb.substr(issue, exit_pos - issue);
+        CHECK(contains(win, "aura_persist_reject_undo"),
+              "3818 soak: #3472 post-persist deny wires shared reject-undo");
+        CHECK(contains(emb, "note_3440_restore") && contains(emb, "aura_persist_reject_undo(ev,"),
+              "3818 soak: in-helper persist-reject shares the same undo");
         apply_dev_audit_defaults();
         reset_for_test();
     }
@@ -524,17 +580,23 @@ int run_test_outermost_persist_fail_closed() {
         CHECK(contains(emb, "Issue #3687"), "3687: persist helper cites #3687");
         CHECK(contains(emb, "restore_checkpoint_topology_for_persist_reject"),
               "3687: topology restore in persist-reject txn");
+        // Issue #3818: shared aura_persist_reject_undo owns AST+#3545 order;
+        // note_3440_restore / #3472 post-persist deny both call it.
+        const auto shared_pos = emb.find("aura_persist_reject_undo(");
+        const auto shared = (shared_pos == std::string::npos) ? std::string{} : emb.substr(shared_pos);
+        const auto shared_end = shared.find("extern \"C\" void aura_outermost_success_persist_occurrence");
+        const auto shared_body =
+            shared_end == std::string::npos ? shared : shared.substr(0, shared_end);
+        const auto topo = shared_body.find("restore_checkpoint_topology_for_persist_reject");
+        const auto undo = shared_body.find("undo_apply_coercion_map_recent");
+        CHECK(topo != std::string::npos && undo != std::string::npos && topo < undo,
+              "3687 AC1: AST restore before CoercionMap undo in note_3440 (same function)");
         const auto fn_pos =
             emb.find("extern \"C\" void aura_outermost_success_persist_occurrence(");
         const auto helper = (fn_pos == std::string::npos) ? std::string{} : emb.substr(fn_pos);
-        const auto end_helper =
-            helper.find("extern \"C\" void aura_clear_occurrence_persist_buffer");
-        const auto helper_body =
-            end_helper == std::string::npos ? helper : helper.substr(0, end_helper);
-        const auto topo = helper_body.find("restore_checkpoint_topology_for_persist_reject");
-        const auto undo = helper_body.find("undo_apply_coercion_map_recent");
-        CHECK(topo != std::string::npos && undo != std::string::npos && topo < undo,
-              "3687 AC1: AST restore before CoercionMap undo in note_3440 (same function)");
+        CHECK(contains(helper, "aura_persist_reject_undo") ||
+                  contains(helper, "restore_checkpoint_topology_for_persist_reject"),
+              "3687 AC1: persist helper invokes shared reject-undo");
         CHECK(contains(emb, "if (!cp.topology_restored)"),
               "3687: exit_mutation_boundary no-ops dual-topology if already restored");
         CHECK(contains(tma, "Issue #3687"), "3687: typed_audit cites #3687");

@@ -59,6 +59,9 @@ def main() -> int:
     must("aura_clear_occurrence_persist_buffer", "AC1 persist clear", win)
     must("clear_type_export_authority", "AC1 grant drop", win)
     must("success = false", "AC1 flip", win)
+    # Issue #3818: post-persist deny must undo CoercionMap journal (#3545).
+    if "aura_persist_reject_undo" not in win and "undo_apply_coercion_map_recent" not in win:
+        fails.append("AC1/#3818: #3472 window missing CoercionMap journal undo")
     must("production_defaults_active()", "AC4 hard gate", win)
     must("AuditStrategy::Full", "AC4 Full", win)
     must_not("linear_post_mutate_force_rollback_total", "AC1 rollback counter not deny", win)

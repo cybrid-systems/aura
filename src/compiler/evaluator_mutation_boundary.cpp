@@ -422,6 +422,25 @@ extern "C" void aura_undo_apply_coercion_map_recent(void* ev_ptr, std::uint64_t 
         ::aura::compiler::g_coercion_provenance_miss_total.fetch_add(1, std::memory_order_relaxed);
 }
 
+// Issue #3440 / #3545 / #3687 / #3818: shared persist-reject / post-persist
+// deny undo. AST dual-topology (#3687) + CoercionMap journal (#3545) in
+// one transaction. Soft/Off: topology helper no-ops; undo take-and-discards
+// the journal (zero extra). exit_mutation_boundary no-ops dual-topology
+// when the checkpoint is already restored. Used by in-helper persist-reject
+// (note_3440_restore) and by #3472 post-persist linear deny (#3818).
+static void aura_persist_reject_undo(aura::compiler::Evaluator* ev,
+                                     std::uint64_t mutation_id) noexcept {
+    if (!ev)
+        return;
+    // Issue #3687: AST dual-topology restore in the same transaction as
+    // CoercionMap undo (before return / any observer).
+    ev->restore_checkpoint_topology_for_persist_reject();
+    // Issue #3545: CoercionMap / DeadCoercion / stamper undo (do not wait
+    // for dtor abort_restore — abort takes coerced nodes but does not
+    // reverse eliminated_count_ / g_dead_coercion_ast_elided_*).
+    aura::compiler::typed_audit::undo_apply_coercion_map_recent(ev, mutation_id);
+}
+
 // Issue #2641 / #2938: C ABI for outermost-success OccurrenceGoal persist
 // (tests + dtor). Soft / env=0 / no type-checker / empty goals → zero cost
 // inside maybe_persist_occurrence_snapshot. Issue #2938: successful commit
@@ -442,14 +461,8 @@ extern "C" void aura_outermost_success_persist_occurrence(void* ev_ptr,
     // stays SSOT. Soft/Off: note is a no-op (flag stays false).
     auto note_3440_restore = [ev, mutation_id]() noexcept {
         aura::compiler::typed_audit::note_outermost_persist_reject_needs_restore();
-        // Issue #3687: AST dual-topology restore in the same transaction
-        // as CoercionMap undo (before return / any observer). Soft/Off:
-        // restore helper is a no-op. exit_mutation_boundary then no-ops
-        // dual-topology if the checkpoint is already restored.
-        ev->restore_checkpoint_topology_for_persist_reject();
-        // Issue #3545: CoercionMap / DeadCoercion / stamper undo on the
-        // persist-reject path (do not wait for dtor abort_restore).
-        aura::compiler::typed_audit::undo_apply_coercion_map_recent(ev, mutation_id);
+        // Issue #3687 / #3545 / #3818: shared reject-undo (AST + journal).
+        aura_persist_reject_undo(ev, mutation_id);
     };
     // Issue #3170: outermost-success fingerprint guard (I4 from 2026-08)
     // type-system review -- 半解不得出厂). Compute the fingerprint of the
@@ -4494,13 +4507,16 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
             // else: #3780 miss already un-stamped; skip Occurrence persist
         }
     }
-    // Issue #3472: belt-and-suspenders post-persist linear deny. The
-    // pre-persist #3614 gate above is the primary deny path now; retain
+    // Issue #3472 / #3818: belt-and-suspenders post-persist linear deny.
+    // The pre-persist #3614 gate above is the primary deny path now; retain
     // this walk for the case the persist helper's own drain / recover
     // latch flips linear safety after a green pre-check. Same un-stamp
     // set (proof / persist buffer / query:type grant) and the same
     // success flip into the existing abort_restore SSOT — do not
     // invent a second restore. Soft/Off: observe-only, no hard flip.
+    // Issue #3818: after a green persist beat, also run the shared
+    // note_3440 / #3545 reject-undo (CoercionMap journal + #3687 AST).
+    // abort_restore then no-ops dual-topology if already restored.
     if (outermost && success &&
         (typed_audit::production_defaults_active() ||
          typed_audit::get_strategy() == typed_audit::AuditStrategy::Full)) {
@@ -4514,6 +4530,20 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
                 typed_audit::kTypeLinearProofOutcomeReject);
             aura_clear_occurrence_persist_buffer(ev_);
             ev_->clear_type_export_authority();
+            // Issue #3818: #3545 CoercionMap journal undo + #3687 AST
+            // (same aura_persist_reject_undo as in-helper persist-reject).
+            // Soft/Off never enters this arm (no undo cost).
+            std::uint64_t mid_undo = 0;
+            {
+                auto& stk = ev_->active_mutation_stack();
+                if (!stk.empty() && stk.back().audit_mid != 0)
+                    mid_undo = stk.back().audit_mid;
+                else if (session_mid_at_enter_ != 0)
+                    mid_undo = session_mid_at_enter_;
+                else
+                    mid_undo = typed_audit::join_audit_and_se_mid(0);
+            }
+            aura_persist_reject_undo(ev_, mid_undo);
             success = false;
             success_flag_store(flag_, false);
         }
