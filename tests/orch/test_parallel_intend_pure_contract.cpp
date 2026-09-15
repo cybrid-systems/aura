@@ -41,7 +41,9 @@
 
 #include "compiler/typed_mutation_audit.h"
 #include "orch/agent_spawn.h"
+#include "orch/agent_scope.h" // #3803
 #include "serve/parallel_orch.h" // Issue #2923: decide_isolation SSOT
+#include "serve/scheduler.h" // #3803 AgentScope observe
 
 #include <atomic>
 #include <cstdint>
@@ -1741,6 +1743,193 @@ int run_test_parallel_intend_pure_contract() {
 
         reset_for_test();
         scs.evaluator().set_effect_sandbox_mode(0);
+    }
+
+    // ── #3803: AgentScope N-agents ≠ concurrent mutate — join/workflow ──
+    // Spawning N scope agents without ≥2 distinct region_keys stays
+    // Serialized under production; join/workflow hash carries
+    // isolation-level + region-key-missing bool (no new query key).
+    {
+        using aura::compiler::typed_audit::apply_production_audit_defaults;
+        using aura::compiler::typed_audit::clear_cone_outside_goal_drop_for_test;
+        using aura::compiler::typed_audit::clear_occurrence_empty_after_fence_for_test;
+        using aura::compiler::typed_audit::clear_partial_cone_truncate_for_test;
+        using aura::compiler::typed_audit::g_refined_consistency_drift_face;
+        using aura::compiler::typed_audit::g_region_type_cross_talk_face;
+        using aura::compiler::typed_audit::reset_for_test;
+        using aura::orch::kAgentScopeRegionKeyIsolationIssue;
+        using aura::serve::parallel_orch::g_parallel_orch_stats;
+
+        std::println("\n--- #3803 AC1: Soft two scope agents — region-key-missing=#f ---");
+        reset_for_test();
+        CompilerService soft3803;
+        soft3803.evaluator().set_effect_sandbox_mode(0);
+        CHECK(soft3803.eval("(+ 1 1)").has_value(), "3803 AC1: warm Soft");
+        auto soft_flag = soft3803.eval(R"(
+            (begin
+              (orch:scope-spawn "a-3803" (lambda () 1))
+              (orch:scope-spawn "b-3803" (lambda () 1))
+              (let ((h (orch:scope-join-all :timeout-ms 2000)))
+                (list (hash-ref h "isolation-level")
+                      (if (hash-ref h "region-key-missing") 1 0))))
+        )");
+        CHECK(soft_flag.has_value(), "ac3803_1_soft: Soft join returns");
+        // Probe fields via separate joins (scope dropped after each join_all).
+        auto soft_lvl = soft3803.eval(R"(
+            (begin
+              (orch:scope-spawn "a2-3803" (lambda () 1))
+              (orch:scope-spawn "b2-3803" (lambda () 1))
+              (hash-ref (orch:scope-join-all :timeout-ms 2000) "isolation-level"))
+        )");
+        CHECK(soft_lvl && is_string(*soft_lvl), "ac3803_1_soft: isolation-level present");
+        if (soft_lvl && is_string(*soft_lvl)) {
+            const auto idx = as_string_idx(*soft_lvl);
+            const auto heap = soft3803.evaluator().string_heap();
+            const std::string s = idx < heap.size() ? std::string(heap[idx]) : "";
+            CHECK(s == "serialized", "ac3803_1_soft: Soft isolation-level=serialized");
+        }
+        auto soft_miss = soft3803.eval(R"(
+            (begin
+              (orch:scope-spawn "a3-3803" (lambda () 1))
+              (orch:scope-spawn "b3-3803" (lambda () 1))
+              (if (hash-ref (orch:scope-join-all :timeout-ms 2000) "region-key-missing") 1 0))
+        )");
+        CHECK(soft_miss && is_int(*soft_miss) && as_int(*soft_miss) == 0,
+              "ac3803_1_soft: Soft region-key-missing=#f");
+
+        std::println("\n--- #3803 AC1: production two agents no keys → missing flag ---");
+        reset_for_test();
+        clear_partial_cone_truncate_for_test();
+        clear_cone_outside_goal_drop_for_test();
+        clear_occurrence_empty_after_fence_for_test();
+        g_region_type_cross_talk_face.store(0, std::memory_order_relaxed);
+        g_refined_consistency_drift_face.store(0, std::memory_order_relaxed);
+        apply_production_audit_defaults();
+        CompilerService prod3803;
+        prod3803.evaluator().set_effect_sandbox_mode(0);
+        CHECK(prod3803.eval("(+ 1 1)").has_value(), "3803 AC1: warm prod");
+        const auto miss0 = g_parallel_orch_stats.region_key_missing_serialized_total.load(
+            std::memory_order_relaxed);
+        auto prod_miss = prod3803.eval(R"(
+            (begin
+              (orch:scope-spawn "c-3803" (lambda () 1))
+              (orch:scope-spawn "d-3803" (lambda () 1))
+              (let ((h (orch:scope-join-all :timeout-ms 2000)))
+                (if (hash-ref h "region-key-missing") 1 0)))
+        )");
+        CHECK(prod_miss && is_int(*prod_miss) && as_int(*prod_miss) == 1,
+              "ac3803_2_prod_missing: region-key-missing=#t");
+        auto prod_lvl = prod3803.eval(R"(
+            (begin
+              (orch:scope-spawn "e-3803" (lambda () 1))
+              (orch:scope-spawn "f-3803" (lambda () 1))
+              (hash-ref (orch:scope-join-all :timeout-ms 2000) "isolation-level"))
+        )");
+        CHECK(prod_lvl && is_string(*prod_lvl), "ac3803_2_prod_missing: isolation-level");
+        if (prod_lvl && is_string(*prod_lvl)) {
+            const auto idx = as_string_idx(*prod_lvl);
+            const auto heap = prod3803.evaluator().string_heap();
+            const std::string s = idx < heap.size() ? std::string(heap[idx]) : "";
+            CHECK(s == "serialized", "ac3803_2_prod_missing: isolation-level=serialized");
+        }
+        CHECK(g_parallel_orch_stats.region_key_missing_serialized_total.load(
+                  std::memory_order_relaxed) > miss0,
+              "ac3803_2_prod_missing: counter bumped");
+
+        std::println("\n--- #3803 AC2: distinct :region-key → RegionConcurrent observe ---");
+        auto key_lvl = prod3803.eval(R"(
+            (begin
+              (orch:scope-spawn "g-3803" (lambda () 1) :region-key 11)
+              (orch:scope-spawn "h-3803" (lambda () 1) :region-key 22)
+              (hash-ref (orch:scope-join-all :timeout-ms 2000) "isolation-level"))
+        )");
+        CHECK(key_lvl && is_string(*key_lvl), "ac3803_3_keys: isolation-level string");
+        if (key_lvl && is_string(*key_lvl)) {
+            const auto idx = as_string_idx(*key_lvl);
+            const auto heap = prod3803.evaluator().string_heap();
+            const std::string s = idx < heap.size() ? std::string(heap[idx]) : "";
+            CHECK(s == "region-concurrent",
+                  "ac3803_3_keys: isolation-level=region-concurrent");
+        }
+        auto key_miss = prod3803.eval(R"(
+            (begin
+              (orch:scope-spawn "i-3803" (lambda () 1) :region-key 11)
+              (orch:scope-spawn "j-3803" (lambda () 1) :region-key 22)
+              (if (hash-ref (orch:scope-join-all :timeout-ms 2000) "region-key-missing") 1 0))
+        )");
+        CHECK(key_miss && is_int(*key_miss) && as_int(*key_miss) == 0,
+              "ac3803_3_keys: region-key-missing=#f with distinct keys");
+
+        std::println("\n--- #3803 AC3: single-agent Soft unchanged ---");
+        reset_for_test();
+        CompilerService single3803;
+        single3803.evaluator().set_effect_sandbox_mode(0);
+        auto single = single3803.eval(R"(
+            (begin
+              (orch:scope-spawn "solo-3803" (lambda () 1))
+              (if (hash-ref (orch:scope-join-all :timeout-ms 2000) "region-key-missing") 1 0))
+        )");
+        CHECK(single && is_int(*single) && as_int(*single) == 0,
+              "ac3803_4_single: single-agent region-key-missing=#f");
+
+        std::println("\n--- #3803 AC2 C++: AgentSpec.region_key + observe_isolation ---");
+        {
+            aura::orch::AgentSpec s;
+            s.name = "cpp-3803";
+            s.region_key = 42;
+            CHECK(s.region_key == 42, "3803 AC2: AgentSpec.region_key field");
+            CHECK(kAgentScopeRegionKeyIsolationIssue == 3803, "3803 stamp");
+            // C++ observe_isolation on a live scope with two keyed specs.
+            aura::serve::Scheduler sched(2);
+            aura::orch::AgentScope scope(sched);
+            aura::orch::AgentSpec a;
+            a.name = "cpp-a";
+            a.region_key = 7;
+            a.body = [] {};
+            a.mutation_boundary = false;
+            aura::orch::AgentSpec b;
+            b.name = "cpp-b";
+            b.region_key = 8;
+            b.body = [] {};
+            b.mutation_boundary = false;
+            (void)scope.spawn(std::move(a));
+            (void)scope.spawn(std::move(b));
+            auto obs = scope.observe_isolation();
+            CHECK(obs.decision.level == aura::serve::parallel_orch::IsolationLevel::RegionConcurrent,
+                  "3803 AC2: C++ observe RegionConcurrent");
+            CHECK(!obs.region_key_missing, "3803 AC2: C++ observe not missing");
+            CHECK(obs.decision.distinct_nonzero_region_keys == 2, "3803 AC2: distinct==2");
+        }
+
+        std::println("\n--- #3803 AC4: source-cite + no invent / no new query ---");
+        const auto agent = read_file("src/compiler/evaluator_primitives_agent.cpp");
+        const auto scope_h = read_file("src/orch/agent_scope.h");
+        const auto spawn_h = read_file("src/orch/agent_spawn.h");
+        const auto readme = read_file("src/orch/README.md");
+        const auto build = read_file("build.py");
+        CHECK(spawn_h.find("region_key = 0") != std::string::npos,
+              "3803 AC4: AgentSpec.region_key");
+        CHECK(scope_h.find("observe_isolation") != std::string::npos,
+              "3803 AC4: AgentScope::observe_isolation");
+        CHECK(scope_h.find("kAgentScopeRegionKeyIsolationIssue = 3803") != std::string::npos,
+              "3803 AC4: issue stamp");
+        CHECK(agent.find("region-key-missing") != std::string::npos,
+              "3803 AC4: join/workflow region-key-missing");
+        CHECK(agent.find("schema-3803") != std::string::npos, "3803 AC4: schema-3803");
+        CHECK(agent.find("spec.region_key = region_key") != std::string::npos,
+              "3803 AC4: scope-spawn stamps AgentSpec");
+        CHECK(readme.find("Issue #3803") != std::string::npos, "3803 AC4: README cites #3803");
+        CHECK(agent.find("query:3803") == std::string::npos, "3803 AC4: no new query key");
+        CHECK(build.find("check_agent_scope_region_key_isolation_3803") != std::string::npos,
+              "3803 AC4: build.py wires linter");
+        CHECK(read_file("docs/design/3803-scope-region-key.md").empty(),
+              "3803 AC4: no docs/design per #1655");
+        std::ifstream invent("tests/orch/test_issue_3803.cpp");
+        if (!invent.good())
+            invent.open("../tests/orch/test_issue_3803.cpp");
+        CHECK(!invent.good(), "3803 AC4: no test_issue_3803.cpp per #81967");
+
+        reset_for_test();
     }
 
     std::println("\n=== Results: {} passed, {} failed ===", aura::test::g_passed,

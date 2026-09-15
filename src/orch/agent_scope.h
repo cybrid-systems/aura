@@ -115,6 +115,11 @@ inline constexpr int kScopeSpawnPendingNameIssue = 3497;
 // find/directory already skip them (#3598). Soft/Off stay append-only
 // (zero compact cost; #3497 AC2/AC3 green).
 inline constexpr int kScopeDoneHuskCompactIssue = 3776;
+// Issue #3803: AgentScope N-agents ≠ concurrent mutate — join/workflow
+// hash surfaces isolation-level / region-key-missing from specs_ region_keys
+// (decide_isolation SSOT). Spawning N scope agents without ≥2 distinct
+// non-zero region_keys stays Serialized under production. No AgentRegistry.
+inline constexpr int kAgentScopeRegionKeyIsolationIssue = 3803;
 
 // Issue #3444: directory_snapshot encodes root as "root" and children
 // as "0" / "0/1". Same rule for orch:scope-child's returned path.
@@ -124,6 +129,16 @@ inline constexpr int kScopeDoneHuskCompactIssue = 3776;
         return std::to_string(index);
     return std::string(parent_path) + "/" + std::to_string(index);
 }
+
+// Issue #3803: isolation observation for AgentScope join / workflow hashes.
+// Built from specs_.region_key via decide_isolation (no second ternary).
+// Soft / single-agent / empty: region_key_missing stays false.
+struct ScopeIsolationObservation {
+    serve::parallel_orch::IsolationDecision decision{};
+    bool region_key_missing = false;
+    std::uint32_t agent_count = 0;
+    std::uint32_t mutate_agent_count = 0;
+};
 
 inline std::atomic<std::uint64_t> g_agent_scope_bp_seq{1};
 
@@ -737,6 +752,16 @@ public:
         return last_restart_skipped_no_spec_;
     }
     [[nodiscard]] std::uint32_t last_restart_ok() const noexcept { return last_restart_ok_; }
+
+    // Issue #3803: observe isolation from stored specs_ region_keys.
+    // Agents discover "I am Serialized" without scraping process-global
+    // parallel stats. Soft / Off / single-agent: region_key_missing=#f.
+    // Production + ≥2 agents + distinct_nonzero < 2 → region_key_missing
+    // (existing region_key_missing_serialized predicate). No new query key.
+    [[nodiscard]] ScopeIsolationObservation observe_isolation() const noexcept {
+        ScopeEnterGuard g(this, "observe_isolation");
+        return observe_isolation_unlocked_();
+    }
 
     // Best-effort cancel request on all live fibers. Bounded cost; does
     // NOT wait. Use join_all afterwards to drain. Safe to call multiple
@@ -1561,6 +1586,44 @@ private:
     // (#3366 size==1). Soft/Off never compact.
     [[nodiscard]] static bool is_done_path_husk_(const AgentHandle& h) noexcept {
         return h.ok && aura::orch::slot_is_reclaimable_clean(h);
+    }
+
+    // Issue #3803: decide_isolation over specs_ region_keys (SSOT).
+    // Counts all specs_ slots (aligned with handles_); mutate_agent_count
+    // tracks mutation_boundary for hosts that filter pure-reasoning agents.
+    [[nodiscard]] ScopeIsolationObservation observe_isolation_unlocked_() const noexcept {
+        ScopeIsolationObservation out;
+        out.agent_count = static_cast<std::uint32_t>(specs_.size());
+        // Small stack buffer — decide_isolation only reads region_key.
+        // Cap observation at 64 specs for the stack vector (larger scopes
+        // still count via distinct walk below when needed).
+        constexpr std::size_t kCap = 64;
+        serve::parallel_orch::TaskSpec stack[kCap]{};
+        const std::size_t n = specs_.size() < kCap ? specs_.size() : kCap;
+        for (std::size_t i = 0; i < specs_.size(); ++i) {
+            if (specs_[i].mutation_boundary)
+                ++out.mutate_agent_count;
+            if (i < n)
+                stack[i].region_key = specs_[i].region_key;
+        }
+        // When >kCap, still count distinct via the same O(n²) walk used by
+        // count_distinct_nonzero_region_keys — allocate a small vector.
+        if (specs_.size() > kCap) {
+            std::vector<serve::parallel_orch::TaskSpec> tasks(specs_.size());
+            for (std::size_t i = 0; i < specs_.size(); ++i)
+                tasks[i].region_key = specs_[i].region_key;
+            out.decision = serve::parallel_orch::decide_isolation(
+                serve::parallel_orch::ParallelPolicy{}, tasks, /*pure_mode=*/false);
+        } else {
+            out.decision = serve::parallel_orch::decide_isolation(
+                serve::parallel_orch::ParallelPolicy{},
+                std::span<const serve::parallel_orch::TaskSpec>(stack, n),
+                /*pure_mode=*/false);
+        }
+        const bool production = aura::compiler::typed_audit::production_defaults_active();
+        out.region_key_missing = serve::parallel_orch::region_key_missing_serialized(
+            out.decision, /*pure_mode=*/false, specs_.size(), production);
+        return out;
     }
 
     [[nodiscard]] std::size_t live_handle_count_unlocked_() const noexcept {

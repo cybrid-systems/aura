@@ -176,6 +176,8 @@ count_distinct_nonzero_region_keys(std::span<const TaskSpec> tasks) noexcept {
 
 // Issue #3243: production + !pure + ≥2 tasks + distinct_nonzero < 2.
 // Pure predicate — no side effects. Soft callers pass production=false.
+// Issue #3803: same predicate reused by AgentScope::observe_isolation for
+// join/workflow hash region-key-missing (N scope agents ≠ concurrent mutate).
 [[nodiscard]] inline bool region_key_missing_serialized(const IsolationDecision& d, bool pure_mode,
                                                         std::size_t n_tasks,
                                                         bool production) noexcept {

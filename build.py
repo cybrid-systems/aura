@@ -8605,6 +8605,20 @@ def cmd_lint():
             "Issue #3353 production mutate region-keys deny linter failed — run python3 scripts/coverage/checks/check_parallel_mutate_region_keys_prod_deny_3353.py"
         )
         return r
+    # Issue #3803: AgentScope N-agents ≠ concurrent mutate — join/workflow
+    # hash surfaces isolation-level / region-key-missing from specs_
+    # region_keys (decide_isolation SSOT). Extends
+    # test_parallel_intend_pure_contract.cpp (#81967); no docs/design (#1655).
+    asr3803_script = COVERAGE_CHECKS / "check_agent_scope_region_key_isolation_3803.py"
+    if not asr3803_script.exists():
+        fail(f"missing {asr3803_script}")
+        return 1
+    r = run([sys.executable, str(asr3803_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3803 AgentScope region-key isolation linter failed — run python3 scripts/coverage/checks/check_agent_scope_region_key_isolation_3803.py"
+        )
+        return r
     # Issue #2887: mailbox BP storm — producer degrade hook on
     # AgentScope::watch_all (on_backpressure Cancel/Throttle/RestartN;
     # default ReportOnly). Complements admit soft-reject of new spawns
