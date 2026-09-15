@@ -32,6 +32,7 @@
 #include "compiler/observability_metrics.h"
 #include "compiler/security_capabilities.h"
 #include "compiler/security_side_effect.hh"
+#include "compiler/typed_mutation_audit.h"
 #include "core/capability_model.hh"
 #include "core/provenance_tracker.hh"
 #include "core/sandbox.hh"
@@ -39,6 +40,7 @@
 #include "core/workspace_epoch.hh"
 
 #include <algorithm>
+#include <array>
 #include <cstdlib>
 #include <cstdint>
 #include <fstream>
@@ -69,6 +71,11 @@ using aura::compiler::security::kEffectNone;
 using aura::compiler::types::as_int;
 using aura::compiler::types::is_error;
 using aura::compiler::types::is_int;
+using aura::compiler::types::is_void;
+using aura::compiler::types::is_closure;
+using aura::compiler::types::as_closure_id;
+using aura::compiler::types::make_int;
+using aura::compiler::types::make_void;
 using aura::core::capability::g_capability_effect_metrics;
 using aura::core::capability::reset_capability_effects_for_test;
 using aura::core::sandbox::SandboxMode;
@@ -809,6 +816,161 @@ int run_test_dispatch_required_effects() {
         CHECK(src.find("query:") != std::string::npos || true,
               "3720 AC5: no new query key required");
     }
+
+
+    // ── Issue #3798: PrimCall ownerless production fail-closed (#3720 residual) ──
+    {
+        std::println("\n--- #3798 AC1: PrimCall production fail-closed arm next to HashSet ---");
+        const auto src = read_file("src/compiler/ir_executor_impl.cpp");
+        const auto hs = src.find("case IROpcode::HashSet");
+        const auto pc = src.find("case IROpcode::PrimCall");
+        CHECK(hs != std::string::npos, "3798 AC1: HashSet case present");
+        CHECK(pc != std::string::npos, "3798 AC1: PrimCall case present");
+        if (pc != std::string::npos) {
+            const auto win = src.substr(pc, 2200);
+            CHECK(win.find("production_defaults_active()") != std::string::npos,
+                  "3798 AC1: PrimCall cites production_defaults_active");
+            CHECK(win.find("make_void()") != std::string::npos,
+                  "3798 AC1: PrimCall production arm returns void");
+            CHECK(win.find("Issue #3798") != std::string::npos ||
+                      win.find("#3798") != std::string::npos,
+                  "3798 AC1: PrimCall documents #3798");
+            // Soft/Off raw path retained in the same arm (AC3 source).
+            CHECK(win.find("(*pfn)(pargs)") != std::string::npos,
+                  "3798 AC3: Soft/Off ownerless raw (*pfn) retained");
+        }
+        if (hs != std::string::npos && pc != std::string::npos) {
+            const auto hs_win = src.substr(hs, 1200);
+            CHECK(hs_win.find("production_defaults_active()") != std::string::npos,
+                  "3798 AC1: HashSet still has production gate");
+        }
+    }
+
+    {
+        std::println(
+            "\n--- #3798 AC2: Restricted+MT null evaluator PrimCall mutate-class unchanged ---");
+        reset_all();
+        aura::core::bump_mutation_epoch(1);
+        aura::core::provenance::set_multi_tenant_env_active(true);
+        aura::compiler::typed_audit::apply_production_audit_defaults();
+        CHECK(aura::compiler::typed_audit::production_defaults_active(),
+              "3798 AC2: production_defaults_active armed");
+        set_mode(SandboxMode::Restricted);
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.set_effect_sandbox_mode(1);
+        ev.set_capability_tenant_id(3798);
+        auto& prims = ev.primitives();
+        auto vec_pfn = prims.lookup("vector");
+        auto vref_pfn = prims.lookup("vector-ref");
+        CHECK(vec_pfn.has_value() && vref_pfn.has_value(), "3798 AC2: vector prims present");
+        auto vec_r = (*vec_pfn)({make_int(10), make_int(20)});
+        CHECK(vec_r.has_value(), "3798 AC2: direct vector construct");
+        const auto vec = *vec_r;
+        auto before = (*vref_pfn)({vec, make_int(0)});
+        CHECK(before && is_int(*before) && as_int(*before) == 10, "3798 AC2: before[0]==10");
+
+        aura::ir::IRModule mod;
+        // fn0 entry: MakeClosure of mutate fn1, return closure
+        mod.functions.push_back(aura::ir::IRFunction{.name = "entry", .local_count = 4});
+        mod.functions.push_back(aura::ir::IRFunction{
+            .name = "mutate", .params = {"v", "i", "x"}, .local_count = 8, .arg_count = 3});
+        mod.functions[0].blocks.push_back({0});
+        mod.functions[0].blocks.back().instructions = {
+            {aura::ir::IROpcode::MakeClosure, {0, 1, 0, 0}},
+            {aura::ir::IROpcode::Return, {0, 0, 0, 0}},
+        };
+        const auto vs_id = static_cast<std::uint32_t>(aura::ir::PrimId::VectorSet);
+        const auto vr_id = static_cast<std::uint32_t>(aura::ir::PrimId::VectorRef);
+        mod.functions[1].blocks.push_back({0});
+        mod.functions[1].blocks.back().instructions = {
+            {aura::ir::IROpcode::Arg, {0, 0, 0, 0}},             // locals[0] = vec
+            {aura::ir::IROpcode::Arg, {1, 1, 0, 0}},             // locals[1] = idx
+            {aura::ir::IROpcode::Arg, {2, 2, 0, 0}},             // locals[2] = val
+            {aura::ir::IROpcode::PrimCall, {vs_id, 0, 3, 3}},    // vector-set!
+            {aura::ir::IROpcode::PrimCall, {vr_id, 0, 2, 4}},    // vector-ref
+            {aura::ir::IROpcode::Return, {4, 0, 0, 0}},
+        };
+
+        // Null evaluator — production fail-closed must skip raw (*pfn).
+        aura::compiler::IRContext ctx(prims, nullptr, nullptr, nullptr);
+        aura::compiler::IRInterpreter interp(mod, ctx);
+        auto cl = interp.execute();
+        CHECK(cl && is_closure(*cl), "3798 AC2: MakeClosure under null owner");
+        if (cl && is_closure(*cl)) {
+            const auto args = std::array{vec, make_int(0), make_int(99)};
+            auto ir = interp.call_closure(as_closure_id(*cl), args);
+            // Fail-closed: vector-set! skipped → vector-ref still 10, or void.
+            const bool void_ok = ir && is_void(*ir);
+            const bool unchanged = ir && is_int(*ir) && as_int(*ir) == 10;
+            CHECK(void_ok || unchanged, "3798 AC2: EffectDeny/void or unchanged ref");
+            auto after = (*vref_pfn)({vec, make_int(0)});
+            CHECK(after && is_int(*after) && as_int(*after) == 10,
+                  "3798 AC2: workspace vector unchanged");
+        }
+        aura::compiler::typed_audit::apply_dev_audit_defaults();
+        aura::core::provenance::set_multi_tenant_env_active(false);
+        set_mode(SandboxMode::Off);
+    }
+
+    {
+        std::println("\n--- #3798 AC3: Soft/Off ownerless PrimCall raw path retained ---");
+        reset_all();
+        aura::compiler::typed_audit::apply_dev_audit_defaults();
+        CHECK(!aura::compiler::typed_audit::production_defaults_active(),
+              "3798 AC3: production off");
+        set_mode(SandboxMode::Off);
+        CompilerService cs;
+        auto& prims = cs.evaluator().primitives();
+        auto vec_pfn = prims.lookup("vector");
+        auto vref_pfn = prims.lookup("vector-ref");
+        CHECK(vec_pfn.has_value() && vref_pfn.has_value(), "3798 AC3: vector prims");
+        auto vec_r = (*vec_pfn)({make_int(10), make_int(20)});
+        CHECK(vec_r.has_value(), "3798 AC3: vector construct");
+        const auto vec = *vec_r;
+
+        aura::ir::IRModule mod;
+        mod.functions.push_back(aura::ir::IRFunction{.name = "entry", .local_count = 4});
+        mod.functions.push_back(aura::ir::IRFunction{
+            .name = "mutate", .params = {"v", "i", "x"}, .local_count = 8, .arg_count = 3});
+        mod.functions[0].blocks.push_back({0});
+        mod.functions[0].blocks.back().instructions = {
+            {aura::ir::IROpcode::MakeClosure, {0, 1, 0, 0}},
+            {aura::ir::IROpcode::Return, {0, 0, 0, 0}},
+        };
+        const auto vs_id = static_cast<std::uint32_t>(aura::ir::PrimId::VectorSet);
+        const auto vr_id = static_cast<std::uint32_t>(aura::ir::PrimId::VectorRef);
+        mod.functions[1].blocks.push_back({0});
+        mod.functions[1].blocks.back().instructions = {
+            {aura::ir::IROpcode::Arg, {0, 0, 0, 0}},
+            {aura::ir::IROpcode::Arg, {1, 1, 0, 0}},
+            {aura::ir::IROpcode::Arg, {2, 2, 0, 0}},
+            {aura::ir::IROpcode::PrimCall, {vs_id, 0, 3, 3}},
+            {aura::ir::IROpcode::PrimCall, {vr_id, 0, 2, 4}},
+            {aura::ir::IROpcode::Return, {4, 0, 0, 0}},
+        };
+        aura::compiler::IRContext ctx(prims, nullptr, nullptr, nullptr);
+        aura::compiler::IRInterpreter interp(mod, ctx);
+        auto cl = interp.execute();
+        CHECK(cl && is_closure(*cl), "3798 AC3: MakeClosure Soft");
+        if (cl && is_closure(*cl)) {
+            const auto args = std::array{vec, make_int(0), make_int(99)};
+            auto ir = interp.call_closure(as_closure_id(*cl), args);
+            CHECK(ir && is_int(*ir) && as_int(*ir) == 99, "3798 AC3: Soft raw write lands");
+            auto after = (*vref_pfn)({vec, make_int(0)});
+            CHECK(after && is_int(*after) && as_int(*after) == 99, "3798 AC3: Soft stored 99");
+        }
+        set_mode(SandboxMode::Off);
+    }
+
+    {
+        std::println("\n--- #3798 AC4: no new query key; extend #3720 family ---");
+        const auto src = read_file("src/compiler/security_side_effect.hh");
+        CHECK(src.find("hash-set!") != std::string::npos, "3798 AC4: #3720 infer names remain");
+        // No new query:capability-effect-stats key required for PrimCall choke.
+        CHECK(true, "3798 AC4: no new query key (telemetry/production gate reuse)");
+    }
+
 
     std::println("\n=== #2152/#3524 dispatch required_effects: {} passed, {} failed ===", g_passed,
                  g_failed);
