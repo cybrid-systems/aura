@@ -123,16 +123,35 @@ inline std::atomic<std::uint32_t>& wal_overflow_ring_count() noexcept {
     return c;
 }
 
+// Issue #3806: process-local wrap/overwrite counter. Bumped when push
+// overwrites a live slot (count == capacity before store). Soft / WAL-off
+// never call push (AC3 zero cost). Agent face: wal-overflow-wrap-total.
+inline constexpr int kWalOverflowWrapIssue = 3806;
+
+inline std::atomic<std::uint64_t>& wal_overflow_ring_wrap_total() noexcept {
+    // Named security_event_wal_overflow_wrap_total in the #3806 contract;
+    // process-local atomic next to head/count (not SecurityEventWalMetrics —
+    // Soft / WAL-off never touch this path).
+    static std::atomic<std::uint64_t> security_event_wal_overflow_wrap_total{0};
+    return security_event_wal_overflow_wrap_total;
+}
+
 // Push one record to the overflow ring. Called only when
 // wal_append_fail_closed_active() returns true (production fail-closed).
 // Thread-safe under WAL's std::lock_guard.
 inline void wal_overflow_ring_push(const WalOverflowRecord& rec) noexcept {
     auto* ring = wal_overflow_ring_storage();
+    auto& cnt = wal_overflow_ring_count();
+    auto expected = cnt.load(std::memory_order_relaxed);
+    // Issue #3806: bump wrap when overwriting a live slot (count already
+    // at capacity before store). Overwritten mids vanish from
+    // wal_overflow_find_by_mid — Agents need this face to distinguish
+    // "never emitted" vs "overflow evicted".
+    if (expected >= kWalOverflowRingCapacity)
+        wal_overflow_ring_wrap_total().fetch_add(1, std::memory_order_relaxed);
     const auto h = wal_overflow_ring_head().fetch_add(1, std::memory_order_relaxed);
     ring[h % kWalOverflowRingCapacity] = rec;
     // Cap count at capacity (head wraps but count saturates).
-    auto& cnt = wal_overflow_ring_count();
-    auto expected = cnt.load(std::memory_order_relaxed);
     if (expected < kWalOverflowRingCapacity)
         cnt.compare_exchange_strong(expected, expected + 1, std::memory_order_relaxed);
 }
@@ -149,6 +168,7 @@ inline void wal_overflow_ring_push(const WalOverflowRecord& rec) noexcept {
 inline void wal_overflow_ring_clear_for_test() noexcept {
     wal_overflow_ring_head().store(0, std::memory_order_relaxed);
     wal_overflow_ring_count().store(0, std::memory_order_relaxed);
+    wal_overflow_ring_wrap_total().store(0, std::memory_order_relaxed);
 }
 
 // Issue #3734: join a lost mutation-WAL append by mid. Process-local

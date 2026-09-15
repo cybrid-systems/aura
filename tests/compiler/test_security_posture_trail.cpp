@@ -113,6 +113,11 @@ int run_test_security_posture_trail() {
     CHECK(href(cs, "issue-3109") == 3109, "3109 AC5: issue-3109");
     CHECK(href(cs, "wal-fail-closed-active") == 0, "3109 AC1: no env → fail-closed inactive");
     CHECK(href(cs, "wal-overflow-ring-depth") == 0, "3109 AC1: overflow ring depth=0 (Soft/Off)");
+    // Issue #3806: Soft/Off wrap/full stay 0 (additive; depth key not renamed).
+    CHECK(href(cs, "wal-overflow-wrap-total") == 0, "3806 AC3: wrap-total=0 Soft/Off");
+    CHECK(href(cs, "wal-overflow-full") == 0, "3806 AC3: full=0 Soft/Off");
+    CHECK(href(cs, "schema-3806") == 3806, "3806 AC2: schema-3806 on posture");
+    CHECK(href(cs, "issue-3806") == 3806, "3806 AC2: issue-3806 on posture");
     // 3109 AC3: overflow ring path wired (source-cite only — env is unset in this run,
     // so depth stays 0; the gate is verified by the AC5 source-cite checks below)
     CHECK(href(cs, "wal-overflow-ring-depth") == 0,
