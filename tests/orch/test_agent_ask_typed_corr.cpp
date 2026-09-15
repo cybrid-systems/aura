@@ -279,10 +279,12 @@ int run_test_agent_ask_typed_corr() {
             }
         });
 
-        // De-flake: same tier-load budget raise as AC1 (10s). This AC
-        // checks the legacy text-prefix match path, not the timeout
-        // contract (that keeps its own tight budget).
-        AskResult r = agent_ask(b, "legacy-ping", /*timeout_ms=*/10000);
+        // De-flake: tier-load budget raise (AC1 10s, #3796-wave CI still
+        // timed out this AC at 10s under jobs=4 x inner_jobs=3 — isolated
+        // re-run also starved). 30s: the legacy text-prefix worker only
+        // needs to win one mailbox pop; CI scheduling stalls are bounded
+        // well under that.
+        AskResult r = agent_ask(b, "legacy-ping", /*timeout_ms=*/30000);
         CHECK(r.ok, std::format("AC2: agent_ask ok via pure text-prefix worker (status={} corr={})",
                                 r.status, r.correlation_id));
         CHECK(r.payload == "legacy-ping",

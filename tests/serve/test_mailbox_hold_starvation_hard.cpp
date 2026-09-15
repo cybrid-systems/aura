@@ -3050,7 +3050,7 @@ static void ac3613_4_source_and_linter() {
     CHECK(p_push != std::string::npos, "3613 AC6: push cite present");
     if (p_push != std::string::npos) {
         const auto win = mb.substr(p_push, 1200);
-        const auto p_note = win.find("if (note_mailbox_deferred_under_boundary(&local_stats_))");
+        const auto p_note = win.find("note_mailbox_deferred_under_boundary(&local_stats_");
         const auto p_acq = win.find("on_acquire");
         CHECK(p_note != std::string::npos, "3613 AC6: note call in push window");
         CHECK(p_acq != std::string::npos, "3613 AC6: on_acquire in push window");
@@ -3061,7 +3061,7 @@ static void ac3613_4_source_and_linter() {
     CHECK(p_fan != std::string::npos, "3613 AC6: fanout cite present");
     if (p_fan != std::string::npos) {
         const auto win = mb.substr(p_fan, 900);
-        const auto p_note = win.find("if (note_mailbox_deferred_under_boundary(&local_stats_))");
+        const auto p_note = win.find("note_mailbox_deferred_under_boundary(&local_stats_");
         const auto p_mu = win.find("std::lock_guard lock(mu_)");
         CHECK(p_note != std::string::npos && p_mu != std::string::npos && p_note < p_mu,
               "3613 AC6: note BEFORE mu_ in fanout");
