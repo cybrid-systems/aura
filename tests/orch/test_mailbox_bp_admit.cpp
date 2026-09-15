@@ -63,6 +63,7 @@
 #include <atomic>
 #include <cstdint>
 #include <cstdlib>
+#include <format>
 #include <fstream>
 #include <iterator>
 #include <print>
@@ -117,6 +118,181 @@ void reset_counter_window() {
 }
 
 } // namespace
+
+
+// ── Issue #3775: per-scope mailbox starvation throttle ─────────────────
+// Dedicated runner (angel / ci can invoke without the full #2228 suite).
+int run_test_mailbox_starvation_scope_throttle_3775() {
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    using aura::serve::mf_mailbox::aura_orch_mailbox_starvation_throttled;
+    using aura::serve::mf_mailbox::clear_agent_throttle_for_mailbox_starvation;
+    using aura::serve::mf_mailbox::drain_deferred_under_budget;
+    using aura::serve::mf_mailbox::g_mf_mailbox_stats;
+    using aura::serve::mf_mailbox::kMailboxStarveScopeIssue;
+    using aura::serve::mf_mailbox::kMailboxStarveScopeMapCap;
+    using aura::serve::mf_mailbox::load_scope_mailbox_deferred_depth;
+    using aura::serve::mf_mailbox::load_scope_starve_throttle;
+    using aura::serve::mf_mailbox::mailbox_starve_scoped_active;
+    using aura::serve::mf_mailbox::note_mailbox_mutation_hold_defer;
+    using aura::serve::mf_mailbox::note_mailbox_push_ok_drain_progress;
+    using aura::serve::mf_mailbox::reset_scope_starve_map_for_test;
+    using aura::serve::mf_mailbox::scope_starve_map_size_for_test;
+
+    std::println("=== Issue #3775: mailbox starvation scope throttle ===");
+    CHECK(kMailboxStarveScopeIssue == 3775, "3775: issue stamp");
+
+    // Reset process faces + scope map.
+    const auto reset_all = [&] {
+        (void)reset_scope_starve_map_for_test();
+        clear_agent_throttle_for_mailbox_starvation();
+        g_mf_mailbox_stats.agent_throttle_for_mailbox_starvation.store(0,
+                                                                       std::memory_order_relaxed);
+        // Drain any leftover process deferred_depth.
+        std::uint64_t guard = 512;
+        while (g_mf_mailbox_stats.mailbox_deferred_depth.load(std::memory_order_relaxed) > 0 &&
+               guard-- > 0)
+            note_mailbox_push_ok_drain_progress();
+    };
+
+    // ── AC1: Restricted+MT — A arms → B mutate probe still clear ──
+    {
+        std::println("\n--- #3775 AC1: A starvation does not throttle B ---");
+        apply_production_audit_defaults();
+        unsetenv("AURA_SANDBOX");
+        reset_all();
+        CHECK(mailbox_starve_scoped_active(), "3775 AC1: production scoped mode on");
+        note_mailbox_mutation_hold_defer("tenant-a-3775");
+        note_mailbox_mutation_hold_defer("tenant-a-3775");
+        CHECK(load_scope_mailbox_deferred_depth("tenant-a-3775") >= 2,
+              "3775 AC1: A deferred_depth armed");
+        CHECK(load_scope_mailbox_deferred_depth("tenant-b-3775") == 0,
+              "3775 AC1: B deferred_depth untouched");
+        // Budget 0 → immediate force-resolve + hard arm under production.
+        auto dr = drain_deferred_under_budget(/*budget_us=*/0, "tenant-a-3775");
+        CHECK(dr.starved || load_scope_starve_throttle("tenant-a-3775") != 0,
+              "3775 AC1: A throttle armed after starve drain");
+        CHECK(load_scope_starve_throttle("tenant-a-3775") != 0, "3775 AC1: A throttle == 1");
+        CHECK(aura_orch_mailbox_starvation_throttled("tenant-a-3775"),
+              "3775 AC1: probe A → throttled");
+        CHECK(!aura_orch_mailbox_starvation_throttled("tenant-b-3775"),
+              "3775 AC1: probe B → NOT throttled (cross-tenant isolation)");
+        CHECK(load_scope_starve_throttle("tenant-b-3775") == 0, "3775 AC1: B throttle == 0");
+        reset_all();
+        apply_dev_audit_defaults();
+    }
+
+    // ── AC2: same-scope starvation still denies that scope ──
+    {
+        std::println("\n--- #3775 AC2: same-scope starve still denies ---");
+        apply_production_audit_defaults();
+        unsetenv("AURA_SANDBOX");
+        reset_all();
+        note_mailbox_mutation_hold_defer("scope-same-3775");
+        (void)drain_deferred_under_budget(/*budget_us=*/0, "scope-same-3775");
+        CHECK(aura_orch_mailbox_starvation_throttled("scope-same-3775"),
+              "3775 AC2: same scope still throttled (#2587 per-scope)");
+        clear_agent_throttle_for_mailbox_starvation("scope-same-3775");
+        CHECK(!aura_orch_mailbox_starvation_throttled("scope-same-3775"),
+              "3775 AC2: clear_agent_throttle(scope) frees that scope");
+        reset_all();
+        apply_dev_audit_defaults();
+    }
+
+    // ── AC3: Soft/Off keep process-global zero-cost contract ──
+    {
+        std::println("\n--- #3775 AC3: Soft/Off process-global ---");
+        apply_dev_audit_defaults();
+        setenv("AURA_SANDBOX", "off", 1);
+        reset_all();
+        CHECK(!mailbox_starve_scoped_active(), "3775 AC3: Soft/Off not scoped");
+        const auto sz0 = scope_starve_map_size_for_test();
+        note_mailbox_mutation_hold_defer("named-ignored-under-soft");
+        CHECK(scope_starve_map_size_for_test() == sz0,
+              "3775 AC3: Soft note does not insert scope map entry");
+        CHECK(load_scope_mailbox_deferred_depth("named-ignored-under-soft") == 0,
+              "3775 AC3: named scope depth stays 0 under Soft");
+        CHECK(g_mf_mailbox_stats.mailbox_deferred_depth.load(std::memory_order_relaxed) >= 1,
+              "3775 AC3: process deferred_depth still bumps");
+        g_mf_mailbox_stats.agent_throttle_for_mailbox_starvation.store(1,
+                                                                       std::memory_order_relaxed);
+        CHECK(aura_orch_mailbox_starvation_throttled(),
+              "3775 AC3: process-global probe observes flag");
+        CHECK(aura_orch_mailbox_starvation_throttled("any-name"),
+              "3775 AC3: Soft ignores name — still process flag");
+        clear_agent_throttle_for_mailbox_starvation();
+        CHECK(!aura_orch_mailbox_starvation_throttled(), "3775 AC3: clear process flag");
+        // Drain process depth for hygiene.
+        while (g_mf_mailbox_stats.mailbox_deferred_depth.load(std::memory_order_relaxed) > 0)
+            note_mailbox_push_ok_drain_progress();
+        unsetenv("AURA_SANDBOX");
+        apply_dev_audit_defaults();
+        reset_all();
+    }
+
+    // ── AC4: overflow isolation — quiet map tenant not process-poisoned ──
+    {
+        std::println("\n--- #3775 AC4: overflow isolation ---");
+        apply_production_audit_defaults();
+        unsetenv("AURA_SANDBOX");
+        reset_all();
+        // Fill map to cap with quiet tenants.
+        for (std::size_t i = 0; i < kMailboxStarveScopeMapCap; ++i) {
+            note_mailbox_mutation_hold_defer(std::format("fill-3775-{}", i));
+            // Resolve depth immediately so only map occupancy remains.
+            note_mailbox_push_ok_drain_progress(std::format("fill-3775-{}", i));
+        }
+        CHECK(scope_starve_map_size_for_test() == kMailboxStarveScopeMapCap,
+              "3775 AC4: map at cap");
+        // Quiet tenant already in map.
+        CHECK(!aura_orch_mailbox_starvation_throttled("fill-3775-0"),
+              "3775 AC4 setup: quiet fill-0 not throttled");
+        // New scope beyond cap → overflow bucket; arm overflow via drain.
+        note_mailbox_mutation_hold_defer("overflow-new-3775");
+        (void)drain_deferred_under_budget(/*budget_us=*/0, "overflow-new-3775");
+        // Overflow arm must not flip a quiet in-map tenant's scope throttle.
+        CHECK(!aura_orch_mailbox_starvation_throttled("fill-3775-0"),
+              "3775 AC4: quiet in-map tenant not poisoned by overflow arm");
+        CHECK(load_scope_starve_throttle("fill-3775-0") == 0, "3775 AC4: fill-0 throttle stays 0");
+        // Process bucket (empty scope) is not the overflow dump for named notes.
+        // Named overflow arms process aggregate for query, but empty-scope
+        // path is the legacy Soft contract — named quiet tenants stay safe.
+        reset_all();
+        apply_dev_audit_defaults();
+    }
+
+    // ── AC5: extend existing suite; no test_issue_N; source-cite ──
+    {
+        std::println("\n--- #3775 AC5: source-cite + no invent ---");
+        const auto mb = read_file("src/serve/multi_fiber_mailbox.h");
+        const auto mut = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+        CHECK(mb.find("kMailboxStarveScopeIssue = 3775") != std::string::npos,
+              "3775 AC5: issue constant in mailbox header");
+        CHECK(mb.find("arm_scope_starve_throttle") != std::string::npos,
+              "3775 AC5: arm_scope_starve_throttle present");
+        CHECK(mb.find("g_scope_starve_overflow") != std::string::npos,
+              "3775 AC5: overflow isolation bucket");
+        CHECK(mb.find("mailbox_starve_scoped_active") != std::string::npos,
+              "3775 AC5: Soft/Off gate");
+        CHECK(mut.find("Issue #3775") != std::string::npos, "3775 AC5: mutate admit cites #3775");
+        CHECK(mut.find("aura_orch_mailbox_starvation_throttled(starve_scope") != std::string::npos,
+              "3775 AC5: try_acquire passes caller scope");
+        CHECK(read_file("tests/orch/test_issue_3775.cpp").empty() &&
+                  read_file("tests/issues/test_issue_3775.cpp").empty() &&
+                  read_file("tests/serve/test_issue_3775.cpp").empty(),
+              "3775 AC5: no test_issue_3775.cpp");
+        CHECK(read_file("docs/design/3775-mailbox-starve-scope.md").empty(),
+              "3775 AC5: no docs/design/3775-*");
+        // No mid-metrics counter insert: process keys unchanged.
+        const auto msg = read_file("src/compiler/evaluator_primitives_messaging.cpp");
+        CHECK(msg.find("agent_throttle_for_mailbox_starvation") != std::string::npos,
+              "3775 AC5: existing query key retained");
+    }
+
+    std::println("\n=== #3775 slice: {} passed, {} failed ===", aura::test::g_passed,
+                 aura::test::g_failed);
+    return aura::test::g_failed ? 1 : 0;
+}
 
 int run_test_mailbox_bp_admit() {
     std::println("=== Issue #2228: mailbox BP-driven spawn admission ===");
@@ -1615,11 +1791,18 @@ int run_test_mailbox_bp_admit() {
         aura::compiler::typed_audit::apply_dev_audit_defaults();
     }
 
+    // Issue #3775: per-scope starvation throttle ACs (also dedicated runner).
+    if (run_test_mailbox_starvation_scope_throttle_3775() != 0)
+        return 1;
+
     return aura::test::g_failed ? 1 : 0;
 }
 
 #ifndef AURA_ISSUE_BATCH_MEMBER
 int main() {
+    // Dedicated #3775 slice: AURA_TEST_3775_ONLY=1 skips the legacy suite.
+    if (const char* e = std::getenv("AURA_TEST_3775_ONLY"); e && e[0] == '1')
+        return run_test_mailbox_starvation_scope_throttle_3775();
     return run_test_mailbox_bp_admit();
 }
 #endif
