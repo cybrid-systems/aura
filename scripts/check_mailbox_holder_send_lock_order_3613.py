@@ -32,7 +32,7 @@ OBS = "src/compiler/observability_metrics.h"
 
 PUSH_CITE = "Issue #3613: BEFORE mu_"
 FANOUT_CITE = "Issue #3613: same holder-send inversion fix as push()"
-NOTE = "if (note_mailbox_deferred_under_boundary(&local_stats_))"
+NOTE = "if (note_mailbox_deferred_under_boundary(&local_stats_, bp_scope_id_))"  # #3775 scope arg
 MOVED = "moved BEFORE mu_ (#3613"
 
 
