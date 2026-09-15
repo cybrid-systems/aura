@@ -60,9 +60,9 @@ def main() -> int:
     must("Issue #2849", "AC1", mb)
     must("note_mailbox_deferred_under_boundary", "AC1", mb)
     must_count("note_mailbox_deferred_under_boundary", "AC1 def+sites", mb, 3)
-    must("if (note_mailbox_deferred_under_boundary(&local_stats_))", "AC1 call sites", mb)
+    must("if (note_mailbox_deferred_under_boundary(&local_stats_, bp_scope_id_))", "AC1 call sites", mb)
     must_count(
-        "if (note_mailbox_deferred_under_boundary(&local_stats_))",
+        "if (note_mailbox_deferred_under_boundary(&local_stats_, bp_scope_id_))",
         "AC1 push+fanout",
         mb,
         2,
