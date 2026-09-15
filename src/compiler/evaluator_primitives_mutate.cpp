@@ -5835,6 +5835,10 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             // by the helper's own gate). New helpers MUST set this so the
             // batch-level audit backstops them even if they forget a gate.
             int target_arg;
+            // Issue #3815: secondary MacroIntroduced spine arg (move-node
+            // new_parent at index 1). -1 = none. Soft/Off: walk still gated
+            // by prod_sandbox above; per-arg is_macro_introduced is O(1).
+            int parent_arg = -1;
         };
         // Issue #1899: single source of truth for supported batch ops.
         static constexpr AtomicBatchOpEntry kAtomicBatchLocklessOps[] = {
@@ -5849,7 +5853,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             {"mutate:splice", &Evaluator::eval_flat_apply_mutate_splice, 0},
             {"mutate:wrap", &Evaluator::eval_flat_apply_mutate_wrap, 0},
             {"mutate:rename-symbol", &Evaluator::eval_flat_apply_mutate_rename_symbol, -1},
-            {"mutate:move-node", &Evaluator::eval_flat_apply_mutate_move_node, 0},
+            {"mutate:move-node", &Evaluator::eval_flat_apply_mutate_move_node, 0, 1},
             {"mutate:inline-call", &Evaluator::eval_flat_apply_mutate_inline_call, 0},
         };
         static constexpr std::size_t kAtomicBatchLocklessOpCount =
@@ -5880,77 +5884,90 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                     // walk — it selects the MSE arm below.
                     const bool op_opt_out = parse_allow_macro_opt_out(ev, op_args);
                     for (const auto& e : kAtomicBatchLocklessOps) {
-                        if (op_name != e.name || e.target_arg < 0)
+                        if (op_name != e.name)
                             continue;
-                        if (static_cast<std::size_t>(e.target_arg) >= op_args.size() ||
-                            !is_int(op_args[e.target_arg]))
-                            break; // malformed; sub-op loop reports it
-                        auto node = static_cast<aura::ast::NodeId>(as_int(op_args[e.target_arg]));
-                        if (node == aura::ast::NULL_NODE || node >= ev.workspace_flat_->size() ||
-                            !ev.workspace_flat_->is_live_node(node))
-                            break;
-                        if (!ev.workspace_flat_->is_macro_introduced(node))
-                            break;
-                        // Issue #3652: opt-out arms (global flag / batch
-                        // :allow-macro? / per-sub-op :allow-macro?) route
-                        // through the #3542 MSE gate — same face as the
-                        // public prims. Deny aborts the batch before any
-                        // sub-op; MSE granted falls through to per-op gates.
-                        if (op_opt_out || batch_allow_macro || ev.get_allow_macro_mutate()) {
-                            if (deny_macro_opt_out_without_mse(ev, node, mev)) {
-                                aura::compiler::macro_exp::note_hygiene_last_limit_reason(
-                                    aura::compiler::macro_exp::kHygieneLimitReasonMacroIntroduced);
-                                ev.bump_atomic_batch_hygiene_violation();
-                                abort_batch_workspace();
-                                ev.atomic_batch_domain_.rollbacks++;
-                                ev.bump_edsl_nested_atomic_rollback();
-                                if (batch_snap_id >= 0 &&
-                                    ev.restore_workspace_snapshot_under_lock(
-                                        static_cast<std::size_t>(batch_snap_id)))
-                                    ev.bump_atomic_batch_snapshot_rollback();
-                                ev.rollback_atomic_batch_pinning();
-                                guard_ok = false;
-                                return ev.make_merr(
-                                    "hygiene-protected",
-                                    ("mutate:atomic-batch: target node " + std::to_string(node) +
-                                     " was produced by a hygienic macro expansion; the "
-                                     ":allow-macro? opt-out requires MacroSelfEvo capability "
-                                     "under the active sandbox face")
-                                        .c_str());
+                        // Issue #3815: check primary target_arg and optional
+                        // parent_arg (move-node new_parent). -1 skips.
+                        const int spine_args[2] = {e.target_arg, e.parent_arg};
+                        for (int arg_i : spine_args) {
+                            if (arg_i < 0)
+                                continue;
+                            if (static_cast<std::size_t>(arg_i) >= op_args.size() ||
+                                !is_int(op_args[arg_i]))
+                                break; // malformed; sub-op loop reports it
+                            auto node =
+                                static_cast<aura::ast::NodeId>(as_int(op_args[arg_i]));
+                            if (node == aura::ast::NULL_NODE ||
+                                node >= ev.workspace_flat_->size() ||
+                                !ev.workspace_flat_->is_live_node(node))
+                                break;
+                            if (!ev.workspace_flat_->is_macro_introduced(node))
+                                continue; // #3815: still check parent_arg
+                            // Issue #3652: opt-out arms (global flag / batch
+                            // :allow-macro? / per-sub-op :allow-macro?) route
+                            // through the #3542 MSE gate — same face as the
+                            // public prims. Deny aborts the batch before any
+                            // sub-op; MSE granted falls through to per-op gates.
+                            if (op_opt_out || batch_allow_macro || ev.get_allow_macro_mutate()) {
+                                if (deny_macro_opt_out_without_mse(ev, node, mev)) {
+                                    aura::compiler::macro_exp::note_hygiene_last_limit_reason(
+                                        aura::compiler::macro_exp::
+                                            kHygieneLimitReasonMacroIntroduced);
+                                    ev.bump_atomic_batch_hygiene_violation();
+                                    abort_batch_workspace();
+                                    ev.atomic_batch_domain_.rollbacks++;
+                                    ev.bump_edsl_nested_atomic_rollback();
+                                    if (batch_snap_id >= 0 &&
+                                        ev.restore_workspace_snapshot_under_lock(
+                                            static_cast<std::size_t>(batch_snap_id)))
+                                        ev.bump_atomic_batch_snapshot_rollback();
+                                    ev.rollback_atomic_batch_pinning();
+                                    guard_ok = false;
+                                    return ev.make_merr(
+                                        "hygiene-protected",
+                                        ("mutate:atomic-batch: target node " +
+                                         std::to_string(node) +
+                                         " was produced by a hygienic macro expansion; the "
+                                         ":allow-macro? opt-out requires MacroSelfEvo "
+                                         "capability under the active sandbox face")
+                                            .c_str());
+                                }
+                                continue; // MSE granted — check remaining spine args
                             }
-                            break; // MSE granted — continue walking remaining ops
+                            // Fail closed: deny the whole batch before any sub-op.
+                            ev.record_hygiene_violation_attempt();
+                            aura::compiler::macro_exp::note_hygiene_last_limit_reason(
+                                aura::compiler::macro_exp::kHygieneLimitReasonMacroIntroduced);
+                            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
+                                m->naked_macro_mutate_attempt.fetch_add(1,
+                                                                        std::memory_order_relaxed);
+                                m->macro_hygiene_provenance_hits_total.fetch_add(
+                                    1, std::memory_order_relaxed);
+                                m->last_hygiene_blame_node = static_cast<std::uint32_t>(node);
+                            }
+                            typed_audit::capture_macro_hygiene_audit(
+                                "hygiene-protected", typed_audit::AuditOutcome::Error,
+                                static_cast<std::uint32_t>(node),
+                                static_cast<std::int64_t>(aura_fiber_current_id()),
+                                ev.capability_tenant_id());
+                            ev.bump_atomic_batch_hygiene_violation(); // #790 wire-up (#3301)
+                            abort_batch_workspace();
+                            ev.atomic_batch_domain_.rollbacks++;
+                            ev.bump_edsl_nested_atomic_rollback();
+                            if (batch_snap_id >= 0 &&
+                                ev.restore_workspace_snapshot_under_lock(
+                                    static_cast<std::size_t>(batch_snap_id)))
+                                ev.bump_atomic_batch_snapshot_rollback();
+                            ev.rollback_atomic_batch_pinning();
+                            guard_ok = false;
+                            return ev.make_merr(
+                                "hygiene-protected",
+                                ("mutate:atomic-batch: target node " + std::to_string(node) +
+                                 " was produced by a hygienic macro expansion; pass "
+                                 ":allow-macro? #t on the batch form or per sub-op, or call "
+                                 "(hygiene:set-allow-macro-mutate! #t) to opt out")
+                                    .c_str()); // #3683
                         }
-                        // Fail closed: deny the whole batch before any sub-op.
-                        ev.record_hygiene_violation_attempt();
-                        aura::compiler::macro_exp::note_hygiene_last_limit_reason(
-                            aura::compiler::macro_exp::kHygieneLimitReasonMacroIntroduced);
-                        if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
-                            m->naked_macro_mutate_attempt.fetch_add(1, std::memory_order_relaxed);
-                            m->macro_hygiene_provenance_hits_total.fetch_add(
-                                1, std::memory_order_relaxed);
-                            m->last_hygiene_blame_node = static_cast<std::uint32_t>(node);
-                        }
-                        typed_audit::capture_macro_hygiene_audit(
-                            "hygiene-protected", typed_audit::AuditOutcome::Error,
-                            static_cast<std::uint32_t>(node),
-                            static_cast<std::int64_t>(aura_fiber_current_id()),
-                            ev.capability_tenant_id());
-                        ev.bump_atomic_batch_hygiene_violation(); // #790 wire-up (#3301)
-                        abort_batch_workspace();
-                        ev.atomic_batch_domain_.rollbacks++;
-                        ev.bump_edsl_nested_atomic_rollback();
-                        if (batch_snap_id >= 0 && ev.restore_workspace_snapshot_under_lock(
-                                                      static_cast<std::size_t>(batch_snap_id)))
-                            ev.bump_atomic_batch_snapshot_rollback();
-                        ev.rollback_atomic_batch_pinning();
-                        guard_ok = false;
-                        return ev.make_merr(
-                            "hygiene-protected",
-                            ("mutate:atomic-batch: target node " + std::to_string(node) +
-                             " was produced by a hygienic macro expansion; pass :allow-macro? #t "
-                             "on the batch form or per sub-op, or call "
-                             "(hygiene:set-allow-macro-mutate! #t) to opt out")
-                                .c_str()); // #3683
                     }
                 }
             }
@@ -7039,9 +7056,10 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
     // invalidate ev.defuse_index_" — the actual move is not
     // reversed, but readers know the workspace state changed.
     //
-    // Hygiene (Issue #142 / #2801 / #3061): MacroIntroduced default-reject;
-    // :allow-macro? / global allow-macro-mutate unlocks (parity with
-    // other structural prims). Lockless batch honors the global flag.
+    // Hygiene (Issue #142 / #2801 / #3061 / #3815): MacroIntroduced
+    // default-reject on moved node AND new_parent spine; :allow-macro? /
+    // global allow-macro-mutate unlocks (parity with insert-child / splice).
+    // Lockless batch honors the global flag + parent_arg pre-walk.
     add_mutate(
         "mutate:move-node",
         [&ev, safe_str, resolve_mutate_node_arg](std::span<const EvalValue> a) -> EvalValue {
@@ -7090,9 +7108,13 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             // Issue #3061 / Issue #2801 / #142: MacroIntroduced default-reject;
             // :allow-macro? / global unlocks. Deny still bumps
             // move_node_hygiene_reject_total (AC2/AC3 metric).
+            // Issue #3815: also gate new_parent spine (parity with insert-child /
+            // splice) — User node must not hop under MacroIntroduced parent
+            // without :allow-macro? / MacroSelfEvo under Restricted/Strict.
             const bool allow_macro_mv =
                 ev.get_allow_macro_mutate() || parse_allow_macro_opt_out(ev, a);
             const bool was_macro_mv = flat.is_macro_introduced(node);
+            const bool parent_was_macro_mv = flat.is_macro_introduced(new_parent);
             if (was_macro_mv && !allow_macro_mv) {
                 ok = false;
                 flat.note_move_node_hygiene_reject();
@@ -7102,6 +7124,12 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                     return ev.make_merr(k, m);
                 };
                 if (auto err = reject_structural_macro_hygiene(ev, flat, node, allow_macro_mv,
+                                                               "move-node", mv_mev)) {
+                    ok = false;
+                    return *err;
+                }
+                // Issue #3815: dest parent spine — same face as insert-child.
+                if (auto err = reject_structural_macro_hygiene(ev, flat, new_parent, allow_macro_mv,
                                                                "move-node", mv_mev)) {
                     ok = false;
                     return *err;
@@ -7167,9 +7195,10 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                                     "insert failed; node reattached (no dangling NULL hole)");
             }
 
-            // Issue #3061: allowed MacroIntroduced move → propagate marker /
-            // restamp so provenance stays coherent after the hop.
-            if (allow_macro_mv && was_macro_mv)
+            // Issue #3061 / #3815: allowed MacroIntroduced move OR hop under
+            // MacroIntroduced parent → propagate marker / restamp (parity with
+            // insert-child parent_was_macro restamp).
+            if (allow_macro_mv && (was_macro_mv || parent_was_macro_mv))
                 propagate_macro_introduced_marker(ev, flat, node,
                                                   parse_no_auto_restamp_opt_out(ev, a));
 

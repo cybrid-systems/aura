@@ -1,0 +1,34 @@
+{
+  "issue": 3815,
+  "title": "Issue #3815: mutate:move-node gates MacroIntroduced new_parent spine",
+  "ok": "OK: Issue #3815 move-node parent hygiene",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_primitives_mutate.cpp",
+      "contains": ["Issue #3815", "parent_was_macro_mv", "reject_structural_macro_hygiene"]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/evaluator_eval_flat.cpp",
+      "contains": ["Issue #3815", "is_macro_introduced(new_parent)", "cannot move into MacroIntroduced parent"]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/evaluator_primitives_mutate.cpp",
+      "contains": ["parent_arg", "spine_args", "eval_flat_apply_mutate_move_node, 0, 1"]
+    },
+    {
+      "ac": "AC4-tests",
+      "path": "tests/compiler/test_move_node_hygiene.cpp",
+      "contains": ["3815 AC1", "3815 AC4", "Issue #3815"]
+    },
+    {
+      "ac": "AC5",
+      "forbid": [
+        "tests/compiler/test_issue_3815.cpp",
+        "docs/design/3815-move-node-parent-hygiene.md"
+      ]
+    }
+  ]
+}
