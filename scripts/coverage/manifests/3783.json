@@ -1,0 +1,49 @@
+{
+  "issue": 3783,
+  "title": "Issue #3783: alloc-path Moving auto-arm publishes densify health; Phase-5 real blocked",
+  "ok": "OK: Issue #3783 auto-arm densify health publish \u2014 publish before Soft fallback; Phase-5 real blocked; Soft zero-cost",
+  "checks": [
+    {
+      "ac": "AC1-auto-arm",
+      "path": "src/core/arena.ixx",
+      "contains": [
+        "Issue #3783",
+        "pin_for_publish",
+        "publish_last_moving_densify_window"
+      ]
+    },
+    {
+      "ac": "AC2-phase5",
+      "path": "src/compiler/evaluator_mutation_boundary.cpp",
+      "contains": [
+        "Issue #3783",
+        "densify_moving_blocked",
+        "moving_blocked_precondition=*/densify_moving_blocked"
+      ]
+    },
+    {
+      "ac": "AC2-agg",
+      "path": "src/core/arena.ixx",
+      "contains": [
+        "moving_blocked_precondition_any"
+      ]
+    },
+    {
+      "ac": "AC4-tests",
+      "path": "tests/core/test_moving_densify_fail_closed.cpp",
+      "contains": [
+        "ac3783_1",
+        "ac3783_2",
+        "ac3783_3"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "forbid": [
+        "tests/core/test_issue_3783.cpp",
+        "tests/compiler/test_issue_3783.cpp",
+        "docs/design/3783-auto-arm-densify-health.md"
+      ]
+    }
+  ]
+}

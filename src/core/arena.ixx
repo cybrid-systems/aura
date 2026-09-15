@@ -1244,6 +1244,10 @@ export struct AdaptiveCompactResult {
     std::size_t objects_moved_total = 0;
     std::size_t untracked_kept_total = 0;
     bool moving_incomplete_remap_any = false;
+    // Issue #3783: any arena reported moving_blocked_precondition this window.
+    // Phase-5 feeds compute_moving_unified_success so blocked Moving cannot
+    // publish vacuous-green unified success (hardcoded false was the hole).
+    bool moving_blocked_precondition_any = false;
     // Issue #3182: aggregate of LiveCompactResult::post_moving_stale_count
     // (EnvFrame / Closure / FFI / JIT live ptr residual on known
     // root paths — #3055 canary axis) across all arenas in this
@@ -1269,7 +1273,8 @@ export struct AdaptiveCompactResult {
         return bytes_reclaimed_total == 0 && pin_contract_held && !moved_live_objects &&
                root_remap_stable_ref_fail_total == 0 &&
                root_remap_closure_capture_fail_total == 0 && !moving_incomplete_remap_any &&
-               untracked_kept_total == 0 && post_moving_stale_count_total == 0;
+               !moving_blocked_precondition_any && untracked_kept_total == 0 &&
+               post_moving_stale_count_total == 0;
     }
 };
 
@@ -3746,11 +3751,43 @@ public:
                     if (has_known_roots_hook()) {
                         invoke_known_roots_hook();
                         const auto r = live_compact(LiveCompactMode::Moving);
+                        // Issue #3783 / #3739: any production auto-arm Moving
+                        // attempt must publish densify health (Phase-5 face).
+                        // Pre-#3783 only the non-soft_gated success branch
+                        // published; incomplete/hard paths armed sticky then
+                        // Soft-fell-back with last window still
+                        // would_allow_mutate=true after objects already moved.
+                        // Soft/Off never reach this arm (should_production_
+                        // auto_arm_moving). Blocked → force pin false so the
+                        // window is not vacuous-green (#3200 shape).
+                        {
+                            const auto root_fail =
+                                static_cast<std::uint64_t>(r.root_remap_stable_ref_fail_total +
+                                                           r.root_remap_closure_capture_fail_total);
+                            const bool pin_for_publish =
+                                r.pin_contract_held && !r.moving_blocked_precondition;
+                            aura::core::moving_densify_health::publish_last_moving_densify_window(
+                                /*had_moving_densify=*/true, pin_for_publish,
+                                r.moving_incomplete_remap,
+                                static_cast<std::uint64_t>(r.objects_moved),
+                                static_cast<std::uint64_t>(r.untracked_kept_count), root_fail,
+                                static_cast<std::uint64_t>(
+                                    r.external_roots_prep_registered_cleared));
+                            // Relocated objects still need Densify restamp
+                            // even when the window later soft-gates hard.
+                            if (r.objects_moved > 0 || r.moved_live_objects) {
+                                if (void* owner = arena_owner()) {
+                                    if (auto* restamp = g_arena_unified_restamp_densify_fn.load(
+                                            std::memory_order_relaxed))
+                                        restamp(owner);
+                                }
+                            }
+                        }
                         if (r.moving_blocked_precondition || r.soft_gated) {
                             // Issue #3404 AC1: Soft fallback after Moving
                             // blocked — do NOT claim a real reclaim; the
                             // Soft mark-only below does not relocate
-                            // objects.
+                            // objects. (#3783 health already published.)
                             const auto marked = live_compact(/*force=*/false);
                             if (marked > 0) {
                                 // Mark-only still frees holes; treat as a
@@ -3762,27 +3799,6 @@ public:
                                 saved = 1;
                             }
                         } else {
-                            // Issue #3739: auto-arm Moving remapped slots
-                            // but skipped the Phase-5 window publish +
-                            // Densify restamp. apply_closure then bailed
-                            // on g_last_objects_moved==0 (vacuous last
-                            // Phase-5 window) while last_object_remap_
-                            // still held moved keys.
-                            const auto root_fail =
-                                static_cast<std::uint64_t>(r.root_remap_stable_ref_fail_total +
-                                                           r.root_remap_closure_capture_fail_total);
-                            aura::core::moving_densify_health::publish_last_moving_densify_window(
-                                /*had_moving_densify=*/true, r.pin_contract_held,
-                                r.moving_incomplete_remap,
-                                static_cast<std::uint64_t>(r.objects_moved),
-                                static_cast<std::uint64_t>(r.untracked_kept_count), root_fail,
-                                static_cast<std::uint64_t>(
-                                    r.external_roots_prep_registered_cleared));
-                            if (void* owner = arena_owner()) {
-                                if (auto* restamp = g_arena_unified_restamp_densify_fn.load(
-                                        std::memory_order_relaxed))
-                                    restamp(owner);
-                            }
                             if (r.slots_recycled > 0 || r.objects_moved > 0 ||
                                 r.bytes_reclaimed > 0) {
                                 // Issue #3404 AC1: real Moving success.
@@ -4686,6 +4702,10 @@ public:
             out.untracked_kept_total += r.untracked_kept_count;
             out.moving_incomplete_remap_any =
                 out.moving_incomplete_remap_any || r.moving_incomplete_remap;
+            // Issue #3783: fold blocked-Moving so Phase-5 unified success
+            // sees the real precondition (not hardcoded false).
+            out.moving_blocked_precondition_any =
+                out.moving_blocked_precondition_any || r.moving_blocked_precondition;
             // Issue #2775: aggregate prep-registered external roots count
             // across all arenas. Pure observability — does not gate any
             // success / fail predicate. Phase 5 reads this into a local and
