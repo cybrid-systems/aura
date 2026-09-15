@@ -539,6 +539,9 @@ inline constexpr int kQueryResultFullProvenanceIssue = 3103;
 inline constexpr int kQueryResultLayoutOnlyRejectIssue = 3231;
 // Issue #3449: production default query:* export is schema-2, not opt-in.
 inline constexpr int kQueryDefaultSchema2ExportIssue = 3449;
+// Issue #3827: query:children / query:parent Production finish routes
+// through end_query_epoch_maybe_result (schema-2), not bare NodeId lists.
+inline constexpr int kQueryChildrenParentSchema2ExportIssue = 3827;
 inline constexpr const char* kQueryResultLayoutOnlyErrorKind = "query-result-layout-only";
 inline constexpr std::uint8_t kQueryResultMatchSchema2 = 1;
 // Issue #3311: production-stamped variant. Under production_defaults the

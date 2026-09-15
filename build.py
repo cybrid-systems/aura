@@ -5053,6 +5053,20 @@ def cmd_lint():
             "Issue #3826 edge-free latch gate linter failed — run python3 scripts/coverage/checks/check_edge_free_latch_gate_3826.py"
         )
         return r
+    # Issue #3827: query:children / query:parent must finish via
+    # end_query_epoch_maybe_result (schema-2 under Production). Soft bare
+    # lists unchanged. Extends test_query_result_full_provenance.cpp
+    # (#81967); no docs/design/ (#1655).
+    qcps3827_script = COVERAGE_CHECKS / "check_query_children_parent_schema2_3827.py"
+    if not qcps3827_script.exists():
+        fail(f"missing {qcps3827_script}")
+        return 1
+    r = run([sys.executable, str(qcps3827_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3827 query children/parent schema-2 linter failed — run python3 scripts/coverage/checks/check_query_children_parent_schema2_3827.py"
+        )
+        return r
     # Issue #3802: EXEMPT_2ARG write-file/sys-* host-path isolation under
     # Restricted+MT / Strict — resolve under tenant root from
     # capability_tenant_id_; cross-tenant escape → IsolationDeny SE
@@ -15177,6 +15191,26 @@ def cmd_edge_free_latch_gate_3826():
     """Issue #3826: Ready residual sticky + join Reclaimed gate edge-free holds."""
     print(f"{B}=== edge-free latch gate (#3826) ==={N}")
     return cmd_edge_free_latch_gate_3826_coverage()
+
+
+def cmd_query_children_parent_schema2_3827_coverage():
+    """Issue #3827: query:children/parent Production schema-2 (static)."""
+    print(f"{B}=== query children/parent schema-2 (#3827) ==={N}")
+    script = COVERAGE_CHECKS / "check_query_children_parent_schema2_3827.py"
+    if not script.is_file():
+        fail(f"missing {script}")
+        return 1
+    if run([sys.executable, str(script)], cwd=ROOT) != 0:
+        fail("query children/parent schema-2 (#3827) coverage contract rows failed")
+        return 1
+    ok("query children/parent schema-2 (#3827) coverage clean")
+    return 0
+
+
+def cmd_query_children_parent_schema2_3827():
+    """Issue #3827: children/parent finish via maybe_result under Production."""
+    print(f"{B}=== query children/parent schema-2 (#3827) ==={N}")
+    return cmd_query_children_parent_schema2_3827_coverage()
 
 
 def cmd_engine_metrics_hash_overflow_3018_coverage():
