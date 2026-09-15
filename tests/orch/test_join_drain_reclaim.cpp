@@ -683,6 +683,15 @@ static void ac3433_1_timeout_live_defers_like_reclaimed() {
     ::setenv("AURA_SANDBOX", "restricted", 1);
     apply_production_audit_defaults();
     set_mode(SandboxMode::Strict);
+    // #3797-wave CI: the security-schedule posture gate denies production
+    // spawns while the audit WAL is off (force_wal reads the sandbox mode
+    // at defaults-call time â Off here). Pin the WAL on for this live
+    // spawn (restored at cleanup below).
+    std::filesystem::create_directories("build/test-wal-3433");
+    const bool wal_on_3433 = aura::core::audit_wal::g_mutation_audit_wal().is_enabled();
+    if (!wal_on_3433)
+        (void)aura::core::audit_wal::g_mutation_audit_wal().enable(
+            std::string_view("build/test-wal-3433"), nullptr, 0);
 
     // No SchedRunner: workers not started, so the body never executes and
     // the fiber deterministically stays !is_done — the tight non-yielding
@@ -726,6 +735,8 @@ static void ac3433_1_timeout_live_defers_like_reclaimed() {
         h.fiber->set_state(FiberState::Done);
     h.finish_reclaimed_cleanup_on_dtor();
     apply_dev_audit_defaults();
+    if (!wal_on_3433)
+        aura::core::audit_wal::g_mutation_audit_wal().disable();
     if (!prev_sb_s.empty())
         ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
     else
@@ -854,6 +865,14 @@ static void ac3433_5_abandon_attach_only() {
     ::setenv("AURA_SANDBOX", "restricted", 1);
     apply_production_audit_defaults();
     set_mode(SandboxMode::Strict);
+    // #3797-wave CI: pin the audit WAL on for this production spawn â
+    // the security-schedule posture gate denies while the WAL is off
+    // (restored at cleanup below).
+    std::filesystem::create_directories("build/test-wal-3433b");
+    const bool wal_on_3433b = aura::core::audit_wal::g_mutation_audit_wal().is_enabled();
+    if (!wal_on_3433b)
+        (void)aura::core::audit_wal::g_mutation_audit_wal().enable(
+            std::string_view("build/test-wal-3433b"), nullptr, 0);
     // No SchedRunner (synthetic live body, same as AC1): body never runs,
     // join Timeout → derived Reclaimed → production auto-wait Timeout →
     // must_wait_reclaimed set, then abandon releases attach-only.
@@ -894,6 +913,8 @@ static void ac3433_5_abandon_attach_only() {
         h.fiber->set_state(FiberState::Done);
     h.finish_reclaimed_cleanup_on_dtor();
     apply_dev_audit_defaults();
+    if (!wal_on_3433b)
+        aura::core::audit_wal::g_mutation_audit_wal().disable();
     if (!prev_sb_s.empty())
         ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
     else
@@ -950,6 +971,14 @@ static void ac3467_name_reuse_fail_closed() {
     ::setenv("AURA_SANDBOX", "restricted", 1);
     apply_production_audit_defaults();
     set_mode(SandboxMode::Strict);
+    // #3797-wave CI: pin the audit WAL on for the #3467 production
+    // spawns â the security-schedule posture gate denies while the
+    // WAL is off (restored at cleanup below).
+    std::filesystem::create_directories("build/test-wal-3467");
+    const bool wal_on_3467 = aura::core::audit_wal::g_mutation_audit_wal().is_enabled();
+    if (!wal_on_3467)
+        (void)aura::core::audit_wal::g_mutation_audit_wal().enable(
+            std::string_view("build/test-wal-3467"), nullptr, 0);
 
     // Destruction order matters: table drops its handles (fiber pointers)
     // BEFORE the scheduler destroys the fibers.
@@ -1034,6 +1063,8 @@ static void ac3467_name_reuse_fail_closed() {
         finish(*accepted);
 
     apply_dev_audit_defaults();
+    if (!wal_on_3467)
+        aura::core::audit_wal::g_mutation_audit_wal().disable();
     if (!prev_sb_s.empty())
         ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
     else
@@ -2206,8 +2237,7 @@ static void ac3805_1_put_retires_abandoned_live_not_move_assign() {
     CHECK(table.put(std::move(h)) != nullptr, "3805 AC1: initial put lands");
     // Drive #3564 then #3644 abandon shape via two finds.
     CHECK(table.find("agent-3805") != nullptr, "3805 AC1: first find (quota arm)");
-    CHECK(table.find("agent-3805") == nullptr,
-          "3805 AC1: second find abandons + retires map key");
+    CHECK(table.find("agent-3805") == nullptr, "3805 AC1: second find abandons + retires map key");
     CHECK(table.size() == 0, "3805 AC1: name-table empty after retire");
     CHECK(!old_fiber->is_done(), "3805 AC1: #2661 old body-stack untouched");
 
@@ -2409,9 +2439,10 @@ static void ac3805_5_source_cite_and_linter() {
           "3805 AC5: name-table cite");
     const auto scopeh = read_file("src/orch/agent_scope.h");
     CHECK(scopeh.find("slot_is_abandoned_live") != std::string::npos, "3805 AC5: scope cite");
-    CHECK(read_file("scripts/coverage/checks/check_abandoned_live_name_reuse_3805.py").find(
-              "3805") != std::string::npos,
-          "3805 AC5: linter present");
+    CHECK(
+        read_file("scripts/coverage/checks/check_abandoned_live_name_reuse_3805.py").find("3805") !=
+            std::string::npos,
+        "3805 AC5: linter present");
     CHECK(read_file("tests/orch/test_issue_3805.cpp").empty() &&
               read_file("tests/issues/test_issue_3805.cpp").empty(),
           "3805 AC5: no test_issue_3805.cpp per #81967");
@@ -2490,6 +2521,17 @@ int run_test_join_drain_reclaim() {
     CHECK(true, "issue stamp #2227");
     CompilerService cs;
     (void)cs; // reserved for future query:orch-module-stats probes
+
+    // #3797-wave CI: production spawn blocks in this member (#3245/#3273/
+    // #3433/#3467/#3497) hit the security-schedule posture gate, which
+    // denies while the audit WAL is off. Pin the WAL on for the whole
+    // member (the per-family pins below compose: their guards skip when
+    // the WAL is already on) and restore the off face at the end.
+    std::filesystem::create_directories("build/test-wal-member");
+    const bool wal_member_pinned = !aura::core::audit_wal::g_mutation_audit_wal().is_enabled();
+    if (wal_member_pinned)
+        (void)aura::core::audit_wal::g_mutation_audit_wal().enable(
+            std::string_view("build/test-wal-member"), nullptr, 0);
 
     // ── AC1: residual + reclaim bump + reaper drops the fiber ─────
     {
@@ -5770,15 +5812,34 @@ int run_test_join_drain_reclaim() {
 
         std::println("\n--- #3245 AC3: Timeout → ensure second close / hold bump ---");
         {
-            apply_production_audit_defaults();
+            // Order matters (#3797-wave CI): the production force_wal block
+            // reads the sandbox mode at call time. Strict must be armed
+            // BEFORE apply_production_audit_defaults, or the audit WAL stays
+            // off and the spawn admission denies with
+            // security-schedule:posture-degraded (#3777 spawn preflight).
             set_mode(SandboxMode::Strict);
+            apply_production_audit_defaults();
+            // #3797-wave CI: force_wal inside the defaults can be skipped
+            // (AURA_SANDBOX=off env / dir resolution) — the security-schedule
+            // posture gate then denies every production spawn with
+            // posture-degraded. Pin the audit WAL on for this block.
+            std::filesystem::create_directories("build/test-wal-ac3245");
+            const bool wal_on_3245 = aura::core::audit_wal::g_mutation_audit_wal().is_enabled();
+            if (!wal_on_3245)
+                (void)aura::core::audit_wal::g_mutation_audit_wal().enable(
+                    std::string_view("build/test-wal-ac3245"), nullptr, 0);
             Scheduler sched(1);
             AgentScope scope(sched);
             AgentSpec spec;
             spec.name = "ac3245-pending";
             spec.body = [] {};
             auto& named = scope.spawn(spec);
-            CHECK(named.ok && named.fiber != nullptr, "3245 AC3: spawn ok");
+            // #3793-wave CI: the batch runs 15 members in one process — a
+            // prior member's leftover production state (quota/latch) can
+            // deny this spawn. Surface the deny reason in the CHECK.
+            CHECK(named.ok && named.fiber != nullptr,
+                  std::format("3245 AC3: spawn ok (error={})",
+                              named.ok ? std::string{"none"} : named.error));
             named.fiber->mark_reclaimed();
             named.reserved_memory_bytes = 1024;
             JoinPolicy np{};
@@ -5835,6 +5896,9 @@ int run_test_join_drain_reclaim() {
                 CHECK(!held[0].must_wait_reclaimed, "3245 AC3: Ok ensure clears must_wait");
                 CHECK(held[0].reserved_memory_bytes == 0, "3245 AC3: reservation released");
             }
+            // Restore the pre-block WAL face for later batch members.
+            if (!wal_on_3245)
+                aura::core::audit_wal::g_mutation_audit_wal().disable();
         }
 
         std::println("\n--- #3245 AC5: source-cite + linter + no invent ---");
@@ -6065,6 +6129,14 @@ int run_test_join_drain_reclaim() {
             // observation-only, source still owns reservation.
             apply_production_audit_defaults();
             set_mode(SandboxMode::Strict);
+            // #3797-wave CI: the security-schedule posture gate denies
+            // production spawns while the audit WAL is off; the batch face
+            // leaves it off, so pin it on for the #3273 spawn blocks
+            // (disabled again after AC4 below).
+            std::filesystem::create_directories("build/test-wal-3273");
+            if (!aura::core::audit_wal::g_mutation_audit_wal().is_enabled())
+                (void)aura::core::audit_wal::g_mutation_audit_wal().enable(
+                    std::string_view("build/test-wal-3273"), nullptr, 0);
             Scheduler sched(1);
             AgentScope scope(sched);
             AgentSpec spec;
@@ -6226,6 +6298,8 @@ int run_test_join_drain_reclaim() {
 
         set_mode(SandboxMode::Off);
         apply_dev_audit_defaults();
+        // #3797-wave CI: restore the WAL-off face this section pinned on.
+        aura::core::audit_wal::g_mutation_audit_wal().disable();
     }
 
     std::println("\n=== Issue #3297: ~AgentHandle under-account observability ===");
@@ -6298,6 +6372,9 @@ int run_test_join_drain_reclaim() {
     ac3805_4_no_body_stack_free_on_retire();
     ac3805_5_source_cite_and_linter();
 
+    // #3797-wave CI: restore the WAL-off face for later batch members.
+    if (wal_member_pinned)
+        aura::core::audit_wal::g_mutation_audit_wal().disable();
     std::println("\n=== Results: {} passed, {} failed ===", aura::test::g_passed,
                  aura::test::g_failed);
     return aura::test::g_failed ? 1 : 0;

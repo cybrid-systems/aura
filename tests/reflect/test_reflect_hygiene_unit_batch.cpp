@@ -72,7 +72,10 @@ int run_allow_macro_inline_1780() {
         CHECK(prim.find("#1780") != std::string::npos, "cites #1780");
         auto pos = prim.find("add(\"*allow-macro-inline*\"");
         CHECK(pos != std::string::npos, "primitive present");
-        auto win = prim.substr(pos, 500);
+        // #3786: the MSE gate (deny_marker_clear_without_mse + error return)
+        // now sits between the registration and the per-Evaluator policy
+        // calls — widen the cite window so the setter/getter stay in view.
+        auto win = prim.substr(pos, 800);
         CHECK(win.find("set_inline_respect_macro_hygiene") != std::string::npos,
               "uses Evaluator setter");
         CHECK(win.find("get_inline_respect_macro_hygiene") != std::string::npos,
