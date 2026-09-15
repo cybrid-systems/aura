@@ -6720,6 +6720,18 @@ def cmd_lint():
             "Issue #3782 densify-entry LCP skip-compact linter failed — run python3 scripts/coverage/checks/check_densify_entry_lcp_skip_compact_3782.py"
         )
         return r
+    # Issue #3793: replace-pattern macro keyword unify (:allow-macro? primary,
+    # old query-side spellings as compat aliases; one include + gate bool).
+    kwu3793_script = COVERAGE_CHECKS / "check_replace_pattern_kw_unify_3793.py"
+    if not kwu3793_script.exists():
+        fail(f"missing {kwu3793_script}")
+        return 1
+    r = run([sys.executable, str(kwu3793_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3793 replace-pattern keyword unify linter failed — run python3 scripts/coverage/checks/check_replace_pattern_kw_unify_3793.py"
+        )
+        return r
     # Issue #3640: add_mutate isolation gate single spine (#3396 v2
     # residual). The gate parses packed StableNodeRefs through the same
     # unpack_stable_ref_arg as resolve_mutate_node_arg and takes

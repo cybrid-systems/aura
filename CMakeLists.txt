@@ -2580,6 +2580,12 @@ aura_add_issue_test(test_hygiene_mutate_closed_loop)
 aura_issue_test_link_light(test_hygiene_mutate_closed_loop)
 add_dependencies(all_test_issue_targets test_hygiene_mutate_closed_loop)
 
+# Issue #3793: replace-pattern macro keyword unify (:allow-macro? primary,
+# old query-side spellings as compat aliases; one include + gate bool).
+aura_add_issue_test(test_replace_pattern_allow_macro_unify)
+aura_issue_test_link_light(test_replace_pattern_allow_macro_unify)
+add_dependencies(all_test_issue_targets test_replace_pattern_allow_macro_unify)
+
 # Issue #3131: scalar/metadata mutate MacroIntroduced hygiene (record-patch
 # closed-loop). replace-type / replace-value / tweak-literal guards preserved
 # (#3115 / #373); record-patch body adds reject_structural_macro_hygiene +
