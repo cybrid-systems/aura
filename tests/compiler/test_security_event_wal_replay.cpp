@@ -1021,8 +1021,7 @@ int run_test_security_event_wal_replay() {
         }
         const auto wraps = wal_overflow_ring_wrap_total().load(std::memory_order_relaxed);
         CHECK(wraps >= kExtra, "3806 AC1: wrap_total >= overwrite count");
-        CHECK(wal_overflow_find_by_mid(1) == nullptr,
-              "3806 AC1: earliest mid vanished after wrap");
+        CHECK(wal_overflow_find_by_mid(1) == nullptr, "3806 AC1: earliest mid vanished after wrap");
         CHECK(wal_overflow_find_by_mid(10000 + kExtra - 1) != nullptr,
               "3806 AC1: newest mid still findable");
         CHECK(href_posture(cs, "wal-overflow-wrap-total") >= static_cast<std::int64_t>(kExtra),
@@ -1044,8 +1043,7 @@ int run_test_security_event_wal_replay() {
         const auto dir = fresh_wal_dir("3806-inject");
         CHECK(cs.evaluator().enable_security_event_wal(dir.string()), "3806: enable SE WAL");
         CHECK(aura::core::wal_slo::wal_append_fail_closed_active(), "3806: fail-closed active");
-        const auto wrap_before =
-            wal_overflow_ring_wrap_total().load(std::memory_order_relaxed);
+        const auto wrap_before = wal_overflow_ring_wrap_total().load(std::memory_order_relaxed);
         aura::core::wal_slo::g_wal_append_fail_slo_counters.inject_fail_remaining.store(
             1, std::memory_order_relaxed);
         const bool fail_ret = aura::core::security_event_wal::persist_security_event(

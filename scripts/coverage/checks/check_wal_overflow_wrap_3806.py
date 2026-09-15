@@ -94,9 +94,7 @@ def main() -> int:
     # audit-stats, evolution). Each insert_kv site once → >= 4.
     wrap_inserts = prim.count('insert_kv("wal-overflow-wrap-total"')
     if wrap_inserts < 4:
-        fails.append(
-            f"AC2: expected >=4 wal-overflow-wrap-total insert sites, found {wrap_inserts}"
-        )
+        fails.append(f"AC2: expected >=4 wal-overflow-wrap-total insert sites, found {wrap_inserts}")
 
     # AC3 — Soft/Off zero cost: push still gated by fail-closed.
     must("wal_append_fail_closed_active()", "AC3 fail-closed gate retained", sew)
