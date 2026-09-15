@@ -3203,7 +3203,15 @@ aura::ast::NodeId expand_inner_macros(
                     // Issue #2018: rest params on inner macros — build
                     // (list remaining...) into subst (same as eval_flat
                     // hygienic path).
+                    // Issue #3817: snapshot before rest add_*/stamp —
+                    // ExpandCheckpointGuard is inside clone and cannot
+                    // rewind pre-entry MacroIntroduced rest spine.
+                    // Soft/Off keeps historical half-write.
+                    std::size_t rest_spine_ckpt = 0;
+                    bool rest_spine_pending = false;
                     if (md.dotted && !md.params.empty()) {
+                        rest_spine_ckpt = flat->size();
+                        rest_spine_pending = true;
                         const std::size_t regular_count = md.params.size() - 1;
                         std::vector<aura::ast::NodeId> remaining;
                         for (std::size_t ai = regular_count + 1; ai < call_args.size(); ++ai)
@@ -3241,8 +3249,11 @@ aura::ast::NodeId expand_inner_macros(
                     auto cloned =
                         clone_macro_body(*flat, *pool, *md.flat, *src_pool, md.body_id, &subst,
                                          &rename_map, aura::ast::SyntaxMarker::MacroIntroduced);
-                    if (cloned == NULL_NODE)
+                    if (cloned == NULL_NODE) {
+                        if (rest_spine_pending && production_surface)
+                            flat->truncate_to(rest_spine_ckpt);
                         return root;
+                    }
                     // Recursively expand inner macros in the cloned body
                     cloned = expand_inner_macros(flat, pool, cloned, depth + 1, max_depth, macros);
                     // Issue #3684: production refuses to splice a
@@ -3513,7 +3524,15 @@ static aura::ast::NodeId macro_expand_all_body(aura::ast::FlatAST& flat,
                             md.params, call_args, md.dotted);
                         // Issue #2018: rest param → (list remaining...) in subst
                         // so clone_macro_body substitutes free rest uses.
+                        // Issue #3817: checkpoint before rest add_*/stamp
+                        // so production NULL-clone can truncate orphans
+                        // ExpandCheckpointGuard cannot see. Soft/Off
+                        // historical half-write unchanged.
+                        std::size_t rest_spine_ckpt = 0;
+                        bool rest_spine_pending = false;
                         if (md.dotted && !md.params.empty()) {
+                            rest_spine_ckpt = flat.size();
+                            rest_spine_pending = true;
                             const std::size_t regular_count = md.params.size() - 1;
                             std::vector<aura::ast::NodeId> remaining;
                             for (std::size_t ai = regular_count + 1; ai < call_args.size(); ++ai)
@@ -3539,7 +3558,10 @@ static aura::ast::NodeId macro_expand_all_body(aura::ast::FlatAST& flat,
                         auto expanded = clone_macro_body(
                             flat, pool, *md.src_flat, *md.src_pool, md.body_id, &subst, &rename_map,
                             /*cloned_marker=*/aura::ast::SyntaxMarker::MacroIntroduced);
-                        if (expanded != NULL_NODE) {
+                        if (expanded == NULL_NODE) {
+                            if (rest_spine_pending && production_surface)
+                                flat.truncate_to(rest_spine_ckpt);
+                        } else {
                             if (id == root)
                                 new_root = expanded;
                             else {

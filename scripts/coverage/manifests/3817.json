@@ -1,0 +1,29 @@
+{
+  "issue": 3817,
+  "title": "Issue #3817: dotted-rest MacroIntroduced spine rewind on clone deny",
+  "ok": "OK: Issue #3817 rest-spine orphan rewind",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_eval_flat.cpp",
+      "contains": ["Issue #3817", "rest_spine_ckpt", "truncate_to(rest_spine_ckpt)"]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/macro_expansion.cpp",
+      "contains": ["Issue #3817", "truncate_to(rest_spine_ckpt)", "rest_spine_pending"]
+    },
+    {
+      "ac": "AC3-tests",
+      "path": "tests/compiler/test_rest_param_hygiene_eval_flat.cpp",
+      "contains": ["3817 soak", "flat size restored", "Issue #3817"]
+    },
+    {
+      "ac": "AC4",
+      "forbid": [
+        "tests/compiler/test_issue_3817.cpp",
+        "docs/design/3817-rest-spine-orphan.md"
+      ]
+    }
+  ]
+}

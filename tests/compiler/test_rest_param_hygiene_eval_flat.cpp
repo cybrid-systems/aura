@@ -4,6 +4,8 @@
 // marker on rest-list spine, so is_macro_introduced stayed false and
 // mutate:replace-subtree / rebind gates could not reject rest nodes). Residual
 // of #2018 / #2169 / #2239 / #2808 — call-site residual only, helper exists.
+// Issue #3817 — rest add_*/stamp before clone checkpoint leaves MacroIntroduced
+// orphans on gensym/depth/pass deny; production truncate_to(rest_spine_ckpt).
 //
 //   AC1: helper exposed cross-TU — dropped static, added export declaration
 //        in macro_expansion.ixx. Definition still single-source in
@@ -33,15 +35,34 @@
 #include <print>
 #include <string>
 #include <string_view>
+#include <unordered_map>
+#include <vector>
+
+#include "compiler/aura_jit_bridge.h"
+#include "compiler/grant_test_support.hh"
+#include "core/capability_model.hh"
+#include "core/sandbox.hh"
+#include "core/transparent_string_hash.hh"
 
 import std;
+import aura.compiler.macro_expansion;
 import aura.compiler.service;
 import aura.compiler.value;
 import aura.core.ast;
+import aura.parser.parser;
 
 namespace {
 
+using aura::ast::FlatAST;
+using aura::ast::NodeId;
+using aura::ast::NULL_NODE;
+using aura::ast::StringPool;
+using aura::ast::SyntaxMarker;
 using aura::compiler::CompilerService;
+using aura::compiler::macro_exp::clone_macro_body;
+using aura::compiler::macro_exp::g_macro_hygiene_last_limit_reason;
+using aura::compiler::macro_exp::hygiene_last_limit_reason_string;
+using aura::compiler::macro_exp::stamp_rest_param_hygiene;
 using aura::compiler::types::as_int;
 using aura::compiler::types::as_pair_idx;
 using aura::compiler::types::as_string_idx;
@@ -313,6 +334,139 @@ static void ac5_marker_set_total_parity() {
     // (linter enforces; this is a defensive guard for the test itself).
 }
 
+
+// Issue #3817: source cites rest_spine_ckpt + production truncate on NULL clone.
+static void ac3817_source_rest_spine_ckpt() {
+    std::println("\n--- #3817 AC1: rest_spine_ckpt + truncate on NULL clone ---");
+    auto eef = read_file("src/compiler/evaluator_eval_flat.cpp");
+    auto mx = read_file("src/compiler/macro_expansion.cpp");
+    CHECK(!eef.empty() && !mx.empty(), "3817 AC1: sources readable");
+    CHECK(eef.find("Issue #3817") != std::string::npos, "3817 AC1: eval_flat cites #3817");
+    CHECK(eef.find("rest_spine_ckpt") != std::string::npos, "3817 AC1: rest_spine_ckpt");
+    CHECK(eef.find("truncate_to(rest_spine_ckpt)") != std::string::npos,
+          "3817 AC1: truncate_to(rest_spine_ckpt)");
+    CHECK(eef.find("is_sandbox_active()") != std::string::npos, "3817 AC1: production gate");
+    auto re = eef.find("Issue #3817: checkpoint before rest add_*/stamp");
+    CHECK(re != std::string::npos, "3817 AC1: reexpand_call cite");
+    CHECK(mx.find("Issue #3817") != std::string::npos, "3817 AC1: macro_expansion cites");
+    CHECK(mx.find("truncate_to(rest_spine_ckpt)") != std::string::npos,
+          "3817 AC1: expand paths truncate");
+    CHECK(read_file("tests/compiler/test_issue_3817.cpp").empty(), "3817: no test_issue");
+    CHECK(read_file("docs/design/3817-rest-spine-orphan.md").empty(), "3817: no docs/design");
+}
+
+// Soft/Off: truncate gated — historical half-write when sandbox inactive.
+static void ac3817_soft_off_gate() {
+    std::println("\n--- #3817 AC3: Soft/Off contract unchanged ---");
+    auto eef = read_file("src/compiler/evaluator_eval_flat.cpp");
+    auto win_pos = eef.find("Issue #3817: production rewind pre-clone");
+    CHECK(win_pos != std::string::npos, "3817 AC3: rewind cite");
+    auto win = eef.substr(win_pos, 500);
+    CHECK(win.find("is_sandbox_active()") != std::string::npos,
+          "3817 AC3: truncate gated on is_sandbox_active");
+    auto mx = read_file("src/compiler/macro_expansion.cpp");
+    CHECK(mx.find("rest_spine_pending && production_surface") != std::string::npos,
+          "3817 AC3: expand paths gate on production_surface");
+}
+
+// Soak: rest stamp × gensym ceiling deny → truncate leaves no MacroIntroduced
+// rest list orphan; stable reason hygiene-gensym-ceiling; mutate face clean.
+static void ac3817_soak_rest_ceiling_no_orphan() {
+    std::println("\n--- #3817 soak: rest × ceiling deny × no orphan spine ---");
+    using aura::core::capability::Effect;
+    using aura::core::capability::g_capability_registry;
+    using aura::core::capability::reset_capability_effects_for_test;
+    reset_capability_effects_for_test();
+    CHECK(g_capability_registry().grant(0, "tenant-admin", Effect::TenantAdmin,
+                                        aura_test_grant_prov()),
+          "3817 soak: TenantAdmin grant");
+    CHECK(g_capability_registry().grant_macro_self_evo(0, {}, aura_test_grant_prov()),
+          "3817 soak: MacroSelfEvo grant");
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Strict);
+
+    aura::ast::ASTArena arena;
+    auto alloc = arena.allocator();
+    StringPool sp(alloc);
+    FlatAST src(alloc);
+    // Two lets → gensym ceiling at cap=1 forces NULL clone after rest stamp.
+    auto pr = aura::parser::parse_to_flat("(let ((x 1)) (let ((y 2)) rest))", src, sp);
+    CHECK(pr.success && pr.root != NULL_NODE, "3817 soak: parse body");
+
+    FlatAST target(alloc);
+    StringPool tp(alloc);
+    // Mirror eval_flat: checkpoint → allocate (list) → stamp → clone.
+    const auto rest_spine_ckpt = target.size();
+    auto list_var = target.add_variable(tp.intern("list"));
+    std::vector<NodeId> remaining;
+    auto list_call = target.add_call(list_var, remaining);
+    stamp_rest_param_hygiene(target, src, pr.root, list_call);
+    CHECK(target.is_macro_introduced(list_call), "3817 soak: rest stamped MacroIntroduced");
+    const auto size_after_stamp = target.size();
+    CHECK(size_after_stamp > rest_spine_ckpt, "3817 soak: rest grew flat");
+
+    std::unordered_map<std::string, NodeId, aura::core::TransparentStringHash, std::equal_to<>>
+        subst;
+    subst["rest"] = list_call;
+    std::unordered_map<std::string, std::string, aura::core::TransparentStringHash, std::equal_to<>>
+        rename_map;
+    aura_test_set_max_gensym_map_size_for_test(1);
+    g_macro_hygiene_last_limit_reason.store(0, std::memory_order_relaxed);
+    auto expanded = clone_macro_body(target, tp, src, sp, pr.root, &subst, &rename_map,
+                                     SyntaxMarker::MacroIntroduced);
+    aura_test_set_max_gensym_map_size_for_test(0);
+    CHECK(expanded == NULL_NODE, "3817 soak: production ceiling → NULL_NODE");
+    const auto* rs = hygiene_last_limit_reason_string();
+    CHECK(rs != nullptr && std::string(rs) == "hygiene-gensym-ceiling",
+          "3817 soak: hygiene-gensym-ceiling");
+
+    // Production rewind (same face as eval_flat #3817).
+    if (aura::core::sandbox::is_sandbox_active())
+        target.truncate_to(rest_spine_ckpt);
+    CHECK(target.size() == rest_spine_ckpt, "3817 soak: flat size restored");
+    std::size_t orphan_mi = 0;
+    for (NodeId id = rest_spine_ckpt; id < target.size(); ++id) {
+        if (target.is_macro_introduced(id))
+            ++orphan_mi;
+    }
+    CHECK(orphan_mi == 0, "3817 soak: no MacroIntroduced orphan past ckpt");
+    CHECK(list_call >= target.size() || !target.is_macro_introduced(list_call),
+          "3817 soak: stamped list_call no longer live MacroIntroduced");
+
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+    reset_capability_effects_for_test();
+}
+
+// Soft/Off: without truncate, stamped rest may remain (historical half-write).
+static void ac3817_off_half_write() {
+    std::println("\n--- #3817 AC3b: Off keeps historical half-write ---");
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+    aura::ast::ASTArena arena;
+    auto alloc = arena.allocator();
+    StringPool sp(alloc);
+    FlatAST src(alloc);
+    auto pr = aura::parser::parse_to_flat("(let ((x 1)) (let ((y 2)) rest))", src, sp);
+    CHECK(pr.success, "3817 AC3b: parse");
+    FlatAST target(alloc);
+    StringPool tp(alloc);
+    const auto ckpt = target.size();
+    auto list_var = target.add_variable(tp.intern("list"));
+    std::vector<NodeId> remaining;
+    auto list_call = target.add_call(list_var, remaining);
+    stamp_rest_param_hygiene(target, src, pr.root, list_call);
+    std::unordered_map<std::string, NodeId, aura::core::TransparentStringHash, std::equal_to<>>
+        subst;
+    subst["rest"] = list_call;
+    std::unordered_map<std::string, std::string, aura::core::TransparentStringHash, std::equal_to<>>
+        rename_map;
+    aura_test_set_max_gensym_map_size_for_test(1);
+    (void)clone_macro_body(target, tp, src, sp, pr.root, &subst, &rename_map,
+                           SyntaxMarker::MacroIntroduced);
+    aura_test_set_max_gensym_map_size_for_test(0);
+    CHECK(target.size() >= ckpt, "3817 AC3b: Off does not require rewind");
+    CHECK(list_call < target.size() && target.is_macro_introduced(list_call),
+          "3817 AC3b: Off may keep stamped rest MacroIntroduced");
+}
+
 } // namespace
 
 int main() {
@@ -323,8 +477,12 @@ int main() {
     ac4_rest_spine_macro_introduced_parity();
     ac5_marker_set_total_parity();
     ac3468_spine_only_no_remaining_walk();
+    ac3817_source_rest_spine_ckpt();
+    ac3817_soft_off_gate();
+    ac3817_soak_rest_ceiling_no_orphan();
+    ac3817_off_half_write();
     if (g_failed)
         return 1;
-    std::println("eval_flat rest-param-hygiene (#3153): OK ({} passed)", g_passed);
+    std::println("eval_flat rest-param-hygiene (#3153/#3817): OK ({} passed)", g_passed);
     return 0;
 }
