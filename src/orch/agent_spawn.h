@@ -23,6 +23,7 @@
 
 #include "core/resource_quota.hh"
 #include "core/sandbox.hh" // Issue #3434/#3494: is_sandbox_active() + MT spawn gate
+#include "orch/security_schedule_gate.h" // Issue #3777: schedule-gate-at-spawn preflight
 #include "serve/fiber.h"
 #include "serve/multi_fiber_mailbox.h"
 #include "serve/parallel_orch.h"
@@ -210,6 +211,10 @@ inline constexpr int kMailboxBpScopeDecayRaceIssue = 2780;
 inline constexpr int kAgentBpDegradeIssue = 2887;
 // Issue #3251: unified deny-class on Aura spawn/join/send fail hashes.
 inline constexpr int kAgentDenyClassIssue = 3251;
+// Issue #3777: production schedule-gate deny fails spawn before
+// fiber/mailbox/name commit (same rollback face as quota/BP).
+// Soft/Off keep body try_acquire path (zero-cost preflight skip).
+inline constexpr int kScheduleGateAtSpawnIssue = 3777;
 
 enum class AgentDenyClass : std::uint8_t {
     None = 0,
@@ -2166,7 +2171,7 @@ inline serve::mf_mailbox::PushStatus emit_keepalive(serve::mf_mailbox::MultiFibe
 
 // Issue #3364: rollback_spawn_reservation — release any reserved arena
 // for `h` (no-op if zero). Used by BP deny path + Scheduler::spawn nullptr
-// path + future schedule-gate-at-spawn to ensure arena usage returns to
+// path + schedule-gate-at-spawn (#3777) to ensure arena usage returns to
 // pre-spawn on every reject (no leak under storms). Caller is responsible
 // for any leak-detect / no-leak counter bumps — this helper is a pure
 // release of `reserved_memory_bytes` (paired with zeroing the field).
@@ -2422,6 +2427,33 @@ inline void finalize_spawn_quota_reject(AgentHandle& h) noexcept {
         }
     }
 
+    // Issue #3777: production schedule-gate-at-spawn preflight.
+    // Quota/BP already roll back before fiber+mailbox+name commit; schedule-gate
+    // used to deny only at body try_acquire (acq==2 / #3251) leaving husks until
+    // join Done-path. Under production defaults, admit_security_schedule before
+    // Scheduler::spawn / mailbox attach / name put — same rollback face as BP.
+    // Soft/Off: skip entirely (zero-cost; body try_acquire path remains).
+    // Body-path ScheduleGate (#3251 deny_storm skip) stays as belt if preflight
+    // races a later flap.
+    if (production_defaults_active()) {
+        const auto sb_mode =
+            aura::core::sandbox::g_sandbox_mode_atomic().load(std::memory_order_acquire);
+        const auto sched_in =
+            make_security_schedule_input_live(sb_mode, /*production_defaults=*/true,
+                                              /*soft_mode=*/false);
+        if (auto sched_reason = admit_security_schedule(sched_in); sched_reason.has_value()) {
+            g_orch_module_stats.spawn_failures.fetch_add(1, std::memory_order_relaxed);
+            h.quota_exceeded = true; // structured admit-reject hash face (#2079/#3251)
+            h.deny_class = AgentDenyClass::ScheduleGate;
+            h.quota_dimension = "security-schedule";
+            h.retry_after_ms = 50;
+            h.error = *sched_reason;
+            rollback_spawn_reservation(h);
+            finalize_spawn_quota_reject(h);
+            return h;
+        }
+    }
+
     auto mb = spec.attach_mailbox ? std::make_shared<serve::mf_mailbox::MultiFiberMailbox>(
                                         spec.mailbox_high_water, spec.mailbox_credit)
                                   : nullptr;
@@ -2538,7 +2570,7 @@ inline void finalize_spawn_quota_reject(AgentHandle& h) noexcept {
         // before return so agent_arena_usage_bytes does not leak under storms.
         // Issue #3364: use the shared rollback helper (replaces the inline
         // `pq.release_agent_arena + zero fields` sequence so BP / nullptr /
-        // future schedule-gate-at-spawn share one release path).
+        // schedule-gate-at-spawn (#3777) share one release path).
         rollback_spawn_reservation(h);
         g_orch_module_stats.spawn_failures.fetch_add(1, std::memory_order_relaxed);
         g_orch_module_stats.spawn_quota_rejects.fetch_add(1, std::memory_order_relaxed);
