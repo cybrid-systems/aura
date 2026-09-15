@@ -402,6 +402,38 @@ static void ac3351_4_linter_no_invent() {
 
 } // namespace
 
+
+// ── Issue #3784: empty-name / anonymous peer leave-native ──
+static void ac3784_1_empty_name_consults_func_id_soft_stale() {
+    std::println("\n--- #3784 AC1: empty-name peer consults func_id soft_stale ---");
+    const auto runtime = read_file("src/compiler/aura_jit_runtime.cpp");
+    CHECK(runtime.find("Issue #3784") != std::string::npos, "ac3784_1: runtime cites #3784");
+    CHECK(runtime.find("aura_aot_slot_is_soft_stale") != std::string::npos,
+          "ac3784_1: empty-name path consults slot soft_stale");
+    CHECK(runtime.find("peer_cname == nullptr") != std::string::npos ||
+              runtime.find("peer_cname == nullptr") != std::string::npos,
+          "ac3784_1: empty-name branch on peer_cname nullptr");
+    CHECK(runtime.find("g_closure_func_ids") != std::string::npos,
+          "ac3784_1: uses closure func_id for soft_stale consult");
+}
+
+static void ac3784_2_named_path_retained() {
+    std::println("\n--- #3784 AC2: named peer still leaves via #3300 ---");
+    const auto runtime = read_file("src/compiler/aura_jit_runtime.cpp");
+    CHECK(runtime.find("aura_aot_peer_jit_name_is_soft_stale(peer_cname)") != std::string::npos,
+          "ac3784_2: named path still probes name side-table");
+}
+
+static void ac3784_3_soft_off_and_no_invent() {
+    std::println("\n--- #3784 AC3/AC4: Soft cascade may all-slot; no invent ---");
+    const auto bridge = read_file("src/compiler/aura_jit_bridge.cpp");
+    CHECK(bridge.find("Issue #3784") != std::string::npos, "ac3784_3: bridge cites #3784");
+    CHECK(bridge.find("aura_aot_soft_stale_peer_slots_for_name") != std::string::npos,
+          "ac3784_3: #3750 name-precise peer slot mark retained");
+    CHECK(bridge.find("test_issue_3784.cpp") == std::string::npos,
+          "ac3784_3: no invented issue test path");
+}
+
 int run_test_peer_jit_name_soft_stale() {
     ac1_side_table_present();
     ac2_facade_owner_scoped_mark();
@@ -418,7 +450,15 @@ int run_test_peer_jit_name_soft_stale() {
     ac3514_2_empty_cache_still_walks();
     ac3514_3_overflow_fail_closed();
     ac3514_5_no_invent();
-    std::println("\n=== #3300 + #3351 + #3514: {} passed, {} failed ===", g_passed, g_failed);
+
+    std::println("\n=== Issue #3784: empty-name peer leave-native "
+                 "(#3750/#3300 residual) ===");
+    ac3784_1_empty_name_consults_func_id_soft_stale();
+    ac3784_2_named_path_retained();
+    ac3784_3_soft_off_and_no_invent();
+
+    std::println("\n=== #3300 + #3351 + #3514 + #3784: {} passed, {} failed ===", g_passed,
+                 g_failed);
     return g_failed ? 1 : 0;
 }
 
