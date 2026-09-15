@@ -5884,6 +5884,19 @@ def cmd_lint():
             "Issue #3737 compiler_metrics_fields.inc linter failed — run python3 scripts/coverage/checks/check_compiler_metrics_fields_3737.py"
         )
         return r
+    # Issue #3779: steal_complete_total Agent-visible SSOT (gc_hooks face).
+    # CompilerMetrics :group dump must agree with query hashes / AdaptiveStealStats.
+    # Soft/Off unchanged. Linter after #3737 ABI fields check.
+    sct3779_script = COVERAGE_CHECKS / "check_steal_complete_total_ssot_3779.py"
+    if not sct3779_script.exists():
+        fail(f"missing {sct3779_script}")
+        return 1
+    r = run([sys.executable, str(sct3779_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3779 steal_complete_total SSOT linter failed — run python3 scripts/coverage/checks/check_steal_complete_total_ssot_3779.py"
+        )
+        return r
     emho_script = COVERAGE_CHECKS / "check_engine_metrics_hash_overflow_3018.py"
     if not emho_script.exists():
         fail(f"missing {emho_script}")
@@ -14156,6 +14169,26 @@ def cmd_compiler_metrics_fields_3737():
     return cmd_compiler_metrics_fields_3737_coverage()
 
 
+def cmd_steal_complete_total_ssot_3779_coverage():
+    """Issue #3779: steal_complete_total :group dump == gc_hooks SSOT (static)."""
+    print(f"{B}=== steal_complete_total SSOT (#3779) ==={N}")
+    script = COVERAGE_CHECKS / "check_steal_complete_total_ssot_3779.py"
+    if not script.is_file():
+        fail(f"missing {script}")
+        return 1
+    if run([sys.executable, str(script)], cwd=ROOT) != 0:
+        fail("steal_complete_total SSOT (#3779) coverage contract rows failed")
+        return 1
+    ok("steal_complete_total SSOT (#3779) coverage clean")
+    return 0
+
+
+def cmd_steal_complete_total_ssot_3779():
+    """Issue #3779: Agent-visible steal_complete_total single SSOT."""
+    print(f"{B}=== steal_complete_total SSOT (#3779) ==={N}")
+    return cmd_steal_complete_total_ssot_3779_coverage()
+
+
 def cmd_engine_metrics_hash_overflow_3018_coverage():
     """Issue #3018: engine:metrics hash overflow fail-soft (static)."""
     print(f"{B}=== engine:metrics hash overflow coverage (#3018) ==={N}")
@@ -21886,6 +21919,8 @@ def main():
         "moving-temporary-canary-3210-coverage": cmd_moving_temporary_canary_3210_coverage,
         "compiler-metrics-fields-3737": cmd_compiler_metrics_fields_3737,
         "compiler-metrics-fields-3737-coverage": cmd_compiler_metrics_fields_3737_coverage,
+        "steal-complete-total-ssot-3779": cmd_steal_complete_total_ssot_3779,
+        "steal-complete-total-ssot-3779-coverage": cmd_steal_complete_total_ssot_3779_coverage,
         "engine-metrics-hash-overflow-3018": cmd_engine_metrics_hash_overflow_3018,
         "engine-metrics-hash-overflow-3018-coverage": cmd_engine_metrics_hash_overflow_3018_coverage,
         "unified-restamp-3019": cmd_unified_restamp_3019,

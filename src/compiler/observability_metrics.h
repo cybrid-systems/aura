@@ -8368,8 +8368,10 @@ struct CompilerMetrics {
     // panic-defer depth from the previous host (avoids permanently
     // deferring GC after a steal across evaluators).
     std::atomic<std::uint64_t> gc_defer_orphan_cleared_total{0}; // #2086
-    // Issue #2203: steal-complete single entry (worker try_steal_from).
+    // Issue #2203 / #3779: steal-complete single entry (worker try_steal_from).
     // steal_complete_total — every successful steal that hit on_steal_complete
+    //   (mirrors gc_hooks::g_steal_complete_total at entry; :group dump overlays
+    //   process SSOT so Agents agree with query hashes — Issue #3779)
     // gc_defer_orphan_cleared_on_steal_total — depths cleared at steal-complete
     //   (subset of gc_defer_orphan_cleared_total; resume/migration may add more)
     std::atomic<std::uint64_t> steal_complete_total{0};                   // #2203

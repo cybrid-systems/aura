@@ -844,6 +844,38 @@ int main() {
               "3737 AC3: build.py wires linter");
     }
 
+    // ── Issue #3779: steal_complete_total :group SSOT (source + key face) ──
+    {
+        std::println("\n--- #3779: steal_complete_total group dump SSOT ---");
+        auto tel = cs.eval("(engine:metrics :group \"telemetry\")");
+        CHECK(tel && is_hash(*tel), "3779 AC1: :group telemetry is hash");
+        auto sc = cs.eval(
+            "(hash-ref (engine:metrics :group \"telemetry\") \"steal_complete_total\")");
+        CHECK(sc && is_int(*sc), "3779 AC1: steal_complete_total still in telemetry group");
+        // Existing jit / mutate faces unchanged (no rename / no mid-struct insert).
+        auto jit = cs.eval("(hash-ref (engine:metrics :group \"jit\") \"jit_compilations\")");
+        CHECK(jit && is_int(*jit), "3779 AC2: existing jit group key unchanged");
+        CHECK(hash_int(cs, "(engine:metrics)", "schema") == 2, "3779 AC2: schema 2 unchanged");
+        const auto jit_src = read_file("src/compiler/evaluator_primitives_obs_jit.cpp");
+        CHECK(jit_src.find("Issue #3779") != std::string::npos, "3779 AC: dump cites #3779");
+        CHECK(jit_src.find("gc_hooks::steal_complete_total()") != std::string::npos,
+              "3779 AC2: :group overlay reads gc_hooks SSOT");
+        const auto efm = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+        CHECK(efm.find("Issue #3779") != std::string::npos, "3779 AC: entry cites #3779");
+        CHECK(efm.find("adaptive_steal_stats().steal_complete_total.fetch_add") != std::string::npos,
+              "3779 AC1: AdaptiveStealStats entry bump retained");
+        const auto inc = read_file("src/compiler/compiler_metrics_fields.inc");
+        CHECK(inc.find("AURA_COMPILER_METRICS_FIELD(steal_complete_total)") != std::string::npos,
+              "3779 AC3: .inc field retained (no rename)");
+        CHECK(read_file("tests/compiler/test_issue_3779.cpp").empty(),
+              "3779 AC5: no test_issue_3779.cpp");
+        CHECK(read_file("docs/design/3779-steal-complete-total-ssot.md").empty(),
+              "3779 AC5: no docs/design/3779-*");
+        const auto build3779 = read_file("build.py");
+        CHECK(build3779.find("check_steal_complete_total_ssot_3779") != std::string::npos,
+              "3779 AC5: build.py wires linter");
+    }
+
     if (::aura::test::g_failed) {
         std::println(std::cerr, "engine metrics facade #1433: FAIL ({} failed, {} passed)",
                      ::aura::test::g_failed, ::aura::test::g_passed);

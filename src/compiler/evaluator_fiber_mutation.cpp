@@ -3751,9 +3751,17 @@ extern "C" int aura_abi_strong_ir_typed_entry_v(void) noexcept {
 
 extern "C" void aura_evaluator_on_steal_complete(void* fiber_ptr) noexcept {
     // Always count the steal-complete entry (even with null fiber).
+    // Issue #3779: single SSOT bump for Agent-visible steal_complete_total —
+    // gc_hooks (process) + AdaptiveStealStats + CompilerMetrics mirror when a
+    // scheduler evaluator is live. Mid-body conditional bumps removed so
+    // (engine:metrics :group) cannot lag query hashes that read gc_hooks.
     aura::gc_hooks::g_steal_complete_total.fetch_add(1, std::memory_order_relaxed);
     aura::serve::metrics::adaptive_steal_stats().steal_complete_total.fetch_add(
         1, std::memory_order_relaxed);
+    if (auto* ev = evaluator_for_scheduler_hooks()) {
+        if (auto* m = static_cast<CompilerMetrics*>(ev->compiler_metrics()))
+            m->steal_complete_total.fetch_add(1, std::memory_order_relaxed);
+    }
 
     auto* fiber = static_cast<aura::serve::Fiber*>(fiber_ptr);
     // Issue #3048: revoke session grants bound to this fiber's captured
@@ -3808,16 +3816,16 @@ extern "C" void aura_evaluator_on_steal_complete(void* fiber_ptr) noexcept {
                     m->gc_defer_orphan_cleared_total.fetch_add(cleared, std::memory_order_relaxed);
                     m->gc_defer_orphan_cleared_on_steal_total.fetch_add(cleared,
                                                                         std::memory_order_relaxed);
-                    m->steal_complete_total.fetch_add(1, std::memory_order_relaxed);
+                    // steal_complete_total: Issue #3779 entry SSOT (not here)
                     if (reconciled > 0)
                         m->mutation_boundary_residual_defer_bit_reconcile_total.fetch_add(
                             reconciled, std::memory_order_relaxed);
                 }
             }
-        } else if (auto* ev = evaluator_for_scheduler_hooks()) {
-            if (auto* m = static_cast<CompilerMetrics*>(ev->compiler_metrics())) {
-                m->steal_complete_total.fetch_add(1, std::memory_order_relaxed);
-                if (reconciled > 0)
+        } else if (reconciled > 0) {
+            // Issue #3779: steal_complete_total already bumped at entry SSOT.
+            if (auto* ev = evaluator_for_scheduler_hooks()) {
+                if (auto* m = static_cast<CompilerMetrics*>(ev->compiler_metrics()))
                     m->mutation_boundary_residual_defer_bit_reconcile_total.fetch_add(
                         reconciled, std::memory_order_relaxed);
             }
@@ -3846,10 +3854,9 @@ extern "C" void aura_evaluator_on_steal_complete(void* fiber_ptr) noexcept {
                 }
             }
         }
-    } else if (auto* ev = evaluator_for_scheduler_hooks()) {
-        if (auto* m = static_cast<CompilerMetrics*>(ev->compiler_metrics()))
-            m->steal_complete_total.fetch_add(1, std::memory_order_relaxed);
     }
+    // Issue #3779: steal_complete_total already bumped at entry (gc_hooks /
+    // AdaptiveStealStats / CompilerMetrics mirror) — no mid-body re-bump.
 
     // (4) Issue #2351 / #2510: LayoutStamp dual-check at steal-complete
     // (before fiber is pushed local / resumed). Zero cost when no stamp
