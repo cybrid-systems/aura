@@ -3308,6 +3308,244 @@ static void ac3763_2_recv_try_pop_under_guard() {
     aura::compiler::typed_audit::apply_dev_audit_defaults();
 }
 
+// ── Issue #3791: I5/I4 deploy door fail-closed (#3620 x #3763 x #3764 residual). ──
+// The soak stayed green under sticky Mailbox TLS depth (#3763) and a no-edge
+// forever-held holder (#3764): the lock-order canary cannot observe either
+// condition, so the deploy door shipped false-green. These doors make the PR
+// smoke fail closed on regression; runtime fixes belong to #3763/#3764
+// (out of scope here — test-only ship, no src/ stamp).
+
+// AC1: Mailbox lock-order TLS depth returns to 0 after attach/push/size/
+// empty/attacher_count/close on host AND worker TLS. A #3763 regression
+// (on_acquire without on_release) leaves sticky depth > 0 → fails closed.
+static void ac3791_1_mailbox_depth_zero_after_attach_push() {
+    std::println("\n--- #3791 AC1: Mailbox depth 0 after attach+push (host + worker TLS) ---");
+    namespace lo = aura::compiler::lock_order;
+    const auto mailbox_depth = [] {
+        return lo::g_depth[static_cast<std::uint8_t>(lo::Level::Mailbox)];
+    };
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    if (!aura::compiler::typed_audit::production_defaults_active())
+        return; // Soft / Off: hard doors skip (existing Soft contract)
+    aura::serve::mf_mailbox::MultiFiberMailbox mailbox(16);
+    CHECK(mailbox.push(aura::serve::mf_mailbox::MailMessage{}) ==
+              aura::serve::mf_mailbox::PushStatus::Ok,
+          "3791 AC1: host push ok");
+    (void)mailbox.size();
+    (void)mailbox.empty();
+    (void)mailbox.attacher_count();
+    CHECK(mailbox_depth() == 0,
+          "3791 AC1: depth 0 after push/size/empty/attacher_count (host TLS) — #3763 sticky door");
+    aura::serve::mf_mailbox::MultiFiberMailbox scratch(4);
+    scratch.close();
+    CHECK(mailbox_depth() == 0, "3791 AC1: depth 0 after close (host TLS)");
+    std::atomic<int> worker_depth{-1};
+    std::atomic<int> worker_done{0};
+    aura::serve::Scheduler sched(1);
+    aura::serve::Fiber* w = sched.spawn([&]() {
+        aura::serve::Fiber* cur = aura::serve::g_current_fiber;
+        mailbox.attach(cur);
+        CHECK(mailbox.push(aura::serve::mf_mailbox::MailMessage{}) ==
+                  aura::serve::mf_mailbox::PushStatus::Ok,
+              "3791 AC1: worker push ok");
+        (void)mailbox.size();
+        mailbox.detach(cur);
+        worker_depth.store(mailbox_depth(), std::memory_order_release);
+        worker_done.store(1, std::memory_order_release);
+    });
+    CHECK(w != nullptr, "3791 AC1: worker spawned");
+    std::thread io([&]() { sched.run(); });
+    for (int i = 0; i < 400 && worker_done.load(std::memory_order_acquire) == 0; ++i)
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    sched.stop();
+    io.join();
+    CHECK(worker_done.load() == 1, "3791 AC1: worker body ran");
+    CHECK(worker_depth.load() == 0,
+          "3791 AC1: depth 0 after attach+push+size+detach (worker TLS) — #3763 sticky door");
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+}
+
+// AC1b: Guard-live recv/try_pop take zero mu_ acquires. Policy A empty must
+// fire BEFORE the AuditScope/mu_ region — the canary itself cannot see the
+// regression (unaudited lock, or blinded by sticky depth), so the door
+// counts lock_order acquire_total across the Guard-live window.
+static void ac3791_2_guard_live_recv_zero_mu_() {
+    std::println("\n--- #3791 AC2: Guard-live recv/try_pop take zero mu_ ---");
+    namespace lo = aura::compiler::lock_order;
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    if (!aura::compiler::typed_audit::production_defaults_active())
+        return; // Soft / Off: hard doors skip
+    CompilerService cs;
+    aura::compiler::Evaluator::set_query_evaluator(&cs.evaluator());
+    aura::serve::mf_mailbox::MultiFiberMailbox mailbox(16);
+    aura::serve::mf_mailbox::MailMessage queued{};
+    queued.payload = "queued-3791";
+    CHECK(mailbox.push(queued) == aura::serve::mf_mailbox::PushStatus::Ok, "3791 AC2: pre-queue");
+    bool ok = true;
+    {
+        aura::compiler::Evaluator::MutationBoundaryGuard g(cs.evaluator(), &ok);
+        const auto acq0 = lo::g_lock_order_acquire_total.load(std::memory_order_relaxed);
+        const auto rej0 =
+            g_mf_mailbox_stats.recv_rejected_in_mutation_boundary.load(std::memory_order_relaxed);
+        aura::serve::mf_mailbox::MailMessage popped{};
+        const bool try_pop_ok = mailbox.try_pop(popped);
+        const auto got = mailbox.recv(/*wait=*/true, /*timeout_ms=*/5);
+        const auto acq1 = lo::g_lock_order_acquire_total.load(std::memory_order_relaxed);
+        CHECK(!try_pop_ok, "3791 AC2: try_pop under Guard is Policy-A empty");
+        CHECK(!got.has_value(), "3791 AC2: recv under Guard is Policy-A empty");
+        CHECK(acq1 == acq0,
+              "3791 AC2: zero mu_ acquires under Guard-live recv/try_pop (acquire_total delta 0)");
+        CHECK(g_mf_mailbox_stats.recv_rejected_in_mutation_boundary.load(
+                  std::memory_order_relaxed) > rej0,
+              "3791 AC2: Policy A reject bumped");
+        CHECK(lo::g_depth[static_cast<std::uint8_t>(lo::Level::Mailbox)] == 0,
+              "3791 AC2: Mailbox depth 0 inside Guard window (no sticky)");
+    }
+    aura::compiler::Evaluator::set_query_evaluator(nullptr);
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+}
+
+// AC2 (no-edge holder): past 2×SLO the holder must be disposed — busy-path
+// poll arms cancel → inbody no-edge force (multi-worker latch) →
+// mark_reclaimed while still spinning; join never waits forever. After the
+// bounded spin: Done + depth slot 0 + MutationHold GC defer released. A
+// #3764 forever-held regression (no dispose in busy-path / join) fails this
+// door while the holder is still joinable + held.
+static void ac3791_3_no_edge_holder_fail_closed() {
+    std::println("\n--- #3791 AC3: no-edge holder past 2xSLO disposed, join no hang ---");
+    using aura::serve::Fiber;
+    using aura::serve::JoinStatus;
+    using aura::serve::Scheduler;
+    ::unsetenv("AURA_SANDBOX");
+    ::unsetenv("AURA_MUTATION_HOLD_BUDGET_HARD");
+    ::unsetenv("AURA_HOLD_BUDGET_INBODY_BOUND_US");
+    ::setenv("AURA_MUTATION_HOLD_SLO_US", "2000", 1);
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    if (!aura::compiler::typed_audit::production_defaults_active())
+        return; // Soft / Off: hard doors skip
+    CHECK(aura::compiler::mutation_hold_budget_reject_enabled(),
+          "3791 AC3: reject_enabled under production");
+    aura::serve::set_production_multi_worker_latched_for_test(true);
+    aura::compiler::mutation_hold_live_reset_for_test();
+    aura::compiler::clear_hold_budget_no_edge_force_for_test();
+    aura::compiler::clear_mutation_hold_budget_inbody_window_for_test();
+    CompilerService cs;
+    aura::compiler::Evaluator::set_query_evaluator(&cs.evaluator());
+    const auto slo_us = aura::compiler::mutation_hold_slo_us();
+    CHECK(slo_us > 0, "3791 AC3: SLO configured");
+    const auto body_ns = slo_us * 60ULL * 1000ULL; // 60xSLO, no edge
+    std::atomic<int> guard_held{0};
+    std::atomic<int> body_done{0};
+    Scheduler sched(2);
+    Fiber* holder = sched.spawn([&]() {
+        bool ok = true;
+        {
+            aura::compiler::Evaluator::MutationBoundaryGuard g(cs.evaluator(), &ok);
+            guard_held.store(1, std::memory_order_release);
+            volatile std::uint64_t sink = 0;
+            const auto t0 = std::chrono::steady_clock::now();
+            while (std::chrono::steady_clock::now() - t0 < std::chrono::nanoseconds(body_ns))
+                sink += 1; // tight no-edge loop: no poll / no yield / no recv
+            (void)sink;
+            guard_held.store(0, std::memory_order_release);
+        }
+        body_done.store(1, std::memory_order_release);
+    });
+    CHECK(holder != nullptr, "3791 AC3: holder spawned");
+    std::thread io([&]() { sched.run(); });
+    bool past_two_slo = false;
+    for (int i = 0; i < 4000; ++i) {
+        if (guard_held.load(std::memory_order_acquire) != 0) {
+            const auto snap = aura::compiler::mutation_hold_live_snapshot();
+            if (snap.held && snap.duration_us > slo_us * 2ULL) {
+                past_two_slo = true;
+                break;
+            }
+        }
+        std::this_thread::sleep_for(std::chrono::microseconds(200));
+    }
+    CHECK(past_two_slo, "3791 AC3: no-edge holder live past 2xSLO");
+    // Worker-run-loop contract: busy-path poll arms cancel → inbody no-edge
+    // force → mark_reclaimed while the holder is still spinning. Bounded
+    // window so the door itself cannot hang the soak.
+    for (int i = 0; i < 40 && !holder->is_reclaimed(); ++i) {
+        (void)aura::serve::aura_hold_budget_poll_busy_path();
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    const bool spinning = guard_held.load(std::memory_order_acquire) != 0;
+    CHECK(!spinning || holder->is_reclaimed() ||
+              !aura::compiler::mutation_hold_live_snapshot().held,
+          "3791 AC3: still-spinning no-edge holder disposed or released past 2xSLO — #3764 door");
+    const auto jr = Fiber::join(holder, std::optional<std::uint64_t>{200});
+    CHECK(jr.status != JoinStatus::Timeout,
+          "3791 AC3: join disposed no-edge holder (no forever-held Timeout)");
+    for (int i = 0; i < 400 && body_done.load(std::memory_order_acquire) == 0; ++i)
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    sched.stop();
+    io.join();
+    CHECK(body_done.load() == 1, "3791 AC3: bounded no-edge body returned (Guard dtor ran)");
+    CHECK(holder->is_done(), "3791 AC3: holder Done after spin end");
+    CHECK(cs.evaluator().mutation_boundary_depth_slot_value(holder->id()) == 0,
+          "3791 AC3: holder depth slot 0 after dtor");
+    CHECK((aura::gc_hooks::defer_reasons_snapshot() &
+           static_cast<std::uint32_t>(aura::gc_hooks::GcDeferReason::MutationHold)) == 0,
+          "3791 AC3: MutationHold GC defer released after disposition");
+    CHECK(!aura::compiler::mutation_hold_live_snapshot().held, "3791 AC3: hold snapshot clear");
+    aura::compiler::Evaluator::set_query_evaluator(nullptr);
+    aura::serve::set_production_multi_worker_latched_for_test(false);
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    ::unsetenv("AURA_MUTATION_HOLD_SLO_US");
+    ::setenv("AURA_SANDBOX", "off", 1);
+    aura::compiler::clear_mutation_hold_budget_inbody_window_for_test();
+    aura::compiler::clear_hold_budget_no_edge_force_for_test();
+}
+
+// AC3 gate pins: mu_ ↔ AuditScope pairing count; no runtime stamp in src/
+// (test-only ship); no new query key; no per-issue invent; linter
+// (build.py + allowlist) self-test; Soft companion — hard doors skip and
+// Policy A still returns empty without any force path.
+static void ac3791_4_gate_source_and_linter() {
+    std::println("\n--- #3791 AC4: source pins + linter + Soft skip ---");
+    const auto mb = read_file("src/serve/multi_fiber_mailbox.h");
+    std::size_t locks = 0;
+    for (auto p = mb.find("lock(mu_)"); p != std::string::npos; p = mb.find("lock(mu_)", p + 1))
+        ++locks;
+    std::size_t scopes = 0;
+    for (auto p = mb.find("AuditScope mailbox_rank"); p != std::string::npos;
+         p = mb.find("AuditScope mailbox_rank", p + 1))
+        ++scopes;
+    CHECK(locks > 0 && locks == scopes, "3791 AC4: mu_ locks == AuditScope pairings");
+    CHECK(mb.find("3791") == std::string::npos, "3791 AC4: no runtime change in mailbox header");
+    CHECK(read_file("src/serve/fiber.cpp").find("3791") == std::string::npos,
+          "3791 AC4: no runtime change in fiber.cpp");
+    CHECK(read_file_3613("src/compiler/mutation_hold_budget.h").find("3791") == std::string::npos,
+          "3791 AC4: no runtime change in mutation_hold_budget.h");
+    CHECK(read_file("src/compiler/evaluator_primitives_query.cpp").find("3791") ==
+              std::string::npos,
+          "3791 AC4: no new query key");
+    CHECK(read_file_3613("tests/serve/test_issue_3791.cpp").empty(), "3791 AC4: no invent");
+    CHECK(read_file_3613("docs/design/3791-deploy-door-fail-closed.md").empty(),
+          "3791 AC4: no docs/design");
+    int rc = std::system("python3 scripts/check_mailbox_lock_audit_pairs_3791.py --self-test");
+    if (rc != 0)
+        rc = std::system("python3 ../scripts/check_mailbox_lock_audit_pairs_3791.py --self-test");
+    CHECK(rc == 0, "3791 AC4: linter self-test passes");
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    ::setenv("AURA_SANDBOX", "off", 1);
+    CHECK(!aura::compiler::typed_audit::production_defaults_active(),
+          "3791 AC4: Soft skips hard doors");
+    CompilerService cs;
+    aura::compiler::Evaluator::set_query_evaluator(&cs.evaluator());
+    aura::serve::mf_mailbox::MultiFiberMailbox mailbox(8);
+    bool ok = true;
+    {
+        aura::compiler::Evaluator::MutationBoundaryGuard g(cs.evaluator(), &ok);
+        CHECK(!mailbox.recv(/*wait=*/false, /*timeout_ms=*/0).has_value(),
+              "3791 AC4: Soft recv under Guard still Policy-A empty");
+    }
+    aura::compiler::Evaluator::set_query_evaluator(nullptr);
+}
+
 int run_test_mailbox_hold_starvation_hard() {
     std::println("=== Issue #2551: mailbox hold starvation hard + Agent throttle ===");
     ac1_production_hard_signal();
@@ -3439,6 +3677,12 @@ int run_test_mailbox_hold_starvation_hard() {
     ac3764_2_no_edge_holder_disposed();
     ac3764_3_mutation_hold_released();
     ac3764_4_soft_no_force();
+    std::println(
+        "\n=== Issue #3791: I5/I4 deploy door fail-closed (#3620 x #3763 x #3764 residual) ===");
+    ac3791_1_mailbox_depth_zero_after_attach_push();
+    ac3791_2_guard_live_recv_zero_mu_();
+    ac3791_3_no_edge_holder_fail_closed();
+    ac3791_4_gate_source_and_linter();
     std::println("\n=== Issue #3692: peer recv must not fail-close holder Guard ===");
     ac3692_peer_recv_does_not_fail_holder();
     std::println(
