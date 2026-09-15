@@ -563,7 +563,10 @@ extern "C" void aura_outermost_success_persist_occurrence(void* ev_ptr,
             return;
         }
     }
-    if (aura::compiler::typed_audit::production_defaults_active() &&
+    // Issue #3819: Full audit dual-track for fingerprint mismatch reject —
+    // was production_defaults_active() only; align with #3788/#3794/#3431/#3556
+    // (production ∥ Full via production_hard_face_active). Soft/Off unchanged.
+    if (aura::compiler::typed_audit::production_hard_face_active() &&
         ev->expected_occurrence_snapshot_fp() != 0 &&
         live_fp != ev->expected_occurrence_snapshot_fp()) {
         // Mismatch -> treat as abort: clear persist + bump mismatch counter.
