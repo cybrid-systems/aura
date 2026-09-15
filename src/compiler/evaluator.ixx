@@ -15356,6 +15356,10 @@ public:
         // fiber does not own the live Guard (do not use process query
         // Evaluator to fail a peer's mutate).
         [[nodiscard]] static MutationBoundaryGuard* this_fiber_outermost() noexcept;
+        // Issue #3799: enter-captured Fiber::id (0 = off-fiber / legacy).
+        // Outermost session revoke prefers this over live TLS so dtor after
+        // fiber clear does not mid-only sweep under Restricted+MT.
+        [[nodiscard]] std::uint64_t captured_fiber_id() const noexcept { return fiber_id_; }
 
     private:
         struct AcquireTag {};

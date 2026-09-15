@@ -835,6 +835,123 @@ static void ac3241_4_source_cite_and_linter() {
           "AC6: no docs/design/");
 }
 
+
+// ── Issue #3799: production Restricted+MT must never mid-only revoke
+// (fiber_id=0). Peer outermosts sharing WorkspaceEpoch::Mutation mid
+// must not become collateral; true off-fiber fail-closes (orphan observe).
+
+static void ac3799_1_dual_fiber_real_fid_no_peer_collateral() {
+    std::println("\n--- #3799 AC1: dual-fiber real fid exit does not revoke peer ---");
+    reset_all();
+    ac3241_arm_restricted_multi_tenant();
+    aura::core::bump_mutation_epoch(1);
+    const auto mid = aura::core::current_mutation_epoch();
+    constexpr std::uint64_t tenant = 37991;
+    constexpr std::uint32_t fiber_a = 301;
+    constexpr std::uint32_t fiber_b = 302;
+    ac3241_grant(tenant, "mut-A", mid, fiber_a);
+    ac3241_grant(tenant, "mut-B", mid, fiber_b);
+    CHECK(g_capability_registry().session_bound_entries_alive(tenant) == 2, "AC1: both live");
+    const auto n =
+        g_capability_registry().revoke_session_grants_for_mid(mid, "session-mid-exit", fiber_a);
+    CHECK(n >= 1, "AC1: Fiber A with real fid revokes A");
+    CHECK(!ac3241_grant_live(tenant, "mut-A"), "AC1: mut-A revoked");
+    CHECK(ac3241_grant_live(tenant, "mut-B"), "AC1: mut-B still live (no collateral)");
+    CHECK(ac3241_consume(tenant, mid, fiber_b), "AC1: Fiber B consume still allowed");
+    (void)g_capability_registry().revoke_session_grants_for_mid(mid, "session-mid-exit", fiber_b);
+    CHECK(g_capability_registry().session_bound_entries_alive(tenant) == 0, "AC1: B exit clears");
+}
+
+static void ac3799_2_fiber_zero_fail_closed_under_mt() {
+    std::println("\n--- #3799 AC2: Restricted+MT fiber_id=0 fail-closed (no mid-only) ---");
+    reset_all();
+    ac3241_arm_restricted_multi_tenant();
+    aura::core::bump_mutation_epoch(1);
+    const auto mid = aura::core::current_mutation_epoch();
+    constexpr std::uint64_t tenant = 37992;
+    ac3241_grant(tenant, "mut-A", mid, 401);
+    ac3241_grant(tenant, "mut-B", mid, 402);
+    const auto orphan_before =
+        g_capability_effect_metrics().session_bound_orphan_detected_total.load(
+            std::memory_order_relaxed);
+    // True off-fiber / unknown fiber under MT — must NOT silent mid-only.
+    const auto n = g_capability_registry().revoke_session_grants_for_mid(mid); // fiber=0
+    CHECK(n == 0, "AC2: fiber_id=0 under MT revokes nothing (fail-closed)");
+    CHECK(ac3241_grant_live(tenant, "mut-A"), "AC2: mut-A untouched");
+    CHECK(ac3241_grant_live(tenant, "mut-B"), "AC2: mut-B untouched");
+    CHECK(g_capability_registry().session_bound_entries_alive(tenant) == 2,
+          "AC2: both still live session_bound");
+    const auto orphan_after =
+        g_capability_effect_metrics().session_bound_orphan_detected_total.load(
+            std::memory_order_relaxed);
+    CHECK(orphan_after >= orphan_before + 2,
+          "AC2: orphan counter bumped for refused mid-only (observability)");
+    // Steal helper with fiber=0 under MT also fail-closes (no peer mark-stolen).
+    const auto steal_n = aura::core::capability::revoke_session_grants_on_steal_or_abort(
+        mid, /*steal=*/true, /*fiber_id=*/0);
+    CHECK(steal_n == 0, "AC2: steal fiber=0 under MT revokes nothing");
+    CHECK(ac3241_grant_live(tenant, "mut-A") && ac3241_grant_live(tenant, "mut-B"),
+          "AC2: steal fiber=0 left peers live");
+    // Cleanup with real fids.
+    (void)g_capability_registry().revoke_session_grants_for_mid(mid, "session-mid-exit", 401);
+    (void)g_capability_registry().revoke_session_grants_for_mid(mid, "session-mid-exit", 402);
+}
+
+static void ac3799_3_soft_zero_cost_retained() {
+    std::println("\n--- #3799 AC3: Soft/Off zero-cost retained ---");
+    reset_all();
+    set_mode(SandboxMode::Off);
+    const auto n0 =
+        g_capability_registry().revoke_session_grants_for_mid(88, "session-mid-exit", 0);
+    CHECK(n0 == 0, "AC3: Soft empty live → no work");
+    // Soft-share Restricted (hard_fiber=false) keeps legacy mid-only (#3241).
+    reset_all();
+    set_mode(SandboxMode::Restricted);
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+    g_capability_registry().set_hard_fiber_isolation(false);
+    aura::core::bump_mutation_epoch(1);
+    const auto mid = aura::core::current_mutation_epoch();
+    constexpr std::uint64_t tenant = 37993;
+    ac3241_grant(tenant, "mut-A", mid, 501);
+    ac3241_grant(tenant, "mut-B", mid, 502);
+    const auto n = g_capability_registry().revoke_session_grants_for_mid(mid); // fiber=0
+    CHECK(n >= 2, "AC3: soft-share Restricted fiber=0 still mid-only");
+    CHECK(g_capability_registry().session_bound_entries_alive(tenant) == 0,
+          "AC3: soft-share mid-only clears both");
+}
+
+static void ac3799_4_source_cite_and_linter() {
+    std::println("\n--- #3799 AC4: cite-first linter on outermost/steal/join ---");
+    const auto cap = read_file("src/core/capability_model.hh");
+    const auto bound = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto steal = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+    const auto eval_ixx = read_file("src/compiler/evaluator.ixx");
+    const auto build = read_file("build.py");
+    CHECK(cap.find("kCapabilitySessionRevokeFiberZeroIssue = 3799") != std::string::npos,
+          "AC4: stamp #3799");
+    CHECK(cap.find("Issue #3799") != std::string::npos, "AC4: registry cites #3799");
+    CHECK(cap.find("hard_fiber_isolation_") != std::string::npos &&
+              cap.find("fiber_id == 0 && production") != std::string::npos,
+          "AC4: fail-closed fiber_id=0 under production+hard_fiber");
+    CHECK(bound.find("Issue #3799") != std::string::npos, "AC4: outermost dtor cites #3799");
+    CHECK(bound.find("fiber_id_") != std::string::npos &&
+              bound.find("revoke_session_grants_for_mid_locked") != std::string::npos,
+          "AC4: dtor prefers captured fiber_id_");
+    CHECK(steal.find("Issue #3799") != std::string::npos, "AC4: steal/join cites #3799");
+    CHECK(steal.find("static_cast<std::uint32_t>(f->id())") != std::string::npos ||
+              steal.find("static_cast<std::uint32_t>(fiber->id())") != std::string::npos,
+          "AC4: join/steal pass Fiber::id");
+    CHECK(steal.find("captured_fiber_id()") != std::string::npos ||
+              eval_ixx.find("captured_fiber_id()") != std::string::npos,
+          "AC4: Guard captured_fiber_id accessor");
+    CHECK(build.find("check_session_revoke_fiber_zero_3799") != std::string::npos,
+          "AC4: build.py wires linter");
+    CHECK(!std::filesystem::exists("tests/core/test_issue_3799.cpp"), "AC4: no invent");
+    CHECK(!std::filesystem::exists("docs/design/3799-session-revoke-fiber-zero.md"),
+          "AC4: no docs/design/");
+}
+
+
 static void ac3144_1_production_wildcard_only_strip_tenant_admin() {
     std::println(
         "\n--- #3144 AC1: production + kCapWildcard (no explicit TenantAdmin) → strip ---");
@@ -2636,6 +2753,10 @@ int run_test_capability_single_use_consume() {
         ac3241_2_steal_a_does_not_touch_b();
         ac3241_3_soft_zero_and_legacy_mid_only();
         ac3241_4_source_cite_and_linter();
+        ac3799_1_dual_fiber_real_fid_no_peer_collateral();
+        ac3799_2_fiber_zero_fail_closed_under_mt();
+        ac3799_3_soft_zero_cost_retained();
+        ac3799_4_source_cite_and_linter();
         ac3144_1_production_wildcard_only_strip_tenant_admin();
         ac3144_2_explicit_tenant_admin_no_strip();
         ac3144_3_soft_off_no_strip();

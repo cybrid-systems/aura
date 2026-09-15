@@ -48,6 +48,12 @@ inline constexpr int kCapabilitySessionQuiesceIssue = 3209;
 // Issue #3241: concurrent outermost sharing process Mutation epoch as
 // session_mid — revoke key is (mid, fiber); fiber=0 is legacy mid-only.
 inline constexpr int kCapabilitySessionPeerFiberIssue = 3241;
+// Issue #3799: production Restricted/Strict + hard_fiber_isolation (MT)
+// must never mid-only revoke (fiber_id=0) — peer outermost session grants
+// sharing WorkspaceEpoch::Mutation mid would become collateral. Fail-closed
+// (observe via session_bound_orphan_detected_total); Soft/Off + soft-share
+// Restricted retain legacy mid-only (#3241 AC3).
+inline constexpr int kCapabilitySessionRevokeFiberZeroIssue = 3799;
 
 // First-class effects (layout-stable uint16_t bitflags).
 enum class Effect : std::uint16_t {
@@ -812,6 +818,32 @@ struct CapabilityRegistry {
         if (!reason || reason[0] == '\0')
             reason = "session-mid-exit";
         auto& met = g_capability_effect_metrics();
+        // Issue #3799: Restricted/Strict + hard_fiber_isolation (MT profile)
+        // must never mid-only sweep. fiber_id=0 under that regime is refuse
+        // (fail-closed): bump session_bound_orphan_detected_total for each
+        // matching live grant and revoke nothing — peer outermosts sharing
+        // epoch mid must not become collateral. Soft/Off and soft-share
+        // Restricted (hard_fiber=false) keep legacy mid-only (#3241 AC3).
+        {
+            const auto mode = sandbox_mode.load(std::memory_order_acquire);
+            const bool production =
+                (mode == EffectSandboxMode::Restricted || mode == EffectSandboxMode::Strict);
+            if (fiber_id == 0 && production &&
+                hard_fiber_isolation_.load(std::memory_order_acquire)) {
+                for (const auto& [tenant, vec] : by_tenant) {
+                    (void)tenant;
+                    for (const auto& g : vec) {
+                        if (g.revoked || !g.session_bound)
+                            continue;
+                        if (g.bound_mutation_id != mid)
+                            continue;
+                        met.session_bound_orphan_detected_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                    }
+                }
+                return 0;
+            }
+        }
         std::size_t n = 0;
         auto ep = ::aura::core::current_mutation_epoch();
         if (ep == 0)
@@ -827,7 +859,8 @@ struct CapabilityRegistry {
                     continue;
                 // Issue #3241: concurrent outermost sharing epoch mid.
                 // Skip peer fiber when both ids are known and differ.
-                // fiber_id=0 → legacy mid-only (unknown / single-fiber).
+                // fiber_id=0 → legacy mid-only (unknown / single-fiber)
+                // unless #3799 fail-closed above already returned.
                 // grant_fiber_id=0 is legacy and still matches.
                 if (fiber_id != 0 && g.grant_fiber_id != 0 && g.grant_fiber_id != fiber_id)
                     continue;
@@ -862,6 +895,8 @@ struct CapabilityRegistry {
     // cannot sneak a residual past this cascade (TOCTOU on the atomic).
     // Issue #3241: optional fiber_id narrows the sweep to (mid, fiber).
     // fiber_id=0 is the legacy mid-only key (unknown / single-fiber).
+    // Issue #3799: under Restricted/Strict + hard_fiber_isolation, fiber_id=0
+    // is fail-closed (no mid-only sweep); Soft/Off / soft-share unchanged.
     std::size_t revoke_session_grants_for_mid(std::uint64_t mid,
                                               const char* reason = "session-mid-exit",
                                               std::uint32_t fiber_id = 0) {
@@ -1068,6 +1103,19 @@ struct CapabilityRegistry {
                                           std::uint32_t fiber_id) noexcept {
         if (mid == 0 || tenant == 0)
             return false;
+        // Issue #3799: refuse fiber_id=0 mid-only stolen mark under
+        // Restricted/Strict + hard_fiber_isolation (peer collateral).
+        // Observability (orphan bump) lives in revoke_session_grants_for_mid_locked
+        // so steal/abort mark+revoke does not double-count.
+        {
+            const auto mode = sandbox_mode.load(std::memory_order_acquire);
+            const bool production =
+                (mode == EffectSandboxMode::Restricted || mode == EffectSandboxMode::Strict);
+            if (fiber_id == 0 && production &&
+                hard_fiber_isolation_.load(std::memory_order_acquire)) {
+                return false;
+            }
+        }
         auto it = by_tenant.find(tenant);
         if (it == by_tenant.end())
             return false;
@@ -1107,6 +1155,19 @@ struct CapabilityRegistry {
                                                   std::uint32_t fiber_id = 0) noexcept {
         if (mid == 0)
             return false;
+        // Issue #3799: align with mid-revoke — under Restricted/Strict +
+        // hard_fiber_isolation, fiber_id=0 must not mark every peer grant
+        // stolen (collateral). Soft/Off / soft-share retain mid-only.
+        // Orphan observe is sole in revoke_session_grants_for_mid_locked.
+        {
+            const auto mode = sandbox_mode.load(std::memory_order_acquire);
+            const bool production =
+                (mode == EffectSandboxMode::Restricted || mode == EffectSandboxMode::Strict);
+            if (fiber_id == 0 && production &&
+                hard_fiber_isolation_.load(std::memory_order_acquire)) {
+                return false;
+            }
+        }
         bool found = false;
         for (auto& [tenant, vec] : by_tenant) {
             (void)tenant;
@@ -1867,15 +1928,33 @@ revoke_session_grants_on_steal_or_abort_locked(std::uint64_t session_mid, bool s
     // Issue #3209: mark_stolen before revoke so a resume consume that
     // interleaves after this lock still denies (stolen skip) even if a
     // later dtor revoke is the commutative no-op. fiber_id=0 marks every
-    // live grant bound to this mid.
+    // live grant bound to this mid (legacy); under Restricted+MT (#3799)
+    // fiber_id=0 is fail-closed in mark/revoke (no peer collateral).
     (void)reg.mark_session_bound_stolen_for_mid_locked(session_mid, fiber_id);
     const char* reason = steal ? "session-mid-steal-exit" : "session-mid-abort-exit";
+    const auto orphan_before =
+        met.session_bound_orphan_detected_total.load(std::memory_order_relaxed);
     const auto n = reg.revoke_session_grants_for_mid_locked(session_mid, reason, fiber_id);
     if (n > 0) {
         if (steal)
             met.capability_session_revoke_steal_total.fetch_add(n, std::memory_order_relaxed);
         else
             met.capability_session_revoke_abort_total.fetch_add(n, std::memory_order_relaxed);
+    } else if (fiber_id == 0) {
+        // Issue #3799: fail-closed mid-only under Restricted+MT — orphan
+        // already bumped in revoke; also nudge steal/abort counter so
+        // Agents can join the refuse without a new query key.
+        const auto orphan_delta =
+            met.session_bound_orphan_detected_total.load(std::memory_order_relaxed) -
+            orphan_before;
+        if (orphan_delta > 0) {
+            if (steal)
+                met.capability_session_revoke_steal_total.fetch_add(orphan_delta,
+                                                                   std::memory_order_relaxed);
+            else
+                met.capability_session_revoke_abort_total.fetch_add(orphan_delta,
+                                                                   std::memory_order_relaxed);
+        }
     }
     return n;
 }
