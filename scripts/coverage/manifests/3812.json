@@ -1,0 +1,29 @@
+{
+  "issue": 3812,
+  "title": "Issue #3812: Soft Global critical-bypass success covered remount gate",
+  "ok": "OK: Issue #3812 Soft Global x critical bypass covered remount gate",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/hot_update_registry.cpp",
+      "contains": ["Issue #3812", "soft_global", "aura_note_reemit_success_sync_covered_budget_skip"]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/aura_jit_runtime.cpp",
+      "contains": ["Issue #3812", "aura_hot_update_hard_storm_active", "never full named FIFO"]
+    },
+    {
+      "ac": "AC4-tests",
+      "path": "tests/compiler/test_remount_force_deopt.cpp",
+      "contains": ["ac3812_1", "ac3812_2", "ac3812_3", "ac3812_4"]
+    },
+    {
+      "ac": "AC4",
+      "forbid": [
+        "tests/compiler/test_issue_3812.cpp",
+        "docs/design/3812-soft-global-critical-remount.md"
+      ]
+    }
+  ]
+}

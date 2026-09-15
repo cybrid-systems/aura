@@ -4842,6 +4842,21 @@ def cmd_lint():
             "Issue #3811 Agent Soft|Force Densify restamp linter failed — run python3 scripts/coverage/checks/check_agent_soft_densify_restamp_3811.py"
         )
         return r
+    # Issue #3812: Soft Global/Both success covered remount gated like
+    # residual remount; critical-bypass reemit does not waive by default
+    # (opt-in allow still requires precise define coverage — never full
+    # named FIFO amplify). Shape-only pass-through unchanged. Extends
+    # test_remount_force_deopt.cpp (#81967); no docs/design/ (#1655).
+    sgcr3812_script = COVERAGE_CHECKS / "check_soft_global_critical_remount_3812.py"
+    if not sgcr3812_script.exists():
+        fail(f"missing {sgcr3812_script}")
+        return 1
+    r = run([sys.executable, str(sgcr3812_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3812 Soft Global critical remount linter failed — run python3 scripts/coverage/checks/check_soft_global_critical_remount_3812.py"
+        )
+        return r
     # Issue #3802: EXEMPT_2ARG write-file/sys-* host-path isolation under
     # Restricted+MT / Strict — resolve under tenant root from
     # capability_tenant_id_; cross-tenant escape → IsolationDeny SE
@@ -14666,6 +14681,26 @@ def cmd_sync_remount_storm_gate_3785():
     """Issue #3785: sync covered remount honors residual storm gate."""
     print(f"{B}=== sync remount storm gate (#3785) ==={N}")
     return cmd_sync_remount_storm_gate_3785_coverage()
+
+
+def cmd_soft_global_critical_remount_3812_coverage():
+    """Issue #3812: Soft Global critical-bypass covered remount gate (static)."""
+    print(f"{B}=== soft Global critical remount (#3812) ==={N}")
+    script = COVERAGE_CHECKS / "check_soft_global_critical_remount_3812.py"
+    if not script.is_file():
+        fail(f"missing {script}")
+        return 1
+    if run([sys.executable, str(script)], cwd=ROOT) != 0:
+        fail("soft Global critical remount (#3812) coverage contract rows failed")
+        return 1
+    ok("soft Global critical remount (#3812) coverage clean")
+    return 0
+
+
+def cmd_soft_global_critical_remount_3812():
+    """Issue #3812: Soft Global x critical bypass success covered remount gate."""
+    print(f"{B}=== soft Global critical remount (#3812) ==={N}")
+    return cmd_soft_global_critical_remount_3812_coverage()
 
 
 def cmd_engine_metrics_hash_overflow_3018_coverage():

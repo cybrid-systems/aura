@@ -387,3 +387,4 @@ check_boundary_soft_densify_restamp_3809.py
 check_soft_gen_bump_this_window_3810.py
 check_agent_soft_densify_restamp_3811.py
 check_tenant_host_path_isolation_3802.py
+check_soft_global_critical_remount_3812.py

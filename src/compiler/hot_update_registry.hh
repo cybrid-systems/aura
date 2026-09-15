@@ -489,6 +489,15 @@ public:
     static constexpr std::uint64_t kStormIsolationRegionCap = 64;
     void on_reemit_throttled(ThrottleReason reason) noexcept;
     void on_reemit_critical_bypass() noexcept;
+    // Issue #3812: Soft Global success covered remount policy. Default
+    // deny — critical-bypass reemit does not waive remount (soak: no
+    // unbound ok/fail amplify vs residual skip). Opt-in allow still
+    // requires armed bypass + define-side precise coverage in the
+    // remount body (never full named FIFO under soft Global).
+    [[nodiscard]] bool allow_critical_bypass_sync_covered_remount() const noexcept;
+    void set_allow_critical_bypass_sync_covered_remount(bool allow) noexcept;
+    [[nodiscard]] bool critical_bypass_remount_armed() const noexcept;
+    void clear_critical_bypass_remount_armed() noexcept;
     // Issue #3636: per-region force-arm watermark + storm attribution.
     // note_force_bits_armed stamps a steady-ms watermark for every force
     // bit that transitioned 0→1 (residual / aggregate re-stores keep the
@@ -1100,6 +1109,9 @@ private:
     std::atomic<std::uint64_t> reemit_throttle_skips_region_{0};
     std::atomic<std::uint64_t> reemit_throttle_skips_hard_{0};
     std::atomic<std::uint64_t> reemit_critical_bypass_{0};
+    // Issue #3812: default-deny remount under soft Global × critical bypass.
+    std::atomic<bool> allow_critical_bypass_sync_covered_remount_{false};
+    std::atomic<bool> critical_bypass_remount_armed_{false};
     // Issue #2094: ShapeProfiler publishes its deopt_storm_active
     // state here so current_storm_level() can OR both detectors
     // without importing shape_profiler.h.
@@ -1503,6 +1515,12 @@ std::uint64_t aura_hot_update_critical_region_mask(void);
 void aura_hot_update_set_hard_deopt_storm_threshold(std::uint64_t deopts_per_window);
 std::uint64_t aura_hot_update_hard_deopt_storm_threshold(void);
 void aura_hot_update_on_reemit_throttled(void);
+// Issue #3812: hard ceiling + critical-bypass covered remount policy.
+int aura_hot_update_hard_storm_active(void);
+int aura_hot_update_allow_critical_bypass_sync_covered_remount(void);
+void aura_hot_update_set_allow_critical_bypass_sync_covered_remount(int allow);
+int aura_hot_update_critical_bypass_remount_armed(void);
+void aura_hot_update_clear_critical_bypass_remount_armed(void);
 
 // Issue #2094: StormLevel facade accessor (C ABI). Returns the
 // combined bitmask of shape-storm + global-deopt-storm detectors

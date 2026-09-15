@@ -736,6 +736,11 @@ extern "C" __attribute__((weak)) std::uint64_t
 aura_reemit_success_sync_covered_cap_hit_total_v_read() {
     return 0;
 }
+extern "C" __attribute__((weak)) std::uint64_t
+aura_reemit_success_sync_covered_budget_skip_total_v_read() {
+    return 0;
+}
+extern "C" __attribute__((weak)) void aura_note_reemit_success_sync_covered_budget_skip() {}
 extern "C" __attribute__((weak)) void
 aura_sync_remount_covered_named_live_closures(std::uint64_t /*mask*/, std::uint64_t /*cap*/) {}
 extern "C" __attribute__((weak)) void
