@@ -83,10 +83,8 @@ def main() -> int:
         fails.append("AC2: node-dep helper must be before Soft BFS body")
 
     must("3823 AC1: lookup_define_v2(g)==1 needs-relower before peel", "AC3 live", test_cascade)
-    must("3823 soak: lockless one-side write × mark × lookup does not clean-hit", "AC3 soak",
-         test_cascade)
-    must("3823 AC2: helper only on Production facade path (before Soft body)", "AC2 soft",
-         test_cascade)
+    must("3823 soak: lockless one-side write × mark × lookup does not clean-hit", "AC3 soak", test_cascade)
+    must("3823 AC2: helper only on Production facade path (before Soft body)", "AC2 soft", test_cascade)
     must("3823: node-dep union after #3474 cone mark", "AC3 facade cite", test_facade)
 
     must("check_production_mark_node_dep_union_3823", "AC4 build.py", build)

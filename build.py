@@ -15357,6 +15357,7 @@ def cmd_empty_type_annotation_no_dynamic_3830():
     print(f"{B}=== empty TypeAnnotation no-Dynamic (#3830) ==={N}")
     return cmd_empty_type_annotation_no_dynamic_3830_coverage()
 
+
 def cmd_dirty_aware_storm_force_full_cap_3831_coverage():
     """Issue #3831: Production dirty-aware storm force-full cap (static)."""
     print(f"{B}=== dirty-aware storm force-full cap (#3831) ==={N}")

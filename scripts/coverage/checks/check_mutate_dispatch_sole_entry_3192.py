@@ -136,7 +136,7 @@ def main() -> int:
         if s.startswith("//") or s.startswith("*"):
             continue
         if 'add("mutate:' in ln:
-            fails.append(f"AC2/#3828: raw add(\"mutate: in compile.cpp:{i} (route via add_mutate)")
+            fails.append(f'AC2/#3828: raw add("mutate: in compile.cpp:{i} (route via add_mutate)')
 
     # AC3 — nested atomic-batch suppress_bump / single-commit bump unchanged.
     # Issue #3019 / #3166 semantics preserved; verify the existing

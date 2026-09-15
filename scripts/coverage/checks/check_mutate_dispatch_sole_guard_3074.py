@@ -110,14 +110,12 @@ def main() -> int:
             continue
         win = "\n".join(clines[max(0, i - 12) : i + 16])
         if "GUARD_EXEMPT" not in win or "MetadataGuardExempt" not in win:
-            fails.append(
-                f'AC3452/#3828: raw add("mutate: at compile.cpp:{i} is not GUARD_EXEMPT + MetadataGuardExempt'
-            )
+            fails.append(f'AC3452/#3828: raw add("mutate: at compile.cpp:{i} is not GUARD_EXEMPT + MetadataGuardExempt')
     must("kMutateFromVerificationFeedbackSsotIssue = 3828", "AC3452 #3828 stamp", hh)
-    must('add_mutate(', "AC3452 #3828 add_mutate face", mut)
+    must("add_mutate(", "AC3452 #3828 add_mutate face", mut)
     if 'add("mutate:from-verification-feedback"' in compile_cpp:
         fails.append("AC3452/#3828: mutate:from-verification-feedback still raw-add in compile.cpp")
-    if 'add_mutate(' not in mut or '"mutate:from-verification-feedback"' not in mut:
+    if "add_mutate(" not in mut or '"mutate:from-verification-feedback"' not in mut:
         fails.append("AC3452/#3828: mutate:from-verification-feedback missing add_mutate in mutate.cpp")
 
     must("mutate_dispatch_note", "AC3", hh)
