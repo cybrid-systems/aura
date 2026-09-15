@@ -272,6 +272,8 @@ extern "C" std::uint64_t aura_reemit_success_sync_covered_cap_default() noexcept
 extern "C" std::uint64_t aura_reemit_success_sync_covered_ok_total_v_read() noexcept;
 extern "C" std::uint64_t aura_reemit_success_sync_covered_fail_total_v_read() noexcept;
 extern "C" std::uint64_t aura_reemit_success_sync_covered_cap_hit_total_v_read() noexcept;
+extern "C" std::uint64_t aura_reemit_success_sync_covered_budget_skip_total_v_read() noexcept;
+extern "C" void aura_note_reemit_success_sync_covered_budget_skip() noexcept;
 extern "C" void aura_sync_remount_covered_named_live_closures(std::uint64_t mask,
                                                               std::uint64_t cap);
 extern "C" void aura_test_set_reemit_success_sync_covered_cap(std::uint64_t cap) noexcept;

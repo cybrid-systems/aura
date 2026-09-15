@@ -4478,6 +4478,9 @@ extern "C" std::uint64_t aura_reemit_aot_for_dirty(std::uint64_t current_defuse_
                 storm_scope_mask = region_or_prio;
             }
             // Soft storm active but critical region allowed reemit.
+            // Issue #3812: critical-bypass arms remount attribution; success
+            // covered remount still Soft-Global gated (default deny) so
+            // remount ok/fail cannot amplify vs residual budget_skip.
             if (hur_thr.is_critical_region(region_or_prio))
                 hur_thr.on_reemit_critical_bypass();
         }

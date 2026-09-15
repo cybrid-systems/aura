@@ -46,6 +46,10 @@ extern "C" void aura_bump_live_closure_residual_cap_hit_total(std::uint64_t n);
 // Issue #2928: storm / throttle gates (production in hot_update_registry.cpp).
 extern "C" std::uint8_t aura_hot_update_current_storm_level(void);
 extern "C" int aura_hot_update_should_throttle_reemit(void);
+// Issue #3812: hard ceiling + critical-bypass covered remount policy.
+extern "C" int aura_hot_update_hard_storm_active(void);
+extern "C" int aura_hot_update_allow_critical_bypass_sync_covered_remount(void);
+extern "C" int aura_hot_update_critical_bypass_remount_armed(void);
 // Issue #3342: residual tick / budget (defined later in this TU).
 extern "C" std::uint64_t aura_residual_remount_budget_default() noexcept;
 extern "C" void aura_residual_live_closure_remount_tick(std::uint64_t budget);
@@ -3215,12 +3219,27 @@ extern "C" std::uint64_t aura_reemit_success_sync_covered_budget_skip_total_v_re
     return g_reemit_success_sync_covered_budget_skip_total.load(std::memory_order_relaxed);
 }
 
+// Issue #3812: registry Soft Global default-deny path counts budget_skip
+// without entering the named FIFO walk.
+extern "C" void aura_note_reemit_success_sync_covered_budget_skip() noexcept {
+    g_reemit_success_sync_covered_budget_skip_total.fetch_add(1, std::memory_order_relaxed);
+}
+
 extern "C" void aura_test_set_reemit_success_sync_covered_cap(std::uint64_t cap) noexcept {
     g_reemit_success_sync_covered_cap_override.store(cap, std::memory_order_relaxed);
 }
 
 extern "C" void aura_test_reset_reemit_success_sync_covered_state() noexcept {
     g_reemit_success_sync_covered_cap_override.store(UINT64_MAX, std::memory_order_relaxed);
+}
+
+// Issue #3812: Soft Global critical-bypass remount allow (default deny).
+// Requires !hard && policy && armed && define-active — never full named FIFO.
+static bool aura_critical_bypass_covered_remount_allowed() noexcept {
+    return aura_hot_update_hard_storm_active() == 0 &&
+           aura_hot_update_allow_critical_bypass_sync_covered_remount() != 0 &&
+           aura_hot_update_critical_bypass_remount_armed() != 0 &&
+           aura_hot_update_relower_success_define_active() != 0;
 }
 
 extern "C" void aura_sync_remount_covered_named_live_closures(std::uint64_t mask,
@@ -3231,14 +3250,16 @@ extern "C" void aura_sync_remount_covered_named_live_closures(std::uint64_t mask
 
     // Issue #3785: reuse residual remount storm gate (storm>=2 Global/Both
     // or reemit throttle / force-skip). Soft Shape-only (storm==1) stays
-    // decoupled (#2172). Soft Global scoped reemit must not remount-walk
-    // while residual remount is budget_skipped.
+    // decoupled (#2172). Issue #3812: critical-bypass does not waive unless
+    // allow helper (policy+armed+define; never full named FIFO).
     {
         const auto storm = static_cast<std::uint64_t>(aura_hot_update_current_storm_level());
         if (g_residual_force_skip.load(std::memory_order_relaxed) != 0 || storm >= 2 ||
             aura_hot_update_should_throttle_reemit() != 0) {
-            g_reemit_success_sync_covered_budget_skip_total.fetch_add(1, std::memory_order_relaxed);
-            return;
+            if (!aura_critical_bypass_covered_remount_allowed()) {
+                g_reemit_success_sync_covered_budget_skip_total.fetch_add(1, std::memory_order_relaxed);
+                return;
+            }
         }
     }
 

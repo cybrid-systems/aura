@@ -925,6 +925,68 @@ static void ac3785_3_shape_only_decoupled() {
     CHECK(rt.find("test_issue_3785.cpp") == std::string::npos, "ac3785_3: no invent");
 }
 
+
+// ── Issue #3812: Soft Global × critical bypass remount gate ──
+static void ac3812_1_registry_storm_conjunct() {
+    std::println("\n--- #3812 AC1: registry Soft Global storm conjunct ---");
+    const auto reg = read_file("src/compiler/hot_update_registry.cpp");
+    CHECK(reg.find("Issue #3812") != std::string::npos, "ac3812_1: cites #3812");
+    CHECK(reg.find("aura_note_reemit_success_sync_covered_budget_skip") != std::string::npos,
+          "ac3812_1: Soft Global default-deny budget_skip");
+    CHECK(reg.find("allow_critical_bypass_sync_covered_remount") != std::string::npos,
+          "ac3812_1: critical-bypass policy conjunct");
+    const auto call = reg.find("aura_sync_remount_covered_named_live_closures(cov, cap)");
+    CHECK(call != std::string::npos, "ac3812_1: remount call present");
+    const auto gate = reg.find("soft_global");
+    CHECK(gate != std::string::npos && gate < call, "ac3812_1: storm gate before remount call");
+}
+
+static void ac3812_2_hard_ceiling_and_critical_default_deny() {
+    std::println("\n--- #3812 AC2: hard ceiling + critical default deny ---");
+    const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
+    const auto fn = rt.find("aura_sync_remount_covered_named_live_closures");
+    CHECK(fn != std::string::npos, "ac3812_2: sync remount present");
+    const auto win = rt.substr(fn, 1600);
+    const auto helper = rt.find("aura_critical_bypass_covered_remount_allowed");
+    CHECK(helper != std::string::npos, "ac3812_2: allow helper present");
+    const auto hwin = rt.substr(helper, 800);
+    CHECK(win.find("Issue #3812") != std::string::npos, "ac3812_2: cites #3812");
+    CHECK(win.find("storm >= 2") != std::string::npos, "ac3812_2: Global/Both gate retained");
+    CHECK(win.find("aura_critical_bypass_covered_remount_allowed") != std::string::npos,
+          "ac3812_2: gate calls allow helper");
+    CHECK(hwin.find("aura_hot_update_hard_storm_active") != std::string::npos,
+          "ac3812_2: hard ceiling never allows");
+    CHECK(hwin.find("allow_critical_bypass_sync_covered_remount") != std::string::npos,
+          "ac3812_2: opt-in policy checked");
+    CHECK(hwin.find("relower_success_define_active") != std::string::npos,
+          "ac3812_2: precise define coverage required for allow");
+    CHECK(win.find("never full named FIFO") != std::string::npos,
+          "ac3812_2: full FIFO refuse under soft Global allow");
+}
+
+static void ac3812_3_shape_only_passthrough() {
+    std::println("\n--- #3812 AC3: Shape-only reemit/remount pass-through ---");
+    const auto br = read_file("src/compiler/aura_jit_bridge.cpp");
+    CHECK(br.find("Shape-only storms therefore pass") != std::string::npos ||
+              br.find("Shape-only") != std::string::npos,
+          "ac3812_3: Shape-only reemit pass-through retained");
+    const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
+    CHECK(rt.find("storm == 1") != std::string::npos || rt.find("storm==1") != std::string::npos,
+          "ac3812_3: Shape-only decoupled cite");
+    CHECK(rt.find("test_issue_3812.cpp") == std::string::npos, "ac3812_3: no invent");
+}
+
+static void ac3812_4_soak_no_amplify() {
+    std::println("\n--- #3812 AC4: soft Global × critical does not amplify ---");
+    const auto reg = read_file("src/compiler/hot_update_registry.cpp");
+    const auto br = read_file("src/compiler/aura_jit_bridge.cpp");
+    CHECK(br.find("Issue #3812") != std::string::npos, "ac3812_4: bridge cites #3812");
+    CHECK(reg.find("aura_note_reemit_success_sync_covered_budget_skip") != std::string::npos,
+          "ac3812_4: default deny counts skip not ok/fail");
+    CHECK(reg.find("clear_critical_bypass_remount_armed") != std::string::npos,
+          "ac3812_4: one-shot arm cleared after success path");
+}
+
 } // namespace
 
 int run_test_remount_force_deopt() {
@@ -956,10 +1018,16 @@ int run_test_remount_force_deopt() {
     ac3785_1_sync_remount_storm_gate();
     ac3785_2_residual_predicates_shared();
     ac3785_3_shape_only_decoupled();
+    std::println("\n=== Issue #3812: Soft Global critical-bypass remount gate ===");
+    ac3812_1_registry_storm_conjunct();
+    ac3812_2_hard_ceiling_and_critical_default_deny();
+    ac3812_3_shape_only_passthrough();
+    ac3812_4_soak_no_amplify();
     if (g_failed)
         return 1;
-    std::println("remount force-deopt #2503/#2894/#3548/#3578/#3612/#3785: OK ({} passed)",
-                 g_passed);
+    std::println(
+        "remount force-deopt #2503/#2894/#3548/#3578/#3612/#3785/#3812: OK ({} passed)",
+        g_passed);
     return 0;
 }
 

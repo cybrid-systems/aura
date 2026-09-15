@@ -23,6 +23,7 @@ extern "C" std::uint64_t aura_residual_remount_budget_default() noexcept;
 // Issue #2978: reemit-success sync covered-named remount.
 extern "C" void aura_sync_remount_covered_named_live_closures(std::uint64_t mask,
                                                               std::uint64_t cap);
+extern "C" void aura_note_reemit_success_sync_covered_budget_skip() noexcept;
 extern "C" std::uint64_t aura_reemit_success_sync_covered_cap_default() noexcept;
 extern "C" void aura_residual_live_closure_remount_tick(std::uint64_t budget);
 // Issue #2950: pure-anon bg remount drain (never steal-complete #2715).
@@ -318,18 +319,39 @@ void HotUpdateRegistry::on_reemit_pipeline_call(std::uint64_t candidates,
         // Soft / latch idle: existing path (one acquire).
         if (!ir_content_untrusted_for_native()) {
             maybe_force_jit_repromote_on_clean_success();
-            // Issue #2978: production + non-zero coverage → sync remount
-            // named closures in the just-covered region bits (budget-exempt
-            // vs residual). Soft / mask idle / cap=0 → zero extra work.
-            // Runs after coverage stamp so last_success is visible.
+            // Issue #2978 / #3812: production + non-zero coverage → sync
+            // remount named closures in the just-covered region bits
+            // (budget-exempt vs residual outside storm). Soft / mask idle /
+            // cap=0 → zero extra work. Runs after coverage stamp so
+            // last_success is visible.
+            // Issue #3812: Soft Global/Both storm gate is the missing
+            // conjunct with cap. Critical-bypass reemit (#2132/#3636) does
+            // not waive remount by default (opt-in allow policy); default
+            // deny matches residual budget_skip so ok/fail cannot amplify.
+            // Shape-only (storm==Shape) pass-through unchanged (#2172).
             if (aura_production_defaults_active_probe() != 0) {
                 const auto cov = last_reemit_success_region_mask_.load(std::memory_order_relaxed);
                 if (cov != 0) {
                     const auto cap = aura_reemit_success_sync_covered_cap_default();
-                    if (cap > 0)
-                        aura_sync_remount_covered_named_live_closures(cov, cap);
+                    if (cap > 0) {
+                        const auto storm = static_cast<std::uint8_t>(current_storm_level());
+                        constexpr auto kGlobal =
+                            static_cast<std::uint8_t>(StormLevel::Global);
+                        const bool soft_global = (storm & kGlobal) != 0;
+                        if (soft_global && !allow_critical_bypass_sync_covered_remount()) {
+                            // Default deny under Soft Global/Both — same
+                            // residual face; count budget_skip without a
+                            // named FIFO walk.
+                            aura_note_reemit_success_sync_covered_budget_skip();
+                        } else {
+                            aura_sync_remount_covered_named_live_closures(cov, cap);
+                        }
+                    }
                 }
             }
+            // Issue #3812: one-shot critical-bypass arm — clear on every
+            // clean success so Soft Global attribution cannot leak.
+            clear_critical_bypass_remount_armed();
         }
     } else if (force_jit_regions_mask_.load(std::memory_order_relaxed) != 0)
         force_jit_stable_successes_.store(0, std::memory_order_relaxed);
@@ -1625,6 +1647,25 @@ void HotUpdateRegistry::on_reemit_throttled(ThrottleReason reason) noexcept {
 
 void HotUpdateRegistry::on_reemit_critical_bypass() noexcept {
     reemit_critical_bypass_.fetch_add(1, std::memory_order_relaxed);
+    // Issue #3812: arm one-shot so opt-in covered remount policy can
+    // attribute this soft-Global success (default policy still denies).
+    critical_bypass_remount_armed_.store(true, std::memory_order_relaxed);
+}
+
+bool HotUpdateRegistry::allow_critical_bypass_sync_covered_remount() const noexcept {
+    return allow_critical_bypass_sync_covered_remount_.load(std::memory_order_relaxed);
+}
+
+void HotUpdateRegistry::set_allow_critical_bypass_sync_covered_remount(bool allow) noexcept {
+    allow_critical_bypass_sync_covered_remount_.store(allow, std::memory_order_relaxed);
+}
+
+bool HotUpdateRegistry::critical_bypass_remount_armed() const noexcept {
+    return critical_bypass_remount_armed_.load(std::memory_order_relaxed);
+}
+
+void HotUpdateRegistry::clear_critical_bypass_remount_armed() noexcept {
+    critical_bypass_remount_armed_.store(false, std::memory_order_relaxed);
 }
 
 // Issue #3636: stamp the first-armed watermark for every force bit that
@@ -3020,6 +3061,29 @@ extern "C" void aura_hot_update_set_hard_deopt_storm_threshold(std::uint64_t deo
 
 extern "C" std::uint64_t aura_hot_update_hard_deopt_storm_threshold(void) {
     return aura::compiler::hot_update_registry().hard_deopt_storm_threshold();
+}
+
+// Issue #3812: hard ceiling / critical-bypass remount policy C ABI.
+extern "C" int aura_hot_update_hard_storm_active(void) {
+    return aura::compiler::hot_update_registry().hard_storm_active() ? 1 : 0;
+}
+
+extern "C" int aura_hot_update_allow_critical_bypass_sync_covered_remount(void) {
+    return aura::compiler::hot_update_registry().allow_critical_bypass_sync_covered_remount()
+               ? 1
+               : 0;
+}
+
+extern "C" void aura_hot_update_set_allow_critical_bypass_sync_covered_remount(int allow) {
+    aura::compiler::hot_update_registry().set_allow_critical_bypass_sync_covered_remount(allow != 0);
+}
+
+extern "C" int aura_hot_update_critical_bypass_remount_armed(void) {
+    return aura::compiler::hot_update_registry().critical_bypass_remount_armed() ? 1 : 0;
+}
+
+extern "C" void aura_hot_update_clear_critical_bypass_remount_armed(void) {
+    aura::compiler::hot_update_registry().clear_critical_bypass_remount_armed();
 }
 
 // Issue #2094: StormLevel C ABI lives in runtime_ssot.cpp. Register
