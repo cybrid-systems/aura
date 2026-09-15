@@ -4969,6 +4969,19 @@ def cmd_lint():
             "Issue #3820 pending offer map-miss retain linter failed — run python3 scripts/coverage/checks/check_pending_offer_map_miss_retain_3820.py"
         )
         return r
+    # Issue #3821: synth-hard-fail abort must pair begin IR fence with
+    # force_dirty after topology restore (clears abort_force_in_progress_).
+    # Extends test_abort_ir_cache_fence_first.cpp (#81967); no docs/design/.
+    shfafd3821_script = COVERAGE_CHECKS / "check_synth_hard_fail_abort_force_dirty_3821.py"
+    if not shfafd3821_script.exists():
+        fail(f"missing {shfafd3821_script}")
+        return 1
+    r = run([sys.executable, str(shfafd3821_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3821 synth-hard-fail abort force-dirty linter failed — run python3 scripts/coverage/checks/check_synth_hard_fail_abort_force_dirty_3821.py"
+        )
+        return r
     # Issue #3802: EXEMPT_2ARG write-file/sys-* host-path isolation under
     # Restricted+MT / Strict — resolve under tenant root from
     # capability_tenant_id_; cross-tenant escape → IsolationDeny SE
@@ -14973,6 +14986,26 @@ def cmd_pending_offer_map_miss_retain_3820():
     """Issue #3820: solve_delta pending offer retains var_to_constraints_ miss."""
     print(f"{B}=== pending offer map-miss retain (#3820) ==={N}")
     return cmd_pending_offer_map_miss_retain_3820_coverage()
+
+
+def cmd_synth_hard_fail_abort_force_dirty_3821_coverage():
+    """Issue #3821: synth-hard-fail abort pairs begin→force_dirty (static)."""
+    print(f"{B}=== synth-hard-fail abort force-dirty (#3821) ==={N}")
+    script = COVERAGE_CHECKS / "check_synth_hard_fail_abort_force_dirty_3821.py"
+    if not script.is_file():
+        fail(f"missing {script}")
+        return 1
+    if run([sys.executable, str(script)], cwd=ROOT) != 0:
+        fail("synth-hard-fail abort force-dirty (#3821) coverage contract rows failed")
+        return 1
+    ok("synth-hard-fail abort force-dirty (#3821) coverage clean")
+    return 0
+
+
+def cmd_synth_hard_fail_abort_force_dirty_3821():
+    """Issue #3821: synth-hard-fail abort begins IR fence and force-dirties."""
+    print(f"{B}=== synth-hard-fail abort force-dirty (#3821) ==={N}")
+    return cmd_synth_hard_fail_abort_force_dirty_3821_coverage()
 
 
 def cmd_engine_metrics_hash_overflow_3018_coverage():
