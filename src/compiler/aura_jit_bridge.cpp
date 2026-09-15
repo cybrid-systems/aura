@@ -2303,6 +2303,8 @@ extern "C" void aura_aot_mark_peer_slots_soft_stale(void* owner) {
 // Issue #3750: name-precise peer AOT slot stale for define `name`.
 // Not #3070 all-slot fanout. Owner slot skipped (#3377 already
 // physically clears it). Probe already rejects soft_stale.
+// Issue #3784: aura_closure_call empty-name peers consult this soft_stale
+// via func_id (name table cannot key anonymous closures).
 extern "C" void aura_aot_soft_stale_peer_slots_for_name(const char* name, void* owner) {
     if (!name || !*name)
         return;
@@ -2445,6 +2447,9 @@ extern "C" void aura_aot_mark_peer_jit_name_soft_stale(const char* name) {
 }
 
 // Issue #3300: lock-free probe. Zero-cost when the table is empty.
+// Issue #3784: empty name still returns 0 here (unless overflow) — callers
+// with anonymous closures must also consult aura_aot_slot_is_soft_stale
+// for the closure's func_id (#3750 peer slot mark). Soft/Off unchanged.
 extern "C" int aura_aot_peer_jit_name_is_soft_stale(const char* name) {
     // Issue #3514: overflow fail-closed (including anonymous nullptr).
     if (g_peer_name_stale_overflow.load(std::memory_order_acquire) != 0)

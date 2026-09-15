@@ -4053,7 +4053,23 @@ extern "C" int64_t aura_closure_dispatch_native_checked(int64_t closure_id, int6
                                      : nullptr;
         // Issue #3514: overflow fail-closed also covers anonymous
         // (peer_cname==nullptr). Named callers are marked on the cone.
-        if (aura_aot_peer_jit_name_is_soft_stale(peer_cname) != 0) {
+        // Issue #3784: empty-name / anonymous peer closures of an
+        // invalidated define — name table returns 0 for !name||!*name
+        // unless overflow (#3300). Consult #3750 name-precise peer AOT
+        // slot soft_stale via the closure's func_id / stable sid so they
+        // leave native under production hard owner-scoped without
+        // restoring process-wide clock bumps or #3070 all-slot.
+        bool peer_leave_native = aura_aot_peer_jit_name_is_soft_stale(peer_cname) != 0;
+        if (!peer_leave_native && peer_cname == nullptr) {
+            std::int64_t check_id = 0;
+            if (cid < g_closure_stable_func_ids.size() && g_closure_stable_func_ids[cid] != 0)
+                check_id = static_cast<std::int64_t>(g_closure_stable_func_ids[cid]);
+            else if (cid < g_closure_func_ids.size() && g_closure_func_ids[cid] > 0)
+                check_id = g_closure_func_ids[cid];
+            if (check_id > 0 && aura_aot_slot_is_soft_stale(check_id) != 0)
+                peer_leave_native = true;
+        }
+        if (peer_leave_native) {
             tlock.unlock();
             aura_unlock_workspace_read();
             aura_jit_closure_record_stale_deopt();

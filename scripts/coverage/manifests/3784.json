@@ -1,0 +1,48 @@
+{
+  "issue": 3784,
+  "title": "Issue #3784: empty-name / anonymous peer closures leave native under hard owner-scoped invalidate",
+  "ok": "OK: Issue #3784 empty-name peer leave-native \u2014 func_id soft_stale consult; named #3300 retained; Soft/Off unchanged",
+  "checks": [
+    {
+      "ac": "AC1-runtime",
+      "path": "src/compiler/aura_jit_runtime.cpp",
+      "contains": [
+        "Issue #3784",
+        "peer_leave_native",
+        "aura_aot_slot_is_soft_stale"
+      ]
+    },
+    {
+      "ac": "AC2-named",
+      "path": "src/compiler/aura_jit_runtime.cpp",
+      "contains": [
+        "aura_aot_peer_jit_name_is_soft_stale(peer_cname)"
+      ]
+    },
+    {
+      "ac": "AC3-bridge",
+      "path": "src/compiler/aura_jit_bridge.cpp",
+      "contains": [
+        "Issue #3784",
+        "aura_aot_soft_stale_peer_slots_for_name"
+      ]
+    },
+    {
+      "ac": "AC4-tests",
+      "path": "tests/compiler/test_peer_jit_name_soft_stale.cpp",
+      "contains": [
+        "ac3784_1",
+        "ac3784_2",
+        "ac3784_3"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "forbid": [
+        "tests/core/test_issue_3784.cpp",
+        "tests/compiler/test_issue_3784.cpp",
+        "docs/design/3784-anon-peer-empty-name.md"
+      ]
+    }
+  ]
+}

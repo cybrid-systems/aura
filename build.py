@@ -6732,6 +6732,18 @@ def cmd_lint():
             "Issue #3783 auto-arm densify health publish linter failed — run python3 scripts/coverage/checks/check_auto_arm_densify_health_publish_3783.py"
         )
         return r
+    # Issue #3784: empty-name / anonymous peer leave-native under hard OS
+    # (#3300/#3750 residual — name table skips !name||!*name).
+    apens3784_script = COVERAGE_CHECKS / "check_anon_peer_empty_name_soft_stale_3784.py"
+    if not apens3784_script.exists():
+        fail(f"missing {apens3784_script}")
+        return 1
+    r = run([sys.executable, str(apens3784_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3784 anon peer empty-name soft-stale linter failed — run python3 scripts/coverage/checks/check_anon_peer_empty_name_soft_stale_3784.py"
+        )
+        return r
     # Issue #3793: replace-pattern macro keyword unify (:allow-macro? primary,
     # old query-side spellings as compat aliases; one include + gate bool).
     kwu3793_script = COVERAGE_CHECKS / "check_replace_pattern_kw_unify_3793.py"
@@ -14327,6 +14339,26 @@ def cmd_auto_arm_densify_health_publish_3783():
     """Issue #3783: auto-arm Moving publishes densify health; Phase-5 real blocked."""
     print(f"{B}=== auto-arm densify health publish (#3783) ==={N}")
     return cmd_auto_arm_densify_health_publish_3783_coverage()
+
+
+def cmd_anon_peer_empty_name_soft_stale_3784_coverage():
+    """Issue #3784: empty-name peer leave-native (static)."""
+    print(f"{B}=== anon peer empty-name soft-stale (#3784) ==={N}")
+    script = COVERAGE_CHECKS / "check_anon_peer_empty_name_soft_stale_3784.py"
+    if not script.is_file():
+        fail(f"missing {script}")
+        return 1
+    if run([sys.executable, str(script)], cwd=ROOT) != 0:
+        fail("anon peer empty-name soft-stale (#3784) coverage contract rows failed")
+        return 1
+    ok("anon peer empty-name soft-stale (#3784) coverage clean")
+    return 0
+
+
+def cmd_anon_peer_empty_name_soft_stale_3784():
+    """Issue #3784: empty-name peer closures leave native under hard owner-scoped."""
+    print(f"{B}=== anon peer empty-name soft-stale (#3784) ==={N}")
+    return cmd_anon_peer_empty_name_soft_stale_3784_coverage()
 
 
 def cmd_engine_metrics_hash_overflow_3018_coverage():
@@ -22069,6 +22101,8 @@ def main():
         "densify-entry-lcp-skip-compact-3782-coverage": cmd_densify_entry_lcp_skip_compact_3782_coverage,
         "auto-arm-densify-health-publish-3783": cmd_auto_arm_densify_health_publish_3783,
         "auto-arm-densify-health-publish-3783-coverage": cmd_auto_arm_densify_health_publish_3783_coverage,
+        "anon-peer-empty-name-soft-stale-3784": cmd_anon_peer_empty_name_soft_stale_3784,
+        "anon-peer-empty-name-soft-stale-3784-coverage": cmd_anon_peer_empty_name_soft_stale_3784_coverage,
         "engine-metrics-hash-overflow-3018": cmd_engine_metrics_hash_overflow_3018,
         "engine-metrics-hash-overflow-3018-coverage": cmd_engine_metrics_hash_overflow_3018_coverage,
         "unified-restamp-3019": cmd_unified_restamp_3019,
