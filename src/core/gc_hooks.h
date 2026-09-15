@@ -30,6 +30,12 @@
 #include <mutex>
 #include <thread> // Issue #2438: this_thread::yield in clear_arena_compact_notify_hooks
 
+// Issue #3824: process-wide live outermost Guard count (strong def in
+// evaluator_fiber_mutation.cpp; weak stub returns 0 in fiber_bridge.cpp).
+// Declared at file scope so force_clear can refuse foreign MutationHold
+// release while another Guard still holds.
+extern "C" std::uint32_t aura_process_mutation_boundary_held_count() noexcept;
+
 namespace aura::gc_hooks {
 
 // ── Safepoint check ─────────────────────────────────────────
@@ -997,7 +1003,8 @@ inline std::atomic<std::uint64_t> g_gc_defer_bit_reconcile_aborted_total{0};
 // Issue #2296: Phase-5 Clear / multi-eval force-clear for one evaluator.
 // Clears per-eval panic table + process depth, then reconciles the
 // process-wide bitmask. MutationHold is process-wide (not per-eval) —
-// caller re-releases hold separately when this eval owned the residual.
+// caller / force_clear_residual may release hold only when no live
+// outermost Guard remains (#3824); identity-keyed Panic clear stays here.
 struct ForceClearGcDeferResult {
     std::uint32_t panic_depth_cleared = 0;
     std::uint32_t bits_reconciled = 0;
@@ -1028,12 +1035,29 @@ struct ResidualClearResult {
     bool hold_released = false;
 };
 
+// Issue #3824: refuse foreign force_clear of MutationHold while a live
+// outermost Guard still holds (process held count SSOT; see file-scope
+// aura_process_mutation_boundary_held_count declaration).
+[[nodiscard]] inline bool mutation_hold_live_guard_held_for_force_clear() noexcept {
+    // Matches issue refuse rule: !mutation_hold_live_snapshot().held for
+    // foreign clear — process held count is the enter/exit SSOT (exact),
+    // while the live snapshot probe is best-effort max-holder.
+    return ::aura_process_mutation_boundary_held_count() > 0;
+}
+
 inline ResidualClearResult force_clear_residual_defer_for_evaluator(void* evaluator_id) noexcept {
     ResidualClearResult r{};
     const auto fr = force_clear_all_gc_defer_for_evaluator(evaluator_id);
     r.panic_depth_cleared = static_cast<std::uint64_t>(fr.panic_depth_cleared);
     r.bits_reconciled = static_cast<std::uint64_t>(fr.bits_reconciled);
-    if (mutation_hold_defer_active()) {
+    // Issue #3824: MutationHold is process-wide (not per-eval). Refuse
+    // force_clear of the hold bit while any live outermost Guard still
+    // holds — steal of A must not drop B's defer mid-mutate. EnvFrame /
+    // Panic stay identity-keyed via force_clear_all_gc_defer_for_evaluator
+    // above. Orphan residual (defer armed, no live Guard) still releases.
+    // Soft leftover observe path unchanged (production_force=false skips
+    // this helper entirely via close_residual_defer_after_exit).
+    if (mutation_hold_defer_active() && !mutation_hold_live_guard_held_for_force_clear()) {
         release_mutation_hold_defer();
         r.hold_released = true;
     }

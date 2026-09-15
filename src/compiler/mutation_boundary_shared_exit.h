@@ -66,13 +66,16 @@ namespace aura::compiler {
 //     Guard's evaluator pointer directly)
 inline void mutation_boundary_shared_exit(void* evaluator_id) noexcept {
     // 1. Force-clear residual GcDeferReason for this evaluator
-    // (idempotent atomic + CAS-based — #2314 helper).
+    // (idempotent atomic + CAS-based — #2314 helper). #3824: helper
+    // refuses MutationHold release while another live Guard holds.
     if (evaluator_id) {
         (void)aura::gc_hooks::force_clear_residual_defer_for_evaluator(evaluator_id);
     }
-    // 2. Release MutationHold if this path owned outermost hold
-    // (#2338 overflow + #2269 outermost policy).
-    if (aura::gc_hooks::mutation_hold_defer_active()) {
+    // 2. Release MutationHold only for orphan residual (no live Guard).
+    // Issue #3824: do not drop a foreign live outermost hold (#2338 /
+    // #2269 ownership — live process held count is SSOT).
+    if (aura::gc_hooks::mutation_hold_defer_active() &&
+        !aura::gc_hooks::mutation_hold_live_guard_held_for_force_clear()) {
         aura::gc_hooks::release_mutation_hold_defer();
         // Final reconcile after hold release (hold bit ≠ Panic).
         (void)aura::gc_hooks::reconcile_gc_defer_bits_after_clear();

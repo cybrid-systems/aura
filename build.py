@@ -5010,6 +5010,21 @@ def cmd_lint():
             "Issue #3823 production mark node-dep union linter failed — run python3 scripts/coverage/checks/check_production_mark_node_dep_union_3823.py"
         )
         return r
+    # Issue #3824: force_clear_residual must not release process MutationHold
+    # while another live outermost Guard still holds (foreign steal of A
+    # must not drop B's defer). Orphan residual (no live Guard) still clears.
+    # Soft leftover observe path unchanged. Extends
+    # test_steal_complete_gc_defer.cpp (#81967); no docs/design/.
+    sfchf3824_script = COVERAGE_CHECKS / "check_steal_force_clear_hold_foreign_3824.py"
+    if not sfchf3824_script.exists():
+        fail(f"missing {sfchf3824_script}")
+        return 1
+    r = run([sys.executable, str(sfchf3824_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3824 steal force_clear hold foreign linter failed — run python3 scripts/coverage/checks/check_steal_force_clear_hold_foreign_3824.py"
+        )
+        return r
     # Issue #3802: EXEMPT_2ARG write-file/sys-* host-path isolation under
     # Restricted+MT / Strict — resolve under tenant root from
     # capability_tenant_id_; cross-tenant escape → IsolationDeny SE
@@ -15074,6 +15089,26 @@ def cmd_production_mark_node_dep_union_3823():
     """Issue #3823: Production mark-time node-dep body-dirty union before peel."""
     print(f"{B}=== production mark node-dep union (#3823) ==={N}")
     return cmd_production_mark_node_dep_union_3823_coverage()
+
+
+def cmd_steal_force_clear_hold_foreign_3824_coverage():
+    """Issue #3824: force_clear refuses foreign live MutationHold (static)."""
+    print(f"{B}=== steal force_clear hold foreign (#3824) ==={N}")
+    script = COVERAGE_CHECKS / "check_steal_force_clear_hold_foreign_3824.py"
+    if not script.is_file():
+        fail(f"missing {script}")
+        return 1
+    if run([sys.executable, str(script)], cwd=ROOT) != 0:
+        fail("steal force_clear hold foreign (#3824) coverage contract rows failed")
+        return 1
+    ok("steal force_clear hold foreign (#3824) coverage clean")
+    return 0
+
+
+def cmd_steal_force_clear_hold_foreign_3824():
+    """Issue #3824: steal/force_clear must not drop another Guard's MutationHold."""
+    print(f"{B}=== steal force_clear hold foreign (#3824) ==={N}")
+    return cmd_steal_force_clear_hold_foreign_3824_coverage()
 
 
 def cmd_engine_metrics_hash_overflow_3018_coverage():

@@ -1,0 +1,43 @@
+{
+  "issue": 3824,
+  "title": "Issue #3824: steal force_clear refuses foreign live MutationHold release",
+  "ok": "OK: Issue #3824 steal force_clear hold foreign refuse",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/core/gc_hooks.h",
+      "contains": [
+        "Issue #3824",
+        "mutation_hold_live_guard_held_for_force_clear",
+        "aura_process_mutation_boundary_held_count"
+      ]
+    },
+    {
+      "ac": "AC3-steal",
+      "path": "src/compiler/evaluator_fiber_mutation.cpp",
+      "contains": ["Issue #3824"]
+    },
+    {
+      "ac": "AC3-shared",
+      "path": "src/compiler/mutation_boundary_shared_exit.h",
+      "contains": ["Issue #3824", "mutation_hold_live_guard_held_for_force_clear"]
+    },
+    {
+      "ac": "AC2-tests",
+      "path": "tests/serve/test_steal_complete_gc_defer.cpp",
+      "contains": [
+        "3824 AC1: mutation_hold_defer_active still true while B.held",
+        "3824 AC2: orphan force_clear released hold",
+        "3824 AC1: no destructive GC admit mid-B-hold (chaos)"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "forbid": [
+        "tests/serve/test_issue_3824.cpp",
+        "tests/issues/test_issue_3824.cpp",
+        "docs/design/3824-mutation-hold-foreign-clear.md"
+      ]
+    }
+  ]
+}

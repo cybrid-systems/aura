@@ -399,3 +399,4 @@ scripts/coverage/checks/check_pending_offer_map_miss_retain_3820.py
 scripts/coverage/checks/check_synth_hard_fail_abort_force_dirty_3821.py
 scripts/coverage/checks/check_prod_soa_writeback_sync_3822.py
 scripts/coverage/checks/check_production_mark_node_dep_union_3823.py
+scripts/coverage/checks/check_steal_force_clear_hold_foreign_3824.py
