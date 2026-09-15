@@ -1,0 +1,34 @@
+{
+  "issue": 3818,
+  "title": "Issue #3818: #3472 post-persist linear deny undoes #3545 CoercionMap journal",
+  "ok": "OK: Issue #3818 post-persist linear deny CoercionMap undo",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_mutation_boundary.cpp",
+      "contains": ["Issue #3818", "aura_persist_reject_undo", "Issue #3472"]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/evaluator_mutation_boundary.cpp",
+      "contains": [
+        "restore_checkpoint_topology_for_persist_reject",
+        "undo_apply_coercion_map_recent",
+        "if (!cp.topology_restored)"
+      ]
+    },
+    {
+      "ac": "AC4-tests",
+      "path": "tests/compiler/test_outermost_persist_fail_closed.cpp",
+      "contains": ["3818 soak", "aura_persist_reject_undo", "Issue #3818"]
+    },
+    {
+      "ac": "AC4",
+      "forbid": [
+        "tests/compiler/test_issue_3818.cpp",
+        "tests/issues/test_issue_3818.cpp",
+        "docs/design/3818-post-persist-coercion-undo.md"
+      ]
+    }
+  ]
+}

@@ -1575,6 +1575,19 @@ static void ac3472_2_persist_reject_unchanged() {
          p = emb.find("restore_or_clear_occurrence_to_entry(", p + 1))
         ++occ_n;
     CHECK(occ_n == 4, "3472 AC2: 3 abort sites + persist-reject #3687 #3158 reuse");
+    // Issue #3818: post-persist belt undoes CoercionMap journal (#3545).
+    {
+        const auto issue = emb.find("Issue #3472");
+        const auto exit_pos = emb.find("ev_->exit_mutation_boundary(success)");
+        const auto win =
+            (issue == std::string::npos || exit_pos == std::string::npos || issue > exit_pos)
+                ? std::string{}
+                : emb.substr(issue, exit_pos - issue);
+        CHECK(win.find("aura_persist_reject_undo") != std::string::npos ||
+                  win.find("undo_apply_coercion_map_recent") != std::string::npos,
+              "3818: #3472 window calls shared/#3545 undo");
+        CHECK(emb.find("schema-3818") == std::string::npos, "3818: no new query key");
+    }
 }
 
 static void ac3472_3_happy_stamped() {

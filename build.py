@@ -4927,6 +4927,20 @@ def cmd_lint():
             "Issue #3817 rest-spine orphan rewind linter failed — run python3 scripts/coverage/checks/check_rest_spine_orphan_rewind_3817.py"
         )
         return r
+    # Issue #3818: #3472 post-persist linear deny must undo #3545 CoercionMap
+    # journal via shared aura_persist_reject_undo (AST #3687 + journal).
+    # Extends test_outermost_persist_fail_closed / linear / health (#81967);
+    # no docs/design/.
+    ppld3818_script = COVERAGE_CHECKS / "check_post_persist_linear_deny_coercion_undo_3818.py"
+    if not ppld3818_script.exists():
+        fail(f"missing {ppld3818_script}")
+        return 1
+    r = run([sys.executable, str(ppld3818_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3818 post-persist linear deny CoercionMap undo linter failed — run python3 scripts/coverage/checks/check_post_persist_linear_deny_coercion_undo_3818.py"
+        )
+        return r
     # Issue #3802: EXEMPT_2ARG write-file/sys-* host-path isolation under
     # Restricted+MT / Strict — resolve under tenant root from
     # capability_tenant_id_; cross-tenant escape → IsolationDeny SE
@@ -14871,6 +14885,26 @@ def cmd_rest_spine_orphan_rewind_3817():
     """Issue #3817: production rewind of pre-clone MacroIntroduced rest spine."""
     print(f"{B}=== rest-spine orphan rewind (#3817) ==={N}")
     return cmd_rest_spine_orphan_rewind_3817_coverage()
+
+
+def cmd_post_persist_linear_deny_coercion_undo_3818_coverage():
+    """Issue #3818: #3472 post-persist deny undoes #3545 CoercionMap journal (static)."""
+    print(f"{B}=== post-persist linear deny CoercionMap undo (#3818) ==={N}")
+    script = COVERAGE_CHECKS / "check_post_persist_linear_deny_coercion_undo_3818.py"
+    if not script.is_file():
+        fail(f"missing {script}")
+        return 1
+    if run([sys.executable, str(script)], cwd=ROOT) != 0:
+        fail("post-persist linear deny CoercionMap undo (#3818) coverage contract rows failed")
+        return 1
+    ok("post-persist linear deny CoercionMap undo (#3818) coverage clean")
+    return 0
+
+
+def cmd_post_persist_linear_deny_coercion_undo_3818():
+    """Issue #3818: #3472 post-persist linear deny undoes CoercionMap journal."""
+    print(f"{B}=== post-persist linear deny CoercionMap undo (#3818) ==={N}")
+    return cmd_post_persist_linear_deny_coercion_undo_3818_coverage()
 
 
 def cmd_engine_metrics_hash_overflow_3018_coverage():
