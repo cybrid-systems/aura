@@ -92,7 +92,7 @@ def main() -> int:
     if n_pipe != 5:
         fails.append(f"AC3: production incremental pack length is {n_pipe}, cap is 5")
     must("static_assert(ProductionPureWrapPass<ComputeKindWrap>", "AC3 CK ProductionPureWrap (#3488)", pass_impls)
-    must("!ProductionPureWrapPass<EscapeAnalysisWrap>", "AC3 Escape not ProductionPureWrap", service)
+    must("ProductionPureWrapPass<EscapeAnalysisWrap>", "AC3/#3795 Escape is ProductionPureWrap", service)
     must("DirtySoAEntryPass<EscapeAnalysisWrap>", "AC3 Escape stays DirtySoAEntry", service)
 
     must("kPureWrapNoStdFunctionDirtyIssue = 3042", "AC4 #3042 stamp", pipeline)

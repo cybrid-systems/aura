@@ -4914,7 +4914,7 @@ static_assert((check_production_soa_dirty_pack_2907(), true),
 // Issue #3488: production DirtyAware PureWrap pack members satisfy
 // ProductionPureWrapPass via run_on_dirty_blocks_only(IRModuleV2&).
 // AoS run_on_dirty_blocks_only(IRFunction&) stays DirtySoAEntryPass
-// (Soft/unit). EscapeAnalysisWrap remains the #3454 grandfather (#3701).
+// (Soft/unit). EscapeAnalysisWrap is ProductionPureWrapPass (#3795).
 static_assert(ProductionPureWrapPass<ComputeKindWrap>,
               "#3488 ComputeKindWrap SoA dirty entry satisfies ProductionPureWrapPass");
 static_assert(ProductionPureWrapPass<ConstantFoldingWrap>,
@@ -4923,6 +4923,8 @@ static_assert(ProductionPureWrapPass<TypePropagationPass>,
               "#3488 TypePropagationPass SoA dirty entry satisfies ProductionPureWrapPass");
 static_assert(ProductionPureWrapPass<ShapeWrap>,
               "#3488 ShapeWrap SoA dirty entry satisfies ProductionPureWrapPass");
+// EscapeAnalysisWrap ProductionPureWrapPass assert lives in service.ixx (#3795)
+// — Wrap is defined there; avoid service↔pass_impls import cycle.
 static_assert((check_production_pure_wrap_pack<ComputeKindWrap, ConstantFoldingWrap,
                                                TypePropagationPass, ShapeWrap>(),
                true),
@@ -4940,8 +4942,8 @@ static_assert(!ProductionPureWrapPass<pass_soa_detail::AosOnlyPureWrapStub>,
 // to_aos_view / zero set_block_dirty_pred. Call from CompilerService when
 // entry.soa_mod is non-empty after dirty mark. type_reg optional
 // (DCE identity/type rules; nullptr keeps columnar path).
-// EscapeAnalysisWrap remains the #3454 AoS grandfather (#3701: production
-// incremental suite skips Wrap::run when soa_mod nonempty).
+// EscapeAnalysisWrap SoA peel (#3795 / #3701): production incremental suite
+// skips Wrap AoS run when soa_mod nonempty (columnar run_dirty_escape_on_soa).
 // InlinePass::run_on_dirty_blocks_only(IRModuleV2&) remains the #3403
 // production dispatch target — not added to the AoS incremental suite.
 export inline bool
