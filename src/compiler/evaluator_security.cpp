@@ -8,6 +8,7 @@ module;
 #include <cstring>
 
 #include "security_capabilities.h"
+#include "tenant_host_path.hh" // #3802 tenant FS path-prefix
 #include "security_defaults.hh" // #2076/#2053 production defaults (header-inline)
 #include "typed_mutation_audit.h"
 #include "core/capability_model.hh"
@@ -1910,6 +1911,58 @@ bool Evaluator::check_workspace_isolation(std::uint64_t target_tenant, std::uint
                                                        /*target_node=*/0, fiber);
     }
     return ok;
+}
+
+// Issue #3802: host FS path-prefix isolation for EXEMPT_2ARG write-file /
+// sys-* under Restricted+MT / Strict. Soft/Off / single-tenant Restricted
+// passthrough (AC2). Cross-tenant / escape → IsolationDeny SE reason
+// tenant-path-escape + zero write (AC1). EXEMPT_2ARG inventory unchanged (AC3).
+bool Evaluator::check_tenant_host_path(std::string_view path, std::string& out_resolved,
+                                       std::string_view op) noexcept {
+    using ::aura::compiler::security::kEffectWrite;
+    using ::aura::compiler::security::kTenantPathEscapeReason;
+    using ::aura::compiler::security::resolve_tenant_host_path;
+    using ::aura::compiler::security::tenant_host_path_policy_active;
+    using ::aura::compiler::security::TenantHostPathVerdict;
+    using ::aura::core::capability::EffectSandboxMode;
+    using ::aura::core::capability::g_capability_registry;
+    using ::aura::core::provenance::hard_capture_tenant_active;
+    using ::aura::core::provenance::multi_tenant_env_active;
+    using ::aura::core::sandbox::is_strict;
+    using ::aura::core::security_event::SecurityEventKind;
+    using ::aura::core::security_event_wal::emit_security_event_durable;
+
+    out_resolved.clear();
+    std::uint8_t mode = effect_sandbox_mode();
+    if (mode != 2 && is_strict())
+        mode = 2;
+    if (mode != 2 && g_capability_registry().sandbox_mode == EffectSandboxMode::Strict)
+        mode = 2;
+    if (mode == 0 && g_capability_registry().sandbox_mode == EffectSandboxMode::Restricted)
+        mode = 1;
+    const bool mt = hard_capture_tenant_active() || multi_tenant_env_active();
+    const bool active = tenant_host_path_policy_active(mode, mt);
+    const auto result = resolve_tenant_host_path(path, capability_tenant_id_, active);
+    if (result.verdict == TenantHostPathVerdict::Passthrough) {
+        out_resolved.assign(path.begin(), path.end());
+        return true;
+    }
+    if (result.verdict == TenantHostPathVerdict::Resolved) {
+        out_resolved = result.resolved;
+        return true;
+    }
+    // Deny — auditable IsolationDeny SE, zero write.
+    bump_capability_denial();
+    last_mutate_error_ = std::string(op) + ": " + kTenantPathEscapeReason;
+    const auto epoch = ::aura::core::current_mutation_epoch();
+    const auto mid = production_deny_se_mid();
+    const auto fiber = static_cast<std::int64_t>(aura_fiber_current_id());
+    emit_security_event_durable(SecurityEventKind::IsolationDeny, capability_tenant_id_, mid, epoch,
+                                static_cast<std::uint16_t>(kEffectWrite), op,
+                                kTenantPathEscapeReason, /*denied=*/true, fiber);
+    typed_audit::capture_security_correlated_audit(mid, op, mid, /*denied=*/true,
+                                                   /*target_node=*/0, fiber);
+    return false;
 }
 
 void Evaluator::stamp_ref_tenant(ast::FlatAST::StableNodeRef& ref) const noexcept {

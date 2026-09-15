@@ -4780,6 +4780,23 @@ def cmd_lint():
             "Issue #3801 IsolationDeny mid-join linter failed — run python3 scripts/coverage/checks/check_isolation_deny_mid_join_3801.py"
         )
         return r
+    # Issue #3802: EXEMPT_2ARG write-file/sys-* host-path isolation under
+    # Restricted+MT / Strict — resolve under tenant root from
+    # capability_tenant_id_; cross-tenant escape → IsolationDeny SE
+    # (tenant-path-escape), zero write. Soft/Off / single-tenant Restricted
+    # passthrough. EXEMPT_2ARG inventory size unchanged (no NodeId redesign).
+    # Extends test_tenant_isolation_enforcement.cpp (#81967); no
+    # docs/design/ (#1655). No new posture / query key.
+    thp3802_script = COVERAGE_CHECKS / "check_tenant_host_path_isolation_3802.py"
+    if not thp3802_script.exists():
+        fail(f"missing {thp3802_script}")
+        return 1
+    r = run([sys.executable, str(thp3802_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3802 tenant host-path isolation linter failed — run python3 scripts/coverage/checks/check_tenant_host_path_isolation_3802.py"
+        )
+        return r
     # Issue #2969: registry write-fence — under production (Restricted/
     # Strict), grant/revoke targeting a foreign tenant id requires
     # TenantAdmin. Deny → SE reason grant-foreign-tenant-needs-tenant-admin

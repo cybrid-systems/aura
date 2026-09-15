@@ -61,7 +61,7 @@ SCOPE_FILES = [
 # Documented exempt 2-arg require_effect ops (non-workspace NodeId).
 # Same inventory as #2839 + #2881 EXEMPT_2ARG_OPS — keep in lockstep.
 EXEMPT_2ARG_OPS: dict[str, str] = {
-    "write-file": "filesystem, not workspace node (#2839)",
+    "write-file": "filesystem, not workspace node (#2839); #3802 path-prefix under MT",
     "mutation-log-compact": "log maintenance, no NodeId target (#2839)",
     "security:check-effect": "capability probe, not mutate body (#2839)",
     "git-commit": "exec+network (Issue #2072) — no NodeId target (#2881)",
