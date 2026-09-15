@@ -136,7 +136,9 @@ def _check_existing_surfaces(ixx: str) -> list[str]:
     if pos < 0:
         failures.append("AC5: commit_readiness_live_policy definition not found")
         return failures
-    scope = ixx[pos : pos + 2500]
+    # #3794 folds grant-refuse into the same residual OR — keep a window
+    # large enough to cover the wrapped face_hit() call (~2500 was exact edge).
+    scope = ixx[pos : pos + 3200]
     if "pending_full_solve_residual_face_hit()" not in scope:
         failures.append(
             "AC5: commit_readiness_live_policy still reads pending_full_solve_residual_face_hit() (no new query key)"
