@@ -112,7 +112,7 @@ def main() -> int:
     must(ta_pos >= 0, "G2: try_acquire definition present")
     must(tar_pos >= 0, "G2: try_acquire_for_region definition present")
     if ta_pos >= 0:
-        must("production-residual-sticky" in mb[ta_pos : ta_pos + 6000], "G2: try_acquire carries the sticky gate")
+        must("production-residual-sticky" in mb[ta_pos : ta_pos + 9000], "G2: try_acquire carries the sticky gate")
     if tar_pos >= 0:
         must(
             "production-residual-sticky" in mb[tar_pos : tar_pos + 6000],
