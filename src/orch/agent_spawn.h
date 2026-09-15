@@ -130,6 +130,12 @@ inline constexpr int kReclaimedNameTableQuotaRecycleIssue = 3564;
 // until Evaluator drain. Done body → full Done-path cleanup; live body →
 // abandon shape once quota is gone. Soft / Off / not stuck: no-op.
 inline constexpr int kReclaimedSlotSecondRecycleIssue = 3644;
+// Issue #3805: abandon / force-recycle live-body shape clears pending
+// flags + name while the fiber may still run (#2661). Name-table must
+// retire the map key (erase + fresh insert) — never move-assign over the
+// live fiber — and directory / scope-resolve must not present the
+// abandoned ghost as a live send/join target once the name has moved on.
+inline constexpr int kAbandonedLiveNameReuseIssue = 3805;
 // Issue #3336: production C++ send preference — agent_send_safe (or
 // explicit `// orch-raw-send-ok`) for non-test TUs. Raw agent_send
 // remains for zero-cost non-held_ref / already-stamped.
@@ -2904,6 +2910,26 @@ inline void complete_agent_join_cleanup(AgentHandle& h, serve::JoinResult jr) no
     return h.reserved_memory_bytes == 0;
 }
 
+// Issue #3805: abandon / force-recycle live-body husk. Pending flags are
+// already cleared and the name/mailbox arms have run, but the body may
+// still be live (#2661 — never free body-stack here). Distinct from
+// slot_is_reclaimable_clean (body done). Cost: two bool loads + fiber /
+// mailbox / name checks — no new atomic, no getenv. Soft never produces
+// this shape via force-recycle (production gate); the predicate is still
+// shape-based so a defensive retire stays correct if a host called
+// abandon_reclaimed under production and then flipped Soft mid-session.
+[[nodiscard]] inline bool slot_is_abandoned_live(const AgentHandle& h) noexcept {
+    if (h.must_wait_reclaimed || h.reclaimed_deferred_cleanup)
+        return false;
+    if (!h.fiber || h.fiber->is_done())
+        return false;
+    if (h.reserved_memory_bytes != 0)
+        return false;
+    // Abandon shape markers (force-recycle live arm / abandon_reclaimed
+    // Timeout): name cleared + mailbox detach/reset.
+    return h.name.empty() && !h.mailbox;
+}
+
 // Issue #3644: second recycle for Reclaimed slots that survived the
 // #3564 quota-only arm. Runs on the same resolution planes (name-table
 // find / put walk, Scope find) with an ordering contract, not a flag:
@@ -2920,8 +2946,10 @@ inline void complete_agent_join_cleanup(AgentHandle& h, serve::JoinResult jr) no
 //     (quota released, flags stay, #3467 deny stays). On the later
 //     visit this is the abandon_reclaimed (#3334) mailbox + name arms:
 //     detach + reset mailbox, release reservation (no-op), clear name
-//     + both pending flags — same-name put passes, wait_reclaimed on
-//     the abandoned slot goes Invalid. Body-stack never freed (#2661);
+//     + both pending flags — #3805 retires the map key on the next
+//     find/put (erase + fresh insert; never move-assign over the live
+//     fiber), wait_reclaimed on the abandoned slot goes Invalid.
+//     Body-stack never freed (#2661);
 //     clearing reclaimed_deferred_cleanup keeps ~AgentHandle from
 //     re-counting under-account (same reason #3334 clears it).
 //   - Soft / Off / not stuck / no pending flags: no-op (false).

@@ -188,7 +188,7 @@ struct AgentDirectoryEntry {
     std::string scope_path; // "" / "root" for root; "0", "0/1" for child indices
     // Issue #3220: production Timeout after auto-wait — reservation /
     // name-table still held. Empty on Soft / reclaimable handles.
-    std::string lifecycle; // "" | "reclaimed-pending"
+    std::string lifecycle; // "" | "reclaimed-pending" | "abandoned"
     bool ok = false;
     // Issue #3527: three-plane Reclaimed sync. Appended at struct END
     // (#2906). Directory / scope-resolve / name-table project the same
@@ -225,7 +225,7 @@ struct CrossScopeEntry {
     std::string scope_path;       // per-source relative scope_path
     std::string source_path;      // bp_scope_id() of the source scope
     std::uint64_t source_seq = 0; // input span index (0..N-1)
-    std::string lifecycle;        // Issue #3220: "" | "reclaimed-pending"
+    std::string lifecycle;        // Issue #3220/#3805: "" | "reclaimed-pending" | "abandoned"
     bool ok = false;
     // Issue #3527: copied from AgentDirectoryEntry (struct END, #2906).
     bool reclaimed_deferred = false;
@@ -1331,7 +1331,11 @@ private:
                 // walking. Pending handles return as before (#3467/#3527);
                 // done-but-not-yet-joined stays resolvable (reservation
                 // pins it — reserved_memory_bytes > 0 fails the predicate).
-                if (aura::orch::slot_is_reclaimable_clean(h))
+                // Issue #3805: abandoned-live husk (force-recycle /
+                // abandon_reclaimed cleared name while !is_done) is not a
+                // live send/join target — keep walking.
+                if (aura::orch::slot_is_reclaimable_clean(h) ||
+                    aura::orch::slot_is_abandoned_live(h))
                     continue;
                 return &h;
             }
@@ -1354,7 +1358,9 @@ private:
                 // Issue #3598: Done-path-cleaned handle → resolve miss
                 // (same-plane retire; read-only mirror of the mutable
                 // walk — no #3564 recycle on the const path, unchanged).
-                if (aura::orch::slot_is_reclaimable_clean(h))
+                // Issue #3805: abandoned-live husk is not a live target.
+                if (aura::orch::slot_is_reclaimable_clean(h) ||
+                    aura::orch::slot_is_abandoned_live(h))
                     continue;
                 return &h;
             }
@@ -1390,8 +1396,12 @@ private:
             // already dropped it; the default view now retires it too).
             // Pending rows fall through — #3527 lifecycle projection is
             // intact (the predicate never matches a pending slot).
+            // Issue #3805: abandoned-live husk is filtered out of the live
+            // directory (not a send/join target once name-table moved on).
             if (aura::orch::slot_is_reclaimable_clean(h))
                 continue;
+            if (aura::orch::slot_is_abandoned_live(h))
+                continue; // filter-out; identity plane consistent
             AgentDirectoryEntry e;
             e.name = h.name;
             e.id = h.id;
@@ -1584,7 +1594,12 @@ private:
     // Spawn-failed slots (ok=false) also match slot_is_reclaimable_clean
     // but are not Done-path ghosts — keep them for supervisor observability
     // (#3366 size==1). Soft/Off never compact.
+    // Issue #3805: abandoned-live husks compact the same way so a
+    // namesake spawn cannot leave an empty-name ghost in handles_ as a
+    // directory / find residue once name-table has moved on.
     [[nodiscard]] static bool is_done_path_husk_(const AgentHandle& h) noexcept {
+        if (aura::orch::slot_is_abandoned_live(h))
+            return true;
         return h.ok && aura::orch::slot_is_reclaimable_clean(h);
     }
 

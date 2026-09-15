@@ -2050,7 +2050,7 @@ static void ac3644_2_live_body_abandon_shape_on_later_find() {
     using aura::serve::Fiber;
     using aura::serve::mf_mailbox::MultiFiberMailbox;
     std::println("\n--- #3644 AC2: production + live body → first find keeps flags (#3564), later "
-                 "find abandons (mailbox+name) ---");
+                 "find abandons then #3805 retires map key ---");
     apply_production_audit_defaults();
     const char* prev = std::getenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS");
     std::string prev_s = prev ? prev : "";
@@ -2075,12 +2075,13 @@ static void ac3644_2_live_body_abandon_shape_on_later_find() {
     CHECK(f1->must_wait_reclaimed && f1->reclaimed_deferred_cleanup,
           "3644 AC2: first find keeps pending flags (#3564 AC1 unchanged)");
     CHECK(!weak.expired(), "3644 AC2: first find keeps the mailbox attached");
+    // Second find: #3644 abandon shape lands, then #3805 retires the
+    // abandoned-live map key (erase) — husk is no longer a send/join
+    // target; body-stack stays with the owned Fiber (#2661).
     auto* f2 = table.find("agent-3644b");
-    CHECK(f2 != nullptr, "3644 AC2: husk slot stays resolvable while the body lives");
-    CHECK(!f2->fiber->is_done(), "3644 AC2: body-stack untouched (#2661)");
-    CHECK(f2->name.empty(), "3644 AC2: name cleared (abandon shape)");
-    CHECK(!f2->must_wait_reclaimed && !f2->reclaimed_deferred_cleanup,
-          "3644 AC2: pending flags cleared — same-name put no longer denied");
+    CHECK(f2 == nullptr, "3644 AC2 / #3805: abandoned husk retired from name-table");
+    CHECK(table.size() == 0, "3644 AC2 / #3805: map key erased (not left empty-named)");
+    CHECK(!fiber_owned->is_done(), "3644 AC2: body-stack untouched (#2661)");
     CHECK(weak.expired(), "3644 AC2: mailbox detached and freed on the later find");
     CHECK(g_orch_module_stats.reclaimed_abandon_total.load(std::memory_order_relaxed) == ab0 + 1,
           "3644 AC2: existing abandon counter bumps (no new query key)");
@@ -2088,7 +2089,8 @@ static void ac3644_2_live_body_abandon_shape_on_later_find() {
               std::memory_order_relaxed) == fr0 + 1,
           "3644 AC2: exactly one quota bump across both visits (#3564 arm only)");
     auto* again = table.put(make_pending_reclaimed_handle(fiber_owned.get(), "agent-3644b", 0));
-    CHECK(again != nullptr, "3644 AC2: same-name put succeeds over the abandoned husk");
+    CHECK(again != nullptr, "3644 AC2 / #3805: same-name put is a fresh insert after retire");
+    CHECK(again->fiber == fiber_owned.get(), "3644 AC2: fresh slot holds the new handle");
     if (!prev_s.empty())
         ::setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", prev_s.c_str(), 1);
     else
@@ -2177,6 +2179,247 @@ static void ac3644_4_not_stuck_no_recycle_deny_and_wait_intact() {
           "3644 AC4: wait_reclaimed still resolves the name (Timeout, not Invalid)");
     CHECK(f2->must_wait_reclaimed, "3644 AC4: wait Timeout keeps must_wait (#3146)");
     apply_dev_audit_defaults();
+}
+
+
+// Issue #3805: abandon/force-recycle clears pending then same-name put
+// must retire the map key (not move-assign over a live fiber). Directory
+// / scope-resolve must not present the abandoned ghost as a live target.
+static void ac3805_1_put_retires_abandoned_live_not_move_assign() {
+    using aura::orch::AgentHandle;
+    using aura::serve::Fiber;
+    using aura::serve::mf_mailbox::MultiFiberMailbox;
+    std::println("\n--- #3805 AC1: same-name put over abandoned-live → retire + fresh insert ---");
+    apply_production_audit_defaults();
+    const char* prev = std::getenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS");
+    std::string prev_s = prev ? prev : "";
+    ::setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", "0", 1);
+
+    auto old_fiber = std::make_unique<Fiber>([] {});
+    old_fiber->mark_reclaimed();
+    CHECK(!old_fiber->is_done(), "3805 AC1: old body still live");
+    auto h = make_pending_reclaimed_handle(old_fiber.get(), "agent-3805", 4096);
+    auto mb = std::make_shared<MultiFiberMailbox>(/*high_water=*/4);
+    h.mailbox = mb;
+    mb.reset();
+    aura::compiler::AgentNameTable table;
+    CHECK(table.put(std::move(h)) != nullptr, "3805 AC1: initial put lands");
+    // Drive #3564 then #3644 abandon shape via two finds.
+    CHECK(table.find("agent-3805") != nullptr, "3805 AC1: first find (quota arm)");
+    CHECK(table.find("agent-3805") == nullptr,
+          "3805 AC1: second find abandons + retires map key");
+    CHECK(table.size() == 0, "3805 AC1: name-table empty after retire");
+    CHECK(!old_fiber->is_done(), "3805 AC1: #2661 old body-stack untouched");
+
+    // Fresh namesake with a DIFFERENT fiber — must not move-assign over
+    // the abandoned live body (old fiber unreachable by name).
+    auto new_fiber = std::make_unique<Fiber>([] {});
+    auto* again = table.put(make_pending_reclaimed_handle(new_fiber.get(), "agent-3805", 0));
+    CHECK(again != nullptr, "3805 AC1: same-name put accepted (fresh insert)");
+    CHECK(again->fiber == new_fiber.get(), "3805 AC1: name-table points at NEW fiber");
+    CHECK(again->fiber != old_fiber.get(), "3805 AC1: old live fiber unreachable by name");
+    CHECK(table.size() == 1, "3805 AC1: exactly one live namesake");
+    CHECK(!old_fiber->is_done(), "3805 AC1: #2661 preserved after replace");
+
+    if (!prev_s.empty())
+        ::setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", prev_s.c_str(), 1);
+    else
+        ::unsetenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS");
+    apply_dev_audit_defaults();
+}
+
+static void ac3805_2_directory_scope_skip_abandoned_ghost() {
+    using aura::orch::AgentHandle;
+    using aura::orch::AgentScope;
+    using aura::serve::Fiber;
+    using aura::serve::Scheduler;
+    using aura::serve::mf_mailbox::MultiFiberMailbox;
+    std::println("\n--- #3805 AC2: directory / scope find skip abandoned ghost ---");
+    apply_production_audit_defaults();
+    const char* prev = std::getenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS");
+    std::string prev_s = prev ? prev : "";
+    ::setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", "0", 1);
+
+    Scheduler sched(1);
+    AgentScope scope(sched);
+    auto fiber_owned = std::make_unique<Fiber>([] {});
+    fiber_owned->mark_reclaimed();
+    auto h = make_pending_reclaimed_handle(fiber_owned.get(), "scope-3805", 4096);
+    auto mb = std::make_shared<MultiFiberMailbox>(/*high_water=*/4);
+    h.mailbox = mb;
+    mb.reset();
+    auto& slot = scope.adopt_handle_without_spec_for_test(std::move(h));
+    CHECK(slot.must_wait_reclaimed, "3805 AC2: pending adopted");
+
+    // First find: quota recycle, flags stay. Second find: abandon shape
+    // then #3805 skips the husk as a live target.
+    auto* f1 = scope.find("scope-3805");
+    CHECK(f1 != nullptr, "3805 AC2: first find resolves pending");
+    CHECK(f1->reserved_memory_bytes == 0, "3805 AC2: quota recycled");
+    auto* f2 = scope.find("scope-3805");
+    CHECK(f2 == nullptr, "3805 AC2: abandoned husk not a live find target");
+    CHECK(!fiber_owned->is_done(), "3805 AC2: #2661 body-stack untouched");
+
+    auto snap = scope.directory_snapshot({});
+    bool saw = false;
+    for (const auto& e : snap.entries) {
+        if (e.name == "scope-3805" || e.name.empty())
+            saw = true;
+    }
+    CHECK(!saw, "3805 AC2: directory filters out abandoned ghost");
+
+    // Steal so ~AgentScope does not join a never-started fiber.
+    if (!scope.handles_mut().empty()) {
+        auto taken = std::move(scope.handles_mut()[0]);
+        taken.fiber = nullptr;
+    }
+
+    if (!prev_s.empty())
+        ::setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", prev_s.c_str(), 1);
+    else
+        ::unsetenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS");
+    apply_dev_audit_defaults();
+}
+
+static void ac3805_3_soft_and_done_path_unchanged() {
+    using aura::orch::AgentHandle;
+    using aura::serve::Fiber;
+    using aura::serve::mf_mailbox::MultiFiberMailbox;
+    std::println("\n--- #3805 AC3: Soft deny stays; Done-path retire unchanged ---");
+    // Soft: pending deny (#3467) unchanged — no abandon recycle.
+    apply_dev_audit_defaults();
+    {
+        ::setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", "0", 1);
+        auto fiber_owned = std::make_unique<Fiber>([] {});
+        fiber_owned->mark_reclaimed();
+        auto h = make_pending_reclaimed_handle(fiber_owned.get(), "soft-3805", 4096);
+        auto mb = std::make_shared<MultiFiberMailbox>(/*high_water=*/4);
+        h.mailbox = mb;
+        mb.reset();
+        aura::compiler::AgentNameTable table;
+        CHECK(table.put(std::move(h)) != nullptr, "3805 AC3: soft put lands");
+        CHECK(table.find("soft-3805") != nullptr, "3805 AC3: soft find keeps pending");
+        auto* denied = table.put(make_pending_reclaimed_handle(fiber_owned.get(), "soft-3805", 0));
+        CHECK(denied == nullptr, "3805 AC3: Soft same-name still typed-denied (#3467)");
+        ::unsetenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS");
+    }
+    // Done-path clean retire (#3598) still erase+insert under production.
+    apply_production_audit_defaults();
+    {
+        aura::compiler::AgentNameTable table;
+        AgentHandle h;
+        h.ok = true;
+        h.name = "done-3805";
+        h.reserved_memory_bytes = 0;
+        CHECK(aura::orch::slot_is_reclaimable_clean(h), "3805 AC3: clean predicate");
+        CHECK(table.put(std::move(h)) != nullptr, "3805 AC3: clean put");
+        CHECK(table.find("done-3805") == nullptr, "3805 AC3: find retires clean (#3598)");
+        AgentHandle h2;
+        h2.ok = true;
+        h2.name = "done-3805";
+        auto fiber = std::make_unique<Fiber>([] {});
+        h2.fiber = fiber.get();
+        h2.reserved_memory_bytes = 64;
+        auto* fresh = table.put(std::move(h2));
+        CHECK(fresh != nullptr, "3805 AC3: Done-path same-name fresh insert");
+        CHECK(fresh->fiber == fiber.get(), "3805 AC3: fresh fiber installed");
+    }
+    apply_dev_audit_defaults();
+}
+
+static void ac3805_4_no_body_stack_free_on_retire() {
+    using aura::serve::Fiber;
+    using aura::serve::mf_mailbox::MultiFiberMailbox;
+    std::println("
+--- #3805 AC4: #2661 — retire never frees body-stack while !is_done ---");
+    apply_production_audit_defaults();
+    const char* prev = std::getenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS");
+    std::string prev_s = prev ? prev : "";
+    ::setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", "0", 1);
+    auto fiber_owned = std::make_unique<Fiber>([] {});
+    fiber_owned->mark_reclaimed();
+    auto h = make_pending_reclaimed_handle(fiber_owned.get(), "live-3805", 4096);
+    auto mb = std::make_shared<MultiFiberMailbox>(/*high_water=*/4);
+    h.mailbox = mb;
+    mb.reset();
+    aura::compiler::AgentNameTable table;
+    CHECK(table.put(std::move(h)) != nullptr, "3805 AC4: put");
+    (void)table.find("live-3805"); // quota
+    CHECK(table.find("live-3805") == nullptr, "3805 AC4: abandon + retire");
+    CHECK(!fiber_owned->is_done(), "3805 AC4: fiber object still live after map erase");
+
+    // Direct abandon-shape husk under the map key → put retires via
+    // erase+insert (never move-assign); body-stack untouched.
+    auto f2 = std::make_unique<Fiber>([] {});
+    f2->mark_reclaimed();
+    aura::orch::AgentHandle husk;
+    husk.ok = true;
+    husk.fiber = f2.get();
+    husk.name.clear();
+    husk.mailbox.reset();
+    husk.reserved_memory_bytes = 0;
+    husk.must_wait_reclaimed = false;
+    husk.reclaimed_deferred_cleanup = false;
+    CHECK(aura::orch::slot_is_abandoned_live(husk), "3805 AC4: predicate matches");
+    // Emplace abandoned husk under a concrete map key by temporarily
+    // naming it for put, then clearing fields on the stored slot.
+    aura::orch::AgentHandle seed;
+    seed.ok = true;
+    seed.name = "shape-3805";
+    seed.fiber = f2.get();
+    seed.reserved_memory_bytes = 0;
+    CHECK(table.put(std::move(seed)) != nullptr, "3805 AC4: seed named slot");
+    // Force abandon shape on the stored slot without going through recycle
+    // (avoids double-count); put of same name must retire+insert.
+    {
+        // Re-find without recycle: Soft briefly to skip force-recycle.
+        apply_dev_audit_defaults();
+        auto* slot = table.find("shape-3805");
+        CHECK(slot != nullptr, "3805 AC4: soft find keeps seed");
+        slot->name.clear();
+        slot->mailbox.reset();
+        slot->must_wait_reclaimed = false;
+        slot->reclaimed_deferred_cleanup = false;
+        slot->reserved_memory_bytes = 0;
+        CHECK(aura::orch::slot_is_abandoned_live(*slot), "3805 AC4: slot is abandoned-live");
+        apply_production_audit_defaults();
+    }
+    auto new_f = std::make_unique<Fiber>([] {});
+    auto* again = table.put(make_pending_reclaimed_handle(new_f.get(), "shape-3805", 0));
+    CHECK(again != nullptr, "3805 AC4: put retires abandoned + fresh insert");
+    CHECK(again->fiber == new_f.get(), "3805 AC4: new fiber in slot");
+    CHECK(!f2->is_done(), "3805 AC4: #2661 old body after put-retire");
+
+    if (!prev_s.empty())
+        ::setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", prev_s.c_str(), 1);
+    else
+        ::unsetenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS");
+    apply_dev_audit_defaults();
+}
+
+static void ac3805_5_source_cite_and_linter() {
+    std::println("\n--- #3805 AC5: source-cite + linter + no invent ---");
+    const auto spawn = read_file("src/orch/agent_spawn.h");
+    CHECK(spawn.find("slot_is_abandoned_live") != std::string::npos, "3805 AC5: predicate");
+    CHECK(spawn.find("kAbandonedLiveNameReuseIssue = 3805") != std::string::npos,
+          "3805 AC5: issue constant");
+    CHECK(spawn.find("Issue #3805") != std::string::npos, "3805 AC5: cite");
+    const auto nametable = read_file("src/compiler/agent_name_table.h");
+    CHECK(nametable.find("slot_is_abandoned_live") != std::string::npos,
+          "3805 AC5: name-table cite");
+    const auto scopeh = read_file("src/orch/agent_scope.h");
+    CHECK(scopeh.find("slot_is_abandoned_live") != std::string::npos, "3805 AC5: scope cite");
+    CHECK(read_file("scripts/coverage/checks/check_abandoned_live_name_reuse_3805.py").find(
+              "3805") != std::string::npos,
+          "3805 AC5: linter present");
+    CHECK(read_file("tests/orch/test_issue_3805.cpp").empty() &&
+              read_file("tests/issues/test_issue_3805.cpp").empty(),
+          "3805 AC5: no test_issue_3805.cpp per #81967");
+    CHECK(read_file("docs/design/3805-abandoned-live-name-reuse.md").empty(),
+          "3805 AC5: no docs/design/3805-* per #1655");
+    const auto prim = read_file("src/compiler/evaluator_primitives_agent.cpp");
+    CHECK(prim.find("abandoned-live-name-reuse") == std::string::npos,
+          "3805 AC5: no new query key");
 }
 
 static void ac3644_5_source_cite_and_no_invent() {
@@ -6047,6 +6290,13 @@ int run_test_join_drain_reclaim() {
     ac3644_3_soft_no_recycle();
     ac3644_4_not_stuck_no_recycle_deny_and_wait_intact();
     ac3644_5_source_cite_and_no_invent();
+
+    std::println("\n=== Issue #3805: abandon-live name reuse — retire, no move-assign ===");
+    ac3805_1_put_retires_abandoned_live_not_move_assign();
+    ac3805_2_directory_scope_skip_abandoned_ghost();
+    ac3805_3_soft_and_done_path_unchanged();
+    ac3805_4_no_body_stack_free_on_retire();
+    ac3805_5_source_cite_and_linter();
 
     std::println("\n=== Results: {} passed, {} failed ===", aura::test::g_passed,
                  aura::test::g_failed);
