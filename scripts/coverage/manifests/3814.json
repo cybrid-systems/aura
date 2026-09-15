@@ -1,0 +1,29 @@
+{
+  "issue": 3814,
+  "title": "Issue #3814: Sticky force-JIT empty residual — FallBackJit observe-only + heal belt",
+  "ok": "OK: Issue #3814 sticky force empty residual",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/hot_update_registry.cpp",
+      "contains": ["Issue #3814", "FallBackJit", "Observe-only (#2953)"]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/aot_hot_update_health.hh",
+      "contains": ["RequireAgentRepromote", "sticky-force-empty-residual", "require-agent-repromote"]
+    },
+    {
+      "ac": "AC4-tests",
+      "path": "tests/compiler/test_issue_3096.cpp",
+      "contains": ["ac3814_sticky_force_empty_residual_heal"]
+    },
+    {
+      "ac": "AC5",
+      "forbid": [
+        "tests/compiler/test_issue_3814.cpp",
+        "docs/design/3814-sticky-force-empty-residual.md"
+      ]
+    }
+  ]
+}

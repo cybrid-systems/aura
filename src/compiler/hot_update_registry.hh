@@ -304,8 +304,10 @@ public:
     void set_force_eval_owner(void* eval_ptr) noexcept;
     // Production-only observe: age residual bits across outermost
     // BoundaryExits (success or fail — Issue #3248). Soft / idle
-    // residual==0 → one/two loads, no counter. Never reemits from
+    // force==0&&residual==0 → few loads, no counter. Never reemits from
     // the observe itself; #3096 auto-heal is a separate gated pass.
+    // Issue #3814: also ages FallBackJit face (force!=0 && residual==0)
+    // and clears covered demotion after the same 256-exit gate.
     void observe_residual_force_stale() noexcept;
     void reset_residual_force_observe_for_test() noexcept;
     // Issue #3096 test isolation: stamp force-JIT mask / exhaust retry

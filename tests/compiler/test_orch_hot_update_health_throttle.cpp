@@ -168,9 +168,26 @@ static void ac3_priority() {
 
     s = {};
     s.force_jit_regions_mask = 4;
+    s.residual_force_mask = 4; // residual bits still uncovered
     r = compute_aot_hot_update_health(s);
     d = decide_hot_update_throttle(r);
-    CHECK(d.action == HotUpdateThrottleAction::SplitBatch, "AC3: force-jit → split-batch");
+    CHECK(d.action == HotUpdateThrottleAction::SplitBatch,
+          "AC3: force-jit + residual → split-batch");
+
+    // Issue #3814: sticky force with empty residual → RequireAgentRepromote
+    // (distinct from SplitBatch). Playbook FallBackJit stays observe-only.
+    s = {};
+    s.force_jit_regions_mask = 4;
+    s.residual_force_mask = 0;
+    r = compute_aot_hot_update_health(s);
+    CHECK(r.advisory_reason == "sticky-force-empty-residual",
+          "AC3814: advisory sticky-force-empty-residual");
+    d = decide_hot_update_throttle(r);
+    CHECK(d.throttle, "AC3814: throttle under sticky force empty residual");
+    CHECK(d.action == HotUpdateThrottleAction::RequireAgentRepromote,
+          "AC3814: force+empty-residual → require-agent-repromote");
+    CHECK(d.action_name == "require-agent-repromote", "AC3814: action_name");
+    CHECK(d.max_concurrency_cap == 1, "AC3814: cap concurrency=1");
 
     s = {};
     s.epoch_invariant_violation_total = 1;

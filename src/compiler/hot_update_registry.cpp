@@ -862,11 +862,19 @@ void HotUpdateRegistry::reset_residual_force_observe_for_test() noexcept {
 // residual_force_auto_heal_last_mask_). Soft / Off is zero-cost:
 // early-returned before the auto-heal check. Never auto-heal under
 // Soft / Off / budget=0 / storm still active.
+//
+// Issue #3814: extend the same age belt to the FallBackJit face
+// (force_jit_regions_mask != 0 && residual_force_mask == 0). Playbook
+// FallBackJit stays observe-only (#2953). maybe_coverage_verify_min_dirty
+// no-ops when residual==0 (#2952 — re-promote owns clear), so this face
+// clears covered demotion bits after the same 256-exit gate (production
+// only; never Soft wholesale). Caps one-shot per force-mask generation.
 void HotUpdateRegistry::observe_residual_force_stale() noexcept {
     if (aura_production_defaults_active_probe() == 0)
         return; // Soft / Off: zero extra walk
+    const auto force = force_jit_regions_mask_.load(std::memory_order_relaxed);
     const auto residual = residual_force_mask();
-    if (residual == 0) {
+    if (residual == 0 && force == 0) {
         residual_force_observe_age_.store(0, std::memory_order_relaxed);
         residual_force_observe_last_mask_.store(0, std::memory_order_relaxed);
         // Issue #3096: idle mask → reset auto-heal cap (next residual
@@ -874,12 +882,16 @@ void HotUpdateRegistry::observe_residual_force_stale() noexcept {
         residual_force_auto_heal_last_mask_.store(0, std::memory_order_relaxed);
         return;
     }
+    // Issue #3814: FallBackJit face — force sticky, residual empty
+    // (fully covered). Age the force mask itself; heal clears demotion
+    // (covered clear — Soft already returned above).
+    const auto gen = residual != 0 ? residual : force;
     const auto prev = residual_force_observe_last_mask_.load(std::memory_order_relaxed);
-    if (prev != residual) {
-        residual_force_observe_last_mask_.store(residual, std::memory_order_relaxed);
+    if (prev != gen) {
+        residual_force_observe_last_mask_.store(gen, std::memory_order_relaxed);
         residual_force_observe_age_.store(1, std::memory_order_relaxed);
-        // Issue #3096: mask changed → next auto-heal fires for this new
-        // generation (cap reset).
+        // Issue #3096 / #3814: mask/face changed → next auto-heal fires
+        // for this new generation (cap reset).
         residual_force_auto_heal_last_mask_.store(0, std::memory_order_relaxed);
         return;
     }
@@ -893,13 +905,13 @@ void HotUpdateRegistry::observe_residual_force_stale() noexcept {
         // auto-heal threshold (kAutoHealExits=256) is a separate gate that
         // only fires after 8 stale observations without recovery.
     }
-    // Issue #3096: production-only bounded auto-heal gate.
+    // Issue #3096 / #3814: production-only bounded auto-heal gate.
     constexpr std::uint64_t kAutoHealExits = 256;
     if (age >= kAutoHealExits) {
-        // Cap: at most one auto-heal per residual mask generation.
+        // Cap: at most one auto-heal per residual/force mask generation.
         const auto last_heal_mask =
             residual_force_auto_heal_last_mask_.load(std::memory_order_relaxed);
-        if (last_heal_mask == residual) {
+        if (last_heal_mask == gen) {
             return; // already fired for this mask generation
         }
         // Check exhausted retry budget == 0 (#3096 AC1).
@@ -912,13 +924,30 @@ void HotUpdateRegistry::observe_residual_force_stale() noexcept {
         if (current_storm_level() != StormLevel::None || hard_storm_active())
             return;
         // Trigger auto-heal: bump counter, set cap flag, reset age.
-        residual_force_auto_heal_last_mask_.store(residual, std::memory_order_relaxed);
+        residual_force_auto_heal_last_mask_.store(gen, std::memory_order_relaxed);
         residual_force_auto_heal_total_.fetch_add(1, std::memory_order_relaxed);
         residual_force_observe_age_.store(0, std::memory_order_relaxed);
-        // Drive coverage-verify min-dirty. Issue #3221: this age-gated
-        // auto-heal is ResidualForceHeal (not Cascade dirty). Storm-clear
-        // / drain still use CoverageVerify via the default argument.
-        (void)maybe_coverage_verify_min_dirty(ReemitReason::ResidualForceHeal);
+        if (residual != 0) {
+            // Drive coverage-verify min-dirty. Issue #3221: this age-gated
+            // auto-heal is ResidualForceHeal (not Cascade dirty). Storm-clear
+            // / drain still use CoverageVerify via the default argument.
+            (void)maybe_coverage_verify_min_dirty(ReemitReason::ResidualForceHeal);
+            return;
+        }
+        // Issue #3814: residual empty + force sticky (FallBackJit).
+        // maybe_coverage_verify_min_dirty returns false when residual==0
+        // (re-promote owns clear). Clear covered demotion here — force ⊆
+        // last_success by construction of residual==0. Not Soft wholesale
+        // (Soft early-returned). Not playbook auto-FallBackJit execution.
+        const auto reason = last_force_jit_reason_.load(std::memory_order_relaxed);
+        force_jit_regions_mask_.store(0, std::memory_order_relaxed);
+        clear_eval_force_slots();
+        force_jit_stable_successes_.store(0, std::memory_order_relaxed);
+        reemit_success_coverage_override_.store(0, std::memory_order_relaxed);
+        force_jit_repromote_total_.fetch_add(1, std::memory_order_relaxed);
+        last_force_jit_repromote_reason_.store(reason, std::memory_order_release);
+        last_force_jit_repromote_at_epoch_notify_.store(
+            epoch_notify_.load(std::memory_order_relaxed), std::memory_order_relaxed);
     }
 }
 
@@ -2884,7 +2913,9 @@ aura_reload_recovery_playbook_decide(const ReloadRecoveryPlaybookInput& in) noex
         out.action = ReloadRecoveryPlaybookAction::Reemit;
         return out;
     }
-    // 6. fall-back-jit — force mask only (covered residual empty; demotion sticky)
+    // 6. fall-back-jit — force mask only (covered residual empty; demotion sticky).
+    // Observe-only (#2953). Production leave belt: #3814 extends
+    // ResidualForceHeal age to this face + orch RequireAgentRepromote.
     if (in.force_jit_regions_mask != 0) {
         out.action = ReloadRecoveryPlaybookAction::FallBackJit;
         return out;

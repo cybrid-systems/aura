@@ -62,6 +62,11 @@ inline constexpr int kAotHotUpdateHealthThrottleIssue = 2543;
 // Advisory only — no health_bp change, no auto-clear, no auto-recovery;
 // orch decides (#2543 semantics, playbook stays observe-only).
 inline constexpr std::uint64_t kRegionForceStarveAdvisoryMs = 30000;
+// Issue #3814: sticky force-JIT with empty residual (FallBackJit face).
+// Playbook FallBackJit stays observe-only; production ResidualForceHeal
+// belt ages this face (#3814); orch surfaces RequireAgentRepromote
+// distinct from SplitBatch so Agents are not ritual-bound.
+inline constexpr int kStickyForceEmptyResidualIssue = 3814;
 
 struct AotHotUpdateHealthSnapshot {
     // ReloadRecoveryState core (#2302 / #2367).
@@ -84,6 +89,9 @@ struct AotHotUpdateHealthSnapshot {
     // Issue #3636: per-region force watermark (advisory only).
     std::uint64_t region_force_max_age_ms = 0;
     std::uint8_t region_force_starve = 0;
+    // Issue #3814: residual = force & ~last_success (FallBackJit when
+    // force!=0 && residual==0). Soft vacuous default 0.
+    std::uint64_t residual_force_mask = 0;
 };
 
 struct AotHotUpdateHealthResult {
@@ -179,10 +187,13 @@ compute_aot_hot_update_health(const AotHotUpdateHealthSnapshot& s) noexcept {
                             ? 1
                             : 0;
 
-    // Issue #3636: advisory escalation reason — no bp change, no
+    // Issue #3636 / #3814: advisory escalation reason — no bp change, no
     // force_reason change (#2543 semantics: orch decides; observe-only).
+    // region-force-starve wins over sticky-force-empty-residual when both.
     if (s.region_force_starve != 0)
         r.advisory_reason = "region-force-starve";
+    else if (s.force_jit_regions_mask != 0 && s.residual_force_mask == 0)
+        r.advisory_reason = "sticky-force-empty-residual";
 
     // force_reason priority (hard first). Independent of budget.
     if (has_storm(s)) {
@@ -215,7 +226,10 @@ compute_aot_hot_update_health(const AotHotUpdateHealthSnapshot& s) noexcept {
 // Advisory only (never hard-fails mutate / spawn). When
 // health_bp < health_budget_bp, map force_reason_code → action:
 //
-//   storm (1) / force-jit (2)     → split-batch   (cap concurrency=1)
+//   storm (1)                     → split-batch   (cap concurrency=1)
+//   force-jit (2) + residual!=0   → split-batch   (cap concurrency=1)
+//   force-jit (2) + residual==0   → require-agent-repromote (#3814)
+//                                   (cap concurrency=1; distinct from SplitBatch)
 //   reload-fail (3) / remount (4) /
 //     epoch-invariant (5)         → delay-mutate  (cap concurrency=2)
 //   deferred-reemit (6)           → skip-reemit   (cap concurrency=4)
@@ -227,6 +241,10 @@ enum class HotUpdateThrottleAction : std::uint8_t {
     SplitBatch = 1,
     DelayMutate = 2,
     SkipReemit = 3,
+    // Issue #3814: sticky force-JIT demotion with empty residual
+    // (FallBackJit face). Hard Agent-binding beyond SplitBatch; production
+    // also ages ResidualForceHeal belt to clear covered demotion.
+    RequireAgentRepromote = 4,
 };
 
 struct HotUpdateThrottleDecision {
@@ -253,10 +271,21 @@ decide_hot_update_throttle(const AotHotUpdateHealthResult& h) noexcept {
     d.throttle = true;
     switch (h.force_reason_code) {
         case 1: // storm
-        case 2: // force-jit
             d.action = HotUpdateThrottleAction::SplitBatch;
             d.action_name = "split-batch";
             d.max_concurrency_cap = 1;
+            break;
+        case 2: // force-jit — Issue #3814: empty residual → Agent bind
+            if (h.components.force_jit_regions_mask != 0 &&
+                h.components.residual_force_mask == 0) {
+                d.action = HotUpdateThrottleAction::RequireAgentRepromote;
+                d.action_name = "require-agent-repromote";
+                d.max_concurrency_cap = 1;
+            } else {
+                d.action = HotUpdateThrottleAction::SplitBatch;
+                d.action_name = "split-batch";
+                d.max_concurrency_cap = 1;
+            }
             break;
         case 3: // reload-fail
         case 4: // remount-fail
@@ -288,6 +317,10 @@ decide_hot_update_throttle(const AotHotUpdateHealthResult& h) noexcept {
     aura_hot_update_reload_recovery_get_snapshot(&rs);
     snap.attempts_left = static_cast<std::uint32_t>(rs.attempts_left);
     snap.force_jit_regions_mask = static_cast<std::uint64_t>(rs.force_jit_regions_mask);
+    // Issue #3814: residual for FallBackJit Agent-binding (force & ~last).
+    snap.residual_force_mask =
+        snap.force_jit_regions_mask &
+        ~static_cast<std::uint64_t>(rs.last_reemit_success_region_mask);
     snap.pending_dirty_count = static_cast<std::uint64_t>(rs.pending_dirty_count);
     snap.deferred_reemit_pending = static_cast<std::uint8_t>(rs.deferred_reemit_pending);
     snap.storm_level = static_cast<std::uint8_t>(rs.storm_level);
@@ -340,7 +373,8 @@ apply_hot_update_health_concurrency_cap(std::uint32_t requested) noexcept {
     const auto d = orch_hot_update_health_throttle_tick();
     return d.throttle && (d.action == HotUpdateThrottleAction::SkipReemit ||
                           d.action == HotUpdateThrottleAction::SplitBatch ||
-                          d.action == HotUpdateThrottleAction::DelayMutate);
+                          d.action == HotUpdateThrottleAction::DelayMutate ||
+                          d.action == HotUpdateThrottleAction::RequireAgentRepromote);
 }
 
 } // namespace aura::compiler
