@@ -5067,6 +5067,19 @@ def cmd_lint():
             "Issue #3827 query children/parent schema-2 linter failed — run python3 scripts/coverage/checks/check_query_children_parent_schema2_3827.py"
         )
         return r
+    # Issue #3828: mutate:from-verification-feedback must register via
+    # add_mutate SSOT (not raw add in compile.cpp). Soft dormant #f OK.
+    # Extends test_mutate_batch.cpp (#81967); no docs/design/ (#1655).
+    mffs3828_script = COVERAGE_CHECKS / "check_mutate_from_feedback_ssot_3828.py"
+    if not mffs3828_script.exists():
+        fail(f"missing {mffs3828_script}")
+        return 1
+    r = run([sys.executable, str(mffs3828_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3828 mutate from-verification-feedback SSOT linter failed — run python3 scripts/coverage/checks/check_mutate_from_feedback_ssot_3828.py"
+        )
+        return r
     # Issue #3802: EXEMPT_2ARG write-file/sys-* host-path isolation under
     # Restricted+MT / Strict — resolve under tenant root from
     # capability_tenant_id_; cross-tenant escape → IsolationDeny SE
@@ -15213,6 +15226,26 @@ def cmd_query_children_parent_schema2_3827():
     return cmd_query_children_parent_schema2_3827_coverage()
 
 
+def cmd_mutate_from_feedback_ssot_3828_coverage():
+    """Issue #3828: from-verification-feedback add_mutate SSOT (static)."""
+    print(f"{B}=== mutate from-verification-feedback SSOT (#3828) ==={N}")
+    script = COVERAGE_CHECKS / "check_mutate_from_feedback_ssot_3828.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    if run([sys.executable, str(script)], cwd=ROOT) != 0:
+        fail("mutate from-verification-feedback SSOT (#3828) coverage contract rows failed")
+        return 1
+    ok("mutate from-verification-feedback SSOT (#3828) coverage clean")
+    return 0
+
+
+def cmd_mutate_from_feedback_ssot_3828():
+    """Issue #3828: route from-verification-feedback through add_mutate SSOT."""
+    print(f"{B}=== mutate from-verification-feedback SSOT (#3828) ==={N}")
+    return cmd_mutate_from_feedback_ssot_3828_coverage()
+
+
 def cmd_engine_metrics_hash_overflow_3018_coverage():
     """Issue #3018: engine:metrics hash overflow fail-soft (static)."""
     print(f"{B}=== engine:metrics hash overflow coverage (#3018) ==={N}")
@@ -23184,6 +23217,8 @@ def main():
         "chaos-production-readiness-3073": cmd_chaos_production_readiness_3073,
         "chaos-production-readiness-3073-coverage": cmd_chaos_production_readiness_3073_coverage,
         "mutate-dispatch-sole-guard-3074": cmd_mutate_dispatch_sole_guard_3074,
+        "mutate-from-feedback-ssot-3828": cmd_mutate_from_feedback_ssot_3828,
+        "mutate-from-feedback-ssot-3828-coverage": cmd_mutate_from_feedback_ssot_3828_coverage,
         "mutate-dispatch-sole-guard-3074-coverage": cmd_mutate_dispatch_sole_guard_3074_coverage,
         "mutate-reg-kind-3452": cmd_mutate_reg_kind_3452_coverage,
         "mutate-reg-kind-3452-coverage": cmd_mutate_reg_kind_3452_coverage,

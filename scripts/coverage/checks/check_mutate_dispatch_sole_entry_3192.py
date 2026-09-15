@@ -128,6 +128,16 @@ def main() -> int:
     if not (Path(__file__).is_file() and "check_mutate_dispatch_sole_entry_3192" in Path(__file__).name):
         fails.append("AC2: linter path/name")
 
+    # Issue #3828: compile.cpp must not host raw add("mutate: (SSOT is
+    # add_mutate in mutate primitive files). Soft dormant faces still count.
+    compile_cpp = _read("src/compiler/evaluator_primitives_compile.cpp")
+    for i, ln in enumerate(compile_cpp.splitlines(), 1):
+        s = ln.lstrip()
+        if s.startswith("//") or s.startswith("*"):
+            continue
+        if 'add("mutate:' in ln:
+            fails.append(f"AC2/#3828: raw add(\"mutate: in compile.cpp:{i} (route via add_mutate)")
+
     # AC3 — nested atomic-batch suppress_bump / single-commit bump unchanged.
     # Issue #3019 / #3166 semantics preserved; verify the existing
     # Issue #3019 / #3166 surface comments are still in the boundary code.

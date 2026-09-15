@@ -98,6 +98,28 @@ def main() -> int:
     must("MutateRegKind", "AC3452 kind", hh)
     must("kMutateRegKindIssue = 3452", "AC3452 stamp", hh)
 
+    # Issue #3828: raw add("mutate: outside MetadataGuardExempt is also
+    # forbidden in evaluator_primitives_compile.cpp (pre-#3828 leak site).
+    compile_cpp = _read("src/compiler/evaluator_primitives_compile.cpp")
+    clines = compile_cpp.splitlines()
+    for i, ln in enumerate(clines, 1):
+        s = ln.lstrip()
+        if s.startswith("//") or s.startswith("*"):
+            continue
+        if 'add("mutate:' not in ln:
+            continue
+        win = "\n".join(clines[max(0, i - 12) : i + 16])
+        if "GUARD_EXEMPT" not in win or "MetadataGuardExempt" not in win:
+            fails.append(
+                f'AC3452/#3828: raw add("mutate: at compile.cpp:{i} is not GUARD_EXEMPT + MetadataGuardExempt'
+            )
+    must("kMutateFromVerificationFeedbackSsotIssue = 3828", "AC3452 #3828 stamp", hh)
+    must('add_mutate(', "AC3452 #3828 add_mutate face", mut)
+    if 'add("mutate:from-verification-feedback"' in compile_cpp:
+        fails.append("AC3452/#3828: mutate:from-verification-feedback still raw-add in compile.cpp")
+    if 'add_mutate(' not in mut or '"mutate:from-verification-feedback"' not in mut:
+        fails.append("AC3452/#3828: mutate:from-verification-feedback missing add_mutate in mutate.cpp")
+
     must("mutate_dispatch_note", "AC3", hh)
     if "simulate applied" in hh:
         fails.append("AC3: simulate applied path still present")

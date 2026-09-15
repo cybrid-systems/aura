@@ -1,0 +1,35 @@
+{
+  "issue": 3828,
+  "title": "Issue #3828: mutate:from-verification-feedback via add_mutate SSOT",
+  "ok": "OK: Issue #3828 mutate from-verification-feedback SSOT",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_primitives_compile.cpp",
+      "contains": ["Issue #3828", "add_mutate SSOT"]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/evaluator_primitives_mutate.cpp",
+      "contains": ["mutate:from-verification-feedback", "add_mutate", "resolve_mutate_node_arg", "a.subspan(1)"]
+    },
+    {
+      "ac": "AC2-stamp",
+      "path": "src/compiler/mutate_dispatch.hh",
+      "contains": ["kMutateFromVerificationFeedbackSsotIssue = 3828"]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/compiler/test_mutate_batch.cpp",
+      "contains": ["test_ac3828_"]
+    },
+    {
+      "ac": "AC4",
+      "forbid": [
+        "tests/compiler/test_issue_3828.cpp",
+        "tests/issues/test_issue_3828.cpp",
+        "docs/design/3828-mutate-from-feedback-ssot.md"
+      ]
+    }
+  ]
+}

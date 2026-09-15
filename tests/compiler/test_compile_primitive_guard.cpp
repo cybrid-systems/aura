@@ -89,14 +89,28 @@ int main() {
 
         for (const char* prim :
              {"\"compile:mark-block-dirty!\"", "\"compile:clear-block-dirty!\"",
-              "\"compile:mark-instruction-dirty!\"", "\"compile:clear-instruction-dirty!\"",
-              "\"mutate:from-verification-feedback\""}) {
+              "\"compile:mark-instruction-dirty!\"", "\"compile:clear-instruction-dirty!\""}) {
             auto pos = src.find(prim);
             CHECK(pos != std::string::npos, std::string("primitive ") + prim);
             // Window around registration should reference Guard helper.
             auto win = src.substr(pos, 2800);
             CHECK(win.find("run_compile_dirty_under_guard") != std::string::npos,
                   std::string(prim) + " uses helper");
+        }
+        // Issue #3828: from-verification-feedback moved to mutate.cpp add_mutate.
+        {
+            std::string msrc;
+            for (const char* path : {"src/compiler/evaluator_primitives_mutate.cpp",
+                                     "../src/compiler/evaluator_primitives_mutate.cpp"}) {
+                msrc = read_file(path);
+                if (!msrc.empty())
+                    break;
+            }
+            CHECK(msrc.find("\"mutate:from-verification-feedback\"") != std::string::npos,
+                  "3828: feedback prim in mutate.cpp");
+            auto mpos = msrc.find("\"mutate:from-verification-feedback\"");
+            CHECK(msrc.substr(mpos > 80 ? mpos - 80 : 0, 80).find("add_mutate") != std::string::npos,
+                  "3828: feedback via add_mutate");
         }
     }
 

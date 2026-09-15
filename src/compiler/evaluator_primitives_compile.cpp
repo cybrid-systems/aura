@@ -3468,80 +3468,15 @@ void CompilePrims::register_compile_p33(PrimRegistrar add, Evaluator& ev) {
 
 // Issue #909 compile part 34 (orig 2590-2735)
 void CompilePrims::register_compile_p34(PrimRegistrar add, Evaluator& ev) {
-
-    // Issue #802: (mutate:from-verification-feedback strategy node-id payload)
-    // — strategy-driven structured SV mutate under Guard with StableNodeRef
-    // capture. Delegates to existing eda:weaken-property / eda:add-coverpoint-bin /
-    // eda:update-constraint primitives.
-    //
-    // Issue #1896: wrap delegation under try_acquire Guard so a throw from
-    // nested eda:* cannot leave partial structured mutate state without
-    // panic-checkpoint restore (NodeId validated before Guard).
-    // AURA_SIDE_EFFECT_PRIM — verification-feedback mutate (#2057).
-    // Issue #2839: NodeId-only entry uses require_effect_for_node_id so
-    // isolation + capability fire on a stamped ref before body (no
-    // 2-arg default ref_tenant=0 window).
-    // Issue #2881: this site is the canonical #2881 residual-coverage
-    // example — first NodeId-only verify-feedback prim migrated to
-    // require_effect_for_node_id, drives the coverage linter inventory.
-    // Issue #3040: remaining compile:/verify:/syntax: NodeId writers use
-    // gate_compile_node_effect (for_node_id / on_ref) the same way.
-    add("mutate:from-verification-feedback", [&ev](const auto& a) -> EvalValue {
-        using aura::compiler::security::kEffectMutate;
-        if (a.size() < 3 || !is_string(a[0]) || !is_int(a[1]) || !is_string(a[2]))
-            return make_bool(false);
-        auto strategy_idx = as_string_idx(a[0]);
-        if (strategy_idx >= ev.string_heap_.size())
-            return make_bool(false);
-        const auto& strategy = ev.string_heap_[strategy_idx];
-        const auto node_id = static_cast<std::int64_t>(as_int(a[1]));
-        auto payload_idx = as_string_idx(a[2]);
-        if (payload_idx >= ev.string_heap_.size())
-            return make_bool(false);
-        // Issue #2839: stamp + require_effect_on_ref before Guard body.
-        if (!ev.require_effect_for_node_id(kEffectMutate, "mutate:from-verification-feedback",
-                                           static_cast<ast::NodeId>(node_id)))
-            return make_bool(false);
-        // Issue #1772: validate NodeId before eda:* delegation so invalid
-        // agent targets are observable (mutate_from_feedback_invalid_node_total)
-        // and never rely solely on each delegate's optional OOB check.
-        if (auto* ws = ev.workspace_flat()) {
-            if (node_id < 0 || static_cast<std::uint64_t>(node_id) >= ws->size()) {
-                if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
-                    m->mutate_from_feedback_invalid_node_total.fetch_add(1,
-                                                                         std::memory_order_relaxed);
-                return make_bool(false);
-            }
-        } else {
-            // No workspace: cannot resolve NodeId — treat as invalid target.
-            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
-                m->mutate_from_feedback_invalid_node_total.fetch_add(1, std::memory_order_relaxed);
-            return make_bool(false);
-        }
-        return run_compile_dirty_under_guard(ev, [&]() -> EvalValue {
-            auto delegate = [&](const char* name) -> bool {
-                auto fn = ev.primitives_.lookup(name);
-                if (!fn)
-                    return false;
-                auto r = (*fn)({make_int(node_id), make_string(payload_idx)});
-                return is_bool(r) && as_bool(r);
-            };
-            bool ok = false;
-            if (strategy == "weaken-property" || strategy == "assert-fail")
-                ok = false; // eda:weaken-property retired 4.4
-            else if (strategy == "add-coverpoint" || strategy == "coverage-hole")
-                ok = false; // eda:add-coverpoint-bin retired 4.4
-            else if (strategy == "relax-constraint" || strategy == "structural-fix")
-                ok = false; // eda:update-constraint retired 4.4
-            if (!ok)
-                return make_bool(false);
-            ev.bump_sv_self_evo_structured_mutate();
-            ev.bump_sv_self_evo_closed_loop_rounds();
-            ev.bump_sv_self_evo_convergence_hits();
-            ev.bump_closed_loop_feedback_mutate_round();
-            return make_bool(true);
-        });
-    });
+    // Issue #3828: mutate:from-verification-feedback moved to
+    // evaluator_primitives_mutate.cpp via add_mutate SSOT (Guard metrics /
+    // #3697 persist-reject / RO fence / naked belt / #3395 packed-ref).
+    // Soft dormant #f body remains until strategies return. Do not re-add
+    // raw add("mutate: here — sole_guard / #3192 / #3828 gates fail it.
+    // Issue #2881 lineage: canonical NodeId-only residual-coverage example
+    // now lives with the add_mutate registration (still cites #2881 there).
+    (void)add;
+    (void)ev;
 }
 
 // Issue #909 compile part 35 (orig 2736-2875)

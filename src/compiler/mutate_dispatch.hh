@@ -92,6 +92,10 @@ enum class MutateRegKind : std::uint8_t {
     MetadataGuardExempt = 1,
 };
 inline constexpr int kMutateRegKindIssue = 3452;
+// Issue #3828: mutate:from-verification-feedback registers via add_mutate
+// (not raw add in compile.cpp). Soft dormant #f body OK until strategies
+// return; Production bare-int reject + packed-ref via resolve_mutate_node_arg.
+inline constexpr int kMutateFromVerificationFeedbackSsotIssue = 3828;
 inline thread_local std::uint64_t g_mutate_guard_acquire_gen{0};
 inline void note_mutate_guard_acquire_token() noexcept {
     g_mutate_guard_acquire_gen += 1;
