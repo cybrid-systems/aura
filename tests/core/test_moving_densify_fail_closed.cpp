@@ -4185,6 +4185,78 @@ static void ac3781_5_no_second_registry_or_issue_test() {
           "AC5: coverage linter present");
 }
 
+// ── Issue #3782: densify-entry LCP skip-compact (no relocate-then-poison) ──
+static void ac3782_1_phase5_skips_compact_on_lcp_reject() {
+    const auto mut = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    CHECK(mut.find("Issue #3782") != std::string::npos, "ac3782_1: mut cites #3782");
+    CHECK(mut.find("if (!densify_entry_lcp_blocked)") != std::string::npos,
+          "ac3782_1: Phase-5 guards compact behind !densify_entry_lcp_blocked");
+    CHECK(mut.find("consult_last_lcp_for_densify_entry(static_cast<const void*>(ev_))") !=
+              std::string::npos,
+          "ac3782_1: Phase-5 consult is eval-keyed");
+    // Order: skip guard before the live compact call site.
+    const auto skip = mut.find("if (!densify_entry_lcp_blocked)");
+    const auto call = mut.find("ev_->arena_group_->compact_all_moving_pinned()");
+    CHECK(skip != std::string::npos && call != std::string::npos && skip < call,
+          "ac3782_1: skip guard precedes compact_all_moving_pinned call");
+    CHECK(mut.find("publish_had = had_moving_densify || densify_entry_lcp_blocked") !=
+              std::string::npos,
+          "ac3782_1: blocked window publish uses densify_entry_lcp_blocked");
+}
+
+static void ac3782_2_sticky_recovery_same_skip_order() {
+    const auto mut = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto anchor = mut.find("Issue #3185 AC1: same surface as Phase-5 densify entry");
+    CHECK(anchor != std::string::npos, "ac3782_2: sticky-recovery #3185 anchor present");
+    const auto win = mut.substr(anchor, 4500);
+    CHECK(win.find("Issue #3782") != std::string::npos, "ac3782_2: recovery cites #3782");
+    CHECK(win.find("consult_last_lcp_for_densify_entry(static_cast<const void*>(this))") !=
+              std::string::npos,
+          "ac3782_2: recovery consult is eval-keyed");
+    CHECK(win.find("if (densify_entry_lcp_blocked)") != std::string::npos,
+          "ac3782_2: recovery skip branch on densify_entry_lcp_blocked");
+    CHECK(win.find("publish_last_moving_densify_window") != std::string::npos,
+          "ac3782_2: recovery publishes blocked window when skip");
+    const auto skip = win.find("if (densify_entry_lcp_blocked)");
+    const auto call = win.find("arena_group_->compact_all_moving_pinned()");
+    CHECK(skip != std::string::npos && call != std::string::npos && skip < call,
+          "ac3782_2: recovery compact only after LCP skip branch");
+}
+
+static void ac3782_3_eval_keyed_consult_and_soft_off() {
+    const auto lcp = read_file("src/core/lifetime_consistency_proof.hh");
+    const auto gc = read_file("src/compiler/evaluator_gc.cpp");
+    const auto mut = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    CHECK(lcp.find("consult_last_lcp_for_densify_entry(const void* eval_id") != std::string::npos,
+          "ac3782_3: consult takes eval_id (defaulted)");
+    CHECK(lcp.find("last_lifetime_consistency_proof_present_for(eval_id)") != std::string::npos,
+          "ac3782_3: per-Eval present_for (#3617)");
+    CHECK(lcp.find("last_lifetime_consistency_would_allow_for(eval_id)") != std::string::npos,
+          "ac3782_3: per-Eval would_allow_for (#3617)");
+    // Soft/Off: both sites still behind production_defaults_active || Full.
+    const auto count = [](const std::string& hay, const std::string& needle) {
+        int n = 0;
+        std::size_t pos = 0;
+        while (true) {
+            const auto p = hay.find(needle, pos);
+            if (p == std::string::npos)
+                break;
+            ++n;
+            pos = p + 1;
+        }
+        return n;
+    };
+    CHECK(count(mut, "typed_audit::production_defaults_active() ||") >= 4,
+          "ac3782_3: Soft/Off production_defaults_active guards retained");
+    CHECK(gc.find("consult_last_lcp_for_densify_entry") == std::string::npos,
+          "ac3782_3: evaluator_gc.cpp still does not consult LCP");
+    CHECK(gc.find("Issue #3782") == std::string::npos, "ac3782_3: evaluator_gc.cpp untouched");
+    // No invented issue test (source-cite forbid string only — #81934).
+    CHECK(mut.find("test_issue_3782.cpp") == std::string::npos,
+          "ac3782_3: mut does not invent test_issue_3782.cpp");
+}
+
+
 
 static void ac3647_1_closure_body_slots_registered() {
     std::println("\n--- #3647 AC1: closure body slots enter known-root inventory ---");
@@ -5127,6 +5199,12 @@ int run_test_moving_densify_fail_closed() {
     ac3781_3_recycled_addr_slot_not_rewritten();
     ac3781_4_soft_off_zero_cost();
     ac3781_5_no_second_registry_or_issue_test();
+
+    std::println("\n=== Issue #3782: densify-entry LCP skip-compact "
+                 "(#3185 residual; extends fail_closed per #81967) ===");
+    ac3782_1_phase5_skips_compact_on_lcp_reject();
+    ac3782_2_sticky_recovery_same_skip_order();
+    ac3782_3_eval_keyed_consult_and_soft_off();
 
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;

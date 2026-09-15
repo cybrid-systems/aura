@@ -5104,6 +5104,11 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
         bool densify_root_remap_call_ok = true;
         // Pin axis for the report (pin-verify only when RootRemap fails alone).
         bool densify_pin_axis_ok = true;
+        // Issue #3782: densify-entry LCP block (hoisted so Phase-5 window
+        // publish can mark the attempt fail-closed with objects_moved==0
+        // without setting had_moving_densify — that flag still means
+        // relocated live objects for invalidate/pairing).
+        bool densify_entry_lcp_blocked = false;
         // Issue #2497 / #2559: baseline ownership-scan fail counter BEFORE the
         // Moving densify window opens. Any fail delta across compact + pairing
         // + injected tests must suppress Phase 5 success the same way
@@ -5166,27 +5171,38 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
             // fiber's steal-complete arm), block relocation via the same
             // surface as pin_contract / moving_incomplete_remap (silent
             // fail-closed per AC4 — no new Soft/Off cost).
-            bool densify_entry_lcp_blocked = false;
+            //
+            // Issue #3782: consult is eval-keyed (#3617 slots, #3634 shape).
+            // On stamped reject, SKIP compact_all_moving_pinned (no relocate)
+            // then fail the densify face — prior shape was post-move
+            // success-gate poison (objects could move under reject LCP).
             if (typed_audit::production_defaults_active() ||
                 typed_audit::get_strategy() == typed_audit::AuditStrategy::Full) {
-                auto poll =
-                    aura::core::lifetime_consistency_proof::consult_last_lcp_for_densify_entry();
+                auto poll = aura::core::lifetime_consistency_proof::
+                    consult_last_lcp_for_densify_entry(static_cast<const void*>(ev_));
                 if (poll.present && !poll.would_allow_commit) {
                     densify_entry_lcp_blocked = true;
                     aura::core::lifetime_consistency_proof::g_densify_entry_lcp_blocked_total()
                         .fetch_add(1, std::memory_order_relaxed);
                 }
             }
-            const auto compact_r = ev_->arena_group_
-                                       ? ev_->arena_group_->compact_all_moving_pinned()
-                                       : aura::ast::AdaptiveCompactResult{};
-            if (compact_r.bytes_reclaimed_total > 0) {
-                if (auto* mm = static_cast<CompilerMetrics*>(ev_->compiler_metrics_))
-                    mm->arena_compact_deopt_triggered_total.fetch_add(
-                        static_cast<std::uint64_t>(compact_r.bytes_reclaimed_total),
-                        std::memory_order_relaxed);
+            aura::ast::AdaptiveCompactResult compact_r{};
+            if (!densify_entry_lcp_blocked) {
+                compact_r = ev_->arena_group_
+                                ? ev_->arena_group_->compact_all_moving_pinned()
+                                : aura::ast::AdaptiveCompactResult{};
+                if (compact_r.bytes_reclaimed_total > 0) {
+                    if (auto* mm = static_cast<CompilerMetrics*>(ev_->compiler_metrics_))
+                        mm->arena_compact_deopt_triggered_total.fetch_add(
+                            static_cast<std::uint64_t>(compact_r.bytes_reclaimed_total),
+                            std::memory_order_relaxed);
+                }
+            } else {
+                // Issue #3782: skip relocate; synthetic fail-closed compact
+                // result (objects_moved==0). Face fails via pin_contract.
+                compact_r.pin_contract_held = false;
             }
-            // Issue #3185 AC1: densify-entry LCP block surface.
+            // Issue #3185 AC1 / #3782: densify-entry LCP block surface.
             // Force pin_contract_held=false so the unified success gate
             // (same surface as pin_contract / moving_incomplete_remap) catches
             // the block. Soft / Off already short-circuits above (poll.present
@@ -5519,8 +5535,14 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
                 (void)r;
             }
             if (!auto_recover_attempted) {
+                // Issue #3782: LCP skip-compact leaves had_moving_densify=false
+                // (no relocate) but the densify face still failed closed —
+                // publish as an attempted densify with pin held false so
+                // window_would_allow_mutate is false (mirrors #3200 soft-gate
+                // blocked window: had=true, pin=false, objects_moved=0).
+                const bool publish_had = had_moving_densify || densify_entry_lcp_blocked;
                 aura::core::moving_densify_health::publish_last_moving_densify_window(
-                    had_moving_densify, pin_contract_held && densify_consistency.pin_ok, incomplete,
+                    publish_had, pin_contract_held && densify_consistency.pin_ok, incomplete,
                     static_cast<std::uint64_t>(densify_objects_moved),
                     static_cast<std::uint64_t>(densify_untracked_kept),
                     static_cast<std::uint64_t>(densify_root_remap_fails),
@@ -7134,21 +7156,35 @@ Evaluator::recover_moving_sticky_densify_off(bool retry_densify) noexcept {
         // the success gate (same surface as moving_incomplete_remap)
         // catches the block. Mirror Phase-5 entry pattern (no second
         // proof registry per AC4).
+        //
+        // Issue #3782: eval-keyed consult + skip compact on reject (same
+        // order as Phase-5 — no relocate-then-poison).
         bool densify_entry_lcp_blocked = false;
         if (typed_audit::production_defaults_active() ||
             typed_audit::get_strategy() == typed_audit::AuditStrategy::Full) {
-            auto poll =
-                aura::core::lifetime_consistency_proof::consult_last_lcp_for_densify_entry();
+            auto poll = aura::core::lifetime_consistency_proof::
+                consult_last_lcp_for_densify_entry(static_cast<const void*>(this));
             if (poll.present && !poll.would_allow_commit) {
                 densify_entry_lcp_blocked = true;
                 aura::core::lifetime_consistency_proof::g_densify_entry_lcp_blocked_total()
                     .fetch_add(1, std::memory_order_relaxed);
             }
         }
-        const auto compact_r = arena_group_->compact_all_moving_pinned();
         out.densify_retried = true;
-        out.pin_contract_held = compact_r.pin_contract_held && !densify_entry_lcp_blocked;
-        out.incomplete_remap = compact_r.moving_incomplete_remap_any;
+        if (densify_entry_lcp_blocked) {
+            // Skip compact_all_moving_pinned; publish blocked window with
+            // objects_moved==0 (mirrors #3200 soft-gate blocked publish).
+            out.pin_contract_held = false;
+            out.incomplete_remap = false;
+            aura::core::moving_densify_health::publish_last_moving_densify_window(
+                /*had_moving_densify=*/true, /*pin_contract_held=*/false,
+                /*moving_incomplete_remap=*/false, /*objects_moved=*/0, /*untracked_kept=*/0,
+                /*root_remap_fail_total=*/0);
+        } else {
+            const auto compact_r = arena_group_->compact_all_moving_pinned();
+            out.pin_contract_held = compact_r.pin_contract_held && !densify_entry_lcp_blocked;
+            out.incomplete_remap = compact_r.moving_incomplete_remap_any;
+        }
         aura::core::densify_consistency::g_moving_densify_retry_after_recovery_total.fetch_add(
             1, std::memory_order_relaxed);
         // Clean recovery densify also auto-clears sticky via live_compact /

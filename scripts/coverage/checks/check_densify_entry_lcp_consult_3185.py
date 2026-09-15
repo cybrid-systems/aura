@@ -107,7 +107,11 @@ def main() -> int:
         and "bool would_allow_commit = true" in lcp
         and "std::uint32_t force_reason_code = 0" in lcp
     )
-    ac1_helper = "[[nodiscard]] inline DensifyEntryLCPPoll consult_last_lcp_for_densify_entry()" in lcp
+    ac1_helper = (
+        "consult_last_lcp_for_densify_entry" in lcp
+        and "DensifyEntryLCPPoll" in lcp
+        and ("eval_id" in lcp or "consult_last_lcp_for_densify_entry()" in lcp)
+    )
     ac1_helper_body_present = "last_lifetime_consistency_proof_present()" in lcp
     ac1_helper_body_would = "last_lifetime_consistency_would_allow()" in lcp
     ac1_helper_body_reason = "last_lifetime_consistency_force_reason()" in lcp
@@ -127,7 +131,7 @@ def main() -> int:
         fails.append("AC1: DensifyEntryLCPPoll must expose present + would_allow_commit + force_reason_code")
     if not ac1_helper:
         fails.append(
-            "AC1: consult_last_lcp_for_densify_entry() helper definition missing in lifetime_consistency_proof.hh"
+            "AC1: consult_last_lcp_for_densify_entry helper definition missing in lifetime_consistency_proof.hh"
         )
     if not (ac1_helper_body_present and ac1_helper_body_would and ac1_helper_body_reason):
         fails.append(
@@ -185,7 +189,7 @@ def main() -> int:
     else:
         phase5_window = ""
     ac3_guard_phase5 = "typed_audit::production_defaults_active() ||" in phase5_window
-    ac3_helper_phase5 = "consult_last_lcp_for_densify_entry()" in phase5_window
+    ac3_helper_phase5 = "consult_last_lcp_for_densify_entry" in phase5_window
     ac3_poll_check_phase5 = "poll.present && !poll.would_allow_commit" in phase5_window
     # Counter bump is multi-line in source:
     #   g_densify_entry_lcp_blocked_total()
@@ -208,7 +212,7 @@ def main() -> int:
     if not ac3_guard_phase5:
         fails.append("AC3: Phase-5 entry missing production_defaults_active || Full guard")
     if not ac3_helper_phase5:
-        fails.append("AC3: Phase-5 entry missing consult_last_lcp_for_densify_entry() call")
+        fails.append("AC3: Phase-5 entry missing consult_last_lcp_for_densify_entry call")
     if not ac3_poll_check_phase5:
         fails.append("AC3: Phase-5 entry missing poll.present && !poll.would_allow_commit check")
     if not ac3_counter_bump_phase5:
@@ -248,7 +252,7 @@ def main() -> int:
     oneshot_pre_window = mut[max(0, oneshot_pos - 3000) : oneshot_pos] if oneshot_pos != -1 else ""
     ac4_in_recover = "Evaluator::recover_moving_sticky_densify_off" in oneshot_pre_window
     ac4_guard = "typed_audit::production_defaults_active() ||" in oneshot_window
-    ac4_helper = "consult_last_lcp_for_densify_entry()" in oneshot_window
+    ac4_helper = "consult_last_lcp_for_densify_entry" in oneshot_window
     ac4_poll_check = "poll.present && !poll.would_allow_commit" in oneshot_window
     ac4_counter_bump = (
         "g_densify_entry_lcp_blocked_total()" in oneshot_window
@@ -263,7 +267,7 @@ def main() -> int:
     if not ac4_guard:
         fails.append("AC4: optional one-shot missing production_defaults_active || Full guard")
     if not ac4_helper:
-        fails.append("AC4: optional one-shot missing consult_last_lcp_for_densify_entry() call")
+        fails.append("AC4: optional one-shot missing consult_last_lcp_for_densify_entry call")
     if not ac4_poll_check:
         fails.append("AC4: optional one-shot missing poll.present && !poll.would_allow_commit check")
     if not ac4_counter_bump:
