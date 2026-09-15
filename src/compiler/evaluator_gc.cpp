@@ -585,6 +585,7 @@ void Evaluator::record_linear_violation_audit(std::uint8_t path, std::uint8_t re
 
 void Evaluator::force_drop_or_mark_invalid(ClosureId id) noexcept {
     std::unique_lock<std::shared_mutex> cl_lock(closures_mtx_);
+    bump_closures_apply_epoch(); // Issue #3832
     auto it = closures_.find(id);
     if (it == closures_.end())
         return;
@@ -640,6 +641,7 @@ Evaluator::enforce_linear_boundary_consistency(std::uint8_t path, bool mark_all_
         const auto cur_ver = defuse_version_snapshot();
         // Lock order: closures unique → env shared (same as scan_live).
         std::unique_lock<std::shared_mutex> cl_lock(closures_mtx_);
+        bump_closures_apply_epoch(); // Issue #3832
         std::shared_lock<std::shared_mutex> env_lock(env_frames_mtx_);
         for (auto& [id, cl] : closures_) {
             if (cl.bridge_epoch == 0)
@@ -1102,6 +1104,7 @@ Evaluator::CompactSweepResult Evaluator::compact_sweep(void* sweep_buffers) {
         aura::compiler::lock_order::AuditScope lo_closures(
             aura::compiler::lock_order::Level::Closures);
         std::unique_lock<std::shared_mutex> cl_lock(closures_mtx_);
+        bump_closures_apply_epoch(); // Issue #3832
         if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics()))
             m->gc_sweep_closures_locked_total.fetch_add(1, std::memory_order_relaxed);
         if (marks->closure_marks) {

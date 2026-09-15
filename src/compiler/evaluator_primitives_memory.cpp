@@ -297,6 +297,7 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
         // unique_lock because we erase.
         {
             std::unique_lock<std::shared_mutex> lock(ev.closures_mtx_);
+            ev.bump_closures_apply_epoch_public(); // Issue #3832
             for (auto it = ev.closures_.begin(); it != ev.closures_.end();) {
                 if (it->second.owner_arena == ev.temp_arena_) {
                     invalidate_closure_lifetime(it->second);

@@ -543,6 +543,79 @@ bool Evaluator::closure_apply_use_site_ok(const Closure& cl) noexcept {
     return false;
 }
 
+// Issue #3832: epoch-local TLS cache of last-N Closure copies for the
+// apply_closure happy path. Multi-fiber high-rate apply skips the
+// process-wide closures_mtx_ shared_lock on hit. Invalidated when
+// closures_apply_epoch_ bumps (unique-write / erase) or densify
+// publishes a new g_last_window_seq. Tombstone + densify-stale refuse
+// still run on the copied Closure.
+inline constexpr int kApplyClosureTlsCacheIssue = 3832;
+inline constexpr std::size_t kApplyClosureTlsCacheSlots = 8;
+
+struct ApplyClosureTlsSlot {
+    std::uint64_t instance_id = 0;
+    ClosureId cid = 0;
+    std::uint64_t apply_epoch = 0;
+    std::uint64_t densify_window_seq = 0;
+    Closure cl{};
+    bool occupied = false;
+};
+
+struct ApplyClosureTlsCache {
+    ApplyClosureTlsSlot slots[kApplyClosureTlsCacheSlots]{};
+    std::size_t clock = 0;
+};
+
+static ApplyClosureTlsCache& apply_closure_tls_cache() noexcept {
+    thread_local ApplyClosureTlsCache cache{};
+    return cache;
+}
+
+static std::uint64_t densify_window_seq_relaxed() noexcept {
+    return aura::core::moving_densify_health::g_last_window_seq.load(std::memory_order_relaxed);
+}
+
+// Returns true on usable cache hit (cl_out filled). tombstoned_out set when
+// a matching slot fails use-site OK (treated as refuse; slot dropped).
+static bool try_apply_closure_tls_lookup(Evaluator& ev, ClosureId cid, Closure& cl_out,
+                                         bool& tombstoned_out) {
+    tombstoned_out = false;
+    const auto iid = ev.instance_id();
+    const auto epoch = ev.closures_apply_epoch();
+    const auto dseq = densify_window_seq_relaxed();
+    auto& cache = apply_closure_tls_cache();
+    for (auto& s : cache.slots) {
+        if (!s.occupied)
+            continue;
+        if (s.instance_id != iid || s.cid != cid)
+            continue;
+        if (s.apply_epoch != epoch || s.densify_window_seq != dseq) {
+            s.occupied = false;
+            continue;
+        }
+        if (!Evaluator::closure_apply_use_site_ok(s.cl)) {
+            s.occupied = false;
+            tombstoned_out = true;
+            return false;
+        }
+        cl_out = s.cl;
+        ev.note_apply_closure_tls_hit();
+        return true;
+    }
+    return false;
+}
+
+static void store_apply_closure_tls(Evaluator& ev, ClosureId cid, const Closure& cl) {
+    auto& cache = apply_closure_tls_cache();
+    auto& s = cache.slots[cache.clock++ % kApplyClosureTlsCacheSlots];
+    s.instance_id = ev.instance_id();
+    s.cid = cid;
+    s.apply_epoch = ev.closures_apply_epoch();
+    s.densify_window_seq = densify_window_seq_relaxed();
+    s.cl = cl;
+    s.occupied = true;
+}
+
 // apply_closure — looks up closures_, foreign functions, or IR bridge
 std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const EvalValue> args) {
     // Issue #252: closure dual-path observability. Bump the
@@ -690,10 +763,18 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const
     // (second lock + hash find). Folding lifetime into the first
     // hold removes one shared_mutex acquire per apply on the happy
     // path; post-materialize revalidate still covers GC/erase races.
+    // Issue #3832: epoch-local TLS cache — hot apply under N workers
+    // skips process-wide closures_mtx_ on hit; miss falls back to the
+    // Wave2 shared_lock path and refills TLS. Densify window_seq +
+    // closures_apply_epoch_ invalidate; tombstone / densify-stale
+    // refuse unchanged.
     Closure cl_copy;
     bool cl_found = false;
     bool tombstoned = false;
-    {
+    if (try_apply_closure_tls_lookup(*this, cid, cl_copy, tombstoned)) {
+        cl_found = true;
+    } else if (!tombstoned) {
+        note_apply_closure_mtx_lookup();
         std::shared_lock<std::shared_mutex> rlock(closures_mtx_);
         auto it = closures_.find(cid);
         if (it != closures_.end()) {
@@ -705,6 +786,7 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const
             } else {
                 cl_copy = it->second;
                 cl_found = true;
+                store_apply_closure_tls(*this, cid, cl_copy);
             }
         }
     }
@@ -796,6 +878,7 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const
                 }
                 {
                     std::unique_lock<std::shared_mutex> wlock(closures_mtx_);
+                    bump_closures_apply_epoch(); // Issue #3832
                     auto it = closures_.find(cid);
                     if (it != closures_.end()) {
                         // keep must_deopt_before_next_call SET — do not wash.
@@ -827,6 +910,7 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const
             if (body_live_md && !env_terminal_md) {
                 {
                     std::unique_lock<std::shared_mutex> wlock(closures_mtx_);
+                    bump_closures_apply_epoch(); // Issue #3832
                     auto it = closures_.find(cid);
                     if (it != closures_.end()) {
                         it->second.must_deopt_before_next_call = false;
@@ -852,6 +936,7 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const
             } else {
                 {
                     std::unique_lock<std::shared_mutex> wlock(closures_mtx_);
+                    bump_closures_apply_epoch(); // Issue #3832
                     auto it = closures_.find(cid);
                     if (it != closures_.end() && it->second.must_deopt_before_next_call) {
                         it->second.must_deopt_before_next_call = false;
@@ -951,6 +1036,7 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const
             if (body_live && !env_terminal) {
                 {
                     std::unique_lock<std::shared_mutex> wlock(closures_mtx_);
+                    bump_closures_apply_epoch(); // Issue #3832
                     auto it = closures_.find(cid);
                     if (it != closures_.end()) {
                         it->second.must_deopt_before_next_call = false;
@@ -1111,6 +1197,7 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const
                     if (race_body_live && !race_env_terminal) {
                         {
                             std::unique_lock<std::shared_mutex> wlock(closures_mtx_);
+                            bump_closures_apply_epoch(); // Issue #3832
                             auto it = closures_.find(cid);
                             if (it != closures_.end()) {
                                 stamp_closure_bridge_epoch(it->second);
@@ -1913,6 +2000,7 @@ EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env&
                 EnvId cap_id = alloc_env_frame_from_env(env);
                 {
                     std::unique_lock<std::shared_mutex> wlock(closures_mtx_);
+                    bump_closures_apply_epoch(); // Issue #3832
                     Closure cl{"", {}, cl_flat, cl_pool, cloned_body, cap_id, false, target_arena};
                     // Issue #1365: stamp bridge_epoch at construction
                     stamp_closure_bridge_epoch(cl);
@@ -2036,6 +2124,7 @@ EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env&
                         cl.owner_arena = target;
                         {
                             std::unique_lock<std::shared_mutex> wlock(closures_mtx_);
+                            bump_closures_apply_epoch(); // Issue #3832
                             closures_[cid] = std::move(cl);
                         }
 
@@ -5762,6 +5851,7 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                     EnvId cap_id = alloc_env_frame_from_env(*current_env);
                     {
                         std::unique_lock<std::shared_mutex> wlock(closures_mtx_);
+                        bump_closures_apply_epoch(); // Issue #3832
                         Closure cl{"", std::move(params), f, p, body_id, cap_id, dotted, target};
                         // Issue #1365: stamp bridge_epoch at construction
                         stamp_closure_bridge_epoch(cl);

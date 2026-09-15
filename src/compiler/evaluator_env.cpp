@@ -1553,6 +1553,7 @@ void Evaluator::walk_active_closures(const ActiveClosureWalkFn& fn) {
     if (!fn)
         return;
     std::unique_lock<std::shared_mutex> wlock(closures_mtx_);
+    bump_closures_apply_epoch(); // Issue #3832
     for (auto& [id, cl] : closures_) {
         try {
             fn(id, cl);
@@ -1589,6 +1590,7 @@ Evaluator::scan_live_closures_for_linear_captures(bool mark_invalid, bool only_i
     // closures unique → env_frames shared (same as apply / GC probe).
     // probe_linear_ownership_at_gc_safepoint must use the same order.
     std::unique_lock<std::shared_mutex> cl_lock(closures_mtx_);
+    bump_closures_apply_epoch(); // Issue #3832
     std::shared_lock<std::shared_mutex> env_lock(env_frames_mtx_);
     // Issue #1665: TW tombstone = bridge_epoch==0 while tracking is active
     // (current_bridge_epoch != 0). bridge_epoch==0 with tracking inactive is
@@ -1664,6 +1666,7 @@ ClosureId Evaluator::register_active_closure(Closure cl) {
     stamp_closure_bridge_epoch(cl);
     const ClosureId id = next_id();
     std::unique_lock<std::shared_mutex> wlock(closures_mtx_);
+    bump_closures_apply_epoch(); // Issue #3832
     closures_[id] = std::move(cl);
     return id;
 }
@@ -1676,6 +1679,7 @@ ClosureId Evaluator::register_active_closure(Closure cl) {
 // this Closure fails is_closure_view_valid(view, cl) if cl was snapshotted.
 bool Evaluator::erase_active_closure(ClosureId id) noexcept {
     std::unique_lock<std::shared_mutex> wlock(closures_mtx_);
+    bump_closures_apply_epoch(); // Issue #3832
     auto it = closures_.find(id);
     if (it == closures_.end())
         return false;
@@ -2151,6 +2155,7 @@ std::size_t Evaluator::truncate_env_frames_to_checkpoint() {
     std::size_t doomed = 0;
     {
         std::unique_lock<std::shared_mutex> cl_lock(closures_mtx_);
+        bump_closures_apply_epoch(); // Issue #3832
         for (auto& kv : closures_) {
             const auto id = kv.second.env_id;
             if (id != NULL_ENV_ID && id >= checkpoint_size) {
@@ -2418,6 +2423,7 @@ std::size_t Evaluator::compact_env_frames() {
     std::vector<std::int64_t> remapped_cids;
     {
         std::unique_lock<std::shared_mutex> cl_lock(closures_mtx_);
+        bump_closures_apply_epoch(); // Issue #3832
         remapped_cids.reserve(closures_.size());
         for (auto& kv : closures_) {
             const auto id = kv.second.env_id;
@@ -2486,6 +2492,7 @@ std::size_t Evaluator::compact_env_frames() {
     {
         const auto cur_bridge = current_bridge_epoch();
         std::unique_lock<std::shared_mutex> cl_lock(closures_mtx_);
+        bump_closures_apply_epoch(); // Issue #3832
         for (auto& kv : closures_) {
             // Restamp any previously-tracked closure (non-zero) so it
             // matches post-compact dual-epoch. Leave 0 (untracked) alone.

@@ -5139,8 +5139,10 @@ private:
     // lock, concurrent insert/erase + lookup races corrupt the
     // hash table and the read returns NULL pointers (ASan
     // SEGV at address 0x8 in the test_issue_164 heap trace).
-    // Reader (apply_closure, materialize_call_env) takes a
+    // Reader (apply_closure miss / materialize_call_env) takes a
     // shared lock; writer (closures_[cid] = ...) takes unique.
+    // Issue #3832: apply_closure happy path prefers TLS cache and
+    // skips this mutex on hit; writers must bump closures_apply_epoch_.
     //
     // Issue #1664 — dual-lock order when BOTH are held:
     //   1. closures_mtx_  (shared or unique)
@@ -5150,6 +5152,20 @@ private:
     // Exception: compact_env_frames holds compact_env_frames_lock_ first,
     // then env unique, then briefly closures (documented there).
     mutable std::shared_mutex closures_mtx_;
+    // Issue #3832: epoch-local TLS cache of last-N Closure copies for
+    // apply_closure happy path. Bumped on densify/erase/unique-write so
+    // cached copies cannot outlive map mutations; densify also keys TLS
+    // on g_last_window_seq. Hot apply under N workers skips process-wide
+    // closures_mtx_ shared_lock on cache hit (tombstone / densify-stale
+    // refuse unchanged on the copied Closure).
+    inline static constexpr int kApplyClosureTlsCacheIssue = 3832;
+    inline static constexpr std::size_t kApplyClosureTlsCacheSlots = 8;
+    mutable std::atomic<std::uint64_t> closures_apply_epoch_{1};
+    mutable std::atomic<std::uint64_t> apply_closure_tls_hit_total_{0};
+    mutable std::atomic<std::uint64_t> apply_closure_mtx_lookup_total_{0};
+    void bump_closures_apply_epoch() noexcept {
+        closures_apply_epoch_.fetch_add(1, std::memory_order_acq_rel);
+    }
     ClosureBridgeFn closure_bridge_;
     // Issue #252: optional pointer to CompilerMetrics for
     // closure_* counter increments. nullptr = counters
@@ -8200,6 +8216,25 @@ public:
     // so the GC size-provider callback can size the closure MarkBitVector
     // to the actual current closure count rather than the max root index.
     [[nodiscard]] std::size_t closures_size() const noexcept { return closures_.size(); }
+    // Issue #3832: TLS apply_closure cache observability (tests / microbench).
+    [[nodiscard]] std::uint64_t closures_apply_epoch() const noexcept {
+        return closures_apply_epoch_.load(std::memory_order_acquire);
+    }
+    [[nodiscard]] std::uint64_t apply_closure_tls_hit_total() const noexcept {
+        return apply_closure_tls_hit_total_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t apply_closure_mtx_lookup_total() const noexcept {
+        return apply_closure_mtx_lookup_total_.load(std::memory_order_relaxed);
+    }
+    // Public bump for tests + friend primitives (unique-write / erase / densify).
+    void bump_closures_apply_epoch_public() noexcept { bump_closures_apply_epoch(); }
+    void bump_closures_apply_epoch_for_test() noexcept { bump_closures_apply_epoch(); }
+    void note_apply_closure_tls_hit() noexcept {
+        apply_closure_tls_hit_total_.fetch_add(1, std::memory_order_relaxed);
+    }
+    void note_apply_closure_mtx_lookup() noexcept {
+        apply_closure_mtx_lookup_total_.fetch_add(1, std::memory_order_relaxed);
+    }
     // Issue #2651 / #1397: always serialize string_heap_ growth.
     // Multi-fiber orch fanout (overnight agents) races unlocked
     // push_back → pmr::vector / monotonic_buffer_resource corruption
