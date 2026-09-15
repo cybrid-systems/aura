@@ -66,6 +66,18 @@ Issue #3528: C++ `BatchResult` carries `isolation_level` / `region_concurrent_el
 `distinct_nonzero_region_keys` (struct END). The Aura hash also exposes
 `distinct-region-keys` (per-batch, not the process-global counter). No new `query:*`.
 
+**Issue #3803 — AgentScope N-agents ≠ concurrent mutate:** Spawning N
+`orch:scope-spawn` / `AgentScope::spawn` agents does **not** by itself enable
+`IsolationLevel::RegionConcurrent`. Under production, multi-agent mutate
+without ≥2 distinct non-zero `region_key`s stays **Serialized** (same
+`decide_isolation` / `region_key_missing_serialized` SSOT as parallel-intend).
+Optional `:region-key n` on `orch:scope-spawn` / `orch:spawn-agent` stamps
+`AgentSpec.region_key` + fiber TLS during apply (#3728) so hosts can compose
+with `parallel-intend :region-keys`. Join / supervise-batch workflow hashes
+carry additive `isolation-level` + `region-key-missing` bool (existing
+`region_key_missing_serialized_total` counter; **no new query key**). Soft /
+Off / single-agent / `:pure` unchanged. No AgentRegistry / saga.
+
 **Pure contract (caller guarantees + best-effort probe):**
 
 ```text

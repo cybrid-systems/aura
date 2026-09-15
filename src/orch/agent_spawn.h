@@ -1934,6 +1934,13 @@ struct AgentSpec {
     // Issue #3494: Restricted+MT is in the gate (is_sandbox_active),
     // not only Strict+MT.
     std::uint64_t tenant_id = 0;
+    // Issue #3803 / #3728: optional mutation region key for concurrent
+    // multi-agent mutate. 0 = none (Serialized / agent_apply_mu_ face).
+    // Non-zero stamps fiber TLS during body apply so try_acquire_for_region
+    // and subsequent parallel_intend TaskSpec participation can see it.
+    // AgentScope stores this on specs_ for join/workflow isolation observe.
+    // No process-global AgentRegistry / saga.
+    std::uint64_t region_key = 0;
 };
 
 // Issue #3250: RestartN fuel is a copyable AgentSpec body stored by

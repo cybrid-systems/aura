@@ -3466,6 +3466,9 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             // stamps Fiber::assigned_tenant_id so the TenantScope resume
             // mandate arms; Soft/Off / legacy single-tenant stay 0).
             spec.tenant_id = tenant_id != 0 ? tenant_id : ev.capability_tenant_id();
+            // Issue #3803 / #3728: stamp AgentSpec.region_key so AgentScope
+            // join observe + fiber TLS apply see the same key (0 = Serialized).
+            spec.region_key = region_key;
             auto handle = aura::orch::spawn_agent_with_mailbox(*orch_sched.sched, std::move(spec));
             // Issue #2009: move-only handle; snapshot then put on success.
             bool ok = handle.ok;
@@ -4090,6 +4093,9 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             // Issue #3434: tenant mandate — explicit :tenant-id wins, else
             // inherit the Evaluator capability tenant (mirrors orch:spawn-agent).
             spec.tenant_id = tenant_id != 0 ? tenant_id : ev.capability_tenant_id();
+            // Issue #3803: persist :region-key on AgentSpec for join/workflow
+            // isolation observe (TLS stamp during apply is #3728).
+            spec.region_key = region_key;
             try {
                 auto& handle = scope.spawn(std::move(spec));
                 // #2009: handle is a reference; extract fields before any
@@ -4604,6 +4610,13 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             const auto restart_attempted = scope->last_restart_attempted();
             const auto restart_skipped = scope->last_restart_skipped_no_spec();
             const auto restart_ok = scope->last_restart_ok();
+            // Issue #3803: observe isolation from specs_ region_keys BEFORE
+            // drop (join/workflow hash additive; Soft/single unchanged).
+            const auto iso_obs = scope->observe_isolation();
+            if (iso_obs.region_key_missing) {
+                aura::serve::parallel_orch::g_parallel_orch_stats
+                    .region_key_missing_serialized_total.fetch_add(1, std::memory_order_relaxed);
+            }
             // Issue #2588 comment-vs-code contract, closed by #3467
             // (option B1, strict): after join_all the per-Evaluator slot
             // is dropped so the next scope-spawn creates a fresh tree —
@@ -4712,6 +4725,26 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 {"tree-settled", make_bool(tree_settled_now)},
                 {"descendants-live", make_bool(descendants_live)},
             };
+            // Issue #3803: additive isolation-level / region-key-missing
+            // on join hash (existing counter OK; no new query key name).
+            {
+                const char* iso_cstr =
+                    aura::serve::parallel_orch::isolation_level_cstr(iso_obs.decision.level);
+                const auto iso_sidx = ev.string_heap_.size();
+                ev.string_heap_.push_back(iso_cstr);
+                kv.push_back({"isolation-level", make_string(iso_sidx)});
+                kv.push_back({"isolation-level-wired", make_int(1)});
+                kv.push_back({"region-key-missing", make_bool(iso_obs.region_key_missing)});
+                kv.push_back({"region-key-missing-serialized",
+                              make_int(iso_obs.region_key_missing ? 1 : 0)});
+                kv.push_back({"distinct-region-keys",
+                              make_int(static_cast<std::int64_t>(
+                                  iso_obs.decision.distinct_nonzero_region_keys))});
+                kv.push_back({"schema-3803",
+                              make_int(aura::orch::kAgentScopeRegionKeyIsolationIssue)});
+                kv.push_back({"issue-3803",
+                              make_int(aura::orch::kAgentScopeRegionKeyIsolationIssue)});
+            }
             // Issue #3671: production guard — see the kv fields above.
             if (join_guard_deny)
                 add_deny_class(kv, aura::orch::AgentDenyClass::Other, "descendants-live",
@@ -5683,8 +5716,9 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             // Phase B watch_all / Phase C cancel_all walked, so RestartN /
             // Cancel hit unrelated orch:scope-spawn agents (S). Dedicated
             // child: watch/join/cancel/RestartN stay on this batch; root S
-            // is untouched. AgentSpec has no region_key — decide_isolation
-            // stays SSOT on Phase A TaskSpec (default 0 = Serialized).
+            // is untouched. Issue #3803: AgentSpec.region_key exists for
+            // join/workflow observe; Phase A TaskSpec still defaults 0
+            // (Serialized) unless the host supplies :region-keys.
             auto& child = root.spawn_child();
             auto eval_mu = std::make_shared<std::mutex>();
             std::vector<aura::serve::parallel_orch::TaskSpec> tasks;
@@ -5745,6 +5779,29 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             auto r = aura::orch::apply_workflow(*orch_sched.sched, child, tasks, w,
                                                 stall_timeout_ms, watch_scope);
 
+            // Issue #3803: workflow hash isolation surface. watch-scope
+            // path spawns into child (empty Phase A) — observe child
+            // specs_; parallel Phase A uses BatchResult (#3528).
+            aura::orch::ScopeIsolationObservation wf_iso{};
+            if (watch_scope) {
+                wf_iso = child.observe_isolation();
+            } else {
+                wf_iso.decision.level = r.batch.isolation_level;
+                wf_iso.decision.region_concurrent_eligible = r.batch.region_concurrent_eligible;
+                wf_iso.decision.distinct_nonzero_region_keys =
+                    r.batch.distinct_nonzero_region_keys;
+                wf_iso.agent_count = static_cast<std::uint32_t>(tasks.size());
+                const bool production =
+                    aura::compiler::typed_audit::production_defaults_active();
+                wf_iso.region_key_missing =
+                    aura::serve::parallel_orch::region_key_missing_serialized(
+                        wf_iso.decision, /*pure_mode=*/false, tasks.size(), production);
+            }
+            if (wf_iso.region_key_missing) {
+                aura::serve::parallel_orch::g_parallel_orch_stats
+                    .region_key_missing_serialized_total.fetch_add(1, std::memory_order_relaxed);
+            }
+
             using aura::serve::parallel_orch::BatchStatus;
             const char* status_str = "invalid";
             switch (r.batch.status) {
@@ -5774,6 +5831,8 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             };
             const auto apply_total = aura::orch::g_orch_module_stats.workflow_apply_total.load(
                 std::memory_order_relaxed);
+            const char* iso_cstr =
+                aura::serve::parallel_orch::isolation_level_cstr(wf_iso.decision.level);
             std::vector<std::pair<std::string, EvalValue>> kv = {
                 {"ok", make_bool(r.batch.status == BatchStatus::Ok)},
                 {"ok-count", make_int(static_cast<std::int64_t>(r.batch.ok_count))},
@@ -5791,6 +5850,18 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 {"schema-3206", make_int(aura::orch::kWorkflowResidualActionIssue)},
                 {"schema-3495", make_int(aura::orch::kSuperviseBatchApplyIssue)},
                 {"issue-3495", make_int(aura::orch::kSuperviseBatchApplyIssue)},
+                // Issue #3803: additive isolation-level / region-key-missing
+                // on workflow hash (no new query key).
+                {"isolation-level", push_str(iso_cstr)},
+                {"isolation-level-wired", make_int(1)},
+                {"region-key-missing", make_bool(wf_iso.region_key_missing)},
+                {"region-key-missing-serialized",
+                 make_int(wf_iso.region_key_missing ? 1 : 0)},
+                {"distinct-region-keys",
+                 make_int(static_cast<std::int64_t>(
+                     wf_iso.decision.distinct_nonzero_region_keys))},
+                {"schema-3803", make_int(aura::orch::kAgentScopeRegionKeyIsolationIssue)},
+                {"issue-3803", make_int(aura::orch::kAgentScopeRegionKeyIsolationIssue)},
             };
             return build_orch_hash(kv);
         });
