@@ -3704,13 +3704,34 @@ inline void note_pending_full_solve_residual(std::uint64_t n, bool hard) noexcep
         g_pending_full_solve_residual_face.store(1, std::memory_order_release);
 }
 
+
+// Issue #3794: Agent-face belt for #3788 partial Occurrence refined drift.
+// Production/Full latch refuses grant_type_export_authority / commit_readiness
+// until the next SDO with drifted_goals==0 clears it. Soft never latches
+// (miss counters only — #3788 AC3). No new query key.
+inline constexpr int kOccurrencePartialDriftGrantRefuseIssue = 3794;
+inline std::atomic<std::uint8_t> g_occurrence_partial_drift_grant_refuse_face{0};
+[[nodiscard]] inline bool occurrence_partial_drift_grant_refuse_face_hit() noexcept {
+    return g_occurrence_partial_drift_grant_refuse_face.load(std::memory_order_acquire) != 0;
+}
+inline void note_occurrence_partial_drift_grant_refuse(bool hard) noexcept {
+    if (hard)
+        g_occurrence_partial_drift_grant_refuse_face.store(1, std::memory_order_release);
+}
+inline void clear_occurrence_partial_drift_grant_refuse() noexcept {
+    g_occurrence_partial_drift_grant_refuse_face.store(0, std::memory_order_release);
+}
+
 // Issue #3237: query:type / type_export_is_authoritative residual gate.
 // Production/Full latches pending_full_solve_residual_face; Soft never
 // does (#3031). Quiet: one face load of 0. No production_defaults
 // load (#3203 AC4). Callers already refused TIMEOUT via last-solve.
 // Stamp lives on TypeChecker (kTypeExportFullAuditGateIssue).
 [[nodiscard]] inline bool type_export_residual_faces_clear() noexcept {
-    return !pending_full_solve_residual_face_hit();
+    // Issue #3794: partial Occurrence drift refuse is the same residual
+    // family as pending_full_solve for grant / query:type.
+    return !pending_full_solve_residual_face_hit() &&
+           !occurrence_partial_drift_grant_refuse_face_hit();
 }
 
 // Issue #3316: residual of #3237 under steal / densify interleave.
@@ -3727,12 +3748,15 @@ inline constexpr int kTypeExportAuthorityRaceIssue = 3316;
     if ((s0 & 1ull) != 0)
         return false;
     const auto f0 = g_pending_full_solve_residual_face.load(std::memory_order_acquire);
+    const auto d0 = g_occurrence_partial_drift_grant_refuse_face.load(std::memory_order_acquire);
     aura::util::thread_fence(std::memory_order_acquire);
     const auto f1 = g_pending_full_solve_residual_face.load(std::memory_order_acquire);
+    const auto d1 = g_occurrence_partial_drift_grant_refuse_face.load(std::memory_order_acquire);
     const auto s1 = g_occurrence_persist_seq.load(std::memory_order_acquire);
     if (s0 != s1 || (s1 & 1ull) != 0)
         return false;
-    return f0 == 0 && f1 == 0;
+    // Issue #3794: partial-drift grant-refuse must stay clear across sample.
+    return f0 == 0 && f1 == 0 && d0 == 0 && d1 == 0;
 }
 inline std::atomic<std::uint64_t> g_refined_consistency_observe_total{0};
 inline std::atomic<std::uint64_t> g_refined_consistency_reject_total{0};
@@ -4036,7 +4060,10 @@ inline void clear_occurrence_empty_after_fence_for_test() noexcept;
     in.refined_consistency_hard = face_hard;
     // Issue #3031: pending_full_solve residual face.
     in.pending_full_solve_hard = face_hard;
-    in.pending_full_solve_residual = pending_full_solve_residual_face_hit();
+    // Issue #3794: fold partial-drift grant-refuse into the existing
+    // pending_full_solve residual reject arm (would_allow_commit=false).
+    in.pending_full_solve_residual =
+        pending_full_solve_residual_face_hit() || occurrence_partial_drift_grant_refuse_face_hit();
     if (face_hard) {
         in.cone_outside_goal_drop_face = (cone_outside_goal_drop_total_v_read() > 0);
         in.occurrence_empty_after_fence_face = (occurrence_empty_after_fence_total_v_read() > 0);
