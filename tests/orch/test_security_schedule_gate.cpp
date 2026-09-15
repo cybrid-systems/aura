@@ -44,6 +44,7 @@
 #include "compiler/aot_hot_update_health.hh"
 #include "compiler/typed_mutation_audit.h"
 #include "core/wal_append_fail_slo.h"
+#include "core/resource_quota.hh"
 #include "orch/agent_spawn.h"
 #include "orch/sched_runner_test_helper.h"
 #include "serve/scheduler.h"
@@ -55,6 +56,7 @@ extern "C" void aura_query_hash_reset_overflow_for_test(void);
 #include <atomic>
 #include <cstdint>
 #include <fstream>
+#include <iterator>
 #include <print>
 #include <string>
 #include <string_view>
@@ -936,8 +938,68 @@ int run_test_security_schedule_gate() {
     }
 
     {
-        std::println("\n--- #3251: schedule-gate body deny-class ---");
+        // Issue #3777: production schedule-gate deny is spawn-time (no
+        // fiber/mailbox/name commit). #3251 typed ScheduleGate preserved;
+        // body-path acq==2 remains belt for Soft/Off + race.
+        std::println("\n--- #3777/#3251: schedule-gate-at-spawn (production) ---");
         using aura::orch::AgentDenyClass;
+        using aura::orch::AgentSpec;
+        using aura::orch::g_capability_deny_storm_threshold;
+        using aura::orch::g_orch_module_stats;
+        using aura::orch::kScheduleGateAtSpawnIssue;
+        using aura::orch::spawn_agent_with_mailbox;
+        using aura::serve::SchedRunner;
+        using aura::serve::Scheduler;
+        CHECK(kScheduleGateAtSpawnIssue == 3777, "3777: issue stamp");
+        aura::compiler::typed_audit::apply_production_audit_defaults();
+        const auto prev_thr =
+            g_capability_deny_storm_threshold().exchange(0, std::memory_order_relaxed);
+        const auto& pq = aura::core::resource_quota::process_resource_quota();
+        const auto arena_before = pq.agent_arena_usage_bytes.load(std::memory_order_relaxed);
+        const auto release_before = pq.agent_arena_release_total.load(std::memory_order_relaxed);
+        const auto fail_before =
+            g_orch_module_stats.spawn_failures.load(std::memory_order_relaxed);
+        Scheduler sched(1);
+        SchedRunner runner(sched);
+        AgentSpec spec;
+        spec.name = "3777-sched";
+        spec.attach_mailbox = true;
+        spec.mailbox_high_water = 16;
+        spec.body = [] { /* never runs */ };
+        auto h = spawn_agent_with_mailbox(sched, spec);
+        CHECK(!h.ok, "3777 AC1: production schedule-gate deny → !ok (spawn-time)");
+        CHECK(h.deny_class == AgentDenyClass::ScheduleGate,
+              "3777 AC2 / 3251: deny_class == ScheduleGate");
+        CHECK(h.quota_dimension == "security-schedule",
+              "3777 AC2: quota_dimension == security-schedule");
+        CHECK(h.error.find("AdmissionRejected: security-schedule:") != std::string::npos,
+              "3777 AC2: typed AdmissionRejected security-schedule reason");
+        CHECK(h.fiber == nullptr, "3777 AC1: no fiber committed");
+        CHECK(h.mailbox == nullptr, "3777 AC1: mailbox never attached");
+        CHECK(h.reserved_memory_bytes == 0, "3777 AC1: reservation released");
+        CHECK(pq.agent_arena_usage_bytes.load(std::memory_order_relaxed) == arena_before,
+              "3777 AC1: arena usage back to baseline (rollback_spawn_reservation)");
+        CHECK(pq.agent_arena_release_total.load(std::memory_order_relaxed) == release_before + 1,
+              "3777 AC1: arena release bumped once");
+        CHECK(g_orch_module_stats.spawn_failures.load(std::memory_order_relaxed) > fail_before,
+              "3777 AC2: spawn_failures bumped");
+        // Source-cite: body-path ScheduleGate belt still present (#3251).
+        const auto spawn_src = [&] {
+            std::ifstream in("src/orch/agent_spawn.h");
+            return std::string(std::istreambuf_iterator<char>(in), {});
+        }();
+        CHECK(spawn_src.find("acq == 2") != std::string::npos,
+              "3777 AC3: body-path acq==2 ScheduleGate belt retained");
+        CHECK(spawn_src.find("admit_security_schedule") != std::string::npos,
+              "3777 AC3: spawn preflight calls admit_security_schedule");
+        g_capability_deny_storm_threshold().store(prev_thr, std::memory_order_relaxed);
+        aura::compiler::typed_audit::apply_dev_audit_defaults();
+        reset_orch_security_schedule_counters_for_test();
+    }
+
+    {
+        // Issue #3777 AC4: Soft/Off keeps body-time path (preflight skipped).
+        std::println("\n--- #3777 AC4: Soft/Off schedule-gate stays body-time ---");
         using aura::orch::AgentSpec;
         using aura::orch::g_capability_deny_storm_threshold;
         using aura::orch::join_agent;
@@ -945,32 +1007,32 @@ int run_test_security_schedule_gate() {
         using aura::orch::spawn_agent_with_mailbox;
         using aura::serve::SchedRunner;
         using aura::serve::Scheduler;
-        aura::compiler::typed_audit::apply_production_audit_defaults();
+        aura::compiler::typed_audit::apply_dev_audit_defaults();
         const auto prev_thr =
             g_capability_deny_storm_threshold().exchange(0, std::memory_order_relaxed);
         Scheduler sched(1);
         SchedRunner runner(sched);
         AgentSpec spec;
-        spec.name = "3251-sched";
+        spec.name = "3777-soft";
         spec.attach_mailbox = false;
         spec.body = [] {};
         auto h = spawn_agent_with_mailbox(sched, spec);
-        CHECK(h.ok, "3251: spawn ok (deny is body try_acquire)");
+        CHECK(h.ok, "3777 AC4: Soft spawn ok (preflight skipped)");
+        CHECK(h.fiber != nullptr, "3777 AC4: Soft fiber committed");
         JoinPolicy jp{};
         jp.primary_ms = 2000;
         jp.drain_ms = 200;
         (void)join_agent(h, jp);
-        CHECK(h.body_acquire_rejected(), "3251: body try_acquire rejected");
-        CHECK(h.body_deny_class() == AgentDenyClass::ScheduleGate,
-              "3251: deny class schedule-gate");
+        // Soft evaluate observes but does not skip body (#3251 soft contract).
+        CHECK(!h.body_acquire_rejected(),
+              "3777 AC4: Soft body not ScheduleGate-skipped");
         g_capability_deny_storm_threshold().store(prev_thr, std::memory_order_relaxed);
-        aura::compiler::typed_audit::apply_dev_audit_defaults();
         reset_orch_security_schedule_counters_for_test();
     }
 
     reset_orch_security_schedule_counters_for_test();
     aura::core::wal_slo::reset_wal_append_fail_slo_for_test();
-    std::println("\n=== #2590/#2947/#3211/#3244/#3251: {}/{} checks passed ===", g_passed,
+    std::println("\n=== #2590/#2947/#3211/#3244/#3251/#3777: {}/{} checks passed ===", g_passed,
                  g_passed + g_failed);
     return g_failed == 0 ? 0 : 1;
 }

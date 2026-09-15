@@ -3526,10 +3526,14 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 auto eidx = ev.string_heap_.size();
                 ev.string_heap_.push_back(qerr);
                 qkv.push_back({"error", make_string(eidx)});
-                // Issue #3251: unified deny-class (quota vs bp-admit).
+                // Issue #3251 / #3777: prefer handle.deny_class (ScheduleGate /
+                // Quota / BpAdmit) when stamped; else legacy qdim mapping.
                 // retry-after-ms already on this hash (emit_retry=false).
-                const auto dcls = (qdim == "mailbox-bp") ? aura::orch::AgentDenyClass::BpAdmit
-                                                         : aura::orch::AgentDenyClass::Quota;
+                const auto dcls =
+                    (handle.deny_class != aura::orch::AgentDenyClass::None)
+                        ? handle.deny_class
+                        : ((qdim == "mailbox-bp") ? aura::orch::AgentDenyClass::BpAdmit
+                                                  : aura::orch::AgentDenyClass::Quota);
                 add_deny_class(qkv, dcls, qdim, qretry, /*emit_retry=*/false);
                 return build_orch_hash(qkv);
             }
@@ -4139,11 +4143,15 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                         ev.string_heap_.push_back(handle.error);
                         qkv.push_back({"error", make_string(eidx)});
                     }
-                    // Issue #3251: unified deny-class (quota vs bp-admit) —
+                    // Issue #3251 / #3777: prefer handle.deny_class when stamped
+                    // (ScheduleGate at spawn); else legacy qdim mapping.
                     // same shape as orch:spawn-agent (#2079).
-                    const auto dcls = (handle.quota_dimension == "mailbox-bp")
-                                          ? aura::orch::AgentDenyClass::BpAdmit
-                                          : aura::orch::AgentDenyClass::Quota;
+                    const auto dcls =
+                        (handle.deny_class != aura::orch::AgentDenyClass::None)
+                            ? handle.deny_class
+                            : ((handle.quota_dimension == "mailbox-bp")
+                                   ? aura::orch::AgentDenyClass::BpAdmit
+                                   : aura::orch::AgentDenyClass::Quota);
                     add_deny_class(qkv, dcls, handle.quota_dimension, handle.retry_after_ms,
                                    /*emit_retry=*/false);
                     return build_orch_hash(qkv);

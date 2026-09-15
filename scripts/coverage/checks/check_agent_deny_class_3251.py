@@ -52,6 +52,8 @@ def main() -> int:
     must("AgentDenyClass::BpAdmit", "AC2 bp stamp", spawn)
     must("AgentDenyClass::ScheduleGate", "AC2 schedule stamp", spawn)
     must("admit_security_schedule", "AC2 body schedule", fib)
+    must("admit_security_schedule", "AC2 spawn schedule #3777", spawn)
+    must("kScheduleGateAtSpawnIssue = 3777", "AC2 #3777 stamp", spawn)
     must("AgentDenyClass::Handoff", "AC2 send handoff", agent)
     must("AgentDenyClass::Closed", "AC2 send closed", agent)
     must("body-not-run", "AC2 join lifecycle", agent)
