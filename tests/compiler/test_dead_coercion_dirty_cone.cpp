@@ -1169,6 +1169,17 @@ static void ac3618_persist_attribution_forces_full() {
         // the relower's retention policy).
         CHECK(cs.eval("(set-code \"(define f (lambda (x) (begin x)))\")").has_value(),
               "3618 AC1: re-establish f entry post-relower");
+        // #3618 CI heal: Guard abort-restore must not leave an empty/free
+        // root after set-code (evaluator_primitives_eval.cpp post-Guard
+        // reparse + revive_all_slots_after_null_root_recycle).
+        {
+            auto* flat = cs.evaluator().workspace_flat();
+            CHECK(flat && flat->root != aura::ast::NULL_NODE, "3618 AC1: workspace root live");
+            CHECK(flat && !flat->is_free_slot(flat->root),
+                  "3618 AC1: root not free after set-code");
+            CHECK(flat && !flat->get(flat->root).children.empty(),
+                  "3618 AC1: root children non-empty after set-code heal");
+        }
         CHECK(cs.eval("(eval-current)").has_value(), "3618 AC1: lower f into IR cache");
         CHECK(cs.inject_source_to_ir_map_desync_for_test("f"), "3618 AC1: map non-empty (inject)");
         reset_residual_castop_persist_for_test();
