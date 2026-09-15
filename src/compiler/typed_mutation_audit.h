@@ -1538,6 +1538,14 @@ inline std::atomic<std::uint32_t> g_type_linear_commit_proof_wired{1};
 // Issue #2899: last proof face bits for IR Move/Drop proven fast-path.
 // Quiet default 0 → fast-path disabled (zero cost full check).
 inline std::atomic<std::uint8_t> g_last_proof_would_allow_commit{0};
+// Issue #3789: remount-last-zero strip latch (declared early so
+// publish_last_proof_face can clear it on green rebind). Quiet outcome
+// stays warm for depth==0 (#3510/#3578); Agents join this face + would_allow.
+inline std::atomic<std::uint8_t> g_remount_last_zero_strip_face{0};
+[[nodiscard]] inline std::uint8_t remount_last_zero_strip_face_v_read() noexcept {
+    return g_remount_last_zero_strip_face.load(std::memory_order_relaxed);
+}
+inline constexpr std::int64_t kRemountLastZeroForceReasonCode = 17;
 inline std::atomic<std::uint8_t> g_last_proof_linear_ok{0};
 // Issue #3416: last-proof stamper eval identity (TLS Evaluator pointer).
 // Production IR/JIT treats the face as unbound unless this matches the
@@ -1719,6 +1727,8 @@ inline void publish_last_proof_face(bool would_allow, bool linear_ok) noexcept {
         g_rehydrate_miss_green_bind_gen.store(
             g_rehydrate_miss_invalidate_gen.load(std::memory_order_acquire),
             std::memory_order_release);
+        // Issue #3789: green rebind clears remount-last-zero strip latch.
+        g_remount_last_zero_strip_face.store(0, std::memory_order_release);
         if (hard)
             g_last_proof_stamper_eval.store(
                 reinterpret_cast<std::uintptr_t>(::g_tls_audit_commit_readiness_evaluator),
@@ -3563,8 +3573,12 @@ inline void strip_green_face_on_remount_last_zero() noexcept {
     // depth==0 typed entry is not poisoned by this background hygiene.
     // #3548 AC1/AC2 only assert stamper_unbound + would_allow==0, so this
     // stays additive to those contracts.
+    // Issue #3789: Quiet keeps depth==0 warm (#3510), but latch the strip
+    // face so Agents polling evolution-snapshot / commit-health see deny
+    // (would_allow=0 + force_reason 17), not Quiet-as-ok.
     g_last_type_linear_commit_proof_stamp.store(0, std::memory_order_relaxed);
     g_last_type_linear_proof_outcome.store(kTypeLinearProofOutcomeQuiet, std::memory_order_relaxed);
+    g_remount_last_zero_strip_face.store(1, std::memory_order_release);
 }
 
 [[nodiscard]] inline std::int64_t commit_readiness_reason_code(std::string_view r) noexcept {

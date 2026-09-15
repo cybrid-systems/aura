@@ -616,6 +616,62 @@ static void ac3548_5_source_cite_no_invent() {
     CHECK(read_file("docs/design/3548-remount-last-zero.md").empty(), "3548 AC5: no docs/design");
 }
 
+
+// ── Issue #3789: remount last==0 Quiet ≠ green for Agents ──
+static void ac3789_1_snapshot_deny_not_quiet_as_ok() {
+    std::println("\n--- #3789 AC1: after strip, evolution-snapshot deny (not Quiet-as-ok) ---");
+    using namespace aura::compiler::typed_audit;
+    apply_production_audit_defaults();
+    g_remount_last_zero_strip_face.store(0, std::memory_order_relaxed);
+    seed_green_face();
+    CHECK(last_proof_would_allow_commit_v_read() == 1, "3789 AC1: green before strip");
+    strip_green_face_on_remount_last_zero();
+    CHECK(last_proof_would_allow_commit_v_read() == 0, "3789 AC1: would_allow dropped");
+    CHECK(remount_last_zero_strip_face_v_read() == 1, "3789 AC1: strip face latched");
+    CHECK(last_type_linear_proof_outcome_v_read() == kTypeLinearProofOutcomeQuiet,
+          "3789 AC1: outcome stays Quiet (depth==0 warm)");
+    CompilerService cs;
+    CHECK(href_evolv(cs, "remount-last-zero-strip") == 1, "3789 AC1: snapshot strip face");
+    CHECK(href_evolv(cs, "would-allow-commit") == 0, "3789 AC1: snapshot would_allow deny");
+    CHECK(href_evolv(cs, "last-proof-would-allow-commit") == 0, "3789 AC1: last-proof would_allow");
+    CHECK(href_evolv(cs, "force-reason-code") == kRemountLastZeroForceReasonCode ||
+              href_evolv(cs, "force-reason-code") != 0,
+          "3789 AC1: force_reason not ok-alone");
+    CHECK(href_evolv(cs, "last-proof-outcome") == 0,
+          "3789 AC1: Quiet alone — Agents must join strip/would_allow");
+    CHECK(href_evolv(cs, "schema-3789") == 3789, "3789 AC1: schema-3789");
+    // IR/JIT refuse via would_allow / invalidate (#3548)
+    CHECK(!linear_fast_path_ok(), "3789 AC1: IR/JIT fast-path refused after strip");
+    apply_dev_audit_defaults();
+    g_remount_last_zero_strip_face.store(0, std::memory_order_relaxed);
+}
+
+static void ac3789_2_soft_observe() {
+    std::println("\n--- #3789 AC2: Soft observe-only (no strip latch) ---");
+    using namespace aura::compiler::typed_audit;
+    apply_dev_audit_defaults();
+    g_typed_mutation_audit_counters.production_defaults_active.store(0, std::memory_order_relaxed);
+    g_remount_last_zero_strip_face.store(0, std::memory_order_relaxed);
+    seed_green_face();
+    strip_green_face_on_remount_last_zero();
+    CHECK(remount_last_zero_strip_face_v_read() == 0, "3789 AC2: Soft no strip latch");
+    CHECK(last_proof_would_allow_commit_v_read() == 1, "3789 AC2: Soft face stays green");
+}
+
+static void ac3789_3_source_cite_no_invent() {
+    std::println("\n--- #3789 AC3: source-cite + no invent / no key rename ---");
+    const auto tma = read_file("src/compiler/typed_mutation_audit.h");
+    const auto hh = read_file("src/compiler/type_linear_commit_health.hh");
+    const auto rf = read_file("src/compiler/evaluator_primitives_query_reflect.cpp");
+    CHECK(tma.find("g_remount_last_zero_strip_face") != std::string::npos, "3789 AC3: face");
+    CHECK(tma.find("Issue #3789") != std::string::npos, "3789 AC3: cite strip");
+    CHECK(hh.find("remount_last_zero_strip") != std::string::npos, "3789 AC3: snapshot field");
+    CHECK(rf.find("remount-last-zero-strip") != std::string::npos, "3789 AC3: query key");
+    CHECK(rf.find("query:type-linear-") != std::string::npos, "3789 AC3: no rename base query");
+    CHECK(read_file("tests/compiler/test_issue_3789.cpp").empty(), "3789 AC3: no invent");
+    CHECK(read_file("docs/design/3789-remount-strip.md").empty(), "3789 AC3: no docs/design");
+}
+
 // ── Issue #3578: background rebind/strip observability + Quiet=unknown ──
 // (void) call sites discard the bool; Agent polls evolution-snapshot
 // gauges. Reject is not an immediate commit-barrier. Quiet ≠ invalid/green.
@@ -819,8 +875,12 @@ static void ac3612_4_source_and_linter() {
     // Linter wired.
     CHECK(build.find("check_remount_densify_pairing_strip_3612") != std::string::npos,
           "3612 AC4: build.py wires linter");
-    const int rc = std::system(
+    // Resolve from repo root or build/ (binary cwd varies).
+    int rc = std::system(
         "python3 scripts/check_remount_densify_pairing_strip_3612.py --self-test > /dev/null 2>&1");
+    if (rc != 0)
+        rc = std::system("python3 ../scripts/check_remount_densify_pairing_strip_3612.py "
+                         "--self-test > /dev/null 2>&1");
     CHECK(rc == 0, "3612 AC4: linter --self-test passes");
     CHECK(read_file("tests/issues/test_issue_3612.cpp").empty(),
           "3612 AC4: no tests/issues/test_issue_3612.cpp");
@@ -882,6 +942,9 @@ int run_test_remount_force_deopt() {
     ac3548_4_soft_observe_only();
     ac3548_5_source_cite_no_invent();
     ac3578_1_rebind_reject_counter_stamper_unbound();
+    ac3789_1_snapshot_deny_not_quiet_as_ok();
+    ac3789_2_soft_observe();
+    ac3789_3_source_cite_no_invent();
     ac3578_2_last0_green_quiet_unknown();
     ac3578_3_void_call_sites_observability_cite();
     ac3578_4_linter_3448_not_regressed();

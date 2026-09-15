@@ -609,7 +609,7 @@ void register_query_reflect_primitives(PrimRegistrar add, std::pmr::vector<Pair>
             const auto snap = capture_type_linear_evolution_snapshot();
             // Issue #3339: live 57 keys; planned 72 (>= 57+8). Additive
             // insert_kv must raise planned_keys; Agent facade forbids overflow.
-            constexpr std::size_t kTypeLinearEvolutionSnapshotPlannedKeys = 80;
+            constexpr std::size_t kTypeLinearEvolutionSnapshotPlannedKeys = 84;
             auto* ht = FlatHashTable::create(
                 query_hash_capacity_for(kTypeLinearEvolutionSnapshotPlannedKeys));
             if (!ht)
@@ -674,6 +674,14 @@ void register_query_reflect_primitives(PrimRegistrar add, std::pmr::vector<Pair>
                 static_cast<std::int64_t>(
                     aura::compiler::typed_audit::cone_outside_goal_drop_reject_total_v_read()));
             insert_kv("last-proof-stamper-bound", snap.last_proof_stamper_bound);
+            // Issue #3789: remount-last-zero strip face + last-proof would_allow.
+            // Quiet outcome alone is not green; Agents join these keys.
+            insert_kv("remount-last-zero-strip", snap.remount_last_zero_strip);
+            insert_kv("last-proof-would-allow-commit", snap.last_proof_would_allow_commit);
+            insert_kv("force-reason-remount-last-zero",
+                      aura::compiler::typed_audit::kRemountLastZeroForceReasonCode);
+            insert_kv("schema-3789", 3789);
+            insert_kv("issue-3789", 3789);
             insert_kv("type-linear-evolution-snapshot-wired", 1);
             // Issue #3116: abort dual-clear of last_coercions_ + TLS context.
             insert_kv(

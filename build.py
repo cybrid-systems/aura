@@ -5584,6 +5584,18 @@ def cmd_lint():
             "Issue #3788 partial Occurrence drift escalate linter failed — run python3 scripts/coverage/checks/check_partial_occurrence_drift_escalate_3788.py"
         )
         return r
+    # Issue #3789: remount last==0 Quiet must not read as green on Agent faces.
+    # Extends #3548/#3578; no query key rename / invent.
+    rlz3789_script = COVERAGE_CHECKS / "check_remount_last_zero_agent_face_3789.py"
+    if not rlz3789_script.exists():
+        fail(f"missing {rlz3789_script}")
+        return 1
+    r = run([sys.executable, str(rlz3789_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3789 remount last==0 Agent face linter failed — run python3 scripts/coverage/checks/check_remount_last_zero_agent_face_3789.py"
+        )
+        return r
     # Issue #3656: caller partial absorbs callee cone (block units, not
     # define count). Residual of #3550 (precompute early-return on empty
     # calls) + #3584 (units fixed, cone still invisible). Soft observe.

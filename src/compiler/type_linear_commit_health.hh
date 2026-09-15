@@ -205,6 +205,11 @@ struct TypeLinearEvolutionSnapshot {
     // Issue #3416: last-proof stamper identity bound (1) or unbound (0).
     // Folded into existing snapshot — no new query key.
     std::int64_t last_proof_stamper_bound = 0;
+    // Issue #3789: remount-last-zero strip latch (1) — Quiet outcome alone
+    // is not green; Agents must treat would_allow=0 + this face as deny.
+    std::int64_t remount_last_zero_strip = 0;
+    // Last-proof face would_allow (may differ from live readiness fold).
+    std::int64_t last_proof_would_allow_commit = 0;
 };
 
 // Purpose: one-shot Agent self-evo poll of type×linear×occurrence axis
@@ -247,6 +252,17 @@ struct TypeLinearEvolutionSnapshot {
         static_cast<std::int64_t>(typed_audit::occurrence_empty_after_fence_soft_total_v_read());
     s.cone_outside_goal_drop_total =
         static_cast<std::int64_t>(typed_audit::cone_outside_goal_drop_total_v_read());
+    // Issue #3789: overlay remount-last-zero strip onto Agent faces.
+    // Quiet outcome stays (depth==0 warm); would_allow + force_reason show deny.
+    s.last_proof_would_allow_commit =
+        static_cast<std::int64_t>(typed_audit::last_proof_would_allow_commit_v_read());
+    s.remount_last_zero_strip =
+        static_cast<std::int64_t>(typed_audit::remount_last_zero_strip_face_v_read());
+    if (s.remount_last_zero_strip != 0) {
+        s.would_allow_commit = 0;
+        if (s.force_reason_code == 0)
+            s.force_reason_code = typed_audit::kRemountLastZeroForceReasonCode;
+    }
     return s;
 }
 
