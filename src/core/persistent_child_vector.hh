@@ -206,6 +206,12 @@ inline constexpr int kPcvUniqueZeroAtomicIssue = 3491;
 // stale-span (across-guard). Soft keeps is_stale + #3167 counter only.
 // Reuses pcv_span_stale_across_guard_total — no new metric / query key.
 inline constexpr int kPcvSpanQueryRefreshIssue = 3328;
+// Issue #3829: children_columnar dense SafePCVSpan must capture the same
+// across-Guard fingerprint (node_id + generation + wrap_epoch + node_gen)
+// as children_safe_view. pin_query_children uses columnar; without this
+// stamp has_fingerprint() gates are no-ops on dense spans. Soft export
+// remains identity (pcv_span_for_agent_export); PCV 6-arg path unchanged.
+inline constexpr int kPcvDenseColumnarFingerprintIssue = 3829;
 
 [[nodiscard]] inline bool pcv_stale_span_exclusive_enabled() noexcept {
     return g_pcv_hotpath_metrics().stale_span_force_exclusive_enabled.load(
@@ -931,8 +937,21 @@ public:
     // Issue #3402: dense child_data_ span is owned by FlatAST, so no PCV
     // Storage keep is required. Storage is a private nested type; naming
     // it at the call site does not compile. Keep stays empty (use_count 0).
+    // Issue #3829: prefer the 5-arg dense fingerprint ctor below when the
+    // span may be held across Guard (pin_query_children / agent export).
     explicit SafePCVSpan(std::span<const T> sp) noexcept
         : span_(sp) {}
+    // Issue #3829: dense columnar span with across-Guard fingerprint and
+    // no PCV Storage keep (FlatAST owns child_data_). Same fingerprint
+    // shape as the 6-arg PCV ctor so has_fingerprint / is_stale /
+    // force_refresh / pcv_span_for_agent_export work for columnar pins.
+    SafePCVSpan(std::span<const T> sp, std::uint32_t node_id, std::uint64_t generation,
+                std::uint32_t wrap_epoch, std::uint16_t node_gen) noexcept
+        : span_(sp)
+        , captured_node_id_(node_id)
+        , captured_generation_(generation)
+        , captured_wrap_epoch_(wrap_epoch)
+        , captured_node_gen_(node_gen) {}
     // Issue #370 / #2036: legacy 2-arg ctor (no fingerprint). is_stale() on
     // such a span returns false (no captured_node_id_); callers that need
     // stale detection must use the 6-arg ctor below.

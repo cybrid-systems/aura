@@ -220,6 +220,8 @@ void register_workspace_query_primitives(
     // force_refresh on fingerprint mismatch so query:children /
     // query:children-stable never walk a stale COW frozen view.
     // Soft: helper is identity (AC2 zero extra).
+    // Issue #3829: children_columnar stamps across-Guard fingerprint so
+    // has_fingerprint() gates (and export refresh) are live on dense spans.
     auto pin_query_children = [&ev](aura::ast::FlatAST& flat, aura::ast::NodeId id) {
         ev.bump_query_safe_span_pin();
         auto kids = flat.children_columnar(id);

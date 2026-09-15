@@ -4624,6 +4624,9 @@ public:
     // Source-cite contract (per #3402 AC2): walk_children_hot /
     // children_columnar MUST NOT use children_[id][ — the dense
     // columns are the canonical storage; PCV is an edit buffer only.
+    // Issue #3829: returned SafePCVSpan carries across-Guard fingerprint
+    // (same shape as children_safe_view) so Production is_stale /
+    // pcv_span_for_agent_export work when Agents hold dense pins.
     [[nodiscard]] SafePCVSpan<NodeId> children_columnar(NodeId id) const {
         // Sync first: a never-synced / post-copy tree has empty
         // child_count_ with dense_dirty_ == true. Bounding on the
@@ -4636,11 +4639,17 @@ public:
         const auto count = child_count_[id];
         if (begin > child_data_.size() || count > child_data_.size() - begin)
             return {};
-        // 1-arg SafePCVSpan ctor — dense columns are part of FlatAST
-        // (lifetime tied to FlatAST reference), so no PCV Storage keep
-        // is needed. The dense span is consumed by walk_children_column
-        // immediately, before any structural mutation can invalidate it.
-        return SafePCVSpan<NodeId>(std::span<const NodeId>(child_data_.data() + begin, count));
+        // Issue #3829: dense columns are part of FlatAST (no PCV Storage
+        // keep), but must still capture node_id+generation_+wrap_epoch_+
+        // node_gen_ so has_fingerprint()/is_stale() detect across-Guard
+        // stale. pin_query_children uses columnar; 1-arg spans made those
+        // gates no-ops. Soft: pcv_span_for_agent_export stays identity.
+        // Fingerprinted PCV children_safe_view path unchanged (#3167/#3328).
+        const auto ng = (id < node_gen_.size()) ? node_gen_[id] : std::uint16_t{0};
+        return SafePCVSpan<NodeId>(std::span<const NodeId>(child_data_.data() + begin, count),
+                                   static_cast<std::uint32_t>(id),
+                                   static_cast<std::uint64_t>(generation_),
+                                   wrap_epoch_.load(std::memory_order_relaxed), ng);
     }
 
     // Issue #3453: observe in-place dense patch (equal-length set).

@@ -5080,6 +5080,21 @@ def cmd_lint():
             "Issue #3828 mutate from-verification-feedback SSOT linter failed — run python3 scripts/coverage/checks/check_mutate_from_feedback_ssot_3828.py"
         )
         return r
+    # Issue #3829: children_columnar dense SafePCVSpan must capture
+    # across-Guard fingerprint (node_id+gen+wrap+node_gen). pin_query_children
+    # uses columnar; without fingerprint has_fingerprint() gates are no-ops.
+    # Soft export identity unchanged; PCV children_safe_view path unchanged.
+    # Extends test_pcv_exclusive_with_set.cpp (#81967); no docs/design/ (#1655).
+    dcf3829_script = COVERAGE_CHECKS / "check_dense_columnar_fingerprint_3829.py"
+    if not dcf3829_script.exists():
+        fail(f"missing {dcf3829_script}")
+        return 1
+    r = run([sys.executable, str(dcf3829_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3829 dense columnar fingerprint linter failed — run python3 scripts/coverage/checks/check_dense_columnar_fingerprint_3829.py"
+        )
+        return r
     # Issue #3802: EXEMPT_2ARG write-file/sys-* host-path isolation under
     # Restricted+MT / Strict — resolve under tenant root from
     # capability_tenant_id_; cross-tenant escape → IsolationDeny SE
@@ -15246,6 +15261,27 @@ def cmd_mutate_from_feedback_ssot_3828():
     return cmd_mutate_from_feedback_ssot_3828_coverage()
 
 
+def cmd_dense_columnar_fingerprint_3829_coverage():
+    """Issue #3829: children_columnar dense SafePCVSpan across-Guard fingerprint (static)."""
+    print(f"{B}=== dense columnar fingerprint (#3829) ==={N}")
+    script = COVERAGE_CHECKS / "check_dense_columnar_fingerprint_3829.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = run([sys.executable, str(script)], cwd=ROOT)
+    if r != 0:
+        fail("dense columnar fingerprint (#3829) coverage contract rows failed")
+        return r
+    ok("dense columnar fingerprint (#3829) coverage clean")
+    return 0
+
+
+def cmd_dense_columnar_fingerprint_3829():
+    """Issue #3829: capture across-Guard fingerprint on dense children_columnar spans."""
+    print(f"{B}=== dense columnar fingerprint (#3829) ==={N}")
+    return cmd_dense_columnar_fingerprint_3829_coverage()
+
+
 def cmd_engine_metrics_hash_overflow_3018_coverage():
     """Issue #3018: engine:metrics hash overflow fail-soft (static)."""
     print(f"{B}=== engine:metrics hash overflow coverage (#3018) ==={N}")
@@ -23219,6 +23255,8 @@ def main():
         "mutate-dispatch-sole-guard-3074": cmd_mutate_dispatch_sole_guard_3074,
         "mutate-from-feedback-ssot-3828": cmd_mutate_from_feedback_ssot_3828,
         "mutate-from-feedback-ssot-3828-coverage": cmd_mutate_from_feedback_ssot_3828_coverage,
+        "dense-columnar-fingerprint-3829": cmd_dense_columnar_fingerprint_3829,
+        "dense-columnar-fingerprint-3829-coverage": cmd_dense_columnar_fingerprint_3829_coverage,
         "mutate-dispatch-sole-guard-3074-coverage": cmd_mutate_dispatch_sole_guard_3074_coverage,
         "mutate-reg-kind-3452": cmd_mutate_reg_kind_3452_coverage,
         "mutate-reg-kind-3452-coverage": cmd_mutate_reg_kind_3452_coverage,
