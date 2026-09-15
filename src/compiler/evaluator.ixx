@@ -8778,6 +8778,17 @@ public:
         // per-CompilerMetrics atomics from the Evaluator host ctx here
         // avoids the C-linkage shim import issue — same pattern as
         // #1908 macro_provenance).
+        // Issue #3809: mirror #3677/#3742 Soft GC restamp — this Soft probe
+        // runs AFTER BoundarySuccess triad restamp and AFTER Phase-5 Moving
+        // densify. Soft gen bump / pin wipe would otherwise leave LifetimePins
+        // fail-closed until the next outermost restamp. Soft stays non-Moving
+        // (no publish_last_moving_densify_window here). Soft soft-gated no-op
+        // (depth/render) reports unchanged gen → zero extra Densify restamp.
+        std::uint64_t gen_at_entry = 0;
+        {
+            std::uint64_t aid = 0;
+            (void)arena_group_->primary_arena_id_and_gen(aid, gen_at_entry);
+        }
         const aura::ast::LiveCompactResult lc =
             arena_group_->live_compact(aura::ast::LiveCompactMode::Soft);
         if (compiler_metrics_) {
@@ -8808,6 +8819,12 @@ public:
             m->root_remap_closure_capture_fail_total.fetch_add(
                 static_cast<std::uint64_t>(lc.root_remap_closure_capture_fail_total),
                 std::memory_order_relaxed);
+        }
+        // Issue #3809 / #3677 / #3742: Soft that bumped gen / invalidated or
+        // remapped pins must restamp the IR/JIT triad before Guard returns.
+        if (lc.invalidates_pins || lc.remapped_pins > 0 ||
+            (lc.new_gen != 0 && lc.new_gen != gen_at_entry)) {
+            (void)unified_restamp_after_boundary(UnifiedRestampSite::Densify);
         }
     }
 
