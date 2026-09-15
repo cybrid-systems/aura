@@ -1316,15 +1316,14 @@ static void ac3463_4_no_new_query_key_and_no_invent() {
 }
 
 
-
 // Issue #3776: production Scope retires Done-path husks (compact / live
 // size) so long-run soak does not accumulate O(n) ghosts while name-table
 // already erases (#3598). Soft/Off stay append-only (#3497 AC2/AC3).
 static void ac3776_scope_done_husk_compact() {
     using aura::orch::AgentScope;
     using aura::orch::AgentSpec;
-    using aura::orch::StallPolicy;
     using aura::orch::kScopeDoneHuskCompactIssue;
+    using aura::orch::StallPolicy;
     std::println("\n--- #3776: AgentScope Done-path husk compact (production) ---");
     CHECK(kScopeDoneHuskCompactIssue == 3776, "3776: issue stamp");
 
