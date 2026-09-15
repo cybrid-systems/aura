@@ -71,9 +71,7 @@ def main() -> int:
 
     # Obs join comment must not regress to epoch-only mid claim.
     if "isolation-deny mutation_id is epoch, never tenant" in sec_prim:
-        fails.append(
-            "AC4: stale security-audit-stats comment still claims IsolationDeny mid=epoch only"
-        )
+        fails.append("AC4: stale security-audit-stats comment still claims IsolationDeny mid=epoch only")
     must("TypedMid-then-epoch", "AC4 stats cite TypedMid join", sec_prim)
 
     if fails:

@@ -22,9 +22,9 @@
 #include "compiler/observability_metrics.h"
 #include "compiler/typed_mutation_audit.h"
 #include "serve/gc_coordinator.h"
-#include "core/flatast_restamp.hh"       // #3677 unified restamp counter
-#include "core/gc_hooks.h"               // #3677 ffi-pin defer arm/release
-#include "core/moving_densify_health.hh" // #3677 last Moving window atomics
+#include "core/flatast_restamp.hh"        // #3677 unified restamp counter
+#include "core/gc_hooks.h"                // #3677 ffi-pin defer arm/release
+#include "core/moving_densify_health.hh"  // #3677 last Moving window atomics
 #include "core/arena_auto_policy_stats.h" // #3809 Soft soft-gate render
 #include "core/lifetime_pin.hh"           // #3809 LifetimePin soak
 
@@ -732,9 +732,8 @@ static void run_3809_boundary_soft_densify_restamp() {
               "3809 AC4: Soft probe documents non-Moving (no window publish)");
         CHECK(win.find("publish_last_moving_densify_window(") == std::string::npos,
               "3809 AC4: Soft probe does NOT call publish_last_moving_densify_window");
-        const auto mb = read_first(
-            {"src/compiler/evaluator_mutation_boundary.cpp",
-             "../src/compiler/evaluator_mutation_boundary.cpp"});
+        const auto mb = read_first({"src/compiler/evaluator_mutation_boundary.cpp",
+                                    "../src/compiler/evaluator_mutation_boundary.cpp"});
         CHECK(mb.find("probe_arena_auto_policy_on_boundary_exit(success)") != std::string::npos,
               "3809 AC1: Guard dtor still calls Soft probe");
         CHECK(read_file("tests/serve/test_issue_3809.cpp").empty(), "3809: no test_issue_N.cpp");
@@ -772,8 +771,7 @@ static void run_3809_boundary_soft_densify_restamp() {
         const auto gen1 = m->arena_live_compact_gen_restamps_total.load(std::memory_order_relaxed);
         CHECK(rs1 > rs0, "3809 AC1: BoundarySuccess restamp at least ran");
         if (gen1 > gen0) {
-            CHECK(rs1 >= rs0 + 2,
-                  "3809 AC1: Soft gen bump → Densify restamp before Guard returns");
+            CHECK(rs1 >= rs0 + 2, "3809 AC1: Soft gen bump → Densify restamp before Guard returns");
         } else {
             std::println("  note: Soft did not invalidate pins this round; AC1 source-cite "
                          "carries (unit-env freelist may be quiet)");
@@ -872,9 +870,10 @@ static void run_3810_soft_gen_bump_this_window() {
         CHECK(!ixx.empty(), "3810 AC3: arena.ixx readable");
         const auto rel = ixx.find("// ── Relocate (freelist protocol) ──");
         CHECK(rel != std::string::npos, "3810 AC3: Relocate section present");
-        const auto gen = ixx.find("if (saved_bytes > 0 || this_window_relocated > 0 || result.moved_live_objects)",
-                                  rel);
-        CHECK(gen != std::string::npos && gen > rel, "3810 AC3: gen-bump uses this_window_relocated");
+        const auto gen = ixx.find(
+            "if (saved_bytes > 0 || this_window_relocated > 0 || result.moved_live_objects)", rel);
+        CHECK(gen != std::string::npos && gen > rel,
+              "3810 AC3: gen-bump uses this_window_relocated");
         const auto win = ixx.substr(rel, gen - rel + 120);
         CHECK(win.find("Issue #3810") != std::string::npos, "3810 AC3: Relocate cites #3810");
         CHECK(win.find("recycle_hits_at_entry") != std::string::npos,
@@ -885,7 +884,8 @@ static void run_3810_soft_gen_bump_this_window() {
         CHECK(win.find("this_window_relocated") != std::string::npos,
               "3810 AC3: this_window_relocated accounting");
         // Must NOT rebuild relocated from lifetime recycle_hits() alone.
-        CHECK(win.find("const std::size_t reuses = small_pool_.recycle_hits();") == std::string::npos,
+        CHECK(win.find("const std::size_t reuses = small_pool_.recycle_hits();") ==
+                  std::string::npos,
               "3810 AC3: no lifetime reuses = recycle_hits() for relocated");
         CHECK(win.find("const std::size_t relocated = holes + reuses;") == std::string::npos,
               "3810 AC3: no relocated = holes + lifetime reuses");
@@ -932,7 +932,8 @@ static void run_3810_soft_gen_bump_this_window() {
             CHECK(r.new_gen == 0 || r.new_gen == arena.generation(),
                   "3810 AC4: quiet Soft does not restamp new_gen");
         }
-        CHECK(arena.generation() == gen_after_account, "3810 AC1: gen stable across quiet Soft soak");
+        CHECK(arena.generation() == gen_after_account,
+              "3810 AC1: gen stable across quiet Soft soak");
         CHECK(arena.live_compact_gen_restamps_total_relaxed() == restamp0,
               "3810 AC4: no gen restamp on quiet Soft soak");
         CHECK(arena.live_compact_soft_count_relaxed() >= soft0 + static_cast<std::uint64_t>(kSoak),

@@ -4671,7 +4671,8 @@ int main() {
     // via query:security-audit mutation-id=TypedMid and
     // query:evolution-audit-decision last-se-reason (not epoch-only mid).
     {
-        std::println("\n--- #3808 AC4: Guard TypedMid≠epoch → security-audit + evo last-se-reason ---");
+        std::println(
+            "\n--- #3808 AC4: Guard TypedMid≠epoch → security-audit + evo last-se-reason ---");
         reset_all();
         aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
         aura::compiler::typed_audit::apply_production_audit_defaults();
@@ -4748,11 +4749,10 @@ int main() {
         if (rsn && is_string(*rsn)) {
             auto heap = ev.string_heap();
             const auto sidx = as_string_idx(*rsn);
-            reason_ok = sidx < heap.size() &&
-                        heap[sidx].find("isolation-deny:") != std::string::npos;
+            reason_ok =
+                sidx < heap.size() && heap[sidx].find("isolation-deny:") != std::string::npos;
         }
-        CHECK(reason_ok,
-              "3808 AC4: evolution-audit-decision last-se-reason is isolation-deny:*");
+        CHECK(reason_ok, "3808 AC4: evolution-audit-decision last-se-reason is isolation-deny:*");
         auto rsn_code = cs.eval(
             R"((hash-ref (engine:metrics "query:evolution-audit-decision" 777) "last-se-reason-code"))");
         CHECK(rsn_code && is_int(*rsn_code) && as_int(*rsn_code) != 0,
@@ -4768,7 +4768,8 @@ int main() {
         const auto build = read_file("build.py");
         const auto prim = read_file("src/compiler/evaluator_primitives_security.cpp");
         const auto test_self = read_file("tests/core/test_tenant_isolation_enforcement.cpp");
-        CHECK(iso.find("Issue #3808") != std::string::npos, "3808: workspace_isolation cites #3808");
+        CHECK(iso.find("Issue #3808") != std::string::npos,
+              "3808: workspace_isolation cites #3808");
         CHECK(iso.find("query:security-audit") != std::string::npos,
               "3808: iso cites query:security-audit obs join");
         CHECK(iso.find("if (!denied)") != std::string::npos,
