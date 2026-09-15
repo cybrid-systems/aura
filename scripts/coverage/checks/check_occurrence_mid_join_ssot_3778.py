@@ -54,7 +54,13 @@ def main() -> int:
     qr = _read("src/compiler/evaluator_primitives_query_reflect.cpp")
 
     pre = mb.find("outermost-pre-persist")
-    persist = mb.find("aura_outermost_success_persist_occurrence(ev_")
+    # Prefer the call site after pre-persist (#3780 may add an early
+    # extern/decl of aura_outermost_success_persist_occurrence).
+    persist = -1
+    if pre >= 0:
+        persist = mb.find("aura_outermost_success_persist_occurrence(ev_", pre)
+    if persist < 0:
+        persist = mb.find("aura_outermost_success_persist_occurrence(ev_")
     densify = mb.find("densify_stamp_mid_3778")
     steal = efm.find("steal_stamp_mid_3778")
 
@@ -71,7 +77,7 @@ def main() -> int:
             "AC1 no defuse mid_audit",
             pre_win,
         )
-        persist_win = mb[persist - 900 : persist + 200]
+        persist_win = mb[persist - 4000 : persist + 200]  # #3780 WAL gate sits between mid SSOT and persist call
         must("hard_3778", "AC1 mid==0 refuse gate", persist_win)
         must("join_audit_and_se_mid(0)", "AC1 persist join", persist_win)
         must("session_mid_at_enter_", "AC1 session mid", persist_win)
