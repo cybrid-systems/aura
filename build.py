@@ -5596,6 +5596,18 @@ def cmd_lint():
             "Issue #3789 remount last==0 Agent face linter failed — run python3 scripts/coverage/checks/check_remount_last_zero_agent_face_3789.py"
         )
         return r
+    # Issue #3790: rollback / rollback-since acquire MutationBoundaryGuard
+    # (residual of #3722 concurrency half). Soft/Off inert Guard.
+    rbg3790_script = COVERAGE_CHECKS / "check_rollback_mutation_boundary_guard_3790.py"
+    if not rbg3790_script.exists():
+        fail(f"missing {rbg3790_script}")
+        return 1
+    r = run([sys.executable, str(rbg3790_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3790 rollback MutationBoundaryGuard linter failed — run python3 scripts/coverage/checks/check_rollback_mutation_boundary_guard_3790.py"
+        )
+        return r
     # Issue #3656: caller partial absorbs callee cone (block units, not
     # define count). Residual of #3550 (precompute early-return on empty
     # calls) + #3584 (units fixed, cone still invisible). Soft observe.

@@ -22,6 +22,10 @@ import std;
 import aura.core.ast;
 import aura.compiler.value;
 
+// Issue #3790: rollback / rollback-since acquire MutationBoundaryGuard
+// via mutate_dispatch_try_acquire (same as mutate:*).
+#include "compiler/mutate_dispatch.hh"
+
 namespace aura::compiler::primitives_detail {
 
 using EvalValue = types::EvalValue;
@@ -358,7 +362,9 @@ void register_mutation_primitives(PrimRegistrar add, Evaluator& ev) {
 
     // Issue #3722: rollback / rollback-since are FlatAST writes — under
     // Restricted/Strict they MUST take the same Mutate + isolation join as
-    // mutate:* BEFORE any topology write. The gate resolves mid → target
+    // mutate:* BEFORE any topology write. Issue #3790: then acquire
+    // MutationBoundaryGuard via mutate_dispatch_try_acquire so steal/GC
+    // cannot tear mid-restore (same contract as mutate:*). The gate resolves mid → target
     // node and routes through require_effect_for_node_id (the #2942
     // mandated helper): capability check + #2490 auto-isolation + #3415/
     // #3641 occupancy consult fire together, and #2384 stamps the live
@@ -391,7 +397,19 @@ void register_mutation_primitives(PrimRegistrar add, Evaluator& ev) {
             // #3722 AC1/AC2: EffectDeny / IsolationDeny before any write.
             return make_bool(false);
         }
-        return make_bool(ev.workspace_flat_->rollback(mid));
+        // Issue #3790: acquire outermost MutationBoundaryGuard before FlatAST
+        // restore so concurrent steal/GC cannot observe torn children_/parent_
+        // and StableNodeRef gens restamp on exit (same contract as mutate:*).
+        // Soft/Off: try_acquire returns inert/no-op Guard (existing Soft face).
+        bool ok = true;
+        auto guard_r = aura::compiler::mutate_dispatch_try_acquire(ev, /*pending=*/1, &ok);
+        if (!guard_r)
+            return make_bool(false); // AdmissionRejected / hold SLO
+        auto guard = std::move(*guard_r);
+        const bool ok_rb = ev.workspace_flat_->rollback(mid);
+        if (!ok_rb)
+            guard->mark_failed();
+        return make_bool(ok_rb);
     });
 
     add("rollback-since", [&ev](std::span<const EvalValue> a) {
@@ -414,7 +432,14 @@ void register_mutation_primitives(PrimRegistrar add, Evaluator& ev) {
                 return make_int(0);
             }
         }
-        return make_int(static_cast<std::int64_t>(ev.workspace_flat_->rollback_since(since_id)));
+        // Issue #3790: same Guard + restamp contract as (rollback N).
+        bool ok = true;
+        auto guard_r = aura::compiler::mutate_dispatch_try_acquire(ev, /*pending=*/1, &ok);
+        if (!guard_r)
+            return make_int(0);
+        auto guard = std::move(*guard_r);
+        const auto n = ev.workspace_flat_->rollback_since(since_id);
+        return make_int(static_cast<std::int64_t>(n));
     });
 
     // (mutation-log:summary) — Issue #278: aggregate stats over the
