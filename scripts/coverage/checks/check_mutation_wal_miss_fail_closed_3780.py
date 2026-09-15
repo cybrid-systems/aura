@@ -61,9 +61,7 @@ def main() -> int:
     else:
         persist = bnd.find("aura_outermost_success_persist_occurrence", gate)
         if persist < 0:
-            fails.append(
-                "AC1: #3780 gate must precede aura_outermost_success_persist_occurrence"
-            )
+            fails.append("AC1: #3780 gate must precede aura_outermost_success_persist_occurrence")
     must("wal_append_fail_closed_active()", "AC1 fail-closed gate", bnd)
     must("g_mutation_audit_wal().is_enabled()", "AC1 WAL enabled gate", bnd)
     must("emit_mutation_audit(nodes_changed_wal", "AC1 pre-persist emit call", bnd)
@@ -80,9 +78,7 @@ def main() -> int:
     # ── AC3: Soft fail-open ────────────────────────────────────────────
     bare = sec.count("(void)g_mutation_audit_wal().append(rec);")
     if bare != 1:
-        fails.append(
-            f"AC3: expected exactly 1 bare (void) mutation append (Soft observe), found {bare}"
-        )
+        fails.append(f"AC3: expected exactly 1 bare (void) mutation append (Soft observe), found {bare}")
     must("Soft / WAL-off keep this post-success emit", "AC3 late emit Soft comment", bnd)
     must("g_tls_mutation_audit_wal_precommitted", "AC3 TLS precommit skip", bnd)
     must("Issue #3056", "AC3 #3056 cite", sec)
