@@ -12466,13 +12466,23 @@ SolveDeltaOccurrenceResult solve_delta_occurrence(ConstraintSystem& cs,
     r.status = cs.solve_delta(&r.unresolved);
     if (unresolved_out)
         *unresolved_out = r.unresolved;
-    // Issue #2647 AC3: drifted goals → not silent SOLVED without miss export.
+    // Issue #2647 AC3 / #3788: drifted goals → not silent SOLVED without
+    // miss export. All-drift (no remaining priority roots) → CONFLICT
+    // (#2647). Partial drift under production/Full → CONFLICT too so
+    // Agents cannot see SOLVED while dependents stay under-marked
+    // (#3788); Soft/Off keep miss counters without escalate (contract).
     if (drifted_goals > 0) {
         r.occurrence_replay_miss_count += drifted_goals;
-        if (r.status == SolveResult::SOLVED && cs.occurrence_priority_roots_size() == 0) {
-            // All live goals drifted / dropped — surface CONFLICT so Agents
-            // do not treat empty-dirty + dead goals as green.
-            r.status = SolveResult::CONFLICT;
+        if (r.status == SolveResult::SOLVED) {
+            if (cs.occurrence_priority_roots_size() == 0) {
+                // All live goals drifted / dropped — surface CONFLICT so Agents
+                // do not treat empty-dirty + dead goals as green.
+                r.status = SolveResult::CONFLICT;
+            } else if (aura::compiler::typed_audit::production_defaults_active() ||
+                       aura::compiler::typed_audit::get_strategy() ==
+                           aura::compiler::typed_audit::AuditStrategy::Full) {
+                r.status = SolveResult::CONFLICT;
+            }
         }
     }
     r.occurrence_priority_roots = cs.occurrence_priority_roots_size();

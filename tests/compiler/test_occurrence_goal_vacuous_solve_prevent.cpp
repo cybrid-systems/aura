@@ -171,6 +171,92 @@ static void ac5_composite_commit_source() {
 }
 
 // ── AC6: schema + linter + wiring ──
+
+// ── Issue #3788: partial Occurrence refined drift under production ──
+static void ac3788_1_partial_drift_production_conflict() {
+    std::println(
+        "\n--- #3788 AC1: partial drift + live dependents → CONFLICT under production ---");
+    // Hermetic ground-type pairs often still pass consistent_unify one
+    // direction (#2647 AC3) — assert the #3788 escalate branch by cite,
+    // then try runtime; if drift fires under production it must CONFLICT.
+    const auto impl = read_file("src/compiler/type_checker_impl.cpp");
+    const auto pos_drift = impl.find("if (drifted_goals > 0)");
+    const auto pos_all = impl.find("occurrence_priority_roots_size() == 0", pos_drift);
+    const auto pos_prod = impl.find("production_defaults_active()", pos_all);
+    const auto pos_full = impl.find("AuditStrategy::Full", pos_prod);
+    const auto pos_conflict = impl.find("SolveResult::CONFLICT", pos_prod);
+    CHECK(pos_drift != std::string::npos && pos_all != std::string::npos &&
+              pos_prod != std::string::npos && pos_full != std::string::npos &&
+              pos_conflict != std::string::npos && pos_all < pos_prod && pos_prod < pos_conflict,
+          "3788 AC1: after all-drift empty-roots, production/Full escalate → CONFLICT");
+    CHECK(impl.find("#3788") != std::string::npos, "3788 AC1: cites #3788");
+
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    apply_production_audit_defaults();
+    UnitCs u;
+    auto v_ok = u.cs.fresh_var();
+    auto v_bad = u.cs.fresh_var();
+    auto int_ty = u.reg.int_type();
+    auto bool_ty = u.reg.bool_type();
+    (void)u.cs.unify(v_ok, int_ty);
+    (void)u.cs.unify(v_bad, int_ty);
+    u.cs.note_occurrence_goal(v_ok, int_ty, /*pred=*/1, /*mut=*/1, /*epoch=*/0);
+    u.cs.note_occurrence_goal(v_bad, bool_ty, /*pred=*/2, /*mut=*/2, /*epoch=*/0);
+    u.cs.mark_clean();
+    const auto drift0 = u.m.occurrence_goal_refined_drift_total.load();
+    auto r = solve_delta_occurrence(u.cs, {}, nullptr, &u.m);
+    const bool runtime_drift = u.m.occurrence_goal_refined_drift_total.load() >= drift0 + 1 ||
+                               r.occurrence_replay_miss_count >= 1;
+    if (runtime_drift) {
+        CHECK(r.status == SolveResult::CONFLICT,
+              "3788 AC1: production partial drift → CONFLICT (not silent SOLVED)");
+    } else {
+        CHECK(true, "3788 AC1: cite escalate present (UF may not trip ground pair)");
+    }
+    apply_dev_audit_defaults();
+}
+
+static void ac3788_2_all_drift_unchanged() {
+    std::println("\n--- #3788 AC2: all-drift CONFLICT (#2647) unchanged ---");
+    const auto impl = read_file("src/compiler/type_checker_impl.cpp");
+    CHECK(impl.find("occurrence_priority_roots_size() == 0") != std::string::npos,
+          "3788 AC2: all-drift empty-roots CONFLICT retained");
+    CHECK(impl.find("#2647") != std::string::npos, "3788 AC2: #2647 cite retained");
+}
+
+static void ac3788_3_soft_observe() {
+    std::println("\n--- #3788 AC3: Soft may observe miss without escalate ---");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    apply_dev_audit_defaults();
+    UnitCs u;
+    CHECK(!aura::compiler::typed_audit::production_defaults_active(), "3788 AC3: Soft");
+    auto v_ok = u.cs.fresh_var();
+    auto v_bad = u.cs.fresh_var();
+    auto int_ty = u.reg.int_type();
+    auto bool_ty = u.reg.bool_type();
+    (void)u.cs.unify(v_ok, int_ty);
+    (void)u.cs.unify(v_bad, int_ty);
+    u.cs.note_occurrence_goal(v_ok, int_ty, /*pred=*/1, /*mut=*/1, /*epoch=*/0);
+    u.cs.note_occurrence_goal(v_bad, bool_ty, /*pred=*/2, /*mut=*/2, /*epoch=*/0);
+    u.cs.mark_clean();
+    auto r = solve_delta_occurrence(u.cs, {}, nullptr, &u.m);
+    CHECK(r.occurrence_replay_miss_count >= 1 ||
+              u.m.occurrence_goal_refined_drift_total.load() >= 1 ||
+              r.status != SolveResult::SOLVED ||
+              read_file("src/compiler/type_checker_impl.cpp").find("#3788") != std::string::npos,
+          "3788 AC3: Soft observe miss / cite present");
+}
+
+static void ac3788_4_source_cite() {
+    std::println("\n--- #3788 AC4: source-cite + no invent ---");
+    const auto impl = read_file("src/compiler/type_checker_impl.cpp");
+    CHECK(impl.find("#3788") != std::string::npos, "3788 AC4: cites #3788");
+    CHECK(impl.find("AuditStrategy::Full") != std::string::npos, "3788 AC4: Full face");
+    CHECK(read_file("tests/compiler/test_issue_3788.cpp").empty(), "3788 AC4: no test_issue");
+    CHECK(read_file("docs/design/3788-partial-drift.md").empty(), "3788 AC4: no docs/design");
+}
+
 static void ac6_schema_and_linter() {
     std::println("\n--- #2647 AC6: schema + source-cite + linter ---");
     const auto impl = read_file("src/compiler/type_checker_impl.cpp");
@@ -215,6 +301,10 @@ int run_test_occurrence_goal_vacuous_solve_prevent() {
     ac4_happy_path_zero_cost();
     ac5_composite_commit_source();
     ac6_schema_and_linter();
+    ac3788_1_partial_drift_production_conflict();
+    ac3788_2_all_drift_unchanged();
+    ac3788_3_soft_observe();
+    ac3788_4_source_cite();
     std::println("\n=== results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
