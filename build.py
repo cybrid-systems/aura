@@ -4749,6 +4749,22 @@ def cmd_lint():
             "Issue #3145 cross-tenant grant principal source linter failed — run python3 scripts/coverage/checks/check_cross_tenant_grant_principal_3145.py"
         )
         return r
+    # Issue #3800: grant_cross_tenant TA fence is caller-only under
+    # Restricted/Strict — target-only TenantAdmin must not mint
+    # cross_grants (least-privilege residual post-#3086/#3145/#3797).
+    # Soft/Off zero-cost unchanged. Extends
+    # test_tenant_isolation_enforcement.cpp (#81967); no docs/design/
+    # (#1655). No new posture / query key.
+    cta3800_script = COVERAGE_CHECKS / "check_cross_tenant_grant_caller_ta_3800.py"
+    if not cta3800_script.exists():
+        fail(f"missing {cta3800_script}")
+        return 1
+    r = run([sys.executable, str(cta3800_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3800 cross-tenant grant caller-only TA linter failed — run python3 scripts/coverage/checks/check_cross_tenant_grant_caller_ta_3800.py"
+        )
+        return r
     # Issue #2969: registry write-fence — under production (Restricted/
     # Strict), grant/revoke targeting a foreign tenant id requires
     # TenantAdmin. Deny → SE reason grant-foreign-tenant-needs-tenant-admin

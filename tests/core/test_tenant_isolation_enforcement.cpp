@@ -1644,9 +1644,10 @@ int main() {
               "AC2: Off path cross grant installed");
     }
 
-    // ── #3086 AC3: target tenant holds TenantAdmin → allow under Restricted ──
+    // ── #3086 AC3 / #3800: target-only TenantAdmin → deny under Restricted ──
+    // (#3800 flips the #3086 AC3 oracle: caller-only TA required.)
     {
-        std::println("\n--- #3086 AC3: TenantAdmin on target tenant → allow raw grant ---");
+        std::println("\n--- #3086 AC3/#3800: TenantAdmin on target only → deny raw grant ---");
         reset_all();
         aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
         aura::core::capability::g_capability_registry().default_tenant.store(
@@ -1664,10 +1665,22 @@ int main() {
         const auto allow_after =
             aura::core::workspace_isolation::g_tenant_isolation_metrics()
                 .cross_tenant_capability_grant_total.load(std::memory_order_relaxed);
-        CHECK(deny_after == deny_before, "AC3: target-tenant admin → no deny bump");
-        CHECK(allow_after == allow_before + 1, "AC3: target-tenant admin → allow bump");
-        CHECK(g_workspace_isolation().cross_grant_bits(7, 42) == kEffectMutate,
-              "AC3: cross grant installed when target holds TenantAdmin");
+        CHECK(deny_after == deny_before + 1, "AC3/#3800: target-only TA → deny bump");
+        CHECK(allow_after == allow_before, "AC3/#3800: target-only TA → no allow bump");
+        CHECK(g_workspace_isolation().cross_grant_bits(7, 42) == 0,
+              "AC3/#3800: cross_grant_bits unchanged when only target holds TenantAdmin");
+        // Existing SE reason (#2968 stable).
+        const auto& ring = g_security_event_ring();
+        bool found = false;
+        const auto cur = ring.seq.load(std::memory_order_acquire);
+        for (auto s = cur; s > 0 && s + 16 > cur; --s) {
+            const auto& e = ring.ring[(s - 1) % ring.ring.size()];
+            if (std::string_view(e.reason) == "cross-tenant-grant-needs-tenant-admin") {
+                found = true;
+                break;
+            }
+        }
+        CHECK(found, "AC3/#3800: SE reason 'cross-tenant-grant-needs-tenant-admin' on target-only TA");
     }
 
     // ── #3086 AC4: no double-count via Evaluator wrapper ──
@@ -3145,23 +3158,21 @@ int main() {
         // TenantAdmin on tenant 42 (b's principal), not on tenant 0 or 7.
         grant_tenant_admin_mid(42);
 
-        // Evaluator a (tenant 7, no admin): grant denied — caller lacks admin
-        // and target 42 holds admin (allowed as fallback). Target-tenant admin
-        // is still a valid gate clear post-#2968/#3086.
+        // Evaluator a (tenant 7, no admin): grant denied — #3800 caller-only TA.
+        // Target 42 holds admin but that no longer clears the fence. Gate still
+        // resolves via caller_principal=7 (not default_tenant=0): if it read
+        // default_tenant alone both would deny the same way, but the explicit
+        // principal path is what #3145 requires; #3800 flips the target-admin
+        // fallback to deny.
         const auto deny0 = aura::core::workspace_isolation::g_tenant_isolation_metrics()
                                .cross_tenant_grant_deny_total.load(std::memory_order_relaxed);
         ev_a.grant_cross_tenant_access(/*from=*/7, /*to=*/42, kEffectMutate);
         const auto deny1 = aura::core::workspace_isolation::g_tenant_isolation_metrics()
                                .cross_tenant_grant_deny_total.load(std::memory_order_relaxed);
-        // Either deny (caller lacks admin, target has admin → allow) or allow —
-        // we only care that the gate resolves via caller_principal (42) not
-        // default_tenant (0). A's call sees caller=7 (no admin) and target=42
-        // (has admin) — the target-admin branch allows, no deny bump.
-        CHECK(deny1 == deny0, "AC2: gate uses caller_principal=7 (no admin) → target-admin path "
-                              "allows, no deny bump");
-        CHECK(g_workspace_isolation().cross_grant_bits(7, 42) ==
-                  static_cast<std::uint16_t>(kEffectMutate),
-              "AC2: 7→42 grant landed via target-tenant admin fallback");
+        CHECK(deny1 == deny0 + 1,
+              "AC2/#3800: caller_principal=7 (no admin) → deny (target-admin no longer allows)");
+        CHECK(g_workspace_isolation().cross_grant_bits(7, 42) == 0,
+              "AC2/#3800: 7→42 grant refused — caller lacks TA");
 
         // Now b's grant to a different target (99) where neither caller nor
         // target has admin (caller_principal=42 has admin on 42, but target=99
@@ -4388,6 +4399,129 @@ int main() {
         const auto prim = read_file("src/compiler/evaluator_primitives_security.cpp");
         CHECK(prim.find("schema-3797") == std::string::npos, "AC4: no schema-3797 query key");
         CHECK(prim.find("issue-3797") == std::string::npos, "AC4: no issue-3797 query key");
+    }
+
+    // ── Issue #3800: grant_cross_tenant TA fence is caller-only ──
+    // Target-only TA must not mint cross_grants under Restricted/Strict.
+    {
+        std::println("\n--- #3800 AC1: caller lacks TA, target has TA → deny ---");
+        reset_all();
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+        aura::core::capability::g_capability_registry().default_tenant.store(
+            7, std::memory_order_release);
+        grant_tenant_admin_mid(42); // target only
+        const auto bits_before = g_workspace_isolation().cross_grant_bits(7, 42);
+        const auto deny_before = aura::core::workspace_isolation::g_tenant_isolation_metrics()
+                                     .cross_tenant_grant_deny_total.load(std::memory_order_relaxed);
+        g_workspace_isolation().grant_cross_tenant(/*from=*/7, /*to=*/42, kEffectMutate);
+        CHECK(g_workspace_isolation().cross_grant_bits(7, 42) == bits_before,
+              "AC1: cross_grant_bits unchanged (target-only TA deny)");
+        const auto deny_after = aura::core::workspace_isolation::g_tenant_isolation_metrics()
+                                    .cross_tenant_grant_deny_total.load(std::memory_order_relaxed);
+        CHECK(deny_after == deny_before + 1, "AC1: deny counter bumps on target-only TA");
+    }
+
+    {
+        std::println("\n--- #3800 AC2: caller has TA → allow (unchanged) ---");
+        reset_all();
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+        aura::core::capability::g_capability_registry().default_tenant.store(
+            7, std::memory_order_release);
+        grant_tenant_admin_mid(7); // caller
+        const auto allow_before =
+            aura::core::workspace_isolation::g_tenant_isolation_metrics()
+                .cross_tenant_capability_grant_total.load(std::memory_order_relaxed);
+        g_workspace_isolation().grant_cross_tenant(/*from=*/7, /*to=*/42, kEffectMutate);
+        CHECK(g_workspace_isolation().cross_grant_bits(7, 42) ==
+                  static_cast<std::uint16_t>(kEffectMutate),
+              "AC2: caller-TA allow installs cross grant");
+        CHECK(g_workspace_isolation().cross_grant_mint_principal(7, 42) == 7,
+              "AC2: mint_principal bound to caller (#3797/#3800)");
+        const auto allow_after =
+            aura::core::workspace_isolation::g_tenant_isolation_metrics()
+                .cross_tenant_capability_grant_total.load(std::memory_order_relaxed);
+        CHECK(allow_after == allow_before + 1, "AC2: allow counter bumps");
+    }
+
+    {
+        std::println("\n--- #3800 AC3: Soft/Off zero-cost unchanged ---");
+        reset_all(); // Off
+        const auto deny_before = aura::core::workspace_isolation::g_tenant_isolation_metrics()
+                                     .cross_tenant_grant_deny_total.load(std::memory_order_relaxed);
+        g_workspace_isolation().grant_cross_tenant(/*from=*/1, /*to=*/2, kEffectMutate);
+        const auto deny_after = aura::core::workspace_isolation::g_tenant_isolation_metrics()
+                                    .cross_tenant_grant_deny_total.load(std::memory_order_relaxed);
+        CHECK(deny_after == deny_before, "AC3: Soft/Off does not deny");
+        CHECK(g_workspace_isolation().cross_grant_bits(1, 2) ==
+                  static_cast<std::uint16_t>(kEffectMutate),
+              "AC3: Soft/Off grant lands without TA");
+        CHECK(g_workspace_isolation().cross_grant_mint_principal(1, 2) == 0,
+              "AC3: Soft mint_principal stays 0");
+    }
+
+    {
+        std::println("\n--- #3800 AC5: dual-Evaluator A(no TA) cannot mint into B(TA) ---");
+        reset_all();
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+        aura::core::capability::g_capability_registry().default_tenant.store(
+            0, std::memory_order_release);
+        CompilerService cs_a;
+        CompilerService cs_b;
+        auto& ev_a = cs_a.evaluator();
+        auto& ev_b = cs_b.evaluator();
+        ev_a.set_effect_sandbox_mode(1);
+        ev_b.set_effect_sandbox_mode(1);
+        ev_a.set_capability_tenant_id(7);
+        ev_b.set_capability_tenant_id(42);
+        grant_tenant_admin_mid(42); // B holds TA; A does not
+        const auto deny0 = aura::core::workspace_isolation::g_tenant_isolation_metrics()
+                               .cross_tenant_grant_deny_total.load(std::memory_order_relaxed);
+        ev_a.grant_cross_tenant_access(/*from=*/7, /*to=*/42, kEffectMutate);
+        const auto deny1 = aura::core::workspace_isolation::g_tenant_isolation_metrics()
+                               .cross_tenant_grant_deny_total.load(std::memory_order_relaxed);
+        CHECK(deny1 == deny0 + 1, "AC5: A (no TA) mint into B (TA target) → deny");
+        CHECK(g_workspace_isolation().cross_grant_bits(7, 42) == 0,
+              "AC5: no cross_grant from non-TA A into TA B");
+        // B (caller has TA) can still mint outbound.
+        ev_b.grant_cross_tenant_access(/*from=*/42, /*to=*/99, kEffectMutate);
+        CHECK(g_workspace_isolation().cross_grant_bits(42, 99) ==
+                  static_cast<std::uint16_t>(kEffectMutate),
+              "AC5: B (holds TA) can still mint outbound");
+    }
+
+    {
+        std::println("\n--- #3800 AC4: source-cite + linter + no invent / query key ---");
+        const auto iso = read_file("src/core/workspace_isolation.hh");
+        const auto test_self = read_file("tests/core/test_tenant_isolation_enforcement.cpp");
+        const auto build = read_file("build.py");
+        const auto prim = read_file("src/compiler/evaluator_primitives_security.cpp");
+        CHECK(iso.find("Issue #3800") != std::string::npos ||
+                  iso.find("#3800") != std::string::npos,
+              "AC4: workspace_isolation.hh cites #3800");
+        CHECK(iso.find("caller-only") != std::string::npos ||
+                  iso.find("caller-only TenantAdmin") != std::string::npos,
+              "AC4: caller-only TA fence documented");
+        // Must not OR target TA anymore.
+        CHECK(iso.find("caller_ta || target_ta") == std::string::npos,
+              "AC4: caller_ta || target_ta removed");
+        CHECK(test_self.find("#3800") != std::string::npos, "AC4: test file cites #3800");
+        CHECK(build.find("check_cross_tenant_grant_caller_ta_3800") != std::string::npos,
+              "AC4: build.py wires #3800 linter");
+        CHECK(prim.find("schema-3800") == std::string::npos, "AC4: no schema-3800 query key");
+        CHECK(prim.find("issue-3800") == std::string::npos, "AC4: no issue-3800 query key");
+        std::ifstream invent("tests/core/test_issue_3800.cpp");
+        if (!invent.good())
+            invent.open("../tests/core/test_issue_3800.cpp");
+        CHECK(!invent.good(), "AC4: no tests/core/test_issue_3800.cpp (forbidden per #81967)");
+        const std::filesystem::path docs_design = "docs/design";
+        std::error_code ec;
+        if (std::filesystem::is_directory(docs_design, ec)) {
+            for (const auto& entry : std::filesystem::directory_iterator(docs_design, ec)) {
+                const auto name = entry.path().filename().string();
+                CHECK(name.find("3800-") == std::string::npos,
+                      std::string("AC4: no docs/design/") + name + " (forbidden per #1655)");
+            }
+        }
     }
 
     reset_all();
