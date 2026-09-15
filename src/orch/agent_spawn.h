@@ -22,7 +22,7 @@
 #define AURA_ORCH_AGENT_SPAWN_H
 
 #include "core/resource_quota.hh"
-#include "core/sandbox.hh" // Issue #3434/#3494: is_sandbox_active() + MT spawn gate
+#include "core/sandbox.hh"               // Issue #3434/#3494: is_sandbox_active() + MT spawn gate
 #include "orch/security_schedule_gate.h" // Issue #3777: schedule-gate-at-spawn preflight
 #include "serve/fiber.h"
 #include "serve/multi_fiber_mailbox.h"
