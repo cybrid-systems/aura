@@ -1126,8 +1126,14 @@ struct CapabilityRegistry {
             return;
         for (auto& g : it->second) {
             if (g.name == name) {
+                // Issue #3774: named revoke of session_bound rows clears the
+                // flag and decrements live residual (saturate at 0) so Soft
+                // AC3 does not ratchet forever / orphan sweep stays armed
+                // only while real residuals remain.
+                const bool was_session = g.session_bound;
                 g.revoked = true;
                 g.effects = Effect::None;
+                g.session_bound = false;
                 // Prefer explicit epoch; else stamp current Mutation epoch.
                 auto ep = revoke_at_epoch;
                 if (ep == 0)
@@ -1138,6 +1144,11 @@ struct CapabilityRegistry {
                 auto& met = g_capability_effect_metrics();
                 met.capability_revoke_total.fetch_add(1, std::memory_order_relaxed);
                 met.capability_revoke_epoch_bound_total.fetch_add(1, std::memory_order_relaxed);
+                if (was_session) {
+                    auto cur = met.capability_live_session_grants.load(std::memory_order_relaxed);
+                    if (cur > 0)
+                        met.capability_live_session_grants.fetch_sub(1, std::memory_order_relaxed);
+                }
             }
         }
     }
@@ -1632,6 +1643,9 @@ struct CapabilityRegistry {
         }
         auto& vec = by_tenant[tenant];
         auto apply = [&](CapabilityGrant& g) {
+            // Issue #3774: capture live session residual BEFORE mutating
+            // revoked/session_bound (same shape as grant_locked #2944).
+            const bool was_session = g.session_bound && !g.revoked;
             g.effects = g.effects | Effect::MacroSelfEvo;
             g.revoked = false;
             g.bound_mutation_id = prov.mutation_id;
@@ -1690,6 +1704,17 @@ struct CapabilityRegistry {
                 met.capability_grant_epoch_bound_total.fetch_add(1, std::memory_order_relaxed);
             if (prov.fiber_id != 0)
                 met.capability_grant_fiber_bound_total.fetch_add(1, std::memory_order_relaxed);
+            // Issue #3774: MSE production session rows arm the same live
+            // residual + orphan sweep as grant_locked / grant_session.
+            // Soft/Off keeps legacy flags (no session_bound force) → no bump.
+            if (g.session_bound && !was_session) {
+                met.capability_session_grant_total.fetch_add(1, std::memory_order_relaxed);
+                met.capability_live_session_grants.fetch_add(1, std::memory_order_relaxed);
+            } else if (!g.session_bound && was_session) {
+                auto cur = met.capability_live_session_grants.load(std::memory_order_relaxed);
+                if (cur > 0)
+                    met.capability_live_session_grants.fetch_sub(1, std::memory_order_relaxed);
+            }
         };
         for (auto& g : vec) {
             if (g.name == "macro-self-evo") {
@@ -1715,8 +1740,12 @@ struct CapabilityRegistry {
         if (it != by_tenant.end()) {
             for (auto& g : it->second) {
                 if (g.name == "macro-self-evo") {
+                    // Issue #3774: clear session_bound + decrement live residual
+                    // (parity with revoke_session_grants_for_mid_locked).
+                    const bool was_session = g.session_bound;
                     g.revoked = true;
                     g.effects = Effect::None;
+                    g.session_bound = false;
                     auto ep = revoke_at_epoch;
                     if (ep == 0)
                         ep = ::aura::core::current_mutation_epoch();
@@ -1726,6 +1755,13 @@ struct CapabilityRegistry {
                     auto& met = g_capability_effect_metrics();
                     met.capability_revoke_total.fetch_add(1, std::memory_order_relaxed);
                     met.capability_revoke_epoch_bound_total.fetch_add(1, std::memory_order_relaxed);
+                    if (was_session) {
+                        auto cur =
+                            met.capability_live_session_grants.load(std::memory_order_relaxed);
+                        if (cur > 0)
+                            met.capability_live_session_grants.fetch_sub(
+                                1, std::memory_order_relaxed);
+                    }
                 }
             }
         }
