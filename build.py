@@ -5571,6 +5571,19 @@ def cmd_lint():
             "Issue #3787 sticky last_limit deny_all linter failed — run python3 scripts/coverage/checks/check_sticky_last_limit_deny_all_3787.py"
         )
         return r
+    # Issue #3788: partial Occurrence refined drift under production/Full
+    # must CONFLICT (not silent SOLVED-with-miss). Soft/Off observe-only.
+    # Extends vacuous-solve-prevent (#2647); no docs/design / invent.
+    pod3788_script = COVERAGE_CHECKS / "check_partial_occurrence_drift_escalate_3788.py"
+    if not pod3788_script.exists():
+        fail(f"missing {pod3788_script}")
+        return 1
+    r = run([sys.executable, str(pod3788_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3788 partial Occurrence drift escalate linter failed — run python3 scripts/coverage/checks/check_partial_occurrence_drift_escalate_3788.py"
+        )
+        return r
     # Issue #3656: caller partial absorbs callee cone (block units, not
     # define count). Residual of #3550 (precompute early-return on empty
     # calls) + #3584 (units fixed, cone still invisible). Soft observe.
