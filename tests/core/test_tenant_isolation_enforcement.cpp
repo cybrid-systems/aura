@@ -3886,9 +3886,10 @@ int main() {
         aura::core::provenance::set_multi_tenant_env_active(false);
     }
 
-    // ── #3722 AC4: the foreign mid is visible in the shared log (option B:
-    // mutation-history is a query-surface prim, no tenant filter) — the AC2
-    // gate keeps a leaked mid inert ──
+    // ── #3722 AC4: the foreign mid is visible in the shared log (option B;
+    // the mutation-history prim face itself is tenant-filtered under the
+    // production consult regime since #3792) — the AC2 gate keeps a leaked
+    // mid inert ──
     {
         std::println("\n--- #3722 AC4: leaked foreign mid cannot fire rollback ---");
         reset_all();
@@ -3973,6 +3974,120 @@ int main() {
               "3722 AC6: no docs/design/3722-* per #1655");
         CHECK(read_file("tests/core/test_issue_3722.cpp").empty(),
               "3722 AC6: no test_issue_3722.cpp per #81934");
+    }
+
+    // ── #3792 AC1/AC2/AC3: mutation-history rows filtered to the caller
+    // occupancy tenant under the production consult regime — foreign mids
+    // never cross the face (rollback-mid oracle residual of #3722 option-B
+    // closed); Soft/Off keeps the full dump (filter-over-deny) ──
+    {
+        std::println("\n--- #3792 AC1-AC3: history tenant filter ---");
+        reset_all();
+        set_mode(SandboxMode::Restricted);
+        aura::core::provenance::set_multi_tenant_env_active(true);
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.set_effect_sandbox_mode(1);
+        ev.set_capability_tenant_id(7);
+        ev.grant_effect_capability(/*tenant=*/7, "mh-3792-a", kEffectMutate, /*mid=*/1);
+        CHECK(cs.eval("(set-code \"(define (n3792a x) x)\")").has_value(), "3792 set-code");
+        CHECK(cs.eval("(eval-current)").has_value(), "3792 eval");
+        auto* ws = ev.workspace_flat();
+        CHECK(ws != nullptr, "3792 workspace");
+        const auto own = static_cast<NodeId>(ws->size() - 2);
+        const auto foreign = static_cast<NodeId>(ws->size() - 1);
+        CHECK(own != NULL_NODE && foreign != NULL_NODE && own != foreign,
+              "3792: two fresh node ids");
+        ev.set_capability_tenant_id(7);
+        const auto own_ref = ev.make_stamped_ref(own);
+        CHECK(own_ref.tenant_id == 7, "3792: own occupancy 7");
+        ev.set_capability_tenant_id(99);
+        const auto f_ref = ev.make_stamped_ref(foreign);
+        CHECK(f_ref.tenant_id == 99, "3792: foreign occupancy 99");
+        ev.set_capability_tenant_id(7);
+        seed_3722_record(*ws, /*mid=*/379201, own);
+        seed_3722_record(*ws, /*mid=*/379202, foreign);
+        auto dump_mids = [&ev](const auto& v) {
+            std::string all;
+            auto cur = v;
+            int guard = 0;
+            auto& pairs = ev.pairs();
+            auto heap = ev.string_heap();
+            while (is_pair(cur) && guard++ < 128) {
+                const auto idx = as_pair_idx(cur);
+                if (idx >= pairs.size())
+                    break;
+                if (is_string(pairs[idx].car)) {
+                    const auto sidx = as_string_idx(pairs[idx].car);
+                    if (sidx < heap.size())
+                        all += heap[sidx];
+                }
+                cur = pairs[idx].cdr;
+            }
+            return all;
+        };
+        // Production face (Restricted+MT, caller tenant 7): own rows visible,
+        // foreign-occupied rows filtered out. Agent surface is the #2054
+        // engine:metrics facade (stats_impl args forwarding).
+        const auto own_prod =
+            cs.eval("(engine:metrics \"mutation-history\" " + std::to_string(own) + ")");
+        CHECK(own_prod.has_value(), "3792 AC1: own history callable");
+        const auto own_prod_s = own_prod ? dump_mids(*own_prod) : std::string();
+        CHECK(own_prod_s.find("[379201]") != std::string::npos,
+              "3792 AC1: own mid visible under production face");
+        CHECK(own_prod_s.find("[379202]") == std::string::npos,
+              "3792 AC2: foreign mid absent from production dump");
+        const auto foreign_prod =
+            cs.eval("(engine:metrics \"mutation-history\" " + std::to_string(foreign) + ")");
+        const auto foreign_prod_s = foreign_prod ? dump_mids(*foreign_prod) : std::string();
+        CHECK(foreign_prod_s.find("[379202]") == std::string::npos,
+              "3792 AC1/AC2: foreign mid never crosses the production face");
+        // Soft face: full dump unchanged (foreign mid visible — Soft contract).
+        set_mode(SandboxMode::Off);
+        ev.set_effect_sandbox_mode(0);
+        aura::core::provenance::set_multi_tenant_env_active(false);
+        const auto own_soft =
+            cs.eval("(engine:metrics \"mutation-history\" " + std::to_string(own) + ")");
+        const auto own_soft_s = own_soft ? dump_mids(*own_soft) : std::string();
+        CHECK(own_soft_s.find("[379201]") != std::string::npos,
+              "3792 AC3: Soft own mid still visible (full dump)");
+        const auto foreign_soft =
+            cs.eval("(engine:metrics \"mutation-history\" " + std::to_string(foreign) + ")");
+        const auto foreign_soft_s = foreign_soft ? dump_mids(*foreign_soft) : std::string();
+        CHECK(foreign_soft_s.find("[379202]") != std::string::npos,
+              "3792 AC2/AC3: Soft full dump keeps foreign row (zero extra)");
+        aura::core::provenance::set_multi_tenant_env_active(false);
+    }
+
+    // ── #3792 AC4: source-cite — consult gate + occupancy resolve inside the
+    // mutation-history face, gate precedes dump; no new query key; no invent ──
+    {
+        std::println("\n--- #3792 AC4: source-cite ---");
+        const auto prim = read_file("src/compiler/evaluator_primitives_mutation.cpp");
+        const auto mh_pos = prim.find("\"mutation-history\"");
+        CHECK(mh_pos != std::string::npos, "3792 AC4: mutation-history prim present");
+        const auto cite_pos = prim.find("Issue #3792:", mh_pos);
+        CHECK(cite_pos != std::string::npos, "3792 AC4: handler cites #3792");
+        const auto consult_pos =
+            prim.find("const bool consult = strict || (restricted && mt);", mh_pos);
+        CHECK(consult_pos != std::string::npos, "3792 AC4: consult regime predicate present");
+        const auto existing_pos = prim.find("existing_stamp_for_node", mh_pos);
+        const auto occ_pos = prim.find("occupying_stamp_for_node", mh_pos);
+        CHECK(existing_pos != std::string::npos && occ_pos != std::string::npos,
+              "3792 AC4: occupancy resolve chain present");
+        const auto dump_pos = prim.find("push_string_heap", mh_pos);
+        CHECK(consult_pos < dump_pos, "3792 AC4: gate precedes dump loop");
+        CHECK(prim.find("\"3792") == std::string::npos, "3792 AC4: no new query key");
+        CHECK(read_file("docs/design/3792-mutation-history-tenant-filter.md").empty(),
+              "3792 AC4: no docs/design/3792-* per #1655");
+        CHECK(read_file("tests/core/test_issue_3792.cpp").empty(),
+              "3792 AC4: no test_issue_3792.cpp per #81934");
+        int rc =
+            std::system("python3 scripts/check_mutation_history_tenant_filter_3792.py --self-test");
+        if (rc != 0)
+            rc = std::system(
+                "python3 ../scripts/check_mutation_history_tenant_filter_3792.py --self-test");
+        CHECK(rc == 0, "3792 AC4: linter self-test passes");
     }
 
     // ── #3772 AC1: Restricted+MT — forged foreign (id . gen) re-entry
