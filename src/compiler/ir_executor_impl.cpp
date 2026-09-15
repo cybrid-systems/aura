@@ -1439,6 +1439,11 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                     // Issue #1676: route through invoke_prim_with_telemetry so
                     // render-critical IR prims get the trusted fast path (and
                     // metrics) — tree-walker and IR share the same dispatch tax.
+                    // Issue #3798: PrimCall was a raw (*pfn) dual-track that
+                    // skipped production fail-closed when ownerless — HashSet
+                    // / HashRemove (#3720) residual. Production + no owner:
+                    // no silent mutate-class / FFI side effects (fail-closed).
+                    // Soft/unwired keeps the historical raw pfn.
                     auto prim_id = static_cast<PrimId>(ops[0]);
                     auto arg_base = ops[1];
                     auto arg_count = ops[2];
@@ -1465,7 +1470,12 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                             if (context_.evaluator) {
                                 presult = context_.evaluator->invoke_prim_with_telemetry(
                                     pname, [&]() { return (*pfn)(pargs); });
+                            } else if (aura::compiler::typed_audit::production_defaults_active()) {
+                                // #3798 / #3720: production + null owner — void,
+                                // zero side effects (mirror HashRemove arm).
+                                presult = make_void();
                             } else {
+                                // Soft/Off ownerless: historical raw pfn.
                                 presult = (*pfn)(pargs);
                             }
                         }
