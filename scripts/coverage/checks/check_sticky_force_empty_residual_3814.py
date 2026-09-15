@@ -53,10 +53,13 @@ def main() -> int:
             fails.append("AC1: decide calls reemit (playbook must stay observe-only)")
         if "FallBackJit" not in dbody:
             fails.append("AC1: FallBackJit action missing")
-        if "Observe-only" not in dbody and "observe-only" not in dbody.lower():
+        if (
+            "Observe-only" not in dbody
+            and "observe-only" not in dbody.lower()
             # decide header comment is above; accept #3814 observe cite nearby
-            if "Observe-only (#2953)" not in dbody:
-                fails.append("AC1: FallBackJit observe-only cite missing near decide")
+            and "Observe-only (#2953)" not in dbody
+        ):
+            fails.append("AC1: FallBackJit observe-only cite missing near decide")
 
     # AC2: bounded heal face + Agent-binding beyond SplitBatch
     must("Issue #3814", "AC2 observe cite", cpp)
