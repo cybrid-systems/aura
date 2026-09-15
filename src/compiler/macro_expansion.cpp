@@ -118,15 +118,15 @@ namespace aura::compiler::macro_exp {
            r == kHygieneLimitReasonGensymCeiling;
 }
 
-// Issue #3684: the macro_expand_all_body pass-loop consult — the 8/9/10
-// ConcurrentCloneGuard refuse codes ARE pass denies there (single-thread
-// pass context: the stamp comes from this pass's own clone work), so a
-// later pass refusing after a pass-0 splice restores original_root.
-[[nodiscard]] bool inner_expand_production_limit_deny_all() noexcept {
-    const auto r = g_macro_hygiene_last_limit_reason.load(std::memory_order_relaxed);
-    return inner_expand_production_limit_deny() || r == kHygieneLimitReasonSameFlatReject ||
-           r == kHygieneLimitReasonNameMapShared || r == kHygieneLimitReasonConcurrentTopLevel;
-}
+// Issue #3684 / #3787: the macro_expand_all_body pass-loop consult.
+// Depth/pass/steal/cap/gensym still use the process atomic (own-walk,
+// #3685). ConcurrentCloneGuard codes 8/9/10 are stamped globally by
+// peer fibers — consulting the process atomic here let a sibling's
+// shared-map / same-flat refuse false-deny an unrelated expand
+// (#3787). Prefer this fiber's FiberHygieneStats.last_limit_reason
+// (#3341) for 8/9/10; single-thread pass context still stamps both
+// surfaces via note_hygiene_last_limit_reason, so own refuse remains.
+[[nodiscard]] bool inner_expand_production_limit_deny_all() noexcept;
 
 namespace detail {
 
@@ -829,6 +829,16 @@ FiberHygieneStats get_fiber_hygiene_metrics(std::uint32_t fiber_id) noexcept {
     auto it = g_fiber_hygiene_map.find(fiber_id);
     return it == g_fiber_hygiene_map.end() ? FiberHygieneStats{} : it->second;
 }
+// Issue #3787: strong def — see forward decl above (#3684 comment).
+[[nodiscard]] bool inner_expand_production_limit_deny_all() noexcept {
+    if (inner_expand_production_limit_deny())
+        return true;
+    const auto fid = static_cast<std::uint32_t>(aura_fiber_current_id());
+    const auto fr = get_fiber_hygiene_metrics(fid).last_limit_reason;
+    return fr == kHygieneLimitReasonSameFlatReject || fr == kHygieneLimitReasonNameMapShared ||
+           fr == kHygieneLimitReasonConcurrentTopLevel;
+}
+
 std::size_t fiber_hygiene_stats_map_size() noexcept {
     std::lock_guard<std::mutex> lock(g_fiber_hygiene_mu);
     return g_fiber_hygiene_map.size();
@@ -1227,6 +1237,11 @@ extern "C" const char* aura_macro_hygiene_last_limit_reason_string(void) noexcep
 }
 extern "C" void aura_test_reset_macro_hygiene_last_limit_reason_for_test(void) noexcept {
     g_macro_hygiene_last_limit_reason.store(0, std::memory_order_relaxed);
+    // Issue #3787: also clear per-fiber sticky 8/9/10 so host tests that
+    // share fiber_id 0 do not keep deny_all armed after reset.
+    std::lock_guard<std::mutex> lock(g_fiber_hygiene_mu);
+    for (auto& [_, slot] : g_fiber_hygiene_map)
+        slot.last_limit_reason = 0;
 }
 // Issue #2807: unquote-splicing boundary recognition metric.
 extern "C" std::uint64_t aura_unquote_splicing_hygiene_mismatch_total_v_read(void) noexcept {
@@ -2901,16 +2916,27 @@ static aura::ast::NodeId clone_macro_body_at_depth(
         if (hygiene_depth == 0)
             nm_ckpt.commit();
     }
-    // Issue #3756: a sibling's shared-map / same-flat / concurrent-top
+    // Issue #3756 / #3787: a sibling's shared-map / same-flat / concurrent-top
     // refuse stamps process-global last_limit 8/9/10. Successful expand
     // on this map must not leave that sticky so a later pass-loop
-    // deny_all cannot refuse an unrelated clone.
+    // deny_all cannot refuse an unrelated clone. #3787 also clears this
+    // fiber's last_limit_reason — tests / host threads often share
+    // fiber_id 0, so a peer stamp on the same slot would otherwise
+    // keep deny_all true after global clear.
     if (hygiene_depth == 0 && new_id != NULL_NODE) {
         auto r = g_macro_hygiene_last_limit_reason.load(std::memory_order_relaxed);
         if (r == kHygieneLimitReasonSameFlatReject || r == kHygieneLimitReasonNameMapShared ||
             r == kHygieneLimitReasonConcurrentTopLevel) {
             g_macro_hygiene_last_limit_reason.compare_exchange_strong(
                 r, 0, std::memory_order_relaxed, std::memory_order_relaxed);
+        }
+        const auto fid = static_cast<std::uint32_t>(aura_fiber_current_id());
+        std::lock_guard<std::mutex> lock(g_fiber_hygiene_mu);
+        if (auto it = g_fiber_hygiene_map.find(fid); it != g_fiber_hygiene_map.end()) {
+            const auto fr = it->second.last_limit_reason;
+            if (fr == kHygieneLimitReasonSameFlatReject || fr == kHygieneLimitReasonNameMapShared ||
+                fr == kHygieneLimitReasonConcurrentTopLevel)
+                it->second.last_limit_reason = 0;
         }
     }
     return new_id;
