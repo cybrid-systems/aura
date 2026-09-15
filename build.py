@@ -6991,6 +6991,23 @@ def cmd_lint():
     if r != 0:
         fail("Issue #3772 ast ref stamp linter failed — run python3 scripts/check_ast_ref_stamp_3772.py")
         return r
+    # Issue #3791 (#3620/#3763/#3764 residual): the PR soak stayed green
+    # under sticky Mailbox TLS depth (#3763) and a no-edge forever-held
+    # holder (#3764) — the canary cannot observe either. Gate pins:
+    # every mu_ acquisition in multi_fiber_mailbox.h is AuditScope-paired;
+    # Guard-live recv/try_pop return Policy-A-empty BEFORE mu_; no new
+    # query key / counters / soak binary; lock_order depth machinery
+    # intact. Runtime doors live in test_mailbox_hold_starvation_hard.cpp.
+    mla3791_script = ROOT / "scripts" / "check_mailbox_lock_audit_pairs_3791.py"
+    if not mla3791_script.exists():
+        fail(f"missing {mla3791_script}")
+        return 1
+    r = run([sys.executable, str(mla3791_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3791 mailbox lock audit pairing linter failed — run python3 scripts/check_mailbox_lock_audit_pairs_3791.py"
+        )
+        return r
     # Issue #3649 (#2952/#3096/#2690 residual): the storm-exit edge drives
     # residual coverage-verify. storm_exit_force_full_active now==0 &&
     # prev!=0 branch runs one maybe_coverage_verify_min_dirty when
