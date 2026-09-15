@@ -46,7 +46,8 @@ def main() -> int:
     must("external_root_slots_for_densify_", "AC1", arena)
     must("g_moving_external_root_slot_remap_total", "AC1", arena)
     must("external_roots_remapped_count", "AC1", arena)
-    must("last_object_remap_.find(*slot)", "AC1", arena)
+    # Issue #3781: rewrite walks this_window_remap (not full #3469 table).
+    must("this_window_remap.find(*slot)", "AC1", arena)
 
     # AC2 — stale unremapped detection
     must("external_roots_stale_unremapped_count", "AC2", arena)

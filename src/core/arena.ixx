@@ -609,7 +609,8 @@ export inline std::atomic<std::uint64_t> g_moving_external_root_prep_register_to
 inline constexpr int kMovingExternalRootPrepRegisterIssue = 2775;
 
 // Issue #2837: external-root *slot* remaps after Moving densify. Bumped
-// once per void** slot whose *slot value was rewritten via last_object_remap_.
+// once per void** slot whose *slot value was rewritten via this_window_remap
+// (#3781 — this-window relocate pairs only, not #3469 tombstones).
 // Distinct from prep-register (#2775 value-only observability).
 export inline std::atomic<std::uint64_t> g_moving_external_root_slot_remap_total{0};
 // Issue #2837 / #2905: sticky force densify-off after production hard
@@ -1176,15 +1177,16 @@ export struct LiveCompactResult {
     // moving_densify_health::snapshot().external_roots_prep_registered_last.
     // zero = no caller registered external roots before this Moving.
     std::size_t external_roots_prep_registered_cleared = 0;
-    // Issue #2837: count of void** slots rewritten via last_object_remap_
-    // during this Moving densify window.
+    // Issue #2837 / #3781: count of void** slots rewritten via
+    // this_window_remap during this Moving densify window.
     std::size_t external_roots_remapped_count = 0;
     // Issue #2837: prep-registered values that were densify old addresses
     // but no slot rewrite covered them (stale external root residual).
     std::size_t external_roots_stale_unremapped_count = 0;
-    // Issue #3055: post-Moving live ptrs on known residual paths
-    // (EnvFrame/Closure/FFI/JIT canary) that still hold a last_object_remap_
-    // key after slot + pin + RootRemapPass. Observe-only — not a remap.
+    // Issue #3055 / #3781: post-Moving live ptrs on known residual paths
+    // (EnvFrame/Closure/FFI/JIT canary) that still hold a this-window
+    // densify-old key after slot + pin + RootRemapPass. Observe-only —
+    // not a remap. Tombstone keys do not count.
     std::size_t post_moving_stale_count = 0;
     // Issue #2267: RootRemapPass counters (StableNodeRef + Closure captures).
     std::size_t root_remap_stable_ref_total = 0;
@@ -1700,10 +1702,11 @@ public:
         ++aura::core::lifetime::g_lifetime_pin_stats.general_object_pin_exempt_total;
     }
 
-    // Issue #2837: register a *slot* (void**) holding a pointer that may
-    // reference a densify-tracked object. After live_compact(Moving)
+    // Issue #2837 / #3781: register a *slot* (void**) holding a pointer that
+    // may reference a densify-tracked object. After live_compact(Moving)
     // relocates tracked objects, *slot is rewritten to the new address
-    // when *slot is a key in last_object_remap_. Also value-registers
+    // when *slot is a key in this_window_remap (this-window pairs only;
+    // #3469 tombstones stay resolve/refuse-only). Also value-registers
     // *slot via #2775 prep set (observability + stale detection).
     // No-op when slot == nullptr or *slot == nullptr.
     void register_external_root_slot_for_densify(void** slot) noexcept {
@@ -1713,9 +1716,9 @@ public:
         register_external_root_for_densify(*slot);
     }
 
-    // Issue #3055: observe-only live pointer for the post-Moving stale
-    // scan. Not a slot (no rewrite) and not cover (#3017). After
-    // objects_moved>0, if `p` is still a last_object_remap_ key the
+    // Issue #3055 / #3781: observe-only live pointer for the post-Moving
+    // stale scan. Not a slot (no rewrite) and not cover (#3017). After
+    // objects_moved>0, if `p` is still a this-window densify-old key the
     // window fail-closes. Soft / no-move never walks this list.
     void note_post_moving_live_ptr_canary(void* p) noexcept {
         if (!p)
@@ -2206,6 +2209,12 @@ public:
         // the Moving branch, consumed by the window-exit moved-vs-covered
         // reconciliation in the common tail (dedup key = old address).
         std::unordered_set<void*> slot_covered_old;
+        // Issue #3781: this-window relocate pairs for rewrite / mutation
+        // consumers (slot / pin / linear / RootRemap). Built from
+        // last_moving_relocated_old_ after relocate; never fold the full
+        // #3469 last_object_remap_ tombstone table into these paths.
+        // resolve_object_remap / densify-stale refuse keep the full map.
+        std::unordered_map<void*, void*> this_window_remap;
 
         // Soft-gate the auto path during render / active MutationBoundary
         // so fiber yield / Guard pins stay coherent.
@@ -2397,13 +2406,29 @@ public:
             stats_.objects_moved_total += result.objects_moved;
             g_objects_moved_total.fetch_add(result.objects_moved, std::memory_order_relaxed);
 
-            // Issue #2837: rewrite registered external-root slots via
-            // last_object_remap_. Soft / no-move: slot walk is O(registered)
-            // only when objects_moved > 0 (zero extra work on no-move).
-            // Track which densify-old values were covered by a slot rewrite.
+            // Issue #3781: materialize this-window relocate pairs for every
+            // rewrite path below. Iterate last_moving_relocated_old_ and
+            // resolve the current new via last_object_remap_ (this-window
+            // entries only — tombstones are other keys). Soft / no-move:
+            // leave this_window_remap empty (zero rewrite work).
+            this_window_remap.clear();
+            if (result.objects_moved > 0 && !last_moving_relocated_old_.empty()) {
+                this_window_remap.reserve(last_moving_relocated_old_.size());
+                for (void* old_ptr : last_moving_relocated_old_) {
+                    auto it = last_object_remap_.find(old_ptr);
+                    if (it != last_object_remap_.end() && it->second)
+                        this_window_remap.emplace(old_ptr, it->second);
+                }
+            }
+
+            // Issue #2837 / #3781: rewrite registered external-root slots via
+            // this_window_remap only (not #3469 multi-window tombstones).
+            // Soft / no-move: slot walk is O(registered) only when
+            // objects_moved > 0 (zero extra work on no-move). Track which
+            // densify-old values were covered by a slot rewrite.
             std::size_t slots_remapped = 0;
             if (result.objects_moved > 0 && !external_root_slots_for_densify_.empty() &&
-                !last_object_remap_.empty()) {
+                !this_window_remap.empty()) {
                 slot_covered_old.reserve(external_root_slots_for_densify_.size());
                 std::unordered_set<void**> slot_seen;
                 for (void** slot : external_root_slots_for_densify_) {
@@ -2411,13 +2436,12 @@ public:
                         continue;
                     // Issue #3473: helper drain + known-root walk may
                     // register the same void** twice. A second rewrite
-                    // would look up the already-new address in
-                    // last_object_remap_ (previous-window keys) and
-                    // clobber *slot.
+                    // would look up the already-new address in the remap
+                    // table and clobber *slot.
                     if (!slot_seen.insert(slot).second)
                         continue;
-                    auto it = last_object_remap_.find(*slot);
-                    if (it == last_object_remap_.end())
+                    auto it = this_window_remap.find(*slot);
+                    if (it == this_window_remap.end())
                         continue;
                     slot_covered_old.insert(it->first);
                     *slot = it->second;
@@ -2430,15 +2454,17 @@ public:
                                                                   std::memory_order_relaxed);
             }
 
-            // Issue #2837: prep-registered values that densify moved but
-            // no slot rewrite covered → stale external residual.
+            // Issue #2837 / #3781: prep-registered values that densify moved
+            // this window but no slot rewrite covered → stale external
+            // residual. Tombstone keys from prior windows must not count
+            // (recycled addr holding a new unmoved object is not stale).
             std::size_t stale_unremapped = 0;
             if (result.objects_moved > 0 && !external_roots_for_densify_.empty() &&
-                !last_object_remap_.empty()) {
+                !this_window_remap.empty()) {
                 for (void* p : external_roots_for_densify_) {
                     if (p == nullptr)
                         continue;
-                    if (last_object_remap_.find(p) == last_object_remap_.end())
+                    if (this_window_remap.find(p) == this_window_remap.end())
                         continue;
                     if (slot_covered_old.find(p) == slot_covered_old.end())
                         ++stale_unremapped;
@@ -2608,8 +2634,11 @@ public:
             result.invalidates_pins = true;
             ++stats_.live_compact_gen_restamps_total;
             std::size_t remapped_pins = 0;
-            if (result.moved_live_objects && !last_object_remap_.empty()) {
-                for (const auto& [old_ptr, new_ptr] : last_object_remap_) {
+            // Issue #3781: pin remap walks this-window pairs only — a
+            // recycled small-pool addr holding a new unmoved object must
+            // not be rewritten via a prior-window tombstone.
+            if (result.moved_live_objects && !this_window_remap.empty()) {
+                for (const auto& [old_ptr, new_ptr] : this_window_remap) {
                     const auto rr = aura::core::lifetime::remap_pins_pointing_to(
                         old_ptr, new_ptr, result.new_gen, arena_id_);
                     remapped_pins += rr.remapped;
@@ -2622,30 +2651,33 @@ public:
                 result.remapped_pins = remapped_pins;
             }
             // Build set of new addresses for O(1) skip during invalidate pass.
-            // Remapped pins have ptr_ == value in last_object_remap_; non-remapped
-            // pins have ptr_ NOT in last_object_remap_'s values. Invalidate the
+            // Remapped pins have ptr_ == this-window new; non-remapped pins
+            // have ptr_ NOT in this_window_remap's values. Invalidate the
             // latter so dangling pointers fail closed (validate returns false).
             std::unordered_set<void*> new_addrs;
             if (result.moved_live_objects) {
-                new_addrs.reserve(last_object_remap_.size() * 2);
-                for (const auto& [old_ptr, new_ptr] : last_object_remap_)
+                new_addrs.reserve(this_window_remap.size() * 2);
+                for (const auto& [old_ptr, new_ptr] : this_window_remap)
                     new_addrs.insert(new_ptr);
             }
             // Issue #2266 AC1 — verify pin-or-remap hard contract. After the
             // remap walk + selective invalidate, every live pin for arena_id_
             // must either: (a) have been remapped to a new address (ptr_ no
-            // longer in last_object_remap_'s keys), or (b) been invalidated
-            // (ptr_ == nullptr). If any pin still has ptr_ in last_object_remap_'s
-            // keys (= old densified addresses), the remap missed it → fail closed.
+            // longer in this-window old keys), or (b) been invalidated
+            // (ptr_ == nullptr). If any pin still has ptr_ in this-window
+            // old keys (= densified addresses this window), the remap missed
+            // it → fail closed. #3781: tombstone keys must not enter the
+            // verify miss set (would false-fail a pin on a recycled addr).
             // This is the #2266 fail-closed change (previously always-true observe-only).
-            if (result.moved_live_objects && !last_object_remap_.empty()) {
-                // Issue #3350: rewrite linear_roots identities via
-                // last_object_remap_ AFTER slot/pin remap, BEFORE
+            if (result.moved_live_objects && !this_window_remap.empty()) {
+                // Issue #3350 / #3781: rewrite linear_roots identities via
+                // this_window_remap AFTER slot/pin remap, BEFORE
                 // verify_linear_pins_under_moving_compact (called from
                 // verify_pins_under_moving_compact below). Prefer rewrite
-                // when the object moved; verify stays belt-and-suspenders.
-                // Empty registry: one lock + empty check (Soft / quiet).
-                // Abort/join drain still uses unpin_* (#3249 stays closed).
+                // when the object moved this window; verify stays
+                // belt-and-suspenders. Empty registry: one lock + empty
+                // check (Soft / quiet). Abort/join drain still uses
+                // unpin_* (#3249 stays closed).
                 // Issue #3356: pin rewrite is densify-success address remap
                 // (moved set). IR/JIT cone-limited restamp is the compact-hook
                 // sibling (on_arena_compact_notify) — dirty mask only, no
@@ -2653,18 +2685,18 @@ public:
                 // Issue #3633: linear roots are a rewrite channel — capture
                 // covered old addresses as a reconciliation family.
                 (void)aura::core::lifetime::remap_linear_roots_under_moving(
-                    last_object_remap_, &linear_roots_covered_old);
+                    this_window_remap, &linear_roots_covered_old);
                 std::unordered_set<void*> old_addrs;
-                old_addrs.reserve(last_object_remap_.size());
-                for (const auto& [old_ptr, new_ptr] : last_object_remap_)
+                old_addrs.reserve(this_window_remap.size());
+                for (const auto& [old_ptr, new_ptr] : this_window_remap)
                     old_addrs.insert(old_ptr);
                 // Issue #3350: densify packing reuses vacated slots, so a
-                // last_object_remap_ value can equal another key. After
-                // remap_linear_roots those destinations are live post-move
-                // identities, not stale. Exclude them from the verify miss
-                // set (linear_roots do not block Moving the way
+                // this-window remap value can equal another this-window key.
+                // After remap_linear_roots those destinations are live
+                // post-move identities, not stale. Exclude them from the
+                // verify miss set (linear_roots do not block Moving the way
                 // live_pin_count does).
-                for (const auto& [old_ptr, new_ptr] : last_object_remap_)
+                for (const auto& [old_ptr, new_ptr] : this_window_remap)
                     old_addrs.erase(new_ptr);
                 const bool contract_held =
                     aura::core::lifetime::verify_pins_under_moving_compact(arena_id_, old_addrs);
@@ -2695,8 +2727,10 @@ public:
             // Fail-closed: unmapped densify candidates bump *_fail_total.
             // Only fires for Moving densify (moved_live_objects + non-empty
             // remap). Stats write back into LiveCompactResult + ArenaStats.
-            if (result.moved_live_objects && !last_object_remap_.empty()) {
-                invoke_root_remap_callback_(result, &root_remap_covered_old);
+            // Issue #3781: RootRemap mutates pointers — pass this-window
+            // pairs only (tombstones remain resolve/refuse-only).
+            if (result.moved_live_objects && !this_window_remap.empty()) {
+                invoke_root_remap_callback_(result, &root_remap_covered_old, this_window_remap);
                 // Issue #2499: unify RootRemapPass fail into pin_contract_held at
                 // the densify source so every driver (Phase 5, ArenaGroup
                 // compact_all_moving_pinned, GC Soft path metrics) shares one
@@ -2713,8 +2747,10 @@ public:
             // (EnvFrame/Closure/FFI/JIT canary) still holding a densify-old
             // address after slot rewrite + pin remap + RootRemapPass.
             // Soft / no-move: canary empty or this branch not taken.
-            if (result.moved_live_objects && !last_object_remap_.empty()) {
-                const auto stale = count_post_moving_stale_known_ptrs_();
+            // Issue #3781: stale canary scan uses this-window densify-old
+            // keys only (a canary on a recycled addr must not false-stale).
+            if (result.moved_live_objects && !this_window_remap.empty()) {
+                const auto stale = count_post_moving_stale_known_ptrs_(this_window_remap);
                 result.post_moving_stale_count = stale;
                 if (stale > 0) {
                     result.pin_contract_held = false;
@@ -3825,8 +3861,11 @@ public:
     // callback under root_remap_mtx_ and invokes outside the lock (same
     // pattern as invoke_layout_change_). Passes densify old→new object_remap
     // + new gen; writes per-call stats into result + ArenaStats.
-    void invoke_root_remap_callback_(LiveCompactResult& result,
-                                     std::vector<void*>* covered_old_out = nullptr) noexcept {
+    // Issue #3781: rewrite_remap is this-window pairs (mutation consumer).
+    // Callers must not pass the full #3469 tombstone table.
+    void invoke_root_remap_callback_(
+        LiveCompactResult& result, std::vector<void*>* covered_old_out = nullptr,
+        const std::unordered_map<void*, void*>& rewrite_remap = {}) noexcept {
         RootRemapHook cb_copy;
         {
             std::lock_guard<std::mutex> lock(root_remap_mtx_);
@@ -3837,8 +3876,8 @@ public:
         if (!cb_copy)
             return;
         std::size_t sr = 0, sr_fail = 0, cc = 0, cc_fail = 0;
-        cb_copy(arena_id_, generation_.load(std::memory_order_relaxed), last_object_remap_, sr,
-                sr_fail, cc, cc_fail);
+        cb_copy(arena_id_, generation_.load(std::memory_order_relaxed), rewrite_remap, sr, sr_fail,
+                cc, cc_fail);
         result.root_remap_stable_ref_total += sr;
         result.root_remap_stable_ref_fail_total += sr_fail;
         result.root_remap_closure_capture_total += cc;
@@ -3856,14 +3895,17 @@ public:
             *covered_old_out = aura::core::moving_cover_probe::drain();
     }
 
-    // Issue #3055: observe-only. Count canaries that still hold a
-    // last_object_remap_ key (old address). Does not rewrite.
-    [[nodiscard]] std::size_t count_post_moving_stale_known_ptrs_() const noexcept {
-        if (post_moving_live_canaries_.empty() || last_object_remap_.empty())
+    // Issue #3055 / #3781: observe-only. Count canaries that still hold a
+    // this-window densify-old key. Does not rewrite. Caller passes
+    // this_window_remap so #3469 tombstones cannot false-stale a recycled
+    // address that now holds a new unmoved object.
+    [[nodiscard]] std::size_t count_post_moving_stale_known_ptrs_(
+        const std::unordered_map<void*, void*>& rewrite_remap) const noexcept {
+        if (post_moving_live_canaries_.empty() || rewrite_remap.empty())
             return 0;
         std::size_t stale = 0;
         for (void* p : post_moving_live_canaries_) {
-            if (p && last_object_remap_.find(p) != last_object_remap_.end())
+            if (p && rewrite_remap.find(p) != rewrite_remap.end())
                 ++stale;
         }
         return stale;
@@ -3949,6 +3991,10 @@ public:
     // Issue #2166: old→new create-object addresses from last Moving densify.
     // Issue #3469: previous-window keys are folded (A→B then B→C keeps A)
     // so resolve_object_remap(A) still hits. Soft/Force leave it empty.
+    // Issue #3781: rewrite / mutation consumers must NOT walk this full
+    // table — use this_window_remap (from last_moving_relocated_old_) so
+    // recycled addresses holding new unmoved objects are not rewritten
+    // via tombstones. This map remains resolve/refuse-only for apply_closure.
     std::unordered_map<void*, void*> last_object_remap_;
     // Issue #2775 / #3017: external roots registered by callers via
     // register_external_root_for_densify(void*) / batch span before a
@@ -3960,7 +4006,8 @@ public:
     std::unordered_set<void*> external_roots_for_densify_;
     // Issue #2837: void** slots registered via
     // register_external_root_slot_for_densify. Rewritten after densify when
-    // *slot is a key in last_object_remap_. Cleared with the prep set.
+    // *slot is a key in this_window_remap (#3781 — not multi-window
+    // tombstones). Cleared with the prep set.
     std::vector<void**> external_root_slots_for_densify_;
     // Issue #2971: live intermediate creates auto-wired under production
     // required (pref > 0). Soft / unset never inserts (zero hot-path
@@ -3997,6 +4044,8 @@ public:
     // entry and after consumption (no cross-window retention; the
     // last_object_remap_ tombstone fold (#3469) must NOT widen the
     // reconciliation denominator).
+    // Issue #3781: also the source of this_window_remap for slot/pin/
+    // linear/RootRemap rewrite paths (resolve keeps the full #3469 table).
     std::vector<void*> last_moving_relocated_old_;
     // Issue #1546: optional Evaluator* (void*) + quota allow callback.
     // Issue #1663: owner_mtx_ protects the dual-word owner pair.

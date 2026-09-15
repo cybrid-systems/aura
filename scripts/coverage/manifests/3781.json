@@ -1,0 +1,41 @@
+{
+  "issue": 3781,
+  "title": "Issue #3781: densify rewrite uses this-window relocate pairs; #3469 tombstones remain resolve/refuse-only",
+  "ok": "OK: Issue #3781 densify this-window rewrite — slot/pin/linear/RootRemap use this_window_remap; resolve keeps #3469 table; #3633 cover retained",
+  "checks": [
+    {
+      "ac": "AC1-rewrite",
+      "path": "src/core/arena.ixx",
+      "contains": [
+        "Issue #3781",
+        "this_window_remap",
+        "this_window_remap.find(*slot)"
+      ]
+    },
+    {
+      "ac": "AC2-resolve",
+      "path": "src/core/arena.ixx",
+      "contains": [
+        "Issue #3469",
+        "resolve_object_remap",
+        "prev_remap"
+      ]
+    },
+    {
+      "ac": "AC6-tests",
+      "path": "tests/core/test_moving_densify_fail_closed.cpp",
+      "contains": [
+        "ac3781_1_source_cite_this_window_rewrite",
+        "ac3781_3_recycled_addr_slot_not_rewritten"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "forbid": [
+        "tests/core/test_issue_3781.cpp",
+        "tests/compiler/test_issue_3781.cpp",
+        "docs/design/3781-densify-this-window-rewrite.md"
+      ]
+    }
+  ]
+}
