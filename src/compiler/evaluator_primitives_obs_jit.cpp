@@ -2095,8 +2095,8 @@ void ObservabilityPrims::register_metrics_facade(PrimRegistrar add, Evaluator& e
                 if (it != groups.end()) {
                     for (auto& [fname, val] : it->second) {
                         if (fname == "steal_complete_total") {
-                            val = make_int(static_cast<std::int64_t>(
-                                aura::gc_hooks::steal_complete_total()));
+                            val = make_int(
+                                static_cast<std::int64_t>(aura::gc_hooks::steal_complete_total()));
                             break;
                         }
                     }

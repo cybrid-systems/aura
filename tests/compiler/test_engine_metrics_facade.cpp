@@ -849,8 +849,8 @@ int main() {
         std::println("\n--- #3779: steal_complete_total group dump SSOT ---");
         auto tel = cs.eval("(engine:metrics :group \"telemetry\")");
         CHECK(tel && is_hash(*tel), "3779 AC1: :group telemetry is hash");
-        auto sc = cs.eval(
-            "(hash-ref (engine:metrics :group \"telemetry\") \"steal_complete_total\")");
+        auto sc =
+            cs.eval("(hash-ref (engine:metrics :group \"telemetry\") \"steal_complete_total\")");
         CHECK(sc && is_int(*sc), "3779 AC1: steal_complete_total still in telemetry group");
         // Existing jit / mutate faces unchanged (no rename / no mid-struct insert).
         auto jit = cs.eval("(hash-ref (engine:metrics :group \"jit\") \"jit_compilations\")");
@@ -862,7 +862,8 @@ int main() {
               "3779 AC2: :group overlay reads gc_hooks SSOT");
         const auto efm = read_file("src/compiler/evaluator_fiber_mutation.cpp");
         CHECK(efm.find("Issue #3779") != std::string::npos, "3779 AC: entry cites #3779");
-        CHECK(efm.find("adaptive_steal_stats().steal_complete_total.fetch_add") != std::string::npos,
+        CHECK(efm.find("adaptive_steal_stats().steal_complete_total.fetch_add") !=
+                  std::string::npos,
               "3779 AC1: AdaptiveStealStats entry bump retained");
         const auto inc = read_file("src/compiler/compiler_metrics_fields.inc");
         CHECK(inc.find("AURA_COMPILER_METRICS_FIELD(steal_complete_total)") != std::string::npos,
