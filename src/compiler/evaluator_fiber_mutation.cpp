@@ -1183,7 +1183,7 @@ bool aura::compiler::Evaluator::restore_post_yield_or_rollback() {
     // Issue #3813: pass C-bridge and table as independent domains (live
     // samples here; dual-track must not conflate C-bridge with table).
     if (aura_aot_probe_checkpoint_version(cp.defuse_version, current_bridge_epoch(),
-                                          aura_aot_func_table_epoch())) {
+                                         aura_aot_func_table_epoch())) {
         version_drift = true;
         aura_aot_record_deopt_on_steal();
     }

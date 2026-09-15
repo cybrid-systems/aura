@@ -4683,8 +4683,10 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 insert_kv("wal-overflow-full",
                           static_cast<std::int64_t>(
                               ::aura::core::security_event_wal::wal_overflow_ring_full() ? 1 : 0));
-                insert_kv("schema-3806", ::aura::core::security_event_wal::kWalOverflowWrapIssue);
-                insert_kv("issue-3806", ::aura::core::security_event_wal::kWalOverflowWrapIssue);
+                insert_kv("schema-3806",
+                          ::aura::core::security_event_wal::kWalOverflowWrapIssue);
+                insert_kv("issue-3806",
+                          ::aura::core::security_event_wal::kWalOverflowWrapIssue);
                 insert_kv("schema-3109", 3109);
                 insert_kv("issue-3109", 3109);
                 // Issue #3302: force_wal default-arms fail-closed. Additive.
@@ -5537,8 +5539,10 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 insert_kv("wal-overflow-full",
                           static_cast<std::int64_t>(
                               ::aura::core::security_event_wal::wal_overflow_ring_full() ? 1 : 0));
-                insert_kv("schema-3806", ::aura::core::security_event_wal::kWalOverflowWrapIssue);
-                insert_kv("issue-3806", ::aura::core::security_event_wal::kWalOverflowWrapIssue);
+                insert_kv("schema-3806",
+                          ::aura::core::security_event_wal::kWalOverflowWrapIssue);
+                insert_kv("issue-3806",
+                          ::aura::core::security_event_wal::kWalOverflowWrapIssue);
                 insert_kv("schema-3109", 3109);
                 insert_kv("issue-3109", 3109);
                 // Issue #3302: force_wal default-arms fail-closed. Additive.

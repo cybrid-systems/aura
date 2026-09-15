@@ -1945,14 +1945,15 @@ revoke_session_grants_on_steal_or_abort_locked(std::uint64_t session_mid, bool s
         // already bumped in revoke; also nudge steal/abort counter so
         // Agents can join the refuse without a new query key.
         const auto orphan_delta =
-            met.session_bound_orphan_detected_total.load(std::memory_order_relaxed) - orphan_before;
+            met.session_bound_orphan_detected_total.load(std::memory_order_relaxed) -
+            orphan_before;
         if (orphan_delta > 0) {
             if (steal)
                 met.capability_session_revoke_steal_total.fetch_add(orphan_delta,
-                                                                    std::memory_order_relaxed);
+                                                                   std::memory_order_relaxed);
             else
                 met.capability_session_revoke_abort_total.fetch_add(orphan_delta,
-                                                                    std::memory_order_relaxed);
+                                                                   std::memory_order_relaxed);
         }
     }
     return n;

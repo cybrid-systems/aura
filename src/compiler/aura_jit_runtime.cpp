@@ -3257,8 +3257,7 @@ extern "C" void aura_sync_remount_covered_named_live_closures(std::uint64_t mask
         if (g_residual_force_skip.load(std::memory_order_relaxed) != 0 || storm >= 2 ||
             aura_hot_update_should_throttle_reemit() != 0) {
             if (!aura_critical_bypass_covered_remount_allowed()) {
-                g_reemit_success_sync_covered_budget_skip_total.fetch_add(
-                    1, std::memory_order_relaxed);
+                g_reemit_success_sync_covered_budget_skip_total.fetch_add(1, std::memory_order_relaxed);
                 return;
             }
         }

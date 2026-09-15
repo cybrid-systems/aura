@@ -276,7 +276,8 @@ decide_hot_update_throttle(const AotHotUpdateHealthResult& h) noexcept {
             d.max_concurrency_cap = 1;
             break;
         case 2: // force-jit — Issue #3814: empty residual → Agent bind
-            if (h.components.force_jit_regions_mask != 0 && h.components.residual_force_mask == 0) {
+            if (h.components.force_jit_regions_mask != 0 &&
+                h.components.residual_force_mask == 0) {
                 d.action = HotUpdateThrottleAction::RequireAgentRepromote;
                 d.action_name = "require-agent-repromote";
                 d.max_concurrency_cap = 1;
@@ -317,8 +318,9 @@ decide_hot_update_throttle(const AotHotUpdateHealthResult& h) noexcept {
     snap.attempts_left = static_cast<std::uint32_t>(rs.attempts_left);
     snap.force_jit_regions_mask = static_cast<std::uint64_t>(rs.force_jit_regions_mask);
     // Issue #3814: residual for FallBackJit Agent-binding (force & ~last).
-    snap.residual_force_mask = snap.force_jit_regions_mask &
-                               ~static_cast<std::uint64_t>(rs.last_reemit_success_region_mask);
+    snap.residual_force_mask =
+        snap.force_jit_regions_mask &
+        ~static_cast<std::uint64_t>(rs.last_reemit_success_region_mask);
     snap.pending_dirty_count = static_cast<std::uint64_t>(rs.pending_dirty_count);
     snap.deferred_reemit_pending = static_cast<std::uint8_t>(rs.deferred_reemit_pending);
     snap.storm_level = static_cast<std::uint8_t>(rs.storm_level);

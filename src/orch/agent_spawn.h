@@ -1338,7 +1338,8 @@ inline std::shared_ptr<ScopeBpGauge> lookup_scope_bp_gauge(std::string_view scop
 // Issue #3804: production named scope that cannot insert at
 // kMailboxBpScopeMapCap (not in map, map full). Soft/Off / empty /
 // process-bucket sentinel → false (zero extra cost under Soft).
-[[nodiscard]] inline bool named_scope_bp_on_overflow_cohort(std::string_view scope_id) noexcept {
+[[nodiscard]] inline bool named_scope_bp_on_overflow_cohort(
+    std::string_view scope_id) noexcept {
     if (scope_id.empty() || scope_id == kBpScopeProcessBucket)
         return false;
     if (!production_defaults_active())
@@ -2466,10 +2467,11 @@ inline void finalize_spawn_quota_reject(AgentHandle& h) noexcept {
                 h.quota_used = static_cast<std::uint64_t>(kMailboxBpScopeMapCap);
                 h.quota_limit = static_cast<std::uint64_t>(kMailboxBpScopeMapCap);
                 h.retry_after_ms = 50;
-                h.error = "AdmissionRejected: mailbox BP scope-map overflow cohort "
-                          "(cap=" +
-                          std::to_string(kMailboxBpScopeMapCap) +
-                          "; deny-detail=mailbox-bp-scope-overflow)";
+                h.error =
+                    "AdmissionRejected: mailbox BP scope-map overflow cohort "
+                    "(cap=" +
+                    std::to_string(kMailboxBpScopeMapCap) +
+                    "; deny-detail=mailbox-bp-scope-overflow)";
                 rollback_spawn_reservation(h);
                 finalize_spawn_quota_reject(h);
                 return h;

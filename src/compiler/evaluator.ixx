@@ -8936,7 +8936,8 @@ public:
         // invalidated or remapped pins must restamp the IR/JIT triad before
         // return so Agent Soft mid-session does not leave LifetimePins /
         // StableNodeRef on the pre-Soft gen. Moving unchanged (hook path).
-        if (mode == aura::ast::LiveCompactMode::Soft || mode == aura::ast::LiveCompactMode::Force) {
+        if (mode == aura::ast::LiveCompactMode::Soft ||
+            mode == aura::ast::LiveCompactMode::Force) {
             if (lc.invalidates_pins || lc.remapped_pins > 0 ||
                 (lc.new_gen != 0 && lc.new_gen != gen_at_entry)) {
                 (void)unified_restamp_after_boundary(UnifiedRestampSite::Densify);
