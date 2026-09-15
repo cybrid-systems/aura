@@ -4888,6 +4888,19 @@ def cmd_lint():
             "Issue #3814 sticky force empty residual linter failed — run python3 scripts/coverage/checks/check_sticky_force_empty_residual_3814.py"
         )
         return r
+    # Issue #3815: mutate:move-node gates MacroIntroduced new_parent spine
+    # (parity with insert-child / splice). Batch parent_arg=1 pre-walk.
+    # Extends test_move_node_hygiene.cpp (#81967); no docs/design/ (#1655).
+    mnph3815_script = COVERAGE_CHECKS / "check_move_node_parent_hygiene_3815.py"
+    if not mnph3815_script.exists():
+        fail(f"missing {mnph3815_script}")
+        return 1
+    r = run([sys.executable, str(mnph3815_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3815 move-node parent hygiene linter failed — run python3 scripts/coverage/checks/check_move_node_parent_hygiene_3815.py"
+        )
+        return r
     # Issue #3802: EXEMPT_2ARG write-file/sys-* host-path isolation under
     # Restricted+MT / Strict — resolve under tenant root from
     # capability_tenant_id_; cross-tenant escape → IsolationDeny SE
@@ -14772,6 +14785,26 @@ def cmd_sticky_force_empty_residual_3814():
     """Issue #3814: sticky force-JIT empty residual heal + Agent-binding."""
     print(f"{B}=== sticky force empty residual (#3814) ==={N}")
     return cmd_sticky_force_empty_residual_3814_coverage()
+
+
+def cmd_move_node_parent_hygiene_3815_coverage():
+    """Issue #3815: move-node MacroIntroduced new_parent spine (static)."""
+    print(f"{B}=== move-node parent hygiene (#3815) ==={N}")
+    script = COVERAGE_CHECKS / "check_move_node_parent_hygiene_3815.py"
+    if not script.is_file():
+        fail(f"missing {script}")
+        return 1
+    if run([sys.executable, str(script)], cwd=ROOT) != 0:
+        fail("move-node parent hygiene (#3815) coverage contract rows failed")
+        return 1
+    ok("move-node parent hygiene (#3815) coverage clean")
+    return 0
+
+
+def cmd_move_node_parent_hygiene_3815():
+    """Issue #3815: mutate:move-node gates MacroIntroduced new_parent."""
+    print(f"{B}=== move-node parent hygiene (#3815) ==={N}")
+    return cmd_move_node_parent_hygiene_3815_coverage()
 
 
 def cmd_engine_metrics_hash_overflow_3018_coverage():

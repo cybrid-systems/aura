@@ -3778,6 +3778,9 @@ EvalResult Evaluator::eval_flat_apply_mutate_rename_symbol(std::span<const types
 // Issue #2801 / #142: MacroIntroduced target rejected (parity with
 // replace-subtree). Moving a macro-internal node into a non-macro
 // parent would hoist macro scope bindings — hygiene contract leak.
+// Issue #3815: also gate new_parent spine (parity with insert-child /
+// splice) so a User node cannot hop under MacroIntroduced without
+// :allow-macro? / MacroSelfEvo under Restricted/Strict.
 EvalResult Evaluator::eval_flat_apply_mutate_move_node(std::span<const types::EvalValue> a) {
     EVAL_FLAT_HOLD_BUDGET_POLL();
     if (a.size() < 3 || !is_int(a[0]) || !is_int(a[1]) || !is_int(a[2]) || !workspace_flat_)
@@ -3807,6 +3810,24 @@ EvalResult Evaluator::eval_flat_apply_mutate_move_node(std::span<const types::Ev
         // Issue #3652: the opt-out arm still requires MacroSelfEvo (#3542
         // face) under Restricted/Strict. Soft/Off: one mode load.
         if (effect_sandbox_mode() != 0 && deny_macro_opt_out_without_mse(*this, node))
+            return std::unexpected(aura::diag::Diagnostic{
+                aura::diag::ErrorKind::InternalError,
+                "batch :move-node: mutation of MacroIntroduced requires "
+                "MacroSelfEvo capability (mutate:move-node :allow-macro? #t)"});
+    }
+    // Issue #3815: dest parent spine — same dual-track + #3652 MSE face as
+    // insert-child / splice. Soft/Off: zero extra when parent is not
+    // MacroIntroduced (single is_macro_introduced load).
+    if (flat.is_macro_introduced(new_parent)) {
+        if (!(get_allow_macro_mutate() || parse_allow_macro_opt_out(a))) {
+            record_hygiene_violation_attempt();
+            note_hygiene_last_limit_reason(kHygieneLimitReasonMacroIntroduced);
+            return std::unexpected(aura::diag::Diagnostic{
+                aura::diag::ErrorKind::InternalError,
+                "batch :move-node: cannot move into MacroIntroduced parent without "
+                "public mutate:move-node :allow-macro? #t"});
+        }
+        if (effect_sandbox_mode() != 0 && deny_macro_opt_out_without_mse(*this, new_parent))
             return std::unexpected(aura::diag::Diagnostic{
                 aura::diag::ErrorKind::InternalError,
                 "batch :move-node: mutation of MacroIntroduced requires "

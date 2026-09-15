@@ -1,12 +1,16 @@
 // @category: unit
 // @reason: Issue #2801 — mutate:move-node / lockless batch must reject
 // MacroIntroduced targets (#142 hygiene; parity with replace-subtree).
+// Issue #3815 — also gate MacroIntroduced new_parent spine (insert-child
+// / splice parity); User→MacroIntroduced-parent refuse without allow+MSE.
 //
 //   AC1: public + lockless cite #2801; is_macro_introduced + note metric
 //   AC2: public move of MacroIntroduced → hygiene merr + metric bump
 //   AC3: atomic-batch lockless move of MacroIntroduced fails (not committed)
 //   AC4: non-macro move-node still succeeds
 //   AC5: this suite + linter; no docs/design/2801-*; no test_issue_2801.cpp
+//   #3815: User into MacroIntroduced parent refuse; node still gated;
+//          Soft/Off zero extra when neither MacroIntroduced; batch face
 
 #include "test_harness.hpp"
 
@@ -335,7 +339,121 @@ int run_test_move_node_hygiene() {
         CHECK(read_file("tests/compiler/test_issue_3061.cpp").empty(), "3061 AC5: no invent test");
     }
 
-    std::println("\n=== #2801+#3061 move-node hygiene: {} passed, {} failed ===", g_passed,
+
+    // ── Issue #3815: gate MacroIntroduced new_parent spine ──
+    {
+        std::println("\n--- #3815 AC1: User move into MacroIntroduced parent refuses ---");
+        CompilerService cs;
+        CHECK(cs.eval("(set-code \"(begin (define a (lambda () 1)) "
+                      "(define b (lambda () 2)))\")")
+                  .has_value(),
+              "3815 AC1: set-code");
+        CHECK(cs.eval("(eval-current)").has_value(), "3815 AC1: eval");
+        auto* ws = cs.evaluator().workspace_flat();
+        CHECK(ws, "3815 AC1: workspace");
+        auto loc = find_first_child(*ws);
+        auto dest = find_alt_parent(*ws, loc.parent, loc.node);
+        CHECK(loc.node != NULL_NODE && dest != NULL_NODE, "3815 AC1: loc+dest");
+        CHECK(!ws->is_macro_introduced(loc.node), "3815 AC1: moved node is User");
+        CHECK(cs.eval(std::format("(syntax:set-marker {} 1)", dest)).has_value(),
+              "3815 AC1: stamp dest MacroIntroduced");
+        CHECK(ws->is_macro_introduced(dest), "3815 AC1: dest MacroIntroduced");
+        const auto parent0 = ws->parent_of(loc.node);
+        auto r = cs.eval(std::format("(mutate:move-node {} {} 0)", loc.node, dest));
+        CHECK(r.has_value(), "3815 AC1: returns");
+        CHECK(!(is_bool(*r) && as_bool(*r)), "3815 AC1: not success #t");
+        CHECK(merr_kind(cs, *r) == "hygiene-protected",
+              "3815 AC1: hygiene-protected on MacroIntroduced parent");
+        CHECK(ws->parent_of(loc.node) == parent0, "3815 AC1: parent unchanged");
+    }
+    {
+        std::println("\n--- #3815 AC2: MacroIntroduced moved node still gated ---");
+        CompilerService cs;
+        CHECK(cs.eval("(set-code \"(begin (define a (lambda () 1)) "
+                      "(define b (lambda () 2)))\")")
+                  .has_value(),
+              "3815 AC2: set-code");
+        CHECK(cs.eval("(eval-current)").has_value(), "3815 AC2: eval");
+        auto* ws = cs.evaluator().workspace_flat();
+        auto loc = find_first_child(*ws);
+        auto dest = find_alt_parent(*ws, loc.parent, loc.node);
+        CHECK(loc.node != NULL_NODE && dest != NULL_NODE, "3815 AC2: loc+dest");
+        CHECK(cs.eval(std::format("(syntax:set-marker {} 1)", loc.node)).has_value(),
+              "3815 AC2: stamp moved node");
+        const auto rej0 = ws->move_node_hygiene_reject_total();
+        auto r = cs.eval(std::format("(mutate:move-node {} {} 0)", loc.node, dest));
+        CHECK(r.has_value() && merr_kind(cs, *r) == "hygiene-protected",
+              "3815 AC2: moved MacroIntroduced still hygiene");
+        CHECK(ws->move_node_hygiene_reject_total() > rej0, "3815 AC2: metric bump");
+        CHECK(ws->parent_of(loc.node) == loc.parent, "3815 AC2: parent unchanged");
+    }
+    {
+        std::println("\n--- #3815 AC3: Soft/Off zero extra when neither MacroIntroduced ---");
+        CompilerService cs;
+        CHECK(cs.eval("(set-code \"(begin (define p (lambda () 1)) "
+                      "(define q (lambda () 2)))\")")
+                  .has_value(),
+              "3815 AC3: set-code");
+        CHECK(cs.eval("(eval-current)").has_value(), "3815 AC3: eval");
+        auto* ws = cs.evaluator().workspace_flat();
+        auto loc = find_first_child(*ws);
+        CHECK(loc.node != NULL_NODE, "3815 AC3: child");
+        CHECK(!ws->is_macro_introduced(loc.node), "3815 AC3: node not MacroIntroduced");
+        CHECK(!ws->is_macro_introduced(loc.parent), "3815 AC3: parent not MacroIntroduced");
+        // Same-pos no-op proves gate open with zero MacroIntroduced traffic.
+        auto noop =
+            cs.eval(std::format("(mutate:move-node {} {} {})", loc.node, loc.parent, loc.index));
+        CHECK(noop.has_value() && is_bool(*noop) && as_bool(*noop),
+              "3815 AC3: non-macro same-pos no-op #t");
+        CHECK(merr_kind(cs, *noop) != "hygiene-protected", "3815 AC3: not hygiene");
+    }
+    {
+        std::println("\n--- #3815 AC4: atomic-batch move into MacroIntroduced parent ---");
+        CompilerService cs;
+        CHECK(cs.eval("(set-code \"(begin (define x (lambda () 3)) "
+                      "(define y (lambda () 4)))\")")
+                  .has_value(),
+              "3815 AC4: set-code");
+        CHECK(cs.eval("(eval-current)").has_value(), "3815 AC4: eval");
+        auto* ws = cs.evaluator().workspace_flat();
+        auto loc = find_first_child(*ws);
+        auto dest = find_alt_parent(*ws, loc.parent, loc.node);
+        CHECK(loc.node != NULL_NODE && dest != NULL_NODE, "3815 AC4: loc+dest");
+        CHECK(!ws->is_macro_introduced(loc.node), "3815 AC4: User node");
+        CHECK(cs.eval(std::format("(syntax:set-marker {} 1)", dest)).has_value(),
+              "3815 AC4: stamp dest");
+        const auto parent0 = ws->parent_of(loc.node);
+        auto r = cs.eval(std::format("(mutate:atomic-batch "
+                                     "(list (list \"mutate:move-node\" {} {} 0)))",
+                                     loc.node, dest));
+        CHECK(r.has_value(), "3815 AC4: batch returns");
+        if (is_bool(*r) && as_bool(*r)) {
+            CHECK(false, "3815 AC4: batch must not commit User→MacroIntroduced-parent");
+        } else {
+            CHECK(true, "3815 AC4: batch rejected (not #t)");
+        }
+        CHECK(ws->parent_of(loc.node) == parent0, "3815 AC4: parent unchanged");
+    }
+    {
+        std::println("\n--- #3815 AC5: source cite + no invent ---");
+        const auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
+        const auto flat = read_file("src/compiler/evaluator_eval_flat.cpp");
+        CHECK(mut.find("Issue #3815") != std::string::npos, "3815 AC5: mutate cites #3815");
+        CHECK(flat.find("Issue #3815") != std::string::npos, "3815 AC5: lockless cites #3815");
+        CHECK(mut.find("parent_arg") != std::string::npos, "3815 AC5: batch parent_arg");
+        CHECK(mut.find("parent_was_macro_mv") != std::string::npos,
+              "3815 AC5: public parent_was_macro_mv");
+        auto lpos = flat.find("eval_flat_apply_mutate_move_node");
+        CHECK(lpos != std::string::npos, "3815 AC5: lockless helper");
+        auto lwin = flat.substr(lpos, 4500);
+        CHECK(lwin.find("is_macro_introduced(new_parent)") != std::string::npos,
+              "3815 AC5: lockless gates new_parent");
+        CHECK(read_file("docs/design/3815-move-node-parent-hygiene.md").empty(),
+              "3815 AC5: no docs/design/");
+        CHECK(read_file("tests/compiler/test_issue_3815.cpp").empty(), "3815 AC5: no invent test");
+    }
+
+    std::println("\n=== #2801+#3061+#3815 move-node hygiene: {} passed, {} failed ===", g_passed,
                  g_failed);
     return g_failed == 0 ? 0 : 1;
 }
