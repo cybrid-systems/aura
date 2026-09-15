@@ -5192,7 +5192,9 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             using aura::core::security_event::kIsolationAuditMidIssue;
             insert_kv("schema", kSecurityAuditUnifyIssue);
             insert_kv("schema-2054", kSecurityAuditUnifyIssue);
-            // Issue #2156: isolation-deny mutation_id is epoch, never tenant.
+            // Issue #2156 / #3801 / Issue #3808: IsolationDeny mutation_id is
+            // TypedMid-then-epoch (join_audit_and_se_mid), never tenant —
+            // query:security-audit mutation-id=TypedMid joins IsolationDeny.
             insert_kv("schema-2156", kIsolationAuditMidIssue);
             insert_kv("issue-2156", kIsolationAuditMidIssue);
             insert_kv("isolation-audit-mid-wired", 1);

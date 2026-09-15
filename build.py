@@ -4780,6 +4780,22 @@ def cmd_lint():
             "Issue #3801 IsolationDeny mid-join linter failed — run python3 scripts/coverage/checks/check_isolation_deny_mid_join_3801.py"
         )
         return r
+    # Issue #3808: IsolationDeny obs join — query:security-audit
+    # mutation-id=TypedMid + evolution-audit-decision last-se-reason
+    # under Guard TypedMid≠epoch. Mid resolver landed in #3801; this
+    # locks the Agent-facing join oracle. Extends
+    # test_tenant_isolation_enforcement.cpp (#81967); no docs/design/
+    # (#1655). No new posture / query key.
+    ido3808_script = COVERAGE_CHECKS / "check_isolation_deny_obs_join_3808.py"
+    if not ido3808_script.exists():
+        fail(f"missing {ido3808_script}")
+        return 1
+    r = run([sys.executable, str(ido3808_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3808 IsolationDeny obs-join linter failed — run python3 scripts/coverage/checks/check_isolation_deny_obs_join_3808.py"
+        )
+        return r
     # Issue #3802: EXEMPT_2ARG write-file/sys-* host-path isolation under
     # Restricted+MT / Strict — resolve under tenant root from
     # capability_tenant_id_; cross-tenant escape → IsolationDeny SE

@@ -440,9 +440,11 @@ struct WorkspaceIsolationPolicy {
                       std::uint16_t required_effects = 0) noexcept {
         using ::aura::core::current_mutation_epoch;
         const auto epoch = current_mutation_epoch();
-        // Issue #3801 / #3594: IsolationDeny mid = same resolver family as
-        // require_effect (join_audit_and_se_mid / TypedMid-then-epoch).
-        // Under Guard TypedMid≠epoch the SE joins grant.bound_mutation_id;
+        // Issue #3801 / #3594 / Issue #3808: IsolationDeny mid = same resolver
+        // family as require_effect (join_audit_and_se_mid / TypedMid-then-
+        // epoch). Under Guard TypedMid≠epoch the SE joins
+        // grant.bound_mutation_id + query:security-audit mutation-id +
+        // evolution-audit-decision last-se-reason (#3808 obs join AC);
         // epoch=0 stays 0 (no phantom mid=1). Soft/Off keeps TypedMid-then-
         // epoch with 0 terminal (#2493 Soft mid=1 is EffectDeny Soft arms).
         // Weak hook → epoch when audit TU not linked.
