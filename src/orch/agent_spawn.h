@@ -204,6 +204,10 @@ inline constexpr int kMailboxBpScopeMapLifecycleIssue = 2778;
 // at-cap production does not LRU-evict live tenants (overflow-only
 // for new named scopes). Soft/Off LRU + process-bucket unchanged.
 inline constexpr int kMailboxBpScopeOverflowTeardownIssue = 3337;
+// Issue #3804: production overflow cohort must not share admit pressure
+// across unrelated named scopes (fail-closed typed BpAdmit with distinct
+// deny-detail). Soft/Off LRU path unchanged.
+inline constexpr int kMailboxBpScopeOverflowCohortIssue = 3804;
 inline constexpr int kMailboxBpScopeDecayRaceIssue = 2780;
 // Issue #2887: AgentScope::watch_all on_backpressure degrade (Cancel /
 // Throttle / optional RestartN) for BP-hot producers — complements
@@ -486,11 +490,12 @@ struct ScopeBpGauge {
 inline std::mutex g_scope_bp_map_mtx{};
 inline std::unordered_map<std::string, std::shared_ptr<ScopeBpGauge>> g_scope_bp_map{};
 
-// Issue #3127: overflow-only BP gauge for named scopes that hit
-// kMailboxBpScopeMapCap under production. Single shared counter
-// (not per-scope) — preserves multi-tenant isolation by keeping
-// process-bucket recent un-inflated (process-bucket is empty-
-// scope_id path only; named-scope events never bump it). Soft/Off
+// Issue #3127 / #3804: overflow-only BP gauge for named scopes that
+// hit kMailboxBpScopeMapCap under production. Note path still bumps
+// this gauge + spawn_bp_scope_overflow_* for dashboards. Issue #3804:
+// admit must NOT share this recent across unrelated overflow peers —
+// load_mailbox_bp_recent returns 0 for missing named scopes; spawn
+// fail-closes with deny-detail mailbox-bp-scope-overflow. Soft/Off
 // never touches this gauge (zero extra cost). Decay in
 // maybe_decay_mailbox_bp_recent (production-gated).
 struct ScopeBpOverflowGauge {
@@ -1200,9 +1205,11 @@ inline void note_mailbox_bp_recent_event(std::string_view scope_id = {},
         ScopeBpGauge* gauge = nullptr;
         if (it == g_scope_bp_map.end()) {
             if (g_scope_bp_map.size() >= kMailboxBpScopeMapCap) {
-                // Issue #3337: production does not LRU-evict a live tenant
-                // to make room. New named scopes go to the overflow-only
-                // bucket (admit may typed-BpAdmit via overflow recent).
+                // Issue #3337 / #3804: production does not LRU-evict a live
+                // tenant to make room. New named scopes bump the overflow
+                // observability gauge + counters (no per-scope insert).
+                // Admit fail-closes with distinct deny-detail (#3804) —
+                // peers do not share overflow.recent for BpAdmit.
                 // Live gauges stay. Soft/Off keeps LRU-evict + insert
                 // (overflow gauge never touched — zero extra cost).
                 if (production_defaults_active()) {
@@ -1313,14 +1320,28 @@ inline std::shared_ptr<ScopeBpGauge> lookup_scope_bp_gauge(std::string_view scop
     }
     if (auto gauge = lookup_scope_bp_gauge(scope_id))
         return gauge->recent.load(std::memory_order_relaxed);
-    // Issue #3127 / #3337: overflow-only bucket fallback for named
-    // scopes not in the map (new scopes at cap). Live tenants still
-    // in the map keep their own gauge (production no longer LRU-evicts
-    // them). Process-bucket recent is NOT touched. Soft/Off returns 0.
-    if (production_defaults_active()) {
-        return g_scope_bp_overflow.recent.load(std::memory_order_relaxed);
-    }
+    // Issue #3804: named scope missing from the map must NOT inherit
+    // shared g_scope_bp_overflow.recent (cross-scope admit crosstalk
+    // after #3127/#3337). Return 0; production admit fail-closes via
+    // named_scope_bp_on_overflow_cohort with distinct deny-detail.
+    // Soft/Off: also 0 (LRU path inserts before load in steady state).
+    // Process-bucket recent is never touched by named-scope paths.
     return 0;
+}
+
+// Issue #3804: production named scope that cannot insert at
+// kMailboxBpScopeMapCap (not in map, map full). Soft/Off / empty /
+// process-bucket sentinel → false (zero extra cost under Soft).
+[[nodiscard]] inline bool named_scope_bp_on_overflow_cohort(
+    std::string_view scope_id) noexcept {
+    if (scope_id.empty() || scope_id == kBpScopeProcessBucket)
+        return false;
+    if (!production_defaults_active())
+        return false;
+    std::lock_guard<std::mutex> lock(g_scope_bp_map_mtx);
+    if (g_scope_bp_map.find(std::string{scope_id}) != g_scope_bp_map.end())
+        return false;
+    return g_scope_bp_map.size() >= kMailboxBpScopeMapCap;
 }
 
 // Issue #2778: explicit free of one scope gauge (tenant / session
@@ -2425,6 +2446,30 @@ inline void finalize_spawn_quota_reject(AgentHandle& h) noexcept {
         if (threshold > 0) {
             // Issue #2398: quiet-period decay; #2633 also decays scope gauges.
             maybe_decay_mailbox_bp_recent();
+            // Issue #3804: production overflow cohort — fail-closed typed
+            // BpAdmit with distinct deny-detail. Do not load shared
+            // overflow.recent (unrelated peers must not cross-admit).
+            // Soft/Off: named_scope_bp_on_overflow_cohort is always false.
+            if (named_scope_bp_on_overflow_cohort(scope_id)) {
+                g_orch_module_stats.spawn_failures.fetch_add(1, std::memory_order_relaxed);
+                // Distinguish from scope-local deny (spawn_bp_admit_reject_scope_total).
+                g_orch_module_stats.spawn_bp_scope_overflow_total.fetch_add(
+                    1, std::memory_order_relaxed);
+                h.quota_exceeded = true;
+                h.deny_class = AgentDenyClass::BpAdmit;
+                h.quota_dimension = "mailbox-bp-scope-overflow";
+                h.quota_used = static_cast<std::uint64_t>(kMailboxBpScopeMapCap);
+                h.quota_limit = static_cast<std::uint64_t>(kMailboxBpScopeMapCap);
+                h.retry_after_ms = 50;
+                h.error =
+                    "AdmissionRejected: mailbox BP scope-map overflow cohort "
+                    "(cap=" +
+                    std::to_string(kMailboxBpScopeMapCap) +
+                    "; deny-detail=mailbox-bp-scope-overflow)";
+                rollback_spawn_reservation(h);
+                finalize_spawn_quota_reject(h);
+                return h;
+            }
             // #2948: same load path as watch_all degrade.
             const auto bp_recent = load_mailbox_bp_recent(scope_id);
             if (bp_recent >= threshold) {
