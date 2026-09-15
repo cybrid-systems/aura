@@ -414,6 +414,10 @@ void CompilerService::mark_define_dirty(const std::string& name) {
             // IR-dirty before the next lookup / peel. #3345 stays
             // direct-only. Shared lock, no dep_graph erase.
             mark_called_by_cone_body_dirty_(name);
+            // Issue #3823: union node-dep dependents (Soft-erased /
+            // node-only callers) into the same body-dirty set before
+            // return — closes clean-hit window until #3761 peel.
+            mark_node_dep_dependents_body_dirty_(name);
             return;
         }
     }
@@ -960,6 +964,8 @@ void CompilerService::invalidate_function(const std::string& name) {
             mark_direct_hybrid_dependents_body_dirty_(name);
             // Issue #3474: FIFO called_by cone (transitive IR dirty).
             mark_called_by_cone_body_dirty_(name);
+            // Issue #3823: node-dep dependents union (node-only callers).
+            mark_node_dep_dependents_body_dirty_(name);
             return;
         }
     }
@@ -2075,6 +2081,69 @@ void CompilerService::mark_called_by_cone_body_dirty_(const std::string& name) {
     for (const auto& dependent : dependents) {
         if (dependent == name)
             continue;
+        auto cit = ir_cache_v2_.find(dependent);
+        if (cit == ir_cache_v2_.end())
+            continue;
+        cit->second.dirty = true;
+        const auto n = cit->second.mark_caller_body_dirty();
+        finish_cascade_soa_dirty_sync_(cit->second);
+        if (n > 0) {
+            metrics_.cascade_body_only_count.fetch_add(1, std::memory_order_relaxed);
+            metrics_.dirty_propagation_block_marks.fetch_add(n, std::memory_order_relaxed);
+        } else {
+            cit->second.mark_all_blocks_dirty();
+            finish_cascade_soa_dirty_sync_(cit->second);
+            metrics_.cascade_body_only_count.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+}
+
+
+void CompilerService::mark_node_dep_dependents_body_dirty_(const std::string& name) {
+    // Issue #3823: Production mark-time body-dirty for node-dep
+    // dependents of encode_fn_node(slot(name)). #3474 walks string
+    // called_by only; Soft-erased / inject / lockless forks leave
+    // node-only callers clean until #3761 peel. Reuse #3761 decode
+    // walk under shared lock — no remirror, no generation bump, no
+    // dep_graph erase. Soft / Off never call this (facade-success
+    // path only); Soft inject remains observe-only.
+    if (ir_cache_v2_.empty())
+        return;
+    std::vector<std::string> dependents;
+    {
+        using aura::compiler::lock_order::Level;
+        using aura::compiler::lock_order::OrderedSharedLock;
+        using aura::compiler::dirty::decode_block_dep_node;
+        using aura::compiler::dirty::decode_fn_slot;
+        using aura::compiler::dirty::encode_fn_node;
+        using aura::compiler::dirty::is_block_dep_node;
+        using aura::compiler::dirty::is_fn_node;
+        OrderedSharedLock<std::shared_mutex> dep_read(dep_graph_mtx_, Level::DepGraph);
+        const auto slot_it = dep_name_to_slot_.find(name);
+        if (slot_it == dep_name_to_slot_.end())
+            return;
+        const auto* deps = node_dep_graph_.dependents(encode_fn_node(slot_it->second));
+        if (!deps)
+            return;
+        std::unordered_set<std::string> seen;
+        seen.insert(name);
+        for (const auto n : *deps) {
+            std::uint32_t slot = UINT32_MAX;
+            if (is_fn_node(n))
+                slot = decode_fn_slot(n);
+            else if (is_block_dep_node(n))
+                slot = decode_block_dep_node(n).caller_slot;
+            else
+                continue;
+            if (slot >= dep_slot_to_name_.size())
+                continue;
+            const auto& nm = dep_slot_to_name_[slot];
+            if (nm.empty() || !seen.insert(nm).second)
+                continue;
+            dependents.push_back(nm);
+        }
+    }
+    for (const auto& dependent : dependents) {
         auto cit = ir_cache_v2_.find(dependent);
         if (cit == ir_cache_v2_.end())
             continue;

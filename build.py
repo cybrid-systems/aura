@@ -4996,6 +4996,20 @@ def cmd_lint():
             "Issue #3822 prod_soa writeback sync linter failed — run python3 scripts/coverage/checks/check_prod_soa_writeback_sync_3822.py"
         )
         return r
+    # Issue #3823: Production mark_define_dirty unions node-dep dependents
+    # (Soft-erased / node-only callers) into the #3474 body-dirty set before
+    # return — closes clean-hit until #3761 peel. Soft inject observe-only.
+    # Extends test_dep_graph_hybrid_cascade.cpp (#81967); no docs/design/.
+    pmndu3823_script = COVERAGE_CHECKS / "check_production_mark_node_dep_union_3823.py"
+    if not pmndu3823_script.exists():
+        fail(f"missing {pmndu3823_script}")
+        return 1
+    r = run([sys.executable, str(pmndu3823_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3823 production mark node-dep union linter failed — run python3 scripts/coverage/checks/check_production_mark_node_dep_union_3823.py"
+        )
+        return r
     # Issue #3802: EXEMPT_2ARG write-file/sys-* host-path isolation under
     # Restricted+MT / Strict — resolve under tenant root from
     # capability_tenant_id_; cross-tenant escape → IsolationDeny SE
@@ -15040,6 +15054,26 @@ def cmd_prod_soa_writeback_sync_3822():
     """Issue #3822: Production SoA PureWrap mirrors dirty blocks into AoS writeback."""
     print(f"{B}=== prod_soa writeback sync (#3822) ==={N}")
     return cmd_prod_soa_writeback_sync_3822_coverage()
+
+
+def cmd_production_mark_node_dep_union_3823_coverage():
+    """Issue #3823: Production mark unions node-dep dependents (static)."""
+    print(f"{B}=== production mark node-dep union (#3823) ==={N}")
+    script = COVERAGE_CHECKS / "check_production_mark_node_dep_union_3823.py"
+    if not script.is_file():
+        fail(f"missing {script}")
+        return 1
+    if run([sys.executable, str(script)], cwd=ROOT) != 0:
+        fail("production mark node-dep union (#3823) coverage contract rows failed")
+        return 1
+    ok("production mark node-dep union (#3823) coverage clean")
+    return 0
+
+
+def cmd_production_mark_node_dep_union_3823():
+    """Issue #3823: Production mark-time node-dep body-dirty union before peel."""
+    print(f"{B}=== production mark node-dep union (#3823) ==={N}")
+    return cmd_production_mark_node_dep_union_3823_coverage()
 
 
 def cmd_engine_metrics_hash_overflow_3018_coverage():

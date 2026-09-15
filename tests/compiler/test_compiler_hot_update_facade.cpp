@@ -964,6 +964,49 @@ static void ac3474_production_called_by_cone() {
     CHECK(read_file("tests/issues/test_issue_3474.cpp").empty(), "3474 AC5: no tests/issues");
 }
 
+
+// ── Issue #3823: Production mark unions node-dep dependents (#3761 decode)
+static void ac3823_production_node_dep_mark_union() {
+    std::println("\n--- #3823: Production mark-time node-dep body-dirty union ---");
+    const auto svc = read_file("src/compiler/service_dirty.cpp");
+    const auto ixx = read_file("src/compiler/service.ixx");
+    const auto build = read_file("build.py");
+    CHECK(ixx.find("mark_node_dep_dependents_body_dirty_") != std::string::npos,
+          "3823: helper declared");
+    CHECK(svc.find("void CompilerService::mark_node_dep_dependents_body_dirty_") != std::string::npos,
+          "3823: helper defined");
+    {
+        const auto md_pos = svc.find("void CompilerService::mark_define_dirty");
+        const auto md_end = svc.find("\nvoid CompilerService::", md_pos + 1);
+        const auto md_win =
+            svc.substr(md_pos, (md_end == std::string::npos ? 9000 : md_end - md_pos));
+        const auto cone = md_win.find("mark_called_by_cone_body_dirty_(name)");
+        const auto node = md_win.find("mark_node_dep_dependents_body_dirty_(name)");
+        const auto ret =
+            (node == std::string::npos) ? std::string::npos : md_win.find("return;", node);
+        CHECK(cone != std::string::npos && node != std::string::npos && cone < node,
+              "3823: node-dep union after #3474 cone mark");
+        CHECK(node != std::string::npos && ret != std::string::npos && node < ret,
+              "3823: node-dep union on facade-success return");
+    }
+    {
+        const auto hpos = svc.find("void CompilerService::mark_node_dep_dependents_body_dirty_");
+        CHECK(hpos != std::string::npos, "3823: helper body");
+        const auto hwin = svc.substr(hpos, 2200);
+        CHECK(hwin.find("Issue #3823") != std::string::npos, "3823: cite");
+        CHECK(hwin.find("encode_fn_node") != std::string::npos, "3823: encode_fn_node");
+        CHECK(hwin.find("decode_fn_slot") != std::string::npos, "3823: #3761 decode walk");
+        CHECK(hwin.find("mark_caller_body_dirty") != std::string::npos, "3823: #3474 union mark");
+        CHECK(hwin.find("rebuild_node_dep_graph_from_string") == std::string::npos,
+              "3823: no remirror at mark");
+    }
+    CHECK(build.find("check_production_mark_node_dep_union_3823") != std::string::npos,
+          "3823: build.py linter");
+    CHECK(read_file("tests/compiler/test_issue_3823.cpp").empty(), "3823: no invent");
+    CHECK(read_file("docs/design/3823-node-dep-mark-union.md").empty(), "3823: no docs/design");
+}
+
+
 } // namespace
 
 // ── Issue #3605: production owner-scoped facade freezes the process
@@ -1203,6 +1246,7 @@ int run_test_issue_3112() {
     // #3345 stays depth-1. Peel union is transitive. Soft teardown
     // unchanged.
     ac3474_production_called_by_cone();
+    ac3823_production_node_dep_mark_union();
 
     // Issue #3749: production facade must evict jit_cache_ so
     // try_jit_execute cannot cache-hit pre-mutate native.

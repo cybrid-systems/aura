@@ -1351,6 +1351,115 @@ static void ac3761_3_soft_no_extra_consult() {
     apply_dev_audit_defaults();
 }
 
+
+// ── Issue #3823: Production mark-time node-dep union (before peel) ──
+// #3474 string called_by FIFO leaves node-only callers clean until #3761
+// peel. Mark must union encode_fn_node dependents into the body-dirty set.
+
+static void ac3823_1_prod_node_only_dirty_before_peel() {
+    std::println("\n--- #3823 AC1: Production node-only caller dirty at mark (pre-peel) ---");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    apply_production_audit_defaults();
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define f (lambda () 1)) (define g (lambda () (f)))\")").has_value(),
+          "3823 AC1: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3823 AC1: eval");
+    if (!cs.get_define_v2("g"))
+        (void)cs.eval("(compile:cache-define \"g\")");
+    CHECK(cs.get_define_v2("g") != nullptr, "3823 AC1: g cached");
+    cs.public_record_dependency("g", "f");
+    CHECK(cs.public_dep_graph_has_edge("g", "f"), "3823 AC1: dual-record string edge");
+    CHECK(cs.public_node_dep_has_mirror_edge("g", "f"), "3823 AC1: dual-record node edge");
+    // Soft-erased / node-only residue: drop string, keep node mirror.
+    cs.inject_drop_string_calls_keep_node_for_test("g", "f");
+    CHECK(!cs.public_dep_graph_has_edge("g", "f"), "3823 AC1: string called_by cleared");
+    CHECK(cs.public_node_dep_has_mirror_edge("g", "f"), "3823 AC1: node-only G←F remains");
+    const auto hash_g = cs.get_define_v2("g")->source_hash;
+    // Mutate/mark callee — no peel yet.
+    cs.public_mark_define_dirty("f");
+    const auto* ge = cs.get_define_v2("g");
+    CHECK(ge && (ge->dirty || ge->dirty_block_count() > 0),
+          "3823 AC1: g body-dirty at mark (before peel)");
+    CHECK(cs.lookup_define_v2("g", hash_g) == 1,
+          "3823 AC1: lookup_define_v2(g)==1 needs-relower before peel");
+    // Explicit: no relower_dirty_defines_from_workspace between mark and lookup.
+    apply_dev_audit_defaults();
+}
+
+static void ac3823_2_soft_inject_observe_only() {
+    std::println("\n--- #3823 AC2: Soft inject path may remain observe-only ---");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+    apply_dev_audit_defaults();
+    g_typed_mutation_audit_counters.production_defaults_active.store(0, std::memory_order_relaxed);
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define f (lambda () 1)) (define g (lambda () (f)))\")").has_value(),
+          "3823 AC2: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3823 AC2: eval");
+    if (!cs.get_define_v2("g"))
+        (void)cs.eval("(compile:cache-define \"g\")");
+    cs.public_record_dependency("g", "f");
+    cs.inject_drop_string_calls_keep_node_for_test("g", "f");
+    CHECK(cs.public_node_dep_has_mirror_edge("g", "f"), "3823 AC2: node-only remains");
+    // Soft mark: facade early-return (and #3823 helper) does not run.
+    cs.public_mark_define_dirty("f");
+    const auto dirty = read_file("src/compiler/service_dirty.cpp");
+    CHECK(dirty.find("mark_node_dep_dependents_body_dirty_") != std::string::npos,
+          "3823 AC2: Production helper present");
+    const auto md = dirty.find("void CompilerService::mark_define_dirty");
+    const auto soft = dirty.find("gc_coord::Scope gc_coord_scope", md);
+    const auto helper_call = dirty.find("mark_node_dep_dependents_body_dirty_(name)", md);
+    CHECK(helper_call != std::string::npos && soft != std::string::npos && helper_call < soft,
+          "3823 AC2: helper only on Production facade path (before Soft body)");
+    apply_dev_audit_defaults();
+}
+
+static void ac3823_3_soak_lockless_one_side_no_clean_hit() {
+    std::println("\n--- #3823 soak: lockless one-side write × mark × lookup ---");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    apply_production_audit_defaults();
+    for (int i = 0; i < 8; ++i) {
+        CompilerService cs;
+        CHECK(cs.eval("(set-code \"(define f (lambda () 1)) (define g (lambda () (f)))\")")
+                  .has_value(),
+              "3823 soak: set-code");
+        CHECK(cs.eval("(eval-current)").has_value(), "3823 soak: eval");
+        if (!cs.get_define_v2("g"))
+            (void)cs.eval("(compile:cache-define \"g\")");
+        cs.public_record_dependency("g", "f");
+        // Alternate Soft-erased hole vs pure node-only inject after dual-record.
+        if ((i & 1) == 0) {
+            cs.inject_drop_string_calls_keep_node_for_test("g", "f");
+        } else {
+            cs.inject_drop_string_calls_keep_node_for_test("g", "f");
+            cs.inject_node_only_edge_for_test("g", "f");
+        }
+        CHECK(cs.public_node_dep_has_mirror_edge("g", "f"), "3823 soak: node edge");
+        const auto hash_g = cs.get_define_v2("g")->source_hash;
+        cs.public_mark_define_dirty("f");
+        CHECK(cs.lookup_define_v2("g", hash_g) == 1,
+              "3823 soak: lockless one-side write × mark × lookup does not clean-hit");
+    }
+    const auto dirty = read_file("src/compiler/service_dirty.cpp");
+    const auto hpos = dirty.find("void CompilerService::mark_node_dep_dependents_body_dirty_");
+    CHECK(hpos != std::string::npos, "3823 soak: helper defined");
+    if (hpos != std::string::npos) {
+        const auto hwin = dirty.substr(hpos, 2200);
+        CHECK(hwin.find("Issue #3823") != std::string::npos, "3823 soak: cite");
+        CHECK(hwin.find("encode_fn_node") != std::string::npos, "3823 soak: encode_fn_node");
+        CHECK(hwin.find("decode_fn_slot") != std::string::npos, "3823 soak: #3761 decode");
+        CHECK(hwin.find("mark_caller_body_dirty") != std::string::npos, "3823 soak: #3474 union");
+        CHECK(hwin.find("dep_graph_.erase(") == std::string::npos, "3823 soak: no erase");
+        CHECK(hwin.find("rebuild_node_dep_graph_from_string") == std::string::npos,
+              "3823 soak: no remirror at mark");
+    }
+    CHECK(read_file("tests/compiler/test_issue_3823.cpp").empty(), "3823 soak: no invent");
+    CHECK(read_file("docs/design/3823-node-dep-mark-union.md").empty(), "3823 soak: no docs/design");
+    apply_dev_audit_defaults();
+}
+
 // ── Issue #3762: unload_module must tear down V2 + remirror node_dep ──
 static void ac3762_1_unload_dirties_caller() {
     std::println("\n--- #3762 AC1: unload f's module → lookup(g)==1, (g) not pre-unload f ---");
@@ -1835,6 +1944,10 @@ int run_test_dep_graph_hybrid_cascade() {
     ac3761_1_node_only_caller_this_sweep();
     ac3761_2_ghost_node_only_still_remirrors();
     ac3761_3_soft_no_extra_consult();
+    // Issue #3823: Production mark-time node-dep union (pre-peel clean-hit).
+    ac3823_1_prod_node_only_dirty_before_peel();
+    ac3823_2_soft_inject_observe_only();
+    ac3823_3_soak_lockless_one_side_no_clean_hit();
     // Issue #3762: unload_module tears down V2 + remirrors node_dep.
     ac3762_1_unload_dirties_caller();
     ac3762_2_graphs_consistent_after_unload();
