@@ -1932,17 +1932,33 @@ extern "C" std::uint64_t aura_aot_register_dropped_count(void) {
     return g_aot_register_dropped.load(std::memory_order_relaxed);
 }
 
+// Issue #3813: dual-track steal checkpoint probe (align with
+// aura_is_jit_closure_fresh / #3447). Callers pass current_bridge_epoch()
+// (C-bridge facade) as bridge_epoch — do NOT compare it to
+// g_aot_table_epoch. Owner-scoped hard invalidate advances C-bridge
+// while freezing the table (#2841/#2951); conflating the clocks
+// false-positives steal deopt / yield rollback. Sample C-bridge vs
+// C-bridge and table vs table independently (AND with defuse).
+// table_epoch==0 → table domain skipped (2-arg / live-only callers).
 extern "C" bool aura_aot_probe_checkpoint_version(std::uint64_t defuse_version,
-                                                  std::uint64_t bridge_epoch) {
+                                                  std::uint64_t bridge_epoch,
+                                                  std::uint64_t table_epoch) {
     const std::uint64_t emit_ver = g_aot_defuse_version;
-    const std::uint64_t table_epoch = g_aot_table_epoch.load(std::memory_order_relaxed);
+    const std::uint64_t cur_c_bridge = aura_get_current_bridge_epoch();
+    const std::uint64_t cur_table = g_aot_table_epoch.load(std::memory_order_relaxed);
     const bool defuse_drift = (defuse_version != 0 && emit_ver != 0 && defuse_version != emit_ver);
-    const bool bridge_mismatch = (bridge_epoch != 0 && bridge_epoch != table_epoch);
+    // Same-domain C-bridge sample (not C-bridge vs table).
+    const bool c_bridge_mismatch =
+        (bridge_epoch != 0 && cur_c_bridge != 0 && bridge_epoch != cur_c_bridge);
+    // Independent table-domain sample (#3447 dual-track).
+    const bool table_mismatch =
+        (table_epoch != 0 && cur_table != 0 && table_epoch != cur_table);
+    const bool epoch_mismatch = c_bridge_mismatch || table_mismatch;
     if (defuse_drift && aot_metrics())
         aot_metrics()->aot_checkpoint_version_drifts_.fetch_add(1, std::memory_order_relaxed);
-    if (bridge_mismatch && aot_metrics())
+    if (epoch_mismatch && aot_metrics())
         aot_metrics()->aot_bridge_epoch_mismatches_.fetch_add(1, std::memory_order_relaxed);
-    return defuse_drift || bridge_mismatch;
+    return defuse_drift || epoch_mismatch;
 }
 
 extern "C" std::uint64_t aura_aot_bridge_epoch_mismatches(void) {

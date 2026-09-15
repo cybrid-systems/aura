@@ -4857,6 +4857,22 @@ def cmd_lint():
             "Issue #3812 Soft Global critical remount linter failed — run python3 scripts/coverage/checks/check_soft_global_critical_remount_3812.py"
         )
         return r
+    # Issue #3813: steal checkpoint probe dual-track — do not conflate
+    # C-bridge (current_bridge_epoch) with g_aot_table_epoch (#3447).
+    # Owner-scoped hard invalidate advances C-bridge while freezing table;
+    # false steal deopt / yield rollback. Extends
+    # test_aot_bridge_checkpoint_version_steal.cpp (#653); no docs/design/
+    # (#1655). aura_is_jit_closure_fresh unchanged.
+    scdt3813_script = COVERAGE_CHECKS / "check_steal_checkpoint_dual_track_3813.py"
+    if not scdt3813_script.exists():
+        fail(f"missing {scdt3813_script}")
+        return 1
+    r = run([sys.executable, str(scdt3813_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3813 steal checkpoint dual-track linter failed — run python3 scripts/coverage/checks/check_steal_checkpoint_dual_track_3813.py"
+        )
+        return r
     # Issue #3802: EXEMPT_2ARG write-file/sys-* host-path isolation under
     # Restricted+MT / Strict — resolve under tenant root from
     # capability_tenant_id_; cross-tenant escape → IsolationDeny SE
@@ -14701,6 +14717,26 @@ def cmd_soft_global_critical_remount_3812():
     """Issue #3812: Soft Global x critical bypass success covered remount gate."""
     print(f"{B}=== soft Global critical remount (#3812) ==={N}")
     return cmd_soft_global_critical_remount_3812_coverage()
+
+
+def cmd_steal_checkpoint_dual_track_3813_coverage():
+    """Issue #3813: steal checkpoint probe dual-track (static)."""
+    print(f"{B}=== steal checkpoint dual-track (#3813) ==={N}")
+    script = COVERAGE_CHECKS / "check_steal_checkpoint_dual_track_3813.py"
+    if not script.is_file():
+        fail(f"missing {script}")
+        return 1
+    if run([sys.executable, str(script)], cwd=ROOT) != 0:
+        fail("steal checkpoint dual-track (#3813) coverage contract rows failed")
+        return 1
+    ok("steal checkpoint dual-track (#3813) coverage clean")
+    return 0
+
+
+def cmd_steal_checkpoint_dual_track_3813():
+    """Issue #3813: steal checkpoint probe aligns with dual-fresh clocks."""
+    print(f"{B}=== steal checkpoint dual-track (#3813) ==={N}")
+    return cmd_steal_checkpoint_dual_track_3813_coverage()
 
 
 def cmd_engine_metrics_hash_overflow_3018_coverage():
