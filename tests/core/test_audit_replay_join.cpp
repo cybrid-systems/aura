@@ -986,8 +986,7 @@ static void ac17_pre_persist_wal_miss_fail_closed_3780() {
     CHECK(aura::core::security_event_wal::wal_overflow_find_by_mid(3780) != nullptr,
           "3780 AC1: overflow joins mid with mutation_wal_append_miss");
     const auto* ovr = aura::core::security_event_wal::wal_overflow_find_by_mid(3780);
-    CHECK(ovr && ovr->reason == "mutation_wal_append_miss",
-          "3780 AC4: reason string stable");
+    CHECK(ovr && ovr->reason == "mutation_wal_append_miss", "3780 AC4: reason string stable");
     ev.disable_mutation_audit_wal();
     std::filesystem::remove_all(dir);
     ::unsetenv("AURA_WAL_APPEND_FAIL_CLOSED");
