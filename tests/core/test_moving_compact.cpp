@@ -773,6 +773,14 @@ int run_test_moving_compact() {
         CHECK(read_file("tests/core/test_issue_3469.cpp").empty() &&
                   read_file("tests/compiler/test_issue_3469.cpp").empty(),
               "3469: no test_issue_3469.cpp per #81967");
+        // Issue #3781: rewrite consumers must not fold the full tombstone
+        // table — resolve remains the #3469 refuse path.
+        const auto ar3781 = read_file("src/core/arena.ixx");
+        CHECK(ar3781.find("Issue #3781") != std::string::npos, "3781: arena cites #3781");
+        CHECK(ar3781.find("this_window_remap") != std::string::npos,
+              "3781: this_window_remap splits rewrite from resolve");
+        CHECK(ar3781.find("this_window_remap.find(*slot)") != std::string::npos,
+              "3781: slot rewrite this-window only");
     }
 
     // ── Source contract ──

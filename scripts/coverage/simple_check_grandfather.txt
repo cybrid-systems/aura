@@ -366,3 +366,4 @@ check_workspace_source_ssot_2920.py
 check_occurrence_mid_join_ssot_3778.py
 check_steal_complete_total_ssot_3779.py
 check_mutation_wal_miss_fail_closed_3780.py
+check_densify_this_window_rewrite_3781.py

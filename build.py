@@ -6696,6 +6696,18 @@ def cmd_lint():
             "Issue #3780 mutation WAL miss fail-closed linter failed — run python3 scripts/coverage/checks/check_mutation_wal_miss_fail_closed_3780.py"
         )
         return r
+    # Issue #3781: densify rewrite uses this-window relocate pairs only
+    # (#3469 multi-window tombstone residual — recycled addr silent UAF).
+    dtw3781_script = COVERAGE_CHECKS / "check_densify_this_window_rewrite_3781.py"
+    if not dtw3781_script.exists():
+        fail(f"missing {dtw3781_script}")
+        return 1
+    r = run([sys.executable, str(dtw3781_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3781 densify this-window rewrite linter failed — run python3 scripts/coverage/checks/check_densify_this_window_rewrite_3781.py"
+        )
+        return r
     # Issue #3640: add_mutate isolation gate single spine (#3396 v2
     # residual). The gate parses packed StableNodeRefs through the same
     # unpack_stable_ref_arg as resolve_mutate_node_arg and takes
@@ -14219,6 +14231,26 @@ def cmd_mutation_wal_miss_fail_closed_3780():
     """Issue #3780: emit_mutation_audit WAL miss fail-closed before Occurrence persist."""
     print(f"{B}=== mutation WAL miss fail-closed (#3780) ==={N}")
     return cmd_mutation_wal_miss_fail_closed_3780_coverage()
+
+
+def cmd_densify_this_window_rewrite_3781_coverage():
+    """Issue #3781: densify rewrite this-window pairs only (static)."""
+    print(f"{B}=== densify this-window rewrite (#3781) ==={N}")
+    script = COVERAGE_CHECKS / "check_densify_this_window_rewrite_3781.py"
+    if not script.is_file():
+        fail(f"missing {script}")
+        return 1
+    if run([sys.executable, str(script)], cwd=ROOT) != 0:
+        fail("densify this-window rewrite (#3781) coverage contract rows failed")
+        return 1
+    ok("densify this-window rewrite (#3781) coverage clean")
+    return 0
+
+
+def cmd_densify_this_window_rewrite_3781():
+    """Issue #3781: rewrite paths use this-window relocate pairs; #3469 resolve retained."""
+    print(f"{B}=== densify this-window rewrite (#3781) ==={N}")
+    return cmd_densify_this_window_rewrite_3781_coverage()
 
 
 def cmd_engine_metrics_hash_overflow_3018_coverage():
@@ -21955,6 +21987,8 @@ def main():
         "steal-complete-total-ssot-3779-coverage": cmd_steal_complete_total_ssot_3779_coverage,
         "mutation-wal-miss-fail-closed-3780": cmd_mutation_wal_miss_fail_closed_3780,
         "mutation-wal-miss-fail-closed-3780-coverage": cmd_mutation_wal_miss_fail_closed_3780_coverage,
+        "densify-this-window-rewrite-3781": cmd_densify_this_window_rewrite_3781,
+        "densify-this-window-rewrite-3781-coverage": cmd_densify_this_window_rewrite_3781_coverage,
         "engine-metrics-hash-overflow-3018": cmd_engine_metrics_hash_overflow_3018,
         "engine-metrics-hash-overflow-3018-coverage": cmd_engine_metrics_hash_overflow_3018_coverage,
         "unified-restamp-3019": cmd_unified_restamp_3019,

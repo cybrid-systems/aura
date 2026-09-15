@@ -4010,6 +4010,175 @@ struct ClosureBodySlots3647 {
 // AC1: the known-root walk registers live Closure body slots (cl.flat /
 // cl.pool) into the Moving densify window via the existing slot SSOT;
 // additive counter + issue stamp + reset helper declared (#3647).
+
+// ── Issue #3781: densify rewrite uses this-window pairs only ─────────
+// #3469 tombstones remain resolve/refuse-only. Slot/pin/linear/RootRemap
+// must not rewrite a recycled addr holding a new unmoved object Y to the
+// prior-window destination (silent UAF). Soft/Off unchanged.
+
+static void ac3781_1_source_cite_this_window_rewrite() {
+    std::println("\n--- #3781 AC1: rewrite paths use this_window_remap ---");
+    const auto arena = read_file("src/core/arena.ixx");
+    CHECK(arena.find("Issue #3781") != std::string::npos, "AC1: arena cites #3781");
+    CHECK(arena.find("this_window_remap") != std::string::npos, "AC1: this_window_remap present");
+    CHECK(arena.find("this_window_remap.find(*slot)") != std::string::npos,
+          "AC1: slot rewrite uses this_window_remap");
+    CHECK(arena.find("for (const auto& [old_ptr, new_ptr] : this_window_remap)") !=
+              std::string::npos,
+          "AC1: pin remap iterates this_window_remap");
+    CHECK(arena.find("remap_linear_roots_under_moving(\n                    this_window_remap") !=
+              std::string::npos,
+          "AC1: linear remap gets this_window_remap");
+    CHECK(arena.find("invoke_root_remap_callback_(result, &root_remap_covered_old, "
+                     "this_window_remap)") != std::string::npos,
+          "AC1: RootRemap gets this_window_remap");
+    CHECK(arena.find("count_post_moving_stale_known_ptrs_(this_window_remap)") !=
+              std::string::npos,
+          "AC1: stale scan uses this_window_remap");
+    // Pin remap must not walk the full tombstone table.
+    const auto pin = arena.find("Issue #3781: pin remap walks this-window pairs only");
+    CHECK(pin != std::string::npos, "AC1: pin remap #3781 cite");
+    if (pin != std::string::npos) {
+        const auto win = arena.substr(pin, 900);
+        CHECK(win.find("for (const auto& [old_ptr, new_ptr] : last_object_remap_)") ==
+                  std::string::npos,
+              "AC1: pin remap must not iterate full last_object_remap_");
+    }
+}
+
+static void ac3781_2_resolve_keeps_multi_window_tombstones() {
+    std::println("\n--- #3781 AC2: resolve_object_remap still hits after A→B→C ---");
+    MovingFlagGuard on(1);
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    aura::ast::g_moving_untracked_hard_abort_pref.store(0, std::memory_order_relaxed);
+    ASTArena arena(64 * 1024);
+    auto* p0 = arena.create<Pod16>(1, 2, 3, 4);
+    auto* p1 = arena.create<Pod16>(5, 6, 7, 8);
+    auto* p2 = arena.create<Pod16>(9, 10, 11, 12);
+    CHECK(p0 && p1 && p2, "AC2: create");
+    void* A = p0;
+    void* s0 = p0;
+    void* s1 = p1;
+    void* s2 = p2;
+    arena.register_external_root_slot_for_densify(&s0);
+    arena.register_external_root_slot_for_densify(&s1);
+    arena.register_external_root_slot_for_densify(&s2);
+    const auto r1 = arena.live_compact(LiveCompactMode::Moving);
+    CHECK(r1.objects_moved > 0, "AC2: window 1 moved");
+    void* B = arena.resolve_object_remap(A);
+    CHECK(B != nullptr, "AC2: window 1 remapped A");
+    // Re-register slots at post-move identities for window 2.
+    arena.register_external_root_slot_for_densify(&s0);
+    arena.register_external_root_slot_for_densify(&s1);
+    arena.register_external_root_slot_for_densify(&s2);
+    const auto r2 = arena.live_compact(LiveCompactMode::Moving);
+    CHECK(r2.objects_moved > 0, "AC2: window 2 moved");
+    CHECK(arena.resolve_object_remap(A) != nullptr,
+          "AC2: resolve(A) still hits after A→B→C (#3469 AC1 retained)");
+    CHECK(arena.resolve_object_remap(B) != nullptr, "AC2: resolve(B) still hits");
+}
+
+static void ac3781_3_recycled_addr_slot_not_rewritten() {
+    std::println("\n--- #3781 AC3: recycled addr Y unmoved — slot not rewritten to tombstone B ---");
+    MovingFlagGuard on(1);
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    aura::ast::g_moving_untracked_hard_abort_pref.store(0, std::memory_order_relaxed);
+    ASTArena arena(64 * 1024);
+    auto* p0 = arena.create<Pod16>(1, 2, 3, 4);
+    auto* p1 = arena.create<Pod16>(5, 6, 7, 8);
+    auto* p2 = arena.create<Pod16>(9, 10, 11, 12);
+    CHECK(p0 && p1 && p2, "AC3: create window-1 objects");
+    void* A = p0;
+    void* s0 = p0;
+    void* s1 = p1;
+    void* s2 = p2;
+    arena.register_external_root_slot_for_densify(&s0);
+    arena.register_external_root_slot_for_densify(&s1);
+    arena.register_external_root_slot_for_densify(&s2);
+    const auto r1 = arena.live_compact(LiveCompactMode::Moving);
+    CHECK(r1.objects_moved > 0, "AC3: window 1 moved");
+    void* B = arena.resolve_object_remap(A);
+    CHECK(B != nullptr && B != A, "AC3: A→B");
+
+    // Recycle vacated A: create until freelist returns A (same-size Pod16).
+    void* Y = nullptr;
+    void* y_slot = nullptr;
+    for (int i = 0; i < 32 && Y == nullptr; ++i) {
+        auto* cand = arena.create<Pod16>(100 + i, 101, 102, 103);
+        CHECK(cand != nullptr, "AC3: recycle create");
+        if (static_cast<void*>(cand) == A) {
+            Y = cand;
+            y_slot = cand;
+        }
+    }
+    if (Y == nullptr) {
+        // Freelist did not return A this run — source contract still holds;
+        // resolve tombstone must remain, and rewrite must cite this_window.
+        CHECK(arena.resolve_object_remap(A) != nullptr,
+              "AC3: resolve(A) tombstone retained even without recycle hit");
+        const auto ar = read_file("src/core/arena.ixx");
+        CHECK(ar.find("this_window_remap.find(*slot)") != std::string::npos,
+              "AC3: slot rewrite this-window (no recycle hit this run)");
+        return;
+    }
+    CHECK(y_slot == A, "AC3: Y occupies recycled A");
+    // Movers that will densify this window (cover them so window can stay green).
+    auto* m0 = arena.create<Pod16>(200, 201, 202, 203);
+    auto* m1 = arena.create<Pod16>(210, 211, 212, 213);
+    auto* m2 = arena.create<Pod16>(220, 221, 222, 223);
+    CHECK(m0 && m1 && m2, "AC3: movers");
+    void* ms0 = m0;
+    void* ms1 = m1;
+    void* ms2 = m2;
+    arena.register_external_root_slot_for_densify(&y_slot);
+    arena.register_external_root_slot_for_densify(&ms0);
+    arena.register_external_root_slot_for_densify(&ms1);
+    arena.register_external_root_slot_for_densify(&ms2);
+    const auto r2 = arena.live_compact(LiveCompactMode::Moving);
+    CHECK(r2.objects_moved > 0, "AC3: window 2 moved other objects");
+    // Y was unmoved at A: slot must NOT be rewritten to tombstone B.
+    CHECK(y_slot != B, "AC3: must not rewrite Y's slot A→B via tombstone");
+    if (y_slot == A) {
+        CHECK(static_cast<Pod16*>(y_slot)->a >= 100, "AC3: Y payload intact at A");
+    }
+    CHECK(arena.resolve_object_remap(A) != nullptr,
+          "AC3: resolve(A) still hits (#3469 refuse path intact)");
+}
+
+static void ac3781_4_soft_off_zero_cost() {
+    std::println("\n--- #3781 AC4: Soft/Off — this_window_remap empty, no rewrite ---");
+    const auto arena = read_file("src/core/arena.ixx");
+    CHECK(arena.find("this_window_remap.clear()") != std::string::npos, "AC4: clear each window");
+    CHECK(arena.find("result.moved_live_objects && !this_window_remap.empty()") !=
+              std::string::npos,
+          "AC4: rewrite gated on this_window_remap non-empty");
+    MovingFlagGuard on(0);
+    aura::ast::g_moving_untracked_hard_abort_pref.store(0, std::memory_order_relaxed);
+    ASTArena a(64 * 1024);
+    auto* p0 = a.create<Pod16>(1, 2, 3, 4);
+    CHECK(p0 != nullptr, "AC4: create");
+    const auto r = a.live_compact(LiveCompactMode::Soft);
+    CHECK(r.objects_moved == 0, "AC4: Soft moves nothing");
+    CHECK(a.resolve_object_remap(p0) == nullptr, "AC4: Soft leaves remap empty");
+}
+
+static void ac3781_5_no_second_registry_or_issue_test() {
+    std::println("\n--- #3781 AC5: no second pin registry / no test_issue_3781 ---");
+    const auto arena = read_file("src/core/arena.ixx");
+    CHECK(arena.find("class DensifyClosurePinRegistry") == std::string::npos,
+          "AC5: no second pin registry");
+    CHECK(arena.find("g_3781_") == std::string::npos, "AC5: no invented g_3781_*");
+    CHECK(read_file("tests/core/test_issue_3781.cpp").empty() &&
+              read_file("tests/compiler/test_issue_3781.cpp").empty(),
+          "AC5: no test_issue_3781.cpp");
+    CHECK(read_file("docs/design/3781-densify-this-window-rewrite.md").empty(),
+          "AC5: no docs/design/3781-*");
+    CHECK(read_file("scripts/coverage/checks/check_densify_this_window_rewrite_3781.py").find(
+              "Issue #3781") != std::string::npos,
+          "AC5: coverage linter present");
+}
+
+
 static void ac3647_1_closure_body_slots_registered() {
     std::println("\n--- #3647 AC1: closure body slots enter known-root inventory ---");
     const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
@@ -4944,6 +5113,13 @@ int run_test_moving_densify_fail_closed() {
     ac3647_3_soft_zero_work_and_gating();
     ac3647_4_no_pin_no_dual_note();
     ac3647_5_soak_windows_and_wiring();
+    std::println("\n=== Issue #3781: densify rewrite this-window pairs only "
+                 "(#3469 residual; extends fail_closed per #81967) ===");
+    ac3781_1_source_cite_this_window_rewrite();
+    ac3781_2_resolve_keeps_multi_window_tombstones();
+    ac3781_3_recycled_addr_slot_not_rewritten();
+    ac3781_4_soft_off_zero_cost();
+    ac3781_5_no_second_registry_or_issue_test();
 
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;

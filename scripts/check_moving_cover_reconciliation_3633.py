@@ -107,8 +107,9 @@ def _rows(arena: str, remap: str, probe: str, lp: str, build: str, core_test: st
     # Issue #3350/#3633: linear roots are a rewrite channel — a fourth
     # cover family via the remap_linear_roots_under_moving out-param.
     must("std::vector<void*> linear_roots_covered_old;", "AC3", arena)
+    # Issue #3781: linear remap receives this_window_remap (not full tombstone table).
     must(
-        "remap_linear_roots_under_moving(\n                    last_object_remap_, &linear_roots_covered_old);",
+        "remap_linear_roots_under_moving(\n                    this_window_remap, &linear_roots_covered_old);",
         "AC3",
         arena,
     )
@@ -119,7 +120,8 @@ def _rows(arena: str, remap: str, probe: str, lp: str, build: str, core_test: st
     must("aura::core::moving_cover_probe::clear();", "AC4", remap)
     must("thread_local", "AC4", probe)
     must("Issue #3633", "AC4", probe)
-    must("invoke_root_remap_callback_(result, &root_remap_covered_old)", "AC4", arena)
+    # Issue #3781: RootRemap receives this_window_remap (mutation consumer).
+    must("invoke_root_remap_callback_(result, &root_remap_covered_old, this_window_remap)", "AC4", arena)
     must("*covered_old_out = aura::core::moving_cover_probe::drain();", "AC4", arena)
 
     # ── AC5: appended schema ──
@@ -150,7 +152,9 @@ def _self_test() -> int:
         "if (neu != p.old) {\n"
         "const bool covered_anywhere = slot_covered_old.count(moved_old) != 0 ||\n"
         "pins_honoring_old.insert(old_ptr);\n"
-        "invoke_root_remap_callback_(result, &root_remap_covered_old)\n"
+        "std::vector<void*> linear_roots_covered_old;\n"
+        "remap_linear_roots_under_moving(\n                    this_window_remap, &linear_roots_covered_old);\n"
+        "invoke_root_remap_callback_(result, &root_remap_covered_old, this_window_remap)\n"
         "*covered_old_out = aura::core::moving_cover_probe::drain();\n"
         "result.uncovered_moved_count = uncovered;\n"
         "g_moving_uncovered_relocation_total.fetch_add(uncovered,\n"
@@ -177,7 +181,7 @@ def _self_test() -> int:
     )
     good_arena = (
         "std::vector<void*> linear_roots_covered_old;\n"
-        "remap_linear_roots_under_moving(\n                    last_object_remap_, &linear_roots_covered_old);\n"
+        "remap_linear_roots_under_moving(\n                    this_window_remap, &linear_roots_covered_old);\n"
         "if (result.objects_moved > 0 && !last_moving_relocated_old_.empty()) {\n" + good_arena
     )
     ok_rows = _rows(good_arena, good_remap, good_probe, good_lp, good_build, good_core, good_health)

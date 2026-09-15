@@ -54,7 +54,8 @@ def main() -> int:
     must("g_moving_post_moving_stale_total", "AC2 counter", dc)
 
     must("ac3055_3_soft_no_scan", "AC3 test", test)
-    must("moved_live_objects && !last_object_remap_.empty()", "AC3 gate", arena)
+    # Issue #3781: stale scan gated on this_window_remap (not tombstone table).
+    must("moved_live_objects && !this_window_remap.empty()", "AC3 gate", arena)
 
     must("ac3055_4_no_second_remap", "AC4 test", test)
     must("invoke_root_remap_callback_", "AC4 RootRemap", arena)

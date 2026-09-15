@@ -153,9 +153,11 @@ def check() -> list:
         "AC3: LiveCompactMode Soft / Force / Moving branches present",
         fails,
     )
+    # Issue #3781: pin remap gated on this_window_remap (this-window pairs),
+    # not the full #3469 last_object_remap_ tombstone table.
     _must(
-        "result.moved_live_objects && !last_object_remap_.empty()" in arena,
-        "AC3: remap loop guarded by moved_live_objects (zero-cost on Soft/Force)",
+        "result.moved_live_objects && !this_window_remap.empty()" in arena,
+        "AC3: remap loop guarded by moved_live_objects + this_window_remap (zero-cost on Soft/Force)",
         fails,
     )
 
