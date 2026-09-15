@@ -1951,7 +1951,8 @@ extern "C" bool aura_aot_probe_checkpoint_version(std::uint64_t defuse_version,
     const bool c_bridge_mismatch =
         (bridge_epoch != 0 && cur_c_bridge != 0 && bridge_epoch != cur_c_bridge);
     // Independent table-domain sample (#3447 dual-track).
-    const bool table_mismatch = (table_epoch != 0 && cur_table != 0 && table_epoch != cur_table);
+    const bool table_mismatch =
+        (table_epoch != 0 && cur_table != 0 && table_epoch != cur_table);
     const bool epoch_mismatch = c_bridge_mismatch || table_mismatch;
     if (defuse_drift && aot_metrics())
         aot_metrics()->aot_checkpoint_version_drifts_.fetch_add(1, std::memory_order_relaxed);

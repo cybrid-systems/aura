@@ -12,7 +12,7 @@ module;
 #include "runtime_shared.h"
 #include "security_capabilities.h"
 #include "security_side_effect.hh" // #2057
-#include "tenant_host_path.hh"     // #3802 tenant FS path-prefix
+#include "tenant_host_path.hh" // #3802 tenant FS path-prefix
 
 module aura.compiler.evaluator;
 
@@ -183,8 +183,7 @@ void register_file_primitives(PrimRegistrar add, Evaluator& ev) {
         }
         // O_NOFOLLOW | O_CREAT | O_WRONLY — no symlink follow to sensitive targets.
         // Issue #3802: use_path is tenant-rooted under Restricted+MT / Strict.
-        int fd =
-            ::open(use_path.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW | O_CLOEXEC, 0644);
+        int fd = ::open(use_path.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW | O_CLOEXEC, 0644);
         if (fd < 0)
             return make_void();
         struct stat st{};
@@ -281,8 +280,8 @@ void register_file_primitives(PrimRegistrar add, Evaluator& ev) {
         int sfd = ::open(src_resolved.c_str(), O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
         if (sfd < 0)
             return make_void();
-        int dfd = ::open(dst_resolved.c_str(),
-                         O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW | O_CLOEXEC, 0644);
+        int dfd =
+            ::open(dst_resolved.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW | O_CLOEXEC, 0644);
         if (dfd < 0) {
             ::close(sfd);
             return make_void();

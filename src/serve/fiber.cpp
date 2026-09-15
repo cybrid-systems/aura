@@ -773,6 +773,7 @@ extern "C" __attribute__((weak)) std::uint64_t aura_join_audit_and_se_mid(std::u
 }
 
 
+
 extern "C" __attribute__((weak)) void aura_evaluator_enforce_linear_on_densify(void*) noexcept {}
 
 // Issue #3195: weak no-op (single-worker / light-link). Strong def in

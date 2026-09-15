@@ -251,7 +251,7 @@ struct WorkspaceIsolationPolicy {
         std::lock_guard<std::mutex> registry_lock(reg.mtx);
         TenantId mint_principal = 0;
         if (!try_grant_cross_tenant_privileged(to, effect_bits, caller_principal, reg,
-                                               &mint_principal))
+                                              &mint_principal))
             return; // deny: SE + counter emitted inside (#2968 stable); table unchanged
         CrossTenantKey key{from, to};
         auto& row = cross_grants[key];
@@ -391,8 +391,8 @@ struct WorkspaceIsolationPolicy {
         if (it == cross_grants.end())
             return false;
         const auto held = it->second.effect_bits;
-        const bool bits_ok =
-            (required_effects == 0) ? (held != 0) : ((held & required_effects) == required_effects);
+        const bool bits_ok = (required_effects == 0) ? (held != 0)
+                                                     : ((held & required_effects) == required_effects);
         if (!bits_ok)
             return false;
         if (!production)
@@ -448,8 +448,9 @@ struct WorkspaceIsolationPolicy {
         // epoch=0 stays 0 (no phantom mid=1). Soft/Off keeps TypedMid-then-
         // epoch with 0 terminal (#2493 Soft mid=1 is EffectDeny Soft arms).
         // Weak hook → epoch when audit TU not linked.
-        const auto mid =
-            (aura_isolation_deny_se_mid != nullptr) ? aura_isolation_deny_se_mid() : epoch;
+        const auto mid = (aura_isolation_deny_se_mid != nullptr)
+                             ? aura_isolation_deny_se_mid()
+                             : epoch;
 
         const auto seq = audit_seq.fetch_add(1, std::memory_order_release);
         IsolationAuditEntry entry{};
@@ -674,7 +675,7 @@ struct WorkspaceIsolationPolicy {
             if (ref_tenant != 0 && cur != 0 && ref_tenant != cur) {
                 // Provenance path: any non-zero grant bits (required=0 sense).
                 if (!cross_grant_allows_locked(cur, ref_tenant, /*required_effects=*/0,
-                                               production)) {
+                                              production)) {
                     allowed = false;
                     prov_deny = true;
                 }

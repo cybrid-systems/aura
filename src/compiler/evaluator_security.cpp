@@ -8,7 +8,7 @@ module;
 #include <cstring>
 
 #include "security_capabilities.h"
-#include "tenant_host_path.hh"  // #3802 tenant FS path-prefix
+#include "tenant_host_path.hh" // #3802 tenant FS path-prefix
 #include "security_defaults.hh" // #2076/#2053 production defaults (header-inline)
 #include "typed_mutation_audit.h"
 #include "core/capability_model.hh"
@@ -47,11 +47,11 @@ using security::kCapWildcard;
 // epoch=0 → mid=0 (no phantom 1). Soft Soft-gen / mid=1 observe stays on
 // Soft arms only (#2493). Call sites are Restricted/Strict deny paths.
 [[nodiscard]] static std::uint64_t production_deny_se_mid(std::uint64_t caller_mid = 0) noexcept {
-    using typed_audit::AuditStrategy;
-    using typed_audit::get_strategy;
     using typed_audit::join_audit_and_se_mid;
     using typed_audit::last_type_linear_commit_proof_stamp_v_read;
     using typed_audit::production_defaults_active;
+    using typed_audit::get_strategy;
+    using typed_audit::AuditStrategy;
     if (production_defaults_active() || get_strategy() == AuditStrategy::Full)
         return join_audit_and_se_mid(caller_mid);
     if (caller_mid != 0)
@@ -68,6 +68,7 @@ using security::kCapWildcard;
 extern "C" std::uint64_t aura_isolation_deny_se_mid() noexcept {
     return production_deny_se_mid();
 }
+
 
 
 // Issue #2077 / #2387: unify has_capability string path with Effect matrix

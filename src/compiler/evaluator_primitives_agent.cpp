@@ -4737,13 +4737,13 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 kv.push_back({"region-key-missing", make_bool(iso_obs.region_key_missing)});
                 kv.push_back({"region-key-missing-serialized",
                               make_int(iso_obs.region_key_missing ? 1 : 0)});
-                kv.push_back(
-                    {"distinct-region-keys", make_int(static_cast<std::int64_t>(
-                                                 iso_obs.decision.distinct_nonzero_region_keys))});
-                kv.push_back(
-                    {"schema-3803", make_int(aura::orch::kAgentScopeRegionKeyIsolationIssue)});
-                kv.push_back(
-                    {"issue-3803", make_int(aura::orch::kAgentScopeRegionKeyIsolationIssue)});
+                kv.push_back({"distinct-region-keys",
+                              make_int(static_cast<std::int64_t>(
+                                  iso_obs.decision.distinct_nonzero_region_keys))});
+                kv.push_back({"schema-3803",
+                              make_int(aura::orch::kAgentScopeRegionKeyIsolationIssue)});
+                kv.push_back({"issue-3803",
+                              make_int(aura::orch::kAgentScopeRegionKeyIsolationIssue)});
             }
             // Issue #3671: production guard — see the kv fields above.
             if (join_guard_deny)
@@ -5788,9 +5788,11 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             } else {
                 wf_iso.decision.level = r.batch.isolation_level;
                 wf_iso.decision.region_concurrent_eligible = r.batch.region_concurrent_eligible;
-                wf_iso.decision.distinct_nonzero_region_keys = r.batch.distinct_nonzero_region_keys;
+                wf_iso.decision.distinct_nonzero_region_keys =
+                    r.batch.distinct_nonzero_region_keys;
                 wf_iso.agent_count = static_cast<std::uint32_t>(tasks.size());
-                const bool production = aura::compiler::typed_audit::production_defaults_active();
+                const bool production =
+                    aura::compiler::typed_audit::production_defaults_active();
                 wf_iso.region_key_missing =
                     aura::serve::parallel_orch::region_key_missing_serialized(
                         wf_iso.decision, /*pure_mode=*/false, tasks.size(), production);
@@ -5853,9 +5855,11 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 {"isolation-level", push_str(iso_cstr)},
                 {"isolation-level-wired", make_int(1)},
                 {"region-key-missing", make_bool(wf_iso.region_key_missing)},
-                {"region-key-missing-serialized", make_int(wf_iso.region_key_missing ? 1 : 0)},
+                {"region-key-missing-serialized",
+                 make_int(wf_iso.region_key_missing ? 1 : 0)},
                 {"distinct-region-keys",
-                 make_int(static_cast<std::int64_t>(wf_iso.decision.distinct_nonzero_region_keys))},
+                 make_int(static_cast<std::int64_t>(
+                     wf_iso.decision.distinct_nonzero_region_keys))},
                 {"schema-3803", make_int(aura::orch::kAgentScopeRegionKeyIsolationIssue)},
                 {"issue-3803", make_int(aura::orch::kAgentScopeRegionKeyIsolationIssue)},
             };

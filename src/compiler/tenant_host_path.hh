@@ -113,8 +113,7 @@ struct TenantHostPathResult {
     return out;
 }
 
-[[nodiscard]] inline bool path_is_under_root(std::string_view path,
-                                             std::string_view root) noexcept {
+[[nodiscard]] inline bool path_is_under_root(std::string_view path, std::string_view root) noexcept {
     if (root.empty() || path.empty())
         return false;
     if (path == root)
@@ -127,7 +126,7 @@ struct TenantHostPathResult {
 // Extract tenant id from `<base>/t-<id>(/...)` when path sits under base.
 // Returns 0 when not a tenant-prefixed path.
 [[nodiscard]] inline std::uint64_t tenant_id_from_host_path(std::string_view path,
-                                                            std::string_view base) noexcept {
+                                                           std::string_view base) noexcept {
     if (!path_is_under_root(path, base) && path != base)
         return 0;
     const auto prefix = std::string(base) + "/t-";
