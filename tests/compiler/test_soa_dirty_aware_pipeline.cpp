@@ -574,12 +574,12 @@ int run_test_soa_dirty_aware_pipeline() {
         std::println("\n=== Issue #3701: Production SoA dirty escape, no AoS Wrap run ===");
         CHECK(aura::compiler::pass_concepts::kProductionDirtyEscapeSoaIssue == 3701,
               "3701: issue stamp");
-        static_assert(!ProductionPureWrapPass<EscapeAnalysisWrap>);
+        static_assert(ProductionPureWrapPass<EscapeAnalysisWrap>);
         static_assert(DirtySoAEntryPass<EscapeAnalysisWrap>);
-        CHECK(!static_cast<bool>(ProductionPureWrapPass<EscapeAnalysisWrap>),
-              "3701 AC4: pack still rejects EscapeAnalysisWrap");
+        CHECK(static_cast<bool>(ProductionPureWrapPass<EscapeAnalysisWrap>),
+              "3795 AC1: EscapeAnalysisWrap ProductionPureWrapPass");
         CHECK(static_cast<bool>(DirtySoAEntryPass<EscapeAnalysisWrap>),
-              "3701 AC3: Soft DirtySoAEntryPass grandfather kept");
+              "3701 AC3 / 3795 AC2: Soft DirtySoAEntryPass grandfather kept");
 
         const auto svc = read_file("src/compiler/service.ixx");
         const auto prod = svc.find("const bool prod_soa");
@@ -605,6 +605,12 @@ int run_test_soa_dirty_aware_pipeline() {
         CHECK(read_file("docs/design/3701-soa-dirty-escape.md").empty(),
               "3701 AC5: no docs/design");
         CHECK(read_file("tests/compiler/test_issue_3701.cpp").empty(), "3701 AC5: no invent");
+
+        CHECK(svc.find("run_on_dirty_blocks_only(IRModuleV2& mod)") != std::string::npos ||
+                  svc.find("void run_on_dirty_blocks_only(IRModuleV2& mod)") != std::string::npos,
+              "3795 AC1: EscapeAnalysisWrap SoA dirty entry");
+        CHECK(svc.find("Issue #3795") != std::string::npos, "3795: cites #3795");
+        CHECK(svc.find("schema-3795") == std::string::npos, "3795 AC4: no new query key");
 
         IRModuleV2 mod;
         auto fi0 = mod.add_function("dirty3701", 4);

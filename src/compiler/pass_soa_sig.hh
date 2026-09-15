@@ -27,5 +27,7 @@ inline constexpr int kProductionPureWrapHotPackIssue = 3488;
 // ProductionPureWrapPass pack still rejects the Wrap until it grows
 // a SoA entry. Soft keeps the AoS grandfather.
 inline constexpr int kProductionDirtyEscapeSoaIssue = 3701;
+// Issue #3795: EscapeAnalysisWrap satisfies ProductionPureWrapPass.
+inline constexpr int kEscapeAnalysisProductionPureWrapIssue = 3795;
 
 } // namespace aura::compiler::pass_soa_sig

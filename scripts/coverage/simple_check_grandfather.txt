@@ -377,3 +377,4 @@ scripts/coverage/checks/check_partial_occurrence_drift_escalate_3788.py
 scripts/coverage/checks/check_remount_last_zero_agent_face_3789.py
 scripts/coverage/checks/check_rollback_mutation_boundary_guard_3790.py
 scripts/coverage/checks/check_partial_drift_grant_refuse_3794.py
+scripts/coverage/checks/check_escape_analysis_pure_wrap_3795.py

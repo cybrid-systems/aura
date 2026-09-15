@@ -410,6 +410,11 @@ static aura::diag::Diagnostic parse_error_diag(const aura::parser::FlatParseResu
     return {aura::diag::ErrorKind::ParseError, pr.error.empty() ? "parse error" : pr.error};
 }
 
+// Issue #3795: SoA dirty entry declared before Wrap so run_on_dirty_blocks_only
+// can delegate to the columnar helper (defined below).
+export inline std::size_t run_dirty_escape_on_soa(IRModuleV2& soa_mod,
+                                                  std::vector<std::vector<std::uint8_t>>& maps);
+
 // ── EscapeAnalysisWrap — IR pass that computes per-function escape info ───
 // Runs after lowering, before JIT codegen. Stores escape maps per function.
 // JIT and IR interpreter read the results to select arena vs heap allocation.
@@ -477,6 +482,13 @@ export struct EscapeAnalysisWrap {
             run(func);
     }
 
+    // Issue #3795: ProductionPureWrapPass SoA dirty peel (columnar).
+    // Soft/unit keep AoS run(IRFunction&) / DirtySoAEntryPass grandfather.
+    void run_on_dirty_blocks_only(IRModuleV2& mod) {
+        aura::compiler::ir_soa_migration::record_consumer_pass();
+        (void)run_dirty_escape_on_soa(mod, maps);
+    }
+
     bool has_error() const { return false; }
     std::string_view name() const { return "escape-analysis"; }
     // Issue #2258: HotPassDodCompliant for run_incremental_dirty_pipeline.
@@ -509,13 +521,12 @@ static_assert(HotPassDodCompliant<EscapeAnalysisWrap>,
               "EscapeAnalysisWrap HotPassDodCompliant (#2258)");
 static_assert(PureWrapPass<EscapeAnalysisWrap>, "EscapeAnalysisWrap PureWrapPass (#2258)");
 static_assert(DirtySoAEntryPass<EscapeAnalysisWrap>,
-              "Issue #3454: EscapeAnalysisWrap stays DirtySoAEntryPass (grandfather)");
-static_assert(!ProductionPureWrapPass<EscapeAnalysisWrap>,
-              "Issue #3454: EscapeAnalysisWrap AoS grandfather fails ProductionPureWrapPass");
-// Issue #3701: Production + soa_mod skips EscapeAnalysisWrap AoS run in
-// the incremental suite. Columnar dirty-block escape; shape-stable
-// functions reuse last maps. Soft keeps the AoS grandfather. Pack
-// still rejects this Wrap until a SoA entry lands.
+              "Issue #3454/#3795: Soft/unit AoS DirtySoAEntryPass grandfather retained");
+static_assert(ProductionPureWrapPass<EscapeAnalysisWrap>,
+              "Issue #3795: EscapeAnalysisWrap SoA dirty entry satisfies ProductionPureWrapPass");
+// Issue #3701 / #3795: Production + soa_mod skips EscapeAnalysisWrap AoS run in
+// the incremental suite; columnar dirty-block escape via run_on_dirty_blocks_only /
+// run_dirty_escape_on_soa. Soft keeps the AoS grandfather.
 
 export inline std::size_t run_dirty_escape_on_soa(IRModuleV2& soa_mod,
                                                   std::vector<std::vector<std::uint8_t>>& maps) {
@@ -11825,13 +11836,11 @@ private:
         // Issue #3454 AC3 grandfather (length-capped 5): ComputeKindWrap,
         // ConstantFoldingWrap, TypePropagationPass, ShapeWrap,
         // EscapeAnalysisWrap. Soft/unit keep AoS DirtySoAEntryPass.
-        // Issue #3488: under production_defaults + soa_mod, CK/CF/TP/Shape
-        // peel SoA dirty blocks (ProductionPureWrapPass) and skip the AoS
-        // walk. Issue #3701: EscapeAnalysisWrap AoS run is also skipped
-        // (columnar run_dirty_escape_on_soa / shape-stable reuse). New pack
-        // members must satisfy ProductionPureWrapPass — not a silent 6th
-        // AoS Wrap. InlinePass SoA stays the #3403 production dispatch
-        // target; do not add it to this AoS suite.
+        // Issue #3488/#3795: under production_defaults + soa_mod, PureWrap
+        // stages peel SoA dirty blocks and skip the AoS walk. Issue
+        // #3701/#3795: Escape uses columnar run_dirty_escape_on_soa
+        // (now ProductionPureWrapPass). InlinePass SoA stays the #3403
+        // production dispatch target; do not add it to this AoS suite.
         const bool soa_hot = soa_mod && !soa_mod->functions.empty();
         const bool prod_soa = soa_hot && aura::compiler::typed_audit::production_defaults_active();
         // Issue #3690: Production last-look at the suite envelope so DCE

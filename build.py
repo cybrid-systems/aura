@@ -2673,9 +2673,20 @@ def cmd_lint():
             "Issue #3454 ProductionPureWrapPass SoA linter failed — run python3 scripts/coverage/checks/check_production_pure_wrap_soa_3454.py"
         )
         return r
+    # Issue #3795: EscapeAnalysisWrap ProductionPureWrapPass SoA dirty entry
+    ppw3795_script = COVERAGE_CHECKS / "check_escape_analysis_pure_wrap_3795.py"
+    if not ppw3795_script.exists():
+        fail(f"missing {ppw3795_script}")
+        return 1
+    r = run([sys.executable, str(ppw3795_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3795 EscapeAnalysisWrap ProductionPureWrap linter failed — run python3 scripts/coverage/checks/check_escape_analysis_pure_wrap_3795.py"
+        )
+        return r
     # Issue #3488: production DirtyAware PureWrap pack (CK/CF/TP/Shape)
     # peels SoA dirty blocks (ProductionPureWrapPass). AoS DirtySoAEntry
-    # stays Soft/unit; Escape stays #3454 grandfather. Extends
+    # stays Soft/unit; Escape is ProductionPureWrap (#3795). Extends
     # test_soa_dirty_aware_pipeline; no docs/design / invent.
     ppw3488_script = COVERAGE_CHECKS / "check_production_pure_wrap_hot_pack_3488.py"
     if not ppw3488_script.exists():
@@ -16555,6 +16566,18 @@ def cmd_production_pure_wrap_soa_3454_coverage():
     return 0
 
 
+def cmd_escape_analysis_pure_wrap_3795_coverage():
+    """Issue #3795: EscapeAnalysisWrap ProductionPureWrapPass SoA dirty entry."""
+    print(f"{B}=== EscapeAnalysisWrap ProductionPureWrap (#3795) ==={N}")
+    script = COVERAGE_CHECKS / "check_escape_analysis_pure_wrap_3795.py"
+    if not script.exists():
+        fail(f"missing {script}")
+    r = run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("EscapeAnalysisWrap ProductionPureWrap (#3795) coverage contract rows failed")
+    ok("EscapeAnalysisWrap ProductionPureWrap (#3795) coverage clean")
+
+
 def cmd_destroy_dtor_index_3456_coverage():
     """Issue #3456: ASTArena::destroy indexes ptr→dtors_ slot.
 
@@ -22457,6 +22480,8 @@ def main():
         "pure-wrap-dirty-entry-3405-coverage": cmd_pure_wrap_dirty_entry_3405_coverage,
         "production-pure-wrap-soa-3454": cmd_production_pure_wrap_soa_3454_coverage,
         "production-pure-wrap-soa-3454-coverage": cmd_production_pure_wrap_soa_3454_coverage,
+        "escape-analysis-pure-wrap-3795": cmd_escape_analysis_pure_wrap_3795_coverage,
+        "escape-analysis-pure-wrap-3795-coverage": cmd_escape_analysis_pure_wrap_3795_coverage,
         "destroy-dtor-index-3456": cmd_destroy_dtor_index_3456_coverage,
         "destroy-dtor-index-3456-coverage": cmd_destroy_dtor_index_3456_coverage,
         "recover-fail-clear-persist-3406": cmd_recover_fail_clear_persist_3406_coverage,
