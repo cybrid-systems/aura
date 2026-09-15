@@ -77,7 +77,8 @@ def main() -> int:
             "AC1 no defuse mid_audit",
             pre_win,
         )
-        persist_win = mb[persist - 4000 : persist + 200]  # #3780 WAL gate sits between mid SSOT and persist call
+        # #3780 WAL + #3472 vacuous mid==0 skip sit between join SSOT and persist.
+        persist_win = mb[persist - 5200 : persist + 200]
         must("hard_3778", "AC1 mid==0 refuse gate", persist_win)
         must("join_audit_and_se_mid(0)", "AC1 persist join", persist_win)
         must("session_mid_at_enter_", "AC1 session mid", persist_win)
