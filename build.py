@@ -6708,6 +6708,18 @@ def cmd_lint():
             "Issue #3781 densify this-window rewrite linter failed — run python3 scripts/coverage/checks/check_densify_this_window_rewrite_3781.py"
         )
         return r
+    # Issue #3782: densify-entry LCP reject skips compact_all_moving_pinned
+    # (#3185 residual — relocate-then-poison under stamped-reject LCP).
+    delcp3782_script = COVERAGE_CHECKS / "check_densify_entry_lcp_skip_compact_3782.py"
+    if not delcp3782_script.exists():
+        fail(f"missing {delcp3782_script}")
+        return 1
+    r = run([sys.executable, str(delcp3782_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3782 densify-entry LCP skip-compact linter failed — run python3 scripts/coverage/checks/check_densify_entry_lcp_skip_compact_3782.py"
+        )
+        return r
     # Issue #3640: add_mutate isolation gate single spine (#3396 v2
     # residual). The gate parses packed StableNodeRefs through the same
     # unpack_stable_ref_arg as resolve_mutate_node_arg and takes
@@ -14251,6 +14263,26 @@ def cmd_densify_this_window_rewrite_3781():
     """Issue #3781: rewrite paths use this-window relocate pairs; #3469 resolve retained."""
     print(f"{B}=== densify this-window rewrite (#3781) ==={N}")
     return cmd_densify_this_window_rewrite_3781_coverage()
+
+
+def cmd_densify_entry_lcp_skip_compact_3782_coverage():
+    """Issue #3782: densify-entry LCP skip-compact (static)."""
+    print(f"{B}=== densify-entry LCP skip-compact (#3782) ==={N}")
+    script = COVERAGE_CHECKS / "check_densify_entry_lcp_skip_compact_3782.py"
+    if not script.is_file():
+        fail(f"missing {script}")
+        return 1
+    if run([sys.executable, str(script)], cwd=ROOT) != 0:
+        fail("densify-entry LCP skip-compact (#3782) coverage contract rows failed")
+        return 1
+    ok("densify-entry LCP skip-compact (#3782) coverage clean")
+    return 0
+
+
+def cmd_densify_entry_lcp_skip_compact_3782():
+    """Issue #3782: densify-entry LCP reject skips compact; eval-keyed consult."""
+    print(f"{B}=== densify-entry LCP skip-compact (#3782) ==={N}")
+    return cmd_densify_entry_lcp_skip_compact_3782_coverage()
 
 
 def cmd_engine_metrics_hash_overflow_3018_coverage():
@@ -21989,6 +22021,8 @@ def main():
         "mutation-wal-miss-fail-closed-3780-coverage": cmd_mutation_wal_miss_fail_closed_3780_coverage,
         "densify-this-window-rewrite-3781": cmd_densify_this_window_rewrite_3781,
         "densify-this-window-rewrite-3781-coverage": cmd_densify_this_window_rewrite_3781_coverage,
+        "densify-entry-lcp-skip-compact-3782": cmd_densify_entry_lcp_skip_compact_3782,
+        "densify-entry-lcp-skip-compact-3782-coverage": cmd_densify_entry_lcp_skip_compact_3782_coverage,
         "engine-metrics-hash-overflow-3018": cmd_engine_metrics_hash_overflow_3018,
         "engine-metrics-hash-overflow-3018-coverage": cmd_engine_metrics_hash_overflow_3018_coverage,
         "unified-restamp-3019": cmd_unified_restamp_3019,

@@ -1,0 +1,50 @@
+{
+  "issue": 3782,
+  "title": "Issue #3782: densify-entry LCP reject skips compact_all_moving_pinned (no relocate-then-poison)",
+  "ok": "OK: Issue #3782 densify-entry LCP skip-compact — Phase-5 + sticky-recovery skip relocate on reject; eval-keyed consult; Soft zero-cost",
+  "checks": [
+    {
+      "ac": "AC1-phase5",
+      "path": "src/compiler/evaluator_mutation_boundary.cpp",
+      "contains": [
+        "Issue #3782",
+        "if (!densify_entry_lcp_blocked)",
+        "consult_last_lcp_for_densify_entry(static_cast<const void*>(ev_))"
+      ]
+    },
+    {
+      "ac": "AC2-recovery",
+      "path": "src/compiler/evaluator_mutation_boundary.cpp",
+      "contains": [
+        "consult_last_lcp_for_densify_entry(static_cast<const void*>(this))",
+        "publish_last_moving_densify_window"
+      ]
+    },
+    {
+      "ac": "AC3-keyed",
+      "path": "src/core/lifetime_consistency_proof.hh",
+      "contains": [
+        "consult_last_lcp_for_densify_entry(const void* eval_id",
+        "last_lifetime_consistency_proof_present_for(eval_id)",
+        "last_lifetime_consistency_would_allow_for(eval_id)"
+      ]
+    },
+    {
+      "ac": "AC5-tests",
+      "path": "tests/core/test_moving_densify_fail_closed.cpp",
+      "contains": [
+        "ac3782_1",
+        "ac3782_2",
+        "ac3782_3"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "forbid": [
+        "tests/core/test_issue_3782.cpp",
+        "tests/compiler/test_issue_3782.cpp",
+        "docs/design/3782-densify-entry-lcp-skip-compact.md"
+      ]
+    }
+  ]
+}

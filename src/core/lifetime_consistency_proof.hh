@@ -320,14 +320,32 @@ inline void reset_lifetime_consistency_proof_for_test() noexcept {
 // caller does NOT consult (zero-cost branch per AC4). Soft live_compact
 // itself does NOT relocate per AC2, so the consultation is only on the
 // Moving decision point.
+//
+// Issue #3782 / #3617: prefer per-Eval keyed slots when `eval_id` is set and
+// a slot is present (same shape as #3634 apply_closure densify-stale). Null
+// id or no slot → process-wide fallback (fail-closed for never-stamped
+// evaluators after a global reject). Cross-Eval: Eval A's reject does not
+// incorrectly block Eval B when B has its own stamped slot.
 struct DensifyEntryLCPPoll {
     bool present = false;
     bool would_allow_commit = true;
     std::uint32_t force_reason_code = 0;
 };
 
-[[nodiscard]] inline DensifyEntryLCPPoll consult_last_lcp_for_densify_entry() noexcept {
+[[nodiscard]] inline DensifyEntryLCPPoll
+consult_last_lcp_for_densify_entry(const void* eval_id = nullptr) noexcept {
     DensifyEntryLCPPoll poll;
+    // Per-Eval first (#3617 slots): present_for gates the keyed read so a
+    // foreign process-wide Reject cannot poison an evaluator that already
+    // stamped its own window.
+    if (eval_id && last_lifetime_consistency_proof_present_for(eval_id)) {
+        poll.present = true;
+        poll.would_allow_commit = last_lifetime_consistency_would_allow_for(eval_id);
+        // force_reason is informational; slots store would_allow only —
+        // best-effort process-wide reason (steal arms likewise ignore it).
+        poll.force_reason_code = last_lifetime_consistency_force_reason();
+        return poll;
+    }
     poll.present = last_lifetime_consistency_proof_present();
     poll.would_allow_commit = last_lifetime_consistency_would_allow();
     poll.force_reason_code = last_lifetime_consistency_force_reason();
