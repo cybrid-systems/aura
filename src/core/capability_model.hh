@@ -1759,8 +1759,8 @@ struct CapabilityRegistry {
                         auto cur =
                             met.capability_live_session_grants.load(std::memory_order_relaxed);
                         if (cur > 0)
-                            met.capability_live_session_grants.fetch_sub(
-                                1, std::memory_order_relaxed);
+                            met.capability_live_session_grants.fetch_sub(1,
+                                                                         std::memory_order_relaxed);
                     }
                 }
             }

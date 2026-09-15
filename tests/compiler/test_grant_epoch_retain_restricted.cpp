@@ -74,6 +74,154 @@ std::string read_file(const char* path) {
 }
 } // namespace
 
+
+int run_test_mse_session_live_grants_3774() {
+    std::println("=== Issue #3774: MSE production session rows arm live_session_grants ===");
+    // ── #3774: MSE production session rows arm live residual + orphan sweep ──
+    {
+        std::println("\n--- #3774 AC1: Restricted MSE grant bumps live_session_grants ---");
+        reset_all();
+        // Issue #3409 bootstrap: seed TenantAdmin while Off, then arm Restricted
+        // (grant_locked SSOT fences high-bits grants under production).
+        const auto tenant = std::uint64_t{17};
+        bump_mutation_epoch();
+        const auto mid = current_mutation_epoch();
+        CHECK(g_capability_registry().grant(tenant, "tenant-admin", Effect::TenantAdmin,
+                                            make_grant_provenance(mid, false, 0, 0)),
+              "3774 AC1: TA bootstrap under Off");
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+        const auto live0 = g_capability_effect_metrics().capability_live_session_grants.load();
+        const auto sess0 = g_capability_effect_metrics().capability_session_grant_total.load();
+        EffectProvenance prov;
+        prov.mutation_id = mid;
+        prov.epoch = mid;
+        CHECK(g_capability_registry().grant_macro_self_evo(tenant, {}, prov, 0),
+              "3774 AC1: MSE grant ok");
+        CapabilityGrant g;
+        CHECK(g_capability_registry().find_grant(tenant, "macro-self-evo", g),
+              "3774 AC1: MSE row present");
+        CHECK(g.session_bound && g.single_use, "3774 AC1: session_bound+single_use stamped");
+        CHECK(g_capability_effect_metrics().capability_live_session_grants.load() == live0 + 1,
+              "3774 AC1: live_session_grants++ (orphan sweep armed)");
+        CHECK(g_capability_effect_metrics().capability_session_grant_total.load() == sess0 + 1,
+              "3774 AC1: session_grant_total++");
+        // Re-grant same live session row must not double-bump.
+        CHECK(g_capability_registry().grant_macro_self_evo(tenant, {}, prov, 0),
+              "3774 AC1: re-grant ok");
+        CHECK(g_capability_effect_metrics().capability_live_session_grants.load() == live0 + 1,
+              "3774 AC1: re-grant does not double-bump live");
+    }
+    {
+        std::println("\n--- #3774 AC2: orphan sweep clears MSE-only residual ---");
+        reset_all();
+        const auto tenant = std::uint64_t{18};
+        bump_mutation_epoch();
+        const auto mid = current_mutation_epoch();
+        CHECK(g_capability_registry().grant(tenant, "tenant-admin", Effect::TenantAdmin,
+                                            make_grant_provenance(mid, false, 0, 0)),
+              "3774 AC2: TA bootstrap under Off");
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+        EffectProvenance prov;
+        prov.mutation_id = mid;
+        prov.epoch = mid;
+        CHECK(g_capability_registry().grant_macro_self_evo(tenant, {}, prov, 0),
+              "3774 AC2: MSE grant ok");
+        CHECK(g_capability_effect_metrics().capability_live_session_grants.load() >= 1,
+              "3774 AC2: live residual armed");
+        // Lost-Guard / mid-clear race: only orphan sweep remains; live mids
+        // do not include the MSE bound mid → row revoked.
+        const auto n =
+            g_capability_registry().sweep_session_bound_orphans({mid + 4242}, /*fiber_id=*/0);
+        CHECK(n >= 1, "3774 AC2: orphan sweep revoked MSE session row");
+        CHECK((g_capability_registry().effects_for(tenant) & Effect::MacroSelfEvo) == Effect::None,
+              "3774 AC2: MacroSelfEvo cleared by sweep");
+        CHECK(g_capability_effect_metrics().capability_live_session_grants.load() == 0,
+              "3774 AC2: live residual cleared");
+    }
+    {
+        std::println("\n--- #3774 AC3: named MSE revoke clears session_bound + live ---");
+        reset_all();
+        const auto tenant = std::uint64_t{19};
+        bump_mutation_epoch();
+        const auto mid = current_mutation_epoch();
+        CHECK(g_capability_registry().grant(tenant, "tenant-admin", Effect::TenantAdmin,
+                                            make_grant_provenance(mid, false, 0, 0)),
+              "3774 AC3: TA bootstrap under Off");
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+        EffectProvenance prov;
+        prov.mutation_id = mid;
+        prov.epoch = mid;
+        CHECK(g_capability_registry().grant_macro_self_evo(tenant, {}, prov, 0),
+              "3774 AC3: MSE grant ok");
+        CHECK(g_capability_effect_metrics().capability_live_session_grants.load() >= 1,
+              "3774 AC3: live residual present");
+        g_capability_registry().revoke_macro_self_evo(tenant);
+        CapabilityGrant g;
+        CHECK(g_capability_registry().find_grant(tenant, "macro-self-evo", g),
+              "3774 AC3: row still findable (revoked)");
+        CHECK(g.revoked && !g.session_bound, "3774 AC3: revoked + session_bound cleared");
+        CHECK(g_capability_effect_metrics().capability_live_session_grants.load() == 0,
+              "3774 AC3: live decremented (Soft AC3 does not ratchet)");
+        // Named revoke via revoke_locked / revoke("macro-self-evo") path.
+        reset_all();
+        bump_mutation_epoch();
+        const auto mid2 = current_mutation_epoch();
+        CHECK(g_capability_registry().grant(tenant, "tenant-admin", Effect::TenantAdmin,
+                                            make_grant_provenance(mid2, false, 0, 0)),
+              "3774 AC3b: TA bootstrap under Off");
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+        EffectProvenance prov2;
+        prov2.mutation_id = mid2;
+        prov2.epoch = mid2;
+        CHECK(g_capability_registry().grant_macro_self_evo(tenant, {}, prov2, 0),
+              "3774 AC3b: MSE grant ok");
+        g_capability_registry().revoke(tenant, "macro-self-evo");
+        CapabilityGrant g2;
+        CHECK(g_capability_registry().find_grant(tenant, "macro-self-evo", g2),
+              "3774 AC3b: row present");
+        CHECK(g2.revoked && !g2.session_bound, "3774 AC3b: revoke_locked cleared session_bound");
+        CHECK(g_capability_effect_metrics().capability_live_session_grants.load() == 0,
+              "3774 AC3b: live decremented via revoke_locked");
+    }
+    {
+        std::println("\n--- #3774 AC4: Soft/Off MSE grant is zero-cost on live counter ---");
+        reset_all();
+        const auto tenant = std::uint64_t{20};
+        bump_mutation_epoch();
+        const auto epoch = current_mutation_epoch();
+        const auto live0 = g_capability_effect_metrics().capability_live_session_grants.load();
+        EffectProvenance prov;
+        prov.epoch = epoch;
+        CHECK(g_capability_registry().grant_macro_self_evo(tenant, {}, prov, 0),
+              "3774 AC4: Soft MSE grant ok");
+        CapabilityGrant g;
+        CHECK(g_capability_registry().find_grant(tenant, "macro-self-evo", g),
+              "3774 AC4: Soft row present");
+        CHECK(!g.session_bound, "3774 AC4: Soft does not force session_bound");
+        CHECK(g_capability_effect_metrics().capability_live_session_grants.load() == live0,
+              "3774 AC4: Soft/Off zero extra live cost");
+        g_capability_registry().revoke_macro_self_evo(tenant);
+        CHECK(g_capability_effect_metrics().capability_live_session_grants.load() == live0,
+              "3774 AC4: Soft revoke leaves live unchanged");
+    }
+    {
+        std::println("\n--- #3774 AC5: source cites #3774 on MSE live residual ---");
+        const auto cap = read_file("src/core/capability_model.hh");
+        CHECK(cap.find("#3774") != std::string::npos, "3774 AC5: capability_model cites #3774");
+        CHECK(cap.find("grant_macro_self_evo") != std::string::npos, "3774 AC5: MSE grant present");
+    }
+
+    std::println("\n=== #3774 slice: {} passed, {} failed (cumulative face) ===", g_passed,
+                 g_failed);
+    return g_failed ? 1 : 0;
+}
+
+int run_test_mse_session_live_grants_3774_member() {
+    g_passed = 0;
+    g_failed = 0;
+    return run_test_mse_session_live_grants_3774();
+}
+
 int run_test_grant_epoch_retain_restricted() {
     std::println("=== Issue #2529: Restricted grant epoch retain K=16 ===");
     CHECK(kGrantEpochRetainRestrictedIssue == 2529, "issue stamp");
@@ -229,14 +377,14 @@ int run_test_grant_epoch_retain_restricted() {
     {
         std::println("\n--- AC7 (#3721): MSE row session-bound (same lifetime as high-risk) ---");
         reset_all();
-        set_env("AURA_SANDBOX", "restricted");
-        apply_production_security_defaults();
         const auto tenant = std::uint64_t{7};
-        // Seed TenantAdmin on the default caller principal (#3029 fence).
+        // Issue #3409 bootstrap: seed TenantAdmin while Off, then Restricted.
         bump_mutation_epoch();
         const auto mid = current_mutation_epoch();
-        (void)g_capability_registry().grant(0, "tenant-admin", Effect::TenantAdmin,
-                                            make_grant_provenance(mid, false, 0, 0));
+        CHECK(g_capability_registry().grant(tenant, "tenant-admin", Effect::TenantAdmin,
+                                            make_grant_provenance(mid, false, 0, 0)),
+              "3721: TA bootstrap under Off");
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
         EffectProvenance prov;
         prov.mutation_id = mid;
         prov.epoch = mid;
@@ -274,137 +422,8 @@ int run_test_grant_epoch_retain_restricted() {
     }
 
 
-    // ── #3774: MSE production session rows arm live residual + orphan sweep ──
-    {
-        std::println("\n--- #3774 AC1: Restricted MSE grant bumps live_session_grants ---");
-        reset_all();
-        set_env("AURA_SANDBOX", "restricted");
-        apply_production_security_defaults();
-        const auto tenant = std::uint64_t{17};
-        bump_mutation_epoch();
-        const auto mid = current_mutation_epoch();
-        (void)g_capability_registry().grant(0, "tenant-admin", Effect::TenantAdmin,
-                                            make_grant_provenance(mid, false, 0, 0));
-        const auto live0 = g_capability_effect_metrics().capability_live_session_grants.load();
-        const auto sess0 = g_capability_effect_metrics().capability_session_grant_total.load();
-        EffectProvenance prov;
-        prov.mutation_id = mid;
-        prov.epoch = mid;
-        CHECK(g_capability_registry().grant_macro_self_evo(tenant, {}, prov, 0),
-              "3774 AC1: MSE grant ok");
-        CapabilityGrant g;
-        CHECK(g_capability_registry().find_grant(tenant, "macro-self-evo", g),
-              "3774 AC1: MSE row present");
-        CHECK(g.session_bound && g.single_use, "3774 AC1: session_bound+single_use stamped");
-        CHECK(g_capability_effect_metrics().capability_live_session_grants.load() == live0 + 1,
-              "3774 AC1: live_session_grants++ (orphan sweep armed)");
-        CHECK(g_capability_effect_metrics().capability_session_grant_total.load() == sess0 + 1,
-              "3774 AC1: session_grant_total++");
-        // Re-grant same live session row must not double-bump.
-        CHECK(g_capability_registry().grant_macro_self_evo(tenant, {}, prov, 0),
-              "3774 AC1: re-grant ok");
-        CHECK(g_capability_effect_metrics().capability_live_session_grants.load() == live0 + 1,
-              "3774 AC1: re-grant does not double-bump live");
-    }
-    {
-        std::println("\n--- #3774 AC2: orphan sweep clears MSE-only residual ---");
-        reset_all();
-        set_env("AURA_SANDBOX", "restricted");
-        apply_production_security_defaults();
-        const auto tenant = std::uint64_t{18};
-        bump_mutation_epoch();
-        const auto mid = current_mutation_epoch();
-        (void)g_capability_registry().grant(0, "tenant-admin", Effect::TenantAdmin,
-                                            make_grant_provenance(mid, false, 0, 0));
-        EffectProvenance prov;
-        prov.mutation_id = mid;
-        prov.epoch = mid;
-        CHECK(g_capability_registry().grant_macro_self_evo(tenant, {}, prov, 0),
-              "3774 AC2: MSE grant ok");
-        CHECK(g_capability_effect_metrics().capability_live_session_grants.load() >= 1,
-              "3774 AC2: live residual armed");
-        // Lost-Guard / mid-clear race: only orphan sweep remains; live mids
-        // do not include the MSE bound mid → row revoked.
-        const auto n =
-            g_capability_registry().sweep_session_bound_orphans({mid + 4242}, /*fiber_id=*/0);
-        CHECK(n >= 1, "3774 AC2: orphan sweep revoked MSE session row");
-        CHECK((g_capability_registry().effects_for(tenant) & Effect::MacroSelfEvo) == Effect::None,
-              "3774 AC2: MacroSelfEvo cleared by sweep");
-        CHECK(g_capability_effect_metrics().capability_live_session_grants.load() == 0,
-              "3774 AC2: live residual cleared");
-    }
-    {
-        std::println("\n--- #3774 AC3: named MSE revoke clears session_bound + live ---");
-        reset_all();
-        set_env("AURA_SANDBOX", "restricted");
-        apply_production_security_defaults();
-        const auto tenant = std::uint64_t{19};
-        bump_mutation_epoch();
-        const auto mid = current_mutation_epoch();
-        (void)g_capability_registry().grant(0, "tenant-admin", Effect::TenantAdmin,
-                                            make_grant_provenance(mid, false, 0, 0));
-        EffectProvenance prov;
-        prov.mutation_id = mid;
-        prov.epoch = mid;
-        CHECK(g_capability_registry().grant_macro_self_evo(tenant, {}, prov, 0),
-              "3774 AC3: MSE grant ok");
-        CHECK(g_capability_effect_metrics().capability_live_session_grants.load() >= 1,
-              "3774 AC3: live residual present");
-        g_capability_registry().revoke_macro_self_evo(tenant);
-        CapabilityGrant g;
-        CHECK(g_capability_registry().find_grant(tenant, "macro-self-evo", g),
-              "3774 AC3: row still findable (revoked)");
-        CHECK(g.revoked && !g.session_bound, "3774 AC3: revoked + session_bound cleared");
-        CHECK(g_capability_effect_metrics().capability_live_session_grants.load() == 0,
-              "3774 AC3: live decremented (Soft AC3 does not ratchet)");
-        // Named revoke via revoke_locked / revoke("macro-self-evo") path.
-        reset_all();
-        set_env("AURA_SANDBOX", "restricted");
-        apply_production_security_defaults();
-        bump_mutation_epoch();
-        const auto mid2 = current_mutation_epoch();
-        (void)g_capability_registry().grant(0, "tenant-admin", Effect::TenantAdmin,
-                                            make_grant_provenance(mid2, false, 0, 0));
-        EffectProvenance prov2;
-        prov2.mutation_id = mid2;
-        prov2.epoch = mid2;
-        CHECK(g_capability_registry().grant_macro_self_evo(tenant, {}, prov2, 0),
-              "3774 AC3b: MSE grant ok");
-        g_capability_registry().revoke(tenant, "macro-self-evo");
-        CapabilityGrant g2;
-        CHECK(g_capability_registry().find_grant(tenant, "macro-self-evo", g2),
-              "3774 AC3b: row present");
-        CHECK(g2.revoked && !g2.session_bound, "3774 AC3b: revoke_locked cleared session_bound");
-        CHECK(g_capability_effect_metrics().capability_live_session_grants.load() == 0,
-              "3774 AC3b: live decremented via revoke_locked");
-    }
-    {
-        std::println("\n--- #3774 AC4: Soft/Off MSE grant is zero-cost on live counter ---");
-        reset_all();
-        const auto tenant = std::uint64_t{20};
-        bump_mutation_epoch();
-        const auto epoch = current_mutation_epoch();
-        const auto live0 = g_capability_effect_metrics().capability_live_session_grants.load();
-        EffectProvenance prov;
-        prov.epoch = epoch;
-        CHECK(g_capability_registry().grant_macro_self_evo(tenant, {}, prov, 0),
-              "3774 AC4: Soft MSE grant ok");
-        CapabilityGrant g;
-        CHECK(g_capability_registry().find_grant(tenant, "macro-self-evo", g),
-              "3774 AC4: Soft row present");
-        CHECK(!g.session_bound, "3774 AC4: Soft does not force session_bound");
-        CHECK(g_capability_effect_metrics().capability_live_session_grants.load() == live0,
-              "3774 AC4: Soft/Off zero extra live cost");
-        g_capability_registry().revoke_macro_self_evo(tenant);
-        CHECK(g_capability_effect_metrics().capability_live_session_grants.load() == live0,
-              "3774 AC4: Soft revoke leaves live unchanged");
-    }
-    {
-        std::println("\n--- #3774 AC5: source cites #3774 on MSE live residual ---");
-        const auto cap = read_file("src/core/capability_model.hh");
-        CHECK(cap.find("#3774") != std::string::npos, "3774 AC5: capability_model cites #3774");
-        CHECK(cap.find("grant_macro_self_evo") != std::string::npos, "3774 AC5: MSE grant present");
-    }
+    // #3774 ACs live in run_test_mse_session_live_grants_3774 (batch member).
+    (void)run_test_mse_session_live_grants_3774();
 
     std::println("\n=== #2529/#2688/#3774: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;

@@ -54,6 +54,7 @@ extern int run_test_hard_fiber_restricted();
 extern int run_test_require_effect_auto_isolation();
 extern int run_test_occupancy_deny_path_3724();
 extern int run_test_require_effect_on_ref_stale_3773();
+extern int run_test_mse_session_live_grants_3774_member();
 extern int run_test_require_effect_three_arg_default();
 extern int run_test_require_effect_live_mid();
 extern int run_test_std_ffi_per_call_3725();
@@ -208,6 +209,18 @@ int main() {
     CHECK(true, "skip leftover retain-restricted Full AC");
     ++members_passed;
     std::println("OK member test_grant_epoch_retain_restricted (skip leftover AC)");
+
+    std::println("\n──── test_mse_session_live_grants_3774 ────");
+    reset_member_face();
+    g_passed = 0;
+    g_failed = 0;
+    if (run_test_mse_session_live_grants_3774_member() != 0 || g_failed != 0) {
+        ++members_failed;
+        std::println("FAIL member test_mse_session_live_grants_3774 ({}/{})", g_passed, g_failed);
+    } else {
+        ++members_passed;
+        std::println("OK member test_mse_session_live_grants_3774 ({} checks)", g_passed);
+    }
 
     std::println("\n──── test_grant_epoch_retain_window ────");
     CHECK(true, "skip leftover retain-window Full AC");
