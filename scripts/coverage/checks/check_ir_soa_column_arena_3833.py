@@ -48,8 +48,7 @@ def main() -> int:
     must("IrSoaArenaColumn<aura::ir::IROpcode> opcodes_", "AC1 opcodes_", soa)
     must("bind_column_arena", "AC1 bind", soa)
     must("column_slab_for", "AC1 monotonic slab", soa)
-    must("sizeof(IrSoaArenaColumn<std::uint32_t>) == sizeof(std::vector<std::uint32_t>)",
-         "AC1 BMI size match", soa)
+    must("sizeof(IrSoaArenaColumn<std::uint32_t>) == sizeof(std::vector<std::uint32_t>)", "AC1 BMI size match", soa)
     forbid("std::vector<aura::ir::IROpcode> opcodes_", "AC1 no vector opcodes_", soa)
     forbid("defer arena migration to Phase 3", "AC1 Phase 3 deferral removed", soa)
 

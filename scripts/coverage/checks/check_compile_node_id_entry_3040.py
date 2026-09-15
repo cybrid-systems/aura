@@ -131,7 +131,15 @@ def main() -> int:
         fb = mut_cpp[pos : pos + 3500] if pos >= 0 else ""
     if "require_effect_for_node_id" not in fb:
         fails.append("AC1: mutate:from-verification-feedback lost for_node_id")
-    if "add_mutate" not in mut_cpp[max(0, mut_cpp.find('"mutate:from-verification-feedback"') - 80) : mut_cpp.find('"mutate:from-verification-feedback"') + 1]:
+    if (
+        "add_mutate"
+        not in mut_cpp[
+            max(0, mut_cpp.find('"mutate:from-verification-feedback"') - 80) : mut_cpp.find(
+                '"mutate:from-verification-feedback"'
+            )
+            + 1
+        ]
+    ):
         fails.append("AC1/#3828: mutate:from-verification-feedback not via add_mutate")
 
     # ── AC2: stamped path uses on_ref ──

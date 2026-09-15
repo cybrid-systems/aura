@@ -50,7 +50,11 @@ def main() -> int:
         fails.append("AC1: #3472 window missing CoercionMap journal undo")
 
     shared_pos = emb.find("static void aura_persist_reject_undo")
-    shared = emb[shared_pos : emb.find("extern \"C\" void aura_outermost_success_persist_occurrence", shared_pos)] if shared_pos >= 0 else ""
+    shared = (
+        emb[shared_pos : emb.find('extern "C" void aura_outermost_success_persist_occurrence', shared_pos)]
+        if shared_pos >= 0
+        else ""
+    )
     topo = shared.find("restore_checkpoint_topology_for_persist_reject")
     undo = shared.find("undo_apply_coercion_map_recent")
     if not (topo >= 0 and undo >= 0 and topo < undo):
