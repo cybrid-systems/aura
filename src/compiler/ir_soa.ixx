@@ -1295,6 +1295,57 @@ export inline aura::ir::IRModule to_aos_module(const IRModuleV2& soa) {
     return mod;
 }
 
+// Issue #3822: mirror SoA PureWrap/DCE dirty-block opcode+operands into the
+// AoS writeback SSOT (`entry.irs`). Does NOT call to_aos_view / to_aos_module
+// (zero residual_aos_bridge). When block_dirty_ is empty, syncs all overlapping
+// blocks (full mirror). Returns number of blocks written.
+export inline std::size_t sync_soa_dirty_blocks_into_aos(const IRModuleV2& soa,
+                                                         aura::ir::IRModule& aos) noexcept {
+    std::size_t synced = 0;
+    const auto nfn = std::min(soa.functions.size(), aos.functions.size());
+    for (std::size_t fi = 0; fi < nfn; ++fi) {
+        const auto& soa_fn = soa.functions[fi];
+        auto& aos_fn = aos.functions[fi];
+        const bool peel = !soa_fn.block_dirty_.empty();
+        const auto nblk = std::min(soa_fn.blocks_.size(), aos_fn.blocks.size());
+        for (std::size_t bi = 0; bi < nblk; ++bi) {
+            if (peel && !soa_fn.is_block_dirty(static_cast<std::uint32_t>(bi)))
+                continue;
+            const auto& sblk = soa_fn.blocks_[bi];
+            auto& ablk = aos_fn.blocks[bi];
+            const auto n =
+                (sblk.end_idx >= sblk.start_idx) ? (sblk.end_idx - sblk.start_idx) : 0u;
+            if (ablk.instructions.size() != n)
+                ablk.instructions.resize(n);
+            for (std::uint32_t k = 0; k < n; ++k) {
+                const auto si = sblk.start_idx + k;
+                if (si >= soa_fn.opcodes_.size())
+                    break;
+                auto& instr = ablk.instructions[k];
+                instr.opcode = soa_fn.opcodes_[si];
+                instr.operands = {soa_fn.operand0_[si], soa_fn.operand1_[si], soa_fn.operand2_[si],
+                                  soa_fn.operand3_[si]};
+                if (si < soa_fn.type_ids_.size())
+                    instr.type_id = soa_fn.type_ids_[si];
+                if (si < soa_fn.shape_ids_.size())
+                    instr.shape_id = soa_fn.shape_ids_[si];
+                if (si < soa_fn.linear_ownership_states_.size())
+                    instr.linear_ownership_state = soa_fn.linear_ownership_states_[si];
+                if (si < soa_fn.adt_variant_ids_.size())
+                    instr.adt_variant_id = soa_fn.adt_variant_ids_[si];
+                if (si < soa_fn.narrow_evidence_.size())
+                    instr.narrow_evidence = soa_fn.narrow_evidence_[si];
+                if (si < soa_fn.source_node_ids_.size())
+                    instr.source_ast_node_id = soa_fn.source_node_ids_[si];
+                if (si < soa_fn.source_markers_.size())
+                    instr.source_marker = soa_fn.source_markers_[si];
+            }
+            ++synced;
+        }
+    }
+    return synced;
+}
+
 // Issue #1920: interpreter / JIT hot-path SoA column walk.
 // Returns {instructions_visited, dirty_runs, clean_skips}. Callers
 // record ir_soa_migration consumer/dirty metrics (header counters).

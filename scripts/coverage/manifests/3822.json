@@ -1,0 +1,35 @@
+{
+  "issue": 3822,
+  "title": "Issue #3822: prod_soa hot pack syncs dirty SoA into AoS writeback SSOT",
+  "ok": "OK: Issue #3822 prod_soa writeback sync",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/service.ixx",
+      "contains": ["Issue #3822", "sync_soa_dirty_blocks_into_aos", "run_production_soa_dirty_hot_pack"]
+    },
+    {
+      "ac": "AC1-helper",
+      "path": "src/compiler/ir_soa.ixx",
+      "contains": ["sync_soa_dirty_blocks_into_aos", "Issue #3822"]
+    },
+    {
+      "ac": "AC2-soft",
+      "path": "src/compiler/service.ixx",
+      "contains": ["beyond Soft contract", "if (!prod_soa)"]
+    },
+    {
+      "ac": "AC3-soak",
+      "path": "tests/compiler/test_soa_dirty_aware_pipeline.cpp",
+      "contains": ["3822 soak: hot_pack invocations advance with sync companion"]
+    },
+    {
+      "ac": "AC4",
+      "forbid": [
+        "tests/compiler/test_issue_3822.cpp",
+        "tests/issues/test_issue_3822.cpp",
+        "docs/design/3822-soa-purewrap-writeback.md"
+      ]
+    }
+  ]
+}

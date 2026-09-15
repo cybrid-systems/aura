@@ -6154,7 +6154,8 @@ public:
         }
 
         // Run DirtyAware suite with instr-precision mask (mutates entry.irs).
-        // Issue #2907: also runs production SoA dirty hot pack on entry.soa_mod.
+        // Issue #2907/#3822: under prod_soa, SoA hot pack + dirty-block sync
+        // into AoS writeback SSOT (entry.irs); Soft keeps AoS-only suite.
         {
             aura::ir::IRModule mod;
             mod.functions = entry.irs; // copy for pass mutability then write back
@@ -11818,12 +11819,14 @@ private:
         metrics_.dead_coercion_narrow_mutation_wired.store(1, std::memory_order_relaxed);
     }
 
-    // Issue #2044 / #1574 / #2907: full incremental dirty pass suite shared by
-    // relower_define_blocks full-fallback and invalidate_function cascade.
-    // When mask_ptr is non-null, DirtyAware passes skip clean blocks;
+    // Issue #2044 / #1574 / #2907 / Issue #3822: full incremental dirty pass suite
+    // shared by relower_define_blocks full-fallback and invalidate_function
+    // cascade. When mask_ptr is non-null, DirtyAware passes skip clean blocks;
     // when null, every block is treated as dirty (safe full re-opt).
-    // Issue #2907: when soa_mod is non-empty, also run production SoA dirty
-    // hot pack (CF+TP+DCE via run_dirty_pipeline) — zero SoAtoAoSBridgePass.
+    // Issue #3822: under production_defaults + non-empty soa_mod, SoA
+    // PureWrap+DCE is authority (hot pack); dirty AoS blocks are synced from
+    // SoA before writeback SSOT (`entry.irs`). Soft keeps AoS suite only
+    // (no dual PureWrap divergence). Zero SoAtoAoSBridgePass / to_aos_view.
     // Returns clean blocks skipped (0 if no mask / all dirty).
     std::size_t run_incremental_dirty_pass_suite_(aura::ir::IRModule& ir_mod,
                                                   const DefineDirtyMaskView* mask_ptr,
@@ -11901,11 +11904,16 @@ private:
             run_coercion_elim_on_function(func);
         }
 
-        // Issue #2907 / #3488: force hot DirtyAware PureWrap stages onto
-        // IRModuleV2 ProductionPureWrapPass peel when SoA module is present
-        // (production pack — no AoS bridge).
-        if (soa_hot) {
+        // Issue #3822 / #2907 / #3488: under prod_soa, SoA is sole PureWrap+DCE
+        // authority (hot pack). Soft + soa_hot used to run both AoS suite and
+        // SoA pack → dual PureWrap with only AoS writeback — gate hot pack on
+        // prod_soa and mirror dirty SoA bodies into AoS before restamp/writeback.
+        // Soft: AoS suite only (no hot-pack divergence beyond Soft contract).
+        // Soak: production_soa_dirty_hot_pack_invocations_total advances from
+        // this suite only when writeback SSOT is synced to match.
+        if (prod_soa) {
             (void)aura::compiler::run_production_soa_dirty_hot_pack(*soa_mod, &type_registry_);
+            (void)aura::compiler::sync_soa_dirty_blocks_into_aos(*soa_mod, ir_mod);
         }
 
         std::size_t clean_skipped = 0;
