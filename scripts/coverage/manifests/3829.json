@@ -1,0 +1,35 @@
+{
+  "issue": 3829,
+  "title": "Issue #3829: children_columnar SafePCVSpan across-Guard fingerprint",
+  "ok": "OK: Issue #3829 dense columnar SafePCVSpan fingerprint",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/core/ast.ixx",
+      "contains": ["Issue #3829", "children_columnar", "generation_", "wrap_epoch_", "node_gen_"]
+    },
+    {
+      "ac": "AC1-stamp",
+      "path": "src/core/persistent_child_vector.hh",
+      "contains": ["kPcvDenseColumnarFingerprintIssue = 3829"]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/core/test_pcv_exclusive_with_set.cpp",
+      "contains": ["ac3829_2_soft_frozen_view_unchanged"]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/core/test_pcv_exclusive_with_set.cpp",
+      "contains": ["ac3829_3_pcv_path_unchanged", "ac3829_1_columnar_production_stale"]
+    },
+    {
+      "ac": "AC3-forbid",
+      "forbid": [
+        "tests/core/test_issue_3829.cpp",
+        "tests/issues/test_issue_3829.cpp",
+        "docs/design/3829-dense-columnar-fingerprint.md"
+      ]
+    }
+  ]
+}

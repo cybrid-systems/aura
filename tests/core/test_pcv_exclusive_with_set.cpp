@@ -75,6 +75,9 @@ static void ac3167_4_additive_counter_only();
 static void ac3328_1_production_held_span_refresh();
 static void ac3328_2_soft_frozen_view();
 static void ac3328_3_2906_3233_non_regression();
+static void ac3829_1_columnar_production_stale();
+static void ac3829_2_soft_frozen_view_unchanged();
+static void ac3829_3_pcv_path_unchanged();
 void ac3393_1_production_arms_flag();
 void ac3393_2_soft_off_does_not_arm();
 void ac3393_3_existing_ac3233_non_regress();
@@ -340,6 +343,11 @@ int run_test_pcv_exclusive_with_set() {
     ac3328_1_production_held_span_refresh();
     ac3328_2_soft_frozen_view();
     ac3328_3_2906_3233_non_regression();
+
+    std::println("\n=== Issue #3829: children_columnar dense SafePCVSpan fingerprint ===");
+    ac3829_1_columnar_production_stale();
+    ac3829_2_soft_frozen_view_unchanged();
+    ac3829_3_pcv_path_unchanged();
 
     std::println("\n=== Issue #3393: production_defaults arms pcv_set_stale_span_exclusive ===");
     ac3393_1_production_arms_flag();
@@ -867,3 +875,95 @@ static void ac3328_3_2906_3233_non_regression() {
     CHECK(read_file("tests/core/test_issue_3328.cpp").empty(), "3328 AC4: no invent per #81967");
     CHECK(read_file("tests/issues/test_issue_3328.cpp").empty(), "3328 AC4: no invent per #81967");
 }
+
+// ── Issue #3829 ACs ──
+// children_columnar returned a 1-arg SafePCVSpan (no fingerprint). 
+// pin_query_children uses columnar; has_fingerprint() gates were no-ops
+// on dense spans. Capture the same fingerprint shape as children_safe_view.
+
+static void ac3829_1_columnar_production_stale() {
+    std::println("\n--- #3829 AC1: columnar capture → mutate → Production is_stale / re-pin live ---");
+    CHECK(kPcvDenseColumnarFingerprintIssue == 3829, "3829 AC1: issue stamp");
+    reset_pcv_hotpath_metrics_for_test();
+    FlatAST flat;
+    NodeId kids[2] = {flat.add_literal(10), flat.add_literal(20)};
+    auto root = flat.add_begin(std::span<const NodeId>(kids, 2));
+    // Force dense sync so children_columnar returns a live dense span.
+    auto span = flat.children_columnar(root);
+    CHECK(span.has_fingerprint(), "3829 AC1: dense columnar span fingerprinted");
+    CHECK(span.size() == 2, "3829 AC1: pre-mutate arity");
+    CHECK(!span.is_stale(static_cast<std::uint64_t>(flat.generation()), flat.wrap_epoch(),
+                         flat.node_gen_for(root)),
+          "3829 AC1: fresh columnar not stale");
+    const auto extra = flat.add_literal(42);
+    flat.insert_child(root, 0, extra);
+    CHECK(span.is_stale(static_cast<std::uint64_t>(flat.generation()), flat.wrap_epoch(),
+                        flat.node_gen_for(root)),
+          "3829 AC1: Production is_stale true after Guard/mutate");
+    const auto stale_before = flat.pcv_span_stale_across_guard_total();
+    auto exported = flat.pcv_span_for_agent_export(span, root, /*production=*/true);
+    CHECK(exported.has_fingerprint(), "3829 AC1: production re-export fingerprinted");
+    CHECK(exported.size() == 3, "3829 AC1: re-pin returns live children");
+    CHECK(!exported.is_stale(static_cast<std::uint64_t>(flat.generation()), flat.wrap_epoch(),
+                             flat.node_gen_for(root)),
+          "3829 AC1: refreshed span not stale");
+    CHECK(flat.pcv_span_stale_across_guard_total() > stale_before,
+          "3829 AC1: #3167 counter bumped on columnar refresh");
+    auto live = flat.children_columnar(root);
+    CHECK(live.size() == 3, "3829 AC1: subsequent children_columnar is live");
+    CHECK(live.has_fingerprint(), "3829 AC1: live columnar still fingerprinted");
+}
+
+static void ac3829_2_soft_frozen_view_unchanged() {
+    std::println("\n--- #3829 AC2: Soft frozen view unchanged (export identity) ---");
+    reset_pcv_hotpath_metrics_for_test();
+    FlatAST flat;
+    NodeId kids[1] = {flat.add_literal(1)};
+    auto root = flat.add_begin(std::span<const NodeId>(kids, 1));
+    auto span = flat.children_columnar(root);
+    CHECK(span.has_fingerprint(), "3829 AC2: Soft columnar fingerprinted");
+    const auto extra = flat.add_literal(99);
+    flat.insert_child(root, 0, extra);
+    const auto before = flat.pcv_span_stale_across_guard_total();
+    auto exported = flat.pcv_span_for_agent_export(span, root, /*production=*/false);
+    CHECK(exported.size() == span.size(), "3829 AC2: Soft export identity (frozen view)");
+    CHECK(exported.has_fingerprint(), "3829 AC2: Soft span still fingerprinted");
+    CHECK(flat.pcv_span_stale_across_guard_total() == before,
+          "3829 AC2: Soft does not bump counter");
+}
+
+static void ac3829_3_pcv_path_unchanged() {
+    std::println("\n--- #3829 AC3: fingerprinted PCV children_safe_view path unchanged ---");
+    reset_pcv_hotpath_metrics_for_test();
+    FlatAST flat;
+    NodeId kids[2] = {flat.add_literal(7), flat.add_literal(8)};
+    auto root = flat.add_begin(std::span<const NodeId>(kids, 2));
+    auto pcv = flat.children_safe_view(root);
+    CHECK(pcv.has_fingerprint(), "3829 AC3: PCV path still fingerprinted");
+    CHECK(pcv.use_count() > 0, "3829 AC3: PCV keep still held");
+    auto col = flat.children_columnar(root);
+    CHECK(col.has_fingerprint(), "3829 AC3: columnar also fingerprinted");
+    CHECK(col.use_count() == 0, "3829 AC3: dense keep empty (FlatAST-owned)");
+    const auto extra = flat.add_literal(9);
+    flat.insert_child(root, 0, extra);
+    CHECK(pcv.is_stale(static_cast<std::uint64_t>(flat.generation()), flat.wrap_epoch(),
+                       flat.node_gen_for(root)),
+          "3829 AC3: PCV is_stale still works");
+    auto refreshed = flat.pcv_span_for_agent_export(pcv, root, /*production=*/true);
+    CHECK(refreshed.size() == 3, "3829 AC3: PCV production refresh live");
+    const auto hh = read_file("src/core/persistent_child_vector.hh");
+    const auto ast = read_file("src/core/ast.ixx");
+    const auto qws = read_file("src/compiler/evaluator_primitives_query_workspace.cpp");
+    const auto build = read_file("build.py");
+    CHECK(hh.find("kPcvDenseColumnarFingerprintIssue = 3829") != std::string::npos,
+          "3829 AC3: stamp");
+    CHECK(ast.find("Issue #3829") != std::string::npos, "3829 AC3: ast cite");
+    CHECK(qws.find("Issue #3829") != std::string::npos, "3829 AC3: pin_query_children cite");
+    CHECK(build.find("check_dense_columnar_fingerprint_3829") != std::string::npos,
+          "3829 AC3: build.py");
+    CHECK(read_file("docs/design/3829-dense-columnar-fingerprint.md").empty(),
+          "3829 AC3: no docs/design");
+    CHECK(read_file("tests/core/test_issue_3829.cpp").empty(), "3829 AC3: no invent");
+    CHECK(read_file("tests/issues/test_issue_3829.cpp").empty(), "3829 AC3: no invent");
+}
+
