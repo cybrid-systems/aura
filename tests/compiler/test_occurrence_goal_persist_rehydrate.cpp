@@ -505,9 +505,8 @@ static void ac3170_6_source_and_linter() {
     const auto build = read_file("build.py");
     const auto lint =
         read_file("scripts/coverage/checks/check_occurrence_persist_fingerprint_3170.py");
-    int rc =
-        std::system("python3 scripts/coverage/checks/check_occurrence_persist_fingerprint_3170.py "
-                    "--self-test > /dev/null 2>&1");
+    int rc = aura::test::aura_python_repo_script(
+        "scripts/coverage/checks/check_occurrence_persist_fingerprint_3170.py", "--self-test");
     CHECK(rc == 0, "3170 AC6: linter --self-test passes");
     CHECK(!lint.empty() && lint.find("Issue #3170") != std::string::npos,
           "3170 AC6: linter cites #3170");

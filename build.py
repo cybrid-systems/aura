@@ -2684,6 +2684,17 @@ def cmd_lint():
             "Issue #3795 EscapeAnalysisWrap ProductionPureWrap linter failed — run python3 scripts/coverage/checks/check_escape_analysis_pure_wrap_3795.py"
         )
         return r
+    # Issue #3796: coercion batch CI AC anchors + build-cwd harness
+    ppw3796_script = COVERAGE_CHECKS / "check_occurrence_coercion_ci_ok_3796.py"
+    if not ppw3796_script.exists():
+        fail(f"missing {ppw3796_script}")
+        return 1
+    r = run([sys.executable, str(ppw3796_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3796 coercion CI AC linter failed — run python3 scripts/coverage/checks/check_occurrence_coercion_ci_ok_3796.py"
+        )
+        return r
     # Issue #3488: production DirtyAware PureWrap pack (CK/CF/TP/Shape)
     # peels SoA dirty blocks (ProductionPureWrapPass). AoS DirtySoAEntry
     # stays Soft/unit; Escape is ProductionPureWrap (#3795). Extends
@@ -16566,6 +16577,18 @@ def cmd_production_pure_wrap_soa_3454_coverage():
     return 0
 
 
+def cmd_occurrence_coercion_ci_ok_3796_coverage():
+    """Issue #3796: coercion batch CI AC anchors after #3698/#3699."""
+    print(f"{B}=== occurrence coercion CI ok (#3796) ==={N}")
+    script = COVERAGE_CHECKS / "check_occurrence_coercion_ci_ok_3796.py"
+    if not script.exists():
+        fail(f"missing {script}")
+    r = run([sys.executable, str(script)], cwd=ROOT)
+    if r != 0:
+        fail("occurrence coercion CI ok (#3796) coverage contract rows failed")
+    ok("occurrence coercion CI ok (#3796) coverage clean")
+
+
 def cmd_escape_analysis_pure_wrap_3795_coverage():
     """Issue #3795: EscapeAnalysisWrap ProductionPureWrapPass SoA dirty entry."""
     print(f"{B}=== EscapeAnalysisWrap ProductionPureWrap (#3795) ==={N}")
@@ -16573,7 +16596,7 @@ def cmd_escape_analysis_pure_wrap_3795_coverage():
     if not script.exists():
         fail(f"missing {script}")
     r = run([sys.executable, str(script)], cwd=ROOT)
-    if r.returncode != 0:
+    if r != 0:
         fail("EscapeAnalysisWrap ProductionPureWrap (#3795) coverage contract rows failed")
     ok("EscapeAnalysisWrap ProductionPureWrap (#3795) coverage clean")
 
@@ -22481,6 +22504,8 @@ def main():
         "production-pure-wrap-soa-3454": cmd_production_pure_wrap_soa_3454_coverage,
         "production-pure-wrap-soa-3454-coverage": cmd_production_pure_wrap_soa_3454_coverage,
         "escape-analysis-pure-wrap-3795": cmd_escape_analysis_pure_wrap_3795_coverage,
+        "occurrence-coercion-ci-ok-3796": cmd_occurrence_coercion_ci_ok_3796_coverage,
+        "occurrence-coercion-ci-ok-3796-coverage": cmd_occurrence_coercion_ci_ok_3796_coverage,
         "escape-analysis-pure-wrap-3795-coverage": cmd_escape_analysis_pure_wrap_3795_coverage,
         "destroy-dtor-index-3456": cmd_destroy_dtor_index_3456_coverage,
         "destroy-dtor-index-3456-coverage": cmd_destroy_dtor_index_3456_coverage,

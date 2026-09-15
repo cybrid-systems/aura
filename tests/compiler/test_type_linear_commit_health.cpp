@@ -2451,8 +2451,15 @@ int run_test_type_linear_commit_health() {
     }
     {
         const std::string linter_out = [] {
-            std::FILE* p =
-                popen("python3 scripts/check_type_linear_proof_mid_3091.py --strict 2>&1", "r");
+#ifdef AURA_SOURCE_DIR
+            const std::string cmd =
+                std::string("cd \"") + AURA_SOURCE_DIR +
+                "\" && python3 scripts/check_type_linear_proof_mid_3091.py --strict 2>&1";
+#else
+            const std::string cmd =
+                "python3 scripts/check_type_linear_proof_mid_3091.py --strict 2>&1";
+#endif
+            std::FILE* p = popen(cmd.c_str(), "r");
             if (!p)
                 return std::string{};
             char buf[4096]{};

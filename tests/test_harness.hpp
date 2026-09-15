@@ -32,6 +32,7 @@
 #include <cstdlib>
 #include <format>
 #include <fstream>
+#include <filesystem>
 #include <iostream>
 #include <iterator>
 #include <print>
@@ -122,6 +123,50 @@ inline std::string aura_read_repo_file(std::string_view rel) {
                                std::istreambuf_iterator<char>());
     }
     return {};
+}
+
+
+// Resolve a repo-relative path (AURA_SOURCE_DIR, else cwd / ../ / ../../).
+inline std::string aura_repo_path(std::string_view rel) {
+#ifdef AURA_SOURCE_DIR
+    {
+        const std::string abs = std::string(AURA_SOURCE_DIR) + "/" + std::string(rel);
+        if (std::filesystem::exists(abs))
+            return abs;
+    }
+#endif
+    for (const auto& p : {std::string(rel), std::string("../") + std::string(rel),
+                          std::string("../../") + std::string(rel)}) {
+        if (std::filesystem::exists(p))
+            return p;
+    }
+    return std::string(rel);
+}
+
+inline bool aura_repo_file_exists(std::string_view rel) {
+    const auto p = aura_repo_path(rel);
+#ifdef AURA_SOURCE_DIR
+    if (p == rel && !std::filesystem::exists(p)) {
+        // aura_repo_path fell through to bare rel; still try SOURCE_DIR join.
+        return std::filesystem::exists(std::string(AURA_SOURCE_DIR) + "/" + std::string(rel));
+    }
+#endif
+    return std::filesystem::exists(p);
+}
+
+// Run `python3 <repo-rel-script> <args>` with cwd = repo root (Issue #3796 batch
+// members run under build/ WORKING_DIRECTORY).
+inline int aura_python_repo_script(std::string_view rel_script, std::string_view args = "") {
+#ifdef AURA_SOURCE_DIR
+    const std::string root = AURA_SOURCE_DIR;
+#else
+    const std::string root = aura_repo_path("build.py").ends_with("build.py")
+                                 ? std::filesystem::path(aura_repo_path("build.py")).parent_path().string()
+                                 : ".";
+#endif
+    const std::string cmd = std::string("cd \"") + root + "\" && python3 " + std::string(rel_script) +
+                            (args.empty() ? "" : " ") + std::string(args) + " > /dev/null 2>&1";
+    return std::system(cmd.c_str());
 }
 
 // True if *needle* appears in *src*, or as adjacent C++ string literals
