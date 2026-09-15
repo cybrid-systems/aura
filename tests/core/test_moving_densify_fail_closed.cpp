@@ -4191,8 +4191,9 @@ static void ac3782_1_phase5_skips_compact_on_lcp_reject() {
     CHECK(mut.find("Issue #3782") != std::string::npos, "ac3782_1: mut cites #3782");
     CHECK(mut.find("if (!densify_entry_lcp_blocked)") != std::string::npos,
           "ac3782_1: Phase-5 guards compact behind !densify_entry_lcp_blocked");
-    CHECK(mut.find("consult_last_lcp_for_densify_entry(static_cast<const void*>(ev_))") !=
-              std::string::npos,
+    // clang-format may wrap the consult call across lines.
+    CHECK(mut.find("consult_last_lcp_for_densify_entry") != std::string::npos &&
+              mut.find("static_cast<const void*>(ev_)") != std::string::npos,
           "ac3782_1: Phase-5 consult is eval-keyed");
     // Order: skip guard before the live compact call site.
     const auto skip = mut.find("if (!densify_entry_lcp_blocked)");
@@ -4210,8 +4211,8 @@ static void ac3782_2_sticky_recovery_same_skip_order() {
     CHECK(anchor != std::string::npos, "ac3782_2: sticky-recovery #3185 anchor present");
     const auto win = mut.substr(anchor, 4500);
     CHECK(win.find("Issue #3782") != std::string::npos, "ac3782_2: recovery cites #3782");
-    CHECK(win.find("consult_last_lcp_for_densify_entry(static_cast<const void*>(this))") !=
-              std::string::npos,
+    CHECK(win.find("consult_last_lcp_for_densify_entry") != std::string::npos &&
+              win.find("static_cast<const void*>(this)") != std::string::npos,
           "ac3782_2: recovery consult is eval-keyed");
     CHECK(win.find("if (densify_entry_lcp_blocked)") != std::string::npos,
           "ac3782_2: recovery skip branch on densify_entry_lcp_blocked");
