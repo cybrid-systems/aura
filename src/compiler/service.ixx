@@ -11846,10 +11846,10 @@ private:
         // production dispatch target; do not add it to this AoS suite.
         const bool soa_hot = soa_mod && !soa_mod->functions.empty();
         const bool prod_soa = soa_hot && aura::compiler::typed_audit::production_defaults_active();
-        // Issue #3690: Production last-look at the suite envelope so DCE
-        // (#3689 mask peel) and SoA pack cannot cone-skip after Global /
-        // storm-exit trips between consult_workload and DirtyAware entry.
-        // Soft/Off: production_dirty_aware_storm_force_full is consult-only.
+        // Issue #3690 / Issue #3831: Production last-look at the suite envelope.
+        // Storm-exit cooldown and dense-under-Global may all-1s rewrite;
+        // sparse-under-Global keeps dirty-cone amortize (#3831). Soft/Off:
+        // production_dirty_aware_storm_force_full is consult-only.
         std::vector<std::vector<std::uint8_t>> storm_full_bits;
         DefineDirtyMaskView storm_full_view;
         if (mask_ptr && mask_ptr->block_dirty_per_func) {

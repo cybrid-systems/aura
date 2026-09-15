@@ -5109,6 +5109,20 @@ def cmd_lint():
             "Issue #3830 empty TypeAnnotation no-Dynamic linter failed — run python3 scripts/coverage/checks/check_empty_type_annotation_no_dynamic_3830.py"
         )
         return r
+    # Issue #3831: Production dirty-aware storm force-full cap — sparse
+    # under Global keeps dirty-cone amortize; storm-exit / dense still
+    # all-1s. Soft consult-only; compact never feeds storm ring.
+    # Extends test_partial_relower_storm_gate; no docs/design / invent.
+    dasffc3831_script = COVERAGE_CHECKS / "check_dirty_aware_storm_force_full_cap_3831.py"
+    if not dasffc3831_script.exists():
+        fail(f"missing {dasffc3831_script}")
+        return 1
+    r = run([sys.executable, str(dasffc3831_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3831 dirty-aware storm force-full cap linter failed — run python3 scripts/coverage/checks/check_dirty_aware_storm_force_full_cap_3831.py"
+        )
+        return r
     # Issue #3802: EXEMPT_2ARG write-file/sys-* host-path isolation under
     # Restricted+MT / Strict — resolve under tenant root from
     # capability_tenant_id_; cross-tenant escape → IsolationDeny SE
@@ -15316,6 +15330,27 @@ def cmd_empty_type_annotation_no_dynamic_3830():
     print(f"{B}=== empty TypeAnnotation no-Dynamic (#3830) ==={N}")
     return cmd_empty_type_annotation_no_dynamic_3830_coverage()
 
+def cmd_dirty_aware_storm_force_full_cap_3831_coverage():
+    """Issue #3831: Production dirty-aware storm force-full cap (static)."""
+    print(f"{B}=== dirty-aware storm force-full cap (#3831) ==={N}")
+    script = COVERAGE_CHECKS / "check_dirty_aware_storm_force_full_cap_3831.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = run([sys.executable, str(script)], cwd=ROOT)
+    if r != 0:
+        fail("dirty-aware storm force-full cap (#3831) coverage contract rows failed")
+        return r
+    ok("dirty-aware storm force-full cap (#3831) coverage clean")
+    return 0
+
+
+def cmd_dirty_aware_storm_force_full_cap_3831():
+    """Issue #3831: Cap DirtyAware all-1s rewrite while Global storm held."""
+    print(f"{B}=== dirty-aware storm force-full cap (#3831) ==={N}")
+    return cmd_dirty_aware_storm_force_full_cap_3831_coverage()
+
+
 
 def cmd_engine_metrics_hash_overflow_3018_coverage():
     """Issue #3018: engine:metrics hash overflow fail-soft (static)."""
@@ -23294,6 +23329,8 @@ def main():
         "dense-columnar-fingerprint-3829-coverage": cmd_dense_columnar_fingerprint_3829_coverage,
         "empty-type-annotation-no-dynamic-3830": cmd_empty_type_annotation_no_dynamic_3830,
         "empty-type-annotation-no-dynamic-3830-coverage": cmd_empty_type_annotation_no_dynamic_3830_coverage,
+        "dirty-aware-storm-force-full-cap-3831": cmd_dirty_aware_storm_force_full_cap_3831,
+        "dirty-aware-storm-force-full-cap-3831-coverage": cmd_dirty_aware_storm_force_full_cap_3831_coverage,
         "mutate-dispatch-sole-guard-3074-coverage": cmd_mutate_dispatch_sole_guard_3074_coverage,
         "mutate-reg-kind-3452": cmd_mutate_reg_kind_3452_coverage,
         "mutate-reg-kind-3452-coverage": cmd_mutate_reg_kind_3452_coverage,

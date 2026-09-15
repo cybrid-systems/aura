@@ -4950,9 +4950,9 @@ export inline bool
 run_production_soa_dirty_hot_pack(IRModuleV2& mod,
                                   const aura::core::TypeRegistry* type_reg = nullptr) {
     production_soa_dirty_hot_pack_invocations_total.fetch_add(1, std::memory_order_relaxed);
-    // Issue #3690: Production last-look — Global / storm-exit after the
-    // consult_workload snapshot must not SoA-peel a stale partial mask.
-    // Soft/Off: consult-only (production_dirty_aware_storm_force_full).
+    // Issue #3690 / Issue #3831: Production last-look — storm-exit / dense-under-
+    // Global may mark_all_blocks_dirty; sparse-under-Global keeps SoA cone
+    // (#3831). Soft/Off: consult-only (production_dirty_aware_storm_force_full).
     std::size_t dirty_n = 0;
     for (const auto& fn : mod.functions)
         for (auto b : fn.block_dirty_)

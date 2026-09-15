@@ -193,6 +193,8 @@ void ac6_suite_helper_source() {
     CHECK(svc.find("Issue #3690") != std::string::npos, "3690: suite last-look");
     CHECK(svc.find("production_dirty_aware_storm_force_full") != std::string::npos,
           "3690: suite reuses last-look helper");
+    CHECK(svc.find("Issue #3831") != std::string::npos || svc.find("#3831") != std::string::npos,
+          "3831: suite cites force-full cap");
 }
 
 } // namespace

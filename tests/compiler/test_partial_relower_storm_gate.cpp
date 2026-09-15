@@ -391,6 +391,23 @@ int run_test_partial_relower_storm_gate() {
               "3690: no test_issue_3690.cpp");
         CHECK(read_file("docs/design/3690-dirty-aware-storm-last-look.md").empty(),
               "3690: no docs/design/");
+        // Issue #3831: force-full cap + Soft consult-only + compact never feeds.
+        CHECK(pm.find("Issue #3831") != std::string::npos, "3831: pipeline cites cap");
+        CHECK(pm.find("kDirtyAwareStormForceFullCapIssue = 3831") != std::string::npos,
+              "3831: stamp");
+        CHECK(pm.find("kDefaultPartialRelowerThreshold") != std::string::npos,
+              "3831: second dirty_n threshold");
+        CHECK(svc.find("Issue #3831") != std::string::npos ||
+                  svc.find("#3831") != std::string::npos,
+              "3831: suite cites cap");
+        CHECK(pm.find("schema-3831") == std::string::npos, "3831: no new query key");
+        CHECK(read_file("tests/compiler/test_issue_3831.cpp").empty(),
+              "3831: no test_issue_3831.cpp");
+        auto shape = read_file("src/compiler/shape_profiler.cpp");
+        CHECK(shape.find("last_storm_from_compact_") != std::string::npos,
+              "3831 AC3: compact never feeds storm ring");
+        CHECK(shape.find("deopt_storm_compact_suppressed") != std::string::npos,
+              "3831 AC3: compact suppress kept");
     }
 
     // ── Issue #3690: Production DirtyAware last-look honors Global ──
@@ -454,17 +471,36 @@ int run_test_partial_relower_storm_gate() {
         trip_global_storm();
         CHECK(storm_level_has_global(), "3690 AC1: Global live");
         const auto forced0 = partial_relower_storm_forced_full_total_atomic().load();
-        CHECK(production_dirty_aware_storm_force_full(1),
-              "3690 AC1: Production+Global last-look force-full");
+        // Issue #3831: sparse-under-Global no longer all-1s rewrites the cone.
+        CHECK(!production_dirty_aware_storm_force_full(1),
+              "3831 AC2: sparse-under-Global keeps cone (no all-1s)");
         CHECK(partial_relower_storm_forced_full_total_atomic().load() > forced0,
-              "3690 AC3: forced_full correlated with last-look");
+              "3690 AC3: forced_full still consulted under Global");
         {
             auto mod = make_mod(4);
             const auto skip0 = dirty_only_blocks_skipped_total.load(std::memory_order_relaxed);
             ConstantFoldingWrap cf;
-            CHECK(run_incremental_dirty_pipeline(mod, cf, &view), "3690 AC1: Global sparse ok");
+            CHECK(run_incremental_dirty_pipeline(mod, cf, &view), "3831 AC2: Global sparse ok");
+            CHECK(dirty_only_blocks_skipped_total.load(std::memory_order_relaxed) >= skip0 + 3,
+                  "3831 AC2: dirty-cone skips non-zero while Global held");
+        }
+        // Dense-under-Global still force-full (#3831 second dirty_n threshold).
+        CHECK(production_dirty_aware_storm_force_full(kDefaultPartialRelowerThreshold),
+              "3831: dense-under-Global still force-full");
+        {
+            std::vector<std::vector<std::uint8_t>> dense(
+                1, std::vector<std::uint8_t>(kDefaultPartialRelowerThreshold + 2, 0));
+            for (std::size_t i = 0; i < kDefaultPartialRelowerThreshold; ++i)
+                dense[0][i] = 1;
+            DefineDirtyMaskView dense_view;
+            dense_view.block_dirty_per_func = &dense;
+            auto mod = make_mod(kDefaultPartialRelowerThreshold + 2);
+            const auto skip0 = dirty_only_blocks_skipped_total.load(std::memory_order_relaxed);
+            ConstantFoldingWrap cf;
+            CHECK(run_incremental_dirty_pipeline(mod, cf, &dense_view),
+                  "3831: dense Global pipeline ok");
             CHECK(dirty_only_blocks_skipped_total.load(std::memory_order_relaxed) == skip0,
-                  "3690 AC1: no clean-block skip under Global");
+                  "3831: dense-under-Global still no cone-skip");
         }
         clear_storm();
 
@@ -487,6 +523,63 @@ int run_test_partial_relower_storm_gate() {
         }
 
         apply_dev_audit_defaults();
+        clear_storm();
+        reset_partial_relower_threshold_for_test();
+    }
+
+    // ── Issue #3831: sparse-under-Global cone amortize across N rounds ──
+    {
+        std::println("\n--- #3831: sparse Global N-round cone amortize ---");
+        using aura::ir::IRModule;
+        using aura::ir::IROpcode;
+        apply_production_audit_defaults();
+        reset_partial_relower_threshold_for_test();
+        clear_storm();
+
+        auto make_mod = [](std::size_t nblocks) {
+            IRModule mod;
+            aura::ir::IRFunction fn;
+            fn.name = "f3831";
+            fn.local_count = 2;
+            for (std::size_t i = 0; i < nblocks; ++i) {
+                aura::ir::BasicBlock b;
+                b.id = static_cast<std::uint32_t>(i);
+                b.instructions.push_back(aura::ir::IRInstruction{
+                    .opcode = IROpcode::ConstI64,
+                    .operands = {0, 1, 0, 0},
+                });
+                fn.blocks.push_back(std::move(b));
+            }
+            mod.functions.push_back(std::move(fn));
+            return mod;
+        };
+
+        std::vector<std::vector<std::uint8_t>> sparse(1, std::vector<std::uint8_t>(16, 0));
+        sparse[0][0] = 1;
+        DefineDirtyMaskView view;
+        view.block_dirty_per_func = &sparse;
+
+        trip_global_storm();
+        CHECK(storm_level_has_global(), "3831: Global live");
+        const auto skip0 = dirty_only_blocks_skipped_total.load(std::memory_order_relaxed);
+        const auto forced0 = partial_relower_storm_forced_full_total_atomic().load();
+        constexpr int kRounds = 12;
+        for (int r = 0; r < kRounds; ++r) {
+            CHECK(!production_dirty_aware_storm_force_full(1),
+                  "3831 AC2: sparse force-full false each round");
+            auto mod = make_mod(16);
+            ConstantFoldingWrap cf;
+            CHECK(run_incremental_dirty_pipeline(mod, cf, &view), "3831 AC1: round ok");
+        }
+        const auto skip1 = dirty_only_blocks_skipped_total.load(std::memory_order_relaxed);
+        const auto forced1 = partial_relower_storm_forced_full_total_atomic().load();
+        CHECK(skip1 >= skip0 + static_cast<std::uint64_t>(kRounds) * 15,
+              "3831 AC1/AC2: cone skips accumulate across storm-held rounds");
+        CHECK(forced1 > forced0, "3831: storm gate still consulted (metrics)");
+        // Soft consult-only unchanged.
+        apply_dev_audit_defaults();
+        CHECK(!production_dirty_aware_storm_force_full(1),
+              "3831 AC3: Soft consult-only (no force-full)");
         clear_storm();
         reset_partial_relower_threshold_for_test();
     }
