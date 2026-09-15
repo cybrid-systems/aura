@@ -4766,6 +4766,82 @@ static void ac3652_5_set_allow_flag_gate() {
     aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
 }
 
+
+// ── Issue #3786: *allow-macro-inline* requires MacroSelfEvo under Restricted ──
+static void ac3786_1_allow_macro_inline_denied() {
+    std::println("\n--- #3786 AC1: (*allow-macro-inline* #t) denied without MacroSelfEvo ---");
+    using aura::core::capability::reset_capability_effects_for_test;
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    reset_capability_effects_for_test();
+    CompilerService cs;
+    grant_3301_production_mutate(cs);
+    aura::core::capability::g_capability_registry().revoke(cs.evaluator().capability_tenant_id(),
+                                                           "tenant-admin");
+    CHECK(cs.evaluator().get_inline_respect_macro_hygiene() == true,
+          "3786 AC1: respect default true");
+    auto denied = cs.eval("(*allow-macro-inline* #t)");
+    CHECK(denied.has_value(), "3786 AC1: returns");
+    CHECK(merr_kind_3027(cs, *denied) == "hygiene-protected",
+          "3786 AC1: denied without MacroSelfEvo");
+    CHECK(cs.evaluator().get_inline_respect_macro_hygiene() == true,
+          "3786 AC1: respect stays true (no toggle)");
+    auto clear = cs.eval("(*allow-macro-inline* #f)");
+    CHECK(clear.has_value() && is_int(*clear) && as_int(*clear) == 0, "3786 AC1: #f still free");
+    reset_capability_effects_for_test();
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+}
+
+static void ac3786_2_mse_grant_toggle_ok() {
+    std::println("\n--- #3786 AC2: MacroSelfEvo + (*allow-macro-inline* #t) commits ---");
+    using aura::core::capability::MacroSelfEvoPolicy;
+    using aura::core::capability::reset_capability_effects_for_test;
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    reset_capability_effects_for_test();
+    CompilerService cs;
+    grant_3301_production_mutate(cs);
+    const auto tenant = cs.evaluator().capability_tenant_id();
+    aura::core::capability::g_capability_registry().grant_macro_self_evo(
+        tenant, MacroSelfEvoPolicy{}, aura_test_grant_prov(), tenant);
+    auto ok = cs.eval("(*allow-macro-inline* #t)");
+    CHECK(ok.has_value() && is_int(*ok) && as_int(*ok) == 1, "3786 AC2: enable → 1");
+    CHECK(cs.evaluator().get_inline_respect_macro_hygiene() == false,
+          "3786 AC2: respect=false (MacroIntroduced may inline)");
+    auto off = cs.eval("(*allow-macro-inline* #f)");
+    CHECK(off.has_value() && is_int(*off) && as_int(*off) == 0, "3786 AC2: disable → 0");
+    CHECK(cs.evaluator().get_inline_respect_macro_hygiene() == true, "3786 AC2: respect restored");
+    reset_capability_effects_for_test();
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+}
+
+static void ac3786_3_soft_ungated() {
+    std::println("\n--- #3786 AC3: Soft toggle without MSE ---");
+    using aura::core::capability::reset_capability_effects_for_test;
+    reset_capability_effects_for_test();
+    CompilerService cs;
+    CHECK(cs.evaluator().effect_sandbox_mode() == 0, "3786 AC3: Soft sandbox");
+    auto ok = cs.eval("(*allow-macro-inline* #t)");
+    CHECK(ok.has_value() && is_int(*ok) && as_int(*ok) == 1, "3786 AC3: Soft enable");
+    CHECK(cs.evaluator().get_inline_respect_macro_hygiene() == false, "3786 AC3: respect off");
+    reset_capability_effects_for_test();
+}
+
+static void ac3786_4_mutate_flag_unchanged_and_cite() {
+    std::println("\n--- #3786 AC4: set-allow-macro-mutate! unchanged + source-cite ---");
+    const auto cp = read_file("src/compiler/evaluator_primitives_compile.cpp");
+    CHECK(cp.find("Issue #3786") != std::string::npos, "3786 AC4: cites #3786");
+    CHECK(cp.find("(*allow-macro-inline* #t) requires MacroSelfEvo capability") !=
+              std::string::npos,
+          "3786 AC4: deny string");
+    CHECK(cp.find("deny_marker_clear_without_mse(ev, 0)") != std::string::npos,
+          "3786 AC4: reuses deny_marker_clear_without_mse");
+    CHECK(cp.find("(hygiene:set-allow-macro-mutate! #t) requires MacroSelfEvo capability") !=
+              std::string::npos,
+          "3786 AC4: mutate flag gate unchanged");
+    CHECK(!std::filesystem::exists(std::filesystem::path(AURA_SOURCE_DIR) / "tests" / "compiler" /
+                                   "test_issue_3786.cpp"),
+          "3786 AC4: no test_issue_3786.cpp");
+}
+
 static void ac3652_6_source_cite() {
     std::println("\n--- #3652 AC6: source-cite + no artifacts ---");
     const auto efl = read_file("src/compiler/evaluator_eval_flat.cpp");
@@ -6012,6 +6088,10 @@ int main() {
     ac3652_4_soft_off_unchanged();
     ac3652_5_set_allow_flag_gate();
     ac3652_6_source_cite();
+    ac3786_1_allow_macro_inline_denied();
+    ac3786_2_mse_grant_toggle_ok();
+    ac3786_3_soft_ungated();
+    ac3786_4_mutate_flag_unchanged_and_cite();
     std::println("\n=== Issue #3755: public rename-symbol :allow-macro? still MSE ===");
     ac3755_1_public_rename_allow_denied_without_mse();
     ac3755_2_mse_grant_rename_ok();
