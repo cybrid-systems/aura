@@ -303,8 +303,7 @@ static void ac3779_steal_complete_total_ssot() {
     CHECK(after == before + 1, "3779 AC1: gc_hooks advanced");
     CHECK(ads1 == ads0 + 1, "3779 AC1: AdaptiveStealStats advanced");
     CHECK(ads1 == after, "3779 AC1: AdaptiveStealStats == gc_hooks");
-    auto v = cs.eval(
-        "(hash-ref (engine:metrics :group \"telemetry\") \"steal_complete_total\")");
+    auto v = cs.eval("(hash-ref (engine:metrics :group \"telemetry\") \"steal_complete_total\")");
     CHECK(v && is_int(*v), "3779 AC1: :group telemetry has steal_complete_total");
     CHECK(as_int(*v) == static_cast<std::int64_t>(after),
           "3779 AC1: :group steal_complete_total == gc_hooks");
