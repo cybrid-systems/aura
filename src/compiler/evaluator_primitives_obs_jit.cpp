@@ -2085,6 +2085,23 @@ void ObservabilityPrims::register_metrics_facade(PrimRegistrar add, Evaluator& e
     groups[metrics_group_for_field(#name)].emplace_back(                                           \
         #name, make_int(static_cast<std::int64_t>(m->name.load(std::memory_order_relaxed))));
 #include "compiler_metrics_fields.inc"
+            // Issue #3779: Agent-visible steal_complete_total SSOT is process-wide
+            // gc_hooks (query hashes already read it; AdaptiveStealStats mirrors).
+            // Overlay :group / :prefix dump so a lagged per-eval CompilerMetrics
+            // mirror cannot disagree with the process face. No new key; field
+            // name unchanged (append-only .inc retained). Soft/Off unchanged.
+            {
+                auto it = groups.find("telemetry");
+                if (it != groups.end()) {
+                    for (auto& [fname, val] : it->second) {
+                        if (fname == "steal_complete_total") {
+                            val = make_int(static_cast<std::int64_t>(
+                                aura::gc_hooks::steal_complete_total()));
+                            break;
+                        }
+                    }
+                }
+            }
             return groups;
         };
 
@@ -11663,11 +11680,12 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
                       aura::gc_hooks::gc_defer_production_locked() ? 1 : 0);
             insert_kv("schema-2338", 2338);
             insert_kv("issue-2338", 2338);
-            // Issue #2203 / #2377: steal-complete single entry metrics
+            // Issue #2203 / #2377 / #3779: steal-complete single entry metrics
             // (lineage retained; schema-2088 primary keys unchanged).
             // Process-wide atomics are the source of truth; CompilerMetrics
-            // mirrors when present. #2377: entry-missing counts light/
-            // sandbox weak-no-op or null ABI (production must stay 0).
+            // mirrors at on_steal_complete entry (#3779) and :group dump
+            // overlays gc_hooks for steal_complete_total. #2377: entry-missing
+            // counts light/sandbox weak-no-op or null ABI (production must stay 0).
             insert_kv("schema-2203", 2203);
             insert_kv("issue-2203", 2203);
             insert_kv("steal-complete-wired", 1);

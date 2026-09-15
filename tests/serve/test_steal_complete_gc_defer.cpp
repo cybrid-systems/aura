@@ -290,6 +290,35 @@ static void ac_null_fiber_still_counts() {
           "null fiber still bumps steal_complete_total");
 }
 
+// ── Issue #3779: :group steal_complete_total == gc_hooks + AdaptiveStealStats ──
+static void ac3779_steal_complete_total_ssot() {
+    std::println("\n--- #3779: steal_complete_total group dump SSOT ---");
+    CompilerService cs;
+    CHECK(cs.eval("(+ 1 1)").has_value(), "3779 warm eval");
+    const auto before = aura::gc_hooks::steal_complete_total();
+    const auto ads0 = adaptive_steal_stats().steal_complete_total.load(std::memory_order_relaxed);
+    aura_evaluator_on_steal_complete(nullptr);
+    const auto after = aura::gc_hooks::steal_complete_total();
+    const auto ads1 = adaptive_steal_stats().steal_complete_total.load(std::memory_order_relaxed);
+    CHECK(after == before + 1, "3779 AC1: gc_hooks advanced");
+    CHECK(ads1 == ads0 + 1, "3779 AC1: AdaptiveStealStats advanced");
+    CHECK(ads1 == after, "3779 AC1: AdaptiveStealStats == gc_hooks");
+    auto v = cs.eval(
+        "(hash-ref (engine:metrics :group \"telemetry\") \"steal_complete_total\")");
+    CHECK(v && is_int(*v), "3779 AC1: :group telemetry has steal_complete_total");
+    CHECK(as_int(*v) == static_cast<std::int64_t>(after),
+          "3779 AC1: :group steal_complete_total == gc_hooks");
+    // Query hash face (obs_jit) still reads gc_hooks — same semantic.
+    CHECK(href(cs, "steal_complete_total") == static_cast<std::int64_t>(after),
+          "3779 AC2: query hash steal_complete_total matches SSOT (key unchanged)");
+    CHECK(href(cs, "steal-complete-total") == static_cast<std::int64_t>(after),
+          "3779 AC2: hyphen alias unchanged / matches SSOT");
+    const auto efm = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+    CHECK(efm.find("Issue #3779") != std::string::npos, "3779: entry cites issue");
+    const auto obs = read_file("src/compiler/evaluator_primitives_obs_jit.cpp");
+    CHECK(obs.find("Issue #3779") != std::string::npos, "3779: dump cites issue");
+}
+
 // ── Issue #2314 AC1: residual defer interlock wiring + idempotency ──
 static void ac2314_residual_interlock() {
     std::println("\n--- #2314 AC1: residual defer interlock wiring ---");
@@ -964,6 +993,7 @@ int run_test_steal_complete_gc_defer() {
     std::println("=== Issue #2314: residual defer clear interlock (share helper, idempotent) ===");
     ac1_ac5_ac6_source();
     ac_null_fiber_still_counts();
+    ac3779_steal_complete_total_ssot();
     ac2_clear_via_steal_complete();
     ac3_query_metrics();
     ac4_stress_steals();
