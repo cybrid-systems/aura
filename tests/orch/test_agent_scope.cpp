@@ -732,8 +732,17 @@ static void ac2946_production_hard_deny() {
         CHECK(hd1 > hd0, "2946 AC1: hard_deny_total bumps under production");
         CHECK(!spawn_ok.load(std::memory_order_relaxed),
               "2946 AC1: concurrent spawn returns ok=false under hard deny");
-        CHECK(scope.size() == size_before,
-              "2946 AC1: handles_ size unchanged (no mutate under hard deny)");
+        // Issue #3776: production size() is live count; join/cancel may
+        // compact Done husks so live size can drop. Hard-deny must not
+        // grow the underlying handles_ vector (no emplace).
+        CHECK(scope.handles().size() <= size_before,
+              "2946 AC1: handles_ did not grow under hard deny");
+        bool found_denied = false;
+        for (const auto& hh : scope.handles()) {
+            if (hh.name == "2946-ct-spawn")
+                found_denied = true;
+        }
+        CHECK(!found_denied, "2946 AC1: denied spawn name not emplaced");
         set_prod(false);
     }
 
