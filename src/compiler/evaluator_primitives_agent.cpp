@@ -6344,6 +6344,13 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             insert_kv("scope-bp-gauge-teardown-erase-total",
                       static_cast<std::int64_t>(
                           os.scope_bp_gauge_teardown_erase_total.load(std::memory_order_relaxed)));
+            // Issue #3804: overflow-cohort admit isolation (no shared
+            // overflow.recent crosstalk). Keep spawn-bp-scope-overflow-*
+            // keys; Agents distinguish via deny-detail
+            // mailbox-bp-scope-overflow vs scope-local mailbox-bp.
+            insert_kv("schema-3804", aura::orch::kMailboxBpScopeOverflowCohortIssue);
+            insert_kv("issue-3804", aura::orch::kMailboxBpScopeOverflowCohortIssue);
+            insert_kv("scope-bp-overflow-cohort-wired", 1);
             // Issue #3632: sender attribution sketch — additive bp-hot-sender
             // rows (top scopes by recent, each with its top sender slot).
             // Bounded (≤4 rows); existing keys unchanged (#3632 AC5).

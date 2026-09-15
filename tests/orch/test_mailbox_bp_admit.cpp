@@ -1457,10 +1457,14 @@ int run_test_mailbox_bp_admit() {
                 // New scope NOT in map (redirected to overflow bucket).
                 CHECK(aura::orch::lookup_scope_bp_gauge("prod-scope-257") == nullptr,
                       "AC3 production: 257th scope NOT inserted (overflow redirect)");
-                // load_mailbox_bp_recent for 257th scope falls back to overflow gauge.
+                // Issue #3804: missing named scope must NOT inherit shared
+                // overflow.recent (cross-scope admit crosstalk). Load is 0;
+                // admit fail-closes via named_scope_bp_on_overflow_cohort.
                 const auto ov = aura::orch::load_mailbox_bp_recent("prod-scope-257");
-                CHECK(ov > 0,
-                      "AC3 production: load_mailbox_bp_recent falls back to overflow gauge");
+                CHECK(ov == 0,
+                      "AC3/#3804 production: load_mailbox_bp_recent does not share overflow");
+                CHECK(aura::orch::named_scope_bp_on_overflow_cohort("prod-scope-257"),
+                      "AC3/#3804 production: 257th scope is overflow cohort");
             } else {
                 // Production not active in this test env (sandbox Restricted may not
                 // trip production_defaults_active in unit-Soft builds) — Soft path
@@ -1789,6 +1793,134 @@ int run_test_mailbox_bp_admit() {
         else
             unsetenv("AURA_SANDBOX");
         aura::compiler::typed_audit::apply_dev_audit_defaults();
+    }
+
+    // ── Issue #3804: production overflow cohort no shared admit pressure ──
+    {
+        std::println("\n--- #3804: BP scope overflow cohort admit isolation ---");
+        using aura::orch::kMailboxBpScopeMapCap;
+        using aura::orch::kMailboxBpScopeOverflowCohortIssue;
+        const auto spawn = read_file("src/orch/agent_spawn.h");
+        CHECK(kMailboxBpScopeOverflowCohortIssue == 3804, "3804 AC: issue stamp");
+        CHECK(spawn.find("named_scope_bp_on_overflow_cohort") != std::string::npos,
+              "ac3804_1_overflow_cohort_helper");
+        CHECK(spawn.find("mailbox-bp-scope-overflow") != std::string::npos,
+              "ac3804_1_distinct_deny_detail");
+        CHECK(spawn.find("kMailboxBpScopeOverflowCohortIssue = 3804") != std::string::npos,
+              "ac3804_1_stamp_in_header");
+
+        // AC3 Soft/Off: LRU path unchanged — 257th inserts own gauge; no cohort.
+        {
+            aura::compiler::typed_audit::apply_dev_audit_defaults();
+            aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+            aura::orch::reset_scope_bp_map_for_test();
+            for (int i = 0; i < static_cast<int>(kMailboxBpScopeMapCap); ++i)
+                aura::orch::note_mailbox_bp_recent_event(std::string("soft3804-") +
+                                                         std::to_string(i));
+            aura::orch::note_mailbox_bp_recent_event("soft3804-new");
+            CHECK(aura::orch::lookup_scope_bp_gauge("soft3804-new") != nullptr,
+                  "ac3804_3_soft_lru_inserts");
+            CHECK(!aura::orch::named_scope_bp_on_overflow_cohort("soft3804-new"),
+                  "ac3804_3_soft_not_overflow_cohort");
+            aura::orch::reset_scope_bp_map_for_test();
+        }
+
+        aura::compiler::typed_audit::apply_production_audit_defaults();
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+        aura::orch::reset_scope_bp_map_for_test();
+        if (aura::orch::production_defaults_active()) {
+            // Fill 256 live named gauges.
+            for (int i = 0; i < static_cast<int>(kMailboxBpScopeMapCap); ++i)
+                aura::orch::note_mailbox_bp_recent_event(std::string("live3804-") +
+                                                         std::to_string(i));
+            CHECK(aura::orch::scope_bp_map_size_for_test() == kMailboxBpScopeMapCap,
+                  "3804 AC: map at cap");
+
+            // Storm overflow peer A (not in map) — bumps overflow observability.
+            const auto thr_prev = ::getenv("AURA_ORCH_BP_ADMIT_THRESHOLD");
+            const std::string thr_save = thr_prev ? thr_prev : "";
+            ::setenv("AURA_ORCH_BP_ADMIT_THRESHOLD", "1", 1);
+            for (int i = 0; i < 64; ++i)
+                aura::orch::note_mailbox_bp_recent_event("storm-overflow-A");
+            CHECK(aura::orch::lookup_scope_bp_gauge("storm-overflow-A") == nullptr,
+                  "3804 AC1: storming peer stays overflow (not inserted)");
+            CHECK(aura::orch::g_scope_bp_overflow.recent.load(std::memory_order_relaxed) >= 64,
+                  "3804 AC1: overflow gauge observes storm (dashboard)");
+            // Quiet peer B never shared a gauge — load must be 0 (no crosstalk).
+            CHECK(aura::orch::load_mailbox_bp_recent("quiet-overflow-B") == 0,
+                  "ac3804_4_quiet_load_no_crosstalk");
+            CHECK(aura::orch::named_scope_bp_on_overflow_cohort("quiet-overflow-B"),
+                  "3804 AC1: quiet peer is overflow cohort");
+
+            // Soft soak: storming peer must not BpAdmit-deny via shared recent;
+            // quiet overflow peer gets typed overflow deny (distinct detail),
+            // while an in-map quiet peer still admits on its own gauge.
+            Scheduler sched(1);
+            // Raise threshold so in-map recent=1 still admits; overflow cohort
+            // still fail-closes regardless of recent (#3804 typed deny).
+            ::setenv("AURA_ORCH_BP_ADMIT_THRESHOLD", "32", 1);
+            AgentSpec in_map;
+            in_map.name = "3804-in-map-quiet";
+            in_map.body = [] {};
+            in_map.attach_mailbox = true;
+            in_map.bp_scope_id = "live3804-0";
+            auto hin = spawn_agent_with_mailbox(sched, in_map);
+            CHECK(hin.ok, "ac3804_4_in_map_quiet_admits_despite_overflow_storm");
+
+            AgentSpec quiet_ov;
+            quiet_ov.name = "3804-quiet-ov";
+            quiet_ov.body = [] {};
+            quiet_ov.attach_mailbox = true;
+            quiet_ov.bp_scope_id = "quiet-overflow-B";
+            const auto overflow_pre =
+                aura::orch::g_orch_module_stats.spawn_bp_scope_overflow_total.load(
+                    std::memory_order_relaxed);
+            const auto scope_rej_pre =
+                aura::orch::g_orch_module_stats.spawn_bp_admit_reject_scope_total.load(
+                    std::memory_order_relaxed);
+            auto hov = spawn_agent_with_mailbox(sched, quiet_ov);
+            CHECK(!hov.ok, "ac3804_1_overflow_cohort_fail_closed");
+            CHECK(hov.deny_class == aura::orch::AgentDenyClass::BpAdmit,
+                  "ac3804_1_typed_BpAdmit");
+            CHECK(hov.quota_dimension == "mailbox-bp-scope-overflow",
+                  "ac3804_2_distinct_deny_detail");
+            CHECK(hov.error.find("mailbox-bp-scope-overflow") != std::string::npos,
+                  "3804 AC1: error cites overflow cohort");
+            CHECK(aura::orch::g_orch_module_stats.spawn_bp_scope_overflow_total.load(
+                      std::memory_order_relaxed) > overflow_pre,
+                  "ac3804_2_overflow_counter_not_scope_reject");
+            CHECK(aura::orch::g_orch_module_stats.spawn_bp_admit_reject_scope_total.load(
+                      std::memory_order_relaxed) == scope_rej_pre,
+                  "ac3804_2_scope_local_reject_untouched");
+
+            // Storming overflow peer also fail-closes (not via shared recent crosstalk
+            // from a different peer — same typed deny).
+            AgentSpec storm;
+            storm.name = "3804-storm-ov";
+            storm.body = [] {};
+            storm.attach_mailbox = true;
+            storm.bp_scope_id = "storm-overflow-A";
+            auto hs = spawn_agent_with_mailbox(sched, storm);
+            CHECK(!hs.ok && hs.quota_dimension == "mailbox-bp-scope-overflow",
+                  "3804 AC1: storming overflow peer typed deny (not peer crosstalk)");
+
+            if (thr_prev)
+                ::setenv("AURA_ORCH_BP_ADMIT_THRESHOLD", thr_save.c_str(), 1);
+            else
+                ::unsetenv("AURA_ORCH_BP_ADMIT_THRESHOLD");
+        } else {
+            CHECK(true, "3804: production_defaults_active=false; Soft AC3 above");
+        }
+
+        CHECK(spawn.find("spawn_bp_scope_overflow_dropped_total") != std::string::npos,
+              "3804 AC2: overflow keys retained");
+        CHECK(read_file("tests/orch/test_issue_3804.cpp").empty(), "ac3804_5_no_invent");
+        CHECK(read_file("docs/design/3804-bp-overflow-cohort.md").empty(),
+              "3804 AC: no docs/design/3804-*");
+
+        aura::compiler::typed_audit::apply_dev_audit_defaults();
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+        aura::orch::reset_scope_bp_map_for_test();
     }
 
     // Issue #3775: per-scope starvation throttle ACs (also dedicated runner).

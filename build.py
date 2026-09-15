@@ -8619,6 +8619,20 @@ def cmd_lint():
             "Issue #3803 AgentScope region-key isolation linter failed — run python3 scripts/coverage/checks/check_agent_scope_region_key_isolation_3803.py"
         )
         return r
+    # Issue #3804: production BP scope overflow cohort — no shared
+    # overflow.recent admit crosstalk; fail-closed typed BpAdmit with
+    # deny-detail mailbox-bp-scope-overflow. Soft/Off LRU unchanged.
+    # Extends test_mailbox_bp_admit.cpp (#81967); no docs/design (#1655).
+    mboc3804_script = COVERAGE_CHECKS / "check_mailbox_bp_overflow_cohort_3804.py"
+    if not mboc3804_script.exists():
+        fail(f"missing {mboc3804_script}")
+        return 1
+    r = run([sys.executable, str(mboc3804_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3804 mailbox BP overflow cohort linter failed — run python3 scripts/coverage/checks/check_mailbox_bp_overflow_cohort_3804.py"
+        )
+        return r
     # Issue #2887: mailbox BP storm — producer degrade hook on
     # AgentScope::watch_all (on_backpressure Cancel/Throttle/RestartN;
     # default ReportOnly). Complements admit soft-reject of new spawns

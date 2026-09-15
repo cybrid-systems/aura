@@ -16,8 +16,9 @@ Contract:
       production_defaults_active, bumps overflow gauge + return early
       (skips insert). Under Soft/Off, falls through to existing
       LRU-evict + insert.
-  AC3 agent_spawn.h load_mailbox_bp_recent falls back to overflow
-      gauge recent when scope not in map (under production).
+  AC3 agent_spawn.h load_mailbox_bp_recent returns 0 for missing named
+      scopes (#3804 — no shared overflow.recent admit crosstalk).
+      Production admit fail-closes via named_scope_bp_on_overflow_cohort.
   AC4 agent_spawn.h maybe_decay_mailbox_bp_recent also decays the
       overflow gauge (production-gated).
   AC5 tests/orch/test_mailbox_bp_admit.cpp: ac3127_overflow_isolation
@@ -81,17 +82,23 @@ def main() -> int:
     must("g_scope_bp_map.erase(coldest)", "AC2 LRU-evict preserved", note_block)
     must("spawn_bp_scope_overflow_total.fetch_add", "AC2 overflow_total counter preserved", note_block)
 
-    # AC3 \u2014 load_mailbox_bp_recent falls back to overflow gauge under production.
-    load_pos = aspawn.find("load_mailbox_bp_recent")
-    decay_pos = aspawn.find("inline void maybe_decay_mailbox_bp_recent", load_pos)
-    load_block = aspawn[load_pos:decay_pos] if decay_pos > load_pos else aspawn[load_pos:]
-    must("return gauge->recent.load(std::memory_order_relaxed)", "AC3 scope gauge path", load_block)
-    must("g_scope_bp_overflow.recent.load(std::memory_order_relaxed)", "AC3 overflow fallback", load_block)
-    must("if (production_defaults_active())", "AC3 production gate", load_block)
-    # Soft/Off returns 0 (no mis-fire signal).
-    must("return 0;", "AC3 Soft/Off zero", load_block)
+    # AC3 — load_mailbox_bp_recent returns 0 for missing named (#3804).
+    load_pos = aspawn.find("[[nodiscard]] inline std::uint64_t load_mailbox_bp_recent")
+    erase_pos = aspawn.find("inline bool erase_scope_bp_gauge", load_pos)
+    load_through = aspawn[load_pos:erase_pos] if erase_pos > load_pos else aspawn[load_pos:]
+    must("return gauge->recent.load(std::memory_order_relaxed)", "AC3 scope gauge path", load_through)
+    must("return 0;", "AC3 missing named returns 0", load_through)
+    must("Issue #3804", "AC3 #3804 cite in load/cohort", load_through)
+    # Isolate load_mailbox_bp_recent body (before cohort helper).
+    cohort_fn = load_through.find("[[nodiscard]] inline bool named_scope_bp_on_overflow_cohort")
+    load_fn = load_through[:cohort_fn] if cohort_fn > 0 else load_through
+    if "g_scope_bp_overflow.recent.load" in load_fn:
+        fails.append("AC3: load must not fall back to g_scope_bp_overflow.recent (#3804)")
+    must("named_scope_bp_on_overflow_cohort", "AC3 #3804 cohort helper", aspawn)
+    must("mailbox-bp-scope-overflow", "AC3 #3804 deny-detail", aspawn)
 
-    # AC4 \u2014 maybe_decay_mailbox_bp_recent also decays the overflow gauge.
+    # AC4 — maybe_decay_mailbox_bp_recent also decays the overflow gauge.
+    decay_pos = aspawn.find("inline void maybe_decay_mailbox_bp_recent")
     decay_block = aspawn[decay_pos:] if decay_pos > 0 else aspawn
     must("g_scope_bp_overflow.recent.store(0, std::memory_order_release)", "AC4 overflow recent zero", decay_block)
     must(
