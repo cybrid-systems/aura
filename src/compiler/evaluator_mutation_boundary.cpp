@@ -3560,9 +3560,12 @@ void Evaluator::MutationBoundaryGuard::force_release_hold_budget_inbody() noexce
 // Issue #3194 / #3222: same-fiber inbody-window force-release. Reuses
 // #3118 force_release_hold_after_cancel_ (unlock + depth 0). Cross-fiber
 // only re-arms pending-cancel (AC2 — unique_lock is not unlocked from
-// another thread). Soft / !reject_enabled: no-op. Counters: reuse
-// forced_unlock_total + forced_fail_closed_total (AC4). One-shot: do
-// not re-count if the Guard already force-released.
+// another thread). Issue #3826: edge-free holders under multi-worker
+// latch are gated by Ready residual sticky + join Reclaimed (peer poll
+// in fiber.cpp) — this foreign arm must never unlock. Soft /
+// !reject_enabled: no-op. Counters: reuse forced_unlock_total +
+// forced_fail_closed_total (AC4). One-shot: do not re-count if the Guard
+// already force-released.
 extern "C" void aura_evaluator_force_release_outermost_holder(std::uint64_t fiber_id) noexcept {
     using namespace aura::compiler;
     if (!mutation_hold_budget_reject_enabled())
@@ -3570,6 +3573,7 @@ extern "C" void aura_evaluator_force_release_outermost_holder(std::uint64_t fibe
     auto* cur = aura::serve::g_current_fiber;
     const bool same = cur != nullptr && cur->id() == fiber_id;
     if (!same) {
+        // Issue #3826: foreign — re-arm cancel only (never unlock).
         if (fiber_id != 0)
             (void)aura_fiber_request_hold_budget_cancel(fiber_id);
         return;

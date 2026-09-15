@@ -1,0 +1,43 @@
+{
+  "issue": 3826,
+  "title": "Issue #3826: edge-free MutationHold under multi-worker latch gated (Ready sticky + Reclaimed)",
+  "ok": "OK: Issue #3826 edge-free latch gate",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/serve/fiber.cpp",
+      "contains": [
+        "Issue #3826",
+        "steal_safety_production_residual_zero_v_read"
+      ]
+    },
+    {
+      "ac": "AC1-stamp",
+      "path": "src/compiler/mutation_hold_budget.h",
+      "contains": ["kMutationHoldBudgetEdgeFreeLatchGateIssue = 3826"]
+    },
+    {
+      "ac": "AC1-foreign",
+      "path": "src/compiler/evaluator_mutation_boundary.cpp",
+      "contains": ["Issue #3826", "aura_fiber_request_hold_budget_cancel"]
+    },
+    {
+      "ac": "AC2-oracles",
+      "path": "tests/serve/test_mailbox_hold_starvation_hard.cpp",
+      "contains": ["ac3764_2_no_edge_holder_disposed", "ac3826_1_edge_free_peer_poll_gate"]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/serve/fiber.cpp",
+      "contains": ["mutation_hold_budget_reject_enabled()"]
+    },
+    {
+      "ac": "AC4",
+      "forbid": [
+        "tests/serve/test_issue_3826.cpp",
+        "tests/issues/test_issue_3826.cpp",
+        "docs/design/3826-edge-free-latch-gate.md"
+      ]
+    }
+  ]
+}

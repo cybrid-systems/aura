@@ -5039,6 +5039,20 @@ def cmd_lint():
             "Issue #3825 safepoint fail-closed force-release linter failed — run python3 scripts/coverage/checks/check_hold_budget_safepoint_force_release_3825.py"
         )
         return r
+    # Issue #3826: edge-free MutationHold under multi-worker latch must gate
+    # via Ready residual sticky + join Reclaimed (never unlock foreign
+    # unique_lock). Soft metric-only. Extends
+    # test_mailbox_hold_starvation_hard.cpp (#81967); no docs/design/.
+    eflg3826_script = COVERAGE_CHECKS / "check_edge_free_latch_gate_3826.py"
+    if not eflg3826_script.exists():
+        fail(f"missing {eflg3826_script}")
+        return 1
+    r = run([sys.executable, str(eflg3826_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3826 edge-free latch gate linter failed — run python3 scripts/coverage/checks/check_edge_free_latch_gate_3826.py"
+        )
+        return r
     # Issue #3802: EXEMPT_2ARG write-file/sys-* host-path isolation under
     # Restricted+MT / Strict — resolve under tenant root from
     # capability_tenant_id_; cross-tenant escape → IsolationDeny SE
@@ -15143,6 +15157,26 @@ def cmd_hold_budget_safepoint_force_release_3825():
     """Issue #3825: safepoint fail-closed unlocks via force_release_hold_budget_inbody."""
     print(f"{B}=== hold-budget safepoint force-release (#3825) ==={N}")
     return cmd_hold_budget_safepoint_force_release_3825_coverage()
+
+
+def cmd_edge_free_latch_gate_3826_coverage():
+    """Issue #3826: edge-free hold under multi-worker latch gated (static)."""
+    print(f"{B}=== edge-free latch gate (#3826) ==={N}")
+    script = COVERAGE_CHECKS / "check_edge_free_latch_gate_3826.py"
+    if not script.is_file():
+        fail(f"missing {script}")
+        return 1
+    if run([sys.executable, str(script)], cwd=ROOT) != 0:
+        fail("edge-free latch gate (#3826) coverage contract rows failed")
+        return 1
+    ok("edge-free latch gate (#3826) coverage clean")
+    return 0
+
+
+def cmd_edge_free_latch_gate_3826():
+    """Issue #3826: Ready residual sticky + join Reclaimed gate edge-free holds."""
+    print(f"{B}=== edge-free latch gate (#3826) ==={N}")
+    return cmd_edge_free_latch_gate_3826_coverage()
 
 
 def cmd_engine_metrics_hash_overflow_3018_coverage():

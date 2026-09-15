@@ -527,6 +527,12 @@ inline constexpr int kMutationHoldBudgetNoEdgeForceIssue = 3325;
 // thread. Reuses no_edge_force_total + forced_unlock pair — no new
 // counter / query key.
 inline constexpr int kMutationHoldBudgetNoEdgeHolderDisposeIssue = 3764;
+// Issue #3826: edge-free long holds under production multi-worker latch
+// are gated — peer poll arms Ready residual sticky (#3619/#3288) + join
+// Reclaimed (#3764); same-fiber consume → depth0/!held. Never unlock
+// foreign unique_lock (force_release foreign arm only re-arms cancel).
+// Soft / !reject_enabled: metric-only. No new counter / query key.
+inline constexpr int kMutationHoldBudgetEdgeFreeLatchGateIssue = 3826;
 
 [[nodiscard]] inline std::uint64_t hold_budget_no_edge_force_total_v_read() noexcept {
     return g_hold_budget_no_edge_force_total.load(std::memory_order_relaxed);
