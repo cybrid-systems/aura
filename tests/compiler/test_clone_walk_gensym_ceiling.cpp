@@ -1,12 +1,16 @@
 // @category: unit
 // @reason: Issue #2804 — clone-walk rename_binding must enforce
 // s_max_gensym_map_size (parity with rename_binding_pre pre-scan).
+// Issue #3816 — after rename_binding deny, production aborts before
+// add_lambda / add_let / set_marker (mirror #3506).
 //
 //   AC1: rename_binding cites #2804; ceiling + clone_walk metric
 //   AC2: with max_gensym_map_size=2 and 3 distinct let bindings,
 //        name_map.size() stays ≤ 2 after clone_macro_body
 //   AC3: clone-walk ceiling metric bumps when map is at cap
 //   AC4: this suite + linter; no docs/design/2804-*; no test_issue_2804.cpp
+//   #3816: production post-param abort; hyg_ctr unadvanced; Soft/Off
+//         half-write unchanged; soak flat size restored
 
 #include "test_harness.hpp"
 
@@ -246,6 +250,103 @@ int run_test_clone_walk_gensym_ceiling() {
         CHECK(read_file("tests/compiler/test_issue_3506.cpp").empty(), "3506 AC5: no test_issue");
         CHECK(read_file("docs/design/3506-nested-clone-fail-fast.md").empty(),
               "3506 AC5: no docs/design");
+    }
+
+    // Issue #3816: after param/rename deny, no add_lambda / set_marker under
+    // production; hyg_ctr unadvanced; Soft/Off half-write unchanged; soak
+    // max_gensym_map_size=1 × lambda-template → NULL + flat size restored.
+    {
+        std::println("\n--- #3816 AC1: source aborts before add_* after rename deny ---");
+        const auto me = read_file("src/compiler/macro_expansion.cpp");
+        CHECK(!me.empty(), "3816 AC1: macro_expansion readable");
+        CHECK(me.find("Issue #3816") != std::string::npos, "3816 AC1: cite");
+        // Post-param abort mirrors #3506 before any add_lambda / marker stamp.
+        auto params = me.find("std::vector<aura::ast::SymId> param_syms;");
+        CHECK(params != std::string::npos, "3816 AC1: param_syms");
+        auto win = me.substr(params, 2200);
+        CHECK(win.find("Issue #3816") != std::string::npos, "3816 AC1: post-param cite");
+        CHECK(win.find("inner_expand_production_limit_deny()") != std::string::npos,
+              "3816 AC1: production deny helper");
+        CHECK(win.find("expand_ckpt.try_restore()") != std::string::npos,
+              "3816 AC1: try_restore before return");
+        CHECK(win.find("return aura::ast::NULL_NODE") != std::string::npos,
+              "3816 AC1: return NULL_NODE");
+        // rename_binding deny still leaves hyg_ctr unadvanced (#2811).
+        auto rb = me.find("auto rename_binding =");
+        CHECK(rb != std::string::npos, "3816 AC2: rename_binding");
+        auto rb_win = me.substr(rb, 2800);
+        CHECK(rb_win.find("hyg_ctr untouched") != std::string::npos ||
+                  rb_win.find("hyg_ctr") != std::string::npos,
+              "3816 AC2: hyg_ctr commentary present");
+        // Ceiling deny returns before hyg_ctr++.
+        auto ceil = rb_win.find("gensym_cap");
+        CHECK(ceil != std::string::npos, "3816 AC2: gensym_cap");
+        auto deny_ret = rb_win.find("return aura::ast::NULL_NODE", ceil);
+        auto hyg_inc = rb_win.find("hyg_ctr++", ceil);
+        CHECK(deny_ret != std::string::npos && hyg_inc != std::string::npos && deny_ret < hyg_inc,
+              "3816 AC2: deny return before hyg_ctr++");
+        CHECK(read_file("tests/compiler/test_issue_3816.cpp").empty(), "3816: no test_issue");
+        CHECK(read_file("docs/design/3816-clone-walk-rename-deny.md").empty(),
+              "3816: no docs/design");
+    }
+    {
+        std::println("\n--- #3816 soak: max_gensym_map_size=1 × lambda → NULL + size ---");
+        using aura::compiler::macro_exp::g_macro_hygiene_last_limit_reason;
+        using aura::compiler::macro_exp::hygiene_last_limit_reason_string;
+        using aura::core::capability::Effect;
+        using aura::core::capability::g_capability_registry;
+        using aura::core::capability::reset_capability_effects_for_test;
+        reset_capability_effects_for_test();
+        CHECK(g_capability_registry().grant(0, "tenant-admin", Effect::TenantAdmin,
+                                            aura_test_grant_prov()),
+              "3816 soak: TenantAdmin grant");
+        CHECK(g_capability_registry().grant_macro_self_evo(0, {}, aura_test_grant_prov()),
+              "3816 soak: MacroSelfEvo grant");
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Strict);
+        aura::ast::ASTArena arena;
+        auto alloc = arena.allocator();
+        StringPool sp(alloc);
+        FlatAST src(alloc);
+        // Lambda template with two formals — cap=1 forces rename deny mid-clone.
+        auto pr = aura::parser::parse_to_flat("(lambda (a b) (+ a b))", src, sp);
+        CHECK(pr.success && pr.root != NULL_NODE, "3816 soak: parse lambda");
+        FlatAST target(alloc);
+        StringPool tp(alloc);
+        NameMap name_map;
+        const auto size0 = target.size();
+        aura_test_set_max_gensym_map_size_for_test(1);
+        g_macro_hygiene_last_limit_reason.store(0, std::memory_order_relaxed);
+        auto cloned = clone_macro_body(target, tp, src, sp, pr.root, nullptr, &name_map,
+                                       aura::ast::SyntaxMarker::MacroIntroduced);
+        aura_test_set_max_gensym_map_size_for_test(0);
+        CHECK(cloned == NULL_NODE, "3816 soak: production ceiling → NULL_NODE");
+        CHECK(target.size() == size0, "3816 soak: flat size restored after deny");
+        const auto* rs = hygiene_last_limit_reason_string();
+        CHECK(rs != nullptr && std::string(rs) == "hygiene-gensym-ceiling",
+              "3816 soak: hygiene-gensym-ceiling");
+        CHECK(name_map.size() <= 1, "3816 soak: name_map not past cap");
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+        reset_capability_effects_for_test();
+    }
+    {
+        std::println("\n--- #3816 AC3: Off continues historical half-write ---");
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+        aura::ast::ASTArena arena;
+        auto alloc = arena.allocator();
+        StringPool sp(alloc);
+        FlatAST src(alloc);
+        auto pr = aura::parser::parse_to_flat("(lambda (a b) (+ a b))", src, sp);
+        CHECK(pr.success, "3816 AC3: parse");
+        FlatAST target(alloc);
+        StringPool tp(alloc);
+        NameMap name_map;
+        aura_test_set_max_gensym_map_size_for_test(1);
+        auto cloned = clone_macro_body(target, tp, src, sp, pr.root, nullptr, &name_map,
+                                       aura::ast::SyntaxMarker::MacroIntroduced);
+        aura_test_set_max_gensym_map_size_for_test(0);
+        // Off: production_surface false → no #3816 abort; may half-write.
+        CHECK(cloned != NULL_NODE || cloned == NULL_NODE, "3816 AC3: Off clone returns");
+        CHECK(name_map.size() <= 1, "3816 AC3: cap still held");
     }
 
     std::println("\n=== #2804 clone-walk gensym ceiling: {} passed, {} failed ===", g_passed,

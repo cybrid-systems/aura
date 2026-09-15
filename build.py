@@ -4901,6 +4901,19 @@ def cmd_lint():
             "Issue #3815 move-node parent hygiene linter failed — run python3 scripts/coverage/checks/check_move_node_parent_hygiene_3815.py"
         )
         return r
+    # Issue #3816: clone-walk rename_binding gensym ceiling deny must
+    # abort before add_lambda / add_let / set_marker (mirror #3506).
+    # Extends test_clone_walk_gensym_ceiling.cpp (#81967); no docs/design/.
+    cwrd3816_script = COVERAGE_CHECKS / "check_clone_walk_rename_deny_abort_3816.py"
+    if not cwrd3816_script.exists():
+        fail(f"missing {cwrd3816_script}")
+        return 1
+    r = run([sys.executable, str(cwrd3816_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3816 clone-walk rename deny abort linter failed — run python3 scripts/coverage/checks/check_clone_walk_rename_deny_abort_3816.py"
+        )
+        return r
     # Issue #3802: EXEMPT_2ARG write-file/sys-* host-path isolation under
     # Restricted+MT / Strict — resolve under tenant root from
     # capability_tenant_id_; cross-tenant escape → IsolationDeny SE
@@ -14805,6 +14818,26 @@ def cmd_move_node_parent_hygiene_3815():
     """Issue #3815: mutate:move-node gates MacroIntroduced new_parent."""
     print(f"{B}=== move-node parent hygiene (#3815) ==={N}")
     return cmd_move_node_parent_hygiene_3815_coverage()
+
+
+def cmd_clone_walk_rename_deny_abort_3816_coverage():
+    """Issue #3816: clone-walk rename deny abort before add_*/marker (static)."""
+    print(f"{B}=== clone-walk rename deny abort (#3816) ==={N}")
+    script = COVERAGE_CHECKS / "check_clone_walk_rename_deny_abort_3816.py"
+    if not script.is_file():
+        fail(f"missing {script}")
+        return 1
+    if run([sys.executable, str(script)], cwd=ROOT) != 0:
+        fail("clone-walk rename deny abort (#3816) coverage contract rows failed")
+        return 1
+    ok("clone-walk rename deny abort (#3816) coverage clean")
+    return 0
+
+
+def cmd_clone_walk_rename_deny_abort_3816():
+    """Issue #3816: clone-walk rename_binding deny aborts before add_*."""
+    print(f"{B}=== clone-walk rename deny abort (#3816) ==={N}")
+    return cmd_clone_walk_rename_deny_abort_3816_coverage()
 
 
 def cmd_engine_metrics_hash_overflow_3018_coverage():

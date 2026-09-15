@@ -391,3 +391,4 @@ check_soft_global_critical_remount_3812.py
 check_steal_checkpoint_dual_track_3813.py
 check_sticky_force_empty_residual_3814.py
 check_move_node_parent_hygiene_3815.py
+check_clone_walk_rename_deny_abort_3816.py
