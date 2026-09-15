@@ -67,8 +67,7 @@ def main() -> int:
         must("join_audit_and_se_mid(0)", "AC1 pre-persist join", pre_win)
         must("stk.back().audit_mid", "AC1 pre-persist cp.audit_mid", pre_win)
         must_not(
-            "defuse_version_.load(std::memory_order_relaxed);\n"
-            "        (void)ev_->run_typed_mutation_invariant_audit",
+            "defuse_version_.load(std::memory_order_relaxed);\n        (void)ev_->run_typed_mutation_invariant_audit",
             "AC1 no defuse mid_audit",
             pre_win,
         )
