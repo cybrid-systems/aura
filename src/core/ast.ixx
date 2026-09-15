@@ -5696,6 +5696,20 @@ public:
     // compact_nodes() rebuilds dense 0..live-1 SoA columns,
     // remaps all NodeId references, clears free_list_, and bumps
     // generation_ (invalidates all StableNodeRefs).
+    // Issue #3618 CI: revive slots after recycle_dead_nodes ran with
+    // root still unpublished (parse_to_flat restamp / soft-compact).
+    // Clears free_list_ and restamps every slot to generation_ so
+    // is_free_slot / is_live_node match the tagged payload again.
+    void revive_all_slots_after_null_root_recycle() {
+        free_list_.clear();
+        if (node_gen_.size() < tag_.size())
+            node_gen_.resize(tag_.size(), 0);
+        const auto gen = generation_ == 0 ? std::uint16_t{1} : generation_;
+        for (NodeId id = 0; id < static_cast<NodeId>(tag_.size()); ++id)
+            node_gen_[id] = gen;
+        restamp_lazy_align_enabled_.store(false, std::memory_order_release);
+    }
+
     [[nodiscard]] std::size_t recycle_dead_nodes() {
         auto live = mark_live_nodes();
         std::size_t recycled = 0;
