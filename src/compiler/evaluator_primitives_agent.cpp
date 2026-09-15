@@ -4146,12 +4146,11 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                     // Issue #3251 / #3777: prefer handle.deny_class when stamped
                     // (ScheduleGate at spawn); else legacy qdim mapping.
                     // same shape as orch:spawn-agent (#2079).
-                    const auto dcls =
-                        (handle.deny_class != aura::orch::AgentDenyClass::None)
-                            ? handle.deny_class
-                            : ((handle.quota_dimension == "mailbox-bp")
-                                   ? aura::orch::AgentDenyClass::BpAdmit
-                                   : aura::orch::AgentDenyClass::Quota);
+                    const auto dcls = (handle.deny_class != aura::orch::AgentDenyClass::None)
+                                          ? handle.deny_class
+                                          : ((handle.quota_dimension == "mailbox-bp")
+                                                 ? aura::orch::AgentDenyClass::BpAdmit
+                                                 : aura::orch::AgentDenyClass::Quota);
                     add_deny_class(qkv, dcls, handle.quota_dimension, handle.retry_after_ms,
                                    /*emit_retry=*/false);
                     return build_orch_hash(qkv);

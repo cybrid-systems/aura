@@ -957,8 +957,7 @@ int run_test_security_schedule_gate() {
         const auto& pq = aura::core::resource_quota::process_resource_quota();
         const auto arena_before = pq.agent_arena_usage_bytes.load(std::memory_order_relaxed);
         const auto release_before = pq.agent_arena_release_total.load(std::memory_order_relaxed);
-        const auto fail_before =
-            g_orch_module_stats.spawn_failures.load(std::memory_order_relaxed);
+        const auto fail_before = g_orch_module_stats.spawn_failures.load(std::memory_order_relaxed);
         Scheduler sched(1);
         SchedRunner runner(sched);
         AgentSpec spec;
@@ -1024,8 +1023,7 @@ int run_test_security_schedule_gate() {
         jp.drain_ms = 200;
         (void)join_agent(h, jp);
         // Soft evaluate observes but does not skip body (#3251 soft contract).
-        CHECK(!h.body_acquire_rejected(),
-              "3777 AC4: Soft body not ScheduleGate-skipped");
+        CHECK(!h.body_acquire_rejected(), "3777 AC4: Soft body not ScheduleGate-skipped");
         g_capability_deny_storm_threshold().store(prev_thr, std::memory_order_relaxed);
         reset_orch_security_schedule_counters_for_test();
     }
