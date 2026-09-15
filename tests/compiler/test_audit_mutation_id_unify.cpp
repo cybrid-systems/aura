@@ -733,21 +733,20 @@ static void ac3778_occurrence_persist_mid_joins_ssot() {
     const auto persist = mb.find("aura_outermost_success_persist_occurrence(ev_");
     CHECK(pre != std::string::npos && persist != std::string::npos && pre < persist,
           "#3778 AC1: pre-persist before persist");
-    const auto pre_win = mb.substr(pre > 400 ? pre - 400 : 0, (persist - (pre > 400 ? pre - 400 : 0)));
+    const auto pre_win =
+        mb.substr(pre > 400 ? pre - 400 : 0, (persist - (pre > 400 ? pre - 400 : 0)));
     CHECK(pre_win.find("join_audit_and_se_mid(0)") != std::string::npos,
           "#3778 AC1: pre-persist uses join_audit_and_se_mid");
     CHECK(pre_win.find("stk.back().audit_mid") != std::string::npos,
           "#3778 AC1: pre-persist prefers cp.audit_mid");
-    const auto persist_win =
-        mb.substr(persist > 900 ? persist - 900 : 0, 1100);
+    const auto persist_win = mb.substr(persist > 900 ? persist - 900 : 0, 1100);
     CHECK(persist_win.find("hard_3778") != std::string::npos,
           "#3778 AC1: production mid==0 refuse gate");
     CHECK(persist_win.find("join_audit_and_se_mid(0)") != std::string::npos,
           "#3778 AC1: persist uses join SSOT");
     CHECK(mb.find("densify_stamp_mid_3778") != std::string::npos,
           "#3778 AC2: densify stamp mid SSOT");
-    CHECK(efm.find("steal_stamp_mid_3778") != std::string::npos,
-          "#3778 AC2: steal stamp mid SSOT");
+    CHECK(efm.find("steal_stamp_mid_3778") != std::string::npos, "#3778 AC2: steal stamp mid SSOT");
     CHECK(mb.find("!hard_3778 && mid == 0") != std::string::npos,
           "#3778 AC3: Soft may observe with defuse when join mid is 0");
     const std::filesystem::path invent =

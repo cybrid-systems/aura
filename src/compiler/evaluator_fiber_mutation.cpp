@@ -2761,8 +2761,9 @@ void Evaluator::complete_post_join_linear_enforcement(void* joined_fiber_void) n
         // (join_audit_and_se_mid) under production/Full — never invent
         // defuse_version_ as the Agent join key. Soft/Off keep defuse
         // observe stamp (#2717 drift).
-        const bool steal_hard_3778 = typed_audit::production_defaults_active() ||
-                                     typed_audit::get_strategy() == typed_audit::AuditStrategy::Full;
+        const bool steal_hard_3778 =
+            typed_audit::production_defaults_active() ||
+            typed_audit::get_strategy() == typed_audit::AuditStrategy::Full;
         const std::uint64_t steal_stamp_mid_3778 =
             steal_hard_3778 ? typed_audit::join_audit_and_se_mid(0)
                             : defuse_version_.load(std::memory_order_acquire);
