@@ -480,6 +480,26 @@ struct RegistryStateSnapshot {
 };
 
 // Process-wide grant registry + audit ring.
+
+// Issue #3797: when a tenant loses TenantAdmin, matching cross_grants minted
+// under that principal must be invalidated. workspace_isolation installs the
+// hook (avoids capability_model → workspace_isolation include cycle; same
+// shape as #2154 mutation-epoch bump hook). Soft/Off: revoke still fires the
+// hook, but Soft grants store mint_principal=0 so the wipe is a no-op on
+// Soft-only rows; production check_boundary_ex also re-validates TA.
+using TenantAdminLostHook = void (*)(TenantId tenant) noexcept;
+inline std::atomic<TenantAdminLostHook>& g_tenant_admin_lost_hook() noexcept {
+    static std::atomic<TenantAdminLostHook> h{nullptr};
+    return h;
+}
+inline void set_tenant_admin_lost_hook(TenantAdminLostHook fn) noexcept {
+    g_tenant_admin_lost_hook().store(fn, std::memory_order_release);
+}
+inline void maybe_notify_tenant_admin_lost(TenantId tenant) noexcept {
+    if (auto* fn = g_tenant_admin_lost_hook().load(std::memory_order_acquire))
+        fn(tenant);
+}
+
 struct CapabilityRegistry {
     mutable std::mutex mtx;
     // tenant_id → grants (multiple named grants OR'd for checks)
@@ -1109,9 +1129,24 @@ struct CapabilityRegistry {
     // Issue #2055: revoke stamps revoke_epoch (WorkspaceEpoch Mutation) for audit.
     // If revoke_at_epoch == 0, callers should pass current_mutation_epoch() (or
     // the make_grant_provenance helper) so blame trails stay non-zero.
+    // Issue #3797: after unlocking, if this revoke dropped the last
+    // TenantAdmin bit on `tenant`, notify workspace_isolation so matching
+    // cross_grants (mint_principal == tenant) are erased via the installed
+    // hook (revoke_cross_grants_minted_by / revoke_cross_tenant SSOT).
+    // Lock order: registry mtx must be released before isolation mtx
+    // (isolation → registry is the only nested pair — #3597). Soft/Off:
+    // Soft rows carry mint_principal=0 so the wipe is vacuous for them.
     void revoke(TenantId tenant, std::string_view name, std::uint64_t revoke_at_epoch = 0) {
-        std::lock_guard<std::mutex> lock(mtx);
-        revoke_locked(tenant, name, revoke_at_epoch);
+        bool lost_ta = false;
+        {
+            std::lock_guard<std::mutex> lock(mtx);
+            const bool had_ta = has_effect(effects_for_locked(tenant), Effect::TenantAdmin);
+            revoke_locked(tenant, name, revoke_at_epoch);
+            if (had_ta && !has_effect(effects_for_locked(tenant), Effect::TenantAdmin))
+                lost_ta = true;
+        }
+        if (lost_ta)
+            maybe_notify_tenant_admin_lost(tenant);
     }
 
     // Issue #3126: caller MUST hold `mtx`. Body is the by_tenant

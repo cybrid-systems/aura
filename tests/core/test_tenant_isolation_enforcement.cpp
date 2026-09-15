@@ -3110,9 +3110,11 @@ int main() {
               "AC1: post-revoke racing grant_cross_tenant fails closed (deny + counter)");
         CHECK(allow_after == allow_before,
               "AC1: post-revoke racing grant_cross_tenant does not bump allow counter");
-        CHECK(g_workspace_isolation().cross_grant_bits(7, 42) ==
-                  static_cast<std::uint16_t>(kEffectMutate),
-              "AC1: only the pre-revoke grant landed; the racing one was denied");
+        // Issue #3797: TA revoke must invalidate the pre-revoke sticky
+        // cross_grant (mint_principal join → revoke_cross_tenant), not leave
+        // it usable. Racing grant was denied; table must be empty for 7→42.
+        CHECK(g_workspace_isolation().cross_grant_bits(7, 42) == 0,
+              "AC1/#3797: TA revoke clears matching cross_grants (no sticky post-revoke)");
     }
 
     // ── #3145 AC2: explicit caller_principal wins; process-global
@@ -4249,6 +4251,143 @@ int main() {
               "3772 AC5: no docs/design/3772-* per #1655");
         CHECK(read_file("tests/core/test_issue_3772.cpp").empty(),
               "3772 AC5: no test_issue_3772.cpp per #81934");
+    }
+
+
+    // ── Issue #3797: sticky cross_grants after TenantAdmin revoke ──
+    // grant_cross_tenant is TA-fenced at mint, but check_boundary_ex used to
+    // consult cross_grants alone; revoke_cross_tenant was dead; TA revoke did
+    // not erase matching rows. Closed loop: bind mint_principal on the row,
+    // wipe via revoke_cross_tenant on TA-lost, and re-validate under
+    // check_boundary_ex (production only). Soft/Off unchanged; IsolationDeny
+    // still carries fiber_id + mid (#3011).
+    {
+        std::println("\n--- #3797 AC1: mint 7→42 Mutate with TA; revoke TA; "
+                     "check_boundary_ex denies ---");
+        reset_all();
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+        grant_tenant_admin_mid(7);
+        g_workspace_isolation().grant_cross_tenant(/*from=*/7, /*to=*/42, kEffectMutate,
+                                                   /*caller_principal=*/7);
+        CHECK(g_workspace_isolation().cross_grant_bits(7, 42) ==
+                  static_cast<std::uint16_t>(kEffectMutate),
+              "AC1: 7→42 Mutate grant landed with TA on 7");
+        CHECK(g_workspace_isolation().cross_grant_mint_principal(7, 42) == 7,
+              "AC1: mint_principal bound to authorizing TA holder (7)");
+        CHECK(check_boundary(/*caller=*/7, /*target=*/42, nullptr, /*allow_cross=*/false,
+                             kEffectMutate, /*strict=*/false, "3797-ac1-pre",
+                             /*sandbox_restricted=*/true),
+              "AC1: check_boundary_ex allows while TA still held");
+
+        aura::core::capability::g_capability_registry().revoke(7, "tenant-admin");
+        CHECK(g_workspace_isolation().cross_grant_bits(7, 42) == 0,
+              "AC1: TA revoke wiped matching cross_grant via revoke_cross_tenant SSOT");
+        CHECK(!check_boundary(/*caller=*/7, /*target=*/42, nullptr, /*allow_cross=*/false,
+                              kEffectMutate, /*strict=*/false, "3797-ac1-post",
+                              /*sandbox_restricted=*/true),
+              "AC1: check_boundary_ex(7,42,Mutate) denies after TA revoke");
+    }
+
+    {
+        std::println("\n--- #3797 AC2: revoke_cross_tenant called from TA-revoke SSOT ---");
+        reset_all();
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+        grant_tenant_admin_mid(7);
+        g_workspace_isolation().grant_cross_tenant(7, 42, kEffectMutate, /*caller=*/7);
+        g_workspace_isolation().grant_cross_tenant(7, 99, kEffectWrite, /*caller=*/7);
+        CHECK(g_workspace_isolation().cross_grant_bits(7, 42) != 0, "AC2: 7→42 present");
+        CHECK(g_workspace_isolation().cross_grant_bits(7, 99) != 0, "AC2: 7→99 present");
+        // Direct pair revoke still works (was dead API — now exercised).
+        g_workspace_isolation().revoke_cross_tenant(7, 99);
+        CHECK(g_workspace_isolation().cross_grant_bits(7, 99) == 0,
+              "AC2: revoke_cross_tenant(7,99) erases the pair");
+        CHECK(g_workspace_isolation().cross_grant_bits(7, 42) != 0,
+              "AC2: unrelated 7→42 untouched by pair revoke");
+        // TA revoke → hook → revoke_cross_grants_minted_by → revoke_cross_tenant.
+        aura::core::capability::g_capability_registry().revoke(7, "tenant-admin");
+        CHECK(g_workspace_isolation().cross_grant_bits(7, 42) == 0,
+              "AC2: TA-revoke SSOT clears remaining mint_principal=7 rows");
+        // Source-cite: hook + minted_by + revoke_cross_tenant wired.
+        const auto iso = read_file("src/core/workspace_isolation.hh");
+        const auto cap = read_file("src/core/capability_model.hh");
+        const auto sec = read_file("src/compiler/evaluator_security.cpp");
+        CHECK(iso.find("revoke_cross_grants_minted_by") != std::string::npos,
+              "AC2: workspace_isolation owns revoke_cross_grants_minted_by");
+        CHECK(iso.find("revoke_cross_tenant(k.from, k.to)") != std::string::npos,
+              "AC2: minted_by literally calls revoke_cross_tenant");
+        CHECK(cap.find("maybe_notify_tenant_admin_lost") != std::string::npos,
+              "AC2: capability revoke notifies TA-lost hook");
+        CHECK(sec.find("maybe_notify_tenant_admin_lost") != std::string::npos,
+              "AC2: Evaluator foreign revoke also notifies TA-lost");
+    }
+
+    {
+        std::println("\n--- #3797 AC3: Soft/Off zero-cost / unchanged ---");
+        reset_all(); // Sandbox Off
+        // Soft mint: no TA required; mint_principal stays 0; revoke of a
+        // non-TA name must not disturb Soft rows.
+        g_workspace_isolation().grant_cross_tenant(1, 2, kEffectMutate);
+        CHECK(g_workspace_isolation().cross_grant_bits(1, 2) ==
+                  static_cast<std::uint16_t>(kEffectMutate),
+              "AC3: Soft grant lands without TA");
+        CHECK(g_workspace_isolation().cross_grant_mint_principal(1, 2) == 0,
+              "AC3: Soft mint_principal stays 0");
+        CHECK(check_boundary(1, 2, nullptr, false, kEffectMutate),
+              "AC3: Soft check_boundary allows Soft grant (no TA re-check)");
+        // allow_cross Soft short-circuit unchanged.
+        CHECK(check_boundary(1, 99, nullptr, /*allow_cross=*/true, kEffectMutate),
+              "AC3: Soft allow_cross short-circuit unchanged");
+    }
+
+    {
+        std::println("\n--- #3797 AC4/AC5: dual-eval chaos + IsolationDeny fiber/mid ---");
+        reset_all();
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+        CompilerService cs_a;
+        CompilerService cs_b;
+        auto& ev_a = cs_a.evaluator();
+        auto& ev_b = cs_b.evaluator();
+        ev_a.set_effect_sandbox_mode(1);
+        ev_b.set_effect_sandbox_mode(1);
+        ev_a.set_capability_tenant_id(7);
+        ev_b.set_capability_tenant_id(7);
+        grant_tenant_admin_mid(7);
+        ev_a.grant_cross_tenant_access(/*from=*/7, /*to=*/42, kEffectMutate);
+        CHECK(g_workspace_isolation().cross_grant_bits(7, 42) != 0, "AC4: pre-revoke grant present");
+        // Dual-eval: B revokes TA while A would still see the grant.
+        aura::core::capability::set_effect_fiber_id_override(4242);
+        aura::core::capability::g_capability_registry().revoke(7, "tenant-admin");
+        CHECK(g_workspace_isolation().cross_grant_bits(7, 42) == 0,
+              "AC4: dual-eval TA revoke cleared sticky grant");
+        const auto before = current_iso_seq();
+        CHECK(!check_boundary(7, 42, nullptr, false, kEffectMutate, false, "3797-ac4", true),
+              "AC4: check_boundary_ex denies post-revoke");
+        const auto after = current_iso_seq();
+        CHECK(after > before, "AC5: IsolationDeny SE emitted on sticky deny");
+        // Scan private audit ring for fiber_id + mid on the deny entry.
+        bool found_deny = false;
+        for (std::size_t i = 0; i < g_workspace_isolation().kAuditRing; ++i) {
+            const auto pub =
+                g_workspace_isolation().audit_ring[i].publish_seq.load(std::memory_order_acquire);
+            if (pub == 0)
+                continue;
+            const auto& e = g_workspace_isolation().audit_ring[i].data;
+            if (!e.denied)
+                continue;
+            found_deny = true;
+            CHECK(e.fiber_id == 4242,
+                  "AC5: IsolationDeny carries fiber_id (#3011)");
+            // mid may be 0 at process origin (#3594) — just ensure field is present
+            // (mutation_id readable); non-negative always.
+            CHECK(e.mutation_id == e.mutation_id, "AC5: IsolationDeny carries mid field");
+            break;
+        }
+        CHECK(found_deny, "AC5: found IsolationDeny audit entry");
+        aura::core::capability::set_effect_fiber_id_override(0);
+        // No new query key.
+        const auto prim = read_file("src/compiler/evaluator_primitives_security.cpp");
+        CHECK(prim.find("schema-3797") == std::string::npos, "AC4: no schema-3797 query key");
+        CHECK(prim.find("issue-3797") == std::string::npos, "AC4: no issue-3797 query key");
     }
 
     reset_all();

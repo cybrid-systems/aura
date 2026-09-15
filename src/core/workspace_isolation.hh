@@ -123,13 +123,27 @@ struct CrossTenantKeyHash {
     }
 };
 
+// Issue #3797: cross_grants row binds the minting principal (who held
+// TenantAdmin at mint — caller if armed, else target) so TA revoke can
+// join and erase matching rows. Soft/Off mints leave mint_principal=0
+// (no TA fence) so Soft rows are unaffected by the wipe / re-check.
+// Do NOT invent a second isolation model — same CrossTenantKey table.
+inline constexpr int kCrossGrantTaRevokeIssue = 3797;
+struct CrossTenantGrant {
+    std::uint16_t effect_bits = 0;
+    TenantId mint_principal = 0;
+    std::uint64_t mint_mid = 0; // Mutation epoch at mint (audit join; 0 Soft/Off)
+};
+
+inline void install_cross_grant_ta_lost_hook() noexcept;
+
 struct WorkspaceIsolationPolicy {
     std::mutex mtx;
     TenantPrincipal current{};
     // Owned name storage so string_view in principal stays valid.
     std::string current_name_owned;
-    // from_tenant → (to_tenant → effect bit OR-mask allowed)
-    std::unordered_map<CrossTenantKey, std::uint16_t, CrossTenantKeyHash> cross_grants;
+    // from_tenant → (to_tenant → effect bit OR-mask + mint principal #3797)
+    std::unordered_map<CrossTenantKey, CrossTenantGrant, CrossTenantKeyHash> cross_grants;
     // Legacy counters (also mirrored to atomics)
     std::uint64_t boundary_checks = 0;
     std::uint64_t denials = 0;
@@ -215,20 +229,33 @@ struct WorkspaceIsolationPolicy {
         using ::aura::core::capability::EffectSandboxMode;
         using ::aura::core::capability::g_capability_registry;
         auto& reg = g_capability_registry();
+        // Issue #3797: ensure TA-lost → cross_grants wipe hook is armed
+        // (idempotent). Soft/Off path still short-circuits before any TA
+        // check; mint_principal stays 0 on Soft rows.
+        install_cross_grant_ta_lost_hook();
         if (reg.sandbox_mode.load(std::memory_order_acquire) == EffectSandboxMode::Off) {
             std::lock_guard<std::mutex> lock(mtx);
             CrossTenantKey key{from, to};
-            cross_grants[key] = static_cast<std::uint16_t>(cross_grants[key] | effect_bits);
+            auto& row = cross_grants[key];
+            row.effect_bits = static_cast<std::uint16_t>(row.effect_bits | effect_bits);
+            // Soft/Off: no TA fence → mint_principal stays 0 (AC3).
             g_tenant_isolation_metrics().cross_tenant_capability_grant_total.fetch_add(
                 1, std::memory_order_relaxed);
             return;
         }
         std::lock_guard<std::mutex> isolation_lock(mtx);
         std::lock_guard<std::mutex> registry_lock(reg.mtx);
-        if (!try_grant_cross_tenant_privileged(to, effect_bits, caller_principal, reg))
+        TenantId mint_principal = 0;
+        if (!try_grant_cross_tenant_privileged(to, effect_bits, caller_principal, reg,
+                                              &mint_principal))
             return; // deny: SE + counter emitted inside (#2968 stable); table unchanged
         CrossTenantKey key{from, to};
-        cross_grants[key] = static_cast<std::uint16_t>(cross_grants[key] | effect_bits);
+        auto& row = cross_grants[key];
+        row.effect_bits = static_cast<std::uint16_t>(row.effect_bits | effect_bits);
+        // Issue #3797: bind mint principal (caller if TA, else target) + mid
+        // for revoke join. Re-mint on the same key refreshes the binder.
+        row.mint_principal = mint_principal;
+        row.mint_mid = ::aura::core::current_mutation_epoch();
         g_tenant_isolation_metrics().cross_tenant_capability_grant_total.fetch_add(
             1, std::memory_order_relaxed);
     }
@@ -262,20 +289,29 @@ struct WorkspaceIsolationPolicy {
     // wins; fallback to default_tenant only for legacy direct callers
     // without an Evaluator context — the fallback never widens access.
     // SE reason string + counter names unchanged (#2968 stable).
+    // Issue #3797: on allow, `*out_mint_principal` receives the authorizing
+    // principal (caller if holds TA, else target). Caller MUST pass non-null
+    // under production grant_cross_tenant; Soft/Off never reaches here.
     [[nodiscard]] bool
     try_grant_cross_tenant_privileged(TenantId to, std::uint16_t effect_bits,
                                       TenantId caller_principal,
-                                      ::aura::core::capability::CapabilityRegistry& reg) noexcept {
+                                      ::aura::core::capability::CapabilityRegistry& reg,
+                                      TenantId* out_mint_principal = nullptr) noexcept {
         const TenantId caller = caller_principal != 0
                                     ? caller_principal
                                     : reg.default_tenant.load(std::memory_order_acquire);
         const auto caller_eff = reg.effects_for_locked(caller);
         const auto target_eff = reg.effects_for_locked(to);
-        const bool is_admin =
-            ((caller_eff | target_eff) & ::aura::core::capability::Effect::TenantAdmin) !=
-            ::aura::core::capability::Effect::None;
-        if (is_admin)
+        using ::aura::core::capability::Effect;
+        using ::aura::core::capability::has_effect;
+        const bool caller_ta = has_effect(caller_eff, Effect::TenantAdmin);
+        const bool target_ta = has_effect(target_eff, Effect::TenantAdmin);
+        const bool is_admin = caller_ta || target_ta;
+        if (is_admin) {
+            if (out_mint_principal)
+                *out_mint_principal = caller_ta ? caller : to;
             return true;
+        }
         const auto epoch = ::aura::core::current_mutation_epoch();
         // Issue #3594: epoch=0 stays 0 on the deny surface — joins the
         // grant-mid-refused / mid-fallback-refused refuse rows (mid=0,
@@ -298,11 +334,77 @@ struct WorkspaceIsolationPolicy {
         cross_grants.erase(CrossTenantKey{from, to});
     }
 
+    // Issue #3797: erase every cross_grants row whose mint_principal matches
+    // `mint` (TA-revoke / grant-revoke SSOT). Equivalent bulk form of
+    // revoke_cross_tenant for the mint-principal join — do not invent a
+    // second isolation model. Called from the capability TA-lost hook
+    // (registry mtx already released — lock order isolation-only here).
+    void revoke_cross_grants_minted_by(TenantId mint) noexcept {
+        if (mint == 0)
+            return;
+        // Collect under isolation lock, then revoke_cross_tenant per pair
+        // (AC2: TA-revoke SSOT literally calls revoke_cross_tenant).
+        std::vector<CrossTenantKey> doomed;
+        {
+            std::lock_guard<std::mutex> lock(mtx);
+            doomed.reserve(cross_grants.size());
+            for (const auto& kv : cross_grants) {
+                if (kv.second.mint_principal == mint)
+                    doomed.push_back(kv.first);
+            }
+        }
+        for (const auto& k : doomed)
+            revoke_cross_tenant(k.from, k.to);
+    }
+
     [[nodiscard]] std::uint16_t cross_grant_bits(TenantId from, TenantId to) const noexcept {
         auto it = cross_grants.find(CrossTenantKey{from, to});
         if (it == cross_grants.end())
             return 0;
-        return it->second;
+        return it->second.effect_bits;
+    }
+
+    // Issue #3797: mint principal bound on the row (0 Soft/Off or unset).
+    [[nodiscard]] TenantId cross_grant_mint_principal(TenantId from, TenantId to) const noexcept {
+        auto it = cross_grants.find(CrossTenantKey{from, to});
+        if (it == cross_grants.end())
+            return 0;
+        return it->second.mint_principal;
+    }
+
+
+    // Issue #3797: caller MUST hold `mtx`. Returns true iff the from→to
+    // row covers `required_effects` and (under production) the bound
+    // mint_principal still holds TenantAdmin. On sticky TA-loss, erases
+    // the row under the isolation lock (closed loop; no nested
+    // revoke_cross_tenant — that would re-lock mtx). Soft/Off /
+    // mint_principal==0: bits-only (AC3).
+    [[nodiscard]] bool cross_grant_allows_locked(TenantId from, TenantId to,
+                                                 std::uint16_t required_effects,
+                                                 bool production) noexcept {
+        auto it = cross_grants.find(CrossTenantKey{from, to});
+        if (it == cross_grants.end())
+            return false;
+        const auto held = it->second.effect_bits;
+        const bool bits_ok = (required_effects == 0) ? (held != 0)
+                                                     : ((held & required_effects) == required_effects);
+        if (!bits_ok)
+            return false;
+        if (!production)
+            return true;
+        const TenantId mint = it->second.mint_principal;
+        if (mint == 0)
+            return true; // Soft/legacy row — bits-only
+        using ::aura::core::capability::Effect;
+        using ::aura::core::capability::g_capability_registry;
+        using ::aura::core::capability::has_effect;
+        auto& reg = g_capability_registry();
+        std::lock_guard<std::mutex> registry_lock(reg.mtx);
+        if (has_effect(reg.effects_for_locked(mint), Effect::TenantAdmin))
+            return true;
+        // Sticky post-TA-revoke grant — erase under isolation lock we hold.
+        cross_grants.erase(it);
+        return false;
     }
 
     // Issue #3669: single source for the IsolationDeny reason split —
@@ -536,18 +638,18 @@ struct WorkspaceIsolationPolicy {
                 allowed = false;
             }
             // Same tenant or unscoped target → ok (still check ref provenance).
+            // Issue #3797: production (Restricted/Strict) re-validates that
+            // the minting principal still holds TenantAdmin under registry
+            // mtx (isolation → registry lock order — #3597). Soft/Off skip
+            // the re-check (AC3). Sticky rows whose mint principal lost TA
+            // are erased under the isolation lock we already hold.
+            const bool production = strict || sandbox_restricted;
             if (target == 0 || cur == target) {
                 // fall through to provenance
             } else {
                 // Cross-tenant path: need grant covering required effects
                 // (or any grant when required_effects == 0).
-                const auto held = cross_grant_bits(cur, target);
-                if (required_effects == 0) {
-                    if (held == 0) {
-                        allowed = false;
-                        cap_deny = true;
-                    }
-                } else if ((held & required_effects) != required_effects) {
+                if (!cross_grant_allows_locked(cur, target, required_effects, production)) {
                     allowed = false;
                     cap_deny = true;
                 }
@@ -559,8 +661,9 @@ struct WorkspaceIsolationPolicy {
             // cross-tenant resolve of a foreign-stamped ref is both a
             // capability deny AND a provenance deny — record both reasons.
             if (ref_tenant != 0 && cur != 0 && ref_tenant != cur) {
-                const auto held = cross_grant_bits(cur, ref_tenant);
-                if (held == 0) {
+                // Provenance path: any non-zero grant bits (required=0 sense).
+                if (!cross_grant_allows_locked(cur, ref_tenant, /*required_effects=*/0,
+                                              production)) {
                     allowed = false;
                     prov_deny = true;
                 }
@@ -597,8 +700,25 @@ struct WorkspaceIsolationPolicy {
     }
 };
 
+inline WorkspaceIsolationPolicy& g_workspace_isolation() noexcept;
+
+inline void install_cross_grant_ta_lost_hook() noexcept {
+    static std::atomic<bool> done{false};
+    bool expected = false;
+    if (!done.compare_exchange_strong(expected, true, std::memory_order_acq_rel))
+        return;
+    // Issue #3797: TA-lost → erase matching cross_grants (mint_principal join).
+    // Hook runs AFTER registry mtx is released (CapabilityRegistry::revoke).
+    // Uses revoke_cross_grants_minted_by (bulk equivalent of revoke_cross_tenant
+    // on the mint-principal join — AC2 SSOT).
+    ::aura::core::capability::set_tenant_admin_lost_hook([](TenantId tenant) noexcept {
+        g_workspace_isolation().revoke_cross_grants_minted_by(tenant);
+    });
+}
+
 inline WorkspaceIsolationPolicy& g_workspace_isolation() noexcept {
     static WorkspaceIsolationPolicy p;
+    install_cross_grant_ta_lost_hook();
     return p;
 }
 
