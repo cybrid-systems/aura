@@ -5137,6 +5137,19 @@ def cmd_lint():
             "Issue #3832 apply_closure TLS cache linter failed — run python3 scripts/coverage/checks/check_apply_closure_tls_cache_3832.py"
         )
         return r
+    # Issue #3833: IRFunctionSoA instruction columns Arena-backed via
+    # IrSoaArenaColumn (BMI #3314 offsetof pins kept). Extends
+    # test_ir_soa_layout_stamp; no docs/design / invent.
+    isca3833_script = COVERAGE_CHECKS / "check_ir_soa_column_arena_3833.py"
+    if not isca3833_script.exists():
+        fail(f"missing {isca3833_script}")
+        return 1
+    r = run([sys.executable, str(isca3833_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3833 IR SoA column arena linter failed — run python3 scripts/coverage/checks/check_ir_soa_column_arena_3833.py"
+        )
+        return r
     # Issue #3802: EXEMPT_2ARG write-file/sys-* host-path isolation under
     # Restricted+MT / Strict — resolve under tenant root from
     # capability_tenant_id_; cross-tenant escape → IsolationDeny SE
@@ -15386,6 +15399,26 @@ def cmd_apply_closure_tls_cache_3832():
     return cmd_apply_closure_tls_cache_3832_coverage()
 
 
+def cmd_ir_soa_column_arena_3833_coverage():
+    """Issue #3833: IRFunctionSoA columns Arena-backed (BMI pins kept)."""
+    print(f"{B}=== IR SoA column arena (#3833) ==={N}")
+    script = COVERAGE_CHECKS / "check_ir_soa_column_arena_3833.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = run([sys.executable, str(script)], cwd=ROOT)
+    if r != 0:
+        fail("IR SoA column arena (#3833) coverage contract rows failed")
+        return r
+    ok("IR SoA column arena (#3833) coverage clean")
+    return 0
+
+
+def cmd_ir_soa_column_arena_3833():
+    """Issue #3833: Migrate IR SoA columns off default heap; keep BMI pins."""
+    print(f"{B}=== IR SoA column arena (#3833) ==={N}")
+    return cmd_ir_soa_column_arena_3833_coverage()
+
 
 def cmd_engine_metrics_hash_overflow_3018_coverage():
     """Issue #3018: engine:metrics hash overflow fail-soft (static)."""
@@ -23368,6 +23401,8 @@ def main():
         "dirty-aware-storm-force-full-cap-3831-coverage": cmd_dirty_aware_storm_force_full_cap_3831_coverage,
         "apply-closure-tls-cache-3832": cmd_apply_closure_tls_cache_3832,
         "apply-closure-tls-cache-3832-coverage": cmd_apply_closure_tls_cache_3832_coverage,
+        "ir-soa-column-arena-3833": cmd_ir_soa_column_arena_3833,
+        "ir-soa-column-arena-3833-coverage": cmd_ir_soa_column_arena_3833_coverage,
         "mutate-dispatch-sole-guard-3074-coverage": cmd_mutate_dispatch_sole_guard_3074_coverage,
         "mutate-reg-kind-3452": cmd_mutate_reg_kind_3452_coverage,
         "mutate-reg-kind-3452-coverage": cmd_mutate_reg_kind_3452_coverage,

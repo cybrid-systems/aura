@@ -60,9 +60,15 @@ module;
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <limits>
+#include <memory>
 #include <memory_resource>
+#include <mutex>
+#include <new>
 #include <span>
 #include <string>
+#include <unordered_map>
+#include <utility>
 #include <vector>
 #include <contracts>
 
@@ -315,6 +321,225 @@ static_assert(kIrSoaColumnCount == 10, "IRFunctionSoA must have 10 SoA columns")
 // (the full definition is also exported below).
 export struct BasicBlockSoA;
 
+// ── Issue #3833: Arena-backed IR SoA columns (BMI-stable) ────────
+//
+// FlatAST columns are std::pmr::vector; IRFunctionSoA historically used
+// std::vector (Phase-3 arena migration deferred) so sustained dual-lower
+// × batch dirty still hit the default heap. Migrating mid-struct to
+// std::pmr::vector would grow each column 24→32 and shift #3314 BMI
+// offsetof pins (block_dirty_/instruction_dirty_/generation_).
+//
+// IrSoaArenaColumn keeps the 24-byte std::vector object layout
+// (data/size/cap encoded as pointer + 2×uint32 + resource*), allocates
+// from a per-function monotonic slab (side map; append-only lifetime,
+// not a mid-struct member), and supports grow under Moving densify
+// without inventing a second IR model. Dirty bit columns stay
+// std::pmr::vector (already pmr). blocks_ stays std::vector (CFG meta).
+export inline constexpr int kIrSoaColumnArenaIssue = 3833;
+
+namespace ir_soa_detail {
+
+struct IrSoaColumnSlab {
+    alignas(std::max_align_t) std::byte seed[8192]{};
+    std::pmr::monotonic_buffer_resource resource{seed, sizeof(seed),
+                                                 std::pmr::new_delete_resource()};
+};
+
+inline std::mutex& column_slab_mu() noexcept {
+    static std::mutex mu;
+    return mu;
+}
+
+inline std::unordered_map<const void*, std::unique_ptr<IrSoaColumnSlab>>&
+column_slabs() noexcept {
+    static std::unordered_map<const void*, std::unique_ptr<IrSoaColumnSlab>> m;
+    return m;
+}
+
+inline IrSoaColumnSlab& column_slab_for(const void* key) {
+    std::lock_guard lock(column_slab_mu());
+    auto& m = column_slabs();
+    auto it = m.find(key);
+    if (it == m.end())
+        it = m.emplace(key, std::make_unique<IrSoaColumnSlab>()).first;
+    return *it->second;
+}
+
+inline void drop_column_slab(const void* key) noexcept {
+    std::lock_guard lock(column_slab_mu());
+    column_slabs().erase(key);
+}
+
+inline void rekey_column_slab(const void* from, const void* to) noexcept {
+    if (from == to || from == nullptr || to == nullptr)
+        return;
+    std::lock_guard lock(column_slab_mu());
+    auto& m = column_slabs();
+    auto it = m.find(from);
+    if (it == m.end())
+        return;
+    auto ptr = std::move(it->second);
+    m.erase(it);
+    m[to] = std::move(ptr);
+}
+
+} // namespace ir_soa_detail
+
+// 24-byte arena column: matches sizeof(std::vector<T>) so #3314 pins hold.
+export template <typename T>
+struct IrSoaArenaColumn {
+    static_assert(sizeof(T) > 0);
+    T* data_ = nullptr;
+    std::uint32_t size_ = 0;
+    std::uint32_t capacity_ = 0;
+    std::pmr::memory_resource* resource_ = nullptr;
+
+    using value_type = T;
+    using iterator = T*;
+    using const_iterator = const T*;
+
+    IrSoaArenaColumn() noexcept = default;
+    IrSoaArenaColumn(const IrSoaArenaColumn&) = delete;
+    IrSoaArenaColumn& operator=(const IrSoaArenaColumn&) = delete;
+    IrSoaArenaColumn(IrSoaArenaColumn&& o) noexcept
+        : data_(std::exchange(o.data_, nullptr))
+        , size_(std::exchange(o.size_, 0))
+        , capacity_(std::exchange(o.capacity_, 0))
+        , resource_(std::exchange(o.resource_, nullptr)) {}
+    IrSoaArenaColumn& operator=(IrSoaArenaColumn&& o) noexcept {
+        if (this == &o)
+            return *this;
+        orphan();
+        data_ = std::exchange(o.data_, nullptr);
+        size_ = std::exchange(o.size_, 0);
+        capacity_ = std::exchange(o.capacity_, 0);
+        resource_ = std::exchange(o.resource_, nullptr);
+        return *this;
+    }
+    ~IrSoaArenaColumn() { orphan(); }
+
+    void bind(std::pmr::memory_resource* mr) noexcept { resource_ = mr; }
+
+    [[nodiscard]] std::pmr::memory_resource* memory_resource() const noexcept {
+        return resource_ != nullptr ? resource_ : std::pmr::new_delete_resource();
+    }
+
+    [[nodiscard]] bool uses_arena_resource() const noexcept {
+        return resource_ != nullptr && resource_ != std::pmr::new_delete_resource();
+    }
+
+    [[nodiscard]] std::size_t size() const noexcept { return size_; }
+    [[nodiscard]] std::size_t capacity() const noexcept { return capacity_; }
+    [[nodiscard]] bool empty() const noexcept { return size_ == 0; }
+    [[nodiscard]] T* data() noexcept { return data_; }
+    [[nodiscard]] const T* data() const noexcept { return data_; }
+    T& operator[](std::size_t i) noexcept { return data_[i]; }
+    const T& operator[](std::size_t i) const noexcept { return data_[i]; }
+    iterator begin() noexcept { return data_; }
+    iterator end() noexcept { return data_ + size_; }
+    const_iterator begin() const noexcept { return data_; }
+    const_iterator end() const noexcept { return data_ + size_; }
+    const_iterator cbegin() const noexcept { return data_; }
+    const_iterator cend() const noexcept { return data_ + size_; }
+
+    void orphan() noexcept {
+        if (data_ != nullptr) {
+            for (std::uint32_t i = 0; i < size_; ++i)
+                std::destroy_at(data_ + i);
+            // monotonic deallocate is a no-op; new_delete frees the buffer.
+            memory_resource()->deallocate(data_, static_cast<std::size_t>(capacity_) * sizeof(T),
+                                          alignof(T));
+        }
+        data_ = nullptr;
+        size_ = 0;
+        capacity_ = 0;
+        // keep resource_ so subsequent grows stay on the same slab
+    }
+
+    void reserve(std::size_t n) {
+        if (n <= capacity_)
+            return;
+        if (n > static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max()))
+            throw std::bad_alloc();
+        std::size_t new_cap = capacity_ == 0 ? 8u : static_cast<std::size_t>(capacity_);
+        while (new_cap < n)
+            new_cap *= 2;
+        if (new_cap > static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max()))
+            new_cap = n;
+        auto* mr = memory_resource();
+        T* nd = static_cast<T*>(mr->allocate(new_cap * sizeof(T), alignof(T)));
+        for (std::uint32_t i = 0; i < size_; ++i) {
+            std::construct_at(nd + i, std::move(data_[i]));
+            std::destroy_at(data_ + i);
+        }
+        if (data_ != nullptr)
+            mr->deallocate(data_, static_cast<std::size_t>(capacity_) * sizeof(T), alignof(T));
+        data_ = nd;
+        capacity_ = static_cast<std::uint32_t>(new_cap);
+    }
+
+    void resize(std::size_t n) {
+        resize(n, T{});
+    }
+
+    void resize(std::size_t n, const T& value) {
+        if (n > static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max()))
+            throw std::bad_alloc();
+        if (n < size_) {
+            for (std::uint32_t i = static_cast<std::uint32_t>(n); i < size_; ++i)
+                std::destroy_at(data_ + i);
+            size_ = static_cast<std::uint32_t>(n);
+            return;
+        }
+        reserve(n);
+        while (size_ < n) {
+            std::construct_at(data_ + size_, value);
+            ++size_;
+        }
+    }
+
+    void push_back(const T& value) {
+        reserve(static_cast<std::size_t>(size_) + 1);
+        std::construct_at(data_ + size_, value);
+        ++size_;
+    }
+
+    void push_back(T&& value) {
+        reserve(static_cast<std::size_t>(size_) + 1);
+        std::construct_at(data_ + size_, std::move(value));
+        ++size_;
+    }
+
+    void clear() noexcept {
+        if (data_ == nullptr) {
+            size_ = 0;
+            return;
+        }
+        for (std::uint32_t i = 0; i < size_; ++i)
+            std::destroy_at(data_ + i);
+        size_ = 0;
+    }
+
+    // Deep-copy into this column using *this's bound resource (caller binds first).
+    // orphan() releases any prior buffer via the *current* resource_ before grow.
+    void assign_copy_from(const IrSoaArenaColumn& o) {
+        orphan();
+        if (o.size_ == 0)
+            return;
+        reserve(o.size_);
+        for (std::uint32_t i = 0; i < o.size_; ++i) {
+            std::construct_at(data_ + i, o.data_[i]);
+        }
+        size_ = o.size_;
+    }
+};
+
+static_assert(sizeof(IrSoaArenaColumn<std::uint32_t>) == sizeof(std::vector<std::uint32_t>),
+              "Issue #3833: IrSoaArenaColumn must match std::vector object size "
+              "(keep #3314 BMI offsetof pins)");
+static_assert(sizeof(IrSoaArenaColumn<std::uint8_t>) == sizeof(std::vector<std::uint8_t>),
+              "Issue #3833: IrSoaArenaColumn must match std::vector object size");
+
 // ── IRFunctionSoA ─────────────────────────────────────────────
 //
 // One IRFunction's worth of instructions, stored as separate
@@ -329,16 +554,21 @@ export struct BasicBlockSoA;
 // the other 5 cold in cache. With the AoS struct, every
 // instruction access pulls all 10 fields in.
 //
-// All columns are std::pmr::vector-friendly (could be migrated
-// later). Today: std::vector for simplicity, defer arena
-// migration to Phase 3.
+// Issue #3833: instruction SoA columns are IrSoaArenaColumn (24-byte,
+// Arena/monotonic slab) — closes Phase 3 deferral without shifting
+// #3314 BMI offsetof pins. Dirty columns remain std::pmr::vector.
 export struct IRFunctionSoA {
-    IRFunctionSoA() = default;
-    IRFunctionSoA(const IRFunctionSoA&) = default;
-    IRFunctionSoA& operator=(const IRFunctionSoA&) = default;
-    IRFunctionSoA(IRFunctionSoA&&) noexcept = default;
-    IRFunctionSoA& operator=(IRFunctionSoA&&) noexcept = default;
+    IRFunctionSoA() noexcept = default;
+    IRFunctionSoA(const IRFunctionSoA& other);
+    IRFunctionSoA& operator=(const IRFunctionSoA& other);
+    IRFunctionSoA(IRFunctionSoA&& other) noexcept;
+    IRFunctionSoA& operator=(IRFunctionSoA&& other) noexcept;
     ~IRFunctionSoA() noexcept;
+
+    // Issue #3833: bind all instruction columns to this function's
+    // monotonic slab (side map). Call before sustained grow paths.
+    void bind_column_arena() noexcept;
+    void orphan_instruction_columns() noexcept;
 
     // Issue #463: function identity. Mirrors the AoS
     // IRFunction's name + local_count fields. Needed for
@@ -349,28 +579,28 @@ export struct IRFunctionSoA {
     std::uint8_t marker = 0;
 
     // Opcode stream (the most-frequently-touched column)
-    std::vector<aura::ir::IROpcode> opcodes_;
+    IrSoaArenaColumn<aura::ir::IROpcode> opcodes_;
 
     // 4 operand columns (parallel to opcodes_)
-    std::vector<std::uint32_t> operand0_;
-    std::vector<std::uint32_t> operand1_;
-    std::vector<std::uint32_t> operand2_;
-    std::vector<std::uint32_t> operand3_;
+    IrSoaArenaColumn<std::uint32_t> operand0_;
+    IrSoaArenaColumn<std::uint32_t> operand1_;
+    IrSoaArenaColumn<std::uint32_t> operand2_;
+    IrSoaArenaColumn<std::uint32_t> operand3_;
 
     // Metadata columns (parallel to opcodes_)
-    std::vector<std::uint32_t> source_node_ids_;
-    std::vector<std::uint32_t> type_ids_;
-    std::vector<std::uint32_t> shape_ids_;
-    std::vector<std::uint8_t> linear_ownership_states_;
-    std::vector<std::uint32_t> adt_variant_ids_;
-    std::vector<std::uint32_t> narrow_evidence_;
+    IrSoaArenaColumn<std::uint32_t> source_node_ids_;
+    IrSoaArenaColumn<std::uint32_t> type_ids_;
+    IrSoaArenaColumn<std::uint32_t> shape_ids_;
+    IrSoaArenaColumn<std::uint8_t> linear_ownership_states_;
+    IrSoaArenaColumn<std::uint32_t> adt_variant_ids_;
+    IrSoaArenaColumn<std::uint32_t> narrow_evidence_;
     // Issue #746: CastOp coercion type_tag (mirrors operands[2] on AoS CastOp).
-    std::vector<std::uint8_t> coercion_tags_;
+    IrSoaArenaColumn<std::uint8_t> coercion_tags_;
     // Issue #2825: per-instruction SyntaxMarker (0=User, 1=MacroIntroduced).
     // Mirrors IRInstruction::source_marker for AoS↔SoA hygiene parity.
-    std::vector<std::uint8_t> source_markers_;
+    IrSoaArenaColumn<std::uint8_t> source_markers_;
 
-    // Basic blocks: ranges into the SoA columns
+    // Basic blocks: ranges into the SoA columns (CFG meta; heap OK)
     std::vector<BasicBlockSoA> blocks_;
 
     // Issue #196: per-block dirty bitmask. One bit per block;
@@ -418,6 +648,7 @@ export struct IRFunctionSoA {
     // hint for tight inner loops; consumers can call this
     // when they know an estimate)
     void reserve(std::size_t n) {
+        bind_column_arena(); // Issue #3833: Arena locality on grow
         opcodes_.reserve(n);
         operand0_.reserve(n);
         operand1_.reserve(n);
@@ -628,6 +859,8 @@ export struct BasicBlockSoA {
 // data members (block_dirty_ / instruction_dirty_ / generation_) +
 // sizeof. IRFunctionSoA is not standard-layout (vectors); offsetof is
 // a GNU extension here — ignored under -Wpedantic. Compile-time only.
+// Issue #3833: instruction columns are IrSoaArenaColumn (same object
+// sizeof as std::vector) so these pins stay at 376/408/440/448.
 export inline constexpr int kAppendOnlyLayoutStampIssue = 3314;
 #if defined(__GNUC__)
 #pragma GCC diagnostic push
@@ -784,10 +1017,173 @@ namespace detail {
     }
 } // namespace detail
 
+inline void IRFunctionSoA::bind_column_arena() noexcept {
+    auto* mr = &ir_soa_detail::column_slab_for(this).resource;
+    // If a column already holds a buffer under a different resource, release
+    // it first so we never retarget new_delete storage onto the slab.
+    auto rebind = [mr](auto& col) noexcept {
+        if (col.resource_ != mr && col.data_ != nullptr)
+            col.orphan();
+        col.bind(mr);
+    };
+    rebind(opcodes_);
+    rebind(operand0_);
+    rebind(operand1_);
+    rebind(operand2_);
+    rebind(operand3_);
+    rebind(source_node_ids_);
+    rebind(type_ids_);
+    rebind(shape_ids_);
+    rebind(linear_ownership_states_);
+    rebind(adt_variant_ids_);
+    rebind(narrow_evidence_);
+    rebind(coercion_tags_);
+    rebind(source_markers_);
+}
+
+inline void IRFunctionSoA::orphan_instruction_columns() noexcept {
+    opcodes_.orphan();
+    operand0_.orphan();
+    operand1_.orphan();
+    operand2_.orphan();
+    operand3_.orphan();
+    source_node_ids_.orphan();
+    type_ids_.orphan();
+    shape_ids_.orphan();
+    linear_ownership_states_.orphan();
+    adt_variant_ids_.orphan();
+    narrow_evidence_.orphan();
+    coercion_tags_.orphan();
+    source_markers_.orphan();
+}
+
+inline IRFunctionSoA::IRFunctionSoA(const IRFunctionSoA& other)
+    : name(other.name)
+    , local_count(other.local_count)
+    , marker(other.marker)
+    , blocks_(other.blocks_)
+    , block_dirty_(other.block_dirty_)
+    , instruction_dirty_(other.instruction_dirty_)
+    , generation_(other.generation_) {
+    bind_column_arena();
+    opcodes_.assign_copy_from(other.opcodes_);
+    operand0_.assign_copy_from(other.operand0_);
+    operand1_.assign_copy_from(other.operand1_);
+    operand2_.assign_copy_from(other.operand2_);
+    operand3_.assign_copy_from(other.operand3_);
+    source_node_ids_.assign_copy_from(other.source_node_ids_);
+    type_ids_.assign_copy_from(other.type_ids_);
+    shape_ids_.assign_copy_from(other.shape_ids_);
+    linear_ownership_states_.assign_copy_from(other.linear_ownership_states_);
+    adt_variant_ids_.assign_copy_from(other.adt_variant_ids_);
+    narrow_evidence_.assign_copy_from(other.narrow_evidence_);
+    coercion_tags_.assign_copy_from(other.coercion_tags_);
+    source_markers_.assign_copy_from(other.source_markers_);
+}
+
+inline IRFunctionSoA& IRFunctionSoA::operator=(const IRFunctionSoA& other) {
+    if (this == &other)
+        return *this;
+    name = other.name;
+    local_count = other.local_count;
+    marker = other.marker;
+    blocks_ = other.blocks_;
+    block_dirty_ = other.block_dirty_;
+    instruction_dirty_ = other.instruction_dirty_;
+    generation_ = other.generation_;
+    // Release prior buffers under the old resource, then rebind + deep-copy.
+    orphan_instruction_columns();
+    bind_column_arena();
+    opcodes_.assign_copy_from(other.opcodes_);
+    operand0_.assign_copy_from(other.operand0_);
+    operand1_.assign_copy_from(other.operand1_);
+    operand2_.assign_copy_from(other.operand2_);
+    operand3_.assign_copy_from(other.operand3_);
+    source_node_ids_.assign_copy_from(other.source_node_ids_);
+    type_ids_.assign_copy_from(other.type_ids_);
+    shape_ids_.assign_copy_from(other.shape_ids_);
+    linear_ownership_states_.assign_copy_from(other.linear_ownership_states_);
+    adt_variant_ids_.assign_copy_from(other.adt_variant_ids_);
+    narrow_evidence_.assign_copy_from(other.narrow_evidence_);
+    coercion_tags_.assign_copy_from(other.coercion_tags_);
+    source_markers_.assign_copy_from(other.source_markers_);
+    return *this;
+}
+
+inline IRFunctionSoA::IRFunctionSoA(IRFunctionSoA&& other) noexcept
+    : name(std::move(other.name))
+    , local_count(other.local_count)
+    , marker(other.marker)
+    , opcodes_(std::move(other.opcodes_))
+    , operand0_(std::move(other.operand0_))
+    , operand1_(std::move(other.operand1_))
+    , operand2_(std::move(other.operand2_))
+    , operand3_(std::move(other.operand3_))
+    , source_node_ids_(std::move(other.source_node_ids_))
+    , type_ids_(std::move(other.type_ids_))
+    , shape_ids_(std::move(other.shape_ids_))
+    , linear_ownership_states_(std::move(other.linear_ownership_states_))
+    , adt_variant_ids_(std::move(other.adt_variant_ids_))
+    , narrow_evidence_(std::move(other.narrow_evidence_))
+    , coercion_tags_(std::move(other.coercion_tags_))
+    , source_markers_(std::move(other.source_markers_))
+    , blocks_(std::move(other.blocks_))
+    , block_dirty_(std::move(other.block_dirty_))
+    , instruction_dirty_(std::move(other.instruction_dirty_))
+    , generation_(other.generation_) {
+    other.local_count = 0;
+    other.marker = 0;
+    other.generation_ = 0;
+    // Column buffers live in other's slab — rekey map entry to this address
+    // (std::vector<IRFunctionSoA> reallocation changes the key).
+    // Column resource_ pointers (if set) still address the same ColumnSlab
+    // object after rekey; do not bind_column_arena() here — that would
+    // retarget new_delete-backed buffers onto the slab by mistake.
+    ir_soa_detail::rekey_column_slab(&other, this);
+    detail::clear_single_mark_residual(&other);
+}
+
+inline IRFunctionSoA& IRFunctionSoA::operator=(IRFunctionSoA&& other) noexcept {
+    if (this == &other)
+        return *this;
+    // Drop our slab/columns before stealing other's.
+    orphan_instruction_columns();
+    ir_soa_detail::drop_column_slab(this);
+    name = std::move(other.name);
+    local_count = other.local_count;
+    marker = other.marker;
+    opcodes_ = std::move(other.opcodes_);
+    operand0_ = std::move(other.operand0_);
+    operand1_ = std::move(other.operand1_);
+    operand2_ = std::move(other.operand2_);
+    operand3_ = std::move(other.operand3_);
+    source_node_ids_ = std::move(other.source_node_ids_);
+    type_ids_ = std::move(other.type_ids_);
+    shape_ids_ = std::move(other.shape_ids_);
+    linear_ownership_states_ = std::move(other.linear_ownership_states_);
+    adt_variant_ids_ = std::move(other.adt_variant_ids_);
+    narrow_evidence_ = std::move(other.narrow_evidence_);
+    coercion_tags_ = std::move(other.coercion_tags_);
+    source_markers_ = std::move(other.source_markers_);
+    blocks_ = std::move(other.blocks_);
+    block_dirty_ = std::move(other.block_dirty_);
+    instruction_dirty_ = std::move(other.instruction_dirty_);
+    generation_ = other.generation_;
+    other.local_count = 0;
+    other.marker = 0;
+    other.generation_ = 0;
+    ir_soa_detail::rekey_column_slab(&other, this);
+    detail::clear_single_mark_residual(&other);
+    return *this;
+}
+
 inline IRFunctionSoA::~IRFunctionSoA() noexcept {
     // Heap-reuse of this address must not continue a prior streak
     // (#2774 residual / #2936 abort across batch members).
     detail::clear_single_mark_residual(this);
+    // Issue #3833: orphan column views then release monotonic slab.
+    orphan_instruction_columns();
+    ir_soa_detail::drop_column_slab(this);
 }
 
 #if !AURA_IR_SOA_SINGLE_MARK_DELETED
@@ -1011,6 +1407,7 @@ export struct IRModuleV2 {
                                   std::uint8_t source_marker = 0) {
         auto& func = functions[func_idx];
         auto idx = static_cast<std::uint32_t>(func.size());
+        func.bind_column_arena(); // Issue #3833
         func.opcodes_.push_back(opcode);
         func.operand0_.push_back(operands[0]);
         func.operand1_.push_back(operands[1]);

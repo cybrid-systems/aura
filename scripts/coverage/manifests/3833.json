@@ -1,0 +1,41 @@
+{
+  "issue": 3833,
+  "title": "Issue #3833: IRFunctionSoA columns Arena-backed (BMI pins kept)",
+  "ok": "OK #3833 ir_soa_column_arena: all rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/ir_soa.ixx",
+      "contains": [
+        "Issue #3833",
+        "kIrSoaColumnArenaIssue = 3833",
+        "IrSoaArenaColumn",
+        "bind_column_arena",
+        "column_slab_for"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/ir_soa.ixx",
+      "contains": [
+        "offsetof(IRFunctionSoA, block_dirty_) == 376",
+        "sizeof(IRFunctionSoA) == 448",
+        "view_at",
+        "mark_blocks_dirty"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/compiler/test_ir_soa_layout_stamp.cpp",
+      "contains": ["3833 AC1", "3833 AC2", "3833 AC3", "walk_soa_function_hotpath"]
+    },
+    {
+      "ac": "AC3-forbid",
+      "forbid": [
+        "tests/compiler/test_issue_3833.cpp",
+        "tests/issues/test_issue_3833.cpp",
+        "docs/design/3833-ir-soa-column-arena.md"
+      ]
+    }
+  ]
+}
