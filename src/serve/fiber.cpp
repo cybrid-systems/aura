@@ -14,6 +14,7 @@
 #include "../compiler/mutation_hold_budget.h" // Issue #3071: in-body cancel-arm watchdog
 #include "multi_fiber_mailbox.h"              // Issue #3485: mailbox_hold_slo_live_signal SSOT
 #include "runtime_production_abi.h"           // Issue #3325: production multi-worker latch
+#include "steal_safety.h"                   // Issue #3826: Ready residual sticky gate
 #include "aura_platform.h"
 #include "core/gc_hooks.h"      // Issue #1364
 #include "core/lifetime_pin.hh" // Issue #3023: post-join linear_roots unpin
@@ -476,10 +477,23 @@ extern "C" int aura_hold_budget_poll_inbody_window(void) noexcept {
     // residual for steal/mailbox observers is bounded by one idle/park
     // poll interval. Same-fiber consume already ran above. Cross-fiber
     // never drops unique_lock (TLS Guard only). Soft already returned.
+    //
+    // Issue #3826: edge-free long holds under multi-worker latch are gated
+    // — never unlock foreign unique_lock. After force_release, if the hold
+    // is still live (foreign / no cooperative edge), arm Ready residual
+    // sticky so soak/admit deny + steal RejectHard within bound; join uses
+    // dispose_no_edge_holder → Reclaimed (#3764). Soft already returned.
     if (no_edge_latched) {
-        std::lock_guard<std::mutex> lock(g_fiber_registry_mtx);
-        if (Fiber* f = find_fiber_by_id_locked_held(fid))
-            f->inject_synthetic_mutation_boundary_yield();
+        {
+            std::lock_guard<std::mutex> lock(g_fiber_registry_mtx);
+            if (Fiber* f = find_fiber_by_id_locked_held(fid))
+                f->inject_synthetic_mutation_boundary_yield();
+        }
+        // Issue #3826: arm Ready residual sticky outside registry lock when
+        // the hold is still live (foreign / edge-free). Soft already returned.
+        if (g_hold_budget_no_edge_force_total.load(std::memory_order_relaxed) != 0 &&
+            mutation_hold_live_snapshot().held)
+            (void)steal_safety_production_residual_zero_v_read();
     }
     return 1;
 }
@@ -492,6 +506,10 @@ extern "C" int aura_mutation_hold_no_edge_still_held(void) noexcept;
 // Soft / Off: reject_enabled skip. Happy path: one snapshot.
 // Issue #3764: after inbody, if no-edge still held — same-fiber
 // force_release; else Cancel+Done / mark_reclaimed (join must not hang).
+// Issue #3826: under latched multi-worker, peer poll of an edge-free
+// holder past budget arms Ready residual sticky (admit deny) before
+// foreign dispose → Reclaimed. Never unlock foreign unique_lock.
+// Same-fiber consume → depth0/!held. Soft / !reject_enabled: metric-only.
 extern "C" int aura_hold_budget_poll_busy_path(void) noexcept {
     using namespace aura::compiler;
     if (!mutation_hold_budget_reject_enabled())
@@ -515,6 +533,10 @@ extern "C" int aura_hold_budget_poll_busy_path(void) noexcept {
         aura_evaluator_force_release_outermost_holder(live.fiber_id);
         return exceeded;
     }
+    // Issue #3826: foreign edge-free — gate Ready via residual sticky, then
+    // dispose (Reclaimed/Done). unique_lock stays with the holder until
+    // same-fiber Guard exit / consume.
+    (void)steal_safety_production_residual_zero_v_read();
     std::lock_guard<std::mutex> lock(g_fiber_registry_mtx);
     if (Fiber* f = find_fiber_by_id_locked_held(live.fiber_id))
         (void)dispose_no_edge_holder(f);
@@ -526,8 +548,11 @@ extern "C" int aura_hold_budget_poll_busy_path(void) noexcept {
 // STILL held (no cooperative edge consumed the force). The residual-zero
 // reader consults this under latch → Ready/admit fail closed via the
 // existing sticky bus (#3288 continuous fail-closed + try_acquire
-// production-residual-sticky reject). Weak stub in fiber_bridge.cpp keeps
-// non-evaluator link units building (returns 0 = observe-only).
+// production-residual-sticky reject). Issue #3826: peer busy/inbody poll
+// under multi-worker latch arms that sticky so edge-free long holds are
+// gated within bound (join Reclaimed / same-fiber consume) — never unlock
+// foreign unique_lock. Weak stub in fiber_bridge.cpp keeps non-evaluator
+// link units building (returns 0 = observe-only).
 extern "C" int aura_mutation_hold_no_edge_still_held(void) noexcept {
     return (aura::compiler::g_hold_budget_no_edge_force_total.load(std::memory_order_relaxed) !=
                 0 &&
