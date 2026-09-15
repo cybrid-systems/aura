@@ -68,12 +68,12 @@ using aura::compiler::kSideEffectInheritIssue;
 using aura::compiler::PrimMeta;
 using aura::compiler::security::kEffectMutate;
 using aura::compiler::security::kEffectNone;
+using aura::compiler::types::as_closure_id;
 using aura::compiler::types::as_int;
+using aura::compiler::types::is_closure;
 using aura::compiler::types::is_error;
 using aura::compiler::types::is_int;
 using aura::compiler::types::is_void;
-using aura::compiler::types::is_closure;
-using aura::compiler::types::as_closure_id;
 using aura::compiler::types::make_int;
 using aura::compiler::types::make_void;
 using aura::core::capability::g_capability_effect_metrics;
@@ -884,11 +884,11 @@ int run_test_dispatch_required_effects() {
         const auto vr_id = static_cast<std::uint32_t>(aura::ir::PrimId::VectorRef);
         mod.functions[1].blocks.push_back({0});
         mod.functions[1].blocks.back().instructions = {
-            {aura::ir::IROpcode::Arg, {0, 0, 0, 0}},             // locals[0] = vec
-            {aura::ir::IROpcode::Arg, {1, 1, 0, 0}},             // locals[1] = idx
-            {aura::ir::IROpcode::Arg, {2, 2, 0, 0}},             // locals[2] = val
-            {aura::ir::IROpcode::PrimCall, {vs_id, 0, 3, 3}},    // vector-set!
-            {aura::ir::IROpcode::PrimCall, {vr_id, 0, 2, 4}},    // vector-ref
+            {aura::ir::IROpcode::Arg, {0, 0, 0, 0}},          // locals[0] = vec
+            {aura::ir::IROpcode::Arg, {1, 1, 0, 0}},          // locals[1] = idx
+            {aura::ir::IROpcode::Arg, {2, 2, 0, 0}},          // locals[2] = val
+            {aura::ir::IROpcode::PrimCall, {vs_id, 0, 3, 3}}, // vector-set!
+            {aura::ir::IROpcode::PrimCall, {vr_id, 0, 2, 4}}, // vector-ref
             {aura::ir::IROpcode::Return, {4, 0, 0, 0}},
         };
 

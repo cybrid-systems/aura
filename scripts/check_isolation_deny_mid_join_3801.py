@@ -43,7 +43,7 @@ def main() -> int:
 
     iso = _read("src/core/workspace_isolation.hh")
     sec = _read("src/compiler/evaluator_security.cpp")
-    hooks = _read("src/compiler/typed_mutation_audit_hooks.cpp")
+    _read("src/compiler/typed_mutation_audit_hooks.cpp")
     test = _read("tests/core/test_tenant_isolation_enforcement.cpp")
     build = _read("build.py")
     prim = _read("src/compiler/evaluator_primitives_security.cpp")

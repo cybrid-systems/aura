@@ -50,7 +50,7 @@ def main() -> int:
             fails.append("AC1: PrimCall missing #3798 cite")
         # Fail-closed arm must precede Soft raw (production check before else raw).
         prod = win.find("production_defaults_active()")
-        raw = win.find("(*pfn)(pargs)")
+        win.find("(*pfn)(pargs)")
         # First (*pfn) may be inside invoke_prim lambda; find Soft branch one.
         # Require production_defaults_active appears before the last (*pfn)(pargs).
         last_raw = win.rfind("(*pfn)(pargs)")
