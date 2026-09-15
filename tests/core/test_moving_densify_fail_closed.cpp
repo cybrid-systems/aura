@@ -4258,6 +4258,51 @@ static void ac3782_3_eval_keyed_consult_and_soft_off() {
 }
 
 
+// ── Issue #3783: alloc-path auto-arm Moving publishes densify health ──
+static void ac3783_1_auto_arm_publishes_before_soft_fallback() {
+    const auto arena = read_file("src/core/arena.ixx");
+    CHECK(arena.find("Issue #3783") != std::string::npos, "ac3783_1: arena cites #3783");
+    const auto arm = arena.find("should_production_auto_arm_moving(frag_before)");
+    CHECK(arm != std::string::npos, "ac3783_1: auto-arm site present");
+    const auto win = arena.substr(arm, 5500);
+    CHECK(win.find("publish_last_moving_densify_window") != std::string::npos,
+          "ac3783_1: auto-arm publishes densify window");
+    CHECK(win.find("pin_for_publish") != std::string::npos,
+          "ac3783_1: blocked Moving forces pin_for_publish");
+    // Publish must precede Soft-fallback live_compact(force=false) after Moving.
+    const auto pub = win.find("publish_last_moving_densify_window");
+    const auto soft = win.find("live_compact(/*force=*/false)");
+    CHECK(pub != std::string::npos && soft != std::string::npos && pub < soft,
+          "ac3783_1: publish before Soft fallback after Moving");
+}
+
+static void ac3783_2_phase5_passes_real_blocked_precondition() {
+    const auto mut = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto arena = read_file("src/core/arena.ixx");
+    CHECK(mut.find("Issue #3783") != std::string::npos, "ac3783_2: mut cites #3783");
+    CHECK(mut.find("densify_moving_blocked") != std::string::npos,
+          "ac3783_2: Phase-5 tracks densify_moving_blocked");
+    CHECK(
+        mut.find("/*moving_blocked_precondition=*/densify_moving_blocked") != std::string::npos ||
+            (mut.find("moving_blocked_precondition=*/densify_moving_blocked") != std::string::npos),
+        "ac3783_2: compute_moving_unified_success gets real blocked flag");
+    CHECK(mut.find("/*moving_blocked_precondition=*/false") == std::string::npos,
+          "ac3783_2: no hardcoded false blocked precondition at unified success");
+    CHECK(arena.find("moving_blocked_precondition_any") != std::string::npos,
+          "ac3783_2: AdaptiveCompactResult aggregates blocked");
+}
+
+static void ac3783_3_soft_off_and_no_invent() {
+    const auto arena = read_file("src/core/arena.ixx");
+    // Soft/Off never take production auto-arm Moving arm.
+    CHECK(arena.find("Soft/sandbox never takes this arm") != std::string::npos ||
+              arena.find("should_production_auto_arm_moving") != std::string::npos,
+          "ac3783_3: Soft/Off gated by production auto-arm");
+    CHECK(arena.find("test_issue_3783.cpp") == std::string::npos,
+          "ac3783_3: no invented issue test path");
+}
+
+
 static void ac3647_1_closure_body_slots_registered() {
     std::println("\n--- #3647 AC1: closure body slots enter known-root inventory ---");
     const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
@@ -5205,6 +5250,12 @@ int run_test_moving_densify_fail_closed() {
     ac3782_1_phase5_skips_compact_on_lcp_reject();
     ac3782_2_sticky_recovery_same_skip_order();
     ac3782_3_eval_keyed_consult_and_soft_off();
+
+    std::println("\n=== Issue #3783: auto-arm Moving densify health publish "
+                 "(#3739 residual; extends fail_closed per #81967) ===");
+    ac3783_1_auto_arm_publishes_before_soft_fallback();
+    ac3783_2_phase5_passes_real_blocked_precondition();
+    ac3783_3_soft_off_and_no_invent();
 
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;

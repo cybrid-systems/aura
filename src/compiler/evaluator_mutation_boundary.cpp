@@ -5083,6 +5083,8 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
         std::size_t densify_objects_moved = 0;
         std::size_t densify_untracked_kept = 0;
         bool densify_incomplete_remap = false;
+        // Issue #3783: AdaptiveCompactResult blocked aggregate for unified success.
+        bool densify_moving_blocked = false;
         std::size_t densify_root_remap_fails = 0;
         // Issue #2775: aggregate external roots registered via prep API that
         // were consumed by the last Moving densify window. Sourced from
@@ -5231,6 +5233,8 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
             densify_objects_moved = compact_r.objects_moved_total;
             densify_untracked_kept = compact_r.untracked_kept_total;
             densify_incomplete_remap = compact_r.moving_incomplete_remap_any;
+            // Issue #3783: real blocked flag for unified success (was hardcoded false).
+            densify_moving_blocked = compact_r.moving_blocked_precondition_any;
             // Issue #2775: prep-API aggregate from AdaptiveCompactResult →
             // local for the publish call below. See moving_densify_health.hh
             // for the additive snapshot.external_roots_prep_registered_last
@@ -5632,13 +5636,12 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
         // g_moving_unified_success_total / g_moving_unified_fail_total for
         // Agent dashboards. AC3 Soft / observe-only: predicate runs in all
         // modes (no behavior change for Soft — counters bump either way).
+        // Issue #3783: pass AdaptiveCompactResult blocked aggregate — hardcoded
+        // false left vacuous-green unified success on blocked Moving windows
+        // (pin still true / objects_moved==0). Soft/Off observe-only counters.
         const bool moving_unified_success =
             aura::core::moving_densify_health::compute_moving_unified_success(
-                /*moving_blocked_precondition=*/false, // not folded into AdaptiveCompactResult
-                                                       // yet; pin_contract_held
-                                                       // already covers the
-                                                       // user-visible gate
-                pin_contract_held,
+                /*moving_blocked_precondition=*/densify_moving_blocked, pin_contract_held,
                 /*root_remap_stable_ref_fail_total=*/densify_root_remap_stable_ref_fail,
                 /*root_remap_closure_capture_fail_total=*/densify_root_remap_closure_capture_fail,
                 /*objects_moved=*/static_cast<std::uint64_t>(densify_objects_moved),

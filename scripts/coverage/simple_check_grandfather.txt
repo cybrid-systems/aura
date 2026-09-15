@@ -368,3 +368,4 @@ check_steal_complete_total_ssot_3779.py
 check_mutation_wal_miss_fail_closed_3780.py
 check_densify_this_window_rewrite_3781.py
 check_densify_entry_lcp_skip_compact_3782.py
+check_auto_arm_densify_health_publish_3783.py
