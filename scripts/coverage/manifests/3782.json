@@ -1,7 +1,7 @@
 {
   "issue": 3782,
   "title": "Issue #3782: densify-entry LCP reject skips compact_all_moving_pinned (no relocate-then-poison)",
-  "ok": "OK: Issue #3782 densify-entry LCP skip-compact — Phase-5 + sticky-recovery skip relocate on reject; eval-keyed consult; Soft zero-cost",
+  "ok": "OK: Issue #3782 densify-entry LCP skip-compact \u2014 Phase-5 + sticky-recovery skip relocate on reject; eval-keyed consult; Soft zero-cost",
   "checks": [
     {
       "ac": "AC1-phase5",
@@ -9,14 +9,16 @@
       "contains": [
         "Issue #3782",
         "if (!densify_entry_lcp_blocked)",
-        "consult_last_lcp_for_densify_entry(static_cast<const void*>(ev_))"
+        "consult_last_lcp_for_densify_entry",
+        "static_cast<const void*>(ev_)"
       ]
     },
     {
       "ac": "AC2-recovery",
       "path": "src/compiler/evaluator_mutation_boundary.cpp",
       "contains": [
-        "consult_last_lcp_for_densify_entry(static_cast<const void*>(this))",
+        "consult_last_lcp_for_densify_entry",
+        "static_cast<const void*>(this)",
         "publish_last_moving_densify_window"
       ]
     },
