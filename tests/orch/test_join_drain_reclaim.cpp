@@ -1315,6 +1315,210 @@ static void ac3463_4_no_new_query_key_and_no_invent() {
           "3463 AC4: build.py wires linter");
 }
 
+
+
+// Issue #3776: production Scope retires Done-path husks (compact / live
+// size) so long-run soak does not accumulate O(n) ghosts while name-table
+// already erases (#3598). Soft/Off stay append-only (#3497 AC2/AC3).
+static void ac3776_scope_done_husk_compact() {
+    using aura::orch::AgentScope;
+    using aura::orch::AgentSpec;
+    using aura::orch::StallPolicy;
+    using aura::orch::kScopeDoneHuskCompactIssue;
+    std::println("\n--- #3776: AgentScope Done-path husk compact (production) ---");
+    CHECK(kScopeDoneHuskCompactIssue == 3776, "3776: issue stamp");
+
+    // Force Done-path cleanup without depending on SchedRunner timing:
+    // mark fiber Done, then join_all → complete_agent_join_cleanup → husk.
+    auto force_done = [](AgentHandle& hh) {
+        if (hh.fiber)
+            hh.fiber->set_state(FiberState::Done);
+    };
+
+    // AC1/AC3: N spawn→join Done → size live; directory count == size.
+    {
+        std::println("\n--- #3776 AC1/AC3: production N spawn/join → live size ---");
+        apply_production_audit_defaults();
+        Scheduler sched(1);
+        AgentScope scope(sched);
+        constexpr int N = 8;
+        for (int i = 0; i < N; ++i) {
+            AgentSpec a;
+            a.name = "3776-c" + std::to_string(i);
+            // Non-yielding body (no SchedRunner) — we force Done below.
+            a.body = [] {
+                for (;;) {
+                }
+            };
+            auto& h = scope.spawn(a);
+            CHECK(h.ok && h.fiber, "3776 AC1: spawn ok");
+            force_done(h);
+        }
+        CHECK(scope.size() == static_cast<std::size_t>(N), "3776 AC1: N live before join");
+        (void)scope.join_all(JoinPolicy{.primary_ms = 2000, .drain_ms = 200});
+        CHECK(scope.size() == 0, "3776 AC1: size() live count 0 after clean joins");
+        auto snap = scope.directory_snapshot({});
+        CHECK(snap.entries.size() == scope.size(),
+              "3776 AC3: directory count == live size after clean joins");
+        CHECK(scope.handles().empty(), "3776 AC2: handles_ compacted (not just live-count)");
+        apply_dev_audit_defaults();
+    }
+
+    // AC1 soak: same Scope, repeated spawn→join same name — size bounded.
+    {
+        std::println("\n--- #3776 AC1 soak: same-name spawn/join size bounded ---");
+        apply_production_audit_defaults();
+        Scheduler sched(1);
+        AgentScope scope(sched);
+        for (int i = 0; i < 32; ++i) {
+            AgentSpec a;
+            a.name = "3776-soak";
+            a.body = [] {
+                for (;;) {
+                }
+            };
+            auto& h = scope.spawn(a);
+            CHECK(h.ok && h.fiber, "3776 soak: spawn ok");
+            force_done(h);
+            (void)scope.join_all(JoinPolicy{.primary_ms = 2000, .drain_ms = 100});
+            CHECK(scope.size() == 0, "3776 soak: size 0 after each join");
+        }
+        CHECK(scope.handles().size() <= 1, "3776 soak: raw handles_ bounded");
+        apply_dev_audit_defaults();
+    }
+
+    // AC2: watch_all under production does not retain husk cost — after
+    // clean joins, a subsequent watch_all sees empty aggregate.
+    {
+        std::println("\n--- #3776 AC2: watch_all after clean joins is empty ---");
+        apply_production_audit_defaults();
+        Scheduler sched(1);
+        AgentScope scope(sched);
+        AgentSpec a;
+        a.name = "3776-watch";
+        a.body = [] {
+            for (;;) {
+            }
+        };
+        auto& h = scope.spawn(a);
+        CHECK(h.ok, "3776 AC2: spawn");
+        force_done(h);
+        (void)scope.join_all(JoinPolicy{.primary_ms = 2000, .drain_ms = 100});
+        auto wr = scope.watch_all(/*stall_timeout_ms=*/0, StallPolicy::ReportOnly);
+        CHECK(wr.alive + wr.done + wr.closed + wr.stalled == 0,
+              "3776 AC2: watch_all aggregate 0 after compact");
+        CHECK(scope.size() == 0, "3776 AC2: size still 0");
+        apply_dev_audit_defaults();
+    }
+
+    // AC4: name-table erase unchanged (source-cite #3598 erase still present).
+    {
+        std::println("\n--- #3776 AC4: name-table erase unchanged ---");
+        const auto nth = read_file("src/compiler/agent_name_table.h");
+        CHECK(nth.find("slot_is_reclaimable_clean(it->second)") != std::string::npos,
+              "3776 AC4: name-table still retires clean on find");
+        CHECK(nth.find("impl_->agents_.erase(it)") != std::string::npos,
+              "3776 AC4: name-table erase intact");
+    }
+
+    // AC5: Soft/Off append-only — compact gated; stamp + no invent.
+    {
+        std::println("\n--- #3776 AC5: Soft append-only (no compact) ---");
+        apply_dev_audit_defaults();
+        Scheduler sched(1);
+        AgentScope scope(sched);
+        AgentSpec a;
+        a.name = "3776-soft";
+        a.body = [] {
+            for (;;) {
+            }
+        };
+        auto& h1 = scope.spawn(a);
+        CHECK(h1.ok && h1.fiber, "3776 AC5: first Soft spawn ok");
+        force_done(h1);
+        (void)scope.join_all(JoinPolicy{.primary_ms = 2000, .drain_ms = 100});
+        const auto raw_after_join = scope.handles().size();
+        CHECK(raw_after_join >= 1, "3776 AC5: Soft keeps husk in handles_ (no compact)");
+        auto& h2 = scope.spawn(a);
+        CHECK(h2.ok, "3776 AC5: Soft re-spawn ok");
+        CHECK(scope.size() == raw_after_join + 1, "3776 AC5: Soft size is raw append-only");
+        force_done(h2);
+        const auto scopeh = read_file("src/orch/agent_scope.h");
+        CHECK(scopeh.find("kScopeDoneHuskCompactIssue = 3776") != std::string::npos,
+              "3776 AC5: stamp");
+        CHECK(scopeh.find("compact_done_husks_unlocked_") != std::string::npos,
+              "3776 AC5: compact helper");
+        CHECK(scopeh.find("class AgentRegistry") == std::string::npos,
+              "3776 AC5: no AgentRegistry");
+        CHECK(read_file("tests/orch/test_issue_3776.cpp").empty(),
+              "3776 AC5: no test_issue_3776.cpp");
+    }
+
+    // Cross-plane: after clean join, scope find miss + directory omit.
+    {
+        std::println("\n--- #3776 cross-plane: find miss + directory omit ---");
+        apply_production_audit_defaults();
+        Scheduler sched(1);
+        AgentScope scope(sched);
+        AgentSpec a;
+        a.name = "3776-xplane";
+        a.body = [] {
+            for (;;) {
+            }
+        };
+        auto& h = scope.spawn(a);
+        CHECK(h.ok, "3776 xplane: spawn");
+        force_done(h);
+        (void)scope.join_all(JoinPolicy{.primary_ms = 2000, .drain_ms = 100});
+        CHECK(scope.find("3776-xplane") == nullptr, "3776: scope find miss after clean");
+        CHECK(scope.directory_snapshot({}).entries.empty(), "3776: directory omit after clean");
+        apply_dev_audit_defaults();
+    }
+
+    // Pending (#3497) must NOT be compacted — still deny same-name.
+    {
+        std::println("\n--- #3776: pending slot survives compact (#3497 intact) ---");
+        const char* prev_sb = std::getenv("AURA_SANDBOX");
+        std::string prev_sb_s = prev_sb ? prev_sb : "";
+        ::setenv("AURA_SANDBOX", "restricted", 1);
+        apply_production_audit_defaults();
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Strict);
+        Scheduler sched(1);
+        AgentScope scope(sched);
+        AgentSpec s;
+        s.name = "3776-pending";
+        s.attach_mailbox = true;
+        s.body = [] {
+            for (;;) {
+            }
+        };
+        auto& h = scope.spawn(s);
+        CHECK(h.ok && h.fiber, "3776 pending: spawn");
+        JoinPolicy policy;
+        policy.primary_ms = 50;
+        policy.drain_ms = 0;
+        const auto jr = join_agent(h, policy);
+        CHECK(jr.status == JoinStatus::Reclaimed, "3776 pending: Reclaimed");
+        CHECK(h.reclaimed_deferred_cleanup || h.must_wait_reclaimed, "3776 pending: flags");
+        // join_all compact must not erase pending.
+        (void)scope.join_all(policy);
+        CHECK(scope.size() == 1, "3776 pending: size still 1 after compact pass");
+        auto& h2 = scope.spawn(s);
+        CHECK(!h2.ok, "3776 pending: same-name still denied");
+        if (h.fiber) {
+            h.fiber->request_cancel();
+            h.fiber->set_state(FiberState::Done);
+            h.fiber->note_body_exit_if_reclaimed();
+            h.finish_reclaimed_cleanup_on_dtor();
+        }
+        apply_dev_audit_defaults();
+        if (!prev_sb_s.empty())
+            ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+        else
+            ::unsetenv("AURA_SANDBOX");
+    }
+}
+
 // Issue #3598: Done-path-cleaned slot → same-plane retire. Behavior
 // oracle on a direct table — isolated, no soak. The predicate is state
 // (two bools + is_done + reservation) — this binary runs without
@@ -5815,6 +6019,8 @@ int run_test_join_drain_reclaim() {
     ac3467_name_reuse_fail_closed();
     // Issue #3497: AgentScope::spawn same-name pending (extend-in-place).
     ac3497_scope_spawn_pending_name();
+    // Issue #3776: production Scope Done-husk compact (extend-in-place).
+    ac3776_scope_done_husk_compact();
 
     std::println(
         "\n=== Issue #3463: orch:agent-wait-reclaimed routes through resolve_aura_agent ===");

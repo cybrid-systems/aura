@@ -24,7 +24,8 @@
 //     AgentScope::find on the same Evaluator — resolve fallback, not
 //     a plane merge and not a second owning put.
 //   - scope-handle (AgentScope::handles_): supervision authority;
-//     orch:scope-resolve live find.
+//     orch:scope-resolve live find. Issue #3776: production compacts
+//     Done-path husks (name-table already erases #3598); Soft/Off append-only.
 //   - directory (directory_snapshot / orch:agent-directory): read-only
 //     projection of the same scope tree. Not a second name table.
 //     Issue #3444: Aura orch:scope-child returns that scope_path so
@@ -108,6 +109,12 @@ inline constexpr int kJoinAllTreeJoinIssue = 3643;
 // fail-closes; this is the scope-handle plane. Soft / Off: one
 // production load, existing append (zero extra scan).
 inline constexpr int kScopeSpawnPendingNameIssue = 3497;
+// Issue #3776: production retires Done-path-cleaned husks from the
+// scope-handle plane (compact handles_ + parallel RestartN vectors)
+// so long-run Scope reuse does not accumulate O(n) ghosts while
+// find/directory already skip them (#3598). Soft/Off stay append-only
+// (zero compact cost; #3497 AC2/AC3 green).
+inline constexpr int kScopeDoneHuskCompactIssue = 3776;
 
 // Issue #3444: directory_snapshot encodes root as "root" and children
 // as "0" / "0/1". Same rule for orch:scope-child's returned path.
@@ -397,8 +404,11 @@ public:
     // Issue #2782: true while the bound Scheduler is still alive.
     [[nodiscard]] bool scheduler_alive() const noexcept { return sched_ != nullptr; }
 
-    // Spawn a new agent under this scope. Pushes the handle to the back;
-    // reference remains valid until the scope is destroyed.
+    // Spawn a new agent under this scope. Pushes the handle to the back.
+    // Soft/Off: reference remains valid until the scope is destroyed.
+    // Production (#3776): compact may erase Done husks and reshuffle live
+    // slots on a later spawn / join_all / watch_all — do not hold AgentHandle&
+    // across those calls after a Done-path join (resolve by name instead).
     //
     // Issue #2229: also stores a copy of the spec in specs_ so
     // watch_all(stall_timeout_ms, AgentFailurePolicy) with
@@ -461,6 +471,9 @@ public:
             g_orch_module_stats.spawn_bp_scope_inherited_total.fetch_add(1,
                                                                          std::memory_order_relaxed);
         }
+        // Issue #3776: production retires Done husks before the #3497
+        // pending walk so soak re-spawn does not scan O(history).
+        compact_done_husks_unlocked_();
         // Issue #3497: production + same name already in handles_ with
         // Reclaimed-pending flags → typed deny, do not emplace (ghost
         // handle would steal first-match find). Soft / Off: skip the
@@ -674,6 +687,9 @@ public:
                 jr.status = cr.status;
             }
         };
+        // Issue #3776: drop already-clean Done husks before join so
+        // join_agents cost is not linear in historical Done agents.
+        compact_done_husks_unlocked_();
         if (!handles_.empty()) {
             if (!sched_) {
                 g_orch_module_stats.agent_scope_scheduler_dangling_total.fetch_add(
@@ -685,6 +701,9 @@ public:
                 auto local = join_agents(std::span<AgentHandle>(handles_), policy);
                 apply_on_join_fail_unlocked_(fail ? &*fail : nullptr);
                 fold(std::move(local));
+                // Newly Done-path-cleaned slots retire here (same lifecycle
+                // vocabulary as name-table erase #3598).
+                compact_done_husks_unlocked_();
             }
         }
         if (tree) {
@@ -745,6 +764,8 @@ public:
     [[nodiscard]] ScopeWatchResult watch_all(std::uint32_t stall_timeout_ms = 0,
                                              StallPolicy policy = StallPolicy::Cancel) {
         ScopeEnterGuard g(this, "watch_all");
+        // Issue #3776: production compact before walk (AC2 — not O(history)).
+        compact_done_husks_unlocked_();
         ScopeWatchResult r;
         const bool cancel_on_stall = (policy == StallPolicy::Cancel);
         for (auto& h : handles_) {
@@ -793,6 +814,8 @@ public:
     [[nodiscard]] ScopeWatchResult watch_all(std::uint32_t stall_timeout_ms,
                                              const AgentFailurePolicy& policy) {
         ScopeEnterGuard g(this, "watch_all(policy)");
+        // Issue #3776: production compact before RestartN/index walk.
+        compact_done_husks_unlocked_();
         ScopeWatchResult r;
         // Map AgentFailureAction::ReportOnly / Cancel to the binary
         // watch_agent_liveness cancel_on_stall flag. RestartN uses
@@ -978,13 +1001,16 @@ public:
     // on read path). spans are only valid while the owner serializes further
     // mutate — concurrent spawn may reallocate after return (detect via guard
     // on the call, not a transactional lock).
+    // Issue #3776: production size/empty report live count (exclude
+    // Done-path-cleaned husks that find/directory already skip). Soft/Off
+    // keep raw handles_.size() (append-only contract).
     [[nodiscard]] std::size_t size() const noexcept {
         ScopeEnterGuard g(this, "size");
-        return handles_.size();
+        return live_handle_count_unlocked_();
     }
     [[nodiscard]] bool empty() const noexcept {
         ScopeEnterGuard g(this, "empty");
-        return handles_.empty();
+        return live_handle_count_unlocked_() == 0;
     }
 
     // Read-only access (for advanced supervisor logic + tests).
@@ -1527,6 +1553,59 @@ private:
                 return false;
         }
         return true;
+    }
+
+    // Issue #3776: Done-path husk = reclaimable-clean (#3598) AND ok.
+    // Spawn-failed slots (ok=false) also match slot_is_reclaimable_clean
+    // but are not Done-path ghosts — keep them for supervisor observability
+    // (#3366 size==1). Soft/Off never compact.
+    [[nodiscard]] static bool is_done_path_husk_(const AgentHandle& h) noexcept {
+        return h.ok && aura::orch::slot_is_reclaimable_clean(h);
+    }
+
+    [[nodiscard]] std::size_t live_handle_count_unlocked_() const noexcept {
+        if (!aura::compiler::typed_audit::production_defaults_active())
+            return handles_.size();
+        std::size_t n = 0;
+        for (const auto& h : handles_) {
+            if (!is_done_path_husk_(h))
+                ++n;
+        }
+        return n;
+    }
+
+    // Production: stable-partition erase Done husks from handles_ and the
+    // three RestartN parallel vectors. Soft/Off: no-op (one production load).
+    void compact_done_husks_unlocked_() noexcept {
+        if (!aura::compiler::typed_audit::production_defaults_active())
+            return;
+        const std::size_t n = handles_.size();
+        if (n == 0)
+            return;
+        std::size_t w = 0;
+        for (std::size_t r = 0; r < n; ++r) {
+            if (is_done_path_husk_(handles_[r]))
+                continue;
+            if (w != r) {
+                handles_[w] = std::move(handles_[r]);
+                if (r < specs_.size())
+                    specs_[w] = std::move(specs_[r]);
+                if (r < restart_counts_.size())
+                    restart_counts_[w] = restart_counts_[r];
+                if (r < consecutive_stall_counts_.size())
+                    consecutive_stall_counts_[w] = consecutive_stall_counts_[r];
+            }
+            ++w;
+        }
+        if (w == n)
+            return;
+        handles_.resize(w);
+        if (specs_.size() > w)
+            specs_.resize(w);
+        if (restart_counts_.size() > w)
+            restart_counts_.resize(w);
+        if (consecutive_stall_counts_.size() > w)
+            consecutive_stall_counts_.resize(w);
     }
 
     // Issue #2782: nullable; nulled by Scheduler observer before fiber teardown.
