@@ -11,6 +11,8 @@ module;
 #include "security_capabilities.h" // Issue #2201: kEffectMutate gate on compact
 #include "primitives_meta.h"       // kPrimSecSandboxed / kPrimSafetyMutates
 #include "core/gc_hooks.h"
+#include "core/provenance_tracker.hh" // #3792: occupancy stamp resolve (existing/collision-borrow)
+#include "core/sandbox.hh"            // #3792: is_strict() consult-regime predicate
 #include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 #include <algorithm>                       // std::min
 
@@ -301,9 +303,49 @@ void register_mutation_primitives(PrimRegistrar add, Evaluator& ev) {
                 return make_void();
             auto node = static_cast<aura::ast::NodeId>(as_int(a[0]));
             auto hist = ev.workspace_flat_->mutation_history(node);
+            // Issue #3792: under the consult regime (Strict, or Restricted+MT —
+            // same predicate as require_effect_for_node_id #3722), filter rows
+            // to the caller's occupancy tenant: a row ships only when its
+            // target node is unstamped (caller-stampable, #2056 face) or
+            // occupied by the caller. Foreign-occupied mids never cross the
+            // production face — closes the cross-tenant mid oracle feeding
+            // unguarded (rollback N) (#3722/#3790). Filter-over-deny: Agents
+            // keep same-tenant memory. Soft/Off: zero extra (full dump). No
+            // new query key (AC4).
+            const auto mode = ev.effect_sandbox_mode();
+            const bool strict = mode == 2 || ::aura::core::sandbox::is_strict();
+            const bool restricted = mode == 1;
+            const bool mt = ::aura::core::provenance::hard_capture_tenant_active() ||
+                            ::aura::core::provenance::multi_tenant_env_active();
+            const bool consult = strict || (restricted && mt);
+            const auto caller = ev.capability_tenant_id();
+            // #3792: occupancy tenant resolve — same chain as
+            // require_effect_for_node_id (existing stamp → #2384 last-hygiene
+            // fallback → #3641 same-slot collision borrow). 0 = unset.
+            auto occ_tenant = [](aura::ast::NodeId target) -> std::uint64_t {
+                auto existing = ::aura::core::provenance::existing_stamp_for_node(
+                    static_cast<std::uint32_t>(target));
+                if (existing == 0) {
+                    const auto& hs = ::aura::core::provenance::g_provenance_tracker().last_hygiene;
+                    if (hs.tenant_id != 0 && hs.node_id == static_cast<std::uint32_t>(target))
+                        existing = hs.tenant_id;
+                }
+                if (existing == 0) {
+                    const auto occ = ::aura::core::provenance::occupying_stamp_for_node(
+                        static_cast<std::uint32_t>(target));
+                    if (occ.node_id != 0 && occ.node_id != static_cast<std::uint32_t>(target))
+                        existing = occ.tenant_id;
+                }
+                return existing;
+            };
             EvalValue result = make_void();
             for (auto it = hist.rbegin(); it != hist.rend(); ++it) {
                 auto& rec = *it;
+                if (consult) {
+                    const auto occ = occ_tenant(rec.target_node);
+                    if (occ != 0 && occ != caller)
+                        continue; // #3792: foreign-occupied — mid stays behind the face
+                }
                 auto sid = static_cast<std::uint64_t>(ev.push_string_heap(std::format(
                     "[{}] {}: {}{}", rec.mutation_id, rec.operator_name, rec.summary,
                     rec.status == aura::ast::MutationStatus::RolledBack ? " [rolled-back]" : "")));

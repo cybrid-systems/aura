@@ -7021,6 +7021,22 @@ def cmd_lint():
             "Issue #3791 mailbox lock audit pairing linter failed — run python3 scripts/check_mailbox_lock_audit_pairs_3791.py"
         )
         return r
+    # Issue #3792 (#3722 option-B / #3790 residual): mutation-history dumped
+    # the workspace mutation log with no tenant filter — a Restricted+MT
+    # Agent could learn a foreign mid and fire the unguarded rollback
+    # oracle. Gate pins: the mutation-history face carries the consult-
+    # regime gate + occupancy resolve chain, gate precedes the dump loop,
+    # foreign-row skip present; no new query key / counters / invent.
+    mhf3792_script = ROOT / "scripts" / "check_mutation_history_tenant_filter_3792.py"
+    if not mhf3792_script.exists():
+        fail(f"missing {mhf3792_script}")
+        return 1
+    r = run([sys.executable, str(mhf3792_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3792 mutation-history tenant filter linter failed — run python3 scripts/check_mutation_history_tenant_filter_3792.py"
+        )
+        return r
     # Issue #3649 (#2952/#3096/#2690 residual): the storm-exit edge drives
     # residual coverage-verify. storm_exit_force_full_active now==0 &&
     # prev!=0 branch runs one maybe_coverage_verify_min_dirty when
