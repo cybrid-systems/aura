@@ -718,6 +718,43 @@ static void ac3367_source_cite_and_no_invent() {
     }
 }
 
+
+static void ac3778_occurrence_persist_mid_joins_ssot() {
+    std::println("\n--- #3778 AC1: occurrence persist mid joins SSOT ---");
+    const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto efm = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+    const auto tma = read_file("src/compiler/typed_mutation_audit.h");
+    CHECK(tma.find("kOccurrenceMidJoinSsotIssue = 3778") != std::string::npos,
+          "#3778 AC1: typed_mutation_audit.h stamps #3778");
+    CHECK(mb.find("Issue #3778") != std::string::npos, "#3778 AC1: boundary cites #3778");
+    CHECK(mb.find("outermost-pre-persist") != std::string::npos,
+          "#3778 AC1: pre-persist site present");
+    const auto pre = mb.find("outermost-pre-persist");
+    const auto persist = mb.find("aura_outermost_success_persist_occurrence(ev_");
+    CHECK(pre != std::string::npos && persist != std::string::npos && pre < persist,
+          "#3778 AC1: pre-persist before persist");
+    const auto pre_win = mb.substr(pre > 400 ? pre - 400 : 0, (persist - (pre > 400 ? pre - 400 : 0)));
+    CHECK(pre_win.find("join_audit_and_se_mid(0)") != std::string::npos,
+          "#3778 AC1: pre-persist uses join_audit_and_se_mid");
+    CHECK(pre_win.find("stk.back().audit_mid") != std::string::npos,
+          "#3778 AC1: pre-persist prefers cp.audit_mid");
+    const auto persist_win =
+        mb.substr(persist > 900 ? persist - 900 : 0, 1100);
+    CHECK(persist_win.find("hard_3778") != std::string::npos,
+          "#3778 AC1: production mid==0 refuse gate");
+    CHECK(persist_win.find("join_audit_and_se_mid(0)") != std::string::npos,
+          "#3778 AC1: persist uses join SSOT");
+    CHECK(mb.find("densify_stamp_mid_3778") != std::string::npos,
+          "#3778 AC2: densify stamp mid SSOT");
+    CHECK(efm.find("steal_stamp_mid_3778") != std::string::npos,
+          "#3778 AC2: steal stamp mid SSOT");
+    CHECK(mb.find("!hard_3778 && mid == 0") != std::string::npos,
+          "#3778 AC3: Soft may observe with defuse when join mid is 0");
+    const std::filesystem::path invent =
+        std::filesystem::path(AURA_SOURCE_DIR) / "tests" / "compiler" / "test_issue_3778.cpp";
+    CHECK(!std::filesystem::exists(invent), "#3778 AC4: no test_issue_3778.cpp");
+}
+
 } // namespace
 
 int run_test_audit_mutation_id_unify() {
@@ -740,6 +777,7 @@ int run_test_audit_mutation_id_unify() {
     ac3546_3_enter_zero_is_noop();
     ac3546_4_source_cite_no_invent();
     ac3599_1_refuse_class_joinable();
+    ac3778_occurrence_persist_mid_joins_ssot();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

@@ -5533,6 +5533,19 @@ def cmd_lint():
             "Issue #3653 outermost persist audit-order linter failed — run python3 scripts/coverage/checks/check_outermost_persist_audit_order_3653.py"
         )
         return r
+    # Issue #3778: Occurrence / pre-persist / densify TypeLinear mid joins
+    # Typed/SE/grant/WAL SSOT (never defuse_version_ under production).
+    # Soft/Off may keep defuse observe stamps. Linter after #3653.
+    omj3778_script = COVERAGE_CHECKS / "check_occurrence_mid_join_ssot_3778.py"
+    if not omj3778_script.exists():
+        fail(f"missing {omj3778_script}")
+        return 1
+    r = run([sys.executable, str(omj3778_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3778 occurrence mid-join SSOT linter failed — run python3 scripts/coverage/checks/check_occurrence_mid_join_ssot_3778.py"
+        )
+        return r
     # Issue #3656: caller partial absorbs callee cone (block units, not
     # define count). Residual of #3550 (precompute early-return on empty
     # calls) + #3584 (units fixed, cone still invisible). Soft observe.
