@@ -4811,6 +4811,21 @@ def cmd_lint():
             "Issue #3809 Boundary Soft Densify restamp linter failed — run python3 scripts/coverage/checks/check_boundary_soft_densify_restamp_3809.py"
         )
         return r
+    # Issue #3810: Soft/Force live_compact gen-bump must use this-window
+    # freelist activity (delta recycle hits / holes closed / saved_bytes),
+    # not lifetime recycle_hits_ (perpetual Soft pin wipe). Soft stays
+    # non-Moving. Extends test_gc_compact_sweep_batch.cpp (#81967); no
+    # docs/design/ (#1655).
+    sgbt3810_script = COVERAGE_CHECKS / "check_soft_gen_bump_this_window_3810.py"
+    if not sgbt3810_script.exists():
+        fail(f"missing {sgbt3810_script}")
+        return 1
+    r = run([sys.executable, str(sgbt3810_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3810 Soft gen-bump this-window linter failed — run python3 scripts/coverage/checks/check_soft_gen_bump_this_window_3810.py"
+        )
+        return r
     # Issue #3802: EXEMPT_2ARG write-file/sys-* host-path isolation under
     # Restricted+MT / Strict — resolve under tenant root from
     # capability_tenant_id_; cross-tenant escape → IsolationDeny SE

@@ -1129,7 +1129,7 @@ inline void stamp_last_moving_compact_now() noexcept {
 
 export struct LiveCompactResult {
     std::size_t bytes_reclaimed = 0; // bytes saved by defrag_impl (buffer resize)
-    std::size_t slots_recycled = 0;  // freelist slots recycled (free_slot + recycle_hits)
+    std::size_t slots_recycled = 0;  // this-window freelist (#3810: delta hits + holes closed)
     std::uint64_t new_gen = 0;       // generation after restamp (0 = no restamp)
     LiveCompactMode mode = LiveCompactMode::Soft;
     bool soft_gated = false;       // true if Soft mode skipped (render hotpath / boundary held)
@@ -1379,7 +1379,7 @@ export struct KnownRootsHook {
 
 // Issue #2089: optional layout-change callback hook. Fires on each
 // successful live_compact that actually bumps the generation counter (i.e.
-// saved_bytes > 0 || relocated > 0) — never on soft-gated no-ops or on the
+// saved_bytes > 0 || this_window_relocated > 0 — #3810) — never on soft-gated no-ops or on the
 // initial zero-gen state. Default-wired to pin invalidate (already in-path
 // via invalidate_all_pins_for_arena) — HotUpdate / Shape hooks can install
 // their own observer here without assuming any pointer rewrite happened.
@@ -1550,8 +1550,8 @@ public:
 
     // Issue #2089 / #3124: optional layout-change callback. Fires exactly when
     // live_compact(Soft|Force) actually bumps the generation counter
-    // (saved_bytes > 0 || relocated > 0) — NEVER on soft-gated no-ops or
-    // on the initial zero-gen state. Allows HotUpdate / Shape / Fiber
+    // (saved_bytes > 0 || this_window_relocated > 0 — #3810) — NEVER on soft-gated
+    // no-ops or on the initial zero-gen state. Allows HotUpdate / Shape / Fiber
     // hooks to react to layout shifts without assuming any pointer
     // rewrite happened (live_compact Soft/Force is non-moving — see
     // LiveCompactResult::moved_live_objects and the module-level
@@ -2598,13 +2598,18 @@ public:
         stats_.live_objects_marked_total += total_marked;
 
         // ── Relocate (freelist protocol) ──
-        const std::size_t holes = small_pool_.free_slot_count();
-        const std::size_t reuses = small_pool_.recycle_hits();
-        const std::size_t relocated = holes + reuses;
-        stats_.live_relocate_count += relocated;
-        stats_.live_compact_freelist_hits_total += relocated;
-        aura::core::arena_policy::record_live_relocate(relocated);
-        result.slots_recycled = relocated;
+        // Issue #3810: Soft/Force gen-bump must use this-window freelist
+        // activity (delta recycle hits since last Soft/Force account /
+        // holes closed this call / saved_bytes), NOT lifetime recycle_hits_
+        // (never reset → perpetual Soft gen bump + wipe-all pins after the
+        // first freelist hit ever). Soft stays non-Moving. Lifetime
+        // recycle_hits_ remains a metrics counter via recycle_hits().
+        const std::size_t holes_at_entry = small_pool_.free_slot_count();
+        const std::size_t recycle_hits_at_entry = small_pool_.recycle_hits(); // snapshot
+        const std::size_t recycle_delta =
+            recycle_hits_at_entry >= live_compact_recycle_hits_baseline_
+                ? recycle_hits_at_entry - live_compact_recycle_hits_baseline_
+                : recycle_hits_at_entry;
 
         // ── Compact tail ──
         const auto frag_before = stats().fragmentation_ratio();
@@ -2622,13 +2627,33 @@ public:
                 static_cast<std::size_t>((frag_before - frag_after) * 10000.0);
         }
 
+        // Holes closed this Soft/Force call (defrag/rebind may clear freelist).
+        const std::size_t holes_after = small_pool_.free_slot_count();
+        const std::size_t holes_closed =
+            holes_at_entry > holes_after ? (holes_at_entry - holes_after) : 0;
+        // Mid-Soft recycle (rare) folds into the same this-window total.
+        const std::size_t recycle_delta_mid =
+            small_pool_.recycle_hits() >= recycle_hits_at_entry
+                ? small_pool_.recycle_hits() - recycle_hits_at_entry
+                : 0;
+        const std::size_t this_window_relocated =
+            recycle_delta + recycle_delta_mid + holes_closed;
+        stats_.live_relocate_count += this_window_relocated;
+        stats_.live_compact_freelist_hits_total += this_window_relocated;
+        aura::core::arena_policy::record_live_relocate(this_window_relocated);
+        result.slots_recycled = this_window_relocated;
+        // Advance baseline so quiet Softs do not re-see prior lifetime hits.
+        live_compact_recycle_hits_baseline_ = small_pool_.recycle_hits();
+
         // ── Generation restamp + LifetimePin remap + invalidation ──
         // Moving always restamps when any object moved (even if freelist quiet).
         // Issue #2265 Phase 3: remap live pins to follow densified addresses
         // BEFORE layout-change callbacks. Remapped pins keep valid; non-remapped
         // pins are still invalidated (existing fail-closed policy). The remap
         // pass is Moving-only — Soft/Force paths skip it (AC3 zero-cost).
-        if (saved_bytes > 0 || relocated > 0 || result.moved_live_objects) {
+        // Issue #3810: predicate uses this_window_relocated / saved_bytes —
+        // never raw lifetime recycle_hits_.
+        if (saved_bytes > 0 || this_window_relocated > 0 || result.moved_live_objects) {
             // Issue #3633: cover sets for the window-exit moved-vs-covered
             // reconciliation (dedup by old address at the reconciliation
             // site; canaries are observe-only #3017/#3055 — not a family).
@@ -4073,6 +4098,9 @@ public:
     // live_compact). arena_id_ keys LifetimePin invalidation to THIS arena.
     std::uint64_t arena_id_ = 0;
     std::atomic<std::uint64_t> generation_{0};
+    // Issue #3810: last Soft/Force-accounted small-pool recycle_hits_ so
+    // gen-bump sees this-window delta only (lifetime counter never resets).
+    std::size_t live_compact_recycle_hits_baseline_ = 0;
 };
 
 // Issue #685: aggregate auto-compact policy stats for observability.
