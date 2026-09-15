@@ -33,6 +33,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
 #include <fstream>
 #include <string>
 #include <string_view>
@@ -2219,6 +2220,175 @@ static void ac3640_gate_single_spine_source_cite() {
           "3640 AC2: #3396 v2 linter still wired");
 }
 
+
+// ── Issue #3773: require_effect_on_ref must refuse stale gen/COW under
+// Restricted/Strict before any effect is recorded (resolve_stamped Stage 2
+// parity). Soft/Off: zero extra cost.
+static void ac3773_1_restricted_stale_ref_denies_before_effect() {
+    std::println("\n--- #3773 AC1: Restricted stamp→bump→on_ref(stale) denies ---");
+    reset_all();
+    bump_mutation_epoch(1);
+    const auto me = current_mutation_epoch();
+    // Registry grant (same as #3724 AC2) — bypasses #3362 TA fence so the
+    // deny under test is stale-ref, not grant-effect-needs-explicit-tenant-admin.
+    using aura::core::capability::make_grant_provenance;
+    g_capability_registry().grant(7, "mut-3773-ac1",
+                                  static_cast<Effect>(kEffectMutate),
+                                  make_grant_provenance(me == 0 ? 1 : me, true, 0, 0));
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_effect_sandbox_mode(1); // Restricted
+    ev.set_capability_tenant_id(7);
+    CHECK(cs.eval("(set-code \"(define (f x) (+ x 1))\")").has_value(), "3773 AC1: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3773 AC1: eval-current");
+    auto* ws = ev.workspace_flat();
+    CHECK(ws != nullptr, "3773 AC1: workspace");
+    auto root = cs.eval("(query:root)");
+    CHECK(root.has_value() && aura::compiler::types::is_int(*root), "3773 AC1: query:root");
+    const auto nid = static_cast<std::uint32_t>(aura::compiler::types::as_int(*root));
+    auto stale = ev.export_ref(nid);
+    CHECK(stale.tenant_id == 7, "3773 AC1: stamped tenant");
+    CHECK(stale.id == nid, "3773 AC1: stamped id");
+    const auto gen_before = stale.gen;
+    ws->bump_generation();
+    CHECK(!ws->get_safe(stale).has_value(), "3773 AC1: get_safe fails after gen bump");
+    const auto seq_se = current_seq();
+    const auto aud0 = ev.mutation_audit_seq();
+    const bool ok = ev.require_effect_on_ref(static_cast<std::uint16_t>(kEffectMutate),
+                                             "3773-ac1-stale", stale);
+    CHECK(!ok, "3773 AC1: on_ref(stale) → false");
+    const auto& err = ev.last_mutate_error();
+    CHECK(err.find("stale-ref") != std::string::npos,
+          std::format("3773 AC1: last_mutate_error_ contains stale-ref (got: {})", err));
+    // SE: EffectDeny + stale-ref, joinable mid+node+tenant+fiber+Mutation epoch.
+    const auto& ring = g_security_event_ring();
+    bool se_join = false;
+    for (std::uint64_t s = seq_se; s < ring.seq.load(); ++s) {
+        const auto& e = ring.ring[s % ring.ring.size()];
+        if (static_cast<int>(e.kind) !=
+                static_cast<int>(aura::core::security_event::SecurityEventKind::EffectDeny) ||
+            e.seq != s)
+            continue;
+        if (std::string{e.op} != "3773-ac1-stale")
+            continue;
+        se_join = true;
+        CHECK(e.tenant_id == 7, "3773 AC1: SE tenant joins stamped ref");
+        CHECK(e.mutation_id == current_mutation_epoch(),
+              "3773 AC1: SE mid is Mutation epoch");
+        CHECK(e.epoch == current_mutation_epoch(), "3773 AC1: SE epoch join");
+        CHECK(std::string{e.reason}.find("stale-ref") != std::string::npos,
+              "3773 AC1: SE reason is stale-ref");
+        std::println("  SE deny: op='{}' tenant={} mid={} epoch={} fiber={} reason='{}'", e.op,
+                     e.tenant_id, e.mutation_id, e.epoch, e.fiber_id, e.reason);
+    }
+    CHECK(se_join, "3773 AC1: EffectDeny SE row present");
+    // Zero mutate body / no phantom allow row for this op.
+    const auto aud1 = ev.mutation_audit_seq();
+    for (std::uint64_t s = aud0; s < aud1; ++s) {
+        const auto& m = ev.mutation_audit_entry_at(s);
+        if (std::string{m.op} != "3773-ac1-stale")
+            continue;
+        CHECK(m.effect_denied, "3773 AC1: audit row is deny (no phantom allow)");
+    }
+    (void)gen_before;
+}
+
+static void ac3773_2_fresh_stamped_ref_still_passes() {
+    std::println("\n--- #3773 AC2: fresh stamped ref still passes with Mutate grant ---");
+    reset_all();
+    bump_mutation_epoch(1);
+    const auto me = current_mutation_epoch();
+    using aura::core::capability::make_grant_provenance;
+    g_capability_registry().grant(7, "mut-3773-ac2",
+                                  static_cast<Effect>(kEffectMutate),
+                                  make_grant_provenance(me == 0 ? 1 : me, true, 0, 0));
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_effect_sandbox_mode(1);
+    ev.set_capability_tenant_id(7);
+    CHECK(cs.eval("(set-code \"(define (g x) x)\")").has_value(), "3773 AC2: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3773 AC2: eval-current");
+    auto root = cs.eval("(query:root)");
+    CHECK(root.has_value() && aura::compiler::types::is_int(*root), "3773 AC2: query:root");
+    const auto nid = static_cast<std::uint32_t>(aura::compiler::types::as_int(*root));
+    auto fresh = ev.export_ref(nid);
+    CHECK(fresh.tenant_id == 7, "3773 AC2: stamp is caller");
+    const bool ok = ev.require_effect_on_ref(static_cast<std::uint16_t>(kEffectMutate),
+                                             "3773-ac2-fresh", fresh);
+    CHECK(ok, "3773 AC2: fresh stamped on_ref allows when capability held");
+}
+
+static void ac3773_3_soft_off_skips_freshness_gate() {
+    std::println("\n--- #3773 AC3: Soft/Off zero extra cost (stale still reaches require_effect) ---");
+    reset_all();
+    bump_mutation_epoch(1);
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_effect_sandbox_mode(0); // Off
+    ev.set_capability_tenant_id(0);
+    CHECK(cs.eval("(set-code \"(define (h x) x)\")").has_value(), "3773 AC3: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3773 AC3: eval-current");
+    auto* ws = ev.workspace_flat();
+    CHECK(ws != nullptr, "3773 AC3: workspace");
+    auto root = cs.eval("(query:root)");
+    CHECK(root.has_value() && aura::compiler::types::is_int(*root), "3773 AC3: query:root");
+    const auto nid = static_cast<std::uint32_t>(aura::compiler::types::as_int(*root));
+    auto stale = ev.export_ref(nid);
+    ws->bump_generation();
+    CHECK(!ws->get_safe(stale).has_value(), "3773 AC3: get_safe fails after bump");
+    const auto seq_se = current_seq();
+    // Soft/Off: freshness gate skipped — require_effect still allows (Off permissive).
+    const bool ok = ev.require_effect_on_ref(static_cast<std::uint16_t>(kEffectMutate),
+                                             "3773-ac3-soft", stale);
+    CHECK(ok, "3773 AC3: Soft/Off on_ref(stale) still allows (zero-cost gate skip)");
+    // No EffectDeny stale-ref SE from the #3773 gate under Soft.
+    const auto& ring = g_security_event_ring();
+    for (std::uint64_t s = seq_se; s < ring.seq.load(); ++s) {
+        const auto& e = ring.ring[s % ring.ring.size()];
+        if (e.seq != s)
+            continue;
+        if (std::string{e.op} != "3773-ac3-soft")
+            continue;
+        CHECK(!(static_cast<int>(e.kind) ==
+                    static_cast<int>(aura::core::security_event::SecurityEventKind::EffectDeny) &&
+                std::string{e.reason}.find("stale-ref") != std::string::npos),
+              "3773 AC3: Soft must not emit #3773 EffectDeny stale-ref");
+    }
+}
+
+static void ac3773_4_source_cite_and_no_invent() {
+    std::println("\n--- #3773 AC4: source-cite + no invent + no new query key ---");
+    const auto sec = read_file("src/compiler/evaluator_security.cpp");
+    CHECK(sec.find("Issue #3773") != std::string::npos, "3773 AC4: security cites #3773");
+    CHECK(sec.find("require_effect_on_ref") != std::string::npos, "3773 AC4: on_ref present");
+    // Freshness gate uses get_safe (resolve_stamped Stage 2) under production_face.
+    const auto on_ref = sec.find("bool Evaluator::require_effect_on_ref");
+    CHECK(on_ref != std::string::npos, "3773 AC4: on_ref definition");
+    const auto body = sec.substr(on_ref, 1800);
+    CHECK(body.find("get_safe") != std::string::npos, "3773 AC4: on_ref consults get_safe");
+    CHECK(body.find("production_face") != std::string::npos ||
+              body.find("effect_sandbox_mode()") != std::string::npos,
+          "3773 AC4: Soft/Off gated");
+    CHECK(body.find("stale-ref") != std::string::npos, "3773 AC4: stale-ref reason reused");
+    CHECK(body.find("EffectDeny") != std::string::npos, "3773 AC4: EffectDeny SE on stale");
+    // No invent test_issue_3773.cpp; no docs/design/3773-*.
+    CHECK(read_file("tests/compiler/test_issue_3773.cpp").empty() &&
+              read_file("tests/core/test_issue_3773.cpp").empty() &&
+              read_file("tests/issues/test_issue_3773.cpp").empty(),
+          "3773 AC4: no invented test_issue_3773.cpp");
+    const std::filesystem::path docs_design = "docs/design";
+    std::error_code ec;
+    if (std::filesystem::is_directory(docs_design, ec)) {
+        for (const auto& entry : std::filesystem::directory_iterator(docs_design, ec)) {
+            const auto name = entry.path().filename().string();
+            CHECK(name.find("3773-") == std::string::npos,
+                  std::string("3773 AC4: no docs/design/") + name + " (forbidden per #1655)");
+        }
+    }
+    // No new query key in evaluator_security for this residual.
+    CHECK(body.find("query:") == std::string::npos, "3773 AC4: no new query key in on_ref body");
+}
+
 int run_test_require_effect_auto_isolation() {
     std::println("=== Issue #2490: require_effect auto-enforces isolation ===");
     ac1_restricted_unset_principal_denies();
@@ -2315,6 +2485,11 @@ int run_test_require_effect_auto_isolation() {
     ac3630_5_source_cite_and_no_invent();
     std::println("\n=== Issue #3640: add_mutate gate single spine (wrap != tenant) ===");
     ac3640_gate_single_spine_source_cite();
+    std::println("\n=== Issue #3773: on_ref stale gen/COW freshness ===");
+    ac3773_1_restricted_stale_ref_denies_before_effect();
+    ac3773_2_fresh_stamped_ref_still_passes();
+    ac3773_3_soft_off_skips_freshness_gate();
+    ac3773_4_source_cite_and_no_invent();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
