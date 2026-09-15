@@ -1025,9 +1025,8 @@ int run_test_remount_force_deopt() {
     ac3812_4_soak_no_amplify();
     if (g_failed)
         return 1;
-    std::println(
-        "remount force-deopt #2503/#2894/#3548/#3578/#3612/#3785/#3812: OK ({} passed)",
-        g_passed);
+    std::println("remount force-deopt #2503/#2894/#3548/#3578/#3612/#3785/#3812: OK ({} passed)",
+                 g_passed);
     return 0;
 }
 

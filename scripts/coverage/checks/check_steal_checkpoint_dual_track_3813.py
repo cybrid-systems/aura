@@ -59,7 +59,7 @@ def main() -> int:
     must("table_epoch", "AC2 stub 3-arg", stub)
 
     # AC3: aura_is_jit_closure_fresh semantics unchanged (dual-fresh retained)
-    fresh = br.find("extern \"C\" bool aura_is_jit_closure_fresh")
+    fresh = br.find('extern "C" bool aura_is_jit_closure_fresh')
     if fresh == -1:
         fails.append("AC3: aura_is_jit_closure_fresh missing")
     else:
