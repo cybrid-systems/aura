@@ -1494,10 +1494,11 @@ void Evaluator::mark_outermost_mutation_failed() noexcept {
 //
 // Under production / AURA_MUTATION_HOLD_BUDGET_HARD=1, when the holder
 // fiber has pending_hold_budget_cancel_ (set by #2726 force-degrade +
-// paired force-safepoint), consume the flag once and mark outermost
-// mutation failed so Guard dtor releases workspace_mtx_ + MutationHold
-// + residual closed-loop (#2846) — even if the body is a non-yielding
-// tight loop that never reaches Phase-5 on its own.
+// paired force-safepoint), consume the flag once and force-release the
+// outermost hold (#3825 / same as #3254 inbody path) so workspace_mtx_ +
+// MutationHold unlock immediately — not wait for Guard dtor — even if
+// the body is a non-yielding tight loop that never reaches Phase-5 on
+// its own. mark_failed alone left held==true until lexical end.
 //
 // Soft / sandbox=off: returns 0 without consume (metric-only unless hard
 // env). Nested guards never independently force-fail (outermost success
@@ -1510,8 +1511,12 @@ void Evaluator::mark_outermost_mutation_failed() noexcept {
 // Issue #3694: process-wide held + get_query_evaluator TLS-fallback could
 // let an eventfd-woken non-holder flip the holder's success flag while
 // unique_lock stayed with the owner. This-fiber stack depth is SSOT;
-// mark_failed only on g_tls_outermost_guard. Do not call
+// force-release only on g_tls_outermost_guard. Do not call
 // mark_outermost_mutation_failed via the process query Evaluator here.
+//
+// Issue #3825: call force_release_hold_budget_inbody() (unlock + depth0 +
+// release_mutation_hold_defer + mark_failed) instead of mark_failed-only
+// so steal/GC observers see held==false before Guard lexical end.
 extern "C" int aura_evaluator_try_hold_budget_fail_closed_at_safepoint() noexcept {
     using namespace aura::compiler;
     auto* cur = aura::serve::g_current_fiber;
@@ -1533,13 +1538,16 @@ extern "C" int aura_evaluator_try_hold_budget_fail_closed_at_safepoint() noexcep
     auto* g = Evaluator::MutationBoundaryGuard::this_fiber_outermost();
     if (!g)
         return 0;
-    g->mark_failed();
+    // Issue #3825: same as #3254 inbody — unlock now, not at Guard dtor.
+    g->force_release_hold_budget_inbody();
     // Cooperative Phase-5 consume counter stays in sync for Agent health
-    // (fired vs consumed). Distinct forced-fail-closed total records that
-    // the fail closed at a safepoint edge rather than voluntary Phase-5.
+    // (fired vs consumed). Distinct forced-fail-closed + forced-unlock
+    // totals record that fail-closed at a safepoint edge released the
+    // hold immediately (not voluntary Phase-5 / dtor-only).
     g_mutation_hold_budget_holder_degrade_cross_fiber_cancel_consumed_total.fetch_add(
         1, std::memory_order_relaxed);
     g_mutation_hold_budget_forced_fail_closed_total.fetch_add(1, std::memory_order_relaxed);
+    g_mutation_hold_budget_forced_unlock_total.fetch_add(1, std::memory_order_relaxed);
     return 1;
 }
 

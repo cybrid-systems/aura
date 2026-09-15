@@ -1,0 +1,44 @@
+{
+  "issue": 3825,
+  "title": "Issue #3825: safepoint fail-closed force-releases hold (not mark_failed-only)",
+  "ok": "OK: Issue #3825 safepoint fail-closed force-release",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_fiber_mutation.cpp",
+      "contains": [
+        "Issue #3825",
+        "force_release_hold_budget_inbody",
+        "g_mutation_hold_budget_forced_unlock_total"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/evaluator_fiber_mutation.cpp",
+      "contains": ["mutation_hold_budget_reject_enabled()"]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/evaluator_fiber_mutation.cpp",
+      "contains": ["this_fiber_outermost()"]
+    },
+    {
+      "ac": "AC4-tests",
+      "path": "tests/serve/test_hold_budget_synthetic_yield_injection.cpp",
+      "contains": [
+        "3825 AC1: held==false before Guard lexical end",
+        "3825 AC1: forced_unlock_total bumps",
+        "3825 AC2: Soft does not force-fail",
+        "3825 AC3: Steal Ok — process held clear after unlock"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "forbid": [
+        "tests/serve/test_issue_3825.cpp",
+        "tests/issues/test_issue_3825.cpp",
+        "docs/design/3825-safepoint-force-release.md"
+      ]
+    }
+  ]
+}

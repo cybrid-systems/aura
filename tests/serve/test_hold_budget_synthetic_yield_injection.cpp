@@ -23,6 +23,7 @@
 
 #include "compiler/mutation_hold_budget.h"
 #include "compiler/typed_mutation_audit.h"
+#include "core/gc_hooks.h" // #3825 MutationHold defer release check
 #include "serve/fiber.h"
 #include "serve/runtime_production_abi.h"
 #include "serve/scheduler.h"
@@ -1770,7 +1771,7 @@ extern "C" int aura_evaluator_try_hold_budget_fail_closed_at_safepoint() noexcep
 
 // Issue #3694: safepoint fail-closed used process-held + process query Evaluator.
 //   AC1: A holds Guard; B force_safepoint / fail-closed ABI → A's flag unchanged
-//   AC2: holder's own check_gc_safepoint still consume + mark-failed
+//   AC2: holder's own check_gc_safepoint still consume + force-release (#3825)
 //   AC3: get_query_evaluator process fallback not used from this ABI
 //   AC4: Soft/Off still early-returns on !reject_enabled
 //   AC5: no new query key
@@ -1824,7 +1825,10 @@ int run_test_hold_budget_safepoint_this_fiber_3694() {
         const auto win = fn == std::string::npos ? std::string{} : efm.substr(fn, 2200);
         CHECK(win.find("this_fiber_outermost()") != std::string::npos,
               "3694 AC2: this-fiber TLS Guard");
-        CHECK(win.find("mark_failed()") != std::string::npos, "3694 AC2: holder mark_failed");
+        // Issue #3825: safepoint fail-closed force-releases (mark_failed
+        // inside force_release_hold_budget_inbody), not mark_failed-only.
+        CHECK(win.find("force_release_hold_budget_inbody") != std::string::npos,
+              "3694 AC2 / #3825: holder force_release_hold_budget_inbody");
         CHECK(win.find("Evaluator::get_query_evaluator") == std::string::npos,
               "3694 AC3: ABI does not use process query Evaluator");
         CHECK(win.find("aura_evaluator_mutation_boundary_held()") == std::string::npos,
@@ -1857,6 +1861,163 @@ int run_test_hold_budget_safepoint_this_fiber_3694() {
     return failed == 0 ? 0 : 1;
 }
 
+
+// Issue #3825: safepoint fail-closed must force-release (unlock) not
+// mark_failed-only — held==false + forced_unlock_total before Guard end.
+//   AC1: check_gc_safepoint after cancel → forced_unlock_total bumps;
+//        mutation_hold_live_snapshot().held==false before Guard end
+//   AC2: Soft path unchanged (!reject_enabled → no consume / no unlock)
+//   AC3: Steal Ok possible after unlock (process held + MutationHold clear)
+//   AC4: source cites force_release_hold_budget_inbody; no invent / docs
+int run_test_hold_budget_safepoint_force_release_3825() {
+    std::println("=== Issue #3825: safepoint fail-closed force-releases hold ===");
+    int saved_failed = aura::test::g_failed;
+    int saved_passed = aura::test::g_passed;
+
+    using aura::compiler::CompilerService;
+    using aura::compiler::Evaluator;
+    using aura::serve::Fiber;
+    using aura::serve::Scheduler;
+
+    {
+        std::println("\n--- #3825 AC1: Production safepoint unlocks before Guard end ---");
+        ::unsetenv("AURA_SANDBOX");
+        ::unsetenv("AURA_MUTATION_HOLD_BUDGET_HARD");
+        aura::compiler::typed_audit::apply_production_audit_defaults();
+        CHECK(aura::compiler::mutation_hold_budget_reject_enabled(),
+              "3825 AC1: reject_enabled under production");
+        aura::compiler::clear_mutation_hold_budget_forced_unlock_for_test();
+        aura::compiler::clear_mutation_hold_budget_forced_fail_closed_for_test();
+        const auto unlock0 = aura::compiler::mutation_hold_budget_forced_unlock_total_v_read();
+        const auto fail0 = aura::compiler::mutation_hold_budget_forced_fail_closed_total_v_read();
+        CompilerService cs;
+        Evaluator::set_query_evaluator(&cs.evaluator());
+        std::atomic<int> ok_flag{1};
+        std::atomic<int> ran{0};
+        std::atomic<int> held_before_end{-1};
+        std::atomic<int> depth_before_end{-1};
+        std::atomic<int> process_held_before_end{-1};
+        std::atomic<int> defer_hold_before_end{-1};
+        Scheduler sched(2);
+        sched.spawn([&]() {
+            bool ok = true;
+            {
+                Evaluator::MutationBoundaryGuard g(cs.evaluator(), &ok);
+                CHECK(g.is_outermost(), "3825 AC1: outermost Guard");
+                auto* f = aura::serve::g_current_fiber;
+                CHECK(f != nullptr, "3825 AC1: fiber current");
+                f->request_hold_budget_cancel();
+                f->request_force_safepoint();
+                Fiber::check_gc_safepoint();
+                // Before Guard lexical end: hold must already be clear so
+                // steal/GC observers can proceed (Steal Ok possible).
+                held_before_end.store(aura::compiler::mutation_hold_live_snapshot().held ? 1 : 0,
+                                      std::memory_order_relaxed);
+                depth_before_end.store(
+                    cs.evaluator().mutation_boundary_depth_slot_value(/*fiber_id=*/0),
+                    std::memory_order_relaxed);
+                process_held_before_end.store(aura_evaluator_mutation_boundary_held() != 0 ? 1 : 0,
+                                              std::memory_order_relaxed);
+                defer_hold_before_end.store(
+                    aura::gc_hooks::mutation_hold_defer_active() ? 1 : 0,
+                    std::memory_order_relaxed);
+                ran.store(1, std::memory_order_relaxed);
+            }
+            ok_flag.store(ok ? 1 : 0, std::memory_order_relaxed);
+        });
+        std::thread io([&]() { sched.run(); });
+        for (int i = 0; i < 200 && ran.load() == 0; ++i)
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        sched.stop();
+        io.join();
+        CHECK(ran.load() == 1, "3825 AC1: fiber body ran");
+        CHECK(ok_flag.load() == 0, "3825 AC1: outermost success forced false");
+        CHECK(held_before_end.load() == 0, "3825 AC1: held==false before Guard lexical end");
+        CHECK(depth_before_end.load() == 0, "3825 AC1: depth==0 before Guard lexical end");
+        CHECK(process_held_before_end.load() == 0,
+              "3825 AC3: Steal Ok — process held clear after unlock");
+        CHECK(defer_hold_before_end.load() == 0,
+              "3825 AC3: Steal Ok — MutationHold defer released after unlock");
+        CHECK(aura::compiler::mutation_hold_budget_forced_unlock_total_v_read() > unlock0,
+              "3825 AC1: forced_unlock_total bumps");
+        CHECK(aura::compiler::mutation_hold_budget_forced_fail_closed_total_v_read() > fail0,
+              "3825 AC1: forced_fail_closed_total bumps");
+        Evaluator::set_query_evaluator(nullptr);
+        aura::compiler::typed_audit::apply_dev_audit_defaults();
+    }
+
+    {
+        std::println("\n--- #3825 AC2: Soft path unchanged ---");
+        ::setenv("AURA_SANDBOX", "off", 1);
+        ::unsetenv("AURA_MUTATION_HOLD_BUDGET_HARD");
+        aura::compiler::typed_audit::apply_dev_audit_defaults();
+        CHECK(!aura::compiler::mutation_hold_budget_reject_enabled(),
+              "3825 AC2: reject_enabled false under Soft");
+        aura::compiler::clear_mutation_hold_budget_forced_unlock_for_test();
+        const auto unlock0 = aura::compiler::mutation_hold_budget_forced_unlock_total_v_read();
+        CompilerService cs;
+        Evaluator::set_query_evaluator(&cs.evaluator());
+        std::atomic<int> ok_flag{0};
+        std::atomic<int> held_after{-1};
+        std::atomic<int> ran{0};
+        Scheduler sched(2);
+        sched.spawn([&]() {
+            bool ok = true;
+            {
+                Evaluator::MutationBoundaryGuard g(cs.evaluator(), &ok);
+                auto* f = aura::serve::g_current_fiber;
+                if (f) {
+                    f->request_hold_budget_cancel();
+                    f->request_force_safepoint();
+                    Fiber::check_gc_safepoint();
+                }
+                held_after.store(aura::compiler::mutation_hold_live_snapshot().held ? 1 : 0,
+                                 std::memory_order_relaxed);
+                ran.store(1, std::memory_order_relaxed);
+            }
+            ok_flag.store(ok ? 1 : 0, std::memory_order_relaxed);
+        });
+        std::thread io([&]() { sched.run(); });
+        for (int i = 0; i < 200 && ran.load() == 0; ++i)
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        sched.stop();
+        io.join();
+        CHECK(ran.load() == 1, "3825 AC2: Soft fiber ran");
+        CHECK(ok_flag.load() == 1, "3825 AC2: Soft does not force-fail");
+        CHECK(held_after.load() == 1, "3825 AC2: Soft still held after safepoint");
+        CHECK(aura::compiler::mutation_hold_budget_forced_unlock_total_v_read() == unlock0,
+              "3825 AC2: Soft forced_unlock_total unchanged");
+        Evaluator::set_query_evaluator(nullptr);
+        ::unsetenv("AURA_SANDBOX");
+    }
+
+    {
+        std::println("\n--- #3825 AC4: source cite + no invent ---");
+        const auto efm = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+        const auto fn =
+            efm.find("aura_evaluator_try_hold_budget_fail_closed_at_safepoint() noexcept");
+        CHECK(fn != std::string::npos, "3825 AC4: ABI present");
+        const auto win = fn == std::string::npos ? std::string{} : efm.substr(fn, 2800);
+        CHECK(win.find("Issue #3825") != std::string::npos, "3825 AC4: cites #3825");
+        CHECK(win.find("force_release_hold_budget_inbody") != std::string::npos,
+              "3825 AC4: calls force_release_hold_budget_inbody");
+        CHECK(win.find("g_mutation_hold_budget_forced_unlock_total") != std::string::npos,
+              "3825 AC4: bumps forced_unlock_total");
+        CHECK(win.find("mutation_hold_budget_reject_enabled()") != std::string::npos,
+              "3825 AC4: Soft still gates reject_enabled");
+        CHECK(win.find("this_fiber_outermost()") != std::string::npos,
+              "3825 AC4: outermost-only retained");
+        CHECK(read_file("tests/serve/test_issue_3825.cpp").empty(), "3825 AC4: no invent");
+        CHECK(read_file("docs/design/3825-safepoint-force-release.md").empty(),
+              "3825 AC4: no docs/design/");
+    }
+
+    int failed = aura::test::g_failed - saved_failed;
+    int passed = aura::test::g_passed - saved_passed;
+    std::println("\n=== #3825 safepoint force-release: {} passed, {} failed ===", passed, failed);
+    return failed == 0 ? 0 : 1;
+}
+
 #ifndef AURA_ISSUE_BATCH_MEMBER
 int main() {
     const int rc1 = run_test_hold_budget_synthetic_yield_injection();
@@ -1870,6 +2031,9 @@ int main() {
     const int rc9 = run_test_hold_budget_add_mutate_inbody_poll_3480();
     const int rc10 = run_test_hold_budget_eval_flat_safepoint_3693();
     const int rc11 = run_test_hold_budget_safepoint_this_fiber_3694();
+    const int rc12 = run_test_hold_budget_safepoint_force_release_3825();
+    if (rc12 != 0)
+        return rc12;
     return rc1 != 0
                ? rc1
                : (rc2 != 0

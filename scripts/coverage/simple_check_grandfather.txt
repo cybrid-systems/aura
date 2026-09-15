@@ -400,3 +400,4 @@ scripts/coverage/checks/check_synth_hard_fail_abort_force_dirty_3821.py
 scripts/coverage/checks/check_prod_soa_writeback_sync_3822.py
 scripts/coverage/checks/check_production_mark_node_dep_union_3823.py
 scripts/coverage/checks/check_steal_force_clear_hold_foreign_3824.py
+scripts/coverage/checks/check_hold_budget_safepoint_force_release_3825.py
