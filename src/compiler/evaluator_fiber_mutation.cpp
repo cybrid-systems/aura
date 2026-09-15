@@ -1458,7 +1458,14 @@ void Evaluator::mark_outermost_mutation_failed() noexcept {
     if (mid != 0) {
         // Issue #3142 AC2 / #3209: mark stolen then revoke under one lock,
         // then clear fiber + hold mid (happens-before resume consume).
-        const auto fid = static_cast<std::uint32_t>(aura_fiber_current_id());
+        // Issue #3799: sample live fiber, then outermost Guard capture —
+        // never pass fiber_id=0 under Restricted+MT when a fiber / Guard
+        // exists (registry fail-closes residual true off-fiber).
+        std::uint32_t fid = static_cast<std::uint32_t>(aura_fiber_current_id());
+        if (fid == 0) {
+            if (auto* g = MutationBoundaryGuard::this_fiber_outermost())
+                fid = static_cast<std::uint32_t>(g->captured_fiber_id());
+        }
         auto& reg = ::aura::core::capability::g_capability_registry();
         std::lock_guard<std::mutex> lock(reg.mtx);
         (void)reg.mark_session_bound_stolen_locked(capability_tenant_id_, mid, fid);
@@ -2940,6 +2947,8 @@ bool Evaluator::probe_mailbox_linear_and_stable_refs(std::uint64_t /*from_fiber*
 // release) so Reclaimed may call the revoke-only ABI without UAF.
 // Same SSOT as outermost dtor (`revoke_session_grants_for_mid_locked`,
 // reason session-mid-exit). Steal/abort that already ran is a no-op.
+// Issue #3799: always pass Fiber::id (non-zero when fiber live) — never
+// fiber_id=0 mid-only under Restricted+MT.
 static void revoke_session_grants_on_fiber_join(aura::serve::Fiber* f) noexcept {
     if (!f)
         return;
@@ -2957,6 +2966,7 @@ static void revoke_session_grants_on_fiber_join(aura::serve::Fiber* f) noexcept 
     if (!production && met.capability_live_session_grants.load(std::memory_order_relaxed) == 0)
         return; // Soft/Off + no live residual: zero-cost (AC4)
     std::lock_guard<std::mutex> lock(reg.mtx);
+    // Issue #3799: Fiber::id is the join-site fiber key (never invent 0).
     (void)reg.revoke_session_grants_for_mid_locked(mid, "session-mid-exit",
                                                    static_cast<std::uint32_t>(f->id()));
     f->clear_session_mid();
@@ -3769,6 +3779,8 @@ extern "C" void aura_evaluator_on_steal_complete(void* fiber_ptr) noexcept {
     // Done the fiber before dtor). Zero cost when mid==0 or no live
     // session grants (registry early-out, AC4). Double-revoke with
     // later Guard dtor is a no-op (AC3).
+    // Issue #3799: Fiber::id required — never fiber_id=0 mid-only under
+    // Restricted+MT (peer outermost collateral).
     if (fiber) {
         const auto mid = fiber->session_mid();
         if (mid != 0) {

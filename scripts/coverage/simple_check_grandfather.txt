@@ -296,6 +296,7 @@ check_security_audit_fold_2388.py
 check_session_bound_dtor_cascade.py
 check_session_bound_orphan_sweep_3279.py
 check_session_grant_peer_fiber_3241.py
+check_session_revoke_fiber_zero_3799.py
 check_session_grant_quiesce_3209.py
 check_session_grant_steal_3048.py
 check_shape_dirty_hook_no_std_function_3271.py

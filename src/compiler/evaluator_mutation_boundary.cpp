@@ -3596,7 +3596,13 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
             if (production ||
                 met.capability_live_session_grants.load(std::memory_order_relaxed) != 0) {
                 std::lock_guard<std::mutex> lock(reg.mtx);
-                const auto fid = static_cast<std::uint32_t>(aura_fiber_current_id());
+                // Issue #3799 / #3241: prefer enter-captured fiber_id_ so
+                // TLS-cleared dtor under Restricted+MT never mid-only sweeps
+                // peer outermost grants. Fall back to live current id;
+                // registry fail-closes if still 0 under hard_fiber.
+                std::uint32_t fid = static_cast<std::uint32_t>(fiber_id_);
+                if (fid == 0)
+                    fid = static_cast<std::uint32_t>(aura_fiber_current_id());
                 (void)reg.revoke_session_grants_for_mid_locked(session_mid_at_enter_,
                                                                "session-mid-exit", fid);
             }
@@ -3762,9 +3768,14 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
                                 mode == ::aura::core::capability::EffectSandboxMode::Strict;
         if (production || met.capability_live_session_grants.load(std::memory_order_relaxed) != 0) {
             std::lock_guard<std::mutex> lock(reg.mtx);
-            // Issue #3241: (mid, fiber) so a peer outermost sharing epoch
-            // mid is not collateral. fiber=0 (off-fiber) stays mid-only.
-            const auto fid = static_cast<std::uint32_t>(aura_fiber_current_id());
+            // Issue #3799 / #3241: (mid, fiber) so a peer outermost sharing
+            // epoch mid is not collateral. Prefer enter-captured fiber_id_
+            // (TLS may already be clear at dtor). fiber=0 under Soft /
+            // soft-share Restricted stays legacy mid-only; Restricted+MT
+            // fail-closes in the registry (no silent peer sweep).
+            std::uint32_t fid = static_cast<std::uint32_t>(fiber_id_);
+            if (fid == 0)
+                fid = static_cast<std::uint32_t>(aura_fiber_current_id());
             (void)reg.revoke_session_grants_for_mid_locked(session_mid_at_enter_,
                                                            "session-mid-exit", fid);
             aura::serve::clear_current_fiber_session_mid();

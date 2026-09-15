@@ -4264,6 +4264,21 @@ def cmd_lint():
             "Issue #3241 session-grant peer-fiber linter failed — run python3 scripts/coverage/checks/check_session_grant_peer_fiber_3241.py"
         )
         return r
+    # Issue #3799: production Restricted+MT must never mid-only revoke
+    # (fiber_id=0) — peer outermost session grants sharing epoch mid
+    # would become collateral. Fail-closed + captured fiber_id_ / Fiber::id.
+    # Extends test_capability_single_use_consume.cpp (#81967); no
+    # docs/design/ (#1655).
+    srfz3799_script = COVERAGE_CHECKS / "check_session_revoke_fiber_zero_3799.py"
+    if not srfz3799_script.exists():
+        fail(f"missing {srfz3799_script}")
+        return 1
+    r = run([sys.executable, str(srfz3799_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3799 session-revoke fiber_id=0 linter failed — run python3 scripts/coverage/checks/check_session_revoke_fiber_zero_3799.py"
+        )
+        return r
     # Issue #3049: per-tenant ResourceQuota under multi-tenant production
     # (process ceiling still binds). Extends
     # test_tenant_isolation_enforcement.cpp (#81967); no docs/design/
