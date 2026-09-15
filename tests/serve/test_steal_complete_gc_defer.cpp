@@ -987,6 +987,102 @@ static void ac3765_4_eventfd_no_mb_tag() {
     CHECK(read_file("docs/design/3765-steal-disposition.md").empty(), "3765: no docs/design/");
 }
 
+
+// ── Issue #3824: foreign steal must not release live MutationHold ──
+static void ac3824_foreign_steal_preserves_b_hold() {
+    std::println("\n--- #3824 AC1: B holds Guard; steal/force_clear A keeps hold ---");
+    // Drain any sticky hold from prior suites.
+    while (aura::gc_hooks::mutation_hold_defer_active())
+        aura::gc_hooks::release_mutation_hold_defer();
+    while (aura_process_mutation_boundary_held_count() > 0)
+        aura_process_mutation_boundary_held_exit();
+
+    // B holds outermost Guard (process held + MutationHold defer).
+    aura_process_mutation_boundary_held_enter();
+    aura::gc_hooks::arm_mutation_hold_defer();
+    CHECK(aura_process_mutation_boundary_held_count() > 0, "3824 AC1: B.held process count");
+    CHECK(aura::gc_hooks::mutation_hold_defer_active(), "3824 AC1: MutationHold armed for B");
+    CHECK(aura::gc_hooks::should_defer_destructive_gc(), "3824 AC1: GC deferred mid-B-hold");
+    CHECK(aura::gc_hooks::mutation_hold_live_guard_held_for_force_clear(),
+          "3824 AC1: live-guard probe true");
+
+    // Foreign clear for evaluator A (steal-complete residual path).
+    CompilerService cs_a;
+    const auto r = aura::gc_hooks::force_clear_residual_defer_for_evaluator(
+        static_cast<void*>(&cs_a.evaluator()));
+    CHECK(!r.hold_released, "3824 AC1: foreign force_clear did not release hold");
+    CHECK(aura::gc_hooks::mutation_hold_defer_active(),
+          "3824 AC1: mutation_hold_defer_active still true while B.held");
+    CHECK(aura::gc_hooks::should_defer_destructive_gc(),
+          "3824 AC1: GC still deferred mid-B-hold after foreign clear");
+
+    // Steal-complete entry (seeded yield CP) must also preserve B's hold.
+    CompilerService prev_cs;
+    Fiber fiber([]() {}, 64 * 1024);
+    // Arm a Panic residual so steal takes the residual interlock path.
+    aura::gc_hooks::arm_gc_defer_pending_panic_for(static_cast<void*>(&prev_cs.evaluator()));
+    aura_evaluator_test_seed_yield_cp_and_steal_complete(&fiber,
+                                                         static_cast<void*>(&prev_cs.evaluator()));
+    CHECK(aura::gc_hooks::mutation_hold_defer_active(),
+          "3824 AC1: hold survives steal-complete while B.held");
+    CHECK(aura::gc_hooks::should_defer_destructive_gc(),
+          "3824 AC1: no destructive GC admit mid-B-hold (chaos)");
+
+    // B exit → clear + GC may proceed.
+    aura::gc_hooks::release_mutation_hold_defer();
+    aura_process_mutation_boundary_held_exit();
+    CHECK(!aura::gc_hooks::mutation_hold_defer_active(), "3824 AC2: hold clear after B exit");
+    CHECK(!aura::gc_hooks::mutation_hold_live_guard_held_for_force_clear(),
+          "3824 AC2: live-guard probe false after B exit");
+    // Drain any leftover Panic from the steal seed so later suites stay clean.
+    (void)aura::gc_hooks::force_clear_all_gc_defer_for_evaluator(
+        static_cast<void*>(&prev_cs.evaluator()));
+    (void)aura::gc_hooks::reconcile_gc_defer_bits_after_clear();
+}
+
+static void ac3824_orphan_residual_still_clears() {
+    std::println("\n--- #3824 AC2: orphan residual (no live Guard) still clears ---");
+    while (aura::gc_hooks::mutation_hold_defer_active())
+        aura::gc_hooks::release_mutation_hold_defer();
+    while (aura_process_mutation_boundary_held_count() > 0)
+        aura_process_mutation_boundary_held_exit();
+
+    // Orphan: defer armed without live Guard enter (test/residual path).
+    aura::gc_hooks::arm_mutation_hold_defer();
+    CHECK(aura::gc_hooks::mutation_hold_defer_active(), "3824 AC2: orphan hold armed");
+    CHECK(!aura::gc_hooks::mutation_hold_live_guard_held_for_force_clear(),
+          "3824 AC2: no live Guard");
+    CompilerService cs;
+    const auto r = aura::gc_hooks::force_clear_residual_defer_for_evaluator(
+        static_cast<void*>(&cs.evaluator()));
+    CHECK(r.hold_released, "3824 AC2: orphan force_clear released hold");
+    CHECK(!aura::gc_hooks::mutation_hold_defer_active(), "3824 AC2: orphan hold cleared");
+}
+
+static void ac3824_soft_leftover_unchanged() {
+    std::println("\n--- #3824 AC4: Soft leftover residual path unchanged ---");
+    const auto gh = read_file("src/core/gc_hooks.h");
+    const auto efm = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+    const auto shared = read_file("src/compiler/mutation_boundary_shared_exit.h");
+    CHECK(gh.find("Issue #3824") != std::string::npos, "3824 AC4: gc_hooks cites #3824");
+    CHECK(gh.find("mutation_hold_live_guard_held_for_force_clear") != std::string::npos,
+          "3824 AC4: live-guard refuse helper");
+    CHECK(gh.find("aura_process_mutation_boundary_held_count") != std::string::npos,
+          "3824 AC4: process held SSOT");
+    CHECK(efm.find("Issue #3824") != std::string::npos, "3824 AC4: steal-complete cites #3824");
+    CHECK(shared.find("Issue #3824") != std::string::npos, "3824 AC4: shared_exit cites #3824");
+    // Soft leftover: production_force=false skips force_clear (unchanged).
+    const auto close = gh.find("close_residual_defer_after_exit");
+    CHECK(close != std::string::npos, "3824 AC4: close_residual helper present");
+    const auto win = gh.substr(close, 1200);
+    CHECK(win.find("production_force") != std::string::npos, "3824 AC4: Soft gate retained");
+    CHECK(win.find("force_clear_residual_defer_for_evaluator") != std::string::npos,
+          "3824 AC4: Soft still routes production_force through helper");
+    CHECK(read_file("tests/serve/test_issue_3824.cpp").empty(), "3824: no invent");
+    CHECK(read_file("docs/design/3824-mutation-hold-foreign-clear.md").empty(),
+          "3824: no docs/design/");
+}
+
 int run_test_steal_complete_gc_defer() {
     std::println("=== Issue #2203: steal-complete single entry (clear_gc_defer + metric) ===");
     std::println("=== Issue #2314: residual defer clear interlock (share helper, idempotent) ===");
@@ -1023,6 +1119,10 @@ int run_test_steal_complete_gc_defer() {
     ac3765_1_inconsistent_continue_dominated();
     ac3765_2_reject_hard_dones_fiber();
     ac3765_4_eventfd_no_mb_tag();
+    std::println("\n=== Issue #3824: foreign steal preserves live MutationHold ---");
+    ac3824_foreign_steal_preserves_b_hold();
+    ac3824_orphan_residual_still_clears();
+    ac3824_soft_leftover_unchanged();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

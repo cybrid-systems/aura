@@ -3854,6 +3854,8 @@ extern "C" void aura_evaluator_on_steal_complete(void* fiber_ptr) noexcept {
         // if defer_reasons_snapshot() != 0, force residual clear. AC4:
         // zero cost when snapshot is zero (single relaxed load).
         // Idempotent (force_clear_residual_defer_for_evaluator is atomic).
+        // Issue #3824: helper keeps MutationHold armed while another
+        // fiber's outermost Guard is still live (foreign clear refuse).
         if (aura::gc_hooks::defer_reasons_snapshot() != 0) {
             if (auto* ev = evaluator_for_scheduler_hooks()) {
                 const auto r = aura::gc_hooks::force_clear_residual_defer_for_evaluator(
