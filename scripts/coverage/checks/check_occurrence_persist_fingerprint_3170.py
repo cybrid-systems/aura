@@ -258,7 +258,7 @@ def _self_test() -> int:
     // src/compiler/evaluator_mutation_boundary.cpp
     extern "C" void aura_clear_occurrence_persist_buffer(void* ev_ptr) noexcept {
     // Issue #3170: outermost-success fingerprint guard
-    if (aura::compiler::typed_audit::production_defaults_active() &&
+    if (aura::compiler::typed_audit::production_hard_face_active() &&
         ev->expected_occurrence_snapshot_fp() != 0 &&
         live_fp != ev->expected_occurrence_snapshot_fp()) {
     aura_clear_occurrence_persist_buffer(ev_);

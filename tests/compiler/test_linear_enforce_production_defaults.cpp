@@ -339,6 +339,13 @@ int run_test_linear_enforce_production_defaults() {
                   "3818: #3472 window calls CoercionMap undo");
             CHECK(emb.find("schema-3818") == std::string::npos, "3818: no new query schema");
         }
+        // Issue #3819: fingerprint mismatch reject is prod||Full (hard-face).
+        {
+            CHECK(emb.find("Issue #3819") != std::string::npos, "3819: emb cites #3819");
+            CHECK(emb.find("production_hard_face_active()") != std::string::npos,
+                  "3819: mismatch hard-face gate present");
+            CHECK(emb.find("schema-3819") == std::string::npos, "3819: no new query schema");
+        }
     }
 
     // Restore Soft for any subsequent process consumers.

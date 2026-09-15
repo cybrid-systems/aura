@@ -471,12 +471,13 @@ static void ac3170_4_quiet_zero_extra_atomics() {
     CHECK(impl.find("if (prior != SolveResult::TIMEOUT)\n        return prior;") !=
               std::string::npos,
           "3170 AC4: escalate_if_production early-return on non-TIMEOUT (Quiet path)");
-    // Fingerprint guard is gated on production_defaults_active.
-    CHECK(emb.find("if (aura::compiler::typed_audit::production_defaults_active() &&\n"
+    // Fingerprint guard is gated on production_hard_face_active (prod||Full; #3819).
+    // Soft/Off: hard-face false → zero extra refuse (AC3 Soft contract retained).
+    CHECK(emb.find("if (aura::compiler::typed_audit::production_hard_face_active() &&\n"
                    "        ev->expected_occurrence_snapshot_fp() != 0 &&\n"
                    "        live_fp != ev->expected_occurrence_snapshot_fp()) {") !=
               std::string::npos,
-          "3170 AC4: fingerprint guard gated on production_defaults_active (zero extra on Soft)");
+          "3170 AC4: fingerprint guard gated on production_hard_face_active (zero extra on Soft)");
 }
 
 static void ac3170_5_additive_observability_only() {

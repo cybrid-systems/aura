@@ -318,10 +318,10 @@ int run_test_outermost_persist_fail_closed() {
     {
         std::println("\n--- #3431 AC2: staged expected match path unchanged (#3170/#3376) ---");
         const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
-        CHECK(contains(emb, "if (aura::compiler::typed_audit::production_defaults_active() &&\n"
+        CHECK(contains(emb, "if (aura::compiler::typed_audit::production_hard_face_active() &&\n"
                             "        ev->expected_occurrence_snapshot_fp() != 0 &&\n"
                             "        live_fp != ev->expected_occurrence_snapshot_fp()) {"),
-              "3431 AC2: #3170 staged-mismatch needle kept");
+              "3431 AC2: #3170 staged-mismatch needle kept (prod||Full via hard_face)");
         CHECK(contains(emb, "Issue #3376"), "3431 AC2: #3376 reject stamp kept");
     }
 
@@ -934,6 +934,80 @@ int run_test_outermost_persist_fail_closed() {
         }
         reset_for_test();
     }
+
+    // ── Issue #3819: fingerprint mismatch reject dual-track (prod ∥ Full) ──
+    {
+        std::println("\n--- #3819 AC1: Full hard-face gates fingerprint mismatch reject ---");
+        const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+        const auto fn_pos =
+            emb.find("extern \"C\" void aura_outermost_success_persist_occurrence(");
+        const auto emb_after = (fn_pos == std::string::npos) ? std::string{} : emb.substr(fn_pos);
+        const auto cite = emb_after.find("Issue #3819");
+        CHECK(cite != std::string::npos, "3819 AC1: outermost persist cites #3819");
+        const auto win =
+            cite == std::string::npos ? std::string{} : emb_after.substr(cite, 2400);
+        CHECK(contains(win, "production_hard_face_active()"),
+              "3819 AC1: mismatch uses production_hard_face_active (prod||Full)");
+        CHECK(contains(win, "expected_occurrence_snapshot_fp() != 0"),
+              "3819 AC1: staged expected != 0");
+        CHECK(contains(win, "live_fp != ev->expected_occurrence_snapshot_fp()"),
+              "3819 AC1: live!=expected mismatch");
+        CHECK(contains(win, "kTypeLinearProofOutcomeReject"),
+              "3819 AC1: stamps reject proof outcome");
+        CHECK(contains(win, "force_reason=*/16"), "3819 AC1: force_reason 16");
+        CHECK(contains(win, "bump_occurrence_persist_fingerprint_mismatch"),
+              "3819 AC1: bumps mismatch counter");
+        // #3556 sibling already hard-face; cite that dual-track is shared.
+        CHECK(contains(emb_after, "production_hard_face_active()"),
+              "3819 AC1: #3556 hard-face still present in helper");
+    }
+
+    {
+        std::println("\n--- #3819 AC2: Soft/Off — hard refuse still gated (no Soft hard path) ---");
+        const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+        const auto cite = emb.find("Issue #3819");
+        const auto win = cite == std::string::npos ? std::string{} : emb.substr(cite, 900);
+        CHECK(contains(win, "Soft/Off unchanged"), "3819 AC2: Soft/Off contract cited");
+        // Soft: production_hard_face_active is false under Sampled/dev defaults.
+        reset_for_test();
+        apply_dev_audit_defaults();
+        CHECK(!aura::compiler::typed_audit::production_defaults_active(),
+              "3819 AC2: Soft production_defaults off");
+        CHECK(aura::compiler::typed_audit::get_strategy() !=
+                  aura::compiler::typed_audit::AuditStrategy::Full,
+              "3819 AC2: Soft strategy is not Full");
+        CHECK(!aura::compiler::typed_audit::production_hard_face_active(),
+              "3819 AC2: Soft hard-face inactive (no hard refuse)");
+    }
+
+    {
+        std::println(
+            "\n--- #3819 soak: Full-without-prod arms hard-face (no persist freeze under drift) ---");
+        reset_for_test();
+        apply_dev_audit_defaults();
+        aura::compiler::typed_audit::set_strategy(
+            aura::compiler::typed_audit::AuditStrategy::Full);
+        CHECK(!aura::compiler::typed_audit::production_defaults_active(),
+              "3819 soak: Full-without-prod (production_defaults off)");
+        CHECK(aura::compiler::typed_audit::get_strategy() ==
+                  aura::compiler::typed_audit::AuditStrategy::Full,
+              "3819 soak: strategy Full");
+        CHECK(aura::compiler::typed_audit::production_hard_face_active(),
+              "3819 soak: hard-face active under Full-without-prod");
+        const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+        CHECK(contains(emb, "if (aura::compiler::typed_audit::production_hard_face_active() &&\n"
+                            "        ev->expected_occurrence_snapshot_fp() != 0 &&\n"
+                            "        live_fp != ev->expected_occurrence_snapshot_fp()) {"),
+              "3819 soak: mismatch early-return gated on hard-face (refuses freeze)");
+        CHECK(emb.find("schema-3819") == std::string::npos, "3819: no new query key");
+        CHECK(read_file("tests/compiler/test_issue_3819.cpp").empty(),
+              "3819: no test_issue_3819.cpp");
+        CHECK(read_file("docs/design/3819-fp-mismatch-dual-track.md").empty(),
+              "3819: no docs/design/");
+        apply_dev_audit_defaults();
+        reset_for_test();
+    }
+
 
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;

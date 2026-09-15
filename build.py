@@ -4941,6 +4941,20 @@ def cmd_lint():
             "Issue #3818 post-persist linear deny CoercionMap undo linter failed — run python3 scripts/coverage/checks/check_post_persist_linear_deny_coercion_undo_3818.py"
         )
         return r
+    # Issue #3819: outermost fingerprint mismatch reject dual-track
+    # (production ∥ Full via production_hard_face_active). Soft/Off unchanged.
+    # Extends test_outermost_persist_fail_closed / linear / health / rehydrate
+    # (#81967); no docs/design/.
+    fmdt3819_script = COVERAGE_CHECKS / "check_occurrence_persist_fp_mismatch_dual_track_3819.py"
+    if not fmdt3819_script.exists():
+        fail(f"missing {fmdt3819_script}")
+        return 1
+    r = run([sys.executable, str(fmdt3819_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3819 fingerprint mismatch dual-track linter failed — run python3 scripts/coverage/checks/check_occurrence_persist_fp_mismatch_dual_track_3819.py"
+        )
+        return r
     # Issue #3802: EXEMPT_2ARG write-file/sys-* host-path isolation under
     # Restricted+MT / Strict — resolve under tenant root from
     # capability_tenant_id_; cross-tenant escape → IsolationDeny SE
@@ -14905,6 +14919,26 @@ def cmd_post_persist_linear_deny_coercion_undo_3818():
     """Issue #3818: #3472 post-persist linear deny undoes CoercionMap journal."""
     print(f"{B}=== post-persist linear deny CoercionMap undo (#3818) ==={N}")
     return cmd_post_persist_linear_deny_coercion_undo_3818_coverage()
+
+
+def cmd_occurrence_persist_fp_mismatch_dual_track_3819_coverage():
+    """Issue #3819: fingerprint mismatch reject dual-track prod||Full (static)."""
+    print(f"{B}=== occurrence persist fp mismatch dual-track (#3819) ==={N}")
+    script = COVERAGE_CHECKS / "check_occurrence_persist_fp_mismatch_dual_track_3819.py"
+    if not script.is_file():
+        fail(f"missing {script}")
+        return 1
+    if run([sys.executable, str(script)], cwd=ROOT) != 0:
+        fail("occurrence persist fp mismatch dual-track (#3819) coverage contract rows failed")
+        return 1
+    ok("occurrence persist fp mismatch dual-track (#3819) coverage clean")
+    return 0
+
+
+def cmd_occurrence_persist_fp_mismatch_dual_track_3819():
+    """Issue #3819: Occurrence persist fingerprint mismatch reject is prod||Full."""
+    print(f"{B}=== occurrence persist fp mismatch dual-track (#3819) ==={N}")
+    return cmd_occurrence_persist_fp_mismatch_dual_track_3819_coverage()
 
 
 def cmd_engine_metrics_hash_overflow_3018_coverage():

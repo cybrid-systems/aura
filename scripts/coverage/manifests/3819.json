@@ -1,0 +1,30 @@
+{
+  "issue": 3819,
+  "title": "Issue #3819: Occurrence persist fingerprint mismatch reject dual-track (prod||Full)",
+  "ok": "OK: Issue #3819 fingerprint mismatch dual-track (prod||Full)",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_mutation_boundary.cpp",
+      "contains": ["Issue #3819", "production_hard_face_active()", "live_fp != ev->expected_occurrence_snapshot_fp()"]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/compiler/test_outermost_persist_fail_closed.cpp",
+      "contains": ["3819 AC2", "Soft hard-face inactive"]
+    },
+    {
+      "ac": "AC3-soak",
+      "path": "tests/compiler/test_outermost_persist_fail_closed.cpp",
+      "contains": ["3819 soak", "Full-without-prod"]
+    },
+    {
+      "ac": "AC4",
+      "forbid": [
+        "tests/compiler/test_issue_3819.cpp",
+        "tests/issues/test_issue_3819.cpp",
+        "docs/design/3819-fp-mismatch-dual-track.md"
+      ]
+    }
+  ]
+}
