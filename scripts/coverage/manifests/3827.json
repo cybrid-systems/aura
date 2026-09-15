@@ -1,0 +1,35 @@
+{
+  "issue": 3827,
+  "title": "Issue #3827: query:children / query:parent Production export schema-2 via maybe_result",
+  "ok": "OK: Issue #3827 query children/parent schema-2",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_primitives_query_workspace.cpp",
+      "contains": ["Issue #3827", "end_query_epoch_maybe_result"]
+    },
+    {
+      "ac": "AC1-stamp",
+      "path": "src/core/workspace_epoch.hh",
+      "contains": ["kQueryChildrenParentSchema2ExportIssue = 3827"]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/compiler/test_query_result_full_provenance.cpp",
+      "contains": ["test_ac3827_2_soft_children_int_fails_prod_as_stable"]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/compiler/test_query_result_full_provenance.cpp",
+      "contains": ["test_ac3827_3_children_stable_stays_green"]
+    },
+    {
+      "ac": "AC4",
+      "forbid": [
+        "tests/compiler/test_issue_3827.cpp",
+        "tests/issues/test_issue_3827.cpp",
+        "docs/design/3827-children-parent-schema2.md"
+      ]
+    }
+  ]
+}

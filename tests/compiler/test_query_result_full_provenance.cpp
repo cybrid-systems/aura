@@ -1622,6 +1622,153 @@ void test_ac3767_3_soft_id_gen_and_no_invent() {
     }
 }
 
+
+// Issue #3827: query:children / query:parent still finished with plain
+// end_query_epoch and returned bare NodeId lists under Production — Agents
+// caching those ints hit the occupancy hole. Route both through
+// end_query_epoch_maybe_result (schema-2 auto-upgrade). Soft bare lists stay.
+//   AC1 Production + (query :children <v2-ref>) → schema-2 hash
+//   AC2 Soft children ints fail query:as-stable-ref under Prod
+//   AC3 *-stable path stays green (children-stable still schema-2)
+//   AC4 Soft children bare list unchanged; no invent/docs
+
+void test_ac3827_1_production_children_v2_schema2() {
+    std::print("AC3827/AC1 -- production query:children <v2-ref> is schema-2 hash\n");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    apply_dev_audit_defaults();
+    CompilerService cs;
+    expect_true("3827 AC1: set-code", cs.eval("(set-code \"(begin 1 2 3)\")").has_value());
+    expect_true("3827 AC1: eval", cs.eval("(eval-current)").has_value());
+    apply_production_audit_defaults();
+    // Packed v2 StableNodeRef (id . gen) — bare int rejected by #3395.
+    expect_true("3827 AC1: bind children via v2 root",
+                cs.eval("(define qc3827 (query :children (0 . 0)))").has_value());
+    auto qc = cs.eval("qc3827");
+    expect_true("3827 AC1: children returns", qc.has_value());
+    expect_true("3827 AC1: children IS schema-2 hash (not bare NodeId list)",
+                qc && is_hash(*qc));
+    auto tag = cs.eval("(hash-ref qc3827 \"query-result-tag\")");
+    expect_true("3827 AC1: query-result-tag present",
+                tag && is_int(*tag) && as_int(*tag) == 1);
+    auto wired = cs.eval("(hash-ref qc3827 \"query-result-wired-full\")");
+    expect_true("3827 AC1: query-result-wired-full (schema-2 stamp)",
+                wired && is_int(*wired) && as_int(*wired) == 1);
+    // Parent path: children-stable → as-stable-ref :index → query:parent.
+    expect_true("3827 AC1: bind 3-child children-stable for parent probe",
+                bind_three_child_stable(cs));
+    expect_true("3827 AC1: bind child v2",
+                cs.eval("(define cref3827 (query:as-stable-ref qc :index 0))").has_value());
+    auto cref_car = cs.eval("(car cref3827)");
+    expect_true("3827 AC1: child v2 car is NodeId (not error kind)",
+                cref_car && is_int(*cref_car));
+    expect_true("3827 AC1: bind parent via v2",
+                cs.eval("(define qp3827 (query :parent cref3827))").has_value());
+    auto qp = cs.eval("qp3827");
+    expect_true("3827 AC1: parent returns", qp.has_value());
+    expect_true("3827 AC1: parent IS schema-2 hash", qp && is_hash(*qp));
+    apply_dev_audit_defaults();
+}
+
+void test_ac3827_2_soft_children_int_fails_prod_as_stable() {
+    std::print("AC3827/AC2 -- Soft children bare int fails as-stable-ref under Prod\n");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    apply_dev_audit_defaults();
+    CompilerService cs;
+    expect_true("3827 AC2: set-code", cs.eval("(set-code \"(begin 7 8 9)\")").has_value());
+    expect_true("3827 AC2: eval", cs.eval("(eval-current)").has_value());
+    // Soft: bare children list of ints.
+    expect_true("3827 AC2: Soft bind children",
+                cs.eval("(define kids3827 (query :children 0))").has_value());
+    auto kids = cs.eval("kids3827");
+    expect_true("3827 AC2: Soft children returns", kids.has_value());
+    expect_true("3827 AC2: Soft children is NOT a hash (bare list)",
+                kids && !is_hash(*kids));
+    expect_true("3827 AC2: bind first Soft int",
+                cs.eval("(define nid3827 (car kids3827))").has_value());
+    auto nid = cs.eval("nid3827");
+    expect_true("3827 AC2: Soft car is bare int", nid && is_int(*nid));
+    apply_production_audit_defaults();
+    expect_true("3827 AC2: bind as-stable-ref of Soft int",
+                cs.eval("(define r3827bare (query:as-stable-ref nid3827))").has_value());
+    auto stale = cs.eval("(and (pair? r3827bare) (equal? (car r3827bare) \"stale-ref\"))");
+    expect_true("3827 AC2: Soft children int is stale-ref under Prod",
+                stale && is_bool(*stale) && as_bool(*stale));
+    apply_dev_audit_defaults();
+}
+
+void test_ac3827_3_children_stable_stays_green() {
+    std::print("AC3827/AC3 -- *-stable path stays green under Production\n");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    apply_dev_audit_defaults();
+    CompilerService cs;
+    expect_true("3827 AC3: set-code", cs.eval("(set-code \"(begin 11 22 33)\")").has_value());
+    expect_true("3827 AC3: eval", cs.eval("(eval-current)").has_value());
+    apply_production_audit_defaults();
+    expect_true("3827 AC3: bind children-stable", bind_three_child_stable(cs));
+    auto qc = cs.eval("qc");
+    expect_true("3827 AC3: children-stable is schema-2 hash", qc && is_hash(*qc));
+    auto n = cs.eval("(length (hash-ref qc \"matches\"))");
+    expect_true("3827 AC3: 3 matches", n && is_int(*n) && as_int(*n) == 3);
+    apply_dev_audit_defaults();
+}
+
+void test_ac3827_4_soft_and_source() {
+    std::print("AC3827/AC4 -- Soft bare list + source-cite; no invent/docs\n");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    apply_dev_audit_defaults();
+    CompilerService cs;
+    expect_true("3827 AC4: set-code", cs.eval("(set-code \"(begin 4 5)\")").has_value());
+    expect_true("3827 AC4: eval", cs.eval("(eval-current)").has_value());
+    auto kids = cs.eval("(query :children 0)");
+    expect_true("3827 AC4: Soft children returns", kids.has_value());
+    expect_true("3827 AC4: Soft children is NOT a hash", kids && !is_hash(*kids));
+    auto par = cs.eval("(query :parent (car (query :children 0)))");
+    expect_true("3827 AC4: Soft parent returns", par.has_value());
+    expect_true("3827 AC4: Soft parent is NOT a hash", par && !is_hash(*par));
+
+    std::ifstream f_qws("src/compiler/evaluator_primitives_query_workspace.cpp");
+    std::string qws((std::istreambuf_iterator<char>(f_qws)), std::istreambuf_iterator<char>());
+    expect_true("3827 AC4: query_workspace readable", !qws.empty());
+    expect_true("3827 AC4: Issue #3827 cited", qws.find("Issue #3827") != std::string::npos);
+    // children finish must use maybe_result (not plain end_query_epoch alone).
+    const auto ch = qws.find("(*q_impls)[\"query:children\"]");
+    expect_true("3827 AC4: query:children present", ch != std::string::npos);
+    const auto ch_end = qws.find("(*q_impls)[\"query:children-stable\"]", ch);
+    const auto ch_body =
+        ch == std::string::npos
+            ? std::string{}
+            : qws.substr(ch, (ch_end == std::string::npos ? 2500 : ch_end - ch));
+    expect_true("3827 AC4: children uses end_query_epoch_maybe_result",
+                ch_body.find("end_query_epoch_maybe_result") != std::string::npos);
+
+    const auto pa = qws.find("(*q_impls)[\"query:parent\"]");
+    expect_true("3827 AC4: query:parent present", pa != std::string::npos);
+    // parent-stable follows parent in some layouts; bound by siblings comment or next add(
+    const auto pa_end = qws.find("query:siblings", pa);
+    const auto pa_body =
+        pa == std::string::npos
+            ? std::string{}
+            : qws.substr(pa, (pa_end == std::string::npos ? 2500 : pa_end - pa));
+    expect_true("3827 AC4: parent uses end_query_epoch_maybe_result",
+                pa_body.find("end_query_epoch_maybe_result") != std::string::npos);
+
+    std::ifstream f_hh("src/core/workspace_epoch.hh");
+    std::string hh((std::istreambuf_iterator<char>(f_hh)), std::istreambuf_iterator<char>());
+    expect_true("3827 AC4: kQueryChildrenParentSchema2ExportIssue",
+                hh.find("kQueryChildrenParentSchema2ExportIssue") != std::string::npos);
+    {
+        std::ifstream f("tests/compiler/test_issue_3827.cpp");
+        expect_true("3827 AC4: no test_issue_3827.cpp", !f.good());
+    }
+    {
+        std::ifstream f("docs/design/3827-children-parent-schema2.md");
+        expect_true("3827 AC4: no docs/design/", !f.good());
+    }
+}
+
 int main() {
     std::print("Issue #3103 + #3137 + #3231 -- QueryResult full-provenance path (schema-2)\n");
     set_strategy(AuditStrategy::Full);
@@ -1685,7 +1832,11 @@ int main() {
     // the pre-existing eval-current path crash is resolved.
     test_3395_ac4_non_regress_source_cite();
     // AC3389 runtime ACs skipped — see comment above.
+    test_ac3827_1_production_children_v2_schema2();
+    test_ac3827_2_soft_children_int_fails_prod_as_stable();
+    test_ac3827_3_children_stable_stays_green();
+    test_ac3827_4_soft_and_source();
     std::print("All #3103 + #3137 + #3231 + #3286 + #3311 + #3389 + #3395 + #3424 + "
-               "#3449 + #3660 + #3695 + #3696 + #3766 + #3767 AC tests PASSED\n");
+               "#3449 + #3660 + #3695 + #3696 + #3766 + #3767 + #3827 AC tests PASSED\n");
     return 0;
 }
