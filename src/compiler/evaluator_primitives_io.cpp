@@ -31,7 +31,7 @@ module;
 #include "primitives_detail.h"
 #include "primitives_meta.h"
 #include "security_capabilities.h"
-#include "tenant_host_path.hh" // #3802 tenant FS path-prefix
+#include "tenant_host_path.hh"        // #3802 tenant FS path-prefix
 #include "core/provenance_tracker.hh" // #3802 MT active
 #include "core/arena_auto_policy_stats.h"
 #include "core/gap_buffer.hh"

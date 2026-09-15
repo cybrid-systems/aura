@@ -44,8 +44,7 @@ def main() -> int:
     must("Issue #3800", "AC1/AC2 cite", iso)
     must("caller-only TenantAdmin", "AC1/AC2 caller-only marker", iso)
     must("try_grant_cross_tenant_privileged", "AC1/AC2 helper", iso)
-    must("const bool caller_ta = has_effect(caller_eff, Effect::TenantAdmin);",
-         "AC1/AC2 caller_ta", iso)
+    must("const bool caller_ta = has_effect(caller_eff, Effect::TenantAdmin);", "AC1/AC2 caller_ta", iso)
     if "caller_ta || target_ta" in iso:
         fails.append("AC1: caller_ta || target_ta still present (must be caller-only)")
     if "target_ta" in iso:
@@ -72,8 +71,7 @@ def main() -> int:
     # ── AC4: #3086 AC3 oracle flipped; linter wired; no invent / query key ──
     must("#3086 AC3/#3800", "AC4 oracle cite", test_iso)
     must("target-only TA → deny", "AC4 oracle deny", test_iso)
-    must("cross_grant_bits unchanged when only target holds TenantAdmin",
-         "AC4 bits unchanged", test_iso)
+    must("cross_grant_bits unchanged when only target holds TenantAdmin", "AC4 bits unchanged", test_iso)
     must("check_cross_tenant_grant_caller_ta_3800", "AC4 build.py", build)
     must("Issue #3800", "AC4 build cite", build)
     if "schema-3800" in prim:

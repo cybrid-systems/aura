@@ -1880,8 +1880,7 @@ int run_test_mailbox_bp_admit() {
                     std::memory_order_relaxed);
             auto hov = spawn_agent_with_mailbox(sched, quiet_ov);
             CHECK(!hov.ok, "ac3804_1_overflow_cohort_fail_closed");
-            CHECK(hov.deny_class == aura::orch::AgentDenyClass::BpAdmit,
-                  "ac3804_1_typed_BpAdmit");
+            CHECK(hov.deny_class == aura::orch::AgentDenyClass::BpAdmit, "ac3804_1_typed_BpAdmit");
             CHECK(hov.quota_dimension == "mailbox-bp-scope-overflow",
                   "ac3804_2_distinct_deny_detail");
             CHECK(hov.error.find("mailbox-bp-scope-overflow") != std::string::npos,

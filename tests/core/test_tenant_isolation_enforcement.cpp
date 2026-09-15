@@ -1681,7 +1681,8 @@ int main() {
                 break;
             }
         }
-        CHECK(found, "AC3/#3800: SE reason 'cross-tenant-grant-needs-tenant-admin' on target-only TA");
+        CHECK(found,
+              "AC3/#3800: SE reason 'cross-tenant-grant-needs-tenant-admin' on target-only TA");
     }
 
     // ── #3086 AC4: no double-count via Evaluator wrapper ──
@@ -4365,7 +4366,8 @@ int main() {
         ev_b.set_capability_tenant_id(7);
         grant_tenant_admin_mid(7);
         ev_a.grant_cross_tenant_access(/*from=*/7, /*to=*/42, kEffectMutate);
-        CHECK(g_workspace_isolation().cross_grant_bits(7, 42) != 0, "AC4: pre-revoke grant present");
+        CHECK(g_workspace_isolation().cross_grant_bits(7, 42) != 0,
+              "AC4: pre-revoke grant present");
         // Dual-eval: B revokes TA while A would still see the grant.
         aura::core::capability::set_effect_fiber_id_override(4242);
         aura::core::capability::g_capability_registry().revoke(7, "tenant-admin");
@@ -4387,8 +4389,7 @@ int main() {
             if (!e.denied)
                 continue;
             found_deny = true;
-            CHECK(e.fiber_id == 4242,
-                  "AC5: IsolationDeny carries fiber_id (#3011)");
+            CHECK(e.fiber_id == 4242, "AC5: IsolationDeny carries fiber_id (#3011)");
             // mid may be 0 at process origin (#3594) — just ensure field is present
             // (mutation_id readable); non-negative always.
             CHECK(e.mutation_id == e.mutation_id, "AC5: IsolationDeny carries mid field");
@@ -4528,7 +4529,8 @@ int main() {
 
     // ── Issue #3801: IsolationDeny mid joins TypedMid (no phantom 1) ──
     {
-        std::println("\n--- #3801 AC1: Guard TypedMid≠epoch → IsolationDeny SE mid == TypedMid ---");
+        std::println(
+            "\n--- #3801 AC1: Guard TypedMid≠epoch → IsolationDeny SE mid == TypedMid ---");
         reset_all();
         aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
         aura::compiler::typed_audit::apply_production_audit_defaults();
@@ -4551,7 +4553,8 @@ int main() {
         for (std::uint64_t s = se_base; s < ring.seq.load(std::memory_order_acquire); ++s) {
             const auto& e = ring.ring[s % ring.ring.size()];
             if (static_cast<int>(e.kind) !=
-                    static_cast<int>(aura::core::security_event::SecurityEventKind::IsolationDeny) ||
+                    static_cast<int>(
+                        aura::core::security_event::SecurityEventKind::IsolationDeny) ||
                 e.seq != s)
                 continue;
             found = true;
@@ -4607,7 +4610,8 @@ int main() {
         for (std::uint64_t s = se2; s < ring.seq.load(std::memory_order_acquire); ++s) {
             const auto& e = ring.ring[s % ring.ring.size()];
             if (static_cast<int>(e.kind) !=
-                    static_cast<int>(aura::core::security_event::SecurityEventKind::IsolationDeny) ||
+                    static_cast<int>(
+                        aura::core::security_event::SecurityEventKind::IsolationDeny) ||
                 e.seq != s)
                 continue;
             if (e.mutation_id == 0)
@@ -4785,7 +4789,8 @@ int main() {
 
     // ── Issue #3802: EXEMPT_2ARG write-file/sys-* tenant host-path isolation ──
     {
-        std::println("\n--- #3802 AC1: Restricted+MT tenant A cannot write under tenant B prefix ---");
+        std::println(
+            "\n--- #3802 AC1: Restricted+MT tenant A cannot write under tenant B prefix ---");
         reset_all();
         aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
         ::setenv("AURA_MULTI_TENANT", "1", 1);
@@ -4872,11 +4877,14 @@ int main() {
 
     {
         std::println("\n--- #3802 AC3: EXEMPT_2ARG inventory size stable; no new query key ---");
-        const auto mandate = read_file("scripts/coverage/checks/check_side_effect_node_id_mandate_2942.py");
-        const auto fiber = read_file("scripts/coverage/checks/check_side_effect_fiber_principal_2839.py");
+        const auto mandate =
+            read_file("scripts/coverage/checks/check_side_effect_node_id_mandate_2942.py");
+        const auto fiber =
+            read_file("scripts/coverage/checks/check_side_effect_fiber_principal_2839.py");
         const auto ixx = read_file("src/compiler/evaluator.ixx");
         const auto prim = read_file("src/compiler/evaluator_primitives_security.cpp");
-        CHECK(mandate.find("EXEMPT_2ARG_OPS") != std::string::npos, "AC3: mandate inventory present");
+        CHECK(mandate.find("EXEMPT_2ARG_OPS") != std::string::npos,
+              "AC3: mandate inventory present");
         CHECK(ixx.find("kResidualNodeIdExemptOpsCount = 5") != std::string::npos,
               "AC3: kResidualNodeIdExemptOpsCount stays 5");
         CHECK(ixx.find("kNodeIdMandateExemptOpsCount = 5") != std::string::npos,

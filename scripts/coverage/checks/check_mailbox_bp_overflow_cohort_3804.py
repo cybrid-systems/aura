@@ -54,9 +54,7 @@ def main() -> int:
     must("Issue #3804", "AC1 cite", spawn)
 
     load_pos = spawn.find("[[nodiscard]] inline std::uint64_t load_mailbox_bp_recent")
-    cohort_pos = spawn.find(
-        "[[nodiscard]] inline bool named_scope_bp_on_overflow_cohort", load_pos
-    )
+    cohort_pos = spawn.find("[[nodiscard]] inline bool named_scope_bp_on_overflow_cohort", load_pos)
     load_fn = spawn[load_pos:cohort_pos] if cohort_pos > load_pos else spawn[load_pos:]
     must("return 0;", "AC1 load missing→0", load_fn)
     if "g_scope_bp_overflow.recent.load" in load_fn:

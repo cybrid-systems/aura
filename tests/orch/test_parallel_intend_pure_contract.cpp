@@ -41,9 +41,9 @@
 
 #include "compiler/typed_mutation_audit.h"
 #include "orch/agent_spawn.h"
-#include "orch/agent_scope.h" // #3803
+#include "orch/agent_scope.h"    // #3803
 #include "serve/parallel_orch.h" // Issue #2923: decide_isolation SSOT
-#include "serve/scheduler.h" // #3803 AgentScope observe
+#include "serve/scheduler.h"     // #3803 AgentScope observe
 
 #include <atomic>
 #include <cstdint>
@@ -1848,8 +1848,7 @@ int run_test_parallel_intend_pure_contract() {
             const auto idx = as_string_idx(*key_lvl);
             const auto heap = prod3803.evaluator().string_heap();
             const std::string s = idx < heap.size() ? std::string(heap[idx]) : "";
-            CHECK(s == "region-concurrent",
-                  "ac3803_3_keys: isolation-level=region-concurrent");
+            CHECK(s == "region-concurrent", "ac3803_3_keys: isolation-level=region-concurrent");
         }
         auto key_miss = prod3803.eval(R"(
             (begin
@@ -1895,7 +1894,8 @@ int run_test_parallel_intend_pure_contract() {
             (void)scope.spawn(std::move(a));
             (void)scope.spawn(std::move(b));
             auto obs = scope.observe_isolation();
-            CHECK(obs.decision.level == aura::serve::parallel_orch::IsolationLevel::RegionConcurrent,
+            CHECK(obs.decision.level ==
+                      aura::serve::parallel_orch::IsolationLevel::RegionConcurrent,
                   "3803 AC2: C++ observe RegionConcurrent");
             CHECK(!obs.region_key_missing, "3803 AC2: C++ observe not missing");
             CHECK(obs.decision.distinct_nonzero_region_keys == 2, "3803 AC2: distinct==2");
