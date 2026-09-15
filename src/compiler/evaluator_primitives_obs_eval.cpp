@@ -1639,6 +1639,10 @@ void ObservabilityPrims::register_eval_p11(PrimRegistrar add, Evaluator& ev) {
     // Issue #2089 + #2166: (arena:live-compact [mode]). Soft=0 Force=1 Moving=2.
     // Soft/Force keep non-moving contract (moved-live-objects #f). Moving is
     // opt-in densify + object_remap_ (default OFF; Agent flag / env).
+    //
+    // Issue #3811: Soft|Force Densify restamp lives inside Evaluator::live_compact
+    // (mirror #3677/#3742/#3809). This primitive stays a thin obs face — no
+    // duplicate restamp / no Moving window publish from Soft.
     ObservabilityPrims::register_stats_impl(
         "arena:live-compact", [&ev](const auto& args) -> EvalValue {
             aura::ast::LiveCompactMode mode = aura::ast::LiveCompactMode::Soft;

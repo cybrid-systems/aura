@@ -4826,6 +4826,22 @@ def cmd_lint():
             "Issue #3810 Soft gen-bump this-window linter failed — run python3 scripts/coverage/checks/check_soft_gen_bump_this_window_3810.py"
         )
         return r
+    # Issue #3811: Evaluator::live_compact Soft|Force Agent entry must
+    # Densify-restamp when Soft/Force bumps gen / invalidates pins (dual-
+    # track vs #3677/#3742 GC Soft and #3809 boundary Soft probe). Soft
+    # soft-gated no-op → zero extra restamp; Soft does not publish Moving
+    # densify health window; Moving path unchanged. Extends
+    # test_gc_compact_sweep_batch.cpp (#81967); no docs/design/ (#1655).
+    asdr3811_script = COVERAGE_CHECKS / "check_agent_soft_densify_restamp_3811.py"
+    if not asdr3811_script.exists():
+        fail(f"missing {asdr3811_script}")
+        return 1
+    r = run([sys.executable, str(asdr3811_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3811 Agent Soft|Force Densify restamp linter failed — run python3 scripts/coverage/checks/check_agent_soft_densify_restamp_3811.py"
+        )
+        return r
     # Issue #3802: EXEMPT_2ARG write-file/sys-* host-path isolation under
     # Restricted+MT / Strict — resolve under tenant root from
     # capability_tenant_id_; cross-tenant escape → IsolationDeny SE
