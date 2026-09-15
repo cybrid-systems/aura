@@ -2232,8 +2232,7 @@ static void ac3773_1_restricted_stale_ref_denies_before_effect() {
     // Registry grant (same as #3724 AC2) — bypasses #3362 TA fence so the
     // deny under test is stale-ref, not grant-effect-needs-explicit-tenant-admin.
     using aura::core::capability::make_grant_provenance;
-    g_capability_registry().grant(7, "mut-3773-ac1",
-                                  static_cast<Effect>(kEffectMutate),
+    g_capability_registry().grant(7, "mut-3773-ac1", static_cast<Effect>(kEffectMutate),
                                   make_grant_provenance(me == 0 ? 1 : me, true, 0, 0));
     CompilerService cs;
     auto& ev = cs.evaluator();
@@ -2273,8 +2272,7 @@ static void ac3773_1_restricted_stale_ref_denies_before_effect() {
             continue;
         se_join = true;
         CHECK(e.tenant_id == 7, "3773 AC1: SE tenant joins stamped ref");
-        CHECK(e.mutation_id == current_mutation_epoch(),
-              "3773 AC1: SE mid is Mutation epoch");
+        CHECK(e.mutation_id == current_mutation_epoch(), "3773 AC1: SE mid is Mutation epoch");
         CHECK(e.epoch == current_mutation_epoch(), "3773 AC1: SE epoch join");
         CHECK(std::string{e.reason}.find("stale-ref") != std::string::npos,
               "3773 AC1: SE reason is stale-ref");
@@ -2296,30 +2294,44 @@ static void ac3773_1_restricted_stale_ref_denies_before_effect() {
 static void ac3773_2_fresh_stamped_ref_still_passes() {
     std::println("\n--- #3773 AC2: fresh stamped ref still passes with Mutate grant ---");
     reset_all();
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
     bump_mutation_epoch(1);
-    const auto me = current_mutation_epoch();
+    const auto mid = current_mutation_epoch();
+    using aura::core::capability::g_capability_registry;
     using aura::core::capability::make_grant_provenance;
     g_capability_registry().grant(7, "mut-3773-ac2",
-                                  static_cast<Effect>(kEffectMutate),
-                                  make_grant_provenance(me == 0 ? 1 : me, true, 0, 0));
+                                  static_cast<aura::core::capability::Effect>(kEffectMutate),
+                                  make_grant_provenance(mid, true, 0, 0));
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+    aura::core::provenance::set_multi_tenant_env_active(true);
     CompilerService cs;
     auto& ev = cs.evaluator();
     ev.set_effect_sandbox_mode(1);
     ev.set_capability_tenant_id(7);
+    ev.clear_boundary_audit_mid_for_test();
+    ev.note_boundary_audit_mid_for_test(mid);
     CHECK(cs.eval("(set-code \"(define (g x) x)\")").has_value(), "3773 AC2: set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "3773 AC2: eval-current");
+    // Re-arm mid after set-code Guard (may bump Mutation epoch / clear face).
+    ev.clear_boundary_audit_mid_for_test();
+    ev.note_boundary_audit_mid_for_test(mid);
     auto root = cs.eval("(query:root)");
     CHECK(root.has_value() && aura::compiler::types::is_int(*root), "3773 AC2: query:root");
     const auto nid = static_cast<std::uint32_t>(aura::compiler::types::as_int(*root));
     auto fresh = ev.export_ref(nid);
     CHECK(fresh.tenant_id == 7, "3773 AC2: stamp is caller");
+    CHECK(ev.workspace_flat() && ev.workspace_flat()->get_safe(fresh).has_value(),
+          "3773 AC2: fresh ref passes get_safe");
     const bool ok = ev.require_effect_on_ref(static_cast<std::uint16_t>(kEffectMutate),
                                              "3773-ac2-fresh", fresh);
     CHECK(ok, "3773 AC2: fresh stamped on_ref allows when capability held");
+    aura::core::provenance::set_multi_tenant_env_active(false);
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
 }
 
 static void ac3773_3_soft_off_skips_freshness_gate() {
-    std::println("\n--- #3773 AC3: Soft/Off zero extra cost (stale still reaches require_effect) ---");
+    std::println(
+        "\n--- #3773 AC3: Soft/Off zero extra cost (stale still reaches require_effect) ---");
     reset_all();
     bump_mutation_epoch(1);
     CompilerService cs;
@@ -2338,8 +2350,8 @@ static void ac3773_3_soft_off_skips_freshness_gate() {
     CHECK(!ws->get_safe(stale).has_value(), "3773 AC3: get_safe fails after bump");
     const auto seq_se = current_seq();
     // Soft/Off: freshness gate skipped — require_effect still allows (Off permissive).
-    const bool ok = ev.require_effect_on_ref(static_cast<std::uint16_t>(kEffectMutate),
-                                             "3773-ac3-soft", stale);
+    const bool ok =
+        ev.require_effect_on_ref(static_cast<std::uint16_t>(kEffectMutate), "3773-ac3-soft", stale);
     CHECK(ok, "3773 AC3: Soft/Off on_ref(stale) still allows (zero-cost gate skip)");
     // No EffectDeny stale-ref SE from the #3773 gate under Soft.
     const auto& ring = g_security_event_ring();
@@ -2501,6 +2513,17 @@ int run_test_occupancy_deny_path_3724() {
     ac3724_3_export_ref_still_occupies();
     ac3724_4_collision_fail_closed_intact();
     ac3724_5_soft_source_and_no_invent();
+    return aura::test::g_failed ? 1 : 0;
+}
+
+// Issue #3773: batch member entry (security_capability_batch calls this;
+// full run_test_require_effect_auto_isolation also includes the same ACs).
+int run_test_require_effect_on_ref_stale_3773() {
+    std::println("=== Issue #3773: on_ref stale gen/COW freshness ===");
+    ac3773_1_restricted_stale_ref_denies_before_effect();
+    ac3773_2_fresh_stamped_ref_still_passes();
+    ac3773_3_soft_off_skips_freshness_gate();
+    ac3773_4_source_cite_and_no_invent();
     return aura::test::g_failed ? 1 : 0;
 }
 
