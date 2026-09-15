@@ -3623,7 +3623,7 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
             if (production ||
                 met.capability_live_session_grants.load(std::memory_order_relaxed) != 0) {
                 std::lock_guard<std::mutex> lock(reg.mtx);
-                // Issue #3799 / #3241: prefer enter-captured fiber_id_ so
+                // Issue #3799 / Issue #3241: prefer enter-captured fiber_id_ so
                 // TLS-cleared dtor under Restricted+MT never mid-only sweeps
                 // peer outermost grants. Fall back to live current id;
                 // registry fail-closes if still 0 under hard_fiber.

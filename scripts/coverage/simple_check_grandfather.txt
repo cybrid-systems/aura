@@ -409,3 +409,5 @@ scripts/coverage/checks/check_empty_type_annotation_no_dynamic_3830.py
 scripts/coverage/checks/check_dirty_aware_storm_force_full_cap_3831.py
 scripts/coverage/checks/check_apply_closure_tls_cache_3832.py
 scripts/coverage/checks/check_ir_soa_column_arena_3833.py
+check_abandoned_live_name_reuse_3805.py
+check_agent_scope_region_key_isolation_3803.py
