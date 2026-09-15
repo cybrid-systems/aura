@@ -5546,6 +5546,19 @@ def cmd_lint():
             "Issue #3778 occurrence mid-join SSOT linter failed — run python3 scripts/coverage/checks/check_occurrence_mid_join_ssot_3778.py"
         )
         return r
+    # Issue #3786: *allow-macro-inline* #t requires MacroSelfEvo under
+    # Restricted/Strict (same face as hygiene:set-allow-macro-mutate!).
+    # Soft/Off ungated. Linter after #3778.
+    ami3786_script = COVERAGE_CHECKS / "check_allow_macro_inline_mse_3786.py"
+    if not ami3786_script.exists():
+        fail(f"missing {ami3786_script}")
+        return 1
+    r = run([sys.executable, str(ami3786_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3786 allow-macro-inline MSE linter failed — run python3 scripts/coverage/checks/check_allow_macro_inline_mse_3786.py"
+        )
+        return r
     # Issue #3656: caller partial absorbs callee cone (block units, not
     # define count). Residual of #3550 (precompute early-return on empty
     # calls) + #3584 (units fixed, cone still invisible). Soft observe.

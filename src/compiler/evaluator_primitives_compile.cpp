@@ -4018,18 +4018,26 @@ void CompilePrims::register_compile_p39(PrimRegistrar add, Evaluator& ev) {
     // workspace opt in to (or out of) inlining macro-introduced
     // code without recompiling.
     //
-    // Issue #1780: policy is per-Evaluator (ev.inline_respect_macro_hygiene_),
+    // Issue #1780 / #3786: policy is per-Evaluator (ev.inline_respect_macro_hygiene_),
     // not InlinePass process-wide static — concurrent CompilerServices /
     // fibers no longer clobber each other's toggle.
     //
     // Args: 1 (optional bool — defaults to true). Returns the
     // post-toggle flag value (1 if macro-introduced code is
     // now inlinable, 0 if not).
+    // Issue #3786: enabling (#t) under Restricted/Strict requires
+    // MacroSelfEvo — same face as hygiene:set-allow-macro-mutate! /
+    // deny_marker_clear_without_mse (#3652/#3650). Soft/Off: one
+    // sandbox-mode load (ungated). Clearing (#f) stays ungated so a
+    // denied arm cannot strand respect=false.
     add("*allow-macro-inline*", [&ev](const auto& a) -> EvalValue {
         bool enable = true;
         if (a.size() >= 1 && types::is_bool(a[0])) {
             enable = static_cast<bool>(types::as_bool(a[0]));
         }
+        if (enable && ev.effect_sandbox_mode() != 0 && deny_marker_clear_without_mse(ev, 0))
+            return ev.make_merr("hygiene-protected",
+                                "(*allow-macro-inline* #t) requires MacroSelfEvo capability");
         // enable=#t → respect hygiene off (allow inline macros).
         ev.set_inline_respect_macro_hygiene(!enable);
         const bool now_respects = ev.get_inline_respect_macro_hygiene();
