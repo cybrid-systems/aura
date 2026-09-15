@@ -54,9 +54,11 @@ using aura::compiler::macro_exp::g_macro_hygiene_last_limit_reason;
 using aura::compiler::macro_exp::g_macro_origin_provenance_errors;
 using aura::compiler::macro_exp::get_fiber_hygiene_metrics;
 using aura::compiler::macro_exp::hygiene_last_limit_reason_string;
+using aura::compiler::macro_exp::inner_expand_production_limit_deny;
 using aura::compiler::macro_exp::inner_expand_production_limit_deny_all;
 using aura::compiler::macro_exp::kHygieneLimitReasonDepthLimit;
 using aura::compiler::macro_exp::kHygieneLimitReasonNameMapShared;
+using aura::compiler::macro_exp::note_hygiene_last_limit_reason;
 using aura::compiler::macro_exp::reset_hygiene_runtime_caps_for_test;
 using aura::compiler::macro_exp::set_hygiene_depth_cap;
 using aura::test::g_failed;
@@ -763,6 +765,58 @@ int run_test_concurrent_clone_hygiene_depth() {
         CHECK(read_file("tests/compiler/test_issue_3756.cpp").empty(), "3756 AC4: no test_issue");
         CHECK(read_file("docs/design/3756-shared-name-map-abort.md").empty(),
               "3756 AC4: no docs/design");
+    }
+
+
+    // Issue #3787: sticky process-global 8/9/10 must not false-deny later expands.
+    std::println("\n=== Issue #3787: sticky last_limit 8/9/10 vs deny_all ===");
+    {
+        std::println("\n--- #3787 AC1: peer global sticky 9 does not deny_all ---");
+        aura_test_reset_macro_hygiene_last_limit_reason_for_test();
+        g_macro_hygiene_last_limit_reason.store(kHygieneLimitReasonNameMapShared,
+                                                std::memory_order_relaxed);
+        CHECK(!inner_expand_production_limit_deny(),
+              "3787 AC1: own-walk deny still excludes 9 (#3685)");
+        CHECK(!inner_expand_production_limit_deny_all(),
+              "3787 AC1: deny_all ignores peer-only global 9");
+        note_hygiene_last_limit_reason(kHygieneLimitReasonNameMapShared);
+        CHECK(inner_expand_production_limit_deny_all(),
+              "3787 AC1: this-fiber stamped 9 still deny_all");
+        const auto* rs = hygiene_last_limit_reason_string();
+        CHECK(rs && std::string_view(rs) == "name-map-shared",
+              "3787 AC3: stable string after real deny");
+        aura_test_reset_macro_hygiene_last_limit_reason_for_test();
+    }
+    {
+        std::println("\n--- #3787 AC2: successful expand clears this-fiber sticky 9 ---");
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+        aura_test_reset_macro_hygiene_last_limit_reason_for_test();
+        note_hygiene_last_limit_reason(kHygieneLimitReasonNameMapShared);
+        CHECK(inner_expand_production_limit_deny_all(), "3787 AC2: armed before expand");
+        aura::ast::ASTArena sa, ta;
+        StringPool sp(sa.allocator());
+        FlatAST src(sa.allocator());
+        auto pr = aura::parser::parse_to_flat("(lambda (x) x)", src, sp);
+        CHECK(pr.success, "3787 AC2: parse");
+        NameMap other;
+        FlatAST tgt(ta.allocator());
+        StringPool tp2(ta.allocator());
+        auto later = clone_macro_body(tgt, tp2, src, sp, pr.root, nullptr, &other,
+                                      SyntaxMarker::MacroIntroduced);
+        CHECK(later != NULL_NODE, "3787 AC2: expand succeeds");
+        CHECK(!inner_expand_production_limit_deny_all(),
+              "3787 AC2: success clears this-fiber sticky 9 for deny_all");
+        aura_test_reset_macro_hygiene_last_limit_reason_for_test();
+    }
+    {
+        std::println("\n--- #3787 AC4: source-cite + Soft contract + no invent ---");
+        const auto me = read_file("src/compiler/macro_expansion.cpp");
+        CHECK(me.find("Issue #3787") != std::string::npos, "3787 AC4: cites #3787");
+        CHECK(me.find("get_fiber_hygiene_metrics(fid).last_limit_reason") != std::string::npos,
+              "3787 AC4: deny_all uses per-fiber reason");
+        CHECK(read_file("tests/compiler/test_issue_3787.cpp").empty(), "3787 AC4: no test_issue");
+        CHECK(read_file("docs/design/3787-sticky-last-limit.md").empty(),
+              "3787 AC4: no docs/design");
     }
 
     // Issue #3574: no-boundary depth-exceed NULL_NODE hole + caller contract.

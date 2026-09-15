@@ -372,3 +372,4 @@ check_auto_arm_densify_health_publish_3783.py
 check_anon_peer_empty_name_soft_stale_3784.py
 check_sync_remount_storm_gate_3785.py
 check_allow_macro_inline_mse_3786.py
+check_sticky_last_limit_deny_all_3787.py

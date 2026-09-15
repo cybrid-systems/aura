@@ -5559,6 +5559,18 @@ def cmd_lint():
             "Issue #3786 allow-macro-inline MSE linter failed — run python3 scripts/coverage/checks/check_allow_macro_inline_mse_3786.py"
         )
         return r
+    # Issue #3787: sticky global last_limit 8/9/10 must not false-deny
+    # via deny_all — prefer per-fiber FiberHygieneStats. Linter after #3786.
+    sll3787_script = COVERAGE_CHECKS / "check_sticky_last_limit_deny_all_3787.py"
+    if not sll3787_script.exists():
+        fail(f"missing {sll3787_script}")
+        return 1
+    r = run([sys.executable, str(sll3787_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3787 sticky last_limit deny_all linter failed — run python3 scripts/coverage/checks/check_sticky_last_limit_deny_all_3787.py"
+        )
+        return r
     # Issue #3656: caller partial absorbs callee cone (block units, not
     # define count). Residual of #3550 (precompute early-return on empty
     # calls) + #3584 (units fixed, cone still invisible). Soft observe.
