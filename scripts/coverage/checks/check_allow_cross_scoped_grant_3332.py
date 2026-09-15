@@ -51,7 +51,8 @@ def main() -> int:
     must("3332 AC1: Restricted without TenantAdmin cannot set flag", "AC1 test", test_iso)
 
     must("allow_cross_tenant && !(strict || sandbox_restricted)", "AC2 gated short-circuit", iso)
-    must("cross_grant_bits(cur, target)", "AC2 grant walk retained", iso)
+    # #3800/#3802 reshaped the walk into cross_grant_allows_locked.
+    must("cross_grant_allows_locked(cur, target", "AC2 grant walk retained", iso)
     must("3332 AC2: foreign Mutate without grant denies", "AC2 test", test_iso)
     must("allow_cross without grant denies", "AC2 rewritten bypass case", test_iso)
     if "return true;  // full isolation short-circuit" in iso:
@@ -61,7 +62,7 @@ def main() -> int:
     must("3332 AC3: Mutate grant + allow_cross allows", "AC3 test", test_iso)
     must("3332 AC3: insufficient bits still deny", "AC3 bits", test_iso)
 
-    must("cross_grant_bits(cur, ref_tenant)", "AC4 provenance walk retained", iso)
+    must("cross_grant_allows_locked(cur, ref_tenant", "AC4 provenance walk retained", iso)
     must("3332 AC4: foreign ref without current→ref grant denies", "AC4 test", test_iso)
 
     must("the zero-cost bypass", "AC5 comment", iso)
