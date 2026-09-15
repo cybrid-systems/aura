@@ -828,6 +828,43 @@ static void ac3612_4_source_and_linter() {
           "3612 AC4: no docs/design");
 }
 
+
+// ── Issue #3785: sync covered remount honors residual storm gate ──
+static void ac3785_1_sync_remount_storm_gate() {
+    std::println("\n--- #3785 AC1: sync covered remount storm/throttle gate ---");
+    const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
+    CHECK(rt.find("Issue #3785") != std::string::npos, "ac3785_1: cites #3785");
+    const auto fn = rt.find("aura_sync_remount_covered_named_live_closures");
+    CHECK(fn != std::string::npos, "ac3785_1: sync remount present");
+    const auto win = rt.substr(fn, 1200);
+    CHECK(win.find("storm >= 2") != std::string::npos, "ac3785_1: Global/Both storm gate");
+    CHECK(win.find("aura_hot_update_should_throttle_reemit") != std::string::npos,
+          "ac3785_1: reuses reemit throttle");
+    CHECK(win.find("g_reemit_success_sync_covered_budget_skip_total") != std::string::npos,
+          "ac3785_1: budget_skip counter");
+    const auto gate = win.find("storm >= 2");
+    const auto lock = win.find("g_closure_table_mtx");
+    CHECK(gate != std::string::npos && lock != std::string::npos && gate < lock,
+          "ac3785_1: storm gate before table lock");
+}
+
+static void ac3785_2_residual_predicates_shared() {
+    std::println("\n--- #3785 AC2: same predicates as residual remount tick ---");
+    const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
+    CHECK(rt.find("aura_residual_live_closure_remount_tick") != std::string::npos,
+          "ac3785_2: residual tick present");
+    const auto fn = rt.find("aura_sync_remount_covered_named_live_closures");
+    const auto win = rt.substr(fn, 1200);
+    CHECK(win.find("g_residual_force_skip") != std::string::npos, "ac3785_2: force-skip shared");
+}
+
+static void ac3785_3_shape_only_decoupled() {
+    std::println("\n--- #3785 AC3/AC4: Shape-only storm remains decoupled ---");
+    const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
+    CHECK(rt.find("storm >= 2") != std::string::npos, "ac3785_3: Shape-only not gated");
+    CHECK(rt.find("test_issue_3785.cpp") == std::string::npos, "ac3785_3: no invent");
+}
+
 } // namespace
 
 int run_test_remount_force_deopt() {
@@ -852,9 +889,14 @@ int run_test_remount_force_deopt() {
     ac3612_2_soft_pairing_fail_no_strip();
     ac3612_3_success_no_strip();
     ac3612_4_source_and_linter();
+    std::println("\n=== Issue #3785: sync covered remount storm gate ===");
+    ac3785_1_sync_remount_storm_gate();
+    ac3785_2_residual_predicates_shared();
+    ac3785_3_shape_only_decoupled();
     if (g_failed)
         return 1;
-    std::println("remount force-deopt #2503/#2894/#3548/#3578/#3612: OK ({} passed)", g_passed);
+    std::println("remount force-deopt #2503/#2894/#3548/#3578/#3612/#3785: OK ({} passed)",
+                 g_passed);
     return 0;
 }
 

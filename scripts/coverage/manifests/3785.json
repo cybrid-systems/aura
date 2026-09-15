@@ -1,0 +1,32 @@
+{
+  "issue": 3785,
+  "title": "Issue #3785: sync covered remount honors residual storm gate",
+  "ok": "OK: Issue #3785 sync covered remount storm gate \u2014 Soft Global budget_skip; Shape-only decoupled; Soft/Off unchanged",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/aura_jit_runtime.cpp",
+      "contains": [
+        "Issue #3785",
+        "g_reemit_success_sync_covered_budget_skip_total",
+        "storm >= 2"
+      ]
+    },
+    {
+      "ac": "AC4-tests",
+      "path": "tests/compiler/test_remount_force_deopt.cpp",
+      "contains": [
+        "ac3785_1",
+        "ac3785_2",
+        "ac3785_3"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "forbid": [
+        "tests/compiler/test_issue_3785.cpp",
+        "docs/design/3785-sync-remount-storm-gate.md"
+      ]
+    }
+  ]
+}

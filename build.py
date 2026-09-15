@@ -6744,6 +6744,17 @@ def cmd_lint():
             "Issue #3784 anon peer empty-name soft-stale linter failed — run python3 scripts/coverage/checks/check_anon_peer_empty_name_soft_stale_3784.py"
         )
         return r
+    # Issue #3785: sync covered remount honors residual storm gate.
+    srs3785_script = COVERAGE_CHECKS / "check_sync_remount_storm_gate_3785.py"
+    if not srs3785_script.exists():
+        fail(f"missing {srs3785_script}")
+        return 1
+    r = run([sys.executable, str(srs3785_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3785 sync remount storm gate linter failed — run python3 scripts/coverage/checks/check_sync_remount_storm_gate_3785.py"
+        )
+        return r
     # Issue #3793: replace-pattern macro keyword unify (:allow-macro? primary,
     # old query-side spellings as compat aliases; one include + gate bool).
     kwu3793_script = COVERAGE_CHECKS / "check_replace_pattern_kw_unify_3793.py"
@@ -14359,6 +14370,26 @@ def cmd_anon_peer_empty_name_soft_stale_3784():
     """Issue #3784: empty-name peer closures leave native under hard owner-scoped."""
     print(f"{B}=== anon peer empty-name soft-stale (#3784) ==={N}")
     return cmd_anon_peer_empty_name_soft_stale_3784_coverage()
+
+
+def cmd_sync_remount_storm_gate_3785_coverage():
+    """Issue #3785: sync remount storm gate (static)."""
+    print(f"{B}=== sync remount storm gate (#3785) ==={N}")
+    script = COVERAGE_CHECKS / "check_sync_remount_storm_gate_3785.py"
+    if not script.is_file():
+        fail(f"missing {script}")
+        return 1
+    if run([sys.executable, str(script)], cwd=ROOT) != 0:
+        fail("sync remount storm gate (#3785) coverage contract rows failed")
+        return 1
+    ok("sync remount storm gate (#3785) coverage clean")
+    return 0
+
+
+def cmd_sync_remount_storm_gate_3785():
+    """Issue #3785: sync covered remount honors residual storm gate."""
+    print(f"{B}=== sync remount storm gate (#3785) ==={N}")
+    return cmd_sync_remount_storm_gate_3785_coverage()
 
 
 def cmd_engine_metrics_hash_overflow_3018_coverage():
@@ -22103,6 +22134,8 @@ def main():
         "auto-arm-densify-health-publish-3783-coverage": cmd_auto_arm_densify_health_publish_3783_coverage,
         "anon-peer-empty-name-soft-stale-3784": cmd_anon_peer_empty_name_soft_stale_3784,
         "anon-peer-empty-name-soft-stale-3784-coverage": cmd_anon_peer_empty_name_soft_stale_3784_coverage,
+        "sync-remount-storm-gate-3785": cmd_sync_remount_storm_gate_3785,
+        "sync-remount-storm-gate-3785-coverage": cmd_sync_remount_storm_gate_3785_coverage,
         "engine-metrics-hash-overflow-3018": cmd_engine_metrics_hash_overflow_3018,
         "engine-metrics-hash-overflow-3018-coverage": cmd_engine_metrics_hash_overflow_3018_coverage,
         "unified-restamp-3019": cmd_unified_restamp_3019,
