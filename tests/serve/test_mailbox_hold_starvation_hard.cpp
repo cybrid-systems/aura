@@ -3265,7 +3265,8 @@ static void ac3764_4_soft_no_force() {
 // Reclaimed. After body exit MutationHold defer is clear. Mid-mutation
 // steal never Ok. Soft / !reject_enabled metric-only unchanged.
 static void ac3826_1_edge_free_peer_poll_gate() {
-    std::println("\n--- #3826 AC1: latched 6×SLO edge-free + peer poll → sticky/Reclaimed or unlock ---");
+    std::println(
+        "\n--- #3826 AC1: latched 6×SLO edge-free + peer poll → sticky/Reclaimed or unlock ---");
     using aura::compiler::Evaluator;
     using aura::serve::Fiber;
     using aura::serve::JoinStatus;
@@ -3336,8 +3337,8 @@ static void ac3826_1_edge_free_peer_poll_gate() {
     CHECK(guard_held.load() == 1 || body_done.load() == 1, "3826 AC1: holder entered or finished");
     const auto jr = Fiber::join(holder, std::optional<std::uint64_t>{200});
     const bool join_ok = jr.status == JoinStatus::Reclaimed || jr.status == JoinStatus::Cancelled ||
-                         jr.status == JoinStatus::Ok || holder->is_done() || holder->is_reclaimed() ||
-                         aura_evaluator_mutation_boundary_depth() == 0;
+                         jr.status == JoinStatus::Ok || holder->is_done() ||
+                         holder->is_reclaimed() || aura_evaluator_mutation_boundary_depth() == 0;
     CHECK(join_ok, "3826 AC1: join Reclaimed/Done or unlocked (no hang)");
     for (int i = 0; i < 400 && body_done.load() == 0; ++i)
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
@@ -3857,8 +3858,7 @@ int run_test_mailbox_hold_starvation_hard() {
     ac3764_2_no_edge_holder_disposed();
     ac3764_3_mutation_hold_released();
     ac3764_4_soft_no_force();
-    std::println(
-        "\n=== Issue #3826: edge-free latch gate (Ready sticky + join Reclaimed) ===");
+    std::println("\n=== Issue #3826: edge-free latch gate (Ready sticky + join Reclaimed) ===");
     ac3826_1_edge_free_peer_poll_gate();
     ac3826_2_defer_clear_after_body();
     ac3826_3_soft_and_source();
