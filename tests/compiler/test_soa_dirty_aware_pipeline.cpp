@@ -51,6 +51,7 @@ using aura::compiler::run_dirty_escape_on_soa;
 using aura::compiler::run_dirty_pipeline;
 using aura::compiler::run_pipeline;
 using aura::compiler::run_production_soa_dirty_hot_pack;
+using aura::compiler::sync_soa_dirty_blocks_into_aos;
 using aura::compiler::run_production_soa_pure_wrap_pack;
 using aura::compiler::set_fn_shape_stable_probe;
 using aura::compiler::ShapeWrap;
@@ -737,6 +738,125 @@ int run_test_soa_dirty_aware_pipeline() {
         CHECK(clean_has_cast, "3689 AC1: clean-block CastOp still present after SoA pack");
     }
 
+    // ── Issue #3822: prod_soa hot pack + SoA→AoS dirty sync before writeback ──
+    {
+        std::println("\n=== Issue #3822: SoA PureWrap sync into AoS writeback SSOT ===");
+        const auto svc = read_file("src/compiler/service.ixx");
+        const auto soa = read_file("src/compiler/ir_soa.ixx");
+        CHECK(svc.find("Issue #3822") != std::string::npos, "3822: suite cites #3822");
+        CHECK(soa.find("sync_soa_dirty_blocks_into_aos") != std::string::npos,
+              "3822: sync helper present");
+        const auto prod = svc.find("const bool prod_soa");
+        CHECK(prod != std::string::npos, "3822: prod_soa");
+        const auto win = svc.substr(prod, 3600);
+        // Hot pack gated on prod_soa (not bare soa_hot) + sync after.
+        const auto pack = win.find("if (prod_soa)");
+        CHECK(pack != std::string::npos, "3822 AC3: hot pack gated on prod_soa");
+        // Prefer the hot-pack arm (second prod_soa / last in window): must call sync.
+        auto pack_arm = win.rfind("if (prod_soa)");
+        CHECK(pack_arm != std::string::npos, "3822: prod_soa hot-pack arm");
+        const auto arm = win.substr(pack_arm, 700);
+        CHECK(arm.find("run_production_soa_dirty_hot_pack") != std::string::npos,
+              "3822 AC3: prod_soa runs hot pack");
+        CHECK(arm.find("sync_soa_dirty_blocks_into_aos") != std::string::npos,
+              "3822 AC1: sync before writeback SSOT");
+        // Soft keeps AoS suite; suite must not call hot pack on bare soa_hot.
+        CHECK(win.find("if (soa_hot)") == std::string::npos,
+              "3822 Soft: suite no longer gates hot pack on bare soa_hot");
+        CHECK(win.find("if (!prod_soa)") != std::string::npos,
+              "3822 Soft: AoS PureWrap suite retained");
+        CHECK(svc.find("schema-3822") == std::string::npos, "3822: no new query key");
+        CHECK(read_file("tests/compiler/test_issue_3822.cpp").empty(),
+              "3822: no test_issue_3822.cpp");
+        CHECK(read_file("docs/design/3822-soa-purewrap-writeback.md").empty(),
+              "3822: no docs/design");
+
+        // AC1 runtime: diverge SoA dirty opcodes, sync → AoS opcode/const match.
+        IRModuleV2 smod;
+        auto fi = smod.add_function("f3822", 4);
+        auto b0 = smod.add_block(fi);
+        smod.add_instruction(fi, IROpcode::ConstI64, {0, 11, 0, 0}, 0, 1, 0, 0);
+        smod.add_instruction(fi, IROpcode::ConstI64, {1, 22, 0, 0}, 0, 1, 0, 0);
+        smod.seal_block(fi, b0);
+        auto b1 = smod.add_block(fi);
+        smod.add_instruction(fi, IROpcode::ConstI64, {2, 33, 0, 0}, 0, 1, 0, 0);
+        smod.seal_block(fi, b1);
+        auto& sfn = smod.functions[fi];
+        sfn.block_dirty_.assign(sfn.blocks_.size(), 0);
+        sfn.block_dirty_[0] = 1;
+
+        aura::ir::IRModule amod;
+        aura::ir::IRFunction afn;
+        afn.name = "f3822";
+        afn.local_count = 4;
+        for (std::size_t bi = 0; bi < sfn.blocks_.size(); ++bi) {
+            aura::ir::BasicBlock ab;
+            ab.id = static_cast<std::uint32_t>(bi);
+            const auto& sb = sfn.blocks_[bi];
+            for (std::uint32_t i = sb.start_idx; i < sb.end_idx; ++i) {
+                aura::ir::IRInstruction ins;
+                // Stale AoS consts (pre-PureWrap) — dirty block diverges.
+                ins.opcode = IROpcode::ConstI64;
+                ins.operands = {sfn.operand0_[i], 0, 0, 0};
+                ins.type_id = 1;
+                ab.instructions.push_back(std::move(ins));
+            }
+            afn.blocks.push_back(std::move(ab));
+        }
+        amod.functions.push_back(std::move(afn));
+
+        // Mutate SoA dirty body (simulates PureWrap/CF on soa_mod).
+        sfn.opcodes_[sfn.blocks_[0].start_idx] = IROpcode::ConstI64;
+        sfn.operand1_[sfn.blocks_[0].start_idx] = 99;
+        sfn.operand1_[sfn.blocks_[0].start_idx + 1] = 88;
+
+        const auto residual0 =
+            aura::compiler::g_residual_aos_bridge_total_atomic().load(std::memory_order_relaxed);
+        const auto n = sync_soa_dirty_blocks_into_aos(smod, amod);
+        CHECK(n == 1, "3822 AC1: only dirty block synced");
+        CHECK(amod.functions[0].blocks[0].instructions[0].operands[1] == 99,
+              "3822 AC1: AoS dirty const matches SoA");
+        CHECK(amod.functions[0].blocks[0].instructions[1].operands[1] == 88,
+              "3822 AC1: AoS dirty const[1] matches SoA");
+        CHECK(amod.functions[0].blocks[1].instructions[0].operands[1] == 0,
+              "3822 AC1: clean AoS block untouched");
+        CHECK(aura::compiler::g_residual_aos_bridge_total_atomic().load(
+                  std::memory_order_relaxed) == residual0,
+              "3822 AC1: sync does not bump residual_aos_bridge");
+
+        // Soft: hot-pack from suite gated off — Soft body-hash contract.
+        CHECK(win.find("Soft: AoS suite only") != std::string::npos ||
+                  win.find("no dual PureWrap") != std::string::npos ||
+                  win.find("Soft keeps AoS") != std::string::npos ||
+                  svc.find("beyond Soft contract") != std::string::npos,
+              "3822 Soft: Soft contract cite in suite");
+
+        // Soak: hot pack + sync leave AoS==SoA on dirty; invocations advance
+        // with writeback SSOT matched (sync companion).
+        const auto inv0 = aura::compiler::production_soa_dirty_hot_pack_invocations_total.load(
+            std::memory_order_relaxed);
+        for (int i = 0; i < 32; ++i) {
+            CHECK(run_production_soa_dirty_hot_pack(smod), "3822 soak: hot pack ok");
+            (void)sync_soa_dirty_blocks_into_aos(smod, amod);
+            // Dirty block opcode/const equal after each pair.
+            const auto& sb0 = sfn.blocks_[0];
+            for (std::uint32_t k = 0; k < sb0.end_idx - sb0.start_idx; ++k) {
+                const auto si = sb0.start_idx + k;
+                CHECK(amod.functions[0].blocks[0].instructions[k].opcode == sfn.opcodes_[si],
+                      "3822 soak: opcode equal on dirty");
+                CHECK(amod.functions[0].blocks[0].instructions[k].operands[1] ==
+                          sfn.operand1_[si],
+                      "3822 soak: const equal on dirty");
+            }
+        }
+        CHECK(aura::compiler::production_soa_dirty_hot_pack_invocations_total.load(
+                  std::memory_order_relaxed) >= inv0 + 32,
+              "3822 soak: hot_pack invocations advance with sync companion");
+        CHECK(aura::compiler::g_residual_aos_bridge_total_atomic().load(
+                  std::memory_order_relaxed) == residual0,
+              "3822 soak: residual bridge still unchanged");
+    }
+
     ac3583_1_dual_eval_callee_mutate_not_stale();
     ac3583_1b_aot_emit_has_no_inline_pass();
     ac3583_2_reuse_existing_counters();
@@ -744,7 +864,7 @@ int run_test_soa_dirty_aware_pipeline() {
     ac3583_4_no_invent_no_mangle();
 
     std::println(
-        "\n=== #2143/#2907/#3488/#3502/#3583/#3689/#3701 results: {} passed, {} failed ===",
+        "\n=== #2143/#2907/#3488/#3502/#3583/#3689/#3701/#3822 results: {} passed, {} failed ===",
         g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

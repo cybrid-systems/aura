@@ -4982,6 +4982,20 @@ def cmd_lint():
             "Issue #3821 synth-hard-fail abort force-dirty linter failed — run python3 scripts/coverage/checks/check_synth_hard_fail_abort_force_dirty_3821.py"
         )
         return r
+    # Issue #3822: Production + soa_mod PureWrap mutates SoA but writeback SSOT
+    # is AoS entry.irs — gate hot pack on prod_soa and sync dirty blocks before
+    # writeback. Soft keeps AoS suite only. Extends test_soa_dirty_aware_pipeline
+    # (#81967); no docs/design/.
+    psws3822_script = COVERAGE_CHECKS / "check_prod_soa_writeback_sync_3822.py"
+    if not psws3822_script.exists():
+        fail(f"missing {psws3822_script}")
+        return 1
+    r = run([sys.executable, str(psws3822_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3822 prod_soa writeback sync linter failed — run python3 scripts/coverage/checks/check_prod_soa_writeback_sync_3822.py"
+        )
+        return r
     # Issue #3802: EXEMPT_2ARG write-file/sys-* host-path isolation under
     # Restricted+MT / Strict — resolve under tenant root from
     # capability_tenant_id_; cross-tenant escape → IsolationDeny SE
@@ -15006,6 +15020,26 @@ def cmd_synth_hard_fail_abort_force_dirty_3821():
     """Issue #3821: synth-hard-fail abort begins IR fence and force-dirties."""
     print(f"{B}=== synth-hard-fail abort force-dirty (#3821) ==={N}")
     return cmd_synth_hard_fail_abort_force_dirty_3821_coverage()
+
+
+def cmd_prod_soa_writeback_sync_3822_coverage():
+    """Issue #3822: prod_soa hot pack syncs dirty SoA into AoS writeback (static)."""
+    print(f"{B}=== prod_soa writeback sync (#3822) ==={N}")
+    script = COVERAGE_CHECKS / "check_prod_soa_writeback_sync_3822.py"
+    if not script.is_file():
+        fail(f"missing {script}")
+        return 1
+    if run([sys.executable, str(script)], cwd=ROOT) != 0:
+        fail("prod_soa writeback sync (#3822) coverage contract rows failed")
+        return 1
+    ok("prod_soa writeback sync (#3822) coverage clean")
+    return 0
+
+
+def cmd_prod_soa_writeback_sync_3822():
+    """Issue #3822: Production SoA PureWrap mirrors dirty blocks into AoS writeback."""
+    print(f"{B}=== prod_soa writeback sync (#3822) ==={N}")
+    return cmd_prod_soa_writeback_sync_3822_coverage()
 
 
 def cmd_engine_metrics_hash_overflow_3018_coverage():
