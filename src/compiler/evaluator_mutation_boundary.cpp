@@ -5178,8 +5178,9 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
             // success-gate poison (objects could move under reject LCP).
             if (typed_audit::production_defaults_active() ||
                 typed_audit::get_strategy() == typed_audit::AuditStrategy::Full) {
-                auto poll = aura::core::lifetime_consistency_proof::
-                    consult_last_lcp_for_densify_entry(static_cast<const void*>(ev_));
+                auto poll =
+                    aura::core::lifetime_consistency_proof::consult_last_lcp_for_densify_entry(
+                        static_cast<const void*>(ev_));
                 if (poll.present && !poll.would_allow_commit) {
                     densify_entry_lcp_blocked = true;
                     aura::core::lifetime_consistency_proof::g_densify_entry_lcp_blocked_total()
@@ -5188,9 +5189,8 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
             }
             aura::ast::AdaptiveCompactResult compact_r{};
             if (!densify_entry_lcp_blocked) {
-                compact_r = ev_->arena_group_
-                                ? ev_->arena_group_->compact_all_moving_pinned()
-                                : aura::ast::AdaptiveCompactResult{};
+                compact_r = ev_->arena_group_ ? ev_->arena_group_->compact_all_moving_pinned()
+                                              : aura::ast::AdaptiveCompactResult{};
                 if (compact_r.bytes_reclaimed_total > 0) {
                     if (auto* mm = static_cast<CompilerMetrics*>(ev_->compiler_metrics_))
                         mm->arena_compact_deopt_triggered_total.fetch_add(
@@ -7162,8 +7162,8 @@ Evaluator::recover_moving_sticky_densify_off(bool retry_densify) noexcept {
         bool densify_entry_lcp_blocked = false;
         if (typed_audit::production_defaults_active() ||
             typed_audit::get_strategy() == typed_audit::AuditStrategy::Full) {
-            auto poll = aura::core::lifetime_consistency_proof::
-                consult_last_lcp_for_densify_entry(static_cast<const void*>(this));
+            auto poll = aura::core::lifetime_consistency_proof::consult_last_lcp_for_densify_entry(
+                static_cast<const void*>(this));
             if (poll.present && !poll.would_allow_commit) {
                 densify_entry_lcp_blocked = true;
                 aura::core::lifetime_consistency_proof::g_densify_entry_lcp_blocked_total()
