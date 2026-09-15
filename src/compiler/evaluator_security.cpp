@@ -684,8 +684,8 @@ bool Evaluator::require_effect_on_ref(std::uint16_t req_bits, std::string_view o
             const auto tenant = ref.tenant_id != 0
                                     ? ref.tenant_id
                                     : static_cast<std::uint64_t>(capability_tenant_id_);
-            emit_security_event_durable(SecurityEventKind::EffectDeny, tenant, mid, epoch,
-                                        req_bits, op, "stale-ref",
+            emit_security_event_durable(SecurityEventKind::EffectDeny, tenant, mid, epoch, req_bits,
+                                        op, "stale-ref",
                                         /*denied=*/true, fiber);
             typed_audit::capture_security_correlated_audit(mid, op, mid, /*denied=*/true,
                                                            /*target_node=*/ref.id, fiber);

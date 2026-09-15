@@ -53,6 +53,7 @@ extern int run_test_isolation_audit_mid();
 extern int run_test_hard_fiber_restricted();
 extern int run_test_require_effect_auto_isolation();
 extern int run_test_occupancy_deny_path_3724();
+extern int run_test_require_effect_on_ref_stale_3773();
 extern int run_test_require_effect_three_arg_default();
 extern int run_test_require_effect_live_mid();
 extern int run_test_std_ffi_per_call_3725();
@@ -238,6 +239,19 @@ int main() {
     } else {
         ++members_passed;
         std::println("OK member test_require_effect_auto_isolation ({} checks)", g_passed);
+    }
+
+
+    std::println("\n──── test_require_effect_on_ref_stale (#3773) ────");
+    reset_member_face();
+    g_passed = 0;
+    g_failed = 0;
+    if (run_test_require_effect_on_ref_stale_3773() != 0 || g_failed != 0) {
+        ++members_failed;
+        std::println("FAIL member test_require_effect_on_ref_stale ({}/{})", g_passed, g_failed);
+    } else {
+        ++members_passed;
+        std::println("OK member test_require_effect_on_ref_stale ({} checks)", g_passed);
     }
 
     std::println("\n──── test_require_effect_three_arg_default (#3526) ────");
