@@ -8834,10 +8834,26 @@ public:
     // aura::ast::LiveCompactResult so callers (the (arena:live-compact) primitive,
     // Agents, mutation-boundary probe) can observe bytes_reclaimed /
     // slots_recycled / new_gen / soft_gated / invalidates_pins.
+    // Issue #3811: Soft|Force Agent / (arena:live-compact) entry must mirror
+    // #3677/#3742/#3809 Densify restamp when Soft/Force bumps gen / wipes
+    // LifetimePins. GC Soft and boundary Soft probe already restamp; this is
+    // the explicit mid-session Agent path. Soft stays non-Moving
+    // (no publish_last_moving_densify_window here). Soft soft-gated no-op
+    // (depth/render) reports unchanged gen → zero extra Densify restamp.
+    // Moving path unchanged — densify restamp / window publish stay on the
+    // existing relocate hook (g_arena_unified_restamp_densify_fn / #3739).
     [[nodiscard]] aura::ast::LiveCompactResult
     live_compact(aura::ast::LiveCompactMode mode = aura::ast::LiveCompactMode::Soft) noexcept {
         if (!arena_group_)
             return {};
+        // Issue #3811 / #3742: snapshot primary arena gen before Soft|Force
+        // so a mark-only freelist / gen bump that fails to set
+        // invalidates_pins still restamps (lc.new_gen != gen_at_entry).
+        std::uint64_t gen_at_entry = 0;
+        {
+            std::uint64_t aid = 0;
+            (void)arena_group_->primary_arena_id_and_gen(aid, gen_at_entry);
+        }
         const aura::ast::LiveCompactResult lc = arena_group_->live_compact(mode);
         if (compiler_metrics_) {
             auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
@@ -8880,6 +8896,17 @@ public:
             m->root_remap_closure_capture_fail_total.fetch_add(
                 static_cast<std::uint64_t>(lc.root_remap_closure_capture_fail_total),
                 std::memory_order_relaxed);
+        }
+        // Issue #3811 / #3677 / #3742 / #3809: Soft|Force that bumped gen /
+        // invalidated or remapped pins must restamp the IR/JIT triad before
+        // return so Agent Soft mid-session does not leave LifetimePins /
+        // StableNodeRef on the pre-Soft gen. Moving unchanged (hook path).
+        if (mode == aura::ast::LiveCompactMode::Soft ||
+            mode == aura::ast::LiveCompactMode::Force) {
+            if (lc.invalidates_pins || lc.remapped_pins > 0 ||
+                (lc.new_gen != 0 && lc.new_gen != gen_at_entry)) {
+                (void)unified_restamp_after_boundary(UnifiedRestampSite::Densify);
+            }
         }
         return lc;
     }
