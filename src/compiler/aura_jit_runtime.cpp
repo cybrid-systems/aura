@@ -3179,6 +3179,9 @@ extern "C" void aura_residual_live_closure_remount_tick(std::uint64_t budget) {
 static std::atomic<std::uint64_t> g_reemit_success_sync_covered_ok_total{0};
 static std::atomic<std::uint64_t> g_reemit_success_sync_covered_fail_total{0};
 static std::atomic<std::uint64_t> g_reemit_success_sync_covered_cap_hit_total{0};
+// Issue #3785: Soft Global storm / reemit throttle → sync covered remount
+// budget_skip (same face as residual remount tick).
+static std::atomic<std::uint64_t> g_reemit_success_sync_covered_budget_skip_total{0};
 static std::atomic<std::uint64_t> g_reemit_success_sync_covered_cap_override{UINT64_MAX};
 
 extern "C" std::uint64_t aura_reemit_success_sync_covered_cap_default() noexcept {
@@ -3208,6 +3211,10 @@ extern "C" std::uint64_t aura_reemit_success_sync_covered_cap_hit_total_v_read()
     return g_reemit_success_sync_covered_cap_hit_total.load(std::memory_order_relaxed);
 }
 
+extern "C" std::uint64_t aura_reemit_success_sync_covered_budget_skip_total_v_read() noexcept {
+    return g_reemit_success_sync_covered_budget_skip_total.load(std::memory_order_relaxed);
+}
+
 extern "C" void aura_test_set_reemit_success_sync_covered_cap(std::uint64_t cap) noexcept {
     g_reemit_success_sync_covered_cap_override.store(cap, std::memory_order_relaxed);
 }
@@ -3221,6 +3228,19 @@ extern "C" void aura_sync_remount_covered_named_live_closures(std::uint64_t mask
     // AC2: mask idle / cap=0 → zero walk (no table lock).
     if (mask == 0 || cap == 0)
         return;
+
+    // Issue #3785: reuse residual remount storm gate (storm>=2 Global/Both
+    // or reemit throttle / force-skip). Soft Shape-only (storm==1) stays
+    // decoupled (#2172). Soft Global scoped reemit must not remount-walk
+    // while residual remount is budget_skipped.
+    {
+        const auto storm = static_cast<std::uint64_t>(aura_hot_update_current_storm_level());
+        if (g_residual_force_skip.load(std::memory_order_relaxed) != 0 || storm >= 2 ||
+            aura_hot_update_should_throttle_reemit() != 0) {
+            g_reemit_success_sync_covered_budget_skip_total.fetch_add(1, std::memory_order_relaxed);
+            return;
+        }
+    }
 
     std::uint64_t ok = 0;
     std::uint64_t fail = 0;
