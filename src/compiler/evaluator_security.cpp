@@ -657,8 +657,42 @@ bool Evaluator::require_effect(std::uint16_t req_bits, std::string_view op, ast:
 // fiber mutation, render batch with cross-tenant handles, FFI on stamped
 // node, etc.) — callers that don't have a ref in hand keep using the
 // positional require_effect(req_bits, op, target_node) form.
+//
+// Issue #3773: under Restricted/Strict (production face) also refuse stale
+// gen/COW the same way resolve_stamped Stage 2 does, BEFORE any effect is
+// recorded. Soft/Off: zero extra cost. No workspace: skip freshness (legacy
+// NodeId-only on_ref tests / non-workspace paths keep the #2658 shape —
+// resolve_stamped would otherwise fail-closed on "no workspace").
 bool Evaluator::require_effect_on_ref(std::uint16_t req_bits, std::string_view op,
                                       const ast::FlatAST::StableNodeRef& ref) noexcept {
+    // Soft/Off contract: one mode load, no get_safe / SE / audit.
+    const bool production_face = sandbox_mode_ != 0 || effect_sandbox_mode() != 0;
+    if (production_face && workspace_flat_) {
+        // Match resolve_stamped Stage 2 (get_safe = gen + COW + live slot).
+        // Isolation stays in require_effect (single IsolationDeny, #2388).
+        if (!workspace_flat_->get_safe(ref).has_value()) {
+            last_mutate_error_ = std::string(op) + ": stale-ref id=" + std::to_string(ref.id) +
+                                 " gen=" + std::to_string(ref.gen);
+            // EffectDeny SE + Typed correlation so Agents join
+            // mid+node+tenant+fiber+Mutation epoch (AC1). Reason reuses the
+            // resolve_stamped "stale-ref" face — no new query key.
+            using ::aura::core::security_event::SecurityEventKind;
+            using ::aura::core::security_event_wal::emit_security_event_durable;
+            const auto epoch = ::aura::core::current_mutation_epoch();
+            const auto mid = epoch != 0 ? epoch : static_cast<std::uint64_t>(1);
+            const auto fiber = static_cast<std::int64_t>(aura_fiber_current_id());
+            const auto tenant = ref.tenant_id != 0
+                                    ? ref.tenant_id
+                                    : static_cast<std::uint64_t>(capability_tenant_id_);
+            emit_security_event_durable(SecurityEventKind::EffectDeny, tenant, mid, epoch,
+                                        req_bits, op, "stale-ref",
+                                        /*denied=*/true, fiber);
+            typed_audit::capture_security_correlated_audit(mid, op, mid, /*denied=*/true,
+                                                           /*target_node=*/ref.id, fiber);
+            bump_capability_denial();
+            return false; // fail-closed — zero mutate body / no effect record allow
+        }
+    }
     return require_effect(req_bits, op, ref.id, ref.tenant_id);
 }
 
