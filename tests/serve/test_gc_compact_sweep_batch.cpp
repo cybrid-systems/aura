@@ -1028,9 +1028,8 @@ static void run_3811_agent_soft_densify_restamp() {
         CHECK(win.find("mode == aura::ast::LiveCompactMode::Soft ||") != std::string::npos &&
                   win.find("mode == aura::ast::LiveCompactMode::Force") != std::string::npos,
               "3811 AC3: restamp gated Soft|Force only (Moving unchanged)");
-        const auto obs = read_first(
-            {"src/compiler/evaluator_primitives_obs_eval.cpp",
-             "../src/compiler/evaluator_primitives_obs_eval.cpp"});
+        const auto obs = read_first({"src/compiler/evaluator_primitives_obs_eval.cpp",
+                                     "../src/compiler/evaluator_primitives_obs_eval.cpp"});
         CHECK(obs.find("Issue #3811") != std::string::npos,
               "3811 AC1: (arena:live-compact) cites #3811");
         CHECK(read_file("tests/serve/test_issue_3811.cpp").empty(), "3811: no test_issue_N.cpp");
@@ -1063,8 +1062,7 @@ static void run_3811_agent_soft_densify_restamp() {
         const auto rs1 = aura::ast::unified_restamp_calls_total_v_read();
         const auto gen1 = m->arena_live_compact_gen_restamps_total.load(std::memory_order_relaxed);
         if (lc.invalidates_pins || gen1 > gen0) {
-            CHECK(rs1 > rs0,
-                  "3811 AC1: Soft invalidates-pins → Densify restamp before return");
+            CHECK(rs1 > rs0, "3811 AC1: Soft invalidates-pins → Densify restamp before return");
         } else {
             std::println("  note: Soft did not invalidate pins this round; AC1 source-cite "
                          "carries (unit-env freelist may be quiet)");

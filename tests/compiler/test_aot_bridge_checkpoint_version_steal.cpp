@@ -108,8 +108,7 @@ static void run_matrix(CompilerService& cs) {
     CHECK(bridge_after_ok == bridge0, "ac3813_1c: no bridge-epoch-mismatch bump on C!=table alone");
 
     // Real C-bridge domain stale (independent sample).
-    const bool c_drift =
-        aura_aot_probe_checkpoint_version(0, c_bridge_adv + 99, table_epoch);
+    const bool c_drift = aura_aot_probe_checkpoint_version(0, c_bridge_adv + 99, table_epoch);
     CHECK(c_drift, "ac3813_3a: C-bridge domain stale detected");
     const auto bridge1 = hash_int(cs, "bridge-epoch-mismatches");
     std::println("  bridge-epoch-mismatches (C-stale): {} -> {}", bridge0, bridge1);
