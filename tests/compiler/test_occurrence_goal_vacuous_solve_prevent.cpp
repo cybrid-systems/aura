@@ -182,13 +182,17 @@ static void ac3788_1_partial_drift_production_conflict() {
     const auto impl = read_file("src/compiler/type_checker_impl.cpp");
     const auto pos_drift = impl.find("if (drifted_goals > 0)");
     const auto pos_all = impl.find("occurrence_priority_roots_size() == 0", pos_drift);
-    const auto pos_prod = impl.find("production_defaults_active()", pos_all);
-    const auto pos_full = impl.find("AuditStrategy::Full", pos_prod);
-    const auto pos_conflict = impl.find("SolveResult::CONFLICT", pos_prod);
+    // #3794: production/Full is bound to hard_drift before empty-roots;
+    // escalate still uses hard_drift after all-drift CONFLICT.
+    const auto pos_hard = impl.find("hard_drift", pos_drift);
+    const auto pos_prod = impl.find("production_defaults_active()", pos_drift);
+    const auto pos_full = impl.find("AuditStrategy::Full", pos_drift);
+    const auto pos_conflict = impl.find("SolveResult::CONFLICT", pos_all);
     CHECK(pos_drift != std::string::npos && pos_all != std::string::npos &&
-              pos_prod != std::string::npos && pos_full != std::string::npos &&
-              pos_conflict != std::string::npos && pos_all < pos_prod && pos_prod < pos_conflict,
-          "3788 AC1: after all-drift empty-roots, production/Full escalate → CONFLICT");
+              pos_hard != std::string::npos && pos_prod != std::string::npos &&
+              pos_full != std::string::npos && pos_conflict != std::string::npos &&
+              pos_drift < pos_hard && pos_hard < pos_all && pos_all < pos_conflict,
+          "3788 AC1: hard_drift (production/Full) escalate → CONFLICT after empty-roots");
     CHECK(impl.find("#3788") != std::string::npos, "3788 AC1: cites #3788");
 
     using aura::compiler::typed_audit::apply_dev_audit_defaults;
@@ -257,6 +261,64 @@ static void ac3788_4_source_cite() {
     CHECK(read_file("docs/design/3788-partial-drift.md").empty(), "3788 AC4: no docs/design");
 }
 
+
+// ── Issue #3794: Agent-face belt for #3788 partial drift ──
+static void ac3794_1_grant_refuse_latched() {
+    std::println("\n--- #3794 AC1: production partial drift latches grant/commit refuse ---");
+    using namespace aura::compiler::typed_audit;
+    apply_production_audit_defaults();
+    clear_occurrence_partial_drift_grant_refuse();
+    // Source-cite belt (UF may not trip ground pairs — same as #3788 AC1).
+    const auto impl = read_file("src/compiler/type_checker_impl.cpp");
+    const auto tma = read_file("src/compiler/typed_mutation_audit.h");
+    CHECK(impl.find("Issue #3794") != std::string::npos, "3794 AC1: SDO cites #3794");
+    CHECK(tma.find("note_occurrence_partial_drift_grant_refuse") != std::string::npos,
+          "3794 AC1: note helper");
+    CHECK(tma.find("occurrence_partial_drift_grant_refuse_face_hit") != std::string::npos,
+          "3794 AC1: face hit");
+    // Hermetic latch + commit_readiness / residual clear.
+    note_occurrence_partial_drift_grant_refuse(/*hard=*/true);
+    CHECK(occurrence_partial_drift_grant_refuse_face_hit(), "3794 AC1: face latched");
+    CHECK(!type_export_residual_faces_clear(), "3794 AC1: export residual refuses");
+    const auto in = commit_readiness_live_policy();
+    CHECK(in.pending_full_solve_residual, "3794 AC1: folded into pending residual");
+    const auto cr = commit_readiness(in);
+    CHECK(!cr.would_allow_commit, "3794 AC1: would_allow_commit==false until drained");
+    clear_occurrence_partial_drift_grant_refuse();
+    CHECK(type_export_residual_faces_clear() || !occurrence_partial_drift_grant_refuse_face_hit(),
+          "3794 AC1: clear drains face");
+    apply_dev_audit_defaults();
+}
+
+static void ac3794_2_all_drift_unchanged() {
+    std::println("\n--- #3794 AC2: all-drift CONFLICT (#2647/#3788) unchanged ---");
+    const auto impl = read_file("src/compiler/type_checker_impl.cpp");
+    CHECK(impl.find("occurrence_priority_roots_size() == 0") != std::string::npos,
+          "3794 AC2: all-drift empty-roots CONFLICT retained");
+    CHECK(impl.find("#2647") != std::string::npos, "3794 AC2: #2647 cite");
+}
+
+static void ac3794_3_soft_no_latch() {
+    std::println("\n--- #3794 AC3: Soft miss-only, no grant-refuse latch ---");
+    using namespace aura::compiler::typed_audit;
+    apply_dev_audit_defaults();
+    clear_occurrence_partial_drift_grant_refuse();
+    note_occurrence_partial_drift_grant_refuse(/*hard=*/false);
+    CHECK(!occurrence_partial_drift_grant_refuse_face_hit(), "3794 AC3: Soft no latch");
+    CHECK(read_file("src/compiler/type_checker_impl.cpp").find("Soft/Off: miss counters only") !=
+              std::string::npos,
+          "3794 AC3: Soft cite retained");
+}
+
+static void ac3794_4_no_rename() {
+    std::println("\n--- #3794 AC4: no query key rename / invent ---");
+    CHECK(read_file("tests/compiler/test_issue_3794.cpp").empty(), "3794 AC4: no invent");
+    CHECK(read_file("docs/design/3794-partial-drift-grant.md").empty(), "3794 AC4: no docs");
+    const auto rf = read_file("src/compiler/evaluator_primitives_query_reflect.cpp");
+    CHECK(rf.find("query:type-linear-commit-health") != std::string::npos,
+          "3794 AC4: health query name retained");
+}
+
 static void ac6_schema_and_linter() {
     std::println("\n--- #2647 AC6: schema + source-cite + linter ---");
     const auto impl = read_file("src/compiler/type_checker_impl.cpp");
@@ -305,6 +367,10 @@ int run_test_occurrence_goal_vacuous_solve_prevent() {
     ac3788_2_all_drift_unchanged();
     ac3788_3_soft_observe();
     ac3788_4_source_cite();
+    ac3794_1_grant_refuse_latched();
+    ac3794_2_all_drift_unchanged();
+    ac3794_3_soft_no_latch();
+    ac3794_4_no_rename();
     std::println("\n=== results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

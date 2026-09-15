@@ -12473,17 +12473,26 @@ SolveDeltaOccurrenceResult solve_delta_occurrence(ConstraintSystem& cs,
     // (#3788); Soft/Off keep miss counters without escalate (contract).
     if (drifted_goals > 0) {
         r.occurrence_replay_miss_count += drifted_goals;
+        const bool hard_drift = aura::compiler::typed_audit::production_defaults_active() ||
+                                aura::compiler::typed_audit::get_strategy() ==
+                                    aura::compiler::typed_audit::AuditStrategy::Full;
         if (r.status == SolveResult::SOLVED) {
             if (cs.occurrence_priority_roots_size() == 0) {
                 // All live goals drifted / dropped — surface CONFLICT so Agents
                 // do not treat empty-dirty + dead goals as green.
                 r.status = SolveResult::CONFLICT;
-            } else if (aura::compiler::typed_audit::production_defaults_active() ||
-                       aura::compiler::typed_audit::get_strategy() ==
-                           aura::compiler::typed_audit::AuditStrategy::Full) {
+            } else if (hard_drift) {
                 r.status = SolveResult::CONFLICT;
             }
         }
+        // Issue #3794: Agent-face belt for #3788 — latch grant/commit refuse
+        // until dependents drained (next SDO with drifted_goals==0 clears).
+        // Soft/Off: miss counters only (no latch).
+        if (hard_drift)
+            aura::compiler::typed_audit::note_occurrence_partial_drift_grant_refuse(/*hard=*/true);
+    } else {
+        // Issue #3794: drained — clear the grant-refuse latch.
+        aura::compiler::typed_audit::clear_occurrence_partial_drift_grant_refuse();
     }
     r.occurrence_priority_roots = cs.occurrence_priority_roots_size();
     r.let_poly_roots = cs.let_poly_dirty_roots_size();

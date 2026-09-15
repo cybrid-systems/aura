@@ -5608,6 +5608,18 @@ def cmd_lint():
             "Issue #3790 rollback MutationBoundaryGuard linter failed — run python3 scripts/coverage/checks/check_rollback_mutation_boundary_guard_3790.py"
         )
         return r
+    # Issue #3794: partial Occurrence drift Agent-face grant/commit refuse.
+    # Extends #3788; Soft miss-only; no query key rename.
+    pdg3794_script = COVERAGE_CHECKS / "check_partial_drift_grant_refuse_3794.py"
+    if not pdg3794_script.exists():
+        fail(f"missing {pdg3794_script}")
+        return 1
+    r = run([sys.executable, str(pdg3794_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3794 partial drift grant refuse linter failed — run python3 scripts/coverage/checks/check_partial_drift_grant_refuse_3794.py"
+        )
+        return r
     # Issue #3656: caller partial absorbs callee cone (block units, not
     # define count). Residual of #3550 (precompute early-return on empty
     # calls) + #3584 (units fixed, cone still invisible). Soft observe.
