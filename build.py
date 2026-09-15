@@ -4873,6 +4873,21 @@ def cmd_lint():
             "Issue #3813 steal checkpoint dual-track linter failed — run python3 scripts/coverage/checks/check_steal_checkpoint_dual_track_3813.py"
         )
         return r
+    # Issue #3814: sticky force-JIT when residual empty — FallBackJit
+    # observe-only; production ResidualForceHeal age belt + orch
+    # RequireAgentRepromote beyond SplitBatch. Soft/Off zero extra.
+    # Extends test_issue_3096.cpp / test_orch_hot_update_health_throttle.cpp
+    # (#81967); no docs/design/ (#1655).
+    sfer3814_script = COVERAGE_CHECKS / "check_sticky_force_empty_residual_3814.py"
+    if not sfer3814_script.exists():
+        fail(f"missing {sfer3814_script}")
+        return 1
+    r = run([sys.executable, str(sfer3814_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3814 sticky force empty residual linter failed — run python3 scripts/coverage/checks/check_sticky_force_empty_residual_3814.py"
+        )
+        return r
     # Issue #3802: EXEMPT_2ARG write-file/sys-* host-path isolation under
     # Restricted+MT / Strict — resolve under tenant root from
     # capability_tenant_id_; cross-tenant escape → IsolationDeny SE
@@ -14737,6 +14752,26 @@ def cmd_steal_checkpoint_dual_track_3813():
     """Issue #3813: steal checkpoint probe aligns with dual-fresh clocks."""
     print(f"{B}=== steal checkpoint dual-track (#3813) ==={N}")
     return cmd_steal_checkpoint_dual_track_3813_coverage()
+
+
+def cmd_sticky_force_empty_residual_3814_coverage():
+    """Issue #3814: sticky force empty residual FallBackJit belt (static)."""
+    print(f"{B}=== sticky force empty residual (#3814) ==={N}")
+    script = COVERAGE_CHECKS / "check_sticky_force_empty_residual_3814.py"
+    if not script.is_file():
+        fail(f"missing {script}")
+        return 1
+    if run([sys.executable, str(script)], cwd=ROOT) != 0:
+        fail("sticky force empty residual (#3814) coverage contract rows failed")
+        return 1
+    ok("sticky force empty residual (#3814) coverage clean")
+    return 0
+
+
+def cmd_sticky_force_empty_residual_3814():
+    """Issue #3814: sticky force-JIT empty residual heal + Agent-binding."""
+    print(f"{B}=== sticky force empty residual (#3814) ==={N}")
+    return cmd_sticky_force_empty_residual_3814_coverage()
 
 
 def cmd_engine_metrics_hash_overflow_3018_coverage():

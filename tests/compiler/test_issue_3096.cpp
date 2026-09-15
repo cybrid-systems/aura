@@ -7,6 +7,8 @@
 // min-dirty / coverage-verify pass via maybe_coverage_verify_min_dirty
 // (single seed + decide gate, respects resolve_force_jit_repromote_only_covered).
 // Soft / Off is zero-cost (early-returned before the auto-heal check).
+// Issue #3814: same belt ages FallBackJit face (force!=0 && residual==0)
+// and clears covered demotion (playbook stays observe-only).
 //
 //   AC1: Production + residual force bits + exhausted retry budget
 //        (attempts_left == 0) + age >= 256 BoundaryExits →
@@ -142,11 +144,55 @@ static void ac5_c_linkage_accessor(CompilerService& cs) {
     CHECK(v >= 0, "AC5: aura_hot_update_residual_force_auto_heal_total() surfaces");
 }
 
+// Issue #3814: sticky force with empty residual (FallBackJit face) ages
+// the same ResidualForceHeal belt and clears covered demotion — no
+// undocumented Agent ritual; playbook FallBackJit stays observe-only.
+static void ac3814_sticky_force_empty_residual_heal(CompilerService& cs) {
+    (void)cs;
+    auto& reg = hot_reg();
+    reg.reset_residual_force_observe_for_test();
+    reg.reset_deopt_storm_state_for_test();
+    reg.force_jit_stamp_for_test(0x10);
+    // Cover all force bits → residual == 0 while force sticky.
+    reg.note_reemit_success_coverage(0x10);
+    CHECK(reg.residual_force_mask() == 0, "AC3814: residual empty after cover");
+    CHECK(reg.force_jit_regions_mask() == 0x10, "AC3814: force still sticky");
+    reg.exhaust_retry_for_test();
+    const auto heal_before = reg.residual_force_auto_heal_total();
+    const auto force_before = reg.force_jit_regions_mask();
+    for (int i = 0; i < 300; ++i) {
+        reg.observe_residual_force_stale();
+    }
+    const auto heal_after = reg.residual_force_auto_heal_total();
+    CHECK(heal_after >= heal_before + 1,
+          "AC3814: auto-heal bumps for FallBackJit face (force!=0 residual==0)");
+    CHECK(reg.force_jit_regions_mask() == 0,
+          "AC3814: covered sticky force cleared after bounded heal");
+    CHECK(force_before == 0x10, "AC3814: force was sticky before heal");
+    // Soft / Off: zero extra — early return leaves force alone.
+    reg.reset_residual_force_observe_for_test();
+    reg.force_jit_stamp_for_test(0x20);
+    reg.note_reemit_success_coverage(0x20);
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    const auto soft_heal_before = reg.residual_force_auto_heal_total();
+    for (int i = 0; i < 300; ++i) {
+        reg.observe_residual_force_stale();
+    }
+    CHECK(reg.residual_force_auto_heal_total() == soft_heal_before,
+          "AC3814 Soft: zero extra auto-heal under Soft/Off");
+    CHECK(reg.force_jit_regions_mask() == 0x20,
+          "AC3814 Soft: no silent wholesale clear under Soft");
+    // Restore production for remaining callers.
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    reg.on_reload_success();
+    reg.reset_residual_force_observe_for_test();
+}
+
 } // namespace
 
 int run_test_issue_3096() {
     CompilerService cs;
-    std::print("[test_issue_3096] running 5 ACs\n");
+    std::print("[test_issue_3096] running 6 ACs (+#3814)\n");
     // Production ACs need production_defaults_active even when the issues
     // runner sets AURA_SANDBOX=off (which apply_dev_audit_defaults).
     aura::compiler::typed_audit::apply_production_audit_defaults();
@@ -155,6 +201,7 @@ int run_test_issue_3096() {
     ac3_one_per_mask_generation(cs);
     ac4_existing_observe_counter_preserved(cs);
     ac5_c_linkage_accessor(cs);
+    ac3814_sticky_force_empty_residual_heal(cs);
 
     aura::compiler::typed_audit::apply_dev_audit_defaults();
     std::print("[test_issue_3096] passed={} failed={}\n", g_passed, g_failed);
