@@ -50,7 +50,7 @@ def main() -> int:
     lint3296 = _read("scripts/coverage/checks/check_require_effect_mid_ssot_3296.py")
     build = _read("build.py")
 
-    emit_pos = sec.find("void Evaluator::emit_mutation_audit")
+    emit_pos = sec.find("bool Evaluator::emit_mutation_audit")
     if emit_pos < 0:
         fails.append("AC1: emit_mutation_audit missing")
         emit_body = ""

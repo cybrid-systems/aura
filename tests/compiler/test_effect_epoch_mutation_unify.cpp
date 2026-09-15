@@ -303,7 +303,7 @@ static void ac3335_1_emit_stamps_mutation() {
 
     CompilerService cs;
     auto& ev = cs.evaluator();
-    ev.emit_mutation_audit(1, 0, "3335-ac1", 7);
+    (void)ev.emit_mutation_audit(1, 0, "3335-ac1", 7);
     const auto seq = ev.mutation_audit_seq();
     CHECK(seq >= 1, "3335 AC1: ring wrote");
     const auto& e = ev.mutation_audit_entry_at(seq - 1);
@@ -314,7 +314,7 @@ static void ac3335_1_emit_stamps_mutation() {
 
     auto sec = read_file("src/compiler/evaluator_security.cpp");
     CHECK(sec.find("Issue #3335") != std::string::npos, "3335 AC1: emit cites #3335");
-    const auto emit_pos = sec.find("void Evaluator::emit_mutation_audit");
+    const auto emit_pos = sec.find("bool Evaluator::emit_mutation_audit");
     CHECK(emit_pos != std::string::npos, "3335 AC1: emit_mutation_audit present");
     if (emit_pos != std::string::npos) {
         auto body_end = sec.find("\nbool Evaluator::", emit_pos);
@@ -343,7 +343,7 @@ static void ac3335_2_bridge_bump_no_ring_flip() {
     CHECK(g_capability_registry().find_grant(210, "3335-bridge-iso", g), "3335 AC2: grant");
     const auto me_before = current_mutation_epoch();
 
-    ev.emit_mutation_audit(1, 0, "3335-pre-bridge", 0);
+    (void)ev.emit_mutation_audit(1, 0, "3335-pre-bridge", 0);
     const auto seq0 = ev.mutation_audit_seq();
     const auto epoch0 = ev.mutation_audit_entry_at(seq0 - 1).epoch;
     CHECK(epoch0 == me_before || epoch0 == 1, "3335 AC2: pre-bump ring = Mutation");
@@ -352,7 +352,7 @@ static void ac3335_2_bridge_bump_no_ring_flip() {
     CHECK(current_mutation_epoch() == me_before, "3335 AC2: Mutation unchanged");
     CHECK(current_bridge_epoch() != me_before, "3335 AC2: Bridge diverged");
 
-    ev.emit_mutation_audit(1, 0, "3335-post-bridge", 0);
+    (void)ev.emit_mutation_audit(1, 0, "3335-post-bridge", 0);
     const auto seq1 = ev.mutation_audit_seq();
     const auto epoch1 = ev.mutation_audit_entry_at(seq1 - 1).epoch;
     CHECK(epoch1 == me_before || epoch1 == 1, "3335 AC2: post-bump ring still Mutation");
@@ -382,7 +382,7 @@ static void ac3335_3_grant_mutate_ring_epoch() {
     CHECK(ev.check_and_record_effect_for_test(kEffectMutate, kEffectMutate, "3335-mutate", 0, 410,
                                               g.bound_mutation_id),
           "3335 AC3: mutate allowed");
-    ev.emit_mutation_audit(2, 1, "3335-structural", 3);
+    (void)ev.emit_mutation_audit(2, 1, "3335-structural", 3);
 
     bool found_mutate = false;
     bool found_structural = false;
@@ -416,7 +416,7 @@ static void ac3335_4_soft_off_write() {
     auto& ev = cs.evaluator();
     ev.set_effect_sandbox_mode(0);
     const auto seq0 = ev.mutation_audit_seq();
-    ev.emit_mutation_audit(1, 0, "3335-off", 0);
+    (void)ev.emit_mutation_audit(1, 0, "3335-off", 0);
     const auto seq1 = ev.mutation_audit_seq();
     CHECK(seq1 > seq0, "3335 AC4: Off still writes the ring");
     const auto& e = ev.mutation_audit_entry_at(seq1 - 1);
@@ -448,7 +448,7 @@ static void ac3335_5_agent_join_vocab() {
     CHECK(ev.check_and_record_effect_for_test(kEffectMutate, kEffectMutate, "3335-join-op", 0, 510,
                                               g.bound_mutation_id),
           "3335 AC5: effect allow");
-    ev.emit_mutation_audit(1, 0, "3335-join-struct", 0);
+    (void)ev.emit_mutation_audit(1, 0, "3335-join-struct", 0);
 
     // SecurityEvent joinable by mutation_id on Mutation vocabulary.
     auto& ring = g_security_event_ring();
