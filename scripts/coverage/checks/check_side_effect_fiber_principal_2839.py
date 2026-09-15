@@ -109,7 +109,10 @@ def main() -> int:
     must("require_effect_for_node_id", "AC1", sec)
     must("make_stamped_ref", "AC1", sec)
     must("require_effect_for_node_id", "AC1", compile_cpp)
-    must("mutate:from-verification-feedback", "AC1", compile_cpp)
+    # Issue #3828: from-verification-feedback moved to mutate.cpp add_mutate SSOT.
+    mut_cpp = _read("src/compiler/evaluator_primitives_mutate.cpp")
+    must("mutate:from-verification-feedback", "AC1", mut_cpp)
+    must("require_effect_for_node_id", "AC1 #3828 for_node_id", mut_cpp)
 
     # ── #2839 AC2 — on_ref path preserved ──
     must("require_effect_on_ref", "AC2", sec)

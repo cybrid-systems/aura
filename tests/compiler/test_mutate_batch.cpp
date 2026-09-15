@@ -339,18 +339,20 @@ static void run_1772_from_feedback() {
     {
         std::println("\n--- AC1/AC2 (#1772): source + metric ---");
         std::string src;
-        for (const char* p : {"src/compiler/evaluator_primitives_compile.cpp",
-                              "../src/compiler/evaluator_primitives_compile.cpp"}) {
+        // Issue #3828: registration lives in mutate.cpp via add_mutate.
+        for (const char* p : {"src/compiler/evaluator_primitives_mutate.cpp",
+                              "../src/compiler/evaluator_primitives_mutate.cpp"}) {
             src = read_file(p);
             if (!src.empty())
                 break;
         }
-        CHECK(!src.empty(), "read compile_04.cpp");
+        CHECK(!src.empty(), "read evaluator_primitives_mutate.cpp");
         CHECK(src.find("#1772") != std::string::npos, "cites #1772");
         CHECK(src.find("mutate_from_feedback_invalid_node_total") != std::string::npos,
               "bumps invalid_node metric");
         CHECK(src.find("mutate:from-verification-feedback") != std::string::npos,
               "primitive present");
+        CHECK(src.find("add_mutate") != std::string::npos, "#3828 add_mutate SSOT");
 
         std::string msrc;
         for (const char* p :
@@ -404,6 +406,104 @@ static void run_1772_from_feedback() {
                   "no invalid bump for in-range id");
         }
     }
+}
+
+
+// ── Issue #3828 — from-verification-feedback add_mutate SSOT ──
+static void test_ac3828_1_add_mutate_ssot_source() {
+    std::println("\n--- #3828 AC1: add_mutate SSOT + no raw add in compile.cpp ---");
+    std::string mut, compile;
+    for (const char* p : {"src/compiler/evaluator_primitives_mutate.cpp",
+                          "../src/compiler/evaluator_primitives_mutate.cpp"}) {
+        mut = read_file(p);
+        if (!mut.empty())
+            break;
+    }
+    for (const char* p : {"src/compiler/evaluator_primitives_compile.cpp",
+                          "../src/compiler/evaluator_primitives_compile.cpp"}) {
+        compile = read_file(p);
+        if (!compile.empty())
+            break;
+    }
+    CHECK(!mut.empty() && !compile.empty(), "read mutate + compile");
+    CHECK(mut.find("mutate:from-verification-feedback") != std::string::npos, "prim in mutate.cpp");
+    auto pos = mut.find("\"mutate:from-verification-feedback\"");
+    CHECK(pos != std::string::npos, "quoted name");
+    CHECK(mut.substr(std::max<std::size_t>(0, pos > 80 ? pos - 80 : 0), 80).find("add_mutate") !=
+              std::string::npos,
+          "registered via add_mutate");
+    CHECK(mut.find("resolve_mutate_node_arg") != std::string::npos, "packed-ref resolve");
+    CHECK(mut.find("a.subspan(1)") != std::string::npos, "node at a[1]");
+    // No live raw add("mutate:from-verification-feedback" in compile.cpp
+    bool raw = false;
+    std::size_t at = 0;
+    while ((at = compile.find("add(\"mutate:", at)) != std::string::npos) {
+        auto line_start = compile.rfind('\n', at);
+        auto line = compile.substr(line_start == std::string::npos ? 0 : line_start + 1,
+                                   compile.find('\n', at) - (line_start == std::string::npos ? 0 : line_start + 1));
+        auto trimmed = line;
+        while (!trimmed.empty() && (trimmed[0] == ' ' || trimmed[0] == '\t'))
+            trimmed.erase(trimmed.begin());
+        if (!trimmed.empty() && trimmed[0] != '/' &&
+            line.find("mutate:from-verification-feedback") != std::string::npos)
+            raw = true;
+        at += 1;
+    }
+    CHECK(!raw, "no raw add in compile.cpp");
+    CHECK(compile.find("Issue #3828") != std::string::npos, "compile cites move");
+}
+
+static void test_ac3828_2_soft_dormant_and_oob() {
+    std::println("\n--- #3828 AC2/AC3: Soft dormant #f + OOB metric ---");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define x 1)\")").has_value(), "set-code");
+    auto* m = static_cast<CompilerMetrics*>(cs.evaluator().compiler_metrics());
+    CHECK(m != nullptr, "metrics");
+    const auto n0 = m->mutate_from_feedback_invalid_node_total.load(std::memory_order_relaxed);
+    const auto wraps0 =
+        m->mutation_boundary_primitives_wrapped.load(std::memory_order_relaxed);
+    auto r = cs.eval("(mutate:from-verification-feedback \"weaken-property\" 999999 \"reset\")");
+    CHECK(r && is_bool(*r) && !as_bool(*r), "OOB Soft → #f");
+    CHECK(m->mutate_from_feedback_invalid_node_total.load(std::memory_order_relaxed) == n0 + 1,
+          "invalid_node_total +1");
+    // In-range Soft dormant strategy still #f; Guard path may wrap.
+    auto* ws = cs.evaluator().workspace_flat();
+    CHECK(ws && ws->size() > 0, "workspace");
+    const auto nid = static_cast<std::int64_t>(ws->size() - 1);
+    auto r2 = cs.eval(std::format(
+        "(mutate:from-verification-feedback \"weaken-property\" {} \"reset\")", nid));
+    CHECK(r2 && is_bool(*r2) && !as_bool(*r2), "Soft dormant strategy → #f");
+    CHECK(m->mutation_boundary_primitives_wrapped.load(std::memory_order_relaxed) >= wraps0,
+          "Guard wrap non-decreasing via add_mutate");
+}
+
+static void test_ac3828_3_production_bare_int_reject() {
+    std::println("\n--- #3828 AC2: Production bare-int reject (#3395) source ---");
+    std::string mut;
+    for (const char* path : {"src/compiler/evaluator_primitives_mutate.cpp",
+                             "../src/compiler/evaluator_primitives_mutate.cpp"}) {
+        mut = read_file(path);
+        if (!mut.empty())
+            break;
+    }
+    CHECK(!mut.empty(), "read mutate.cpp");
+    auto pos = mut.find("\"mutate:from-verification-feedback\"");
+    CHECK(pos != std::string::npos, "prim present");
+    auto win = mut.substr(pos, 3500);
+    CHECK(win.find("resolve_mutate_node_arg") != std::string::npos, "uses resolve helper");
+    CHECK(win.find("a.subspan(1)") != std::string::npos, "node operand a[1]");
+    // Production bare-int reject is inside resolve_mutate_node_arg (#3395).
+    CHECK(mut.find("raw node-id rejected under production") != std::string::npos,
+          "#3395 bare-int reject still wired in resolve_mutate_node_arg");
+    std::string hh;
+    for (const char* path : {"src/compiler/mutate_dispatch.hh",
+                             "../src/compiler/mutate_dispatch.hh"}) {
+        hh = read_file(path);
+        if (!hh.empty())
+            break;
+    }
+    CHECK(hh.find("kMutateFromVerificationFeedbackSsotIssue = 3828") != std::string::npos,
+          "3828 stamp");
 }
 
 // ── Issue #1684 — MutationBoundaryGuard::run_or_rollback exception safety ──
@@ -1337,6 +1437,9 @@ int main() {
     run_1691_dead_heap();
     run_1701_extract_parent();
     run_1772_from_feedback();
+    test_ac3828_1_add_mutate_ssot_source();
+    test_ac3828_2_soft_dormant_and_oob();
+    test_ac3828_3_production_bare_int_reject();
     run_1684_guard_exception();
     run_1702_inline_call();
     run_1690_insert_child();

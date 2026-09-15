@@ -594,6 +594,7 @@ static void ac2839_1_node_id_helper_and_inventory() {
     const auto sec = read_file("src/compiler/evaluator_security.cpp");
     const auto ixx = read_file("src/compiler/evaluator.ixx");
     const auto compile = read_file("src/compiler/evaluator_primitives_compile.cpp");
+    const auto mut_fb = read_file("src/compiler/evaluator_primitives_mutate.cpp");
     CHECK(sec.find("require_effect_for_node_id") != std::string::npos,
           "2839 AC1: require_effect_for_node_id defined");
     CHECK(ixx.find("require_effect_for_node_id") != std::string::npos,
@@ -601,9 +602,12 @@ static void ac2839_1_node_id_helper_and_inventory() {
     CHECK(sec.find("make_stamped_ref") != std::string::npos &&
               sec.find("require_effect_on_ref") != std::string::npos,
           "2839 AC1: helper stamps then on_ref");
-    // Production NodeId mutate path uses the helper.
-    CHECK(compile.find("require_effect_for_node_id") != std::string::npos,
+    // Issue #3828: from-verification-feedback uses for_node_id in mutate.cpp.
+    CHECK(mut_fb.find("mutate:from-verification-feedback") != std::string::npos &&
+              mut_fb.find("require_effect_for_node_id") != std::string::npos,
           "2839 AC1: mutate:from-verification-feedback uses for_node_id");
+    CHECK(compile.find("require_effect_for_node_id") != std::string::npos,
+          "2839 AC1: compile NodeId helpers still use for_node_id");
     // Inventory of remaining 2-arg exempt paths (non-workspace).
     const auto mut = read_file("src/compiler/evaluator_primitives_mutation.cpp");
     const auto file = read_file("src/compiler/evaluator_primitives_file.cpp");

@@ -121,10 +121,18 @@ def main() -> int:
         if mutate_positions and gate_p > min(mutate_positions):
             fails.append(f"AC1: {name}: gate_compile_node_effect must precede mutate body")
 
-    # Canonical #2839 site still gated (lineage).
-    fb = _prim_body(compile_cpp, "mutate:from-verification-feedback")
+    # Canonical #2839 site still gated (lineage). Issue #3828: registration
+    # moved to mutate.cpp via add_mutate; still requires for_node_id.
+    mut_cpp = _read("src/compiler/evaluator_primitives_mutate.cpp")
+    fb = _prim_body(mut_cpp, "mutate:from-verification-feedback")
+    if not fb:
+        # add_mutate("\n        \"mutate:...\" split — fall back to window scan
+        pos = mut_cpp.find('"mutate:from-verification-feedback"')
+        fb = mut_cpp[pos : pos + 3500] if pos >= 0 else ""
     if "require_effect_for_node_id" not in fb:
         fails.append("AC1: mutate:from-verification-feedback lost for_node_id")
+    if "add_mutate" not in mut_cpp[max(0, mut_cpp.find('"mutate:from-verification-feedback"') - 80) : mut_cpp.find('"mutate:from-verification-feedback"') + 1]:
+        fails.append("AC1/#3828: mutate:from-verification-feedback not via add_mutate")
 
     # ── AC2: stamped path uses on_ref ──
     must("arg.tenant != 0", "AC2", compile_cpp)

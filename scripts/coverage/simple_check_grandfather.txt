@@ -403,3 +403,4 @@ scripts/coverage/checks/check_steal_force_clear_hold_foreign_3824.py
 scripts/coverage/checks/check_hold_budget_safepoint_force_release_3825.py
 scripts/coverage/checks/check_edge_free_latch_gate_3826.py
 scripts/coverage/checks/check_query_children_parent_schema2_3827.py
+scripts/coverage/checks/check_mutate_from_feedback_ssot_3828.py
