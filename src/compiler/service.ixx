@@ -12547,6 +12547,12 @@ private:
     // cache is a no-op.
     void mark_called_by_cone_body_dirty_(const std::string& name);
 
+    // Issue #3823: Production mark-time union of node-dep dependents of
+    // encode_fn_node(slot(name)) into the same body-dirty set as #3474.
+    // Reuses #3761 decode walk. Shared lock only — no remirror/erase.
+    // Soft inject remains observe-only (helper only on facade success).
+    void mark_node_dep_dependents_body_dirty_(const std::string& name);
+
     void record_dependency(const std::string& caller, const std::string& callee) {
         // Issue #687: idempotent — skip if (caller, callee) is
         // already recorded. Without this, dep edges double

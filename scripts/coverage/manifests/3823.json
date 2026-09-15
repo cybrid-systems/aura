@@ -1,0 +1,39 @@
+{
+  "issue": 3823,
+  "title": "Issue #3823: Production mark unions node-dep dependents before peel",
+  "ok": "OK: Issue #3823 production mark-time node-dep union",
+  "checks": [
+    {
+      "ac": "AC1-helper",
+      "path": "src/compiler/service_dirty.cpp",
+      "contains": [
+        "Issue #3823",
+        "mark_node_dep_dependents_body_dirty_",
+        "encode_fn_node",
+        "decode_fn_slot",
+        "mark_caller_body_dirty"
+      ]
+    },
+    {
+      "ac": "AC1-decl",
+      "path": "src/compiler/service.ixx",
+      "contains": ["mark_node_dep_dependents_body_dirty_"]
+    },
+    {
+      "ac": "AC3-live",
+      "path": "tests/compiler/test_dep_graph_hybrid_cascade.cpp",
+      "contains": [
+        "3823 AC1: lookup_define_v2(g)==1 needs-relower before peel",
+        "3823 soak: lockless one-side write × mark × lookup does not clean-hit"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "forbid": [
+        "tests/compiler/test_issue_3823.cpp",
+        "tests/issues/test_issue_3823.cpp",
+        "docs/design/3823-node-dep-mark-union.md"
+      ]
+    }
+  ]
+}
