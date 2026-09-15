@@ -145,7 +145,7 @@ int main() {
         CHECK(ev.mutation_audit_wal_enabled(), "wal enabled flag");
         ev.set_capability_tenant_id(7);
         // Drive both emit paths: structural + effect
-        ev.emit_mutation_audit(3, 1, "test-mutate", 42);
+        (void)ev.emit_mutation_audit(3, 1, "test-mutate", 42);
         CHECK(ev.check_and_record_effect_for_test(kEffectMutate, kEffectMutate, "effect-op", 99, 7,
                                                   12345),
               "effect path records");
@@ -212,7 +212,7 @@ int main() {
         auto& ev = cs.evaluator();
         CHECK(ev.enable_mutation_audit_wal(dir2), "enable filt dir");
         ev.set_capability_tenant_id(11);
-        ev.emit_mutation_audit(1, 0, "a", 1);
+        (void)ev.emit_mutation_audit(1, 0, "a", 1);
         ev.set_capability_tenant_id(22);
         (void)ev.check_and_record_effect_for_test(kEffectMutate, kEffectMutate, "b", 2, 22, 999);
         // Filter tenant=22
@@ -251,7 +251,7 @@ int main() {
         CompilerService cs;
         CHECK(cs.evaluator().enable_mutation_audit_wal(dir3), "enable rotate dir");
         for (int i = 0; i < 8; ++i)
-            cs.evaluator().emit_mutation_audit(1, 0, "rot", static_cast<std::uint32_t>(i));
+            (void)cs.evaluator().emit_mutation_audit(1, 0, "rot", static_cast<std::uint32_t>(i));
         CHECK(snapshot_audit_wal_stats().rotate_total >= 1 ||
                   snapshot_audit_wal_stats().persisted >= 8,
               "rotate or all persisted");
@@ -271,7 +271,7 @@ int main() {
         const int N = 2000;
         auto t0 = std::chrono::steady_clock::now();
         for (int i = 0; i < N; ++i)
-            cs_off.evaluator().emit_mutation_audit(1, 0, "bench", 0);
+            (void)cs_off.evaluator().emit_mutation_audit(1, 0, "bench", 0);
         auto t1 = std::chrono::steady_clock::now();
         const auto off_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
 
@@ -283,7 +283,7 @@ int main() {
         CHECK(cs_on.evaluator().enable_mutation_audit_wal(dir4), "enable perf");
         auto t2 = std::chrono::steady_clock::now();
         for (int i = 0; i < N; ++i)
-            cs_on.evaluator().emit_mutation_audit(1, 0, "bench", 0);
+            (void)cs_on.evaluator().emit_mutation_audit(1, 0, "bench", 0);
         auto t3 = std::chrono::steady_clock::now();
         const auto on_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(t3 - t2).count();
         // Allow generous slack on CI; just ensure not pathologically slow (>20x).

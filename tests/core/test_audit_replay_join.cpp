@@ -725,12 +725,13 @@ static void ac13_emit_wal_miss_overflow_join_3734() {
     const auto persisted0 = aura::core::audit_wal::snapshot_audit_wal_stats().persisted;
     aura::core::wal_slo::g_wal_append_fail_slo_counters.inject_fail_remaining.store(
         1, std::memory_order_relaxed);
-    ev_a.emit_mutation_audit(2, 1, "3734-structural", 11);
+    CHECK(!ev_a.emit_mutation_audit(2, 1, "3734-structural", 11),
+          "3734 AC1 / #3780: fail-closed emit returns false on WAL miss");
     CHECK(aura::core::wal_slo::g_wal_append_fail_slo_counters.inject_fail_remaining.load(
               std::memory_order_relaxed) == 0,
           "3734 AC1: inject consumed by emit_mutation_audit append");
     CHECK(aura::core::audit_wal::snapshot_audit_wal_stats().persisted == persisted0,
-          "3734 AC1: committed tree not aborted; WAL row not persisted");
+          "3734 AC1: WAL row not persisted on miss");
     CHECK(aura::core::security_event_wal::wal_overflow_ring_depth() >= 1,
           "3734 AC1: overflow ring captured emit miss");
     const auto* ovr = aura::core::security_event_wal::wal_overflow_find_by_mid(3734);
@@ -748,7 +749,7 @@ static void ac13_emit_wal_miss_overflow_join_3734() {
     // the :durable fold would treat as a hit for the missed commit.
     ev_a.clear_boundary_audit_mid_for_test();
     ev_b.note_boundary_audit_mid_for_test(3735);
-    ev_b.emit_mutation_audit(1, 0, "3734-peer", 12);
+    (void)ev_b.emit_mutation_audit(1, 0, "3734-peer", 12);
     const auto* ovr_a = aura::core::security_event_wal::wal_overflow_find_by_mid(3734);
     CHECK(ovr_a && ovr_a->tenant_id == 7,
           "3734 AC1: dual-eval overflow tenant still committer (not peer 9)");
@@ -811,24 +812,32 @@ static void ac13_emit_wal_miss_overflow_join_3734() {
         ::unsetenv("AURA_SANDBOX");
 }
 
-// ── AC14 (#3734): effect-gate fail-closed before body unchanged ──
+// ── AC14 (#3734 / #3780): effect-gate fail-closed before body unchanged ──
 static void ac14_effect_gate_fail_closed_unchanged_3734() {
-    std::println("\n--- #3734 AC2: check_and_record_effect still denies before body ---");
+    std::println("\n--- #3734 AC2 / #3780: effect gate + pre-persist structural deny ---");
     const auto sec = read_file("src/compiler/evaluator_security.cpp");
-    const auto emit_pos = sec.find("void Evaluator::emit_mutation_audit");
+    const auto bnd = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto emit_pos = sec.find("bool Evaluator::emit_mutation_audit");
     const auto effect_pos = sec.find("bool Evaluator::check_and_record_effect");
     CHECK(emit_pos != std::string::npos, "3734 AC2: emit_mutation_audit present");
     CHECK(effect_pos != std::string::npos, "3734 AC2: check_and_record_effect present");
     CHECK(effect_pos > emit_pos, "3734 AC2: check_and_record_effect follows emit");
     CHECK(sec.find("wal_append_missed && ::aura::core::wal_slo::wal_append_fail_closed_active()",
                    effect_pos) != std::string::npos,
-          "3734 AC2: effect gate still fail-closed on WAL miss");
+          "3734 AC2: effect gate still fail-closed on WAL miss (#3639)");
     const auto emit_overflow = sec.find("wal_overflow_ring_push", emit_pos);
     CHECK(emit_overflow != std::string::npos && emit_overflow < effect_pos,
-          "3734 AC2: emit_mutation_audit stamps overflow (does not unwind commit)");
-    CHECK(sec.find("Do not abort a committed tree") != std::string::npos ||
-              sec.find("does not unwind the commit") != std::string::npos,
-          "3734 AC2: emit miss does not unwind Phase-5 persist");
+          "3734 AC2: emit_mutation_audit still stamps overflow on miss");
+    CHECK(sec.find("return false;") != std::string::npos &&
+              sec.find("Issue #3780") != std::string::npos,
+          "3780: emit returns false under fail-closed miss");
+    const auto gate = bnd.find("Issue #3780");
+    const auto persist = bnd.find("aura_outermost_success_persist_occurrence", gate);
+    CHECK(gate != std::string::npos, "3780: Guard dtor cites #3780");
+    CHECK(persist != std::string::npos && persist > gate,
+          "3780: pre-persist WAL gate precedes Occurrence persist");
+    CHECK(sec.find("mutation_wal_append_miss") != std::string::npos,
+          "3780: reason stays in security TU (stable)");
 }
 
 // ── AC15 (#3734): Soft / WAL-off emit miss does not push overflow ──
@@ -847,7 +856,8 @@ static void ac15_soft_emit_no_overflow_3734() {
     CHECK(ev.enable_mutation_audit_wal(dir.string()), "3734 AC3: WAL on under Soft");
     aura::core::wal_slo::g_wal_append_fail_slo_counters.inject_fail_remaining.store(
         1, std::memory_order_relaxed);
-    ev.emit_mutation_audit(1, 0, "3734-soft", 0);
+    CHECK(ev.emit_mutation_audit(1, 0, "3734-soft", 0),
+          "3734 AC3 / #3780: Soft emit miss stays fail-open (true)");
     CHECK(aura::core::security_event_wal::wal_overflow_ring_depth() == 0,
           "3734 AC3: Soft inject miss does not push overflow");
     ev.disable_mutation_audit_wal();
@@ -855,7 +865,8 @@ static void ac15_soft_emit_no_overflow_3734() {
 
     aura::core::wal_slo::g_wal_append_fail_slo_counters.inject_fail_remaining.store(
         1, std::memory_order_relaxed);
-    ev.emit_mutation_audit(1, 0, "3734-wal-off", 0);
+    CHECK(ev.emit_mutation_audit(1, 0, "3734-wal-off", 0),
+          "3734 AC3 / #3780: WAL-off emit stays fail-open (true)");
     CHECK(aura::core::security_event_wal::wal_overflow_ring_depth() == 0,
           "3734 AC3: WAL-off emit does not push overflow");
     aura::core::wal_slo::g_wal_append_fail_slo_counters.inject_fail_remaining.store(
@@ -916,6 +927,77 @@ static void ac16_mid0_refuse_fold_3738() {
     CHECK(read_file("tests/core/test_issue_3738.cpp").empty(), "3738 AC4: no test_issue_3738.cpp");
 }
 
+
+// ── #3780: pre-persist structural WAL miss fail-closed ──
+static void ac17_pre_persist_wal_miss_fail_closed_3780() {
+    std::println("\n--- #3780 AC1: emit miss returns false; Guard gates before persist ---");
+    const auto sec = read_file("src/compiler/evaluator_security.cpp");
+    const auto bnd = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto ixx = read_file("src/compiler/evaluator.ixx");
+    CHECK(ixx.find("[[nodiscard]] bool emit_mutation_audit") != std::string::npos,
+          "3780 AC1: emit_mutation_audit returns bool");
+    CHECK(sec.find("ovr.reason = \"mutation_wal_append_miss\"") != std::string::npos ||
+              sec.find("ovr.reason = \"mutation_wal_append_miss\";") != std::string::npos,
+          "3780 AC4: overflow reason mutation_wal_append_miss stable");
+    // Prefer the string form used in emit (non-std::string ctor).
+    CHECK(sec.find("mutation_wal_append_miss") != std::string::npos,
+          "3780 AC4: mutation_wal_append_miss present");
+    const auto gate = bnd.find("Issue #3780");
+    const auto persist = bnd.find("aura_outermost_success_persist_occurrence");
+    CHECK(gate != std::string::npos && persist != std::string::npos && gate < persist,
+          "3780 AC1: #3780 pre-persist gate before Occurrence persist");
+    CHECK(bnd.find("wal_append_fail_closed_active()") != std::string::npos,
+          "3780 AC1: gate uses wal_append_fail_closed_active");
+    // Soft skip: late emit still present under Soft/WAL-off.
+    CHECK(bnd.find("Soft / WAL-off keep") != std::string::npos ||
+              bnd.find("Soft / WAL-off") != std::string::npos,
+          "3780 AC3: Soft/WAL-off late emit preserved");
+    CHECK(sec.find("wal_append_missed && ::aura::core::wal_slo::wal_append_fail_closed_active()") !=
+              std::string::npos,
+          "3780 AC2: #3639 require_effect path unchanged");
+    std::ifstream invent("tests/core/test_issue_3780.cpp");
+    if (!invent.good())
+        invent.open("../tests/core/test_issue_3780.cpp");
+    CHECK(!invent.good(), "3780 AC4: no test_issue_3780.cpp");
+    CHECK(read_file("docs/design/3780-mutation-wal-miss-fail-closed.md").empty(),
+          "3780 AC4: no docs/design/3780-*");
+    // Runtime: fail-closed emit miss → false + overflow; Soft → true.
+    reset_all();
+    aura::core::security_event_wal::wal_overflow_ring_clear_for_test();
+    aura::core::wal_slo::reset_wal_append_fail_slo_for_test();
+    ::setenv("AURA_SANDBOX", "restricted", 1);
+    ::setenv("AURA_WAL_APPEND_FAIL_CLOSED", "1", 1);
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    ev.set_capability_tenant_id(7);
+    aura::compiler::typed_audit::clear_type_linear_commit_proof_for_test();
+    ev.clear_boundary_audit_mid_for_test();
+    ev.note_boundary_audit_mid_for_test(3780);
+    const auto dir = fresh_wal_dir_3603("ac17-3780");
+    CHECK(ev.enable_mutation_audit_wal(dir.string()), "3780 AC1: mutation WAL enabled");
+    ev.disable_security_event_wal();
+    aura::core::wal_slo::g_wal_append_fail_slo_counters.inject_fail_remaining.store(
+        1, std::memory_order_relaxed);
+    CHECK(!ev.emit_mutation_audit(1, 0, "3780-miss", 1),
+          "3780 AC1: production fail-closed emit returns false");
+    CHECK(aura::core::security_event_wal::wal_overflow_find_by_mid(3780) != nullptr,
+          "3780 AC1: overflow joins mid with mutation_wal_append_miss");
+    const auto* ovr = aura::core::security_event_wal::wal_overflow_find_by_mid(3780);
+    CHECK(ovr && ovr->reason == "mutation_wal_append_miss",
+          "3780 AC4: reason string stable");
+    ev.disable_mutation_audit_wal();
+    std::filesystem::remove_all(dir);
+    ::unsetenv("AURA_WAL_APPEND_FAIL_CLOSED");
+    ::setenv("AURA_SANDBOX", "off", 1);
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    aura::core::security_event_wal::wal_overflow_ring_clear_for_test();
+    aura::core::wal_slo::reset_wal_append_fail_slo_for_test();
+}
+
 } // namespace
 
 int run_test_audit_replay_join() {
@@ -936,6 +1018,7 @@ int run_test_audit_replay_join() {
     ac14_effect_gate_fail_closed_unchanged_3734();
     ac15_soft_emit_no_overflow_3734();
     ac16_mid0_refuse_fold_3738();
+    ac17_pre_persist_wal_miss_fail_closed_3780();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }

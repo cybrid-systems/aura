@@ -243,7 +243,7 @@ int run_test_isolation_audit_mid() {
 
         // AC1: production refuse → no ring row (seq not consumed).
         const auto seq0 = ev.mutation_audit_seq();
-        ev.emit_mutation_audit(1, 0, "ac3462-refuse", 0);
+        (void)ev.emit_mutation_audit(1, 0, "ac3462-refuse", 0);
         CHECK(ev.mutation_audit_seq() == seq0,
               "AC1: production refuse writes no mutation ring row");
         bool refuse_seen = false;
@@ -272,7 +272,7 @@ int run_test_isolation_audit_mid() {
         // new rows for the join op instead of assuming an exact offset.)
         const auto seq_before_join = ev.mutation_audit_seq();
         ta::note_boundary_audit_mid(0x3462ull);
-        ev.emit_mutation_audit(1, 0, "ac3462-join", 0);
+        (void)ev.emit_mutation_audit(1, 0, "ac3462-join", 0);
         CHECK(ev.mutation_audit_seq() > seq_before_join, "AC3: joined ring row written");
         bool join_row_ok = false;
         for (auto s = seq_before_join; s < ev.mutation_audit_seq(); ++s) {

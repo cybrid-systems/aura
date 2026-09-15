@@ -6684,6 +6684,18 @@ def cmd_lint():
             "Issue #3639 WAL append-miss same-mutate fail-closed linter failed — run python3 scripts/check_wal_append_miss_deny_3639.py"
         )
         return r
+    # Issue #3780: structural emit_mutation_audit WAL miss fail-closed before
+    # Occurrence persist (#3734 residual). Soft/WAL-off fail-open preserved.
+    mw3780_script = COVERAGE_CHECKS / "check_mutation_wal_miss_fail_closed_3780.py"
+    if not mw3780_script.exists():
+        fail(f"missing {mw3780_script}")
+        return 1
+    r = run([sys.executable, str(mw3780_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3780 mutation WAL miss fail-closed linter failed — run python3 scripts/coverage/checks/check_mutation_wal_miss_fail_closed_3780.py"
+        )
+        return r
     # Issue #3640: add_mutate isolation gate single spine (#3396 v2
     # residual). The gate parses packed StableNodeRefs through the same
     # unpack_stable_ref_arg as resolve_mutate_node_arg and takes
@@ -14187,6 +14199,26 @@ def cmd_steal_complete_total_ssot_3779():
     """Issue #3779: Agent-visible steal_complete_total single SSOT."""
     print(f"{B}=== steal_complete_total SSOT (#3779) ==={N}")
     return cmd_steal_complete_total_ssot_3779_coverage()
+
+
+def cmd_mutation_wal_miss_fail_closed_3780_coverage():
+    """Issue #3780: structural mutation WAL miss fail-closed before persist (static)."""
+    print(f"{B}=== mutation WAL miss fail-closed (#3780) ==={N}")
+    script = COVERAGE_CHECKS / "check_mutation_wal_miss_fail_closed_3780.py"
+    if not script.is_file():
+        fail(f"missing {script}")
+        return 1
+    if run([sys.executable, str(script)], cwd=ROOT) != 0:
+        fail("mutation WAL miss fail-closed (#3780) coverage contract rows failed")
+        return 1
+    ok("mutation WAL miss fail-closed (#3780) coverage clean")
+    return 0
+
+
+def cmd_mutation_wal_miss_fail_closed_3780():
+    """Issue #3780: emit_mutation_audit WAL miss fail-closed before Occurrence persist."""
+    print(f"{B}=== mutation WAL miss fail-closed (#3780) ==={N}")
+    return cmd_mutation_wal_miss_fail_closed_3780_coverage()
 
 
 def cmd_engine_metrics_hash_overflow_3018_coverage():
@@ -21921,6 +21953,8 @@ def main():
         "compiler-metrics-fields-3737-coverage": cmd_compiler_metrics_fields_3737_coverage,
         "steal-complete-total-ssot-3779": cmd_steal_complete_total_ssot_3779,
         "steal-complete-total-ssot-3779-coverage": cmd_steal_complete_total_ssot_3779_coverage,
+        "mutation-wal-miss-fail-closed-3780": cmd_mutation_wal_miss_fail_closed_3780,
+        "mutation-wal-miss-fail-closed-3780-coverage": cmd_mutation_wal_miss_fail_closed_3780_coverage,
         "engine-metrics-hash-overflow-3018": cmd_engine_metrics_hash_overflow_3018,
         "engine-metrics-hash-overflow-3018-coverage": cmd_engine_metrics_hash_overflow_3018_coverage,
         "unified-restamp-3019": cmd_unified_restamp_3019,

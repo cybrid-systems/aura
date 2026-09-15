@@ -6103,8 +6103,11 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                     // scan keeps 0 — no extra I/O either way.
                     wal_lookup_window_miss =
                         (durable_hit == 0 && typed_summary_from_wal == 0) ? 1 : 0;
-                    // Issue #3734: emit_mutation_audit production WAL miss
-                    // never hit disk; overflow ring is the join key.
+                    // Issue #3734 / #3780: emit_mutation_audit production
+                    // WAL miss never hit disk; overflow ring is the join
+                    // key for the deny/observe face. Under #3780 the
+                    // Guard denies before Occurrence persist, so a
+                    // committed success should not rely on overflow alone.
                     // Fill last-se-reason so :durable is not empty while
                     // wal-lookup-window-miss stays 1 (overflow is not WAL).
                     // In-memory scan only; this block is production/Full.

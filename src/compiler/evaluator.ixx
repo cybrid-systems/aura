@@ -6754,8 +6754,11 @@ public:
     mutation_audit_entry_at(std::uint64_t seq) const noexcept {
         return mutation_audit_ring_[seq % kMutationAuditRingSize];
     }
-    void emit_mutation_audit(std::uint32_t nodes_changed, std::uint32_t epoch_delta,
-                             std::string_view op, ast::NodeId target_node) noexcept;
+    // Issue #3780: returns false under production fail-closed when the
+    // structural mutation WAL append misses (caller must deny before
+    // Occurrence persist). Soft/WAL-off: always true (fail-open).
+    [[nodiscard]] bool emit_mutation_audit(std::uint32_t nodes_changed, std::uint32_t epoch_delta,
+                                           std::string_view op, ast::NodeId target_node) noexcept;
     // Issue #1567: optional mutation audit WAL (append + crash recovery).
     // Returns true if persist enabled (and replay applied when dir has data).
     bool enable_mutation_audit_wal(std::string_view persist_dir) noexcept;

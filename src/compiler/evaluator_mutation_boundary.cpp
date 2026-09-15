@@ -143,6 +143,11 @@ extern "C" void aura_pure_anon_maybe_heal_starved(void) noexcept;
 // unlock is UB). Nested / inert never publish.
 static thread_local aura::compiler::Evaluator::MutationBoundaryGuard* g_tls_outermost_guard =
     nullptr;
+// Issue #3780: outermost pre-persist structural WAL append succeeded —
+// skip the post-success duplicate emit in exit_mutation_boundary.
+// Nested boundaries never set this (they still late-emit). Soft/WAL-off
+// never set it. Cleared on consume in the success emit path.
+static thread_local bool g_tls_mutation_audit_wal_precommitted = false;
 // Issue #3312: nested log-from captured at nested success so Guard dtor
 // can re-seed the thin cone after exit_mutation_boundary (cascade /
 // wrap restamp_all refill the full-tree eager face).
@@ -1786,8 +1791,16 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
             audit_op = rec.operator_name;
             audit_target = rec.target_node;
         }
-        emit_mutation_audit(static_cast<std::uint32_t>(nodes_changed),
-                            static_cast<std::uint32_t>(epoch_delta), audit_op, audit_target);
+        // Issue #3780: outermost pre-persist may have already appended
+        // under fail-closed + WAL — skip only that duplicate. Nested /
+        // Soft / WAL-off keep this post-success emit (#3056 / #3734 AC3).
+        if (g_tls_mutation_audit_wal_precommitted) {
+            g_tls_mutation_audit_wal_precommitted = false;
+        } else {
+            (void)emit_mutation_audit(static_cast<std::uint32_t>(nodes_changed),
+                                      static_cast<std::uint32_t>(epoch_delta), audit_op,
+                                      audit_target);
+        }
         // Issue #2038 / #2988: push-automatic DefUse/IR/JIT cascade so the
         // next eval-current / apply_closure sees updated caches without a
         // manual invalidate. #2988 adds binding_gen + JIT invalidate signal
@@ -4399,15 +4412,60 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
             success = false;
             success_flag_store(flag_, false);
         } else {
-            if (!hard_3778 && mid == 0)
-                mid = ev_->defuse_version_.load(std::memory_order_relaxed);
-            aura_outermost_success_persist_occurrence(ev_, mid);
-            // Issue #3512: staging is one-shot for this outermost persist.
-            ev_->clear_expected_occurrence_snapshot_fp();
-            if (typed_audit::consume_outermost_persist_reject_needs_restore()) {
-                success = false;
-                success_flag_store(flag_, false);
+            // Issue #3780: production fail-closed + force_wal — structural
+            // mutation WAL must land BEFORE Occurrence persist. #3734
+            // post-commit overflow alone is not crash-durable (cap 256,
+            // process-local). On miss: overflow still stamps
+            // mutation_wal_append_miss, then flip success into the
+            // existing !success abort_restore SSOT (no Occurrence commit).
+            // Soft / WAL-off: skip (fail-open; late emit in exit path).
+            // #3639 require_effect body deny is unchanged.
+            if (::aura::core::wal_slo::wal_append_fail_closed_active() &&
+                ::aura::core::audit_wal::g_mutation_audit_wal().is_enabled()) {
+                std::uint32_t nodes_changed_wal = 0;
+                std::uint32_t epoch_delta_wal = 0;
+                std::string_view audit_op_wal = "structural";
+                ast::NodeId audit_target_wal = ast::NULL_NODE;
+                if (ev_->workspace_flat_) {
+                    auto& stk = ev_->active_mutation_stack();
+                    const auto enter_log = (!stk.empty()) ? stk.back().mutation_log_size : 0ull;
+                    const auto post_size = ev_->workspace_flat_->all_mutations().size();
+                    if (post_size > enter_log)
+                        nodes_changed_wal = static_cast<std::uint32_t>(post_size - enter_log);
+                    const auto& log = ev_->workspace_flat_->all_mutations();
+                    if (post_size > enter_log && post_size <= log.size()) {
+                        const auto& rec = log[post_size - 1];
+                        audit_op_wal = rec.operator_name;
+                        audit_target_wal = rec.target_node;
+                    }
+                }
+                if (!ev_->emit_mutation_audit(nodes_changed_wal, epoch_delta_wal, audit_op_wal,
+                                              audit_target_wal)) {
+                    typed_audit::clear_type_linear_commit_proof_on_abort();
+                    typed_audit::publish_type_linear_proof_outcome(
+                        typed_audit::kTypeLinearProofOutcomeReject);
+                    aura_clear_occurrence_persist_buffer(ev_);
+                    ev_->clear_type_export_authority();
+                    ev_->clear_expected_occurrence_snapshot_fp();
+                    success = false;
+                    success_flag_store(flag_, false);
+                    g_tls_mutation_audit_wal_precommitted = false;
+                } else {
+                    g_tls_mutation_audit_wal_precommitted = true;
+                }
             }
+            if (success) {
+                if (!hard_3778 && mid == 0)
+                    mid = ev_->defuse_version_.load(std::memory_order_relaxed);
+                aura_outermost_success_persist_occurrence(ev_, mid);
+                // Issue #3512: staging is one-shot for this outermost persist.
+                ev_->clear_expected_occurrence_snapshot_fp();
+                if (typed_audit::consume_outermost_persist_reject_needs_restore()) {
+                    success = false;
+                    success_flag_store(flag_, false);
+                }
+            }
+            // else: #3780 miss already un-stamped; skip Occurrence persist
         }
     }
     // Issue #3472: belt-and-suspenders post-persist linear deny. The
