@@ -17,6 +17,9 @@
 #include "core/resource_quota.hh"
 #include "core/sandbox.hh"
 #include "orch/agent_spawn.h"
+#include "orch/security_schedule_gate.h"
+#include "core/wal_append_fail_slo.h"
+#include "serve/multi_fiber_mailbox.h"
 #include "serve/fiber.h"
 #include "serve/scheduler.h"
 
@@ -108,6 +111,19 @@ void ac3731_arm_per_tenant() {
     aura::core::resource_quota::set_quota_per_tenant_enabled_for_test(true);
     aura::core::resource_quota::refresh_quota_per_tenant_cache();
     aura::core::provenance::set_multi_tenant_env_active(true);
+    // #3777 schedule-gate-at-spawn: clear leftover live denies (WAL SLO /
+    // schedule counters) so tenant happy-path AC1 is not poisoned by
+    // earlier members of this batch under production defaults.
+    aura::orch::reset_orch_security_schedule_counters_for_test();
+    aura::core::wal_slo::reset_wal_append_fail_slo_for_test();
+    aura::compiler::typed_audit::clear_type_linear_proof_outcome_for_test();
+    aura::compiler::typed_audit::clear_type_linear_commit_proof_for_test();
+    // #2947/#3775: leftover under-boundary p99 / starve throttle would
+    // deny schedule-gate-at-spawn (#3777) on tenant happy-path.
+    aura::serve::mf_mailbox::reset_scope_starve_map_for_test();
+    aura::serve::mf_mailbox::clear_agent_throttle_for_mailbox_starvation();
+    aura::serve::mf_mailbox::g_mf_mailbox_stats.mailbox_under_boundary_wait_us_p99.store(
+        0, std::memory_order_relaxed);
     aura::compiler::typed_audit::apply_production_audit_defaults();
     aura::core::resource_quota::set_current_quota_tenant(0);
 }

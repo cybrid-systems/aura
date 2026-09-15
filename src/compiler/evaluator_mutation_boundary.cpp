@@ -4403,14 +4403,29 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
         const bool hard_3778 = typed_audit::production_defaults_active() ||
                                typed_audit::get_strategy() == typed_audit::AuditStrategy::Full;
         if (hard_3778 && mid == 0) {
-            typed_audit::clear_type_linear_commit_proof_on_abort();
-            typed_audit::publish_type_linear_proof_outcome(
-                typed_audit::kTypeLinearProofOutcomeReject);
-            aura_clear_occurrence_persist_buffer(ev_);
-            ev_->clear_type_export_authority();
-            ev_->clear_expected_occurrence_snapshot_fp();
-            success = false;
-            success_flag_store(flag_, false);
+            // Issue #3778 / #3472: production mid==0 refuse applies when an
+            // Occurrence identity is actually required (mutated / staged).
+            // Vacuous empty MutationBoundaryGuard must not invent defuse
+            // OR abort — skip persist, keep success (happy AC3).
+            bool need_occurrence_mid = ev_->txn_dirty() || ev_->occurrence_fp_staged();
+            if (ev_->workspace_flat_) {
+                auto& stk = ev_->active_mutation_stack();
+                const auto enter_log = (!stk.empty()) ? stk.back().mutation_log_size : 0ull;
+                need_occurrence_mid =
+                    need_occurrence_mid || ev_->workspace_flat_->mutation_log_size() > enter_log ||
+                    ev_->workspace_flat_->mark_dirty_upward_call_count() > dirty_upward_at_enter_;
+            }
+            if (need_occurrence_mid) {
+                typed_audit::clear_type_linear_commit_proof_on_abort();
+                typed_audit::publish_type_linear_proof_outcome(
+                    typed_audit::kTypeLinearProofOutcomeReject);
+                aura_clear_occurrence_persist_buffer(ev_);
+                ev_->clear_type_export_authority();
+                ev_->clear_expected_occurrence_snapshot_fp();
+                success = false;
+                success_flag_store(flag_, false);
+            }
+            // else vacuous: no persist, success stays true
         } else {
             // Issue #3780: production fail-closed + force_wal — structural
             // mutation WAL must land BEFORE Occurrence persist. #3734

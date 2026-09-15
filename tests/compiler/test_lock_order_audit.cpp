@@ -260,7 +260,12 @@ static void ac3613_canary_holder_send_no_inversion() {
     const auto mb = read_file("src/serve/multi_fiber_mailbox.h");
     const auto p3613 = mb.find("Issue #3613: BEFORE mu_");
     CHECK(p3613 != std::string::npos, "3613: push under-boundary gate cites #3613");
-    const auto p_note = mb.find("if (note_mailbox_deferred_under_boundary(&local_stats_))", p3613);
+    // #3775 keyed the under-boundary note with bp_scope_id_; accept either
+    // arity so the #3613 order cite stays valid.
+    auto p_note =
+        mb.find("if (note_mailbox_deferred_under_boundary(&local_stats_, bp_scope_id_)", p3613);
+    if (p_note == std::string::npos)
+        p_note = mb.find("if (note_mailbox_deferred_under_boundary(&local_stats_))", p3613);
     const auto p_acq = mb.find("on_acquire(::aura::compiler::lock_order::Level::Mailbox", p3613);
     CHECK(p_note != std::string::npos && p_acq != std::string::npos && p_note < p_acq,
           "3613: under-boundary gate precedes on_acquire(Mailbox)");

@@ -198,6 +198,9 @@ static void ac3208_2_prod_unset_cancel() {
     aura::orch::JoinPolicy jp{};
     jp.primary_ms = 1;
     jp.drain_ms = kJoinFailDrainMs;
+    // #3776: capture fiber before join — production Done-husk compact may
+    // empty handles() so handles()[0] is UB after Cancel settles.
+    aura::serve::Fiber* fiber0 = scope.handles().empty() ? nullptr : scope.handles()[0].fiber;
     const auto jr = scope.join_all(jp); // unset → production Cancel
     CHECK(jr.status != aura::serve::JoinStatus::Ok, "ac3208_2_prod_unset_cancel: join not Ok");
     CHECK(scope.last_on_join_fail_effective() == AgentFailureAction::Cancel,
@@ -206,9 +209,8 @@ static void ac3208_2_prod_unset_cancel() {
     CHECK(g_orch_module_stats.agent_join_fail_total.load() == f0 + 1, "AC2: join-fail-total +1");
     CHECK(g_orch_module_stats.agent_join_fail_action_cancel_total.load() == c0 + 1,
           "AC2: cancel-total +1");
-    if (scope.handles()[0].fiber)
-        CHECK(scope.handles()[0].fiber->is_cancel_requested() ||
-                  scope.handles()[0].fiber->is_done(),
+    if (fiber0)
+        CHECK(fiber0->is_cancel_requested() || fiber0->is_done(),
               "AC2: Cancel path request_cancel");
     ac3208_set_prod(false);
     ac3208_stop(scope, keep);
@@ -233,6 +235,8 @@ static void ac3208_3_reclaimed_skip() {
     jp.primary_ms = 1;
     jp.drain_ms = 0;
     (void)scope.join_all(jp); // production unset Cancel — must skip reclaimed
+    // Reclaimed live agents are not Done-husk-compacted (#3776).
+    CHECK(!scope.handles().empty(), "ac3208_3_reclaimed_skip: handle retained");
     CHECK(scope.handles()[0].reclaimed_deferred_cleanup ||
               (scope.handles()[0].fiber && scope.handles()[0].fiber->is_reclaimed()),
           "ac3208_3_reclaimed_skip: still reclaimed");
@@ -1010,6 +1014,10 @@ int run_test_agent_failure_policy() {
             pol.on_join_fail = AgentFailureAction::RestartN;
             pol.max_restarts = 3;
             ac3208_set_prod(true);
+            // #3776: capture fiber before join — production Cancel degrade
+            // + Done-husk compact can empty handles() before the Cancel check.
+            aura::serve::Fiber* fiber0 =
+                scope.handles().empty() ? nullptr : scope.handles()[0].fiber;
             (void)scope.join_all(jp, pol);
             CHECK(g_orch_module_stats.agent_restart_total.load(std::memory_order_relaxed) == rst0,
                   "3250 AC3: no re-spawn without spec");
@@ -1019,7 +1027,7 @@ int run_test_agent_failure_policy() {
             CHECK(scope.last_restart_attempted() == 1, "3250 AC3: attempted");
             CHECK(scope.last_restart_skipped_no_spec() == 1, "3250 AC3: skipped");
             CHECK(scope.last_restart_ok() == 0, "3250 AC3: not ok");
-            CHECK(scope.handles()[0].fiber && scope.handles()[0].fiber->is_cancel_requested(),
+            CHECK(fiber0 && fiber0->is_cancel_requested(),
                   "3250 AC3: production degrades to Cancel");
             ac3208_set_prod(false);
             keep.store(false, std::memory_order_relaxed);
