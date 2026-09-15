@@ -4257,7 +4257,6 @@ static void ac3782_3_eval_keyed_consult_and_soft_off() {
 }
 
 
-
 static void ac3647_1_closure_body_slots_registered() {
     std::println("\n--- #3647 AC1: closure body slots enter known-root inventory ---");
     const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");

@@ -61,7 +61,9 @@ def main() -> int:
     p5 = mut.find(phase5_anchor)
     p5w = mut[p5 : p5 + 4500] if p5 != -1 else ""
     must("Issue #3782", "AC1 Phase-5 cite", p5w)
-    must("consult_last_lcp_for_densify_entry(static_cast<const void*>(ev_))", "AC1 eval-keyed", p5w)
+    # clang-format may wrap the consult call; require call + eval key nearby.
+    must("consult_last_lcp_for_densify_entry", "AC1 consult call", p5w)
+    must("static_cast<const void*>(ev_)", "AC1 eval-keyed", p5w)
     must("if (!densify_entry_lcp_blocked)", "AC1 skip guard", p5w)
     must("compact_all_moving_pinned()", "AC1 compact under guard", p5w)
     must("compact_r.pin_contract_held = false", "AC1 synthetic fail-closed", p5w)
@@ -83,11 +85,8 @@ def main() -> int:
     o5 = mut.find(oneshot_anchor)
     o5w = mut[o5 : o5 + 4500] if o5 != -1 else ""
     must("Issue #3782", "AC2 recovery cite", o5w)
-    must(
-        "consult_last_lcp_for_densify_entry(static_cast<const void*>(this))",
-        "AC2 eval-keyed",
-        o5w,
-    )
+    must("consult_last_lcp_for_densify_entry", "AC2 consult call", o5w)
+    must("static_cast<const void*>(this)", "AC2 eval-keyed", o5w)
     must("if (densify_entry_lcp_blocked)", "AC2 skip branch", o5w)
     must("publish_last_moving_densify_window", "AC2 blocked publish", o5w)
     # compact only in else of densify_entry_lcp_blocked
