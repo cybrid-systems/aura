@@ -83,8 +83,10 @@ struct AgentNameTable {
         // Issue #3644: the second recycle runs first — a stuck done
         // body gets the full Done-path cleanup (retire + same-name put
         // passes), a stuck live body with quota already gone gets the
-        // abandon shape; a fresh pending slot returns false and the
-        // #3564 quota arm owns the visit (flags stay).
+        // abandon shape (#3805 retires the map key on put/find — never
+        // move-assign over the live fiber); a fresh pending slot
+        // returns false and the #3564 quota arm owns the visit (flags
+        // stay).
         for (auto& [_, slot] : impl_->agents_)
             if (!aura::orch::maybe_force_recycle_reclaimed_slot(slot))
                 (void)aura::orch::maybe_force_release_reclaimed_quota(slot);
@@ -99,7 +101,12 @@ struct AgentNameTable {
             // Issue #3598: Done-path-cleaned ghost → retire + FRESH insert
             // (AC1) — not a move-assign over the cleaned slot. The ghost's
             // ~AgentHandle runs here (idempotent no-op on a clean slot).
-            if (aura::orch::slot_is_reclaimable_clean(it->second)) {
+            // Issue #3805: abandoned-but-still_running husk (force-recycle
+            // / abandon_reclaimed cleared flags + name while !is_done) →
+            // same retire + fresh insert. Never move-assign over a live
+            // fiber (#2661 body-stack stays with the Scheduler orphan).
+            if (aura::orch::slot_is_reclaimable_clean(it->second) ||
+                aura::orch::slot_is_abandoned_live(it->second)) {
                 impl_->agents_.erase(it);
                 auto [ins_clean, _ins_clean] = impl_->agents_.emplace(name, std::move(h));
                 return &ins_clean->second;
@@ -130,7 +137,11 @@ struct AgentNameTable {
         // a done-but-not-yet-joined slot stays (reservation pins it until
         // the Done-path join clears reserved_memory_bytes). Predicate is
         // two bool loads + is_done — no new atomic (AC3).
-        if (aura::orch::slot_is_reclaimable_clean(it->second)) {
+        // Issue #3805: abandoned-live husk retires the same way — the
+        // name-table must not keep answering send/join under the old
+        // key once force-recycle/abandon cleared the identity plane.
+        if (aura::orch::slot_is_reclaimable_clean(it->second) ||
+            aura::orch::slot_is_abandoned_live(it->second)) {
             impl_->agents_.erase(it);
             return nullptr;
         }

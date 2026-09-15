@@ -8633,6 +8633,20 @@ def cmd_lint():
             "Issue #3804 mailbox BP overflow cohort linter failed — run python3 scripts/coverage/checks/check_mailbox_bp_overflow_cohort_3804.py"
         )
         return r
+    # Issue #3805: abandon/force-recycle live-body husk — name-table
+    # retires map key (erase + fresh insert), never move-assign over a
+    # live fiber; directory / scope-resolve skip abandoned ghosts.
+    # Extends test_join_drain_reclaim.cpp (#81967); no docs/design (#1655).
+    alnr3805_script = COVERAGE_CHECKS / "check_abandoned_live_name_reuse_3805.py"
+    if not alnr3805_script.exists():
+        fail(f"missing {alnr3805_script}")
+        return 1
+    r = run([sys.executable, str(alnr3805_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3805 abandoned-live name reuse linter failed — run python3 scripts/coverage/checks/check_abandoned_live_name_reuse_3805.py"
+        )
+        return r
     # Issue #2887: mailbox BP storm — producer degrade hook on
     # AgentScope::watch_all (on_backpressure Cancel/Throttle/RestartN;
     # default ReportOnly). Complements admit soft-reject of new spawns
