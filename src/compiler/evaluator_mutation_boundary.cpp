@@ -2652,7 +2652,22 @@ Evaluator::MutationBoundaryGuard::try_acquire(Evaluator& ev, std::uint64_t pendi
     // mailbox-hold-starvation error (#2587 AC1 + AC2 + #2551 closed-loop
     // BP control plane). The TransactionGuard host callback wraps this
     // function (#2555), so TransactionGuard ctor is gated transitively.
-    if (aura::serve::mf_mailbox::aura_orch_mailbox_starvation_throttled()) {
+
+    // Issue #3775: resolve caller's bp_scope_id from fiber mailbox so
+    // starvation throttle is scope-local under production (Soft/Off still
+    // process-global inside aura_orch_mailbox_starvation_throttled).
+    const auto starve_scope = []() noexcept -> std::string_view {
+        using aura::serve::g_current_fiber;
+        if (g_current_fiber == nullptr)
+            return {};
+        if (auto* mb = g_current_fiber->mailbox()) {
+            const auto s = mb->bp_scope_id();
+            if (!s.empty() && s != "-")
+                return s;
+        }
+        return {};
+    }();
+    if (aura::serve::mf_mailbox::aura_orch_mailbox_starvation_throttled(starve_scope)) {
         aura::serve::mf_mailbox::note_mutate_rejected_mailbox_starvation();
         if (typed_audit::production_defaults_active()) {
             if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_)) {
@@ -2816,9 +2831,19 @@ Evaluator::MutationBoundaryGuard::try_acquire_for_region(Evaluator& ev, std::uin
             aura::core::AuraErrorKind::ResourceQuotaExceeded,
             std::string("AdmissionRejected: nested-mutate-under-eval-current")));
     }
-    // Issue #2587: same throttle gate as try_acquire above (single
-    // relaxed load, soft / hard split on production_defaults_active).
-    if (aura::serve::mf_mailbox::aura_orch_mailbox_starvation_throttled()) {
+    // Issue #2587 / #3775: same throttle gate as try_acquire above.
+    const auto starve_scope_region = []() noexcept -> std::string_view {
+        using aura::serve::g_current_fiber;
+        if (g_current_fiber == nullptr)
+            return {};
+        if (auto* mb = g_current_fiber->mailbox()) {
+            const auto s = mb->bp_scope_id();
+            if (!s.empty() && s != "-")
+                return s;
+        }
+        return {};
+    }();
+    if (aura::serve::mf_mailbox::aura_orch_mailbox_starvation_throttled(starve_scope_region)) {
         aura::serve::mf_mailbox::note_mutate_rejected_mailbox_starvation();
         if (typed_audit::production_defaults_active()) {
             if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_)) {
@@ -4905,7 +4930,20 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
         // force-resolve remaining + audit; residual after budget → hard
         // counter + Agent throttle flag (#2551). Wraps
         // note_mailbox_outermost_exit_drain (#2378 opportunity stamp).
-        (void)aura::serve::mf_mailbox::drain_deferred_under_budget();
+        {
+            // Issue #3775: drain / arm starvation on the holder's mailbox
+            // bp_scope_id so cross-tenant mutate admits stay isolated.
+            std::string_view drain_scope{};
+            if (aura::serve::g_current_fiber != nullptr) {
+                if (auto* mb = aura::serve::g_current_fiber->mailbox()) {
+                    const auto s = mb->bp_scope_id();
+                    if (!s.empty() && s != "-")
+                        drain_scope = s;
+                }
+            }
+            (void)aura::serve::mf_mailbox::drain_deferred_under_budget(/*budget_us=*/0,
+                                                                       drain_scope);
+        }
         ev_->unbind_yield_hook_evaluator();
         // Issue #2170: publish LayoutStamp at outermost exit (Phase 5).
         // Captures the post-mutation stamp (env_generation_ + defuse_version_

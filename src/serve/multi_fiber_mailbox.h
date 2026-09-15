@@ -60,11 +60,13 @@
 #include <cstdint>
 #include <cstdlib>
 #include <deque>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <thread>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -408,9 +410,141 @@ inline constexpr int kMailboxDeferSloHoldCancelIssue = 2958;
                                           .count());
 }
 
+// Issue #3775: per-scope starvation throttle / deferred-depth plane.
+// Soft/Off keep process-global atomics only (zero extra map cost).
+// Production: map bp_scope_id → {throttle, deferred_depth} so one tenant's
+// Guard / hold-exit residual cannot deny other tenants' mutate admits.
+inline constexpr int kMailboxStarveScopeIssue = 3775;
+inline constexpr std::size_t kMailboxStarveScopeMapCap = 256;
+
+struct ScopeStarveState {
+    std::atomic<std::uint64_t> deferred_depth{0};
+    std::atomic<std::uint64_t> throttle{0}; // 0/1
+};
+
+inline std::mutex g_scope_starve_map_mtx{};
+inline std::unordered_map<std::string, std::shared_ptr<ScopeStarveState>> g_scope_starve_map{};
+// Overflow-only bucket when map is full under production — never the
+// process bucket (quiet empty-scope tenants stay un-poisoned, AC4).
+inline ScopeStarveState g_scope_starve_overflow{};
+
+// TLS scope for defer / drain / throttle note paths. Empty / "-" =
+// process bucket. Named id routes to the per-scope starve state.
+inline thread_local std::string_view g_mf_mailbox_starve_note_scope{};
+
+[[nodiscard]] inline bool mailbox_starve_scoped_active() noexcept {
+    // Inline sandbox=off probe (mailbox_sandbox_explicit_off is defined later).
+    const char* sb = std::getenv("AURA_SANDBOX");
+    if (sb && sb[0] == 'o' && sb[1] == 'f' && sb[2] == 'f' && sb[3] == '\0')
+        return false;
+    return aura_production_defaults_active_probe() != 0;
+}
+
+[[nodiscard]] inline std::string_view
+normalize_starve_scope_id(std::string_view scope_id) noexcept {
+    if (scope_id.empty() || scope_id == "-")
+        return {};
+    return scope_id;
+}
+
+// Lookup-or-insert under production. At-cap → overflow bucket (no process
+// poison). Soft/Off callers must not reach here.
+inline std::shared_ptr<ScopeStarveState>
+ensure_scope_starve_state(std::string_view scope_id) noexcept {
+    scope_id = normalize_starve_scope_id(scope_id);
+    if (scope_id.empty())
+        return nullptr;
+    std::lock_guard<std::mutex> lock(g_scope_starve_map_mtx);
+    auto it = g_scope_starve_map.find(std::string{scope_id});
+    if (it != g_scope_starve_map.end())
+        return it->second;
+    if (g_scope_starve_map.size() >= kMailboxStarveScopeMapCap) {
+        // Explicit overflow isolation — do not fall into process bucket.
+        return nullptr; // caller uses g_scope_starve_overflow
+    }
+    auto s = std::make_shared<ScopeStarveState>();
+    g_scope_starve_map.emplace(std::string{scope_id}, s);
+    return s;
+}
+
+inline ScopeStarveState* resolve_scope_starve_state(std::string_view scope_id) noexcept {
+    scope_id = normalize_starve_scope_id(scope_id);
+    if (scope_id.empty())
+        return nullptr;
+    if (auto p = ensure_scope_starve_state(scope_id))
+        return p.get();
+    return &g_scope_starve_overflow;
+}
+
+[[nodiscard]] inline ScopeStarveState*
+lookup_scope_starve_state(std::string_view scope_id) noexcept {
+    scope_id = normalize_starve_scope_id(scope_id);
+    if (scope_id.empty())
+        return nullptr;
+    std::lock_guard<std::mutex> lock(g_scope_starve_map_mtx);
+    auto it = g_scope_starve_map.find(std::string{scope_id});
+    if (it == g_scope_starve_map.end()) {
+        // Overflow participants share the overflow gauge when map was full
+        // at first note — still isolate from process bucket.
+        if (g_scope_starve_map.size() >= kMailboxStarveScopeMapCap)
+            return &g_scope_starve_overflow;
+        return nullptr;
+    }
+    return it->second.get();
+}
+
+inline void bump_scope_deferred_depth(std::string_view scope_id) noexcept {
+    if (!mailbox_starve_scoped_active())
+        return;
+    if (auto* s = resolve_scope_starve_state(scope_id))
+        s->deferred_depth.fetch_add(1, std::memory_order_relaxed);
+}
+
+inline void dec_scope_deferred_depth(std::string_view scope_id) noexcept {
+    if (!mailbox_starve_scoped_active())
+        return;
+    auto* s = lookup_scope_starve_state(scope_id);
+    if (!s)
+        return;
+    auto cur = s->deferred_depth.load(std::memory_order_relaxed);
+    while (cur > 0 &&
+           !s->deferred_depth.compare_exchange_weak(cur, cur - 1, std::memory_order_relaxed)) {
+    }
+}
+
+inline void arm_scope_starve_throttle(std::string_view scope_id) noexcept {
+    if (!mailbox_starve_scoped_active()) {
+        g_mf_mailbox_stats.agent_throttle_for_mailbox_starvation.store(1,
+                                                                       std::memory_order_relaxed);
+        return;
+    }
+    scope_id = normalize_starve_scope_id(scope_id);
+    if (scope_id.empty()) {
+        g_mf_mailbox_stats.agent_throttle_for_mailbox_starvation.store(1,
+                                                                       std::memory_order_relaxed);
+        return;
+    }
+    if (auto* s = resolve_scope_starve_state(scope_id))
+        s->throttle.store(1, std::memory_order_relaxed);
+    // Process aggregate for query:orch-module-stats (no key rename).
+    g_mf_mailbox_stats.agent_throttle_for_mailbox_starvation.store(1, std::memory_order_relaxed);
+}
+
+[[nodiscard]] inline bool any_scope_starve_throttled_unlocked() noexcept {
+    if (g_scope_starve_overflow.throttle.load(std::memory_order_relaxed) != 0)
+        return true;
+    for (auto& kv : g_scope_starve_map) {
+        if (kv.second && kv.second->throttle.load(std::memory_order_relaxed) != 0)
+            return true;
+    }
+    return false;
+}
+
 // Issue #2378: note a mutation-hold defer (push/fanout returned BP).
 // AC3: only called on the defer path (not on happy Ok push).
-inline void note_mailbox_mutation_hold_defer() noexcept {
+// Issue #3775: optional scope_id (or TLS g_mf_mailbox_starve_note_scope)
+// keys per-scope deferred_depth under production; Soft/Off process-only.
+inline void note_mailbox_mutation_hold_defer(std::string_view scope_id = {}) noexcept {
     g_mf_mailbox_stats.mailbox_deferred_mutation_hold_total.fetch_add(1, std::memory_order_relaxed);
     const auto d =
         g_mf_mailbox_stats.mailbox_deferred_depth.fetch_add(1, std::memory_order_relaxed) + 1;
@@ -424,27 +558,81 @@ inline void note_mailbox_mutation_hold_defer() noexcept {
     const auto now = mailbox_steady_ns();
     (void)g_mailbox_first_open_defer_ns.compare_exchange_strong(expected, now,
                                                                 std::memory_order_relaxed);
+    // Issue #3775: scope deferred_depth (production only).
+    if (scope_id.empty())
+        scope_id = g_mf_mailbox_starve_note_scope;
+    bump_scope_deferred_depth(scope_id);
 }
 
-// Issue #2551: clear Agent throttle once deferred mailbox pressure is gone.
-// Called on free drain path (depth==0) and when open window closes (1→0).
-inline void clear_agent_throttle_for_mailbox_starvation() noexcept {
-    g_mf_mailbox_stats.agent_throttle_for_mailbox_starvation.store(0, std::memory_order_relaxed);
+// Issue #2551 / #3775: clear Agent throttle once deferred mailbox pressure
+// is gone. Soft/Off / empty scope → process-global. Production named scope
+// clears that scope; process aggregate clears when no scope remains armed.
+inline void clear_agent_throttle_for_mailbox_starvation(std::string_view scope_id = {}) noexcept {
+    if (scope_id.empty())
+        scope_id = g_mf_mailbox_starve_note_scope;
+    scope_id = normalize_starve_scope_id(scope_id);
+    if (!mailbox_starve_scoped_active() || scope_id.empty()) {
+        g_mf_mailbox_stats.agent_throttle_for_mailbox_starvation.store(0,
+                                                                       std::memory_order_relaxed);
+        return;
+    }
+    if (auto* s = lookup_scope_starve_state(scope_id))
+        s->throttle.store(0, std::memory_order_relaxed);
+    std::lock_guard<std::mutex> lock(g_scope_starve_map_mtx);
+    if (!any_scope_starve_throttled_unlocked()) {
+        g_mf_mailbox_stats.agent_throttle_for_mailbox_starvation.store(0,
+                                                                       std::memory_order_relaxed);
+    }
 }
 
-// Issue #2587: zero-cost probe for agent_throttle_for_mailbox_starvation.
-// Single relaxed atomic load (no side effects, no syscall). When the flag
-// is 0 the inlined load + branch is the entire hot-path overhead (AC5 —
-// zero cost when flag == 0). MutationBoundaryGuard::try_acquire (host +
-// fiber soft path), TransactionGuard ctor (#2555 unified entry), and the
-// public mutate:* prims in evaluator_primitives_mutate.cpp call this
-// before admitting new mutate work; the call site decides hard reject vs
-// metric-only soft tick based on production_defaults_active() (#2543
-// sibling pattern). Header-inline + always_inline so the relaxed load
-// folds into the gate branch with no extra symbol cost in caller TUs.
-[[nodiscard, gnu::always_inline]] inline bool aura_orch_mailbox_starvation_throttled() noexcept {
-    return g_mf_mailbox_stats.agent_throttle_for_mailbox_starvation.load(
-               std::memory_order_relaxed) != 0;
+// Issue #2587 / #3775: zero-cost probe for agent_throttle_for_mailbox_starvation.
+// Soft/Off: single process-global relaxed load (contract). Production named
+// scope: load that scope's throttle only (cross-tenant isolation). Empty
+// scope under production still uses the process bucket.
+[[nodiscard, gnu::always_inline]] inline bool
+aura_orch_mailbox_starvation_throttled(std::string_view scope_id = {}) noexcept {
+    if (scope_id.empty())
+        scope_id = g_mf_mailbox_starve_note_scope;
+    scope_id = normalize_starve_scope_id(scope_id);
+    if (!mailbox_starve_scoped_active() || scope_id.empty()) {
+        return g_mf_mailbox_stats.agent_throttle_for_mailbox_starvation.load(
+                   std::memory_order_relaxed) != 0;
+    }
+    if (auto* s = lookup_scope_starve_state(scope_id))
+        return s->throttle.load(std::memory_order_relaxed) != 0;
+    return false;
+}
+
+// Issue #3775 test / Agent helpers (no new query key rename).
+[[nodiscard]] inline std::uint64_t load_scope_starve_throttle(std::string_view scope_id) noexcept {
+    scope_id = normalize_starve_scope_id(scope_id);
+    if (scope_id.empty()) {
+        return g_mf_mailbox_stats.agent_throttle_for_mailbox_starvation.load(
+            std::memory_order_relaxed);
+    }
+    if (auto* s = lookup_scope_starve_state(scope_id))
+        return s->throttle.load(std::memory_order_relaxed);
+    return 0;
+}
+[[nodiscard]] inline std::uint64_t
+load_scope_mailbox_deferred_depth(std::string_view scope_id) noexcept {
+    scope_id = normalize_starve_scope_id(scope_id);
+    if (scope_id.empty()) {
+        return g_mf_mailbox_stats.mailbox_deferred_depth.load(std::memory_order_relaxed);
+    }
+    if (auto* s = lookup_scope_starve_state(scope_id))
+        return s->deferred_depth.load(std::memory_order_relaxed);
+    return 0;
+}
+inline void reset_scope_starve_map_for_test() noexcept {
+    std::lock_guard<std::mutex> lock(g_scope_starve_map_mtx);
+    g_scope_starve_map.clear();
+    g_scope_starve_overflow.deferred_depth.store(0, std::memory_order_relaxed);
+    g_scope_starve_overflow.throttle.store(0, std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::size_t scope_starve_map_size_for_test() noexcept {
+    std::lock_guard<std::mutex> lock(g_scope_starve_map_mtx);
+    return g_scope_starve_map.size();
 }
 
 // Issue #3002: SSOT live sample for p99 + throttle + SLO. No hist walk.
@@ -632,10 +820,12 @@ inline void maybe_mailbox_defer_slo_hold_cancel() noexcept {
 // AC3: when deferred_depth==0, single relaxed load then return (no maps).
 // Issue #2903: when window closes (1→0), also sample under-boundary wait
 // from first defer decision → deliver (full hold-visible latency).
-inline void note_mailbox_push_ok_drain_progress() noexcept {
+inline void note_mailbox_push_ok_drain_progress(std::string_view scope_id = {}) noexcept {
     const auto depth = g_mf_mailbox_stats.mailbox_deferred_depth.load(std::memory_order_relaxed);
     if (depth == 0)
         return; // happy path — zero extra work beyond this load
+    if (scope_id.empty())
+        scope_id = g_mf_mailbox_starve_note_scope;
     // Resolve one outstanding defer (sender retry succeeded).
     auto cur = depth;
     while (cur > 0 && !g_mf_mailbox_stats.mailbox_deferred_depth.compare_exchange_weak(
@@ -643,6 +833,7 @@ inline void note_mailbox_push_ok_drain_progress() noexcept {
     }
     if (cur == 0)
         return; // raced to zero
+    dec_scope_deferred_depth(scope_id);
     // Flush latency sample when window closes (depth was 1 → 0).
     if (cur == 1) {
         // Issue #2554: window closed — clear starvation canary so the next
@@ -678,8 +869,9 @@ inline void note_mailbox_push_ok_drain_progress() noexcept {
             const auto wait_us = (now - first) / 1000ull;
             note_mailbox_under_boundary_wait_sample(wait_us, /*dropped=*/false);
         }
-        // Issue #2551 AC3: window closed → clear Agent throttle.
-        clear_agent_throttle_for_mailbox_starvation();
+        // Issue #2551 / #3775 AC3: window closed → clear Agent throttle
+        // for this scope (process under Soft / empty).
+        clear_agent_throttle_for_mailbox_starvation(scope_id);
     }
 }
 
@@ -752,17 +944,19 @@ struct MailboxHoldDrainResult {
 // Agent throttle flag (query-visible). Soft residual: metric-only. Flag
 // clears on free path (depth0 entry) or window close (1→0 push Ok).
 [[nodiscard]] inline MailboxHoldDrainResult
-drain_deferred_under_budget(std::uint64_t budget_us = 0) noexcept {
+drain_deferred_under_budget(std::uint64_t budget_us = 0, std::string_view scope_id = {}) noexcept {
     MailboxHoldDrainResult r;
+    if (scope_id.empty())
+        scope_id = g_mf_mailbox_starve_note_scope;
     // AC5 / #2551 AC2: zero extra work when no pending defer (one relaxed load).
     const auto depth0 = g_mf_mailbox_stats.mailbox_deferred_depth.load(std::memory_order_relaxed);
     if (depth0 == 0) {
         // Still stamp exit_ns so a later open-window flush can baseline
         // against this outermost exit (cheap store; not a depth walk).
         g_mailbox_last_outermost_exit_ns.store(mailbox_steady_ns(), std::memory_order_relaxed);
-        // Issue #2551 AC3: subsequent free drain (depth already zero) clears
-        // Agent throttle — mailbox has caught up.
-        clear_agent_throttle_for_mailbox_starvation();
+        // Issue #2551 / #3775 AC3: subsequent free drain (depth already zero)
+        // clears Agent throttle for this scope — mailbox has caught up.
+        clear_agent_throttle_for_mailbox_starvation(scope_id);
         return r;
     }
     r.had_open_defer = true;
@@ -784,8 +978,8 @@ drain_deferred_under_budget(std::uint64_t budget_us = 0) noexcept {
         if (d == 0) {
             r.remaining_depth = 0;
             r.elapsed_us = elapsed_us;
-            // Natural resolve under budget → clear throttle (#2551 AC3).
-            clear_agent_throttle_for_mailbox_starvation();
+            // Natural resolve under budget → clear throttle (#2551/#3775).
+            clear_agent_throttle_for_mailbox_starvation(scope_id);
             break;
         }
         if (elapsed_us >= budget) {
@@ -850,8 +1044,21 @@ drain_deferred_under_budget(std::uint64_t budget_us = 0) noexcept {
                 r.starved = true;
                 g_mf_mailbox_stats.mailbox_hold_starvation_hard_total.fetch_add(
                     1, std::memory_order_relaxed);
-                g_mf_mailbox_stats.agent_throttle_for_mailbox_starvation.store(
-                    1, std::memory_order_relaxed);
+                // Issue #3775: arm per-scope throttle under production; Soft
+                // path below stays process-global. Process aggregate still
+                // set for query faces (no key rename).
+                arm_scope_starve_throttle(scope_id);
+                // Force-close ALL per-scope deferred_depth (process depth
+                // was just CAS-closed). Throttle arms only for holder scope
+                // — other scopes' mutate admits stay open (#3775 AC1).
+                if (mailbox_starve_scoped_active()) {
+                    std::lock_guard<std::mutex> lock(g_scope_starve_map_mtx);
+                    for (auto& kv : g_scope_starve_map) {
+                        if (kv.second)
+                            kv.second->deferred_depth.store(0, std::memory_order_relaxed);
+                    }
+                    g_scope_starve_overflow.deferred_depth.store(0, std::memory_order_relaxed);
+                }
                 g_mf_mailbox_stats.mailbox_hold_exit_starvation_total.fetch_add(
                     1, std::memory_order_relaxed);
                 g_mf_mailbox_stats.mailbox_defer_starvation_total.fetch_add(
@@ -861,7 +1068,7 @@ drain_deferred_under_budget(std::uint64_t budget_us = 0) noexcept {
                 // gate already prevented enqueue). Clear throttle if depth 0.
                 r.starved = false;
                 if (r.remaining_depth == 0)
-                    clear_agent_throttle_for_mailbox_starvation();
+                    clear_agent_throttle_for_mailbox_starvation(scope_id);
             }
             break;
         }
@@ -936,7 +1143,8 @@ inline void clear_recv_boundary_reject_window() noexcept {
 //   if (note_mailbox_deferred_under_boundary(&local_stats_))
 //       return PushStatus::Backpressure;
 [[nodiscard]] inline bool
-note_mailbox_deferred_under_boundary(MultiFiberMailboxStats* local_stats = nullptr) noexcept {
+note_mailbox_deferred_under_boundary(MultiFiberMailboxStats* local_stats = nullptr,
+                                     std::string_view scope_id = {}) noexcept {
     // Production defaults: push under live boundary always Backpressure.
     if (!(aura_evaluator_mutation_boundary_depth() > 0 ||
           aura_evaluator_mutation_boundary_held() != 0))
@@ -975,7 +1183,9 @@ note_mailbox_deferred_under_boundary(MultiFiberMailboxStats* local_stats = nullp
                 1, std::memory_order_relaxed);
         }
     }
-    note_mailbox_mutation_hold_defer();
+    if (scope_id.empty())
+        scope_id = g_mf_mailbox_starve_note_scope;
+    note_mailbox_mutation_hold_defer(scope_id);
     // Issue #2958: concurrent push under long hold may already exceed wait
     // SLO by open-window age — request holder cancel under production.
     maybe_mailbox_defer_slo_hold_cancel();
@@ -1287,7 +1497,7 @@ public:
         // inversion). Same #2849 helper, earlier: the BP fires before any
         // lock acquisition. Two relaxed loads when the boundary is idle —
         // zero cost on the happy path (no live boundary).
-        if (note_mailbox_deferred_under_boundary(&local_stats_))
+        if (note_mailbox_deferred_under_boundary(&local_stats_, bp_scope_id_))
             return PushStatus::Backpressure;
         // Issue #3763: AuditScope pairs on_acquire(::aura::compiler::lock_order::Level::Mailbox)
         // with on_release (sticky TLS depth was blinding Workspace→Mailbox canary).
@@ -1315,7 +1525,8 @@ public:
                     snap = a->mutation_safety_snapshot();
                     if (!a->is_at_mutation_boundary_safe(snap)) {
                         // Issue #2312 defer + #2378 depth/SLA (not dropped).
-                        note_mailbox_mutation_hold_defer();
+                        // Issue #3775: attribute deferred_depth to mailbox scope.
+                        note_mailbox_mutation_hold_defer(bp_scope_id_);
                         local_stats_.mailbox_deferred_mutation_hold_total.fetch_add(
                             1, std::memory_order_relaxed);
                         return PushStatus::Backpressure;
@@ -1360,7 +1571,7 @@ public:
         add_inflight_(1);
         // Issue #2378: successful enqueue may close an open defer window
         // (AC3: free when deferred_depth==0 — single relaxed load).
-        note_mailbox_push_ok_drain_progress();
+        note_mailbox_push_ok_drain_progress(bp_scope_id_);
         notify_all_unlocked();
         return PushStatus::Ok;
     }
@@ -1396,7 +1607,7 @@ public:
         // fanout defers BEFORE mu_ (all-or-nothing; note_self_backpressure
         // pairing kept). A Guard-held sender must not take Mailbox under a
         // live Workspace Guard.
-        if (note_mailbox_deferred_under_boundary(&local_stats_)) {
+        if (note_mailbox_deferred_under_boundary(&local_stats_, bp_scope_id_)) {
             note_self_backpressure(/*from_fanout=*/true);
             return PushStatus::Backpressure;
         }
@@ -1424,7 +1635,8 @@ public:
             const auto snap = a->mutation_safety_snapshot();
             if (!a->is_at_mutation_boundary_safe(snap)) {
                 // Issue #2312 / #2378: whole fan-out deferred (depth SLA).
-                note_mailbox_mutation_hold_defer();
+                // Issue #3775: attribute deferred_depth to mailbox scope.
+                note_mailbox_mutation_hold_defer(bp_scope_id_);
                 local_stats_.mailbox_deferred_mutation_hold_total.fetch_add(
                     1, std::memory_order_relaxed);
                 note_self_backpressure(/*from_fanout=*/true, proto.from_fiber);
@@ -1473,7 +1685,7 @@ public:
         }
         add_inflight_(need);
         // Issue #2378: fan-out success may close open defer window.
-        note_mailbox_push_ok_drain_progress();
+        note_mailbox_push_ok_drain_progress(bp_scope_id_);
         notify_all_unlocked();
         return PushStatus::Ok;
     }
