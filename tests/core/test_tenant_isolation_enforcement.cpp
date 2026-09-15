@@ -4661,6 +4661,128 @@ int main() {
     }
 
 
+    // ── Issue #3808: obs join oracle — IsolationDeny ↔ security-audit / evo ──
+    // #3801 already fixed record_audit mid = TypedMid-then-epoch. This block
+    // locks AC4: under Guard TypedMid≠epoch the IsolationDeny SE is joinable
+    // via query:security-audit mutation-id=TypedMid and
+    // query:evolution-audit-decision last-se-reason (not epoch-only mid).
+    {
+        std::println("\n--- #3808 AC4: Guard TypedMid≠epoch → security-audit + evo last-se-reason ---");
+        reset_all();
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+        aura::compiler::typed_audit::apply_production_audit_defaults();
+        aura::core::store_workspace_epoch(aura::core::WorkspaceEpochKind::Mutation, 42);
+        aura::core::capability::set_effect_fiber_id_override(99);
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.set_effect_sandbox_mode(1);
+        ev.set_capability_tenant_id(7);
+        ev.arm_production_audit_defaults_for_test();
+        ev.note_boundary_audit_mid_for_test(777);
+        aura::compiler::typed_audit::stamp_type_linear_commit_proof(777);
+        CHECK(!ev.check_workspace_isolation(/*target=*/42, /*ref_tenant=*/42, kEffectMutate,
+                                            "test:3808-ac4"),
+              "3808 AC4: cross-tenant IsolationDeny fires");
+        // query:security-audit [limit] [tenant] [fiber] [since-seq] [mutation-id]
+        // — mid=TypedMid 777 must hit; epoch 42 must miss IsolationDeny.
+        auto q_typed = cs.eval(R"((engine:metrics "query:security-audit" 16 7 99 0 777))");
+        CHECK(q_typed.has_value(), "3808 AC4: query:security-audit mid=TypedMid callable");
+        bool saw_iso_typed = false;
+        if (q_typed) {
+            auto cur = *q_typed;
+            int guard = 0;
+            auto& pairs = ev.pairs();
+            auto heap = ev.string_heap();
+            while (is_pair(cur) && guard++ < 64) {
+                const auto idx = as_pair_idx(cur);
+                if (idx >= pairs.size())
+                    break;
+                if (is_string(pairs[idx].car)) {
+                    const auto sidx = as_string_idx(pairs[idx].car);
+                    if (sidx < heap.size()) {
+                        const std::string ln(heap[sidx]);
+                        if (ln.find("kind=IsolationDeny") != std::string::npos &&
+                            ln.find("mutation_id=777") != std::string::npos)
+                            saw_iso_typed = true;
+                    }
+                }
+                cur = pairs[idx].cdr;
+            }
+        }
+        CHECK(saw_iso_typed,
+              "3808 AC4: query:security-audit mutation-id=TypedMid returns IsolationDeny");
+        auto q_epoch = cs.eval(R"((engine:metrics "query:security-audit" 16 7 99 0 42))");
+        CHECK(q_epoch.has_value(), "3808 AC4: query:security-audit mid=epoch callable");
+        bool saw_iso_epoch = false;
+        if (q_epoch) {
+            auto cur = *q_epoch;
+            int guard = 0;
+            auto& pairs = ev.pairs();
+            auto heap = ev.string_heap();
+            while (is_pair(cur) && guard++ < 64) {
+                const auto idx = as_pair_idx(cur);
+                if (idx >= pairs.size())
+                    break;
+                if (is_string(pairs[idx].car)) {
+                    const auto sidx = as_string_idx(pairs[idx].car);
+                    if (sidx < heap.size()) {
+                        const std::string ln(heap[sidx]);
+                        if (ln.find("kind=IsolationDeny") != std::string::npos &&
+                            ln.find("mutation_id=42") != std::string::npos)
+                            saw_iso_epoch = true;
+                    }
+                }
+                cur = pairs[idx].cdr;
+            }
+        }
+        CHECK(!saw_iso_epoch,
+              "3808 AC4: query:security-audit mutation-id=epoch does not return IsolationDeny");
+        // evolution-audit-decision last-se-reason joins the same TypedMid.
+        auto rsn = cs.eval(
+            R"((hash-ref (engine:metrics "query:evolution-audit-decision" 777) "last-se-reason"))");
+        bool reason_ok = false;
+        if (rsn && is_string(*rsn)) {
+            auto heap = ev.string_heap();
+            const auto sidx = as_string_idx(*rsn);
+            reason_ok = sidx < heap.size() &&
+                        heap[sidx].find("isolation-deny:") != std::string::npos;
+        }
+        CHECK(reason_ok,
+              "3808 AC4: evolution-audit-decision last-se-reason is isolation-deny:*");
+        auto rsn_code = cs.eval(
+            R"((hash-ref (engine:metrics "query:evolution-audit-decision" 777) "last-se-reason-code"))");
+        CHECK(rsn_code && is_int(*rsn_code) && as_int(*rsn_code) != 0,
+              "3808 AC4: last-se-reason-code non-zero for IsolationDeny");
+        ev.clear_boundary_audit_mid_for_test();
+        aura::core::capability::set_effect_fiber_id_override(0);
+        aura::compiler::typed_audit::apply_dev_audit_defaults();
+    }
+
+    {
+        std::println("\n--- #3808 Soft/Off + cite-first (obs join contract) ---");
+        const auto iso = read_file("src/core/workspace_isolation.hh");
+        const auto build = read_file("build.py");
+        const auto prim = read_file("src/compiler/evaluator_primitives_security.cpp");
+        const auto test_self = read_file("tests/core/test_tenant_isolation_enforcement.cpp");
+        CHECK(iso.find("Issue #3808") != std::string::npos, "3808: workspace_isolation cites #3808");
+        CHECK(iso.find("query:security-audit") != std::string::npos,
+              "3808: iso cites query:security-audit obs join");
+        CHECK(iso.find("if (!denied)") != std::string::npos,
+              "3808 Soft/Off: record_audit early return on !denied retained");
+        CHECK(build.find("check_isolation_deny_obs_join_3808") != std::string::npos,
+              "3808: build.py wires obs-join linter");
+        CHECK(prim.find("schema-3808") == std::string::npos, "3808: no schema-3808 query key");
+        CHECK(prim.find("issue-3808") == std::string::npos, "3808: no issue-3808 query key");
+        CHECK(prim.find("TypedMid-then-epoch") != std::string::npos,
+              "3808: security-audit-stats cites TypedMid-then-epoch");
+        CHECK(test_self.find("3808 AC4") != std::string::npos, "3808: test hosts AC4 oracle");
+        std::ifstream invent("tests/core/test_issue_3808.cpp");
+        if (!invent.good())
+            invent.open("../tests/core/test_issue_3808.cpp");
+        CHECK(!invent.good(), "3808: no tests/core/test_issue_3808.cpp (forbidden per #81967)");
+    }
+
+
     // ── Issue #3802: EXEMPT_2ARG write-file/sys-* tenant host-path isolation ──
     {
         std::println("\n--- #3802 AC1: Restricted+MT tenant A cannot write under tenant B prefix ---");
