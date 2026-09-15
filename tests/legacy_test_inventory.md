@@ -1165,7 +1165,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_gc_misc_batch.cpp` (—) [small, batch_driver, domain_suite, theme_compiler] — test_gc_misc_batch.cpp — thematic multi-TU batch
 - `tests/core/test_general_object_pin.cpp` (—) [domain_suite, theme_core] — AC1: Non-render buffer pin-or-remap; validate succeeds after densify.
 - `tests/core/test_general_object_pin_adopt.cpp` (—) [domain_suite, theme_core] — AC1: wire_general_object_create_pair pins both buffers + bumps wire
-- `tests/compiler/test_grant_epoch_retain_restricted.cpp` (—) [domain_suite, theme_compiler] — AC1: Restricted + no multi-tenant → K==16
+- `tests/compiler/test_grant_epoch_retain_restricted.cpp` (—) [domain_suite, theme_compiler] — Issue #3774 — MSE production session rows arm live_session_grants.
 - `tests/compiler/test_grant_epoch_retain_window.cpp` (—) [domain_suite, theme_compiler] — AC1: K=0 → no auto advance (identical to #2074 manual-only)
 - `tests/compiler/test_grant_macro_self_evo_stamp.cpp` (—) [domain_suite, theme_compiler] — AC1: After grant_macro_self_evo, grant_epoch non-zero (= Mutation epoch)
 - `tests/core/test_has_on_compact_hook_lock.cpp` (—) [domain_suite, theme_core] — AC1: All three has_* methods take their respective mutexes (source)
