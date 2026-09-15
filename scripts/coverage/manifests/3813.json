@@ -1,0 +1,29 @@
+{
+  "issue": 3813,
+  "title": "Issue #3813: Steal checkpoint probe dual-track (C-bridge vs table)",
+  "ok": "OK: Issue #3813 steal checkpoint probe dual-track",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/aura_jit_bridge.cpp",
+      "contains": ["Issue #3813", "cur_c_bridge", "table_mismatch", "c_bridge_mismatch"]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/evaluator_fiber_mutation.cpp",
+      "contains": ["Issue #3813", "aura_aot_func_table_epoch()"]
+    },
+    {
+      "ac": "AC4-tests",
+      "path": "tests/compiler/test_aot_bridge_checkpoint_version_steal.cpp",
+      "contains": ["ac3813_1", "ac3813_2", "ac3813_3", "ac3813_4"]
+    },
+    {
+      "ac": "AC4",
+      "forbid": [
+        "tests/compiler/test_issue_3813.cpp",
+        "docs/design/3813-steal-checkpoint-dual-track.md"
+      ]
+    }
+  ]
+}

@@ -739,7 +739,12 @@ int aura_aot_bump_will_be_owner_scoped(void);
 // joint stamp reads it (same mutate_mtx_ critical section, same thread)
 // to skip the core bridge epoch bump + C mirror SET on that path.
 int aura_aot_last_table_bump_owner_scoped(void);
-bool aura_aot_probe_checkpoint_version(std::uint64_t defuse_version, std::uint64_t bridge_epoch);
+// Issue #3813: dual-track — bridge_epoch is C-bridge (compare to
+// aura_get_current_bridge_epoch); table_epoch is independent table
+// stamp (compare to g_aot_table_epoch). Do not conflate C-bridge with
+// table (#3447). table_epoch defaults to 0 (skip table domain).
+bool aura_aot_probe_checkpoint_version(std::uint64_t defuse_version, std::uint64_t bridge_epoch,
+                                       std::uint64_t table_epoch = 0);
 void aura_aot_record_deopt_on_steal(void);
 std::uint64_t aura_aot_bridge_epoch_mismatches(void);
 

@@ -52,7 +52,9 @@ import aura.compiler.value;    // Issue #3479: is_closure / is_cell on EnvFrame 
 import aura.compiler.type_checker; // Issue #2910: rehydrate + CS goal freeze on steal stamp
 
 extern "C" {
-bool aura_aot_probe_checkpoint_version(std::uint64_t defuse_version, std::uint64_t bridge_epoch);
+bool aura_aot_probe_checkpoint_version(std::uint64_t defuse_version, std::uint64_t bridge_epoch,
+                                       std::uint64_t table_epoch);
+std::uint64_t aura_aot_func_table_epoch(void);
 void aura_aot_record_deopt_on_steal();
 // Issue #1631: force JIT/active-closure walk on post-steal bridge_epoch drift.
 std::size_t aura_jit_walk_active_closures(std::uint64_t current_bridge_epoch);
@@ -1178,7 +1180,10 @@ bool aura::compiler::Evaluator::restore_post_yield_or_rollback() {
     if (!cp.had_active_boundary)
         return true;
     bool version_drift = !is_version_current(cp.defuse_version);
-    if (aura_aot_probe_checkpoint_version(cp.defuse_version, current_bridge_epoch())) {
+    // Issue #3813: pass C-bridge and table as independent domains (live
+    // samples here; dual-track must not conflate C-bridge with table).
+    if (aura_aot_probe_checkpoint_version(cp.defuse_version, current_bridge_epoch(),
+                                         aura_aot_func_table_epoch())) {
         version_drift = true;
         aura_aot_record_deopt_on_steal();
     }
@@ -1285,7 +1290,8 @@ namespace {
             return;
         const std::uint64_t ver = ev->defuse_version_snapshot();
         const std::uint64_t bridge = ev->current_bridge_epoch();
-        if (aura_aot_probe_checkpoint_version(ver, bridge))
+        // Issue #3813: independent C-bridge + table samples (not C vs table).
+        if (aura_aot_probe_checkpoint_version(ver, bridge, aura_aot_func_table_epoch()))
             aura_aot_record_deopt_on_steal();
         (void)ev->restore_post_yield_or_rollback();
         ev->restore_panic_checkpoint_on_fiber_resume_if_needed();
@@ -2425,7 +2431,8 @@ bool Evaluator::transfer_and_revalidate_panic_checkpoint(void* fiber_void) noexc
     aura::util::thread_fence(std::memory_order_acquire);
     const auto defuse_v = defuse_version_snapshot();
     const auto bridge_e = current_bridge_epoch();
-    if (aura_aot_probe_checkpoint_version(defuse_v, bridge_e)) {
+    // Issue #3813: dual-track — C-bridge and table sampled independently.
+    if (aura_aot_probe_checkpoint_version(defuse_v, bridge_e, aura_aot_func_table_epoch())) {
         aura_aot_record_deopt_on_steal();
         bump_concurrent_safety_aot_reload_at_guard();
     }
@@ -3689,7 +3696,8 @@ extern "C" void aura_evaluator_probe_linear_on_steal() {
     aura::util::thread_fence(std::memory_order_acquire);
     const auto defuse_v = ev->defuse_version_snapshot();
     const auto bridge_e = ev->current_bridge_epoch();
-    if (aura_aot_probe_checkpoint_version(defuse_v, bridge_e)) {
+    // Issue #3813: dual-track — C-bridge and table sampled independently.
+    if (aura_aot_probe_checkpoint_version(defuse_v, bridge_e, aura_aot_func_table_epoch())) {
         aura_aot_record_deopt_on_steal();
         ev->bump_concurrent_safety_aot_reload_at_guard();
     }
