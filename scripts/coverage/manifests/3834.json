@@ -1,0 +1,38 @@
+{
+  "issue": 3834,
+  "title": "Issue #3834: IR Call primitive arm ownerless production fail-closed (#3798 sibling)",
+  "ok": "OK #3834 call_ownerless_fail_closed: all rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/ir_executor_impl.cpp",
+      "contains": [
+        "Issue #3834",
+        "is_primitive(callee_val)",
+        "production_defaults_active()",
+        "(*pfn)(call_args)"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/compiler/test_dispatch_required_effects.cpp",
+      "contains": [
+        "3834 AC1",
+        "3834 AC2",
+        "3834 AC3",
+        "IROpcode::Call",
+        "IROpcode::Primitive",
+        "vector-set!",
+        "null evaluator"
+      ]
+    },
+    {
+      "ac": "AC3-forbid",
+      "forbid": [
+        "tests/compiler/test_issue_3834.cpp",
+        "tests/issues/test_issue_3834.cpp",
+        "docs/design/3834-call-ownerless.md"
+      ]
+    }
+  ]
+}

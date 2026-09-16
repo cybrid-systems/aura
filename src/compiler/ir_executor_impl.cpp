@@ -1562,6 +1562,11 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                         // Primitive function call — look up and invoke.
                         // Issue #1676: share invoke_prim_with_telemetry with the
                         // tree-walker so render-critical get trusted fast path.
+                        // Issue #3834: Call primitive arm was a raw (*pfn) dual-track
+                        // that skipped production fail-closed when ownerless —
+                        // PrimCall (#3798) / HashRemove (#3720) residual. Production
+                        // + no owner: no silent mutate-class / FFI side effects.
+                        // Soft/unwired keeps the historical raw pfn.
                         auto slot = as_primitive_slot(callee_val);
                         auto prim_name = context_.primitives.name_for_slot(slot);
                         auto pfn = context_.primitives.lookup(prim_name);
@@ -1569,7 +1574,12 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                             if (context_.evaluator) {
                                 locals[ops[3]] = context_.evaluator->invoke_prim_with_telemetry(
                                     prim_name, [&]() { return (*pfn)(call_args); });
+                            } else if (aura::compiler::typed_audit::production_defaults_active()) {
+                                // #3834 / #3798: production + null owner — void,
+                                // zero side effects (mirror PrimCall arm).
+                                locals[ops[3]] = make_void();
                             } else {
+                                // Soft/Off ownerless: historical raw pfn.
                                 locals[ops[3]] = (*pfn)(call_args);
                             }
                         } else {

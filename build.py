@@ -5150,6 +5150,20 @@ def cmd_lint():
             "Issue #3833 IR SoA column arena linter failed — run python3 scripts/coverage/checks/check_ir_soa_column_arena_3833.py"
         )
         return r
+    # Issue #3834: IR Call primitive arm ownerless production fail-closed
+    # (#3798 PrimCall sibling). Production + null evaluator → make_void;
+    # Soft/Off raw (*pfn) retained. Extends test_dispatch_required_effects;
+    # no docs/design / invent / new query key.
+    cofc3834_script = COVERAGE_CHECKS / "check_call_ownerless_fail_closed_3834.py"
+    if not cofc3834_script.exists():
+        fail(f"missing {cofc3834_script}")
+        return 1
+    r = run([sys.executable, str(cofc3834_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3834 Call ownerless fail-closed linter failed — run python3 scripts/coverage/checks/check_call_ownerless_fail_closed_3834.py"
+        )
+        return r
     # Issue #3802: EXEMPT_2ARG write-file/sys-* host-path isolation under
     # Restricted+MT / Strict — resolve under tenant root from
     # capability_tenant_id_; cross-tenant escape → IsolationDeny SE
@@ -15421,6 +15435,27 @@ def cmd_ir_soa_column_arena_3833():
     return cmd_ir_soa_column_arena_3833_coverage()
 
 
+def cmd_call_ownerless_fail_closed_3834_coverage():
+    """Issue #3834: IR Call primitive arm ownerless production fail-closed."""
+    print(f"{B}=== Call ownerless fail-closed (#3834) ==={N}")
+    script = COVERAGE_CHECKS / "check_call_ownerless_fail_closed_3834.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = run([sys.executable, str(script)], cwd=ROOT)
+    if r != 0:
+        fail("Call ownerless fail-closed (#3834) coverage contract rows failed")
+        return r
+    ok("Call ownerless fail-closed (#3834) coverage clean")
+    return 0
+
+
+def cmd_call_ownerless_fail_closed_3834():
+    """Issue #3834: Mirror PrimCall ownerless production fail-closed onto Call."""
+    print(f"{B}=== Call ownerless fail-closed (#3834) ==={N}")
+    return cmd_call_ownerless_fail_closed_3834_coverage()
+
+
 def cmd_engine_metrics_hash_overflow_3018_coverage():
     """Issue #3018: engine:metrics hash overflow fail-soft (static)."""
     print(f"{B}=== engine:metrics hash overflow coverage (#3018) ==={N}")
@@ -23404,6 +23439,8 @@ def main():
         "apply-closure-tls-cache-3832-coverage": cmd_apply_closure_tls_cache_3832_coverage,
         "ir-soa-column-arena-3833": cmd_ir_soa_column_arena_3833,
         "ir-soa-column-arena-3833-coverage": cmd_ir_soa_column_arena_3833_coverage,
+        "call-ownerless-fail-closed-3834": cmd_call_ownerless_fail_closed_3834,
+        "call-ownerless-fail-closed-3834-coverage": cmd_call_ownerless_fail_closed_3834_coverage,
         "mutate-dispatch-sole-guard-3074-coverage": cmd_mutate_dispatch_sole_guard_3074_coverage,
         "mutate-reg-kind-3452": cmd_mutate_reg_kind_3452_coverage,
         "mutate-reg-kind-3452-coverage": cmd_mutate_reg_kind_3452_coverage,
