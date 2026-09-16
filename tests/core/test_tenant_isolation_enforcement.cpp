@@ -4651,6 +4651,12 @@ int main() {
         CHECK(iso.find("Issue #3801") != std::string::npos, "AC4: workspace_isolation cites #3801");
         CHECK(iso.find("aura_isolation_deny_se_mid") != std::string::npos,
               "AC4: IsolationDeny uses aura_isolation_deny_se_mid");
+        const auto capm = read_file("src/core/capability_model.hh");
+        CHECK(capm.find("Issue #3837") != std::string::npos,
+              "AC4: capability_model cites #3837 string-fence mid join");
+        CHECK(capm.find("try_grant_capability_string_path_privileged_locked") != std::string::npos &&
+                  capm.find("aura_isolation_deny_se_mid") != std::string::npos,
+              "AC4: string fence uses aura_isolation_deny_se_mid");
         CHECK(sec.find("production_deny_se_mid") != std::string::npos,
               "AC4: production_deny_se_mid helper present");
         CHECK(sec.find("Issue #3801") != std::string::npos, "AC4: evaluator_security cites #3801");
@@ -4662,6 +4668,124 @@ int main() {
         if (!invent.good())
             invent.open("../tests/core/test_issue_3801.cpp");
         CHECK(!invent.good(), "AC4: no tests/core/test_issue_3801.cpp (forbidden per #81967)");
+    }
+
+    // ── Issue #3837: string write-fence deny SE mid joins TypedMid SSOT ──
+    // Residual after #3801: try_grant_capability_string_path_privileged_locked
+    // used mid = epoch ?: 1. Must use aura_isolation_deny_se_mid.
+    {
+        std::println(
+            "\n--- #3837 AC1: Guard TypedMid≠epoch → wildcard fence deny SE mid == TypedMid ---");
+        reset_all();
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.set_capability_tenant_id(7);
+        // Seed wildcard-only under Off (zero-cost fence short-circuit).
+        ev.grant_capability("*");
+        aura::compiler::typed_audit::apply_production_audit_defaults();
+        {
+            auto& reg = aura::core::capability::g_capability_registry();
+            std::lock_guard<std::mutex> lock(reg.mtx);
+            CHECK(reg.holds_wildcard_only_locked(7), "3837 AC1 pre: wildcard-only holder");
+        }
+        aura::core::store_workspace_epoch(aura::core::WorkspaceEpochKind::Mutation, 42);
+        ev.set_effect_sandbox_mode(1); // Restricted
+        ev.arm_production_audit_defaults_for_test();
+        ev.note_boundary_audit_mid_for_test(777);
+        aura::compiler::typed_audit::stamp_type_linear_commit_proof(777);
+        const auto& ring = g_security_event_ring();
+        const auto se_base = ring.seq.load(std::memory_order_acquire);
+        const auto deny_before =
+            aura::core::capability::g_capability_effect_metrics()
+                .capability_wildcard_write_fence_deny_total.load(std::memory_order_relaxed);
+        // Privilege-bearing string path ("capability" → TenantAdmin).
+        ev.grant_capability("capability");
+        const auto deny_after =
+            aura::core::capability::g_capability_effect_metrics()
+                .capability_wildcard_write_fence_deny_total.load(std::memory_order_relaxed);
+        CHECK(deny_after == deny_before + 1, "3837 AC1: fence deny counter bumps");
+        bool found = false;
+        for (std::uint64_t s = se_base; s < ring.seq.load(std::memory_order_acquire); ++s) {
+            const auto& e = ring.ring[s % ring.ring.size()];
+            if (e.seq != s)
+                continue;
+            if (std::string_view(e.reason).find(
+                    "wildcard-write-fence-needs-explicit-tenant-admin") == std::string_view::npos)
+                continue;
+            found = true;
+            CHECK(e.mutation_id == 777,
+                  "3837 AC1: fence deny SE mid == TypedMid 777 (not epoch 42 / not 1)");
+            CHECK(aura::core::current_mutation_epoch() == 42, "3837 AC1 pre: epoch still 42");
+        }
+        CHECK(found, "3837 AC1: fence EffectDeny SE in ring");
+        ev.clear_boundary_audit_mid_for_test();
+        aura::compiler::typed_audit::apply_dev_audit_defaults();
+    }
+
+    {
+        std::println(
+            "\n--- #3837 AC2: Restricted epoch=0 wildcard fence deny SE mid=0 (no phantom 1) ---");
+        reset_all();
+        aura::core::reset_mutation_epoch_for_test();
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.set_capability_tenant_id(7);
+        // Seed under Off before production audit defaults (#3090 mid refuse).
+        ev.grant_capability("*");
+        aura::compiler::typed_audit::apply_production_audit_defaults();
+        ev.set_effect_sandbox_mode(1);
+        ev.arm_production_audit_defaults_for_test();
+        CHECK(aura::core::current_mutation_epoch() == 0, "3837 AC2 pre: epoch=0");
+        const auto& ring = g_security_event_ring();
+        const auto se_base = ring.seq.load(std::memory_order_acquire);
+        ev.grant_capability("capability");
+        bool saw_mid0 = false;
+        bool saw_mid1 = false;
+        for (std::uint64_t s = se_base; s < ring.seq.load(std::memory_order_acquire); ++s) {
+            const auto& e = ring.ring[s % ring.ring.size()];
+            if (e.seq != s)
+                continue;
+            if (std::string_view(e.reason).find(
+                    "wildcard-write-fence-needs-explicit-tenant-admin") == std::string_view::npos)
+                continue;
+            if (e.mutation_id == 0)
+                saw_mid0 = true;
+            if (e.mutation_id == 1)
+                saw_mid1 = true;
+        }
+        CHECK(saw_mid0, "3837 AC2: fence deny SE mid=0 at epoch=0");
+        CHECK(!saw_mid1, "3837 AC2: no phantom mid=1 on fence deny");
+        aura::compiler::typed_audit::apply_dev_audit_defaults();
+    }
+
+    {
+        std::println("\n--- #3837 AC3: Soft/Off fence short-circuit unchanged ---");
+        reset_all();
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.set_capability_tenant_id(7);
+        ev.grant_capability("*");
+        ev.set_effect_sandbox_mode(0); // Off
+        const auto before =
+            aura::core::capability::g_capability_effect_metrics()
+                .capability_wildcard_write_fence_deny_total.load(std::memory_order_relaxed);
+        ev.grant_capability("capability");
+        const auto after =
+            aura::core::capability::g_capability_effect_metrics()
+                .capability_wildcard_write_fence_deny_total.load(std::memory_order_relaxed);
+        CHECK(after == before, "3837 AC3: Soft/Off → fence counter does not bump");
+        CHECK(ev.has_capability("capability"),
+              "3837 AC3: Soft/Off wildcard contract preserved for capability");
+        const auto cap = read_file("src/core/capability_model.hh");
+        CHECK(cap.find("Issue #3837") != std::string::npos, "3837 AC3: capability_model cites #3837");
+        CHECK(cap.find("aura_isolation_deny_se_mid") != std::string::npos,
+              "3837 AC3: fence uses aura_isolation_deny_se_mid");
+        CHECK(cap.find(
+                  "const auto mid = epoch != 0 ? epoch : static_cast<std::uint64_t>(1);") ==
+                  std::string::npos,
+              "3837 AC3: no bare epoch?:1 phantom mid in capability_model");
     }
 
 

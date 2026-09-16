@@ -4765,9 +4765,11 @@ def cmd_lint():
             "Issue #3800 cross-tenant grant caller-only TA linter failed — run python3 scripts/coverage/checks/check_cross_tenant_grant_caller_ta_3800.py"
         )
         return r
-    # Issue #3801: IsolationDeny / production deny SE mid joins TypedMid
-    # (join_audit_and_se_mid / TypedMid-then-epoch). Production epoch?:1
-    # phantom mid mint forbidden outside Soft arms (#2493 Soft observe).
+    # Issue #3801 / #3837: IsolationDeny / production deny SE mid joins
+    # TypedMid (join_audit_and_se_mid / TypedMid-then-epoch). Production
+    # epoch?:1 phantom mid mint forbidden outside Soft arms (#2493 Soft
+    # observe). #3837 extends scope to string write-fence
+    # try_grant_capability_string_path_privileged_locked.
     # Extends test_tenant_isolation_enforcement.cpp (#81967); no
     # docs/design/ (#1655). No new posture / query key.
     idm3801_script = COVERAGE_CHECKS / "check_isolation_deny_mid_join_3801.py"
