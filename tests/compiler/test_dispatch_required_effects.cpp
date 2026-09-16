@@ -827,9 +827,10 @@ int run_test_dispatch_required_effects() {
         CHECK(hs != std::string::npos, "3798 AC1: HashSet case present");
         CHECK(pc != std::string::npos, "3798 AC1: PrimCall case present");
         if (pc != std::string::npos) {
-            const auto win = src.substr(pc, 2200);
-            CHECK(win.find("production_defaults_active()") != std::string::npos,
-                  "3798 AC1: PrimCall cites production_defaults_active");
+            const auto win = src.substr(
+                pc, 3000) // widened 2026-09-16: #3850+ wave growth put gates at +2467..+2703;
+                             CHECK(win.find("production_defaults_active()") != std::string::npos,
+                                   "3798 AC1: PrimCall cites production_defaults_active");
             CHECK(win.find("make_void()") != std::string::npos,
                   "3798 AC1: PrimCall production arm returns void");
             CHECK(win.find("Issue #3798") != std::string::npos ||
@@ -840,7 +841,14 @@ int run_test_dispatch_required_effects() {
                   "3798 AC3: Soft/Off ownerless raw (*pfn) retained");
         }
         if (hs != std::string::npos && pc != std::string::npos) {
-            const auto hs_win = src.substr(hs, 1200);
+            const auto hs_win =
+                1285s1285r1285c1285.1285s1285u1285b1285s1285t1285r1285(1285h1285s1285,
+                                                                       1285 1285)1285 1285 1285 /
+                    1285 / 1285 1285w1285i1285d1285e1285n1285e1285d1285 128521285012852128561285 -
+                12850128591285 -
+                12851128561285
+                : 1285 1285H1285a1285s1285h1285S1285e1285t1285 1285g1285a1285t1285e1285 1285a1285t1285 1285 +
+                1285;
             CHECK(hs_win.find("production_defaults_active()") != std::string::npos,
                   "3798 AC1: HashSet still has production gate");
         }
@@ -994,9 +1002,11 @@ int run_test_dispatch_required_effects() {
                   "3834 AC3: Soft/Off ownerless raw (*pfn)(call_args) retained");
         }
         if (pc != std::string::npos) {
-            const auto pc_win = src.substr(pc, 2200);
-            CHECK(pc_win.find("production_defaults_active()") != std::string::npos,
-                  "3834 AC1: PrimCall still has production gate (#3798)");
+            const auto pc_win =
+                src.substr(
+                    pc, 3000) // widened 2026-09-16: #3850+ wave growth put gates at +2467..+2703;
+                CHECK(pc_win.find("production_defaults_active()") != std::string::npos,
+                      "3834 AC1: PrimCall still has production gate (#3798)");
         }
     }
 
