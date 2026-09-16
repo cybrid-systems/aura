@@ -25,13 +25,16 @@ def _read(rel: str) -> str:
     p = ROOT / rel
     if not p.is_file():
         return ""
-    return p.read_text(encoding="utf-8", errors="replace")
+    # Whitespace-normalized: pins survive clang-format reflows.
+    return " ".join(p.read_text(encoding="utf-8", errors="replace").split())
 
 
 def main() -> int:
     fails: list[str] = []
 
     def must(n: str, label: str, hay: str) -> None:
+        n = " ".join(n.split())
+        hay = " ".join(hay.split())
         if n not in hay:
             fails.append(f"{label}: missing {n!r}")
 

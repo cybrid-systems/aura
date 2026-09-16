@@ -30,13 +30,16 @@ ROOT = Path(__file__).resolve().parents[3]
 
 def _read(rel: str) -> str:
     p = ROOT / rel
-    return p.read_text(encoding="utf-8", errors="replace") if p.is_file() else ""
+    text = p.read_text(encoding="utf-8", errors="replace") if p.is_file() else ""
+    return " ".join(text.split())
 
 
 def main() -> int:
     fails: list[str] = []
 
     def must(n: str, label: str, hay: str) -> None:
+        n = " ".join(n.split())
+        hay = " ".join(hay.split())
         if n not in hay:
             fails.append(f"{label}: missing {n!r}")
 
@@ -62,12 +65,17 @@ def main() -> int:
     must("bump_occurrence_persist_fingerprint_mismatch", "AC1 reuse mismatch", win)
     must("3431 AC1", "AC1 test", t)
 
+    # Issue #3819: the reject condition is production_hard_face_active
+    # (production ∥ Full) — the wave aligned #3431's staged-mismatch gate
+    # off bare production_defaults_active; needle follows the current code.
     needle = (
-        "if (aura::compiler::typed_audit::production_defaults_active() &&\n"
+        "if (aura::compiler::typed_audit::production_hard_face_active() &&\n"
         "        ev->expected_occurrence_snapshot_fp() != 0 &&\n"
         "        live_fp != ev->expected_occurrence_snapshot_fp()) {"
     )
-    if needle not in emb:
+    # emb is whitespace-normalized (see _read); normalize the needle too so
+    # clang-format reflows of the source do not break the containment check.
+    if " ".join(needle.split()) not in emb:
         fails.append("AC2: #3170 staged-mismatch needle missing")
     must("Issue #3376", "AC2 #3376 kept", emb)
     must("3431 AC2", "AC2 test", t)

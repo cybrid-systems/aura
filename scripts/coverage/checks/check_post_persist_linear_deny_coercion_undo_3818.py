@@ -24,13 +24,16 @@ ROOT = Path(__file__).resolve().parents[3]
 
 def _read(rel: str) -> str:
     p = ROOT / rel
-    return p.read_text(encoding="utf-8", errors="replace") if p.is_file() else ""
+    text = p.read_text(encoding="utf-8", errors="replace") if p.is_file() else ""
+    return " ".join(text.split())
 
 
 def main() -> int:
     fails: list[str] = []
 
     def must(n: str, label: str, hay: str) -> None:
+        n = " ".join(n.split())
+        hay = " ".join(hay.split())
         if n not in hay:
             fails.append(f"{label}: missing {n!r}")
 
