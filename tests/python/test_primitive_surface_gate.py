@@ -114,7 +114,9 @@ class TestBlockedPatterns(unittest.TestCase):
         self.assertEqual(self.m.domain_status("git-status"), "deferred")
         self.assertEqual(self.m.domain_status("git-commit"), "deferred")
         self.assertIn("git-", self.m.COMMERCIAL_DOMAIN_BUDGETS)
-        self.assertEqual(self.m.COMMERCIAL_DOMAIN_BUDGETS["git-"], 21)  # #3615 ship raise (was 14; #3461 gate refresh)
+        self.assertEqual(
+            self.m.COMMERCIAL_DOMAIN_BUDGETS["git-"], 22
+        )  # 2026-09-16 wave +1 per CI run 35071333280 (was 14; #3615->21)
 
     def test_terminal_domain_removed_2626(self):
         # Issue #2626: terminal:* commercial surface deleted.
@@ -131,8 +133,8 @@ class TestBlockedPatterns(unittest.TestCase):
         self.assertEqual(self.m.domain_status("synthesize:optimize"), "deferred")
         self.assertIn("synthesize:", self.m.COMMERCIAL_DOMAIN_BUDGETS)
         self.assertEqual(
-            self.m.COMMERCIAL_DOMAIN_BUDGETS["synthesize:"], 18
-        )  # #3615 ship raise (was 11; #3461 gate refresh)
+            self.m.COMMERCIAL_DOMAIN_BUDGETS["synthesize:"], 19
+        )  # 2026-09-16 wave +1 per CI run 35071333280 (was 11; #3615->18)
 
     def test_tcp_domain_deferred_and_budgeted(self):
         self.assertEqual(self.m.DOMAIN_STATUS.get("tcp-"), "deferred")
@@ -140,8 +142,8 @@ class TestBlockedPatterns(unittest.TestCase):
         self.assertEqual(self.m.domain_status("tcp-recv"), "deferred")
         self.assertIn("tcp-", self.m.COMMERCIAL_DOMAIN_BUDGETS)
         self.assertEqual(
-            self.m.COMMERCIAL_DOMAIN_BUDGETS["tcp-"], 23
-        )  # #3615 ship raise (was 15; #1975+#2771+#3379/#3380 mergebot + #3461 gate refresh)
+            self.m.COMMERCIAL_DOMAIN_BUDGETS["tcp-"], 24
+        )  # 2026-09-16 wave +1 per CI run 35071333280 (was 15; #3615->23)
 
     def test_strategy_domain_deferred_and_budgeted(self):
         self.assertEqual(self.m.DOMAIN_STATUS.get("strategy:"), "deferred")
@@ -149,15 +151,17 @@ class TestBlockedPatterns(unittest.TestCase):
         self.assertEqual(self.m.domain_status("strategy:escalate"), "deferred")
         self.assertIn("strategy:", self.m.COMMERCIAL_DOMAIN_BUDGETS)
         self.assertEqual(
-            self.m.COMMERCIAL_DOMAIN_BUDGETS["strategy:"], 18
-        )  # #3615 ship raise (was 11; #3461 gate refresh)
+            self.m.COMMERCIAL_DOMAIN_BUDGETS["strategy:"], 19
+        )  # 2026-09-16 wave +1 per CI run 35071333280 (was 11; #3615->18)
 
     def test_m4_domain_deferred_and_budgeted(self):
         self.assertEqual(self.m.DOMAIN_STATUS.get("m4-"), "deferred")
         self.assertEqual(self.m.domain_status("m4-move"), "deferred")
         self.assertEqual(self.m.domain_status("m4-return!"), "deferred")
         self.assertIn("m4-", self.m.COMMERCIAL_DOMAIN_BUDGETS)
-        self.assertEqual(self.m.COMMERCIAL_DOMAIN_BUDGETS["m4-"], 17)  # #3615 ship raise (was 10; #3461 gate refresh)
+        self.assertEqual(
+            self.m.COMMERCIAL_DOMAIN_BUDGETS["m4-"], 18
+        )  # 2026-09-16 wave +1 per CI run 35071333280 (was 10; #3615->17)
 
     def test_commercial_domain_counts_prefixes(self):
         names = [

@@ -352,8 +352,8 @@ static void ac3817_source_rest_spine_ckpt() {
     CHECK(mx.find("Issue #3817") != std::string::npos, "3817 AC1: macro_expansion cites");
     CHECK(mx.find("truncate_to(rest_spine_ckpt)") != std::string::npos,
           "3817 AC1: expand paths truncate");
-    CHECK(read_file("tests/compiler/test_issue_3817.cpp").empty(), "3817: no test_issue");
-    CHECK(read_file("docs/design/3817-rest-spine-orphan.md").empty(), "3817: no docs/design");
+    CHECK(!std::ifstream("tests/compiler/test_issue_3817.cpp").good(), "3817: no test_issue");
+    CHECK(!std::ifstream("docs/design/3817-rest-spine-orphan.md").good(), "3817: no docs/design");
 }
 
 // Soft/Off: truncate gated — historical half-write when sandbox inactive.
