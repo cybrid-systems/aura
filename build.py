@@ -5164,6 +5164,22 @@ def cmd_lint():
             "Issue #3834 Call ownerless fail-closed linter failed — run python3 scripts/coverage/checks/check_call_ownerless_fail_closed_3834.py"
         )
         return r
+    # Issue #3835: read/recon host-path isolation residual of #3802 —
+    # read-file / file-exists? / file-size / directory-list call
+    # check_tenant_host_path (same Restricted+MT / Strict policy). Soft/Off
+    # / single-tenant Restricted passthrough unchanged. Write paths retain
+    # #3802 wiring. Extends test_tenant_isolation_enforcement.cpp (#81967);
+    # no docs/design/ (#1655). No invent / new query key.
+    thp3835_script = COVERAGE_CHECKS / "check_tenant_host_path_read_3835.py"
+    if not thp3835_script.exists():
+        fail(f"missing {thp3835_script}")
+        return 1
+    r = run([sys.executable, str(thp3835_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3835 read/recon tenant host-path linter failed — run python3 scripts/coverage/checks/check_tenant_host_path_read_3835.py"
+        )
+        return r
     # Issue #3802: EXEMPT_2ARG write-file/sys-* host-path isolation under
     # Restricted+MT / Strict — resolve under tenant root from
     # capability_tenant_id_; cross-tenant escape → IsolationDeny SE
@@ -15456,6 +15472,27 @@ def cmd_call_ownerless_fail_closed_3834():
     return cmd_call_ownerless_fail_closed_3834_coverage()
 
 
+def cmd_tenant_host_path_read_3835_coverage():
+    """Issue #3835: read/recon host-path isolation (mirror #3802 writes)."""
+    print(f"{B}=== tenant host-path read/recon (#3835) ==={N}")
+    script = COVERAGE_CHECKS / "check_tenant_host_path_read_3835.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = run([sys.executable, str(script)], cwd=ROOT)
+    if r != 0:
+        fail("tenant host-path read/recon (#3835) coverage contract rows failed")
+        return r
+    ok("tenant host-path read/recon (#3835) coverage clean")
+    return 0
+
+
+def cmd_tenant_host_path_read_3835():
+    """Issue #3835: Wire check_tenant_host_path on read/recon file prims."""
+    print(f"{B}=== tenant host-path read/recon (#3835) ==={N}")
+    return cmd_tenant_host_path_read_3835_coverage()
+
+
 def cmd_engine_metrics_hash_overflow_3018_coverage():
     """Issue #3018: engine:metrics hash overflow fail-soft (static)."""
     print(f"{B}=== engine:metrics hash overflow coverage (#3018) ==={N}")
@@ -23441,6 +23478,8 @@ def main():
         "ir-soa-column-arena-3833-coverage": cmd_ir_soa_column_arena_3833_coverage,
         "call-ownerless-fail-closed-3834": cmd_call_ownerless_fail_closed_3834,
         "call-ownerless-fail-closed-3834-coverage": cmd_call_ownerless_fail_closed_3834_coverage,
+        "tenant-host-path-read-3835": cmd_tenant_host_path_read_3835,
+        "tenant-host-path-read-3835-coverage": cmd_tenant_host_path_read_3835_coverage,
         "mutate-dispatch-sole-guard-3074-coverage": cmd_mutate_dispatch_sole_guard_3074_coverage,
         "mutate-reg-kind-3452": cmd_mutate_reg_kind_3452_coverage,
         "mutate-reg-kind-3452-coverage": cmd_mutate_reg_kind_3452_coverage,

@@ -4950,6 +4950,131 @@ int main() {
         CHECK(!invent.good(), "AC4: no tests/core/test_issue_3802.cpp (forbidden per #81967)");
     }
 
+    // ── Issue #3835: read/recon host-path isolation (mirror #3802 writes) ──
+    {
+        std::println(
+            "\n--- #3835 AC1: Restricted+MT tenant A cannot read under tenant B prefix ---");
+        reset_all();
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+        ::setenv("AURA_MULTI_TENANT", "1", 1);
+        aura::core::provenance::set_multi_tenant_env_active(true);
+        const char* tmp = std::getenv("TMPDIR");
+        const std::string base = std::string(tmp && tmp[0] ? tmp : "/tmp") + "/aura-3835-ac1";
+        ::setenv("AURA_TENANT_FS_ROOT", base.c_str(), 1);
+        using aura::compiler::security::resolve_tenant_host_path;
+        using aura::compiler::security::tenant_host_root_for;
+        using aura::compiler::security::TenantHostPathVerdict;
+        const auto root_a = tenant_host_root_for(7);
+        const auto root_b = tenant_host_root_for(42);
+        const auto escape = root_b + "/secret.txt";
+        auto denied = resolve_tenant_host_path(escape, /*tenant=*/7, /*active=*/true);
+        CHECK(denied.verdict == TenantHostPathVerdict::Deny,
+              "3835 AC1: lexical resolve denies A→B prefix");
+
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.set_effect_sandbox_mode(1);
+        ev.set_capability_tenant_id(7);
+        const auto& ring = g_security_event_ring();
+        std::string out;
+        for (const char* op : {"read-file", "file-exists?", "file-size", "directory-list"}) {
+            const auto se_base = ring.seq.load(std::memory_order_acquire);
+            CHECK(!ev.check_tenant_host_path(escape, out, op),
+                  (std::string("3835 AC1: Evaluator denies A→B via ") + op).c_str());
+            bool saw = false;
+            for (std::uint64_t s = se_base; s < ring.seq.load(std::memory_order_acquire); ++s) {
+                const auto& e = ring.ring[s % ring.ring.size()];
+                if (e.seq != s)
+                    continue;
+                if (static_cast<int>(e.kind) !=
+                    static_cast<int>(aura::core::security_event::SecurityEventKind::IsolationDeny))
+                    continue;
+                if (std::string_view(e.reason).find("tenant-path-escape") != std::string_view::npos) {
+                    saw = true;
+                    CHECK(e.tenant_id == 7, "3835 AC1: SE tenant is caller A");
+                }
+            }
+            CHECK(saw, (std::string("3835 AC1: IsolationDeny SE for ") + op).c_str());
+        }
+        // In-tenant relative path under own root → allow (void/false/empty only on deny).
+        CHECK(ev.check_tenant_host_path("ok.txt", out, "read-file"),
+              "3835 AC1: in-tenant relative allows for read-file");
+        CHECK(out.find(root_a) == 0, "3835 AC1: resolved under tenant A root");
+        ::unsetenv("AURA_TENANT_FS_ROOT");
+        ::unsetenv("AURA_MULTI_TENANT");
+        aura::core::provenance::set_multi_tenant_env_active(false);
+    }
+
+    {
+        std::println("\n--- #3835 AC2: Soft/Off / single-tenant Restricted passthrough ---");
+        reset_all();
+        using aura::compiler::security::resolve_tenant_host_path;
+        using aura::compiler::security::tenant_host_path_policy_active;
+        using aura::compiler::security::TenantHostPathVerdict;
+        CHECK(!tenant_host_path_policy_active(/*mode=*/0, /*mt=*/false),
+              "3835 AC2: Soft/Off inactive");
+        CHECK(!tenant_host_path_policy_active(/*mode=*/1, /*mt=*/false),
+              "3835 AC2: single-tenant Restricted inactive");
+        auto soft = resolve_tenant_host_path("/tmp/anywhere.txt", 7, /*active=*/false);
+        CHECK(soft.verdict == TenantHostPathVerdict::Passthrough,
+              "3835 AC2: Soft passthrough keeps absolute path");
+
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+        aura::core::provenance::set_multi_tenant_env_active(false);
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.set_effect_sandbox_mode(0);
+        ev.set_capability_tenant_id(7);
+        std::string out;
+        CHECK(ev.check_tenant_host_path("/tmp/anywhere.txt", out, "read-file"),
+              "3835 AC2: Off check_tenant_host_path allows read-file");
+        CHECK(out == "/tmp/anywhere.txt", "3835 AC2: Off leaves path unchanged");
+        CHECK(ev.check_tenant_host_path("/tmp/anywhere.txt", out, "file-exists?"),
+              "3835 AC2: Off allows file-exists?");
+        CHECK(ev.check_tenant_host_path("/tmp/anywhere.txt", out, "file-size"),
+              "3835 AC2: Off allows file-size");
+        CHECK(ev.check_tenant_host_path("/tmp/anywhere.txt", out, "directory-list"),
+              "3835 AC2: Off allows directory-list");
+
+        ev.set_effect_sandbox_mode(1);
+        CHECK(ev.check_tenant_host_path("/tmp/anywhere.txt", out, "read-file"),
+              "3835 AC2: single-tenant Restricted allows absolute read");
+    }
+
+    {
+        std::println("\n--- #3835 AC3: write paths still call check; read/recon wired ---");
+        const auto filep = read_file("src/compiler/evaluator_primitives_file.cpp");
+        const auto build = read_file("build.py");
+        CHECK(filep.find("check_tenant_host_path") != std::string::npos,
+              "3835 AC3: file prims cite check_tenant_host_path");
+        CHECK(filep.find("\"write-file\"") != std::string::npos ||
+                  filep.find("check_tenant_host_path(path, resolved_path, \"write-file\")") !=
+                      std::string::npos,
+              "3835 AC3: write-file still present");
+        CHECK(filep.find("check_tenant_host_path(path, resolved_path, \"write-file\")") !=
+                  std::string::npos,
+              "3835 AC3: write-file still calls check_tenant_host_path");
+        CHECK(filep.find("check_tenant_host_path(path, resolved, \"read-file\")") !=
+                  std::string::npos,
+              "3835 AC3: read-file calls check_tenant_host_path");
+        CHECK(filep.find("check_tenant_host_path(path, resolved, \"file-exists?\")") !=
+                  std::string::npos,
+              "3835 AC3: file-exists? calls check_tenant_host_path");
+        CHECK(filep.find("check_tenant_host_path(path, resolved, \"file-size\")") !=
+                  std::string::npos,
+              "3835 AC3: file-size calls check_tenant_host_path");
+        CHECK(filep.find("check_tenant_host_path(dir_path, resolved, \"directory-list\")") !=
+                  std::string::npos,
+              "3835 AC3: directory-list calls check_tenant_host_path");
+        CHECK(build.find("check_tenant_host_path_read_3835") != std::string::npos,
+              "3835 AC3: build.py wires #3835 linter");
+
+        std::ifstream invent("tests/core/test_issue_3835.cpp");
+        if (!invent.good())
+            invent.open("../tests/core/test_issue_3835.cpp");
+        CHECK(!invent.good(), "3835 AC3: no tests/core/test_issue_3835.cpp (forbidden)");
+    }
+
     reset_all();
     std::println("\n=== test_tenant_isolation_enforcement: {} passed, {} failed ===", g_passed,
                  g_failed);
