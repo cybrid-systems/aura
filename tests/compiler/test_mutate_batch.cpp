@@ -440,7 +440,8 @@ static void test_ac3828_1_add_mutate_ssot_source() {
     while ((at = compile.find("add(\"mutate:", at)) != std::string::npos) {
         auto line_start = compile.rfind('\n', at);
         auto line = compile.substr(line_start == std::string::npos ? 0 : line_start + 1,
-                                   compile.find('\n', at) - (line_start == std::string::npos ? 0 : line_start + 1));
+                                   compile.find('\n', at) -
+                                       (line_start == std::string::npos ? 0 : line_start + 1));
         auto trimmed = line;
         while (!trimmed.empty() && (trimmed[0] == ' ' || trimmed[0] == '\t'))
             trimmed.erase(trimmed.begin());
@@ -460,8 +461,7 @@ static void test_ac3828_2_soft_dormant_and_oob() {
     auto* m = static_cast<CompilerMetrics*>(cs.evaluator().compiler_metrics());
     CHECK(m != nullptr, "metrics");
     const auto n0 = m->mutate_from_feedback_invalid_node_total.load(std::memory_order_relaxed);
-    const auto wraps0 =
-        m->mutation_boundary_primitives_wrapped.load(std::memory_order_relaxed);
+    const auto wraps0 = m->mutation_boundary_primitives_wrapped.load(std::memory_order_relaxed);
     auto r = cs.eval("(mutate:from-verification-feedback \"weaken-property\" 999999 \"reset\")");
     CHECK(r && is_bool(*r) && !as_bool(*r), "OOB Soft → #f");
     CHECK(m->mutate_from_feedback_invalid_node_total.load(std::memory_order_relaxed) == n0 + 1,
@@ -470,8 +470,8 @@ static void test_ac3828_2_soft_dormant_and_oob() {
     auto* ws = cs.evaluator().workspace_flat();
     CHECK(ws && ws->size() > 0, "workspace");
     const auto nid = static_cast<std::int64_t>(ws->size() - 1);
-    auto r2 = cs.eval(std::format(
-        "(mutate:from-verification-feedback \"weaken-property\" {} \"reset\")", nid));
+    auto r2 = cs.eval(
+        std::format("(mutate:from-verification-feedback \"weaken-property\" {} \"reset\")", nid));
     CHECK(r2 && is_bool(*r2) && !as_bool(*r2), "Soft dormant strategy → #f");
     CHECK(m->mutation_boundary_primitives_wrapped.load(std::memory_order_relaxed) >= wraps0,
           "Guard wrap non-decreasing via add_mutate");
@@ -496,8 +496,8 @@ static void test_ac3828_3_production_bare_int_reject() {
     CHECK(mut.find("raw node-id rejected under production") != std::string::npos,
           "#3395 bare-int reject still wired in resolve_mutate_node_arg");
     std::string hh;
-    for (const char* path : {"src/compiler/mutate_dispatch.hh",
-                             "../src/compiler/mutate_dispatch.hh"}) {
+    for (const char* path :
+         {"src/compiler/mutate_dispatch.hh", "../src/compiler/mutate_dispatch.hh"}) {
         hh = read_file(path);
         if (!hh.empty())
             break;

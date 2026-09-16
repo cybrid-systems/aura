@@ -33,8 +33,8 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | Theme | Title | Issues | Root | Domain | Total | Migration priority |
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
 | `arena_compaction` | Arena / compaction / GC | 0 | 0 | 92 | 92 | P0 — well-contained, batch drivers already exist |
-| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 272 | 272 | P0 — high volume; strong domain suite foothold |
-| `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 108 | 108 | P1 — domain suite already collapses many obs gates |
+| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 273 | 273 | P0 — high volume; strong domain suite foothold |
+| `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 107 | 107 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 26 | 26 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 60 | 60 | P1 — domain hygiene suite exists |
 | `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 87 | 87 | P2 — link-profile heavy; migrate AC smoke first |
@@ -1207,13 +1207,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_type_dep_epoch_prune.cpp` (—) [domain_suite, theme_compiler] — AC1: After set_cache_epoch(e+1), edges stamped at epoch e (e>0) drop;
 - `tests/compiler/test_workspace_switch.cpp` (—) [domain_suite, theme_compiler] — AC1: switch binds flat/pool + set_workspace_cow_epoch in one block
 
-### `mutation_dirty` — Mutation / dirty propagation / provenance (272)
+### `mutation_dirty` — Mutation / dirty propagation / provenance (273)
 
 **Target:** tests/core/test_mutation_boundary_batch (domain/ pilot abandoned in R1)
 
 **Priority:** P0 — high volume; strong domain suite foothold
 
-#### domain/ (272)
+#### domain/ (273)
 
 - `tests/compiler/test_abort_ir_cache_fence_first.cpp` (—) [large, domain_suite, theme_compiler] — AC1: All 3 abort entry points in evaluator_mutation_boundary.cpp
 - `tests/core/test_add_node_builder_contract.cpp` (—) [domain_suite, theme_core] — AC1: single-threaded add_* path unchanged (builders work)
@@ -1319,6 +1319,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/core/test_guard_dtor_batch_metrics.cpp` (—) [batch_driver, domain_suite, theme_core] — Issue #1747 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_guard_exit_occurrence_refresh.cpp` (—) [domain_suite, theme_compiler] — AC1: multi-round mutate on if-predicate binding → selective invalidate
 - `tests/compiler/test_hard_gate_full_strict.cpp` (—) [domain_suite, theme_compiler] — AC1: Full + injected use-after-move / Moved → rollback; mutation not visible
+- `tests/serve/test_hold_budget_synthetic_yield_injection.cpp` (—) [large, domain_suite, theme_serve] — AC1: source cites #3133 in fiber.h + fiber.cpp — Fiber::inject_synthetic
 - `tests/compiler/test_hot_pass_dirty_soa.cpp` (—) [domain_suite, theme_compiler] — AC1: DirtySoAEntryPass + kRequireDirtySoAEntry on production wraps
 - `tests/compiler/test_hot_pass_hard_dod.cpp` (—) [large, domain_suite, theme_compiler] — Issue #3042 — drop residual std::function dirty predicates from
 - `tests/compiler/test_hot_pass_pure_wrap.cpp` (—) [domain_suite, theme_compiler] — AC1: Pipeline registration rejects non-HotPassDodCompliant dirty/inc packs
@@ -1488,13 +1489,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_workspace_rollback_latest.cpp` (—) [domain_suite, theme_compiler] — AC1: source has no second all_mutations() ID walk inside rollback-latest
 - `tests/core/test_workspace_state_lock.cpp` (—) [domain_suite, theme_core] — tests/core/test_workspace_state_lock.cpp — Issue #1994 (F-004):` (workspace-state)` and
 
-### `fiber_orch` — Fiber / orchestration / steal / Guard (108)
+### `fiber_orch` — Fiber / orchestration / steal / Guard (107)
 
 **Target:** tests/core/test_fiber_resume_batch (domain/ pilot abandoned in R1)
 
 **Priority:** P1 — domain suite already collapses many obs gates
 
-#### domain/ (108)
+#### domain/ (107)
 
 - `tests/orch/test_agent_apply_mutex.cpp` (—) [domain_suite, theme_orch] — AC1: No process-static mutex on orch spawn apply path (grep clean).
 - `tests/orch/test_agent_ask_typed_corr.cpp` (—) [domain_suite, theme_orch] — AC1: corr_id match without payload text parse (MailKind + correlation_id)
@@ -1535,7 +1536,6 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/serve/test_guard_panic_reflect_fiber_resume_task6.cpp` (—) [domain_suite, theme_serve] — test_guard_panic_reflect_fiber_resume_task6.cpp — Issue #596:
 - `tests/compiler/test_hard_fiber_isolation.cpp` (—) [domain_suite, theme_compiler] — AC1: hard_fiber_isolation=false → fiber mismatch allow + metric only
 - `tests/compiler/test_hard_fiber_restricted.cpp` (—) [domain_suite, theme_compiler] — AC1: Restricted default soft — fiber A grant, fiber B allow + mismatch metric
-- `tests/serve/test_hold_budget_synthetic_yield_injection.cpp` (—) [large, domain_suite, theme_serve] — AC1: source cites #3133 in fiber.h + fiber.cpp — Fiber::inject_synthetic
 - `tests/serve/test_inner_steal_starvation.cpp` (—) [domain_suite, theme_serve] — Issue #1445/#1492/#1633 (#1978 renamed): issue# moved from filename to header.
 - `tests/serve/test_issue_1992.cpp` (#1992) [domain_suite, theme_serve] — test_issue_1992.cpp — Issue #1992 (C-001): Fiber::mutation_stack_storage_
 - `tests/compiler/test_issues_809_817_batch.cpp` (#809) [batch_driver, domain_suite, theme_compiler] — test_issues_809_817_batch.cpp — Phase 1 close for Issues #809–#817.
@@ -1651,7 +1651,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/reflect/test_ast_pod_reflect_b3.cpp` (—) [domain_suite, theme_reflect] — Wave B3: small AST public PODs via auto_serialize / to_json.
 - `tests/reflect/test_cache_header_magic_a2.cpp` (—) [small, domain_suite, theme_reflect] — Wave A2: CacheHeader::magic[8] round-trips via auto_serialize;
 - `tests/compiler/test_capability_macro_self_evo_reason_uniformity.cpp` (—) [domain_suite, theme_compiler] — Fix contract (AC1–AC8):
-- `tests/compiler/test_clone_walk_gensym_ceiling.cpp` (—) [domain_suite, theme_compiler] — AC1: rename_binding cites #2804; ceiling + clone_walk metric
+- `tests/compiler/test_clone_walk_gensym_ceiling.cpp` (—) [domain_suite, theme_compiler] — Issue #3816 — after rename_binding deny, production aborts before
 - `tests/compiler/test_concurrent_clone_hygiene_depth.cpp` (—) [large, domain_suite, theme_compiler] — AC1: clone_macro_body_at_depth / hygiene_depth; #2806 cites
 - `tests/compiler/test_contracts.cpp` (—) [small, domain_suite, theme_compiler] — tests/compiler/test_contracts.cpp — Issue #83: C++26 contract_assert + trailing pre/post
 - `tests/compiler/test_emit_soa_source_marker_propagation.cpp` (—) [domain_suite, theme_compiler] — AC1: add_instruction + emit pass source_marker; columns + view API
@@ -1677,7 +1677,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_macro_restamp_after_flat.cpp` (—) [domain_suite, theme_compiler] — AC1: source cites #2019 + restamp_macro_introduced_generations
 - `tests/compiler/test_macro_self_evo_capability.cpp` (—) [domain_suite, theme_compiler] — AC1: source cites #2023; MacroSelfEvoPolicy + check_macro_self_evo
 - `tests/compiler/test_macro_self_evo_reexpand_chokepoint.cpp` (—) [domain_suite, theme_compiler] — AC1: source cites #3132 in evaluator_eval_flat.cpp — chokepoint at
-- `tests/compiler/test_move_node_hygiene.cpp` (—) [domain_suite, theme_compiler] — AC1: public + lockless cite #2801; is_macro_introduced + note metric
+- `tests/compiler/test_move_node_hygiene.cpp` (—) [domain_suite, theme_compiler] — Issue #3815 — also gate MacroIntroduced new_parent spine (insert-child
 - `tests/core/test_node_meta_gap.cpp` (—) [domain_suite, theme_core] — AC1: gap entry tag is 0x0C sentinel and is_gap == true
 - `tests/reflect/test_node_tag_align_b1.cpp` (—) [small, domain_suite, theme_reflect] — Wave B1: NodeTag P2996 identifiers ↔ kNodeTagNames alignment.
 - `tests/reflect/test_opcode_info_align_a3.cpp` (—) [small, domain_suite, theme_reflect] — Wave A3: IROpcode PascalCase (P2996) ↔ display kebab table alignment.
@@ -1699,7 +1699,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_replace_pattern_allow_macro_unify.cpp` (—) [domain_suite, theme_compiler] — AC1: default (no kwargs) — matcher still skips MacroIntroduced;
 - `tests/compiler/test_replace_subtree_new_body_hygiene.cpp` (—) [domain_suite, theme_compiler] — AC1: public + lockless cite #2797; walk_subtree(pr.root) + is_macro_introduced
 - `tests/compiler/test_rest_param_hygiene.cpp` (—) [domain_suite, theme_compiler] — AC1: source cites #2169; always gensym rest; process serial
-- `tests/compiler/test_rest_param_hygiene_eval_flat.cpp` (—) [domain_suite, theme_compiler] — AC1: helper exposed cross-TU — dropped static, added export declaration
+- `tests/compiler/test_rest_param_hygiene_eval_flat.cpp` (—) [domain_suite, theme_compiler] — Issue #3817 — rest add_*/stamp before clone checkpoint leaves MacroIntroduced
 - `tests/compiler/test_rest_param_hygiene_self_evo.cpp` (—) [domain_suite, theme_compiler] — AC1: source cites #2018; rest pre-scan + dotted preserve + metric
 - `tests/compiler/test_rest_param_nested_qq_hygiene.cpp` (—) [domain_suite, theme_compiler] — AC1: source cites #2239; counters + v_read accessors + helper +
 - `tests/compiler/test_rollback_by_marker.cpp` (—) [domain_suite, theme_compiler] — - AC1: existing primitives registered + callable

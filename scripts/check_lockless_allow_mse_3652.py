@@ -46,14 +46,15 @@ LINTER = "check_lockless_allow_mse_3652"
 
 MIRROR_DEF = "static bool deny_macro_opt_out_without_mse(Evaluator& ev, aura::ast::NodeId id)"
 MIRROR_CALL = "deny_macro_opt_out_without_mse(*this,"
-MIRROR_CALLS = 17
+MIRROR_CALLS = 18
 
 
 def _read(rel: str) -> str:
     p = ROOT / rel
     if not p.is_file():
         return ""
-    return p.read_text(encoding="utf-8", errors="replace")
+    # Whitespace-normalized: pins/counts must survive clang-format reflows.
+    return " ".join(p.read_text(encoding="utf-8", errors="replace").split())
 
 
 def _rows(efl: str, mut: str, cpp: str, test: str, build: str, allow: str) -> list[str]:
@@ -77,7 +78,7 @@ def _rows(efl: str, mut: str, cpp: str, test: str, build: str, allow: str) -> li
     must("typed_audit::capture_macro_hygiene_audit", "AC1 hygiene audit", efl)
     must("macro_hygiene_provenance_hits_total", "AC1 provenance blame", efl)
 
-    # AC2 — all 17 lockless allow arms route through the mirror.
+    # AC2 — all 18 lockless allow arms route through the mirror.
     got_calls = count(MIRROR_CALL, efl)
     if got_calls != MIRROR_CALLS:
         fails.append(f"AC2: mirror call sites {got_calls} != {MIRROR_CALLS}")
@@ -125,7 +126,8 @@ def _rows(efl: str, mut: str, cpp: str, test: str, build: str, allow: str) -> li
     must("deny_macro_opt_out_without_mse(ev, node, mev)", "AC5 batch allow arm", mut)
     must("if (op_opt_out || batch_allow_macro ||", "AC5 opt-out selection", mut)
     must("const bool op_opt_out = parse_allow_macro_opt_out(ev, op_args);", "AC5 per-op parse", mut)
-    must(":allow-macro? opt-out requires MacroSelfEvo capability", "AC5 batch merr", mut)
+    must(":allow-macro? opt-out requires MacroSelfEvo", "AC5 batch merr", mut)
+    must("capability under the active sandbox face", "AC5 capability face", mut)
     must_not("!ev.get_allow_macro_mutate() && !batch_allow_macro) {", "AC5 old skip gone", mut)
 
     # AC6 — set-allow-macro-mutate! capability gate.

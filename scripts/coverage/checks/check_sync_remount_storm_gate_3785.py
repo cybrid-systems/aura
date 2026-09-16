@@ -10,8 +10,12 @@ ROOT = Path(__file__).resolve().parents[3]
 
 
 def _read(rel: str) -> str:
+    # Whitespace-normalized: pins must survive clang-format reflows of the
+    # scanned sources (the gate runs format + these checks in one pass).
     p = ROOT / rel
-    return p.read_text(encoding="utf-8", errors="replace") if p.is_file() else ""
+    if not p.is_file():
+        return ""
+    return " ".join(p.read_text(encoding="utf-8", errors="replace").split())
 
 
 def main() -> int:
@@ -26,7 +30,7 @@ def main() -> int:
     build = _read("build.py")
 
     fn = rt.find("aura_sync_remount_covered_named_live_closures")
-    win = rt[fn : fn + 1200] if fn != -1 else ""
+    win = rt[fn : fn + 1200] if fn != -1 else ""  # normalized text; ordering preserved
     must("Issue #3785", "AC1 cite", win)
     must("storm >= 2", "AC1 Global storm", win)
     must("aura_hot_update_should_throttle_reemit", "AC1 throttle", win)

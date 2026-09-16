@@ -3795,7 +3795,7 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
                                 mode == ::aura::core::capability::EffectSandboxMode::Strict;
         if (production || met.capability_live_session_grants.load(std::memory_order_relaxed) != 0) {
             std::lock_guard<std::mutex> lock(reg.mtx);
-            // Issue #3799 / #3241: (mid, fiber) so a peer outermost sharing
+            // Issue #3799 / Issue #3241: (mid, fiber) so a peer outermost sharing
             // epoch mid is not collateral. Prefer enter-captured fiber_id_
             // (TLS may already be clear at dtor). fiber=0 under Soft /
             // soft-share Restricted stays legacy mid-only; Restricted+MT

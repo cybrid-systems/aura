@@ -1456,7 +1456,8 @@ static void ac3823_3_soak_lockless_one_side_no_clean_hit() {
               "3823 soak: no remirror at mark");
     }
     CHECK(read_file("tests/compiler/test_issue_3823.cpp").empty(), "3823 soak: no invent");
-    CHECK(read_file("docs/design/3823-node-dep-mark-union.md").empty(), "3823 soak: no docs/design");
+    CHECK(read_file("docs/design/3823-node-dep-mark-union.md").empty(),
+          "3823 soak: no docs/design");
     apply_dev_audit_defaults();
 }
 

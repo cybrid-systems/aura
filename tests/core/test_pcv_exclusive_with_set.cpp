@@ -877,12 +877,13 @@ static void ac3328_3_2906_3233_non_regression() {
 }
 
 // ── Issue #3829 ACs ──
-// children_columnar returned a 1-arg SafePCVSpan (no fingerprint). 
+// children_columnar returned a 1-arg SafePCVSpan (no fingerprint).
 // pin_query_children uses columnar; has_fingerprint() gates were no-ops
 // on dense spans. Capture the same fingerprint shape as children_safe_view.
 
 static void ac3829_1_columnar_production_stale() {
-    std::println("\n--- #3829 AC1: columnar capture → mutate → Production is_stale / re-pin live ---");
+    std::println(
+        "\n--- #3829 AC1: columnar capture → mutate → Production is_stale / re-pin live ---");
     CHECK(kPcvDenseColumnarFingerprintIssue == 3829, "3829 AC1: issue stamp");
     reset_pcv_hotpath_metrics_for_test();
     FlatAST flat;
@@ -966,4 +967,3 @@ static void ac3829_3_pcv_path_unchanged() {
     CHECK(read_file("tests/core/test_issue_3829.cpp").empty(), "3829 AC3: no invent");
     CHECK(read_file("tests/issues/test_issue_3829.cpp").empty(), "3829 AC3: no invent");
 }
-

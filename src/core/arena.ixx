@@ -2636,8 +2636,7 @@ public:
             small_pool_.recycle_hits() >= recycle_hits_at_entry
                 ? small_pool_.recycle_hits() - recycle_hits_at_entry
                 : 0;
-        const std::size_t this_window_relocated =
-            recycle_delta + recycle_delta_mid + holes_closed;
+        const std::size_t this_window_relocated = recycle_delta + recycle_delta_mid + holes_closed;
         stats_.live_relocate_count += this_window_relocated;
         stats_.live_compact_freelist_hits_total += this_window_relocated;
         aura::core::arena_policy::record_live_relocate(this_window_relocated);

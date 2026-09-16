@@ -262,22 +262,20 @@ static void ac3832_tls_cache_happy_path() {
     for (auto& t : threads)
         t.join();
     auto t1 = std::chrono::steady_clock::now();
-    const auto us =
-        std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count();
+    const auto us = std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count();
     CHECK(ok.load() == static_cast<std::uint64_t>(kWorkers * kPer),
           "3832 AC3: contended multi-fiber apply results correct");
     const auto hits2 = ev.apply_closure_tls_hit_total();
     const auto mtx2 = ev.apply_closure_mtx_lookup_total();
     CHECK(hits2 > mtx2, "3832 AC3: under contention TLS hits >> mtx lookups (p99 path)");
-    std::println("3832 microbench: {} workers x {} applies in {} us (tls_hits={} mtx={})",
-                 kWorkers, kPer, us, hits2, mtx2);
+    std::println("3832 microbench: {} workers x {} applies in {} us (tls_hits={} mtx={})", kWorkers,
+                 kPer, us, hits2, mtx2);
 
     // Epoch bump invalidates TLS → next apply takes mtx again.
     const auto mtx_before = ev.apply_closure_mtx_lookup_total();
     ev.bump_closures_apply_epoch_for_test();
     (void)ev.apply_closure(cid, args);
-    CHECK(ev.apply_closure_mtx_lookup_total() > mtx_before,
-          "3832: epoch bump forces mtx refill");
+    CHECK(ev.apply_closure_mtx_lookup_total() > mtx_before, "3832: epoch bump forces mtx refill");
 }
 
 static void ac3832_tombstone_and_source() {

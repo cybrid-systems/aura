@@ -339,55 +339,54 @@ export inline constexpr int kIrSoaColumnArenaIssue = 3833;
 
 namespace ir_soa_detail {
 
-struct IrSoaColumnSlab {
-    alignas(std::max_align_t) std::byte seed[8192]{};
-    std::pmr::monotonic_buffer_resource resource{seed, sizeof(seed),
-                                                 std::pmr::new_delete_resource()};
-};
+    struct IrSoaColumnSlab {
+        alignas(std::max_align_t) std::byte seed[8192]{};
+        std::pmr::monotonic_buffer_resource resource{seed, sizeof(seed),
+                                                     std::pmr::new_delete_resource()};
+    };
 
-inline std::mutex& column_slab_mu() noexcept {
-    static std::mutex mu;
-    return mu;
-}
+    inline std::mutex& column_slab_mu() noexcept {
+        static std::mutex mu;
+        return mu;
+    }
 
-inline std::unordered_map<const void*, std::unique_ptr<IrSoaColumnSlab>>&
-column_slabs() noexcept {
-    static std::unordered_map<const void*, std::unique_ptr<IrSoaColumnSlab>> m;
-    return m;
-}
+    inline std::unordered_map<const void*, std::unique_ptr<IrSoaColumnSlab>>&
+    column_slabs() noexcept {
+        static std::unordered_map<const void*, std::unique_ptr<IrSoaColumnSlab>> m;
+        return m;
+    }
 
-inline IrSoaColumnSlab& column_slab_for(const void* key) {
-    std::lock_guard lock(column_slab_mu());
-    auto& m = column_slabs();
-    auto it = m.find(key);
-    if (it == m.end())
-        it = m.emplace(key, std::make_unique<IrSoaColumnSlab>()).first;
-    return *it->second;
-}
+    inline IrSoaColumnSlab& column_slab_for(const void* key) {
+        std::lock_guard lock(column_slab_mu());
+        auto& m = column_slabs();
+        auto it = m.find(key);
+        if (it == m.end())
+            it = m.emplace(key, std::make_unique<IrSoaColumnSlab>()).first;
+        return *it->second;
+    }
 
-inline void drop_column_slab(const void* key) noexcept {
-    std::lock_guard lock(column_slab_mu());
-    column_slabs().erase(key);
-}
+    inline void drop_column_slab(const void* key) noexcept {
+        std::lock_guard lock(column_slab_mu());
+        column_slabs().erase(key);
+    }
 
-inline void rekey_column_slab(const void* from, const void* to) noexcept {
-    if (from == to || from == nullptr || to == nullptr)
-        return;
-    std::lock_guard lock(column_slab_mu());
-    auto& m = column_slabs();
-    auto it = m.find(from);
-    if (it == m.end())
-        return;
-    auto ptr = std::move(it->second);
-    m.erase(it);
-    m[to] = std::move(ptr);
-}
+    inline void rekey_column_slab(const void* from, const void* to) noexcept {
+        if (from == to || from == nullptr || to == nullptr)
+            return;
+        std::lock_guard lock(column_slab_mu());
+        auto& m = column_slabs();
+        auto it = m.find(from);
+        if (it == m.end())
+            return;
+        auto ptr = std::move(it->second);
+        m.erase(it);
+        m[to] = std::move(ptr);
+    }
 
 } // namespace ir_soa_detail
 
 // 24-byte arena column: matches sizeof(std::vector<T>) so #3314 pins hold.
-export template <typename T>
-struct IrSoaArenaColumn {
+export template <typename T> struct IrSoaArenaColumn {
     static_assert(sizeof(T) > 0);
     T* data_ = nullptr;
     std::uint32_t size_ = 0;
@@ -478,9 +477,7 @@ struct IrSoaArenaColumn {
         capacity_ = static_cast<std::uint32_t>(new_cap);
     }
 
-    void resize(std::size_t n) {
-        resize(n, T{});
-    }
+    void resize(std::size_t n) { resize(n, T{}); }
 
     void resize(std::size_t n, const T& value) {
         if (n > static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max()))
@@ -1710,8 +1707,7 @@ export inline std::size_t sync_soa_dirty_blocks_into_aos(const IRModuleV2& soa,
                 continue;
             const auto& sblk = soa_fn.blocks_[bi];
             auto& ablk = aos_fn.blocks[bi];
-            const auto n =
-                (sblk.end_idx >= sblk.start_idx) ? (sblk.end_idx - sblk.start_idx) : 0u;
+            const auto n = (sblk.end_idx >= sblk.start_idx) ? (sblk.end_idx - sblk.start_idx) : 0u;
             if (ablk.instructions.size() != n)
                 ablk.instructions.resize(n);
             for (std::uint32_t k = 0; k < n; ++k) {

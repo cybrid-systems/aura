@@ -3856,8 +3856,7 @@ static void ac3820_1_prod_miss_retains_pending() {
     cs.force_next_delta_timeout_for_test(true);
     std::vector<Constraint> unresolved;
     (void)cs.solve_delta(&unresolved);
-    CHECK(cs.pending_full_solve_roots_size() >= 1,
-          "3820 AC1: pending miss retained under Prod");
+    CHECK(cs.pending_full_solve_roots_size() >= 1, "3820 AC1: pending miss retained under Prod");
 }
 
 static void ac3820_2_soft_hit_clears_observe_unchanged() {
@@ -3887,8 +3886,7 @@ static void ac3820_2_soft_hit_clears_observe_unchanged() {
     CHECK(cs.pending_full_solve_roots_size() == 0, "3820 AC2: Soft clear-after-offer");
     CHECK(pending_full_solve_residual_observe_total_v_read() == obs0,
           "3820 AC2: Soft observe unchanged on hit");
-    CHECK(pending_full_solve_residual_face_hit() == face0,
-          "3820 AC2: Soft face unchanged on hit");
+    CHECK(pending_full_solve_residual_face_hit() == face0, "3820 AC2: Soft face unchanged on hit");
 
     // Soft miss also clear-after-offer (existing contract).
     auto u = cs.fresh_var();
@@ -3950,8 +3948,8 @@ static void ac3820_3_soak_remount_next_delta() {
 
 static void ac3820_4_full_without_prod_retains() {
     std::println("\n--- #3820 AC4: Full-without-prod retains miss ---");
-    using aura::compiler::typed_audit::AuditStrategy;
     using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::AuditStrategy;
     using aura::compiler::typed_audit::get_strategy;
     using aura::compiler::typed_audit::set_strategy;
     apply_dev_audit_defaults();

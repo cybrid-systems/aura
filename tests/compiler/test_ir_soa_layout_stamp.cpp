@@ -47,8 +47,8 @@ using aura::compiler::IrSoaArenaColumn;
 using aura::compiler::kAppendOnlyLayoutStampIssue;
 using aura::compiler::kIrSoaColumnArenaIssue;
 using aura::compiler::kRelowerSoaGeneration;
-using aura::compiler::walk_soa_function_hotpath;
 using aura::compiler::should_relower;
+using aura::compiler::walk_soa_function_hotpath;
 using aura::core::kLayoutStampSchema;
 using aura::core::LayoutStamp;
 using aura::core::densify_consistency::DensifyConsistencyReport;
@@ -295,8 +295,7 @@ int run_test_ir_soa_layout_stamp() {
         const auto t0 = std::chrono::steady_clock::now();
         auto walk = walk_soa_function_hotpath(live, /*dirty_only=*/false);
         const auto t1 = std::chrono::steady_clock::now();
-        const auto ns =
-            std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
+        const auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
         CHECK(walk.instructions == 256, "3833 AC3: walked all instrs");
         CHECK(ns >= 0, "3833 AC3: microbench ran");
         std::println("3833 AC3: walk_soa 256 instr ns={}", ns);

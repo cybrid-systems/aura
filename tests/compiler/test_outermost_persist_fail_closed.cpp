@@ -526,7 +526,8 @@ int run_test_outermost_persist_fail_closed() {
     }
 
     {
-        std::println("\n--- #3818 soak: shared reject-undo restores elim (next CastOp/DCE safe) ---");
+        std::println(
+            "\n--- #3818 soak: shared reject-undo restores elim (next CastOp/DCE safe) ---");
         // Live #3472 flip after green persist is hard to arm without the
         // #3614 pre-persist gate consuming the same pending/density latch
         // first. Static window checks above prove #3472 calls
@@ -583,8 +584,10 @@ int run_test_outermost_persist_fail_closed() {
         // Issue #3818: shared aura_persist_reject_undo owns AST+#3545 order;
         // note_3440_restore / #3472 post-persist deny both call it.
         const auto shared_pos = emb.find("aura_persist_reject_undo(");
-        const auto shared = (shared_pos == std::string::npos) ? std::string{} : emb.substr(shared_pos);
-        const auto shared_end = shared.find("extern \"C\" void aura_outermost_success_persist_occurrence");
+        const auto shared =
+            (shared_pos == std::string::npos) ? std::string{} : emb.substr(shared_pos);
+        const auto shared_end =
+            shared.find("extern \"C\" void aura_outermost_success_persist_occurrence");
         const auto shared_body =
             shared_end == std::string::npos ? shared : shared.substr(0, shared_end);
         const auto topo = shared_body.find("restore_checkpoint_topology_for_persist_reject");
@@ -944,8 +947,7 @@ int run_test_outermost_persist_fail_closed() {
         const auto emb_after = (fn_pos == std::string::npos) ? std::string{} : emb.substr(fn_pos);
         const auto cite = emb_after.find("Issue #3819");
         CHECK(cite != std::string::npos, "3819 AC1: outermost persist cites #3819");
-        const auto win =
-            cite == std::string::npos ? std::string{} : emb_after.substr(cite, 2400);
+        const auto win = cite == std::string::npos ? std::string{} : emb_after.substr(cite, 2400);
         CHECK(contains(win, "production_hard_face_active()"),
               "3819 AC1: mismatch uses production_hard_face_active (prod||Full)");
         CHECK(contains(win, "expected_occurrence_snapshot_fp() != 0"),
@@ -981,12 +983,11 @@ int run_test_outermost_persist_fail_closed() {
     }
 
     {
-        std::println(
-            "\n--- #3819 soak: Full-without-prod arms hard-face (no persist freeze under drift) ---");
+        std::println("\n--- #3819 soak: Full-without-prod arms hard-face (no persist freeze under "
+                     "drift) ---");
         reset_for_test();
         apply_dev_audit_defaults();
-        aura::compiler::typed_audit::set_strategy(
-            aura::compiler::typed_audit::AuditStrategy::Full);
+        aura::compiler::typed_audit::set_strategy(aura::compiler::typed_audit::AuditStrategy::Full);
         CHECK(!aura::compiler::typed_audit::production_defaults_active(),
               "3819 soak: Full-without-prod (production_defaults off)");
         CHECK(aura::compiler::typed_audit::get_strategy() ==

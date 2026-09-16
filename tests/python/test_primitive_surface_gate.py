@@ -114,7 +114,7 @@ class TestBlockedPatterns(unittest.TestCase):
         self.assertEqual(self.m.domain_status("git-status"), "deferred")
         self.assertEqual(self.m.domain_status("git-commit"), "deferred")
         self.assertIn("git-", self.m.COMMERCIAL_DOMAIN_BUDGETS)
-        self.assertEqual(self.m.COMMERCIAL_DOMAIN_BUDGETS["git-"], 20)  # #3615 ship raise (was 14; #3461 gate refresh)
+        self.assertEqual(self.m.COMMERCIAL_DOMAIN_BUDGETS["git-"], 21)  # #3615 ship raise (was 14; #3461 gate refresh)
 
     def test_terminal_domain_removed_2626(self):
         # Issue #2626: terminal:* commercial surface deleted.
@@ -131,7 +131,7 @@ class TestBlockedPatterns(unittest.TestCase):
         self.assertEqual(self.m.domain_status("synthesize:optimize"), "deferred")
         self.assertIn("synthesize:", self.m.COMMERCIAL_DOMAIN_BUDGETS)
         self.assertEqual(
-            self.m.COMMERCIAL_DOMAIN_BUDGETS["synthesize:"], 17
+            self.m.COMMERCIAL_DOMAIN_BUDGETS["synthesize:"], 18
         )  # #3615 ship raise (was 11; #3461 gate refresh)
 
     def test_tcp_domain_deferred_and_budgeted(self):
@@ -140,7 +140,7 @@ class TestBlockedPatterns(unittest.TestCase):
         self.assertEqual(self.m.domain_status("tcp-recv"), "deferred")
         self.assertIn("tcp-", self.m.COMMERCIAL_DOMAIN_BUDGETS)
         self.assertEqual(
-            self.m.COMMERCIAL_DOMAIN_BUDGETS["tcp-"], 22
+            self.m.COMMERCIAL_DOMAIN_BUDGETS["tcp-"], 23
         )  # #3615 ship raise (was 15; #1975+#2771+#3379/#3380 mergebot + #3461 gate refresh)
 
     def test_strategy_domain_deferred_and_budgeted(self):
@@ -149,7 +149,7 @@ class TestBlockedPatterns(unittest.TestCase):
         self.assertEqual(self.m.domain_status("strategy:escalate"), "deferred")
         self.assertIn("strategy:", self.m.COMMERCIAL_DOMAIN_BUDGETS)
         self.assertEqual(
-            self.m.COMMERCIAL_DOMAIN_BUDGETS["strategy:"], 17
+            self.m.COMMERCIAL_DOMAIN_BUDGETS["strategy:"], 18
         )  # #3615 ship raise (was 11; #3461 gate refresh)
 
     def test_m4_domain_deferred_and_budgeted(self):
@@ -157,7 +157,7 @@ class TestBlockedPatterns(unittest.TestCase):
         self.assertEqual(self.m.domain_status("m4-move"), "deferred")
         self.assertEqual(self.m.domain_status("m4-return!"), "deferred")
         self.assertIn("m4-", self.m.COMMERCIAL_DOMAIN_BUDGETS)
-        self.assertEqual(self.m.COMMERCIAL_DOMAIN_BUDGETS["m4-"], 16)  # #3615 ship raise (was 10; #3461 gate refresh)
+        self.assertEqual(self.m.COMMERCIAL_DOMAIN_BUDGETS["m4-"], 17)  # #3615 ship raise (was 10; #3461 gate refresh)
 
     def test_commercial_domain_counts_prefixes(self):
         names = [

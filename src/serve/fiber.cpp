@@ -14,7 +14,7 @@
 #include "../compiler/mutation_hold_budget.h" // Issue #3071: in-body cancel-arm watchdog
 #include "multi_fiber_mailbox.h"              // Issue #3485: mailbox_hold_slo_live_signal SSOT
 #include "runtime_production_abi.h"           // Issue #3325: production multi-worker latch
-#include "steal_safety.h"                   // Issue #3826: Ready residual sticky gate
+#include "steal_safety.h"                     // Issue #3826: Ready residual sticky gate
 #include "aura_platform.h"
 #include "core/gc_hooks.h"      // Issue #1364
 #include "core/lifetime_pin.hh" // Issue #3023: post-join linear_roots unpin
@@ -771,7 +771,6 @@ extern "C" __attribute__((weak)) std::uint64_t aura_isolation_deny_se_mid() noex
 extern "C" __attribute__((weak)) std::uint64_t aura_join_audit_and_se_mid(std::uint64_t) noexcept {
     return ::aura::core::current_mutation_epoch();
 }
-
 
 
 extern "C" __attribute__((weak)) void aura_evaluator_enforce_linear_on_densify(void*) noexcept {}

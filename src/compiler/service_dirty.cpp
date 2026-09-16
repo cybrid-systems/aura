@@ -2111,13 +2111,13 @@ void CompilerService::mark_node_dep_dependents_body_dirty_(const std::string& na
         return;
     std::vector<std::string> dependents;
     {
-        using aura::compiler::lock_order::Level;
-        using aura::compiler::lock_order::OrderedSharedLock;
         using aura::compiler::dirty::decode_block_dep_node;
         using aura::compiler::dirty::decode_fn_slot;
         using aura::compiler::dirty::encode_fn_node;
         using aura::compiler::dirty::is_block_dep_node;
         using aura::compiler::dirty::is_fn_node;
+        using aura::compiler::lock_order::Level;
+        using aura::compiler::lock_order::OrderedSharedLock;
         OrderedSharedLock<std::shared_mutex> dep_read(dep_graph_mtx_, Level::DepGraph);
         const auto slot_it = dep_name_to_slot_.find(name);
         if (slot_it == dep_name_to_slot_.end())

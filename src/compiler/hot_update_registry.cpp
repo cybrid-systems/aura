@@ -335,8 +335,7 @@ void HotUpdateRegistry::on_reemit_pipeline_call(std::uint64_t candidates,
                     const auto cap = aura_reemit_success_sync_covered_cap_default();
                     if (cap > 0) {
                         const auto storm = static_cast<std::uint8_t>(current_storm_level());
-                        constexpr auto kGlobal =
-                            static_cast<std::uint8_t>(StormLevel::Global);
+                        constexpr auto kGlobal = static_cast<std::uint8_t>(StormLevel::Global);
                         const bool soft_global = (storm & kGlobal) != 0;
                         if (soft_global && !allow_critical_bypass_sync_covered_remount()) {
                             // Default deny under Soft Global/Both — same
@@ -3100,13 +3099,13 @@ extern "C" int aura_hot_update_hard_storm_active(void) {
 }
 
 extern "C" int aura_hot_update_allow_critical_bypass_sync_covered_remount(void) {
-    return aura::compiler::hot_update_registry().allow_critical_bypass_sync_covered_remount()
-               ? 1
-               : 0;
+    return aura::compiler::hot_update_registry().allow_critical_bypass_sync_covered_remount() ? 1
+                                                                                              : 0;
 }
 
 extern "C" void aura_hot_update_set_allow_critical_bypass_sync_covered_remount(int allow) {
-    aura::compiler::hot_update_registry().set_allow_critical_bypass_sync_covered_remount(allow != 0);
+    aura::compiler::hot_update_registry().set_allow_critical_bypass_sync_covered_remount(allow !=
+                                                                                         0);
 }
 
 extern "C" int aura_hot_update_critical_bypass_remount_armed(void) {

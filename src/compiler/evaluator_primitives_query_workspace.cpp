@@ -764,52 +764,50 @@ void register_workspace_query_primitives(
     // Issue #3827: finish via end_query_epoch_maybe_result so Production
     // auto-upgrades bare NodeId lists to schema-2 QueryResult (or structured
     // reject). Soft keeps the historical bare list (AC Soft exception).
-    (*q_impls)["query:children"] =
-        PrimFn{[ws, mev, resolve_query_node_arg, begin_query_epoch,
-                end_query_epoch_maybe_result,
-                pin_query_children](const auto& a) -> EvalValue {
-            std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
-            if (a.empty() || !ws.workspace_flat)
-                return mev("bad-arg",
-                           "usage: (query :children node-id|stable-ref [:as-query-result])");
-            bool ok = true;
-            aura::ast::NodeId node = aura::ast::NULL_NODE;
-            auto err = resolve_query_node_arg(a, "query:children", &ok, node);
-            if (!ok)
-                return err;
-            // Issue #2933 / #3827: optional QueryResult; Production auto-upgrades.
-            bool as_query_result = false;
-            for (std::size_t ai = 1; ai < a.size(); ++ai) {
-                if (!is_keyword(a[ai]))
-                    continue;
-                auto kidx = as_keyword_idx(a[ai]);
-                if (kidx >= ws.keyword_table.size())
-                    continue;
-                auto kw = ws.keyword_table[kidx];
-                if (kw == ":as-query-result" || kw == ":query-result") {
-                    as_query_result = true;
-                    if (ai + 1 < a.size() && (is_bool(a[ai + 1]) || is_int(a[ai + 1]))) {
-                        if (is_bool(a[ai + 1]))
-                            as_query_result = as_bool(a[ai + 1]);
-                        else
-                            as_query_result = (as_int(a[ai + 1]) != 0);
-                        ++ai;
-                    }
+    (*q_impls)["query:children"] = PrimFn{[ws, mev, resolve_query_node_arg, begin_query_epoch,
+                                           end_query_epoch_maybe_result,
+                                           pin_query_children](const auto& a) -> EvalValue {
+        std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
+        if (a.empty() || !ws.workspace_flat)
+            return mev("bad-arg", "usage: (query :children node-id|stable-ref [:as-query-result])");
+        bool ok = true;
+        aura::ast::NodeId node = aura::ast::NULL_NODE;
+        auto err = resolve_query_node_arg(a, "query:children", &ok, node);
+        if (!ok)
+            return err;
+        // Issue #2933 / #3827: optional QueryResult; Production auto-upgrades.
+        bool as_query_result = false;
+        for (std::size_t ai = 1; ai < a.size(); ++ai) {
+            if (!is_keyword(a[ai]))
+                continue;
+            auto kidx = as_keyword_idx(a[ai]);
+            if (kidx >= ws.keyword_table.size())
+                continue;
+            auto kw = ws.keyword_table[kidx];
+            if (kw == ":as-query-result" || kw == ":query-result") {
+                as_query_result = true;
+                if (ai + 1 < a.size() && (is_bool(a[ai + 1]) || is_int(a[ai + 1]))) {
+                    if (is_bool(a[ai + 1]))
+                        as_query_result = as_bool(a[ai + 1]);
+                    else
+                        as_query_result = (as_int(a[ai + 1]) != 0);
+                    ++ai;
                 }
             }
-            auto& flat = *ws.workspace_flat;
-            const auto qe = begin_query_epoch(&flat); // Issue #2192
-            // Issue #2989: SafePCVSpan pin (children_columnar), not raw NodeView.children.
-            auto kids = pin_query_children(flat, node);
-            EvalValue result = make_void();
-            for (std::size_t i = kids.size(); i > 0; --i) {
-                auto pid = ws.pairs.size();
-                ws.pairs.push_back({make_int(static_cast<std::int64_t>(kids[i - 1])), result});
-                result = make_pair(pid);
-            }
-            // Issue #3827: schema-2 under Production via maybe_result.
-            return end_query_epoch_maybe_result(qe, &flat, result, as_query_result);
-        }};
+        }
+        auto& flat = *ws.workspace_flat;
+        const auto qe = begin_query_epoch(&flat); // Issue #2192
+        // Issue #2989: SafePCVSpan pin (children_columnar), not raw NodeView.children.
+        auto kids = pin_query_children(flat, node);
+        EvalValue result = make_void();
+        for (std::size_t i = kids.size(); i > 0; --i) {
+            auto pid = ws.pairs.size();
+            ws.pairs.push_back({make_int(static_cast<std::int64_t>(kids[i - 1])), result});
+            result = make_pair(pid);
+        }
+        // Issue #3827: schema-2 under Production via maybe_result.
+        return end_query_epoch_maybe_result(qe, &flat, result, as_query_result);
+    }};
 
     // Issue #249: (query :children-stable node-id|stable-ref) — Get children
     // as a list of (node-id . generation) stable-ref pairs. Use
@@ -1409,59 +1407,57 @@ void register_workspace_query_primitives(
     // Issue #3827: finish via end_query_epoch_maybe_result (schema-2 under
     // Production; Soft bare list unchanged). Same multi-round memory hole as
     // query:children — bare NodeId lists must not be durable Agent memory.
-    (*q_impls)["query:parent"] =
-        PrimFn{[ws, mev, resolve_query_node_arg, begin_query_epoch,
-                end_query_epoch_maybe_result,
-                pin_query_children](const auto& a) -> EvalValue {
-            std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
-            if (a.empty())
-                return mev("bad-arg",
-                           "usage: (query :parent node-id|stable-ref [:as-query-result])");
-            if (!ws.workspace_flat)
-                return mev("no-workspace", "no workspace AST loaded");
-            bool ok = true;
-            aura::ast::NodeId target = aura::ast::NULL_NODE;
-            auto err = resolve_query_node_arg(a, "query:parent", &ok, target);
-            if (!ok)
-                return err;
-            // Issue #2933 / #3827: optional QueryResult; Production auto-upgrades.
-            bool as_query_result = false;
-            for (std::size_t ai = 1; ai < a.size(); ++ai) {
-                if (!is_keyword(a[ai]))
-                    continue;
-                auto kidx = as_keyword_idx(a[ai]);
-                if (kidx >= ws.keyword_table.size())
-                    continue;
-                auto kw = ws.keyword_table[kidx];
-                if (kw == ":as-query-result" || kw == ":query-result") {
-                    as_query_result = true;
-                    if (ai + 1 < a.size() && (is_bool(a[ai + 1]) || is_int(a[ai + 1]))) {
-                        if (is_bool(a[ai + 1]))
-                            as_query_result = as_bool(a[ai + 1]);
-                        else
-                            as_query_result = (as_int(a[ai + 1]) != 0);
-                        ++ai;
-                    }
+    (*q_impls)["query:parent"] = PrimFn{[ws, mev, resolve_query_node_arg, begin_query_epoch,
+                                         end_query_epoch_maybe_result,
+                                         pin_query_children](const auto& a) -> EvalValue {
+        std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
+        if (a.empty())
+            return mev("bad-arg", "usage: (query :parent node-id|stable-ref [:as-query-result])");
+        if (!ws.workspace_flat)
+            return mev("no-workspace", "no workspace AST loaded");
+        bool ok = true;
+        aura::ast::NodeId target = aura::ast::NULL_NODE;
+        auto err = resolve_query_node_arg(a, "query:parent", &ok, target);
+        if (!ok)
+            return err;
+        // Issue #2933 / #3827: optional QueryResult; Production auto-upgrades.
+        bool as_query_result = false;
+        for (std::size_t ai = 1; ai < a.size(); ++ai) {
+            if (!is_keyword(a[ai]))
+                continue;
+            auto kidx = as_keyword_idx(a[ai]);
+            if (kidx >= ws.keyword_table.size())
+                continue;
+            auto kw = ws.keyword_table[kidx];
+            if (kw == ":as-query-result" || kw == ":query-result") {
+                as_query_result = true;
+                if (ai + 1 < a.size() && (is_bool(a[ai + 1]) || is_int(a[ai + 1]))) {
+                    if (is_bool(a[ai + 1]))
+                        as_query_result = as_bool(a[ai + 1]);
+                    else
+                        as_query_result = (as_int(a[ai + 1]) != 0);
+                    ++ai;
                 }
             }
-            auto& flat = *ws.workspace_flat;
-            const auto qe = begin_query_epoch(&flat); // Issue #2192
-            EvalValue result = make_void();
-            for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
-                // Issue #2989: SafePCVSpan pin, not raw NodeView.children.
-                auto kids = pin_query_children(flat, id);
-                for (std::size_t ci = 0; ci < kids.size(); ++ci) {
-                    if (kids[ci] == target) {
-                        auto pid = ws.pairs.size();
-                        ws.pairs.push_back({make_int(static_cast<std::int64_t>(id)), result});
-                        result = make_pair(pid);
-                        break;
-                    }
+        }
+        auto& flat = *ws.workspace_flat;
+        const auto qe = begin_query_epoch(&flat); // Issue #2192
+        EvalValue result = make_void();
+        for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
+            // Issue #2989: SafePCVSpan pin, not raw NodeView.children.
+            auto kids = pin_query_children(flat, id);
+            for (std::size_t ci = 0; ci < kids.size(); ++ci) {
+                if (kids[ci] == target) {
+                    auto pid = ws.pairs.size();
+                    ws.pairs.push_back({make_int(static_cast<std::int64_t>(id)), result});
+                    result = make_pair(pid);
+                    break;
                 }
             }
-            // Issue #3827: schema-2 under Production via maybe_result.
-            return end_query_epoch_maybe_result(qe, &flat, result, as_query_result);
-        }};
+        }
+        // Issue #3827: schema-2 under Production via maybe_result.
+        return end_query_epoch_maybe_result(qe, &flat, result, as_query_result);
+    }};
 
     // Issue #1449 / Tier-1 demotion: (query:siblings) removed from the public
     // engine registry. Use lib/std/compat.aura shim or:
