@@ -2347,6 +2347,12 @@ static void ac3773_1_restricted_stale_ref_denies_before_effect() {
     CHECK(!ws->get_safe(stale).has_value(), "3773 AC1: get_safe fails after gen bump");
     const auto seq_se = current_seq();
     const auto aud0 = ev.mutation_audit_seq();
+    // #3801 deny-SE mid oracle: production_deny_se_mid (caller=0, dev
+    // posture) joins the boundary-stamped proof mid before falling back to
+    // the epoch. Capture it right before the call — nothing re-stamps in
+    // between — so the SE row check has a deterministic same-source oracle.
+    const auto expected_mid_3773 =
+        aura::compiler::typed_audit::last_type_linear_commit_proof_stamp_v_read();
     const bool ok = ev.require_effect_on_ref(static_cast<std::uint16_t>(kEffectMutate),
                                              "3773-ac1-stale", stale);
     CHECK(!ok, "3773 AC1: on_ref(stale) → false");
@@ -2366,9 +2372,10 @@ static void ac3773_1_restricted_stale_ref_denies_before_effect() {
             continue;
         se_join = true;
         CHECK(e.tenant_id == 7, "3773 AC1: SE tenant joins stamped ref");
-        std::fprintf(stderr, "3773dbg: se_mid=%llu epoch=%llu\n", (unsigned long long)e.mutation_id,
-                     (unsigned long long)current_mutation_epoch());
-        CHECK(e.mutation_id == current_mutation_epoch(), "3773 AC1: SE mid is Mutation epoch");
+        // #3296 AC1 / #3801: the deny SE's mid is the TypedMid SSOT the
+        // deny path joined (the boundary-stamped proof mid), not a tenant
+        // id, not zero — Agents join mid+node+tenant+fiber+epoch on it.
+        CHECK(e.mutation_id == expected_mid_3773, "3773 AC1: SE mid is Mutation epoch");
         CHECK(e.epoch == current_mutation_epoch(), "3773 AC1: SE epoch join");
         CHECK(std::string{e.reason}.find("stale-ref") != std::string::npos,
               "3773 AC1: SE reason is stale-ref");
