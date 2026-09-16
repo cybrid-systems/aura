@@ -4877,7 +4877,7 @@ int main() {
     }
 
     {
-        std::println("\n--- #3802 AC3: EXEMPT_2ARG inventory size stable; no new query key ---");
+        std::println("\n--- #3802 AC3: EXEMPT_2ARG stays 2-arg; #3836 grew size to 7; no new query key ---");
         const auto mandate =
             read_file("scripts/coverage/checks/check_side_effect_node_id_mandate_2942.py");
         const auto fiber =
@@ -4886,13 +4886,15 @@ int main() {
         const auto prim = read_file("src/compiler/evaluator_primitives_security.cpp");
         CHECK(mandate.find("EXEMPT_2ARG_OPS") != std::string::npos,
               "AC3: mandate inventory present");
-        CHECK(ixx.find("kResidualNodeIdExemptOpsCount = 5") != std::string::npos,
-              "AC3: kResidualNodeIdExemptOpsCount stays 5");
-        CHECK(ixx.find("kNodeIdMandateExemptOpsCount = 5") != std::string::npos,
-              "AC3: kNodeIdMandateExemptOpsCount stays 5");
-        CHECK(fiber.find("expected 5") != std::string::npos ||
-                  fiber.find("!= 5") != std::string::npos,
-              "AC3: fiber linter still expects 5 exempt ops");
+        CHECK(ixx.find("kResidualNodeIdExemptOpsCount = 7") != std::string::npos,
+              "AC3: kResidualNodeIdExemptOpsCount = 7 (#3836 shell/command-output)");
+        CHECK(ixx.find("kNodeIdMandateExemptOpsCount = 7") != std::string::npos,
+              "AC3: kNodeIdMandateExemptOpsCount = 7");
+        CHECK(fiber.find("expected 7") != std::string::npos ||
+                  fiber.find("!= 7") != std::string::npos,
+              "AC3: fiber linter expects 7 exempt ops");
+        CHECK(mandate.find("write-file") != std::string::npos,
+              "AC3: write-file still EXEMPT (#3802 retained)");
         CHECK(prim.find("schema-3802") == std::string::npos, "AC3: no schema-3802 query key");
         CHECK(prim.find("issue-3802") == std::string::npos, "AC3: no issue-3802 query key");
     }
@@ -5073,6 +5075,40 @@ int main() {
         if (!invent.good())
             invent.open("../tests/core/test_issue_3835.cpp");
         CHECK(!invent.good(), "3835 AC3: no tests/core/test_issue_3835.cpp (forbidden)");
+    }
+
+    // ── Issue #3836: shell/command-output require_effect(Exec) ──
+    {
+        std::println("\n--- #3836 AC1: shell/command-output require_effect(Exec) before fork/popen ---");
+        const auto filep = read_file("src/compiler/evaluator_primitives_file.cpp");
+        CHECK(filep.find("Issue #3836") != std::string::npos, "3836 AC1: cite");
+        CHECK(filep.find("require_effect(kEffectExec, \"shell\")") != std::string::npos,
+              "3836 AC1: shell require_effect");
+        CHECK(filep.find("require_effect(kEffectExec, \"command-output\")") != std::string::npos,
+              "3836 AC1: command-output require_effect");
+    }
+    {
+        std::println("\n--- #3836 AC2: Soft/Off deny_exec contract preserved ---");
+        const auto filep = read_file("src/compiler/evaluator_primitives_file.cpp");
+        CHECK(filep.find("!ev.sandbox_mode()") != std::string::npos,
+              "3836 AC2: Soft/Off !sandbox_mode() in deny_exec");
+        const auto deny = filep.find("const auto deny_exec");
+        CHECK(deny != std::string::npos, "3836 AC2: deny_exec lambda present");
+    }
+    {
+        std::println("\n--- #3836 AC3: EXEMPT + build wiring; no invent ---");
+        const auto build = read_file("build.py");
+        const auto fiber =
+            read_file("scripts/coverage/checks/check_side_effect_fiber_principal_2839.py");
+        CHECK(build.find("check_shell_require_effect_3836") != std::string::npos,
+              "3836 AC3: build.py wires linter");
+        CHECK(fiber.find("shell") != std::string::npos &&
+                  fiber.find("command-output") != std::string::npos,
+              "3836 AC3: EXEMPT lists shell/command-output");
+        std::ifstream invent("tests/core/test_issue_3836.cpp");
+        if (!invent.good())
+            invent.open("../tests/core/test_issue_3836.cpp");
+        CHECK(!invent.good(), "3836 AC3: no test_issue_3836.cpp");
     }
 
     reset_all();

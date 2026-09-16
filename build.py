@@ -5180,6 +5180,21 @@ def cmd_lint():
             "Issue #3835 read/recon tenant host-path linter failed — run python3 scripts/coverage/checks/check_tenant_host_path_read_3835.py"
         )
         return r
+    # Issue #3836: shell/command-output require_effect(Exec) — string-cap
+    # deny_exec alone skipped fiber-principal / isolation / live mid under
+    # Restricted. Soft/Off deny_exec (!sandbox_mode()) short-circuit retained.
+    # Extends test_require_effect_auto_isolation + tenant isolation; no
+    # docs/design / invent / new query key.
+    shell3836_script = COVERAGE_CHECKS / "check_shell_require_effect_3836.py"
+    if not shell3836_script.exists():
+        fail(f"missing {shell3836_script}")
+        return 1
+    r = run([sys.executable, str(shell3836_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3836 shell/command-output require_effect linter failed — run python3 scripts/coverage/checks/check_shell_require_effect_3836.py"
+        )
+        return r
     # Issue #3802: EXEMPT_2ARG write-file/sys-* host-path isolation under
     # Restricted+MT / Strict — resolve under tenant root from
     # capability_tenant_id_; cross-tenant escape → IsolationDeny SE
@@ -15493,6 +15508,27 @@ def cmd_tenant_host_path_read_3835():
     return cmd_tenant_host_path_read_3835_coverage()
 
 
+def cmd_shell_require_effect_3836_coverage():
+    """Issue #3836: shell/command-output require_effect(Exec) (git-commit sibling)."""
+    print(f"{B}=== shell/command-output require_effect (#3836) ==={N}")
+    script = COVERAGE_CHECKS / "check_shell_require_effect_3836.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = run([sys.executable, str(script)], cwd=ROOT)
+    if r != 0:
+        fail("shell/command-output require_effect (#3836) coverage contract rows failed")
+        return r
+    ok("shell/command-output require_effect (#3836) coverage clean")
+    return 0
+
+
+def cmd_shell_require_effect_3836():
+    """Issue #3836: Force shell/command-output through require_effect(Exec)."""
+    print(f"{B}=== shell/command-output require_effect (#3836) ==={N}")
+    return cmd_shell_require_effect_3836_coverage()
+
+
 def cmd_engine_metrics_hash_overflow_3018_coverage():
     """Issue #3018: engine:metrics hash overflow fail-soft (static)."""
     print(f"{B}=== engine:metrics hash overflow coverage (#3018) ==={N}")
@@ -23480,6 +23516,8 @@ def main():
         "call-ownerless-fail-closed-3834-coverage": cmd_call_ownerless_fail_closed_3834_coverage,
         "tenant-host-path-read-3835": cmd_tenant_host_path_read_3835,
         "tenant-host-path-read-3835-coverage": cmd_tenant_host_path_read_3835_coverage,
+        "shell-require-effect-3836": cmd_shell_require_effect_3836,
+        "shell-require-effect-3836-coverage": cmd_shell_require_effect_3836_coverage,
         "mutate-dispatch-sole-guard-3074-coverage": cmd_mutate_dispatch_sole_guard_3074_coverage,
         "mutate-reg-kind-3452": cmd_mutate_reg_kind_3452_coverage,
         "mutate-reg-kind-3452-coverage": cmd_mutate_reg_kind_3452_coverage,

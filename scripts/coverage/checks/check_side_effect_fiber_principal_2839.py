@@ -54,7 +54,7 @@ SCOPE_FILES = [
 
 # Documented exempt 2-arg require_effect ops (non-workspace NodeId).
 # AC1 inventory (Issue #2839) + AC8 inventory (Issue #2881).
-# #2839: 3 entries. #2881 adds 2 (git-commit, deny_sys) = 5 total.
+# #2839: 3 entries. #2881 adds 2 (git-commit, deny_sys). #3836 adds 2 (shell, command-output) = 7 total.
 EXEMPT_2ARG_OPS = {
     # #2839 originals (3)
     "write-file",  # filesystem, not workspace node (#3802 path-prefix under MT)
@@ -63,6 +63,9 @@ EXEMPT_2ARG_OPS = {
     # #2881 residual (2)
     "git-commit",  # exec+network (Issue #2072) — no NodeId target
     "deny_sys",  # syscall wrapper (Issue #1329 Phase 1) — cap is string, no NodeId
+    # #3836 residual (2): shell/command-output require_effect(Exec)
+    "shell",  # exec fork+execl (Issue #3836) — no NodeId target
+    "command-output",  # exec popen (Issue #3836) — no NodeId target
 }
 
 
@@ -200,16 +203,21 @@ def main() -> int:
     # ── #2881 AC8 — residual exempt ops (2 new entries documented) ──
     must("git-commit", "AC8", "\n".join(sorted(EXEMPT_2ARG_OPS)))
     must("deny_sys", "AC8", "\n".join(sorted(EXEMPT_2ARG_OPS)))
+    must("shell", "AC8", "\n".join(sorted(EXEMPT_2ARG_OPS)))
+    must("command-output", "AC8", "\n".join(sorted(EXEMPT_2ARG_OPS)))
     # Exempt ops must be reflected in source-cite (io.cpp comments).
     must("git-commit", "AC8", io_cpp)
     must("deny_sys", "AC8", io_cpp)
     must("sys-open", "AC8", io_cpp)  # deny_sys call site
+    file_cpp = _read("src/compiler/evaluator_primitives_file.cpp")
+    must('require_effect(kEffectExec, "shell")', "AC8", file_cpp)
+    must('require_effect(kEffectExec, "command-output")', "AC8", file_cpp)
     # Total EXEMPT_2ARG_OPS count matches kResidualNodeIdExemptOpsCount
-    # (5: 3 from #2839 + 2 from #2881).
-    if len(EXEMPT_2ARG_OPS) != 5:
+    # (7: 3 from #2839 + 2 from #2881 + 2 from #3836).
+    if len(EXEMPT_2ARG_OPS) != 7:
         fails.append(
             f"AC8: EXEMPT_2ARG_OPS count = {len(EXEMPT_2ARG_OPS)}, "
-            f"expected 5 (3 #2839 + 2 #2881) per kResidualNodeIdExemptOpsCount"
+            f"expected 7 (3 #2839 + 2 #2881 + 2 #3836) per kResidualNodeIdExemptOpsCount"
         )
 
     # ── #2881 AC9 — residual inventory constants wired + match ──

@@ -380,6 +380,17 @@ void register_file_primitives(PrimRegistrar add, Evaluator& ev) {
     });
 
     ev.defer_std_host_prim("shell", [&ev, deny_exec](std::span<const EvalValue> a) -> EvalValue {
+        // Issue #3836: force shell through require_effect(Exec) so Restricted
+        // sandbox runs fiber-principal / isolation / live-mid (git-commit #2072
+        // sibling). String-cap deny_exec Soft/Off (!sandbox_mode()) short-circuit
+        // stays contract; effect choke only when sandbox on / production face.
+        using aura::compiler::security::kEffectExec;
+        if (!ev.require_effect(kEffectExec, "shell")) {
+            return make_primitive_error(ev.string_heap_, ev.error_values_,
+                                        aura::compiler::security::format_deny_reason(
+                                            kEffectExec, ev.capability_tenant_id(), "shell"),
+                                        ev.primitive_error_counter_ptr());
+        }
         if (auto denied = deny_exec("capability denied: exec required"); is_error(denied))
             return denied;
         if (a.empty() || !is_string(a[0]))
@@ -410,6 +421,16 @@ void register_file_primitives(PrimRegistrar add, Evaluator& ev) {
 
     ev.defer_std_host_prim(
         "command-output", [&ev, deny_exec](std::span<const EvalValue> a) -> EvalValue {
+            // Issue #3836: require_effect(Exec) before popen — same dual-track
+            // close as shell (string-cap alone skipped isolation / live mid).
+            using aura::compiler::security::kEffectExec;
+            if (!ev.require_effect(kEffectExec, "command-output")) {
+                return make_primitive_error(
+                    ev.string_heap_, ev.error_values_,
+                    aura::compiler::security::format_deny_reason(
+                        kEffectExec, ev.capability_tenant_id(), "command-output"),
+                    ev.primitive_error_counter_ptr());
+            }
             if (auto denied = deny_exec("capability denied: exec required"); is_error(denied))
                 return denied;
             if (a.empty() || !is_string(a[0]))

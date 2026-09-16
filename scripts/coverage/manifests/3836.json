@@ -1,0 +1,47 @@
+{
+  "issue": 3836,
+  "title": "Issue #3836: shell/command-output string-cap only — no require_effect(Exec)",
+  "ok": "OK #3836 shell_require_effect: all rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_primitives_file.cpp",
+      "contains": [
+        "Issue #3836",
+        "require_effect(kEffectExec, \"shell\")",
+        "require_effect(kEffectExec, \"command-output\")"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/compiler/test_require_effect_auto_isolation.cpp",
+      "contains": [
+        "3836 AC1",
+        "3836 AC2",
+        "3836 AC3",
+        "3836 AC4",
+        "Soft/Off",
+        "deny_exec",
+        "shell",
+        "command-output"
+      ]
+    },
+    {
+      "ac": "AC3-exempt",
+      "path": "src/compiler/evaluator.ixx",
+      "contains": [
+        "kResidualNodeIdExemptOpsCount = 7",
+        "kNodeIdMandateExemptOpsCount = 7"
+      ]
+    },
+    {
+      "ac": "AC3-forbid",
+      "forbid": [
+        "tests/core/test_issue_3836.cpp",
+        "tests/compiler/test_issue_3836.cpp",
+        "tests/issues/test_issue_3836.cpp",
+        "docs/design/3836-shell-require-effect.md"
+      ]
+    }
+  ]
+}
