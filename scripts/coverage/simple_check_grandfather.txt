@@ -440,3 +440,5 @@ scripts/coverage/checks/check_reload_recovery_state_headroom_3846.py
 check_reload_recovery_state_headroom_3846.py
 check_densify_refuse_zero_move_3848.py
 scripts/coverage/checks/check_densify_refuse_zero_move_3848.py
+check_apply_closure_happy_path_densify_3849.py
+scripts/coverage/checks/check_apply_closure_happy_path_densify_3849.py

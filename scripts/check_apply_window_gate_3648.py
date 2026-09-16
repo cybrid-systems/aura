@@ -11,8 +11,8 @@
 # AC4: counters reused — the note helper still bumps closure_stale_returns +
 #      compiler_root_dangling_prevented; no invented g_3648_* counter.
 # AC5: the FFI arm carries the same gate; test wiring (ac9..ac12 + #3848
-#      ac16 in tests/compiler/test_setcode_rebind_survive.cpp with the
-#      extended ProdDensifyWindowGuard); no tests/**/test_issue_3648.cpp;
+#      ac16 + #3849 ac17 in tests/compiler/test_setcode_rebind_survive.cpp
+#      with the extended ProdDensifyWindowGuard); no tests/**/test_issue_3648.cpp;
 #      no docs/design/3648*; build.py registration + allowlist append.
 
 from __future__ import annotations
@@ -104,10 +104,11 @@ def _rows(flat: str, test: str, build: str) -> list[str]:
         "ac11_3648_soft_no_move_recover();",
         "ac12_3648_wiring_and_family();",
         "ac16_3848_zero_move_publish_still_refuse();",
+        "ac17_3849_happy_path_densify_refuse();",
     ):
         must(ac, "AC5 runner wired", test)
     must("std::uint64_t untracked = 0, std::uint64_t root_fail = 0", "AC5 guard axes", test)
-    must("=== #2569/#3421/#3469/#3602/#3634/#3648/#3848:", "AC5 summary line", test)
+    must("=== #2569/#3421/#3469/#3602/#3634/#3648/#3848/#3849:", "AC5 summary line", test)
     must_not("test_issue_3648", "AC5 no tests/issues file", test)
     must("check_apply_window_gate_3648.py", "AC5 build.py registration", build)
     for stale in ROOT.glob("docs/design/*3648*"):

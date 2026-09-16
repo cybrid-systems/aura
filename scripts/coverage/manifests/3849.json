@@ -1,0 +1,51 @@
+{
+  "issue": 3849,
+  "title": "Issue #3849: happy-path apply_closure densify-stale refuse before eval_flat",
+  "ok": "OK: Issue #3849 happy-path densify refuse — same helper as MustDeopt; Soft unchanged",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_eval_flat.cpp",
+      "contains": [
+        "Issue #3849",
+        "production_apply_closure_densify_hard_refuse",
+        "bridge_epoch_hit_count_",
+        "Soft / Off never take this refuse"
+      ]
+    },
+    {
+      "ac": "AC2-survive",
+      "path": "tests/compiler/test_setcode_rebind_survive.cpp",
+      "contains": [
+        "ac17_3849_happy_path_densify_refuse",
+        "happy-path densify-old flat* hard-refuses",
+        "3849 Soft: happy-path apply unchanged"
+      ]
+    },
+    {
+      "ac": "AC2-fail-closed",
+      "path": "tests/core/test_moving_densify_fail_closed.cpp",
+      "contains": [
+        "ac3849_1_happy_path_refuse_source_cite",
+        "ac3849_2_wiring_no_invent"
+      ]
+    },
+    {
+      "ac": "AC3-wiring",
+      "path": "build.py",
+      "contains": [
+        "check_apply_closure_happy_path_densify_3849",
+        "Issue #3849"
+      ]
+    },
+    {
+      "ac": "AC3-forbid",
+      "forbid": [
+        "tests/compiler/test_issue_3849.cpp",
+        "tests/core/test_issue_3849.cpp",
+        "tests/issues/test_issue_3849.cpp",
+        "docs/design/3849-happy-path-densify-refuse.md"
+      ]
+    }
+  ]
+}

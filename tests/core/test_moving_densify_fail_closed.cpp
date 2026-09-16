@@ -4597,6 +4597,53 @@ static void ac3848_3_wiring_no_invent() {
     }
 }
 
+
+// Issue #3849: happy-path apply_closure must consult densify hard-refuse
+// before eval_flat. Extends fail_closed (source-cite + wiring) per #81967;
+// behavioral cover lives in test_setcode_rebind_survive.
+static void ac3849_1_happy_path_refuse_source_cite() {
+    std::println("\n--- #3849 AC1: happy-path densify refuse before eval_flat ---");
+    const auto flat = read_file("src/compiler/evaluator_eval_flat.cpp");
+    CHECK(flat.find("Issue #3849") != std::string::npos, "3849 AC1: eval_flat cites #3849");
+    const auto hit = flat.find("metrics->bridge_epoch_hit_count_.fetch_add");
+    CHECK(hit != std::string::npos, "3849 AC1: bridge_epoch_hit located");
+    const auto win = flat.substr(hit > 700 ? hit - 700 : 0, 800);
+    CHECK(win.find("production_apply_closure_densify_hard_refuse") != std::string::npos,
+          "3849 AC1: happy path calls densify hard-refuse");
+    CHECK(win.find("note_apply_closure_densify_hard_refuse") != std::string::npos,
+          "3849 AC1: notes refuse via shared helper");
+    CHECK(win.find("Issue #3849") != std::string::npos, "3849 AC1: cite on happy path");
+    // Soft/Off: helper still production-gated (zero-cost early false).
+    const auto begin = flat.find("static bool production_apply_closure_densify_hard_refuse");
+    const auto end = flat.find("static void note_apply_closure_densify_hard_refuse", begin);
+    CHECK(begin != std::string::npos && end > begin, "3849 AC1: helper located");
+    const auto arm = flat.substr(begin, end - begin);
+    CHECK(arm.find("production_defaults_active()") != std::string::npos,
+          "3849 AC1: Soft/Off early-false retained");
+    CHECK(flat.find("g_3849_") == std::string::npos, "3849 AC1: no invented counter");
+}
+
+static void ac3849_2_wiring_no_invent() {
+    std::println("\n--- #3849 AC2: suite + linter wiring; no invent ---");
+    const auto survive = read_file("tests/compiler/test_setcode_rebind_survive.cpp");
+    CHECK(survive.find("ac17_3849_happy_path_densify_refuse();") != std::string::npos,
+          "3849 AC2: densify-stale suite wired");
+    const auto lint = read_file("scripts/coverage/checks/check_apply_closure_happy_path_densify_3849.py");
+    CHECK(!lint.empty() && lint.find("Issue #3849") != std::string::npos, "3849 AC2: linter present");
+    const auto build = read_file("build.py");
+    CHECK(build.find("check_apply_closure_happy_path_densify_3849") != std::string::npos,
+          "3849 AC2: build.py wires linter");
+    const auto gf = read_file("scripts/coverage/simple_check_grandfather.txt");
+    CHECK(gf.find("check_apply_closure_happy_path_densify_3849.py") != std::string::npos,
+          "3849 AC2: grandfather lists linter");
+    for (const char* forbid : {"tests/compiler/test_issue_3849.cpp",
+                                 "tests/core/test_issue_3849.cpp",
+                                 "tests/issues/test_issue_3849.cpp"}) {
+        CHECK(read_file(forbid).empty(), "3849 AC2: no invent file");
+        (void)forbid;
+    }
+}
+
 int run_test_moving_densify_fail_closed() {
     std::println("=== Issue #2495: Moving densify fail-closed on untracked external roots ===");
     std::println(
@@ -5346,6 +5393,11 @@ int run_test_moving_densify_fail_closed() {
     ac3848_1_source_cite_no_moved_early_return();
     ac3848_2_zero_move_publish_keeps_tombstones();
     ac3848_3_wiring_no_invent();
+
+    std::println("\n=== Issue #3849: happy-path apply_closure densify refuse "
+                 "(#3421 residual; extends fail_closed per #81967) ===");
+    ac3849_1_happy_path_refuse_source_cite();
+    ac3849_2_wiring_no_invent();
 
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;

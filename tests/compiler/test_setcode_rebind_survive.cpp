@@ -763,8 +763,9 @@ static void ac12_3648_wiring_and_family() {
               t.find("ac10_3648_green_window_remap_still_refuse();") != std::string::npos &&
               t.find("ac11_3648_soft_no_move_recover();") != std::string::npos &&
               t.find("ac12_3648_wiring_and_family();") != std::string::npos &&
-              t.find("ac16_3848_zero_move_publish_still_refuse();") != std::string::npos,
-          "3648/3848 AC5: runner wired");
+              t.find("ac16_3848_zero_move_publish_still_refuse();") != std::string::npos &&
+              t.find("ac17_3849_happy_path_densify_refuse();") != std::string::npos,
+          "3648/3848/3849 AC5: runner wired");
     const std::string issue_artifact = std::string("test_issue_") + "3648";
     CHECK(t.find(issue_artifact) == std::string::npos, "3648 AC5: no tests/issues file");
 }
@@ -823,6 +824,121 @@ static void ac16_3848_zero_move_publish_still_refuse() {
     (void)p1;
 }
 
+
+// Issue #3849: bridge-epoch-green happy path must consult densify hard-refuse
+// before eval_flat (same helper as MustDeopt). MustDeopt / safe_fallback /
+// race arms alone left the green path ungated → UAF under densify-old flat*.
+static void ac17_3849_happy_path_densify_refuse() {
+    std::println("\n--- #3849: happy-path (bridge-epoch green) densify-stale refuse ---");
+    const auto flat = read_file("src/compiler/evaluator_eval_flat.cpp");
+    CHECK(flat.find("Issue #3849") != std::string::npos, "3849: eval_flat cites #3849");
+    CHECK(flat.find("g_3849_") == std::string::npos, "3849: no invented g_3849_* counter");
+    // Happy-path refuse sits immediately before bridge_epoch_hit / eval_flat.
+    const auto hit = flat.find("metrics->bridge_epoch_hit_count_.fetch_add");
+    CHECK(hit != std::string::npos, "3849: bridge_epoch_hit site located");
+    const auto win = flat.substr(hit > 600 ? hit - 600 : 0, 700);
+    CHECK(win.find("production_apply_closure_densify_hard_refuse") != std::string::npos,
+          "3849: happy path consults densify hard-refuse before eval_flat");
+    CHECK(win.find("Issue #3849") != std::string::npos, "3849: happy-path cite near eval_flat");
+
+    std::array<aura::compiler::types::EvalValue, 1> args{make_int(1)};
+
+    // Soft: production off → helper early-false; green closure still applies
+    // (zero-cost Soft/Off contract — no densify refuse on Soft face).
+    {
+        CompilerService cs;
+        auto r = cs.eval("(lambda (x) (+ x 1))");
+        CHECK(r && is_closure(*r), "3849 Soft: fresh lambda");
+        const auto cid = as_closure_id(*r);
+        ProdDensifyWindowGuard g(/*prod=*/false, /*moved=*/1, /*lcp_allow=*/false, &cs.evaluator());
+        auto got = cs.evaluator().apply_closure(cid, args);
+        CHECK(got.has_value() && is_int(*got) && as_int(*got) == 2,
+              "3849 Soft: happy-path apply unchanged");
+    }
+
+    // Production + densify-old flat* + bridge-epoch green (no MustDeopt /
+    // no safe_fallback) → refuse before eval_flat.
+    {
+        CompilerService cs;
+        auto* m = metrics_of(cs);
+        auto r = cs.eval("(lambda (x) (+ x 1))");
+        CHECK(r && is_closure(*r), "3849: fresh green lambda");
+        const auto cid0 = as_closure_id(*r);
+        auto snap = cs.evaluator().find_active_closure(cid0);
+        CHECK(snap.has_value(), "3849: live closure");
+        if (!snap)
+            return;
+        CHECK(!snap->must_deopt_before_next_call, "3849: not MustDeopt");
+        MovingFlagGuard on(1);
+        auto& ar = cs.evaluator().test_arena();
+        auto* p0 = ar.create<Pod16>(1, 2, 3, 4);
+        auto* p1 = ar.create<Pod16>(5, 6, 7, 8);
+        CHECK(p0 && p1, "3849: tracked objects");
+        void* A = p0;
+        const auto compact = ar.live_compact(LiveCompactMode::Moving);
+        CHECK(!compact.moving_blocked_precondition && compact.objects_moved > 0,
+              "3849: window moved");
+        CHECK(ar.resolve_object_remap(A) != nullptr, "3849: A is a remap key");
+        // Keep epochs green: stamp bridge to current; leave must_deopt false.
+        snap->flat = static_cast<decltype(snap->flat)>(A);
+        snap->must_deopt_before_next_call = false;
+        cs.evaluator().stamp_closure_bridge_epoch(*snap);
+        CHECK(cs.evaluator().erase_active_closure(cid0), "3849: erase original");
+        const auto cid = cs.evaluator().register_active_closure(std::move(*snap));
+        const auto restamp0 = m->live_closure_epoch_restamp_total.load(std::memory_order_relaxed);
+        const auto stale0 = m->closure_stale_returns.load(std::memory_order_relaxed);
+        const auto hit0 = m->bridge_epoch_hit_count_.load(std::memory_order_relaxed);
+        ProdDensifyWindowGuard g(/*prod=*/true, /*moved=*/1, /*lcp_allow=*/true, &cs.evaluator(),
+                                 /*had_moving=*/true, /*pin_held=*/true, /*incomplete=*/false,
+                                 /*untracked=*/0, /*root_fail=*/0);
+        auto got = cs.evaluator().apply_closure(cid, args);
+        CHECK(!got.has_value(), "3849: happy-path densify-old flat* hard-refuses");
+        CHECK(m->live_closure_epoch_restamp_total.load(std::memory_order_relaxed) == restamp0,
+              "3849: no #2569 restamp");
+        CHECK(m->closure_stale_returns.load(std::memory_order_relaxed) > stale0,
+              "3849: reuses closure_stale_returns");
+        CHECK(m->bridge_epoch_hit_count_.load(std::memory_order_relaxed) == hit0,
+              "3849: refused before bridge_epoch_hit / eval_flat");
+        (void)p1;
+    }
+
+    // Soak: intentional densify-old green closure stays refused across rounds.
+    {
+        CompilerService cs;
+        auto* m = metrics_of(cs);
+        auto r = cs.eval("(lambda (x) (+ x 1))");
+        CHECK(r && is_closure(*r), "3849 soak: fresh lambda");
+        const auto cid0 = as_closure_id(*r);
+        auto snap = cs.evaluator().find_active_closure(cid0);
+        CHECK(snap.has_value(), "3849 soak: live closure");
+        if (!snap)
+            return;
+        MovingFlagGuard on(1);
+        auto& ar = cs.evaluator().test_arena();
+        auto* p0 = ar.create<Pod16>(1, 2, 3, 4);
+        auto* p1 = ar.create<Pod16>(5, 6, 7, 8);
+        CHECK(p0 && p1, "3849 soak: tracked objects");
+        void* A = p0;
+        const auto compact = ar.live_compact(LiveCompactMode::Moving);
+        CHECK(!compact.moving_blocked_precondition && compact.objects_moved > 0,
+              "3849 soak: window moved");
+        snap->flat = static_cast<decltype(snap->flat)>(A);
+        snap->must_deopt_before_next_call = false;
+        cs.evaluator().stamp_closure_bridge_epoch(*snap);
+        CHECK(cs.evaluator().erase_active_closure(cid0), "3849 soak: erase");
+        const auto cid = cs.evaluator().register_active_closure(std::move(*snap));
+        ProdDensifyWindowGuard g(/*prod=*/true, /*moved=*/1, /*lcp_allow=*/true, &cs.evaluator());
+        const auto restamp0 = m->live_closure_epoch_restamp_total.load(std::memory_order_relaxed);
+        for (int i = 0; i < 8; ++i) {
+            auto got = cs.evaluator().apply_closure(cid, args);
+            CHECK(!got.has_value(), "3849 soak: refuse holds on happy path");
+        }
+        CHECK(m->live_closure_epoch_restamp_total.load(std::memory_order_relaxed) == restamp0,
+              "3849 soak: no restamp");
+        (void)p1;
+    }
+}
+
 } // namespace
 
 static void ac13_3678_ffi_pointer_class_refuse();
@@ -846,12 +962,13 @@ int run_test_setcode_rebind_survive() {
     ac11_3648_soft_no_move_recover();
     ac12_3648_wiring_and_family();
     ac16_3848_zero_move_publish_still_refuse();
+    ac17_3849_happy_path_densify_refuse();
     ac13_3678_ffi_pointer_class_refuse();
     // Issue #3681: production refuses MustDeopt/dirty-stale wash onto the
     // pre-reemit body; unimpacted rebinds keep the #2569 recover.
     ac14_3681_production_pre_reemit_refuse();
     ac15_3739_auto_arm_apply_closure_refuse();
-    std::println("\n=== #2569/#3421/#3469/#3602/#3634/#3648/#3848: #3739 {} passed, {} failed ===",
+    std::println("\n=== #2569/#3421/#3469/#3602/#3634/#3648/#3848/#3849: #3739 {} passed, {} failed ===",
                  g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
