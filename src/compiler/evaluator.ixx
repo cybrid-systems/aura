@@ -1213,7 +1213,8 @@ namespace primitives_detail {
     //
     // Issue #3339: Agent decision facades (evolution-audit-decision,
     // security-posture, type-linear-commit-health, type-linear-evolution-
-    // snapshot, reload-recovery-playbook) MUST keep
+    // snapshot, reload-recovery-playbook, reload-recovery-state #3846,
+    // orch-module-stats #3807) MUST keep
     // planned_keys >= actual insert_kv count + kAgentDecisionFacadeHeadroom.
     // Additive insert_kv must raise planned_keys. Those facades forbid
     // hash-overflow (CI: check_agent_decision_facade_headroom_3339.py).

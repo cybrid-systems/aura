@@ -1,0 +1,62 @@
+{
+  "issue": 3846,
+  "title": "Issue #3846: reload-recovery-state #3339 headroom + insert_kv_checked (+ #3096 heal keys)",
+  "ok": "OK: Issue #3846 reload-recovery-state headroom — planned>=live+8; #3096/#3847 keys published",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_primitives_mutate.cpp",
+      "contains": [
+        "Issue #3846",
+        "kReloadRecoveryStatePlannedKeys = 112",
+        "insert_kv_checked",
+        "query:reload-recovery-state"
+      ]
+    },
+    {
+      "ac": "AC1-3339",
+      "path": "scripts/coverage/checks/check_agent_decision_facade_headroom_3339.py",
+      "contains": [
+        "query:reload-recovery-state",
+        "kReloadRecoveryStatePlannedKeys"
+      ]
+    },
+    {
+      "ac": "AC2-3096",
+      "path": "src/compiler/evaluator_primitives_mutate.cpp",
+      "contains": [
+        "residual-force-auto-heal-total",
+        "residual-force-auto-heal-wired",
+        "schema-3096",
+        "issue-3096"
+      ]
+    },
+    {
+      "ac": "AC2-test",
+      "path": "tests/compiler/test_engine_metrics_facade.cpp",
+      "contains": [
+        "query:reload-recovery-state",
+        "schema-3096",
+        "residual-force-auto-heal-wired",
+        "kReloadRecoveryStatePlannedKeys = 112"
+      ]
+    },
+    {
+      "ac": "AC4-wiring",
+      "path": "build.py",
+      "contains": [
+        "check_reload_recovery_state_headroom_3846",
+        "Issue #3846"
+      ]
+    },
+    {
+      "ac": "AC4-forbid",
+      "forbid": [
+        "tests/compiler/test_issue_3846.cpp",
+        "tests/core/test_issue_3846.cpp",
+        "tests/issues/test_issue_3846.cpp",
+        "docs/design/3846-reload-recovery-state-headroom.md"
+      ]
+    }
+  ]
+}

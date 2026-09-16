@@ -5239,6 +5239,20 @@ def cmd_lint():
             "Issue #3845 promote force-join mid no-invent linter failed — run python3 scripts/coverage/checks/check_promote_force_join_mid_no_invent_3845.py"
         )
         return r
+    # Issue #3846: query:reload-recovery-state joins #3339 Agent decision
+    # headroom gate (planned >= live + 8, insert_kv_checked). Publishes
+    # #3096 ResidualForceHeal counters (#3847 cite-only). Extends
+    # test_engine_metrics_facade; no docs/design / invent (#1655).
+    rrs3846_script = COVERAGE_CHECKS / "check_reload_recovery_state_headroom_3846.py"
+    if not rrs3846_script.exists():
+        fail(f"missing {rrs3846_script}")
+        return 1
+    r = run([sys.executable, str(rrs3846_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3846 reload-recovery-state headroom linter failed — run python3 scripts/coverage/checks/check_reload_recovery_state_headroom_3846.py"
+        )
+        return r
     # Issue #3838: SE WAL overflow refuse-on-wrap under production
     # fail-closed (#3806 residual). Soft overwrite retained; Agent face
     # wrap-evicted vs never-emitted. Extends test_security_event_wal_replay
@@ -15708,6 +15722,28 @@ def cmd_promote_force_join_mid_no_invent_3845():
 
 
 
+def cmd_reload_recovery_state_headroom_3846_coverage():
+    """Issue #3846: reload-recovery-state #3339 headroom + #3096 heal keys."""
+    print(f"{B}=== reload-recovery-state headroom (#3846) ==={N}")
+    script = COVERAGE_CHECKS / "check_reload_recovery_state_headroom_3846.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = run([sys.executable, str(script)], cwd=ROOT)
+    if r != 0:
+        fail("reload-recovery-state headroom (#3846) coverage contract rows failed")
+        return r
+    ok("reload-recovery-state headroom (#3846) coverage clean")
+    return 0
+
+
+def cmd_reload_recovery_state_headroom_3846():
+    """Issue #3846: Gate reload-recovery-state under #3339 headroom discipline."""
+    print(f"{B}=== reload-recovery-state headroom (#3846) ==={N}")
+    return cmd_reload_recovery_state_headroom_3846_coverage()
+
+
+
 def cmd_wal_overflow_wrap_refuse_3838_coverage():
     """Issue #3838: WAL overflow refuse-on-wrap (#3806 residual)."""
     print(f"{B}=== WAL overflow wrap refuse (#3838) ==={N}")
@@ -23766,6 +23802,8 @@ def main():
         "grant-epoch-no-phantom-3844-coverage": cmd_grant_epoch_no_phantom_3844_coverage,
         "promote-force-join-mid-no-invent-3845": cmd_promote_force_join_mid_no_invent_3845,
         "promote-force-join-mid-no-invent-3845-coverage": cmd_promote_force_join_mid_no_invent_3845_coverage,
+        "reload-recovery-state-headroom-3846": cmd_reload_recovery_state_headroom_3846,
+        "reload-recovery-state-headroom-3846-coverage": cmd_reload_recovery_state_headroom_3846_coverage,
         "wal-overflow-wrap-refuse-3838": cmd_wal_overflow_wrap_refuse_3838,
         "wal-overflow-wrap-refuse-3838-coverage": cmd_wal_overflow_wrap_refuse_3838_coverage,
         "string-grant-session-bound-3839": cmd_string_grant_session_bound_3839,
