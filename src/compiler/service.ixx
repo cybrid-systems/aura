@@ -5779,6 +5779,8 @@ public:
     // (do not rebuild from) source_to_ir_map so ImpactScope cannot
     // under-invalidate on aborted NodeIds. Abort path only.
     // Issue #3551: also drop entry.irs (clear_cache_v2_for_define).
+    // Issue #3852: production also force-bumps AOT table epoch so probe
+    // cannot return mid-abort native (Soft: AOT untouched).
     void force_ir_cache_dirty_after_abort() {
         // Issue #3069 / #3117: publish the fence before the walk. When
         // begin_abort_ir_cache_force_fence already ran (restore window),
@@ -5819,6 +5821,19 @@ public:
         if (forced > 0)
             metrics_.abort_ir_cache_force_dirty_total.fetch_add(static_cast<std::uint64_t>(forced),
                                                                 std::memory_order_relaxed);
+        // Issue #3852: production abort IR fence also invalidates AOT so
+        // aura_aot_probe_fn_ptr cannot return mid-mutate / pre-abort native
+        // while lookup_define_v2 correctly needs-relower. Soft / Off: AOT
+        // untouched (IR clear observe-only; Soft not scored). Reuse the
+        // process-wide recovery SSOT (force-bump + table epoch) already
+        // used by reload fall_back — do not invent a second AOT table or
+        // gate probe on abort_force_generation.
+        if (aura::compiler::typed_audit::production_defaults_active() ||
+            aura::compiler::typed_audit::get_strategy() ==
+                aura::compiler::typed_audit::AuditStrategy::Full) {
+            aura_aot_note_cross_eval_epoch_force_bump();
+            aura_aot_bump_func_table_epoch();
+        }
         abort_force_in_progress_.store(0, std::memory_order_release);
         aura::util::thread_fence(std::memory_order_release);
     }

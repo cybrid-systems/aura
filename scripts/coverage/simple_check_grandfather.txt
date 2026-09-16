@@ -446,3 +446,5 @@ check_steal_panic_moving_gate_3850.py
 scripts/coverage/checks/check_steal_panic_moving_gate_3850.py
 check_pure_anon_budget_skip_sticky_3851.py
 scripts/coverage/checks/check_pure_anon_budget_skip_sticky_3851.py
+check_abort_aot_invalidate_3852.py
+scripts/coverage/checks/check_abort_aot_invalidate_3852.py

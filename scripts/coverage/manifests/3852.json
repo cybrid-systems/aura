@@ -1,0 +1,52 @@
+{
+  "issue": 3852,
+  "title": "Issue #3852: production abort IR fence also invalidates AOT",
+  "ok": "OK: Issue #3852 production abort force-bumps AOT; Soft untouched; probe epoch/soft_stale",
+  "checks": [
+    {
+      "ac": "AC1-force-dirty-aot",
+      "path": "src/compiler/service.ixx",
+      "contains": [
+        "Issue #3852",
+        "aura_aot_note_cross_eval_epoch_force_bump()",
+        "aura_aot_bump_func_table_epoch()",
+        "production_defaults_active()"
+      ]
+    },
+    {
+      "ac": "AC3-probe-gates",
+      "path": "src/compiler/aura_jit_bridge.cpp",
+      "contains": [
+        "aura_aot_probe_fn_ptr",
+        "g_aot_table_epoch",
+        "soft_stale"
+      ]
+    },
+    {
+      "ac": "AC4-tests",
+      "path": "tests/compiler/test_abort_ir_cache_fence_first.cpp",
+      "contains": [
+        "ac3852_1_production_abort_probe_rejects_until_reemit",
+        "3852 AC1: probe rejects mid-abort native",
+        "ac3852_2_soft_abort_aot_untouched",
+        "ac3852_3_source_and_linter"
+      ]
+    },
+    {
+      "ac": "AC4-wiring",
+      "path": "build.py",
+      "contains": [
+        "check_abort_aot_invalidate_3852",
+        "Issue #3852"
+      ]
+    },
+    {
+      "ac": "AC4-forbid",
+      "forbid": [
+        "tests/compiler/test_issue_3852.cpp",
+        "tests/issues/test_issue_3852.cpp",
+        "docs/design/3852-abort-aot-invalidate.md"
+      ]
+    }
+  ]
+}
