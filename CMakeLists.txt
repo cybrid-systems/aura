@@ -2452,7 +2452,7 @@ add_dependencies(all_test_issue_targets test_occurrence_persist_rehydrate)
 # concurrent lookup injection. Lives in tests/compiler/ per
 # #81934/#81967.
 aura_add_issue_test(test_abort_ir_cache_fence_first)
-aura_issue_test_link_light(test_abort_ir_cache_fence_first)
+aura_issue_test_link_llvm_jit(test_abort_ir_cache_fence_first)
 add_dependencies(all_test_issue_targets test_abort_ir_cache_fence_first)
 # Issue #2236: optional per-region / per-eval deopt-storm isolation
 # in HotUpdateRegistry (per-AC2 cap 64 regions, overflow → global;
