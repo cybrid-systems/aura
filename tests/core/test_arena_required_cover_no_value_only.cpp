@@ -777,8 +777,11 @@ static void ac3454_production_pure_wrap_soa() {
     CHECK(pass_impls.find("static_assert(ProductionPureWrapPass<ComputeKindWrap>") !=
               std::string::npos,
           "AC3: CK satisfies ProductionPureWrapPass (#3488)");
-    CHECK(service.find("!ProductionPureWrapPass<EscapeAnalysisWrap>") != std::string::npos,
-          "AC3: grandfather Escape does not silently satisfy ProductionPureWrapPass");
+    CHECK(service.find(
+              "Issue #3795: EscapeAnalysisWrap SoA dirty entry satisfies ProductionPureWrapPass") !=
+              std::string::npos,
+          "AC3: Escape satisfies ProductionPureWrapPass via explicit #3795 (grandfather lifted, "
+          "not silent)");
 
     CHECK(read_file("tests/core/test_issue_3454.cpp").empty(),
           "AC5: no tests/core/test_issue_3454.cpp");

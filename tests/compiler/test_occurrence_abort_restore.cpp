@@ -312,8 +312,11 @@ static void ac3440_persist_reject_flips_success_into_abort_restore() {
     CHECK(boundary_cpp.find("Issue #3687") != std::string::npos, "3687: boundary cites #3687");
     CHECK(boundary_cpp.find("restore_checkpoint_topology_for_persist_reject") != std::string::npos,
           "3687: topology restore helper");
-    CHECK(helper_body.find("restore_checkpoint_topology_for_persist_reject") != std::string::npos,
-          "3687: called from persist helper note_3440");
+    CHECK(
+        helper_body.find("aura_persist_reject_undo(") != std::string::npos &&
+            boundary_cpp.find("ev->restore_checkpoint_topology_for_persist_reject()") !=
+                std::string::npos,
+        "3687: persist helper restores topology via aura_persist_reject_undo (#3818 indirection)");
     CHECK(boundary_cpp.find("if (!cp.topology_restored)") != std::string::npos,
           "3687: abort body no-ops if already restored");
     CHECK(boundary_cpp.find("abort_restore_dual_topology_persist_reject") == std::string::npos,

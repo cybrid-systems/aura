@@ -642,7 +642,7 @@ static void ac3830_empty_type_annotation_no_dynamic() {
     CHECK(impl.find("Issue #3830") != std::string::npos, "3830 AC3: impl cite");
     const auto ann_fn = impl.find("TypeId InferenceEngine::synthesize_flat_annotation");
     CHECK(ann_fn != std::string::npos, "3830 AC3: synthesize_flat_annotation");
-    const auto ann_body = impl.substr(ann_fn, 900);
+    const auto ann_body = impl.substr(ann_fn, 1600);
     CHECK(ann_body.find("cs_.fresh_var()") != std::string::npos,
           "3830 AC1: empty TypeAnnotation fresh_var");
     CHECK(ann_body.find("return reg_.dynamic_type()") == std::string::npos,

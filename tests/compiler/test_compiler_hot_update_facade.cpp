@@ -993,7 +993,7 @@ static void ac3823_production_node_dep_mark_union() {
     {
         const auto hpos = svc.find("void CompilerService::mark_node_dep_dependents_body_dirty_");
         CHECK(hpos != std::string::npos, "3823: helper body");
-        const auto hwin = svc.substr(hpos, 2200);
+        const auto hwin = svc.substr(hpos, 2600);
         CHECK(hwin.find("Issue #3823") != std::string::npos, "3823: cite");
         CHECK(hwin.find("encode_fn_node") != std::string::npos, "3823: encode_fn_node");
         CHECK(hwin.find("decode_fn_slot") != std::string::npos, "3823: #3761 decode walk");

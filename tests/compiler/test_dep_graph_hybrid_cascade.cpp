@@ -1446,7 +1446,7 @@ static void ac3823_3_soak_lockless_one_side_no_clean_hit() {
     const auto hpos = dirty.find("void CompilerService::mark_node_dep_dependents_body_dirty_");
     CHECK(hpos != std::string::npos, "3823 soak: helper defined");
     if (hpos != std::string::npos) {
-        const auto hwin = dirty.substr(hpos, 2200);
+        const auto hwin = dirty.substr(hpos, 2600);
         CHECK(hwin.find("Issue #3823") != std::string::npos, "3823 soak: cite");
         CHECK(hwin.find("encode_fn_node") != std::string::npos, "3823 soak: encode_fn_node");
         CHECK(hwin.find("decode_fn_slot") != std::string::npos, "3823 soak: #3761 decode");
