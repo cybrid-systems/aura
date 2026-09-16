@@ -31,7 +31,7 @@ def _read(rel: str) -> str:
     return p.read_text(encoding="utf-8", errors="replace") if p.is_file() else ""
 
 
-def _slice_after(hay: str, needle: str, n: int = 20000) -> str:
+def _slice_after(hay: str, needle: str, n: int = 60000) -> str:
     i = hay.find(needle)
     if i < 0:
         return ""

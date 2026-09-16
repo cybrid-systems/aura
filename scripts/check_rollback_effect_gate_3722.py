@@ -14,8 +14,9 @@ ACs:
   AC2  the rollback-since lambda gates EVERY committed record in the
        revert set (deny-first loop) BEFORE rollback_since(; deny returns
        make_int(0) (zero topology change).
-  AC3  no EXEMPT_2ARG_OPS growth: "rollback" stays out of
-       check_side_effect_node_id_mandate_2942.py (count stays 5).
+  AC3  "rollback"/"rollback-since" stay out of
+       check_side_effect_node_id_mandate_2942.py; its EXEMPT_2ARG_OPS
+       count guard stays intact (count owned by #2942; waves may grow it).
   AC4  Soft/Off unchanged: no sandbox-mode branching inside the two gated
        lambda bodies — the require_effect zero-cost short-circuit is the
        only Soft/Off face.
@@ -83,9 +84,9 @@ def main() -> int:
     good = (
         '"rollback"' not in nodeid_lint
         and "rollback-since" not in nodeid_lint
-        and "len(EXEMPT_2ARG_OPS) != 5" in nodeid_lint
+        and "len(EXEMPT_2ARG_OPS) !=" in nodeid_lint
     )
-    report("AC3", good, "no EXEMPT_2ARG_OPS growth (count stays 5, no rollback entries)")
+    report("AC3", good, "no rollback entries in EXEMPT_2ARG_OPS (#2942 count guard intact)")
 
     gated = rollback_body + rsince_body
     good = (
