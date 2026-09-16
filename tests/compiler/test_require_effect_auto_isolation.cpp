@@ -829,8 +829,7 @@ static void ac3836_2_restricted_no_exec_denies() {
     ev.set_capability_tenant_id(1);
     const bool ok = ev.require_effect(static_cast<std::uint16_t>(kEffectExec), "shell");
     CHECK(!ok, "3836 AC2: require_effect(Exec,\"shell\") denies without Exec bits");
-    const bool ok2 =
-        ev.require_effect(static_cast<std::uint16_t>(kEffectExec), "command-output");
+    const bool ok2 = ev.require_effect(static_cast<std::uint16_t>(kEffectExec), "command-output");
     CHECK(!ok2, "3836 AC2: require_effect(Exec,\"command-output\") denies");
 }
 
@@ -847,8 +846,7 @@ static void ac3836_3_soft_off_deny_exec_contract() {
     ev.set_effect_sandbox_mode(0);
     const bool ok = ev.require_effect(static_cast<std::uint16_t>(kEffectExec), "shell");
     CHECK(ok, "3836 AC3: Off sandbox require_effect(Exec,\"shell\") allows");
-    const bool ok2 =
-        ev.require_effect(static_cast<std::uint16_t>(kEffectExec), "command-output");
+    const bool ok2 = ev.require_effect(static_cast<std::uint16_t>(kEffectExec), "command-output");
     CHECK(ok2, "3836 AC3: Off sandbox require_effect(Exec,\"command-output\") allows");
 }
 

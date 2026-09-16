@@ -2594,7 +2594,8 @@ static void ac3841_4_batch_keeps_must_wait_after_quota_recycle() {
     h.reclaimed_deferred_cleanup = true;
     std::vector<AgentHandle> agents;
     agents.push_back(std::move(h));
-    auto out = maybe_auto_wait_reclaimed_batch(std::span<AgentHandle>(agents), /*retry_budget_ms=*/1);
+    auto out =
+        maybe_auto_wait_reclaimed_batch(std::span<AgentHandle>(agents), /*retry_budget_ms=*/1);
     CHECK(out.still_running == 1, "3841 AC4: still_running");
     CHECK(agents[0].must_wait_reclaimed, "3841 AC4: must_wait kept after batch recycle");
     CHECK(agents[0].quota_recycled_pending, "3841 AC4: quota_recycled_pending");
@@ -2778,8 +2779,7 @@ static void ac3842_3_soft_zero_cost_no_force() {
     h.must_wait_reclaimed = true;
     h.reclaimed_deferred_cleanup = true;
     auto& slot = scope.adopt_handle_without_spec_for_test(std::move(h));
-    const auto wait0 =
-        g_orch_module_stats.wait_reclaimed_total.load(std::memory_order_relaxed);
+    const auto wait0 = g_orch_module_stats.wait_reclaimed_total.load(std::memory_order_relaxed);
     const auto force0 =
         g_orch_module_stats.reclaimed_quota_force_released_total.load(std::memory_order_relaxed);
     auto swept = scope.sweep_reclaimed_pending();

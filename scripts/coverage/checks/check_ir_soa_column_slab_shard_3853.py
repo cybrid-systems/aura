@@ -142,10 +142,7 @@ def main() -> int:
         for f in fails:
             print(f"  - {f}")
         return 1
-    print(
-        "OK #3853 ir_soa_column_slab_shard: sharded map; no process-wide mu; "
-        "BMI pins kept"
-    )
+    print("OK #3853 ir_soa_column_slab_shard: sharded map; no process-wide mu; BMI pins kept")
     return 0
 
 

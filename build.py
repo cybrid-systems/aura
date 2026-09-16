@@ -15767,7 +15767,6 @@ def cmd_require_effect_full_hard_mid_3843():
     return cmd_require_effect_full_hard_mid_3843_coverage()
 
 
-
 def cmd_grant_epoch_no_phantom_3844_coverage():
     """Issue #3844: grant/SE epoch no phantom 1 under hard face (prod||Full)."""
     print(f"{B}=== grant/SE epoch no phantom (#3844) ==={N}")
@@ -15787,7 +15786,6 @@ def cmd_grant_epoch_no_phantom_3844():
     """Issue #3844: Keep Mutation epoch 0 under hard face (no phantom 1)."""
     print(f"{B}=== grant/SE epoch no phantom (#3844) ==={N}")
     return cmd_grant_epoch_no_phantom_3844_coverage()
-
 
 
 def cmd_promote_force_join_mid_no_invent_3845_coverage():
@@ -15811,7 +15809,6 @@ def cmd_promote_force_join_mid_no_invent_3845():
     return cmd_promote_force_join_mid_no_invent_3845_coverage()
 
 
-
 def cmd_reload_recovery_state_headroom_3846_coverage():
     """Issue #3846: reload-recovery-state #3339 headroom + #3096 heal keys."""
     print(f"{B}=== reload-recovery-state headroom (#3846) ==={N}")
@@ -15831,7 +15828,6 @@ def cmd_reload_recovery_state_headroom_3846():
     """Issue #3846: Gate reload-recovery-state under #3339 headroom discipline."""
     print(f"{B}=== reload-recovery-state headroom (#3846) ==={N}")
     return cmd_reload_recovery_state_headroom_3846_coverage()
-
 
 
 def cmd_densify_refuse_zero_move_3848_coverage():
@@ -15937,7 +15933,6 @@ def cmd_ir_soa_column_slab_shard_3853():
     """Issue #3853: Shard column_slab map; keep #3833 BMI pins."""
     print(f"{B}=== IR SoA column_slab shard (#3853) ==={N}")
     return cmd_ir_soa_column_slab_shard_3853_coverage()
-
 
 
 def cmd_pure_anon_budget_skip_sticky_3851_coverage():

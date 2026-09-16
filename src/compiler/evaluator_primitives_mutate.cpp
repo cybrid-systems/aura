@@ -9609,8 +9609,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             // Issue #3096 / #3846 / #3847: expose auto-heal counters on playbook
             // Agent hash (advisory text stays observe-only; counters only).
             insert_kv("residual-force-auto-heal-total",
-                      static_cast<std::int64_t>(
-                          aura_hot_update_residual_force_auto_heal_total()));
+                      static_cast<std::int64_t>(aura_hot_update_residual_force_auto_heal_total()));
             insert_kv("residual-force-auto-heal-wired", 1);
             insert_kv("schema-3096", 3096);
             insert_kv("issue-3096", 3096);

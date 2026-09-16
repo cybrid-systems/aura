@@ -1241,8 +1241,8 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const
             // consult; bridge-epoch-green went straight to eval_flat with
             // no resolve_object_remap / window / LCP gate. Soft/Off: helper
             // returns false when production defaults inactive (zero-cost).
-            if (production_apply_closure_densify_hard_refuse(
-                    arena_, cl_copy, static_cast<const void*>(this))) {
+            if (production_apply_closure_densify_hard_refuse(arena_, cl_copy,
+                                                             static_cast<const void*>(this))) {
                 note_apply_closure_densify_hard_refuse(metrics, *this);
                 return std::nullopt;
             }

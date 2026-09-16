@@ -4,6 +4,7 @@
 module;
 
 #include "messaging_bridge.h"
+#include "core/gc_hooks.h" // Issue #3850: note_panic_checkpoint_cleared at teardown
 #include "observability_metrics.h"
 #include "primitives_detail.h"
 #include "primitives_meta.h"

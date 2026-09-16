@@ -62,8 +62,7 @@ def main() -> int:
     must("SweepReclaimedPendingResult", "AC1 result type", scope)
     must("ensure_reclaimed_cleanup(h)", "AC1 ensure SSOT", scope)
     must(
-        "if (!aura::compiler::typed_audit::production_defaults_active())\n"
-        "            return out;",
+        "if (!aura::compiler::typed_audit::production_defaults_active())\n            return out;",
         "AC1 Soft production gate",
         scope,
     )
@@ -76,10 +75,14 @@ def main() -> int:
         sweep_region = scope[sweep_idx : sweep_idx + 2500]
         if "maybe_force_release_reclaimed_quota" in sweep_region:
             fails.append("AC1: sweep body must not call maybe_force_release_reclaimed_quota")
-        if "AgentRegistry" in sweep_region and "No process-global AgentRegistry" not in sweep_region and "no process-global AgentRegistry" not in sweep_region:
-            # Allow forbid-cite; forbid inventing a registry type in the region.
-            if "class AgentRegistry" in sweep_region or "struct AgentRegistry" in sweep_region:
-                fails.append("AC1: sweep region invents AgentRegistry")
+        # Allow forbid-cite; forbid inventing a registry type in the region.
+        if (
+            "AgentRegistry" in sweep_region
+            and "No process-global AgentRegistry" not in sweep_region
+            and "no process-global AgentRegistry" not in sweep_region
+            and ("class AgentRegistry" in sweep_region or "struct AgentRegistry" in sweep_region)
+        ):
+            fails.append("AC1: sweep region invents AgentRegistry")
 
     # AC2 — spawn registers; no AgentRegistry invent (type symbols only;
     # header comments may cite the forbidden identifiers).

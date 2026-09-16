@@ -4654,7 +4654,8 @@ int main() {
         const auto capm = read_file("src/core/capability_model.hh");
         CHECK(capm.find("Issue #3837") != std::string::npos,
               "AC4: capability_model cites #3837 string-fence mid join");
-        CHECK(capm.find("try_grant_capability_string_path_privileged_locked") != std::string::npos &&
+        CHECK(capm.find("try_grant_capability_string_path_privileged_locked") !=
+                      std::string::npos &&
                   capm.find("aura_isolation_deny_se_mid") != std::string::npos,
               "AC4: string fence uses aura_isolation_deny_se_mid");
         CHECK(sec.find("production_deny_se_mid") != std::string::npos,
@@ -4779,11 +4780,11 @@ int main() {
         CHECK(ev.has_capability("capability"),
               "3837 AC3: Soft/Off wildcard contract preserved for capability");
         const auto cap = read_file("src/core/capability_model.hh");
-        CHECK(cap.find("Issue #3837") != std::string::npos, "3837 AC3: capability_model cites #3837");
+        CHECK(cap.find("Issue #3837") != std::string::npos,
+              "3837 AC3: capability_model cites #3837");
         CHECK(cap.find("aura_isolation_deny_se_mid") != std::string::npos,
               "3837 AC3: fence uses aura_isolation_deny_se_mid");
-        CHECK(cap.find(
-                  "const auto mid = epoch != 0 ? epoch : static_cast<std::uint64_t>(1);") ==
+        CHECK(cap.find("const auto mid = epoch != 0 ? epoch : static_cast<std::uint64_t>(1);") ==
                   std::string::npos,
               "3837 AC3: no bare epoch?:1 phantom mid in capability_model");
     }
@@ -5001,7 +5002,8 @@ int main() {
     }
 
     {
-        std::println("\n--- #3802 AC3: EXEMPT_2ARG stays 2-arg; #3836 grew size to 7; no new query key ---");
+        std::println(
+            "\n--- #3802 AC3: EXEMPT_2ARG stays 2-arg; #3836 grew size to 7; no new query key ---");
         const auto mandate =
             read_file("scripts/coverage/checks/check_side_effect_node_id_mandate_2942.py");
         const auto fiber =
@@ -5204,7 +5206,8 @@ int main() {
 
     // ── Issue #3836: shell/command-output require_effect(Exec) ──
     {
-        std::println("\n--- #3836 AC1: shell/command-output require_effect(Exec) before fork/popen ---");
+        std::println(
+            "\n--- #3836 AC1: shell/command-output require_effect(Exec) before fork/popen ---");
         const auto filep = read_file("src/compiler/evaluator_primitives_file.cpp");
         CHECK(filep.find("Issue #3836") != std::string::npos, "3836 AC1: cite");
         CHECK(filep.find("require_effect(kEffectExec, \"shell\")") != std::string::npos,

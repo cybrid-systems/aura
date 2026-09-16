@@ -6,6 +6,7 @@ module;
 #include "runtime_shared.h"
 #include "hash_meta.h" // FNV constants (#901)
 #include "observability_metrics.h"
+#include "core/gc_hooks.h" // gc panic-checkpoint notes (#3850 family)
 #include "core/workspace_isolation.hh"
 #include "core/self_healing_hooks.h"
 #include "security_capabilities.h"

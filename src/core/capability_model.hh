@@ -80,7 +80,7 @@ inline constexpr int kGrantEpochNoPhantomIssue = 3844;
 [[nodiscard]] inline std::uint64_t stamp_grant_mutation_epoch() noexcept {
     const auto me = ::aura::core::current_mutation_epoch();
     if (capability_epoch_hard_face())
-        return me; // 0 stays 0 — WorkspaceEpoch Mutation only
+        return me;                                       // 0 stays 0 — WorkspaceEpoch Mutation only
     return me != 0 ? me : static_cast<std::uint64_t>(1); // Soft observe
 }
 
@@ -2642,8 +2642,7 @@ inline bool try_grant_capability_string_path_privileged_locked(TenantId caller,
     using ::aura::core::security_event::SecurityEventKind;
     using ::aura::core::security_event_wal::emit_security_event_durable;
     const auto epoch = current_mutation_epoch();
-    const auto mid =
-        (aura_isolation_deny_se_mid != nullptr) ? aura_isolation_deny_se_mid() : epoch;
+    const auto mid = (aura_isolation_deny_se_mid != nullptr) ? aura_isolation_deny_se_mid() : epoch;
     const auto fid = static_cast<std::int64_t>(effect_fiber_id_or(0));
     emit_security_event_durable(SecurityEventKind::EffectDeny, caller, mid, epoch, eff_bits,
                                 "grant_capability",

@@ -97,9 +97,7 @@ def main() -> int:
     must('"overflow_wrap_evicted"', "AC2 wrap-evicted reason", prim)
     refuse_inserts = prim.count('insert_kv("wal-overflow-wrap-refuse-total"')
     if refuse_inserts < 4:
-        fails.append(
-            f"AC2: expected >=4 wal-overflow-wrap-refuse-total insert sites, found {refuse_inserts}"
-        )
+        fails.append(f"AC2: expected >=4 wal-overflow-wrap-refuse-total insert sites, found {refuse_inserts}")
     must("wal_overflow_ring_wrap_total()", "AC2 wrap_total gate for evicted face", prim)
 
     # AC3 — Soft / fail-open overwrite retained (refuse only under fail-closed).

@@ -2734,8 +2734,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                             pure_mode &&
                             (ev.mutation_boundary_held() || ev.mutation_boundary_depth() > 0 ||
                              ash->batch_force_eval_mu.load(std::memory_order_relaxed));
-                        const bool region_skip =
-                            ash->region_concurrent_skip_eval_mu && rkey != 0;
+                        const bool region_skip = ash->region_concurrent_skip_eval_mu && rkey != 0;
                         const bool use_lock = (!pure_mode || force_lock) && !region_skip;
                         std::unique_lock<std::mutex> lock(ash->eval_mu, std::defer_lock);
                         if (use_lock) {
@@ -2997,8 +2996,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
         const auto pure_unlocked = ash->pure_unlocked_applies.load(std::memory_order_relaxed);
         const auto pure_fallback = ash->pure_fallback_locked.load(std::memory_order_relaxed);
         const auto pure_viol = ash->pure_contract_violated.load(std::memory_order_relaxed);
-        const auto region_unlocked =
-            ash->region_unlocked_applies.load(std::memory_order_relaxed);
+        const auto region_unlocked = ash->region_unlocked_applies.load(std::memory_order_relaxed);
         const bool pure_engaged = pure_mode && pure_unlocked > 0;
         const bool region_unlocked_engaged = region_unlocked > 0;
         if (pure_mode) {

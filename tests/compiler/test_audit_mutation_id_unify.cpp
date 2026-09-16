@@ -846,7 +846,8 @@ static void ac3843_3_source_cite_wiring_no_invent() {
     const auto t = read_file("tests/compiler/test_audit_mutation_id_unify.cpp");
     const auto build = read_file("build.py");
     const auto gf = read_file("scripts/coverage/simple_check_grandfather.txt");
-    const auto lint = read_file("scripts/coverage/checks/check_require_effect_full_hard_mid_3843.py");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_require_effect_full_hard_mid_3843.py");
     const auto man = read_file("scripts/coverage/manifests/3843.json");
     CHECK(sec.find("Issue #3843") != std::string::npos, "3843 AC3: evaluator_security cites #3843");
     CHECK(sec.find("AuditStrategy::Full") != std::string::npos,
@@ -913,9 +914,9 @@ static void ac3844_1_hard_epoch0_stays_zero() {
     CHECK(aura::compiler::typed_audit::production_hard_face_active(),
           "3844 AC1 pre: hard face active");
 
+    using aura::core::capability::Effect;
     using aura::core::capability::make_grant_provenance;
     using aura::core::capability::stamp_grant_mutation_epoch;
-    using aura::core::capability::Effect;
     constexpr std::uint64_t kTypedMid = 4242;
     // Stamp TypedMid so mid join is non-zero while Mutation epoch stays 0.
     aura::compiler::typed_audit::stamp_type_linear_commit_proof(kTypedMid);
@@ -974,7 +975,8 @@ static void ac3844_1_hard_epoch0_stays_zero() {
 }
 
 static void ac3844_2_soft_observe_stamp_documented() {
-    std::println("\n--- #3844 AC2: Soft observe stamp (epoch=1) retained when product wants it ---");
+    std::println(
+        "\n--- #3844 AC2: Soft observe stamp (epoch=1) retained when product wants it ---");
     reset_all();
     aura::compiler::typed_audit::reset_for_test();
     aura::core::reset_mutation_epoch_for_test();
@@ -984,8 +986,7 @@ static void ac3844_2_soft_observe_stamp_documented() {
     g_typed_mutation_audit_counters.production_defaults_active.store(0, std::memory_order_relaxed);
     aura::core::store_workspace_epoch(aura::core::WorkspaceEpochKind::Mutation, 0);
     process_resource_quota_manager().provenance_mutation_id = 0;
-    CHECK(!aura::compiler::typed_audit::production_hard_face_active(),
-          "3844 AC2 pre: Soft face");
+    CHECK(!aura::compiler::typed_audit::production_hard_face_active(), "3844 AC2 pre: Soft face");
     CHECK(aura::core::current_mutation_epoch() == 0, "3844 AC2 pre: epoch=0");
 
     using aura::core::capability::make_grant_provenance;
@@ -1058,8 +1059,7 @@ static void ac3844_3_source_cite_wiring_no_invent() {
 // invent intentionally NOT kept (quiet #3066 AC3). Not a refile of
 // #3837/#3838.
 static void ac3845_1_hard_promote_zero_no_invent() {
-    std::println(
-        "\n--- #3845 AC1: hard face + promote(0) → 0; no sticky; no gen invent ---");
+    std::println("\n--- #3845 AC1: hard face + promote(0) → 0; no sticky; no gen invent ---");
     using namespace aura::compiler::typed_audit;
     auto reset_state = []() {
         reset_for_test();
@@ -1073,9 +1073,7 @@ static void ac3845_1_hard_promote_zero_no_invent() {
         g_last_composite_batch_join_mid.store(0, std::memory_order_relaxed);
         g_last_stamped_audit_mid.store(0, std::memory_order_relaxed);
     };
-    auto read_gen = []() {
-        return g_typed_mutation_audit_counters.audit_mutation_id_gen.load();
-    };
+    auto read_gen = []() { return g_typed_mutation_audit_counters.audit_mutation_id_gen.load(); };
 
     // AC1a: production_defaults + mid==0
     {

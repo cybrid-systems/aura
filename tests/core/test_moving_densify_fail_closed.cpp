@@ -4564,11 +4564,11 @@ static void ac3848_2_zero_move_publish_keeps_tombstones() {
     CHECK(arena.resolve_object_remap(A) != nullptr, "3848 AC2: A is remap key");
     CHECK(arena.object_remap_size() > 0, "3848 AC2: tombstones present");
     // Simulate vacuous / LCP-blocked publish: objects_moved=0 while remap remains.
-    const auto prev = aura::core::moving_densify_health::g_last_objects_moved.load(
-        std::memory_order_relaxed);
+    const auto prev =
+        aura::core::moving_densify_health::g_last_objects_moved.load(std::memory_order_relaxed);
     aura::core::moving_densify_health::g_last_objects_moved.store(0, std::memory_order_relaxed);
-    CHECK(aura::core::moving_densify_health::g_last_objects_moved.load(
-              std::memory_order_relaxed) == 0,
+    CHECK(aura::core::moving_densify_health::g_last_objects_moved.load(std::memory_order_relaxed) ==
+              0,
           "3848 AC2: published objects_moved==0");
     CHECK(arena.resolve_object_remap(A) != nullptr,
           "3848 AC2: densify-old key survives zero-move publish");
@@ -4583,16 +4583,17 @@ static void ac3848_3_wiring_no_invent() {
     CHECK(survive.find("ac16_3848_zero_move_publish_still_refuse();") != std::string::npos,
           "3848 AC3: densify-stale suite wired");
     const auto lint = read_file("scripts/coverage/checks/check_densify_refuse_zero_move_3848.py");
-    CHECK(!lint.empty() && lint.find("Issue #3848") != std::string::npos, "3848 AC3: linter present");
+    CHECK(!lint.empty() && lint.find("Issue #3848") != std::string::npos,
+          "3848 AC3: linter present");
     const auto build = read_file("build.py");
     CHECK(build.find("check_densify_refuse_zero_move_3848") != std::string::npos,
           "3848 AC3: build.py wires linter");
     const auto gf = read_file("scripts/coverage/simple_check_grandfather.txt");
     CHECK(gf.find("check_densify_refuse_zero_move_3848.py") != std::string::npos,
           "3848 AC3: grandfather lists linter");
-    for (const char* forbid : {"tests/compiler/test_issue_3848.cpp",
-                                 "tests/core/test_issue_3848.cpp",
-                                 "tests/issues/test_issue_3848.cpp"}) {
+    for (const char* forbid :
+         {"tests/compiler/test_issue_3848.cpp", "tests/core/test_issue_3848.cpp",
+          "tests/issues/test_issue_3848.cpp"}) {
         CHECK(read_file(forbid).empty(), "3848 AC3: no invent file");
         (void)forbid;
     }
@@ -4629,17 +4630,19 @@ static void ac3849_2_wiring_no_invent() {
     const auto survive = read_file("tests/compiler/test_setcode_rebind_survive.cpp");
     CHECK(survive.find("ac17_3849_happy_path_densify_refuse();") != std::string::npos,
           "3849 AC2: densify-stale suite wired");
-    const auto lint = read_file("scripts/coverage/checks/check_apply_closure_happy_path_densify_3849.py");
-    CHECK(!lint.empty() && lint.find("Issue #3849") != std::string::npos, "3849 AC2: linter present");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_apply_closure_happy_path_densify_3849.py");
+    CHECK(!lint.empty() && lint.find("Issue #3849") != std::string::npos,
+          "3849 AC2: linter present");
     const auto build = read_file("build.py");
     CHECK(build.find("check_apply_closure_happy_path_densify_3849") != std::string::npos,
           "3849 AC2: build.py wires linter");
     const auto gf = read_file("scripts/coverage/simple_check_grandfather.txt");
     CHECK(gf.find("check_apply_closure_happy_path_densify_3849.py") != std::string::npos,
           "3849 AC2: grandfather lists linter");
-    for (const char* forbid : {"tests/compiler/test_issue_3849.cpp",
-                                 "tests/core/test_issue_3849.cpp",
-                                 "tests/issues/test_issue_3849.cpp"}) {
+    for (const char* forbid :
+         {"tests/compiler/test_issue_3849.cpp", "tests/core/test_issue_3849.cpp",
+          "tests/issues/test_issue_3849.cpp"}) {
         CHECK(read_file(forbid).empty(), "3849 AC2: no invent file");
         (void)forbid;
     }
@@ -4706,15 +4709,13 @@ static void ac3850_3_wiring_no_invent() {
     const auto gf = read_file("scripts/coverage/simple_check_grandfather.txt");
     CHECK(gf.find("check_steal_panic_moving_gate_3850.py") != std::string::npos,
           "3850 AC3: grandfather");
-    for (const char* forbid : {"tests/compiler/test_issue_3850.cpp",
-                                 "tests/core/test_issue_3850.cpp",
-                                 "tests/serve/test_issue_3850.cpp",
-                                 "tests/issues/test_issue_3850.cpp"}) {
+    for (const char* forbid :
+         {"tests/compiler/test_issue_3850.cpp", "tests/core/test_issue_3850.cpp",
+          "tests/serve/test_issue_3850.cpp", "tests/issues/test_issue_3850.cpp"}) {
         CHECK(read_file(forbid).empty(), "3850 AC3: no invent file");
         (void)forbid;
     }
-    CHECK(read_file("docs/design/3850-steal-panic-moving.md").empty(),
-          "3850 AC3: no docs/design");
+    CHECK(read_file("docs/design/3850-steal-panic-moving.md").empty(), "3850 AC3: no docs/design");
 }
 
 int run_test_moving_densify_fail_closed() {

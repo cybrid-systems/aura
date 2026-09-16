@@ -1151,14 +1151,12 @@ int run_test_security_event_wal_replay() {
             CHECK(!wal_overflow_ring_push(rec), "3838 AC1: push refuses on wrap");
         }
         const auto wraps = wal_overflow_ring_wrap_total().load(std::memory_order_relaxed);
-        const auto refuses =
-            wal_overflow_ring_wrap_refuse_total().load(std::memory_order_relaxed);
+        const auto refuses = wal_overflow_ring_wrap_refuse_total().load(std::memory_order_relaxed);
         CHECK(wraps >= kRefuse, "3838 AC1: wrap_total >= refuse count");
         CHECK(refuses >= kRefuse, "3838 AC1: refuse_total >= refuse count");
         CHECK(wal_overflow_find_by_mid(1) != nullptr,
               "3838 AC1: earliest mid preserved (no overwrite)");
-        CHECK(wal_overflow_find_by_mid(20000) == nullptr,
-              "3838 AC1: refused mid never parked");
+        CHECK(wal_overflow_find_by_mid(20000) == nullptr, "3838 AC1: refused mid never parked");
         CHECK(href_posture(cs, "wal-overflow-wrap-refuse-total") >=
                   static_cast<std::int64_t>(kRefuse),
               "3838 AC2: posture refuse face");
