@@ -718,6 +718,7 @@ inline TypedMutationAuditTrail& g_trail() {
                std::memory_order_relaxed) != 0;
 }
 
+
 // Issue #3556: centralized hard-face gate. Equivalent to the inline
 // production_defaults_active() || get_strategy() == AuditStrategy::Full
 // pattern used at every #3418/#3431/#3556 reject site. Centralized so
@@ -4399,6 +4400,19 @@ inline std::uint64_t pin_composite_batch_join_mid(std::uint64_t caller_mid = 0) 
 // observe invent; same quiet contract as pin #3066 AC3 / #3367).
 // Soft invent is intentionally NOT kept. Not a refile of #3837/#3838.
 inline std::uint64_t promote_sampled_force_join_mid(std::uint64_t deny_mid = 0) noexcept {
+    if (deny_mid == 0) {
+        // Issue #3845: quiet contract — mid==0 must not invent via the
+        // resolver's Soft fallback (next_audit_mutation_id). Nothing pinned
+        // and no epoch on a quiet Soft/Sampled face → 0 (aligned #3367 /
+        // #3066 AC3). Hard face falls through so the #2836 refuse counter
+        // still fires; pinned TLS / epoch≠0 observe stamps fall through too.
+        const bool pinned3845 = g_tls_composite_batch_join_mid != 0 ||
+                                (g_tls_boundary_audit_noted && g_tls_boundary_audit_mid != 0);
+        const bool hard_face3845 =
+            production_defaults_active() || get_strategy() == AuditStrategy::Full;
+        if (!pinned3845 && !hard_face3845 && ::aura::core::current_mutation_epoch() == 0)
+            return 0;
+    }
     auto mid = deny_mid != 0 ? deny_mid : join_audit_and_se_mid(0);
     if (mid == 0) {
         // Issue #3845: hard face (production_defaults || Full) → no invent,

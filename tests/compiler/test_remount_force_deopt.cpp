@@ -896,7 +896,9 @@ static void ac3785_1_sync_remount_storm_gate() {
     CHECK(rt.find("Issue #3785") != std::string::npos, "ac3785_1: cites #3785");
     const auto fn = rt.find("aura_sync_remount_covered_named_live_closures");
     CHECK(fn != std::string::npos, "ac3785_1: sync remount present");
-    const auto win = rt.substr(fn, 1200);
+    // Window widened 1200→1600: #3812 comment block pushed g_closure_table_mtx
+    // past offset 1188 (needle straddled the old boundary — wave drift).
+    const auto win = rt.substr(fn, 1600);
     CHECK(win.find("storm >= 2") != std::string::npos, "ac3785_1: Global/Both storm gate");
     CHECK(win.find("aura_hot_update_should_throttle_reemit") != std::string::npos,
           "ac3785_1: reuses reemit throttle");

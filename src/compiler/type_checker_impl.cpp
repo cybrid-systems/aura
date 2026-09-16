@@ -2542,8 +2542,15 @@ SolveResult ConstraintSystem::solve_delta_impl(std::vector<Constraint>* unresolv
                     if (!id.valid() || !reg_.is_var(id))
                         return;
                     const auto rep = union_find_rep_index(id);
-                    if (rep != UINT32_MAX)
-                        pending_full_solve_roots_.insert(rep);
+                    if (rep == UINT32_MAX)
+                        return;
+                    // Issue #3820: Soft keeps clear-after-offer — the #1871
+                    // prune must not re-seed pending within the same
+                    // solve_delta that just offered and cleared it. Prod/Full
+                    // retain misses and non-local roots (#3253 family).
+                    if (!aura::compiler::typed_audit::production_hard_face_active())
+                        return;
+                    pending_full_solve_roots_.insert(rep);
                 };
                 note_pending(constraints_[i].lhs);
                 note_pending(constraints_[i].rhs);
@@ -3031,8 +3038,11 @@ ConstraintSystem::try_instance_repair_before_full(std::vector<Constraint>* unres
         if (unresolved_out)
             unresolved_out->push_back(constraints_[i]);
     }
-    if (unprocessed)
+    if (unprocessed) {
+        std::fprintf(stderr, "3820dbg: ret-TIMEOUT pending=%zu\n",
+                     pending_full_solve_roots_.size());
         return SolveResult::TIMEOUT;
+    }
 
     // Issue #3511: local cone SOLVED is not finally SOLVED until clean
     // dep-closure reverify. Keep pending/touched as reverify seeds.
