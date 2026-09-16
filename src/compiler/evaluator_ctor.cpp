@@ -279,6 +279,10 @@ Evaluator::~Evaluator() {
     // leaks until process exit and every request_gc_safepoint defers.
     // Mirrors #63723 / #1662 teardown hygiene for process-wide / owner links.
     // release is idempotent (no-op when not armed) and noexcept.
+    // Issue #3850: drop live-CP process depth if checkpoint fields still set
+    // (defer may already have been orphan-cleared by steal while CP remained).
+    if (!panic_safe_source_.empty())
+        aura::gc_hooks::note_panic_checkpoint_cleared();
     release_gc_defer_for_pending_panic();
 
     // Issue #3394: join outstanding thread-fiber workers (the fiber:spawn

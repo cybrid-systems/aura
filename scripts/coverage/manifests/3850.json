@@ -1,0 +1,79 @@
+{
+  "issue": 3850,
+  "title": "Issue #3850: steal defer×Moving panic CP gate + panic_residual_ok has_cp",
+  "ok": "OK: Issue #3850 Moving OR-gates live CP probe; residual keys off has_panic_checkpoint; Soft leftover observe-only",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/core/arena.ixx",
+      "contains": [
+        "Issue #3850",
+        "evaluator_has_panic_checkpoint_probe()",
+        "should_defer_destructive_gc()"
+      ]
+    },
+    {
+      "ac": "AC1-hooks",
+      "path": "src/core/gc_hooks.h",
+      "contains": [
+        "Issue #3850",
+        "g_live_panic_checkpoint_depth",
+        "evaluator_has_panic_checkpoint_probe"
+      ]
+    },
+    {
+      "ac": "AC2-residual",
+      "path": "src/compiler/evaluator_mutation_boundary.cpp",
+      "contains": [
+        "Issue #2595 / #3850",
+        "ev_->has_panic_checkpoint()",
+        "panic_residual_ok = !panic_cp_live_now || panic_deferred_now"
+      ]
+    },
+    {
+      "ac": "AC2-steal",
+      "path": "src/compiler/evaluator_fiber_mutation.cpp",
+      "contains": [
+        "Issue #3850: production clears live PanicCheckpoint BEFORE",
+        "clear_panic_checkpoint()",
+        "observe-only"
+      ]
+    },
+    {
+      "ac": "AC3-steal-test",
+      "path": "tests/serve/test_steal_complete_gc_defer.cpp",
+      "contains": [
+        "ac3850_1_soft_leftover_probe_blocks_moving",
+        "ac3850_2_production_clears_cp_before_defer",
+        "ac3850_3_panic_residual_ok_keys_off_has_cp"
+      ]
+    },
+    {
+      "ac": "AC3-fail-closed",
+      "path": "tests/core/test_moving_densify_fail_closed.cpp",
+      "contains": [
+        "ac3850_1_live_cp_blocks_moving",
+        "ac3850_2_source_cite_gate_and_residual",
+        "ac3850_3_wiring_no_invent"
+      ]
+    },
+    {
+      "ac": "AC3-wiring",
+      "path": "build.py",
+      "contains": [
+        "check_steal_panic_moving_gate_3850",
+        "Issue #3850"
+      ]
+    },
+    {
+      "ac": "AC3-forbid",
+      "forbid": [
+        "tests/compiler/test_issue_3850.cpp",
+        "tests/core/test_issue_3850.cpp",
+        "tests/serve/test_issue_3850.cpp",
+        "tests/issues/test_issue_3850.cpp",
+        "docs/design/3850-steal-panic-moving.md"
+      ]
+    }
+  ]
+}

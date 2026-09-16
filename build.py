@@ -5285,6 +5285,21 @@ def cmd_lint():
             "Issue #3849 happy-path densify refuse linter failed — run python3 scripts/coverage/checks/check_apply_closure_happy_path_densify_3849.py"
         )
         return r
+    # Issue #3850: steal clears panic defer before checkpoint; Moving densify
+    # must OR-gate evaluator_has_panic_checkpoint_probe (align compact_sweep).
+    # panic_residual_ok keys off has_panic_checkpoint. Soft leftover
+    # observe-only. Extends test_steal_complete_gc_defer +
+    # test_moving_densify_fail_closed; no docs/design / invent (#1655 / #81967).
+    spmg3850_script = COVERAGE_CHECKS / "check_steal_panic_moving_gate_3850.py"
+    if not spmg3850_script.exists():
+        fail(f"missing {spmg3850_script}")
+        return 1
+    r = run([sys.executable, str(spmg3850_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3850 steal panic×Moving gate linter failed — run python3 scripts/coverage/checks/check_steal_panic_moving_gate_3850.py"
+        )
+        return r
     # Issue #3838: SE WAL overflow refuse-on-wrap under production
     # fail-closed (#3806 residual). Soft overwrite retained; Agent face
     # wrap-evicted vs never-emitted. Extends test_security_event_wal_replay
@@ -15818,6 +15833,26 @@ def cmd_apply_closure_happy_path_densify_3849():
     return cmd_apply_closure_happy_path_densify_3849_coverage()
 
 
+def cmd_steal_panic_moving_gate_3850_coverage():
+    """Issue #3850: Moving OR-gates live panic CP; residual keys off has_cp."""
+    print(f"{B}=== steal panic×Moving densify gate (#3850) ==={N}")
+    script = COVERAGE_CHECKS / "check_steal_panic_moving_gate_3850.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = run([sys.executable, str(script)], cwd=ROOT)
+    if r != 0:
+        fail("steal panic×Moving densify gate (#3850) coverage contract rows failed")
+        return r
+    ok("steal panic×Moving densify gate (#3850) coverage clean")
+    return 0
+
+
+def cmd_steal_panic_moving_gate_3850():
+    """Issue #3850: Block Moving densify while live PanicCheckpoint remains."""
+    print(f"{B}=== steal panic×Moving densify gate (#3850) ==={N}")
+    return cmd_steal_panic_moving_gate_3850_coverage()
+
 
 def cmd_wal_overflow_wrap_refuse_3838_coverage():
     """Issue #3838: WAL overflow refuse-on-wrap (#3806 residual)."""
@@ -23883,6 +23918,8 @@ def main():
         "densify-refuse-zero-move-3848-coverage": cmd_densify_refuse_zero_move_3848_coverage,
         "apply-closure-happy-path-densify-3849": cmd_apply_closure_happy_path_densify_3849,
         "apply-closure-happy-path-densify-3849-coverage": cmd_apply_closure_happy_path_densify_3849_coverage,
+        "steal-panic-moving-gate-3850": cmd_steal_panic_moving_gate_3850,
+        "steal-panic-moving-gate-3850-coverage": cmd_steal_panic_moving_gate_3850_coverage,
         "wal-overflow-wrap-refuse-3838": cmd_wal_overflow_wrap_refuse_3838,
         "wal-overflow-wrap-refuse-3838-coverage": cmd_wal_overflow_wrap_refuse_3838_coverage,
         "string-grant-session-bound-3839": cmd_string_grant_session_bound_3839,

@@ -166,6 +166,32 @@ inline void note_safepoint_wait_while_mutation(std::uint64_t wait_us) noexcept {
 // Bounded inline array + mutex (PanicCheckpoint save/restore is rare;
 // per-call lock is fine).
 inline std::atomic<std::uint32_t> g_gc_defer_pending_panic_depth{0};
+
+// Issue #3850: process-wide live PanicCheckpoint count — independent of
+// defer depth. steal_complete can clear per-eval panic defer while the
+// Evaluator checkpoint remains live (Soft never clears CP; production
+// historically cleared CP after defer drain). Moving densify must OR-gate
+// on this the same way compact_sweep OR-gates has_panic_checkpoint().
+// Depth (not a bool) so nested / multi-eval windows compose.
+inline std::atomic<std::uint32_t> g_live_panic_checkpoint_depth{0};
+
+inline void note_panic_checkpoint_live() noexcept {
+    g_live_panic_checkpoint_depth.fetch_add(1, std::memory_order_acq_rel);
+}
+
+inline void note_panic_checkpoint_cleared() noexcept {
+    auto prev = g_live_panic_checkpoint_depth.load(std::memory_order_relaxed);
+    while (prev > 0) {
+        if (g_live_panic_checkpoint_depth.compare_exchange_weak(
+                prev, prev - 1, std::memory_order_acq_rel, std::memory_order_relaxed))
+            return;
+    }
+}
+
+[[nodiscard]] inline bool evaluator_has_panic_checkpoint_probe() noexcept {
+    return g_live_panic_checkpoint_depth.load(std::memory_order_acquire) > 0;
+}
+
 namespace detail {
     // Issue #2173: bumped to 512 (max possible) — the effective per-process
     // cap is configurable via AURA_GC_DEFER_MAX_ARMED env var (default 64,

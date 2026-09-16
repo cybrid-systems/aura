@@ -60,10 +60,11 @@ struct DensifyConsistencyReport {
     // OR #2495 process-wide g_moving_untracked_external_roots_total delta
     // during the densify window). Default true (no Moving / Soft).
     bool untracked_ok = true;
-    // Issue #2595: panic_residual axis — if any PanicCheckpoint is live
-    // AND not deferred (gc_deferred_for_evaluator), Phase 5 must NOT
-    // claim success (panic in progress can leak half-green densify).
-    // Default true (no panic_cp OR gc_deferred_for_evaluator is true).
+    // Issue #2595 / #3850: panic_residual axis — if Evaluator still holds
+    // a live PanicCheckpoint (has_panic_checkpoint) AND is not deferred
+    // (gc_deferred_for_evaluator), Phase 5 must NOT claim success. Keys
+    // off the live Evaluator CP, not process panic depth (steal may clear
+    // defer while CP remains). Default true (no CP OR deferred).
     bool panic_residual_ok = true;
     bool linear_ok = true;
     // Issue #2353: type-axis after densify/steal (ownership + optional partial).

@@ -2251,9 +2251,16 @@ public:
             }
             const bool pin_block = aura::core::lifetime::live_pin_count() > 0;
             const bool guard_block = aura::core::envframe_lifetime::active_guard_depth() > 0;
+            // Issue #3850: align with compact_sweep — also block when a live
+            // PanicCheckpoint remains after steal cleared orphan defer
+            // (should_defer_destructive_gc alone is insufficient). Soft
+            // leftover (defer cleared, CP kept) stays observe-only for Soft
+            // vulnerability scoring; Moving still soft-gates.
             if (aura::core::arena_policy::in_render_hotpath() ||
                 arena_mutation_boundary_depth() > 0 ||
-                aura::gc_hooks::should_defer_destructive_gc() || pin_block || guard_block) {
+                aura::gc_hooks::should_defer_destructive_gc() ||
+                aura::gc_hooks::evaluator_has_panic_checkpoint_probe() || pin_block ||
+                guard_block) {
                 result.moving_blocked_precondition = true;
                 result.soft_gated = true;
                 if (pin_block) {

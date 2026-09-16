@@ -1083,6 +1083,85 @@ static void ac3824_soft_leftover_unchanged() {
           "3824: no docs/design/");
 }
 
+
+// ── Issue #3850: steal defer-first × Moving densify CP probe ───────────
+// Soft leftover (defer cleared, CP kept) is observe-only — Moving still
+// soft-gates via evaluator_has_panic_checkpoint_probe. Production clears
+// CP before orphan defer drain.
+static void ac3850_1_soft_leftover_probe_blocks_moving() {
+    std::println("\n--- #3850 AC1: Soft leftover — defer cleared, CP live → Moving blocked ---");
+    apply_dev_audit_defaults(); // Soft
+    // Simulate Soft leftover: live CP depth without panic defer.
+    while (aura::gc_hooks::g_live_panic_checkpoint_depth.load(std::memory_order_relaxed) > 0)
+        aura::gc_hooks::note_panic_checkpoint_cleared();
+    aura::gc_hooks::note_panic_checkpoint_live();
+    CHECK(aura::gc_hooks::evaluator_has_panic_checkpoint_probe(),
+          "3850 AC1: probe true with live CP depth");
+    // Soft leftover shape: live CP probe true even when panic defer depth
+    // is zero (steal cleared defer, CP kept). Do not require process defer.
+    CHECK(aura::gc_hooks::g_live_panic_checkpoint_depth.load(std::memory_order_relaxed) > 0,
+          "3850 AC1: live CP depth > 0 independent of defer arm");
+    // Source-cite Moving gate OR-gates the probe (behavioral densify cover
+    // lives in test_moving_densify_fail_closed / test_moving_compact).
+    const auto arena = read_file("src/core/arena.ixx");
+    const auto gate = arena.find("LiveCompactMode::Moving");
+    CHECK(gate != std::string::npos, "3850 AC1: Moving entry located");
+    const auto win = arena.substr(gate, 2200);
+    CHECK(win.find("evaluator_has_panic_checkpoint_probe()") != std::string::npos,
+          "3850 AC1: Moving OR-gates panic CP probe");
+    CHECK(win.find("should_defer_destructive_gc()") != std::string::npos,
+          "3850 AC1: Moving still checks should_defer");
+    aura::gc_hooks::note_panic_checkpoint_cleared();
+    CHECK(!aura::gc_hooks::evaluator_has_panic_checkpoint_probe(),
+          "3850 AC1: probe false after clear");
+}
+
+static void ac3850_2_production_clears_cp_before_defer() {
+    std::println("\n--- #3850 AC2: production steal clears CP before defer drain ---");
+    const auto efm = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+    const auto early = efm.find("Issue #3850: production clears live PanicCheckpoint BEFORE");
+    CHECK(early != std::string::npos, "3850 AC2: early CP clear cite");
+    const auto defer = efm.find("clear_gc_defer_for_evaluator(prev_eval_id)", early);
+    CHECK(defer != std::string::npos && defer > early,
+          "3850 AC2: clear_gc_defer after early CP clear");
+    const auto win = efm.substr(early, defer - early + 80);
+    CHECK(win.find("clear_panic_checkpoint()") != std::string::npos,
+          "3850 AC2: clear_panic_checkpoint in early window");
+    CHECK(win.find("production_hard") != std::string::npos, "3850 AC2: Soft skips early clear");
+}
+
+static void ac3850_3_panic_residual_ok_keys_off_has_cp() {
+    std::println("\n--- #3850 AC3: panic_residual_ok keys off has_panic_checkpoint ---");
+    const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto pos = mb.find("panic_residual_ok = !panic_cp_live_now || panic_deferred_now");
+    CHECK(pos != std::string::npos, "3850 AC3: panic_residual_ok formula");
+    const auto win = mb.substr(pos > 500 ? pos - 500 : 0, 700);
+    CHECK(win.find("ev_->has_panic_checkpoint()") != std::string::npos,
+          "3850 AC3: keys off live Evaluator CP");
+    CHECK(win.find("g_gc_defer_pending_panic_depth") == std::string::npos ||
+              win.find("has_panic_checkpoint()") != std::string::npos,
+          "3850 AC3: not depth-only");
+    CHECK(win.find("Issue #3850") != std::string::npos || mb.find("Issue #2595 / #3850") != std::string::npos,
+          "3850 AC3: cites #3850");
+}
+
+static void ac3850_4_soft_leftover_observe_wiring() {
+    std::println("\n--- #3850 AC4: Soft leftover observe-only; wiring; no invent ---");
+    const auto gh = read_file("src/core/gc_hooks.h");
+    CHECK(gh.find("evaluator_has_panic_checkpoint_probe") != std::string::npos,
+          "3850 AC4: probe declared");
+    CHECK(gh.find("g_live_panic_checkpoint_depth") != std::string::npos,
+          "3850 AC4: live CP depth");
+    CHECK(gh.find("Issue #3850") != std::string::npos, "3850 AC4: gc_hooks cites #3850");
+    const auto efm = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+    CHECK(efm.find("Soft:") != std::string::npos && efm.find("observe-only") != std::string::npos,
+          "3850 AC4: Soft leftover observe-only retained");
+    CHECK(read_file("tests/serve/test_issue_3850.cpp").empty(), "3850: no invent");
+    CHECK(read_file("docs/design/3850-steal-panic-moving.md").empty(), "3850: no docs/design");
+    const auto lint = read_file("scripts/coverage/checks/check_steal_panic_moving_gate_3850.py");
+    CHECK(!lint.empty() && lint.find("Issue #3850") != std::string::npos, "3850 AC4: linter present");
+}
+
 int run_test_steal_complete_gc_defer() {
     std::println("=== Issue #2203: steal-complete single entry (clear_gc_defer + metric) ===");
     std::println("=== Issue #2314: residual defer clear interlock (share helper, idempotent) ===");
@@ -1123,6 +1202,11 @@ int run_test_steal_complete_gc_defer() {
     ac3824_foreign_steal_preserves_b_hold();
     ac3824_orphan_residual_still_clears();
     ac3824_soft_leftover_unchanged();
+    std::println("\n=== Issue #3850: steal defer×Moving panic CP probe ---");
+    ac3850_1_soft_leftover_probe_blocks_moving();
+    ac3850_2_production_clears_cp_before_defer();
+    ac3850_3_panic_residual_ok_keys_off_has_cp();
+    ac3850_4_soft_leftover_observe_wiring();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

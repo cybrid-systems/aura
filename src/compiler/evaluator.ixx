@@ -3246,6 +3246,11 @@ public:
         // throw from later bookkeeping cannot leave depth permanently
         // elevated (exception-safe dual of ~Evaluator release).
         release_gc_defer_for_pending_panic();
+        // Issue #3850: drop live-CP process depth (independent of defer)
+        // before clearing fields so Moving densify probe cannot race a
+        // half-cleared window.
+        if (!panic_safe_source_.empty())
+            aura::gc_hooks::note_panic_checkpoint_cleared();
         panic_safe_source_.clear();
         // Issue #242: clear the arena-size snapshots too so a
         // subsequent save_panic_checkpoint() starts fresh.
