@@ -23,6 +23,7 @@ Exit 0 = all rows satisfied.
 
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 
@@ -95,7 +96,7 @@ def main() -> int:
     ):
         must(f'"{key}"' if key != "overflow_wrap_evicted" else f'"{key}"', f"AC2 key {key}", prim)
     must('"overflow_wrap_evicted"', "AC2 wrap-evicted reason", prim)
-    refuse_inserts = prim.count('insert_kv("wal-overflow-wrap-refuse-total"')
+    refuse_inserts = len(re.findall(r'insert_kv\(\s*"wal-overflow-wrap-refuse-total"', prim))
     if refuse_inserts < 4:
         fails.append(f"AC2: expected >=4 wal-overflow-wrap-refuse-total insert sites, found {refuse_inserts}")
     must("wal_overflow_ring_wrap_total()", "AC2 wrap_total gate for evicted face", prim)

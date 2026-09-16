@@ -8,7 +8,8 @@ Fold previous keys into the same map (not a second registry).
 Contract:
   AC1 relocate saves prev_remap and folds keys that are not live
   AC2 apply_closure helper still refuses on resolve hit (no new predicate)
-  AC3 Soft / objects_moved==0 keep #2569 recover (helper early-outs)
+  AC3 #3848 refine: helper consults window_would_allow_mutate — refuse
+      survives objects_moved==0 publish
   AC4 no g_3469_* / no new query key / no second pin registry
   AC5 tests in test_moving_compact + test_setcode_rebind_survive;
       no test_issue_3469.cpp / no docs/design/3469-*
@@ -61,7 +62,8 @@ def main() -> int:
     helper_end = flat.find("static void note_apply_closure_densify_hard_refuse", helper)
     helper_win = flat[helper:helper_end] if helper >= 0 and helper_end > helper else flat[helper : helper + 800]
     must("resolve_object_remap", "AC2 refuse still resolve-hit", helper_win)
-    must("g_last_objects_moved", "AC3 last-window moved load", helper_win)
+    must("moving_densify_health::window_would_allow_mutate", "AC3 #3848 window consult", helper_win)
+    must("g_last_untracked_kept", "AC3 untracked_kept feed", helper_win)
     if "LifetimePin::pin" in helper_win or ".pin(" in helper_win:
         fails.append("AC3: extra pin walk on densify-refuse helper")
 
