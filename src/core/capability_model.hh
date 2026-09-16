@@ -21,6 +21,11 @@
 #include <unordered_map>
 #include <vector>
 
+// Issue #3801 / #3837: IsolationDeny + string write-fence deny SE mid joins
+// TypedMid-then-epoch (strong def in evaluator_security.cpp). Weak so
+// core-only / light-link TUs still link; null → Mutation epoch.
+extern "C" std::uint64_t aura_isolation_deny_se_mid() noexcept __attribute__((weak));
+
 namespace aura::core::capability {
 
 inline constexpr int kCapabilityModelPhase = 2; // #1565 enforcement
@@ -2596,11 +2601,16 @@ inline bool try_grant_capability_string_path_privileged_locked(TenantId caller,
         1, std::memory_order_relaxed);
 
     // Dual-write to SecurityEvent ring + WAL for forensic join (mid + fiber + epoch).
+    // Issue #3837 / #3801: TypedMid-then-epoch SSOT via aura_isolation_deny_se_mid
+    // (same resolver family as IsolationDeny / production_deny_se_mid). Never
+    // synthesize mid=1 when epoch=0 — Soft Soft-gen / mid=1 observe stays on
+    // Soft arms only (#2493). Weak hook → epoch when audit TU not linked.
     using ::aura::core::current_mutation_epoch;
     using ::aura::core::security_event::SecurityEventKind;
     using ::aura::core::security_event_wal::emit_security_event_durable;
     const auto epoch = current_mutation_epoch();
-    const auto mid = epoch != 0 ? epoch : static_cast<std::uint64_t>(1);
+    const auto mid =
+        (aura_isolation_deny_se_mid != nullptr) ? aura_isolation_deny_se_mid() : epoch;
     const auto fid = static_cast<std::int64_t>(effect_fiber_id_or(0));
     emit_security_event_durable(SecurityEventKind::EffectDeny, caller, mid, epoch, eff_bits,
                                 "grant_capability",

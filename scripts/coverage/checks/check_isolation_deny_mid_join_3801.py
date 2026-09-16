@@ -6,12 +6,18 @@ family as require_effect / join_audit_and_se_mid). Production deny arms
 must not mint phantom mid=1 via ``epoch ?: 1``. Soft/Off observe mid=1
 (#2493) stays on Soft arms only.
 
+Issue #3837: string-path wildcard write-fence
+(``try_grant_capability_string_path_privileged_locked``) must use the same
+``aura_isolation_deny_se_mid`` / production_deny_se_mid SSOT — never
+``epoch ?: 1``.
+
 Contract (one row per AC):
   AC1  under Guard TypedMid≠epoch, IsolationDeny SE mid == TypedMid
   AC2  Restricted+MT epoch=0 deny SE mid=0 (no phantom 1)
   AC3  Soft/Off observe stamp contract unchanged
   AC4  cite-first linter forbids production epoch?:1 outside Soft arms;
        no new query key
+  AC5  #3837 string write-fence deny SE uses TypedMid-then-epoch SSOT
 
 Exit 0 = all rows satisfied.
 """
@@ -113,12 +119,44 @@ def main() -> int:
         sec,
     )
 
+    # ── AC5 #3837 string write-fence deny SE mid join ──
+    cap = _read("src/core/capability_model.hh")
+    must("Issue #3837", "AC5 cite cap", cap)
+    must("try_grant_capability_string_path_privileged_locked", "AC5 fence fn", cap)
+    must("aura_isolation_deny_se_mid", "AC5 fence uses mid hook", cap)
+    # Fence body must not synthesize epoch?:1
+    fn_marker = "inline bool try_grant_capability_string_path_privileged_locked"
+    fn_idx = cap.find(fn_marker)
+    if fn_idx < 0:
+        fails.append("AC5: fence function missing")
+    else:
+        # Scope to this function only (until next top-level helper / namespace close)
+        fn_end = cap.find("\n[[nodiscard]] inline std::uint64_t capability_wildcard_write_fence_deny_total_v_read", fn_idx)
+        if fn_end < 0:
+            fn_end = cap.find("\n} // namespace aura::core::capability", fn_idx)
+        if fn_end < 0:
+            fn_end = fn_idx + 2500
+        fn_body = cap[fn_idx:fn_end]
+        phantom = "epoch != 0 ? epoch : static_cast<std::uint64_t>(1)"
+        if phantom in fn_body:
+            fails.append("AC5: string write-fence still synthesizes epoch?:1 mid")
+        if "aura_isolation_deny_se_mid" not in fn_body:
+            fails.append("AC5: fence body missing aura_isolation_deny_se_mid call")
+    must("3837 AC1", "AC5 test TypedMid join", test)
+    must("3837 AC2", "AC5 test epoch=0", test)
+    must("wildcard-write-fence-needs-explicit-tenant-admin", "AC5 SE reason", test)
+    must_not(
+        "const auto mid = epoch != 0 ? epoch : static_cast<std::uint64_t>(1);",
+        "AC5 no bare phantom in capability_model",
+        cap,
+    )
+
     if fails:
         print(f"Issue #3801 linter FAILED ({len(fails)} rows):")
         for f in fails:
             print(f"  - {f}")
         return 1
-    print("OK: Issue #3801 IsolationDeny / deny SE mid join — all AC rows satisfied")
+    print("OK: Issue #3801/#3837 IsolationDeny / string-fence deny SE mid join — all AC rows satisfied")
     return 0
 
 
