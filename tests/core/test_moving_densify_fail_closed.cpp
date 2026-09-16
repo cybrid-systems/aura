@@ -2861,7 +2861,10 @@ static void ac3308_6_source_and_linter() {
               std::format("3308 AC6: forbidden {} per #81934", rel));
     }
     // Linter script presence (registered in build.py via #3308 cmd_*_coverage).
-    CHECK(std::filesystem::exists("scripts/check_post_moving_canary_steal_lcp_3308.py"),
+    // CWD-independent: the test may run from the build dir (add_test has no
+    // WORKING_DIRECTORY), so anchor the linter-script path at the source root.
+    CHECK(std::filesystem::exists(std::filesystem::path(AURA_SOURCE_DIR) /
+                                  "scripts/check_post_moving_canary_steal_lcp_3308.py"),
           "3308 AC6: source-cite linter script present");
 }
 
@@ -3949,8 +3952,8 @@ static void ac3633_4_soft_off_zero_cost() {
     // Issue #3781: the same objects_moved+relocated_old predicate also builds
     // this_window_remap *before* the gate — find reconciliation after gate.
     const auto arena_src = read_file("src/core/arena.ixx");
-    const auto gate =
-        arena_src.find("if (saved_bytes > 0 || relocated > 0 || result.moved_live_objects) {");
+    const auto gate = arena_src.find(
+        "if (saved_bytes > 0 || this_window_relocated > 0 || result.moved_live_objects) {");
     const auto recon = (gate == std::string::npos)
                            ? std::string::npos
                            : arena_src.find("if (result.objects_moved > 0 && "
