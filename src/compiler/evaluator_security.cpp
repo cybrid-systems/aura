@@ -424,14 +424,19 @@ bool Evaluator::check_and_record_effect(std::uint16_t required_effect_bits,
             }
         }
     }
-    // Issue #2149: security provenance uses WorkspaceEpoch Mutation only
-    // (same vocabulary as make_grant_provenance / grant_epoch). Bridge is
-    // AOT/JIT/closure — never the capability fence key. Pre-#2149 this
-    // path used Evaluator::current_bridge_epoch(), which can diverge from
-    // Mutation under independent bumps and misalign audit / grant epochs.
+    // Issue #3844 / #2149: security provenance uses WorkspaceEpoch Mutation
+    // only (same vocabulary as make_grant_provenance / grant_epoch). Bridge
+    // is AOT/JIT/closure — never the capability fence key. Hard face
+    // (production_defaults || Full): epoch=0 stays 0 — never invent phantom
+    // 1 (Agents false-join SE/WAL/grant epoch to Mutation). Soft may keep
+    // a non-zero observe stamp (#2493 AC4). #3837 is string-fence mid invent
+    // — sibling vocabulary bug, different function.
     {
         const auto me = ::aura::core::current_mutation_epoch();
-        prov.epoch = me != 0 ? me : 1;
+        if (typed_audit::production_hard_face_active())
+            prov.epoch = me; // 0 stays 0
+        else
+            prov.epoch = me != 0 ? me : 1; // Soft observe stamp only
         // Optional observability: Mutation vs Bridge split under Strict
         // (does not deny — Agent sees capability_mutation_bridge_split_total).
         if (is_strict()) {

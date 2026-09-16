@@ -110,12 +110,16 @@ int run_test_grant_epoch_fiber_bind() {
         std::println("\n--- make_grant_provenance helper ---");
         const auto me = current_mutation_epoch();
         auto p = make_grant_provenance(0, true, 0, 42);
-        CHECK(p.epoch != 0, "helper non-zero epoch");
-        CHECK(p.epoch == me || p.epoch == 1, "helper epoch = mutation");
-        CHECK(p.mutation_id != 0, "helper mutation_id bound");
+        // Issue #3844: epoch matches Mutation (0 stays 0 under hard face;
+        // Soft may observe-stamp 1). After bump above me is non-zero.
+        CHECK(p.epoch == me || p.epoch == 1, "helper epoch = mutation (or Soft observe 1)");
+        if (me != 0)
+            CHECK(p.epoch == me, "helper epoch == Mutation when me!=0");
+        CHECK(p.mutation_id != 0 || me == 0, "helper mutation_id bound when me!=0");
         CHECK(p.fiber_id == 42, "helper fiber_id");
         auto p_off = make_grant_provenance(0, false, 0, 7);
-        CHECK(p_off.epoch != 0, "Off path still non-zero epoch");
+        CHECK(p_off.epoch == me || p_off.epoch == 1,
+              "Off path epoch = Mutation (or Soft observe 1) — #3844");
         CHECK(p_off.mutation_id == 0, "Off path no forced mutation_id");
         CHECK(p_off.fiber_id == 7, "Off path fiber");
     }
@@ -271,7 +275,7 @@ int run_test_grant_epoch_fiber_bind() {
         CHECK(true, "AC7 chaos completed without crash");
     }
 
-    // ── AC8: Off sandbox grant still works; epoch still non-zero ──
+    // ── AC8: Off sandbox grant still works; epoch vocabulary (#3844) ──
     {
         std::println("\n--- AC8: Off sandbox ---");
         reset_all();
@@ -282,7 +286,11 @@ int run_test_grant_epoch_fiber_bind() {
         ev.grant_effect_capability(44, "off-grant", kEffectMutate, 0);
         CapabilityGrant g{};
         CHECK(g_capability_registry().find_grant(44, "off-grant", g), "Off grant found");
-        CHECK(g.grant_epoch != 0, "Off still non-zero epoch (#2055 AC)");
+        // Issue #3844: under hard face (prod||Full) epoch=0 stays 0; Soft may
+        // observe-stamp 1. Off sandbox no longer requires non-zero invent.
+        const auto me = current_mutation_epoch();
+        CHECK(g.grant_epoch == me || g.grant_epoch == 1,
+              "Off grant_epoch = Mutation (or Soft observe 1) — #3844");
         // mutation_id not forced under Off
         CHECK(g.bound_mutation_id == 0, "Off no forced mutation_id bind");
         const bool allowed = ev.check_and_record_effect_for_test(kEffectMutate, kEffectMutate,

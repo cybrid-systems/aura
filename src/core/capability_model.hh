@@ -26,6 +26,11 @@
 // core-only / light-link TUs still link; null → Mutation epoch.
 extern "C" std::uint64_t aura_isolation_deny_se_mid() noexcept __attribute__((weak));
 
+// Issue #3844: hard face = production_defaults || Full (strong def in
+// typed_mutation_audit_hooks.cpp via production_hard_face_active). Weak so
+// core-only links still compile; null → treat as hard (never invent epoch).
+extern "C" int aura_production_hard_face_active_probe() noexcept __attribute__((weak));
+
 namespace aura::core::capability {
 
 inline constexpr int kCapabilityModelPhase = 2; // #1565 enforcement
@@ -59,6 +64,26 @@ inline constexpr int kCapabilitySessionPeerFiberIssue = 3241;
 // (observe via session_bound_orphan_detected_total); Soft/Off + soft-share
 // Restricted retain legacy mid-only (#3241 AC3).
 inline constexpr int kCapabilitySessionRevokeFiberZeroIssue = 3799;
+// Issue #3844: grant/SE epoch invent residual — Epoch = WorkspaceEpoch
+// Mutation only (never phantom 1 under hard face).
+inline constexpr int kGrantEpochNoPhantomIssue = 3844;
+
+// Issue #3844: Mutation-epoch stamp for grant/SE provenance.
+// Hard (production_defaults || Full, or probe absent): 0 stays 0.
+// Soft: optional observe stamp 1 when Mutation epoch is unset (#2493 AC4).
+[[nodiscard]] inline bool capability_epoch_hard_face() noexcept {
+    if (aura_production_hard_face_active_probe)
+        return aura_production_hard_face_active_probe() != 0;
+    return true; // Vocabulary-true default when probe unlinked
+}
+
+[[nodiscard]] inline std::uint64_t stamp_grant_mutation_epoch() noexcept {
+    const auto me = ::aura::core::current_mutation_epoch();
+    if (capability_epoch_hard_face())
+        return me; // 0 stays 0 — WorkspaceEpoch Mutation only
+    return me != 0 ? me : static_cast<std::uint64_t>(1); // Soft observe
+}
+
 
 // First-class effects (layout-stable uint16_t bitflags).
 enum class Effect : std::uint16_t {
@@ -1577,7 +1602,11 @@ struct CapabilityRegistry {
         // Soft / quiet recording path may emit mid=0 here; SE.reason carries
         // the failure class — that is the canonical refuse shape.
         const auto mid = prov.mutation_id;
-        const auto epoch = prov.epoch != 0 ? prov.epoch : mid;
+        // Issue #3844: SE.epoch is WorkspaceEpoch Mutation only — never
+        // fall through to mid (TypedMid ≠ Mutation). Soft observe invent
+        // (if any) is stamped into prov.epoch upstream via
+        // stamp_grant_mutation_epoch / make_grant_provenance.
+        const auto epoch = prov.epoch;
         const auto kind = denied ? SecurityEventKind::EffectDeny : SecurityEventKind::EffectAllow;
         const char* reason = reason_hint;
         if (reason == nullptr) {
@@ -1659,11 +1688,10 @@ struct CapabilityRegistry {
     bool grant_macro_self_evo(TenantId tenant, MacroSelfEvoPolicy policy = {},
                               const EffectProvenance& prov_in = {}, TenantId caller_principal = 0) {
         EffectProvenance prov = prov_in;
-        // Always ensure non-zero epoch stamp (parity with make_grant_provenance).
-        if (prov.epoch == 0) {
-            const auto me = ::aura::core::current_mutation_epoch();
-            prov.epoch = me != 0 ? me : 1;
-        }
+        // Issue #3844: stamp Mutation epoch; hard face keeps 0 (no phantom 1).
+        // Soft may still observe-stamp via stamp_grant_mutation_epoch.
+        if (prov.epoch == 0)
+            prov.epoch = stamp_grant_mutation_epoch();
         // Issue #3459: phantom mid synthesis is Soft/Off-only contract
         // (#2531 parity). Production (Restricted/Strict) refuses mid==0
         // below — one refuse policy with grant() (#3090); no epoch|1
@@ -2095,13 +2123,14 @@ inline bool check_and_record_effect(Effect required, Effect actual, const Effect
     return allowed;
 }
 
-// Issue #2055: build EffectProvenance stamped with WorkspaceEpoch Mutation
-// + fiber. Always produces non-zero epoch (AC: grant carries non-zero
-// epoch matching mutation epoch at grant time). When force_mutation_bind
-// is true (sandbox != Off), mutation_id defaults to the mutation epoch if
-// the caller left it zero (#2074 anti-sticky). Pass fiber_id from
-// aura_fiber_current_id() at the Evaluator boundary (core header stays
-// free of fiber TLS).
+// Issue #2055 / #3844: build EffectProvenance stamped with WorkspaceEpoch
+// Mutation + fiber. Epoch matches current Mutation epoch at grant time;
+// under production_defaults || Full, epoch=0 stays 0 (no phantom 1). Soft
+// may observe-stamp 1 when Mutation is unset (#2493 AC4). When
+// force_mutation_bind is true (sandbox != Off), mutation_id defaults to the
+// mutation epoch if the caller left it zero (#2074 anti-sticky). Pass
+// fiber_id from aura_fiber_current_id() at the Evaluator boundary (core
+// header stays free of fiber TLS).
 [[nodiscard]] inline EffectProvenance
 make_grant_provenance(std::uint64_t provenance_mutation_id = 0, bool force_mutation_bind = true,
                       std::uint32_t node_id = 0, std::uint32_t fiber_id = 0) noexcept {
@@ -2109,8 +2138,11 @@ make_grant_provenance(std::uint64_t provenance_mutation_id = 0, bool force_mutat
     prov.node_id = node_id;
     prov.fiber_id = fiber_id;
     const auto me = ::aura::core::current_mutation_epoch();
-    // Non-zero WorkspaceEpoch Mutation stamp (0 is "unset / legacy").
-    prov.epoch = me != 0 ? me : 1;
+    // Issue #3844: Epoch = WorkspaceEpoch Mutation only. Hard face
+    // (production_defaults || Full): 0 stays 0 — never invent phantom 1.
+    // Soft: optional observe stamp via stamp_grant_mutation_epoch (#2493).
+    // #3837 is deny-SE mid invent on string write-fence — different site.
+    prov.epoch = stamp_grant_mutation_epoch();
     if (force_mutation_bind) {
         // Issue #2531: production (sandbox != Off) grant mid join must be
         // non-zero so provenance_ok mid compare cannot silently skip.
@@ -2394,7 +2426,8 @@ check_macro_self_evo(TenantId tenant, bool sandbox_active = false, bool wildcard
     EffectProvenance call_prov{};
     {
         const auto me = ::aura::core::current_mutation_epoch();
-        call_prov.epoch = me != 0 ? me : 1;
+        // Issue #3844: hard face keeps Mutation epoch 0; Soft may observe-stamp.
+        call_prov.epoch = stamp_grant_mutation_epoch();
         // Issue #3594: check provenance key — no phantom mid=1. caller_mid
         // (live session mid / TypedMid join) wins; else Mutation epoch.
         // epoch=0 → mutation_id=0 hits the provenance fence below

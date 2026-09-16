@@ -432,3 +432,5 @@ scripts/coverage/checks/check_scope_sweep_reclaimed_pending_3842.py
 check_scope_sweep_reclaimed_pending_3842.py
 scripts/coverage/checks/check_require_effect_full_hard_mid_3843.py
 check_require_effect_full_hard_mid_3843.py
+scripts/coverage/checks/check_grant_epoch_no_phantom_3844.py
+check_grant_epoch_no_phantom_3844.py
