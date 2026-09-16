@@ -257,7 +257,8 @@ void register_file_primitives(PrimRegistrar add, Evaluator& ev) {
                                auto& path = ev.string_heap_[idx];
                                if (path_is_denied(path))
                                    return make_int(0);
-                               // Issue #3835: Restricted+MT / Strict tenant root (mirror write-file).
+                               // Issue #3835: Restricted+MT / Strict tenant root (mirror
+                               // write-file).
                                std::string resolved;
                                if (!ev.check_tenant_host_path(path, resolved, "file-exists?"))
                                    return make_int(0);
@@ -469,7 +470,8 @@ void register_file_primitives(PrimRegistrar add, Evaluator& ev) {
                                auto& dir_path = ev.string_heap_[idx];
                                if (path_is_denied(dir_path))
                                    return make_void();
-                               // Issue #3835: Restricted+MT / Strict tenant root (mirror write-file).
+                               // Issue #3835: Restricted+MT / Strict tenant root (mirror
+                               // write-file).
                                std::string resolved;
                                if (!ev.check_tenant_host_path(dir_path, resolved, "directory-list"))
                                    return make_void();

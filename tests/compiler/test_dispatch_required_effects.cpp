@@ -973,7 +973,8 @@ int run_test_dispatch_required_effects() {
 
     // ── Issue #3834: Call primitive arm ownerless production fail-closed (#3798 sibling) ──
     {
-        std::println("\n--- #3834 AC1: Call primitive arm production fail-closed next to PrimCall ---");
+        std::println(
+            "\n--- #3834 AC1: Call primitive arm production fail-closed next to PrimCall ---");
         const auto src = read_file("src/compiler/ir_executor_impl.cpp");
         const auto call = src.find("case IROpcode::Call");
         const auto pc = src.find("case IROpcode::PrimCall");
@@ -986,7 +987,8 @@ int run_test_dispatch_required_effects() {
                   "3834 AC1: Call has primitive arm");
             CHECK(win.find("production_defaults_active()") != std::string::npos,
                   "3834 AC1: Call cites production_defaults_active");
-            CHECK(win.find("Issue #3834") != std::string::npos || win.find("#3834") != std::string::npos,
+            CHECK(win.find("Issue #3834") != std::string::npos ||
+                      win.find("#3834") != std::string::npos,
                   "3834 AC1: Call documents #3834");
             // Soft/Off raw path retained (call_args form).
             CHECK(win.find("(*pfn)(call_args)") != std::string::npos,
@@ -1040,13 +1042,13 @@ int run_test_dispatch_required_effects() {
         // Call path: Primitive load → Call (not PrimCall).
         mod.functions[1].blocks.push_back({0});
         mod.functions[1].blocks.back().instructions = {
-            {aura::ir::IROpcode::Arg, {0, 0, 0, 0}},                 // locals[0] = vec
-            {aura::ir::IROpcode::Arg, {1, 1, 0, 0}},                 // locals[1] = idx
-            {aura::ir::IROpcode::Arg, {2, 2, 0, 0}},                 // locals[2] = val
-            {aura::ir::IROpcode::Primitive, {5, vs_slot, 0, 0}},     // locals[5] = vector-set!
-            {aura::ir::IROpcode::Call, {5, 0, 3, 3}},                // Call prim with 3 args
-            {aura::ir::IROpcode::Primitive, {6, vr_slot, 0, 0}},     // locals[6] = vector-ref
-            {aura::ir::IROpcode::Call, {6, 0, 2, 4}},                // Call vector-ref
+            {aura::ir::IROpcode::Arg, {0, 0, 0, 0}},             // locals[0] = vec
+            {aura::ir::IROpcode::Arg, {1, 1, 0, 0}},             // locals[1] = idx
+            {aura::ir::IROpcode::Arg, {2, 2, 0, 0}},             // locals[2] = val
+            {aura::ir::IROpcode::Primitive, {5, vs_slot, 0, 0}}, // locals[5] = vector-set!
+            {aura::ir::IROpcode::Call, {5, 0, 3, 3}},            // Call prim with 3 args
+            {aura::ir::IROpcode::Primitive, {6, vr_slot, 0, 0}}, // locals[6] = vector-ref
+            {aura::ir::IROpcode::Call, {6, 0, 2, 4}},            // Call vector-ref
             {aura::ir::IROpcode::Return, {4, 0, 0, 0}},
         };
 
