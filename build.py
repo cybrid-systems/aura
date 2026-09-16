@@ -5197,6 +5197,20 @@ def cmd_lint():
             "Issue #3836 shell/command-output require_effect linter failed — run python3 scripts/coverage/checks/check_shell_require_effect_3836.py"
         )
         return r
+    # Issue #3843: require_effect hard mid refuse matches Typed resolve
+    # (production_defaults || Full). Full-without-defaults no longer invents
+    # mid=1; Soft mid=1 unchanged. Not a dup of #3837. Extends
+    # test_audit_mutation_id_unify (#81967); no docs/design / invent (#1655).
+    refh3843_script = COVERAGE_CHECKS / "check_require_effect_full_hard_mid_3843.py"
+    if not refh3843_script.exists():
+        fail(f"missing {refh3843_script}")
+        return 1
+    r = run([sys.executable, str(refh3843_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3843 require_effect Full-hard mid linter failed — run python3 scripts/coverage/checks/check_require_effect_full_hard_mid_3843.py"
+        )
+        return r
     # Issue #3838: SE WAL overflow refuse-on-wrap under production
     # fail-closed (#3806 residual). Soft overwrite retained; Agent face
     # wrap-evicted vs never-emitted. Extends test_security_event_wal_replay
@@ -15600,6 +15614,28 @@ def cmd_shell_require_effect_3836():
     return cmd_shell_require_effect_3836_coverage()
 
 
+def cmd_require_effect_full_hard_mid_3843_coverage():
+    """Issue #3843: require_effect hard mid refuse matches Typed (prod||Full)."""
+    print(f"{B}=== require_effect Full-hard mid (#3843) ==={N}")
+    script = COVERAGE_CHECKS / "check_require_effect_full_hard_mid_3843.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = run([sys.executable, str(script)], cwd=ROOT)
+    if r != 0:
+        fail("require_effect Full-hard mid (#3843) coverage contract rows failed")
+        return r
+    ok("require_effect Full-hard mid (#3843) coverage clean")
+    return 0
+
+
+def cmd_require_effect_full_hard_mid_3843():
+    """Issue #3843: Align require_effect mid refuse with Typed Full hard face."""
+    print(f"{B}=== require_effect Full-hard mid (#3843) ==={N}")
+    return cmd_require_effect_full_hard_mid_3843_coverage()
+
+
+
 def cmd_wal_overflow_wrap_refuse_3838_coverage():
     """Issue #3838: WAL overflow refuse-on-wrap (#3806 residual)."""
     print(f"{B}=== WAL overflow wrap refuse (#3838) ==={N}")
@@ -23652,6 +23688,8 @@ def main():
         "tenant-host-path-read-3835-coverage": cmd_tenant_host_path_read_3835_coverage,
         "shell-require-effect-3836": cmd_shell_require_effect_3836,
         "shell-require-effect-3836-coverage": cmd_shell_require_effect_3836_coverage,
+        "require-effect-full-hard-mid-3843": cmd_require_effect_full_hard_mid_3843,
+        "require-effect-full-hard-mid-3843-coverage": cmd_require_effect_full_hard_mid_3843_coverage,
         "wal-overflow-wrap-refuse-3838": cmd_wal_overflow_wrap_refuse_3838,
         "wal-overflow-wrap-refuse-3838-coverage": cmd_wal_overflow_wrap_refuse_3838_coverage,
         "string-grant-session-bound-3839": cmd_string_grant_session_bound_3839,

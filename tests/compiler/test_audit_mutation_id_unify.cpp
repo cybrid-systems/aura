@@ -758,6 +758,139 @@ static void ac3778_occurrence_persist_mid_joins_ssot() {
     CHECK(!std::filesystem::exists(invent), "#3778 AC4: no test_issue_3778.cpp");
 }
 
+// Issue #3843: require_effect hard face must match Typed resolve —
+// production_defaults_active() || AuditStrategy::Full. Full-without-defaults
+// (cold-start Full + production_defaults==0) previously invented mid=1 while
+// resolve refused mid=0 → phantom SE/grant mid vs Typed trail. Soft mid=1
+// observe stamp unchanged. Not a dup of #3837 (string-fence mid join).
+static void ac3843_1_full_without_defaults_refuses() {
+    std::println(
+        "\n--- #3843 AC1: Full + production_defaults=0 + mid==0 → refuse, no phantom mid=1 ---");
+    reset_all();
+    aura::compiler::typed_audit::reset_for_test();
+    aura::core::reset_mutation_epoch_for_test();
+    aura::compiler::typed_audit::clear_type_linear_commit_proof_for_test();
+    aura::compiler::typed_audit::clear_boundary_audit_mid();
+    // Hard face without production_defaults: strategy Full, flag 0.
+    aura::compiler::typed_audit::set_strategy(aura::compiler::typed_audit::AuditStrategy::Full);
+    g_typed_mutation_audit_counters.production_defaults_active.store(0, std::memory_order_relaxed);
+    aura::core::store_workspace_epoch(aura::core::WorkspaceEpochKind::Mutation, 0);
+    process_resource_quota_manager().provenance_mutation_id = 0;
+    CHECK(aura::compiler::typed_audit::get_strategy() ==
+              aura::compiler::typed_audit::AuditStrategy::Full,
+          "3843 AC1 pre: strategy Full");
+    CHECK(!aura::compiler::typed_audit::production_defaults_active(),
+          "3843 AC1 pre: production_defaults inactive");
+    CHECK(aura::core::current_mutation_epoch() == 0, "3843 AC1 pre: epoch=0");
+
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_effect_sandbox_mode(0); // Off — mid refuse is hard-face, not sandbox
+    ev.set_capability_tenant_id(843);
+
+    using aura::core::security_event::g_security_event_ring;
+    const auto seq0 = g_security_event_ring().seq.load(std::memory_order_acquire);
+    const bool had_mid1_before = se_ring_has_mid(1);
+    const bool ok = ev.require_effect(
+        static_cast<std::uint16_t>(aura::compiler::security::kEffectMutate), "test:3843-ac1", 0);
+    const auto seq1 = g_security_event_ring().seq.load(std::memory_order_acquire);
+    CHECK(!ok, "3843 AC1: Full-without-defaults + mid==0 → require_effect refuses");
+    bool saw_mid1 = false;
+    for (std::uint64_t s = seq0; s < seq1; ++s) {
+        const auto& e = g_security_event_ring().ring[s % g_security_event_ring().ring.size()];
+        if (e.seq != s)
+            continue;
+        if (e.mutation_id == 1)
+            saw_mid1 = true;
+    }
+    CHECK(!saw_mid1, "3843 AC1: no phantom mid=1 SE/grant row after refuse");
+    CHECK(!se_ring_has_mid(1) || had_mid1_before,
+          "3843 AC1: ring does not mint new mid=1 after Full-without-defaults refuse");
+    // Align with Typed resolve: join/resolve hard refuse path.
+    const auto resolved = aura::compiler::typed_audit::resolve_audit_mutation_id(0);
+    CHECK(resolved == 0, "3843 AC1: Typed resolve also refuses mid=0 under Full");
+}
+
+static void ac3843_2_soft_mid1_unchanged() {
+    std::println("\n--- #3843 AC2: Soft mid=1 observe stamp unchanged ---");
+    reset_all();
+    aura::compiler::typed_audit::reset_for_test();
+    aura::core::reset_mutation_epoch_for_test();
+    aura::compiler::typed_audit::clear_type_linear_commit_proof_for_test();
+    aura::compiler::typed_audit::clear_boundary_audit_mid();
+    aura::compiler::typed_audit::apply_dev_audit_defaults(); // Sampled / Soft
+    g_typed_mutation_audit_counters.production_defaults_active.store(0, std::memory_order_relaxed);
+    aura::core::store_workspace_epoch(aura::core::WorkspaceEpochKind::Mutation, 0);
+    process_resource_quota_manager().provenance_mutation_id = 0;
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_effect_sandbox_mode(0);
+    const bool ok = ev.require_effect(
+        static_cast<std::uint16_t>(aura::compiler::security::kEffectMutate), "test:3843-ac2", 0);
+    CHECK(ok, "3843 AC2: Soft/Off allows without grant");
+    using aura::core::security_event::g_security_event_ring;
+    const auto& ring = g_security_event_ring();
+    const auto seq = ring.seq.load(std::memory_order_relaxed);
+    std::uint64_t last_mid = 0;
+    if (seq != 0)
+        last_mid = ring.ring[(seq - 1) % ring.ring.size()].mutation_id;
+    std::println("  3843 AC2: last SecurityEvent mid={}", last_mid);
+    CHECK(last_mid == 1, "3843 AC2: Soft observe stamp mid=1 preserved (#2493 AC4 / #3594)");
+}
+
+static void ac3843_3_source_cite_wiring_no_invent() {
+    std::println("\n--- #3843 AC3: source-cite + linter/manifest/grandfather + no invent ---");
+    const auto sec = read_file("src/compiler/evaluator_security.cpp");
+    const auto t = read_file("tests/compiler/test_audit_mutation_id_unify.cpp");
+    const auto build = read_file("build.py");
+    const auto gf = read_file("scripts/coverage/simple_check_grandfather.txt");
+    const auto lint = read_file("scripts/coverage/checks/check_require_effect_full_hard_mid_3843.py");
+    const auto man = read_file("scripts/coverage/manifests/3843.json");
+    CHECK(sec.find("Issue #3843") != std::string::npos, "3843 AC3: evaluator_security cites #3843");
+    CHECK(sec.find("AuditStrategy::Full") != std::string::npos,
+          "3843 AC3: require_effect hard face includes Full");
+    // Hard gate must OR Full — not production_defaults alone (the residual).
+    const auto re = sec.find("bool Evaluator::require_effect");
+    CHECK(re != std::string::npos, "3843 AC3: require_effect present");
+    const auto re_win = sec.substr(re, 3500);
+    CHECK(re_win.find("production_defaults_active()") != std::string::npos &&
+              re_win.find("AuditStrategy::Full") != std::string::npos,
+          "3843 AC3: require_effect hard = production_defaults || Full");
+    CHECK(re_win.find("Soft only") != std::string::npos ||
+              re_win.find("mid = 1; // Soft") != std::string::npos,
+          "3843 AC3: Soft mid=1 arm retained");
+    CHECK(t.find("ac3843_1_full_without_defaults_refuses") != std::string::npos,
+          "3843 AC3: AC1 present");
+    CHECK(t.find("ac3843_2_soft_mid1_unchanged") != std::string::npos, "3843 AC3: AC2 present");
+    CHECK(!lint.empty() && lint.find("Issue #3843") != std::string::npos, "3843 AC3: linter");
+    CHECK(!man.empty() && man.find("\"issue\": 3843") != std::string::npos, "3843 AC3: manifest");
+    CHECK(gf.find("check_require_effect_full_hard_mid_3843.py") != std::string::npos,
+          "3843 AC3: grandfather");
+    CHECK(build.find("check_require_effect_full_hard_mid_3843") != std::string::npos,
+          "3843 AC3: build.py gate");
+    CHECK(build.find("cmd_require_effect_full_hard_mid_3843") != std::string::npos,
+          "3843 AC3: build.py cmd");
+    // Not a dup of #3837 string-fence mid join.
+    CHECK(sec.find("#3837") != std::string::npos || t.find("#3837") != std::string::npos,
+          "3843 AC3: cites #3837 as separate (not dup)");
+    CHECK(read_file("tests/compiler/test_issue_3843.cpp").empty(),
+          "3843 AC3: no test_issue_3843.cpp");
+    CHECK(read_file("tests/issues/test_issue_3843.cpp").empty(),
+          "3843 AC3: no tests/issues/test_issue_3843.cpp");
+    const std::filesystem::path docs_design =
+        std::filesystem::path(AURA_SOURCE_DIR) / "docs" / "design";
+    std::error_code ec;
+    if (std::filesystem::exists(docs_design, ec)) {
+        for (const auto& entry : std::filesystem::directory_iterator(docs_design, ec)) {
+            const auto name = entry.path().filename().string();
+            CHECK(name.find("3843-") == std::string::npos,
+                  std::string("3843 AC3: no docs/design/") + name + " (forbidden per #1655)");
+        }
+    }
+}
+
 } // namespace
 
 int run_test_audit_mutation_id_unify() {
@@ -781,6 +914,10 @@ int run_test_audit_mutation_id_unify() {
     ac3546_4_source_cite_no_invent();
     ac3599_1_refuse_class_joinable();
     ac3778_occurrence_persist_mid_joins_ssot();
+    std::println("\n=== Issue #3843: require_effect Full-without-defaults hard mid refuse ===");
+    ac3843_1_full_without_defaults_refuses();
+    ac3843_2_soft_mid1_unchanged();
+    ac3843_3_source_cite_wiring_no_invent();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

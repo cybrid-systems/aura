@@ -670,17 +670,22 @@ bool Evaluator::require_effect(std::uint16_t req_bits, std::string_view op, ast:
     std::uint64_t mid = typed_audit::last_type_linear_commit_proof_stamp_v_read();
     if (mid == 0)
         mid = ::aura::core::current_mutation_epoch();
-    // Issue #3594: production join-0 is the refuse path —
-    // resolve_audit_mutation_id already emits the mid-fallback-refused SE
-    // (#3462); do not check-with phantom 1 (cannot join grant-mid-refused /
-    // Typed trail, and fail-closed provenance would false-join session 1).
-    // Soft / Off keeps the mid=1 observe stamp (#2493 AC4 / #3462 Soft arm).
-    if (typed_audit::production_defaults_active()) {
+    // Issue #3843 / #3594: hard face (production_defaults || Full) join-0
+    // is the refuse path — resolve_audit_mutation_id already emits the
+    // mid-fallback-refused SE (#3462); do not check-with phantom 1 (cannot
+    // join grant-mid-refused / Typed trail, and fail-closed provenance
+    // would false-join session 1). Full-without-defaults (cold-start Full
+    // + production_defaults==0) must match Typed resolve — not invent
+    // mid=1. Soft / Off keeps the mid=1 observe stamp (#2493 AC4 / #3462).
+    // #3837 is the string-fence mid join — separate site, not a dup.
+    const bool hard = typed_audit::production_defaults_active() ||
+                        typed_audit::get_strategy() == typed_audit::AuditStrategy::Full;
+    if (hard) {
         mid = typed_audit::join_audit_and_se_mid(mid);
         if (mid == 0)
             return false; // fail-closed, zero side effect
     } else if (mid == 0) {
-        mid = 1; // Soft / standalone: non-zero join stamp (process origin)
+        mid = 1; // Soft only: non-zero join stamp (process origin)
     }
     return check_and_record_effect(req_bits, req_bits, op, target_node, capability_tenant_id_, mid);
 }
