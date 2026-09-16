@@ -2,18 +2,18 @@
 # scripts/check_apply_window_gate_3648.py -- Issue #3648 source-cite gate.
 #
 # AC1: the closure apply arm consults the densify window gate
-#      (window_would_allow_mutate over the g_last_* axes) after the
-#      objects_moved quiet gate and before the LCP consult; cites #3648.
+#      (window_would_allow_mutate over the g_last_* axes) before the LCP
+#      consult; cites #3648. #3848: no objects_moved==0 early return.
 # AC2: the #3421 half-guards remain — LCP consult + resolve_object_remap on
 #      flat/pool still refuse after the window gate (no regression).
-# AC3: quiet / recover path unchanged — production gate + objects_moved==0
-#      gate precede the window consult; #2569 recover surface untouched.
+# AC3: Soft / Off never refuse (production gate); empty-remap fast-path
+#      (#3848) keeps true-zero quiet recover; #2569 recover surface kept.
 # AC4: counters reused — the note helper still bumps closure_stale_returns +
 #      compiler_root_dangling_prevented; no invented g_3648_* counter.
-# AC5: the FFI arm carries the same gate; test wiring (ac9..ac12 in
-#      tests/compiler/test_setcode_rebind_survive.cpp with the extended
-#      ProdDensifyWindowGuard); no tests/**/test_issue_3648.cpp; no
-#      docs/design/3648*; build.py registration + allowlist append.
+# AC5: the FFI arm carries the same gate; test wiring (ac9..ac12 + #3848
+#      ac16 in tests/compiler/test_setcode_rebind_survive.cpp with the
+#      extended ProdDensifyWindowGuard); no tests/**/test_issue_3648.cpp;
+#      no docs/design/3648*; build.py registration + allowlist append.
 
 from __future__ import annotations
 
@@ -61,13 +61,15 @@ def _rows(flat: str, test: str, build: str) -> list[str]:
     must("g_last_had_moving_densify", "AC1 had axis", arm)
     must("g_last_pin_contract_held", "AC1 pin axis", arm)
     must("g_last_root_remap_fail_total", "AC1 root-fail axis", arm)
-    moved_pos = arm.find("g_last_objects_moved")
     gate_pos = arm.find("window_would_allow_mutate")
     lcp_pos = arm.find("last_lifetime_consistency_would_allow")
-    if moved_pos < 0 or gate_pos < 0 or not (moved_pos < gate_pos):
-        fails.append("AC1: quiet moved-gate must precede the window consult")
-    if lcp_pos < 0 or gate_pos >= lcp_pos:
+    remap_size_pos = arm.find("object_remap_size")
+    if "g_last_objects_moved" in arm:
+        fails.append("AC1: objects_moved==0 early return must be gone (#3848)")
+    if gate_pos < 0 or lcp_pos < 0 or gate_pos >= lcp_pos:
         fails.append("AC1: window consult must precede the LCP consult")
+    if remap_size_pos < 0 or gate_pos >= remap_size_pos:
+        fails.append("AC1: empty-remap fast-path (#3848) must follow window")
 
     # AC2 — #3421 half-guards remain after the gate.
     must("resolve_object_remap", "AC2 remap half-guard", arm)
@@ -75,11 +77,11 @@ def _rows(flat: str, test: str, build: str) -> list[str]:
     must("resolve_object_remap(static_cast<void*>(cl.flat))", "AC2 flat resolve", arm)
     must("resolve_object_remap(static_cast<void*>(cl.pool))", "AC2 pool resolve", arm)
 
-    # AC3 — quiet / recover path unchanged.
+    # AC3 — Soft/Off never refuse; empty-remap fast-path keeps true-zero quiet.
     must("if (!aura::compiler::typed_audit::production_defaults_active())", "AC3 prod gate", arm)
-    # Issue stamp + recover-contract comment live above the arm (file scope).
     must("kApplyClosureDensifyHardRefuseIssue = 3421", "AC3 issue stamp kept", flat)
-    must("Soft / no-Moving / objects_moved==0 keep #2569 recover", "AC3 recover contract", flat)
+    must("Soft / Off never take this refuse", "AC3 Soft contract", flat)
+    must("Issue #3848", "AC3 #3848 cite", flat)
 
     # AC4 — counters reused; no invented counter.
     must_not("g_3648_", "AC4 no invented counter", flat)
@@ -101,10 +103,11 @@ def _rows(flat: str, test: str, build: str) -> list[str]:
         "ac10_3648_green_window_remap_still_refuse();",
         "ac11_3648_soft_no_move_recover();",
         "ac12_3648_wiring_and_family();",
+        "ac16_3848_zero_move_publish_still_refuse();",
     ):
         must(ac, "AC5 runner wired", test)
     must("std::uint64_t untracked = 0, std::uint64_t root_fail = 0", "AC5 guard axes", test)
-    must("=== #2569/#3421/#3469/#3602/#3634/#3648:", "AC5 summary line", test)
+    must("=== #2569/#3421/#3469/#3602/#3634/#3648/#3848:", "AC5 summary line", test)
     must_not("test_issue_3648", "AC5 no tests/issues file", test)
     must("check_apply_window_gate_3648.py", "AC5 build.py registration", build)
     for stale in ROOT.glob("docs/design/*3648*"):

@@ -438,3 +438,5 @@ scripts/coverage/checks/check_promote_force_join_mid_no_invent_3845.py
 check_promote_force_join_mid_no_invent_3845.py
 scripts/coverage/checks/check_reload_recovery_state_headroom_3846.py
 check_reload_recovery_state_headroom_3846.py
+check_densify_refuse_zero_move_3848.py
+scripts/coverage/checks/check_densify_refuse_zero_move_3848.py

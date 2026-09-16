@@ -314,9 +314,13 @@ static bool closure_needs_safe_fallback(const Evaluator& ev, const Closure& cl,
 // Issue #3421: production apply_closure hard-refuses densify-stale closures.
 // #2569 restamp is not a remap — it does not rewrite EnvFrame / capture
 // cells via last_object_remap_, and must not eval_flat a densify-old
-// flat*/pool*. Soft / no-Moving / objects_moved==0 keep #2569 recover.
-// Quiet path: one production load + one objects_moved load; remap/LCP
-// only when densify actually moved.
+// flat*/pool*. Soft / Off never take this refuse (production gate).
+// Issue #3848: do NOT early-return on g_last_objects_moved==0 — zero-move
+// publishes (vacuous Phase-5, LCP-blocked sticky recovery, pin-guard
+// soft-gate) leave densify-old tombstones in last_object_remap_; skipping
+// refuse → UAF if MustDeopt / safe-fallback / FFI arms eval densify-old
+// flat*/pool*. Order: production → window_would_allow_mutate → (empty
+// remap + window green fast-path) → LCP → resolve_object_remap(flat|pool).
 // Issue #3469: last_object_remap_ folds previous-window keys, so
 // resolve_object_remap(A) still hits after A→B then B→C. This helper
 // predicate is unchanged (resolve hit ⇒ refuse).
@@ -326,16 +330,15 @@ static bool production_apply_closure_densify_hard_refuse(ast::ASTArena* arena, c
                                                          const void* eval_id) noexcept {
     if (!aura::compiler::typed_audit::production_defaults_active())
         return false;
-    if (aura::core::moving_densify_health::g_last_objects_moved.load(std::memory_order_relaxed) ==
-        0)
-        return false;
     // Issue #3648: apply must also consult the densify window gate — the
     // same predicate as Phase-5 / #2682. LCP stamp points are outermost
     // densify SUCCESS and steal-complete, so an incomplete window
-    // (untracked kept under objects_moved>0) can leave a still-green LCP,
-    // and an untracked stale flat* misses last_object_remap_ — neither
-    // #3421 half-guard (LCP red, remap key) fires. Refuse on the window
-    // itself; green windows fall through to the #3421 checks unchanged.
+    // (untracked kept) can leave a still-green LCP, and an untracked stale
+    // flat* misses last_object_remap_ — neither #3421 half-guard (LCP red,
+    // remap key) fires. Refuse on the window itself; green windows fall
+    // through to the #3421 checks unchanged.
+    // Issue #3848: window consult runs even when last publish had
+    // objects_moved==0 (tombstones may still be present).
     if (!aura::core::moving_densify_health::window_would_allow_mutate(
             aura::core::moving_densify_health::g_last_had_moving_densify.load(
                 std::memory_order_relaxed) != 0,
@@ -348,6 +351,11 @@ static bool production_apply_closure_densify_hard_refuse(ast::ASTArena* arena, c
             aura::core::moving_densify_health::g_last_root_remap_fail_total.load(
                 std::memory_order_relaxed)))
         return true;
+    ast::ASTArena* ar = arena ? arena : cl.owner_arena;
+    // Issue #3848 optional fast-path: window green + empty remap table →
+    // no densify-old tombstone to refuse on (zero cost; Soft already exited).
+    if (ar && ar->object_remap_size() == 0)
+        return false;
     // Issue #3634: per-eval first (#3617 slots), process-wide fallback.
     // A foreign evaluator's Reject poisons the process-wide bit; an
     // evaluator with a slot of its own consults its own last-window
@@ -360,7 +368,6 @@ static bool production_apply_closure_densify_hard_refuse(ast::ASTArena* arena, c
             : aura::core::lifetime_consistency_proof::last_lifetime_consistency_would_allow();
     if (!lcp_ok)
         return true;
-    ast::ASTArena* ar = arena ? arena : cl.owner_arena;
     if (!ar)
         return false;
     if (cl.flat && ar->resolve_object_remap(static_cast<void*>(cl.flat)))
@@ -406,12 +413,13 @@ static EvalResult eval_flat_commit_readiness_refused() {
 // the live value is a densify-OLD address that escaped slot rewrite (EXEMPT
 // alias, observed-only, pre-rewrite copy). fn_ptr: a remap hit means the
 // pointer aliases an arena object that moved - native libc addrs are never
-// remap keys, so no false positive. Same quiet shape as #3421: two relaxed
-// loads when Soft / objects_moved==0, then return. Counters reused via the
-// shared note helper (closure_stale_returns + compiler_root_dangling). No
-// remap inside ffi_marshal_args_pure - it stays pure (#3602 non-goal).
-// Marshalled is a template parameter: FFIMarshalled is reachable-but-not
-// namable through the module import (non-exported in evaluator_pure.ixx).
+// remap keys, so no false positive. Same shape as #3421/#3848: production
+// → window → empty-remap fast-path → LCP → remap (no objects_moved==0
+// disarm). Counters reused via the shared note helper (closure_stale_returns
+// + compiler_root_dangling). No remap inside ffi_marshal_args_pure - it
+// stays pure (#3602 non-goal). Marshalled is a template parameter:
+// FFIMarshalled is reachable-but-not namable through the module import
+// (non-exported in evaluator_pure.ixx).
 template <typename Marshalled>
 static bool production_ffi_apply_densify_hard_refuse(ast::ASTArena* arena, const void* fn_ptr,
                                                      std::span<const int> arg_types,
@@ -419,12 +427,10 @@ static bool production_ffi_apply_densify_hard_refuse(ast::ASTArena* arena, const
                                                      const void* eval_id) noexcept {
     if (!aura::compiler::typed_audit::production_defaults_active())
         return false;
-    if (aura::core::moving_densify_health::g_last_objects_moved.load(std::memory_order_relaxed) ==
-        0)
-        return false;
     // Issue #3648: same window-gate consult as the #3421 closure arm —
     // the FFI return path must refuse an incomplete window too (untracked
     // opaque args are exactly the escapes the remap table cannot name).
+    // Issue #3848: no objects_moved==0 early return (tombstones may remain).
     if (!aura::core::moving_densify_health::window_would_allow_mutate(
             aura::core::moving_densify_health::g_last_had_moving_densify.load(
                 std::memory_order_relaxed) != 0,
@@ -437,6 +443,9 @@ static bool production_ffi_apply_densify_hard_refuse(ast::ASTArena* arena, const
             aura::core::moving_densify_health::g_last_root_remap_fail_total.load(
                 std::memory_order_relaxed)))
         return true;
+    // Issue #3848 optional fast-path: window green + empty remap → no refuse.
+    if (arena && arena->object_remap_size() == 0)
+        return false;
     // Issue #3634: per-eval first (#3617 slots), process-wide fallback —
     // same shape as the #3421 closure arm above.
     const bool lcp_ok =
