@@ -209,7 +209,7 @@ int run_test_audit_durable_gap_force_wal() {
             aura::core::security_event_wal::WalOverflowRecord rec{};
             rec.mid = i + 1;
             rec.reason = "test:3493-fill";
-            aura::core::security_event_wal::wal_overflow_ring_push(rec);
+            (void)aura::core::security_event_wal::wal_overflow_ring_push(rec);
         }
         CHECK(aura::core::security_event_wal::wal_overflow_ring_full(),
               "3493 live: overflow ring full");

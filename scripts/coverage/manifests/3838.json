@@ -1,0 +1,50 @@
+{
+  "issue": 3838,
+  "title": "Issue #3838: WAL overflow refuse-on-wrap under production fail-closed (#3806 residual)",
+  "ok": "OK #3838 wal_overflow_wrap_refuse: all rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/core/security_event_wal.hh",
+      "contains": [
+        "Issue #3838",
+        "kWalOverflowWrapRefuseIssue = 3838",
+        "wal_overflow_ring_wrap_refuse_total",
+        "[[nodiscard]] inline bool wal_overflow_ring_push",
+        "wal_append_fail_closed_active()",
+        "return false;"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/evaluator_primitives_security.cpp",
+      "contains": [
+        "wal-overflow-wrap-refuse-total",
+        "schema-3838",
+        "issue-3838",
+        "overflow_wrap_evicted"
+      ]
+    },
+    {
+      "ac": "AC3-AC4",
+      "path": "tests/compiler/test_security_event_wal_replay.cpp",
+      "contains": [
+        "3838 AC1",
+        "3838 AC2",
+        "3838 AC3",
+        "3838 AC4",
+        "3838 Soft: overwrite still ok",
+        "overflow_wrap_evicted"
+      ]
+    },
+    {
+      "ac": "AC4-forbid",
+      "forbid": [
+        "tests/compiler/test_issue_3838.cpp",
+        "tests/core/test_issue_3838.cpp",
+        "tests/issues/test_issue_3838.cpp",
+        "docs/design/3838-wal-overflow-wrap-refuse.md"
+      ]
+    }
+  ]
+}

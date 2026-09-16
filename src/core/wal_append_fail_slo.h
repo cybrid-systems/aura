@@ -239,7 +239,7 @@ inline void reset_wal_append_fail_slo_for_test() noexcept {
 // AURA_WAL_APPEND_FAIL_OPEN=1. Explicit AURA_WAL_APPEND_FAIL_CLOSED=1
 // still forces on. Soft / production_defaults_active()==0: always false
 // (zero new cost, AC1). Caller pattern:
-//   if (wal_append_fail_closed_active()) wal_overflow_ring_push(rec);
+//   if (wal_append_fail_closed_active()) (void)wal_overflow_ring_push(rec); // #3838 bool
 inline constexpr int kWalAppendFailClosedForceWalIssue = 3302;
 
 [[nodiscard]] inline bool wal_env_flag_truthy(const char* name) noexcept {

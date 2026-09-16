@@ -127,6 +127,10 @@ inline std::atomic<std::uint32_t>& wal_overflow_ring_count() noexcept {
 // overwrites a live slot (count == capacity before store). Soft / WAL-off
 // never call push (AC3 zero cost). Agent face: wal-overflow-wrap-total.
 inline constexpr int kWalOverflowWrapIssue = 3806;
+// Issue #3838: refuse-on-wrap under production fail-closed (residual of
+// #3806 observability-only). Soft / fail-open still overwrites so Soft
+// zero-cost / observe contract is unchanged.
+inline constexpr int kWalOverflowWrapRefuseIssue = 3838;
 
 inline std::atomic<std::uint64_t>& wal_overflow_ring_wrap_total() noexcept {
     // Named security_event_wal_overflow_wrap_total in the #3806 contract;
@@ -136,10 +140,19 @@ inline std::atomic<std::uint64_t>& wal_overflow_ring_wrap_total() noexcept {
     return security_event_wal_overflow_wrap_total;
 }
 
-// Push one record to the overflow ring. Called only when
-// wal_append_fail_closed_active() returns true (production fail-closed).
-// Thread-safe under WAL's std::lock_guard.
-inline void wal_overflow_ring_push(const WalOverflowRecord& rec) noexcept {
+inline std::atomic<std::uint64_t>& wal_overflow_ring_wrap_refuse_total() noexcept {
+    // Named security_event_wal_overflow_wrap_refuse_total in the #3838
+    // contract; bumped only when fail-closed refuses an overwrite.
+    static std::atomic<std::uint64_t> security_event_wal_overflow_wrap_refuse_total{0};
+    return security_event_wal_overflow_wrap_refuse_total;
+}
+
+// Push one record to the overflow ring. Production callers gate on
+// wal_append_fail_closed_active() (fail-closed). Soft / WAL-off: push is
+// never called today (zero cost). Returns false when #3838 refuse-on-wrap
+// declines the store (live slots preserved). Thread-safe under WAL's
+// std::lock_guard.
+[[nodiscard]] inline bool wal_overflow_ring_push(const WalOverflowRecord& rec) noexcept {
     auto* ring = wal_overflow_ring_storage();
     auto& cnt = wal_overflow_ring_count();
     auto expected = cnt.load(std::memory_order_relaxed);
@@ -149,11 +162,20 @@ inline void wal_overflow_ring_push(const WalOverflowRecord& rec) noexcept {
     // "never emitted" vs "overflow evicted".
     if (expected >= kWalOverflowRingCapacity)
         wal_overflow_ring_wrap_total().fetch_add(1, std::memory_order_relaxed);
+    // Issue #3838: under production fail-closed, refuse silent overwrite —
+    // bump refuse counter and return false so callers fail-closed rather
+    // than lose older mids. Soft / fail-open keep overwrite.
+    if (expected >= kWalOverflowRingCapacity &&
+        ::aura::core::wal_slo::wal_append_fail_closed_active()) {
+        wal_overflow_ring_wrap_refuse_total().fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
     const auto h = wal_overflow_ring_head().fetch_add(1, std::memory_order_relaxed);
     ring[h % kWalOverflowRingCapacity] = rec;
     // Cap count at capacity (head wraps but count saturates).
     if (expected < kWalOverflowRingCapacity)
         cnt.compare_exchange_strong(expected, expected + 1, std::memory_order_relaxed);
+    return true;
 }
 
 [[nodiscard]] inline std::uint32_t wal_overflow_ring_depth() noexcept {
@@ -169,6 +191,7 @@ inline void wal_overflow_ring_clear_for_test() noexcept {
     wal_overflow_ring_head().store(0, std::memory_order_relaxed);
     wal_overflow_ring_count().store(0, std::memory_order_relaxed);
     wal_overflow_ring_wrap_total().store(0, std::memory_order_relaxed);
+    wal_overflow_ring_wrap_refuse_total().store(0, std::memory_order_relaxed);
 }
 
 // Issue #3734: join a lost mutation-WAL append by mid. Process-local
@@ -450,7 +473,7 @@ struct SecurityEventWal {
                 ovr.epoch = rec.epoch;
                 ovr.op = rec.op[0] ? std::string(rec.op) : std::string("security_event_wal_append");
                 ovr.reason = std::string("inject_fail");
-                wal_overflow_ring_push(ovr);
+                (void)wal_overflow_ring_push(ovr);
             }
             return false;
         }
@@ -473,7 +496,7 @@ struct SecurityEventWal {
                 ovr.epoch = rec.epoch;
                 ovr.op = rec.op[0] ? std::string(rec.op) : std::string("security_event_wal_append");
                 ovr.reason = std::string("fwrite_miss");
-                wal_overflow_ring_push(ovr);
+                (void)wal_overflow_ring_push(ovr);
             }
             return false;
         }
