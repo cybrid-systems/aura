@@ -1,0 +1,48 @@
+{
+  "issue": 3835,
+  "title": "Issue #3835: Host FS read/recon skips check_tenant_host_path (#3802 write-only residual)",
+  "ok": "OK #3835 tenant_host_path_read: all rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_primitives_file.cpp",
+      "contains": [
+        "Issue #3835",
+        "check_tenant_host_path(path, resolved, \"read-file\")",
+        "check_tenant_host_path(path, resolved, \"file-exists?\")",
+        "check_tenant_host_path(path, resolved, \"file-size\")",
+        "check_tenant_host_path(dir_path, resolved, \"directory-list\")"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/core/test_tenant_isolation_enforcement.cpp",
+      "contains": [
+        "3835 AC1",
+        "3835 AC2",
+        "3835 AC3",
+        "Soft/Off",
+        "read-file",
+        "file-exists?",
+        "file-size",
+        "directory-list"
+      ]
+    },
+    {
+      "ac": "AC3-write-retained",
+      "path": "src/compiler/evaluator_primitives_file.cpp",
+      "contains": [
+        "check_tenant_host_path(path, resolved_path, \"write-file\")"
+      ]
+    },
+    {
+      "ac": "AC3-forbid",
+      "forbid": [
+        "tests/core/test_issue_3835.cpp",
+        "tests/compiler/test_issue_3835.cpp",
+        "tests/issues/test_issue_3835.cpp",
+        "docs/design/3835-read-host-path.md"
+      ]
+    }
+  ]
+}

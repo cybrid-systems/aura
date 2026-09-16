@@ -120,7 +120,12 @@ void register_file_primitives(PrimRegistrar add, Evaluator& ev) {
         // collapse lstat+open TOCTOU (symlink swap between check and open).
         if (path_is_denied(path))
             return make_void();
-        int fd = ::open(path.c_str(), O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+        // Issue #3835: Restricted+MT / Strict → resolve under tenant root;
+        // cross-tenant / escape → deny + IsolationDeny SE (mirror #3802 write-file).
+        std::string resolved;
+        if (!ev.check_tenant_host_path(path, resolved, "read-file"))
+            return make_void();
+        int fd = ::open(resolved.c_str(), O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
         if (fd < 0)
             return make_void();
         struct stat st{};
@@ -252,8 +257,12 @@ void register_file_primitives(PrimRegistrar add, Evaluator& ev) {
                                auto& path = ev.string_heap_[idx];
                                if (path_is_denied(path))
                                    return make_int(0);
+                               // Issue #3835: Restricted+MT / Strict tenant root (mirror write-file).
+                               std::string resolved;
+                               if (!ev.check_tenant_host_path(path, resolved, "file-exists?"))
+                                   return make_int(0);
                                struct stat st;
-                               return make_int(::lstat(path.c_str(), &st) == 0 ? 1 : 0);
+                               return make_int(::lstat(resolved.c_str(), &st) == 0 ? 1 : 0);
                            });
 
     ev.defer_std_host_prim("file-copy", [&ev, is_regular, path_is_denied, deny_io](const auto& a) {
@@ -356,10 +365,16 @@ void register_file_primitives(PrimRegistrar add, Evaluator& ev) {
         if (idx >= ev.string_heap_.size())
             return make_int(0);
         auto& path = ev.string_heap_[idx];
-        if (path_is_denied(path) || !is_regular(path))
+        if (path_is_denied(path))
+            return make_int(0);
+        // Issue #3835: Restricted+MT / Strict tenant root (mirror write-file).
+        std::string resolved;
+        if (!ev.check_tenant_host_path(path, resolved, "file-size"))
+            return make_int(0);
+        if (!is_regular(resolved))
             return make_int(0);
         struct stat st{};
-        if (::lstat(path.c_str(), &st) != 0 || !S_ISREG(st.st_mode))
+        if (::lstat(resolved.c_str(), &st) != 0 || !S_ISREG(st.st_mode))
             return make_int(0);
         return make_int(static_cast<std::int64_t>(st.st_size));
     });
@@ -433,8 +448,12 @@ void register_file_primitives(PrimRegistrar add, Evaluator& ev) {
                                auto& dir_path = ev.string_heap_[idx];
                                if (path_is_denied(dir_path))
                                    return make_void();
+                               // Issue #3835: Restricted+MT / Strict tenant root (mirror write-file).
+                               std::string resolved;
+                               if (!ev.check_tenant_host_path(dir_path, resolved, "directory-list"))
+                                   return make_void();
                                EvalValue result = make_void();
-                               auto dir = opendir(dir_path.c_str());
+                               auto dir = opendir(resolved.c_str());
                                if (!dir)
                                    return make_void();
                                struct dirent* entry;
