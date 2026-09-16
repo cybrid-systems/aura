@@ -1,0 +1,61 @@
+{
+  "issue": 3851,
+  "title": "Issue #3851: pure-anon budget-skip arms sticky overflow fence",
+  "ok": "OK: Issue #3851 budget-skip sticky — Soft enqueue-only; soft-migrate epoch0 refuse",
+  "checks": [
+    {
+      "ac": "AC1-skip-sticky",
+      "path": "src/compiler/aura_jit_runtime.cpp",
+      "contains": [
+        "Issue #3851",
+        "g_closure_pure_anon_overflow_armed[cid] = 1",
+        "invalidate_closure_cache_for(static_cast<std::int64_t>(cid))"
+      ]
+    },
+    {
+      "ac": "AC2-heal-ssot",
+      "path": "src/compiler/aura_jit_runtime.cpp",
+      "contains": [
+        "remount heal with dual-fresh green disarms the",
+        "g_closure_pure_anon_overflow_armed[cid] = 0"
+      ]
+    },
+    {
+      "ac": "AC3-soft-migrate",
+      "path": "src/compiler/aura_jit_runtime.cpp",
+      "contains": [
+        "production + bridge tracking treats cap_bridge==0 as",
+        "(bridge_tracking && cap_bridge == 0)",
+        "re-check dual-fresh after soft-migrate",
+        "if (!aura_is_jit_closure_fresh(post_bridge, post_defuse, post_table))"
+      ]
+    },
+    {
+      "ac": "AC4-tests",
+      "path": "tests/compiler/test_anonymous_residual_stable_id_policy.cpp",
+      "contains": [
+        "ac3851_1_two_call_leave_native_after_budget_skip",
+        "3851 AC1: second call leaves native",
+        "ac3851_2_heal_clears_sticky_soft_no_arm",
+        "ac3851_3_soft_migrate_epoch0_and_post_fresh",
+        "ac3851_4_source_and_linter"
+      ]
+    },
+    {
+      "ac": "AC4-wiring",
+      "path": "build.py",
+      "contains": [
+        "check_pure_anon_budget_skip_sticky_3851",
+        "Issue #3851"
+      ]
+    },
+    {
+      "ac": "AC4-forbid",
+      "forbid": [
+        "tests/compiler/test_issue_3851.cpp",
+        "tests/issues/test_issue_3851.cpp",
+        "docs/design/3851-pure-anon-budget-skip-sticky.md"
+      ]
+    }
+  ]
+}

@@ -6745,6 +6745,21 @@ def cmd_lint():
             "Issue #3478 pure-anon budget-skip MustDeopt linter failed — run python3 scripts/coverage/checks/check_pure_anon_budget_skip_must_deopt_3478.py"
         )
         return r
+    # Issue #3851: pure-anon budget-skip arms sticky overflow fence
+    # (#3323 SSOT). Soft enqueue-only; soft-migrate refuses epoch==0;
+    # post-migrate re-checks dual-fresh. Extends
+    # test_anonymous_residual_stable_id_policy (#81967); no docs/design;
+    # no new query key / g_3851_* counter.
+    pabs3851_script = COVERAGE_CHECKS / "check_pure_anon_budget_skip_sticky_3851.py"
+    if not pabs3851_script.exists():
+        fail(f"missing {pabs3851_script}")
+        return 1
+    r = run([sys.executable, str(pabs3851_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3851 pure-anon budget-skip sticky linter failed — run python3 scripts/coverage/checks/check_pure_anon_budget_skip_sticky_3851.py"
+        )
+        return r
     # Issue #3342: pure-anon recovery starvation. Overflow already
     # MustDeopt (#3024/#3323); residual tick + drain were success-
     # BoundaryExit only. Production amortizes heal on outermost failure
@@ -15854,6 +15869,27 @@ def cmd_steal_panic_moving_gate_3850():
     return cmd_steal_panic_moving_gate_3850_coverage()
 
 
+def cmd_pure_anon_budget_skip_sticky_3851_coverage():
+    """Issue #3851: budget-skip arms sticky overflow fence (#3323 SSOT)."""
+    print(f"{B}=== pure-anon budget-skip sticky fence (#3851) ==={N}")
+    script = COVERAGE_CHECKS / "check_pure_anon_budget_skip_sticky_3851.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = run([sys.executable, str(script)], cwd=ROOT)
+    if r != 0:
+        fail("pure-anon budget-skip sticky fence (#3851) coverage contract rows failed")
+        return r
+    ok("pure-anon budget-skip sticky fence (#3851) coverage clean")
+    return 0
+
+
+def cmd_pure_anon_budget_skip_sticky_3851():
+    """Issue #3851: Arm sticky fence on production pure-anon budget-skip."""
+    print(f"{B}=== pure-anon budget-skip sticky fence (#3851) ==={N}")
+    return cmd_pure_anon_budget_skip_sticky_3851_coverage()
+
+
 def cmd_wal_overflow_wrap_refuse_3838_coverage():
     """Issue #3838: WAL overflow refuse-on-wrap (#3806 residual)."""
     print(f"{B}=== WAL overflow wrap refuse (#3838) ==={N}")
@@ -23920,6 +23956,8 @@ def main():
         "apply-closure-happy-path-densify-3849-coverage": cmd_apply_closure_happy_path_densify_3849_coverage,
         "steal-panic-moving-gate-3850": cmd_steal_panic_moving_gate_3850,
         "steal-panic-moving-gate-3850-coverage": cmd_steal_panic_moving_gate_3850_coverage,
+        "pure-anon-budget-skip-sticky-3851": cmd_pure_anon_budget_skip_sticky_3851,
+        "pure-anon-budget-skip-sticky-3851-coverage": cmd_pure_anon_budget_skip_sticky_3851_coverage,
         "wal-overflow-wrap-refuse-3838": cmd_wal_overflow_wrap_refuse_3838,
         "wal-overflow-wrap-refuse-3838-coverage": cmd_wal_overflow_wrap_refuse_3838_coverage,
         "string-grant-session-bound-3839": cmd_string_grant_session_bound_3839,
