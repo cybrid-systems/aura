@@ -1,0 +1,44 @@
+{
+  "issue": 3843,
+  "title": "Issue #3843: require_effect hard mid refuse matches Typed (prod||Full)",
+  "ok": "OK: Issue #3843 require_effect Full-without-defaults hard mid refuse",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_security.cpp",
+      "contains": [
+        "Issue #3843",
+        "AuditStrategy::Full",
+        "join_audit_and_se_mid(mid)",
+        "Soft only"
+      ]
+    },
+    {
+      "ac": "AC2-test",
+      "path": "tests/compiler/test_audit_mutation_id_unify.cpp",
+      "contains": [
+        "ac3843_1_full_without_defaults_refuses",
+        "ac3843_2_soft_mid1_unchanged",
+        "ac3843_3_source_cite_wiring_no_invent",
+        "3843 AC2: Soft observe stamp mid=1"
+      ]
+    },
+    {
+      "ac": "AC3-wiring",
+      "path": "build.py",
+      "contains": [
+        "check_require_effect_full_hard_mid_3843",
+        "Issue #3843"
+      ]
+    },
+    {
+      "ac": "AC3-forbid",
+      "forbid": [
+        "tests/compiler/test_issue_3843.cpp",
+        "tests/core/test_issue_3843.cpp",
+        "tests/issues/test_issue_3843.cpp",
+        "docs/design/3843-require-effect-full-hard-mid.md"
+      ]
+    }
+  ]
+}
