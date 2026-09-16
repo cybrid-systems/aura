@@ -5115,7 +5115,8 @@ int main() {
                 if (static_cast<int>(e.kind) !=
                     static_cast<int>(aura::core::security_event::SecurityEventKind::IsolationDeny))
                     continue;
-                if (std::string_view(e.reason).find("tenant-path-escape") != std::string_view::npos) {
+                if (std::string_view(e.reason).find("tenant-path-escape") !=
+                    std::string_view::npos) {
                     saw = true;
                     CHECK(e.tenant_id == 7, "3835 AC1: SE tenant is caller A");
                 }
