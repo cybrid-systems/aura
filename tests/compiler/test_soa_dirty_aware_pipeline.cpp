@@ -51,11 +51,11 @@ using aura::compiler::run_dirty_escape_on_soa;
 using aura::compiler::run_dirty_pipeline;
 using aura::compiler::run_pipeline;
 using aura::compiler::run_production_soa_dirty_hot_pack;
-using aura::compiler::sync_soa_dirty_blocks_into_aos;
 using aura::compiler::run_production_soa_pure_wrap_pack;
 using aura::compiler::set_fn_shape_stable_probe;
 using aura::compiler::ShapeWrap;
 using aura::compiler::SoaDirtyAwarePass;
+using aura::compiler::sync_soa_dirty_blocks_into_aos;
 using aura::compiler::TypePropagationPass;
 using aura::compiler::opt_registry::DeadCoercionPass;
 using aura::compiler::types::as_int;
@@ -844,8 +844,7 @@ int run_test_soa_dirty_aware_pipeline() {
                 const auto si = sb0.start_idx + k;
                 CHECK(amod.functions[0].blocks[0].instructions[k].opcode == sfn.opcodes_[si],
                       "3822 soak: opcode equal on dirty");
-                CHECK(amod.functions[0].blocks[0].instructions[k].operands[1] ==
-                          sfn.operand1_[si],
+                CHECK(amod.functions[0].blocks[0].instructions[k].operands[1] == sfn.operand1_[si],
                       "3822 soak: const equal on dirty");
             }
         }

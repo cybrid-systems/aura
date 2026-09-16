@@ -1918,9 +1918,8 @@ int run_test_hold_budget_safepoint_force_release_3825() {
                     std::memory_order_relaxed);
                 process_held_before_end.store(aura_evaluator_mutation_boundary_held() != 0 ? 1 : 0,
                                               std::memory_order_relaxed);
-                defer_hold_before_end.store(
-                    aura::gc_hooks::mutation_hold_defer_active() ? 1 : 0,
-                    std::memory_order_relaxed);
+                defer_hold_before_end.store(aura::gc_hooks::mutation_hold_defer_active() ? 1 : 0,
+                                            std::memory_order_relaxed);
                 ran.store(1, std::memory_order_relaxed);
             }
             ok_flag.store(ok ? 1 : 0, std::memory_order_relaxed);

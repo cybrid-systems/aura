@@ -5895,8 +5895,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                             if (static_cast<std::size_t>(arg_i) >= op_args.size() ||
                                 !is_int(op_args[arg_i]))
                                 break; // malformed; sub-op loop reports it
-                            auto node =
-                                static_cast<aura::ast::NodeId>(as_int(op_args[arg_i]));
+                            auto node = static_cast<aura::ast::NodeId>(as_int(op_args[arg_i]));
                             if (node == aura::ast::NULL_NODE ||
                                 node >= ev.workspace_flat_->size() ||
                                 !ev.workspace_flat_->is_live_node(node))
@@ -5954,9 +5953,8 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                             abort_batch_workspace();
                             ev.atomic_batch_domain_.rollbacks++;
                             ev.bump_edsl_nested_atomic_rollback();
-                            if (batch_snap_id >= 0 &&
-                                ev.restore_workspace_snapshot_under_lock(
-                                    static_cast<std::size_t>(batch_snap_id)))
+                            if (batch_snap_id >= 0 && ev.restore_workspace_snapshot_under_lock(
+                                                          static_cast<std::size_t>(batch_snap_id)))
                                 ev.bump_atomic_batch_snapshot_rollback();
                             ev.rollback_atomic_batch_pinning();
                             guard_ok = false;
@@ -7771,79 +7769,79 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
     // after resolve (add_mutate sees strategy string at a[0]; node is a[1]).
     // Issue #1772: Soft bare-int OOB bumps mutate_from_feedback_invalid_node_total.
     // Issue #3395: Production rejects bare int via resolve_mutate_node_arg.
-    add_mutate(
-        "mutate:from-verification-feedback",
-        [resolve_mutate_node_arg, &ev, mev](std::span<const EvalValue> a) -> EvalValue {
-            using aura::compiler::security::kEffectMutate;
-            if (a.size() < 3 || !is_string(a[0]) || !is_string(a[2]))
-                return make_bool(false);
-            auto strategy_idx = as_string_idx(a[0]);
-            if (strategy_idx >= ev.string_heap_.size())
-                return make_bool(false);
-            const auto& strategy = ev.string_heap_[strategy_idx];
-            auto payload_idx = as_string_idx(a[2]);
-            if (payload_idx >= ev.string_heap_.size())
-                return make_bool(false);
-            (void)payload_idx;
+    add_mutate("mutate:from-verification-feedback",
+               [resolve_mutate_node_arg, &ev, mev](std::span<const EvalValue> a) -> EvalValue {
+                   using aura::compiler::security::kEffectMutate;
+                   if (a.size() < 3 || !is_string(a[0]) || !is_string(a[2]))
+                       return make_bool(false);
+                   auto strategy_idx = as_string_idx(a[0]);
+                   if (strategy_idx >= ev.string_heap_.size())
+                       return make_bool(false);
+                   const auto& strategy = ev.string_heap_[strategy_idx];
+                   auto payload_idx = as_string_idx(a[2]);
+                   if (payload_idx >= ev.string_heap_.size())
+                       return make_bool(false);
+                   (void)payload_idx;
 
-            // Soft bare-int OOB path preserves #1772 metric face before resolve.
-            if (is_int(a[1]) && !aura::compiler::typed_audit::production_defaults_active()) {
-                const auto node_id = static_cast<std::int64_t>(as_int(a[1]));
-                if (auto* ws = ev.workspace_flat()) {
-                    if (node_id < 0 || static_cast<std::uint64_t>(node_id) >= ws->size()) {
-                        if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
-                            m->mutate_from_feedback_invalid_node_total.fetch_add(
-                                1, std::memory_order_relaxed);
-                        return make_bool(false);
-                    }
-                } else {
-                    if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
-                        m->mutate_from_feedback_invalid_node_total.fetch_add(
-                            1, std::memory_order_relaxed);
-                    return make_bool(false);
-                }
-            }
+                   // Soft bare-int OOB path preserves #1772 metric face before resolve.
+                   if (is_int(a[1]) && !aura::compiler::typed_audit::production_defaults_active()) {
+                       const auto node_id = static_cast<std::int64_t>(as_int(a[1]));
+                       if (auto* ws = ev.workspace_flat()) {
+                           if (node_id < 0 || static_cast<std::uint64_t>(node_id) >= ws->size()) {
+                               if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+                                   m->mutate_from_feedback_invalid_node_total.fetch_add(
+                                       1, std::memory_order_relaxed);
+                               return make_bool(false);
+                           }
+                       } else {
+                           if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+                               m->mutate_from_feedback_invalid_node_total.fetch_add(
+                                   1, std::memory_order_relaxed);
+                           return make_bool(false);
+                       }
+                   }
 
-            if (!ev.workspace_flat_) {
-                if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
-                    m->mutate_from_feedback_invalid_node_total.fetch_add(1,
-                                                                         std::memory_order_relaxed);
-                return make_bool(false);
-            }
-            bool ok = true;
-            aura::ast::NodeId node = 0;
-            // Node operand is a[1] (strategy is a[0]) — subspan so
-            // resolve_mutate_node_arg / #3395 / packed-ref see the node.
-            auto resolve_err = resolve_mutate_node_arg(
-                *ev.workspace_flat_, a.subspan(1), "mutate:from-verification-feedback", &ok, node);
-            if (!ok)
-                return resolve_err;
+                   if (!ev.workspace_flat_) {
+                       if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+                           m->mutate_from_feedback_invalid_node_total.fetch_add(
+                               1, std::memory_order_relaxed);
+                       return make_bool(false);
+                   }
+                   bool ok = true;
+                   aura::ast::NodeId node = 0;
+                   // Node operand is a[1] (strategy is a[0]) — subspan so
+                   // resolve_mutate_node_arg / #3395 / packed-ref see the node.
+                   auto resolve_err =
+                       resolve_mutate_node_arg(*ev.workspace_flat_, a.subspan(1),
+                                               "mutate:from-verification-feedback", &ok, node);
+                   if (!ok)
+                       return resolve_err;
 
-            // Issue #2839: stamp + require_effect_on_ref before write body.
-            // add_mutate wrapper gated capability on a[0] (strategy); re-gate
-            // on the resolved NodeId for isolation + principal stamp.
-            if (!ev.require_effect_for_node_id(kEffectMutate, "mutate:from-verification-feedback",
-                                               node))
-                return make_bool(false);
+                   // Issue #2839: stamp + require_effect_on_ref before write body.
+                   // add_mutate wrapper gated capability on a[0] (strategy); re-gate
+                   // on the resolved NodeId for isolation + principal stamp.
+                   if (!ev.require_effect_for_node_id(kEffectMutate,
+                                                      "mutate:from-verification-feedback", node))
+                       return make_bool(false);
 
-            // Soft dormant #f body (Issue #3828 AC3) — retired eda:* strategies.
-            // When strategies return, writes land under add_mutate Guard
-            // (metrics + #3697 persist-reject + RO fence already held).
-            bool applied = false;
-            if (strategy == "weaken-property" || strategy == "assert-fail")
-                applied = false; // eda:weaken-property retired 4.4
-            else if (strategy == "add-coverpoint" || strategy == "coverage-hole")
-                applied = false; // eda:add-coverpoint-bin retired 4.4
-            else if (strategy == "relax-constraint" || strategy == "structural-fix")
-                applied = false; // eda:update-constraint retired 4.4
-            if (!applied)
-                return make_bool(false);
-            ev.bump_sv_self_evo_structured_mutate();
-            ev.bump_sv_self_evo_closed_loop_rounds();
-            ev.bump_sv_self_evo_convergence_hits();
-            ev.bump_closed_loop_feedback_mutate_round();
-            return make_bool(true);
-        });
+                   // Soft dormant #f body (Issue #3828 AC3) — retired eda:* strategies.
+                   // When strategies return, writes land under add_mutate Guard
+                   // (metrics + #3697 persist-reject + RO fence already held).
+                   bool applied = false;
+                   if (strategy == "weaken-property" || strategy == "assert-fail")
+                       applied = false; // eda:weaken-property retired 4.4
+                   else if (strategy == "add-coverpoint" || strategy == "coverage-hole")
+                       applied = false; // eda:add-coverpoint-bin retired 4.4
+                   else if (strategy == "relax-constraint" || strategy == "structural-fix")
+                       applied = false; // eda:update-constraint retired 4.4
+                   if (!applied)
+                       return make_bool(false);
+                   ev.bump_sv_self_evo_structured_mutate();
+                   ev.bump_sv_self_evo_closed_loop_rounds();
+                   ev.bump_sv_self_evo_convergence_hits();
+                   ev.bump_closed_loop_feedback_mutate_round();
+                   return make_bool(true);
+               });
 
     // ── Issue #2099: HygieneCheckpoint save / restore primitives ───
     // Lightweight Agent-visible primitives for what-if / self-evo

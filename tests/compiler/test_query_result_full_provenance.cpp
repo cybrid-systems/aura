@@ -1646,11 +1646,9 @@ void test_ac3827_1_production_children_v2_schema2() {
                 cs.eval("(define qc3827 (query :children (0 . 0)))").has_value());
     auto qc = cs.eval("qc3827");
     expect_true("3827 AC1: children returns", qc.has_value());
-    expect_true("3827 AC1: children IS schema-2 hash (not bare NodeId list)",
-                qc && is_hash(*qc));
+    expect_true("3827 AC1: children IS schema-2 hash (not bare NodeId list)", qc && is_hash(*qc));
     auto tag = cs.eval("(hash-ref qc3827 \"query-result-tag\")");
-    expect_true("3827 AC1: query-result-tag present",
-                tag && is_int(*tag) && as_int(*tag) == 1);
+    expect_true("3827 AC1: query-result-tag present", tag && is_int(*tag) && as_int(*tag) == 1);
     auto wired = cs.eval("(hash-ref qc3827 \"query-result-wired-full\")");
     expect_true("3827 AC1: query-result-wired-full (schema-2 stamp)",
                 wired && is_int(*wired) && as_int(*wired) == 1);
@@ -1660,8 +1658,7 @@ void test_ac3827_1_production_children_v2_schema2() {
     expect_true("3827 AC1: bind child v2",
                 cs.eval("(define cref3827 (query:as-stable-ref qc :index 0))").has_value());
     auto cref_car = cs.eval("(car cref3827)");
-    expect_true("3827 AC1: child v2 car is NodeId (not error kind)",
-                cref_car && is_int(*cref_car));
+    expect_true("3827 AC1: child v2 car is NodeId (not error kind)", cref_car && is_int(*cref_car));
     expect_true("3827 AC1: bind parent via v2",
                 cs.eval("(define qp3827 (query :parent cref3827))").has_value());
     auto qp = cs.eval("qp3827");
@@ -1683,8 +1680,7 @@ void test_ac3827_2_soft_children_int_fails_prod_as_stable() {
                 cs.eval("(define kids3827 (query :children 0))").has_value());
     auto kids = cs.eval("kids3827");
     expect_true("3827 AC2: Soft children returns", kids.has_value());
-    expect_true("3827 AC2: Soft children is NOT a hash (bare list)",
-                kids && !is_hash(*kids));
+    expect_true("3827 AC2: Soft children is NOT a hash (bare list)", kids && !is_hash(*kids));
     expect_true("3827 AC2: bind first Soft int",
                 cs.eval("(define nid3827 (car kids3827))").has_value());
     auto nid = cs.eval("nid3827");
@@ -1737,10 +1733,9 @@ void test_ac3827_4_soft_and_source() {
     const auto ch = qws.find("(*q_impls)[\"query:children\"]");
     expect_true("3827 AC4: query:children present", ch != std::string::npos);
     const auto ch_end = qws.find("(*q_impls)[\"query:children-stable\"]", ch);
-    const auto ch_body =
-        ch == std::string::npos
-            ? std::string{}
-            : qws.substr(ch, (ch_end == std::string::npos ? 2500 : ch_end - ch));
+    const auto ch_body = ch == std::string::npos
+                             ? std::string{}
+                             : qws.substr(ch, (ch_end == std::string::npos ? 2500 : ch_end - ch));
     expect_true("3827 AC4: children uses end_query_epoch_maybe_result",
                 ch_body.find("end_query_epoch_maybe_result") != std::string::npos);
 
@@ -1748,10 +1743,9 @@ void test_ac3827_4_soft_and_source() {
     expect_true("3827 AC4: query:parent present", pa != std::string::npos);
     // parent-stable follows parent in some layouts; bound by siblings comment or next add(
     const auto pa_end = qws.find("query:siblings", pa);
-    const auto pa_body =
-        pa == std::string::npos
-            ? std::string{}
-            : qws.substr(pa, (pa_end == std::string::npos ? 2500 : pa_end - pa));
+    const auto pa_body = pa == std::string::npos
+                             ? std::string{}
+                             : qws.substr(pa, (pa_end == std::string::npos ? 2500 : pa_end - pa));
     expect_true("3827 AC4: parent uses end_query_epoch_maybe_result",
                 pa_body.find("end_query_epoch_maybe_result") != std::string::npos);
 

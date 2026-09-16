@@ -109,7 +109,8 @@ int main() {
             CHECK(msrc.find("\"mutate:from-verification-feedback\"") != std::string::npos,
                   "3828: feedback prim in mutate.cpp");
             auto mpos = msrc.find("\"mutate:from-verification-feedback\"");
-            CHECK(msrc.substr(mpos > 80 ? mpos - 80 : 0, 80).find("add_mutate") != std::string::npos,
+            CHECK(msrc.substr(mpos > 80 ? mpos - 80 : 0, 80).find("add_mutate") !=
+                      std::string::npos,
                   "3828: feedback via add_mutate");
         }
     }

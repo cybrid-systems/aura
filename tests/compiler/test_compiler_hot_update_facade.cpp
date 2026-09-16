@@ -973,7 +973,8 @@ static void ac3823_production_node_dep_mark_union() {
     const auto build = read_file("build.py");
     CHECK(ixx.find("mark_node_dep_dependents_body_dirty_") != std::string::npos,
           "3823: helper declared");
-    CHECK(svc.find("void CompilerService::mark_node_dep_dependents_body_dirty_") != std::string::npos,
+    CHECK(svc.find("void CompilerService::mark_node_dep_dependents_body_dirty_") !=
+              std::string::npos,
           "3823: helper defined");
     {
         const auto md_pos = svc.find("void CompilerService::mark_define_dirty");
