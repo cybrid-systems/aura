@@ -1932,6 +1932,173 @@ int run_test_parallel_intend_pure_contract() {
         reset_for_test();
     }
 
+    // ── Issue #3840: RegionConcurrent skips eval_mu under production ──
+    // Twin of spawn #3728 — advertised region-concurrent must unlock
+    // ash->eval_mu for non-zero region_key tasks when production +
+    // workspace region concurrency are on. Soft / zero-key stay locked.
+    {
+        using aura::compiler::typed_audit::apply_production_audit_defaults;
+        using aura::compiler::typed_audit::clear_cone_outside_goal_drop_for_test;
+        using aura::compiler::typed_audit::clear_occurrence_empty_after_fence_for_test;
+        using aura::compiler::typed_audit::clear_partial_cone_truncate_for_test;
+        using aura::compiler::typed_audit::reset_for_test;
+
+        auto set_prod = [](bool on) {
+            aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active
+                .store(on ? 1u : 0u, std::memory_order_relaxed);
+        };
+
+        std::println("\n--- #3840 AC1: production + region-keys → eval-serialized=#f ---");
+        reset_for_test();
+        clear_partial_cone_truncate_for_test();
+        clear_cone_outside_goal_drop_for_test();
+        clear_occurrence_empty_after_fence_for_test();
+        apply_production_audit_defaults();
+        CompilerService pcs;
+        pcs.evaluator().set_effect_sandbox_mode(0);
+        pcs.evaluator().set_workspace_region_concurrency_enabled(true);
+        CHECK(pcs.eval("(+ 1 1)").has_value(), "3840 AC1: warm");
+        auto ser = pcs.eval(R"(
+            (let ((h (parallel-intend (vector (lambda () 1) (lambda () 2))
+                                    :max-concurrency 2
+                                    :region-keys (vector 1 2)
+                                    :collect-errors #t
+                                    :timeout-ms 2000)))
+              (list (if (hash-ref h "eval-serialized") 1 0)
+                    (if (string=? (hash-ref h "isolation-level") "region-concurrent") 1 0)
+                    (hash-ref h "schema-3840")
+                    (hash-ref h "ok-count")))
+        )");
+        CHECK(ser.has_value(), "3840 AC1: batch returns");
+        // Probe eval-serialized alone (stable).
+        auto es = pcs.eval(R"(
+            (let ((h (parallel-intend (vector (lambda () 10) (lambda () 20))
+                                    :max-concurrency 2
+                                    :region-keys (vector 11 22)
+                                    :collect-errors #t
+                                    :timeout-ms 2000)))
+              (if (hash-ref h "eval-serialized") 1 0))
+        )");
+        CHECK(es.has_value() && as_int(*es) == 0,
+              "ac3840_1_prod_keys: eval-serialized=#f under RegionConcurrent + region concurrency");
+        auto iso = pcs.eval(R"(
+            (let ((h (parallel-intend (vector (lambda () 1) (lambda () 2))
+                                    :max-concurrency 2
+                                    :region-keys (vector 1 2)
+                                    :collect-errors #t
+                                    :timeout-ms 2000)))
+              (if (string=? (hash-ref h "isolation-level") "region-concurrent") 1 0))
+        )");
+        CHECK(iso.has_value() && as_int(*iso) == 1,
+              "3840 AC1: isolation-level still region-concurrent");
+        auto schema = pcs.eval(R"(
+            (let ((h (parallel-intend (vector (lambda () 1) (lambda () 2))
+                                    :max-concurrency 2
+                                    :region-keys (vector 1 2)
+                                    :collect-errors #t
+                                    :timeout-ms 2000)))
+              (hash-ref h "schema-3840"))
+        )");
+        CHECK(schema.has_value() && as_int(*schema) == 3840, "3840 AC1: schema-3840");
+
+        std::println("\n--- #3840 AC2: Soft + region-keys stays eval-serialized=#t ---");
+        reset_for_test();
+        set_prod(false);
+        CompilerService soft_cs;
+        soft_cs.evaluator().set_effect_sandbox_mode(0);
+        soft_cs.evaluator().set_workspace_region_concurrency_enabled(true);
+        CHECK(soft_cs.eval("(+ 1 1)").has_value(), "3840 AC2: warm");
+        auto soft_es = soft_cs.eval(R"(
+            (let ((h (parallel-intend (vector (lambda () 1) (lambda () 2))
+                                    :max-concurrency 2
+                                    :region-keys (vector 1 2)
+                                    :collect-errors #t
+                                    :timeout-ms 2000)))
+              (list (if (hash-ref h "eval-serialized") 1 0)
+                    (if (string=? (hash-ref h "isolation-level") "region-concurrent") 1 0)))
+        )");
+        CHECK(soft_es.has_value(), "3840 AC2: Soft batch returns");
+        auto soft_ser = soft_cs.eval(R"(
+            (let ((h (parallel-intend (vector (lambda () 1) (lambda () 2))
+                                    :max-concurrency 2
+                                    :region-keys (vector 1 2)
+                                    :collect-errors #t
+                                    :timeout-ms 2000)))
+              (if (hash-ref h "eval-serialized") 1 0))
+        )");
+        CHECK(soft_ser.has_value() && as_int(*soft_ser) == 1,
+              "ac3840_2_soft: Soft keeps eval-serialized=#t (still takes eval_mu)");
+        auto soft_iso = soft_cs.eval(R"(
+            (let ((h (parallel-intend (vector (lambda () 1) (lambda () 2))
+                                    :max-concurrency 2
+                                    :region-keys (vector 1 2)
+                                    :collect-errors #t
+                                    :timeout-ms 2000)))
+              (if (string=? (hash-ref h "isolation-level") "region-concurrent") 1 0))
+        )");
+        CHECK(soft_iso.has_value() && as_int(*soft_iso) == 1,
+              "3840 AC2: Soft still advertises region-concurrent");
+
+        std::println("\n--- #3840 AC3: zero-key / missing keys stay serialized ---");
+        // Soft zero-key / overlap path: still eval-serialized=#t (keeps eval_mu).
+        reset_for_test();
+        set_prod(false);
+        CompilerService zsoft;
+        zsoft.evaluator().set_effect_sandbox_mode(0);
+        zsoft.evaluator().set_workspace_region_concurrency_enabled(true);
+        auto zser = zsoft.eval(R"(
+            (let ((h (parallel-intend (vector (lambda () 1) (lambda () 2))
+                                    :max-concurrency 2
+                                    :collect-errors #t
+                                    :timeout-ms 2000)))
+              (if (hash-ref h "eval-serialized") 1 0))
+        )");
+        CHECK(zser.has_value() && as_int(*zser) == 1,
+              "ac3840_3_zero_key: missing region_keys stay eval-serialized=#t");
+        // Overlap keys → Serialized (not RegionConcurrent) under Soft.
+        auto oser = zsoft.eval(R"(
+            (let ((h (parallel-intend (vector (lambda () 1) (lambda () 2))
+                                    :max-concurrency 2
+                                    :region-keys (vector 5 5)
+                                    :collect-errors #t
+                                    :timeout-ms 2000)))
+              (list (if (hash-ref h "eval-serialized") 1 0)
+                    (if (string=? (hash-ref h "isolation-level") "serialized") 1 0)))
+        )");
+        CHECK(oser.has_value(), "3840 AC3: overlap batch returns");
+        auto o_es = zsoft.eval(R"(
+            (let ((h (parallel-intend (vector (lambda () 1) (lambda () 2))
+                                    :max-concurrency 2
+                                    :region-keys (vector 5 5)
+                                    :collect-errors #t
+                                    :timeout-ms 2000)))
+              (if (hash-ref h "eval-serialized") 1 0))
+        )");
+        CHECK(o_es.has_value() && as_int(*o_es) == 1,
+              "3840 AC3: overlap keys stay eval-serialized=#t");
+
+        std::println("\n--- #3840 AC4: source-cite + no invent / Soft zero-key locked ---");
+        const auto agent = read_file("src/compiler/evaluator_primitives_agent.cpp");
+        const auto build = read_file("build.py");
+        CHECK(agent.find("Issue #3840") != std::string::npos, "3840 AC4: prim cites #3840");
+        CHECK(agent.find("region_concurrent_skip_eval_mu") != std::string::npos,
+              "3840 AC4: skip gate present");
+        CHECK(agent.find("apply_spawn_closure_maybe_locked") != std::string::npos,
+              "3840 AC4: still shares spawn #3728 discipline cite");
+        CHECK(agent.find("schema-3840") != std::string::npos, "3840 AC4: schema-3840");
+        CHECK(agent.find("query:3840") == std::string::npos, "3840 AC4: no new query key");
+        CHECK(build.find("check_parallel_intend_region_eval_mu_3840") != std::string::npos,
+              "3840 AC4: build.py wires linter");
+        CHECK(read_file("docs/design/3840-region-eval-mu.md").empty(),
+              "3840 AC4: no docs/design per #1655");
+        std::ifstream invent3840("tests/orch/test_issue_3840.cpp");
+        if (!invent3840.good())
+            invent3840.open("../tests/orch/test_issue_3840.cpp");
+        CHECK(!invent3840.good(), "3840 AC4: no test_issue_3840.cpp per #81967");
+
+        reset_for_test();
+    }
+
     std::println("\n=== Results: {} passed, {} failed ===", aura::test::g_passed,
                  aura::test::g_failed);
     return aura::test::g_failed ? 1 : 0;

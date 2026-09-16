@@ -424,3 +424,5 @@ scripts/coverage/checks/check_wal_overflow_wrap_refuse_3838.py
 check_wal_overflow_wrap_refuse_3838.py
 scripts/coverage/checks/check_string_grant_session_bound_3839.py
 check_string_grant_session_bound_3839.py
+scripts/coverage/checks/check_parallel_intend_region_eval_mu_3840.py
+check_parallel_intend_region_eval_mu_3840.py
