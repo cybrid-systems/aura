@@ -442,23 +442,25 @@ export constexpr std::uint64_t INVALID_VERSION = std::numeric_limits<std::uint64
 // across all module TUs (generic lambda template-body two-phase lookup
 // requires exported namespace-scope symbols, not TU-private inline
 // constexpr). The coverage linter
-// Issue #3802: EXEMPT_2ARG host IO stays 2-arg (inventory size stable);
+// Issue #3802: EXEMPT_2ARG host IO stays 2-arg (no NodeId redesign);
 // Restricted+MT / Strict path-prefix isolation via check_tenant_host_path
-// (no NodeId redesign / no new query key).
+// (no new query key). Issue #3836 grows exempt inventory for shell /
+// command-output require_effect(Exec).
 // (scripts/coverage/checks/check_side_effect_fiber_principal_2839.py)
 // validates these match the actual inventory in EXEMPT_2ARG_OPS +
 // SCOPE_FILES; drift trips the linter before commit. Counts:
 //   kResidualNodeIdExemptOpsCount   = total documented 2-arg exempt ops
 //                                     (3 from #2839 + 2 added by #2881:
-//                                     git-commit + deny_sys)
+//                                     git-commit + deny_sys + 2 by #3836:
+//                                     shell + command-output)
 //   kResidualNodeIdScopeFilesCount  = total prim files in residual scope
 //                                     (11 from #2839 + 6 added by #2881:
 //                                     query_workspace + diagnostic +
 //                                     memory + module + obs_jit + json)
 //   kResidualNodeIdInventoryCount   = exempt + scope = full inventory
-export inline constexpr std::int64_t kResidualNodeIdExemptOpsCount = 5;
+export inline constexpr std::int64_t kResidualNodeIdExemptOpsCount = 7;
 export inline constexpr std::int64_t kResidualNodeIdScopeFilesCount = 17;
-export inline constexpr std::int64_t kResidualNodeIdInventoryCount = 22;
+export inline constexpr std::int64_t kResidualNodeIdInventoryCount = 24;
 
 // Issue #2942: late-isolation NodeId mandate — every workspace-mutating
 // prim with a concrete NodeId goes through require_effect_for_node_id
@@ -470,7 +472,7 @@ export inline constexpr std::int64_t kResidualNodeIdInventoryCount = 22;
 // Issue #3526: same linter AC7 reverse-scans 3-arg require_effect
 // (and 4-arg literal ref_tenant=0) so new NodeId prims cannot silently
 // take the default. No new query key.
-export inline constexpr std::int64_t kNodeIdMandateExemptOpsCount = 5;
+export inline constexpr std::int64_t kNodeIdMandateExemptOpsCount = 7;
 export inline constexpr std::int64_t kNodeIdMandateWired = 1;
 
 // Issue #3040: residual compile:/verify:/syntax: NodeId writers gate

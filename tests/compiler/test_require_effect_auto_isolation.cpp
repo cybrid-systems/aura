@@ -48,6 +48,7 @@ namespace {
 
 using aura::compiler::CompilerService;
 using aura::compiler::Evaluator;
+using aura::compiler::security::kEffectExec;
 using aura::compiler::security::kEffectMutate;
 using aura::core::bump_mutation_epoch;
 using aura::core::current_mutation_epoch;
@@ -717,7 +718,7 @@ static void ac2881_3_inventory_constants_wired() {
     CHECK(ixx.find("kResidualNodeIdInventoryCount") != std::string::npos,
           "2881 AC3: kResidualNodeIdInventoryCount defined in evaluator.ixx");
     // Values must equal the actual inventory counts.
-    // Note: must match the declaration (e.g. "kResidualNodeIdExemptOpsCount = 5;")
+    // Note: must match the declaration (e.g. "kResidualNodeIdExemptOpsCount = 7;")
     // not the documentation comment that precedes it — search for the
     // constant name + trailing " = " so we land on the actual assignment
     // instead of the comment header.
@@ -733,12 +734,12 @@ static void ac2881_3_inventory_constants_wired() {
         const auto p = ixx.find("kResidualNodeIdInventoryCount = ");
         return p == std::string::npos ? std::string{} : ixx.substr(p, 60);
     }();
-    CHECK(m_exempt.find("= 5") != std::string::npos,
-          "2881 AC3: kResidualNodeIdExemptOpsCount = 5 (3 #2839 + 2 #2881)");
+    CHECK(m_exempt.find("= 7") != std::string::npos,
+          "2881 AC3: kResidualNodeIdExemptOpsCount = 7 (3 #2839 + 2 #2881 + 2 #3836)");
     CHECK(m_scope.find("= 17") != std::string::npos,
           "2881 AC3: kResidualNodeIdScopeFilesCount = 17 (11 #2839 + 6 #2881)");
-    CHECK(m_inv.find("= 22") != std::string::npos,
-          "2881 AC3: kResidualNodeIdInventoryCount = 22 (5 exempt + 17 scope)");
+    CHECK(m_inv.find("= 24") != std::string::npos,
+          "2881 AC3: kResidualNodeIdInventoryCount = 24 (7 exempt + 17 scope)");
     // Schema-2881 exposed in posture prim (query:security-posture / side-effect-stats).
     CHECK(posture.find("schema-2881") != std::string::npos,
           "2881 AC3: schema-2881 field in posture prim");
@@ -793,6 +794,93 @@ static void ac2881_5_linter_self_test_and_no_invent() {
 }
 
 // ── #2942: mandate require_effect_for_node_id on all workspace NodeId paths ──
+// ── #3836: shell / command-output require_effect(Exec) ──
+// String-cap deny_exec alone skipped fiber-principal / isolation / live mid
+// under Restricted. Mirror git-commit (#2072): require_effect(kEffectExec)
+// before fork/popen. Soft/Off deny_exec !sandbox_mode() short-circuit kept.
+static void ac3836_1_shell_command_output_require_effect() {
+    std::println("\n--- #3836 AC1: shell/command-output call require_effect(Exec) ---");
+    const auto filep = read_file("src/compiler/evaluator_primitives_file.cpp");
+    CHECK(filep.find("Issue #3836") != std::string::npos, "3836 AC1: cite Issue #3836");
+    CHECK(filep.find("require_effect(kEffectExec, \"shell\")") != std::string::npos,
+          "3836 AC1: shell require_effect(Exec)");
+    CHECK(filep.find("require_effect(kEffectExec, \"command-output\")") != std::string::npos,
+          "3836 AC1: command-output require_effect(Exec)");
+    const auto shell_pos = filep.find("require_effect(kEffectExec, \"shell\")");
+    const auto fork_pos = filep.find("::fork()", shell_pos);
+    const auto execl_pos = filep.find("::execl(", shell_pos);
+    CHECK(shell_pos != std::string::npos && fork_pos != std::string::npos && fork_pos > shell_pos,
+          "3836 AC1: shell require_effect before fork");
+    CHECK(execl_pos != std::string::npos && execl_pos > shell_pos,
+          "3836 AC1: shell require_effect before execl");
+    const auto cmd_pos = filep.find("require_effect(kEffectExec, \"command-output\")");
+    const auto popen_pos = filep.find("::popen(", cmd_pos);
+    CHECK(cmd_pos != std::string::npos && popen_pos != std::string::npos && popen_pos > cmd_pos,
+          "3836 AC1: command-output require_effect before popen");
+}
+
+static void ac3836_2_restricted_no_exec_denies() {
+    std::println("\n--- #3836 AC2: Restricted + no Exec bits → require_effect deny ---");
+    reset_all();
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_effect_sandbox_mode(1);
+    ev.set_capability_tenant_id(1);
+    const bool ok = ev.require_effect(static_cast<std::uint16_t>(kEffectExec), "shell");
+    CHECK(!ok, "3836 AC2: require_effect(Exec,\"shell\") denies without Exec bits");
+    const bool ok2 =
+        ev.require_effect(static_cast<std::uint16_t>(kEffectExec), "command-output");
+    CHECK(!ok2, "3836 AC2: require_effect(Exec,\"command-output\") denies");
+}
+
+static void ac3836_3_soft_off_deny_exec_contract() {
+    std::println("\n--- #3836 AC3: Soft/Off deny_exec !sandbox_mode() short-circuit preserved ---");
+    const auto filep = read_file("src/compiler/evaluator_primitives_file.cpp");
+    CHECK(filep.find("deny_exec") != std::string::npos, "3836 AC3: deny_exec present");
+    CHECK(filep.find("!ev.sandbox_mode()") != std::string::npos,
+          "3836 AC3: Soft/Off !sandbox_mode() short-circuit in deny_exec");
+    reset_all();
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_effect_sandbox_mode(0);
+    const bool ok = ev.require_effect(static_cast<std::uint16_t>(kEffectExec), "shell");
+    CHECK(ok, "3836 AC3: Off sandbox require_effect(Exec,\"shell\") allows");
+    const bool ok2 =
+        ev.require_effect(static_cast<std::uint16_t>(kEffectExec), "command-output");
+    CHECK(ok2, "3836 AC3: Off sandbox require_effect(Exec,\"command-output\") allows");
+}
+
+static void ac3836_4_exempt_inventory_and_no_invent() {
+    std::println("\n--- #3836 AC4: EXEMPT_2ARG + wiring; no invent / docs ---");
+    const auto fiber =
+        read_file("scripts/coverage/checks/check_side_effect_fiber_principal_2839.py");
+    const auto mandate =
+        read_file("scripts/coverage/checks/check_side_effect_node_id_mandate_2942.py");
+    const auto ixx = read_file("src/compiler/evaluator.ixx");
+    const auto build = read_file("build.py");
+    const auto posture = read_file("src/compiler/evaluator_primitives_security.cpp");
+    CHECK(fiber.find("\"shell\"") != std::string::npos, "3836 AC4: fiber EXEMPT lists shell");
+    CHECK(fiber.find("\"command-output\"") != std::string::npos,
+          "3836 AC4: fiber EXEMPT lists command-output");
+    CHECK(mandate.find("\"shell\"") != std::string::npos, "3836 AC4: mandate EXEMPT lists shell");
+    CHECK(mandate.find("\"command-output\"") != std::string::npos,
+          "3836 AC4: mandate EXEMPT lists command-output");
+    CHECK(ixx.find("kResidualNodeIdExemptOpsCount = 7") != std::string::npos,
+          "3836 AC4: exempt count = 7");
+    CHECK(ixx.find("kNodeIdMandateExemptOpsCount = 7") != std::string::npos,
+          "3836 AC4: mandate exempt count = 7");
+    CHECK(build.find("check_shell_require_effect_3836") != std::string::npos,
+          "3836 AC4: build.py wires #3836 linter");
+    CHECK(posture.find("schema-3836") == std::string::npos, "3836 AC4: no schema-3836");
+    CHECK(posture.find("issue-3836") == std::string::npos, "3836 AC4: no issue-3836");
+    std::ifstream invent("tests/compiler/test_issue_3836.cpp");
+    if (!invent.good())
+        invent.open("../tests/compiler/test_issue_3836.cpp");
+    CHECK(!invent.good(), "3836 AC4: no test_issue_3836.cpp (forbidden)");
+}
+
 static void ac2942_1_add_mutate_uses_mandated_helpers() {
     std::println("\n--- #2942 AC1: add_mutate uses for_node_id / on_ref ---");
     const auto mutate = read_file("src/compiler/evaluator_primitives_mutate.cpp");
@@ -2439,6 +2527,11 @@ int run_test_require_effect_auto_isolation() {
     ac2881_3_inventory_constants_wired();
     ac2881_4_cross_source_cite();
     ac2881_5_linter_self_test_and_no_invent();
+    std::println("\n=== Issue #3836: shell/command-output require_effect(Exec) ===");
+    ac3836_1_shell_command_output_require_effect();
+    ac3836_2_restricted_no_exec_denies();
+    ac3836_3_soft_off_deny_exec_contract();
+    ac3836_4_exempt_inventory_and_no_invent();
     std::println("\n=== Issue #2942: NodeId side-effect mandate ===");
     ac2942_1_add_mutate_uses_mandated_helpers();
     ac2942_2_for_node_id_restricted_unset_denies();

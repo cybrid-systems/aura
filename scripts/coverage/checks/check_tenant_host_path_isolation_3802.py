@@ -5,7 +5,7 @@ Under Restricted+MT / Strict, path-taking host IO (write-file / sys-open /
 sys-write siblings) resolve under a tenant root derived from
 capability_tenant_id_. Cross-tenant path escape → IsolationDeny SE
 (tenant-path-escape), zero write. Soft/Off / single-tenant Restricted
-passthrough. EXEMPT_2ARG inventory size stays 5 (no NodeId redesign).
+passthrough. EXEMPT_2ARG stays 2-arg (no NodeId redesign); size grew to 7 via #3836 shell/command-output.
 
 Contract (one row per AC):
   AC1  Restricted+MT tenant A cannot write under tenant B prefix; deny + SE
@@ -69,12 +69,13 @@ def main() -> int:
     must("3802 AC2", "AC2 test", test)
     must("Soft/Off", "AC2 Soft test", test)
 
-    # ── AC3 inventory stable ──
-    must("kResidualNodeIdExemptOpsCount = 5", "AC3 exempt count ixx", ixx)
-    must("kNodeIdMandateExemptOpsCount = 5", "AC3 mandate count ixx", ixx)
-    # EXEMPT_2ARG still size 5 in mandate linter
-    if "len(EXEMPT_2ARG_OPS) != 5" not in mandate and "expected 5" not in mandate:
-        fails.append("AC3: mandate linter no longer pins EXEMPT_2ARG size 5")
+    # ── AC3 inventory: #3802 did not redesign NodeId; #3836 grew exempt to 7 ──
+    must("kResidualNodeIdExemptOpsCount = 7", "AC3 exempt count ixx", ixx)
+    must("kNodeIdMandateExemptOpsCount = 7", "AC3 mandate count ixx", ixx)
+    # EXEMPT_2ARG size 7 in mandate linter (5 pre-#3836 + shell/command-output)
+    if "len(EXEMPT_2ARG_OPS) != 7" not in mandate and "expected 7" not in mandate:
+        fails.append("AC3: mandate linter no longer pins EXEMPT_2ARG size 7")
+    must("write-file", "AC3 write-file still exempt", mandate)
     must_not("schema-3802", "AC3 no schema key", prim)
     must_not("issue-3802", "AC3 no issue key", prim)
     must("3802 AC3", "AC3 test", test)

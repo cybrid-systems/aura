@@ -418,3 +418,5 @@ scripts/coverage/checks/check_call_ownerless_fail_closed_3834.py
 check_call_ownerless_fail_closed_3834.py
 scripts/coverage/checks/check_tenant_host_path_read_3835.py
 check_tenant_host_path_read_3835.py
+scripts/coverage/checks/check_shell_require_effect_3836.py
+check_shell_require_effect_3836.py
