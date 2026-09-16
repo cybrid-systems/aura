@@ -34,6 +34,7 @@
 #include "core/arena_auto_policy_stats.h"
 #include "core/densify_consistency_report.h"
 #include "core/gc_hooks.h"
+#include "core/moving_densify_health.hh"
 
 #include <cstdint>
 #include <fstream>

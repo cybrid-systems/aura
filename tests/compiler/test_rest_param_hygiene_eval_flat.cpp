@@ -49,6 +49,7 @@ import aura.compiler.macro_expansion;
 import aura.compiler.service;
 import aura.compiler.value;
 import aura.core.ast;
+import aura.core.arena; // ASTArena lives here (wave split the re-export)
 import aura.parser.parser;
 
 namespace {

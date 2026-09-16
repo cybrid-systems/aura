@@ -865,10 +865,10 @@ int run_test_dispatch_required_effects() {
         auto vref_pfn = prims.lookup("vector-ref");
         CHECK(vec_pfn.has_value() && vref_pfn.has_value(), "3798 AC2: vector prims present");
         auto vec_r = (*vec_pfn)({make_int(10), make_int(20)});
-        CHECK(vec_r.has_value(), "3798 AC2: direct vector construct");
-        const auto vec = *vec_r;
+        CHECK(!is_error(vec_r), "3798 AC2: direct vector construct");
+        const auto vec = vec_r;
         auto before = (*vref_pfn)({vec, make_int(0)});
-        CHECK(before && is_int(*before) && as_int(*before) == 10, "3798 AC2: before[0]==10");
+        CHECK(is_int(before) && as_int(before) == 10, "3798 AC2: before[0]==10");
 
         aura::ir::IRModule mod;
         // fn0 entry: MakeClosure of mutate fn1, return closure
@@ -905,8 +905,7 @@ int run_test_dispatch_required_effects() {
             const bool unchanged = ir && is_int(*ir) && as_int(*ir) == 10;
             CHECK(void_ok || unchanged, "3798 AC2: EffectDeny/void or unchanged ref");
             auto after = (*vref_pfn)({vec, make_int(0)});
-            CHECK(after && is_int(*after) && as_int(*after) == 10,
-                  "3798 AC2: workspace vector unchanged");
+            CHECK(is_int(after) && as_int(after) == 10, "3798 AC2: workspace vector unchanged");
         }
         aura::compiler::typed_audit::apply_dev_audit_defaults();
         aura::core::provenance::set_multi_tenant_env_active(false);
@@ -926,8 +925,8 @@ int run_test_dispatch_required_effects() {
         auto vref_pfn = prims.lookup("vector-ref");
         CHECK(vec_pfn.has_value() && vref_pfn.has_value(), "3798 AC3: vector prims");
         auto vec_r = (*vec_pfn)({make_int(10), make_int(20)});
-        CHECK(vec_r.has_value(), "3798 AC3: vector construct");
-        const auto vec = *vec_r;
+        CHECK(!is_error(vec_r), "3798 AC3: vector construct");
+        const auto vec = vec_r;
 
         aura::ir::IRModule mod;
         mod.functions.push_back(aura::ir::IRFunction{.name = "entry", .local_count = 4});
@@ -958,7 +957,7 @@ int run_test_dispatch_required_effects() {
             auto ir = interp.call_closure(as_closure_id(*cl), args);
             CHECK(ir && is_int(*ir) && as_int(*ir) == 99, "3798 AC3: Soft raw write lands");
             auto after = (*vref_pfn)({vec, make_int(0)});
-            CHECK(after && is_int(*after) && as_int(*after) == 99, "3798 AC3: Soft stored 99");
+            CHECK(is_int(after) && as_int(after) == 99, "3798 AC3: Soft stored 99");
         }
         set_mode(SandboxMode::Off);
     }
@@ -1020,10 +1019,10 @@ int run_test_dispatch_required_effects() {
         auto vref_pfn = prims.lookup("vector-ref");
         CHECK(vec_pfn.has_value() && vref_pfn.has_value(), "3834 AC2: vector prims present");
         auto vec_r = (*vec_pfn)({make_int(10), make_int(20)});
-        CHECK(vec_r.has_value(), "3834 AC2: direct vector construct");
-        const auto vec = *vec_r;
+        CHECK(!is_error(vec_r), "3834 AC2: direct vector construct");
+        const auto vec = vec_r;
         auto before = (*vref_pfn)({vec, make_int(0)});
-        CHECK(before && is_int(*before) && as_int(*before) == 10, "3834 AC2: before[0]==10");
+        CHECK(is_int(before) && as_int(before) == 10, "3834 AC2: before[0]==10");
 
         const auto vs_slot = static_cast<std::uint32_t>(prims.slot_for_name("vector-set!"));
         const auto vr_slot = static_cast<std::uint32_t>(prims.slot_for_name("vector-ref"));
@@ -1063,8 +1062,7 @@ int run_test_dispatch_required_effects() {
             const bool unchanged = ir && is_int(*ir) && as_int(*ir) == 10;
             CHECK(void_ok || unchanged, "3834 AC2: EffectDeny/void or unchanged ref");
             auto after = (*vref_pfn)({vec, make_int(0)});
-            CHECK(after && is_int(*after) && as_int(*after) == 10,
-                  "3834 AC2: workspace vector unchanged");
+            CHECK(is_int(after) && as_int(after) == 10, "3834 AC2: workspace vector unchanged");
         }
         aura::compiler::typed_audit::apply_dev_audit_defaults();
         aura::core::provenance::set_multi_tenant_env_active(false);
@@ -1084,8 +1082,8 @@ int run_test_dispatch_required_effects() {
         auto vref_pfn = prims.lookup("vector-ref");
         CHECK(vec_pfn.has_value() && vref_pfn.has_value(), "3834 AC3: vector prims");
         auto vec_r = (*vec_pfn)({make_int(10), make_int(20)});
-        CHECK(vec_r.has_value(), "3834 AC3: vector construct");
-        const auto vec = *vec_r;
+        CHECK(!is_error(vec_r), "3834 AC3: vector construct");
+        const auto vec = vec_r;
         const auto vs_slot = static_cast<std::uint32_t>(prims.slot_for_name("vector-set!"));
         const auto vr_slot = static_cast<std::uint32_t>(prims.slot_for_name("vector-ref"));
 
@@ -1118,7 +1116,7 @@ int run_test_dispatch_required_effects() {
             auto ir = interp.call_closure(as_closure_id(*cl), args);
             CHECK(ir && is_int(*ir) && as_int(*ir) == 99, "3834 AC3: Soft raw write lands");
             auto after = (*vref_pfn)({vec, make_int(0)});
-            CHECK(after && is_int(*after) && as_int(*after) == 99, "3834 AC3: Soft stored 99");
+            CHECK(is_int(after) && as_int(after) == 99, "3834 AC3: Soft stored 99");
         }
         set_mode(SandboxMode::Off);
     }
