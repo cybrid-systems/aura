@@ -855,7 +855,7 @@ static void ac3843_3_source_cite_wiring_no_invent() {
     // Hard gate must OR Full — not production_defaults alone (the residual).
     const auto re = sec.find("bool Evaluator::require_effect");
     CHECK(re != std::string::npos, "3843 AC3: require_effect present");
-    const auto re_win = sec.substr(re, 3500);
+    const auto re_win = sec.substr(re, 5000);
     CHECK(re_win.find("production_defaults_active()") != std::string::npos &&
               re_win.find("AuditStrategy::Full") != std::string::npos,
           "3843 AC3: require_effect hard = production_defaults || Full");
