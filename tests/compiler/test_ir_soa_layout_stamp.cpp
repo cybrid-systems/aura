@@ -11,6 +11,8 @@
 //                  column tail + DensifyConsistencyReport + LayoutStamp
 //   #3833 AC1–AC3: IrSoaArenaColumn closes IR SoA heap; BMI pins kept;
 //                  view_at/batch dirty intact; SoA walk microbench
+//   #3853 AC1–AC3: column_slab map sharded (no process-wide mu); BMI
+//                  offsetof pins unchanged; uses_arena_resource post-bind
 
 #include "test_harness.hpp"
 #include "compiler/observability_metrics.h"
@@ -46,6 +48,8 @@ using aura::compiler::IRModuleV2;
 using aura::compiler::IrSoaArenaColumn;
 using aura::compiler::kAppendOnlyLayoutStampIssue;
 using aura::compiler::kIrSoaColumnArenaIssue;
+using aura::compiler::kIrSoaColumnSlabShardCount;
+using aura::compiler::kIrSoaColumnSlabShardIssue;
 using aura::compiler::kRelowerSoaGeneration;
 using aura::compiler::should_relower;
 using aura::compiler::walk_soa_function_hotpath;
@@ -301,6 +305,49 @@ int run_test_ir_soa_layout_stamp() {
         std::println("3833 AC3: walk_soa 256 instr ns={}", ns);
         CHECK(sizeof(IrSoaArenaColumn<std::uint32_t>) == sizeof(std::vector<std::uint32_t>),
               "3833 AC3: column object size == std::vector (BMI)");
+    }
+
+    // ── #3853: column_slab side-map sharded; BMI pins unchanged ──
+    {
+        std::println("\n--- #3853 AC1: sharded column_slab map (no process-wide mu) ---");
+        CHECK(kIrSoaColumnSlabShardIssue == 3853, "3853 AC1: issue constant");
+        CHECK(kIrSoaColumnSlabShardCount == 16, "3853 AC1: shard count 16");
+        const auto soa = read_file("src/compiler/ir_soa.ixx");
+        CHECK(soa.find("kIrSoaColumnSlabShardIssue = 3853") != std::string::npos,
+              "3853 AC1: stamp");
+        CHECK(soa.find("kIrSoaColumnSlabShardCount = 16") != std::string::npos,
+              "3853 AC1: shard count stamp");
+        CHECK(soa.find("column_slab_shards()") != std::string::npos, "3853 AC1: shards()");
+        CHECK(soa.find("column_slab_shard_index") != std::string::npos, "3853 AC1: shard_index");
+        CHECK(soa.find("IrSoaColumnSlabShard") != std::string::npos, "3853 AC1: shard type");
+        // Process-wide single mutex for all keys must be gone.
+        CHECK(soa.find("inline std::mutex& column_slab_mu()") == std::string::npos,
+              "3853 AC1: no process-wide column_slab_mu()");
+        CHECK(soa.find("static std::mutex mu;") == std::string::npos ||
+                  soa.find("column_slab_shards()") != std::string::npos,
+              "3853 AC1: no lone static mu for slab map");
+
+        std::println("\n--- #3853 AC2: #3833 BMI offsetof + uses_arena_resource ---");
+        CHECK(soa.find("offsetof(IRFunctionSoA, block_dirty_) == 376") != std::string::npos,
+              "3853 AC2: BMI block_dirty_");
+        CHECK(soa.find("offsetof(IRFunctionSoA, instruction_dirty_) == 408") != std::string::npos,
+              "3853 AC2: BMI instruction_dirty_");
+        CHECK(soa.find("offsetof(IRFunctionSoA, generation_) == 440") != std::string::npos,
+              "3853 AC2: BMI generation_");
+        CHECK(soa.find("sizeof(IRFunctionSoA) == 448") != std::string::npos,
+              "3853 AC2: BMI sizeof");
+        IRFunctionSoA hot;
+        hot.bind_column_arena();
+        hot.opcodes_.resize(4);
+        CHECK(hot.opcodes_.uses_arena_resource(), "3853 AC2: post-bind arena-owned");
+
+        std::println("\n--- #3853 AC3: wiring / no invent ---");
+        const auto build = read_file("build.py");
+        CHECK(build.find("check_ir_soa_column_slab_shard_3853") != std::string::npos,
+              "3853 AC3: build.py linter");
+        CHECK(read_file("tests/compiler/test_issue_3853.cpp").empty(), "3853 AC3: no invent");
+        CHECK(read_file("docs/design/3853-column-slab-shard.md").empty(),
+              "3853 AC3: no docs/design");
     }
 
     std::println("\n=== results: {} passed, {} failed ===", g_passed, g_failed);
