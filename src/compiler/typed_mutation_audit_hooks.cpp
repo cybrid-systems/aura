@@ -290,6 +290,12 @@ extern "C" int aura_production_defaults_active_probe() noexcept {
     return aura::compiler::typed_audit::production_defaults_active() ? 1 : 0;
 }
 
+// Issue #3844: hard-face probe for core capability_model.hh (cannot include
+// typed_mutation_audit.h — circular). Matches production_hard_face_active().
+extern "C" int aura_production_hard_face_active_probe() noexcept {
+    return aura::compiler::typed_audit::production_hard_face_active() ? 1 : 0;
+}
+
 // Issue #3532: classify production/Full mid=0 SE reasons. Canonical
 // refuse reasons pass through; anything else is caller-misuse and is
 // rewritten to audit-mid-ssot-miss-not-refuse. Soft/Off returns `reason`

@@ -891,6 +891,166 @@ static void ac3843_3_source_cite_wiring_no_invent() {
     }
 }
 
+
+// Issue #3844: check_and_record_effect / make_grant_provenance invent
+// prov.epoch = me ?: 1 when Mutation epoch is 0. Under production_defaults
+// || Full, epoch must stay 0 (WorkspaceEpoch Mutation only). Soft may keep
+// observe stamp. #3837 is deny-SE mid invent — sibling, not a dup.
+static void ac3844_1_hard_epoch0_stays_zero() {
+    std::println(
+        "\n--- #3844 AC1: hard face + TypedMid≠0 + Mutation epoch=0 → grant/SE epoch=0 ---");
+    reset_all();
+    aura::compiler::typed_audit::reset_for_test();
+    aura::core::reset_mutation_epoch_for_test();
+    aura::compiler::typed_audit::clear_type_linear_commit_proof_for_test();
+    aura::compiler::typed_audit::clear_boundary_audit_mid();
+    // Hard face: Full without production_defaults (cold-start Full residual).
+    aura::compiler::typed_audit::set_strategy(aura::compiler::typed_audit::AuditStrategy::Full);
+    g_typed_mutation_audit_counters.production_defaults_active.store(0, std::memory_order_relaxed);
+    aura::core::store_workspace_epoch(aura::core::WorkspaceEpochKind::Mutation, 0);
+    process_resource_quota_manager().provenance_mutation_id = 0;
+    CHECK(aura::core::current_mutation_epoch() == 0, "3844 AC1 pre: epoch=0");
+    CHECK(aura::compiler::typed_audit::production_hard_face_active(),
+          "3844 AC1 pre: hard face active");
+
+    using aura::core::capability::make_grant_provenance;
+    using aura::core::capability::stamp_grant_mutation_epoch;
+    using aura::core::capability::Effect;
+    constexpr std::uint64_t kTypedMid = 4242;
+    // Stamp TypedMid so mid join is non-zero while Mutation epoch stays 0.
+    aura::compiler::typed_audit::stamp_type_linear_commit_proof(kTypedMid);
+
+    auto prov = make_grant_provenance(kTypedMid, /*force_bind=*/true, 0, 0);
+    CHECK(prov.epoch == 0, "3844 AC1: make_grant_provenance epoch stays 0 (no phantom 1)");
+    CHECK(prov.mutation_id == kTypedMid, "3844 AC1: mid join unchanged (TypedMid)");
+    CHECK(stamp_grant_mutation_epoch() == 0, "3844 AC1: stamp helper returns 0 under hard");
+
+    // Grant under Restricted so registry records provenance; TenantAdmin first.
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+    g_capability_registry().sandbox_mode = aura::core::capability::EffectSandboxMode::Restricted;
+    {
+        auto ta = make_grant_provenance(kTypedMid, true, 0, 0);
+        CHECK(ta.epoch == 0, "3844 AC1: TA grant epoch stays 0");
+        g_capability_registry().grant(844, "tenant-admin", Effect::TenantAdmin, ta,
+                                      /*single_use=*/false, /*session_bound=*/false, 844);
+    }
+    auto gprov = make_grant_provenance(kTypedMid, true, 0, 0);
+    const bool granted =
+        g_capability_registry().grant(844, "mutate-3844", Effect::Mutate, gprov,
+                                      /*single_use=*/false, /*session_bound=*/false, 844);
+    CHECK(granted, "3844 AC1: Mutate grant accepted");
+    CapabilityGrant g{};
+    CHECK(g_capability_registry().find_grant(844, "mutate-3844", g), "3844 AC1: grant found");
+    CHECK(g.grant_epoch == 0, "3844 AC1: grant_epoch stays 0 (not invented 1)");
+    CHECK(g.bound_mutation_id == kTypedMid, "3844 AC1: bound mid joins TypedMid");
+
+    // check_and_record_effect path: SE.epoch must be 0, mid stays TypedMid.
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_effect_sandbox_mode(1); // Restricted
+    ev.set_capability_tenant_id(844);
+    using aura::core::security_event::g_security_event_ring;
+    const auto seq0 = g_security_event_ring().seq.load(std::memory_order_acquire);
+    const bool ok = ev.check_and_record_effect_for_test(
+        static_cast<std::uint16_t>(aura::compiler::security::kEffectMutate),
+        static_cast<std::uint16_t>(aura::compiler::security::kEffectMutate), "test:3844-ac1", 0,
+        844, kTypedMid);
+    CHECK(ok, "3844 AC1: effect check allows with live mid + grant");
+    const auto seq1 = g_security_event_ring().seq.load(std::memory_order_acquire);
+    bool saw_epoch1 = false;
+    bool saw_epoch0_with_mid = false;
+    for (std::uint64_t s = seq0; s < seq1; ++s) {
+        const auto& e = g_security_event_ring().ring[s % g_security_event_ring().ring.size()];
+        if (e.seq != s)
+            continue;
+        if (e.epoch == 1)
+            saw_epoch1 = true;
+        if (e.epoch == 0 && e.mutation_id == kTypedMid)
+            saw_epoch0_with_mid = true;
+    }
+    CHECK(!saw_epoch1, "3844 AC1: no phantom epoch=1 SE/WAL row");
+    CHECK(saw_epoch0_with_mid,
+          "3844 AC1: SE epoch=0 with TypedMid join (Mutation vocabulary intact)");
+}
+
+static void ac3844_2_soft_observe_stamp_documented() {
+    std::println("\n--- #3844 AC2: Soft observe stamp (epoch=1) retained when product wants it ---");
+    reset_all();
+    aura::compiler::typed_audit::reset_for_test();
+    aura::core::reset_mutation_epoch_for_test();
+    aura::compiler::typed_audit::clear_type_linear_commit_proof_for_test();
+    aura::compiler::typed_audit::clear_boundary_audit_mid();
+    aura::compiler::typed_audit::apply_dev_audit_defaults(); // Soft/Sampled
+    g_typed_mutation_audit_counters.production_defaults_active.store(0, std::memory_order_relaxed);
+    aura::core::store_workspace_epoch(aura::core::WorkspaceEpochKind::Mutation, 0);
+    process_resource_quota_manager().provenance_mutation_id = 0;
+    CHECK(!aura::compiler::typed_audit::production_hard_face_active(),
+          "3844 AC2 pre: Soft face");
+    CHECK(aura::core::current_mutation_epoch() == 0, "3844 AC2 pre: epoch=0");
+
+    using aura::core::capability::make_grant_provenance;
+    using aura::core::capability::stamp_grant_mutation_epoch;
+    CHECK(stamp_grant_mutation_epoch() == 1, "3844 AC2: Soft stamp invents observe 1");
+    auto prov = make_grant_provenance(0, false, 0, 0);
+    CHECK(prov.epoch == 1, "3844 AC2: Soft make_grant_provenance observe stamp epoch=1");
+}
+
+static void ac3844_3_source_cite_wiring_no_invent() {
+    std::println("\n--- #3844 AC3: source-cite + linter/manifest/grandfather + no invent ---");
+    const auto sec = read_file("src/compiler/evaluator_security.cpp");
+    const auto cap = read_file("src/core/capability_model.hh");
+    const auto hooks = read_file("src/compiler/typed_mutation_audit_hooks.cpp");
+    const auto t = read_file("tests/compiler/test_audit_mutation_id_unify.cpp");
+    const auto build = read_file("build.py");
+    const auto gf = read_file("scripts/coverage/simple_check_grandfather.txt");
+    const auto lint = read_file("scripts/coverage/checks/check_grant_epoch_no_phantom_3844.py");
+    const auto man = read_file("scripts/coverage/manifests/3844.json");
+    CHECK(sec.find("Issue #3844") != std::string::npos, "3844 AC3: evaluator_security cites #3844");
+    CHECK(cap.find("Issue #3844") != std::string::npos, "3844 AC3: capability_model cites #3844");
+    CHECK(cap.find("stamp_grant_mutation_epoch") != std::string::npos,
+          "3844 AC3: stamp_grant_mutation_epoch helper");
+    CHECK(cap.find("make_grant_provenance") != std::string::npos &&
+              cap.find("stamp_grant_mutation_epoch()") != std::string::npos,
+          "3844 AC3: make_grant_provenance uses stamp helper");
+    // Hard invent gone: no bare `me != 0 ? me : 1` assigned to prov.epoch
+    // outside Soft arms in check_and_record_effect.
+    const auto care = sec.find("bool Evaluator::check_and_record_effect");
+    CHECK(care != std::string::npos, "3844 AC3: check_and_record_effect present");
+    const auto care_win = sec.substr(care, 6000);
+    CHECK(care_win.find("production_hard_face_active()") != std::string::npos,
+          "3844 AC3: check_and_record_effect hard-face gate");
+    CHECK(care_win.find("Soft observe stamp only") != std::string::npos,
+          "3844 AC3: Soft observe path documented");
+    CHECK(hooks.find("aura_production_hard_face_active_probe") != std::string::npos,
+          "3844 AC3: hard-face probe defined");
+    CHECK(t.find("ac3844_1_hard_epoch0_stays_zero") != std::string::npos, "3844 AC3: AC1 present");
+    CHECK(t.find("ac3844_2_soft_observe_stamp_documented") != std::string::npos,
+          "3844 AC3: AC2 present");
+    CHECK(!lint.empty() && lint.find("Issue #3844") != std::string::npos, "3844 AC3: linter");
+    CHECK(!man.empty() && man.find("\"issue\": 3844") != std::string::npos, "3844 AC3: manifest");
+    CHECK(gf.find("check_grant_epoch_no_phantom_3844.py") != std::string::npos,
+          "3844 AC3: grandfather");
+    CHECK(build.find("check_grant_epoch_no_phantom_3844") != std::string::npos,
+          "3844 AC3: build.py gate");
+    CHECK(sec.find("#3837") != std::string::npos || cap.find("#3837") != std::string::npos ||
+              t.find("#3837") != std::string::npos,
+          "3844 AC3: cites #3837 as separate (not dup)");
+    CHECK(read_file("tests/compiler/test_issue_3844.cpp").empty(),
+          "3844 AC3: no test_issue_3844.cpp");
+    CHECK(read_file("tests/issues/test_issue_3844.cpp").empty(),
+          "3844 AC3: no tests/issues/test_issue_3844.cpp");
+    const std::filesystem::path docs_design =
+        std::filesystem::path(AURA_SOURCE_DIR) / "docs" / "design";
+    std::error_code ec;
+    if (std::filesystem::exists(docs_design, ec)) {
+        for (const auto& entry : std::filesystem::directory_iterator(docs_design, ec)) {
+            const auto name = entry.path().filename().string();
+            CHECK(name.find("3844-") == std::string::npos,
+                  std::string("3844 AC3: no docs/design/") + name + " (forbidden per #1655)");
+        }
+    }
+}
+
 } // namespace
 
 int run_test_audit_mutation_id_unify() {
@@ -918,6 +1078,10 @@ int run_test_audit_mutation_id_unify() {
     ac3843_1_full_without_defaults_refuses();
     ac3843_2_soft_mid1_unchanged();
     ac3843_3_source_cite_wiring_no_invent();
+    std::println("\n=== Issue #3844: grant/SE epoch no phantom 1 under hard face ===");
+    ac3844_1_hard_epoch0_stays_zero();
+    ac3844_2_soft_observe_stamp_documented();
+    ac3844_3_source_cite_wiring_no_invent();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

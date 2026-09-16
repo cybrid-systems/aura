@@ -5211,6 +5211,20 @@ def cmd_lint():
             "Issue #3843 require_effect Full-hard mid linter failed — run python3 scripts/coverage/checks/check_require_effect_full_hard_mid_3843.py"
         )
         return r
+    # Issue #3844: grant/SE epoch no phantom 1 under hard face
+    # (production_defaults || Full). Soft observe stamp retained. Not a
+    # dup of #3837 (mid invent). Extends test_audit_mutation_id_unify;
+    # no docs/design / invent (#1655).
+    gep3844_script = COVERAGE_CHECKS / "check_grant_epoch_no_phantom_3844.py"
+    if not gep3844_script.exists():
+        fail(f"missing {gep3844_script}")
+        return 1
+    r = run([sys.executable, str(gep3844_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3844 grant/SE epoch no-phantom linter failed — run python3 scripts/coverage/checks/check_grant_epoch_no_phantom_3844.py"
+        )
+        return r
     # Issue #3838: SE WAL overflow refuse-on-wrap under production
     # fail-closed (#3806 residual). Soft overwrite retained; Agent face
     # wrap-evicted vs never-emitted. Extends test_security_event_wal_replay
@@ -15636,6 +15650,28 @@ def cmd_require_effect_full_hard_mid_3843():
 
 
 
+def cmd_grant_epoch_no_phantom_3844_coverage():
+    """Issue #3844: grant/SE epoch no phantom 1 under hard face (prod||Full)."""
+    print(f"{B}=== grant/SE epoch no phantom (#3844) ==={N}")
+    script = COVERAGE_CHECKS / "check_grant_epoch_no_phantom_3844.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = run([sys.executable, str(script)], cwd=ROOT)
+    if r != 0:
+        fail("grant/SE epoch no phantom (#3844) coverage contract rows failed")
+        return r
+    ok("grant/SE epoch no phantom (#3844) coverage clean")
+    return 0
+
+
+def cmd_grant_epoch_no_phantom_3844():
+    """Issue #3844: Keep Mutation epoch 0 under hard face (no phantom 1)."""
+    print(f"{B}=== grant/SE epoch no phantom (#3844) ==={N}")
+    return cmd_grant_epoch_no_phantom_3844_coverage()
+
+
+
 def cmd_wal_overflow_wrap_refuse_3838_coverage():
     """Issue #3838: WAL overflow refuse-on-wrap (#3806 residual)."""
     print(f"{B}=== WAL overflow wrap refuse (#3838) ==={N}")
@@ -23690,6 +23726,8 @@ def main():
         "shell-require-effect-3836-coverage": cmd_shell_require_effect_3836_coverage,
         "require-effect-full-hard-mid-3843": cmd_require_effect_full_hard_mid_3843,
         "require-effect-full-hard-mid-3843-coverage": cmd_require_effect_full_hard_mid_3843_coverage,
+        "grant-epoch-no-phantom-3844": cmd_grant_epoch_no_phantom_3844,
+        "grant-epoch-no-phantom-3844-coverage": cmd_grant_epoch_no_phantom_3844_coverage,
         "wal-overflow-wrap-refuse-3838": cmd_wal_overflow_wrap_refuse_3838,
         "wal-overflow-wrap-refuse-3838-coverage": cmd_wal_overflow_wrap_refuse_3838_coverage,
         "string-grant-session-bound-3839": cmd_string_grant_session_bound_3839,

@@ -1,0 +1,54 @@
+{
+  "issue": 3844,
+  "title": "Issue #3844: grant/SE epoch no phantom 1 under hard face (prod||Full)",
+  "ok": "OK: Issue #3844 grant/SE epoch keeps Mutation 0 under hard face",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/core/capability_model.hh",
+      "contains": [
+        "Issue #3844",
+        "stamp_grant_mutation_epoch",
+        "capability_epoch_hard_face",
+        "const auto epoch = prov.epoch;"
+      ]
+    },
+    {
+      "ac": "AC1-care",
+      "path": "src/compiler/evaluator_security.cpp",
+      "contains": [
+        "Issue #3844",
+        "production_hard_face_active()",
+        "prov.epoch = me; // 0 stays 0",
+        "Soft observe stamp only"
+      ]
+    },
+    {
+      "ac": "AC2-test",
+      "path": "tests/compiler/test_audit_mutation_id_unify.cpp",
+      "contains": [
+        "ac3844_1_hard_epoch0_stays_zero",
+        "ac3844_2_soft_observe_stamp_documented",
+        "ac3844_3_source_cite_wiring_no_invent",
+        "3844 AC2: Soft stamp invents observe 1"
+      ]
+    },
+    {
+      "ac": "AC3-wiring",
+      "path": "build.py",
+      "contains": [
+        "check_grant_epoch_no_phantom_3844",
+        "Issue #3844"
+      ]
+    },
+    {
+      "ac": "AC3-forbid",
+      "forbid": [
+        "tests/compiler/test_issue_3844.cpp",
+        "tests/core/test_issue_3844.cpp",
+        "tests/issues/test_issue_3844.cpp",
+        "docs/design/3844-grant-epoch-no-phantom.md"
+      ]
+    }
+  ]
+}
