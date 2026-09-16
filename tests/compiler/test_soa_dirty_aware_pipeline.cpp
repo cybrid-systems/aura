@@ -748,14 +748,16 @@ int run_test_soa_dirty_aware_pipeline() {
               "3822: sync helper present");
         const auto prod = svc.find("const bool prod_soa");
         CHECK(prod != std::string::npos, "3822: prod_soa");
-        const auto win = svc.substr(prod, 3600);
-        // Hot pack gated on prod_soa (not bare soa_hot) + sync after.
-        const auto pack = win.find("if (prod_soa)");
-        CHECK(pack != std::string::npos, "3822 AC3: hot pack gated on prod_soa");
-        // Prefer the hot-pack arm (second prod_soa / last in window): must call sync.
-        auto pack_arm = win.rfind("if (prod_soa)");
-        CHECK(pack_arm != std::string::npos, "3822: prod_soa hot-pack arm");
-        const auto arm = win.substr(pack_arm, 700);
+        const auto win = svc.substr(prod, 6000);
+        // Hot pack gated on prod_soa: the AoS arm early-exits via
+        // if (!prod_soa) (#3818 restructure); the prod_soa fall-through
+        // runs the hot pack + SoA→AoS sync before writeback.
+        CHECK(win.find("if (!prod_soa)") != std::string::npos,
+              "3822 AC3: hot pack gated on prod_soa (AoS early-exit)");
+        // The prod_soa arm: hot pack call immediately followed by the sync.
+        const auto pack = win.find("run_production_soa_dirty_hot_pack");
+        CHECK(pack != std::string::npos, "3822 AC3: prod_soa runs hot pack");
+        const auto arm = win.substr(pack, 700);
         CHECK(arm.find("run_production_soa_dirty_hot_pack") != std::string::npos,
               "3822 AC3: prod_soa runs hot pack");
         CHECK(arm.find("sync_soa_dirty_blocks_into_aos") != std::string::npos,

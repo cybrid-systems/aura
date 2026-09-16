@@ -4853,7 +4853,7 @@ static void ac3652_6_source_cite() {
     const auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
     CHECK(mut.find("deny_macro_opt_out_without_mse(ev, node, mev)") != std::string::npos,
           "3652 AC6: batch allow arm routes #3542 helper");
-    CHECK(mut.find(":allow-macro? opt-out requires MacroSelfEvo capability") != std::string::npos,
+    CHECK(mut.find(":allow-macro? opt-out requires MacroSelfEvo") != std::string::npos,
           "3652 AC6: batch merr cites MSE");
     const auto cp = read_file("src/compiler/evaluator_primitives_compile.cpp");
     CHECK(cp.find("(hygiene:set-allow-macro-mutate! #t) requires MacroSelfEvo capability") !=

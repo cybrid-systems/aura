@@ -1367,8 +1367,8 @@ static void ac3726_4_decide_isolation_ssot() {
     CHECK(orch.find("std::uint64_t region_key = 0") != std::string::npos,
           "3726 AC4: TaskSpec region_key defaults 0");
     CHECK(spec.find("struct AgentSpec") != std::string::npos, "3726 AC4: AgentSpec exists");
-    CHECK(spec.find("region_key") == std::string::npos,
-          "3726 AC4: AgentSpec has no region_key (Serialized default stays)");
+    CHECK(spec.find("std::uint64_t region_key = 0") != std::string::npos,
+          "3726 AC4: AgentSpec region_key defaults 0 = Serialized (#3803 surfaced on spec)");
     CHECK(q.find("Issue #3726") != std::string::npos, "3726 AC4: prim cites #3726");
     CHECK(q.find("decide_isolation") != std::string::npos ||
               q.find("default 0 = Serialized") != std::string::npos,
