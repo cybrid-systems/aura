@@ -321,6 +321,9 @@ static bool closure_needs_safe_fallback(const Evaluator& ev, const Closure& cl,
 // refuse → UAF if MustDeopt / safe-fallback / FFI arms eval densify-old
 // flat*/pool*. Order: production → window_would_allow_mutate → (empty
 // remap + window green fast-path) → LCP → resolve_object_remap(flat|pool).
+// Issue #3849: happy-path (bridge-epoch green) must consult the same
+// helper before eval_flat — MustDeopt / safe_fallback / race arms alone
+// left the green path ungated.
 // Issue #3469: last_object_remap_ folds previous-window keys, so
 // resolve_object_remap(A) still hits after A→B then B→C. This helper
 // predicate is unchanged (resolve hit ⇒ refuse).
@@ -1232,6 +1235,16 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const
                         return std::nullopt;
                     }
                 }
+            }
+            // Issue #3849: production densify-old must refuse on the happy
+            // path too — MustDeopt / safe_fallback / race arms already
+            // consult; bridge-epoch-green went straight to eval_flat with
+            // no resolve_object_remap / window / LCP gate. Soft/Off: helper
+            // returns false when production defaults inactive (zero-cost).
+            if (production_apply_closure_densify_hard_refuse(
+                    arena_, cl_copy, static_cast<const void*>(this))) {
+                note_apply_closure_densify_hard_refuse(metrics, *this);
+                return std::nullopt;
             }
             if (metrics)
                 metrics->bridge_epoch_hit_count_.fetch_add(1, std::memory_order_relaxed);

@@ -7,7 +7,7 @@ must not restamp-and-eval_flat. Soft / Off never refuse. #3848 removed
 the objects_moved==0 early return (tombstones may remain).
 
 Contract:
-  AC1 helper after needs_safe_fallback / must_deopt / race recover
+  AC1 helper after needs_safe_fallback / must_deopt / race / happy-path (#3849)
   AC2 Soft / empty-remap+green-window fast-path (no objects_moved disarm)
   AC3 no invoke_closure_bridge_checked on densify hard-refuse
   AC4 reuse closure_stale_returns; no g_3421_* / no new query key
@@ -68,8 +68,8 @@ def main() -> int:
     # Issue #3634: apply sites pass the evaluator identity as a third arg
     # (clang-format may reflow args across lines — count the call prefix).
     calls = flat.count("production_apply_closure_densify_hard_refuse(")
-    if calls < 4:  # 1 definition + 3 apply sites
-        fails.append(f"AC1: expected 3 apply-site helper calls, found {max(calls - 1, 0)}")
+    if calls < 5:  # 1 definition + 4 apply sites (#3849 happy path)
+        fails.append(f"AC1: expected 4 apply-site helper calls, found {max(calls - 1, 0)}")
     # Recover sites: helper call must appear in the same window as the restamp cite.
     for label, needle, before in (
         ("must_deopt", "if (cl_copy.must_deopt_before_next_call)", False),
@@ -87,6 +87,16 @@ def main() -> int:
         win = flat[pos : pos + 1200] if not before else flat[max(0, pos - 4600) : pos + 80]
         if "production_apply_closure_densify_hard_refuse(" not in win:
             fails.append(f"AC1: {label} must consult densify hard-refuse before recover")
+    # Issue #3849: happy-path (bridge-epoch green) consults before eval_flat.
+    hit = flat.find("metrics->bridge_epoch_hit_count_.fetch_add")
+    if hit < 0:
+        fails.append("AC1: missing bridge_epoch_hit happy-path site")
+    else:
+        hwin = flat[max(0, hit - 700) : hit + 80]
+        if "production_apply_closure_densify_hard_refuse(" not in hwin:
+            fails.append("AC1: happy path must consult densify hard-refuse before eval_flat (#3849)")
+        if "Issue #3849" not in hwin:
+            fails.append("AC1: happy path must cite Issue #3849")
 
     must("closure_stale_returns.fetch_add", "AC4 reuse stale_returns", flat)
     if "g_3421_" in flat or "g_3421_" in ev:

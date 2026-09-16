@@ -5269,6 +5269,22 @@ def cmd_lint():
             "Issue #3848 densify refuse zero-move linter failed — run python3 scripts/coverage/checks/check_densify_refuse_zero_move_3848.py"
         )
         return r
+    # Issue #3849 (#3421 residual): happy-path (bridge-epoch green)
+    # apply_closure must consult densify hard-refuse before eval_flat —
+    # MustDeopt / safe_fallback / race arms alone left the green path
+    # ungated. Soft/Off: helper early-false (zero-cost). Extends
+    # test_setcode_rebind_survive + test_moving_densify_fail_closed; no
+    # docs/design / invent (#1655 / #81967).
+    achp3849_script = COVERAGE_CHECKS / "check_apply_closure_happy_path_densify_3849.py"
+    if not achp3849_script.exists():
+        fail(f"missing {achp3849_script}")
+        return 1
+    r = run([sys.executable, str(achp3849_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3849 happy-path densify refuse linter failed — run python3 scripts/coverage/checks/check_apply_closure_happy_path_densify_3849.py"
+        )
+        return r
     # Issue #3838: SE WAL overflow refuse-on-wrap under production
     # fail-closed (#3806 residual). Soft overwrite retained; Agent face
     # wrap-evicted vs never-emitted. Extends test_security_event_wal_replay
@@ -15781,6 +15797,27 @@ def cmd_densify_refuse_zero_move_3848():
     return cmd_densify_refuse_zero_move_3848_coverage()
 
 
+def cmd_apply_closure_happy_path_densify_3849_coverage():
+    """Issue #3849: happy-path apply_closure densify refuse before eval_flat."""
+    print(f"{B}=== apply_closure happy-path densify refuse (#3849) ==={N}")
+    script = COVERAGE_CHECKS / "check_apply_closure_happy_path_densify_3849.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = run([sys.executable, str(script)], cwd=ROOT)
+    if r != 0:
+        fail("apply_closure happy-path densify refuse (#3849) coverage contract rows failed")
+        return r
+    ok("apply_closure happy-path densify refuse (#3849) coverage clean")
+    return 0
+
+
+def cmd_apply_closure_happy_path_densify_3849():
+    """Issue #3849: Gate happy-path apply_closure with densify hard-refuse."""
+    print(f"{B}=== apply_closure happy-path densify refuse (#3849) ==={N}")
+    return cmd_apply_closure_happy_path_densify_3849_coverage()
+
+
 
 def cmd_wal_overflow_wrap_refuse_3838_coverage():
     """Issue #3838: WAL overflow refuse-on-wrap (#3806 residual)."""
@@ -23844,6 +23881,8 @@ def main():
         "reload-recovery-state-headroom-3846-coverage": cmd_reload_recovery_state_headroom_3846_coverage,
         "densify-refuse-zero-move-3848": cmd_densify_refuse_zero_move_3848,
         "densify-refuse-zero-move-3848-coverage": cmd_densify_refuse_zero_move_3848_coverage,
+        "apply-closure-happy-path-densify-3849": cmd_apply_closure_happy_path_densify_3849,
+        "apply-closure-happy-path-densify-3849-coverage": cmd_apply_closure_happy_path_densify_3849_coverage,
         "wal-overflow-wrap-refuse-3838": cmd_wal_overflow_wrap_refuse_3838,
         "wal-overflow-wrap-refuse-3838-coverage": cmd_wal_overflow_wrap_refuse_3838_coverage,
         "string-grant-session-bound-3839": cmd_string_grant_session_bound_3839,
