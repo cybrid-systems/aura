@@ -2663,6 +2663,13 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             // (resolved once at batch start; pure_mode only). Zero cost when
             // !pure_mode (left false).
             bool force_lock_on_violation_policy = false;
+            // Issue #3840: RegionConcurrent + production + workspace region
+            // concurrency → skip ash->eval_mu for non-zero region_key tasks
+            // (same discipline as spawn #3728). Set once after decide_isolation
+            // before parallel_intend; Soft / Serialized / BestEffortPure / zero-key
+            // stay on the mutex.
+            bool region_concurrent_skip_eval_mu = false;
+            std::atomic<std::uint64_t> region_unlocked_applies{0};
         };
         auto ash = std::make_shared<AuraShared>();
         ash->values.assign(cids.size(), make_void());
@@ -2719,11 +2726,17 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                         // Issue #2662: also force lock when batch_force_eval_mu
                         // is set (production + opt-in flag, post a pure-contract
                         // violation in the same batch — see wire-up below).
+                        // Issue #3840: RegionConcurrent + production + workspace
+                        // region concurrency + non-zero region_key skips eval_mu
+                        // (spawn #3728 discipline). Soft / Serialized / BestEffortPure / zero-key
+                        // stay locked.
                         const bool force_lock =
                             pure_mode &&
                             (ev.mutation_boundary_held() || ev.mutation_boundary_depth() > 0 ||
                              ash->batch_force_eval_mu.load(std::memory_order_relaxed));
-                        const bool use_lock = !pure_mode || force_lock;
+                        const bool region_skip =
+                            ash->region_concurrent_skip_eval_mu && rkey != 0;
+                        const bool use_lock = (!pure_mode || force_lock) && !region_skip;
                         std::unique_lock<std::mutex> lock(ash->eval_mu, std::defer_lock);
                         if (use_lock) {
                             lock.lock();
@@ -2732,10 +2745,12 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                                 aura::orch::g_orch_module_stats.pure_fallback_locked_total
                                     .fetch_add(1, std::memory_order_relaxed);
                             }
-                        } else {
+                        } else if (pure_mode) {
                             ash->pure_unlocked_applies.fetch_add(1, std::memory_order_relaxed);
                             aura::orch::g_orch_module_stats.pure_parallel_tasks_total.fetch_add(
                                 1, std::memory_order_relaxed);
+                        } else {
+                            ash->region_unlocked_applies.fetch_add(1, std::memory_order_relaxed);
                         }
                         // Issue #1719: refuse apply on freed closure (sibling of intend).
                         if (!agent_cid_live(ev, cid)) {
@@ -2888,6 +2903,13 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             }
         }
 
+        // Issue #3840: after decide_isolation, unlock eval_mu for RegionConcurrent
+        // tasks under production + workspace region concurrency (non-zero key
+        // checked per-task). Soft / Off / Serialized / BestEffortPure keep mu.
+        ash->region_concurrent_skip_eval_mu =
+            iso_decision.level == aura::serve::parallel_orch::IsolationLevel::RegionConcurrent &&
+            prod && ev.workspace_region_concurrency_enabled();
+
         const int workers = static_cast<int>(
             std::min<std::uint32_t>(std::max<std::uint32_t>(policy.max_concurrency, 1), 8));
         aura::serve::Scheduler sched(workers);
@@ -2970,10 +2992,15 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
 
         // Issue #2163: eval-serialized=#f when pure path engaged for this batch
         // and at least one task applied unlocked (not all forced-lock fallback).
+        // Issue #3840: also #f when RegionConcurrent skipped eval_mu for ≥1
+        // non-zero region_key task (production + workspace region concurrency).
         const auto pure_unlocked = ash->pure_unlocked_applies.load(std::memory_order_relaxed);
         const auto pure_fallback = ash->pure_fallback_locked.load(std::memory_order_relaxed);
         const auto pure_viol = ash->pure_contract_violated.load(std::memory_order_relaxed);
+        const auto region_unlocked =
+            ash->region_unlocked_applies.load(std::memory_order_relaxed);
         const bool pure_engaged = pure_mode && pure_unlocked > 0;
+        const bool region_unlocked_engaged = region_unlocked > 0;
         if (pure_mode) {
             aura::orch::g_orch_module_stats.pure_parallel_batches_total.fetch_add(
                 1, std::memory_order_relaxed);
@@ -3031,10 +3058,10 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             {"retries-performed", make_int(static_cast<std::int64_t>(batch.retries_performed))},
             {"circuit-opened", make_bool(batch.circuit_opened)},
             {"results", make_vector(rvidx)},
-            // Issue #2081 / #2163: eval-serialization contract surface.
+            // Issue #2081 / #2163 / #3840: eval-serialization contract surface.
             // Default: apply_closure serialized via shared eval_mu.
-            // :pure #t with unlocked applies → eval-serialized=#f.
-            {"eval-serialized", make_bool(!pure_engaged)},
+            // :pure #t unlocked OR RegionConcurrent region-unlocked → #f.
+            {"eval-serialized", make_bool(!(pure_engaged || region_unlocked_engaged))},
             {"pure", make_bool(pure_mode)},
             {"pure-unlocked-tasks", make_int(static_cast<std::int64_t>(pure_unlocked))},
             {"pure-fallback-locked", make_int(static_cast<std::int64_t>(pure_fallback))},
@@ -3092,6 +3119,10 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             {"schema-2886", make_int(2886)},
             {"issue-2886", make_int(2886)},
             {"parallel-intend-region-concurrent-wired", make_int(1)},
+            // Issue #3840: RegionConcurrent apply unlocks eval_mu under
+            // production + workspace region concurrency (spawn #3728 twin).
+            {"schema-3840", make_int(3840)},
+            {"issue-3840", make_int(3840)},
         };
         if (pure_engaged) {
             kv.push_back({"schema-pure-parallel", make_int(2163)});

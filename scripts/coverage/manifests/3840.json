@@ -1,0 +1,40 @@
+{
+  "issue": 3840,
+  "title": "Issue #3840: parallel-intend RegionConcurrent skips eval_mu under production",
+  "ok": "OK: Issue #3840 parallel-intend RegionConcurrent skips eval_mu under production",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_primitives_agent.cpp",
+      "contains": [
+        "Issue #3840",
+        "region_concurrent_skip_eval_mu",
+        "region_unlocked_applies",
+        "IsolationLevel::RegionConcurrent",
+        "region_unlocked_engaged",
+        "schema-3840"
+      ]
+    },
+    {
+      "ac": "AC2-test",
+      "path": "tests/orch/test_parallel_intend_pure_contract.cpp",
+      "contains": [
+        "3840 AC1",
+        "3840 AC2",
+        "3840 AC3",
+        "3840 AC4",
+        "ac3840_1_prod_keys",
+        "ac3840_2_soft",
+        "ac3840_3_zero_key"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "forbid": [
+        "tests/orch/test_issue_3840.cpp",
+        "tests/issues/test_issue_3840.cpp",
+        "docs/design/3840-region-eval-mu.md"
+      ]
+    }
+  ]
+}

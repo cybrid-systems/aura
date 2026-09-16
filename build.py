@@ -5225,6 +5225,20 @@ def cmd_lint():
             "Issue #3839 string grant session_bound linter failed — run python3 scripts/coverage/checks/check_string_grant_session_bound_3839.py"
         )
         return r
+    # Issue #3840: parallel-intend RegionConcurrent skips ash->eval_mu under
+    # production + workspace region concurrency + non-zero region_key (spawn
+    # #3728 twin). Soft / zero-key stay serialized. Extends
+    # test_parallel_intend_pure_contract.cpp (#81967); no docs/design (#1655).
+    pire3840_script = COVERAGE_CHECKS / "check_parallel_intend_region_eval_mu_3840.py"
+    if not pire3840_script.exists():
+        fail(f"missing {pire3840_script}")
+        return 1
+    r = run([sys.executable, str(pire3840_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3840 parallel-intend region eval_mu linter failed — run python3 scripts/coverage/checks/check_parallel_intend_region_eval_mu_3840.py"
+        )
+        return r
     # Issue #3802: EXEMPT_2ARG write-file/sys-* host-path isolation under
     # Restricted+MT / Strict — resolve under tenant root from
     # capability_tenant_id_; cross-tenant escape → IsolationDeny SE
@@ -15601,6 +15615,27 @@ def cmd_string_grant_session_bound_3839():
     return cmd_string_grant_session_bound_3839_coverage()
 
 
+def cmd_parallel_intend_region_eval_mu_3840_coverage():
+    """Issue #3840: parallel-intend RegionConcurrent skips eval_mu under production."""
+    print(f"{B}=== parallel-intend region eval_mu (#3840) ==={N}")
+    script = COVERAGE_CHECKS / "check_parallel_intend_region_eval_mu_3840.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = run([sys.executable, str(script)], cwd=ROOT)
+    if r != 0:
+        fail("parallel-intend region eval_mu (#3840) coverage contract rows failed")
+        return r
+    ok("parallel-intend region eval_mu (#3840) coverage clean")
+    return 0
+
+
+def cmd_parallel_intend_region_eval_mu_3840():
+    """Issue #3840: RegionConcurrent parallel-intend unlocks eval_mu (spawn #3728 twin)."""
+    print(f"{B}=== parallel-intend region eval_mu (#3840) ==={N}")
+    return cmd_parallel_intend_region_eval_mu_3840_coverage()
+
+
 def cmd_engine_metrics_hash_overflow_3018_coverage():
     """Issue #3018: engine:metrics hash overflow fail-soft (static)."""
     print(f"{B}=== engine:metrics hash overflow coverage (#3018) ==={N}")
@@ -23594,6 +23629,8 @@ def main():
         "wal-overflow-wrap-refuse-3838-coverage": cmd_wal_overflow_wrap_refuse_3838_coverage,
         "string-grant-session-bound-3839": cmd_string_grant_session_bound_3839,
         "string-grant-session-bound-3839-coverage": cmd_string_grant_session_bound_3839_coverage,
+        "parallel-intend-region-eval-mu-3840": cmd_parallel_intend_region_eval_mu_3840,
+        "parallel-intend-region-eval-mu-3840-coverage": cmd_parallel_intend_region_eval_mu_3840_coverage,
         "mutate-dispatch-sole-guard-3074-coverage": cmd_mutate_dispatch_sole_guard_3074_coverage,
         "mutate-reg-kind-3452": cmd_mutate_reg_kind_3452_coverage,
         "mutate-reg-kind-3452-coverage": cmd_mutate_reg_kind_3452_coverage,
