@@ -33,6 +33,7 @@
 
 #include "core/arena_auto_policy_stats.h"
 #include "core/densify_consistency_report.h"
+#include "core/gc_hooks.h"
 
 #include <cstdint>
 #include <fstream>
@@ -4644,6 +4645,78 @@ static void ac3849_2_wiring_no_invent() {
     }
 }
 
+
+// Issue #3850: Moving densify entry OR-gates live PanicCheckpoint probe
+// (align compact_sweep). Soft leftover observe-only; production steal
+// clears CP before defer. Extends fail_closed per #81967.
+static void ac3850_1_live_cp_blocks_moving() {
+    std::println("\n--- #3850 AC1: live PanicCheckpoint probe blocks Moving densify ---");
+    // Drain any leaked depth from prior tests.
+    while (aura::gc_hooks::g_live_panic_checkpoint_depth.load(std::memory_order_relaxed) > 0)
+        aura::gc_hooks::note_panic_checkpoint_cleared();
+    aura::ast::set_moving_compact_enabled(1);
+    ASTArena arena(64 * 1024);
+    auto* p = arena.create<Pod16>(1, 2, 3, 4);
+    CHECK(p != nullptr, "3850 AC1: create");
+    aura::gc_hooks::note_panic_checkpoint_live();
+    CHECK(aura::gc_hooks::evaluator_has_panic_checkpoint_probe(), "3850 AC1: probe armed");
+    const auto block0 =
+        aura::ast::g_moving_blocked_precondition_total.load(std::memory_order_relaxed);
+    const auto r = arena.live_compact(LiveCompactMode::Moving);
+    CHECK(r.moving_blocked_precondition, "3850 AC1: moving_blocked_precondition");
+    CHECK(r.soft_gated, "3850 AC1: soft_gated");
+    CHECK(!r.moved_live_objects, "3850 AC1: no relocate");
+    CHECK(aura::ast::g_moving_blocked_precondition_total.load() > block0,
+          "3850 AC1: precondition metric");
+    aura::gc_hooks::note_panic_checkpoint_cleared();
+    // After clear, Moving can proceed (pin/guard free).
+    const auto r2 = arena.live_compact(LiveCompactMode::Moving);
+    CHECK(!r2.moving_blocked_precondition || r2.objects_moved >= 0,
+          "3850 AC1: probe clear unblocks precondition face");
+    aura::ast::set_moving_compact_enabled(0);
+}
+
+static void ac3850_2_source_cite_gate_and_residual() {
+    std::println("\n--- #3850 AC2: source-cite Moving gate + panic_residual_ok ---");
+    const auto arena = read_file("src/core/arena.ixx");
+    CHECK(arena.find("evaluator_has_panic_checkpoint_probe()") != std::string::npos,
+          "3850 AC2: arena Moving gate cites probe");
+    CHECK(arena.find("Issue #3850") != std::string::npos, "3850 AC2: arena cites #3850");
+    const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    CHECK(mb.find("ev_->has_panic_checkpoint()") != std::string::npos,
+          "3850 AC2: panic_residual_ok uses has_panic_checkpoint");
+    CHECK(mb.find("Issue #2595 / #3850") != std::string::npos ||
+              mb.find("Issue #3850") != std::string::npos,
+          "3850 AC2: mutation_boundary cites #3850");
+    const auto gh = read_file("src/core/gc_hooks.h");
+    CHECK(gh.find("evaluator_has_panic_checkpoint_probe") != std::string::npos,
+          "3850 AC2: probe in gc_hooks");
+}
+
+static void ac3850_3_wiring_no_invent() {
+    std::println("\n--- #3850 AC3: suite + linter wiring; no invent ---");
+    const auto steal = read_file("tests/serve/test_steal_complete_gc_defer.cpp");
+    CHECK(steal.find("ac3850_1_soft_leftover_probe_blocks_moving();") != std::string::npos,
+          "3850 AC3: steal suite extended");
+    const auto lint = read_file("scripts/coverage/checks/check_steal_panic_moving_gate_3850.py");
+    CHECK(!lint.empty() && lint.find("Issue #3850") != std::string::npos, "3850 AC3: linter");
+    const auto build = read_file("build.py");
+    CHECK(build.find("check_steal_panic_moving_gate_3850") != std::string::npos,
+          "3850 AC3: build.py wires linter");
+    const auto gf = read_file("scripts/coverage/simple_check_grandfather.txt");
+    CHECK(gf.find("check_steal_panic_moving_gate_3850.py") != std::string::npos,
+          "3850 AC3: grandfather");
+    for (const char* forbid : {"tests/compiler/test_issue_3850.cpp",
+                                 "tests/core/test_issue_3850.cpp",
+                                 "tests/serve/test_issue_3850.cpp",
+                                 "tests/issues/test_issue_3850.cpp"}) {
+        CHECK(read_file(forbid).empty(), "3850 AC3: no invent file");
+        (void)forbid;
+    }
+    CHECK(read_file("docs/design/3850-steal-panic-moving.md").empty(),
+          "3850 AC3: no docs/design");
+}
+
 int run_test_moving_densify_fail_closed() {
     std::println("=== Issue #2495: Moving densify fail-closed on untracked external roots ===");
     std::println(
@@ -5398,6 +5471,12 @@ int run_test_moving_densify_fail_closed() {
                  "(#3421 residual; extends fail_closed per #81967) ===");
     ac3849_1_happy_path_refuse_source_cite();
     ac3849_2_wiring_no_invent();
+
+    std::println("\n=== Issue #3850: steal defer × Moving panic CP gate "
+                 "(extends fail_closed per #81967) ===");
+    ac3850_1_live_cp_blocks_moving();
+    ac3850_2_source_cite_gate_and_residual();
+    ac3850_3_wiring_no_invent();
 
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;

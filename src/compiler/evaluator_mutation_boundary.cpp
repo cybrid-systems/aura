@@ -5194,12 +5194,10 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
         // half-green window where pin ok + root_remap ok + envframe ok but
         // any arena left untracked_kept_count > 0 after Moving relocate.
         std::uint64_t untracked_baseline = 0;
-        // Issue #2595: panic checkpoint depth baseline (gc_hooks). Phase 5
-        // may not claim success while a panic checkpoint is live AND not
-        // deferred via gc_deferred_for_evaluator (half-green densify can
-        // leak panic mid-stack). Baseline captured before compact; post-
-        // compact depth (>= baseline + any new arm) drives panic_residual_ok
-        // under production / when !gc_deferred_for_evaluator.
+        // Issue #2595 / #3850: panic_residual_ok keys off the live Evaluator
+        // PanicCheckpoint (has_panic_checkpoint), not process panic depth —
+        // steal can clear defer while CP remains. Depth baseline kept for
+        // observability only (no longer drives the success axis).
         std::uint32_t panic_depth_baseline = 0;
         if (aura::ast::moving_compact_enabled()) {
             // Issue #3238: densify while a mutation is still live (this
@@ -5401,15 +5399,13 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
             aura::ast::g_moving_untracked_external_roots_total.load(std::memory_order_relaxed);
         const bool untracked_ok = !had_moving_densify || (untracked_after <= untracked_baseline);
         densify_consistency.untracked_ok = untracked_ok;
-        // Issue #2595: panic_residual_ok = no live panic_cp OR
-        // gc_deferred_for_evaluator is true (defer armed so the panic can
-        // be drained before Phase 5 publishes success). If a panic_cp is
-        // armed mid-densify AND the eval isn't deferring, !panic_residual_ok
-        // so the unified gate fails (half-green densify can leak panic
-        // mid-stack into a published success).
-        const auto panic_depth_after =
-            aura::gc_hooks::g_gc_defer_pending_panic_depth.load(std::memory_order_relaxed);
-        const bool panic_cp_live_now = panic_depth_after > 0;
+        // Issue #2595 / #3850: panic_residual_ok = !ev->has_panic_checkpoint()
+        // OR gc_deferred_for_evaluator. Process panic depth alone is wrong —
+        // steal can clear orphan defer while the Evaluator CP is still live
+        // (Moving gate uses evaluator_has_panic_checkpoint_probe; this axis
+        // must agree). Soft leftover: CP kept + defer cleared → !ok (observe).
+        (void)panic_depth_baseline; // observability snapshot only (#3850)
+        const bool panic_cp_live_now = ev_->has_panic_checkpoint();
         const bool panic_deferred_now =
             aura::gc_hooks::gc_deferred_for_evaluator(static_cast<void*>(ev_));
         const bool panic_residual_ok = !panic_cp_live_now || panic_deferred_now;

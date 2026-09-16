@@ -442,3 +442,5 @@ check_densify_refuse_zero_move_3848.py
 scripts/coverage/checks/check_densify_refuse_zero_move_3848.py
 check_apply_closure_happy_path_densify_3849.py
 scripts/coverage/checks/check_apply_closure_happy_path_densify_3849.py
+check_steal_panic_moving_gate_3850.py
+scripts/coverage/checks/check_steal_panic_moving_gate_3850.py

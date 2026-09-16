@@ -273,7 +273,12 @@ bool Evaluator::save_panic_checkpoint() {
     auto idx = types::as_string_idx(src);
     if (idx >= string_heap_.size())
         return false;
+    // Issue #3850: bump live-CP depth only on empty→live transition
+    // (re-save of an already-live checkpoint must not double-count).
+    const bool newly_live = panic_safe_source_.empty();
     panic_safe_source_ = string_heap_[idx];
+    if (newly_live)
+        aura::gc_hooks::note_panic_checkpoint_live();
     // Issue #242 / #1360: snapshot append-only arena sizes so
     // restore_panic_checkpoint can truncate them back (including
     // env_frames_ — append-only EnvId keeps pre-checkpoint ids valid).
@@ -377,6 +382,10 @@ bool Evaluator::restore_panic_checkpoint() {
         // frames and bumps envframe_post_rollback_invalidations_.
         (void)truncate_env_frames_to_checkpoint();
         // Clear checkpoint after successful restore
+        // Issue #3850: pair note_panic_checkpoint_live from save (restore
+        // clears fields without clear_panic_checkpoint()).
+        if (!panic_safe_source_.empty())
+            aura::gc_hooks::note_panic_checkpoint_cleared();
         panic_safe_source_.clear();
         panic_safe_cells_size_ = 0;
         panic_safe_pairs_size_ = 0;

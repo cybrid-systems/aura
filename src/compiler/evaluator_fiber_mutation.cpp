@@ -3830,7 +3830,38 @@ extern "C" void aura_evaluator_on_steal_complete(void* fiber_ptr) noexcept {
         }
     }
 
+    // Issue #3850: set when production early-clears prev CP so Ok-path
+    // cleared_on_steal_ok_total still bumps after hard_failed is known.
+    bool panic_cp_cleared_early = false;
     if (prev_eval_id != nullptr) {
+        // Issue #3850: production clears live PanicCheckpoint BEFORE orphan
+        // defer drain so Moving densify cannot observe defer=false + CP=true
+        // (aligns with compact_sweep's has_panic_checkpoint OR-gate). Soft:
+        // leave CP (observe-only leftover; Moving still soft-gates via
+        // evaluator_has_panic_checkpoint_probe). clear_panic_checkpoint also
+        // releases that eval's panic defer — subsequent clear_gc_defer is
+        // idempotent. Later #2667/#2710/#2890 blocks remain (no-op if cleared).
+        {
+            const bool production_hard =
+                aura::compiler::typed_audit::production_defaults_active() ||
+                aura::gc_hooks::panic_contract_hard_pref_v_read() == 1;
+            const auto prev_addr = reinterpret_cast<std::uintptr_t>(prev_eval_id);
+            if (production_hard && prev_addr > 0x100000ull) {
+                auto* prev_ev = static_cast<Evaluator*>(prev_eval_id);
+                if (prev_ev->has_panic_checkpoint()) {
+                    prev_ev->clear_panic_checkpoint();
+                    panic_cp_cleared_early = true;
+                    aura::gc_hooks::g_panic_checkpoint_cleared_on_steal_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                    // Cross-eval only: same face as #2890 residual cleared
+                    // (same-eval continuity accounted via #2710 ok_total).
+                    if (prev_ev != evaluator_for_scheduler_hooks()) {
+                        aura::gc_hooks::g_residual_defer_steal_checkpoint_cleared_total
+                            .fetch_add(1, std::memory_order_relaxed);
+                    }
+                }
+            }
+        }
         // (2) Issue #2203 / #2296: orphan Panic clear + bit reconcile.
         const auto cleared = aura::gc_hooks::clear_gc_defer_for_evaluator(prev_eval_id);
         const auto reconciled = aura::gc_hooks::reconcile_gc_defer_bits_after_clear();
@@ -4161,6 +4192,12 @@ extern "C" void aura_evaluator_on_steal_complete(void* fiber_ptr) noexcept {
                     // ergonomics; panic defer stays armed (observed via
                     // PanicDeferDensifyAudit #2598).
                 }
+            }
+            // Issue #3850: early production CP clear still needs Ok-path
+            // accounting once hard_failed is known (#2710 ok_total).
+            if (panic_cp_cleared_early && !hard_failed) {
+                aura::gc_hooks::g_panic_checkpoint_cleared_on_steal_ok_total.fetch_add(
+                    1, std::memory_order_relaxed);
             }
             // Issue #2890: cross-fiber steal residual — the stolen fiber's
             // PanicCheckpointHost lives on the PREVIOUS host evaluator
