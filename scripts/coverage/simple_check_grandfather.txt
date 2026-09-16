@@ -434,3 +434,5 @@ scripts/coverage/checks/check_require_effect_full_hard_mid_3843.py
 check_require_effect_full_hard_mid_3843.py
 scripts/coverage/checks/check_grant_epoch_no_phantom_3844.py
 check_grant_epoch_no_phantom_3844.py
+scripts/coverage/checks/check_promote_force_join_mid_no_invent_3845.py
+check_promote_force_join_mid_no_invent_3845.py

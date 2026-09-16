@@ -1051,6 +1051,166 @@ static void ac3844_3_source_cite_wiring_no_invent() {
     }
 }
 
+
+// Issue #3845: promote_sampled_force_join_mid still invented mid via
+// next_audit_mutation_id() when mid==0. Align with pin #3367 — hard
+// (production_defaults || Full) returns 0 (no invent, no sticky); Soft
+// invent intentionally NOT kept (quiet #3066 AC3). Not a refile of
+// #3837/#3838.
+static void ac3845_1_hard_promote_zero_no_invent() {
+    std::println(
+        "\n--- #3845 AC1: hard face + promote(0) → 0; no sticky; no gen invent ---");
+    using namespace aura::compiler::typed_audit;
+    auto reset_state = []() {
+        reset_for_test();
+        reset_all();
+        clear_boundary_audit_mid();
+        clear_type_linear_commit_proof_for_test();
+        aura::core::reset_mutation_epoch_for_test();
+        aura::core::store_workspace_epoch(aura::core::WorkspaceEpochKind::Mutation, 0);
+        process_resource_quota_manager().provenance_mutation_id = 0;
+        g_tls_composite_batch_join_mid = 0;
+        g_last_composite_batch_join_mid.store(0, std::memory_order_relaxed);
+        g_last_stamped_audit_mid.store(0, std::memory_order_relaxed);
+    };
+    auto read_gen = []() {
+        return g_typed_mutation_audit_counters.audit_mutation_id_gen.load();
+    };
+
+    // AC1a: production_defaults + mid==0
+    {
+        reset_state();
+        apply_production_audit_defaults();
+        g_typed_mutation_audit_counters.production_defaults_active.store(1);
+        const auto gen0 = read_gen();
+        const auto mid = promote_sampled_force_join_mid(0);
+        CHECK(mid == 0, "3845 AC1a: production + promote(0) returns 0");
+        CHECK(g_tls_composite_batch_join_mid == 0, "3845 AC1a: no sticky TLS mid");
+        CHECK(g_last_composite_batch_join_mid.load() == 0, "3845 AC1a: no last composite mid");
+        CHECK(g_last_stamped_audit_mid.load() == 0, "3845 AC1a: no last_stamped invent");
+        CHECK(read_gen() == gen0, "3845 AC1a: no audit_mutation_id_gen invent");
+    }
+
+    // AC1b: Full without production_defaults + mid==0 (cold-start Full residual)
+    {
+        reset_state();
+        set_strategy(AuditStrategy::Full);
+        g_typed_mutation_audit_counters.production_defaults_active.store(0);
+        const auto gen0 = read_gen();
+        const auto mid = promote_sampled_force_join_mid(0);
+        CHECK(mid == 0, "3845 AC1b: Full-without-defaults + promote(0) returns 0");
+        CHECK(g_tls_composite_batch_join_mid == 0, "3845 AC1b: no sticky TLS mid");
+        CHECK(read_gen() == gen0, "3845 AC1b: no audit_mutation_id_gen invent");
+    }
+}
+
+static void ac3845_2_nonzero_deny_mid_unchanged() {
+    std::println("\n--- #3845 AC2: non-zero deny_mid path unchanged ---");
+    using namespace aura::compiler::typed_audit;
+    reset_for_test();
+    reset_all();
+    clear_boundary_audit_mid();
+    apply_production_audit_defaults();
+    g_typed_mutation_audit_counters.production_defaults_active.store(1);
+    aura::core::store_workspace_epoch(aura::core::WorkspaceEpochKind::Mutation, 0);
+    process_resource_quota_manager().provenance_mutation_id = 0;
+    g_tls_composite_batch_join_mid = 0;
+    constexpr std::uint64_t kDeny = 38450042;
+    const auto mid = promote_sampled_force_join_mid(kDeny);
+    CHECK(mid == kDeny, "3845 AC2: promote(deny_mid) returns deny_mid");
+    CHECK(g_tls_composite_batch_join_mid == kDeny, "3845 AC2: sticky TLS = deny_mid");
+    CHECK(g_last_composite_batch_join_mid.load() == kDeny, "3845 AC2: last composite = deny_mid");
+    CHECK(g_last_stamped_audit_mid.load() == kDeny, "3845 AC2: last_stamped = deny_mid");
+    // Clear sticky for subsequent cases.
+    composite_txn_exit();
+    CHECK(g_tls_composite_batch_join_mid == 0, "3845 AC2: exit clears sticky");
+}
+
+static void ac3845_3_soft_no_observe_invent_documented() {
+    std::println(
+        "\n--- #3845 AC3: Soft promote(0) → 0; Soft invent NOT kept (aligned pin #3367) ---");
+    using namespace aura::compiler::typed_audit;
+    reset_for_test();
+    reset_all();
+    clear_boundary_audit_mid();
+    clear_type_linear_commit_proof_for_test();
+    apply_dev_audit_defaults(); // Soft/Sampled
+    g_typed_mutation_audit_counters.production_defaults_active.store(0);
+    aura::core::reset_mutation_epoch_for_test();
+    aura::core::store_workspace_epoch(aura::core::WorkspaceEpochKind::Mutation, 0);
+    process_resource_quota_manager().provenance_mutation_id = 0;
+    g_tls_composite_batch_join_mid = 0;
+    g_last_composite_batch_join_mid.store(0, std::memory_order_relaxed);
+    g_last_stamped_audit_mid.store(0, std::memory_order_relaxed);
+    const auto gen0 = g_typed_mutation_audit_counters.audit_mutation_id_gen.load();
+    const auto mid = promote_sampled_force_join_mid(0);
+    CHECK(mid == 0, "3845 AC3: Soft + promote(0) returns 0 (no Soft observe invent)");
+    CHECK(g_tls_composite_batch_join_mid == 0, "3845 AC3: Soft no sticky");
+    CHECK(g_typed_mutation_audit_counters.audit_mutation_id_gen.load() == gen0,
+          "3845 AC3: Soft does not bump audit_mutation_id_gen");
+    // Source documents Soft invent NOT kept.
+    const auto tma = read_file("src/compiler/typed_mutation_audit.h");
+    CHECK(tma.find("Soft invent is intentionally NOT kept") != std::string::npos ||
+              tma.find("Soft quiet — no invent") != std::string::npos,
+          "3845 AC3: Soft invent-not-kept documented in promote");
+}
+
+static void ac3845_4_source_cite_wiring_no_invent() {
+    std::println("\n--- #3845 AC4: source-cite + linter/manifest/grandfather + no invent ---");
+    const auto tma = read_file("src/compiler/typed_mutation_audit.h");
+    const auto t = read_file("tests/compiler/test_audit_mutation_id_unify.cpp");
+    const auto build = read_file("build.py");
+    const auto gf = read_file("scripts/coverage/simple_check_grandfather.txt");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_promote_force_join_mid_no_invent_3845.py");
+    const auto man = read_file("scripts/coverage/manifests/3845.json");
+    CHECK(tma.find("Issue #3845") != std::string::npos,
+          "3845 AC4: typed_mutation_audit.h cites #3845");
+    CHECK(tma.find("promote_sampled_force_join_mid") != std::string::npos, "3845 AC4: promote fn");
+    // Promote window must not invent via next_audit_mutation_id.
+    const auto promo = tma.find("inline std::uint64_t promote_sampled_force_join_mid");
+    CHECK(promo != std::string::npos, "3845 AC4: promote def present");
+    const auto promo_win = tma.substr(promo, 900);
+    CHECK(promo_win.find("next_audit_mutation_id()") == std::string::npos,
+          "3845 AC4: promote does NOT call next_audit_mutation_id (no invent)");
+    CHECK(promo_win.find("production_defaults_active()") != std::string::npos &&
+              promo_win.find("AuditStrategy::Full") != std::string::npos,
+          "3845 AC4: promote hard face = production_defaults || Full");
+    CHECK(t.find("ac3845_1_hard_promote_zero_no_invent") != std::string::npos,
+          "3845 AC4: AC1 present");
+    CHECK(t.find("ac3845_2_nonzero_deny_mid_unchanged") != std::string::npos,
+          "3845 AC4: AC2 present");
+    CHECK(t.find("ac3845_3_soft_no_observe_invent_documented") != std::string::npos,
+          "3845 AC4: AC3 present");
+    CHECK(!lint.empty() && lint.find("Issue #3845") != std::string::npos, "3845 AC4: linter");
+    CHECK(!man.empty() && man.find("\"issue\": 3845") != std::string::npos, "3845 AC4: manifest");
+    CHECK(gf.find("check_promote_force_join_mid_no_invent_3845.py") != std::string::npos,
+          "3845 AC4: grandfather");
+    CHECK(build.find("check_promote_force_join_mid_no_invent_3845") != std::string::npos,
+          "3845 AC4: build.py gate");
+    CHECK(build.find("cmd_promote_force_join_mid_no_invent_3845") != std::string::npos,
+          "3845 AC4: build.py cmd");
+    // Not a refile of #3837/#3838.
+    CHECK(tma.find("#3837") != std::string::npos || t.find("#3837") != std::string::npos,
+          "3845 AC4: cites #3837 as separate (not dup)");
+    CHECK(tma.find("#3838") != std::string::npos || t.find("#3838") != std::string::npos,
+          "3845 AC4: cites #3838 as separate (not dup)");
+    CHECK(read_file("tests/compiler/test_issue_3845.cpp").empty(),
+          "3845 AC4: no test_issue_3845.cpp");
+    CHECK(read_file("tests/issues/test_issue_3845.cpp").empty(),
+          "3845 AC4: no tests/issues/test_issue_3845.cpp");
+    const std::filesystem::path docs_design =
+        std::filesystem::path(AURA_SOURCE_DIR) / "docs" / "design";
+    std::error_code ec;
+    if (std::filesystem::exists(docs_design, ec)) {
+        for (const auto& entry : std::filesystem::directory_iterator(docs_design, ec)) {
+            const auto name = entry.path().filename().string();
+            CHECK(name.find("3845-") == std::string::npos,
+                  std::string("3845 AC4: no docs/design/") + name + " (forbidden per #1655)");
+        }
+    }
+}
+
 } // namespace
 
 int run_test_audit_mutation_id_unify() {
@@ -1082,6 +1242,11 @@ int run_test_audit_mutation_id_unify() {
     ac3844_1_hard_epoch0_stays_zero();
     ac3844_2_soft_observe_stamp_documented();
     ac3844_3_source_cite_wiring_no_invent();
+    std::println("\n=== Issue #3845: promote_sampled_force_join_mid no invent ===");
+    ac3845_1_hard_promote_zero_no_invent();
+    ac3845_2_nonzero_deny_mid_unchanged();
+    ac3845_3_soft_no_observe_invent_documented();
+    ac3845_4_source_cite_wiring_no_invent();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
