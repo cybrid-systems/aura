@@ -684,7 +684,7 @@ bool Evaluator::require_effect(std::uint16_t req_bits, std::string_view op, ast:
     // mid=1. Soft / Off keeps the mid=1 observe stamp (#2493 AC4 / #3462).
     // #3837 is the string-fence mid join — separate site, not a dup.
     const bool hard = typed_audit::production_defaults_active() ||
-                        typed_audit::get_strategy() == typed_audit::AuditStrategy::Full;
+                      typed_audit::get_strategy() == typed_audit::AuditStrategy::Full;
     if (hard) {
         mid = typed_audit::join_audit_and_se_mid(mid);
         if (mid == 0)

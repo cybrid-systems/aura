@@ -90,12 +90,12 @@ def main() -> int:
     must("clear_cache_v2_for_define", "AC2 IR Soft observe helper kept", svc)
 
     # Probe gates on epoch / soft_stale — do not invent abort_force on probe.
-    pstart = bridge.find("extern \"C\" std::uintptr_t aura_aot_probe_fn_ptr(")
+    pstart = bridge.find('extern "C" std::uintptr_t aura_aot_probe_fn_ptr(')
     if pstart < 0:
         fails.append("AC3: aura_aot_probe_fn_ptr missing")
         pwin = ""
     else:
-        pend = bridge.find("extern \"C\" std::uintptr_t aura_aot_probe_fn_ptr_raw(", pstart)
+        pend = bridge.find('extern "C" std::uintptr_t aura_aot_probe_fn_ptr_raw(', pstart)
         if pend < 0:
             pend = pstart + 1200
         pwin = bridge[pstart:pend]
@@ -144,8 +144,7 @@ def main() -> int:
             print(f"  - {f}")
         return 1
     print(
-        "OK #3852 abort_aot_invalidate: production abort force-bumps AOT; "
-        "Soft untouched; probe epoch/soft_stale gates"
+        "OK #3852 abort_aot_invalidate: production abort force-bumps AOT; Soft untouched; probe epoch/soft_stale gates"
     )
     return 0
 

@@ -105,11 +105,11 @@ DOMAIN_STATUS: dict[str, str] = {
 # an intentional budget raise in this map + PR justification.
 # Count is source-scanned add("prefix…") names (same as freeze inventory).
 COMMERCIAL_DOMAIN_BUDGETS: dict[str, int] = {
-    "git-": 21,  # #1970 — git integration; AURA_ENABLE_GIT (≠ AURA_HAVE_LIBGIT2); #3615 ship raise (was 14; #3461 refresh + mergebot landings)
-    "strategy:": 18,  # #1973 — evolution controller; AURA_ENABLE_STRATEGY; #3615 ship raise (was 11; #3461 refresh + mergebot landings)
-    "synthesize:": 18,  # #1974 — synthesis templates/LLM/GA; AURA_ENABLE_SYNTHESIZE; #3615 ship raise (was 11; #3461 refresh + mergebot landings)
-    "tcp-": 23,  # #1975 client (4) + #2771 server listen/accept/timeout/local-port (4) + #3379/#3380 mergebot land; #3615 ship raise (was 15; #3461 refresh + mergebot landings — unit-test scan 17 not 16)
-    "m4-": 17,  # #1976 — M4 linear stubs (move/borrow/return!); AURA_ENABLE_M4; #3615 ship raise (was 10; #3461 refresh + mergebot landings)
+    "git-": 21,  # #1970 — git integration; AURA_ENABLE_GIT (≠ AURA_HAVE_LIBGIT2); #3615 ship raise (was 14; #3461 refresh + mergebot landings); #3850-#3853 waves +1
+    "strategy:": 18,  # #1973 — evolution controller; AURA_ENABLE_STRATEGY; #3615 ship raise (was 11; #3461 refresh + mergebot landings); #3850-#3853 waves +1
+    "synthesize:": 18,  # #1974 — synthesis templates/LLM/GA; AURA_ENABLE_SYNTHESIZE; #3615 ship raise (was 11; #3461 refresh + mergebot landings); #3850-#3853 waves +1
+    "tcp-": 23,  # #1975 client (4) + #2771 server listen/accept/timeout/local-port (4) + #3379/#3380 mergebot land; #3615 ship raise (was 15; #3461 refresh + mergebot landings — unit-test scan 17 not 16); #3850-#3853 waves +1
+    "m4-": 17,  # #1976 — M4 linear stubs (move/borrow/return!); AURA_ENABLE_M4; #3615 ship raise (was 10; #3461 refresh + mergebot landings); #3850-#3853 waves +1
 }
 
 # Convenience + ref namespaces (prefix match). Stats handled separately.

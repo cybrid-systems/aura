@@ -3856,8 +3856,8 @@ extern "C" void aura_evaluator_on_steal_complete(void* fiber_ptr) noexcept {
                     // Cross-eval only: same face as #2890 residual cleared
                     // (same-eval continuity accounted via #2710 ok_total).
                     if (prev_ev != evaluator_for_scheduler_hooks()) {
-                        aura::gc_hooks::g_residual_defer_steal_checkpoint_cleared_total
-                            .fetch_add(1, std::memory_order_relaxed);
+                        aura::gc_hooks::g_residual_defer_steal_checkpoint_cleared_total.fetch_add(
+                            1, std::memory_order_relaxed);
                     }
                 }
             }

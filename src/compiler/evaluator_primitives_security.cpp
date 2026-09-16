@@ -4687,10 +4687,11 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 insert_kv("issue-3806", ::aura::core::security_event_wal::kWalOverflowWrapIssue);
                 // Issue #3838: refuse-on-wrap counter (production fail-closed).
                 // Soft / Off / WAL-off: 0 (push never runs / Soft overwrites).
-                insert_kv("wal-overflow-wrap-refuse-total",
-                          static_cast<std::int64_t>(
-                              ::aura::core::security_event_wal::wal_overflow_ring_wrap_refuse_total()
-                                  .load(std::memory_order_relaxed)));
+                insert_kv(
+                    "wal-overflow-wrap-refuse-total",
+                    static_cast<std::int64_t>(
+                        ::aura::core::security_event_wal::wal_overflow_ring_wrap_refuse_total()
+                            .load(std::memory_order_relaxed)));
                 insert_kv("schema-3838",
                           ::aura::core::security_event_wal::kWalOverflowWrapRefuseIssue);
                 insert_kv("issue-3838",
@@ -5248,14 +5249,13 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             insert_kv("schema-3806", ::aura::core::security_event_wal::kWalOverflowWrapIssue);
             insert_kv("issue-3806", ::aura::core::security_event_wal::kWalOverflowWrapIssue);
             // Issue #3838: refuse-on-wrap counter (production fail-closed).
-            insert_kv("wal-overflow-wrap-refuse-total",
-                      static_cast<std::int64_t>(
-                          ::aura::core::security_event_wal::wal_overflow_ring_wrap_refuse_total()
-                              .load(std::memory_order_relaxed)));
-            insert_kv("schema-3838",
-                      ::aura::core::security_event_wal::kWalOverflowWrapRefuseIssue);
-            insert_kv("issue-3838",
-                      ::aura::core::security_event_wal::kWalOverflowWrapRefuseIssue);
+            insert_kv(
+                "wal-overflow-wrap-refuse-total",
+                static_cast<std::int64_t>(
+                    ::aura::core::security_event_wal::wal_overflow_ring_wrap_refuse_total().load(
+                        std::memory_order_relaxed)));
+            insert_kv("schema-3838", ::aura::core::security_event_wal::kWalOverflowWrapRefuseIssue);
+            insert_kv("issue-3838", ::aura::core::security_event_wal::kWalOverflowWrapRefuseIssue);
             insert_kv("unified", 1);
             return query_hash_finish(ht, ev.string_heap_, overflowed);
         });
@@ -5561,10 +5561,11 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 insert_kv("issue-3806", ::aura::core::security_event_wal::kWalOverflowWrapIssue);
                 // Issue #3838: refuse-on-wrap counter (production fail-closed).
                 // Soft / Off / WAL-off: 0 (push never runs / Soft overwrites).
-                insert_kv("wal-overflow-wrap-refuse-total",
-                          static_cast<std::int64_t>(
-                              ::aura::core::security_event_wal::wal_overflow_ring_wrap_refuse_total()
-                                  .load(std::memory_order_relaxed)));
+                insert_kv(
+                    "wal-overflow-wrap-refuse-total",
+                    static_cast<std::int64_t>(
+                        ::aura::core::security_event_wal::wal_overflow_ring_wrap_refuse_total()
+                            .load(std::memory_order_relaxed)));
                 insert_kv("schema-3838",
                           ::aura::core::security_event_wal::kWalOverflowWrapRefuseIssue);
                 insert_kv("issue-3838",
@@ -6237,14 +6238,13 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             insert_kv("schema-3806", ::aura::core::security_event_wal::kWalOverflowWrapIssue);
             insert_kv("issue-3806", ::aura::core::security_event_wal::kWalOverflowWrapIssue);
             // Issue #3838: refuse-on-wrap counter (production fail-closed).
-            insert_kv("wal-overflow-wrap-refuse-total",
-                      static_cast<std::int64_t>(
-                          ::aura::core::security_event_wal::wal_overflow_ring_wrap_refuse_total()
-                              .load(std::memory_order_relaxed)));
-            insert_kv("schema-3838",
-                      ::aura::core::security_event_wal::kWalOverflowWrapRefuseIssue);
-            insert_kv("issue-3838",
-                      ::aura::core::security_event_wal::kWalOverflowWrapRefuseIssue);
+            insert_kv(
+                "wal-overflow-wrap-refuse-total",
+                static_cast<std::int64_t>(
+                    ::aura::core::security_event_wal::wal_overflow_ring_wrap_refuse_total().load(
+                        std::memory_order_relaxed)));
+            insert_kv("schema-3838", ::aura::core::security_event_wal::kWalOverflowWrapRefuseIssue);
+            insert_kv("issue-3838", ::aura::core::security_event_wal::kWalOverflowWrapRefuseIssue);
             insert_kv("commit-would-allow", cr.would_allow_commit ? 1 : 0);
             insert_kv("commit-force-reason-code", cr.force_reason_code);
             insert_kv("playbook-action", static_cast<std::int64_t>(pb.action));

@@ -1812,7 +1812,7 @@ struct AgentHandle {
             o.last_join_status = serve::JoinStatus::Invalid;
             o.body_acquire_rejected_slot.reset();
             o.deny_class = AgentDenyClass::None;
-            o.bp_scope_id.clear(); // #3461: move is a complete field transfer
+            o.bp_scope_id.clear();            // #3461: move is a complete field transfer
             o.quota_recycled_pending = false; // #3841 / #3461 END field
         }
         return *this;
@@ -3441,8 +3441,8 @@ abandon_reclaimed(AgentHandle& h, AbandonReclaimedOpts opts = {}) noexcept {
     // pending flags clear ⇒ nothing to abandon (same as
     // slot_is_abandoned_live / cleaned). Soft: !must_wait &&
     // !quota_recycled_pending → Invalid (#3334 AC3).
-    const bool owed = h.must_wait_reclaimed ||
-                      (h.reclaimed_deferred_cleanup && h.quota_recycled_pending);
+    const bool owed =
+        h.must_wait_reclaimed || (h.reclaimed_deferred_cleanup && h.quota_recycled_pending);
     if (!owed) {
         out.outcome = AbandonReclaimedOutcome::Invalid;
         return out; // Soft / Off / already cleaned / abandoned-live

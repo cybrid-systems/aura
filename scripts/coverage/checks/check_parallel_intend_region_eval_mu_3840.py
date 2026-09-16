@@ -111,9 +111,7 @@ def main() -> int:
         for f in fails:
             print(f"  - {f}")
         return 1
-    print(
-        "OK: Issue #3840 parallel-intend RegionConcurrent skips eval_mu under production"
-    )
+    print("OK: Issue #3840 parallel-intend RegionConcurrent skips eval_mu under production")
     return 0
 
 

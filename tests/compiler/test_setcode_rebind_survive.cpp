@@ -706,8 +706,7 @@ static void ac11_3648_soft_no_move_recover() {
                                  /*had_moving=*/true, /*pin_held=*/true, /*incomplete=*/false,
                                  /*untracked=*/9, /*root_fail=*/0);
         auto got = cs.evaluator().apply_closure(cid, args);
-        CHECK(!got.has_value(),
-              "3848 AC3: incomplete window refuses even when objects_moved==0");
+        CHECK(!got.has_value(), "3848 AC3: incomplete window refuses even when objects_moved==0");
         CHECK(m->closure_stale_returns.load(std::memory_order_relaxed) > stale0,
               "3848 AC3: reuses closure_stale_returns");
     }
@@ -968,8 +967,9 @@ int run_test_setcode_rebind_survive() {
     // pre-reemit body; unimpacted rebinds keep the #2569 recover.
     ac14_3681_production_pre_reemit_refuse();
     ac15_3739_auto_arm_apply_closure_refuse();
-    std::println("\n=== #2569/#3421/#3469/#3602/#3634/#3648/#3848/#3849: #3739 {} passed, {} failed ===",
-                 g_passed, g_failed);
+    std::println(
+        "\n=== #2569/#3421/#3469/#3602/#3634/#3648/#3848/#3849: #3739 {} passed, {} failed ===",
+        g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
 

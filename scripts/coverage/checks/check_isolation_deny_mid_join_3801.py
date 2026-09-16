@@ -131,7 +131,9 @@ def main() -> int:
         fails.append("AC5: fence function missing")
     else:
         # Scope to this function only (until next top-level helper / namespace close)
-        fn_end = cap.find("\n[[nodiscard]] inline std::uint64_t capability_wildcard_write_fence_deny_total_v_read", fn_idx)
+        fn_end = cap.find(
+            "\n[[nodiscard]] inline std::uint64_t capability_wildcard_write_fence_deny_total_v_read", fn_idx
+        )
         if fn_end < 0:
             fn_end = cap.find("\n} // namespace aura::core::capability", fn_idx)
         if fn_end < 0:

@@ -80,8 +80,7 @@ def main() -> int:
     # grant_macro_self_evo + check_macro_self_evo use stamp helper
     if cap.count("stamp_grant_mutation_epoch()") < 3:
         fails.append(
-            f"AC1: expected ≥3 stamp_grant_mutation_epoch() call sites, got "
-            f"{cap.count('stamp_grant_mutation_epoch()')}"
+            f"AC1: expected ≥3 stamp_grant_mutation_epoch() call sites, got {cap.count('stamp_grant_mutation_epoch()')}"
         )
     # record_audit must not fall through epoch → mid
     must("const auto epoch = prov.epoch;", "AC1 record_audit epoch=prov.epoch", cap)

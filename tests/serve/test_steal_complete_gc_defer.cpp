@@ -1141,7 +1141,8 @@ static void ac3850_3_panic_residual_ok_keys_off_has_cp() {
     CHECK(win.find("g_gc_defer_pending_panic_depth") == std::string::npos ||
               win.find("has_panic_checkpoint()") != std::string::npos,
           "3850 AC3: not depth-only");
-    CHECK(win.find("Issue #3850") != std::string::npos || mb.find("Issue #2595 / #3850") != std::string::npos,
+    CHECK(win.find("Issue #3850") != std::string::npos ||
+              mb.find("Issue #2595 / #3850") != std::string::npos,
           "3850 AC3: cites #3850");
 }
 
@@ -1150,8 +1151,7 @@ static void ac3850_4_soft_leftover_observe_wiring() {
     const auto gh = read_file("src/core/gc_hooks.h");
     CHECK(gh.find("evaluator_has_panic_checkpoint_probe") != std::string::npos,
           "3850 AC4: probe declared");
-    CHECK(gh.find("g_live_panic_checkpoint_depth") != std::string::npos,
-          "3850 AC4: live CP depth");
+    CHECK(gh.find("g_live_panic_checkpoint_depth") != std::string::npos, "3850 AC4: live CP depth");
     CHECK(gh.find("Issue #3850") != std::string::npos, "3850 AC4: gc_hooks cites #3850");
     const auto efm = read_file("src/compiler/evaluator_fiber_mutation.cpp");
     CHECK(efm.find("Soft:") != std::string::npos && efm.find("observe-only") != std::string::npos,
@@ -1159,7 +1159,8 @@ static void ac3850_4_soft_leftover_observe_wiring() {
     CHECK(read_file("tests/serve/test_issue_3850.cpp").empty(), "3850: no invent");
     CHECK(read_file("docs/design/3850-steal-panic-moving.md").empty(), "3850: no docs/design");
     const auto lint = read_file("scripts/coverage/checks/check_steal_panic_moving_gate_3850.py");
-    CHECK(!lint.empty() && lint.find("Issue #3850") != std::string::npos, "3850 AC4: linter present");
+    CHECK(!lint.empty() && lint.find("Issue #3850") != std::string::npos,
+          "3850 AC4: linter present");
 }
 
 int run_test_steal_complete_gc_defer() {

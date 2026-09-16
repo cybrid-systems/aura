@@ -1706,7 +1706,8 @@ static void ac3839_2_capability_and_self_evo_align() {
     CapabilityGrant g_se{};
     CHECK(g_capability_registry().find_grant(38392, "self-evo", g_se),
           "3839 AC2: self-evo row exists");
-    CHECK(g_se.session_bound, "3839 AC2: self-evo session_bound (align grant_macro_self_evo #3721)");
+    CHECK(g_se.session_bound,
+          "3839 AC2: self-evo session_bound (align grant_macro_self_evo #3721)");
     CHECK(g_se.single_use, "3839 AC2: self-evo single_use");
 }
 
@@ -1733,7 +1734,8 @@ static void ac3839_4_source_cite() {
     CHECK(sec.find("grant_capability(std::move(cap), single_use, session_bound,") !=
               std::string::npos,
           "3839 AC4: string path passes session_bound");
-    const auto linter = read_file("scripts/coverage/checks/check_string_grant_session_bound_3839.py");
+    const auto linter =
+        read_file("scripts/coverage/checks/check_string_grant_session_bound_3839.py");
     CHECK(!linter.empty(), "3839 AC4: coverage linter present");
     CHECK(read_file("build.py").find("check_string_grant_session_bound_3839") != std::string::npos,
           "3839 AC4: build.py wires linter");
@@ -2910,7 +2912,8 @@ int run_test_grant_effect_capability_session_3561() {
 }
 
 int run_test_string_grant_session_bound_3839() {
-    std::println("=== Issue #3839: plain grant_capability(string) production high-risk session_bound ===");
+    std::println(
+        "=== Issue #3839: plain grant_capability(string) production high-risk session_bound ===");
     ac3839_1_string_high_risk_session_revoked();
     ac3839_2_capability_and_self_evo_align();
     ac3839_3_soft_no_force();

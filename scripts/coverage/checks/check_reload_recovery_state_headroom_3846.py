@@ -34,9 +34,7 @@ GF = "scripts/coverage/simple_check_grandfather.txt"
 MANIFEST = "scripts/coverage/manifests/3846.json"
 LINTER = "check_reload_recovery_state_headroom_3846"
 INSERT_RE = re.compile(r'insert_kv(?:_str)?\(\s*"([^"]+)"')
-PLANNED_RE = re.compile(
-    r"constexpr std::size_t kReloadRecoveryStatePlannedKeys\s*=\s*(\d+)"
-)
+PLANNED_RE = re.compile(r"constexpr std::size_t kReloadRecoveryStatePlannedKeys\s*=\s*(\d+)")
 
 
 def _read(rel: str) -> str:
@@ -84,9 +82,7 @@ def main() -> int:
     actual = len(keys)
     planned = int(m.group(1)) if m else 0
     if planned < actual + HEADROOM:
-        fails.append(
-            f"AC1: planned {planned} < actual {actual} + {HEADROOM} headroom"
-        )
+        fails.append(f"AC1: planned {planned} < actual {actual} + {HEADROOM} headroom")
     must("insert_kv_checked", "AC1 checked insert", block)
     must("kReloadRecoveryStatePlannedKeys = 112", "AC1 planned 112", mut)
     must("query:reload-recovery-state", "AC1 in #3339 facades", c3339)
@@ -149,10 +145,7 @@ def main() -> int:
         print(f"\n{len(fails)} check(s) failed for #3846", file=sys.stderr)
         return 1
 
-    print(
-        f"OK {LINTER}: planned={planned} live={actual} "
-        f"headroom={planned - actual} (#3096/#3847 keys included)"
-    )
+    print(f"OK {LINTER}: planned={planned} live={actual} headroom={planned - actual} (#3096/#3847 keys included)")
     return 0
 
 

@@ -60,8 +60,7 @@ def main() -> int:
     must("quota_recycled_pending", "AC1 flag", spawn)
     must("h.quota_recycled_pending = true;", "AC1 helper sets flag", spawn)
     must(
-        "if (wr.status == serve::JoinStatus::Timeout)\n"
-        "        (void)maybe_force_release_reclaimed_quota(h);",
+        "if (wr.status == serve::JoinStatus::Timeout)\n        (void)maybe_force_release_reclaimed_quota(h);",
         "AC1 ensure no must_wait clear",
         spawn,
     )
@@ -78,8 +77,7 @@ def main() -> int:
         spawn,
     )
     must_not(
-        "if (maybe_force_release_reclaimed_quota(a))\n"
-        "                a.must_wait_reclaimed = false;",
+        "if (maybe_force_release_reclaimed_quota(a))\n                a.must_wait_reclaimed = false;",
         "AC1 forbid batch clear-as-cleaned",
         spawn,
     )
@@ -99,8 +97,7 @@ def main() -> int:
 
     # AC3 — Soft / production gate on helper unchanged.
     must(
-        "if (!aura::compiler::typed_audit::production_defaults_active())\n"
-        "        return false;",
+        "if (!aura::compiler::typed_audit::production_defaults_active())\n        return false;",
         "AC3 helper production gate",
         spawn,
     )

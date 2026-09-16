@@ -815,8 +815,7 @@ static void ac3852_3_source_and_linter() {
     const auto t = read_file("tests/compiler/test_abort_ir_cache_fence_first.cpp");
     const auto build = read_file("build.py");
     const auto gf = read_file("scripts/coverage/simple_check_grandfather.txt");
-    const auto lint =
-        read_file("scripts/coverage/checks/check_abort_aot_invalidate_3852.py");
+    const auto lint = read_file("scripts/coverage/checks/check_abort_aot_invalidate_3852.py");
     const auto man = read_file("scripts/coverage/manifests/3852.json");
     const auto dirty = svc.find("void force_ir_cache_dirty_after_abort()");
     CHECK(dirty != std::string::npos, "3852 AC4: force_dirty present");
@@ -832,8 +831,7 @@ static void ac3852_3_source_and_linter() {
           "3852 AC4: AC1 folded");
     CHECK(t.find("ac3852_2_soft_abort_aot_untouched") != std::string::npos, "3852 AC4: AC3 folded");
     CHECK(!lint.empty() && lint.find("Issue #3852") != std::string::npos, "3852 AC4: linter");
-    CHECK(build.find("check_abort_aot_invalidate_3852") != std::string::npos,
-          "3852 AC4: build.py");
+    CHECK(build.find("check_abort_aot_invalidate_3852") != std::string::npos, "3852 AC4: build.py");
     CHECK(gf.find("check_abort_aot_invalidate_3852.py") != std::string::npos,
           "3852 AC4: grandfather");
     CHECK(!man.empty() && man.find("\"issue\": 3852") != std::string::npos, "3852 AC4: manifest");
