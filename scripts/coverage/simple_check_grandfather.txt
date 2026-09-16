@@ -428,3 +428,5 @@ scripts/coverage/checks/check_parallel_intend_region_eval_mu_3840.py
 scripts/coverage/checks/check_quota_recycle_must_wait_ssot_3841.py
 check_parallel_intend_region_eval_mu_3840.py
 check_quota_recycle_must_wait_ssot_3841.py
+scripts/coverage/checks/check_scope_sweep_reclaimed_pending_3842.py
+check_scope_sweep_reclaimed_pending_3842.py
