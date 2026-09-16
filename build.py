@@ -9106,6 +9106,19 @@ def cmd_lint():
             "Issue #3805 abandoned-live name reuse linter failed — run python3 scripts/coverage/checks/check_abandoned_live_name_reuse_3805.py"
         )
         return r
+    # Issue #3841: quota-only recycle must not clear must_wait as cleaned;
+    # auto-wait / abandon_reclaimed SSOT with deferred+mailbox still owed.
+    # Extends test_join_drain_reclaim.cpp (#81967); no docs/design (#1655).
+    qrmw3841_script = COVERAGE_CHECKS / "check_quota_recycle_must_wait_ssot_3841.py"
+    if not qrmw3841_script.exists():
+        fail(f"missing {qrmw3841_script}")
+        return 1
+    r = run([sys.executable, str(qrmw3841_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3841 quota-recycle must_wait SSOT linter failed — run python3 scripts/coverage/checks/check_quota_recycle_must_wait_ssot_3841.py"
+        )
+        return r
     # Issue #3806: SE WAL overflow ring wrap/overwrite counter + Agent
     # faces (depth/wrap-total/full). Extends test_security_event_wal_replay
     # + test_security_posture_trail (#81967); no docs/design (#1655).
