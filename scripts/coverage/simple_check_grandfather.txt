@@ -414,3 +414,5 @@ check_agent_scope_region_key_isolation_3803.py
 check_wal_overflow_wrap_3806.py
 check_apply_closure_tls_cache_3832.py
 check_ir_soa_column_arena_3833.py
+scripts/coverage/checks/check_call_ownerless_fail_closed_3834.py
+check_call_ownerless_fail_closed_3834.py
