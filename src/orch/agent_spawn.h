@@ -136,6 +136,13 @@ inline constexpr int kReclaimedSlotSecondRecycleIssue = 3644;
 // live fiber — and directory / scope-resolve must not present the
 // abandoned ghost as a live send/join target once the name has moved on.
 inline constexpr int kAbandonedLiveNameReuseIssue = 3805;
+// Issue #3841: quota-only recycle must not clear must_wait_reclaimed as
+// "cleaned". ensure / batch callers used to clear must_wait on
+// maybe_force_release_reclaimed_quota success → auto-wait exited Done
+// while deferred / mailbox / live body remained; abandon_reclaimed went
+// Invalid. Keep must_wait; set quota_recycled_pending for host/stats.
+// Soft / Off: helper stays production-gated (unchanged).
+inline constexpr int kQuotaRecycleMustWaitSsotIssue = 3841;
 // Issue #3336: production C++ send preference — agent_send_safe (or
 // explicit `// orch-raw-send-ok`) for non-test TUs. Raw agent_send
 // remains for zero-cost non-held_ref / already-stamped.
@@ -543,12 +550,13 @@ inline constexpr std::uint64_t kProductionWaitReclaimedMsDefault = 50;
 
 // Issue #3334: host-opt-in abandon after production Reclaimed Timeout.
 // max_second_wait_ms nullopt → kProductionWaitReclaimedMsDefault (50).
-// Soft / !must_wait_reclaimed: abandon_reclaimed is a no-op (Invalid).
+// Soft / cleaned / abandoned-live: abandon_reclaimed is a no-op (Invalid).
+// Issue #3841: production owed = must_wait OR (deferred && quota_recycled).
 struct AbandonReclaimedOpts {
     std::optional<std::uint64_t> max_second_wait_ms{};
 };
 enum class AbandonReclaimedOutcome : std::uint8_t {
-    Invalid = 0,   // Soft / Off / !must_wait — zero wait, zero atomic
+    Invalid = 0,   // Soft / Off / cleaned / abandoned-live — zero wait
     Cleaned = 1,   // body exited during second wait — Done-path cleanup
     Abandoned = 2, // Timeout — typed abandon (reservation+name+mailbox)
 };
@@ -1645,6 +1653,12 @@ struct AgentHandle {
     // agent_send / emit_keepalive BP arms. Appended at END (#2906) so
     // any stale module BMI reading at offset zero is unaffected.
     std::string bp_scope_id{};
+    // Issue #3841: set when maybe_force_release_reclaimed_quota succeeds.
+    // Quota gone; must_wait / deferred stay so auto-wait / abandon SSOT
+    // does not treat recycle as cleanup-landed. Cleared on Done-path /
+    // abandon / force-recycle live arm. Soft never sets (production gate).
+    // Appended at END — move ctor / assign / reset must transfer (#3461).
+    bool quota_recycled_pending = false;
 
     AgentHandle() = default;
     AgentHandle(const AgentHandle&) = delete;
@@ -1681,7 +1695,8 @@ struct AgentHandle {
         , last_join_status(o.last_join_status)
         , body_acquire_rejected_slot(std::move(o.body_acquire_rejected_slot))
         , deny_class(o.deny_class)
-        , bp_scope_id(std::move(o.bp_scope_id)) {
+        , bp_scope_id(std::move(o.bp_scope_id))
+        , quota_recycled_pending(o.quota_recycled_pending) {
         // Issue #3245: hold-path signal when a still-pending handle is
         // stored (vector / another component). Soft: pending=false.
         note_reclaimed_pending_hold(o.must_wait_reclaimed);
@@ -1717,6 +1732,7 @@ struct AgentHandle {
         // field appended at END of AgentHandle must appear in BOTH move
         // lists AND this reset block.
         o.bp_scope_id.clear();
+        o.quota_recycled_pending = false; // #3841 / #3461 END field
     }
 
     AgentHandle& operator=(AgentHandle&& o) noexcept {
@@ -1759,6 +1775,7 @@ struct AgentHandle {
             // Issue #3461: complete field transfer (see move ctor
             // checklist — END-appended fields must appear here).
             bp_scope_id = std::move(o.bp_scope_id);
+            quota_recycled_pending = o.quota_recycled_pending;
             note_reclaimed_pending_hold(o.must_wait_reclaimed);
             o.id = 0;
             o.fiber = nullptr;
@@ -1786,6 +1803,7 @@ struct AgentHandle {
             o.body_acquire_rejected_slot.reset();
             o.deny_class = AgentDenyClass::None;
             o.bp_scope_id.clear(); // #3461: move is a complete field transfer
+            o.quota_recycled_pending = false; // #3841 / #3461 END field
         }
         return *this;
     }
@@ -2832,6 +2850,7 @@ inline void complete_agent_join_cleanup(AgentHandle& h, serve::JoinResult jr) no
     // put; leaving must_wait set after wait_reclaimed_body completed
     // blocked same-name put after cleanup.
     h.must_wait_reclaimed = false;
+    h.quota_recycled_pending = false; // #3841: Done-path is fully cleaned
     // Name-table drop: deferred to ~AgentHandle / scope dtor
     // (idempotent with this helper).
 }
@@ -2888,6 +2907,10 @@ inline void complete_agent_join_cleanup(AgentHandle& h, serve::JoinResult jr) no
     g_orch_module_stats.reclaimed_quota_force_released_total.fetch_add(1,
                                                                        std::memory_order_relaxed);
     h.release_reservation_if_any();
+    // Issue #3841: quota only — pending flags stay. Mark recycled so
+    // hosts / abandon can see quota-gone-but-cleanup-owed (must_wait
+    // must NOT be cleared by callers as "cleaned").
+    h.quota_recycled_pending = true;
     return true;
 }
 
@@ -2979,6 +3002,7 @@ inline void complete_agent_join_cleanup(AgentHandle& h, serve::JoinResult jr) no
     h.name.clear();
     h.must_wait_reclaimed = false;
     h.reclaimed_deferred_cleanup = false;
+    h.quota_recycled_pending = false; // #3841: abandon-shape settles recycle
     g_orch_module_stats.reclaimed_abandon_total.fetch_add(1, std::memory_order_relaxed);
     return true;
 }
@@ -3013,6 +3037,7 @@ inline void AgentHandle::finish_reclaimed_cleanup_on_dtor() noexcept {
     }
     release_reservation_if_any();
     must_wait_reclaimed = false;
+    quota_recycled_pending = false; // #3841
 }
 
 // Issue #2924: wait for still-running body after JoinStatus::Reclaimed.
@@ -3250,10 +3275,13 @@ struct JoinViaTokenResult {
     // Issue #3529 / #3564: long-lived host recycle. After auto-wait
     // Timeout, if production + body still alive + reclaim-stuck ≥
     // timeout, release quota (not body-stack). Soft / age < timeout:
-    // unchanged (#2661 no-early-free). ensure still clears must_wait
-    // after recycle (AC3); find/put leave flags (#3564 AC1).
-    if (wr.status == serve::JoinStatus::Timeout && maybe_force_release_reclaimed_quota(h))
-        h.must_wait_reclaimed = false;
+    // unchanged (#2661 no-early-free). Issue #3841: do NOT clear
+    // must_wait on recycle success — auto-wait must not exit as Done
+    // solely from quota force-release while deferred/mailbox/live body
+    // remain. Helper sets quota_recycled_pending; find/put leave flags
+    // (#3564 AC1).
+    if (wr.status == serve::JoinStatus::Timeout)
+        (void)maybe_force_release_reclaimed_quota(h);
     return wr;
 }
 
@@ -3280,6 +3308,8 @@ struct JoinViaTokenResult {
     std::uint64_t waited_us = 0;
     for (;;) {
         waited_us += ensure_reclaimed_cleanup(h).wait_us;
+        // Issue #3841: must_wait stays true after quota-only recycle, so
+        // this Done exit means body exit + cleanup — never quota alone.
         if (!h.must_wait_reclaimed)
             return waited_us; // body exited + cleanup landed (AC1)
         const auto elapsed_ms =
@@ -3369,9 +3399,9 @@ maybe_auto_wait_reclaimed_batch(std::span<AgentHandle> agents,
             ++out.still_running;
             any_still_running = true;
             // #3529/#3564 quota recycle mirror (ensure_reclaimed_cleanup
-            // Timeout arm) — per handle.
-            if (maybe_force_release_reclaimed_quota(a))
-                a.must_wait_reclaimed = false;
+            // Timeout arm) — per handle. Issue #3841: must_wait stays;
+            // helper sets quota_recycled_pending (not "cleaned").
+            (void)maybe_force_release_reclaimed_quota(a);
         }
     }
     if (any_still_running) {
@@ -3389,14 +3419,23 @@ maybe_auto_wait_reclaimed_batch(std::span<AgentHandle> agents,
 // 50 ms); on body exit → Done-path cleanup; on Timeout → detach mailbox
 // attach only + release reservation + clear name + bump
 // reclaimed_abandon_total. Never frees body-stack while !fiber->is_done()
-// (#2661). Soft / !must_wait_reclaimed: Invalid, zero extra wait / atomic.
+// (#2661). Soft / Off / already cleaned / abandoned-live husk: Invalid.
+// Issue #3841: gate on owed cleanup — must_wait OR (deferred &&
+// quota_recycled_pending), not must_wait alone. Soft never sets
+// must_wait / quota_recycled_pending (production-gated) → stays Invalid.
 // Distinct from ~AgentHandle under-account (reclaimed_dtor_under_account_total).
 [[nodiscard]] inline AbandonReclaimedResult
 abandon_reclaimed(AgentHandle& h, AbandonReclaimedOpts opts = {}) noexcept {
     AbandonReclaimedResult out;
-    if (!h.must_wait_reclaimed) {
+    // Issue #3841: align with deferred / abandoned-live shape — both
+    // pending flags clear ⇒ nothing to abandon (same as
+    // slot_is_abandoned_live / cleaned). Soft: !must_wait &&
+    // !quota_recycled_pending → Invalid (#3334 AC3).
+    const bool owed = h.must_wait_reclaimed ||
+                      (h.reclaimed_deferred_cleanup && h.quota_recycled_pending);
+    if (!owed) {
         out.outcome = AbandonReclaimedOutcome::Invalid;
-        return out; // AC: Soft / Off / already cleaned — zero extra
+        return out; // Soft / Off / already cleaned / abandoned-live
     }
     const auto wait_ms = opts.max_second_wait_ms.value_or(kProductionWaitReclaimedMsDefault);
     auto wr = wait_reclaimed_body(h, wait_ms);
@@ -3407,6 +3446,7 @@ abandon_reclaimed(AgentHandle& h, AbandonReclaimedOpts opts = {}) noexcept {
     h.wait_reclaimed_timeout = (wr.status == serve::JoinStatus::Timeout);
     if (wr.status != serve::JoinStatus::Timeout) {
         h.must_wait_reclaimed = false;
+        h.quota_recycled_pending = false; // #3841
         out.outcome = AbandonReclaimedOutcome::Cleaned;
         out.reservation_released = (h.reserved_memory_bytes == 0);
         return out;
@@ -3424,6 +3464,7 @@ abandon_reclaimed(AgentHandle& h, AbandonReclaimedOpts opts = {}) noexcept {
     out.body_stack_untouched = !h.fiber || !h.fiber->is_done();
     h.must_wait_reclaimed = false;
     h.reclaimed_deferred_cleanup = false; // dtor must not re-count under-account
+    h.quota_recycled_pending = false;     // #3841
     g_orch_module_stats.reclaimed_abandon_total.fetch_add(1, std::memory_order_relaxed);
     out.outcome = AbandonReclaimedOutcome::Abandoned;
     return out;

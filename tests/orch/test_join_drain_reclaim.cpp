@@ -476,7 +476,10 @@ static void ac3529_3_ensure_timeout_force_releases() {
     CHECK(wr.status == aura::serve::JoinStatus::Timeout || wr.still_running,
           "3529 AC3: ensure Timeout / still-running");
     CHECK(h.reserved_memory_bytes == 0, "3529 AC3: reservation force-released");
-    CHECK(!h.must_wait_reclaimed, "3529 AC3: must_wait cleared after recycle");
+    // Issue #3841: must_wait stays after quota-only recycle (not "cleaned").
+    CHECK(h.must_wait_reclaimed, "3529 AC3: must_wait kept after recycle (#3841)");
+    CHECK(h.quota_recycled_pending, "3529 AC3: quota_recycled_pending set (#3841)");
+    CHECK(h.reclaimed_deferred_cleanup, "3529 AC3: deferred stays (#3467)");
     CHECK(!h.fiber->is_done(), "3529 AC3: body-stack untouched (#2661)");
     CHECK(g_orch_module_stats.reclaimed_quota_force_released_total.load(
               std::memory_order_relaxed) == before + 1,
@@ -2450,6 +2453,226 @@ static void ac3805_5_source_cite_and_linter() {
     const auto prim = read_file("src/compiler/evaluator_primitives_agent.cpp");
     CHECK(prim.find("abandoned-live-name-reuse") == std::string::npos,
           "3805 AC5: no new query key");
+}
+
+// Issue #3841: quota-only recycle must not clear must_wait as "cleaned".
+// ensure / batch keep must_wait; auto-wait does not exit Done solely from
+// force-release; abandon_reclaimed stays valid while deferred/mailbox owed.
+static void ac3841_1_ensure_keeps_must_wait_after_quota_recycle() {
+    using aura::orch::AgentHandle;
+    using aura::orch::ensure_reclaimed_cleanup;
+    using aura::serve::Fiber;
+    std::println("\n--- #3841 AC1: ensure Timeout + stuck → must_wait kept, quota_recycled ---");
+    apply_production_audit_defaults();
+    const char* prev = std::getenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS");
+    std::string prev_s = prev ? prev : "";
+    ::setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", "0", 1);
+    const auto before =
+        g_orch_module_stats.reclaimed_quota_force_released_total.load(std::memory_order_relaxed);
+    auto fiber_owned = std::make_unique<Fiber>([] {});
+    fiber_owned->mark_reclaimed();
+    AgentHandle h;
+    h.ok = true;
+    h.fiber = fiber_owned.get();
+    h.reserved_memory_bytes = 4096;
+    h.name = "3841-ensure";
+    h.must_wait_reclaimed = true;
+    h.reclaimed_deferred_cleanup = true;
+    auto wr = ensure_reclaimed_cleanup(h);
+    CHECK(wr.status == aura::serve::JoinStatus::Timeout || wr.still_running,
+          "3841 AC1: ensure Timeout / still-running");
+    CHECK(h.reserved_memory_bytes == 0, "3841 AC1: quota force-released");
+    CHECK(h.must_wait_reclaimed, "3841 AC1: must_wait kept (not cleaned)");
+    CHECK(h.reclaimed_deferred_cleanup, "3841 AC1: deferred stays");
+    CHECK(h.quota_recycled_pending, "3841 AC1: quota_recycled_pending set");
+    CHECK(!h.fiber->is_done(), "3841 AC1: body-stack untouched (#2661)");
+    CHECK(g_orch_module_stats.reclaimed_quota_force_released_total.load(
+              std::memory_order_relaxed) == before + 1,
+          "3841 AC1: force-released counter +1");
+    if (!prev_s.empty())
+        ::setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", prev_s.c_str(), 1);
+    else
+        ::unsetenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS");
+    apply_dev_audit_defaults();
+}
+
+static void ac3841_2_auto_wait_not_done_from_quota_alone() {
+    using aura::orch::AgentHandle;
+    using aura::serve::Fiber;
+    std::println("\n--- #3841 AC2: auto-wait does not Done solely from quota force-release ---");
+    apply_production_audit_defaults();
+    const char* prev = std::getenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS");
+    std::string prev_s = prev ? prev : "";
+    ::setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", "0", 1);
+    const auto hf0 =
+        g_orch_module_stats.host_forget_reclaimed_risk_total.load(std::memory_order_relaxed);
+    auto fiber_owned = std::make_unique<Fiber>([] {});
+    fiber_owned->mark_reclaimed();
+    AgentHandle h;
+    h.ok = true;
+    h.fiber = fiber_owned.get();
+    h.reserved_memory_bytes = 4096;
+    h.must_wait_reclaimed = true;
+    h.reclaimed_deferred_cleanup = true;
+    // Short budget: one/two ensure arms; body never exits. Pre-#3841 the
+    // first ensure would clear must_wait after quota recycle and return
+    // as Done (~50ms). Post-#3841 must_wait stays → budget expiry path.
+    const auto waited = aura::orch::maybe_auto_wait_reclaimed_production(
+        h, /*caller_passed_wait_reclaimed_ms=*/false, /*retry_budget_ms=*/80);
+    CHECK(waited >= 50000, "3841 AC2: waited at least one ensure arm");
+    CHECK(h.must_wait_reclaimed, "3841 AC2: must_wait still set (not Done from quota)");
+    CHECK(h.quota_recycled_pending, "3841 AC2: quota recycled pending");
+    CHECK(h.reclaimed_deferred_cleanup, "3841 AC2: deferred still owed");
+    CHECK(h.reserved_memory_bytes == 0, "3841 AC2: quota released");
+    CHECK(g_orch_module_stats.host_forget_reclaimed_risk_total.load(std::memory_order_relaxed) ==
+              hf0 + 1,
+          "3841 AC2: host_forget bumps on budget expiry (not silent Done)");
+    if (!prev_s.empty())
+        ::setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", prev_s.c_str(), 1);
+    else
+        ::unsetenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS");
+    apply_dev_audit_defaults();
+}
+
+static void ac3841_3_abandon_after_quota_recycle_not_invalid() {
+    using aura::orch::AbandonReclaimedOpts;
+    using aura::orch::AbandonReclaimedOutcome;
+    using aura::orch::AgentHandle;
+    using aura::orch::ensure_reclaimed_cleanup;
+    using aura::serve::Fiber;
+    std::println("\n--- #3841 AC3: abandon_reclaimed ≠ Invalid after quota recycle ---");
+    apply_production_audit_defaults();
+    const char* prev = std::getenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS");
+    std::string prev_s = prev ? prev : "";
+    ::setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", "0", 1);
+    auto fiber_owned = std::make_unique<Fiber>([] {});
+    fiber_owned->mark_reclaimed();
+    AgentHandle h;
+    h.ok = true;
+    h.fiber = fiber_owned.get();
+    h.reserved_memory_bytes = 4096;
+    h.name = "3841-abandon";
+    h.must_wait_reclaimed = true;
+    h.reclaimed_deferred_cleanup = true;
+    (void)ensure_reclaimed_cleanup(h);
+    CHECK(h.must_wait_reclaimed && h.quota_recycled_pending,
+          "3841 AC3: pre-abandon owed cleanup + recycled");
+    AbandonReclaimedOpts opts;
+    opts.max_second_wait_ms = 1;
+    auto ar = h.abandon_reclaimed(opts);
+    CHECK(ar.outcome == AbandonReclaimedOutcome::Abandoned,
+          "3841 AC3: abandon lands Abandoned (not Invalid)");
+    CHECK(ar.outcome != AbandonReclaimedOutcome::Invalid, "3841 AC3: not Invalid");
+    CHECK(h.name.empty(), "3841 AC3: name cleared");
+    CHECK(!h.must_wait_reclaimed && !h.reclaimed_deferred_cleanup,
+          "3841 AC3: pending flags cleared");
+    CHECK(!h.quota_recycled_pending, "3841 AC3: quota_recycled_pending cleared");
+    CHECK(!h.fiber->is_done(), "3841 AC3: body-stack untouched (#2661)");
+    if (!prev_s.empty())
+        ::setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", prev_s.c_str(), 1);
+    else
+        ::unsetenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS");
+    apply_dev_audit_defaults();
+}
+
+static void ac3841_4_batch_keeps_must_wait_after_quota_recycle() {
+    using aura::orch::AgentHandle;
+    using aura::orch::maybe_auto_wait_reclaimed_batch;
+    using aura::serve::Fiber;
+    std::println("\n--- #3841 AC4: batch expiry quota recycle keeps must_wait ---");
+    apply_production_audit_defaults();
+    const char* prev = std::getenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS");
+    std::string prev_s = prev ? prev : "";
+    ::setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", "0", 1);
+    auto fiber_owned = std::make_unique<Fiber>([] {});
+    fiber_owned->mark_reclaimed();
+    AgentHandle h;
+    h.ok = true;
+    h.fiber = fiber_owned.get();
+    h.reserved_memory_bytes = 4096;
+    h.must_wait_reclaimed = true;
+    h.reclaimed_deferred_cleanup = true;
+    std::vector<AgentHandle> agents;
+    agents.push_back(std::move(h));
+    auto out = maybe_auto_wait_reclaimed_batch(std::span<AgentHandle>(agents), /*retry_budget_ms=*/1);
+    CHECK(out.still_running == 1, "3841 AC4: still_running");
+    CHECK(agents[0].must_wait_reclaimed, "3841 AC4: must_wait kept after batch recycle");
+    CHECK(agents[0].quota_recycled_pending, "3841 AC4: quota_recycled_pending");
+    CHECK(agents[0].reserved_memory_bytes == 0, "3841 AC4: quota released");
+    CHECK(agents[0].reclaimed_deferred_cleanup, "3841 AC4: deferred stays");
+    // Steal fiber so dtor does not join never-started body.
+    agents[0].fiber = nullptr;
+    if (!prev_s.empty())
+        ::setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", prev_s.c_str(), 1);
+    else
+        ::unsetenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS");
+    apply_dev_audit_defaults();
+}
+
+static void ac3841_5_soft_and_source_cite() {
+    using aura::orch::AbandonReclaimedOpts;
+    using aura::orch::AbandonReclaimedOutcome;
+    using aura::orch::AgentHandle;
+    using aura::orch::ensure_reclaimed_cleanup;
+    using aura::serve::Fiber;
+    std::println("\n--- #3841 AC5: Soft unchanged + source-cite / linter / no invent ---");
+    apply_dev_audit_defaults();
+    const char* prev = std::getenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS");
+    std::string prev_s = prev ? prev : "";
+    ::setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", "0", 1);
+    const auto before =
+        g_orch_module_stats.reclaimed_quota_force_released_total.load(std::memory_order_relaxed);
+    auto fiber_owned = std::make_unique<Fiber>([] {});
+    fiber_owned->mark_reclaimed();
+    AgentHandle h;
+    h.ok = true;
+    h.fiber = fiber_owned.get();
+    h.reserved_memory_bytes = 4096;
+    h.must_wait_reclaimed = false; // Soft join leaves must_wait clear
+    h.reclaimed_deferred_cleanup = true;
+    // Direct helper call — Soft production gate (no getenv / no release).
+    CHECK(!aura::orch::maybe_force_release_reclaimed_quota(h),
+          "3841 AC5: Soft helper returns false");
+    CHECK(h.reserved_memory_bytes == 4096, "3841 AC5: Soft does not force-release");
+    CHECK(!h.quota_recycled_pending, "3841 AC5: Soft no quota_recycled_pending");
+    CHECK(g_orch_module_stats.reclaimed_quota_force_released_total.load(
+              std::memory_order_relaxed) == before,
+          "3841 AC5: Soft force-released counter unchanged");
+    // Soft abandon stays Invalid (#3334) — deferred alone without
+    // must_wait / quota_recycled_pending.
+    AbandonReclaimedOpts opts;
+    opts.max_second_wait_ms = 1;
+    auto ar = h.abandon_reclaimed(opts);
+    CHECK(ar.outcome == AbandonReclaimedOutcome::Invalid, "3841 AC5: Soft abandon Invalid");
+    // ensure with !must_wait is zero-cost Invalid (unchanged Soft contract).
+    auto wr = ensure_reclaimed_cleanup(h);
+    CHECK(wr.status == aura::serve::JoinStatus::Invalid && wr.wait_us == 0,
+          "3841 AC5: Soft ensure !must_wait zero-cost");
+    if (!prev_s.empty())
+        ::setenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS", prev_s.c_str(), 1);
+    else
+        ::unsetenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS");
+
+    const auto spawn = read_file("src/orch/agent_spawn.h");
+    CHECK(spawn.find("kQuotaRecycleMustWaitSsotIssue = 3841") != std::string::npos,
+          "3841 AC5: issue constant");
+    CHECK(spawn.find("Issue #3841") != std::string::npos, "3841 AC5: cite");
+    CHECK(spawn.find("quota_recycled_pending") != std::string::npos, "3841 AC5: flag");
+    CHECK(spawn.find("do NOT clear\n    // must_wait on recycle success") != std::string::npos ||
+              spawn.find("do NOT clear must_wait") != std::string::npos ||
+              spawn.find("must_wait stays") != std::string::npos,
+          "3841 AC5: ensure/batch keep-must_wait cite");
+    CHECK(read_file("scripts/coverage/checks/check_quota_recycle_must_wait_ssot_3841.py")
+                  .find("3841") != std::string::npos,
+          "3841 AC5: linter present");
+    CHECK(read_file("tests/orch/test_issue_3841.cpp").empty() &&
+              read_file("tests/issues/test_issue_3841.cpp").empty(),
+          "3841 AC5: no test_issue_3841.cpp per #81967");
+    CHECK(read_file("docs/design/3841-quota-recycle-must-wait.md").empty(),
+          "3841 AC5: no docs/design/3841-* per #1655");
+    const auto prim = read_file("src/compiler/evaluator_primitives_agent.cpp");
+    CHECK(prim.find("query:quota-recycle-must-wait") == std::string::npos,
+          "3841 AC5: no new query key");
 }
 
 static void ac3644_5_source_cite_and_no_invent() {
@@ -6370,6 +6593,13 @@ int run_test_join_drain_reclaim() {
     ac3805_3_soft_and_done_path_unchanged();
     ac3805_4_no_body_stack_free_on_retire();
     ac3805_5_source_cite_and_linter();
+
+    std::println("\n=== Issue #3841: quota recycle must_wait SSOT ===");
+    ac3841_1_ensure_keeps_must_wait_after_quota_recycle();
+    ac3841_2_auto_wait_not_done_from_quota_alone();
+    ac3841_3_abandon_after_quota_recycle_not_invalid();
+    ac3841_4_batch_keeps_must_wait_after_quota_recycle();
+    ac3841_5_soft_and_source_cite();
 
     // #3797-wave CI: restore the WAL-off face for later batch members.
     if (wal_member_pinned)

@@ -1,0 +1,42 @@
+{
+  "issue": 3841,
+  "title": "Issue #3841: quota recycle must not clear must_wait as cleaned",
+  "ok": "OK: Issue #3841 quota-only recycle keeps must_wait; auto-wait/abandon SSOT; Soft production-gated.",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/orch/agent_spawn.h",
+      "contains": [
+        "kQuotaRecycleMustWaitSsotIssue = 3841",
+        "quota_recycled_pending",
+        "Issue #3841"
+      ]
+    },
+    {
+      "ac": "AC1-ensure",
+      "path": "src/orch/agent_spawn.h",
+      "contains": [
+        "(void)maybe_force_release_reclaimed_quota(h);"
+      ]
+    },
+    {
+      "ac": "AC4-test",
+      "path": "tests/orch/test_join_drain_reclaim.cpp",
+      "contains": [
+        "ac3841_1_ensure_keeps_must_wait_after_quota_recycle",
+        "ac3841_2_auto_wait_not_done_from_quota_alone",
+        "ac3841_3_abandon_after_quota_recycle_not_invalid",
+        "ac3841_4_batch_keeps_must_wait_after_quota_recycle",
+        "ac3841_5_soft_and_source_cite"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "forbid": [
+        "tests/orch/test_issue_3841.cpp",
+        "tests/issues/test_issue_3841.cpp",
+        "docs/design/3841-quota-recycle-must-wait.md"
+      ]
+    }
+  ]
+}
