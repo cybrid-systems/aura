@@ -151,18 +151,21 @@ bool Evaluator::has_capability(std::string_view needed) const noexcept {
     return false;
 }
 
-// Issue #3436: single-arg public form is the documented string path
+// Issue #3436 / #3839: single-arg public form is the documented string path
 // (security:grant-capability! prim + Evaluator callers). Under production
 // defaults (Restricted/Strict) any name mapping to a high-risk effect bit
 // (Mutate | MacroSelfEvo | TenantAdmin | Syscall - the #2882 mask) is
-// force-promoted to single_use so a TA holder using the string surface
-// cannot mint a privilege-sticky grant that outlives its first successful
-// use (#2882/#3177 residual). Soft/Off: no force, zero extra fence (AC5).
+// force-promoted to single_use AND session_bound — same lifetime as
+// grant_effect_capability (#3561) so unused high-risk string grants die at
+// outermost session-mid-exit instead of surviving sticky until first
+// consume / retain K. Soft/Off: no force, zero extra fence (AC5).
 // Reuses the existing capability_high_risk_forced_single_use_total counter.
+// String "self-evo" (MacroSelfEvo) aligns with grant_macro_self_evo #3721.
 void Evaluator::grant_capability(std::string cap) {
     using namespace ::aura::core::capability;
     const auto eff = effect_for_cap_name(cap);
     bool single_use = false;
+    bool session_bound = false;
     if (eff != Effect::None) {
         using aura::compiler::security::kEffectMacroSelfEvo;
         using aura::compiler::security::kEffectMutate;
@@ -171,13 +174,17 @@ void Evaluator::grant_capability(std::string cap) {
         constexpr std::uint16_t kHighRiskMask = static_cast<std::uint16_t>(
             kEffectMutate | kEffectMacroSelfEvo | kEffectTenantAdmin | kEffectSyscall);
         const bool production_defaults = sandbox_mode_ != 0 || effect_sandbox_mode() != 0;
-        if (production_defaults && (static_cast<std::uint16_t>(eff) & kHighRiskMask) != 0) {
+        const bool is_high_risk = (static_cast<std::uint16_t>(eff) & kHighRiskMask) != 0;
+        if (production_defaults && is_high_risk) {
             single_use = true;
             g_capability_effect_metrics().capability_high_risk_forced_single_use_total.fetch_add(
                 1, std::memory_order_relaxed);
         }
+        // Issue #3839: align with grant_effect_capability (#3561) — production
+        // high-risk also session-binds (Soft/Off: false).
+        session_bound = production_defaults && is_high_risk;
     }
-    grant_capability(std::move(cap), single_use, /*session_bound=*/false,
+    grant_capability(std::move(cap), single_use, session_bound,
                      /*provenance_mutation_id=*/0);
 }
 

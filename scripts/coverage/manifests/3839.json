@@ -1,0 +1,36 @@
+{
+  "issue": 3839,
+  "title": "Issue #3839: plain grant_capability(string) production high-risk session_bound",
+  "ok": "OK: Issue #3839 string grant_capability session-binds high-risk under production",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_security.cpp",
+      "contains": [
+        "Issue #3839",
+        "session_bound = production_defaults && is_high_risk",
+        "grant_capability(std::move(cap), single_use, session_bound,"
+      ]
+    },
+    {
+      "ac": "AC2-test",
+      "path": "tests/core/test_capability_single_use_consume.cpp",
+      "contains": [
+        "3839 AC1",
+        "3839 AC2",
+        "3839 AC3",
+        "3839 AC4",
+        "ac3839_1_string_high_risk_session_revoked",
+        "run_test_string_grant_session_bound_3839"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "forbid": [
+        "tests/core/test_issue_3839.cpp",
+        "tests/issues/test_issue_3839.cpp",
+        "docs/design/3839-string-grant-session.md"
+      ]
+    }
+  ]
+}

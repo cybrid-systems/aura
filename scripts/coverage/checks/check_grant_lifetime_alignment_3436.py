@@ -7,8 +7,9 @@ clang-format rewrapping — see source-cite-lint-windowing skill):
      promotes high-risk bits (#2882 mask) to single_use under production
      (sandbox_mode_ != 0 || effect_sandbox_mode() != 0) and bumps the
      existing capability_high_risk_forced_single_use_total counter.
-  AC2 source: the string path delegates with session_bound=false — the
-     documented string path never mints session residual rows.
+  AC2 source: the string path session-binds high-risk under production
+     (session_bound = production_defaults && is_high_risk) — aligned with
+     grant_effect_capability (#3561 / #3839); Soft/Off stays false.
   AC3 source: every grant_effect_* grant()/grant_locked() site passes
      capability_tenant_id_ as caller_principal (>= 7 sites total) so the
      #3409 SSOT fence evaluates the granting Evaluator's principal, not
@@ -82,8 +83,10 @@ def main() -> int:
         # AC5: force fires only inside the production_defaults && high-risk branch.
         must("production_defaults &&", "AC5", s1)
         must("kHighRiskMask) != 0", "AC5", s1)
-        # AC2: string path delegates with session_bound=false (no session rows).
-        must("grant_capability(std::move(cap), single_use, /*session_bound=*/false,", "AC2", s1)
+        # AC2 / #3839: string path session-binds high-risk under production.
+        must("session_bound = production_defaults && is_high_risk", "AC2", s1)
+        must("grant_capability(std::move(cap), single_use, session_bound,", "AC2", s1)
+        must("Issue #3839", "AC2", s1)
 
     CALLER = "static_cast<std::uint64_t>(capability_tenant_id_)"
 
