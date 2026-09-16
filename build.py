@@ -5300,6 +5300,20 @@ def cmd_lint():
             "Issue #3850 steal panic×Moving gate linter failed — run python3 scripts/coverage/checks/check_steal_panic_moving_gate_3850.py"
         )
         return r
+    # Issue #3852: production abort IR fence also invalidates AOT
+    # (force-bump table epoch) so probe cannot return mid-abort native.
+    # Soft untouched. Extends test_abort_ir_cache_fence_first (#81967);
+    # no docs/design / invent (#1655).
+    aai3852_script = COVERAGE_CHECKS / "check_abort_aot_invalidate_3852.py"
+    if not aai3852_script.exists():
+        fail(f"missing {aai3852_script}")
+        return 1
+    r = run([sys.executable, str(aai3852_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3852 abort AOT invalidate linter failed — run python3 scripts/coverage/checks/check_abort_aot_invalidate_3852.py"
+        )
+        return r
     # Issue #3838: SE WAL overflow refuse-on-wrap under production
     # fail-closed (#3806 residual). Soft overwrite retained; Agent face
     # wrap-evicted vs never-emitted. Extends test_security_event_wal_replay
@@ -15869,6 +15883,27 @@ def cmd_steal_panic_moving_gate_3850():
     return cmd_steal_panic_moving_gate_3850_coverage()
 
 
+def cmd_abort_aot_invalidate_3852_coverage():
+    """Issue #3852: production abort IR fence also invalidates AOT."""
+    print(f"{B}=== abort AOT invalidate (#3852) ==={N}")
+    script = COVERAGE_CHECKS / "check_abort_aot_invalidate_3852.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = run([sys.executable, str(script)], cwd=ROOT)
+    if r != 0:
+        fail("abort AOT invalidate (#3852) coverage contract rows failed")
+        return r
+    ok("abort AOT invalidate (#3852) coverage clean")
+    return 0
+
+
+def cmd_abort_aot_invalidate_3852():
+    """Issue #3852: Production abort force-bumps AOT so probe rejects mid-abort."""
+    print(f"{B}=== abort AOT invalidate (#3852) ==={N}")
+    return cmd_abort_aot_invalidate_3852_coverage()
+
+
 def cmd_pure_anon_budget_skip_sticky_3851_coverage():
     """Issue #3851: budget-skip arms sticky overflow fence (#3323 SSOT)."""
     print(f"{B}=== pure-anon budget-skip sticky fence (#3851) ==={N}")
@@ -23956,6 +23991,8 @@ def main():
         "apply-closure-happy-path-densify-3849-coverage": cmd_apply_closure_happy_path_densify_3849_coverage,
         "steal-panic-moving-gate-3850": cmd_steal_panic_moving_gate_3850,
         "steal-panic-moving-gate-3850-coverage": cmd_steal_panic_moving_gate_3850_coverage,
+        "abort-aot-invalidate-3852": cmd_abort_aot_invalidate_3852,
+        "abort-aot-invalidate-3852-coverage": cmd_abort_aot_invalidate_3852_coverage,
         "pure-anon-budget-skip-sticky-3851": cmd_pure_anon_budget_skip_sticky_3851,
         "pure-anon-budget-skip-sticky-3851-coverage": cmd_pure_anon_budget_skip_sticky_3851_coverage,
         "wal-overflow-wrap-refuse-3838": cmd_wal_overflow_wrap_refuse_3838,

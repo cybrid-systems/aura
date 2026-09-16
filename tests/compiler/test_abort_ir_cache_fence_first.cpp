@@ -51,6 +51,7 @@
 #include "test_harness.hpp"
 
 #include "compiler/typed_mutation_audit.h"
+#include "compiler/aura_jit_bridge.h"
 
 #include <atomic>
 #include <fstream>
@@ -744,6 +745,106 @@ static void ac3821_4_soak_no_permanent_latch() {
           "3821 soak: no permanent in_progress latch after N paired denies");
 }
 
+
+// ── Issue #3852: production abort IR fence also invalidates AOT ──
+static void ac3852_1_production_abort_probe_rejects_until_reemit() {
+    std::println("\n--- #3852 AC1: production abort → probe 0 / soft_stale until reemit ---");
+    using namespace aura::compiler::typed_audit;
+    apply_production_audit_defaults();
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define f3852 (lambda (x) (+ x 1))) (f3852 1)\")").has_value(),
+          "3852 AC1: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3852 AC1: eval");
+    if (!cs.get_define_v2("f3852"))
+        (void)cs.eval("(compile:cache-define \"f3852\")");
+    CHECK(cs.get_define_v2("f3852") != nullptr, "3852 AC1: cached");
+    const auto hash = cs.get_define_v2("f3852")->source_hash;
+
+    const std::int64_t fid = 3852;
+    const std::uintptr_t seed = 0x3852A0A0ull;
+    aura_register_fn_tracked(fid, static_cast<std::int64_t>(seed));
+    CHECK(aura_aot_probe_fn_ptr(fid) == seed, "3852 AC1: probe green pre-abort");
+    CHECK(aura_aot_slot_is_stale(fid) == 0, "3852 AC1: slot fresh pre-abort");
+
+    const auto epoch0 = aura_aot_func_table_epoch();
+    cs.public_force_ir_cache_dirty_after_abort();
+    const auto epoch1 = aura_aot_func_table_epoch();
+    CHECK(epoch1 > epoch0, "3852 AC1: production abort advanced AOT table epoch");
+    CHECK(aura_aot_probe_fn_ptr(fid) == 0, "3852 AC1: probe rejects mid-abort native");
+    CHECK(aura_aot_slot_is_stale(fid) == 1, "3852 AC1: slot stale after abort");
+    CHECK(aura_aot_probe_fn_ptr_raw(fid) == seed, "3852 AC1: raw still holds pre-abort ptr");
+    CHECK(cs.lookup_define_v2("f3852", hash) == 1, "3852 AC1: lookup still needs-relower");
+
+    const std::uintptr_t seed2 = 0x3852B1B1ull;
+    aura_register_fn_tracked(fid, static_cast<std::int64_t>(seed2));
+    CHECK(aura_aot_probe_fn_ptr(fid) == seed2, "3852 AC1: probe green after reemit/store");
+    CHECK(aura_aot_slot_is_stale(fid) == 0, "3852 AC1: slot fresh after restamp");
+    aura_aot_clear_slot_for_test(fid);
+    apply_dev_audit_defaults();
+}
+
+static void ac3852_2_soft_abort_aot_untouched() {
+    std::println("\n--- #3852 AC3: Soft abort leaves AOT untouched ---");
+    using namespace aura::compiler::typed_audit;
+    apply_dev_audit_defaults();
+    g_typed_mutation_audit_counters.production_defaults_active.store(0, std::memory_order_relaxed);
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define s3852 (lambda (x) x)) (s3852 1)\")").has_value(),
+          "3852 AC3: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3852 AC3: eval");
+    if (!cs.get_define_v2("s3852"))
+        (void)cs.eval("(compile:cache-define \"s3852\")");
+    CHECK(cs.get_define_v2("s3852") != nullptr, "3852 AC3: cached");
+
+    const std::int64_t fid = 3853;
+    const std::uintptr_t seed = 0x3852C2C2ull;
+    aura_register_fn_tracked(fid, static_cast<std::int64_t>(seed));
+    CHECK(aura_aot_probe_fn_ptr(fid) == seed, "3852 AC3: probe green pre-Soft-abort");
+    const auto epoch0 = aura_aot_func_table_epoch();
+    cs.public_force_ir_cache_dirty_after_abort();
+    const auto epoch1 = aura_aot_func_table_epoch();
+    CHECK(epoch1 == epoch0, "3852 AC3: Soft abort does not bump AOT table epoch");
+    CHECK(aura_aot_probe_fn_ptr(fid) == seed, "3852 AC3: Soft probe still returns native");
+    CHECK(aura_aot_slot_is_stale(fid) == 0, "3852 AC3: Soft slot not soft_stale/gen-behind");
+    aura_aot_clear_slot_for_test(fid);
+}
+
+static void ac3852_3_source_and_linter() {
+    std::println("\n--- #3852 AC4: source-cite + linter / grandfather / no invent ---");
+    const auto svc = read_file("src/compiler/service.ixx");
+    const auto t = read_file("tests/compiler/test_abort_ir_cache_fence_first.cpp");
+    const auto build = read_file("build.py");
+    const auto gf = read_file("scripts/coverage/simple_check_grandfather.txt");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_abort_aot_invalidate_3852.py");
+    const auto man = read_file("scripts/coverage/manifests/3852.json");
+    const auto dirty = svc.find("void force_ir_cache_dirty_after_abort()");
+    CHECK(dirty != std::string::npos, "3852 AC4: force_dirty present");
+    const auto body = svc.substr(dirty, 3200);
+    CHECK(body.find("Issue #3852") != std::string::npos, "3852 AC4: cite in force_dirty");
+    CHECK(body.find("aura_aot_note_cross_eval_epoch_force_bump()") != std::string::npos,
+          "3852 AC4: force-bump note");
+    CHECK(body.find("aura_aot_bump_func_table_epoch()") != std::string::npos,
+          "3852 AC4: table epoch bump");
+    CHECK(body.find("production_defaults_active()") != std::string::npos,
+          "3852 AC4: production gate");
+    CHECK(t.find("ac3852_1_production_abort_probe_rejects_until_reemit") != std::string::npos,
+          "3852 AC4: AC1 folded");
+    CHECK(t.find("ac3852_2_soft_abort_aot_untouched") != std::string::npos, "3852 AC4: AC3 folded");
+    CHECK(!lint.empty() && lint.find("Issue #3852") != std::string::npos, "3852 AC4: linter");
+    CHECK(build.find("check_abort_aot_invalidate_3852") != std::string::npos,
+          "3852 AC4: build.py");
+    CHECK(gf.find("check_abort_aot_invalidate_3852.py") != std::string::npos,
+          "3852 AC4: grandfather");
+    CHECK(!man.empty() && man.find("\"issue\": 3852") != std::string::npos, "3852 AC4: manifest");
+    CHECK(svc.find("schema-3852") == std::string::npos, "3852 AC4: no schema-3852");
+    CHECK(svc.find("g_3852_") == std::string::npos, "3852 AC4: no g_3852_*");
+    CHECK(read_file("tests/compiler/test_issue_3852.cpp").empty(), "3852 AC4: no invent");
+    CHECK(read_file("tests/issues/test_issue_3852.cpp").empty(), "3852 AC4: no tests/issues");
+    CHECK(read_file("docs/design/3852-abort-aot-invalidate.md").empty(),
+          "3852 AC4: no docs/design/");
+}
+
 } // namespace
 
 int run_test_abort_ir_cache_fence_first() {
@@ -780,8 +881,12 @@ int run_test_abort_ir_cache_fence_first() {
     ac3821_2_begin_equals_dirty_count();
     ac3821_3_force_dirty_clears_in_progress();
     ac3821_4_soak_no_permanent_latch();
+    std::println("\n=== Issue #3852: production abort IR fence invalidates AOT ===");
+    ac3852_1_production_abort_probe_rejects_until_reemit();
+    ac3852_2_soft_abort_aot_untouched();
+    ac3852_3_source_and_linter();
 
-    std::println("\n=== #3159+#3258+#3324+#3551+#3821 result: passed={} failed={} ===",
+    std::println("\n=== #3159+#3258+#3324+#3551+#3821+#3852 result: passed={} failed={} ===",
                  aura::test::g_passed, aura::test::g_failed);
     return aura::test::g_failed == 0 ? 0 : 1;
 }
