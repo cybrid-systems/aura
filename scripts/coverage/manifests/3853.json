@@ -1,0 +1,56 @@
+{
+  "issue": 3853,
+  "title": "Issue #3853: IR SoA column_slab map sharded (no process-wide mu)",
+  "ok": "OK #3853 ir_soa_column_slab_shard: sharded map; no process-wide mu; BMI pins kept",
+  "checks": [
+    {
+      "ac": "AC1-shards",
+      "path": "src/compiler/ir_soa.ixx",
+      "contains": [
+        "Issue #3853",
+        "kIrSoaColumnSlabShardIssue = 3853",
+        "kIrSoaColumnSlabShardCount = 16",
+        "column_slab_shards()",
+        "column_slab_shard_index",
+        "IrSoaColumnSlabShard"
+      ]
+    },
+    {
+      "ac": "AC2-bmi",
+      "path": "src/compiler/ir_soa.ixx",
+      "contains": [
+        "offsetof(IRFunctionSoA, block_dirty_) == 376",
+        "sizeof(IRFunctionSoA) == 448",
+        "bind_column_arena",
+        "kIrSoaColumnArenaIssue = 3833"
+      ]
+    },
+    {
+      "ac": "AC3-tests",
+      "path": "tests/compiler/test_ir_soa_layout_stamp.cpp",
+      "contains": [
+        "3853 AC1",
+        "3853 AC2",
+        "3853 AC3",
+        "kIrSoaColumnSlabShardIssue",
+        "column_slab_shards()"
+      ]
+    },
+    {
+      "ac": "AC3-wiring",
+      "path": "build.py",
+      "contains": [
+        "check_ir_soa_column_slab_shard_3853",
+        "Issue #3853"
+      ]
+    },
+    {
+      "ac": "AC3-forbid",
+      "forbid": [
+        "tests/compiler/test_issue_3853.cpp",
+        "tests/issues/test_issue_3853.cpp",
+        "docs/design/3853-column-slab-shard.md"
+      ]
+    }
+  ]
+}

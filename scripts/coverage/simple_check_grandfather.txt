@@ -448,3 +448,5 @@ check_pure_anon_budget_skip_sticky_3851.py
 scripts/coverage/checks/check_pure_anon_budget_skip_sticky_3851.py
 check_abort_aot_invalidate_3852.py
 scripts/coverage/checks/check_abort_aot_invalidate_3852.py
+check_ir_soa_column_slab_shard_3853.py
+scripts/coverage/checks/check_ir_soa_column_slab_shard_3853.py

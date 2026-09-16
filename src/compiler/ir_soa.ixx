@@ -335,7 +335,14 @@ export struct BasicBlockSoA;
 // not a mid-struct member), and supports grow under Moving densify
 // without inventing a second IR model. Dirty bit columns stay
 // std::pmr::vector (already pmr). blocks_ stays std::vector (CFG meta).
+// Issue #3853: the slab side map is sharded (hash(key)%N) so multi-fiber
+// bind/grow does not serialize on one process-wide mutex.
 export inline constexpr int kIrSoaColumnArenaIssue = 3833;
+// Issue #3853: shard the IR SoA column-slab side map (mirror ShapeProfiler
+// FnKey shards) so multi-fiber bind/grow no longer serialize on one
+// process-wide mutex. 24B IrSoaArenaColumn BMI pins stay (#3833).
+export inline constexpr int kIrSoaColumnSlabShardIssue = 3853;
+export inline constexpr std::size_t kIrSoaColumnSlabShardCount = 16;
 
 namespace ir_soa_detail {
 
@@ -345,20 +352,33 @@ namespace ir_soa_detail {
                                                      std::pmr::new_delete_resource()};
     };
 
-    inline std::mutex& column_slab_mu() noexcept {
-        static std::mutex mu;
-        return mu;
+    // Per-shard map + mutex — disjoint IRFunctionSoA keys do not contend.
+    struct IrSoaColumnSlabShard {
+        std::mutex mu;
+        std::unordered_map<const void*, std::unique_ptr<IrSoaColumnSlab>> map;
+    };
+
+    // SplitMix64-style mix (same family as ShapeProfiler::shard_index).
+    [[nodiscard]] inline std::size_t column_slab_shard_index(const void* key) noexcept {
+        std::uint64_t x = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(key));
+        x ^= x >> 30;
+        x *= 0xbf58476d1ce4e5b9ULL;
+        x ^= x >> 27;
+        x *= 0x94d049bb133111ebULL;
+        x ^= x >> 31;
+        return static_cast<std::size_t>(x % kIrSoaColumnSlabShardCount);
     }
 
-    inline std::unordered_map<const void*, std::unique_ptr<IrSoaColumnSlab>>&
-    column_slabs() noexcept {
-        static std::unordered_map<const void*, std::unique_ptr<IrSoaColumnSlab>> m;
-        return m;
+    inline std::array<IrSoaColumnSlabShard, kIrSoaColumnSlabShardCount>&
+    column_slab_shards() noexcept {
+        static std::array<IrSoaColumnSlabShard, kIrSoaColumnSlabShardCount> shards{};
+        return shards;
     }
 
     inline IrSoaColumnSlab& column_slab_for(const void* key) {
-        std::lock_guard lock(column_slab_mu());
-        auto& m = column_slabs();
+        auto& shard = column_slab_shards()[column_slab_shard_index(key)];
+        std::lock_guard lock(shard.mu);
+        auto& m = shard.map;
         auto it = m.find(key);
         if (it == m.end())
             it = m.emplace(key, std::make_unique<IrSoaColumnSlab>()).first;
@@ -366,21 +386,40 @@ namespace ir_soa_detail {
     }
 
     inline void drop_column_slab(const void* key) noexcept {
-        std::lock_guard lock(column_slab_mu());
-        column_slabs().erase(key);
+        auto& shard = column_slab_shards()[column_slab_shard_index(key)];
+        std::lock_guard lock(shard.mu);
+        shard.map.erase(key);
     }
 
     inline void rekey_column_slab(const void* from, const void* to) noexcept {
         if (from == to || from == nullptr || to == nullptr)
             return;
-        std::lock_guard lock(column_slab_mu());
-        auto& m = column_slabs();
-        auto it = m.find(from);
-        if (it == m.end())
+        const std::size_t si_from = column_slab_shard_index(from);
+        const std::size_t si_to = column_slab_shard_index(to);
+        auto& shards = column_slab_shards();
+        if (si_from == si_to) {
+            auto& shard = shards[si_from];
+            std::lock_guard lock(shard.mu);
+            auto& m = shard.map;
+            auto it = m.find(from);
+            if (it == m.end())
+                return;
+            auto ptr = std::move(it->second);
+            m.erase(it);
+            m[to] = std::move(ptr);
+            return;
+        }
+        // Ordered multi-shard locks avoid deadlock under concurrent rekey.
+        const std::size_t lo = si_from < si_to ? si_from : si_to;
+        const std::size_t hi = si_from < si_to ? si_to : si_from;
+        std::lock_guard lock_lo(shards[lo].mu);
+        std::lock_guard lock_hi(shards[hi].mu);
+        auto it = shards[si_from].map.find(from);
+        if (it == shards[si_from].map.end())
             return;
         auto ptr = std::move(it->second);
-        m.erase(it);
-        m[to] = std::move(ptr);
+        shards[si_from].map.erase(it);
+        shards[si_to].map[to] = std::move(ptr);
     }
 
 } // namespace ir_soa_detail

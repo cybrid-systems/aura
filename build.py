@@ -5314,6 +5314,20 @@ def cmd_lint():
             "Issue #3852 abort AOT invalidate linter failed — run python3 scripts/coverage/checks/check_abort_aot_invalidate_3852.py"
         )
         return r
+    # Issue #3853: IR SoA column_slab side-map sharded (mirror ShapeProfiler
+    # FnKey shards) so multi-fiber bind/grow no longer serialize on one
+    # process-wide mutex. Extends test_ir_soa_layout_stamp; BMI #3833 pins
+    # kept. No docs/design / invent (#1655).
+    icss3853_script = COVERAGE_CHECKS / "check_ir_soa_column_slab_shard_3853.py"
+    if not icss3853_script.exists():
+        fail(f"missing {icss3853_script}")
+        return 1
+    r = run([sys.executable, str(icss3853_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3853 IR SoA column_slab shard linter failed — run python3 scripts/coverage/checks/check_ir_soa_column_slab_shard_3853.py"
+        )
+        return r
     # Issue #3838: SE WAL overflow refuse-on-wrap under production
     # fail-closed (#3806 residual). Soft overwrite retained; Agent face
     # wrap-evicted vs never-emitted. Extends test_security_event_wal_replay
@@ -15904,6 +15918,28 @@ def cmd_abort_aot_invalidate_3852():
     return cmd_abort_aot_invalidate_3852_coverage()
 
 
+def cmd_ir_soa_column_slab_shard_3853_coverage():
+    """Issue #3853: IR SoA column_slab map sharded (no process-wide mu)."""
+    print(f"{B}=== IR SoA column_slab shard (#3853) ==={N}")
+    script = COVERAGE_CHECKS / "check_ir_soa_column_slab_shard_3853.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = run([sys.executable, str(script)], cwd=ROOT)
+    if r != 0:
+        fail("IR SoA column_slab shard (#3853) coverage contract rows failed")
+        return r
+    ok("IR SoA column_slab shard (#3853) coverage clean")
+    return 0
+
+
+def cmd_ir_soa_column_slab_shard_3853():
+    """Issue #3853: Shard column_slab map; keep #3833 BMI pins."""
+    print(f"{B}=== IR SoA column_slab shard (#3853) ==={N}")
+    return cmd_ir_soa_column_slab_shard_3853_coverage()
+
+
+
 def cmd_pure_anon_budget_skip_sticky_3851_coverage():
     """Issue #3851: budget-skip arms sticky overflow fence (#3323 SSOT)."""
     print(f"{B}=== pure-anon budget-skip sticky fence (#3851) ==={N}")
@@ -23993,6 +24029,8 @@ def main():
         "steal-panic-moving-gate-3850-coverage": cmd_steal_panic_moving_gate_3850_coverage,
         "abort-aot-invalidate-3852": cmd_abort_aot_invalidate_3852,
         "abort-aot-invalidate-3852-coverage": cmd_abort_aot_invalidate_3852_coverage,
+        "ir-soa-column-slab-shard-3853": cmd_ir_soa_column_slab_shard_3853,
+        "ir-soa-column-slab-shard-3853-coverage": cmd_ir_soa_column_slab_shard_3853_coverage,
         "pure-anon-budget-skip-sticky-3851": cmd_pure_anon_budget_skip_sticky_3851,
         "pure-anon-budget-skip-sticky-3851-coverage": cmd_pure_anon_budget_skip_sticky_3851_coverage,
         "wal-overflow-wrap-refuse-3838": cmd_wal_overflow_wrap_refuse_3838,
