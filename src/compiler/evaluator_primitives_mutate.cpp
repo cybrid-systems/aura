@@ -314,6 +314,8 @@ struct ReloadRecoveryPlaybookResult {
 };
 void aura_hot_update_reload_recovery_playbook_get(ReloadRecoveryPlaybookResult* out) noexcept;
 std::uint64_t aura_hot_update_residual_force_stale_observe_total(void);
+// Issue #3096 / #3846: ResidualForceHeal lifetime counter (C ABI).
+std::uint64_t aura_hot_update_residual_force_auto_heal_total(void);
 // Issue #2370: SpecJIT PerEval storm counters (spec_jit_controller.cpp).
 std::uint64_t aura_specjit_storm_clear_total_v_read(void);
 std::uint64_t aura_specjit_per_eval_storm_clear_total_v_read(void);
@@ -9388,40 +9390,25 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
     // Additive / zero-cost when idle (relaxed atomic snapshot only).
     // Alias note: early #2302 comments mentioned query:aot-reload-recovery-stats
     // — both names register to the same snapshot builder.
+    // Issue #3846 / #3339: Agent decision headroom gate — planned >= live + 8;
+    // insert_kv_checked (forbid silent drop). #3096 ResidualForceHeal counters
+    // published additively (closes sibling #3847 cite-only if verified).
     {
         auto reload_recovery_builder = [&ev](const auto&) -> EvalValue {
             aura_reload_recovery_snapshot rs{};
             aura_hot_update_reload_recovery_get_snapshot(&rs);
-            // 128→256: #2952 coverage-verify keys (schema additive; power-of-2).
-            auto* ht = FlatHashTable::create(query_hash_capacity_for(102));
+            // Issue #3339/#3846: live ~102 insert_kv (#3096 I4 heal keys
+            // included); planned 112 (>= 102+8). Additive insert_kv must
+            // raise planned_keys; Agent facade forbids hash-overflow.
+            constexpr std::size_t kReloadRecoveryStatePlannedKeys = 112;
+            auto* ht =
+                FlatHashTable::create(query_hash_capacity_for(kReloadRecoveryStatePlannedKeys));
             if (!ht)
                 return make_void();
             bool overflowed = false;
-            auto meta = ht->metadata();
-            auto keys = ht->keys();
-            auto vals = ht->values();
-            auto hcap = ht->capacity;
             auto insert_kv = [&](const char* k_str, std::int64_t v) {
-                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-                for (const char* p = k_str; *p; ++p)
-                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                if (fp == 0xFF)
-                    fp = 0xFE;
-                for (std::size_t at = 0; at < hcap; ++at) {
-                    auto idx = ((h >> 1) + at) & (hcap - 1);
-                    if (meta[idx] == 0xFF) {
-                        meta[idx] = fp;
-                        auto kidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(k_str);
-                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                        vals[idx] = make_int(v).val;
-                        ht->size++;
-                        return;
-                    }
-                }
-
-                overflowed = true;
+                if (!insert_kv_checked(ht, ev.string_heap_, k_str, v))
+                    overflowed = true;
             };
             insert_kv("schema", rs.schema);
             insert_kv("issue", rs.issue);
@@ -9489,6 +9476,12 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             insert_kv("residual-force-observe-wired", rs.residual_force_observe_wired);
             insert_kv("schema-3026", rs.schema_3026);
             insert_kv("issue-3026", rs.issue_3026);
+            // Issue #3096 / #3846 / #3847: ResidualForceHeal auto-heal counters
+            // (C ABI already stamped; Agent hash was blind). Additive only.
+            insert_kv("residual-force-auto-heal-total", rs.residual_force_auto_heal_total);
+            insert_kv("residual-force-auto-heal-wired", rs.residual_force_auto_heal_wired);
+            insert_kv("schema-3096", rs.schema_3096 != 0 ? rs.schema_3096 : 3096);
+            insert_kv("issue-3096", rs.issue_3096 != 0 ? rs.issue_3096 : 3096);
             insert_kv("force-jit-repromote-only-covered-bits",
                       rs.force_jit_repromote_only_covered_bits);
             insert_kv("force-jit-repromote-partial-total", rs.force_jit_repromote_partial_total);
@@ -9564,8 +9557,9 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             ReloadRecoveryPlaybookResult pb{};
             aura_hot_update_reload_recovery_playbook_get(&pb);
             // Issue #3020: ~26 live keys; next_pow2(planned*2) ≥64.
-            // Issue #3339: live 31; planned 48 (>= 31+8). Additive insert_kv
-            // must raise planned_keys; Agent facade forbids hash-overflow.
+            // Issue #3339: live 35 (#3096 heal counters); planned 48 (>= 35+8).
+            // Additive insert_kv must raise planned_keys; Agent facade forbids
+            // hash-overflow.
             constexpr std::size_t kReloadRecoveryPlaybookPlannedKeys = 48;
             auto* ht =
                 FlatHashTable::create(query_hash_capacity_for(kReloadRecoveryPlaybookPlannedKeys));
@@ -9612,6 +9606,14 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             insert_kv("residual-force-observe-wired", 1);
             insert_kv("schema-3026", pb.schema_3026 != 0 ? pb.schema_3026 : 3026);
             insert_kv("issue-3026", 3026);
+            // Issue #3096 / #3846 / #3847: expose auto-heal counters on playbook
+            // Agent hash (advisory text stays observe-only; counters only).
+            insert_kv("residual-force-auto-heal-total",
+                      static_cast<std::int64_t>(
+                          aura_hot_update_residual_force_auto_heal_total()));
+            insert_kv("residual-force-auto-heal-wired", 1);
+            insert_kv("schema-3096", 3096);
+            insert_kv("issue-3096", 3096);
             // Lineage preserved (agents can still poll recovery-state).
             insert_kv("schema-2367", 2367);
             insert_kv("schema-2302", 2302);

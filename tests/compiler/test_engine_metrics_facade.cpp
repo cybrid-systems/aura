@@ -172,14 +172,14 @@ int main() {
               "3246 AC2: observe-only preserved");
     }
 
-    // ── Issue #3339 / #3807: Agent decision facade headroom; no hash-overflow ──
+    // ── Issue #3339 / #3807 / #3846: Agent decision facade headroom; no hash-overflow ──
     // Runs before :prefix catalog dump so a prefix leftover cannot hide ACs.
     // #3807: orch-module-stats joins the production_defaults overflow hard-fail set.
     {
         using aura::compiler::typed_audit::apply_dev_audit_defaults;
         using aura::compiler::typed_audit::apply_production_audit_defaults;
         using aura::compiler::typed_audit::reset_for_test;
-        std::println("\n--- #3339/#3807: Agent decision facade planned_keys headroom ---");
+        std::println("\n--- #3339/#3807/#3846: Agent decision facade planned_keys headroom ---");
         aura_query_hash_set_force_cap(0);
         aura_query_hash_reset_overflow_for_test();
         reset_for_test();
@@ -188,7 +188,8 @@ int main() {
         const char* kFacades[] = {
             "query:evolution-audit-decision",  "query:security-posture",
             "query:type-linear-commit-health", "query:type-linear-evolution-snapshot",
-            "query:reload-recovery-playbook",  "query:orch-module-stats",
+            "query:reload-recovery-playbook",  "query:reload-recovery-state",
+            "query:orch-module-stats",
         };
         for (const char* q : kFacades) {
             const auto expr = std::format("(engine:metrics \"{}\")", q);
@@ -219,6 +220,21 @@ int main() {
         CHECK(hash_int(cs, "(engine:metrics \"query:reload-recovery-playbook\")", "schema-2953") ==
                   2953,
               "3339 AC2: reload-recovery-playbook schema-2953");
+        CHECK(hash_int(cs, "(engine:metrics \"query:reload-recovery-state\")", "schema-2367") ==
+                  2367,
+              "3339 AC2 / #3846: reload-recovery-state schema-2367");
+        CHECK(hash_int(cs, "(engine:metrics \"query:reload-recovery-state\")", "schema-3096") ==
+                  3096,
+              "3846/#3847 AC: reload-recovery-state schema-3096");
+        CHECK(hash_int(cs, "(engine:metrics \"query:reload-recovery-state\")",
+                       "residual-force-auto-heal-wired") == 1,
+              "3846/#3847 AC: residual-force-auto-heal-wired");
+        CHECK(hash_int(cs, "(engine:metrics \"query:reload-recovery-state\")",
+                       "residual-force-auto-heal-total") >= 0,
+              "3846/#3847 AC: residual-force-auto-heal-total");
+        CHECK(read_file("src/compiler/evaluator_primitives_mutate.cpp")
+                      .find("kReloadRecoveryStatePlannedKeys = 112") != std::string::npos,
+              "3846 AC1: kReloadRecoveryStatePlannedKeys = 112");
         CHECK(hash_int(cs, "(engine:metrics \"query:orch-module-stats\")", "schema") == 1588,
               "3807 AC2: orch-module-stats schema present");
         CHECK(hash_int(cs, "(engine:metrics \"query:orch-module-stats\")",

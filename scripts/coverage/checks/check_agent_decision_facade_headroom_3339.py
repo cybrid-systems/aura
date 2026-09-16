@@ -13,7 +13,7 @@ Contract (one row per AC):
   AC1  planned >= actual + 8 on evolution-audit-decision /
        security-posture / type-linear-commit-health /
        type-linear-evolution-snapshot / reload-recovery-playbook /
-       orch-module-stats (#3807)
+       reload-recovery-state (#3846) / orch-module-stats (#3807)
   AC2  tests under production_defaults assert hash-overflow is absent
   AC3  +20 dummy keys without raising planned would fail AC1 on
        evolution-audit-decision
@@ -47,6 +47,10 @@ def _block(src: str, query: str) -> str:
     Prefer the registration that defines PlannedKeys + insert_kv so
     comment mentions (e.g. orch-module-stats docs near parallel-intend)
     do not win over the live query_hash_finish facade (#3807).
+
+    Issue #3846: also consider a window *before* the registration string
+    when the builder is a shared named lambda registered after its body
+    (query:reload-recovery-state).
     """
     needle = f'"{query}"'
     candidates: list[str] = []
@@ -62,9 +66,40 @@ def _block(src: str, query: str) -> str:
                 ends.append(j)
         end = min(ends) + 40 if ends else min(len(src), i + 25000)
         candidates.append(src[i:end])
+        # Backward window: shared named-lambda body registered after builder.
+        for tok in ("return query_hash_finish", "return make_hash"):
+            j = src.rfind(tok, max(0, i - 30000), i)
+            if j <= 0:
+                continue
+            k = max(0, j - 25000)
+            for marker in (
+                "constexpr std::size_t k",  # full PlannedKeys line (#3846)
+                "query_hash_capacity_for",
+                "reload_recovery_builder",
+            ):
+                m = src.rfind(marker, k, j)
+                if m > 0:
+                    k = m
+                    break
+            candidates.append(src[k : j + 40])
         start = i + 1
     if not candidates:
         return ""
+    # Prefer candidate whose PlannedKeys name matches the facade (avoid
+    # picking the next handler's PlannedKeys when looking forward).
+    for c in candidates:
+        m = PLANNED_RE.search(c)
+        if m and ("insert_kv" in c or "insert_kv_checked" in c):
+            # Prefer reload-recovery-state's own constant when that is query.
+            if query.endswith("reload-recovery-state"):
+                if m.group(1) == "kReloadRecoveryStatePlannedKeys":
+                    return c
+                continue
+            if query.endswith("reload-recovery-playbook"):
+                if m.group(1) == "kReloadRecoveryPlaybookPlannedKeys":
+                    return c
+                continue
+            return c
     for c in candidates:
         if PLANNED_RE.search(c) and ("insert_kv" in c or "insert_kv_checked" in c):
             return c
@@ -105,6 +140,8 @@ def main() -> int:
         ("query:type-linear-commit-health", ref, "kTypeLinearCommitHealthPlannedKeys"),
         ("query:type-linear-evolution-snapshot", ref, "kTypeLinearEvolutionSnapshotPlannedKeys"),
         ("query:reload-recovery-playbook", mut, "kReloadRecoveryPlaybookPlannedKeys"),
+        # Issue #3846: reload-recovery-state joins Agent decision headroom gate
+        ("query:reload-recovery-state", mut, "kReloadRecoveryStatePlannedKeys"),
         # Issue #3807: primary Agent soak surface (~390 live / planned 512)
         ("query:orch-module-stats", agent, "kOrchModuleStatsPlannedKeys"),
     ]
@@ -138,6 +175,12 @@ def main() -> int:
             must('insert_kv("last-audit-mid"', "AC1 last-audit-mid", block)
         if query == "query:security-posture":
             must('insert_kv("schema-2534"', "AC1 posture schema-2534", block)
+        if query == "query:reload-recovery-state":
+            must("insert_kv_checked", "AC1/#3846 state insert_kv_checked", block)
+            must('insert_kv("residual-force-auto-heal-total"', "AC1/#3846/#3847 heal total", block)
+            must('insert_kv("residual-force-auto-heal-wired"', "AC1/#3846/#3847 heal wired", block)
+            must('insert_kv("schema-3096"', "AC1/#3846/#3847 schema-3096", block)
+            must('insert_kv("issue-3096"', "AC1/#3846/#3847 issue-3096", block)
         if query == "query:orch-module-stats":
             must("insert_kv_checked", "AC1 orch insert_kv_checked", block)
             must("query_hash_finish", "AC1 orch query_hash_finish", block)
@@ -193,7 +236,7 @@ def main() -> int:
             print(f"FAIL: {f}", file=sys.stderr)
         print(f"\n{len(fails)} contract row(s) failed", file=sys.stderr)
         return 1
-    print("OK: Issue #3339/#3807 Agent decision facade headroom — all AC rows satisfied")
+    print("OK: Issue #3339/#3807/#3846 Agent decision facade headroom — all AC rows satisfied")
     return 0
 
 
