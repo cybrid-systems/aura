@@ -109,7 +109,10 @@ static void ac1_same_gen_soft() {
     const auto hard1 = metrics.cross_cow_hard_reject_total.load();
     const auto cgm1 = metrics.cross_cow_hard_reject_cow_gen_mismatch_total.load();
     CHECK(soft1 == soft0 + 1, "AC1: soft migrate +1 under same cow_gen");
-    CHECK(hard1 == hard0, "AC1: no hard reject under same cow_gen");
+    // Issue #3851: post-soft-migrate dual-fresh re-check — soft restamp
+    // covers provenance only (not table epochs), so the stale table epoch
+    // hard-rejects the native dispatch (safe fallback) after the soft +1.
+    CHECK(hard1 == hard0 + 1, "AC1: #3851 re-check hard-rejects stale table epoch");
     CHECK(cgm1 == cgm0, "AC1: no cow_gen_mismatch under same gen");
     // Soft restamp includes cow_gen (still 42).
     CHECK(aura_get_closure_cow_gen(cid) == 42, "AC1: cow_gen restamped same G");

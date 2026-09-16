@@ -89,7 +89,10 @@ static void ac1_soft_migrate() {
     CHECK(hard1 == hard0 || soft1 > soft0, "AC1: soft path preferred over hard for live slot");
     if (aura_aot_func_table_epoch() != 0 && b0 != 0 && b0 != aura_aot_func_table_epoch()) {
         CHECK(soft1 > soft0, "AC1: soft migrate bumped when epochs active+stale");
-        CHECK(hard1 == hard0, "AC1: no hard reject on soft path");
+        // Issue #3851: post-soft-migrate dual-fresh re-check — soft restamp
+        // covers provenance only (not table epochs), so the stale table
+        // epoch hard-rejects the native dispatch after the soft +1.
+        CHECK(hard1 == hard0 + 1, "AC1: #3851 re-check hard-rejects after soft");
     }
     aura_set_aot_metrics(nullptr);
 }

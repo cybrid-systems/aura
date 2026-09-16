@@ -97,7 +97,9 @@ static void ac1_near_drift_soft() {
     const auto hard1 = metrics.cross_cow_hard_reject_total.load();
     if (b0 != 0 && aura_aot_func_table_epoch() != 0) {
         CHECK(soft1 == soft0 + 1, "AC1: soft migrate +1 on near-drift");
-        CHECK(hard1 == hard0, "AC1: no hard reject on near-drift soft path");
+        // Issue #3851: post-soft-migrate dual-fresh re-check hard-rejects the
+        // native dispatch (soft restamp covers provenance, not table epochs).
+        CHECK(hard1 == hard0 + 1, "AC1: #3851 re-check hard-rejects after near-drift soft");
         // Restamped bridge should match live after soft migrate.
         CHECK(aura_get_closure_bridge_epoch(cid) == aura_aot_func_table_epoch() || soft1 > soft0,
               "AC1: restamp advanced or soft counted");
