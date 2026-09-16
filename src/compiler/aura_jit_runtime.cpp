@@ -1503,16 +1503,23 @@ static int try_cross_cow_soft_migrate_(std::size_t cid) noexcept {
     // so table cur_bridge can still match. Dual-fresh already misses on
     // g_current_bridge_epoch; this probe must see that miss too or
     // restamp-and-continue would wash leave-native on this call.
-    if (aura::compiler::typed_audit::production_defaults_active() &&
-        ((cap_defuse != 0 && cur_defuse != 0 && cap_defuse != cur_defuse) ||
-         (cap_bridge != 0 && cur_bridge != 0 && cap_bridge != cur_bridge) ||
-         (cap_bridge != 0 && cur_c_bridge != 0 && cap_bridge != cur_c_bridge))) {
-        if (cid >= g_closure_must_deopt.size())
-            g_closure_must_deopt.resize(g_closure_func_ids.size(), 0);
-        g_closure_must_deopt[cid] = 1;
-        cross_cow_note_hard_(CrossCowHardReject::Other);
-        aura_unlock_workspace_write();
-        return 0;
+    // Issue #3851: production + bridge tracking treats cap_bridge==0 as
+    // stale (budget-skip / overflow poison, or never-stamped). The both-
+    // sides-nonzero #3410 shape let unstamped/poisoned bridge escape
+    // soft-migrate and wash leave-native after MustDeopt consume.
+    if (aura::compiler::typed_audit::production_defaults_active()) {
+        const bool bridge_tracking = (cur_bridge != 0 || cur_c_bridge != 0);
+        if ((bridge_tracking && cap_bridge == 0) ||
+            (cap_defuse != 0 && cur_defuse != 0 && cap_defuse != cur_defuse) ||
+            (cap_bridge != 0 && cur_bridge != 0 && cap_bridge != cur_bridge) ||
+            (cap_bridge != 0 && cur_c_bridge != 0 && cap_bridge != cur_c_bridge)) {
+            if (cid >= g_closure_must_deopt.size())
+                g_closure_must_deopt.resize(g_closure_func_ids.size(), 0);
+            g_closure_must_deopt[cid] = 1;
+            cross_cow_note_hard_(CrossCowHardReject::Other);
+            aura_unlock_workspace_write();
+            return 0;
+        }
     }
     const std::uint8_t lin = cid < g_closure_linear_state.size() ? g_closure_linear_state[cid] : 0;
     if (lin != 0) {
@@ -2540,17 +2547,25 @@ extern "C" void aura_sync_remount_pure_anon_live_closures(std::uint64_t budget,
                 // Issue #2950: enqueue for background remount (cap 256).
                 if (pending_n < 256)
                     pending_bg[pending_n++] = static_cast<std::int64_t>(cid);
-                // Issue #3478: budget skip is not overflow and is not
-                // leave-native. Production stamps MustDeopt on the skipped
-                // cid BEFORE return so the next aura_closure_call cannot
-                // dispatch old native while residual tick / bg drain lag.
-                // Unnamed: no batch_deopt_for. Soft: enqueue only — no extra
-                // MustDeopt stores. Do not bump overflow counters (#3024).
+                // Issue #3478 / #3851: budget skip is not overflow (do not
+                // call overflow helper / bump overflow counters — #3024).
+                // Production stamps MustDeopt + poisons bridge_epoch AND
+                // arms the #3323 sticky overflow fence + cache invalidate
+                // so MustDeopt consumption cannot open a second-call
+                // soft-migrate wash onto pre-reemit native. Soft: enqueue
+                // only — zero extra stores. Unnamed: no batch_deopt_for.
+                // Sticky clears only on remount heal dual-fresh green
+                // (same SSOT as overflow — note_capture_remount_ok).
                 if (aura::compiler::typed_audit::production_defaults_active()) {
                     g_closure_must_deopt[cid] = 1;
                     if (g_closure_bridge_epochs.size() <= cid)
                         g_closure_bridge_epochs.resize(nslots, 0);
                     g_closure_bridge_epochs[cid] = 0;
+                    // Issue #3851: reuse overflow sticky fence SSOT (#3323).
+                    if (g_closure_pure_anon_overflow_armed.size() <= cid)
+                        g_closure_pure_anon_overflow_armed.resize(nslots, 0);
+                    g_closure_pure_anon_overflow_armed[cid] = 1;
+                    invalidate_closure_cache_for(static_cast<std::int64_t>(cid));
                 }
                 continue;
             }
@@ -4038,8 +4053,27 @@ extern "C" int64_t aura_closure_dispatch_native_checked(int64_t closure_id, int6
             aura_unlock_workspace_read();
             if (try_cross_cow_soft_migrate_(cid) != 0) {
                 // Soft restamp succeeded — re-acquire shared and continue.
+                // Issue #3851: re-check dual-fresh after soft-migrate.
+                // Success stamps provenance only (not table epochs); a
+                // poisoned/unstamped wash must not continue to native.
                 tlock.lock();
                 aura_lock_workspace_read();
+                const std::uint64_t post_bridge =
+                    cid < g_closure_bridge_epochs.size() ? g_closure_bridge_epochs[cid] : 0;
+                const std::uint64_t post_defuse =
+                    cid < g_closure_defuse_versions.size() ? g_closure_defuse_versions[cid] : 0;
+                const std::uint64_t post_table =
+                    cid < g_closure_table_epochs.size() ? g_closure_table_epochs[cid] : 0;
+                if (!aura_is_jit_closure_fresh(post_bridge, post_defuse, post_table)) {
+                    tlock.unlock();
+                    aura_unlock_workspace_read();
+                    aura_bump_cross_cow_hard_reject_total();
+                    aura_jit_closure_record_stale_deopt();
+                    aura_jit_closure_record_safe_fallback();
+                    aura_deopt_inc();
+                    invalidate_closure_cache_for(closure_id);
+                    return 0;
+                }
             } else {
                 aura_bump_cross_cow_hard_reject_total();
                 // Hard reject: invalidate_closure_cache_for takes its own locks.

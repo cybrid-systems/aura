@@ -444,3 +444,5 @@ check_apply_closure_happy_path_densify_3849.py
 scripts/coverage/checks/check_apply_closure_happy_path_densify_3849.py
 check_steal_panic_moving_gate_3850.py
 scripts/coverage/checks/check_steal_panic_moving_gate_3850.py
+check_pure_anon_budget_skip_sticky_3851.py
+scripts/coverage/checks/check_pure_anon_budget_skip_sticky_3851.py

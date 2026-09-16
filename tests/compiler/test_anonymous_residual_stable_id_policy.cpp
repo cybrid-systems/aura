@@ -1643,6 +1643,141 @@ static void ac3478_6_source_and_linter() {
     CHECK(rt.find("g_3478_") == std::string::npos, "3478 AC6: no g_3478_*");
 }
 
+// ── Issue #3851: budget-skip arms sticky overflow fence (skip ≠ overflow) ──
+// #3478 stamped MustDeopt + poisoned bridge but did not arm
+// g_closure_pure_anon_overflow_armed. MustDeopt consume cleared the flag;
+// second call soft-migrated past bridge=0 (#3410 both-nonzero escape) onto
+// pre-reemit native. Align production budget-skip with overflow sticky
+// SSOT (#3323). Soft remains enqueue-only.
+// AC1: production budget exhaust → two immediate calls leave-native
+// AC2: heal clears sticky (source SSOT); Soft skip zero sticky stores
+// AC3: #3410 refuse epoch==0 + post soft-migrate fresh re-check
+// AC4: source-cite + linter + grandfather + manifest; no invent
+
+static std::atomic<std::uint64_t> g_3851_native_hits{0};
+static std::int64_t dummy_3851_native(std::int64_t* /*locals*/, std::uint32_t /*argc*/) {
+    g_3851_native_hits.fetch_add(1, std::memory_order_relaxed);
+    return 42;
+}
+
+static void ac3851_1_two_call_leave_native_after_budget_skip() {
+    std::println("\n--- #3851 AC1: production budget-skip → two calls leave-native ---");
+    aura_test_reset_pure_anon_bg_queue();
+    g_3851_native_hits.store(0, std::memory_order_relaxed);
+    aura_register_fn(/*func_id=*/420, dummy_3851_native, /*local_count=*/16, /*arg_count=*/0,
+                     /*env_count=*/0);
+    auto& prod =
+        aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active;
+    const auto prev = prod.exchange(1, std::memory_order_relaxed);
+    // > pressure batch (8) so some skips only get the #3851 sticky arm
+    // (not the oldest-8 overflow helper path).
+    std::int64_t cids[16];
+    for (int i = 0; i < 16; ++i) {
+        cids[i] = aura_alloc_closure(/*func_id=*/420);
+        CHECK(cids[i] >= 0, "3851 AC1: alloc");
+        aura_closure_set_must_deopt(cids[i], 0);
+    }
+    std::uint64_t ok = 0, skip = 0;
+    aura_sync_remount_pure_anon_live_closures(/*budget=*/1, &ok, &skip);
+    CHECK(skip >= 8, "3851 AC1: many budget skips");
+    const auto hits0 = g_3851_native_hits.load(std::memory_order_relaxed);
+    int exercised = 0;
+    for (int i = 0; i < 16; ++i) {
+        // Prefer cids still MustDeopt OR already consumed — sticky must
+        // keep both first and second call leave-native.
+        const auto hits_before = g_3851_native_hits.load(std::memory_order_relaxed);
+        CHECK(aura_closure_call(cids[i], nullptr, 0) == 0, "3851 AC1: first call leaves native");
+        CHECK(g_3851_native_hits.load(std::memory_order_relaxed) == hits_before,
+              "3851 AC1: first call no native hit");
+        // Deterministically consume MustDeopt like #3323 AC2 follow-up —
+        // sticky fence must survive.
+        aura_closure_set_must_deopt(cids[i], 0);
+        const auto hits_mid = g_3851_native_hits.load(std::memory_order_relaxed);
+        CHECK(aura_closure_call(cids[i], nullptr, 0) == 0, "3851 AC1: second call leaves native");
+        CHECK(g_3851_native_hits.load(std::memory_order_relaxed) == hits_mid,
+              "3851 AC1: second call no native hit after MustDeopt consume");
+        ++exercised;
+    }
+    CHECK(exercised >= 8, "3851 AC1: exercised skipped cohort");
+    CHECK(g_3851_native_hits.load(std::memory_order_relaxed) == hits0,
+          "3851 AC1: no g_jit_fns dispatch across two-call wash");
+    prod.store(prev, std::memory_order_relaxed);
+    aura_test_reset_pure_anon_bg_queue();
+}
+
+static void ac3851_2_heal_clears_sticky_soft_no_arm() {
+    std::println("\n--- #3851 AC2: heal clears sticky; Soft skip no sticky arm ---");
+    const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
+    CHECK(rt.find("g_closure_pure_anon_overflow_armed[cid] = 0") != std::string::npos,
+          "3851 AC2: heal/reuse clears sticky");
+    CHECK(rt.find("remount heal with dual-fresh green disarms the") != std::string::npos,
+          "3851 AC2: note_capture_remount_ok disarms sticky (overflow SSOT)");
+    // Soft: budget skip must not arm sticky / MustDeopt.
+    aura_test_reset_pure_anon_bg_queue();
+    const auto cid = aura_alloc_closure(/*func_id=*/0);
+    CHECK(cid >= 0, "3851 AC2: alloc");
+    aura_closure_set_must_deopt(cid, 0);
+    auto& prod =
+        aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active;
+    const auto prev = prod.exchange(0, std::memory_order_relaxed);
+    std::uint64_t ok = 0, skip = 0;
+    aura_sync_remount_pure_anon_live_closures(/*budget=*/1, &ok, &skip);
+    CHECK(aura_closure_get_must_deopt(cid) == 0, "3851 AC2: Soft skip no MustDeopt");
+    const auto walk = rt.find("aura_sync_remount_pure_anon_live_closures");
+    const auto skip_arm = rt.find("if (used >= budget)", walk);
+    const auto remount = rt.find("remount_or_force_deopt_unlocked_no_call_time_counter", walk);
+    CHECK(skip_arm != std::string::npos && remount != std::string::npos && skip_arm < remount,
+          "3851 AC2: skip arm window");
+    const auto arm = rt.substr(skip_arm, remount - skip_arm);
+    CHECK(arm.find("production_defaults_active()") != std::string::npos,
+          "3851 AC2: sticky arm gated on production");
+    CHECK(arm.find("g_closure_pure_anon_overflow_armed[cid] = 1") != std::string::npos,
+          "3851 AC2: production skip arms sticky");
+    CHECK(arm.find("pure_anon_bg_overflow_force_leave_native") == std::string::npos,
+          "3851 AC2: skip arm does not call overflow helper");
+    prod.store(prev, std::memory_order_relaxed);
+    aura_test_reset_pure_anon_bg_queue();
+}
+
+static void ac3851_3_soft_migrate_epoch0_and_post_fresh() {
+    std::println("\n--- #3851 AC3: soft-migrate refuses epoch==0; post-migrate fresh ---");
+    const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
+    CHECK(rt.find("production + bridge tracking treats cap_bridge==0 as") != std::string::npos,
+          "3851 AC3: #3410 harden cites epoch==0 refuse");
+    CHECK(rt.find("(bridge_tracking && cap_bridge == 0)") != std::string::npos,
+          "3851 AC3: bridge_tracking && cap_bridge == 0 refuse");
+    CHECK(rt.find("re-check dual-fresh after soft-migrate") != std::string::npos,
+          "3851 AC3: post soft-migrate fresh re-check");
+    CHECK(rt.find("if (!aura_is_jit_closure_fresh(post_bridge, post_defuse, post_table))") !=
+              std::string::npos,
+          "3851 AC3: post-migrate aura_is_jit_closure_fresh");
+}
+
+static void ac3851_4_source_and_linter() {
+    std::println("\n--- #3851 AC4: source-cite + linter + grandfather + manifest ---");
+    const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
+    const auto build = read_file("build.py");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_pure_anon_budget_skip_sticky_3851.py");
+    const auto gf = read_file("scripts/coverage/simple_check_grandfather.txt");
+    const auto man = read_file("scripts/coverage/manifests/3851.json");
+    CHECK(rt.find("Issue #3851") != std::string::npos, "3851 AC4: runtime cites #3851");
+    CHECK(rt.find("g_closure_pure_anon_overflow_armed[cid] = 1") != std::string::npos,
+          "3851 AC4: sticky arm present");
+    CHECK(!lint.empty() && lint.find("Issue #3851") != std::string::npos, "3851 AC4: linter");
+    CHECK(build.find("check_pure_anon_budget_skip_sticky_3851") != std::string::npos,
+          "3851 AC4: build.py wires linter");
+    CHECK(gf.find("check_pure_anon_budget_skip_sticky_3851.py") != std::string::npos,
+          "3851 AC4: grandfather");
+    CHECK(man.find("\"issue\": 3851") != std::string::npos, "3851 AC4: manifest");
+    CHECK(read_file("docs/design/3851-pure-anon-budget-skip-sticky.md").empty(),
+          "3851 AC4: no docs/design/");
+    CHECK(read_file("tests/compiler/test_issue_3851.cpp").empty(),
+          "3851 AC4: no invent test per #81967");
+    CHECK(rt.find("schema-3851") == std::string::npos, "3851 AC4: no schema-3851");
+    CHECK(rt.find("g_3851_") == std::string::npos, "3851 AC4: no g_3851_* production counter");
+}
+
 // ── Issue #3342: pure-anon recovery starvation (heal path, not #3323 race) ──
 // Success BoundaryExit remains primary drain. Outermost failure amortizes
 // residual tick + drain when pending ≥ pressure or overflow advanced.
@@ -3148,6 +3283,11 @@ int run_test_anonymous_residual_stable_id_policy() {
     ac3478_4_named_captured_unchanged();
     ac3478_5_soft_no_extra();
     ac3478_6_source_and_linter();
+    std::println("\n=== Issue #3851: budget-skip sticky fence (two-call wash) ===");
+    ac3851_1_two_call_leave_native_after_budget_skip();
+    ac3851_2_heal_clears_sticky_soft_no_arm();
+    ac3851_3_soft_migrate_epoch0_and_post_fresh();
+    ac3851_4_source_and_linter();
     std::println("\n=== Issue #3342: pure-anon recovery starvation heal ===");
     ac3342_1_fail_exit_heals_after_overflow();
     ac3342_2_success_boundary_still_primary();
