@@ -1054,9 +1054,18 @@ static void ac3636_advisory() {
           "3636 AC9: advisory reason set");
     s3636.region_force_starve = 0;
     const auto r0 = aura::compiler::compute_aot_hot_update_health(s3636);
-    CHECK(r0.advisory_reason.empty(), "3636 AC9: quiet advisory empty");
-    CHECK(r1.health_bp == r0.health_bp, "3636 AC9: advisory does not change bp");
-    CHECK(r1.force_reason_code == r0.force_reason_code, "3636 AC9: force_reason unchanged");
+    // #3814: mask armed + empty residual is itself the advisory signal now
+    // (observe-only; bp/force_reason unchanged below).
+    CHECK(std::string_view(r0.advisory_reason) == "sticky-force-empty-residual",
+          "3636 AC9: sticky-force-empty-residual advisory (#3814)");
+    // True quiet: nothing armed → no advisory at all.
+    s3636.force_jit_regions_mask = 0;
+    const auto r2 = aura::compiler::compute_aot_hot_update_health(s3636);
+    CHECK(r2.advisory_reason.empty(), "3636 AC9: quiet advisory empty (nothing armed)");
+    s3636.force_jit_regions_mask = 0x2;
+    const auto r0b = aura::compiler::compute_aot_hot_update_health(s3636);
+    CHECK(r1.health_bp == r0b.health_bp, "3636 AC9: advisory does not change bp");
+    CHECK(r1.force_reason_code == r0b.force_reason_code, "3636 AC9: force_reason unchanged");
 }
 
 } // namespace
