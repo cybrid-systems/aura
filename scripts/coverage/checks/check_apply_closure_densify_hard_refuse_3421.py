@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """Issue #3421: production apply_closure hard-refuses densify-stale closures.
 
-#2569 restamp is not a remap. Under production + last Moving
-objects_moved>0 + (remap key OR LCP deny), apply_closure returns
-nullopt and must not restamp-and-eval_flat. Soft / no-move keep
-#2569 recover.
+#2569 restamp is not a remap. Under production + (window red OR remap
+key OR LCP deny with tombstones), apply_closure returns nullopt and
+must not restamp-and-eval_flat. Soft / Off never refuse. #3848 removed
+the objects_moved==0 early return (tombstones may remain).
 
 Contract:
   AC1 helper after needs_safe_fallback / must_deopt / race recover
-  AC2 Soft / objects_moved==0 skip remap (production load + moved load)
+  AC2 Soft / empty-remap+green-window fast-path (no objects_moved disarm)
   AC3 no invoke_closure_bridge_checked on densify hard-refuse
   AC4 reuse closure_stale_returns; no g_3421_* / no new query key
   AC5 tests in test_setcode_rebind_survive; linter after #3420;
@@ -51,10 +51,15 @@ def main() -> int:
     helper_end = flat.find("static void note_apply_closure_densify_hard_refuse", helper)
     helper_win = flat[helper:helper_end] if helper >= 0 and helper_end > helper else flat[helper : helper + 800]
     must("production_defaults_active()", "AC2 production load", helper_win)
-    must("g_last_objects_moved", "AC2 last-window moved", helper_win)
+    must("window_would_allow_mutate", "AC2 window gate (#3648)", helper_win)
+    must("object_remap_size", "AC2 empty-remap fast-path (#3848)", helper_win)
     must("last_lifetime_consistency_would_allow()", "AC1 LCP", helper_win)
     must("Issue #3634", "AC1 per-eval consult cite (#3634)", helper_win)
+    must("Issue #3848", "AC2 #3848 cite", helper_win)
     must("resolve_object_remap", "AC1 remap key", helper_win)
+    # #3848: no objects_moved==0 early return in the helper body.
+    if "g_last_objects_moved" in helper_win:
+        fails.append("AC2: g_last_objects_moved early return must be removed (#3848)")
     if "LifetimePin::pin" in helper_win or ".pin(" in helper_win:
         fails.append("AC2: extra pin walk on densify-refuse helper")
     if "invoke_closure_bridge_checked" in helper_win:

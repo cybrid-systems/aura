@@ -5253,6 +5253,22 @@ def cmd_lint():
             "Issue #3846 reload-recovery-state headroom linter failed — run python3 scripts/coverage/checks/check_reload_recovery_state_headroom_3846.py"
         )
         return r
+    # Issue #3848 (#3421/#3648 residual): densify-stale refuse must not
+    # disarm on g_last_objects_moved==0 while last_object_remap_ still holds
+    # densify-old tombstones. Order: production → window → empty-remap
+    # fast-path → LCP → resolve. Soft/Off unchanged. Extends
+    # test_setcode_rebind_survive + test_moving_densify_fail_closed; no
+    # docs/design / invent (#1655 / #81967).
+    drzm3848_script = COVERAGE_CHECKS / "check_densify_refuse_zero_move_3848.py"
+    if not drzm3848_script.exists():
+        fail(f"missing {drzm3848_script}")
+        return 1
+    r = run([sys.executable, str(drzm3848_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3848 densify refuse zero-move linter failed — run python3 scripts/coverage/checks/check_densify_refuse_zero_move_3848.py"
+        )
+        return r
     # Issue #3838: SE WAL overflow refuse-on-wrap under production
     # fail-closed (#3806 residual). Soft overwrite retained; Agent face
     # wrap-evicted vs never-emitted. Extends test_security_event_wal_replay
@@ -7557,7 +7573,7 @@ def cmd_lint():
     # Phase-5 / #2682) after the objects_moved quiet gate — an incomplete
     # window (untracked kept under moved>0) with a still-green LCP and a
     # remap-miss stale flat no longer slips through to eval. Counters
-    # reused; Soft / moved==0 keep #2569 recover.
+    # reused; Soft / Off keep #2569 recover (#3848: no moved==0 disarm).
     awg3648_script = ROOT / "scripts" / "check_apply_window_gate_3648.py"
     if not awg3648_script.exists():
         fail(f"missing {awg3648_script}")
@@ -15744,6 +15760,28 @@ def cmd_reload_recovery_state_headroom_3846():
 
 
 
+def cmd_densify_refuse_zero_move_3848_coverage():
+    """Issue #3848: densify-stale refuse survives zero-move publish."""
+    print(f"{B}=== densify refuse zero-move (#3848) ==={N}")
+    script = COVERAGE_CHECKS / "check_densify_refuse_zero_move_3848.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = run([sys.executable, str(script)], cwd=ROOT)
+    if r != 0:
+        fail("densify refuse zero-move (#3848) coverage contract rows failed")
+        return r
+    ok("densify refuse zero-move (#3848) coverage clean")
+    return 0
+
+
+def cmd_densify_refuse_zero_move_3848():
+    """Issue #3848: Keep densify-stale refuse armed after zero-move publish."""
+    print(f"{B}=== densify refuse zero-move (#3848) ==={N}")
+    return cmd_densify_refuse_zero_move_3848_coverage()
+
+
+
 def cmd_wal_overflow_wrap_refuse_3838_coverage():
     """Issue #3838: WAL overflow refuse-on-wrap (#3806 residual)."""
     print(f"{B}=== WAL overflow wrap refuse (#3838) ==={N}")
@@ -23804,6 +23842,8 @@ def main():
         "promote-force-join-mid-no-invent-3845-coverage": cmd_promote_force_join_mid_no_invent_3845_coverage,
         "reload-recovery-state-headroom-3846": cmd_reload_recovery_state_headroom_3846,
         "reload-recovery-state-headroom-3846-coverage": cmd_reload_recovery_state_headroom_3846_coverage,
+        "densify-refuse-zero-move-3848": cmd_densify_refuse_zero_move_3848,
+        "densify-refuse-zero-move-3848-coverage": cmd_densify_refuse_zero_move_3848_coverage,
         "wal-overflow-wrap-refuse-3838": cmd_wal_overflow_wrap_refuse_3838,
         "wal-overflow-wrap-refuse-3838-coverage": cmd_wal_overflow_wrap_refuse_3838_coverage,
         "string-grant-session-bound-3839": cmd_string_grant_session_bound_3839,

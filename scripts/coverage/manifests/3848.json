@@ -1,0 +1,58 @@
+{
+  "issue": 3848,
+  "title": "Issue #3848: densify-stale refuse survives zero-move publish (no objects_moved disarm)",
+  "ok": "OK: Issue #3848 densify refuse order — window → empty-remap → LCP → remap; Soft unchanged",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_eval_flat.cpp",
+      "contains": [
+        "Issue #3848",
+        "window_would_allow_mutate",
+        "object_remap_size",
+        "Soft / Off never take this refuse"
+      ]
+    },
+    {
+      "ac": "AC1-no-early",
+      "path": "src/compiler/evaluator_eval_flat.cpp",
+      "contains": [
+        "production_apply_closure_densify_hard_refuse",
+        "production_ffi_apply_densify_hard_refuse"
+      ]
+    },
+    {
+      "ac": "AC2-survive",
+      "path": "tests/compiler/test_setcode_rebind_survive.cpp",
+      "contains": [
+        "ac16_3848_zero_move_publish_still_refuse",
+        "zero-move publish still refuses densify-old flat*"
+      ]
+    },
+    {
+      "ac": "AC2-fail-closed",
+      "path": "tests/core/test_moving_densify_fail_closed.cpp",
+      "contains": [
+        "ac3848_1_source_cite_no_moved_early_return",
+        "ac3848_2_zero_move_publish_keeps_tombstones"
+      ]
+    },
+    {
+      "ac": "AC3-wiring",
+      "path": "build.py",
+      "contains": [
+        "check_densify_refuse_zero_move_3848",
+        "Issue #3848"
+      ]
+    },
+    {
+      "ac": "AC3-forbid",
+      "forbid": [
+        "tests/compiler/test_issue_3848.cpp",
+        "tests/core/test_issue_3848.cpp",
+        "tests/issues/test_issue_3848.cpp",
+        "docs/design/3848-densify-refuse-zero-move.md"
+      ]
+    }
+  ]
+}

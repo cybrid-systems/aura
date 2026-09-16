@@ -4516,6 +4516,87 @@ static void ac3647_5_soak_windows_and_wiring() {
     CHECK(t.find(issue_artifact) == std::string::npos, "3647 AC5: no tests/issues file");
 }
 
+
+// Issue #3848: densify-stale refuse must not disarm on g_last_objects_moved==0
+// while last_object_remap_ still holds densify-old tombstones. Extends this
+// fail-closed suite (source-cite + remap persistence) per #81967; apply
+// refuse behavioral coverage lives in test_setcode_rebind_survive.
+static void ac3848_1_source_cite_no_moved_early_return() {
+    std::println("\n--- #3848 AC1: no objects_moved==0 early return in densify refuse ---");
+    const auto flat = read_file("src/compiler/evaluator_eval_flat.cpp");
+    CHECK(flat.find("Issue #3848") != std::string::npos, "3848 AC1: eval_flat cites #3848");
+    const auto begin = flat.find("static bool production_apply_closure_densify_hard_refuse");
+    const auto end = flat.find("static void note_apply_closure_densify_hard_refuse", begin);
+    CHECK(begin != std::string::npos && end > begin, "3848 AC1: closure arm located");
+    const auto arm = flat.substr(begin, end - begin);
+    CHECK(arm.find("g_last_objects_moved") == std::string::npos,
+          "3848 AC1: objects_moved early return removed");
+    CHECK(arm.find("window_would_allow_mutate") != std::string::npos, "3848 AC1: window gate");
+    CHECK(arm.find("object_remap_size") != std::string::npos, "3848 AC1: empty-remap fast-path");
+    const auto gate = arm.find("window_would_allow_mutate");
+    const auto lcp = arm.find("last_lifetime_consistency_would_allow");
+    CHECK(gate != std::string::npos && lcp != std::string::npos && gate < lcp,
+          "3848 AC1: window precedes LCP");
+    CHECK(flat.find("Soft / Off never take this refuse") != std::string::npos,
+          "3848 AC1: Soft unchanged");
+    CHECK(flat.find("g_3848_") == std::string::npos, "3848 AC1: no invented counter");
+    CHECK(flat.find("class DensifyClosurePinRegistry") == std::string::npos,
+          "3848 AC1: no second pin registry");
+}
+
+static void ac3848_2_zero_move_publish_keeps_tombstones() {
+    std::println("\n--- #3848 AC2: zero-move publish leaves densify-old remap keys ---");
+    MovingFlagGuard on(1);
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    aura::ast::g_moving_untracked_hard_abort_pref.store(0, std::memory_order_relaxed);
+    ASTArena arena(64 * 1024);
+    auto* p0 = arena.create<Pod16>(1, 2, 3, 4);
+    auto* p1 = arena.create<Pod16>(5, 6, 7, 8);
+    CHECK(p0 && p1, "3848 AC2: creates ok");
+    void* A = p0;
+    void* s0 = p0;
+    void* s1 = p1;
+    arena.register_external_root_slot_for_densify(&s0);
+    arena.register_external_root_slot_for_densify(&s1);
+    const auto r = arena.live_compact(LiveCompactMode::Moving);
+    CHECK(r.objects_moved > 0, "3848 AC2: objects_moved > 0");
+    CHECK(arena.resolve_object_remap(A) != nullptr, "3848 AC2: A is remap key");
+    CHECK(arena.object_remap_size() > 0, "3848 AC2: tombstones present");
+    // Simulate vacuous / LCP-blocked publish: objects_moved=0 while remap remains.
+    const auto prev = aura::core::moving_densify_health::g_last_objects_moved.load(
+        std::memory_order_relaxed);
+    aura::core::moving_densify_health::g_last_objects_moved.store(0, std::memory_order_relaxed);
+    CHECK(aura::core::moving_densify_health::g_last_objects_moved.load(
+              std::memory_order_relaxed) == 0,
+          "3848 AC2: published objects_moved==0");
+    CHECK(arena.resolve_object_remap(A) != nullptr,
+          "3848 AC2: densify-old key survives zero-move publish");
+    CHECK(arena.object_remap_size() > 0, "3848 AC2: remap table still non-empty");
+    aura::core::moving_densify_health::g_last_objects_moved.store(prev, std::memory_order_relaxed);
+    (void)p1;
+}
+
+static void ac3848_3_wiring_no_invent() {
+    std::println("\n--- #3848 AC3: suite + linter wiring; no invent ---");
+    const auto survive = read_file("tests/compiler/test_setcode_rebind_survive.cpp");
+    CHECK(survive.find("ac16_3848_zero_move_publish_still_refuse();") != std::string::npos,
+          "3848 AC3: densify-stale suite wired");
+    const auto lint = read_file("scripts/coverage/checks/check_densify_refuse_zero_move_3848.py");
+    CHECK(!lint.empty() && lint.find("Issue #3848") != std::string::npos, "3848 AC3: linter present");
+    const auto build = read_file("build.py");
+    CHECK(build.find("check_densify_refuse_zero_move_3848") != std::string::npos,
+          "3848 AC3: build.py wires linter");
+    const auto gf = read_file("scripts/coverage/simple_check_grandfather.txt");
+    CHECK(gf.find("check_densify_refuse_zero_move_3848.py") != std::string::npos,
+          "3848 AC3: grandfather lists linter");
+    for (const char* forbid : {"tests/compiler/test_issue_3848.cpp",
+                                 "tests/core/test_issue_3848.cpp",
+                                 "tests/issues/test_issue_3848.cpp"}) {
+        CHECK(read_file(forbid).empty(), "3848 AC3: no invent file");
+        (void)forbid;
+    }
+}
+
 int run_test_moving_densify_fail_closed() {
     std::println("=== Issue #2495: Moving densify fail-closed on untracked external roots ===");
     std::println(
@@ -5259,6 +5340,12 @@ int run_test_moving_densify_fail_closed() {
     ac3783_1_auto_arm_publishes_before_soft_fallback();
     ac3783_2_phase5_passes_real_blocked_precondition();
     ac3783_3_soft_off_and_no_invent();
+
+    std::println("\n=== Issue #3848: densify-stale refuse survives zero-move publish "
+                 "(#3421/#3648 residual; extends fail_closed per #81967) ===");
+    ac3848_1_source_cite_no_moved_early_return();
+    ac3848_2_zero_move_publish_keeps_tombstones();
+    ac3848_3_wiring_no_invent();
 
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
