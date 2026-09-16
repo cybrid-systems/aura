@@ -5197,6 +5197,20 @@ def cmd_lint():
             "Issue #3836 shell/command-output require_effect linter failed — run python3 scripts/coverage/checks/check_shell_require_effect_3836.py"
         )
         return r
+    # Issue #3838: SE WAL overflow refuse-on-wrap under production
+    # fail-closed (#3806 residual). Soft overwrite retained; Agent face
+    # wrap-evicted vs never-emitted. Extends test_security_event_wal_replay
+    # (#81967); no docs/design / invent (#1655).
+    wow3838_script = COVERAGE_CHECKS / "check_wal_overflow_wrap_refuse_3838.py"
+    if not wow3838_script.exists():
+        fail(f"missing {wow3838_script}")
+        return 1
+    r = run([sys.executable, str(wow3838_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3838 WAL overflow wrap-refuse linter failed — run python3 scripts/coverage/checks/check_wal_overflow_wrap_refuse_3838.py"
+        )
+        return r
     # Issue #3802: EXEMPT_2ARG write-file/sys-* host-path isolation under
     # Restricted+MT / Strict — resolve under tenant root from
     # capability_tenant_id_; cross-tenant escape → IsolationDeny SE
@@ -15531,6 +15545,27 @@ def cmd_shell_require_effect_3836():
     return cmd_shell_require_effect_3836_coverage()
 
 
+def cmd_wal_overflow_wrap_refuse_3838_coverage():
+    """Issue #3838: WAL overflow refuse-on-wrap (#3806 residual)."""
+    print(f"{B}=== WAL overflow wrap refuse (#3838) ==={N}")
+    script = COVERAGE_CHECKS / "check_wal_overflow_wrap_refuse_3838.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = run([sys.executable, str(script)], cwd=ROOT)
+    if r != 0:
+        fail("WAL overflow wrap refuse (#3838) coverage contract rows failed")
+        return r
+    ok("WAL overflow wrap refuse (#3838) coverage clean")
+    return 0
+
+
+def cmd_wal_overflow_wrap_refuse_3838():
+    """Issue #3838: Refuse WAL overflow wrap under production fail-closed."""
+    print(f"{B}=== WAL overflow wrap refuse (#3838) ==={N}")
+    return cmd_wal_overflow_wrap_refuse_3838_coverage()
+
+
 def cmd_engine_metrics_hash_overflow_3018_coverage():
     """Issue #3018: engine:metrics hash overflow fail-soft (static)."""
     print(f"{B}=== engine:metrics hash overflow coverage (#3018) ==={N}")
@@ -23520,6 +23555,8 @@ def main():
         "tenant-host-path-read-3835-coverage": cmd_tenant_host_path_read_3835_coverage,
         "shell-require-effect-3836": cmd_shell_require_effect_3836,
         "shell-require-effect-3836-coverage": cmd_shell_require_effect_3836_coverage,
+        "wal-overflow-wrap-refuse-3838": cmd_wal_overflow_wrap_refuse_3838,
+        "wal-overflow-wrap-refuse-3838-coverage": cmd_wal_overflow_wrap_refuse_3838_coverage,
         "mutate-dispatch-sole-guard-3074-coverage": cmd_mutate_dispatch_sole_guard_3074_coverage,
         "mutate-reg-kind-3452": cmd_mutate_reg_kind_3452_coverage,
         "mutate-reg-kind-3452-coverage": cmd_mutate_reg_kind_3452_coverage,

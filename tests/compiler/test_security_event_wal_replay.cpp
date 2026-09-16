@@ -1004,7 +1004,7 @@ int run_test_security_event_wal_replay() {
             WalOverflowRecord rec{};
             rec.mid = i + 1; // earliest mid=1
             rec.reason = "test:3806-fill";
-            wal_overflow_ring_push(rec);
+            CHECK(wal_overflow_ring_push(rec), "3806: fill push ok");
         }
         CHECK(wal_overflow_ring_full(), "3806 AC1: ring full after 256");
         CHECK(wal_overflow_ring_wrap_total().load(std::memory_order_relaxed) == 0,
@@ -1017,7 +1017,7 @@ int run_test_security_event_wal_replay() {
             WalOverflowRecord rec{};
             rec.mid = 10000 + i;
             rec.reason = "test:3806-wrap";
-            wal_overflow_ring_push(rec);
+            CHECK(wal_overflow_ring_push(rec), "3806 Soft: overwrite push ok");
         }
         const auto wraps = wal_overflow_ring_wrap_total().load(std::memory_order_relaxed);
         CHECK(wraps >= kExtra, "3806 AC1: wrap_total >= overwrite count");
@@ -1051,7 +1051,7 @@ int run_test_security_event_wal_replay() {
             1, 0);
         CHECK(!fail_ret, "3806: inject fail returns false");
         CHECK(wal_overflow_ring_wrap_total().load(std::memory_order_relaxed) == wrap_before + 1,
-              "3806 AC1: inject overwrite bumps wrap");
+              "3806 AC1: inject full-ring bumps wrap");
         cs.evaluator().disable_security_event_wal();
         fs::remove_all(dir);
         ::unsetenv("AURA_WAL_APPEND_FAIL_CLOSED");
@@ -1077,6 +1077,186 @@ int run_test_security_event_wal_replay() {
         wal_overflow_ring_clear_for_test();
         CHECK(wal_overflow_ring_wrap_total().load(std::memory_order_relaxed) == 0,
               "3806: clear_for_test resets wrap");
+        reset_all();
+    }
+
+    // ── Issue #3838: refuse-on-wrap under production fail-closed ─────
+    {
+        std::println("\n--- #3838 AC1/AC2/AC3/AC4: wrap refuse + Agent faces ---");
+        using aura::core::security_event_wal::kWalOverflowRingCapacity;
+        using aura::core::security_event_wal::kWalOverflowWrapRefuseIssue;
+        using aura::core::security_event_wal::wal_overflow_find_by_mid;
+        using aura::core::security_event_wal::wal_overflow_ring_clear_for_test;
+        using aura::core::security_event_wal::wal_overflow_ring_depth;
+        using aura::core::security_event_wal::wal_overflow_ring_full;
+        using aura::core::security_event_wal::wal_overflow_ring_push;
+        using aura::core::security_event_wal::wal_overflow_ring_wrap_refuse_total;
+        using aura::core::security_event_wal::wal_overflow_ring_wrap_total;
+        using aura::core::security_event_wal::WalOverflowRecord;
+
+        reset_all();
+        wal_overflow_ring_clear_for_test();
+        CompilerService cs;
+
+        // Soft / Off: refuse_total=0 (AC4 — Soft zero-cost / no fail-closed).
+        CHECK(wal_overflow_ring_wrap_refuse_total().load(std::memory_order_relaxed) == 0,
+              "3838 AC4: refuse_total=0 Soft/Off");
+        CHECK(href_posture(cs, "wal-overflow-wrap-refuse-total") == 0,
+              "3838 AC4: posture refuse=0 Soft");
+        CHECK(href_posture(cs, "schema-3838") == kWalOverflowWrapRefuseIssue,
+              "3838 AC2: schema-3838 Soft");
+        CHECK(href_posture(cs, "issue-3838") == kWalOverflowWrapRefuseIssue,
+              "3838 AC2: issue-3838 Soft");
+
+        // Soft overwrite still allowed when fail-closed inactive (AC4).
+        for (std::uint32_t i = 0; i < kWalOverflowRingCapacity; ++i) {
+            WalOverflowRecord rec{};
+            rec.mid = i + 1;
+            rec.reason = "test:3838-soft-fill";
+            CHECK(wal_overflow_ring_push(rec), "3838 Soft: fill push ok");
+        }
+        WalOverflowRecord soft_ovr{};
+        soft_ovr.mid = 999001;
+        soft_ovr.reason = "test:3838-soft-wrap";
+        CHECK(wal_overflow_ring_push(soft_ovr), "3838 Soft: overwrite still ok");
+        CHECK(wal_overflow_ring_wrap_total().load(std::memory_order_relaxed) >= 1,
+              "3838 Soft: wrap bumps on Soft overwrite");
+        CHECK(wal_overflow_ring_wrap_refuse_total().load(std::memory_order_relaxed) == 0,
+              "3838 Soft: refuse_total stays 0");
+        CHECK(wal_overflow_find_by_mid(1) == nullptr, "3838 Soft: earliest mid overwritten");
+
+        wal_overflow_ring_clear_for_test();
+
+        // Production fail-closed: fill → refuse on wrap (no silent mid loss).
+        ::setenv("AURA_WAL_APPEND_FAIL_CLOSED", "1", 1);
+        apply_production_audit_defaults();
+        CHECK(aura::core::wal_slo::wal_append_fail_closed_active(), "3838: fail-closed active");
+
+        for (std::uint32_t i = 0; i < kWalOverflowRingCapacity; ++i) {
+            WalOverflowRecord rec{};
+            rec.mid = i + 1; // earliest mid=1
+            rec.reason = "test:3838-fc-fill";
+            CHECK(wal_overflow_ring_push(rec), "3838 AC1: fill under fail-closed ok");
+        }
+        CHECK(wal_overflow_ring_full(), "3838 AC1: ring full");
+        CHECK(wal_overflow_ring_wrap_total().load(std::memory_order_relaxed) == 0,
+              "3838 AC1: wrap=0 before refuse");
+        CHECK(wal_overflow_find_by_mid(1) != nullptr, "3838 AC1: earliest mid parked");
+
+        constexpr std::uint32_t kRefuse = 40;
+        for (std::uint32_t i = 0; i < kRefuse; ++i) {
+            WalOverflowRecord rec{};
+            rec.mid = 20000 + i;
+            rec.reason = "test:3838-refuse";
+            CHECK(!wal_overflow_ring_push(rec), "3838 AC1: push refuses on wrap");
+        }
+        const auto wraps = wal_overflow_ring_wrap_total().load(std::memory_order_relaxed);
+        const auto refuses =
+            wal_overflow_ring_wrap_refuse_total().load(std::memory_order_relaxed);
+        CHECK(wraps >= kRefuse, "3838 AC1: wrap_total >= refuse count");
+        CHECK(refuses >= kRefuse, "3838 AC1: refuse_total >= refuse count");
+        CHECK(wal_overflow_find_by_mid(1) != nullptr,
+              "3838 AC1: earliest mid preserved (no overwrite)");
+        CHECK(wal_overflow_find_by_mid(20000) == nullptr,
+              "3838 AC1: refused mid never parked");
+        CHECK(href_posture(cs, "wal-overflow-wrap-refuse-total") >=
+                  static_cast<std::int64_t>(kRefuse),
+              "3838 AC2: posture refuse face");
+        CHECK(href_posture(cs, "wal-overflow-wrap-total") >= static_cast<std::int64_t>(kRefuse),
+              "3838 AC2: posture wrap face after refuse storm");
+        CHECK(href_wal_stats(cs, "wal-overflow-wrap-refuse-total") >=
+                  static_cast<std::int64_t>(kRefuse),
+              "3838 AC2: audit-wal-stats refuse face");
+
+        auto href_audit_stats = [&](std::string_view key) -> std::int64_t {
+            auto r = cs.eval(std::format(
+                "(hash-ref (engine:metrics \"query:security-audit-stats\") \"{}\")", key));
+            if (!r || !is_int(*r))
+                return -1;
+            return as_int(*r);
+        };
+        auto href_evol = [&](std::string_view key) -> std::int64_t {
+            auto r = cs.eval(std::format(
+                "(hash-ref (engine:metrics \"query:evolution-audit-decision\") \"{}\")", key));
+            if (!r || !is_int(*r))
+                return -1;
+            return as_int(*r);
+        };
+        CHECK(href_audit_stats("wal-overflow-wrap-refuse-total") >=
+                  static_cast<std::int64_t>(kRefuse),
+              "3838 AC2: security-audit-stats refuse face");
+        CHECK(href_evol("wal-overflow-wrap-refuse-total") >= static_cast<std::int64_t>(kRefuse),
+              "3838 AC2: evolution refuse face");
+
+        // AC2: Agent face wrap-evicted vs never-emitted on durable join.
+        const auto dir = fresh_wal_dir("3838-durable");
+        CHECK(cs.evaluator().enable_security_event_wal(dir.string()), "3838: enable SE WAL");
+        // Never-emitted mid while wrap storm active → overflow_wrap_evicted.
+        CHECK(href_evol_reason(cs, 20000) == "overflow_wrap_evicted",
+              "3838 AC2: refused mid → overflow_wrap_evicted");
+        // Parked mid still joins from overflow reason (not wrap-evicted).
+        CHECK(href_evol_reason(cs, 1) == "test:3838-fc-fill",
+              "3838 AC2: parked mid joins overflow reason");
+        // Clear wrap → never-emitted mid returns empty (distinguish).
+        wal_overflow_ring_clear_for_test();
+        CHECK(href_evol_reason(cs, 424242) == "",
+              "3838 AC2: never-emitted (wrap=0) → empty reason");
+
+        // AC3: inject >256 under fail-closed → wrap_total >= 1; refuse preserves.
+        wal_overflow_ring_clear_for_test();
+        for (std::uint32_t i = 0; i < kWalOverflowRingCapacity; ++i) {
+            WalOverflowRecord rec{};
+            rec.mid = 30000 + i;
+            rec.reason = "test:3838-inject-fill";
+            CHECK(wal_overflow_ring_push(rec), "3838 AC3: prefill ok");
+        }
+        const auto wrap_before = wal_overflow_ring_wrap_total().load(std::memory_order_relaxed);
+        const auto refuse_before =
+            wal_overflow_ring_wrap_refuse_total().load(std::memory_order_relaxed);
+        aura::core::wal_slo::g_wal_append_fail_slo_counters.inject_fail_remaining.store(
+            5, std::memory_order_relaxed);
+        for (int i = 0; i < 5; ++i) {
+            const bool fail_ret = aura::core::security_event_wal::persist_security_event(
+                SecurityEventKind::EffectDeny, 7, 0x3838ULL + static_cast<std::uint64_t>(i), 1, 0,
+                "test:3838-inject", "inject", true, 1, 0);
+            CHECK(!fail_ret, "3838 AC3: inject fail returns false");
+        }
+        CHECK(wal_overflow_ring_wrap_total().load(std::memory_order_relaxed) >= wrap_before + 1,
+              "3838 AC3: inject wrap_total >= 1");
+        CHECK(wal_overflow_ring_wrap_refuse_total().load(std::memory_order_relaxed) >=
+                  refuse_before + 1,
+              "3838 AC3: inject refuse_total bumps");
+        CHECK(wal_overflow_find_by_mid(30000) != nullptr,
+              "3838 AC3: earliest mid preserved under inject refuse");
+        // AC3: require_effect denies under full (zero side effect) — #3493.
+        CHECK(cs.evaluator().require_effect(kEffectMutate, "test:3838-mutate") == false,
+              "3838 AC3: require_effect refuses when overflow full");
+
+        cs.evaluator().disable_security_event_wal();
+        fs::remove_all(dir);
+        ::unsetenv("AURA_WAL_APPEND_FAIL_CLOSED");
+
+        // Source-cite / no-invent.
+        const auto sew = read_repo_file("src/core/security_event_wal.hh");
+        const auto sec = read_repo_file("src/compiler/evaluator_primitives_security.cpp");
+        const auto build = read_repo_file("build.py");
+        CHECK(sew.find("kWalOverflowWrapRefuseIssue = 3838") != std::string::npos,
+              "3838: issue stamp");
+        CHECK(sew.find("wal_append_fail_closed_active()") != std::string::npos,
+              "3838: refuse gated on fail-closed");
+        CHECK(sew.find("return false;") != std::string::npos, "3838: push returns false");
+        CHECK(sec.find("wal-overflow-wrap-refuse-total") != std::string::npos,
+              "3838 AC2: prim refuse key");
+        CHECK(sec.find("overflow_wrap_evicted") != std::string::npos,
+              "3838 AC2: wrap-evicted reason face");
+        CHECK(build.find("check_wal_overflow_wrap_refuse_3838") != std::string::npos,
+              "3838: build.py wires linter");
+        CHECK(read_repo_file("tests/compiler/test_issue_3838.cpp").empty(),
+              "3838: no invent test_issue_3838.cpp");
+        CHECK(read_repo_file("docs/design/3838-wal-overflow-wrap-refuse.md").empty(),
+              "3838: no docs/design/3838-*");
+
+        wal_overflow_ring_clear_for_test();
         reset_all();
     }
 

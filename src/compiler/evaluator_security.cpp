@@ -313,7 +313,7 @@ bool Evaluator::emit_mutation_audit(std::uint32_t nodes_changed, std::uint32_t e
                 ovr.epoch = slot.epoch;
                 ovr.op = op.empty() ? std::string("emit_mutation_audit") : std::string(op);
                 ovr.reason = "mutation_wal_append_miss";
-                ::aura::core::security_event_wal::wal_overflow_ring_push(ovr);
+                (void)::aura::core::security_event_wal::wal_overflow_ring_push(ovr);
                 return false;
             }
         } else {
@@ -503,7 +503,7 @@ bool Evaluator::check_and_record_effect(std::uint16_t required_effect_bits,
                     ovr.op =
                         op.empty() ? std::string("mutation_audit_wal_append") : std::string(op);
                     ovr.reason = std::string("mutation_wal_append_miss");
-                    ::aura::core::security_event_wal::wal_overflow_ring_push(ovr);
+                    (void)::aura::core::security_event_wal::wal_overflow_ring_push(ovr);
                 }
             }
         }

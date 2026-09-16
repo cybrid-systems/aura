@@ -279,7 +279,7 @@ int run_test_security_posture_trail() {
             aura::core::security_event_wal::WalOverflowRecord rec{};
             rec.mid = i + 1;
             rec.reason = "test:3302-fill";
-            aura::core::security_event_wal::wal_overflow_ring_push(rec);
+            (void)aura::core::security_event_wal::wal_overflow_ring_push(rec);
         }
         CHECK(aura::core::security_event_wal::wal_overflow_ring_full(),
               "3302 AC5: overflow ring full");
@@ -354,7 +354,7 @@ int run_test_security_posture_trail() {
                 aura::core::security_event_wal::WalOverflowRecord rec{};
                 rec.mid = i + 1;
                 rec.reason = "test:3639-fill";
-                aura::core::security_event_wal::wal_overflow_ring_push(rec);
+                (void)aura::core::security_event_wal::wal_overflow_ring_push(rec);
             }
             CHECK(!ev.require_effect(kEffectMutate, "test:3639-ac2", 0),
                   "3639 AC2: overflow full still denies (#3493 regression)");

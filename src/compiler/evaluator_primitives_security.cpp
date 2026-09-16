@@ -4685,6 +4685,16 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                               ::aura::core::security_event_wal::wal_overflow_ring_full() ? 1 : 0));
                 insert_kv("schema-3806", ::aura::core::security_event_wal::kWalOverflowWrapIssue);
                 insert_kv("issue-3806", ::aura::core::security_event_wal::kWalOverflowWrapIssue);
+                // Issue #3838: refuse-on-wrap counter (production fail-closed).
+                // Soft / Off / WAL-off: 0 (push never runs / Soft overwrites).
+                insert_kv("wal-overflow-wrap-refuse-total",
+                          static_cast<std::int64_t>(
+                              ::aura::core::security_event_wal::wal_overflow_ring_wrap_refuse_total()
+                                  .load(std::memory_order_relaxed)));
+                insert_kv("schema-3838",
+                          ::aura::core::security_event_wal::kWalOverflowWrapRefuseIssue);
+                insert_kv("issue-3838",
+                          ::aura::core::security_event_wal::kWalOverflowWrapRefuseIssue);
                 insert_kv("schema-3109", 3109);
                 insert_kv("issue-3109", 3109);
                 // Issue #3302: force_wal default-arms fail-closed. Additive.
@@ -5156,7 +5166,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             using aura::core::security_event::kSecurityEventRingSize;
             auto& ring = g_security_event_ring();
             // Capacity 32: schema-2054 + schema-2156 + schema-3113 wrap keys
-            // + #3806 overflow wrap/depth/full (24 live; planned 32).
+            // + #3806 overflow wrap/depth/full + #3838 refuse (27 live; planned 32).
             auto* ht = FlatHashTable::create(query_hash_capacity_for(32));
             if (!ht)
                 return make_void();
@@ -5237,6 +5247,15 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                           ::aura::core::security_event_wal::wal_overflow_ring_full() ? 1 : 0));
             insert_kv("schema-3806", ::aura::core::security_event_wal::kWalOverflowWrapIssue);
             insert_kv("issue-3806", ::aura::core::security_event_wal::kWalOverflowWrapIssue);
+            // Issue #3838: refuse-on-wrap counter (production fail-closed).
+            insert_kv("wal-overflow-wrap-refuse-total",
+                      static_cast<std::int64_t>(
+                          ::aura::core::security_event_wal::wal_overflow_ring_wrap_refuse_total()
+                              .load(std::memory_order_relaxed)));
+            insert_kv("schema-3838",
+                      ::aura::core::security_event_wal::kWalOverflowWrapRefuseIssue);
+            insert_kv("issue-3838",
+                      ::aura::core::security_event_wal::kWalOverflowWrapRefuseIssue);
             insert_kv("unified", 1);
             return query_hash_finish(ht, ev.string_heap_, overflowed);
         });
@@ -5388,7 +5407,8 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             // Issue #3499: +2225 WAL durability keys (ring-wrap /
             // persisted / audit-durable-gap). Live ~93; planned 128.
             // Issue #3806: +4 overflow wrap/full/schema/issue (depth
-            // already present). Live ~97; planned 128 still has headroom.
+            // already present). Issue #3838: +3 refuse/schema/issue.
+            // Live ~100; planned 128 still has headroom.
             constexpr std::size_t kSecurityPosturePlannedKeys = 128;
             auto* ht = FlatHashTable::create(query_hash_capacity_for(kSecurityPosturePlannedKeys));
             if (!ht)
@@ -5539,6 +5559,16 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                               ::aura::core::security_event_wal::wal_overflow_ring_full() ? 1 : 0));
                 insert_kv("schema-3806", ::aura::core::security_event_wal::kWalOverflowWrapIssue);
                 insert_kv("issue-3806", ::aura::core::security_event_wal::kWalOverflowWrapIssue);
+                // Issue #3838: refuse-on-wrap counter (production fail-closed).
+                // Soft / Off / WAL-off: 0 (push never runs / Soft overwrites).
+                insert_kv("wal-overflow-wrap-refuse-total",
+                          static_cast<std::int64_t>(
+                              ::aura::core::security_event_wal::wal_overflow_ring_wrap_refuse_total()
+                                  .load(std::memory_order_relaxed)));
+                insert_kv("schema-3838",
+                          ::aura::core::security_event_wal::kWalOverflowWrapRefuseIssue);
+                insert_kv("issue-3838",
+                          ::aura::core::security_event_wal::kWalOverflowWrapRefuseIssue);
                 insert_kv("schema-3109", 3109);
                 insert_kv("issue-3109", 3109);
                 // Issue #3302: force_wal default-arms fail-closed. Additive.
@@ -5857,7 +5887,8 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             // + 3 additive keys (se-mid-miss + schema-3284 + issue-3284)
             // + 1 additive key (wal-lookup-window-miss, #3603)
             // + 5 additive keys (overflow depth/wrap/full + schema/issue, #3806)
-            // = 55 live keys. Issue #3339: planned 72 (>= 55+8 headroom;
+            // + 3 additive keys (wrap-refuse-total + schema/issue, #3838)
+            // = 58 live keys. Issue #3339: planned 72 (>= 58+8 headroom;
             // +20 dummy keys without a raise must fail the CI headroom
             // gate). Additive insert_kv must raise planned_keys; this
             // Agent facade forbids hash-overflow.
@@ -6163,6 +6194,11 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                                     join_mid)) {
                             if (!ovr->reason.empty())
                                 last_se_reason_str = ovr->reason;
+                        } else if (::aura::core::security_event_wal::wal_overflow_ring_wrap_total()
+                                       .load(std::memory_order_relaxed) > 0) {
+                            // Issue #3838: wrap storm — Agent face distinguishes
+                            // wrap-evicted mid joins from never-emitted (empty).
+                            last_se_reason_str = "overflow_wrap_evicted";
                         }
                     }
                 }
@@ -6200,6 +6236,15 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                           ::aura::core::security_event_wal::wal_overflow_ring_full() ? 1 : 0));
             insert_kv("schema-3806", ::aura::core::security_event_wal::kWalOverflowWrapIssue);
             insert_kv("issue-3806", ::aura::core::security_event_wal::kWalOverflowWrapIssue);
+            // Issue #3838: refuse-on-wrap counter (production fail-closed).
+            insert_kv("wal-overflow-wrap-refuse-total",
+                      static_cast<std::int64_t>(
+                          ::aura::core::security_event_wal::wal_overflow_ring_wrap_refuse_total()
+                              .load(std::memory_order_relaxed)));
+            insert_kv("schema-3838",
+                      ::aura::core::security_event_wal::kWalOverflowWrapRefuseIssue);
+            insert_kv("issue-3838",
+                      ::aura::core::security_event_wal::kWalOverflowWrapRefuseIssue);
             insert_kv("commit-would-allow", cr.would_allow_commit ? 1 : 0);
             insert_kv("commit-force-reason-code", cr.force_reason_code);
             insert_kv("playbook-action", static_cast<std::int64_t>(pb.action));
