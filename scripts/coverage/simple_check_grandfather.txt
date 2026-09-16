@@ -422,3 +422,5 @@ scripts/coverage/checks/check_shell_require_effect_3836.py
 check_shell_require_effect_3836.py
 scripts/coverage/checks/check_wal_overflow_wrap_refuse_3838.py
 check_wal_overflow_wrap_refuse_3838.py
+scripts/coverage/checks/check_string_grant_session_bound_3839.py
+check_string_grant_session_bound_3839.py

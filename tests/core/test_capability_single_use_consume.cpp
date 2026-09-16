@@ -1363,9 +1363,11 @@ static void ac3333_6_source_and_linter() {
 
 // ── Issue #3436: grant writers share one lifetime policy + caller principal
 // + no nested registry lock on the string mirror. ──────────────────────────
-//   AC1: Restricted TA-holder string grant "mutate" is forced single_use;
-//        1st successful Mutate check consumes, 2nd denies.
-//   AC2: the string path never inflates capability_live_session_grants.
+//   AC1: Restricted TA-holder string grant "mutate" is forced single_use
+//        + session_bound (#3839 align with #3561); 1st successful Mutate
+//        check consumes, 2nd denies.
+//   AC2: production high-risk string path inflates
+//        capability_live_session_grants (session residual); Soft/Off does not.
 //   AC3: grant_effect_* pass capability_tenant_id_ into grant_locked as
 //        caller_principal — the #3409 SSOT fence evaluates the granting
 //        Evaluator's principal, not the default_tenant fallback.
@@ -1404,9 +1406,9 @@ static void ac3436_1_string_path_forced_single_use() {
     CapabilityGrant g{};
     CHECK(g_capability_registry().find_grant(21, "mutate", g), "AC1: 'mutate' row exists");
     CHECK(g.single_use, "AC1: string-path 'mutate' row is single_use (not sticky)");
-    CHECK(!g.session_bound, "AC1: string path stamps session_bound=false");
-    CHECK(g_capability_effect_metrics().capability_live_session_grants.load() == live_before,
-          "AC2: capability_live_session_grants not inflated by the string path");
+    CHECK(g.session_bound, "AC1: string path session-binds high-risk under Restricted (#3839)");
+    CHECK(g_capability_effect_metrics().capability_live_session_grants.load() == live_before + 1,
+          "AC2: capability_live_session_grants inflated by production string high-risk (#3839)");
 
     // Consume semantics: join the row's bound mid; 1st allow consumes, 2nd denies.
     EffectProvenance prov{};
@@ -1516,6 +1518,7 @@ static void ac3436_4_soft_off_and_source_cite() {
     CapabilityGrant g{};
     CHECK(g_capability_registry().find_grant(23, "mutate", g), "AC5: row exists under Off");
     CHECK(!g.single_use, "AC5: Off-mode string grant stays single_use=false");
+    CHECK(!g.session_bound, "AC5: Off-mode string grant stays session_bound=false (#3839)");
     const bool ok = check_and_record_effect(Effect::Mutate, Effect::Mutate, EffectProvenance{},
                                             /*tenant=*/23, "3436-ac5");
     CHECK(ok, "AC5: Off-mode check allows (legacy semantics, no extra fence)");
@@ -1638,6 +1641,105 @@ static void ac3561_5_source_cite() {
     CHECK(read_file("tests/core/test_issue_3561.cpp").empty(), "3561 AC5: no test_issue_3561.cpp");
     CHECK(!std::filesystem::exists("docs/design/3561-grant-effect-session.md"),
           "3561 AC5: no docs/design/3561-*");
+}
+
+// ── Issue #3839: plain grant_capability(string) production high-risk session_bound ──
+// Align string path with grant_effect_capability (#3561). Soft/Off: no force.
+// String "self-evo" aligns with grant_macro_self_evo (#3721) session_bound.
+
+static void ac3839_1_string_high_risk_session_revoked() {
+    std::println("\n--- #3839 AC1: unused high-risk string grant is session_bound ---");
+    reset_all();
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_capability_tenant_id(38391);
+    ev.grant_capability("tenant-admin"); // seed TA while Off
+    set_mode(SandboxMode::Restricted);
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+    ev.set_effect_sandbox_mode(1);
+    aura::core::bump_mutation_epoch(1);
+    const auto mid = aura::core::current_mutation_epoch();
+
+    const auto live_before = g_capability_effect_metrics().capability_live_session_grants.load();
+    ev.grant_capability("mutate");
+    CapabilityGrant g{};
+    CHECK(g_capability_registry().find_grant(38391, "mutate", g), "3839 AC1: mutate row exists");
+    CHECK(g.single_use, "3839 AC1: #2882 single_use still forced");
+    CHECK(g.session_bound, "3839 AC1: session_bound forced under Restricted");
+    CHECK(g_capability_effect_metrics().capability_live_session_grants.load() == live_before + 1,
+          "3839 AC1: live session residual");
+    CHECK(g_capability_registry().session_bound_entries_alive(38391) >= 1,
+          "3839 AC1: session_bound_entries_alive");
+    const auto n = g_capability_registry().revoke_session_grants_for_mid(
+        g.bound_mutation_id != 0 ? g.bound_mutation_id : mid);
+    CHECK(n >= 1, "3839 AC1: session-mid-exit revokes unused string grant");
+    CHECK(g_capability_registry().session_bound_entries_alive(38391) == 0,
+          "3839 AC1: no live session residual after mid exit");
+    EffectProvenance call{};
+    call.mutation_id = g.bound_mutation_id != 0 ? g.bound_mutation_id : mid;
+    call.epoch = g.grant_epoch != 0 ? g.grant_epoch : mid;
+    CHECK(!check_and_record_effect(Effect::Mutate, Effect::Mutate, call, 38391, "3839-ac1-post",
+                                   false, true),
+          "3839 AC1: require/check deny after session revoke");
+}
+
+static void ac3839_2_capability_and_self_evo_align() {
+    std::println("\n--- #3839 AC2: string capability + self-evo session-bind ---");
+    reset_all();
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_capability_tenant_id(38392);
+    ev.grant_capability("tenant-admin");
+    set_mode(SandboxMode::Restricted);
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+    ev.set_effect_sandbox_mode(1);
+    aura::core::bump_mutation_epoch(2);
+
+    ev.grant_capability("capability");
+    CapabilityGrant g_cap{};
+    CHECK(g_capability_registry().find_grant(38392, "capability", g_cap),
+          "3839 AC2: capability row exists");
+    CHECK(g_cap.session_bound, "3839 AC2: capability (TenantAdmin) session_bound");
+    CHECK(g_cap.single_use, "3839 AC2: capability single_use");
+
+    ev.grant_capability("self-evo");
+    CapabilityGrant g_se{};
+    CHECK(g_capability_registry().find_grant(38392, "self-evo", g_se),
+          "3839 AC2: self-evo row exists");
+    CHECK(g_se.session_bound, "3839 AC2: self-evo session_bound (align grant_macro_self_evo #3721)");
+    CHECK(g_se.single_use, "3839 AC2: self-evo single_use");
+}
+
+static void ac3839_3_soft_no_force() {
+    std::println("\n--- #3839 AC3: Soft/Off no session_bound force ---");
+    reset_all();
+    set_mode(SandboxMode::Off);
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_capability_tenant_id(38393);
+    ev.grant_capability("mutate");
+    CapabilityGrant g{};
+    CHECK(g_capability_registry().find_grant(38393, "mutate", g), "3839 AC3: row exists");
+    CHECK(!g.session_bound, "3839 AC3: Off does not force session_bound");
+    CHECK(!g.single_use, "3839 AC3: Off does not force single_use");
+}
+
+static void ac3839_4_source_cite() {
+    std::println("\n--- #3839 AC4: source-cite; no test_issue / docs/design ---");
+    const auto sec = read_file("src/compiler/evaluator_security.cpp");
+    CHECK(sec.find("Issue #3839") != std::string::npos, "3839 AC4: evaluator_security.cpp cites");
+    CHECK(sec.find("session_bound = production_defaults && is_high_risk") != std::string::npos,
+          "3839 AC4: session_bound force formula");
+    CHECK(sec.find("grant_capability(std::move(cap), single_use, session_bound,") !=
+              std::string::npos,
+          "3839 AC4: string path passes session_bound");
+    const auto linter = read_file("scripts/coverage/checks/check_string_grant_session_bound_3839.py");
+    CHECK(!linter.empty(), "3839 AC4: coverage linter present");
+    CHECK(read_file("build.py").find("check_string_grant_session_bound_3839") != std::string::npos,
+          "3839 AC4: build.py wires linter");
+    CHECK(read_file("tests/core/test_issue_3839.cpp").empty(), "3839 AC4: no test_issue_3839.cpp");
+    CHECK(!std::filesystem::exists("docs/design/3839-string-grant-session.md"),
+          "3839 AC4: no docs/design/3839-*");
 }
 
 // ── Issue #3723: inert Guard must not publish a session mid ─────────
@@ -2779,6 +2881,11 @@ int run_test_capability_single_use_consume() {
         ac3436_2_durable_named_no_deadlock();
         ac3436_3_caller_principal_ssot();
         ac3436_4_soft_off_and_source_cite();
+        // Issue #3839: string grant_capability production high-risk session_bound.
+        ac3839_1_string_high_risk_session_revoked();
+        ac3839_2_capability_and_self_evo_align();
+        ac3839_3_soft_no_force();
+        ac3839_4_source_cite();
         // Issue #3723: inert Guard must not publish a session mid.
         ac3723_1_inert_ctor_does_not_publish_mid();
         ac3723_2_prior_session_untouched_inert_mid_unusable();
@@ -2799,6 +2906,16 @@ int run_test_grant_effect_capability_session_3561() {
     ac3561_4_string_mirror_keeps_session();
     ac3561_5_source_cite();
     std::println("\n=== #3561 results: {} passed, {} failed ===", g_passed, g_failed);
+    return g_failed == 0 ? 0 : 1;
+}
+
+int run_test_string_grant_session_bound_3839() {
+    std::println("=== Issue #3839: plain grant_capability(string) production high-risk session_bound ===");
+    ac3839_1_string_high_risk_session_revoked();
+    ac3839_2_capability_and_self_evo_align();
+    ac3839_3_soft_no_force();
+    ac3839_4_source_cite();
+    std::println("\n=== #3839 results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
 

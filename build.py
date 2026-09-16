@@ -5211,6 +5211,20 @@ def cmd_lint():
             "Issue #3838 WAL overflow wrap-refuse linter failed — run python3 scripts/coverage/checks/check_wal_overflow_wrap_refuse_3838.py"
         )
         return r
+    # Issue #3839: plain grant_capability(string) production high-risk
+    # session_bound — align with grant_effect_capability (#3561). Soft/Off
+    # no force. Extends test_capability_single_use_consume (#81967); updates
+    # #3436 AC2; no docs/design / invent (#1655).
+    sgsb3839_script = COVERAGE_CHECKS / "check_string_grant_session_bound_3839.py"
+    if not sgsb3839_script.exists():
+        fail(f"missing {sgsb3839_script}")
+        return 1
+    r = run([sys.executable, str(sgsb3839_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3839 string grant session_bound linter failed — run python3 scripts/coverage/checks/check_string_grant_session_bound_3839.py"
+        )
+        return r
     # Issue #3802: EXEMPT_2ARG write-file/sys-* host-path isolation under
     # Restricted+MT / Strict — resolve under tenant root from
     # capability_tenant_id_; cross-tenant escape → IsolationDeny SE
@@ -15566,6 +15580,27 @@ def cmd_wal_overflow_wrap_refuse_3838():
     return cmd_wal_overflow_wrap_refuse_3838_coverage()
 
 
+def cmd_string_grant_session_bound_3839_coverage():
+    """Issue #3839: string grant_capability production high-risk session_bound."""
+    print(f"{B}=== string grant session_bound (#3839) ==={N}")
+    script = COVERAGE_CHECKS / "check_string_grant_session_bound_3839.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = run([sys.executable, str(script)], cwd=ROOT)
+    if r != 0:
+        fail("string grant session_bound (#3839) coverage contract rows failed")
+        return r
+    ok("string grant session_bound (#3839) coverage clean")
+    return 0
+
+
+def cmd_string_grant_session_bound_3839():
+    """Issue #3839: Align string grant_capability session_bound with effect path."""
+    print(f"{B}=== string grant session_bound (#3839) ==={N}")
+    return cmd_string_grant_session_bound_3839_coverage()
+
+
 def cmd_engine_metrics_hash_overflow_3018_coverage():
     """Issue #3018: engine:metrics hash overflow fail-soft (static)."""
     print(f"{B}=== engine:metrics hash overflow coverage (#3018) ==={N}")
@@ -23557,6 +23592,8 @@ def main():
         "shell-require-effect-3836-coverage": cmd_shell_require_effect_3836_coverage,
         "wal-overflow-wrap-refuse-3838": cmd_wal_overflow_wrap_refuse_3838,
         "wal-overflow-wrap-refuse-3838-coverage": cmd_wal_overflow_wrap_refuse_3838_coverage,
+        "string-grant-session-bound-3839": cmd_string_grant_session_bound_3839,
+        "string-grant-session-bound-3839-coverage": cmd_string_grant_session_bound_3839_coverage,
         "mutate-dispatch-sole-guard-3074-coverage": cmd_mutate_dispatch_sole_guard_3074_coverage,
         "mutate-reg-kind-3452": cmd_mutate_reg_kind_3452_coverage,
         "mutate-reg-kind-3452-coverage": cmd_mutate_reg_kind_3452_coverage,
