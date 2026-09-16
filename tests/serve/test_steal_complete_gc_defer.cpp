@@ -1104,7 +1104,9 @@ static void ac3850_1_soft_leftover_probe_blocks_moving() {
     // Source-cite Moving gate OR-gates the probe (behavioral densify cover
     // lives in test_moving_densify_fail_closed / test_moving_compact).
     const auto arena = read_file("src/core/arena.ixx");
-    const auto gate = arena.find("LiveCompactMode::Moving");
+    // Pin the actual Moving entry branch — a bare "LiveCompactMode::Moving"
+    // also matches the #2166 comment far above the gate and shadows it.
+    const auto gate = arena.find("mode == LiveCompactMode::Moving");
     CHECK(gate != std::string::npos, "3850 AC1: Moving entry located");
     const auto win = arena.substr(gate, 2200);
     CHECK(win.find("evaluator_has_panic_checkpoint_probe()") != std::string::npos,
