@@ -351,7 +351,33 @@ int run_test_hold_budget_inbody_escalate() {
         auto fc = read_file("src/serve/fiber.cpp");
         auto poll_pos = fc.find("aura_hold_budget_poll_inbody_window(void) noexcept");
         auto poll_end = poll_pos + 6000;
-        auto poll_win = fc.substr(poll_pos, poll_end - poll_pos);
+        auto poll_raw = fc.substr(poll_pos, poll_end - poll_pos);
+        // Strip // comments + collapse whitespace before matching: the
+        // invariant is about CODE (no preemptive unlock / workspace_mtx_
+        // touch in the poll), not about comment text — clang-format reflows
+        // move comments in/out of any fixed window (format-wave, 2026-09-16).
+        std::string poll_win;
+        bool in_comment = false;
+        for (std::size_t k = 0; k < poll_raw.size(); ++k) {
+            if (!in_comment && k + 1 < poll_raw.size() && poll_raw[k] == '/' &&
+                poll_raw[k + 1] == '/') {
+                in_comment = true;
+                ++k;
+                continue;
+            }
+            if (in_comment) {
+                if (poll_raw[k] == '\n')
+                    in_comment = false;
+                continue;
+            }
+            if (poll_raw[k] == ' ' || poll_raw[k] == '\t' || poll_raw[k] == '\n' ||
+                poll_raw[k] == '\r') {
+                if (!poll_win.empty() && poll_win.back() != ' ')
+                    poll_win += ' ';
+                continue;
+            }
+            poll_win += poll_raw[k];
+        }
 
         // poll does NOT call any workspace_mtx_ unlock path.
         CHECK(poll_win.find("workspace_mtx_") == std::string::npos,
