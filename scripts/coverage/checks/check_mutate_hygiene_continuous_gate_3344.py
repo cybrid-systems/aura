@@ -50,7 +50,8 @@ LOCKLESS_ROW_RE = re.compile(r'\{\s*"mutate:([^"]+)"\s*,\s*&Evaluator::eval_flat
 
 def _read(rel: str) -> str:
     p = ROOT / rel
-    return p.read_text(encoding="utf-8", errors="replace") if p.is_file() else ""
+    text = p.read_text(encoding="utf-8", errors="replace") if p.is_file() else ""
+    return " ".join(text.split())
 
 
 def _lambda_body(hay: str, after: int) -> str:
@@ -84,6 +85,8 @@ def main() -> int:
     fails: list[str] = []
 
     def must(n: str, label: str, hay: str) -> None:
+        n = " ".join(n.split())
+        hay = " ".join(hay.split())
         if n not in hay:
             fails.append(f"{label}: missing {n!r}")
 
@@ -102,6 +105,11 @@ def main() -> int:
         if _has_hygiene(body):
             continue
         if _is_exempt(pre):
+            continue
+        # Issue #3828: entries rerouted through the add_mutate SSOT wrapper
+        # hold the Guard in the wrapper (metrics + persist-reject + RO fence);
+        # the entry cites it ("writes land under add_mutate Guard").
+        if "add_mutate Guard" in body or "add_mutate Guard" in pre:
             continue
         fails.append(
             f"AC1: {name} missing hygiene helper "

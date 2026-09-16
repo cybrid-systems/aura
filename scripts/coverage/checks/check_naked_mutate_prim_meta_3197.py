@@ -28,7 +28,8 @@ ROOT = Path(__file__).resolve().parents[3]
 
 def _read(rel: str) -> str:
     p = ROOT / rel
-    return p.read_text(encoding="utf-8", errors="replace") if p.is_file() else ""
+    text = p.read_text(encoding="utf-8", errors="replace") if p.is_file() else ""
+    return " ".join(text.split())
 
 
 ADD_MUTATE_RE = re.compile(r'add_mutate\(\s*"([^"]+)"', re.MULTILINE)
@@ -59,6 +60,8 @@ def main() -> int:
     fails: list[str] = []
 
     def must(n: str, label: str, hay: str) -> None:
+        n = " ".join(n.split())
+        hay = " ".join(hay.split())
         if n not in hay:
             fails.append(f"{label}: missing {n!r}")
 
@@ -93,7 +96,11 @@ def main() -> int:
             fails.append(f"AC3: could not parse body for {name}")
             continue
         exempt = "guard_exempt" in after
-        has = "mutate_dispatch_try_acquire" in body or "run_under_mutation_guard" in body
+        has = (
+            "mutate_dispatch_try_acquire" in body
+            or "run_under_mutation_guard" in body
+            or "add_mutate Guard" in body  # Issue #3828: SSOT wrapper-held guard
+        )
         if exempt:
             continue
         if not has:
