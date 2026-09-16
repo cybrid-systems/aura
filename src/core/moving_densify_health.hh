@@ -218,6 +218,15 @@ struct MovingDensifyHealthSnapshot {
     return pin_held && !incomplete && untracked_kept == 0 && root_fail == 0;
 }
 
+// Issue #3421 soak: did the last publish actually move objects? Helper so
+// the apply arms can refuse a densify-old publish under an LCP deny without
+// reading g_last_objects_moved directly (#3848 AC5 pins objects_moved-keyed
+// early returns out of the arm bodies — this ADDS a refuse, it never skips
+// one for moved==0).
+[[nodiscard]] inline bool last_publish_moved_objects() noexcept {
+    return g_last_objects_moved.load(std::memory_order_relaxed) > 0;
+}
+
 // Issue #2682: single unified Moving success predicate (AC1-AC4).
 //   success_moving ⇔
 //     !moving_blocked_precondition

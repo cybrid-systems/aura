@@ -355,10 +355,6 @@ static bool production_apply_closure_densify_hard_refuse(ast::ASTArena* arena, c
                 std::memory_order_relaxed)))
         return true;
     ast::ASTArena* ar = arena ? arena : cl.owner_arena;
-    // Issue #3848 optional fast-path: window green + empty remap table →
-    // no densify-old tombstone to refuse on (zero cost; Soft already exited).
-    if (ar && ar->object_remap_size() == 0)
-        return false;
     // Issue #3634: per-eval first (#3617 slots), process-wide fallback.
     // A foreign evaluator's Reject poisons the process-wide bit; an
     // evaluator with a slot of its own consults its own last-window
@@ -369,6 +365,16 @@ static bool production_apply_closure_densify_hard_refuse(ast::ASTArena* arena, c
             ? aura::core::lifetime_consistency_proof::last_lifetime_consistency_would_allow_for(
                   eval_id)
             : aura::core::lifetime_consistency_proof::last_lifetime_consistency_would_allow();
+    // Issue #3421 soak / #3602 AC-b / #3634 AC2: a densify-old publish
+    // (moved>0, helper read) under an LCP deny refuses even when the remap
+    // table is empty — the #3848 fast-path must not bypass the LCP gate
+    // (the deny already says the last window would not allow commit).
+    if (!lcp_ok && aura::core::moving_densify_health::last_publish_moved_objects())
+        return true;
+    // Issue #3848 optional fast-path: window green (or zero-move recovery
+    // per AC2) + empty remap table → no densify-old tombstone to refuse on.
+    if (ar && ar->object_remap_size() == 0)
+        return false;
     if (!lcp_ok)
         return true;
     if (!ar)
@@ -446,9 +452,6 @@ static bool production_ffi_apply_densify_hard_refuse(ast::ASTArena* arena, const
             aura::core::moving_densify_health::g_last_root_remap_fail_total.load(
                 std::memory_order_relaxed)))
         return true;
-    // Issue #3848 optional fast-path: window green + empty remap → no refuse.
-    if (arena && arena->object_remap_size() == 0)
-        return false;
     // Issue #3634: per-eval first (#3617 slots), process-wide fallback —
     // same shape as the #3421 closure arm above.
     const bool lcp_ok =
@@ -456,6 +459,15 @@ static bool production_ffi_apply_densify_hard_refuse(ast::ASTArena* arena, const
             ? aura::core::lifetime_consistency_proof::last_lifetime_consistency_would_allow_for(
                   eval_id)
             : aura::core::lifetime_consistency_proof::last_lifetime_consistency_would_allow();
+    // Issue #3602 AC-b / #3634 AC2: densify-old (moved>0, helper read) + LCP
+    // deny refuses even with an empty remap table — the #3848 fast-path must
+    // not bypass the LCP gate (mirrors the #3421 soak arm above).
+    if (!lcp_ok && aura::core::moving_densify_health::last_publish_moved_objects())
+        return true;
+    // Issue #3848 optional fast-path: window green (or zero-move recovery)
+    // + empty remap → no refuse.
+    if (arena && arena->object_remap_size() == 0)
+        return false;
     if (!lcp_ok)
         return true;
     if (arena && fn_ptr && arena->resolve_object_remap(const_cast<void*>(fn_ptr)))

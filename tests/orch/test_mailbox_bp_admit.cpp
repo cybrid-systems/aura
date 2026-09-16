@@ -50,6 +50,8 @@
 //                                       + schema-2228)
 
 #include "test_harness.hpp"
+
+#include <filesystem>
 #include "orch/sched_runner_test_helper.h"
 
 #include "compiler/typed_mutation_audit.h"
@@ -1828,6 +1830,20 @@ int run_test_mailbox_bp_admit() {
         aura::compiler::typed_audit::apply_production_audit_defaults();
         aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
         aura::orch::reset_scope_bp_map_for_test();
+        // Issue #3777 spawn preflight consults the security schedule: under
+        // Restricted a disabled mutation-audit WAL is "posture-degraded" —
+        // every spawn is schedule-denied before the BP logic this AC tests.
+        // Pin the WAL on for this section (production posture); restored at
+        // section end below.
+        const bool wal_on_3804 = aura::core::audit_wal::g_mutation_audit_wal().is_enabled();
+        if (!wal_on_3804) {
+            std::filesystem::create_directories("build/test-wal-3804");
+            const bool wal_en = aura::core::audit_wal::g_mutation_audit_wal().enable(
+                std::string_view("build/test-wal-3804"), nullptr, 0);
+            CHECK(wal_en, "3804: mutation WAL enable");
+        }
+        CHECK(aura::core::audit_wal::g_mutation_audit_wal().is_enabled(),
+              "3804: mutation WAL pinned on");
         if (aura::orch::production_defaults_active()) {
             // Fill 256 live named gauges.
             for (int i = 0; i < static_cast<int>(kMailboxBpScopeMapCap); ++i)
@@ -1865,7 +1881,9 @@ int run_test_mailbox_bp_admit() {
             in_map.attach_mailbox = true;
             in_map.bp_scope_id = "live3804-0";
             auto hin = spawn_agent_with_mailbox(sched, in_map);
-            CHECK(hin.ok, "ac3804_4_in_map_quiet_admits_despite_overflow_storm");
+            CHECK(hin.ok, "ac3804_4_in_map_quiet_admits_despite_overflow_storm (deny_class=" +
+                              std::to_string(static_cast<int>(hin.deny_class)) +
+                              " dim=" + hin.quota_dimension + " err=" + hin.error + ")");
 
             AgentSpec quiet_ov;
             quiet_ov.name = "3804-quiet-ov";
@@ -1916,6 +1934,9 @@ int run_test_mailbox_bp_admit() {
         CHECK(read_file("tests/orch/test_issue_3804.cpp").empty(), "ac3804_5_no_invent");
         CHECK(read_file("docs/design/3804-bp-overflow-cohort.md").empty(),
               "3804 AC: no docs/design/3804-*");
+
+        if (!wal_on_3804)
+            aura::core::audit_wal::g_mutation_audit_wal().disable();
 
         aura::compiler::typed_audit::apply_dev_audit_defaults();
         aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);

@@ -3074,8 +3074,11 @@ static void ac3613_4_source_and_linter() {
           "3613 AC5: lock-order canary extended");
     CHECK(build.find("check_mailbox_holder_send_lock_order_3613") != std::string::npos,
           "3613 AC6: build.py wires linter");
-    const int rc = std::system("python3 scripts/check_mailbox_holder_send_lock_order_3613.py "
-                               "--self-test > /dev/null 2>&1");
+    int rc = std::system("python3 scripts/check_mailbox_holder_send_lock_order_3613.py "
+                         "--self-test > /dev/null 2>&1");
+    if (rc != 0)
+        rc = std::system("python3 ../scripts/check_mailbox_holder_send_lock_order_3613.py "
+                         "--self-test > /dev/null 2>&1");
     CHECK(rc == 0, "3613 AC6: linter --self-test passes");
     CHECK(read_file_3613("tests/issues/test_issue_3613.cpp").empty(),
           "3613 AC6: no tests/issues/test_issue_3613.cpp");
@@ -3129,6 +3132,8 @@ static void ac3764_2_no_edge_holder_disposed() {
     CHECK(aura::compiler::mutation_hold_budget_reject_enabled(),
           "3764 AC2: reject_enabled under production");
     aura::serve::set_production_multi_worker_latched_for_test(true);
+    aura::serve::clear_steal_safety_transaction_for_test(); // #3195: reset named residuals from
+                                                            // prior windows/members
     aura::compiler::mutation_hold_live_reset_for_test();
     aura::compiler::clear_hold_budget_no_edge_force_for_test();
     aura::compiler::clear_mutation_hold_budget_inbody_window_for_test();
@@ -3201,6 +3206,8 @@ static void ac3764_3_mutation_hold_released() {
     ::setenv("AURA_MUTATION_HOLD_SLO_US", "2000", 1);
     aura::compiler::typed_audit::apply_production_audit_defaults();
     aura::serve::set_production_multi_worker_latched_for_test(true);
+    aura::serve::clear_steal_safety_transaction_for_test(); // #3195: reset named residuals from
+                                                            // prior windows/members
     aura::compiler::mutation_hold_live_reset_for_test();
     aura::compiler::clear_hold_budget_no_edge_force_for_test();
     CompilerService cs;
@@ -3281,6 +3288,8 @@ static void ac3826_1_edge_free_peer_poll_gate() {
     CHECK(aura::compiler::mutation_hold_budget_reject_enabled(),
           "3826 AC1: reject_enabled under production");
     aura::serve::set_production_multi_worker_latched_for_test(true);
+    aura::serve::clear_steal_safety_transaction_for_test(); // #3195: reset named residuals from
+                                                            // prior windows/members
     aura::compiler::mutation_hold_live_reset_for_test();
     aura::compiler::clear_hold_budget_no_edge_force_for_test();
     aura::compiler::clear_mutation_hold_budget_inbody_window_for_test();
@@ -3371,6 +3380,8 @@ static void ac3826_2_defer_clear_after_body() {
     ::setenv("AURA_MUTATION_HOLD_SLO_US", "2000", 1);
     aura::compiler::typed_audit::apply_production_audit_defaults();
     aura::serve::set_production_multi_worker_latched_for_test(true);
+    aura::serve::clear_steal_safety_transaction_for_test(); // #3195: reset named residuals from
+                                                            // prior windows/members
     aura::compiler::mutation_hold_live_reset_for_test();
     aura::compiler::clear_hold_budget_no_edge_force_for_test();
     CompilerService cs;
@@ -3607,6 +3618,8 @@ static void ac3791_3_no_edge_holder_fail_closed() {
     CHECK(aura::compiler::mutation_hold_budget_reject_enabled(),
           "3791 AC3: reject_enabled under production");
     aura::serve::set_production_multi_worker_latched_for_test(true);
+    aura::serve::clear_steal_safety_transaction_for_test(); // #3195: reset named residuals from
+                                                            // prior windows/members
     aura::compiler::mutation_hold_live_reset_for_test();
     aura::compiler::clear_hold_budget_no_edge_force_for_test();
     aura::compiler::clear_mutation_hold_budget_inbody_window_for_test();

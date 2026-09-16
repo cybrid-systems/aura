@@ -926,15 +926,19 @@ static void ac3844_1_hard_epoch0_stays_zero() {
     CHECK(prov.mutation_id == kTypedMid, "3844 AC1: mid join unchanged (TypedMid)");
     CHECK(stamp_grant_mutation_epoch() == 0, "3844 AC1: stamp helper returns 0 under hard");
 
-    // Grant under Restricted so registry records provenance; TenantAdmin first.
-    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
-    g_capability_registry().sandbox_mode = aura::core::capability::EffectSandboxMode::Restricted;
+    // Bootstrap TenantAdmin while the registry is still Off — the #3409
+    // SSOT fence refuses same-tenant high-bits grants from a caller that
+    // holds no TA yet (cold start has no TA to vouch). Production seeds TA
+    // before arming Restricted; mirror that here, then arm.
     {
         auto ta = make_grant_provenance(kTypedMid, true, 0, 0);
         CHECK(ta.epoch == 0, "3844 AC1: TA grant epoch stays 0");
-        g_capability_registry().grant(844, "tenant-admin", Effect::TenantAdmin, ta,
-                                      /*single_use=*/false, /*session_bound=*/false, 844);
+        CHECK(g_capability_registry().grant(844, "tenant-admin", Effect::TenantAdmin, ta,
+                                            /*single_use=*/false, /*session_bound=*/false, 844),
+              "3844 AC1: TA bootstrap grant under Off");
     }
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+    g_capability_registry().sandbox_mode = aura::core::capability::EffectSandboxMode::Restricted;
     auto gprov = make_grant_provenance(kTypedMid, true, 0, 0);
     const bool granted =
         g_capability_registry().grant(844, "mutate-3844", Effect::Mutate, gprov,
@@ -972,6 +976,15 @@ static void ac3844_1_hard_epoch0_stays_zero() {
     CHECK(!saw_epoch1, "3844 AC1: no phantom epoch=1 SE/WAL row");
     CHECK(saw_epoch0_with_mid,
           "3844 AC1: SE epoch=0 with TypedMid join (Mutation vocabulary intact)");
+
+    // Registry + proof + TLS hygiene for downstream members: pre-fix these
+    // grants failed silently (#3409 cold start) and the effect check was
+    // denied — downstream members saw that world. The allowed path stamps
+    // the TLS boundary mid + proof + grant entries; restore all of it.
+    aura::compiler::typed_audit::clear_boundary_audit_mid();
+    aura::compiler::typed_audit::clear_type_linear_commit_proof_for_test();
+    g_capability_registry().revoke(844, "mutate-3844");
+    g_capability_registry().revoke(844, "tenant-admin");
 }
 
 static void ac3844_2_soft_observe_stamp_documented() {

@@ -156,6 +156,28 @@ bool aura_runtime_require_production_multi_worker() noexcept {
 
     if (steal_safety_production_residual_zero_v_read() == 0) {
         fail_bits |= kProductionAbiSelfcheckFailBitResidualSticky;
+        // Issue #3195 diagnosis: which named residual is non-zero.
+        std::fprintf(
+            stderr,
+            "#3195 residual dump: rearm_race=%llu lifetime_proof=%llu "
+            "boundary_unsafe=%llu layout_stamp=%llu gc_defer=%llu "
+            "envframe_lag=%llu hold_no_edge=%llu\n",
+            static_cast<unsigned long long>(
+                g_steal_safety_residual_rearm_race_total.load(std::memory_order_relaxed)),
+            static_cast<unsigned long long>(
+                g_steal_safety_residual_lifetime_proof_reject_total.load(
+                    std::memory_order_relaxed)),
+            static_cast<unsigned long long>(
+                g_steal_safety_residual_boundary_unsafe_total.load(std::memory_order_relaxed)),
+            static_cast<unsigned long long>(
+                g_steal_safety_residual_layout_stamp_mismatch_total.load(
+                    std::memory_order_relaxed)),
+            static_cast<unsigned long long>(
+                g_steal_safety_residual_gc_defer_armed_total.load(std::memory_order_relaxed)),
+            static_cast<unsigned long long>(
+                g_steal_safety_residual_envframe_lag_total.load(std::memory_order_relaxed)),
+            static_cast<unsigned long long>(
+                ::aura::serve::aura_mutation_hold_no_edge_still_held()));
         g_production_abi_selfcheck_last_fail_bits.store(fail_bits, std::memory_order_relaxed);
         g_production_abi_selfcheck_fail_total.fetch_add(1, std::memory_order_relaxed);
         std::fprintf(stderr,
