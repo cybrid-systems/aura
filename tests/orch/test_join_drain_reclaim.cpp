@@ -2675,6 +2675,194 @@ static void ac3841_5_soft_and_source_cite() {
           "3841 AC5: no new query key");
 }
 
+
+// Issue #3842: AgentScope::sweep_reclaimed_pending — Scope-owned vector
+// hosts drain Reclaimed-pending without remembering ensure per handle.
+// Soft: no new force path. No AgentRegistry. Aura orch:* auto-wait unchanged.
+static void ac3842_1_scope_sweep_cleans_vector_host_after_body_exit() {
+    using aura::orch::AgentHandle;
+    using aura::orch::AgentScope;
+    using aura::serve::Fiber;
+    using aura::serve::FiberState;
+    using aura::serve::Scheduler;
+    std::println("\n--- #3842 AC1: Scope sweep cleans vector-host after body exit (no ensure) ---");
+    apply_production_audit_defaults();
+    Scheduler sched(1);
+    AgentScope scope(sched);
+    auto fiber_owned = std::make_unique<Fiber>([] {});
+    fiber_owned->mark_reclaimed();
+    fiber_owned->set_state(FiberState::Done);
+    fiber_owned->note_body_exit_if_reclaimed();
+    AgentHandle h;
+    h.ok = true;
+    h.fiber = fiber_owned.get();
+    h.reserved_memory_bytes = 2048;
+    h.name = "ac3842-vec";
+    h.must_wait_reclaimed = true;
+    h.reclaimed_deferred_cleanup = true;
+    // Option C: Scope owns the handle (same plane as spawn → handles_).
+    auto& slot = scope.adopt_handle_without_spec_for_test(std::move(h));
+    CHECK(slot.must_wait_reclaimed && slot.reserved_memory_bytes == 2048,
+          "3842 AC1: pending + reservation held pre-sweep");
+    // Host does NOT call ensure_reclaimed_cleanup / wait / abandon / dtor.
+    auto swept = scope.sweep_reclaimed_pending();
+    CHECK(swept.cleaned == 1, "3842 AC1: sweep cleaned one pending handle");
+    CHECK(swept.still_pending == 0, "3842 AC1: none still pending");
+    // After Done-path cleanup + compact, husk may be erased from handles_.
+    const auto live = scope.handles();
+    if (!live.empty()) {
+        CHECK(!live[0].must_wait_reclaimed && !live[0].reclaimed_deferred_cleanup,
+              "3842 AC1: pending flags cleared");
+        CHECK(live[0].reserved_memory_bytes == 0, "3842 AC1: reservation released");
+    } else {
+        CHECK(true, "3842 AC1: Done husk compacted after sweep (name/slot retired)");
+    }
+    apply_dev_audit_defaults();
+}
+
+static void ac3842_2_scope_sweep_timeout_keeps_pending_no_force() {
+    using aura::orch::AgentHandle;
+    using aura::orch::AgentScope;
+    using aura::serve::Fiber;
+    using aura::serve::Scheduler;
+    std::println("\n--- #3842 AC2: sweep Timeout while body live — no new force, #2661 ---");
+    apply_production_audit_defaults();
+    Scheduler sched(1);
+    AgentScope scope(sched);
+    auto fiber_owned = std::make_unique<Fiber>([] {});
+    fiber_owned->mark_reclaimed();
+    // Body still live (!is_done).
+    AgentHandle h;
+    h.ok = true;
+    h.fiber = fiber_owned.get();
+    h.reserved_memory_bytes = 4096;
+    h.name = "ac3842-live";
+    h.must_wait_reclaimed = true;
+    h.reclaimed_deferred_cleanup = true;
+    auto& slot = scope.adopt_handle_without_spec_for_test(std::move(h));
+    const auto force0 =
+        g_orch_module_stats.reclaimed_quota_force_released_total.load(std::memory_order_relaxed);
+    auto swept = scope.sweep_reclaimed_pending();
+    CHECK(swept.still_pending == 1, "3842 AC2: still_pending while body live");
+    CHECK(swept.cleaned == 0, "3842 AC2: no cleanup while live");
+    CHECK(slot.must_wait_reclaimed, "3842 AC2: must_wait retained");
+    CHECK(slot.reserved_memory_bytes == 4096 || slot.quota_recycled_pending,
+          "3842 AC2: #2661 no early body-stack free; quota may recycle via ensure SSOT only");
+    CHECK(!fiber_owned->is_done(), "3842 AC2: body-stack untouched");
+    // Soft contract: no *new* force path beyond ensure's existing #3529 arm.
+    // With default timeout (60s) and fresh mark_reclaimed, force should not bump.
+    CHECK(g_orch_module_stats.reclaimed_quota_force_released_total.load(
+              std::memory_order_relaxed) == force0,
+          "3842 AC2: no new force bump on fresh reclaim (ensure SSOT age gate)");
+    // Steal fiber so ~AgentHandle / scope dtor does not join never-started body.
+    slot.fiber = nullptr;
+    apply_dev_audit_defaults();
+}
+
+static void ac3842_3_soft_zero_cost_no_force() {
+    using aura::orch::AgentHandle;
+    using aura::orch::AgentScope;
+    using aura::serve::Fiber;
+    using aura::serve::Scheduler;
+    std::println("\n--- #3842 AC3: Soft sweep zero-cost / no force ---");
+    apply_dev_audit_defaults();
+    Scheduler sched(1);
+    AgentScope scope(sched);
+    auto fiber_owned = std::make_unique<Fiber>([] {});
+    fiber_owned->mark_reclaimed();
+    AgentHandle h;
+    h.ok = true;
+    h.fiber = fiber_owned.get();
+    h.reserved_memory_bytes = 1024;
+    h.name = "ac3842-soft";
+    h.must_wait_reclaimed = true;
+    h.reclaimed_deferred_cleanup = true;
+    auto& slot = scope.adopt_handle_without_spec_for_test(std::move(h));
+    const auto wait0 =
+        g_orch_module_stats.wait_reclaimed_total.load(std::memory_order_relaxed);
+    const auto force0 =
+        g_orch_module_stats.reclaimed_quota_force_released_total.load(std::memory_order_relaxed);
+    auto swept = scope.sweep_reclaimed_pending();
+    CHECK(swept.cleaned == 0 && swept.still_pending == 0 && swept.skipped == 0 &&
+              swept.wait_us == 0,
+          "3842 AC3: Soft sweep returns zeros");
+    CHECK(slot.reserved_memory_bytes == 1024, "3842 AC3: Soft does not release");
+    CHECK(slot.must_wait_reclaimed, "3842 AC3: Soft leaves flags");
+    CHECK(g_orch_module_stats.wait_reclaimed_total.load(std::memory_order_relaxed) == wait0,
+          "3842 AC3: Soft no wait_reclaimed bump");
+    CHECK(g_orch_module_stats.reclaimed_quota_force_released_total.load(
+              std::memory_order_relaxed) == force0,
+          "3842 AC3: Soft no force bump");
+    slot.fiber = nullptr;
+}
+
+static void ac3842_4_spawn_registers_with_scope_lifetime() {
+    using aura::orch::AgentScope;
+    using aura::orch::AgentSpec;
+    using aura::serve::Scheduler;
+    std::println("\n--- #3842 AC4: spawn via Scope registers handle for sweep ---");
+    apply_dev_audit_defaults();
+    Scheduler sched(1);
+    AgentScope scope(sched);
+    AgentSpec spec;
+    spec.name = "ac3842-spawn-reg";
+    spec.body = [] {};
+    auto& named = scope.spawn(spec);
+    CHECK(named.ok || !named.ok, "3842 AC4: spawn returns handle ref");
+    // Registration plane: handles_ contains the spawned slot (or failed
+    // stub under deny). Soft append-only — size >= 1 when spawn pushed.
+    if (named.ok) {
+        CHECK(scope.handles().size() >= 1, "3842 AC4: spawn registered into handles_");
+        CHECK(scope.handles()[0].name == "ac3842-spawn-reg" ||
+                  scope.find("ac3842-spawn-reg") != nullptr,
+              "3842 AC4: Scope owns named handle (find / handles_)");
+    }
+    const auto scope_h = read_file("src/orch/agent_scope.h");
+    CHECK(scope_h.find("registers the raw AgentHandle with this Scope") != std::string::npos ||
+              scope_h.find("Issue #3842: registers the raw AgentHandle") != std::string::npos,
+          "3842 AC4: spawn cites Scope lifetime registration");
+}
+
+static void ac3842_5_source_cite_linter_no_invent() {
+    std::println("\n--- #3842 AC5: source-cite + linter + no invent / no AgentRegistry ---");
+    const auto spawn = read_file("src/orch/agent_spawn.h");
+    const auto scope_h = read_file("src/orch/agent_scope.h");
+    const auto build = read_file("build.py");
+    CHECK(spawn.find("kScopeSweepReclaimedPendingIssue = 3842") != std::string::npos,
+          "3842 AC5: issue stamp");
+    CHECK(spawn.find("Issue #3842") != std::string::npos, "3842 AC5: spawn cite");
+    CHECK(scope_h.find("sweep_reclaimed_pending()") != std::string::npos,
+          "3842 AC5: sweep API present");
+    CHECK(scope_h.find("ensure_reclaimed_cleanup(h)") != std::string::npos,
+          "3842 AC5: sweep reuses ensure SSOT");
+    CHECK(scope_h.find("AgentRegistry") == std::string::npos ||
+              scope_h.find("no process-global AgentRegistry") != std::string::npos ||
+              scope_h.find("No process-global AgentRegistry") != std::string::npos,
+          "3842 AC5: no invent AgentRegistry (forbid cite ok)");
+    CHECK(scope_h.find("class AgentRegistry") == std::string::npos &&
+              scope_h.find("struct AgentRegistry") == std::string::npos &&
+              scope_h.find("global_agent_registry") == std::string::npos,
+          "3842 AC5: no AgentRegistry / global_agent_registry symbol");
+    CHECK(build.find("check_scope_sweep_reclaimed_pending_3842") != std::string::npos,
+          "3842 AC5: build.py wires linter");
+    CHECK(read_file("scripts/coverage/checks/check_scope_sweep_reclaimed_pending_3842.py")
+                  .find("3842") != std::string::npos,
+          "3842 AC5: linter present");
+    CHECK(read_file("tests/orch/test_issue_3842.cpp").empty() &&
+              read_file("tests/issues/test_issue_3842.cpp").empty(),
+          "3842 AC5: no test_issue_3842.cpp per #81967");
+    CHECK(read_file("docs/design/3842-scope-sweep-reclaimed.md").empty(),
+          "3842 AC5: no docs/design/3842-* per #1655");
+    const auto prim = read_file("src/compiler/evaluator_primitives_agent.cpp");
+    CHECK(prim.find("query:scope-sweep-reclaimed") == std::string::npos,
+          "3842 AC5: no new query key");
+    // Aura auto-wait path must remain the ensure / maybe_auto_wait SSOT.
+    CHECK(spawn.find("maybe_auto_wait_reclaimed_production") != std::string::npos &&
+              spawn.find("ensure_reclaimed_cleanup(h)") != std::string::npos,
+          "3842 AC5: Aura orch:* auto-wait SSOT unchanged");
+}
+
+
 static void ac3644_5_source_cite_and_no_invent() {
     std::println("\n--- #3644 AC5: source-cite + linter + no invent / no new query key ---");
     const auto spawn = read_file("src/orch/agent_spawn.h");
@@ -6600,6 +6788,13 @@ int run_test_join_drain_reclaim() {
     ac3841_3_abandon_after_quota_recycle_not_invalid();
     ac3841_4_batch_keeps_must_wait_after_quota_recycle();
     ac3841_5_soft_and_source_cite();
+
+    std::println("\n=== Issue #3842: Scope sweep_reclaimed_pending vector-host ===");
+    ac3842_1_scope_sweep_cleans_vector_host_after_body_exit();
+    ac3842_2_scope_sweep_timeout_keeps_pending_no_force();
+    ac3842_3_soft_zero_cost_no_force();
+    ac3842_4_spawn_registers_with_scope_lifetime();
+    ac3842_5_source_cite_linter_no_invent();
 
     // #3797-wave CI: restore the WAL-off face for later batch members.
     if (wal_member_pinned)

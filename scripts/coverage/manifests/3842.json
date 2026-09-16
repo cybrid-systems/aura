@@ -1,0 +1,43 @@
+{
+  "issue": 3842,
+  "title": "Issue #3842: AgentScope::sweep_reclaimed_pending for Scope-owned vector hosts",
+  "ok": "OK: Issue #3842 Scope sweep drains Reclaimed-pending via ensure SSOT; Soft gated; no AgentRegistry.",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/orch/agent_spawn.h",
+      "contains": [
+        "kScopeSweepReclaimedPendingIssue = 3842",
+        "Issue #3842"
+      ]
+    },
+    {
+      "ac": "AC1-sweep",
+      "path": "src/orch/agent_scope.h",
+      "contains": [
+        "sweep_reclaimed_pending()",
+        "SweepReclaimedPendingResult",
+        "ensure_reclaimed_cleanup(h)"
+      ]
+    },
+    {
+      "ac": "AC4-test",
+      "path": "tests/orch/test_join_drain_reclaim.cpp",
+      "contains": [
+        "ac3842_1_scope_sweep_cleans_vector_host_after_body_exit",
+        "ac3842_2_scope_sweep_timeout_keeps_pending_no_force",
+        "ac3842_3_soft_zero_cost_no_force",
+        "ac3842_4_spawn_registers_with_scope_lifetime",
+        "ac3842_5_source_cite_linter_no_invent"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "forbid": [
+        "tests/orch/test_issue_3842.cpp",
+        "tests/issues/test_issue_3842.cpp",
+        "docs/design/3842-scope-sweep-reclaimed.md"
+      ]
+    }
+  ]
+}

@@ -9119,6 +9119,20 @@ def cmd_lint():
             "Issue #3841 quota-recycle must_wait SSOT linter failed — run python3 scripts/coverage/checks/check_quota_recycle_must_wait_ssot_3841.py"
         )
         return r
+    # Issue #3842: AgentScope::sweep_reclaimed_pending drains Scope-owned
+    # Reclaimed-pending handles without host remembering ensure per handle.
+    # Soft: no new force path. No AgentRegistry. Aura orch:* auto-wait
+    # unchanged. Extends test_join_drain_reclaim.cpp (#81967); no docs/design (#1655).
+    ssrp3842_script = COVERAGE_CHECKS / "check_scope_sweep_reclaimed_pending_3842.py"
+    if not ssrp3842_script.exists():
+        fail(f"missing {ssrp3842_script}")
+        return 1
+    r = run([sys.executable, str(ssrp3842_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3842 Scope sweep_reclaimed_pending linter failed — run python3 scripts/coverage/checks/check_scope_sweep_reclaimed_pending_3842.py"
+        )
+        return r
     # Issue #3806: SE WAL overflow ring wrap/overwrite counter + Agent
     # faces (depth/wrap-total/full). Extends test_security_event_wal_replay
     # + test_security_posture_trail (#81967); no docs/design (#1655).

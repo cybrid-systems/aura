@@ -419,7 +419,9 @@ public:
     // Issue #2782: true while the bound Scheduler is still alive.
     [[nodiscard]] bool scheduler_alive() const noexcept { return sched_ != nullptr; }
 
-    // Spawn a new agent under this scope. Pushes the handle to the back.
+    // Spawn a new agent under this scope. Pushes the handle to the back
+    // (Issue #3842: registers the raw AgentHandle with this Scope's
+    // lifetime — handles_ is the only ownership plane; no AgentRegistry).
     // Soft/Off: reference remains valid until the scope is destroyed.
     // Production (#3776): compact may erase Done husks and reshuffle live
     // slots on a later spawn / join_all / watch_all — do not hold AgentHandle&
@@ -1089,6 +1091,76 @@ public:
                                           bool include_descendants = true) const noexcept {
         ScopeEnterGuard g(this, "find");
         return find_unlocked_(name, include_descendants);
+    }
+
+    // Issue #3842: drain Scope-owned Reclaimed-pending handles without
+    // requiring the host to remember ensure_reclaimed_cleanup / wait /
+    // abandon per handle. Long-lived C++ hosts that keep AgentHandle in
+    // Scope (spawn registers into handles_; vector of Scope-owned refs)
+    // call this after production auto-wait Timeout when bodies may have
+    // exited — releases reservation / mailbox (Done-path SSOT via
+    // ensure_reclaimed_cleanup) so cleanup does not bottom out at
+    // ~AgentHandle. Name-table / find·put recycle (#3564/#3644) still does
+    // not run for raw host vectors that never resolve by name; Scope
+    // ownership is the closed plane.
+    //
+    // Soft / Off: one production gate, zero wait, no new force path.
+    // Aura orch:* auto-wait unchanged. No process-global AgentRegistry.
+    // Timeout while body still live: still_pending++, #2661 no-early-free
+    // (ensure SSOT). After successful Done-path cleanup, compact may
+    // retire Done husks (#3776).
+    struct SweepReclaimedPendingResult {
+        std::uint32_t cleaned = 0;       // Done-path cleanup completed
+        std::uint32_t still_pending = 0; // must_wait / deferred still owed
+        std::uint32_t skipped = 0;       // not reclaimed-pending
+        std::uint64_t wait_us = 0;
+    };
+
+    [[nodiscard]] SweepReclaimedPendingResult sweep_reclaimed_pending() {
+        ScopeEnterGuard g(this, "sweep_reclaimed_pending");
+        SweepReclaimedPendingResult out;
+        // Soft / Off: zero-cost — no ensure loop, no force path, no
+        // getenv. Production hosts that opted into must_wait are the
+        // only callers that need the drain.
+        if (!aura::compiler::typed_audit::production_defaults_active())
+            return out;
+        for (auto& h : handles_) {
+            if (!h.must_wait_reclaimed && !h.reclaimed_deferred_cleanup) {
+                ++out.skipped;
+                continue;
+            }
+            // SSOT second-wait (#3087/#3245): ensure requires must_wait.
+            // When must_wait is set (production Timeout), one ensure arm
+            // finishes Done-path cleanup if the body already exited, or
+            // returns Timeout while live (#2661). Deferred without
+            // must_wait under production is rare; wait_reclaimed_body
+            // covers the body-already-done edge without a new force path.
+            if (h.must_wait_reclaimed) {
+                auto wr = ensure_reclaimed_cleanup(h);
+                out.wait_us += wr.wait_us;
+                if (wr.cleanup_completed ||
+                    (!h.must_wait_reclaimed && !h.reclaimed_deferred_cleanup)) {
+                    ++out.cleaned;
+                } else {
+                    ++out.still_pending;
+                }
+            } else if (h.fiber && h.fiber->is_done()) {
+                auto wr = wait_reclaimed_body(h, /*timeout_ms=*/std::nullopt);
+                out.wait_us += wr.wait_us;
+                if (wr.cleanup_completed ||
+                    (!h.must_wait_reclaimed && !h.reclaimed_deferred_cleanup)) {
+                    ++out.cleaned;
+                } else {
+                    ++out.still_pending;
+                }
+            } else {
+                ++out.still_pending;
+            }
+        }
+        // Retire Done-path husks so name / slot pressure drops without
+        // waiting for the next spawn / join_all (#3776).
+        compact_done_husks_unlocked_();
+        return out;
     }
 
     // Supervision root: cancel + best-effort drain + release before

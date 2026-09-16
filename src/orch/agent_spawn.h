@@ -143,6 +143,14 @@ inline constexpr int kAbandonedLiveNameReuseIssue = 3805;
 // Invalid. Keep must_wait; set quota_recycled_pending for host/stats.
 // Soft / Off: helper stays production-gated (unchanged).
 inline constexpr int kQuotaRecycleMustWaitSsotIssue = 3841;
+
+// Issue #3842: AgentScope::sweep_reclaimed_pending drains Scope-owned
+// Reclaimed-pending handles (reservation/mailbox/name plane) without
+// requiring the host to remember ensure_reclaimed_cleanup per handle.
+// Spawn via Scope already registers into handles_ (no process-global
+// AgentRegistry). Soft: no new force path. Aura orch:* auto-wait unchanged.
+inline constexpr int kScopeSweepReclaimedPendingIssue = 3842;
+
 // Issue #3336: production C++ send preference — agent_send_safe (or
 // explicit `// orch-raw-send-ok`) for non-test TUs. Raw agent_send
 // remains for zero-cost non-held_ref / already-stamped.
@@ -1052,6 +1060,8 @@ inline OrchModuleStats g_orch_module_stats{};
 // Issue #3245: long-lived C++ hosts that keep AgentHandle after
 // production auto-wait Timeout MUST call ensure_reclaimed_cleanup
 // (or wait_reclaimed_body) before name reuse / second supervision.
+// Issue #3842: Scope-owned handles can instead call
+// AgentScope::sweep_reclaimed_pending (SSOT still ensure_reclaimed_cleanup).
 // Moving a still-pending handle (vector / hand-off) re-bumps the
 // existing host_forget_reclaimed_risk_total so hosts that only saw
 // the join-time bump still get a hold-path signal. Soft: must_wait
