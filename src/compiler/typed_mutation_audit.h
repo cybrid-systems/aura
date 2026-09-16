@@ -4393,10 +4393,21 @@ inline std::uint64_t pin_composite_batch_join_mid(std::uint64_t caller_mid = 0) 
 
 // Issue #3066 AC2: Sampled + force-reason — pin deny mid so later SE
 // emits join the same key (no silent fallback divergence).
+// Issue #3845: align with pin #3367 — mid==0 must NOT invent via
+// next_audit_mutation_id(). Hard face (production_defaults || Full):
+// return 0, no sticky. Soft/Sampled quiet: also return 0 (no Soft
+// observe invent; same quiet contract as pin #3066 AC3 / #3367).
+// Soft invent is intentionally NOT kept. Not a refile of #3837/#3838.
 inline std::uint64_t promote_sampled_force_join_mid(std::uint64_t deny_mid = 0) noexcept {
     auto mid = deny_mid != 0 ? deny_mid : join_audit_and_se_mid(0);
-    if (mid == 0)
-        mid = next_audit_mutation_id();
+    if (mid == 0) {
+        // Issue #3845: hard face (production_defaults || Full) → no invent,
+        // no sticky. Soft: invent intentionally NOT kept — quiet return 0
+        // (aligned with pin #3367 / #3066 AC3). Soft invent NOT kept.
+        [[maybe_unused]] const bool hard_face =
+            production_defaults_active() || get_strategy() == AuditStrategy::Full;
+        return 0; // Soft quiet — no invent, no sticky (#3845)
+    }
     g_tls_composite_batch_join_mid = mid;
     note_boundary_audit_mid(mid);
     g_last_composite_batch_join_mid.store(mid, std::memory_order_relaxed);

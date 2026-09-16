@@ -5225,6 +5225,20 @@ def cmd_lint():
             "Issue #3844 grant/SE epoch no-phantom linter failed — run python3 scripts/coverage/checks/check_grant_epoch_no_phantom_3844.py"
         )
         return r
+    # Issue #3845: promote_sampled_force_join_mid must not invent mid via
+    # next_audit_mutation_id when mid==0. Align with pin #3367. Soft invent
+    # intentionally NOT kept. Not a refile of #3837/#3838. Extends
+    # test_audit_mutation_id_unify; no docs/design / invent (#1655).
+    pfj3845_script = COVERAGE_CHECKS / "check_promote_force_join_mid_no_invent_3845.py"
+    if not pfj3845_script.exists():
+        fail(f"missing {pfj3845_script}")
+        return 1
+    r = run([sys.executable, str(pfj3845_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3845 promote force-join mid no-invent linter failed — run python3 scripts/coverage/checks/check_promote_force_join_mid_no_invent_3845.py"
+        )
+        return r
     # Issue #3838: SE WAL overflow refuse-on-wrap under production
     # fail-closed (#3806 residual). Soft overwrite retained; Agent face
     # wrap-evicted vs never-emitted. Extends test_security_event_wal_replay
@@ -15672,6 +15686,28 @@ def cmd_grant_epoch_no_phantom_3844():
 
 
 
+def cmd_promote_force_join_mid_no_invent_3845_coverage():
+    """Issue #3845: promote_sampled_force_join_mid no mid invent (align pin #3367)."""
+    print(f"{B}=== promote force-join mid no invent (#3845) ==={N}")
+    script = COVERAGE_CHECKS / "check_promote_force_join_mid_no_invent_3845.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = run([sys.executable, str(script)], cwd=ROOT)
+    if r != 0:
+        fail("promote force-join mid no invent (#3845) coverage contract rows failed")
+        return r
+    ok("promote force-join mid no invent (#3845) coverage clean")
+    return 0
+
+
+def cmd_promote_force_join_mid_no_invent_3845():
+    """Issue #3845: Align promote mid==0 with pin #3367 (no invent)."""
+    print(f"{B}=== promote force-join mid no invent (#3845) ==={N}")
+    return cmd_promote_force_join_mid_no_invent_3845_coverage()
+
+
+
 def cmd_wal_overflow_wrap_refuse_3838_coverage():
     """Issue #3838: WAL overflow refuse-on-wrap (#3806 residual)."""
     print(f"{B}=== WAL overflow wrap refuse (#3838) ==={N}")
@@ -23728,6 +23764,8 @@ def main():
         "require-effect-full-hard-mid-3843-coverage": cmd_require_effect_full_hard_mid_3843_coverage,
         "grant-epoch-no-phantom-3844": cmd_grant_epoch_no_phantom_3844,
         "grant-epoch-no-phantom-3844-coverage": cmd_grant_epoch_no_phantom_3844_coverage,
+        "promote-force-join-mid-no-invent-3845": cmd_promote_force_join_mid_no_invent_3845,
+        "promote-force-join-mid-no-invent-3845-coverage": cmd_promote_force_join_mid_no_invent_3845_coverage,
         "wal-overflow-wrap-refuse-3838": cmd_wal_overflow_wrap_refuse_3838,
         "wal-overflow-wrap-refuse-3838-coverage": cmd_wal_overflow_wrap_refuse_3838_coverage,
         "string-grant-session-bound-3839": cmd_string_grant_session_bound_3839,

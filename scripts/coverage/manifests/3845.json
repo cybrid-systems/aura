@@ -1,0 +1,53 @@
+{
+  "issue": 3845,
+  "title": "Issue #3845: promote_sampled_force_join_mid no mid invent (align pin #3367)",
+  "ok": "OK: Issue #3845 promote mid==0 returns 0 under hard/Soft (no invent)",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/typed_mutation_audit.h",
+      "contains": [
+        "Issue #3845",
+        "promote_sampled_force_join_mid",
+        "production_defaults_active()",
+        "AuditStrategy::Full",
+        "Soft invent is intentionally NOT kept"
+      ]
+    },
+    {
+      "ac": "AC1-no-invent",
+      "path": "src/compiler/typed_mutation_audit.h",
+      "contains": [
+        "Soft quiet — no invent, no sticky (#3845)"
+      ]
+    },
+    {
+      "ac": "AC2-test",
+      "path": "tests/compiler/test_audit_mutation_id_unify.cpp",
+      "contains": [
+        "ac3845_1_hard_promote_zero_no_invent",
+        "ac3845_2_nonzero_deny_mid_unchanged",
+        "ac3845_3_soft_no_observe_invent_documented",
+        "ac3845_4_source_cite_wiring_no_invent",
+        "3845 AC2: promote(deny_mid) returns deny_mid"
+      ]
+    },
+    {
+      "ac": "AC4-wiring",
+      "path": "build.py",
+      "contains": [
+        "check_promote_force_join_mid_no_invent_3845",
+        "Issue #3845"
+      ]
+    },
+    {
+      "ac": "AC4-forbid",
+      "forbid": [
+        "tests/compiler/test_issue_3845.cpp",
+        "tests/core/test_issue_3845.cpp",
+        "tests/issues/test_issue_3845.cpp",
+        "docs/design/3845-promote-force-join-mid-no-invent.md"
+      ]
+    }
+  ]
+}
