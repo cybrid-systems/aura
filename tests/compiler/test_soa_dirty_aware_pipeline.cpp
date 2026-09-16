@@ -621,16 +621,22 @@ int run_test_soa_dirty_aware_pipeline() {
         auto b1 = mod.add_block(fi0);
         mod.add_instruction(fi0, IROpcode::ConstI64, {1, 0, 0, 0}, 0, 1, 0, 0);
         mod.seal_block(fi0, b1);
-        auto& dirty_fn = mod.functions[fi0];
-        dirty_fn.block_dirty_.assign(dirty_fn.blocks_.size(), 0);
-        if (!dirty_fn.block_dirty_.empty())
-            dirty_fn.block_dirty_[0] = 1;
+        {
+            auto& dirty_fn = mod.functions[fi0];
+            dirty_fn.block_dirty_.assign(dirty_fn.blocks_.size(), 0);
+            if (!dirty_fn.block_dirty_.empty())
+                dirty_fn.block_dirty_[0] = 1;
+        }
         auto fi1 = mod.add_function("clean3701", 2);
         auto c0 = mod.add_block(fi1);
         mod.add_instruction(fi1, IROpcode::ConstI64, {0, 1, 0, 0}, 0, 1, 0, 0);
         mod.seal_block(fi1, c0);
         auto& clean_fn = mod.functions[fi1];
         clean_fn.block_dirty_.assign(clean_fn.blocks_.size(), 0);
+        // Issue #3701 AC2: re-fetch AFTER the second add_function — the
+        // functions vector can reallocate on push_back, dangling the old
+        // reference (maps0=4 / dirty_local=0 probe, 2026-09-16).
+        const auto& dirty_fn = mod.functions[fi0];
 
         std::vector<std::vector<std::uint8_t>> maps(2);
         maps[0] = {9};

@@ -884,7 +884,7 @@ static void ac3328_3_2906_3233_non_regression() {
 static void ac3829_1_columnar_production_stale() {
     std::println(
         "\n--- #3829 AC1: columnar capture → mutate → Production is_stale / re-pin live ---");
-    CHECK(kPcvDenseColumnarFingerprintIssue == 3829, "3829 AC1: issue stamp");
+    CHECK(aura::ast::kPcvDenseColumnarFingerprintIssue == 3829, "3829 AC1: issue stamp");
     reset_pcv_hotpath_metrics_for_test();
     FlatAST flat;
     NodeId kids[2] = {flat.add_literal(10), flat.add_literal(20)};
