@@ -111,6 +111,11 @@ int run_test_isolation_audit_mid() {
     {
         std::println("\n--- AC1/AC4: mid = mutation epoch ---");
         reset_all();
+        // Mid-join hygiene: the isolation deny's mid must be the Mutation
+        // epoch, not a boundary/proof stamp leaked from an earlier member's
+        // effect path (TLS noted boundary survives reset_all).
+        aura::compiler::typed_audit::clear_boundary_audit_mid();
+        aura::compiler::typed_audit::clear_type_linear_commit_proof_for_test();
         bump_mutation_epoch(42);
         const auto epoch = current_mutation_epoch();
         CHECK(epoch >= 42, "epoch advanced");

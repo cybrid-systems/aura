@@ -4401,25 +4401,18 @@ inline std::uint64_t pin_composite_batch_join_mid(std::uint64_t caller_mid = 0) 
 // Soft invent is intentionally NOT kept. Not a refile of #3837/#3838.
 inline std::uint64_t promote_sampled_force_join_mid(std::uint64_t deny_mid = 0) noexcept {
     if (deny_mid == 0) {
-        // Issue #3845: quiet contract — mid==0 must not invent via the
-        // resolver's Soft fallback (next_audit_mutation_id). Nothing pinned
-        // and no epoch on a quiet Soft/Sampled face → 0 (aligned #3367 /
-        // #3066 AC3). Hard face falls through so the #2836 refuse counter
-        // still fires; pinned TLS / epoch≠0 observe stamps fall through too.
-        const bool pinned3845 = g_tls_composite_batch_join_mid != 0 ||
-                                (g_tls_boundary_audit_noted && g_tls_boundary_audit_mid != 0);
-        const bool hard_face3845 =
-            production_defaults_active() || get_strategy() == AuditStrategy::Full;
-        if (!pinned3845 && !hard_face3845 && ::aura::core::current_mutation_epoch() == 0)
+        // Issue #3845: quiet — nothing pinned / no epoch / not hard face →
+        // 0; Soft invent intentionally NOT kept (#3367, #3066 AC3). Hard
+        // face falls through to the #2836 refuse; pinned TLS / epoch!=0
+        // observe stamps fall through too.
+        const bool pin3845 = g_tls_composite_batch_join_mid != 0 ||
+                             (g_tls_boundary_audit_noted && g_tls_boundary_audit_mid != 0);
+        const bool hard3845 = production_defaults_active() || get_strategy() == AuditStrategy::Full;
+        if (!pin3845 && !hard3845 && ::aura::core::current_mutation_epoch() == 0)
             return 0;
     }
     auto mid = deny_mid != 0 ? deny_mid : join_audit_and_se_mid(0);
     if (mid == 0) {
-        // Issue #3845: hard face (production_defaults || Full) → no invent,
-        // no sticky. Soft: invent intentionally NOT kept — quiet return 0
-        // (aligned with pin #3367 / #3066 AC3). Soft invent NOT kept.
-        [[maybe_unused]] const bool hard_face =
-            production_defaults_active() || get_strategy() == AuditStrategy::Full;
         return 0; // Soft quiet — no invent, no sticky (#3845)
     }
     g_tls_composite_batch_join_mid = mid;

@@ -2317,6 +2317,10 @@ static void ac3640_gate_single_spine_source_cite() {
 static void ac3773_1_restricted_stale_ref_denies_before_effect() {
     std::println("\n--- #3773 AC1: Restricted stamp→bump→on_ref(stale) denies ---");
     reset_all();
+    // Mid-join hygiene: the deny SE's mid must join the Mutation epoch, not
+    // a boundary/proof stamp leaked from an earlier member's effect path.
+    aura::compiler::typed_audit::clear_boundary_audit_mid();
+    aura::compiler::typed_audit::clear_type_linear_commit_proof_for_test();
     bump_mutation_epoch(1);
     const auto me = current_mutation_epoch();
     // Registry grant (same as #3724 AC2) — bypasses #3362 TA fence so the
@@ -2362,6 +2366,8 @@ static void ac3773_1_restricted_stale_ref_denies_before_effect() {
             continue;
         se_join = true;
         CHECK(e.tenant_id == 7, "3773 AC1: SE tenant joins stamped ref");
+        std::fprintf(stderr, "3773dbg: se_mid=%llu epoch=%llu\n", (unsigned long long)e.mutation_id,
+                     (unsigned long long)current_mutation_epoch());
         CHECK(e.mutation_id == current_mutation_epoch(), "3773 AC1: SE mid is Mutation epoch");
         CHECK(e.epoch == current_mutation_epoch(), "3773 AC1: SE epoch join");
         CHECK(std::string{e.reason}.find("stale-ref") != std::string::npos,
