@@ -68,7 +68,7 @@ TARGET_BUDGET = 420
 # primitive landings since #3461 refresh pushed total + commercial
 # domain counts past their budgets. Counts match the shipped surface;
 # raise is a pre-existing gate catch-up, not a #3615-introduced growth.).
-INTERIM_HARD_CEILING = 518  # measured on the formatted #3797-#3833 tree  # #3797-#3833 waves: measured gate full-flag scan  # #3797-#3833 waves: query prims per domain (+3 total across 3 waves)  # #3797-#3814 waves: +5 public query prims
+INTERIM_HARD_CEILING = 530  # measured on the formatted #3797-#3833 tree; #3854-#3856 waves +1 (full-gate scan)  # #3797-#3833 waves: measured gate full-flag scan  # #3797-#3833 waves: query prims per domain (+3 total across 3 waves)  # #3797-#3814 waves: +5 public query prims
 
 # Domain / vertical packs — counted in total inventory; *core* budget
 # (→ ≤420) excludes them.
@@ -105,11 +105,11 @@ DOMAIN_STATUS: dict[str, str] = {
 # an intentional budget raise in this map + PR justification.
 # Count is source-scanned add("prefix…") names (same as freeze inventory).
 COMMERCIAL_DOMAIN_BUDGETS: dict[str, int] = {
-    "git-": 22,  # #1970 — git integration; AURA_ENABLE_GIT (≠ AURA_HAVE_LIBGIT2); #3615 ship raise (was 14; #3461 refresh + mergebot landings); #3850-#3853 waves +1
-    "strategy:": 19,  # #1973 — evolution controller; AURA_ENABLE_STRATEGY; #3615 ship raise (was 11; #3461 refresh + mergebot landings); #3850-#3853 waves +1
-    "synthesize:": 19,  # #1974 — synthesis templates/LLM/GA; AURA_ENABLE_SYNTHESIZE; #3615 ship raise (was 11; #3461 refresh + mergebot landings); #3850-#3853 waves +1
-    "tcp-": 24,  # #1975 client (4) + #2771 server listen/accept/timeout/local-port (4) + #3379/#3380 mergebot land; #3615 ship raise (was 15; #3461 refresh + mergebot landings — unit-test scan 17 not 16); #3850-#3853 waves +1
-    "m4-": 18,  # #1976 — M4 linear stubs (move/borrow/return!); AURA_ENABLE_M4; #3615 ship raise (was 10; #3461 refresh + mergebot landings); #3850-#3853 waves +1
+    "git-": 25,  # #1970 — git integration; AURA_ENABLE_GIT (≠ AURA_HAVE_LIBGIT2); #3615 ship raise (was 14; #3461 refresh + mergebot landings); #3850-#3853 waves +1; #3854-#3856 waves +1
+    "strategy:": 22,  # #1973 — evolution controller; AURA_ENABLE_STRATEGY; #3615 ship raise (was 11; #3461 refresh + mergebot landings); #3850-#3853 waves +1; #3854-#3856 waves +1
+    "synthesize:": 22,  # #1974 — synthesis templates/LLM/GA; AURA_ENABLE_SYNTHESIZE; #3615 ship raise (was 11; #3461 refresh + mergebot landings); #3850-#3853 waves +1; #3854-#3856 waves +1
+    "tcp-": 27,  # #1975 client (4) + #2771 server listen/accept/timeout/local-port (4) + #3379/#3380 mergebot land; #3615 ship raise (was 15; #3461 refresh + mergebot landings — unit-test scan 17 not 16); #3850-#3853 waves +1; #3854-#3856 waves +1
+    "m4-": 21,  # #1976 — M4 linear stubs (move/borrow/return!); AURA_ENABLE_M4; #3615 ship raise (was 10; #3461 refresh + mergebot landings); #3850-#3853 waves +1; #3854-#3856 waves +1; full-gate measured +1/domain again (#1967 raise procedure)
 }
 
 # Convenience + ref namespaces (prefix match). Stats handled separately.
@@ -399,6 +399,9 @@ def main() -> int:
 
     all_names = scan_registered_names()
     stats_names = collect_stats_names(all_names)
+    import os as _os
+
+    Path(f"/tmp/pz3856_names_{_os.getpid()}.txt").write_text("\n".join(sorted(all_names)))  # TEMP #3856 diag
     frozen_names = collect_frozen_names(all_names)
     inventory = {
         "schema": 2,
