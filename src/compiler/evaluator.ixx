@@ -14175,6 +14175,14 @@ public:
     // Returns 0 when no workspace is loaded (caller treats 0 as
     // "no-op checkpoint", distinct from a valid saved id).
     std::uint64_t save_hygiene_checkpoint_handle() noexcept;
+    // Issue #3858: non-consuming peek — the first node whose live
+    // MacroIntroduced marker restore would demote to the checkpointed
+    // (User) value, or NULL_NODE when the restore cannot demote (bad
+    // handle, cross-generation, no live MI, or identical saved
+    // markers). The deny face (mutate:restore-hygiene-checkpoint)
+    // blames this node; the peek never consumes the slot.
+    [[nodiscard]] aura::ast::NodeId
+    restore_would_demote_macro_introduced(std::uint64_t handle) const noexcept;
     // Returns false on: handle == 0, handle not found, already
     // restored, cross-fiber mismatch, or generation drift
     // (workspace compacted / recycled since save).

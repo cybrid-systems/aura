@@ -7888,6 +7888,24 @@ def cmd_lint():
             "Issue #3857 temp-canary Moving entry gate linter failed — run python3 scripts/check_temp_canary_moving_gate_3857.py"
         )
         return r
+    # Issue #3858 (macro hygiene residual): #3344 marked
+    # mutate:restore-hygiene-checkpoint HYGIENE_EXEMPT, but restoring the
+    # checkpointed marker column can demote live MacroIntroduced → User
+    # and vacate the #3344/#3542 structural default-deny without
+    # MacroSelfEvo. Gate pins: the prim peeks the demote face under
+    # sandbox and denies via the #3650 helper before the handle is
+    # consumed; the peek is non-consuming; the hygiene closed-loop suite
+    # drives block + MSE-restore + Soft + non-demote faces.
+    rcmse3858_script = ROOT / "scripts" / "check_restore_checkpoint_mse_3858.py"
+    if not rcmse3858_script.exists():
+        fail(f"missing {rcmse3858_script}")
+        return 1
+    r = run([sys.executable, str(rcmse3858_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3858 restore-checkpoint MSE linter failed — run python3 scripts/check_restore_checkpoint_mse_3858.py"
+        )
+        return r
     # Issue #3722 (#2490/#2658/#2942 residual): rollback / rollback-since
     # host prims wrote FlatAST with no require_effect / isolation consult —
     # a Restricted+MT tenant could structurally undo a foreign mutation

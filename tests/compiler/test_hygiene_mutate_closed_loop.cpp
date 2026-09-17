@@ -5900,6 +5900,163 @@ static void ac3752_5_source_and_no_artifacts() {
           "3752 AC5: no docs/design/");
 }
 
+
+// ── Issue #3858: restore-hygiene-checkpoint demote face requires MSE ──
+// #3344 marked restore HYGIENE_EXEMPT, but restoring the checkpointed
+// marker column can demote live MacroIntroduced → User, vacating the
+// structural default-deny without MacroSelfEvo. Same MSE gate as
+// rollback-macro-introduced (#3650); blame = first demoted node.
+
+static void ac3858_1_restore_demote_denied_without_mse() {
+    std::println("\n--- #3858 AC1: restore demoting MacroIntroduced denied without MSE ---");
+    using aura::core::capability::g_capability_effect_metrics;
+    using aura::core::capability::reset_capability_effects_for_test;
+    using aura::core::security_event::reset_security_event_ring_for_test;
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    reset_capability_effects_for_test();
+    reset_security_event_ring_for_test();
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define f (lambda (x) (+ x 1)))\")").has_value(),
+          "3858 AC1: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3858 AC1: eval");
+    auto find_f = cs.eval("(car (query :find \"f\"))");
+    CHECK(find_f && is_int(*find_f), "3858 AC1: find f");
+    const auto id = static_cast<aura::ast::NodeId>(as_int(*find_f));
+    // Checkpoint while the marker is still User, then stamp MacroIntroduced.
+    auto saved = cs.eval("(mutate:save-hygiene-checkpoint)");
+    CHECK(saved && is_int(*saved) && as_int(*saved) > 0, "3858 AC1: checkpoint saved");
+    CHECK(cs.eval(std::format("(syntax:set-marker {} 1)", as_int(*find_f))).has_value(),
+          "3858 AC1: stamp MacroIntroduced");
+    auto& ws = *cs.evaluator().workspace_flat();
+    CHECK(ws.is_macro_introduced(id), "3858 AC1: MI live");
+    grant_3301_production_mutate(cs);
+    aura::core::capability::g_capability_registry().revoke(cs.evaluator().capability_tenant_id(),
+                                                           "tenant-admin");
+    const auto deny0 = g_capability_effect_metrics().macro_mutate_capability_deny_total.load();
+    auto denied = cs.eval(std::format("(mutate:restore-hygiene-checkpoint {})", as_int(*saved)));
+    CHECK(denied.has_value(), "3858 AC1: returns");
+    CHECK(merr_kind_3027(cs, *denied) == "hygiene-protected", "3858 AC1: capability fence kind");
+    CHECK(g_capability_effect_metrics().macro_mutate_capability_deny_total.load() > deny0,
+          "3858 AC1: deny counter");
+    CHECK(ring_has_reason_3542("macro-mutate-needs-macro-self-evo"), "3858 AC1: SE reason");
+    CHECK(ws.is_macro_introduced(id), "3858 AC1: marker unchanged after deny");
+    reset_capability_effects_for_test();
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+}
+
+static void ac3858_2_restore_with_mse_demotes() {
+    std::println(
+        "\n--- #3858 AC2: restore with MacroSelfEvo demotes; denied handle not consumed ---");
+    using aura::core::capability::g_capability_registry;
+    using aura::core::capability::MacroSelfEvoPolicy;
+    using aura::core::capability::reset_capability_effects_for_test;
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    reset_capability_effects_for_test();
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define f (lambda (x) (+ x 1)))\")").has_value(),
+          "3858 AC2: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3858 AC2: eval");
+    auto find_f = cs.eval("(car (query :find \"f\"))");
+    CHECK(find_f && is_int(*find_f), "3858 AC2: find f");
+    const auto id = static_cast<aura::ast::NodeId>(as_int(*find_f));
+    auto saved = cs.eval("(mutate:save-hygiene-checkpoint)");
+    CHECK(saved && is_int(*saved) && as_int(*saved) > 0, "3858 AC2: checkpoint saved");
+    CHECK(cs.eval(std::format("(syntax:set-marker {} 1)", as_int(*find_f))).has_value(),
+          "3858 AC2: stamp MacroIntroduced");
+    grant_3301_production_mutate(cs);
+    const auto tenant = cs.evaluator().capability_tenant_id();
+    g_capability_registry().grant_macro_self_evo(tenant, MacroSelfEvoPolicy{},
+                                                 aura_test_grant_prov(), tenant);
+    auto ok = cs.eval(std::format("(mutate:restore-hygiene-checkpoint {})", as_int(*saved)));
+    CHECK(ok.has_value() && is_bool(*ok) && as_bool(*ok), "3858 AC2: restore ok with MSE");
+    auto& ws = *cs.evaluator().workspace_flat();
+    CHECK(!ws.is_macro_introduced(id), "3858 AC2: MI demoted to checkpointed User");
+    reset_capability_effects_for_test();
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+}
+
+static void ac3858_3_soft_restore_unchanged() {
+    std::println("\n--- #3858 AC3: Soft / Off restore unchanged, MSE never consulted ---");
+    using aura::core::capability::g_capability_effect_metrics;
+    using aura::core::capability::reset_capability_effects_for_test;
+    reset_capability_effects_for_test();
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define f (lambda (x) (+ x 1)))\")").has_value(),
+          "3858 AC3: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3858 AC3: eval");
+    auto find_f = cs.eval("(car (query :find \"f\"))");
+    CHECK(find_f && is_int(*find_f), "3858 AC3: find f");
+    const auto id = static_cast<aura::ast::NodeId>(as_int(*find_f));
+    auto saved = cs.eval("(mutate:save-hygiene-checkpoint)");
+    CHECK(saved && is_int(*saved) && as_int(*saved) > 0, "3858 AC3: checkpoint saved");
+    CHECK(cs.eval(std::format("(syntax:set-marker {} 1)", as_int(*find_f))).has_value(),
+          "3858 AC3: stamp MacroIntroduced");
+    const auto deny0 = g_capability_effect_metrics().macro_mutate_capability_deny_total.load();
+    auto ok = cs.eval(std::format("(mutate:restore-hygiene-checkpoint {})", as_int(*saved)));
+    CHECK(ok.has_value() && is_bool(*ok) && as_bool(*ok), "3858 AC3: Soft restore proceeds");
+    CHECK(g_capability_effect_metrics().macro_mutate_capability_deny_total.load() == deny0,
+          "3858 AC3: no deny telemetry");
+    auto& ws = *cs.evaluator().workspace_flat();
+    CHECK(!ws.is_macro_introduced(id), "3858 AC3: demote happened (Soft observe-only world)");
+    reset_capability_effects_for_test();
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+}
+
+static void ac3858_4_no_demote_restore_allowed() {
+    std::println(
+        "\n--- #3858 AC4: non-demoting restore (MI checkpointed) allowed under Restricted ---");
+    using aura::core::capability::reset_capability_effects_for_test;
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    reset_capability_effects_for_test();
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define f (lambda (x) (+ x 1)))\")").has_value(),
+          "3858 AC4: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3858 AC4: eval");
+    auto find_f = cs.eval("(car (query :find \"f\"))");
+    CHECK(find_f && is_int(*find_f), "3858 AC4: find f");
+    const auto id = static_cast<aura::ast::NodeId>(as_int(*find_f));
+    // Stamp MacroIntroduced BEFORE the checkpoint: saved == live MI, no demote.
+    CHECK(cs.eval(std::format("(syntax:set-marker {} 1)", as_int(*find_f))).has_value(),
+          "3858 AC4: stamp MacroIntroduced");
+    auto saved = cs.eval("(mutate:save-hygiene-checkpoint)");
+    CHECK(saved && is_int(*saved) && as_int(*saved) > 0, "3858 AC4: checkpoint saved");
+    grant_3301_production_mutate(cs);
+    aura::core::capability::g_capability_registry().revoke(cs.evaluator().capability_tenant_id(),
+                                                           "tenant-admin");
+    auto ok = cs.eval(std::format("(mutate:restore-hygiene-checkpoint {})", as_int(*saved)));
+    CHECK(ok.has_value() && is_bool(*ok) && as_bool(*ok), "3858 AC4: non-demote restore allowed");
+    auto& ws = *cs.evaluator().workspace_flat();
+    CHECK(ws.is_macro_introduced(id), "3858 AC4: marker stays MacroIntroduced");
+    reset_capability_effects_for_test();
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+}
+
+static void ac3858_5_source_and_no_artifacts() {
+    std::println("\n--- #3858 AC5: source-cite + no invent ---");
+    const auto prim = read_file("src/compiler/evaluator_primitives_mutate.cpp");
+    const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto ev = read_file("src/compiler/evaluator.ixx");
+    const auto build = read_file("build.py");
+    CHECK(prim.find("Issue #3858") != std::string::npos, "AC5: prim gate stamped #3858");
+    CHECK(prim.find("restore_would_demote_macro_introduced(handle)") != std::string::npos,
+          "AC5: prim peeks demote before restore");
+    CHECK(prim.find("deny_macro_opt_out_without_mse(ev, demote_id, mev)") != std::string::npos,
+          "AC5: deny helper wired (#3650 face)");
+    CHECK(mb.find("restore_would_demote_macro_introduced") != std::string::npos &&
+              mb.find("Issue #3858") != std::string::npos,
+          "AC5: peek impl present");
+    CHECK(mb.find("saved[id] != aura::ast::SyntaxMarker::MacroIntroduced") != std::string::npos,
+          "AC5: demote predicate reads the checkpointed marker column");
+    CHECK(ev.find("restore_would_demote_macro_introduced") != std::string::npos,
+          "AC5: Evaluator surface declared");
+    CHECK(build.find("check_restore_checkpoint_mse_3858") != std::string::npos,
+          "AC5: build.py wires linter");
+    CHECK(read_file("tests/compiler/test_issue_3858.cpp").empty(),
+          "AC5: no test_issue_3858.cpp per #81967");
+    CHECK(read_file("docs/design/3858-restore-checkpoint-mse.md").empty(),
+          "AC5: no docs/design/3858-* per #1655");
+}
+
 int main() {
     std::println("=== test_hygiene_mutate_closed_loop (#2037 + #2762 + #2858 + #2863 + #2864 + "
                  "#2961 + #3000 + #3027 + #3037 + #3076 + #3121) ===");
@@ -6115,6 +6272,13 @@ int main() {
     ac3650_3_rollback_with_mse_unstamps();
     ac3650_4_soft_rollback_unchanged();
     ac3650_5_source_and_no_artifacts();
+
+    std::println("\n=== Issue #3858: restore-hygiene-checkpoint MSE gate (demote face) ===");
+    ac3858_1_restore_demote_denied_without_mse();
+    ac3858_2_restore_with_mse_demotes();
+    ac3858_3_soft_restore_unchanged();
+    ac3858_4_no_demote_restore_allowed();
+    ac3858_5_source_and_no_artifacts();
     std::println("\n=== Issue #3752: propagate-marker clear requires MacroSelfEvo ===");
     ac3752_1_propagate_clear_denied_without_mse();
     ac3752_2_propagate_clear_with_mse();

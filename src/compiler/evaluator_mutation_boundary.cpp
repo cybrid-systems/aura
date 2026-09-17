@@ -6748,6 +6748,36 @@ bool Evaluator::restore_hygiene_checkpoint_handle(std::uint64_t handle) noexcept
     return restore_hygiene_checkpoint(cp);
 }
 
+// Issue #3858: non-consuming peek for the restore MSE gate. Restoring
+// reinstalls the full checkpointed marker column, so a node currently
+// MacroIntroduced whose saved marker differs would be demoted back to
+// the saved (User) value — vacating the #3344/#3542 structural
+// default-deny without MacroSelfEvo. Returns the first demoted node id
+// (deny blame) or NULL_NODE when the restore cannot demote: bad handle,
+// cross-generation (restore refuses anyway), no live MacroIntroduced,
+// or saved markers identical. Never consumes the slot — a denied handle
+// stays restorable by a capable tenant. Soft / Off callers gate on
+// effect_sandbox_mode() before calling.
+aura::ast::NodeId
+Evaluator::restore_would_demote_macro_introduced(std::uint64_t handle) const noexcept {
+    if (handle == 0 || !workspace_flat_)
+        return aura::ast::NULL_NODE;
+    const std::size_t slot = static_cast<std::size_t>(handle) - 1;
+    if (slot >= hygiene_checkpoints_.size() || !hygiene_checkpoints_[slot].has_value())
+        return aura::ast::NULL_NODE;
+    const auto& cp = *hygiene_checkpoints_[slot];
+    if (!cp.valid || workspace_flat_->generation() != cp.saved_flat_generation)
+        return aura::ast::NULL_NODE;
+    const auto& saved = cp.meta.marker;
+    const auto count = workspace_flat_->size();
+    for (std::uint32_t id = 0; id < count && id < saved.size(); ++id) {
+        if (workspace_flat_->is_macro_introduced(id) &&
+            saved[id] != aura::ast::SyntaxMarker::MacroIntroduced)
+            return static_cast<aura::ast::NodeId>(id);
+    }
+    return aura::ast::NULL_NODE;
+}
+
 std::size_t Evaluator::hygiene_checkpoint_pending_count() const noexcept {
     std::size_t n = 0;
     for (const auto& slot : hygiene_checkpoints_) {
