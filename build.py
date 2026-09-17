@@ -7858,6 +7858,18 @@ def cmd_lint():
             "Issue #3855 WAL-miss SE compensation linter failed — run python3 scripts/check_wal_miss_se_compensate_3855.py"
         )
         return r
+    # Issue #3856 (observability residual): #3780's fail-closed WAL-miss
+    # deny leaves the mutation-audit ring slot success-shaped for a
+    # rolled-back mid. Gate pins: the emit flips the slot to denied on the
+    # miss and the WAL suite asserts the flip through the #3640 arm shim.
+    ring3856_script = ROOT / "scripts" / "check_wal_miss_ring_flip_3856.py"
+    if not ring3856_script.exists():
+        fail(f"missing {ring3856_script}")
+        return 1
+    r = run([sys.executable, str(ring3856_script)], cwd=ROOT)
+    if r != 0:
+        fail("Issue #3856 WAL-miss ring flip linter failed — run python3 scripts/check_wal_miss_ring_flip_3856.py")
+        return r
     # Issue #3722 (#2490/#2658/#2942 residual): rollback / rollback-since
     # host prims wrote FlatAST with no require_effect / isolation consult —
     # a Restricted+MT tenant could structurally undo a foreign mutation
