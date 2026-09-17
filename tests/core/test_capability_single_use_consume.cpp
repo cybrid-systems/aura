@@ -809,6 +809,75 @@ static void ac3241_3_soft_zero_and_legacy_mid_only() {
           "AC3: legacy mid-only clears both");
 }
 
+// Issue #3854: fiber-scoped session revoke must stamp the caller fiber on
+// SE/audit evidence — #3241/#3799 filter grants by (mid, fiber); the
+// evidence face must join the same tuple or revoke blame reads fiber 0.
+static void ac3854_1_revoke_se_carries_caller_fiber() {
+    std::println("\n--- #3854 AC1: revoke SE rows carry caller fiber (not 0) ---");
+    reset_all();
+    ac3241_arm_restricted_multi_tenant();
+    aura::core::bump_mutation_epoch(1);
+    const auto mid = aura::core::current_mutation_epoch();
+    constexpr std::uint64_t tenant = 44;
+    constexpr std::uint32_t fiber_a = 301;
+    constexpr std::uint32_t fiber_b = 302;
+    ac3241_grant(tenant, "mut-A", mid, fiber_a);
+    ac3241_grant(tenant, "mut-B", mid, fiber_b);
+    const auto n =
+        g_capability_registry().revoke_session_grants_for_mid(mid, "session-mid-exit", fiber_a);
+    CHECK(n >= 1, "AC1: Fiber A mid-exit revokes >=1");
+    CHECK(!ac3241_grant_live(tenant, "mut-A"), "AC1: mut-A revoked");
+    CHECK(ac3241_grant_live(tenant, "mut-B"), "AC1: peer B grant still live");
+    const auto* se = ring_lookup_reason("session-mid-exit");
+    CHECK(se != nullptr, "AC1: revoke SE row present");
+    if (se != nullptr) {
+        CHECK(se->fiber_id == static_cast<std::int64_t>(fiber_a),
+              "AC1: SE fiber_id == caller fiber (not 0)");
+        CHECK(se->tenant_id == tenant, "AC1: SE tenant joins");
+        CHECK(se->mutation_id == mid, "AC1: SE mid joins");
+        CHECK(se->epoch != 0, "AC1: SE epoch nonzero (joinable)");
+    }
+    (void)g_capability_registry().revoke_session_grants_for_mid(mid, "session-mid-exit", fiber_b);
+    const auto* se_b = ring_lookup_reason("session-mid-exit");
+    CHECK(se_b != nullptr, "AC1: B exit SE row present");
+    if (se_b != nullptr) {
+        CHECK(se_b->fiber_id == static_cast<std::int64_t>(fiber_b),
+              "AC1: B exit SE fiber_id == fiber_b");
+    }
+    CHECK(g_capability_registry().session_bound_entries_alive(tenant) == 0, "AC1: both cleared");
+}
+
+static void ac3854_2_legacy_zero_fiber_rows_unchanged() {
+    std::println("\n--- #3854 AC2: legacy fiber=0 mid-only keeps SE fiber 0 ---");
+    reset_all();
+    // Restricted WITHOUT hard_fiber_isolation: the #3799 fail-closed
+    // preflight only fires under hard_fiber_isolation — the legacy
+    // fiber=0 mid-only path stays live here (mirrors #3241 AC3 tail).
+    set_mode(SandboxMode::Restricted);
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+    aura::core::bump_mutation_epoch(1);
+    const auto mid = aura::core::current_mutation_epoch();
+    constexpr std::uint64_t tenant = 45;
+    ac3241_grant(tenant, "mut-L", mid, 101);
+    const auto n = g_capability_registry().revoke_session_grants_for_mid(mid); // fiber=0 legacy
+    CHECK(n >= 1, "AC2: legacy mid-only revokes");
+    const auto* se = ring_lookup_reason("session-mid-exit");
+    CHECK(se != nullptr, "AC2: revoke SE row present");
+    if (se != nullptr) {
+        CHECK(se->fiber_id == 0, "AC2: unknown-fiber legacy row keeps fiber 0");
+    }
+}
+
+static void ac3854_3_source_cite() {
+    std::println("\n--- #3854 AC3: source-cite fiber stamp + hard-face epoch ---");
+    const auto cap = read_file("src/core/capability_model.hh");
+    CHECK(cap.find("Issue #3854") != std::string::npos, "AC3: registry cites #3854");
+    CHECK(cap.find("audit_prov.fiber_id = fiber_id;") != std::string::npos,
+          "AC3: revoke rows stamp caller fiber");
+    CHECK(cap.find("capability_epoch_hard_face()") != std::string::npos,
+          "AC3: hard face helper gates revoke epoch");
+}
+
 static void ac3241_4_source_cite_and_linter() {
     std::println("\n--- #3241 AC5/AC6: source-cite + linter + no invent ---");
     const auto cap = read_file("src/core/capability_model.hh");
@@ -2929,6 +2998,12 @@ int run_test_inert_session_mid_3723() {
     ac3723_3_next_live_enter_sweeps_inert_orphan();
     ac3723_4_steal_resume_no_false_allow();
     ac3723_5_soft_source_and_no_invent();
+    // Issue #3854: the batch dispatches this runner for the member — the
+    // base run_test_capability_single_use_consume() is standalone-main
+    // only (#ifndef AURA_ISSUE_BATCH_MEMBER), so the #3854 ACs live here.
+    ac3854_1_revoke_se_carries_caller_fiber();
+    ac3854_2_legacy_zero_fiber_rows_unchanged();
+    ac3854_3_source_cite();
     std::println("\n=== #3723 results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }

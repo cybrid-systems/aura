@@ -7828,6 +7828,20 @@ def cmd_lint():
     if r != 0:
         fail("Issue #3721 MSE session-bound linter failed — run python3 scripts/check_mse_session_bound_3721.py")
         return r
+    # Issue #3854 (security/provenance residual): fiber-scoped session
+    # revoke filtered grants by (mid, fiber) but stamped SE/audit
+    # provenance without fiber_id — revoke blame rows read fiber 0. Gate
+    # pins: all three fiber-filtered revoke paths stamp the caller fiber;
+    # the mid-revoke epoch routes through capability_epoch_hard_face()
+    # (#3844 contract, 0 stays 0); the #2944 suite asserts SE fiber joins.
+    revoke3854_script = ROOT / "scripts" / "check_mse_revoke_fiber_3854.py"
+    if not revoke3854_script.exists():
+        fail(f"missing {revoke3854_script}")
+        return 1
+    r = run([sys.executable, str(revoke3854_script)], cwd=ROOT)
+    if r != 0:
+        fail("Issue #3854 revoke fiber SE linter failed — run python3 scripts/check_mse_revoke_fiber_3854.py")
+        return r
     # Issue #3722 (#2490/#2658/#2942 residual): rollback / rollback-since
     # host prims wrote FlatAST with no require_effect / isolation consult —
     # a Restricted+MT tenant could structurally undo a foreign mutation
