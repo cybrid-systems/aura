@@ -721,6 +721,33 @@ int run_test_steal_safety_production_residual_zero() {
               "3592: no docs/design/");
     }
 
+    // AC17: densify-busy composition SSOT (#3860, Option B) — the AND set
+    // (GcDeferClear ∧ EnvFrameOk ∧ LifetimeProofOk ∧ BoundarySafe) is the
+    // documented densify-busy face; no single StealInvariant bit exists.
+    // Adversarial: densify-in-progress under production keeps
+    // steal_safety_transaction RejectHard (arms unchanged); Soft densify
+    // stays observe-only by design.
+    {
+        std::println("\n--- AC17: densify-busy composition SSOT (#3860) ---");
+        const auto ss_h = read_file("src/serve/steal_safety.h");
+        const auto ss_cpp = read_file("src/serve/steal_safety.cpp");
+        CHECK(ss_h.find("Issue #3860") != std::string::npos, "AC17: steal_safety.h cites #3860");
+        CHECK(ss_h.find("densify-busy SSOT") != std::string::npos,
+              "AC17: header pins the composition SSOT");
+        CHECK(ss_h.find("Count = 7,") != std::string::npos, "AC17: invariant count unchanged (7)");
+        CHECK(ss_h.find("DensifyBusy") == std::string::npos,
+              "AC17: no new StealInvariant bit (Option B)");
+        CHECK(ss_cpp.find("Issue #3860") != std::string::npos, "AC17: hard-AND site cites #3860");
+        CHECK(ss_cpp.find("StealInvariant::EnvFrameOk") != std::string::npos,
+              "AC17: EnvFrameOk arm present (#2745)");
+        CHECK(ss_cpp.find("StealInvariant::LifetimeProofOk") != std::string::npos,
+              "AC17: LifetimeProofOk arm present (#2957)");
+        CHECK(read_file("tests/serve/test_issue_3860.cpp").empty(),
+              "AC17: no test_issue_3860.cpp per #81967");
+        CHECK(read_file("docs/design/3860-densify-busy-ssot.md").empty(),
+              "AC17: no docs/design/3860-* per #1655");
+    }
+
     std::println("\n=== #3134/#3288/#3385/#3586/#3590/#3592 production-readiness residual-zero: {} "
                  "passed, {} failed ===",
                  g_passed, g_failed);
