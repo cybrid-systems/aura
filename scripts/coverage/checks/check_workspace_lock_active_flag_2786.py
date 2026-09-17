@@ -124,6 +124,20 @@ def main() -> int:
         for f in sorted(docs.glob("2786-*")):
             fails.append(f"AC5: docs/design/{f.name} present (forbidden per #1655)")
 
+    # Issue #3863: workspace:discard MutationBoundaryGuard (extend #2786,
+    # no new check file).
+    ws3863 = _read("src/compiler/evaluator_primitives_workspace.cpp")
+    t3863 = _read("tests/compiler/test_workspace_delete_child.cpp")
+    ps3863 = ws3863.find('add("workspace:discard"')
+    ps_end = ws3863.find("workspace :merge", ps3863) if ps3863 != -1 else -1
+    ps_body = ws3863[ps3863 : ps_end if ps_end != -1 else ps3863 + 4000] if ps3863 != -1 else ""
+    must("Issue #3863", "AC3863 discard cite", ps_body)
+    must("MutationBoundaryGuard::try_acquire", "AC3863 guard acquire", ps_body)
+    must("held_guard", "AC3863 guard held", ps_body)
+    must("Issue #3863", "AC3863 test cite", t3863)
+    if (ROOT / "tests" / "issues" / "test_issue_3863.cpp").is_file():
+        fails.append("AC3863: test_issue_3863.cpp present (forbidden per #81967)")
+
     if fails:
         for f in fails:
             print(f"FAIL: {f}", file=sys.stderr)

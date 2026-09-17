@@ -105,6 +105,38 @@ int main() {
         CHECK(!tree.delete_child(1), "missing child false");
     }
 
+    // ── AC5: workspace:discard MutationBoundaryGuard (#3863) ──
+    {
+        std::println("\n--- AC5: discard guarded (#3863) ---");
+        std::string ws_cpp;
+        for (const char* p : {"src/compiler/evaluator_primitives_workspace.cpp",
+                              "../src/compiler/evaluator_primitives_workspace.cpp"}) {
+            ws_cpp = read_file(p);
+            if (!ws_cpp.empty())
+                break;
+        }
+        CHECK(!ws_cpp.empty(), "3863: read evaluator_primitives_workspace.cpp");
+        CHECK(ws_cpp.find("Issue #3863") != std::string::npos, "3863: discard cites #3863");
+        CHECK(ws_cpp.find("MutationBoundaryGuard::try_acquire") != std::string::npos,
+              "3863: discard acquires MutationBoundaryGuard");
+        // The Guard must wrap the delete/rebind: try_acquire BEFORE the
+        // flat delete (the torn-flat window), held via unique_ptr for the
+        // scope (RAII release).
+        auto dpos = ws_cpp.find("add(\"workspace:discard\"");
+        CHECK(dpos != std::string::npos, "3863: workspace:discard present");
+        auto dwin_end = ws_cpp.find("workspace :merge", dpos);
+        auto dwin = ws_cpp.substr(dpos, (dwin_end == std::string::npos ? 4000 : dwin_end - dpos));
+        CHECK(dwin.find("held_guard") != std::string::npos,
+              "3863: guard held via unique_ptr for the delete/rebind scope");
+        CHECK(dwin.find("delete ws.flat") != std::string::npos,
+              "3863: delete/rebind under the Guard");
+        // No artifacts (#81967 / #1655).
+        CHECK(read_file("tests/issues/test_issue_3863.cpp").empty(),
+              "3863: no test_issue_3863.cpp per #81967");
+        CHECK(read_file("docs/design/3863-discard-guard.md").empty(),
+              "3863: no docs/design/3863-* per #1655");
+    }
+
     std::println("\n=== test_workspace_delete_child_1770: {} passed, {} failed ===", g_passed,
                  g_failed);
     return g_failed ? 1 : 0;

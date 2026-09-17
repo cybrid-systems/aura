@@ -819,6 +819,20 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
                 return make_bool(true); // already in parent state
 
             if (ws.parent_flat_) {
+                // Issue #3863: discard deletes/rebinds the active flat —
+                // wrap the scope in MutationBoundaryGuard (fulfills the
+                // #1904 TODO) so concurrent shared query:* fibers cannot
+                // observe torn workspace_flat_ pointers (MT torn flat,
+                // EDSL I1 residual). Guard acquisition failure → the
+                // discard is refused (consistent false per Verify 1).
+                std::unique_ptr<Evaluator::MutationBoundaryGuard> held_guard;
+                if (!ev.mutation_boundary_held() && ev.mutation_boundary_depth() == 0) {
+                    auto gr =
+                        Evaluator::MutationBoundaryGuard::try_acquire(ev, /*pending=*/1, nullptr);
+                    if (!gr)
+                        return make_bool(false); // guard-reject (Verify 1)
+                    held_guard = std::move(*gr);
+                }
                 delete ws.flat;
                 delete ws.pool;
                 ws.flat = ws.parent_flat_;
@@ -827,9 +841,6 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
                 ws.generation = 0;
                 ws.cow_epoch = 0;
                 ws.remap = aura::ast::mutation::NodeIdRemapTable{};
-                // Issue #1904: removed redundant bump — workspace:discard
-                // doesn't currently use MutationBoundaryGuard, so this
-                // scope needs its own Guard. Marked TODO: add Guard wrap.
                 // If we just discarded the active workspace, sync pointers
                 if (idx == tree->active_idx()) {
                     ev.workspace_flat_ = ws.flat;
