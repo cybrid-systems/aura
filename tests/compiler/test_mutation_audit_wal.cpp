@@ -293,6 +293,42 @@ int main() {
                      off_ns > 0 ? static_cast<double>(on_ns) / static_cast<double>(off_ns) : 0.0);
     }
 
+    // ── AC7 (#3856): fail-closed WAL miss flips the ring slot to denied ──
+    {
+        reset_all();
+        const auto dir7 = dir + "-3856";
+        fs::remove_all(dir7);
+        fs::create_directories(dir7);
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        CHECK(ev.enable_mutation_audit_wal(dir7), "3856 setup: enable WAL");
+        // Arm the LIBRARY-side audit defaults (#3640 per-TU TLS: the test
+        // TU's copy is distinct from the dispatch gate's).
+        ev.arm_production_audit_defaults_for_test();
+        ::setenv("AURA_WAL_APPEND_FAIL_CLOSED", "1", 1); // #3109 explicit opt-in
+        // Pin the #3066 composite join so the mid is deterministic.
+        aura::compiler::typed_audit::g_tls_composite_batch_join_mid = 0x3856;
+        aura::core::security_event_wal::wal_overflow_ring_clear_for_test();
+        const auto depth0 = aura::core::security_event_wal::wal_overflow_ring_depth();
+        CHECK(aura::core::wal_slo::wal_append_fail_closed_active(),
+              "3856 setup: fail-closed active");
+        const auto seq0 = ev.mutation_audit_seq();
+        aura::core::wal_slo::g_wal_append_fail_slo_counters.inject_fail_remaining.store(
+            1, std::memory_order_relaxed);
+        CHECK(!ev.emit_mutation_audit(3, 1, "test:3856-miss", 42),
+              "3856 AC1: WAL append miss → emit returns false (#3780)");
+        CHECK(aura::core::wal_slo::g_wal_append_fail_slo_counters.inject_fail_remaining.load(
+                  std::memory_order_relaxed) == 0,
+              "3856 AC1: inject consumed by the mutation WAL append");
+        const auto& ent = ev.mutation_audit_entry_at(seq0);
+        CHECK(ent.effect_denied, "3856 AC1: ring slot flipped to denied (miss-shaped)");
+        CHECK(ent.provenance_mutation_id == 0x3856, "3856 AC1: mid joined");
+        CHECK(aura::core::security_event_wal::wal_overflow_ring_depth() == depth0 + 1,
+              "3856 AC1: overflow captured the miss");
+        ::unsetenv("AURA_WAL_APPEND_FAIL_CLOSED");
+        aura::compiler::typed_audit::g_tls_composite_batch_join_mid = 0;
+    }
+
     // ── EDSL set-audit-persist-dir! ──
     {
         reset_all();

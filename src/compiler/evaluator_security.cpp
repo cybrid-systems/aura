@@ -313,6 +313,12 @@ bool Evaluator::emit_mutation_audit(std::uint32_t nodes_changed, std::uint32_t e
                                      slot.effect_denied);
         if (::aura::core::wal_slo::wal_append_fail_closed_active()) {
             if (!g_mutation_audit_wal().append(rec)) {
+                // Issue #3856: the ring slot published above reads success
+                // (effect_denied=false) while the #3780 gate is about to
+                // deny the mutate (Guard abort before Occurrence persist).
+                // Flip the slot so Agents joining the ring for this mid see
+                // the miss-shaped face, not a committed one.
+                slot.effect_denied = true;
                 ::aura::core::security_event_wal::WalOverflowRecord ovr{};
                 ovr.mid = rec.provenance_mutation_id;
                 ovr.tenant_id = static_cast<std::uint32_t>(slot.tenant_id);
