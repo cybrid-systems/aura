@@ -300,6 +300,26 @@ def main() -> int:
     if "Issue #3864" not in t3864:
         fails.append("AC3864 test cite: missing Issue #3864")
 
+    # Issue #3865: abort_restore_dual_topology restores the dirty SoA family
+    # (extend #3184, no new check file).
+    root3865 = Path(__file__).resolve().parents[3]
+    ast3865 = (root3865 / "src/core/ast.ixx").read_text(encoding="utf-8", errors="replace")
+    mb3865 = (root3865 / "src/compiler/evaluator_mutation_boundary.cpp").read_text(encoding="utf-8", errors="replace")
+    t3865 = (root3865 / "tests/compiler/test_abort_ir_cache_fence_first.cpp").read_text(
+        encoding="utf-8", errors="replace"
+    )
+    for needle, label in [
+        ("Issue #3865", "AC3865 ast cite"),
+        ("snapshot_dirty_soa", "AC3865 snapshot fn"),
+        ("restore_dirty_soa", "AC3865 restore fn"),
+    ]:
+        if needle not in ast3865:
+            fails.append(f"{label}: missing {needle!r}")
+    if "std::move(cp.dirty_soa_snapshot)" not in mb3865:
+        fails.append("AC3865: caller does not pass the dirty snapshot")
+    if "Issue #3865" not in t3865:
+        fails.append("AC3865 test cite: missing Issue #3865")
+
     if fails:
         for f in fails:
             print(f"FAIL: {f}", file=sys.stderr)

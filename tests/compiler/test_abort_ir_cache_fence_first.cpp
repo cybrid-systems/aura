@@ -846,6 +846,7 @@ static void ac3852_3_source_and_linter() {
 } // namespace
 
 static void ac3864_prod_bypass_source_cite();
+static void ac3865_dirty_soa_restore_source_cite();
 
 int run_test_abort_ir_cache_fence_first() {
     std::println("=== Issue #3159: abort IR cache fence-first ordering under multi-fiber ===");
@@ -854,6 +855,7 @@ int run_test_abort_ir_cache_fence_first() {
     ac1_2_three_abort_sites_ordering();
     ac3_in_progress_flag_lifecycle();
     ac3864_prod_bypass_source_cite();
+    ac3865_dirty_soa_restore_source_cite();
     ac4_test_only_hold_mechanism();
     ac5_soft_off_zero_cost();
     ac6_no_new_metrics_counters();
@@ -919,6 +921,42 @@ static void ac3864_prod_bypass_source_cite() {
           "3864: no test_issue_3864.cpp per #81967");
     CHECK(read_file("docs/design/3864-cascade-defer-bypass.md").empty(),
           "3864: no docs/design/3864-* per #1655");
+}
+
+// ── #3865: abort_restore_dual_topology restores the dirty SoA family ──
+static void ac3865_dirty_soa_restore_source_cite() {
+    std::println("\n--- #3865: dirty SoA restore with topology on abort ---");
+    std::string ast;
+    for (const char* p : {"src/core/ast.ixx", "../src/core/ast.ixx"}) {
+        ast = read_file(p);
+        if (!ast.empty())
+            break;
+    }
+    CHECK(!ast.empty(), "3865: ast.ixx readable");
+    CHECK(ast.find("Issue #3865") != std::string::npos, "3865: ast.ixx cites #3865");
+    CHECK(ast.find("snapshot_dirty_soa") != std::string::npos, "3865: dirty SoA snapshot present");
+    CHECK(ast.find("restore_dirty_soa") != std::string::npos, "3865: dirty SoA restore present");
+    const auto art = ast.find("abort_restore_dual_topology(std::size_t mutation_log_checkpoint");
+    CHECK(art != std::string::npos, "3865: abort_restore_dual_topology present");
+    const auto art_win = ast.substr(art, 700);
+    CHECK(art_win.find("restore_dirty_soa(std::move(dirty_soa_snapshot))") != std::string::npos,
+          "3865: abort restore includes the dirty SoA restore");
+    std::string mb;
+    for (const char* p : {"src/compiler/evaluator_mutation_boundary.cpp",
+                          "../src/compiler/evaluator_mutation_boundary.cpp"}) {
+        mb = read_file(p);
+        if (!mb.empty())
+            break;
+    }
+    CHECK(!mb.empty(), "3865: mutation_boundary.cpp readable");
+    CHECK(mb.find("snapshot_dirty_soa()") != std::string::npos,
+          "3865: checkpoint captures the dirty SoA family");
+    CHECK(mb.find("std::move(cp.dirty_soa_snapshot)") != std::string::npos,
+          "3865: abort restore passes the dirty snapshot");
+    CHECK(read_file("tests/issues/test_issue_3865.cpp").empty(),
+          "3865: no test_issue_3865.cpp per #81967");
+    CHECK(read_file("docs/design/3865-dirty-soa-restore.md").empty(),
+          "3865: no docs/design/3865-* per #1655");
 }
 
 int main() {
