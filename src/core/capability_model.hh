@@ -880,7 +880,15 @@ struct CapabilityRegistry {
             ep = 1;
         EffectProvenance audit_prov{};
         audit_prov.mutation_id = mid;
-        audit_prov.epoch = ep;
+        // Issue #3854: hard face keeps the #3844 contract — Mutation epoch
+        // 0 stays 0 (no phantom 1 in revoke SE/audit provenance); Soft
+        // keeps the observe invent above.
+        audit_prov.epoch =
+            capability_epoch_hard_face() ? ::aura::core::current_mutation_epoch() : ep;
+        // Issue #3854: stamp the caller fiber on revoke SE/audit rows —
+        // #3241/#3799 filter grants by (mid, fiber); the evidence side
+        // must join the same tuple or revoke blame reads fiber 0.
+        audit_prov.fiber_id = fiber_id;
         for (auto& [tenant, vec] : by_tenant) {
             for (auto& g : vec) {
                 if (g.revoked || !g.session_bound)
@@ -961,6 +969,9 @@ struct CapabilityRegistry {
         EffectProvenance audit_prov{};
         audit_prov.mutation_id = mid;
         audit_prov.epoch = ep;
+        // Issue #3854: same evidence-face join as the mid-revoke sweep —
+        // the scope cascade is fiber-filtered, stamp the caller fiber.
+        audit_prov.fiber_id = fiber_id;
         auto it = by_tenant.find(tenant);
         if (it == by_tenant.end())
             return 0;
@@ -1118,6 +1129,9 @@ struct CapabilityRegistry {
                     met.capability_live_session_grants.fetch_sub(1, std::memory_order_relaxed);
                 EffectProvenance audit_prov{};
                 audit_prov.mutation_id = g.bound_mutation_id;
+                // Issue #3854: orphan sweep is fiber-filtered — stamp the
+                // caller fiber so the SE/audit row joins (mid, fiber).
+                audit_prov.fiber_id = fiber_id;
                 audit_prov.epoch = ep;
                 record_audit(Effect::None, Effect::None, tenant, audit_prov,
                              /*denied=*/false, "session-orphan-sweep", "session-orphan-sweep");
