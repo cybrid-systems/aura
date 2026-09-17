@@ -14073,6 +14073,10 @@ public:
         // helper (same transaction as CoercionMap undo). exit_mutation_boundary
         // then no-ops abort_restore_dual_topology (snapshot already moved).
         bool topology_restored = false;
+        // Issue #3865: dirty SoA family snapshot (#1893 columns) — restored
+        // with the topology on abort (no phantom over-dirty cones). Captured
+        // only on non-lightweight boundaries; empty = keep live columns.
+        aura::ast::FlatAST::DirtySoaSnapshot dirty_soa_snapshot;
     };
     // Issue #264: snapshot taken at fiber yield while a mutation
     // boundary may be active (per-fiber stack on Fiber).

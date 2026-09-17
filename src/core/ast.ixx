@@ -5530,6 +5530,27 @@ public:
         maybe_auto_restamp_on_wrap();
     }
 
+    // Issue #3865: capture the hygiene / dirty metadata SoA columns for
+    // abort restore (#1893 family) — restoring them with the topology
+    // prevents phantom over-dirty cones after an aborted mutation window.
+    struct DirtySoaSnapshot {
+        std::pmr::vector<std::uint8_t> dirty_, ppa_dirty_, verify_dirty_, verification_dirty_,
+            macro_dirty_;
+    };
+    [[nodiscard]] DirtySoaSnapshot snapshot_dirty_soa() const {
+        return DirtySoaSnapshot{dirty_, ppa_dirty_, verify_dirty_, verification_dirty_,
+                                macro_dirty_};
+    }
+    void restore_dirty_soa(DirtySoaSnapshot&& snap) {
+        if (snap.dirty_.empty())
+            return; // uncaptured (lightweight path) — keep live columns
+        dirty_ = std::move(snap.dirty_);
+        ppa_dirty_ = std::move(snap.ppa_dirty_);
+        verify_dirty_ = std::move(snap.verify_dirty_);
+        verification_dirty_ = std::move(snap.verification_dirty_);
+        macro_dirty_ = std::move(snap.macro_dirty_);
+    }
+
     // Issue #2959: Guard abort dual topology path — mutation-log rollback
     // + children_ snapshot restore + parent_ rebuild + dual canary, all
     // under ONE StructuralMutationGuard so densify/steal cannot observe
@@ -5538,11 +5559,15 @@ public:
     // Prefer this over separate rollback_to_size + restore_children on abort.
     std::size_t
     abort_restore_dual_topology(std::size_t mutation_log_checkpoint,
-                                std::vector<PersistentChildVector<NodeId>>&& children_snapshot) {
+                                std::vector<PersistentChildVector<NodeId>>&& children_snapshot,
+                                DirtySoaSnapshot&& dirty_soa_snapshot = {}) {
         StructuralMutationGuard guard(this);
         contract_assert(static_cast<bool>(guard));
         const auto rolled = rollback_to_size(mutation_log_checkpoint);
         restore_children_locked(std::move(children_snapshot));
+        // Issue #3865: restore the dirty SoA family with the topology —
+        // phantom over-dirty cones from the aborted window are gone.
+        restore_dirty_soa(std::move(dirty_soa_snapshot));
         return rolled;
     }
 

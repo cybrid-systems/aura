@@ -867,7 +867,7 @@ void Evaluator::restore_checkpoint_topology_for_persist_reject() noexcept {
     (void)mid_abort_ver;
     BoundaryRollbackStats stats;
     stats.field_records_rolled = workspace_flat_->abort_restore_dual_topology(
-        cp.mutation_log_size, std::move(cp.children_snapshot));
+        cp.mutation_log_size, std::move(cp.children_snapshot), std::move(cp.dirty_soa_snapshot));
     stats.children_column_restored = true;
     if (stats.field_records_rolled > 0)
         bump_mutation_log_rollback_count();
@@ -1007,6 +1007,11 @@ void Evaluator::enter_mutation_boundary() {
                           macro_introduced_count_at_entry, flat_generation_at_entry,
                           std::move(children_snapshot), fine_rollback, std::move(sym_id_snapshot),
                           std::move(param_snapshot), lightweight};
+    // Issue #3865: capture the dirty SoA family at checkpoint (non-
+    // lightweight) — restored with the topology on abort (no phantom
+    // over-dirty cones). Empty on lightweight = keep live columns.
+    if (workspace_flat_ && !lightweight)
+        cp.dirty_soa_snapshot = workspace_flat_->snapshot_dirty_soa();
     // Issue #3016: resolve audit mid once at enter (outer inherits from
     // TLS / parent checkpoint). total_mutations_ stays volume-only.
     {
