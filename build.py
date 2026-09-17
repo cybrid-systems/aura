@@ -7870,6 +7870,24 @@ def cmd_lint():
     if r != 0:
         fail("Issue #3856 WAL-miss ring flip linter failed — run python3 scripts/check_wal_miss_ring_flip_3856.py")
         return r
+    # Issue #3857 (mem residual): #3210 TemporaryMovingLivePtrCanary is
+    # observe-only and the Moving entry precondition gate is TLS-only, so
+    # a peer fiber's apply_closure window (cl_copy stack copies) cannot
+    # block a concurrent densify relocate — mid-apply × Moving UAF. Gate
+    # pins: entry soft-gate reads the process-wide canary inventory before
+    # the #3210 drain; the post-relocate re-drain feeds the existing
+    # #3055/#3182 stale gate; the densify-pin batch drives block +
+    # release + soak.
+    tcan3857_script = ROOT / "scripts" / "check_temp_canary_moving_gate_3857.py"
+    if not tcan3857_script.exists():
+        fail(f"missing {tcan3857_script}")
+        return 1
+    r = run([sys.executable, str(tcan3857_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3857 temp-canary Moving entry gate linter failed — run python3 scripts/check_temp_canary_moving_gate_3857.py"
+        )
+        return r
     # Issue #3722 (#2490/#2658/#2942 residual): rollback / rollback-since
     # host prims wrote FlatAST with no require_effect / isolation consult —
     # a Restricted+MT tenant could structurally undo a foreign mutation

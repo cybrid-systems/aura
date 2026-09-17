@@ -2294,6 +2294,29 @@ public:
                 g_moving_blocked_precondition_total.fetch_add(1, std::memory_order_relaxed);
                 return result;
             }
+            // Issue #3857: soft-gate Moving while the process-wide #3210
+            // temporary live-ptr canary inventory is live. The
+            // boundary-depth gate above is TLS-only and the apply thread
+            // never enters MutationBoundary, so a peer fiber's
+            // apply_closure window (cl_copy.flat / cl_copy.pool stack
+            // copies registered as observe-only canaries) is invisible to
+            // it — Moving could relocate while the peer is mid-eval_flat
+            // on densify-old pointers (UAF). One acquire load; the
+            // empty-inventory common case is a predicted branch. Soft /
+            // Off: note is gated on moving_compact_enabled so the
+            // inventory stays empty and this gate never fires. The peer
+            // unnotes at apply exit → the next window proceeds; the apply
+            // thread's own #3848/#3849 refuse still handles post-move
+            // staleness for subsequent applies.
+            if (moving_temp_canary_detail::g_inventory.live.load(std::memory_order_acquire) > 0) {
+                result.moving_blocked_precondition = true;
+                result.soft_gated = true;
+                aura::core::densify_consistency::g_moving_blocked_temp_canary_total.fetch_add(
+                    1, std::memory_order_relaxed);
+                ++stats_.moving_blocked_precondition_total;
+                g_moving_blocked_precondition_total.fetch_add(1, std::memory_order_relaxed);
+                return result;
+            }
             // Issue #2973 / #3017: production hard pre-densify external-root
             // completeness. Soft / hard_pref<=0 is a single atomic load
             // (AC2 / AC6 — no walk, no extra pin work). When hard, walk
@@ -2417,6 +2440,21 @@ public:
             result.moved_live_objects = result.objects_moved > 0;
             stats_.objects_moved_total += result.objects_moved;
             g_objects_moved_total.fetch_add(result.objects_moved, std::memory_order_relaxed);
+            // Issue #3857: late-window canary re-drain — a peer fiber may
+            // have noted its apply_closure temporary between the entry
+            // soft-gate and relocate completion (apply start racing the
+            // Moving window). Re-draining now feeds the existing
+            // #3055/#3182 post-move stale gate below: a late canary whose
+            // object was relocated fail-closes this window instead of
+            // leaving the peer fiber holding a densify-old stack copy
+            // (silent UAF). Empty inventory: one acquire load (common case
+            // — the entry gate already blocks windows entered under live
+            // canaries).
+            if (moving_temp_canary_detail::g_inventory.live.load(std::memory_order_acquire) > 0) {
+                aura::core::densify_consistency::g_moving_late_temp_canary_total.fetch_add(
+                    1, std::memory_order_relaxed);
+                note_temporary_moving_live_canaries();
+            }
 
             // Issue #3781: materialize this-window relocate pairs for every
             // rewrite path below. Iterate last_moving_relocated_old_ and
