@@ -426,6 +426,9 @@ extern "C" int aura_hold_budget_poll_inbody_window(void) noexcept {
     if (!snap.held || (armed_fiber != 0 && snap.fiber_id != 0 && snap.fiber_id != armed_fiber)) {
         // Holder gone or a different outermost holder — window no longer applies.
         mutation_hold_budget_note_cancel_consumed(armed_fiber);
+        // Issue #3859: window ended — clear the no-edge quarantine clock.
+        g_hold_budget_no_edge_first_seen_ns.store(0, std::memory_order_release);
+        g_hold_budget_no_edge_quarantine_latched.store(0, std::memory_order_release);
         return 0;
     }
     g_mutation_hold_budget_inbody_window_exceeded_total.fetch_add(1, std::memory_order_relaxed);
@@ -494,6 +497,27 @@ extern "C" int aura_hold_budget_poll_inbody_window(void) noexcept {
         if (g_hold_budget_no_edge_force_total.load(std::memory_order_relaxed) != 0 &&
             mutation_hold_live_snapshot().held)
             (void)steal_safety_production_residual_zero_v_read();
+        // Issue #3859: quarantine-latency SLO — an edge-free busy-spin
+        // holder keeps join_drain_residual_still_running visible until the
+        // #3764 next-enter dispose; bound that face. First no-edge sighting
+        // of the window stamps the clock; past 4× the inbody window bound,
+        // bump the quarantine counter (one latch per window) so soak/admit
+        // see a bounded, explicit quarantine instead of an open-ended
+        // still-running. Dispose (#3764) + dual-restore-before-unlock stay
+        // the only unlock paths. Soft already returned above.
+        const auto now_ns = mutation_hold_steady_ns_now();
+        auto first_ns = g_hold_budget_no_edge_first_seen_ns.load(std::memory_order_acquire);
+        if (first_ns == 0) {
+            if (g_hold_budget_no_edge_first_seen_ns.compare_exchange_strong(
+                    first_ns, now_ns, std::memory_order_acq_rel, std::memory_order_acquire))
+                first_ns = now_ns;
+        }
+        const auto quarantine_ns = kMutationHoldBudgetNoEdgeQuarantineSloMultiple *
+                                   mutation_hold_inbody_window_bound_us() * 1000ULL;
+        if (now_ns >= first_ns && (now_ns - first_ns) >= quarantine_ns &&
+            g_hold_budget_no_edge_quarantine_latched.exchange(1, std::memory_order_acq_rel) == 0) {
+            g_hold_budget_no_edge_quarantine_total.fetch_add(1, std::memory_order_relaxed);
+        }
     }
     return 1;
 }

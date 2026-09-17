@@ -102,6 +102,23 @@ def main() -> int:
 
     if (ROOT / "tests" / "issues" / "test_issue_3325.cpp").is_file():
         fails.append("AC5: forbidden tests/issues/test_issue_3325.cpp per #81967")
+
+    # Issue #3859: quarantine-latency SLO (extend #3325; no new check file).
+    must("kMutationHoldBudgetNoEdgeQuarantineIssue", "AC3859 stamp", mhb)
+    must("g_hold_budget_no_edge_quarantine_total", "AC3859 counter", mhb)
+    must("g_hold_budget_no_edge_first_seen_ns", "AC3859 first-seen clock", mhb)
+    must("kMutationHoldBudgetNoEdgeQuarantineSloMultiple", "AC3859 SLO multiple", mhb)
+    must("hold_budget_no_edge_quarantine_total_v_read", "AC3859 reader", mhb)
+    must("clear_hold_budget_no_edge_quarantine_for_test", "AC3859 test reset", mhb)
+    must("Issue #3859", "AC3859 poll cite", poll_win)
+    must("g_hold_budget_no_edge_first_seen_ns.store(0", "AC3859 window reset", poll_win)
+    must("g_hold_budget_no_edge_quarantine_latched.exchange", "AC3859 once-per-window", poll_win)
+    must("ac3859_1_quarantine_bump_within_slo", "AC3859 test AC1", t)
+    must("run_test_hold_budget_no_edge_quarantine_3859", "AC3859 runner", t)
+    if (ROOT / "scripts" / "check_hold_budget_no_edge_quarantine_3859.py").is_file():
+        fails.append("AC3859: invented check_hold_budget_no_edge_quarantine_3859.py")
+    if (ROOT / "tests" / "serve" / "test_issue_3859.cpp").is_file():
+        fails.append("AC3859: forbidden tests/serve/test_issue_3859.cpp")
     if (ROOT / "tests" / "serve" / "test_issue_3325.cpp").is_file():
         fails.append("AC5: forbidden tests/serve/test_issue_3325.cpp per #81967")
     docs = ROOT / "docs" / "design"
