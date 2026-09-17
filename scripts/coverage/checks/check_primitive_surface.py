@@ -399,9 +399,7 @@ def main() -> int:
 
     all_names = scan_registered_names()
     stats_names = collect_stats_names(all_names)
-    import os as _os
 
-    Path(f"/tmp/pz3856_names_{_os.getpid()}.txt").write_text("\n".join(sorted(all_names)))  # TEMP #3856 diag
     frozen_names = collect_frozen_names(all_names)
     inventory = {
         "schema": 2,

@@ -73,7 +73,7 @@ def main() -> int:
     must("run_test_tcp_listen_accept", "AC3", _read("tests/compiler/test_json_io_cap_batch.cpp"))
 
     # AC4
-    must('tcp-": 24', "AC4", surface)  # #3615 raise; gate bump for #3850-#3853 waves (was 23)
+    must('tcp-": 28', "AC4", surface)  # #3615 raise; #3850-#3853 +1; 2026-09-17 wave (#3854-#3856) +1 -> 28
     must("#2771", "AC4", surface)
 
     # AC5
