@@ -525,8 +525,26 @@ bool Evaluator::check_and_record_effect(std::uint16_t required_effect_bits,
     // the body / Guard write). Soft / production_defaults_active()==0
     // keeps #3056 fail-open; AURA_WAL_APPEND_FAIL_OPEN=1 keeps the
     // explicit opt-out. Capability-denial accounting below is untouched.
-    if (ok && wal_append_missed && ::aura::core::wal_slo::wal_append_fail_closed_active())
+    // Issue #3855: the capability dual-write above already emitted an
+    // EffectAllow SE and the ring slot reads allow — compensate before
+    // the early return: rewrite the ring slot to denied (miss-shaped)
+    // and emit a compensating EffectDeny with reason
+    // mutation_wal_append_miss so forensics join the deny that actually
+    // gates the body (the Allow row predates the miss and stays; the
+    // Deny row carries the verdict).
+    const auto wal_miss_compensate = [&]() noexcept {
+        slot.effect_denied = true;
+        // #3801: deny SEs join the mid SSOT (never a bare caller mid — a
+        // mid=0 row would also trip the #3532 canonical-reason rewrite).
+        (void)::aura::core::security_event_wal::emit_security_event_durable(
+            ::aura::core::security_event::SecurityEventKind::EffectDeny, tenant_id,
+            production_deny_se_mid(prov.mutation_id), slot.epoch, actual_effect_bits, op,
+            "mutation_wal_append_miss", /*denied=*/true, static_cast<std::int64_t>(prov.fiber_id));
+    };
+    if (ok && wal_append_missed && ::aura::core::wal_slo::wal_append_fail_closed_active()) {
+        wal_miss_compensate();
         return false;
+    }
 
     if (!ok) {
         bump_capability_denial();

@@ -392,6 +392,71 @@ int run_test_security_posture_trail() {
             const auto sched = read_file("tests/orch/test_security_schedule_gate.cpp");
             CHECK(!sched.empty(), "3639 AC5: schedule-gate regression binary present");
 
+            // ── #3855: WAL-miss deny compensates the premature EffectAllow SE ─────
+            // The capability dual-write emits EffectAllow before the append;
+            // on a fail-closed miss the deny must leave a matching EffectDeny
+            // row (reason mutation_wal_append_miss) so forensics join the
+            // verdict that actually gates the body.
+            {
+                // Issue #3855 AC: self-contained state — the #3639 block's
+                // leftover session-bound grant (mut-3639, bound 0x3639)
+                // would win provenance_ok_locked's per-grant mid match and
+                // deny (via-wildcard) before our grant is ever consulted.
+                reset_capability_effects_for_test();
+                aura::core::bump_mutation_epoch(0x3855);
+                aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+                const auto gprov_3855 = aura::core::capability::make_grant_provenance(
+                    0x3855, /*force_mutation_bind=*/true, 0, 0);
+                CHECK(g_capability_registry().grant(7, "mut-3855", Effect::Mutate, gprov_3855),
+                      "3855 setup: Mutate grant (tenant 7)");
+                ev.set_capability_tenant_id(7);
+                aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+                apply_production_security_defaults();
+                // Re-enable the SE side-car (AC1 parked it): the compensating
+                // EffectDeny must land in the SE ring for the join assert.
+                // Inject two misses so force_wal's paired appends (SE then
+                // mutation) both miss and the MUTATION append — the #3639
+                // gate — is the one that counts.
+                namespace fs3855 = std::filesystem;
+                const auto dir_3855 = fs3855::temp_directory_path() / "aura-3855-ac1-XXXXXX";
+                fs3855::remove_all(dir_3855);
+                fs3855::create_directories(dir_3855);
+                CHECK(ev.enable_security_event_wal(dir_3855.string()),
+                      "3855 setup: SE WAL re-enabled");
+                aura::core::security_event_wal::wal_overflow_ring_clear_for_test();
+                CHECK(aura::core::wal_slo::wal_append_fail_closed_active(),
+                      "3855 setup: fail-closed active");
+                const auto& ring = aura::core::security_event::g_security_event_ring();
+                const auto se_base = ring.seq.load(std::memory_order_acquire);
+                const auto depth0 = aura::core::security_event_wal::wal_overflow_ring_depth();
+                aura::core::wal_slo::g_wal_append_fail_slo_counters.inject_fail_remaining.store(
+                    2, std::memory_order_relaxed);
+                // Issue #2706 test surface: explicit mid — deterministic.
+                // prov.mid 0x3855 == the grant's bound mid → capability
+                // allows (bits 8/8) → the paired WAL appends both miss →
+                // the #3639 gate compensates and denies.
+                CHECK(!ev.check_and_record_effect_for_test(kEffectMutate, kEffectMutate,
+                                                           "test:3855-ac1", 0, 7, 0x3855),
+                      "3855 AC1: WAL append miss → deny");
+                CHECK(aura::core::security_event_wal::wal_overflow_ring_depth() > depth0,
+                      "3855 AC1: overflow captured the WAL miss(es)");
+                const auto head = ring.seq.load(std::memory_order_acquire);
+                int allow_rows = 0, deny_rows = 0;
+                for (auto s = se_base; s < head; ++s) {
+                    const auto& e = ring.ring[s % ring.ring.size()];
+                    if (std::string_view(e.op) != "test:3855-ac1")
+                        continue;
+                    if (e.kind == aura::core::security_event::SecurityEventKind::EffectAllow &&
+                        std::string_view(e.reason) == "mutation_wal_append_miss")
+                        ++allow_rows; // compensator misfiled as Allow
+                    if (e.kind == aura::core::security_event::SecurityEventKind::EffectDeny &&
+                        std::string_view(e.reason) == "mutation_wal_append_miss")
+                        ++deny_rows;
+                }
+                CHECK(deny_rows >= 1, "3855 AC1: compensating EffectDeny SE (miss reason)");
+                CHECK(allow_rows == 0, "3855 AC1: no compensator misfiled as Allow");
+            }
+
             aura::core::reset_mutation_epoch_for_test();
         }
 

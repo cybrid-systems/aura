@@ -7842,6 +7842,22 @@ def cmd_lint():
     if r != 0:
         fail("Issue #3854 revoke fiber SE linter failed — run python3 scripts/check_mse_revoke_fiber_3854.py")
         return r
+    # Issue #3855 (observability residual): a fail-closed mutation-WAL append
+    # miss denies the mutate, but the capability dual-write had already
+    # emitted EffectAllow and the ring slot read allow — forensic poison.
+    # Gate pins: the deny compensates (ring slot flips to denied + a
+    # compensating EffectDeny with reason mutation_wal_append_miss) and the
+    # posture suite asserts the compensation.
+    miss3855_script = ROOT / "scripts" / "check_wal_miss_se_compensate_3855.py"
+    if not miss3855_script.exists():
+        fail(f"missing {miss3855_script}")
+        return 1
+    r = run([sys.executable, str(miss3855_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3855 WAL-miss SE compensation linter failed — run python3 scripts/check_wal_miss_se_compensate_3855.py"
+        )
+        return r
     # Issue #3722 (#2490/#2658/#2942 residual): rollback / rollback-since
     # host prims wrote FlatAST with no require_effect / isolation consult —
     # a Restricted+MT tenant could structurally undo a foreign mutation
