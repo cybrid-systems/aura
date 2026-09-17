@@ -84,6 +84,21 @@ def main() -> int:
         for f in sorted(docs.glob("3827-*")):
             fails.append(f"AC4: docs/design/{f.name} present (forbidden #1655)")
 
+    # Issue #3862: stable-ref / parent-stable schema-2 finish (extend
+    # #3827, no new check file).
+    ps_b = qws.find('["query:parent-stable"]')
+    ps_e = qws.find("query:root", ps_b) if ps_b != -1 else -1
+    ps_body = qws[ps_b : ps_e if ps_e != -1 else ps_b + 3000] if ps_b != -1 else ""
+    must("Issue #3862", "AC3862 parent-stable cite", ps_body)
+    must("end_query_epoch_maybe_result", "AC3862 parent-stable finish", ps_body)
+    sr_b = qws.find('("query:stable-ref",')
+    sr_e = qws.find("query:ensure-ref", sr_b) if sr_b != -1 else -1
+    sr_body = qws[sr_b : sr_e if sr_e != -1 else sr_b + 3000] if sr_b != -1 else ""
+    must("Issue #3862", "AC3862 stable-ref cite", sr_body)
+    must("end_query_epoch_maybe_result", "AC3862 stable-ref finish", sr_body)
+    t3862 = _read("tests/compiler/test_query_result_full_provenance.cpp")
+    must("#3862", "AC3862 test AC", t3862)
+
     if fails:
         print(f"Issue #3827 linter FAILED ({len(fails)} rows):")
         for f in fails:

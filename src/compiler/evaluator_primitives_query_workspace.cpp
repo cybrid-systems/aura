@@ -959,8 +959,9 @@ void register_workspace_query_primitives(
     // parent as a (node-id . generation) stable-ref pair. Returns
     // an empty list if the node has no parent.
     // Issue #2186: resolve via ensure_valid_or_refresh.
-    (*q_impls)["query:parent-stable"] = PrimFn{[ws, mev, resolve_query_node_arg,
-                                                &ev](const auto& a) -> EvalValue {
+    (*q_impls)["query:parent-stable"] = PrimFn{[ws, mev, resolve_query_node_arg, &ev,
+                                                begin_query_epoch, end_query_epoch_maybe_result](
+                                                   const auto& a) -> EvalValue {
         std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
         if (a.empty() || !ws.workspace_flat)
             return mev("bad-arg", "usage: (query :parent-stable node-id|stable-ref)");
@@ -987,12 +988,18 @@ void register_workspace_query_primitives(
         if (exported.id == aura::ast::NULL_NODE || !exported.is_valid_in(flat))
             return mev("stale-ref", "query:parent-stable: Agent export failed");
         ::aura::core::provenance::record_query_stable_ref_stamped();
-        // Build (parent-id . gen) pair
+        // Issue #3862: finish via end_query_epoch_maybe_result so
+        // Production auto-upgrades the bare (parent-id . gen) pair to the
+        // schema-2 stamped QueryResult hash (#3827-class) — Agent memory
+        // never receives the layout-only pair. Soft keeps the historical
+        // bare pair (AC Soft exception).
+        const auto qe = begin_query_epoch(&flat);
         auto gen_pid = ws.pairs.size();
         ws.pairs.push_back({make_int(static_cast<std::int64_t>(exported.gen)), make_void()});
         auto pair_pid = ws.pairs.size();
         ws.pairs.push_back({make_int(static_cast<std::int64_t>(exported.id)), make_pair(gen_pid)});
-        return make_pair(pair_pid);
+        return end_query_epoch_maybe_result(qe, &flat, make_pair(pair_pid),
+                                            /*as_query_result=*/false);
     }};
 
     // (query:root) — Return the current workspace root node ID, or #f if no workspace
@@ -1080,48 +1087,61 @@ void register_workspace_query_primitives(
     // The result is a 2-element list `(id . gen)` so the agent
     // can capture it as a single value and pass it through
     // multi-round edit pipelines.
-    add("query:stable-ref", [ws, mev, &ev](const auto& a) -> EvalValue {
-        std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
-        if (a.empty() || !is_int(a[0]))
-            return mev("bad-arg", "usage: (query:stable-ref node-id)");
-        if (!ws.workspace_flat)
-            return mev("no-workspace", "no workspace AST loaded");
-        auto node = static_cast<aura::ast::NodeId>(as_int(a[0]));
-        auto& flat = *ws.workspace_flat;
-        if (node >= flat.size())
-            return mev("out-of-range", "node ID " + std::to_string(node) + " >= flat size " +
-                                           std::to_string(flat.size()));
-        // Issue #3000 / Issue #3487: gate before export_ref_safe so a skipped
-        // restamp cannot ship a stamped-green pre-mutate generation.
-        // Latch==1 ORs the hard face inside allow (even if defaults flipped).
-        if (!ev.allow_query_stable_ref_export(node))
-            return mev("restamp-lag",
-                       "budget-exceeded: query:stable-ref: restamp budget exceeded; "
-                       "generation torn for export (Issue #3121 / #3037 / #3000); ; // Issue "
-                       "#3138: Agent recovery hint recovery: re-query after budget window or force "
-                       "full restamp before reusing refs");
-        // Issue #738 / #1630 / #2404 / #2960: export_ref_safe stamps + finalize
-        // (sole Agent export path); query counter tracks the stamp.
-        std::uint32_t layer = 0;
-        if (ev.workspace_tree()) {
-            auto* wt = static_cast<WorkspaceTree*>(ev.workspace_tree());
-            layer = wt->active_idx();
-        }
-        const std::uint32_t cur_fiber = static_cast<std::uint32_t>(aura_fiber_current_id());
-        auto ref = ev.export_ref_safe(node, layer, cur_fiber);
-        if (ref.id == aura::ast::NULL_NODE || !ref.is_valid_in(flat))
-            return mev("stale-ref", "query:stable-ref: Agent export validate_or_refresh failed");
-        // Issue #2960: export_ref_safe already stamped via make_stamped_safe_ref;
-        // count as query stable export stamp (primary path — residual 0).
-        ::aura::core::provenance::record_query_stable_ref_stamped();
-        ev.pin_stable_ref_for_cow_boundary(ref);
-        // Build (node-id . gen) pair using post-refresh gen.
-        auto gen_pid = ws.pairs.size();
-        ws.pairs.push_back({make_int(static_cast<std::int64_t>(ref.gen)), make_void()});
-        auto pair_pid = ws.pairs.size();
-        ws.pairs.push_back({make_int(static_cast<std::int64_t>(ref.id)), make_pair(gen_pid)});
-        return make_pair(pair_pid);
-    });
+    add("query:stable-ref",
+        [ws, mev, &ev, begin_query_epoch,
+         end_query_epoch_maybe_result](const auto& a) -> EvalValue {
+            std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
+            if (a.empty() || !is_int(a[0]))
+                return mev("bad-arg", "usage: (query:stable-ref node-id)");
+            if (!ws.workspace_flat)
+                return mev("no-workspace", "no workspace AST loaded");
+            auto node = static_cast<aura::ast::NodeId>(as_int(a[0]));
+            auto& flat = *ws.workspace_flat;
+            if (node >= flat.size())
+                return mev("out-of-range", "node ID " + std::to_string(node) + " >= flat size " +
+                                               std::to_string(flat.size()));
+            // Issue #3000 / Issue #3487: gate before export_ref_safe so a skipped
+            // restamp cannot ship a stamped-green pre-mutate generation.
+            // Latch==1 ORs the hard face inside allow (even if defaults flipped).
+            if (!ev.allow_query_stable_ref_export(node))
+                return mev(
+                    "restamp-lag",
+                    "budget-exceeded: query:stable-ref: restamp budget exceeded; "
+                    "generation torn for export (Issue #3121 / #3037 / #3000); ; // Issue "
+                    "#3138: Agent recovery hint recovery: re-query after budget window or force "
+                    "full restamp before reusing refs");
+            // Issue #738 / #1630 / #2404 / #2960: export_ref_safe stamps + finalize
+            // (sole Agent export path); query counter tracks the stamp.
+            std::uint32_t layer = 0;
+            if (ev.workspace_tree()) {
+                auto* wt = static_cast<WorkspaceTree*>(ev.workspace_tree());
+                layer = wt->active_idx();
+            }
+            const std::uint32_t cur_fiber = static_cast<std::uint32_t>(aura_fiber_current_id());
+            auto ref = ev.export_ref_safe(node, layer, cur_fiber);
+            if (ref.id == aura::ast::NULL_NODE || !ref.is_valid_in(flat))
+                return mev("stale-ref",
+                           "query:stable-ref: Agent export validate_or_refresh failed");
+            // Issue #3862: bracket the Agent-memory handoff — production must
+            // never hand a layout-only (id . gen) pair as durable memory.
+            // Thin bracket (post-export): no error path inside, no epoch leak.
+            const auto qe = begin_query_epoch(&flat);
+            // Issue #2960: export_ref_safe already stamped via make_stamped_safe_ref;
+            // count as query stable export stamp (primary path — residual 0).
+            ::aura::core::provenance::record_query_stable_ref_stamped();
+            ev.pin_stable_ref_for_cow_boundary(ref);
+            // Issue #3862: finish via end_query_epoch_maybe_result so
+            // Production auto-upgrades the bare (node-id . gen) pair to the
+            // schema-2 stamped QueryResult hash (#3827-class) — Agent
+            // memory never receives the layout-only pair. Soft keeps the
+            // historical bare pair (AC Soft exception).
+            auto gen_pid = ws.pairs.size();
+            ws.pairs.push_back({make_int(static_cast<std::int64_t>(ref.gen)), make_void()});
+            auto pair_pid = ws.pairs.size();
+            ws.pairs.push_back({make_int(static_cast<std::int64_t>(ref.id)), make_pair(gen_pid)});
+            return end_query_epoch_maybe_result(qe, &flat, make_pair(pair_pid),
+                                                /*as_query_result=*/false);
+        });
 
     // Issue #2404: (query:ensure-ref node-id|stable-ref) — force
     // validate_or_refresh on an Agent-held handle and return a diagnostic
