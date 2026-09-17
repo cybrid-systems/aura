@@ -150,6 +150,18 @@ def main() -> int:
         _read("build.py") + _read("pyproject.toml"),
     )
 
+    # Issue #3860: densify-busy composition SSOT (Option B — extend #3134,
+    # no new check file).
+    must("Issue #3860", "AC3860 header SSOT pin", sh)
+    must("densify-busy SSOT", "AC3860 composition SSOT", sh)
+    must("Count = 7,", "AC3860 enum count unchanged", sh)
+    if "DensifyBusy" in sh:
+        fails.append("AC3860: invented DensifyBusy bit (Option B forbids)")
+    must("Issue #3860", "AC3860 hard-AND pin", cpp)
+    must("AC17: densify-busy composition SSOT (#3860)", "AC3860 test AC17", test)
+    if (ROOT / "tests" / "serve" / "test_issue_3860.cpp").is_file():
+        fails.append("AC3860: forbidden test_issue_3860.cpp")
+
     if fails:
         for f in fails:
             print(f"FAIL: {f}", file=sys.stderr)

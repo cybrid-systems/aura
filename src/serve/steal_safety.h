@@ -52,6 +52,13 @@ enum class StealSafetyDecision : std::uint8_t {
 // Every residual arm in steal_safety_transaction maps to one value;
 // RejectHard records the failing bit-set (bit N = StealInvariant N).
 // Stable ABI for Agents / dashboards / linters — do not reorder.
+// Issue #3860: densify-in-progress has NO single StealInvariant bit —
+// the densify-busy face is closed by composition:
+//   GcDeferClear ∧ EnvFrameOk (#2745) ∧ LifetimeProofOk (#2957) ∧
+//   BoundarySafe (held outermost Guard / MutationHold).
+// This AND set is the densify-busy SSOT. Agents / proof harnesses must
+// not assume a lone densify-busy flag; Soft densify without residual
+// stamp stays observe-only by design.
 enum class StealInvariant : std::uint8_t {
     SnapshotConsistent = 0, // MutationSafetySnapshot seqlock consistent
     BoundarySafe = 1,       // is_at_mutation_boundary_safe

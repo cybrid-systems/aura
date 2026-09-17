@@ -161,6 +161,8 @@ namespace {
 //   GcDeferClear      — victim evaluator GC defer clear
 //   EnvFrameOk        — densify EnvFrame residual (#2745)
 //   LifetimeProofOk   — last LifetimeConsistencyProof (#2957, production)
+// Issue #3860: this AND set is the densify-busy SSOT — no dedicated
+// densify-in-flight arm exists; the composition above closes the face.
 [[nodiscard]] std::uint64_t evaluate_residual_hard_and_bits(Fiber* stolen,
                                                             const MutationSafetySnapshot& snap,
                                                             bool bump_counters,
