@@ -550,6 +550,36 @@ inline void reset_densify_consistency_for_test() noexcept {
     g_last_densify_closure_fail_code.store(0, std::memory_order_relaxed);
 }
 
+// Issue #3857: Moving entry soft-gate on live #3210 temporary canaries.
+// Bumped when live_compact(Moving) returns blocked because a peer fiber's
+// apply_closure window holds observe-only temp canaries (process-wide
+// g_inventory.live > 0). Soft / Off / !moving_compact_enabled never
+// increment (inventory stays empty). Appended at header end
+// (layout-stable).
+inline std::atomic<std::uint64_t> g_moving_blocked_temp_canary_total{0};
+inline constexpr int kMovingTempCanaryEntryGateIssue = 3857;
+[[nodiscard]] inline std::uint64_t moving_blocked_temp_canary_total_v_read() noexcept {
+    return g_moving_blocked_temp_canary_total.load(std::memory_order_relaxed);
+}
+inline void reset_moving_blocked_temp_canary_for_test() noexcept {
+    g_moving_blocked_temp_canary_total.store(0, std::memory_order_relaxed);
+}
+
+// Issue #3857: late-window temporary-canary re-drain. Bumped when the
+// post-relocate re-drain observes a live inventory (a peer fiber noted its
+// apply_closure temp while this window was already past the entry gate);
+// the re-drain feeds the existing #3055/#3182 post-move stale gate so a
+// relocated late temp fail-closes the window instead of UAF. Appended at
+// header end (layout-stable).
+inline std::atomic<std::uint64_t> g_moving_late_temp_canary_total{0};
+inline constexpr int kMovingTempCanaryLateRedrainIssue = 3857;
+[[nodiscard]] inline std::uint64_t moving_late_temp_canary_total_v_read() noexcept {
+    return g_moving_late_temp_canary_total.load(std::memory_order_relaxed);
+}
+inline void reset_moving_late_temp_canary_for_test() noexcept {
+    g_moving_late_temp_canary_total.store(0, std::memory_order_relaxed);
+}
+
 } // namespace aura::core::densify_consistency
 
 #endif // AURA_CORE_DENSIFY_CONSISTENCY_REPORT_H

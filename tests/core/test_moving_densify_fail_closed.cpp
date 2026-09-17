@@ -2757,6 +2757,179 @@ static void ac3210_6_source_cite_no_invent() {
           "AC5: no test_issue_3210.cpp per #81967");
 }
 
+// ── Issue #3857: Moving entry soft-gate on live #3210 temp canaries ──
+// Peer fiber mid-apply_closure holds observe-only canaries on densify-old
+// stack copies; the TLS boundary-depth gate cannot see it (apply thread
+// never enters MutationBoundary). Entry gate: one acquire load on the
+// process-wide inventory → blocked_precondition + soft_gated, no
+// relocate. Post-relocate re-drain feeds the #3055/#3182 stale gate for
+// apply-start races.
+
+static void ac3857_1_entry_gate_blocks_then_releases() {
+    std::println("\n--- #3857 AC1: entry gate blocks peer Moving, releases on unnote ---");
+    MovingFlagGuard on(1);
+    RequiredPinGuard off(0);
+    aura::ast::g_moving_untracked_hard_abort_pref.store(1, std::memory_order_relaxed);
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    aura::core::densify_consistency::reset_moving_post_moving_stale_for_test();
+    aura::core::densify_consistency::reset_moving_blocked_temp_canary_for_test();
+    aura::core::densify_consistency::reset_moving_late_temp_canary_for_test();
+    aura::ast::reset_temporary_moving_live_ptrs_for_test();
+    // Fiber A: mid-apply_closure — temp canary live on a densify-old addr.
+    ASTArena peer(64 * 1024);
+    auto* held = peer.create<Pod16>(9, 9, 9, 9);
+    const auto blocked0 =
+        aura::core::densify_consistency::moving_blocked_temp_canary_total_v_read();
+    {
+        aura::ast::TemporaryMovingLivePtrCanary tmp(held);
+        // Fiber B: independent arena — its Moving window must soft-gate.
+        ASTArena victim(64 * 1024);
+        auto* p0 = victim.create<Pod16>(1, 2, 3, 4);
+        void* s0 = p0;
+        victim.register_external_root_slot_for_densify(&s0);
+        const auto r = victim.live_compact(LiveCompactMode::Moving);
+        CHECK(r.objects_moved == 0, "AC1: no relocate under live peer canary");
+        CHECK(r.moving_blocked_precondition, "AC1: blocked_precondition");
+        CHECK(r.soft_gated, "AC1: soft_gated");
+        CHECK(aura::core::densify_consistency::moving_blocked_temp_canary_total_v_read() ==
+                  blocked0 + 1,
+              "AC1: canary-gate counter bumped");
+        CHECK(static_cast<Pod16*>(s0)->a == 1, "AC1: peer payload intact (no UAF)");
+    } // tmp dtor unnotes — fiber A exits its apply window
+    // Fiber B may proceed now (#3848/#3849 refuse still guards applies).
+    ASTArena victim2(64 * 1024);
+    auto* q0 = victim2.create<Pod16>(7, 7, 7, 7);
+    void* t0 = q0;
+    victim2.register_external_root_slot_for_densify(&t0);
+    const auto r2 = victim2.live_compact(LiveCompactMode::Moving);
+    CHECK(!r2.moving_blocked_precondition, "AC1: window proceeds after unnote");
+    CHECK(aura::core::densify_consistency::moving_blocked_temp_canary_total_v_read() ==
+              blocked0 + 1,
+          "AC1: counter stable after release");
+    if (r2.objects_moved > 0)
+        CHECK(static_cast<Pod16*>(t0)->a == 7, "AC1: released window remaps slots");
+    else
+        CHECK(q0->a == 7, "AC1: released window no-move intact");
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    aura::ast::reset_temporary_moving_live_ptrs_for_test();
+}
+
+static void ac3857_2_soft_off_unchanged() {
+    std::println("\n--- #3857 AC2: Soft / Off unchanged — gate never fires ---");
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    aura::core::densify_consistency::reset_moving_post_moving_stale_for_test();
+    aura::core::densify_consistency::reset_moving_blocked_temp_canary_for_test();
+    aura::core::densify_consistency::reset_moving_temporary_canary_noted_for_test();
+    aura::ast::reset_temporary_moving_live_ptrs_for_test();
+    const auto blocked0 =
+        aura::core::densify_consistency::moving_blocked_temp_canary_total_v_read();
+    {
+        MovingFlagGuard off_moving(0); // Off: note no-ops → inventory empty
+        ASTArena arena(64 * 1024);
+        auto* p0 = arena.create<Pod16>(1, 2, 3, 4);
+        aura::ast::TemporaryMovingLivePtrCanary tmp(p0);
+        CHECK(aura::core::densify_consistency::moving_temporary_canary_noted_total_v_read() == 0,
+              "AC2: Off path does not note temps (inventory stays empty)");
+        const auto r = arena.live_compact(LiveCompactMode::Soft);
+        CHECK(r.objects_moved == 0, "AC2: Soft does not relocate");
+        CHECK(!r.moving_blocked_precondition, "AC2: Soft window not blocked");
+    }
+    CHECK(aura::core::densify_consistency::moving_blocked_temp_canary_total_v_read() == blocked0,
+          "AC2: gate counter unchanged under Off/Soft");
+    aura::ast::reset_temporary_moving_live_ptrs_for_test();
+}
+
+static void ac3857_3_late_redrain_wiring() {
+    std::println("\n--- #3857 AC3: post-relocate re-drain feeds stale gate ---");
+    const auto arena = read_file("src/core/arena.ixx");
+    const auto dc = read_file("src/core/densify_consistency_report.h");
+    const auto gate_idx = arena.find("moving_temp_canary_detail::g_inventory.live.load(");
+    CHECK(gate_idx != std::string::npos, "AC3: entry gate reads process-wide inventory");
+    const auto first_drain = arena.find("note_temporary_moving_live_canaries();");
+    CHECK(first_drain != std::string::npos, "AC3: #3210 drain present");
+    CHECK(gate_idx < first_drain, "AC3: gate runs before the drain");
+    const auto relocate = arena.find("relocate_tracked_objects_for_moving_(&untracked_kept_local)");
+    CHECK(relocate != std::string::npos, "AC3: relocate call site");
+    const auto redrain = arena.find("g_moving_late_temp_canary_total");
+    CHECK(redrain != std::string::npos, "AC3: late re-drain counter wired");
+    const auto stale_scan = arena.find("count_post_moving_stale_known_ptrs_(this_window_remap)");
+    CHECK(stale_scan != std::string::npos, "AC3: stale scan call site");
+    CHECK(relocate < redrain && redrain < stale_scan,
+          "AC3: re-drain between relocate and stale scan");
+    CHECK(dc.find("g_moving_blocked_temp_canary_total{0}") != std::string::npos &&
+              dc.find("g_moving_late_temp_canary_total{0}") != std::string::npos,
+          "AC3: additive counters at header end");
+}
+
+static void ac3857_4_soak_block_release_compose() {
+    std::println("\n--- #3857 AC4: soak note × blocked-window × unnote × healthy ---");
+    MovingFlagGuard on(1);
+    RequiredPinGuard off(0);
+    aura::ast::g_moving_untracked_hard_abort_pref.store(1, std::memory_order_relaxed);
+    aura::core::densify_consistency::reset_moving_blocked_temp_canary_for_test();
+    aura::core::densify_consistency::reset_moving_late_temp_canary_for_test();
+    bool saw_move = false;
+    for (int i = 0; i < 8; ++i) {
+        aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+        aura::core::densify_consistency::reset_moving_post_moving_stale_for_test();
+        aura::ast::reset_temporary_moving_live_ptrs_for_test();
+        ASTArena peer(64 * 1024);
+        auto* held = peer.create<Pod16>(3, 1, 4, 1);
+        {
+            aura::ast::TemporaryMovingLivePtrCanary tmp(held);
+            ASTArena victim(64 * 1024);
+            auto* p0 = victim.create<Pod16>(5, 9, 2, 6);
+            void* s0 = p0;
+            victim.register_external_root_slot_for_densify(&s0);
+            const auto rb = victim.live_compact(LiveCompactMode::Moving);
+            CHECK(rb.objects_moved == 0, "AC4: blocked window never relocates");
+            CHECK(rb.soft_gated, "AC4: blocked window soft_gated");
+        }
+        ASTArena victim2(64 * 1024);
+        auto* q0 = victim2.create<Pod16>(5, 3, 5, 3);
+        void* t0 = q0;
+        victim2.register_external_root_slot_for_densify(&t0);
+        const auto r2 = victim2.live_compact(LiveCompactMode::Moving);
+        CHECK(r2.post_moving_stale_count == 0, "AC4: released window stale==0");
+        if (r2.objects_moved > 0) {
+            saw_move = true;
+            CHECK(static_cast<Pod16*>(t0)->a == 5, "AC4: released window remap intact");
+        } else {
+            CHECK(q0->a == 5, "AC4: released window no-move intact");
+        }
+    }
+    CHECK(aura::core::densify_consistency::moving_post_moving_stale_total_v_read() == 0,
+          "AC4: gate keeps the stale canary path quiet across soak");
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    aura::ast::reset_temporary_moving_live_ptrs_for_test();
+    (void)saw_move;
+}
+
+static void ac3857_5_source_cite_no_invent() {
+    std::println("\n--- #3857 AC5: source-cite + SSOT + no second model ---");
+    const auto arena = read_file("src/core/arena.ixx");
+    const auto apply = read_file("src/compiler/evaluator_eval_flat.cpp");
+    const auto dc = read_file("src/core/densify_consistency_report.h");
+    const auto build = read_file("build.py");
+    CHECK(arena.find("Issue #3857") != std::string::npos, "AC5: gate stamped #3857");
+    CHECK(arena.find("moving_temp_canary_detail::g_inventory.live.load") != std::string::npos,
+          "AC5: gate reads the #3210 SSOT inventory");
+    CHECK(arena.find("class PostMovingPinRegistry") == std::string::npos &&
+              arena.find("g_moving_pin_registry_3857") == std::string::npos,
+          "AC5: no second model / no new registry");
+    CHECK(apply.find("TemporaryMovingLivePtrCanary tmp_flat") != std::string::npos &&
+              apply.find("TemporaryMovingLivePtrCanary tmp_pool") != std::string::npos,
+          "AC5: apply_closure canaries remain observe-only (#3210 shape)");
+    CHECK(dc.find("kMovingTempCanaryEntryGateIssue = 3857") != std::string::npos,
+          "AC5: counter stamps at header end");
+    CHECK(build.find("check_temp_canary_moving_gate_3857") != std::string::npos,
+          "AC5: build.py wires linter");
+    CHECK(read_file("docs/design/3857-temp-canary-gate.md").empty(),
+          "AC5: no docs/design/3857-* per #1655");
+    CHECK(read_file("tests/core/test_issue_3857.cpp").empty(),
+          "AC5: no test_issue_3857.cpp per #81967");
+}
+
 
 // ── Issue #3308: post-Moving temporary/known canary × steal×compact race ──
 // densify success path must stamp LCP BEFORE post_moving_live_canaries_.clear(),
@@ -3586,6 +3759,10 @@ static void ac3533_4_soft_zero_cost() {
           "3533 AC4: Soft fail_total stays 0");
     CHECK(!aura::core::lifetime::general_object_pin_required_breach_active(),
           "3533 AC4: Soft no breach");
+    // Issue #3857: the Soft cover path reuses note_ffi_opaque_alias_densify_cover
+    // (no stable slot → #3210 canary inventory note). Clean the process-wide
+    // inventory so the observe-only leftover cannot block later Moving windows.
+    aura::ast::reset_temporary_moving_live_ptrs_for_test();
 }
 
 static void ac3533_5_source_cite_no_invent() {
@@ -4878,6 +5055,16 @@ int run_test_moving_densify_fail_closed() {
     ac3210_4_soak_unregistered_temp();
     ac3210_5_soft_zero_extra();
     ac3210_6_source_cite_no_invent();
+
+    // Issue #3857: Moving entry soft-gate on live #3210 temp canaries
+    // (apply_closure×densify UAF residual). Additive to this file per
+    // #81934 (no new test_issue_3857.cpp).
+    std::println("\n=== Issue #3857: Moving entry temp-canary gate ===");
+    ac3857_1_entry_gate_blocks_then_releases();
+    ac3857_2_soft_off_unchanged();
+    ac3857_3_late_redrain_wiring();
+    ac3857_4_soak_block_release_compose();
+    ac3857_5_source_cite_no_invent();
 
     // Issue #3092: wire production EnvFrame/Closure/FFI/JIT live ptrs into
     // note_post_moving_live_ptr_canary (#3055 gate was blind). Additive to
