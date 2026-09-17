@@ -533,6 +533,34 @@ inline constexpr int kMutationHoldBudgetNoEdgeHolderDisposeIssue = 3764;
 // foreign unique_lock (force_release foreign arm only re-arms cancel).
 // Soft / !reject_enabled: metric-only. No new counter / query key.
 inline constexpr int kMutationHoldBudgetEdgeFreeLatchGateIssue = 3826;
+// Issue #3859: quarantine-latency SLO for the edge-free holder. #3325
+// force + #3826 residual sticky + #3764 dispose bound the unlock paths,
+// but a truly edge-free busy-spin holder keeps
+// join_drain_residual_still_running visible until the next-enter
+// dispose — soak can read as a hang. Bound the quarantine face: once
+// the no-edge state persists past 4× the inbody window bound (one latch
+// per window), the poll bumps g_hold_budget_no_edge_quarantine_total so
+// soak/admit see a bounded, explicit quarantine signal instead of an
+// open-ended still-running. Dispose (#3764) + dual-restore-before-
+// unlock stay the only unlock paths. Soft already returned before this
+// face.
+inline constexpr int kMutationHoldBudgetNoEdgeQuarantineIssue = 3859;
+inline constexpr std::uint64_t kMutationHoldBudgetNoEdgeQuarantineSloMultiple = 4;
+inline std::atomic<std::uint64_t> g_hold_budget_no_edge_quarantine_total{0};
+// First no-edge sighting of the current window (steady ns; 0 = none).
+inline std::atomic<std::uint64_t> g_hold_budget_no_edge_first_seen_ns{0};
+// One latch per window: the quarantine counter bumps once, not per poll.
+inline std::atomic<std::uint32_t> g_hold_budget_no_edge_quarantine_latched{0};
+
+[[nodiscard]] inline std::uint64_t hold_budget_no_edge_quarantine_total_v_read() noexcept {
+    return g_hold_budget_no_edge_quarantine_total.load(std::memory_order_relaxed);
+}
+
+inline void clear_hold_budget_no_edge_quarantine_for_test() noexcept {
+    g_hold_budget_no_edge_quarantine_total.store(0, std::memory_order_relaxed);
+    g_hold_budget_no_edge_first_seen_ns.store(0, std::memory_order_release);
+    g_hold_budget_no_edge_quarantine_latched.store(0, std::memory_order_release);
+}
 
 [[nodiscard]] inline std::uint64_t hold_budget_no_edge_force_total_v_read() noexcept {
     return g_hold_budget_no_edge_force_total.load(std::memory_order_relaxed);

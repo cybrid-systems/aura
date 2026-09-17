@@ -2043,6 +2043,224 @@ int run_test_hold_budget_safepoint_force_release_3825() {
     return failed == 0 ? 0 : 1;
 }
 
+
+// Issue #3859: quarantine-latency SLO (extend #3325) — the no-edge face
+// past 4× the inbody window bound bumps the quarantine counter once per
+// window; window end (holder gone / cancel consumed) clears the clock so
+// a fresh window escalates on its own latency; Soft stays metric-only.
+int run_test_hold_budget_no_edge_quarantine_3859() {
+    std::println("\n=== Issue #3859: no-edge quarantine latency SLO ===");
+    int saved_failed = aura::test::g_failed;
+    int saved_passed = aura::test::g_passed;
+
+    // ac3859_1_quarantine_bump_within_slo
+    {
+        std::println("\n--- AC1: quarantine counter bumps within SLO; window end resets ---");
+        using aura::compiler::CompilerService;
+        using aura::compiler::Evaluator;
+        using aura::serve::Scheduler;
+        ::unsetenv("AURA_SANDBOX");
+        ::unsetenv("AURA_MUTATION_HOLD_BUDGET_HARD");
+        ::unsetenv("AURA_HOLD_BUDGET_INBODY_BOUND_US");
+        aura::compiler::typed_audit::apply_production_audit_defaults();
+        CHECK(aura::compiler::mutation_hold_budget_reject_enabled(),
+              "3859 AC1: reject_enabled under production");
+        aura::serve::set_production_multi_worker_latched_for_test(true);
+        aura::compiler::clear_mutation_hold_budget_forced_unlock_for_test();
+        aura::compiler::clear_mutation_hold_budget_forced_fail_closed_for_test();
+        aura::compiler::clear_mutation_hold_budget_inbody_window_for_test();
+        aura::compiler::clear_hold_budget_no_edge_force_for_test();
+        aura::compiler::clear_hold_budget_no_edge_quarantine_for_test();
+        CompilerService cs;
+        Evaluator::set_query_evaluator(&cs.evaluator());
+        std::atomic<int> ran{0};
+        std::atomic<int> polled{0};
+        std::atomic<int> polled2{0};
+        std::atomic<std::uint64_t> q_after{0};
+        std::atomic<std::uint64_t> q_after2{0};
+        std::atomic<int> first_seen_reset{0};
+        std::atomic<int> latch_reset{0};
+        Scheduler sched(2);
+        sched.spawn([&]() {
+            bool ok = true;
+            {
+                Evaluator::MutationBoundaryGuard g(cs.evaluator(), &ok);
+                auto* f = aura::serve::g_current_fiber;
+                CHECK(f != nullptr, "3859 AC1: fiber current");
+                f->request_hold_budget_cancel();
+                aura::compiler::mutation_hold_budget_note_cancel_armed(f->id());
+                aura::compiler::g_hold_budget_cancel_armed_ns.store(1, std::memory_order_release);
+                // Preset the first no-edge sighting deep in the past: the
+                // window is already past the quarantine SLO.
+                aura::compiler::g_hold_budget_no_edge_first_seen_ns.store(
+                    1, std::memory_order_release);
+                volatile std::uint64_t sink = 0;
+                for (int i = 0; i < 64; ++i)
+                    sink += static_cast<std::uint64_t>(i);
+                (void)sink;
+                polled.store(aura::serve::aura_hold_budget_poll_inbody_window(),
+                             std::memory_order_relaxed);
+                q_after.store(aura::compiler::hold_budget_no_edge_quarantine_total_v_read(),
+                              std::memory_order_relaxed);
+                // Second poll: the first consume dropped the hold — the
+                // window ends (holder gone) and the quarantine clock must
+                // be cleared for the next window.
+                polled2.store(aura::serve::aura_hold_budget_poll_inbody_window(),
+                              std::memory_order_relaxed);
+                first_seen_reset.store(
+                    aura::compiler::g_hold_budget_no_edge_first_seen_ns.load() == 0 ? 1 : 0,
+                    std::memory_order_relaxed);
+                latch_reset.store(
+                    aura::compiler::g_hold_budget_no_edge_quarantine_latched.load() == 0 ? 1 : 0,
+                    std::memory_order_relaxed);
+                q_after2.store(aura::compiler::hold_budget_no_edge_quarantine_total_v_read(),
+                               std::memory_order_relaxed);
+                ran.store(1, std::memory_order_relaxed);
+            }
+        });
+        std::thread io([&]() { sched.run(); });
+        for (int i = 0; i < 200 && ran.load() == 0; ++i)
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        sched.stop();
+        io.join();
+        CHECK(ran.load() == 1, "3859 AC1: fiber body ran");
+        CHECK(polled.load() == 1, "3859 AC1: poll exceeded bound");
+        CHECK(aura::compiler::hold_budget_no_edge_force_total_v_read() >= 1,
+              "3859 AC1: no-edge force path ran");
+        CHECK(q_after.load() >= 1, "3859 AC1: quarantine counter bumped within SLO");
+        CHECK(q_after2.load() == q_after.load(), "3859 AC1: one latch per window");
+        CHECK(first_seen_reset.load() == 1, "3859 AC1: window end cleared the clock");
+        CHECK(latch_reset.load() == 1, "3859 AC1: window end cleared the latch");
+        Evaluator::set_query_evaluator(nullptr);
+        aura::compiler::typed_audit::apply_dev_audit_defaults();
+        aura::serve::set_production_multi_worker_latched_for_test(false);
+        aura::compiler::clear_mutation_hold_budget_inbody_window_for_test();
+        aura::compiler::clear_hold_budget_no_edge_force_for_test();
+        aura::compiler::clear_hold_budget_no_edge_quarantine_for_test();
+    }
+
+    // ac3859_2_window_end_reset
+    {
+        std::println("\n--- AC2: holder-gone poll resets the quarantine clock (pure face) ---");
+        using aura::compiler::Evaluator;
+        aura::compiler::typed_audit::apply_dev_audit_defaults();
+        aura::compiler::clear_hold_budget_no_edge_quarantine_for_test();
+        aura::compiler::g_hold_budget_cancel_armed_ns.store(1, std::memory_order_release);
+        aura::compiler::g_hold_budget_cancel_armed_fiber.store(1, std::memory_order_release);
+        aura::compiler::g_hold_budget_no_edge_first_seen_ns.store(42, std::memory_order_release);
+        aura::compiler::g_hold_budget_no_edge_quarantine_latched.store(1,
+                                                                       std::memory_order_release);
+        const auto r = aura::serve::aura_hold_budget_poll_inbody_window();
+        CHECK(r == 0, "3859 AC2: holder-gone poll returns 0");
+        CHECK(aura::compiler::g_hold_budget_cancel_armed_fiber.load() == 0,
+              "3859 AC2: cancel consumed");
+        CHECK(aura::compiler::g_hold_budget_no_edge_first_seen_ns.load() == 0,
+              "3859 AC2: first-seen cleared");
+        CHECK(aura::compiler::g_hold_budget_no_edge_quarantine_latched.load() == 0,
+              "3859 AC2: latch cleared");
+        aura::compiler::typed_audit::apply_dev_audit_defaults();
+        aura::compiler::clear_hold_budget_no_edge_quarantine_for_test();
+    }
+
+    // ac3859_3_soft_observe_unchanged
+    {
+        std::println("\n--- AC3: Soft / sandbox=off metric-only, quarantine face never runs ---");
+        using aura::compiler::CompilerService;
+        using aura::compiler::Evaluator;
+        using aura::serve::Scheduler;
+        // AURA_SANDBOX=off satisfies the multi-worker latch FATAL guard while
+        // keeping reject disabled (Soft observe-only world).
+        ::setenv("AURA_SANDBOX", "off", 1);
+        ::unsetenv("AURA_MUTATION_HOLD_BUDGET_HARD");
+        ::unsetenv("AURA_HOLD_BUDGET_INBODY_BOUND_US");
+        aura::compiler::typed_audit::apply_dev_audit_defaults();
+        CHECK(!aura::compiler::mutation_hold_budget_reject_enabled(),
+              "3859 AC3: reject disabled under Soft");
+        aura::serve::set_production_multi_worker_latched_for_test(true);
+        aura::compiler::clear_hold_budget_no_edge_quarantine_for_test();
+        CompilerService cs;
+        Evaluator::set_query_evaluator(&cs.evaluator());
+        std::atomic<int> ran{0};
+        std::atomic<std::uint64_t> q_soft{0};
+        std::atomic<std::uint64_t> first_seen_after{0};
+        Scheduler sched(2);
+        sched.spawn([&]() {
+            bool ok_soft = true;
+            Evaluator::MutationBoundaryGuard g(cs.evaluator(), &ok_soft);
+            auto* f = aura::serve::g_current_fiber;
+            CHECK(f != nullptr, "3859 AC3: fiber current");
+            f->request_hold_budget_cancel();
+            aura::compiler::mutation_hold_budget_note_cancel_armed(f->id());
+            aura::compiler::g_hold_budget_cancel_armed_ns.store(1, std::memory_order_release);
+            aura::compiler::g_hold_budget_no_edge_first_seen_ns.store(1, std::memory_order_release);
+            (void)aura::serve::aura_hold_budget_poll_inbody_window();
+            q_soft.store(aura::compiler::hold_budget_no_edge_quarantine_total_v_read(),
+                         std::memory_order_relaxed);
+            first_seen_after.store(aura::compiler::g_hold_budget_no_edge_first_seen_ns.load(),
+                                   std::memory_order_relaxed);
+            ran.store(1, std::memory_order_relaxed);
+        });
+        std::thread io([&]() { sched.run(); });
+        for (int i = 0; i < 200 && ran.load() == 0; ++i)
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        sched.stop();
+        io.join();
+        CHECK(ran.load() == 1, "3859 AC3: fiber body ran");
+        CHECK(q_soft.load() == 0, "3859 AC3: Soft never bumps quarantine");
+        CHECK(first_seen_after.load() == 1,
+              "3859 AC3: clock untouched (quarantine face never ran)");
+        Evaluator::set_query_evaluator(nullptr);
+        aura::compiler::typed_audit::apply_dev_audit_defaults();
+        aura::serve::set_production_multi_worker_latched_for_test(false);
+        aura::compiler::clear_hold_budget_no_edge_quarantine_for_test();
+    }
+
+    // ac3859_4_order_unchanged_source_cite
+    {
+        std::println("\n--- AC4: cancel → dual-restore → unlock order unchanged ---");
+        const auto fc = read_file("src/serve/fiber.cpp");
+        const auto mhb = read_file("src/compiler/mutation_hold_budget.h");
+        const auto consume = fc.find("aura_evaluator_force_release_outermost_holder(fid)");
+        const auto qface = fc.find("Issue #3859: quarantine-latency SLO");
+        CHECK(consume != std::string::npos, "AC4: unlock consume path present");
+        CHECK(qface != std::string::npos, "AC4: quarantine face present");
+        CHECK(qface > consume, "AC4: face runs after the unlock consume (order unchanged)");
+        CHECK(mhb.find("Dispose (#3764) + dual-restore-before-") != std::string::npos,
+              "AC4: unlock prohibition pinned");
+    }
+
+    // ac3859_5_source_and_no_artifacts
+    {
+        std::println("\n--- AC5: source-cite + no invent ---");
+        const auto mhb = read_file("src/compiler/mutation_hold_budget.h");
+        const auto fc = read_file("src/serve/fiber.cpp");
+        const auto lint =
+            read_file("scripts/coverage/checks/check_hold_budget_no_edge_force_3325.py");
+        CHECK(mhb.find("kMutationHoldBudgetNoEdgeQuarantineIssue = 3859") != std::string::npos,
+              "AC5: stamp");
+        CHECK(mhb.find("g_hold_budget_no_edge_quarantine_total") != std::string::npos,
+              "AC5: counter");
+        CHECK(mhb.find("kMutationHoldBudgetNoEdgeQuarantineSloMultiple = 4") != std::string::npos,
+              "AC5: SLO multiple");
+        CHECK(mhb.find("hold_budget_no_edge_quarantine_total_v_read") != std::string::npos,
+              "AC5: reader");
+        CHECK(fc.find("Issue #3859") != std::string::npos, "AC5: poll cites #3859");
+        CHECK(lint.find("Issue #3859") != std::string::npos,
+              "AC5: #3325 linter expanded per issue Verify #1");
+        CHECK(read_file("tests/serve/test_issue_3859.cpp").empty(),
+              "AC5: no test_issue_3859.cpp per #81967");
+        CHECK(read_file("docs/design/3859-no-edge-quarantine.md").empty(),
+              "AC5: no docs/design/3859-* per #1655");
+        CHECK(read_file("scripts/check_hold_budget_no_edge_quarantine_3859.py").empty(),
+              "AC5: no invented top-level linter (house rule: extend #3325)");
+    }
+
+    int failed = aura::test::g_failed - saved_failed;
+    int passed = aura::test::g_passed - saved_passed;
+    std::println("\n=== #3859 quarantine SLO: {} passed, {} failed ===", passed, failed);
+    return failed == 0 ? 0 : 1;
+}
+
 #ifndef AURA_ISSUE_BATCH_MEMBER
 int main() {
     const int rc1 = run_test_hold_budget_synthetic_yield_injection();
@@ -2059,6 +2277,10 @@ int main() {
     const int rc12 = run_test_hold_budget_safepoint_force_release_3825();
     if (rc12 != 0)
         return rc12;
+    // Issue #3859: quarantine-latency SLO (extend #3325).
+    const int rc13 = run_test_hold_budget_no_edge_quarantine_3859();
+    if (rc13 != 0)
+        return rc13;
     return rc1 != 0
                ? rc1
                : (rc2 != 0
