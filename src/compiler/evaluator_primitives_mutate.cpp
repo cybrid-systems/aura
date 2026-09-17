@@ -7891,6 +7891,24 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         if (!guard_r)
             return mev("resource-quota-exceeded", guard_r.error().message);
         auto guard = std::move(*guard_r);
+        // Issue #3858: restore IS an unstamp face — reinstalling the
+        // checkpointed marker column can demote live MacroIntroduced →
+        // User, vacating the #3344/#3542 structural default-deny without
+        // MacroSelfEvo. Same MSE gate as rollback-macro-introduced
+        // (#3650): refuse the demoting restore without the capability;
+        // restore stays reachable WITH MacroSelfEvo (HYGIENE_EXEMPT
+        // surface preserved; deny blames the first demoted node). Soft /
+        // Off: effect_sandbox_mode()==0 → one load, no scan; the peek is
+        // non-consuming so a denied handle stays restorable.
+        if (ev.effect_sandbox_mode() != 0) {
+            const auto demote_id = ev.restore_would_demote_macro_introduced(handle);
+            if (demote_id != aura::ast::NULL_NODE) {
+                if (auto denied = deny_macro_opt_out_without_mse(ev, demote_id, mev)) {
+                    ok = false;
+                    return *denied;
+                }
+            }
+        }
         const bool restored = ev.restore_hygiene_checkpoint_handle(handle);
         return make_bool(restored);
     });

@@ -122,3 +122,4 @@ check_mse_revoke_fiber_3854.py
 check_wal_miss_se_compensate_3855.py
 check_wal_miss_ring_flip_3856.py
 check_temp_canary_moving_gate_3857.py
+check_restore_checkpoint_mse_3858.py
