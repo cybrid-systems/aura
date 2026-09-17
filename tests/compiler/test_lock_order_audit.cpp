@@ -274,6 +274,39 @@ static void ac3613_canary_holder_send_no_inversion() {
 }
 
 
+// ── #3861: expected-vs-typed-latch consistency (source-cite) ──
+static void ac3861_1_expected_typed_latch_consistency() {
+    std::println("\n--- #3861: expected() ⇒ typed latch self-upgrade ---");
+    const auto ctor = read_file("src/compiler/evaluator_ctor.cpp");
+    const auto tma = read_file("src/compiler/typed_mutation_audit.h");
+    // The #3554 branch now also flips the typed latch: an embedder that
+    // satisfies expected() (env / lock-order default) while skipping
+    // apply_production_audit_defaults() would leave restamp-lag Hard faces
+    // Soft observe-only while ops read "production" (config skew).
+    const auto exp = ctor.find("production_defaults_expected()");
+    const auto apply = ctor.find("typed_audit::apply_production_audit_defaults()");
+    CHECK(exp != std::string::npos, "3861: ctor expected() gate present");
+    CHECK(apply != std::string::npos, "3861: ctor self-applies typed audit defaults");
+    CHECK(ctor.find("typed_audit::production_defaults_active()") != std::string::npos,
+          "3861: ctor gates on the typed latch (skip when already active)");
+    CHECK(exp < apply, "3861: typed self-apply inside the expected() branch");
+    CHECK(ctor.find("Issue #3861") != std::string::npos, "3861: self-apply block cites #3861");
+    // Latch reader + apply helper exist (#3319 / #3375).
+    CHECK(tma.find("production_defaults_active") != std::string::npos,
+          "3861: typed latch reader present (#3319)");
+    CHECK(tma.find("inline void apply_production_audit_defaults()") != std::string::npos,
+          "3861: apply helper present (#3375)");
+    // Soft / sandbox=off unchanged: apply helper keeps the opt-out.
+    CHECK(tma.find("AURA_SANDBOX") != std::string::npos,
+          "3861: apply helper keeps Soft / sandbox=off opt-out");
+    // No artifacts (#81967 / #1655).
+    CHECK(read_file("tests/issues/test_issue_3861.cpp").empty(),
+          "3861: no test_issue_3861.cpp per #81967");
+    CHECK(read_file("docs/design/3861-typed-latch-consistency.md").empty(),
+          "3861: no docs/design/3861-* per #1655");
+}
+
+
 } // namespace
 
 int run_test_lock_order_audit() {
@@ -287,6 +320,8 @@ int run_test_lock_order_audit() {
     std::println("\n=== #3554: Evaluator ctor self-upgrade ===");
     ac3554_1_evaluator_ctor_self_upgrade_source_cite();
     ac3554_2_no_docs_no_invent();
+    std::println("\n=== #3861: expected vs typed latch consistency ===");
+    ac3861_1_expected_typed_latch_consistency();
     std::println("\n=== Issue #3613: holder send BPs before Mailbox acquire (no inversion) ===");
     ac3613_canary_holder_send_no_inversion();
     std::println("\n=== #2316 lock-order audit: {} passed, {} failed ===", g_passed, g_failed);

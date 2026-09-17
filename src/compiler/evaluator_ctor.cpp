@@ -103,6 +103,17 @@ Evaluator::Evaluator() {
         if (!aura::compiler::mutation_hold_budget_reject_enabled()) {
             (void)aura::compiler::mutation_hold_budget_reject_enabled_set(true);
         }
+        // Issue #3861: keep the typed_audit latch consistent with the
+        // #3554 self-upgrade — some typed / restamp-lag Hard faces gate on
+        // production_defaults_active() (#3319/#3556); an embedder that
+        // satisfies expected() (env / lock-order default) while skipping
+        // apply_production_audit_defaults() would leave those faces Soft
+        // observe-only while ops read "production". Self-apply mirrors the
+        // #3554 pattern; Soft / sandbox=off never reaches this branch
+        // (expected() is false without host production signals).
+        if (!aura::compiler::typed_audit::production_defaults_active()) {
+            aura::compiler::typed_audit::apply_production_audit_defaults();
+        }
     }
 
     // Issue #2078: per-Evaluator orch agent name table. The unique_ptr

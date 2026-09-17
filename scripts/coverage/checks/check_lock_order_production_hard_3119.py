@@ -72,6 +72,15 @@ def main() -> int:
         for f in sorted(docs.glob("3119-*")):
             fails.append(f"AC6: docs/design/{f.name} present (forbidden #1655)")
 
+    # Issue #3861: expected() ⇒ typed latch self-upgrade (extend #3119,
+    # no new check file).
+    ctor3861 = _read("src/compiler/evaluator_ctor.cpp")
+    lko3861 = _read("tests/compiler/test_lock_order_audit.cpp")
+    must("Issue #3861", "AC3861 ctor self-apply block", ctor3861)
+    must("typed_audit::apply_production_audit_defaults()", "AC3861 apply call", ctor3861)
+    must("typed_audit::production_defaults_active()", "AC3861 latch gate", ctor3861)
+    must("Issue #3861", "AC3861 test AC", lko3861)
+
     if fails:
         for f in fails:
             print(f"FAIL: {f}", file=sys.stderr)
