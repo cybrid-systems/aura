@@ -845,12 +845,15 @@ static void ac3852_3_source_and_linter() {
 
 } // namespace
 
+static void ac3864_prod_bypass_source_cite();
+
 int run_test_abort_ir_cache_fence_first() {
     std::println("=== Issue #3159: abort IR cache fence-first ordering under multi-fiber ===");
     std::println(
         "=== Residual of #3117 / #3069: concurrent lookup during dual-topology restore ===");
     ac1_2_three_abort_sites_ordering();
     ac3_in_progress_flag_lifecycle();
+    ac3864_prod_bypass_source_cite();
     ac4_test_only_hold_mechanism();
     ac5_soft_off_zero_cost();
     ac6_no_new_metrics_counters();
@@ -890,6 +893,34 @@ int run_test_abort_ir_cache_fence_first() {
 }
 
 #ifndef AURA_ISSUE_BATCH_MEMBER
+// ── #3864: production bypass of the frame-budget cascade defer ──
+static void ac3864_prod_bypass_source_cite() {
+    std::println("\n--- #3864: production bypass of frame-budget cascade defer ---");
+    std::string sd;
+    for (const char* p : {"src/compiler/service_dirty.cpp", "../src/compiler/service_dirty.cpp"}) {
+        sd = read_file(p);
+        if (!sd.empty())
+            break;
+    }
+    CHECK(!sd.empty(), "3864: service_dirty.cpp readable");
+    CHECK(sd.find("Issue #3864") != std::string::npos, "3864: defer sites cite #3864");
+    // Both defer checks gate on !production_defaults_active() — the
+    // production hard-force path cascades immediately (Verify 1: abort →
+    // immediate cascade; no deferred clean-hit window).
+    CHECK(sd.find("frame_budget::active() && !") != std::string::npos,
+          "3864: notify defer check gates on !production_defaults_active()");
+    CHECK(sd.find("production_defaults_active()") != std::string::npos,
+          "3864: mark_define_dirty defer check gates on the latch too");
+    // Soft/non-render defer unchanged: the defer bodies still defer_cascade.
+    CHECK(sd.find("frame_budget::defer_cascade(name)") != std::string::npos,
+          "3864: Soft defer path retained");
+    // No artifacts (#81967 / #1655).
+    CHECK(read_file("tests/issues/test_issue_3864.cpp").empty(),
+          "3864: no test_issue_3864.cpp per #81967");
+    CHECK(read_file("docs/design/3864-cascade-defer-bypass.md").empty(),
+          "3864: no docs/design/3864-* per #1655");
+}
+
 int main() {
     return run_test_abort_ir_cache_fence_first();
 }

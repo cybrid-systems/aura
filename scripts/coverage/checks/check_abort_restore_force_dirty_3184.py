@@ -281,6 +281,25 @@ def main() -> int:
         print(json.dumps(out, indent=2))
         return 0 if (len(fails) == 0 or not args.strict) else 1
 
+    # Issue #3864: production bypass of the frame-budget cascade defer
+    # (extend #3184, no new check file).
+    sd3864 = (Path(__file__).resolve().parents[3] / "src/compiler/service_dirty.cpp").read_text(
+        encoding="utf-8", errors="replace"
+    )
+    must3864 = [
+        ("Issue #3864", "AC3864 defer-site cite"),
+        ("frame_budget::active() && !", "AC3864 notify bypass"),
+        ("frame_budget::defer_cascade(name)", "AC3864 Soft defer retained"),
+    ]
+    for needle, label in must3864:
+        if needle not in sd3864:
+            fails.append(f"{label}: missing {needle!r}")
+    t3864 = (Path(__file__).resolve().parents[3] / "tests/compiler/test_abort_ir_cache_fence_first.cpp").read_text(
+        encoding="utf-8", errors="replace"
+    )
+    if "Issue #3864" not in t3864:
+        fails.append("AC3864 test cite: missing Issue #3864")
+
     if fails:
         for f in fails:
             print(f"FAIL: {f}", file=sys.stderr)

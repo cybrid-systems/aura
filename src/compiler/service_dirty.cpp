@@ -118,7 +118,12 @@ void CompilerService::notify_hot_update_after_cascade_(const std::string& name,
     // Issue #2137: under frame budget, skip HotUpdate reemit fan-out for
     // non-render roots (cascade body already deferred in mark_define_dirty;
     // this is a safety net if hard invalidate still reaches here).
-    if (frame_budget::active() && frame_budget::should_defer_cascade(name)) {
+    // Issue #3864: production hard-force bypasses the frame-budget
+    // defer — the cascade fans out immediately (no deferred clean-hit
+    // window after a production mutate/abort). Soft/non-render defer
+    // path unchanged.
+    if (frame_budget::active() && !aura::compiler::typed_audit::production_defaults_active() &&
+        frame_budget::should_defer_cascade(name)) {
         frame_budget::defer_cascade(name);
         for (const auto& d : dependents)
             frame_budget::defer_cascade(d);
@@ -307,10 +312,15 @@ void CompilerService::mark_define_dirty(const std::string& name) {
     }
     // Issue #2137: while present/frame budget holds, defer non-render cascade.
     // Render-related names (draw/present/tui/…) proceed; others coalesce.
-    if (frame_budget::should_defer_cascade(name) ||
-        (aura::core::arena_policy::in_render_hotpath() &&
-         !frame_budget::is_render_related_name(name) &&
-         !evaluator_.is_render_critical_define(name))) {
+    // Issue #3864: production hard-force bypasses the frame-budget
+    // defer — the cascade proceeds immediately (no deferred clean-hit
+    // window after a production mutate/abort). Soft/non-render defer
+    // path unchanged.
+    if (!aura::compiler::typed_audit::production_defaults_active() &&
+        (frame_budget::should_defer_cascade(name) ||
+         (aura::core::arena_policy::in_render_hotpath() &&
+          !frame_budget::is_render_related_name(name) &&
+          !evaluator_.is_render_critical_define(name)))) {
         frame_budget::defer_cascade(name);
         metrics_.frame_budget_deferred_cascade_total.fetch_add(1, std::memory_order_relaxed);
         metrics_.frame_budget_pending.store(frame_budget::deferred_pending(),
