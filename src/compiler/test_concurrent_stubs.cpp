@@ -7,8 +7,12 @@
 // (only compiled into the test_concurrent target, not the main
 // aura binary which gets the real definition).
 //
-// This file is listed ONLY in target_sources(test_concurrent ...)
-// — never in target_sources(aura ...) — so no duplicate symbol.
+// Listed in target_sources(test_concurrent ...) and the other
+// light-link standalone targets (test_shape / test_spec_jit /
+// test_shape_profiler_concurrency / test_jit_metrics — added
+// 2026-09-18, #3868 full-tree rebuild surfaced their link rot) —
+// never in target_sources(aura ...). All defs are weak: strong
+// definitions in module TUs keep winning wherever compiled.
 
 #include "compiler/aura_jit_bridge.h" // for the C-linkage declaration
 #include <cstddef>
@@ -126,3 +130,25 @@ __attribute__((weak)) void maybe_persist_typed_summary(const TypedMutationAuditE
     // stub: no mutation WAL persist (Soft / zero extra)
 }
 } // namespace aura::compiler::typed_audit
+
+// ── 2026-09-18: light-link closures for the standalone shape/jit
+//    metrics targets (#3868 full-tree rebuild). Strong defs live in
+//    src/serve/fiber.cpp (module TU — cannot compile standalone);
+//    light binaries get inert weak stubs (fail-closed / no-fiber).
+extern "C" __attribute__((weak)) std::uint64_t aura_fiber_current_id() noexcept {
+    return 0; // stub: no fiber context in light binaries
+}
+extern "C" __attribute__((weak)) int aura_production_defaults_active_probe() noexcept {
+    return 0; // stub: production defaults inactive in light binaries
+}
+extern "C" __attribute__((weak)) std::uint64_t
+aura_hot_update_force_jit_regions_mask(void) noexcept {
+    return 0; // stub: no forced JIT regions in light binaries
+}
+extern "C" __attribute__((weak)) std::uint64_t
+aura_hot_update_last_reemit_success_region_mask(void) noexcept {
+    return 0; // stub: no reemit-success regions in light binaries
+}
+extern "C" __attribute__((weak)) int aura_hot_update_relower_success_define_active(void) noexcept {
+    return 0; // stub: no relower-success define tracking in light binaries
+}

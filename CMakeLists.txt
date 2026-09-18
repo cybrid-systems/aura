@@ -1141,7 +1141,7 @@ target_link_libraries(test_shape PRIVATE stdc++)
 # (aura_hot_update_set_shape_storm_active) lives in runtime_ssot.cpp —
 # the standalone link broke when #2433 added the call. Surfaced by the
 # #3868 full-tree rebuild.
-target_sources(test_shape PRIVATE src/core/contract_handler.cpp src/compiler/runtime_ssot.cpp)
+target_sources(test_shape PRIVATE src/core/contract_handler.cpp src/compiler/runtime_ssot.cpp src/compiler/test_concurrent_stubs.cpp)
 set_source_files_properties(src/core/contract_handler.cpp PROPERTIES COMPILE_FLAGS "-include contracts -fcontracts")
 add_test(NAME test_shape COMMAND test_shape
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
@@ -1152,7 +1152,7 @@ add_executable(test_shape_profiler_concurrency
     src/compiler/shape_profiler.cpp)
 target_include_directories(test_shape_profiler_concurrency PRIVATE src tests)
 target_link_libraries(test_shape_profiler_concurrency PRIVATE stdc++ pthread)
-target_sources(test_shape_profiler_concurrency PRIVATE src/core/contract_handler.cpp)
+target_sources(test_shape_profiler_concurrency PRIVATE src/core/contract_handler.cpp src/compiler/test_concurrent_stubs.cpp)
 add_test(NAME test_shape_profiler_concurrency COMMAND test_shape_profiler_concurrency
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 
@@ -1165,7 +1165,7 @@ target_link_libraries(test_spec_jit PRIVATE stdc++)
 # Issue #278 follow-up: same contract_handler link fix as test_shape.
 # Issue #2433 follow-up: same runtime_ssot link fix as test_shape —
 # shape_profiler.cpp references aura_hot_update_set_shape_storm_active.
-target_sources(test_spec_jit PRIVATE src/core/contract_handler.cpp src/compiler/runtime_ssot.cpp)
+target_sources(test_spec_jit PRIVATE src/core/contract_handler.cpp src/compiler/runtime_ssot.cpp src/compiler/test_concurrent_stubs.cpp)
 set_source_files_properties(src/core/contract_handler.cpp PROPERTIES COMPILE_FLAGS "-include contracts -fcontracts")
 # Issue #278 follow-up: spec_jit_controller.cpp calls
 # AuraJIT::unhandled_opcode_count_for_function, which lives in
@@ -1200,7 +1200,9 @@ add_executable(test_jit_metrics tests/compiler/test_jit_metrics.cpp
     src/compiler/aura_jit_runtime.cpp
     src/compiler/aura_jit_bridge_stub.cpp
     src/compiler/tl_arena_tls.cpp
-    src/compiler/runtime_ssot.cpp)
+    src/compiler/runtime_ssot.cpp
+    src/compiler/test_concurrent_stubs.cpp
+    src/compiler/hot_update_registry.cpp)
 target_include_directories(test_jit_metrics PRIVATE src)
 set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
