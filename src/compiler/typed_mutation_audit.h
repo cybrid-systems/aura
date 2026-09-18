@@ -1312,13 +1312,21 @@ inline void maybe_warn_sampled_without_opt_in() noexcept {
 // Sampled + small non-linear non-match dirty → soft path (perf; AC3).
 // Off sandbox / Off strategy → no hard gate (AC4).
 // Issue #2223: match_sites_present mirrors linear_ops_present force.
-[[nodiscard]] inline bool requires_invariant_hard_gate(std::uint64_t nodes_changed,
-                                                       bool linear_ops_present, bool strict_sandbox,
-                                                       bool match_sites_present = false) noexcept {
+// Issue #3872: production + live mutate session always hard-gates — self-mod
+//   must never ride the observe-only soft path, even at nodes_changed == 0.
+[[nodiscard]] inline bool
+requires_invariant_hard_gate(std::uint64_t nodes_changed, bool linear_ops_present,
+                             bool strict_sandbox, bool match_sites_present = false,
+                             bool mutate_session_active = false) noexcept {
     const auto s = get_strategy();
     if (s == AuditStrategy::Off)
         return false;
     if (s == AuditStrategy::Full || strict_sandbox)
+        return true;
+    // Issue #3872: production + live mutate session → always force. The
+    // #2053/#2223 arms only cover nodes >= force_n / linear / match-sites;
+    // a zero-node dirty cone under Sampled was still observe-only.
+    if (production_defaults_active() && mutate_session_active)
         return true;
     // Sampled: contextual force only.
     const auto force_n =
@@ -1343,6 +1351,8 @@ inline void maybe_warn_sampled_without_opt_in() noexcept {
 //   │ Sampled  │ -       │ >=N   │ -      │ -       │ true  / true  / "nodes" │
 //   │ Sampled  │ -       │ -     │ -      │ true    │ true  / true  /         │
 //   │          │         │       │        │         │ "match-sites"          │
+//   │ Sampled  │ -       │ -     │ -      │ -       │ true  / true  /         │
+//   │          │         │       │        │         │ "mutate-session" (prod)│
 //   │ Sampled  │ -       │ -     │ true   │ -       │ *hit / true / "strict"  │
 //   │ Sampled  │ -       │ <N    │ false  │ false   │ *hit / false /          │
 //   │          │         │       │        │         │ "sampled-hit"|"skip"    │
@@ -1368,7 +1378,8 @@ struct AuditDecision {
 
 inline AuditDecision decide(std::uint64_t mutation_id, std::uint64_t nodes_changed,
                             bool linear_ops_present, bool strict_sandbox,
-                            bool match_sites_present = false) noexcept {
+                            bool match_sites_present = false,
+                            bool mutate_session_active = false) noexcept {
     AuditDecision d;
     d.strategy = static_cast<int>(get_strategy());
     d.sample_ratio = static_cast<int>(get_sample_ratio());
@@ -1393,9 +1404,11 @@ inline AuditDecision decide(std::uint64_t mutation_id, std::uint64_t nodes_chang
         linear_ops_present || match_sites_present || nodes_changed >= force_n;
     const bool sample_hit =
         (d.sample_ratio <= 1) || (mutation_id % static_cast<std::uint64_t>(d.sample_ratio)) == 0;
+    // Issue #3872: production + live mutate session always hard-gates.
+    const bool mutate_session_force = d.production_defaults && mutate_session_active;
 
-    d.would_audit = context_force || sample_hit;
-    d.would_hard_gate = strict_sandbox || context_force;
+    d.would_audit = context_force || sample_hit || mutate_session_force;
+    d.would_hard_gate = strict_sandbox || context_force || mutate_session_force;
 
     // force_reason: priority order (most specific first).
     if (strict_sandbox) {
@@ -1404,6 +1417,8 @@ inline AuditDecision decide(std::uint64_t mutation_id, std::uint64_t nodes_chang
         d.force_reason = "linear";
     } else if (match_sites_present) {
         d.force_reason = "match-sites";
+    } else if (mutate_session_force) {
+        d.force_reason = "mutate-session";
     } else if (nodes_changed >= force_n) {
         d.force_reason = d.production_defaults ? "production-nodes" : "nodes";
     } else if (d.would_audit) {
