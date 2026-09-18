@@ -7665,6 +7665,18 @@ def cmd_lint():
     if r != 0:
         fail("Issue #3874 audit event tenant linter failed — run python3 scripts/check_audit_event_tenant_3874.py")
         return r
+    # Issue #3875: revoke_epoch process-origin stamp is hard-only — Soft
+    # rows keep honest 0 (no phantom 1 into mutation-order stats).
+    reh3875_script = ROOT / "scripts" / "check_revoke_epoch_hard_only_3875.py"
+    if not reh3875_script.exists():
+        fail(f"missing {reh3875_script}")
+        return 1
+    r = run([sys.executable, str(reh3875_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3875 revoke-epoch hard-only linter failed — run python3 scripts/check_revoke_epoch_hard_only_3875.py"
+        )
+        return r
     # Issue #3645: engine:metrics by-name lookup miss returns a typed
     # not-found hash (ok=#f / status=not-found / name / schema-3531)
     # instead of make_void() — a typo'd or unregistered name is now

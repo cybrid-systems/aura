@@ -1282,8 +1282,12 @@ struct CapabilityRegistry {
                 auto ep = revoke_at_epoch;
                 if (ep == 0)
                     ep = ::aura::core::current_mutation_epoch();
-                if (ep == 0)
-                    ep = 1; // non-zero audit stamp at process origin
+                // Issue #3875: the process-origin stamp is hard-only. Soft is
+                // observe-only — a phantom 1 leaks into mutation-order stats
+                // via the commit_health readiness clamp; Soft rows keep
+                // revoke_epoch = 0 (honest unset; #3844/#3854 vocabulary).
+                if (ep == 0 && capability_epoch_hard_face())
+                    ep = 1; // non-zero audit stamp at process origin (hard-only)
                 g.revoke_epoch = ep;
                 auto& met = g_capability_effect_metrics();
                 met.capability_revoke_total.fetch_add(1, std::memory_order_relaxed);

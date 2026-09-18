@@ -346,6 +346,56 @@ static void ac3066_1_production_batch_share_mid() {
 
 // Issue #3874: TypedMutationAuditEvent carries the capability principal
 // tenant; unset emits stay honest-0 (Soft-face unchanged).
+// Issue #3875: revoke_epoch process-origin stamp is hard-only — Soft rows
+// keep honest 0 (no phantom 1 into mutation-order stats).
+static void ac3875_revoke_epoch_hard_only_invent() {
+    std::println("\n--- #3875 AC1: Soft face + Mutation epoch=0 → revoke_epoch stays 0 ---");
+    reset_all();
+    aura::compiler::typed_audit::reset_for_test();
+    aura::core::reset_mutation_epoch_for_test();
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    aura::compiler::typed_audit::set_strategy(aura::compiler::typed_audit::AuditStrategy::Sampled);
+    aura::core::store_workspace_epoch(aura::core::WorkspaceEpochKind::Mutation, 0);
+    CHECK(aura::core::current_mutation_epoch() == 0, "3875 AC1 pre: epoch=0");
+    CHECK(!aura::core::capability::capability_epoch_hard_face(), "3875 AC1 pre: soft face");
+
+    using aura::core::capability::Effect;
+    using aura::core::capability::make_grant_provenance;
+    auto prov = make_grant_provenance(0, false, 0, 0);
+    CHECK(g_capability_registry().grant(875, "mutate-3875", Effect::Mutate, prov,
+                                        /*single_use=*/false, /*session_bound=*/false, 875),
+          "3875 AC1: grant accepted");
+    g_capability_registry().revoke(875, "mutate-3875", /*revoke_at_epoch=*/0);
+    CapabilityGrant g{};
+    CHECK(g_capability_registry().find_grant(875, "mutate-3875", g), "3875 AC1: grant found");
+    CHECK(g.revoked, "3875 AC1: revoked flag");
+    CHECK(g.revoke_epoch == 0, "3875 AC1: Soft observe keeps revoke_epoch 0 (no invented 1)");
+
+    std::println("\n--- #3875 AC2: hard face + Mutation epoch=0 → process-origin stamp 1 ---");
+    reset_all();
+    aura::compiler::typed_audit::reset_for_test();
+    aura::core::reset_mutation_epoch_for_test();
+    aura::compiler::typed_audit::set_strategy(aura::compiler::typed_audit::AuditStrategy::Full);
+    g_typed_mutation_audit_counters.production_defaults_active.store(0, std::memory_order_relaxed);
+    aura::core::store_workspace_epoch(aura::core::WorkspaceEpochKind::Mutation, 0);
+    CHECK(aura::core::capability::capability_epoch_hard_face(), "3875 AC2 pre: hard face");
+    prov = make_grant_provenance(0, false, 0, 0);
+    CHECK(g_capability_registry().grant(875, "mutate-3875h", Effect::Mutate, prov,
+                                        /*single_use=*/false, /*session_bound=*/false, 875),
+          "3875 AC2: grant accepted");
+    g_capability_registry().revoke(875, "mutate-3875h", /*revoke_at_epoch=*/0);
+    CHECK(g_capability_registry().find_grant(875, "mutate-3875h", g), "3875 AC2: grant found");
+    CHECK(g.revoke_epoch == 1, "3875 AC2: hard face process-origin stamp stays");
+
+    const auto cm = read_file("src/core/capability_model.hh");
+    CHECK(cm.find("Issue #3875") != std::string::npos, "3875 AC3: header cites #3875");
+    CHECK(cm.find("ep == 0 && capability_epoch_hard_face()") != std::string::npos,
+          "3875 AC3: hard-only clamp present");
+    CHECK(read_file("docs/design/3875-revoke-epoch-hard-only.md").empty(),
+          "3875 AC3: no docs/design");
+    CHECK(read_file("tests/compiler/test_issue_3875.cpp").empty(), "3875 AC3: no invent");
+}
+
 static void ac3874_tenant_stamp() {
     std::println("\n--- #3874: TypedMutationAuditEvent capability tenant stamp ---");
     reset_all();
@@ -1293,6 +1343,8 @@ int run_test_audit_mutation_id_unify() {
     ac3845_4_source_cite_wiring_no_invent();
     std::println("\n=== Issue #3874: TypedMutationAuditEvent capability tenant ===");
     ac3874_tenant_stamp();
+    std::println("\n=== Issue #3875: revoke_epoch hard-only process-origin stamp ===");
+    ac3875_revoke_epoch_hard_only_invent();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
