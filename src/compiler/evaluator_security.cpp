@@ -241,8 +241,14 @@ void Evaluator::grant_capability(std::string cap, bool single_use, bool session_
         // Issue #3436: single_use / session_bound now carry the caller's
         // lifetime (forced single_use on the plain string path; wrapper
         // lifetime on the grant_effect_* mirrors) instead of sticky false.
-        g_capability_registry().grant(capability_tenant_id_, granted_capabilities_.back(), eff,
-                                      prov, single_use, session_bound, capability_tenant_id_);
+        // Issue #3878: registry refuse (mid-refuse / TA deny) must not
+        // leave an orphan string (incl. "*") in granted_capabilities_.
+        if (!g_capability_registry().grant(capability_tenant_id_, granted_capabilities_.back(), eff,
+                                           prov, single_use, session_bound,
+                                           capability_tenant_id_)) {
+            granted_capabilities_.pop_back();
+            return;
+        }
         // Issue #2136: count Render effect grants for Agent dashboards.
         if (has_effect(eff, Effect::Render)) {
             if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))

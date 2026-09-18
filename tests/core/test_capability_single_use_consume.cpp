@@ -32,6 +32,7 @@
 #include "compiler/mutation_hold_budget.h"
 #include "compiler/security_capabilities.h"
 #include "compiler/security_defaults.hh"
+#include "compiler/typed_mutation_audit.h"
 #include "core/capability_model.hh"
 #include "core/sandbox.hh"
 #include "core/security_event.hh"
@@ -1213,6 +1214,67 @@ static void ac3876_3_source_cite() {
           "3876 AC3: no test_issue_3876.cpp");
     CHECK(read_file("docs/design/3876-effects-effective-retain.md").empty(),
           "3876 AC3: no docs/design/");
+}
+
+// ── Issue #3878: grant_capability must not orphan the Evaluator string
+// list after registry refuse (mid-refuse / TA deny). Production mutate
+// body is still require_effect / bits — this is list/has_capability
+// hygiene for the string-only / Soft effect-Off backstop.
+static void ac3878_1_mid_refuse_no_orphan_string() {
+    std::println("\n--- #3878 AC1: mid-refuse does not orphan granted_capabilities_ ---");
+    reset_all();
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_capability_tenant_id(0);
+    ev.grant_capability("tenant-admin"); // Off: seed TA so #3141 fence passes
+    const auto after_ta = ev.granted_capability_count();
+    CHECK(after_ta >= 1, "3878 AC1: TA string landed while Off");
+    aura::compiler::typed_audit::reset_for_test();
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    aura::core::reset_mutation_epoch_for_test();
+    ev.set_effect_sandbox_mode(1);
+    set_mode(SandboxMode::Restricted);
+    ev.grant_capability("mutate");
+    CHECK(ev.granted_capability_count() == after_ta,
+          "3878 AC1: mid-refuse does not orphan mutate string");
+    CHECK(!ev.has_capability("mutate"), "3878 AC1: has_capability false after refuse");
+    CHECK(!ev.require_effect(kEffectMutate, "test:3878-ac1"),
+          "3878 AC1: require_effect still denies");
+}
+
+static void ac3878_2_wildcard_refuse_no_orphan() {
+    std::println("\n--- #3878 AC2: wildcard mid-refuse does not orphan '*' ---");
+    reset_all();
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_capability_tenant_id(0);
+    ev.grant_capability("tenant-admin");
+    const auto after_ta = ev.granted_capability_count();
+    aura::compiler::typed_audit::reset_for_test();
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    aura::core::reset_mutation_epoch_for_test();
+    ev.set_effect_sandbox_mode(1);
+    set_mode(SandboxMode::Restricted);
+    ev.grant_capability("*");
+    CHECK(ev.granted_capability_count() == after_ta, "3878 AC2: mid-refuse does not orphan '*'");
+    CHECK(!ev.has_capability("render"), "3878 AC2: no wildcard short-circuit after refused '*'");
+}
+
+static void ac3878_3_soft_string_path_and_cite() {
+    std::println("\n--- #3878 AC3: Soft string path + source-cite ---");
+    reset_all();
+    set_mode(SandboxMode::Off);
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    const auto before = ev.granted_capability_count();
+    ev.grant_capability("mutate");
+    CHECK(ev.granted_capability_count() == before + 1, "3878 AC3: Soft string grant lands");
+    const auto sec = read_file("src/compiler/evaluator_security.cpp");
+    CHECK(sec.find("Issue #3878") != std::string::npos, "3878 AC3: grant_capability cites");
+    CHECK(sec.find("granted_capabilities_.pop_back()") != std::string::npos,
+          "3878 AC3: refuse pops the orphan");
+    CHECK(read_file("tests/compiler/test_issue_3878.cpp").empty(),
+          "3878 AC3: no test_issue_3878.cpp");
 }
 
 // ── Issue #3279: session_bound orphan fail-closed sweep ─────────────
@@ -3004,6 +3066,9 @@ int run_test_capability_single_use_consume() {
         ac3876_1_effective_matches_require_after_retain();
         ac3876_2_soft_no_retain_filter();
         ac3876_3_source_cite();
+        ac3878_1_mid_refuse_no_orphan_string();
+        ac3878_2_wildcard_refuse_no_orphan();
+        ac3878_3_soft_string_path_and_cite();
         // Issue #3279: session_bound orphan fail-closed sweep.
         ac3279_1_soft_observe_only();
         ac3279_2_production_revoke();
@@ -3079,6 +3144,9 @@ int run_test_inert_session_mid_3723() {
     ac3876_1_effective_matches_require_after_retain();
     ac3876_2_soft_no_retain_filter();
     ac3876_3_source_cite();
+    ac3878_1_mid_refuse_no_orphan_string();
+    ac3878_2_wildcard_refuse_no_orphan();
+    ac3878_3_soft_string_path_and_cite();
     std::println("\n=== #3723 results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
