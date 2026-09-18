@@ -62,7 +62,9 @@ def main() -> int:
     if deny_idx < 0:
         fails.append("AC1: same-mutate deny if missing")
     else:
-        deny_window = ev[deny_idx : deny_idx + 240]
+        # Issue #3879: Typed correlate sits between compensate and
+        # return false; keep the window large enough to see the deny.
+        deny_window = ev[deny_idx : deny_idx + 2000]
         if "wal_append_fail_closed_active()" not in deny_window:
             fails.append("AC1: deny not gated on fail-closed")
         if "return false" not in deny_window:

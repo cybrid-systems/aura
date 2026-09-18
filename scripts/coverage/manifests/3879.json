@@ -1,0 +1,32 @@
+{
+  "issue": 3879,
+  "title": "WAL-miss early return stamps Typed denied correlate",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_security.cpp",
+      "contains": [
+        "Issue #3879",
+        "WAL-miss early return skipped Typed correlate",
+        "capture_security_correlated_audit",
+        "wal_miss_compensate"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/core/test_audit_replay_join.cpp",
+      "contains": [
+        "3879 AC1: Typed correlate before WAL-miss return false",
+        "ac19_wal_miss_typed_correlate_3879"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "forbid": [
+        "tests/compiler/test_issue_3879.cpp",
+        "tests/issues/test_issue_3879.cpp",
+        "docs/design/3879-wal-miss-typed.md"
+      ]
+    }
+  ]
+}

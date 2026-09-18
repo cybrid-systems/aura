@@ -1040,6 +1040,24 @@ static void ac18_last_se_wins_wal_miss_3877() {
           "3877 AC3: audit-replay-join wal-miss-deny key");
 }
 
+// ── #3879: WAL-miss early return stamps Typed denied correlate ──
+static void ac19_wal_miss_typed_correlate_3879() {
+    std::println("\n--- #3879: WAL-miss stamps Typed denied correlate ---");
+    const auto sec = read_file("src/compiler/evaluator_security.cpp");
+    CHECK(sec.find("Issue #3879") != std::string::npos, "3879 AC: evaluator_security cite");
+    const auto miss = sec.find("if (ok && wal_append_missed");
+    CHECK(miss != std::string::npos, "3879 AC: fail-closed miss gate present");
+    const auto cap = sec.find("capture_security_correlated_audit", miss);
+    const auto ret = sec.find("return false;", miss);
+    CHECK(cap != std::string::npos && ret != std::string::npos && cap < ret,
+          "3879 AC1: Typed correlate before WAL-miss return false");
+    CHECK(sec.find("/*denied=*/true") != std::string::npos ||
+              sec.find("denied=*/true") != std::string::npos,
+          "3879 AC1: correlate denied=true on miss");
+    CHECK(read_file("tests/compiler/test_issue_3879.cpp").empty(),
+          "3879 AC3: no test_issue_3879.cpp");
+}
+
 } // namespace
 
 int run_test_audit_replay_join() {
@@ -1062,6 +1080,7 @@ int run_test_audit_replay_join() {
     ac16_mid0_refuse_fold_3738();
     ac17_pre_persist_wal_miss_fail_closed_3780();
     ac18_last_se_wins_wal_miss_3877();
+    ac19_wal_miss_typed_correlate_3879();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
