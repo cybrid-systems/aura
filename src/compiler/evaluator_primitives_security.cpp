@@ -647,7 +647,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
             // 1565 + 1876 + #2023 MacroSelfEvo + #2052 mutate-force keys
             auto* ht =
-                FlatHashTable::create(query_hash_capacity_for(178)); // #3339: 170 live + 8 (#3599)
+                FlatHashTable::create(query_hash_capacity_for(186)); // #3339: 178 live + 8 (#3877)
             if (!ht)
                 return make_void();
             bool overflowed = false;
@@ -731,6 +731,16 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                               ::aura::core::audit_wal::g_mutation_audit_wal().last_seq_persisted));
                 insert_kv("schema-3143", 3143);
                 insert_kv("issue-3143", 3143);
+                // Issue #3877: last matching SE wins; any
+                // mutation_wal_append_miss Deny on the same mid forces
+                // Deny (Agents must not stop at a preceding EffectAllow).
+                insert_kv("last-se-wins-verdict",
+                          static_cast<std::int64_t>(
+                              ::aura::core::security_event::forensic_effect_verdict_for_mid(mid)));
+                insert_kv("wal-miss-deny",
+                          ::aura::core::security_event::forensic_mid_has_wal_append_miss(mid) ? 1
+                                                                                              : 0);
+                insert_kv("issue-3877", 3877);
             }
             // Issue #3090: production grant refused when prov.mutation_id == 0
             // under Restricted/Strict (same refuse semantics as

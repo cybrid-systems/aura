@@ -1,0 +1,51 @@
+{
+  "issue": 3877,
+  "title": "forensic last-SE-wins; WAL-miss Deny refuses Allow-only conclusion",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/core/security_event.hh",
+      "contains": [
+        "Issue #3877",
+        "kForensicLastSeWinsIssue = 3877",
+        "forensic_effect_verdict_for_mid",
+        "kMutationWalAppendMissReason",
+        "forensic_mid_has_wal_append_miss"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/evaluator_primitives_security.cpp",
+      "contains": [
+        "Issue #3877",
+        "last-se-wins-verdict",
+        "wal-miss-deny",
+        "issue-3877"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/core/test_audit_replay_join.cpp",
+      "contains": [
+        "3877 AC1: last-SE-wins refuses Allow-only when miss Deny exists",
+        "3877 AC2: last-SE-wins Allow when no miss Deny shares mid",
+        "ac18_last_se_wins_wal_miss_3877"
+      ]
+    },
+    {
+      "ac": "AC3b",
+      "path": "tests/compiler/test_security_posture_trail.cpp",
+      "contains": [
+        "3877 AC1: last-SE-wins refuses Allow-only when miss Deny exists"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "forbid": [
+        "tests/compiler/test_issue_3877.cpp",
+        "tests/issues/test_issue_3877.cpp",
+        "docs/design/3877-last-se-wins.md"
+      ]
+    }
+  ]
+}

@@ -455,6 +455,45 @@ int run_test_security_posture_trail() {
                 }
                 CHECK(deny_rows >= 1, "3855 AC1: compensating EffectDeny SE (miss reason)");
                 CHECK(allow_rows == 0, "3855 AC1: no compensator misfiled as Allow");
+
+                // Issue #3877: forensic helper last-SE-wins; WAL-miss Deny
+                // on the same mid refuses an Allow-only conclusion even
+                // if an EffectAllow row predates the compensator.
+                using aura::core::security_event::forensic_effect_verdict_for_mid;
+                using aura::core::security_event::forensic_mid_has_wal_append_miss;
+                using aura::core::security_event::ForensicEffectVerdict;
+                using aura::core::security_event::kForensicLastSeWinsIssue;
+                CHECK(kForensicLastSeWinsIssue == 3877, "3877 AC: issue stamp");
+                CHECK(forensic_mid_has_wal_append_miss(0x3855),
+                      "3877 AC1: WAL-miss Deny shares mid 0x3855");
+                CHECK(forensic_effect_verdict_for_mid(0x3855) == ForensicEffectVerdict::Deny,
+                      "3877 AC1: last-SE-wins refuses Allow-only when miss Deny exists");
+                CHECK(!forensic_mid_has_wal_append_miss(0xDEAD),
+                      "3877 AC1: unrelated mid has no miss Deny");
+                auto v3877 =
+                    cs.eval("(hash-ref (engine:metrics \"query:capability-effect-stats\" 14421) "
+                            "\"last-se-wins-verdict\")");
+                CHECK(v3877 && is_int(*v3877) && as_int(*v3877) == 2,
+                      "3877 AC1: audit-replay-join last-se-wins-verdict=Deny");
+                auto w3877 =
+                    cs.eval("(hash-ref (engine:metrics \"query:capability-effect-stats\" 14421) "
+                            "\"wal-miss-deny\")");
+                CHECK(w3877 && is_int(*w3877) && as_int(*w3877) == 1,
+                      "3877 AC1: audit-replay-join wal-miss-deny=1");
+
+                // 3877 AC2: lone Allow (no miss Deny) still reports Allow.
+                {
+                    using aura::core::security_event::append_security_event;
+                    using aura::core::security_event::g_security_event_ring;
+                    using aura::core::security_event::SecurityEventKind;
+                    append_security_event(g_security_event_ring(), SecurityEventKind::EffectAllow,
+                                          7, 0x3877, 0x3877, kEffectMutate, "test:3877-ac2", "",
+                                          /*denied=*/false, 0);
+                    CHECK(forensic_effect_verdict_for_mid(0x3877) == ForensicEffectVerdict::Allow,
+                          "3877 AC2: last-SE-wins Allow when no miss Deny shares mid");
+                    CHECK(!forensic_mid_has_wal_append_miss(0x3877),
+                          "3877 AC2: lone Allow is not a WAL-miss Deny");
+                }
             }
 
             aura::core::reset_mutation_epoch_for_test();
@@ -475,6 +514,16 @@ int run_test_security_posture_trail() {
         if (std::FILE* f = std::fopen("tests/compiler/test_issue_3302.cpp", "r")) {
             std::fclose(f);
             CHECK(false, "3302 AC6: no invent test_issue_3302.cpp");
+        }
+
+        const auto se3877 = read_file("src/core/security_event.hh");
+        CHECK(se3877.find("kForensicLastSeWinsIssue = 3877") != std::string::npos,
+              "3877 AC3: forensic last-SE-wins helper stamp");
+        CHECK(se3877.find("forensic_effect_verdict_for_mid") != std::string::npos,
+              "3877 AC3: verdict helper present");
+        if (std::FILE* f = std::fopen("tests/compiler/test_issue_3877.cpp", "r")) {
+            std::fclose(f);
+            CHECK(false, "3877 AC4: no invent test_issue_3877.cpp");
         }
 
         restore_env();

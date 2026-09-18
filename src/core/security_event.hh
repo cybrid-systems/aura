@@ -173,4 +173,51 @@ inline void reset_security_event_ring_for_test() noexcept {
         e = SecurityEvent{};
 }
 
+// Issue #3877: forensic join for a mid. Last matching EffectAllow/Deny
+// wins; any SE whose reason is mutation_wal_append_miss forces Deny
+// (Agents must not stop at a preceding EffectAllow). Privilege path
+// (#3855/#3856) is unchanged — this is an Agent-facing join helper.
+inline constexpr int kForensicLastSeWinsIssue = 3877;
+inline constexpr std::string_view kMutationWalAppendMissReason = "mutation_wal_append_miss";
+
+enum class ForensicEffectVerdict : std::uint8_t { None = 0, Allow = 1, Deny = 2 };
+
+[[nodiscard]] inline ForensicEffectVerdict
+forensic_effect_verdict_for_mid(std::uint64_t mid) noexcept {
+    auto& ring = g_security_event_ring();
+    const auto head = ring.seq.load(std::memory_order_acquire);
+    const auto max_i =
+        head < kSecurityEventRingSize ? head : static_cast<std::uint64_t>(kSecurityEventRingSize);
+    ForensicEffectVerdict last = ForensicEffectVerdict::None;
+    for (std::uint64_t i = 0; i < max_i; ++i) {
+        const auto& e = ring.ring[(head - 1 - i) % kSecurityEventRingSize];
+        if (e.mutation_id != mid)
+            continue;
+        if (std::string_view(e.reason) == kMutationWalAppendMissReason)
+            return ForensicEffectVerdict::Deny;
+        if (last != ForensicEffectVerdict::None)
+            continue; // already captured last matching SE; keep scanning for miss
+        if (e.kind == SecurityEventKind::EffectDeny || e.denied)
+            last = ForensicEffectVerdict::Deny;
+        else if (e.kind == SecurityEventKind::EffectAllow)
+            last = ForensicEffectVerdict::Allow;
+    }
+    return last;
+}
+
+[[nodiscard]] inline bool forensic_mid_has_wal_append_miss(std::uint64_t mid) noexcept {
+    auto& ring = g_security_event_ring();
+    const auto head = ring.seq.load(std::memory_order_acquire);
+    const auto max_i =
+        head < kSecurityEventRingSize ? head : static_cast<std::uint64_t>(kSecurityEventRingSize);
+    for (std::uint64_t i = 0; i < max_i; ++i) {
+        const auto& e = ring.ring[(head - 1 - i) % kSecurityEventRingSize];
+        if (e.mutation_id != mid)
+            continue;
+        if (std::string_view(e.reason) == kMutationWalAppendMissReason)
+            return true;
+    }
+    return false;
+}
+
 } // namespace aura::core::security_event
