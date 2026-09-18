@@ -1,0 +1,41 @@
+{
+  "issue": 3876,
+  "title": "effects_effective_for skips grant-epoch retain so has_capability matches require_effect",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/core/capability_model.hh",
+      "contains": [
+        "Issue #3876",
+        "kEffectsEffectiveRetainIssue = 3876",
+        "effects_effective_for",
+        "effects_effective_for_locked",
+        "grant_epoch < min_valid"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/evaluator_security.cpp",
+      "contains": [
+        "Issue #3876",
+        "effects_effective_for"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/core/test_capability_single_use_consume.cpp",
+      "contains": [
+        "3876 AC1: effects_effective_for matches deny",
+        "3876 AC2: Soft effective does not filter retain"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "forbid": [
+        "tests/compiler/test_issue_3876.cpp",
+        "tests/issues/test_issue_3876.cpp",
+        "docs/design/3876-effects-effective-retain.md"
+      ]
+    }
+  ]
+}

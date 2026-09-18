@@ -110,7 +110,8 @@ bool Evaluator::has_capability(std::string_view needed) const noexcept {
                                    (static_cast<std::uint16_t>(Effect::TenantAdmin) |
                                     static_cast<std::uint16_t>(Effect::MacroSelfEvo))) != 0);
     // Explicit "*" in any layer grants non-TA/MSE effect-mapped caps +
-    // string-only caps. TA/MSE queries always fall through to effects_for.
+    // string-only caps. TA/MSE queries always fall through to
+    // effects_effective_for (#3876; still the #3144 effects_for strip).
     if (!is_ta_mse_eff) {
         const auto wildcard_held = [&]() noexcept {
             for (const auto& cap : granted_capabilities_) {
@@ -134,7 +135,11 @@ bool Evaluator::has_capability(std::string_view needed) const noexcept {
     // cap queries even without an explicit "*" string grant. #3144 strip
     // removes TA+MSE bits from wildcard-only holders.
     if (eff != Effect::None) {
-        return has_effect(g_capability_registry().effects_for(capability_tenant_id_), eff);
+        // Issue #3876: Agent has_capability must not overstate Mutate after
+        // grant-epoch retain (effects_for ORs expired grants; require_effect
+        // already denies via provenance_ok). Soft/Off effective == effects_for.
+        return has_effect(g_capability_registry().effects_effective_for(capability_tenant_id_),
+                          eff);
     }
     // Legacy string-only caps keep the list path.
     const auto matches = [&](const std::string& held) { return held == needed; };

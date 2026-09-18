@@ -82,7 +82,10 @@ def main() -> int:
         fails.append("AC1: evaluator_security.cpp missing is_ta_mse_eff guard for TA/MSE routing")
     if "Effect::TenantAdmin" not in sec or "Effect::MacroSelfEvo" not in sec:
         fails.append("AC1: TA / MSE bits not referenced in has_capability TA/MSE guard")
-    if "has_effect(g_capability_registry().effects_for(capability_tenant_id_), eff)" not in sec:
+    # Issue #3876: has_capability reads effects_effective_for (retain-aware
+    # OR of effects_for). TA/MSE still route through that strip; the
+    # #3144 wildcard-only TA/MSE drop lives inside effects_for_locked.
+    if "has_effect(g_capability_registry().effects_effective_for(capability_tenant_id_)," not in sec:
         fails.append("AC1: TA/MSE routed via effects_for path missing")
 
     # AC2 — set_tenant_principal drops kCapWildcard privileged arm.
