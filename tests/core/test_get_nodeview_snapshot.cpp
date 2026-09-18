@@ -4,6 +4,12 @@
 //   AC1: sequential get() is self-consistent (tag matches payload)
 //   AC2: concurrent multi-reader get() on a stable flat (no writer)
 //   AC3: source cites Issue #2453 + single-threaded/post-parse contract
+//
+//   Issue #3868 — seqlock get (torn-NodeView machine-check):
+//   AC4: single-thread soft path unchanged, epoch even/quiet
+//   AC5: odd-epoch reader fires torn-retry + locked fallback, clean view
+//   AC6: concurrent add_node writer vs hot get() — no torn NodeView
+//   AC7: source cites #3868 seqlock contract
 
 #include "test_harness.hpp"
 
@@ -164,6 +170,126 @@ int run_test_get_nodeview_snapshot() {
         CHECK(ast.find("post-parse") != std::string::npos ||
                   ast.find("workspace_mtx") != std::string::npos,
               "serialization contract wording");
+    }
+
+    // ── AC4 (#3868): single-thread soft path unchanged + epoch invariants ──
+    {
+        std::println("\n--- #3868 AC4: single-thread get unchanged, epoch quiet ---");
+        FlatAST flat;
+        const auto lit = flat.add_literal(42);
+        const auto var = flat.add_variable(7);
+        const auto def = flat.add_define(8, lit);
+        std::array<SymId, 1> params{1};
+        const auto lam = flat.add_lambda(std::span<const SymId>{params}, lit, false);
+
+        CHECK(flat.get(lit).int_value == 42, "AC4: literal int payload");
+        CHECK(flat.get(def).children.size() == 1, "AC4: define child");
+        CHECK(view_self_consistent(flat, lam), "AC4: lambda view");
+        CHECK(view_self_consistent(flat, var), "AC4: variable view");
+        CHECK(flat.soa_write_epoch() % 2 == 0, "AC4: epoch even after writer sections close");
+        CHECK(flat.soa_get_torn_retry_total() == 0,
+              "AC4: no torn retries on the single-thread soft path");
+    }
+
+    // ── AC5 (#3868): reader detects open writer section (odd epoch) ──────
+    // Deterministic detector test: hold an external SoA write section
+    // (SoAWriteGuard = epoch odd), run a hot get() reader — it must fire
+    // the torn-retry detector, park in the locked fallback, and observe a
+    // clean view once the section closes.
+    {
+        std::println("\n--- #3868 AC5: odd-epoch reader retries + locked fallback ---");
+        FlatAST flat;
+        const auto lit = flat.add_literal(5);
+        std::atomic<bool> done{false};
+        std::atomic<std::int64_t> observed_int{0};
+        std::thread reader;
+        {
+            auto guard = flat.begin_soa_write(); // epoch even→odd, held open
+            reader = std::thread([&]() {
+                auto v = flat.get(lit);
+                observed_int.store(v.int_value, std::memory_order_release);
+                done.store(true, std::memory_order_release);
+            });
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            CHECK(flat.soa_write_epoch() % 2 == 1, "AC5: writer section holds epoch odd");
+            // guard dtor closes the section (odd→even); the parked
+            // reader's get_soa_safe fallback then completes against the
+            // stable flat.
+        }
+        reader.join();
+        CHECK(done.load(std::memory_order_acquire), "AC5: fallback reader completed");
+        CHECK(observed_int.load(std::memory_order_acquire) == 5,
+              "AC5: fallback view clean (payload intact)");
+        CHECK(flat.soa_get_torn_retry_total() >= 1,
+              "AC5: torn-retry detector fired under open writer section");
+        CHECK(flat.soa_write_epoch() % 2 == 0, "AC5: epoch back to even");
+    }
+
+    // ── AC6 (#3868): concurrent add_node writer vs hot lock-free get() ───
+    // Writers append new nodes (epoch bumps); readers get() STABLE ids —
+    // any torn assemble must be caught by the seqlock retry/fallback, so
+    // every returned view stays self-consistent.
+    {
+        std::println("\n--- #3868 AC6: no torn NodeView under concurrent writer ---");
+        FlatAST flat;
+        constexpr int kN = 64;
+        std::vector<NodeId> ids;
+        ids.reserve(static_cast<std::size_t>(kN * 3));
+        for (int i = 0; i < kN; ++i) {
+            const auto lit = flat.add_literal(i);
+            const auto var = flat.add_variable(static_cast<SymId>(i + 1));
+            const auto def = flat.add_define(static_cast<SymId>(i + 100), lit);
+            ids.push_back(lit);
+            ids.push_back(var);
+            ids.push_back(def);
+        }
+
+        std::atomic<bool> stop{false};
+        std::atomic<std::uint64_t> reads{0};
+        std::atomic<std::uint64_t> bad{0};
+        std::vector<std::thread> threads;
+        // 1 writer: appends (multi-column SoA growth mid-read window).
+        threads.emplace_back([&]() {
+            for (int k = 0; k < 4000 && !stop.load(std::memory_order_acquire); ++k)
+                (void)flat.add_literal(k);
+        });
+        // 4 readers: hot get() on stable ids.
+        for (int t = 0; t < 4; ++t) {
+            threads.emplace_back([&, t]() {
+                int i = t;
+                while (!stop.load(std::memory_order_acquire)) {
+                    const auto id = ids[static_cast<std::size_t>(i % ids.size())];
+                    if (!view_self_consistent(flat, id))
+                        bad.fetch_add(1, std::memory_order_relaxed);
+                    auto v = flat.get(id);
+                    if (v.tag == NodeTag::LiteralInt && v.int_value < 0)
+                        bad.fetch_add(1, std::memory_order_relaxed);
+                    reads.fetch_add(1, std::memory_order_relaxed);
+                    i += 4;
+                }
+            });
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(60));
+        stop.store(true, std::memory_order_release);
+        for (auto& th : threads)
+            th.join();
+
+        std::println("  #3868 reads={} bad={}", reads.load(), bad.load());
+        CHECK(reads.load() > 0, "AC6: concurrent reads progressed");
+        CHECK(bad.load() == 0, "AC6: no torn NodeView escaped the seqlock");
+        CHECK(flat.soa_write_epoch() % 2 == 0, "AC6: epoch even after writers stop");
+    }
+
+    // ── AC7 (#3868): source cites seqlock get contract ──────────────────
+    {
+        std::println("\n--- #3868 AC7: source cites seqlock get contract ---");
+        auto ast = read_file("src/core/ast.ixx");
+        CHECK(ast.find("Issue #3868") != std::string::npos, "source-cite #3868");
+        CHECK(ast.find("soa_write_epoch_") != std::string::npos, "seqlock epoch member");
+        CHECK(ast.find("assemble_nodeview") != std::string::npos, "raw assemble extracted");
+        CHECK(ast.find("return get_soa_safe(id);") != std::string::npos,
+              "locked fallback on pathological contention");
+        CHECK(ast.find("SoaSeqlockWriteSection") != std::string::npos, "writer-section RAII");
     }
 
     std::println("\n=== #2453 results: {} passed, {} failed ===", g_passed, g_failed);

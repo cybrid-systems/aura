@@ -32,13 +32,13 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 
 | Theme | Title | Issues | Root | Domain | Total | Migration priority |
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
-| `arena_compaction` | Arena / compaction / GC | 0 | 0 | 92 | 92 | P0 — well-contained, batch drivers already exist |
+| `arena_compaction` | Arena / compaction / GC | 0 | 0 | 93 | 93 | P0 — well-contained, batch drivers already exist |
 | `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 273 | 273 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 107 | 107 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 26 | 26 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 60 | 60 | P1 — domain hygiene suite exists |
 | `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 87 | 87 | P2 — link-profile heavy; migrate AC smoke first |
-| `shape_soa` | Shape / SoA / column layout | 0 | 0 | 53 | 53 | P2 — small-medium; soa_batch precedent |
+| `shape_soa` | Shape / SoA / column layout | 0 | 0 | 52 | 52 | P2 — small-medium; soa_batch precedent |
 | `observability` | Observability / metrics / query:*-stats | 0 | 0 | 132 | 132 | P2 — often thin schema probes; collapse into obs matrix |
 | `uncategorized` | Uncategorized / mixed | 0 | 0 | 58 | 58 | P3 — review case-by-case |
 
@@ -1106,13 +1106,13 @@ Suggested order starts with well-contained groups (per #1957) and leverages exis
 
 Files listed as ``location/name`` with issue id and one-line summary.
 
-### `arena_compaction` — Arena / compaction / GC (92)
+### `arena_compaction` — Arena / compaction / GC (93)
 
 **Target:** tests/core/ (extend compact/gc family; see test_arena_batch / test_hotpath_matrix_batch)
 
 **Priority:** P0 — well-contained, batch drivers already exist
 
-#### domain/ (92)
+#### domain/ (93)
 
 - `tests/compiler/test_adt_match_exhaust_post_mutate_reliability.cpp` (—) [domain_suite, theme_compiler] — test_adt_match_exhaust_post_mutate_reliability.cpp — Issue #612:
 - `tests/orch/test_agent_name_table_isolation.cpp` (—) [large, domain_suite, theme_orch] — AC1: source cites #2078; no process-static OrchAgentNameTable;
@@ -1166,6 +1166,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_gc_misc_batch.cpp` (—) [small, batch_driver, domain_suite, theme_compiler] — test_gc_misc_batch.cpp — thematic multi-TU batch
 - `tests/core/test_general_object_pin.cpp` (—) [domain_suite, theme_core] — AC1: Non-render buffer pin-or-remap; validate succeeds after densify.
 - `tests/core/test_general_object_pin_adopt.cpp` (—) [domain_suite, theme_core] — AC1: wire_general_object_create_pair pins both buffers + bumps wire
+- `tests/core/test_get_nodeview_snapshot.cpp` (—) [domain_suite, theme_core] — AC1: sequential get() is self-consistent (tag matches payload)
 - `tests/compiler/test_grant_epoch_retain_restricted.cpp` (—) [domain_suite, theme_compiler] — Issue #3774 — MSE production session rows arm live_session_grants.
 - `tests/compiler/test_grant_epoch_retain_window.cpp` (—) [domain_suite, theme_compiler] — AC1: K=0 → no auto advance (identical to #2074 manual-only)
 - `tests/compiler/test_grant_macro_self_evo_stamp.cpp` (—) [domain_suite, theme_compiler] — AC1: After grant_macro_self_evo, grant_epoch non-zero (= Mutation epoch)
@@ -1805,13 +1806,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_workload_adaptive_relower.cpp` (—) [domain_suite, theme_compiler] — AC1: default base=8 compatible with #2032 (no forced signals)
 - `tests/compiler/test_write_string_escape.cpp` (—) [domain_suite, theme_compiler] — AC1: (write "a\"b") → "a\"b" under default JIT path
 
-### `shape_soa` — Shape / SoA / column layout (53)
+### `shape_soa` — Shape / SoA / column layout (52)
 
 **Target:** tests/core/test_soa_batch.cpp (no move needed)
 
 **Priority:** P2 — small-medium; soa_batch precedent
 
-#### domain/ (53)
+#### domain/ (52)
 
 - `tests/compiler/test_alloc_block_seal_last.cpp` (—) [domain_suite, theme_compiler] — AC1: finalize_last_blocks / finalize_soa_module / #2820 cites
 - `tests/compiler/test_apply_closure_envframe_soa.cpp` (—) [domain_suite, theme_compiler] — Issue #1365/#1475/#1511/#1626/#1632/#1660 (#1978 renamed): issue# moved from filename to header.
@@ -1825,7 +1826,6 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/core/test_flatast_add_node_lock.cpp` (—) [domain_suite, theme_core] — AC1: class contract documents flatast_mutex_ reader invariant
 - `tests/core/test_flatast_atomic_lock_batch.cpp` (—) [batch_driver, domain_suite, theme_core] — test_flatast_atomic_lock_batch.cpp — thematic multi-TU batch
 - `tests/core/test_flatast_soa_read_guard.cpp` (—) [domain_suite, theme_core] — AC1: public SoAReadGuard / SoAWriteGuard / get_soa_safe / try_acquire_*
-- `tests/core/test_get_nodeview_snapshot.cpp` (—) [domain_suite, theme_core] — AC1: sequential get() is self-consistent (tag matches payload)
 - `tests/compiler/test_highperf_cpp26_gaps_arena_soa_value_shape_pass.cpp` (—) [domain_suite, theme_compiler] — test_highperf_cpp26_gaps_arena_soa_value_shape_pass.cpp — Issue #658:
 - `tests/core/test_hot_children_columnar.cpp` (—) [domain_suite, theme_core] — AC1: Primary walk/query/PCV hot templates constrained
 - `tests/compiler/test_hot_contract_unify.cpp` (—) [domain_suite, theme_compiler] — AC1: policy documented in cpp26_contract_stats.h (AURA_HOT_CONTRACT)

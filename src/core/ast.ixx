@@ -1245,6 +1245,42 @@ export class FlatAST {
     // LOCK ORDER: flatast_mutex_ (exclusive) before dirty_column_mtx_.
     mutable OwnedSharedMutex flatast_mutex_;
 
+    // Issue #3868: SoA seqlock write epoch. Bumped even→odd on
+    // writer-section entry and odd→even on exit — SoaSeqlockWriteSection
+    // inside the flatast_mutex_ exclusive regions of add_node/clear, and
+    // SoAWriteGuard ctor/dtor for external batch writers. get() samples it
+    // around the multi-column assemble to detect (and retry) a torn
+    // NodeView window instead of silently returning mixed-generation
+    // columns. Even = no writer section open; odd = writer mid-section.
+    // Fresh, copied, and moved FlatAST objects start quiet (0) via the
+    // default member initializer — the copy/move ctors need no member
+    // lines (same treatment as summary_flags_).
+    mutable std::atomic<std::uint64_t> soa_write_epoch_{0};
+    // Issue #3868: observability counter — how often get() hit an odd
+    // epoch or an epoch advance mid-assemble and retried (or fell back to
+    // the locked path). Cost of a clean assemble: two acquire loads.
+    mutable std::atomic<std::uint64_t> soa_get_torn_retry_total_{0};
+
+    // Issue #3868: RAII writer section for the seqlock epoch — open
+    // (even→odd) on construction, close (odd→even) on destruction so
+    // every add_node/clear return path is covered. The scope MUST sit
+    // inside the flatast_mutex_ exclusive region (writers already hold
+    // it; the epoch brackets exactly the section lock-free readers
+    // must avoid).
+    class SoaSeqlockWriteSection {
+    public:
+        explicit SoaSeqlockWriteSection(std::atomic<std::uint64_t>& epoch) noexcept
+            : epoch_(epoch) {
+            epoch_.fetch_add(1, std::memory_order_release);
+        }
+        ~SoaSeqlockWriteSection() { epoch_.fetch_add(1, std::memory_order_release); }
+        SoaSeqlockWriteSection(const SoaSeqlockWriteSection&) = delete;
+        SoaSeqlockWriteSection& operator=(const SoaSeqlockWriteSection&) = delete;
+
+    private:
+        std::atomic<std::uint64_t>& epoch_;
+    };
+
 public:
     // Issue #261 / #1299: node_gen_[id] == 0 marks a recycled (free-list)
     // or ghost-orphan slot. Public so query:* can skip freed ghosts after
@@ -1504,6 +1540,12 @@ public:
         // NodeId is fully published only on return from this function.
         // Issue #2488: exclusive SoA write (shared readers blocked).
         std::unique_lock<std::shared_mutex> lock(flatast_mutex_.mutable_get());
+        // Issue #3868: open the SoA seqlock writer section (even→odd) for
+        // this whole multi-column append/reset — lock-free get() readers
+        // sample the epoch and retry instead of assembling torn columns.
+        // The scope sits inside the exclusive flatast_mutex_ region; the
+        // dtor closes the section (odd→even) on every return path.
+        SoaSeqlockWriteSection soa_epoch_section_{soa_write_epoch_};
         // Issue #402: tag-based summary flags. Update eagerly
         // before allocation so a fast-path consumer (next
         // add_node's caller) sees the correct bit-set.
@@ -4367,7 +4409,48 @@ public:
     // serialization (workspace_mtx exclusive parse). Ten+ column loads
     // without a SoA lock: torn NodeView or reallocation race if a writer
     // runs mid-get. Concurrent multi-reader get() is safe on a stable flat.
+    //
+    // Issue #3868: the raw column assemble moved 1:1 into assemble_nodeview()
+    // and get() is now a SEQLOCK READER over the SoA write epoch
+    // (soa_write_epoch_, bumped even→odd→even inside the flatast_mutex_
+    // exclusive sections of add_node/clear and by SoAWriteGuard). Reader
+    // protocol: sample the epoch, assemble, re-sample. An odd epoch or a
+    // mid-assemble advance means a writer section overlapped the column
+    // loads — the view may be torn, so retry (bounded) and fall back to
+    // get_soa_safe() (shared SoA lock blocks writers → guaranteed-stable
+    // assemble). This machine-checks the #2453 writer-serialization
+    // contract at runtime WITHOUT a hot-path row lock: single-threaded /
+    // externally-serialized callers sample a stable even epoch on the
+    // first attempt (zero behavior change; two acquire loads).
     NodeView get(NodeId id) const {
+        // Bounded seqlock: writer sections are short (one add_node/clear
+        // critical section), so a retry almost always lands in a stable
+        // window; the locked fallback bounds the worst case.
+        for (int attempt = 0; attempt < 3; ++attempt) {
+            const auto e0 = soa_write_epoch_.load(std::memory_order_acquire);
+            if ((e0 & 1u) != 0u) {
+                // Odd epoch: a writer section is open right now — a
+                // concurrent SoA-size mutation is mid-flight.
+                soa_get_torn_retry_total_.fetch_add(1, std::memory_order_relaxed);
+                continue;
+            }
+            NodeView v = assemble_nodeview(id);
+            const auto e1 = soa_write_epoch_.load(std::memory_order_acquire);
+            if (e0 == e1)
+                return v; // stable window: all columns from one generation
+            soa_get_torn_retry_total_.fetch_add(1, std::memory_order_relaxed);
+        }
+        // Writers keep winning (pathological contention): take the shared
+        // SoA lock — add_node/clear serialize behind us, so the assemble
+        // completes against a frozen flat. Guaranteed progress, no livelock.
+        return get_soa_safe(id);
+    }
+
+    // Issue #3868: raw multi-column assemble (probe + defensive default +
+    // column loads), extracted verbatim from the pre-#3868 get() body.
+    // Call it only through get() (seqlock window) or get_soa_safe() (SoA
+    // shared lock) — a bare call has no torn-window protection.
+    NodeView assemble_nodeview(NodeId id) const {
         // Issue #1620: hot-path SoA column access invariant probe
         // (zero cost under release observe; Agents track hits).
         if (id < tag_.size()) {
@@ -4999,8 +5082,18 @@ public:
             , lock_() {
             if (ast_)
                 lock_ = std::unique_lock<std::shared_mutex>(ast->flatast_mutex_.mutable_get());
+            // Issue #3868: open the seqlock section (even→odd) once the
+            // exclusive SoA lock is held — external batch writers join
+            // the same epoch model as add_node/clear.
+            if (ast_ && lock_.owns_lock())
+                ast_->soa_write_epoch_.fetch_add(1, std::memory_order_release);
         }
-        ~SoAWriteGuard() = default;
+        ~SoAWriteGuard() {
+            // Issue #3868: close the seqlock section (odd→even). The
+            // owns_lock() check keeps moved-from guards bump-free.
+            if (ast_ && lock_.owns_lock())
+                ast_->soa_write_epoch_.fetch_add(1, std::memory_order_release);
+        }
         SoAWriteGuard(const SoAWriteGuard&) = delete;
         SoAWriteGuard& operator=(const SoAWriteGuard&) = delete;
         SoAWriteGuard(SoAWriteGuard&& o) noexcept
@@ -5010,6 +5103,11 @@ public:
         }
         SoAWriteGuard& operator=(SoAWriteGuard&& o) noexcept {
             if (this != &o) {
+                // Issue #3868: release-bump a section this guard still owns
+                // before adopting o's lock, so every acquisition has exactly
+                // one matching release bump (epoch stays even at rest).
+                if (ast_ && lock_.owns_lock())
+                    ast_->soa_write_epoch_.fetch_add(1, std::memory_order_release);
                 ast_ = o.ast_;
                 lock_ = std::move(o.lock_);
                 o.ast_ = nullptr;
@@ -5039,6 +5137,14 @@ public:
     [[nodiscard]] NodeView get_soa_safe(NodeId id) const {
         SoAReadGuard guard(this);
         return get(id);
+    }
+
+    // Issue #3868: seqlock observability accessors (tests + dashboards).
+    [[nodiscard]] std::uint64_t soa_write_epoch() const noexcept {
+        return soa_write_epoch_.load(std::memory_order_acquire);
+    }
+    [[nodiscard]] std::uint64_t soa_get_torn_retry_total() const noexcept {
+        return soa_get_torn_retry_total_.load(std::memory_order_relaxed);
     }
 
     // Issue #1783: exclusive lock on metadata_mtx_ (marker_ /
@@ -6099,6 +6205,11 @@ public:
         // serialize here; readers of atomic summary_flags_ see
         // either pre-clear or post-clear values but never a torn mix.
         std::unique_lock<std::shared_mutex> lock(flatast_mutex_.mutable_get());
+        // Issue #3868: seqlock writer section across the whole clear —
+        // same contract as add_node (open even→odd here, close odd→even
+        // on every return path) so get() readers retry instead of
+        // assembling a torn view mid-clear.
+        SoaSeqlockWriteSection soa_epoch_section_{soa_write_epoch_};
         tag_.clear();
         int_val_.clear();
         float_val_.clear();

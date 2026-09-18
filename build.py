@@ -7906,6 +7906,21 @@ def cmd_lint():
             "Issue #3858 restore-checkpoint MSE linter failed — run python3 scripts/check_restore_checkpoint_mse_3858.py"
         )
         return r
+    # Issue #3868 (FlatAST residual): get() assembled 10+ SoA columns with
+    # no torn-window detection — a concurrent writer mid-get could return
+    # a mixed-generation NodeView. Gate pins: the seqlock epoch
+    # (soa_write_epoch_) brackets the add_node/clear exclusive sections and
+    # SoAWriteGuard, get() is a bounded seqlock reader over
+    # assemble_nodeview with a get_soa_safe() locked fallback, the hot path
+    # stays lock-free, and the snapshot batch hosts the runtime ACs.
+    seq3868_script = ROOT / "scripts" / "check_flatast_seqlock_get_3868.py"
+    if not seq3868_script.exists():
+        fail(f"missing {seq3868_script}")
+        return 1
+    r = run([sys.executable, str(seq3868_script)], cwd=ROOT)
+    if r != 0:
+        fail("Issue #3868 FlatAST seqlock get linter failed — run python3 scripts/check_flatast_seqlock_get_3868.py")
+        return r
     # Issue #3722 (#2490/#2658/#2942 residual): rollback / rollback-since
     # host prims wrote FlatAST with no require_effect / isolation consult —
     # a Restricted+MT tenant could structurally undo a foreign mutation
