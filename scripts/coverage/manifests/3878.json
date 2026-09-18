@@ -1,0 +1,32 @@
+{
+  "issue": 3878,
+  "title": "grant_capability rolls back string list on registry refuse",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_security.cpp",
+      "contains": [
+        "Issue #3878",
+        "granted_capabilities_.pop_back()",
+        "leave an orphan string"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/core/test_capability_single_use_consume.cpp",
+      "contains": [
+        "3878 AC1: mid-refuse does not orphan mutate string",
+        "3878 AC2: mid-refuse does not orphan '*'",
+        "3878 AC3: Soft string grant lands"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "forbid": [
+        "tests/compiler/test_issue_3878.cpp",
+        "tests/issues/test_issue_3878.cpp",
+        "docs/design/3878-grant-orphan.md"
+      ]
+    }
+  ]
+}
