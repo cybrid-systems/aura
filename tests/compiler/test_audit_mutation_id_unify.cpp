@@ -344,6 +344,39 @@ static void ac3066_1_production_batch_share_mid() {
     (void)ev;
 }
 
+// Issue #3874: TypedMutationAuditEvent carries the capability principal
+// tenant; unset emits stay honest-0 (Soft-face unchanged).
+static void ac3874_tenant_stamp() {
+    std::println("\n--- #3874: TypedMutationAuditEvent capability tenant stamp ---");
+    reset_all();
+    aura::compiler::typed_audit::reset_for_test();
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    aura::compiler::typed_audit::capture_audit_event_forced(
+        390074, "test:3874-tenant", aura::compiler::typed_audit::MutationKind::Structural, 1, 2,
+        aura::compiler::typed_audit::AuditOutcome::Error, 0, 0, 0, 0, /*tenant_id=*/4242);
+    aura::compiler::typed_audit::TypedMutationAuditEvent te{};
+    CHECK(aura::compiler::typed_audit::trail_find_by_mutation_id(390074, te),
+          "3874 AC1: trail row joinable by mid");
+    CHECK(te.tenant_id == 4242, "3874 AC1: tenant_id stamped from emit");
+    aura::compiler::typed_audit::capture_audit_event_forced(
+        390075, "test:3874-unset", aura::compiler::typed_audit::MutationKind::Structural, 1, 2,
+        aura::compiler::typed_audit::AuditOutcome::Error);
+    aura::compiler::typed_audit::TypedMutationAuditEvent te2{};
+    CHECK(aura::compiler::typed_audit::trail_find_by_mutation_id(390075, te2),
+          "3874 AC2: unset row joinable");
+    CHECK(te2.tenant_id == 0, "3874 AC2: tenant_id honest unset (0)");
+    const auto hdr = read_file("src/compiler/typed_mutation_audit.h");
+    CHECK(hdr.find("Issue #3874") != std::string::npos, "3874 AC3: header cites #3874");
+    CHECK(hdr.find("std::uint32_t tenant_id = 0;") != std::string::npos,
+          "3874 AC3: struct field present");
+    const auto boundary = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    CHECK(boundary.find("static_cast<std::uint32_t>(capability_tenant_id())") != std::string::npos,
+          "3874 AC3: boundary stamps principal tenant");
+    CHECK(!read_file("docs/design/3874-audit-tenant.md").empty() == false,
+          "3874 AC3: no docs/design");
+    CHECK(read_file("tests/compiler/test_issue_3874.cpp").empty(), "3874 AC3: no invent");
+}
+
 static void ac3066_2_sampled_force_joinable() {
     std::println("\n--- #3066 AC2: Sampled + force-reason joinable mid ---");
     reset_all();
@@ -1258,6 +1291,8 @@ int run_test_audit_mutation_id_unify() {
     ac3845_2_nonzero_deny_mid_unchanged();
     ac3845_3_soft_no_observe_invent_documented();
     ac3845_4_source_cite_wiring_no_invent();
+    std::println("\n=== Issue #3874: TypedMutationAuditEvent capability tenant ===");
+    ac3874_tenant_stamp();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

@@ -296,6 +296,10 @@ struct TypedMutationAuditEvent {
     std::int64_t fiber_id = 0;
     std::uint64_t timestamp_ms = 0;
     std::uint32_t affected_ref_count = 0;
+    // Issue #3874: capability principal tenant at emit (Evaluator context);
+    // 0 = honest unset. Typed+SE join by mutation_id stays the preferred
+    // forensic join — tenant is a replay / forensic filter axis.
+    std::uint32_t tenant_id = 0;
 };
 
 // Defined in typed_mutation_audit_hooks.cpp (keeps WAL I/O out of this header).
@@ -4532,7 +4536,8 @@ inline void capture_audit_event_forced(std::uint64_t mutation_id, std::string_vi
                                        std::uint64_t after_epoch, AuditOutcome outcome,
                                        std::uint32_t target_node = 0,
                                        std::uint32_t nodes_changed = 0, std::int64_t fiber_id = 0,
-                                       std::uint32_t affected_ref_count = 0) noexcept {
+                                       std::uint32_t affected_ref_count = 0,
+                                       std::uint32_t tenant_id = 0) noexcept {
     // Issue #3016 / #2836: never stamp mid=0 into the trail (production
     // refuse / missing resolve). Soft resolve already produced a gen.
     if (mutation_id == 0)
@@ -4554,6 +4559,7 @@ inline void capture_audit_event_forced(std::uint64_t mutation_id, std::string_vi
     ev.target_node = target_node;
     ev.nodes_changed = nodes_changed;
     ev.fiber_id = fiber_id;
+    ev.tenant_id = tenant_id; // #3874 capability principal (0 = honest unset)
     ev.timestamp_ms =
         static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
                                        std::chrono::steady_clock::now().time_since_epoch())
@@ -4620,7 +4626,8 @@ inline void capture_audit_event(std::uint64_t mutation_id, std::string_view name
                                 std::uint64_t before_epoch, std::uint64_t after_epoch,
                                 AuditOutcome outcome, std::uint32_t target_node = 0,
                                 std::uint32_t nodes_changed = 0, std::int64_t fiber_id = 0,
-                                std::uint32_t affected_ref_count = 0) noexcept {
+                                std::uint32_t affected_ref_count = 0,
+                                std::uint32_t tenant_id = 0) noexcept {
     if (!should_audit(mutation_id))
         return; // Issue #3319: trail Sampled-skip; deny callers emit SE
     // Issue #1589 / #3016: capture_audit_event_forced drops mid=0 (never
@@ -4636,13 +4643,14 @@ inline void capture_audit_event(std::uint64_t mutation_id, std::string_view name
             if (outcome == AuditOutcome::Success)
                 return;
             capture_audit_event_forced(0, name, kind, before_epoch, after_epoch, outcome,
-                                       target_node, nodes_changed, fiber_id, affected_ref_count);
+                                       target_node, nodes_changed, fiber_id, affected_ref_count,
+                                       tenant_id);
             return;
         }
         mutation_id = next_audit_mutation_id();
     }
     capture_audit_event_forced(mutation_id, name, kind, before_epoch, after_epoch, outcome,
-                               target_node, nodes_changed, fiber_id, affected_ref_count);
+                               target_node, nodes_changed, fiber_id, affected_ref_count, tenant_id);
 }
 
 // Issue #2054: always-on security correlation emit from
