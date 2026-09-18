@@ -31,9 +31,11 @@
 
 #include "compiler/mutation_hold_budget.h"
 #include "compiler/security_capabilities.h"
+#include "compiler/security_defaults.hh"
 #include "core/capability_model.hh"
 #include "core/sandbox.hh"
 #include "core/security_event.hh"
+#include "core/workspace_epoch.hh"
 
 #include <atomic>
 #include <cstdint>
@@ -58,6 +60,8 @@ using aura::compiler::security::kEffectMacroSelfEvo;
 using aura::compiler::security::kEffectMutate;
 using aura::compiler::security::kEffectSyscall;
 using aura::compiler::security::kEffectTenantAdmin;
+using aura::core::bump_mutation_epoch;
+using aura::core::current_mutation_epoch;
 using aura::core::capability::CapabilityGrant;
 using aura::core::capability::check_and_record_effect;
 using aura::core::capability::Effect;
@@ -65,6 +69,9 @@ using aura::core::capability::EffectProvenance;
 using aura::core::capability::EffectSandboxMode;
 using aura::core::capability::g_capability_effect_metrics;
 using aura::core::capability::g_capability_registry;
+using aura::core::capability::has_effect;
+using aura::core::capability::kEffectsEffectiveRetainIssue;
+using aura::core::capability::make_grant_provenance;
 using aura::core::capability::reset_capability_effects_for_test;
 using aura::core::capability::snapshot_capability_effect_stats;
 using aura::core::sandbox::SandboxMode;
@@ -1146,6 +1153,66 @@ static void ac3144_4_additive_counter_and_source_cite() {
           "AC5: no tests/core/test_issue_3144.cpp");
     CHECK(!std::filesystem::exists("tests/compiler/test_issue_3144.cpp"),
           "AC5: no tests/compiler/test_issue_3144.cpp");
+}
+
+static void ac3876_1_effective_matches_require_after_retain() {
+    std::println("\n--- #3876 AC1: Restricted+MT retain → effective bits match deny ---");
+    CHECK(kEffectsEffectiveRetainIssue == 3876, "3876: issue stamp");
+    reset_all();
+    set_mode(SandboxMode::Restricted);
+    g_capability_registry().set_grant_epoch_retain_window(16);
+    while (current_mutation_epoch() < 1)
+        bump_mutation_epoch(1);
+    EffectProvenance prov = make_grant_provenance(0, true, 0, 0);
+    // Tenant 0 == default_tenant so grant() is not a foreign-tenant TA fence.
+    CHECK(g_capability_registry().grant(0, "read", Effect::Read, prov), "3876 AC1: grant Read");
+    CapabilityGrant stored{};
+    CHECK(g_capability_registry().find_grant(0, "read", stored), "3876 AC1: grant stored");
+    CHECK(has_effect(g_capability_registry().effects_for(0), Effect::Read),
+          "3876 AC1: raw effects_for Read before retain");
+    CHECK(has_effect(g_capability_registry().effects_effective_for(0), Effect::Read),
+          "3876 AC1: effective Read before retain");
+    bump_mutation_epoch(100);
+    EffectProvenance call;
+    call.mutation_id = stored.bound_mutation_id;
+    call.epoch = current_mutation_epoch();
+    CHECK(!g_capability_registry().provenance_ok(0, call, Effect::Read),
+          "3876 AC1: require_effect path (provenance_ok) denies");
+    CHECK(has_effect(g_capability_registry().effects_for(0), Effect::Read),
+          "3876 AC1: raw effects_for still ORs expired grant");
+    CHECK(!has_effect(g_capability_registry().effects_effective_for(0), Effect::Read),
+          "3876 AC1: effects_effective_for matches deny");
+    CHECK(!has_effect(g_capability_registry().effects_effective_for_locked(0), Effect::Read),
+          "3876 AC1: locked effective matches deny");
+}
+
+static void ac3876_2_soft_no_retain_filter() {
+    std::println("\n--- #3876 AC2: Soft/Off effective == effects_for (no retain filter) ---");
+    reset_all();
+    set_mode(SandboxMode::Off);
+    EffectProvenance prov = make_grant_provenance(0, true, 0, 0);
+    CHECK(g_capability_registry().grant(1, "read", Effect::Read, prov), "3876 AC2: Soft grant");
+    g_capability_registry().set_grant_min_valid_epoch(1'000'000);
+    CHECK(has_effect(g_capability_registry().effects_for(1), Effect::Read),
+          "3876 AC2: Soft raw Read");
+    CHECK(has_effect(g_capability_registry().effects_effective_for(1), Effect::Read),
+          "3876 AC2: Soft effective does not filter retain (zero-cost)");
+}
+
+static void ac3876_3_source_cite() {
+    std::println("\n--- #3876 AC3: source-cite + no invent ---");
+    const auto cap = read_file("src/core/capability_model.hh");
+    const auto sec = read_file("src/compiler/evaluator_security.cpp");
+    CHECK(cap.find("Issue #3876") != std::string::npos, "3876 AC3: capability_model cites");
+    CHECK(cap.find("effects_effective_for") != std::string::npos, "3876 AC3: effective API");
+    CHECK(cap.find("kEffectsEffectiveRetainIssue") != std::string::npos, "3876 AC3: stamp");
+    CHECK(sec.find("Issue #3876") != std::string::npos, "3876 AC3: has_capability cites");
+    CHECK(sec.find("effects_effective_for") != std::string::npos,
+          "3876 AC3: has_capability uses effective");
+    CHECK(read_file("tests/compiler/test_issue_3876.cpp").empty(),
+          "3876 AC3: no test_issue_3876.cpp");
+    CHECK(read_file("docs/design/3876-effects-effective-retain.md").empty(),
+          "3876 AC3: no docs/design/");
 }
 
 // ── Issue #3279: session_bound orphan fail-closed sweep ─────────────
@@ -2934,6 +3001,9 @@ int run_test_capability_single_use_consume() {
         ac3144_2_explicit_tenant_admin_no_strip();
         ac3144_3_soft_off_no_strip();
         ac3144_4_additive_counter_and_source_cite();
+        ac3876_1_effective_matches_require_after_retain();
+        ac3876_2_soft_no_retain_filter();
+        ac3876_3_source_cite();
         // Issue #3279: session_bound orphan fail-closed sweep.
         ac3279_1_soft_observe_only();
         ac3279_2_production_revoke();
@@ -3004,6 +3074,11 @@ int run_test_inert_session_mid_3723() {
     ac3854_1_revoke_se_carries_caller_fiber();
     ac3854_2_legacy_zero_fiber_rows_unchanged();
     ac3854_3_source_cite();
+    // Issue #3876: batch dispatches this runner (standalone main is
+    // run_test_capability_single_use_consume only).
+    ac3876_1_effective_matches_require_after_retain();
+    ac3876_2_soft_no_retain_filter();
+    ac3876_3_source_cite();
     std::println("\n=== #3723 results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }

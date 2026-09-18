@@ -31,8 +31,10 @@ using aura::core::capability::Effect;
 using aura::core::capability::EffectProvenance;
 using aura::core::capability::g_capability_effect_metrics;
 using aura::core::capability::g_capability_registry;
+using aura::core::capability::has_effect;
 using aura::core::capability::kDefaultGrantEpochRetainWindowMultiTenant;
 using aura::core::capability::kDefaultGrantEpochRetainWindowRestricted;
+using aura::core::capability::kEffectsEffectiveRetainIssue;
 using aura::core::capability::kGrantEpochRetainRestrictedIssue;
 using aura::core::capability::make_grant_provenance;
 using aura::core::capability::reset_capability_effects_for_test;
@@ -284,6 +286,68 @@ int run_test_grant_epoch_retain_restricted() {
         CHECK(!g_capability_registry().provenance_ok(1, call), "AC5: old grant fenced");
         CHECK(g_capability_effect_metrics().capability_epoch_fence_hit_total.load() > fence0,
               "AC5: fence metric++");
+    }
+    // ── #3876: effects_effective_for matches require_effect after retain ──
+    {
+        std::println("\n--- #3876 AC1: Restricted+MT retain → effective bits match deny ---");
+        CHECK(kEffectsEffectiveRetainIssue == 3876, "3876: issue stamp");
+        reset_all();
+        set_env("AURA_SANDBOX", "restricted");
+        set_env("AURA_MULTI_TENANT", "1");
+        apply_production_security_defaults();
+        aura::core::sandbox::set_mode(SandboxMode::Restricted);
+        while (current_mutation_epoch() < 1)
+            bump_mutation_epoch(1);
+        EffectProvenance prov = make_grant_provenance(0, true, 0, 0);
+        // Read is not a high-bits grant (no TenantAdmin fence). Retain still
+        // applies — Agent posture overstated Mutate/Read the same way.
+        CHECK(g_capability_registry().grant(1, "read", Effect::Read, prov), "3876 AC1: grant Read");
+        CapabilityGrant stored{};
+        CHECK(g_capability_registry().find_grant(1, "read", stored), "3876 AC1: grant stored");
+        CHECK(has_effect(g_capability_registry().effects_for(1), Effect::Read),
+              "3876 AC1: raw effects_for Read before retain");
+        CHECK(has_effect(g_capability_registry().effects_effective_for(1), Effect::Read),
+              "3876 AC1: effective Read before retain");
+        bump_mutation_epoch(100);
+        EffectProvenance call;
+        call.mutation_id = stored.bound_mutation_id;
+        call.epoch = current_mutation_epoch();
+        CHECK(!g_capability_registry().provenance_ok(1, call, Effect::Read),
+              "3876 AC1: require_effect path (provenance_ok) denies");
+        CHECK(has_effect(g_capability_registry().effects_for(1), Effect::Read),
+              "3876 AC1: raw effects_for still ORs expired grant");
+        CHECK(!has_effect(g_capability_registry().effects_effective_for(1), Effect::Read),
+              "3876 AC1: effects_effective_for matches deny");
+        CHECK(!has_effect(g_capability_registry().effects_effective_for_locked(1), Effect::Read),
+              "3876 AC1: locked effective matches deny");
+    }
+    {
+        std::println("\n--- #3876 AC2: Soft/Off effective == effects_for (no retain filter) ---");
+        reset_all();
+        set_env("AURA_SANDBOX", "off");
+        apply_production_security_defaults();
+        EffectProvenance prov = make_grant_provenance(0, true, 0, 0);
+        CHECK(g_capability_registry().grant(1, "read", Effect::Read, prov), "3876 AC2: Soft grant");
+        g_capability_registry().set_grant_min_valid_epoch(1'000'000);
+        CHECK(has_effect(g_capability_registry().effects_for(1), Effect::Read),
+              "3876 AC2: Soft raw Read");
+        CHECK(has_effect(g_capability_registry().effects_effective_for(1), Effect::Read),
+              "3876 AC2: Soft effective does not filter retain (zero-cost)");
+    }
+    {
+        std::println("\n--- #3876 AC3: source-cite + no invent ---");
+        const auto cap = read_file("src/core/capability_model.hh");
+        const auto sec = read_file("src/compiler/evaluator_security.cpp");
+        CHECK(cap.find("Issue #3876") != std::string::npos, "3876 AC3: capability_model cites");
+        CHECK(cap.find("effects_effective_for") != std::string::npos, "3876 AC3: effective API");
+        CHECK(cap.find("kEffectsEffectiveRetainIssue") != std::string::npos, "3876 AC3: stamp");
+        CHECK(sec.find("Issue #3876") != std::string::npos, "3876 AC3: has_capability cites");
+        CHECK(sec.find("effects_effective_for") != std::string::npos,
+              "3876 AC3: has_capability uses effective");
+        CHECK(read_file("tests/compiler/test_issue_3876.cpp").empty(),
+              "3876 AC3: no test_issue_3876.cpp");
+        CHECK(read_file("docs/design/3876-effects-effective-retain.md").empty(),
+              "3876 AC3: no docs/design/");
     }
     {
         std::println("\n--- AC6: source-cite ---");

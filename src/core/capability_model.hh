@@ -49,6 +49,10 @@ inline constexpr std::uint64_t kDefaultGrantEpochRetainWindowMultiTenant = 64;
 inline constexpr std::uint64_t kDefaultGrantEpochRetainWindowRestricted = 16;
 // Issue #2529 stamp.
 inline constexpr int kGrantEpochRetainRestrictedIssue = 2529;
+// Issue #3876: Agent/posture bits after grant-epoch retain. effects_for
+// ORs !revoked&&!stolen; retain lives in provenance_ok. effects_effective_for
+// skips retain-expired grants so has_capability matches require_effect.
+inline constexpr int kEffectsEffectiveRetainIssue = 3876;
 // Issue #3207: dual-Evaluator cascade + consume linearizability on the
 // process-global CapabilityRegistry (no per-Evaluator shard).
 inline constexpr int kCapabilityDualEvaluatorCascadeIssue = 3207;
@@ -1375,6 +1379,50 @@ struct CapabilityRegistry {
                 1, std::memory_order_relaxed);
         }
         return acc;
+    }
+
+    // Issue #3876: Agent-readable bits after grant-epoch retain. Same OR as
+    // effects_for but skips grants with grant_epoch < grant_min_valid_epoch
+    // (the retain fence that provenance_ok already applies). Soft/Off:
+    // min_valid==0 and sandbox Off → identical to effects_for (no extra
+    // retain load). require_effect stays effects_for + provenance_ok.
+    [[nodiscard]] Effect effects_effective_for(TenantId tenant) const {
+        Effect acc = Effect::None;
+        auto it = by_tenant.find(tenant);
+        if (it == by_tenant.end())
+            return acc;
+        const auto mode = sandbox_mode.load(std::memory_order_acquire);
+        const auto min_valid = (mode == EffectSandboxMode::Off)
+                                   ? std::uint64_t{0}
+                                   : grant_min_valid_epoch_.load(std::memory_order_acquire);
+        bool has_wildcard = false;
+        bool has_explicit_TenantAdmin = false;
+        for (const auto& g : it->second) {
+            if (g.revoked || g.stolen)
+                continue;
+            // Issue #3876: retain-expired grants do not contribute posture bits.
+            if (g.grant_epoch != 0 && min_valid != 0 && g.grant_epoch < min_valid)
+                continue;
+            acc = acc | g.effects;
+            if (mode != EffectSandboxMode::Off) {
+                if (g.name == "*")
+                    has_wildcard = true;
+                else if ((static_cast<std::uint16_t>(g.effects) &
+                          static_cast<std::uint16_t>(Effect::TenantAdmin)) != 0)
+                    has_explicit_TenantAdmin = true;
+            }
+        }
+        if (mode != EffectSandboxMode::Off && has_wildcard && !has_explicit_TenantAdmin) {
+            constexpr std::uint16_t kStrip = static_cast<std::uint16_t>(Effect::TenantAdmin) |
+                                             static_cast<std::uint16_t>(Effect::MacroSelfEvo);
+            acc = static_cast<Effect>(static_cast<std::uint16_t>(acc) & ~kStrip);
+        }
+        return acc;
+    }
+
+    // Issue #3876: locked variant — caller MUST hold `mtx`.
+    [[nodiscard]] Effect effects_effective_for_locked(TenantId tenant) const {
+        return effects_effective_for(tenant);
     }
 
     // Issue #3141: wildcard-only detection. Returns true if tenant holds
