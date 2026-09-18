@@ -7622,6 +7622,17 @@ def cmd_lint():
     if r != 0:
         fail("Issue #3870 pass purity declared linter failed — run python3 scripts/check_pass_purity_effect_3870.py")
         return r
+    # Issue #3871: LetRec unannotated check_flat synthesizes the value —
+    # source-cite of the dropped !is_rec guard, rec forward unify, and the
+    # built-host behavioral ACs.
+    lcs3871_script = ROOT / "scripts" / "check_letrec_check_synth_3871.py"
+    if not lcs3871_script.exists():
+        fail(f"missing {lcs3871_script}")
+        return 1
+    r = run([sys.executable, str(lcs3871_script)], cwd=ROOT)
+    if r != 0:
+        fail("Issue #3871 letrec check-synth linter failed — run python3 scripts/check_letrec_check_synth_3871.py")
+        return r
     # Issue #3645: engine:metrics by-name lookup miss returns a typed
     # not-found hash (ok=#f / status=not-found / name / schema-3531)
     # instead of make_void() — a typo'd or unregistered name is now

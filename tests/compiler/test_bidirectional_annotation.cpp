@@ -480,6 +480,101 @@ int aura_issue_1413_run() {
         apply_dev_audit_defaults();
     }
 
+    // ── #3871: unannotated LetRec check_flat walks the value ──
+    {
+        using aura::compiler::typed_audit::apply_dev_audit_defaults;
+        using aura::compiler::typed_audit::apply_production_audit_defaults;
+
+        struct ProdScope {
+            ProdScope() { apply_production_audit_defaults(); }
+            ~ProdScope() { apply_dev_audit_defaults(); }
+        };
+
+        {
+            std::println("\n--- #3871 AC1: unannotated letrec value error reported ---");
+            ProdScope prod;
+            aura::diag::DiagnosticCollector diag;
+            aura::core::TypeRegistry reg;
+            aura::compiler::InferenceEngine eng(reg, diag);
+            eng.set_strict(true);
+            eng.set_gradual_permissiveness(aura::compiler::GradualPermissiveness::Strict);
+            aura::ast::ASTArena arena;
+            auto alloc = arena.allocator();
+            aura::ast::StringPool pool(alloc);
+            aura::ast::FlatAST flat(alloc);
+            // Discriminator: the error lives ONLY inside the unannotated
+            // letrec value — (set! g "hi") against the outer g : Integer
+            // fires the #3407 synthesize-Set ground mismatch, which requires
+            // the value to actually be walked (the #3871 else arm).
+            auto pr = aura::parser::parse_to_flat(
+                "(let ((g 0)) (letrec ((x (begin (set! g \"hi\") 1))) 1))", flat, pool);
+            CHECK(pr.success && pr.root != aura::ast::NULL_NODE, "3871 AC1: parse ok");
+            if (pr.success && pr.root != aura::ast::NULL_NODE) {
+                flat.root = pr.root;
+                (void)eng.check_flat(flat, pool, pr.root, reg.int_type());
+                CHECK(has_kind_msg(diag, aura::diag::ErrorKind::TypeError, "type mismatch") ||
+                          has_kind_msg(diag, aura::diag::ErrorKind::TypeError,
+                                       "incompatible ground types"),
+                      "3871 AC1: letrec unannotated value walked (was skipped)");
+            }
+        }
+        {
+            std::println("\n--- #3871 AC2: well-typed letrec check still green ---");
+            ProdScope prod;
+            aura::diag::DiagnosticCollector diag;
+            aura::core::TypeRegistry reg;
+            aura::compiler::InferenceEngine eng(reg, diag);
+            eng.set_strict(true);
+            eng.set_gradual_permissiveness(aura::compiler::GradualPermissiveness::Strict);
+            aura::ast::ASTArena arena;
+            auto alloc = arena.allocator();
+            aura::ast::StringPool pool(alloc);
+            aura::ast::FlatAST flat(alloc);
+            auto pr = aura::parser::parse_to_flat("(letrec ((x (+ 1 1))) x)", flat, pool);
+            CHECK(pr.success && pr.root != aura::ast::NULL_NODE, "3871 AC2: parse ok");
+            if (pr.success && pr.root != aura::ast::NULL_NODE) {
+                flat.root = pr.root;
+                (void)eng.check_flat(flat, pool, pr.root, reg.int_type());
+                CHECK(!has_kind_msg(diag, aura::diag::ErrorKind::TypeError, "type mismatch"),
+                      "3871 AC2: no false positive on letrec check");
+            }
+        }
+        {
+            std::println("\n--- #3871 AC3: letrec synthesize path unchanged ---");
+            ProdScope prod;
+            aura::diag::DiagnosticCollector diag;
+            infer_code("(letrec ((x 1)) (+ x 2))", aura::compiler::GradualPermissiveness::Strict,
+                       /*strict=*/false, diag);
+            CHECK(!has_kind_msg(diag, aura::diag::ErrorKind::TypeError, "type mismatch"),
+                  "3871 AC3: letrec synthesize/infer unchanged");
+        }
+        {
+            std::println("\n--- #3871 AC4: source-cite + no invent ---");
+            std::ifstream tci("src/compiler/type_checker_impl.cpp");
+            CHECK(tci.good(), "3871 AC4: open type_checker_impl.cpp");
+            std::string src((std::istreambuf_iterator<char>(tci)),
+                            std::istreambuf_iterator<char>());
+            const auto check_pos = src.find("InferenceEngine::check_flat(");
+            CHECK(check_pos != std::string::npos, "3871 AC4: check_flat present");
+            const auto check_after = src.substr(check_pos);
+            const auto let_pos = check_after.find("NodeTag::Let || v.tag == NodeTag::LetRec");
+            CHECK(let_pos != std::string::npos, "3871 AC4: Let/LetRec branch");
+            const auto begin_pos = check_after.find("NodeTag::Begin", let_pos);
+            const auto let_branch = check_after.substr(
+                let_pos, begin_pos == std::string::npos ? std::string::npos : begin_pos - let_pos);
+            CHECK(let_branch.find("Issue #3871") != std::string::npos, "3871 AC4: cites #3871");
+            CHECK(let_branch.find("} else if (!is_rec)") == std::string::npos,
+                  "3871 AC4: !is_rec guard dropped");
+            CHECK(let_branch.find("consistent_unify(rec_fwd, val_type)") != std::string::npos,
+                  "3871 AC4: rec forward unify present");
+            std::ifstream d("docs/design/3871-letrec-check-synth.md");
+            CHECK(!d.good(), "3871 AC4: no docs/design");
+            std::ifstream t("tests/compiler/test_issue_3871.cpp");
+            CHECK(!t.good(), "3871 AC4: no invent");
+        }
+        apply_dev_audit_defaults();
+    }
+
     // ── #3700: Production Quote walks children ---
     {
         using aura::compiler::kBidirectionalQuoteWalkIssue;

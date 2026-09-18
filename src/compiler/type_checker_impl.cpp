@@ -7828,8 +7828,15 @@ void InferenceEngine::check_flat(FlatAST& flat, StringPool& pool, NodeId id, Typ
                 if (is_rec)
                     cs_.consistent_unify(rec_fwd, val_type);
                 env_.bind(var_name, val_type);
-            } else if (!is_rec) {
+            } else {
+                // Issue #3871: unannotated LetRec also synthesizes the value.
+                // The former `else if (!is_rec)` guard left LetRec values
+                // un-walked in check mode — errors inside the recursive body
+                // were never reported. Mirror synthesize_flat_let: synthesize
+                // with the forward binding in scope, then unify it.
                 TypeId val_type = synthesize_flat(flat, pool, val_id, flat.get(val_id));
+                if (is_rec)
+                    cs_.consistent_unify(rec_fwd, val_type);
                 env_.bind(var_name, val_type);
             }
         }

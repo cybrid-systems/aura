@@ -125,3 +125,4 @@ check_temp_canary_moving_gate_3857.py
 check_restore_checkpoint_mse_3858.py
 check_flatast_seqlock_get_3868.py
 check_pass_purity_effect_3870.py
+check_letrec_check_synth_3871.py
