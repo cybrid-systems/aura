@@ -4490,7 +4490,7 @@ static void ac3647_1_closure_body_slots_registered() {
     const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
     const auto hdr = read_file("src/core/densify_consistency_report.h");
     CHECK(mb.find("Issue #3647") != std::string::npos, "AC1: walk cites #3647");
-    CHECK(mb.find("for (auto& [cid, cl] : closures_)") != std::string::npos,
+    CHECK(mb.find("for (auto& cl_sh : closures_shards_)") != std::string::npos,
           "AC1: closures_ walk present in register helper");
     CHECK(mb.find("known_slots.push_back(reinterpret_cast<void**>(&cl.flat))") !=
                   std::string::npos &&
@@ -4632,8 +4632,9 @@ static void ac3647_4_no_pin_no_dual_note() {
           "AC4: temporary canary drain still the only canary injection");
     CHECK(code_only.find("pin_") == std::string::npos && code_only.find("gc_") == std::string::npos,
           "AC4: no new pin/GC API in the walk");
-    const auto lock = raw.find("std::shared_lock<std::shared_mutex> rlock(closures_mtx_)");
-    const auto walk = raw.find("for (auto& [cid, cl] : closures_)");
+    const auto lock =
+        raw.find("std::array<std::shared_lock<std::shared_mutex>, kClosuresShardCount>");
+    const auto walk = raw.find("for (auto& cl_sh : closures_shards_)");
     const auto reg = raw.find("register_external_root_slot_for_densify_all(slot)");
     CHECK(lock != std::string::npos && walk != std::string::npos && reg != std::string::npos &&
               lock < walk && walk < reg,

@@ -998,8 +998,18 @@ void register_workspace_query_primitives(
         ws.pairs.push_back({make_int(static_cast<std::int64_t>(exported.gen)), make_void()});
         auto pair_pid = ws.pairs.size();
         ws.pairs.push_back({make_int(static_cast<std::int64_t>(exported.id)), make_pair(gen_pid)});
-        return end_query_epoch_maybe_result(qe, &flat, make_pair(pair_pid),
-                                            /*as_query_result=*/false);
+        EvalValue packed = make_pair(pair_pid);
+        // Production auto-upgrade walks a match LIST (car = NodeId int or
+        // (id . gen) pair). A bare (id . gen) pair is walked as two ints —
+        // id then gen-as-NodeId — and a lagging gen slot fail-closes a
+        // hot-cone export (#3259). Wrap as a singleton list under
+        // production; Soft keeps the historical bare pair.
+        if (aura::compiler::typed_audit::production_defaults_active()) {
+            auto list_pid = ws.pairs.size();
+            ws.pairs.push_back({packed, make_void()});
+            packed = make_pair(list_pid);
+        }
+        return end_query_epoch_maybe_result(qe, &flat, packed, /*as_query_result=*/false);
     }};
 
     // (query:root) — Return the current workspace root node ID, or #f if no workspace
@@ -1139,8 +1149,18 @@ void register_workspace_query_primitives(
             ws.pairs.push_back({make_int(static_cast<std::int64_t>(ref.gen)), make_void()});
             auto pair_pid = ws.pairs.size();
             ws.pairs.push_back({make_int(static_cast<std::int64_t>(ref.id)), make_pair(gen_pid)});
-            return end_query_epoch_maybe_result(qe, &flat, make_pair(pair_pid),
-                                                /*as_query_result=*/false);
+            EvalValue packed = make_pair(pair_pid);
+            // Production auto-upgrade walks a match LIST (car = NodeId int or
+            // (id . gen) pair). A bare (id . gen) pair is walked as two ints —
+            // id then gen-as-NodeId — and a lagging gen slot fail-closes a
+            // hot-cone export (#3259). Wrap as a singleton list under
+            // production; Soft keeps the historical bare pair.
+            if (aura::compiler::typed_audit::production_defaults_active()) {
+                auto list_pid = ws.pairs.size();
+                ws.pairs.push_back({packed, make_void()});
+                packed = make_pair(list_pid);
+            }
+            return end_query_epoch_maybe_result(qe, &flat, packed, /*as_query_result=*/false);
         });
 
     // Issue #2404: (query:ensure-ref node-id|stable-ref) — force

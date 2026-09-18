@@ -176,7 +176,7 @@ static void ac2_source() {
     if (fpos != std::string::npos) {
         auto win = gc.substr(fpos, 2800);
         CHECK(win.find("shared_lock") != std::string::npos, "AC2: flush shared_lock");
-        CHECK(win.find("closures_mtx_") != std::string::npos, "AC2: flush locks closures_mtx_");
+        CHECK(win.find("closures_shards_") != std::string::npos, "AC2: flush locks closures_mtx_");
         CHECK(win.find("gc_flush_closures_locked_total") != std::string::npos,
               "AC2: flush bumps metric");
     }
@@ -189,7 +189,7 @@ static void ac2_source() {
         // unique_lock is ~4.6k into body (after defer / pin / pair_remap).
         auto win = gc.substr(spos, 7000);
         CHECK(win.find("unique_lock") != std::string::npos, "AC2: sweep unique_lock");
-        CHECK(win.find("closures_mtx_") != std::string::npos, "AC2: sweep locks closures_mtx_");
+        CHECK(win.find("closures_shards_") != std::string::npos, "AC2: sweep locks closures_mtx_");
         CHECK(win.find("gc_sweep_closures_locked_total") != std::string::npos,
               "AC2: sweep bumps metric");
         CHECK(win.find("Issue #2473") != std::string::npos, "AC2: #2473 in sweep body");
