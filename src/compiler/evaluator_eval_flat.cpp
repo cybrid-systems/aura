@@ -795,9 +795,9 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const
         cl_found = true;
     } else if (!tombstoned) {
         note_apply_closure_mtx_lookup();
-        std::shared_lock<std::shared_mutex> rlock(closures_mtx_);
-        auto it = closures_.find(cid);
-        if (it != closures_.end()) {
+        std::shared_lock<std::shared_mutex> rlock(closures_shards_[closures_shard_index(cid)].mu);
+        auto it = closures_shards_[closures_shard_index(cid)].map.find(cid);
+        if (it != closures_shards_[closures_shard_index(cid)].map.end()) {
             // Issue #1926 / #1929 / #3021: refuse tombstoned entries
             // under lock before copying (apply/use-site protocol —
             // same skip as scan_skip_freed).
@@ -897,10 +897,11 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const
                         1, std::memory_order_relaxed);
                 }
                 {
-                    std::unique_lock<std::shared_mutex> wlock(closures_mtx_);
+                    std::unique_lock<std::shared_mutex> wlock(
+                        closures_shards_[closures_shard_index(cid)].mu);
                     bump_closures_apply_epoch(); // Issue #3832
-                    auto it = closures_.find(cid);
-                    if (it != closures_.end()) {
+                    auto it = closures_shards_[closures_shard_index(cid)].map.find(cid);
+                    if (it != closures_shards_[closures_shard_index(cid)].map.end()) {
                         // keep must_deopt_before_next_call SET — do not wash.
                         it->second.bridge_epoch = 0;
                         cl_copy = it->second;
@@ -929,10 +930,11 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const
             }
             if (body_live_md && !env_terminal_md) {
                 {
-                    std::unique_lock<std::shared_mutex> wlock(closures_mtx_);
+                    std::unique_lock<std::shared_mutex> wlock(
+                        closures_shards_[closures_shard_index(cid)].mu);
                     bump_closures_apply_epoch(); // Issue #3832
-                    auto it = closures_.find(cid);
-                    if (it != closures_.end()) {
+                    auto it = closures_shards_[closures_shard_index(cid)].map.find(cid);
+                    if (it != closures_shards_[closures_shard_index(cid)].map.end()) {
                         it->second.must_deopt_before_next_call = false;
                         stamp_closure_bridge_epoch(it->second);
                         cl_copy = it->second;
@@ -955,10 +957,12 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const
                 // Fall through to materialize + eval_flat with restamped epochs.
             } else {
                 {
-                    std::unique_lock<std::shared_mutex> wlock(closures_mtx_);
+                    std::unique_lock<std::shared_mutex> wlock(
+                        closures_shards_[closures_shard_index(cid)].mu);
                     bump_closures_apply_epoch(); // Issue #3832
-                    auto it = closures_.find(cid);
-                    if (it != closures_.end() && it->second.must_deopt_before_next_call) {
+                    auto it = closures_shards_[closures_shard_index(cid)].map.find(cid);
+                    if (it != closures_shards_[closures_shard_index(cid)].map.end() &&
+                        it->second.must_deopt_before_next_call) {
                         it->second.must_deopt_before_next_call = false;
                         // Poison bridge so dual-path also refuses stale views.
                         it->second.bridge_epoch = 0;
@@ -1055,10 +1059,11 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const
             // clear it and restamp (module free-vars survive unimpacted rebind).
             if (body_live && !env_terminal) {
                 {
-                    std::unique_lock<std::shared_mutex> wlock(closures_mtx_);
+                    std::unique_lock<std::shared_mutex> wlock(
+                        closures_shards_[closures_shard_index(cid)].mu);
                     bump_closures_apply_epoch(); // Issue #3832
-                    auto it = closures_.find(cid);
-                    if (it != closures_.end()) {
+                    auto it = closures_shards_[closures_shard_index(cid)].map.find(cid);
+                    if (it != closures_shards_[closures_shard_index(cid)].map.end()) {
                         it->second.must_deopt_before_next_call = false;
                         stamp_closure_bridge_epoch(it->second);
                         cl_copy = it->second;
@@ -1216,10 +1221,11 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const
                     }
                     if (race_body_live && !race_env_terminal) {
                         {
-                            std::unique_lock<std::shared_mutex> wlock(closures_mtx_);
+                            std::unique_lock<std::shared_mutex> wlock(
+                                closures_shards_[closures_shard_index(cid)].mu);
                             bump_closures_apply_epoch(); // Issue #3832
-                            auto it = closures_.find(cid);
-                            if (it != closures_.end()) {
+                            auto it = closures_shards_[closures_shard_index(cid)].map.find(cid);
+                            if (it != closures_shards_[closures_shard_index(cid)].map.end()) {
                                 stamp_closure_bridge_epoch(it->second);
                                 cl_copy = it->second;
                             } else {
@@ -2030,7 +2036,8 @@ EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env&
                 // P0: register captured for SoA, no legacy env pointer in Closure.
                 EnvId cap_id = alloc_env_frame_from_env(env);
                 {
-                    std::unique_lock<std::shared_mutex> wlock(closures_mtx_);
+                    std::unique_lock<std::shared_mutex> wlock(
+                        closures_shards_[closures_shard_index(cid)].mu);
                     bump_closures_apply_epoch(); // Issue #3832
                     Closure cl{"", {}, cl_flat, cl_pool, cloned_body, cap_id, false, target_arena};
                     // Issue #1365: stamp bridge_epoch at construction
@@ -2038,7 +2045,7 @@ EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env&
                     // Store param SymIds directly (Issue #145: SoA migration).
                     for (auto ps : param_syms)
                         cl.params.push_back(ps);
-                    closures_[cid] = std::move(cl);
+                    closures_shards_[closures_shard_index(cid)].map[cid] = std::move(cl);
                 }
                 // Issue #2676: extend closures_mtx_ critical section to cover
                 // the make_closure read (P0 multi-fiber race: another fiber
@@ -2047,7 +2054,8 @@ EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env&
                 // concurrent readers (closure materialization is read-only
                 // here, no need for unique exclusion post-write).
                 {
-                    std::shared_lock<std::shared_mutex> rlock(closures_mtx_);
+                    std::shared_lock<std::shared_mutex> rlock(
+                        closures_shards_[closures_shard_index(cid)].mu);
                     return make_closure(cid);
                 }
             }
@@ -2154,9 +2162,10 @@ EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env&
                         cl.env_id = alloc_env_frame_from_env(*copied_env);
                         cl.owner_arena = target;
                         {
-                            std::unique_lock<std::shared_mutex> wlock(closures_mtx_);
+                            std::unique_lock<std::shared_mutex> wlock(
+                                closures_shards_[closures_shard_index(cid)].mu);
                             bump_closures_apply_epoch(); // Issue #3832
-                            closures_[cid] = std::move(cl);
+                            closures_shards_[closures_shard_index(cid)].map[cid] = std::move(cl);
                         }
 
                         // Bind in env
@@ -2165,7 +2174,8 @@ EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env&
                         // Issue #2676: shared_lock to serialize with closures_ write
                         // (P0 multi-fiber race — see block above).
                         {
-                            std::shared_lock<std::shared_mutex> rlock(closures_mtx_);
+                            std::shared_lock<std::shared_mutex> rlock(
+                                closures_shards_[closures_shard_index(cid)].mu);
                             cells_[ci] = make_closure(cid);
                             return make_closure(cid);
                         }
@@ -2340,8 +2350,8 @@ EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env&
             }
             if (types::is_closure(fn_val)) {
                 auto cid = types::as_closure_id(fn_val);
-                auto it = closures_.find(cid);
-                if (it != closures_.end()) {
+                auto it = closures_shards_[closures_shard_index(cid)].map.find(cid);
+                if (it != closures_shards_[closures_shard_index(cid)].map.end()) {
                     // Issue #3021: no bare apply of freed/tombstone.
                     if (!closure_apply_use_site_ok(it->second))
                         return std::unexpected(
@@ -2396,8 +2406,9 @@ EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env&
         // Fallback: manual closure apply via eval_flat.
         // Issue #3021: never re-apply a slot apply_closure already
         // rejected as freed/tombstone (bare-apply UAF window).
-        auto it = closures_.find(cid);
-        if (it != closures_.end() && it->second.lifetime_valid_for_views()) {
+        auto it = closures_shards_[closures_shard_index(cid)].map.find(cid);
+        if (it != closures_shards_[closures_shard_index(cid)].map.end() &&
+            it->second.lifetime_valid_for_views()) {
             auto& cl = it->second;
             std::vector<EvalValue> cargs;
             auto current = cdr_val;
@@ -5431,9 +5442,10 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                         Closure cl;
                         bool tw_closure = false;
                         {
-                            std::shared_lock<std::shared_mutex> rlock(closures_mtx_);
-                            auto it = closures_.find(cid);
-                            if (it != closures_.end()) {
+                            std::shared_lock<std::shared_mutex> rlock(
+                                closures_shards_[closures_shard_index(cid)].mu);
+                            auto it = closures_shards_[closures_shard_index(cid)].map.find(cid);
+                            if (it != closures_shards_[closures_shard_index(cid)].map.end()) {
                                 // Issue #3021: no bare TCO apply of
                                 // freed/tombstoned slots (scan_skip_freed
                                 // semantics). Stale-but-live still
@@ -5881,17 +5893,19 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                     // closure.
                     EnvId cap_id = alloc_env_frame_from_env(*current_env);
                     {
-                        std::unique_lock<std::shared_mutex> wlock(closures_mtx_);
+                        std::unique_lock<std::shared_mutex> wlock(
+                            closures_shards_[closures_shard_index(cid)].mu);
                         bump_closures_apply_epoch(); // Issue #3832
                         Closure cl{"", std::move(params), f, p, body_id, cap_id, dotted, target};
                         // Issue #1365: stamp bridge_epoch at construction
                         stamp_closure_bridge_epoch(cl);
-                        closures_[cid] = std::move(cl);
+                        closures_shards_[closures_shard_index(cid)].map[cid] = std::move(cl);
                     }
                     // Issue #2676: shared_lock to serialize with closures_ write
                     // (P0 multi-fiber race — see block above).
                     {
-                        std::shared_lock<std::shared_mutex> rlock(closures_mtx_);
+                        std::shared_lock<std::shared_mutex> rlock(
+                            closures_shards_[closures_shard_index(cid)].mu);
                         // Do NOT cache closure values — the closure captures the current env and a
                         // cached closure would reuse the same env on subsequent evaluations (wrong
                         // when the same Lambda node is evaluated with different captured

@@ -61,7 +61,7 @@ def main() -> int:
 
     # AC1: closure materialization — shared_lock(closures_mtx_) around
     # make_closure reads. 3 sites: line ~1550, 1662, 4509 (approximate).
-    must_count("std::shared_lock<std::shared_mutex> rlock(closures_mtx_)", "AC1", ev, at_least=3)
+    must_count("closures_shards_[closures_shard_index(", "AC1", ev, at_least=3)
     must("make_closure(cid)", "AC1", ev)
     must("Issue #2676", "AC1", ev)
 
@@ -84,7 +84,7 @@ def main() -> int:
 
     # AC5: lock_order_audit.h documents the closure materialization rank.
     must("Closures", "AC5", lock_audit)
-    must("closures_mtx_", "AC5", lock_audit)
+    must("closures shard locks", "AC5", lock_audit)
     must("alloc_storage_lock_", "AC5", lock_audit)
 
     # AC6: linter self-coverage + build.py wire-up.

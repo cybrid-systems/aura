@@ -2862,9 +2862,9 @@ extern "C" void aura_aot_invalidate_owner_slot_for_func_id(std::int64_t func_id,
 // `aura_refresh_live_closures_for_mutated_define` against closure
 // materialization in evaluator_eval_flat.cpp — without the lock, the
 // epoch bump + counters + future live-closure remount bookkeeping can
-// race against concurrent closures_[cid] = std::move(cl) writes and
-// `make_closure(cid)` reads (which hold closures_mtx_). Acquire the
-// same per-heap lock class used by string_heap_ / pairs_ push
+// race against concurrent closures_shards_[closures_shard_index(cid)].map[cid] = std::move(cl)
+// writes and `make_closure(cid)` reads (which hold closures_mtx_). Acquire the same per-heap lock
+// class used by string_heap_ / pairs_ push
 // (#2651) so lock-order audit (lock_order_audit.h) sees one consistent
 // rank. Allocation alloc_storage_lock_ is held on the Evaluator that
 // owns the closure bridges (ev_ptr may be null in default path — that
@@ -2886,7 +2886,7 @@ extern "C" void aura_refresh_live_closures_for_mutated_define(void* ev_ptr,
     // call site. The atomic epoch bump + counter increments below are
     // thread-safe on their own; the lock is needed for ordering with
     // concurrent closure materialization (closures_mtx_ write of
-    // closures_[cid] = std::move(cl) + make_closure read).
+    // closures_shards_[closures_shard_index(cid)].map[cid] = std::move(cl) + make_closure read).
     g_aot_table_epoch.fetch_add(1, std::memory_order_acq_rel);
     if (aot_metrics()) {
         aot_metrics()->aot_live_closure_refresh_on_mutation_total.fetch_add(

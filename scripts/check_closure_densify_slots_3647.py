@@ -71,7 +71,7 @@ def _rows(mb: str, hdr: str, arena_src: str, test: str, build: str) -> list[str]
 
     # AC1 — closure body slots enter the known-root inventory.
     must("Issue #3647", "AC1 walk cite", mb)
-    must("for (auto& [cid, cl] : closures_)", "AC1 closures walk", mb)
+    must("for (auto& cl_sh : closures_shards_)", "AC1 closures walk", mb)
     must(
         "known_slots.push_back(reinterpret_cast<void**>(&cl.flat));",
         "AC1 flat slot",
@@ -132,11 +132,11 @@ def _rows(mb: str, hdr: str, arena_src: str, test: str, build: str) -> list[str]
         fails.append("AC4: register helper body not located")
     else:
         raw_body = mb[begin:end]
-        lock = raw_body.find("std::shared_lock<std::shared_mutex> rlock(closures_mtx_)")
-        walk = raw_body.find("for (auto& [cid, cl] : closures_)")
+        lock = raw_body.find("std::array<std::shared_lock<std::shared_mutex>, kClosuresShardCount>")
+        walk = raw_body.find("for (auto& cl_sh : closures_shards_)")
         reg = raw_body.find("register_external_root_slot_for_densify_all(slot)")
         if lock < 0 or walk < 0 or reg < 0 or not (lock < walk < reg):
-            fails.append("AC4: expected shared closures_mtx_ lock before walk before registration")
+            fails.append("AC4: expected shared closures shard locks before walk before registration")
         code4 = _strip_line_comments(raw_body)
         must_not("pin_", "AC4 no pin API", code4)
         must_not("gc_", "AC4 no gc API", code4)

@@ -4,11 +4,11 @@
     "engine": 8,
     "mutate": 3,
     "other": 355,
-    "query": 32,
+    "query": 34,
     "stats-like": 0,
     "workspace": 19
   },
-  "count": 419,
+  "count": 421,
   "frozen_count": 453,
   "frozen_names": [
     "arena:adaptive-stats",
@@ -465,7 +465,7 @@
     "vector-ref",
     "vector-set!"
   ],
-  "interim_hard_ceiling": 507,
+  "interim_hard_ceiling": 533,
   "names": [
     "*allow-macro-inline*",
     "_agent:list",
@@ -654,7 +654,7 @@
     "modulo",
     "monotonic-ms",
     "mutate",
-    "mutate:from-verification-feedback",
+    "mutate: here \u2014 sole_guard / #3192 / #3828 gates fail it.\n    // Issue #2881 lineage: canonical NodeId-only residual-coverage example\n    // now lives with the add_mutate registration (still cites #2881 there).\n    (void)add;\n    (void)ev;\n}\n\n// Issue #909 compile part 35 (orig 2736-2875)\nvoid CompilePrims::register_compile_p35(PrimRegistrar add, Evaluator& ev) {}\n\n// Issue #909 compile part 36 (orig 2876-2965)\nvoid CompilePrims::register_compile_p36(PrimRegistrar add, Evaluator& ev) {\n\n    // Issue #318: (verify:coverage-holes [report-text]) \u2014\n    // return a list of NodeIds that have\n    // kCoverageFeedbackDirty set (i.e. nodes whose coverpoint\n    // / covergroup simulation reports flagged as uncovered).\n    //\n    // Args:\n    //   report-text \u2014 optional string in the same format as\n    //                  (verify:parse-coverage-feedback)\n    //                  (newline-separated NodeIds). When\n    //                  provided, the primitive first marks the\n    //                  listed nodes dirty (same effect as the\n    //                  parse primitive) then returns the\n    //                  combined coverage-dirty list. When\n    //                  omitted, the primitive just returns\n    //                  whatever's already dirty.\n    //\n    // Returns: a pair-list of NodeIds (newest-first so the\n    //   caller can iterate left-to-right via (car / cdr) and\n    //   stop early if desired).\n    //\n    // Composes with (query:where :node-type ",
     "mutate:set-agent-fingerprint",
     "mutate:validate-reflected",
     "mutation-lightweight-commit",
@@ -737,6 +737,8 @@
     "query:provenance-of*",
     "query:reaches",
     "query:ref-valid?",
+    "query:result-fresh?",
+    "query:result-matches",
     "query:root",
     "query:schema",
     "query:stable-ref",

@@ -101,6 +101,7 @@ import aura.compiler.dirty_propagation;
 #include <cstdlib>
 #include <memory>
 #include <mutex>
+#include <array>
 #include <optional>
 #include <shared_mutex>
 #include <string>
@@ -7164,25 +7165,28 @@ std::size_t Evaluator::register_known_moving_densify_root_slots() noexcept {
     // lasting void** — Moving densify rewrites them via the slot SSOT below
     // instead of leaving eval_flat / JIT reading densify-old addresses
     // between densify and apply (previously only the post-move canary
-    // fail-closed the window). Collect under shared closures_mtx_ (same
+    // fail-closed the window). Collect under shared shard locks (same
     // scan lock as refresh_stale_frames_after_steal) and release BEFORE
-    // registration — no arena lock is ever taken under closures_mtx_
+    // registration — no arena lock is ever taken under the shard locks
     // (on_arena_compact_hook may walk closures from inside arena compact).
     // No canary dual-note on these slots (#3368): the slot is the cover.
     std::size_t closure_slots = 0;
     {
-        std::shared_lock<std::shared_mutex> rlock(closures_mtx_);
-        for (auto& [cid, cl] : closures_) {
-            (void)cid;
-            if (cl.flat) {
-                known_slots.push_back(reinterpret_cast<void**>(&cl.flat));
-                ++closure_slots;
+        std::array<std::shared_lock<std::shared_mutex>, kClosuresShardCount> rlock;
+        for (std::size_t rlock_i = 0; rlock_i < kClosuresShardCount; ++rlock_i)
+            rlock[rlock_i] = std::shared_lock<std::shared_mutex>(closures_shards_[rlock_i].mu);
+        for (auto& cl_sh : closures_shards_)
+            for (auto& [cid, cl] : cl_sh.map) {
+                (void)cid;
+                if (cl.flat) {
+                    known_slots.push_back(reinterpret_cast<void**>(&cl.flat));
+                    ++closure_slots;
+                }
+                if (cl.pool) {
+                    known_slots.push_back(reinterpret_cast<void**>(&cl.pool));
+                    ++closure_slots;
+                }
             }
-            if (cl.pool) {
-                known_slots.push_back(reinterpret_cast<void**>(&cl.pool));
-                ++closure_slots;
-            }
-        }
     }
     if (closure_slots > 0) {
         aura::core::densify_consistency::g_moving_closure_slots_registered_total.fetch_add(

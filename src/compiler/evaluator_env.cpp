@@ -4,6 +4,7 @@
 module;
 
 #include "runtime_shared.h"
+#include <array>
 #include "core/atomic_fence_port.h"
 #include "observability_metrics.h"
 #include "gc_coord_scope.h"  // Issue #2131: pin → cascade → audit
@@ -1206,7 +1207,7 @@ Env Evaluator::materialize_call_env(const Closure& cl) {
     // when the closure was constructed via a path that
     // skipped alloc_env_frame_from_env (e.g. a ClosureView
     // copy, a default-constructed Closure moved into
-    // closures_[cid], or a frame that was pruned by a
+    // closures_shards_[closures_shard_index(id)].map[cid], or a frame that was pruned by a
     // future gc-temp cycle). Fall back to a fresh Env with
     // no captured bindings — the body will see globals via
     // the workspace walk, which is correct for lambda
@@ -1552,23 +1553,28 @@ std::optional<EnvFrameRef> Evaluator::materialize_call_env_ref(const Closure& cl
 void Evaluator::walk_active_closures(const ActiveClosureWalkFn& fn) {
     if (!fn)
         return;
-    std::unique_lock<std::shared_mutex> wlock(closures_mtx_);
+    std::array<std::unique_lock<std::shared_mutex>, kClosuresShardCount> wlock;
+    for (std::size_t cl_i = 0; cl_i < kClosuresShardCount; ++cl_i)
+        wlock[cl_i] = std::unique_lock<std::shared_mutex>(closures_shards_[cl_i].mu);
     bump_closures_apply_epoch(); // Issue #3832
-    for (auto& [id, cl] : closures_) {
-        try {
-            fn(id, cl);
-        } catch (const std::exception&) {
-            // [SILENCE-PRIM-#615] Issue #1733: continue walk after callback
-            // throw — partial GC/invalidate completion beats abort. Metric
-            // makes the skip observable; exception is not rethrown.
-            if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
-                m->walk_active_closures_callback_exceptions.fetch_add(1, std::memory_order_relaxed);
-        } catch (...) {
-            // [SILENCE-PRIM-#615] non-std exceptions same isolation policy.
-            if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
-                m->walk_active_closures_callback_exceptions.fetch_add(1, std::memory_order_relaxed);
+    for (auto& cl_sh : closures_shards_)
+        for (auto& [id, cl] : cl_sh.map) {
+            try {
+                fn(id, cl);
+            } catch (const std::exception&) {
+                // [SILENCE-PRIM-#615] Issue #1733: continue walk after callback
+                // throw — partial GC/invalidate completion beats abort. Metric
+                // makes the skip observable; exception is not rethrown.
+                if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+                    m->walk_active_closures_callback_exceptions.fetch_add(
+                        1, std::memory_order_relaxed);
+            } catch (...) {
+                // [SILENCE-PRIM-#615] non-std exceptions same isolation policy.
+                if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+                    m->walk_active_closures_callback_exceptions.fetch_add(
+                        1, std::memory_order_relaxed);
+            }
         }
-    }
 }
 
 // Issue #1545 / #1486 / #1494: scan live closures for linear captures.
@@ -1589,7 +1595,9 @@ Evaluator::scan_live_closures_for_linear_captures(bool mark_invalid, bool only_i
     // Issue #1664 / #1486: canonical dual-lock order —
     // closures unique → env_frames shared (same as apply / GC probe).
     // probe_linear_ownership_at_gc_safepoint must use the same order.
-    std::unique_lock<std::shared_mutex> cl_lock(closures_mtx_);
+    std::array<std::unique_lock<std::shared_mutex>, kClosuresShardCount> cl_lock;
+    for (std::size_t cl_i = 0; cl_i < kClosuresShardCount; ++cl_i)
+        cl_lock[cl_i] = std::unique_lock<std::shared_mutex>(closures_shards_[cl_i].mu);
     bump_closures_apply_epoch(); // Issue #3832
     std::shared_lock<std::shared_mutex> env_lock(env_frames_mtx_);
     // Issue #1665: TW tombstone = bridge_epoch==0 while tracking is active
@@ -1597,91 +1605,94 @@ Evaluator::scan_live_closures_for_linear_captures(bool mark_invalid, bool only_i
     // the unstamped/default stamp, NOT a free. Never gate on JIT
     // g_closure_freed / aura_closure_is_freed (separate heap; OOB → "freed").
     const auto cur_bridge = current_bridge_epoch();
-    for (auto& [id, cl] : closures_) {
-        (void)id;
-        ++out.examined;
-        // Issue #1895 / #1731: NULL_ENV_ID or OOB env — no SoA linear column
-        // to inspect. On bulk mark paths (invalidate / compact / JIT,
-        // mark_invalid && !only_if_moved) force Drop (bridge_epoch=0) for
-        // still-live stamps so materialize_call_env / apply take safe
-        // fallback rather than trusting an untracked linear body.
-        if (cl.env_id == NULL_ENV_ID || cl.env_id >= env_frames_.size()) {
-            if (mark_invalid && !only_if_moved && cur_bridge != 0 && cl.bridge_epoch != 0) {
+    for (auto& cl_sh : closures_shards_)
+        for (auto& [id, cl] : cl_sh.map) {
+            (void)id;
+            ++out.examined;
+            // Issue #1895 / #1731: NULL_ENV_ID or OOB env — no SoA linear column
+            // to inspect. On bulk mark paths (invalidate / compact / JIT,
+            // mark_invalid && !only_if_moved) force Drop (bridge_epoch=0) for
+            // still-live stamps so materialize_call_env / apply take safe
+            // fallback rather than trusting an untracked linear body.
+            if (cl.env_id == NULL_ENV_ID || cl.env_id >= env_frames_.size()) {
+                if (mark_invalid && !only_if_moved && cur_bridge != 0 && cl.bridge_epoch != 0) {
+                    cl.bridge_epoch = 0;
+                    ++out.marked_invalid;
+                    if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
+                        m->linear_force_drop_total.fetch_add(1, std::memory_order_relaxed);
+                        m->linear_live_closures_marked_invalid_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                        m->linear_ownership_violation_prevented.fetch_add(
+                            1, std::memory_order_relaxed);
+                        m->linear_null_env_force_drop_total.fetch_add(1, std::memory_order_relaxed);
+                        m->compiler_closure_safe_fallbacks.fetch_add(1, std::memory_order_relaxed);
+                    }
+                }
+                continue;
+            }
+            if (filter_env_id != NULL_ENV_ID && cl.env_id != filter_env_id)
+                continue;
+            const EnvFrame& fr = env_frames_[cl.env_id];
+            bool has_linear = false;
+            bool has_moved = false;
+            for (const auto s : fr.bindings_linear_ownership_state_) {
+                if (s != linear_rt::Untracked)
+                    has_linear = true;
+                if (s == linear_rt::Moved)
+                    has_moved = true;
+            }
+            if (!has_linear)
+                continue;
+            ++out.with_linear_capture;
+            if (has_moved)
+                ++out.with_moved_capture;
+            // Already force-dropped under active tracking: skip re-mark /
+            // counter inflation (#1665). Still counted above for audit.
+            if (cur_bridge != 0 && cl.bridge_epoch == 0)
+                continue;
+            const bool should_mark = mark_invalid && (!only_if_moved || has_moved);
+            if (should_mark) {
+                // Force safe_fallback on next apply regardless of later
+                // restamp attempts that only update matching epochs.
                 cl.bridge_epoch = 0;
                 ++out.marked_invalid;
                 if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
-                    m->linear_force_drop_total.fetch_add(1, std::memory_order_relaxed);
                     m->linear_live_closures_marked_invalid_total.fetch_add(
                         1, std::memory_order_relaxed);
-                    m->linear_ownership_violation_prevented.fetch_add(1, std::memory_order_relaxed);
-                    m->linear_null_env_force_drop_total.fetch_add(1, std::memory_order_relaxed);
+                    // Also surface on the safe-fallback family so agents
+                    // correlating #1475 / #1545 see the invalidate path.
                     m->compiler_closure_safe_fallbacks.fetch_add(1, std::memory_order_relaxed);
+                    // Issue #1494 AC1: mark-invalid on Moved is a prevented
+                    // use-after-move (align with linear_post_mutate_enforce).
+                    if (has_moved)
+                        m->linear_ownership_violation_prevented.fetch_add(
+                            1, std::memory_order_relaxed);
                 }
             }
-            continue;
         }
-        if (filter_env_id != NULL_ENV_ID && cl.env_id != filter_env_id)
-            continue;
-        const EnvFrame& fr = env_frames_[cl.env_id];
-        bool has_linear = false;
-        bool has_moved = false;
-        for (const auto s : fr.bindings_linear_ownership_state_) {
-            if (s != linear_rt::Untracked)
-                has_linear = true;
-            if (s == linear_rt::Moved)
-                has_moved = true;
-        }
-        if (!has_linear)
-            continue;
-        ++out.with_linear_capture;
-        if (has_moved)
-            ++out.with_moved_capture;
-        // Already force-dropped under active tracking: skip re-mark /
-        // counter inflation (#1665). Still counted above for audit.
-        if (cur_bridge != 0 && cl.bridge_epoch == 0)
-            continue;
-        const bool should_mark = mark_invalid && (!only_if_moved || has_moved);
-        if (should_mark) {
-            // Force safe_fallback on next apply regardless of later
-            // restamp attempts that only update matching epochs.
-            cl.bridge_epoch = 0;
-            ++out.marked_invalid;
-            if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
-                m->linear_live_closures_marked_invalid_total.fetch_add(1,
-                                                                       std::memory_order_relaxed);
-                // Also surface on the safe-fallback family so agents
-                // correlating #1475 / #1545 see the invalidate path.
-                m->compiler_closure_safe_fallbacks.fetch_add(1, std::memory_order_relaxed);
-                // Issue #1494 AC1: mark-invalid on Moved is a prevented
-                // use-after-move (align with linear_post_mutate_enforce).
-                if (has_moved)
-                    m->linear_ownership_violation_prevented.fetch_add(1, std::memory_order_relaxed);
-            }
-        }
-    }
     return out;
 }
 
 ClosureId Evaluator::register_active_closure(Closure cl) {
     stamp_closure_bridge_epoch(cl);
     const ClosureId id = next_id();
-    std::unique_lock<std::shared_mutex> wlock(closures_mtx_);
+    std::unique_lock<std::shared_mutex> wlock(closures_shards_[closures_shard_index(id)].mu);
     bump_closures_apply_epoch(); // Issue #3832
-    closures_[id] = std::move(cl);
+    closures_shards_[closures_shard_index(id)].map[id] = std::move(cl);
     return id;
 }
 
 // Issue #1665: durable free for tree-walker closures_ map (Option B).
 // JIT runtime free uses aura_free_closure + g_closure_freed (#1361) —
-// that table is separate from Evaluator::closures_. Erasing here is the
-// TW equivalent so scan_live_closures never iterates dead entries.
-// Issue #1888: tombstone lifetime before erase so any view stamped from
-// this Closure fails is_closure_view_valid(view, cl) if cl was snapshotted.
+// that table is separate from Evaluator::closures_shards_[closures_shard_index(id)].map. Erasing
+// here is the TW equivalent so scan_live_closures never iterates dead entries. Issue #1888:
+// tombstone lifetime before erase so any view stamped from this Closure fails
+// is_closure_view_valid(view, cl) if cl was snapshotted.
 bool Evaluator::erase_active_closure(ClosureId id) noexcept {
-    std::unique_lock<std::shared_mutex> wlock(closures_mtx_);
+    std::unique_lock<std::shared_mutex> wlock(closures_shards_[closures_shard_index(id)].mu);
     bump_closures_apply_epoch(); // Issue #3832
-    auto it = closures_.find(id);
-    if (it == closures_.end())
+    auto it = closures_shards_[closures_shard_index(id)].map.find(id);
+    if (it == closures_shards_[closures_shard_index(id)].map.end())
         return false;
     invalidate_closure_lifetime(it->second);
     if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics())) {
@@ -1689,14 +1700,14 @@ bool Evaluator::erase_active_closure(ClosureId id) noexcept {
             g_closure_view_dangling_prevented_total.load(std::memory_order_relaxed),
             std::memory_order_relaxed);
     }
-    closures_.erase(it);
+    closures_shards_[closures_shard_index(id)].map.erase(it);
     return true;
 }
 
 std::optional<Closure> Evaluator::find_active_closure(ClosureId id) const {
-    std::shared_lock<std::shared_mutex> rlock(closures_mtx_);
-    auto it = closures_.find(id);
-    if (it == closures_.end())
+    std::shared_lock<std::shared_mutex> rlock(closures_shards_[closures_shard_index(id)].mu);
+    auto it = closures_shards_[closures_shard_index(id)].map.find(id);
+    if (it == closures_shards_[closures_shard_index(id)].map.end())
         return std::nullopt;
     // Issue #1926: do not hand out tombstoned / moved-from snapshots.
     if (!it->second.lifetime_valid_for_views()) {
@@ -1710,9 +1721,9 @@ bool Evaluator::revalidate_closure_snapshot(ClosureId id, const Closure& snap) c
     // Issue #1926: under lock, ensure map entry still live with matching
     // lifetime_version (and bridge_epoch when both stamped). Prevents UAF
     // when apply_closure holds a copy while GC/erase races.
-    std::shared_lock<std::shared_mutex> rlock(closures_mtx_);
-    auto it = closures_.find(id);
-    if (it == closures_.end()) {
+    std::shared_lock<std::shared_mutex> rlock(closures_shards_[closures_shard_index(id)].mu);
+    auto it = closures_shards_[closures_shard_index(id)].map.find(id);
+    if (it == closures_shards_[closures_shard_index(id)].map.end()) {
         g_closure_view_dangling_prevented_total.fetch_add(1, std::memory_order_relaxed);
         g_closure_view_invalid_access_total.fetch_add(1, std::memory_order_relaxed);
         if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics())) {
@@ -2018,19 +2029,22 @@ bool Evaluator::is_env_frame_invalid(EnvId id) const {
 std::uint64_t Evaluator::resync_live_closure_env_versions_on_invalidate() {
     std::uint64_t resynced = 0;
     const std::uint64_t current = defuse_version_.load(std::memory_order_acquire);
-    std::shared_lock<std::shared_mutex> cl_lock(closures_mtx_);
+    std::array<std::shared_lock<std::shared_mutex>, kClosuresShardCount> cl_lock;
+    for (std::size_t cl_i = 0; cl_i < kClosuresShardCount; ++cl_i)
+        cl_lock[cl_i] = std::shared_lock<std::shared_mutex>(closures_shards_[cl_i].mu);
     std::shared_lock<std::shared_mutex> ef_lock(env_frames_mtx_);
-    for (const auto& [cid, cl] : closures_) {
-        (void)cid;
-        if (cl.env_id == NULL_ENV_ID || cl.env_id >= env_frames_.size())
-            continue;
-        const EnvFrame& fr = env_frames_[cl.env_id];
-        if (fr.version_ == INVALID_VERSION || fr.version_ >= current)
-            continue;
-        refresh_stale_frame_in_walk(cl.env_id, "resync_live_closure_env_on_invalidate");
-        bump_incremental_closure_env_version_resync();
-        ++resynced;
-    }
+    for (const auto& cl_sh : closures_shards_)
+        for (const auto& [cid, cl] : cl_sh.map) {
+            (void)cid;
+            if (cl.env_id == NULL_ENV_ID || cl.env_id >= env_frames_.size())
+                continue;
+            const EnvFrame& fr = env_frames_[cl.env_id];
+            if (fr.version_ == INVALID_VERSION || fr.version_ >= current)
+                continue;
+            refresh_stale_frame_in_walk(cl.env_id, "resync_live_closure_env_on_invalidate");
+            bump_incremental_closure_env_version_resync();
+            ++resynced;
+        }
     return resynced;
 }
 
@@ -2154,20 +2168,23 @@ std::size_t Evaluator::truncate_env_frames_to_checkpoint() {
     // resize). bridge_epoch=0 is STALE under active tracking (#1365).
     std::size_t doomed = 0;
     {
-        std::unique_lock<std::shared_mutex> cl_lock(closures_mtx_);
+        std::array<std::unique_lock<std::shared_mutex>, kClosuresShardCount> cl_lock;
+        for (std::size_t cl_i = 0; cl_i < kClosuresShardCount; ++cl_i)
+            cl_lock[cl_i] = std::unique_lock<std::shared_mutex>(closures_shards_[cl_i].mu);
         bump_closures_apply_epoch(); // Issue #3832
-        for (auto& kv : closures_) {
-            const auto id = kv.second.env_id;
-            if (id != NULL_ENV_ID && id >= checkpoint_size) {
-                // Force bridge_epoch=0 (STALE under active tracking #1365)
-                // without full tombstone_for_views — closure stays registered
-                // for diagnostics, apply_closure dual-check refuses it.
-                kv.second.bridge_epoch = 0;
-                // Leave env_id so resolve_env_frame_detailed reports OOB;
-                // safe_fallback path uses dual-check.
-                ++doomed;
+        for (auto& cl_sh : closures_shards_)
+            for (auto& kv : cl_sh.map) {
+                const auto id = kv.second.env_id;
+                if (id != NULL_ENV_ID && id >= checkpoint_size) {
+                    // Force bridge_epoch=0 (STALE under active tracking #1365)
+                    // without full tombstone_for_views — closure stays registered
+                    // for diagnostics, apply_closure dual-check refuses it.
+                    kv.second.bridge_epoch = 0;
+                    // Leave env_id so resolve_env_frame_detailed reports OOB;
+                    // safe_fallback path uses dual-check.
+                    ++doomed;
+                }
             }
-        }
     }
     if (doomed > 0) {
         if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
@@ -2277,10 +2294,10 @@ EnvFrameResolveResultMut Evaluator::resolve_env_frame_mut_detailed(EnvId id) noe
 //
 // Algorithm:
 //   1. unique_lock(env_frames_mtx_)
-//   2. shared_lock(closures_mtx_) — build referenced set
+//   2. shared_lock(closures_shards_[closures_shard_index(id)].mu) — build referenced set
 //   3. live[i] = (version_ >= defuse_version_) || referenced[i]
 //   4. Build new_env_frames + remap[old -> new or -1]
-//   5. unique_lock(closures_mtx_) — rewrite Closure::env_id
+//   5. unique_lock(closures_shards_[closures_shard_index(id)].mu) — rewrite Closure::env_id
 //   6. swap env_frames_, defuse_version_.fetch_add(1)
 //
 // Locking order: env_frames_mtx_ -> closures_mtx_ (consistent
@@ -2368,13 +2385,16 @@ std::size_t Evaluator::compact_env_frames() {
     // A frame is referenced if any live Closure's env_id == i.
     std::vector<bool> referenced(orig_size, false);
     {
-        std::shared_lock<std::shared_mutex> cl_lock(closures_mtx_);
-        for (const auto& kv : closures_) {
-            const auto id = kv.second.env_id;
-            if (id != NULL_ENV_ID && id < orig_size) {
-                referenced[id] = true;
+        std::array<std::shared_lock<std::shared_mutex>, kClosuresShardCount> cl_lock;
+        for (std::size_t cl_i = 0; cl_i < kClosuresShardCount; ++cl_i)
+            cl_lock[cl_i] = std::shared_lock<std::shared_mutex>(closures_shards_[cl_i].mu);
+        for (const auto& cl_sh : closures_shards_)
+            for (const auto& kv : cl_sh.map) {
+                const auto id = kv.second.env_id;
+                if (id != NULL_ENV_ID && id < orig_size) {
+                    referenced[id] = true;
+                }
             }
-        }
     }
 
     // Step 3 + 4: build new_env_frames + remap. Iterate env_frames_
@@ -2422,24 +2442,30 @@ std::size_t Evaluator::compact_env_frames() {
     std::size_t rewritten = 0;
     std::vector<std::int64_t> remapped_cids;
     {
-        std::unique_lock<std::shared_mutex> cl_lock(closures_mtx_);
+        std::array<std::unique_lock<std::shared_mutex>, kClosuresShardCount> cl_lock;
+        for (std::size_t cl_i = 0; cl_i < kClosuresShardCount; ++cl_i)
+            cl_lock[cl_i] = std::unique_lock<std::shared_mutex>(closures_shards_[cl_i].mu);
         bump_closures_apply_epoch(); // Issue #3832
-        remapped_cids.reserve(closures_.size());
-        for (auto& kv : closures_) {
-            const auto id = kv.second.env_id;
-            if (id == NULL_ENV_ID || id >= remap.size())
-                continue;
-            const auto new_id = remap[id];
-            if (new_id >= 0) {
-                kv.second.env_id = static_cast<EnvId>(new_id);
-                ++rewritten;
-                remapped_cids.push_back(static_cast<std::int64_t>(kv.first));
-            } else {
-                // Frame was reclaimed; clear the dangling env_id.
-                kv.second.env_id = NULL_ENV_ID;
-                remapped_cids.push_back(static_cast<std::int64_t>(kv.first));
+        std::size_t cl_total = 0;
+        for (auto& cl_sh : closures_shards_)
+            cl_total += cl_sh.map.size();
+        remapped_cids.reserve(cl_total);
+        for (auto& cl_sh : closures_shards_)
+            for (auto& kv : cl_sh.map) {
+                const auto id = kv.second.env_id;
+                if (id == NULL_ENV_ID || id >= remap.size())
+                    continue;
+                const auto new_id = remap[id];
+                if (new_id >= 0) {
+                    kv.second.env_id = static_cast<EnvId>(new_id);
+                    ++rewritten;
+                    remapped_cids.push_back(static_cast<std::int64_t>(kv.first));
+                } else {
+                    // Frame was reclaimed; clear the dangling env_id.
+                    kv.second.env_id = NULL_ENV_ID;
+                    remapped_cids.push_back(static_cast<std::int64_t>(kv.first));
+                }
             }
-        }
     }
 
     // Issue #1510: optional IR / external env_id remap (runtime_closures_).
@@ -2491,16 +2517,19 @@ std::size_t Evaluator::compact_env_frames() {
     std::size_t restamped = 0;
     {
         const auto cur_bridge = current_bridge_epoch();
-        std::unique_lock<std::shared_mutex> cl_lock(closures_mtx_);
+        std::array<std::unique_lock<std::shared_mutex>, kClosuresShardCount> cl_lock;
+        for (std::size_t cl_i = 0; cl_i < kClosuresShardCount; ++cl_i)
+            cl_lock[cl_i] = std::unique_lock<std::shared_mutex>(closures_shards_[cl_i].mu);
         bump_closures_apply_epoch(); // Issue #3832
-        for (auto& kv : closures_) {
-            // Restamp any previously-tracked closure (non-zero) so it
-            // matches post-compact dual-epoch. Leave 0 (untracked) alone.
-            if (kv.second.bridge_epoch != 0) {
-                kv.second.bridge_epoch = cur_bridge;
-                ++restamped;
+        for (auto& cl_sh : closures_shards_)
+            for (auto& kv : cl_sh.map) {
+                // Restamp any previously-tracked closure (non-zero) so it
+                // matches post-compact dual-epoch. Leave 0 (untracked) alone.
+                if (kv.second.bridge_epoch != 0) {
+                    kv.second.bridge_epoch = cur_bridge;
+                    ++restamped;
+                }
             }
-        }
     }
     // IR restamp: service-installed remap already rewrote env_id; if the
     // ctx supports a second restamp pass it is invoked via the same hook

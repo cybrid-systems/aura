@@ -38,24 +38,27 @@
 //   Joiner        — Scheduler::joiner_map_mutex_
 //   OwnedFibers   — Scheduler::owned_fibers_mutex_
 //   FiberRegistry — WorkerThread::fiber_registry_mutex_
-//   Closures      — Evaluator::closures_mtx_
-//   Module        — Evaluator::module_mtx_
+//   Closures      — Evaluator::closures shard locks (closures_shards_[i] — one logical lock node;
+//   multi-shard holds take ascending index order, #3867) Module        — Evaluator::module_mtx_
 //
 // Issue #2676 (P0 — shared Evaluator heap serialization, extend #2651):
-// Per-heap `alloc_storage_lock_` (Evaluator member) wraps the closures_mtx_
-// critical section for the full push / resize / compact of string_heap_,
-// pairs_, closures_, live-closure remount tables, and IR-cache bridge
-// roots. Acquire order vs. closures_mtx_ is documented at the call site
-// (typically alloc_storage_lock_ is held by the calling Evaluator method
-// first, then closures_mtx_ is acquired as the per-heap mutex; the
+// Per-heap `alloc_storage_lock_` (Evaluator member) wraps the closures shard locks
+// (closures_shards_[i] — one logical lock node; multi-shard holds take ascending index order,
+// #3867) critical section for the full push / resize / compact of string_heap_, pairs_, closures_,
+// live-closure remount tables, and IR-cache bridge roots. Acquire order vs. closures shard locks
+// (closures_shards_[i] — one logical lock node; multi-shard holds take ascending index order,
+// #3867) is documented at the call site (typically alloc_storage_lock_ is held by the calling
+// Evaluator method first, then closures shard locks (closures_shards_[i] — one logical lock node;
+// multi-shard holds take ascending index order, #3867) is acquired as the per-heap mutex; the
 // shared Evaluator heap mutation must observe the rank). Held only for
 // the critical section of a single push / resize / compact — uncontended
 // in single-fiber / Soft / sandbox=off mode (AC6). For the closures_
-// critical section, acquire closures_mtx_ (write) then optionally
-// shared_lock(closures_mtx_) (read of make_closure). 8+ fibers × concurrent
-// closure materialization + live-closure refresh + IR-cache bridge root
-// must observe the rank (AC3 + AC4 chaos).
-// Documented Scheduler reap_orphans_now order:
+// critical section, acquire closures shard locks (closures_shards_[i] — one logical lock node;
+// multi-shard holds take ascending index order, #3867) (write) then optionally shared_lock(closures
+// shard locks (closures_shards_[i] — one logical lock node; multi-shard holds take ascending index
+// order, #3867)) (read of make_closure). 8+ fibers × concurrent closure materialization +
+// live-closure refresh + IR-cache bridge root must observe the rank (AC3 + AC4 chaos). Documented
+// Scheduler reap_orphans_now order:
 //   orphan_mutex_ → wait_map_mutex_ → joiner_map_mutex_ → owned_fibers_mutex_
 //
 // Forbidden inversions (rank check fail → record metric or abort under
@@ -123,8 +126,9 @@ enum class Level : std::uint8_t {
     Joiner = 9,         // Scheduler::joiner_map_mutex_
     OwnedFibers = 10,   // Scheduler::owned_fibers_mutex_
     FiberRegistry = 11, // WorkerThread::fiber_registry_mutex_
-    Closures = 12,      // Evaluator::closures_mtx_
-    Module = 13,        // Evaluator::module_mtx_
+    Closures = 12, // Evaluator::closures shard locks (closures_shards_[i] — one logical lock node;
+                   // multi-shard holds take ascending index order, #3867)
+    Module = 13,   // Evaluator::module_mtx_
     kCount = 14,
 };
 
