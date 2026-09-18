@@ -195,6 +195,50 @@ static void ac2_force_reason_match() {
         CHECK(r.throttle_action == 1, "AC2: SLO → delay advisory");
     }
 
+    // Issue #3873: advisory overlay distinguishable from deny authority
+    {
+        TypeLinearCommitHealthSnapshot s;
+        s.coercion_slo_force_pending = true;
+        const auto r = compute_type_linear_commit_health(s);
+        CHECK(r.force_reason == "coercion-slo", "3873 AC1: overlay stamps advisory reason");
+        CHECK(r.would_allow_commit, "3873 AC1: would_allow stays true under overlay");
+        CHECK(r.advisory_overlay, "3873 AC1: advisory_overlay true (observe-only)");
+        CHECK(r.throttle_action == 1, "3873 AC1: throttle advisory preserved");
+    }
+    {
+        TypeLinearCommitHealthSnapshot s;
+        s.readiness_in.blame_ok = false;
+        s.readiness_in.blame_hard = true;
+        const auto r = compute_type_linear_commit_health(s);
+        CHECK(!r.would_allow_commit, "3873 AC2: deny path unchanged");
+        CHECK(!r.advisory_overlay, "3873 AC2: deny is not advisory overlay");
+        CHECK(r.force_reason == "blame", "3873 AC2: deny reason authority kept");
+    }
+    {
+        TypeLinearCommitHealthSnapshot s;
+        const auto r = compute_type_linear_commit_health(s);
+        CHECK(r.force_reason == "ok", "3873 AC3: clean face reason ok");
+        CHECK(r.would_allow_commit, "3873 AC3: clean face allows");
+        CHECK(!r.advisory_overlay, "3873 AC3: no overlay on clean face");
+    }
+    {
+        std::ifstream q(std::string("src/compiler/evaluator_primitives_query_reflect.cpp"));
+        CHECK(q.good(), "3873 AC4: open query reflect");
+        std::string qs((std::istreambuf_iterator<char>(q)), std::istreambuf_iterator<char>());
+        CHECK(qs.find("\"advisory-overlay\"") != std::string::npos,
+              "3873 AC4: query payload exposes advisory-overlay (additive key)");
+        std::ifstream hh(std::string("src/compiler/type_linear_commit_health.hh"));
+        CHECK(hh.good(), "3873 AC4: open health header");
+        std::string hs((std::istreambuf_iterator<char>(hh)), std::istreambuf_iterator<char>());
+        CHECK(hs.find("Issue #3873") != std::string::npos, "3873 AC4: header cites #3873");
+        CHECK(hs.find("advisory_overlay") != std::string::npos,
+              "3873 AC4: advisory_overlay field present");
+        std::ifstream d(std::string("docs/design/3873-health-advisory-face.md"));
+        CHECK(!d.good(), "3873 AC4: no docs/design");
+        std::ifstream t(std::string("tests/compiler/test_issue_3873.cpp"));
+        CHECK(!t.good(), "3873 AC4: no invent");
+    }
+
     // Commit readiness linear wins over coercion overlay
     {
         TypeLinearCommitHealthSnapshot s;

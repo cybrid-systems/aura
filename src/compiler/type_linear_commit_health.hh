@@ -14,6 +14,8 @@
 //   1) commit_readiness when not "ok" (solve/blame/linear/truncate/empty_cs/…)
 //   2) else if coercion_slo_force_pending → "coercion-slo" (advisory; allow=true)
 //   3) else if coercion_evidence_loss_pressure → "coercion-evidence-loss" (advisory)
+//   #3873: advisory overlays are flagged via advisory_overlay (allow stays true;
+//   deny authority stays in commit_readiness / hard gates).
 //   4) else if occurrence_stale || predicate_memo_stale → "occurrence-stale"
 //   5) else "ok"
 // Codes: 0=ok 1=solve 2=blame 3=linear 4=truncate 5=empty_cs 6=auto_partial
@@ -60,6 +62,10 @@ struct TypeLinearCommitHealthResult {
     bool would_allow_commit = true;
     std::string_view force_reason = "ok";
     std::int64_t force_reason_code = 0;
+    // Issue #3873: true when force_reason is an observe-only overlay
+    // (commit_readiness face "ok"); Agents must not read it as deny
+    // authority. Hard deny paths leave this false.
+    bool advisory_overlay = false;
     // Folded flags (mirrors snapshot components for query)
     std::uint64_t coercion_completeness_bp = 10000;
     bool coercion_slo_force_pending = false;
@@ -133,6 +139,11 @@ compute_type_linear_commit_health(const TypeLinearCommitHealthSnapshot& s) noexc
             r.force_reason_code = 8;
         }
     }
+
+    // Issue #3873: the arms above are observe-only overlays on an "ok"
+    // commit face — flag them so Agents can distinguish advisory
+    // force_reason from deny authority.
+    r.advisory_overlay = cr.force_reason == "ok" && r.force_reason != "ok";
 
     // Optional throttle advisory table (orch delay/split; never hard-fail).
     if (!r.would_allow_commit) {
