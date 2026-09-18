@@ -997,6 +997,49 @@ static void ac17_pre_persist_wal_miss_fail_closed_3780() {
     aura::core::wal_slo::reset_wal_append_fail_slo_for_test();
 }
 
+// ── #3877: last matching SE wins; WAL-miss Deny refuses Allow-only ──
+static void ac18_last_se_wins_wal_miss_3877() {
+    std::println("\n--- #3877: last-SE-wins; WAL-miss Deny refuses Allow-only ---");
+    using aura::core::security_event::append_security_event;
+    using aura::core::security_event::forensic_effect_verdict_for_mid;
+    using aura::core::security_event::forensic_mid_has_wal_append_miss;
+    using aura::core::security_event::ForensicEffectVerdict;
+    using aura::core::security_event::g_security_event_ring;
+    using aura::core::security_event::kForensicLastSeWinsIssue;
+    using aura::core::security_event::SecurityEventKind;
+
+    CHECK(kForensicLastSeWinsIssue == 3877, "3877 AC: issue stamp");
+    aura::core::security_event::reset_security_event_ring_for_test();
+
+    append_security_event(g_security_event_ring(), SecurityEventKind::EffectAllow, 7, 0x3877,
+                          0x3877, 8, "test:3877-allow", "", /*denied=*/false, 0);
+    CHECK(forensic_effect_verdict_for_mid(0x3877) == ForensicEffectVerdict::Allow,
+          "3877 AC1 setup: last-SE is Allow before compensator");
+    append_security_event(g_security_event_ring(), SecurityEventKind::EffectDeny, 7, 0x3877, 0x3877,
+                          8, "test:3877-miss", "mutation_wal_append_miss", /*denied=*/true, 0);
+    CHECK(forensic_mid_has_wal_append_miss(0x3877), "3877 AC1: WAL-miss Deny shares mid");
+    CHECK(forensic_effect_verdict_for_mid(0x3877) == ForensicEffectVerdict::Deny,
+          "3877 AC1: last-SE-wins refuses Allow-only when miss Deny exists");
+
+    append_security_event(g_security_event_ring(), SecurityEventKind::EffectAllow, 7, 0x38770,
+                          0x38770, 8, "test:3877-lone", "", /*denied=*/false, 0);
+    CHECK(forensic_effect_verdict_for_mid(0x38770) == ForensicEffectVerdict::Allow,
+          "3877 AC2: last-SE-wins Allow when no miss Deny shares mid");
+    CHECK(!forensic_mid_has_wal_append_miss(0x38770),
+          "3877 AC2: lone Allow is not a WAL-miss Deny");
+
+    const auto se = read_file("src/core/security_event.hh");
+    CHECK(se.find("kForensicLastSeWinsIssue = 3877") != std::string::npos,
+          "3877 AC3: forensic helper stamp");
+    CHECK(se.find("forensic_effect_verdict_for_mid") != std::string::npos,
+          "3877 AC3: verdict helper present");
+    const auto prim = read_file("src/compiler/evaluator_primitives_security.cpp");
+    CHECK(prim.find("last-se-wins-verdict") != std::string::npos,
+          "3877 AC3: audit-replay-join last-se-wins-verdict key");
+    CHECK(prim.find("wal-miss-deny") != std::string::npos,
+          "3877 AC3: audit-replay-join wal-miss-deny key");
+}
+
 } // namespace
 
 int run_test_audit_replay_join() {
@@ -1018,6 +1061,7 @@ int run_test_audit_replay_join() {
     ac15_soft_emit_no_overflow_3734();
     ac16_mid0_refuse_fold_3738();
     ac17_pre_persist_wal_miss_fail_closed_3780();
+    ac18_last_se_wins_wal_miss_3877();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
