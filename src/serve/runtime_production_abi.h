@@ -51,6 +51,10 @@ inline constexpr std::uint64_t kProductionAbiSelfcheckFailBitProbeLinear = 1ull 
 // Production must link the strong marker in evaluator_fiber_mutation.cpp
 // (same pattern as #3343 probe-linear).
 inline constexpr std::uint64_t kProductionAbiSelfcheckFailBitTypedEntry = 1ull << 8;
+// Issue #3866: bit 9 set when the hot contracts are not fail-closed —
+// non-PACK NDEBUG OFF with hot_contract_harden_armed() false would run
+// as_int / view_at contracts Quiet (the ship-without-arm window).
+inline constexpr std::uint64_t kProductionAbiSelfcheckFailBitHotContracts = 1ull << 9;
 // Issue #3195: set when aura_runtime_require_production_multi_worker
 // succeeds. residual_zero / sticky-fail consult this so a later Soft
 // flip cannot wipe readiness (I3/I6). Not a metric — process latch.
