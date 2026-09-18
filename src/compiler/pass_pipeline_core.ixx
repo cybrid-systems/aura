@@ -267,6 +267,9 @@ export inline std::atomic<std::uint64_t> pure_wrap_no_std_function_dirty_wired{1
 // Issue #3315: production DirtySoAEntry / columnar mask — no residual
 // set_block_dirty_pred on the PureWrap hot path (I5 of #2258/#3042/#2907).
 export inline constexpr int kProductionDirtySoaNoPredIssue = 3315;
+// Issue #3870: production fold purity is declared, not inferred
+// (ProductionPipelinePass requires PureWrapPass; DirtyAware alone rejected).
+export inline constexpr int kProductionPurityDeclaredIssue = 3870;
 export inline std::atomic<std::uint64_t> production_dirty_soa_entry_no_pred_wired{1};
 // Issue #3329: compile-time ProductionPipelinePass gate (no extra atomics
 // on the happy path — concepts erase; this constant is inventory only).
@@ -473,9 +476,9 @@ export template <typename... Passes> consteval void check_pipeline_dod_complianc
 // (and at run_production_pipeline requires). Concepts erase (AC5).
 export template <typename... Passes> consteval void check_production_pipeline_purity() {
     static_assert((ProductionPipelinePass<std::remove_cvref_t<Passes>> && ...),
-                  "Issue #3329: production pipeline requires AnalysisPass && "
-                  "SoAViewAwarePass && DirtyPropagatorAwarePass (impure / non-SoA / "
-                  "Legacy Pass rejected at compile time)");
+                  "Issue #3329 + #3870: production pipeline requires AnalysisPass && "
+                  "SoAViewAwarePass && PureWrapPass (purity declared — DirtyAware alone "
+                  "rejected; impure / non-SoA / Legacy Pass fails at compile time)");
     check_pipeline_dod_compliance<Passes...>();
 }
 
@@ -578,7 +581,8 @@ bool run_pipeline(aura::ir::IRModule& mod, Passes&... passes) pre(sizeof...(Pass
 }
 
 // Issue #3329: production default fold. Extra AnalysisPass + SoAView +
-// DirtyPropagatorAware gate so an impure Pass fails to instantiate.
+// declared-purity gate (PureWrapPass — #3870: DirtyAware alone no longer
+// admits) so an impure Pass fails to instantiate.
 // Delegates to run_pipeline (same fold / metrics). Soft / unit keep
 // run_pipeline. Concepts erase — no extra atomics or branches (AC5).
 export template <ProductionPipelinePass... Passes>
