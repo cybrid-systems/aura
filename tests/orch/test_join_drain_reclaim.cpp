@@ -170,6 +170,79 @@ static void ac3297_1_dtor_under_account_live_body() {
     apply_dev_audit_defaults();
 }
 
+// Issue #3880: live-Reclaimed dtor detaches mailbox (same arms as
+// abandon_reclaimed Timeout) so Fiber::mailbox_ is not dangling after
+// the handle drops the shared_ptr. No body-stack free (#2661).
+static void ac3880_1_live_dtor_detaches_mailbox() {
+    using aura::orch::AgentHandle;
+    using aura::orch::complete_agent_join_cleanup;
+    using aura::serve::Fiber;
+    using aura::serve::JoinResult;
+    using aura::serve::JoinStatus;
+    using aura::serve::mf_mailbox::MultiFiberMailbox;
+    std::println("\n--- #3880 AC1: production live-Reclaimed dtor detaches mailbox ---");
+    apply_production_audit_defaults();
+    const auto ua0 =
+        g_orch_module_stats.reclaimed_dtor_under_account_total.load(std::memory_order_relaxed);
+    auto fiber_owned = std::make_unique<Fiber>([] {});
+    fiber_owned->mark_reclaimed();
+    auto mb = std::make_shared<MultiFiberMailbox>();
+    mb->attach(fiber_owned.get());
+    CHECK(fiber_owned->mailbox() == mb.get(), "3880 AC1: mailbox attached before dtor");
+    AgentHandle h;
+    h.ok = true;
+    h.fiber = fiber_owned.get();
+    h.mailbox = mb;
+    h.reserved_memory_bytes = 4096;
+    JoinResult jr;
+    jr.status = JoinStatus::Reclaimed;
+    complete_agent_join_cleanup(h, jr);
+    CHECK(!h.fiber->is_done(), "3880 AC1: body still live");
+    Fiber* raw = h.fiber;
+    h.finish_reclaimed_cleanup_on_dtor();
+    CHECK(raw->mailbox() == nullptr, "3880 AC1: Fiber::mailbox_ cleared after live dtor");
+    CHECK(!h.mailbox, "3880 AC1: handle mailbox reset");
+    CHECK(!raw->is_done(), "3880 AC1: body-stack untouched (#2661)");
+    CHECK(g_orch_module_stats.reclaimed_dtor_under_account_total.load(std::memory_order_relaxed) ==
+              ua0 + 1,
+          "3880 AC1: under-account still bumps (detach is additive)");
+    apply_dev_audit_defaults();
+}
+
+static void ac3880_2_soft_no_detach() {
+    using aura::orch::AgentHandle;
+    using aura::orch::complete_agent_join_cleanup;
+    using aura::serve::Fiber;
+    using aura::serve::JoinResult;
+    using aura::serve::JoinStatus;
+    using aura::serve::mf_mailbox::MultiFiberMailbox;
+    std::println("\n--- #3880 AC2: Soft live dtor does not detach (zero-cost) ---");
+    apply_dev_audit_defaults();
+    auto fiber_owned = std::make_unique<Fiber>([] {});
+    fiber_owned->mark_reclaimed();
+    auto mb = std::make_shared<MultiFiberMailbox>();
+    mb->attach(fiber_owned.get());
+    AgentHandle h;
+    h.ok = true;
+    h.fiber = fiber_owned.get();
+    h.mailbox = mb;
+    JoinResult jr;
+    jr.status = JoinStatus::Reclaimed;
+    complete_agent_join_cleanup(h, jr);
+    h.finish_reclaimed_cleanup_on_dtor();
+    CHECK(fiber_owned->mailbox() == mb.get(),
+          "3880 AC2: Soft does not detach (Soft/Off zero-cost)");
+}
+
+static void ac3880_3_source_cite() {
+    std::println("\n--- #3880 AC3: source-cite ---");
+    const auto spawn = read_file("src/orch/agent_spawn.h");
+    CHECK(spawn.find("Issue #3880") != std::string::npos, "3880 AC3: dtor cites");
+    CHECK(spawn.find("mailbox->detach(fiber)") != std::string::npos,
+          "3880 AC3: live dtor detaches");
+    CHECK(read_file("tests/orch/test_issue_3880.cpp").empty(), "3880 AC3: no test_issue_3880.cpp");
+}
+
 static void ac3297_2_dtor_no_under_account_post_exit() {
     using aura::orch::AgentHandle;
     using aura::orch::complete_agent_join_cleanup;
@@ -6716,6 +6789,9 @@ int run_test_join_drain_reclaim() {
     ac3297_1_dtor_under_account_live_body();
     ac3297_2_dtor_no_under_account_post_exit();
     ac3297_3_soft_zero_observability();
+    ac3880_1_live_dtor_detaches_mailbox();
+    ac3880_2_soft_no_detach();
+    ac3880_3_source_cite();
     ac3334_1_abandon_releases_without_body_stack();
     ac3334_2_forget_path_unchanged();
     ac3334_3_soft_zero_cost();
