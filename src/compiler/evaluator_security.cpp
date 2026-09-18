@@ -560,6 +560,17 @@ bool Evaluator::check_and_record_effect(std::uint16_t required_effect_bits,
     };
     if (ok && wal_append_missed && ::aura::core::wal_slo::wal_append_fail_closed_active()) {
         wal_miss_compensate();
+        // Issue #3879: WAL-miss early return skipped Typed correlate.
+        // SE+ring already carry the deny; stamp a denied typed row for
+        // the same mid so Agents join tenant+fiber+mid without a hole.
+        {
+            const auto mid = provenance_mutation_id != 0
+                                 ? provenance_mutation_id
+                                 : (prov.epoch != 0 ? prov.epoch : static_cast<std::uint64_t>(1));
+            typed_audit::capture_security_correlated_audit(mid, op, prov.epoch, /*denied=*/true,
+                                                           static_cast<std::uint32_t>(target_node),
+                                                           slot.fiber_id);
+        }
         return false;
     }
 
