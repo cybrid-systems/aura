@@ -1,0 +1,32 @@
+{
+  "issue": 3880,
+  "title": "live-Reclaimed dtor detaches mailbox so Fiber::mailbox_ is not dangling",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/orch/agent_spawn.h",
+      "contains": [
+        "Issue #3880",
+        "mailbox->detach(fiber)",
+        "mailbox.reset()"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/orch/test_join_drain_reclaim.cpp",
+      "contains": [
+        "3880 AC1: Fiber::mailbox_ cleared after live dtor",
+        "3880 AC2: Soft does not detach (Soft/Off zero-cost)",
+        "ac3880_1_live_dtor_detaches_mailbox"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "forbid": [
+        "tests/orch/test_issue_3880.cpp",
+        "tests/issues/test_issue_3880.cpp",
+        "docs/design/3880-reclaimed-dtor-mailbox.md"
+      ]
+    }
+  ]
+}

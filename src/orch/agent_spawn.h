@@ -3044,6 +3044,13 @@ inline void AgentHandle::finish_reclaimed_cleanup_on_dtor() noexcept {
         // Soft skipped by the production gate (no getenv). #2661
         // body-stack is not freed; #3012 still releases quota below.
         (void)maybe_force_release_reclaimed_quota(*this);
+        // Issue #3880: live-Reclaimed dtor must detach mailbox like
+        // abandon_reclaimed Timeout so ~AgentHandle dropping the
+        // shared_ptr cannot UAF Fiber::mailbox_. No body-stack free.
+        if (mailbox && fiber) {
+            mailbox->detach(fiber);
+        }
+        mailbox.reset();
     }
     release_reservation_if_any();
     must_wait_reclaimed = false;
