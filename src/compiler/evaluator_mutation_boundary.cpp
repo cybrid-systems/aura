@@ -1890,7 +1890,8 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
                 // Issue #2145: Strict sandbox links Full-class hard gate.
                 const bool strict_sandbox = aura::core::sandbox::is_strict();
                 const bool hard_gate = typed_audit::requires_invariant_hard_gate(
-                    nodes_changed, linear_hint, strict_sandbox, match_sites);
+                    nodes_changed, linear_hint, strict_sandbox, match_sites,
+                    /*mutate_session=*/true);
                 // Issue #2514 / #2545 / Issue #2559: unified linear force entry
                 // is single rollback authority for synth + sticky post-mutate /
                 // escape (three-layer type-half inventory site).
@@ -4190,9 +4191,9 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
         }
     }
     const bool strict_sandbox_local = aura::core::sandbox::is_strict();
-    const bool hard_gate_local =
-        typed_audit::requires_invariant_hard_gate(nodes_changed_local, linear_ops_present_local,
-                                                  strict_sandbox_local, match_sites_present_local);
+    const bool hard_gate_local = typed_audit::requires_invariant_hard_gate(
+        nodes_changed_local, linear_ops_present_local, strict_sandbox_local,
+        match_sites_present_local, /*mutate_session=*/true);
     const bool linear_or_match_suppress =
         linear_ops_present_local || match_sites_present_local || hard_gate_local;
     const bool render_fast = render_fast_candidate && !linear_or_match_suppress;

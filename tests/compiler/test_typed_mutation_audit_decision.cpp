@@ -375,6 +375,75 @@ int run_test_typed_mutation_audit_decision() {
     ac3625_3_suppress_counters_unchanged();
     ac3625_4_source_and_linter();
 
+    // ── Issue #3872: production + live mutate session always hard-gates ──
+    {
+        std::println("\n--- #3872 AC1: Sampled + production + mutate session always audits ---");
+        AuditStateGuard guard;
+        apply_production_audit_defaults();
+        set_strategy(AuditStrategy::Sampled);
+        // kAuditForceNodesChangedProduction == 1: nodes >= 1 was already forced
+        // by #2053. The residual is nodes == 0 (observe-only self-mod attempt).
+        CHECK(requires_invariant_hard_gate(/*nodes=*/0, /*linear=*/false, /*strict=*/false,
+                                           /*match=*/false, /*mutate_session=*/true),
+              "3872 AC1: production + Sampled + session hard-gates at nodes=0");
+        const auto d = decide(/*mid=*/3, /*nodes=*/0, /*linear=*/false, /*strict=*/false,
+                              /*match=*/false, /*mutate_session=*/true);
+        CHECK(d.would_audit, "3872 AC1: would_audit true at nodes=0");
+        CHECK(d.would_hard_gate, "3872 AC1: would_hard_gate true at nodes=0");
+        CHECK(d.force_reason == "mutate-session", "3872 AC1: force_reason mutate-session");
+    }
+    {
+        std::println("\n--- #3872 AC2: Soft (no production defaults) session unchanged ---");
+        AuditStateGuard guard;
+        apply_dev_audit_defaults();
+        set_strategy(AuditStrategy::Sampled);
+        set_sample_ratio(4);
+        // mid=3 ratio 4 → sample miss; nodes=0 < 8; no linear/match; session
+        // is not a force under Soft (verify #2).
+        CHECK(!requires_invariant_hard_gate(/*nodes=*/0, /*linear=*/false, /*strict=*/false,
+                                            /*match=*/false, /*mutate_session=*/true),
+              "3872 AC2: dev Sampled + session still soft (no production defaults)");
+        const auto d = decide(/*mid=*/3, /*nodes=*/0, /*linear=*/false, /*strict=*/false,
+                              /*match=*/false, /*mutate_session=*/true);
+        CHECK(!d.would_hard_gate, "3872 AC2: would_hard_gate false (soft)");
+        CHECK(d.force_reason == "sampled-skip", "3872 AC2: force_reason sampled-skip");
+    }
+    {
+        std::println("\n--- #3872 AC3: decide() parity with live helper under production ---");
+        AuditStateGuard guard;
+        apply_production_audit_defaults();
+        set_strategy(AuditStrategy::Sampled);
+        set_sample_ratio(4);
+        for (std::uint64_t nodes : {0u, 1u}) {
+            for (bool session : {false, true}) {
+                const auto d = decide(/*mid=*/5, nodes, /*linear=*/false, /*strict=*/false,
+                                      /*match=*/false, session);
+                const bool live_hard =
+                    requires_invariant_hard_gate(nodes, false, false, false, session);
+                CHECK(d.would_hard_gate == live_hard,
+                      std::format("3872 AC3.parity nodes={} session={}", nodes, session ? 1 : 0));
+            }
+        }
+    }
+    {
+        std::println("\n--- #3872 AC4: source-cite + no invent ---");
+        const auto hdr = read_file("src/compiler/typed_mutation_audit.h");
+        CHECK(hdr.find("Issue #3872") != std::string::npos, "3872 AC4: header cites #3872");
+        CHECK(hdr.find("mutate_session_active") != std::string::npos,
+              "3872 AC4: session param present");
+        CHECK(hdr.find("\"mutate-session\"") != std::string::npos,
+              "3872 AC4: decision table + reason present");
+        const auto boundary = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+        CHECK(boundary.find("/*mutate_session=*/true") != std::string::npos,
+              "3872 AC4: mutation boundary passes session");
+        const auto tc = read_file("src/compiler/evaluator_typecheck.cpp");
+        CHECK(tc.find("/*mutate_session=*/true") != std::string::npos,
+              "3872 AC4: typecheck passes session");
+        CHECK(read_file("tests/compiler/test_issue_3872.cpp").empty(), "3872 AC4: no invent");
+        CHECK(read_file("docs/design/3872-mutate-session-hard-gate.md").empty(),
+              "3872 AC4: no docs/design");
+    }
+
     apply_dev_audit_defaults();
     std::println("=== #2281 done: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;

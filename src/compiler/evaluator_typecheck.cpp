@@ -2509,7 +2509,8 @@ bool Evaluator::finish_mutate_hard_gate(std::uint64_t nodes_changed, bool linear
             }
         }
     }
-    if (!requires_invariant_hard_gate(nodes_changed, linear_ops_present, strict, match_sites)) {
+    if (!requires_invariant_hard_gate(nodes_changed, linear_ops_present, strict, match_sites,
+                                      /*mutate_session=*/true)) {
         ac.hard_gate_sampled_skip_total.fetch_add(1, std::memory_order_relaxed);
         // Soft path still observes truncated reverify when CS is live (AC2).
         (void)boundary_solve_proof_gate(/*hard_gate=*/false, linear_ops_present, nodes_changed);

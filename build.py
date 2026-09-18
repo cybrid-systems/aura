@@ -7633,6 +7633,18 @@ def cmd_lint():
     if r != 0:
         fail("Issue #3871 letrec check-synth linter failed — run python3 scripts/check_letrec_check_synth_3871.py")
         return r
+    # Issue #3872: production + live mutate session always hard-gates —
+    # gate arm + decide() mirror + the three production call sites wired.
+    mshg3872_script = ROOT / "scripts" / "check_mutate_session_hard_gate_3872.py"
+    if not mshg3872_script.exists():
+        fail(f"missing {mshg3872_script}")
+        return 1
+    r = run([sys.executable, str(mshg3872_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3872 mutate-session hard-gate linter failed — run python3 scripts/check_mutate_session_hard_gate_3872.py"
+        )
+        return r
     # Issue #3645: engine:metrics by-name lookup miss returns a typed
     # not-found hash (ok=#f / status=not-found / name / schema-3531)
     # instead of make_void() — a typo'd or unregistered name is now
