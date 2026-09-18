@@ -15,6 +15,9 @@
 //                  dod + short-circuit + schema-3042 + concept_rejection==0
 //   #3234 AC1–AC4: grep-clean pass_impls; InlinePass still runs; same Tarjan
 //                  body; source-cite / no invent
+//   #3870 AC1–AC4: production purity declared, not inferred — DirtyAware alone
+//                  rejected from the fold; explicit kPureWrap admits; Soft
+//                  run_pipeline unchanged; source-cite + linter wired
 
 #include "test_harness.hpp"
 
@@ -110,6 +113,31 @@ static IRModule make_mod(std::size_t n_blocks) {
 }
 
 } // namespace
+
+// Issue #3870: the residual admit shape — DirtyAware + SoA, no purity
+// declaration — and its explicitly marked twin. Namespace scope: local
+// classes cannot carry static data members (kPureWrap).
+struct DirtyAwareNoMarkerStub3870 {
+    void run(aura::ir::IRModule&) {}
+    bool has_error() const { return false; }
+    std::string_view name() const { return "dirty-no-marker"; }
+    bool uses_soa_view() const { return true; }
+    bool is_block_dirty(std::uint32_t) const { return true; }
+};
+
+struct MarkedPureWrapStub3870 {
+    void run(aura::ir::IRModule&) {}
+    bool has_error() const { return false; }
+    std::string_view name() const { return "marked-pure-wrap"; }
+    bool uses_soa_view() const { return true; }
+    bool is_block_dirty(std::uint32_t) const { return true; }
+    static constexpr bool kPureWrap = true;
+};
+
+struct SoftImpurePass3870 {
+    void run(aura::ir::IRModule&) {}
+    bool has_error() const { return false; }
+};
 
 int run_test_hot_pass_hard_dod() {
     std::println("=== Issue #2434: hard HotPassDodCompliant for all production stages ===");
@@ -490,8 +518,63 @@ int run_test_hot_pass_hard_dod() {
         CHECK(cc.find("g_3329_") == std::string::npos, "3329 AC5: no g_3329_*");
     }
 
-    std::println("\n=== #2434/#3042/#3234/#3315/#3329 results: {} passed, {} failed ===", g_passed,
-                 g_failed);
+    // ── #3870: production purity is declared, not inferred ──
+    {
+        std::println("\n--- #3870 AC1: DirtyAware alone cannot enter the production fold ---");
+        CHECK(aura::compiler::kProductionPurityDeclaredIssue == 3870, "3870 AC1: issue constant");
+        static_assert(aura::compiler::DirtyAwarePass<DirtyAwareNoMarkerStub3870>);
+        static_assert(!PureWrapPass<DirtyAwareNoMarkerStub3870>);
+        static_assert(!ProductionPipelinePass<DirtyAwareNoMarkerStub3870>);
+        CHECK(static_cast<bool>(aura::compiler::DirtyAwarePass<DirtyAwareNoMarkerStub3870>),
+              "3870 AC1: stub is DirtyAware (the residual admit shape)");
+        CHECK(!static_cast<bool>(ProductionPipelinePass<DirtyAwareNoMarkerStub3870>),
+              "3870 AC1: unmarked DirtyAware stub rejected");
+
+        std::println("\n--- #3870 AC2: explicit kPureWrap marker admits the fold ---");
+        static_assert(ProductionPipelinePass<MarkedPureWrapStub3870>);
+        CHECK(static_cast<bool>(ProductionPipelinePass<MarkedPureWrapStub3870>),
+              "3870 AC2: explicit kPureWrap author marker admits");
+        CHECK(static_cast<bool>(PureWrapPass<ConstantFoldingWrap>),
+              "3870 AC2: real pack stage declares purity");
+
+        std::println("\n--- #3870 AC3: production fold runs; Soft admits unchanged ---");
+        auto mod3 = make_mod(2);
+        ConstantFoldingWrap cf3;
+        ComputeKindWrap ck3;
+        DCEPass dce3;
+        CHECK(run_production_pipeline(mod3, cf3, ck3, dce3), "3870 AC3: production fold ok");
+        // Soft face unchanged by #3870: the impure stub remains a valid Pass
+        // (Soft admit); run_pipeline itself stays Pass + DOD (#2434, untouched).
+        static_assert(aura::compiler::Pass<SoftImpurePass3870>);
+        CHECK(static_cast<bool>(aura::compiler::Pass<SoftImpurePass3870>),
+              "3870 AC3: Soft Pass admit unchanged");
+
+        std::println("\n--- #3870 AC4: concept source-cite + linter wired ---");
+        auto cc3870 = read_file("src/core/concept_constraints.ixx");
+        auto core3870 = read_file("src/compiler/pass_pipeline_core.ixx");
+        auto build3870 = read_file("build.py");
+        CHECK(cc3870.find("concept ProductionPipelinePass") != std::string::npos,
+              "3870 AC4: concept");
+        CHECK(cc3870.find("PureWrapPass<P>") != std::string::npos,
+              "3870 AC4: declared-purity requires PureWrapPass");
+        CHECK(cc3870.find("DirtyAwareNoPurityMarkerStub") != std::string::npos,
+              "3870 AC4: negative stub pin");
+        CHECK(cc3870.find(
+                  "!ProductionPipelinePass<pass_purity_detail::DirtyAwareNoPurityMarkerStub>") !=
+                  std::string::npos,
+              "3870 AC4: negative static_assert");
+        CHECK(core3870.find("purity declared") != std::string::npos,
+              "3870 AC4: entry gate message updated");
+        CHECK(build3870.find("check_pass_purity_effect_3870") != std::string::npos,
+              "3870 AC4: build.py wires linter");
+        CHECK(read_file("tests/compiler/test_issue_3870.cpp").empty(), "3870 AC4: no invent");
+        CHECK(read_file("docs/design/3870-pass-purity-declared.md").empty(),
+              "3870 AC4: no docs/design");
+        CHECK(cc3870.find("g_3870_") == std::string::npos, "3870 AC4: no g_3870_*");
+    }
+
+    std::println("\n=== #2434/#3042/#3234/#3315/#3329/#3870 results: {} passed, {} failed ===",
+                 g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
 

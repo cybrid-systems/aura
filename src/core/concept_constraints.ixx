@@ -42,6 +42,9 @@ inline constexpr int kProductionPureWrapHotPackIssue = 3488;
 // AoS run in the incremental suite. Wrap stays DirtySoAEntryPass /
 // !ProductionPureWrapPass until a SoA entry lands.
 inline constexpr int kProductionDirtyEscapeSoaIssue = 3701;
+// Issue #3870: production fold purity is declared, not inferred — the
+// DirtyAware-only admission arm is gone (concept requires PureWrapPass).
+inline constexpr int kProductionPurityDeclaredIssue = 3870;
 
 inline std::atomic<std::uint64_t> concept_constraints_import_hits{0};
 
@@ -362,16 +365,27 @@ concept RequiresDirtySoAEntryPass =
 template <typename P>
 concept DirtyPropagatorAwarePass = DirtyAwarePass<P> || PureWrapPass<P>;
 
-// ── ProductionPipelinePass (#3329) ─────────────────────────────
+// ── ProductionPipelinePass (#3329, tightened #3870) ────────────
 //
 // Compile-time purity / SoA / dirty gate for the production default
 // fold. Impure Passes (workspace write, residual single-mark, no SoA,
 // Legacy sunset) fail to instantiate run_production_pipeline.
 // Soft / unit keep run_pipeline constrained only by Pass + DOD.
 // Concepts erase — zero runtime cost on the happy path (AC5).
+//
+// Issue #3870: purity is declared, not inferred. The former
+// DirtyPropagatorAwarePass arm admitted a DirtyAware stage (bare
+// is_block_dirty) carrying no purity declaration at all, so a run()
+// body writing workspace / taking locks could enter the production
+// fold structurally. Production entry now requires PureWrapPass — the
+// const-run PureAnalysisPass discipline or an explicit kPureWrap
+// author annotation. The annotation stays author trust (concepts
+// cannot type-check the run() body); the soft audit
+// scripts/check_pass_purity_effect_3870.py greps every kPureWrap
+// body for workspace / lock / heap-write escape tokens.
 template <typename P>
 concept ProductionPipelinePass =
-    AnalysisPass<P> && SoAViewAwarePass<P> && DirtyPropagatorAwarePass<P> && !LegacyPass<P>;
+    AnalysisPass<P> && SoAViewAwarePass<P> && PureWrapPass<P> && !LegacyPass<P>;
 
 // Issue #3329 AC1: a deliberately impure stub (workspace-write / no SoA /
 // no dirty-upward / no PureWrap) must not satisfy ProductionPipelinePass.
@@ -387,6 +401,26 @@ namespace pass_purity_detail {
         std::string_view name() const { return "impure-soa"; }
         bool uses_soa_view() const { return true; }
     };
+    // Issue #3870: the residual admit shape — DirtyAware + SoA with NO
+    // purity declaration (no kPureWrap, not PureAnalysisPass). Admitted by
+    // the pre-#3870 DirtyPropagatorAware arm; now rejected at the fold.
+    struct DirtyAwareNoPurityMarkerStub {
+        void run(aura::ir::IRModule&) {}
+        bool has_error() const { return false; }
+        std::string_view name() const { return "dirty-no-marker"; }
+        bool uses_soa_view() const { return true; }
+        bool is_block_dirty(std::uint32_t) const { return true; }
+    };
+    // Same shape with an explicit author purity annotation — the admitted
+    // trust boundary (annotation soft-audited by the #3870 linter).
+    struct MarkedPureWrapStub {
+        void run(aura::ir::IRModule&) {}
+        bool has_error() const { return false; }
+        std::string_view name() const { return "marked-pure-wrap"; }
+        bool uses_soa_view() const { return true; }
+        bool is_block_dirty(std::uint32_t) const { return true; }
+        static constexpr bool kPureWrap = true;
+    };
 } // namespace pass_purity_detail
 static_assert(Pass<pass_purity_detail::ImpureWorkspaceWriteStub>,
               "Issue #3329: impure stub is still a Pass (Soft/unit admit)");
@@ -398,6 +432,14 @@ static_assert(AnalysisPass<pass_purity_detail::ImpureNamedSoaNoDirtyStub> &&
 static_assert(!ProductionPipelinePass<pass_purity_detail::ImpureNamedSoaNoDirtyStub>,
               "Issue #3329: SoA without DirtyPropagator/PureWrap fails production gate");
 static_assert(pass_concepts::kPassPurityGateIssue == 3329, "Issue #3329 stamp");
+static_assert(DirtyAwarePass<pass_purity_detail::DirtyAwareNoPurityMarkerStub> &&
+                  !PureWrapPass<pass_purity_detail::DirtyAwareNoPurityMarkerStub>,
+              "Issue #3870: stub is DirtyAware + SoA without any purity declaration");
+static_assert(!ProductionPipelinePass<pass_purity_detail::DirtyAwareNoPurityMarkerStub>,
+              "Issue #3870: DirtyAware alone cannot enter the production fold");
+static_assert(ProductionPipelinePass<pass_purity_detail::MarkedPureWrapStub>,
+              "Issue #3870: explicit kPureWrap author marker admits the fold (soft-audited)");
+static_assert(pass_concepts::kProductionPurityDeclaredIssue == 3870, "Issue #3870 stamp");
 
 // Issue #3454 AC1: AoS-only `kPureWrap` + `run_on_dirty_blocks_only
 // (IRFunction&)` must NOT satisfy ProductionPureWrapPass. SoA

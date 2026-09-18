@@ -7610,6 +7610,18 @@ def cmd_lint():
             "Issue #3644 second recycle linter failed — run python3 scripts/check_reclaimed_slot_second_recycle_3644.py"
         )
         return r
+    # Issue #3870: production fold purity is declared, not inferred —
+    # ProductionPipelinePass requires PureWrapPass (#3870 concept tighten);
+    # kPureWrap-marked stage bodies are soft-audited for lock / heap / fs
+    # escape tokens (the annotation stays author trust).
+    ppd3870_script = ROOT / "scripts" / "check_pass_purity_effect_3870.py"
+    if not ppd3870_script.exists():
+        fail(f"missing {ppd3870_script}")
+        return 1
+    r = run([sys.executable, str(ppd3870_script)], cwd=ROOT)
+    if r != 0:
+        fail("Issue #3870 pass purity declared linter failed — run python3 scripts/check_pass_purity_effect_3870.py")
+        return r
     # Issue #3645: engine:metrics by-name lookup miss returns a typed
     # not-found hash (ok=#f / status=not-found / name / schema-3531)
     # instead of make_void() — a typo'd or unregistered name is now
