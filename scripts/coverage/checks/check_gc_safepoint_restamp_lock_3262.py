@@ -54,7 +54,7 @@ def main() -> int:
     end = gc.find("void Evaluator::resync_linear_jit_gc_roots_after_invalidate", pos)
     win = gc[pos:end] if pos >= 0 and end > pos else ""
     must("Issue #3262", "AC1 cite", win)
-    must("std::shared_lock<std::shared_mutex> cl_lock(closures_mtx_)", "AC1 cl lock", win)
+    must("std::array<std::shared_lock<std::shared_mutex>, kClosuresShardCount> cl_lock", "AC1 cl lock", win)
     must("std::shared_lock<std::shared_mutex> env_lock(env_frames_mtx_)", "AC1 env lock", win)
     rec = win.find("record_linear_gc_probe")
     rest = win.find("auto_restamp_pinned_stable_refs_at")

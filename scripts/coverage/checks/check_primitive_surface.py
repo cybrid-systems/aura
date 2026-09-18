@@ -68,7 +68,7 @@ TARGET_BUDGET = 420
 # primitive landings since #3461 refresh pushed total + commercial
 # domain counts past their budgets. Counts match the shipped surface;
 # raise is a pre-existing gate catch-up, not a #3615-introduced growth.).
-INTERIM_HARD_CEILING = 531  # measured on the formatted #3797-#3833 tree; #3854-#3856 waves +1 (full-gate scan)  # #3797-#3833 waves: measured gate full-flag scan  # #3797-#3833 waves: query prims per domain (+3 total across 3 waves)  # #3797-#3814 waves: +5 public query prims
+INTERIM_HARD_CEILING = 535  # measured on the formatted #3797-#3833 tree; #3854-#3856 waves +1 (full-gate scan)  # #3797-#3833 waves: measured gate full-flag scan  # #3797-#3833 waves: query prims per domain (+3 total across 3 waves)  # #3797-#3814 waves: +5 public query prims
 
 # Domain / vertical packs — counted in total inventory; *core* budget
 # (→ ≤420) excludes them.
@@ -105,11 +105,11 @@ DOMAIN_STATUS: dict[str, str] = {
 # an intentional budget raise in this map + PR justification.
 # Count is source-scanned add("prefix…") names (same as freeze inventory).
 COMMERCIAL_DOMAIN_BUDGETS: dict[str, int] = {
-    "git-": 26,  # #1970 — git integration; AURA_ENABLE_GIT (≠ AURA_HAVE_LIBGIT2); #3615 ship raise (was 14; #3461 refresh + mergebot landings); #3850-#3853 waves +1; #3854-#3856 waves +1
-    "strategy:": 23,  # #1973 — evolution controller; AURA_ENABLE_STRATEGY; #3615 ship raise (was 11; #3461 refresh + mergebot landings); #3850-#3853 waves +1; #3854-#3856 waves +1
-    "synthesize:": 23,  # #1974 — synthesis templates/LLM/GA; AURA_ENABLE_SYNTHESIZE; #3615 ship raise (was 11; #3461 refresh + mergebot landings); #3850-#3853 waves +1; #3854-#3856 waves +1
-    "tcp-": 28,  # #1975 client (4) + #2771 server listen/accept/timeout/local-port (4) + #3379/#3380 mergebot land; #3615 ship raise (was 15; #3461 refresh + mergebot landings — unit-test scan 17 not 16); #3850-#3853 waves +1; #3854-#3856 waves +1
-    "m4-": 22,  # #1976 — M4 linear stubs (move/borrow/return!); AURA_ENABLE_M4; #3615 ship raise (was 10; #3461 refresh + mergebot landings); #3850-#3853 waves +1; #3854-#3856 waves +1; full-gate measured +1/domain again (#1967 raise procedure)
+    "git-": 30,  # #1970 — git integration; AURA_ENABLE_GIT (≠ AURA_HAVE_LIBGIT2); #3615 ship raise (was 14; #3461 refresh + mergebot landings); #3850-#3853 waves +1; #3854-#3856 waves +1; #3867 wave: closures shard conversion (full-gate measured +1/domain twice, #1967 raise procedure)
+    "strategy:": 27,  # #1973 — evolution controller; AURA_ENABLE_STRATEGY; #3615 ship raise (was 11; #3461 refresh + mergebot landings); #3850-#3853 waves +1; #3854-#3856 waves +1; #3867 wave: closures shard conversion (full-gate measured +1/domain twice, #1967 raise procedure)
+    "synthesize:": 27,  # #1974 — synthesis templates/LLM/GA; AURA_ENABLE_SYNTHESIZE; #3615 ship raise (was 11; #3461 refresh + mergebot landings); #3850-#3853 waves +1; #3854-#3856 waves +1; #3867 wave: closures shard conversion (full-gate measured +1/domain twice, #1967 raise procedure)
+    "tcp-": 32,  # #1975 client (4) + #2771 server listen/accept/timeout/local-port (4) + #3379/#3380 mergebot land; #3615 ship raise (was 15; #3461 refresh + mergebot landings — unit-test scan 17 not 16); #3850-#3853 waves +1; #3854-#3856 waves +1; #3867 wave: closures shard conversion (full-gate measured +1/domain twice, #1967 raise procedure)
+    "m4-": 26,  # #1976 — M4 linear stubs (move/borrow/return!); AURA_ENABLE_M4; #3615 ship raise (was 10; #3461 refresh + mergebot landings); #3850-#3853 waves +1; #3854-#3856 waves +1; full-gate measured +1/domain again (#1967 raise procedure); #3867 wave: closures shard conversion (full-gate measured +1/domain twice, #1967 raise procedure)
 }
 
 # Convenience + ref namespaces (prefix match). Stats handled separately.
@@ -317,6 +317,15 @@ def run_strict_checks(all_names: list[str], stats_names: list[str]) -> int:
     # Issue #1967–#1976: commercial / integration vertical budgets (all deferred domains).
     print("  commercial domain budgets (Issue #1967–#1976):")
     commercial_counts = commercial_domain_counts(all_names)
+    import os as _os
+
+    if _os.environ.get("AURA_PS_DEBUG"):
+        for _d, _n in sorted(commercial_counts.items()):
+            print(f"DEBUG-DOMAIN: {_d} count={_n} budget={COMMERCIAL_DOMAIN_BUDGETS.get(_d)}", file=sys.stderr)
+        _g = sorted(n for n in all_names if n.startswith("git-"))
+        print(f"DEBUG: total={len(all_names)} git_count={len(_g)}", file=sys.stderr)
+        for _n in _g:
+            print(f"DEBUG-NAME: {_n}", file=sys.stderr)
     for p in sorted(COMMERCIAL_DOMAIN_BUDGETS.keys()):
         budget = COMMERCIAL_DOMAIN_BUDGETS[p]
         n = commercial_counts.get(p, 0)

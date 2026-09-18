@@ -4,6 +4,7 @@
 module;
 
 #include "runtime_shared.h"
+#include <array>
 #include "observability_metrics.h"
 #include "messaging_bridge.h"
 #include "serve/gc_coordinator.h"
@@ -201,13 +202,14 @@ std::size_t Evaluator::compact_strings(const std::vector<bool>& live_mask) {
 // Useful for pre-GC metrics and unit tests that want to verify the
 // root set is populated without paying for the GCRootSet heap allocs.
 // Issue #1864: gc_root_count is public outside safepoint — it takes
-// shared_lock(closures_mtx_) when walking closures_.
+// shared_lock(closures_shards_[closures_shard_index(id)].mu) when walking
+// closures_shards_[closures_shard_index(id)].map.
 //
 // Issue #2473: flush_gc_roots / compact_sweep also take closures_mtx_
-// when iterating / erasing closures_. heap_mutex_ alone does NOT
-// serialize with register_active_closure / erase_active_closure (those
-// only take closures_mtx_). Dual-lock order with env: closures →
-// env_frames (#1664). heap_mutex_ is orthogonal (vector heaps).
+// when iterating / erasing closures_shards_[closures_shard_index(id)].map. heap_mutex_ alone does
+// NOT serialize with register_active_closure / erase_active_closure (those only take
+// closures_mtx_). Dual-lock order with env: closures → env_frames (#1664). heap_mutex_ is
+// orthogonal (vector heaps).
 
 void Evaluator::flush_gc_roots(void* root_set_out) {
     // The opaque pointer is aura::serve::GCRootSet* (set by the
@@ -241,20 +243,27 @@ void Evaluator::flush_gc_roots(void* root_set_out) {
     //    that watermark was created inside a temp-arena intend and
     //    is safe to collect. We walk the map and emit the safe set.
     //
-    // Issue #2473: shared_lock(closures_mtx_) alongside heap_mutex_
+    // Issue #2473: shared_lock(closures_shards_[closures_shard_index(id)].mu) alongside heap_mutex_
     // so concurrent register_active_closure / erase cannot rehash the
     // map under our iterator. shared_lock allows concurrent
     // gc_root_count readers (#1864). Bumps gc_flush_closures_locked_total.
     {
         aura::compiler::lock_order::AuditScope lo_closures(
             aura::compiler::lock_order::Level::Closures);
-        std::shared_lock<std::shared_mutex> cl_lock(closures_mtx_);
+        // Issue #3867: bulk closures walk — lock ALL shards in ascending
+        // index order (canonical, deadlock-free; the shards are one
+        // logical lock in the order graph), then walk each shard's map.
+        std::array<std::shared_lock<std::shared_mutex>, kClosuresShardCount> cl_locks;
+        for (std::size_t i = 0; i < kClosuresShardCount; ++i)
+            cl_locks[i] = std::shared_lock<std::shared_mutex>(closures_shards_[i].mu);
         if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics()))
             m->gc_flush_closures_locked_total.fetch_add(1, std::memory_order_relaxed);
-        out.closure_roots.reserve(out.closure_roots.size() + closures_.size());
-        for (const auto& [id, c] : closures_) {
-            if (static_cast<std::uint64_t>(id) < gc_safe_closure_id_) {
-                out.closure_roots.push_back(static_cast<int64_t>(id));
+        for (const auto& shard : closures_shards_) {
+            out.closure_roots.reserve(out.closure_roots.size() + shard.map.size());
+            for (const auto& [id, c] : shard.map) {
+                if (static_cast<std::uint64_t>(id) < gc_safe_closure_id_) {
+                    out.closure_roots.push_back(static_cast<int64_t>(id));
+                }
             }
         }
     }
@@ -281,9 +290,9 @@ void Evaluator::flush_gc_roots(void* root_set_out) {
 }
 
 std::size_t Evaluator::gc_root_count() const {
-    // Issue #1864: shared_lock closures_mtx_ while iterating closures_.
-    // This is a public metrics / test API (not safepoint-only); concurrent
-    // register_active_closure / free can realloc or erase the map and
+    // Issue #1864: shared_lock closures_mtx_ while iterating
+    // closures_shards_[closures_shard_index(id)].map. This is a public metrics / test API (not
+    // safepoint-only); concurrent register_active_closure / free can realloc or erase the map and
     // UAF an unlocked iterator. Returns an approximate upper bound —
     // string_heap_/pairs_ size() remain unlocked (heap_mutex_ covers
     // those in flush_gc_roots / compact_sweep at safepoint).
@@ -293,10 +302,15 @@ std::size_t Evaluator::gc_root_count() const {
     // Issue #2354: Closures rank after Workspace/DepGraph when audit on.
     std::size_t n = string_heap_.size() + pairs_.size();
     aura::compiler::lock_order::AuditScope lo_closures(aura::compiler::lock_order::Level::Closures);
-    std::shared_lock<std::shared_mutex> cl_lock(closures_mtx_);
-    for (const auto& [id, _] : closures_) {
-        if (static_cast<std::uint64_t>(id) < gc_safe_closure_id_) {
-            ++n;
+    // Issue #3867: bulk walk — ALL shards, ascending index order.
+    std::array<std::shared_lock<std::shared_mutex>, kClosuresShardCount> cl_locks;
+    for (std::size_t i = 0; i < kClosuresShardCount; ++i)
+        cl_locks[i] = std::shared_lock<std::shared_mutex>(closures_shards_[i].mu);
+    for (const auto& shard : closures_shards_) {
+        for (const auto& [id, _] : shard.map) {
+            if (static_cast<std::uint64_t>(id) < gc_safe_closure_id_) {
+                ++n;
+            }
         }
     }
     return n;
@@ -373,7 +387,9 @@ void Evaluator::probe_linear_ownership_at_gc_safepoint() noexcept {
     // Pre-#1664 took env then closures — latent deadlock if either side
     // upgrades to unique while the other holds the reverse order.
     {
-        std::shared_lock<std::shared_mutex> cl_lock(closures_mtx_);
+        std::array<std::shared_lock<std::shared_mutex>, kClosuresShardCount> cl_lock;
+        for (std::size_t cl_i = 0; cl_i < kClosuresShardCount; ++cl_i)
+            cl_lock[cl_i] = std::shared_lock<std::shared_mutex>(closures_shards_[cl_i].mu);
         std::shared_lock<std::shared_mutex> env_lock(env_frames_mtx_);
         auto* m_probe = static_cast<CompilerMetrics*>(compiler_metrics_);
         auto* drift_ctr = m_probe ? &m_probe->linear_validate_bridge_epoch_drift_total : nullptr;
@@ -381,53 +397,56 @@ void Evaluator::probe_linear_ownership_at_gc_safepoint() noexcept {
         using aura::core::provenance::validate_linear_provenance;
         g_provenance_enforcement().linear_provenance_gc_checks_total.fetch_add(
             1, std::memory_order_relaxed);
-        for (const auto& [id, cl] : closures_) {
-            (void)id;
-            if (cl.bridge_epoch == 0)
-                continue;
-            if (cl.env_id == NULL_ENV_ID || cl.env_id >= env_frames_.size())
-                continue;
-            const auto& fr = env_frames_[cl.env_id];
-            // Issue #2026: explicit linear × provenance validation at GC.
-            // Scan binding ownership states; require complete forensic trail
-            // on tracked linear roots (steal/GC closed-loop).
-            bool frame_has_linear = false;
-            bool frame_has_moved = false;
-            for (const auto s : fr.bindings_linear_ownership_state_) {
-                if (s == linear_rt::Moved)
-                    frame_has_moved = true;
-                if (s != linear_rt::Untracked)
-                    frame_has_linear = true;
-            }
-            if (frame_has_moved) {
-                const auto pr = validate_linear_provenance(
-                    linear_rt::Moved, static_cast<std::uint32_t>(cl.env_id), 0, 0, fr.version_,
-                    current_ver, cl.bridge_epoch, current_bridge, /*require_complete=*/true);
-                if (!pr.ok) {
+        for (const auto& cl_sh : closures_shards_)
+            for (const auto& [id, cl] : cl_sh.map) {
+                (void)id;
+                if (cl.bridge_epoch == 0)
+                    continue;
+                if (cl.env_id == NULL_ENV_ID || cl.env_id >= env_frames_.size())
+                    continue;
+                const auto& fr = env_frames_[cl.env_id];
+                // Issue #2026: explicit linear × provenance validation at GC.
+                // Scan binding ownership states; require complete forensic trail
+                // on tracked linear roots (steal/GC closed-loop).
+                bool frame_has_linear = false;
+                bool frame_has_moved = false;
+                for (const auto s : fr.bindings_linear_ownership_state_) {
+                    if (s == linear_rt::Moved)
+                        frame_has_moved = true;
+                    if (s != linear_rt::Untracked)
+                        frame_has_linear = true;
+                }
+                if (frame_has_moved) {
+                    const auto pr = validate_linear_provenance(
+                        linear_rt::Moved, static_cast<std::uint32_t>(cl.env_id), 0, 0, fr.version_,
+                        current_ver, cl.bridge_epoch, current_bridge, /*require_complete=*/true);
+                    if (!pr.ok) {
+                        violation = true;
+                        break;
+                    }
+                }
+                if (frame_has_linear) {
+                    // Per-slot trail only (last_hygiene is not this binding).
+                    const auto pr = validate_linear_provenance(
+                        linear_rt::Owned, static_cast<std::uint32_t>(cl.env_id),
+                        /*provenance_id=*/0,
+                        /*mutation_id=*/0, fr.version_, current_ver, cl.bridge_epoch,
+                        current_bridge,
+                        /*require_complete=*/false);
+                    if (!pr.ok || !validate_linear_ownership_state(1, fr.version_, current_ver,
+                                                                   cl.bridge_epoch, current_bridge,
+                                                                   drift_ctr)) {
+                        violation = true;
+                        break;
+                    }
+                } else if (!validate_linear_ownership_state(1, fr.version_, current_ver,
+                                                            cl.bridge_epoch, current_bridge,
+                                                            drift_ctr)) {
+                    // Non-linear bridged closure still dual-checks epoch (legacy).
                     violation = true;
                     break;
                 }
             }
-            if (frame_has_linear) {
-                // Per-slot trail only (last_hygiene is not this binding).
-                const auto pr = validate_linear_provenance(
-                    linear_rt::Owned, static_cast<std::uint32_t>(cl.env_id), /*provenance_id=*/0,
-                    /*mutation_id=*/0, fr.version_, current_ver, cl.bridge_epoch, current_bridge,
-                    /*require_complete=*/false);
-                if (!pr.ok ||
-                    !validate_linear_ownership_state(1, fr.version_, current_ver, cl.bridge_epoch,
-                                                     current_bridge, drift_ctr)) {
-                    violation = true;
-                    break;
-                }
-            } else if (!validate_linear_ownership_state(1, fr.version_, current_ver,
-                                                        cl.bridge_epoch, current_bridge,
-                                                        drift_ctr)) {
-                // Non-linear bridged closure still dual-checks epoch (legacy).
-                violation = true;
-                break;
-            }
-        }
         record_linear_gc_probe(*this, violation, nullptr);
     }
 
@@ -584,10 +603,10 @@ void Evaluator::record_linear_violation_audit(std::uint8_t path, std::uint8_t re
 }
 
 void Evaluator::force_drop_or_mark_invalid(ClosureId id) noexcept {
-    std::unique_lock<std::shared_mutex> cl_lock(closures_mtx_);
+    std::unique_lock<std::shared_mutex> cl_lock(closures_shards_[closures_shard_index(id)].mu);
     bump_closures_apply_epoch(); // Issue #3832
-    auto it = closures_.find(id);
-    if (it == closures_.end())
+    auto it = closures_shards_[closures_shard_index(id)].map.find(id);
+    if (it == closures_shards_[closures_shard_index(id)].map.end())
         return;
     if (it->second.bridge_epoch == 0)
         return;
@@ -640,62 +659,66 @@ Evaluator::enforce_linear_boundary_consistency(std::uint8_t path, bool mark_all_
         const auto cur_bridge = current_bridge_epoch();
         const auto cur_ver = defuse_version_snapshot();
         // Lock order: closures unique → env shared (same as scan_live).
-        std::unique_lock<std::shared_mutex> cl_lock(closures_mtx_);
+        std::array<std::unique_lock<std::shared_mutex>, kClosuresShardCount> cl_lock;
+        for (std::size_t cl_i = 0; cl_i < kClosuresShardCount; ++cl_i)
+            cl_lock[cl_i] = std::unique_lock<std::shared_mutex>(closures_shards_[cl_i].mu);
         bump_closures_apply_epoch(); // Issue #3832
         std::shared_lock<std::shared_mutex> env_lock(env_frames_mtx_);
-        for (auto& [id, cl] : closures_) {
-            if (cl.bridge_epoch == 0)
-                continue;
-            bool drop = false;
-            std::uint8_t reason = kLinearViolReasonEpochStale;
-            if (cl.bridge_epoch != cur_bridge) {
-                drop = true;
-            } else if (cl.env_id != NULL_ENV_ID && cl.env_id < env_frames_.size()) {
-                const auto& fr = env_frames_[cl.env_id];
-                // Stale frame version under concurrent mutate/compact.
-                if (fr.version_ != INVALID_VERSION && fr.version_ < cur_ver) {
-                    // Only force-drop if frame has linear state (avoid
-                    // over-invalidating pure non-linear captures).
-                    bool has_linear = false;
-                    for (const auto s : fr.bindings_linear_ownership_state_) {
-                        if (s != linear_rt::Untracked) {
-                            has_linear = true;
-                            break;
+        for (auto& cl_sh : closures_shards_)
+            for (auto& [id, cl] : cl_sh.map) {
+                if (cl.bridge_epoch == 0)
+                    continue;
+                bool drop = false;
+                std::uint8_t reason = kLinearViolReasonEpochStale;
+                if (cl.bridge_epoch != cur_bridge) {
+                    drop = true;
+                } else if (cl.env_id != NULL_ENV_ID && cl.env_id < env_frames_.size()) {
+                    const auto& fr = env_frames_[cl.env_id];
+                    // Stale frame version under concurrent mutate/compact.
+                    if (fr.version_ != INVALID_VERSION && fr.version_ < cur_ver) {
+                        // Only force-drop if frame has linear state (avoid
+                        // over-invalidating pure non-linear captures).
+                        bool has_linear = false;
+                        for (const auto s : fr.bindings_linear_ownership_state_) {
+                            if (s != linear_rt::Untracked) {
+                                has_linear = true;
+                                break;
+                            }
+                        }
+                        if (has_linear) {
+                            drop = true;
+                            reason = kLinearViolReasonEpochStale;
                         }
                     }
-                    if (has_linear) {
-                        drop = true;
-                        reason = kLinearViolReasonEpochStale;
-                    }
                 }
+                if (!drop)
+                    continue;
+                cl.bridge_epoch = 0;
+                ++out.epoch_fence_hits;
+                ++out.marked_invalid;
+                out.all_safe = false;
+                if (m) {
+                    m->linear_epoch_fence_enforce_total.fetch_add(1, std::memory_order_relaxed);
+                    m->linear_force_drop_total.fetch_add(1, std::memory_order_relaxed);
+                    m->linear_ownership_violation_prevented.fetch_add(1, std::memory_order_relaxed);
+                    m->linear_live_closures_marked_invalid_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                }
+                // Record under locks is fine (audit ring is independent).
+                const auto seq =
+                    linear_violation_audit_seq_.fetch_add(1, std::memory_order_relaxed);
+                auto& slot = linear_violation_audit_ring_[seq % kLinearViolationAuditRingSize];
+                slot.seq = seq;
+                slot.path = path;
+                slot.reason = reason;
+                slot.epoch = cur_bridge;
+                slot.defuse_version = cur_ver;
+                slot.env_id = static_cast<std::uint32_t>(cl.env_id);
+                slot.closure_id = static_cast<std::uint64_t>(id);
+                linear_violation_audit_total_.fetch_add(1, std::memory_order_relaxed);
+                if (m)
+                    m->linear_violation_audit_total.fetch_add(1, std::memory_order_relaxed);
             }
-            if (!drop)
-                continue;
-            cl.bridge_epoch = 0;
-            ++out.epoch_fence_hits;
-            ++out.marked_invalid;
-            out.all_safe = false;
-            if (m) {
-                m->linear_epoch_fence_enforce_total.fetch_add(1, std::memory_order_relaxed);
-                m->linear_force_drop_total.fetch_add(1, std::memory_order_relaxed);
-                m->linear_ownership_violation_prevented.fetch_add(1, std::memory_order_relaxed);
-                m->linear_live_closures_marked_invalid_total.fetch_add(1,
-                                                                       std::memory_order_relaxed);
-            }
-            // Record under locks is fine (audit ring is independent).
-            const auto seq = linear_violation_audit_seq_.fetch_add(1, std::memory_order_relaxed);
-            auto& slot = linear_violation_audit_ring_[seq % kLinearViolationAuditRingSize];
-            slot.seq = seq;
-            slot.path = path;
-            slot.reason = reason;
-            slot.epoch = cur_bridge;
-            slot.defuse_version = cur_ver;
-            slot.env_id = static_cast<std::uint32_t>(cl.env_id);
-            slot.closure_id = static_cast<std::uint64_t>(id);
-            linear_violation_audit_total_.fetch_add(1, std::memory_order_relaxed);
-            if (m)
-                m->linear_violation_audit_total.fetch_add(1, std::memory_order_relaxed);
-        }
     }
 
     // 4) GC root registration consistency audit (monotonicity + balance).
@@ -714,33 +737,37 @@ Evaluator::enforce_linear_boundary_consistency(std::uint8_t path, bool mark_all_
         // leftover expand stamp silent-complete every Owned root
         // (#2197 Strict incomplete must hard-fail; matches
         // validate_linear_ownership_state which already passes 0,0).
-        std::shared_lock<std::shared_mutex> cl_lock(closures_mtx_);
+        std::array<std::shared_lock<std::shared_mutex>, kClosuresShardCount> cl_lock;
+        for (std::size_t cl_i = 0; cl_i < kClosuresShardCount; ++cl_i)
+            cl_lock[cl_i] = std::shared_lock<std::shared_mutex>(closures_shards_[cl_i].mu);
         std::shared_lock<std::shared_mutex> env_lock(env_frames_mtx_);
-        for (const auto& [id, cl] : closures_) {
-            (void)id;
-            if (cl.env_id == NULL_ENV_ID || cl.env_id >= env_frames_.size())
-                continue;
-            const auto& fr = env_frames_[cl.env_id];
-            for (const auto s : fr.bindings_linear_ownership_state_) {
-                if (s == linear_rt::Untracked)
+        for (const auto& cl_sh : closures_shards_)
+            for (const auto& [id, cl] : cl_sh.map) {
+                (void)id;
+                if (cl.env_id == NULL_ENV_ID || cl.env_id >= env_frames_.size())
                     continue;
-                const auto pr = validate_linear_provenance(
-                    s, static_cast<std::uint32_t>(cl.env_id), /*provenance_id=*/0,
-                    /*mutation_id=*/0, fr.version_, current_ver, cl.bridge_epoch, current_bridge,
-                    linear_enforce_require_complete());
-                if (!pr.ok && pr.force_deopt) {
-                    out.all_safe = false;
-                    if (m) {
-                        m->linear_deopt_on_mismatch_total.fetch_add(1, std::memory_order_relaxed);
-                        m->linear_ownership_violation_prevented.fetch_add(
-                            1, std::memory_order_relaxed);
+                const auto& fr = env_frames_[cl.env_id];
+                for (const auto s : fr.bindings_linear_ownership_state_) {
+                    if (s == linear_rt::Untracked)
+                        continue;
+                    const auto pr = validate_linear_provenance(
+                        s, static_cast<std::uint32_t>(cl.env_id), /*provenance_id=*/0,
+                        /*mutation_id=*/0, fr.version_, current_ver, cl.bridge_epoch,
+                        current_bridge, linear_enforce_require_complete());
+                    if (!pr.ok && pr.force_deopt) {
+                        out.all_safe = false;
+                        if (m) {
+                            m->linear_deopt_on_mismatch_total.fetch_add(1,
+                                                                        std::memory_order_relaxed);
+                            m->linear_ownership_violation_prevented.fetch_add(
+                                1, std::memory_order_relaxed);
+                        }
+                        break;
                     }
-                    break;
                 }
+                if (!out.all_safe)
+                    break;
             }
-            if (!out.all_safe)
-                break;
-        }
     }
 
     // 6) Mirror issue metrics aliases used by query surface.
@@ -889,28 +916,32 @@ bool Evaluator::revalidate_linear_type_provenance_after_migration(std::uint8_t p
     if (strict && !hard_fail) {
         const auto current_ver = defuse_version_snapshot();
         const auto current_bridge = current_bridge_epoch();
-        std::shared_lock<std::shared_mutex> cl_lock(closures_mtx_);
+        std::array<std::shared_lock<std::shared_mutex>, kClosuresShardCount> cl_lock;
+        for (std::size_t cl_i = 0; cl_i < kClosuresShardCount; ++cl_i)
+            cl_lock[cl_i] = std::shared_lock<std::shared_mutex>(closures_shards_[cl_i].mu);
         std::shared_lock<std::shared_mutex> env_lock(env_frames_mtx_);
-        for (const auto& [id, cl] : closures_) {
-            (void)id;
-            if (cl.env_id == NULL_ENV_ID || cl.env_id >= env_frames_.size())
-                continue;
-            const auto& fr = env_frames_[cl.env_id];
-            for (const auto s : fr.bindings_linear_ownership_state_) {
-                if (s == linear_rt::Untracked)
+        for (const auto& cl_sh : closures_shards_)
+            for (const auto& [id, cl] : cl_sh.map) {
+                (void)id;
+                if (cl.env_id == NULL_ENV_ID || cl.env_id >= env_frames_.size())
                     continue;
-                const auto pr = validate_linear_provenance(
-                    s, static_cast<std::uint32_t>(cl.env_id), /*provenance_id=*/0,
-                    /*mutation_id=*/0, fr.version_, current_ver, cl.bridge_epoch, current_bridge,
-                    /*require_complete=*/true);
-                if (!pr.ok && pr.force_deopt) {
-                    hard_fail = true;
-                    break;
+                const auto& fr = env_frames_[cl.env_id];
+                for (const auto s : fr.bindings_linear_ownership_state_) {
+                    if (s == linear_rt::Untracked)
+                        continue;
+                    const auto pr = validate_linear_provenance(
+                        s, static_cast<std::uint32_t>(cl.env_id), /*provenance_id=*/0,
+                        /*mutation_id=*/0, fr.version_, current_ver, cl.bridge_epoch,
+                        current_bridge,
+                        /*require_complete=*/true);
+                    if (!pr.ok && pr.force_deopt) {
+                        hard_fail = true;
+                        break;
+                    }
                 }
+                if (hard_fail)
+                    break;
             }
-            if (hard_fail)
-                break;
-        }
     }
 
     if (hard_fail) {
@@ -974,20 +1005,23 @@ void Evaluator::collect_compiler_managed_gc_roots(std::vector<std::int64_t>& clo
     }
     const auto eff_epoch = live_epoch;
 
-    std::shared_lock<std::shared_mutex> lock(closures_mtx_);
-    for (const auto& [id, cl] : closures_) {
-        if (cl.bridge_epoch != 0 && cl.bridge_epoch != eff_epoch) {
-            bump_compiler_root_dangling_prevented();
-            // Issue #1515: stale bridge_epoch root skipped during GC walk.
-            if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
-                m->linear_ownership_gc_root_stale_hits_total.fetch_add(1,
-                                                                       std::memory_order_relaxed);
-            continue;
+    std::array<std::shared_lock<std::shared_mutex>, kClosuresShardCount> lock;
+    for (std::size_t cl_i = 0; cl_i < kClosuresShardCount; ++cl_i)
+        lock[cl_i] = std::shared_lock<std::shared_mutex>(closures_shards_[cl_i].mu);
+    for (const auto& cl_sh : closures_shards_)
+        for (const auto& [id, cl] : cl_sh.map) {
+            if (cl.bridge_epoch != 0 && cl.bridge_epoch != eff_epoch) {
+                bump_compiler_root_dangling_prevented();
+                // Issue #1515: stale bridge_epoch root skipped during GC walk.
+                if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+                    m->linear_ownership_gc_root_stale_hits_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                continue;
+            }
+            closure_roots_out.push_back(static_cast<std::int64_t>(id));
+            if (cl.env_id != NULL_ENV_ID && is_valid_env_id(cl.env_id))
+                env_roots_out.push_back(static_cast<std::int64_t>(cl.env_id));
         }
-        closure_roots_out.push_back(static_cast<std::int64_t>(id));
-        if (cl.env_id != NULL_ENV_ID && is_valid_env_id(cl.env_id))
-            env_roots_out.push_back(static_cast<std::int64_t>(cl.env_id));
-    }
 }
 
 // ── GC sweep / compaction (Issue #113 Phase 3) ──────────────
@@ -999,7 +1033,7 @@ void Evaluator::collect_compiler_managed_gc_roots(std::vector<std::int64_t>& clo
 //
 // For `closures_` we actually erase unmarked entries — this is the
 // main memory-reclamation path (closure bodies hold arena-allocated
-// state). Issue #2473: take unique_lock(closures_mtx_) for the
+// state). Issue #2473: take unique_lock(closures_shards_[closures_shard_index(id)].mu) for the
 // iterate/erase section so concurrent register_active_closure /
 // gc_root_count cannot rehash under our erase iterator. Dual-lock
 // with env (if ever taken here): closures → env_frames (#1664).
@@ -1093,34 +1127,41 @@ Evaluator::CompactSweepResult Evaluator::compact_sweep(void* sweep_buffers) {
     //    an arena-allocated flat, pool, and env that can be
     //    significant memory.
     //
-    // Issue #2473: unique_lock(closures_mtx_) for the full iterate /
-    // erase section. heap_mutex_ alone does not protect the map —
-    // register_active_closure / erase take only closures_mtx_ and can
-    // rehash under an unlocked erase iterator (UAF). Blocks all
+    // Issue #2473: unique_lock(closures_shards_[closures_shard_index(id)].mu) for the full iterate
+    // / erase section. heap_mutex_ alone does not protect the map — register_active_closure / erase
+    // take only closures_mtx_ and can rehash under an unlocked erase iterator (UAF). Blocks all
     // shared readers (gc_root_count / flush) for the erase window.
     // Lock order vs env: closures first (#1664); we do not take
     // env_frames_mtx_ here. Bumps gc_sweep_closures_locked_total.
     {
         aura::compiler::lock_order::AuditScope lo_closures(
             aura::compiler::lock_order::Level::Closures);
-        std::unique_lock<std::shared_mutex> cl_lock(closures_mtx_);
+        std::array<std::unique_lock<std::shared_mutex>, kClosuresShardCount> cl_lock;
+        for (std::size_t cl_i = 0; cl_i < kClosuresShardCount; ++cl_i)
+            cl_lock[cl_i] = std::unique_lock<std::shared_mutex>(closures_shards_[cl_i].mu);
         bump_closures_apply_epoch(); // Issue #3832
         if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics()))
             m->gc_sweep_closures_locked_total.fetch_add(1, std::memory_order_relaxed);
         if (marks->closure_marks) {
-            std::size_t before = closures_.size();
-            for (auto it = closures_.begin(); it != closures_.end();) {
-                int64_t id = static_cast<int64_t>(it->first);
-                if (!marks->closure_marks->test(id)) {
-                    // Issue #1888: tombstone before erase so ClosureView
-                    // lifetime revalidation fails on moved-from / freed sources.
-                    invalidate_closure_lifetime(it->second);
-                    it = closures_.erase(it);
-                } else {
-                    ++it;
+            std::size_t before = 0;
+            for (auto& cl_sh : closures_shards_)
+                before += cl_sh.map.size();
+            for (auto& cl_sh : closures_shards_)
+                for (auto it = cl_sh.map.begin(); it != cl_sh.map.end();) {
+                    int64_t id = static_cast<int64_t>(it->first);
+                    if (!marks->closure_marks->test(id)) {
+                        // Issue #1888: tombstone before erase so ClosureView
+                        // lifetime revalidation fails on moved-from / freed sources.
+                        invalidate_closure_lifetime(it->second);
+                        it = cl_sh.map.erase(it);
+                    } else {
+                        ++it;
+                    }
                 }
-            }
-            result.closures_freed = before - closures_.size();
+            std::size_t cl_after = 0;
+            for (auto& cl_sh : closures_shards_)
+                cl_after += cl_sh.map.size();
+            result.closures_freed = before - cl_after;
             if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics())) {
                 m->closure_view_dangling_prevented_total.store(
                     g_closure_view_dangling_prevented_total.load(std::memory_order_relaxed),

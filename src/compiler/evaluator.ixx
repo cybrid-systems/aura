@@ -1820,7 +1820,8 @@ public:
     // (matches the underlying storage type).
     std::pmr::vector<std::string>& string_heap_mut() { return string_heap_; }
 
-    // IR closure bridge: called when a closure id is not in closures_.
+    // IR closure bridge: called when a closure id is not in
+    // closures_shards_[closures_shard_index(cid)].map.
     using ClosureBridgeFn = std::function<std::optional<EvalValue>(
         ClosureId closure_id, std::span<const EvalValue> args)>;
 
@@ -3582,7 +3583,7 @@ public:
     // mutator can run). Holds `heap_mutex()` so a non-fiber thread
     // in serve-async mode can't race a concurrent
     // `string_heap_.push_back` (or similar) with the walk.
-    // Issue #2473: also takes shared_lock(closures_mtx_) for the
+    // Issue #2473: also takes shared_lock(closures_shards_[closures_shard_index(cid)].mu) for the
     // closures_ walk (heap_mutex_ alone does not serialize with
     // register_active_closure). Bumps gc_flush_closures_locked_total.
     void flush_gc_roots(void* root_set_out);
@@ -3590,11 +3591,10 @@ public:
     // Cheap (no allocation, just sizes + map iteration). Useful for
     // pre-GC metrics and for tests that want to verify root set
     // population without allocating the GCRootSet.
-    // Issue #1864: takes shared_lock(closures_mtx_) for the closures_
-    // walk — callable outside safepoint (metrics / tests); not an
-    // unlocked "safepoint only" helper.
-    // Issue #2473: serializes with flush_gc_roots / compact_sweep map
-    // sections (those now also take closures_mtx_).
+    // Issue #1864: takes shared_lock(closures_shards_[closures_shard_index(cid)].mu) for the
+    // closures_ walk — callable outside safepoint (metrics / tests); not an unlocked "safepoint
+    // only" helper. Issue #2473: serializes with flush_gc_roots / compact_sweep map sections (those
+    // now also take closures_mtx_).
     [[nodiscard]] std::size_t gc_root_count() const;
     // Issue #682: export tree-walker Closure / EnvId roots for
     // compiler GC coordination (bridge epoch gate).
@@ -4334,8 +4334,8 @@ public:
     // Issue #1865: clears pair_remap_ on the successful sweep path
     // (not on nullptr / panic-defer early returns) so compact_pairs
     // remaps cannot outlive GC reclaim.
-    // Issue #2473: unique_lock(closures_mtx_) for closures_ iterate/
-    // erase (blocks register / gc_root_count / flush readers). Bumps
+    // Issue #2473: unique_lock(closures_shards_[closures_shard_index(cid)].mu) for closures_
+    // iterate/ erase (blocks register / gc_root_count / flush readers). Bumps
     // gc_sweep_closures_locked_total. Lock order vs env: closures
     // first (#1664).
     CompactSweepResult compact_sweep(void* sweep_buffers);
@@ -5139,27 +5139,28 @@ private:
     void* type_registry_ = nullptr; // points to aura::core::TypeRegistry
     // Issue #911: true when type_registry_ was allocated by this Evaluator.
     bool owns_type_registry_ = false;
-    std::unordered_map<ClosureId, Closure> closures_;
-    // Issue #145 P0 follow-up: shared_mutex protects closures_
-    // against concurrent access from fiber threads (e.g. a
-    // std::thread spawned by fiber:spawn calling apply_closure)
-    // and the main thread (mutate, define, eval). Without this
-    // lock, concurrent insert/erase + lookup races corrupt the
-    // hash table and the read returns NULL pointers (ASan
-    // SEGV at address 0x8 in the test_issue_164 heap trace).
-    // Reader (apply_closure miss / materialize_call_env) takes a
-    // shared lock; writer (closures_[cid] = ...) takes unique.
-    // Issue #3832: apply_closure happy path prefers TLS cache and
-    // skips this mutex on hit; writers must bump closures_apply_epoch_.
-    //
-    // Issue #1664 — dual-lock order when BOTH are held:
-    //   1. closures_mtx_  (shared or unique)
-    //   2. env_frames_mtx_ (shared)
-    // Matches scan_live_closures_for_linear_captures / apply_closure.
-    // NEVER acquire env_frames_mtx_ then closures_mtx_ (deadlock footgun).
-    // Exception: compact_env_frames holds compact_env_frames_lock_ first,
-    // then env unique, then briefly closures (documented there).
-    mutable std::shared_mutex closures_mtx_;
+    // Issue #3867: FnKey-style sharded closures map (16 shards) — the
+    // #3832 TLS-miss path no longer contends on one process-wide mutex
+    // under closure storms; writers no longer gate every miss.
+    // Shard = { shared_mutex mu; unordered_map map; }. Point sites take
+    // shard(closures_shard_index(cid)); bulk walks take ALL shards in
+    // index order (canonical deadlock-free order, ShapeProfiler #3199
+    // style). Lock order (#1664) UNCHANGED: any closures shard (shared
+    // or unique) then env_frames_mtx_ (shared); NEVER env_frames_mtx_
+    // first then a closures shard (deadlock footgun). Compact exception
+    // unchanged (compact_env_frames_lock_ -> env unique -> shard).
+    // History: #145 P0 (the mutex), Wave2 (lookup+lifetime in one
+    // section), #3832 (TLS happy path skips the lock; writers bump
+    // closures_apply_epoch_).
+    struct ClosuresShard {
+        mutable std::shared_mutex mu;
+        std::unordered_map<ClosureId, Closure> map;
+    };
+    static constexpr std::size_t kClosuresShardCount = 16;
+    [[nodiscard]] static std::size_t closures_shard_index(ClosureId cid) noexcept {
+        return static_cast<std::size_t>((cid * 0x9E3779B97F4A7C15ULL) >> 60);
+    }
+    std::array<ClosuresShard, kClosuresShardCount> closures_shards_;
     // Issue #3832: epoch-local TLS cache of last-N Closure copies for
     // apply_closure happy path. Bumped on densify/erase/unique-write so
     // cached copies cannot outlive map mutations; densify also keys TLS
@@ -8223,7 +8224,17 @@ public:
     // Issue #2084: public closures_ size getter (companion to pairs_size)
     // so the GC size-provider callback can size the closure MarkBitVector
     // to the actual current closure count rather than the max root index.
-    [[nodiscard]] std::size_t closures_size() const noexcept { return closures_.size(); }
+    [[nodiscard]] std::size_t closures_size() const noexcept {
+        // Issue #3867: whole-map read — sum ALL shards (shared, ascending
+        // index order; the closures_shard_index(cid) fast path does not
+        // apply to a total-count walk).
+        std::size_t total = 0;
+        for (const auto& shard : closures_shards_) {
+            std::shared_lock<std::shared_mutex> lk(shard.mu);
+            total += shard.map.size();
+        }
+        return total;
+    }
     // Issue #3832: TLS apply_closure cache observability (tests / microbench).
     [[nodiscard]] std::uint64_t closures_apply_epoch() const noexcept {
         return closures_apply_epoch_.load(std::memory_order_acquire);

@@ -660,8 +660,9 @@ types::EvalValue Evaluator::load_module_file(const std::string& path) {
         if (types::is_closure(actual)) {
             auto cid = types::as_closure_id(actual);
             std::string param_str;
-            auto cit = closures_.find(cid);
-            if (cit != closures_.end() && !cit->second.params.empty()) {
+            auto& cl_sh = closures_shards_[closures_shard_index(cid)];
+            auto cit = cl_sh.map.find(cid);
+            if (cit != cl_sh.map.end() && !cit->second.params.empty()) {
                 for (std::size_t pi = 0; pi < cit->second.params.size(); ++pi) {
                     if (pi > 0)
                         param_str += " ";
@@ -704,14 +705,15 @@ bool Evaluator::gc_module(const std::string& path) {
     if (arena_it != module_arena_ptrs_.end() && arena_it->second) {
         auto* owner = arena_it->second;
         bump_closures_apply_epoch(); // Issue #3832 densify/erase TLS invalidate
-        for (auto it = closures_.begin(); it != closures_.end();) {
-            if (it->second.owner_arena == owner) {
-                // Issue #1888: tombstone before erase for ClosureView lifetime.
-                invalidate_closure_lifetime(it->second);
-                it = closures_.erase(it);
-            } else
-                ++it;
-        }
+        for (auto& cl_sh : closures_shards_)
+            for (auto it = cl_sh.map.begin(); it != cl_sh.map.end();) {
+                if (it->second.owner_arena == owner) {
+                    // Issue #1888: tombstone before erase for ClosureView lifetime.
+                    invalidate_closure_lifetime(it->second);
+                    it = cl_sh.map.erase(it);
+                } else
+                    ++it;
+            }
     }
 
     // Reset the module arena. ASTArena v4 (#131) now runs ~Env() on

@@ -386,7 +386,8 @@ Evaluator::~Evaluator() {
     module_arena_ptrs_.clear();
     module_names_.clear();
     bump_closures_apply_epoch(); // Issue #3832
-    closures_.clear();
+    for (auto& cl_sh : closures_shards_)
+        cl_sh.map.clear();
     cells_.clear();
     pairs_.clear();
     error_values_.clear();

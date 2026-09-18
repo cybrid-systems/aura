@@ -1392,8 +1392,11 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         const auto& body = a[1];
         if (is_closure(body) && ev.workspace_flat_ && ev.workspace_pool_) {
             auto cid = as_closure_id(body);
-            auto it = ev.closures_.find(cid);
-            if (it != ev.closures_.end() && it->second.body_id != aura::ast::NULL_NODE)
+            auto& cl_sh = ev.closures_shards_[ev.closures_shard_index(cid)];
+
+            auto it = cl_sh.map.find(cid);
+
+            if (it != cl_sh.map.end() && it->second.body_id != aura::ast::NULL_NODE)
                 result = ev.eval_flat(*ev.workspace_flat_, *ev.workspace_pool_, it->second.body_id,
                                       ev.top_env())
                              .value_or(make_void());

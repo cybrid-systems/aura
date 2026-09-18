@@ -317,6 +317,32 @@ static void ac3832_tombstone_and_source() {
 
 } // namespace
 
+// ── #3867: closures 16-shard conversion (TLS-miss lock amplification) ──
+static void ac3867_shard_source_cite() {
+    std::println("\n--- #3867: closures shard source-cite ---");
+    std::ifstream ix("src/compiler/evaluator.ixx");
+    std::string ix_s((std::istreambuf_iterator<char>(ix)), std::istreambuf_iterator<char>());
+    CHECK(!ix_s.empty(), "3867: evaluator.ixx readable");
+    CHECK(ix_s.find("Issue #3867") != std::string::npos, "3867: evaluator.ixx cites #3867");
+    CHECK(ix_s.find("struct ClosuresShard") != std::string::npos,
+          "3867: ClosuresShard struct present");
+    CHECK(ix_s.find("kClosuresShardCount = 16") != std::string::npos, "3867: 16 shards declared");
+    CHECK(ix_s.find("closures_shard_index") != std::string::npos, "3867: shard index fn present");
+    CHECK(ix_s.find("std::array<ClosuresShard, kClosuresShardCount> closures_shards_") !=
+              std::string::npos,
+          "3867: sharded member decl present");
+    std::ifstream gcf("src/compiler/evaluator_gc.cpp");
+    std::string gc_s((std::istreambuf_iterator<char>(gcf)), std::istreambuf_iterator<char>());
+    CHECK(gc_s.find("cl_sh : closures_shards_)") != std::string::npos, "3867: gc walks sharded");
+    std::ifstream envf("src/compiler/evaluator_env.cpp");
+    std::string env_s((std::istreambuf_iterator<char>(envf)), std::istreambuf_iterator<char>());
+    CHECK(env_s.find("cl_sh : closures_shards_)") != std::string::npos, "3867: env walks sharded");
+    CHECK(!std::ifstream("tests/issues/test_issue_3867.cpp").good(),
+          "3867: no test_issue_3867.cpp per #81967");
+    CHECK(!std::ifstream("docs/design/3867-closures-shard.md").good(),
+          "3867: no docs/design/3867-* per #1655");
+}
+
 int main() {
     std::println("=== Issue #1660: apply_closure + EnvFrame SoA unified stale ===");
     ac1_unified_helper();
@@ -327,6 +353,7 @@ int main() {
     ac6_materialize_stress();
     ac7_lineage();
     ac3832_tls_cache_happy_path();
+    ac3867_shard_source_cite();
     ac3832_tombstone_and_source();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;

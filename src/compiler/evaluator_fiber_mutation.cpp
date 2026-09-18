@@ -10,6 +10,7 @@
 module;
 
 #include "messaging_bridge.h"
+#include <array>
 #include "core/atomic_fence_port.h"
 #include "serve/fiber.h"
 #include "serve/metrics.h"
@@ -4415,7 +4416,9 @@ std::size_t Evaluator::refresh_stale_frames_after_steal(std::uint64_t hint_env_i
     {
         // Shared locks while inspecting; refresh_stale_frame_in_walk needs
         // the env shared lock held by the caller contract.
-        std::shared_lock<std::shared_mutex> cl_lock(closures_mtx_);
+        std::array<std::shared_lock<std::shared_mutex>, kClosuresShardCount> cl_lock;
+        for (std::size_t cl_i = 0; cl_i < kClosuresShardCount; ++cl_i)
+            cl_lock[cl_i] = std::shared_lock<std::shared_mutex>(closures_shards_[cl_i].mu);
         std::shared_lock<std::shared_mutex> ef_lock(env_frames_mtx_);
 
         // Issue #1903: track the IDs of refreshed frames so the caller
@@ -4451,16 +4454,17 @@ std::size_t Evaluator::refresh_stale_frames_after_steal(std::uint64_t hint_env_i
         if (hint_env_id != 0 && hint_env_id != static_cast<std::uint64_t>(NULL_ENV_ID))
             consider_frame(static_cast<EnvId>(hint_env_id));
 
-        for (const auto& [cid, cl] : closures_) {
-            (void)cid;
-            // Issue #1631: detect bridge_epoch drift vs live and vs fiber
-            // yield-time hint (expected_epoch). Count only — repair is via
-            // JIT walk + apply_closure safe_fallback, not silent restamp.
-            if (is_bridge_stale(cl.bridge_epoch, current_bridge) ||
-                (expected_epoch != 0 && is_bridge_stale(cl.bridge_epoch, epoch_target)))
-                ++bridge_mismatch;
-            consider_frame(cl.env_id);
-        }
+        for (const auto& cl_sh : closures_shards_)
+            for (const auto& [cid, cl] : cl_sh.map) {
+                (void)cid;
+                // Issue #1631: detect bridge_epoch drift vs live and vs fiber
+                // yield-time hint (expected_epoch). Count only — repair is via
+                // JIT walk + apply_closure safe_fallback, not silent restamp.
+                if (is_bridge_stale(cl.bridge_epoch, current_bridge) ||
+                    (expected_epoch != 0 && is_bridge_stale(cl.bridge_epoch, epoch_target)))
+                    ++bridge_mismatch;
+                consider_frame(cl.env_id);
+            }
 
         // Issue #1903: dual-path consistency enforcement on every
         // refreshed frame. After refresh_stale_frame_in_walk bumps the
@@ -4502,8 +4506,8 @@ std::size_t Evaluator::refresh_stale_frames_after_steal(std::uint64_t hint_env_i
                 if (!types::is_closure(v))
                     return;
                 const auto cid = static_cast<ClosureId>(types::as_closure_id(v));
-                auto it = closures_.find(cid);
-                if (it == closures_.end())
+                auto it = closures_shards_[closures_shard_index(cid)].map.find(cid);
+                if (it == closures_shards_[closures_shard_index(cid)].map.end())
                     return;
                 auto& cl = it->second;
                 elevate_ptr(cl.flat);

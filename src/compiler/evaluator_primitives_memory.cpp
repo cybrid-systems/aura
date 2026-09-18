@@ -11,6 +11,7 @@ module;
 #include "core/arena_auto_policy_stats.h"
 #include "core/densify_consistency_report.h" // Issue #2935 recovery counters
 #include <limits>
+#include <vector>
 
 module aura.compiler.evaluator;
 
@@ -291,19 +292,26 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
 
         // Erase closures in temp arena
         // Issue #1888: tombstone lifetime before erase (ClosureView guard).
-        // Issue #1990 (B-009): take unique_lock(closures_mtx_) before iterating.
-        // Concurrent insert (e.g. apply_closure materializing a closure from
+        // Issue #1990 (B-009): take unique_lock(closures_shards_[closures_shard_index(cid)].mu)
+        // before iterating. Concurrent insert (e.g. apply_closure materializing a closure from
         // another fiber) would invalidate the iterators without the lock.
         // unique_lock because we erase.
         {
-            std::unique_lock<std::shared_mutex> lock(ev.closures_mtx_);
+            // Issue #3867: bulk erase — unique-lock ALL shards in ascending
+            // index order, then walk each shard's map.
+            std::vector<std::unique_lock<std::shared_mutex>> cl_locks;
+            cl_locks.reserve(ev.closures_shards_.size());
+            for (auto& cl_sh : ev.closures_shards_)
+                cl_locks.emplace_back(cl_sh.mu);
             ev.bump_closures_apply_epoch_public(); // Issue #3832
-            for (auto it = ev.closures_.begin(); it != ev.closures_.end();) {
-                if (it->second.owner_arena == ev.temp_arena_) {
-                    invalidate_closure_lifetime(it->second);
-                    it = ev.closures_.erase(it);
-                } else
-                    ++it;
+            for (auto& cl_sh : ev.closures_shards_) {
+                for (auto it = cl_sh.map.begin(); it != cl_sh.map.end();) {
+                    if (it->second.owner_arena == ev.temp_arena_) {
+                        invalidate_closure_lifetime(it->second);
+                        it = cl_sh.map.erase(it);
+                    } else
+                        ++it;
+                }
             }
         }
 
@@ -336,19 +344,25 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
     // (gc-stats) — Return formatted string of all heap sizes for telemetry.
     ObservabilityPrims::register_stats_impl(
         "gc-stats", [&ev, destroy_defuse_index](const auto&) -> EvalValue {
-            // Issue #1990 (B-009): take shared_lock(closures_mtx_) for the
-            // read walk. shared_lock allows concurrent readers (other
-            // primitives that only read closures_) to proceed without
-            // blocking. Capture size + root_count inside the lock so the
-            // format below does not race with a concurrent insert/erase.
+            // Issue #1990 (B-009): take shared_lock(closures_shards_[closures_shard_index(cid)].mu)
+            // for the read walk. shared_lock allows concurrent readers (other primitives that only
+            // read closures_) to proceed without blocking. Capture size + root_count inside the
+            // lock so the format below does not race with a concurrent insert/erase.
             std::uint64_t root_count = 0;
             std::size_t closure_count = 0;
             {
-                std::shared_lock<std::shared_mutex> lock(ev.closures_mtx_);
-                closure_count = ev.closures_.size();
-                for (auto& [id, _] : ev.closures_) {
-                    if (id < ev.gc_safe_closure_id_)
-                        ++root_count;
+                // Issue #3867: bulk read — shared-lock ALL shards in ascending
+                // index order, then sum sizes + root counts across shards.
+                std::vector<std::shared_lock<std::shared_mutex>> cl_locks;
+                cl_locks.reserve(ev.closures_shards_.size());
+                for (auto& cl_sh : ev.closures_shards_)
+                    cl_locks.emplace_back(cl_sh.mu);
+                for (const auto& cl_sh : ev.closures_shards_) {
+                    closure_count += cl_sh.map.size();
+                    for (const auto& [id, _] : cl_sh.map) {
+                        if (id < ev.gc_safe_closure_id_)
+                            ++root_count;
+                    }
                 }
             }
             auto result = std::format(

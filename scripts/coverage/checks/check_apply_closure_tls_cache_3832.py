@@ -49,9 +49,13 @@ def main() -> int:
 
     # Happy path: TLS before shared_lock on closures_mtx_
     pos_tls = flat.find("try_apply_closure_tls_lookup(*this, cid, cl_copy, tombstoned)")
-    pos_mtx = flat.find("std::shared_lock<std::shared_mutex> rlock(closures_mtx_);", pos_tls)
+    # Issue #3867: the apply-path mutex is sharded — the lock is
+    # closures_shards_[closures_shard_index(cid)].mu (same ordering intent).
+    pos_mtx = flat.find(
+        "std::shared_lock<std::shared_mutex> rlock(closures_shards_[closures_shard_index(cid)].mu);", pos_tls
+    )
     if pos_tls < 0 or pos_mtx < 0 or pos_mtx < pos_tls:
-        fails.append("AC1: TLS lookup must precede closures_mtx_ shared_lock on apply path")
+        fails.append("AC1: TLS lookup must precede the closures shard shared_lock on apply path")
 
     must("closures_apply_epoch_", "AC1 epoch field", ev)
     must("kApplyClosureTlsCacheIssue = 3832", "AC1 evaluator stamp", ev)
@@ -77,6 +81,26 @@ def main() -> int:
     if docs.is_dir():
         for f in sorted(docs.glob("3832-*")):
             fails.append(f"AC3: docs/design/{f.name} present (forbidden)")
+
+    # Issue #3867: closures 16-shard conversion (extend #3832, no new check file).
+    for needle, label in [
+        ("Issue #3867", "AC3867 ev cite"),
+        ("struct ClosuresShard", "AC3867 shard struct"),
+        ("kClosuresShardCount = 16", "AC3867 shard count"),
+    ]:
+        if needle not in ev:
+            fails.append(f"{label}: missing {needle!r}")
+    gc3867 = _read("src/compiler/evaluator_gc.cpp")
+    env3867 = _read("src/compiler/evaluator_env.cpp")
+    if "cl_sh : closures_shards_)" not in gc3867:
+        fails.append("AC3867: gc walks not sharded")
+    if "cl_sh : closures_shards_)" not in env3867:
+        fails.append("AC3867: env walks not sharded")
+    t3867 = _read("tests/compiler/test_apply_closure_envframe_soa.cpp")
+    if "Issue #3867" not in t3867:
+        fails.append("AC3867 test cite: missing Issue #3867")
+    if (ROOT / "tests" / "issues" / "test_issue_3867.cpp").is_file():
+        fails.append("AC3867: test_issue_3867.cpp present (forbidden #81967)")
 
     if fails:
         print("FAIL #3832 apply_closure_tls_cache:")

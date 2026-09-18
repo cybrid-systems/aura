@@ -57,9 +57,9 @@ def main() -> int:
     must("register_active_closure", "AC1", test)
 
     must("shared_lock", "AC2", flush)
-    must("closures_mtx_", "AC2", flush)
+    must("closures_shards_", "AC2", flush)
     must("unique_lock", "AC2", sweep)
-    must("closures_mtx_", "AC2", sweep)
+    must("closures_shards_", "AC2", sweep)
     must("Issue #2473", "AC2", flush)
     must("Issue #2473", "AC2", sweep)
 

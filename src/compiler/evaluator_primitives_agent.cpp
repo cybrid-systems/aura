@@ -2959,9 +2959,14 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 // 2632 AC4: parallel-intend result packaging wire-up.
                 if (types::is_closure(val) && ev.workspace_flat_) {
                     const auto cid = types::as_closure_id(val);
-                    if (cid < ev.closures_.size()) {
-                        const auto& cl = ev.closures_[cid];
-                        if (cl.body_id != aura::ast::NULL_NODE) {
+                    if (cid < ev.closures_size()) {
+                        // Issue #3867: sharded lookup on the owning shard —
+                        // find() (no default-insert); a miss skips exactly like
+                        // the old default-constructed body_id == NULL path.
+                        auto& cl_sh = ev.closures_shards_[ev.closures_shard_index(cid)];
+                        const auto cit = cl_sh.map.find(cid);
+                        if (cit != cl_sh.map.end() && cit->second.body_id != aura::ast::NULL_NODE) {
+                            const auto& cl = cit->second;
                             // Issue #2759: layout + Evaluator stamp (sole production
                             // authority) — do not write tenant/fiber by hand or rely
                             // on process-global capture under multi-tenant hard-close.
