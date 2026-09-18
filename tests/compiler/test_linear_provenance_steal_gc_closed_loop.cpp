@@ -205,9 +205,10 @@ static void ac3262_1_restamp_after_locks() {
     auto end = gc.find("void Evaluator::resync_linear_jit_gc_roots_after_invalidate", pos);
     auto win = end > pos ? gc.substr(pos, end - pos) : std::string{};
     CHECK(win.find("Issue #3262") != std::string::npos, "3262 AC1: cite");
-    CHECK(win.find("std::shared_lock<std::shared_mutex> cl_lock(closures_mtx_)") !=
-              std::string::npos,
-          "3262 AC1: closures shared_lock");
+    CHECK(
+        win.find("std::array<std::shared_lock<std::shared_mutex>, kClosuresShardCount> cl_lock") !=
+            std::string::npos,
+        "3262 AC1: closures shared_lock");
     auto rec = win.find("record_linear_gc_probe");
     auto rest = win.find("auto_restamp_pinned_stable_refs_at");
     CHECK(rec != std::string::npos && rest != std::string::npos && rest > rec,

@@ -38,6 +38,7 @@
 #include <vector>
 
 #include "compiler/typed_mutation_audit.h"
+#include "core/cpp26_contract_stats.h"
 #include "core/resource_quota.hh"
 #include "orch/agent_scope.h"
 #include "orch/agent_spawn.h"
@@ -90,6 +91,10 @@ struct RestoreSandbox {
             ::unsetenv("AURA_SANDBOX");
         aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active
             .store(0, std::memory_order_relaxed);
+        // Issue #3866: multi-worker Ready self-check requires hot contracts
+        // armed when production is latched. Disarm with the latch so a
+        // later Scheduler(2) under the restored Soft face stays Quiet.
+        aura::core::cpp26::note_hot_contract_harden_armed(false);
     }
 };
 
@@ -625,6 +630,9 @@ static void ac2946_production_hard_deny() {
     auto set_prod = [](bool on) {
         aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active
             .store(on ? 1u : 0u, std::memory_order_relaxed);
+        // Issue #3866: Scheduler(N>1).run() under production refuses Ready
+        // unless hot contracts are fail-closed (non-PACK NDEBUG OFF).
+        aura::core::cpp26::note_hot_contract_harden_armed(on);
     };
 
     // AC2: Soft / no production → SoftMetric
@@ -960,6 +968,9 @@ static void ac3216_handoff_directory_hard_deny() {
     auto set_prod = [](bool on) {
         aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active
             .store(on ? 1u : 0u, std::memory_order_relaxed);
+        // Issue #3866: Scheduler(N>1).run() under production refuses Ready
+        // unless hot contracts are fail-closed (non-PACK NDEBUG OFF).
+        aura::core::cpp26::note_hot_contract_harden_armed(on);
     };
 
     {

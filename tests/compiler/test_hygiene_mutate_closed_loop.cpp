@@ -1317,7 +1317,12 @@ static void ac3121_3_under_budget_green() {
     }
     CHECK(live != aura::ast::NULL_NODE, "3121 AC3: live");
     auto sr = cs.eval(std::format("(query:stable-ref {})", live));
-    CHECK(sr && is_pair(*sr), "3121 AC3: under-budget stable-ref pair");
+    // Issue #3862: production query:stable-ref finishes schema-2 (hash),
+    // not the historical layout-only pair. Under-budget still must not
+    // restamp-lag (3121 AC3).
+    CHECK(sr && is_hash(*sr), "3121 AC3: under-budget production stable-ref schema-2");
+    CHECK(sr.has_value() && merr_kind_3027(cs, *sr) != "restamp-lag",
+          "3121 AC3: under-budget stable-ref not lag");
     // Issue #3425: production as-stable-ref rejects bare int. Under-budget
     // still must not be restamp-lag (3121 AC3); occupancy remake is closed.
     auto asr = cs.eval(std::format("(query:as-stable-ref {})", live));
