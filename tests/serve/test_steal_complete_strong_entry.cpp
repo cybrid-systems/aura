@@ -250,6 +250,37 @@ static void ac3619_no_edge_held_residual() {
         prod_save, std::memory_order_relaxed);
 }
 
+// ── #3866: hot-contracts fail-closed refuse at multi-worker Ready ──
+static void ac3866_hot_contracts_refuse_source_cite() {
+    std::string rpa;
+    for (const char* p :
+         {"src/serve/runtime_production_abi.cpp", "../src/serve/runtime_production_abi.cpp"}) {
+        rpa = read_file(p);
+        if (!rpa.empty())
+            break;
+    }
+    CHECK(!rpa.empty(), "3866: runtime_production_abi.cpp readable");
+    CHECK(rpa.find("Issue #3866") != std::string::npos, "3866: self-check cites #3866");
+    CHECK(rpa.find("hot_contract_harden_armed()") != std::string::npos,
+          "3866: Ready self-check asserts the hot-contract arm");
+    CHECK(rpa.find("kProductionAbiSelfcheckFailBitHotContracts") != std::string::npos,
+          "3866: unarmed sets the hot-contracts fail bit");
+    std::string rph;
+    for (const char* p :
+         {"src/serve/runtime_production_abi.h", "../src/serve/runtime_production_abi.h"}) {
+        rph = read_file(p);
+        if (!rph.empty())
+            break;
+    }
+    CHECK(!rph.empty(), "3866: runtime_production_abi.h readable");
+    CHECK(rph.find("kProductionAbiSelfcheckFailBitHotContracts = 1ull << 9") != std::string::npos,
+          "3866: fail bit 9 defined");
+    CHECK(read_file("tests/serve/test_issue_3866.cpp").empty(),
+          "3866: no test_issue_3866.cpp per #81967");
+    CHECK(read_file("docs/design/3866-hot-contracts-ready-refuse.md").empty(),
+          "3866: no docs/design/3866-* per #1655");
+}
+
 int run_test_steal_complete_strong_entry() {
     std::println("=== Issue #2377: steal-complete strong entry contract ===");
 
@@ -761,6 +792,7 @@ int run_test_steal_complete_strong_entry() {
 
     ac3619_no_edge_held_residual();
     ac3654_linear_post_mutate_unset_fail_closed();
+    ac3866_hot_contracts_refuse_source_cite();
     std::println(
         "\n=== #2377 + #2955 + #3098 + #3195 + #3343 + #3654 results: {} passed, {} failed ===",
         g_passed, g_failed);

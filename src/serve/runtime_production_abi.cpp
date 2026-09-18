@@ -3,6 +3,8 @@
 #include "serve/runtime_production_abi.h"
 #include "serve/steal_safety.h"
 
+#include "core/cpp26_contract_stats.h" // #3866 hot_contract_harden_armed
+
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -127,6 +129,14 @@ bool aura_runtime_require_production_multi_worker() noexcept {
     // multi-worker production (weak stub returning OK is not production).
     if (aura_abi_strong_ir_typed_entry_v() == 0)
         fail_bits |= kProductionAbiSelfcheckFailBitTypedEntry;
+
+    // Issue #3866: hot contracts must be fail-closed under the production
+    // face — unarmed + non-PACK NDEBUG OFF runs as_int / view_at contracts
+    // Quiet (the ship-without-arm window). Ready refuses.
+#if !defined(AURA_PRODUCTION_PACK)
+    if (!::aura::core::cpp26::hot_contract_harden_armed())
+        fail_bits |= kProductionAbiSelfcheckFailBitHotContracts;
+#endif
 
     // Issue #3195: residual-zero sticky wiring must be present. Header
     // sentinels are 1 unless a mis-link / test store(0) wiped them.

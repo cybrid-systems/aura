@@ -86,6 +86,18 @@ def main() -> int:
         for f in docs.glob("2955-*"):
             fails.append(f"AC6: docs/design/{f.name} present (forbidden #1655)")
 
+    # Issue #3866: hot-contracts fail-closed refuse at multi-worker Ready
+    # (extend #2955 self-check, no new check file).
+    rpa = (ROOT / "src" / "serve" / "runtime_production_abi.cpp").read_text(encoding="utf-8", errors="replace")
+    rph = (ROOT / "src" / "serve" / "runtime_production_abi.h").read_text(encoding="utf-8", errors="replace")
+    must("Issue #3866", "AC3866", rpa)
+    must("hot_contract_harden_armed", "AC3866", rpa)
+    must("kProductionAbiSelfcheckFailBitHotContracts", "AC3866", rpa)
+    must("kProductionAbiSelfcheckFailBitHotContracts = 1ull << 9", "AC3866", rph)
+    must("Issue #3866", "AC3866", test)
+    if (ROOT / "tests" / "serve" / "test_issue_3866.cpp").is_file():
+        fails.append("AC3866: test_issue_3866.cpp present (forbidden #81967)")
+
     if fails:
         for f in fails:
             print(f"FAIL: {f}", file=sys.stderr)
