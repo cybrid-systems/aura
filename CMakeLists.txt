@@ -1137,7 +1137,11 @@ target_link_libraries(test_shape PRIVATE stdc++)
 # contract_handler.cpp. Without this, the link fails with
 # `undefined reference to handle_contract_violation`. Same pattern
 # as test_jit_metrics (line ~695).
-target_sources(test_shape PRIVATE src/core/contract_handler.cpp)
+# Issue #2433 follow-up: shape_profiler's storm-active hook
+# (aura_hot_update_set_shape_storm_active) lives in runtime_ssot.cpp —
+# the standalone link broke when #2433 added the call. Surfaced by the
+# #3868 full-tree rebuild.
+target_sources(test_shape PRIVATE src/core/contract_handler.cpp src/compiler/runtime_ssot.cpp)
 set_source_files_properties(src/core/contract_handler.cpp PROPERTIES COMPILE_FLAGS "-include contracts -fcontracts")
 add_test(NAME test_shape COMMAND test_shape
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
@@ -1159,7 +1163,9 @@ add_executable(test_spec_jit tests/compiler/test_spec_jit.cpp
 target_include_directories(test_spec_jit PRIVATE src)
 target_link_libraries(test_spec_jit PRIVATE stdc++)
 # Issue #278 follow-up: same contract_handler link fix as test_shape.
-target_sources(test_spec_jit PRIVATE src/core/contract_handler.cpp)
+# Issue #2433 follow-up: same runtime_ssot link fix as test_shape —
+# shape_profiler.cpp references aura_hot_update_set_shape_storm_active.
+target_sources(test_spec_jit PRIVATE src/core/contract_handler.cpp src/compiler/runtime_ssot.cpp)
 set_source_files_properties(src/core/contract_handler.cpp PROPERTIES COMPILE_FLAGS "-include contracts -fcontracts")
 # Issue #278 follow-up: spec_jit_controller.cpp calls
 # AuraJIT::unhandled_opcode_count_for_function, which lives in
