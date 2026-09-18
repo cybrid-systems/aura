@@ -7645,6 +7645,16 @@ def cmd_lint():
             "Issue #3872 mutate-session hard-gate linter failed — run python3 scripts/check_mutate_session_hard_gate_3872.py"
         )
         return r
+    # Issue #3873: advisory overlay distinguishable from deny authority —
+    # result flag + query payload key + built-host behavioral ACs.
+    haf3873_script = ROOT / "scripts" / "check_health_advisory_face_3873.py"
+    if not haf3873_script.exists():
+        fail(f"missing {haf3873_script}")
+        return 1
+    r = run([sys.executable, str(haf3873_script)], cwd=ROOT)
+    if r != 0:
+        fail("Issue #3873 health advisory face linter failed — run python3 scripts/check_health_advisory_face_3873.py")
+        return r
     # Issue #3645: engine:metrics by-name lookup miss returns a typed
     # not-found hash (ok=#f / status=not-found / name / schema-3531)
     # instead of make_void() — a typo'd or unregistered name is now

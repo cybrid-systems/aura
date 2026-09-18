@@ -127,3 +127,4 @@ check_flatast_seqlock_get_3868.py
 check_pass_purity_effect_3870.py
 check_letrec_check_synth_3871.py
 check_mutate_session_hard_gate_3872.py
+check_health_advisory_face_3873.py

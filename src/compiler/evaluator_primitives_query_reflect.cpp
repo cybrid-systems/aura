@@ -338,6 +338,8 @@ void register_query_reflect_primitives(PrimRegistrar add, std::pmr::vector<Pair>
             insert_kv("readiness-bp", static_cast<std::int64_t>(scored.readiness_bp));
             insert_kv("force-reason", scored.force_reason_code);
             insert_kv("force-reason-code", scored.force_reason_code);
+            // Issue #3873: observe-only overlay flag (additive payload key).
+            insert_kv("advisory-overlay", scored.advisory_overlay ? 1 : 0);
             insert_kv("would-allow-commit", scored.would_allow_commit ? 1 : 0);
             // #2558 coercion
             insert_kv("coercion-completeness-bp",
