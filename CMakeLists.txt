@@ -1161,11 +1161,16 @@ add_executable(test_spec_jit tests/compiler/test_spec_jit.cpp
     src/compiler/spec_jit_controller.cpp
     src/compiler/shape_profiler.cpp)
 target_include_directories(test_spec_jit PRIVATE src)
-target_link_libraries(test_spec_jit PRIVATE stdc++)
+# Issue #2433-era rot, surfaced by the #3868 full-tree rebuild: the
+# hand-picked subset closure of this light target cannot be kept in
+# sync with the typed_audit / hot_update / fiber SSOT web. Link the
+# full shared lib — in-target strong defs preempt it, the .so fills
+# every remaining undefined.
+target_link_libraries(test_spec_jit PRIVATE stdc++ aura_test_objects)
 # Issue #278 follow-up: same contract_handler link fix as test_shape.
 # Issue #2433 follow-up: same runtime_ssot link fix as test_shape —
 # shape_profiler.cpp references aura_hot_update_set_shape_storm_active.
-target_sources(test_spec_jit PRIVATE src/core/contract_handler.cpp src/compiler/runtime_ssot.cpp src/compiler/test_concurrent_stubs.cpp)
+target_sources(test_spec_jit PRIVATE src/core/contract_handler.cpp src/compiler/runtime_ssot.cpp)
 set_source_files_properties(src/core/contract_handler.cpp PROPERTIES COMPILE_FLAGS "-include contracts -fcontracts")
 # Issue #278 follow-up: spec_jit_controller.cpp calls
 # AuraJIT::unhandled_opcode_count_for_function, which lives in
@@ -1201,7 +1206,6 @@ add_executable(test_jit_metrics tests/compiler/test_jit_metrics.cpp
     src/compiler/aura_jit_bridge_stub.cpp
     src/compiler/tl_arena_tls.cpp
     src/compiler/runtime_ssot.cpp
-    src/compiler/test_concurrent_stubs.cpp
     src/compiler/hot_update_registry.cpp)
 target_include_directories(test_jit_metrics PRIVATE src)
 set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
@@ -1209,7 +1213,9 @@ set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE
 set_source_files_properties(src/core/contract_handler.cpp PROPERTIES COMPILE_FLAGS "-include contracts -fcontracts")
 set_source_files_properties(src/core/contract_stub.cpp PROPERTIES COMPILE_FLAGS "-include contracts -fcontracts")
 target_sources(test_jit_metrics PRIVATE src/core/contract_handler.cpp)
-target_link_libraries(test_jit_metrics PRIVATE stdc++ stdc++exp pthread aura-reflect)
+# Same #3868-surfaced rot as test_spec_jit: full shared-lib link
+# closes the typed_audit / hot_update / fiber symbol web.
+target_link_libraries(test_jit_metrics PRIVATE stdc++ stdc++exp pthread aura-reflect aura_test_objects)
 if(LLVM_FOUND)
     target_include_directories(test_jit_metrics PRIVATE ${LLVM_INCLUDE_DIRS})
     target_link_libraries(test_jit_metrics PRIVATE ${llvm_libs})
