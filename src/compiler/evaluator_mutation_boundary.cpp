@@ -1957,7 +1957,8 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
                             mid, "strict-linear-synth-denied",
                             typed_audit::MutationKind::Structural, cp.version, epoch_after,
                             typed_audit::AuditOutcome::Error,
-                            static_cast<std::uint32_t>(audit_target), 0, fid, 0);
+                            static_cast<std::uint32_t>(audit_target), 0, fid, 0,
+                            static_cast<std::uint32_t>(capability_tenant_id()));
                     // Issue #2717: stamp TypeLinearCommitProof on boundary
                     // reject path. Agents can hold the proof across
                     // densify / steal / remap and re-check

@@ -40,7 +40,9 @@ def main() -> int:
     cmake = _read("CMakeLists.txt")
 
     def_pos = h.find("inline void capture_audit_event_forced")
-    win = h[def_pos : def_pos + 3500] if def_pos >= 0 else ""
+    # Issue #3874: the tenant_id param + stamp grew the body by ~2 lines;
+    # window extended so the enforcement-link needles stay in range.
+    win = h[def_pos : def_pos + 3700] if def_pos >= 0 else ""
 
     # AC1
     must("Issue #2814", "AC1", win)

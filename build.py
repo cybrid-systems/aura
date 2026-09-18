@@ -7655,6 +7655,16 @@ def cmd_lint():
     if r != 0:
         fail("Issue #3873 health advisory face linter failed — run python3 scripts/check_health_advisory_face_3873.py")
         return r
+    # Issue #3874: TypedMutationAuditEvent carries the capability tenant —
+    # struct field + emit plumbing + production boundary wiring.
+    aet3874_script = ROOT / "scripts" / "check_audit_event_tenant_3874.py"
+    if not aet3874_script.exists():
+        fail(f"missing {aet3874_script}")
+        return 1
+    r = run([sys.executable, str(aet3874_script)], cwd=ROOT)
+    if r != 0:
+        fail("Issue #3874 audit event tenant linter failed — run python3 scripts/check_audit_event_tenant_3874.py")
+        return r
     # Issue #3645: engine:metrics by-name lookup miss returns a typed
     # not-found hash (ok=#f / status=not-found / name / schema-3531)
     # instead of make_void() — a typo'd or unregistered name is now
