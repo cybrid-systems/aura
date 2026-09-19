@@ -1014,16 +1014,32 @@ void register_workspace_query_primitives(
     }};
 
     // (query:root) — Return the current workspace root node ID, or #f if no workspace
-    add("query:root", [ws, mev, begin_query_epoch, end_query_epoch](const auto&) -> EvalValue {
-        std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
-        if (!ws.workspace_flat)
-            return mev("no-workspace", "no workspace AST loaded");
-        if (ws.workspace_flat->root == aura::ast::NULL_NODE)
-            return mev("no-root", "workspace AST has no root node");
-        const auto qe = begin_query_epoch(ws.workspace_flat); // Issue #2192
-        auto out = make_int(static_cast<std::int64_t>(ws.workspace_flat->root));
-        return end_query_epoch(qe, ws.workspace_flat, out);
-    });
+    // Issue #3896: production must not export a bare NodeId through
+    // end_query_epoch — resolve/mutate refuse bare int (#3395). Finish via
+    // end_query_epoch_maybe_result with a singleton match list so schema-2
+    // auto-upgrade stamps the root. Soft keeps the historical bare int.
+    add("query:root",
+        [ws, mev, begin_query_epoch, end_query_epoch,
+         end_query_epoch_maybe_result](const auto&) -> EvalValue {
+            std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
+            if (!ws.workspace_flat)
+                return mev("no-workspace", "no workspace AST loaded");
+            if (ws.workspace_flat->root == aura::ast::NULL_NODE)
+                return mev("no-root", "workspace AST has no root node");
+            const auto qe = begin_query_epoch(ws.workspace_flat); // Issue #2192
+            auto out = make_int(static_cast<std::int64_t>(ws.workspace_flat->root));
+            if (aura::compiler::typed_audit::production_defaults_active()) {
+                // Issue #3896: singleton match list. Walk treats a bare int as
+                // zero matches (not a pair list). Wrap so match_count==1 and
+                // matches[0] is root.
+                auto list_pid = ws.pairs.size();
+                ws.pairs.push_back({out, make_void()});
+                out = make_pair(static_cast<int>(list_pid));
+                return end_query_epoch_maybe_result(qe, ws.workspace_flat, out,
+                                                    /*as_query_result=*/false);
+            }
+            return end_query_epoch(qe, ws.workspace_flat, out);
+        });
 
     // Issue #2989: Agent-facing hygiene skip + SafePCVSpan pin counters.
     // Combined skip = root pattern skips + hygiene_skip_total (filter/recursive).

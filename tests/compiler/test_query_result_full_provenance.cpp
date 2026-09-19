@@ -1869,6 +1869,49 @@ void test_ac3895_3_soft_and_source() {
     }
 }
 
+// ── #3896: production query:root schema-2, Soft bare int ──
+void test_ac3896_1_prod_root_schema2_source() {
+    std::print("AC3896/AC1 -- production query:root finishes schema-2 via maybe_result\n");
+    std::ifstream f("src/compiler/evaluator_primitives_query_workspace.cpp");
+    std::string qws((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    expect_true("3896 AC1: query_workspace readable", !qws.empty());
+    const auto root_b = qws.find("add(\"query:root\"");
+    expect_true("3896 AC1: query:root present", root_b != std::string::npos);
+    const auto root_e = qws.find("query:hygiene-skip-count", root_b);
+    const auto root_body =
+        qws.substr(root_b, (root_e == std::string::npos ? 1800 : root_e - root_b));
+    expect_true("3896 AC1: cites #3896", root_body.find("Issue #3896") != std::string::npos);
+    expect_true("3896 AC1: production finishes via maybe_result",
+                root_body.find("end_query_epoch_maybe_result") != std::string::npos);
+    expect_true("3896 AC1: singleton match list wrap",
+                root_body.find("singleton match list") != std::string::npos);
+    expect_true("3896 AC1: production_defaults_active gate",
+                root_body.find("production_defaults_active()") != std::string::npos);
+    expect_true("3896 AC1: Soft keeps end_query_epoch bare int",
+                root_body.find("return end_query_epoch(qe, ws.workspace_flat, out)") !=
+                    std::string::npos);
+}
+
+void test_ac3896_2_soft_root_bare_int() {
+    std::print("AC3896/AC2 -- Soft query:root stays a bare int\n");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    apply_dev_audit_defaults();
+    CompilerService cs;
+    expect_true("3896 AC2: set-code", cs.eval("(set-code \"(begin 1 2 3)\")").has_value());
+    expect_true("3896 AC2: eval", cs.eval("(eval-current)").has_value());
+    auto root = cs.eval("(query:root)");
+    expect_true("3896 AC2: Soft query:root returns", root.has_value());
+    expect_true("3896 AC2: Soft query:root is bare int (not hash)", root && is_int(*root));
+    {
+        std::ifstream f2("tests/issues/test_issue_3896.cpp");
+        expect_true("3896 AC2: no test_issue_3896.cpp", !f2.good());
+    }
+    {
+        std::ifstream f3("docs/design/3896-query-root-schema2.md");
+        expect_true("3896 AC2: no docs/design/", !f3.good());
+    }
+}
+
 // ── #3862: production stable-ref / parent-stable schema-2 finish ──
 void test_ac3862_1_prod_schema2_finish() {
     std::print("AC3862/AC1 -- production stable-ref / parent-stable schema-2 finish\n");
@@ -2047,6 +2090,8 @@ int main() {
     test_ac3895_1_prod_stable_ref_singleton_match();
     test_ac3895_2_prod_parent_stable_singleton_match();
     test_ac3895_3_soft_and_source();
+    test_ac3896_1_prod_root_schema2_source();
+    test_ac3896_2_soft_root_bare_int();
     test_ac3862_2_soft_and_source();
     std::fprintf(stderr, "[m] after 3862_2 ALL DONE\n");
     // test_ac3827_1_production_children_v2_schema2(); — SKIPPED: pre-existing
@@ -2062,6 +2107,7 @@ int main() {
     // test_ac3827_3_children_stable_stays_green();
     test_ac3827_4_soft_and_source();
     std::print("All #3103 + #3137 + #3231 + #3286 + #3311 + #3389 + #3395 + #3424 + "
-               "#3449 + #3660 + #3695 + #3696 + #3766 + #3767 + #3827 + #3895 AC tests PASSED\n");
+               "#3449 + #3660 + #3695 + #3696 + #3766 + #3767 + #3827 + #3895 + #3896 AC tests "
+               "PASSED\n");
     return 0;
 }
