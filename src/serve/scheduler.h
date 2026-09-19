@@ -115,11 +115,14 @@ public:
     // Timeout residual) calls note_orphan_fiber after observing
     // !is_done() post-drain. The Scheduler holds the orphan for
     // hard_deadline_ms, then reaps it: removes from wait_map_ /
-    // joiner_map_ / owned_fibers_, sets the fiber's reclaimed_ flag
-    // (so the next joiner sees "logically done"), wakes any
-    // registered joiners. Bodies that never yield still consume
-    // stack until they return — documented limitation, same as
-    // the cooperative cancel protocol (#2153).
+    // joiner_map_, sets the fiber's reclaimed_ flag (so the next
+    // joiner sees "logically done"), wakes any registered joiners.
+    // Issue #3905: do not owned_fibers_.erase a live (!is_done) body —
+    // Reclaimed-pending AgentHandle / name-table keep Fiber* across
+    // hard-reap. Object stays until Done / on_fiber_done / ~Scheduler.
+    // Bodies that never yield still consume stack until they return —
+    // documented limitation, same as the cooperative cancel protocol
+    // (#2153).
     //
     // Issue #2396: production residual hard-reclaim is tick-driven.
     // Scheduler::run() (IO/epoll loop) and maybe_reap_orphans_on_tick()
@@ -248,8 +251,9 @@ private:
     // Issue #2227: hard-reclaim orphan list. Each entry is a fiber
     // that has been observed as !is_done() after the cooperative
     // drain window; the scheduler reaps it when its hard_deadline
-    // elapses (drop from wait_map_ / joiner_map_ / owned_fibers_,
-    // set reclaimed_ flag, wake joiners). Small (one entry per
+    // elapses (drop from wait_map_ / joiner_map_, set reclaimed_
+    // flag, wake joiners). Issue #3905: live bodies stay in
+    // owned_fibers_ until Done / ~Scheduler. Small (one entry per
     // residual fiber); mutated only under orphan_mutex_.
     std::vector<OrphanEntry> orphan_fibers_;
     mutable std::mutex orphan_mutex_;

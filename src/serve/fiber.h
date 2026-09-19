@@ -906,7 +906,9 @@ public:
     // when the fiber's hard_deadline has passed and !is_done(). Once
     // set, is_done() still returns the body-truth state, but the
     // scheduler treats the fiber as "logically done" (removed from
-    // wait_map_ / joiner_map_ / owned_fibers_). Bodies that yield
+    // wait_map_ / joiner_map_). Issue #3905: owned_fibers_ keeps the
+    // object while the body is live so Reclaimed-pending AgentHandle /
+    // name-table / mailbox attachers do not UAF. Bodies that yield
     // post-reclaim are NOT re-dispatched; #2533 request_force_safepoint
     // + cancel nudge residual bodies to cooperative edges so still_running
     // converges (true preemption remains out of scope).
@@ -939,6 +941,12 @@ public:
     // gauge without bumping retired — same accounting as ~Fiber, so a
     // later dtor does not double-drop. Joiners already observe reclaimed_.
     void abandon_join_drain_still_running() noexcept;
+    // Issue #3905: drop this Fiber from its primary mailbox attachers_
+    // (no-op if unbound). Hard-reap belt so mailbox notify cannot walk
+    // a Fiber* after maps are dropped; object stays owned until Done /
+    // ~Scheduler. Safe while the mailbox is still live (handle / spawn
+    // shared_ptr). Idempotent.
+    void detach_mailbox_if_attached() noexcept;
     // Issue #2885: per-Fiber still-running flag (true between
     // mark_reclaimed and body-retired). Set in mark_reclaimed (per
     // #2636 sample-window protocol), cleared in body-exit. Read by the

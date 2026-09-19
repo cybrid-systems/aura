@@ -582,13 +582,14 @@ void WorkerThread::run() {
             }
 
             if (fiber->is_done() || fiber->is_reclaimed()) {
-                // Issue #XXXX: a hard-reclaimed fiber may still sit in
-                // this worker's local queue (the reaper marks it but
-                // cannot remove it from the Chase-Lev deque). resume()
-                // would no-op via the #2468 guard; re-queueing would
-                // hot-loop until the reaper destroys the object (UAF).
-                // Drop it like a done fiber (reaper already cleaned up
-                // maps/quota/joiners — no notify).
+                // Issue #XXXX / #3905: a hard-reclaimed fiber may still
+                // sit in this worker's local queue (the reaper marks it
+                // but cannot remove it from the Chase-Lev deque).
+                // resume() would no-op via the #2468 guard; re-queueing
+                // would hot-loop. Drop it like a done fiber (reaper
+                // already cleaned maps/quota/joiners — no notify).
+                // #3905 keeps the object in owned_fibers_ until Done /
+                // ~Scheduler so this pointer stays valid.
                 fiber->clear_queued();
                 pending_.fetch_sub(1, std::memory_order_release);
                 continue;

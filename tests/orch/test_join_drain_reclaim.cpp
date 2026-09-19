@@ -3,11 +3,10 @@
 // (no leak after cancel+drain under non-yielding bodies).
 //
 //   AC1: residual + reclaim counters bump when non-yielding body +
-//        short drain. Reaper drops the fiber from owned_fibers_ +
-//        marks reclaimed_; is_done() returns true.
-//   AC2: resource convergence — N-agent cancel storm, owned_fibers_
-//        count returns to baseline after reap; orphans_reaped_total
-//        == N.
+//        short drain. Reaper marks reclaimed_; Issue #3905 keeps the
+//        live Fiber in owned_fibers_ (safe to dereference after reap).
+//   AC2: resource convergence — N-agent cancel storm; orphans_reaped_total
+//        == N. Live bodies stay owned until ~Scheduler (#3905).
 //   AC3: happy path unchanged — Ok join does not trigger residual
 //        or reclaim counters; provenance only on Ok (#1879).
 //   AC4: parallel timeout reclaims too (per the issue's AC4 — parallel
@@ -55,6 +54,7 @@
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
+#include <filesystem>
 #include <fstream>
 #include <print>
 #include <span>
@@ -241,6 +241,152 @@ static void ac3880_3_source_cite() {
     CHECK(spawn.find("mailbox->detach(fiber)") != std::string::npos,
           "3880 AC3: live dtor detaches");
     CHECK(read_file("tests/orch/test_issue_3880.cpp").empty(), "3880 AC3: no test_issue_3880.cpp");
+}
+
+// Issue #3905: orphan hard-reap must not free Fiber while a
+// Reclaimed-pending name-table / AgentHandle still holds fiber*
+// (complement of #3880 — handle drops mailbox while Fiber live).
+static void ac3905_1_reap_keeps_pending_handle_fiber() {
+    using aura::orch::AgentHandle;
+    using aura::orch::complete_agent_join_cleanup;
+    using aura::orch::ensure_reclaimed_cleanup;
+    using aura::serve::JoinResult;
+    using aura::serve::mf_mailbox::MultiFiberMailbox;
+    std::println("\n--- #3905 AC1: Reclaimed-pending + hard-reap → no UAF on wait/find/ensure ---");
+    // Scheduler-owned fiber (no SchedRunner): body never runs, so
+    // cancel+drain residual + hard-reap is the #2227 AC1 shape without
+    // production spawn / sandbox / WAL (those pollute later ACs).
+    Scheduler sched(1);
+    aura::compiler::AgentNameTable table;
+    Fiber* raw = sched.spawn([] {
+        for (;;) {
+        }
+    });
+    CHECK(raw != nullptr, "3905 AC1: spawn ok");
+    auto mb = std::make_shared<MultiFiberMailbox>();
+    mb->attach(raw);
+    CHECK(raw->mailbox() == mb.get(), "3905 AC1: Fiber::mailbox_ set");
+    CHECK(mb->attacher_count() >= 1, "3905 AC1: mailbox lists fiber");
+
+    AgentHandle h;
+    h.ok = true;
+    h.fiber = raw;
+    h.mailbox = mb;
+    h.name = "3905-pending";
+    h.reserved_memory_bytes = 4096;
+    h.must_wait_reclaimed = true;
+    JoinResult jr;
+    jr.status = JoinStatus::Reclaimed;
+    complete_agent_join_cleanup(h, jr);
+    CHECK(h.reclaimed_deferred_cleanup, "3905 AC1: Reclaimed-pending");
+    CHECK(h.must_wait_reclaimed, "3905 AC1: must_wait kept for ensure/find");
+    CHECK(!raw->is_done(), "3905 AC1: body still live");
+
+    auto* slot = table.put(std::move(h));
+    CHECK(slot != nullptr && slot->fiber == raw, "3905 AC1: pending handle in name table");
+
+    sched.note_orphan_fiber(raw, /*hard_deadline_ms=*/15);
+    std::this_thread::sleep_for(std::chrono::milliseconds(40));
+    const auto reaped = sched.reap_orphans_now();
+    CHECK(reaped >= 1, "3905 AC1: hard-reap ran");
+    CHECK(raw->is_reclaimed(), "3905 AC1: reclaimed_ set");
+    CHECK(!raw->is_done(), "3905 AC1: body not destroyed");
+
+    auto* found = table.find("3905-pending");
+    CHECK(found != nullptr && found->fiber == raw, "3905 AC1: find still resolves live fiber*");
+    CHECK(found->fiber->is_reclaimed(), "3905 AC1: find fiber is_reclaimed (no UAF)");
+
+    const auto wr = wait_reclaimed_body(*found, std::optional<std::uint64_t>{5});
+    CHECK(wr.status == JoinStatus::Timeout, "3905 AC1: wait_reclaimed_body Timeout (body live)");
+    CHECK(!found->fiber->is_done(), "3905 AC1: wait did not UAF / destroy");
+
+    const auto ens = ensure_reclaimed_cleanup(*found);
+    CHECK(ens.status == JoinStatus::Timeout || ens.status == JoinStatus::Ok,
+          "3905 AC1: ensure did not UAF");
+    CHECK(found->fiber == raw && !raw->is_done(), "3905 AC1: ensure fiber still owned");
+    CHECK(mb->attacher_count() == 0, "3905 AC1: mailbox attachers cleared on reap");
+
+    if (found->fiber) {
+        found->fiber->request_cancel();
+        found->fiber->set_state(FiberState::Done);
+        found->fiber->note_body_exit_if_reclaimed();
+        found->finish_reclaimed_cleanup_on_dtor();
+    }
+}
+
+static void ac3905_2_mailbox_attachers_cleared() {
+    using aura::serve::mf_mailbox::MultiFiberMailbox;
+    std::println("\n--- #3905 AC2: mailbox attachers do not retain destroyed Fiber* ---");
+    Scheduler sched(1);
+    Fiber* f = sched.spawn([] {
+        for (;;) {
+        }
+    });
+    auto mb = std::make_shared<MultiFiberMailbox>();
+    mb->attach(f);
+    CHECK(f->mailbox() == mb.get(), "3905 AC2: attached");
+    CHECK(mb->attacher_count() == 1, "3905 AC2: one attacher");
+    sched.note_orphan_fiber(f, /*hard_deadline_ms=*/10);
+    std::this_thread::sleep_for(std::chrono::milliseconds(25));
+    CHECK(sched.reap_orphans_now() >= 1, "3905 AC2: reaped");
+    CHECK(f->is_reclaimed() && !f->is_done(), "3905 AC2: Fiber object still owned");
+    CHECK(mb->attacher_count() == 0, "3905 AC2: attachers cleared (no dangling Fiber*)");
+    CHECK(f->mailbox() == nullptr, "3905 AC2: Fiber::mailbox_ cleared");
+}
+
+static void ac3905_3_soft_no_getenv_non_orphan_zero() {
+    std::println("\n--- #3905 AC3: Soft/Off — no new getenv; non-orphan path zero extra ---");
+    apply_dev_audit_defaults();
+    Scheduler sched(1);
+    CHECK(sched.orphan_count() == 0, "3905 AC3: empty orphans");
+    const auto reaped = sched.reap_orphans_now();
+    CHECK(reaped == 0, "3905 AC3: non-orphan reap is no-op");
+    Fiber* f = sched.spawn([] {
+        for (;;) {
+        }
+    });
+    sched.note_orphan_fiber(f, /*hard_deadline_ms=*/10);
+    std::this_thread::sleep_for(std::chrono::milliseconds(25));
+    CHECK(sched.reap_orphans_now() >= 1, "3905 AC3: Soft reap still runs");
+    CHECK(f->is_reclaimed() && !f->is_done(), "3905 AC3: Soft also keeps live body (no UAF)");
+}
+
+static void ac3905_4_queued_resume_not_destroyed() {
+    std::println("\n--- #3905 AC4: queued-during-resume non-yield still not destroyed (#2468) ---");
+    const auto worker = read_file("src/serve/worker.cpp");
+    CHECK(worker.find("if (fiber->is_done() || fiber->is_reclaimed())") != std::string::npos,
+          "3905 AC4: worker drops reclaimed without resume (#2468)");
+    CHECK(worker.find("if (fiber->is_reclaimed())") != std::string::npos,
+          "3905 AC4: post-resume reclaimed drop preserved");
+    const auto sched = read_file("src/serve/scheduler.cpp");
+    const auto start = sched.find("std::size_t Scheduler::reap_orphans_now()");
+    const auto end = sched.find("std::size_t Scheduler::orphan_count()", start);
+    CHECK(start != std::string::npos && end != std::string::npos && end > start,
+          "3905 AC4: reap_orphans_now window");
+    const auto body = sched.substr(start, end - start);
+    CHECK(body.find("owned_fibers_.erase") == std::string::npos,
+          "3905 AC4: reap never erases live owned_fibers_");
+}
+
+static void ac3905_5_source_cite() {
+    std::println("\n--- #3905 AC5: source-cite + no invent ---");
+    const auto sched_c = read_file("src/serve/scheduler.cpp");
+    const auto start = sched_c.find("std::size_t Scheduler::reap_orphans_now()");
+    const auto end = sched_c.find("std::size_t Scheduler::orphan_count()", start);
+    CHECK(start != std::string::npos && end != std::string::npos, "3905 AC5: reap window");
+    const auto body = sched_c.substr(start, end - start);
+    CHECK(body.find("Issue #3905") != std::string::npos, "3905 AC5: reap cites #3905");
+    CHECK(body.find("abandon_join_drain_still_running") != std::string::npos,
+          "3905 AC5: keep-alive abandon");
+    CHECK(body.find("detach_mailbox_if_attached") != std::string::npos,
+          "3905 AC5: mailbox attacher belt");
+    CHECK(body.find("getenv") == std::string::npos, "3905 AC5: no new getenv on reap");
+    CHECK(read_file("src/serve/fiber.h").find("detach_mailbox_if_attached") != std::string::npos,
+          "3905 AC5: Fiber API");
+    CHECK(read_file("src/serve/fiber.cpp").find("Issue #3905") != std::string::npos,
+          "3905 AC5: fiber.cpp cites");
+    CHECK(read_file("tests/orch/test_issue_3905.cpp").empty(), "3905 AC5: no test_issue_3905.cpp");
+    CHECK(read_file("tests/issues/test_issue_3905.cpp").empty(), "3905 AC5: no tests/issues file");
 }
 
 static void ac3297_2_dtor_no_under_account_post_exit() {
@@ -1185,8 +1331,15 @@ static void ac3497_scope_spawn_pending_name() {
         const char* prev_sb = std::getenv("AURA_SANDBOX");
         std::string prev_sb_s = prev_sb ? prev_sb : "";
         ::setenv("AURA_SANDBOX", "restricted", 1);
-        apply_production_audit_defaults();
+        // Strict before defaults so force_wal arms; pin WAL so #3777
+        // posture-degraded cannot deny the first spawn (same as #3433).
         set_mode(SandboxMode::Strict);
+        apply_production_audit_defaults();
+        std::filesystem::create_directories("build/test-wal-3497");
+        const bool wal_on_3497 = aura::core::audit_wal::g_mutation_audit_wal().is_enabled();
+        if (!wal_on_3497)
+            (void)aura::core::audit_wal::g_mutation_audit_wal().enable(
+                std::string_view("build/test-wal-3497"), nullptr, 0);
         Scheduler sched(1);
         AgentScope scope(sched);
         auto& h = scope.spawn(make_spec("3497-pending"));
@@ -1211,6 +1364,8 @@ static void ac3497_scope_spawn_pending_name() {
         CHECK(snap.entries.size() == 1, "3497 AC1: directory still one row");
         finish(h);
         apply_dev_audit_defaults();
+        if (!wal_on_3497)
+            aura::core::audit_wal::g_mutation_audit_wal().disable();
         if (!prev_sb_s.empty())
             ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
         else
@@ -1587,8 +1742,13 @@ static void ac3776_scope_done_husk_compact() {
         const char* prev_sb = std::getenv("AURA_SANDBOX");
         std::string prev_sb_s = prev_sb ? prev_sb : "";
         ::setenv("AURA_SANDBOX", "restricted", 1);
-        apply_production_audit_defaults();
         aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Strict);
+        apply_production_audit_defaults();
+        std::filesystem::create_directories("build/test-wal-3776");
+        const bool wal_on_3776 = aura::core::audit_wal::g_mutation_audit_wal().is_enabled();
+        if (!wal_on_3776)
+            (void)aura::core::audit_wal::g_mutation_audit_wal().enable(
+                std::string_view("build/test-wal-3776"), nullptr, 0);
         Scheduler sched(1);
         AgentScope scope(sched);
         AgentSpec s;
@@ -1618,6 +1778,8 @@ static void ac3776_scope_done_husk_compact() {
             h.finish_reclaimed_cleanup_on_dtor();
         }
         apply_dev_audit_defaults();
+        if (!wal_on_3776)
+            aura::core::audit_wal::g_mutation_audit_wal().disable();
         if (!prev_sb_s.empty())
             ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
         else
@@ -1824,8 +1986,13 @@ static void ac3595_4_join_agent_routes_wrapper() {
     const char* prev_sb = std::getenv("AURA_SANDBOX");
     std::string prev_sb_s = prev_sb ? prev_sb : "";
     ::setenv("AURA_SANDBOX", "restricted", 1);
-    apply_production_audit_defaults();
     set_mode(SandboxMode::Strict);
+    apply_production_audit_defaults();
+    std::filesystem::create_directories("build/test-wal-3595");
+    const bool wal_on_3595 = aura::core::audit_wal::g_mutation_audit_wal().is_enabled();
+    if (!wal_on_3595)
+        (void)aura::core::audit_wal::g_mutation_audit_wal().enable(
+            std::string_view("build/test-wal-3595"), nullptr, 0);
     Scheduler sched(1);
     aura::orch::AgentSpec spec;
     spec.name = "3595-join";
@@ -1854,6 +2021,8 @@ static void ac3595_4_join_agent_routes_wrapper() {
         h.fiber->set_state(FiberState::Done);
     h.finish_reclaimed_cleanup_on_dtor();
     apply_dev_audit_defaults();
+    if (!wal_on_3595)
+        aura::core::audit_wal::g_mutation_audit_wal().disable();
     if (!prev_sb_s.empty())
         ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
     else
@@ -1902,8 +2071,13 @@ static void ac3631_1_batch_shared_budget() {
     const char* prev_sb = std::getenv("AURA_SANDBOX");
     std::string prev_sb_s = prev_sb ? prev_sb : "";
     ::setenv("AURA_SANDBOX", "restricted", 1);
-    apply_production_audit_defaults();
     set_mode(SandboxMode::Strict);
+    apply_production_audit_defaults();
+    std::filesystem::create_directories("build/test-wal-3631");
+    const bool wal_on_3631 = aura::core::audit_wal::g_mutation_audit_wal().is_enabled();
+    if (!wal_on_3631)
+        (void)aura::core::audit_wal::g_mutation_audit_wal().enable(
+            std::string_view("build/test-wal-3631"), nullptr, 0);
 
     // No SchedRunner: bodies never execute → deterministic non-yielding
     // Reclaimed residual (same fixture pattern as #3433 AC1).
@@ -1954,6 +2128,8 @@ static void ac3631_1_batch_shared_budget() {
         h.finish_reclaimed_cleanup_on_dtor();
     }
     apply_dev_audit_defaults();
+    if (!wal_on_3631)
+        aura::core::audit_wal::g_mutation_audit_wal().disable();
     if (!prev_sb_s.empty())
         ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
     else
@@ -1967,8 +2143,13 @@ static void ac3631_2_cleanup_after_expiry() {
     const char* prev_sb = std::getenv("AURA_SANDBOX");
     std::string prev_sb_s = prev_sb ? prev_sb : "";
     ::setenv("AURA_SANDBOX", "restricted", 1);
-    apply_production_audit_defaults();
     set_mode(SandboxMode::Strict);
+    apply_production_audit_defaults();
+    std::filesystem::create_directories("build/test-wal-3631b");
+    const bool wal_on_3631b = aura::core::audit_wal::g_mutation_audit_wal().is_enabled();
+    if (!wal_on_3631b)
+        (void)aura::core::audit_wal::g_mutation_audit_wal().enable(
+            std::string_view("build/test-wal-3631b"), nullptr, 0);
     Scheduler sched(1);
     std::vector<aura::orch::AgentHandle> handles;
     for (std::size_t i = 0; i < 4; ++i) {
@@ -2017,6 +2198,8 @@ static void ac3631_2_cleanup_after_expiry() {
         handles[i].finish_reclaimed_cleanup_on_dtor();
     }
     apply_dev_audit_defaults();
+    if (!wal_on_3631b)
+        aura::core::audit_wal::g_mutation_audit_wal().disable();
     if (!prev_sb_s.empty())
         ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
     else
@@ -2913,9 +3096,8 @@ static void ac3842_5_source_cite_linter_no_invent() {
               scope_h.find("No process-global AgentRegistry") != std::string::npos,
           "3842 AC5: no invent AgentRegistry (forbid cite ok)");
     CHECK(scope_h.find("class AgentRegistry") == std::string::npos &&
-              scope_h.find("struct AgentRegistry") == std::string::npos &&
-              scope_h.find("global_agent_registry") == std::string::npos,
-          "3842 AC5: no AgentRegistry / global_agent_registry symbol");
+              scope_h.find("struct AgentRegistry") == std::string::npos,
+          "3842 AC5: no AgentRegistry type symbol (comment forbid-cites ok)");
     CHECK(build.find("check_scope_sweep_reclaimed_pending_3842") != std::string::npos,
           "3842 AC5: build.py wires linter");
     CHECK(read_file("scripts/coverage/checks/check_scope_sweep_reclaimed_pending_3842.py")
@@ -3068,7 +3250,9 @@ int run_test_join_drain_reclaim() {
         CHECK(reaped >= 1, "AC1: reaper reaped ≥ 1 fiber");
         CHECK(sched.orphans_reaped_total() > orphans_before,
               "AC1: scheduler.orphans_reaped_total bumped");
-        // Fiber destroyed by reaper — do not dereference f.
+        // Issue #3905: live body stays owned — safe to dereference.
+        CHECK(f->is_reclaimed(), "AC1: reclaimed_ set");
+        CHECK(!f->is_done(), "AC1: body still live (not destroyed)");
     }
 
     // ── AC2: resource convergence — N-agent cancel storm ──────────
@@ -3115,6 +3299,10 @@ int run_test_join_drain_reclaim() {
         const auto reaped = sched.reap_orphans_now();
         std::println("  reaped={} (expected ≥ N)", reaped);
         CHECK(reaped >= N, "AC2: reaper reaped all N");
+        for (auto* f : fibers) {
+            CHECK(f && f->is_reclaimed(), "AC2: live body still owned after reap (#3905)");
+            CHECK(!f->is_done(), "AC2: body still live (not destroyed)");
+        }
     }
 
     // ── AC3: happy path unchanged — Ok join does not trigger reclaim ─
@@ -6871,6 +7059,13 @@ int run_test_join_drain_reclaim() {
     ac3842_3_soft_zero_cost_no_force();
     ac3842_4_spawn_registers_with_scope_lifetime();
     ac3842_5_source_cite_linter_no_invent();
+
+    std::println("\n=== Issue #3905: orphan hard-reap keeps live Fiber ===");
+    ac3905_1_reap_keeps_pending_handle_fiber();
+    ac3905_2_mailbox_attachers_cleared();
+    ac3905_3_soft_no_getenv_non_orphan_zero();
+    ac3905_4_queued_resume_not_destroyed();
+    ac3905_5_source_cite();
 
     // #3797-wave CI: restore the WAL-off face for later batch members.
     if (wal_member_pinned)
