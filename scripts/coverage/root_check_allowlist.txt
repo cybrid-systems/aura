@@ -130,3 +130,4 @@ check_mutate_session_hard_gate_3872.py
 check_health_advisory_face_3873.py
 check_audit_event_tenant_3874.py
 check_revoke_epoch_hard_only_3875.py
+check_storm_force_full_counter_3869.py

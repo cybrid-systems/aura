@@ -287,6 +287,14 @@ export inline constexpr int kUnwiredPredProductionIssue = 3502;
 // rewrites at dirty_n>0. Soft consult-only unchanged. No second pipeline.
 export inline constexpr int kDirtyAwareStormLastLookIssue = 3690;
 export inline constexpr int kDirtyAwareStormForceFullCapIssue = 3831;
+// Issue #3869: a force-full actually fired — a rewrite-side call site is
+// collapsing the dirty cone to an all-1s rewrite (the Hard fence's
+// multi-turn throughput cliff). Soak/SLO observability per the fix
+// sketch: pin the count, alert on it; do NOT invent a Soft skip of the
+// Hard fence. Soft/Off never fires (probe early-out in the consult), so
+// the counter stays an honest production-face signal. Declared before
+// the consult so its decision-point bump is in scope.
+export inline std::atomic<std::uint64_t> dirty_aware_storm_force_full_total{0};
 export [[nodiscard]] inline bool
 production_dirty_aware_storm_force_full(std::size_t dirty_n) noexcept {
     const bool allow_partial = should_partial_relower_storm_aware(dirty_n);
@@ -303,6 +311,11 @@ production_dirty_aware_storm_force_full(std::size_t dirty_n) noexcept {
     // hysteresis alignment, no second cooldown pipeline).
     if (storm_level_has_global() && dirty_n < kDefaultPartialRelowerThreshold)
         return false;
+    // Issue #3869: a force-full actually fired — count it here at the
+    // decision point so every rewrite site (and any direct consult) is
+    // covered by one soak/alert counter. Soft/Off never reaches this
+    // (probe early-out above); do NOT invent a Soft skip of the fence.
+    dirty_aware_storm_force_full_total.fetch_add(1, std::memory_order_relaxed);
     return true;
 }
 
@@ -757,6 +770,8 @@ bool run_incremental_dirty_pipeline(aura::ir::IRModule& mod, P& pass,
     if (define_cache && define_cache->block_dirty_per_func) {
         const auto dirty_n = static_cast<std::size_t>(define_cache->dirty_block_count());
         if (production_dirty_aware_storm_force_full(dirty_n)) {
+            // Issue #3869: the fire was counted at the consult — do not
+            // double-bump here.
             storm_full_bits = *define_cache->block_dirty_per_func;
             for (auto& fb : storm_full_bits)
                 for (auto& b : fb)

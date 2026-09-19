@@ -7677,6 +7677,18 @@ def cmd_lint():
             "Issue #3875 revoke-epoch hard-only linter failed — run python3 scripts/check_revoke_epoch_hard_only_3875.py"
         )
         return r
+    # Issue #3869: storm/Global force-full soak/alert counter — rewrite-
+    # side fires counted; no Soft skip of the Hard fence invented.
+    sfc3869_script = ROOT / "scripts" / "check_storm_force_full_counter_3869.py"
+    if not sfc3869_script.exists():
+        fail(f"missing {sfc3869_script}")
+        return 1
+    r = run([sys.executable, str(sfc3869_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3869 storm force-full counter linter failed — run python3 scripts/check_storm_force_full_counter_3869.py"
+        )
+        return r
     # Issue #3645: engine:metrics by-name lookup miss returns a typed
     # not-found hash (ok=#f / status=not-found / name / schema-3531)
     # instead of make_void() — a typo'd or unregistered name is now
