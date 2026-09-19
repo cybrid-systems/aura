@@ -746,6 +746,13 @@ int run_test_steal_safety_production_residual_zero() {
               "AC17: no test_issue_3860.cpp per #81967");
         CHECK(read_file("docs/design/3860-densify-busy-ssot.md").empty(),
               "AC17: no docs/design/3860-* per #1655");
+        CHECK(ss_h.find("Issue #3894") != std::string::npos, "3894 AC2: header cites #3894");
+        CHECK(ss_h.find("densify_in_flight_for") != std::string::npos,
+              "3894 AC2: in-flight folded into BoundarySafe");
+        CHECK(ss_cpp.find("densify_in_flight_for") != std::string::npos,
+              "3894 AC2: hard-AND consults in-flight");
+        CHECK(ss_h.find("Count = 7,") != std::string::npos, "3894 AC2: Count stays 7");
+        CHECK(ss_h.find("DensifyBusy") == std::string::npos, "3894 AC2: no DensifyBusy bit");
     }
 
     std::println("\n=== #3134/#3288/#3385/#3586/#3590/#3592 production-readiness residual-zero: {} "

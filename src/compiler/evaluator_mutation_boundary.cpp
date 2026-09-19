@@ -5067,31 +5067,37 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
         (void)aura_mutation_boundary_assert_mirrors_consistent(/*is_active=*/1,
                                                                /*expect_held=*/0,
                                                                /*check_process=*/1);
-        // Issue #2121: unlock matching acquire mode.
-        if (region_mode_) {
-            if (region_lock_.owns_lock()) {
-                region_lock_.unlock();
-                ev_->workspace_region_holders_[region_shard_].fetch_sub(1,
-                                                                        std::memory_order_relaxed);
+        // Issue #3894: delay workspace unlock + cascade drain until after
+        // Moving compact (lock-held densify). invalidate_function still
+        // takes mutate_mtx_ only after workspace release. Idempotent so
+        // Soft / Moving-disabled still release at this site.
+        bool workspace_released = false;
+        auto release_workspace_then_drain_after_densify_ = [&]() {
+            if (workspace_released)
+                return;
+            workspace_released = true;
+            // Issue #2121: unlock matching acquire mode.
+            if (region_mode_) {
+                if (region_lock_.owns_lock()) {
+                    region_lock_.unlock();
+                    ev_->workspace_region_holders_[region_shard_].fetch_sub(
+                        1, std::memory_order_relaxed);
+                }
+                if (shared_lock_.owns_lock())
+                    shared_lock_.unlock();
+            } else if (lock_.owns_lock()) {
+                lock_.unlock();
             }
-            if (shared_lock_.owns_lock())
-                shared_lock_.unlock();
-        } else if (lock_.owns_lock()) {
-            lock_.unlock();
-        }
-        aura::compiler::lock_order::on_release(aura::compiler::lock_order::Level::Workspace);
-        // Issue #2812: post-Guard BFS invalidate_function drain.
-        // Soft cascade under Guard enqueued defines that need precise
-        // invalidation (lambda/closure bodies + dep_graph dependents).
-        // invalidate_function takes mutate_mtx_ — safe only after
-        // workspace_mtx_ release above. Success → drain (closures
-        // capturing mutated defines get IR/JIT BFS); failure → clear
-        // (rollback already restored AST; do not hard-invalidate).
-        if (success)
-            ev_->drain_cascade_bfs_invalidate();
-        else
-            ev_->clear_cascade_bfs_invalidate();
-        ev_->outermost_mutation_success_flag_ = nullptr;
+            aura::compiler::lock_order::on_release(aura::compiler::lock_order::Level::Workspace);
+            // Issue #2812: post-Guard BFS invalidate_function drain.
+            if (success)
+                ev_->drain_cascade_bfs_invalidate();
+            else
+                ev_->clear_cascade_bfs_invalidate();
+            ev_->outermost_mutation_success_flag_ = nullptr;
+        };
+        if (!aura::ast::moving_compact_enabled())
+            release_workspace_then_drain_after_densify_();
         // Issue #2347: clear TLS Guard-window reject count so multi-round
         // mutates do not accumulate a stale threshold across outermost
         // boundaries (Soft dashboard + Strict force-rollback both reset).
@@ -5269,6 +5275,9 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
             }
             aura::ast::AdaptiveCompactResult compact_r{};
             if (!densify_entry_lcp_blocked) {
+                // Issue #3894: compact under workspace_mtx_ + densify-in-flight.
+                aura::core::densify_consistency::DensifyInFlightGuard densify_inflight(
+                    static_cast<const void*>(ev_));
                 compact_r = ev_->arena_group_ ? ev_->arena_group_->compact_all_moving_pinned()
                                               : aura::ast::AdaptiveCompactResult{};
                 if (compact_r.bytes_reclaimed_total > 0) {
@@ -5288,6 +5297,7 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
             // the block. Soft / Off already short-circuits above (poll.present
             // false in quiet path → zero extra work).
             pin_contract_held = compact_r.pin_contract_held && !densify_entry_lcp_blocked;
+            release_workspace_then_drain_after_densify_();
             had_moving_densify = compact_r.moved_live_objects;
             // Issue #3171: Moving densify success did not go through
             // unified_restamp(Densify), so invalidate_gen stayed matched
@@ -7310,6 +7320,7 @@ Evaluator::recover_moving_sticky_densify_off(bool retry_densify) noexcept {
                 /*moving_incomplete_remap=*/false, /*objects_moved=*/0, /*untracked_kept=*/0,
                 /*root_remap_fail_total=*/0);
         } else {
+            aura::core::densify_consistency::DensifyInFlightGuard densify_inflight(this);
             const auto compact_r = arena_group_->compact_all_moving_pinned();
             out.pin_contract_held = compact_r.pin_contract_held && !densify_entry_lcp_blocked;
             out.incomplete_remap = compact_r.moving_incomplete_remap_any;

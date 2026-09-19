@@ -352,6 +352,9 @@ struct DensifyEvalSlot {
     std::atomic<std::uint8_t> envframe_ok{1};
     std::atomic<std::uint8_t> dual_epoch_ok{1};
     std::atomic<std::uint64_t> seq{0};
+    // Issue #3894: mid-flight Moving densify (after held-clear, before
+    // compact returns). Steal BoundarySafe RejectHard while set.
+    std::atomic<std::uint8_t> in_flight{0};
 };
 inline constexpr std::size_t kDensifyEvalSlotCount = 64; // power of two
 inline DensifyEvalSlot g_densify_eval_slots[kDensifyEvalSlotCount];
@@ -415,6 +418,47 @@ inline void note_last_densify_result_for(const void* eval_id, bool envframe_ok,
     auto* s = densify_eval_slot_find(eval_id);
     return !s || s->dual_epoch_ok.load(std::memory_order_relaxed) != 0;
 }
+
+// Issue #3894: densify-in-flight (Phase-5 compact after held-clear).
+// Steal folds this into BoundarySafe (no new StealInvariant bit — #3860
+// Count stays 7). Eval-keyed; missing slot is not in-flight.
+inline DensifyEvalSlot* densify_eval_slot_occupy(const void* eval_id) noexcept {
+    if (!eval_id)
+        return nullptr;
+    const std::size_t h = densify_eval_slot_base(eval_id);
+    for (std::size_t i = 0; i < kDensifyEvalSlotCount; ++i) {
+        auto& s = g_densify_eval_slots[(h + i) & (kDensifyEvalSlotCount - 1)];
+        if (s.id.load(std::memory_order_acquire) == eval_id)
+            return &s;
+        const void* expected = nullptr;
+        if (s.id.compare_exchange_strong(expected, eval_id, std::memory_order_acq_rel,
+                                         std::memory_order_acquire))
+            return &s;
+    }
+    return nullptr;
+}
+inline void arm_densify_in_flight(const void* eval_id) noexcept {
+    if (auto* s = densify_eval_slot_occupy(eval_id))
+        s->in_flight.store(1, std::memory_order_release);
+}
+inline void clear_densify_in_flight(const void* eval_id) noexcept {
+    if (auto* s = densify_eval_slot_find(eval_id))
+        s->in_flight.store(0, std::memory_order_release);
+}
+[[nodiscard]] inline bool densify_in_flight_for(const void* eval_id) noexcept {
+    auto* s = densify_eval_slot_find(eval_id);
+    return s && s->in_flight.load(std::memory_order_acquire) != 0;
+}
+struct DensifyInFlightGuard {
+    const void* eval_id;
+    explicit DensifyInFlightGuard(const void* id) noexcept
+        : eval_id(id) {
+        arm_densify_in_flight(eval_id);
+    }
+    ~DensifyInFlightGuard() { clear_densify_in_flight(eval_id); }
+    DensifyInFlightGuard(const DensifyInFlightGuard&) = delete;
+    DensifyInFlightGuard& operator=(const DensifyInFlightGuard&) = delete;
+};
 inline void note_last_densify_remap_pairing_forced(bool forced) noexcept {
     g_last_densify_remap_pairing_forced.store(forced ? 1 : 0, std::memory_order_relaxed);
 }

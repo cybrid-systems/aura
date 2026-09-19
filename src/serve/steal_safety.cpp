@@ -162,7 +162,9 @@ namespace {
 //   EnvFrameOk        — densify EnvFrame residual (#2745)
 //   LifetimeProofOk   — last LifetimeConsistencyProof (#2957, production)
 // Issue #3860: this AND set is the densify-busy SSOT — no dedicated
-// densify-in-flight arm exists; the composition above closes the face.
+// densify-in-flight StealInvariant bit exists; the composition above
+// closes last-completed densify. Issue #3894: mid-flight after
+// held-clear is BoundarySafe via densify_in_flight_for.
 [[nodiscard]] std::uint64_t evaluate_residual_hard_and_bits(Fiber* stolen,
                                                             const MutationSafetySnapshot& snap,
                                                             bool bump_counters,
@@ -178,10 +180,21 @@ namespace {
     // A no-argument BoundarySafe probe re-samples and can pass after
     // snap.held==true was cleared — enqueue with a held-era ticket.
     // Reverse (snap safe, live unsafe) was already RejectHard.
-    if (!skip(StealInvariant::BoundarySafe) && !stolen->is_at_mutation_boundary_safe(snap)) {
-        fail_bits |= steal_invariant_mask(StealInvariant::BoundarySafe);
-        if (bump_counters)
-            note_steal_invariant_fail(StealInvariant::BoundarySafe);
+    // Issue #3894: densify-in-flight after held-clear is also unsafe
+    // (Moving relocate mid-window; no new StealInvariant bit).
+    if (!skip(StealInvariant::BoundarySafe)) {
+        bool boundary_unsafe = !stolen->is_at_mutation_boundary_safe(snap);
+        if (!boundary_unsafe) {
+            void* victim_eval_id = aura_fiber_evaluator_id_for_steal_safety(stolen);
+            if (victim_eval_id != nullptr &&
+                aura::core::densify_consistency::densify_in_flight_for(victim_eval_id))
+                boundary_unsafe = true;
+        }
+        if (boundary_unsafe) {
+            fail_bits |= steal_invariant_mask(StealInvariant::BoundarySafe);
+            if (bump_counters)
+                note_steal_invariant_fail(StealInvariant::BoundarySafe);
+        }
     }
     // StealInvariant::LayoutStampMatch
     if (!skip(StealInvariant::LayoutStampMatch) &&
