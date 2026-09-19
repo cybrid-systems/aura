@@ -140,7 +140,10 @@ std::size_t Evaluator::compact_pairs(const std::vector<bool>& live_mask) {
         {
             aura::compiler::lock_order::AuditScope lo_env(
                 aura::compiler::lock_order::Level::EnvFrames);
-            std::unique_lock<std::shared_mutex> env_lock(env_frames_mtx_);
+            std::array<std::unique_lock<std::shared_mutex>, kEnvFramesShardCount> env_lock;
+            for (std::size_t ef_i = 0; ef_i < kEnvFramesShardCount; ++ef_i)
+                env_lock[ef_i] =
+                    std::unique_lock<std::shared_mutex>(env_frame_shards_[ef_i].mu); // Issue #3900
             for (auto& fr : env_frames_) {
                 for (auto& b : fr.bindings_symid_)
                     rewrite(b.second);
@@ -390,7 +393,10 @@ void Evaluator::probe_linear_ownership_at_gc_safepoint() noexcept {
         std::array<std::shared_lock<std::shared_mutex>, kClosuresShardCount> cl_lock;
         for (std::size_t cl_i = 0; cl_i < kClosuresShardCount; ++cl_i)
             cl_lock[cl_i] = std::shared_lock<std::shared_mutex>(closures_shards_[cl_i].mu);
-        std::shared_lock<std::shared_mutex> env_lock(env_frames_mtx_);
+        std::array<std::shared_lock<std::shared_mutex>, kEnvFramesShardCount> env_lock;
+        for (std::size_t ef_i = 0; ef_i < kEnvFramesShardCount; ++ef_i)
+            env_lock[ef_i] =
+                std::shared_lock<std::shared_mutex>(env_frame_shards_[ef_i].mu); // Issue #3900
         auto* m_probe = static_cast<CompilerMetrics*>(compiler_metrics_);
         auto* drift_ctr = m_probe ? &m_probe->linear_validate_bridge_epoch_drift_total : nullptr;
         using aura::core::provenance::g_provenance_enforcement;
@@ -663,7 +669,10 @@ Evaluator::enforce_linear_boundary_consistency(std::uint8_t path, bool mark_all_
         for (std::size_t cl_i = 0; cl_i < kClosuresShardCount; ++cl_i)
             cl_lock[cl_i] = std::unique_lock<std::shared_mutex>(closures_shards_[cl_i].mu);
         bump_closures_apply_epoch(); // Issue #3832
-        std::shared_lock<std::shared_mutex> env_lock(env_frames_mtx_);
+        std::array<std::shared_lock<std::shared_mutex>, kEnvFramesShardCount> env_lock;
+        for (std::size_t ef_i = 0; ef_i < kEnvFramesShardCount; ++ef_i)
+            env_lock[ef_i] =
+                std::shared_lock<std::shared_mutex>(env_frame_shards_[ef_i].mu); // Issue #3900
         for (auto& cl_sh : closures_shards_)
             for (auto& [id, cl] : cl_sh.map) {
                 if (cl.bridge_epoch == 0)
@@ -740,7 +749,10 @@ Evaluator::enforce_linear_boundary_consistency(std::uint8_t path, bool mark_all_
         std::array<std::shared_lock<std::shared_mutex>, kClosuresShardCount> cl_lock;
         for (std::size_t cl_i = 0; cl_i < kClosuresShardCount; ++cl_i)
             cl_lock[cl_i] = std::shared_lock<std::shared_mutex>(closures_shards_[cl_i].mu);
-        std::shared_lock<std::shared_mutex> env_lock(env_frames_mtx_);
+        std::array<std::shared_lock<std::shared_mutex>, kEnvFramesShardCount> env_lock;
+        for (std::size_t ef_i = 0; ef_i < kEnvFramesShardCount; ++ef_i)
+            env_lock[ef_i] =
+                std::shared_lock<std::shared_mutex>(env_frame_shards_[ef_i].mu); // Issue #3900
         for (const auto& cl_sh : closures_shards_)
             for (const auto& [id, cl] : cl_sh.map) {
                 (void)id;
@@ -919,7 +931,10 @@ bool Evaluator::revalidate_linear_type_provenance_after_migration(std::uint8_t p
         std::array<std::shared_lock<std::shared_mutex>, kClosuresShardCount> cl_lock;
         for (std::size_t cl_i = 0; cl_i < kClosuresShardCount; ++cl_i)
             cl_lock[cl_i] = std::shared_lock<std::shared_mutex>(closures_shards_[cl_i].mu);
-        std::shared_lock<std::shared_mutex> env_lock(env_frames_mtx_);
+        std::array<std::shared_lock<std::shared_mutex>, kEnvFramesShardCount> env_lock;
+        for (std::size_t ef_i = 0; ef_i < kEnvFramesShardCount; ++ef_i)
+            env_lock[ef_i] =
+                std::shared_lock<std::shared_mutex>(env_frame_shards_[ef_i].mu); // Issue #3900
         for (const auto& cl_sh : closures_shards_)
             for (const auto& [id, cl] : cl_sh.map) {
                 (void)id;

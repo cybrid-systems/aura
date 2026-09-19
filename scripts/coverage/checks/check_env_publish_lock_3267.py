@@ -51,7 +51,8 @@ def main() -> int:
     pos = env.find("void Evaluator::publish_live_env_linear_to_bridge() const noexcept")
     win = env[pos : pos + 900] if pos >= 0 else ""
     must("Issue #3267", "AC1 cite", win)
-    must("std::shared_lock<std::shared_mutex> env_rlock(env_frames_mtx_)", "AC1 shared_lock", win)
+    # Issue #3900: publish wrapper reads via env shards (bulk, index order).
+    must("std::shared_lock<std::shared_mutex>(env_frame_shards_[ef_i].mu)", "AC1 shared_lock", win)
     must("publish_live_env_linear_to_bridge_holding_env_lock()", "AC1 holding", win)
     must("non-recursive", "AC1 non-recursive", env)
     tpos = env.find("Evaluator::truncate_env_frames_to_checkpoint()")
@@ -81,7 +82,12 @@ def main() -> int:
     swin = env[spos : spos + 900] if spos >= 0 else ""
     must("closure-creation timestamp", "AC3 comment", swin)
     epoch = swin.find("cl.bridge_epoch = current_bridge_epoch()")
-    lock = swin.find("std::shared_lock<std::shared_mutex> env_rlock(env_frames_mtx_)")
+    # Issue #3900: epoch read stays before the env shard shared_lock
+    # (clang-format splits the lock across two lines — anchor the head).
+    lock = swin.find("std::shared_lock<std::shared_mutex> env_rlock(")
+    lock2 = swin.find("env_frame_shards_[env_frame_shard_index(cl.env_id)].mu")
+    if lock2 >= 0 and (lock < 0 or lock2 < lock):
+        lock = lock2
     if epoch < 0 or lock < 0 or epoch > lock:
         fails.append("AC3: epoch read must stay before env lock")
     must("ac3267_3_epoch_before_lock_comment", "AC3 test", test)

@@ -80,7 +80,10 @@ using types::make_float;
 // hold unique_lock and must call the holding-lock sibling — a
 // nested shared_lock would deadlock.
 void Evaluator::publish_live_env_linear_to_bridge() const noexcept {
-    std::shared_lock<std::shared_mutex> env_rlock(env_frames_mtx_);
+    std::array<std::shared_lock<std::shared_mutex>, kEnvFramesShardCount> env_rlock;
+    for (std::size_t ef_i = 0; ef_i < kEnvFramesShardCount; ++ef_i)
+        env_rlock[ef_i] =
+            std::shared_lock<std::shared_mutex>(env_frame_shards_[ef_i].mu); // Issue #3900
     publish_live_env_linear_to_bridge_holding_env_lock();
 }
 
@@ -109,7 +112,8 @@ void Evaluator::stamp_closure_bridge_epoch(Closure& cl) const noexcept {
     // Aggregate max linear ownership from captured EnvFrame bindings.
     std::uint8_t max_lin = 0;
     if (cl.env_id != NULL_ENV_ID) {
-        std::shared_lock<std::shared_mutex> env_rlock(env_frames_mtx_);
+        std::shared_lock<std::shared_mutex> env_rlock(
+            env_frame_shards_[env_frame_shard_index(cl.env_id)].mu); // Issue #3900
         if (cl.env_id < env_frames_.size()) {
             const auto& fr = env_frames_[cl.env_id];
             for (auto v : fr.bindings_linear_ownership_state_) {
@@ -189,7 +193,8 @@ void Evaluator::reset_envframe_dual_path_desync_mode_for_test() noexcept {
 void Evaluator::inject_envframe_dual_path_desync_for_test(EnvId id) noexcept {
     if (id == NULL_ENV_ID)
         return;
-    std::unique_lock<std::shared_mutex> wlock(env_frames_mtx_);
+    std::unique_lock<std::shared_mutex> wlock(
+        env_frame_shards_[env_frame_shard_index(id)].mu); // Issue #3900
     if (id >= env_frames_.size())
         return;
     // Length desync: push only on string path (bindings_ longer than
@@ -325,7 +330,11 @@ std::optional<EvalValue> Env::lookup(std::string_view n) const {
     // bounded by MAX_ENV_DEPTH (same cycle budget as parent_
     // pointer walk; #1858: one hop per frame, not 2×).
     if (parent_id_ != NULL_ENV_ID && owner_) {
-        std::shared_lock<std::shared_mutex> env_rlock(owner_->env_frames_lock());
+        std::array<std::shared_lock<std::shared_mutex>, Evaluator::env_frame_shard_count()>
+            env_rlock;
+        for (std::size_t ef_i = 0; ef_i < Evaluator::env_frame_shard_count(); ++ef_i)
+            env_rlock[ef_i] = std::shared_lock<std::shared_mutex>(
+                owner_->env_frame_shard_mu(ef_i)); // Issue #3900
         EnvId cur = parent_id_;
         std::size_t hops = 0;
         // Wave2: intern once for the whole SoA walk (not once per hop).
@@ -964,6 +973,12 @@ aura::compiler::EnvId Evaluator::alloc_env_frame(EnvId parent_id, const Primitiv
     // capacity, freeing the map pointer a fiber thread is
     // reading via env_frame[id]. Unique lock makes the
     // push_back atomic with respect to readers.
+    // Issue #3900: shard barrier FIRST (index order) — shard readers
+    // no longer hold env_frames_mtx_, and taking the structure mutex
+    // before the shards would AB-BA against in-flight walkers.
+    std::array<std::unique_lock<std::shared_mutex>, kEnvFramesShardCount> ef_barrier;
+    for (std::size_t ef_i = 0; ef_i < kEnvFramesShardCount; ++ef_i)
+        ef_barrier[ef_i] = std::unique_lock<std::shared_mutex>(env_frame_shards_[ef_i].mu);
     std::unique_lock<std::shared_mutex> wlock(env_frames_mtx_);
     if (env_frames_.size() >= NULL_ENV_ID) {
         // 4G envs reached. Return NULL to signal overflow;
@@ -1022,7 +1037,8 @@ aura::compiler::EnvId Evaluator::alloc_env_frame_from_env(const Env& e, EnvId pa
     // alloc_env_frame on another thread (e.g. a fiber)
     // could push_back and reallocate env_frames_'s map
     // array, invalidating our `fr` reference.
-    std::unique_lock<std::shared_mutex> wlock(env_frames_mtx_);
+    std::unique_lock<std::shared_mutex> wlock(
+        env_frame_shards_[env_frame_shard_index(id)].mu); // Issue #3900
     EnvFrame& fr = env_frames_[id];
     // e is `const`, so .bindings()/.bindings_symid() return
     // std::span (const overload).
@@ -1172,7 +1188,8 @@ Env Evaluator::materialize_call_env(const Closure& cl) {
         if (cl.env_id == NULL_ENV_ID || !is_valid_env_id(cl.env_id)) {
             env_terminal = true;
         } else {
-            std::shared_lock<std::shared_mutex> rlock(env_frames_mtx_);
+            std::shared_lock<std::shared_mutex> rlock(
+                env_frame_shards_[env_frame_shard_index(cl.env_id)].mu); // Issue #3900
             if (cl.env_id < env_frames_.size() &&
                 env_frames_[cl.env_id].version_ == INVALID_VERSION)
                 env_terminal = true;
@@ -1285,7 +1302,8 @@ Env Evaluator::materialize_call_env(const Closure& cl) {
     // reallocate the deque's map array, freeing the map
     // pointer a fiber thread (running apply_closure →
     // materialize_call_env) is reading.
-    std::shared_lock<std::shared_mutex> env_rlock(env_frames_mtx_);
+    std::shared_lock<std::shared_mutex> env_rlock(
+        env_frame_shards_[env_frame_shard_index(cl.env_id)].mu); // Issue #3900
     const EnvFrame& fr = env_frame(cl.env_id);
     // Issue #683 / #2129: linear-capturing closure materialize gate —
     // use stamped cl.linear_state (not a hardcoded 1) when host tracks
@@ -1599,7 +1617,10 @@ Evaluator::scan_live_closures_for_linear_captures(bool mark_invalid, bool only_i
     for (std::size_t cl_i = 0; cl_i < kClosuresShardCount; ++cl_i)
         cl_lock[cl_i] = std::unique_lock<std::shared_mutex>(closures_shards_[cl_i].mu);
     bump_closures_apply_epoch(); // Issue #3832
-    std::shared_lock<std::shared_mutex> env_lock(env_frames_mtx_);
+    std::array<std::shared_lock<std::shared_mutex>, kEnvFramesShardCount> env_lock;
+    for (std::size_t ef_i = 0; ef_i < kEnvFramesShardCount; ++ef_i)
+        env_lock[ef_i] =
+            std::shared_lock<std::shared_mutex>(env_frame_shards_[ef_i].mu); // Issue #3900
     // Issue #1665: TW tombstone = bridge_epoch==0 while tracking is active
     // (current_bridge_epoch != 0). bridge_epoch==0 with tracking inactive is
     // the unstamped/default stamp, NOT a free. Never gate on JIT
@@ -1772,7 +1793,8 @@ bool Evaluator::is_env_frame_stale(EnvId id) const {
         return false;
     // env_frames_ is a deque guarded by env_frames_mtx_; a
     // shared_lock keeps the frame alive across the load.
-    std::shared_lock<std::shared_mutex> rlock(env_frames_mtx_);
+    std::shared_lock<std::shared_mutex> rlock(
+        env_frame_shards_[env_frame_shard_index(id)].mu); // Issue #3900
     return env_frames_[id].version_ < defuse_version_.load(std::memory_order_acquire);
 }
 
@@ -1813,7 +1835,8 @@ bool Evaluator::linear_post_mutate_enforce(EnvId env_id) const noexcept {
     // Issue #1539: real per-cell linear scan via bindings_linear_ownership_state_.
     // Return false if any captured binding is Moved (use-after-move / post-mutate
     // violation). Other states (Owned/Borrowed/MutBorrowed/Untracked) are safe.
-    std::shared_lock<std::shared_mutex> rlock(env_frames_mtx_);
+    std::shared_lock<std::shared_mutex> rlock(
+        env_frame_shards_[env_frame_shard_index(env_id)].mu); // Issue #3900
     if (env_id >= env_frames_.size())
         return true;
     const EnvFrame& fr = env_frames_[env_id];
@@ -1835,7 +1858,8 @@ bool Evaluator::mark_linear_binding_moved(Env& env, aura::ast::SymId s) {
     bool any = env.set_linear_ownership_state(s, linear_rt::Moved).has_value();
     const EnvId pid = env.parent_id();
     if (pid != NULL_ENV_ID && pid < env_frames_.size()) {
-        std::unique_lock<std::shared_mutex> wlock(env_frames_mtx_);
+        std::unique_lock<std::shared_mutex> wlock(
+            env_frame_shards_[env_frame_shard_index(pid)].mu); // Issue #3900
         if (pid < env_frames_.size())
             any = env_frames_[pid].set_linear_ownership_state(s, linear_rt::Moved) || any;
     }
@@ -1846,7 +1870,8 @@ bool Evaluator::mark_linear_binding_moved_by_name(Env& env, std::string_view nam
     bool any = env.set_linear_ownership_state_by_name(name, linear_rt::Moved).has_value();
     const EnvId pid = env.parent_id();
     if (pid != NULL_ENV_ID && pid < env_frames_.size()) {
-        std::unique_lock<std::shared_mutex> wlock(env_frames_mtx_);
+        std::unique_lock<std::shared_mutex> wlock(
+            env_frame_shards_[env_frame_shard_index(pid)].mu); // Issue #3900
         if (pid < env_frames_.size())
             any = env_frames_[pid].set_linear_ownership_state_by_name(std::string(name),
                                                                       linear_rt::Moved) ||
@@ -1863,7 +1888,10 @@ Evaluator::LinearPostMutateSweepResult Evaluator::linear_post_mutate_enforce_all
     LinearPostMutateSweepResult out;
     std::vector<EnvId> ids;
     {
-        std::shared_lock<std::shared_mutex> rlock(env_frames_mtx_);
+        std::array<std::shared_lock<std::shared_mutex>, kEnvFramesShardCount> rlock;
+        for (std::size_t ef_i = 0; ef_i < kEnvFramesShardCount; ++ef_i)
+            rlock[ef_i] =
+                std::shared_lock<std::shared_mutex>(env_frame_shards_[ef_i].mu); // Issue #3900
         ids.reserve(env_frames_.size());
         for (EnvId id = 0; id < env_frames_.size(); ++id) {
             if (env_frames_[id].version_ == INVALID_VERSION)
@@ -1901,7 +1929,10 @@ bool Evaluator::run_post_densify_linear_type_revalidate(bool had_moving_densify)
         // without pin registry — run enforce_all only if any env frames exist.
         std::size_t n_frames = 0;
         {
-            std::shared_lock<std::shared_mutex> rlock(env_frames_mtx_);
+            std::array<std::shared_lock<std::shared_mutex>, kEnvFramesShardCount> rlock;
+            for (std::size_t ef_i = 0; ef_i < kEnvFramesShardCount; ++ef_i)
+                rlock[ef_i] =
+                    std::shared_lock<std::shared_mutex>(env_frame_shards_[ef_i].mu); // Issue #3900
             n_frames = env_frames_.size();
         }
         if (n_frames == 0)
@@ -2017,7 +2048,8 @@ bool Evaluator::is_env_frame_invalid(EnvId id) const {
     // load (consistent with is_env_frame_stale). The version_
     // load is atomic-friendly (uint64_t) but the shared_mutex
     // guards against an alloc_env_frame concurrent reallocation.
-    std::shared_lock<std::shared_mutex> rlock(env_frames_mtx_);
+    std::shared_lock<std::shared_mutex> rlock(
+        env_frame_shards_[env_frame_shard_index(id)].mu); // Issue #3900
     return env_frames_[id].version_ == INVALID_VERSION;
 }
 
@@ -2032,7 +2064,10 @@ std::uint64_t Evaluator::resync_live_closure_env_versions_on_invalidate() {
     std::array<std::shared_lock<std::shared_mutex>, kClosuresShardCount> cl_lock;
     for (std::size_t cl_i = 0; cl_i < kClosuresShardCount; ++cl_i)
         cl_lock[cl_i] = std::shared_lock<std::shared_mutex>(closures_shards_[cl_i].mu);
-    std::shared_lock<std::shared_mutex> ef_lock(env_frames_mtx_);
+    std::array<std::shared_lock<std::shared_mutex>, kEnvFramesShardCount> ef_lock;
+    for (std::size_t ef_i = 0; ef_i < kEnvFramesShardCount; ++ef_i)
+        ef_lock[ef_i] =
+            std::shared_lock<std::shared_mutex>(env_frame_shards_[ef_i].mu); // Issue #3900
     for (const auto& cl_sh : closures_shards_)
         for (const auto& [cid, cl] : cl_sh.map) {
             (void)cid;
@@ -2064,7 +2099,10 @@ void Evaluator::invalidate_post_rollback_env_frames() {
     const std::size_t current_size = env_frames_.size();
     if (checkpoint_size >= current_size)
         return; // nothing to invalidate
-    std::unique_lock<std::shared_mutex> wlock(env_frames_lock());
+    std::array<std::unique_lock<std::shared_mutex>, kEnvFramesShardCount> wlock;
+    for (std::size_t ef_i = 0; ef_i < kEnvFramesShardCount; ++ef_i)
+        wlock[ef_i] =
+            std::unique_lock<std::shared_mutex>(env_frame_shards_[ef_i].mu); // Issue #3900
     std::uint64_t invalidated = 0;
     for (std::size_t i = checkpoint_size; i < current_size; ++i) {
         if (env_frames_[i].version_ != INVALID_VERSION) {
@@ -2097,7 +2135,10 @@ std::size_t Evaluator::truncate_env_frames_to_checkpoint() {
     // Issue #1927 / #1955: fast no-op BEFORE Guard acquire — avoids enter/exit
     // defuse_version_ bumps (2 per boundary) when nothing is truncated.
     {
-        std::shared_lock<std::shared_mutex> rlock(env_frames_lock());
+        std::array<std::shared_lock<std::shared_mutex>, kEnvFramesShardCount> rlock;
+        for (std::size_t ef_i = 0; ef_i < kEnvFramesShardCount; ++ef_i)
+            rlock[ef_i] =
+                std::shared_lock<std::shared_mutex>(env_frame_shards_[ef_i].mu); // Issue #3900
         if (checkpoint_size >= env_frames_.size())
             return 0;
     }
@@ -2127,6 +2168,12 @@ std::size_t Evaluator::truncate_env_frames_to_checkpoint() {
     // mark_invalid=true, only_if_moved=false → also NULL_ENV_ID force Drop.
     (void)scan_live_closures_for_linear_captures(/*mark_invalid=*/true,
                                                  /*only_if_moved=*/false);
+    // Issue #3900: shard barrier FIRST (index order) — shard readers
+    // no longer hold env_frames_mtx_, and taking the structure mutex
+    // before the shards would AB-BA against in-flight walkers.
+    std::array<std::unique_lock<std::shared_mutex>, kEnvFramesShardCount> ef_barrier;
+    for (std::size_t ef_i = 0; ef_i < kEnvFramesShardCount; ++ef_i)
+        ef_barrier[ef_i] = std::unique_lock<std::shared_mutex>(env_frame_shards_[ef_i].mu);
     std::unique_lock<std::shared_mutex> wlock(env_frames_lock());
     const std::size_t current_size = env_frames_.size();
     if (checkpoint_size >= current_size)
@@ -2349,6 +2396,12 @@ std::size_t Evaluator::compact_env_frames() {
         (void)linear_post_mutate_enforce_all();
     }
     compact_gc_coord.enter_cascade();
+    // Issue #3900: shard barrier FIRST (index order) — shard readers
+    // no longer hold env_frames_mtx_, and taking the structure mutex
+    // before the shards would AB-BA against in-flight walkers.
+    std::array<std::unique_lock<std::shared_mutex>, kEnvFramesShardCount> ef_barrier;
+    for (std::size_t ef_i = 0; ef_i < kEnvFramesShardCount; ++ef_i)
+        ef_barrier[ef_i] = std::unique_lock<std::shared_mutex>(env_frame_shards_[ef_i].mu);
     std::unique_lock<std::shared_mutex> env_lock(env_frames_mtx_);
     const std::size_t orig_size = env_frames_.size();
     if (orig_size == 0) {
@@ -2628,7 +2681,10 @@ std::optional<types::EvalValue> Evaluator::lookup_by_symid_chain(
     // Hold the shared lock across the walk so frame refs stay
     // valid; refresh_stale_frame_in_walk needs the shared lock
     // to be held (consistent with materialize_call_env).
-    std::shared_lock<std::shared_mutex> rlock(env_frames_mtx_);
+    std::array<std::shared_lock<std::shared_mutex>, kEnvFramesShardCount> rlock;
+    for (std::size_t ef_i = 0; ef_i < kEnvFramesShardCount; ++ef_i)
+        rlock[ef_i] =
+            std::shared_lock<std::shared_mutex>(env_frame_shards_[ef_i].mu); // Issue #3900
     walk_env_frames(start, [&](EnvId cur, const EnvFrame& fr) {
         // Issue #264: skip frames stamped before the current
         // mutation epoch (stale under concurrent mutate/compact).
@@ -2696,7 +2752,10 @@ std::optional<EnvFrameRef> Evaluator::lookup_by_symid_chain_ref(EnvId start,
         }
     }
     std::optional<EnvFrameRef> result;
-    std::shared_lock<std::shared_mutex> rlock(env_frames_mtx_);
+    std::array<std::shared_lock<std::shared_mutex>, kEnvFramesShardCount> rlock;
+    for (std::size_t ef_i = 0; ef_i < kEnvFramesShardCount; ++ef_i)
+        rlock[ef_i] =
+            std::shared_lock<std::shared_mutex>(env_frame_shards_[ef_i].mu); // Issue #3900
     walk_env_frames(start, [&](EnvId cur, const EnvFrame& fr) {
         auto v = fr.lookup_local_by_symid(s);
         if (v.has_value()) {
@@ -2919,7 +2978,10 @@ void Evaluator::scan_live_env_frame_refs_after_densify() noexcept {
 // counters on drift. Empty / all-INVALID → true (vacuous).
 bool Evaluator::revalidate_dual_epoch_after_densify() noexcept {
     const auto desync0 = envframe_desync_detected_.load(std::memory_order_relaxed);
-    std::shared_lock<std::shared_mutex> rlock(env_frames_mtx_);
+    std::array<std::shared_lock<std::shared_mutex>, kEnvFramesShardCount> rlock;
+    for (std::size_t ef_i = 0; ef_i < kEnvFramesShardCount; ++ef_i)
+        rlock[ef_i] =
+            std::shared_lock<std::shared_mutex>(env_frame_shards_[ef_i].mu); // Issue #3900
     if (env_frames_.empty())
         return true;
     bool ok = true;
@@ -3023,7 +3085,10 @@ void Evaluator::walk_env_frame_roots(std::vector<std::int64_t>& pair_roots_out,
     // Hold the shared lock across the iteration so refresh_stale_frame_in_walk
     // can safely bump the frame's version_ (same precondition as
     // materialize_call_env + lookup_by_symid_chain).
-    std::shared_lock<std::shared_mutex> rlock(env_frames_mtx_);
+    std::array<std::shared_lock<std::shared_mutex>, kEnvFramesShardCount> rlock;
+    for (std::size_t ef_i = 0; ef_i < kEnvFramesShardCount; ++ef_i)
+        rlock[ef_i] =
+            std::shared_lock<std::shared_mutex>(env_frame_shards_[ef_i].mu); // Issue #3900
     for (EnvId cur = 0; cur < env_frames_.size(); ++cur) {
         const EnvFrame& fr = env_frames_[cur];
         // Issue #1903: skip frames marked INVALID_VERSION (post-rollback
@@ -3334,7 +3399,10 @@ EvalValue* Env::lookup_cell_ptr(std::string_view n, std::vector<EvalValue>* cell
         // materialize_call_env + lookup_by_symid_chain +
         // walk_env_frame_roots). The shared lock also keeps the
         // frame reference alive across the visitor call.
-        std::shared_lock<std::shared_mutex> rlock(owner_->env_frames_lock());
+        std::array<std::shared_lock<std::shared_mutex>, Evaluator::env_frame_shard_count()> rlock;
+        for (std::size_t ef_i = 0; ef_i < Evaluator::env_frame_shard_count(); ++ef_i)
+            rlock[ef_i] = std::shared_lock<std::shared_mutex>(
+                owner_->env_frame_shard_mu(ef_i)); // Issue #3900
         owner_->walk_env_frames(parent_id_, [&](EnvId cur, const EnvFrame& f) {
             // Skip frames stamped before the current mutation epoch.
             if (f.version_ < version_snap) {
@@ -3439,7 +3507,10 @@ std::optional<std::uint64_t> Env::lookup_cell_index(std::string_view n) const {
         // Issue #355: take the shared lock so refresh_stale_frame_in_walk
         // can bump the stale frame's version_ safely (same
         // precondition as the other walker sites).
-        std::shared_lock<std::shared_mutex> rlock(owner_->env_frames_lock());
+        std::array<std::shared_lock<std::shared_mutex>, Evaluator::env_frame_shard_count()> rlock;
+        for (std::size_t ef_i = 0; ef_i < Evaluator::env_frame_shard_count(); ++ef_i)
+            rlock[ef_i] = std::shared_lock<std::shared_mutex>(
+                owner_->env_frame_shard_mu(ef_i)); // Issue #3900
         owner_->walk_env_frames(parent_id_, [&](EnvId cur, const EnvFrame& f) {
             // Issue #355: skip + refresh stale frames in the
             // parent walk. This path was previously missing

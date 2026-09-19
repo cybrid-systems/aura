@@ -913,7 +913,10 @@ void Evaluator::install_defuse_subsystem() {
             // not leave the entire arena permanently stale.
             const auto ver = defuse_version_.fetch_add(1, std::memory_order_acq_rel) + 1;
             {
-                std::unique_lock<std::shared_mutex> wlock(env_frames_mtx_);
+                std::array<std::unique_lock<std::shared_mutex>, kEnvFramesShardCount> wlock;
+                for (std::size_t ef_i = 0; ef_i < kEnvFramesShardCount; ++ef_i)
+                    wlock[ef_i] = std::unique_lock<std::shared_mutex>(
+                        env_frame_shards_[ef_i].mu); // Issue #3900
                 for (auto& fr : env_frames_) {
                     if (fr.version_ != INVALID_VERSION)
                         fr.version_ = ver;

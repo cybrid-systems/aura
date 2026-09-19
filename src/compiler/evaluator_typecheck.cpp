@@ -715,7 +715,10 @@ bool Evaluator::hard_block_cross_batch_linear_escape(
     bool escape = false;
     // 1) Live Moved roots in env frames (runtime ownership half).
     {
-        std::shared_lock<std::shared_mutex> env_lock(env_frames_mtx_);
+        std::array<std::shared_lock<std::shared_mutex>, kEnvFramesShardCount> env_lock;
+        for (std::size_t ef_i = 0; ef_i < kEnvFramesShardCount; ++ef_i)
+            env_lock[ef_i] =
+                std::shared_lock<std::shared_mutex>(env_frame_shards_[ef_i].mu); // Issue #3900
         for (const auto& fr : env_frames_) {
             for (const auto s : fr.bindings_linear_ownership_state_) {
                 if (s == linear_rt::Moved) {
@@ -745,7 +748,10 @@ bool Evaluator::hard_block_cross_batch_linear_escape(
             }
             // Also include names of any env binding already in linear state.
             {
-                std::shared_lock<std::shared_mutex> env_lock(env_frames_mtx_);
+                std::array<std::shared_lock<std::shared_mutex>, kEnvFramesShardCount> env_lock;
+                for (std::size_t ef_i = 0; ef_i < kEnvFramesShardCount; ++ef_i)
+                    env_lock[ef_i] = std::shared_lock<std::shared_mutex>(
+                        env_frame_shards_[ef_i].mu); // Issue #3900
                 for (const auto& fr : env_frames_) {
                     const auto n =
                         std::min(fr.bindings_.size(), fr.bindings_linear_ownership_state_.size());
@@ -849,7 +855,7 @@ void Evaluator::clear_adt_non_exhaustive_inject_for_test() noexcept {
 }
 
 void Evaluator::inject_cross_batch_linear_escape_for_test() noexcept {
-    std::unique_lock<std::shared_mutex> lock(env_frames_mtx_);
+    std::unique_lock<std::shared_mutex> lock(env_frame_shards_[0].mu); // Issue #3900
     if (env_frames_.empty())
         env_frames_.emplace_back();
     auto& fr = env_frames_[0];

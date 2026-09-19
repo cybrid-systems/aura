@@ -4425,7 +4425,10 @@ std::size_t Evaluator::refresh_stale_frames_after_steal(std::uint64_t hint_env_i
         std::array<std::shared_lock<std::shared_mutex>, kClosuresShardCount> cl_lock;
         for (std::size_t cl_i = 0; cl_i < kClosuresShardCount; ++cl_i)
             cl_lock[cl_i] = std::shared_lock<std::shared_mutex>(closures_shards_[cl_i].mu);
-        std::shared_lock<std::shared_mutex> ef_lock(env_frames_mtx_);
+        std::array<std::shared_lock<std::shared_mutex>, kEnvFramesShardCount> ef_lock;
+        for (std::size_t ef_i = 0; ef_i < kEnvFramesShardCount; ++ef_i)
+            ef_lock[ef_i] =
+                std::shared_lock<std::shared_mutex>(env_frame_shards_[ef_i].mu); // Issue #3900
 
         // Issue #1903: track the IDs of refreshed frames so the caller
         // (complete_post_resume_steal_refresh) can run a final
