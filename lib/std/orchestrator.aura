@@ -439,16 +439,20 @@
            (if else-step (exec-step else-step) input))))
       
       ; 重试: (retry step n)
+      ; Issue #3935: named let must not be `try` — that shadows the
+      ; exception try/catch, so the inner step never runs. Stop on a
+      ; successful non-#f value (a number is not a pair; the old
+      ; `(not (pair? result))` returned the first #f).
       ((and (pair? step) (eq? (car step) (quote retry)))
        (let ((inner (car (cdr step)))
              (n (if (> (length step) 2) (car (cdr (cdr step))) 3)))
-         (let try ((attempt 1))
+         (let retry-loop ((attempt 1))
            (define result (try (exec-step inner) (catch (e) #f)))
-           (if (or (not (pair? result)) (>= attempt n))
+           (if (or result (>= attempt n))
              result
              (begin
                (orch-yield-safe)
-               (try (+ attempt 1)))))))
+               (retry-loop (+ attempt 1)))))))
       
       ; 配置对: (action . strategy)
       ((pair? step) (orch:step step input))
