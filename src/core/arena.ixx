@@ -1083,6 +1083,11 @@ should_production_auto_arm_moving(double current_fragmentation) noexcept {
         return false;
     if (arena_mutation_boundary_depth() != 0)
         return false;
+    // Issue #3909: honor Agent densify throttle on quiet-window auto-arm
+    // (pin/guard soft-gate already notes it; auto-arm previously ignored).
+    // #3884 LCP consult is unchanged — this is an additional skip.
+    if (aura::core::moving_densify_health::agent_throttle_for_moving_densify())
+        return false;
     return true;
 }
 

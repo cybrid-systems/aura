@@ -517,6 +517,33 @@ static void ac3123_1_production_auto_arm_soft_never() {
     CHECK(aura::core::lifetime::live_pin_count() == 0, "AC1: pin released");
 }
 
+static void ac3909_auto_arm_honors_agent_throttle() {
+    std::println("\n--- #3909: auto-arm skips when Agent densify throttle is set ---");
+    MovingFlagGuard3123 on(1);
+    aura::ast::g_last_moving_compact_ms.store(0, std::memory_order_release);
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    mdh::clear_agent_throttle_for_moving_densify();
+    AutoArmPrefGuard prod(1);
+    CHECK(aura::ast::should_production_auto_arm_moving(0.90),
+          "3909 AC2: throttle off + LCP quiet → auto-arm unchanged");
+    mdh::note_agent_throttle_for_moving_densify();
+    CHECK(!aura::ast::should_production_auto_arm_moving(0.90),
+          "3909 AC1: throttle armed → auto-arm skips Moving");
+    mdh::clear_agent_throttle_for_moving_densify();
+    CHECK(aura::ast::should_production_auto_arm_moving(0.90),
+          "3909 AC2: throttle cleared → auto-arm restored");
+    const auto arena = [&] {
+        std::ifstream in("src/core/arena.ixx");
+        if (!in)
+            in.open("../src/core/arena.ixx");
+        return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    }();
+    CHECK(arena.find("Issue #3909") != std::string::npos, "3909 AC: auto-arm cites throttle");
+    CHECK(arena.find("consult_last_lcp_for_densify_entry") != std::string::npos ||
+              arena.find("Issue #3884") != std::string::npos,
+          "3909 AC3: #3884 LCP consult retained");
+}
+
 static void ac3123_2_untracked_fail_closed_sticky() {
     std::println("\n--- #3123 AC2: production untracked kept fail-closed + sticky ---");
     MovingFlagGuard3123 on(1);
@@ -1007,6 +1034,7 @@ int run_test_arena_moving_densify_health() {
     ac2775_prep_default_arg_compat();
     ac2775_source_cite();
     ac3123_1_production_auto_arm_soft_never();
+    ac3909_auto_arm_honors_agent_throttle();
     ac3123_2_untracked_fail_closed_sticky();
     ac3123_3_sticky_clears_only_on_healthy();
     ac3123_4_soft_force_unchanged();
