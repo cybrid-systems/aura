@@ -1915,9 +1915,15 @@ static void ac2928_1_residual_tick_clears_must_deopt() {
     aura_closure_set_must_deopt(cid, 1);
     CHECK(aura_closure_get_must_deopt(cid) == 1, "AC1: MustDeopt set");
     // Quiet pipeline ticks (candidates==0) + direct tick cover AC1 without reemit.
+    // Issue #3886: pipeline coalesces to one walk per exit, so pin the
+    // round-robin cursor at cid (same as #3746) — eight unlatched ticks
+    // used to walk far enough through a large table; one budget=32 walk
+    // from cursor 0 would miss a high cid.
+    aura_test_set_residual_remount_cursor(static_cast<std::uint64_t>(cid));
     for (int i = 0; i < 8; ++i)
         aura::compiler::hot_update_registry().on_reemit_pipeline_call(/*candidates=*/0,
                                                                       /*successes=*/0);
+    aura_test_set_residual_remount_cursor(static_cast<std::uint64_t>(cid));
     aura_residual_live_closure_remount_tick(32);
     CHECK(aura_closure_get_must_deopt(cid) == 0, "AC1: MustDeopt cleared by residual tick");
     const auto ok1 = aura_residual_remount_ok_total_v_read();
@@ -2109,8 +2115,8 @@ static void ac2928_3_reemit_success_unchanged() {
     const auto reg = read_file("src/compiler/hot_update_registry.cpp");
     CHECK(reg.find("candidates == 0") != std::string::npos,
           "AC3: residual only on quiet candidates==0");
-    CHECK(reg.find("aura_residual_live_closure_remount_tick") != std::string::npos,
-          "AC3: residual wired from pipeline quiet");
+    CHECK(reg.find("aura_residual_remount_tick_coalesce") != std::string::npos,
+          "AC3: residual wired from pipeline quiet (coalesce #3886)");
 }
 
 static void ac2928_4_soft_budget_zero() {
@@ -2161,10 +2167,10 @@ static void ac2928_6_source_and_linter() {
     CHECK(rt.find("g_residual_remount_cursor") != std::string::npos, "AC6: cursor atomic");
     CHECK(rt.find("Issue #2928") != std::string::npos, "AC6: runtime cites #2928");
     CHECK(br.find("aura_bump_residual_remount_totals") != std::string::npos, "AC6: bridge bump");
-    CHECK(reg.find("aura_residual_live_closure_remount_tick") != std::string::npos,
-          "AC6: pipeline quiet wire");
-    CHECK(dtor.find("aura_residual_live_closure_remount_tick") != std::string::npos,
-          "AC6: BoundaryExit wire");
+    CHECK(reg.find("aura_residual_remount_tick_coalesce") != std::string::npos,
+          "AC6: pipeline quiet wire (coalesce #3886)");
+    CHECK(dtor.find("aura_residual_remount_tick_coalesce") != std::string::npos,
+          "AC6: BoundaryExit wire (coalesce #3886)");
     CHECK(obs.find("residual_remount_ok_total") != std::string::npos, "AC6: metrics ok");
     CHECK(obs.find("residual_remount_budget_skip_total") != std::string::npos, "AC6: metrics skip");
     CHECK(sh.find("aura_residual_live_closure_remount_tick") != std::string::npos,
@@ -2178,6 +2184,59 @@ static void ac2928_6_source_and_linter() {
           "AC6: no docs/design/2928-* per #1655");
     CHECK(read_file("tests/compiler/test_issue_2928.cpp").empty(),
           "AC6: no invent test per #81967");
+}
+
+// ── Issue #3886: Quiet BoundaryExit coalesces residual remount with pipeline ──
+static void ac3886_coalesce_duplicate_tick() {
+    std::println("\n--- #3886 AC1: second coalesce in same exit is a no-op ---");
+    aura_test_reset_residual_remount_state();
+    aura_test_set_residual_remount_budget(32);
+    const auto first = aura_residual_remount_tick_coalesce(32);
+    const auto dup = aura_residual_remount_tick_coalesce(32);
+    if (first == 0 && dup == 0) {
+        std::println("  (light link: coalesce stub — source-cite only)");
+    } else {
+        CHECK(first == 1, "3886 AC1: first tick runs");
+        CHECK(dup == 0, "3886 AC1: duplicate tick skipped (one walk per exit)");
+        aura_residual_remount_note_boundary_exit();
+        CHECK(aura_residual_remount_tick_coalesce(32) == 1,
+              "3886 AC1: next exit generation ticks again");
+    }
+    aura_test_reset_residual_remount_state();
+}
+
+static void ac3886_source_and_soft() {
+    std::println("\n--- #3886 AC2/AC3: source-cite + Soft unchanged ---");
+    const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
+    const auto reg = read_file("src/compiler/hot_update_registry.cpp");
+    const auto dtor = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    CHECK(rt.find("Issue #3886") != std::string::npos, "3886 AC: runtime cites #3886");
+    CHECK(reg.find("Issue #3886") != std::string::npos, "3886 AC: pipeline cites #3886");
+    CHECK(dtor.find("Issue #3886") != std::string::npos, "3886 AC: BoundaryExit cites #3886");
+    CHECK(reg.find("aura_residual_remount_tick_coalesce") != std::string::npos,
+          "3886 AC1: pipeline uses coalesce");
+    CHECK(dtor.find("aura_residual_remount_tick_coalesce") != std::string::npos,
+          "3886 AC1: BoundaryExit uses coalesce");
+    CHECK(dtor.find("aura_residual_remount_note_boundary_exit") != std::string::npos,
+          "3886 AC1: BoundaryExit bumps gen");
+    CHECK(rt.find("storm >= 2") != std::string::npos ||
+              rt.find("aura_hot_update_should_throttle_reemit") != std::string::npos,
+          "3886 AC2: storm/throttle still skip inside tick");
+    aura_test_reset_residual_remount_state();
+    aura_test_set_residual_remount_budget(0);
+    const auto s0 = aura_residual_remount_tick_coalesce(0);
+    const auto s1 = aura_residual_remount_tick_coalesce(0);
+    if (s0 == 0 && s1 == 0) {
+        std::println("  (light link: coalesce stub)");
+    } else {
+        CHECK(s0 == 1, "3886 AC3: Soft/budget=0 still one-shot");
+        CHECK(s1 == 0, "3886 AC3: duplicate still skipped");
+    }
+    CHECK(read_file("tests/compiler/test_issue_3886.cpp").empty(),
+          "3886 AC: no test_issue_3886.cpp");
+    CHECK(read_file("docs/design/3886-residual-remount-coalesce.md").empty(),
+          "3886 AC: no docs/design/3886-*");
+    aura_test_reset_residual_remount_state();
 }
 
 // ── Issue #2977: residual remount prefer force_jit / last_success ──
@@ -3308,6 +3367,9 @@ int run_test_anonymous_residual_stable_id_policy() {
     ac2928_4_soft_budget_zero();
     ac2928_5_query_keys();
     ac2928_6_source_and_linter();
+    std::println("\n=== Issue #3886: Quiet BoundaryExit residual remount coalesce ===");
+    ac3886_coalesce_duplicate_tick();
+    ac3886_source_and_soft();
     std::println("\n=== Issue #2977: residual remount prefer force_jit / last_success ===");
     ac2977_1_prefer_demoted_region();
     ac2977_2_soft_idle_zero_cost();

@@ -26,6 +26,7 @@ extern "C" void aura_sync_remount_covered_named_live_closures(std::uint64_t mask
 extern "C" void aura_note_reemit_success_sync_covered_budget_skip() noexcept;
 extern "C" std::uint64_t aura_reemit_success_sync_covered_cap_default() noexcept;
 extern "C" void aura_residual_live_closure_remount_tick(std::uint64_t budget);
+extern "C" int aura_residual_remount_tick_coalesce(std::uint64_t budget);
 // Issue #2950: pure-anon bg remount drain (never steal-complete #2715).
 extern "C" void aura_pure_anon_bg_remount_drain(std::uint64_t max_n) noexcept;
 extern "C" std::uint64_t aura_pure_anon_bg_pending() noexcept;
@@ -377,10 +378,12 @@ void HotUpdateRegistry::on_reemit_pipeline_call(std::uint64_t candidates,
     // budget=0 → one relaxed load then return. Hard storm / throttle
     // skip inside the tick (budget_skip). Never on candidates>0 success
     // path — avoids double-remount with the reemit-success sync walk.
+    // Issue #3886: coalesce with BoundaryExit so one quiet exit does
+    // not walk residual remount twice.
     if (candidates == 0) {
         const auto b = aura_residual_remount_budget_default();
         if (b > 0)
-            aura_residual_live_closure_remount_tick(b);
+            (void)aura_residual_remount_tick_coalesce(b);
     }
     // Issue #2950: pure-anon background remount drain (amortized).
     // Empty queue → single relaxed load. Never steal-complete (#2715).

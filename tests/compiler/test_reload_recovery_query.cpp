@@ -1562,8 +1562,8 @@ static void ac3248_3_source_and_linter() {
                   win.find("Remount / drain stay") != std::string::npos,
               "3248 AC3: observe moved out of success-only remount block");
     }
-    const auto remount = bnd.find("aura_residual_live_closure_remount_tick(b)");
-    CHECK(remount != std::string::npos, "3248 AC3: remount still present");
+    const auto remount = bnd.find("aura_residual_remount_tick_coalesce(b)");
+    CHECK(remount != std::string::npos, "3248 AC3: remount still present (coalesce #3886)");
     if (remount != std::string::npos) {
         const auto rwin = bnd.substr(remount > 500 ? remount - 500 : 0, 600);
         CHECK(rwin.find("if (outermost && success)") != std::string::npos,

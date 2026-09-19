@@ -1,0 +1,43 @@
+{
+  "issue": 3886,
+  "title": "Quiet BoundaryExit coalesces residual remount with pipeline candidates==0",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/aura_jit_runtime.cpp",
+      "contains": [
+        "Issue #3886",
+        "aura_residual_remount_tick_coalesce",
+        "aura_residual_remount_note_boundary_exit"
+      ]
+    },
+    {
+      "ac": "AC1-sites",
+      "paths": [
+        "src/compiler/hot_update_registry.cpp",
+        "src/compiler/evaluator_mutation_boundary.cpp"
+      ],
+      "contains": [
+        "Issue #3886",
+        "aura_residual_remount_tick_coalesce"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/compiler/test_anonymous_residual_stable_id_policy.cpp",
+      "contains": [
+        "3886 AC1: duplicate tick skipped (one walk per exit)",
+        "3886 AC1: next exit generation ticks again",
+        "ac3886_coalesce_duplicate_tick"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "forbid": [
+        "tests/compiler/test_issue_3886.cpp",
+        "tests/issues/test_issue_3886.cpp",
+        "docs/design/3886-residual-remount-coalesce.md"
+      ]
+    }
+  ]
+}
