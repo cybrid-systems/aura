@@ -1,13 +1,17 @@
 #!/usr/bin/env python3
-"""Issue #3339 / #3807: Agent decision facade planned_keys headroom + no overflow.
+"""Issue #3339 / #3807 / Issue #3882: Agent decision facade planned_keys headroom.
 
 Agent single-hash decision facades must keep
 planned_keys >= actual insert_kv count + 8. Additive insert_kv must
 raise planned_keys. hash-overflow on these facades is a hard fail
-(non-Agent catalogs may still stamp #3020 overflow).
+(non-Agent catalogs may still stamp #3020 overflow). Prefer
+query_hash_capacity_for over a magic FlatHashTable::create(N).
 
 Issue #3807: query:orch-module-stats (~390 live insert_kv, planned=512)
 joins the same headroom CI so orch growth cannot silently drop Agent keys.
+
+Issue #3882: CI fails when live keys + 8 > planned for posture / playbook /
+evolution-snapshot / orch-module (same pin list as AC1). No new check file.
 
 Contract (one row per AC):
   AC1  planned >= actual + 8 on evolution-audit-decision /
@@ -132,6 +136,7 @@ def main() -> int:
     must("kAgentDecisionFacadeHeadroom = 8", "AC1 headroom constant", ev)
     must("kAgentDecisionFacadeHeadroomIssue = 3339", "AC1 stamp", ev)
     must("Additive insert_kv must raise planned_keys", "AC1 comment", ev)
+    must("Issue #3882", "AC1/#3882 live-vs-planned pin stamp", ev)
 
     facades = [
         ("query:evolution-audit-decision", sec, "kEvolutionAuditDecisionPlannedKeys"),
@@ -195,6 +200,10 @@ def main() -> int:
     must("hash-overflow", "AC2 test overflow key", test)
     must("apply_production_audit_defaults", "AC2 production", test)
     must("query:orch-module-stats", "AC2/#3807 orch in production overflow hard-fail", test)
+    must("3882 AC1: CI pins posture", "AC1/#3882 posture pin test", test)
+    must("3882 AC1: CI pins playbook", "AC1/#3882 playbook pin test", test)
+    must("3882 AC1: CI pins evolution", "AC1/#3882 evolution pin test", test)
+    must("3882 AC1: CI pins orch", "AC1/#3882 orch pin test", test)
 
     if evo_actual > 0 and evo_planned >= (evo_actual + 20) + HEADROOM:
         fails.append(
@@ -228,7 +237,7 @@ def main() -> int:
             print(f"FAIL: {f}", file=sys.stderr)
         print(f"\n{len(fails)} contract row(s) failed", file=sys.stderr)
         return 1
-    print("OK: Issue #3339/#3807/#3846 Agent decision facade headroom — all AC rows satisfied")
+    print("OK: Issue #3339/#3807/#3846/#3882 Agent decision facade headroom — all AC rows satisfied")
     return 0
 
 

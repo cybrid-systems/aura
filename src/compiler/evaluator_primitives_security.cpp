@@ -5422,6 +5422,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             // Issue #3806: +4 overflow wrap/full/schema/issue (depth
             // already present). Issue #3838: +3 refuse/schema/issue.
             // Live ~100; planned 128 still has headroom.
+            // Issue #3882: CI fails when live + 8 > planned.
             constexpr std::size_t kSecurityPosturePlannedKeys = 128;
             auto* ht = FlatHashTable::create(query_hash_capacity_for(kSecurityPosturePlannedKeys));
             if (!ht)

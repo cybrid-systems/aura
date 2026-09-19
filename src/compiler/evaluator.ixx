@@ -1211,13 +1211,15 @@ namespace primitives_detail {
     // FlatHashTable::create(N) catalogs are static (key count << 0.7*N)
     // or already N>=64; migrate when adding keys. headroom-3020.
     //
-    // Issue #3339: Agent decision facades (evolution-audit-decision,
-    // security-posture, type-linear-commit-health, type-linear-evolution-
-    // snapshot, reload-recovery-playbook, reload-recovery-state #3846,
-    // orch-module-stats #3807) MUST keep
+    // Issue #3339 / Issue #3882: Agent decision facades
+    // (evolution-audit-decision, security-posture, type-linear-commit-health,
+    // type-linear-evolution-snapshot, reload-recovery-playbook,
+    // reload-recovery-state #3846, orch-module-stats #3807) MUST keep
     // planned_keys >= actual insert_kv count + kAgentDecisionFacadeHeadroom.
-    // Additive insert_kv must raise planned_keys. Those facades forbid
-    // hash-overflow (CI: check_agent_decision_facade_headroom_3339.py).
+    // Additive insert_kv must raise planned_keys. Prefer
+    // query_hash_capacity_for over a magic create(N). Those facades forbid
+    // hash-overflow (CI: check_agent_decision_facade_headroom_3339.py;
+    // live+8 > planned fails the gate).
     inline constexpr std::size_t kAgentDecisionFacadeHeadroom = 8;
     inline constexpr int kAgentDecisionFacadeHeadroomIssue = 3339;
     extern std::atomic<std::uint64_t> g_query_hash_overflow_total;

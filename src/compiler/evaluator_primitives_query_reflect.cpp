@@ -611,6 +611,7 @@ void register_query_reflect_primitives(PrimRegistrar add, std::pmr::vector<Pair>
             const auto snap = capture_type_linear_evolution_snapshot();
             // Issue #3339: live 57 keys; planned 72 (>= 57+8). Additive
             // insert_kv must raise planned_keys; Agent facade forbids overflow.
+            // Issue #3882: CI fails when live + 8 > planned.
             constexpr std::size_t kTypeLinearEvolutionSnapshotPlannedKeys = 84;
             auto* ht = FlatHashTable::create(
                 query_hash_capacity_for(kTypeLinearEvolutionSnapshotPlannedKeys));

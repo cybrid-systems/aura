@@ -6178,6 +6178,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             // (#3282): query_hash_capacity_for + insert_kv_checked +
             // query_hash_finish (hash-overflow=1, never silent drop).
             // Live ~390 insert_kv + hot-scope extras + 8 headroom.
+            // Issue #3882: CI fails when live + 8 > planned.
             // planned=256 → cap 512 already dropped tail sentinels
             // (#3208/#3220/#3250); raise when appending. Soft/Off extra
             // cost is one force-cap load. No second metrics bus.
