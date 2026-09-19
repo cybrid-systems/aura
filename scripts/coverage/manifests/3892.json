@@ -1,0 +1,51 @@
+{
+  "issue": 3892,
+  "title": "prefer-partial cold miss (lookup st==2) has no dedicated counter",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/service.ixx",
+      "contains": [
+        "Issue #3892",
+        "st == 2",
+        "incremental_relower_cold_miss_total"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/observability_metrics.h",
+      "contains": [
+        "Issue #3892",
+        "incremental_relower_cold_miss_total"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/evaluator_primitives_obs_eval.cpp",
+      "contains": [
+        "cold-miss-total",
+        "schema-3892"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "paths": [
+        "tests/compiler/test_eval_relower_hotpath.cpp",
+        "tests/compiler/test_partial_relower_cascade.cpp"
+      ],
+      "contains": [
+        "3892 AC1: cold-miss bumped on never-cached full lower",
+        "3892 AC2: correct skip does not bump cold-miss",
+        "ac3892_1_cold_miss_bumps"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "forbid": [
+        "tests/compiler/test_issue_3892.cpp",
+        "tests/issues/test_issue_3892.cpp",
+        "docs/design/3892-prefer-partial-cold-miss.md"
+      ]
+    }
+  ]
+}

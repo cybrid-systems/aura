@@ -8128,6 +8128,12 @@ void ObservabilityPrims::register_eval_p42(PrimRegistrar add, Evaluator& ev) {
                 {"instr-level-relower-wired", make_int(1)},
                 {"schema-2133", make_int(2133)},
                 {"issue-2133", make_int(2133)},
+                // Issue #3892: prefer-partial cold miss (st==2)
+                {"cold-miss-total", make_int(m ? load(m->incremental_relower_cold_miss_total) : 0)},
+                {"incremental_relower_cold_miss_total",
+                 make_int(m ? load(m->incremental_relower_cold_miss_total) : 0)},
+                {"schema-3892", make_int(3892)},
+                {"issue-3892", make_int(3892)},
                 {"issue", make_int(1639)},
                 // lineage 718 → … → 1639; #2032–#2190 satellites
                 {"schema", make_int(1639)},

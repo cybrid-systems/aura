@@ -23,6 +23,7 @@
 #include <thread>
 
 import std;
+import aura.compiler.ir;
 import aura.compiler.ir_cache_pure;
 import aura.compiler.service;
 import aura.compiler.value;
@@ -772,6 +773,85 @@ static void ac3760_3_soft_empty_map_zero() {
     apply_dev_audit_defaults();
 }
 
+static void ac3892_1_cold_miss_bumps() {
+    std::println("\n--- #3892 AC1: first lookup (never cached) bumps cold-miss ---");
+    CompilerService cs;
+    auto* m = static_cast<CompilerMetrics*>(cs.evaluator().compiler_metrics());
+    CHECK(m, "3892 AC1: metrics");
+    const auto miss0 = m->incremental_relower_cold_miss_total.load(std::memory_order_relaxed);
+    const auto skip0 = m->relower_skipped_entirely_count.load(std::memory_order_relaxed);
+    CHECK(cs.eval("(define (f3892 x) (+ x 1))").has_value(), "3892 AC1: first define");
+    CHECK(m->incremental_relower_cold_miss_total.load(std::memory_order_relaxed) > miss0,
+          "3892 AC1: cold-miss bumped on never-cached full lower");
+    CHECK(href(cs, "cold-miss-total") > 0, "3892 AC1: query cold-miss-total");
+    CHECK(href(cs, "schema-3892") == 3892, "3892 AC1: schema-3892");
+    CHECK(m->relower_skipped_entirely_count.load(std::memory_order_relaxed) == skip0,
+          "3892 AC1: first miss is not a correct-skip");
+}
+
+static void seed_fn_v2_3892(CompilerService& cs, const std::string& name, const std::string& src) {
+    aura::ir::IRFunction top;
+    top.id = 0;
+    top.name = "__top__";
+    top.blocks.push_back({0, {}, {}});
+    aura::ir::IRFunction body;
+    body.id = 1;
+    body.name = name + "_body";
+    body.blocks.push_back({0, {}, {}});
+    body.blocks.push_back({1, {}, {}});
+    std::vector<aura::ir::IRFunction> irs;
+    irs.push_back(std::move(top));
+    irs.push_back(std::move(body));
+    cs.store_define_v2(name, src, std::move(irs), {}, {});
+}
+
+static void ac3892_2_skip_does_not_bump() {
+    std::println("\n--- #3892 AC2: correct skip does not bump cold-miss ---");
+    CompilerService cs;
+    auto* m = static_cast<CompilerMetrics*>(cs.evaluator().compiler_metrics());
+    CHECK(m, "3892 AC2: metrics");
+    const char* src = "(define (g3892 x) (+ x 1))";
+    CHECK(cs.eval(src).has_value(), "3892 AC2: seed define");
+    if (!cs.get_define_v2("g3892") || cs.get_define_v2("g3892")->irs.empty())
+        seed_fn_v2_3892(cs, "g3892", src);
+    CHECK(cs.get_define_v2("g3892") != nullptr, "3892 AC2: v2 cached");
+    const auto miss1 = m->incremental_relower_cold_miss_total.load(std::memory_order_relaxed);
+    const auto skip1 = m->relower_skipped_entirely_count.load(std::memory_order_relaxed);
+    CHECK(cs.eval(src).has_value(), "3892 AC2: same-source redefine");
+    CHECK(m->incremental_relower_cold_miss_total.load(std::memory_order_relaxed) == miss1,
+          "3892 AC2: correct skip does not bump cold-miss");
+    CHECK(m->relower_skipped_entirely_count.load(std::memory_order_relaxed) > skip1,
+          "3892 AC2: skip counter moved on clean hit");
+}
+
+static void ac3892_3_fail_closed_full_unchanged() {
+    std::println("\n--- #3892 AC3: fail-closed full still uses existing distinguisher ---");
+    const auto svc = read_file("src/compiler/service.ixx");
+    const auto cite = svc.find("Issue #3892");
+    CHECK(cite != std::string::npos, "3892 AC3: #3892 cite");
+    if (cite != std::string::npos) {
+        const auto hwin = svc.substr(cite, 700);
+        CHECK(hwin.find("st == 2") != std::string::npos, "3892 AC3: st==2 arm");
+        CHECK(hwin.find("incremental_relower_cold_miss_total") != std::string::npos,
+              "3892 AC3: cold-miss counter");
+    }
+    CHECK(svc.find("partial_forced_full_by_impact_total") != std::string::npos,
+          "3892 AC3: fail-closed full distinguisher retained");
+    CompilerService cs;
+    CHECK(href(cs, "full-fallbacks") >= 0, "3892 AC3: existing full-fallbacks key retained");
+}
+
+static void ac3892_4_no_invent() {
+    std::println("\n--- #3892 AC4: no invent / no old key rename ---");
+    const auto q = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
+    CHECK(q.find("cold-miss-total") != std::string::npos, "3892 AC4: additive key");
+    CHECK(q.find("make_int(1639)") != std::string::npos, "3892 AC4: schema 1639 retained");
+    CHECK(read_file("tests/compiler/test_issue_3892.cpp").empty(), "3892 AC4: no invent");
+    CHECK(read_file("tests/issues/test_issue_3892.cpp").empty(), "3892 AC4: no issues invent");
+    CHECK(read_file("docs/design/3892-prefer-partial-cold-miss.md").empty(),
+          "3892 AC4: no docs/design");
+}
+
 } // namespace
 
 int run_test_partial_relower_cascade() {
@@ -800,9 +880,14 @@ int run_test_partial_relower_cascade() {
     ac3760_1_empty_map_unknown_full();
     ac3760_2_3656_nonempty_empty_calls_unknown();
     ac3760_3_soft_empty_map_zero();
+    ac3892_1_cold_miss_bumps();
+    ac3892_2_skip_does_not_bump();
+    ac3892_3_fail_closed_full_unchanged();
+    ac3892_4_no_invent();
     if (g_failed)
         return 1;
-    std::println("partial re-lower cascade (#2041/#3550/#3584/#3656): OK ({} passed)", g_passed);
+    std::println("partial re-lower cascade (#2041/#3550/#3584/#3656/#3892): OK ({} passed)",
+                 g_passed);
     return 0;
 }
 

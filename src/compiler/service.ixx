@@ -9466,6 +9466,10 @@ public:
             // Source changed, no IR, or partial failed → full path.
             metrics_.incremental_full_fallback_total.fetch_add(1, std::memory_order_relaxed);
         }
+        // Issue #3892: st==2 cold miss — dedicated counter (not skip, not
+        // fail-closed-full). st==1 fallback stays on incremental_full_fallback.
+        if (st == 2)
+            metrics_.incremental_relower_cold_miss_total.fetch_add(1, std::memory_order_relaxed);
         // st == 2 (miss) or st == 1 fallback
         return cache_define(source, flat, pool, expanded_root, name_str, bind_in_env, module_name);
     }
