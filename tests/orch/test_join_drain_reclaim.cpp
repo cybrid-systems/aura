@@ -4827,6 +4827,54 @@ int run_test_join_drain_reclaim() {
             CHECK(build.find("check_join_auto_wait_reclaimed_3051") != std::string::npos,
                   "3051 AC6: build.py wires linter");
         }
+
+        std::println("\n--- #3923: Aura does not stack a second wait budget ---");
+        {
+            const char* prev_sb = std::getenv("AURA_SANDBOX");
+            std::string prev_sb_s = prev_sb ? prev_sb : "";
+            ::setenv("AURA_SANDBOX", "restricted", 1);
+            apply_production_audit_defaults();
+            auto fiber_owned = std::make_unique<Fiber>([] {});
+            fiber_owned->mark_reclaimed();
+            AgentHandle h;
+            h.ok = true;
+            h.fiber = fiber_owned.get();
+            h.reserved_memory_bytes = 1024;
+            JoinPolicy policy{};
+            policy.primary_ms = 1;
+            policy.drain_ms = 0;
+            (void)join_agent(h, policy);
+            CHECK(h.wait_reclaimed_used, "3923 AC1: C++ join_agent already auto-waited");
+            CHECK(h.must_wait_reclaimed, "3923 AC1: Timeout still owes host wait");
+            const auto t0 = std::chrono::steady_clock::now();
+            std::uint64_t extra = 0;
+            // Mimic orch:agent-join after join_agent (#3923 skip).
+            if (!h.wait_reclaimed_used)
+                extra = maybe_auto_wait_reclaimed_production(h, false);
+            const auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                        std::chrono::steady_clock::now() - t0)
+                                        .count();
+            CHECK(extra == 0, "3923 AC1: Aura skip → no second retry budget");
+            CHECK(elapsed_ms < 20, "3923 AC1: skip is not a second 16s/50ms loop");
+            apply_dev_audit_defaults();
+            if (!prev_sb_s.empty())
+                ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+            else
+                ::unsetenv("AURA_SANDBOX");
+            fiber_owned->set_state(FiberState::Done);
+            fiber_owned->note_body_exit_if_reclaimed();
+            h.finish_reclaimed_cleanup_on_dtor();
+        }
+        {
+            const auto agent = read_file("src/compiler/evaluator_primitives_agent.cpp");
+            CHECK(agent.find("#3923") != std::string::npos, "3923 AC4: Aura join cites #3923");
+            CHECK(agent.find("if (!hp->wait_reclaimed_used)") != std::string::npos,
+                  "3923 AC4: agent-join skips when C++ already waited");
+            CHECK(agent.find("if (!hp.wait_reclaimed_used)") != std::string::npos,
+                  "3923 AC4: scope-join-all skips per-handle after batch");
+            CHECK(read_file("docs/design/3923-double-wait.md").empty(), "3923: no docs/design");
+            CHECK(read_file("tests/orch/test_issue_3923.cpp").empty(), "3923: no test_issue_3923");
+        }
     }
 
     // ── #3087: ensure_reclaimed_cleanup — C++ host helper for long-lived

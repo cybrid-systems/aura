@@ -3644,16 +3644,12 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             }
 
             auto jr = aura::orch::join_agent(*hp, policy);
-            // Issue #3051: language surface only — production + Reclaimed
-            // + must_wait_reclaimed + no :wait-reclaimed-ms → one 50ms
-            // wait_reclaimed_body. Explicit override wins (no double-wait).
-            // C++ join_agent Soft default is unchanged (#3012 AC4).
-            // Issue #3595: the wait is now a bounded retry (#2227 budget
-            // shape) so a body that exits inside the window lands Done-path
-            // cleanup before join surfaces cleanup-pending.
-            jr.wait_us += aura::orch::maybe_auto_wait_reclaimed_production(
-                *hp, policy.wait_reclaimed_ms.has_value(),
-                aura::orch::reclaimed_retry_budget_ms(policy.drain_ms));
+            // #3051 language surface; Issue #3595 bounded retry; #3923
+            // skip if join_agent already auto-waited (wait_reclaimed_used).
+            if (!hp->wait_reclaimed_used)
+                jr.wait_us += aura::orch::maybe_auto_wait_reclaimed_production(
+                    *hp, policy.wait_reclaimed_ms.has_value(),
+                    aura::orch::reclaimed_retry_budget_ms(policy.drain_ms));
             const char* st = "ok";
             switch (jr.status) {
                 case aura::serve::JoinStatus::Ok:
@@ -4606,11 +4602,11 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             std::int64_t cleanup_pending_n = 0; // Issue #3272: SSOT second-wait owed
             auto per_handle_3643 = [&](aura::orch::AgentScope& s) {
                 for (auto& hp : s.handles_mut()) {
-                    // Issue #3595: bounded retry budget (drain-scaled, #2227
-                    // shape) — same SSOT wrapper as orch:agent-join.
-                    auto_wait_us += aura::orch::maybe_auto_wait_reclaimed_production(
-                        hp, caller_passed_wait,
-                        aura::orch::reclaimed_retry_budget_ms(policy.drain_ms));
+                    // Issue #3595 SSOT; #3923 skip if batch already waited.
+                    if (!hp.wait_reclaimed_used)
+                        auto_wait_us += aura::orch::maybe_auto_wait_reclaimed_production(
+                            hp, caller_passed_wait,
+                            aura::orch::reclaimed_retry_budget_ms(policy.drain_ms));
                     if (hp.wait_reclaimed_used)
                         any_wait = true;
                     if (hp.wait_reclaimed_timeout)
