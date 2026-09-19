@@ -37,7 +37,11 @@
   (check= 1 (length (string-split (string-repeat "a" 5000) "|")))
   (check= 2001 (length (string-split (string-repeat "a\n" 2000) "\n")))
   (check= ("hi" "there" "world") (string-split-words "hi  there\tworld"))
-  (check= 500 (length (string-split-words (string-repeat "w " 500)))))
+  (check= 500 (length (string-split-words (string-repeat "w " 500))))
+  ;; Issue #3920: string-find (haystack, needle) → index or -1
+  (check= 2 (string-find "ab(lambda" "(lambda"))
+  (check= 0 (string-find "(lambda (x) x)" "(lambda"))
+  (check= -1 (string-find "abc" "(lambda"))))
 
 (test-suite "stdlib:json"
   (require std/json)

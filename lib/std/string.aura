@@ -9,6 +9,7 @@
 (export string-split string-split-words string-join string-trim
         string-upcase string-downcase
         string-contains? string-prefix? string-suffix? string-replace
+        string-find
         string-pad-left string-pad-right string-reverse string-repeat
         string->chars chars->string string-take string-drop)
 
@@ -103,6 +104,10 @@
   (list->string (map down (string->list s))))
 
 ;; ── New v2 functions ───────────────────────────────────────
+
+; Index of needle in haystack, or -1. Wraps boot string-index (#3920).
+(define (string-find haystack needle)
+  (string-index haystack needle 0))
 
 ; Check if string contains a substring — iterative O(1) stack (#2770).
 (define (string-contains? haystack needle)
