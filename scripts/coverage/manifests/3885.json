@@ -1,0 +1,41 @@
+{
+  "issue": 3885,
+  "title": "only_covered multi-reason force: heal ORs one bit; residual until coverage note",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/hot_update_registry.cpp",
+      "contains": [
+        "Issue #3885",
+        "prev | bit",
+        "maybe_stamp_heal_reason_last_success"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/hot_update_registry.hh",
+      "contains": [
+        "Issue #3885",
+        "note_reemit_success_coverage"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/compiler/test_hot_update_cascade_dirty_reemit.cpp",
+      "contains": [
+        "3885 AC1: residual Defuse remains force-JIT (fail-closed)",
+        "3885 AC2: residual empty after coverage note",
+        "3885 AC2: second heal ORs Defuse"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "forbid": [
+        "tests/compiler/test_issue_3885.cpp",
+        "tests/issues/test_issue_3885.cpp",
+        "scripts/coverage/checks/check_only_covered_3885.py",
+        "docs/design/3885-only-covered-multi-reason.md"
+      ]
+    }
+  ]
+}

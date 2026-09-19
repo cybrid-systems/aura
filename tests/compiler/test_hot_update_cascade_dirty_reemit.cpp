@@ -838,6 +838,128 @@ static void ac3745_soft_wholesale_unchanged() {
     reg.reset_force_jit_repromote_for_test();
 }
 
+// ── Issue #3885: only_covered multi-reason force sticky until coverage / belt ──
+static void ac3885_multi_reason_single_heal_leaves_residual() {
+    std::println("\n--- #3885 AC1: multi-reason force + single-bit heal leaves residual ---");
+    const auto cpp = read_file("src/compiler/hot_update_registry.cpp");
+    CHECK(cpp.find("Issue #3885") != std::string::npos, "3885 AC: cpp cites #3885");
+    CHECK(cpp.find("prev | bit") != std::string::npos, "3885 AC1: heal ORs one reason bit");
+    auto& reg = hot_update_registry();
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    reg.on_reload_success();
+    reg.reset_force_jit_repromote_for_test();
+    reg.set_force_jit_repromote_window(1);
+    reg.set_force_jit_repromote_only_covered_bits(true);
+    reg.set_force_jit_repromote_require_pending_idle(false);
+    reg.on_force_jit_for_reason(AotReloadFail::Defuse);
+    reg.on_force_jit_for_reason(AotReloadFail::Env); // last_reason = Env
+    const auto defuse = aot_reload_fail_to_force_jit_mask(AotReloadFail::Defuse);
+    const auto env = aot_reload_fail_to_force_jit_mask(AotReloadFail::Env);
+    CHECK((reg.force_jit_regions_mask() & defuse) != 0, "3885 AC1: Defuse force bit set");
+    CHECK((reg.force_jit_regions_mask() & env) != 0, "3885 AC1: Env force bit set");
+    aura_hot_update_set_reemit_boundary_policy(0);
+    static ReemitFeed feed;
+    feed.names = {"__hu_3885_one"};
+    feed.regions = {1};
+    feed.cursor = 0;
+    aura_set_reemit_candidate_fn(&reemit_candidate_iter, &feed);
+    aura_set_aot_emit_fn(&emit_ok, nullptr);
+    reg.on_emit_region_mask_set(~0ULL);
+    (void)reg.decide_and_reemit(1, aura::compiler::HotUpdateRegistry::ReemitReason::CoverageVerify);
+    if ((reg.last_reemit_success_region_mask() & env) == 0)
+        reg.on_reemit_pipeline_call(/*candidates=*/1, /*successes=*/1);
+    CHECK((reg.last_reemit_success_region_mask() & env) != 0,
+          "3885 AC1: last_success has Env (last_force_jit_reason)");
+    CHECK((reg.last_reemit_success_region_mask() & defuse) == 0,
+          "3885 AC1: single-bit heal does not stamp Defuse");
+    CHECK((reg.residual_force_mask() & defuse) != 0,
+          "3885 AC1: residual Defuse remains force-JIT (fail-closed)");
+    aura_set_aot_emit_fn(nullptr, nullptr);
+    aura_set_reemit_candidate_fn(nullptr, nullptr);
+    reg.on_reload_success();
+    reg.reset_force_jit_repromote_for_test();
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+}
+
+static void ac3885_agent_coverage_note_clears_residual() {
+    std::println("\n--- #3885 AC2: Agent coverage note clears remaining residual ---");
+    auto& reg = hot_update_registry();
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    reg.on_reload_success();
+    reg.reset_force_jit_repromote_for_test();
+    reg.set_force_jit_repromote_only_covered_bits(true);
+    reg.on_force_jit_for_reason(AotReloadFail::Defuse);
+    reg.on_force_jit_for_reason(AotReloadFail::Env);
+    const auto defuse = aot_reload_fail_to_force_jit_mask(AotReloadFail::Defuse);
+    const auto env = aot_reload_fail_to_force_jit_mask(AotReloadFail::Env);
+    aura_hot_update_set_reemit_boundary_policy(0);
+    static ReemitFeed feed;
+    feed.names = {"__hu_3885_note"};
+    feed.regions = {1};
+    feed.cursor = 0;
+    aura_set_reemit_candidate_fn(&reemit_candidate_iter, &feed);
+    aura_set_aot_emit_fn(&emit_ok, nullptr);
+    reg.on_emit_region_mask_set(~0ULL);
+    (void)reg.decide_and_reemit(1, aura::compiler::HotUpdateRegistry::ReemitReason::CoverageVerify);
+    if ((reg.last_reemit_success_region_mask() & env) == 0)
+        reg.on_reemit_pipeline_call(/*candidates=*/1, /*successes=*/1);
+    CHECK((reg.residual_force_mask() & defuse) != 0, "3885 AC2: residual Defuse before note");
+    reg.note_reemit_success_coverage(defuse | env);
+    CHECK(reg.last_reemit_success_region_mask() == (defuse | env),
+          "3885 AC2: Agent note covers both faces");
+    CHECK(reg.residual_force_mask() == 0, "3885 AC2: residual empty after coverage note");
+    aura_set_aot_emit_fn(nullptr, nullptr);
+    aura_set_reemit_candidate_fn(nullptr, nullptr);
+    reg.on_reload_success();
+    reg.reset_force_jit_repromote_for_test();
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+}
+
+static void ac3885_second_heal_ors_other_bit() {
+    std::println("\n--- #3885 AC2: second heal ORs the other covered face ---");
+    auto& reg = hot_update_registry();
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    reg.on_reload_success();
+    reg.reset_force_jit_repromote_for_test();
+    reg.set_force_jit_repromote_only_covered_bits(true);
+    reg.on_force_jit_for_reason(AotReloadFail::Defuse);
+    reg.on_force_jit_for_reason(AotReloadFail::Env);
+    const auto defuse = aot_reload_fail_to_force_jit_mask(AotReloadFail::Defuse);
+    const auto env = aot_reload_fail_to_force_jit_mask(AotReloadFail::Env);
+    aura_hot_update_set_reemit_boundary_policy(0);
+    static ReemitFeed feed;
+    feed.names = {"__hu_3885_or"};
+    feed.regions = {1};
+    feed.cursor = 0;
+    aura_set_reemit_candidate_fn(&reemit_candidate_iter, &feed);
+    aura_set_aot_emit_fn(&emit_ok, nullptr);
+    reg.on_emit_region_mask_set(~0ULL);
+    (void)reg.decide_and_reemit(1, aura::compiler::HotUpdateRegistry::ReemitReason::CoverageVerify);
+    if ((reg.last_reemit_success_region_mask() & env) == 0)
+        reg.on_reemit_pipeline_call(/*candidates=*/1, /*successes=*/1);
+    CHECK((reg.last_reemit_success_region_mask() & env) != 0, "3885 AC2: first heal stamps Env");
+    CHECK((reg.residual_force_mask() & defuse) != 0, "3885 AC2: Defuse residual after first heal");
+    reg.on_force_jit_for_reason(AotReloadFail::Defuse); // last_reason = Defuse
+    feed.cursor = 0;
+    (void)reg.decide_and_reemit(1, aura::compiler::HotUpdateRegistry::ReemitReason::CoverageVerify);
+    reg.on_reemit_pipeline_call(/*candidates=*/1, /*successes=*/1);
+    CHECK((reg.last_reemit_success_region_mask() & defuse) != 0,
+          "3885 AC2: second heal ORs Defuse");
+    CHECK((reg.last_reemit_success_region_mask() & env) != 0, "3885 AC2: Env bit retained");
+    CHECK(reg.residual_force_mask() == 0, "3885 AC2: residual empty after both heals");
+    aura_set_aot_emit_fn(nullptr, nullptr);
+    aura_set_reemit_candidate_fn(nullptr, nullptr);
+    CHECK(read_file("tests/compiler/test_issue_3885.cpp").empty(),
+          "3885 AC3: no test_issue_3885.cpp");
+    CHECK(read_file("docs/design/3885-only-covered-multi-reason.md").empty(),
+          "3885 AC3: no docs/design/3885-*");
+    CHECK(read_file("scripts/coverage/checks/check_only_covered_3885.py").empty(),
+          "3885 AC3: no new check_*.py");
+    reg.on_reload_success();
+    reg.reset_force_jit_repromote_for_test();
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+}
+
 // ── Issue #3573: mutate×reemit bounded soak — proof hygiene + residual ──
 // Repeated facade rounds (mark dirty → reemit → success) must never leave
 // a fail-stamped proof behind (#2845 face), a sticky force bit, or new
@@ -1126,6 +1248,12 @@ int main() {
     ac3745_agent_override_wins();
     reset_runtime_after_cs();
     ac3745_soft_wholesale_unchanged();
+    reset_runtime_after_cs();
+    ac3885_multi_reason_single_heal_leaves_residual();
+    reset_runtime_after_cs();
+    ac3885_agent_coverage_note_clears_residual();
+    reset_runtime_after_cs();
+    ac3885_second_heal_ors_other_bit();
     reset_runtime_after_cs();
     std::println("\n=== {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
