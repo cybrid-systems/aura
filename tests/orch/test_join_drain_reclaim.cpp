@@ -3117,6 +3117,27 @@ static void ac3842_5_source_cite_linter_no_invent() {
           "3842 AC5: Aura orch:* auto-wait SSOT unchanged");
 }
 
+static void ac3924_aura_scope_sweep_prim() {
+    std::println("\n--- #3924: Aura orch:scope-sweep-reclaimed-pending ---");
+    const auto prim = read_file("src/compiler/evaluator_primitives_agent.cpp");
+    CHECK(prim.find("orch:scope-sweep-reclaimed-pending") != std::string::npos,
+          "3924 AC: Aura prim registered");
+    CHECK(prim.find("sweep_reclaimed_pending()") != std::string::npos,
+          "3924 AC: prim calls C++ sweep SSOT");
+    CHECK(prim.find("query:scope-sweep-reclaimed") == std::string::npos,
+          "3924 AC: no new query key");
+    CHECK(prim.find("#3924") != std::string::npos, "3924 AC: cite");
+    CompilerService cs;
+    auto r = cs.eval("(orch:scope-sweep-reclaimed-pending)");
+    CHECK(r.has_value(), "3924 AC: Soft eval ok");
+    auto cleaned = cs.eval("(hash-ref (orch:scope-sweep-reclaimed-pending) \"cleaned\")");
+    CHECK(cleaned && is_int(*cleaned) && as_int(*cleaned) == 0, "3924 AC: Soft cleaned=0");
+    auto pending = cs.eval("(hash-ref (orch:scope-sweep-reclaimed-pending) \"still-pending\")");
+    CHECK(pending && is_int(*pending) && as_int(*pending) == 0, "3924 AC: Soft still-pending=0");
+    CHECK(read_file("docs/design/3924-scope-sweep.md").empty(), "3924: no docs/design");
+    CHECK(read_file("tests/orch/test_issue_3924.cpp").empty(), "3924: no test_issue_3924");
+}
+
 
 static void ac3644_5_source_cite_and_no_invent() {
     std::println("\n--- #3644 AC5: source-cite + linter + no invent / no new query key ---");
@@ -7107,6 +7128,7 @@ int run_test_join_drain_reclaim() {
     ac3842_3_soft_zero_cost_no_force();
     ac3842_4_spawn_registers_with_scope_lifetime();
     ac3842_5_source_cite_linter_no_invent();
+    ac3924_aura_scope_sweep_prim();
 
     std::println("\n=== Issue #3905: orphan hard-reap keeps live Fiber ===");
     ac3905_1_reap_keeps_pending_handle_fiber();
