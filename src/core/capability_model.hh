@@ -1802,6 +1802,14 @@ struct CapabilityRegistry {
                 const auto caller = caller_principal != 0
                                         ? caller_principal
                                         : default_tenant.load(std::memory_order_acquire);
+                // Issue #3904 posture: this fence stays caller-OR-target
+                // (#3029 contract) — asymmetric with grant_cross_tenant's
+                // caller-only fence (#3800). Option A (caller-only) was
+                // implemented and empirically rejected: under multi-fiber
+                // chaos load the Guard composition change yielded non-zero
+                // mailbox hold/defer starvation (delta 2-8) against the
+                // #2554 PR deployment contract of 0. Revisit caller-only
+                // when the chaos workload adapts to the deny semantics.
                 if (!has_admin(caller) && !has_admin(tenant)) {
                     auto& met = g_capability_effect_metrics();
                     met.capability_macro_self_evo_grant_deny_total.fetch_add(

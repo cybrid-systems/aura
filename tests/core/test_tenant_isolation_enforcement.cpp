@@ -426,6 +426,110 @@ static void ac3126_admin_fence_locked() {
     }
 }
 
+// ── Issue #3904: MSE TA fence posture — caller-OR-target documented ──
+static void ac3904_1_target_ta_allow_non_ta_caller_documented() {
+    std::println("\n--- #3904 AC1: non-TA caller + TA target → allow (posture documented) ---");
+    reset_all();
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+    // Target tenant 42 holds TenantAdmin; caller 7 holds nothing. Under the
+    // #3029 caller-OR-target fence this authorizes the grant (Option B:
+    // behavior preserved; the Option A caller-only variant was rejected —
+    // chaos PR starvation delta 2-8, see the fence posture comment).
+    grant_tenant_admin_mid(42);
+
+    const auto deny0 =
+        aura::core::capability::g_capability_effect_metrics()
+            .capability_macro_self_evo_grant_deny_total.load(std::memory_order_relaxed);
+    aura::core::capability::g_capability_registry().grant_macro_self_evo(
+        /*tenant=*/42, aura::core::capability::MacroSelfEvoPolicy{},
+        /*prov_in=*/aura::core::capability::make_grant_provenance(2, true, 0, 0),
+        /*caller_principal=*/7);
+    const auto deny1 =
+        aura::core::capability::g_capability_effect_metrics()
+            .capability_macro_self_evo_grant_deny_total.load(std::memory_order_relaxed);
+    CHECK(deny1 == deny0, "3904 AC1: OR fence — target TA authorizes (behavior preserved)");
+    aura::core::capability::CapabilityGrant g{};
+    CHECK(aura::core::capability::g_capability_registry().find_grant(42, "macro-self-evo", g),
+          "3904 AC1: MSE policy lands on the TA target (documented posture)");
+    reset_all();
+}
+
+static void ac3904_2_caller_with_ta_allow_unchanged() {
+    std::println("\n--- #3904 AC2: caller holds TA → allow unchanged ---");
+    reset_all();
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+    grant_tenant_admin_mid(7); // caller 7 holds TenantAdmin
+    aura::core::capability::g_capability_registry().grant_macro_self_evo(
+        /*tenant=*/42, aura::core::capability::MacroSelfEvoPolicy{},
+        /*prov_in=*/aura::core::capability::make_grant_provenance(3, true, 0, 0),
+        /*caller_principal=*/7);
+    aura::core::capability::CapabilityGrant g{};
+    CHECK(aura::core::capability::g_capability_registry().find_grant(42, "macro-self-evo", g),
+          "3904 AC2: TA caller → MSE grant lands on target");
+    reset_all();
+}
+
+static void ac3904_3_neither_ta_denied() {
+    std::println("\n--- #3904 AC3: neither caller nor target holds TA → deny ---");
+    reset_all();
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+    // No TA anywhere: caller_principal=0 → default 0 (no admin); target 7
+    // has no admin row.
+    const auto deny0 =
+        aura::core::capability::g_capability_effect_metrics()
+            .capability_macro_self_evo_grant_deny_total.load(std::memory_order_relaxed);
+    aura::core::capability::g_capability_registry().grant_macro_self_evo(
+        /*tenant=*/7, aura::core::capability::MacroSelfEvoPolicy{},
+        /*prov_in=*/aura::core::capability::make_grant_provenance(3, true, 0, 0),
+        /*caller_principal=*/0);
+    const auto deny1 =
+        aura::core::capability::g_capability_effect_metrics()
+            .capability_macro_self_evo_grant_deny_total.load(std::memory_order_relaxed);
+    CHECK(deny1 == deny0 + 1, "3904 AC3: neither-side TA → deny + counter bump");
+    aura::core::capability::CapabilityGrant g{};
+    CHECK(!aura::core::capability::g_capability_registry().find_grant(7, "macro-self-evo", g),
+          "3904 AC3: no MSE policy lands");
+    reset_all();
+}
+
+static void ac3904_4_soft_off_zero_cost_unchanged() {
+    std::println("\n--- #3904 AC4: Soft/Off skips the fence entirely (zero-cost) ---");
+    reset_all();
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+    const auto deny0 =
+        aura::core::capability::g_capability_effect_metrics()
+            .capability_macro_self_evo_grant_deny_total.load(std::memory_order_relaxed);
+    aura::core::capability::g_capability_registry().grant_macro_self_evo(
+        /*tenant=*/7, aura::core::capability::MacroSelfEvoPolicy{},
+        /*prov_in=*/aura::core::capability::make_grant_provenance(4, true, 0, 0),
+        /*caller_principal=*/7); // no admin anywhere — Soft passes through
+    aura::core::capability::CapabilityGrant g{};
+    CHECK(aura::core::capability::g_capability_registry().find_grant(7, "macro-self-evo", g),
+          "3904 AC4: Soft/Off grant lands (no fence consult)");
+    CHECK(aura::core::capability::g_capability_effect_metrics()
+                  .capability_macro_self_evo_grant_deny_total.load(std::memory_order_relaxed) ==
+              deny0,
+          "3904 AC4: deny counter untouched under Soft/Off");
+    reset_all();
+}
+
+static void ac3904_5_source_cite() {
+    std::println("\n--- #3904 AC5: posture source-cite + no invent ---");
+    const auto cap = read_file("src/core/capability_model.hh");
+    CHECK(cap.find("Issue #3904 posture") != std::string::npos,
+          "3904 AC5: fence posture comment cites #3904");
+    CHECK(cap.find("if (!has_admin(caller) && !has_admin(tenant)) {") != std::string::npos,
+          "3904 AC5: caller-OR-target fence preserved (Option B)");
+    std::ifstream docs("docs/design/3904-mse-ta-caller-only.md");
+    if (!docs.good())
+        docs.open("../docs/design/3904-mse-ta-caller-only.md");
+    CHECK(!docs.good(), "3904 AC5: no docs/design");
+    std::ifstream invent("tests/issues/test_issue_3904.cpp");
+    if (!invent.good())
+        invent.open("../tests/issues/test_issue_3904.cpp");
+    CHECK(!invent.good(), "3904 AC5: no test_issue_3904.cpp");
+}
+
 } // namespace
 
 int main() {
@@ -5238,6 +5342,13 @@ int main() {
             invent.open("../tests/core/test_issue_3836.cpp");
         CHECK(!invent.good(), "3836 AC3: no test_issue_3836.cpp");
     }
+
+    // ── Issue #3904: MSE TA fence posture (caller-OR-target documented) ──
+    ac3904_1_target_ta_allow_non_ta_caller_documented();
+    ac3904_2_caller_with_ta_allow_unchanged();
+    ac3904_3_neither_ta_denied();
+    ac3904_4_soft_off_zero_cost_unchanged();
+    ac3904_5_source_cite();
 
     reset_all();
     std::println("\n=== test_tenant_isolation_enforcement: {} passed, {} failed ===", g_passed,
