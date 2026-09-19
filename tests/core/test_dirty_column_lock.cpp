@@ -41,7 +41,11 @@ using aura::ast::NodeId;
 using aura::ast::NodeTag;
 using aura::compiler::CompilerService;
 using aura::compiler::types::as_int;
+using aura::compiler::types::is_hash;
 using aura::compiler::types::is_int;
+
+extern "C" void aura_query_hash_set_force_cap(std::uint64_t);
+extern "C" void aura_query_hash_reset_overflow_for_test();
 using aura::test::g_failed;
 using aura::test::g_passed;
 
@@ -248,6 +252,48 @@ static void ac2904_7_no_docs_design_source_cite() {
     CHECK(read_file("tests/core/test_issue_2904.cpp").empty(), "AC7: no new test file per #81967");
 }
 
+// Issue #3883: query:dirty-columnar overflow sentinel (no silent drop).
+static void ac3883_overflow_sentinel() {
+    std::println("\n--- #3883: query:dirty-columnar overflow sentinel ---");
+    const auto q = read_file("src/compiler/evaluator_primitives_query_lifecycle.cpp");
+    CHECK(q.find("Issue #3883") != std::string::npos, "3883 AC: cites #3883");
+    CHECK(q.find("kDirtyColumnarPlannedKeys") != std::string::npos, "3883 AC1: planned_keys");
+    CHECK(q.find("insert_kv_checked") != std::string::npos, "3883 AC1: insert_kv_checked");
+    CHECK(q.find("query_hash_finish") != std::string::npos, "3883 AC1: query_hash_finish");
+    CHECK(q.find("query_hash_capacity_for") != std::string::npos,
+          "3883 AC1: query_hash_capacity_for");
+    CHECK(q.find("schema-2904") != std::string::npos, "3883 AC2: schema-2904 unchanged");
+    CHECK(q.find("dirty-column-writes-total") != std::string::npos,
+          "3883 AC2: column-writes key unchanged");
+    CHECK(q.find("dirty-columnar-wired") != std::string::npos, "3883 AC2: wired key unchanged");
+
+    CompilerService cs;
+    CHECK(cs.eval("(+ 1 1)").has_value(), "3883: warm");
+    aura_query_hash_reset_overflow_for_test();
+    aura_query_hash_set_force_cap(0);
+    auto r = cs.eval("(engine:metrics \"query:dirty-columnar\")");
+    CHECK(r.has_value() && is_hash(*r), "3883 AC1: dirty-columnar returns hash");
+    const auto schema = href(cs, "schema-2904");
+    if (schema >= 0)
+        CHECK(schema == 2904, "3883 AC2: live schema-2904");
+    CHECK(href(cs, "hash-overflow") != 1, "3883 AC1: no overflow under default cap");
+    CHECK(href(cs, "overflow") != 1, "3883 AC1: overflow!=1 under default cap");
+
+    aura_query_hash_set_force_cap(4);
+    auto r_ov = cs.eval("(engine:metrics \"query:dirty-columnar\")");
+    CHECK(r_ov.has_value() && is_hash(*r_ov), "3883 AC1: overflow still returns hash");
+    const auto ho = href(cs, "hash-overflow");
+    const auto ov = href(cs, "overflow");
+    CHECK(ho == 1 || ov == 1, "3883 AC1: overflow counted/sentinel'd (no silent drop)");
+    aura_query_hash_set_force_cap(0);
+
+    CHECK(read_file("tests/core/test_issue_3883.cpp").empty(), "3883 AC: no test_issue_3883.cpp");
+    CHECK(read_file("docs/design/3883-dirty-columnar-overflow.md").empty(),
+          "3883 AC: no docs/design/3883-*");
+    CHECK(read_file("scripts/coverage/checks/check_dirty_columnar_overflow_3883.py").empty(),
+          "3883 AC: no new check_*.py");
+}
+
 } // namespace
 
 int run_test_dirty_column_lock() {
@@ -385,6 +431,7 @@ int run_test_dirty_column_lock() {
     ac2904_5_query_and_atomics();
     ac2904_6_sparse_early_exit();
     ac2904_7_no_docs_design_source_cite();
+    ac3883_overflow_sentinel();
 
     std::println("\n=== results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
