@@ -4801,7 +4801,8 @@ int run_test_join_drain_reclaim() {
                 g_orch_module_stats.wait_reclaimed_total.load(std::memory_order_relaxed);
             (void)join_agent(h, policy);
             CHECK(h.wait_reclaimed_used, "3051 AC2: explicit :wait-reclaimed-ms 1 used");
-            CHECK(!h.must_wait_reclaimed, "3051 AC2: explicit wait does not set must_wait");
+            // Issue #3934: production explicit Timeout still owes cleanup.
+            CHECK(h.must_wait_reclaimed, "3051 AC2: #3934 explicit Timeout arms must_wait");
             const auto wait1 =
                 g_orch_module_stats.wait_reclaimed_total.load(std::memory_order_relaxed);
             CHECK(wait1 == wait0 + 1, "3051 AC2: join_agent waited once");
@@ -5521,11 +5522,14 @@ int run_test_join_drain_reclaim() {
         CHECK(jr.status == JoinStatus::Reclaimed, "3146 AC3: join status Reclaimed");
         CHECK(h.wait_reclaimed_used, "3146 AC3: explicit wait ran");
         CHECK(h.wait_reclaimed_timeout, "3146 AC3: explicit wait timeout surfaced");
-        // The explicit path pre-clears must_wait_reclaimed before the wait
-        // block runs (per #3110 AC2). Caller chose a deadline; the
-        // production-gate flag must not be re-armed by the explicit wait.
-        CHECK(!h.must_wait_reclaimed,
-              "3146 AC3: explicit path leaves must_wait_reclaimed == false (caller-controlled)");
+        // Issue #3934: production explicit Timeout on a live Reclaimed
+        // body still owes cleanup (must_wait). Soft / Off stays false.
+        if (aura::orch::production_reclaimed_must_wait())
+            CHECK(h.must_wait_reclaimed,
+                  "3146 AC3: #3934 production explicit Timeout arms must_wait");
+        else
+            CHECK(!h.must_wait_reclaimed,
+                  "3146 AC3: Soft/Off explicit wait leaves must_wait false");
         CHECK(h.reserved_memory_bytes == 2048,
               "3146 AC3: explicit Timeout preserves reservation (#2661)");
         // Cleanup so dtor does not leak reservation accounting.
@@ -6509,13 +6513,22 @@ int run_test_join_drain_reclaim() {
             policy.drain_ms = 0;
             policy.wait_reclaimed_ms = 1;
             (void)join_agent(h, policy);
-            CHECK(!h.must_wait_reclaimed, "3245 AC1: explicit wait_reclaimed_ms no must_wait");
             const auto risk0 = g_orch_module_stats.host_forget_reclaimed_risk_total.load(
                 std::memory_order_relaxed);
             AgentHandle stored = std::move(h);
-            CHECK(g_orch_module_stats.host_forget_reclaimed_risk_total.load(
-                      std::memory_order_relaxed) == risk0,
-                  "3245 AC1: explicit-wait move does not bump host_forget");
+            if (aura::orch::production_reclaimed_must_wait()) {
+                CHECK(stored.must_wait_reclaimed,
+                      "3245 AC1: #3934 production explicit Timeout still owes cleanup");
+                CHECK(g_orch_module_stats.host_forget_reclaimed_risk_total.load(
+                          std::memory_order_relaxed) > risk0,
+                      "3245 AC1: pending explicit-wait move bumps host_forget");
+            } else {
+                CHECK(!stored.must_wait_reclaimed,
+                      "3245 AC1: Soft/Off explicit wait_reclaimed_ms no must_wait");
+                CHECK(g_orch_module_stats.host_forget_reclaimed_risk_total.load(
+                          std::memory_order_relaxed) == risk0,
+                      "3245 AC1: Soft/Off explicit-wait move does not bump host_forget");
+            }
             fiber_owned->set_state(FiberState::Done);
             fiber_owned->note_body_exit_if_reclaimed();
             stored.finish_reclaimed_cleanup_on_dtor();
@@ -7186,6 +7199,161 @@ int run_test_join_drain_reclaim() {
         set_mode(SandboxMode::Off);
         apply_dev_audit_defaults();
         aura::core::audit_wal::g_mutation_audit_wal().disable();
+    }
+
+    // ── Issue #3934: production explicit wait_reclaimed_ms Timeout still
+    // owes cleanup (must_wait) so ensure/abandon/sweep are not Invalid.
+    // Soft / omit-kwarg / Done path stay one-shot.
+    {
+        using aura::core::sandbox::SandboxMode;
+        using aura::core::sandbox::set_mode;
+        using aura::orch::abandon_reclaimed;
+        using aura::orch::AbandonReclaimedOpts;
+        using aura::orch::AbandonReclaimedOutcome;
+        using aura::orch::ensure_reclaimed_cleanup;
+        using aura::orch::production_reclaimed_must_wait;
+        using aura::serve::FiberState;
+        using aura::serve::JoinStatus;
+
+        auto restore_sb = [] {
+            apply_dev_audit_defaults();
+            set_mode(SandboxMode::Off);
+            ::setenv("AURA_SANDBOX", "off", 1);
+        };
+
+        std::println(
+            "\n--- #3934 AC1: production explicit Timeout → ensure/abandon not Invalid ---");
+        {
+            const char* prev_sb = std::getenv("AURA_SANDBOX");
+            std::string prev_sb_s = prev_sb ? prev_sb : "";
+            ::setenv("AURA_SANDBOX", "restricted", 1);
+            apply_production_audit_defaults();
+            set_mode(SandboxMode::Strict);
+            CHECK(production_reclaimed_must_wait(), "3934 AC1: production face armed");
+            auto fiber_owned = std::make_unique<Fiber>([] {});
+            fiber_owned->mark_reclaimed();
+            AgentHandle h;
+            h.ok = true;
+            h.fiber = fiber_owned.get();
+            h.reserved_memory_bytes = 2048;
+            JoinPolicy policy{};
+            policy.primary_ms = 1;
+            policy.drain_ms = 0;
+            policy.wait_reclaimed_ms = 1;
+            const auto jr = join_agent(h, policy);
+            CHECK(jr.status == JoinStatus::Reclaimed, "3934 AC1: join Reclaimed");
+            CHECK(h.wait_reclaimed_used, "3934 AC1: explicit wait ran");
+            CHECK(h.wait_reclaimed_timeout, "3934 AC1: Timeout surfaced");
+            CHECK(h.must_wait_reclaimed, "3934 AC1: must_wait armed after explicit Timeout");
+            auto ens = ensure_reclaimed_cleanup(h);
+            CHECK(ens.status != JoinStatus::Invalid,
+                  "3934 AC1: ensure_reclaimed_cleanup not Invalid");
+            CHECK(h.reserved_memory_bytes == 2048, "3934 AC1: Timeout no early free (#2661)");
+            AbandonReclaimedOpts opts;
+            opts.max_second_wait_ms = 1;
+            auto ar = abandon_reclaimed(h, opts);
+            CHECK(ar.outcome != AbandonReclaimedOutcome::Invalid,
+                  "3934 AC1: abandon_reclaimed not Invalid");
+            fiber_owned->set_state(FiberState::Done);
+            fiber_owned->note_body_exit_if_reclaimed();
+            if (!prev_sb_s.empty())
+                ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+            else
+                ::unsetenv("AURA_SANDBOX");
+            restore_sb();
+        }
+
+        std::println("\n--- #3934 AC2: explicit wait that reaches Done is one-shot ---");
+        {
+            const char* prev_sb = std::getenv("AURA_SANDBOX");
+            std::string prev_sb_s = prev_sb ? prev_sb : "";
+            ::setenv("AURA_SANDBOX", "restricted", 1);
+            apply_production_audit_defaults();
+            set_mode(SandboxMode::Strict);
+            auto fiber_owned = std::make_unique<Fiber>([] {});
+            fiber_owned->mark_reclaimed();
+            fiber_owned->set_state(FiberState::Done);
+            fiber_owned->note_body_exit_if_reclaimed();
+            AgentHandle h;
+            h.ok = true;
+            h.fiber = fiber_owned.get();
+            h.reserved_memory_bytes = 2048;
+            JoinPolicy policy{};
+            policy.primary_ms = 1;
+            policy.drain_ms = 0;
+            policy.wait_reclaimed_ms = 50;
+            (void)join_agent(h, policy);
+            CHECK(!h.must_wait_reclaimed, "3934 AC2: Done path does not arm must_wait");
+            CHECK(!h.wait_reclaimed_timeout, "3934 AC2: not a Timeout");
+            auto ens = ensure_reclaimed_cleanup(h);
+            CHECK(ens.status == JoinStatus::Invalid,
+                  "3934 AC2: ensure Invalid after Done (already cleaned)");
+            if (!prev_sb_s.empty())
+                ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+            else
+                ::unsetenv("AURA_SANDBOX");
+            restore_sb();
+        }
+
+        std::println("\n--- #3934 AC3: Soft explicit wait Timeout stays zero extra ---");
+        {
+            apply_dev_audit_defaults();
+            set_mode(SandboxMode::Off);
+            ::setenv("AURA_SANDBOX", "off", 1);
+            CHECK(!production_reclaimed_must_wait(), "3934 AC3: Soft face");
+            auto fiber_owned = std::make_unique<Fiber>([] {});
+            fiber_owned->mark_reclaimed();
+            AgentHandle h;
+            h.ok = true;
+            h.fiber = fiber_owned.get();
+            h.reserved_memory_bytes = 1024;
+            JoinPolicy policy{};
+            policy.primary_ms = 1;
+            policy.drain_ms = 0;
+            policy.wait_reclaimed_ms = 1;
+            (void)join_agent(h, policy);
+            CHECK(h.wait_reclaimed_used, "3934 AC3: explicit wait still ran (caller asked)");
+            CHECK(!h.must_wait_reclaimed, "3934 AC3: Soft no must_wait");
+            auto ens = ensure_reclaimed_cleanup(h);
+            CHECK(ens.status == JoinStatus::Invalid, "3934 AC3: Soft ensure stays Invalid");
+            AbandonReclaimedOpts opts;
+            opts.max_second_wait_ms = 1;
+            auto ar = abandon_reclaimed(h, opts);
+            CHECK(ar.outcome == AbandonReclaimedOutcome::Invalid, "3934 AC3: Soft abandon Invalid");
+            fiber_owned->set_state(FiberState::Done);
+            fiber_owned->note_body_exit_if_reclaimed();
+            restore_sb();
+        }
+
+        std::println("\n--- #3934 AC4: source-cite — SSOT flag, no new query ---");
+        {
+            const auto spawn = read_file("src/orch/agent_spawn.h");
+            const auto prim = read_file("src/compiler/evaluator_primitives_agent.cpp");
+            CHECK(spawn.find("Issue #3934") != std::string::npos,
+                  "3934 AC4: join_agent cites #3934");
+            const auto expl = spawn.find("if (jr.status == serve::JoinStatus::Reclaimed && "
+                                         "policy.wait_reclaimed_ms.has_value())");
+            CHECK(expl != std::string::npos, "3934 AC4: explicit wait arm present");
+            if (expl != std::string::npos) {
+                const auto snip = spawn.substr(expl, 900);
+                CHECK(snip.find("h.must_wait_reclaimed = true") != std::string::npos,
+                      "3934 AC4: explicit Timeout arms must_wait");
+                CHECK(snip.find("production_reclaimed_must_wait()") != std::string::npos,
+                      "3934 AC4: Soft/Off gate preserved");
+            }
+            CHECK(prim.find("wait-reclaimed-ms") != std::string::npos,
+                  "3934 AC4: Aura :wait-reclaimed-ms still on orch:agent-join");
+            CHECK(prim.find("query:wait-reclaimed") == std::string::npos &&
+                      prim.find("query:must-wait") == std::string::npos,
+                  "3934 AC4: no new query:*");
+            CHECK(read_file("tests/orch/test_issue_3934.cpp").empty() &&
+                      read_file("tests/issues/test_issue_3934.cpp").empty(),
+                  "3934 AC4: no test_issue_3934.cpp");
+            CHECK(read_file("docs/design/3934-explicit-wait-ssot.md").empty(),
+                  "3934 AC4: no docs/design/3934-*");
+        }
+
+        restore_sb();
     }
 
     std::println("\n=== Issue #3297: ~AgentHandle under-account observability ===");

@@ -3282,13 +3282,16 @@ struct JoinViaTokenResult {
 //
 // Issue #3245: production contract — if must_wait_reclaimed after the
 // 50ms auto-wait Timeout, the host MUST call this (or wait_reclaimed_body)
-// before name reuse / second supervision. Soft / explicit wait_reclaimed_ms:
-// must_wait is false → this stays a no-op. Timeout keeps #2661 no-early-free.
+// before name reuse / second supervision. Soft / Off: must_wait is false
+// → this stays a no-op. Issue #3934: production explicit
+// wait_reclaimed_ms Timeout on a still-running Reclaimed body arms
+// must_wait so this helper is not Invalid. Timeout keeps #2661
+// no-early-free.
 [[nodiscard]] inline WaitReclaimedResult ensure_reclaimed_cleanup(AgentHandle& h) noexcept {
-    // AC: zero-cost when Soft/Off or explicit wait already ran (the
-    // production gate is the must_wait_reclaimed flag set in join_agent;
-    // explicit JoinPolicy{.wait_reclaimed_ms = N} clears it before this
-    // helper is called, see L2302..2309).
+    // AC: zero-cost when Soft/Off (the production gate is the
+    // must_wait_reclaimed flag set in join_agent). Issue #3934: production
+    // explicit JoinPolicy{.wait_reclaimed_ms = N} Timeout on a live
+    // Reclaimed body now arms the same flag; Done/Soft stay a no-op.
     if (!h.must_wait_reclaimed) {
         WaitReclaimedResult out;
         out.status = serve::JoinStatus::Invalid;
@@ -3776,6 +3779,13 @@ inline void cancel_and_drain_fibers(std::span<serve::Fiber* const> fibers,
         jr.wait_us += wr.wait_us; // fold auto-wait into join wait-us (AC4)
         h.wait_reclaimed_used = true;
         h.wait_reclaimed_timeout = (wr.status == serve::JoinStatus::Timeout);
+        // Issue #3934: explicit wait Timeout on a still-running Reclaimed
+        // body still owes cleanup — same must_wait as omit-kwarg production
+        // so ensure/abandon/sweep are not Invalid. Done path stays one-shot.
+        // Soft / Off: production_reclaimed_must_wait() is false.
+        if (h.wait_reclaimed_timeout && production_reclaimed_must_wait() && h.fiber &&
+            !h.fiber->is_done())
+            h.must_wait_reclaimed = true;
     }
     h.last_join_status = jr.status; // Issue #3052: per-handle join_fail fuel
     return jr;
@@ -3900,6 +3910,11 @@ inline void cancel_and_drain_fibers(std::span<serve::Fiber* const> fibers,
             jr.wait_us += wr.wait_us;
             a.wait_reclaimed_used = true;
             a.wait_reclaimed_timeout = (wr.status == serve::JoinStatus::Timeout);
+            // Issue #3934: mirror join_agent — production explicit Timeout
+            // on a live Reclaimed body still owes cleanup.
+            if (a.wait_reclaimed_timeout && production_reclaimed_must_wait() && a.fiber &&
+                !a.fiber->is_done())
+                a.must_wait_reclaimed = true;
         }
         // Issue #3052 / #3208: cleanup may remap a Done body to Ok (#3433)
         // or a still-running Timeout body to Reclaimed (#3433 defer, do not
