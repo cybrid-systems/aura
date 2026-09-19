@@ -210,6 +210,9 @@ int run_test_concurrent_clone_hygiene_depth() {
               "3028 AC1: no TLS -1 sentinel as authority");
         CHECK(me.find("claim_same_flat_clone") != std::string::npos, "3028 AC1: same-flat claim");
         CHECK(me.find("NameMapCheckpoint") != std::string::npos, "3028 AC1: name_map checkpoint");
+        CHECK(me.find("Issue #3912") != std::string::npos, "3912 AC: checkpoint snapshots values");
+        CHECK(me.find("std::unordered_map<std::string, std::string> snap") != std::string::npos,
+              "3912 AC1: key→value snap (not keys-only)");
         CHECK(me.find("TLS is not read for this decision") != std::string::npos ||
                   me.find("not TLS") != std::string::npos,
               "3028 AC1: depth decision not TLS");
