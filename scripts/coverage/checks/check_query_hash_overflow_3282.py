@@ -53,7 +53,7 @@ FINISH_FLOORS = {
     "src/compiler/evaluator_primitives_security.cpp": 52,
     "src/compiler/evaluator_primitives_mutate.cpp": 11,
     "src/compiler/evaluator_primitives_obs_jit.cpp": 118,
-    "src/compiler/evaluator_primitives_obs_eval.cpp": 133,
+    "src/compiler/evaluator_primitives_obs_eval.cpp": 131,  # #3881: two dual-reg handlers removed
     "src/compiler/evaluator_primitives_query.cpp": 14,
     "src/compiler/evaluator_primitives_query_obs_mid.cpp": 33,
 }

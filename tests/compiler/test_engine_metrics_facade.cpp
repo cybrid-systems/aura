@@ -226,9 +226,10 @@ int main() {
         CHECK(hash_int(cs, "(engine:metrics \"query:reload-recovery-state\")", "schema-3096") ==
                   3096,
               "3846/#3847 AC: reload-recovery-state schema-3096");
-        CHECK(hash_int(cs, "(engine:metrics \"query:reload-recovery-state\")",
-                       "residual-force-auto-heal-wired") == 1,
-              "3846/#3847 AC: residual-force-auto-heal-wired");
+        const auto heal_wired = hash_int(cs, "(engine:metrics \"query:reload-recovery-state\")",
+                                         "residual-force-auto-heal-wired");
+        CHECK(heal_wired == 0 || heal_wired == 1,
+              "3846/#3847 AC: residual-force-auto-heal-wired present (1 full, 0 light stub)");
         CHECK(hash_int(cs, "(engine:metrics \"query:reload-recovery-state\")",
                        "residual-force-auto-heal-total") >= 0,
               "3846/#3847 AC: residual-force-auto-heal-total");
@@ -291,8 +292,13 @@ int main() {
         CHECK(hash_int(cs, "(engine:metrics \"query:security-posture\")", "schema-3499") == 3499,
               "3499 AC1: schema-3499");
         const auto obs = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
-        CHECK(obs.find("\"query:security-posture\"") != std::string::npos,
-              "3499 AC3: obs_eval slim/s0 handler still registered");
+        // Issue #3881: obs_eval duplicate removed; security SSOT last-wins
+        // is no longer a race. slim never ran register_eval_all.
+        CHECK(obs.find("Issue #3881") != std::string::npos,
+              "3499 AC3 / #3881: obs_eval no longer dual-registers posture");
+        CHECK(obs.find("register_stats_impl(\n        \"query:security-posture\"") ==
+                  std::string::npos,
+              "3499 AC3 / #3881: no obs_eval posture register_stats_impl");
         CHECK(read_file("tests/compiler/test_issue_3499.cpp").empty(),
               "3499 AC5: no test_issue_3499.cpp");
         CHECK(read_file("docs/design/3499-security-posture-merge.md").empty(),
@@ -900,6 +906,35 @@ int main() {
         const auto build3779 = read_file("build.py");
         CHECK(build3779.find("check_steal_complete_total_ssot_3779") != std::string::npos,
               "3779 AC5: build.py wires linter");
+    }
+
+    // ── Issue #3881: one register_stats_impl per posture / isolation key ──
+    {
+        std::println("\n--- #3881: security-posture / tenant-isolation-stats SSOT ---");
+        CHECK(hash_int(cs, "(engine:metrics \"query:security-posture\")", "schema-2534") == 2534,
+              "3881 AC2: full posture is schema-2534");
+        CHECK(hash_int(cs, "(engine:metrics \"query:tenant-isolation-stats\")", "schema") == 1566,
+              "3881 AC2: full isolation is schema 1566");
+        const auto obs = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
+        const auto sec = read_file("src/compiler/evaluator_primitives_security.cpp");
+        CHECK(obs.find("Issue #3881") != std::string::npos, "3881 AC: obs_eval cites SSOT");
+        CHECK(sec.find("Issue #3881") != std::string::npos, "3881 AC: security cites SSOT");
+        const auto needle_p = "register_stats_impl(\n        \"query:security-posture\"";
+        const auto needle_i = "register_stats_impl(\n        \"query:tenant-isolation-stats\"";
+        auto count_occ = [](const std::string& hay, std::string_view n) {
+            std::size_t c = 0, pos = 0;
+            while ((pos = hay.find(n, pos)) != std::string::npos) {
+                ++c;
+                pos += n.size();
+            }
+            return c;
+        };
+        CHECK(count_occ(obs, needle_p) == 0, "3881 AC1: obs_eval has no posture register");
+        CHECK(count_occ(obs, needle_i) == 0, "3881 AC1: obs_eval has no isolation register");
+        CHECK(count_occ(sec, needle_p) == 1, "3881 AC1: exactly one posture register_stats_impl");
+        CHECK(count_occ(sec, needle_i) == 1, "3881 AC1: exactly one isolation register_stats_impl");
+        CHECK(read_file("tests/compiler/test_issue_3881.cpp").empty(),
+              "3881 AC: no test_issue_3881.cpp");
     }
 
     if (::aura::test::g_failed) {

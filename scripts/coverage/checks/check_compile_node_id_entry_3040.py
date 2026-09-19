@@ -88,7 +88,6 @@ def main() -> int:
     ixx = _read("src/compiler/evaluator.ixx")
     iso = _read("src/core/workspace_isolation.hh")
     posture = _read("src/compiler/evaluator_primitives_security.cpp")
-    qws = _read("src/compiler/evaluator_primitives_obs_eval.cpp")
     test_iso = _read("tests/core/test_tenant_isolation_enforcement.cpp")
     build = _read("build.py")
     lint2942 = _read("scripts/coverage/checks/check_side_effect_node_id_mandate_2942.py")
@@ -161,7 +160,7 @@ def main() -> int:
     must("nodeid-only-entry-prevented-total", "AC4 posture", posture)
     must("kNodeIdOnlyEntryPreventedWired", "AC4 ixx", ixx)
     must("kNodeIdOnlyEntryIssue = 3040", "AC4 ixx", ixx)
-    must("schema-3040", "AC4 isolation-stats", qws)
+    must("schema-3040", "AC4 isolation-stats", posture)  # #3881 SSOT
     must("nodeid_only_entry_prevented_total.fetch_add", "AC4 bump", sec)
 
     # ── AC5: existing isolation suite ──

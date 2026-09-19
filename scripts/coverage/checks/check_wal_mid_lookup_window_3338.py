@@ -41,7 +41,6 @@ def main() -> int:
     se_wal = _read("src/core/security_event_wal.hh")
     mut_wal = _read("src/core/mutation_audit_wal.hh")
     sec = _read("src/compiler/evaluator_primitives_security.cpp")
-    obs = _read("src/compiler/evaluator_primitives_obs_eval.cpp")
     replay = _read("tests/compiler/test_security_event_wal_replay.cpp")
     unify = _read("tests/compiler/test_security_audit_unify.cpp")
     lint3205 = _read("scripts/coverage/checks/check_evolution_audit_decision_durable_3205.py")
@@ -57,7 +56,7 @@ def main() -> int:
     must("kWalMidLookupSegmentsProduction = 8", "AC2 production default 8", slo)
     must("wal_mid_lookup_segments()", "AC2 durable SE lookup", sec)
     must("wal-mid-lookup-segments", "AC2 posture key", sec)
-    must("wal-mid-lookup-segments", "AC2 obs posture key", obs)
+    # Issue #3881: obs_eval no longer dual-registers posture.
     must("3338 AC2", "AC2 test", replay)
 
     must("AURA_WAL_MAX_SEGMENTS", "AC3 retention env", slo)

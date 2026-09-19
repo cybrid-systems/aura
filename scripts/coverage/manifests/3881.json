@@ -1,0 +1,40 @@
+{
+  "issue": 3881,
+  "title": "single register_stats_impl for security-posture and tenant-isolation-stats",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_primitives_security.cpp",
+      "contains": [
+        "Issue #3881",
+        "query:security-posture",
+        "query:tenant-isolation-stats"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/evaluator_primitives_obs_eval.cpp",
+      "contains": [
+        "Issue #3881",
+        "registered only in register_security_primitives"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/compiler/test_engine_metrics_facade.cpp",
+      "contains": [
+        "3881 AC1: exactly one posture register_stats_impl",
+        "3881 AC2: full posture is schema-2534",
+        "3881 AC2: full isolation is schema 1566"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "forbid": [
+        "tests/compiler/test_issue_3881.cpp",
+        "tests/issues/test_issue_3881.cpp",
+        "docs/design/3881-dual-register.md"
+      ]
+    }
+  ]
+}

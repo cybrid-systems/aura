@@ -19,10 +19,10 @@
 # AC5: one posture SE per process (once-guard exchange), stable reason
 #      "undeclared-multi-tenant-armed", denied=false, new appended
 #      SecurityEventKind PostureObserve = 6 (never renumbered).
-# AC6: posture surface additive — both query:security-posture
-#      registrations (slim obs_eval + full security last-wins) expose
+# AC6: posture surface additive — query:security-posture SSOT
+#      (register_security_primitives, #3881) exposes
 #      undeclared-multi-tenant-detected-total + undeclared-mt-autodetect-
-#      armed; no new query key.
+#      armed; no new query key. obs_eval no longer dual-registers.
 # AC7: suite rows (ac3630 in test_require_effect_auto_isolation.cpp), no
 #      tests/issues / docs/design, build.py registration.
 
@@ -123,10 +123,11 @@ def _rows(
     must("/*denied=*/false", "AC5 observability-only", sec)
     must("PostureObserve = 6", "AC5 appended kind", se)
 
-    # AC6 — posture surface additive on both registrations.
-    for hay, label in ((obs, "AC6 slim"), (secp, "AC6 full")):
-        must("undeclared-multi-tenant-detected-total", f"{label} counter key", hay)
-        must("undeclared-mt-autodetect-armed", f"{label} armed key", hay)
+    # AC6 — posture surface additive on the #3881 security SSOT.
+    must("undeclared-multi-tenant-detected-total", "AC6 counter key", secp)
+    must("undeclared-mt-autodetect-armed", "AC6 armed key", secp)
+    if 'register_stats_impl(\n        "query:security-posture"' in obs:
+        fails.append("AC6: obs_eval reintroduced query:security-posture register_stats_impl")
     must_not("query:undeclared", "AC6 no new query key", sec)
     must_not("query:undeclared", "AC6 no new query key", prov)
 
