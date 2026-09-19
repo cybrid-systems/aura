@@ -159,10 +159,27 @@
     (orch:define-role "unstable" (cons
       (lambda (x)
         (set! attempts (+ attempts 1))
-        (if (< attempts 3) (error "not yet") (+ x 1)))
+        (if (< attempts 3) #f (+ x 1)))
       "direct"))
     (check (= (orch:conduct (list (orch:retry "unstable" 5)) 10) 11)
       "orch:retry succeeds after multiple attempts")))
+
+;; Issue #3935: named-let `try` shadowed exception try; #f is a retry
+;; signal (not "not a pair" → stop). Repro: 3 attempts then 70.
+(test-suite "orch:retry-falsy-then-success"
+  (define n 0)
+  (orch:define-role "flaky-3935" (cons
+    (lambda (x)
+      (set! n (+ n 1))
+      (if (< n 3) #f (* x 10)))
+    "direct"))
+  (check (= (orch:step "flaky-3935" 7) #f)
+    "orch:step still runs the role")
+  (set! n 0)
+  (check (= (orch:conduct (list (orch:retry "flaky-3935" 5)) 7) 70)
+    "orch:conduct retry returns success after two #f attempts")
+  (check (= n 3)
+    "flaky role ran three times"))
 
 (test-suite "orch:retry-failure-on-empty"
   ;; Empty pipeline + retry should just return input
@@ -222,3 +239,18 @@
   (orch:define-role "identity" (cons (lambda (x) x) "direct"))
   (check (= (orch:pipeline (list "identity") 99) 99)
     "orch:pipeline with single step works"))
+
+;; Issue #3935: load-time oracle (test-suite bodies are quoted until run-tests).
+(define *n-3935* 0)
+(orch:define-role "flaky-3935-load" (cons
+  (lambda (x)
+    (set! *n-3935* (+ *n-3935* 1))
+    (if (< *n-3935* 3) #f (* x 10)))
+  "direct"))
+(check= #f (orch:step "flaky-3935-load" 7))
+(set! *n-3935* 0)
+(check= 70 (orch:conduct (list (orch:retry "flaky-3935-load" 5)) 7))
+(check= 3 *n-3935*)
+(orch:define-role "upper-3935" (cons (lambda (x) (+ x 100)) "direct"))
+(orch:define-role "lower-3935" (cons (lambda (x) (+ x 1)) "direct"))
+(check= 105 (orch:conduct (list (orch:if (lambda (x) (> x 0)) "upper-3935" "lower-3935")) 5))
