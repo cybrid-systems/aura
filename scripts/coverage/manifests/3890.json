@@ -1,0 +1,31 @@
+{
+  "issue": 3890,
+  "title": "Clone-success then inner-deny truncates MI body when no Guard owns the range",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/macro_expansion.cpp",
+      "contains": [
+        "Issue #3890",
+        "flat->truncate_to(clone_ckpt)",
+        "aura_evaluator_mutation_boundary_depth() == 0"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/compiler/test_macro_hygiene_limits.cpp",
+      "contains": [
+        "3890 AC1: no MI clone residue outside Guard",
+        "ac3890_clone_success_inner_deny_truncates"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "forbid": [
+        "tests/compiler/test_issue_3890.cpp",
+        "tests/issues/test_issue_3890.cpp",
+        "docs/design/3890-clone-inner-deny-truncate.md"
+      ]
+    }
+  ]
+}

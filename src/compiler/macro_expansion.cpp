@@ -3268,6 +3268,10 @@ aura::ast::NodeId expand_inner_macros(
                     // not hide nested expansion residue. Closure-materialization
                     // path (evaluator_eval_flat.cpp #1543) intentionally keeps
                     // User — that path is not touched.
+                    // Issue #3890: snapshot before clone so inner-deny can
+                    // truncate the committed MI body when no Guard owns the
+                    // range (C-ABI ckpt restore does not drop those nodes).
+                    const auto clone_ckpt = rest_spine_pending ? rest_spine_ckpt : flat->size();
                     auto cloned =
                         clone_macro_body(*flat, *pool, *md.flat, *src_pool, md.body_id, &subst,
                                          &rename_map, aura::ast::SyntaxMarker::MacroIntroduced);
@@ -3286,6 +3290,11 @@ aura::ast::NodeId expand_inner_macros(
                     // committed. Soft/Off keeps the splice (contract).
                     if (production_surface && inner_expand_production_limit_deny()) {
                         (void)aura_evaluator_try_restore_macro_expand_checkpoint();
+                        // Issue #3890: no outer Guard → C-ABI ckpt restore
+                        // does not drop the committed clone body. Truncate
+                        // like #3817 rest-spine so no eval-able MI residue.
+                        if (aura_evaluator_mutation_boundary_depth() == 0)
+                            flat->truncate_to(clone_ckpt);
                         return root;
                     }
                     // Rewrite the parent's child to use the cloned body
