@@ -48,7 +48,9 @@ def main() -> int:
         fails.append("AC1: prod_soa missing")
         win = ""
     else:
-        win = svc[prod : prod + 4000]
+        # Issue #3869: the storm force-full bump lines grew the suite body;
+        # window widened so the pack/sync needles stay in range.
+        win = svc[prod : prod + 4200]
         must("if (!prod_soa)", "AC2 Soft AoS suite", win)
         arms = []
         start = 0
@@ -56,7 +58,9 @@ def main() -> int:
             i = win.find("if (prod_soa)", start)
             if i < 0:
                 break
-            arms.append(win[i : i + 500])
+            # Issue #3869: the storm force-full bump lines grew the suite
+            # body; window widened so the pack/sync needles stay in range.
+            arms.append(win[i : i + 600])
             start = i + 1
         if not arms:
             fails.append("AC1: no if (prod_soa) hot-pack arm")

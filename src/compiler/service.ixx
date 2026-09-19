@@ -11870,6 +11870,8 @@ private:
         if (mask_ptr && mask_ptr->block_dirty_per_func) {
             const auto dirty_n = static_cast<std::size_t>(mask_ptr->dirty_block_count());
             if (production_dirty_aware_storm_force_full(dirty_n)) {
+                // Issue #3869: the fire was counted at the consult — do
+                // not double-bump here.
                 storm_full_bits = *mask_ptr->block_dirty_per_func;
                 for (auto& fb : storm_full_bits)
                     for (auto& b : fb)

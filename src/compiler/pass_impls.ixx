@@ -4959,6 +4959,8 @@ run_production_soa_dirty_hot_pack(IRModuleV2& mod,
             if (b)
                 ++dirty_n;
     if (production_dirty_aware_storm_force_full(dirty_n)) {
+        // Issue #3869: the fire was counted at the consult — do not
+        // double-bump here.
         for (auto& fn : mod.functions) {
             if (fn.block_dirty_.size() < fn.blocks_.size())
                 fn.block_dirty_.resize(fn.blocks_.size(), 0);

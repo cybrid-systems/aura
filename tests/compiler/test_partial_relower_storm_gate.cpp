@@ -31,6 +31,7 @@ using aura::compiler::apply_partial_relower_storm_gate;
 using aura::compiler::CompilerService;
 using aura::compiler::ConstantFoldingWrap;
 using aura::compiler::DefineDirtyMaskView;
+using aura::compiler::dirty_aware_storm_force_full_total;
 using aura::compiler::dirty_only_blocks_skipped_total;
 using aura::compiler::get_partial_relower_threshold;
 using aura::compiler::hot_update_registry;
@@ -600,6 +601,97 @@ int run_test_partial_relower_storm_gate() {
         auto r = cs.eval("(g 10)");
         CHECK(r && is_int(*r) && as_int(*r) == 12, "g 10 = 12 under Global");
         clear_storm();
+    }
+
+    // ── Issue #3869: storm force-full soak/alert counter ──
+    {
+        std::println("\n--- #3869: force-full counter bounded + Soft honest ---");
+        reset_partial_relower_threshold_for_test();
+        clear_storm();
+        apply_production_audit_defaults();
+
+        // Synthetic Global storm — the deterministic force-full face:
+        // dense-under-Global fires; sparse-under-Global stays amortized
+        // (#3831 cap). The storm-exit face itself is behaviorally covered
+        // by the #3690 AC1 block above; this block verifies the counter.
+        trip_global_storm();
+
+        // AC1: each fire counts exactly once — bounded/deterministic.
+        const auto f0 = dirty_aware_storm_force_full_total.load(std::memory_order_relaxed);
+        constexpr int kFires = 3;
+        for (int i = 0; i < kFires; ++i)
+            CHECK(production_dirty_aware_storm_force_full(kDefaultPartialRelowerThreshold),
+                  "3869 AC1: dense-under-Global force-full fires");
+        CHECK(dirty_aware_storm_force_full_total.load(std::memory_order_relaxed) ==
+                  f0 + static_cast<std::uint64_t>(kFires),
+              "3869 AC1: counter bounded under synthetic storm");
+
+        // AC1: pipeline rewrite site counts too (integration).
+        {
+            using aura::ir::IRModule;
+            using aura::ir::IROpcode;
+            auto make_mod3869 = [](std::size_t nblocks) {
+                IRModule mod;
+                aura::ir::IRFunction fn;
+                fn.name = "f3869";
+                fn.local_count = 2;
+                for (std::size_t i = 0; i < nblocks; ++i) {
+                    aura::ir::BasicBlock b;
+                    b.id = static_cast<std::uint32_t>(i);
+                    b.instructions.push_back(aura::ir::IRInstruction{
+                        .opcode = IROpcode::ConstI64,
+                        .operands = {0, 1, 0, 0},
+                    });
+                    fn.blocks.push_back(std::move(b));
+                }
+                mod.functions.push_back(std::move(fn));
+                return mod;
+            };
+            auto mod = make_mod3869(kDefaultPartialRelowerThreshold);
+            std::vector<std::vector<std::uint8_t>> dense(
+                1, std::vector<std::uint8_t>(kDefaultPartialRelowerThreshold, 1));
+            DefineDirtyMaskView v3869;
+            v3869.block_dirty_per_func = &dense;
+            ConstantFoldingWrap cf;
+            const auto f1 = dirty_aware_storm_force_full_total.load(std::memory_order_relaxed);
+            (void)run_incremental_dirty_pipeline(mod, cf, &v3869);
+            CHECK(dirty_aware_storm_force_full_total.load(std::memory_order_relaxed) >= f1 + 1,
+                  "3869 AC1: pipeline force-full site counted");
+        }
+
+        // AC2: sparse-under-Global stays amortized (#3831 cap) — no fire,
+        // no count.
+        const auto f2 = dirty_aware_storm_force_full_total.load(std::memory_order_relaxed);
+        CHECK(!production_dirty_aware_storm_force_full(1),
+              "3869 AC2: Global sparse cone stays amortized");
+        CHECK(dirty_aware_storm_force_full_total.load(std::memory_order_relaxed) == f2,
+              "3869 AC2: no count under #3831 cap");
+
+        // AC2: Soft-unarmed — no fire, no invented observability.
+        apply_dev_audit_defaults();
+        const auto f3 = dirty_aware_storm_force_full_total.load(std::memory_order_relaxed);
+        CHECK(!production_dirty_aware_storm_force_full(1),
+              "3869 AC2: Soft consult-only (no force-full)");
+        CHECK(!production_dirty_aware_storm_force_full(kDefaultPartialRelowerThreshold),
+              "3869 AC2: Soft dense still consult-only");
+        CHECK(dirty_aware_storm_force_full_total.load(std::memory_order_relaxed) == f3,
+              "3869 AC2: Soft does not count (no pretend amortized)");
+
+        // AC4: source-cite — decl + all three rewrite sites cite #3869.
+        const auto pp = read_file("src/compiler/pass_pipeline_core.ixx");
+        const auto sv = read_file("src/compiler/service.ixx");
+        const auto pi = read_file("src/compiler/pass_impls.ixx");
+        CHECK(pp.find("dirty_aware_storm_force_full_total{0}") != std::string::npos,
+              "3869 AC4: counter declared in pass_pipeline_core.ixx");
+        CHECK(pp.find("#3869") != std::string::npos && sv.find("#3869") != std::string::npos &&
+                  pi.find("#3869") != std::string::npos,
+              "3869 AC4: all three rewrite sites cite #3869");
+        CHECK(read_file("docs/design/3869-storm-force-full-counter.md").empty(),
+              "3869 AC4: no docs/design");
+        CHECK(read_file("tests/compiler/test_issue_3869.cpp").empty(), "3869 AC4: no invent");
+
+        clear_storm();
+        reset_partial_relower_threshold_for_test();
     }
 
     clear_storm();
