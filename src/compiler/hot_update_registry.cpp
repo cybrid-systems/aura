@@ -111,17 +111,15 @@ std::uint64_t HotUpdateRegistry::decide_and_reemit(std::uint64_t defuse_version,
             // Pipeline body already called on_reemit_pipeline_call.
             // If last_success is still 0, publish the same coverage
             // the pipeline would have (override or full demoted mask).
-            if (last_reemit_success_region_mask_.load(std::memory_order_relaxed) == 0) {
-                // Issue #3413: skip the fallback `covered = demoted` stamp.
-                // Issue #3445: never stamp `candidates & emit_region_mask_`
-                // (count is not a mask) and never the full demoted mask.
-                // Issue #3745: heal-path n>0 (CoverageVerify / StormClear /
-                // ReloadRecovery / ResidualForceHeal / ExhaustedMinDirty)
-                // may stamp last_force_jit_reason's one group bit. Cascade
-                // dirty still must not (#3682). Pipeline usually stamped
-                // first; this is the belt if last_success is still 0.
-                maybe_stamp_heal_reason_last_success(demoted);
-            }
+            // Issue #3413: skip the fallback `covered = demoted` stamp.
+            // Issue #3445: never stamp `candidates & emit_region_mask_`
+            // (count is not a mask) and never the full demoted mask.
+            // Issue #3745 / Issue #3885: heal-path n>0 ORs
+            // last_force_jit_reason's one group bit. Cascade dirty still
+            // must not (#3682). Pipeline usually stamped first; this
+            // belt ORs a later heal face when last_success is already
+            // non-zero (single-bit heal still leaves residual).
+            maybe_stamp_heal_reason_last_success(demoted);
         }
     }
     return n;
@@ -301,10 +299,10 @@ void HotUpdateRegistry::on_reemit_pipeline_call(std::uint64_t candidates,
             // Issue #3466: Agent override stays sticky opt-in and wins
             // when set. Issue #3682: idle override + Cascade dirty n>0
             // stamps NOTHING — last_force_jit_reason_ is not "this emit
-            // healed that reason". Issue #3745: heal-path reemit
-            // (CoverageVerify / StormClear / ReloadRecovery / …) may
-            // stamp that one group bit so only_covered is not stuck
-            // until the 256-exit ResidualForceHeal belt. Count ∩ emit
+            // healed that reason". Issue #3745 / Issue #3885: heal-path
+            // reemit ORs last_force_jit_reason's one group bit.
+            // Multi-reason + single-bit heal leaves residual. Agent
+            // note_reemit_success_coverage still wins. Count ∩ emit
             // and the full demoted mask stay forbidden (#3445/#3413).
             const auto covered = reemit_success_coverage_override_.load(std::memory_order_relaxed);
             if (covered != 0) {
@@ -1058,8 +1056,6 @@ void HotUpdateRegistry::maybe_stamp_heal_reason_last_success(std::uint64_t demot
         return;
     if (reemit_success_coverage_override_.load(std::memory_order_relaxed) != 0)
         return;
-    if (last_reemit_success_region_mask_.load(std::memory_order_relaxed) != 0)
-        return;
     // Soft / Off: wholesale re-promote does not need last_success; skip
     // extra stores (AC4).
     if (aura_production_defaults_active_probe() == 0)
@@ -1074,8 +1070,18 @@ void HotUpdateRegistry::maybe_stamp_heal_reason_last_success(std::uint64_t demot
     const auto bit = aot_reload_fail_to_force_jit_mask(fail);
     if (bit == 0 || (demoted & bit) == 0)
         return;
-    last_reemit_success_region_mask_.store(bit, std::memory_order_relaxed);
-    stamp_eval_last_success(force_owner_tls(), bit);
+    // Issue #3885: OR this heal's one reason bit. Multi-reason force +
+    // single-bit heal leaves residual (fail-closed). A later heal whose
+    // last_force_jit_reason is a different covered face ORs that bit.
+    // Agent note_reemit_success_coverage still wins (override early-out).
+    // Do not wholesale-store demoted (#3413). Belt (#3096/#3814) still
+    // ages residual until Agent coverage note or age clear.
+    const auto prev = last_reemit_success_region_mask_.load(std::memory_order_relaxed);
+    const auto next = prev | bit;
+    if (next == prev)
+        return;
+    last_reemit_success_region_mask_.store(next, std::memory_order_relaxed);
+    stamp_eval_last_success(force_owner_tls(), next);
 }
 
 void HotUpdateRegistry::clear_eval_force_slots() noexcept {

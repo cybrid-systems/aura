@@ -1020,11 +1020,14 @@ private:
     EvalForceSlot* find_eval_force_slot(void* ev, bool create) noexcept;
     void or_eval_force_bit(void* ev, std::uint64_t bit) noexcept;
     void stamp_eval_last_success(void* ev, std::uint64_t cov) noexcept;
-    // Issue #3745: production heal-path reemit (ReloadRecovery /
-    // CoverageVerify / StormClear / ResidualForceHeal / ExhaustedMinDirty)
-    // may stamp last_force_jit_reason's one group bit into last_success
-    // when override is idle. Cascade / BoundaryExit / ResidualPipeline
-    // do not (#3682). Soft: no extra. Not the full demoted mask (#3413).
+    // Issue #3745 / Issue #3885: production heal-path reemit
+    // (ReloadRecovery / CoverageVerify / StormClear / ResidualForceHeal /
+    // ExhaustedMinDirty) ORs last_force_jit_reason's one group bit into
+    // last_success when override is idle. Multi-reason + single-bit heal
+    // leaves residual (fail-closed). Agent note_reemit_success_coverage
+    // ORs remaining covered faces. Cascade / BoundaryExit /
+    // ResidualPipeline do not (#3682). Soft: no extra. Not the full
+    // demoted mask (#3413).
     void maybe_stamp_heal_reason_last_success(std::uint64_t demoted) noexcept;
     void clear_eval_force_slots() noexcept;
     std::uint64_t rebuild_force_mask_from_slots() noexcept;
