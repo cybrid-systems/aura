@@ -3444,7 +3444,8 @@ extern "C" void aura_fiber_install_tenant_scope_for_resume(void* fiber_ptr) noex
                                             /*fiber_id=*/static_cast<std::int64_t>(f->id()));
                 typed_audit::capture_security_correlated_audit(
                     mid, "fiber-principal-mismatch", mid, /*denied=*/true,
-                    /*target_node=*/0, static_cast<std::int64_t>(f->id()));
+                    /*target_node=*/0, static_cast<std::int64_t>(f->id()),
+                    ev->capability_tenant_id()); // Issue #3903
             }
         }
         return;
@@ -3497,7 +3498,8 @@ extern "C" void aura_fiber_install_tenant_scope_for_resume(void* fiber_ptr) noex
             // Correlated TypedMutationAudit trail join (same mid).
             typed_audit::capture_security_correlated_audit(
                 mid, "fiber-principal-mismatch", mid, /*denied=*/true,
-                /*target_node=*/0, static_cast<std::int64_t>(f->id()));
+                /*target_node=*/0, static_cast<std::int64_t>(f->id()),
+                assigned); // Issue #3903
         }
     }
     // Issue #3668: bind the quota TLS next to the capability principal so

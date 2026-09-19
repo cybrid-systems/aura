@@ -1307,6 +1307,75 @@ static void ac3845_4_source_cite_wiring_no_invent() {
 
 } // namespace
 
+// ── Issue #3903: capture_security_correlated_audit carries tenant_id ──
+static void ac3903_1_correlate_tenant_passthrough() {
+    std::println("\n--- #3903 AC1: correlate tenant_id passthrough ---");
+    reset_all();
+    constexpr std::uint64_t mid = 3903;
+    constexpr std::uint32_t tenant = 3903;
+    const auto before = g_typed_mutation_audit_counters.audits_considered.load();
+    capture_security_correlated_audit(/*mutation_id=*/mid, "test:3903-ac1",
+                                      /*epoch=*/0, /*denied=*/false,
+                                      /*target_node=*/0, /*fiber_id=*/0,
+                                      /*tenant_id=*/tenant);
+    CHECK(g_typed_mutation_audit_counters.audits_considered.load() == before + 1,
+          "3903 AC1: audits_considered bumped");
+    bool found = false;
+    std::uint32_t seen_tenant = 999;
+    {
+        std::lock_guard<std::mutex> lock(aura::compiler::typed_audit::g_trail().mu);
+        for (const auto& e : aura::compiler::typed_audit::g_trail().ring) {
+            if (e.mutation_id == mid) {
+                found = true;
+                seen_tenant = e.tenant_id;
+                break;
+            }
+        }
+    }
+    CHECK(found, "3903 AC1: trail row for mid reachable");
+    CHECK(seen_tenant == tenant, "3903 AC1: trail row tenant_id == passed tenant");
+    reset_all();
+}
+
+static void ac3903_2_default_tenant_zero_unchanged() {
+    std::println("\n--- #3903 AC2: default tenant stays 0 (existing callers unaffected) ---");
+    reset_all();
+    constexpr std::uint64_t mid = 3904;
+    capture_security_correlated_audit(/*mutation_id=*/mid, "test:3903-ac2",
+                                      /*epoch=*/0, /*denied=*/false);
+    bool found = false;
+    std::uint32_t seen_tenant = 999;
+    {
+        std::lock_guard<std::mutex> lock(aura::compiler::typed_audit::g_trail().mu);
+        for (const auto& e : aura::compiler::typed_audit::g_trail().ring) {
+            if (e.mutation_id == mid) {
+                found = true;
+                seen_tenant = e.tenant_id;
+                break;
+            }
+        }
+    }
+    CHECK(found, "3903 AC2: trail row for mid reachable");
+    CHECK(seen_tenant == 0, "3903 AC2: omitted tenant → 0 (existing callers unchanged)");
+    reset_all();
+}
+
+static void ac3903_3_source_cite() {
+    std::println("\n--- #3903 AC3: source-cite + no invent ---");
+    const auto tma = read_file("src/compiler/typed_mutation_audit.h");
+    CHECK(tma.find("Issue #3903") != std::string::npos, "3903 AC3: correlate API cites #3903");
+    const auto es = read_file("src/compiler/evaluator_security.cpp");
+    CHECK(es.find("Issue #3903") != std::string::npos,
+          "3903 AC3: evaluator_security call sites pass tenant");
+    const auto fm = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+    CHECK(fm.find("Issue #3903") != std::string::npos,
+          "3903 AC3: fiber_mutation call sites pass tenant");
+    CHECK(!std::filesystem::exists("docs/design/3903-correlate-tenant-id.md"),
+          "3903 AC3: no docs/design");
+    CHECK(!std::filesystem::exists("tests/issues/test_issue_3903.cpp"),
+          "3903 AC3: no tests/issues invent");
+}
+
 int run_test_audit_mutation_id_unify() {
     std::println("=== Issue #2493: mutation_id source unify (WorkspaceEpoch Mutation) ===");
     ac1_prefers_caller_then_mutation_epoch();
@@ -1315,6 +1384,9 @@ int run_test_audit_mutation_id_unify() {
     ac4_soft_no_activity_fallback();
     ac5_correlated_audit_join();
     ac6_source_and_gate();
+    ac3903_1_correlate_tenant_passthrough();
+    ac3903_2_default_tenant_zero_unchanged();
+    ac3903_3_source_cite();
     ac7_boundary_trail_uses_resolve();
     ac3066_1_production_batch_share_mid();
     ac3066_2_sampled_force_joinable();

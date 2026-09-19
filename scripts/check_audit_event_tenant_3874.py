@@ -35,7 +35,8 @@ def ac1_struct_field():
 def ac2_emit_plumbing():
     text = HEADER.read_text()
     ok = (
-        text.count("std::uint32_t tenant_id = 0) noexcept") == 2
+        # Issue #3903: correlate API adds a third defaulted tenant param.
+        text.count("std::uint32_t tenant_id = 0) noexcept") >= 2
         and "ev.tenant_id = tenant_id;" in text
         and text.count("tenant_id);") >= 2
     )

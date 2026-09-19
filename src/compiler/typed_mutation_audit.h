@@ -4664,7 +4664,8 @@ inline void capture_audit_event(std::uint64_t mutation_id, std::string_view name
 inline void capture_security_correlated_audit(std::uint64_t mutation_id, std::string_view op,
                                               std::uint64_t epoch, bool denied,
                                               std::uint32_t target_node = 0,
-                                              std::int64_t fiber_id = 0) noexcept {
+                                              std::int64_t fiber_id = 0,
+                                              std::uint32_t tenant_id = 0) noexcept {
     g_typed_mutation_audit_counters.audits_considered.fetch_add(1, std::memory_order_relaxed);
     // Issue #3066: prefer pinned composite/batch mid so SE + typed share
     // one join key. Fallback remains resolve_audit_mutation_id(mutation_id).
@@ -4672,7 +4673,8 @@ inline void capture_security_correlated_audit(std::uint64_t mutation_id, std::st
     const auto use_epoch = epoch != 0 ? epoch : ::aura::core::current_mutation_epoch();
     capture_audit_event_forced(mid, op, classify_kind(op), use_epoch, use_epoch,
                                denied ? AuditOutcome::Error : AuditOutcome::Success, target_node,
-                               /*nodes_changed=*/0, fiber_id, /*affected_ref_count=*/0);
+                               /*nodes_changed=*/0, fiber_id, /*affected_ref_count=*/0,
+                               /*tenant_id=*/tenant_id); // Issue #3903
 }
 
 // Issue #1882: AOT hot-update boundary audit. Sampled on success (should_audit);

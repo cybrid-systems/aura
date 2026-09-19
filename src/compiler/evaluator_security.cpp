@@ -569,7 +569,7 @@ bool Evaluator::check_and_record_effect(std::uint16_t required_effect_bits,
                                  : (prov.epoch != 0 ? prov.epoch : static_cast<std::uint64_t>(1));
             typed_audit::capture_security_correlated_audit(mid, op, prov.epoch, /*denied=*/true,
                                                            static_cast<std::uint32_t>(target_node),
-                                                           slot.fiber_id);
+                                                           slot.fiber_id, tenant_id); // Issue #3903
         }
         return false;
     }
@@ -611,7 +611,7 @@ bool Evaluator::check_and_record_effect(std::uint16_t required_effect_bits,
                              : (prov.epoch != 0 ? prov.epoch : static_cast<std::uint64_t>(1));
         typed_audit::capture_security_correlated_audit(mid, op, prov.epoch, /*denied=*/!ok,
                                                        static_cast<std::uint32_t>(target_node),
-                                                       slot.fiber_id);
+                                                       slot.fiber_id, tenant_id); // Issue #3903
     }
     g_sandbox_state().effect_checks++;
     return ok;
@@ -780,7 +780,8 @@ bool Evaluator::require_effect_on_ref(std::uint16_t req_bits, std::string_view o
                                         op, "stale-ref",
                                         /*denied=*/true, fiber);
             typed_audit::capture_security_correlated_audit(mid, op, mid, /*denied=*/true,
-                                                           /*target_node=*/ref.id, fiber);
+                                                           /*target_node=*/ref.id, fiber,
+                                                           tenant); // Issue #3903
             bump_capability_denial();
             return false; // fail-closed — zero mutate body / no effect record allow
         }
@@ -1970,7 +1971,8 @@ bool Evaluator::check_workspace_isolation(std::uint64_t target_tenant, std::uint
         const auto epoch = ::aura::core::current_mutation_epoch();
         const auto mid = production_deny_se_mid(); // #3801: epoch=0 → mid=0
         typed_audit::capture_security_correlated_audit(mid, op, mid, /*denied=*/true,
-                                                       /*target_node=*/0, fiber);
+                                                       /*target_node=*/0, fiber,
+                                                       capability_tenant_id()); // Issue #3903
     }
     return ok;
 }
