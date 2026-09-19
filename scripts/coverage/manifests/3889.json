@@ -1,0 +1,32 @@
+{
+  "issue": 3889,
+  "title": "from-verification-feedback revival write hits reject_structural_macro_hygiene",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_primitives_mutate.cpp",
+      "contains": [
+        "Issue #3889",
+        "reject_structural_macro_hygiene",
+        "from-verification-feedback"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/compiler/test_hygiene_mutate_closed_loop.cpp",
+      "contains": [
+        "3889 AC1: dormant strategy still #f",
+        "3889 AC1: revival write gated",
+        "ac3889_revival_hygiene_gate"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "forbid": [
+        "tests/compiler/test_issue_3889.cpp",
+        "tests/issues/test_issue_3889.cpp",
+        "docs/design/3889-from-verification-feedback-hygiene.md"
+      ]
+    }
+  ]
+}

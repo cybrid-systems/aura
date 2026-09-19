@@ -506,6 +506,34 @@ static void test_ac3828_3_production_bare_int_reject() {
           "3828 stamp");
 }
 
+static void test_ac3889_revival_hygiene_gate() {
+    std::println("\n--- #3889 AC1: revival write hits reject_structural_macro_hygiene ---");
+    std::string mut;
+    for (const char* p : {"src/compiler/evaluator_primitives_mutate.cpp",
+                          "../src/compiler/evaluator_primitives_mutate.cpp"}) {
+        mut = read_file(p);
+        if (!mut.empty())
+            break;
+    }
+    CHECK(!mut.empty(), "3889 AC1: mutate.cpp readable");
+    auto pos = mut.find("\"mutate:from-verification-feedback\"");
+    CHECK(pos != std::string::npos, "3889 AC1: prim present");
+    CHECK(mut.find("Issue #3889") != std::string::npos, "3889 AC1: cites #3889");
+    const auto hpos = mut.find("Issue #3889");
+    auto hwin = hpos == std::string::npos ? std::string{} : mut.substr(hpos, 900);
+    CHECK(hwin.find("reject_structural_macro_hygiene") != std::string::npos,
+          "3889 AC1: revival write gated");
+    CHECK(hwin.find("parse_allow_macro_opt_out") != std::string::npos,
+          "3889 AC2: :allow-macro? parsed on revival");
+    CHECK(mut.find("if (!applied)") != std::string::npos &&
+              mut.find("make_bool(false)") != std::string::npos,
+          "3889 AC1: dormant still #f before write");
+    CHECK(read_file("tests/compiler/test_issue_3889.cpp").empty(),
+          "3889 AC: no test_issue_3889.cpp");
+    CHECK(read_file("docs/design/3889-from-verification-feedback-hygiene.md").empty(),
+          "3889 AC: no docs/design/3889-*");
+}
+
 // ── Issue #1684 — MutationBoundaryGuard::run_or_rollback exception safety ──
 static void run_1684_guard_exception() {
     std::println("\n--- Issue #1684: Guard run_or_rollback ---");
@@ -1440,6 +1468,7 @@ int main() {
     test_ac3828_1_add_mutate_ssot_source();
     test_ac3828_2_soft_dormant_and_oob();
     test_ac3828_3_production_bare_int_reject();
+    test_ac3889_revival_hygiene_gate();
     run_1684_guard_exception();
     run_1702_inline_call();
     run_1690_insert_child();

@@ -5267,6 +5267,34 @@ static void ac3576_3_allowlist_reason_source_cite() {
     }
 }
 
+static void ac3889_revival_hygiene_gate() {
+    std::println("\n--- #3889 AC1: dormant still #f; revival write hits hygiene gate ---");
+    const auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
+    CHECK(!mut.empty(), "3889 AC1: mutate.cpp readable");
+    auto pos = mut.find("\"mutate:from-verification-feedback\"");
+    CHECK(pos != std::string::npos, "3889 AC1: prim present");
+    CHECK(mut.find("Issue #3889") != std::string::npos, "3889 AC1: cites #3889");
+    const auto hpos = mut.find("Issue #3889");
+    auto hwin = hpos == std::string::npos ? std::string{} : mut.substr(hpos, 900);
+    CHECK(hwin.find("reject_structural_macro_hygiene") != std::string::npos,
+          "3889 AC1: revival write gated");
+    CHECK(hwin.find("parse_allow_macro_opt_out") != std::string::npos,
+          "3889 AC2: :allow-macro? on revival");
+    CHECK(mut.find("applied = false") != std::string::npos, "3889 AC1: strategies stay dormant");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define x 1)\")").has_value(), "3889 AC1: set-code");
+    auto* ws = cs.evaluator().workspace_flat();
+    CHECK(ws && ws->size() > 0, "3889 AC1: workspace");
+    const auto nid = static_cast<std::int64_t>(ws->size() - 1);
+    auto r = cs.eval(
+        std::format("(mutate:from-verification-feedback \"weaken-property\" {} \"reset\")", nid));
+    CHECK(r && is_bool(*r) && !as_bool(*r), "3889 AC1: dormant strategy still #f");
+    CHECK(read_file("tests/compiler/test_issue_3889.cpp").empty(),
+          "3889 AC: no test_issue_3889.cpp");
+    CHECK(read_file("docs/design/3889-from-verification-feedback-hygiene.md").empty(),
+          "3889 AC: no docs/design/3889-*");
+}
+
 static void ac3576_4_existing_point_tests_not_reimplemented() {
     std::println("\n--- #3576 AC4: existing per-prim tests cross-cited, not reimplemented ---");
     const auto t = read_file("tests/compiler/test_hygiene_mutate_closed_loop.cpp");
@@ -6292,6 +6320,8 @@ int main() {
     ac3752_5_source_and_no_artifacts();
     ac3683_deny_kind_unified();
     ac3684_inner_expand_refuse();
+    std::println("\n=== Issue #3889: from-verification-feedback revival hygiene gate ---");
+    ac3889_revival_hygiene_gate();
     std::println("\n=== {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

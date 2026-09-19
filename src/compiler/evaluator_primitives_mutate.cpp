@@ -7841,6 +7841,17 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                        applied = false; // eda:update-constraint retired 4.4
                    if (!applied)
                        return make_bool(false);
+                   // Issue #3889: revival write path — same MI default-refuse
+                   // as rename/replace/move-node/tweak-literal/lockless.
+                   // Dormant strategies never reach here (applied stays false).
+                   const bool allow_macro_fv =
+                       ev.get_allow_macro_mutate() || parse_allow_macro_opt_out(ev, a);
+                   if (auto err = reject_structural_macro_hygiene(
+                           ev, *ev.workspace_flat_, node, allow_macro_fv,
+                           "from-verification-feedback", mev)) {
+                       ok = false;
+                       return *err;
+                   }
                    ev.bump_sv_self_evo_structured_mutate();
                    ev.bump_sv_self_evo_closed_loop_rounds();
                    ev.bump_sv_self_evo_convergence_hits();
