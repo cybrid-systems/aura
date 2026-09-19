@@ -1890,13 +1890,17 @@ bool ConstraintSystem::consistent_unify(TypeId t1, TypeId t2) {
         // Dynamic ~ Linear already failed closed above (#117).
         if (unify_gradual_mode_ == GradualPermissiveness::Strict &&
             aura::compiler::typed_audit::production_defaults_active()) {
-            // Issue #2064 blame note: the reject stays observable when the
-            // accept would have carried provenance.
-            if (metrics_ && active_mutation_id_ != 0) {
-                auto* m = static_cast<struct CompilerMetrics*>(metrics_);
-                m->dynamic_degrade_with_blame_total.fetch_add(1, std::memory_order_relaxed);
+            // Issue #3622: ground T ~ Dynamic fail-closed.
+            // Issue #3921: a type variable still instantiates against
+            // Dynamic (display of an Any-typed cell is ∀a. a → Void).
+            const auto other_id = (t1 == reg_.dynamic_type()) ? t2 : t1;
+            if (!reg_.is_var(other_id) && other_id != reg_.dynamic_type()) {
+                if (metrics_ && active_mutation_id_ != 0) {
+                    auto* m = static_cast<struct CompilerMetrics*>(metrics_);
+                    m->dynamic_degrade_with_blame_total.fetch_add(1, std::memory_order_relaxed);
+                }
+                return false; // Production: Dynamic is not a silent success (#3622)
             }
-            return false; // Production: Dynamic is not a silent success (#3622)
         }
         // If one side is Any and the other is a type variable, bind the
         // variable to Any.  This prevents the free var from escaping into
@@ -4064,9 +4068,17 @@ void InferenceEngine::init_primitive_env_part0(TypeId Int, TypeId Bool, TypeId F
         env_.bind("filter", forall_map);
     }
 
-    // I/O
-    register_primitive("display", {Dyn}, Void);
-    register_primitive("write", {Dyn}, Void);
+    // I/O — #3921: ∀a. a → Void. Production Dynamic~T (#3622) used to
+    // reject (display "hello") / (display #t) as "expected Any, got
+    // String/Bool". Sandbox on vs off must not change display's type.
+    {
+        auto a = cs_.fresh_var();
+        register_poly_primitive("display", {a}, Void, {a});
+    }
+    {
+        auto a = cs_.fresh_var();
+        register_poly_primitive("write", {a}, Void, {a});
+    }
     register_primitive("newline", {}, Void);
     register_primitive("error", {Dyn}, Void);
     register_primitive("assert", {Dyn}, Void);
