@@ -5331,6 +5331,26 @@ public:
     // element references (BUT the map array itself can still
     // be reallocated when the deque grows past the current
     // map capacity — see env_frames_mtx_ below).
+    // Issue #3900: env_frames readers sharded 16-way (closures-shard
+    // pattern, #3867). Coordination mutexes only — the env_frames_
+    // deque stays the structure SSOT. Point sites take
+    // shard(env_frame_shard_index(id)); bulk walks take ALL shards in
+    // index order (canonical deadlock-free order, #3199 style).
+    // Structure ops (alloc/compact/truncate/whole-arena restamp+rewrite)
+    // barrier ALL shards FIRST (index order), then take env_frames_mtx_ —
+    // shards-before-structure; the reverse order AB-BA'd against
+    // in-flight walkers (observed EDEADLK in the first cut).
+    // Lock order (#1664) UNCHANGED: any closures shard then any env
+    // shard (closures first); env shards in index order among
+    // themselves; env shards BEFORE env_frames_mtx_, never after.
+    struct EnvFramesShard {
+        mutable std::shared_mutex mu;
+    };
+    [[nodiscard]] static std::size_t env_frame_shard_index(EnvId id) noexcept {
+        return static_cast<std::size_t>((static_cast<std::uint64_t>(id) * 0x9E3779B97F4A7C15ULL) >>
+                                        60);
+    }
+    std::array<EnvFramesShard, kEnvFramesShardCount> env_frame_shards_;
     std::deque<EnvFrame> env_frames_;
     // Issue #145 P0 follow-up: shared_mutex protects
     // env_frames_ against concurrent access from fiber threads
@@ -5352,17 +5372,6 @@ public:
     // always take closures_mtx_ FIRST, then env_frames_mtx_
     // (see closures_mtx_ comment). Solo env_frames acquires OK.
     mutable std::shared_mutex env_frames_mtx_;
-    // Issue #3900: per-id coordination mutexes. Hot readers take ONE
-    // shard shared; bulk walks take ALL in index order; structure
-    // ops barrier ALL shards FIRST then env_frames_mtx_.
-    struct EnvFramesShard {
-        mutable std::shared_mutex mu;
-    };
-    [[nodiscard]] static std::size_t env_frame_shard_index(EnvId id) noexcept {
-        return static_cast<std::size_t>((static_cast<std::uint64_t>(id) * 0x9E3779B97F4A7C15ULL) >>
-                                        60);
-    }
-    mutable std::array<EnvFramesShard, kEnvFramesShardCount> env_frame_shards_;
     // Issue #2360 / #2362: live EnvFrameRef ownership slots for
     // densify + fiber-steal transfer_to / drop protocol. deque so
     // push_back does not invalidate pointers to existing slots

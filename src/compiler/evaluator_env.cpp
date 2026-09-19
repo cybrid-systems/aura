@@ -2172,8 +2172,9 @@ std::size_t Evaluator::truncate_env_frames_to_checkpoint() {
     // no longer hold env_frames_mtx_, and taking the structure mutex
     // before the shards would AB-BA against in-flight walkers.
     std::array<std::unique_lock<std::shared_mutex>, kEnvFramesShardCount> ef_barrier;
-    for (std::size_t ef_i = 0; ef_i < kEnvFramesShardCount; ++ef_i)
+    for (std::size_t ef_i = 0; ef_i < kEnvFramesShardCount; ++ef_i) {
         ef_barrier[ef_i] = std::unique_lock<std::shared_mutex>(env_frame_shards_[ef_i].mu);
+    }
     std::unique_lock<std::shared_mutex> wlock(env_frames_lock());
     const std::size_t current_size = env_frames_.size();
     if (checkpoint_size >= current_size)
@@ -2242,7 +2243,16 @@ std::size_t Evaluator::truncate_env_frames_to_checkpoint() {
     // scan. scan_live_closures takes closures_mtx_ and may touch env
     // frames — holding wlock here is a Resource deadlock avoided footgun
     // (NEVER env_frames then closures under the same thread).
+    // Issue #2295 / #3900: release env_frames unique lock AND the env shard
+    // barrier BEFORE ownership-exit scan. scan_live_closures takes closures
+    // shards first, then env shards shared — entering it with env_frames_mtx_
+    // or the env shard uniques still held is the env-to-closures order
+    // footgun (#1664) and same-thread EDEADLKs the shared re-acquisition
+    // (observed 100% in run_1360). Barrier protection is done: soft-mark,
+    // resize and publish all completed above.
     wlock.unlock();
+    for (auto& ef_b : ef_barrier)
+        ef_b.unlock();
     // Ownership protocol after truncate: skip-freed scan closes dual-path
     // stale windows for resume-hint / bare-chain holders. EnvFrameRef
     // holders outside this function still call drop() after use_site_check
@@ -2549,6 +2559,17 @@ std::size_t Evaluator::compact_env_frames() {
     // compact that proceeded under a hold (should be impossible when gate works).
     if (reclaimed > 0 || !env_id_remap_.empty())
         aura::core::envframe_lifetime::note_compact_generation_bump();
+
+    // Issue #3900: the shard barrier's job is done — the env_frames_
+    // rewrite completed above. The downstream tail (bridge publish,
+    // restamp callbacks, targeted cache invalidate, epoch notify) relies
+    // on the interlock / env_frames_mtx_ and takes closures locks in
+    // canonical order; entering those with the env shard uniques still
+    // held is the env-to-closures inversion (#1664) and same-thread
+    // EDEADLKs any env shard re-acquisition (observed in run_2017).
+    // Release before the dual-epoch/publish tail.
+    for (auto& ef_b : ef_barrier)
+        ef_b.unlock();
 
     // Issue #1510 / #1526: atomic dual-epoch pair under interlock —
     // defuse_version_ (EnvFrame freshness) + bridge_epoch (closure
