@@ -16,6 +16,7 @@
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
 #include <print>
 #include <string>
 #include <vector>
@@ -325,6 +326,28 @@ int main() {
         CHECK(ent.provenance_mutation_id == 0x3856, "3856 AC1: mid joined");
         CHECK(aura::core::security_event_wal::wal_overflow_ring_depth() == depth0 + 1,
               "3856 AC1: overflow captured the miss");
+        bool saw_deny = false;
+        {
+            auto& ring = g_security_event_ring();
+            const auto seq = ring.seq.load(std::memory_order_relaxed);
+            for (std::uint64_t i = 0; i < seq && i < kSecurityEventRingSize; ++i) {
+                const auto& e = ring.ring[i % kSecurityEventRingSize];
+                if (e.kind == aura::core::security_event::SecurityEventKind::EffectDeny &&
+                    std::string_view(e.reason) == "mutation_wal_append_miss")
+                    saw_deny = true;
+            }
+        }
+        CHECK(saw_deny, "3907 AC1: emit_mutation_audit miss emits EffectDeny SE");
+        std::string sec;
+        for (const auto& p : {std::string("src/compiler/evaluator_security.cpp"),
+                              std::string("../src/compiler/evaluator_security.cpp")}) {
+            std::ifstream in(p);
+            if (in) {
+                sec.assign((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+                break;
+            }
+        }
+        CHECK(sec.find("Issue #3907") != std::string::npos, "3907 AC2: emit_mutation_audit cites");
         ::unsetenv("AURA_WAL_APPEND_FAIL_CLOSED");
         aura::compiler::typed_audit::g_tls_composite_batch_join_mid = 0;
     }

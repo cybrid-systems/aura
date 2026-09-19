@@ -330,6 +330,15 @@ bool Evaluator::emit_mutation_audit(std::uint32_t nodes_changed, std::uint32_t e
                 // Flip the slot so Agents joining the ring for this mid see
                 // the miss-shaped face, not a committed one.
                 slot.effect_denied = true;
+                // Issue #3907: align emit_mutation_audit miss with #3855 —
+                // ring flip is not enough; Agents joining SE by mid need a
+                // compensating EffectDeny (reason mutation_wal_append_miss).
+                (void)::aura::core::security_event_wal::emit_security_event_durable(
+                    ::aura::core::security_event::SecurityEventKind::EffectDeny,
+                    static_cast<std::uint32_t>(slot.tenant_id),
+                    production_deny_se_mid(rec.provenance_mutation_id), slot.epoch,
+                    slot.effect_bits, op, "mutation_wal_append_miss", /*denied=*/true,
+                    slot.fiber_id);
                 ::aura::core::security_event_wal::WalOverflowRecord ovr{};
                 ovr.mid = rec.provenance_mutation_id;
                 ovr.tenant_id = static_cast<std::uint32_t>(slot.tenant_id);
