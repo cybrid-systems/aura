@@ -1339,6 +1339,13 @@ void Fiber::abandon_join_drain_still_running() noexcept {
     }
 }
 
+void Fiber::detach_mailbox_if_attached() noexcept {
+    // Issue #3905: hard-reap belt. Mailbox::detach is idempotent and
+    // clears mailbox_ when this was the primary. No-op if unbound.
+    if (auto* mb = mailbox_)
+        mb->detach(this);
+}
+
 std::uint64_t Fiber::join_drain_residual_still_running() noexcept {
     return join_drain_residual_still_running_.load(std::memory_order_relaxed);
 }

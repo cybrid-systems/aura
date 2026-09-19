@@ -509,10 +509,11 @@ void Scheduler::note_orphan_fiber(Fiber* f, std::uint64_t hard_deadline_ms) noex
 // For each candidate (!is_done && !is_reclaimed):
 //   - mark fiber reclaimed_ (so joiners see "logically done")
 //   - drop from wait_map_ / joiner_map_ (wake joiners with 1-byte write)
-//   - drop from owned_fibers_ (releases the unique_ptr)
 //   - unregister from all workers
 //   - release process fiber quota (paired with spawn)
 //   - bump orphans_reaped_total_
+// Issue #3905: do not drop a live body from owned_fibers_ — keep
+// the object until body Done / on_fiber_done / ~Scheduler.
 // Returns the number of fibers actually reaped. Idempotent: a
 // second call past the same deadline is a no-op (all entries
 // already removed from orphan_fibers_).
@@ -605,41 +606,22 @@ std::size_t Scheduler::reap_orphans_now() noexcept {
                 joiner_map_.erase(jit);
             }
         }
-        // Drop from owned_fibers_ (releases the unique_ptr; the
-        // fiber's destructor runs at this point if no other ref
-        // holds it. The body stack is freed here; non-yielding
-        // bodies leak stack until return — documented limitation).
-        // Issue #2468 residual: if a worker may still hold this fiber
-        // (queued_ set — in its local queue, or popped and being
-        // processed), destroying the object now leaves the worker a
-        // dangling pointer → resume-on-reclaimed hot loop → SIGSEGV
-        // (CI batch). The worker drops reclaimed fibers on pop; the
-        // object stays in owned_fibers_ until scheduler teardown
-        // (same lifecycle as normally-completed fibers).
-        //
-        // Issue #2397: when workers are not live, the deque will never
-        // pop this pointer — destroy now so hard-reap pairs the
-        // still-running gauge in ~Fiber. When a worker still holds it,
-        // pair the gauge here (abandon) without destroying.
-        bool workers_live = false;
-        for (auto& w : workers_) {
-            if (w && w->is_running()) {
-                workers_live = true;
-                break;
-            }
-        }
-        if (!f->is_queued() || !workers_live) {
-            ::aura::compiler::lock_order::AuditedMutexLock ol(
-                owned_fibers_mutex_, ::aura::compiler::lock_order::Level::OwnedFibers);
-            for (auto oit = owned_fibers_.begin(); oit != owned_fibers_.end(); ++oit) {
-                if (oit->get() == f) {
-                    owned_fibers_.erase(oit);
-                    break;
-                }
-            }
-        } else {
-            f->abandon_join_drain_still_running();
-        }
+        // Issue #3905: never drop a live (!is_done) body from
+        // owned_fibers_. Production Reclaimed-pending AgentHandle /
+        // name-table / mailbox attachers keep Fiber* across hard-reap.
+        // Destroying here is UAF on wait_reclaimed_body / find /
+        // ensure / mailbox notify. Maps / joiners / quota still
+        // cleaned; object stays until body Done / on_fiber_done /
+        // ~Scheduler (same lifecycle as normally-completed fibers).
+        // Extends #2468 ("don't destroy worker-held") to "don't
+        // destroy any live body"; #2397 workers-not-live destroy arm
+        // is retired for live bodies.
+        // Pair the still-running gauge here (abandon) so a later
+        // ~Fiber / body-exit does not double-drop. Belt: detach the
+        // mailbox attacher so notify cannot walk this Fiber* after
+        // wait_map_ is dropped (object stays owned).
+        f->abandon_join_drain_still_running();
+        f->detach_mailbox_if_attached();
         // Release process fiber quota (paired with spawn). Always:
         // the fiber is logically reclaimed (maps/joiners cleaned,
         // reclaimed_ set) and the worker never notifies a reclaimed
