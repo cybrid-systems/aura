@@ -1193,6 +1193,19 @@ static std::uint32_t lower_flat_expr(
                                     free.insert(std::string(name));
                                 break;
                             }
+                            case NodeTag::Set: {
+                                // Issue #3927: set! of a free cell is a store.
+                                // Collecting only Variable reads dropped
+                                // write-only top-level cells, so the body
+                                // Set missed scopes and was a no-op while
+                                // later < / = / - const-folded the init.
+                                auto name = std::string(pool.resolve(nv.sym_id));
+                                if (bound.find(name) == bound.end())
+                                    free.insert(name);
+                                for (auto c : nv.children)
+                                    walk(c);
+                                break;
+                            }
                             case NodeTag::LiteralInt:
                             case NodeTag::LiteralString:
                                 break;
@@ -1518,6 +1531,9 @@ static std::uint32_t lower_flat_expr(
                     return val_slot;
                 }
             }
+            // Issue #3927: name not in lambda scopes (write-only free
+            // var filtered out, or REPL value-define cell). Caller
+            // cache_define skips IR when the body set!s a non-local.
             return val_slot;
         }
         case NodeTag::Quote: {
