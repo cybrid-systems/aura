@@ -116,9 +116,12 @@ int run_test_audit_durable_gap_force_wal() {
     // \u2500\u2500 AC3: query:security-posture exposes additive audit-durable-gap \u2500\u2500
     {
         std::println("\n--- AC3: additive audit-durable-gap key ---");
-        const auto obs = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
+        // #3881/#3906 moved the posture obs implementation (and the
+        // audit-durable-gap key with it) from evaluator_primitives_obs_eval.cpp
+        // into evaluator_primitives_security.cpp — cite the new home.
+        const auto obs = read_file("src/compiler/evaluator_primitives_security.cpp");
         CHECK(contains(obs, "audit-durable-gap"),
-              "AC3: additive key 'audit-durable-gap' present in obs_eval");
+              "AC3: additive key 'audit-durable-gap' present in security obs");
         CHECK(contains(obs, "schema-3375"), "AC3: schema-3375 sentinel present");
         CHECK(contains(obs, "issue-3375"), "AC3: issue-3375 sentinel present");
         // The condition must be: prod && !sandbox_off && strategy==Full && !wal_enabled
