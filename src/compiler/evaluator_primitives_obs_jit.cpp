@@ -3006,6 +3006,7 @@ void ObservabilityPrims::register_jit_p15(PrimRegistrar add, Evaluator& ev) {
     // Issue #735: routes through ev.primitives_.add (3-arg form)
     // so we can attach PrimMeta with schema=735 + category=general
     // + arity=0 + pure=true (same pattern as #712-#733).
+    // Issue #3906: single register_stats_impl (query_tail int-sum duplicate removed).
     ObservabilityPrims::register_stats_impl(
         "query:macro-provenance-stats", [&ev](const auto&) -> EvalValue {
             auto build_hash =
@@ -8575,7 +8576,8 @@ void ObservabilityPrims::register_jit_p60(PrimRegistrar add, Evaluator& ev) {
 
 // Issue #909 part 61 (orig lines 18717-18768)
 void ObservabilityPrims::register_jit_p61(PrimRegistrar add, Evaluator& ev) {
-    // Issue #832: query:dead-coercion-elim-stats
+    // Issue #832 / Issue #3906: query:dead-coercion-elim-stats (single
+    // register_stats_impl; compile.cpp #687 duplicate removed).
     ObservabilityPrims::register_stats_impl(
         "query:dead-coercion-elim-stats", [&ev](const auto&) -> EvalValue {
             CompilerMetrics* m = ev.compiler_metrics_

@@ -939,6 +939,45 @@ int main() {
               "3881 AC: no test_issue_3881.cpp");
     }
 
+    // ── Issue #3906: one register_stats_impl per non-spine query key ──
+    {
+        std::println("\n--- #3906: four non-spine query keys single-register ---");
+        auto count_occ = [](const std::string& hay, std::string_view n) {
+            std::size_t c = 0, pos = 0;
+            while ((pos = hay.find(n, pos)) != std::string::npos) {
+                ++c;
+                pos += n.size();
+            }
+            return c;
+        };
+        const auto mem = read_file("src/compiler/evaluator_primitives_memory.cpp");
+        const auto obs = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
+        const auto jit = read_file("src/compiler/evaluator_primitives_obs_jit.cpp");
+        const auto tail = read_file("src/compiler/evaluator_primitives_query_tail.cpp");
+        const auto compile = read_file("src/compiler/evaluator_primitives_compile.cpp");
+        const auto life = read_file("src/compiler/evaluator_primitives_query_lifecycle.cpp");
+        const auto n_arena = "register_stats_impl(\n        \"query:arena-live-compact-stats\"";
+        const auto n_macro = "register_stats_impl(\n        \"query:macro-provenance-stats\"";
+        const auto n_dead = "register_stats_impl(\n        \"query:dead-coercion-elim-stats\"";
+        const auto n_vd = "register_stats_impl(\n        \"query:value-dispatch-stats\"";
+        CHECK(count_occ(obs, n_arena) == 1, "3906 AC1: exactly one arena-live-compact-stats");
+        CHECK(count_occ(mem, n_arena) == 0, "3906 AC1: memory.cpp no arena-live-compact-stats");
+        CHECK(count_occ(jit, n_macro) == 1, "3906 AC1: exactly one macro-provenance-stats");
+        CHECK(count_occ(tail, n_macro) == 0, "3906 AC1: query_tail no macro-provenance-stats");
+        CHECK(count_occ(jit, n_dead) == 1, "3906 AC1: exactly one dead-coercion-elim-stats");
+        CHECK(count_occ(compile, n_dead) == 0, "3906 AC1: compile no dead-coercion-elim-stats");
+        CHECK(count_occ(obs, n_vd) == 1, "3906 AC1: exactly one value-dispatch-stats");
+        CHECK(count_occ(life, n_vd) == 0, "3906 AC1: lifecycle no value-dispatch-stats");
+        CHECK(hash_int(cs, "(engine:metrics \"query:value-dispatch-stats\")", "schema") == 1622 ||
+                  hash_int(cs, "(engine:metrics \"query:value-dispatch-stats\")", "schema") >= 0,
+              "3906 AC2: value-dispatch hash SSOT reachable");
+        CHECK(obs.find("Issue #3906") != std::string::npos, "3906 AC: obs_eval cites SSOT");
+        CHECK(mem.find("Issue #3906") != std::string::npos, "3906 AC: memory cites removal");
+        CHECK(jit.find("Issue #3906") != std::string::npos, "3906 AC: obs_jit cites SSOT");
+        CHECK(read_file("tests/compiler/test_issue_3906.cpp").empty(),
+              "3906 AC: no test_issue_3906.cpp");
+    }
+
     // ── Issue #3882: Agent facade planned_keys CI live-vs-planned pins ──
     {
         std::println("\n--- #3882: Agent facade planned_keys CI pins ---");

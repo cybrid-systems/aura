@@ -1,0 +1,29 @@
+{
+  "issue": 3906,
+  "title": "single register_stats_impl for four non-spine query keys",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_primitives_obs_eval.cpp",
+      "contains": ["Issue #3906", "query:arena-live-compact-stats", "query:value-dispatch-stats"]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/evaluator_primitives_memory.cpp",
+      "contains": ["Issue #3906", "registered only in"]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/evaluator_primitives_obs_jit.cpp",
+      "contains": ["Issue #3906", "query:macro-provenance-stats", "query:dead-coercion-elim-stats"]
+    },
+    {
+      "ac": "AC4",
+      "forbid": [
+        "tests/compiler/test_issue_3906.cpp",
+        "tests/issues/test_issue_3906.cpp",
+        "docs/design/3906-dual-register.md"
+      ]
+    }
+  ]
+}
