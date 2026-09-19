@@ -56,8 +56,10 @@ using aura::compiler::macro_exp::g_hygiene_violation_se_emit_total;
 using aura::compiler::macro_exp::g_macro_hygiene_last_limit_reason;
 using aura::compiler::macro_exp::g_macro_self_evo_depth_clamp_total;
 using aura::compiler::macro_exp::g_macro_self_evo_pass_clamp_total;
+using aura::compiler::macro_exp::get_fiber_hygiene_metrics;
 using aura::compiler::macro_exp::hard_hygiene_depth_limit;
 using aura::compiler::macro_exp::hygiene_last_limit_reason_string;
+using aura::compiler::macro_exp::inner_expand_production_limit_deny;
 using aura::compiler::macro_exp::kHygieneLimitReasonDepthLimit;
 using aura::compiler::macro_exp::kHygieneLimitReasonGensymCeiling;
 using aura::compiler::macro_exp::kHygieneLimitReasonMacroIntroduced;
@@ -87,6 +89,8 @@ using aura::core::sandbox::SandboxMode;
 using aura::core::sandbox::set_mode;
 using aura::test::g_failed;
 using aura::test::g_passed;
+
+extern "C" std::uint64_t aura_fiber_current_id();
 
 using NameMap = std::unordered_map<std::string, std::string, aura::core::TransparentStringHash,
                                    std::equal_to<>>;
@@ -1315,6 +1319,33 @@ static void ac3753_reexpand_call_inner_deny_no_splice() {
     reset_all();
 }
 
+static void ac3888_sticky_mi_then_ceiling_still_observable() {
+    std::println("\n--- #3888 AC1: MI then gensym ceiling stays observable ---");
+    reset_all();
+    g_macro_hygiene_last_limit_reason.store(0, std::memory_order_relaxed);
+    note_hygiene_last_limit_reason(kHygieneLimitReasonMacroIntroduced);
+    CHECK(std::string(hygiene_last_limit_reason_string()) == "hygiene-macro-introduced",
+          "3888 AC1: Agent-facing reason stays hygiene-macro-introduced");
+    note_hygiene_last_limit_reason(kHygieneLimitReasonGensymCeiling);
+    CHECK(std::string(hygiene_last_limit_reason_string()) == "hygiene-macro-introduced",
+          "3888 AC1: ceiling does not clobber sticky MI (no second lattice)");
+    const auto fid = static_cast<std::uint32_t>(aura_fiber_current_id());
+    CHECK(get_fiber_hygiene_metrics(fid).last_limit_reason == kHygieneLimitReasonGensymCeiling,
+          "3888 AC1: fiber stamps ceiling under sticky MI");
+    CHECK(inner_expand_production_limit_deny(),
+          "3888 AC1: belt sees fiber ceiling under sticky MI");
+    const auto me = read_file("src/compiler/macro_expansion.cpp");
+    CHECK(me.find("Issue #3888") != std::string::npos, "3888 AC: cpp cites #3888");
+    CHECK(me.find("cloned == NULL_NODE || inner_expand_production_limit_deny()") !=
+              std::string::npos,
+          "3888 AC1: child-loop belt keys on NULL_NODE");
+    CHECK(read_file("tests/compiler/test_issue_3888.cpp").empty(),
+          "3888 AC: no test_issue_3888.cpp");
+    CHECK(read_file("docs/design/3888-sticky-mi-reason.md").empty(),
+          "3888 AC: no docs/design/3888-*");
+    reset_all();
+}
+
 int run_test_macro_hygiene_limits() {
     std::println("=== Issue #2101: runtime hygiene depth/pass caps ===");
     ac1_runtime_cap_clamps();
@@ -1362,6 +1393,8 @@ int run_test_macro_hygiene_limits() {
     std::println("\n=== Issue #3735: hygiene SE keeps join mid (no phantom 1) ===");
     ac3735_hygiene_se_keeps_join_mid();
     ac3735_soft_and_source();
+    std::println("\n=== Issue #3888: sticky MI/rest does not mask ceiling belts ===");
+    ac3888_sticky_mi_then_ceiling_still_observable();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

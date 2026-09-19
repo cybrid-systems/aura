@@ -1,0 +1,33 @@
+{
+  "issue": 3888,
+  "title": "Sticky MI/rest reason still observes follow-on gensym/depth ceiling",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/macro_expansion.cpp",
+      "contains": [
+        "Issue #3888",
+        "stamp_fiber_last_limit_reason(fiber_id, code)",
+        "cloned == NULL_NODE || inner_expand_production_limit_deny()"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/compiler/test_macro_hygiene_limits.cpp",
+      "contains": [
+        "3888 AC1: ceiling does not clobber sticky MI (no second lattice)",
+        "3888 AC1: fiber stamps ceiling under sticky MI",
+        "3888 AC1: belt sees fiber ceiling under sticky MI",
+        "ac3888_sticky_mi_then_ceiling_still_observable"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "forbid": [
+        "tests/compiler/test_issue_3888.cpp",
+        "tests/issues/test_issue_3888.cpp",
+        "docs/design/3888-sticky-mi-reason.md"
+      ]
+    }
+  ]
+}

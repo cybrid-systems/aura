@@ -113,9 +113,22 @@ namespace aura::compiler::macro_exp {
     // gensym). The ConcurrentCloneGuard refuses (8/9/10) are stamped
     // GLOBALLY by sibling threads — consulting them here let a sibling's
     // concurrent-refuse spuriously abort an in-flight clone (3544 soak).
-    return r == kHygieneLimitReasonDepthLimit || r == kHygieneLimitReasonPassLimit ||
-           r == kHygieneLimitReasonStealAbort || r == kHygieneLimitReasonCapabilityDeny ||
-           r == kHygieneLimitReasonGensymCeiling;
+    if (r == kHygieneLimitReasonDepthLimit || r == kHygieneLimitReasonPassLimit ||
+        r == kHygieneLimitReasonStealAbort || r == kHygieneLimitReasonCapabilityDeny ||
+        r == kHygieneLimitReasonGensymCeiling)
+        return true;
+    // Issue #3888: sticky global 4/5 (MI / rest) can mask a follow-on
+    // depth/gensym/pass ceiling in the same expand. Fiber stamp still
+    // records the ceiling — belts consult it so ExpandCheckpoint restore
+    // and NULL_NODE abort still fire. Do not invent a second lattice.
+    if (r == kHygieneLimitReasonMacroIntroduced || r == kHygieneLimitReasonRestUnmarked) {
+        const auto fid = static_cast<std::uint32_t>(aura_fiber_current_id());
+        const auto fr = get_fiber_hygiene_metrics(fid).last_limit_reason;
+        return fr == kHygieneLimitReasonDepthLimit || fr == kHygieneLimitReasonPassLimit ||
+               fr == kHygieneLimitReasonStealAbort || fr == kHygieneLimitReasonCapabilityDeny ||
+               fr == kHygieneLimitReasonGensymCeiling;
+    }
+    return false;
 }
 
 // Issue #3684 / #3787: the macro_expand_all_body pass-loop consult.
@@ -491,8 +504,13 @@ void note_hygiene_last_limit_reason_for_fiber(std::uint32_t fiber_id, std::uint8
     if (code == kHygieneLimitReasonPassLimit || code == kHygieneLimitReasonDepthLimit ||
         code == kHygieneLimitReasonGensymCeiling) {
         const auto cur = g_macro_hygiene_last_limit_reason.load(std::memory_order_relaxed);
-        if (cur == kHygieneLimitReasonMacroIntroduced || cur == kHygieneLimitReasonRestUnmarked)
+        if (cur == kHygieneLimitReasonMacroIntroduced || cur == kHygieneLimitReasonRestUnmarked) {
+            // Issue #3888: keep Agent-facing 4/5, but still stamp fiber + SE
+            // so a follow-on ceiling in the same expand is observable.
+            stamp_fiber_last_limit_reason(fiber_id, code);
+            emit_hygiene_limit_se(code, fiber_id);
             return;
+        }
     }
     g_macro_hygiene_last_limit_reason.store(code, std::memory_order_relaxed);
     stamp_fiber_last_limit_reason(fiber_id, code);
@@ -2485,6 +2503,8 @@ static aura::ast::NodeId clone_macro_body_at_depth(
         // Issue #3506: pre_scan ignores rename_*_pre NULL_NODE; a ceiling
         // deny already try_restore'd. Abort the clone walk so later add_*
         // are not unguarded (checkpoint consumed). Soft/Off: continue.
+        // Issue #3888: sticky MI/rest still aborts via fiber ceiling stamp
+        // (inner_expand_production_limit_deny consults fiber when global is 4/5).
         if (production_surface && inner_expand_production_limit_deny()) {
             expand_ckpt.try_restore();
             return aura::ast::NULL_NODE;
@@ -2564,7 +2584,9 @@ static aura::ast::NodeId clone_macro_body_at_depth(
         // Issue #3321: production fail-fast after nested steal-abort.
         // Issue #3506: same restore for nested depth / gensym / cap / pass.
         // Soft/Off: continue (historical half-write contract).
-        if (cloned == NULL_NODE && production_surface && inner_expand_production_limit_deny()) {
+        // Issue #3888: also key on NULL_NODE (counter / fiber ceiling), not
+        // only sticky global reason — same face as #3816 let/define belts.
+        if (production_surface && (cloned == NULL_NODE || inner_expand_production_limit_deny())) {
             expand_ckpt.try_restore();
             return NULL_NODE;
         }

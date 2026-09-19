@@ -173,8 +173,7 @@ int run_test_concurrent_clone_steal_abort_visibility() {
             // Walk back ~200 chars to find the outer `if (new_id != NULL_NODE)`.
             // We expect the outer if NOT to be gated on hygiene_depth == 0
             // (the old gate was `if (hygiene_depth == 0 && new_id != NULL_NODE)`).
-            const std::string scope =
-                me.substr((nested_pos > 400 ? nested_pos - 400 : 0), nested_pos + 400);
+            const std::string scope = me.substr(nested_pos > 400 ? nested_pos - 400 : 0, 800);
             // The OLD form "hygiene_depth == 0 && new_id != NULL_NODE" must
             // not appear in the steal detection scope any more.
             CHECK(scope.find("hygiene_depth == 0 && new_id != NULL_NODE") == std::string::npos,
@@ -260,7 +259,8 @@ int run_test_concurrent_clone_steal_abort_visibility() {
         CHECK(me.find("kHygieneLimitReasonStealAbort") != std::string::npos &&
                   me.find("production_surface") != std::string::npos,
               "3321 AC2: production_surface + steal-abort");
-        CHECK(me.find("cloned == NULL_NODE && production_surface") != std::string::npos,
+        CHECK(me.find("cloned == NULL_NODE || inner_expand_production_limit_deny()") !=
+                  std::string::npos,
               "3321 AC2: sibling abort after nested NULL_NODE");
     }
     {
