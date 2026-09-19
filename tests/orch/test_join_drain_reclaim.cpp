@@ -7356,6 +7356,112 @@ int run_test_join_drain_reclaim() {
         restore_sb();
     }
 
+    // ── Issue #3939: join_agents explicit Timeout must not stack a second
+    // drain×8 batch wait. must_wait stays armed (#3934). Soft unchanged.
+    {
+        using aura::core::sandbox::SandboxMode;
+        using aura::core::sandbox::set_mode;
+        using aura::orch::abandon_reclaimed;
+        using aura::orch::AbandonReclaimedOpts;
+        using aura::orch::AbandonReclaimedOutcome;
+        using aura::orch::ensure_reclaimed_cleanup;
+        using aura::orch::g_orch_module_stats;
+        using aura::orch::join_agents;
+        using aura::orch::production_reclaimed_must_wait;
+        using aura::serve::FiberState;
+        using aura::serve::JoinStatus;
+
+        auto restore_sb = [] {
+            apply_dev_audit_defaults();
+            set_mode(SandboxMode::Off);
+            ::setenv("AURA_SANDBOX", "off", 1);
+        };
+
+        std::println("\n--- #3939 AC1: join_agents explicit Timeout is one-shot ---");
+        {
+            const char* prev_sb = std::getenv("AURA_SANDBOX");
+            std::string prev_sb_s = prev_sb ? prev_sb : "";
+            ::setenv("AURA_SANDBOX", "restricted", 1);
+            apply_production_audit_defaults();
+            set_mode(SandboxMode::Strict);
+            CHECK(production_reclaimed_must_wait(), "3939 AC1: production face armed");
+            auto fiber_owned = std::make_unique<Fiber>([] {});
+            fiber_owned->mark_reclaimed();
+            AgentHandle h;
+            h.ok = true;
+            h.fiber = fiber_owned.get();
+            h.reserved_memory_bytes = 2048;
+            JoinPolicy policy{};
+            policy.primary_ms = 1;
+            policy.drain_ms = 2000;
+            policy.wait_reclaimed_ms = 1;
+            std::vector<AgentHandle> agents;
+            agents.push_back(std::move(h));
+            const auto wr0 =
+                g_orch_module_stats.wait_reclaimed_total.load(std::memory_order_relaxed);
+            const auto jr = join_agents(agents, policy);
+            CHECK(jr.wait_us < 500'000, "3939 AC1: no second drain×8 wait (~16s)");
+            CHECK(g_orch_module_stats.wait_reclaimed_total.load(std::memory_order_relaxed) ==
+                      wr0 + 1,
+                  "3939 AC1: wait_reclaimed_total +1 (explicit only, not batch)");
+            CHECK(agents[0].wait_reclaimed_used, "3939 AC1: explicit wait ran");
+            CHECK(agents[0].must_wait_reclaimed, "3939 AC1: must_wait stays armed");
+            auto ens = ensure_reclaimed_cleanup(agents[0]);
+            CHECK(ens.status != JoinStatus::Invalid, "3939 AC1: ensure not Invalid");
+            AbandonReclaimedOpts opts;
+            opts.max_second_wait_ms = 1;
+            auto ar = abandon_reclaimed(agents[0], opts);
+            CHECK(ar.outcome != AbandonReclaimedOutcome::Invalid, "3939 AC1: abandon not Invalid");
+            fiber_owned->set_state(FiberState::Done);
+            fiber_owned->note_body_exit_if_reclaimed();
+            if (!prev_sb_s.empty())
+                ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+            else
+                ::unsetenv("AURA_SANDBOX");
+            restore_sb();
+        }
+
+        std::println("\n--- #3939 AC3: Soft join_agents still zero extra wait ---");
+        {
+            apply_dev_audit_defaults();
+            set_mode(SandboxMode::Off);
+            ::setenv("AURA_SANDBOX", "off", 1);
+            auto fiber_owned = std::make_unique<Fiber>([] {});
+            fiber_owned->mark_reclaimed();
+            AgentHandle h;
+            h.ok = true;
+            h.fiber = fiber_owned.get();
+            h.reserved_memory_bytes = 1024;
+            JoinPolicy policy{};
+            policy.primary_ms = 1;
+            policy.drain_ms = 2000;
+            policy.wait_reclaimed_ms = 1;
+            std::vector<AgentHandle> agents;
+            agents.push_back(std::move(h));
+            const auto wr0 =
+                g_orch_module_stats.wait_reclaimed_total.load(std::memory_order_relaxed);
+            (void)join_agents(agents, policy);
+            CHECK(!agents[0].must_wait_reclaimed, "3939 AC3: Soft no must_wait");
+            CHECK(g_orch_module_stats.wait_reclaimed_total.load(std::memory_order_relaxed) ==
+                      wr0 + 1,
+                  "3939 AC3: Soft no batch extra wait");
+            fiber_owned->set_state(FiberState::Done);
+            fiber_owned->note_body_exit_if_reclaimed();
+            restore_sb();
+        }
+
+        std::println("\n--- #3939 AC4: source-cite ---");
+        {
+            const auto spawn = read_file("src/orch/agent_spawn.h");
+            CHECK(spawn.find("Issue #3939") != std::string::npos, "3939 AC4: cite");
+            CHECK(spawn.find("!a.wait_reclaimed_used") != std::string::npos,
+                  "3939 AC4: batch skips already-used explicit wait");
+            CHECK(spawn.find("query:3939") == std::string::npos, "3939 AC4: no new query key");
+            CHECK(read_file("tests/orch/test_issue_3939.cpp").empty(),
+                  "3939 AC4: no test_issue_3939.cpp");
+        }
+    }
+
     std::println("\n=== Issue #3297: ~AgentHandle under-account observability ===");
     ac3297_1_dtor_under_account_live_body();
     ac3297_2_dtor_no_under_account_post_exit();
