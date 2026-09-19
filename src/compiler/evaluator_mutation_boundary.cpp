@@ -7282,6 +7282,20 @@ Evaluator::recover_moving_sticky_densify_off(bool retry_densify) noexcept {
         }
         out.densify_retried = true;
         if (densify_entry_lcp_blocked) {
+            // Issue #3884: step (b) already cleared sticky so
+            // moving_compact_enabled() could admit this one-shot. LCP
+            // reject must re-arm the trap — otherwise auto-arm Moving
+            // relocates under reject LCP after Guard unlock (UAF /
+            // miss-remap). Healthy densify still clears (#2905/#3128).
+            if (out.sticky_was_on) {
+                const auto prev = aura::ast::g_moving_incomplete_remap_sticky_densify_off.exchange(
+                    1, std::memory_order_acq_rel);
+                if (prev == 0) {
+                    aura::ast::g_moving_incomplete_remap_sticky_densify_off_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                }
+                out.sticky_cleared = false;
+            }
             // Skip compact_all_moving_pinned; publish blocked window with
             // objects_moved==0 (mirrors #3200 soft-gate blocked publish).
             out.pin_contract_held = false;

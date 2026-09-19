@@ -3819,7 +3819,22 @@ public:
                     // Evaluator still holds in unregistered void** slots.
                     if (has_known_roots_hook()) {
                         invoke_known_roots_hook();
-                        const auto r = live_compact(LiveCompactMode::Moving);
+                        // Issue #3884: same densify-entry LCP consult as
+                        // Phase-5 / recover (#3782). Skip Moving relocate
+                        // under stamped reject. Soft/Off never reach this
+                        // arm (should_production_auto_arm_moving).
+                        LiveCompactResult r{};
+                        auto poll = aura::core::lifetime_consistency_proof::
+                            consult_last_lcp_for_densify_entry(arena_owner());
+                        if (poll.present && !poll.would_allow_commit) {
+                            aura::core::lifetime_consistency_proof::
+                                g_densify_entry_lcp_blocked_total()
+                                    .fetch_add(1, std::memory_order_relaxed);
+                            r.moving_blocked_precondition = true;
+                            r.pin_contract_held = false;
+                        } else {
+                            r = live_compact(LiveCompactMode::Moving);
+                        }
                         // Issue #3783 / #3739: any production auto-arm Moving
                         // attempt must publish densify health (Phase-5 face).
                         // Pre-#3783 only the non-soft_gated success branch

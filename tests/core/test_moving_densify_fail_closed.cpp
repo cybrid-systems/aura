@@ -4439,6 +4439,56 @@ static void ac3782_3_eval_keyed_consult_and_soft_off() {
           "ac3782_3: mut does not invent test_issue_3782.cpp");
 }
 
+// ── Issue #3884: sticky recover re-arms on LCP reject; auto-arm consults LCP ──
+static void ac3884_1_recover_rearms_sticky_on_lcp_reject() {
+    const auto mut = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    CHECK(mut.find("Issue #3884") != std::string::npos, "ac3884_1: mut cites #3884");
+    const auto anchor = mut.find("Issue #3185 AC1: same surface as Phase-5 densify entry");
+    CHECK(anchor != std::string::npos, "ac3884_1: sticky-recovery #3185 anchor present");
+    const auto win = mut.substr(anchor, 5500);
+    CHECK(win.find("if (densify_entry_lcp_blocked)") != std::string::npos,
+          "ac3884_1: LCP skip branch present");
+    CHECK(win.find("g_moving_incomplete_remap_sticky_densify_off.exchange") != std::string::npos,
+          "ac3884_1: LCP reject re-arms sticky");
+    CHECK(win.find("out.sticky_was_on") != std::string::npos, "ac3884_1: re-arm gated on was-on");
+    CHECK(win.find("out.sticky_cleared = false") != std::string::npos,
+          "ac3884_1: sticky_cleared stays false on re-arm");
+    const auto rearm = win.find("g_moving_incomplete_remap_sticky_densify_off.exchange");
+    const auto compact = win.find("arena_group_->compact_all_moving_pinned()");
+    CHECK(rearm != std::string::npos && compact != std::string::npos && rearm < compact,
+          "ac3884_1: re-arm precedes skip-compact (no relocate under reject)");
+}
+
+static void ac3884_2_auto_arm_consults_lcp_before_moving() {
+    const auto arena = read_file("src/core/arena.ixx");
+    CHECK(arena.find("Issue #3884") != std::string::npos, "ac3884_2: arena cites #3884");
+    const auto arm = arena.find("should_production_auto_arm_moving(frag_before)");
+    CHECK(arm != std::string::npos, "ac3884_2: auto-arm site present");
+    const auto win = arena.substr(arm, 6500);
+    CHECK(win.find("consult_last_lcp_for_densify_entry") != std::string::npos,
+          "ac3884_2: auto-arm consults densify-entry LCP");
+    CHECK(win.find("poll.present && !poll.would_allow_commit") != std::string::npos,
+          "ac3884_2: skip Moving on stamped reject");
+    const auto consult = win.find("consult_last_lcp_for_densify_entry");
+    const auto moving = win.find("live_compact(LiveCompactMode::Moving)");
+    CHECK(consult != std::string::npos && moving != std::string::npos && consult < moving,
+          "ac3884_2: LCP consult precedes live_compact(Moving)");
+    CHECK(win.find("moving_blocked_precondition = true") != std::string::npos,
+          "ac3884_2: LCP reject Soft-falls-back (no relocate)");
+}
+
+static void ac3884_3_soft_off_and_no_invent() {
+    const auto arena = read_file("src/core/arena.ixx");
+    const auto mut = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    CHECK(arena.find("should_production_auto_arm_moving") != std::string::npos,
+          "ac3884_3: Soft/Off still gated by production auto-arm");
+    CHECK(mut.find("kStickyClearRecovery") != std::string::npos,
+          "ac3884_3: healthy recover still clears sticky");
+    CHECK(read_file("tests/core/test_issue_3884.cpp").empty(), "ac3884_3: no test_issue_3884.cpp");
+    CHECK(read_file("docs/design/3884-sticky-recover-lcp.md").empty(),
+          "ac3884_3: no docs/design/3884-*");
+}
+
 
 // ── Issue #3783: alloc-path auto-arm Moving publishes densify health ──
 static void ac3783_1_auto_arm_publishes_before_soft_fallback() {
@@ -5644,6 +5694,12 @@ int run_test_moving_densify_fail_closed() {
     ac3782_1_phase5_skips_compact_on_lcp_reject();
     ac3782_2_sticky_recovery_same_skip_order();
     ac3782_3_eval_keyed_consult_and_soft_off();
+
+    std::println("\n=== Issue #3884: sticky recover re-arm + auto-arm LCP consult "
+                 "(#3782 residual; extends fail_closed per #81967) ===");
+    ac3884_1_recover_rearms_sticky_on_lcp_reject();
+    ac3884_2_auto_arm_consults_lcp_before_moving();
+    ac3884_3_soft_off_and_no_invent();
 
     std::println("\n=== Issue #3783: auto-arm Moving densify health publish "
                  "(#3739 residual; extends fail_closed per #81967) ===");

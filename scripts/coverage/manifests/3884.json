@@ -1,0 +1,43 @@
+{
+  "issue": 3884,
+  "title": "sticky recover re-arms on LCP reject; auto-arm consults densify-entry LCP",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_mutation_boundary.cpp",
+      "contains": [
+        "Issue #3884",
+        "g_moving_incomplete_remap_sticky_densify_off.exchange",
+        "out.sticky_was_on",
+        "densify_entry_lcp_blocked"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/core/arena.ixx",
+      "contains": [
+        "Issue #3884",
+        "consult_last_lcp_for_densify_entry",
+        "should_production_auto_arm_moving",
+        "live_compact(LiveCompactMode::Moving)"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/core/test_moving_densify_fail_closed.cpp",
+      "contains": [
+        "ac3884_1_recover_rearms_sticky_on_lcp_reject",
+        "ac3884_2_auto_arm_consults_lcp_before_moving",
+        "ac3884_3_soft_off_and_no_invent"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "forbid": [
+        "tests/core/test_issue_3884.cpp",
+        "tests/compiler/test_issue_3884.cpp",
+        "docs/design/3884-sticky-recover-lcp.md"
+      ]
+    }
+  ]
+}
