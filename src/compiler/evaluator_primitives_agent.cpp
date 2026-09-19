@@ -2613,10 +2613,21 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
         // with structured AdmissionRejected: security-schedule:<reason>;
         // soft / sandbox=off stays observe-only (metric-only, no deny).
         // Counters always bump via evaluate_security_schedule.
+        // Issue #3938: pass the caller's mailbox bp_scope_id (spawn
+        // already does this at preflight, #3932). Host-thread / no
+        // fiber keeps the empty process sample.
         {
             const auto prod = aura::compiler::typed_audit::production_defaults_active();
+            std::string_view intend_scope{};
+            if (auto* f = aura::serve::g_current_fiber) {
+                if (auto* mb = f->mailbox()) {
+                    const auto s = mb->bp_scope_id();
+                    if (!s.empty() && s != "-")
+                        intend_scope = s;
+                }
+            }
             const auto in = aura::orch::make_security_schedule_input_live(
-                ev.effect_sandbox_mode(), prod, /*soft_mode=*/!prod);
+                ev.effect_sandbox_mode(), prod, /*soft_mode=*/!prod, intend_scope);
             if (auto reason = aura::orch::admit_security_schedule(in); reason.has_value()) {
                 return make_primitive_error(ev.string_heap_, ev.error_values_, *reason,
                                             ev.primitive_error_counter_ptr());
