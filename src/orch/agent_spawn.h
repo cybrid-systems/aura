@@ -3403,7 +3403,10 @@ maybe_auto_wait_reclaimed_batch(std::span<AgentHandle> agents,
     WaitReclaimedBatchResult out;
     std::vector<serve::Fiber*> residual;
     for (auto& a : agents)
-        if (a.must_wait_reclaimed && a.fiber)
+        // Issue #3939: explicit wait already consumed the one-shot
+        // (wait_reclaimed_used). Keep must_wait armed (#3934) so
+        // ensure/abandon/sweep stay valid; do not stack drain×8.
+        if (a.must_wait_reclaimed && a.fiber && !a.wait_reclaimed_used)
             residual.push_back(a.fiber);
     if (residual.empty())
         return out; // Soft/Off / no production gate: zero extra wait (AC3)
@@ -3428,7 +3431,7 @@ maybe_auto_wait_reclaimed_batch(std::span<AgentHandle> agents,
             .count());
     bool any_still_running = false;
     for (auto& a : agents) {
-        if (!a.must_wait_reclaimed || !a.fiber)
+        if (!a.must_wait_reclaimed || !a.fiber || a.wait_reclaimed_used)
             continue;
         a.wait_reclaimed_used = true;
         if (a.fiber->is_done()) {
