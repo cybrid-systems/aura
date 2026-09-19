@@ -621,6 +621,69 @@ int aura_issue_1413_run() {
         apply_dev_audit_defaults();
     }
 
+    // ── #3921: display accepts String/Bool under production (no Any spam) ──
+    {
+        using aura::compiler::typed_audit::apply_dev_audit_defaults;
+        using aura::compiler::typed_audit::apply_production_audit_defaults;
+
+        struct ProdScope {
+            ProdScope() { apply_production_audit_defaults(); }
+            ~ProdScope() { apply_dev_audit_defaults(); }
+        };
+
+        {
+            std::println("\n--- #3921 AC1: production (display \"hello\") no expected Any ---");
+            ProdScope prod;
+            aura::diag::DiagnosticCollector diag;
+            infer_code("(display \"hello\")", aura::compiler::GradualPermissiveness::Strict,
+                       /*strict=*/false, diag);
+            CHECK(!has_kind_msg(diag, aura::diag::ErrorKind::TypeError, "expected Any"),
+                  "3921 AC1: display String no expected Any");
+        }
+        {
+            std::println("\n--- #3921 AC2: production (display #t) no expected Any ---");
+            ProdScope prod;
+            aura::diag::DiagnosticCollector diag;
+            infer_code("(display #t)", aura::compiler::GradualPermissiveness::Strict,
+                       /*strict=*/false, diag);
+            CHECK(!has_kind_msg(diag, aura::diag::ErrorKind::TypeError, "expected Any"),
+                  "3921 AC2: display Bool no expected Any");
+        }
+        {
+            std::println("\n--- #3921 AC2b: production display of set! Any cell ---");
+            ProdScope prod;
+            aura::diag::DiagnosticCollector diag;
+            infer_code("(let ((x #f)) (begin (set! x \"hi\") (display x)))",
+                       aura::compiler::GradualPermissiveness::Strict, /*strict=*/false, diag);
+            CHECK(!has_kind_msg(diag, aura::diag::ErrorKind::TypeError, "expected Any") &&
+                      !has_kind_msg(diag, aura::diag::ErrorKind::TypeError, "expected __t"),
+                  "3921 AC2b: display Any-typed cell no type error");
+        }
+        {
+            std::println("\n--- #3921 AC3: Soft display String still silent ---");
+            apply_dev_audit_defaults();
+            aura::diag::DiagnosticCollector diag;
+            infer_code("(display \"hello\")", aura::compiler::GradualPermissiveness::Balanced,
+                       /*strict=*/false, diag);
+            CHECK(!has_kind_msg(diag, aura::diag::ErrorKind::TypeError, "expected Any"),
+                  "3921 AC3: Soft display String no type error");
+        }
+        {
+            std::println("\n--- #3921 AC4: source-cite poly display ---");
+            std::ifstream tci("src/compiler/type_checker_impl.cpp");
+            std::string src((std::istreambuf_iterator<char>(tci)),
+                            std::istreambuf_iterator<char>());
+            CHECK(src.find("#3921") != std::string::npos, "3921 AC4: cites #3921");
+            CHECK(src.find("register_poly_primitive(\"display\"") != std::string::npos,
+                  "3921 AC4: display is ∀a. a → Void");
+            std::ifstream d("docs/design/3921-display-any.md");
+            CHECK(!d.good(), "3921 AC4: no docs/design");
+            std::ifstream t("tests/compiler/test_issue_3921.cpp");
+            CHECK(!t.good(), "3921 AC4: no invent");
+        }
+        apply_dev_audit_defaults();
+    }
+
     if (g_failed == 0) {
         std::println("\n=== ALL ACs PASS ===");
         return 0;
