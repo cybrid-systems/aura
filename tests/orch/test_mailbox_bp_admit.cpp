@@ -58,6 +58,7 @@
 #include "core/sandbox.hh"
 #include "orch/agent_spawn.h"
 #include "orch/agent_scope.h" // Issue #2778: reset_all_agent_scopes_for_test clears BP map
+#include "orch/security_schedule_gate.h"
 #include "serve/fiber.h"
 #include "serve/multi_fiber_mailbox.h"
 #include "serve/scheduler.h"
@@ -291,7 +292,44 @@ int run_test_mailbox_starvation_scope_throttle_3775() {
               "3775 AC5: existing query key retained");
     }
 
-    std::println("\n=== #3775 slice: {} passed, {} failed ===", aura::test::g_passed,
+    // ── Issue #3938: mutate schedule-gate live sample is per-scope ──
+    {
+        std::println("\n--- #3938: B live schedule-gate is not mailbox-hold-slo ---");
+        using aura::orch::admit_security_schedule;
+        using aura::orch::make_security_schedule_input_live;
+        using aura::serve::mf_mailbox::arm_scope_starve_throttle;
+        apply_production_audit_defaults();
+        unsetenv("AURA_SANDBOX");
+        reset_all();
+        g_mf_mailbox_stats.mailbox_under_boundary_wait_us_p99.store(50'000,
+                                                                    std::memory_order_relaxed);
+        arm_scope_starve_throttle("tenant-a-3938");
+        CHECK(aura_orch_mailbox_starvation_throttled("tenant-a-3938"), "3938: A throttle armed");
+        CHECK(!aura_orch_mailbox_starvation_throttled("tenant-b-3938"),
+              "3938: B throttle stays false");
+        const auto in_b = make_security_schedule_input_live(/*sandbox=*/0, /*prod=*/true,
+                                                            /*soft=*/false, "tenant-b-3938");
+        const auto rej_b = admit_security_schedule(in_b);
+        CHECK(!rej_b.has_value() || rej_b->find("mailbox-hold-slo") == std::string::npos,
+              "3938: B named live input is not mailbox-hold-slo");
+        apply_dev_audit_defaults();
+        setenv("AURA_SANDBOX", "off", 1);
+        const auto in_soft = make_security_schedule_input_live(/*sandbox=*/0, /*prod=*/false,
+                                                               /*soft=*/true, "tenant-b-3938");
+        CHECK(!admit_security_schedule(in_soft).has_value(),
+              "3938: Soft still skips the schedule-gate deny");
+        const auto mut = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+        const auto prim = read_file("src/compiler/evaluator_primitives_agent.cpp");
+        CHECK(mut.find("Issue #3938") != std::string::npos, "3938: mutate cites #3938");
+        CHECK(prim.find("Issue #3938") != std::string::npos, "3938: parallel-intend cites #3938");
+        CHECK(read_file("tests/orch/test_issue_3938.cpp").empty(), "3938: no test_issue_3938.cpp");
+        g_mf_mailbox_stats.mailbox_under_boundary_wait_us_p99.store(0, std::memory_order_relaxed);
+        unsetenv("AURA_SANDBOX");
+        apply_dev_audit_defaults();
+        reset_all();
+    }
+
+    std::println("\n=== #3775/#3938 slice: {} passed, {} failed ===", aura::test::g_passed,
                  aura::test::g_failed);
     return aura::test::g_failed ? 1 : 0;
 }

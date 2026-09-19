@@ -49,6 +49,7 @@
 #include "core/resource_quota.hh"
 #include "orch/agent_spawn.h"
 #include "orch/sched_runner_test_helper.h"
+#include "serve/fiber.h"
 #include "serve/multi_fiber_mailbox.h"
 #include "serve/scheduler.h"
 
@@ -1102,9 +1103,105 @@ int run_test_security_schedule_gate() {
         reset_orch_security_schedule_counters_for_test();
     }
 
+    {
+        // Issue #3938: named scope A starve/p99 must not ScheduleGate
+        // tenant B mutate / parallel-intend with a distinct bp_scope_id.
+        std::println("\n--- #3938: mutate/intend schedule-gate uses caller bp_scope_id ---");
+        using aura::core::sandbox::SandboxMode;
+        using aura::core::sandbox::set_mode;
+        using aura::orch::AgentSpec;
+        using aura::orch::join_agent;
+        using aura::orch::JoinPolicy;
+        using aura::orch::spawn_agent_with_mailbox;
+        using aura::serve::g_current_fiber;
+        using aura::serve::SchedRunner;
+        using aura::serve::Scheduler;
+        using aura::serve::mf_mailbox::arm_scope_starve_throttle;
+        using aura::serve::mf_mailbox::aura_orch_mailbox_starvation_throttled;
+        using aura::serve::mf_mailbox::g_mf_mailbox_stats;
+        using aura::serve::mf_mailbox::reset_scope_starve_map_for_test;
+
+        const char* prev_sb = std::getenv("AURA_SANDBOX");
+        std::string prev_sb_s = prev_sb ? prev_sb : "";
+        ::setenv("AURA_SANDBOX", "restricted", 1);
+        aura::compiler::typed_audit::apply_production_audit_defaults();
+        set_mode(SandboxMode::Strict);
+        std::filesystem::create_directories("build/test-wal-3938");
+        if (!aura::core::audit_wal::g_mutation_audit_wal().is_enabled())
+            (void)aura::core::audit_wal::g_mutation_audit_wal().enable(
+                std::string_view("build/test-wal-3938"), nullptr, 0);
+        reset_scope_starve_map_for_test();
+        g_mf_mailbox_stats.mailbox_under_boundary_wait_us_p99.store(50'000,
+                                                                    std::memory_order_relaxed);
+        arm_scope_starve_throttle("scope-A-3938");
+        CHECK(aura_orch_mailbox_starvation_throttled("scope-A-3938"), "3938: A throttle armed");
+        CHECK(!aura_orch_mailbox_starvation_throttled("scope-B-3938"),
+              "3938: B throttle stays false");
+        Scheduler sched(1);
+        SchedRunner runner(sched);
+        AgentSpec spec;
+        spec.name = "3938-B";
+        spec.attach_mailbox = true;
+        spec.bp_scope_id = "scope-B-3938";
+        spec.body = [] {};
+        auto h = spawn_agent_with_mailbox(sched, spec);
+        CHECK(h.ok && h.fiber && h.mailbox, "3938: B spawn ok");
+        if (h.ok && h.fiber && h.mailbox && h.fiber->mailbox() == nullptr)
+            h.mailbox->attach(h.fiber);
+        auto* prev_fiber = g_current_fiber;
+        g_current_fiber = h.fiber;
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        using Ev = std::remove_reference_t<decltype(ev)>;
+        bool guard_ok = true;
+        auto gr = Ev::MutationBoundaryGuard::try_acquire(ev, /*pending=*/1, &guard_ok);
+        if (!gr.has_value()) {
+            CHECK(gr.error().message.find("mailbox-hold-slo") == std::string::npos,
+                  "3938: B try_acquire is not security-schedule:mailbox-hold-slo");
+        } else {
+            CHECK(true, "3938: B try_acquire admits");
+        }
+        auto grr = Ev::MutationBoundaryGuard::try_acquire_for_region(ev, /*region_key=*/1,
+                                                                     /*pending=*/1, &guard_ok);
+        if (!grr.has_value()) {
+            CHECK(grr.error().message.find("mailbox-hold-slo") == std::string::npos,
+                  "3938: B try_acquire_for_region is not mailbox-hold-slo");
+        } else {
+            CHECK(true, "3938: B try_acquire_for_region admits");
+        }
+        const auto in_b = aura::orch::make_security_schedule_input_live(
+            ev.effect_sandbox_mode(), /*prod=*/true, /*soft=*/false, "scope-B-3938");
+        const auto rej_b = aura::orch::admit_security_schedule(in_b);
+        CHECK(!rej_b.has_value() || rej_b->find("mailbox-hold-slo") == std::string::npos,
+              "3938: B live schedule-gate is not mailbox-hold-slo");
+        auto intend = cs.eval(R"((parallel-intend (vector)))");
+        CHECK(intend.has_value(), "3938: B parallel-intend evaluated");
+        g_current_fiber = prev_fiber;
+        if (h.ok)
+            (void)join_agent(h, JoinPolicy{.primary_ms = 500, .drain_ms = 100});
+        const auto mbc = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+        const auto agent = read_file("src/compiler/evaluator_primitives_agent.cpp");
+        CHECK(mbc.find("Issue #3938") != std::string::npos, "3938: try_acquire cites #3938");
+        CHECK(agent.find("Issue #3938") != std::string::npos, "3938: parallel-intend cites #3938");
+        CHECK(mbc.find("starve_scope") != std::string::npos &&
+                  mbc.find("make_security_schedule_input_live") != std::string::npos,
+              "3938: try_acquire passes starve_scope");
+        CHECK(read_file("tests/orch/test_issue_3938.cpp").empty(), "3938: no test_issue_3938.cpp");
+        g_mf_mailbox_stats.mailbox_under_boundary_wait_us_p99.store(0, std::memory_order_relaxed);
+        reset_scope_starve_map_for_test();
+        aura::core::audit_wal::g_mutation_audit_wal().disable();
+        aura::compiler::typed_audit::apply_dev_audit_defaults();
+        set_mode(SandboxMode::Off);
+        if (!prev_sb_s.empty())
+            ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+        else
+            ::unsetenv("AURA_SANDBOX");
+        reset_orch_security_schedule_counters_for_test();
+    }
+
     reset_orch_security_schedule_counters_for_test();
     aura::core::wal_slo::reset_wal_append_fail_slo_for_test();
-    std::println("\n=== #2590/#2947/#3211/#3244/#3251/#3777/#3932: {}/{} checks passed ===",
+    std::println("\n=== #2590/#2947/#3211/#3244/#3251/#3777/#3932/#3938: {}/{} checks passed ===",
                  g_passed, g_passed + g_failed);
     return g_failed == 0 ? 0 : 1;
 }

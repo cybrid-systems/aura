@@ -2784,8 +2784,12 @@ Evaluator::MutationBoundaryGuard::try_acquire(Evaluator& ev, std::uint64_t pendi
     // the same helper (observe+posture; no admit deny).
     {
         const auto prod = typed_audit::production_defaults_active();
-        const auto in = aura::orch::make_security_schedule_input_live(ev.effect_sandbox_mode(),
-                                                                      prod, /*soft_mode=*/!prod);
+        // Issue #3938: pass the caller's mailbox bp_scope_id so sibling
+        // starve/p99 cannot ScheduleGate a quiet named mutate. Spawn
+        // already uses this 4-arg helper (#3932); starve probe is
+        // per-scope (#3775). Soft/Off: empty scope, observe-only.
+        const auto in = aura::orch::make_security_schedule_input_live(
+            ev.effect_sandbox_mode(), prod, /*soft_mode=*/!prod, starve_scope);
         if (auto reason = aura::orch::admit_security_schedule(in); reason.has_value()) {
             if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_)) {
                 m->mutation_guard_try_acquire_reject_total.fetch_add(1, std::memory_order_relaxed);
@@ -2948,8 +2952,9 @@ Evaluator::MutationBoundaryGuard::try_acquire_for_region(Evaluator& ev, std::uin
     // posture wal_off under Restricted).
     {
         const auto prod = typed_audit::production_defaults_active();
-        const auto in = aura::orch::make_security_schedule_input_live(ev.effect_sandbox_mode(),
-                                                                      prod, /*soft_mode=*/!prod);
+        // Issue #3938: same per-scope live sample as try_acquire.
+        const auto in = aura::orch::make_security_schedule_input_live(
+            ev.effect_sandbox_mode(), prod, /*soft_mode=*/!prod, starve_scope_region);
         if (auto reason = aura::orch::admit_security_schedule(in); reason.has_value()) {
             if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_)) {
                 m->mutation_guard_try_acquire_reject_total.fetch_add(1, std::memory_order_relaxed);
