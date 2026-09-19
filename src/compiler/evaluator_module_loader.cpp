@@ -162,10 +162,16 @@ types::EvalValue Evaluator::ensure_std_host_prims(std::string_view module_path) 
     std::uint32_t want = 0;
     std::uint16_t bits = 0;
     const char* op = "std-module";
-    if (is_mod("net") || is_mod("socket")) {
+    // Issue #3919: std/llm calls http-post (deferred host prim). Install
+    // the same http-* mask as std/net when llm loads. Sandbox without a
+    // network grant must still load llm (sanitize / templates / stats);
+    // skip the install instead of failing the require — aura-llm-call
+    // returns "no-http-post", not unbound.
+    const bool llm_optional_http = is_mod("llm");
+    if (is_mod("net") || is_mod("socket") || llm_optional_http) {
         want = 1u << 1;
         bits = kEffectNetwork;
-        op = "std/net";
+        op = llm_optional_http ? "std/llm" : "std/net";
     } else if (is_mod("git")) {
         want = 1u << 2;
         bits = static_cast<std::uint16_t>(kEffectExec | kEffectWrite);
@@ -188,6 +194,8 @@ types::EvalValue Evaluator::ensure_std_host_prims(std::string_view module_path) 
 
     if (sandbox_mode() || effect_sandbox_mode() != 0) {
         if (!require_effect(bits, op)) {
+            if (llm_optional_http)
+                return types::make_void();
             return primitives_detail::make_primitive_error(
                 string_heap_, error_values_,
                 aura::compiler::security::format_deny_reason(bits, capability_tenant_id(), op),

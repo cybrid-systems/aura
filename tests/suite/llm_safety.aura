@@ -56,3 +56,8 @@
     (check (number? (hash-ref s "success" 0)))
     (check (number? (hash-ref s "injection-blocked" 0)))
     (check (number? (hash-ref s "parse-ok" 0)))))
+
+; Issue #3919: requiring std/llm installs deferred http-post (sandbox off).
+(test-suite "llm:http-post-installed"
+  (check (procedure? http-post))
+  (check (string? (aura-llm-call "{\"model\":\"x\",\"messages\":[]}"))))
