@@ -1,0 +1,32 @@
+{
+  "issue": 3896,
+  "title": "production query:root still exports bare NodeId",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_primitives_query_workspace.cpp",
+      "contains": [
+        "Issue #3896",
+        "end_query_epoch_maybe_result",
+        "singleton match list"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/compiler/test_query_result_full_provenance.cpp",
+      "contains": [
+        "3896 AC1: production finishes via maybe_result",
+        "3896 AC2: Soft query:root is bare int (not hash)",
+        "ac3896_1_prod_root_schema2_source"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "forbid": [
+        "tests/compiler/test_issue_3896.cpp",
+        "tests/issues/test_issue_3896.cpp",
+        "docs/design/3896-query-root-schema2.md"
+      ]
+    }
+  ]
+}
