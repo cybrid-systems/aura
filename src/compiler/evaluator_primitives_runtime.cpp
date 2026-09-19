@@ -113,8 +113,15 @@ namespace {
         }
         if (is_vector(v))
             return std::format("<vector[{}]>", as_vector_idx(v));
-        if (is_hash(v))
-            return std::format("<hash[{}]>", as_hash_idx(v));
+        if (is_hash(v)) {
+            // Issue #3916: print occupancy, not the table index (Strand
+            // saw <hash[2]> for an 8-key agent:loop-stats).
+            const auto idx = as_hash_idx(v);
+            std::size_t n = 0;
+            if (idx < g_hash_tables.size() && g_hash_tables[idx])
+                n = static_cast<std::size_t>(g_hash_tables[idx]->size);
+            return std::format("<hash[{}]>", n);
+        }
         if (is_closure(v))
             return "#<procedure>";
         return "<unknown>";
@@ -251,7 +258,11 @@ namespace {
             return;
         }
         if (is_hash(v)) {
-            std::fprintf(stdout, "<hash[%zu]>", (size_t)as_hash_idx(v));
+            const auto idx = as_hash_idx(v);
+            std::size_t n = 0;
+            if (idx < g_hash_tables.size() && g_hash_tables[idx])
+                n = static_cast<std::size_t>(g_hash_tables[idx]->size);
+            std::fprintf(stdout, "<hash[%zu]>", n);
             return;
         }
         if (is_closure(v)) {

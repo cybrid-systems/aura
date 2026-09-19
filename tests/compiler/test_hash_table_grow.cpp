@@ -202,6 +202,25 @@ static void ac3235_4_source() {
 
 } // namespace
 
+static void ac3916_display_occupancy() {
+    std::println("\n--- #3916: display hash prints occupancy not table index ---");
+    const auto rt = read_file("src/compiler/evaluator_primitives_runtime.cpp");
+    CHECK(rt.find("Issue #3916") != std::string::npos, "3916 AC: runtime cites");
+    CHECK(rt.find("g_hash_tables[idx]->size") != std::string::npos, "3916 AC: print size");
+    CompilerService cs;
+    auto r = cs.eval("(begin (require \"std/agent\" all:) (agent:loop-stats-reset!) "
+                     "(hash-length (agent:loop-stats)))");
+    CHECK(r.has_value() && is_int(*r) && as_int(*r) == 8, "3916 AC: loop-stats length 8");
+    CHECK(cs.eval("(require \"std/mutate\" all:)").has_value(), "3916 require mutate");
+    CHECK(cs.eval("(agent:closed-loop-once :source \"(define (f x) x)\" :rebind \"f\" "
+                  "\"(lambda (x) x)\" :summary \"r1\")")
+              .has_value(),
+          "3916 closed-loop-once");
+    auto after = cs.eval("(hash-length (agent:loop-stats))");
+    CHECK(after.has_value() && is_int(*after) && as_int(*after) == 8,
+          "3916 AC: length 8 after closed-loop");
+}
+
 int run_test_hash_table_grow() {
     std::println("=== Issue #2654: language hash table grow ===");
     ac1_hash_literal_16();
@@ -209,6 +228,7 @@ int run_test_hash_table_grow() {
     ac3_update_after_growth();
     ac4_source();
     ac5_gate();
+    ac3916_display_occupancy();
     std::println("\n=== Issue #3235: container mutation Guard ===");
     ac3235_1_vector_set_mutates();
     ac3235_2_hash_and_pair();

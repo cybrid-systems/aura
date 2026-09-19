@@ -47,7 +47,8 @@
 (define *agent-fiber-rollback-max* 50)  ; fiber Guard rollbacks; > → back-off
 
 ; Loop telemetry for tests / dashboards (does not depend on engine).
-; Note: Aura (hash ...) tables are capacity-8 — keep ≤8 keys.
+; Hash tables grow (#2654); keep this catalog at 8 keys so dashboards stay
+; stable. Display occupancy is hash-length (#3916), not the table index.
 (define *agent-loop-stats*
   (hash "query-calls" 0
         "atomic-batch-calls" 0
