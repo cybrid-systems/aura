@@ -276,6 +276,71 @@ int run_test_bare_bp_resolve_3179() {
         apply_dev_audit_defaults();
     }
 
+    // ── Issue #3931: bare:N gauges erase on join/dtor so 256 naked
+    // spawns cannot overflow a later named as:N admit.
+    {
+        std::println("\n--- #3931: bare:N teardown erase + named-scope admit ---");
+        using aura::orch::AgentHandle;
+        using aura::orch::kMailboxBpScopeMapCap;
+        using aura::orch::lookup_scope_bp_gauge;
+        using aura::orch::maybe_erase_bare_bp_gauge;
+        using aura::orch::note_mailbox_bp_recent_event;
+        using aura::orch::reset_scope_bp_map_for_test;
+        using aura::orch::scope_bp_map_size_for_test;
+
+        SandboxRestore prod{"restricted"};
+        apply_production_audit_defaults();
+        reset_scope_bp_map_for_test();
+        if (aura::compiler::typed_audit::production_defaults_active()) {
+            {
+                AgentHandle first;
+                first.bp_scope_id = resolve_bare_bp_scope_id("");
+                CHECK(first.bp_scope_id.size() >= 5 &&
+                          first.bp_scope_id.compare(0, 5, "bare:") == 0,
+                      "3931: tenant-0 production resolver mints bare:N");
+                note_mailbox_bp_recent_event(first.bp_scope_id);
+                first.finish_reclaimed_cleanup_on_dtor();
+            }
+            for (std::size_t i = 1; i < kMailboxBpScopeMapCap; ++i) {
+                AgentHandle h;
+                h.bp_scope_id = resolve_bare_bp_scope_id("");
+                note_mailbox_bp_recent_event(h.bp_scope_id);
+                h.finish_reclaimed_cleanup_on_dtor();
+            }
+            CHECK(scope_bp_map_size_for_test() == 0,
+                  "3931 AC1: join/dtor erased every bare:N gauge");
+            note_mailbox_bp_recent_event("as:3931");
+            CHECK(lookup_scope_bp_gauge("as:3931") != nullptr,
+                  "3931 AC1: named as:N admits after 256 naked spawn+dtor");
+            AgentHandle named;
+            named.bp_scope_id = "as:keep";
+            note_mailbox_bp_recent_event(named.bp_scope_id);
+            maybe_erase_bare_bp_gauge(named.bp_scope_id);
+            CHECK(lookup_scope_bp_gauge("as:keep") != nullptr,
+                  "3931 AC3: named as:N not erased by bare helper");
+            named.finish_reclaimed_cleanup_on_dtor();
+            CHECK(lookup_scope_bp_gauge("as:keep") != nullptr,
+                  "3931 AC3: handle dtor does not drop named as:N");
+        } else {
+            CHECK(true, "3931: production_defaults_active=false; Soft ACs below");
+        }
+        apply_dev_audit_defaults();
+        SandboxRestore soft{"off"};
+        CHECK(resolve_bare_bp_scope_id("").empty(), "3931 AC4: Soft still process bucket");
+        apply_dev_audit_defaults();
+        reset_scope_bp_map_for_test();
+
+        const auto spawn_src = read_repo_file("src/orch/agent_spawn.h");
+        CHECK(spawn_src.find("maybe_erase_bare_bp_gauge") != std::string::npos,
+              "3931: helper present");
+        CHECK(spawn_src.find("Issue #3931") != std::string::npos, "3931: issue cite");
+        CHECK(read_repo_file("tests/orch/test_issue_3931.cpp").empty() &&
+                  read_repo_file("tests/issues/test_issue_3931.cpp").empty(),
+              "3931: no test_issue_3931.cpp");
+        CHECK(read_repo_file("docs/design/3931-bare-bp-teardown.md").empty(),
+              "3931: no docs/design/3931-*");
+    }
+
     // ── Source-cite ──────────────────────────────────────────────────
     {
         std::println("\n--- #3179 AC source-cite ---");
