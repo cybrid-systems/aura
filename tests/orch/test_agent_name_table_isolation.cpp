@@ -620,6 +620,62 @@ static void ac3925_5_soft_and_source() {
     reset_all_agent_scopes_for_test();
 }
 
+static void ac3937_1_prod_denies_live_scope() {
+    std::println("\n--- #3937 AC1: production live Scope occupancy denies spawn-agent ---");
+    reset_all_agent_scopes_for_test();
+    ac3727_set_prod(true);
+    CompilerService cs;
+    CHECK(cs.eval(R"((hash-ref (orch:scope-spawn "live-3937") "ok"))").has_value(),
+          "3937 AC1: scope-spawn live");
+    auto r = cs.eval(R"(
+        (let ((h (orch:spawn-agent "live-3937")))
+          (and (not (hash-ref h "ok"))
+               (string=? (hash-ref h "deny-detail" "")
+                         "name-reuse-while-live-scope")))
+    )");
+    CHECK(r && is_bool(*r) && as_bool(*r), "3937 AC1: spawn-agent ok=#f + deny-detail live Scope");
+    CHECK(cs.evaluator().agent_names_->find("live-3937") == nullptr, "3937 AC1: no name-table put");
+    auto n = cs.eval(R"((hash-ref (orch:agent-directory) "name-table-count"))");
+    CHECK(n && is_int(*n) && as_int(*n) == 0, "3937 AC1: name-table-count still 0");
+    auto c = cs.eval(R"((hash-ref (orch:agent-directory) "count"))");
+    CHECK(c && is_int(*c) && as_int(*c) >= 1, "3937 AC1: directory still lists Scope");
+    auto* scope = aura::orch::find_agent_scope(static_cast<void*>(&cs.evaluator()));
+    CHECK(scope && scope->find("live-3937") && scope->find("live-3937")->ok,
+          "3937 AC1: Scope handle unchanged");
+    auto ping = cs.eval(R"(
+        (begin
+          (orch:agent-send "live-3937" "ping-3937")
+          (let ((m (orch:agent-recv "live-3937" :wait #t :timeout-ms 200)))
+            (and (hash-ref m "ok")
+                 (string=? (hash-ref m "payload" "") "ping-3937"))))
+    )");
+    CHECK(ping && is_bool(*ping) && as_bool(*ping),
+          "3937 AC1: send/recv still hit the Scope mailbox");
+    ac3727_set_prod(false);
+    reset_all_agent_scopes_for_test();
+}
+
+static void ac3937_5_soft_and_source() {
+    std::println("\n--- #3937 AC5: Soft live dual occupancy; no new query key ---");
+    reset_all_agent_scopes_for_test();
+    ac3727_set_prod(false);
+    CompilerService cs;
+    CHECK(cs.eval(R"((hash-ref (orch:scope-spawn "soft-3937") "ok"))").has_value(),
+          "3937 AC5: scope-spawn Soft");
+    auto r = cs.eval(R"((hash-ref (orch:spawn-agent "soft-3937") "ok"))");
+    CHECK(r && is_bool(*r) && as_bool(*r), "3937 AC5: Soft still allows live dual occupancy");
+    CHECK(cs.evaluator().agent_names_->find("soft-3937") != nullptr,
+          "3937 AC5: Soft spawn-agent still puts");
+    const auto src = read_file("src/compiler/evaluator_primitives_agent.cpp");
+    CHECK(src.find("#3937") != std::string::npos, "3937 AC5: cite");
+    CHECK(src.find("name-reuse-while-live-scope") != std::string::npos, "3937 AC5: deny-detail");
+    CHECK(src.find("query:3937") == std::string::npos, "3937 AC5: no query key");
+    CHECK(src.find("class AgentRegistry") == std::string::npos, "3937 AC5: no AgentRegistry");
+    CHECK(read_file("docs/design/3937-identity-plane.md").empty(), "3937: no docs/design");
+    CHECK(read_file("tests/orch/test_issue_3937.cpp").empty(), "3937: no test_issue_3937");
+    reset_all_agent_scopes_for_test();
+}
+
 static void ac3729_1_scope_export_import_recv() {
     std::println("\n--- #3729 AC1: scope-spawn export → import recv ---");
     reset_all_agent_scopes_for_test();
@@ -760,6 +816,8 @@ int run_test_agent_name_table_isolation() {
     ac3925_1_prod_denies_live_name_table();
     ac3925_2_directory_name_table_count();
     ac3925_5_soft_and_source();
+    ac3937_1_prod_denies_live_scope();
+    ac3937_5_soft_and_source();
     ac3729_1_scope_export_import_recv();
     ac3729_2_stash_bounded();
     ac3729_4_join_observe_only();
