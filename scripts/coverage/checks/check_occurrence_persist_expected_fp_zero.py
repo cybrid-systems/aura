@@ -55,7 +55,8 @@ TA = ROOT / "src" / "compiler" / "typed_mutation_audit.h"
 # Required: new precondition wired into aura_outermost_success_persist_occurrence.
 RE_HARD_GUARD = re.compile(
     r"production_hard_face_active\(\)\s*&&\s*"
-    r"aura::compiler::typed_audit::last_proof_goal_fingerprint_v_read\(\)\s*==\s*0"
+    r"(?:live_truth\.)?live_goal_count\s*>\s*0\s*&&\s*"
+    r"(?:aura::compiler::typed_audit::)?last_proof_goal_fingerprint_v_read\(\)\s*==\s*0"
 )
 RE_BUMP = re.compile(r"bump_occurrence_persist_reject_expected_fp_zero_total\(\)")
 RE_FORCE_REASON_16 = re.compile(r"/\*force_reason=\*/16")
