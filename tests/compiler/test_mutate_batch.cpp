@@ -856,6 +856,24 @@ static void run_1685_rebind_stale_define() {
         CHECK(int_eq(cs, "(pad0 1)", 1), "pad0 unchanged");
         CHECK(int_eq(cs, "(pad63 1)", 64), "pad63 unchanged");
     }
+
+    // Issue #3918: lockless atomic-batch :rebind must refresh top_env so
+    // nested calls (not just Path B bare (f x)) see the new body.
+    {
+        std::println("\n--- #3918: sequential sole-define batch rebind applies ---");
+        CompilerService cs2;
+        CHECK(eval_ok(cs2, "(require \"std/mutate\" all:)"), "3918 require mutate");
+        CHECK(eval_ok(cs2, "(set-code \"(define (f x) x)\")"), "3918 set-code");
+        CHECK(eval_ok(cs2, "(eval-current)"), "3918 eval-current seed");
+        auto br = cs2.eval("(mutate:atomic-batch (list (list \"mutate:rebind\" \"f\" "
+                           "\"(lambda (x) (if (< x 0) (* x -1) x))\" \"abs\")) \"abs\")");
+        CHECK(br && is_bool(*br) && as_bool(*br), "3918 AC: batch rebind #t");
+        CHECK(int_eq(cs2, "(f -4)", 4), "3918 AC: direct (f -4)→4");
+        CHECK(int_eq(cs2, "(let ((g f)) (g -4))", 4), "3918 AC: env/HO call (f -4)→4");
+        CHECK(int_eq(cs2, "(f 2)", 2), "3918 AC: (f 2)→2");
+        const auto src = read_file("src/compiler/evaluator_eval_flat.cpp");
+        CHECK(src.find("Issue #3918") != std::string::npos, "3918 AC: lockless rebind cites");
+    }
 }
 
 // ── Issue #1703 — refactor/extract stale parent ──

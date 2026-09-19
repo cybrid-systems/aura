@@ -159,6 +159,31 @@ static void ac3917_extra_paren_cli() {
           "3917 AC: *skip-left* is one identifier");
 }
 
+static void ac3918_batch_rebind_env() {
+    std::println("\n--- #3918: atomic-batch sole-define rebind refreshes env ---");
+    CompilerService cs;
+    CHECK(cs.eval("(require \"std/mutate\" all:)").has_value(), "3918 require");
+    CHECK(cs.eval("(set-code \"(define (f x) x)\")").has_value(), "3918 set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3918 seed");
+    auto br = cs.eval("(mutate:atomic-batch (list (list \"mutate:rebind\" \"f\" "
+                      "\"(lambda (x) (if (< x 0) (* x -1) x))\" \"abs\")) \"abs\")");
+    CHECK(br && is_bool(*br) && as_bool(*br), "3918 AC: batch #t");
+    auto direct = cs.eval("(f -4)");
+    CHECK(direct.has_value() && is_int(*direct) && as_int(*direct) == 4,
+          "3918 AC: direct (f -4)→4");
+    auto ho = cs.eval("(let ((g f)) (g -4))");
+    CHECK(ho.has_value() && is_int(*ho) && as_int(*ho) == 4, "3918 AC: HO (f -4)→4");
+    auto f2 = cs.eval("(f 2)");
+    CHECK(f2.has_value() && is_int(*f2) && as_int(*f2) == 2, "3918 AC: (f 2)→2");
+    auto nested = cs.eval("(begin (f -4))");
+    CHECK(nested.has_value() && is_int(*nested) && as_int(*nested) == 4,
+          "3918 AC: nested (begin (f -4))→4");
+    const auto src = read_file("src/compiler/evaluator_eval_flat.cpp");
+    CHECK(src.find("Issue #3918") != std::string::npos, "3918 AC: lockless cites");
+    const auto svc = read_file("src/compiler/service.ixx");
+    CHECK(svc.find("Issue #3918") != std::string::npos, "3918 AC: Path B env SSOT cites");
+}
+
 int run_test_eval_current_no_auto_fix() {
     std::println("=== Issue #2484: eval-current no auto-fix ===");
     ac1_closure_unchanged();
@@ -168,7 +193,9 @@ int run_test_eval_current_no_auto_fix() {
     ac3915_define_rhs_binds();
     ac3915_round_once_rest_args();
     ac3917_extra_paren_cli();
-    std::println("\n=== #2484/#3915/#3917 results: {} passed, {} failed ===", g_passed, g_failed);
+    ac3918_batch_rebind_env();
+    std::println("\n=== #2484/#3915/#3917/#3918 results: {} passed, {} failed ===", g_passed,
+                 g_failed);
     return g_failed ? 1 : 0;
 }
 
