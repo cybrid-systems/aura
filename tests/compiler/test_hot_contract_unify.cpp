@@ -233,6 +233,25 @@ int run_test_hot_contract_unify() {
               "3501 AC5: no docs/design/3501-*");
     }
 
+    // ── #3898: SafePCVSpan::operator[] uses AURA_HOT_CONTRACT ──
+    {
+        std::println("\n--- #3898: SafePCVSpan[] is AURA_HOT_CONTRACT ---");
+        auto sv = read_file("src/compiler/soa_view.ixx");
+        CHECK(!sv.empty(), "3898: soa_view.ixx readable");
+        CHECK(sv.find("Issue #3898") != std::string::npos, "3898: cites #3898");
+        const auto sp = sv.find("struct SafePCVSpan");
+        CHECK(sp != std::string::npos, "3898: SafePCVSpan present");
+        const auto swin = sv.substr(sp, 700);
+        CHECK(swin.find("AURA_HOT_CONTRACT(i < len)") != std::string::npos,
+              "3898 AC1: operator[] uses AURA_HOT_CONTRACT");
+        CHECK(swin.find("contract_assert(i < len)") == std::string::npos,
+              "3898 AC1: operator[] is not language contract_assert");
+        CHECK(read_file("tests/compiler/test_issue_3898.cpp").empty(),
+              "3898 AC3: no test_issue_3898.cpp");
+        CHECK(read_file("docs/design/3898-safepcvspan-hot-contract.md").empty(),
+              "3898 AC3: no docs/design/3898-*");
+    }
+
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
