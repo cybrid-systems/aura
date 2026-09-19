@@ -1298,6 +1298,47 @@ static void ac3684_inner_depth_restore() {
     reset_all();
 }
 
+static void ac3890_clone_success_inner_deny_truncates() {
+    std::println("\n--- #3890 AC1: clone-success then inner-deny truncates when no Guard ---");
+    const auto cpp = read_file("src/compiler/macro_expansion.cpp");
+    CHECK(cpp.find("Issue #3890") != std::string::npos, "3890 AC: cpp cites #3890");
+    CHECK(cpp.find("flat->truncate_to(clone_ckpt)") != std::string::npos,
+          "3890 AC1: inner-deny truncates committed clone");
+    CHECK(cpp.find("aura_evaluator_mutation_boundary_depth() == 0") != std::string::npos,
+          "3890 AC1: truncate only when no Guard owns the range");
+    reset_all();
+    grant_self_evo_production();
+    StringPool pool;
+    FlatAST flat;
+    auto m = pool.intern("m");
+    FlatAST body_flat;
+    StringPool body_pool;
+    auto m_body_var = body_pool.intern("m");
+    auto m_body_one = body_flat.add_literal(1);
+    auto m_body_self = body_flat.add_variable(m_body_var);
+    std::array<aura::ast::NodeId, 1> body_args{m_body_one};
+    auto m_body_call = body_flat.add_call(m_body_self, body_args);
+    std::unordered_map<std::string, aura::compiler::macro_exp::MacroExpansionDef,
+                       aura::core::TransparentStringHash, std::equal_to<>>
+        macros;
+    macros["m"] = aura::compiler::macro_exp::MacroExpansionDef{
+        {"one"}, false, &body_flat, &body_pool, m_body_call};
+    auto one_id = flat.add_literal(1);
+    std::array<aura::ast::NodeId, 1> call_args{one_id};
+    auto root_call = flat.add_call(flat.add_variable(pool.intern("m")), call_args);
+    flat.root = root_call;
+    const auto size0 = flat.size();
+    g_macro_hygiene_last_limit_reason.store(0, std::memory_order_relaxed);
+    auto out = expand_inner_macros(&flat, &pool, flat.root, /*depth=*/0, /*max_depth=*/2, macros);
+    CHECK(out == root_call, "3890 AC1: denied expand returns original root");
+    CHECK(flat.size() == size0, "3890 AC1: no MI clone residue outside Guard");
+    CHECK(read_file("tests/compiler/test_issue_3890.cpp").empty(),
+          "3890 AC: no test_issue_3890.cpp");
+    CHECK(read_file("docs/design/3890-clone-inner-deny-truncate.md").empty(),
+          "3890 AC: no docs/design/3890-*");
+    reset_all();
+}
+
 static void ac3753_reexpand_call_inner_deny_no_splice() {
     std::println("\n--- #3753 AC2: reexpand_call inner deny does not splice ---");
     reset_all();
@@ -1360,6 +1401,7 @@ int run_test_macro_hygiene_limits() {
     ac3029_pass_reason();
     ac3684_deny_codes();
     ac3684_inner_depth_restore();
+    ac3890_clone_success_inner_deny_truncates();
     ac3753_reexpand_call_inner_deny_no_splice();
     ac3029_query_and_linter();
     std::println("\n=== Issue #3062: no-boundary pass-limit refuse-partial ===");
