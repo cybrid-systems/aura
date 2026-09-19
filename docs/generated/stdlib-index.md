@@ -69,7 +69,7 @@
 | `std/socket` | `tcp-connect` `tcp-send` `tcp-recv` `tcp-close` `tcp-listen` `tcp-local-port` `tcp-accept` `tcp-accept-timeout` | socket.aura — TCP socket library (client + server) |
 | `std/stack` | `make-stack` `stack-push` `stack-pop` `stack-top` `stack-empty?` `stack-length` `stack->list` `list->stack` | stack.aura — LIFO stack (pair-based) |
 | `std/stats` | `get` `list` `contains?` `count` `prefix` `filter` | Aura standard observability / stats module |
-| `std/string` | `string-split` `string-split-words` `string-join` `string-trim` `string-upcase` `string-downcase` `string-contains?` `string-prefix?` … (+10) | Aura standard string library |
+| `std/string` | `string-split` `string-split-words` `string-join` `string-trim` `string-upcase` `string-downcase` `string-contains?` `string-prefix?` … (+11) | Aura standard string library |
 | `std/struct` | — | Aura struct library — define-struct as a macro |
 | `std/surface` | `;` `──` `string` `(stdlib` `composition)` `string-split` `string-split-words` `string-join` … (+81) | lib/std/surface.aura — recommended public convenience surface (P3) |
 | `std/swarm` | `swarm:init` `swarm:step!` `swarm:best` `swarm:population` `swarm:report` `swarm:export` `swarm:kind` `swarm:gen` … (+2) | lib/std/swarm.aura — Issue #2874 / #2875 pluggable swarm control family |
