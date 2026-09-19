@@ -3958,6 +3958,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
     //   (orch:scope-watch [:stall-ms n] [:policy 'cancel|'report-only|'restart-n]
     //                       [:max-restarts n] [:consecutive-stall-limit n])
     //   (orch:scope-join-all [:timeout-ms n] [:drain-ms n])
+    //   (orch:scope-sweep-reclaimed-pending)  ; #3924
     //   (orch:scope-cancel-all)
     // MVP linter guard: scripts/coverage/checks/check_orch_mvp_scope.py still rejects
     // AgentRegistry / global_agent_registry. The scope map is just a
@@ -4780,6 +4781,44 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 add_deny_class(kv, aura::orch::AgentDenyClass::Other, "descendants-live",
                                /*retry_ms=*/0,
                                /*emit_retry=*/false);
+            return build_orch_hash(kv);
+        });
+
+    // Issue #3924: Aura vector sweep of Scope-owned Reclaimed-pending
+    // (C++ AgentScope::sweep_reclaimed_pending). No new query:* key.
+    // Soft/Off: sweep is production-gated no-op. Still-running stays #2661.
+    add("orch:scope-sweep-reclaimed-pending",
+        [&ev, build_orch_hash, orch_keyword_key, parse_scope_addr_kw, resolve_scope_addr,
+         make_scope_addr_fail](std::span<const EvalValue> a) -> EvalValue {
+            std::string addr_path;
+            std::optional<std::int64_t> addr_child;
+            for (std::size_t i = 0; i + 1 < a.size(); i += 2) {
+                auto k = orch_keyword_key(a[i]);
+                (void)parse_scope_addr_kw(k, a[i + 1], addr_path, addr_child);
+            }
+            auto* root = aura::orch::find_agent_scope(static_cast<void*>(&ev));
+            if (!root) {
+                std::vector<std::pair<std::string, EvalValue>> kv = {
+                    {"ok", make_bool(true)},        {"cleaned", make_int(0)},
+                    {"still-pending", make_int(0)}, {"skipped", make_int(0)},
+                    {"wait-us", make_int(0)},       {"schema", make_int(3924)},
+                };
+                return build_orch_hash(kv);
+            }
+            auto* scope = resolve_scope_addr(*root, addr_path, addr_child);
+            if (!scope) {
+                return make_scope_addr_fail(3924, "invalid-path",
+                                            "orch:scope-sweep-reclaimed-pending: unknown :path");
+            }
+            const auto sw = scope->sweep_reclaimed_pending();
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"ok", make_bool(true)},
+                {"cleaned", make_int(static_cast<std::int64_t>(sw.cleaned))},
+                {"still-pending", make_int(static_cast<std::int64_t>(sw.still_pending))},
+                {"skipped", make_int(static_cast<std::int64_t>(sw.skipped))},
+                {"wait-us", make_int(static_cast<std::int64_t>(sw.wait_us))},
+                {"schema", make_int(3924)},
+            };
             return build_orch_hash(kv);
         });
 
