@@ -4685,7 +4685,10 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
                 boundary_gc_coord->enter_cascade();
             // dual-path still on failure path below for non-fast
             {
-                std::shared_lock<std::shared_mutex> rlock(ev_->env_frames_lock());
+                std::array<std::shared_lock<std::shared_mutex>, kEnvFramesShardCount> rlock;
+                for (std::size_t ef_i = 0; ef_i < kEnvFramesShardCount; ++ef_i)
+                    rlock[ef_i] = std::shared_lock<std::shared_mutex>(
+                        ev_->env_frame_shard_mu(ef_i)); // Issue #3900
                 const auto n = ev_->env_frames_size();
                 for (EnvId id = 0; id < n; ++id) {
                     if (!ev_->is_valid_env_id(id))
@@ -4714,7 +4717,10 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
             // Issue #2120 / #2116: dual-path consistency probe at boundary exit
             // (no half-consistent EnvFrame left live after probes).
             {
-                std::shared_lock<std::shared_mutex> rlock(ev_->env_frames_lock());
+                std::array<std::shared_lock<std::shared_mutex>, kEnvFramesShardCount> rlock;
+                for (std::size_t ef_i = 0; ef_i < kEnvFramesShardCount; ++ef_i)
+                    rlock[ef_i] = std::shared_lock<std::shared_mutex>(
+                        ev_->env_frame_shard_mu(ef_i)); // Issue #3900
                 const auto n = ev_->env_frames_size();
                 for (EnvId id = 0; id < n; ++id) {
                     if (!ev_->is_valid_env_id(id))

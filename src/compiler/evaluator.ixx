@@ -4727,7 +4727,8 @@ public:
     // Throws std::out_of_range on invalid id.
     [[nodiscard]] const aura::compiler::EnvFrame&
     env_frame_for_test(aura::compiler::EnvId id) const {
-        std::shared_lock<std::shared_mutex> rlock(env_frames_mtx_);
+        std::shared_lock<std::shared_mutex> rlock(
+            env_frame_shards_[env_frame_shard_index(id)].mu); // Issue #3900
         if (id == aura::compiler::NULL_ENV_ID || id >= env_frames_.size())
             throw std::out_of_range("env_frame_for_test: invalid id");
         return env_frames_[id];
@@ -4740,7 +4741,10 @@ public:
     // job (CompilerService owns the arena + its counting MR).
     void refresh_env_arena_metrics(CompilerMetrics& m) const {
         m.env_frames_size_total.store(env_frames_.size(), std::memory_order_relaxed);
-        std::shared_lock<std::shared_mutex> rlock(env_frames_mtx_);
+        std::array<std::shared_lock<std::shared_mutex>, kEnvFramesShardCount> rlock;
+        for (std::size_t ef_i = 0; ef_i < kEnvFramesShardCount; ++ef_i)
+            rlock[ef_i] =
+                std::shared_lock<std::shared_mutex>(env_frame_shards_[ef_i].mu); // Issue #3900
         auto current = defuse_version_.load(std::memory_order_acquire);
         std::size_t stale = 0;
         for (const auto& fr : env_frames_) {
@@ -7478,7 +7482,10 @@ public:
 
         EnvId hint = NULL_ENV_ID;
         {
-            std::shared_lock<std::shared_mutex> rlock(env_frames_mtx_);
+            std::array<std::shared_lock<std::shared_mutex>, kEnvFramesShardCount> rlock;
+            for (std::size_t ef_i = 0; ef_i < kEnvFramesShardCount; ++ef_i)
+                rlock[ef_i] =
+                    std::shared_lock<std::shared_mutex>(env_frame_shards_[ef_i].mu); // Issue #3900
             if (!env_frames_.empty()) {
                 for (std::size_t i = env_frames_.size(); i > 0; --i) {
                     const EnvId id = static_cast<EnvId>(i - 1);
