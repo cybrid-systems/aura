@@ -930,6 +930,37 @@ int run_test_orch_obs_facade() {
         }
     }
 
+    {
+        std::println("\n--- #3940: Guard-live agent_ask is not Policy A timeout ---");
+        CompilerService cs3940;
+        aura::compiler::typed_audit::apply_production_audit_defaults();
+        CHECK(cs3940.eval(R"((orch:spawn-agent "3940-a" (lambda () 0) :attach-mailbox #t))")
+                  .has_value(),
+              "3940 setup: mailbox agent spawned");
+        auto* hp = cs3940.evaluator().agent_names_->find("3940-a");
+        CHECK(hp && hp->ok && hp->mailbox, "3940 setup: handle");
+        auto& ev3940 = cs3940.evaluator();
+        using Ev3940 = std::remove_reference_t<decltype(ev3940)>;
+        bool guard_ok = true;
+        {
+            auto guard_r = Ev3940::MutationBoundaryGuard::try_acquire(ev3940, 1, &guard_ok);
+            CHECK(guard_r.has_value(), "3940 setup: Guard try_acquire");
+            if (guard_r) {
+                auto guard = std::move(*guard_r);
+                auto r = aura::orch::agent_ask(*hp, "ping-3940", /*timeout_ms=*/200);
+                CHECK(r.status != "timeout",
+                      "3940: Guard-live ask is not timeout from Policy A empty");
+                CHECK(r.status == "recv-under-boundary", "3940: typed recv-under-boundary");
+            }
+        }
+        aura::compiler::typed_audit::apply_dev_audit_defaults();
+        const auto spawn_src = read_file("src/orch/agent_spawn.h");
+        CHECK(spawn_src.find("Issue #3940") != std::string::npos, "3940: cite");
+        CHECK(spawn_src.find("recv-under-boundary") != std::string::npos,
+              "3940: ask recv typed deny");
+        CHECK(read_file("tests/orch/test_issue_3940.cpp").empty(), "3940: no test_issue_3940");
+    }
+
     // ── Issue #3733: overflow contract + missing live atomics on the hash ──
     // Fresh Evaluator: the shared `cs` interned thousands of stats keys
     // before this block (plus #3673's second service). Query the facade

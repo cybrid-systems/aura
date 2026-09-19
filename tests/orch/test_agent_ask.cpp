@@ -379,6 +379,45 @@ int run_test_agent_ask() {
         CHECK(true, "AC5: source-cite complete");
     }
 
+    {
+        std::println("\n--- #3940: ask BP charges named scope gauge ---");
+        using aura::orch::AgentDenyClass;
+        using aura::orch::load_mailbox_bp_recent;
+        Scheduler sched(1);
+        SchedRunner runner(sched);
+        AgentSpec spec;
+        spec.name = "ask-3940";
+        spec.attach_mailbox = true;
+        spec.mailbox_high_water = 1;
+        spec.bp_scope_id = "scope-A-3940";
+        spec.body = [] {};
+        auto h = spawn_agent_with_mailbox(sched, spec);
+        CHECK(h.ok && h.mailbox, "3940: spawn ok");
+        MailMessage fill;
+        fill.payload = "fill-3940";
+        CHECK(h.mailbox->push(std::move(fill)) == PushStatus::Ok, "3940: fill high_water");
+        const auto recent0 = load_mailbox_bp_recent("scope-A-3940");
+        auto ask = agent_ask(h, "storm-3940", /*timeout_ms=*/10);
+        CHECK(ask.status == "timeout", "3940: ask BP surfaces timeout (no retry)");
+        CHECK(load_mailbox_bp_recent("scope-A-3940") > recent0,
+              "3940: named gauge bumped by ask BP");
+        AgentSpec sib;
+        sib.name = "sib-3940";
+        sib.attach_mailbox = true;
+        sib.bp_scope_id = "scope-A-3940";
+        sib.bp_admit_threshold = 1;
+        sib.body = [] {};
+        auto h2 = spawn_agent_with_mailbox(sched, sib);
+        CHECK(!h2.ok && h2.deny_class == AgentDenyClass::BpAdmit,
+              "3940: sibling spawn is BpAdmit after ask storm");
+        cleanup_handle(h);
+        const auto spawn_src = read_file("src/orch/agent_spawn.h");
+        CHECK(spawn_src.find("Issue #3940") != std::string::npos, "3940: cite");
+        CHECK(spawn_src.find("agent_send(target, std::move(msg))") != std::string::npos,
+              "3940: ask routes through agent_send");
+        CHECK(read_file("tests/orch/test_issue_3940.cpp").empty(), "3940: no test_issue_3940");
+    }
+
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
