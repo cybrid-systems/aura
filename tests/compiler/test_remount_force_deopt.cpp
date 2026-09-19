@@ -978,6 +978,35 @@ static void ac3812_3_shape_only_passthrough() {
     CHECK(rt.find("test_issue_3812.cpp") == std::string::npos, "ac3812_3: no invent");
 }
 
+static void ac3887_call_time_dual_fresh_covers_post_steal_defuse() {
+    std::println("\n--- #3887 AC1: call-time dual-fresh covers post-steal defuse bump ---");
+    const auto br = read_file("src/compiler/aura_jit_bridge.cpp");
+    const auto steal = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+    CHECK(br.find("Issue #3887") != std::string::npos, "3887 AC1: steal revalidate cites #3887");
+    CHECK(br.find("(void)cur_module") != std::string::npos, "3887 AC1: module axis reserved");
+    CHECK(br.find("(void)cur_defuse") != std::string::npos, "3887 AC1: defuse axis reserved");
+    CHECK(steal.find("Issue #3887") != std::string::npos, "3887 AC1: steal-complete cites #3887");
+    CHECK(br.find("aura_is_jit_closure_fresh") != std::string::npos,
+          "3887 AC1: call-time dual-fresh is SSOT");
+
+    const auto def0 = aura_get_aot_defuse_version();
+    const auto cap_c = aura_get_current_bridge_epoch();
+    const auto cap_t = aura_aot_func_table_epoch();
+    aura_set_aot_defuse_version(def0 == 0 ? 10 : def0);
+    const auto cur = aura_get_aot_defuse_version();
+    CHECK(cur != 0, "3887 AC1: defuse tracking on");
+    CHECK(!aura_is_jit_closure_fresh(cap_c, cur - 1, cap_t),
+          "3887 AC1: captured defuse behind current → not fresh");
+    aura_set_aot_defuse_version(cur + 1);
+    CHECK(!aura_is_jit_closure_fresh(cap_c, cur, cap_t),
+          "3887 AC1: post-steal-shaped defuse bump leaves native at call-time");
+    aura_set_aot_defuse_version(def0);
+    CHECK(read_file("tests/compiler/test_issue_3887.cpp").empty(),
+          "3887 AC: no test_issue_3887.cpp");
+    CHECK(read_file("docs/design/3887-steal-mid-aot-revalidate.md").empty(),
+          "3887 AC: no docs/design/3887-*");
+}
+
 static void ac3812_4_soak_no_amplify() {
     std::println("\n--- #3812 AC4: soft Global × critical does not amplify ---");
     const auto reg = read_file("src/compiler/hot_update_registry.cpp");
@@ -1025,6 +1054,8 @@ int run_test_remount_force_deopt() {
     ac3812_2_hard_ceiling_and_critical_default_deny();
     ac3812_3_shape_only_passthrough();
     ac3812_4_soak_no_amplify();
+    std::println("\n=== Issue #3887: steal-mid AOT revalidate deferred; call-time dual-fresh ===");
+    ac3887_call_time_dual_fresh_covers_post_steal_defuse();
     if (g_failed)
         return 1;
     std::println("remount force-deopt #2503/#2894/#3548/#3578/#3612/#3785/#3812: OK ({} passed)",
