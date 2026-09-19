@@ -32,9 +32,11 @@
 (define g-ok (and (eq? ag #t) (= (g 7) 21)))
 
 ; Loop telemetry: query + atomic-batch + metrics
+; Issue #3916: length must stay 8 (missing keys defaulted to 0 and hid drops).
 (define st (agent:loop-stats))
 (define touched
-  (and (> (hash-ref st "query-calls" 0) 0)
+  (and (= (hash-length st) 8)
+       (> (hash-ref st "query-calls" 0) 0)
        (> (hash-ref st "atomic-batch-calls" 0) 0)
        (> (hash-ref st "metrics-calls" 0) 0)))
 
