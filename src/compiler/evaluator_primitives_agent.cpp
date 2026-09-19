@@ -3466,6 +3466,37 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 }
             }
 
+            // Issue #3937: reverse of #3925. Production spawn-agent of a
+            // name AgentScope::find still resolves as live (ok + fiber)
+            // must not put — resolve is name-table first, so send/join
+            // would hit the new mailbox while directory still lists
+            // Scope. Soft/Off: keep dual occupancy (#3925 AC5).
+            if (aura::compiler::typed_audit::production_defaults_active() && !name.empty()) {
+                if (auto* scope = aura::orch::find_agent_scope(static_cast<void*>(&ev))) {
+                    if (auto* live = scope->find(name); live && live->ok && live->fiber) {
+                        aura::orch::g_orch_module_stats.host_forget_reclaimed_risk_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                        auto ridx = ev.string_heap_.size();
+                        ev.string_heap_.push_back(name);
+                        auto eidx = ev.string_heap_.size();
+                        ev.string_heap_.push_back(
+                            "orch:spawn-agent: name live in AgentScope — join or stop "
+                            "before spawn-agent of the same name");
+                        std::vector<std::pair<std::string, EvalValue>> rkv = {
+                            {"ok", make_bool(false)},        {"id", make_int(0)},
+                            {"name", make_string(ridx)},     {"schema", make_int(1588)},
+                            {"schema-2011", make_int(2011)}, {"quota-exceeded", make_bool(false)},
+                            {"error", make_string(eidx)},    {"cleanup-pending", make_bool(false)},
+                        };
+                        add_reclaimed_pending_lifecycle(rkv, /*pending=*/false);
+                        add_deny_class(rkv, aura::orch::AgentDenyClass::Other,
+                                       "name-reuse-while-live-scope", 0,
+                                       /*emit_retry=*/false);
+                        return build_orch_hash(rkv);
+                    }
+                }
+            }
+
             orch_sched.ensure(2);
             auto body = [&ev, cid, region_key]() {
                 if (!cid)
