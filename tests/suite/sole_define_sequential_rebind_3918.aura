@@ -1,0 +1,48 @@
+; Issue #3918 — sole-define sequential atomic-batch rebind must apply
+; (follow-on #2730 ORDER-C). Nested/HO call agrees with direct (f x).
+(require "std/mutate" all:)
+
+(define *fails* 0)
+(define (assert! pred msg)
+  (if pred
+      (begin (display "  pass: ") (display msg) (newline))
+      (begin
+        (set! *fails* (+ *fails* 1))
+        (display "  FAIL: ")
+        (display msg)
+        (newline))))
+
+(set-code "(define (f x) x)")
+(eval-current)
+(assert! (= (f -4) -4) "pre identity")
+(assert! (mutate:atomic-batch
+           (list (list "mutate:rebind" "f"
+                       "(lambda (x) (if (< x 0) (* x -1) x))" "abs"))
+           "abs")
+         "batch rebind #t")
+(assert! (= (f -4) 4) "direct (f -4)→4")
+(assert! (= (let ((g f)) (g -4)) 4) "HO (f -4)→4")
+(assert! (= (f 2) 2) "(f 2)→2")
+
+; Sequential closed-loop-once (Strand swarm shape) — live f must be abs
+; after the first successful commit, not still identity at round 6.
+(require "std/agent" all:)
+(set-code "(define (f x) x)")
+(eval-current)
+(define *abs* "(lambda (x) (if (< x 0) (* x -1) x))")
+(define (round-once)
+  (agent:closed-loop-once :skip-set-code :rebind "f" *abs* :summary "abs"))
+(round-once)
+(assert! (= (f -4) 4) "closed-loop-once direct (f -4)→4")
+(assert! (= (let ((g f)) (g -4)) 4) "closed-loop-once HO (f -4)→4")
+(round-once)
+(round-once)
+(assert! (= (f -4) 4) "round 3 still abs")
+
+(if (= *fails* 0)
+    (begin (display "OK-3918 sole-define sequential rebind\n"))
+    (begin
+      (display "FAIL-3918 fails=")
+      (display *fails*)
+      (newline)
+      (exit 1)))

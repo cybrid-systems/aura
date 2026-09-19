@@ -2708,6 +2708,36 @@ EvalResult Evaluator::eval_flat_apply_mutate_rebind(std::span<const types::EvalV
     flat.set_child(old_define, 0, new_value);
     // Issue #493: fast dirty path (early-exit fixed point, #471).
     flat.mark_dirty_upward_fast(old_define);
+    // Issue #3918 / #2730: public mutate:rebind refreshes top_env from
+    // the live new value so nested calls (display (f x)) / live-fit see
+    // the new closure. Lockless batch used to leave the old cell; Path B
+    // only helps a bare top-level (f x).
+    if (workspace_pool_ && new_value != aura::ast::NULL_NODE && new_value < flat.size()) {
+        flat.force_align_subtree_gen(new_value);
+        auto refreshed = eval_flat(flat, *workspace_pool_, new_value, top_env());
+        if (refreshed) {
+            auto& tenv = top_env();
+            std::size_t ci = 0;
+            bool have = false;
+            if (auto existing = tenv.lookup_binding(name); existing && is_cell(*existing)) {
+                ci = as_cell_id(*existing);
+                have = true;
+            }
+            if (!have)
+                ci = alloc_cell(*refreshed);
+            else if (ci < cells().size())
+                cells()[ci] = *refreshed;
+            tenv.bind(name, make_cell(ci));
+            if (sym != aura::ast::INVALID_SYM)
+                tenv.bind_symid(sym, make_cell(ci));
+        }
+    }
+    last_eval_current_result_.reset();
+    // Issue #3918: public mutate:rebind marks IR dirty so the next
+    // eval("(f x)") / (begin (f x)) relowers from the live body.
+    // Lockless batch used to leave ir_cache_v2_ on the identity.
+    if (mark_define_dirty_fn_)
+        mark_define_dirty_fn_(name);
     return make_int(static_cast<std::int64_t>(mid));
 }
 

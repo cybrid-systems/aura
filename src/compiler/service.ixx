@@ -2371,6 +2371,16 @@ public:
             auto* ws_flat = evaluator_.workspace_flat();
             auto* ws_pool = evaluator_.workspace_pool();
             if (is_bare) {
+                // Issue #3918: env cell is SSOT after lockless rebind.
+                if (auto bound = evaluator_.top_env().lookup(trimmed)) {
+                    types::EvalValue v = *bound;
+                    if (types::is_cell(v)) {
+                        auto ci = types::as_cell_id(v);
+                        if (ci < evaluator_.cells().size())
+                            v = evaluator_.cells()[ci];
+                    }
+                    return EvalResult(v);
+                }
                 // Last live Define wins: mutate:rebind may intern a new
                 // SymId and take the add-path, leaving the original
                 // Define earlier in the table.
@@ -2422,38 +2432,55 @@ public:
                         }
                     }
                     if (head_is_bare) {
-                        // Last live Lambda Define wins (rebind add-path /
-                        // intern SymId mismatch must not keep the old body).
+                        // Issue #3918: apply the env closure (lockless rebind
+                        // refresh) instead of the last all-nodes Define —
+                        // parse_to_flat leftovers made (f -4) identity while
+                        // HO (let ((g f)) (g -4)) was abs.
+                        types::EvalValue env_fn{};
+                        bool have_env_fn = false;
+                        if (auto bound = evaluator_.top_env().lookup(head_name)) {
+                            env_fn = *bound;
+                            if (types::is_cell(env_fn)) {
+                                auto ci = types::as_cell_id(env_fn);
+                                if (ci < evaluator_.cells().size())
+                                    env_fn = evaluator_.cells()[ci];
+                            }
+                            have_env_fn = types::is_closure(env_fn);
+                        }
                         aura::ast::NodeId def_body = aura::ast::NULL_NODE;
                         std::vector<aura::ast::SymId> fn_params;
                         bool dotted = false;
-                        for (aura::ast::NodeId id = 0; id < ws_flat->size(); ++id) {
-                            if (ws_flat->is_free_slot(id))
-                                continue;
-                            auto v = ws_flat->get(id);
-                            if (v.tag != aura::ast::NodeTag::Define)
-                                continue;
-                            if (v.sym_id == aura::ast::INVALID_SYM)
-                                continue;
-                            if (v.children.empty())
-                                continue;
-                            auto wname = std::string(ws_pool->resolve(v.sym_id));
-                            if (wname != head_name)
-                                continue;
-                            auto body_id = v.child(0);
-                            if (body_id >= ws_flat->size())
-                                continue;
-                            auto body_v = ws_flat->get(body_id);
-                            if (body_v.tag != aura::ast::NodeTag::Lambda)
-                                continue;
-                            def_body =
-                                body_v.children.empty() ? aura::ast::NULL_NODE : body_v.child(0);
-                            fn_params.assign(body_v.params.begin(), body_v.params.end());
-                            // Dotted flag is bit 0 of int_value (see ast.ixx
-                            // add_lambda encoding).
-                            dotted = (body_v.int_value & 1) != 0;
+                        if (!have_env_fn) {
+                            // Last live Lambda Define wins (rebind add-path /
+                            // intern SymId mismatch must not keep the old body).
+                            for (aura::ast::NodeId id = 0; id < ws_flat->size(); ++id) {
+                                if (ws_flat->is_free_slot(id))
+                                    continue;
+                                auto v = ws_flat->get(id);
+                                if (v.tag != aura::ast::NodeTag::Define)
+                                    continue;
+                                if (v.sym_id == aura::ast::INVALID_SYM)
+                                    continue;
+                                if (v.children.empty())
+                                    continue;
+                                auto wname = std::string(ws_pool->resolve(v.sym_id));
+                                if (wname != head_name)
+                                    continue;
+                                auto body_id = v.child(0);
+                                if (body_id >= ws_flat->size())
+                                    continue;
+                                auto body_v = ws_flat->get(body_id);
+                                if (body_v.tag != aura::ast::NodeTag::Lambda)
+                                    continue;
+                                def_body = body_v.children.empty() ? aura::ast::NULL_NODE
+                                                                   : body_v.child(0);
+                                fn_params.assign(body_v.params.begin(), body_v.params.end());
+                                // Dotted flag is bit 0 of int_value (see ast.ixx
+                                // add_lambda encoding).
+                                dotted = (body_v.int_value & 1) != 0;
+                            }
                         }
-                        if (def_body != aura::ast::NULL_NODE) {
+                        if (have_env_fn || def_body != aura::ast::NULL_NODE) {
                             // Tokenize the args between head_end and close.
                             // Simple splitter: walks parens / strings.
                             std::size_t arg_start = i;
@@ -2520,6 +2547,14 @@ public:
                                     val = *ar;
                                 }
                                 arg_vals.push_back(val);
+                            }
+                            if (have_env_fn) {
+                                auto cid = types::as_closure_id(env_fn);
+                                if (auto r = evaluator_.apply_closure(cid, arg_vals))
+                                    return EvalResult(*r);
+                                return std::unexpected(
+                                    aura::diag::Diagnostic{aura::diag::ErrorKind::InvalidClosure,
+                                                           "eval: env rebind apply failed"});
                             }
                             // Build a child env with param bindings.
                             Env call_env(&evaluator_.top_env());
@@ -2778,6 +2813,42 @@ public:
                 evaluator_.eval_flat(*flat_ptr, *pool_ptr, expanded_root, evaluator_.top_env());
             user_bindings_.insert(std::string(name));
             return result;
+        }
+
+        // Issue #3918: nested (display (f x)) / (begin (f x)) used the IR
+        // cache of a leftover identity Define. Env cell is SSOT after
+        // lockless rebind — tree-walk those Calls so they match HO lookup.
+        {
+            bool env_closure_call = false;
+            for (aura::ast::NodeId id = 0; id < flat_ptr->size(); ++id) {
+                if (flat_ptr->is_free_slot(id))
+                    continue;
+                auto nv = flat_ptr->get(id);
+                if (nv.tag != aura::ast::NodeTag::Call || nv.children.empty())
+                    continue;
+                auto cal = flat_ptr->get(nv.child(0));
+                if (cal.tag != aura::ast::NodeTag::Variable)
+                    continue;
+                const std::string cn(pool_ptr->resolve(cal.sym_id));
+                if (cn.empty())
+                    continue;
+                auto bound = evaluator_.top_env().lookup(cn);
+                if (!bound)
+                    continue;
+                auto fn = *bound;
+                if (types::is_cell(fn)) {
+                    auto ci = types::as_cell_id(fn);
+                    if (ci < evaluator_.cells().size())
+                        fn = evaluator_.cells()[ci];
+                }
+                if (types::is_closure(fn)) {
+                    env_closure_call = true;
+                    break;
+                }
+            }
+            if (env_closure_call)
+                return evaluator_.eval_flat(*flat_ptr, *pool_ptr, expanded_root,
+                                            evaluator_.top_env());
         }
 
         // ========== IR pipeline (default path for non-define expressions) ==========
