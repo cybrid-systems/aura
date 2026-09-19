@@ -2549,7 +2549,7 @@ inline void finalize_spawn_quota_reject(AgentHandle& h) noexcept {
             aura::core::sandbox::g_sandbox_mode_atomic().load(std::memory_order_acquire);
         const auto sched_in =
             make_security_schedule_input_live(sb_mode, /*production_defaults=*/true,
-                                              /*soft_mode=*/false);
+                                              /*soft_mode=*/false, h.bp_scope_id);
         if (auto sched_reason = admit_security_schedule(sched_in); sched_reason.has_value()) {
             g_orch_module_stats.spawn_failures.fetch_add(1, std::memory_order_relaxed);
             h.quota_exceeded = true; // structured admit-reject hash face (#2079/#3251)
