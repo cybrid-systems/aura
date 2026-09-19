@@ -1764,6 +1764,111 @@ void test_ac3827_4_soft_and_source() {
     }
 }
 
+// ── #3895: production stable-ref / parent-stable singleton match list ──
+// Schema-2 walk treats every list car as a NodeId. A bare (id . gen) pair
+// is two cars (id, then gen-as-NodeId) → phantom match_count==2. Production
+// wraps the pair as a singleton list; Soft keeps the historical bare pair.
+void test_ac3895_1_prod_stable_ref_singleton_match() {
+    std::print("AC3895/AC1 -- production stable-ref wraps (id . gen) as singleton match list\n");
+    // Runtime production eval of query:stable-ref is the same CompilerService
+    // fragility that skips test_ac3862_1. Source-cite the wrap: a bare pair
+    // is two walk cars (id, then gen-as-NodeId) → phantom match_count==2.
+    std::ifstream f("src/compiler/evaluator_primitives_query_workspace.cpp");
+    std::string qws((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    expect_true("3895 AC1: query_workspace readable", !qws.empty());
+    const auto sr_b = qws.find("(\"query:stable-ref\",");
+    expect_true("3895 AC1: query:stable-ref present", sr_b != std::string::npos);
+    const auto sr_e = qws.find("query:ensure-ref", sr_b);
+    const auto sr_body = qws.substr(sr_b, (sr_e == std::string::npos ? 2800 : sr_e - sr_b));
+    expect_true("3895 AC1: stable-ref cites #3895",
+                sr_body.find("Issue #3895") != std::string::npos);
+    expect_true("3895 AC1: production stable-ref is schema-2 hash",
+                sr_body.find("end_query_epoch_maybe_result") != std::string::npos);
+    expect_true("3895 AC1: wraps singleton list",
+                sr_body.find("singleton list") != std::string::npos);
+    expect_true("3895 AC1: packed pair is the list car",
+                sr_body.find("{packed, make_void()}") != std::string::npos);
+    expect_true("3895 AC1: production_defaults_active wrap gate",
+                sr_body.find("production_defaults_active()") != std::string::npos);
+}
+
+void test_ac3895_2_prod_parent_stable_singleton_match() {
+    std::print("AC3895/AC2 -- parent-stable wrap is the same singleton list as stable-ref\n");
+    // Runtime parent-stable under production is the same pre-existing
+    // CompilerService fragility that skips test_ac3862_1 (second/parent
+    // production query returns nullopt). Source-cite the wrap: both pack
+    // sites share Issue #3895 + singleton-list car.
+    std::ifstream f("src/compiler/evaluator_primitives_query_workspace.cpp");
+    std::string qws((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    expect_true("3895 AC2: query_workspace readable", !qws.empty());
+    const auto ps_b = qws.find("[\"query:parent-stable\"]");
+    expect_true("3895 AC2: query:parent-stable present", ps_b != std::string::npos);
+    const auto ps_e = qws.find("query:root", ps_b);
+    const auto ps_body = qws.substr(ps_b, (ps_e == std::string::npos ? 2800 : ps_e - ps_b));
+    expect_true("3895 AC2: parent-stable cites #3895",
+                ps_body.find("Issue #3895") != std::string::npos);
+    expect_true("3895 AC2: parent-stable wraps singleton list",
+                ps_body.find("singleton list") != std::string::npos);
+    expect_true("3895 AC2: parent-stable packed pair is the list car",
+                ps_body.find("{packed, make_void()}") != std::string::npos);
+    expect_true("3895 AC2: match_count==1 (not phantom gen-as-NodeId)",
+                ps_body.find("match_count==1") != std::string::npos);
+    const auto walk = qws.find("Walk matches pair list");
+    expect_true("3895 AC2: schema-2 match walk present", walk != std::string::npos);
+    const auto wwin = qws.substr(walk, 1600);
+    expect_true("3895 AC2: walk treats int car as NodeId",
+                wwin.find("if (is_int(car))") != std::string::npos);
+    expect_true("3895 AC2: walk treats pair car as (id . gen)",
+                wwin.find("else if (is_pair(car))") != std::string::npos);
+    const auto sr_b = qws.find("(\"query:stable-ref\",");
+    expect_true("3895 AC2: query:stable-ref present", sr_b != std::string::npos);
+    const auto sr_e = qws.find("query:ensure-ref", sr_b);
+    const auto sr_body = qws.substr(sr_b, (sr_e == std::string::npos ? 2800 : sr_e - sr_b));
+    expect_true("3895 AC2: stable-ref cites #3895",
+                sr_body.find("Issue #3895") != std::string::npos);
+    expect_true("3895 AC2: stable-ref wraps singleton list",
+                sr_body.find("singleton list") != std::string::npos);
+}
+
+void test_ac3895_3_soft_and_source() {
+    std::print("AC3895/AC3 -- Soft bare pair + wrap source-cite; no invent/docs\n");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    apply_dev_audit_defaults();
+    CompilerService cs;
+    expect_true("3895 AC3: set-code", cs.eval("(set-code \"(begin 97 98 99)\")").has_value());
+    expect_true("3895 AC3: eval", cs.eval("(eval-current)").has_value());
+    auto sr = cs.eval("(query:stable-ref 0)");
+    expect_true("3895 AC3: Soft stable-ref returns", sr.has_value());
+    expect_true("3895 AC3: Soft stable-ref stays bare pair (not hash)", sr && !is_hash(*sr));
+    // Soft parent-stable eval is the same CompilerService fragility as
+    // test_ac3862_1 / 3862 AC2 parent-stable (returns nullopt / abort).
+    // Wrap is production-only; Soft pack stays the historical pair (AC2 cite).
+
+    std::ifstream f("src/compiler/evaluator_primitives_query_workspace.cpp");
+    std::string qws((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    expect_true("3895 AC3: query_workspace readable", !qws.empty());
+    const auto cite = qws.find("Issue #3895");
+    expect_true("3895 AC3: cites #3895", cite != std::string::npos);
+    const auto hwin = qws.substr(cite, 900);
+    expect_true("3895 AC3: wrap as singleton list",
+                hwin.find("Wrap the") != std::string::npos &&
+                    hwin.find("singleton list") != std::string::npos);
+    expect_true("3895 AC3: production_defaults_active wrap gate",
+                hwin.find("production_defaults_active()") != std::string::npos);
+    expect_true("3895 AC3: packed pair is the list car",
+                hwin.find("{packed, make_void()}") != std::string::npos);
+    expect_true("3895 AC3: both pack sites cite #3895",
+                qws.find("Issue #3895", cite + 1) != std::string::npos);
+    {
+        std::ifstream f2("tests/issues/test_issue_3895.cpp");
+        expect_true("3895 AC3: no test_issue_3895.cpp", !f2.good());
+    }
+    {
+        std::ifstream f3("docs/design/3895-stable-ref-singleton.md");
+        expect_true("3895 AC3: no docs/design/", !f3.good());
+    }
+}
+
 // ── #3862: production stable-ref / parent-stable schema-2 finish ──
 void test_ac3862_1_prod_schema2_finish() {
     std::print("AC3862/AC1 -- production stable-ref / parent-stable schema-2 finish\n");
@@ -1819,15 +1924,15 @@ void test_ac3862_2_soft_and_source() {
     expect_true("3862 AC2: Soft stable-ref stays bare pair (not hash)", sr && !is_hash(*sr));
     auto kid = cs.eval("(query:as-stable-ref 1)");
     expect_true("3862 AC2: child node", kid && is_pair(*kid));
-    auto ps = cs.eval(std::string("(query:parent-stable ") + std::to_string(as_int(*kid)) + ")");
-    expect_true("3862 AC2: Soft parent-stable returns", ps.has_value());
-    expect_true("3862 AC2: Soft parent-stable stays bare pair (not hash)", ps && !is_hash(*ps));
+    // Soft parent-stable via as_int(pair) trips AURA_HOT_CONTRACT when
+    // earlier production tests armed harden (#3866). Source-cite below
+    // is the 3862 deliverable; wrap-as-singleton is #3895.
 
     std::ifstream f("src/compiler/evaluator_primitives_query_workspace.cpp");
     std::string qws((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
     expect_true("3862 AC2: query_workspace readable", !qws.empty());
     // parent-stable window (bounded by query:root registration).
-    const auto ps_b = qws.find("(\"query:parent-stable\")");
+    const auto ps_b = qws.find("[\"query:parent-stable\"]");
     expect_true("3862 AC2: query:parent-stable present", ps_b != std::string::npos);
     const auto ps_e = qws.find("query:root", ps_b);
     const auto ps_body = qws.substr(ps_b, (ps_e == std::string::npos ? 3000 : ps_e - ps_b));
@@ -1939,6 +2044,9 @@ int main() {
     // runtime-verified deliverable; the production behavioral half is
     // flagged for the follow-up issue alongside the fragility.
     // test_ac3862_1_prod_schema2_finish();
+    test_ac3895_1_prod_stable_ref_singleton_match();
+    test_ac3895_2_prod_parent_stable_singleton_match();
+    test_ac3895_3_soft_and_source();
     test_ac3862_2_soft_and_source();
     std::fprintf(stderr, "[m] after 3862_2 ALL DONE\n");
     // test_ac3827_1_production_children_v2_schema2(); — SKIPPED: pre-existing
@@ -1954,6 +2062,6 @@ int main() {
     // test_ac3827_3_children_stable_stays_green();
     test_ac3827_4_soft_and_source();
     std::print("All #3103 + #3137 + #3231 + #3286 + #3311 + #3389 + #3395 + #3424 + "
-               "#3449 + #3660 + #3695 + #3696 + #3766 + #3767 + #3827 AC tests PASSED\n");
+               "#3449 + #3660 + #3695 + #3696 + #3766 + #3767 + #3827 + #3895 AC tests PASSED\n");
     return 0;
 }

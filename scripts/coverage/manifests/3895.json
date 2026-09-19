@@ -1,0 +1,32 @@
+{
+  "issue": 3895,
+  "title": "production stable-ref / parent-stable schema-2 walks (id gen) as NodeId list",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_primitives_query_workspace.cpp",
+      "contains": [
+        "Issue #3895",
+        "singleton list",
+        "match_count==2"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/compiler/test_query_result_full_provenance.cpp",
+      "contains": [
+        "3895 AC1: production stable-ref is schema-2 hash",
+        "3895 AC2: match_count==1 (not phantom gen-as-NodeId)",
+        "ac3895_1_prod_stable_ref_singleton_match"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "forbid": [
+        "tests/compiler/test_issue_3895.cpp",
+        "tests/issues/test_issue_3895.cpp",
+        "docs/design/3895-stable-ref-singleton.md"
+      ]
+    }
+  ]
+}

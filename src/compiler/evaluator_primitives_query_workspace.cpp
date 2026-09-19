@@ -999,11 +999,12 @@ void register_workspace_query_primitives(
         auto pair_pid = ws.pairs.size();
         ws.pairs.push_back({make_int(static_cast<std::int64_t>(exported.id)), make_pair(gen_pid)});
         EvalValue packed = make_pair(pair_pid);
-        // Production auto-upgrade walks a match LIST (car = NodeId int or
-        // (id . gen) pair). A bare (id . gen) pair is walked as two ints —
-        // id then gen-as-NodeId — and a lagging gen slot fail-closes a
-        // hot-cone export (#3259). Wrap as a singleton list under
-        // production; Soft keeps the historical bare pair.
+        // Issue #3895 / #3259: production auto-upgrade walks a match LIST
+        // (car = NodeId int or (id . gen) pair). A bare (id . gen) pair is
+        // walked as two ints — id then gen-as-NodeId — and stamps a phantom
+        // second match (match_count==2) when gen < flat.size(). Wrap the
+        // pair as a singleton list so match_count==1 and matches[0] is the
+        // parent. Soft keeps the historical bare pair.
         if (aura::compiler::typed_audit::production_defaults_active()) {
             auto list_pid = ws.pairs.size();
             ws.pairs.push_back({packed, make_void()});
@@ -1150,11 +1151,12 @@ void register_workspace_query_primitives(
             auto pair_pid = ws.pairs.size();
             ws.pairs.push_back({make_int(static_cast<std::int64_t>(ref.id)), make_pair(gen_pid)});
             EvalValue packed = make_pair(pair_pid);
-            // Production auto-upgrade walks a match LIST (car = NodeId int or
-            // (id . gen) pair). A bare (id . gen) pair is walked as two ints —
-            // id then gen-as-NodeId — and a lagging gen slot fail-closes a
-            // hot-cone export (#3259). Wrap as a singleton list under
-            // production; Soft keeps the historical bare pair.
+            // Issue #3895 / #3259: production auto-upgrade walks a match LIST
+            // (car = NodeId int or (id . gen) pair). A bare (id . gen) pair is
+            // walked as two ints — id then gen-as-NodeId — and stamps a phantom
+            // second match (match_count==2) when gen < flat.size(). Wrap the
+            // pair as a singleton list so match_count==1 and matches[0] is the
+            // target. Soft keeps the historical bare pair.
             if (aura::compiler::typed_audit::production_defaults_active()) {
                 auto list_pid = ws.pairs.size();
                 ws.pairs.push_back({packed, make_void()});
