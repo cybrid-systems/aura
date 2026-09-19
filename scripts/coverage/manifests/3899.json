@@ -1,0 +1,31 @@
+{
+  "issue": 3899,
+  "title": "single-worker Ready does not gate hot-contract arm",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/serve/runtime_production_abi.cpp",
+      "contains": [
+        "Issue #3899",
+        "kProductionAbiSelfcheckFailBitHotContracts"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/serve/test_steal_complete_strong_entry.cpp",
+      "contains": [
+        "3899 AC1: single-worker Ready asserts the hot-contract arm",
+        "3899 AC2: Soft/sandbox=off early-out unchanged",
+        "ac3899_single_worker_hot_contracts_source_cite"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "forbid": [
+        "tests/serve/test_issue_3899.cpp",
+        "tests/issues/test_issue_3899.cpp",
+        "docs/design/3899-single-worker-hot-contract.md"
+      ]
+    }
+  ]
+}
