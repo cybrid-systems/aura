@@ -1239,7 +1239,8 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
         return make_bool(ev.check_workspace_isolation(target, ref_t, bits, "security:check"));
     });
 
-    // Issue #1566: query:tenant-isolation-stats
+    // Issue #1566 / Issue #3881: query:tenant-isolation-stats — SSOT
+    // (obs_eval #2224 duplicate removed).
     ObservabilityPrims::register_stats_impl(
         "query:tenant-isolation-stats", [&ev](const auto&) -> EvalValue {
             using namespace aura::core::workspace_isolation;
@@ -5387,9 +5388,11 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             return query_hash_finish(ht, ev.string_heap_, overflowed);
         });
 
-    // Issue #2534: query:security-posture — single Agent posture snapshot
-    // (mode / wal / ring fill / retain window / hard fiber / mismatch rates).
-    // Pure/read-only; additive to query:security-health and *-stats.
+    // Issue #2534 / Issue #3881: query:security-posture — single Agent posture
+    // snapshot (mode / wal / ring fill / retain window / hard fiber /
+    // mismatch rates). Pure/read-only; additive to query:security-health
+    // and *-stats. SSOT: this is the only register_stats_impl for the key
+    // (obs_eval #2225 duplicate removed).
     ObservabilityPrims::register_stats_impl(
         "query:security-posture", [&ev](const auto&) -> EvalValue {
             using ::aura::core::audit_wal::g_mutation_audit_wal;

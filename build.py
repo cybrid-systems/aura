@@ -13846,8 +13846,8 @@ def cmd_undeclared_mt_autodetect_3630_coverage():
     - AURA_MT_AUTODETECT=0 opts out (dark but observable via posture);
       Soft/Off never records (zero-cost, AC4).
     - quota map follows the armed flag with an arm-time cache refresh;
-      posture surface additive on both query:security-posture
-      registrations (slim obs_eval + full security last-wins).
+      posture surface additive on query:security-posture SSOT
+      (register_security_primitives; #3881 removed obs_eval duplicate).
     - Suite rows ac3630_1..5 in test_require_effect_auto_isolation.cpp;
       no docs/design/3630-*, no tests/**/test_issue_3630.cpp.
     """

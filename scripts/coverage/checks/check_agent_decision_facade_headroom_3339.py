@@ -124,7 +124,6 @@ def main() -> int:
     sec = _read("src/compiler/evaluator_primitives_security.cpp")
     ref = _read("src/compiler/evaluator_primitives_query_reflect.cpp")
     mut = _read("src/compiler/evaluator_primitives_mutate.cpp")
-    obs = _read("src/compiler/evaluator_primitives_obs_eval.cpp")
     agent = _read("src/compiler/evaluator_primitives_agent.cpp")
     test = _read("tests/compiler/test_engine_metrics_facade.cpp")
     lint3020 = _read("scripts/coverage/checks/check_query_hash_overflow_3020.py")
@@ -189,15 +188,8 @@ def main() -> int:
             if "query:orch-module-stats-v2" in agent or "query:orch-module-stats2" in agent:
                 fails.append("AC4: orch-module-stats renamed (forbidden)")
 
-    obs_block = _block(obs, "query:security-posture")
-    must("kSecurityPostureWalPlannedKeys", "AC1 obs posture planned", obs_block)
-    obs_keys = _actual(obs_block)
-    om = PLANNED_RE.search(obs_block)
-    if om:
-        op = int(om.group(2))
-        oa = len(obs_keys)
-        if op < oa + HEADROOM:
-            fails.append(f"AC1: obs security-posture planned {op} < actual {oa} + {HEADROOM}")
+    # Issue #3881: obs_eval no longer dual-registers security-posture.
+    # Headroom is pinned on the security SSOT above.
 
     must("ac3339_2_no_overflow", "AC2 test", test)
     must("hash-overflow", "AC2 test overflow key", test)

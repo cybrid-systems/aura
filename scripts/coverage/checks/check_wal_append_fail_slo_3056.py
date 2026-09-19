@@ -39,7 +39,6 @@ def main() -> int:
     mut = _read("src/core/mutation_audit_wal.hh")
     se = _read("src/core/security_event_wal.hh")
     sec = _read("src/compiler/evaluator_primitives_security.cpp")
-    obs = _read("src/compiler/evaluator_primitives_obs_eval.cpp")
     evsec = _read("src/compiler/evaluator_security.cpp")
     test = _read("tests/compiler/test_security_event_wal_replay.cpp")
     trail = _read("tests/compiler/test_security_posture_trail.cpp")
@@ -62,7 +61,7 @@ def main() -> int:
     must("3056 AC3", "AC3 test", test)
 
     must("append-fail", "AC4 existing key", sec)
-    must("wal-append-fail-total", "AC4 existing SE key", obs)
+    must("wal-append-fail-total", "AC4 existing SE key", sec)  # #3881 SSOT
     must("3056 AC4", "AC4 test", test)
 
     must("decide_wal_append_fail_slo", "AC5 decide", slo)
