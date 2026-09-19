@@ -371,10 +371,14 @@ inline bool posture_wal_off_restricted_live(std::uint8_t sandbox_mode) noexcept 
 // Issue #2947: two relaxed loads (p99 + throttle flag) — no hist walk.
 // Quiet path (no samples, throttle=0) is the same cost as a pair of
 // loads; matches #2903 AC zero-extra-work when depth==0.
-inline void fill_mailbox_hold_slo_live_(SecurityScheduleInput& in) noexcept {
+inline void fill_mailbox_hold_slo_live_(SecurityScheduleInput& in,
+                                        std::string_view bp_scope_id = {}) noexcept {
     // Issue #3002: SSOT sample (same two relaxed loads as #2958).
-    aura::serve::mf_mailbox::sample_mailbox_hold_slo_live(
-        in.mailbox_wait_p99_us, in.mailbox_starvation_throttled, in.mailbox_wait_slo_us);
+    // Issue #3932: named spawn/mutate passes bp_scope_id so sibling
+    // starve/p99 does not flip mailbox_hold_slo.
+    aura::serve::mf_mailbox::sample_mailbox_hold_slo_live(in.mailbox_wait_p99_us,
+                                                          in.mailbox_starvation_throttled,
+                                                          in.mailbox_wait_slo_us, bp_scope_id);
     // Production + signal + live holder → one-shot cancel (reuse #2958
     // CAS; do not double-arm). Quiet: signal false → no extra work.
     if (mailbox_hold_slo_signal(in))
@@ -415,9 +419,9 @@ inline bool wal_append_fail_would_arm_live(bool production_defaults, bool soft_m
            ::aura_query_hash_overflow_total() > 0;
 }
 
-inline SecurityScheduleInput make_security_schedule_input_live(std::uint8_t eval_sandbox_mode,
-                                                               bool production_defaults,
-                                                               bool soft_mode) noexcept {
+inline SecurityScheduleInput
+make_security_schedule_input_live(std::uint8_t eval_sandbox_mode, bool production_defaults,
+                                  bool soft_mode, std::string_view bp_scope_id = {}) noexcept {
     SecurityScheduleInput in;
     in.production_mode = production_defaults;
     in.soft_mode = soft_mode;
@@ -428,7 +432,8 @@ inline SecurityScheduleInput make_security_schedule_input_live(std::uint8_t eval
     in.mid_fallback_slo_breach = mid_fallback_slo_breach_live();
     in.posture_wal_off_restricted = posture_wal_off_restricted_live(eval_sandbox_mode);
     // Issue #2947: mailbox under-boundary wait / throttle into same gate.
-    fill_mailbox_hold_slo_live_(in);
+    // Issue #3932: spawn preflight passes the resolved bp_scope_id.
+    fill_mailbox_hold_slo_live_(in, bp_scope_id);
     // Issue #3211: WAL append-fail SLO would_arm → schedule deny.
     in.wal_append_fail_would_arm = wal_append_fail_would_arm_live(production_defaults, soft_mode);
     // Issue #3244: metrics hash overflow observe (does not deny admit).

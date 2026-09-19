@@ -641,10 +641,18 @@ inline void reset_scope_starve_map_for_test() noexcept {
 // (#2958) so the two faces cannot drift.
 inline constexpr int kMailboxHoldSloSsotIssue = 3002;
 inline void sample_mailbox_hold_slo_live(std::uint64_t& p99_us, bool& throttled,
-                                         std::uint64_t& slo_us) noexcept {
-    p99_us = g_mf_mailbox_stats.mailbox_under_boundary_wait_us_p99.load(std::memory_order_relaxed);
-    throttled = aura_orch_mailbox_starvation_throttled();
+                                         std::uint64_t& slo_us,
+                                         std::string_view scope_id = {}) noexcept {
     slo_us = aura::compiler::mailbox_under_boundary_wait_slo_us();
+    throttled = aura_orch_mailbox_starvation_throttled(scope_id);
+    // Issue #3932: named production spawn must not inherit sibling
+    // process p99. Empty / "-" / Soft still sample the process hist.
+    const bool named =
+        mailbox_starve_scoped_active() && !normalize_starve_scope_id(scope_id).empty();
+    p99_us =
+        named
+            ? 0
+            : g_mf_mailbox_stats.mailbox_under_boundary_wait_us_p99.load(std::memory_order_relaxed);
 }
 [[nodiscard]] inline bool mailbox_hold_slo_live_signal(std::uint64_t p99_us, std::uint64_t slo_us,
                                                        bool throttled) noexcept {

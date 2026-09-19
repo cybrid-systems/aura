@@ -43,10 +43,13 @@
 #include "orch/security_schedule_gate.h"
 #include "compiler/aot_hot_update_health.hh"
 #include "compiler/typed_mutation_audit.h"
+#include "core/mutation_audit_wal.hh"
+#include "core/sandbox.hh"
 #include "core/wal_append_fail_slo.h"
 #include "core/resource_quota.hh"
 #include "orch/agent_spawn.h"
 #include "orch/sched_runner_test_helper.h"
+#include "serve/multi_fiber_mailbox.h"
 #include "serve/scheduler.h"
 
 extern "C" void aura_engine_metrics_reset_hash_overflow_for_test(void);
@@ -55,6 +58,8 @@ extern "C" void aura_query_hash_reset_overflow_for_test(void);
 
 #include <atomic>
 #include <cstdint>
+#include <cstdlib>
+#include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <print>
@@ -1028,10 +1033,79 @@ int run_test_security_schedule_gate() {
         reset_orch_security_schedule_counters_for_test();
     }
 
+    {
+        // Issue #3932: named scope A starve/p99 must not ScheduleGate
+        // tenant B spawn with a distinct bp_scope_id.
+        std::println("\n--- #3932: schedule-gate spawn uses spawn bp_scope_id ---");
+        using aura::core::sandbox::SandboxMode;
+        using aura::core::sandbox::set_mode;
+        using aura::orch::AgentDenyClass;
+        using aura::orch::AgentSpec;
+        using aura::orch::join_agent;
+        using aura::orch::JoinPolicy;
+        using aura::orch::spawn_agent_with_mailbox;
+        using aura::serve::SchedRunner;
+        using aura::serve::Scheduler;
+        using aura::serve::mf_mailbox::arm_scope_starve_throttle;
+        using aura::serve::mf_mailbox::aura_orch_mailbox_starvation_throttled;
+        using aura::serve::mf_mailbox::g_mf_mailbox_stats;
+        using aura::serve::mf_mailbox::reset_scope_starve_map_for_test;
+
+        const char* prev_sb = std::getenv("AURA_SANDBOX");
+        std::string prev_sb_s = prev_sb ? prev_sb : "";
+        ::setenv("AURA_SANDBOX", "restricted", 1);
+        aura::compiler::typed_audit::apply_production_audit_defaults();
+        set_mode(SandboxMode::Strict);
+        std::filesystem::create_directories("build/test-wal-3932");
+        if (!aura::core::audit_wal::g_mutation_audit_wal().is_enabled())
+            (void)aura::core::audit_wal::g_mutation_audit_wal().enable(
+                std::string_view("build/test-wal-3932"), nullptr, 0);
+        reset_scope_starve_map_for_test();
+        g_mf_mailbox_stats.mailbox_under_boundary_wait_us_p99.store(50'000,
+                                                                    std::memory_order_relaxed);
+        arm_scope_starve_throttle("scope-A-3932");
+        CHECK(aura_orch_mailbox_starvation_throttled("scope-A-3932"), "3932: A throttle armed");
+        CHECK(!aura_orch_mailbox_starvation_throttled("scope-B-3932"),
+              "3932: B throttle stays false");
+        Scheduler sched(1);
+        SchedRunner runner(sched);
+        AgentSpec spec;
+        spec.name = "3932-B";
+        spec.attach_mailbox = true;
+        spec.bp_scope_id = "scope-B-3932";
+        spec.body = [] {};
+        auto h = spawn_agent_with_mailbox(sched, spec);
+        CHECK(h.error.find("mailbox-hold-slo") == std::string::npos,
+              "3932: B spawn is not security-schedule:mailbox-hold-slo");
+        if (h.ok) {
+            CHECK(h.deny_class != AgentDenyClass::ScheduleGate, "3932: B spawn not ScheduleGate");
+            (void)join_agent(h, JoinPolicy{.primary_ms = 500, .drain_ms = 100});
+        }
+        const auto gate_h = read_file("src/orch/security_schedule_gate.h");
+        const auto mb = read_file("src/serve/multi_fiber_mailbox.h");
+        const auto spawn_src = read_file("src/orch/agent_spawn.h");
+        CHECK(mb.find("Issue #3932") != std::string::npos, "3932: sample cites #3932");
+        CHECK(gate_h.find("Issue #3932") != std::string::npos, "3932: fill cites #3932");
+        CHECK(spawn_src.find("h.bp_scope_id") != std::string::npos &&
+                  spawn_src.find("make_security_schedule_input_live") != std::string::npos,
+              "3932: spawn preflight passes bp_scope_id");
+        CHECK(read_file("tests/orch/test_issue_3932.cpp").empty(), "3932: no test_issue_3932.cpp");
+        g_mf_mailbox_stats.mailbox_under_boundary_wait_us_p99.store(0, std::memory_order_relaxed);
+        reset_scope_starve_map_for_test();
+        aura::core::audit_wal::g_mutation_audit_wal().disable();
+        aura::compiler::typed_audit::apply_dev_audit_defaults();
+        set_mode(SandboxMode::Off);
+        if (!prev_sb_s.empty())
+            ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+        else
+            ::unsetenv("AURA_SANDBOX");
+        reset_orch_security_schedule_counters_for_test();
+    }
+
     reset_orch_security_schedule_counters_for_test();
     aura::core::wal_slo::reset_wal_append_fail_slo_for_test();
-    std::println("\n=== #2590/#2947/#3211/#3244/#3251/#3777: {}/{} checks passed ===", g_passed,
-                 g_passed + g_failed);
+    std::println("\n=== #2590/#2947/#3211/#3244/#3251/#3777/#3932: {}/{} checks passed ===",
+                 g_passed, g_passed + g_failed);
     return g_failed == 0 ? 0 : 1;
 }
 
