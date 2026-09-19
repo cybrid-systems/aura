@@ -1,0 +1,31 @@
+{
+  "issue": 3897,
+  "title": "3 abort sites omit DirtySoaSnapshot (phantom over-dirty)",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_mutation_boundary.cpp",
+      "contains": [
+        "Issue #3897",
+        "std::move(cp.dirty_soa_snapshot)"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/compiler/test_abort_ir_cache_fence_first.cpp",
+      "contains": [
+        "3897 AC1: four abort_restore_dual_topology call sites",
+        "3897 AC1: all four sites pass moved dirty snapshot",
+        "ac3897_all_abort_sites_pass_dirty_soa"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "forbid": [
+        "tests/compiler/test_issue_3897.cpp",
+        "tests/issues/test_issue_3897.cpp",
+        "docs/design/3897-abort-dirty-soa.md"
+      ]
+    }
+  ]
+}
