@@ -3916,8 +3916,9 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 else if (ci < ev.cells().size())
                     ev.cells()[ci] = *refreshed;
                 tenv.bind(name, types::make_cell(ci));
-                if (sym != aura::ast::INVALID_SYM)
-                    tenv.bind_symid(sym, types::make_cell(ci));
+                // Do not bind_symid with the workspace intern onto
+                // stdin top_env — intern ids are pool-local and steal
+                // sibling stdin bindings (*h* / hbump) after rebind.
             }
         }
 
@@ -4106,6 +4107,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 // root is a full Define form, extract its value child
                 // first so we never nest a Define as a Lambda body
                 // (silent semantic corruption → void returns).
+                aura::ast::NodeId env_refresh_node = aura::ast::NULL_NODE;
                 {
                     auto pr_root_v = flat.get(pr.root);
                     aura::ast::NodeId body_to_set = pr.root;
@@ -4143,13 +4145,16 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                     }
                     if (pr_root_v.tag == aura::ast::NodeTag::Lambda) {
                         flat.set_child(id, 0, body_to_set);
+                        env_refresh_node = body_to_set;
                     } else if (lambda_id < flat.size() && !flat.is_free_slot(lambda_id)) {
                         flat.set_child(lambda_id, 0, body_to_set);
+                        env_refresh_node = lambda_id;
                     } else {
                         // No existing lambda; treat as
                         // "replace whole Define child" for
                         // consistency with the Lambda branch.
                         flat.set_child(id, 0, body_to_set);
+                        env_refresh_node = body_to_set;
                     }
                     if (allow_macro_set_body && was_macro_set_body)
                         propagate_macro_introduced_marker(ev, flat, body_to_set);
@@ -4251,6 +4256,32 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 if (ev.repopulate_workspace_dep_graph_fn_)
                     ev.repopulate_workspace_dep_graph_fn_();
 
+                // Issue #2730 / #3918: public rebind refreshes top_env
+                // from the live new value. set-body only dirtied IR, so
+                // (k 1) kept the pre-mutate closure until eval-current.
+                if (ev.workspace_pool_ && env_refresh_node != aura::ast::NULL_NODE &&
+                    env_refresh_node < flat.size()) {
+                    flat.force_align_subtree_gen(env_refresh_node);
+                    auto refreshed =
+                        ev.eval_flat(flat, *ev.workspace_pool_, env_refresh_node, ev.top_env());
+                    if (refreshed) {
+                        auto& tenv = ev.top_env();
+                        std::size_t ci = 0;
+                        bool have = false;
+                        if (auto existing = tenv.lookup_binding(name);
+                            existing && types::is_cell(*existing)) {
+                            ci = types::as_cell_id(*existing);
+                            have = true;
+                        }
+                        if (!have)
+                            ci = ev.alloc_cell(*refreshed);
+                        else if (ci < ev.cells().size())
+                            ev.cells()[ci] = *refreshed;
+                        tenv.bind(name, types::make_cell(ci));
+                    }
+                }
+                ev.last_eval_current_result_.reset();
+                ok = true;
                 return make_bool(true);
             }
         }
