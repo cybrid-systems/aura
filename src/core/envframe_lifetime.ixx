@@ -257,15 +257,12 @@ public:
         g_envframe_last_hold_gen_at_enter().store(hold_gen_at_enter_, std::memory_order_release);
     }
     ~EnvFrameLifetimeGuard() noexcept {
-        // Drop depth before scan so concurrent Force/compact can proceed after hold.
-        auto cur = g_envframe_active_guard_depth().load(std::memory_order_relaxed);
-        for (;;) {
-            const auto next = cur > 0 ? cur - 1 : 0;
-            if (g_envframe_active_guard_depth().compare_exchange_weak(
-                    cur, next, std::memory_order_acq_rel, std::memory_order_relaxed))
-                break;
-        }
         ++g_envframe_lifetime_stats.guards_destructed;
+        // Issue #3908: scan BEFORE dropping process-wide depth so
+        // concurrent Force / Moving / CompactSweep that soft-gate on
+        // active_guard_depth()==0 cannot admit mid-scan. Throughput
+        // cost is one extra depth-held window equal to the skip-freed
+        // walk (mandatory #2003 / #2164 safety net).
         // Issue #3535 / #3741: discriminator armed and ctx is not the
         // bound Evaluator. Still scan expected (save-side / bound eval)
         // — CompactSweep / FiberSteal / BoundaryExit must not drop the
@@ -277,10 +274,8 @@ public:
                 host_.scan_skip_freed(host_.expected_evaluator_id, site_);
                 ++g_envframe_lifetime_stats.scans_run;
             }
-            return;
-        }
-        // Mandatory exit scan (do not remove — #2003 / #2164 safety net).
-        if (host_.scan_skip_freed && host_.ctx) {
+        } else if (host_.scan_skip_freed && host_.ctx) {
+            // Mandatory exit scan (do not remove — #2003 / #2164 safety net).
             host_.scan_skip_freed(host_.ctx, site_);
             ++g_envframe_lifetime_stats.scans_run;
         }
@@ -290,6 +285,15 @@ public:
             host_.hold_generation ? host_.hold_generation(host_.ctx) : compact_generation();
         if (now != hold_gen_at_enter_)
             ++g_envframe_lifetime_stats.hold_gen_mismatch_total;
+        // Drop depth after scan so compact waiters see depth==0 only
+        // once skip-freed has returned.
+        auto cur = g_envframe_active_guard_depth().load(std::memory_order_relaxed);
+        for (;;) {
+            const auto next = cur > 0 ? cur - 1 : 0;
+            if (g_envframe_active_guard_depth().compare_exchange_weak(
+                    cur, next, std::memory_order_acq_rel, std::memory_order_relaxed))
+                break;
+        }
     }
 
     EnvFrameLifetimeGuard(const EnvFrameLifetimeGuard&) = delete;
