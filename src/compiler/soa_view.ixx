@@ -10,6 +10,7 @@ module;
 #include <cstdlib>
 
 #include "compiler/typed_mutation_audit.h" // #3403 production_defaults_active
+#include "core/cpp26_contract_stats.h"     // #3898 AURA_HOT_CONTRACT
 #include "jit_typed_mutation_stats.h"      // ir_soa_migration Phase 2 counters (#1920)
 
 export module aura.compiler.soa_view;
@@ -110,7 +111,9 @@ inline void record_edsl_soa_migration_progress(std::uint64_t n = 1) noexcept {
 }
 
 // Zero-overhead non-owning span over a single SoA column (safe PCV pattern).
-// Issue #1321: bounds-checked operator[] (contract in debug; no-op release).
+// Issue #1321: bounds-checked operator[].
+// Issue #3898: AURA_HOT_CONTRACT so Ready/PACK arming covers column OOB
+// (language contract_assert is Quiet under Soft/NDEBUG).
 template <typename T> struct SafePCVSpan {
     const T* data = nullptr;
     std::size_t len = 0;
@@ -120,7 +123,7 @@ template <typename T> struct SafePCVSpan {
     [[nodiscard]] const T& operator[](std::size_t i) const {
         // AI mutation context: prevent SoA column OOB when dirty short-circuit
         // or dual-emit leaves sparse lengths.
-        contract_assert(i < len);
+        AURA_HOT_CONTRACT(i < len);
         return data[i];
     }
     [[nodiscard]] constexpr const T* begin() const noexcept { return data; }

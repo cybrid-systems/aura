@@ -1,0 +1,30 @@
+{
+  "issue": 3898,
+  "title": "SafePCVSpan::operator[] still contract_assert, not AURA_HOT_CONTRACT",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/soa_view.ixx",
+      "contains": [
+        "Issue #3898",
+        "AURA_HOT_CONTRACT(i < len)"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/compiler/test_hot_contract_unify.cpp",
+      "contains": [
+        "3898 AC1: operator[] uses AURA_HOT_CONTRACT",
+        "3898 AC1: operator[] is not language contract_assert"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "forbid": [
+        "tests/compiler/test_issue_3898.cpp",
+        "tests/issues/test_issue_3898.cpp",
+        "docs/design/3898-safepcvspan-hot-contract.md"
+      ]
+    }
+  ]
+}
