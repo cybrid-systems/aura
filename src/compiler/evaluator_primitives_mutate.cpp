@@ -9580,7 +9580,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             // Issue #3020: ~26 live keys; next_pow2(planned*2) ≥64.
             // Issue #3339: live 35 (#3096 heal counters); planned 48 (>= 35+8).
             // Additive insert_kv must raise planned_keys; Agent facade forbids
-            // hash-overflow.
+            // hash-overflow. Issue #3882: CI fails when live + 8 > planned.
             constexpr std::size_t kReloadRecoveryPlaybookPlannedKeys = 48;
             auto* ht =
                 FlatHashTable::create(query_hash_capacity_for(kReloadRecoveryPlaybookPlannedKeys));

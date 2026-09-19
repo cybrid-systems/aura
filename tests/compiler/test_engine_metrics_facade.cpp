@@ -172,14 +172,16 @@ int main() {
               "3246 AC2: observe-only preserved");
     }
 
-    // ── Issue #3339 / #3807 / #3846: Agent decision facade headroom; no hash-overflow ──
+    // ── Issue #3339 / #3807 / #3846 / Issue #3882: Agent decision facade headroom ──
     // Runs before :prefix catalog dump so a prefix leftover cannot hide ACs.
     // #3807: orch-module-stats joins the production_defaults overflow hard-fail set.
+    // #3882: CI pin list covers posture / playbook / evolution / orch.
     {
         using aura::compiler::typed_audit::apply_dev_audit_defaults;
         using aura::compiler::typed_audit::apply_production_audit_defaults;
         using aura::compiler::typed_audit::reset_for_test;
-        std::println("\n--- #3339/#3807/#3846: Agent decision facade planned_keys headroom ---");
+        std::println(
+            "\n--- #3339/#3807/#3846/#3882: Agent decision facade planned_keys headroom ---");
         aura_query_hash_set_force_cap(0);
         aura_query_hash_reset_overflow_for_test();
         reset_for_test();
@@ -935,6 +937,45 @@ int main() {
         CHECK(count_occ(sec, needle_i) == 1, "3881 AC1: exactly one isolation register_stats_impl");
         CHECK(read_file("tests/compiler/test_issue_3881.cpp").empty(),
               "3881 AC: no test_issue_3881.cpp");
+    }
+
+    // ── Issue #3882: Agent facade planned_keys CI live-vs-planned pins ──
+    {
+        std::println("\n--- #3882: Agent facade planned_keys CI pins ---");
+        const auto lint =
+            read_file("scripts/coverage/checks/check_agent_decision_facade_headroom_3339.py");
+        CHECK(lint.find("query:security-posture") != std::string::npos,
+              "3882 AC1: CI pins posture");
+        CHECK(lint.find("query:reload-recovery-playbook") != std::string::npos,
+              "3882 AC1: CI pins playbook");
+        CHECK(lint.find("query:type-linear-evolution-snapshot") != std::string::npos,
+              "3882 AC1: CI pins evolution");
+        CHECK(lint.find("query:orch-module-stats") != std::string::npos, "3882 AC1: CI pins orch");
+        CHECK(lint.find("planned < actual + HEADROOM") != std::string::npos,
+              "3882 AC1: CI fails when live + 8 > planned");
+        const auto evix = read_file("src/compiler/evaluator.ixx");
+        CHECK(evix.find("Issue #3882") != std::string::npos, "3882 AC1: evaluator cites #3882");
+        CHECK(evix.find("query_hash_capacity_for") != std::string::npos,
+              "3882 AC: prefer query_hash_capacity_for");
+        CHECK(read_file("src/compiler/evaluator_primitives_security.cpp").find("Issue #3882") !=
+                  std::string::npos,
+              "3882 AC1: posture cites #3882");
+        CHECK(read_file("src/compiler/evaluator_primitives_mutate.cpp").find("Issue #3882") !=
+                  std::string::npos,
+              "3882 AC1: playbook cites #3882");
+        CHECK(
+            read_file("src/compiler/evaluator_primitives_query_reflect.cpp").find("Issue #3882") !=
+                std::string::npos,
+            "3882 AC1: evolution cites #3882");
+        CHECK(read_file("src/compiler/evaluator_primitives_agent.cpp").find("Issue #3882") !=
+                  std::string::npos,
+              "3882 AC1: orch cites #3882");
+        CHECK(read_file("tests/compiler/test_issue_3882.cpp").empty(),
+              "3882 AC: no test_issue_3882.cpp");
+        CHECK(read_file("docs/design/3882-planned-keys-ci.md").empty(),
+              "3882 AC: no docs/design/3882-*");
+        CHECK(read_file("scripts/coverage/checks/check_planned_keys_3882.py").empty(),
+              "3882 AC: no new check_*.py");
     }
 
     if (::aura::test::g_failed) {

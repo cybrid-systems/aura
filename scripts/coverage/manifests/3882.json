@@ -1,0 +1,54 @@
+{
+  "issue": 3882,
+  "title": "Agent facade planned_keys CI live-vs-planned pins",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "scripts/coverage/checks/check_agent_decision_facade_headroom_3339.py",
+      "contains": [
+        "Issue #3882",
+        "query:security-posture",
+        "query:reload-recovery-playbook",
+        "query:type-linear-evolution-snapshot",
+        "query:orch-module-stats",
+        "planned < actual + HEADROOM"
+      ]
+    },
+    {
+      "ac": "AC1-stamp",
+      "path": "src/compiler/evaluator.ixx",
+      "contains": [
+        "Issue #3882",
+        "kAgentDecisionFacadeHeadroom = 8",
+        "query_hash_capacity_for"
+      ]
+    },
+    {
+      "ac": "AC1-facades",
+      "path": "src/compiler/evaluator_primitives_security.cpp",
+      "contains": [
+        "Issue #3882",
+        "kSecurityPosturePlannedKeys = 128"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/compiler/test_engine_metrics_facade.cpp",
+      "contains": [
+        "3882 AC1: CI pins posture",
+        "3882 AC1: CI pins playbook",
+        "3882 AC1: CI pins evolution",
+        "3882 AC1: CI pins orch"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "forbid": [
+        "tests/compiler/test_issue_3882.cpp",
+        "tests/issues/test_issue_3882.cpp",
+        "scripts/coverage/checks/check_planned_keys_3882.py",
+        "docs/design/3882-planned-keys-ci.md"
+      ]
+    }
+  ]
+}
