@@ -2219,6 +2219,13 @@ static void ac3886_source_and_soft() {
           "3886 AC1: BoundaryExit uses coalesce");
     CHECK(dtor.find("aura_residual_remount_note_boundary_exit") != std::string::npos,
           "3886 AC1: BoundaryExit bumps gen");
+    const auto note = dtor.find("Issue #3910");
+    CHECK(note != std::string::npos, "3910 AC: BoundaryExit cites gen-before-coalesce");
+    const auto win = dtor.substr(note, 500);
+    const auto bump = win.find("aura_residual_remount_note_boundary_exit");
+    const auto tick = win.find("aura_residual_remount_tick_coalesce");
+    CHECK(bump != std::string::npos && tick != std::string::npos && bump < tick,
+          "3910 AC1: note_boundary_exit before coalesce (this exit owns the gen)");
     CHECK(rt.find("storm >= 2") != std::string::npos ||
               rt.find("aura_hot_update_should_throttle_reemit") != std::string::npos,
           "3886 AC2: storm/throttle still skip inside tick");
