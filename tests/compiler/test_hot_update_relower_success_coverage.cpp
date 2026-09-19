@@ -46,6 +46,7 @@
 
 #include "compiler/aura_jit_bridge.h"
 #include "compiler/hot_update_registry.hh"
+#include "compiler/typed_mutation_audit.h"
 
 #include <fstream>
 #include <print>
@@ -430,7 +431,70 @@ int run_test_hot_update_relower_success_coverage() {
         reg.reset_force_jit_repromote_for_test();
     }
 
-    std::println("\n=== Issue #3383 + #3229 + #3505 AC tests done ===");
+    // ── Issue #3893: idle fallback must not mix FNV region with reason-group
+    {
+        std::println("\n--- #3893 AC1: idle side set + FNV bits 0-4 is not false residual ---");
+        auto& reg = aura::compiler::hot_update_registry();
+        reg.on_reload_success();
+        reg.reset_force_jit_repromote_for_test();
+        std::string collide;
+        std::uint64_t cbit = 0;
+        for (int i = 0; i < 4096; ++i) {
+            auto n = std::string("d3893-") + std::to_string(i);
+            const auto b = aura::compiler::relower_success_region_bit(n);
+            if ((b & 0x1FULL) != 0) {
+                collide = std::move(n);
+                cbit = b;
+                break;
+            }
+        }
+        CHECK(!collide.empty(), "3893 AC1: found FNV region bit in 0-4");
+        const auto id = aura::compiler::relower_success_define_id(collide);
+        CHECK(id != 0, "3893 AC1: define id");
+        reg.on_force_jit_for_reason(AotReloadFail::Defuse);
+        reg.on_force_jit_for_reason(AotReloadFail::Env);
+        reg.on_force_jit_for_reason(AotReloadFail::Linear);
+        reg.on_force_jit_for_reason(AotReloadFail::Region);
+        reg.on_force_jit_for_reason(AotReloadFail::Dlopen);
+        CHECK((reg.residual_force_mask() & cbit) != 0,
+              "3893 AC1: reason-group residual overlaps FNV bit (pre-fix mix)");
+        CHECK(!reg.relower_success_define_active(), "3893 AC1: side set idle");
+        CHECK(!reg.residual_force_for_define(id, cbit),
+              "3893 AC1: idle + FNV-in-0-4 is not a false residual remount");
+
+        std::println("\n--- #3893 AC2: active define side set unchanged ---");
+        using aura::compiler::typed_audit::apply_dev_audit_defaults;
+        using aura::compiler::typed_audit::apply_production_audit_defaults;
+        apply_production_audit_defaults();
+        const auto peer = id ^ 0x9e3779b9u;
+        CHECK(peer != 0 && peer != id, "3893 AC2: uncovered peer id");
+        reg.note_relower_success_define(id);
+        CHECK(reg.relower_success_define_active(), "3893 AC2: side set active");
+        CHECK(reg.relower_success_covers_define(id), "3893 AC2: covered id recorded");
+        CHECK(!reg.residual_force_for_define(id, cbit), "3893 AC2: covered define is not residual");
+        CHECK(reg.residual_force_for_define(peer, cbit), "3893 AC2: uncovered peer stays residual");
+        apply_dev_audit_defaults();
+
+        std::println("\n--- #3893 AC3: source-cite + Soft/Off + no invent ---");
+        const auto hh = read_file("src/compiler/hot_update_registry.hh");
+        const auto cite = hh.find("Issue #3893");
+        CHECK(cite != std::string::npos, "3893 AC3: #3893 cite");
+        if (cite != std::string::npos) {
+            const auto hwin = hh.substr(cite, 900);
+            CHECK(hwin.find("return false") != std::string::npos, "3893 AC3: idle empty residual");
+            CHECK(hwin.find("relower_success_covers_define") != std::string::npos,
+                  "3893 AC3: active side set kept");
+        }
+        CHECK(hh.find("schema-3893") == std::string::npos, "3893 AC3: no query key in header");
+        CHECK(read_file("tests/compiler/test_issue_3893.cpp").empty(), "3893 AC3: no invent");
+        CHECK(read_file("tests/issues/test_issue_3893.cpp").empty(), "3893 AC3: no issues invent");
+        CHECK(read_file("docs/design/3893-residual-force-fnv-mix.md").empty(),
+              "3893 AC3: no docs/design");
+        reg.on_reload_success();
+        reg.reset_force_jit_repromote_for_test();
+    }
+
+    std::println("\n=== Issue #3383 + #3229 + #3505 + #3893 AC tests done ===");
     return g_failed == 0 ? 0 : 1;
 }
 

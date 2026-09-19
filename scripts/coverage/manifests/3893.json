@@ -1,0 +1,31 @@
+{
+  "issue": 3893,
+  "title": "residual_force_for_define idle fallback mixes FNV region with reason-group bits",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/hot_update_registry.hh",
+      "contains": [
+        "Issue #3893",
+        "residual_force_for_define",
+        "return false"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/compiler/test_hot_update_relower_success_coverage.cpp",
+      "contains": [
+        "3893 AC1: idle + FNV-in-0-4 is not a false residual remount",
+        "3893 AC2: uncovered peer stays residual"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "forbid": [
+        "tests/compiler/test_issue_3893.cpp",
+        "tests/issues/test_issue_3893.cpp",
+        "docs/design/3893-residual-force-fnv-mix.md"
+      ]
+    }
+  ]
+}

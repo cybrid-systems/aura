@@ -267,8 +267,11 @@ public:
         return relower_success_define_active_.load(std::memory_order_relaxed) != 0;
     }
     // Per-define residual: force_region && !this define's success.
-    // When the side set is idle (Soft / pipeline coverage), fall back
-    // to residual_force_mask() & region_bit (#3136).
+    // Issue #3893: idle side set must not AND #3445 reason-group residual
+    // (bits 0–4) with an FNV&63 region_bit — that mix is a latent false
+    // residual when the hash lands in bits 0–4. Define coverage is the
+    // #3229 side set; idle means no precise record → empty residual
+    // (same face as remount prefer idle). Active side set unchanged.
     [[nodiscard]] bool residual_force_for_define(std::uint32_t id,
                                                  std::uint64_t region_bit) const noexcept {
         if (region_bit == 0)
@@ -278,7 +281,7 @@ public:
             return false;
         if (relower_success_define_active_.load(std::memory_order_relaxed) != 0)
             return !relower_success_covers_define(id);
-        return (residual_force_mask() & region_bit) != 0;
+        return false; // Issue #3893: idle — never mix reason-group with FNV
     }
     void clear_relower_success_defines() noexcept {
         relower_success_define_count_.store(0, std::memory_order_relaxed);
