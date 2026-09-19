@@ -5118,59 +5118,65 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
     // (#1966): C++ helper agent_ask builds a per-ask reply mailbox,
     // stamps MailKind::Ask + correlation_id (#2538 typed path) and
     // dual-writes the legacy "ask:<id>:<body>" prefix (#2231).
-    add("orch:agent-ask", [&ev, build_orch_hash](std::span<const EvalValue> a) -> EvalValue {
-        if (a.size() < 2 || !types::is_string(a[0])) {
-            return make_primitive_error(
-                ev.string_heap_, ev.error_values_,
-                "orch:agent-ask: usage (orch:agent-ask name payload [:timeout-ms n])",
-                ev.primitive_error_counter_ptr());
-        }
-        auto name = heap_str_from(ev.string_heap_, a[0]);
-        auto* hp = resolve_aura_agent(ev, name);
-        if (!hp || !hp->ok) {
-            return make_primitive_error(ev.string_heap_, ev.error_values_,
-                                        "orch:agent-ask: unknown agent",
-                                        ev.primitive_error_counter_ptr());
-        }
-        // Coerce payload to a string (mirror orch:agent-send).
-        std::string payload;
-        if (types::is_string(a[1]))
-            payload = heap_str_from(ev.string_heap_, a[1]);
-        else if (types::is_int(a[1]))
-            payload = std::to_string(types::as_int(a[1]));
-        else if (types::is_bool(a[1]))
-            payload = types::as_bool(a[1]) ? "#t" : "#f";
-        else
-            payload = "payload";
-        // Default timeout 5000ms; optional 3rd arg (int ms).
-        std::uint64_t timeout_ms = 5000;
-        if (a.size() >= 3 && types::is_int(a[2])) {
-            const auto t = types::as_int(a[2]);
-            if (t > 0)
-                timeout_ms = static_cast<std::uint64_t>(t);
-        }
-        // Delegate to the C++ helper (typed + dual-write legacy protocol).
-        const auto r = aura::orch::agent_ask(*hp, payload, timeout_ms);
-        // Encode the structured hash: ok / status / payload /
-        // correlation-id / schema-2231 / schema-2538.
-        auto st_s = r.status; // already "ok" | "timeout" | "no-mailbox" | "malformed"
-        auto st_idx = ev.string_heap_.size();
-        ev.string_heap_.push_back(st_s);
-        auto payload_idx = ev.string_heap_.size();
-        ev.string_heap_.push_back(r.payload);
-        auto corr_idx = ev.string_heap_.size();
-        ev.string_heap_.push_back(std::to_string(r.correlation_id));
-        std::vector<std::pair<std::string, EvalValue>> kv = {
-            {"ok", make_bool(r.ok)},
-            {"status", make_string(st_idx)},
-            {"payload", make_string(payload_idx)},
-            {"correlation-id", make_string(corr_idx)},
-            {"schema", make_int(aura::orch::kAgentAskIssue)},
-            {"schema-2231", make_int(aura::orch::kAgentAskIssue)},
-            {"schema-2538", make_int(aura::orch::kAgentAskTypedCorrIssue)},
-        };
-        return build_orch_hash(kv);
-    });
+    add("orch:agent-ask",
+        [&ev, build_orch_hash, add_deny_class](std::span<const EvalValue> a) -> EvalValue {
+            if (a.size() < 2 || !types::is_string(a[0])) {
+                return make_primitive_error(
+                    ev.string_heap_, ev.error_values_,
+                    "orch:agent-ask: usage (orch:agent-ask name payload [:timeout-ms n])",
+                    ev.primitive_error_counter_ptr());
+            }
+            auto name = heap_str_from(ev.string_heap_, a[0]);
+            auto* hp = resolve_aura_agent(ev, name);
+            if (!hp || !hp->ok) {
+                return make_primitive_error(ev.string_heap_, ev.error_values_,
+                                            "orch:agent-ask: unknown agent",
+                                            ev.primitive_error_counter_ptr());
+            }
+            // Coerce payload to a string (mirror orch:agent-send).
+            std::string payload;
+            if (types::is_string(a[1]))
+                payload = heap_str_from(ev.string_heap_, a[1]);
+            else if (types::is_int(a[1]))
+                payload = std::to_string(types::as_int(a[1]));
+            else if (types::is_bool(a[1]))
+                payload = types::as_bool(a[1]) ? "#t" : "#f";
+            else
+                payload = "payload";
+            // Default timeout 5000ms; optional 3rd arg (int ms).
+            std::uint64_t timeout_ms = 5000;
+            if (a.size() >= 3 && types::is_int(a[2])) {
+                const auto t = types::as_int(a[2]);
+                if (t > 0)
+                    timeout_ms = static_cast<std::uint64_t>(t);
+            }
+            // Delegate to the C++ helper (typed + dual-write legacy protocol).
+            const auto r = aura::orch::agent_ask(*hp, payload, timeout_ms);
+            // Encode the structured hash: ok / status / payload /
+            // correlation-id / schema-2231 / schema-2538.
+            auto st_s =
+                r.status; // "ok" | "timeout" | "no-mailbox" | "malformed" | recv-under-boundary
+            auto st_idx = ev.string_heap_.size();
+            ev.string_heap_.push_back(st_s);
+            auto payload_idx = ev.string_heap_.size();
+            ev.string_heap_.push_back(r.payload);
+            auto corr_idx = ev.string_heap_.size();
+            ev.string_heap_.push_back(std::to_string(r.correlation_id));
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"ok", make_bool(r.ok)},
+                {"status", make_string(st_idx)},
+                {"payload", make_string(payload_idx)},
+                {"correlation-id", make_string(corr_idx)},
+                {"schema", make_int(aura::orch::kAgentAskIssue)},
+                {"schema-2231", make_int(aura::orch::kAgentAskIssue)},
+                {"schema-2538", make_int(aura::orch::kAgentAskTypedCorrIssue)},
+            };
+            // Issue #3940: Guard-live ask typed deny reuses recv-under-boundary.
+            if (r.status == "recv-under-boundary")
+                add_deny_class(kv, aura::orch::AgentDenyClass::Other, "recv-under-boundary", 0,
+                               /*emit_retry=*/false);
+            return build_orch_hash(kv);
+        });
 
     // Issue #2401 / #2538: orch:agent-reply corr payload → hash
     // {ok, status, schema-2401, schema-2538}.

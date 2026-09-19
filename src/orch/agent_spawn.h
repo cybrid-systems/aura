@@ -4410,6 +4410,10 @@ agent_reply(std::uint64_t corr_id, std::string_view body,
     if (from && from->ok)
         msg.from_fiber = from->id;
     const auto st = dest->push(std::move(msg));
+    // Issue #3940: charge the same per-scope BP gauge as agent_send.
+    if (st == serve::mf_mailbox::PushStatus::Backpressure)
+        note_mailbox_bp_recent_event(from ? from->bp_scope_id : std::string_view{},
+                                     from ? from->id : 0);
     if (st == serve::mf_mailbox::PushStatus::Ok) {
         out.ok = true;
         out.status = "ok";
@@ -4442,6 +4446,14 @@ agent_reply(AgentHandle& self, std::uint64_t corr_id, std::string_view body,
         out.status = "no-mailbox";
         return out;
     }
+    // Issue #3940: Guard-live Policy A would empty the reply recv and
+    // busy-spin to timeout. Typed deny (same recv-under-boundary as
+    // orch:agent-recv) — do not send then spin. Soft/Off: skip.
+    if (aura::compiler::typed_audit::production_defaults_active() &&
+        aura_evaluator_mutation_boundary_depth() > 0) {
+        out.status = "recv-under-boundary";
+        return out;
+    }
     // Process atomic correlation id (no global agent map).
     static std::atomic<std::uint64_t> g_ask_corr_id{0};
     const auto corr_id = g_ask_corr_id.fetch_add(1, std::memory_order_relaxed) + 1;
@@ -4469,7 +4481,10 @@ agent_reply(AgentHandle& self, std::uint64_t corr_id, std::string_view body,
     // Issue #2538: typed correlation fields (primary match path).
     msg.correlation_id = corr_id;
     msg.kind = serve::mf_mailbox::MailKind::Ask;
-    auto st = target.mailbox->push(std::move(msg));
+    // Issue #3940: route through agent_send so named-scope BP / producer
+    // throttle match orch:agent-send (ask storms no longer leave the
+    // gauge dark). String payload stays string (no held_ref invent).
+    auto st = agent_send(target, std::move(msg)); // orch-raw-send-ok
     if (st == serve::mf_mailbox::PushStatus::Closed) {
         out.status = "no-mailbox";
         return out;
@@ -4490,7 +4505,16 @@ agent_reply(AgentHandle& self, std::uint64_t corr_id, std::string_view body,
         }
         const auto remaining_ms = static_cast<int>(
             std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now).count());
-        auto m = reply_mb->recv(/*wait=*/true, remaining_ms, /*fiber_id=*/0);
+        bool stale_handoff = false;
+        bool boundary_reject = false;
+        auto m = reply_mb->recv(/*wait=*/true, remaining_ms, /*fiber_id=*/0, &stale_handoff,
+                                &boundary_reject);
+        // Issue #3940: Guard-live Policy A empty is a typed deny, not a
+        // timeout from busy-spin. Soft/Off: no extra intern (continue).
+        if (boundary_reject && aura::compiler::typed_audit::production_defaults_active()) {
+            out.status = "recv-under-boundary";
+            return out;
+        }
         if (!m)
             continue;
         // Issue #2538: typed match first, then legacy text prefix (AC1/AC2).
