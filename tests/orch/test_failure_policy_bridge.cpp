@@ -89,6 +89,7 @@ static void ac3206_run_added_tests();
 static void ac3495_run_added_tests();
 // Issue #3726: supervise-batch population split (child scope).
 static void ac3726_run_added_tests();
+static void ac3926_supervise_batch_isolation_honest();
 
 int run_test_failure_policy_bridge() {
     std::println("=== Issue #2539: FailurePolicy → AgentFailurePolicy bridge ===");
@@ -415,6 +416,7 @@ int run_test_failure_policy_bridge() {
     ac3495_run_added_tests();
     // Issue #3726: one population per apply_workflow call.
     ac3726_run_added_tests();
+    ac3926_supervise_batch_isolation_honest();
 
     // Issue #3052: RetryN projects on_join_fail; explicit policy not overwritten.
     {
@@ -1396,6 +1398,43 @@ static void ac3726_run_added_tests() {
     ac3726_3_soft_observe();
     ac3726_4_decide_isolation_ssot();
     ac3726_5_no_invent();
+}
+
+static void ac3926_supervise_batch_isolation_honest() {
+    std::println("\n--- #3926: supervise-batch does not advertise region-concurrent 1-wide ---");
+    using aura::compiler::CompilerService;
+    using aura::compiler::types::as_bool;
+    using aura::compiler::types::as_int;
+    using aura::compiler::types::is_bool;
+    using aura::compiler::types::is_int;
+    using aura::orch::reset_all_agent_scopes_for_test;
+    reset_all_agent_scopes_for_test();
+    CompilerService cs;
+    auto r = cs.eval(R"(
+        (let ((pol (orch:compose-workflow 'collect-all))
+              (tasks (list (lambda () 1) (lambda () 2))))
+          (let ((h (orch:supervise-batch tasks pol :watch-scope #t)))
+            (if (and (string=? (hash-ref h "isolation-level") "serialized")
+                     (hash-ref h "eval-serialized"))
+                1 0)))
+    )");
+    CHECK(r && is_int(*r) && as_int(*r) == 1,
+          "3926 AC1: watch path isolation-level=serialized and eval-serialized=#t");
+    auto r2 = cs.eval(R"(
+        (let ((pol (orch:compose-workflow 'collect-all))
+              (tasks (list (lambda () 1) (lambda () 2)))
+              (keys (vector 1 2)))
+          (let ((h (orch:supervise-batch tasks pol :watch-scope #f :region-keys keys)))
+            (if (hash-ref h "eval-serialized") 1 0)))
+    )");
+    CHECK(r2 && is_int(*r2) && as_int(*r2) == 1,
+          "3926 AC2: Soft + region-keys still eval-serialized (no getenv skip)");
+    const auto src = read_file("src/compiler/evaluator_primitives_agent.cpp");
+    CHECK(src.find("#3926") != std::string::npos, "3926 AC5: cite");
+    CHECK(src.find("eval-serialized") != std::string::npos, "3926 AC5: eval-serialized on hash");
+    CHECK(read_file("docs/design/3926-supervise-isolation.md").empty(), "3926: no docs/design");
+    CHECK(read_file("tests/orch/test_issue_3926.cpp").empty(), "3926: no test_issue_3926");
+    reset_all_agent_scopes_for_test();
 }
 
 #ifndef AURA_ISSUE_BATCH_MEMBER

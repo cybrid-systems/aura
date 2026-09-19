@@ -5669,6 +5669,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             // string-only) so :watch-scope #f actually skips Phase B.
             std::uint32_t stall_timeout_ms = 0;
             bool watch_scope = true;
+            std::vector<std::uint64_t> region_keys;
             for (std::size_t i = 2; i + 1 < a.size(); i += 2) {
                 auto k = orch_keyword_key(a[i]);
                 if (k == "stall-timeout-ms" && types::is_int(a[i + 1]))
@@ -5676,6 +5677,20 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                         std::max<std::int64_t>(0, types::as_int(a[i + 1])));
                 else if (k == "watch-scope" && types::is_bool(a[i + 1]))
                     watch_scope = types::as_bool(a[i + 1]);
+                else if ((k == "region-keys" || k == "region_keys") && types::is_vector(a[i + 1])) {
+                    // Issue #3926: forward :region-keys onto child specs / no-watch intend.
+                    auto rvidx = types::as_vector_idx(a[i + 1]);
+                    if (rvidx < ev.vector_heap_.size()) {
+                        region_keys.clear();
+                        for (auto& e : ev.vector_heap_[rvidx]) {
+                            if (types::is_int(e))
+                                region_keys.push_back(static_cast<std::uint64_t>(
+                                    std::max<std::int64_t>(0, types::as_int(e))));
+                            else
+                                region_keys.push_back(0);
+                        }
+                    }
+                }
             }
 
             auto hash_lookup = [&ev](const EvalValue& h, std::string_view key) -> EvalValue {
@@ -5806,16 +5821,33 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             auto& child = root.spawn_child();
             auto eval_mu = std::make_shared<std::mutex>();
             std::vector<aura::serve::parallel_orch::TaskSpec> tasks;
+            auto rkey_at = [&region_keys](std::size_t i) -> std::uint64_t {
+                return i < region_keys.size() ? region_keys[i] : 0;
+            };
+            std::vector<aura::serve::parallel_orch::TaskSpec> iso_probe(cids.size());
+            for (std::size_t i = 0; i < cids.size(); ++i)
+                iso_probe[i].region_key = rkey_at(i);
+            const auto iso_dec = aura::serve::parallel_orch::decide_isolation(
+                aura::serve::parallel_orch::ParallelPolicy{}, iso_probe, /*pure_mode=*/false);
+            const bool prod = aura::compiler::typed_audit::production_defaults_active();
+            const bool skip_mu =
+                iso_dec.level == aura::serve::parallel_orch::IsolationLevel::RegionConcurrent &&
+                prod && ev.workspace_region_concurrency_enabled();
             if (watch_scope) {
                 // Spawn into the child so watch_all / RestartN have specs_
                 // + handles. Empty Phase A so closures do not run twice.
                 for (std::size_t ti = 0; ti < cids.size(); ++ti) {
                     const auto cid = cids[ti];
+                    const auto rkey = rkey_at(ti);
                     aura::orch::AgentSpec spec;
                     spec.name = "supervise-batch-" + std::to_string(ti);
-                    spec.body = [&ev, cid]() {
+                    spec.region_key = rkey;
+                    spec.body = [&ev, cid, rkey, skip_mu]() {
                         try {
-                            std::lock_guard lock(ev.agent_apply_mu_);
+                            const bool use_lock = !skip_mu || rkey == 0;
+                            std::unique_lock<std::mutex> lock(ev.agent_apply_mu_, std::defer_lock);
+                            if (use_lock)
+                                lock.lock();
                             if (!agent_cid_live(ev, cid)) {
                                 agent_note_closure_freed_call(ev);
                                 return;
@@ -5839,22 +5871,28 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 tasks.reserve(cids.size());
                 for (std::size_t ti = 0; ti < cids.size(); ++ti) {
                     const auto cid = cids[ti];
-                    tasks.push_back(aura::serve::parallel_orch::TaskSpec{
-                        .body = [&ev, eval_mu, cid,
-                                 ti]() -> aura::serve::parallel_orch::TaskResult {
-                            std::lock_guard<std::mutex> lock(*eval_mu);
-                            aura::serve::parallel_orch::TaskResult tr;
-                            tr.task_index = ti;
-                            auto opt = ev.apply_closure(cid, {});
-                            if (!opt) {
-                                tr.ok = false;
-                                tr.error = "apply-failed";
-                            } else if (types::is_error(*opt)) {
-                                tr.ok = false;
-                                tr.error = "task-error";
-                            }
-                            return tr;
-                        }});
+                    const auto rkey = rkey_at(ti);
+                    aura::serve::parallel_orch::TaskSpec ts;
+                    ts.region_key = rkey;
+                    ts.body = [&ev, eval_mu, cid, ti, rkey,
+                               skip_mu]() -> aura::serve::parallel_orch::TaskResult {
+                        const bool use_lock = !skip_mu || rkey == 0;
+                        std::unique_lock<std::mutex> lock(*eval_mu, std::defer_lock);
+                        if (use_lock)
+                            lock.lock();
+                        aura::serve::parallel_orch::TaskResult tr;
+                        tr.task_index = ti;
+                        auto opt = ev.apply_closure(cid, {});
+                        if (!opt) {
+                            tr.ok = false;
+                            tr.error = "apply-failed";
+                        } else if (types::is_error(*opt)) {
+                            tr.ok = false;
+                            tr.error = "task-error";
+                        }
+                        return tr;
+                    };
+                    tasks.push_back(std::move(ts));
                 }
             }
 
@@ -5913,6 +5951,11 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             };
             const auto apply_total = aura::orch::g_orch_module_stats.workflow_apply_total.load(
                 std::memory_order_relaxed);
+            // Issue #3926: never advertise region-concurrent while apply is
+            // 1-wide (watch empty Phase A / unkeyed / Soft). decide_isolation
+            // remains the only ternary.
+            if (!skip_mu)
+                wf_iso.decision.level = aura::serve::parallel_orch::IsolationLevel::Serialized;
             const char* iso_cstr =
                 aura::serve::parallel_orch::isolation_level_cstr(wf_iso.decision.level);
             std::vector<std::pair<std::string, EvalValue>> kv = {
@@ -5936,6 +5979,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 // on workflow hash (no new query key).
                 {"isolation-level", push_str(iso_cstr)},
                 {"isolation-level-wired", make_int(1)},
+                {"eval-serialized", make_bool(!skip_mu)},
                 {"region-key-missing", make_bool(wf_iso.region_key_missing)},
                 {"region-key-missing-serialized", make_int(wf_iso.region_key_missing ? 1 : 0)},
                 {"distinct-region-keys",
