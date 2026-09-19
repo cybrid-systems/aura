@@ -2095,35 +2095,21 @@ void register_query_lifecycle_primitives(PrimRegistrar add, std::pmr::vector<Pai
     // propagation metrics (column writes / cascades avoided / column
     // scans / legacy tree-walk). Hash surface so Agents poll without
     // stitching. Additive schema-2904. Name avoids *-stats freeze (#1448).
+    // Issue #3883: overflow sentinel — planned_keys + insert_kv_checked +
+    // query_hash_finish (no silent drop when additive keys fill the table).
     ObservabilityPrims::register_stats_impl(
         "query:dirty-columnar", [&string_heap, &ev](std::span<const EvalValue>) -> EvalValue {
             auto* ws = ev.workspace_flat();
-            auto* ht = FlatHashTable::create(32);
+            // Live 9 keys; #3339 headroom +8. Additive insert_kv must
+            // raise planned_keys. Issue #3883: never silent-drop.
+            constexpr std::size_t kDirtyColumnarPlannedKeys = 24;
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(kDirtyColumnarPlannedKeys));
             if (!ht)
                 return make_void();
-            auto meta = ht->metadata();
-            auto keys = ht->keys();
-            auto vals = ht->values();
-            auto hcap = ht->capacity;
+            bool overflowed = false;
             auto insert_kv = [&](const char* k_str, std::int64_t v) {
-                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-                for (const char* p = k_str; *p; ++p)
-                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                if (fp == 0xFF)
-                    fp = 0xFE;
-                for (std::size_t at = 0; at < hcap; ++at) {
-                    auto idx = ((h >> 1) + at) & (hcap - 1);
-                    if (meta[idx] == 0xFF) {
-                        meta[idx] = fp;
-                        auto kidx = string_heap.size();
-                        string_heap.push_back(k_str);
-                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                        vals[idx] = make_int(v).val;
-                        ht->size++;
-                        return;
-                    }
-                }
+                if (!insert_kv_checked(ht, string_heap, k_str, v))
+                    overflowed = true;
             };
             const std::uint64_t col_writes = ws ? ws->dirty_column_writes_total() : 0;
             const std::uint64_t cascades_avoided =
@@ -2142,9 +2128,7 @@ void register_query_lifecycle_primitives(PrimRegistrar add, std::pmr::vector<Pai
             insert_kv("dirty-columnar-wired", 1);
             insert_kv("schema-2904", 2904);
             insert_kv("issue-2904", 2904);
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
+            return query_hash_finish(ht, string_heap, overflowed);
         });
 
     // Issue #414: query:generation-epoch-stats. Returns the sum of

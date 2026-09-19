@@ -1,0 +1,45 @@
+{
+  "issue": 3883,
+  "title": "query:dirty-columnar overflow sentinel",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_primitives_query_lifecycle.cpp",
+      "contains": [
+        "Issue #3883",
+        "query:dirty-columnar",
+        "kDirtyColumnarPlannedKeys",
+        "query_hash_capacity_for",
+        "insert_kv_checked",
+        "query_hash_finish"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/evaluator_primitives_query_lifecycle.cpp",
+      "contains": [
+        "schema-2904",
+        "dirty-column-writes-total",
+        "dirty-columnar-wired"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/core/test_dirty_column_lock.cpp",
+      "contains": [
+        "3883 AC1: overflow counted/sentinel'd (no silent drop)",
+        "3883 AC2: schema-2904 unchanged",
+        "ac3883_overflow_sentinel"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "forbid": [
+        "tests/core/test_issue_3883.cpp",
+        "tests/issues/test_issue_3883.cpp",
+        "scripts/coverage/checks/check_dirty_columnar_overflow_3883.py",
+        "docs/design/3883-dirty-columnar-overflow.md"
+      ]
+    }
+  ]
+}
