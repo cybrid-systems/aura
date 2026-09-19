@@ -159,6 +159,78 @@ static void ac3917_extra_paren_cli() {
           "3917 AC: *skip-left* is one identifier");
 }
 
+static void ac3927_set_then_compare() {
+    std::println("\n--- #3927: set! of top-level cells is visible to < / = / - ---");
+    {
+        CompilerService cs;
+        CHECK(cs.eval("(define *a* 0)").has_value(), "3927 AC: define *a*");
+        CHECK(cs.eval("(define *b* 0)").has_value(), "3927 AC: define *b*");
+        CHECK(cs.eval("(define (go x y) (begin (set! *a* x) (set! *b* y)))").has_value(),
+              "3927 AC: define go");
+        CHECK(cs.eval("(go 3 0)").has_value(), "3927 AC: (go 3 0)");
+        auto da = cs.eval("*a*");
+        CHECK(da && is_int(*da) && as_int(*da) == 3, "3927 AC: *a* is 3 after go");
+        auto db = cs.eval("*b*");
+        CHECK(db && is_int(*db) && as_int(*db) == 0, "3927 AC: *b* is 0 after go");
+        auto lt = cs.eval("(< *b* *a*)");
+        CHECK(lt && is_bool(*lt) && as_bool(*lt), "3927 AC1: (go 3 0) then (< *b* *a*) is #t");
+        auto eq = cs.eval("(= *a* *b*)");
+        CHECK(eq && is_bool(*eq) && !as_bool(*eq), "3927 AC2: (= *a* *b*) is #f");
+        auto sub = cs.eval("(- *a* *b*)");
+        CHECK(sub && is_int(*sub) && as_int(*sub) == 3, "3927 AC2: (- *a* *b*) is 3");
+    }
+    {
+        CompilerService cs;
+        CHECK(cs.eval("(define *a* 0)").has_value(), "3927 AC3: define *a*");
+        CHECK(cs.eval("(define *b* 0)").has_value(), "3927 AC3: define *b*");
+        CHECK(cs.eval("(define (go x y) (begin (set! *a* x) (set! *b* y)))").has_value(),
+              "3927 AC3: define go");
+        CHECK(cs.eval("(define (worse? a b) (< a b))").has_value(), "3927 AC3: define worse?");
+        CHECK(cs.eval("(go 3 0)").has_value(), "3927 AC3: (go 3 0)");
+        auto w = cs.eval("(worse? *b* *a*)");
+        CHECK(w && is_bool(*w) && as_bool(*w), "3927 AC3: (worse? *b* *a*) is #t");
+    }
+    {
+        CompilerService cs;
+        CHECK(cs.eval("(define *a* 0)").has_value(), "3927 AC4: define *a*");
+        CHECK(cs.eval("(define *b* 0)").has_value(), "3927 AC4: define *b*");
+        CHECK(cs.eval("(set! *a* 3)").has_value(), "3927 AC4: top-level set! *a*");
+        CHECK(cs.eval("(set! *b* 0)").has_value(), "3927 AC4: top-level set! *b*");
+        auto lt = cs.eval("(< *b* *a*)");
+        CHECK(lt && is_bool(*lt) && as_bool(*lt), "3927 AC4: direct top-level set! (< *b* *a*) #t");
+    }
+    {
+        CompilerService cs;
+        auto r = cs.eval(R"(
+            (begin
+              (define *a* 0)
+              (define *b* 0)
+              (define (go x y) (begin (set! *a* x) (set! *b* y)))
+              (go 3 0)
+              (< *b* *a*))
+        )");
+        CHECK(r && is_bool(*r) && as_bool(*r), "3927 AC1: whole-program Begin (< *b* *a*) #t");
+    }
+    {
+        CompilerService cs;
+        CHECK(cs.eval("(set-code \"(define *pre* 0)\\n(define *post* 0)\\n"
+                      "(define (live-fit p q) (begin (set! *pre* p) (set! *post* q)))\\n"
+                      "(live-fit 3 0)\")")
+                  .has_value(),
+              "3927 Strand: set-code");
+        CHECK(cs.eval("(eval-current)").has_value(), "3927 Strand: eval-current");
+        auto lt = cs.eval("(< *post* *pre*)");
+        CHECK(lt && is_bool(*lt) && as_bool(*lt),
+              "3927 Strand: eval-current then (< *post* *pre*) #t");
+    }
+    const auto low = read_file("src/compiler/lowering_impl.cpp");
+    CHECK(low.find("#3927") != std::string::npos, "3927 AC5: lowering cites");
+    const auto svc = read_file("src/compiler/service.ixx");
+    CHECK(svc.find("#3927") != std::string::npos, "3927 AC5: cache_define cites");
+    CHECK(read_file("docs/design/3927-set-const-fold.md").empty(), "3927: no docs/design");
+    CHECK(read_file("tests/compiler/test_issue_3927.cpp").empty(), "3927: no test_issue_3927");
+}
+
 static void ac3918_batch_rebind_env() {
     std::println("\n--- #3918: atomic-batch sole-define rebind refreshes env ---");
     CompilerService cs;
@@ -194,7 +266,8 @@ int run_test_eval_current_no_auto_fix() {
     ac3915_round_once_rest_args();
     ac3917_extra_paren_cli();
     ac3918_batch_rebind_env();
-    std::println("\n=== #2484/#3915/#3917/#3918 results: {} passed, {} failed ===", g_passed,
+    ac3927_set_then_compare();
+    std::println("\n=== #2484/#3915/#3917/#3918/#3927 results: {} passed, {} failed ===", g_passed,
                  g_failed);
     return g_failed ? 1 : 0;
 }

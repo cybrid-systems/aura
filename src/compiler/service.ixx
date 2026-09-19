@@ -9605,16 +9605,45 @@ public:
                             const std::unordered_map<std::string, std::vector<aura::ir::IRFunction>,
                                                      aura::core::TransparentStringHash,
                                                      std::equal_to<>>& ir_cache;
+                            std::unordered_set<std::string> let_bound;
                             bool skip = false;
                             void walk(aura::ast::NodeId id) {
                                 if (skip || id == aura::ast::NULL_NODE || id >= f.size())
                                     return;
                                 auto nv = f.get(id);
+                                if (nv.tag == aura::ast::NodeTag::Quote)
+                                    return;
+                                if (nv.tag == aura::ast::NodeTag::Let ||
+                                    nv.tag == aura::ast::NodeTag::LetRec) {
+                                    auto nm = std::string(p.resolve(nv.sym_id));
+                                    if (!nv.children.empty())
+                                        walk(nv.child(0));
+                                    let_bound.insert(nm);
+                                    if (nv.children.size() >= 2)
+                                        walk(nv.child(1));
+                                    let_bound.erase(nm);
+                                    return;
+                                }
+                                if (nv.tag == aura::ast::NodeTag::Set) {
+                                    // Issue #3927: IR Set only stores to local
+                                    // scopes / captured cells. set! of a
+                                    // top-level value cell is a no-op if the
+                                    // name was never read (not a free var).
+                                    // Tree-walk so lookup_cell_index hits the
+                                    // evaluator cell; later < / = / - load it.
+                                    auto nm = std::string(p.resolve(nv.sym_id));
+                                    if (!param_names.count(nm) && !let_bound.count(nm) &&
+                                        nm != self_name)
+                                        skip = true;
+                                    for (auto c : nv.children)
+                                        walk(c);
+                                    return;
+                                }
                                 if (nv.tag == aura::ast::NodeTag::Variable) {
                                     auto var_name = std::string(p.resolve(nv.sym_id));
                                     // Skip params, the function's own name (self-reference handled
                                     // by lowering), primitives, cached functions
-                                    if (param_names.count(var_name))
+                                    if (param_names.count(var_name) || let_bound.count(var_name))
                                         return;
                                     if (var_name == self_name)
                                         return;

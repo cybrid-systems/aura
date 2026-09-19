@@ -4719,6 +4719,16 @@ public:
     // pointer a reader is holding). See env_frames_mtx_ below
     // for the full rationale.
     [[nodiscard]] std::shared_mutex& env_frames_lock() const { return env_frames_mtx_; }
+    // Issue #3900: 16-way env-frame reader shards (coordination mutex
+    // only; env_frames_ stays the structure SSOT). Closures-shard
+    // pattern (#3867). Public for Env parent walks / mutation_boundary.
+    static constexpr std::size_t kEnvFramesShardCount = 16;
+    [[nodiscard]] static constexpr std::size_t env_frame_shard_count() noexcept {
+        return kEnvFramesShardCount;
+    }
+    [[nodiscard]] std::shared_mutex& env_frame_shard_mu(std::size_t i) const {
+        return env_frame_shards_[i].mu;
+    }
     // Number of live frames.
     [[nodiscard]] std::size_t env_frames_size() const { return env_frames_.size(); }
     // Issue #1384: test-only accessor for a frame by id. Returns
@@ -5342,6 +5352,17 @@ public:
     // always take closures_mtx_ FIRST, then env_frames_mtx_
     // (see closures_mtx_ comment). Solo env_frames acquires OK.
     mutable std::shared_mutex env_frames_mtx_;
+    // Issue #3900: per-id coordination mutexes. Hot readers take ONE
+    // shard shared; bulk walks take ALL in index order; structure
+    // ops barrier ALL shards FIRST then env_frames_mtx_.
+    struct EnvFramesShard {
+        mutable std::shared_mutex mu;
+    };
+    [[nodiscard]] static std::size_t env_frame_shard_index(EnvId id) noexcept {
+        return static_cast<std::size_t>((static_cast<std::uint64_t>(id) * 0x9E3779B97F4A7C15ULL) >>
+                                        60);
+    }
+    mutable std::array<EnvFramesShard, kEnvFramesShardCount> env_frame_shards_;
     // Issue #2360 / #2362: live EnvFrameRef ownership slots for
     // densify + fiber-steal transfer_to / drop protocol. deque so
     // push_back does not invalidate pointers to existing slots
