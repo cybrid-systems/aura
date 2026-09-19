@@ -50,7 +50,8 @@ def main() -> int:
     must("#3321 AC1", "AC1 test", test)
 
     must("Issue #3321: production fail-fast after nested steal-abort", "AC2 fail-fast", me)
-    must("cloned == NULL_NODE && production_surface", "AC2 sibling abort", me)
+    # Issue #3888: belt keys on NULL_NODE OR inner_expand (sticky MI/rest).
+    must("cloned == NULL_NODE || inner_expand_production_limit_deny()", "AC2 sibling abort", me)
     must("#3321 AC2", "AC2 test", test)
 
     must("Soft/Off: continue (historical", "AC3 soft", me)

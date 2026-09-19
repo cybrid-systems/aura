@@ -56,6 +56,7 @@ export bool set_hygiene_depth_cap(int n) noexcept; // reject if n∉[1,MAX]
 // inner-expand deny code (depth/pass/steal/cap/gensym + same-flat/
 // name-map-shared/concurrent-top-level). eval_flat consults after
 // expand_inner_macros so a half-expanded body is never evaluated.
+// Issue #3888: sticky global 4/5 still consults this fiber's ceiling stamp.
 export bool inner_expand_production_limit_deny() noexcept;
 // Issue #3685: pass-loop variant — the base five codes plus the
 // ConcurrentCloneGuard refuse codes (8/9/10) for macro_expand_all's
