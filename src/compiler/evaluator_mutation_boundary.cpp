@@ -6290,10 +6290,13 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
     // reemit-success sync walk was missed. Soft / budget=0 → zero walk.
     // Issue #3886: skip if the quiet pipeline already ticked this exit.
     if (outermost && success) {
+        // Issue #3910: bump exit gen BEFORE coalesce so a peer/pipeline
+        // quiet tick cannot steal this BoundaryExit's slot (#3886
+        // same-exit coalesce still holds — this exit owns the new gen).
+        aura_residual_remount_note_boundary_exit();
         const auto b = aura_residual_remount_budget_default();
         if (b > 0)
             (void)aura_residual_remount_tick_coalesce(b);
-        aura_residual_remount_note_boundary_exit();
         // Issue #2950: pure-anon background remount drain (safe site).
         // Empty queue → single relaxed load. Never steal-complete (#2715).
         if (aura_pure_anon_bg_pending() > 0) {
