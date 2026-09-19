@@ -7702,6 +7702,17 @@ def cmd_lint():
             "Issue #3903 correlate tenant passthrough linter failed — run python3 scripts/check_correlate_tenant_passthrough_3903.py"
         )
         return r
+    # Issue #3904: MSE TA fence posture — the caller-OR-target fence
+    # (#3029) is documented as intended (Option A caller-only rejected
+    # on chaos PR starvation evidence); contract unchanged.
+    mtc3904_script = ROOT / "scripts" / "check_mse_ta_posture_3904.py"
+    if not mtc3904_script.exists():
+        fail(f"missing {mtc3904_script}")
+        return 1
+    r = run([sys.executable, str(mtc3904_script)], cwd=ROOT)
+    if r != 0:
+        fail("Issue #3904 MSE TA posture linter failed — run python3 scripts/check_mse_ta_posture_3904.py")
+        return r
     # Issue #3869: storm/Global force-full soak/alert counter — rewrite-
     # side fires counted; no Soft skip of the Hard fence invented.
     sfc3869_script = ROOT / "scripts" / "check_storm_force_full_counter_3869.py"

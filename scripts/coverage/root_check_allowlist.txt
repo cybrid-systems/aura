@@ -133,3 +133,4 @@ check_revoke_epoch_hard_only_3875.py
 check_storm_force_full_counter_3869.py
 check_soft_revoke_epoch_honest_3902.py
 check_correlate_tenant_passthrough_3903.py
+check_mse_ta_posture_3904.py
