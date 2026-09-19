@@ -20,7 +20,9 @@ import aura.compiler.value;
 namespace {
 
 using aura::compiler::CompilerService;
+using aura::compiler::types::as_bool;
 using aura::compiler::types::as_int;
+using aura::compiler::types::is_bool;
 using aura::compiler::types::is_closure;
 using aura::compiler::types::is_int;
 using aura::test::g_failed;
@@ -104,13 +106,53 @@ static void ac4_gate() {
 
 } // namespace
 
+static void ac3915_define_rhs_binds() {
+    std::println("\n--- #3915: define-RHS of set-code+eval-current binds ---");
+    CompilerService cs;
+    auto r = cs.eval(
+        "(begin (define seeded (begin (set-code \"(define (f x) x)\") (eval-current) #t)) seeded)");
+    CHECK(r.has_value() && is_bool(*r) && as_bool(*r), "3915 AC: seeded bound to #t");
+    auto f3 = cs.eval("(f 3)");
+    CHECK(f3.has_value() && is_int(*f3) && as_int(*f3) == 3, "3915 AC: workspace f still live");
+    auto ge = cs.eval("(>= 1 0)");
+    CHECK(ge.has_value() && is_bool(*ge) && as_bool(*ge), "3915 AC: >= still bound");
+    const auto ev = read_file("src/compiler/evaluator_primitives_eval.cpp");
+    CHECK(ev.find("Issue #3915") != std::string::npos, "3915 AC: eval-current cites restore pool");
+    CHECK(ev.find("RestoreTopPool") != std::string::npos, "3915 AC: RestoreTopPool");
+    const auto flat = read_file("src/compiler/evaluator_eval_flat.cpp");
+    CHECK(flat.find("Issue #3915") != std::string::npos, "3915 AC: rest-args TCO cites");
+}
+
+static void ac3915_round_once_rest_args() {
+    std::println("\n--- #3915: round-once rest-args closed-loop-once ---");
+    CompilerService cs;
+    CHECK(cs.eval("(require \"std/agent\" all:)").has_value(), "3915B require agent");
+    CHECK(cs.eval("(require \"std/mutate\" all:)").has_value(), "3915B require mutate");
+    CHECK(cs.eval("(set-code \"(define (f x) x)\")").has_value(), "3915B set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3915B seed");
+    CHECK(cs.eval("(define (round-once body) (agent:closed-loop-once :skip-set-code :rebind "
+                  "\"f\" body :summary \"r\"))")
+              .has_value(),
+          "3915B define round-once");
+    for (int i = 0; i < 3; ++i) {
+        auto r = cs.eval("(round-once \"(lambda (x) x)\")");
+        CHECK(r.has_value(), "3915B AC: round-once callable");
+    }
+    auto ge = cs.eval("(>= 1 0)");
+    CHECK(ge.has_value() && is_bool(*ge) && as_bool(*ge), "3915B AC: >= still bound");
+    auto wr = cs.eval("(begin (write 1) 1)");
+    CHECK(wr.has_value() && is_int(*wr) && as_int(*wr) == 1, "3915C AC: write still bound");
+}
+
 int run_test_eval_current_no_auto_fix() {
     std::println("=== Issue #2484: eval-current no auto-fix ===");
     ac1_closure_unchanged();
     ac2_no_auto_call_arity0();
     ac3_source();
     ac4_gate();
-    std::println("\n=== #2484 results: {} passed, {} failed ===", g_passed, g_failed);
+    ac3915_define_rhs_binds();
+    ac3915_round_once_rest_args();
+    std::println("\n=== #2484/#3915 results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
 

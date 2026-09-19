@@ -617,18 +617,35 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
         ev.coverage_counters_[4]++;
 
         // Incremental eval cache (Issue #32b / #159 / #1441).
+        // Issue #3915 / #3918: dirty-check the *root*, not the last child.
+        // Lockless rebind set_child's a new lambda that is not itself
+        // marked dirty; last-form-only would cache-hit the pre-rebind
+        // closure (and leave stdin looking at a stale eval-current).
         {
-            using aura::ast::NodeId;
-            NodeId last_form = expanded;
-            auto root_v = flat->get(expanded);
-            if (!root_v.children.empty())
-                last_form = root_v.child(root_v.children.size() - 1);
             const auto gen = flat->generation();
-            if (last_form != aura::ast::NULL_NODE && !flat->has_dirty_subtree(last_form) &&
+            if (expanded != aura::ast::NULL_NODE && !flat->has_dirty_subtree(expanded) &&
                 ev.last_eval_current_result_ && gen == ev.last_eval_current_generation_) {
                 return *ev.last_eval_current_result_;
             }
         }
+
+        // Issue #3915: eval-current walks workspace Defines into top_ and
+        // Env::set_pool re-keys top_ to the workspace StringPool. Stdin /
+        // in-flight script evals intern names in a *different* pool; after
+        // the re-key, bind_symid of the outer define resolves empty/wrong
+        // and *seeded* / lambda params / later primitives look unbound.
+        // Restore the caller's pool so string mirrors stay on the script.
+        struct RestoreTopPool {
+            Env& top;
+            const aura::ast::StringPool* saved;
+            explicit RestoreTopPool(Env& t)
+                : top(t)
+                , saved(t.pool()) {}
+            ~RestoreTopPool() {
+                if (saved && saved != top.pool())
+                    top.set_pool(saved);
+            }
+        } restore_top_pool(ev.top_env());
 
         auto result = ev.eval_flat(*flat, *pool, expanded, ev.top_);
 
