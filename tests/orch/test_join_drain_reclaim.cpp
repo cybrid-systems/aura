@@ -7042,6 +7042,152 @@ int run_test_join_drain_reclaim() {
         aura::core::audit_wal::g_mutation_audit_wal().disable();
     }
 
+    // ── Issue #3930: imported handoff proxy is not a second join owner.
+    // join_agent / join_agents / orch:agent-join on the proxy must
+    // Invalid without cancel/drain/detach; source join_agent remains
+    // the reclaim owner. Soft/Off same fail-closed (ownership, not a
+    // wait budget). reservation==0 is not the gate.
+    {
+        using aura::core::sandbox::SandboxMode;
+        using aura::core::sandbox::set_mode;
+        using aura::orch::agent_export_handoff;
+        using aura::orch::agent_import_handoff;
+        using aura::orch::AgentScope;
+        using aura::orch::AgentSpec;
+        using aura::orch::join_agents;
+
+        auto run_proxy_join_gate = [&](bool production, const char* tag) {
+            if (production) {
+                apply_production_audit_defaults();
+                set_mode(SandboxMode::Strict);
+                std::filesystem::create_directories("build/test-wal-3930");
+                if (!aura::core::audit_wal::g_mutation_audit_wal().is_enabled())
+                    (void)aura::core::audit_wal::g_mutation_audit_wal().enable(
+                        std::string_view("build/test-wal-3930"), nullptr, 0);
+            } else {
+                apply_dev_audit_defaults();
+                set_mode(SandboxMode::Off);
+            }
+            Scheduler sched(1);
+            SchedRunner runner(sched);
+            AgentScope scope(sched);
+            AgentSpec spec;
+            spec.name = production ? "src-3930-prod" : "src-3930-soft";
+            std::atomic<bool> stop_3930{false};
+            spec.body = [&] {
+                while (!stop_3930.load(std::memory_order_acquire))
+                    ;
+            };
+            auto& src = scope.spawn(spec);
+            CHECK(src.ok && src.fiber != nullptr, std::string(tag) + ": source spawn ok");
+            src.reserved_memory_bytes = 2048;
+            const auto src_fiber_id = src.fiber->id();
+            auto tok = agent_export_handoff(src);
+            CompilerService cs2;
+            auto proxy = agent_import_handoff(std::move(tok), static_cast<void*>(&cs2), sched);
+            CHECK(proxy.import_proxy, std::string(tag) + ": import stamps import_proxy");
+            CHECK(proxy.reserved_memory_bytes == 0, std::string(tag) + ": proxy reservation 0");
+            auto jr = join_agent(proxy, JoinPolicy{.primary_ms = 20, .drain_ms = 20});
+            CHECK(jr.status == JoinStatus::Invalid,
+                  std::string(tag) + ": join_agent(proxy) → Invalid");
+            CHECK(src.reserved_memory_bytes == 2048,
+                  std::string(tag) + ": source reservation unchanged after proxy join");
+            CHECK(src.fiber && src.fiber->id() == src_fiber_id,
+                  std::string(tag) + ": source fiber identity unchanged");
+            CHECK(src.mailbox != nullptr, std::string(tag) + ": source mailbox still attached");
+            CHECK(!src.fiber->is_cancel_requested(),
+                  std::string(tag) + ": proxy join did not cancel source");
+            auto jr_batch = join_agents(std::span<AgentHandle>(&proxy, 1),
+                                        JoinPolicy{.primary_ms = 20, .drain_ms = 20});
+            CHECK(jr_batch.status == JoinStatus::Invalid,
+                  std::string(tag) + ": join_agents(proxy) → Invalid");
+            CHECK(src.mailbox != nullptr,
+                  std::string(tag) + ": source mailbox still attached after batch");
+            CHECK(src.reserved_memory_bytes == 2048,
+                  std::string(tag) + ": source reservation unchanged after batch");
+            stop_3930.store(true, std::memory_order_release);
+            if (src.fiber)
+                src.fiber->request_cancel();
+            (void)join_agent(src, JoinPolicy{.primary_ms = 500, .drain_ms = 200});
+            CHECK(src.reserved_memory_bytes == 0,
+                  std::string(tag) + ": source join_agent still reclaims");
+        };
+
+        std::println("\n--- #3930 AC1: production join_agent(proxy) Invalid, source owns ---");
+        run_proxy_join_gate(true, "3930 AC1");
+
+        std::println("\n--- #3930 AC2: Soft join_agent(proxy) same fail-closed ---");
+        run_proxy_join_gate(false, "3930 AC2");
+
+        std::println("\n--- #3930 AC3: Aura orch:agent-join on imported name ---");
+        {
+            const char* prev_sb = std::getenv("AURA_SANDBOX");
+            std::string prev_sb_s = prev_sb ? prev_sb : "";
+            ::setenv("AURA_SANDBOX", "restricted", 1);
+            apply_production_audit_defaults();
+            set_mode(SandboxMode::Strict);
+            std::filesystem::create_directories("build/test-wal-3930");
+            if (!aura::core::audit_wal::g_mutation_audit_wal().is_enabled())
+                (void)aura::core::audit_wal::g_mutation_audit_wal().enable(
+                    std::string_view("build/test-wal-3930"), nullptr, 0);
+            CompilerService cs;
+            auto spawn_ok = cs.eval(R"((let ((r (orch:spawn-agent "ac3930-src" (lambda () #t))))
+                                         (if (hash-ref r "ok") 1 0)))");
+            CHECK(spawn_ok && is_int(*spawn_ok) && as_int(*spawn_ok) == 1,
+                  "3930 AC3: spawn-agent ac3930-src ok");
+            auto join_proxy = cs.eval(R"(
+              (let* ((tok (orch:agent-export-via-token "ac3930-src"))
+                     (pname (orch:agent-import-via-token tok))
+                     (r (orch:agent-join pname :timeout-ms 20)))
+                (if (and (string? pname) (> (string-length pname) 0)
+                         (string=? (hash-ref r "status") "invalid"))
+                    1 0)))");
+            CHECK(join_proxy && is_int(*join_proxy) && as_int(*join_proxy) == 1,
+                  "3930 AC3: orch:agent-join on imported proxy-* → invalid");
+            apply_dev_audit_defaults();
+            set_mode(SandboxMode::Off);
+            if (!prev_sb_s.empty())
+                ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+            else
+                ::unsetenv("AURA_SANDBOX");
+        }
+
+        std::println("\n--- #3930 AC4: source-cite — flag gate, no reservation-0, no registry ---");
+        {
+            const auto spawn = read_file("src/orch/agent_spawn.h");
+            const auto prim = read_file("src/compiler/evaluator_primitives_agent.cpp");
+            CHECK(spawn.find("bool import_proxy = false;") != std::string::npos,
+                  "3930 AC4: import_proxy flag at AgentHandle END");
+            CHECK(spawn.find("h.import_proxy = true;") != std::string::npos,
+                  "3930 AC4: agent_import_handoff stamps the flag");
+            CHECK(spawn.find("if (h.import_proxy)") != std::string::npos,
+                  "3930 AC4: join_agent gates on import_proxy");
+            const auto ja = spawn.find(
+                "inline serve::JoinResult join_agent(AgentHandle& h, JoinPolicy policy)");
+            CHECK(ja != std::string::npos, "3930 AC4: join_agent present");
+            if (ja != std::string::npos) {
+                const auto snip = spawn.substr(ja, 900);
+                CHECK(snip.find("if (h.import_proxy)") != std::string::npos,
+                      "3930 AC4: join_agent snip gates import_proxy");
+                CHECK(snip.find("reserved_memory_bytes == 0") == std::string::npos,
+                      "3930 AC4: join_agent does not use reservation-0 as proxy gate");
+            }
+            CHECK(prim.find("join_agent(*hp, policy)") != std::string::npos,
+                  "3930 AC4: orch:agent-join still routes through join_agent");
+            CHECK(spawn.find("class AgentRegistry") == std::string::npos,
+                  "3930 AC4: no AgentRegistry");
+            CHECK(read_file("tests/orch/test_issue_3930.cpp").empty() &&
+                      read_file("tests/issues/test_issue_3930.cpp").empty(),
+                  "3930 AC4: no test_issue_3930.cpp");
+            CHECK(read_file("docs/design/3930-import-proxy-join.md").empty(),
+                  "3930 AC4: no docs/design/3930-*");
+        }
+
+        set_mode(SandboxMode::Off);
+        apply_dev_audit_defaults();
+        aura::core::audit_wal::g_mutation_audit_wal().disable();
+    }
+
     std::println("\n=== Issue #3297: ~AgentHandle under-account observability ===");
     ac3297_1_dtor_under_account_live_body();
     ac3297_2_dtor_no_under_account_post_exit();

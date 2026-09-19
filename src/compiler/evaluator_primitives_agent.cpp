@@ -7245,8 +7245,9 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
     // observes the source's fiber state (raw pointer, source-owned).
     // Reservation stays with the source (proxy has reserved_memory_bytes
     // == 0 so release_reservation_if_any is a no-op on dtor). The
-    // source's Scope remains the owner of the body fiber; cancel/join
-    // for the proxy routes back through the source.
+    // source's Scope remains the owner of the body fiber. Issue #3930:
+    // join_agent / orch:agent-join on the proxy is Invalid (import_proxy)
+    // — it must not cancel/drain/detach the shared fiber/mailbox.
     add("orch:agent-import-via-token", [&ev](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !types::is_string(a[0]))
             return types::make_string(0);
