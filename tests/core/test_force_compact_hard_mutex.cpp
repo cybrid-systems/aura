@@ -144,6 +144,20 @@ int run_test_force_compact_hard_mutex() {
                   "AC_F2: envframe-block metric");
         }
         CHECK(active_guard_depth() == 0, "AC_F2: depth 0 after dtor");
+        {
+            std::ifstream in("src/core/envframe_lifetime.ixx");
+            if (!in)
+                in.open("../src/core/envframe_lifetime.ixx");
+            std::string src((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+            const auto dtor = src.find("~EnvFrameLifetimeGuard()");
+            CHECK(dtor != std::string::npos, "3908: Guard dtor present");
+            const auto win = src.substr(dtor, 3200);
+            CHECK(win.find("Issue #3908") != std::string::npos, "3908 AC: scan-before-depth cite");
+            const auto scan = win.find("scan_skip_freed");
+            const auto drop = win.find("g_envframe_active_guard_depth().compare_exchange_weak");
+            CHECK(scan != std::string::npos && drop != std::string::npos && scan < drop,
+                  "3908 AC1: scan_skip_freed before depth drop");
+        }
 
         // After dtor, Force not blocked by envframe.
         const auto r2 = arena.live_compact(LiveCompactMode::Force);
