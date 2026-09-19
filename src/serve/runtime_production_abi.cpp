@@ -61,6 +61,13 @@ bool aura_runtime_require_production_abi() noexcept {
     // returning OK is not production).
     if (aura_abi_strong_ir_typed_entry_v() == 0)
         fail_bits |= kProductionAbiSelfcheckFailBitTypedEntry;
+    // Issue #3899: single-worker Ready with a production claim must also
+    // refuse unarmed hot contracts (same bit-9 as multi-worker #3866).
+    // Soft / sandbox=off already returned above.
+#if !defined(AURA_PRODUCTION_PACK)
+    if (!::aura::core::cpp26::hot_contract_harden_armed())
+        fail_bits |= kProductionAbiSelfcheckFailBitHotContracts;
+#endif
 
     if (fail_bits != 0) {
         g_production_abi_selfcheck_last_fail_bits.store(fail_bits, std::memory_order_relaxed);

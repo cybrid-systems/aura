@@ -11,6 +11,7 @@
 #include "serve/scheduler.h"
 #include "serve/steal_safety.h"
 #include "compiler/typed_mutation_audit.h"
+#include "core/cpp26_contract_stats.h"
 
 #include <chrono>
 #include <cstdint>
@@ -281,6 +282,33 @@ static void ac3866_hot_contracts_refuse_source_cite() {
           "3866: no docs/design/3866-* per #1655");
 }
 
+// ── #3899: single-worker Ready also gates hot-contract arm ──
+static void ac3899_single_worker_hot_contracts_source_cite() {
+    std::string rpa;
+    for (const char* p :
+         {"src/serve/runtime_production_abi.cpp", "../src/serve/runtime_production_abi.cpp"}) {
+        rpa = read_file(p);
+        if (!rpa.empty())
+            break;
+    }
+    CHECK(!rpa.empty(), "3899: runtime_production_abi.cpp readable");
+    const auto sw = rpa.find("bool aura_runtime_require_production_abi()");
+    CHECK(sw != std::string::npos, "3899: single-worker require present");
+    const auto mw = rpa.find("bool aura_runtime_require_production_multi_worker()");
+    const auto sw_body = rpa.substr(sw, (mw == std::string::npos ? 2500 : mw - sw));
+    CHECK(sw_body.find("Issue #3899") != std::string::npos, "3899 AC1: single-worker cites #3899");
+    CHECK(sw_body.find("hot_contract_harden_armed()") != std::string::npos,
+          "3899 AC1: single-worker Ready asserts the hot-contract arm");
+    CHECK(sw_body.find("kProductionAbiSelfcheckFailBitHotContracts") != std::string::npos,
+          "3899 AC1: unarmed sets the hot-contracts fail bit");
+    CHECK(sw_body.find("production_abi_selfcheck_required()") != std::string::npos,
+          "3899 AC2: Soft/sandbox=off early-out unchanged");
+    CHECK(read_file("tests/serve/test_issue_3899.cpp").empty(),
+          "3899 AC3: no test_issue_3899.cpp per #81967");
+    CHECK(read_file("docs/design/3899-single-worker-hot-contract.md").empty(),
+          "3899 AC3: no docs/design/3899-* per #1655");
+}
+
 int run_test_steal_complete_strong_entry() {
     std::println("=== Issue #2377: steal-complete strong entry contract ===");
 
@@ -428,6 +456,9 @@ int run_test_steal_complete_strong_entry() {
             CHECK(aura_abi_strong_mutation_held_v() == 1, "2955 AC3: mutation held strong");
             CHECK(aura_abi_strong_mutation_depth_from_ptr_v() == 1,
                   "2955 AC3: depth-from-ptr strong");
+            // Issue #3899: production single-worker Ready also requires
+            // hot contracts armed (same bit-9 as multi-worker #3866).
+            aura::core::cpp26::note_hot_contract_harden_armed(true);
             const auto ok0 = g_production_abi_selfcheck_ok_total.load(std::memory_order_relaxed);
             CHECK(aura_runtime_require_production_abi(), "2955 AC3: require ok");
             CHECK(g_production_abi_selfcheck_ok_total.load(std::memory_order_relaxed) == ok0 + 1,
@@ -662,6 +693,7 @@ int run_test_steal_complete_strong_entry() {
                 unsetenv("AURA_SANDBOX");
                 aura::compiler::typed_audit::g_typed_mutation_audit_counters
                     .production_defaults_active.store(1, std::memory_order_relaxed);
+                aura::core::cpp26::note_hot_contract_harden_armed(true);
                 CHECK(aura::serve::aura_runtime_require_production_multi_worker(),
                       "3195 AC1: multi-worker Ready ok (clean residual)");
                 CHECK(aura::serve::g_production_multi_worker_latched.load(
@@ -680,6 +712,7 @@ int run_test_steal_complete_strong_entry() {
                       "3195 AC1: sticky survives Soft flip");
                 aura::compiler::typed_audit::g_typed_mutation_audit_counters
                     .production_defaults_active.store(0, std::memory_order_relaxed);
+                aura::core::cpp26::note_hot_contract_harden_armed(false);
                 clear_steal_safety_transaction_for_test();
                 clear_production_abi_selfcheck_for_test();
             }
@@ -793,6 +826,7 @@ int run_test_steal_complete_strong_entry() {
     ac3619_no_edge_held_residual();
     ac3654_linear_post_mutate_unset_fail_closed();
     ac3866_hot_contracts_refuse_source_cite();
+    ac3899_single_worker_hot_contracts_source_cite();
     std::println(
         "\n=== #2377 + #2955 + #3098 + #3195 + #3343 + #3654 results: {} passed, {} failed ===",
         g_passed, g_failed);
