@@ -1305,8 +1305,11 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
         // the same mutate lock (snapshot moved). Skip a second restore so
         // empty children_snapshot cannot wipe the enter checkpoint.
         if (!cp.topology_restored) {
+            // Issue #3897: pass the enter dirty-SoA snapshot so abort
+            // does not leave phantom over-dirty cones (#3865 incomplete).
             stats.field_records_rolled = workspace_flat_->abort_restore_dual_topology(
-                cp.mutation_log_size, std::move(cp.children_snapshot));
+                cp.mutation_log_size, std::move(cp.children_snapshot),
+                std::move(cp.dirty_soa_snapshot));
             if (stats.field_records_rolled > 0) {
                 bump_mutation_log_rollback_count();
                 if (nested_boundary)
@@ -2202,9 +2205,13 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
                             const auto mid_abort_ver =
                                 typed_audit::begin_mid_abort_authority(cp.audit_mid);
                             BoundaryRollbackStats stats;
+                            // Issue #3897: pass the enter dirty-SoA snapshot
+                            // so invariant force-rollback does not leave
+                            // phantom over-dirty cones (#3865 incomplete).
                             stats.field_records_rolled =
                                 workspace_flat_->abort_restore_dual_topology(
-                                    cp.mutation_log_size, std::move(cp.children_snapshot));
+                                    cp.mutation_log_size, std::move(cp.children_snapshot),
+                                    std::move(cp.dirty_soa_snapshot));
                             if (stats.field_records_rolled > 0) {
                                 bump_mutation_log_rollback_count();
                                 if (nested_boundary)
@@ -2388,8 +2395,12 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
                     // clears below (see end_mid_abort_authority).
                     const auto mid_abort_ver = typed_audit::begin_mid_abort_authority(cp.audit_mid);
                     BoundaryRollbackStats stats;
+                    // Issue #3897: pass the enter dirty-SoA snapshot so
+                    // Strict reflect-validate rollback does not leave
+                    // phantom over-dirty cones (#3865 incomplete).
                     stats.field_records_rolled = workspace_flat_->abort_restore_dual_topology(
-                        cp.mutation_log_size, std::move(cp.children_snapshot));
+                        cp.mutation_log_size, std::move(cp.children_snapshot),
+                        std::move(cp.dirty_soa_snapshot));
                     if (stats.field_records_rolled > 0) {
                         bump_mutation_log_rollback_count();
                         if (nested_boundary)

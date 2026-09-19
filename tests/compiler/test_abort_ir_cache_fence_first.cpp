@@ -847,6 +847,7 @@ static void ac3852_3_source_and_linter() {
 
 static void ac3864_prod_bypass_source_cite();
 static void ac3865_dirty_soa_restore_source_cite();
+static void ac3897_all_abort_sites_pass_dirty_soa();
 
 int run_test_abort_ir_cache_fence_first() {
     std::println("=== Issue #3159: abort IR cache fence-first ordering under multi-fiber ===");
@@ -856,6 +857,7 @@ int run_test_abort_ir_cache_fence_first() {
     ac3_in_progress_flag_lifecycle();
     ac3864_prod_bypass_source_cite();
     ac3865_dirty_soa_restore_source_cite();
+    ac3897_all_abort_sites_pass_dirty_soa();
     ac4_test_only_hold_mechanism();
     ac5_soft_off_zero_cost();
     ac6_no_new_metrics_counters();
@@ -957,6 +959,35 @@ static void ac3865_dirty_soa_restore_source_cite() {
           "3865: no test_issue_3865.cpp per #81967");
     CHECK(read_file("docs/design/3865-dirty-soa-restore.md").empty(),
           "3865: no docs/design/3865-* per #1655");
+}
+
+// ── #3897: all four abort_restore_dual_topology sites pass dirty snapshot ──
+static void ac3897_all_abort_sites_pass_dirty_soa() {
+    std::println("\n--- #3897: all abort sites pass DirtySoaSnapshot ---");
+    std::string mb;
+    for (const char* p : {"src/compiler/evaluator_mutation_boundary.cpp",
+                          "../src/compiler/evaluator_mutation_boundary.cpp"}) {
+        mb = read_file(p);
+        if (!mb.empty())
+            break;
+    }
+    CHECK(!mb.empty(), "3897: mutation_boundary.cpp readable");
+    std::size_t n_call = 0;
+    for (std::size_t p = 0;
+         (p = mb.find("workspace_flat_->abort_restore_dual_topology(", p)) != std::string::npos;
+         p += 1)
+        ++n_call;
+    CHECK(n_call == 4, "3897 AC1: four abort_restore_dual_topology call sites");
+    std::size_t n_move = 0;
+    for (std::size_t p = 0;
+         (p = mb.find("std::move(cp.dirty_soa_snapshot)", p)) != std::string::npos; p += 1)
+        ++n_move;
+    CHECK(n_move == 4, "3897 AC1: all four sites pass moved dirty snapshot");
+    CHECK(mb.find("Issue #3897") != std::string::npos, "3897 AC1: cites #3897");
+    CHECK(read_file("tests/issues/test_issue_3897.cpp").empty(),
+          "3897 AC3: no test_issue_3897.cpp per #81967");
+    CHECK(read_file("docs/design/3897-abort-dirty-soa.md").empty(),
+          "3897 AC3: no docs/design/3897-* per #1655");
 }
 
 int main() {
