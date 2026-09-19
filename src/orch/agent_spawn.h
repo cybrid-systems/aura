@@ -1669,6 +1669,13 @@ struct AgentHandle {
     // abandon / force-recycle live arm. Soft never sets (production gate).
     // Appended at END — move ctor / assign / reset must transfer (#3461).
     bool quota_recycled_pending = false;
+    // Issue #3930: stamped by agent_import_handoff. join_agent /
+    // join_agents on a proxy must return Invalid without cancel/drain/
+    // detach — the source handle remains the only reclaim owner.
+    // reserved_memory_bytes==0 is NOT the gate (quota recycle also
+    // zeros it). Appended at END (#2906); move ctor / assign / reset
+    // must transfer (#3461).
+    bool import_proxy = false;
 
     AgentHandle() = default;
     AgentHandle(const AgentHandle&) = delete;
@@ -1706,7 +1713,8 @@ struct AgentHandle {
         , body_acquire_rejected_slot(std::move(o.body_acquire_rejected_slot))
         , deny_class(o.deny_class)
         , bp_scope_id(std::move(o.bp_scope_id))
-        , quota_recycled_pending(o.quota_recycled_pending) {
+        , quota_recycled_pending(o.quota_recycled_pending)
+        , import_proxy(o.import_proxy) {
         // Issue #3245: hold-path signal when a still-pending handle is
         // stored (vector / another component). Soft: pending=false.
         note_reclaimed_pending_hold(o.must_wait_reclaimed);
@@ -1743,6 +1751,7 @@ struct AgentHandle {
         // lists AND this reset block.
         o.bp_scope_id.clear();
         o.quota_recycled_pending = false; // #3841 / #3461 END field
+        o.import_proxy = false;           // #3930 / #3461 END field
     }
 
     AgentHandle& operator=(AgentHandle&& o) noexcept {
@@ -1786,6 +1795,7 @@ struct AgentHandle {
             // checklist — END-appended fields must appear here).
             bp_scope_id = std::move(o.bp_scope_id);
             quota_recycled_pending = o.quota_recycled_pending;
+            import_proxy = o.import_proxy;
             note_reclaimed_pending_hold(o.must_wait_reclaimed);
             o.id = 0;
             o.fiber = nullptr;
@@ -1814,6 +1824,7 @@ struct AgentHandle {
             o.deny_class = AgentDenyClass::None;
             o.bp_scope_id.clear();            // #3461: move is a complete field transfer
             o.quota_recycled_pending = false; // #3841 / #3461 END field
+            o.import_proxy = false;           // #3930 / #3461 END field
         }
         return *this;
     }
@@ -1933,6 +1944,10 @@ inline AgentHandle agent_import_handoff(HandoffToken tok, void* dst_ev,
     h.producer_bp_budget = tok.producer_bp_budget;
     // NO reservation; NO quota bump. The source remains the owner;
     // release_reservation_if_any() on the proxy early-exits (== 0).
+    // Issue #3930: join_agent on this handle is Invalid (not a second
+    // owner). Flag, not reserved_memory_bytes==0 — quota recycle also
+    // zeros reservation on a real owner.
+    h.import_proxy = true;
     return h;
 }
 
@@ -3647,6 +3662,14 @@ inline void cancel_and_drain_fibers(std::span<serve::Fiber* const> fibers,
         r.status = serve::JoinStatus::Invalid;
         return r;
     }
+    // Issue #3930: imported handoff proxy is observation-only. Must not
+    // cancel/drain/detach the source fiber or shared mailbox. Soft/Off
+    // same fail-closed (ownership, not a wait budget).
+    if (h.import_proxy) {
+        serve::JoinResult r;
+        r.status = serve::JoinStatus::Invalid;
+        return r;
+    }
     // Issue #2008 / #2159: stop keepalive helper first (signal + cancel fiber).
     stop_keepalive_helper(h);
     if (h.liveness)
@@ -3770,6 +3793,8 @@ inline void cancel_and_drain_fibers(std::span<serve::Fiber* const> fibers,
 [[nodiscard]] inline serve::JoinResult join_agents(std::span<AgentHandle> agents,
                                                    JoinPolicy policy) {
     for (auto& a : agents) {
+        if (a.import_proxy) // Issue #3930: proxy is not a join owner
+            continue;
         stop_keepalive_helper(a);
         if (a.liveness)
             a.liveness->body_done.store(true, std::memory_order_release);
@@ -3778,7 +3803,7 @@ inline void cancel_and_drain_fibers(std::span<serve::Fiber* const> fibers,
     std::vector<serve::Fiber*> fibers;
     fibers.reserve(agents.size());
     for (auto& a : agents) {
-        if (a.ok && a.fiber)
+        if (a.ok && a.fiber && !a.import_proxy)
             fibers.push_back(a.fiber);
     }
     if (fibers.empty()) {
@@ -3801,8 +3826,11 @@ inline void cancel_and_drain_fibers(std::span<serve::Fiber* const> fibers,
         const auto helper_drain = policy.drain_ms == 0
                                       ? kDefaultKeepaliveHelperDrainMs
                                       : std::min(policy.drain_ms, kDefaultKeepaliveHelperDrainMs);
-        for (auto& a : agents)
+        for (auto& a : agents) {
+            if (a.import_proxy) // Issue #3930
+                continue;
             join_keepalive_helper(a, helper_drain);
+        }
     }
     {
         auto cur = g_orch_module_stats.agents_active.load(std::memory_order_relaxed);
@@ -3816,7 +3844,7 @@ inline void cancel_and_drain_fibers(std::span<serve::Fiber* const> fibers,
     }
     if (jr.status == serve::JoinStatus::Ok) {
         for (auto& a : agents) {
-            if (a.fiber)
+            if (a.fiber && !a.import_proxy)
                 orch_post_join_provenance(a.fiber);
         }
     }
@@ -3834,6 +3862,10 @@ inline void cancel_and_drain_fibers(std::span<serve::Fiber* const> fibers,
     // Done body takes Ok. Same still-running body gets the same policy
     // whether the batch join returned Reclaimed or Timeout.
     for (auto& a : agents) {
+        if (a.import_proxy) { // Issue #3930: not a reclaim owner
+            a.last_join_status = serve::JoinStatus::Invalid;
+            continue;
+        }
         serve::JoinResult local = jr;
         if (a.fiber && (a.fiber->is_reclaimed() || local.status != serve::JoinStatus::Ok) &&
             !a.fiber->is_done()) {
