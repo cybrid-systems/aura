@@ -178,13 +178,14 @@ def main() -> int:
 
     # ── AC3: Phase-5 main entry consults LCP ──
     # Anchor on the unique Phase-5 cite comment (only at the Phase-5 entry).
-    # Take a 3000-char forward window covering the consult + bump +
+    # Take a 3600-char forward window covering the consult + bump +
     # pin_contract_held forced-false block (which lives at the trailing end
-    # of the entry, ~33 lines after the consult cite).
+    # of the entry, ~33 lines after the consult cite). #3894 densify-in-flight
+    # Guard sits between compact and unlock.
     phase5_anchor = "Issue #3185 AC1: consult last LifetimeConsistencyProof before"
     phase5_pos = mut.find(phase5_anchor)
     if phase5_pos != -1:
-        phase5_window_end = min(len(mut), phase5_pos + 3000)
+        phase5_window_end = min(len(mut), phase5_pos + 3600)
         phase5_window = mut[phase5_pos:phase5_window_end]
     else:
         phase5_window = ""
@@ -236,13 +237,13 @@ def main() -> int:
 
     # ── AC4: Optional one-shot Moving densify (recover_moving_sticky_densify_off) ──
     # Anchor on the unique one-shot cite comment (only inside the recover
-    # function body). Take a 3000-char forward window covering the consult +
+    # function body). Take a 3600-char forward window covering the consult +
     # bump + pin_contract_held forced-false block (which lives at the
-    # trailing end of the if-block, ~22 lines after the consult cite).
+    # trailing end of the if-block after #3894 DensifyInFlightGuard).
     oneshot_anchor = "Issue #3185 AC1: same surface as Phase-5 densify entry"
     oneshot_pos = mut.find(oneshot_anchor)
     if oneshot_pos != -1:
-        oneshot_window_end = min(len(mut), oneshot_pos + 3000)
+        oneshot_window_end = min(len(mut), oneshot_pos + 3600)
         oneshot_window = mut[oneshot_pos:oneshot_window_end]
     else:
         oneshot_window = ""

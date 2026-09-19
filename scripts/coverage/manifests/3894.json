@@ -1,0 +1,48 @@
+{
+  "issue": 3894,
+  "title": "Phase-5 Moving densify after held-clear+unlock — steal/peer mutate mid-relocate",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_mutation_boundary.cpp",
+      "contains": [
+        "Issue #3894",
+        "DensifyInFlightGuard",
+        "release_workspace_then_drain_after_densify_",
+        "compact_all_moving_pinned"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/serve/steal_safety.cpp",
+      "contains": [
+        "Issue #3894",
+        "densify_in_flight_for"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/serve/steal_safety.h",
+      "contains": [
+        "Issue #3894",
+        "Count = 7,"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/core/test_moving_densify_fail_closed.cpp",
+      "contains": [
+        "3894 AC1: compact before unlock/drain",
+        "ac3894_phase5_lock_held_densify"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "forbid": [
+        "tests/compiler/test_issue_3894.cpp",
+        "tests/issues/test_issue_3894.cpp",
+        "docs/design/3894-phase5-densify-inflight.md"
+      ]
+    }
+  ]
+}

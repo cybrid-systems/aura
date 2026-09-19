@@ -4947,6 +4947,43 @@ static void ac3850_3_wiring_no_invent() {
     CHECK(read_file("docs/design/3850-steal-panic-moving.md").empty(), "3850 AC3: no docs/design");
 }
 
+static void ac3894_phase5_lock_held_densify() {
+    std::println("\n--- #3894 AC1: Phase-5 compact under lock + densify-in-flight ---");
+    const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto cite = mb.find("Issue #3894: compact under workspace_mtx_");
+    CHECK(cite != std::string::npos, "3894 AC1: Phase-5 compact cite");
+    if (cite != std::string::npos) {
+        const auto hwin = mb.substr(cite, 1600);
+        CHECK(hwin.find("DensifyInFlightGuard") != std::string::npos, "3894 AC1: in-flight guard");
+        CHECK(hwin.find("compact_all_moving_pinned") != std::string::npos, "3894 AC1: compact");
+        const auto gpos = hwin.find("DensifyInFlightGuard");
+        const auto cpos = hwin.find("compact_all_moving_pinned");
+        const auto rpos = hwin.find("release_workspace_then_drain_after_densify_()");
+        CHECK(gpos != std::string::npos && cpos != std::string::npos && gpos < cpos,
+              "3894 AC1: guard before compact");
+        CHECK(rpos != std::string::npos && cpos < rpos, "3894 AC1: compact before unlock/drain");
+    }
+    CHECK(mb.find("release_workspace_then_drain_after_densify_") != std::string::npos,
+          "3894 AC1: delayed unlock helper");
+    CHECK(mb.find("DensifyInFlightGuard densify_inflight") != std::string::npos,
+          "3894 AC1: recovery densify also arms in-flight");
+    const auto h = read_file("src/core/densify_consistency_report.h");
+    CHECK(h.find("Issue #3894") != std::string::npos, "3894 AC1: flag cite");
+    CHECK(h.find("densify_in_flight_for") != std::string::npos, "3894 AC1: eval-keyed probe");
+    int dummy = 0;
+    {
+        aura::core::densify_consistency::DensifyInFlightGuard g(static_cast<const void*>(&dummy));
+        CHECK(aura::core::densify_consistency::densify_in_flight_for(&dummy),
+              "3894 AC1: in-flight armed");
+    }
+    CHECK(!aura::core::densify_consistency::densify_in_flight_for(&dummy),
+          "3894 AC1: in-flight cleared");
+    CHECK(read_file("tests/compiler/test_issue_3894.cpp").empty(), "3894 AC3: no invent");
+    CHECK(read_file("tests/issues/test_issue_3894.cpp").empty(), "3894 AC3: no issues invent");
+    CHECK(read_file("docs/design/3894-phase5-densify-inflight.md").empty(),
+          "3894 AC3: no docs/design");
+}
+
 int run_test_moving_densify_fail_closed() {
     std::println("=== Issue #2495: Moving densify fail-closed on untracked external roots ===");
     std::println(
@@ -5725,6 +5762,7 @@ int run_test_moving_densify_fail_closed() {
     ac3850_3_wiring_no_invent();
 
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
+    ac3894_phase5_lock_held_densify();
     return g_failed ? 1 : 0;
 }
 // production default AURA_MOVING_UNTRACKED=hard (extends #2495 test file per #81967)
