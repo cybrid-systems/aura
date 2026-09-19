@@ -9552,6 +9552,11 @@ struct CompilerMetrics {
     // hygiene_violation_prevented_on_boundary_total (#1908). Appended at
     // END (#2906).
     std::atomic<std::uint64_t> mutation_boundary_macro_hygiene_backstop_total{0};
+    // Issue #3892: prefer-partial lookup miss (st==2). Agents can
+    // separate correct-skip (relower_skipped_entirely_count) from a
+    // never-cached full lower. Fail-closed full still uses
+    // partial_forced_full_by_impact_total. Additive, struct-end (#2906).
+    std::atomic<std::uint64_t> incremental_relower_cold_miss_total{0};
 };
 
 // Issue #2248: adaptive thr feed lives in ir_cache_pure (module). Header
