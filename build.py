@@ -7690,6 +7690,18 @@ def cmd_lint():
             "Issue #3902 soft revoke-epoch honest linter failed — run python3 scripts/check_soft_revoke_epoch_honest_3902.py"
         )
         return r
+    # Issue #3903: capture_security_correlated_audit carries tenant_id —
+    # all six call sites pass the real principal for Typed-alone filters.
+    ctp3903_script = ROOT / "scripts" / "check_correlate_tenant_passthrough_3903.py"
+    if not ctp3903_script.exists():
+        fail(f"missing {ctp3903_script}")
+        return 1
+    r = run([sys.executable, str(ctp3903_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3903 correlate tenant passthrough linter failed — run python3 scripts/check_correlate_tenant_passthrough_3903.py"
+        )
+        return r
     # Issue #3869: storm/Global force-full soak/alert counter — rewrite-
     # side fires counted; no Soft skip of the Hard fence invented.
     sfc3869_script = ROOT / "scripts" / "check_storm_force_full_counter_3869.py"
