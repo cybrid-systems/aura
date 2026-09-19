@@ -2607,6 +2607,10 @@ void Evaluator::refresh_after_fiber_migration(void* fiber_void) noexcept {
         }
     }
 
+    // Issue #3887: steal-complete does not sample module/defuse into
+    // early-MustDeopt (aura_post_steal_aot_revalidate reserves those
+    // axes). Call-time aura_is_jit_closure_fresh AND (C-bridge ∧ table
+    // ∧ defuse) is the SSOT that refuses stale native after steal.
     if (pending_panic_checkpoint())
         (void)transfer_and_revalidate_panic_checkpoint(fb_void);
 

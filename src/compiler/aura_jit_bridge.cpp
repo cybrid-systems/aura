@@ -3004,10 +3004,11 @@ extern "C" int aura_post_steal_aot_revalidate(void* ev_ptr, std::uint64_t resume
         }
         return 1;
     }
-    // Reserved for future region_mask + module_version + defuse_version
-    // mismatch detection. The per-eval AotState already tracks these;
-    // revalidation compares against the global current + bump counters
-    // on drift. For P0 #1905 ship, bridge_epoch is the primary signal.
+    // Issue #3887: steal-mid module / defuse axes stay deferred (MVP
+    // brief). Call-time aura_is_jit_closure_fresh AND (C-bridge ∧ table
+    // ∧ defuse) still refuses stale invoke after steal — this hook does
+    // not early-MustDeopt / restamp on those clocks. Soft zero-cost:
+    // the loads above are the only extra work when the hook runs.
     (void)cur_module;
     (void)cur_defuse;
     return 0;

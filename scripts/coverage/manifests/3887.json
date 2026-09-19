@@ -1,0 +1,41 @@
+{
+  "issue": 3887,
+  "title": "Steal-mid AOT revalidate defers module/defuse; call-time dual-fresh is SSOT",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/aura_jit_bridge.cpp",
+      "contains": [
+        "Issue #3887",
+        "(void)cur_module",
+        "(void)cur_defuse",
+        "aura_is_jit_closure_fresh"
+      ]
+    },
+    {
+      "ac": "AC1-steal",
+      "path": "src/compiler/evaluator_fiber_mutation.cpp",
+      "contains": [
+        "Issue #3887",
+        "aura_is_jit_closure_fresh"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/compiler/test_remount_force_deopt.cpp",
+      "contains": [
+        "3887 AC1: captured defuse behind current → not fresh",
+        "3887 AC1: post-steal-shaped defuse bump leaves native at call-time",
+        "ac3887_call_time_dual_fresh_covers_post_steal_defuse"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "forbid": [
+        "tests/compiler/test_issue_3887.cpp",
+        "tests/issues/test_issue_3887.cpp",
+        "docs/design/3887-steal-mid-aot-revalidate.md"
+      ]
+    }
+  ]
+}
