@@ -10,6 +10,7 @@
 
 #include "core/arena_auto_policy_stats.h"
 #include "core/flatast_restamp.hh"
+#include "core/lifetime_consistency_proof.hh"
 #include "core/moving_densify_health.hh"
 #include "compiler/typed_mutation_audit.h"
 #include "test_harness.hpp"
@@ -865,6 +866,9 @@ static void ac3633_health_probe_and_publish() {
 static void dummy_known_roots_3739(void*) noexcept {}
 
 static void punch_and_alloc_auto_arm(ASTArena& arena) {
+    // Issue #3884: auto-arm now consults densify-entry LCP. Quiet the last
+    // proof so leftover reject from earlier ACs does not skip Moving.
+    aura::core::lifetime_consistency_proof::reset_lifetime_consistency_proof_for_test();
     arena.request_defrag();
     aura::ast::g_last_moving_compact_ms.store(0, std::memory_order_release);
     Pod16_3123* objs[8]{};

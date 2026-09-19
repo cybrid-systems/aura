@@ -79,8 +79,10 @@ def main() -> int:
         "AC1 auto-arm invokes the hook before live_compact(Moving)",
         arena,
     )
+    # Issue #3884: LCP consult may skip Moving; assignment is `r = live_compact(...)`
+    # after a default-constructed LiveCompactResult (no longer `const auto r =`).
     must(
-        "const auto r = live_compact(LiveCompactMode::Moving)",
+        "live_compact(LiveCompactMode::Moving)",
         "AC1 live_compact(Moving) called after hook invoke",
         arena,
     )
