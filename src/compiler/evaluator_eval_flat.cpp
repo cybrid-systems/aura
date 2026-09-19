@@ -2728,8 +2728,6 @@ EvalResult Evaluator::eval_flat_apply_mutate_rebind(std::span<const types::EvalV
             else if (ci < cells().size())
                 cells()[ci] = *refreshed;
             tenv.bind(name, make_cell(ci));
-            if (sym != aura::ast::INVALID_SYM)
-                tenv.bind_symid(sym, make_cell(ci));
         }
     }
     last_eval_current_result_.reset();

@@ -2450,7 +2450,11 @@ public:
                         aura::ast::NodeId def_body = aura::ast::NULL_NODE;
                         std::vector<aura::ast::SymId> fn_params;
                         bool dotted = false;
-                        if (!have_env_fn) {
+                        // Always record the workspace Lambda as fallback.
+                        // #3918 env-SSOT apply_closure can miss a live
+                        // eval-current TW closure; fail-closed InvalidClosure
+                        // then breaks (h 41) / (id 7) / (mv 3) Path B.
+                        {
                             // Last live Lambda Define wins (rebind add-path /
                             // intern SymId mismatch must not keep the old body).
                             for (aura::ast::NodeId id = 0; id < ws_flat->size(); ++id) {
@@ -2480,7 +2484,7 @@ public:
                                 dotted = (body_v.int_value & 1) != 0;
                             }
                         }
-                        if (have_env_fn || def_body != aura::ast::NULL_NODE) {
+                        if (def_body != aura::ast::NULL_NODE) {
                             // Tokenize the args between head_end and close.
                             // Simple splitter: walks parens / strings.
                             std::size_t arg_start = i;
@@ -2548,38 +2552,41 @@ public:
                                 }
                                 arg_vals.push_back(val);
                             }
-                            if (have_env_fn) {
+                            // Issue #3918: env-SSOT apply only for workspace
+                            // Defines (rebind leftovers). Stdin closures
+                            // (hbump / bump) must use the normal pipeline —
+                            // apply_closure after rebind can run a captured
+                            // hash that hash-set! no longer mutates.
+                            if (have_env_fn && def_body != aura::ast::NULL_NODE) {
                                 auto cid = types::as_closure_id(env_fn);
                                 if (auto r = evaluator_.apply_closure(cid, arg_vals))
                                     return EvalResult(*r);
-                                return std::unexpected(
-                                    aura::diag::Diagnostic{aura::diag::ErrorKind::InvalidClosure,
-                                                           "eval: env rebind apply failed"});
                             }
-                            // Build a child env with param bindings.
-                            Env call_env(&evaluator_.top_env());
-                            call_env.set_primitives(&evaluator_.primitives());
-                            if (ws_pool)
-                                call_env.set_pool(ws_pool);
-                            std::size_t named = dotted && !fn_params.empty() ? fn_params.size() - 1
-                                                                             : fn_params.size();
-                            for (std::size_t pi = 0; pi < named && pi < arg_vals.size(); ++pi) {
-                                call_env.bind_symid(fn_params[pi], std::move(arg_vals[pi]));
-                            }
-                            // Dotted-rest: collect remaining args into a pair list.
-                            if (dotted && !fn_params.empty() && arg_vals.size() > named) {
-                                types::EvalValue rest = types::make_void();
-                                for (std::size_t ri = arg_vals.size(); ri > named; --ri) {
-                                    std::size_t pid = evaluator_.pairs().size();
-                                    evaluator_.pairs().push_back(
-                                        {std::move(arg_vals[ri - 1]), rest});
-                                    rest = types::make_pair(pid);
+                            if (def_body != aura::ast::NULL_NODE) {
+                                // Build a child env with param bindings.
+                                Env call_env(&evaluator_.top_env());
+                                call_env.set_primitives(&evaluator_.primitives());
+                                if (ws_pool)
+                                    call_env.set_pool(ws_pool);
+                                std::size_t named = dotted && !fn_params.empty()
+                                                        ? fn_params.size() - 1
+                                                        : fn_params.size();
+                                for (std::size_t pi = 0; pi < named && pi < arg_vals.size(); ++pi) {
+                                    call_env.bind_symid(fn_params[pi], std::move(arg_vals[pi]));
                                 }
-                                call_env.bind_symid(fn_params.back(), rest);
+                                // Dotted-rest: collect remaining args into a pair list.
+                                if (dotted && !fn_params.empty() && arg_vals.size() > named) {
+                                    types::EvalValue rest = types::make_void();
+                                    for (std::size_t ri = arg_vals.size(); ri > named; --ri) {
+                                        std::size_t pid = evaluator_.pairs().size();
+                                        evaluator_.pairs().push_back(
+                                            {std::move(arg_vals[ri - 1]), rest});
+                                        rest = types::make_pair(pid);
+                                    }
+                                    call_env.bind_symid(fn_params.back(), rest);
+                                }
+                                return evaluator_.eval_flat(*ws_flat, *ws_pool, def_body, call_env);
                             }
-                            auto dbg_ret =
-                                evaluator_.eval_flat(*ws_flat, *ws_pool, def_body, call_env);
-                            return dbg_ret;
                         }
                         // head is a Variable but no workspace define —
                         // fall through to the normal pipeline (which
@@ -10908,6 +10915,37 @@ public:
     // mutations since the snapshot via
     // workspace_flat_->rollback_since(snapshot_id).
     //
+    // Issue #3918 follow-up: after typed-mutate-atomic abort restores
+    // AST, re-eval top-level Defines into env cells. Lockless rebind
+    // writes cells in place; rollback_since does not undo that.
+    void resync_top_env_from_workspace_after_abort() {
+        auto* flat = evaluator_.workspace_flat();
+        auto* pool = evaluator_.workspace_pool();
+        if (!flat || !pool)
+            return;
+        const auto defs = aura::compiler::find_top_level_defines(*flat, *pool, flat->root);
+        auto& tenv = evaluator_.top_env();
+        for (const auto& [name, def_id] : defs) {
+            if (name.empty() || def_id >= flat->size())
+                continue;
+            auto dv = flat->get(def_id);
+            if (dv.children.empty())
+                continue;
+            auto body = dv.child(0);
+            if (body >= flat->size() || flat->is_free_slot(body))
+                continue;
+            auto refreshed = evaluator_.eval_flat(*flat, *pool, body, tenv);
+            if (!refreshed)
+                continue;
+            auto existing = tenv.lookup_binding(name);
+            if (!existing || !types::is_cell(*existing))
+                continue;
+            const auto ci = types::as_cell_id(*existing);
+            if (ci < evaluator_.cells().size())
+                evaluator_.cells()[ci] = *refreshed;
+        }
+    }
+
     // Used by typed_mutate_atomic to wrap N typed_mutate calls into
     // a single atomic operation: if any one fails, all prior are
     // rolled back. Distinct from MutationTransaction (which wraps
@@ -11001,6 +11039,11 @@ public:
                 // issue.
                 ws_flat->rollback_since(snapshot_id);
                 ws_flat->erase_mutations_since(snapshot_id);
+                // Issue #3918: lockless rebind env-refreshes cells in
+                // place. AST rollback does not restore those cells, so
+                // typed-mutate-atomic abort left x/y at the rebound
+                // values. Re-eval restored top-level Defines into env.
+                svc->resync_top_env_from_workspace_after_abort();
             }
             restore_provenance();
         }
