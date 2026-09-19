@@ -7677,6 +7677,19 @@ def cmd_lint():
             "Issue #3875 revoke-epoch hard-only linter failed — run python3 scripts/check_revoke_epoch_hard_only_3875.py"
         )
         return r
+    # Issue #3902: grant-row revoke stamps honest under Soft / epoch=0 —
+    # invent 1 only on the capability hard face at all four stamp sites
+    # (single_use consume, session cascade, orphan sweep, epoch-bound).
+    sre3902_script = ROOT / "scripts" / "check_soft_revoke_epoch_honest_3902.py"
+    if not sre3902_script.exists():
+        fail(f"missing {sre3902_script}")
+        return 1
+    r = run([sys.executable, str(sre3902_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3902 soft revoke-epoch honest linter failed — run python3 scripts/check_soft_revoke_epoch_honest_3902.py"
+        )
+        return r
     # Issue #3869: storm/Global force-full soak/alert counter — rewrite-
     # side fires counted; no Soft skip of the Hard fence invented.
     sfc3869_script = ROOT / "scripts" / "check_storm_force_full_counter_3869.py"

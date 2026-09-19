@@ -63,6 +63,7 @@ using aura::compiler::security::kEffectSyscall;
 using aura::compiler::security::kEffectTenantAdmin;
 using aura::core::bump_mutation_epoch;
 using aura::core::current_mutation_epoch;
+using aura::core::reset_mutation_epoch_for_test;
 using aura::core::capability::CapabilityGrant;
 using aura::core::capability::check_and_record_effect;
 using aura::core::capability::Effect;
@@ -2172,6 +2173,205 @@ static void ac3723_5_soft_source_and_no_invent() {
     (void)g_capability_registry().revoke_session_grants_for_mid(prior_mid);
 }
 
+// ── Issue #3902: grant-row revoke stamps honest under Soft / epoch=0 ──
+static void ac3902_1_soft_epoch0_consume_honest_unset() {
+    std::println("\n--- #3902 AC1: Soft + epoch=0 single-use consume keeps revoke_epoch 0 ---");
+    reset_all(); // Off face = Soft; registry reset
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    apply_dev_audit_defaults(); // Issue #3902: pin Soft audit face (earlier tests leave production
+                                // on)
+    // Issue #3902: pin epoch 0 (earlier tests bump it).
+    reset_mutation_epoch_for_test();
+    CHECK(aura::core::current_mutation_epoch() == 0, "3902 AC1: epoch 0 after test reset");
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    constexpr std::uint64_t tenant = 3902;
+    ev.set_capability_tenant_id(tenant);
+
+    EffectProvenance prov{};
+    prov.epoch = 0;
+    prov.mutation_id = 3902;
+
+    g_capability_registry().grant(tenant, "mut-3902-soft", Effect::Mutate, prov,
+                                  /*single_use=*/true, /*session_bound=*/true);
+
+    const bool allowed = check_and_record_effect(Effect::Mutate, Effect::Mutate, prov, tenant,
+                                                 "mut-3902-soft-check");
+    CHECK(allowed, "3902 AC1: single-use consume allowed (Soft face unchanged)");
+
+    bool found = false;
+    std::uint64_t revoke_epoch = 1;
+    {
+        std::lock_guard<std::mutex> lock(g_capability_registry().mtx);
+        const auto it = g_capability_registry().by_tenant.find(tenant);
+        if (it != g_capability_registry().by_tenant.end()) {
+            for (const auto& g : it->second) {
+                if (g.revoked) {
+                    found = true;
+                    revoke_epoch = g.revoke_epoch;
+                    break;
+                }
+            }
+        }
+    }
+    CHECK(found, "3902 AC1: consumed grant row reachable");
+    CHECK(revoke_epoch == 0,
+          "3902 AC1: Soft epoch=0 → revoke_epoch 0 (honest unset, no phantom 1)");
+    CHECK(g_capability_effect_metrics().capability_single_use_consumed_total.load() >= 1,
+          "3902 AC1: consume still counted");
+    reset_all();
+}
+
+static void ac3902_2_hard_face_invent_1() {
+    std::println("\n--- #3902 AC2: hard face + epoch=0 consume invents 1 (#3875 vocabulary) ---");
+    reset_all();
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Strict);
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    apply_production_audit_defaults(); // Issue #3902: pin hard face
+    // Issue #3902: pin epoch 0 (earlier tests bump it).
+    reset_mutation_epoch_for_test();
+    CHECK(aura::core::current_mutation_epoch() == 0, "3902 AC2: epoch 0 after test reset");
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    constexpr std::uint64_t tenant = 3903;
+    ev.set_capability_tenant_id(tenant);
+
+    EffectProvenance prov{};
+    prov.epoch = 0;
+    prov.mutation_id = 3902;
+
+    g_capability_registry().grant(tenant, "mut-3902-hard", Effect::Mutate, prov,
+                                  /*single_use=*/true, /*session_bound=*/true);
+
+    const bool allowed = check_and_record_effect(Effect::Mutate, Effect::Mutate, prov, tenant,
+                                                 "mut-3902-hard-check");
+    CHECK(allowed, "3902 AC2: single-use consume allowed (hard face)");
+
+    bool found = false;
+    std::uint64_t revoke_epoch = 0;
+    {
+        std::lock_guard<std::mutex> lock(g_capability_registry().mtx);
+        const auto it = g_capability_registry().by_tenant.find(tenant);
+        if (it != g_capability_registry().by_tenant.end()) {
+            for (const auto& g : it->second) {
+                if (g.revoked) {
+                    found = true;
+                    revoke_epoch = g.revoke_epoch;
+                    break;
+                }
+            }
+        }
+    }
+    CHECK(found, "3902 AC2: consumed grant row reachable");
+    CHECK(revoke_epoch == 1, "3902 AC2: hard-face invent 1 (matches named-revoke policy)");
+    reset_all();
+}
+
+static void ac3902_3_real_epoch_passthrough() {
+    std::println("\n--- #3902 AC3: real epoch passes through untouched ---");
+    reset_all();
+    reset_mutation_epoch_for_test();
+    aura::core::bump_mutation_epoch(2);
+    CHECK(aura::core::current_mutation_epoch() == 2, "3902 AC3: epoch 2 after reset+bump");
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    constexpr std::uint64_t tenant = 3904;
+    ev.set_capability_tenant_id(tenant);
+
+    EffectProvenance prov{};
+    prov.epoch = 2;
+    prov.mutation_id = 3902;
+
+    g_capability_registry().grant(tenant, "mut-3902-real", Effect::Mutate, prov,
+                                  /*single_use=*/true, /*session_bound=*/true);
+
+    const bool allowed = check_and_record_effect(Effect::Mutate, Effect::Mutate, prov, tenant,
+                                                 "mut-3902-real-check");
+    CHECK(allowed, "3902 AC3: single-use consume allowed");
+
+    bool found = false;
+    std::uint64_t revoke_epoch = 0;
+    {
+        std::lock_guard<std::mutex> lock(g_capability_registry().mtx);
+        const auto it = g_capability_registry().by_tenant.find(tenant);
+        if (it != g_capability_registry().by_tenant.end()) {
+            for (const auto& g : it->second) {
+                if (g.revoked) {
+                    found = true;
+                    revoke_epoch = g.revoke_epoch;
+                    break;
+                }
+            }
+        }
+    }
+    CHECK(found, "3902 AC3: consumed grant row reachable");
+    CHECK(revoke_epoch == 2, "3902 AC3: real epoch stamped unchanged");
+    reset_all();
+}
+
+static void ac3902_4_soft_session_cascade_honest() {
+    std::println(
+        "\n--- #3902 AC4: Soft epoch=0 session cascade keeps revoke_epoch 0, bits clear ---");
+    reset_all();
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    // Issue #3902: pin Soft audit face (earlier tests leave production on).
+    apply_dev_audit_defaults();
+    // Issue #3902: pin epoch 0 (earlier tests bump it).
+    reset_mutation_epoch_for_test();
+    CHECK(aura::core::current_mutation_epoch() == 0, "3902 AC4: epoch 0 after test reset");
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    constexpr std::uint64_t tenant = 3905;
+    ev.set_capability_tenant_id(tenant);
+
+    EffectProvenance prov{};
+    prov.epoch = 0;
+    prov.mutation_id = 3902;
+
+    g_capability_registry().grant(tenant, "mut-3902-cascade", Effect::Mutate, prov,
+                                  /*single_use=*/false, /*session_bound=*/true);
+
+    (void)g_capability_registry().revoke_session_grants_for(tenant, prov.mutation_id,
+                                                            /*fiber_id=*/0, "scope-dtor-cascade");
+
+    bool found = false;
+    bool revoked = false;
+    bool session_bound = true;
+    std::uint64_t revoke_epoch = 1;
+    {
+        std::lock_guard<std::mutex> lock(g_capability_registry().mtx);
+        const auto it = g_capability_registry().by_tenant.find(tenant);
+        if (it != g_capability_registry().by_tenant.end()) {
+            for (const auto& g : it->second) {
+                if (g.revoked) {
+                    found = true;
+                    revoked = g.revoked;
+                    session_bound = g.session_bound;
+                    revoke_epoch = g.revoke_epoch;
+                    break;
+                }
+            }
+        }
+    }
+    CHECK(found, "3902 AC4: revoked grant row reachable");
+    CHECK(revoked && !session_bound, "3902 AC4: session bits still cleared");
+    CHECK(revoke_epoch == 0, "3902 AC4: Soft epoch=0 → revoke_epoch 0 (honest unset)");
+    reset_all();
+}
+
+static void ac3902_5_source_cite() {
+    std::println("\n--- #3902 AC5: source-cite + no invent ---");
+    const auto cap = read_file("src/core/capability_model.hh");
+    CHECK(cap.find("Issue #3902") != std::string::npos,
+          "3902 AC5: capability_model.hh cites #3902");
+    CHECK(!std::filesystem::exists("docs/design/3902-soft-revoke-epoch-honest.md"),
+          "3902 AC5: no docs/design");
+    CHECK(!std::filesystem::exists("tests/issues/test_issue_3902.cpp"),
+          "3902 AC5: no tests/issues invent");
+    CHECK(!std::filesystem::exists("tests/core/test_issue_3902.cpp"),
+          "3902 AC5: no tests/core invent");
+}
+
 int run_test_capability_single_use_consume() {
     std::println("=== Issue #2586/#3142/#3144: single-use + SessionBound revoke + kCapWildcard "
                  "effects_for strip ===");
@@ -3147,6 +3347,11 @@ int run_test_inert_session_mid_3723() {
     ac3878_1_mid_refuse_no_orphan_string();
     ac3878_2_wildcard_refuse_no_orphan();
     ac3878_3_soft_string_path_and_cite();
+    ac3902_1_soft_epoch0_consume_honest_unset();
+    ac3902_2_hard_face_invent_1();
+    ac3902_3_real_epoch_passthrough();
+    ac3902_4_soft_session_cascade_honest();
+    ac3902_5_source_cite();
     std::println("\n=== #3723 results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }

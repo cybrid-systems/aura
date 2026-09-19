@@ -968,7 +968,9 @@ struct CapabilityRegistry {
         auto& met = g_capability_effect_metrics();
         std::size_t n = 0;
         auto ep = ::aura::core::current_mutation_epoch();
-        if (ep == 0)
+        // Issue #3902: hard-face invent only — Soft keeps 0 honest unset
+        // (same vocabulary as the #3875 named-revoke stamp).
+        if (ep == 0 && capability_epoch_hard_face())
             ep = 1;
         EffectProvenance audit_prov{};
         audit_prov.mutation_id = mid;
@@ -1103,7 +1105,9 @@ struct CapabilityRegistry {
             return orphans; // Soft/Off observe-only; production no-op on clean state
         std::size_t revoked = 0;
         auto ep = ::aura::core::current_mutation_epoch();
-        if (ep == 0)
+        // Issue #3902: hard-face invent only — Soft keeps 0 honest unset
+        // (same vocabulary as the #3875 named-revoke stamp).
+        if (ep == 0 && capability_epoch_hard_face())
             ep = 1;
         for (auto& [tenant, vec] : by_tenant) {
             for (auto& g : vec) {
@@ -1944,7 +1948,9 @@ struct CapabilityRegistry {
                     auto ep = revoke_at_epoch;
                     if (ep == 0)
                         ep = ::aura::core::current_mutation_epoch();
-                    if (ep == 0)
+                    // Issue #3902: hard-face invent only — Soft keeps 0
+                    // honest unset (same vocabulary as #3875 named revoke).
+                    if (ep == 0 && capability_epoch_hard_face())
                         ep = 1;
                     g.revoke_epoch = ep;
                     auto& met = g_capability_effect_metrics();
@@ -2159,8 +2165,12 @@ inline bool check_and_record_effect(Effect required, Effect actual, const Effect
                     g.effects = Effect::None;
                     g.session_bound = false; // #2944: no longer live session
                     auto ep = ::aura::core::current_mutation_epoch();
-                    if (ep == 0)
-                        ep = 1; // non-zero audit stamp at process origin
+                    // Issue #3902: align grant-row revoke stamps with the
+                    // #3875 vocabulary — invent 1 only on the capability
+                    // hard face; Soft keeps 0 honest unset (forensic rows
+                    // must not phantom-collide with a later real epoch=1).
+                    if (ep == 0 && capability_epoch_hard_face())
+                        ep = 1;
                     g.revoke_epoch = ep;
                     met.capability_single_use_consumed_total.fetch_add(1,
                                                                        std::memory_order_relaxed);
