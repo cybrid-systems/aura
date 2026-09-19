@@ -19,6 +19,9 @@
         llm:chat)
 
 (require "std/string" all:)
+; #3919: http-post is a deferred host prim. Requiring std/llm installs
+; http-* (ensure_std_host_prims, same mask as std/net). Sandbox without
+; a network grant skips that install so this module still loads.
 
 
 ; ── Rate limit (#929) ──────────────────────────────────────────
@@ -210,10 +213,14 @@
                     (url (if (string? base)
                            (string-append base "/chat/completions")
                            "https://api.deepseek.com/v1/chat/completions"))
-                    (r (http-post url clean key)))
-               (if (and (string? r) (> (string-length r) 0))
-                 r
-                 (if (string? r) r ""))))))))))
+                    (r (try
+                         (http-post url clean key)
+                         (catch (e) "no-http-post"))))
+               (cond
+                 ((error? r) "no-http-post")
+                 ((and (string? r) (> (string-length r) 0)) r)
+                 ((string? r) r)
+                 (else ""))))))))))
 
 (define (llm:call-sandboxed body)
   (if (not (string? body))
@@ -244,6 +251,8 @@
          (hash "ok" #f "error" "injection-blocked" "content" ""))
         ((equal? raw "bad-arg")
          (hash "ok" #f "error" "bad-arg" "content" ""))
+        ((equal? raw "no-http-post")
+         (hash "ok" #f "error" "no-http-post" "content" ""))
         ((equal? raw "")
          (hash "ok" #f "error" "empty" "content" ""))
         (else (llm:parse-response raw))))))

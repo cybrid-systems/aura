@@ -28,6 +28,12 @@
 //   #2769 AC3: host #2766 canary still shared
 //   #2769 AC4: zero require-before-export in lib/std (export-first policy)
 //   #2769 AC5: linter + INDEX authoring note; no docs/design/*
+//
+//   #3919 AC1: sandbox-off (require "std/llm") installs http-post
+//   #3919 AC2: (require "std/agent") llm-ask without key is a string (not unbound)
+//   #3919 AC3: sandbox-on require llm still loads; dummy-key call → "no-http-post"
+//   #3919 AC4: source-cite ensure_std_host_prims llm + aura-llm-call try
+//   #3919 AC5: no test_issue_3919.cpp; no docs/design/3919-*
 
 #include "test_harness.hpp"
 
@@ -39,6 +45,7 @@
 #include <string_view>
 
 import std;
+import aura.compiler.evaluator;
 import aura.compiler.service;
 import aura.compiler.value;
 
@@ -49,6 +56,7 @@ using aura::compiler::types::as_bool;
 using aura::compiler::types::as_int;
 using aura::compiler::types::as_string_idx;
 using aura::compiler::types::is_bool;
+using aura::compiler::types::is_error;
 using aura::compiler::types::is_int;
 using aura::compiler::types::is_string;
 using aura::test::g_failed;
@@ -564,6 +572,91 @@ static void ac2769_5_linter() {
           "AC5: no docs/design/2769-* per #1655");
 }
 
+static void ac3919_1_llm_installs_http_post() {
+    std::println("\n--- #3919 AC1: require std/llm installs http-post ---");
+    const auto lib = find_lib_std();
+    CHECK(!lib.empty(), "AC1: lib found");
+    if (lib.empty())
+        return;
+    setenv("AURA_PATH", lib.string().c_str(), 1);
+    setenv("AURA_SANDBOX", "off", 1);
+    setenv("AURA_PIPELINE_STRICT", "0", 1);
+    unsetenv("LLM_API_KEY");
+
+    CompilerService cs;
+    CHECK(!eval_bool(cs, "(try (procedure? http-post) (catch (e) #f))"),
+          "AC1: http-post unbound before require");
+    CHECK(cs.eval("(require \"std/llm\" all:)").has_value(), "AC1: require std/llm");
+    CHECK(eval_bool(cs, "(procedure? http-post)"), "AC1: http-post bound after std/llm");
+}
+
+static void ac3919_2_agent_llm_ask_no_unbound() {
+    std::println("\n--- #3919 AC2: require std/agent; llm-ask is not unbound ---");
+    const auto lib = find_lib_std();
+    CHECK(!lib.empty(), "AC2: lib found");
+    if (lib.empty())
+        return;
+    setenv("AURA_PATH", lib.string().c_str(), 1);
+    setenv("AURA_SANDBOX", "off", 1);
+    setenv("AURA_PIPELINE_STRICT", "0", 1);
+    unsetenv("LLM_API_KEY");
+
+    CompilerService cs;
+    CHECK(cs.eval("(require \"std/agent\" all:)").has_value(), "AC2: require std/agent");
+    CHECK(eval_bool(cs, "(procedure? http-post)"), "AC2: http-post bound via std/llm");
+    CHECK(eval_bool(cs, "(procedure? llm-ask)"), "AC2: llm-ask bound");
+    auto r = cs.eval("(llm-ask \"x\")");
+    CHECK(r && is_string(*r) && !is_error(*r), "AC2: llm-ask returns string (empty/no-key)");
+}
+
+static void ac3919_3_sandbox_no_unbound() {
+    std::println("\n--- #3919 AC3: sandbox require llm loads; dummy-key → no-http-post ---");
+    const auto lib = find_lib_std();
+    CHECK(!lib.empty(), "AC3: lib found");
+    if (lib.empty())
+        return;
+    setenv("AURA_PATH", lib.string().c_str(), 1);
+    setenv("AURA_SANDBOX", "off", 1);
+    setenv("AURA_PIPELINE_STRICT", "0", 1);
+    setenv("LLM_API_KEY", "dummy-3919", 1);
+
+    CompilerService cs;
+    cs.evaluator().set_sandbox_mode(true);
+    auto req = cs.eval("(require \"std/llm\" all:)");
+    CHECK(req.has_value() && !(req && is_error(*req)),
+          "AC3: require std/llm succeeds under sandbox");
+    auto gate = cs.evaluator().ensure_std_host_prims("std/llm");
+    CHECK(!is_error(gate), "AC3: ensure_std_host_prims llm is not a deny error");
+    CHECK(eval_bool(cs, "(equal? (aura-llm-call \"hello\") \"no-http-post\")"),
+          "AC3: dummy-key aura-llm-call → no-http-post (not unbound)");
+    CHECK(eval_bool(cs, "(try (procedure? http-post) (catch (e) #f))") == false,
+          "AC3: http-post stays uninstalled without network grant");
+
+    unsetenv("LLM_API_KEY");
+}
+
+static void ac3919_4_source_cite() {
+    std::println("\n--- #3919 AC4: source-cite llm http-post install ---");
+    const auto loader = read_file("src/compiler/evaluator_module_loader.cpp");
+    CHECK(loader.find("#3919") != std::string::npos, "AC4: loader cites #3919");
+    CHECK(loader.find("llm_optional_http") != std::string::npos, "AC4: llm optional http mask");
+    CHECK(loader.find("is_mod(\"llm\")") != std::string::npos, "AC4: is_mod llm");
+    const auto llm = read_file("lib/std/llm.aura");
+    CHECK(llm.find("#3919") != std::string::npos, "AC4: llm.aura cites #3919");
+    CHECK(llm.find("no-http-post") != std::string::npos, "AC4: structured no-http-post");
+    CHECK(llm.find("(catch (e) \"no-http-post\")") != std::string::npos,
+          "AC4: aura-llm-call catches unbound http-post");
+}
+
+static void ac3919_5_gate() {
+    std::println("\n--- #3919 AC5: no invent test_issue / docs/design ---");
+    CHECK(read_file("docs/design/3919-llm-http-post.md").empty(), "AC5: no docs/design/3919-*");
+    CHECK(read_file("tests/compiler/test_issue_3919.cpp").empty(), "AC5: no test_issue_3919.cpp");
+    const auto t = read_file("tests/compiler/test_module_require_freevar.cpp");
+    CHECK(t.find("ac3919_1_llm_installs_http_post") != std::string::npos,
+          "AC5: ACs live in test_module_require_freevar");
+}
+
 } // namespace
 
 int run_test_module_require_freevar() {
@@ -591,7 +684,14 @@ int run_test_module_require_freevar() {
     ac2769_3_host_canary_2766();
     ac2769_4_form_order_policy();
     ac2769_5_linter();
-    std::println("\n=== #2566+#2766+#2768+#2769: {} passed, {} failed ===", g_passed, g_failed);
+    std::println("\n=== Issue #3919: std/llm installs http-post ---");
+    ac3919_1_llm_installs_http_post();
+    ac3919_2_agent_llm_ask_no_unbound();
+    ac3919_3_sandbox_no_unbound();
+    ac3919_4_source_cite();
+    ac3919_5_gate();
+    std::println("\n=== #2566+#2766+#2768+#2769+#3919: {} passed, {} failed ===", g_passed,
+                 g_failed);
     return g_failed ? 1 : 0;
 }
 
