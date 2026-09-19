@@ -4610,7 +4610,9 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                         bool dotted = callee.int_value != 0;
                         std::size_t named_count =
                             dotted && !pspan.empty() ? pspan.size() - 1 : pspan.size();
-                        // Evaluate named args
+                        // Evaluate named + rest args before emplace.
+                        // Issue #3915: rest eval after emplace dangled the
+                        // TCO caller Env (same class as TW closure TCO).
                         std::vector<EvalValue> iargs;
                         iargs.reserve(named_count);
                         for (std::size_t i = 0; i < named_count && i + 1 < v.children.size(); ++i) {
@@ -4618,6 +4620,15 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                             if (!ar)
                                 return ar;
                             iargs.push_back(*ar);
+                        }
+                        std::vector<EvalValue> rest_args;
+                        if (dotted && !pspan.empty()) {
+                            for (std::size_t i = named_count + 1; i < v.children.size(); ++i) {
+                                auto ar = eval_flat(*f, *p, v.child(i), eval_env);
+                                if (!ar)
+                                    return ar;
+                                rest_args.push_back(*ar);
+                            }
                         }
                         // Issue #2871: pin parent if it lives in tail_env before emplace.
                         pin_if_current_in_tail();
@@ -4627,15 +4638,11 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                         for (std::size_t i = 0; i < iargs.size(); ++i) {
                             tail_env->bind(std::string(p->resolve(pspan[i])), std::move(iargs[i]));
                         }
-                        // Dotted rest: collect remaining args into a pair list
                         if (dotted && !pspan.empty()) {
                             types::EvalValue rest = make_void();
-                            for (std::size_t i = v.children.size() - 1; i > named_count; --i) {
-                                auto ar = eval_flat(*f, *p, v.child(i), *current_env);
-                                if (!ar)
-                                    return ar;
+                            for (std::size_t i = rest_args.size(); i > 0; --i) {
                                 auto pid = pairs_.size();
-                                pairs_.push_back({*ar, rest});
+                                pairs_.push_back({rest_args[i - 1], rest});
                                 rest = make_pair(pid);
                             }
                             tail_env->bind(std::string(p->resolve(pspan.back())), rest);
@@ -5476,7 +5483,11 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                             return std::unexpected(Diagnostic{ErrorKind::InvalidClosure,
                                                               "eval_flat: invalid closure"});
                         }
-                        // Evaluate named args for TW TCO inline path.
+                        // Evaluate ALL args before overwriting tail_env.
+                        // Issue #3915: dotted rest used to eval after
+                        // materialize_call_env, which destroys the TCO
+                        // caller Env `eval_env` aliases (round-once's
+                        // `body` became unbound at agent:closed-loop-once).
                         std::size_t named_count = cl.dotted && !cl.params.empty()
                                                       ? cl.params.size() - 1
                                                       : cl.params.size();
@@ -5490,6 +5501,17 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                                 return ar;
                             cargs.push_back(*ar);
                         }
+                        std::vector<EvalValue> rest_args;
+                        if (cl.dotted && !cl.params.empty()) {
+                            for (std::size_t i = named_count + 1; i < v.children.size(); ++i) {
+                                auto ar = eval_flat(*f, *p, v.child(i), eval_env);
+                                if (!ar)
+                                    return ar;
+                                if (is_error(*ar) && !is_string(*ar))
+                                    return ar;
+                                rest_args.push_back(*ar);
+                            }
+                        }
                         tail_env = materialize_call_env(cl);
                         tail_env->set_primitives(&primitives_);
 
@@ -5499,17 +5521,11 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                         for (std::size_t i = 0; i < cargs.size(); ++i) {
                             tail_env->bind_symid(cl.params[i], std::move(cargs[i]));
                         }
-                        // Dotted rest: collect remaining args into a pair list
                         if (cl.dotted && !cl.params.empty()) {
                             types::EvalValue rest = make_void();
-                            for (std::size_t i = v.children.size() - 1; i > named_count; --i) {
-                                auto ar = eval_flat(*f, *p, v.child(i), eval_env);
-                                if (!ar)
-                                    return ar;
-                                if (is_error(*ar) && !is_string(*ar))
-                                    return ar;
+                            for (std::size_t i = rest_args.size(); i > 0; --i) {
                                 auto pid = pairs_.size();
-                                pairs_.push_back({*ar, rest});
+                                pairs_.push_back({rest_args[i - 1], rest});
                                 rest = make_pair(pid);
                             }
                             tail_env->bind_symid(cl.params.back(), rest);
