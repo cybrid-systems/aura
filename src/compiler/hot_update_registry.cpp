@@ -1079,6 +1079,10 @@ void HotUpdateRegistry::maybe_stamp_heal_reason_last_success(std::uint64_t demot
     // Agent note_reemit_success_coverage still wins (override early-out).
     // Do not wholesale-store demoted (#3413). Belt (#3096/#3814) still
     // ages residual until Agent coverage note or age clear.
+    // Issue #3911: stamp is still a reason-proxy, not per-define emit
+    // proof. Residual uncovered = force & ~last_success stays force-JIT
+    // until Agent coverage note / ResidualForceHeal age belt. Soft
+    // wholesale re-promote unchanged.
     const auto prev = last_reemit_success_region_mask_.load(std::memory_order_relaxed);
     const auto next = prev | bit;
     if (next == prev)

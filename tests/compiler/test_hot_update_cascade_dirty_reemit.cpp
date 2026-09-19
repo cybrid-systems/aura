@@ -844,6 +844,10 @@ static void ac3885_multi_reason_single_heal_leaves_residual() {
     const auto cpp = read_file("src/compiler/hot_update_registry.cpp");
     CHECK(cpp.find("Issue #3885") != std::string::npos, "3885 AC: cpp cites #3885");
     CHECK(cpp.find("prev | bit") != std::string::npos, "3885 AC1: heal ORs one reason bit");
+    CHECK(cpp.find("Issue #3911") != std::string::npos,
+          "3911 AC: heal stamp remains reason-proxy (not per-define)");
+    CHECK(cpp.find("note_reemit_success_coverage") != std::string::npos,
+          "3911 AC1: Agent coverage note still the multi-reason clear");
     auto& reg = hot_update_registry();
     aura::compiler::typed_audit::apply_production_audit_defaults();
     reg.on_reload_success();
