@@ -2891,6 +2891,23 @@ int main(int argc, char* argv[]) {
             continue;
         }
 
+        if ((c == ')' || c == ']') && depth == 0) {
+            // Issue #3917: extra close at file/form top level is a hard
+            // read error. Do not evaluate a already-split prefix — a
+            // truncated named-let would run with rewritten control flow
+            // (n becomes (1)/(), infinite back-off).
+            std::size_t line = 1, col = 1;
+            for (std::size_t k = 0; k < i; ++k) {
+                if (all_input[k] == '\n') {
+                    ++line;
+                    col = 1;
+                } else {
+                    ++col;
+                }
+            }
+            std::println(std::cerr, "error: {}:{}: parse error: unexpected '{}'", line, col, c);
+            return 1;
+        }
         if ((c == ')' || c == ']') && depth > 0) {
             current += c;
             --depth;

@@ -144,6 +144,21 @@ static void ac3915_round_once_rest_args() {
     CHECK(wr.has_value() && is_int(*wr) && as_int(*wr) == 1, "3915C AC: write still bound");
 }
 
+static void ac3917_extra_paren_cli() {
+    std::println("\n--- #3917: extra ) at top level is a hard CLI read error ---");
+    const auto main = read_file("src/main.cpp");
+    CHECK(main.find("Issue #3917") != std::string::npos, "3917 AC: main.cpp cites");
+    CHECK(main.find("unexpected '{}'") != std::string::npos ||
+              main.find("unexpected") != std::string::npos,
+          "3917 AC: unexpected extra close");
+    CHECK(main.find("depth == 0") != std::string::npos, "3917 AC: depth-0 extra close");
+    CompilerService cs;
+    auto star = cs.eval("(begin (define *skip-left* 2) (set! *skip-left* (- *skip-left* 1)) "
+                        "*skip-left*)");
+    CHECK(star.has_value() && is_int(*star) && as_int(*star) == 1,
+          "3917 AC: *skip-left* is one identifier");
+}
+
 int run_test_eval_current_no_auto_fix() {
     std::println("=== Issue #2484: eval-current no auto-fix ===");
     ac1_closure_unchanged();
@@ -152,7 +167,8 @@ int run_test_eval_current_no_auto_fix() {
     ac4_gate();
     ac3915_define_rhs_binds();
     ac3915_round_once_rest_args();
-    std::println("\n=== #2484/#3915 results: {} passed, {} failed ===", g_passed, g_failed);
+    ac3917_extra_paren_cli();
+    std::println("\n=== #2484/#3915/#3917 results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
 
