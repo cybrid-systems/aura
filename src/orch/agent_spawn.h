@@ -1393,6 +1393,16 @@ inline bool maybe_erase_scope_bp_gauge_on_teardown(std::string_view scope_id) no
     return erased;
 }
 
+// Issue #3931: unique per-agent "bare:<seq>" gauges (tenant-0 naked
+// production spawn) must not fill the 256-cap map. Named as:N / t:N /
+// explicit :bp-scope-id stay until Scope teardown. Idempotent. Soft
+// never inserts unique bare keys (resolver returns {}).
+inline void maybe_erase_bare_bp_gauge(std::string_view scope_id) noexcept {
+    if (scope_id.size() < 5 || scope_id.compare(0, 5, "bare:") != 0)
+        return;
+    (void)maybe_erase_scope_bp_gauge_on_teardown(scope_id);
+}
+
 // Issue #2778: process-wide clear of the scope BP map (tests + session
 // boundary). Returns the number of gauges dropped. Wired from
 // reset_all_agent_scopes_for_test so scope lifecycle reset also frees
@@ -2876,6 +2886,9 @@ inline void complete_agent_join_cleanup(AgentHandle& h, serve::JoinResult jr) no
     // blocked same-name put after cleanup.
     h.must_wait_reclaimed = false;
     h.quota_recycled_pending = false; // #3841: Done-path is fully cleaned
+    // Issue #3931: drop unique bare:N gauge so 256 naked spawns cannot
+    // overflow a later named as:N admit. Named / tenant keys stay.
+    maybe_erase_bare_bp_gauge(h.bp_scope_id);
     // Name-table drop: deferred to ~AgentHandle / scope dtor
     // (idempotent with this helper).
 }
@@ -3070,6 +3083,8 @@ inline void AgentHandle::finish_reclaimed_cleanup_on_dtor() noexcept {
     release_reservation_if_any();
     must_wait_reclaimed = false;
     quota_recycled_pending = false; // #3841
+    // Issue #3931: dtor of a naked production handle frees bare:N.
+    maybe_erase_bare_bp_gauge(bp_scope_id);
 }
 
 // Issue #2924: wait for still-running body after JoinStatus::Reclaimed.
