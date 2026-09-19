@@ -896,7 +896,8 @@ static void ac3267_1_publish_takes_env_frames_lock() {
     CHECK(pos != std::string::npos, "3267 AC1: publish def");
     auto win = env.substr(pos, 900);
     CHECK(win.find("Issue #3267") != std::string::npos, "3267 AC1: cite");
-    CHECK(win.find("std::shared_lock<std::shared_mutex> env_rlock(env_frames_mtx_)") !=
+    // Issue #3900: publish reads via the env shard shared栅栏 now.
+    CHECK(win.find("std::array<std::shared_lock<std::shared_mutex>, kEnvFramesShardCount>") !=
               std::string::npos,
           "3267 AC1: shared_lock before scan");
     CHECK(win.find("publish_live_env_linear_to_bridge_holding_env_lock()") != std::string::npos,
@@ -968,7 +969,9 @@ static void ac3267_3_epoch_before_lock_comment() {
           "3267 AC3: contract comment");
     CHECK(win.find("current_bridge_epoch()") != std::string::npos, "3267 AC3: epoch read");
     auto epoch = win.find("cl.bridge_epoch = current_bridge_epoch()");
-    auto lock = win.find("std::shared_lock<std::shared_mutex> env_rlock(env_frames_mtx_)");
+    // Issue #3900: the env lock is the per-id shard rdlock now
+    // (clang-format folds the declaration; anchor the shard subscript).
+    auto lock = win.find("env_frame_shards_[env_frame_shard_index(cl.env_id)].mu");
     CHECK(epoch != std::string::npos && lock != std::string::npos && epoch < lock,
           "3267 AC3: epoch before env lock (intentional)");
     Evaluator ev;
