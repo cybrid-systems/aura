@@ -131,6 +131,8 @@ extern "C" void aura_periodic_epoch_invariant_walk_if_due(void);
 // Issue #2928: residual remount tick (aura_jit_runtime.cpp; weak stub light-link).
 extern "C" std::uint64_t aura_residual_remount_budget_default() noexcept;
 extern "C" void aura_residual_live_closure_remount_tick(std::uint64_t budget);
+extern "C" int aura_residual_remount_tick_coalesce(std::uint64_t budget);
+extern "C" void aura_residual_remount_note_boundary_exit();
 // Issue #2950: pure-anon bg remount drain (BoundaryExit safe site).
 extern "C" void aura_pure_anon_bg_remount_drain(std::uint64_t max_n) noexcept;
 extern "C" std::uint64_t aura_pure_anon_bg_pending() noexcept;
@@ -6265,10 +6267,12 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
     // Issue #2928: outermost success BoundaryExit residual remount tick
     // (after deferred drain above). Amortizes residual MustDeopt when
     // reemit-success sync walk was missed. Soft / budget=0 → zero walk.
+    // Issue #3886: skip if the quiet pipeline already ticked this exit.
     if (outermost && success) {
         const auto b = aura_residual_remount_budget_default();
         if (b > 0)
-            aura_residual_live_closure_remount_tick(b);
+            (void)aura_residual_remount_tick_coalesce(b);
+        aura_residual_remount_note_boundary_exit();
         // Issue #2950: pure-anon background remount drain (safe site).
         // Empty queue → single relaxed load. Never steal-complete (#2715).
         if (aura_pure_anon_bg_pending() > 0) {
@@ -6280,6 +6284,7 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
         // Issue #3323: drain is not gated on !render_fast.
         // Soft / budget=0: max_n==0, no drain.
     } else if (outermost && !success) {
+        aura_residual_remount_note_boundary_exit();
         // Issue #3342: success-BoundaryExit is the primary drain (above).
         // Failure-dominated / boundary-sparse HF mutate never reaches it,
         // so MustDeopt + epoch-poisoned pure-anon starve. Bounded

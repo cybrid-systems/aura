@@ -57,14 +57,16 @@ def main() -> int:
             fails.append("AC1: observe still success-only")
         must("success or fail", "AC1 fail-exit comment", win)
 
-    remount = bnd.find("aura_residual_live_closure_remount_tick(b)")
+    # Issue #3886: BoundaryExit residual remount goes through coalesce;
+    # tick remains the walk body in aura_jit_runtime.cpp. Success-only.
+    remount = bnd.find("aura_residual_remount_tick_coalesce(b)")
     if remount < 0:
         fails.append("AC3: remount tick missing")
     else:
         rwin = bnd[max(0, remount - 400) : remount]
         if "if (outermost && success)" not in rwin:
             fails.append("AC3: remount no longer success-only")
-        if "aura_pure_anon_bg_remount_drain" not in bnd[remount : remount + 400]:
+        if "aura_pure_anon_bg_remount_drain" not in bnd[remount : remount + 700]:
             fails.append("AC3: drain moved off success path")
 
     must("Issue #3248", "AC1 observe impl", cpp)

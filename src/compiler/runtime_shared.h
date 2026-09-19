@@ -255,6 +255,9 @@ extern "C" std::uint64_t aura_residual_remount_budget_skip_total_v_read() noexce
 extern "C" std::uint64_t aura_residual_remount_prefer_force_jit_total_v_read() noexcept;
 extern "C" std::uint64_t aura_residual_remount_prefer_hit_total_v_read() noexcept;
 extern "C" void aura_residual_live_closure_remount_tick(std::uint64_t budget);
+// Issue #3886: coalesce pipeline + BoundaryExit residual remount.
+extern "C" int aura_residual_remount_tick_coalesce(std::uint64_t budget);
+extern "C" void aura_residual_remount_note_boundary_exit();
 extern "C" void aura_test_set_residual_remount_budget(std::uint64_t budget) noexcept;
 extern "C" void aura_test_set_residual_remount_cursor(std::uint64_t cursor) noexcept;
 extern "C" void aura_test_set_closure_stable_func_id(std::int64_t closure_id,

@@ -2904,6 +2904,11 @@ extern "C" void aura_pure_anon_maybe_heal_starved(void) noexcept {
 // remount path (AC3 no double-remount same tick).
 
 static std::atomic<std::uint64_t> g_residual_remount_cursor{0};
+// Issue #3886: coalesce pipeline quiet tick + BoundaryExit tick in the
+// same outermost exit. Same gen → skip duplicate walk (storm skip still
+// inside the tick). note_boundary_exit bumps gen for the next mutate.
+static std::atomic<std::uint64_t> g_residual_remount_exit_gen{1};
+static std::atomic<std::uint64_t> g_residual_remount_ticked_gen{0};
 // Process-local totals (light-link-safe; metrics bump may be weak stub).
 static std::atomic<std::uint64_t> g_residual_remount_ok_total{0};
 static std::atomic<std::uint64_t> g_residual_remount_budget_skip_total{0};
@@ -2998,7 +3003,24 @@ extern "C" void aura_test_reset_residual_remount_state() noexcept {
     g_residual_remount_budget_override.store(UINT64_MAX, std::memory_order_relaxed);
     g_residual_force_skip.store(0, std::memory_order_relaxed);
     g_residual_budget_skip_streak.store(0, std::memory_order_relaxed);
+    g_residual_remount_exit_gen.store(1, std::memory_order_relaxed);
+    g_residual_remount_ticked_gen.store(0, std::memory_order_relaxed);
     // Do not zero ok/skip totals — monotonic for Agents; tests delta against snapshot.
+}
+
+// Issue #3886: at most one residual remount walk per outermost exit.
+// Returns 1 if this call ran (or would run) the tick; 0 if duplicate.
+extern "C" int aura_residual_remount_tick_coalesce(std::uint64_t budget) {
+    const auto gen = g_residual_remount_exit_gen.load(std::memory_order_relaxed);
+    if (g_residual_remount_ticked_gen.load(std::memory_order_relaxed) == gen)
+        return 0;
+    aura_residual_live_closure_remount_tick(budget);
+    g_residual_remount_ticked_gen.store(gen, std::memory_order_relaxed);
+    return 1;
+}
+
+extern "C" void aura_residual_remount_note_boundary_exit() {
+    g_residual_remount_exit_gen.fetch_add(1, std::memory_order_relaxed);
 }
 
 // Issue #3607: the sid%64 "region bit" helper is gone. force_jit_regions_mask

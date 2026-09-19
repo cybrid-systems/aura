@@ -713,6 +713,10 @@ extern "C" __attribute__((weak)) void
 aura_unwind_fiber_hygiene_on_steal(std::uint32_t /*fiber_id*/) noexcept {}
 extern "C" __attribute__((weak)) void
 aura_residual_live_closure_remount_tick(std::uint64_t /*budget*/) {}
+extern "C" __attribute__((weak)) int aura_residual_remount_tick_coalesce(std::uint64_t /*budget*/) {
+    return 0;
+}
+extern "C" __attribute__((weak)) void aura_residual_remount_note_boundary_exit() {}
 extern "C" __attribute__((weak)) void
 aura_test_set_residual_remount_budget(std::uint64_t /*budget*/) {}
 extern "C" __attribute__((weak)) void

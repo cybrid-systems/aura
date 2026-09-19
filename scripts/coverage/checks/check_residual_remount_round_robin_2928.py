@@ -70,8 +70,10 @@ def main() -> int:
     must("aura_sync_remount_named_live_closures", "AC3", rt)
     must("aura_sync_remount_pure_anon_live_closures", "AC3", rt)
     must("candidates == 0", "AC3 quiet", reg)
-    must("aura_residual_live_closure_remount_tick", "AC3 pipeline", reg)
-    must("aura_residual_live_closure_remount_tick", "AC3 boundary", dtor)
+    # Issue #3886: pipeline/BoundaryExit go through coalesce; tick stays
+    # the walk body in runtime.
+    must("aura_residual_remount_tick_coalesce", "AC3 pipeline", reg)
+    must("aura_residual_remount_tick_coalesce", "AC3 boundary", dtor)
 
     # AC4 soft / budget=0
     must("budget == 0", "AC4", rt)
