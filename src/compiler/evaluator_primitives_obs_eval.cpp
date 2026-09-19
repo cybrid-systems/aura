@@ -1732,7 +1732,8 @@ void ObservabilityPrims::register_eval_p11(PrimRegistrar add, Evaluator& ev) {
             return query_hash_finish(ht, ev.string_heap_, overflowed);
         });
 
-    // Issue #2004: live_compact observability primitive — surfaces the 6 new
+    // Issue #2004 / Issue #3906: live_compact observability primitive — SSOT
+    // (single register_stats_impl; memory.cpp duplicate removed). Surfaces the 6 new
     // per-CompilerMetrics counters (soft / force counts, reclaimed bytes total,
     // freelist hits total, gen restamps total, invalidated pins total).
     ObservabilityPrims::register_stats_impl(
@@ -8825,7 +8826,7 @@ void ObservabilityPrims::register_eval_p46(PrimRegistrar add, Evaluator& ev) {
 // Issue #909 part 47 (orig lines 6159-6284)
 void ObservabilityPrims::register_eval_p47(PrimRegistrar add, Evaluator& ev) {
 
-    // Issue #723 / #571 / #1622: (query:value-dispatch-stats) — Value v2
+    // Issue #723 / #571 / #1622 / #3906: (query:value-dispatch-stats) — Value v2
     // dispatch + consteval table + Contracts observability (non-duplicative
     // with #658 Gaps 3/5; hash surface preferred over int-sum legacy).
     //
