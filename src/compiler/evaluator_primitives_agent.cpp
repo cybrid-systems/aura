@@ -4070,31 +4070,43 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             // must not be shadowed by a live scope-spawn of the same name
             // (send would hit the pending mailbox first). Same deny class
             // as orch:spawn-agent (#3467). Soft/Off: skip (zero extra deny).
-            // Two *live* rows stay name-table-wins (#3442).
+            // Issue #3925: also deny a *live* name-table occupancy (two live
+            // same names: send hits table, directory shows Scope). Soft
+            // keeps the historical pointer-walk (AC5).
             if (aura::compiler::typed_audit::production_defaults_active() && ev.agent_names_ &&
                 !name.empty()) {
-                if (auto* pending = ev.agent_names_->find(name);
-                    pending &&
-                    (pending->must_wait_reclaimed || pending->reclaimed_deferred_cleanup)) {
-                    aura::orch::g_orch_module_stats.host_forget_reclaimed_risk_total.fetch_add(
-                        1, std::memory_order_relaxed);
-                    auto ridx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(name);
-                    auto eidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back(
-                        "orch:scope-spawn: name still reclaimed-pending — wait_reclaimed_body "
-                        "or abandon_reclaimed required before reuse");
-                    std::vector<std::pair<std::string, EvalValue>> rkv = {
-                        {"ok", make_bool(false)},        {"id", make_int(0)},
-                        {"name", make_string(ridx)},     {"schema", make_int(2588)},
-                        {"schema-2083", make_int(2083)}, {"schema-2161", make_int(2161)},
-                        {"error", make_string(eidx)},    {"cleanup-pending", make_bool(true)},
-                    };
-                    add_reclaimed_pending_lifecycle(rkv, /*pending=*/true);
-                    add_deny_class(rkv, aura::orch::AgentDenyClass::Other,
-                                   "name-reuse-while-reclaimed-pending", 0,
-                                   /*emit_retry=*/false);
-                    return build_orch_hash(rkv);
+                if (auto* slot = ev.agent_names_->find(name); slot) {
+                    const bool pending =
+                        slot->must_wait_reclaimed || slot->reclaimed_deferred_cleanup;
+                    if (pending || slot->ok) {
+                        aura::orch::g_orch_module_stats.host_forget_reclaimed_risk_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                        auto ridx = ev.string_heap_.size();
+                        ev.string_heap_.push_back(name);
+                        auto eidx = ev.string_heap_.size();
+                        ev.string_heap_.push_back(
+                            pending
+                                ? "orch:scope-spawn: name still reclaimed-pending — "
+                                  "wait_reclaimed_body or abandon_reclaimed required before reuse"
+                                : "orch:scope-spawn: name live in name-table — join or stop "
+                                  "before scope-spawn of the same name");
+                        std::vector<std::pair<std::string, EvalValue>> rkv = {
+                            {"ok", make_bool(false)},
+                            {"id", make_int(0)},
+                            {"name", make_string(ridx)},
+                            {"schema", make_int(2588)},
+                            {"schema-2083", make_int(2083)},
+                            {"schema-2161", make_int(2161)},
+                            {"error", make_string(eidx)},
+                            {"cleanup-pending", make_bool(pending)},
+                        };
+                        add_reclaimed_pending_lifecycle(rkv, pending);
+                        add_deny_class(rkv, aura::orch::AgentDenyClass::Other,
+                                       pending ? "name-reuse-while-reclaimed-pending"
+                                               : "name-reuse-while-live-name-table",
+                                       0, /*emit_retry=*/false);
+                        return build_orch_hash(rkv);
+                    }
                 }
             }
 
@@ -5049,6 +5061,9 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 {"schema-2537", make_int(aura::orch::kAgentScopeHierarchyIssue)},
                 {"schema-2083", make_int(2083)},
                 {"issue-2751", make_int(aura::orch::kAgentDirectoryIssue)},
+                // Issue #3925: additive name-table occupancy (no new query:*).
+                {"name-table-count", make_int(static_cast<std::int64_t>(
+                                         ev.agent_names_ ? ev.agent_names_->size() : 0))},
             };
             // Issue #3216: directory plane (production-only intern).
             add_identity_plane(kv, "directory");

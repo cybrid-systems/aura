@@ -567,6 +567,59 @@ static void ac3727_5_soft_no_extra_deny_and_source() {
     reset_all_agent_scopes_for_test();
 }
 
+static void ac3925_1_prod_denies_live_name_table() {
+    std::println("\n--- #3925 AC1: production live name-table occupancy denies scope-spawn ---");
+    reset_all_agent_scopes_for_test();
+    ac3727_set_prod(true);
+    CompilerService cs;
+    CHECK(cs.eval(R"((hash-ref (orch:spawn-agent "live-3925") "ok"))").has_value(),
+          "3925 AC1: spawn-agent live");
+    auto r = cs.eval(R"(
+        (let ((h (orch:scope-spawn "live-3925")))
+          (and (not (hash-ref h "ok"))
+               (string=? (hash-ref h "deny-detail" "")
+                         "name-reuse-while-live-name-table")))
+    )");
+    CHECK(r && is_bool(*r) && as_bool(*r),
+          "3925 AC1: scope-spawn ok=#f + deny-detail live name-table");
+    ac3727_set_prod(false);
+    reset_all_agent_scopes_for_test();
+}
+
+static void ac3925_2_directory_name_table_count() {
+    std::println("\n--- #3925 AC2: directory name-table-count is additive ---");
+    reset_all_agent_scopes_for_test();
+    ac3727_set_prod(false);
+    CompilerService cs;
+    CHECK(cs.eval(R"((hash-ref (orch:spawn-agent "nt-3925") "ok"))").has_value(),
+          "3925 AC2: spawn-agent");
+    auto n = cs.eval(R"((hash-ref (orch:agent-directory) "name-table-count"))");
+    CHECK(n && is_int(*n) && as_int(*n) >= 1, "3925 AC2: name-table-count ≥ 1");
+    auto c = cs.eval(R"((hash-ref (orch:agent-directory) "count"))");
+    CHECK(c && is_int(*c) && as_int(*c) == 0, "3925 AC2: count still Scope-only");
+    reset_all_agent_scopes_for_test();
+}
+
+static void ac3925_5_soft_and_source() {
+    std::println("\n--- #3925 AC5: Soft live dual occupancy; no new query key ---");
+    reset_all_agent_scopes_for_test();
+    ac3727_set_prod(false);
+    CompilerService cs;
+    CHECK(cs.eval(R"((hash-ref (orch:spawn-agent "soft-3925") "ok"))").has_value(),
+          "3925 AC5: spawn-agent Soft");
+    auto r = cs.eval(R"((hash-ref (orch:scope-spawn "soft-3925") "ok"))");
+    CHECK(r && is_bool(*r) && as_bool(*r), "3925 AC5: Soft still allows live dual occupancy");
+    const auto src = read_file("src/compiler/evaluator_primitives_agent.cpp");
+    CHECK(src.find("#3925") != std::string::npos, "3925 AC5: cite");
+    CHECK(src.find("name-reuse-while-live-name-table") != std::string::npos,
+          "3925 AC5: deny-detail");
+    CHECK(src.find("name-table-count") != std::string::npos, "3925 AC5: directory field");
+    CHECK(src.find("query:3925") == std::string::npos, "3925 AC5: no query key");
+    CHECK(read_file("docs/design/3925-identity-plane.md").empty(), "3925: no docs/design");
+    CHECK(read_file("tests/orch/test_issue_3925.cpp").empty(), "3925: no test_issue_3925");
+    reset_all_agent_scopes_for_test();
+}
+
 static void ac3729_1_scope_export_import_recv() {
     std::println("\n--- #3729 AC1: scope-spawn export → import recv ---");
     reset_all_agent_scopes_for_test();
@@ -704,6 +757,9 @@ int run_test_agent_name_table_isolation() {
     ac3727_3_touch_poll_export_scope_name();
     ac3727_4_directory_scope_only();
     ac3727_5_soft_no_extra_deny_and_source();
+    ac3925_1_prod_denies_live_name_table();
+    ac3925_2_directory_name_table_count();
+    ac3925_5_soft_and_source();
     ac3729_1_scope_export_import_recv();
     ac3729_2_stash_bounded();
     ac3729_4_join_observe_only();
