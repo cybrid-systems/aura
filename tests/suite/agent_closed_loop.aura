@@ -54,12 +54,20 @@
   (check (or (eq? d 'commit) (eq? d 'back-off) (eq? d 'escalate))))
 
 ; Issue #3920: extract-code fence path uses string-find; MiniMax think peel.
+; Issue #3928: closing fence is not left in the extracted string.
 (test-suite "agent:extract-code-find"
   (define fenced "```scheme\n(lambda (x) x)\n```")
   (define fenced-out (extract-code fenced))
   (check (string? fenced-out))
   (check= 0 (string-index fenced-out "(lambda" 0))
+  (check= "(lambda (x) x)" fenced-out)
+  (check= 14 (string-length fenced-out))
+  (check= -1 (string-index fenced-out "```" 0))
   (define think "<think>reason</think>\n(lambda (x) x)")
   (define think-out (extract-code think))
   (check (string? think-out))
-  (check= 0 (string-index think-out "(lambda" 0)))
+  (check= 0 (string-index think-out "(lambda" 0))
+  (define json-body "{\"choices\":[{\"message\":{\"content\":\"```\\n(lambda (x) x)\\n```\"}}]}")
+  (define json-out (extract-code json-body))
+  (check= "(lambda (x) x)" json-out)
+  (check= "(lambda (x) x)" (extract-code "(lambda (x) x)")))

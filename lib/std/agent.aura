@@ -115,6 +115,18 @@
 ; ── Extract code from LLM response (#1551: llm:extract-content) ──
 ; #3920: string-find is exported from std/string (fence path). MiniMax-M3
 ; often wraps in <think>…</think> without fences — peel that first.
+; #3928: do not string-split on "```" (first-char backtick). Peel the
+; opening/closing fence with string-find of the whole marker so the
+; extracted body is not "…\n```".
+(define (extract-code-rtrim s)
+  (define n (string-length s))
+  (let ((hi n))
+    (while (lambda ()
+             (and (> hi 0)
+                  (let ((c (string-ref s (- hi 1))))
+                    (or (= c 32) (= c 10) (= c 13) (= c 9)))))
+      (lambda () (set! hi (- hi 1))))
+    (substring s 0 hi)))
 (define (extract-code response)
   (let ((parsed (llm:extract-content response)))
     (let ((content (if (and (string? parsed) (> (string-length parsed) 0))
@@ -128,17 +140,23 @@
             (if (>= te 0)
               (substring content (+ te 8) (string-length content))
               content))
-          (define lam (string-find stripped "(lambda"))
-          (if (>= lam 0)
-            (substring stripped lam (string-length stripped))
+          (define open (string-find stripped "```"))
+          (if (>= open 0)
+            (let* ((after-open (substring stripped (+ open 3)
+                                          (string-length stripped)))
+                   (close (string-find after-open "```"))
+                   (body (if (>= close 0)
+                           (substring after-open 0 close)
+                           after-open))
+                   (nl (string-find body "\n")))
+              (extract-code-rtrim
+                (if (>= nl 0)
+                  (substring body (+ nl 1) (string-length body))
+                  body)))
             (begin
-              (define parts (string-split stripped "```"))
-              (if (> (length parts) 1)
-                (let* ((after (list-ref parts 1))
-                       (nl-pos (string-find after "\n")))
-                  (if (>= nl-pos 0)
-                    (substring after (+ nl-pos 1) (string-length after))
-                    after))
+              (define lam (string-find stripped "(lambda"))
+              (if (>= lam 0)
+                (substring stripped lam (string-length stripped))
                 stripped))))))))
 ; ── Safe eval with error handling ─────────────────────────────
 (define (safe-eval code)
