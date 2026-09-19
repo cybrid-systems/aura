@@ -2034,37 +2034,25 @@ static aura::ast::NodeId clone_macro_body_at_depth(
                                         std::equal_to<>>;
     struct NameMapCheckpoint {
         NameMapT* map = nullptr;
-        std::vector<std::string> keys0;
+        // Issue #3912: snapshot key→value (not keys-only) so in-place
+        // value mutation on a reused key is restored on steal/abort.
+        std::unordered_map<std::string, std::string> snap;
         bool committed = false;
         explicit NameMapCheckpoint(NameMapT* m)
             : map(m) {
             if (!map)
                 return;
-            keys0.reserve(map->size());
+            snap.reserve(map->size());
             for (const auto& kv : *map)
-                keys0.push_back(kv.first);
+                snap.emplace(kv.first, kv.second);
         }
         void commit() noexcept { committed = true; }
         void rollback() noexcept {
             if (!map)
                 return;
-            if (keys0.empty()) {
-                map->clear();
-                return;
-            }
-            for (auto it = map->begin(); it != map->end();) {
-                bool keep = false;
-                for (const auto& k : keys0) {
-                    if (k == it->first) {
-                        keep = true;
-                        break;
-                    }
-                }
-                if (!keep)
-                    it = map->erase(it);
-                else
-                    ++it;
-            }
+            map->clear();
+            for (const auto& kv : snap)
+                map->emplace(kv.first, kv.second);
         }
         ~NameMapCheckpoint() {
             if (!committed)
