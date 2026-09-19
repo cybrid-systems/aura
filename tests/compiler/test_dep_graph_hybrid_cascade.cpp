@@ -1351,6 +1351,115 @@ static void ac3761_3_soft_no_extra_consult() {
     apply_dev_audit_defaults();
 }
 
+// ── Issue #3891: peel Soft-hole with nonempty string called_by ──
+// graphs_consistent is string→node one-way. Empty-hole arm (#3615) skipped
+// extra node-only callers when called_by already had a string edge.
+
+static void ac3891_1_node_only_with_nonempty_called_by() {
+    std::println("\n--- #3891 AC1: node-only caller + nonempty string called_by peel ---");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    apply_production_audit_defaults();
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define f (lambda () 1)) (define g (lambda () (f))) "
+                  "(define h (lambda () (f)))\")")
+              .has_value(),
+          "3891 AC1: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3891 AC1: eval");
+    if (!cs.get_define_v2("h"))
+        (void)cs.eval("(compile:cache-define \"h\")");
+    CHECK(cs.get_define_v2("h") != nullptr, "3891 AC1: h cached");
+    cs.public_record_dependency("g", "f");
+    cs.public_record_dependency("h", "f");
+    cs.inject_drop_string_calls_keep_node_for_test("h", "f");
+    CHECK(cs.public_dep_graph_has_edge("g", "f"), "3891 AC1: string called_by still has g");
+    CHECK(!cs.public_dep_graph_has_edge("h", "f"), "3891 AC1: string dropped h");
+    CHECK(cs.public_node_dep_has_mirror_edge("h", "f"), "3891 AC1: node-only h←f remains");
+    CHECK(cs.public_graphs_consistent(),
+          "3891 AC1: extra node edge is not a string-authority fail");
+    auto& m = cs.metrics();
+    const auto fail0 = m.dual_dep_graph_parity_fail_total.load(std::memory_order_relaxed);
+    const auto hash_h = cs.get_define_v2("h")->source_hash;
+    std::vector<std::string> cone{"f"};
+    bool want = true;
+    CHECK(cs.public_fail_closed_cone_parity_for_test(cone, want),
+          "3891 AC1: hole helper took fail-closed");
+    CHECK(!want, "3891 AC1: want_partial cleared");
+    bool h_in_cone = false;
+    for (const auto& n : cone) {
+        if (n == "h")
+            h_in_cone = true;
+    }
+    CHECK(h_in_cone, "3891 AC1: node-only h entered peel set");
+    const auto* he = cs.get_define_v2("h");
+    CHECK(he && (he->dirty || he->dirty_block_count() > 0),
+          "3891 AC1: h is body-dirty (not a clean V2 hit)");
+    CHECK(cs.lookup_define_v2("h", hash_h) == 1, "3891 AC1: lookup_define_v2(h)==1");
+    CHECK(m.dual_dep_graph_parity_fail_total.load() > fail0,
+          "3891 AC1: hole remirror fired (parity fail)");
+    apply_dev_audit_defaults();
+}
+
+static void ac3891_2_graphs_consistent_still_one_way() {
+    std::println("\n--- #3891 AC2: graphs_consistent stays one-way; peel observer cites ---");
+    const auto svc = read_file("src/compiler/service.ixx");
+    CHECK(svc.find("Issue #3891") != std::string::npos, "3891 AC2: #3891 cite");
+    const auto lam = svc.find("auto cone_has_node_only_hole");
+    CHECK(lam != std::string::npos, "3891 AC2: peel observer lambda");
+    if (lam != std::string::npos) {
+        const auto hwin = svc.substr(lam, 1400);
+        CHECK(hwin.find("called_by.empty()") != std::string::npos,
+              "3891 AC2: 3615 empty-hole kept");
+        CHECK(hwin.find("is_fn_node") != std::string::npos, "3891 AC2: extra fn-node compare");
+        CHECK(hwin.find("decode_fn_slot") != std::string::npos, "3891 AC2: decode extra caller");
+    }
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    apply_production_audit_defaults();
+    CompilerService cs;
+    CHECK(
+        cs.eval("(set-code \"(define f (lambda () 1)) (define y3891 (lambda () 0))\")").has_value(),
+        "3891 AC2: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3891 AC2: eval");
+    cs.inject_node_only_edge_for_test("y3891", "f");
+    CHECK(cs.public_graphs_consistent(),
+          "3891 AC2: extra NodeId edge is not a string-authority fail");
+    apply_dev_audit_defaults();
+}
+
+static void ac3891_3_soft_skip() {
+    std::println("\n--- #3891 AC3: Soft skips cone consult ---");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+    apply_dev_audit_defaults();
+    g_typed_mutation_audit_counters.production_defaults_active.store(0, std::memory_order_relaxed);
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define f (lambda () 1)) (define g (lambda () (f))) "
+                  "(define h (lambda () (f)))\")")
+              .has_value(),
+          "3891 AC3: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3891 AC3: eval");
+    cs.public_record_dependency("g", "f");
+    cs.public_record_dependency("h", "f");
+    cs.inject_drop_string_calls_keep_node_for_test("h", "f");
+    auto& m = cs.metrics();
+    const auto fail0 = m.dual_dep_graph_parity_fail_total.load(std::memory_order_relaxed);
+    cs.public_mark_define_dirty("f");
+    (void)cs.public_relower_dirty_defines_from_workspace();
+    CHECK(m.dual_dep_graph_parity_fail_total.load() == fail0,
+          "3891 AC3: Soft does not take the production hole remirror");
+    apply_dev_audit_defaults();
+}
+
+static void ac3891_4_no_invent() {
+    std::println("\n--- #3891 AC4: no invent / no query-key rewrite ---");
+    const auto q = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
+    CHECK(q.find("schema-3891") == std::string::npos, "3891 AC4: no schema-3891");
+    CHECK(read_file("tests/compiler/test_issue_3891.cpp").empty(), "3891 AC4: no invent");
+    CHECK(read_file("tests/issues/test_issue_3891.cpp").empty(), "3891 AC4: no issues invent");
+    CHECK(read_file("docs/design/3891-node-only-nonempty-called-by.md").empty(),
+          "3891 AC4: no docs/design");
+}
 
 // ── Issue #3823: Production mark-time node-dep union (before peel) ──
 // #3474 string called_by FIFO leaves node-only callers clean until #3761
@@ -1945,6 +2054,11 @@ int run_test_dep_graph_hybrid_cascade() {
     ac3761_1_node_only_caller_this_sweep();
     ac3761_2_ghost_node_only_still_remirrors();
     ac3761_3_soft_no_extra_consult();
+    // Issue #3891: peel Soft-hole with nonempty string called_by.
+    ac3891_1_node_only_with_nonempty_called_by();
+    ac3891_2_graphs_consistent_still_one_way();
+    ac3891_3_soft_skip();
+    ac3891_4_no_invent();
     // Issue #3823: Production mark-time node-dep union (pre-peel clean-hit).
     ac3823_1_prod_node_only_dirty_before_peel();
     ac3823_2_soft_inject_observe_only();

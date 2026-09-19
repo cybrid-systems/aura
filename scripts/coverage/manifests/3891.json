@@ -1,0 +1,32 @@
+{
+  "issue": 3891,
+  "title": "graphs_consistent one-way; peel Soft-hole misses node-only with nonempty called_by",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/service.ixx",
+      "contains": [
+        "Issue #3891",
+        "cone_has_node_only_hole",
+        "fail_closed_soft_dual_graph_parity_before_partial_cone_"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/compiler/test_dep_graph_hybrid_cascade.cpp",
+      "contains": [
+        "3891 AC1: hole helper took fail-closed",
+        "3891 AC1: extra node edge is not a string-authority fail",
+        "ac3891_1_node_only_with_nonempty_called_by"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "forbid": [
+        "tests/compiler/test_issue_3891.cpp",
+        "tests/issues/test_issue_3891.cpp",
+        "docs/design/3891-node-only-nonempty-called-by.md"
+      ]
+    }
+  ]
+}

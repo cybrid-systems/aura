@@ -7578,6 +7578,10 @@ public:
     // Issue #3761: remirror drops node-only callers. Snapshot those
     // dependents into mark_caller_body_dirty + cone_names *before*
     // rebuild_node_dep_graph_from_string (string stays SSOT).
+    // Issue #3891: empty-hole arm skipped extra node-only callers when
+    // string called_by was nonempty. Peel observer now treats those as
+    // Soft-hole too. graphs_consistent stays string→node one-way (string
+    // authority; extra node edges do not invert the checker).
     // Caller holds cascade_decision_mtx_ (relower path). Soft / Off skip
     // (zero extra — AC3). No new query key (AC4 — reuses
     // dual_dep_graph_parity_fail_total + partial_forced_full_by_impact_total).
@@ -7596,6 +7600,48 @@ public:
                                             aura::compiler::typed_audit::AuditStrategy::Full;
         if (!production_or_full)
             return false;
+        // Issue #3615: empty string called_by + any node dependents.
+        // Issue #3891: extra fn-node dependents not in string called_by
+        // even when called_by is nonempty. Caller holds dep_graph_mtx_.
+        auto cone_has_node_only_hole = [&]() -> bool {
+            for (const auto& root : cone_names) {
+                const auto slot_it = dep_name_to_slot_.find(root);
+                if (slot_it == dep_name_to_slot_.end())
+                    continue;
+                const auto fn_from = aura::compiler::dirty::encode_fn_node(slot_it->second);
+                const auto* deps = node_dep_graph_.dependents(fn_from);
+                if (!deps)
+                    continue;
+                const auto dit = dep_graph_.find(root);
+                if (dit == dep_graph_.end() || dit->second.called_by.empty()) {
+                    for (const auto& n : *deps) {
+                        (void)n;
+                        return true;
+                    }
+                    continue;
+                }
+                for (const auto& n : *deps) {
+                    if (!aura::compiler::dirty::is_fn_node(n))
+                        continue;
+                    const auto slot = aura::compiler::dirty::decode_fn_slot(n);
+                    if (slot >= dep_slot_to_name_.size())
+                        continue;
+                    const auto& nm = dep_slot_to_name_[slot];
+                    if (nm.empty() || nm == root)
+                        continue;
+                    bool in_string = false;
+                    for (const auto& caller : dit->second.called_by) {
+                        if (caller == nm) {
+                            in_string = true;
+                            break;
+                        }
+                    }
+                    if (!in_string)
+                        return true;
+                }
+            }
+            return false;
+        };
         bool parity_fail = false;
         {
             lock_order::OrderedSharedLock<std::shared_mutex> read(dep_graph_mtx_,
@@ -7604,28 +7650,8 @@ public:
                                                           dep_name_to_slot_)) {
                 parity_fail = true;
             } else {
-                // AC2: Soft-erased hole detection. Walk each root in cone;
-                // dep_graph_[root].called_by empty but node_dep has
-                // encode_fn_node(callee_slot) dependents → divergent.
-                for (const auto& root : cone_names) {
-                    const auto dit = dep_graph_.find(root);
-                    if (dit == dep_graph_.end() || !dit->second.called_by.empty())
-                        continue;
-                    const auto slot_it = dep_name_to_slot_.find(root);
-                    if (slot_it == dep_name_to_slot_.end())
-                        continue;
-                    const auto fn_from = aura::compiler::dirty::encode_fn_node(slot_it->second);
-                    const auto* deps = node_dep_graph_.dependents(fn_from);
-                    if (!deps)
-                        continue;
-                    for (const auto& n : *deps) {
-                        (void)n;
-                        parity_fail = true;
-                        break;
-                    }
-                    if (parity_fail)
-                        break;
-                }
+                // AC2: Soft-erased hole + #3891 extra node-only callers.
+                parity_fail = cone_has_node_only_hole();
             }
         }
         if (!parity_fail)
@@ -7636,33 +7662,15 @@ public:
                                                                lock_order::Level::DepGraph);
         bool still_fail = !aura::compiler::dirty::graphs_consistent(dep_graph_, node_dep_graph_,
                                                                     dep_name_to_slot_);
-        if (!still_fail) {
-            for (const auto& root : cone_names) {
-                const auto dit = dep_graph_.find(root);
-                if (dit == dep_graph_.end() || !dit->second.called_by.empty())
-                    continue;
-                const auto slot_it = dep_name_to_slot_.find(root);
-                if (slot_it == dep_name_to_slot_.end())
-                    continue;
-                const auto fn_from = aura::compiler::dirty::encode_fn_node(slot_it->second);
-                const auto* deps = node_dep_graph_.dependents(fn_from);
-                if (!deps)
-                    continue;
-                for (const auto& n : *deps) {
-                    (void)n;
-                    still_fail = true;
-                    break;
-                }
-                if (still_fail)
-                    break;
-            }
-        }
+        if (!still_fail)
+            still_fail = cone_has_node_only_hole();
         if (!still_fail)
             return false;
         // Issue #3761: decode node dependents of each cone root and
         // mark_caller_body_dirty (#3474 union) *before* remirror drops
         // the only record of a node-only caller. Extra node edges do not
-        // fail graphs_consistent; the cone walk is the production observer.
+        // fail graphs_consistent; the cone walk is the production observer
+        // (Issue #3891: including nonempty string called_by).
         {
             using aura::compiler::dirty::decode_block_dep_node;
             using aura::compiler::dirty::decode_fn_slot;
