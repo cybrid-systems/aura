@@ -570,7 +570,9 @@ static void ac2745_1_envframe_arm_in_transaction() {
 static void ac2745_2_quiet_path_skips() {
     std::println("\n--- #2745 AC2: quiet path (no densify) skips arm ---");
     const auto cpp = read_file("src/serve/steal_safety.cpp");
-    CHECK(cpp.find("last_densify_call_seq() > 0") != std::string::npos,
+    // Issue #3617: the gate is victim-keyed now — anchor the #2745 AC to
+    // the per-evaluator read instead of the retired process-last form.
+    CHECK(cpp.find("last_densify_call_seq_for(victim_eval_id) > 0") != std::string::npos,
           "AC2: gated on densify call_seq > 0");
 }
 

@@ -281,10 +281,12 @@ int run_test_agent_ask_typed_corr() {
 
         // De-flake: tier-load budget raise (AC1 10s, #3796-wave CI still
         // timed out this AC at 10s under jobs=4 x inner_jobs=3 — isolated
-        // re-run also starved). 30s: the legacy text-prefix worker only
-        // needs to win one mailbox pop; CI scheduling stalls are bounded
-        // well under that.
-        AskResult r = agent_ask(b, "legacy-ping", /*timeout_ms=*/30000);
+        // re-run also starved). 30s held through several waves but the
+        // #3946-#3957 fix wave pushed CI scheduling stalls past it again
+        // (00:34 run timed out with corr=2 pending). 60s: the legacy
+        // text-prefix worker only needs to win one mailbox pop; CI
+        // scheduling stalls are bounded well under that.
+        AskResult r = agent_ask(b, "legacy-ping", /*timeout_ms=*/60000);
         CHECK(r.ok, std::format("AC2: agent_ask ok via pure text-prefix worker (status={} corr={})",
                                 r.status, r.correlation_id));
         CHECK(r.payload == "legacy-ping",
