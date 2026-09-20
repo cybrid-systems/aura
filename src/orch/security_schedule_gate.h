@@ -52,6 +52,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <cstdlib>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -322,19 +323,51 @@ inline std::pair<bool, bool> commit_readiness_live_signals() noexcept {
     return {r.would_allow_commit, r.force_reason_code != 0};
 }
 
-// Issue #2534: capability deny storm window. Process-wide counter
-// compared against a single threshold (counter increments monotonically;
-// under unit / soft paths the counter is reset by test reset). The
-// threshold is intentionally conservative — callers can lower it via
-// AURA_DENY_STORM_THRESHOLD env override if needed.
+// Issue #2534 / Issue #3952: capability deny storm. Lifetime counter stays
+// additive; the *signal* is a sliding window (now - baseline) vs
+// threshold so a long-lived process heals after the burst. threshold==0
+// is the test/opt-out (never storm). AURA_DENY_STORM_THRESHOLD overlays
+// the atomic default when set (same getenv shape as mailbox BP).
+inline constexpr int kCapabilityDenyStormWindowIssue = 3952;
+inline constexpr std::uint64_t kCapabilityDenyStormThresholdDefault = 64;
 inline std::atomic<std::uint64_t>& g_capability_deny_storm_threshold() noexcept {
-    static std::atomic<std::uint64_t> v{64};
+    static std::atomic<std::uint64_t> v{kCapabilityDenyStormThresholdDefault};
     return v;
+}
+inline std::atomic<std::uint64_t>& g_capability_deny_storm_window_baseline() noexcept {
+    static std::atomic<std::uint64_t> v{0};
+    return v;
+}
+inline void reset_capability_deny_storm_window_for_test() noexcept {
+    g_capability_deny_storm_window_baseline().store(0, std::memory_order_relaxed);
+}
+inline std::uint64_t resolve_capability_deny_storm_threshold() noexcept {
+    const char* env = std::getenv("AURA_DENY_STORM_THRESHOLD");
+    if (env && *env) {
+        try {
+            return static_cast<std::uint64_t>(std::stoull(env));
+        } catch (...) {
+        }
+    }
+    return g_capability_deny_storm_threshold().load(std::memory_order_relaxed);
 }
 inline bool capability_deny_storm_live() noexcept {
     const auto& met = aura::core::capability::g_capability_effect_metrics();
-    const auto threshold = g_capability_deny_storm_threshold().load(std::memory_order_relaxed);
-    return met.capability_effect_denied_total.load(std::memory_order_relaxed) >= threshold;
+    const auto now = met.capability_effect_denied_total.load(std::memory_order_relaxed);
+    const auto threshold = resolve_capability_deny_storm_threshold();
+    if (threshold == 0)
+        return false;
+    auto& base_a = g_capability_deny_storm_window_baseline();
+    auto base = base_a.load(std::memory_order_relaxed);
+    if (now < base) {
+        base_a.store(now, std::memory_order_relaxed);
+        base = now;
+    }
+    if (now - base >= threshold) {
+        base_a.store(now, std::memory_order_relaxed);
+        return true;
+    }
+    return false;
 }
 
 // Issue #2594: mid-fallback SLO breach. evaluate_audit_mid_fallback_slo

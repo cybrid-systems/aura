@@ -384,6 +384,8 @@ int run_test_security_schedule_gate() {
         std::println("\n--- #2660 AC2: deny_storm threshold → reject ---");
         reset_orch_security_schedule_counters_for_test();
         // Lower the threshold so a single denial is enough to trip the storm.
+        ::unsetenv("AURA_DENY_STORM_THRESHOLD");
+        aura::orch::reset_capability_deny_storm_window_for_test();
         aura::orch::g_capability_deny_storm_threshold().store(1, std::memory_order_relaxed);
         // Bump the process counter (set + reset helper for tests).
         auto& met = aura::core::capability::g_capability_effect_metrics();
@@ -411,6 +413,7 @@ int run_test_security_schedule_gate() {
         // Restore threshold.
         aura::orch::g_capability_deny_storm_threshold().store(64, std::memory_order_relaxed);
         met.capability_effect_denied_total.store(before, std::memory_order_relaxed);
+        aura::orch::reset_capability_deny_storm_window_for_test();
     }
 
     // AC3: all-clear inputs → allow (no extra alloc on happy path).
@@ -958,8 +961,14 @@ int run_test_security_schedule_gate() {
         using aura::serve::Scheduler;
         CHECK(kScheduleGateAtSpawnIssue == 3777, "3777: issue stamp");
         aura::compiler::typed_audit::apply_production_audit_defaults();
+        ::unsetenv("AURA_DENY_STORM_THRESHOLD");
+        aura::orch::reset_capability_deny_storm_window_for_test();
         const auto prev_thr =
-            g_capability_deny_storm_threshold().exchange(0, std::memory_order_relaxed);
+            g_capability_deny_storm_threshold().exchange(1, std::memory_order_relaxed);
+        auto& deny_met = aura::core::capability::g_capability_effect_metrics();
+        const auto deny_before =
+            deny_met.capability_effect_denied_total.load(std::memory_order_relaxed);
+        deny_met.capability_effect_denied_total.store(deny_before + 1, std::memory_order_relaxed);
         const auto& pq = aura::core::resource_quota::process_resource_quota();
         const auto arena_before = pq.agent_arena_usage_bytes.load(std::memory_order_relaxed);
         const auto release_before = pq.agent_arena_release_total.load(std::memory_order_relaxed);
@@ -997,7 +1006,9 @@ int run_test_security_schedule_gate() {
               "3777 AC3: body-path acq==2 ScheduleGate belt retained");
         CHECK(spawn_src.find("admit_security_schedule") != std::string::npos,
               "3777 AC3: spawn preflight calls admit_security_schedule");
+        deny_met.capability_effect_denied_total.store(deny_before, std::memory_order_relaxed);
         g_capability_deny_storm_threshold().store(prev_thr, std::memory_order_relaxed);
+        aura::orch::reset_capability_deny_storm_window_for_test();
         aura::compiler::typed_audit::apply_dev_audit_defaults();
         reset_orch_security_schedule_counters_for_test();
     }
@@ -1199,10 +1210,63 @@ int run_test_security_schedule_gate() {
         reset_orch_security_schedule_counters_for_test();
     }
 
+    {
+        std::println("\n--- #3952: deny-storm window heals; env threshold ---");
+        using aura::orch::capability_deny_storm_live;
+        using aura::orch::g_capability_deny_storm_threshold;
+        using aura::orch::kCapabilityDenyStormThresholdDefault;
+        using aura::orch::kCapabilityDenyStormWindowIssue;
+        using aura::orch::reset_capability_deny_storm_window_for_test;
+        using aura::orch::resolve_capability_deny_storm_threshold;
+        CHECK(kCapabilityDenyStormWindowIssue == 3952, "3952: issue stamp");
+        const auto gate_h = read_file("src/orch/security_schedule_gate.h");
+        CHECK(gate_h.find("Issue #3952") != std::string::npos, "3952: gate cites");
+        CHECK(gate_h.find("AURA_DENY_STORM_THRESHOLD") != std::string::npos,
+              "3952: env knob has a reader");
+        CHECK(gate_h.find("g_capability_deny_storm_window_baseline") != std::string::npos,
+              "3952: window baseline (not lifetime latch)");
+        CHECK(gate_h.find("schema-3952") == std::string::npos, "3952: no new query key");
+        CHECK(read_file("tests/orch/test_issue_3952.cpp").empty(), "3952: no test_issue_3952.cpp");
+        CHECK(read_file("docs/design/3952-deny-storm-window.md").empty(), "3952: no docs/design");
+
+        ::unsetenv("AURA_DENY_STORM_THRESHOLD");
+        reset_capability_deny_storm_window_for_test();
+        const auto prev_thr = g_capability_deny_storm_threshold().exchange(
+            kCapabilityDenyStormThresholdDefault, std::memory_order_relaxed);
+        auto& met = aura::core::capability::g_capability_effect_metrics();
+        const auto before = met.capability_effect_denied_total.load(std::memory_order_relaxed);
+        met.capability_effect_denied_total.store(before + kCapabilityDenyStormThresholdDefault,
+                                                 std::memory_order_relaxed);
+        CHECK(capability_deny_storm_live(), "3952: 64-deny burst arms storm");
+        CHECK(!capability_deny_storm_live(), "3952: next consult with no new denies heals");
+        met.capability_effect_denied_total.fetch_add(1, std::memory_order_relaxed);
+        g_capability_deny_storm_threshold().store(1, std::memory_order_relaxed);
+        CHECK(capability_deny_storm_live(), "3952: one new deny re-arms at threshold=1");
+        CHECK(!capability_deny_storm_live(), "3952: slide heals after re-arm");
+        g_capability_deny_storm_threshold().store(kCapabilityDenyStormThresholdDefault,
+                                                  std::memory_order_relaxed);
+        ::setenv("AURA_DENY_STORM_THRESHOLD", "7", 1);
+        CHECK(resolve_capability_deny_storm_threshold() == 7, "3952: env overlays atomic");
+        ::unsetenv("AURA_DENY_STORM_THRESHOLD");
+        CHECK(resolve_capability_deny_storm_threshold() == kCapabilityDenyStormThresholdDefault,
+              "3952: unset env falls back to atomic");
+        aura::orch::SecurityScheduleInput in;
+        in.production_mode = false;
+        in.soft_mode = true;
+        in.commit_readiness_would_allow = true;
+        in.capability_deny_storm = true;
+        CHECK(!aura::orch::admit_security_schedule(in).has_value(),
+              "3952: Soft stays observe-only");
+        met.capability_effect_denied_total.store(before, std::memory_order_relaxed);
+        g_capability_deny_storm_threshold().store(prev_thr, std::memory_order_relaxed);
+        reset_capability_deny_storm_window_for_test();
+    }
+
     reset_orch_security_schedule_counters_for_test();
     aura::core::wal_slo::reset_wal_append_fail_slo_for_test();
-    std::println("\n=== #2590/#2947/#3211/#3244/#3251/#3777/#3932/#3938: {}/{} checks passed ===",
-                 g_passed, g_passed + g_failed);
+    std::println(
+        "\n=== #2590/#2947/#3211/#3244/#3251/#3777/#3932/#3938/#3952: {}/{} checks passed ===",
+        g_passed, g_passed + g_failed);
     return g_failed == 0 ? 0 : 1;
 }
 
