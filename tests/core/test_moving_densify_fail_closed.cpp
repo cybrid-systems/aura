@@ -4976,6 +4976,31 @@ static void ac3955_sticky_recover_lock_held() {
     CHECK(read_file("docs/design/3955-sticky-recover-lock.md").empty(), "3955: no docs/design");
 }
 
+static void ac3956_3958_admit_densify_gates() {
+    std::println("\n--- #3956/#3958: try_acquire densify-in-flight + throttle ---");
+    const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    CHECK(mb.find("Issue #3956") != std::string::npos, "3956: cite");
+    CHECK(mb.find("AdmissionRejected: densify-in-flight") != std::string::npos,
+          "3956: densify-in-flight reject");
+    CHECK(mb.find("try_acquire_for_region") != std::string::npos, "3956: region path present");
+    const auto rgn = mb.find("Evaluator::MutationBoundaryGuard::try_acquire_for_region");
+    CHECK(rgn != std::string::npos, "3956: region admit");
+    const auto rwin = mb.substr(rgn, 6000);
+    CHECK(rwin.find("densify_in_flight_for") != std::string::npos,
+          "3956: RegionExclusive samples densify-in-flight");
+    CHECK(mb.find("Issue #3958") != std::string::npos, "3958: cite");
+    CHECK(mb.find("AdmissionRejected: densify-throttle") != std::string::npos,
+          "3958: throttle reject");
+    CHECK(mb.find("agent_throttle_for_moving_densify()") != std::string::npos,
+          "3958: throttle sampled at admit");
+    CHECK(mb.find("schema-3956") == std::string::npos &&
+              mb.find("schema-3958") == std::string::npos,
+          "3956/3958: no new query keys");
+    CHECK(read_file("tests/issues/test_issue_3956.cpp").empty(), "3956: no invent");
+    CHECK(read_file("tests/issues/test_issue_3958.cpp").empty(), "3958: no invent");
+    CHECK(read_file("docs/design/3956-region-densify.md").empty(), "3956: no docs/design");
+}
+
 static void ac3894_phase5_lock_held_densify() {
     std::println("\n--- #3894 AC1: Phase-5 compact under lock + densify-in-flight ---");
     const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
@@ -5851,6 +5876,7 @@ int run_test_moving_densify_fail_closed() {
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     ac3894_phase5_lock_held_densify();
     ac3955_sticky_recover_lock_held();
+    ac3956_3958_admit_densify_gates();
     return g_failed ? 1 : 0;
 }
 // production default AURA_MOVING_UNTRACKED=hard (extends #2495 test file per #81967)

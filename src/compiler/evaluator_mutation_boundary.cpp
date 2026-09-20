@@ -2799,6 +2799,27 @@ Evaluator::MutationBoundaryGuard::try_acquire(Evaluator& ev, std::uint64_t pendi
         }
         // Soft path: fall through (metric-only — counters always bump).
     }
+    // Issue #3956: densify-in-flight refuses new outermost mutate so a
+    // RegionExclusive peer cannot share workspace during Phase-5 Moving.
+    // Steal already BoundarySafe. Soft: skip.
+    if (typed_audit::production_defaults_active() &&
+        aura::core::densify_consistency::densify_in_flight_for(static_cast<const void*>(&ev))) {
+        if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_))
+            m->mutation_guard_try_acquire_reject_total.fetch_add(1, std::memory_order_relaxed);
+        return std::unexpected(
+            aura::core::AuraError(aura::core::AuraErrorKind::ResourceQuotaExceeded,
+                                  std::string("AdmissionRejected: densify-in-flight")));
+    }
+    // Issue #3958: Agent densify throttle sampled at Guard admit (not
+    // only auto-arm #3909). Soft: skip.
+    if (typed_audit::production_defaults_active() &&
+        aura::core::moving_densify_health::agent_throttle_for_moving_densify()) {
+        if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_))
+            m->mutation_guard_try_acquire_reject_total.fetch_add(1, std::memory_order_relaxed);
+        return std::unexpected(
+            aura::core::AuraError(aura::core::AuraErrorKind::ResourceQuotaExceeded,
+                                  std::string("AdmissionRejected: densify-throttle")));
+    }
     // Issue #3288: production multi-worker continuous fail-closed —
     // sticky residual-fail (set when any named residual is non-zero under
     // the latch, #3162/#3195) refuses a new outermost Guard admit until
@@ -2962,6 +2983,25 @@ Evaluator::MutationBoundaryGuard::try_acquire_for_region(Evaluator& ev, std::uin
             return std::unexpected(
                 aura::core::AuraError(aura::core::AuraErrorKind::ResourceQuotaExceeded, *reason));
         }
+    }
+    // Issue #3956: same densify-in-flight admit refuse as try_acquire
+    // (RegionExclusive other-shard is the residual peer).
+    if (typed_audit::production_defaults_active() &&
+        aura::core::densify_consistency::densify_in_flight_for(static_cast<const void*>(&ev))) {
+        if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_))
+            m->mutation_guard_try_acquire_reject_total.fetch_add(1, std::memory_order_relaxed);
+        return std::unexpected(
+            aura::core::AuraError(aura::core::AuraErrorKind::ResourceQuotaExceeded,
+                                  std::string("AdmissionRejected: densify-in-flight")));
+    }
+    // Issue #3958: same densify-throttle admit refuse as try_acquire.
+    if (typed_audit::production_defaults_active() &&
+        aura::core::moving_densify_health::agent_throttle_for_moving_densify()) {
+        if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_))
+            m->mutation_guard_try_acquire_reject_total.fetch_add(1, std::memory_order_relaxed);
+        return std::unexpected(
+            aura::core::AuraError(aura::core::AuraErrorKind::ResourceQuotaExceeded,
+                                  std::string("AdmissionRejected: densify-throttle")));
     }
     // Issue #3288: production multi-worker continuous fail-closed —
     // sticky residual-fail refuses region-scoped outermost Guard admit
