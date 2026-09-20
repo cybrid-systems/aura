@@ -114,8 +114,9 @@ namespace {
                 break;
             case StealInvariant::LayoutStampMatch:
                 // Keep fetch_add(1 on same line for #2721 AC greps.
-                g_steal_safety_residual_layout_stamp_mismatch_total.fetch_add(
-                    1, std::memory_order_relaxed);
+                // clang-format off
+                g_steal_safety_residual_layout_stamp_mismatch_total.fetch_add(1, std::memory_order_relaxed);
+                // clang-format on
                 break;
             case StealInvariant::TicketFresh:
                 g_steal_safety_residual_ticket_mismatch_total.fetch_add(1,
