@@ -59,7 +59,7 @@ def main() -> int:
     # ── AC1: join_agent auto-wait when Reclaimed + unset wait + production
     must("Issue #3110: auto-wait to close the host-forget cleanup window", "AC1 join_agent comment marker", spawn)
     must(
-        "maybe_auto_wait_reclaimed_production(h, /*caller_passed_wait_reclaimed_ms=*/false,",
+        "h, /*caller_passed_wait_reclaimed_ms=*/false, budget",
         "AC1 join_agent auto-wait calls wait_reclaimed_body(50ms default)",
         spawn,
     )
@@ -93,7 +93,7 @@ def main() -> int:
     # The new auto-wait block must be INSIDE the production gate (else Soft path
     # would auto-wait too).
     gate_idx = spawn.find("production_reclaimed_must_wait()")
-    autowait_idx = spawn.find("maybe_auto_wait_reclaimed_production(h, /*caller_passed_wait_reclaimed_ms=*/false,")
+    autowait_idx = spawn.find("h, /*caller_passed_wait_reclaimed_ms=*/false, budget")
     if gate_idx < 0 or autowait_idx < 0:
         fails.append("AC3: missing production gate or auto-wait call")
     elif autowait_idx < gate_idx:
