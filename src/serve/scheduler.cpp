@@ -6,6 +6,7 @@
 #include "core/resource_quota.hh"
 #include "compiler/lock_order_audit.h" // Issue #2354: rank audit
 #include "runtime_production_abi.h"    // Issue #3476: Ready weld
+#include "steal_safety.h"              // Issue #3950: Ready residual-zero
 #include <cstring>
 #include <unistd.h>
 
@@ -866,6 +867,17 @@ void Scheduler::run() {
     // tests/light-link without production defaults (function header).
     if (workers_.size() > 1 && production_abi_selfcheck_required()) {
         (void)aura_runtime_require_production_multi_worker();
+        // Issue #3950: Ready consults residual-zero SSOT here (same abort
+        // shape as ABI self-check). Helper already aborts; this is the
+        // production door in Scheduler::run so coverage sees the accessor
+        // next to require_production_multi_worker, not only the ABI TU.
+        // Soft / sandbox=off / N==1 skip this arm.
+        if (steal_safety_production_residual_zero_v_read() == 0) {
+            std::fprintf(stderr, "FATAL: multi-worker Ready residual-zero failed (#3950) "
+                                 "— steal-safety residuals must be 0 before WorkerThread::start\n");
+            std::fflush(stderr);
+            std::abort();
+        }
     } else {
         (void)aura_runtime_require_production_abi();
     }

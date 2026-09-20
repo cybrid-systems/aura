@@ -21947,6 +21947,16 @@ def cmd_chaos_pr_hard_fail_gate():
     cmake_cache = BUILD / "CMakeCache.txt"
     if not bin_path.exists():
         if not cmake_cache.exists():
+            # Issue #3950: claiming production-concurrency cannot silent-0 skip.
+            claimed = os.environ.get("AURA_PRODUCTION_CONCURRENCY_GATE", "").strip() == "1" or (
+                os.environ.get("AURA_CI_PRODUCTION_CONCURRENCY", "").strip().lower() in ("1", "true", "yes")
+            )
+            if claimed:
+                fail(
+                    "chaos PR hard-fail runtime skipped while production-concurrency claimed "
+                    "(#3950) — configure cmake / run after ./build.py build"
+                )
+                return 1
             # Static-only gate (CI gate job / fresh clone without build/).
             ok(
                 "chaos PR hard-fail runtime skipped (no CMakeCache; static coverage only) "
