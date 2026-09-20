@@ -2338,7 +2338,7 @@ int run_test_steal_complete_restamp_txn() {
         CHECK(ev_fiber_mut.find("typed_audit::production_defaults_active()") != std::string::npos,
               "3111 AC2: production gate preserved (Soft/Off zero-cost)");
         // AC3: push-time gate unchanged (#2663/#3013 still active)
-        const auto mfbh = read_file("src/serve/multi_fiber_mailbox.cpp");
+        const auto mfbh = read_file("src/serve/multi_fiber_mailbox.h");
         CHECK(mfbh.find("if (msg.held_ref_token.has_value() && !msg.handoff_completed)") !=
                   std::string::npos,
               "3111 AC3: push-time held_ref gate unchanged");
