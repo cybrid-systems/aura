@@ -3202,6 +3202,72 @@ static void ac3631_5_source_cite_and_no_invent() {
     CHECK(slurp("tests/orch/test_issue_3631.cpp").empty(), "3631: no test_issue file");
 }
 
+// Issue #3953: repeated join_agent on a stuck Reclaimed name must not
+// re-burn drain×8; 2nd+ join uses the 50ms ensure budget.
+static void ac3953_1_repeat_join_short_budget() {
+    using aura::core::sandbox::SandboxMode;
+    using aura::core::sandbox::set_mode;
+    std::println("\n--- #3953 AC: 2nd join_agent uses 50ms, not drain×8 ---");
+    const char* prev_sb = std::getenv("AURA_SANDBOX");
+    std::string prev_sb_s = prev_sb ? prev_sb : "";
+    ::setenv("AURA_SANDBOX", "restricted", 1);
+    set_mode(SandboxMode::Strict);
+    apply_production_audit_defaults();
+    auto fiber_owned = std::make_unique<Fiber>([] {});
+    fiber_owned->mark_reclaimed();
+    AgentHandle h;
+    h.ok = true;
+    h.fiber = fiber_owned.get();
+    h.reserved_memory_bytes = 4096;
+    JoinPolicy policy{};
+    policy.primary_ms = 1;
+    policy.drain_ms = 25; // first auto-wait = min(200, 30s) = 200ms
+    const auto jr1 = join_agent(h, policy);
+    CHECK(jr1.status == JoinStatus::Reclaimed, "3953: first join Reclaimed");
+    CHECK(h.wait_reclaimed_used, "3953: first join consumed wait");
+    CHECK(h.reserved_memory_bytes == 4096, "3953: reservation held (#2661)");
+    CHECK(jr1.wait_us >= 150000, "3953: first join burned drain×8 window");
+    const auto jr2 = join_agent(h, policy);
+    CHECK(jr2.status == JoinStatus::Reclaimed, "3953: second join still Reclaimed");
+    CHECK(h.reserved_memory_bytes == 4096, "3953: 2nd join no early free");
+    CHECK(jr2.wait_us < 150000, "3953: 2nd join bounded below drain×8");
+    CHECK(jr2.wait_us >= 20000, "3953: 2nd join still ran the 50ms ensure");
+    fiber_owned->set_state(FiberState::Done);
+    fiber_owned->note_body_exit_if_reclaimed();
+    h.finish_reclaimed_cleanup_on_dtor();
+    apply_dev_audit_defaults();
+    if (!prev_sb_s.empty())
+        ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+    else
+        ::unsetenv("AURA_SANDBOX");
+}
+
+// Issue #3953: wait_reclaimed_body in fiber context aborts on cancel
+// without reservation release.
+static void ac3953_2_fiber_cancel_aborts_wait() {
+    std::println("\n--- #3953 AC: fiber cancel aborts reclaim wait ---");
+    auto target = std::make_unique<Fiber>([] {});
+    target->mark_reclaimed();
+    AgentHandle h;
+    h.ok = true;
+    h.fiber = target.get();
+    h.reserved_memory_bytes = 2048;
+    h.reclaimed_deferred_cleanup = true;
+    auto joiner = std::make_unique<Fiber>([] {});
+    joiner->request_cancel();
+    auto* prev = aura::serve::g_current_fiber;
+    aura::serve::g_current_fiber = joiner.get();
+    const auto wr = wait_reclaimed_body(h, /*timeout_ms=*/5000);
+    aura::serve::g_current_fiber = prev;
+    CHECK(wr.status == JoinStatus::Cancelled, "3953: cancel aborts wait");
+    CHECK(!wr.cleanup_completed, "3953: no cleanup on cancel (#2661)");
+    CHECK(h.reserved_memory_bytes == 2048, "3953: reservation held on cancel");
+    CHECK(wr.wait_us < 500000, "3953: cancel is prompt (not the 5s deadline)");
+    target->set_state(FiberState::Done);
+    target->note_body_exit_if_reclaimed();
+    h.finish_reclaimed_cleanup_on_dtor();
+}
+
 int run_test_join_drain_reclaim() {
     std::println("=== Issue #2227: hard reclaim path for join drain residual fibers ===");
     CHECK(true, "issue stamp #2227");
@@ -5366,8 +5432,8 @@ int run_test_join_drain_reclaim() {
         CHECK(spawn3110.find("Issue #3110: auto-wait to close the host-forget cleanup window") !=
                   std::string::npos,
               "3110 AC1: join_agent auto-wait comment marker");
-        CHECK(spawn3110.find("maybe_auto_wait_reclaimed_production(h, "
-                             "/*caller_passed_wait_reclaimed_ms=*/false,") != std::string::npos,
+        CHECK(spawn3110.find("maybe_auto_wait_reclaimed_production") != std::string::npos &&
+                  spawn3110.find("/*caller_passed_wait_reclaimed_ms=*/false") != std::string::npos,
               "3110 AC1: join_agent production arm routes through the #3595 retry wrapper");
         // AC2: explicit wait path unchanged (existing wr/wait_reclaimed_used/wait_reclaimed_timeout
         // set).
@@ -7556,6 +7622,30 @@ int run_test_join_drain_reclaim() {
     ac3905_3_soft_no_getenv_non_orphan_zero();
     ac3905_4_queued_resume_not_destroyed();
     ac3905_5_source_cite();
+
+    std::println("\n=== Issue #3953: reclaim wait yields on fiber; repeat join short ===");
+    ac3953_1_repeat_join_short_budget();
+    ac3953_2_fiber_cancel_aborts_wait();
+    {
+        const auto spawn = read_file("src/orch/agent_spawn.h");
+        CHECK(spawn.find("Issue #3953") != std::string::npos, "3953: cite");
+        CHECK(spawn.find("wait_reclaimed_poll_once") != std::string::npos,
+              "3953: shared poll helper");
+        const auto wr = spawn.find("wait_reclaimed_body(AgentHandle");
+        CHECK(wr != std::string::npos, "3953: wait_reclaimed_body present");
+        const auto wr_win = spawn.substr(wr, 2200);
+        CHECK(wr_win.find("wait_reclaimed_poll_once") != std::string::npos,
+              "3953: wait_reclaimed_body uses cooperative poll");
+        CHECK(spawn.find("serve::Fiber::yield") != std::string::npos, "3953: fiber path yields");
+        CHECK(spawn.find("wait_already_consumed") != std::string::npos,
+              "3953: join_agent remembers prior wait");
+        CHECK(spawn.find("kProductionWaitReclaimedMsDefault") != std::string::npos,
+              "3953: 2nd join uses 50ms ensure budget");
+        CHECK(spawn.find("schema-3953") == std::string::npos, "3953: no new query key");
+        CHECK(read_file("tests/orch/test_issue_3953.cpp").empty(), "3953: no test_issue_3953.cpp");
+        CHECK(read_file("docs/design/3953-wait-reclaimed-yield.md").empty(),
+              "3953: no docs/design");
+    }
 
     // #3797-wave CI: restore the WAL-off face for later batch members.
     if (wal_member_pinned)

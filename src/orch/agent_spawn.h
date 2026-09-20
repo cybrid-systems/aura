@@ -3189,6 +3189,20 @@ struct WaitReclaimedResult {
     bool cleanup_completed = false;
 };
 
+// Issue #3953: reclaim-wait poll. Fiber context yields (steal/GC/cancel);
+// host-thread stays 200us sleep. Returns true if this-fiber cancel should
+// abort the wait. Does not Fiber::join (join already returned Reclaimed).
+inline bool wait_reclaimed_poll_once() noexcept {
+    if (auto* cf = serve::g_current_fiber) {
+        if (cf->is_cancel_requested())
+            return true;
+        serve::Fiber::yield(serve::YieldReason::Explicit);
+        return cf->is_cancel_requested();
+    }
+    std::this_thread::sleep_for(std::chrono::microseconds(200));
+    return false;
+}
+
 [[nodiscard]] inline WaitReclaimedResult
 wait_reclaimed_body(AgentHandle& h, std::optional<std::uint64_t> timeout_ms = {}) noexcept {
     WaitReclaimedResult out;
@@ -3215,6 +3229,7 @@ wait_reclaimed_body(AgentHandle& h, std::optional<std::uint64_t> timeout_ms = {}
 
     // Poll cooperative exit. Host-thread sleep (no Fiber::join — join already
     // returned Reclaimed; re-join would race residual cleanup contracts).
+    // Issue #3953: on a fiber, yield + cancel instead of pinning the worker.
     while (!f->is_done()) {
         if (has_deadline && std::chrono::steady_clock::now() >= deadline) {
             out.status = serve::JoinStatus::Timeout;
@@ -3228,7 +3243,16 @@ wait_reclaimed_body(AgentHandle& h, std::optional<std::uint64_t> timeout_ms = {}
                                                                        std::memory_order_relaxed);
             return out; // AC2: no reservation release / mailbox detach
         }
-        std::this_thread::sleep_for(std::chrono::microseconds(200));
+        if (wait_reclaimed_poll_once()) {
+            out.status = serve::JoinStatus::Cancelled;
+            out.still_running = f->still_running_after_reclaim_counted() || !f->is_done();
+            out.cleanup_completed = false;
+            out.wait_us =
+                static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(
+                                               std::chrono::steady_clock::now() - t0)
+                                               .count());
+            return out; // #2661: no reservation release on cancel
+        }
     }
 
     // Body exited — pair still-running gauge if reclaim path counted it.
@@ -3354,7 +3378,16 @@ struct JoinViaTokenResult {
                 1, std::memory_order_relaxed);
             return out; // AC2: no reservation release / mailbox detach
         }
-        std::this_thread::sleep_for(std::chrono::microseconds(200));
+        // Issue #3953: same cooperative poll as wait_reclaimed_body.
+        if (wait_reclaimed_poll_once()) {
+            out.status = serve::JoinStatus::Cancelled;
+            out.still_running = f->still_running_after_reclaim_counted() || !f->is_done();
+            out.wait_us =
+                static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(
+                                               std::chrono::steady_clock::now() - t0)
+                                               .count());
+            return out;
+        }
     }
     // Body exited — surface Ok or Reclaimed based on fiber state.
     out.still_running = false;
@@ -3511,7 +3544,9 @@ maybe_auto_wait_reclaimed_batch(std::span<AgentHandle> agents,
             break;
         if (std::chrono::steady_clock::now() >= deadline)
             break;
-        std::this_thread::sleep_for(std::chrono::microseconds(200));
+        // Issue #3953: fiber yield / host 200us — shared poll with wait_reclaimed_body.
+        if (wait_reclaimed_poll_once())
+            break;
     }
     out.wait_us = static_cast<std::uint64_t>(
         std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - t0)
@@ -3857,6 +3892,9 @@ inline void cancel_and_drain_fibers(std::span<serve::Fiber* const> fibers,
     // Issue #3012: production + unset wait → must_wait_reclaimed (no
     // extra poll / no wait_reclaimed_* bump). Soft / sandbox=off stay
     // false. Dtor finishes cleanup if the host never waited.
+    // Issue #3953: remember if a prior join already burned the retry
+    // budget — repeated polls on a stuck name must not re-arm drain×8.
+    const bool wait_already_consumed = h.wait_reclaimed_used;
     h.wait_reclaimed_used = false;
     h.wait_reclaimed_timeout = false;
     h.must_wait_reclaimed = false;
@@ -3875,9 +3913,12 @@ inline void cancel_and_drain_fibers(std::span<serve::Fiber* const> fibers,
         // reclaimed_retry_budget_ms(drain_ms); drain=0 cancel-only stays
         // one-shot) now owns the flag writes (#3146) and the #3220
         // host_forget bump.
-        jr.wait_us +=
-            maybe_auto_wait_reclaimed_production(h, /*caller_passed_wait_reclaimed_ms=*/false,
-                                                 reclaimed_retry_budget_ms(policy.drain_ms));
+        // Issue #3953: 2nd+ join_agent on a stuck name uses the 50ms
+        // ensure budget, not drain×8.
+        const auto budget = wait_already_consumed ? kProductionWaitReclaimedMsDefault
+                                                  : reclaimed_retry_budget_ms(policy.drain_ms);
+        jr.wait_us += maybe_auto_wait_reclaimed_production(
+            h, /*caller_passed_wait_reclaimed_ms=*/false, budget);
     }
     if (jr.status == serve::JoinStatus::Reclaimed && policy.wait_reclaimed_ms.has_value()) {
         auto wr = wait_reclaimed_body(h, policy.wait_reclaimed_ms);
