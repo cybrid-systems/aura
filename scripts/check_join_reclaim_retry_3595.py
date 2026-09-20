@@ -75,8 +75,18 @@ REQUIRED: tuple[tuple[str, str, str], ...] = (
     # AC3: C++ join surfaces route the production arm through the wrapper.
     (
         "src/orch/agent_spawn.h",
-        r"jr\.wait_us\s*\+=\s*maybe_auto_wait_reclaimed_production\(\s*h,\s*/\*caller_passed_wait_reclaimed_ms=\*/false,\s*reclaimed_retry_budget_ms\(policy\.drain_ms\)\);",
+        r"jr\.wait_us\s*\+=\s*maybe_auto_wait_reclaimed_production\(\s*h,\s*/\*caller_passed_wait_reclaimed_ms=\*/false,\s*budget\);",
         "3595 AC3: join_agent production arm routes through the wrapper",
+    ),
+    (
+        "src/orch/agent_spawn.h",
+        r"wait_already_consumed\s*\?\s*kProductionWaitReclaimedMsDefault",
+        "3595 AC3: 2nd+ join_agent uses the 50ms ensure budget (#3953)",
+    ),
+    (
+        "src/orch/agent_spawn.h",
+        r"reclaimed_retry_budget_ms\(policy\.drain_ms\)",
+        "3595 AC3: first production wait still drain-scaled",
     ),
     (
         "src/orch/agent_spawn.h",
