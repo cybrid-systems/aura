@@ -1,7 +1,7 @@
 # Legacy test inventory
 
 **Issue:** [#1957](https://github.com/cybrid-systems/aura/issues/1957)
-**Generated:** 2026-09-20 by `scripts/tools/inventory_legacy_tests.py`
+**Generated:** 2026-09-21 by `scripts/tools/inventory_legacy_tests.py`
 **Status:** living document — re-run the script after consolidations.
 
 ## Purpose
@@ -1523,7 +1523,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/serve/test_fiber_integration_batch.cpp` (—) [batch_driver, domain_suite, theme_serve] — tests/serve/test_fiber_integration_batch.cpp — closure-bridge Cycle-4 integration (Issue #226).
 - `tests/serve/test_fiber_migration_refresh.cpp` (—) [domain_suite, theme_serve] — AC1: Every resume after cross-worker steal runs
 - `tests/serve/test_fiber_mutation_steal_safety.cpp` (—) [large, domain_suite, theme_serve] — test_fiber_mutation_steal_safety.cpp — Issue #542:
-- `tests/orch/test_fiber_native_keepalive.cpp` (—) [domain_suite, theme_orch] — AC1: Default keepalive_interval_ms=0 remains zero-cost (no helper fiber).
+- `tests/orch/test_fiber_native_keepalive.cpp` (—) [large, domain_suite, theme_orch] — AC1: Default keepalive_interval_ms=0 remains zero-cost (no helper fiber).
 - `tests/serve/test_fiber_orch_core_batch.cpp` (—) [large, batch_driver, domain_suite, theme_serve] — test_fiber_orch_core_batch.cpp — consolidated fiber-theme drivers
 - `tests/serve/test_fiber_orch_parallel_quota_batch.cpp` (—) [large, batch_driver, domain_suite, theme_serve] — test_fiber_orch_parallel_quota_batch.cpp — consolidated fiber-theme drivers
 - `tests/serve/test_fiber_reclaim_orphan_release.cpp` (—) [domain_suite, theme_serve] — AC1: Non-yielding body + hard reclaim → Fiber::release_orphan_roots()
