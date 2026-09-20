@@ -205,6 +205,29 @@ int run_test_workspace_delete_subtree() {
         CHECK(cs.evaluator().workspace_flat() != nullptr, "AC4: evaluator flat rebound");
     }
 
+    std::println("\n--- #3957: workspace:discard own-flat without parent is #f ---");
+    {
+        const auto ws_cpp = read_file("src/compiler/evaluator_primitives_workspace.cpp");
+        CHECK(ws_cpp.find("Issue #3957") != std::string::npos, "3957: cite");
+        auto dpos = ws_cpp.find("add(\"workspace:discard\"");
+        CHECK(dpos != std::string::npos, "3957: discard present");
+        auto dwin_end = ws_cpp.find("workspace :merge", dpos);
+        auto dwin = ws_cpp.substr(dpos, (dwin_end == std::string::npos ? 4000 : dwin_end - dpos));
+        CHECK(dwin.find("!ws.parent_flat_") != std::string::npos,
+              "3957: own-flat without parent is fail-closed");
+        CHECK(dwin.find("MutationBoundaryGuard::try_acquire") != std::string::npos,
+              "3957: #3863 Guard retained on parent path");
+        CompilerService cs;
+        CHECK(cs.eval("(set-code \"(define z 1)\")").has_value(), "3957: set-code");
+        CHECK(cs.eval("(eval-current)").has_value(), "3957: eval");
+        auto d0 = cs.eval("(workspace:discard 0)");
+        CHECK(d0 && is_bool(*d0) && !as_bool(*d0),
+              "3957: root own-flat discard is #f not vacuous #t");
+        CHECK(cs.evaluator().workspace_flat() != nullptr, "3957: root flat still live");
+        CHECK(read_file("tests/issues/test_issue_3957.cpp").empty(), "3957: no invent");
+        CHECK(read_file("docs/design/3957-discard-orphan.md").empty(), "3957: no docs/design");
+    }
+
     std::println("\n=== #2789 delete subtree: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }

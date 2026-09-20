@@ -137,6 +137,23 @@ int main() {
               "3863: no docs/design/3863-* per #1655");
     }
 
+    std::println("\n--- #3957: own-flat without parent is not vacuous #t ---");
+    {
+        const auto ws_cpp = read_file("src/compiler/evaluator_primitives_workspace.cpp");
+        CHECK(ws_cpp.find("Issue #3957") != std::string::npos, "3957: cite");
+        auto dpos = ws_cpp.find("add(\"workspace:discard\"");
+        CHECK(dpos != std::string::npos, "3957: discard present");
+        auto dwin_end = ws_cpp.find("workspace :merge", dpos);
+        auto dwin = ws_cpp.substr(dpos, (dwin_end == std::string::npos ? 4000 : dwin_end - dpos));
+        CHECK(dwin.find("!ws.parent_flat_") != std::string::npos,
+              "3957: own-flat without parent is fail-closed");
+        CHECK(dwin.find("MutationBoundaryGuard::try_acquire") != std::string::npos,
+              "3957: #3863 Guard retained on parent path");
+        CHECK(ws_cpp.find("schema-3957") == std::string::npos, "3957: no new query key");
+        CHECK(read_file("tests/issues/test_issue_3957.cpp").empty(), "3957: no invent");
+        CHECK(read_file("docs/design/3957-discard-orphan.md").empty(), "3957: no docs/design");
+    }
+
     std::println("\n=== test_workspace_delete_child_1770: {} passed, {} failed ===", g_passed,
                  g_failed);
     return g_failed ? 1 : 0;
