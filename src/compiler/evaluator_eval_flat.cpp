@@ -861,7 +861,8 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const
             const auto cur_ver = defuse_version_.load(std::memory_order_acquire);
             std::uint64_t frame_ver = cur_ver;
             if (cl_copy.env_id != NULL_ENV_ID) {
-                std::shared_lock<std::shared_mutex> env_rlock(env_frames_mtx_);
+                std::shared_lock<std::shared_mutex> env_rlock(
+                    env_frame_shards_[env_frame_shard_index(cl_copy.env_id)].mu); // Issue #3963
                 if (cl_copy.env_id < env_frames_.size())
                     frame_ver = env_frames_[cl_copy.env_id].version_;
             }
@@ -942,7 +943,8 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const
                 if (!is_valid_env_id(cl_copy.env_id))
                     env_terminal_md = true;
                 else {
-                    std::shared_lock<std::shared_mutex> rlock(env_frames_mtx_);
+                    std::shared_lock<std::shared_mutex> rlock(
+                        env_frame_shards_[env_frame_shard_index(cl_copy.env_id)].mu); // Issue #3963
                     if (cl_copy.env_id < env_frames_.size() &&
                         env_frames_[cl_copy.env_id].version_ == INVALID_VERSION)
                         env_terminal_md = true;
@@ -1069,7 +1071,8 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const
                 if (!is_valid_env_id(cl_copy.env_id))
                     env_terminal = true;
                 else {
-                    std::shared_lock<std::shared_mutex> rlock(env_frames_mtx_);
+                    std::shared_lock<std::shared_mutex> rlock(
+                        env_frame_shards_[env_frame_shard_index(cl_copy.env_id)].mu); // Issue #3963
                     if (cl_copy.env_id < env_frames_.size() &&
                         env_frames_[cl_copy.env_id].version_ == INVALID_VERSION)
                         env_terminal = true;
@@ -1233,7 +1236,9 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const
                         if (!is_valid_env_id(cl_copy.env_id))
                             race_env_terminal = true;
                         else {
-                            std::shared_lock<std::shared_mutex> rlock(env_frames_mtx_);
+                            std::shared_lock<std::shared_mutex> rlock(
+                                env_frame_shards_[env_frame_shard_index(cl_copy.env_id)]
+                                    .mu); // Issue #3963
                             if (cl_copy.env_id < env_frames_.size() &&
                                 env_frames_[cl_copy.env_id].version_ == INVALID_VERSION)
                                 race_env_terminal = true;
