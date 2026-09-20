@@ -621,6 +621,48 @@ int run_test_steal_safety_production_residual_zero() {
               "3586: test_concurrent latches sandbox=off");
     }
 
+    // ── #3950: Scheduler::run Ready aborts on residual-zero ──
+    {
+        std::println("\n--- #3950: Ready residual-zero abort ---");
+        const auto sched = read_file("src/serve/scheduler.cpp");
+        const auto run_pos = sched.find("void Scheduler::run()");
+        CHECK(run_pos != std::string::npos, "3950 AC3: Scheduler::run found");
+        const auto start_pos = sched.find("w->start()", run_pos);
+        const auto multi_pos = sched.find("aura_runtime_require_production_multi_worker", run_pos);
+        const auto rz_pos = sched.find("steal_safety_production_residual_zero_v_read", run_pos);
+        CHECK(multi_pos != std::string::npos && start_pos != std::string::npos &&
+                  multi_pos < start_pos,
+              "3950 AC2: residual consult next to multi-worker Ready");
+        CHECK(rz_pos != std::string::npos && rz_pos < start_pos,
+              "3950 AC1: residual-zero before WorkerThread::start");
+        CHECK(sched.find("Issue #3950") != std::string::npos, "3950: scheduler cites");
+        CHECK(sched.find("#include \"steal_safety.h\"") != std::string::npos,
+              "3950 AC2: no second residual table (existing accessor)");
+        CHECK(sched.find("std::abort()") != std::string::npos, "3950 AC1: abort shape");
+        CHECK(sched.find("schema-3950") == std::string::npos, "3950 AC5: no new query key");
+        CHECK(sched.find("g_3950_") == std::string::npos, "3950: no invented counter");
+        CHECK(read_file("tests/serve/test_issue_3950.cpp").empty(), "3950: no test_issue_3950.cpp");
+        CHECK(read_file("docs/design/3950-ready-residual-zero.md").empty(), "3950: no docs/design");
+        const auto qts = read_file("src/compiler/evaluator_primitives_query_type_stats.cpp");
+        CHECK(qts.find("schema-3073") != std::string::npos, "3950 AC3: keep schema-3073");
+        CHECK(qts.find("steal_safety_production_residual_zero_v_read") != std::string::npos,
+              "3950 AC3: schema-3073 still consults residual-zero");
+        const auto bp = read_file("build.py");
+        const auto pgate = bp.find("def cmd_chaos_pr_hard_fail_gate");
+        const auto pnext =
+            pgate == std::string::npos ? std::string::npos : bp.find("\ndef ", pgate + 1);
+        const auto slice = (pgate != std::string::npos && pnext != std::string::npos)
+                               ? bp.substr(pgate, pnext - pgate)
+                               : std::string{};
+        CHECK(slice.find("AURA_PRODUCTION_CONCURRENCY_GATE") != std::string::npos,
+              "3950 AC4: PR chaos skip fails when production-concurrency claimed");
+        CHECK(slice.find("AURA_CI_PRODUCTION_CONCURRENCY") != std::string::npos,
+              "3950 AC4: AURA_CI_PRODUCTION_CONCURRENCY env");
+        CHECK(slice.find("Issue #3950") != std::string::npos, "3950 AC4: cites");
+        CHECK(slice.find("static coverage only") != std::string::npos,
+              "3950 AC4: static-only skip retained when unclaimed");
+    }
+
     // ── #3590: QueryEpoch strict joins the same production bootstrap gate ──
     {
         std::println("\n--- #3590: QueryEpoch strict joins production bootstrap gate ---");
@@ -755,9 +797,10 @@ int run_test_steal_safety_production_residual_zero() {
         CHECK(ss_h.find("DensifyBusy") == std::string::npos, "3894 AC2: no DensifyBusy bit");
     }
 
-    std::println("\n=== #3134/#3288/#3385/#3586/#3590/#3592 production-readiness residual-zero: {} "
-                 "passed, {} failed ===",
-                 g_passed, g_failed);
+    std::println(
+        "\n=== #3134/#3288/#3385/#3586/#3590/#3592/#3950 production-readiness residual-zero: {} "
+        "passed, {} failed ===",
+        g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
 
