@@ -4948,6 +4948,34 @@ static void ac3850_3_wiring_no_invent() {
     CHECK(read_file("docs/design/3850-steal-panic-moving.md").empty(), "3850 AC3: no docs/design");
 }
 
+static void ac3955_sticky_recover_lock_held() {
+    std::println("\n--- #3955: sticky recover densify keeps workspace lock ---");
+    const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    CHECK(mb.find("Issue #3955") != std::string::npos, "3955: Phase-5 cites");
+    const auto early = mb.find("if (!aura::ast::moving_compact_enabled())");
+    CHECK(early != std::string::npos, "3955: early-unlock gate present");
+    const auto ewin = mb.substr(early, 900);
+    CHECK(ewin.find("moving_incomplete_remap_sticky_densify_off") != std::string::npos,
+          "3955: sticky keeps lock through recover");
+    CHECK(ewin.find("production_defaults_active()") != std::string::npos,
+          "3955: production-only keep-lock");
+    const auto rec = mb.find("recover_moving_sticky_densify_off(/*retry_densify=*/true)");
+    CHECK(rec != std::string::npos, "3955: #3128 recover site");
+    const auto rwin = mb.substr(rec, 1800);
+    CHECK(rwin.find("release_workspace_then_drain_after_densify_()") != std::string::npos,
+          "3955: unlock after recover");
+    const auto recfn = mb.find("Evaluator::recover_moving_sticky_densify_off");
+    CHECK(recfn != std::string::npos, "3955: recover fn");
+    const auto recwin = mb.substr(recfn, 5000);
+    CHECK(recwin.find("DensifyInFlightGuard") != std::string::npos,
+          "3955: recover still in-flight");
+    CHECK(mb.find("Issue #3894: compact under workspace_mtx_") != std::string::npos,
+          "3955: #3894 lock-held compact unchanged");
+    CHECK(mb.find("schema-3955") == std::string::npos, "3955: no new query key");
+    CHECK(read_file("tests/issues/test_issue_3955.cpp").empty(), "3955: no invent");
+    CHECK(read_file("docs/design/3955-sticky-recover-lock.md").empty(), "3955: no docs/design");
+}
+
 static void ac3894_phase5_lock_held_densify() {
     std::println("\n--- #3894 AC1: Phase-5 compact under lock + densify-in-flight ---");
     const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
@@ -5822,6 +5850,7 @@ int run_test_moving_densify_fail_closed() {
 
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     ac3894_phase5_lock_held_densify();
+    ac3955_sticky_recover_lock_held();
     return g_failed ? 1 : 0;
 }
 // production default AURA_MOVING_UNTRACKED=hard (extends #2495 test file per #81967)
