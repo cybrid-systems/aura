@@ -5118,8 +5118,16 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
                 ev_->clear_cascade_bfs_invalidate();
             ev_->outermost_mutation_success_flag_ = nullptr;
         };
-        if (!aura::ast::moving_compact_enabled())
-            release_workspace_then_drain_after_densify_();
+        if (!aura::ast::moving_compact_enabled()) {
+            // Issue #3955: sticky densify-off blinds Moving so Phase-5
+            // would skip lock-held compact and unlock here; #3128 recover
+            // then densifies with workspace already free. Keep the lock
+            // through recover (GlobalExclusive unique / Region shared) and
+            // release after the recover site. Soft / no sticky: unlock now.
+            if (!(typed_audit::production_defaults_active() &&
+                  aura::ast::moving_incomplete_remap_sticky_densify_off()))
+                release_workspace_then_drain_after_densify_();
+        }
         // Issue #2347: clear TLS Guard-window reject count so multi-round
         // mutates do not accumulate a stale threshold across outermost
         // boundaries (Soft dashboard + Strict force-rollback both reset).
@@ -5660,6 +5668,9 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
                     static_cast<std::uint64_t>(densify_root_remap_fails),
                     static_cast<std::uint64_t>(densify_external_roots_prep_registered_cleared));
             }
+            // Issue #3955: sticky recover densify ran lock-held; release now
+            // (idempotent with #3894 happy-path unlock after compact).
+            release_workspace_then_drain_after_densify_();
         }
         // Issue #2975: production hard gate on every outermost Phase-5 exit
         // (success *and* non-intentional-failure). Shared residual leftover
