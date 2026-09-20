@@ -818,6 +818,12 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
             if (!ws.has_own_flat)
                 return make_bool(true); // already in parent state
 
+            // Issue #3957: own-flat without parent is not vacuous success —
+            // there is no parent to restore. Fail closed (#f); #3863 Guard
+            // still wraps the parent rebind path.
+            if (!ws.parent_flat_)
+                return make_bool(false);
+
             if (ws.parent_flat_) {
                 // Issue #3863: discard deletes/rebinds the active flat —
                 // wrap the scope in MutationBoundaryGuard (fulfills the
