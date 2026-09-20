@@ -2954,17 +2954,32 @@ int main(int argc, char* argv[]) {
     }
 
     bool err = false;
-    for (auto& e : exprs) {
-        auto s = e.find_first_not_of(" \t\r\n");
-        if (s == std::string::npos)
-            continue;
-        e = e.substr(s);
-        auto r = cs.eval(e);
-        if (!r) {
-            std::println(std::cerr, "error: {}", r.error().format_with_source(e));
-            err = true;
-        } else if (&e == &exprs.back() && !is_void(*r))
+    // #3918 follow-up (CI cheap/medium red): evaluate the whole program in
+    // ONE cs.eval pass, matching the --load entry. Per-expression eval
+    // split pipeline state across calls and broke fiber:spawn parameter
+    // capture inside defines — issue_135_define_loop_n_acc printed 0 from
+    // stdin while the same source via --load printed 5150.
+    if (auto r = cs.eval(all_input)) {
+        if (!is_void(*r))
             std::println("{}", fmt_val(*r, cs));
+    } else {
+        // Hard error in the single pass — fall back to the historical
+        // per-expression walk. It re-reads the workspace per call, so
+        // set-code-then-use programs resolve (issue_166_*, dws:default-
+        // after-setcode), and diagnostics keep their source carets
+        // (diag:parse-error-*).
+        for (auto& e : exprs) {
+            auto s = e.find_first_not_of(" \t\r\n");
+            if (s == std::string::npos)
+                continue;
+            e = e.substr(s);
+            auto r2 = cs.eval(e);
+            if (!r2) {
+                std::println(std::cerr, "error: {}", r2.error().format_with_source(e));
+                err = true;
+            } else if (&e == &exprs.back() && !is_void(*r2))
+                std::println("{}", fmt_val(*r2, cs));
+        }
     }
     // Clear messaging bridge to prevent dangling pointer access during
     // static destruction (the CompilerService captures 'this' in lambdas

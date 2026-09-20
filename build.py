@@ -159,7 +159,13 @@ SANITIZER_FLAGS = {
         None,
     ),
     "tsan": (
-        "-fsanitize=thread -fno-omit-frame-pointer",
+        # -Wno-error=mismatched-new-delete: GCC's TSan instrumentation inlines
+        # LLVM IRBuilder CreateLoad (llvm/IR/IRBuilder.h:1950) and flags LLVM's
+        # intrusive User::operator new/delete pairing as mismatched-new-delete;
+        # with -Werror that kills the build (observed in aura_jit.cpp via
+        # LLVMBuilder::load). Downgrade that one diagnostic to a warning —
+        # all other -Werror checks stay on.
+        "-fsanitize=thread -fno-omit-frame-pointer -Wno-error=mismatched-new-delete",
         "-fsanitize=thread",
         "Debug",  # force -O0; -O2/-O3 explode TSan false positives
     ),

@@ -3900,8 +3900,10 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         // OLD pool's intern("score"), so lookup_by_symid would steal score's
         // cell and silent-corrupt the sibling binding (ORDER-B after ORDER-A).
         if (ev.workspace_pool_ && new_value != aura::ast::NULL_NODE && new_value < flat.size()) {
-            flat.force_align_subtree_gen(new_value);
-            auto refreshed = ev.eval_flat(flat, *ev.workspace_pool_, new_value, ev.top_env());
+            // #3918 follow-up: eval the whole Define node (eval_current's
+            // root-eval semantics) — parity with the batch :rebind path.
+            flat.force_align_subtree_gen(old_define);
+            auto refreshed = ev.eval_flat(flat, *ev.workspace_pool_, old_define, ev.top_env());
             if (refreshed) {
                 auto& tenv = ev.top_env();
                 std::size_t ci = 0;
