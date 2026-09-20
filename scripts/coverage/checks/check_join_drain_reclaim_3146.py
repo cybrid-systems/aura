@@ -59,7 +59,7 @@ def main() -> int:
     # The conditional update must appear in join_agent (single-handle).
     must("Issue #3146", "AC1 source-cite marker in agent_spawn.h", spawn)
     must(
-        "maybe_auto_wait_reclaimed_production(h, /*caller_passed_wait_reclaimed_ms=*/false,",
+        "h, /*caller_passed_wait_reclaimed_ms=*/false, budget",
         "AC1 join_agent auto-wait calls wait_reclaimed_body(50ms default)",
         spawn,
     )
@@ -113,7 +113,7 @@ def main() -> int:
     # The new auto-wait block must be INSIDE the production gate (Soft path
     # would auto-wait too otherwise).
     gate_idx = spawn.find("production_reclaimed_must_wait()")
-    autowait_idx = spawn.find("maybe_auto_wait_reclaimed_production(h, /*caller_passed_wait_reclaimed_ms=*/false,")
+    autowait_idx = spawn.find("h, /*caller_passed_wait_reclaimed_ms=*/false, budget")
     if gate_idx < 0 or autowait_idx < 0:
         fails.append("AC4: missing production gate or auto-wait call")
     elif autowait_idx < gate_idx:
