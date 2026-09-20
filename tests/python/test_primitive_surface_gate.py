@@ -134,7 +134,7 @@ class TestBlockedPatterns(unittest.TestCase):
         self.assertIn("synthesize:", self.m.COMMERCIAL_DOMAIN_BUDGETS)
         self.assertEqual(
             self.m.COMMERCIAL_DOMAIN_BUDGETS["synthesize:"],
-            27,  # 3867 wave +1 (the closures shard conversion)
+            28,  # 3867 wave +1 (the closures shard conversion); #3963 sharded-lock wave +1
         )  # 2026-09-17 wave +1 (the #3854-#3856 ships; was 19; 2026-09-16 wave +1)
 
     def test_tcp_domain_deferred_and_budgeted(self):
@@ -144,7 +144,7 @@ class TestBlockedPatterns(unittest.TestCase):
         self.assertIn("tcp-", self.m.COMMERCIAL_DOMAIN_BUDGETS)
         self.assertEqual(
             self.m.COMMERCIAL_DOMAIN_BUDGETS["tcp-"],
-            32,  # 3867 wave +1 (the closures shard conversion)
+            33,  # 3867 wave +1 (the closures shard conversion); #3963 sharded-lock wave +1
         )  # 2026-09-17 wave +1 (the #3854-#3856 ships; was 24; 2026-09-16 wave +1)
 
     def test_strategy_domain_deferred_and_budgeted(self):
@@ -154,7 +154,7 @@ class TestBlockedPatterns(unittest.TestCase):
         self.assertIn("strategy:", self.m.COMMERCIAL_DOMAIN_BUDGETS)
         self.assertEqual(
             self.m.COMMERCIAL_DOMAIN_BUDGETS["strategy:"],
-            27,  # 3867 wave +1 (the closures shard conversion)
+            28,  # 3867 wave +1 (the closures shard conversion); #3963 sharded-lock wave +1
         )  # 2026-09-17 wave +1 (the #3854-#3856 ships; was 19; 2026-09-16 wave +1)
 
     def test_m4_domain_deferred_and_budgeted(self):
