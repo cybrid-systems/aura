@@ -241,6 +241,9 @@ inline void reset_wal_append_fail_slo_for_test() noexcept {
 // (zero new cost, AC1). Caller pattern:
 //   if (wal_append_fail_closed_active()) (void)wal_overflow_ring_push(rec); // #3838 bool
 inline constexpr int kWalAppendFailClosedForceWalIssue = 3302;
+// Issue #3965: force_wal SE sidecar enable-fail is fail-closed, not the
+// #2225 non-fatal short-circuit. Stamp only (no new query key).
+inline constexpr int kSeWalForceWalEnableFailClosedIssue = 3965;
 
 [[nodiscard]] inline bool wal_env_flag_truthy(const char* name) noexcept {
     const char* e = std::getenv(name);

@@ -1138,18 +1138,23 @@ inline void apply_production_audit_defaults() noexcept {
                 // Issue #3460: pair the SecurityEvent side-car on the same
                 // dir. Issue #3500: replay last ring-size records into the
                 // live SE ring (mutation WAL stays empty-replay).
+                // Issue #3965: SE enable-fail is fail-closed under force_wal;
+                // mutation WAL enable-fail must not disarm fail-closed.
+                bool se_ok = false;
                 {
                     using ::aura::core::security_event::kSecurityEventRingSize;
                     using ::aura::core::security_event_wal::
                         hydrate_security_event_ring_from_wal_replay;
                     std::vector<::aura::core::security_event_wal::SecurityEventWalRecord> replay;
-                    (void)::aura::core::security_event_wal::g_security_event_wal().enable(
+                    se_ok = ::aura::core::security_event_wal::g_security_event_wal().enable(
                         std::string_view(dir), &replay, kSecurityEventRingSize);
-                    hydrate_security_event_ring_from_wal_replay(replay);
+                    if (se_ok)
+                        hydrate_security_event_ring_from_wal_replay(replay);
                 }
+                (void)se_ok;
+                if (force_wal)
+                    ::aura::core::wal_slo::set_wal_fail_closed_defaulted_by_force_wal(true);
                 if (mut_ok) {
-                    if (force_wal)
-                        ::aura::core::wal_slo::set_wal_fail_closed_defaulted_by_force_wal(true);
                     if (force_wal && !has_explicit) {
                         g_audit_wal_metrics().audit_wal_forced_by_multi_tenant_total.fetch_add(
                             1, std::memory_order_relaxed);
@@ -1162,8 +1167,6 @@ inline void apply_production_audit_defaults() noexcept {
                         g_audit_wal_metrics().audit_wal_using_default_dir.store(
                             1, std::memory_order_relaxed);
                     }
-                } else if (force_wal) {
-                    ::aura::core::wal_slo::set_wal_fail_closed_defaulted_by_force_wal(false);
                 }
             } else {
                 ::aura::core::wal_slo::set_wal_fail_closed_defaulted_by_force_wal(false);
