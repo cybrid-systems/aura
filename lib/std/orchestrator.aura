@@ -138,6 +138,9 @@
 
 ; ── agent:spawn — 聘用乐手 ──
 ;
+; Issue #3961: serve-mode spawn failure returns #f (no silent echo-agent
+; fallback); pass a handler for a local agent.
+;
 ; 注册一个命名 agent。agent 是一个 handler 函数：(lambda (input) → output)。
 ; handler 接收输入，处理后返回输出。
 ;
@@ -155,17 +158,13 @@
      name)
     ; 无 handler: 尝试 serve-mode session
     (else
+      ; Issue #3961: a failed serve-mode spawn must not silently register
+      ; an echo handler and report success — return #f so callers see the
+      ; failure (agent:restart propagates it).
       (try
         (let ((sid (_agent:spawn name)))
-          (if (string? sid) sid
-            (begin
-              ; fallback: 创建一个最小 handler（调用者需自行 send/recv）
-              (agent-register name (lambda (x) x))
-              name)))
-        (catch (e)
-          ; fallback: 纯 Aura agent（无 cross-session）
-          (agent-register name (lambda (x) x))
-          name)))))
+          (if (string? sid) sid #f))
+        (catch (e) #f)))))
 
 ; ── agent:ask — 指挥给提示 ──
 ;
@@ -180,7 +179,13 @@
 (define (agent:ask target input . timeout-args)
   ; 先查本地注册表
   (define handler (agent-lookup target))
-  (if (procedure? handler)
+  ; Issue #3960: a stopped agent must not receive new asks — refuse
+  ; with a structured marker instead of invoking the handler.
+  (if (and (procedure? handler) (string? target)
+           (let ((st (agent:status target)))
+             (and (string? st) (string=? st "stopped"))))
+    (list "agent-stopped" target)
+    (if (procedure? handler)
     ; 本地 agent：直接调用 handler
     (try (handler input) (catch (e)
       (list "agent-error" target e)))
@@ -204,7 +209,7 @@
                 ((string-contains? reply (string-append "\"id\":\"" req-id "\""))
                  (try (json-get-string reply "body") (catch (e) reply)))
                 (else (loop (+ elapsed 1)))))))
-        (list "send-failed" target)))))
+        (list "send-failed" target))))))
 
 ; ── agent:list — 点名 ──
 (define (agent:list)
@@ -281,8 +286,12 @@
           input)
         
         ;; agent 策略：通过 agent:ask 委托
+        ;; Issue #3959: rest = (strategy <agent-id> ...) — the id is the
+        ;; second element; (car rest) is the strategy string itself.
         (if (string=? strategy "agent")
-          (let ((agent-name (if (pair? rest) (car rest) "")))
+          (let ((agent-name (if (and (pair? rest) (pair? (cdr rest)))
+                              (cadr rest)
+                              "")))
             (if (string? agent-name)
               (try (agent:ask agent-name input) (catch (e) input))
               input))
