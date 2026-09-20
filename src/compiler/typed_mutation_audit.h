@@ -4178,6 +4178,26 @@ format_invariant_deny_reason(std::string_view kind, std::uint64_t tenant_id, std
            1;
 }
 
+// Issue #3964: production outermost session mid must not equal the
+// process-global Mutation epoch (two Evaluators in the same epoch would
+// revoke each other). Mix epoch × Evaluator* × a process gen. Soft never
+// calls this. Mid 0 is still refuse; never mint 1 as a phantom.
+inline constexpr int kSessionMidPerEvaluatorIssue = 3964;
+inline std::atomic<std::uint64_t> g_session_audit_mid_gen{0};
+
+[[nodiscard]] inline std::uint64_t mint_session_audit_mid(std::uint64_t epoch,
+                                                          const void* eval) noexcept {
+    const auto n = g_session_audit_mid_gen.fetch_add(1, std::memory_order_relaxed) + 1;
+    auto h = epoch;
+    h ^= static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(eval));
+    h ^= n * 0x9E3779B97F4A7C15ULL;
+    if (h == 0 || h == epoch)
+        h = epoch ^ ((n << 1) | 1u);
+    if (h == 0)
+        h = n | 1u;
+    return h;
+}
+
 // Issue #2493: canonical mid resolution for audit paths that did not
 // thread a caller mid. Preference order (mirrors #2384 require_effect
 // stamping so SE ↔ TypedMutationAudit ↔ grant epoch stay joined):
