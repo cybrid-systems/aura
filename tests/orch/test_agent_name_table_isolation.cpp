@@ -797,6 +797,75 @@ static void ac3729_5_soft_miss_and_source() {
 
 } // namespace
 
+// ── Issue #3944: production put() sweeps cross-name Done husks ──
+// A fully-clean slot (flags false, fiber null, reserved 0) is a Done husk
+// per slot_is_reclaimable_clean. Long-run unique-name spawn+join left
+// such husks in the table until ~Evaluator; the put-path sweep (#3944)
+// erases them cross-name under production. Soft keeps them (zero cost).
+static void ac3944_1_prod_sweeps_cross_name_husks() {
+    std::println("\n--- #3944: cross-name Done-husk sweep (production) ---");
+    ac3727_set_prod(true);
+    {
+        AgentNameTable table;
+        AgentHandle husk;
+        husk.id = 1;
+        husk.name = "husk-3944";
+        husk.ok = true;
+        table.put(std::move(husk));
+        AgentHandle live;
+        live.id = 2;
+        live.name = "live-3944";
+        live.ok = true;
+        live.reserved_memory_bytes = 64; // non-clean slot must survive
+        table.put(std::move(live));
+        CHECK(table.find("husk-3944") == nullptr,
+              "3944 AC1: cross-name Done husk swept by the next put");
+        CHECK(table.find("live-3944") != nullptr,
+              "3944 AC1: non-clean different-name slot survives");
+        // Same-name retire path unchanged: clean same-name put still
+        // fresh-inserts (#3598) — the sweep excludes the incoming name.
+        AgentHandle same1;
+        same1.id = 3;
+        same1.name = "same-3944";
+        same1.ok = true;
+        table.put(std::move(same1));
+        AgentHandle same2;
+        same2.id = 4;
+        same2.name = "same-3944";
+        same2.ok = true;
+        auto* slot = table.put(std::move(same2));
+        CHECK(slot != nullptr && slot->id == 4,
+              "3944 AC1: same-name put still fresh-inserts over the husk");
+    }
+    // Soft: sweep skipped — husks stay (zero cost, directory unchanged).
+    ac3727_set_prod(false);
+    {
+        AgentNameTable table;
+        AgentHandle husk;
+        husk.id = 5;
+        husk.name = "soft-husk-3944";
+        husk.ok = true;
+        table.put(std::move(husk));
+        AgentHandle live;
+        live.id = 6;
+        live.name = "soft-live-3944";
+        live.ok = true;
+        live.reserved_memory_bytes = 64;
+        table.put(std::move(live));
+        // Probe with size(), NOT find(): find() itself retires a clean
+        // slot per the #3598 contract — the probe must not disturb the
+        // state it asserts.
+        CHECK(!aura::compiler::typed_audit::production_defaults_active(),
+              "3944 AC2: Soft face latched");
+        CHECK(table.size() == 2, "3944 AC2: Soft keeps Done husks (sweep skipped)");
+    }
+    ac3727_set_prod(false);
+    const auto src = read_file("src/compiler/agent_name_table.h");
+    CHECK(src.find("Issue #3944") != std::string::npos, "3944 AC3: header cites #3944");
+    CHECK(src.find("production_defaults_active()") != std::string::npos,
+          "3944 AC3: sweep is production-gated");
+}
+
 int run_test_agent_name_table_isolation() {
     std::println("=== Issue #2078: per-Evaluator orch agent name table ===");
     ac1_source_and_no_static();
@@ -822,7 +891,8 @@ int run_test_agent_name_table_isolation() {
     ac3729_2_stash_bounded();
     ac3729_4_join_observe_only();
     ac3729_5_soft_miss_and_source();
-    std::println("\n=== #2078/#3125/#3442/#3467/#3598/#3727/#3729: passed={} failed={} ===",
+    ac3944_1_prod_sweeps_cross_name_husks();
+    std::println("\n=== #2078/#3125/#3442/#3467/#3598/#3727/#3729/#3944: passed={} failed={} ===",
                  g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }

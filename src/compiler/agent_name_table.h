@@ -91,6 +91,25 @@ struct AgentNameTable {
             if (!aura::orch::maybe_force_recycle_reclaimed_slot(slot))
                 (void)aura::orch::maybe_force_release_reclaimed_quota(slot);
         auto name = h.name.empty() ? ("agent-" + std::to_string(h.id)) : h.name;
+        // Issue #3944: cross-name Done-husk sweep. The #3564 quota arm
+        // above visits every slot but only recycles; the retire below is
+        // same-name — a *different* unique name's Done-path-cleaned slot
+        // (long-run orch:spawn-agent with uuid / agent-<id> names) was
+        // never erased, so the table grew until ~Evaluator. Mirror the
+        // Scope-side compact_done_husks_unlocked_ (#3776): production
+        // face only, erase Done-path-cleaned slots of any other name.
+        // Clean-slot erase runs the same idempotent no-op ~AgentHandle
+        // the same-name retire relies on (#3598). The incoming name is
+        // excluded — its own retire/fresh-insert logic below is
+        // unchanged (Soft: sweep skipped, zero cost).
+        if (aura::compiler::typed_audit::production_defaults_active()) {
+            for (auto sit = impl_->agents_.begin(); sit != impl_->agents_.end();) {
+                if (sit->first != name && aura::orch::slot_is_reclaimable_clean(sit->second))
+                    sit = impl_->agents_.erase(sit);
+                else
+                    ++sit;
+            }
+        }
         h.name = name;
         auto it = impl_->agents_.find(name);
         if (it != impl_->agents_.end()) {
