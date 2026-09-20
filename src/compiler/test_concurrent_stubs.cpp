@@ -146,6 +146,10 @@ extern "C" __attribute__((weak)) int aura_production_densify_stale_refuse(void*)
 }
 extern "C" __attribute__((weak)) void aura_note_temporary_moving_live_ptr(void*) noexcept {}
 extern "C" __attribute__((weak)) void aura_unnote_temporary_moving_live_ptr(void*) noexcept {}
+extern "C" __attribute__((weak)) int
+aura_evaluator_try_hold_budget_fail_closed_at_safepoint() noexcept {
+    return 0; // Issue #3951: light-link native hold-budget poll is a no-op
+}
 extern "C" __attribute__((weak)) std::uint64_t
 aura_hot_update_force_jit_regions_mask(void) noexcept {
     return 0; // stub: no forced JIT regions in light binaries

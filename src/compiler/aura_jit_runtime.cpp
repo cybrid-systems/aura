@@ -3906,6 +3906,10 @@ int64_t aura_lookup_fn_by_name(const char* name, int64_t* out_local_count, int64
     return aura_jit_deopt_pending_count() != 0;
 }
 
+// Issue #3951: owner-thread hold-budget fail-closed (strong in
+// evaluator_fiber_mutation.cpp; weak 0 in fiber_bridge / stubs).
+extern "C" int aura_evaluator_try_hold_budget_fail_closed_at_safepoint() noexcept;
+
 // Issue #3946: RAII token for the #3210 / #3857 temp-canary inventory.
 // Held around the native invoke inside aura_closure_dispatch_native_checked
 // so auto-arm / RegionExclusive live_compact(Moving) soft-gates while the
@@ -4230,6 +4234,12 @@ extern "C" int64_t aura_closure_dispatch_native_checked(int64_t closure_id, int6
     // #2472 / #3247 stay on the prologue.
     NativeMovingCanary native_moving_canary;
     (void)native_moving_canary;
+    // Issue #3951: owner-thread cooperative edge. Hold-budget cancel
+    // armed on this fiber can force-release here (same helper as
+    // Fiber::check_gc_safepoint). Scheduler idle / busy-path re-arm only
+    // — they do not unlock unique_lock from a foreign thread. Soft:
+    // helper returns 0 after reject_enabled.
+    (void)aura_evaluator_try_hold_budget_fail_closed_at_safepoint();
 
     // ── Inline cache check (Issue #1707: generation double-check) ──
     int cache_idx = static_cast<int>(closure_id % CLOSURE_CACHE_SIZE);
