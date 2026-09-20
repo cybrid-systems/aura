@@ -401,6 +401,16 @@ extern "C" int aura_production_densify_stale_refuse(void* eval_id) noexcept {
     return production_apply_closure_densify_hard_refuse(nullptr, cl, eval_id) ? 1 : 0;
 }
 
+// Issue #3946: C ABI for the #3210 / #3857 temp-canary inventory so JIT
+// native (non-module TU) can hold Moving while mid-call. Soft / !Moving:
+// note_temporary_moving_live_ptr is one atomic load.
+extern "C" void aura_note_temporary_moving_live_ptr(void* p) noexcept {
+    aura::ast::note_temporary_moving_live_ptr(p);
+}
+extern "C" void aura_unnote_temporary_moving_live_ptr(void* p) noexcept {
+    aura::ast::unnote_temporary_moving_live_ptr(p);
+}
+
 // Issue #3688: Production/Full apply_closure / eval_flat of workspace
 // Apply/Call must refuse when IR/JIT typed-entry would refuse at the
 // same depth (persist-reject / mid-boundary Reject / would_allow==0).

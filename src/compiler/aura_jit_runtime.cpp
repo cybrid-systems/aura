@@ -3906,6 +3906,21 @@ int64_t aura_lookup_fn_by_name(const char* name, int64_t* out_local_count, int64
     return aura_jit_deopt_pending_count() != 0;
 }
 
+// Issue #3946: RAII token for the #3210 / #3857 temp-canary inventory.
+// Held around the native invoke inside aura_closure_dispatch_native_checked
+// so auto-arm / RegionExclusive live_compact(Moving) soft-gates while the
+// call is live. Soft / !Moving: note is a no-op. Not a second pin registry.
+namespace {
+    struct NativeMovingCanary {
+        void* p;
+        NativeMovingCanary() noexcept
+            : p(this) {
+            aura_note_temporary_moving_live_ptr(p);
+        }
+        ~NativeMovingCanary() noexcept { aura_unnote_temporary_moving_live_ptr(p); }
+    };
+} // namespace
+
 // Issue #3635: blessed entry — the ONLY legal anon (sid==0 / unnamed)
 // closure native-dispatch path. Owns the complete call-time transaction:
 // freed refuse (#1361/#3021), MustDeopt consume TOCTOU (#2128/#2472),
@@ -4208,6 +4223,13 @@ extern "C" int64_t aura_closure_dispatch_native_checked(int64_t closure_id, int6
             return 0;
         }
     }
+
+    // Issue #3946: hold Moving for the native invoke (fast + slow). Token
+    // is this frame — same #3857 inventory as apply_closure. Soft / !Moving:
+    // note is a no-op. Constructed after refuse so source-cite windows for
+    // #2472 / #3247 stay on the prologue.
+    NativeMovingCanary native_moving_canary;
+    (void)native_moving_canary;
 
     // ── Inline cache check (Issue #1707: generation double-check) ──
     int cache_idx = static_cast<int>(closure_id % CLOSURE_CACHE_SIZE);
