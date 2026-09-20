@@ -1631,6 +1631,26 @@ static void stamp_negative_lifetime_proof_for_test() noexcept {
     lcp::stamp_lifetime_consistency_proof(p);
 }
 
+// Issue #3617 victim-keyed reads: EnvFrameOk / LifetimeProofOk probes read
+// the fiber's own evaluator slots and quietly skip for cold (no-Guard)
+// fibers. These era-old #3001/#2957 ACs therefore arm the keyed slots for a
+// stable test identity and bind the fiber to it (mirrors
+// test_steal_complete_gc_defer.cpp).
+static int ac_steal_victim_id = 0;
+
+static void stamp_negative_lifetime_proof_for_victim(const void* eval_id) noexcept {
+    namespace lcp = aura::core::lifetime_consistency_proof;
+    auto p = lcp::make_lifetime_consistency_proof(
+        /*envframe_hold_gen=*/0, /*envframe_compact_gen=*/0, /*envframe_scans_run=*/0,
+        /*envframe_densify_scan_total=*/1, /*envframe_densify_scan_fail=*/1,
+        /*envframe_hold_gen_mismatch_total=*/0, lcp::kTypeLinearOutcomeQuiet,
+        /*type_linear_linear_root_count=*/0, /*type_linear_stamped_after_rebind_total=*/0,
+        /*type_linear_reject_after_rebind_fail_total=*/0, /*pin_contract_fail_total=*/0,
+        /*pin_remap_miss_total=*/0, /*layout_arena_gen=*/0, /*layout_flat_gen=*/0,
+        /*layout_env_gen=*/0, /*residual_defer_after_exit_total=*/0, /*mutation_epoch=*/1);
+    lcp::stamp_lifetime_consistency_proof_for(eval_id, p);
+}
+
 static void stamp_positive_lifetime_proof_for_test() noexcept {
     namespace lcp = aura::core::lifetime_consistency_proof;
     auto p = lcp::make_lifetime_consistency_proof(0, 0, 0, 0, 0, 0, lcp::kTypeLinearOutcomeQuiet, 0,
@@ -1656,6 +1676,9 @@ static void ac2957_1_production_negative_proof_rejects() {
     aura::core::densify_consistency::note_last_densify_dual_epoch_ok(true);
     aura::core::densify_consistency::bump_last_densify_call_seq();
     stamp_negative_lifetime_proof_for_test();
+    aura::core::densify_consistency::note_last_densify_result_for(
+        &ac_steal_victim_id, /*envframe_ok=*/false, /*dual_epoch_ok=*/false);
+    stamp_negative_lifetime_proof_for_victim(&ac_steal_victim_id);
     CHECK(lcp::last_lifetime_consistency_proof_present(), "2957 AC1: proof present");
     CHECK(!lcp::last_lifetime_consistency_would_allow(), "2957 AC1: would_allow false");
 
@@ -1669,6 +1692,7 @@ static void ac2957_1_production_negative_proof_rejects() {
         g_steal_safety_residual_lifetime_proof_reject_total.load(std::memory_order_relaxed);
     const auto ok0 = g_steal_safety_transaction_ok_total.load(std::memory_order_relaxed);
     Fiber f([] {});
+    f.set_evaluator_id(&ac_steal_victim_id);
     const auto d = steal_safety_transaction(&f);
     CHECK(d == StealSafetyDecision::RejectHard, "2957 AC1: RejectHard");
     CHECK(g_steal_safety_residual_lifetime_proof_reject_total.load(std::memory_order_relaxed) >
@@ -1846,6 +1870,9 @@ static void ac3001_1_hook_inject_negative_proof_rejects() {
     g_steal_safety_between_clear_and_hard_and_hook = []() noexcept {
         aura::core::densify_consistency::bump_last_densify_call_seq();
         stamp_negative_lifetime_proof_for_test();
+        aura::core::densify_consistency::note_last_densify_result_for(
+            &ac_steal_victim_id, /*envframe_ok=*/false, /*dual_epoch_ok=*/false);
+        stamp_negative_lifetime_proof_for_victim(&ac_steal_victim_id);
     };
 
     const auto reject0 =
@@ -1854,6 +1881,7 @@ static void ac3001_1_hook_inject_negative_proof_rejects() {
     const auto ok0 = g_steal_safety_transaction_ok_total.load(std::memory_order_relaxed);
     const auto rearm0 = g_steal_safety_residual_rearm_race_total.load(std::memory_order_relaxed);
     Fiber f([] {});
+    f.set_evaluator_id(&ac_steal_victim_id);
     const auto d = steal_safety_transaction(&f);
     g_steal_safety_between_clear_and_hard_and_hook = nullptr;
 
@@ -1929,10 +1957,13 @@ static void ac3001_3_envframe_hook_and_2931_keys() {
     g_steal_safety_between_clear_and_hard_and_hook = []() noexcept {
         aura::core::densify_consistency::bump_last_densify_call_seq();
         aura::core::densify_consistency::note_last_densify_envframe_ok(false);
+        aura::core::densify_consistency::note_last_densify_result_for(
+            &ac_steal_victim_id, /*envframe_ok=*/false, /*dual_epoch_ok=*/false);
     };
     const auto env0 = g_steal_safety_residual_envframe_lag_total.load(std::memory_order_relaxed);
     const auto rh0 = g_steal_safety_transaction_reject_hard_total.load(std::memory_order_relaxed);
     Fiber f([] {});
+    f.set_evaluator_id(&ac_steal_victim_id);
     const auto d = steal_safety_transaction(&f);
     g_steal_safety_between_clear_and_hard_and_hook = nullptr;
     CHECK(d == StealSafetyDecision::RejectHard, "3001 AC1: EnvFrameOk inject → RejectHard");
