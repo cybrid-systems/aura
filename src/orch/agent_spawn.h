@@ -1119,6 +1119,10 @@ struct AgentLiveness {
     std::atomic<bool> body_done{false};
     std::atomic<bool> helper_stop{false}; // stop keepalive without marking body done
     std::atomic<std::uint64_t> last_keepalive_us{0};
+    // Issue #3954: body-owned progress clock (orch:agent-touch / note_agent_progress
+    // / body-entry seed). Helper emit must not stamp this — hung bodies stay
+    // distinguishable from a live helper.
+    std::atomic<std::uint64_t> body_progress_us{0};
     std::atomic<std::uint64_t> emitted{0};
     std::uint32_t interval_ms = 0;
 };
@@ -2705,10 +2709,15 @@ inline void finalize_spawn_quota_reject(AgentHandle& h) noexcept {
             // entry so watch_agent_liveness has a baseline even if the body
             // never calls `orch:agent-touch`. MailboxKeepalive mode seeds the
             // same clock from emit_keepalive (#2008 / #2159 helper fiber).
-            if (live && progress_clock) {
+            // Issue #3954: always seed body_progress_us when liveness exists
+            // (helper emit must not stamp this clock).
+            if (live) {
                 const auto t0 = orch_now_us();
-                live->last_keepalive_us.store(t0, std::memory_order_release);
-                g_orch_module_stats.last_keepalive_us.store(t0, std::memory_order_relaxed);
+                live->body_progress_us.store(t0, std::memory_order_release);
+                if (progress_clock) {
+                    live->last_keepalive_us.store(t0, std::memory_order_release);
+                    g_orch_module_stats.last_keepalive_us.store(t0, std::memory_order_relaxed);
+                }
             }
             // Issue #1880 / #2118: try_acquire mutation boundary when Evaluator
             // is bound. On fiber: soft-registers per-fiber depth when
@@ -4678,6 +4687,9 @@ struct KeepaliveWatchResult {
     std::uint64_t last_keepalive_us = 0;
     bool cancelled = false; // true when cancel_on_stall fired request_cancel
     std::optional<serve::mf_mailbox::MailMessage> message;
+    // Issue #3954: distinct body vs helper stall (no new query keys).
+    bool body_stalled = false;
+    bool helper_stalled = false;
 };
 
 // Issue #2229: supervision policy surface for long-lived agent
@@ -5135,19 +5147,26 @@ make_workflow_stage(std::span<const serve::parallel_orch::TaskSpec> tasks,
 run_workflow(serve::Scheduler& sched, AgentScope& scope, std::span<const WorkflowStage> stages,
              ResidualReclaimPreference residual = ResidualReclaimPreference::Report) noexcept;
 
-// Wait up to stall_timeout_ms (default 2× keepalive_interval_ms) for a
-// keepalive. Prefers the shared last_keepalive clock (set by the helper
-// fiber) and only does non-blocking mailbox peeks — safe from host threads
-// concurrent with the keepalive helper. On stall, optionally request_cancel
-// the agent body + helper and bump stalled_agents_total / keepalive_cancels_total.
+// Wait up to stall_timeout_ms (default 2× keepalive_interval_ms, or 2×
+// coop window when interval==0) for **body** progress. Helper keepalive
+// freshness is helper_stalled only — a hung body with a live helper is
+// Stalled (#3954). Mailbox is a non-consuming has_pending_for probe (never
+// agent_recv). On stall, optionally request_cancel the agent body + helper
+// and bump stalled_agents_total / keepalive_cancels_total.
 [[nodiscard]] inline KeepaliveWatchResult watch_agent_liveness(AgentHandle& h,
                                                                std::uint32_t stall_timeout_ms = 0,
                                                                bool cancel_on_stall = true) {
     KeepaliveWatchResult out;
     // Issue #2080: ProgressClock mode (attach_mailbox=#f + interval > 0) is
-    // accepted: the body entry seeded last_keepalive_us and `orch:agent-touch`
-    // keeps it fresh. The mailbox peek path is skipped below when no mailbox.
-    if (!h.ok || h.keepalive_interval_ms == 0) {
+    // accepted: the body entry seeded last_keepalive_us / body_progress_us
+    // and `orch:agent-touch` keeps the body clock fresh.
+    // Issue #3954: interval==0 is Closed only when there is no body clock
+    // (no liveness and no coop). Production default coop can still stall.
+    if (!h.ok) {
+        out.status = KeepaliveWatchStatus::Closed;
+        return out;
+    }
+    if (h.keepalive_interval_ms == 0 && !h.liveness && !h.coop) {
         out.status = KeepaliveWatchStatus::Closed;
         return out;
     }
@@ -5157,73 +5176,79 @@ run_workflow(serve::Scheduler& sched, AgentScope& scope, std::span<const Workflo
         return out;
     }
 
-    const std::uint32_t stall_ms = stall_timeout_ms > 0
-                                       ? stall_timeout_ms
-                                       : std::max<std::uint32_t>(1, h.keepalive_interval_ms * 2);
+    std::uint32_t stall_ms = stall_timeout_ms;
+    if (stall_ms == 0) {
+        if (h.keepalive_interval_ms > 0)
+            stall_ms = std::max<std::uint32_t>(1, h.keepalive_interval_ms * 2);
+        else if (h.coop && h.coop->max_no_yield_ms > 0)
+            stall_ms = std::max<std::uint32_t>(1, h.coop->max_no_yield_ms * 2);
+        else
+            stall_ms = 1;
+    }
     const auto stall_us = static_cast<std::uint64_t>(stall_ms) * 1000ull;
 
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(stall_ms);
 
+    auto body_last = [&]() -> std::uint64_t {
+        std::uint64_t t = 0;
+        if (h.liveness)
+            t = std::max(t, h.liveness->body_progress_us.load(std::memory_order_acquire));
+        if (h.coop)
+            t = std::max(t, h.coop->last_coop_us.load(std::memory_order_acquire));
+        return t;
+    };
+    auto helper_last = [&]() -> std::uint64_t {
+        return h.liveness ? h.liveness->last_keepalive_us.load(std::memory_order_acquire) : 0;
+    };
+    auto age_fresh = [&](std::uint64_t last) -> bool {
+        if (last == 0)
+            return false;
+        const auto now = orch_now_us();
+        return now >= last && (now - last) < stall_us;
+    };
+
     while (std::chrono::steady_clock::now() < deadline) {
         if (h.liveness && h.liveness->body_done.load(std::memory_order_acquire)) {
             out.status = KeepaliveWatchStatus::Done;
-            out.last_keepalive_us = h.liveness->last_keepalive_us.load(std::memory_order_relaxed);
+            out.last_keepalive_us = helper_last();
             return out;
         }
 
-        // Non-blocking peek: any message (esp. keepalive) counts as alive.
-        // Skip for ProgressClock mode (#2080): no mailbox to peek.
-        if (h.mailbox) {
-            auto msg = agent_recv(h, /*wait=*/false, /*timeout_ms=*/0);
-            if (msg) {
-                out.message = std::move(msg);
-                if (h.liveness)
-                    out.last_keepalive_us =
-                        h.liveness->last_keepalive_us.load(std::memory_order_relaxed);
-                else if (is_keepalive_message(*out.message))
-                    out.last_keepalive_us = orch_now_us();
-                out.status = KeepaliveWatchStatus::Alive;
-                return out;
-            }
+        // Issue #3954: non-consuming probe — never agent_recv (would steal
+        // real mail). Pending keepalive from the helper is not body proof.
+        if (h.mailbox)
+            (void)h.mailbox->has_pending_for(h.id);
+
+        const auto hlast = helper_last();
+        out.last_keepalive_us = hlast;
+        out.helper_stalled = h.keepalive_active && !age_fresh(hlast);
+        if (age_fresh(body_last())) {
+            out.status = KeepaliveWatchStatus::Alive;
+            out.body_stalled = false;
+            return out;
         }
 
-        // Shared clock from helper emit path (works even if messages already
-        // drained by another supervisor).
-        if (h.liveness) {
-            const auto last = h.liveness->last_keepalive_us.load(std::memory_order_acquire);
-            out.last_keepalive_us = last;
-            if (last > 0) {
-                const auto now = orch_now_us();
-                if (now >= last && (now - last) < stall_us) {
-                    out.status = KeepaliveWatchStatus::Alive;
-                    return out;
-                }
-            }
-        }
-
-        // Brief host sleep; helper continues to emit on its own fiber.
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
 
-    // Final age check after window closes.
-    if (h.liveness) {
-        const auto last = h.liveness->last_keepalive_us.load(std::memory_order_acquire);
-        out.last_keepalive_us = last;
-        if (last > 0) {
-            const auto now = orch_now_us();
-            if (now >= last && (now - last) < stall_us) {
-                out.status = KeepaliveWatchStatus::Alive;
-                return out;
-            }
-        }
-        if (h.liveness->body_done.load(std::memory_order_acquire)) {
-            out.status = KeepaliveWatchStatus::Done;
-            return out;
-        }
+    if (h.liveness && h.liveness->body_done.load(std::memory_order_acquire)) {
+        out.status = KeepaliveWatchStatus::Done;
+        out.last_keepalive_us = helper_last();
+        return out;
     }
 
-    // Stall: no fresh keepalive within the window.
+    const auto hlast = helper_last();
+    out.last_keepalive_us = hlast;
+    out.helper_stalled = h.keepalive_active && !age_fresh(hlast);
+    if (age_fresh(body_last())) {
+        out.status = KeepaliveWatchStatus::Alive;
+        out.body_stalled = false;
+        return out;
+    }
+
+    // Body stall: helper may still be pulsing (helper_stalled=false).
     out.status = KeepaliveWatchStatus::Stalled;
+    out.body_stalled = true;
     g_orch_module_stats.stalled_agents_total.fetch_add(1, std::memory_order_relaxed);
     if (cancel_on_stall) {
         if (h.fiber)
@@ -5242,10 +5267,14 @@ run_workflow(serve::Scheduler& sched, AgentScope& scope, std::span<const Workflo
 // mode is unchanged — the fiber-native helper owns the clock (#2159).
 // Issue #2540: also a recommended cooperative poll edge when max_no_yield_ms > 0.
 inline void note_agent_progress(AgentHandle& h) noexcept {
-    if (h.liveness && h.mailbox == nullptr && h.keepalive_interval_ms > 0) {
+    if (h.liveness) {
         const auto t = orch_now_us();
-        h.liveness->last_keepalive_us.store(t, std::memory_order_release);
-        g_orch_module_stats.last_keepalive_us.store(t, std::memory_order_relaxed);
+        // Issue #3954: body-owned clock. Helper emit does not stamp this.
+        h.liveness->body_progress_us.store(t, std::memory_order_release);
+        if (h.mailbox == nullptr && h.keepalive_interval_ms > 0) {
+            h.liveness->last_keepalive_us.store(t, std::memory_order_release);
+            g_orch_module_stats.last_keepalive_us.store(t, std::memory_order_relaxed);
+        }
     }
     // Issue #2540: recommended yield point for long-running bodies.
     (void)agent_poll(h);

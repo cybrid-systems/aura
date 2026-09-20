@@ -289,6 +289,7 @@ int run_test_fiber_native_keepalive() {
 
         // Age out last pulse so watch sees a stale clock.
         h.liveness->last_keepalive_us.store(1, std::memory_order_release);
+        h.liveness->body_progress_us.store(1, std::memory_order_release);
         for (int i = 0; i < 64; ++i) {
             auto m = aura::orch::agent_recv(h, false, 0);
             if (!m)
@@ -483,6 +484,91 @@ int run_test_fiber_native_keepalive() {
         CHECK(href(cs, "keepalive-helper-reclaim-wired") == 1, "2783 wired");
         CHECK(href(cs, "keepalive-helper-orphan-total") >= 0, "orphan total key");
         CHECK(href(cs, "keepalive-helper-reclaim-exit-total") >= 0, "reclaim-exit total key");
+    }
+
+    std::println("\n=== Issue #3954: body-clock Alive; watch does not consume mail ===");
+    {
+        const auto spawn = read_file("src/orch/agent_spawn.h");
+        const auto mb = read_file("src/serve/multi_fiber_mailbox.h");
+        const auto scope = read_file("src/orch/agent_scope.h");
+        CHECK(spawn.find("Issue #3954") != std::string::npos, "3954: cite");
+        CHECK(spawn.find("body_progress_us") != std::string::npos, "3954: body clock");
+        CHECK(mb.find("has_pending_for") != std::string::npos, "3954: non-consuming pending");
+        CHECK(spawn.find("has_pending_for(h.id)") != std::string::npos,
+              "3954: watch probes pending, no recv");
+        const auto wrfn = spawn.find("watch_agent_liveness(AgentHandle");
+        CHECK(wrfn != std::string::npos, "3954: watch present");
+        const auto wr_win = spawn.substr(wrfn, 3200);
+        CHECK(wr_win.find("agent_recv(h") == std::string::npos,
+              "3954: watch does not consume mailbox");
+        CHECK(spawn.find("schema-3954") == std::string::npos, "3954: no new query key");
+        CHECK(scope.find("body_stalled") != std::string::npos, "3954: ScopeWatch body_stalled");
+        CHECK(scope.find("helper_stalled") != std::string::npos, "3954: ScopeWatch helper_stalled");
+        CHECK(read_file("tests/orch/test_issue_3954.cpp").empty(), "3954: no test_issue_3954.cpp");
+        CHECK(read_file("docs/design/3954-watch-body-clock.md").empty(), "3954: no docs/design");
+    }
+    {
+        std::println("\n--- #3954 AC: hung body + live helper → body_stalled ---");
+        Scheduler sched(2);
+        SchedRunner runner(sched);
+        std::atomic<bool> hold{true};
+        auto h = spawn_agent_with_mailbox(
+            sched, {.name = "3954-hung",
+                    .body =
+                        [&] {
+                            while (hold.load(std::memory_order_relaxed)) {
+                                if (aura::serve::g_current_fiber &&
+                                    aura::serve::g_current_fiber->is_cancel_requested())
+                                    break;
+                            }
+                        },
+                    .keepalive_interval_ms = 15});
+        CHECK(h.ok && h.liveness, "3954: spawn ok");
+        for (int i = 0; i < 200 && h.liveness->emitted.load() < 1; ++i)
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        CHECK(h.liveness->emitted.load() >= 1, "3954: helper emitted");
+        h.liveness->body_progress_us.store(1, std::memory_order_release);
+        const auto n0 = h.mailbox ? h.mailbox->size() : 0;
+        auto wr = watch_agent_liveness(h, /*stall_timeout_ms=*/20, /*cancel_on_stall=*/true);
+        const auto n1 = h.mailbox ? h.mailbox->size() : 0;
+        CHECK(wr.status == KeepaliveWatchStatus::Stalled, "3954: hung body is Stalled");
+        CHECK(wr.body_stalled, "3954: body_stalled");
+        CHECK(!wr.helper_stalled, "3954: helper still pulsing");
+        CHECK(wr.cancelled, "3954: Cancel fires on body stall");
+        CHECK(n1 >= n0, "3954: watch did not consume mailbox");
+        hold.store(false, std::memory_order_relaxed);
+        (void)join_agent(h, std::optional<std::uint64_t>{2000});
+    }
+    {
+        std::println("\n--- #3954 AC: ProgressClock touch Alive; stop → Stalled ---");
+        Scheduler sched(2);
+        SchedRunner runner(sched);
+        std::atomic<bool> hold{true};
+        AgentHandle* self = nullptr;
+        auto h = spawn_agent_with_mailbox(
+            sched, {.name = "3954-pc",
+                    .body =
+                        [&] {
+                            while (hold.load(std::memory_order_relaxed)) {
+                                if (self)
+                                    note_agent_progress(*self);
+                                if (aura::serve::g_current_fiber &&
+                                    aura::serve::g_current_fiber->is_cancel_requested())
+                                    break;
+                                Fiber::yield(YieldReason::Explicit);
+                            }
+                        },
+                    .attach_mailbox = false,
+                    .keepalive_interval_ms = 20});
+        self = &h;
+        for (int i = 0; i < 100 && h.liveness && h.liveness->body_progress_us.load() == 0; ++i)
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        auto wr = watch_agent_liveness(h, /*stall_timeout_ms=*/80, /*cancel_on_stall=*/false);
+        CHECK(wr.status == KeepaliveWatchStatus::Alive || wr.status == KeepaliveWatchStatus::Done,
+              "3954: touching ProgressClock Alive");
+        CHECK(!wr.body_stalled, "3954: body not stalled while touching");
+        hold.store(false, std::memory_order_relaxed);
+        (void)join_agent(h, std::optional<std::uint64_t>{2000});
     }
 
     std::println("\n=== #2159 + #2783 fiber-native keepalive: {} passed, {} failed ===", g_passed,
