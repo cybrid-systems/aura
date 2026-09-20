@@ -37,6 +37,7 @@
 #include "core/moving_densify_health.hh"
 
 #include <cstdint>
+#include <cstring>
 #include <fstream>
 #include <print>
 #include <string>
@@ -4984,6 +4985,59 @@ static void ac3894_phase5_lock_held_densify() {
           "3894 AC3: no docs/design");
 }
 
+// Issue #3947: c-struct-set! interior opaque memcpy joins the existing
+// slot / canary / required-fail triad (opaque_heap_element_cover_or_required_fail).
+static void ac3947_1_source_cite_interior_triad() {
+    std::println("\n--- #3947 AC3: interior store uses cover helper ---");
+    const auto ffi = read_file("src/compiler/ffi_primitives_impl.cpp");
+    const auto setb = ffi.find("add(\"c-struct-set!\"");
+    CHECK(setb != std::string::npos, "3947 AC3: c-struct-set! located");
+    const auto sete = ffi.find("add(\"c-struct-ref\"", setb);
+    CHECK(sete != std::string::npos && sete > setb, "3947 AC3: set! body bounded");
+    const auto body = ffi.substr(setb, sete - setb);
+    CHECK(body.find("opaque_heap_element_cover_or_required_fail") != std::string::npos,
+          "3947 AC3: interior store joins cover triad");
+    CHECK(body.find("struct-interior") != std::string::npos, "3947 AC3: interior reason");
+    CHECK(body.find("void** interior") != std::string::npos, "3947 AC3: interior void** slot");
+}
+
+static void ac3947_2_interior_slot_rewrites_on_moving() {
+    std::println("\n--- #3947 AC1: interior slot remaps on Moving ---");
+    MovingFlagGuard on(1);
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    ASTArena arena(64 * 1024);
+    auto* p0 = arena.create<Pod16>(1, 2, 3, 4);
+    auto* p1 = arena.create<Pod16>(5, 6, 7, 8);
+    CHECK(p0 && p1, "3947 AC1: creates");
+    alignas(void*) char buf[sizeof(void*)]{};
+    void* ptr = p0;
+    std::memcpy(buf, &ptr, sizeof(ptr));
+    void** interior = reinterpret_cast<void**>(buf);
+    CHECK(aura::ast::opaque_heap_element_cover_or_required_fail(ptr, interior, "struct-interior"),
+          "3947 AC1: interior cover ok");
+    void* s1 = p1;
+    arena.register_external_root_slot_for_densify(&s1);
+    const auto r = arena.live_compact(LiveCompactMode::Moving);
+    if (r.objects_moved > 0) {
+        void* neu = arena.resolve_object_remap(p0);
+        CHECK(neu != nullptr, "3947 AC1: p0 remapped");
+        CHECK(*interior == neu, "3947 AC1: interior bytes rewritten to new address");
+    } else {
+        CHECK(*interior == p0, "3947 AC1: no-move interior intact");
+    }
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+}
+
+static void ac3947_3_soft_zero_and_no_invent() {
+    std::println("\n--- #3947 AC4/AC5: Soft zero extra + no invent ---");
+    const auto ffi = read_file("src/compiler/ffi_primitives_impl.cpp");
+    CHECK(ffi.find("Issue #3947") != std::string::npos, "3947: ffi cites");
+    CHECK(ffi.find("g_3947_") == std::string::npos, "3947: no invented counter");
+    CHECK(read_file("docs/design/3947-struct-interior.md").empty(), "3947: no docs/design");
+    CHECK(read_file("tests/issues/test_issue_3947.cpp").empty(), "3947: no tests/issues");
+    CHECK(ffi.find("class InteriorPinRegistry") == std::string::npos, "3947: no second registry");
+}
+
 int run_test_moving_densify_fail_closed() {
     std::println("=== Issue #2495: Moving densify fail-closed on untracked external roots ===");
     std::println(
@@ -5760,6 +5814,11 @@ int run_test_moving_densify_fail_closed() {
     ac3850_1_live_cp_blocks_moving();
     ac3850_2_source_cite_gate_and_residual();
     ac3850_3_wiring_no_invent();
+
+    std::println("\n=== Issue #3947: c-struct-set! interior opaque slot cover ===");
+    ac3947_1_source_cite_interior_triad();
+    ac3947_2_interior_slot_rewrites_on_moving();
+    ac3947_3_soft_zero_and_no_invent();
 
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     ac3894_phase5_lock_held_densify();
