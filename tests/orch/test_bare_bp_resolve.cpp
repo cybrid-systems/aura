@@ -341,6 +341,63 @@ int run_test_bare_bp_resolve_3179() {
               "3931: no docs/design/3931-*");
     }
 
+    // ── Issue #3943: tenant / explicit gauge refcount teardown ──
+    // Two spawn-agents of one tenant share "t:<tid>": the gauge must
+    // survive the first release and erase at the last one. Unique
+    // "bare:<seq>" keys never refcount — the #3931 erase owns them.
+    {
+        std::println("\n--- #3943: shared-tenant gauge refcount teardown ---");
+        using aura::orch::AgentHandle;
+        using aura::orch::lookup_scope_bp_gauge;
+        using aura::orch::maybe_erase_bare_bp_gauge;
+        using aura::orch::maybe_release_scope_bp_gauge_ref;
+        using aura::orch::note_mailbox_bp_recent_event;
+        using aura::orch::note_scope_bp_gauge_ref;
+        using aura::orch::reset_scope_bp_map_for_test;
+
+        SandboxRestore prod{"restricted"};
+        apply_production_audit_defaults();
+        reset_scope_bp_map_for_test();
+        if (aura::compiler::typed_audit::production_defaults_active()) {
+            note_scope_bp_gauge_ref("t:3943");
+            note_scope_bp_gauge_ref("t:3943");
+            note_mailbox_bp_recent_event("t:3943");
+            CHECK(lookup_scope_bp_gauge("t:3943") != nullptr,
+                  "3943 AC1: gauge inserted on first tenant event");
+            maybe_release_scope_bp_gauge_ref("t:3943");
+            CHECK(lookup_scope_bp_gauge("t:3943") != nullptr,
+                  "3943 AC1: shared gauge survives the first release");
+            maybe_release_scope_bp_gauge_ref("t:3943");
+            CHECK(lookup_scope_bp_gauge("t:3943") == nullptr,
+                  "3943 AC1: gauge erased when the last reference drops");
+            note_scope_bp_gauge_ref("bare:3943");
+            note_mailbox_bp_recent_event("bare:3943");
+            maybe_release_scope_bp_gauge_ref("bare:3943");
+            CHECK(lookup_scope_bp_gauge("bare:3943") != nullptr,
+                  "3943 AC2: bare key not refcounted (release no-op)");
+            maybe_erase_bare_bp_gauge("bare:3943");
+            CHECK(lookup_scope_bp_gauge("bare:3943") == nullptr,
+                  "3943 AC2: bare key still erased by the #3931 helper");
+            AgentHandle a;
+            a.bp_scope_id = "t:3943b";
+            note_scope_bp_gauge_ref(a.bp_scope_id);
+            note_mailbox_bp_recent_event(a.bp_scope_id);
+            a.finish_reclaimed_cleanup_on_dtor();
+            CHECK(lookup_scope_bp_gauge("t:3943b") == nullptr,
+                  "3943 AC3: handle dtor cleanup releases the spawn ref");
+        } else {
+            CHECK(true, "3943: production_defaults_active=false; Soft no-ops");
+        }
+        apply_dev_audit_defaults();
+        reset_scope_bp_map_for_test();
+        const auto spawn_src = read_repo_file("src/orch/agent_spawn.h");
+        CHECK(spawn_src.find("Issue #3943") != std::string::npos, "3943: issue cite");
+        CHECK(spawn_src.find("note_scope_bp_gauge_ref(h.bp_scope_id);") != std::string::npos,
+              "3943: spawn path increments the refcount");
+        CHECK(spawn_src.find("maybe_release_scope_bp_gauge_ref(bp_scope_id);") != std::string::npos,
+              "3943: dtor path releases the refcount");
+    }
+
     // ── Source-cite ──────────────────────────────────────────────────
     {
         std::println("\n--- #3179 AC source-cite ---");

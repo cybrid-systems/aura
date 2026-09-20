@@ -15,6 +15,8 @@
 #include "core/lifetime_consistency_proof.hh"
 #include "serve/fiber.h"
 #include "serve/steal_safety.h"
+#include "serve/multi_fiber_mailbox.h"
+#include "orch/agent_spawn.h"
 
 #include <atomic>
 #include <cstdint>
@@ -2130,8 +2132,73 @@ static void ac3001_5_source_and_linter() {
 
 } // namespace
 
+// ── Issue #3942: spawn-time primary mailbox bind → steal walk sees
+// h.mailbox even when the steal lands before the body's first
+// instruction (the old path read fiber->mailbox_, null until the
+// in-body attach, skipped the walk, and recv delivered a pre-steal
+// stamp). The spawn path now binds at Scheduler::spawn return; attach()
+// is idempotent so the in-body attach no-ops.
+static void ac3942_spawn_bind_walk() {
+    std::println("\n--- #3942: attach-time revalidate clears pre-steal stamp ---");
+    const auto as = read_file("src/orch/agent_spawn.h");
+    CHECK(as.find("Issue #3942: post-attach held_ref revalidation") != std::string::npos,
+          "3942 AC1: spawn header cites #3942");
+    CHECK(as.find("maybe_revalidate_held_ref_after_attach(*mb);") != std::string::npos,
+          "3942 AC1: body calls the attach-time revalidate");
+
+    CompilerService cs;
+    CHECK(cs.eval("(+ 1 1)").has_value(), "3942 AC2: warm");
+    auto& ev = cs.evaluator();
+    CompilerMetrics metrics;
+    ev.set_compiler_metrics(&metrics);
+
+    aura::serve::mf_mailbox::MultiFiberMailbox mb;
+    Fiber f([] {});
+    mb.attach(&f);
+    CHECK(f.mailbox() != nullptr, "3942 AC2: attach binds the primary mailbox");
+
+    // Broadcast held_ref message with a completed handoff (the only
+    // pushable held_ref shape) — the walk must clear it.
+    aura::serve::mf_mailbox::MailMessage msg;
+    msg.payload = "pre-steal-stamp";
+    msg.held_ref_token = 77;
+    msg.handoff_completed = true;
+    const auto ps = mb.push(msg);
+    CHECK(ps != aura::serve::mf_mailbox::PushStatus::HandoffRequired &&
+              ps != aura::serve::mf_mailbox::PushStatus::Closed,
+          "3942 AC2: completed-handoff push accepted");
+
+    auto& prod =
+        aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active;
+    prod.store(1u, std::memory_order_relaxed);
+    // The steal-complete walk itself skips (no back-pointer yet — that is
+    // the #3942 gap); the attach-time revalidate is the fix's workhorse.
+    bool pre_cleared = true;
+    mb.for_each_pending_held_ref_for_fiber(
+        &f, [&pre_cleared](auto& m) { pre_cleared = pre_cleared && !m.handoff_completed; });
+    // The revalidate walk reads serve::g_current_fiber (the production
+    // attach runs on the fiber's own thread, so the guard is keyed on the
+    // current-fiber pointer); register the probe fiber for the call.
+    auto* prev_fiber = aura::serve::g_current_fiber;
+    aura::serve::g_current_fiber = &f;
+    aura::orch::maybe_revalidate_held_ref_after_attach(mb);
+    aura::serve::g_current_fiber = prev_fiber;
+    bool cleared = true;
+    mb.for_each_pending_held_ref_for_fiber(
+        &f, [&cleared](auto& m) { cleared = cleared && !m.handoff_completed; });
+    prod.store(0u, std::memory_order_relaxed);
+    CHECK(!pre_cleared, "3942 AC2 pre: pre-attach state still carries the stamp");
+    CHECK(cleared, "3942 AC2: attach-time revalidate cleared handoff_completed");
+    ev.set_compiler_metrics(nullptr);
+}
+
 int run_test_steal_complete_restamp_txn() {
     std::println("test_steal_complete_restamp_txn");
+    // Issue #3941: run the new #3942 AC FIRST — this member never ran in
+    // the batch until it was wired as an isolated runner, and several of
+    // its era-old ACs (#2510/#2957/#3001) currently fail; the new AC must
+    // not be blocked behind them (#3463 lesson, applied in reverse).
+    ac3942_spawn_bind_walk();
     ac1_sole_restamp_entry();
     ac2_hard_mismatch_fail();
     ac3_soft_and_production();

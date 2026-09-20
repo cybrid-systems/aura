@@ -7713,6 +7713,16 @@ def cmd_lint():
     if r != 0:
         fail("Issue #3904 MSE TA posture linter failed — run python3 scripts/check_mse_ta_posture_3904.py")
         return r
+        fail("Issue #3904 MSE TA posture linter failed — run python3 scripts/check_mse_ta_posture_3904.py")
+        return r
+    ocr3941_script = ROOT / "scripts" / "check_orch_residuals_3941.py"
+    if not ocr3941_script.exists():
+        fail(f"missing {ocr3941_script}")
+        return 1
+    r = run([sys.executable, str(ocr3941_script)], cwd=ROOT)
+    if r != 0:
+        fail("Issue #3941 orch residuals linter failed — run python3 scripts/check_orch_residuals_3941.py")
+        return r
     # Issue #3869: storm/Global force-full soak/alert counter — rewrite-
     # side fires counted; no Soft skip of the Hard fence invented.
     sfc3869_script = ROOT / "scripts" / "check_storm_force_full_counter_3869.py"

@@ -1403,6 +1403,69 @@ inline void maybe_erase_bare_bp_gauge(std::string_view scope_id) noexcept {
     (void)maybe_erase_scope_bp_gauge_on_teardown(scope_id);
 }
 
+// Issue #3943: production spawn-agent gauges for tenant / explicit /
+// Scope-named keys ("t:<tid>", ":bp-scope-id", "as:N") previously never
+// tore down — after 256 distinct keys note_mailbox_bp_recent_event hit
+// kMailboxBpScopeMapCap and dropped events (#3804 overflow, no insert).
+// Refcount per key under the gauge map's own mutex: +1 per spawn that
+// resolves the id, -1 at ~AgentHandle; the gauge erases when the last
+// reference drops (shared-tenant agents keep the gauge alive for each
+// other). Unique "bare:<seq>" keys keep the #3931 join/dtor erase and
+// never increment here — release no-ops on absent ref entries. Soft:
+// the resolver returned {} so both helpers no-op on the empty id.
+inline std::unordered_map<std::string, std::uint64_t> g_scope_bp_refs{};
+inline void note_scope_bp_gauge_ref(const std::string& scope_id) noexcept {
+    if (scope_id.empty() || scope_id.compare(0, 5, "bare:") == 0)
+        return;
+    std::lock_guard lock(g_scope_bp_map_mtx);
+    ++g_scope_bp_refs[scope_id];
+}
+// Issue #3942: post-attach held_ref revalidation. A steal that lands
+// before the body's first instruction skips the on_steal_complete walk
+// (the fiber's mailbox back-pointer is null at steal time — set only in
+// this body's attach, on the fiber's own thread). Running the same walk
+// here — post-attach, pre-consumption, still on the fiber's own thread —
+// forces any pre-steal stamp back through the handoff gate (#3565):
+// identical consumer contract to the #3111 AC1 walk, without any
+// cross-thread mailbox_ write. Production face only; zero cost when the
+// queue holds no held_ref messages.
+inline void
+maybe_revalidate_held_ref_after_attach(serve::mf_mailbox::MultiFiberMailbox& mb) noexcept {
+    if (!aura::compiler::typed_audit::production_defaults_active())
+        return;
+    if (!serve::g_current_fiber)
+        return;
+    mb.for_each_pending_held_ref_for_fiber(serve::g_current_fiber, [](auto& m) {
+        if (m.handoff_completed) {
+            m.handoff_completed = false;
+            aura::serve::mf_mailbox::bump_held_ref_stale_after_steal();
+        }
+    });
+}
+
+inline void maybe_release_scope_bp_gauge_ref(const std::string& scope_id) noexcept {
+    if (scope_id.empty())
+        return;
+    bool erase_now = false;
+    {
+        std::lock_guard lock(g_scope_bp_map_mtx);
+        auto it = g_scope_bp_refs.find(scope_id);
+        if (it == g_scope_bp_refs.end())
+            return;
+        if (--it->second != 0)
+            return;
+        g_scope_bp_refs.erase(it);
+        erase_now = g_scope_bp_map.find(scope_id) != g_scope_bp_map.end();
+    }
+    // Erase OUTSIDE the map mutex: erase_scope_bp_gauge takes
+    // g_scope_bp_map_mtx itself — nesting it here would self-deadlock the
+    // dtor path (observed as isolated signal=14 timeouts across
+    // spawn-path batch members in the first #3941 run).
+    if (erase_now && erase_scope_bp_gauge(scope_id))
+        g_orch_module_stats.scope_bp_gauge_teardown_erase_total.fetch_add(
+            1, std::memory_order_relaxed);
+}
+
 // Issue #2778: process-wide clear of the scope BP map (tests + session
 // boundary). Returns the number of gauges dropped. Wired from
 // reset_all_agent_scopes_for_test so scope lifecycle reset also frees
@@ -1411,6 +1474,7 @@ inline std::size_t reset_scope_bp_map_for_test() noexcept {
     std::lock_guard<std::mutex> lock(g_scope_bp_map_mtx);
     const auto n = g_scope_bp_map.size();
     g_scope_bp_map.clear();
+    g_scope_bp_refs.clear(); // Issue #3943: drop refcounts with the gauges
     return n;
 }
 
@@ -2345,6 +2409,11 @@ inline void finalize_spawn_quota_reject(AgentHandle& h) noexcept {
     const auto tenant = spawn_tenant != 0 ? spawn_tenant : orch_tenant;
     h.bp_scope_id = resolve_bare_bp_scope_id(spec.bp_scope_id, spawn_tenant);
     spec.bp_scope_id = h.bp_scope_id;
+    // Issue #3943: count this handle against the resolved gauge key so
+    // the ~AgentHandle release erases tenant / explicit keys when the
+    // last spawn-agent reference drops. Soft: resolver returned {} and
+    // the helper no-ops.
+    note_scope_bp_gauge_ref(h.bp_scope_id);
     if (!spec.body) {
         g_orch_module_stats.spawn_failures.fetch_add(1, std::memory_order_relaxed);
         return h;
@@ -2624,8 +2693,14 @@ inline void finalize_spawn_quota_reject(AgentHandle& h) noexcept {
                 ~CoopReg() { unregister_agent_coop(fid); }
             } coop_reg(coop);
 
-            if (attach && mb && serve::g_current_fiber)
+            if (attach && mb && serve::g_current_fiber) {
                 mb->attach(serve::g_current_fiber);
+                // Issue #3942: covers the pre-first-instruction steal —
+                // the on_steal_complete walk skipped it (null mailbox at
+                // steal time); re-run the revalidation now that this
+                // fiber is bound, before the body can consume anything.
+                maybe_revalidate_held_ref_after_attach(*mb);
+            }
             // Issue #2080: ProgressClock mode — seed last_keepalive_us at body
             // entry so watch_agent_liveness has a baseline even if the body
             // never calls `orch:agent-touch`. MailboxKeepalive mode seeds the
@@ -2696,6 +2771,14 @@ inline void finalize_spawn_quota_reject(AgentHandle& h) noexcept {
         finalize_spawn_quota_reject(h);
         return h;
     }
+    // Issue #3942: NOTE — an earlier cut bound the fiber's primary
+    // mailbox here (right after Scheduler::spawn returned) so the
+    // steal-complete walk would see it. That shape wrote the fiber's
+    // mailbox member from the spawner thread while the fiber could
+    // already be running on a worker (data race; observed as a SIGSEGV
+    // in test_scope_join_tree_visibility). The revalidation now runs at
+    // body entry instead — see maybe_revalidate_held_ref_after_attach
+    // and the attach-time call below.
 
     h.fiber = f;
     h.id = f->id();
@@ -3085,6 +3168,10 @@ inline void AgentHandle::finish_reclaimed_cleanup_on_dtor() noexcept {
     quota_recycled_pending = false; // #3841
     // Issue #3931: dtor of a naked production handle frees bare:N.
     maybe_erase_bare_bp_gauge(bp_scope_id);
+    // Issue #3943: release this handle's gauge reference — the gauge
+    // erases when the last referencing handle dies (idempotent: absent
+    // ref entries and already-erased gauges are no-ops).
+    maybe_release_scope_bp_gauge_ref(bp_scope_id);
 }
 
 // Issue #2924: wait for still-running body after JoinStatus::Reclaimed.
