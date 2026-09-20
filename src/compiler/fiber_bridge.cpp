@@ -113,6 +113,8 @@ aura_evaluator_try_hold_budget_fail_closed_at_safepoint() noexcept {
 extern "C" __attribute__((weak)) int aura_production_densify_stale_refuse(void*) noexcept {
     return 0;
 }
+extern "C" __attribute__((weak)) void aura_note_temporary_moving_live_ptr(void*) noexcept {}
+extern "C" __attribute__((weak)) void aura_unnote_temporary_moving_live_ptr(void*) noexcept {}
 
 // Issue #3071: in-body window watchdog weak no-op (strong in fiber.cpp).
 extern "C" __attribute__((weak)) int aura_hold_budget_poll_inbody_window(void) noexcept {

@@ -988,6 +988,20 @@ static void ac18_3948_native_dispatch_densify_refuse() {
     aura_free_closure(cid);
 }
 
+static void ac19_3946_native_moving_canary() {
+    std::println("\n--- #3946: native dispatch holds #3857 temp canary ---");
+    const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
+    CHECK(rt.find("Issue #3946") != std::string::npos, "3946: jit runtime cites");
+    CHECK(rt.find("NativeMovingCanary") != std::string::npos, "3946 AC3: native canary RAII");
+    CHECK(rt.find("aura_note_temporary_moving_live_ptr") != std::string::npos,
+          "3946 AC3: notes temp canary (same #3857 inventory)");
+    const auto arena = read_file("src/core/arena.ixx");
+    CHECK(arena.find("moving_temp_canary_detail::g_inventory.live") != std::string::npos,
+          "3946 AC2: live_compact(Moving) still gates on canary inventory");
+    CHECK(rt.find("g_3946_") == std::string::npos, "3946: no invented counter");
+    CHECK(read_file("docs/design/3946-native-canary.md").empty(), "3946: no docs/design");
+}
+
 static void ac13_3678_ffi_pointer_class_refuse();
 static void ac14_3681_production_pre_reemit_refuse();
 static void ac15_3739_auto_arm_apply_closure_refuse();
@@ -1016,6 +1030,7 @@ int run_test_setcode_rebind_survive() {
     ac14_3681_production_pre_reemit_refuse();
     ac15_3739_auto_arm_apply_closure_refuse();
     ac18_3948_native_dispatch_densify_refuse();
+    ac19_3946_native_moving_canary();
     std::println(
         "\n=== #2569/#3421/#3469/#3602/#3634/#3648/#3848/#3849: #3739 {} passed, {} failed ===",
         g_passed, g_failed);

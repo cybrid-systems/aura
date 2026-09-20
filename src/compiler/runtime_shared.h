@@ -174,6 +174,11 @@ extern "C" std::int64_t aura_closure_dispatch_native_checked(std::int64_t closur
 // production_defaults load (no window/remap). eval_id may be null
 // (process-wide LCP fallback).
 extern "C" int aura_production_densify_stale_refuse(void* eval_id) noexcept;
+// Issue #3946: native dispatch notes a TemporaryMovingLivePtrCanary token
+// so auto-arm / RegionExclusive Moving soft-gates while native is live
+// (same #3857 inventory). Soft / !Moving: note is a no-op.
+extern "C" void aura_note_temporary_moving_live_ptr(void* p) noexcept;
+extern "C" void aura_unnote_temporary_moving_live_ptr(void* p) noexcept;
 // Issue #2013 / #2092 / #2128: after successful reemit, retarget live
 // closures whose stable_func_id (NOT display name — name is unstable
 // under redefine / gensym / multi-define) is in the reemit set: rewrite

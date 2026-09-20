@@ -791,6 +791,8 @@ extern "C" __attribute__((weak)) int aura_production_defaults_active_probe() noe
 extern "C" __attribute__((weak)) int aura_production_densify_stale_refuse(void*) noexcept {
     return 0;
 }
+extern "C" __attribute__((weak)) void aura_note_temporary_moving_live_ptr(void*) noexcept {}
+extern "C" __attribute__((weak)) void aura_unnote_temporary_moving_live_ptr(void*) noexcept {}
 
 // Issue #3801: weak no-op — strong def in typed_mutation_audit_hooks.cpp.
 // Returns Mutation epoch so core IsolationDeny keeps #3594 mid=0 when the
