@@ -24,9 +24,12 @@
 #include "compiler/security_capabilities.h"
 #include "compiler/security_defaults.hh"
 #include "compiler/typed_mutation_audit.h"
+#include "core/mutation_audit_wal.hh"
 #include "core/sandbox.hh"
+#include "core/security_event.hh"
 #include "core/security_event_wal.hh"
 #include "core/wal_append_fail_slo.h"
+#include "core/workspace_isolation.hh"
 
 #include <cstdlib>
 #include <fstream>
@@ -221,6 +224,102 @@ int run_test_audit_durable_gap_force_wal() {
         aura::core::security_event_wal::wal_overflow_ring_clear_for_test();
         apply_dev_audit_defaults();
         aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+        if (!prev_sb_s.empty())
+            ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+        else
+            ::unsetenv("AURA_SANDBOX");
+        if (!prev_open_s.empty())
+            ::setenv("AURA_WAL_APPEND_FAIL_OPEN", prev_open_s.c_str(), 1);
+        else
+            ::unsetenv("AURA_WAL_APPEND_FAIL_OPEN");
+    }
+
+    // ── #3965: SE enable-fail + mutation WAL enable-fail stay fail-closed ──
+    {
+        using aura::compiler::CompilerService;
+        using aura::compiler::security::apply_production_security_defaults;
+        using aura::compiler::security::kEffectMutate;
+        using aura::compiler::typed_audit::apply_dev_audit_defaults;
+        using aura::compiler::typed_audit::apply_production_audit_defaults;
+        using aura::core::audit_wal::g_mutation_audit_wal;
+        using aura::core::security_event::kSecurityEventRingSize;
+        using aura::core::security_event_wal::g_security_event_wal;
+        using aura::core::security_event_wal::kWalOverflowRingCapacity;
+        using aura::core::security_event_wal::wal_overflow_ring_clear_for_test;
+        using aura::core::security_event_wal::wal_overflow_ring_full;
+        using aura::core::security_event_wal::wal_overflow_ring_wrap_refuse_total;
+        using aura::core::workspace_isolation::g_workspace_isolation;
+        std::println("\n--- #3965: SE enable-fail is fail-closed under force_wal ---");
+        const auto sec = read_file("src/compiler/security_defaults.hh");
+        const auto tma = read_file("src/compiler/typed_mutation_audit.h");
+        const auto sew = read_file("src/core/security_event_wal.hh");
+        const auto slo = read_file("src/core/wal_append_fail_slo.h");
+        CHECK(contains(sec, "Issue #3965"), "3965: security_defaults cites");
+        CHECK(contains(tma, "Issue #3965"), "3965: typed_mutation_audit cites");
+        CHECK(contains(slo, "kSeWalForceWalEnableFailClosedIssue = 3965"), "3965: issue stamp");
+        CHECK(contains(sew, "se-wal-enable-miss"), "3965: WAL-off deny overflow");
+        CHECK(contains(sec, "se_ok ="), "3965: SE enable result kept");
+        CHECK(!contains(sec, "} else if (force_wal) {"),
+              "3965: mutation WAL enable-fail does not disarm fail-closed");
+        CHECK(!contains(tma, "} else if (force_wal) {"),
+              "3965: audit-defaults mutation miss does not disarm");
+        CHECK(sew.find("schema-3965") == std::string::npos, "3965: no new query key");
+        CHECK(read_file("tests/compiler/test_issue_3965.cpp").empty(), "3965: no invent");
+        CHECK(read_file("docs/design/3965-se-wal-enable-fail.md").empty(), "3965: no docs/design");
+
+        const char* prev_sb = std::getenv("AURA_SANDBOX");
+        std::string prev_sb_s = prev_sb ? prev_sb : "";
+        const char* prev_open = std::getenv("AURA_WAL_APPEND_FAIL_OPEN");
+        std::string prev_open_s = prev_open ? prev_open : "";
+        ::unsetenv("AURA_WAL_APPEND_FAIL_OPEN");
+        ::setenv("AURA_SANDBOX", "restricted", 1);
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+        apply_production_audit_defaults();
+        apply_production_security_defaults();
+        wal_overflow_ring_clear_for_test();
+        CHECK(aura::core::wal_slo::wal_append_fail_closed_active(),
+              "3965: fail-closed armed under Restricted force_wal");
+        g_mutation_audit_wal().disable();
+        CHECK(!g_mutation_audit_wal().enable("", nullptr, 0), "3965: mutation WAL enable-fail");
+        CHECK(aura::core::wal_slo::wal_fail_closed_defaulted_by_force_wal() != 0,
+              "3965: mutation WAL enable-fail does not clear fail-closed");
+        g_security_event_wal().disable();
+        CHECK(!g_security_event_wal().is_enabled(),
+              "3965: SE sidecar off after enable-fail inject");
+        CHECK(aura::core::wal_slo::wal_append_fail_closed_active(),
+              "3965: SE enable-fail keeps fail-closed");
+
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.set_effect_sandbox_mode(1);
+        ev.set_tenant_principal(10, "t10", /*allow_cross=*/false);
+        g_workspace_isolation().set_strict_sandbox_linked(true);
+        const auto refuse0 = wal_overflow_ring_wrap_refuse_total().load(std::memory_order_relaxed);
+        for (std::size_t i = 0; i < kSecurityEventRingSize + 8; ++i) {
+            (void)ev.check_workspace_isolation(10, 99, kEffectMutate, "test:3965-iso-storm");
+        }
+        CHECK(wal_overflow_ring_full() ||
+                  wal_overflow_ring_wrap_refuse_total().load(std::memory_order_relaxed) > refuse0,
+              "3965: IsolationDeny storm fills overflow ring");
+        CHECK(!ev.require_effect(kEffectMutate, "test:3965-no-mutate", 0),
+              "3965: overflow/fail-closed denies mutate");
+
+        wal_overflow_ring_clear_for_test();
+        apply_dev_audit_defaults();
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+        ::setenv("AURA_SANDBOX", "off", 1);
+        apply_dev_audit_defaults();
+        wal_overflow_ring_clear_for_test();
+        CompilerService cs_soft;
+        auto& ev_soft = cs_soft.evaluator();
+        ev_soft.set_effect_sandbox_mode(0);
+        g_security_event_wal().disable();
+        (void)ev_soft.check_workspace_isolation(10, 99, kEffectMutate, "test:3965-soft");
+        CHECK(!wal_overflow_ring_full(), "3965: Soft IsolationDeny does not arm overflow");
+        CHECK(!aura::core::wal_slo::wal_append_fail_closed_active(),
+              "3965: Soft fail-closed stays off");
+
+        wal_overflow_ring_clear_for_test();
         if (!prev_sb_s.empty())
             ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
         else

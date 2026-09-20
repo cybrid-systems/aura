@@ -717,8 +717,25 @@ inline void emit_security_event_durable(SecurityEventKind kind, std::uint64_t te
     // Timestamp optional for forensic ordering; 0 is accepted when clock
     // not needed (WAL still stores fields). Avoid pulling <chrono> into
     // every capability include — 0 is fine for durability of content.
-    (void)persist_security_event(kind, tenant_id, mutation_id, epoch, effect_bits, op, use_reason,
-                                 denied, fiber_id, /*timestamp_ms=*/0);
+    const bool persisted =
+        persist_security_event(kind, tenant_id, mutation_id, epoch, effect_bits, op, use_reason,
+                               denied, fiber_id, /*timestamp_ms=*/0);
+    // Issue #3965: production force_wal + SE sidecar off (enable-fail)
+    // still fail-closes IsolationDeny/EffectDeny onto the overflow ring
+    // so wrap of the 1024 SE ring is not the only trail. fwrite-miss
+    // overflow is already pushed inside append(); this arm is WAL-off
+    // only. Soft/Off: fail-closed inactive → one production_defaults load.
+    if (!persisted && !g_security_event_wal().is_enabled() && denied &&
+        ::aura::core::wal_slo::wal_append_fail_closed_active()) {
+        WalOverflowRecord ovr{};
+        ovr.mid = mutation_id;
+        ovr.tenant_id = static_cast<std::uint32_t>(tenant_id);
+        ovr.fiber_id = static_cast<std::uint64_t>(fiber_id);
+        ovr.epoch = epoch;
+        ovr.op = op.empty() ? std::string("se-wal-off") : std::string(op);
+        ovr.reason = "se-wal-enable-miss";
+        (void)wal_overflow_ring_push(ovr);
+    }
 }
 
 struct SecurityEventWalStatsSnapshot {
