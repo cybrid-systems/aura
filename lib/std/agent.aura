@@ -244,7 +244,9 @@
             "atomic-batch-commits" ab-ok
             "atomic-batch-rollbacks" ab-rb))
     (catch (e)
-      (hash "recommendation" "commit"
+      ;; Issue #3962: fail-closed — when live metrics are unavailable we
+      ;; do NOT know the surface is safe, so recommend hold (never commit).
+      (hash "recommendation" "hold"
             "schema" 1461
             "panic-count" 0
             "rollback-rate" 0
@@ -256,7 +258,7 @@
 ; Map recommendation string → symbol for callers
 (define (agent:decide)
   (agent-bump! "decisions")
-  (let ((rec (hash-ref (agent:decision-metrics) "recommendation" "commit")))
+  (let ((rec (hash-ref (agent:decision-metrics) "recommendation" "hold")))
     (cond
       ((equal? rec "escalate") 'escalate)
       ((equal? rec "back-off") 'back-off)
@@ -329,7 +331,7 @@
   (let* ((pre-src (try (current-source) (catch (e) source)))
          (_q (agent-query-workspace rebind-name))
          (pre-metrics (agent:decision-metrics))
-         (pre-rec (hash-ref pre-metrics "recommendation" "commit")))
+         (pre-rec (hash-ref pre-metrics "recommendation" "hold")))
     (cond
       ((equal? pre-rec "escalate")
        (agent-bump! "escalations")
@@ -355,7 +357,7 @@
               ; #1553: post-mutate cooperative yield before post metrics
               (_y (try (mutate:safe-yield) (catch (e) #f)))
               (post-metrics (agent:decision-metrics))
-              (post-rec (hash-ref post-metrics "recommendation" "commit")))
+              (post-rec (hash-ref post-metrics "recommendation" "hold")))
          (cond
            ((not mut-ok)
             (agent-bump! "rollbacks")
