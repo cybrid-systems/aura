@@ -2713,8 +2713,12 @@ EvalResult Evaluator::eval_flat_apply_mutate_rebind(std::span<const types::EvalV
     // the new closure. Lockless batch used to leave the old cell; Path B
     // only helps a bare top-level (f x).
     if (workspace_pool_ && new_value != aura::ast::NULL_NODE && new_value < flat.size()) {
-        flat.force_align_subtree_gen(new_value);
-        auto refreshed = eval_flat(flat, *workspace_pool_, new_value, top_env());
+        // #3918 follow-up: eval the whole Define node (eval_current's
+        // root-eval semantics), not just the lambda child — the Define
+        // eval carries the full rebind semantics (sym binding / closure
+        // registration) that the (f x) call sites read back.
+        flat.force_align_subtree_gen(old_define);
+        auto refreshed = eval_flat(flat, *workspace_pool_, old_define, top_env());
         if (refreshed) {
             auto& tenv = top_env();
             std::size_t ci = 0;
