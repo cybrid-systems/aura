@@ -266,6 +266,18 @@ void FFIRuntime::register_primitives(RegisterFn add, std::pmr::vector<std::strin
             if (!need(sizeof(ptr)))
                 return make_void();
             std::memcpy(base + offset, &ptr, sizeof(ptr));
+            // Issue #3947: interior opaque store is a live void** at
+            // base+offset. Slot rewrite covers arena-tracked aliases
+            // (same triad as opaque_heap_element_cover_or_required_fail).
+            // libc-heap / external with no arena alias: helper EXEMPT
+            // when !Moving (Soft/Off zero extra). Required + no slot
+            // fail-closes — after memcpy the interior slot is live.
+            void** interior = reinterpret_cast<void**>(base + offset);
+            if (!aura::ast::opaque_heap_element_cover_or_required_fail(ptr, interior,
+                                                                       "struct-interior")) {
+                std::memset(base + offset, 0, sizeof(ptr));
+                return make_void();
+            }
         }
         return make_void();
     });
