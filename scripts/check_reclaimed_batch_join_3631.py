@@ -80,9 +80,9 @@ def _rows(asrc: str, test: str, build: str) -> list[str]:
     hstart = max(0, hdef - 1200)
     helper = asrc[hstart : hdef + 4200]
     must(
-        "std::this_thread::sleep_for(std::chrono::microseconds(200));",
-        "AC2 shared-deadline poll cadence",
-        helper,
+        "std::chrono::microseconds(200)",
+        "AC2 shared-deadline poll cadence (host-thread arm; #3953 poll SSOT)",
+        asrc,
     )
     must(
         "re-join would race residual cleanup contracts",
@@ -108,9 +108,12 @@ def _rows(asrc: str, test: str, build: str) -> list[str]:
         fails.append(f"AC2: host_forget must bump exactly once per batch (found {hf})")
 
     # AC3 — single-handle join_agent unchanged (SSOT wrapper retained).
+    # Issue #3953: the call is split across lines with a local budget var —
+    # anchor the serial fn and the caller-passed flag separately.
+    must(SERIAL, "AC3 join_agent SSOT wrapper retained", asrc)
     must(
-        f"{SERIAL}(h, /*caller_passed_wait_reclaimed_ms=*/false,",
-        "AC3 join_agent SSOT wrapper retained",
+        "/*caller_passed_wait_reclaimed_ms=*/false",
+        "AC3 join_agent caller-passed flag",
         asrc,
     )
     wrb = asrc.find("wait_reclaimed_body(AgentHandle& h")
@@ -118,8 +121,15 @@ def _rows(asrc: str, test: str, build: str) -> list[str]:
         fails.append("AC3: wait_reclaimed_body not found")
     else:
         wrb_win = asrc[wrb : wrb + 2600]
-        must("microseconds(200)", "AC3 poll cadence intact", wrb_win)
+        must(
+            "wait_reclaimed_poll_once()",
+            "AC3 poll cadence intact (via #3953 poll SSOT)",
+            wrb_win,
+        )
         must("no Fiber::join", "AC3 no-re-join note intact", wrb_win)
+
+    # AC3b — the #3953 poll SSOT is retained (fiber yield + host 200us).
+    must("wait_reclaimed_poll_once", "AC3b #3953 poll SSOT retained", asrc)
 
     # AC4 — no invented artifacts; registration.
     must(LINTER, "AC4 build.py registration", build)
