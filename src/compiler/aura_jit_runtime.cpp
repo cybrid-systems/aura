@@ -3944,6 +3944,19 @@ extern "C" int64_t aura_closure_dispatch_native_checked(int64_t closure_id, int6
     // concurrent caller (#2128). Cleared only by remount heal observing
     // dual-fresh green, or slot free/reuse. Soft never arms it.
     if (aura::compiler::typed_audit::production_defaults_active()) {
+        // Issue #3948: same densify-stale refuse as TW apply_closure
+        // (window → LCP → remap). Production gate is this load — Soft
+        // never calls the helper (no window/remap on the quiet path).
+        // Not keyed on JIT table epoch. Weak stub returns 0 when the
+        // evaluator TU is not linked.
+        if (aura_production_densify_stale_refuse(nullptr) != 0) {
+            tlock.unlock();
+            aura_unlock_workspace_read();
+            aura_jit_closure_record_stale_deopt();
+            aura_jit_closure_record_safe_fallback();
+            aura_deopt_inc();
+            return 0;
+        }
         const size_t armed_cid = static_cast<size_t>(closure_id);
         if (armed_cid < g_closure_pure_anon_overflow_armed.size() &&
             g_closure_pure_anon_overflow_armed[armed_cid] != 0) {

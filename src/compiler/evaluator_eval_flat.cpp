@@ -391,6 +391,16 @@ static void note_apply_closure_densify_hard_refuse(CompilerMetrics* metrics,
     ev.bump_compiler_root_dangling_prevented();
 }
 
+// Issue #3948: native dispatch consults the same refuse helper as
+// apply_closure (no second densify model; not keyed on JIT table epoch).
+// Empty Closure: window + LCP still fire; remap of null flat/pool is a
+// no-op (native has no TW cl.flat). Production gate is the helper's
+// first load — Soft/Off returns 0 with no window/remap.
+extern "C" int aura_production_densify_stale_refuse(void* eval_id) noexcept {
+    Closure cl{};
+    return production_apply_closure_densify_hard_refuse(nullptr, cl, eval_id) ? 1 : 0;
+}
+
 // Issue #3688: Production/Full apply_closure / eval_flat of workspace
 // Apply/Call must refuse when IR/JIT typed-entry would refuse at the
 // same depth (persist-reject / mid-boundary Reject / would_allow==0).

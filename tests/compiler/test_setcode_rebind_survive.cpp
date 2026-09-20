@@ -9,6 +9,7 @@
 
 #include "test_harness.hpp"
 #include "compiler/observability_metrics.h"
+#include "compiler/runtime_shared.h"
 #include "compiler/typed_mutation_audit.h"
 #include "core/lifetime_consistency_proof.hh"
 #include "core/moving_densify_health.hh"
@@ -940,6 +941,53 @@ static void ac17_3849_happy_path_densify_refuse() {
 
 } // namespace
 
+// Issue #3948: JIT native dispatch consults the same densify-stale refuse
+// as apply_closure (C ABI wrapper). Soft: production gate first, no
+// window/remap. Do not key the refuse on JIT table epoch.
+static void ac18_3948_native_dispatch_densify_refuse() {
+    std::println("\n--- #3948: native dispatch densify-stale refuse ---");
+    const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
+    const auto call = rt.find("int64_t aura_closure_dispatch_native_checked(");
+    CHECK(call != std::string::npos, "3948 AC3: native prologue located");
+    const auto cite = rt.find("Issue #3948: same densify-stale refuse");
+    CHECK(cite != std::string::npos && cite > call, "3948 AC3: refuse cite in native prologue");
+    const auto win = rt.substr(call, cite - call + 900);
+    CHECK(win.find("aura_production_densify_stale_refuse") != std::string::npos,
+          "3948 AC3: native prologue calls refuse helper");
+    CHECK(win.find("production_defaults_active()") != std::string::npos,
+          "3948 AC4: production gate before helper");
+    const auto prod = win.find("production_defaults_active()");
+    const auto refuse = win.find("aura_production_densify_stale_refuse");
+    CHECK(prod != std::string::npos && refuse != std::string::npos && prod < refuse,
+          "3948 AC4: Soft quiet path does not load window/remap first");
+    CHECK(win.find("g_closure_bridge_epochs") == std::string::npos,
+          "3948 AC3: refuse is not keyed on JIT table epoch");
+    const auto flat = read_file("src/compiler/evaluator_eval_flat.cpp");
+    CHECK(flat.find("extern \"C\" int aura_production_densify_stale_refuse") != std::string::npos,
+          "3948 AC3: C ABI wraps production_apply_closure_densify_hard_refuse");
+    CHECK(flat.find("production_apply_closure_densify_hard_refuse(nullptr, cl, eval_id)") !=
+              std::string::npos,
+          "3948 AC3: wrapper reuses the TW helper (no second densify model)");
+    CHECK(flat.find("Issue #3948") != std::string::npos, "3948: eval_flat cites");
+    CHECK(rt.find("g_3948_") == std::string::npos, "3948: no invented g_3948_* counter");
+    CHECK(read_file("docs/design/3948-native-densify-refuse.md").empty(), "3948: no docs/design");
+    const std::string issue_artifact = std::string("test_issue_") + "3948";
+    CHECK(read_file((std::string("tests/issues/") + issue_artifact + ".cpp").c_str()).empty(),
+          "3948: no tests/issues file");
+
+    std::int64_t args[1] = {1};
+    const auto cid = aura_alloc_closure(/*func_id=*/0);
+    CHECK(cid >= 0, "3948: alloc native slot");
+    {
+        ProdDensifyWindowGuard g(/*prod=*/true, /*moved=*/3, /*lcp_allow=*/true, nullptr,
+                                 /*had_moving=*/true, /*pin_held=*/true, /*incomplete=*/true,
+                                 /*untracked=*/9, /*root_fail=*/0);
+        const auto got = aura_closure_dispatch_native_checked(cid, args, 1);
+        CHECK(got == 0, "3948 AC1: incomplete window refuses native");
+    }
+    aura_free_closure(cid);
+}
+
 static void ac13_3678_ffi_pointer_class_refuse();
 static void ac14_3681_production_pre_reemit_refuse();
 static void ac15_3739_auto_arm_apply_closure_refuse();
@@ -967,6 +1015,7 @@ int run_test_setcode_rebind_survive() {
     // pre-reemit body; unimpacted rebinds keep the #2569 recover.
     ac14_3681_production_pre_reemit_refuse();
     ac15_3739_auto_arm_apply_closure_refuse();
+    ac18_3948_native_dispatch_densify_refuse();
     std::println(
         "\n=== #2569/#3421/#3469/#3602/#3634/#3648/#3848/#3849: #3739 {} passed, {} failed ===",
         g_passed, g_failed);

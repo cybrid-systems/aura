@@ -141,6 +141,9 @@ extern "C" __attribute__((weak)) std::uint64_t aura_fiber_current_id() noexcept 
 extern "C" __attribute__((weak)) int aura_production_defaults_active_probe() noexcept {
     return 0; // stub: production defaults inactive in light binaries
 }
+extern "C" __attribute__((weak)) int aura_production_densify_stale_refuse(void*) noexcept {
+    return 0; // Issue #3948: light-link native densify-stale is a no-op
+}
 extern "C" __attribute__((weak)) std::uint64_t
 aura_hot_update_force_jit_regions_mask(void) noexcept {
     return 0; // stub: no forced JIT regions in light binaries

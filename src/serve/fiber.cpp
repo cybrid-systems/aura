@@ -785,6 +785,13 @@ extern "C" __attribute__((weak)) int aura_production_defaults_active_probe() noe
     return 0;
 }
 
+// Issue #3948: weak no-op when evaluator_eval_flat is not linked (light
+// JIT / fiber_bridge). Strong def wraps production_apply_closure_densify_
+// hard_refuse. Soft callers never take the native production branch.
+extern "C" __attribute__((weak)) int aura_production_densify_stale_refuse(void*) noexcept {
+    return 0;
+}
+
 // Issue #3801: weak no-op — strong def in typed_mutation_audit_hooks.cpp.
 // Returns Mutation epoch so core IsolationDeny keeps #3594 mid=0 when the
 // audit TU is not linked (light-link / Soft).

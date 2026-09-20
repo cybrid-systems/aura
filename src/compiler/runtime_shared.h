@@ -168,6 +168,12 @@ extern "C" std::int64_t aura_closure_call(std::int64_t closure_id, std::int64_t*
 // "#3635-allow-direct" annotation opt-out).
 extern "C" std::int64_t aura_closure_dispatch_native_checked(std::int64_t closure_id,
                                                              std::int64_t* args, std::int64_t argc);
+// Issue #3948: C ABI wrapper of production_apply_closure_densify_hard_refuse
+// (window → LCP → remap). Native prologue consults this — same densify
+// stale gate as TW apply_closure. Soft/Off: helper returns 0 after the
+// production_defaults load (no window/remap). eval_id may be null
+// (process-wide LCP fallback).
+extern "C" int aura_production_densify_stale_refuse(void* eval_id) noexcept;
 // Issue #2013 / #2092 / #2128: after successful reemit, retarget live
 // closures whose stable_func_id (NOT display name — name is unstable
 // under redefine / gensym / multi-define) is in the reemit set: rewrite

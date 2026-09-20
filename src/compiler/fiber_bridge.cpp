@@ -108,6 +108,12 @@ aura_evaluator_try_hold_budget_fail_closed_at_safepoint() noexcept {
     return 0;
 }
 
+// Issue #3948: light-link native densify-stale refuse is a no-op (TW
+// helper lives in evaluator_eval_flat.cpp).
+extern "C" __attribute__((weak)) int aura_production_densify_stale_refuse(void*) noexcept {
+    return 0;
+}
+
 // Issue #3071: in-body window watchdog weak no-op (strong in fiber.cpp).
 extern "C" __attribute__((weak)) int aura_hold_budget_poll_inbody_window(void) noexcept {
     return 0;
