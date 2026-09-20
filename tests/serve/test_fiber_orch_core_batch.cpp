@@ -1217,12 +1217,15 @@ namespace {
             }
             CHECK(saw_payload, "keepalive payload in mailbox");
 
-            // watch_agent_liveness should report Alive when recent pulse exists.
+            // Issue #3954: helper pulse is not body-Alive. Yield-only body
+            // is body_stalled; helper_stalled is false while helper emits.
             auto wr = watch_agent_liveness(h, /*stall_timeout_ms=*/80,
                                            /*cancel_on_stall=*/false);
-            CHECK(wr.status == KeepaliveWatchStatus::Alive ||
-                      wr.status == KeepaliveWatchStatus::Done,
-                  "watch Alive or Done while agent live");
+            CHECK(wr.status == KeepaliveWatchStatus::Stalled ||
+                      wr.status == KeepaliveWatchStatus::Done || wr.body_stalled,
+                  "yield-only body is not helper-Alive");
+            if (wr.status != KeepaliveWatchStatus::Done)
+                CHECK(!wr.helper_stalled, "helper pulse is not helper_stalled");
 
             hold.store(false, std::memory_order_relaxed);
             auto jr = aura::orch::join_agent(h, std::optional<std::uint64_t>{5000});
@@ -1270,6 +1273,7 @@ namespace {
             aura::orch::stop_keepalive_helper(h);
             // Age out last pulse so watch sees a stale clock.
             h.liveness->last_keepalive_us.store(1, std::memory_order_release);
+            h.liveness->body_progress_us.store(1, std::memory_order_release);
             for (int i = 0; i < 64; ++i) {
                 auto m = aura::orch::agent_recv(h, /*wait=*/false, 0);
                 if (!m)
@@ -1417,6 +1421,7 @@ namespace {
                 std::this_thread::sleep_for(std::chrono::milliseconds(1));
             }
             h.liveness->last_keepalive_us.store(1, std::memory_order_release);
+            h.liveness->body_progress_us.store(1, std::memory_order_release);
 
             auto wr = watch_agent_liveness(h, /*stall_timeout_ms=*/30, /*cancel_on_stall=*/true);
             CHECK(wr.status == KeepaliveWatchStatus::Stalled,

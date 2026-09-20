@@ -421,6 +421,7 @@ static void ac2161_watch_all_batch() {
     std::this_thread::sleep_for(std::chrono::milliseconds(20));
     CHECK(pc->liveness != nullptr, "liveness still live");
     pc->liveness->last_keepalive_us.store(1, std::memory_order_release);
+    pc->liveness->body_progress_us.store(1, std::memory_order_release);
 
     const auto cancel0 =
         g_orch_module_stats.keepalive_cancels_total.load(std::memory_order_relaxed);
@@ -428,8 +429,10 @@ static void ac2161_watch_all_batch() {
     CHECK(single.status == KeepaliveWatchStatus::Stalled,
           "single-handle ProgressClock stall (baseline)");
     pc->liveness->last_keepalive_us.store(1, std::memory_order_release);
+    pc->liveness->body_progress_us.store(1, std::memory_order_release);
     auto wr1 = scope.watch_all(/*stall_timeout_ms=*/15, /*cancel_on_stall=*/true);
     CHECK(wr1.stalled >= 1, "AC2: ProgressClock stall counted");
+    CHECK(wr1.body_stalled >= 1, "3954: watch_all body_stalled");
     CHECK(wr1.cancelled >= 1, "AC3: cancel_on_stall cancelled stalled");
     CHECK(pc->fiber && pc->fiber->is_cancel_requested(), "AC3: stalled fiber cancel requested");
     for (const auto& h : scope.handles()) {

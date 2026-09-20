@@ -348,6 +348,9 @@ struct ScopeWatchResult {
     std::size_t restart_attempted = 0;
     std::size_t restart_skipped_no_spec = 0;
     std::size_t restart_ok = 0;
+    // Issue #3954: body vs helper stall (additive this pass; no query keys).
+    std::size_t body_stalled = 0;
+    std::size_t helper_stalled = 0;
 };
 
 // Scoped multi-agent supervision root. Owns its handles via std::vector
@@ -797,6 +800,10 @@ public:
         const bool cancel_on_stall = (policy == StallPolicy::Cancel);
         for (auto& h : handles_) {
             auto wr = watch_agent_liveness(h, stall_timeout_ms, cancel_on_stall);
+            if (wr.body_stalled)
+                ++r.body_stalled;
+            if (wr.helper_stalled)
+                ++r.helper_stalled;
             switch (wr.status) {
                 case KeepaliveWatchStatus::Alive:
                     ++r.alive;
@@ -852,6 +859,10 @@ public:
         for (std::size_t i = 0; i < handles_.size(); ++i) {
             auto& h = handles_[i];
             auto wr = watch_agent_liveness(h, stall_timeout_ms, cancel_on_stall);
+            if (wr.body_stalled)
+                ++r.body_stalled;
+            if (wr.helper_stalled)
+                ++r.helper_stalled;
             switch (wr.status) {
                 case KeepaliveWatchStatus::Alive:
                     ++r.alive;

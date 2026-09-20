@@ -1474,6 +1474,19 @@ public:
         std::lock_guard lock(mu_);
         return queue_.size();
     }
+
+    // Issue #3954: non-consuming pending probe (watch must not pop).
+    // to_fiber==0 is broadcast. Does not recv / try_pop.
+    [[nodiscard]] bool has_pending_for(std::uint64_t fiber_id) const {
+        ::aura::compiler::lock_order::AuditScope mailbox_rank(
+            ::aura::compiler::lock_order::Level::Mailbox);
+        std::lock_guard lock(mu_);
+        for (const auto& msg : queue_) {
+            if (msg.to_fiber == 0 || msg.to_fiber == fiber_id)
+                return true;
+        }
+        return false;
+    }
     [[nodiscard]] bool empty() const {
         ::aura::compiler::lock_order::AuditScope mailbox_rank(
             ::aura::compiler::lock_order::Level::Mailbox);
