@@ -2173,6 +2173,92 @@ static void ac3723_5_soft_source_and_no_invent() {
     (void)g_capability_registry().revoke_session_grants_for_mid(prior_mid);
 }
 
+static void ac3964_1_dual_eval_distinct_session_mids() {
+    std::println("\n--- #3964 AC: dual-Evaluator session mids are not the process epoch ---");
+    reset_all();
+    aura::compiler::typed_audit::reset_for_test();
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    set_mode(SandboxMode::Restricted);
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+    aura::core::bump_mutation_epoch(1);
+    const auto epoch = aura::core::current_mutation_epoch();
+    CHECK(epoch != 0, "3964: epoch live");
+    CompilerService cs_a;
+    CompilerService cs_b;
+    auto& ev_a = cs_a.evaluator();
+    auto& ev_b = cs_b.evaluator();
+    ev_a.set_effect_sandbox_mode(1);
+    ev_b.set_effect_sandbox_mode(1);
+    constexpr std::uint64_t tenant_a = 41;
+    constexpr std::uint64_t tenant_b = 42;
+    ev_a.set_capability_tenant_id(tenant_a);
+    ev_b.set_capability_tenant_id(tenant_b);
+    std::atomic<std::uint64_t> mid_a{0};
+    std::atomic<std::uint64_t> mid_b{0};
+    std::atomic<int> phase{0};
+    std::atomic<int> b_after_a{0};
+    std::thread ta([&] {
+        ev_a.clear_boundary_audit_mid_for_test();
+        bool ok = true;
+        Evaluator::MutationBoundaryGuard g(ev_a, &ok);
+        const auto m = aura::compiler::typed_audit::current_boundary_audit_mid();
+        mid_a.store(m, std::memory_order_release);
+        if (m != 0)
+            ac3241_grant(tenant_a, "mut-3964-a", m, 0);
+        while (phase.load(std::memory_order_acquire) < 1)
+            std::this_thread::yield();
+    });
+    std::thread tb([&] {
+        ev_b.clear_boundary_audit_mid_for_test();
+        bool ok = true;
+        Evaluator::MutationBoundaryGuard g(ev_b, &ok);
+        const auto m = aura::compiler::typed_audit::current_boundary_audit_mid();
+        mid_b.store(m, std::memory_order_release);
+        if (m != 0)
+            ac3241_grant(tenant_b, "mut-3964-b", m, 0);
+        while (phase.load(std::memory_order_acquire) < 1)
+            std::this_thread::yield();
+        while (phase.load(std::memory_order_acquire) < 2)
+            std::this_thread::yield();
+        // require_effect join order vs leftover TypedMid is #3966; this
+        // issue is session uniqueness + revoke isolation.
+        b_after_a.store(ac3241_consume(tenant_b, m, 0) ? 1 : -1, std::memory_order_release);
+    });
+    for (int i = 0; i < 100000 && (mid_a.load() == 0 || mid_b.load() == 0); ++i)
+        std::this_thread::yield();
+    const auto ma = mid_a.load();
+    const auto mb = mid_b.load();
+    CHECK(ma != 0 && mb != 0, "3964: both session mids published");
+    CHECK(ma != mb, "3964: Evaluators do not share session mid");
+    CHECK(ma != epoch && mb != epoch, "3964: session mid is not the process Mutation epoch");
+    phase.store(1, std::memory_order_release);
+    ta.join();
+    CHECK(g_capability_registry().session_bound_entries_alive(tenant_b) == 1,
+          "3964: A's exit does not revoke B session grants");
+    phase.store(2, std::memory_order_release);
+    tb.join();
+    CHECK(b_after_a.load() == 1, "3964: B session Mutate still allowed until B exits");
+    CHECK(g_capability_registry().session_bound_entries_alive(tenant_b) == 0,
+          "3964: B exit revokes B grants");
+    (void)g_capability_registry().revoke_session_grants_for_mid(ma);
+    (void)g_capability_registry().revoke_session_grants_for_mid(mb);
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+}
+
+static void ac3964_2_source_cite() {
+    std::println("\n--- #3964 AC: source-cite ---");
+    const auto bound = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto audit = read_file("src/compiler/typed_mutation_audit.h");
+    CHECK(bound.find("Issue #3964") != std::string::npos, "3964: Guard cites");
+    CHECK(audit.find("mint_session_audit_mid") != std::string::npos, "3964: mint helper");
+    CHECK(audit.find("kSessionMidPerEvaluatorIssue = 3964") != std::string::npos,
+          "3964: issue stamp");
+    CHECK(bound.find("mint_session_audit_mid") != std::string::npos, "3964: enter mints");
+    CHECK(audit.find("schema-3964") == std::string::npos, "3964: no new query key");
+    CHECK(!std::filesystem::exists("tests/core/test_issue_3964.cpp"), "3964: no invent");
+    CHECK(!std::filesystem::exists("docs/design/3964-session-mid.md"), "3964: no docs/design");
+}
+
 // ── Issue #3902: grant-row revoke stamps honest under Soft / epoch=0 ──
 static void ac3902_1_soft_epoch0_consume_honest_unset() {
     std::println("\n--- #3902 AC1: Soft + epoch=0 single-use consume keeps revoke_epoch 0 ---");
@@ -3298,6 +3384,8 @@ int run_test_capability_single_use_consume() {
         ac3723_3_next_live_enter_sweeps_inert_orphan();
         ac3723_4_steal_resume_no_false_allow();
         ac3723_5_soft_source_and_no_invent();
+        ac3964_1_dual_eval_distinct_session_mids();
+        ac3964_2_source_cite();
 
         std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
         return g_failed == 0 ? 0 : 1;
@@ -3352,6 +3440,8 @@ int run_test_inert_session_mid_3723() {
     ac3902_3_real_epoch_passthrough();
     ac3902_4_soft_session_cascade_honest();
     ac3902_5_source_cite();
+    ac3964_1_dual_eval_distinct_session_mids();
+    ac3964_2_source_cite();
     std::println("\n=== #3723 results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }

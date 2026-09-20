@@ -3324,6 +3324,14 @@ Evaluator::MutationBoundaryGuard::MutationBoundaryGuard(
         // Soft gen / production refuse). Do not force mid=1 (that was a
         // process-origin join key).
         session_mid_at_enter_ = typed_audit::resolve_audit_mutation_id();
+        // Issue #3964: process Mutation epoch is not Evaluator-unique.
+        // Production session mid must not equal a shared epoch another
+        // Evaluator can join. Soft/Off keep resolve as-is.
+        if (typed_audit::production_defaults_active() && session_mid_at_enter_ != 0 &&
+            session_mid_at_enter_ == ::aura::core::current_mutation_epoch()) {
+            session_mid_at_enter_ = typed_audit::mint_session_audit_mid(
+                session_mid_at_enter_, static_cast<const void*>(ev_));
+        }
         typed_audit::note_boundary_audit_mid(session_mid_at_enter_);
         // Issue #3048: publish session mid to fiber-local + hold snapshot
         // so steal-complete / force-cancel can revoke without Guard stack.
