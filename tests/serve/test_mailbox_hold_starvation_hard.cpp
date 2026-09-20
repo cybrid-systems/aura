@@ -3740,6 +3740,47 @@ static void ac3791_4_gate_source_and_linter() {
     aura::compiler::Evaluator::set_query_evaluator(nullptr);
 }
 
+// ── Issue #3951: no-edge holder cannot be unlocked from a foreign thread.
+// Ready/soak fail-closes via residual-zero (#3619 no-edge arm + #3950 Ready
+// abort). Owner-thread cooperative poll lives on native dispatch / safepoint.
+static void ac3951_1_no_edge_ready_or_owner_poll() {
+    std::println("\n--- #3951: no-edge holder Ready fail-closed / owner-thread poll ---");
+    const auto sh = read_file("src/serve/steal_safety.h");
+    CHECK(sh.find("aura_mutation_hold_no_edge_still_held") != std::string::npos,
+          "3951 AC1: residual-zero includes no-edge still held");
+    const auto rz = sh.find("steal_safety_production_residual_zero_v_read()");
+    CHECK(rz != std::string::npos, "3951 AC1: residual-zero accessor");
+    CHECK(sh.find("aura_mutation_hold_no_edge_still_held() == 0") != std::string::npos,
+          "3951 AC1: no-edge AND-ed under multi latch");
+    const auto sched = read_file("src/serve/scheduler.cpp");
+    const auto run_pos = sched.find("void Scheduler::run()");
+    const auto start_pos = sched.find("w->start()", run_pos);
+    const auto rz_sched = sched.find("steal_safety_production_residual_zero_v_read", run_pos);
+    CHECK(rz_sched != std::string::npos && start_pos != std::string::npos && rz_sched < start_pos,
+          "3951 AC1: Ready abort on residual-zero before start (#3950)");
+    CHECK(sched.find("no unlock") != std::string::npos,
+          "3951 AC1: idle poll is re-arm only (no foreign unlock)");
+    const auto wc = read_file("src/serve/worker.cpp");
+    CHECK(wc.find("Never drops unique_lock from this thread") != std::string::npos,
+          "3951 AC1: busy/park path does not unlock unique_lock");
+    const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
+    CHECK(rt.find("Issue #3951") != std::string::npos, "3951: native dispatch cites");
+    CHECK(rt.find("aura_evaluator_try_hold_budget_fail_closed_at_safepoint") != std::string::npos,
+          "3951 AC1: owner-thread poll on native dispatch");
+    CHECK(rt.find("foreign thread") != std::string::npos,
+          "3951 AC1: native documents no foreign unlock");
+    const auto fc = read_file("src/serve/fiber.cpp");
+    CHECK(fc.find("no unlock") != std::string::npos,
+          "3951 AC1: check_gc_safepoint documents no foreign unlock");
+    CHECK(read_file("src/compiler/evaluator_fiber_mutation.cpp").find("this_fiber_outermost") !=
+              std::string::npos,
+          "3951 AC2: force-release is this-fiber TLS Guard only");
+    CHECK(sched.find("schema-3951") == std::string::npos, "3951 AC5: no new query key");
+    CHECK(rt.find("g_3951_") == std::string::npos, "3951: no invented counter");
+    CHECK(read_file("tests/serve/test_issue_3951.cpp").empty(), "3951: no test_issue_3951.cpp");
+    CHECK(read_file("docs/design/3951-no-edge-unlock.md").empty(), "3951: no docs/design");
+}
+
 int run_test_mailbox_hold_starvation_hard() {
     std::println("=== Issue #2551: mailbox hold starvation hard + Agent throttle ===");
     ac1_production_hard_signal();
@@ -3883,6 +3924,8 @@ int run_test_mailbox_hold_starvation_hard() {
     ac3791_4_gate_source_and_linter();
     std::println("\n=== Issue #3692: peer recv must not fail-close holder Guard ===");
     ac3692_peer_recv_does_not_fail_holder();
+    std::println("\n=== Issue #3951: no-edge holder Ready fail-closed / owner-thread poll ===");
+    ac3951_1_no_edge_ready_or_owner_poll();
     std::println(
         "\n=== #2551..#2761 + #2847 + #3289 + #3485 + #3588 + #3613: {} passed, {} failed ===",
         g_passed, g_failed);
