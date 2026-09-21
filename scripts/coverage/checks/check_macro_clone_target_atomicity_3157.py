@@ -124,10 +124,13 @@ REQUIRED_PATTERNS = (
         MACRO_EXPANSION_CPP,
     ),
     # --- AC2: steal-fail path calls try_restore before return NULL_NODE ---
+    # Issue #3981 (#3975-#3988 wave): the steal-abort condition broadened to
+    # `|| nested_steal` (nested steal sticky restore); the rollback pin must
+    # still match — try_restore() before return NULL_NODE is the invariant.
     (
         "steal-fail return path calls try_restore() before return NULL_NODE",
         re.compile(
-            r"if\s*\(\s*steal1\s*>\s*steal0\s*\)\s*\{[\s\S]*?"
+            r"if\s*\(\s*steal1\s*>\s*steal0(?:\s*\|\|\s*nested_steal)?\s*\)\s*\{[\s\S]*?"
             r"expand_ckpt\.try_restore\s*\(\s*\)[\s\S]*?"
             r"return\s+NULL_NODE"
         ),
