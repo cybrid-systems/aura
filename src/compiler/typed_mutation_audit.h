@@ -2558,15 +2558,17 @@ inline constexpr int kNoTlsLivePolicyDefaultSolvedIssue = 3414;
 // warm eval), but Production/Full refuse negative authority (Reject /
 // published would_allow==0 with stamp / pending-full-solve residual).
 // Quiet (no stamp, not Reject, no pending face) still returns true.
-// Issue #3568: real Quiet (override unset) always allows at depth==0 so
-// engine:metrics / hash-ref cannot be poisoned by leftover faces.
-// Issue #3579: pending_full_solve residual consume scope — real-quiet
-// (override<0) does not consult pending_full_solve_residual_face_hit();
-// probe (override==0) and depth>0 consume it. Defence is publish-side
-// Quiet + the depth>0 gate; not a depth==0 IR-entry barrier.
-// Issue #3610: path split — on the no-TLS metrics path the real-quiet
-// allow stands (#3568); a live commit TC bound on the thread consumes
+// Issue #3568: real Quiet (override unset) allows leftover Reject /
+// stamp+would_allow==0 / leftover pending without a still-green last-proof
+// so engine:metrics / hash-ref cannot be poisoned by leftover faces.
+// Issue #3579: pending_full_solve residual consume scope — leftover
+// pending without a still-green last-proof is not a depth==0 barrier;
+// probe (override==0) and depth>0 consume it.
+// Issue #3610: path split — a live commit TC bound on the thread consumes
 // the pending face (ir_typed_entry_real_quiet_allows).
+// Issue #3983: no-TLS real Quiet also refuses when pending residual rides
+// a still-green last-proof (between local SOLVED-with-dirty and #3190
+// persist drain). Persist remains the green-stamp authority.
 inline constexpr int kDepthZeroTypedEntryNegativeAuthorityIssue = 3510;
 inline constexpr int kQuietTypedEntryWarmEvalIssue = 3568;
 inline constexpr int kPendingFullSolveTypedEntryConsumeIssue = 3579;
@@ -2574,22 +2576,48 @@ inline constexpr int kPendingFullSolveTypedEntryConsumeIssue = 3579;
 // commit TC bound on the thread (g_tls_audit_commit_readiness_evaluator)
 // still owns the live CS: a latched pending_full_solve_residual face
 // refuses depth==0 IR/JIT entry for that face (SOLVED-with-dirty #2994
-// before the #3190 drain + green stamp). The no-TLS metrics path keeps
-// the #3568 allow. Reuses g_linear_fast_path_elide_blocked_production_total.
+// before the #3190 drain + green stamp). Leftover pending without a
+// still-green last-proof keeps the #3568 allow. Reuses
+// g_linear_fast_path_elide_blocked_production_total.
 inline constexpr int kRealQuietLiveTcTypedEntryIssue = 3610;
+// Issue #3983: residual of #3579/#3610 — real Quiet with no TLS commit
+// TC still refuses when pending_full_solve residual rides a still-green
+// last-proof. Leftover pending without green stamp / leftover Reject
+// stay the #3568 engine:metrics allow. Reuses
+// g_linear_fast_path_elide_blocked_production_total — no new counter /
+// query key.
+inline constexpr int kQuietPendingGreenRideIssue = 3983;
 // Issue #3610: real-Quiet (override<0, depth==0) face split — metrics vs
-// live commit TC. No TLS commit TC (engine:metrics / hash-ref / orch
-// prims) → allow without consulting the pending face (#3568/#3579
-// contract preserved). Live commit TC bound on this thread → the eval
-// still owns the live CS: a latched pending_full_solve_residual face
-// (#2994 SOLVED-with-dirty before the #3190 drain + green stamp)
-// refuses IR/JIT entry. Reuses
+// live commit TC. No TLS commit TC + leftover pending without a still-
+// green last-proof → allow (#3568/#3579 leftover-face contract). Live
+// commit TC bound on this thread → the eval still owns the live CS: a
+// latched pending_full_solve_residual face refuses IR/JIT entry.
+// Issue #3983: no-TLS + pending + last-proof still green → refuse
+// (riding the previous stamp). Reuses
 // g_linear_fast_path_elide_blocked_production_total — no new counter /
 // query key. Single helper so the IR interpreter and the JIT prologue
 // cannot drift.
+[[nodiscard]] inline bool ir_typed_entry_last_proof_still_green() noexcept {
+    if (g_last_type_linear_commit_proof_stamp.load(std::memory_order_relaxed) == 0)
+        return false;
+    if (g_last_type_linear_proof_outcome.load(std::memory_order_relaxed) ==
+        kTypeLinearProofOutcomeReject)
+        return false;
+    return g_last_proof_would_allow_commit.load(std::memory_order_relaxed) != 0 &&
+           g_last_proof_linear_ok.load(std::memory_order_relaxed) != 0;
+}
+
 [[nodiscard]] inline bool ir_typed_entry_real_quiet_allows() noexcept {
-    if (::g_tls_audit_commit_readiness_evaluator == nullptr)
+    if (::g_tls_audit_commit_readiness_evaluator == nullptr) {
+        // Issue #3983: riding a previous green stamp with a latched
+        // pending residual is not leftover-face poison (#3568).
+        if (pending_full_solve_residual_face_hit() && ir_typed_entry_last_proof_still_green()) {
+            g_linear_fast_path_elide_blocked_production_total.fetch_add(1,
+                                                                        std::memory_order_relaxed);
+            return false;
+        }
         return true;
+    }
     if (pending_full_solve_residual_face_hit()) {
         g_linear_fast_path_elide_blocked_production_total.fetch_add(1, std::memory_order_relaxed);
         return false;
@@ -2613,20 +2641,23 @@ inline constexpr int kRealQuietLiveTcTypedEntryIssue = 3610;
     if (depth == 0) {
         // Real Quiet (override unset): engine:metrics / hash-ref / orch
         // prims compile to IRInterpreter::execute. Leftover Reject /
-        // stamp+would_allow==0 / pending-full-solve from an earlier Full
-        // mutate in the same process must not refuse the whole eval
-        // (href returns -1 for every key — ci/issues #3568). #3510
-        // AC1-AC3 probe this helper with override==0; keep that path.
-        // Issue #3579: pending_full_solve residual consume scope —
-        // this early return is the documented contract that real-quiet
-        // depth==0 does not consult pending_full_solve_residual_face_hit().
-        // Probe (override==0, below) and depth>0 (commit_readiness live
+        // stamp+would_allow==0 / leftover pending without a still-green
+        // last-proof from an earlier Full mutate must not refuse the
+        // whole eval (href returns -1 for every key — ci/issues #3568).
+        // #3510 AC1-AC3 probe this helper with override==0; keep that path.
+        // Issue #3579: leftover pending_full_solve residual without a
+        // still-green last-proof is not a depth==0 barrier. Probe
+        // (override==0, below) and depth>0 (commit_readiness live
         // policy) still consume the face. Do not move the pending check
         // above this return.
-        // Issue #3610: path split — a live commit TC bound on this thread
-        // still owns the live CS; ir_typed_entry_real_quiet_allows()
-        // consumes the pending face for that face only (refuse
-        // SOLVED-with-dirty until the #3190 drain + green stamp).
+        // Issue #3610: a live commit TC bound on this thread still owns
+        // the live CS; ir_typed_entry_real_quiet_allows() consumes the
+        // pending face for that face (refuse SOLVED-with-dirty until
+        // the #3190 drain + green stamp).
+        // Issue #3983: no-TLS real Quiet also refuses pending residual
+        // when last-proof is still green (riding the previous stamp
+        // between local SOLVED-with-dirty and persist drain). Persist
+        // #3190 remains the green-stamp authority.
         if (g_linear_ir_fastpath_boundary_depth_override < 0)
             return ir_typed_entry_real_quiet_allows();
         // Issue #3510: negative authority is not "stale chaos leftover".

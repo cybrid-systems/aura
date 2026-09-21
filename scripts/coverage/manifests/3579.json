@@ -1,7 +1,7 @@
 {
   "issue": 3579,
   "title": "Issue #3579: pending_full_solve residual consume scope at depth==0",
-  "ok": "OK: Issue #3579 real-quiet depth==0 does not consume pending residual; probe/depth>0 still refuse.",
+  "ok": "OK: Issue #3579 leftover pending without a still-green last-proof is not a depth==0 barrier; probe/depth>0 still refuse.",
   "checks": [
     {
       "ac": "AC1",
@@ -26,7 +26,7 @@
       "contains": [
         "kPendingFullSolveTypedEntryConsumeIssue = 3579",
         "pending_full_solve residual consume scope",
-        "does not consult pending_full_solve_residual_face_hit()"
+        "pending without a still-green last-proof is not a depth==0 barrier"
       ]
     },
     {

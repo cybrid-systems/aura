@@ -34,7 +34,9 @@ using aura::compiler::typed_audit::commit_readiness_live_policy;
 using aura::compiler::typed_audit::CommitReadinessInput;
 using aura::compiler::typed_audit::g_linear_ir_fastpath_boundary_depth_override;
 using aura::compiler::typed_audit::ir_typed_entry_commit_readiness_ok;
+using aura::compiler::typed_audit::jit_execute_commit_readiness_blocked;
 using aura::compiler::typed_audit::kPendingFullSolveTypedEntryConsumeIssue;
+using aura::compiler::typed_audit::kQuietPendingGreenRideIssue;
 using aura::compiler::typed_audit::kTypeLinearProofOutcomeReject;
 using aura::compiler::typed_audit::kTypeLinearProofOutcomeStamped;
 using aura::compiler::typed_audit::note_pending_full_solve_residual;
@@ -387,19 +389,21 @@ static void ac3510_depth_zero_negative_authority() {
 }
 
 // ── Issue #3579: pending_full_solve residual consume scope ──
-// Real-quiet depth==0 (override<0) does not consult the pending face.
-// Probe (override==0) and depth>0 still refuse. Zero behavior change.
+// Leftover pending without a still-green last-proof is not a depth==0
+// barrier (#3568). Probe (override==0) and depth>0 still refuse.
+// Issue #3983: pending + still-green last-proof refuses even with no TLS.
 
 static bool file_exists_cwd_3579(const char* rel) {
     return std::ifstream(rel).good() || std::ifstream(std::string("../") + rel).good();
 }
 
 static void ac3579_1_pending_depth0_real_quiet_allows() {
-    std::println("\n--- #3579 AC1: pending residual + depth==0 real-quiet allows ---");
+    std::println("\n--- #3579 AC1: leftover pending without green stamp still allows ---");
     apply_production_audit_defaults();
     clear_type_linear_commit_proof_for_test();
     clear_type_linear_proof_outcome_for_test();
     reset_pending_full_solve_residual_for_test();
+    aura_typed_audit_clear_readiness_evaluator();
     note_pending_full_solve_residual(1, /*hard=*/true);
     g_linear_ir_fastpath_boundary_depth_override = -1;
     CHECK(ir_typed_entry_commit_readiness_ok(),
@@ -444,8 +448,9 @@ static void ac3579_3_consume_scope_source_cite() {
           "3579 AC3: stamp");
     CHECK(h.find("pending_full_solve residual consume scope") != std::string::npos,
           "3579 AC3: consume-scope comment");
-    CHECK(h.find("does not consult pending_full_solve_residual_face_hit()") != std::string::npos,
-          "3579 AC3: real-quiet does not consult pending");
+    CHECK(h.find("pending without a still-green last-proof is not a depth==0 barrier") !=
+              std::string::npos,
+          "3579 AC3: leftover pending without green is not a depth==0 barrier");
     CHECK(h.find("Do not move the pending check") != std::string::npos,
           "3579 AC3: do not hoist pending above real-quiet return");
     CHECK(!file_exists_cwd_3579("tests/compiler/test_issue_3579.cpp"),
@@ -510,6 +515,93 @@ static void ac3610_real_quiet_live_tc_face_split() {
     g_linear_ir_fastpath_boundary_depth_override = -1;
 }
 
+// ── Issue #3983: real Quiet no-TLS refuses pending residual riding green stamp ──
+static void ac3983_quiet_pending_green_no_tls_refuses() {
+    std::println("\n--- #3983: pending + still-green last-proof refuses real Quiet no-TLS ---");
+    apply_production_audit_defaults();
+    clear_type_linear_commit_proof_for_test();
+    clear_type_linear_proof_outcome_for_test();
+    reset_pending_full_solve_residual_for_test();
+    aura_typed_audit_clear_readiness_evaluator();
+    g_linear_ir_fastpath_boundary_depth_override = -1;
+
+    // AC1: production/Full + pending residual + still-green last-proof +
+    // no TLS commit TC → depth==0 IR/JIT typed-entry refuses.
+    stamp_type_linear_commit_proof(3983);
+    publish_type_linear_proof_outcome(kTypeLinearProofOutcomeStamped);
+    publish_last_proof_face(true, true);
+    note_pending_full_solve_residual(1, /*hard=*/true);
+    const auto blocked0 =
+        aura::compiler::typed_audit::g_linear_fast_path_elide_blocked_production_total.load(
+            std::memory_order_relaxed);
+    CHECK(!ir_typed_entry_commit_readiness_ok(),
+          "3983 AC1: pending + green stamp + no TLS refuses real Quiet depth==0");
+    CHECK(aura::compiler::typed_audit::g_linear_fast_path_elide_blocked_production_total.load(
+              std::memory_order_relaxed) > blocked0,
+          "3983 AC1: #3305 elide-blocked counter reused (no new key)");
+    CHECK(jit_execute_commit_readiness_blocked(),
+          "3983 AC5: JIT execute catalog blocked on pending+green");
+    const auto ir = read_file("src/compiler/ir_executor_impl.cpp");
+    CHECK(ir.find("ir_typed_entry_blocked_result") != std::string::npos &&
+              ir.find("commit-readiness-refused") != std::string::npos,
+          "3983 AC5: IR execute returns TypeError commit-readiness-refused");
+    CHECK(read_file("src/compiler/evaluator_eval_flat.cpp")
+                  .find("production_eval_flat_commit_readiness_refuse") != std::string::npos,
+          "3983 AC5: eval_flat apply/Call consults the same helper");
+
+    // Leftover pending without a green stamp still allows (#3568/#3579).
+    clear_type_linear_commit_proof_for_test();
+    clear_type_linear_proof_outcome_for_test();
+    CHECK(ir_typed_entry_commit_readiness_ok(),
+          "3983: leftover pending without green stamp still allows");
+    CHECK(!jit_execute_commit_readiness_blocked(),
+          "3983: leftover pending without green does not block JIT catalog");
+
+    // Leftover Reject without pending residual still allows (#3568).
+    reset_pending_full_solve_residual_for_test();
+    publish_type_linear_proof_outcome(kTypeLinearProofOutcomeReject);
+    CHECK(ir_typed_entry_commit_readiness_ok(),
+          "3983: leftover Reject without pending residual still allows (#3568)");
+    CompilerService cs;
+    aura_typed_audit_clear_readiness_evaluator();
+    CHECK(cs.eval("(+ 1 1)").has_value(), "3983: engine:metrics-class Quiet eval still runs");
+
+    // AC2: mid-boundary (depth>0) still consumes pending (3579 parity).
+    note_pending_full_solve_residual(1, /*hard=*/true);
+    stamp_type_linear_commit_proof(3983);
+    publish_type_linear_proof_outcome(kTypeLinearProofOutcomeStamped);
+    publish_last_proof_face(true, true);
+    g_linear_ir_fastpath_boundary_depth_override = 1;
+    CHECK(!ir_typed_entry_commit_readiness_ok(),
+          "3983 AC2: depth>0 still consumes pending via live policy");
+    g_linear_ir_fastpath_boundary_depth_override = -1;
+
+    // AC4: Soft/Off unchanged (function returns true before depth math).
+    apply_dev_audit_defaults();
+    note_pending_full_solve_residual(1, /*hard=*/true);
+    CHECK(ir_typed_entry_commit_readiness_ok(), "3983 AC4: Soft still allows before depth math");
+    CHECK(!jit_execute_commit_readiness_blocked(), "3983 AC4: Soft JIT catalog not blocked");
+
+    const auto h = read_file("src/compiler/typed_mutation_audit.h");
+    CHECK(kQuietPendingGreenRideIssue == 3983, "3983: issue constant");
+    CHECK(h.find("kQuietPendingGreenRideIssue = 3983") != std::string::npos, "3983: stamp");
+    CHECK(h.find("ir_typed_entry_last_proof_still_green") != std::string::npos,
+          "3983: last-proof still-green helper");
+    CHECK(h.find("riding the previous stamp") != std::string::npos, "3983: ride-previous-stamp");
+    CHECK(h.find("schema-3983") == std::string::npos, "3983: no new query key");
+    CHECK(read_file("src/compiler/ir_executor_impl.cpp")
+                  .find("g_linear_ir_fastpath_boundary_depth_override = -1") != std::string::npos,
+          "3983: IR execute is the real-Quiet path");
+    CHECK(read_file("tests/compiler/test_issue_3983.cpp").empty(), "3983: no invent");
+    CHECK(read_file("docs/design/3983-quiet-pending-green.md").empty(), "3983: no docs/design");
+
+    aura_typed_audit_clear_readiness_evaluator();
+    reset_pending_full_solve_residual_for_test();
+    clear_type_linear_commit_proof_for_test();
+    clear_type_linear_proof_outcome_for_test();
+    g_linear_ir_fastpath_boundary_depth_override = -1;
+}
+
 } // namespace
 
 int run_test_commit_readiness_score() {
@@ -527,6 +619,7 @@ int run_test_commit_readiness_score() {
     ac3579_2_pending_depth_gt0_refuses();
     ac3579_3_consume_scope_source_cite();
     ac3610_real_quiet_live_tc_face_split();
+    ac3983_quiet_pending_green_no_tls_refuses();
     apply_dev_audit_defaults();
     std::println("\n=== #2553: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
