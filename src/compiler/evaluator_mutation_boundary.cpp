@@ -1557,9 +1557,9 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
             workspace_flat_->note_nested_authority_gap();
             // Issue #3451: production nested success poisons last QueryEpoch
             // so last_query_epoch().is_fresh fails (Agents poll after Guard).
-            // Held QueryResult still needs the gap check in
-            // query_result_is_fresh_with_refs — reuse #3041 poison, no new
-            // query key. Soft / Off never reach this arm.
+            // Issue #3989: held QueryResult / StableNodeRef resolve is
+            // leftover-unless-eager (gap + torn faces; eager cone Fresh).
+            // Reuse #3041 poison, no new query key. Soft / Off never reach this arm.
             aura::core::force_query_epoch_stale_from_restamp_budget();
             if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
                 m->nested_authority_gap_total.fetch_add(1, std::memory_order_relaxed);

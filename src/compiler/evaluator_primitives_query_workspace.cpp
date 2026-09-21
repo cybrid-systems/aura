@@ -163,8 +163,9 @@ query_result_is_fresh_with_refs(const aura::core::QueryResult& qr, const aura::a
                                 std::uint64_t current_fiber_id) noexcept {
     // Issue #3196: nested_authority_gap() — held QueryResult is not
     // fresh until outermost triad (Soft never sets the face).
-    // Issue #3451: production gap → note_query_result_stale() + StaleByEpoch
-    // (held QueryResult / last_query_epoch; reuse #3041 poison).
+    // Issue #3451 / #3989: production leftover-unless-eager →
+    // note_query_result_stale() + StaleByEpoch on leftover (eager cone
+    // stays Fresh; last_query_epoch still uses #3041 poison).
     // Issue #3231: note_query_result_full_provenance_tenant_mismatch on
     // production schema-2 fail-closed tenant mismatch.
     // Issue #3311: hard && qr.matches[0].reserved != aura::core::kQueryResultMatchSchema2Prod

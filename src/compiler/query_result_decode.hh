@@ -32,14 +32,14 @@ query_result_is_fresh_with_refs(const aura::core::QueryResult& qr, const aura::a
     // still returns query-epoch-stale when generation moves in-flight.
     if (qr.match_count == 0)
         return aura::core::QueryResultFreshness::Fresh;
-    // Issue #3451: production nested_authority_gap → held QueryResult is
-    // not fresh until outermost triad. Reuse #3196 face + #3041 stale
-    // counter. Soft / Off never set the gap (#3312 AC2) — skip extra
-    // atomic on the quiet nested path.
-    if (hard && flat.nested_authority_gap()) {
-        aura::core::note_query_result_stale();
-        return aura::core::QueryResultFreshness::StaleByEpoch;
-    }
+    // Issue #3451 / #3989: leftover-unless-eager. Nested gap and
+    // outermost over-budget leftover deny held QueryResult unless the
+    // node is inside the eager cone (occupancy/gen can match on
+    // un-restamped leftover; lazy-align hides table-gen lag). Soft /
+    // Off never set the gap (#3312 AC2) — skip extra atomics.
+    const bool leftover_face =
+        (hard && flat.nested_authority_gap()) ||
+        (hard && (flat.restamp_over_budget_torn() || flat.restamp_last_budget_exceeded()));
     if (!qr.matches[0].has_full_provenance()) {
         if (hard)
             aura::core::note_query_result_full_provenance_stale();
@@ -75,6 +75,13 @@ query_result_is_fresh_with_refs(const aura::core::QueryResult& qr, const aura::a
                 const auto nid = static_cast<aura::ast::NodeId>(m.node_id);
                 if (!flat.is_live_node(nid))
                     return aura::core::QueryResultFreshness::StaleByEpoch;
+                // Issue #3989: leftover-unless-eager (reuse #3451 stale
+                // counter). Overflow skips the eager accept (#3426).
+                if (leftover_face && (aura::ast::restamp_hot_cone_held_overflow() ||
+                                      !flat.node_eagerly_restamped(nid))) {
+                    aura::core::note_query_result_stale();
+                    return aura::core::QueryResultFreshness::StaleByEpoch;
+                }
                 // Issue #3695: packed child gen is node_gen_; a reused
                 // slot with a different occupant must not resolve as success.
                 if (m.generation != 0 && flat.node_gen_for(nid) != m.generation)

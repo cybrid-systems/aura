@@ -5,11 +5,12 @@
 Held QueryResult / QueryEpoch::is_fresh still compared mutation_epoch +
 generation only. Production nested success now reuses #3041
 force_query_epoch_stale_from_restamp_budget after note_nested_authority_gap,
-and query_result_is_fresh_with_refs production-gates the gap check with
-note_query_result_stale. Soft / Off: zero extra. No new query key.
+and query_result_is_fresh_with_refs leftover-unless-eager (#3989) on
+nested gap / over-budget leftover with note_query_result_stale. Eager
+cone stays Fresh. Soft / Off: zero extra. No new query key.
 
 Contract:
-  AC1  Production nested success → with_refs stale + last_query_epoch stale
+  AC1  Production nested leftover → with_refs stale + last_query_epoch stale
   AC2  nested-touched query:*-stable still follows #3312
   AC3  outermost clears gap; new capture fresh; pre-nested QR stays stale
   AC4  Soft / Off: no poison call, no extra stale atomic
@@ -77,9 +78,10 @@ def main() -> int:
     must("production_defaults_active()", "AC4 decode production-gate", dec)
     # Soft decode path must not bump stale on the gap face without hard.
     dfun = dec.find("query_result_is_fresh_with_refs")
-    dwin = dec[dfun : dfun + 1600] if dfun >= 0 else ""
+    dwin = dec[dfun : dfun + 4200] if dfun >= 0 else ""
     must("hard && flat.nested_authority_gap()", "AC4 gated gap", dwin)
     must("note_query_result_stale", "AC4 stale bump", dwin)
+    must("node_eagerly_restamped", "AC4 leftover-unless-eager #3989", dwin)
 
     must("Issue #3451", "AC5 query_workspace cite", qw)
     must("kNestedGapQueryEpochStaleIssue = 3451", "AC5 stamp", we)

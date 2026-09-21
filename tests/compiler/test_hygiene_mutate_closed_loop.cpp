@@ -3174,7 +3174,7 @@ static aura::core::QueryResult make_pre_nested_schema2_qr(const aura::ast::FlatA
 }
 
 static void ac3451_1_nested_held_query_result_stale() {
-    std::println("\n--- #3451 AC1: production nested success stales held QR + last epoch ---");
+    std::println("\n--- #3451 AC1: production nested leftover QR stale; eager cone Fresh ---");
     using aura::compiler::typed_audit::apply_dev_audit_defaults;
     using aura::compiler::typed_audit::apply_production_audit_defaults;
     apply_production_audit_defaults();
@@ -3216,19 +3216,42 @@ static void ac3451_1_nested_held_query_result_stale() {
                   aura::core::current_mutation_epoch(),
                   static_cast<std::uint64_t>(flat->generation())),
               "3451 AC1: last_query_epoch().is_fresh == false");
-        // Rebind captured epoch to live counters so gap (not gen drift) is
-        // the discriminator — the residual #3312 closed export, not held QR.
-        qr.epoch.mutation_epoch = aura::core::current_mutation_epoch();
-        qr.epoch.generation = static_cast<std::uint64_t>(flat->generation());
+        aura::ast::NodeId leftover = aura::ast::NULL_NODE;
+        aura::ast::NodeId eager = aura::ast::NULL_NODE;
+        for (aura::ast::NodeId id = 0; id < flat->size(); ++id) {
+            if (!flat->is_live_node(id) || flat->is_free_slot(id))
+                continue;
+            if (flat->node_eagerly_restamped(id)) {
+                if (eager == aura::ast::NULL_NODE)
+                    eager = id;
+            } else if (leftover == aura::ast::NULL_NODE) {
+                leftover = id;
+            }
+            if (eager != aura::ast::NULL_NODE && leftover != aura::ast::NULL_NODE)
+                break;
+        }
+        CHECK(leftover != aura::ast::NULL_NODE, "3451 AC1: leftover node outside nested cone");
+        CHECK(eager != aura::ast::NULL_NODE, "3451 AC1: nested-touched eager node");
+        auto qr_left = make_pre_nested_schema2_qr(*flat, leftover);
+        qr_left.epoch.mutation_epoch = aura::core::current_mutation_epoch();
+        qr_left.epoch.generation = static_cast<std::uint64_t>(flat->generation());
         const auto stale_before_gap =
             aura::core::g_query_result_stale_total().load(std::memory_order_relaxed);
         const auto held = aura::compiler::query_result_decode::query_result_is_fresh_with_refs(
-            qr, *flat, /*tenant=*/0, /*fiber=*/0);
+            qr_left, *flat, /*tenant=*/0, /*fiber=*/0);
         CHECK(held == aura::core::QueryResultFreshness::StaleByEpoch,
-              "3451 AC1: query_result_is_fresh_with_refs == StaleByEpoch under gap");
+              "3451 AC1: leftover QueryResult StaleByEpoch (#3989 leftover-unless-eager)");
         CHECK(aura::core::g_query_result_stale_total().load(std::memory_order_relaxed) >
                   stale_before_gap,
-              "3451 AC1: g_query_result_stale_total bumped on gap");
+              "3451 AC1: g_query_result_stale_total bumped on leftover");
+        auto qr_hot = make_pre_nested_schema2_qr(*flat, eager);
+        qr_hot.epoch.mutation_epoch = aura::core::current_mutation_epoch();
+        qr_hot.epoch.generation = static_cast<std::uint64_t>(flat->generation());
+        const auto hot = aura::compiler::query_result_decode::query_result_is_fresh_with_refs(
+            qr_hot, *flat, /*tenant=*/0, /*fiber=*/0);
+        CHECK(hot == aura::core::QueryResultFreshness::Fresh,
+              "3451 AC1: eager-cone QueryResult Fresh under gap");
+        (void)qr;
         (void)stale0;
     }
     apply_dev_audit_defaults();

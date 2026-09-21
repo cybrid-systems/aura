@@ -17,6 +17,7 @@
 #include "compiler/security_capabilities.h"
 #include "compiler/typed_mutation_audit.h"
 #include "core/provenance_tracker.hh"
+#include "core/workspace_epoch.hh"
 #include "core/workspace_isolation.hh"
 
 #include <cstdint>
@@ -30,6 +31,9 @@ import aura.compiler.evaluator;
 import aura.compiler.service;
 import aura.compiler.value;
 import aura.core.ast;
+
+#define AURA_QUERY_RESULT_DECODE_FRESHNESS_ONLY
+#include "compiler/query_result_decode.hh"
 
 namespace {
 
@@ -108,6 +112,27 @@ NodeId first_non_eager(FlatAST& ws) {
             return id;
     }
     return NULL_NODE;
+}
+
+aura::core::QueryResult make_schema2_qr(const FlatAST& ws, NodeId id) {
+    aura::core::QueryResult qr{};
+    qr.epoch = aura::core::capture_query_epoch(static_cast<std::uint64_t>(ws.generation()));
+    (void)qr.push_match_full(static_cast<std::uint32_t>(id), ws.node_gen_for(id),
+                             /*wrap_epoch=*/0, /*cow_epoch_at_capture=*/0, /*tenant_id=*/0,
+                             /*fiber_id=*/0, /*mutation_id_at_capture=*/0,
+                             /*boundary_pinned=*/0);
+    qr.matches[0].reserved = aura::core::kQueryResultMatchSchema2Prod;
+    return qr;
+}
+
+void seed_over_budget_and_hot_cone(FlatAST& ws) {
+    using aura::ast::restamp_hot_cone_budget;
+    using aura::ast::set_restamp_budget_nodes_for_process;
+    set_restamp_budget_nodes_for_process(4);
+    seed_over_budget_dirty(ws);
+    ws.bump_generation();
+    ws.restamp_all_node_generations();
+    (void)ws.restamp_hot_cone_after_budget(restamp_hot_cone_budget(4));
 }
 
 void ac3259_1_hot_cone_export() {
@@ -709,6 +734,151 @@ void ac3388_4_ac4_source_cite() {
     }
 }
 
+void ac3989_1_leftover_query_result_and_resolve_deny() {
+    std::println("\n--- #3989 AC1: production leftover QR / StableNodeRef resolve deny ---");
+    using aura::ast::clear_restamp_budget_nodes_override_for_test;
+    using aura::ast::kRestampLeftoverQueryFreshIssue;
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    CHECK(kRestampLeftoverQueryFreshIssue == 3989, "3989 AC1: issue stamp");
+    reset_all();
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.grant_capability(kCapWildcard);
+    CHECK(cs.eval("(set-code \"(define (a3989 x) x) (define (b3989 y) y) "
+                  "(define (c3989 z) z) (define (d3989 w) w) "
+                  "(define (e3989 v) v) (define (f3989 u) u)\")")
+              .has_value(),
+          "3989 AC1: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3989 AC1: eval");
+    auto* ws = ev.workspace_flat();
+    CHECK(ws != nullptr, "3989 AC1: workspace");
+    apply_production_audit_defaults();
+    seed_over_budget_and_hot_cone(*ws);
+    CHECK(ws->restamp_over_budget_torn(), "3989 AC1: over-budget torn");
+    const auto lag = first_non_eager(*ws);
+    CHECK(lag != NULL_NODE, "3989 AC1: leftover node");
+    CHECK(!ev.allow_query_stable_ref_export(lag), "3989 AC1: export still lag-denies");
+    auto qr = make_schema2_qr(*ws, lag);
+    const auto stale0 = aura::core::g_query_result_stale_total().load(std::memory_order_relaxed);
+    const auto fr = aura::compiler::query_result_decode::query_result_is_fresh_with_refs(
+        qr, *ws, /*tenant=*/0, /*fiber=*/0);
+    CHECK(fr == aura::core::QueryResultFreshness::StaleByEpoch,
+          "3989 AC1: leftover QueryResult StaleByEpoch");
+    CHECK(aura::core::g_query_result_stale_total().load(std::memory_order_relaxed) > stale0,
+          "3989 AC1: note_query_result_stale on leftover");
+    (void)ws->make_ref_layout(lag);
+    CHECK(ws->node_generation_is_post_mutate(lag), "3989 AC1: lazy-align hid raw lag");
+    CHECK(!ws->node_eagerly_restamped(lag), "3989 AC1: lazy-align is not eager");
+    FlatAST::StableNodeRef held = ws->make_ref_layout(lag);
+    CHECK(held.is_valid_in(*ws), "3989 AC1: occupancy/gen silent-read after lazy-align");
+    CHECK(!ev.ensure_valid_or_refresh(held, /*auto_refresh=*/true).has_value(),
+          "3989 AC1: ensure_valid_or_refresh denies leftover (no remake-green)");
+    apply_dev_audit_defaults();
+    clear_restamp_budget_nodes_override_for_test();
+    reset_all();
+}
+
+void ac3989_2_hot_cone_query_result_and_resolve_fresh() {
+    std::println("\n--- #3989 AC2: production hot-cone QR / StableNodeRef resolve Fresh ---");
+    using aura::ast::clear_restamp_budget_nodes_override_for_test;
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    reset_all();
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.grant_capability(kCapWildcard);
+    CHECK(cs.eval("(set-code \"(define (g3989 x) x) (define (h3989 y) y) "
+                  "(define (i3989 z) z) (define (j3989 w) w) "
+                  "(define (k3989 v) v) (define (l3989 u) u)\")")
+              .has_value(),
+          "3989 AC2: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3989 AC2: eval");
+    auto* ws = ev.workspace_flat();
+    CHECK(ws != nullptr, "3989 AC2: workspace");
+    apply_production_audit_defaults();
+    seed_over_budget_and_hot_cone(*ws);
+    const auto hot = first_eager(*ws);
+    CHECK(hot != NULL_NODE, "3989 AC2: hot-cone node");
+    CHECK(ev.allow_query_stable_ref_export(hot), "3989 AC2: export allows eager cone");
+    auto qr = make_schema2_qr(*ws, hot);
+    const auto fr = aura::compiler::query_result_decode::query_result_is_fresh_with_refs(
+        qr, *ws, /*tenant=*/0, /*fiber=*/0);
+    CHECK(fr == aura::core::QueryResultFreshness::Fresh, "3989 AC2: hot-cone QueryResult Fresh");
+    FlatAST::StableNodeRef held = ws->make_ref_layout(hot);
+    CHECK(ev.ensure_valid_or_refresh(held, /*auto_refresh=*/true).has_value(),
+          "3989 AC2: ensure_valid_or_refresh succeeds on eager cone");
+    apply_dev_audit_defaults();
+    clear_restamp_budget_nodes_override_for_test();
+    reset_all();
+}
+
+void ac3989_3_soft_unchanged() {
+    std::println("\n--- #3989 AC3: Soft / Off leftover stays Fresh (no extra stale) ---");
+    using aura::ast::clear_restamp_budget_nodes_override_for_test;
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    apply_dev_audit_defaults();
+    reset_all();
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.grant_capability(kCapWildcard);
+    CHECK(cs.eval("(set-code \"(define (s3989 x) x)\")").has_value(), "3989 AC3: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3989 AC3: eval");
+    auto* ws = ev.workspace_flat();
+    CHECK(ws != nullptr, "3989 AC3: workspace");
+    clear_restamp_budget_nodes_override_for_test();
+    ws->bump_generation();
+    ws->restamp_all_node_generations();
+    CHECK(!ws->restamp_over_budget_torn(), "3989 AC3: Soft/unlimited not torn");
+    const auto live = first_live(*ws);
+    CHECK(live != NULL_NODE, "3989 AC3: live");
+    auto qr = make_schema2_qr(*ws, live);
+    const auto stale0 = aura::core::g_query_result_stale_total().load(std::memory_order_relaxed);
+    const auto fr = aura::compiler::query_result_decode::query_result_is_fresh_with_refs(
+        qr, *ws, /*tenant=*/0, /*fiber=*/0);
+    CHECK(fr == aura::core::QueryResultFreshness::Fresh ||
+              fr == aura::core::QueryResultFreshness::SoftOnlyNoProvenance,
+          "3989 AC3: Soft with_refs does not leftover-stale");
+    CHECK(aura::core::g_query_result_stale_total().load(std::memory_order_relaxed) == stale0,
+          "3989 AC3: Soft no extra g_query_result_stale_total");
+    FlatAST::StableNodeRef held = ws->make_ref_layout(live);
+    CHECK(ev.ensure_valid_or_refresh(held, /*auto_refresh=*/true).has_value(),
+          "3989 AC3: Soft ensure_valid_or_refresh unchanged");
+    apply_dev_audit_defaults();
+    reset_all();
+}
+
+void ac3989_4_source_cite() {
+    std::println("\n--- #3989 AC4: source-cite leftover-unless-eager; no invent ---");
+    const auto restamp = read_src("src/core/flatast_restamp.hh");
+    const auto dec = read_src("src/compiler/query_result_decode.hh");
+    const auto fiber = read_src("src/compiler/evaluator_fiber_mutation.cpp");
+    const auto qw = read_src("src/compiler/evaluator_primitives_query_workspace.cpp");
+    CHECK(restamp.find("kRestampLeftoverQueryFreshIssue = 3989") != std::string::npos,
+          "3989 AC4: issue stamp");
+    CHECK(dec.find("Issue #3989") != std::string::npos, "3989 AC4: decode cite");
+    CHECK(dec.find("leftover_face") != std::string::npos, "3989 AC4: leftover face");
+    CHECK(dec.find("node_eagerly_restamped") != std::string::npos, "3989 AC4: eager cone");
+    CHECK(fiber.find("Issue #3989") != std::string::npos, "3989 AC4: ensure_valid cite");
+    CHECK(fiber.find("query_stable_hard_reject_torn()") != std::string::npos &&
+              fiber.find("allow_query_stable_ref_export") != std::string::npos,
+          "3989 AC4: resolve reuses restamp-lag faces");
+    CHECK(qw.find("Issue #3451 / #3989") != std::string::npos, "3989 AC4: query_workspace cite");
+    CHECK(dec.find("schema-3989") == std::string::npos, "3989 AC4: no new query key");
+    {
+        std::ifstream f("tests/issues/test_issue_3989.cpp");
+        CHECK(!f.good(), "3989 AC4: no tests/issues/test_issue_3989.cpp");
+    }
+    {
+        std::ifstream f("tests/compiler/test_issue_3989.cpp");
+        CHECK(!f.good(), "3989 AC4: no tests/compiler/test_issue_3989.cpp");
+    }
+    {
+        std::ifstream f("docs/design/3989-restamp-leftover-query-fresh.md");
+        CHECK(!f.good(), "3989 AC4: no docs/design");
+    }
+}
+
 int run_test_stable_ref_tenant_capture() {
     std::println("=== Issue #2125: stamp_ref_tenant on all StableNodeRef capture paths ===");
     CHECK(kStableRefTenantCaptureIssue == 2125, "AC1: issue stamp constant");
@@ -1002,6 +1172,11 @@ int run_test_stable_ref_tenant_capture() {
     ac3388_2_ac2_production_stable_export_via_layout_stamp();
     ac3388_3_ac3_soft_no_change();
     ac3388_4_ac4_source_cite();
+    std::println("\n=== Issue #3989: leftover-unless-eager QueryResult / StableNodeRef ===");
+    ac3989_1_leftover_query_result_and_resolve_deny();
+    ac3989_2_hot_cone_query_result_and_resolve_fresh();
+    ac3989_3_soft_unchanged();
+    ac3989_4_source_cite();
 
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
