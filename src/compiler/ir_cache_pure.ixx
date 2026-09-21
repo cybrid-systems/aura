@@ -1491,6 +1491,9 @@ inline constexpr std::uint32_t kAdaptiveReasonFull = 1u << 7;
 inline constexpr std::uint32_t kAdaptiveReasonSkipClean = 1u << 8;
 // Issue #2212: Shape storm widened thr / forced partial preference.
 inline constexpr std::uint32_t kAdaptiveReasonShapeStormPartial = 1u << 9;
+// Issue #3986: Shape-storm flip of adaptive-full → partial with empty
+// DeadCoercion persist is unknown cone under production (service consult).
+inline constexpr int kShapeStormEmptyPersistIssue = 3986;
 
 struct AdaptiveRelowerPolicy {
     std::size_t base = kDefaultPartialRelowerThreshold;
@@ -1545,6 +1548,10 @@ struct AdaptiveRelowerDecision {
     bool want_partial = false;
     std::uint32_t reason_bits = 0;
     std::uint32_t dirty_density_bp = 0;
+    // Issue #3986: Shape preference flipped adaptive-full → partial.
+    // Production consult treats persist-empty as unknown cone; Soft/Off
+    // keep the #2212 widen (this flag is cleared off the production path).
+    bool shape_flipped_full_to_partial = false;
 };
 
 [[nodiscard]] inline std::size_t get_effective_partial_relower_threshold() noexcept {
@@ -1642,6 +1649,11 @@ inline void apply_shape_storm_partial_preference(AdaptiveRelowerDecision& d,
     const auto wide = shape_storm_widened_threshold(d.effective_threshold);
     d.effective_threshold = wide;
     if (dirty_count < wide) {
+        // Issue #3986: remember when Shape preference flipped an
+        // adaptive-full decision. Production consult (service.ixx) treats
+        // persist-empty as unknown cone; Soft/Off keep this widen.
+        if (!d.want_partial)
+            d.shape_flipped_full_to_partial = true;
         d.want_partial = true;
         d.reason_bits |= kAdaptiveReasonShapeStormPartial;
         d.reason_bits |= kAdaptiveReasonPartial;

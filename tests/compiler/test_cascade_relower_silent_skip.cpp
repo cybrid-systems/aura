@@ -31,6 +31,10 @@ import std;
 import aura.compiler.ir_cache_pure;
 import aura.compiler.service;
 import aura.compiler.value;
+import aura.compiler.dirty_propagation;
+
+extern "C" void aura_hot_update_set_shape_storm_active(int);
+extern "C" void aura_hot_update_reset_deopt_storm_state_for_test(void);
 
 namespace {
 
@@ -305,6 +309,45 @@ int run_test_cascade_relower_silent_skip() {
                   m->partial_forced_full_by_impact_total.load() > impact0,
               "3484 AC5: type-change did not silent-skip g as clean");
         apply_dev_audit_defaults();
+    }
+
+    // ── #3986 AC4: type-change under Shape-only + empty persist ──
+    {
+        std::println("\n--- #3986 AC4: Shape-storm type-change soak ---");
+        apply_production_audit_defaults();
+        aura::compiler::dirty::reset_residual_castop_persist_for_test();
+        aura_hot_update_reset_deopt_storm_state_for_test();
+        aura_hot_update_set_shape_storm_active(1);
+        CompilerService cs;
+        CHECK(cs.eval(R"(
+(set-code "
+(define f (lambda () 1))
+(define g (lambda () (f)))
+")")
+                  .has_value(),
+              "3986 AC4: set-code");
+        CHECK(cs.eval("(eval-current)").has_value(), "3986 AC4: eval");
+        if (!cs.get_define_v2("g"))
+            (void)cs.eval("(compile:cache-define \"g\")");
+        CHECK(cs.get_define_v2("g") != nullptr, "3986 AC4: g cached");
+        cs.public_record_dependency("g", "f");
+        const auto hash = cs.get_define_v2("g")->source_hash;
+        const auto defuse0 = cs.get_define_v2("g")->version_stamp_.defuse_version;
+        auto* m = metrics_of(cs);
+        const auto impact0 = m->partial_forced_full_by_impact_total.load(std::memory_order_relaxed);
+        auto mut = cs.eval("(mutate:set-body \"f\" \"(lambda () \\\"x\\\")\" \"#3986\")");
+        CHECK(mut.has_value(), "3986 AC4: set-body type change");
+        (void)cs.public_relower_dirty_defines_from_workspace();
+        const auto* g1 = cs.get_define_v2("g");
+        CHECK(g1 != nullptr, "3986 AC4: g after type-change");
+        const int look = cs.lookup_define_v2("g", hash);
+        CHECK(look == 1 || g1->dirty || g1->version_stamp_.defuse_version != defuse0 ||
+                  !g1->content_stored_this_epoch ||
+                  m->partial_forced_full_by_impact_total.load() > impact0,
+              "3986 AC4: Shape-storm type-change did not silent-skip g");
+        aura_hot_update_set_shape_storm_active(0);
+        apply_dev_audit_defaults();
+        aura::compiler::dirty::reset_residual_castop_persist_for_test();
     }
 
     // ── #3484 AC3: Soft genuinely-clean skip is zero extra ──

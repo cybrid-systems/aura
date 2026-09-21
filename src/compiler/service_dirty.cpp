@@ -1463,6 +1463,15 @@ void CompilerService::invalidate_function(const std::string& name) {
             }
         }
         if (dirty_n > 0 && !adaptive.want_partial) {
+            // Issue #3986: Shape-flip + production persist-empty restored
+            // full. Distinguisher + mark_all so the full path is not a
+            // cone-limited leftover.
+            if (adaptive.shape_flipped_full_to_partial) {
+                vit->second.mark_all_blocks_dirty();
+                vit->second.dirty = true;
+                metrics_.partial_forced_full_by_impact_total.fetch_add(1,
+                                                                       std::memory_order_relaxed);
+            }
             note_fb(RelowerFallbackReason::Threshold);
             return false;
         }

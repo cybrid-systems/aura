@@ -78,9 +78,14 @@ using aura::compiler::opt_registry::DeadCoercionPass;
 using aura::compiler::opt_registry::kDeadCoercionDecisionReverifyIssue;
 using aura::compiler::opt_registry::kDeadCoercionHotResidualIssue;
 using aura::compiler::opt_registry::sweep_production_hot_residual_castops;
+using aura::compiler::typed_audit::apply_dev_audit_defaults;
+using aura::compiler::typed_audit::apply_production_audit_defaults;
 using aura::compiler::types::as_int;
 using aura::compiler::types::is_error;
 using aura::compiler::types::is_int;
+
+extern "C" void aura_hot_update_set_shape_storm_active(int);
+extern "C" void aura_hot_update_reset_deopt_storm_state_for_test(void);
 using aura::ir::BasicBlock;
 using aura::ir::IRFunction;
 using aura::ir::IRInstruction;
@@ -1206,6 +1211,103 @@ static void ac3618_persist_attribution_forces_full() {
                                                                      std::memory_order_relaxed);
 }
 
+// ── Issue #3986: Shape-flip empty persist vs attributed partial ──
+//   AC2: Shape-only + adaptive partial + persist attributed → partial allowed
+//   AC4: type-change CastOp soak under Shape storm; skips not the only signal
+static void ac3986_shape_partial_attributed_and_typechange_soak() {
+    std::println("\n--- #3986: Shape adaptive-partial attributed + type-change soak ---");
+    using aura::compiler::apply_shape_storm_partial_preference;
+    using aura::compiler::decide_workload_adaptive_partial_relower;
+    using aura::compiler::kShapeStormEmptyPersistIssue;
+
+    CHECK(kShapeStormEmptyPersistIssue == 3986, "3986: stamp");
+    const auto svc = read_file("src/compiler/service.ixx");
+    CHECK(svc.find("Issue #3986") != std::string::npos, "3986: consult cites");
+    CHECK(svc.find("schema-3986") == std::string::npos, "3986: no new query key");
+
+    // AC2: already-partial is not a Shape flip; attributed persist stays allowed.
+    {
+        apply_production_audit_defaults();
+        aura_hot_update_reset_deopt_storm_state_for_test();
+        aura_hot_update_set_shape_storm_active(1);
+        auto d = decide_workload_adaptive_partial_relower(/*dirty*/ 1, /*total*/ 8, 0, 0, false);
+        CHECK(d.want_partial, "3986 AC2: adaptive 1-of-8 is partial");
+        apply_shape_storm_partial_preference(d, 1);
+        CHECK(d.want_partial, "3986 AC2: Shape keeps partial");
+        CHECK(!d.shape_flipped_full_to_partial, "3986 AC2: no flip");
+
+        reset_residual_castop_persist_for_test();
+        CompilerService cs;
+        CHECK(cs.eval("(set-code \"(define f (lambda (x) x))\")").has_value(),
+              "3986 AC2: set-code");
+        CHECK(cs.eval("(eval-current)").has_value(), "3986 AC2: eval");
+        const auto blk = aura::compiler::dirty::encode_block_dep_node(0, 0, 0);
+        const aura::compiler::dirty::NodeId blocks[] = {blk};
+        note_residual_castop_sites({}, blocks);
+        CHECK(residual_castop_persist_size() >= 1, "3986 AC2: persist attributed nonempty");
+        if (cs.get_define_v2("f") && !cs.get_define_v2("f")->irs.empty())
+            (void)cs.mark_block_dirty_v2("f", 0, 0);
+        else
+            cs.public_mark_define_dirty("f");
+        (void)cs.public_relower_dirty_defines_from_workspace();
+        CHECK(cs.eval("(f 41)").has_value(),
+              "3986 AC2: attributed + Shape partial leaves f evaluable");
+        reset_residual_castop_persist_for_test();
+        aura_hot_update_set_shape_storm_active(0);
+        apply_dev_audit_defaults();
+    }
+
+    // AC4: type-change CastOp outside local mask under Shape storm.
+    {
+        apply_production_audit_defaults();
+        reset_residual_castop_persist_for_test();
+        aura_hot_update_reset_deopt_storm_state_for_test();
+        aura_hot_update_set_shape_storm_active(1);
+        CHECK(residual_castop_persist_size() == 0, "3986 AC4: persist empty");
+        CompilerService cs;
+        CHECK(cs.eval(R"(
+(set-code "
+(define f (lambda () 1))
+(define g (lambda () (f)))
+")
+)")
+                  .has_value(),
+              "3986 AC4: set-code");
+        CHECK(cs.eval("(eval-current)").has_value(), "3986 AC4: eval");
+        if (!cs.get_define_v2("g"))
+            (void)cs.eval("(compile:cache-define \"g\")");
+        CHECK(cs.get_define_v2("g") != nullptr, "3986 AC4: g cached");
+        cs.public_record_dependency("g", "f");
+        const auto hash = cs.get_define_v2("g")->source_hash;
+        const auto defuse0 = cs.get_define_v2("g")->version_stamp_.defuse_version;
+        const auto skips0 = load_u64(dead_coercion_dirty_cone_skips);
+        const auto impact0 =
+            cs.metrics().partial_forced_full_by_impact_total.load(std::memory_order_relaxed);
+        const auto should0 = cs.metrics().should_relower_total.load(std::memory_order_relaxed);
+        auto mut = cs.eval("(mutate:set-body \"f\" \"(lambda () \\\"x\\\")\" \"#3986\")");
+        CHECK(mut.has_value(), "3986 AC4: type-change set-body");
+        (void)cs.public_relower_dirty_defines_from_workspace();
+        const auto* g1 = cs.get_define_v2("g");
+        CHECK(g1 != nullptr, "3986 AC4: g after type-change");
+        const int look = cs.lookup_define_v2("g", hash);
+        const auto impact1 =
+            cs.metrics().partial_forced_full_by_impact_total.load(std::memory_order_relaxed);
+        const auto should1 = cs.metrics().should_relower_total.load(std::memory_order_relaxed);
+        const auto skips1 = load_u64(dead_coercion_dirty_cone_skips);
+        const bool ir_signal =
+            look == 1 || g1->dirty || g1->version_stamp_.defuse_version != defuse0 ||
+            !g1->content_stored_this_epoch || impact1 > impact0 || should1 > should0;
+        CHECK(ir_signal, "3986 AC4: IR matches full-relower oracle (not silent skip)");
+        CHECK(ir_signal || skips1 == skips0,
+              "3986 AC4: dead_coercion_dirty_cone_skips is not the only signal");
+        auto got = cs.eval("(g)");
+        CHECK(got.has_value(), "3986 AC4: g evaluable after type-change");
+        aura_hot_update_set_shape_storm_active(0);
+        apply_dev_audit_defaults();
+        reset_residual_castop_persist_for_test();
+    }
+}
+
 static void ac3349_4_linter_no_invent() {
     std::println("\n--- #3349 AC4: linter + no invent / no new query keys ---");
     const auto t = read_file("tests/compiler/test_dead_coercion_dirty_cone.cpp");
@@ -1616,6 +1718,7 @@ int run_test_dead_coercion_dirty_cone() {
     ac3349_3_production_persist_marks_or_force_full();
     ac3349_4_linter_no_invent();
     ac3618_persist_attribution_forces_full();
+    ac3986_shape_partial_attributed_and_typechange_soak();
     ac3547_1_stamper_unbound_drops_cone();
     ac3547_2_type_id_drift_invalidates_site();
     ac3547_3_soft_keeps_cone();

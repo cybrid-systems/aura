@@ -171,6 +171,8 @@ int run_test_partial_relower_storm_gate() {
         CHECK((both & kStormLevelGlobal) != 0, "Both has Global");
         CHECK((both & kStormLevelShape) != 0, "Both has Shape");
         CHECK(!should_partial_relower_storm_aware(2), "Both+2 → full");
+        CHECK(!should_partial_relower_storm_aware(8),
+              "3986 AC3: Both+8 still full (Global wins after Shape flip)");
         clear_storm();
     }
 
@@ -351,6 +353,9 @@ int run_test_partial_relower_storm_gate() {
         CHECK(hur.find("Issue #3163") != std::string::npos, "3515 AC3: #3163 stays");
         CHECK(hur.find("aura_clear_partial_relower_threshold_force") != std::string::npos,
               "3515 AC3: #3101 stays");
+        CHECK(read_file("src/compiler/ir_cache_pure.ixx")
+                      .find("aura_clear_partial_relower_threshold_force") != std::string::npos,
+              "3986 AC5: storm exit still clears via aura_clear_partial_relower_threshold_force");
         CHECK(hur.find("now != 0 && prev == 0") != std::string::npos, "3515 AC3: entry refresh");
         CHECK(read_file("docs/design/3515-storm-both-shape.md").empty(),
               "3515 AC5: no docs/design");
