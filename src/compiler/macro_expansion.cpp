@@ -333,6 +333,10 @@ struct CloneSessionPolicy {
     bool allow_rest_hygiene = true;
     std::uint32_t max_gensym_map_size = 0;
     bool force_hygienic = false;
+    // Issue #3981: depth==0 owns this flag; nested steal sets it so the
+    // parent restore fires even when the process steal counter is a weak
+    // 0-stub after the nested return. Not TLS.
+    bool* nested_steal_abort = nullptr;
 };
 
 // Issue #3685: session-aware ceiling — process-wide test override wins,
@@ -652,24 +656,49 @@ namespace {
                                 static_cast<std::uintptr_t>(kSameFlatSlots - 1));
     }
 
+    // Issue #3981: 16-slot table stays append-only (#3321). Hash collision
+    // with a *different* address used to allow without storing self, so two
+    // clones of Y both proceeded while X pinned hash(Y). Linear probe +1..+15
+    // still fits the table: empty → CAS self; same address → reject; other
+    // address → next slot; table full of others → reject. Existing reasons
+    // (same-flat-clone-reject / name-map-shared) — no new code.
+    [[nodiscard]] bool claim_addr_slot(std::atomic<std::uintptr_t>* slots, int n, int start,
+                                       std::uintptr_t addr) noexcept {
+        for (int i = 0; i < n; ++i) {
+            auto& slot = slots[(start + i) & (n - 1)];
+            std::uintptr_t expected = 0;
+            if (slot.compare_exchange_strong(expected, addr, std::memory_order_acq_rel,
+                                             std::memory_order_acquire))
+                return true;
+            if (expected == addr)
+                return false;
+        }
+        return false;
+    }
+
+    void release_addr_slot(std::atomic<std::uintptr_t>* slots, int n,
+                           std::uintptr_t addr) noexcept {
+        for (int i = 0; i < n; ++i) {
+            std::uintptr_t expected = addr;
+            if (slots[i].compare_exchange_strong(expected, 0, std::memory_order_release,
+                                                 std::memory_order_relaxed))
+                return;
+        }
+    }
+
     [[nodiscard]] bool claim_same_flat_clone(const aura::ast::FlatAST* t) noexcept {
         if (!t)
             return true;
         const auto addr = reinterpret_cast<std::uintptr_t>(t);
-        auto& slot = g_same_flat_slots[same_flat_slot(t)];
-        std::uintptr_t expected = 0;
-        if (slot.compare_exchange_strong(expected, addr, std::memory_order_acq_rel,
-                                         std::memory_order_acquire))
-            return true;
-        return expected != addr; // occupied by a different flat → allow
+        return claim_addr_slot(g_same_flat_slots, kSameFlatSlots, same_flat_slot(t), addr);
     }
 
     // Issue #3094: parallel lock-free hashed-slot for name_map pointer.
     // Different side table keyed by name_map address (lower-bit hash).
     // Two top-level clones sharing the same name_map pointer under
     // production reject (stable reason 4 = hygiene-name-map-shared).
-    // Different name_maps that collide in the same slot are allowed
-    // (cross-map OK). Empty slot (==0) = unclaimed.
+    // Empty slot (==0) = unclaimed. Issue #3981: colliding different
+    // maps probe; they no longer skip the exclusive-writer belt.
     constexpr int kNameMapSlots = 16;
     std::atomic<std::uintptr_t> g_name_map_slots[kNameMapSlots]{};
 
@@ -682,35 +711,25 @@ namespace {
         if (!m)
             return true;
         const auto addr = reinterpret_cast<std::uintptr_t>(m);
-        auto& slot = g_name_map_slots[name_map_slot(m)];
-        std::uintptr_t expected = 0;
-        if (slot.compare_exchange_strong(expected, addr, std::memory_order_acq_rel,
-                                         std::memory_order_acquire))
-            return true;
-        return expected != addr; // occupied by a different map → allow
+        return claim_addr_slot(g_name_map_slots, kNameMapSlots, name_map_slot(m), addr);
     }
 
     void release_name_map_clone(const void* m) noexcept {
         if (!m)
             return;
-        const auto addr = reinterpret_cast<std::uintptr_t>(m);
-        auto& slot = g_name_map_slots[name_map_slot(m)];
-        // Only release if we still own the slot (defensive: a different
-        // map that landed in the same slot would have a different addr).
-        std::uintptr_t expected = addr;
-        slot.compare_exchange_strong(expected, 0, std::memory_order_release,
-                                     std::memory_order_relaxed);
+        release_addr_slot(g_name_map_slots, kNameMapSlots, reinterpret_cast<std::uintptr_t>(m));
     }
 
     void release_same_flat_clone(const aura::ast::FlatAST* t) noexcept {
         if (!t)
             return;
-        const auto addr = reinterpret_cast<std::uintptr_t>(t);
-        auto& slot = g_same_flat_slots[same_flat_slot(t)];
-        auto cur = addr;
-        (void)slot.compare_exchange_strong(cur, 0, std::memory_order_acq_rel,
-                                           std::memory_order_relaxed);
+        release_addr_slot(g_same_flat_slots, kSameFlatSlots, reinterpret_cast<std::uintptr_t>(t));
     }
+
+    // Issue #3981: light-link hosts use the weak steal-total stub (always 0).
+    // Nested steal inject is a per-walk delta the depth==0 sticky observes.
+    std::atomic<std::uint64_t> g_clone_walk_steal_inject{0};
+    std::atomic<int> g_arm_nested_steal_inject{0};
 } // namespace
 
 extern "C" __attribute__((weak)) std::uint64_t
@@ -1227,6 +1246,22 @@ extern "C" void aura_test_reset_macro_clone_same_flat_reject_for_test(void) noex
     // alongside the top-level steal-abort counter).
     g_macro_clone_nested_steal_check_total.store(0, std::memory_order_relaxed);
     g_macro_clone_last_reject_reason.store(0, std::memory_order_relaxed);
+    g_clone_walk_steal_inject.store(0, std::memory_order_relaxed);
+    g_arm_nested_steal_inject.store(0, std::memory_order_relaxed);
+}
+// Issue #3981: test pin of a name_map into the 16-slot table without a
+// live clone (third map occupying hash(Y) while Y clones probe).
+extern "C" int aura_test_name_map_slot(const void* m) noexcept {
+    return name_map_slot(m);
+}
+extern "C" int aura_test_claim_name_map_clone(const void* m) noexcept {
+    return claim_name_map_clone(m) ? 1 : 0;
+}
+extern "C" void aura_test_release_name_map_clone(const void* m) noexcept {
+    release_name_map_clone(m);
+}
+extern "C" void aura_test_arm_nested_clone_steal_inject(void) noexcept {
+    g_arm_nested_steal_inject.store(1, std::memory_order_relaxed);
 }
 // Issue #3029: Agent-stable hygiene limit reason (ceiling / depth / pass).
 extern "C" std::uint64_t aura_macro_hygiene_last_limit_reason_v_read(void) noexcept {
@@ -1756,8 +1791,8 @@ static aura::ast::NodeId clone_macro_body_at_depth(
             // std::unordered_map concurrently (insert/erase/lookup during
             // rename + NameMapCheckpoint rollback erasing keys another fiber
             // still relies on + gensym ceiling decision racing with another
-            // fiber's map size). Different maps that collide in the same
-            // slot are allowed (cross-map OK).
+            // fiber's map size). Issue #3981: hash collisions linear-probe
+            // rather than allowing a second writer without a slot.
             if (nm && aura::core::sandbox::is_sandbox_active() && !claim_name_map_clone(nm)) {
                 rejected_shared_name_map = true;
                 g_macro_clone_name_map_shared_reject_total.fetch_add(1, std::memory_order_relaxed);
@@ -1938,6 +1973,11 @@ static aura::ast::NodeId clone_macro_body_at_depth(
     // check_macro_self_evo; nested calls keep the caller's session.
     if (hygiene_depth == 0)
         session = top_cap_guard.session;
+    // Issue #3981: depth==0 owns the nested-steal sticky. Nested frames
+    // copy the pointer through CloneSessionPolicy (not TLS).
+    bool steal_abort_sticky = false;
+    if (hygiene_depth == 0 && session.nested_steal_abort == nullptr)
+        session.nested_steal_abort = &steal_abort_sticky;
     if (top_cap_guard.denied()) {
         if (detail::macro_self_evo_verbose()) {
             std::fprintf(stderr,
@@ -2128,7 +2168,12 @@ static aura::ast::NodeId clone_macro_body_at_depth(
     // the actual top-level rollback still happens via the top-level
     // depth's expand_ckpt.try_restore() call, which protects all nested
     // additions too). Zero-cost — atomic load on the steal counter.
-    const auto steal0 = aura_fiber_static_cross_fiber_mutation_safe_steal_total();
+    const auto steal0 = aura_fiber_static_cross_fiber_mutation_safe_steal_total() +
+                        g_clone_walk_steal_inject.load(std::memory_order_relaxed);
+    // Issue #3981: test-only nested steal delta when the process steal
+    // counter is the weak 0-stub. Armed once, consumed on the nested frame.
+    if (hygiene_depth > 0 && g_arm_nested_steal_inject.exchange(0, std::memory_order_relaxed) != 0)
+        g_clone_walk_steal_inject.fetch_add(1, std::memory_order_relaxed);
 
     auto v = source.get(body_id);
 
@@ -2929,8 +2974,13 @@ static aura::ast::NodeId clone_macro_body_at_depth(
         if (hygiene_depth > 0) // top-level excluded
             g_macro_clone_nested_steal_check_total.fetch_add(1, std::memory_order_relaxed);
         // hygiene_depth > 0 gate (top-level excluded) — #3303 AC6 source-cite.
-        const auto steal1 = aura_fiber_static_cross_fiber_mutation_safe_steal_total();
-        if (steal1 > steal0) {
+        const auto steal1 = aura_fiber_static_cross_fiber_mutation_safe_steal_total() +
+                            g_clone_walk_steal_inject.load(std::memory_order_relaxed);
+        const bool nested_steal =
+            session.nested_steal_abort != nullptr && *session.nested_steal_abort;
+        if (steal1 > steal0 || nested_steal) {
+            if (session.nested_steal_abort)
+                *session.nested_steal_abort = true;
             g_macro_clone_steal_abort_total.fetch_add(1, std::memory_order_relaxed);
             // Issue #3303: stamp stable agent-facing reason. Previously
             // stored kHygieneLimitReasonPassLimit (3), which was

@@ -18,6 +18,7 @@
 #include <atomic>
 #include <fstream>
 #include <functional>
+#include <memory>
 #include <print>
 #include <string>
 #include <string_view>
@@ -901,6 +902,129 @@ int run_test_concurrent_clone_hygiene_depth() {
               "3574 AC4: no test_issue_3574.cpp");
         CHECK(read_file("docs/design/3574-clone-null-node.md").empty(),
               "3574 AC4: no docs/design/");
+    }
+
+    // Issue #3981: colliding different map occupying hash(Y) must not let
+    // two Y clones both proceed. Pin X, then pin Y (probe), then clone Y
+    // rejects with name-map-shared.
+    std::println("\n=== Issue #3981: name_map 16-slot probe is exclusive ---");
+    {
+        std::println("\n--- #3981 AC1: source-cite linear probe ---");
+        const auto me = read_file("src/compiler/macro_expansion.cpp");
+        CHECK(me.find("Issue #3981") != std::string::npos, "3981 AC1: cpp cites #3981");
+        CHECK(me.find("claim_addr_slot") != std::string::npos, "3981 AC1: linear probe helper");
+        CHECK(me.find("occupied by a different map → allow") == std::string::npos,
+              "3981 AC1: collision-allow path removed");
+        CHECK(me.find("nested_steal_abort") != std::string::npos,
+              "3981 AC1: CloneSessionPolicy nested-steal sticky");
+        CHECK(read_file("tests/compiler/test_issue_3981.cpp").empty(),
+              "3981 AC1: no test_issue_3981.cpp per #81967");
+        CHECK(read_file("docs/design/3981-name-map-slot-probe.md").empty(),
+              "3981 AC1: no docs/design/3981-* per #1655");
+    }
+    {
+        std::println("\n--- #3981 AC2: third map pins hash(Y); second Y clone name-map-shared ---");
+        using aura::core::capability::Effect;
+        using aura::core::capability::g_capability_registry;
+        using aura::core::capability::MacroSelfEvoPolicy;
+        using aura::core::capability::reset_capability_effects_for_test;
+        reset_capability_effects_for_test();
+        MacroSelfEvoPolicy pol;
+        pol.max_expansion_passes = 8;
+        pol.max_depth = 256;
+        pol.allow_rest_hygiene = true;
+        pol.allow_concurrent_fiber = true;
+        g_capability_registry().grant(0, "tenant-admin", Effect::TenantAdmin,
+                                      aura_test_grant_prov());
+        g_capability_registry().grant_macro_self_evo(0, pol, aura_test_grant_prov());
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+        aura_test_reset_macro_hygiene_last_limit_reason_for_test();
+        aura_test_reset_macro_clone_same_flat_reject_for_test();
+        NameMap y;
+        std::vector<std::unique_ptr<NameMap>> pads;
+        NameMap* x = nullptr;
+        const int y_slot = aura_test_name_map_slot(&y);
+        for (int i = 0; i < 4096 && x == nullptr; ++i) {
+            auto p = std::make_unique<NameMap>();
+            if (aura_test_name_map_slot(p.get()) == y_slot && p.get() != &y)
+                x = p.get();
+            pads.push_back(std::move(p));
+        }
+        CHECK(x != nullptr, "3981 AC2: found colliding third map");
+        CHECK(aura_test_claim_name_map_clone(x) == 1, "3981 AC2: pin X in hash(Y) slot");
+        CHECK(aura_test_claim_name_map_clone(&y) == 1, "3981 AC2: Y claims via probe");
+        aura::ast::ASTArena sa, ta;
+        StringPool sp(sa.allocator());
+        FlatAST src(sa.allocator());
+        auto pr = aura::parser::parse_to_flat("(lambda (z) z)", src, sp);
+        CHECK(pr.success, "3981 AC2: parse");
+        FlatAST tgt(ta.allocator());
+        StringPool tp(ta.allocator());
+        auto cloned =
+            clone_macro_body(tgt, tp, src, sp, pr.root, nullptr, &y, SyntaxMarker::MacroIntroduced);
+        CHECK(cloned == NULL_NODE, "3981 AC2: second Y clone NULL_NODE");
+        const auto* rs = hygiene_last_limit_reason_string();
+        CHECK(rs != nullptr && std::string(rs) == "name-map-shared",
+              "3981 AC2: reason name-map-shared");
+        aura_test_release_name_map_clone(&y);
+        aura_test_release_name_map_clone(x);
+        aura_test_reset_macro_hygiene_last_limit_reason_for_test();
+        FlatAST tgt2(ta.allocator());
+        StringPool tp2(ta.allocator());
+        auto later = clone_macro_body(tgt2, tp2, src, sp, pr.root, nullptr, &y,
+                                      SyntaxMarker::MacroIntroduced);
+        CHECK(later != NULL_NODE, "3981 AC2: Y clone proceeds after pins released");
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+        reset_capability_effects_for_test();
+    }
+    {
+        std::println("\n--- #3981 AC3: Soft/Off no extra claim beyond sandbox load ---");
+        const auto me = read_file("src/compiler/macro_expansion.cpp");
+        const auto guard_pos = me.find("struct ConcurrentCloneGuard");
+        CHECK(guard_pos != std::string::npos, "3981 AC3: guard");
+        const auto body = me.substr(guard_pos, 3500);
+        CHECK(body.find("is_sandbox_active()") != std::string::npos &&
+                  body.find("claim_name_map_clone") != std::string::npos,
+              "3981 AC3: name_map claim still sandbox-gated");
+    }
+    {
+        std::println("\n--- #3981 AC4: nested steal with weak steal-total==0 restores ---");
+        using aura::core::capability::Effect;
+        using aura::core::capability::g_capability_registry;
+        using aura::core::capability::MacroSelfEvoPolicy;
+        using aura::core::capability::reset_capability_effects_for_test;
+        reset_capability_effects_for_test();
+        MacroSelfEvoPolicy pol;
+        pol.max_expansion_passes = 8;
+        pol.max_depth = 256;
+        pol.allow_rest_hygiene = true;
+        pol.allow_concurrent_fiber = true;
+        g_capability_registry().grant(0, "tenant-admin", Effect::TenantAdmin,
+                                      aura_test_grant_prov());
+        g_capability_registry().grant_macro_self_evo(0, pol, aura_test_grant_prov());
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+        aura_test_reset_macro_hygiene_last_limit_reason_for_test();
+        aura_test_reset_macro_clone_same_flat_reject_for_test();
+        aura::ast::ASTArena sa, ta;
+        StringPool sp(sa.allocator());
+        FlatAST src(sa.allocator());
+        auto pr = aura::parser::parse_to_flat("(let ((a 1)) (let ((b a)) b))", src, sp);
+        CHECK(pr.success, "3981 AC4: parse nested lets");
+        FlatAST tgt(ta.allocator());
+        StringPool tp(ta.allocator());
+        NameMap nm;
+        const auto size0 = tgt.size();
+        aura_test_arm_nested_clone_steal_inject();
+        auto cloned = clone_macro_body(tgt, tp, src, sp, pr.root, nullptr, &nm,
+                                       SyntaxMarker::MacroIntroduced);
+        CHECK(cloned == NULL_NODE, "3981 AC4: parent returns NULL_NODE");
+        CHECK(tgt.size() == size0, "3981 AC4: depth==0 truncates target additions");
+        CHECK(nm.empty(), "3981 AC4: name_map rolled back");
+        const auto* rs = hygiene_last_limit_reason_string();
+        CHECK(rs != nullptr && std::string(rs) == "steal-abort", "3981 AC4: reason steal-abort");
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+        reset_capability_effects_for_test();
+        aura_test_reset_macro_clone_same_flat_reject_for_test();
     }
 
     std::println("\n=== #2806 + #3028 + #3094 + #3507 + #3544 + #3574 concurrent clone hygiene "
