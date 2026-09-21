@@ -309,16 +309,13 @@ int run_test_must_deopt_before_next_call() {
     }
 
     // ── Issue #3572: unnamed deopt_pending consult — shared-workspace MVP contract ──
-    // Review residual: the unnamed/sid==0 arm consults the PROCESS-level
-    // deopt_pending count. In the shared-workspace MVP this is by design:
-    // the workspace IR and the JIT fn cache are shared across Evaluators,
-    // so one eval's mutate makes the pending name semantically stale for
-    // every peer too — a per-owner filter would UNDER-invalidate. This
-    // section pins the contract so post-MVP per-owner work starts from an
-    // explicit baseline.
+    // Global table bump: unnamed consults process deopt_pending_count
+    // (IR + JIT cache are shared — a per-owner filter would
+    // UNDER-invalidate). Issue #3977: production owner-scoped last bump
+    // is NOT that gate — peer pure-anon stays native; same-define unnamed
+    // leaves via MustDeopt / slot stale / overflow.
     {
-        std::println(
-            "\n--- #3572 AC1: unnamed arm is process-global BY DESIGN (source contract) ---");
+        std::println("\n--- #3572 AC1: unnamed count is the global-bump fail-closed backstop ---");
         const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
         CHECK(rt.find("Issue #3441") != std::string::npos, "3572: #3441 lineage kept");
         CHECK(rt.find("Issue #3572") != std::string::npos,
@@ -331,6 +328,21 @@ int run_test_must_deopt_before_next_call() {
               "3572 AC1: both arms route through the shared helper");
         CHECK(rt.find("aura_jit_deopt_pending_count()") != std::string::npos,
               "3572 AC1: unnamed arm consults the #3412 table count");
+    }
+    {
+        std::println("\n--- #3977 AC2/AC4: owner-scoped unnamed skip; Soft one load ---");
+        const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
+        const auto fn = rt.find("closure_call_deopt_pending_leave_native_");
+        CHECK(fn != std::string::npos, "3977 AC2: helper present");
+        const auto win = (fn != std::string::npos) ? rt.substr(fn, 1800) : std::string{};
+        CHECK(win.find("Issue #3977") != std::string::npos, "3977 AC2: cites #3977");
+        CHECK(win.find("aura_aot_last_table_bump_owner_scoped") != std::string::npos,
+              "3977 AC2: owner-scoped last bump skips unnamed count");
+        CHECK(win.find("pending == 0") != std::string::npos,
+              "3977 AC4: Soft/idle unnamed is one load");
+        CHECK(rt.find("schema-3977") == std::string::npos, "3977: no new query key");
+        CHECK(read_file("tests/compiler/test_issue_3977.cpp").empty(), "3977: no invent");
+        CHECK(read_file("docs/design/3977-unnamed-deopt-count.md").empty(), "3977: no docs/design");
     }
     {
         std::println("\n--- #3572 AC2: named-arm precision at the ABI ---");

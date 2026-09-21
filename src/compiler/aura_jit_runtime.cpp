@@ -3920,17 +3920,24 @@ int64_t aura_lookup_fn_by_name(const char* name, int64_t* out_local_count, int64
 // production Defer. Same leave-native decision, no new query key:
 //   named     → aura_jit_is_deopt_pending(name)  (#3412 table)
 //   unnamed   → aura_jit_deopt_pending_count()!=0 (same table; Soft is 0)
-// Issue #3572: the unnamed arm's process-global consult is BY DESIGN in
-// the shared-workspace MVP — the workspace IR and the JIT fn cache are
-// shared across Evaluators, so one eval's mutate makes the pending name
-// semantically stale for every peer too; a per-owner filter would
-// UNDER-invalidate (correctness regression, not an availability fix).
-// Per-owner scoping becomes meaningful only with cross-workspace
-// isolation ((workspace, name) keying, post-#2178 long-term).
+// Issue #3572: unnamed process-global count is the fail-closed BACKSTOP
+// when the last table bump was process-wide — workspace IR + JIT fn
+// cache are shared, so a per-owner filter would UNDER-invalidate.
+// Issue #3977: production owner-scoped hard invalidate already armed
+// #3300/#3750 name/slot bits + MustDeopt + #3323 overflow; unnamed
+// must NOT leave native solely because deopt_pending_count>0 (peer
+// pure-anon availability). Soft: count is 0 — one load (AC4).
 [[nodiscard]] static bool closure_call_deopt_pending_leave_native_(size_t cid) noexcept {
     if (cid < g_closure_names.size() && !g_closure_names[cid].empty())
         return aura_jit_is_deopt_pending(g_closure_names[cid].c_str()) != 0;
-    return aura_jit_deopt_pending_count() != 0;
+    const auto pending = aura_jit_deopt_pending_count();
+    if (pending == 0)
+        return false; // Soft / idle: one load
+    // Issue #3977: owner-scoped last bump — count is not the unnamed gate.
+    if (aura::compiler::typed_audit::production_defaults_active() &&
+        aura_aot_last_table_bump_owner_scoped() != 0)
+        return false;
+    return true; // global bump: count is the unnamed fail-closed backstop
 }
 
 // Issue #3951: owner-thread hold-budget fail-closed (strong in
@@ -4477,7 +4484,8 @@ extern "C" int64_t aura_closure_dispatch_native_checked(int64_t closure_id, int6
     // Issue #3441: unnamed / sid==0 never took the #3412 named gate
     // (`!slow_cname.empty()`). Production Defer leaves g_jit_fns.fn live
     // and remount skipped. Consult deopt_pending_count (same AuraJIT
-    // table, no new query key). Soft: count is 0.
+    // table, no new query key). Soft: count is 0. Issue #3977: owner-
+    // scoped last bump skips the count as the unnamed gate.
     if ((slow_cid >= g_closure_names.size() || g_closure_names[slow_cid].empty()) &&
         closure_call_deopt_pending_leave_native_(slow_cid)) {
         if (auto* m = static_cast<aura::compiler::CompilerMetrics*>(aura_get_aot_metrics())) {

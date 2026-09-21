@@ -42,6 +42,10 @@ import aura.compiler.value;
 
 extern "C" int aura_production_defaults_active_probe() noexcept;
 extern "C" std::uint64_t aura_aot_func_table_epoch(void);
+extern "C" int aura_aot_last_table_bump_owner_scoped(void);
+extern "C" int aura_aot_peer_jit_name_is_soft_stale(const char* name);
+extern "C" int aura_jit_is_deopt_pending(const char* name);
+extern "C" std::uint64_t aura_jit_deopt_pending_count(void);
 
 namespace {
 
@@ -1310,6 +1314,57 @@ static void ac3975_owner_scoped_expire_must_deopt_tw() {
     }
 }
 
+// ── Issue #3977: unnamed deopt_pending_count is not the owner-scoped
+// peer-anon leave-native gate. Name table already holds F; batch_deopt
+// must not bump process count. Soft unnamed is still one load.
+static void ac3977_unnamed_owner_scoped_skips_process_count() {
+    std::println("\n--- #3977: owner-scoped unnamed skip process deopt_pending_count ---");
+    const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
+    const auto jit = read_file("src/compiler/aura_jit.cpp");
+    const auto hur = read_file("src/compiler/hot_update_registry.cpp");
+    CHECK(rt.find("Issue #3977") != std::string::npos, "3977: runtime cites #3977");
+    CHECK(rt.find("aura_aot_last_table_bump_owner_scoped") != std::string::npos,
+          "3977 AC2: unnamed helper skips count on owner-scoped last bump");
+    CHECK(jit.find("Issue #3977") != std::string::npos, "3977: AuraJIT cites #3977");
+    CHECK(jit.find("aura_aot_peer_jit_name_is_soft_stale(name)") != std::string::npos,
+          "3977: batch_deopt_for skips when name table already holds F");
+    CHECK(hur.find("Issue #3977") != std::string::npos, "3977: facade mark cites skip");
+    CHECK(rt.find("schema-3977") == std::string::npos, "3977: no new query key");
+    CHECK(read_file("tests/compiler/test_issue_3977.cpp").empty(), "3977: no invent");
+    CHECK(read_file("docs/design/3977-unnamed-deopt-count.md").empty(), "3977: no docs/design");
+
+    apply_production_audit_defaults();
+    {
+        CompilerService cs_a;
+        CompilerService cs_b;
+        void* owner = &cs_a.evaluator();
+        aura_aot_set_reemit_owner_eval(owner);
+        aura_aot_set_register_owner_eval(owner);
+        CHECK(cs_a.eval("(define (ac3977_F x) (+ x 1))").has_value(), "3977: define F");
+        CHECK(cs_a.eval("(define (ac3977_G x) (+ x 10))").has_value(), "3977: define G");
+        CHECK(cs_b.eval("(define (ac3977_G x) (+ x 10))").has_value(), "3977: peer G");
+        const auto h0 = cross_eval_hard_owner_scoped_total_v_read();
+        const auto pending0 = aura_jit_deopt_pending_count();
+        cs_a.public_invalidate_function("ac3977_F");
+        const auto h1 = cross_eval_hard_owner_scoped_total_v_read();
+        if (h1 > h0 && aura_aot_state_map_size() > 1 &&
+            aura_aot_last_table_bump_owner_scoped() != 0) {
+            CHECK(aura_aot_peer_jit_name_is_soft_stale("ac3977_F") != 0,
+                  "3977: name table holds F after owner-scoped invalidate");
+            CHECK(aura_jit_is_deopt_pending("ac3977_G") == 0,
+                  "3977 AC1: unrelated named G is not deopt_pending");
+            CHECK(aura_jit_deopt_pending_count() == pending0,
+                  "3977 AC2: name-precise owner-scoped does not bump process count");
+        } else {
+            std::println(
+                "  [3977] single-state / global fallback — live owner-scope branch skipped");
+        }
+    }
+    apply_dev_audit_defaults();
+    CHECK(aura_jit_deopt_pending_count() == aura_jit_deopt_pending_count(),
+          "3977 AC4: Soft unnamed count consult is a load");
+}
+
 int run_test_issue_3112() {
     std::print("[test_issue_3112] running 5 ACs + #3129 + #3150 extensions\n");
 
@@ -1369,6 +1424,10 @@ int run_test_issue_3112() {
     // Issue #3975: owner-scoped freeze leaves expire_stale_live_closures_
     // vacuous — name-precise MustDeopt + TLS apply-epoch bump.
     ac3975_owner_scoped_expire_must_deopt_tw();
+
+    // Issue #3977: unnamed deopt_pending_count is not the owner-scoped
+    // peer-anon leave-native gate.
+    ac3977_unnamed_owner_scoped_skips_process_count();
 
     // Issue #3227: remount ok path rebinds linear proof (densify/steal gen).
     {
