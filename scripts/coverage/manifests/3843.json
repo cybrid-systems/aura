@@ -9,7 +9,7 @@
       "contains": [
         "Issue #3843",
         "AuditStrategy::Full",
-        "join_audit_and_se_mid(mid)",
+        "join_audit_and_se_mid(0)",
         "Soft only"
       ]
     },
