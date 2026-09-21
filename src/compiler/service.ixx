@@ -1000,6 +1000,10 @@ public:
             [this]() { this->begin_abort_ir_cache_force_fence(); });
         evaluator_.set_abort_ir_cache_force_dirty_fn(
             [this]() { this->force_ir_cache_dirty_after_abort(); });
+        // Issue #3985: Phase-5 densify success invalidates source_to_ir_map
+        // + content latch (abort path stays force_ir_cache_dirty_after_abort).
+        evaluator_.set_densify_ir_cache_map_invalid_fn(
+            [this]() { this->force_ir_cache_map_invalid_after_densify(); });
         // Issue #2730: rebind/set-body publish new source before dirty cascade.
         evaluator_.set_update_function_source_fn(
             [this](const std::string& name, const std::string& src) {
@@ -5914,6 +5918,37 @@ public:
         }
         abort_force_in_progress_.store(0, std::memory_order_release);
         aura::util::thread_fence(std::memory_order_release);
+    }
+
+    // Issue #3985: Phase-5 Moving densify success relocates FlatAST NodeIds
+    // after store_define_v2. source_to_ir_map / content_stored_this_epoch
+    // stay pre-densify unless we refuse clean-hit and partial peel.
+    // Reuse abort_map_invalid so prepare_source_to_ir_map_for_partial_
+    // fail-closes to full. Do not drop irs / do not bump abort fence /
+    // do not bump AOT table (abort densify still uses
+    // force_ir_cache_dirty_after_abort). Soft/Off: one production/Full
+    // load, no map walk. Distinguisher: should_relower_total.
+    static constexpr int kDensifyIrCacheMapInvalidIssue = 3985;
+    void force_ir_cache_map_invalid_after_densify() {
+        if (!(aura::compiler::typed_audit::production_defaults_active() ||
+              aura::compiler::typed_audit::get_strategy() ==
+                  aura::compiler::typed_audit::AuditStrategy::Full))
+            return;
+        std::size_t n = 0;
+        for (auto& [name, entry] : ir_cache_v2_) {
+            if (!entry.content_stored_this_epoch)
+                continue;
+            entry.source_to_ir_map.clear();
+            entry.abort_map_invalid = true;
+            entry.content_stored_this_epoch = false;
+            entry.dirty = true;
+            entry.mark_all_blocks_dirty();
+            finish_cascade_soa_dirty_sync_(entry);
+            ++n;
+        }
+        if (n > 0)
+            metrics_.should_relower_total.fetch_add(static_cast<std::uint64_t>(n),
+                                                    std::memory_order_relaxed);
     }
 
     // Issue #2181: hard-require SoA block↔instr dirty sync before any
@@ -13660,6 +13695,10 @@ public:
     // Issue #3069 / #3117: abort-force fence test hooks.
     void public_begin_abort_ir_cache_force_fence() { begin_abort_ir_cache_force_fence(); }
     void public_force_ir_cache_dirty_after_abort() { force_ir_cache_dirty_after_abort(); }
+    // Issue #3985: test seam for Phase-5 densify map invalidation.
+    void public_force_ir_cache_map_invalid_after_densify() {
+        force_ir_cache_map_invalid_after_densify();
+    }
     void public_set_abort_force_hold(bool on) {
         abort_force_hold_.store(on ? 1 : 0, std::memory_order_release);
     }

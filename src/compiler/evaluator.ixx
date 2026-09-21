@@ -2769,6 +2769,11 @@ public:
     void set_abort_ir_cache_force_dirty_fn(std::function<void()> fn) {
         abort_ir_cache_force_dirty_fn_ = std::move(fn);
     }
+    // Issue #3985: Phase-5 Moving densify success — IR cache map/content
+    // latch is pre-densify. CompilerService walks ir_cache_v2_ (not abort).
+    void set_densify_ir_cache_map_invalid_fn(std::function<void()> fn) {
+        densify_ir_cache_map_invalid_fn_ = std::move(fn);
+    }
     // Issue #2730: keep function_sources_ in sync with rebind/set-body.
     void
     set_update_function_source_fn(std::function<void(const std::string&, const std::string&)> fn) {
@@ -6326,6 +6331,7 @@ private:
     // CompilerService on init; null when standalone).
     std::function<void()> abort_ir_cache_begin_force_fn_ = nullptr;
     std::function<void()> abort_ir_cache_force_dirty_fn_ = nullptr;
+    std::function<void()> densify_ir_cache_map_invalid_fn_ = nullptr;
     std::function<void(const std::string&)> invalidate_function_fn_ = nullptr;
     std::function<void(aura::ast::NodeId)> define_impact_scope_fn_ = nullptr;
     std::function<void(const std::string&, const std::string&)> update_function_source_fn_ =

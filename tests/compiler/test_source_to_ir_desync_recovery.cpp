@@ -14,6 +14,7 @@
 
 #include "test_harness.hpp"
 #include "compiler/observability_metrics.h"
+#include "compiler/typed_mutation_audit.h"
 
 // Stable-func-id probe for light-link detection (#2687 AC5 pattern).
 extern "C" std::uint32_t aura_get_or_preserve_stable_func_id(const char* name, int* out_preserved);
@@ -45,6 +46,8 @@ using aura::compiler::source_to_ir_map_is_consistent;
 using aura::compiler::SourceIrLoc;
 using aura::compiler::SourceToIrDesyncRecovery;
 using aura::compiler::SourceToIrMap;
+using aura::compiler::typed_audit::apply_dev_audit_defaults;
+using aura::compiler::typed_audit::apply_production_audit_defaults;
 using aura::compiler::types::as_int;
 using aura::compiler::types::is_hash;
 using aura::compiler::types::is_int;
@@ -350,6 +353,96 @@ void ac3068_relower_recovers_or_full() {
     }
 }
 
+// ── Issue #3985: Phase-5 densify success must not clean-hit pre-densify map ──
+static void ac3985_densify_success_invalidates_map() {
+    std::println("\n--- #3985: densify success invalidates IR cache map/content latch ---");
+    const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto svc = read_file("src/compiler/service.ixx");
+    CHECK(emb.find("Issue #3985") != std::string::npos, "3985: Phase-5 cites #3985");
+    CHECK(svc.find("force_ir_cache_map_invalid_after_densify") != std::string::npos,
+          "3985: densify map-invalid helper");
+    CHECK(svc.find("kDensifyIrCacheMapInvalidIssue = 3985") != std::string::npos, "3985: stamp");
+    CHECK(svc.find("set_densify_ir_cache_map_invalid_fn") != std::string::npos,
+          "3985: CompilerService wires densify hook");
+    CHECK(svc.find("force_ir_cache_dirty_after_abort") != std::string::npos,
+          "3985 AC3: abort densify still uses abort force-dirty");
+    const auto densify_fn = svc.find("void force_ir_cache_map_invalid_after_densify()");
+    CHECK(densify_fn != std::string::npos, "3985: helper present");
+    if (densify_fn != std::string::npos) {
+        const auto win = svc.substr(densify_fn, 1600);
+        CHECK(win.find("abort_map_invalid = true") != std::string::npos,
+              "3985: reuses abort_map_invalid");
+        CHECK(win.find("content_stored_this_epoch = false") != std::string::npos,
+              "3985: clears content latch");
+        CHECK(win.find("source_to_ir_map.clear()") != std::string::npos, "3985: clears map");
+        CHECK(win.find("clear_cache_v2_for_define") == std::string::npos,
+              "3985 AC3: does not drop irs (not abort restore)");
+        CHECK(win.find("aura_aot_bump_func_table_epoch") == std::string::npos,
+              "3985: no AOT table bump");
+        CHECK(win.find("production_defaults_active()") != std::string::npos,
+              "3985 AC4: production/Full gate (Soft no map walk)");
+    }
+    CHECK(svc.find("schema-3985") == std::string::npos, "3985: no new query key");
+    CHECK(read_file("tests/compiler/test_issue_3985.cpp").empty(), "3985: no invent");
+    CHECK(read_file("docs/design/3985-densify-ir-cache-map.md").empty(), "3985: no docs/design");
+
+    apply_production_audit_defaults();
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define f3985 (lambda (x) (+ x 1))) (f3985 1)\")").has_value(),
+          "3985 AC1: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3985 AC1: eval store");
+    if (!cs.get_define_v2("f3985"))
+        (void)cs.eval("(compile:cache-define \"f3985\")");
+    const auto* e0 = cs.get_define_v2("f3985");
+    CHECK(e0 != nullptr, "3985 AC1: cache entry");
+    CHECK(e0 && e0->content_stored_this_epoch, "3985 AC1: store set content latch");
+    const auto hash = e0 ? e0->source_hash : 0;
+    CHECK(cs.lookup_define_v2("f3985", hash) == 0, "3985 AC1: clean hit after store");
+    CHECK(cs.prepare_source_to_ir_map_for_partial_for_test("f3985"),
+          "3985 AC2: partial map usable after store");
+
+    cs.public_force_ir_cache_map_invalid_after_densify();
+    const auto* e1 = cs.get_define_v2("f3985");
+    CHECK(e1 && e1->abort_map_invalid, "3985 AC1: abort_map_invalid after densify");
+    CHECK(e1 && !e1->content_stored_this_epoch, "3985 AC1: content latch cleared");
+    CHECK(e1 && e1->source_to_ir_map.empty(), "3985 AC1: map cleared");
+    CHECK(e1 && !e1->irs.empty(), "3985 AC3: irs retained (not abort drop)");
+    CHECK(cs.lookup_define_v2("f3985", hash) == 1,
+          "3985 AC1: lookup_define_v2 == 1 until next store");
+    CHECK(!cs.prepare_source_to_ir_map_for_partial_for_test("f3985"),
+          "3985 AC2: prepare_source_to_ir_map_for_partial_ false → full peel");
+
+    CHECK(cs.eval("(eval-current)").has_value(), "3985 AC5: eval-current re-stores");
+    const auto* e2 = cs.get_define_v2("f3985");
+    CHECK(e2 && e2->content_stored_this_epoch, "3985 AC5: store restored content latch");
+    CHECK(e2 && !e2->abort_map_invalid, "3985 AC5: abort_map_invalid cleared on store");
+    CHECK(cs.lookup_define_v2("f3985", e2 ? e2->source_hash : hash) == 0,
+          "3985 AC5: clean hit after store");
+    CHECK(cs.prepare_source_to_ir_map_for_partial_for_test("f3985"),
+          "3985 AC2: partial map usable after store rebuild");
+    if (e2)
+        CHECK(source_to_ir_map_is_consistent(e2->irs, e2->source_to_ir_map),
+              "3985 AC2: post-store map keys match live IR NodeIds");
+    auto r = cs.eval("(f3985 40)");
+    CHECK(r.has_value(), "3985 AC5: eval after densify-invalid + relower");
+
+    apply_dev_audit_defaults();
+    CompilerService cs_soft;
+    CHECK(cs_soft.eval("(set-code \"(define s3985 (lambda (x) x)) (s3985 1)\")").has_value(),
+          "3985 AC4: Soft set-code");
+    CHECK(cs_soft.eval("(eval-current)").has_value(), "3985 AC4: Soft eval");
+    if (!cs_soft.get_define_v2("s3985"))
+        (void)cs_soft.eval("(compile:cache-define \"s3985\")");
+    const auto* es = cs_soft.get_define_v2("s3985");
+    const auto hsoft = es ? es->source_hash : 0;
+    cs_soft.public_force_ir_cache_map_invalid_after_densify();
+    const auto* es2 = cs_soft.get_define_v2("s3985");
+    CHECK(es2 && es2->content_stored_this_epoch,
+          "3985 AC4: Soft helper is a no-op (no extra map walk)");
+    CHECK(cs_soft.lookup_define_v2("s3985", hsoft) == 0, "3985 AC4: Soft clean hit unchanged");
+    apply_dev_audit_defaults();
+}
+
 } // namespace
 
 int run_test_source_to_ir_desync_recovery() {
@@ -360,6 +453,7 @@ int run_test_source_to_ir_desync_recovery() {
     ac4_service_inject_recover();
     ac_extra_full_rebuild_fallback();
     ac3068_relower_recovers_or_full();
+    ac3985_densify_success_invalidates_map();
     std::println("\n=== results: {} passed, {} failed ===\n", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
