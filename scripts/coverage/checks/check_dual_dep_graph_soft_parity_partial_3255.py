@@ -61,7 +61,11 @@ def main() -> int:
     rel_pos = svc.find("std::size_t relower_dirty_defines_from_workspace()")
     # Window expanded after #3381/#3484 grew the peel body (caller union
     # + zero-mask fail-closed before want_partial / prepare_source_to_ir).
-    rel_win = svc[rel_pos : rel_pos + 20000] if rel_pos >= 0 else ""
+    # #3975-#3988 wave grew it again: prepare_source_to_ir_map_for_partial_
+    # now sits at +20000 (exactly the old window edge) — the want_win must
+    # span the fail-closed parity helper call (+446) through prepare
+    # (+561 after want_partial) for the ordering pin.
+    rel_win = svc[rel_pos : rel_pos + 23000] if rel_pos >= 0 else ""
     want_pos = rel_win.find("if (want_partial && dirty_n > 0)")
     want_win = rel_win[want_pos : want_pos + 2500] if want_pos >= 0 else ""
 
