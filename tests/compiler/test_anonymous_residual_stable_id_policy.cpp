@@ -2458,7 +2458,10 @@ static void ac2978_1_sync_covered_named() {
     reg.on_force_jit_for_reason(AotReloadFail::Env);
     const auto env_bit = aot_reload_fail_to_force_jit_mask(AotReloadFail::Env);
     // Issue #3445: coverage is Agent opt-in reason bits, not candidate count.
+    // Issue #3976: Agent coverage note clears the define side set; re-note
+    // the emitted sid so covered remount is define-precise (idle is skip).
     reg.note_reemit_success_coverage(env_bit);
+    reg.note_relower_success_define(1);
     const auto ok0 = aura_reemit_success_sync_covered_ok_total_v_read();
     // Pipeline success restamps override then runs the sync walk.
     reg.on_reemit_pipeline_call(/*candidates=*/1, /*successes=*/1);
@@ -2521,6 +2524,10 @@ static void ac2978_4_cap_overflow_residual() {
     aura_test_set_closure_stable_func_id(b, 1);
     aura_closure_set_must_deopt(a, 1);
     aura_closure_set_must_deopt(b, 1);
+    // Issue #3976: covered remount walks only the define side set.
+    auto& reg = aura::compiler::hot_update_registry();
+    reg.note_reemit_success_coverage(0);
+    reg.note_relower_success_define(1);
     const auto hit0 = aura_reemit_success_sync_covered_cap_hit_total_v_read();
     const auto env = aot_reload_fail_to_force_jit_mask(AotReloadFail::Env);
     aura_sync_remount_covered_named_live_closures(env, /*cap=*/1);
@@ -2970,6 +2977,77 @@ static void ac3607_6_source_and_linter() {
           "AC6: no invent test per #81934/#81967");
 }
 
+// ── Issue #3976: idle define-side skips covered named FIFO remount ──
+static void ac3976_idle_skips_named_fifo() {
+    std::println("\n--- #3976 AC2: define-side idle does not walk the full named FIFO ---");
+    auto& ctr = aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+    const auto save = ctr.production_defaults_active.load(std::memory_order_relaxed);
+    ctr.production_defaults_active.store(1, std::memory_order_relaxed);
+    auto& reg = aura::compiler::hot_update_registry();
+    reg.on_reload_success();
+    aura_test_reset_reemit_success_sync_covered_state();
+    aura_test_set_reemit_success_sync_covered_cap(64);
+    const auto named = aura_alloc_closure(/*func_id=*/0);
+    const auto peer = aura_alloc_closure(/*func_id=*/0);
+    CHECK(named >= 0 && peer >= 0, "3976 AC2: alloc named/peer");
+    aura_test_set_closure_stable_func_id(named, 1);
+    aura_test_set_closure_stable_func_id(peer, 2);
+    aura_closure_set_must_deopt(named, 1);
+    aura_closure_set_must_deopt(peer, 1);
+    reg.note_relower_success_define(1);
+    CHECK(reg.relower_success_define_active(), "3976 AC2: define side set active before note");
+    const auto env = aot_reload_fail_to_force_jit_mask(AotReloadFail::Env);
+    // Agent coverage note clears the precise set — the residual hole.
+    reg.note_reemit_success_coverage(env);
+    CHECK(!reg.relower_success_define_active(), "3976 AC2: coverage note idles define side set");
+    const auto ok0 = aura_reemit_success_sync_covered_ok_total_v_read();
+    const auto hit0 = aura_reemit_success_sync_covered_cap_hit_total_v_read();
+    aura_sync_remount_covered_named_live_closures(env, /*cap=*/64);
+    CHECK(aura_reemit_success_sync_covered_ok_total_v_read() == ok0,
+          "3976 AC2: idle covered remount does not advance ok");
+    CHECK(aura_reemit_success_sync_covered_cap_hit_total_v_read() == hit0,
+          "3976 AC2: idle covered remount does not cap-hit FIFO");
+    CHECK(aura_closure_get_must_deopt(named) == 1, "3976 AC2: named stays MustDeopt");
+    CHECK(aura_closure_get_must_deopt(peer) == 1, "3976 AC2: uncovered peer stays MustDeopt");
+    const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
+    const auto fn = rt.find("aura_sync_remount_covered_named_live_closures");
+    CHECK(fn != std::string::npos, "3976 AC2: covered remount present");
+    const auto win = (fn != std::string::npos) ? rt.substr(fn, 2200) : std::string{};
+    CHECK(win.find("Issue #3976") != std::string::npos, "3976 AC2: cites #3976");
+    const auto idle = win.find("relower_success_define_active() == 0");
+    const auto lock = win.find("g_closure_table_mtx");
+    CHECK(idle != std::string::npos && lock != std::string::npos && idle < lock,
+          "3976 AC2: idle skip before table lock");
+    ac3607_restore(save);
+}
+
+static void ac3976_define_active_still_heals() {
+    std::println("\n--- #3976 AC2b: define-active covered remount still heals recorded sid ---");
+    auto& ctr = aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+    const auto save = ctr.production_defaults_active.load(std::memory_order_relaxed);
+    ctr.production_defaults_active.store(1, std::memory_order_relaxed);
+    auto& reg = aura::compiler::hot_update_registry();
+    reg.on_reload_success();
+    reg.note_reemit_success_coverage(0);
+    aura_test_reset_reemit_success_sync_covered_state();
+    aura_test_set_reemit_success_sync_covered_cap(64);
+    const auto d = aura_alloc_closure(/*func_id=*/0);
+    const auto s = aura_alloc_closure(/*func_id=*/0);
+    CHECK(d >= 0 && s >= 0, "3976 AC2b: alloc D/S");
+    aura_test_set_closure_stable_func_id(d, 70);
+    aura_test_set_closure_stable_func_id(s, 65);
+    aura_closure_set_must_deopt(d, 1);
+    aura_closure_set_must_deopt(s, 1);
+    reg.note_relower_success_define(70);
+    const auto env = aot_reload_fail_to_force_jit_mask(AotReloadFail::Env);
+    const auto ok0 = aura_reemit_success_sync_covered_ok_total_v_read();
+    aura_sync_remount_covered_named_live_closures(env, /*cap=*/64);
+    CHECK(aura_reemit_success_sync_covered_ok_total_v_read() > ok0, "3976 AC2b: covered walk ran");
+    CHECK(aura_closure_get_must_deopt(d) == 0, "3976 AC2b: recorded define healed");
+    CHECK(aura_closure_get_must_deopt(s) == 1, "3976 AC2b: unrecorded stays MustDeopt");
+    ac3607_restore(save);
+}
+
 int run_test_anonymous_residual_stable_id_policy() {
     std::println(
         "=== Issue #2605+#2637+#2638: anonymous / residual sid=0 policy + sync remount + cap ===");
@@ -3405,6 +3483,9 @@ int run_test_anonymous_residual_stable_id_policy() {
     ac3607_4_fail_close_unrecorded();
     ac3607_5_idle_zero_extra();
     ac3607_6_source_and_linter();
+    std::println("\n=== Issue #3976: idle define-side skips covered named FIFO remount ===");
+    ac3976_idle_skips_named_fifo();
+    ac3976_define_active_still_heals();
 
     std::println("\n=== "
                  "#2605+#2637+#2638+#2666+#2691+#2714+#2850+#2893+#2928+#2977+#2978+#2980+#3024+#"

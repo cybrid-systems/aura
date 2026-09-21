@@ -494,7 +494,50 @@ int run_test_hot_update_relower_success_coverage() {
         reg.reset_force_jit_repromote_for_test();
     }
 
-    std::println("\n=== Issue #3383 + #3229 + #3505 + #3893 AC tests done ===");
+    // ── Issue #3976: idle define-side skips covered named FIFO remount ──
+    {
+        std::println("\n--- #3976 AC2: covered remount idle skip (source-cite) ---");
+        const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
+        const auto fn = rt.find("aura_sync_remount_covered_named_live_closures");
+        CHECK(fn != std::string::npos, "3976 AC2: covered remount present");
+        const auto win = (fn != std::string::npos) ? rt.substr(fn, 2200) : std::string{};
+        CHECK(win.find("Issue #3976") != std::string::npos, "3976 AC2: cites #3976");
+        const auto idle = win.find("relower_success_define_active() == 0");
+        const auto lock = win.find("g_closure_table_mtx");
+        CHECK(idle != std::string::npos && lock != std::string::npos && idle < lock,
+              "3976 AC2: idle skip before table lock");
+        CHECK(win.find("every named closure is a FIFO candidate") == std::string::npos,
+              "3976 AC2: idle is not full named FIFO");
+
+        std::println("\n--- #3976 AC4: Soft wholesale re-promote unchanged ---");
+        auto& reg = aura::compiler::hot_update_registry();
+        using aura::compiler::typed_audit::apply_dev_audit_defaults;
+        apply_dev_audit_defaults();
+        reg.on_reload_success();
+        reg.reset_force_jit_repromote_for_test();
+        CHECK(!reg.relower_success_define_active(), "3976 AC4: Soft define side idle");
+        const auto cpp = read_file("src/compiler/hot_update_registry.cpp");
+        CHECK(cpp.find("aura_production_defaults_active_probe() == 0") != std::string::npos,
+              "3976 AC4: Soft heal stamp still skips");
+        CHECK(cpp.find("Issue #3976") != std::string::npos,
+              "3976 AC4: coverage-note idle skip cited");
+
+        std::println("\n--- #3976 AC5: no invent / no new query key ---");
+        CHECK(read_file("tests/compiler/test_issue_3976.cpp").empty(), "3976 AC5: no test_issue");
+        CHECK(read_file("tests/issues/test_issue_3976.cpp").empty(), "3976 AC5: no issues invent");
+        CHECK(read_file("docs/design/3976-idle-covered-fifo.md").empty(),
+              "3976 AC5: no docs/design");
+        CHECK(read_file("src/compiler/evaluator_primitives_obs_eval.cpp").find("schema-3976") ==
+                  std::string::npos,
+              "3976 AC5: no new query key");
+        CHECK(read_file("src/compiler/evaluator_primitives_mutate.cpp").find("schema-3976") ==
+                  std::string::npos,
+              "3976 AC5: no mutate query key");
+        reg.on_reload_success();
+        reg.reset_force_jit_repromote_for_test();
+    }
+
+    std::println("\n=== Issue #3383 + #3229 + #3505 + #3893 + #3976 AC tests done ===");
     return g_failed == 0 ? 0 : 1;
 }
 

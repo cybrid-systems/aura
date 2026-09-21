@@ -1083,6 +1083,8 @@ void HotUpdateRegistry::maybe_stamp_heal_reason_last_success(std::uint64_t demot
     // proof. Residual uncovered = force & ~last_success stays force-JIT
     // until Agent coverage note / ResidualForceHeal age belt. Soft
     // wholesale re-promote unchanged.
+    // Issue #3976: covered remount is define-side only (idle skips the
+    // named FIFO).
     const auto prev = last_reemit_success_region_mask_.load(std::memory_order_relaxed);
     const auto next = prev | bit;
     if (next == prev)
@@ -1192,6 +1194,8 @@ void HotUpdateRegistry::note_reemit_success_coverage(
     stamp_eval_last_success(force_owner_tls(), covered_force_jit_bits);
     // Issue #3229: pipeline coverage is region-complete — drop hashed-name
     // define-id granularity so remount / re-promote stay #2978/#2895.
+    // Issue #3976: clearing the precise set idles covered remount (not
+    // a full named FIFO); residual tick + call-time MustDeopt own leftover.
     clear_relower_success_defines();
 }
 

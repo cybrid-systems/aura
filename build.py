@@ -13426,10 +13426,10 @@ def cmd_remount_reason_domain_3607_coverage():
     a sid bitmap — only_covered healed the sid-modulo set, not the defines.
 
     The covered walk gates on the reason word but filters per-closure by the
-    #3229 define side set (full named FIFO fallback when idle). The residual
-    tick prefer pass prefers the same define set; side set idle → FIFO like
-    pre-#2977. The sid%64 helper is deleted. No docs/design/3607-*, no
-    tests/**/test_issue_3607.cpp.
+    #3229 define side set. Issue #3976: idle define-side skips covered remount
+    (not a full named FIFO). The residual tick prefer pass prefers the same
+    define set; side set idle → FIFO like pre-#2977. The sid%64 helper is
+    deleted. No docs/design/3607-*, no tests/**/test_issue_3607.cpp.
     """
     print(f"{B}=== remount reason domain (#3607) ==={N}")
     script = ROOT / "scripts" / "check_remount_reason_domain_3607.py"

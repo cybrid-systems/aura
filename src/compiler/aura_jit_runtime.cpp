@@ -3052,9 +3052,11 @@ extern "C" void aura_residual_remount_note_boundary_exit() {
 // via aot_reload_fail_to_force_jit_mask); ANDing them against 1<<(sid%64)
 // healed an accidental sid-modulo set instead of the defines that actually
 // re-emitted (sid%64 was neither necessary nor sufficient). Per-closure
-// coverage is the #3229 define side set (relower_success_covers_define);
-// when that side set is idle there is no precise record, so the covered and
-// prefer walks fall back to the full named FIFO (budget/cap still bounded).
+// coverage is the #3229 define side set (relower_success_covers_define).
+// Residual prefer: idle side set → no prefer pass; FIFO like pre-#2977
+// (budget still caps — the full named FIFO residual tick). Issue #3976:
+// covered remount does NOT treat idle as "every named sid is covered";
+// skip that walk; this residual tick + call-time MustDeopt own leftover.
 extern "C" void aura_residual_live_closure_remount_tick(std::uint64_t budget) {
     // AC4: budget=0 → zero walk (caller may still have done one relaxed load).
     if (budget == 0) {
@@ -3230,14 +3232,14 @@ extern "C" void aura_residual_live_closure_remount_tick(std::uint64_t budget) {
 // After a clean reemit success, remount named (sid != 0) closures the
 // success covered. Issue #3607: last_reemit_success is a #3445
 // reason-group word — it gates the walk (mask != 0), it is NOT a sid
-// bitmap. Per-closure coverage is the #3229 define side set; idle side
-// set falls back to the full named FIFO walk (cap-bounded, same heal
-// the #2602 named walk performs on every trusted reemit).
+// bitmap. Per-closure coverage is the #3229 define side set. Issue
+// #3976: idle side set skips this walk (do not treat every named sid
+// as covered); residual tick + call-time MustDeopt own leftover.
 // Budget-exempt vs residual (#2928); cap N so a huge named table
 // cannot stall the pipeline. Overflow stays MustDeopt and residual
 // still rotates them (AC4). Anonymous / pure-anon stay on residual
 // / #2950 (AC3). Issue #3060 does not promote sid==0 into this walk.
-// Soft / mask==0 / cap==0 → zero walk (AC2).
+// Soft / mask==0 / cap==0 / define-idle → zero walk (AC2 / #3976).
 // On remount ok: clear MustDeopt + restamp (same heal as #2928)
 // so the next call does not force-deopt.
 
@@ -3325,6 +3327,10 @@ extern "C" void aura_sync_remount_covered_named_live_closures(std::uint64_t mask
         }
     }
 
+    // Issue #3976: idle define-side skips the named FIFO (not covered).
+    if (aura_hot_update_relower_success_define_active() == 0)
+        return;
+
     std::uint64_t ok = 0;
     std::uint64_t fail = 0;
     std::uint64_t leftover = 0;
@@ -3358,14 +3364,11 @@ extern "C" void aura_sync_remount_covered_named_live_closures(std::uint64_t mask
             const std::uint32_t sid = g_closure_stable_func_ids[cid];
             if (sid == 0)
                 continue; // AC3: anon / pure-anon stay residual / #2950
-            // Issue #3229 / #3607: mask only gates "a clean success
-            // happened"; it is NOT a sid bitmap. Define side set active →
-            // only defines that re-emitted count as covered (fail-close:
-            // unrecorded id stays residual). Side set idle → no precise
-            // record; every named closure is a FIFO candidate (full named
-            // walk, cap-bounded).
-            if (aura_hot_update_relower_success_define_active() != 0 &&
-                aura_hot_update_relower_success_covers_define(sid) == 0)
+            // Issue #3229 / #3607 / #3976: mask only gates "a clean
+            // success happened"; it is NOT a sid bitmap. Idle returned
+            // above. Remount iff covers_define (fail-close: unrecorded
+            // id stays residual).
+            if (aura_hot_update_relower_success_covers_define(sid) == 0)
                 continue;
             if (used >= cap) {
                 ++leftover; // AC4: overflow → residual still rotates
