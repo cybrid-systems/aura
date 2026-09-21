@@ -1506,6 +1506,10 @@ extern "C" void aura_evaluator_force_unlock_outermost_holder(std::uint64_t fiber
 // + urgent inbody poll on the victim Fiber. Does not unlock.
 extern "C" int aura_fiber_request_urgent_inbody_poll(std::uint64_t fiber_id) noexcept;
 extern "C" void aura_evaluator_force_degrade_outermost_holder(std::uint64_t fiber_id) noexcept;
+// Issue #3988: opcode-stride / JIT Jump poll. Soft: 0. Production:
+// honors is_force_safepoint_requested like check_gc_safepoint, then
+// force_release_hold_budget_inbody. Weak 0 in fiber_bridge / stubs.
+extern "C" int aura_jit_poll_hold_budget_safepoint() noexcept;
 
 // Issue #213 Cycle 3: function pointers that the Evaluator
 // registers at startup, to avoid the circular include between

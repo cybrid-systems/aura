@@ -107,6 +107,10 @@ extern "C" __attribute__((weak)) int
 aura_evaluator_try_hold_budget_fail_closed_at_safepoint() noexcept {
     return 0;
 }
+// Issue #3988: light-link opcode-stride poll is a no-op.
+extern "C" __attribute__((weak)) int aura_jit_poll_hold_budget_safepoint() noexcept {
+    return 0;
+}
 
 // Issue #3948: light-link native densify-stale refuse is a no-op (TW
 // helper lives in evaluator_eval_flat.cpp).

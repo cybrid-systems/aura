@@ -15,6 +15,7 @@
 
 #include "test_harness.hpp"
 
+#include "compiler/mutation_hold_budget.h"
 #include "compiler/typed_mutation_audit.h"
 #include "core/densify_consistency_report.h"
 #include "core/gc_hooks.h"
@@ -1165,6 +1166,89 @@ static void ac3850_4_soft_leftover_observe_wiring() {
           "3850 AC4: linter present");
 }
 
+// Issue #3988: production no-edge body + 2×SLO / force-safepoint must
+// retire workspace_mtx_ via opcode-stride / JIT Jump poll (existing
+// check_gc_safepoint consume). Soft: peek-only. aura_mutation_hold_no_edge
+// _still_held must not stay 1 after the bound. No new query key.
+extern "C" int aura_jit_poll_hold_budget_safepoint() noexcept;
+extern "C" int aura_mutation_hold_no_edge_still_held(void) noexcept;
+
+static void ac3988_no_edge_opcode_poll() {
+    std::println("\n--- #3988: opcode-stride poll force-releases hold ---");
+    const auto ir = read_file("src/compiler/ir_executor_impl.cpp");
+    const auto jit = read_file("src/compiler/aura_jit.cpp");
+    const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
+    const auto efm = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+    const auto mh = read_file("src/compiler/mutation_hold_budget.h");
+    CHECK(mh.find("kMutationHoldBudgetNoEdgeOpcodePollIssue") != std::string::npos, "3988: stamp");
+    CHECK(mh.find("kHoldBudgetOpcodePollStride") != std::string::npos, "3988: stride");
+    CHECK(efm.find("aura_jit_poll_hold_budget_safepoint") != std::string::npos, "3988: poll ABI");
+    CHECK(efm.find("is_force_safepoint_requested()") != std::string::npos,
+          "3988: honors force-safepoint like check_gc_safepoint");
+    CHECK(efm.find("force_release_hold_budget_inbody") != std::string::npos,
+          "3988: existing inbody release");
+    CHECK(ir.find("Issue #3988") != std::string::npos, "3988: IR opcode loop cites");
+    CHECK(ir.find("kHoldBudgetOpcodePollStride") != std::string::npos, "3988: IR stride");
+    CHECK(jit.find("Issue #3988") != std::string::npos, "3988: JIT Jump cites");
+    CHECK(jit.find("aura_jit_poll_hold_budget_safepoint") != std::string::npos,
+          "3988: JIT registers poll");
+    CHECK(rt.find("Issue #3988") != std::string::npos, "3988: native dispatch cites");
+    CHECK(rt.find("schema-3988") == std::string::npos, "3988: no new query key");
+    CHECK(read_file("tests/serve/test_issue_3988.cpp").empty(), "3988: no invent");
+    CHECK(read_file("docs/design/3988-no-edge-opcode-poll.md").empty(), "3988: no docs/design");
+
+    apply_production_audit_defaults();
+    CHECK(aura::compiler::mutation_hold_budget_reject_enabled(), "3988: production reject");
+    aura::compiler::clear_mutation_hold_budget_forced_unlock_for_test();
+    CompilerService cs;
+    Evaluator::set_query_evaluator(&cs.evaluator());
+    std::atomic<int> ran{0};
+    std::atomic<int> held_before_end{-1};
+    std::atomic<int> depth_before_end{-1};
+    std::atomic<int> still_held_after{-1};
+    std::atomic<int> poll_fired{0};
+    Scheduler sched(2);
+    sched.spawn([&]() {
+        bool ok = true;
+        {
+            Evaluator::MutationBoundaryGuard g(cs.evaluator(), &ok);
+            auto* f = aura::serve::g_current_fiber;
+            CHECK(f != nullptr, "3988: fiber current");
+            f->request_hold_budget_cancel();
+            f->request_force_safepoint();
+            f->inject_synthetic_mutation_boundary_yield();
+            // Simulate a no-edge native/IR loop: N opcode polls, then release.
+            for (std::uint32_t i = 0; i < aura::compiler::kHoldBudgetOpcodePollStride; ++i) {
+                if (aura_jit_poll_hold_budget_safepoint() != 0)
+                    poll_fired.store(1, std::memory_order_relaxed);
+            }
+            held_before_end.store(aura::compiler::mutation_hold_live_snapshot().held ? 1 : 0,
+                                  std::memory_order_relaxed);
+            depth_before_end.store(
+                cs.evaluator().mutation_boundary_depth_slot_value(/*fiber_id=*/0),
+                std::memory_order_relaxed);
+            still_held_after.store(aura_mutation_hold_no_edge_still_held(),
+                                   std::memory_order_relaxed);
+            ran.store(1, std::memory_order_relaxed);
+        }
+    });
+    std::thread io([&]() { sched.run(); });
+    for (int i = 0; i < 200 && ran.load() == 0; ++i)
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    sched.stop();
+    io.join();
+    CHECK(ran.load() == 1, "3988: fiber body ran");
+    CHECK(held_before_end.load() == 0, "3988: lock released before Guard end");
+    CHECK(depth_before_end.load() == 0, "3988: depth 0 before Guard end");
+    CHECK(still_held_after.load() == 0, "3988: aura_mutation_hold_no_edge_still_held not sticky");
+    CHECK(poll_fired.load() == 1, "3988: opcode poll force-released");
+    Evaluator::set_query_evaluator(nullptr);
+    apply_dev_audit_defaults();
+
+    apply_dev_audit_defaults();
+    CHECK(aura_jit_poll_hold_budget_safepoint() == 0, "3988: Soft peek-only");
+}
+
 int run_test_steal_complete_gc_defer() {
     std::println("=== Issue #2203: steal-complete single entry (clear_gc_defer + metric) ===");
     std::println("=== Issue #2314: residual defer clear interlock (share helper, idempotent) ===");
@@ -1210,6 +1294,8 @@ int run_test_steal_complete_gc_defer() {
     ac3850_2_production_clears_cp_before_defer();
     ac3850_3_panic_residual_ok_keys_off_has_cp();
     ac3850_4_soft_leftover_observe_wiring();
+    std::println("\n=== Issue #3988: no-edge opcode-stride force-safepoint poll ===");
+    ac3988_no_edge_opcode_poll();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

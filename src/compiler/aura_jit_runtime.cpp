@@ -3943,6 +3943,8 @@ int64_t aura_lookup_fn_by_name(const char* name, int64_t* out_local_count, int64
 // Issue #3951: owner-thread hold-budget fail-closed (strong in
 // evaluator_fiber_mutation.cpp; weak 0 in fiber_bridge / stubs).
 extern "C" int aura_evaluator_try_hold_budget_fail_closed_at_safepoint() noexcept;
+// Issue #3988: opcode-stride / force-safepoint poll (same TU as 3951).
+extern "C" int aura_jit_poll_hold_budget_safepoint() noexcept;
 
 // Issue #3946: RAII token for the #3210 / #3857 temp-canary inventory.
 // Held around the native invoke inside aura_closure_dispatch_native_checked
@@ -4343,6 +4345,11 @@ extern "C" int64_t aura_closure_dispatch_native_checked(int64_t closure_id, int6
     // — they do not unlock unique_lock from a foreign thread. Soft:
     // helper returns 0 after reject_enabled.
     (void)aura_evaluator_try_hold_budget_fail_closed_at_safepoint();
+    // Issue #3988: honor is_force_safepoint_requested the same way
+    // check_gc_safepoint does (cancel peek + force-safepoint consume +
+    // inbody force-release). Native entry is one cooperative edge;
+    // JIT Jump / IR opcode stride poll in-loop. Soft: helper 0.
+    (void)aura_jit_poll_hold_budget_safepoint();
 
     // ── Inline cache check (Issue #1707: generation double-check) ──
     int cache_idx = static_cast<int>(closure_id % CLOSURE_CACHE_SIZE);

@@ -1552,6 +1552,26 @@ extern "C" int aura_evaluator_try_hold_budget_fail_closed_at_safepoint() noexcep
     return 1;
 }
 
+// Issue #3988: production opcode-stride poll for JIT Jump / IR interpreter
+// / native dispatch. Honors is_force_safepoint_requested the same way
+// Fiber::check_gc_safepoint does, then force_release_hold_budget_inbody
+// (existing ABI). Soft/Off: one reject_enabled load, return 0. Happy
+// path (no force-safepoint / cancel / urgent): a few peeks, no unlock.
+extern "C" int aura_jit_poll_hold_budget_safepoint() noexcept {
+    using namespace aura::compiler;
+    if (!mutation_hold_budget_reject_enabled())
+        return 0;
+    auto* cur = aura::serve::g_current_fiber;
+    if (!cur)
+        return 0;
+    if (!cur->is_force_safepoint_requested() && !cur->peek_hold_budget_cancel() &&
+        !cur->peek_urgent_inbody_poll())
+        return 0;
+    const bool held = aura_evaluator_mutation_boundary_depth() > 0;
+    aura::serve::Fiber::check_gc_safepoint();
+    return (held && aura_evaluator_mutation_boundary_depth() == 0) ? 1 : 0;
+}
+
 // Issue #2720: P0 holder-degrade path (#2701 residual). #2701 only rejected
 // new admits when live longest outermost hold exceeded budget — the holder
 // itself kept owning workspace_mtx_ exclusive + GcDeferReason::MutationHold,
