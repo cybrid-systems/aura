@@ -3938,14 +3938,67 @@ extern "C" int aura_evaluator_try_hold_budget_fail_closed_at_safepoint() noexcep
 // Held around the native invoke inside aura_closure_dispatch_native_checked
 // so auto-arm / RegionExclusive live_compact(Moving) soft-gates while the
 // call is live. Soft / !Moving: note is a no-op. Not a second pin registry.
+// Issue #3973: the stack token is the #3857 entry-gate PRESENCE BIT only —
+// it is never a this_window_remap key, so as the sole #3055 stale evidence
+// it left a native that raced past the entry gate holding densify-old env
+// on a green window (late drain + stale scan had nothing real to see →
+// UAF). The ctor now also notes THIS invoke's arena-tracked live ptrs: the
+// closure's captured env cell values — the same int64 bit patterns
+// remount_capture_cells_via_densify_ (#2297) rewrites and the #3972 remap
+// arm consults, same "non-pointer values never hit the map" ambiguity.
+// Same shape as TW apply_closure (cl_copy.flat / cl_copy.pool noted via
+// TemporaryMovingLivePtrCanary). Slots XOR canary (#3368): JIT env cells
+// are NOT in the #3647 slot family (only evaluator-side cl.flat / cl.pool
+// / modules_ are), so the cell values have no rewrite cover — the canary
+// is their only observe channel and cannot false-positive a successful
+// rewrite. Cells are stable for the token's lifetime: capture / remount /
+// free all need the exclusive table lock and the dtor runs while this
+// frame still holds the shared lock, so the dtor re-walks the same cells
+// and unnotes exactly what the ctor noted (no snapshot allocation).
 namespace {
     struct NativeMovingCanary {
         void* p;
-        NativeMovingCanary() noexcept
-            : p(this) {
-            aura_note_temporary_moving_live_ptr(p);
+        size_t cid;
+        explicit NativeMovingCanary(size_t cid_) noexcept
+            : p(this)
+            , cid(cid_) {
+            aura_note_temporary_moving_live_ptr(p); // #3857 entry-gate presence bit
+            walk_env_cells_(/*note=*/true);
         }
-        ~NativeMovingCanary() noexcept { aura_unnote_temporary_moving_live_ptr(p); }
+        ~NativeMovingCanary() noexcept {
+            aura_unnote_temporary_moving_live_ptr(p);
+            walk_env_cells_(/*note=*/false); // exact mirror of the ctor notes
+        }
+        void walk_env_cells_(bool note) noexcept {
+            const bool is_arena = cid < g_closure_is_arena.size() && g_closure_is_arena[cid] != 0;
+            if (is_arena && cid < g_arena_closure_envs.size() && g_arena_closure_envs[cid]) {
+                // Issue #1302: bound by the recorded freeable-env size.
+                const size_t asz =
+                    cid < g_arena_closure_env_sizes.size() ? g_arena_closure_env_sizes[cid] : 0;
+                const int64_t* env = g_arena_closure_envs[cid];
+                for (size_t i = 0; i < asz; ++i) {
+                    if (env[i] == 0)
+                        continue;
+                    void* v = reinterpret_cast<void*>(static_cast<std::uintptr_t>(env[i]));
+                    if (note)
+                        aura_note_temporary_moving_live_ptr(v);
+                    else
+                        aura_unnote_temporary_moving_live_ptr(v);
+                }
+                return;
+            }
+            if (cid < g_closure_envs.size()) {
+                for (const int64_t cell : g_closure_envs[cid]) {
+                    if (cell == 0)
+                        continue;
+                    void* v = reinterpret_cast<void*>(static_cast<std::uintptr_t>(cell));
+                    if (note)
+                        aura_note_temporary_moving_live_ptr(v);
+                    else
+                        aura_unnote_temporary_moving_live_ptr(v);
+                }
+            }
+        }
     };
 } // namespace
 
@@ -4272,7 +4325,7 @@ extern "C" int64_t aura_closure_dispatch_native_checked(int64_t closure_id, int6
     // is this frame — same #3857 inventory as apply_closure. Soft / !Moving:
     // note is a no-op. Constructed after refuse so source-cite windows for
     // #2472 / #3247 stay on the prologue.
-    NativeMovingCanary native_moving_canary;
+    NativeMovingCanary native_moving_canary{static_cast<size_t>(closure_id)};
     (void)native_moving_canary;
     // Issue #3951: owner-thread cooperative edge. Hold-budget cancel
     // armed on this fiber can force-release here (same helper as

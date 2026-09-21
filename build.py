@@ -7802,6 +7802,24 @@ def cmd_lint():
     if r != 0:
         fail("Issue #3972 JIT densify remap arm linter failed — run python3 scripts/check_jit_densify_remap_3972.py")
         return r
+    # Issue #3973 (#3946 residual): NativeMovingCanary noted only its stack
+    # token — never a this_window_remap key, so a native that raced past the
+    # #3857 entry gate kept a green window over densify-old env (UAF). Gate
+    # pins: the canary notes this invoke's env cell values (both storages,
+    # #1302-bounded), the dtor unnotes exactly what the ctor noted, env
+    # cells stay out of the slot family (#3368 slot-XOR-canary), the stack
+    # token remains the entry-gate presence bit, the arena entry gate is
+    # untouched, and the walk is not keyed on JIT table epoch.
+    nmce3973_script = ROOT / "scripts" / "check_native_moving_canary_env_note_3973.py"
+    if not nmce3973_script.exists():
+        fail(f"missing {nmce3973_script}")
+        return 1
+    r = run([sys.executable, str(nmce3973_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3973 native moving canary env-note linter failed — run python3 scripts/check_native_moving_canary_env_note_3973.py"
+        )
+        return r
     # Issue #3679 (#2003/#2340 residual): compact_sweep ran the EnvFrame
     # Guard + densify ownership scan at ENTRY while the helper comment
     # claimed post-remap-table ordering — the scan walked pre-compact
