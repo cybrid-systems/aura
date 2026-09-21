@@ -135,3 +135,4 @@ check_soft_revoke_epoch_honest_3902.py
 check_correlate_tenant_passthrough_3903.py
 check_mse_ta_posture_3904.py
 check_orch_residuals_3941.py
+check_jit_densify_remap_3972.py
