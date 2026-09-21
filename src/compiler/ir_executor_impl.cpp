@@ -156,7 +156,8 @@ static bool linear_state_allows_op(std::uint8_t state, LinearOpKind op) noexcept
 static bool enforce_linear_ownership_state(std::uint8_t state, LinearOpKind op,
                                            std::uint32_t provenance_id = 0,
                                            std::uint64_t mutation_id = 0,
-                                           CompilerMetrics* metrics = nullptr) noexcept {
+                                           CompilerMetrics* metrics = nullptr,
+                                           Evaluator* ev = nullptr) noexcept {
     if (!linear_state_allows_op(state, op))
         return false;
     // Issue #2026: Moved is never a valid live state for any op (double-drop
@@ -171,6 +172,7 @@ static bool enforce_linear_ownership_state(std::uint8_t state, LinearOpKind op,
     // !ok forces dirty-root revalidate (#2964 / #3006).
     // Issue #3063: steal/densify restamp advances invalidate_gen first so
     // this try_skip cannot stay true across a concurrent success restamp.
+    // Issue #3982: elision-true path stays zero extra loads (no Evaluator).
     if ((op == LinearOpKind::Move || op == LinearOpKind::Drop) &&
         aura::compiler::typed_audit::linear_move_drop_elision_ok()) {
         return true;
@@ -189,17 +191,45 @@ static bool enforce_linear_ownership_state(std::uint8_t state, LinearOpKind op,
     // booleans in scope.
     const bool require_strict_signal = aura::core::provenance::linear_enforce_mode() ==
                                        aura::core::provenance::LinearEnforceMode::Strict;
-    const bool require = linear_enforce_require_complete_effective(
+    bool require = linear_enforce_require_complete_effective(
         /*production_defaults=*/require_strict_signal,
         /*fiber_boundary_hold=*/aura::core::provenance::linear_enforce_boundary_strict_active(),
         /*env_force_strict=*/false);
-    const auto r =
-        validate_linear_provenance(state, /*node_id=*/0, provenance_id, mutation_id,
-                                   /*frame_version=*/0, /*current_version=*/0,
-                                   /*bridge_epoch=*/0, /*current_bridge_epoch=*/0, require);
-    if (!r.ok && require && metrics) {
+    // Issue #3982: pass live EnvFrame/bridge from the executing Evaluator
+    // (same pair IRClosure dual-check already uses). 0/0 only when no
+    // Evaluator is bound — then production/Full require_complete refuses
+    // rather than skipping the version/bridge arms.
+    std::uint64_t frame_ver = 0;
+    std::uint64_t cur_ver = 0;
+    std::uint64_t stamp_br = 0;
+    std::uint64_t cur_br = 0;
+    const bool prod = aura::compiler::typed_audit::production_defaults_active() ||
+                      aura::compiler::typed_audit::get_strategy() ==
+                          aura::compiler::typed_audit::AuditStrategy::Full;
+    if (ev) {
+        cur_ver = ev->defuse_version();
+        cur_br = ev->current_bridge_epoch();
+        frame_ver = cur_ver;
+        stamp_br = cur_br;
+        if (prod) {
+            const auto inv = aura::compiler::typed_audit::g_rehydrate_miss_invalidate_gen.load(
+                std::memory_order_acquire);
+            const auto bind = aura::compiler::typed_audit::g_rehydrate_miss_green_bind_gen.load(
+                std::memory_order_acquire);
+            if (bind != 0 && inv > bind) {
+                frame_ver = bind;
+                cur_ver = inv;
+            }
+        }
+    } else if (prod) {
+        require = true;
+    }
+    const auto r = validate_linear_provenance(state, /*node_id=*/0, provenance_id, mutation_id,
+                                              frame_ver, cur_ver, stamp_br, cur_br, require);
+    if (!r.ok && metrics && (require || prod)) {
         // Strict hard-fail correlates with force-rollback counter under
-        // Full audit (and remains useful under Sampled as a linear fail).
+        // Full audit. Issue #3982: production remount gen overlay also
+        // bumps when process linear-enforce is Soft (AURA_SANDBOX=off).
         metrics->linear_post_mutate_force_rollback_total.fetch_add(1, std::memory_order_relaxed);
     }
     return r.ok;
@@ -1815,8 +1845,10 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                     // Wrap value in a linear container with refcount=1
                     if (instr.linear_ownership_state != 0) {
                         record_linear_runtime_safety(
-                            metrics_, !enforce_linear_ownership_state(instr.linear_ownership_state,
-                                                                      LinearOpKind::Wrap));
+                            metrics_,
+                            !enforce_linear_ownership_state(instr.linear_ownership_state,
+                                                            LinearOpKind::Wrap, instr.provenance, 0,
+                                                            context_.metrics, context_.evaluator));
                     }
                     auto inner = locals[ops[1]];
                     auto lin_id = next_linear_id_++;
@@ -1845,7 +1877,7 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                     // State-machine gate before heap check (Issue #1515 / #2103).
                     const bool state_ok = enforce_linear_ownership_state(
                         instr.linear_ownership_state, LinearOpKind::Move, instr.provenance, 0,
-                        metrics_);
+                        context_.metrics, context_.evaluator);
                     // Issue #2067: pre-capture violation (always-on, not gated
                     // on linear_ownership_state != 0) so the post-mutate
                     // revalidate can correlate the violation with the
@@ -1909,7 +1941,7 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                         record_linear_jit_safety(metrics_, IROpcode::MoveOp);
                     const bool state_ok = enforce_linear_ownership_state(
                         instr.linear_ownership_state, LinearOpKind::Borrow, instr.provenance, 0,
-                        metrics_);
+                        context_.metrics, context_.evaluator);
                     // Immutable borrow: increment refcount
                     // Runtime check: use-after-move detection
                     auto val = locals[ops[1]];
@@ -1960,7 +1992,7 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                         record_linear_jit_safety(metrics_, IROpcode::MoveOp);
                     const bool state_ok = enforce_linear_ownership_state(
                         instr.linear_ownership_state, LinearOpKind::MutBorrow, instr.provenance, 0,
-                        metrics_);
+                        context_.metrics, context_.evaluator);
                     // Mutable borrow: treat as move (exclusive access)
                     auto val = locals[ops[1]];
                     if (!state_ok) {
@@ -2008,7 +2040,7 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                         record_linear_jit_safety(metrics_, IROpcode::DropOp);
                     const bool state_ok = enforce_linear_ownership_state(
                         instr.linear_ownership_state, LinearOpKind::Drop, instr.provenance, 0,
-                        metrics_);
+                        context_.metrics, context_.evaluator);
                     // Explicit destruct: decrement refcount, erase if zero
                     // Runtime check: double-drop detection
                     auto val = locals[ops[0]];
