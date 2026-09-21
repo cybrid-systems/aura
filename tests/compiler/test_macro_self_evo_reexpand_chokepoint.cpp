@@ -21,7 +21,11 @@
 //        docs/design/3132-* (#1655).
 
 #include "test_harness.hpp"
+#include "compiler/grant_test_support.hh"
+#include "core/capability_model.hh"
+#include "core/sandbox.hh"
 
+#include <array>
 #include <cstdint>
 #include <format>
 #include <fstream>
@@ -31,12 +35,15 @@
 
 import std;
 import aura.compiler.evaluator;
+import aura.compiler.macro_expansion;
 import aura.compiler.service;
 import aura.compiler.value;
+import aura.core.ast;
 
 namespace {
 
 using aura::compiler::CompilerService;
+using aura::compiler::Evaluator;
 using aura::compiler::types::as_int;
 using aura::compiler::types::EvalValue;
 using aura::compiler::types::is_int;
@@ -208,6 +215,77 @@ int run_test_macro_self_evo_reexpand_chokepoint() {
               "3609: no docs/design/3609-* per #1655");
         CHECK(read_file("tests/compiler/test_issue_3609.cpp").empty(),
               "3609: no test_issue_3609.cpp per #81967");
+    }
+
+    // Issue #3979: live soak in this small binary. Do not eval a
+    // self-recursive body (eval_flat expands MacroDef children and
+    // loops). Nested lets + runtime cap=1 force clone/inner deny.
+    {
+        std::println("\n--- #3979: Restricted+Guard reexpand inner-deny restores size ---");
+        using aura::compiler::macro_exp::g_macro_hygiene_last_limit_reason;
+        using aura::compiler::macro_exp::hygiene_last_limit_reason_string;
+        using aura::compiler::macro_exp::reset_hygiene_runtime_caps_for_test;
+        using aura::compiler::macro_exp::set_hygiene_depth_cap;
+        using aura::core::capability::Effect;
+        using aura::core::capability::g_capability_registry;
+        using aura::core::capability::MacroSelfEvoPolicy;
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+        reset_hygiene_runtime_caps_for_test();
+        CompilerService cs;
+        CHECK(cs.eval("(set-code \"(define-hygienic-macro (m3979 x) "
+                      "(let ((a x)) (let ((b a)) (let ((c b)) c))))\")")
+                  .has_value(),
+              "3979: set-code nested-let hygienic macro");
+        CHECK(cs.eval("(eval-current)").has_value(), "3979: eval registers macros_");
+        auto* ws = cs.evaluator().workspace_flat();
+        auto* pool = cs.evaluator().workspace_pool();
+        CHECK(ws != nullptr && pool != nullptr, "3979: workspace");
+        auto m_var = ws->add_variable(pool->intern("m3979"));
+        auto one = ws->add_literal(1);
+        std::array<aura::ast::NodeId, 1> args{one};
+        auto call_id = ws->add_call(m_var, args);
+        CHECK(call_id != aura::ast::NULL_NODE, "3979: Call (m3979 1)");
+        const auto size_before = ws->size();
+        std::size_t orphans_before = 0;
+        for (aura::ast::NodeId id = 0; id < ws->size(); ++id) {
+            if (ws->is_live_node(id) && ws->is_macro_introduced(id) &&
+                ws->parent_of(id) == aura::ast::NULL_NODE)
+                ++orphans_before;
+        }
+        (void)g_capability_registry().grant(0, "tenant-admin", Effect::TenantAdmin,
+                                            aura_test_grant_prov());
+        (void)g_capability_registry().grant_macro_self_evo(0, MacroSelfEvoPolicy{},
+                                                           aura_test_grant_prov());
+        CHECK(set_hygiene_depth_cap(1), "3979: runtime depth cap=1");
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+        g_macro_hygiene_last_limit_reason.store(0, std::memory_order_relaxed);
+        aura::ast::MutationRecord rec{};
+        rec.target_node = call_id;
+        rec.parent_id = ws->parent_of(call_id);
+        bool ok = true;
+        {
+            Evaluator::MutationBoundaryGuard guard(cs.evaluator(), &ok);
+            CHECK(Evaluator::mutation_boundary_depth() > 0, "3979: Guard depth > 0");
+            (void)cs.evaluator().post_mutation_macro_reexpand(*ws, *pool, rec);
+            CHECK(ws->size() == size_before, "3979: flat size restored to pre-reexpand_call");
+            std::size_t orphans_after = 0;
+            for (aura::ast::NodeId id = 0; id < ws->size(); ++id) {
+                if (ws->is_live_node(id) && ws->is_macro_introduced(id) &&
+                    ws->parent_of(id) == aura::ast::NULL_NODE)
+                    ++orphans_after;
+            }
+            CHECK(orphans_after == orphans_before,
+                  "3979: zero new MacroIntroduced with parent_of==NULL_NODE");
+            const auto* rs = hygiene_last_limit_reason_string();
+            CHECK(rs != nullptr && std::string(rs) == "hygiene-depth-limit",
+                  "3979: Agent reason stays hygiene-depth-limit");
+        }
+        reset_hygiene_runtime_caps_for_test();
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+        CHECK(read_file("tests/compiler/test_issue_3979.cpp").empty(),
+              "3979: no test_issue_3979.cpp per #81967");
+        CHECK(read_file("docs/design/3979-reexpand-inner-deny-truncate.md").empty(),
+              "3979: no docs/design/3979-* per #1655");
     }
 
     std::println("\n=== #3132 reexpand chokepoint: {} passed, {} failed ===", g_passed, g_failed);

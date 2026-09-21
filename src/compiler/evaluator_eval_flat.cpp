@@ -7228,24 +7228,36 @@ std::size_t Evaluator::post_mutation_macro_reexpand(aura::ast::FlatAST& flat,
 
         auto* src_pool = md.pool ? md.pool : &pool;
         auto* src_flat = md.flat ? md.flat : &flat;
+        // Issue #3979: snapshot before clone so inner-deny can truncate the
+        // committed MI clone + rest spine even when Guard owns the outer
+        // mutate (expand_inner #3890 skips truncate at boundary_depth>0).
+        // Soft/Off: historical half-write (one sandbox load).
+        const auto clone_ckpt = rest_spine_pending ? rest_spine_ckpt : flat.size();
         auto expanded =
             clone_macro_body(flat, pool, *src_flat, *src_pool, md.body_id, &subst_map, &rename_map,
                              /*cloned_marker=*/aura::ast::SyntaxMarker::MacroIntroduced);
         if (expanded == NULL_NODE) {
-            if (rest_spine_pending && aura::core::sandbox::is_sandbox_active())
-                flat.truncate_to(rest_spine_ckpt);
+            if (aura::core::sandbox::is_sandbox_active())
+                flat.truncate_to(clone_ckpt);
             return false;
         }
         expanded =
             expand_inner_macros(&flat, &pool, expanded, 0, 10, as_expansion_registry(macros_));
-        if (expanded == NULL_NODE)
-            return false;
         // Issue #3753: expand_inner_macros on production deny returns the
         // clone root, not NULL_NODE. eval_flat refuses to eval that half
         // tree; reexpand_call must not splice it into the Call parent.
+        // Issue #3979: truncate rest+clone even under MutationBoundary —
+        // this range is pre-Guard-owned, not the outer mutate log.
         // Soft/Off: historical half-write may remain (one sandbox load).
-        if (aura::core::sandbox::is_sandbox_active() && inner_expand_production_limit_deny())
+        if (expanded == NULL_NODE) {
+            if (aura::core::sandbox::is_sandbox_active())
+                flat.truncate_to(clone_ckpt);
             return false;
+        }
+        if (aura::core::sandbox::is_sandbox_active() && inner_expand_production_limit_deny()) {
+            flat.truncate_to(clone_ckpt);
+            return false;
+        }
 
         // Issue #2762: splice expanded root into the Call's parent slot
         // so subsequent eval-current / IR lower sees the hygienic tree.
