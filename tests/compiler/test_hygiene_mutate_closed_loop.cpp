@@ -6090,6 +6090,61 @@ static void ac3858_5_source_and_no_artifacts() {
           "AC5: no docs/design/3858-* per #1655");
 }
 
+// ── Issue #3979: reexpand_call inner-deny truncates MI orphans under Guard ──
+static void ac3979_1_source_truncate_under_guard() {
+    std::println("\n--- #3979 AC1: reexpand_call inner-deny truncates clone_ckpt ---");
+    const auto eef = read_file("src/compiler/evaluator_eval_flat.cpp");
+    CHECK(eef.find("Issue #3979") != std::string::npos, "3979 AC1: eval_flat cites #3979");
+    const auto exp_pos = eef.find("expand_inner_macros(&flat, &pool, expanded, 0, 10,");
+    CHECK(exp_pos != std::string::npos, "3979 AC1: reexpand calls expand_inner_macros");
+    const auto win = eef.substr(exp_pos, 1200);
+    CHECK(win.find("if (expanded == NULL_NODE)") != std::string::npos,
+          "3979 AC1: NULL_NODE still refuses (#3753)");
+    CHECK(win.find("inner_expand_production_limit_deny()") != std::string::npos,
+          "3979 AC1: deny consult after expand_inner");
+    CHECK(win.find("is_sandbox_active()") != std::string::npos,
+          "3979 AC1: Soft/Off half-write (one sandbox load)");
+    CHECK(win.find("truncate_to(clone_ckpt)") != std::string::npos,
+          "3979 AC1: inner-deny truncates clone_ckpt even under Guard");
+    CHECK(win.find("return false") != std::string::npos,
+          "3979 AC1: deny returns false — no splice");
+    CHECK(eef.find("rest_spine_pending ? rest_spine_ckpt : flat.size()") != std::string::npos,
+          "3979 AC1: clone_ckpt covers rest spine + clone");
+    CHECK(read_file("tests/compiler/test_issue_3979.cpp").empty(),
+          "3979 AC1: no test_issue_3979.cpp per #81967");
+    CHECK(read_file("docs/design/3979-reexpand-inner-deny-truncate.md").empty(),
+          "3979 AC1: no docs/design/3979-* per #1655");
+}
+
+static void ac3979_2_reexpand_truncate_not_depth0_gated() {
+    std::println("\n--- #3979 AC2: reexpand truncate is not #3890 depth==0 gated ---");
+    const auto eef = read_file("src/compiler/evaluator_eval_flat.cpp");
+    const auto fn = eef.find("Evaluator::post_mutation_macro_reexpand(");
+    CHECK(fn != std::string::npos, "3979 AC2: post_mutation_macro_reexpand");
+    const auto win = eef.substr(fn, 18000);
+    const auto ckpt = win.find("rest_spine_pending ? rest_spine_ckpt : flat.size()");
+    CHECK(ckpt != std::string::npos, "3979 AC2: clone_ckpt snapshot in reexpand");
+    const auto inner = win.find("expand_inner_macros(&flat, &pool, expanded, 0, 10,");
+    CHECK(inner != std::string::npos, "3979 AC2: inner expand in reexpand");
+    const auto after = win.substr(inner, 900);
+    CHECK(after.find("truncate_to(clone_ckpt)") != std::string::npos,
+          "3979 AC2: inner-deny truncates clone_ckpt");
+    CHECK(after.find("aura_evaluator_mutation_boundary_depth() == 0") == std::string::npos,
+          "3979 AC2: reexpand truncate fires even when Guard depth > 0");
+}
+
+static void ac3979_3_soft_off_half_write() {
+    std::println("\n--- #3979 AC3: Soft/Off half-write unchanged (one sandbox load) ---");
+    const auto eef = read_file("src/compiler/evaluator_eval_flat.cpp");
+    const auto exp_pos = eef.find("expand_inner_macros(&flat, &pool, expanded, 0, 10,");
+    CHECK(exp_pos != std::string::npos, "3979 AC3: reexpand expand_inner");
+    const auto win = eef.substr(exp_pos, 1200);
+    CHECK(win.find("is_sandbox_active()") != std::string::npos,
+          "3979 AC3: one sandbox load gates truncate");
+    CHECK(win.find("truncate_to(clone_ckpt)") != std::string::npos,
+          "3979 AC3: truncate stays behind the sandbox load");
+}
+
 int main() {
     std::println("=== test_hygiene_mutate_closed_loop (#2037 + #2762 + #2858 + #2863 + #2864 + "
                  "#2961 + #3000 + #3027 + #3037 + #3076 + #3121) ===");
@@ -6322,6 +6377,10 @@ int main() {
     ac3684_inner_expand_refuse();
     std::println("\n=== Issue #3889: from-verification-feedback revival hygiene gate ---");
     ac3889_revival_hygiene_gate();
+    std::println("\n=== Issue #3979: reexpand_call inner-deny truncates under Guard ---");
+    ac3979_1_source_truncate_under_guard();
+    ac3979_2_reexpand_truncate_not_depth0_gated();
+    ac3979_3_soft_off_half_write();
     std::println("\n=== {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
