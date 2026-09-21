@@ -23,10 +23,10 @@
 //        SE-1024 ring wrap: explicit mid still inside the
 //        wal_mid_lookup_segments() window → row via WAL fallback,
 //        wal-lookup-window-miss=0 (typed-trail-miss=1, not never-audited).
-//   AC7 (#3603): mid beyond the lookup window → synthetic miss line
-//        (reason="wal-lookup-window-miss" + typed-trail-miss=1);
-//        evolution-audit-decision :durable flags
-//        wal-lookup-window-miss=1 (no longer silent).
+//   AC7 (#3603/#3970): mid beyond the cheap lookup window but still on
+//        disk → original reason/op/denied via full-segment scan,
+//        wal-lookup-window-miss=0, wal-full-scan-hit=1, typed-trail-miss=1;
+//        evolution-audit-decision :durable durable-hit=1.
 //   AC8 (#3603): Soft / WAL-off — ring hit line carries miss=0; ring
 //        miss emits no synthetic line; WAL on + Soft strategy → no
 //        fallback / no miss line (no extra I/O).
@@ -376,13 +376,19 @@ static void ac6_wal_window_hit_after_wrap() {
     CHECK(saw_row, "AC6: explicit-mid row found via WAL fallback after ring wrap");
     CHECK(miss0 && !miss1, "AC6: in-window WAL hit → wal-lookup-window-miss=0");
     CHECK(typed_miss1, "AC6: typed trail (256) wrapped → typed-trail-miss=1 (not never-audited)");
+    bool cheap0 = false;
+    for (const auto& ln : lines)
+        if (ln.find("mutation_id=4242") != std::string::npos &&
+            ln.find("wal-full-scan-hit=0") != std::string::npos)
+            cheap0 = true;
+    CHECK(cheap0, "AC6: in-window cheap path → wal-full-scan-hit=0");
     ev.disable_security_event_wal();
     aura::compiler::typed_audit::apply_dev_audit_defaults();
 }
 
-// ── AC7 (#3603): beyond lookup window → additive miss face ──────
+// ── AC7 (#3603/#3970): past cheap window, files still on disk → original row
 static void ac7_wal_window_miss_flagged() {
-    std::println("\n--- #3603 AC7: explicit mid beyond lookup window ---");
+    std::println("\n--- #3970 AC7: explicit mid past cheap window still joins ---");
     reset_all();
     aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
     aura::compiler::typed_audit::apply_production_audit_defaults();
@@ -398,7 +404,7 @@ static void ac7_wal_window_miss_flagged() {
     append_se_3603(ring, /*deny=*/false, 4242, "test:3603", "3603-target");
     // 40 persisted fillers, rotation every 4 records → TARGET lands in
     // segment 0 with segments 1..10 after it; win=8 scans the newest 8
-    // (segments 3..10) → segment 0 is never scanned.
+    // (segments 3..10) → cheap path misses; #3970 full scan still hits.
     for (std::uint64_t i = 0; i < 40; ++i) {
         CHECK(persist_se_3603(9100 + i, "test:3603", "3603-filler", ts), "AC7: filler persisted");
         append_se_3603(ring, /*deny=*/false, 9100 + i, "test:3603", "3603-filler");
@@ -408,25 +414,48 @@ static void ac7_wal_window_miss_flagged() {
         append_se_3603(ring, /*deny=*/true, 7000 + i, "test:3603-wrap", "wrap");
     const auto lines =
         query_audit_lines(cs, ev, "(engine:metrics \"query:security-audit\" 10 42 0 0 4242)");
-    bool miss_line = false, miss1 = false, typed1 = false, bogus_row = false;
+    bool saw_row = false, miss0 = false, miss_line = false, typed1 = false, full1 = false;
     for (const auto& ln : lines) {
-        if (ln.find("wal-lookup-window-miss=1") != std::string::npos)
-            miss1 = true;
+        if (ln.find("mutation_id=4242") == std::string::npos)
+            continue;
+        saw_row = true;
+        if (ln.find("reason=\"3603-target\"") != std::string::npos &&
+            ln.find("op=\"test:3603\"") != std::string::npos &&
+            ln.find("denied=0") != std::string::npos)
+            miss0 = true;
         if (ln.find("reason=\"wal-lookup-window-miss\"") != std::string::npos)
             miss_line = true;
         if (ln.find("typed-trail-miss=1") != std::string::npos)
             typed1 = true;
-        if (ln.find("wal-lookup-window-miss=0") != std::string::npos)
-            bogus_row = true;
+        if (ln.find("wal-full-scan-hit=1") != std::string::npos &&
+            ln.find("wal-lookup-window-miss=0") != std::string::npos)
+            full1 = true;
     }
-    CHECK(miss1 && miss_line, "AC7: window miss flagged — not silent, not never-audited");
+    CHECK(saw_row, "AC7: past-window mid still returns a security-audit row");
+    CHECK(miss0 && !miss_line, "AC7: original reason/op/denied, not wal-lookup-window-miss");
     CHECK(typed1, "AC7: typed-trail-miss stays 1 (not rewritten as typed hit)");
-    CHECK(!bogus_row, "AC7: no row claims an in-window hit");
-    // Decision hash: :durable + all find_recent_* miss → additive flag=1.
+    CHECK(full1, "AC7: wal-full-scan-hit=1 and wal-lookup-window-miss=0");
     auto dm = cs.eval("(hash-ref (engine:metrics \"query:evolution-audit-decision\" 4242 "
                       "\"durable\") \"wal-lookup-window-miss\")");
-    CHECK(dm && is_int(*dm) && as_int(*dm) == 1,
-          "AC7: evolution-audit-decision :durable wal-lookup-window-miss=1");
+    CHECK(dm && is_int(*dm) && as_int(*dm) == 0,
+          "AC7: evolution-audit-decision :durable wal-lookup-window-miss=0");
+    auto dh = cs.eval("(hash-ref (engine:metrics \"query:evolution-audit-decision\" 4242 "
+                      "\"durable\") \"durable-hit\")");
+    CHECK(dh && is_int(*dh) && as_int(*dh) == 1,
+          "AC7: evolution-audit-decision :durable durable-hit=1");
+    auto fh = cs.eval("(hash-ref (engine:metrics \"query:evolution-audit-decision\" 4242 "
+                      "\"durable\") \"wal-full-scan-hit\")");
+    CHECK(fh && is_int(*fh) && as_int(*fh) == 1,
+          "AC7: evolution-audit-decision :durable wal-full-scan-hit=1");
+    auto rsn = cs.eval("(hash-ref (engine:metrics \"query:evolution-audit-decision\" 4242 "
+                       "\"durable\") \"last-se-reason\")");
+    bool reason_filled = false;
+    if (rsn && is_string(*rsn)) {
+        auto heap = ev.string_heap();
+        const auto sidx = as_string_idx(*rsn);
+        reason_filled = sidx < heap.size() && heap[sidx].find("3603-target") != std::string::npos;
+    }
+    CHECK(reason_filled, "AC7: :durable last-se-reason is the original WAL reason");
     ev.disable_security_event_wal();
     aura::compiler::typed_audit::apply_dev_audit_defaults();
 }
@@ -1058,6 +1087,85 @@ static void ac19_wal_miss_typed_correlate_3879() {
           "3879 AC3: no test_issue_3879.cpp");
 }
 
+// ── #3970: never-audited mid still flags wal-lookup-window-miss=1 ──
+static void ac3970_never_audited_still_miss() {
+    std::println("\n--- #3970: never-audited mid stays wal-lookup-window-miss=1 ---");
+    reset_all();
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    const auto dir = fresh_wal_dir_3603("ac3970-miss");
+    CHECK(ev.enable_security_event_wal(dir.string()), "3970: SE WAL enabled");
+    aura::core::security_event_wal::g_security_event_wal().set_rotate_bytes(
+        sizeof(aura::core::security_event_wal::SecurityEventWalRecord) * 4);
+    auto& ring = ::aura::core::security_event::g_security_event_ring();
+    const auto ts = now_ms_3603();
+    for (std::uint64_t i = 0; i < 40; ++i) {
+        CHECK(persist_se_3603(9100 + i, "test:3970", "3970-filler", ts), "3970: filler persisted");
+        append_se_3603(ring, /*deny=*/false, 9100 + i, "test:3970", "3970-filler");
+    }
+    for (std::uint64_t i = 0; i < 1030; ++i)
+        append_se_3603(ring, /*deny=*/true, 7000 + i, "test:3970-wrap", "wrap");
+    const auto lines =
+        query_audit_lines(cs, ev, "(engine:metrics \"query:security-audit\" 10 42 0 0 4242)");
+    bool miss_line = false, miss1 = false, full1 = false;
+    for (const auto& ln : lines) {
+        if (ln.find("wal-lookup-window-miss=1") != std::string::npos)
+            miss1 = true;
+        if (ln.find("reason=\"wal-lookup-window-miss\"") != std::string::npos)
+            miss_line = true;
+        if (ln.find("wal-full-scan-hit=1") != std::string::npos)
+            full1 = true;
+    }
+    CHECK(miss1 && miss_line, "3970: never-audited mid still flags wal-lookup-window-miss=1");
+    CHECK(!full1, "3970: never-audited mid is not a full-scan hit");
+    auto dm = cs.eval("(hash-ref (engine:metrics \"query:evolution-audit-decision\" 4242 "
+                      "\"durable\") \"wal-lookup-window-miss\")");
+    CHECK(dm && is_int(*dm) && as_int(*dm) == 1,
+          "3970: :durable never-audited mid wal-lookup-window-miss=1");
+    auto fh = cs.eval("(hash-ref (engine:metrics \"query:evolution-audit-decision\" 4242 "
+                      "\"durable\") \"wal-full-scan-hit\")");
+    CHECK(fh && is_int(*fh) && as_int(*fh) == 0,
+          "3970: :durable never-audited mid wal-full-scan-hit=0");
+    ev.disable_security_event_wal();
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+}
+
+// ── #3970: named wrappers + schema sentinels; no invented test file ──
+static void ac3970_source_cite() {
+    std::println("\n--- #3970: source-cite named full-scan wrappers ---");
+    const auto slo = read_file("src/core/wal_append_fail_slo.h");
+    CHECK(slo.find("kWalFullScanMidIssue = 3970") != std::string::npos,
+          "3970: kWalFullScanMidIssue = 3970");
+    CHECK(slo.find("kWalFullScanAllSegments") != std::string::npos,
+          "3970: kWalFullScanAllSegments named stamp");
+    const auto se = read_file("src/core/security_event_wal.hh");
+    CHECK(se.find("find_by_mutation_id_scan_all_segments") != std::string::npos,
+          "3970: SE WAL named full-scan wrapper");
+    CHECK(se.find("kWalFullScanAllSegments") != std::string::npos,
+          "3970: SE wrapper passes kWalFullScanAllSegments");
+    const auto mut = read_file("src/core/mutation_audit_wal.hh");
+    CHECK(mut.find("find_typed_summary_by_mid_scan_all_segments") != std::string::npos,
+          "3970: typed-summary named full-scan wrapper");
+    CHECK(mut.find("find_by_provenance_mutation_id_scan_all_segments") != std::string::npos,
+          "3970: provenance named full-scan wrapper");
+    const auto sec = read_file("src/compiler/evaluator_primitives_security.cpp");
+    CHECK(sec.find("find_by_mutation_id_scan_all_segments") != std::string::npos,
+          "3970: query:security-audit calls the named wrapper");
+    CHECK(sec.find("insert_kv(\"wal-full-scan-hit\", wal_full_scan_hit)") != std::string::npos,
+          "3970: evolution hash insert_kv wal-full-scan-hit");
+    CHECK(sec.find("insert_kv(\"wal-segments-scanned\", wal_segments_scanned)") !=
+              std::string::npos,
+          "3970: evolution hash insert_kv wal-segments-scanned");
+    CHECK(sec.find("insert_kv(\"schema-3970\"") != std::string::npos, "3970: schema-3970 sentinel");
+    CHECK(sec.find("insert_kv(\"issue-3970\"") != std::string::npos, "3970: issue-3970 sentinel");
+    CHECK(sec.find("kEvolutionAuditDecisionPlannedKeys = 72") != std::string::npos,
+          "3970: planned keys stay 72");
+    CHECK(read_file("tests/issues/test_issue_3970.cpp").empty(), "3970: no test_issue_3970.cpp");
+    CHECK(read_file("docs/design/3970-wal-full-scan.md").empty(), "3970: no docs/design/3970-*");
+}
+
 } // namespace
 
 int run_test_audit_replay_join() {
@@ -1081,6 +1189,8 @@ int run_test_audit_replay_join() {
     ac17_pre_persist_wal_miss_fail_closed_3780();
     ac18_last_se_wins_wal_miss_3877();
     ac19_wal_miss_typed_correlate_3879();
+    ac3970_never_audited_still_miss();
+    ac3970_source_cite();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
