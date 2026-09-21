@@ -14531,6 +14531,58 @@ public:
         run_epoch_invariant_if_enabled();
     }
 
+    // Issue #3975: owner-scoped production facade skipped bump_bridge_epoch
+    // so expire_stale_live_closures_(bridge_epoch()) is a no-op
+    // (cl.bridge_epoch == cur_epoch). Name-precise MustDeopt + poison
+    // bridge_epoch=0 on owner TW/IR closures whose define / .name matches
+    // `name` (empty name → all live views). PrimCall cache still cleared.
+    // JIT sid already ran via invalidate_bridge_for. Not a second table.
+    void must_deopt_owner_live_closures_for_define_(const std::string& name) {
+        metrics_.expire_stale_live_closures_total.fetch_add(1, std::memory_order_relaxed);
+        evaluator_.walk_active_closures([&]([[maybe_unused]] ClosureId id, Closure& cl) {
+            if (!name.empty() && cl.name != name)
+                return;
+            const bool has_view =
+                cl.flat != nullptr || cl.pool != nullptr || cl.body_id != aura::ast::NULL_NODE;
+            if (!has_view && cl.must_deopt_before_next_call && cl.bridge_epoch == 0)
+                return;
+            cl.must_deopt_before_next_call = true;
+            cl.bridge_epoch = 0;
+        });
+        auto poison_ir = [](IRClosure& cl) {
+            cl.bridge_epoch = 0;
+            cl.flat.reset();
+            cl.pool.reset();
+            cl.body_id = aura::ast::NULL_NODE;
+        };
+        if (name.empty()) {
+            for (auto& [bname, binding] : ir_define_env_bindings_) {
+                (void)bname;
+                if (!binding || !binding->interpreter)
+                    continue;
+                binding->interpreter->walk_runtime_closures(
+                    [&]([[maybe_unused]] std::uint64_t cid, IRClosure& cl) { poison_ir(cl); });
+            }
+        } else {
+            if (auto it = ir_define_env_bindings_.find(name);
+                it != ir_define_env_bindings_.end() && it->second && it->second->interpreter) {
+                it->second->interpreter->walk_runtime_closures(
+                    [&]([[maybe_unused]] std::uint64_t cid, IRClosure& cl) { poison_ir(cl); });
+            }
+            for (auto& [bname, binding] : ir_define_env_bindings_) {
+                if (bname == name || !binding || !binding->interpreter)
+                    continue;
+                binding->interpreter->walk_runtime_closures(
+                    [&]([[maybe_unused]] std::uint64_t cid, IRClosure& cl) {
+                        if (cl.name == name)
+                            poison_ir(cl);
+                    });
+            }
+        }
+        aura_invalidate_all_closure_caches();
+        metrics_.expire_primcall_cache_clear_total.fetch_add(1, std::memory_order_relaxed);
+    }
+
     // Issue #3219: production facade owns C-ABI epochs
     // (g_current_bridge_epoch / g_aot_defuse_version / g_aot_table_epoch).
     // Dual-write Evaluator defuse_version_ + core WorkspaceEpoch +
@@ -14580,7 +14632,17 @@ public:
             invalidate_bridge_for(name);
         }
         notify_walk_active_closures_(bridge_epoch());
-        (void)expire_stale_live_closures_(bridge_epoch());
+        // Issue #3975: owner-scoped freeze leaves expire_stale_live_closures_
+        // vacuous (cur_epoch == cl.bridge_epoch for every live TW/IR
+        // closure). Name-precise MustDeopt + poison + TLS apply-epoch
+        // bump replaces the generation-behind walk. Do not bump the
+        // process C-bridge / table epoch (#3605 peer dual-fresh).
+        if (os_table_bump) {
+            must_deopt_owner_live_closures_for_define_(name);
+            evaluator_.bump_closures_apply_epoch_public();
+        } else {
+            (void)expire_stale_live_closures_(bridge_epoch());
+        }
         run_epoch_invariant_if_enabled();
     }
 
