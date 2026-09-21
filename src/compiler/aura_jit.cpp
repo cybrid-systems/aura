@@ -4231,6 +4231,14 @@ std::size_t AuraJIT::batch_deopt_for(const char* name, std::uint64_t current_epo
     metrics_.batch_deopt_for_total.fetch_add(1, std::memory_order_relaxed);
     if (!impl_ || !name || !name[0])
         return 0;
+    // Issue #3977: name-precise owner-scoped invalidate already put F in
+    // the #3300 pending name table. Do not mark trackers — that would
+    // bump process deopt_pending_count and make every sid==0 leave native.
+    // Named leave-native is the name table; same-define unnamed is
+    // #3750 slot stale / MustDeopt / #3323 overflow.
+    if (aura_aot_last_table_bump_owner_scoped() != 0 &&
+        aura_aot_peer_jit_name_is_soft_stale(name) != 0)
+        return 0;
     std::string n(name);
     std::string n_hash = n + "#";
     std::size_t marked = 0;

@@ -192,6 +192,10 @@ bool HotUpdateRegistry::hard_invalidate_via_facade(const char* name, ReemitReaso
     // (Soft/Off zero-cost).
     if (aura_aot_func_table_epoch() == epoch_before && aura_aot_state_map_size() > 1) {
         aura_aot_mark_peer_jit_name_soft_stale(name);
+        // Issue #3977: name table now holds F. Later batch_deopt_for(F)
+        // must not bump process deopt_pending_count (unnamed peer
+        // availability). AuraJIT::batch_deopt_for early-returns when
+        // last bump is owner-scoped and this name is already stale.
         // Issue #3351: same owner-scoped fanout for peer IR-cache. Do not
         // bump g_aot_table_epoch. Mark no-ops unless multi-eval live > 1.
         aura_aot_mark_peer_ir_name_soft_stale(name);

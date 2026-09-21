@@ -1993,6 +1993,25 @@ int main() {
               "3441 AC5: build.py wires linter");
     }
 
+    // ── Issue #3977: unnamed count is the global-bump backstop, not the
+    // owner-scoped peer-anon leave-native gate.
+    {
+        std::println("\n--- #3977 AC2: owner-scoped unnamed skip (source-cite) ---");
+        const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
+        const auto fn = rt.find("closure_call_deopt_pending_leave_native_");
+        CHECK(fn != std::string::npos, "3977 AC2: helper present");
+        const auto win = (fn != std::string::npos) ? rt.substr(fn, 1800) : std::string{};
+        CHECK(win.find("Issue #3977") != std::string::npos, "3977 AC2: cites #3977");
+        CHECK(win.find("aura_aot_last_table_bump_owner_scoped") != std::string::npos,
+              "3977 AC2: owner-scoped last bump skips unnamed count");
+        CHECK(rt.find("aura_jit_deopt_pending_count()") != std::string::npos,
+              "3977 AC4: unnamed still loads count (Soft one-load / global backstop)");
+        CHECK(read_file("src/compiler/aura_jit.cpp").find("Issue #3977") != std::string::npos,
+              "3977: batch_deopt_for skip when name table holds F");
+        CHECK(read_file("tests/compiler/test_issue_3977.cpp").empty(), "3977: no invent");
+        CHECK(read_file("docs/design/3977-unnamed-deopt-count.md").empty(), "3977: no docs/design");
+    }
+
     // ── #3413: last_reemit_success must not stamp the full force_jit
     // mask on any n>0 — only_covered over-covers residual. Production
     // `covered = override || demoted` in decide_and_reemit washed
