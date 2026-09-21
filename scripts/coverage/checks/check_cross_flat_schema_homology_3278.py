@@ -14,11 +14,11 @@ that expand macros across workspaces or after steal.
 
 Fix (minimal, no second hygiene model): `ensure_cross_flat_expand_consistency`
 re-stamps the cloned subtree against the target under production /
-force-hygienic — cross-pool clones clear copied schema ids (0 = re-infer
-in the target env, always safe); OOB ids (>= kSchemaIdMax, #2859 bound)
-bump the EXISTING g_hygiene_violation_in_macro_expand_total (fail-closed,
-Agent-visible via query:macro-provenance-stats cross-flat-violation-total).
-Same-pool clones keep the #390 copy (homologous — shared registry).
+force-hygienic — cross-flat clones (flat OR pool; #3980) clear copied
+schema ids (0 = re-infer in the target env, always safe); OOB ids
+(>= kSchemaIdMax, #2859 bound) bump the EXISTING
+g_hygiene_violation_in_macro_expand_total (fail-closed, Agent-visible
+via query:macro-provenance-stats cross-flat-violation-total).
 Soft/Off: gate short-circuits before any walk (zero-cost contract).
 
 Gate rows:
@@ -71,8 +71,12 @@ def main() -> int:
 
     must("#3278" in macro, "G1: macro_expansion.cpp cites Issue #3278")
     must(
+        "cross_flat && schema_homology_prod" in macro,
+        "G2: homology walk is cross_flat (flat or pool; #3980)",
+    )
+    must(
         "&target_pool != &source_pool" in macro,
-        "G2: cross-pool gate (target_pool != source_pool)",
+        "G2b: pool identity still feeds cross_flat",
     )
     must(
         "production_defaults_active()" in macro and "g_macro_expand_sandbox_strict" in macro,
