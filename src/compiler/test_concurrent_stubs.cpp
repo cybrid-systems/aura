@@ -141,6 +141,9 @@ extern "C" __attribute__((weak)) std::uint64_t aura_fiber_current_id() noexcept 
 extern "C" __attribute__((weak)) int aura_production_defaults_active_probe() noexcept {
     return 0; // stub: production defaults inactive in light binaries
 }
+extern "C" __attribute__((weak)) int aura_production_hard_face_active_probe() noexcept {
+    return 0; // Issue #3987: light-link quiet freeze-cap stays Soft
+}
 extern "C" __attribute__((weak)) int aura_production_densify_stale_refuse(void*) noexcept {
     return 0; // Issue #3948: light-link native densify-stale is a no-op
 }

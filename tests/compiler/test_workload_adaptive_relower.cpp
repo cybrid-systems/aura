@@ -10,6 +10,7 @@
 
 #include "test_harness.hpp"
 #include "compiler/hot_update_registry.hh"
+#include "compiler/typed_mutation_audit.h"
 
 #include <cstdint>
 #include <fstream>
@@ -45,10 +46,14 @@ using aura::compiler::kAdaptiveReasonLowDensity;
 using aura::compiler::kAdaptiveReasonLowDeopt;
 using aura::compiler::kAdaptiveReasonPartial;
 using aura::compiler::kDefaultPartialRelowerThreshold;
+using aura::compiler::kQuietForcedThrCapIssue;
+using aura::compiler::partial_relower_threshold_is_forced;
 using aura::compiler::reset_partial_relower_threshold_for_test;
 using aura::compiler::set_partial_relower_threshold;
 using aura::compiler::should_partial_relower;
 using aura::compiler::should_partial_relower_workload;
+using aura::compiler::typed_audit::apply_dev_audit_defaults;
+using aura::compiler::typed_audit::apply_production_audit_defaults;
 using aura::compiler::types::as_int;
 using aura::compiler::types::is_int;
 using aura::test::g_failed;
@@ -228,6 +233,51 @@ int run_test_workload_adaptive_relower() {
         CHECK(cs.eval("(eval-current)").has_value(), "re-eval");
         auto r = cs.eval("(h 10)");
         CHECK(r && is_int(*r) && as_int(*r) == 12, "h 10 = 12");
+    }
+
+    // ── Issue #3987: production quiet freeze is a cap, not a stuck-wide floor ──
+    {
+        std::println("\n--- #3987: production quiet high-density unfreezes cap ---");
+        CHECK(kQuietForcedThrCapIssue == 3987, "3987: stamp");
+        const auto pure = read_file("src/compiler/ir_cache_pure.ixx");
+        CHECK(pure.find("Issue #3987") != std::string::npos, "3987: decide cites");
+        CHECK(pure.find("quiet_force_cap_production_active") != std::string::npos,
+              "3987: production probe");
+        CHECK(pure.find("adaptive_would_narrow_threshold") != std::string::npos,
+              "3987: narrow helper");
+        CHECK(pure.find("schema-3987") == std::string::npos, "3987: no new query key");
+        CHECK(read_file("tests/compiler/test_issue_3987.cpp").empty(), "3987: no test_issue_3987");
+        CHECK(read_file("docs/design/3987-quiet-force-cap.md").empty(), "3987: no docs/design");
+
+        // AC4 Soft: freeze unchanged (zero extra).
+        apply_dev_audit_defaults();
+        reset_partial_relower_threshold_for_test();
+        hot_update_registry().reset_deopt_storm_state_for_test();
+        set_partial_relower_threshold(32);
+        CHECK(partial_relower_threshold_is_forced(), "3987 AC4: Soft forced");
+        auto soft = decide_workload_adaptive_partial_relower(8, 8, 0, 0, false);
+        CHECK(soft.effective_threshold == 32, "3987 AC4: Soft freeze stays at Agent wide");
+        CHECK(soft.reason_bits & kAdaptiveReasonForced, "3987 AC4: Soft Forced bit");
+        reset_partial_relower_threshold_for_test();
+
+        // AC1: production + wide freeze + quiet high-density → effective ≤ default.
+        apply_production_audit_defaults();
+        set_partial_relower_threshold(32);
+        CHECK(partial_relower_threshold_is_forced(), "3987 AC1: still forced flag");
+        auto prod = decide_workload_adaptive_partial_relower(8, 8, 0, 0, false);
+        std::println("  3987 AC1: effective={} want_partial={} reason={:#x}",
+                     prod.effective_threshold, prod.want_partial, prod.reason_bits);
+        CHECK(prod.effective_threshold <= kDefaultPartialRelowerThreshold,
+              "3987 AC1: effective thr ≤ default (not stuck at 32)");
+        CHECK(prod.reason_bits & kAdaptiveReasonHighDensity, "3987 AC1: high-density narrowed");
+        CHECK(!(prod.reason_bits & kAdaptiveReasonForced),
+              "3987 AC1: freeze not honored as floor under production high-density");
+        // Agent tight still caps (set 4, high density cannot raise above 4).
+        set_partial_relower_threshold(4);
+        auto tight = decide_workload_adaptive_partial_relower(8, 8, 0, 0, false);
+        CHECK(tight.effective_threshold <= 4, "3987: Agent tight stays a cap");
+        apply_dev_audit_defaults();
+        reset_partial_relower_threshold_for_test();
     }
 
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);

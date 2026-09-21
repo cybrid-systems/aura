@@ -160,6 +160,24 @@ static void ac4_force_threshold_hook() {
     CHECK(!partial_relower_threshold_is_forced(), "unforced");
 }
 
+static void ac3987_quiet_cap_storm_exit_stays() {
+    std::println("\n--- #3987: storm-exit still clears force; Soft freeze unchanged ---");
+    const auto irc = read_file("src/compiler/ir_cache_pure.ixx");
+    const auto hur = read_file("src/compiler/hot_update_registry.cpp");
+    CHECK(irc.find("Issue #3987") != std::string::npos, "3987: quiet cap in decide");
+    CHECK(irc.find("kQuietForcedThrCapIssue") != std::string::npos, "3987: stamp");
+    CHECK(hur.find("aura_clear_partial_relower_threshold_force()") != std::string::npos,
+          "3987 AC2: storm-exit still clears force");
+    CHECK(irc.find("schema-3987") == std::string::npos, "3987: no new query key");
+    reset_partial_relower_threshold_for_test();
+    set_partial_relower_threshold(32);
+    CHECK(partial_relower_threshold_is_forced(), "3987 AC4: set still forces");
+    aura_clear_partial_relower_threshold_force();
+    CHECK(!partial_relower_threshold_is_forced(), "3987 AC2: clear still unforces");
+    CHECK(get_partial_relower_threshold() == 32, "3987 AC2: clear does not reset thr value");
+    reset_partial_relower_threshold_for_test();
+}
+
 // ── Issue #3101: production-storm-exit must clear partial_relower_threshold_forced
 // so the adaptive threshold can re-tighten from cost history (Option A +
 // Option C defense). Otherwise the forced flag freezes the threshold at a
@@ -428,6 +446,7 @@ int run_test_adaptive_partial_relower_threshold() {
     ac4_force_threshold_hook();
     ac5_regression_pure();
     ac3101_storm_exit_clears_force();
+    ac3987_quiet_cap_storm_exit_stays();
     ac2248_agent_driven_adaptive_thr();
     ac3582_1_forced_visible_on_existing_face();
     ac3582_2_clear_restores_adaptive();
