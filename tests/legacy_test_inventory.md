@@ -1,7 +1,7 @@
 # Legacy test inventory
 
 **Issue:** [#1957](https://github.com/cybrid-systems/aura/issues/1957)
-**Generated:** 2026-09-21 by `scripts/tools/inventory_legacy_tests.py`
+**Generated:** 2026-09-22 by `scripts/tools/inventory_legacy_tests.py`
 **Status:** living document — re-run the script after consolidations.
 
 ## Purpose
@@ -32,8 +32,8 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 
 | Theme | Title | Issues | Root | Domain | Total | Migration priority |
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
-| `arena_compaction` | Arena / compaction / GC | 0 | 0 | 93 | 93 | P0 — well-contained, batch drivers already exist |
-| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 273 | 273 | P0 — high volume; strong domain suite foothold |
+| `arena_compaction` | Arena / compaction / GC | 0 | 0 | 92 | 92 | P0 — well-contained, batch drivers already exist |
+| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 274 | 274 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 107 | 107 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 26 | 26 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 60 | 60 | P1 — domain hygiene suite exists |
@@ -1106,13 +1106,13 @@ Suggested order starts with well-contained groups (per #1957) and leverages exis
 
 Files listed as ``location/name`` with issue id and one-line summary.
 
-### `arena_compaction` — Arena / compaction / GC (93)
+### `arena_compaction` — Arena / compaction / GC (92)
 
 **Target:** tests/core/ (extend compact/gc family; see test_arena_batch / test_hotpath_matrix_batch)
 
 **Priority:** P0 — well-contained, batch drivers already exist
 
-#### domain/ (93)
+#### domain/ (92)
 
 - `tests/compiler/test_adt_match_exhaust_post_mutate_reliability.cpp` (—) [domain_suite, theme_compiler] — test_adt_match_exhaust_post_mutate_reliability.cpp — Issue #612:
 - `tests/orch/test_agent_name_table_isolation.cpp` (—) [large, domain_suite, theme_orch] — AC1: source cites #2078; no process-static OrchAgentNameTable;
@@ -1182,7 +1182,6 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_module_path_refuse.cpp` (—) [domain_suite, theme_compiler] — AC1: empty path refused (no crash; not "cannot resolve ''")
 - `tests/compiler/test_move_node_partial_failure_no_dangling.cpp` (—) [domain_suite, theme_compiler] — AC1: public + lockless cite #2803; try_move_child; metric on FlatAST
 - `tests/core/test_moving_compact.cpp` (—) [large, domain_suite, theme_core] — Issue #2342 (Refine #2166): sharded LifetimePin registry (Option 1
-- `tests/core/test_moving_densify_fail_closed.cpp` (—) [large, domain_suite, theme_core] — AC1: Untracked live pointer + Moving densify of its referent → contract
 - `tests/compiler/test_occurrence_cache_key.cpp` (—) [domain_suite, theme_compiler] — AC1: same shape + epoch → second visit is structural key hit
 - `tests/compiler/test_occurrence_goal_epoch_table.cpp` (—) [large, domain_suite, theme_compiler] — AC1: clear_blame_context does NOT wipe OccurrenceGoal table
 - `tests/compiler/test_outermost_exit_order.cpp` (—) [domain_suite, theme_compiler] — Documented success exit order (AC5):
@@ -1208,13 +1207,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_type_dep_epoch_prune.cpp` (—) [domain_suite, theme_compiler] — AC1: After set_cache_epoch(e+1), edges stamped at epoch e (e>0) drop;
 - `tests/compiler/test_workspace_switch.cpp` (—) [domain_suite, theme_compiler] — AC1: switch binds flat/pool + set_workspace_cow_epoch in one block
 
-### `mutation_dirty` — Mutation / dirty propagation / provenance (273)
+### `mutation_dirty` — Mutation / dirty propagation / provenance (274)
 
 **Target:** tests/core/test_mutation_boundary_batch (domain/ pilot abandoned in R1)
 
 **Priority:** P0 — high volume; strong domain suite foothold
 
-#### domain/ (273)
+#### domain/ (274)
 
 - `tests/compiler/test_abort_ir_cache_fence_first.cpp` (—) [large, domain_suite, theme_compiler] — AC1: All 3 abort entry points in evaluator_mutation_boundary.cpp
 - `tests/core/test_add_node_builder_contract.cpp` (—) [domain_suite, theme_core] — AC1: single-threaded add_* path unchanged (builders work)
@@ -1358,6 +1357,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_module_query_batch.cpp` (—) [small, batch_driver, domain_suite, theme_compiler] — test_module_query_batch.cpp — thematic multi-TU batch
 - `tests/compiler/test_module_rebind_residual.cpp` (—) [domain_suite, theme_compiler] — AC1: set-code multi-define (define g (f)) binds call result, not procedure
 - `tests/compiler/test_module_require_freevar.cpp` (—) [large, domain_suite, theme_compiler] — Issue #2766 — require-before-export free-var capture of module-private
+- `tests/core/test_moving_densify_fail_closed.cpp` (—) [large, domain_suite, theme_core] — AC1: Untracked live pointer + Moving densify of its referent → contract
 - `tests/compiler/test_mutate_batch.cpp` (—) [large, batch_driver, domain_suite, theme_compiler] — test_mutate_batch.cpp
 - `tests/compiler/test_mutate_capability_force.cpp` (—) [domain_suite, theme_compiler] — AC1: Source: add_mutate calls check_and_record_effect + check_workspace_isolation
 - `tests/compiler/test_mutate_cross_thread_migration.cpp` (—) [domain_suite, theme_compiler] — test_mutate_cross_thread_migration.cpp — Issue #1373:
