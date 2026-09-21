@@ -647,7 +647,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
             // 1565 + 1876 + #2023 MacroSelfEvo + #2052 mutate-force keys
             auto* ht =
-                FlatHashTable::create(query_hash_capacity_for(186)); // #3339: 178 live + 8 (#3877)
+                FlatHashTable::create(query_hash_capacity_for(186)); // #3339: 177 live + 8 (#3971)
             if (!ht)
                 return make_void();
             bool overflowed = false;
@@ -1127,6 +1127,18 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                             std::memory_order_relaxed))
                       : 0);
                 insert_kv("dispatch-required-effects-wired", 1);
+            }
+            // Issue #3971: process-level skip/refuse SE tenant=0 count.
+            // Additive at hash END. query:security-audit already has tenant=.
+            {
+                using aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+                using aura::compiler::typed_audit::kProcessSeTenantJoinIssue;
+                insert_kv("process-se-tenant-unset-total",
+                          static_cast<std::int64_t>(
+                              g_typed_mutation_audit_counters.process_se_tenant_unset_total.load(
+                                  std::memory_order_relaxed)));
+                insert_kv("schema-3971", kProcessSeTenantJoinIssue);
+                insert_kv("issue-3971", kProcessSeTenantJoinIssue);
             }
             return query_hash_finish(ht, ev.string_heap_, overflowed);
         });

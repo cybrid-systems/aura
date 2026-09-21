@@ -920,6 +920,9 @@ void Evaluator::arm_production_audit_defaults_for_test() noexcept {
 // TU — the same instance both readers use.
 void Evaluator::note_boundary_audit_mid_for_test(std::uint64_t mid) noexcept {
     aura::compiler::typed_audit::note_boundary_audit_mid(mid);
+    // Issue #3971: same TLS lifetime as mid — skip/refuse in this TU join
+    // the Evaluator's principal (0 stays 0).
+    aura::compiler::typed_audit::note_boundary_audit_tenant(capability_tenant_id_);
     // require_effect reads the proof stamp (not the noted TLS) for its
     // TypedMid — stamp it in THIS TU or its per-TU copy stays 0.
     aura::compiler::typed_audit::stamp_type_linear_commit_proof(mid);
