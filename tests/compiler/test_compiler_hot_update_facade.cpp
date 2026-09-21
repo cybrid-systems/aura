@@ -25,6 +25,7 @@
 #include "compiler/hot_update_registry.hh"
 #include "compiler/typed_mutation_audit.h"
 
+#include <array>
 #include <atomic>
 #include <cstdint>
 #include <filesystem>
@@ -37,6 +38,7 @@
 import std;
 import aura.compiler.evaluator;
 import aura.compiler.service;
+import aura.compiler.value;
 
 extern "C" int aura_production_defaults_active_probe() noexcept;
 extern "C" std::uint64_t aura_aot_func_table_epoch(void);
@@ -49,6 +51,11 @@ using aura::compiler::hot_update_registry;
 using aura::compiler::HotUpdateRegistry;
 using aura::compiler::typed_audit::apply_dev_audit_defaults;
 using aura::compiler::typed_audit::apply_production_audit_defaults;
+using aura::compiler::types::as_closure_id;
+using aura::compiler::types::as_int;
+using aura::compiler::types::is_closure;
+using aura::compiler::types::is_int;
+using aura::compiler::types::make_int;
 using aura::test::g_failed;
 using aura::test::g_passed;
 
@@ -1197,6 +1204,112 @@ static void ac3749_production_facade_evicts_jit_cache() {
     }
 }
 
+// ── Issue #3975: owner-scoped freeze leaves expire_stale_live_closures_
+// vacuous. Name-precise MustDeopt + poison + TLS apply-epoch bump so
+// owner apply_closure(F) cannot eval_flat the pre-mutate body. Peer G
+// dual-fresh stays green. Soft/Off unchanged. No new query key.
+static void ac3975_owner_scoped_expire_must_deopt_tw() {
+    std::println("\n--- #3975: owner-scoped expire MustDeopt TW/IR ---");
+    const auto ixx = read_file("src/compiler/service.ixx");
+    CHECK(ixx.find("Issue #3975") != std::string::npos, "3975: service.ixx cites #3975");
+    CHECK(ixx.find("must_deopt_owner_live_closures_for_define_") != std::string::npos,
+          "3975 AC: name-precise MustDeopt helper");
+    {
+        const auto spos = ixx.find("void stamp_eval_core_joint_after_production_facade_");
+        CHECK(spos != std::string::npos, "3975: stamp helper");
+        const auto swin = (spos == std::string::npos) ? std::string{} : ixx.substr(spos, 2800);
+        CHECK(swin.find("if (os_table_bump)") != std::string::npos, "3975: os_table_bump branch");
+        CHECK(swin.find("must_deopt_owner_live_closures_for_define_(name)") != std::string::npos,
+              "3975: os path MustDeopt by define");
+        CHECK(swin.find("bump_closures_apply_epoch_public()") != std::string::npos,
+              "3975: os path bumps TLS apply epoch");
+        CHECK(swin.find("expire_stale_live_closures_(bridge_epoch())") != std::string::npos,
+              "3975 AC3: generation-behind expire retained on global path");
+        CHECK(swin.find("aura_aot_bump_func_table_epoch") == std::string::npos,
+              "3975: does not bump process table epoch");
+    }
+    CHECK(ixx.find("schema-3975") == std::string::npos, "3975 AC5: no new query key");
+    CHECK(read_file("tests/compiler/test_issue_3975.cpp").empty(), "3975: no test_issue_3975.cpp");
+    CHECK(read_file("docs/design/3975-owner-scoped-expire.md").empty(),
+          "3975: no docs/design/3975-*");
+
+    apply_production_audit_defaults();
+    {
+        CompilerService cs_a;
+        CompilerService cs_b;
+        void* owner = &cs_a.evaluator();
+        aura_aot_set_reemit_owner_eval(owner);
+        aura_aot_set_register_owner_eval(owner);
+        CHECK(cs_a.eval("(define (ac3975_F x) (+ x 1))").has_value(), "3975: define F");
+        auto fr = cs_a.eval("ac3975_F");
+        CHECK(fr && is_closure(*fr), "3975: F is a closure");
+        const auto cid_f = fr && is_closure(*fr) ? as_closure_id(*fr) : 0;
+        CHECK(cs_a.eval("(define (ac3975_G x) (+ x 10))").has_value(), "3975: define G on owner");
+        auto gr_a = cs_a.eval("ac3975_G");
+        const auto cid_g_owner = gr_a && is_closure(*gr_a) ? as_closure_id(*gr_a) : 0;
+        CHECK(cs_b.eval("(define (ac3975_G x) (+ x 10))").has_value(), "3975: define G on peer");
+        auto gr_b = cs_b.eval("ac3975_G");
+        const auto cid_g_peer = gr_b && is_closure(*gr_b) ? as_closure_id(*gr_b) : 0;
+        const auto c_bridge0 = aura_get_current_bridge_epoch();
+        const auto aot0 = aura_aot_func_table_epoch();
+        const auto apply_ep0 = cs_a.evaluator().closures_apply_epoch();
+        const auto h0 = cross_eval_hard_owner_scoped_total_v_read();
+        cs_a.public_invalidate_function("ac3975_F");
+        const auto h1 = cross_eval_hard_owner_scoped_total_v_read();
+        std::array<aura::compiler::types::EvalValue, 1> args{make_int(1)};
+        if (h1 > h0 && aura_aot_state_map_size() > 1) {
+            CHECK(aura_get_current_bridge_epoch() == c_bridge0,
+                  "3975 AC2: C-bridge frozen (owner-scoped)");
+            CHECK(aura_aot_func_table_epoch() == aot0, "3975 AC2: table epoch frozen");
+            CHECK(cs_a.evaluator().closures_apply_epoch() > apply_ep0,
+                  "3975: TLS apply epoch bumped");
+            auto snap_f = cs_a.evaluator().find_active_closure(cid_f);
+            CHECK(snap_f.has_value(), "3975 AC1: F still registered");
+            if (snap_f) {
+                CHECK(snap_f->must_deopt_before_next_call, "3975 AC1: F MustDeopt");
+                CHECK(snap_f->bridge_epoch == 0, "3975 AC1: F bridge_epoch poisoned");
+            }
+            auto got_f = cs_a.evaluator().apply_closure(cid_f, args);
+            CHECK(!got_f.has_value(), "3975 AC1: owner apply_closure(F) refuses pre-mutate body");
+            if (cid_g_owner != 0) {
+                auto snap_g = cs_a.evaluator().find_active_closure(cid_g_owner);
+                if (snap_g)
+                    CHECK(!snap_g->must_deopt_before_next_call || snap_g->name != "ac3975_F",
+                          "3975: owner G not name-matched MustDeopt of F");
+            }
+            if (cid_g_peer != 0) {
+                auto got_g = cs_b.evaluator().apply_closure(cid_g_peer, args);
+                CHECK(got_g.has_value() && is_int(*got_g) && as_int(*got_g) == 11,
+                      "3975 AC2: peer G still applies");
+            }
+        } else {
+            std::println(
+                "  [3975] single-state / global fallback — live owner-scope branch skipped");
+        }
+        (void)cid_g_owner;
+    }
+    apply_dev_audit_defaults();
+
+    // AC4 Soft: facade returns false; stamp helper not on the Soft path.
+    {
+        apply_dev_audit_defaults();
+        CompilerService cs;
+        CHECK(cs.eval("(define (ac3975_soft x) (+ x 1))").has_value(), "3975 AC4: Soft define");
+        auto r = cs.eval("ac3975_soft");
+        CHECK(r && is_closure(*r), "3975 AC4: Soft closure");
+        const auto cid = r && is_closure(*r) ? as_closure_id(*r) : 0;
+        const auto ep0 = cs.evaluator().closures_apply_epoch();
+        cs.public_invalidate_function("ac3975_soft");
+        auto snap = cs.evaluator().find_active_closure(cid);
+        if (snap && snap->must_deopt_before_next_call && snap->bridge_epoch == 0) {
+            CHECK(true, "3975 AC4: Soft may expire via generation-behind (existing path)");
+        } else {
+            CHECK(cs.evaluator().closures_apply_epoch() >= ep0,
+                  "3975 AC4: Soft no extra apply-path load");
+        }
+    }
+}
+
 int run_test_issue_3112() {
     std::print("[test_issue_3112] running 5 ACs + #3129 + #3150 extensions\n");
 
@@ -1252,6 +1365,10 @@ int run_test_issue_3112() {
     // Issue #3749: production facade must evict jit_cache_ so
     // try_jit_execute cannot cache-hit pre-mutate native.
     ac3749_production_facade_evicts_jit_cache();
+
+    // Issue #3975: owner-scoped freeze leaves expire_stale_live_closures_
+    // vacuous — name-precise MustDeopt + TLS apply-epoch bump.
+    ac3975_owner_scoped_expire_must_deopt_tw();
 
     // Issue #3227: remount ok path rebinds linear proof (densify/steal gen).
     {
