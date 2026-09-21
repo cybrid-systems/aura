@@ -1017,7 +1017,10 @@ void Evaluator::enter_mutation_boundary() {
         cp.dirty_soa_snapshot = workspace_flat_->snapshot_dirty_soa();
     // Issue #3016: resolve audit mid once at enter (outer inherits from
     // TLS / parent checkpoint). total_mutations_ stays volume-only.
+    // Issue #3971: note tenant before resolve so a refuse SE on this
+    // enter joins the live Evaluator principal (0 stays 0).
     {
+        typed_audit::note_boundary_audit_tenant(capability_tenant_id());
         std::uint64_t audit_mid = 0;
         auto& stk = active_mutation_stack();
         if (!stk.empty() && stk.back().audit_mid != 0)
@@ -3320,6 +3323,9 @@ Evaluator::MutationBoundaryGuard::MutationBoundaryGuard(
     // Issue #2944: capture Mutation epoch mid for session-grant revoke on
     // outermost exit. Nested boundaries do not stamp (session_mid stays 0).
     if (outermost) {
+        // Issue #3971: note tenant before resolve so a mid-fallback-refused
+        // SE on this enter joins ev->capability_tenant_id() (0 stays 0).
+        typed_audit::note_boundary_audit_tenant(ev_->capability_tenant_id());
         // Issue #3016: same resolve as trail stamp (caller → epoch → RQ →
         // Soft gen / production refuse). Do not force mid=1 (that was a
         // process-origin join key).

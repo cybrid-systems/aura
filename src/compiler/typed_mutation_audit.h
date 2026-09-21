@@ -664,6 +664,9 @@ struct TypedMutationAuditCounters {
     // END per #2906.
     std::atomic<std::uint64_t> audit_mid_ssot_miss_total{0};
     std::atomic<std::uint32_t> audit_mid_ssot_miss_wired{1};
+    // Issue #3971: process-level skip/refuse SE emitted with tenant=0
+    // (honest unset — no live Guard/checkpoint principal). Append END.
+    std::atomic<std::uint64_t> process_se_tenant_unset_total{0};
 };
 
 inline TypedMutationAuditCounters g_typed_mutation_audit_counters{};
@@ -1245,14 +1248,18 @@ inline void maybe_warn_sampled_without_opt_in() noexcept {
 // Sampled: audit when mutation_id % sample_ratio == 0.
 // Issue #2818: cold-start default is Full (no under-sample).
 // Issue #3676: SE join context for production skip/refuse rows. Fiber is
-// override-aware (#2151) + live TLS fiber; tenant stays 0 (honest unset —
-// capability_tenant_id is per-Evaluator, no process TLS principal); epoch
-// comes from ::aura::core::current_mutation_epoch() at each emit site
-// (0 stays 0, #3594 vocabulary).
+// override-aware (#2151) + live TLS fiber; epoch comes from
+// ::aura::core::current_mutation_epoch() at each emit site (0 stays 0,
+// #3594 vocabulary).
+// Issue #3971: tenant is NOT process-wide TLS (that would reopen #3016).
+// Prefer the live Guard/checkpoint principal noted beside boundary mid;
+// else 0 stays 0. Never mint a phantom tenant.
 [[nodiscard]] inline std::int64_t audit_se_join_fiber_id() noexcept {
     return static_cast<std::int64_t>(::aura::core::capability::effect_fiber_id_or(
         static_cast<std::uint32_t>(aura_fiber_current_id())));
 }
+
+[[nodiscard]] inline std::uint64_t audit_se_join_tenant_id() noexcept;
 
 [[nodiscard]] inline bool should_audit(std::uint64_t mutation_id) noexcept {
     g_typed_mutation_audit_counters.audits_considered.fetch_add(1, std::memory_order_relaxed);
@@ -1273,7 +1280,11 @@ inline void maybe_warn_sampled_without_opt_in() noexcept {
         if (production_defaults_active()) {
             using ::aura::core::security_event::SecurityEventKind;
             using ::aura::core::security_event_wal::emit_security_event_durable;
-            emit_security_event_durable(SecurityEventKind::InvariantFail, /*tenant=*/0, mutation_id,
+            const auto tenant = audit_se_join_tenant_id();
+            if (tenant == 0)
+                g_typed_mutation_audit_counters.process_se_tenant_unset_total.fetch_add(
+                    1, std::memory_order_relaxed);
+            emit_security_event_durable(SecurityEventKind::InvariantFail, tenant, mutation_id,
                                         /*epoch=*/::aura::core::current_mutation_epoch(),
                                         /*effect_bits=*/0, "audit-skipped", "sampled-ratio-skip",
                                         /*denied=*/false, /*fiber=*/audit_se_join_fiber_id());
@@ -2779,7 +2790,19 @@ inline void clear_coercion_commit_readiness_on_abort() noexcept {
 // inlines sit above the #3016 helper block). noted=true even when mid==0.
 inline thread_local std::uint64_t g_tls_boundary_audit_mid = 0;
 inline thread_local bool g_tls_boundary_audit_noted = false;
+// Issue #3971: same TLS lifetime as g_tls_boundary_audit_mid. 0 stays 0.
+inline thread_local std::uint64_t g_tls_boundary_audit_tenant = 0;
 inline std::atomic<std::uint64_t> g_last_stamped_audit_mid{0};
+
+inline constexpr int kProcessSeTenantJoinIssue = 3971;
+
+[[nodiscard]] inline std::uint64_t audit_se_join_tenant_id() noexcept {
+    return g_tls_boundary_audit_tenant;
+}
+
+inline void note_boundary_audit_tenant(std::uint64_t tenant) noexcept {
+    g_tls_boundary_audit_tenant = tenant;
+}
 
 // Purpose: drop last TypeLinearCommitProof + densify-pending inject on abort
 // Pre: call after abort_restore_dual_topology / hard force-rollback
@@ -4255,7 +4278,11 @@ resolve_audit_mutation_id(std::uint64_t caller_mid = 0) noexcept {
             using ::aura::core::security_event::g_security_event_ring;
             using ::aura::core::security_event::SecurityEventKind;
             using ::aura::core::security_event_wal::emit_security_event_durable;
-            emit_security_event_durable(SecurityEventKind::InvariantFail, /*tenant=*/0,
+            const auto tenant = audit_se_join_tenant_id();
+            if (tenant == 0)
+                g_typed_mutation_audit_counters.process_se_tenant_unset_total.fetch_add(
+                    1, std::memory_order_relaxed);
+            emit_security_event_durable(SecurityEventKind::InvariantFail, tenant,
                                         /*mid=*/0, /*epoch=*/ep, /*effect_bits=*/0,
                                         "resolve-audit-mid", "mid-fallback-refused",
                                         /*denied=*/true, /*fiber=*/audit_se_join_fiber_id());
@@ -4308,6 +4335,7 @@ inline std::atomic<std::uint32_t> g_composite_audit_se_join_wired{1};
 inline void clear_boundary_audit_mid() noexcept {
     g_tls_boundary_audit_mid = 0;
     g_tls_boundary_audit_noted = false;
+    g_tls_boundary_audit_tenant = 0;
     g_tls_composite_batch_join_mid = 0;
     clear_mid_fallback_refuse_se_tls();
 }
@@ -5196,6 +5224,9 @@ inline void reset_for_test() noexcept {
     // Issue #3532
     g_typed_mutation_audit_counters.audit_mid_ssot_miss_total.store(0, std::memory_order_relaxed);
     g_typed_mutation_audit_counters.audit_mid_ssot_miss_wired.store(1, std::memory_order_relaxed);
+    // Issue #3971
+    g_typed_mutation_audit_counters.process_se_tenant_unset_total.store(0,
+                                                                        std::memory_order_relaxed);
     // Issue #2818
     g_typed_mutation_audit_counters.audit_strategy_default_warnings_total.store(
         0, std::memory_order_relaxed);

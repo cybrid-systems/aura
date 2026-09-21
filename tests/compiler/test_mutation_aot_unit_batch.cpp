@@ -153,6 +153,7 @@ namespace aura_mut_run_aot_hotupdate_audit_1882 {
 //   AC5: query:typed-mutation-audit-trail exposes aot-hotupdate-audit-wired
 //   AC6: #3675 — AOT audit joins composite/batch pin SSOT (join_audit_and_se_mid)
 //   AC7: #3676 — production skip/refuse SE rows join fiber + Mutation epoch
+//   AC8: #3971 — skip/refuse tenant joins live Guard/checkpoint principal
 
 
 // Declared in aura_jit_bridge.h (C linkage); include path may vary by target.
@@ -397,7 +398,7 @@ void ac7_3676_skip_refuse_join_context() {
     CHECK(skip_row.mutation_id == skip_mid, "AC7: skip row mid");
     CHECK(skip_row.fiber_id == static_cast<std::int64_t>(kFiber),
           "AC7: skip row fiber = live override (#3676)");
-    CHECK(skip_row.tenant_id == 0, "AC7: skip row tenant honest unset");
+    CHECK(skip_row.tenant_id == 0, "AC7: skip row tenant 0 (no live principal)");
     CHECK(skip_row.epoch == ::aura::core::current_mutation_epoch(),
           "AC7: skip row epoch == Mutation epoch (0 stays 0)");
 
@@ -417,7 +418,7 @@ void ac7_3676_skip_refuse_join_context() {
     CHECK(refuse_row.mutation_id == 0, "AC7: refuse row mid=0 (AC2)");
     CHECK(refuse_row.fiber_id == static_cast<std::int64_t>(kFiber),
           "AC7: refuse row fiber filled (AC2)");
-    CHECK(refuse_row.tenant_id == 0, "AC7: refuse row tenant stays 0 (no principal)");
+    CHECK(refuse_row.tenant_id == 0, "AC7: refuse row tenant 0 (no live principal)");
     CHECK(refuse_row.epoch == ::aura::core::current_mutation_epoch(), "AC7: refuse row epoch");
 
     // AC3: Full + ratio=1 → the skip emit never runs.
@@ -471,6 +472,152 @@ void ac7_3676_skip_refuse_join_context() {
     ta::clear_boundary_audit_mid();
 }
 
+void ac8_3971_skip_refuse_tenant_join() {
+    std::println("\n--- AC8 (#3971): skip/refuse SE tenant joins live principal ---");
+    namespace ta = aura::compiler::typed_audit;
+    namespace sec = ::aura::core::security_event;
+    using aura::compiler::CompilerService;
+    using aura::compiler::types::as_int;
+    using aura::compiler::types::as_pair_idx;
+    using aura::compiler::types::as_string_idx;
+    using aura::compiler::types::is_int;
+    using aura::compiler::types::is_pair;
+    using aura::compiler::types::is_string;
+    reset_for_test();
+    ta::clear_boundary_audit_mid();
+    auto& ring = sec::g_security_event_ring();
+    const auto latest = [&]() {
+        const auto head = ring.seq.load(std::memory_order_relaxed);
+        return ring.ring[(head - 1) % sec::kSecurityEventRingSize];
+    };
+
+    g_typed_mutation_audit_counters.production_defaults_active.store(1);
+    ta::inject_sampled_ratio_for_test(4);
+    constexpr std::uint64_t kTenant = 7;
+    ta::note_boundary_audit_tenant(kTenant);
+
+    std::uint64_t skip_mid = 1;
+    while (ta::should_audit(skip_mid))
+        ++skip_mid;
+    const auto skip_row = latest();
+    CHECK(std::string_view(skip_row.reason) == "sampled-ratio-skip", "3971: skip row reason");
+    CHECK(skip_row.mutation_id == skip_mid, "3971: skip row mid");
+    CHECK(skip_row.tenant_id == kTenant, "3971: skip row tenant = live principal");
+
+    set_strategy(AuditStrategy::Full);
+    ta::clear_boundary_audit_mid();
+    ta::note_boundary_audit_tenant(kTenant);
+    ::aura::core::reset_mutation_epoch_for_test();
+    const auto mid = ta::resolve_audit_mutation_id();
+    CHECK(mid == 0, "3971: production refuse → mid=0");
+    const auto refuse_row = latest();
+    CHECK(std::string_view(refuse_row.reason) == "mid-fallback-refused", "3971: refuse reason");
+    CHECK(refuse_row.mutation_id == 0, "3971: refuse mid=0");
+    CHECK(refuse_row.tenant_id == kTenant, "3971: refuse tenant = live principal");
+
+    // No principal: tenant stays 0; unset counter bumps; Soft skip no SE.
+    ta::clear_boundary_audit_mid();
+    const auto unset0 = g_typed_mutation_audit_counters.process_se_tenant_unset_total.load(
+        std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.production_defaults_active.store(1);
+    ta::inject_sampled_ratio_for_test(4);
+    std::uint64_t skip0_mid = 1;
+    while (ta::should_audit(skip0_mid))
+        ++skip0_mid;
+    CHECK(latest().tenant_id == 0, "3971: no principal → tenant 0");
+    CHECK(g_typed_mutation_audit_counters.process_se_tenant_unset_total.load(
+              std::memory_order_relaxed) > unset0,
+          "3971: process_se_tenant_unset_total bumps on tenant=0 skip");
+
+    g_typed_mutation_audit_counters.production_defaults_active.store(0);
+    set_strategy(AuditStrategy::Sampled);
+    set_sample_ratio(4096);
+    const auto seq_soft = ring.seq.load(std::memory_order_relaxed);
+    std::uint64_t soft_mid = 1;
+    while (ta::should_audit(soft_mid))
+        ++soft_mid;
+    CHECK(ring.seq.load(std::memory_order_relaxed) == seq_soft, "3971: Soft skip emits no SE");
+
+    // Agent filter: query:security-audit by tenant keeps the skip row.
+    g_typed_mutation_audit_counters.production_defaults_active.store(1);
+    ta::note_boundary_audit_tenant(kTenant);
+    std::uint64_t qmid = 1;
+    while (ta::should_audit(qmid))
+        ++qmid;
+    CompilerService cs;
+    auto q = cs.eval(
+        std::format("(engine:metrics \"query:security-audit\" 10 {} 0 0 {})", kTenant, qmid));
+    bool saw_tenant_row = false;
+    if (q) {
+        auto cur = *q;
+        auto& pairs = cs.evaluator().pairs();
+        auto heap = cs.evaluator().string_heap();
+        int guard = 0;
+        while (is_pair(cur) && guard++ < 64) {
+            const auto idx = as_pair_idx(cur);
+            if (idx >= pairs.size())
+                break;
+            if (is_string(pairs[idx].car)) {
+                const auto sidx = as_string_idx(pairs[idx].car);
+                if (sidx < heap.size() &&
+                    heap[sidx].find("sampled-ratio-skip") != std::string::npos &&
+                    heap[sidx].find(std::format("tenant={}", kTenant)) != std::string::npos &&
+                    heap[sidx].find(std::format("mutation_id={}", qmid)) != std::string::npos)
+                    saw_tenant_row = true;
+            }
+            cur = pairs[idx].cdr;
+        }
+    }
+    CHECK(saw_tenant_row, "3971: query:security-audit tenant filter keeps the skip row");
+    auto unset = cs.eval("(hash-ref (engine:metrics \"query:capability-effect-stats\") "
+                         "\"process-se-tenant-unset-total\")");
+    CHECK(unset && is_int(*unset) && as_int(*unset) >= 0,
+          "3971: process-se-tenant-unset-total on capability-effect-stats");
+    auto sch =
+        cs.eval("(hash-ref (engine:metrics \"query:capability-effect-stats\") \"schema-3971\")");
+    CHECK(sch && is_int(*sch) && as_int(*sch) == 3971, "3971: schema-3971 sentinel");
+
+    const auto tmh = [&]() {
+        for (const auto& p : {std::string("src/compiler/typed_mutation_audit.h"),
+                              std::string("../src/compiler/typed_mutation_audit.h"),
+                              std::string("../../src/compiler/typed_mutation_audit.h")}) {
+            std::ifstream in(p);
+            if (in)
+                return std::string((std::istreambuf_iterator<char>(in)),
+                                   std::istreambuf_iterator<char>());
+        }
+        return std::string{};
+    }();
+    CHECK(tmh.find("audit_se_join_tenant_id") != std::string::npos, "3971: tenant join helper");
+    CHECK(tmh.find("note_boundary_audit_tenant") != std::string::npos, "3971: note tenant");
+    CHECK(tmh.find("kProcessSeTenantJoinIssue = 3971") != std::string::npos, "3971: issue stamp");
+    CHECK(tmh.find("\"sampled-ratio-skip\"") != std::string::npos &&
+              tmh.find("\"mid-fallback-refused\"") != std::string::npos,
+          "3971: reason strings unchanged");
+    const auto bnd = [&]() {
+        for (const auto& p : {std::string("src/compiler/evaluator_mutation_boundary.cpp"),
+                              std::string("../src/compiler/evaluator_mutation_boundary.cpp"),
+                              std::string("../../src/compiler/evaluator_mutation_boundary.cpp")}) {
+            std::ifstream in(p);
+            if (in)
+                return std::string((std::istreambuf_iterator<char>(in)),
+                                   std::istreambuf_iterator<char>());
+        }
+        return std::string{};
+    }();
+    CHECK(bnd.find("note_boundary_audit_tenant") != std::string::npos,
+          "3971: Guard/checkpoint notes tenant");
+    CHECK(!std::ifstream("tests/issues/test_issue_3971.cpp").good() &&
+              !std::ifstream("tests/compiler/test_issue_3971.cpp").good(),
+          "3971: no test_issue_3971.cpp");
+
+    g_typed_mutation_audit_counters.production_defaults_active.store(0);
+    ::aura::core::capability::set_effect_fiber_id_override(0);
+    set_strategy(AuditStrategy::Full);
+    set_sample_ratio(1);
+    ta::clear_boundary_audit_mid();
+}
+
 int run_aot_hotupdate_audit_1882() {
     std::println("=== Issue #1882: TypedMutationAudit AOT/JIT wire-up ===");
     CompilerService cs;
@@ -481,6 +628,7 @@ int run_aot_hotupdate_audit_1882() {
     ac5_trail_wire_flags(cs);
     ac6_3675_composite_pin_join();
     ac7_3676_skip_refuse_join_context();
+    ac8_3971_skip_refuse_tenant_join();
     std::println("\n=== #1882: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
