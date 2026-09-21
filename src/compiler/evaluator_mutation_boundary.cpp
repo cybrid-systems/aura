@@ -7392,6 +7392,10 @@ Evaluator::recover_moving_sticky_densify_off(bool retry_densify) noexcept {
             // reject must re-arm the trap — otherwise auto-arm Moving
             // relocates under reject LCP after Guard unlock (UAF /
             // miss-remap). Healthy densify still clears (#2905/#3128).
+            // Issue #3974: this re-arm is the abort×sticky×retry_densify×
+            // LCP-deny soak contract — success is not a hot-path
+            // guarantee. Published window stays would_allow_mutate=false
+            // with objects_moved=0; Guard abort restores linear_roots.
             if (out.sticky_was_on) {
                 const auto prev = aura::ast::g_moving_incomplete_remap_sticky_densify_off.exchange(
                     1, std::memory_order_acq_rel);
