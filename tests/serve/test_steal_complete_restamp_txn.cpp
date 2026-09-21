@@ -2214,6 +2214,9 @@ static void ac3942_spawn_bind_walk() {
     // current-fiber pointer); register the probe fiber for the call.
     auto* prev_fiber = aura::serve::g_current_fiber;
     aura::serve::g_current_fiber = &f;
+    // Issue #3967: attach walk is steal-conditional. Inject a pre-attach
+    // steal note (mailbox_ still unused) so this AC still covers #3942.
+    f.note_steal_complete_for_held_ref();
     aura::orch::maybe_revalidate_held_ref_after_attach(mb);
     aura::serve::g_current_fiber = prev_fiber;
     bool cleared = true;
@@ -2225,6 +2228,65 @@ static void ac3942_spawn_bind_walk() {
     ev.set_compiler_metrics(nullptr);
 }
 
+static void ac3967_no_steal_keeps_pre_attach_stamp() {
+    std::println("\n--- #3967: no-steal send-before-attach keeps handoff stamp ---");
+    const auto as = read_file("src/orch/agent_spawn.h");
+    const auto fh = read_file("src/serve/fiber.h");
+    CHECK(as.find("Issue #3967") != std::string::npos, "3967: spawn cites");
+    CHECK(fh.find("note_steal_complete_for_held_ref") != std::string::npos,
+          "3967: Fiber steal seq");
+    CHECK(as.find("seq <= f->last_held_ref_revalidate_seq()") != std::string::npos,
+          "3967: walk is steal-conditional");
+    CHECK(as.find("schema-3967") == std::string::npos, "3967: no new query key");
+    CHECK(read_file("tests/serve/test_issue_3967.cpp").empty(), "3967: no invent");
+    CHECK(read_file("docs/design/3967-held-ref-attach.md").empty(), "3967: no docs/design");
+
+    aura::serve::mf_mailbox::MultiFiberMailbox mb;
+    Fiber f([] {});
+    mb.attach(&f);
+    aura::serve::mf_mailbox::MailMessage msg;
+    msg.payload = "no-steal-stamp";
+    msg.held_ref_token = 88;
+    msg.handoff_completed = true;
+    CHECK(mb.push(msg) != aura::serve::mf_mailbox::PushStatus::Closed, "3967: push ok");
+    auto& prod =
+        aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active;
+    prod.store(1u, std::memory_order_relaxed);
+    auto* prev = aura::serve::g_current_fiber;
+    aura::serve::g_current_fiber = &f;
+    aura::orch::maybe_revalidate_held_ref_after_attach(mb);
+    aura::serve::g_current_fiber = prev;
+    bool kept = false;
+    mb.for_each_pending_held_ref_for_fiber(
+        &f, [&kept](auto& m) { kept = kept || m.handoff_completed; });
+    prod.store(0u, std::memory_order_relaxed);
+    CHECK(kept, "3967: no-steal attach walk leaves handoff_completed");
+}
+
+static void ac3967_soft_is_noop() {
+    std::println("\n--- #3967: Soft attach helper is no-op ---");
+    aura::serve::mf_mailbox::MultiFiberMailbox mb;
+    Fiber f([] {});
+    mb.attach(&f);
+    aura::serve::mf_mailbox::MailMessage msg;
+    msg.payload = "soft-stamp";
+    msg.held_ref_token = 89;
+    msg.handoff_completed = true;
+    CHECK(mb.push(msg) != aura::serve::mf_mailbox::PushStatus::Closed, "3967 soft: push ok");
+    f.note_steal_complete_for_held_ref();
+    auto& prod =
+        aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active;
+    prod.store(0u, std::memory_order_relaxed);
+    auto* prev = aura::serve::g_current_fiber;
+    aura::serve::g_current_fiber = &f;
+    aura::orch::maybe_revalidate_held_ref_after_attach(mb);
+    aura::serve::g_current_fiber = prev;
+    bool kept = false;
+    mb.for_each_pending_held_ref_for_fiber(
+        &f, [&kept](auto& m) { kept = kept || m.handoff_completed; });
+    CHECK(kept, "3967: Soft does not clear stamps");
+}
+
 int run_test_steal_complete_restamp_txn() {
     std::println("test_steal_complete_restamp_txn");
     // Issue #3941: run the new #3942 AC FIRST — this member never ran in
@@ -2232,6 +2294,8 @@ int run_test_steal_complete_restamp_txn() {
     // its era-old ACs (#2510/#2957/#3001) currently fail; the new AC must
     // not be blocked behind them (#3463 lesson, applied in reverse).
     ac3942_spawn_bind_walk();
+    ac3967_no_steal_keeps_pre_attach_stamp();
+    ac3967_soft_is_noop();
     ac1_sole_restamp_entry();
     ac2_hard_mismatch_fail();
     ac3_soft_and_production();

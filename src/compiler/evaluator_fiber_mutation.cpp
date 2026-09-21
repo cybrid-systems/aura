@@ -3797,6 +3797,10 @@ extern "C" void aura_evaluator_on_steal_complete(void* fiber_ptr) noexcept {
     }
 
     auto* fiber = static_cast<aura::serve::Fiber*>(fiber_ptr);
+    // Issue #3967: mark steal even when mailbox_ is still null so the
+    // attach-time held_ref walk can tell steal from a no-steal race.
+    if (fiber)
+        fiber->note_steal_complete_for_held_ref();
     // Issue #3048: revoke session grants bound to this fiber's captured
     // outermost mid independent of Guard lifetime (steal may cancel /
     // Done the fiber before dtor). Zero cost when mid==0 or no live
