@@ -256,7 +256,12 @@ int run_test_must_deopt_before_next_call() {
         const auto call = rt.find("int64_t aura_closure_dispatch_native_checked(");
         CHECK(call != std::string::npos, "3247: blessed dispatch entry present");
         if (call != std::string::npos) {
-            const auto body = rt.substr(call, 4500);
+            // Window grows with the prologue: the #3948 refuse + #3972 remap
+            // arm pushed the MustDeopt-exclusive clear sites past 4500
+            // (`g_closure_must_deopt[cid] = 0` at +5902, bridge_epochs at
+            // +6161; CI run 35602271991 family). Same growth the #3247
+            // coverage linter took in 415d1d33b; assertions unchanged.
+            const auto body = rt.substr(call, 6500);
             CHECK(body.find("g_closure_must_deopt[cid] = 0") != std::string::npos,
                   "3247 AC2: call path still clears under exclusive");
             CHECK(body.find("g_closure_bridge_epochs[cid] = 0") != std::string::npos,

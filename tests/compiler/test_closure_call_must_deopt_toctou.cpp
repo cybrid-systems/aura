@@ -189,7 +189,12 @@ static void ac4_source_cite() {
     const auto call = rt.find("int64_t aura_closure_dispatch_native_checked(");
     CHECK(call != std::string::npos, "AC4: blessed dispatch entry present");
     if (call != std::string::npos) {
-        const auto body = rt.substr(call, 4500);
+        // Window grows with the prologue: the #3948 refuse + #3972 remap arm
+        // pushed `orig_func_id` (MustDeopt-exclusive re-check) past 4500
+        // (observed at +4516, CI run 35602271991). Same growth the #2472
+        // coverage linter took in 415d1d33b (4500 → 6500); assertions
+        // unchanged.
+        const auto body = rt.substr(call, 6500);
         CHECK(body.find("Issue #2472") != std::string::npos, "AC4: #2472 in MustDeopt path");
         CHECK(body.find("g_closure_freed") != std::string::npos,
               "AC4: freed re-check in MustDeopt exclusive");
