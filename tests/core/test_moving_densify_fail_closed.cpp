@@ -31,9 +31,12 @@
 
 #include "test_harness.hpp"
 
+#include "compiler/mutation_concurrency_health.hh"
+#include "compiler/typed_mutation_audit.h"
 #include "core/arena_auto_policy_stats.h"
 #include "core/densify_consistency_report.h"
 #include "core/gc_hooks.h"
+#include "core/lifetime_consistency_proof.hh"
 #include "core/moving_densify_health.hh"
 
 #include <cstdint>
@@ -41,10 +44,13 @@
 #include <fstream>
 #include <print>
 #include <string>
+#include <unordered_set>
 #include <vector>
 #include <string_view>
 
 import std;
+import aura.compiler.evaluator;
+import aura.compiler.service;
 import aura.core.arena;
 import aura.core.lifetime_pin;
 import aura.core.envframe_lifetime;
@@ -53,6 +59,8 @@ namespace {
 
 using aura::ast::ASTArena;
 using aura::ast::LiveCompactMode;
+using aura::compiler::CompilerService;
+using aura::compiler::Evaluator;
 using aura::test::g_failed;
 using aura::test::g_passed;
 
@@ -4478,6 +4486,191 @@ static void ac3884_2_auto_arm_consults_lcp_before_moving() {
           "ac3884_2: LCP reject Soft-falls-back (no relocate)");
 }
 
+// ── Issue #3974: abort-restore canary + incomplete-remap soak ────────────
+// Recover entry (#3128/#3884) is not a hot-path success guarantee. Soak
+// proves LCP-deny recover keeps sticky, never publishes green+moved, and
+// Guard abort restores linear_roots. No new query key / pin registry.
+static void ac3974_1_abort_restore_canary() {
+    std::println("\n--- #3974 AC1: Guard abort × sticky × retry_densify × LCP deny ---");
+    aura::compiler::reset_mutation_concurrency_health_admit_for_test();
+    aura::compiler::MutationConcurrencyHealthSnapshot clean_health;
+    aura::compiler::set_mutation_concurrency_health_admit_snapshot_for_test(clean_health);
+    aura::core::moving_densify_health::clear_agent_throttle_for_moving_densify();
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    aura::core::lifetime::reset_linear_roots_for_test();
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    aura::ast::set_moving_compact_enabled(1);
+    aura::core::lifetime_consistency_proof::reset_lifetime_consistency_proof_for_test();
+    aura::core::lifetime_consistency_proof::reset_densify_entry_lcp_blocked_for_test();
+
+    void* kKeep = reinterpret_cast<void*>(static_cast<std::uintptr_t>(0x39741000));
+    void* kExtra = reinterpret_cast<void*>(static_cast<std::uintptr_t>(0x39742000));
+    aura::core::lifetime::pin_linear_root(kKeep);
+    CompilerService cs;
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    auto& ev = cs.evaluator();
+    bool ok = true;
+    auto g = Evaluator::MutationBoundaryGuard::try_acquire(ev, 1, &ok);
+    if (!g.has_value()) {
+        CHECK(false, std::format("3974 AC1: Guard acquire ({})", g.error().message));
+        aura::compiler::typed_audit::apply_dev_audit_defaults();
+        aura::core::lifetime::reset_linear_roots_for_test();
+        return;
+    }
+    CHECK(true, "3974 AC1: Guard acquired");
+    aura::core::lifetime::pin_linear_root(kExtra);
+    CHECK(aura::core::lifetime::linear_root_snapshot().live_count == 2,
+          "3974 AC1: keep + extra pins live under Guard");
+
+    aura::ast::g_moving_incomplete_remap_sticky_densify_off.store(1, std::memory_order_release);
+    CHECK(aura::ast::moving_incomplete_remap_sticky_densify_off(), "3974 AC1: sticky armed");
+    {
+        auto p = aura::core::lifetime_consistency_proof::make_lifetime_consistency_proof();
+        p.would_allow_commit = false;
+        aura::core::lifetime_consistency_proof::stamp_lifetime_consistency_proof_for(&ev, p);
+    }
+    const auto blocked0 =
+        aura::core::lifetime_consistency_proof::g_densify_entry_lcp_blocked_total().load(
+            std::memory_order_relaxed);
+    const auto rec = ev.recover_moving_sticky_densify_off(/*retry_densify=*/true);
+    CHECK(rec.sticky_was_on, "3974 AC1: recover saw sticky");
+    CHECK(!rec.sticky_cleared, "3974 AC1: LCP deny re-armed sticky (cleared=false)");
+    CHECK(aura::ast::moving_incomplete_remap_sticky_densify_off(),
+          "3974 AC1: sticky still on after LCP-deny recover");
+    CHECK(!rec.success, "3974 AC1: recover success is not a hot-path guarantee");
+    CHECK(!rec.pin_contract_held, "3974 AC1: published pin_contract_held=false");
+    CHECK(rec.densify_retried, "3974 AC1: retry_densify admitted the one-shot consult");
+    CHECK(aura::core::lifetime_consistency_proof::g_densify_entry_lcp_blocked_total().load(
+              std::memory_order_relaxed) > blocked0,
+          "3974 AC1: densify-entry LCP block bumped");
+    const auto hs = aura::core::moving_densify_health::snapshot();
+    CHECK(!hs.would_allow_mutate, "3974 AC1: window_would_allow_mutate==false");
+    CHECK(hs.objects_moved == 0, "3974 AC1: LCP-deny recover publishes objects_moved=0");
+    CHECK(!hs.pin_contract_held, "3974 AC1: snapshot pin_contract_held=false");
+
+    ok = false;
+    g.value().reset();
+    CHECK(aura::core::lifetime::linear_root_snapshot().live_count == 0,
+          "3974 AC1: outermost abort restores linear_roots (empty snapshot)");
+    CHECK(aura::ast::moving_incomplete_remap_sticky_densify_off(),
+          "3974 AC1: abort does not steal-clear sticky");
+
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    aura::core::lifetime::reset_linear_roots_for_test();
+    aura::core::lifetime_consistency_proof::reset_lifetime_consistency_proof_for_test();
+    aura::compiler::reset_mutation_concurrency_health_admit_for_test();
+}
+
+static void ac3974_2_incomplete_remap_soak() {
+    std::println("\n--- #3974 AC2: mutate×densify soak never green+moved on incomplete ---");
+    MovingFlagGuard on(1);
+    aura::ast::g_moving_untracked_hard_abort_pref.store(1, std::memory_order_relaxed);
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    constexpr int kSoak = 32;
+    for (int i = 0; i < kSoak; ++i) {
+        ASTArena arena(64 * 1024);
+        auto* p0 = arena.create<Pod16>(1, 2, 3, 4);
+        auto* p1 = arena.create<Pod16>(5, 6, 7, 8);
+        auto* p2 = arena.create<Pod16>(9, 10, 11, 12);
+        const bool covered = (i % 2) == 0;
+        if (covered) {
+            void* s0 = p0;
+            void* s1 = p1;
+            void* s2 = p2;
+            arena.register_external_root_slot_for_densify(&s0);
+            arena.register_external_root_slot_for_densify(&s1);
+            arena.register_external_root_slot_for_densify(&s2);
+            const auto r = arena.live_compact(LiveCompactMode::Moving);
+            const bool allow = aura::core::moving_densify_health::window_would_allow_mutate(
+                /*had_densify=*/true, r.pin_contract_held, r.moving_incomplete_remap,
+                r.untracked_kept_count, /*root_fail=*/0);
+            if (r.objects_moved > 0 && r.moving_incomplete_remap)
+                CHECK(!allow, "3974 AC2: covered soak never green+moved on incomplete remap");
+            if (r.objects_moved > 0 && allow)
+                CHECK(!r.moving_incomplete_remap && r.pin_contract_held,
+                      "3974 AC2: green+moved requires pin held and complete remap");
+            CHECK(static_cast<Pod16*>(s0)->a == 1, "3974 AC2: covered payload intact");
+            (void)s1;
+            (void)s2;
+        } else {
+            void* ext = p0;
+            arena.register_external_root_for_densify(ext);
+            const auto r = arena.live_compact(LiveCompactMode::Moving);
+            const bool allow = aura::core::moving_densify_health::window_would_allow_mutate(
+                /*had_densify=*/true, r.pin_contract_held, r.moving_incomplete_remap,
+                r.untracked_kept_count, /*root_fail=*/0);
+            if (r.objects_moved > 0)
+                CHECK(!allow, "3974 AC2: untracked inject cannot publish green+moved");
+            CHECK(!(allow && r.objects_moved > 0 && r.moving_incomplete_remap),
+                  "3974 AC2: incomplete remap never green+moved");
+            (void)p1;
+            (void)p2;
+        }
+        const auto hs = aura::core::moving_densify_health::snapshot();
+        if (hs.objects_moved > 0 && hs.moving_incomplete_remap)
+            CHECK(!hs.would_allow_mutate, "3974 AC2: snapshot never green+moved on incomplete");
+    }
+    aura::ast::g_moving_untracked_hard_abort_pref.store(0, std::memory_order_relaxed);
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+}
+
+static void ac3974_3_soft_off_and_pin_required() {
+    std::println("\n--- #3974 AC3: Soft zero-cost LCP consult + pin-required fail-closed ---");
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    aura::core::lifetime_consistency_proof::reset_densify_entry_lcp_blocked_for_test();
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    aura::ast::g_moving_incomplete_remap_sticky_densify_off.store(1, std::memory_order_release);
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    auto p = aura::core::lifetime_consistency_proof::make_lifetime_consistency_proof();
+    p.would_allow_commit = false;
+    aura::core::lifetime_consistency_proof::stamp_lifetime_consistency_proof_for(&ev, p);
+    const auto blocked0 =
+        aura::core::lifetime_consistency_proof::g_densify_entry_lcp_blocked_total().load(
+            std::memory_order_relaxed);
+    (void)ev.recover_moving_sticky_densify_off(/*retry_densify=*/true);
+    CHECK(aura::core::lifetime_consistency_proof::g_densify_entry_lcp_blocked_total().load(
+              std::memory_order_relaxed) == blocked0,
+          "3974 AC3: Soft recover does not consult LCP (zero extra)");
+    const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    CHECK(mb.find("Issue #3974") != std::string::npos, "3974 AC3: recover cites #3974");
+    CHECK(mb.find("production_defaults_active() ||") != std::string::npos,
+          "3974 AC3: LCP consult stays production/Full gated");
+
+    {
+        RequiredPinGuard req(1);
+        MovingFlagGuard on(1);
+        aura::ast::g_moving_untracked_hard_abort_pref.store(1, std::memory_order_relaxed);
+        ASTArena arena(64 * 1024);
+        auto* leftover = create_uncovered_leftover(arena, 1, 2, 3, 4);
+        CHECK(leftover != nullptr, "3974 AC3: uncovered leftover allocated");
+        const auto r = arena.live_compact(LiveCompactMode::Moving);
+        if (r.objects_moved > 0)
+            CHECK(!r.pin_contract_held || r.moving_incomplete_remap,
+                  "3974 AC3: pin-required fail-closed on uncovered leftover");
+        const bool allow = aura::core::moving_densify_health::window_would_allow_mutate(
+            true, r.pin_contract_held, r.moving_incomplete_remap, r.untracked_kept_count, 0);
+        if (r.objects_moved > 0)
+            CHECK(!allow, "3974 AC3: pin-required never green+moved uncovered");
+        aura::ast::g_moving_untracked_hard_abort_pref.store(0, std::memory_order_relaxed);
+    }
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    aura::core::lifetime_consistency_proof::reset_lifetime_consistency_proof_for_test();
+}
+
+static void ac3974_4_source_cite_no_invent() {
+    std::println("\n--- #3974 AC4: source-cite + no invent ---");
+    const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    CHECK(mb.find("Issue #3974") != std::string::npos, "3974 AC4: recover cites #3974");
+    CHECK(mb.find("g_moving_incomplete_remap_sticky_densify_off.exchange") != std::string::npos,
+          "3974 AC4: LCP deny re-arm retained");
+    CHECK(mb.find("schema-3974") == std::string::npos, "3974 AC4: no new query key");
+    CHECK(read_file("tests/core/test_issue_3974.cpp").empty(), "3974 AC4: no test_issue_3974.cpp");
+    CHECK(read_file("docs/design/3974-sticky-recover-soak.md").empty(),
+          "3974 AC4: no docs/design/3974-*");
+}
+
 static void ac3884_3_soft_off_and_no_invent() {
     const auto arena = read_file("src/core/arena.ixx");
     const auto mut = read_file("src/compiler/evaluator_mutation_boundary.cpp");
@@ -5844,6 +6037,13 @@ int run_test_moving_densify_fail_closed() {
     ac3884_1_recover_rearms_sticky_on_lcp_reject();
     ac3884_2_auto_arm_consults_lcp_before_moving();
     ac3884_3_soft_off_and_no_invent();
+
+    std::println("\n=== Issue #3974: sticky recover abort-restore canary + soak "
+                 "(#3884 residual; extends fail_closed per #81967) ===");
+    ac3974_1_abort_restore_canary();
+    ac3974_2_incomplete_remap_soak();
+    ac3974_3_soft_off_and_pin_required();
+    ac3974_4_source_cite_no_invent();
 
     std::println("\n=== Issue #3783: auto-arm Moving densify health publish "
                  "(#3739 residual; extends fail_closed per #81967) ===");
