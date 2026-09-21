@@ -278,10 +278,11 @@ extern "C" void aura_test_set_closure_table_epoch(std::int64_t closure_id,
                                                   std::uint64_t epoch) noexcept;
 extern "C" void aura_test_set_residual_remount_force_skip(int v) noexcept;
 extern "C" void aura_test_reset_residual_remount_state() noexcept;
-// Issue #2978: reemit-success sync remount of named closures whose sid
-// bit intersects last_reemit_success_region_mask. Cap default 64
+// Issue #2978: reemit-success sync remount of named closures the
+// #3229 define side set covers. last_reemit_success is a #3445
+// reason-group gate (mask != 0), not a sid bitmap. Cap default 64
 // production / 0 Soft. Overflow falls through to residual. Soft /
-// mask==0 / cap==0 → zero walk.
+// mask==0 / cap==0 / define-idle (#3976) → zero walk.
 extern "C" std::uint64_t aura_reemit_success_sync_covered_cap_default() noexcept;
 extern "C" std::uint64_t aura_reemit_success_sync_covered_ok_total_v_read() noexcept;
 extern "C" std::uint64_t aura_reemit_success_sync_covered_fail_total_v_read() noexcept;

@@ -964,6 +964,81 @@ static void ac3885_second_heal_ors_other_bit() {
     aura::compiler::typed_audit::apply_dev_audit_defaults();
 }
 
+// ── Issue #3976: only_covered last_success is a reason-group proxy;
+// idle define-side must not FIFO-remount every named sid ──
+static void ac3976_cascade_does_not_stamp() {
+    std::println("\n--- #3976 AC1: Cascade dirty n>0 does not stamp last_success (#3682) ---");
+    const auto cpp = read_file("src/compiler/hot_update_registry.cpp");
+    CHECK(cpp.find("Issue #3682") != std::string::npos, "3976 AC1: cascade no-stamp retained");
+    CHECK(cpp.find("Issue #3976") != std::string::npos, "3976 AC1: idle remount skip cited");
+    ac3745_cascade_does_not_stamp();
+}
+
+static void ac3976_multi_reason_heal_leaves_residual() {
+    std::println("\n--- #3976 AC3: multi-reason force + single-bit heal leaves residual ---");
+    ac3885_multi_reason_single_heal_leaves_residual();
+}
+
+static void ac3976_soft_wholesale_unchanged() {
+    std::println("\n--- #3976 AC4: Soft wholesale re-promote unchanged ---");
+    ac3745_soft_wholesale_unchanged();
+}
+
+static void ac3976_soak_two_force_reasons() {
+    std::println("\n--- #3976 AC5: soak mutate×reemit two force reasons; only healed bit ---");
+    auto& reg = hot_update_registry();
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    reg.on_reload_success();
+    reg.reset_force_jit_repromote_for_test();
+    reg.set_force_jit_repromote_window(1);
+    reg.set_force_jit_repromote_only_covered_bits(true);
+    reg.set_force_jit_repromote_require_pending_idle(false);
+    reg.on_force_jit_for_reason(AotReloadFail::Defuse);
+    reg.on_force_jit_for_reason(AotReloadFail::Env); // last_reason = Env
+    const auto defuse = aot_reload_fail_to_force_jit_mask(AotReloadFail::Defuse);
+    const auto env = aot_reload_fail_to_force_jit_mask(AotReloadFail::Env);
+    aura_hot_update_set_reemit_boundary_policy(0);
+    static ReemitFeed feed;
+    feed.names = {"__hu_3976_soak"};
+    feed.regions = {1};
+    feed.cursor = 0;
+    aura_set_reemit_candidate_fn(&reemit_candidate_iter, &feed);
+    aura_set_aot_emit_fn(&emit_ok, nullptr);
+    reg.on_emit_region_mask_set(~0ULL);
+    (void)reg.decide_and_reemit(1, aura::compiler::HotUpdateRegistry::ReemitReason::StormClear);
+    if ((reg.last_reemit_success_region_mask() & env) == 0)
+        reg.on_reemit_pipeline_call(/*candidates=*/1, /*successes=*/1);
+    CHECK((reg.last_reemit_success_region_mask() & env) != 0,
+          "3976 AC5: storm-clear heal stamps Env (last_force_jit_reason)");
+    CHECK((reg.last_reemit_success_region_mask() & defuse) == 0,
+          "3976 AC5: single-bit heal does not stamp Defuse");
+    CHECK((reg.residual_force_mask() & defuse) != 0,
+          "3976 AC5: uncovered Defuse stays residual (MustDeopt / age belt)");
+    CHECK(!reg.relower_success_define_active(),
+          "3976 AC5: heal stamp does not invent a define side set");
+    for (int round = 0; round < 8; ++round) {
+        feed.cursor = 0;
+        (void)reg.decide_and_reemit(1, aura::compiler::HotUpdateRegistry::ReemitReason::Cascade);
+        if (reg.last_reemit_success_region_mask() == 0)
+            reg.on_reemit_pipeline_call(/*candidates=*/1, /*successes=*/1);
+        CHECK((reg.last_reemit_success_region_mask() & env) != 0,
+              "3976 AC5: cascade soak keeps healed Env bit");
+        CHECK((reg.last_reemit_success_region_mask() & defuse) == 0,
+              "3976 AC5: cascade soak does not invent Defuse last_success");
+        CHECK((reg.residual_force_mask() & defuse) != 0,
+              "3976 AC5: uncovered names stay residual across soak");
+    }
+    const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
+    CHECK(rt.find("Issue #3976") != std::string::npos, "3976 AC5: runtime cites idle skip");
+    CHECK(read_file("tests/compiler/test_issue_3976.cpp").empty(), "3976 AC5: no invent");
+    CHECK(read_file("docs/design/3976-idle-covered-fifo.md").empty(), "3976 AC5: no docs/design");
+    aura_set_aot_emit_fn(nullptr, nullptr);
+    aura_set_reemit_candidate_fn(nullptr, nullptr);
+    reg.on_reload_success();
+    reg.reset_force_jit_repromote_for_test();
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+}
+
 // ── Issue #3573: mutate×reemit bounded soak — proof hygiene + residual ──
 // Repeated facade rounds (mark dirty → reemit → success) must never leave
 // a fail-stamped proof behind (#2845 face), a sticky force bit, or new
@@ -1258,6 +1333,14 @@ int main() {
     ac3885_agent_coverage_note_clears_residual();
     reset_runtime_after_cs();
     ac3885_second_heal_ors_other_bit();
+    reset_runtime_after_cs();
+    ac3976_cascade_does_not_stamp();
+    reset_runtime_after_cs();
+    ac3976_multi_reason_heal_leaves_residual();
+    reset_runtime_after_cs();
+    ac3976_soft_wholesale_unchanged();
+    reset_runtime_after_cs();
+    ac3976_soak_two_force_reasons();
     reset_runtime_after_cs();
     std::println("\n=== {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;

@@ -896,9 +896,9 @@ static void ac3785_1_sync_remount_storm_gate() {
     CHECK(rt.find("Issue #3785") != std::string::npos, "ac3785_1: cites #3785");
     const auto fn = rt.find("aura_sync_remount_covered_named_live_closures");
     CHECK(fn != std::string::npos, "ac3785_1: sync remount present");
-    // Window widened 1200→1600: #3812 comment block pushed g_closure_table_mtx
-    // past offset 1188 (needle straddled the old boundary — wave drift).
-    const auto win = rt.substr(fn, 1600);
+    // Window widened 1200→1600 (#3812 comments) then 1600→2200 (#3976
+    // idle-skip before the table lock).
+    const auto win = rt.substr(fn, 2200);
     CHECK(win.find("storm >= 2") != std::string::npos, "ac3785_1: Global/Both storm gate");
     CHECK(win.find("aura_hot_update_should_throttle_reemit") != std::string::npos,
           "ac3785_1: reuses reemit throttle");
@@ -948,7 +948,7 @@ static void ac3812_2_hard_ceiling_and_critical_default_deny() {
     const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
     const auto fn = rt.find("aura_sync_remount_covered_named_live_closures");
     CHECK(fn != std::string::npos, "ac3812_2: sync remount present");
-    const auto win = rt.substr(fn, 1600);
+    const auto win = rt.substr(fn, 2200);
     const auto helper = rt.find("aura_critical_bypass_covered_remount_allowed");
     CHECK(helper != std::string::npos, "ac3812_2: allow helper present");
     const auto hwin = rt.substr(helper, 800);

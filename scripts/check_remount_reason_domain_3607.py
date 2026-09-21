@@ -2,9 +2,10 @@
 # scripts/check_remount_reason_domain_3607.py -- Issue #3607 source-cite gate.
 #
 # AC1: the covered walk filters per-closure by the #3229 define side set
-#      (relower_success_covers_define) and falls back to the full named FIFO
-#      walk when the side set is idle; the sid%64 helper is deleted — the
-#      #3445 reason word is not a sid bitmap.
+#      (relower_success_covers_define). Issue #3976: idle define-side skips
+#      covered remount (not a full named FIFO). Residual prefer idle still
+#      walks the full named FIFO (pre-#2977). The sid%64 helper is deleted
+#      — the #3445 reason word is not a sid bitmap.
 # AC2: last_reemit_success stays the reason-group stamp (#3445/#3466); the
 #      remount walks never restamp it with the full demoted mask (#3413).
 # AC3: the residual tick prefer pass gates on production + non-idle reason
@@ -61,7 +62,8 @@ def main() -> int:
     must("Issue #3607", "AC1 runtime", rt)
     must_not("residual_closure_sid_region_bits_unlocked", "AC1 runtime", rt)
     must("relower_success_covers_define", "AC1 runtime filter", rt)
-    must("full named FIFO", "AC1 runtime idle fallback", rt)
+    must("full named FIFO", "AC1 residual idle FIFO", rt)
+    must("Issue #3976", "AC1 covered idle skip", rt)
     must("ac3607_1_covered_define_domain", "AC1 test row", test)
 
     # AC2
