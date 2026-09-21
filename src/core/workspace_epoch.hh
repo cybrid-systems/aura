@@ -428,24 +428,25 @@ inline void reset_query_epoch_metrics_for_test() noexcept {
 //   fiber_id (4)                      — fiber isolation token
 //   mutation_id_at_capture (4)        — mutation epoch at capture time
 //   generation (2)                    — StableNodeRef.gen
-//   wrap_epoch (2)                    — StableNodeRef.wrap_epoch
-//   cow_epoch_at_capture (2)          — StableNodeRef.cow_epoch_at_capture
+//   wrap_epoch (4)                    — StableNodeRef.wrap_epoch (#3990; was u16)
+//   cow_epoch_at_capture (8)          — StableNodeRef.cow_epoch_at_capture (#3990)
 //   boundary_pinned (1)               — SafePCVSpan pin path
-//   reserved (1)                      — padding to align to 4
-// Schema-1 readers (pre-#3103) ignore the trailing 18 bytes; schema-2
-// readers check schema_marker == wrap_epoch != 0 (cheap discriminator) and
-// gate validation on tenant_id / fiber_id / cow_epoch_at_capture /
-// mutation_id_at_capture when set.
+//   reserved (1)                      — schema-2 / schema-2-prod marker
+// Issue #3990: wrap/cow match StableNodeRef widths so a held QueryResult
+// cannot alias after wrap_epoch passes 65535 (uint16 compare truncated
+// both sides to 0). reserved stays the schema marker. Do not publish
+// mutation_id_at_capture (#3696). Soft/Off: same struct, no extra atomics.
+// Schema-2 readers gate on reserved / wrap / tenant / fiber / cow when set.
 struct QueryResultMatch {
     std::uint32_t node_id = 0;
     std::uint32_t tenant_id = 0;
     std::uint32_t fiber_id = 0;
     std::uint32_t mutation_id_at_capture = 0;
     std::uint16_t generation = 0;
-    std::uint16_t wrap_epoch = 0;
-    std::uint16_t cow_epoch_at_capture = 0;
+    std::uint32_t wrap_epoch = 0;
+    std::uint64_t cow_epoch_at_capture = 0;
     std::uint8_t boundary_pinned = 0;
-    std::uint8_t reserved = 0; // alignment pad (schema-version bit space)
+    std::uint8_t reserved = 0; // schema-version bit space
 
     // Issue #3103: schema-2 marker. True iff the trailing provenance fields
     // were captured at capture time (via :as-query-result / :query-result #t).
@@ -483,8 +484,8 @@ struct QueryResult {
         return is_fresh(current_mutation_epoch(), flat_generation);
     }
 
-    bool push_match(std::uint32_t node_id, std::uint16_t generation, std::uint16_t wrap_epoch = 0,
-                    std::uint16_t cow_epoch_at_capture = 0, std::uint32_t tenant_id = 0,
+    bool push_match(std::uint32_t node_id, std::uint16_t generation, std::uint32_t wrap_epoch = 0,
+                    std::uint64_t cow_epoch_at_capture = 0, std::uint32_t tenant_id = 0,
                     std::uint32_t fiber_id = 0, std::uint32_t mutation_id_at_capture = 0,
                     std::uint8_t boundary_pinned = 0) noexcept {
         if (match_count >= kMaxInlineMatches)
@@ -507,8 +508,8 @@ struct QueryResult {
     // paths. Soft / single-tenant bare path keeps the 2-arg push_match.
     // Issue #3231: finish path gated on production_defaults_active() must
     // not accept schema-1 (layout-only) after this overload.
-    bool push_match_full(std::uint32_t node_id, std::uint16_t generation, std::uint16_t wrap_epoch,
-                         std::uint16_t cow_epoch_at_capture, std::uint32_t tenant_id,
+    bool push_match_full(std::uint32_t node_id, std::uint16_t generation, std::uint32_t wrap_epoch,
+                         std::uint64_t cow_epoch_at_capture, std::uint32_t tenant_id,
                          std::uint32_t fiber_id, std::uint32_t mutation_id_at_capture,
                          std::uint8_t boundary_pinned) noexcept {
         return push_match(node_id, generation, wrap_epoch, cow_epoch_at_capture, tenant_id,
@@ -542,6 +543,8 @@ inline constexpr int kQueryDefaultSchema2ExportIssue = 3449;
 // Issue #3827: query:children / query:parent Production finish routes
 // through end_query_epoch_maybe_result (schema-2), not bare NodeId lists.
 inline constexpr int kQueryChildrenParentSchema2ExportIssue = 3827;
+// Issue #3990: QueryResultMatch wrap/cow match StableNodeRef widths.
+inline constexpr int kQueryResultMatchWrapWidthIssue = 3990;
 inline constexpr const char* kQueryResultLayoutOnlyErrorKind = "query-result-layout-only";
 inline constexpr std::uint8_t kQueryResultMatchSchema2 = 1;
 // Issue #3311: production-stamped variant. Under production_defaults the

@@ -50,7 +50,9 @@ query_result_is_fresh_with_refs(const aura::core::QueryResult& qr, const aura::a
         return aura::core::QueryResultFreshness::SoftOnlyNoProvenance;
     }
     const auto live_cow = flat.workspace_cow_epoch();
-    const auto live_wrap = static_cast<std::uint16_t>(flat.wrap_epoch());
+    // Issue #3990: compare wrap at StableNodeRef uint32 width. Truncating
+    // live wrap to uint16 aliases captured 0 after wrap_epoch 65536.
+    const auto live_wrap = flat.wrap_epoch();
     for (std::size_t i = 0; i < qr.match_count; ++i) {
         const auto& m = qr.matches[i];
         if (hard) {
@@ -86,7 +88,9 @@ query_result_is_fresh_with_refs(const aura::core::QueryResult& qr, const aura::a
                 // slot with a different occupant must not resolve as success.
                 if (m.generation != 0 && flat.node_gen_for(nid) != m.generation)
                     return aura::core::QueryResultFreshness::StaleByEpoch;
-                if (m.wrap_epoch != 0 && m.wrap_epoch != live_wrap)
+                // Issue #3990: production schema-2 always compares wrap,
+                // including captured 0 vs live 65536 (same as is_valid).
+                if (m.wrap_epoch != live_wrap)
                     return aura::core::QueryResultFreshness::StaleByEpoch;
             }
             continue;
@@ -231,9 +235,10 @@ template <typename StringHeap, typename PairVec>
             }
             if (got) {
                 if (!out.push_match_full(
-                        node_id, node_gen, static_cast<std::uint16_t>(wrap),
-                        static_cast<std::uint16_t>(cow), static_cast<std::uint32_t>(tenant),
-                        static_cast<std::uint32_t>(fiber), static_cast<std::uint32_t>(mid), 0))
+                        node_id, node_gen, static_cast<std::uint32_t>(wrap < 0 ? 0 : wrap),
+                        static_cast<std::uint64_t>(cow < 0 ? 0 : cow),
+                        static_cast<std::uint32_t>(tenant), static_cast<std::uint32_t>(fiber),
+                        static_cast<std::uint32_t>(mid), 0))
                     break;
                 out.matches[out.match_count - 1].reserved = reserved;
             }

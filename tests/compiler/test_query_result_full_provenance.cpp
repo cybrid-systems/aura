@@ -32,6 +32,7 @@
 #include "compiler/mutation_concurrency_health.hh"
 #include "compiler/typed_mutation_audit.h"
 #include "core/sandbox.hh"
+#include "core/workspace_epoch.hh"
 
 #include <cstdint>
 #include <cstring>
@@ -46,6 +47,9 @@ import aura.compiler.dirty_propagation;
 import aura.compiler.evaluator;
 import aura.compiler.service;
 import aura.compiler.value;
+
+#define AURA_QUERY_RESULT_DECODE_FRESHNESS_ONLY
+#include "compiler/query_result_decode.hh"
 
 namespace {
 
@@ -1623,6 +1627,176 @@ void test_ac3767_3_soft_id_gen_and_no_invent() {
     }
 }
 
+// Issue #3990: QueryResultMatch wrap/cow match StableNodeRef widths.
+void test_ac3990_1_wrap_65536_vs_captured_0() {
+    std::print("AC3990/AC1 -- production wrap 65536 vs captured 0 is not fresh\n");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    using aura::core::QueryResultFreshness;
+    expect_eq_i64("3990 AC1: issue stamp", 3990,
+                  static_cast<std::int64_t>(aura::core::kQueryResultMatchWrapWidthIssue));
+    apply_dev_audit_defaults();
+    CompilerService cs;
+    expect_true("3990 AC1: set-code",
+                cs.eval("(set-code \"(define w3990 (lambda () 1))\")").has_value());
+    expect_true("3990 AC1: eval", cs.eval("(eval-current)").has_value());
+    apply_production_audit_defaults();
+    auto* flat = cs.evaluator().workspace_flat();
+    expect_true("3990 AC1: workspace", flat != nullptr);
+    aura::ast::NodeId live = aura::ast::NULL_NODE;
+    for (aura::ast::NodeId id = 1; id < flat->size(); ++id) {
+        if (flat->is_live_node(id) && !flat->is_free_slot(id)) {
+            live = id;
+            break;
+        }
+    }
+    expect_true("3990 AC1: live node", live != aura::ast::NULL_NODE);
+    aura::core::QueryResult qr{};
+    expect_true("3990 AC1: push",
+                qr.push_match_full(static_cast<std::uint32_t>(live), flat->node_gen_for(live),
+                                   /*wrap_epoch=*/0, /*cow_epoch_at_capture=*/0, 0, 0, 0, 0));
+    qr.matches[0].reserved = aura::core::kQueryResultMatchSchema2Prod;
+    const auto pre = aura::compiler::query_result_decode::query_result_is_fresh_with_refs(
+        qr, *flat, /*tenant=*/0, /*fiber=*/0);
+    expect_true("3990 AC1: pre-inject Fresh", pre == QueryResultFreshness::Fresh);
+    auto packed = flat->make_ref_layout(live);
+    expect_true("3990 AC1: packed wrap 0 valid before inject", packed.is_valid_in(*flat));
+    flat->set_wrap_epoch_for_test(65536);
+    expect_true("3990 AC1: packed wrap 0 is_valid false at wrap 65536", !packed.is_valid_in(*flat));
+    const auto held = aura::compiler::query_result_decode::query_result_is_fresh_with_refs(
+        qr, *flat, /*tenant=*/0, /*fiber=*/0);
+    expect_true("3990 AC1: QueryResult StaleByEpoch at wrap 65536",
+                held == QueryResultFreshness::StaleByEpoch);
+    qr.matches[0].wrap_epoch = 65536;
+    const auto aligned = aura::compiler::query_result_decode::query_result_is_fresh_with_refs(
+        qr, *flat, /*tenant=*/0, /*fiber=*/0);
+    expect_true("3990 AC1: wrap 65536 field holds and matches live",
+                aligned == QueryResultFreshness::Fresh);
+    flat->set_wrap_epoch_for_test(0);
+    apply_dev_audit_defaults();
+}
+
+void test_ac3990_2_cow_tenant_fail_closed() {
+    std::print("AC3990/AC2 -- cow/tenant still fail-closed at full width\n");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    using aura::core::QueryResultFreshness;
+    apply_dev_audit_defaults();
+    CompilerService cs;
+    expect_true("3990 AC2: set-code",
+                cs.eval("(set-code \"(define c3990 (lambda () 1))\")").has_value());
+    expect_true("3990 AC2: eval", cs.eval("(eval-current)").has_value());
+    apply_production_audit_defaults();
+    auto* flat = cs.evaluator().workspace_flat();
+    expect_true("3990 AC2: workspace", flat != nullptr);
+    aura::ast::NodeId live = aura::ast::NULL_NODE;
+    for (aura::ast::NodeId id = 1; id < flat->size(); ++id) {
+        if (flat->is_live_node(id) && !flat->is_free_slot(id)) {
+            live = id;
+            break;
+        }
+    }
+    aura::core::QueryResult qr{};
+    expect_true("3990 AC2: push",
+                qr.push_match_full(static_cast<std::uint32_t>(live), flat->node_gen_for(live),
+                                   flat->wrap_epoch(), /*cow=*/65536ull, 0, 0, 0, 0));
+    qr.matches[0].reserved = aura::core::kQueryResultMatchSchema2Prod;
+    expect_true("3990 AC2: cow field holds 65536", qr.matches[0].cow_epoch_at_capture == 65536ull);
+    flat->set_workspace_cow_epoch(65536);
+    const auto cow_ok = aura::compiler::query_result_decode::query_result_is_fresh_with_refs(
+        qr, *flat, /*tenant=*/0, /*fiber=*/0);
+    expect_true("3990 AC2: matching cow 65536 Fresh", cow_ok == QueryResultFreshness::Fresh);
+    qr.matches[0].cow_epoch_at_capture = 1;
+    const auto cow_bad = aura::compiler::query_result_decode::query_result_is_fresh_with_refs(
+        qr, *flat, /*tenant=*/0, /*fiber=*/0);
+    expect_true("3990 AC2: cow mismatch InvalidCowLayer",
+                cow_bad == QueryResultFreshness::InvalidCowLayer);
+    qr.matches[0].cow_epoch_at_capture = 65536;
+    qr.matches[0].tenant_id = 99;
+    const auto ten_bad = aura::compiler::query_result_decode::query_result_is_fresh_with_refs(
+        qr, *flat, /*tenant=*/1, /*fiber=*/0);
+    expect_true("3990 AC2: tenant mismatch InvalidTenant",
+                ten_bad == QueryResultFreshness::InvalidTenant);
+    flat->set_workspace_cow_epoch(0);
+    apply_dev_audit_defaults();
+}
+
+void test_ac3990_3_soft_unchanged_shape() {
+    std::print("AC3990/AC3 -- Soft wrap=0 skip unchanged; same struct\n");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::core::QueryResultFreshness;
+    apply_dev_audit_defaults();
+    CompilerService cs;
+    expect_true("3990 AC3: set-code",
+                cs.eval("(set-code \"(define s3990 (lambda () 1))\")").has_value());
+    expect_true("3990 AC3: eval", cs.eval("(eval-current)").has_value());
+    auto* flat = cs.evaluator().workspace_flat();
+    expect_true("3990 AC3: workspace", flat != nullptr);
+    aura::ast::NodeId live = aura::ast::NULL_NODE;
+    for (aura::ast::NodeId id = 1; id < flat->size(); ++id) {
+        if (flat->is_live_node(id) && !flat->is_free_slot(id)) {
+            live = id;
+            break;
+        }
+    }
+    aura::core::QueryResult qr{};
+    expect_true("3990 AC3: push",
+                qr.push_match_full(static_cast<std::uint32_t>(live), flat->node_gen_for(live),
+                                   /*wrap_epoch=*/0, 0, 0, 0, 0, 0));
+    qr.matches[0].reserved = aura::core::kQueryResultMatchSchema2;
+    flat->set_wrap_epoch_for_test(65536);
+    const auto held = aura::compiler::query_result_decode::query_result_is_fresh_with_refs(
+        qr, *flat, /*tenant=*/0, /*fiber=*/0);
+    expect_true("3990 AC3: Soft wrap=0 skip stays Fresh",
+                held == QueryResultFreshness::Fresh ||
+                    held == QueryResultFreshness::SoftOnlyNoProvenance);
+    aura::core::QueryResultMatch m{};
+    m.wrap_epoch = 65536;
+    m.cow_epoch_at_capture = 65536ull;
+    expect_true("3990 AC3: wrap field holds 65536", m.wrap_epoch == 65536u);
+    expect_true("3990 AC3: cow field holds 65536", m.cow_epoch_at_capture == 65536ull);
+    flat->set_wrap_epoch_for_test(0);
+    apply_dev_audit_defaults();
+}
+
+void test_ac3990_4_source_cite() {
+    std::print("AC3990/AC4 -- source-cite wrap/cow width; no invent\n");
+    std::ifstream f_hh("src/core/workspace_epoch.hh");
+    std::string hh((std::istreambuf_iterator<char>(f_hh)), std::istreambuf_iterator<char>());
+    std::ifstream f_dec("src/compiler/query_result_decode.hh");
+    std::string dec((std::istreambuf_iterator<char>(f_dec)), std::istreambuf_iterator<char>());
+    std::ifstream f_qws("src/compiler/evaluator_primitives_query_workspace.cpp");
+    std::string qws((std::istreambuf_iterator<char>(f_qws)), std::istreambuf_iterator<char>());
+    expect_true("3990 AC4: stamp",
+                hh.find("kQueryResultMatchWrapWidthIssue = 3990") != std::string::npos);
+    expect_true("3990 AC4: wrap is uint32",
+                hh.find("std::uint32_t wrap_epoch = 0;") != std::string::npos);
+    expect_true("3990 AC4: cow is uint64",
+                hh.find("std::uint64_t cow_epoch_at_capture = 0;") != std::string::npos);
+    expect_true("3990 AC4: no uint16 live wrap",
+                dec.find("static_cast<std::uint16_t>(flat.wrap_epoch())") == std::string::npos);
+    expect_true("3990 AC4: stamp copies wrap at full width",
+                qws.find("qr.matches[i].wrap_epoch = scratch_ref.wrap_epoch;") !=
+                    std::string::npos);
+    expect_true("3990 AC4: no uint16 wrap stamp",
+                qws.find("static_cast<std::uint16_t>(scratch_ref.wrap_epoch)") ==
+                    std::string::npos);
+    expect_true("3990 AC4: reserved stays schema marker", hh.find("reserved") != std::string::npos);
+    expect_true("3990 AC4: no schema-3990", qws.find("schema-3990") == std::string::npos);
+    {
+        std::ifstream f("tests/compiler/test_issue_3990.cpp");
+        expect_true("3990 AC4: no test_issue_3990.cpp", !f.good());
+    }
+    {
+        std::ifstream f("tests/issues/test_issue_3990.cpp");
+        expect_true("3990 AC4: no tests/issues/test_issue_3990.cpp", !f.good());
+    }
+    {
+        std::ifstream f("docs/design/3990-query-result-wrap-width.md");
+        expect_true("3990 AC4: no docs/design", !f.good());
+    }
+}
+
 
 // Issue #3827: query:children / query:parent still finished with plain
 // end_query_epoch and returned bare NodeId lists under Production — Agents
@@ -2027,6 +2201,10 @@ int main() {
     test_ac3767_1_wrap_mismatch_is_false();
     test_ac3767_2_foreign_tenant_is_false();
     test_ac3767_3_soft_id_gen_and_no_invent();
+    test_ac3990_1_wrap_65536_vs_captured_0();
+    test_ac3990_2_cow_tenant_fail_closed();
+    test_ac3990_3_soft_unchanged_shape();
+    test_ac3990_4_source_cite();
     test_ac1_struct_extension();
     test_ac2_push_match_defaults();
     test_ac3_push_match_full_provenance();
@@ -2107,7 +2285,7 @@ int main() {
     // test_ac3827_3_children_stable_stays_green();
     test_ac3827_4_soft_and_source();
     std::print("All #3103 + #3137 + #3231 + #3286 + #3311 + #3389 + #3395 + #3424 + "
-               "#3449 + #3660 + #3695 + #3696 + #3766 + #3767 + #3827 + #3895 + #3896 AC tests "
-               "PASSED\n");
+               "#3449 + #3660 + #3695 + #3696 + #3766 + #3767 + #3827 + #3895 + #3896 + "
+               "#3990 AC tests PASSED\n");
     return 0;
 }

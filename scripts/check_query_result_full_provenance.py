@@ -46,8 +46,8 @@ STRUCT_REQUIRED: tuple[tuple[str, str], ...] = (
     ("src/core/workspace_epoch.hh", r"std::uint32_t\s+tenant_id"),
     ("src/core/workspace_epoch.hh", r"std::uint32_t\s+fiber_id"),
     ("src/core/workspace_epoch.hh", r"std::uint32_t\s+mutation_id_at_capture"),
-    ("src/core/workspace_epoch.hh", r"std::uint16_t\s+wrap_epoch"),
-    ("src/core/workspace_epoch.hh", r"std::uint16_t\s+cow_epoch_at_capture"),
+    ("src/core/workspace_epoch.hh", r"std::uint32_t\s+wrap_epoch"),
+    ("src/core/workspace_epoch.hh", r"std::uint64_t\s+cow_epoch_at_capture"),
     ("src/core/workspace_epoch.hh", r"std::uint8_t\s+boundary_pinned"),
     ("src/core/workspace_epoch.hh", r"has_full_provenance"),
     ("src/core/workspace_epoch.hh", r"push_match_full"),
@@ -144,8 +144,8 @@ def _self_test() -> int:
         std::uint32_t tenant_id = 0;
         std::uint32_t fiber_id = 0;
         std::uint32_t mutation_id_at_capture = 0;
-        std::uint16_t wrap_epoch = 0;
-        std::uint16_t cow_epoch_at_capture = 0;
+        std::uint32_t wrap_epoch = 0;
+        std::uint64_t cow_epoch_at_capture = 0;
         std::uint8_t boundary_pinned = 0;
         std::uint8_t reserved = 0;
         constexpr bool has_full_provenance() const noexcept;
