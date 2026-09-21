@@ -3383,10 +3383,34 @@ inline void reject_stamper_live_goal_linear_root_mismatch(TypeLinearCommitProof&
 //   - goal_fingerprint: #2842 bounded content hash of live goals.
 // live_goal_count_hint: UINT64_MAX = use process gauge; else use hint.
 // goal_truth_from_cs: true when hint came from occurrence_goals_size().
+// Issue #3984: outermost persist must not publish observer-visible green
+// would_allow until Guard post-persist deny arms (#3472 linear, density,
+// persist-reject) have passed. persist helper stamps epoch/fingerprint
+// with publish_green_face=false; Guard commits the face after those arms.
+inline constexpr int kOutermostGreenAfterPostPersistDenyIssue = 3984;
+inline thread_local std::uint8_t g_tls_deferred_outermost_green_would_allow{0};
+inline thread_local std::uint8_t g_tls_deferred_outermost_green_linear_ok{0};
+inline std::atomic<std::uint8_t> g_inject_linear_synth_after_persist_for_test{0};
+
+inline void drop_deferred_outermost_green_proof() noexcept {
+    g_tls_deferred_outermost_green_would_allow = 0;
+    g_tls_deferred_outermost_green_linear_ok = 0;
+}
+
+inline void commit_deferred_outermost_green_proof() noexcept {
+    if (g_tls_deferred_outermost_green_would_allow != 0 &&
+        g_tls_deferred_outermost_green_linear_ok != 0) {
+        publish_last_proof_face(true, true);
+        publish_type_linear_proof_outcome(kTypeLinearProofOutcomeStamped);
+    }
+    drop_deferred_outermost_green_proof();
+}
+
 inline TypeLinearCommitProof build_type_linear_commit_proof_from_live(
     std::uint64_t current_epoch_or_defuse,
     std::uint64_t live_goal_count_hint = kProofLiveGoalCountHintAuto,
-    std::uint64_t goal_fingerprint = 0, bool goal_truth_from_cs = false) noexcept {
+    std::uint64_t goal_fingerprint = 0, bool goal_truth_from_cs = false,
+    bool publish_green_face = true) noexcept {
     g_tls_stamp_last_look_rejected = false;
     TypeLinearCommitProof p{};
     const auto ready = commit_readiness_live_policy();
@@ -3437,7 +3461,15 @@ inline TypeLinearCommitProof build_type_linear_commit_proof_from_live(
     // additive — query path returns the latest stamp epoch.
     stamp_type_linear_commit_proof(current_epoch_or_defuse);
     // Issue #2899: publish face bits for IR Move/Drop fast-path.
-    publish_last_proof_face(p.would_allow_commit, p.linear_ok);
+    // Issue #3984: persist helper holds observer-visible green until Guard
+    // post-persist deny arms pass (publish_green_face=false).
+    if (!publish_green_face && p.would_allow_commit && p.linear_ok) {
+        g_tls_deferred_outermost_green_would_allow = 1;
+        g_tls_deferred_outermost_green_linear_ok = 1;
+        publish_last_proof_face(false, false);
+    } else {
+        publish_last_proof_face(p.would_allow_commit, p.linear_ok);
+    }
     // Issue #3346: stamp-site TLS is not valid after this builder returns
     // (stack TypeCheckers in tests). Rejected flag stays for outermost.
     g_tls_stamp_last_look_tc = nullptr;
@@ -5239,6 +5271,8 @@ inline void snapshot_global(std::uint64_t& considered, std::uint64_t& skipped,
 // unit tests keep the fast-iteration path; cold-start process default is
 // Full (#2818) until this or apply_dev is called.
 inline void reset_for_test() noexcept {
+    drop_deferred_outermost_green_proof();
+    g_inject_linear_synth_after_persist_for_test.store(0, std::memory_order_relaxed);
     reset_outermost_persist_reject_needs_restore_for_test();
     g_last_stamped_audit_mid.store(0, std::memory_order_relaxed);
     g_last_composite_batch_join_mid.store(0, std::memory_order_relaxed);

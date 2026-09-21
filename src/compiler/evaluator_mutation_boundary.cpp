@@ -756,8 +756,16 @@ extern "C" void aura_outermost_success_persist_occurrence(void* ev_ptr,
     // fingerprint_tc tests use stack TypeCheckers).
     aura::compiler::typed_audit::note_stamp_last_look_tc(tc);
     const auto truth = freeze_proof_goal_truth_from_type_checker(tc);
+    // Issue #3984: Production/Full stamps epoch/fingerprint but does not
+    // publish observer-visible green would_allow until Guard post-persist
+    // deny arms (#3472 linear, density, persist-reject) have passed.
+    // Soft/Off: existing live stamp (zero extra).
+    const bool defer_green = aura::compiler::typed_audit::production_defaults_active() ||
+                             aura::compiler::typed_audit::get_strategy() ==
+                                 aura::compiler::typed_audit::AuditStrategy::Full;
     (void)aura::compiler::typed_audit::build_type_linear_commit_proof_from_live(
-        mutation_id, truth.live_goal_count, truth.goal_fingerprint, truth.from_cs);
+        mutation_id, truth.live_goal_count, truth.goal_fingerprint, truth.from_cs,
+        /*publish_green_face=*/!defer_green);
     // Issue #3346 AC1: last-look inside the builder can still reject if
     // fingerprint / live_goal_count / linear_root_count drifted or
     // mid_abort_authority is outstanding. Do not grant query:type on a
@@ -765,6 +773,7 @@ extern "C" void aura_outermost_success_persist_occurrence(void* ev_ptr,
     // Live-policy would_allow_commit=false is NOT last-look: recover
     // (#3376 ensure_occurrence_commit_or_recover) must still run.
     if (aura::compiler::typed_audit::stamp_last_look_rejected()) {
+        aura::compiler::typed_audit::drop_deferred_outermost_green_proof();
         ev->clear_type_export_authority();
         aura::compiler::typed_audit::publish_type_linear_proof_outcome(
             aura::compiler::typed_audit::kTypeLinearProofOutcomeReject);
@@ -785,6 +794,7 @@ extern "C" void aura_outermost_success_persist_occurrence(void* ev_ptr,
     // the generic stamp — the face code 10/11/15 lives in the
     // publish_occurrence_commit_health bitmask for Agent observability.
     if (!tc->ensure_occurrence_commit_or_recover()) {
+        aura::compiler::typed_audit::drop_deferred_outermost_green_proof();
         ev->clear_type_export_authority();
         (void)aura::compiler::typed_audit::build_type_linear_commit_proof_from_live_with_outcome(
             mutation_id, /*would_allow_commit=*/false, /*linear_ok=*/false,
@@ -4593,7 +4603,13 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
                 aura_outermost_success_persist_occurrence(ev_, mid);
                 // Issue #3512: staging is one-shot for this outermost persist.
                 ev_->clear_expected_occurrence_snapshot_fp();
+                // Issue #3984: inject after persist helper so #3472 belt can
+                // fire without the #3614 pre-gate seeing the latch (test).
+                if (typed_audit::g_inject_linear_synth_after_persist_for_test.exchange(
+                        0, std::memory_order_acq_rel) != 0)
+                    ev_->note_linear_synth_hard_fail_pending();
                 if (typed_audit::consume_outermost_persist_reject_needs_restore()) {
+                    typed_audit::drop_deferred_outermost_green_proof();
                     success = false;
                     success_flag_store(flag_, false);
                 }
@@ -4638,10 +4654,17 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
                     mid_undo = typed_audit::join_audit_and_se_mid(0);
             }
             aura_persist_reject_undo(ev_, mid_undo);
+            typed_audit::drop_deferred_outermost_green_proof();
             success = false;
             success_flag_store(flag_, false);
         }
     }
+    // Issue #3984: observer-visible green only after every post-persist
+    // deny arm in this Guard has passed. Soft/Off never deferred.
+    if (outermost && success)
+        typed_audit::commit_deferred_outermost_green_proof();
+    else
+        typed_audit::drop_deferred_outermost_green_proof();
     if (!inbody_force_exited_)
         ev_->exit_mutation_boundary(success);
     // Issue #3517: Full/hard-gate force-rollback inside exit already

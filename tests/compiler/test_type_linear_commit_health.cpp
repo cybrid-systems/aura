@@ -28,6 +28,7 @@
 #include "compiler/typed_mutation_audit.h"
 #include "test_harness.hpp"
 
+#include <atomic>
 #include <cctype>
 #include <cstdint>
 #include <filesystem>
@@ -35,6 +36,7 @@
 #include <print>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <vector>
 
 import std;
@@ -1681,6 +1683,128 @@ static void ac3472_4_soft_no_flip() {
     CHECK(read_file("tests/compiler/test_issue_3472.cpp").empty(), "3472 AC4: no invent");
 }
 
+// ── Issue #3984: no observer-visible green until post-persist deny arms pass ──
+static void ac3984_1_no_green_window_before_3472() {
+    std::println("\n--- #3984 AC1: persist would stamp; #3472 deny; no green window ---");
+    reset_for_test();
+    apply_production_audit_defaults();
+    typed_audit::clear_type_linear_proof_outcome_for_test();
+    typed_audit::clear_type_linear_commit_proof_for_test();
+    CompilerService cs;
+    CHECK(cs.eval("(+ 1 1)").has_value(), "3984 AC1: warm");
+    (void)cs.eval("(set-code \"(define f 1)\")");
+    (void)cs.eval("(eval-current)");
+    (void)cs.eval("(typecheck-current)");
+    std::size_t occ_before = 0;
+    if (auto* tc = static_cast<TypeChecker*>(cs.evaluator().commit_type_checker_handle()))
+        occ_before = tc->constraint_system().occurrence_goals_size();
+    typed_audit::g_inject_linear_synth_after_persist_for_test.store(1, std::memory_order_release);
+    std::atomic<int> saw_green{0};
+    std::atomic<int> stop{0};
+    std::thread sampler([&] {
+        typed_audit::g_linear_ir_fastpath_boundary_depth_override = 1;
+        while (stop.load(std::memory_order_relaxed) == 0) {
+            if (typed_audit::g_last_proof_would_allow_commit.load(std::memory_order_acquire) != 0 &&
+                typed_audit::g_last_proof_linear_ok.load(std::memory_order_acquire) != 0)
+                saw_green.fetch_add(1, std::memory_order_relaxed);
+            if (linear_move_drop_elision_ok())
+                saw_green.fetch_add(1, std::memory_order_relaxed);
+            if (ir_typed_entry_commit_readiness_ok())
+                saw_green.fetch_add(1, std::memory_order_relaxed);
+            std::this_thread::yield();
+        }
+        typed_audit::g_linear_ir_fastpath_boundary_depth_override = -1;
+    });
+    bool ok = true;
+    {
+        Evaluator::MutationBoundaryGuard g(cs.evaluator(), &ok);
+    }
+    stop.store(1, std::memory_order_relaxed);
+    sampler.join();
+    CHECK(saw_green.load(std::memory_order_relaxed) == 0,
+          "3984 AC1: second fiber never observed green would_allow / elision / typed-entry");
+    CHECK(!ok, "3984 AC1: success==false");
+    CHECK(last_type_linear_proof_outcome_v_read() == kTypeLinearProofOutcomeReject,
+          "3984 AC1: last_proof_outcome==Reject");
+    CHECK(typed_audit::g_last_proof_would_allow_commit.load(std::memory_order_relaxed) == 0,
+          "3984 AC1: would_allow stays 0");
+    CHECK(!linear_move_drop_elision_ok(), "3984 AC1: !Move/Drop elision");
+    if (auto* tc = static_cast<TypeChecker*>(cs.evaluator().commit_type_checker_handle())) {
+        CHECK(tc->constraint_system().occurrence_persist_log_size() == 0,
+              "3984 AC1: persist buffer empty");
+        CHECK(tc->constraint_system().occurrence_goals_size() == occ_before,
+              "3984 AC1: occurrence entry-size matches pre-mutate checkpoint");
+    }
+    apply_dev_audit_defaults();
+    reset_for_test();
+}
+
+static void ac3984_2_source_cite_defer_then_commit() {
+    std::println("\n--- #3984 AC2: persist defers green; Guard commits after #3472 ---");
+    const auto h = read_file("src/compiler/typed_mutation_audit.h");
+    const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    CHECK(typed_audit::kOutermostGreenAfterPostPersistDenyIssue == 3984, "3984: issue constant");
+    CHECK(h.find("kOutermostGreenAfterPostPersistDenyIssue = 3984") != std::string::npos,
+          "3984 AC2: stamp");
+    CHECK(h.find("commit_deferred_outermost_green_proof") != std::string::npos,
+          "3984 AC2: commit helper");
+    CHECK(h.find("publish_green_face") != std::string::npos, "3984 AC2: defer publish param");
+    CHECK(emb.find("Issue #3984") != std::string::npos, "3984 AC2: persist helper cites #3984");
+    const auto persist_fn = emb.find("extern \"C\" void aura_outermost_success_persist_occurrence");
+    const auto dtor_3472 = emb.find("Issue #3472 / #3818");
+    CHECK(persist_fn != std::string::npos && dtor_3472 != std::string::npos,
+          "3984 AC2: persist helper + #3472 belt present");
+    CHECK(emb.find("/*publish_green_face=*/!defer_green") != std::string::npos,
+          "3984 AC2: production persist holds green publish");
+    const auto commit_pos = emb.find("commit_deferred_outermost_green_proof");
+    const auto exit_pos = emb.find("ev_->exit_mutation_boundary(success)");
+    CHECK(dtor_3472 != std::string::npos && commit_pos != std::string::npos &&
+              exit_pos != std::string::npos && dtor_3472 < commit_pos && commit_pos < exit_pos,
+          "3984 AC2: Guard commits deferred green after #3472");
+    CHECK(emb.find("aura_persist_reject_undo") != std::string::npos,
+          "3984 AC2: #3818 undo retained");
+    CHECK(emb.find("schema-3984") == std::string::npos, "3984: no new query key");
+    CHECK(read_file("tests/compiler/test_issue_3984.cpp").empty(), "3984: no invent");
+    CHECK(read_file("docs/design/3984-outermost-green-after-deny.md").empty(),
+          "3984: no docs/design");
+}
+
+static void ac3984_3_happy_commits_green() {
+    std::println("\n--- #3984 AC3: happy persist still green after Guard ---");
+    reset_for_test();
+    apply_production_audit_defaults();
+    typed_audit::clear_type_linear_proof_outcome_for_test();
+    typed_audit::clear_type_linear_commit_proof_for_test();
+    CompilerService cs;
+    CHECK(cs.eval("(+ 1 1)").has_value(), "3984 AC3: warm");
+    (void)cs.eval("(typecheck-current)");
+    bool ok = true;
+    {
+        Evaluator::MutationBoundaryGuard g(cs.evaluator(), &ok);
+    }
+    CHECK(ok, "3984 AC3: success stays true");
+    CHECK(last_type_linear_proof_outcome_v_read() != kTypeLinearProofOutcomeReject,
+          "3984 AC3: proof not Reject");
+    apply_dev_audit_defaults();
+    reset_for_test();
+}
+
+static void ac3984_4_soft_unchanged() {
+    std::println("\n--- #3984 AC4: Soft/Off unchanged ---");
+    reset_for_test();
+    apply_dev_audit_defaults();
+    CompilerService cs;
+    CHECK(cs.eval("(+ 1 1)").has_value(), "3984 AC4: warm");
+    typed_audit::g_inject_linear_synth_after_persist_for_test.store(1, std::memory_order_relaxed);
+    bool ok = true;
+    {
+        Evaluator::MutationBoundaryGuard g(cs.evaluator(), &ok);
+    }
+    CHECK(ok, "3984 AC4: Soft does not hard-flip success");
+    apply_dev_audit_defaults();
+    reset_for_test();
+}
+
 // ── Issue #3614: outermost persist gated behind linear deny + drain ──
 //   AC1: Production + outermost + linear deny → written_total unchanged,
 //        outcome Reject (not Stamped), persist buffer empty, AST restored.
@@ -2573,6 +2697,11 @@ int run_test_type_linear_commit_health() {
     ac3472_2_persist_reject_unchanged();
     ac3472_3_happy_stamped();
     ac3472_4_soft_no_flip();
+    std::println("\n=== Issue #3984: no green window before post-persist deny ===");
+    ac3984_1_no_green_window_before_3472();
+    ac3984_2_source_cite_defer_then_commit();
+    ac3984_3_happy_commits_green();
+    ac3984_4_soft_unchanged();
     // Issue #3614: outermost persist gated behind linear deny + drain
     // (#3472 residual — order, not a missing restore).
     std::println("\n=== Issue #3614: drain+linear gate before outermost persist ===");
