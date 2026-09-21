@@ -3131,8 +3131,17 @@ inline void complete_agent_join_cleanup(AgentHandle& h, serve::JoinResult jr) no
             1, std::memory_order_relaxed);
         return true;
     }
-    if (h.reserved_memory_bytes != 0)
-        return false; // first visit — the #3564 quota arm owns it
+    // Issue #3968: first post-timeout find is the live abandon arm even
+    // when quota is still held. Two-visit (quota then mailbox) left
+    // name+mailbox parked until a second resolve. Keep #2661 (no stack
+    // free). Same-name put after this visit is a fresh insert (#3467
+    // deny only while pending flags stay).
+    if (h.reserved_memory_bytes != 0) {
+        g_orch_module_stats.reclaimed_quota_force_released_total.fetch_add(
+            1, std::memory_order_relaxed);
+        h.release_reservation_if_any();
+        h.quota_recycled_pending = true;
+    }
     if (h.mailbox && h.fiber)
         h.mailbox->detach(h.fiber);
     h.mailbox.reset();
