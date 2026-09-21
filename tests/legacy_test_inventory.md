@@ -1719,7 +1719,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 #### domain/ (87)
 
 - `tests/compiler/test_adaptive_cascade_depth_partial_thr.cpp` (—) [domain_suite, theme_compiler] — AC1: After enough samples, high cascade-depth raises the threshold.
-- `tests/compiler/test_adaptive_partial_relower_threshold.cpp` (—) [domain_suite, theme_compiler] — AC1: Cold-start stays at default 8 until enough samples
+- `tests/compiler/test_adaptive_partial_relower_threshold.cpp` (—) [large, domain_suite, theme_compiler] — AC1: Cold-start stays at default 8 until enough samples
 - `tests/compiler/test_anonymous_residual_stable_id_policy.cpp` (—) [large, domain_suite, theme_compiler] — AC1: Named create → sid≠0; reemit soak → residual_backfill does not grow
 - `tests/compiler/test_aot_anonymous_closure_policy.cpp` (—) [domain_suite, theme_compiler] — AC1: anonymous + aura_closure_check_aot_stable_id_policy under
 - `tests/compiler/test_aot_hot_update_health.cpp` (—) [domain_suite, theme_compiler] — AC1: Idle healthy → health-bp high, force-reason ok, recovery_active=0
