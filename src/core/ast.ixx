@@ -8264,6 +8264,11 @@ public:
     [[nodiscard]] std::uint32_t wrap_epoch() const noexcept {
         return wrap_epoch_.load(std::memory_order_relaxed);
     }
+    // Issue #3990: tests inject wrap past uint16 so QueryResult freshness
+    // cannot alias captured wrap=0 against live 65536.
+    void set_wrap_epoch_for_test(std::uint32_t w) noexcept {
+        wrap_epoch_.store(w, std::memory_order_relaxed);
+    }
     // Issue #369: structural-rollback counters.
     [[nodiscard]] std::uint64_t structural_rollback_success() const noexcept {
         return structural_rollback_success_.load(std::memory_order_relaxed);

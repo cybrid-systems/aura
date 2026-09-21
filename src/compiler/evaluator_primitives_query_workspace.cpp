@@ -132,9 +132,11 @@ stamp_query_result_full_provenance(aura::core::QueryResult& qr, Evaluator& ev,
             return false;
         // Issue #3695: packed match gen is node_gen_, not workspace generation_.
         qr.matches[i].generation = scratch_ref.gen;
-        qr.matches[i].wrap_epoch = static_cast<std::uint16_t>(scratch_ref.wrap_epoch);
-        qr.matches[i].cow_epoch_at_capture =
-            static_cast<std::uint16_t>(scratch_ref.cow_epoch_at_capture);
+        // Issue #3990: copy wrap/cow at StableNodeRef width (no uint16
+        // truncate). After wrap_epoch passes 65535 a held QueryResult
+        // must not alias captured 0 against live 65536.
+        qr.matches[i].wrap_epoch = scratch_ref.wrap_epoch;
+        qr.matches[i].cow_epoch_at_capture = scratch_ref.cow_epoch_at_capture;
         qr.matches[i].tenant_id = static_cast<std::uint32_t>(scratch_ref.tenant_id);
         qr.matches[i].fiber_id = scratch_ref.fiber_id;
         // Issue #3660 / #3696: do not store current_mutation_epoch() in

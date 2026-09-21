@@ -496,6 +496,23 @@ int run_test_query_epoch_contract() {
               "3231: no docs/design");
     }
 
+    {
+        std::println("\n--- #3990: QueryResultMatch wrap/cow StableNodeRef width ---");
+        const auto hh = read_file("src/core/workspace_epoch.hh");
+        const auto dec = read_file("src/compiler/query_result_decode.hh");
+        CHECK(hh.find("kQueryResultMatchWrapWidthIssue = 3990") != std::string::npos,
+              "3990: wrap-width stamp");
+        CHECK(hh.find("std::uint32_t wrap_epoch = 0;") != std::string::npos,
+              "3990: wrap is uint32");
+        CHECK(hh.find("std::uint64_t cow_epoch_at_capture = 0;") != std::string::npos,
+              "3990: cow is uint64");
+        CHECK(dec.find("static_cast<std::uint16_t>(flat.wrap_epoch())") == std::string::npos,
+              "3990: live wrap not truncated");
+        CHECK(read_file("tests/compiler/test_issue_3990.cpp").empty(), "3990: no invent");
+        CHECK(read_file("docs/design/3990-query-result-wrap-width.md").empty(),
+              "3990: no docs/design");
+    }
+
     reset_query_epoch_metrics_for_test();
     aura::core::reset_query_result_metrics_for_test();
     set_query_epoch_strict(false);
