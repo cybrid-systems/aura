@@ -64,11 +64,13 @@ def main() -> int:
 
     # Issue #3635: the call-time transaction lives in the blessed entry
     # (aura_closure_call is a thin forward to it).
-    # Window 5500: the #3323 sticky overflow fence was inserted ahead of the
+    # Window 7000: the #3323 sticky overflow fence was inserted ahead of the
     # #2128 consume block (fence must precede consume so the overflow stamp
-    # stays observable); grow the window with the function, assertions unchanged.
+    # stays observable); grow the window with the function, assertions
+    # unchanged. #3948 refuse + #3972 this-window remap arm grew it again —
+    # same rule: refuses precede consume, window follows the function.
     call = rt.find("int64_t aura_closure_dispatch_native_checked(")
-    body = rt[call : call + 5500] if call >= 0 else ""
+    body = rt[call : call + 7000] if call >= 0 else ""
     must("g_closure_must_deopt[cid] = 0", "AC2 call still clears", body)
     must("g_closure_bridge_epochs[cid] = 0", "AC2 poison epoch", body)
     must("Issue #2472", "AC2 identity recheck", body)
