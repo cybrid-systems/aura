@@ -315,17 +315,19 @@ static void ac_source_cite() {
 // schema_cache hit path (cached_schema == tid.index) into a wrong-type
 // cache hit. ensure_cross_flat_expand_consistency now re-stamps the
 // cloned subtree against the target under production / force-hygienic:
-// cross-pool clones clear copied schema ids (0 = re-infer in target
-// env); OOB ids (≥ kSchemaIdMax, #2859 bound) bump the existing
-// g_hygiene_violation_in_macro_expand_total (fail-closed). Same-pool
-// clones keep the #390 copy (homologous — shared registry). Soft/Off
-// never walks (zero-cost contract preserved).
+// cross-flat clones (different FlatAST and/or pool) clear copied schema
+// ids (0 = re-infer in target env); OOB ids (≥ kSchemaIdMax, #2859
+// bound) bump the existing g_hygiene_violation_in_macro_expand_total
+// (fail-closed). Soft/Off never walks (zero-cost contract preserved).
 //
 // Issue #3340 residual: provenance is a per-FlatAST MarkerProvenanceTable
 // index. clone_macro_body stamps origin via source.provenance else
-// weak-link body_id. Cross-pool leftover is orphan/wrong in the target
+// weak-link body_id. Cross-flat leftover is orphan/wrong in the target
 // table. Same gate / same walk zeros non-zero provenance (prefer 0 over
-// table transplant). Same-pool / Soft keep the copy.
+// table transplant). Soft keep the copy.
+//
+// Issue #3980: same-pool two-FlatAST is still cross_flat — provenance
+// and schema_cache integers are per-flat table keys, not pool keys.
 
 // AC8: cross-pool clone under force-hygienic re-stamps schema_cache
 // against the target env (cleared to 0) while the source keeps its own.
@@ -366,16 +368,16 @@ static void ac3278_cross_pool_schema_restamp() {
     CHECK(post == 0, "AC8: post-call validate == 0 (restamp auto-cleaned)");
 }
 
-// AC9: same-pool cross-flat clone keeps the #390 schema_cache copy
-// (homologous — shared registry, no re-stamp). Also Soft (!production,
+// AC9: same-pool cross-flat under force-hygienic zeros schema_cache +
+// provenance (#3980 — per-flat table keys). Soft (!production,
 // strict=0) keeps the copy: zero-cost contract unchanged.
-// #3340: same-pool / Soft also keep the provenance stamp (no walk).
 static void ac3278_same_pool_and_soft_keep_copy() {
-    std::println("\n--- AC9: #3278/#3340 same-pool + Soft keep schema_cache + provenance copy ---");
+    std::println("\n--- AC9: #3278/#3340/#3980 same-pool production zeros; Soft keeps copy ---");
     SandboxStrictGuard guard;
     aura_test_set_macro_expand_sandbox_strict(1); // force-hygienic ON
     {
-        // Same-pool cross-flat: two flats sharing one pool → homologous.
+        // Same-pool cross-flat: two flats sharing one pool. Schema/provenance
+        // are still per-FlatAST table indices — production zeros them.
         FlatAST target;
         FlatAST src;
         StringPool shared;
@@ -390,9 +392,11 @@ static void ac3278_same_pool_and_soft_keep_copy() {
         auto cloned = clone_macro_body(target, shared, src, shared, lam, nullptr, &nm,
                                        SyntaxMarker::MacroIntroduced);
         CHECK(cloned != NULL_NODE, "AC9: same-pool clone ok");
-        CHECK(target.schema_cache(cloned) == 77u,
-              "AC9: same-pool keeps #390 schema_cache copy (homologous, no re-stamp)");
-        CHECK(target.provenance(cloned) == 88u, "AC9: same-pool keeps provenance copy (no walk)");
+        CHECK(target.schema_cache(cloned) == 0u, "AC9: same-pool production zeros schema_cache");
+        CHECK(target.provenance(cloned) == 0u, "AC9: same-pool production zeros provenance");
+        CHECK(target.is_macro_introduced(cloned), "AC9: marker stays MacroIntroduced");
+        CHECK(src.schema_cache(lam) == 77u, "AC9: source schema_cache preserved");
+        CHECK(src.provenance(lam) == 88u, "AC9: source provenance preserved");
     }
     aura_test_set_macro_expand_sandbox_strict(0); // Soft / relaxed
     {
@@ -476,7 +480,10 @@ static void ac3278_source_cite() {
           "AC11: reuses existing violation counter (no new metric)");
     CHECK(src.find("Issue #3340") != std::string::npos, "AC11: runtime cites #3340");
     CHECK(src.find("target.set_provenance(cur, 0)") != std::string::npos,
-          "AC11: cross-pool provenance zero (prefer 0 over table transplant)");
+          "AC11: cross-flat provenance zero (prefer 0 over table transplant)");
+    CHECK(src.find("cross_flat && schema_homology_prod") != std::string::npos,
+          "AC11: homology walk is cross_flat (flat or pool; #3980)");
+    CHECK(src.find("Issue #3980") != std::string::npos, "AC11: runtime cites #3980");
     auto lint = read_file("scripts/coverage/checks/check_cross_flat_schema_homology_3278.py");
     CHECK(!lint.empty(), "AC11: linter present");
     CHECK(lint.find("3278") != std::string::npos, "AC11: linter cites #3278");
@@ -496,6 +503,52 @@ static void ac3278_source_cite() {
           "AC11: no invent test_issue_3340.cpp per #81967");
 }
 
+// Issue #3980: same-pool two-FlatAST clone + densify on source.
+// Filter the target by MacroIntroduced marker, not leftover source
+// body_id provenance. compact_nodes remaps source slots; a copied
+// body_id integer would join the wrong row.
+static void ac3980_same_pool_densify_zeros() {
+    std::println("\n--- #3980: same-pool cross-flat clone + source densify ---");
+    SandboxStrictGuard guard;
+    aura_test_set_macro_expand_sandbox_strict(1);
+    FlatAST target;
+    FlatAST src;
+    StringPool shared;
+    auto x = shared.intern("x");
+    auto body = src.add_variable(x);
+    auto lam = src.add_lambda(std::vector<aura::ast::SymId>{x}, body);
+    src.set_schema_cache(lam, /*tid=*/41);
+    src.set_provenance(lam, /*prov=*/static_cast<std::uint32_t>(lam == 0 ? 1 : lam));
+    src.root = lam;
+    (void)src.add_literal(111);
+    (void)src.add_literal(222);
+    std::unordered_map<std::string, std::string, aura::core::TransparentStringHash, std::equal_to<>>
+        nm;
+    auto cloned = clone_macro_body(target, shared, src, shared, lam, nullptr, &nm,
+                                   SyntaxMarker::MacroIntroduced);
+    CHECK(cloned != NULL_NODE, "3980: same-pool clone ok");
+    CHECK(target.is_macro_introduced(cloned), "3980: cloned root is MacroIntroduced");
+    CHECK(target.schema_cache(cloned) == 0u, "3980: schema_cache zeroed");
+    CHECK(target.provenance(cloned) == 0u, "3980: provenance zeroed (not source body_id)");
+    const auto compact_n = src.compact_nodes();
+    CHECK(compact_n > 0, "3980: source densify recycled dead slots");
+    std::size_t mi_n = 0;
+    for (aura::ast::NodeId id = 0; id < target.size(); ++id) {
+        if (!target.is_live_node(id) || !target.is_macro_introduced(id))
+            continue;
+        ++mi_n;
+        CHECK(target.provenance(id) == 0u, "3980: MI node provenance stays 0 after source densify");
+        CHECK(target.schema_cache(id) == 0u, "3980: MI node schema_cache stays 0 after densify");
+    }
+    CHECK(mi_n >= 1, "3980: filter by marker (not leftover source body_id)");
+    CHECK(target.validate_macro_hygiene_invariants() == 0,
+          "3980: validate_macro_hygiene_invariants");
+    CHECK(read_file("tests/compiler/test_issue_3980.cpp").empty(),
+          "3980: no test_issue_3980.cpp per #81967");
+    CHECK(read_file("docs/design/3980-cross-flat-same-pool-homology.md").empty(),
+          "3980: no docs/design/3980-* per #1655");
+}
+
 } // namespace
 
 int run_test_macro_cross_flat_hygiene() {
@@ -513,6 +566,7 @@ int run_test_macro_cross_flat_hygiene() {
     ac3278_same_pool_and_soft_keep_copy();
     ac3278_drift_fail_closed();
     ac3278_source_cite();
+    ac3980_same_pool_densify_zeros();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

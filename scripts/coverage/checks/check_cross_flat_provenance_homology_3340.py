@@ -10,17 +10,16 @@ schema_cache ids under production / force-hygienic; provenance was
 left as a residual.
 
 Fix (minimal, no second hygiene model): same post-clone hook
-(`ensure_cross_flat_expand_consistency`), same production / cross-pool
-gate, same walk: if `target.provenance(cur) != 0` then
-`target.set_provenance(cur, 0)`. Prefer zero (force re-stamp / no
-provenance) over inventing a table transplant. Same-pool / Soft/Off:
-no walk, provenance copy preserved (zero-cost). No new metric, no new
-query key.
+(`ensure_cross_flat_expand_consistency`), same production / cross_flat
+gate (#3980: flat OR pool), same walk: if `target.provenance(cur) != 0`
+then `target.set_provenance(cur, 0)`. Prefer zero (force re-stamp / no
+provenance) over inventing a table transplant. Soft/Off: no walk,
+provenance copy preserved (zero-cost). No new metric, no new query key.
 
 Gate rows:
   G1  src/compiler/macro_expansion.cpp cites Issue #3340 in
       ensure_cross_flat_expand_consistency (the cross-flat hook).
-  G2  same cross-pool gate as #3278 (target_pool != source_pool).
+  G2  same cross_flat gate as #3278 (flat OR pool; #3980).
   G3  production / force-hygienic gate (production_defaults_active or
       g_macro_expand_sandbox_strict) — Soft/Off zero-cost.
   G4  zeros leftover provenance: set_provenance(cur, 0).
@@ -67,8 +66,8 @@ def main() -> int:
 
     must("#3340" in macro, "G1: macro_expansion.cpp cites Issue #3340")
     must(
-        "&target_pool != &source_pool" in macro,
-        "G2: cross-pool gate (target_pool != source_pool)",
+        "cross_flat && schema_homology_prod" in macro,
+        "G2: homology walk is cross_flat (flat or pool; #3980)",
     )
     must(
         "production_defaults_active()" in macro and "g_macro_expand_sandbox_strict" in macro,
@@ -87,7 +86,7 @@ def main() -> int:
         "G6: clone origin stamp intact (feeds homology check)",
     )
     must("target.provenance(cloned) == 0u" in test, "G7a: AC8 provenance-zero assertion")
-    must("same-pool keeps provenance copy" in test, "G7b: AC9 same-pool provenance keep")
+    must("same-pool production zeros provenance" in test, "G7b: AC9 same-pool production zeros")
     must("Soft keeps provenance copy" in test, "G7c: AC9 Soft provenance keep")
     must("leftover provenance zeroed" in test, "G7d: AC10 leftover provenance zeroed")
     must("Issue #3340" in test, "G7e: test cites #3340")

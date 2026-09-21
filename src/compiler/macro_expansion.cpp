@@ -1537,31 +1537,35 @@ static void ensure_cross_flat_expand_consistency(aura::ast::FlatAST& target,
     // become non-homologous with the TARGET type environment / StringPool
     // interning of gensym names — a stale id can short-circuit the type
     // checker's schema_cache hit path (type_checker_impl.cpp
-    // cached_schema == tid.index) into a wrong-type cache hit. Same-pool
-    // clones are homologous (shared registry) → keep the #390 copy
-    // (zero extra). Cross-pool clones under production / force-hygienic:
-    // re-stamp against the target — clear copied schema ids (0 = re-infer
-    // in the target env, always safe). The homology check is fail-closed:
-    // any OOB id (≥ kSchemaIdMax, #2859 bound) surviving on the cloned
-    // subtree is drift → bump the existing
-    // g_hygiene_violation_in_macro_expand_total (Agent-visible via
-    // query:macro-provenance-stats cross-flat-violation-total) + audit;
-    // strict mode force-clears. Soft/Off: gate short-circuits before any
-    // walk (zero-cost contract preserved).
+    // cached_schema == tid.index) into a wrong-type cache hit. Cross-flat
+    // clones under production / force-hygienic re-stamp against the
+    // target — clear copied schema ids (0 = re-infer in the target env,
+    // always safe). The homology check is fail-closed: any OOB id
+    // (≥ kSchemaIdMax, #2859 bound) surviving on the cloned subtree is
+    // drift → bump the existing g_hygiene_violation_in_macro_expand_total
+    // (Agent-visible via query:macro-provenance-stats
+    // cross-flat-violation-total) + audit; strict mode force-clears.
+    // Soft/Off: gate short-circuits before any walk (zero-cost).
     //
     // Issue #3340 residual: provenance is a per-FlatAST MarkerProvenanceTable
     // index (raw uint32). clone_macro_body stamps origin via source.provenance
-    // else weak-link body_id. Cross-pool that leftover is orphan/wrong in the
+    // else weak-link body_id. Cross-flat leftover is orphan/wrong in the
     // TARGET table (densify/steal can recycle slots). Same production /
-    // force-hygienic + cross-pool gate, same walk: if provenance != 0 then
+    // force-hygienic gate, same walk: if provenance != 0 then
     // set_provenance(cur, 0). Prefer zero (force re-stamp / no provenance)
-    // over inventing a table transplant. Same-pool / Soft/Off: no walk,
-    // provenance copy preserved. One extra store per node in the existing
-    // production walk — no extra Soft walk, no new metric, no new query key.
+    // over inventing a table transplant. Soft/Off: no walk, copy preserved.
+    //
+    // Issue #3980: the walk is keyed on cross_flat (flat OR pool), not
+    // pool inequality alone. Two FlatASTs sharing one StringPool
+    // (workspace COW / module import / eval_flat + definition flat on
+    // canonical_pool) still copy source schema_cache / provenance
+    // integers that are not target-table keys. Marker + kMacroExpansion
+    // stay; only the non-homologous integers clear. Single-flat stays
+    // the early-return above. No new metric, no new query key.
     const bool schema_homology_prod =
         aura::compiler::typed_audit::production_defaults_active() ||
         g_macro_expand_sandbox_strict.load(std::memory_order_relaxed) != 0;
-    if (&target_pool != &source_pool && schema_homology_prod && new_root != aura::ast::NULL_NODE) {
+    if (cross_flat && schema_homology_prod && new_root != aura::ast::NULL_NODE) {
         constexpr std::uint32_t kSchemaIdMax = 1u << 24; // #2859 bound
         std::size_t drift = 0;
         std::vector<aura::ast::NodeId> stack;
