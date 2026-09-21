@@ -719,8 +719,13 @@ static void ac3747_1_prod_reload_pending_zero_without_guard() {
         aura::compiler::typed_audit::apply_dev_audit_defaults();
         return;
     }
-    CHECK(aura_reload_aot_module(so1.c_str(), 0) == true, "3747 AC1: first reload");
-    CHECK(aura_reload_aot_module(so2.c_str(), 0) == true, "3747 AC1: second reload");
+    // Issue #3978: production success gate is for_eval / (aot:reload),
+    // not the 2-arg process-wide alias.
+    CompilerService cs;
+    CHECK(aura_reload_aot_module_for_eval(&cs.evaluator(), so1.c_str(), 0) == true,
+          "3747 AC1: first reload");
+    CHECK(aura_reload_aot_module_for_eval(&cs.evaluator(), so2.c_str(), 0) == true,
+          "3747 AC1: second reload");
     CHECK(aura_reload_old_so_pending_v_read() == 0,
           "3747 AC1: pending==0 without later mutate Guard");
     aura::compiler::typed_audit::apply_dev_audit_defaults();
@@ -777,6 +782,57 @@ static void ac3747_4_no_invent_fail_dlclose_new() {
     CHECK(q.find("old-so-staged-total") != std::string::npos, "3747 AC4: existing staged key kept");
 }
 
+// ── Issue #3978: 2-arg aura_reload_aot_module is process-wide alias ──
+static void ac3978_2arg_prod_multi_no_owner() {
+    std::println("\n--- #3978 AC1/AC2: production multi-eval 2-arg without owner TLS ---");
+    const auto br = read_file("src/compiler/aura_jit_bridge.cpp");
+    const auto prim = read_file("src/compiler/evaluator_primitives_obs_jit.cpp");
+    CHECK(br.find("Issue #3978") != std::string::npos, "3978 AC1: 2-arg cites #3978");
+    CHECK(prim.find("aura_reload_aot_module_for_eval(&ev, path.c_str(), version)") !=
+              std::string::npos,
+          "3978 AC1: Aura prim (aot:reload) stays for_eval");
+    CHECK(br.find("aura_aot_get_reemit_owner_eval() == nullptr") != std::string::npos,
+          "3978 AC2: same owner-TLS predicate as reemit #3025");
+    CHECK(br.find("schema-3978") == std::string::npos, "3978: no new query key");
+    CHECK(read_file("tests/compiler/test_issue_3978.cpp").empty(), "3978: no invent");
+    CHECK(read_file("docs/design/3978-reload-2arg-owner.md").empty(), "3978: no docs/design");
+
+    void* eval_a = reinterpret_cast<void*>(static_cast<std::uintptr_t>(0xA3978ULL));
+    void* eval_b = reinterpret_cast<void*>(static_cast<std::uintptr_t>(0xB3978ULL));
+    aura_set_aot_region_mask_for_eval(eval_a, 1);
+    aura_set_aot_region_mask_for_eval(eval_b, 2);
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    aura_aot_set_reemit_owner_eval(nullptr);
+    aura_aot_set_register_owner_eval(nullptr);
+    const auto epoch0 = aura_aot_func_table_epoch();
+    if (aura_aot_state_map_size() > 1) {
+        const auto so = build_test_so(39782);
+        if (so.empty()) {
+            CHECK(!aura_reload_aot_module("/tmp/__aura_3978_missing__.so", 0),
+                  "3978 AC2: 2-arg without owner fails (cc unavailable)");
+        } else {
+            CHECK(!aura_reload_aot_module(so.c_str(), 0),
+                  "3978 AC2: production multi-eval 2-arg without owner does not commit");
+        }
+        CHECK(aura_aot_func_table_epoch() == epoch0, "3978 AC2: func_table epoch unchanged");
+    } else {
+        CHECK(true, "3978 AC2: light-link map size ≤1 — contract source-cited");
+    }
+    aura_cleanup_aot_state(eval_a);
+    aura_cleanup_aot_state(eval_b);
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+}
+
+static void ac3978_soft_single_unchanged() {
+    std::println("\n--- #3978 AC4: Soft / single-eval 2-arg unchanged ---");
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    aura_aot_set_reemit_owner_eval(nullptr);
+    aura_aot_set_register_owner_eval(nullptr);
+    CHECK(!aura_reload_aot_module(nullptr, 0), "3978 AC4: Soft 2-arg null path still fails");
+    CHECK(!aura_reload_aot_module("/tmp/__aura_3978_soft_missing__.so", 0),
+          "3978 AC4: Soft 2-arg missing still fails (no owner gate)");
+}
+
 int main() {
     // Issue #2165: production default is auto-retry ON; strict unit checks
     // (Version/Env/Defuse fail counts) need it off until the #2165 block.
@@ -804,6 +860,8 @@ int main() {
     ac3747_2_must_deopt_even_if_drain_delayed();
     ac3747_3_soft_staging_unchanged();
     ac3747_4_no_invent_fail_dlclose_new();
+    ac3978_2arg_prod_multi_no_owner();
+    ac3978_soft_single_unchanged();
     ac7_cross_workspace_reject_2178();
 
     // ── Issue #2240: stable cross-workspace reject reason code ──

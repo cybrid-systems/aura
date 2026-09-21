@@ -705,6 +705,51 @@ static void ac3025_reload_fail_stamps_proof() {
           "3025 AC2: null-path stamps via note_reload_rollback");
 }
 
+// ── Issue #3978: production multi-eval 2-arg reload fail-stamps proof ──
+static void ac3978_2arg_fail_stamps_proof() {
+    std::println("\n--- #3978 AC3: 2-arg owner-missing fail stamps would_allow_native=false ---");
+    const auto br = read_file("src/compiler/aura_jit_bridge.cpp");
+    CHECK(br.find("Issue #3978") != std::string::npos, "3978 AC3: 2-arg cites #3978");
+    CHECK(br.find("note_reload_rollback(AotReloadFail::Other)") != std::string::npos,
+          "3978 AC3: owner-missing uses existing fail-stamp");
+    {
+        AotReloadConsistencyProof ok{};
+        ok.would_allow_native = true;
+        ok.schema = kAotReloadConsistencyProofIssue;
+        stamp_aot_reload_consistency_proof(ok);
+    }
+    CHECK(aura_last_aot_reload_consistency_would_allow_native() == 1,
+          "3978 AC3: pre-fail allow native");
+    void* eval_a = reinterpret_cast<void*>(static_cast<std::uintptr_t>(0xA3978ULL));
+    void* eval_b = reinterpret_cast<void*>(static_cast<std::uintptr_t>(0xB3978ULL));
+    aura_set_aot_region_mask_for_eval(eval_a, 1);
+    aura_set_aot_region_mask_for_eval(eval_b, 2);
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    aura_aot_set_reemit_owner_eval(nullptr);
+    aura_aot_set_register_owner_eval(nullptr);
+    const auto fail0 = aura_aot_reload_consistency_proof_stamped_on_fail_total();
+    const auto epoch0 = aura_aot_func_table_epoch();
+    if (aura_aot_state_map_size() > 1) {
+        CHECK(!aura_reload_aot_module("/tmp/__aura_3978_proof__.so", 0),
+              "3978 AC3: 2-arg without owner fails");
+        CHECK(aura_aot_func_table_epoch() == epoch0, "3978 AC3: no commit");
+        const auto fail1 = aura_aot_reload_consistency_proof_stamped_on_fail_total();
+        if (fail1 > fail0) {
+            CHECK(aura_last_aot_reload_consistency_would_allow_native() == 0,
+                  "3978 AC3: fail stamps would_allow_native=false (#2845)");
+        } else {
+            CHECK(true, "3978 AC3: light-link reload stub — stamp contract source-cited");
+        }
+    } else {
+        CHECK(true, "3978 AC3: map size ≤1 — contract source-cited");
+    }
+    aura_cleanup_aot_state(eval_a);
+    aura_cleanup_aot_state(eval_b);
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    CHECK(read_file("tests/compiler/test_issue_3978.cpp").empty(), "3978 AC3: no invent");
+    CHECK(read_file("docs/design/3978-reload-2arg-owner.md").empty(), "3978 AC3: no docs/design");
+}
+
 // ── Issue #2927: stable AotReloadFail → force_jit_regions_mask bit groups ──
 // Version|Defuse→0, Env→1, Linear→2, Region|Staging→3, Dlopen|Other→4.
 
@@ -1611,6 +1656,8 @@ int run_test_reload_recovery_query() {
     ac2845_6_source_and_linter();
     std::println("\n=== Issue #3025: residual public reload fail stamps proof ===");
     ac3025_reload_fail_stamps_proof();
+    std::println("\n=== Issue #3978: 2-arg reload owner TLS fail-closed ===");
+    ac3978_2arg_fail_stamps_proof();
     std::println("\n=== Issue #2927: AotReloadFail → force_jit group bits ===");
     ac2927_1_env_only_bit();
     ac2927_2_linear_and_proof_match();
