@@ -4898,6 +4898,9 @@ struct WorkflowFailurePolicy {
     // Residual / reclaim preference. Soft / Report / Defer: observe-only
     // (#2661 preserved). Production + Cancel / JoinDrain: explicit action.
     ResidualReclaimPreference residual = ResidualReclaimPreference::Report;
+    // Issue #3969: C++ adapter :pure flag for decide_isolation. Default
+    // false (not transactional). Aura :pure stays best-effort elsewhere.
+    bool pure = false;
 };
 
 inline constexpr int kWorkflowFailurePolicyIssue = 2756;
@@ -4918,6 +4921,10 @@ inline constexpr int kWorkflowResidualActionIssue = 3206;
 // caller left AgentFailurePolicy unset. Soft / explicit ReportOnly
 // stay ReportOnly (zero extra action).
 inline constexpr int kJoinFailProductionDefaultIssue = 3208;
+// Issue #3969: thin compose_supervised_batch adapter. apply_workflow
+// stays observe-first; the adapter runs only when the caller sets
+// agent_policy.on_join_fail to something other than ReportOnly.
+inline constexpr int kComposeSupervisedBatchIssue = 3969;
 
 // Compose from batch FailurePolicy (+ residual preference). Maps agent
 // via the #2539 bridge so FailFast→Cancel, RetryN→RestartN, etc.
@@ -5107,6 +5114,14 @@ apply_workflow(serve::Scheduler& sched, AgentScope& scope,
                std::span<const serve::parallel_orch::TaskSpec> tasks,
                const WorkflowFailurePolicy& w, std::uint32_t stall_timeout_ms = 0,
                bool watch_scope = true) noexcept;
+
+// Issue #3969: FailFast/Timeout/QuotaExceeded can drive Scope
+// on_join_fail. apply_workflow remains the observe-first sugar.
+[[nodiscard]] ApplyWorkflowResult
+compose_supervised_batch(serve::Scheduler& sched, AgentScope& scope,
+                         std::span<const serve::parallel_orch::TaskSpec> tasks,
+                         const WorkflowFailurePolicy& w, std::uint32_t stall_timeout_ms = 0,
+                         bool watch_scope = true) noexcept;
 
 // Issue #2974: ordered multi-stage workflow over apply_workflow surfaces.
 // Each stage runs parallel_intend(tasks, batch) then optional

@@ -1901,6 +1901,60 @@ inline const char* apply_residual_reclaim_action(AgentScope& scope,
     return "observe";
 }
 
+// Issue #3969: thin FailFast→Scope adapter. Isolation SSOT is
+// decide_isolation. Production missing-keys uses the #3353 deny face.
+// Batch FailFast/Timeout/QuotaExceeded + explicit on_join_fail !=
+// ReportOnly → join_all(drain) then existing apply_on_join_fail_
+// (via join_all's fail policy). RestartN still skip+Cancel on bare
+// adopted handles (#3250). Soft/unset ReportOnly never enter here.
+[[nodiscard]] inline ApplyWorkflowResult
+compose_supervised_batch(serve::Scheduler& sched, AgentScope& scope,
+                         std::span<const serve::parallel_orch::TaskSpec> tasks,
+                         const WorkflowFailurePolicy& w, std::uint32_t stall_timeout_ms,
+                         bool watch_scope) noexcept {
+    ApplyWorkflowResult out;
+    const bool production = aura::compiler::typed_audit::production_defaults_active();
+    const auto pp = to_parallel_policy(w);
+    const auto iso = serve::parallel_orch::decide_isolation(pp, tasks, w.pure);
+    out.batch.isolation_level = iso.level;
+    out.batch.region_concurrent_eligible = iso.region_concurrent_eligible;
+    out.batch.distinct_nonzero_region_keys = iso.distinct_nonzero_region_keys;
+    if (serve::parallel_orch::region_key_missing_serialized(iso, w.pure, tasks.size(),
+                                                            production) &&
+        serve::parallel_orch::parallel_require_region_keys_deny(production,
+                                                                /*mutate_batch=*/true)) {
+        out.batch.status = serve::parallel_orch::BatchStatus::Invalid;
+        g_orch_module_stats.workflow_apply_total.fetch_add(1, std::memory_order_relaxed);
+        return out;
+    }
+    out.batch = serve::parallel_orch::parallel_intend(sched, tasks, pp);
+    const bool batch_fail = out.batch.status == serve::parallel_orch::BatchStatus::FailFast ||
+                            out.batch.status == serve::parallel_orch::BatchStatus::Timeout ||
+                            out.batch.status == serve::parallel_orch::BatchStatus::QuotaExceeded;
+    if (batch_fail && w.agent_policy.on_join_fail != AgentFailureAction::ReportOnly) {
+        JoinPolicy jp;
+        jp.primary_ms = 0;
+        jp.drain_ms = kResidualJoinDrainMs;
+        (void)scope.join_all(jp, to_agent_policy(w));
+    } else if (watch_scope) {
+        out.scope_watch_called = true;
+        auto wres = scope.watch_all(stall_timeout_ms, to_agent_policy(w));
+        out.scope_stalled = static_cast<int>(wres.stalled);
+        out.scope_alive = static_cast<int>(wres.alive);
+        out.scope_done = static_cast<int>(wres.done);
+    }
+    const bool batch_residual = out.batch.status != serve::parallel_orch::BatchStatus::Ok;
+    const bool scope_residual = out.scope_stalled > 0;
+    if (batch_residual || scope_residual) {
+        note_workflow_residual_reclaim_under_policy(w);
+        out.residual_observed = true;
+        out.residual_action = apply_residual_reclaim_action(scope, w);
+        out.residual_acted = (out.residual_action[0] != 'o');
+    }
+    g_orch_module_stats.workflow_apply_total.fetch_add(1, std::memory_order_relaxed);
+    return out;
+}
+
 // Issue #2852: apply_workflow body — defined here (after AgentScope is
 // fully defined) so it can call scope.watch_all. Declaration is in
 // agent_spawn.h (forward decl + simplified ApplyWorkflowResult to break
@@ -1910,12 +1964,17 @@ inline const char* apply_residual_reclaim_action(AgentScope& scope,
 //   - Phase C: residual observe; production + explicit Cancel/JoinDrain
 //              cancel_all / join_all (Issue #3206). Soft/Report observe-only.
 //   - additive: workflow_apply_total bumps once per call
+// Issue #3969: production + explicit on_join_fail != ReportOnly routes
+// through compose_supervised_batch. Soft / unset ReportOnly stay here.
 // No #2661 early-free. No AgentRegistry / process-global map.
 [[nodiscard]] inline ApplyWorkflowResult
 apply_workflow(serve::Scheduler& sched, AgentScope& scope,
                std::span<const serve::parallel_orch::TaskSpec> tasks,
                const WorkflowFailurePolicy& w, std::uint32_t stall_timeout_ms,
                bool watch_scope) noexcept {
+    if (aura::compiler::typed_audit::production_defaults_active() &&
+        w.agent_policy.on_join_fail != AgentFailureAction::ReportOnly)
+        return compose_supervised_batch(sched, scope, tasks, w, stall_timeout_ms, watch_scope);
     ApplyWorkflowResult out;
     // Phase A — batch under composed batch policy.
     out.batch = serve::parallel_orch::parallel_intend(sched, tasks, to_parallel_policy(w));
