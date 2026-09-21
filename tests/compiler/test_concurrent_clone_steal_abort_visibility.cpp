@@ -352,6 +352,26 @@ int run_test_concurrent_clone_steal_abort_visibility() {
         CHECK(read_file("tests/issues/test_issue_3341.cpp").empty(), "3341: no invent test");
     }
 
+    // Issue #3981: nested steal sticky so depth==0 restores when the
+    // process steal counter is a weak 0-stub after the nested return.
+    {
+        std::println("\n--- #3981: nested steal sticky + weak-stub inject ---");
+        auto me = read_file("src/compiler/macro_expansion.cpp");
+        CHECK(me.find("nested_steal_abort") != std::string::npos,
+              "3981: CloneSessionPolicy sticky pointer");
+        CHECK(me.find("g_arm_nested_steal_inject") != std::string::npos,
+              "3981: nested steal inject for weak 0-stub");
+        const auto steal_pos = me.find("g_macro_clone_steal_abort_total.fetch_add");
+        CHECK(steal_pos != std::string::npos, "3981: steal-abort site");
+        if (steal_pos != std::string::npos) {
+            const auto scope = me.substr(steal_pos > 400 ? steal_pos - 400 : 0, 800);
+            CHECK(scope.find("nested_steal") != std::string::npos,
+                  "3981: parent steal check consults sticky");
+        }
+        CHECK(read_file("docs/design/3981-name-map-slot-probe.md").empty(), "3981: no docs/design");
+        CHECK(read_file("tests/compiler/test_issue_3981.cpp").empty(), "3981: no invent test");
+    }
+
     std::println("\n=== Issue #3303 + #3321 + #3341 done ===");
     return g_failed == 0 ? 0 : 1;
 }
