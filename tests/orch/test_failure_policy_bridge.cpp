@@ -34,9 +34,11 @@
 #include <cstdint>
 #include <fstream>
 #include <iterator>
+#include <memory>
 #include <print>
 #include <span>
 #include <string>
+#include <thread>
 
 import std;
 import aura.compiler.service;
@@ -90,6 +92,7 @@ static void ac3495_run_added_tests();
 // Issue #3726: supervise-batch population split (child scope).
 static void ac3726_run_added_tests();
 static void ac3926_supervise_batch_isolation_honest();
+static void ac3969_run_added_tests();
 
 int run_test_failure_policy_bridge() {
     std::println("=== Issue #2539: FailurePolicy → AgentFailurePolicy bridge ===");
@@ -417,6 +420,7 @@ int run_test_failure_policy_bridge() {
     // Issue #3726: one population per apply_workflow call.
     ac3726_run_added_tests();
     ac3926_supervise_batch_isolation_honest();
+    ac3969_run_added_tests();
 
     // Issue #3052: RetryN projects on_join_fail; explicit policy not overwritten.
     {
@@ -1435,6 +1439,222 @@ static void ac3926_supervise_batch_isolation_honest() {
     CHECK(read_file("docs/design/3926-supervise-isolation.md").empty(), "3926: no docs/design");
     CHECK(read_file("tests/orch/test_issue_3926.cpp").empty(), "3926: no test_issue_3926");
     reset_all_agent_scopes_for_test();
+}
+
+// ── Issue #3969: compose_supervised_batch FailFast → Scope on_join_fail ──
+struct Ac3969SchedRunner {
+    aura::serve::Scheduler& sched;
+    std::thread thr;
+    explicit Ac3969SchedRunner(aura::serve::Scheduler& s)
+        : sched(s)
+        , thr([&s] { s.run(); }) {}
+    ~Ac3969SchedRunner() {
+        sched.stop();
+        if (thr.joinable())
+            thr.join();
+    }
+};
+
+static void ac3969_1_report_only_failfast_does_not_cancel() {
+    std::println("\n--- #3969 AC1: FailFast + ReportOnly does not cancel scope agents ---");
+    using aura::orch::AgentScope;
+    using aura::orch::AgentSpec;
+    using aura::orch::apply_workflow;
+    using aura::orch::kComposeSupervisedBatchIssue;
+    using aura::serve::Fiber;
+    using aura::serve::Scheduler;
+    using aura::serve::parallel_orch::TaskResult;
+    using aura::serve::parallel_orch::TaskSpec;
+    CHECK(kComposeSupervisedBatchIssue == 3969, "3969: issue stamp");
+    ac3206_set_prod(true);
+    Scheduler sched(1);
+    Ac3969SchedRunner runner(sched);
+    AgentScope scope(sched);
+    std::atomic<bool> hold{true};
+    AgentSpec spec;
+    spec.name = "live-3969-ro";
+    spec.body = [&] {
+        while (hold.load(std::memory_order_relaxed)) {
+            if (aura::serve::g_current_fiber && aura::serve::g_current_fiber->is_cancel_requested())
+                break;
+            Fiber::yield();
+        }
+    };
+    spec.attach_mailbox = true;
+    spec.mutation_boundary = false;
+    auto& h = scope.spawn(spec);
+    CHECK(h.ok && h.fiber, "3969 AC1: live scope agent");
+    TaskSpec tasks[2];
+    tasks[0].body = [] {
+        TaskResult r;
+        r.ok = false;
+        r.error = "fail-3969";
+        return r;
+    };
+    tasks[1].body = [] {
+        TaskResult r;
+        r.ok = true;
+        return r;
+    };
+    WorkflowFailurePolicy w;
+    w.batch_policy = FailurePolicy::FailFast;
+    w.fail_fast = true;
+    w.agent_policy.on_join_fail = AgentFailureAction::ReportOnly;
+    auto out = apply_workflow(sched, scope, tasks, w, /*stall=*/0, /*watch_scope=*/false);
+    CHECK(out.batch.status == aura::serve::parallel_orch::BatchStatus::FailFast ||
+              out.batch.status == aura::serve::parallel_orch::BatchStatus::Partial ||
+              out.batch.status == aura::serve::parallel_orch::BatchStatus::Ok,
+          "3969 AC1: batch ran");
+    CHECK(h.fiber && !h.fiber->is_cancel_requested(),
+          "3969 AC1: ReportOnly FailFast does not request_cancel");
+    hold.store(false, std::memory_order_relaxed);
+    ac3206_set_prod(false);
+}
+
+static void ac3969_2_explicit_cancel_failfast_cancels() {
+    std::println("\n--- #3969 AC2: explicit on_join_fail=Cancel + FailFast request_cancel ---");
+    using aura::orch::AgentHandle;
+    using aura::orch::AgentScope;
+    using aura::orch::apply_workflow;
+    using aura::serve::Fiber;
+    using aura::serve::Scheduler;
+    using aura::serve::parallel_orch::TaskResult;
+    using aura::serve::parallel_orch::TaskSpec;
+    ac3206_set_prod(true);
+    Scheduler sched(1);
+    Ac3969SchedRunner runner(sched);
+    AgentScope scope(sched);
+    auto fiber_owned = std::make_unique<Fiber>([] {});
+    AgentHandle parked;
+    parked.ok = true;
+    parked.name = "park-3969";
+    parked.fiber = fiber_owned.get();
+    auto& slot = scope.adopt_handle_without_spec_for_test(std::move(parked));
+    CHECK(slot.ok && slot.fiber, "3969 AC2: parked scope handle");
+    TaskSpec tasks[2];
+    tasks[0].region_key = 1;
+    tasks[0].body = [] {
+        TaskResult r;
+        r.ok = false;
+        r.error = "fail-3969";
+        return r;
+    };
+    tasks[1].region_key = 2;
+    tasks[1].body = [] {
+        TaskResult r;
+        r.ok = true;
+        return r;
+    };
+    WorkflowFailurePolicy w;
+    w.batch_policy = FailurePolicy::FailFast;
+    w.fail_fast = true;
+    w.agent_policy.on_join_fail = AgentFailureAction::Cancel;
+    auto out = apply_workflow(sched, scope, tasks, w, 0, false);
+    CHECK(out.batch.status == aura::serve::parallel_orch::BatchStatus::FailFast ||
+              out.batch.status == aura::serve::parallel_orch::BatchStatus::Partial ||
+              out.batch.status == aura::serve::parallel_orch::BatchStatus::Timeout,
+          "3969 AC2: FailFast/Partial/Timeout batch");
+    CHECK(slot.fiber->is_cancel_requested() || scope.last_join_fail_action_taken() > 0,
+          "3969 AC2: request_cancel or join-fail Cancel taken");
+    ac3206_set_prod(false);
+}
+
+static void ac3969_3_restartn_bare_adopt_skips() {
+    std::println("\n--- #3969 AC3: RestartN on bare adopted handle skip+Cancel (#3250) ---");
+    using aura::orch::AgentHandle;
+    using aura::orch::AgentScope;
+    using aura::orch::compose_supervised_batch;
+    using aura::serve::Fiber;
+    using aura::serve::Scheduler;
+    using aura::serve::parallel_orch::TaskResult;
+    using aura::serve::parallel_orch::TaskSpec;
+    ac3206_set_prod(true);
+    Scheduler sched(1);
+    Ac3969SchedRunner runner(sched);
+    AgentScope scope(sched);
+    auto fiber_owned = std::make_unique<Fiber>([] {});
+    AgentHandle adopted;
+    adopted.ok = true;
+    adopted.name = "bare-3969";
+    adopted.fiber = fiber_owned.get();
+    auto& slot = scope.adopt_handle_without_spec_for_test(std::move(adopted));
+    CHECK(slot.ok, "3969 AC3: adopted");
+    TaskSpec tasks[1];
+    tasks[0].region_key = 1;
+    tasks[0].body = [] {
+        TaskResult r;
+        r.ok = false;
+        r.error = "fail-3969";
+        return r;
+    };
+    WorkflowFailurePolicy w;
+    w.batch_policy = FailurePolicy::FailFast;
+    w.fail_fast = true;
+    w.agent_policy.on_join_fail = AgentFailureAction::RestartN;
+    w.agent_policy.max_restarts = 2;
+    (void)compose_supervised_batch(sched, scope, tasks, w, 0, false);
+    CHECK(scope.last_restart_skipped_no_spec() > 0 || scope.last_restart_attempted() == 0,
+          "3969 AC3: bare adopt is not RestartN fuel (#3250)");
+    ac3206_set_prod(false);
+}
+
+static void ac3969_4_missing_keys_invalid() {
+    std::println("\n--- #3969 AC4: production missing region keys → Invalid (#3353) ---");
+    using aura::orch::AgentScope;
+    using aura::orch::compose_supervised_batch;
+    using aura::serve::Scheduler;
+    using aura::serve::parallel_orch::TaskResult;
+    using aura::serve::parallel_orch::TaskSpec;
+    ac3206_set_prod(true);
+    ::unsetenv("AURA_PARALLEL_REQUIRE_REGION_KEYS");
+    Scheduler sched(1);
+    AgentScope scope(sched);
+    TaskSpec tasks[2];
+    tasks[0].body = [] {
+        TaskResult r;
+        r.ok = true;
+        return r;
+    };
+    tasks[1].body = [] {
+        TaskResult r;
+        r.ok = true;
+        return r;
+    };
+    WorkflowFailurePolicy w;
+    w.agent_policy.on_join_fail = AgentFailureAction::Cancel;
+    auto out = compose_supervised_batch(sched, scope, tasks, w, 0, false);
+    CHECK(out.batch.status == aura::serve::parallel_orch::BatchStatus::Invalid,
+          "3969 AC4: missing keys fail-closed Invalid");
+    CHECK(out.batch.isolation_level == aura::serve::parallel_orch::IsolationLevel::Serialized,
+          "3969 AC4: isolation still from decide_isolation");
+    ac3206_set_prod(false);
+}
+
+static void ac3969_5_source_cite() {
+    std::println("\n--- #3969 AC5: source-cite + no AgentRegistry + no new query key ---");
+    const auto spawn = read_file("src/orch/agent_spawn.h");
+    const auto scope = read_file("src/orch/agent_scope.h");
+    const auto t = read_file("tests/orch/test_failure_policy_bridge.cpp");
+    CHECK(spawn.find("kComposeSupervisedBatchIssue = 3969") != std::string::npos, "3969: stamp");
+    CHECK(scope.find("compose_supervised_batch") != std::string::npos, "3969: adapter");
+    CHECK(scope.find("decide_isolation") != std::string::npos, "3969: isolation SSOT");
+    CHECK(scope.find("Issue #3969") != std::string::npos, "3969: cite");
+    CHECK(t.find("ac3969_1_report_only_failfast_does_not_cancel") != std::string::npos,
+          "3969: ReportOnly AC");
+    CHECK(scope.find("class AgentRegistry") == std::string::npos, "3969: no AgentRegistry");
+    CHECK(scope.find("schema-3969") == std::string::npos, "3969: no new query key");
+    CHECK(spawn.find("query:3969") == std::string::npos, "3969: no query:3969");
+    CHECK(read_file("tests/orch/test_issue_3969.cpp").empty(), "3969: no invent");
+    CHECK(read_file("docs/design/3969-compose-supervised-batch.md").empty(),
+          "3969: no docs/design");
+}
+
+static void ac3969_run_added_tests() {
+    ac3969_1_report_only_failfast_does_not_cancel();
+    ac3969_2_explicit_cancel_failfast_cancels();
+    ac3969_3_restartn_bare_adopt_skips();
+    ac3969_4_missing_keys_invalid();
+    ac3969_5_source_cite();
 }
 
 #ifndef AURA_ISSUE_BATCH_MEMBER
