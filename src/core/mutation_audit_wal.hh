@@ -378,6 +378,12 @@ struct MutationAuditWal {
         return dir;
     }
 
+    // Issue #3970: live retained files (segment_index + 1). 0 when disabled.
+    [[nodiscard]] std::uint32_t retained_segment_count() const noexcept {
+        std::lock_guard<std::mutex> lock(mtx);
+        return enabled ? (segment_index + 1) : 0;
+    }
+
     bool append(const AuditWalRecord& rec) noexcept {
         std::lock_guard<std::mutex> lock(mtx);
         if (!enabled || !fp) {
@@ -523,6 +529,22 @@ struct MutationAuditWal {
             }
         }
         return std::nullopt;
+    }
+
+    // Issue #3970: production/Full explicit-mid continuation past the
+    // cheap wal_mid_lookup_segments() window. Wrappers call find_recent_*
+    // with kWalFullScanAllSegments and do not hold mtx (find_recent_*
+    // takes it). Disabled / mid==0 → nullopt, no I/O.
+    [[nodiscard]] std::optional<TypedSummaryWalRecord>
+    find_typed_summary_by_mid_scan_all_segments(std::uint64_t mid) noexcept {
+        return find_recent_typed_summary_by_mid(mid,
+                                                ::aura::core::wal_slo::kWalFullScanAllSegments);
+    }
+
+    [[nodiscard]] std::optional<AuditWalRecord>
+    find_by_provenance_mutation_id_scan_all_segments(std::uint64_t mid) noexcept {
+        return find_recent_by_provenance_mutation_id(
+            mid, ::aura::core::wal_slo::kWalFullScanAllSegments);
     }
 
     static std::vector<AuditWalRecord> read_segment_file(const std::string& path) noexcept {

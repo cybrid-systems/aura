@@ -307,5 +307,13 @@ inline constexpr std::uint32_t kWalMidLookupSegmentsProduction = 8;
     return wal_env_u32("AURA_WAL_MAX_SEGMENTS", 0);
 }
 
+// Issue #3970: production/Full explicit-mid continuation past the cheap
+// wal_mid_lookup_segments() window. find_recent_* already scans
+// min(max_segments, segment_index+1) newest-first; passing this covers
+// every retained file. Named wrappers call find_recent_*(mid, this)
+// without holding the WAL mutex (find_recent_* takes it).
+inline constexpr int kWalFullScanMidIssue = 3970;
+inline constexpr std::uint32_t kWalFullScanAllSegments = 0xffffffffu;
+
 } // namespace aura::core::wal_slo
 #endif // AURA_CORE_WAL_APPEND_FAIL_SLO_H

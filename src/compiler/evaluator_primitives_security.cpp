@@ -5056,6 +5056,8 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                     static_cast<unsigned>(kTypedMutationAuditTrailSize),
                     static_cast<unsigned>(kSecurityEventRingSize), wal_hint, typed_summary_from_wal,
                     typed_outcome_wal, typed_kind_wal);
+                // Issue #3970: ring row is in-window — full-scan face stays 0.
+                line += " wal-full-scan-hit=0 wal-segments-scanned=0";
                 auto sidx = ev.string_heap_.size();
                 ev.string_heap_.push_back(std::move(line));
                 auto pid = ev.pairs_.size();
@@ -5072,10 +5074,24 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             // reason filter rejected is still evidence in-window, so the
             // miss face below must not fire for it.
             bool wal_window_hit = false;
+            int wal_full_scan_hit = 0;
+            std::uint32_t wal_segments_scanned = 0;
             if (emitted == 0 && filt_mid && want_mid != 0 && summary_scan_ok &&
                 g_security_event_wal().is_enabled()) {
-                if (auto rec = g_security_event_wal().find_recent_by_mutation_id(
-                        want_mid, ::aura::core::wal_slo::wal_mid_lookup_segments())) {
+                auto& se_wal = g_security_event_wal();
+                const auto win = ::aura::core::wal_slo::wal_mid_lookup_segments();
+                auto rec = se_wal.find_recent_by_mutation_id(want_mid, win);
+                if (rec) {
+                    wal_segments_scanned = win;
+                } else {
+                    // Issue #3970: cheap window miss → still-on-disk mid
+                    // (retention unbounded) continues via named full scan.
+                    rec = se_wal.find_by_mutation_id_scan_all_segments(want_mid);
+                    wal_segments_scanned = se_wal.retained_segment_count();
+                    if (rec)
+                        wal_full_scan_hit = 1;
+                }
+                if (rec) {
                     wal_window_hit = true;
                     if ((!filt_tenant || rec->tenant_id == want_tenant) &&
                         (!filt_fiber || rec->fiber_id == want_fiber) &&
@@ -5085,8 +5101,12 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                         const char* typed_outcome_wal = "-";
                         const char* typed_kind_wal = "-";
                         if (g_mutation_audit_wal().is_enabled()) {
-                            if (auto ts = g_mutation_audit_wal().find_recent_typed_summary_by_mid(
-                                    want_mid, ::aura::core::wal_slo::wal_mid_lookup_segments())) {
+                            auto ts = g_mutation_audit_wal().find_recent_typed_summary_by_mid(
+                                want_mid, win);
+                            if (!ts)
+                                ts = g_mutation_audit_wal()
+                                         .find_typed_summary_by_mid_scan_all_segments(want_mid);
+                            if (ts) {
                                 typed_summary_from_wal = 1;
                                 typed_outcome_wal =
                                     typed_outcome_name(static_cast<AuditOutcome>(ts->outcome));
@@ -5108,6 +5128,8 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                             static_cast<unsigned>(kTypedMutationAuditTrailSize),
                             static_cast<unsigned>(kSecurityEventRingSize), 1,
                             typed_summary_from_wal, typed_outcome_wal, typed_kind_wal);
+                        line += std::format(" wal-full-scan-hit={} wal-segments-scanned={}",
+                                            wal_full_scan_hit, wal_segments_scanned);
                         auto sidx = ev.string_heap_.size();
                         ev.string_heap_.push_back(std::move(line));
                         auto pid = ev.pairs_.size();
@@ -5132,14 +5154,21 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 const char* typed_outcome_wal = "-";
                 const char* typed_kind_wal = "-";
                 if (g_mutation_audit_wal().is_enabled()) {
-                    if (auto ts = g_mutation_audit_wal().find_recent_typed_summary_by_mid(
-                            want_mid, ::aura::core::wal_slo::wal_mid_lookup_segments())) {
+                    const auto win = ::aura::core::wal_slo::wal_mid_lookup_segments();
+                    auto ts =
+                        g_mutation_audit_wal().find_recent_typed_summary_by_mid(want_mid, win);
+                    if (!ts)
+                        ts = g_mutation_audit_wal().find_typed_summary_by_mid_scan_all_segments(
+                            want_mid);
+                    if (ts) {
                         typed_summary_from_wal = 1;
                         typed_outcome_wal =
                             typed_outcome_name(static_cast<AuditOutcome>(ts->outcome));
                         typed_kind_wal = typed_kind_name(static_cast<MutationKind>(ts->kind));
                     }
                 }
+                if (wal_segments_scanned == 0)
+                    wal_segments_scanned = g_security_event_wal().retained_segment_count();
                 auto line = std::format(
                     "seq=0 kind=mid-window-miss tenant=0 fiber=0 mutation_id={} epoch=0 "
                     "effect=0 op=\"\" reason=\"wal-lookup-window-miss\" denied=0 typed_seq=0 "
@@ -5151,6 +5180,8 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                     static_cast<unsigned>(kTypedMutationAuditTrailSize),
                     static_cast<unsigned>(kSecurityEventRingSize), typed_summary_from_wal,
                     typed_outcome_wal, typed_kind_wal, typed_summary_from_wal == 1 ? 0 : 1);
+                line += std::format(" wal-full-scan-hit={} wal-segments-scanned={}",
+                                    wal_full_scan_hit, wal_segments_scanned);
                 auto sidx = ev.string_heap_.size();
                 ev.string_heap_.push_back(std::move(line));
                 auto pid = ev.pairs_.size();
@@ -5903,7 +5934,9 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             // + 1 additive key (wal-lookup-window-miss, #3603)
             // + 5 additive keys (overflow depth/wrap/full + schema/issue, #3806)
             // + 3 additive keys (wrap-refuse-total + schema/issue, #3838)
-            // = 58 live keys. Issue #3339: planned 72 (>= 58+8 headroom;
+            // + 4 additive keys (wal-full-scan-hit + wal-segments-scanned +
+            //   schema-3970 + issue-3970, #3970)
+            // = 62 live keys. Issue #3339: planned 72 (>= 62+8=70 headroom;
             // +20 dummy keys without a raise must fail the CI headroom
             // gate). Additive insert_kv must raise planned_keys; this
             // Agent facade forbids hash-overflow.
@@ -6098,6 +6131,10 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             // AURA_WAL_MAX_SEGMENTS 0 = unbounded files). Additive face —
             // typed-trail-miss / forensic-source semantics unchanged.
             std::int64_t wal_lookup_window_miss = 0;
+            // Issue #3970: cheap-window miss continues with a named full
+            // scan (production/Full + explicit mid / :durable only).
+            std::int64_t wal_full_scan_hit = 0;
+            std::int64_t wal_segments_scanned = 0;
             std::int64_t typed_summary_from_wal = 0;
             std::int64_t typed_kind = 0;
             if (typed_hit)
@@ -6144,7 +6181,17 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 auto& mut_wal = g_mutation_audit_wal();
                 if (se_wal.is_enabled() || mut_wal.is_enabled()) {
                     const auto win = ::aura::core::wal_slo::wal_mid_lookup_segments();
-                    if (auto rec = se_wal.find_recent_by_mutation_id(join_mid, win)) {
+                    auto rec = se_wal.find_recent_by_mutation_id(join_mid, win);
+                    if (rec) {
+                        wal_segments_scanned = static_cast<std::int64_t>(win);
+                    } else if (se_wal.is_enabled()) {
+                        rec = se_wal.find_by_mutation_id_scan_all_segments(join_mid);
+                        wal_segments_scanned =
+                            static_cast<std::int64_t>(se_wal.retained_segment_count());
+                        if (rec)
+                            wal_full_scan_hit = 1;
+                    }
+                    if (rec) {
                         if (rec->reason[0] != '\0') {
                             const auto n = strnlen(rec->reason, sizeof(rec->reason) - 1);
                             last_se_reason_str.assign(rec->reason, n);
@@ -6154,20 +6201,40 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                         if (forensic_source < 3)
                             forensic_source = 3;
                         durable_hit = 1;
-                    } else if (auto mrec =
-                                   mut_wal.find_recent_by_provenance_mutation_id(join_mid, win)) {
-                        last_se_denied = mrec->effect_denied ? 1 : 0;
-                        if (last_se_reason_str.empty() && mrec->op[0] != '\0') {
-                            const auto n = strnlen(mrec->op, sizeof(mrec->op) - 1);
-                            last_se_reason_str.assign(mrec->op, n);
+                    } else {
+                        auto mrec = mut_wal.find_recent_by_provenance_mutation_id(join_mid, win);
+                        if (mrec) {
+                            if (wal_segments_scanned == 0)
+                                wal_segments_scanned = static_cast<std::int64_t>(win);
+                        } else if (mut_wal.is_enabled()) {
+                            mrec =
+                                mut_wal.find_by_provenance_mutation_id_scan_all_segments(join_mid);
+                            if (wal_segments_scanned == 0)
+                                wal_segments_scanned =
+                                    static_cast<std::int64_t>(mut_wal.retained_segment_count());
+                            if (mrec)
+                                wal_full_scan_hit = 1;
                         }
-                        if (forensic_source < 3)
-                            forensic_source = 3;
-                        durable_hit = 1;
+                        if (mrec) {
+                            last_se_denied = mrec->effect_denied ? 1 : 0;
+                            if (last_se_reason_str.empty() && mrec->op[0] != '\0') {
+                                const auto n = strnlen(mrec->op, sizeof(mrec->op) - 1);
+                                last_se_reason_str.assign(mrec->op, n);
+                            }
+                            if (forensic_source < 3)
+                                forensic_source = 3;
+                            durable_hit = 1;
+                        }
                     }
                     // Issue #3242: typed-trail-miss + :durable → typed summary sidecar.
                     if (typed_miss && mut_wal.is_enabled()) {
-                        if (auto ts = mut_wal.find_recent_typed_summary_by_mid(join_mid, win)) {
+                        auto ts = mut_wal.find_recent_typed_summary_by_mid(join_mid, win);
+                        if (!ts) {
+                            ts = mut_wal.find_typed_summary_by_mid_scan_all_segments(join_mid);
+                            if (ts)
+                                wal_full_scan_hit = 1;
+                        }
+                        if (ts) {
                             typed_summary_from_wal = 1;
                             typed_kind = static_cast<std::int64_t>(ts->kind);
                             if (typed_outcome == 0) {
@@ -6188,6 +6255,11 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                             if (forensic_source < 3)
                                 forensic_source = 3;
                         }
+                    }
+                    if (wal_segments_scanned == 0) {
+                        wal_segments_scanned = static_cast<std::int64_t>(
+                            se_wal.is_enabled() ? se_wal.retained_segment_count()
+                                                : mut_wal.retained_segment_count());
                     }
                     // Issue #3603: all three find_recent_* missed within the
                     // lookup window → additive face (the row may still exist
@@ -6341,6 +6413,13 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 insert_kv("schema-3246", kEvolutionAuditSuggestedNextIssue);
                 insert_kv("issue-3246", kEvolutionAuditSuggestedNextIssue);
             }
+            // Issue #3970: additive full-scan face (END only). Cheap-path
+            // hit / Soft / no durable scan stay 0. Do not rewrite
+            // typed_kind / typed_outcome.
+            insert_kv("wal-full-scan-hit", wal_full_scan_hit);
+            insert_kv("wal-segments-scanned", wal_segments_scanned);
+            insert_kv("schema-3970", ::aura::core::wal_slo::kWalFullScanMidIssue);
+            insert_kv("issue-3970", ::aura::core::wal_slo::kWalFullScanMidIssue);
             return query_hash_finish(ht, ev.string_heap_, overflowed);
         });
 }
