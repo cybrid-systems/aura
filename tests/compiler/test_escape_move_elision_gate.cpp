@@ -26,6 +26,7 @@
 //   AC16: schema-2344 + source-cite
 
 #include "test_harness.hpp"
+#include "compiler/observability_metrics.h"
 #include "compiler/ownership_escape_lowering_gate.h"
 #include "compiler/typed_mutation_audit.h"
 
@@ -42,6 +43,7 @@ import std;
 import aura.core.ast;
 import aura.core.arena;
 import aura.compiler.ir;
+import aura.compiler.ir_executor;
 import aura.compiler.lowering;
 import aura.compiler.lowering_linear_types;
 import aura.compiler.service;
@@ -1687,6 +1689,108 @@ static void ac3448_4_soft_no_schema() {
           "3448 AC4: no test_issue_3448.cpp");
 }
 
+// Issue #3982: IR LinearOp slow path must pass live EnvFrame/bridge, not 0/0.
+static void ac3982_1_source_live_pair() {
+    std::println("\n--- #3982 AC1: slow path passes live Evaluator pair ---");
+    const auto ir = read_file("src/compiler/ir_executor_impl.cpp");
+    CHECK(ir.find("Issue #3982") != std::string::npos, "3982 AC1: cpp cites #3982");
+    const auto fn = ir.find("static bool enforce_linear_ownership_state(");
+    CHECK(fn != std::string::npos, "3982 AC1: enforce helper");
+    const auto win = ir.substr(fn, 4500);
+    CHECK(win.find("/*frame_version=*/0") == std::string::npos &&
+              win.find("/*current_version=*/0") == std::string::npos,
+          "3982 AC1: hardcoded 0/0 EnvFrame pair removed");
+    CHECK(win.find("defuse_version()") != std::string::npos, "3982 AC1: live defuse_version");
+    CHECK(win.find("current_bridge_epoch()") != std::string::npos,
+          "3982 AC1: live current_bridge_epoch");
+    CHECK(win.find("linear_move_drop_elision_ok()") != std::string::npos,
+          "3982 AC1: elision predicate unchanged");
+    CHECK(win.find("g_rehydrate_miss_invalidate_gen") != std::string::npos,
+          "3982 AC1: remount gen overlay");
+    CHECK(read_file("tests/compiler/test_issue_3982.cpp").empty(),
+          "3982 AC1: no test_issue_3982.cpp per #81967");
+    CHECK(read_file("docs/design/3982-linearop-zero-provenance.md").empty(),
+          "3982 AC1: no docs/design/3982-* per #1655");
+}
+
+static void ac3982_2_remount_slow_path_refuses() {
+    std::println("\n--- #3982 AC2: remount last==0 Move slow path force-rollback ---");
+    using namespace aura::compiler::typed_audit;
+    using aura::compiler::CompilerMetrics;
+    using aura::compiler::IRContext;
+    using aura::compiler::IRInterpreter;
+    using aura::ir::IRFunction;
+    using aura::ir::IRInstruction;
+    using aura::ir::IRModule;
+    using aura::ir::IROpcode;
+    clear_escape_move_elision_gate();
+    clear_type_linear_commit_proof_for_test();
+    reset_linear_ir_fastpath_counters_for_test();
+    g_linear_ir_fastpath_boundary_depth_override = 0;
+    auto save =
+        g_typed_mutation_audit_counters.production_defaults_active.load(std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.production_defaults_active.store(1, std::memory_order_relaxed);
+    set_strategy(AuditStrategy::Full);
+    stamp_type_linear_commit_proof(39822);
+    publish_type_linear_proof_outcome(kTypeLinearProofOutcomeStamped);
+    publish_last_proof_face(true, true);
+    set_last_proof_linear_root_count_for_test(0);
+    CHECK(rebind_linear_proof_after_root_migration(), "3982 AC2: last==0 remount");
+    CHECK(!linear_move_drop_elision_ok(), "3982 AC2: elision blocked after remount");
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    auto* cm = static_cast<CompilerMetrics*>(ev.compiler_metrics());
+    CHECK(cm != nullptr, "3982 AC2: metrics");
+    const auto rb0 = cm->linear_post_mutate_force_rollback_total.load(std::memory_order_relaxed);
+    IRModule mod;
+    IRFunction fn;
+    fn.name = "linmove";
+    fn.entry_block = 0;
+    fn.local_count = 3;
+    fn.blocks.push_back({0, {}, {}});
+    IRInstruction c0;
+    c0.opcode = IROpcode::ConstI64;
+    c0.operands = {0, 1, 0, 0};
+    fn.blocks[0].instructions.push_back(c0);
+    IRInstruction wrap;
+    wrap.opcode = IROpcode::LinearWrap;
+    wrap.operands = {1, 0, 0, 0};
+    fn.blocks[0].instructions.push_back(wrap);
+    IRInstruction mv;
+    mv.opcode = IROpcode::MoveOp;
+    mv.operands = {2, 1, 0, 0};
+    mv.linear_ownership_state = 1;
+    mv.provenance = 42;
+    fn.blocks[0].instructions.push_back(mv);
+    IRInstruction ret;
+    ret.opcode = IROpcode::Return;
+    ret.operands = {2, 0, 0, 0};
+    fn.blocks[0].instructions.push_back(ret);
+    mod.add_function(std::move(fn));
+    IRContext ctx(ev.primitives(), nullptr, cm, &ev);
+    IRInterpreter interp(mod, ctx);
+    interp.set_metrics(cm);
+    (void)interp.execute();
+    const auto rb1 = cm->linear_post_mutate_force_rollback_total.load(std::memory_order_relaxed);
+    CHECK(rb1 > rb0, "3982 AC2: remounted Move force-rollback (not 0/0 skip ok)");
+    g_typed_mutation_audit_counters.production_defaults_active.store(save,
+                                                                     std::memory_order_relaxed);
+    set_strategy(AuditStrategy::Sampled);
+    clear_type_linear_commit_proof_for_test();
+    g_linear_ir_fastpath_boundary_depth_override = -1;
+}
+
+static void ac3982_3_soft_elision_true_no_extra() {
+    std::println("\n--- #3982 AC3: Soft elision-true path unchanged ---");
+    const auto ir = read_file("src/compiler/ir_executor_impl.cpp");
+    const auto fn = ir.find("static bool enforce_linear_ownership_state(");
+    CHECK(fn != std::string::npos, "3982 AC3: helper");
+    const auto win = ir.substr(fn, 2200);
+    CHECK(win.find("linear_move_drop_elision_ok()") != std::string::npos &&
+              win.find("return true;") != std::string::npos,
+          "3982 AC3: elision-true returns before Evaluator loads");
+}
+
 static void ac3519_escape_active_depth_emits() {
     std::println("\n--- #3519 AC3: escape-active + depth/densify emits MoveOp ---");
     using aura::compiler::kEscapeActiveMoveElisionDepthIssue;
@@ -2080,6 +2184,10 @@ int run_test_escape_move_elision_gate() {
     std::println("\n=== Issue #3448: last==0 green face drops on remount ---");
     ac3448_1_last0_green_blocks_elision();
     ac3448_4_soft_no_schema();
+    std::println("\n=== Issue #3982: LinearOp slow path live EnvFrame/bridge ---");
+    ac3982_1_source_live_pair();
+    ac3982_2_remount_slow_path_refuses();
+    ac3982_3_soft_elision_true_no_extra();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
