@@ -18,6 +18,7 @@
 #include "core/provenance_tracker.hh"
 #include "core/sandbox.hh"
 #include "core/security_event.hh"
+#include "core/security_event_wal.hh"
 #include "core/workspace_epoch.hh"
 
 #include <cstdint>
@@ -604,6 +605,10 @@ static void ac3594_4_dual_refuse_join_mid0() {
 }
 
 
+static void ac3966_1_stale_proof_does_not_shadow_session();
+static void ac3966_2_nested_abort_keeps_outer_session();
+static void ac3966_3_soft_and_source();
+
 int run_test_std_ffi_per_call_3725() {
     std::println("=== Issue #3725: std/ffi per-call require_effect choke ===");
     ac3725_1_single_use_require_then_c_func_denies();
@@ -611,7 +616,114 @@ int run_test_std_ffi_per_call_3725() {
     ac3725_3_revoke_denies_while_mask_stays();
     ac3725_4_live_grant_allows();
     ac3725_5_soft_off_and_source();
+    // Batch member for this TU currently dispatches here (#3725), not
+    // run_test_require_effect_live_mid. Keep #3966 on the live runner.
+    std::println("\n=== Issue #3966: hard face joins live session mid ===");
+    ac3966_1_stale_proof_does_not_shadow_session();
+    ac3966_2_nested_abort_keeps_outer_session();
+    ac3966_3_soft_and_source();
     return aura::test::g_failed ? 1 : 0;
+}
+
+static void ac3966_1_stale_proof_does_not_shadow_session() {
+    std::println("\n--- #3966 AC1: stale TypedMid does not win over live session mid ---");
+    reset_all();
+    aura::compiler::typed_audit::reset_for_test();
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    set_mode(SandboxMode::Restricted);
+    aura::core::sandbox::set_mode(SandboxMode::Restricted);
+    bump_mutation_epoch(1);
+    constexpr std::uint64_t kStaleProof = 0xC0FFEEULL;
+    aura::compiler::typed_audit::stamp_type_linear_commit_proof(kStaleProof);
+    aura::core::security_event_wal::wal_overflow_ring_clear_for_test();
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_effect_sandbox_mode(1);
+    ev.set_capability_tenant_id(51);
+    ev.clear_boundary_audit_mid_for_test();
+    bool ok = true;
+    Evaluator::MutationBoundaryGuard g(ev, &ok);
+    const auto session = aura::compiler::typed_audit::current_boundary_audit_mid();
+    CHECK(session != 0, "3966 AC1: session mid published");
+    CHECK(session != kStaleProof, "3966 AC1: session mid is not the leftover proof");
+    CHECK(aura::compiler::typed_audit::last_type_linear_commit_proof_stamp_v_read() == kStaleProof,
+          "3966 AC1: leftover proof still visible");
+    {
+        auto prov = make_grant_provenance(session, /*force_bind=*/true, /*node_id=*/0, /*fiber=*/0);
+        CHECK(g_capability_registry().grant(51, "mut-3966", Effect::Mutate, prov,
+                                            /*single_use=*/false,
+                                            /*session_bound=*/true, 51),
+              "3966 AC1: session grant landed");
+    }
+    CapabilityGrant row{};
+    CHECK(g_capability_registry().find_grant(51, "mut-3966", row), "3966 AC1: grant row");
+    CHECK(row.bound_mutation_id == session, "3966 AC1: grant bound to session mid");
+    CHECK(ev.require_effect(static_cast<std::uint16_t>(kEffectMutate), "test:3966-session", 0,
+                            /*ref_tenant=*/51),
+          "3966 AC1: require_effect allows on session mid, not stale proof");
+    CHECK(last_security_event_mid() == session,
+          "3966 AC1: SE mid equals live session, not leftover TypedMid");
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+}
+
+static void ac3966_2_nested_abort_keeps_outer_session() {
+    std::println("\n--- #3966 AC2: nested abort does not join leftover proof ---");
+    reset_all();
+    aura::compiler::typed_audit::reset_for_test();
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    set_mode(SandboxMode::Restricted);
+    aura::core::sandbox::set_mode(SandboxMode::Restricted);
+    bump_mutation_epoch(1);
+    aura::compiler::typed_audit::stamp_type_linear_commit_proof(0xBEEFULL);
+    aura::core::security_event_wal::wal_overflow_ring_clear_for_test();
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_effect_sandbox_mode(1);
+    ev.set_capability_tenant_id(52);
+    ev.clear_boundary_audit_mid_for_test();
+    bool outer_ok = true;
+    Evaluator::MutationBoundaryGuard outer(ev, &outer_ok);
+    const auto outer_mid = aura::compiler::typed_audit::current_boundary_audit_mid();
+    {
+        bool inner_ok = false;
+        Evaluator::MutationBoundaryGuard inner(ev, &inner_ok);
+        (void)inner;
+    }
+    CHECK(aura::compiler::typed_audit::current_boundary_audit_mid() == outer_mid,
+          "3966 AC2: outer session mid restored after nested abort");
+    {
+        auto prov =
+            make_grant_provenance(outer_mid, /*force_bind=*/true, /*node_id=*/0, /*fiber=*/0);
+        CHECK(g_capability_registry().grant(52, "mut-3966-outer", Effect::Mutate, prov,
+                                            /*single_use=*/false, /*session_bound=*/true, 52),
+              "3966 AC2: outer session grant landed");
+    }
+    CHECK(ev.require_effect(static_cast<std::uint16_t>(kEffectMutate), "test:3966-nested", 0,
+                            /*ref_tenant=*/52),
+          "3966 AC2: require_effect still joins outer session mid");
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+}
+
+static void ac3966_3_soft_and_source() {
+    std::println("\n--- #3966 AC3: Soft mid=1 observe + source-cite ---");
+    reset_all();
+    aura::compiler::typed_audit::reset_for_test();
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    set_mode(SandboxMode::Off);
+    aura::core::sandbox::set_mode(SandboxMode::Off);
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_effect_sandbox_mode(0);
+    CHECK(ev.require_effect(static_cast<std::uint16_t>(kEffectFfi), "test:3966-soft", 0),
+          "3966 AC3: Soft require_effect still allows");
+    CHECK(last_security_event_mid() != 0, "3966 AC3: Soft observe mid stays non-zero");
+    const auto sec = read_file("src/compiler/evaluator_security.cpp");
+    CHECK(sec.find("Issue #3966") != std::string::npos, "3966: require_effect cites");
+    CHECK(sec.find("join_audit_and_se_mid(0)") != std::string::npos,
+          "3966: hard face does not pass leftover TypedMid as caller");
+    CHECK(sec.find("schema-3966") == std::string::npos, "3966: no new query key");
+    CHECK(read_file("tests/compiler/test_issue_3966.cpp").empty(), "3966: no invent");
+    CHECK(read_file("docs/design/3966-require-effect-mid.md").empty(), "3966: no docs/design");
 }
 
 int run_test_require_effect_live_mid() {
@@ -633,6 +745,10 @@ int run_test_require_effect_live_mid() {
     ac3594_2_bump_joins_allows();
     ac3594_3_soft_mid1_stamp_preserved();
     ac3594_4_dual_refuse_join_mid0();
+    std::println("\n=== Issue #3966: hard face joins live session mid ===");
+    ac3966_1_stale_proof_does_not_shadow_session();
+    ac3966_2_nested_abort_keeps_outer_session();
+    ac3966_3_soft_and_source();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

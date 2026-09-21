@@ -719,14 +719,13 @@ bool Evaluator::require_effect(std::uint16_t req_bits, std::string_view op, ast:
                                        /*ref_tenant=*/ref_tenant, req_bits, op))
             return false; // IsolationDeny emitted (single-count, #2388)
     }
-    // Issue #3296 AC1: SSOT order under Restricted/Strict is TypedMid
-    // (boundary-stamped) first, then the process-global epoch fallback,
-    // then 1 for Soft / standalone. Drop the host-quota mid from the
-    // production cascade: quota can drift / lag relative to the
-    // TypedMid that was live when the grant was issued (steal × abort
-    // × boundary enter clears quota + epoch while TypedMid remains).
-    // Soft / Off contract unchanged: TypedMid == 0 falls through to 1
-    // with zero extra atomics.
+    // Issue #3296 AC1: Soft/Off SSOT is TypedMid then Mutation epoch then 1.
+    // Issue #3966: hard face must NOT pass last TypedMid as caller_mid —
+    // join_audit_and_se_mid returns a non-zero caller before TLS
+    // boundary / session_mid_at_enter_, so a leftover proof from a
+    // previous outermost (or a foreign-thread stamp) wins over the live
+    // Guard. Pass 0 so composite TLS → boundary/session → resolve.
+    // Grant / SE / Typed stay one join key. No Bridge epoch.
     std::uint64_t mid = typed_audit::last_type_linear_commit_proof_stamp_v_read();
     if (mid == 0)
         mid = ::aura::core::current_mutation_epoch();
@@ -741,7 +740,7 @@ bool Evaluator::require_effect(std::uint16_t req_bits, std::string_view op, ast:
     const bool hard = typed_audit::production_defaults_active() ||
                       typed_audit::get_strategy() == typed_audit::AuditStrategy::Full;
     if (hard) {
-        mid = typed_audit::join_audit_and_se_mid(mid);
+        mid = typed_audit::join_audit_and_se_mid(0);
         if (mid == 0)
             return false; // fail-closed, zero side effect
     } else if (mid == 0) {
