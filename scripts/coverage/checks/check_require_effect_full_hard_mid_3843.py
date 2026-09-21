@@ -66,7 +66,9 @@ def main() -> int:
     must("Issue #3843", "AC1 cite", sec)
     must("AuditStrategy::Full", "AC1 Full in require_effect", re_win)
     must("production_defaults_active()", "AC1 production_defaults in hard", re_win)
-    must("join_audit_and_se_mid(mid)", "AC1 join on hard path", re_win)
+    # Issue #3966: the hard path joins via the 0-caller form (live session
+    # mid, not the leftover TypedMid variable).
+    must("typed_audit::join_audit_and_se_mid(0)", "AC1 join on hard path", re_win)
     must("if (mid == 0)", "AC1 mid==0 refuse", re_win)
     must("return false", "AC1 refuse return", re_win)
     if "AuditStrategy::Full" not in re_win and "production_hard_face_active()" not in re_win:

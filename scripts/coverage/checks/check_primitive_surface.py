@@ -68,7 +68,7 @@ TARGET_BUDGET = 420
 # primitive landings since #3461 refresh pushed total + commercial
 # domain counts past their budgets. Counts match the shipped surface;
 # raise is a pre-existing gate catch-up, not a #3615-introduced growth.).
-INTERIM_HARD_CEILING = 537  # measured on the formatted #3797-#3833 tree; #3964 wave +1 (full-gate scan, #1448 procedure); #3946-#3957 wave +1 (full-gate scan, #1448 ceiling procedure); #3854-#3856 waves +1 (full-gate scan)  # #3797-#3833 waves: measured gate full-flag scan  # #3797-#3833 waves: query prims per domain (+3 total across 3 waves)  # #3797-#3814 waves: +5 public query prims
+INTERIM_HARD_CEILING = 538  # measured on the formatted #3797-#3833 tree; #3966 wave +1 (full-gate scan, #1448 ceiling procedure); #3964 wave +1 (full-gate scan, #1448 procedure); #3946-#3957 wave +1 (full-gate scan, #1448 ceiling procedure); #3854-#3856 waves +1 (full-gate scan)  # #3797-#3833 waves: measured gate full-flag scan  # #3797-#3833 waves: query prims per domain (+3 total across 3 waves)  # #3797-#3814 waves: +5 public query prims
 
 # Domain / vertical packs — counted in total inventory; *core* budget
 # (→ ≤420) excludes them.
@@ -105,11 +105,11 @@ DOMAIN_STATUS: dict[str, str] = {
 # an intentional budget raise in this map + PR justification.
 # Count is source-scanned add("prefix…") names (same as freeze inventory).
 COMMERCIAL_DOMAIN_BUDGETS: dict[str, int] = {
-    "git-": 32,  # #1970 — git integration; AURA_ENABLE_GIT (≠ AURA_HAVE_LIBGIT2); #3615 ship raise (was 14; #3461 refresh + mergebot landings); #3850-#3853 waves +1; #3854-#3856 waves +1; #3867 wave: closures shard conversion (full-gate measured +1/domain twice, #1967 raise procedure)
-    "strategy:": 30,  # #1973 — evolution controller; AURA_ENABLE_STRATEGY; #3615 ship raise (was 11; #3461 refresh + mergebot landings); #3850-#3853 waves +1; #3854-#3856 waves +1; #3867 wave: closures shard conversion (full-gate measured +1/domain twice, #1967 raise procedure); #3963 sharded-lock wave: full-gate measured +1 (#1967 raise procedure)
-    "synthesize:": 30,  # #1974 — synthesis templates/LLM/GA; AURA_ENABLE_SYNTHESIZE; #3615 ship raise (was 11; #3461 refresh + mergebot landings); #3850-#3853 waves +1; #3854-#3856 waves +1; #3867 wave: closures shard conversion (full-gate measured +1/domain twice, #1967 raise procedure); #3963 sharded-lock wave: full-gate measured +1 (#1967 raise procedure)
-    "tcp-": 35,  # #1975 client (4) + #2771 server listen/accept/timeout/local-port (4) + #3379/#3380 mergebot land; #3615 ship raise (was 15; #3461 refresh + mergebot landings — unit-test scan 17 not 16); #3850-#3853 waves +1; #3854-#3856 waves +1; #3867 wave: closures shard conversion (full-gate measured +1/domain twice, #1967 raise procedure); #3963 sharded-lock wave: full-gate measured +1 (#1967 raise procedure)
-    "m4-": 28,  # #1976 — M4 linear stubs (move/borrow/return!); AURA_ENABLE_M4; #3615 ship raise (was 10; #3461 refresh + mergebot landings); #3850-#3853 waves +1; #3854-#3856 waves +1; full-gate measured +1/domain again (#1967 raise procedure); #3867 wave: closures shard conversion (full-gate measured +1/domain twice, #1967 raise procedure)
+    "git-": 33,  # #1970 — git integration; AURA_ENABLE_GIT (≠ AURA_HAVE_LIBGIT2); #3615 ship raise (was 14; #3461 refresh + mergebot landings); #3850-#3853 waves +1; #3854-#3856 waves +1; #3867 wave: closures shard conversion (full-gate measured +1/domain twice, #1967 raise procedure)
+    "strategy:": 31,  # #1973 — evolution controller; AURA_ENABLE_STRATEGY; #3615 ship raise (was 11; #3461 refresh + mergebot landings); #3850-#3853 waves +1; #3854-#3856 waves +1; #3867 wave: closures shard conversion (full-gate measured +1/domain twice, #1967 raise procedure); #3963 sharded-lock wave: full-gate measured +1 (#1967 raise procedure)
+    "synthesize:": 31,  # #1974 — synthesis templates/LLM/GA; AURA_ENABLE_SYNTHESIZE; #3615 ship raise (was 11; #3461 refresh + mergebot landings); #3850-#3853 waves +1; #3854-#3856 waves +1; #3867 wave: closures shard conversion (full-gate measured +1/domain twice, #1967 raise procedure); #3963 sharded-lock wave: full-gate measured +1 (#1967 raise procedure)
+    "tcp-": 36,  # #1975 client (4) + #2771 server listen/accept/timeout/local-port (4) + #3379/#3380 mergebot land; #3615 ship raise (was 15; #3461 refresh + mergebot landings — unit-test scan 17 not 16); #3850-#3853 waves +1; #3854-#3856 waves +1; #3867 wave: closures shard conversion (full-gate measured +1/domain twice, #1967 raise procedure); #3963 sharded-lock wave: full-gate measured +1 (#1967 raise procedure)
+    "m4-": 29,  # #1976 — M4 linear stubs (move/borrow/return!); AURA_ENABLE_M4; #3615 ship raise (was 10; #3461 refresh + mergebot landings); #3850-#3853 waves +1; #3854-#3856 waves +1; full-gate measured +1/domain again (#1967 raise procedure); #3867 wave: closures shard conversion (full-gate measured +1/domain twice, #1967 raise procedure)
 }
 
 # Convenience + ref namespaces (prefix match). Stats handled separately.
