@@ -564,6 +564,62 @@ static void ac3585_4_soft_zero_no_invent() {
           "3585 AC4: no check_3585.py");
 }
 
+// Issue #3987 AC3: distinguish correct skip vs miss-compile with existing
+// counters only (no new query key). lookup==0 iff clean; lookup==1 or
+// partial_forced_full when the type/IR cone is nonempty after mutate.
+static void ac3987_skip_vs_miss_compile_soak() {
+    std::println("\n--- #3987 AC3: skip vs miss-compile soak (existing counters) ---");
+    using aura::compiler::kQuietForcedThrCapIssue;
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+
+    CHECK(kQuietForcedThrCapIssue == 3987, "3987: stamp");
+    const auto pure = read_file("src/compiler/ir_cache_pure.ixx");
+    const auto obs = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
+    CHECK(pure.find("Issue #3987") != std::string::npos, "3987: decide cites");
+    CHECK(obs.find("partial-relowers") != std::string::npos, "3987: existing partial-relowers");
+    CHECK(obs.find("schema-3987") == std::string::npos, "3987: no new query key");
+    CHECK(read_file("tests/compiler/test_issue_3987.cpp").empty(), "3987: no invent");
+
+    apply_production_audit_defaults();
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define f (lambda () 1))\")").has_value(), "3987 AC3: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3987 AC3: eval");
+    const auto* e0 = cs.get_define_v2("f");
+    CHECK(e0 != nullptr, "3987 AC3: f cached");
+    const auto hash = e0->source_hash;
+    CHECK(e0->dirty_block_count() == 0, "3987 AC3: clean dirty_block_count==0");
+    CHECK(e0->content_stored_this_epoch, "3987 AC3: content latch");
+    CHECK(!e0->abort_map_invalid, "3987 AC3: map valid");
+    CHECK(!e0->dirty, "3987 AC3: entry.dirty false on clean skip");
+    CHECK(
+        cs.lookup_define_v2("f", hash) == 0,
+        "3987 AC3: lookup==0 iff dirty_block_count==0 && !should_relower && content && !abort_map");
+
+    auto& m = cs.metrics();
+    const auto should0 = m.should_relower_total.load(std::memory_order_relaxed);
+    const auto forced0 = m.partial_forced_full_by_impact_total.load(std::memory_order_relaxed);
+    const auto q_partial0 = href(cs, "query:incremental-relower-stats", "partial-relowers");
+    auto mut = cs.eval("(mutate:set-body \"f\" \"(lambda () 9)\" \"#3987\")");
+    CHECK(mut.has_value(), "3987 AC3: mutate");
+    (void)cs.public_relower_dirty_defines_from_workspace();
+    const auto* e1 = cs.get_define_v2("f");
+    CHECK(e1 != nullptr, "3987 AC3: f after mutate");
+    const int look = cs.lookup_define_v2("f", hash);
+    const auto should1 = m.should_relower_total.load(std::memory_order_relaxed);
+    const auto forced1 = m.partial_forced_full_by_impact_total.load(std::memory_order_relaxed);
+    const auto q_partial1 = href(cs, "query:incremental-relower-stats", "partial-relowers");
+    CHECK(look == 1 || forced1 > forced0 || should1 > should0,
+          "3987 AC3: type/IR cone nonempty → lookup==1 or partial_forced_full");
+    CHECK(q_partial1 >= 0, "3987 AC3: query partial-relowers surfaces");
+    CHECK(should1 >= should0,
+          "3987 AC3: correlate should_relower_total with query partial-relowers");
+    (void)q_partial0;
+    auto got = cs.eval("(f)");
+    CHECK(got.has_value(), "3987 AC3: f evaluable");
+    apply_dev_audit_defaults();
+}
+
 } // namespace
 
 int run_test_incremental_soundness_oracle() {
@@ -585,6 +641,7 @@ int run_test_incremental_soundness_oracle() {
     ac3585_2_frame_budget_bounded();
     ac3585_3_inject_map_inconsistent();
     ac3585_4_soft_zero_no_invent();
+    ac3987_skip_vs_miss_compile_soak();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

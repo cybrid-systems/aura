@@ -61,6 +61,9 @@ extern "C" int aura_hot_update_storm_exit_force_full_active(void);
 // Defined here (not in hot_update_registry.cpp) so light binaries such
 // as test_concurrent can compile that TU without importing this module.
 extern "C" void aura_clear_partial_relower_threshold_force(void);
+// Issue #3987: production quiet freeze-cap. Weak — light-link / Soft
+// binaries may leave this 0 (treat as not production, keep freeze).
+extern "C" int aura_production_hard_face_active_probe() noexcept __attribute__((weak));
 
 export namespace aura::compiler {
 
@@ -1494,6 +1497,29 @@ inline constexpr std::uint32_t kAdaptiveReasonShapeStormPartial = 1u << 9;
 // Issue #3986: Shape-storm flip of adaptive-full → partial with empty
 // DeadCoercion persist is unknown cone under production (service consult).
 inline constexpr int kShapeStormEmptyPersistIssue = 3986;
+// Issue #3987: production quiet window — Agent freeze is a cap, not a
+// floor. High density / deopt that would narrow may adapt ↓ from default
+// (min with Agent base). Soft/Off keep freeze (probe 0).
+inline constexpr int kQuietForcedThrCapIssue = 3987;
+
+[[nodiscard]] inline bool adaptive_would_narrow_threshold(std::uint32_t dirty_density_bp,
+                                                          std::uint64_t deopt_window_count,
+                                                          std::uint64_t deopt_storm_threshold,
+                                                          bool deopt_storm_active) noexcept {
+    if (dirty_density_bp >= 5000)
+        return true;
+    if (deopt_storm_active)
+        return true;
+    if (deopt_storm_threshold > 0 && deopt_window_count * 2 >= deopt_storm_threshold)
+        return true;
+    return false;
+}
+
+[[nodiscard]] inline bool quiet_force_cap_production_active() noexcept {
+    if (!aura_production_hard_face_active_probe)
+        return false;
+    return aura_production_hard_face_active_probe() != 0;
+}
 
 struct AdaptiveRelowerPolicy {
     std::size_t base = kDefaultPartialRelowerThreshold;
@@ -1578,15 +1604,27 @@ struct AdaptiveRelowerDecision {
     AdaptiveRelowerPolicy pol;
     pol.base = get_partial_relower_threshold();
     bool forced = partial_relower_threshold_is_forced();
+    std::size_t agent_cap = 0;
     // Issue #3070: a forced-wide thr must not stay wide across an
     // active storm bit — ignore the freeze and adapt from default.
     if (forced && (storm_level_has_global() || storm_level_has_shape())) {
+        forced = false;
+        pol.base = kDefaultPartialRelowerThreshold;
+    } else if (forced && quiet_force_cap_production_active() &&
+               adaptive_would_narrow_threshold(d.dirty_density_bp, deopt_window_count,
+                                               deopt_storm_threshold, deopt_storm_active)) {
+        // Issue #3987: production quiet — Agent freeze is a cap. Allow
+        // adaptive ↓ from default; keep Agent base as max. Soft/Off
+        // never enter (probe 0 / hard-face off).
+        agent_cap = pol.base == 0 ? kDefaultPartialRelowerThreshold : pol.base;
         forced = false;
         pol.base = kDefaultPartialRelowerThreshold;
     }
     std::uint32_t reason = 0;
     d.effective_threshold = pol.effective(deopt_window_count, deopt_storm_threshold,
                                           deopt_storm_active, d.dirty_density_bp, forced, &reason);
+    if (agent_cap > 0 && d.effective_threshold > agent_cap)
+        d.effective_threshold = agent_cap;
     if (dirty_count == 0) {
         d.want_partial = false;
         reason |= kAdaptiveReasonSkipClean;
