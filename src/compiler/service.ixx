@@ -6018,6 +6018,20 @@ public:
                                                           reg.deopt_storm_threshold(), deopt_storm);
         // #2212: Shape bit → widen thr / force partial for dirty < 2× thr.
         apply_shape_storm_partial_preference(d, dirty_n);
+        // Issue #3986: Shape preference flipped adaptive-full → partial.
+        // Empty DeadCoercion persist is unknown cone (same unit as #3310
+        // impact_ub==0). Production fail-closed full; Soft/Off keep Shape
+        // widen (zero extra persist consult when not production).
+        if (d.shape_flipped_full_to_partial) {
+            const bool production = aura::compiler::typed_audit::production_hard_face_active();
+            if (production && aura::compiler::dirty::residual_castop_persist_size() == 0) {
+                d.want_partial = false;
+                d.reason_bits |= kAdaptiveReasonFull;
+                d.reason_bits &= ~kAdaptiveReasonPartial;
+            } else {
+                d.shape_flipped_full_to_partial = false;
+            }
+        }
         // #2190: Global bit of unified StormLevel → force full (additional
         // gate; set_partial_relower_threshold still controls base thr).
         d.want_partial = apply_partial_relower_storm_gate(d.want_partial);
@@ -8149,6 +8163,15 @@ public:
             if (want_partial && estimate_relower_blocks(dirty_n, get_partial_relower_threshold()) ==
                                     static_cast<std::size_t>(-1))
                 want_partial = false;
+            // Issue #3986: Shape-flip + production persist-empty restored
+            // full. Treat as unknown cone (mark_all + distinguisher).
+            if (adaptive.shape_flipped_full_to_partial && !want_partial) {
+                it->second.mark_all_blocks_dirty();
+                it->second.dirty = true;
+                metrics_.partial_forced_full_by_impact_total.fetch_add(1,
+                                                                       std::memory_order_relaxed);
+                dirty_n = it->second.dirty_block_count();
+            }
             // Issue #3484: zero-mask cone name already took fail-closed
             // full — do not re-enter partial / skip-as-clean.
             if (zero_mask_forced_full)

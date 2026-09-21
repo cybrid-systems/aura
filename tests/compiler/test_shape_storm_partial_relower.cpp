@@ -12,6 +12,7 @@
 
 #include "test_harness.hpp"
 #include "compiler/hot_update_registry.hh"
+#include "compiler/typed_mutation_audit.h"
 
 #include <cstdint>
 #include <fstream>
@@ -23,13 +24,16 @@ import std;
 import aura.compiler.service;
 import aura.compiler.ir_cache_pure;
 import aura.compiler.value;
+import aura.compiler.dirty_propagation;
 
 namespace {
 
+using aura::compiler::apply_shape_storm_partial_preference;
 using aura::compiler::CompilerService;
 using aura::compiler::decide_workload_adaptive_partial_relower;
 using aura::compiler::get_partial_relower_threshold;
 using aura::compiler::kDefaultPartialRelowerThreshold;
+using aura::compiler::kShapeStormEmptyPersistIssue;
 using aura::compiler::kStormLevelGlobal;
 using aura::compiler::kStormLevelShape;
 using aura::compiler::partial_relower_storm_forced_full_total_atomic;
@@ -43,6 +47,10 @@ using aura::compiler::should_partial_relower;
 using aura::compiler::should_partial_relower_storm_aware;
 using aura::compiler::storm_level_has_global;
 using aura::compiler::storm_level_has_shape;
+using aura::compiler::dirty::reset_residual_castop_persist_for_test;
+using aura::compiler::dirty::residual_castop_persist_size;
+using aura::compiler::typed_audit::apply_dev_audit_defaults;
+using aura::compiler::typed_audit::apply_production_audit_defaults;
 using aura::compiler::types::as_int;
 using aura::compiler::types::is_int;
 using aura::test::g_failed;
@@ -252,6 +260,165 @@ static void ac3070_hysteresis_and_forced_thr() {
     reset_partial_relower_threshold_for_test();
 }
 
+// ── Issue #3986: Shape-flip of adaptive-full + empty persist → production full ──
+//   AC1: Shape-only + adaptive would-be-full + empty persist → peel full
+//   AC2: Shape-only + adaptive partial is not a flip (persist attributed
+//        stays partial — live in test_dead_coercion_dirty_cone)
+//   AC3: Both/Global still force full (existing gate)
+//   AC5: storm exit still clears partial_relower_threshold_forced
+static void ac3986_shape_flip_empty_persist_forces_full() {
+    std::println("\n--- #3986: Shape-flip + empty persist → production full ---");
+    reset_partial_relower_threshold_for_test();
+    clear_storm();
+    reset_residual_castop_persist_for_test();
+
+    CHECK(kShapeStormEmptyPersistIssue == 3986, "3986: issue stamp");
+
+    const auto pure = read_file("src/compiler/ir_cache_pure.ixx");
+    const auto svc = read_file("src/compiler/service.ixx");
+    const auto dirty = read_file("src/compiler/service_dirty.cpp");
+    CHECK(pure.find("shape_flipped_full_to_partial") != std::string::npos,
+          "3986 AC1: decision latches Shape flip");
+    CHECK(pure.find("kShapeStormEmptyPersistIssue") != std::string::npos, "3986: stamp in pure");
+    CHECK(svc.find("Issue #3986") != std::string::npos, "3986 AC1: consult cites #3986");
+    CHECK(svc.find("residual_castop_persist_size() == 0") != std::string::npos,
+          "3986 AC1: persist-empty unknown cone");
+    CHECK(svc.find("production_hard_face_active()") != std::string::npos,
+          "3986 AC1: production-only persist consult");
+    CHECK(svc.find("shape_flipped_full_to_partial") != std::string::npos,
+          "3986 AC1: peel sees flip flag");
+    CHECK(dirty.find("Issue #3986") != std::string::npos, "3986: dirty-path distinguisher");
+    CHECK(svc.find("schema-3986") == std::string::npos, "3986: no new query key");
+    CHECK(read_file("tests/compiler/test_issue_3986.cpp").empty(), "3986: no test_issue_3986.cpp");
+    CHECK(read_file("docs/design/3986-shape-storm-empty-persist.md").empty(),
+          "3986: no docs/design");
+
+    // Pure helper: Shape still widens (#2212). Flip flag is the 3986 latch;
+    // persist consult lives in service, not ir_cache_pure.
+    {
+        auto full = decide_workload_adaptive_partial_relower(/*dirty*/ 8, /*total*/ 8,
+                                                             /*win*/ 0, /*st*/ 0, /*storm*/ false);
+        CHECK(!full.want_partial, "3986 AC1: adaptive 8/8 is full");
+        CHECK(!full.shape_flipped_full_to_partial, "3986 AC1: no flip before Shape");
+        aura_hot_update_set_shape_storm_active(1);
+        apply_shape_storm_partial_preference(full, 8);
+        CHECK(full.want_partial, "3986 AC1: Shape flips adaptive-full → partial");
+        CHECK(full.shape_flipped_full_to_partial, "3986 AC1: flip latched");
+        CHECK(should_partial_relower_storm_aware(8),
+              "3986: pure storm-aware still prefers partial (#2212)");
+        clear_storm();
+
+        auto already = decide_workload_adaptive_partial_relower(3, 10, 0, 0, false);
+        CHECK(already.want_partial, "3986 AC2: adaptive 3 is partial");
+        aura_hot_update_set_shape_storm_active(1);
+        apply_shape_storm_partial_preference(already, 3);
+        CHECK(already.want_partial, "3986 AC2: stays partial");
+        CHECK(!already.shape_flipped_full_to_partial, "3986 AC2: no flip when already partial");
+        clear_storm();
+    }
+
+    // AC3: Both/Global still force full after Shape widen.
+    {
+        aura_hot_update_set_shape_storm_active(1);
+        aura_hot_update_set_deopt_storm_threshold(5, 1000);
+        for (int i = 0; i < 10; ++i)
+            aura_hot_update_note_deopt();
+        CHECK((aura_hot_update_current_storm_level() & kStormLevelGlobal) != 0, "3986 AC3: Global");
+        CHECK((aura_hot_update_current_storm_level() & kStormLevelShape) != 0, "3986 AC3: Shape");
+        CHECK(!should_partial_relower_storm_aware(8), "3986 AC3: Both+8 → full (Global wins)");
+        clear_storm();
+    }
+
+    // AC5: storm exit still clears partial_relower_threshold_forced.
+    {
+        apply_production_audit_defaults();
+        set_partial_relower_threshold(32);
+        CHECK(partial_relower_threshold_is_forced(), "3986 AC5: forced before exit");
+        aura_hot_update_set_shape_storm_active(1);
+        (void)should_partial_relower_storm_aware(3); // hysteresis prev = Shape
+        aura_hot_update_set_shape_storm_active(0);
+        (void)should_partial_relower_storm_aware(3); // Shape→None samples exit
+        CHECK(!partial_relower_threshold_is_forced(),
+              "3986 AC5: aura_clear_partial_relower_threshold_force on production exit");
+        apply_dev_audit_defaults();
+        clear_storm();
+        reset_partial_relower_threshold_for_test();
+    }
+
+    // Live peel: Shape-only + adaptive-full window + empty persist → full.
+    {
+        apply_production_audit_defaults();
+        reset_residual_castop_persist_for_test();
+        CHECK(residual_castop_persist_size() == 0, "3986 AC1: persist empty");
+        CompilerService cs;
+        CHECK(cs.eval(R"(
+(set-code "
+(define f (lambda (x)
+  (if x 1 (if x 2 (if x 3 (if x 4 (if x 5 (if x 6 (if x 7 (if x 8 9)))))))))
+")
+)")
+                  .has_value(),
+              "3986 AC1: set-code");
+        CHECK(cs.eval("(eval-current)").has_value(), "3986 AC1: eval");
+        if (!cs.get_define_v2("f"))
+            (void)cs.eval("(compile:cache-define \"f\")");
+        CHECK(cs.get_define_v2("f") != nullptr, "3986 AC1: f cached");
+        const auto nblocks =
+            cs.get_define_v2("f")->irs.empty() ? 0 : cs.get_define_v2("f")->irs[0].blocks.size();
+        // Quiet + mid density raises thr to 9; mark 9 so adaptive is full
+        // and Shape's 2× window still flips (9 < 18).
+        constexpr std::size_t kFlipDirty = 9;
+        std::size_t marked = 0;
+        if (nblocks >= kFlipDirty) {
+            for (std::uint32_t i = 0; i < kFlipDirty; ++i) {
+                if (cs.mark_block_dirty_v2("f", 0, i))
+                    ++marked;
+            }
+        } else {
+            cs.public_mark_define_dirty("f");
+            marked = cs.get_define_v2("f") ? cs.get_define_v2("f")->dirty_block_count() : 0;
+        }
+        aura_hot_update_set_shape_storm_active(1);
+        CHECK(storm_level_has_shape() && !storm_level_has_global(), "3986 AC1: Shape-only");
+        auto d = decide_workload_adaptive_partial_relower(marked, nblocks, 0, 0, false);
+        const bool would_be_full = !d.want_partial;
+        apply_shape_storm_partial_preference(d, marked);
+        const auto forced0 =
+            cs.metrics().partial_forced_full_by_impact_total.load(std::memory_order_relaxed);
+        const auto full0 =
+            cs.metrics().incremental_full_fallback_total.load(std::memory_order_relaxed);
+        (void)cs.public_relower_dirty_defines_from_workspace();
+        const auto forced1 =
+            cs.metrics().partial_forced_full_by_impact_total.load(std::memory_order_relaxed);
+        const auto full1 =
+            cs.metrics().incremental_full_fallback_total.load(std::memory_order_relaxed);
+        std::println("  3986 AC1: nblocks={} marked={} would_be_full={} flipped={} forced {}→{} "
+                     "full_fb {}→{}",
+                     nblocks, marked, would_be_full, d.shape_flipped_full_to_partial, forced0,
+                     forced1, full0, full1);
+        CHECK(nblocks >= kFlipDirty, "3986 AC1: nested-if lowered enough blocks");
+        CHECK(would_be_full && d.shape_flipped_full_to_partial,
+              "3986 AC1: 9 dirty at mid density is adaptive-full then Shape-flip");
+        CHECK(forced1 > forced0 || full1 > full0,
+              "3986 AC1: production peel is full (want_partial==false)");
+        CHECK(cs.eval("(f 0)").has_value(), "3986 AC1: f still evaluable");
+        clear_storm();
+        apply_dev_audit_defaults();
+        reset_residual_castop_persist_for_test();
+    }
+
+    // Soft/Off: Shape widen stays (no persist consult restore).
+    {
+        apply_dev_audit_defaults();
+        reset_residual_castop_persist_for_test();
+        aura_hot_update_set_shape_storm_active(1);
+        CHECK(should_partial_relower_storm_aware(8),
+              "3986: Soft Shape+8 still partial (zero extra persist consult)");
+        clear_storm();
+    }
+    reset_partial_relower_threshold_for_test();
+}
+
 } // namespace
 
 int run_test_shape_storm_partial_relower() {
@@ -261,6 +428,7 @@ int run_test_shape_storm_partial_relower() {
     ac3_query_schema_2212();
     ac4_lineage_and_source();
     ac3070_hysteresis_and_forced_thr();
+    ac3986_shape_flip_empty_persist_forces_full();
 
     std::println("\n=== test_shape_storm_partial_relower: {} passed, {} failed ===", g_passed,
                  g_failed);
