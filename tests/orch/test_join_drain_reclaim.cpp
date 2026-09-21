@@ -766,11 +766,8 @@ static void ac3564_1_name_table_find_recycles() {
     CHECK(slot != nullptr, "3564 AC1: pending handle registered");
     CHECK(slot->reserved_memory_bytes == 4096, "3564 AC1: reservation held before find");
     auto* found = table.find("nt-recycle");
-    CHECK(found != nullptr, "3564 AC1: find hits pending slot");
-    CHECK(found->reserved_memory_bytes == 0, "3564 AC1: find recycled quota");
-    CHECK(found->must_wait_reclaimed, "3564 AC1: must_wait stays (wait_reclaimed still finds)");
-    CHECK(found->reclaimed_deferred_cleanup, "3564 AC1: deferred stays (#3467 deny)");
-    CHECK(!found->fiber->is_done(), "3564 AC1: body-stack untouched (#2661)");
+    CHECK(found == nullptr, "3564 AC1 / #3968: first find retires abandoned husk");
+    CHECK(!fiber_owned->is_done(), "3564 AC1: body-stack untouched (#2661)");
     CHECK(g_orch_module_stats.reclaimed_quota_force_released_total.load(
               std::memory_order_relaxed) == before + 1,
           "3564 AC1: force-released counter +1");
@@ -824,10 +821,8 @@ static void ac3564_3_scope_find_recycles() {
     scope.adopt_handle_without_spec_for_test(
         make_pending_reclaimed_handle(fiber_owned.get(), "scope-recycle", 4096));
     auto* found = scope.find("scope-recycle");
-    CHECK(found != nullptr, "3564 AC3: scope find hits");
-    CHECK(found->reserved_memory_bytes == 0, "3564 AC3: scope find recycled quota");
-    CHECK(found->must_wait_reclaimed, "3564 AC3: flags stay");
-    CHECK(!found->fiber->is_done(), "3564 AC3: body-stack untouched");
+    CHECK(found == nullptr, "3564 AC3 / #3968: first find skips abandoned husk");
+    CHECK(!fiber_owned->is_done(), "3564 AC3: body-stack untouched");
     CHECK(g_orch_module_stats.reclaimed_quota_force_released_total.load(
               std::memory_order_relaxed) == before + 1,
           "3564 AC3: force-released +1");
@@ -861,8 +856,8 @@ static void ac3564_4_put_other_name_walks() {
     auto* ins = table.put(std::move(other));
     CHECK(ins != nullptr, "3564 AC4: different-name put accepted");
     CHECK(old->reserved_memory_bytes == 0, "3564 AC4: put walk recycled old quota");
-    CHECK(old->must_wait_reclaimed && old->reclaimed_deferred_cleanup,
-          "3564 AC4: old flags stay (#3467)");
+    CHECK(!old->must_wait_reclaimed && !old->reclaimed_deferred_cleanup,
+          "3564 AC4 / #3968: put walk abandons the old live husk");
     CHECK(g_orch_module_stats.reclaimed_quota_force_released_total.load(
               std::memory_order_relaxed) == before + 1,
           "3564 AC4: force-released +1 on put walk, not find");
@@ -2339,8 +2334,7 @@ static void ac3644_2_live_body_abandon_shape_on_later_find() {
     using aura::orch::AgentHandle;
     using aura::serve::Fiber;
     using aura::serve::mf_mailbox::MultiFiberMailbox;
-    std::println("\n--- #3644 AC2: production + live body → first find keeps flags (#3564), later "
-                 "find abandons then #3805 retires map key ---");
+    std::println("\n--- #3644 AC2 / #3968: production + live body → first find abandons ---");
     apply_production_audit_defaults();
     const char* prev = std::getenv("AURA_RECLAIMED_QUOTA_TIMEOUT_MS");
     std::string prev_s = prev ? prev : "";
@@ -2360,24 +2354,17 @@ static void ac3644_2_live_body_abandon_shape_on_later_find() {
     auto* slot = table.put(std::move(h));
     CHECK(slot != nullptr, "3644 AC2: pending live-body handle registered");
     auto* f1 = table.find("agent-3644b");
-    CHECK(f1 != nullptr, "3644 AC2: first find resolves the pending slot");
-    CHECK(f1->reserved_memory_bytes == 0, "3644 AC2: first find recycles quota (#3564 shape)");
-    CHECK(f1->must_wait_reclaimed && f1->reclaimed_deferred_cleanup,
-          "3644 AC2: first find keeps pending flags (#3564 AC1 unchanged)");
-    CHECK(!weak.expired(), "3644 AC2: first find keeps the mailbox attached");
-    // Second find: #3644 abandon shape lands, then #3805 retires the
-    // abandoned-live map key (erase) — husk is no longer a send/join
-    // target; body-stack stays with the owned Fiber (#2661).
-    auto* f2 = table.find("agent-3644b");
-    CHECK(f2 == nullptr, "3644 AC2 / #3805: abandoned husk retired from name-table");
-    CHECK(table.size() == 0, "3644 AC2 / #3805: map key erased (not left empty-named)");
+    // Issue #3968: first post-timeout find is the live abandon arm
+    // (quota + mailbox + name), then #3805 retires the map key.
+    CHECK(f1 == nullptr, "3644 AC2 / #3968: first find retires the abandoned husk");
+    CHECK(table.size() == 0, "3644 AC2 / #3968: map key erased on first find");
     CHECK(!fiber_owned->is_done(), "3644 AC2: body-stack untouched (#2661)");
-    CHECK(weak.expired(), "3644 AC2: mailbox detached and freed on the later find");
+    CHECK(weak.expired(), "3644 AC2 / #3968: mailbox detached on first find");
     CHECK(g_orch_module_stats.reclaimed_abandon_total.load(std::memory_order_relaxed) == ab0 + 1,
           "3644 AC2: existing abandon counter bumps (no new query key)");
     CHECK(g_orch_module_stats.reclaimed_quota_force_released_total.load(
               std::memory_order_relaxed) == fr0 + 1,
-          "3644 AC2: exactly one quota bump across both visits (#3564 arm only)");
+          "3644 AC2 / #3968: quota bump on the same first visit");
     auto* again = table.put(make_pending_reclaimed_handle(fiber_owned.get(), "agent-3644b", 0));
     CHECK(again != nullptr, "3644 AC2 / #3805: same-name put is a fresh insert after retire");
     CHECK(again->fiber == fiber_owned.get(), "3644 AC2: fresh slot holds the new handle");
@@ -2494,9 +2481,8 @@ static void ac3805_1_put_retires_abandoned_live_not_move_assign() {
     mb.reset();
     aura::compiler::AgentNameTable table;
     CHECK(table.put(std::move(h)) != nullptr, "3805 AC1: initial put lands");
-    // Drive #3564 then #3644 abandon shape via two finds.
-    CHECK(table.find("agent-3805") != nullptr, "3805 AC1: first find (quota arm)");
-    CHECK(table.find("agent-3805") == nullptr, "3805 AC1: second find abandons + retires map key");
+    // Issue #3968: first find is the live abandon arm then #3805 retires.
+    CHECK(table.find("agent-3805") == nullptr, "3805 AC1 / #3968: first find abandons + retires");
     CHECK(table.size() == 0, "3805 AC1: name-table empty after retire");
     CHECK(!old_fiber->is_done(), "3805 AC1: #2661 old body-stack untouched");
 
@@ -2540,13 +2526,9 @@ static void ac3805_2_directory_scope_skip_abandoned_ghost() {
     auto& slot = scope.adopt_handle_without_spec_for_test(std::move(h));
     CHECK(slot.must_wait_reclaimed, "3805 AC2: pending adopted");
 
-    // First find: quota recycle, flags stay. Second find: abandon shape
-    // then #3805 skips the husk as a live target.
+    // Issue #3968: first find is the live abandon arm, then #3805 skips.
     auto* f1 = scope.find("scope-3805");
-    CHECK(f1 != nullptr, "3805 AC2: first find resolves pending");
-    CHECK(f1->reserved_memory_bytes == 0, "3805 AC2: quota recycled");
-    auto* f2 = scope.find("scope-3805");
-    CHECK(f2 == nullptr, "3805 AC2: abandoned husk not a live find target");
+    CHECK(f1 == nullptr, "3805 AC2 / #3968: first find skips abandoned husk");
     CHECK(!fiber_owned->is_done(), "3805 AC2: #2661 body-stack untouched");
 
     auto snap = scope.directory_snapshot({});
@@ -3166,6 +3148,12 @@ static void ac3644_5_source_cite_and_no_invent() {
     const auto prim = read_file("src/compiler/evaluator_primitives_agent.cpp");
     CHECK(prim.find("reclaimed-slot-second-recycle") == std::string::npos,
           "3644 AC5: no new query key");
+    CHECK(spawn.find("Issue #3968") != std::string::npos,
+          "3968: recycle cites first-visit abandon");
+    CHECK(spawn.find("first post-timeout find is the live abandon arm") != std::string::npos,
+          "3968: live arm no longer waits for a second visit");
+    CHECK(read_file("tests/orch/test_issue_3968.cpp").empty(), "3968: no invent");
+    CHECK(read_file("docs/design/3968-reclaimed-first-find.md").empty(), "3968: no docs/design");
 }
 
 static void ac3631_5_source_cite_and_no_invent() {
