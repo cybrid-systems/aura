@@ -1437,14 +1437,22 @@ inline void
 maybe_revalidate_held_ref_after_attach(serve::mf_mailbox::MultiFiberMailbox& mb) noexcept {
     if (!aura::compiler::typed_audit::production_defaults_active())
         return;
-    if (!serve::g_current_fiber)
+    auto* f = serve::g_current_fiber;
+    if (!f)
         return;
-    mb.for_each_pending_held_ref_for_fiber(serve::g_current_fiber, [](auto& m) {
+    // Issue #3967: only clear stamps when a steal landed since the last
+    // walk. No-steal send-before-attach must keep handoff_completed.
+    const auto seq = f->steal_seq();
+    if (seq <= f->last_held_ref_revalidate_seq())
+        return;
+    aura::serve::mf_mailbox::revalidate_held_ref_after_steal();
+    mb.for_each_pending_held_ref_for_fiber(f, [](auto& m) {
         if (m.handoff_completed) {
             m.handoff_completed = false;
             aura::serve::mf_mailbox::bump_held_ref_stale_after_steal();
         }
     });
+    f->set_last_held_ref_revalidate_seq(seq);
 }
 
 inline void maybe_release_scope_bp_gauge_ref(const std::string& scope_id) noexcept {

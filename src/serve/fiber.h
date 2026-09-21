@@ -902,6 +902,21 @@ public:
     // registry. nullptr for fibers that have never attached to a mailbox.
     [[nodiscard]] mf_mailbox::MultiFiberMailbox* mailbox() const noexcept { return mailbox_; }
     void set_mailbox(mf_mailbox::MultiFiberMailbox* m) noexcept { mailbox_ = m; }
+    // Issue #3967: steal-complete seq for attach-time held_ref revalidate.
+    // Pre-attach steal still notes here (mailbox_ may be null — #3942).
+    // Attach walk only clears stamps when seq advanced since last walk.
+    [[nodiscard]] std::uint64_t steal_seq() const noexcept {
+        return steal_seq_.load(std::memory_order_relaxed);
+    }
+    void note_steal_complete_for_held_ref() noexcept {
+        steal_seq_.fetch_add(1, std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t last_held_ref_revalidate_seq() const noexcept {
+        return last_held_ref_revalidate_seq_;
+    }
+    void set_last_held_ref_revalidate_seq(std::uint64_t v) noexcept {
+        last_held_ref_revalidate_seq_ = v;
+    }
     // Issue #2227: hard-reclaim flag. Set by Scheduler::reap_orphans_now
     // when the fiber's hard_deadline has passed and !is_done(). Once
     // set, is_done() still returns the body-truth state, but the
@@ -1369,6 +1384,10 @@ private:
     // messages under the mailbox mutex without inventing a process-
     // global AgentRegistry. nullptr for fibers with no mailbox.
     mf_mailbox::MultiFiberMailbox* mailbox_ = nullptr;
+    // Issue #3967: steal-complete generation vs last attach-time
+    // held_ref walk. Do not bind mailbox_ from the spawner (#3942).
+    std::atomic<std::uint64_t> steal_seq_{0};
+    std::uint64_t last_held_ref_revalidate_seq_{0};
     // Issue #2227: reclaimed flag — set by Scheduler::reap_orphans_now
     // when the fiber's hard_deadline has passed and !is_done(). The
     // body may still be running (non-yielding tight loop); the flag
