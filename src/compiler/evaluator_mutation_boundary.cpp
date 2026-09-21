@@ -5956,6 +5956,14 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
                 // relocate (same TU, had_moving_densify). This site remains
                 // the #2507 escape-clear + #2552 type-fence pair.
                 ev_->note_type_freshness_after_steal_or_densify();
+                // Issue #3985: IR cache source_to_ir_map / content latch is
+                // pre-densify. Production/Full refuse clean-hit + partial peel
+                // until store_define_v2. Soft/Off: no extra map walk. Abort
+                // densify still uses force_ir_cache_dirty_after_abort.
+                if ((typed_audit::production_defaults_active() ||
+                     typed_audit::get_strategy() == typed_audit::AuditStrategy::Full) &&
+                    ev_->densify_ir_cache_map_invalid_fn_)
+                    ev_->densify_ir_cache_map_invalid_fn_();
             }
             // Issue #2842 / #2910: freeze CS truth after rehydrate (prefer
             // non-empty live_goal_count + fingerprint on green path).
