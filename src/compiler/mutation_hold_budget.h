@@ -545,6 +545,12 @@ inline constexpr int kMutationHoldBudgetEdgeFreeLatchGateIssue = 3826;
 // unlock stay the only unlock paths. Soft already returned before this
 // face.
 inline constexpr int kMutationHoldBudgetNoEdgeQuarantineIssue = 3859;
+// Issue #3988: production JIT/native/IR opcode loop honors
+// is_force_safepoint_requested the same way check_gc_safepoint does —
+// one poll per N opcodes, then force_release_hold_budget_inbody.
+// Soft/Off: peek-only (reject_enabled gate). No new query key.
+inline constexpr int kMutationHoldBudgetNoEdgeOpcodePollIssue = 3988;
+inline constexpr std::uint32_t kHoldBudgetOpcodePollStride = 32;
 inline constexpr std::uint64_t kMutationHoldBudgetNoEdgeQuarantineSloMultiple = 4;
 inline std::atomic<std::uint64_t> g_hold_budget_no_edge_quarantine_total{0};
 // First no-edge sighting of the current window (steady ns; 0 = none).

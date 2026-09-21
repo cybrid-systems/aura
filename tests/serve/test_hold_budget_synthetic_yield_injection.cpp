@@ -2043,6 +2043,30 @@ int run_test_hold_budget_safepoint_force_release_3825() {
     return failed == 0 ? 0 : 1;
 }
 
+// Issue #3988: JIT/native/IR opcode loop honors force-safepoint.
+int run_test_hold_budget_opcode_poll_3988() {
+    std::println("=== Issue #3988: opcode-stride force-safepoint poll ===");
+    int saved_failed = aura::test::g_failed;
+    int saved_passed = aura::test::g_passed;
+    const auto ir = read_file("src/compiler/ir_executor_impl.cpp");
+    const auto jit = read_file("src/compiler/aura_jit.cpp");
+    const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
+    const auto mh = read_file("src/compiler/mutation_hold_budget.h");
+    CHECK(mh.find("kMutationHoldBudgetNoEdgeOpcodePollIssue") != std::string::npos, "3988: stamp");
+    CHECK(ir.find("Issue #3988") != std::string::npos, "3988: IR loop");
+    CHECK(jit.find("OpJump") != std::string::npos &&
+              jit.find("aura_jit_poll_hold_budget_safepoint") != std::string::npos,
+          "3988: JIT Jump poll");
+    CHECK(rt.find("Issue #3988") != std::string::npos, "3988: native dispatch");
+    CHECK(mh.find("schema-3988") == std::string::npos, "3988: no new query key");
+    CHECK(read_file("tests/serve/test_issue_3988.cpp").empty(), "3988: no invent");
+    CHECK(read_file("docs/design/3988-no-edge-opcode-poll.md").empty(), "3988: no docs/design");
+    int failed = aura::test::g_failed - saved_failed;
+    int passed = aura::test::g_passed - saved_passed;
+    std::println("\n=== #3988 opcode poll: {} passed, {} failed ===", passed, failed);
+    return failed == 0 ? 0 : 1;
+}
+
 
 // Issue #3859: quarantine-latency SLO (extend #3325) — the no-edge face
 // past 4× the inbody window bound bumps the quarantine counter once per
@@ -2281,6 +2305,9 @@ int main() {
     const int rc13 = run_test_hold_budget_no_edge_quarantine_3859();
     if (rc13 != 0)
         return rc13;
+    const int rc14 = run_test_hold_budget_opcode_poll_3988();
+    if (rc14 != 0)
+        return rc14;
     return rc1 != 0
                ? rc1
                : (rc2 != 0

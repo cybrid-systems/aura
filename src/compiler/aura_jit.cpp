@@ -395,6 +395,8 @@ struct LLVMBuilder {
     // Runtime definition: extern "C" void aura_deopt_inc() in
     // aura_jit_runtime.cpp.
     llvm::Function* fn_deopt_inc = nullptr;
+    // Issue #3988: hold-budget / force-safepoint poll on Jump back-edge.
+    llvm::Function* fn_poll_hold_budget = nullptr;
     // Issue #1534: GuardShape dual-epoch fence — runtime call to
     // aura_jit_guard_shape_epoch_check(fn_name) before narrow_evidence.
     llvm::Function* fn_guard_shape_epoch_check = nullptr;
@@ -507,6 +509,10 @@ struct LLVMBuilder {
         fn_deopt_inc =
             llvm::Function::Create(llvm::FunctionType::get(void_ty, false),
                                    llvm::Function::ExternalLinkage, "aura_deopt_inc", mod);
+        // Issue #3988: production Jump back-edge poll (i32 return; Soft 0).
+        fn_poll_hold_budget = llvm::Function::Create(llvm::FunctionType::get(i32_ty, false),
+                                                     llvm::Function::ExternalLinkage,
+                                                     "aura_jit_poll_hold_budget_safepoint", mod);
 
         // Issue #1534: i32 aura_jit_guard_shape_epoch_check(i8* name)
         fn_guard_shape_epoch_check = llvm::Function::Create(
@@ -1215,6 +1221,12 @@ struct LLVMBuilder {
                 return true;
             }
             case OpJump:
+                // Issue #3988: poll hold-budget / force-safepoint on the
+                // loop back-edge (same helper as IR opcode stride). Soft:
+                // runtime returns 0 after reject_enabled. Do not invent a
+                // second scheduler.
+                if (fn_poll_hold_budget)
+                    irb->CreateCall(llvm::FunctionCallee(fn_poll_hold_budget));
                 irb->CreateBr(block_map[inst.ops[0]]);
                 return true;
             case OpReturn:
@@ -2613,6 +2625,8 @@ void aura_exception_clear_all();
 uint64_t aura_get_defuse_version();
 // Issue #157 Phase 1c / #1534 / #1535 / #1537: deopt + dual-epoch fences.
 void aura_deopt_inc();
+// Issue #3988: Jump back-edge hold-budget poll.
+int aura_jit_poll_hold_budget_safepoint() noexcept;
 // Issue #1610: MacroIntroduced hygiene consult / deopt counters.
 void aura_jit_macro_hygiene_consult_inc();
 void aura_jit_macro_introduced_deopt_inc();
@@ -3044,6 +3058,8 @@ struct AuraJIT::Impl {
         reg("aura_jit_is_fn_epoch_stale", (void*)aura_jit_is_fn_epoch_stale);
         reg("aura_jit_deopt_to_interpreter", (void*)aura_jit_deopt_to_interpreter);
         reg("aura_deopt_inc", (void*)aura_deopt_inc);
+        // Issue #3988: Jump back-edge poll (strong in evaluator_fiber_mutation).
+        reg("aura_jit_poll_hold_budget_safepoint", (void*)aura_jit_poll_hold_budget_safepoint);
         reg("aura_get_defuse_version", (void*)aura_get_defuse_version);
         reg("aura_jit_prim_dispatch", (void*)aura_jit_prim_dispatch);
         reg("aura_register_fn", (void*)aura_register_fn);

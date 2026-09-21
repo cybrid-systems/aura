@@ -21,6 +21,7 @@ module;
 #include "shape_jit_pass_closedloop_stats.h"
 #include "core/provenance_tracker.hh"      // Issue #2026: validate_linear_provenance
 #include "compiler/typed_mutation_audit.h" // Issue #2899: linear_ir_fastpath_try_skip
+#include "compiler/mutation_hold_budget.h" // Issue #3988: opcode-stride poll stride
 module aura.compiler.ir_executor;
 import std;
 import aura.compiler.value;
@@ -34,6 +35,9 @@ using aura::compiler::pure::is_truthy;
 // Shared runtime pair allocation (defined in aura_jit_runtime.cpp)
 extern "C" std::int64_t aura_alloc_pair_arena(std::int64_t car, std::int64_t cdr);
 extern "C" std::int64_t aura_alloc_pair(std::int64_t car, std::int64_t cdr);
+// Issue #3988: production opcode-stride hold-budget poll (strong in
+// evaluator_fiber_mutation.cpp; weak 0 in fiber_bridge / stubs).
+extern "C" int aura_jit_poll_hold_budget_safepoint() noexcept;
 
 namespace aura::compiler {
 
@@ -736,6 +740,7 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
         fr.resume_instr = 0;
     }
 
+    std::uint32_t opcode_poll_n = 0;
     while (current < func.blocks.size()) {
         auto& block = func.blocks[current];
 
@@ -748,6 +753,15 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
         for (std::size_t ii = start_idx; ii < block.instructions.size(); ++ii) {
             auto& instr = block.instructions[ii];
             auto& ops = instr.operands;
+            // Issue #3988: one poll per N opcodes. Soft/Off: helper is
+            // one reject_enabled load. Production force-safepoint /
+            // cancel → force_release_hold_budget_inbody (same as
+            // check_gc_safepoint).
+            if ((++opcode_poll_n % kHoldBudgetOpcodePollStride) == 0 &&
+                aura_jit_poll_hold_budget_safepoint() != 0) {
+                return std::unexpected(Diagnostic{ErrorKind::InternalError,
+                                                  "hold-budget-cancel: outermost force-released"});
+            }
 
             // Issue #259: track type propagation coverage.
             // Bump total for every instruction; bump with_type
