@@ -398,6 +398,8 @@ int run_test_incremental_restamp() {
               "3451: held QueryResult stale-counter on gap");
         CHECK(dec.find("nested_authority_gap()") != std::string::npos,
               "3451: decode consults nested_authority_gap");
+        CHECK(dec.find("node_eagerly_restamped") != std::string::npos,
+              "3451/#3989: leftover-unless-eager");
     }
 
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);

@@ -65,6 +65,7 @@ export using ::aura::ast::kRestampHotConeBudgetIssue;
 export using ::aura::ast::kRestampHotConeAgentHeldIssue;
 export using ::aura::ast::kRestampHotConeHeldCap;
 export using ::aura::ast::kRestampHotConeHeldOverflowIssue;
+export using ::aura::ast::kRestampLeftoverQueryFreshIssue;
 export using ::aura::ast::restamp_over_budget_torn;
 export using ::aura::ast::restamp_hot_cone_budget;
 export using ::aura::ast::note_restamp_hot_cone_held_node;

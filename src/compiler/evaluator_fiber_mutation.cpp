@@ -764,6 +764,15 @@ aura::compiler::Evaluator::ensure_valid_or_refresh(aura::ast::FlatAST::StableNod
         aura::core::provenance::record_ensure_valid_fail();
         return std::nullopt;
     }
+    // Issue #3989: leftover-unless-eager. refresh_if_stale remakes via
+    // make_safe_ref_layout (lazy-align hides leftover gen lag). Production
+    // / latch deny unless allow_query_stable_ref_export (eager cone).
+    // Soft / Off: query_stable_hard_reject_torn is false (one hard peek).
+    if (query_stable_hard_reject_torn() && !allow_query_stable_ref_export(ref.id)) {
+        aura::core::provenance::record_ensure_valid_fail();
+        bump_provenance_mismatch();
+        return std::nullopt;
+    }
     // Issue #1630: real fiber_id provenance (g_current_fiber_void TLS).
     // Non-zero capture + non-zero current must match unless boundary_pinned
     // (then restamp fiber_id onto the current fiber and continue).

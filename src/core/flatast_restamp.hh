@@ -153,6 +153,11 @@ inline constexpr std::uint16_t kRestampHotConeHeldCap = 64;
 // Issue #3426: held-cap overflow must not eager a 64-id prefix (half-green
 // Agent memory). Flag only — no unbounded buffer, no new query key.
 inline constexpr int kRestampHotConeHeldOverflowIssue = 3426;
+// Issue #3989: production leftover-unless-eager on held QueryResult /
+// StableNodeRef resolve. Nested gap + outermost over-budget leftover
+// deny unless node_eagerly_restamped (reuse restamp-lag / nested-gap
+// faces). Soft / Off / unlatched: zero extra. No new query key.
+inline constexpr int kRestampLeftoverQueryFreshIssue = 3989;
 [[nodiscard]] inline bool restamp_over_budget_torn(bool last_budget_exceeded,
                                                    bool generation_torn) noexcept {
     return last_budget_exceeded || generation_torn;
