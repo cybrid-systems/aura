@@ -59,6 +59,10 @@ std::uint64_t aura_get_module_version(void);
 // intact, aot_hot_update_atomic_rollback is incremented, and false is
 // returned. Concurrent aura_closure_call observers see either fully
 // old or fully new symbols relative to aura_aot_func_table_epoch().
+// Issue #3978: production multi-eval without reemit/register owner TLS
+// fails closed (no commit / remount). Prefer
+// aura_reload_aot_module_for_eval / (aot:reload). Soft / single-eval
+// 2-arg path unchanged.
 bool aura_reload_aot_module(const char* path, std::uint64_t version);
 
 // Issue #2012 / #2046: probe live func_table slot.

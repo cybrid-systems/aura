@@ -4130,7 +4130,26 @@ extern "C" bool aura_reload_aot_module_for_eval(void* eval_ptr, const char* path
 }
 
 extern "C" bool aura_reload_aot_module(const char* path, std::uint64_t version) {
-    return aura_reload_aot_module_for_eval(nullptr, path, version);
+    // Issue #3978: 2-arg C ABI is a process-wide alias (eval=nullptr).
+    // Production multi-eval must not commit/remount without owner TLS
+    // (same predicate as reemit #3025). Soft / single-eval unchanged.
+    // Aura prim (aot:reload) and for_eval stay the success gate.
+    // On fail: existing #2845 proof fail-stamp; no dlopen / staging /
+    // commit / remount (never entered for_eval).
+    if (aura::compiler::typed_audit::production_defaults_active() &&
+        aura_aot_state_map_size() > 1 && aura_aot_get_reemit_owner_eval() == nullptr &&
+        aura_aot_get_register_owner_eval() == nullptr) {
+        note_reload_rollback(AotReloadFail::Other);
+        return false;
+    }
+    void* owner = nullptr;
+    if (aura::compiler::typed_audit::production_defaults_active() &&
+        aura_aot_state_map_size() > 1) {
+        owner = aura_aot_get_reemit_owner_eval();
+        if (!owner)
+            owner = aura_aot_get_register_owner_eval();
+    }
+    return aura_reload_aot_module_for_eval(owner, path, version);
 }
 
 // Issue #1369: per-function version probe on a dlopened AOT module.
