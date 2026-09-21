@@ -1129,6 +1129,87 @@ static void ac20_3972_native_dispatch_remap_arm() {
     aura_free_closure(cid);
 }
 
+// Issue #3973: the native canary must note THIS invoke's arena-tracked
+// live ptrs — the closure's captured env cells — not just its stack
+// token. The token is the #3857 entry-gate PRESENCE BIT only and is
+// never a this_window_remap key, so a native that raced past the entry
+// gate kept a green window over densify-old env (late drain + the
+// #3055/#3781 stale scan had nothing real to see → UAF). Env cell values
+// are the tracked-key surface (#2297 rewrite / #3972 consult) and carry
+// NO #3647 slot cover in this TU — the canary is their only observe
+// channel (#3368 slot-XOR-canary respected, no slot registration here).
+static void ac21_3973_native_canary_notes_env_cells() {
+    std::println("\n--- #3973: native canary notes invoke env cells ---");
+    const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
+    CHECK(rt.find("Issue #3973") != std::string::npos, "3973: jit runtime cites");
+    const auto begin = rt.find("struct NativeMovingCanary");
+    CHECK(begin != std::string::npos, "3973: canary struct located");
+    const auto strct = rt.substr(begin, 3400);
+    // AC1: the ctor notes this invoke's env cell values (both storages),
+    // not the token alone.
+    CHECK(strct.find("g_closure_is_arena") != std::string::npos,
+          "3973 AC1: ctor walks the arena-mode freeable env storage");
+    CHECK(strct.find("g_arena_closure_env_sizes") != std::string::npos,
+          "3973 AC1: freeable walk bounds by the recorded size (#1302)");
+    CHECK(strct.find("g_closure_envs") != std::string::npos,
+          "3973 AC1: ctor walks the heap env storage");
+    CHECK(strct.find("walk_env_cells_") != std::string::npos,
+          "3973 AC1: ctor + dtor share one cell walk (exact unnote mirror)");
+    CHECK(strct.find("aura_note_temporary_moving_live_ptr") != std::string::npos,
+          "3973 AC1: notes go through the same #3210 inventory bridge");
+    CHECK(rt.find("NativeMovingCanary native_moving_canary{static_cast<size_t>(closure_id)}") !=
+              std::string::npos,
+          "3973 AC1: dispatch hands the invoke's cid to the canary");
+    // AC2: the dtor unnotes exactly what the ctor noted.
+    CHECK(strct.find("aura_unnote_temporary_moving_live_ptr") != std::string::npos,
+          "3973 AC2: dtor unnotes the token + noted cells");
+    // AC3: #3368 slot-XOR-canary — env cells get canary, never a slot
+    // registration (the JIT TU has no slot-family membership at all).
+    CHECK(rt.find("register_external_root_slot_for_densify") == std::string::npos,
+          "3973 AC3: JIT env cells stay out of the slot family (no dual-note)");
+    // AC4: the stack token remains the #3857 presence bit and the arena
+    // entry gate is untouched.
+    CHECK(strct.find("p(this)") != std::string::npos, "3973 AC4: stack token kept as presence bit");
+    const auto arena = read_file("src/core/arena.ixx");
+    CHECK(arena.find("moving_temp_canary_detail::g_inventory.live") != std::string::npos,
+          "3973 AC4: live_compact(Moving) entry gate still reads the inventory");
+    // AC5: no JIT-epoch keying, no invented counters, no docs/design, no
+    // tests/issues file.
+    CHECK(strct.find("g_closure_table_epochs") == std::string::npos,
+          "3973 AC5: not keyed on JIT table epoch");
+    CHECK(rt.find("g_3973_") == std::string::npos, "3973 AC5: no invented g_3973_* counter");
+    CHECK(read_file("docs/design/3973-native-canary-env-note.md").empty(),
+          "3973 AC5: no docs/design per #1655");
+    const std::string issue_artifact = std::string("test_issue_") + "3973";
+    CHECK(read_file((std::string("tests/issues/") + issue_artifact + ".cpp").c_str()).empty(),
+          "3973 AC5: no tests/issues file per #81967");
+
+    // AC6 live smoke (plumbing-safe): the cell walk runs on the real
+    // dispatch in both Moving postures and the invoke result is
+    // unchanged. The note bridge resolves weak in light test binaries (no
+    // inventory delta is assertable here — the #3055/#3857 ACs cover the
+    // drain/stale face at the arena layer), so the observable is dispatch
+    // equivalence across the posture flip.
+    static int smoke_cell = 0;
+    std::int64_t args[1] = {1};
+    const auto cid = aura_alloc_closure(/*func_id=*/0);
+    CHECK(cid >= 0, "3973: alloc native slot");
+    aura_closure_capture(cid, 0,
+                         static_cast<std::int64_t>(reinterpret_cast<std::uintptr_t>(&smoke_cell)));
+    std::int64_t got_on = 0;
+    {
+        MovingFlagGuard on(1);
+        got_on = aura_closure_dispatch_native_checked(cid, args, 1);
+    }
+    std::int64_t got_off = 0;
+    {
+        MovingFlagGuard off(0);
+        got_off = aura_closure_dispatch_native_checked(cid, args, 1);
+    }
+    CHECK(got_on == got_off, "3973 AC6: dispatch result unchanged by the env walk across postures");
+    aura_free_closure(cid);
+}
+
 static void ac13_3678_ffi_pointer_class_refuse();
 static void ac14_3681_production_pre_reemit_refuse();
 static void ac15_3739_auto_arm_apply_closure_refuse();
@@ -1160,6 +1241,8 @@ int run_test_setcode_rebind_survive() {
     ac19_3946_native_moving_canary();
     // Issue #3972: JIT refuse entry surfaces the this-window remap arm.
     ac20_3972_native_dispatch_remap_arm();
+    // Issue #3973: native canary notes the invoke's env cells (residual).
+    ac21_3973_native_canary_notes_env_cells();
     std::println(
         "\n=== #2569/#3421/#3469/#3602/#3634/#3648/#3848/#3849: #3739 {} passed, {} failed ===",
         g_passed, g_failed);
