@@ -8,6 +8,7 @@
 //   AC4: source-cite + cmake + gate
 
 #include "test_harness.hpp"
+#include "compiler/aura_jit_bridge.h"
 #include "compiler/observability_metrics.h"
 #include "compiler/runtime_shared.h"
 #include "compiler/typed_mutation_audit.h"
@@ -1002,6 +1003,132 @@ static void ac19_3946_native_moving_canary() {
     CHECK(read_file("docs/design/3946-native-canary.md").empty(), "3946: no docs/design");
 }
 
+extern "C" std::uint64_t aura_deopt_count(void);
+
+// Issue #3972: the JIT densify-stale refuse must surface the this-window
+// remap arm. #3948's helper consult covers window + LCP only — the remap
+// half needs an arena the dispatch TU never holds, so an empty Closure +
+// nullptr arena skipped it and native kept running while its tracked env
+// cell was a this-window tombstone. The arm consults the same #2297
+// densify object_remap mirror the remount rewrite matches (single model,
+// not keyed on JIT table epoch); Soft never reaches it.
+static void ac20_3972_native_dispatch_remap_arm() {
+    std::println("\n--- #3972: native dispatch surfaces this-window remap arm ---");
+    const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
+    CHECK(rt.find("Issue #3972") != std::string::npos, "3972: jit runtime cites");
+    CHECK(rt.find("closure_env_cells_hit_window_remap_") != std::string::npos,
+          "3972 AC1: JIT remap-arm helper present");
+    CHECK(rt.find("densify_remap_detail::object_remap()") != std::string::npos,
+          "3972 AC1: consults the #2297 this-window mirror (no second model)");
+    CHECK(rt.find("g_3972_") == std::string::npos, "3972: no invented g_3972_* counter");
+    const auto call = rt.find("int64_t aura_closure_dispatch_native_checked(");
+    const auto cite3948 = rt.find("Issue #3948: same densify-stale refuse");
+    const auto cite3972 = rt.find("Issue #3972", call);
+    CHECK(call != std::string::npos && cite3948 != std::string::npos &&
+              cite3972 != std::string::npos,
+          "3972 AC2: native prologue located");
+    CHECK(cite3948 < cite3972,
+          "3972 AC2: remap arm follows the #3948 window/LCP refuse (window → LCP → remap)");
+    const auto win = rt.substr(cite3948, cite3972 - cite3948 + 900);
+    CHECK(win.find("closure_env_cells_hit_window_remap_(") != std::string::npos,
+          "3972 AC2: dispatch consults the JIT remap arm");
+    const auto prod = rt.rfind("production_defaults_active()", cite3948);
+    CHECK(prod != std::string::npos && prod > call,
+          "3972 AC2: arm sits inside the production gate (Soft never consults)");
+    CHECK(win.find("g_closure_table_epochs") == std::string::npos,
+          "3972 AC2: refuse is not keyed on JIT table epoch");
+    CHECK(win.find("aura_jit_closure_record_stale_deopt") != std::string::npos,
+          "3972 AC3: leave-native refuse arm records stale deopt");
+    CHECK(win.find("aura_jit_closure_record_safe_fallback") != std::string::npos,
+          "3972 AC3: leave-native refuse arm records safe fallback");
+    const auto flat = read_file("src/compiler/evaluator_eval_flat.cpp");
+    CHECK(flat.find("production_apply_closure_densify_hard_refuse(nullptr, cl, eval_id)") !=
+              std::string::npos,
+          "3972 AC3: TW helper ABI unchanged (#3948 shape kept, no churn)");
+    CHECK(read_file("docs/design/3972-native-densify-remap.md").empty(), "3972: no docs/design");
+    const std::string issue_artifact = std::string("test_issue_") + "3972";
+    CHECK(read_file((std::string("tests/issues/") + issue_artifact + ".cpp").c_str()).empty(),
+          "3972: no tests/issues file");
+
+    // Live: env cells are the tracked keys. Control first (mirror empty →
+    // arm silent), then publish the mirror → remap hit leaves native, then
+    // clear → silent again (key sensitivity), then Soft → never consults.
+    // One closure, one captured cell; the mirror state is the only delta
+    // between dispatches. env_gen is stamped so the #3504 arm cannot mask
+    // the control dispatches. The observable is the deopt counter — a
+    // plain atomic (aura_deopt_inc / aura_deopt_count), NOT the
+    // aot_metrics chain: the instrumented probe run showed even the
+    // known-good #3948 refuse path does not move
+    // jit_closure_stale_deopt_total in this fork-isolated member, so
+    // aot_metrics-based assertions would be vacuous. The remap arm adds
+    // exactly one aura_deopt_inc relative to the no-mirror flow.
+    static int dummy_old = 0;
+    static int dummy_new = 0;
+    std::int64_t args[1] = {1};
+    const auto cid = aura_alloc_closure(/*func_id=*/0);
+    CHECK(cid >= 0, "3972: alloc native slot");
+    aura_closure_capture(cid, 0,
+                         static_cast<std::int64_t>(reinterpret_cast<std::uintptr_t>(&dummy_old)));
+    aura_closure_set_env_gen(cid, aura_get_aot_live_env_frame_version());
+    aura_clear_densify_object_remap();
+    // Counter-plumbing self-test: a window-red dispatch takes the #3948
+    // refuse which aura_deopt_incs — if the deopt counter does not move,
+    // the AC5 differential below would be vacuous.
+    {
+        ProdDensifyWindowGuard g(/*prod=*/true, /*moved=*/3, /*lcp_allow=*/true, nullptr,
+                                 /*had_moving=*/true, /*pin_held=*/true, /*incomplete=*/true,
+                                 /*untracked=*/9, /*root_fail=*/0);
+        const auto before = aura_deopt_count();
+        (void)aura_closure_dispatch_native_checked(cid, args, 1);
+        CHECK(aura_deopt_count() > before,
+              "3972 AC-plumbing: window-red refuse bumps the deopt counter");
+    }
+    std::uint64_t d_control = 0;
+    {
+        ProdDensifyWindowGuard g(/*prod=*/true, /*moved=*/3, /*lcp_allow=*/true, nullptr,
+                                 /*had_moving=*/true, /*pin_held=*/true, /*incomplete=*/false,
+                                 /*untracked=*/0, /*root_fail=*/0);
+        const auto before = aura_deopt_count();
+        (void)aura_closure_dispatch_native_checked(cid, args, 1);
+        d_control = aura_deopt_count() - before;
+        CHECK(d_control == 0, "3972 AC4: empty mirror — remap arm silent (control)");
+    }
+    const void* olds[] = {&dummy_old};
+    const void* news[] = {&dummy_new};
+    aura_set_densify_object_remap(olds, news, 1);
+    {
+        ProdDensifyWindowGuard g(/*prod=*/true, /*moved=*/3, /*lcp_allow=*/true, nullptr,
+                                 /*had_moving=*/true, /*pin_held=*/true, /*incomplete=*/false,
+                                 /*untracked=*/0, /*root_fail=*/0);
+        const auto before = aura_deopt_count();
+        const auto got = aura_closure_dispatch_native_checked(cid, args, 1);
+        const auto d_remap = aura_deopt_count() - before;
+        CHECK(got == 0, "3972 AC5: remap-hit captured cell leaves native");
+        CHECK(d_remap == d_control + 1,
+              "3972 AC5: remap arm took the refuse (exactly one extra deopt vs control)");
+    }
+    aura_clear_densify_object_remap();
+    {
+        ProdDensifyWindowGuard g(/*prod=*/true, /*moved=*/3, /*lcp_allow=*/true, nullptr,
+                                 /*had_moving=*/true, /*pin_held=*/true, /*incomplete=*/false,
+                                 /*untracked=*/0, /*root_fail=*/0);
+        const auto before = aura_deopt_count();
+        (void)aura_closure_dispatch_native_checked(cid, args, 1);
+        CHECK(aura_deopt_count() - before == d_control,
+              "3972 AC6: cleared mirror — remap arm silent again (key sensitivity)");
+    }
+    aura_set_densify_object_remap(olds, news, 1);
+    {
+        ProdDensifyWindowGuard g(/*prod=*/false, /*moved=*/0, /*lcp_allow=*/true);
+        const auto before = aura_deopt_count();
+        (void)aura_closure_dispatch_native_checked(cid, args, 1);
+        CHECK(aura_deopt_count() - before == d_control,
+              "3972 AC7: Soft never consults the remap arm");
+    }
+    aura_clear_densify_object_remap();
+    aura_free_closure(cid);
+}
+
 static void ac13_3678_ffi_pointer_class_refuse();
 static void ac14_3681_production_pre_reemit_refuse();
 static void ac15_3739_auto_arm_apply_closure_refuse();
@@ -1031,6 +1158,8 @@ int run_test_setcode_rebind_survive() {
     ac15_3739_auto_arm_apply_closure_refuse();
     ac18_3948_native_dispatch_densify_refuse();
     ac19_3946_native_moving_canary();
+    // Issue #3972: JIT refuse entry surfaces the this-window remap arm.
+    ac20_3972_native_dispatch_remap_arm();
     std::println(
         "\n=== #2569/#3421/#3469/#3602/#3634/#3648/#3848/#3849: #3739 {} passed, {} failed ===",
         g_passed, g_failed);

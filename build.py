@@ -7787,6 +7787,21 @@ def cmd_lint():
     if r != 0:
         fail("Issue #3648 apply window gate linter failed — run python3 scripts/check_apply_window_gate_3648.py")
         return r
+    # Issue #3972: JIT densify-stale refuse must surface the this-window
+    # remap arm — #3948's helper consult covers window + LCP only, and the
+    # remap half needs an arena the dispatch TU never holds. Gate pins: the
+    # arm consults the #2297 densify object_remap mirror (single model),
+    # runs after the #3948 refuse inside the production gate, takes the
+    # same leave-native tail, is not keyed on JIT table epoch, and the TW
+    # helper ABI is unchanged.
+    jidr3972_script = ROOT / "scripts" / "check_jit_densify_remap_3972.py"
+    if not jidr3972_script.exists():
+        fail(f"missing {jidr3972_script}")
+        return 1
+    r = run([sys.executable, str(jidr3972_script)], cwd=ROOT)
+    if r != 0:
+        fail("Issue #3972 JIT densify remap arm linter failed — run python3 scripts/check_jit_densify_remap_3972.py")
+        return r
     # Issue #3679 (#2003/#2340 residual): compact_sweep ran the EnvFrame
     # Guard + densify ownership scan at ENTRY while the helper comment
     # claimed post-remap-table ordering — the scan walked pre-compact

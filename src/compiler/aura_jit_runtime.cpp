@@ -1968,6 +1968,30 @@ static int remount_capture_cells_via_densify_(std::size_t cid) {
     return 1;
 }
 
+// Issue #3972: JIT densify-stale refuse remap arm. #3948's helper consult
+// runs window + LCP only — the remap half needs an ast::ASTArena* the
+// dispatch TU never holds, so an empty Closure + nullptr arena skipped it
+// and a native invoke kept running while its tracked key was a this-window
+// tombstone (UAF-adjacent). The native invoke's tracked keys are the
+// closure's env cells — int64 bit patterns that match the #2297 densify
+// object_remap keys exactly (the same surface remount_capture_cells_via
+// _densify_ rewrites, same map instance). A tombstone hit leaves native so
+// the TW interpreter side remaps through cl_copy. Production-only callers;
+// empty mirror is the quiet fast path. Not keyed on JIT table epoch.
+static bool closure_env_cells_hit_window_remap_(std::size_t cid) {
+    std::lock_guard<std::mutex> lock(densify_remap_detail::mtx());
+    const auto& remap = densify_remap_detail::object_remap();
+    if (remap.empty() || cid >= g_closure_envs.size())
+        return false;
+    for (const auto cell : g_closure_envs[cid]) {
+        if (cell == 0)
+            continue;
+        if (remap.count(reinterpret_cast<void*>(static_cast<std::uintptr_t>(cell))) != 0)
+            return true;
+    }
+    return false;
+}
+
 // Issue #2234 + #2272 + #2297 + #2894: remount body. Caller must hold exclusive
 // g_closure_table_mtx when densify remap may rewrite g_closure_envs
 // (or accept shared for fingerprint-only when densify empty).
@@ -3969,6 +3993,22 @@ extern "C" int64_t aura_closure_dispatch_native_checked(int64_t closure_id, int6
         // Not keyed on JIT table epoch. Weak stub returns 0 when the
         // evaluator TU is not linked.
         if (aura_production_densify_stale_refuse(nullptr) != 0) {
+            tlock.unlock();
+            aura_unlock_workspace_read();
+            aura_jit_closure_record_stale_deopt();
+            aura_jit_closure_record_safe_fallback();
+            aura_deopt_inc();
+            return 0;
+        }
+        // Issue #3972: surface the this-window remap arm at the JIT refuse
+        // entry — #3948's helper covers window + LCP, and the remap half
+        // needs an arena this TU never holds. Env cells are the tracked
+        // keys the invoke will deref (same #2297 mirror the remount rewrite
+        // matches); a tombstone hit leaves native so TW remaps via cl_copy.
+        // Sits after the #3948 refuse (window → LCP → remap, same order as
+        // TW apply_closure) and inside the production gate (Soft never
+        // consults); not keyed on JIT table epoch.
+        if (closure_env_cells_hit_window_remap_(static_cast<std::size_t>(closure_id))) {
             tlock.unlock();
             aura_unlock_workspace_read();
             aura_jit_closure_record_stale_deopt();
