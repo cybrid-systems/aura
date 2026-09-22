@@ -209,6 +209,26 @@ extern "C" void aura_gc_frequency_tune_ratio_store(std::uint32_t v) {
 
 // TLS: current running fiber (nullptr = worker loop context)
 thread_local Fiber* g_current_fiber = nullptr;
+
+// Issue #4031: register owner + lazy-arm hooks for pin_linear_root
+// (lifetime_pin.hh cannot include fiber.h). Runs before main().
+namespace {
+void* linear_root_current_owner_impl() noexcept {
+    return static_cast<void*>(g_current_fiber);
+}
+void linear_root_maybe_lazy_arm_impl(void* owner) noexcept {
+    if (!owner)
+        return;
+    static_cast<Fiber*>(owner)->maybe_lazy_arm_outermost_linear_keep();
+}
+struct LinearRootFiberHooksInit final {
+    LinearRootFiberHooksInit() noexcept {
+        aura::core::lifetime::set_linear_root_fiber_hooks(&linear_root_current_owner_impl,
+                                                          &linear_root_maybe_lazy_arm_impl);
+    }
+};
+static LinearRootFiberHooksInit g_linear_root_fiber_hooks_init{};
+} // namespace
 // TLS: current worker's dispatch loop context
 thread_local WorkerContext* g_worker_ctx = nullptr;
 
@@ -1921,11 +1941,12 @@ std::size_t Fiber::release_orphan_roots() noexcept {
         }
     }
     orphan_roots_dropped_on_reclaim_total_.fetch_add(n, std::memory_order_relaxed);
-    // Issue #3438: post-join reclaim drains SCOPED — the fiber's
-    // outermost-Guard keep snapshot (set at production Guard enter)
-    // preserves sibling fibers' live linear roots. Unarmed (Soft / no
-    // Guard history): legacy unpin_all fallback (Issue #3023). Empty registry
-    // is one lock + empty check. post-densify verify never unpins.
+    // Issue #3438 / #4031: post-join reclaim drains SCOPED — the fiber's
+    // outermost-Guard keep snapshot (set at production Guard enter or
+    // lazy-armed on pin_linear_root) preserves sibling fibers' live
+    // linear roots. Unarmed: owner-scoped only (never process-wide).
+    // Empty registry is one lock + empty check. post-densify verify
+    // never unpins.
     (void)unpin_linear_roots_scoped_for_fiber(this);
     return n;
 }
@@ -1953,14 +1974,36 @@ bool Fiber::take_outermost_linear_keep(std::unordered_set<void*>& out) noexcept 
     return true;
 }
 
+// Issue #4031: lazy-arm outermost keep from pin_linear_root when the
+// fiber has not yet published a Guard-enter snapshot. Snapshot under
+// linear_roots_mtx (via snapshot_linear_roots) WITHOUT holding the
+// keep mutex — lock order matches Guard enter (snapshot then set).
+void Fiber::maybe_lazy_arm_outermost_linear_keep() noexcept {
+    {
+        std::lock_guard<std::mutex> lk(outermost_linear_keep_mtx_);
+        if (outermost_linear_keep_armed_)
+            return;
+    }
+    std::unordered_set<void*> snap;
+    aura::core::lifetime::snapshot_linear_roots(snap);
+    std::lock_guard<std::mutex> lk(outermost_linear_keep_mtx_);
+    if (outermost_linear_keep_armed_)
+        return;
+    outermost_linear_keep_ = std::move(snap);
+    outermost_linear_keep_armed_ = true;
+}
+
 std::size_t unpin_linear_roots_scoped_for_fiber(Fiber* f) noexcept {
     if (!f)
         return 0;
     std::unordered_set<void*> keep;
     if (f->take_outermost_linear_keep(keep))
         return aura::core::lifetime::unpin_linear_roots_except(keep);
-    // Issue #3023 legacy fallback (Soft / no Guard history / tests).
-    return aura::core::lifetime::unpin_all_linear_roots();
+    // Issue #4031: owner-scoped fallback — only this fiber's tagged
+    // roots. NEVER process-wide unpin_all_linear_roots for a live fiber
+    // (sibling Moving remap channel must survive). Soft empty = one
+    // lock + empty check (#3023 counter still bumps on non-empty).
+    return aura::core::lifetime::unpin_linear_roots_owned_by(static_cast<void*>(f));
 }
 
 [[nodiscard]] bool Fiber::has_orphan_roots() const noexcept {

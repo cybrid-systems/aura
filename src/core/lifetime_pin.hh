@@ -1063,9 +1063,15 @@ verify_pins_under_moving_compact(std::uint64_t arena_id,
 // OpDropOp) and the env frame binding paths (evaluator_env.cpp).
 // verify_linear_pins_under_moving_compact iterates the registry and
 // checks each root. Issue #3023: this verify never unpins — abort /
-// reclaim (unpin_all_linear_roots) own leftover drain. Issue #3350:
-// densify success rewrites registry identities via last_object_remap_
-// first (remap_linear_roots_under_moving); verify is belt-and-suspenders.
+// reclaim leftover drain owns unpin. Issue #3350: densify success
+// rewrites registry identities via last_object_remap_ first
+// (remap_linear_roots_under_moving); verify is belt-and-suspenders.
+// Issue #4031: each root carries an opaque owner tag (Fiber* or
+// nullptr for off-fiber / standalone pins). Unarmed scoped drain
+// uses owner-scoped erase — never process-wide clear for live fibers.
+// pin_linear_root also lazy-arms the current fiber's outermost keep
+// (via serve hooks) so the armed except-keep path is reachable even
+// when the fiber was stolen before Guard enter.
 //
 // AC3 (zero extra atomics when no linear pins): the linear_roots
 // registry is a no-op when empty (early-return below), and the
@@ -1090,21 +1096,62 @@ inline std::unordered_set<void*>& linear_roots() {
     static std::unordered_set<void*> s;
     return s;
 }
+// Issue #4031: parallel owner tags (addr → opaque Fiber* / nullptr).
+// Kept beside the address set so existing linear_roots() consumers
+// (tests, snapshot keep sets, remap) stay address-keyed; no second
+// pin/GC model.
+inline std::unordered_map<void*, void*>& linear_root_owners() {
+    static std::unordered_map<void*, void*> s;
+    return s;
+}
 inline std::mutex& linear_roots_mtx() {
     static std::mutex m;
     return m;
+}
+
+// Issue #4031: serve/fiber.cpp registers these so pin_linear_root can
+// tag the owning fiber + lazy-arm outermost keep without including
+// serve/fiber.h (circular). Null hooks ⇒ owner=nullptr, no lazy-arm
+// (stdin / pre-serve Soft quiet path).
+using LinearRootCurrentOwnerFn = void* (*)() noexcept;
+using LinearRootMaybeLazyArmFn = void (*)(void* owner) noexcept;
+inline std::atomic<LinearRootCurrentOwnerFn>& linear_root_current_owner_fn() noexcept {
+    static std::atomic<LinearRootCurrentOwnerFn> fn{nullptr};
+    return fn;
+}
+inline std::atomic<LinearRootMaybeLazyArmFn>& linear_root_maybe_lazy_arm_fn() noexcept {
+    static std::atomic<LinearRootMaybeLazyArmFn> fn{nullptr};
+    return fn;
+}
+inline void set_linear_root_fiber_hooks(LinearRootCurrentOwnerFn owner_fn,
+                                        LinearRootMaybeLazyArmFn arm_fn) noexcept {
+    linear_root_current_owner_fn().store(owner_fn, std::memory_order_relaxed);
+    linear_root_maybe_lazy_arm_fn().store(arm_fn, std::memory_order_relaxed);
 }
 
 // Pin a live linear root. Adds to the registry + bumps counter.
 // Called from OpLinearWrap runtime execution (aura_jit.cpp) and from
 // env frame binding paths when a slot transitions to
 // linear_rt::Owned|Borrowed|MutBorrowed.
+// Issue #4031: tag owner fiber; lazy-arm outermost keep when unarmed
+// so scoped drain can take the except-keep path (process-wide
+// fallback unreachable for on-fiber pins).
 inline void pin_linear_root(void* obj) noexcept {
     if (!obj)
         return;
-    std::lock_guard<std::mutex> lock(linear_roots_mtx());
-    linear_roots().insert(obj);
+    void* owner = nullptr;
+    if (auto fn = linear_root_current_owner_fn().load(std::memory_order_relaxed))
+        owner = fn();
+    {
+        std::lock_guard<std::mutex> lock(linear_roots_mtx());
+        linear_roots().insert(obj);
+        linear_root_owners()[obj] = owner;
+    }
     g_linear_pin_total.fetch_add(1, std::memory_order_relaxed);
+    if (owner) {
+        if (auto arm = linear_root_maybe_lazy_arm_fn().load(std::memory_order_relaxed))
+            arm(owner);
+    }
 }
 
 // Unpin a live linear root (on Move consume / Drop). Removes from
@@ -1114,6 +1161,7 @@ inline void unpin_linear_root(void* obj) noexcept {
         return;
     std::lock_guard<std::mutex> lock(linear_roots_mtx());
     linear_roots().erase(obj);
+    linear_root_owners().erase(obj);
     g_linear_unpin_total.fetch_add(1, std::memory_order_relaxed);
 }
 
@@ -1134,12 +1182,16 @@ inline LinearRootSnapshot linear_root_snapshot() noexcept {
     return s;
 }
 
-// Issue #3023 / #3249: leftover linear_roots unpin after abort / mutate-fail /
-// fiber reclaim. Responsibility (single audit face — no second model):
+// Issue #3023 / #3249 / #4031: leftover linear_roots unpin after abort /
+// mutate-fail / fiber reclaim. Responsibility (single audit face —
+// no second model):
 //   post-join:    Fiber::release_orphan_roots (JoinStatus::Reclaimed)
+//                 → unpin_linear_roots_scoped_for_fiber (armed except /
+//                   unarmed owner-scoped; never process-wide for live)
 //   post-abort:   enforce_linear_post_failure (outermost Guard fail)
 //                 + unpin_linear_roots_except (nested Guard abort)
-//   steal hard-fail: same unpin_all as post-join (abandoned mid-Guard)
+//                 off-fiber: owner-scoped (nullptr) only (#4031)
+//   steal hard-fail: same scoped / owner-scoped as post-join
 //   post-densify: remap_linear_roots_under_moving then
 //                 verify_linear_pins_under_moving_compact
 //                 (this verify never unpins). Rewrite is identity
@@ -1150,12 +1202,14 @@ inline std::atomic<std::uint64_t> g_linear_root_remap_total{0};
 inline constexpr int kLinearRootAbortReleaseIssue = 3023;
 inline constexpr int kLinearNestedAbortDrainIssue = 3249;
 inline constexpr int kLinearRootMovingRemapIssue = 3350;
+inline constexpr int kLinearRootOwnerScopedDrainIssue = 4031;
 
 // Reset for tests only. Production leaves linear_roots alone (the
 // live linear bindings are the source of truth).
 inline void reset_linear_roots_for_test() noexcept {
     std::lock_guard<std::mutex> lock(linear_roots_mtx());
     linear_roots().clear();
+    linear_root_owners().clear();
     g_linear_pin_total.store(0, std::memory_order_relaxed);
     g_linear_unpin_total.store(0, std::memory_order_relaxed);
     g_linear_pin_miss_total.store(0, std::memory_order_relaxed);
@@ -1163,6 +1217,11 @@ inline void reset_linear_roots_for_test() noexcept {
     g_linear_root_remap_total.store(0, std::memory_order_relaxed);
 }
 
+// Issue #4031 / #3023: process-wide clear — TEST-ONLY entry.
+// Production live-fiber drain uses unpin_linear_roots_owned_by /
+// unpin_linear_roots_except / scoped helper. Soft empty = one lock +
+// empty check; #3023 abort-release counter bumps only here / owned_by /
+// except (legacy soak + unit tests).
 inline std::size_t unpin_all_linear_roots() noexcept {
     std::lock_guard<std::mutex> lock(linear_roots_mtx());
     auto& roots = linear_roots();
@@ -1170,6 +1229,37 @@ inline std::size_t unpin_all_linear_roots() noexcept {
     if (n == 0)
         return 0;
     roots.clear();
+    linear_root_owners().clear();
+    g_linear_unpin_total.fetch_add(n, std::memory_order_relaxed);
+    g_linear_root_abort_release_total.fetch_add(1, std::memory_order_relaxed);
+    return n;
+}
+
+// Issue #4031: erase only roots whose owner tag equals `owner`
+// (Fiber* opaque, or nullptr for off-fiber / standalone pins).
+// Empty registry: one lock + empty check (Soft quiet path). Never
+// clears sibling fibers' roots.
+inline std::size_t unpin_linear_roots_owned_by(void* owner) noexcept {
+    std::lock_guard<std::mutex> lock(linear_roots_mtx());
+    auto& roots = linear_roots();
+    auto& owners = linear_root_owners();
+    if (roots.empty())
+        return 0;
+    std::size_t n = 0;
+    for (auto it = roots.begin(); it != roots.end();) {
+        auto oit = owners.find(*it);
+        const void* tagged = (oit != owners.end()) ? oit->second : nullptr;
+        if (tagged == owner) {
+            if (oit != owners.end())
+                owners.erase(oit);
+            it = roots.erase(it);
+            ++n;
+        } else {
+            ++it;
+        }
+    }
+    if (n == 0)
+        return 0;
     g_linear_unpin_total.fetch_add(n, std::memory_order_relaxed);
     g_linear_root_abort_release_total.fetch_add(1, std::memory_order_relaxed);
     return n;
@@ -1186,11 +1276,13 @@ inline void snapshot_linear_roots(std::unordered_set<void*>& out) noexcept {
 inline std::size_t unpin_linear_roots_except(const std::unordered_set<void*>& keep) noexcept {
     std::lock_guard<std::mutex> lock(linear_roots_mtx());
     auto& roots = linear_roots();
+    auto& owners = linear_root_owners();
     if (roots.empty())
         return 0;
     std::size_t n = 0;
     for (auto it = roots.begin(); it != roots.end();) {
         if (keep.find(*it) == keep.end()) {
+            owners.erase(*it);
             it = roots.erase(it);
             ++n;
         } else {
@@ -1227,6 +1319,7 @@ remap_linear_roots_under_moving(const std::unordered_map<void*, void*>& last_obj
     auto& roots = linear_roots();
     if (roots.empty() || last_object_remap.empty())
         return 0;
+    auto& owners = linear_root_owners();
     std::vector<void*> to_erase;
     std::vector<void*> to_insert;
     to_erase.reserve(roots.size());
@@ -1239,10 +1332,17 @@ remap_linear_roots_under_moving(const std::unordered_map<void*, void*>& last_obj
     }
     if (to_erase.empty())
         return 0;
-    for (auto* r : to_erase)
-        roots.erase(r);
-    for (auto* n : to_insert)
-        roots.insert(n);
+    // Issue #4031: rewrite preserves owner tags across address remap so
+    // sibling-fiber owner-scoped drain still finds the root post-Moving.
+    for (std::size_t i = 0; i < to_erase.size(); ++i) {
+        auto oit = owners.find(to_erase[i]);
+        void* o = (oit != owners.end()) ? oit->second : nullptr;
+        if (oit != owners.end())
+            owners.erase(oit);
+        roots.erase(to_erase[i]);
+        roots.insert(to_insert[i]);
+        owners[to_insert[i]] = o;
+    }
     // Issue #3633: report the covered OLD addresses so the arena's
     // window-exit moved-vs-covered reconciliation counts the linear-roots
     // channel as cover (an object whose only referent is a linear root is

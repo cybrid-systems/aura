@@ -497,8 +497,9 @@ int run_test_linear_pin_moving_compact() {
         const auto lp = read_src("src/core/lifetime_pin.hh");
         CHECK(bound.find("unpin_linear_roots_except") != std::string::npos,
               "ac3249_2: nested abort uses except-keep drain");
-        CHECK(fibm.find("unpin_all_linear_roots") != std::string::npos,
-              "ac3249_2: steal hard-fail shares unpin_all");
+        CHECK(fibm.find("unpin_linear_roots_scoped_for_fiber") != std::string::npos ||
+                  fibm.find("unpin_linear_roots_owned_by") != std::string::npos,
+              "ac3249_2: steal hard-fail shares scoped/owner drain (#4031)");
         CHECK(lp.find("kLinearNestedAbortDrainIssue = 3249") != std::string::npos,
               "ac3249_2: stamp 3249");
         CHECK(lp.find("this verify never unpins") != std::string::npos,
@@ -577,10 +578,16 @@ int run_test_linear_pin_moving_compact() {
         CHECK(lp.find("post-densify") != std::string::npos, "AC3023: post-densify never unpins");
         CHECK(lp.find("this verify never unpins") != std::string::npos,
               "AC3023: verify never unpins");
-        CHECK(gc.find("unpin_all_linear_roots") != std::string::npos,
-              "AC3023: abort helper wired in enforce_linear_post_failure");
-        CHECK(fib.find("unpin_all_linear_roots") != std::string::npos,
-              "AC3023: fiber reclaim soak site");
+        CHECK(gc.find("unpin_linear_roots_owned_by") != std::string::npos ||
+                  gc.find("unpin_linear_roots_scoped_for_fiber") != std::string::npos,
+              "AC3023/#4031: abort helper owner/scoped drain in enforce_linear_post_failure");
+        CHECK(fib.find("unpin_linear_roots_owned_by") != std::string::npos ||
+                  fib.find("unpin_linear_roots_scoped_for_fiber") != std::string::npos,
+              "AC3023/#4031: fiber reclaim owner/scoped drain site");
+        CHECK(lp.find("TEST-ONLY") != std::string::npos ||
+                  lp.find("test-only") != std::string::npos ||
+                  lp.find("TEST-ONLY entry") != std::string::npos,
+              "AC3023/#4031: process-wide clear demoted to test-only");
         const auto schema = cs.eval(
             "(hash-ref (engine:metrics \"query:lifetime-contract-snapshot\") \"schema-3023\")");
         CHECK(schema.has_value(), "AC3023: schema-3023 reachable");

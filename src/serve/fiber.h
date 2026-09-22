@@ -749,14 +749,17 @@ public:
     // is a no-op on subsequent calls. Thread-safe: registrations from
     // the body's worker thread; release from the joiner thread.
     void register_orphan_root_release(std::function<void()> drop) noexcept;
-    // Issue #3438: outermost-Guard linear-keep management (see private
-    // members below). Set at production Guard outermost enter; consumed
-    // (take = move + disarm) by the scoped drain faces; cleared at
-    // successful outermost exit.
+    // Issue #3438 / #4031: outermost-Guard linear-keep management (see
+    // private members below). Set at production Guard outermost enter;
+    // consumed (take = move + disarm) by the scoped drain faces; cleared
+    // at successful outermost exit. Issue #4031 also lazy-arms from
+    // pin_linear_root when still unarmed (snapshot registry).
     void set_outermost_linear_keep(std::unordered_set<void*> keep) noexcept;
     void clear_outermost_linear_keep() noexcept;
     // Armed? move the keep out + disarm (single-consumer drain).
     bool take_outermost_linear_keep(std::unordered_set<void*>& out) noexcept;
+    // Issue #4031: if keep unarmed, snapshot linear_roots + arm (idempotent).
+    void maybe_lazy_arm_outermost_linear_keep() noexcept;
 
     // Returns the number of callbacks invoked (for AC1 metrics).
     std::size_t release_orphan_roots() noexcept;
@@ -1612,11 +1615,13 @@ struct Scheduler;
 extern Scheduler* g_scheduler;
 extern thread_local Fiber* g_current_fiber;
 
-// Issue #3438: scoped linear-root drain (single audit face). Armed keep
-// -> unpin_linear_roots_except(keep): this fiber's leftovers drain,
-// sibling fibers' live linear roots survive. Unarmed (Soft / no Guard
-// history): legacy unpin_all fallback (#3023; Soft empty = one lock +
-// empty check). No second registry, no new query key.
+// Issue #3438 / #4031: scoped linear-root drain (single audit face).
+// Armed keep -> unpin_linear_roots_except(keep): this fiber's leftovers
+// drain, sibling fibers' live linear roots survive. Unarmed (Soft / no
+// Guard history / steal-before-enter): owner-scoped
+// unpin_linear_roots_owned_by(f) only — NEVER process-wide clear for a
+// live fiber (#4031). Soft empty = one lock + empty check. No second
+// registry, no new query key.
 std::size_t unpin_linear_roots_scoped_for_fiber(Fiber* f) noexcept;
 
 // Issue #2650 / #2649: recursion depth slots for eval_flat / env lookup.

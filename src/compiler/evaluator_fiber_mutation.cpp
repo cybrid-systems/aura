@@ -4322,17 +4322,19 @@ extern "C" void aura_evaluator_on_steal_complete(void* fiber_ptr) noexcept {
             }
         }
     }
-    // Issue #3438 (refines Issue #3249 steal hard-fail drain): steal mid-Guard hard-fail abandons
-    // the victim stack and drains SCOPED — same single audit face as post-join reclaim
+    // Issue #3438 / #4031 (refines Issue #3249 steal hard-fail drain): steal
+    // mid-Guard hard-fail abandons the victim stack and drains SCOPED —
+    // same single audit face as post-join reclaim
     // (unpin_linear_roots_scoped_for_fiber): the victim's outermost-Guard
     // enter keep (still armed — its dtor never ran) preserves sibling
     // fibers' live linear roots. Happy-path steal: fiber still live —
-    // Guard dtor owns the drain. No victim fiber: legacy fallback.
+    // Guard dtor owns the drain. No victim fiber: owner-scoped nullptr
+    // only (#4031 — never process-wide).
     if (hard_failed) {
         if (fiber)
             (void)aura::serve::unpin_linear_roots_scoped_for_fiber(fiber);
         else
-            (void)aura::core::lifetime::unpin_all_linear_roots();
+            (void)aura::core::lifetime::unpin_linear_roots_owned_by(nullptr);
     }
 
     // Issue #3111: post-steal re-validate held_ref messages in this fiber's

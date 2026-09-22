@@ -117,6 +117,10 @@ using ::aura::core::lifetime::snapshot_linear_roots;
 using ::aura::core::lifetime::unpin_all_linear_roots;
 using ::aura::core::lifetime::unpin_linear_root;
 using ::aura::core::lifetime::unpin_linear_roots_except;
+using ::aura::core::lifetime::unpin_linear_roots_owned_by;
+using ::aura::core::lifetime::linear_root_owners;
+using ::aura::core::lifetime::set_linear_root_fiber_hooks;
+using ::aura::core::lifetime::kLinearRootOwnerScopedDrainIssue;
 
 // General-object pin protocol
 using ::aura::core::lifetime::collect_pinned_ptrs_for_arena;

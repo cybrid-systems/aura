@@ -3300,12 +3300,15 @@ Evaluator::MutationBoundaryGuard::MutationBoundaryGuard(
         aura::core::lifetime::snapshot_linear_roots(nested_linear_keep_);
         nested_linear_keep_armed_ = true;
     }
-    // Issue #3438: outermost enter also snapshots live linear roots
-    // (siblings') onto the fiber so the three drain faces (post-join
-    // reclaim / outermost fail / steal hard-fail) scope to this fiber's
-    // leftovers instead of process-wide unpin_all. Same production gate
-    // as the nested arm (Soft skips — zero extra cost). Successful
-    // outermost exit clears; fail/steal consume via take+disarm.
+    // Issue #3438 / #4031: outermost enter also snapshots live linear
+    // roots (siblings') onto the fiber so the three drain faces
+    // (post-join reclaim / outermost fail / steal hard-fail) scope to
+    // this fiber's leftovers (armed except-keep; unarmed owner-scoped
+    // per #4031 — never process-wide). Same production gate as the
+    // nested arm (Soft skips — zero extra cost). Successful outermost
+    // exit clears; fail/steal consume via take+disarm. pin_linear_root
+    // may already have lazy-armed the keep (#4031); enter overwrites
+    // with the authoritative enter-time sibling snapshot.
     if (outermost && typed_audit::production_defaults_active()) {
         if (auto* f3438 = aura::serve::g_current_fiber) {
             std::unordered_set<void*> keep3438;

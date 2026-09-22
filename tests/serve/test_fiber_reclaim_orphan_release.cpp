@@ -28,6 +28,7 @@
 #include <string>
 #include <string_view>
 #include <thread>
+#include <unordered_map> // Issue #4031: Moving remap in AC4031
 #include <unordered_set> // Issue #3438: linear-keep set type in AC6
 
 import std;
@@ -98,14 +99,101 @@ static void ac6_3438_scoped_linear_drain() {
     CHECK(after3438.count(theirs3438) == 1,
           "3438 AC1: sibling linear root survives the scoped reclaim drain");
     CHECK(after3438.count(mine3438) == 0, "3438 AC1: this fiber's leftover linear root drained");
-    // Keep was consumed (take + disarm) -> unarmed reclaim falls back to
-    // the legacy #3023 drain (Soft / no-Guard-history contract).
+    // Issue #4031: keep consumed → unarmed reclaim is owner-scoped only.
+    // Off-fiber-pinned sibling root (owner=nullptr) must SURVIVE — never
+    // process-wide clear for a live fiber.
     {
         Fiber fiber3438b(+[] {}, /*stack_size=*/64 * 1024);
         (void)fiber3438b.release_orphan_roots();
     }
     aura::core::lifetime::snapshot_linear_roots(after3438);
-    CHECK(after3438.empty(), "3438 AC5: unarmed fallback still drains (Soft/#3023 contract)");
+    CHECK(after3438.count(theirs3438) == 1,
+          "4031 AC: unarmed fallback leaves sibling/off-fiber roots intact");
+    aura::core::lifetime::reset_linear_roots_for_test();
+}
+
+// Issue #4031: owner-scoped unarmed drain + off-fiber enforce + remap.
+static void ac4031_owner_scoped_linear_drain() {
+    std::println("\n--- AC #4031: owner-scoped unarmed drain / off-fiber / remap ---");
+    const auto fh = read_file("src/serve/fiber.cpp");
+    const auto lp = read_file("src/core/lifetime_pin.hh");
+    const auto gc = read_file("src/compiler/evaluator_gc.cpp");
+    const auto steal = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+    CHECK(lp.find("unpin_linear_roots_owned_by") != std::string::npos,
+          "4031: owner-scoped drain API present");
+    CHECK(lp.find("kLinearRootOwnerScopedDrainIssue = 4031") != std::string::npos,
+          "4031: stamp 4031");
+    CHECK(lp.find("maybe_lazy_arm") != std::string::npos ||
+              fh.find("maybe_lazy_arm_outermost_linear_keep") != std::string::npos,
+          "4031: lazy-arm on pin path");
+    CHECK(fh.find("unpin_linear_roots_owned_by") != std::string::npos,
+          "4031: scoped unarmed fallback is owner-scoped");
+    CHECK(fh.find("unpin_all_linear_roots()") == std::string::npos,
+          "4031: fiber scoped path never calls process-wide clear");
+    CHECK(gc.find("unpin_linear_roots_owned_by") != std::string::npos,
+          "4031: off-fiber enforce is owner-scoped");
+    CHECK(gc.find("unpin_all_linear_roots()") == std::string::npos,
+          "4031: off-fiber enforce never process-wide clear");
+    CHECK(steal.find("unpin_linear_roots_owned_by") != std::string::npos,
+          "4031: steal no-fiber path is owner-scoped");
+
+    aura::core::lifetime::reset_linear_roots_for_test();
+    static unsigned char fiberA_root[64];
+    static unsigned char fiberB_root[64];
+    static unsigned char off_fiber_root[64];
+
+    Fiber fiberA(+[] {}, /*stack_size=*/64 * 1024);
+    Fiber fiberB(+[] {}, /*stack_size=*/64 * 1024);
+    auto* prev = aura::serve::g_current_fiber;
+
+    // Pin on fiberA (owner=A, lazy-arms A's keep with registry snapshot).
+    aura::serve::g_current_fiber = &fiberA;
+    aura::core::lifetime::pin_linear_root(fiberA_root);
+    // Pin on fiberB (owner=B).
+    aura::serve::g_current_fiber = &fiberB;
+    aura::core::lifetime::pin_linear_root(fiberB_root);
+    // Off-fiber pin (owner=nullptr).
+    aura::serve::g_current_fiber = nullptr;
+    aura::core::lifetime::pin_linear_root(off_fiber_root);
+
+    // Disarm A's keep so drain takes the unarmed owner-scoped path.
+    // (lazy-arm from pin armed it — clear to force unarmed fallback.)
+    fiberA.clear_outermost_linear_keep();
+    CHECK(aura::serve::unpin_linear_roots_scoped_for_fiber(&fiberA) >= 1,
+          "4031 AC1: unarmed drain removes fiberA-owned roots");
+    std::unordered_set<void*> after;
+    aura::core::lifetime::snapshot_linear_roots(after);
+    CHECK(after.count(fiberA_root) == 0, "4031 AC1: fiberA root drained");
+    CHECK(after.count(fiberB_root) == 1, "4031 AC1: sibling fiberB root survives");
+    CHECK(after.count(off_fiber_root) == 1, "4031 AC1: off-fiber root survives");
+
+    // Moving remap still rewrites surviving sibling roots.
+    void* const newB = reinterpret_cast<void*>(reinterpret_cast<std::uintptr_t>(fiberB_root) + 0x1000);
+    std::unordered_map<void*, void*> remap;
+    remap[static_cast<void*>(fiberB_root)] = newB;
+    CHECK(aura::core::lifetime::remap_linear_roots_under_moving(remap) == 1,
+          "4031 AC2: Moving remap rewrites sibling root");
+    aura::core::lifetime::snapshot_linear_roots(after);
+    CHECK(after.count(newB) == 1, "4031 AC2: sibling root at new address");
+    CHECK(after.count(static_cast<void*>(fiberB_root)) == 0,
+          "4031 AC2: old sibling address gone");
+    // Owner tag preserved across remap — fiberB-owned drain still finds it.
+    fiberB.clear_outermost_linear_keep();
+    CHECK(aura::core::lifetime::unpin_linear_roots_owned_by(static_cast<void*>(&fiberB)) == 1,
+          "4031 AC2: owner tag survives remap");
+
+    // Off-fiber enforce: only nullptr-owned roots.
+    aura::core::lifetime::pin_linear_root(off_fiber_root); // owner=nullptr again
+    aura::serve::g_current_fiber = &fiberA;
+    aura::core::lifetime::pin_linear_root(fiberA_root); // re-pin as A
+    aura::serve::g_current_fiber = nullptr;
+    CHECK(aura::core::lifetime::unpin_linear_roots_owned_by(nullptr) >= 1,
+          "4031 AC3: off-fiber enforce drains nullptr-owned only");
+    aura::core::lifetime::snapshot_linear_roots(after);
+    CHECK(after.count(off_fiber_root) == 0, "4031 AC3: off-fiber root drained");
+    CHECK(after.count(fiberA_root) == 1, "4031 AC3: live fiberA root preserved");
+
+    aura::serve::g_current_fiber = prev;
     aura::core::lifetime::reset_linear_roots_for_test();
 }
 
@@ -302,7 +390,8 @@ int run_test_fiber_reclaim_orphan_release() {
     ac4_cancel_storm_stress();
     ac5_source_cite_and_linter();
     ac6_3438_scoped_linear_drain();
-    std::println("\n=== #2498: see per-AC results above ===");
+    ac4031_owner_scoped_linear_drain();
+    std::println("\n=== #2498/#4031: see per-AC results above ===");
     return aura::test::g_failed ? 1 : 0;
 }
 
