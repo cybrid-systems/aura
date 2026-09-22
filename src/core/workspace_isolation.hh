@@ -133,6 +133,9 @@ struct CrossTenantKeyHash {
 // (no TA fence) so Soft rows are unaffected by the wipe / re-check.
 // Do NOT invent a second isolation model — same CrossTenantKey table.
 inline constexpr int kCrossGrantTaRevokeIssue = 3797;
+// Issue #3998: Soft-era cross_grants (mint_principal==0) are swept on
+// production set_mode and fail-closed at read (not bits-only allow).
+inline constexpr int kSoftEraCrossGrantSweepIssue = 3998;
 struct CrossTenantGrant {
     std::uint16_t effect_bits = 0;
     TenantId mint_principal = 0;
@@ -382,8 +385,9 @@ struct WorkspaceIsolationPolicy {
     // row covers `required_effects` and (under production) the bound
     // mint_principal still holds TenantAdmin. On sticky TA-loss, erases
     // the row under the isolation lock (closed loop; no nested
-    // revoke_cross_tenant — that would re-lock mtx). Soft/Off /
-    // mint_principal==0: bits-only (AC3).
+    // revoke_cross_tenant — that would re-lock mtx). Soft/Off: bits-only
+    // (AC3). Issue #3998: production mint_principal==0 is a Soft-era
+    // leftover — erase and deny (not bits-only allow).
     [[nodiscard]] bool cross_grant_allows_locked(TenantId from, TenantId to,
                                                  std::uint16_t required_effects,
                                                  bool production) noexcept {
@@ -398,8 +402,11 @@ struct WorkspaceIsolationPolicy {
         if (!production)
             return true;
         const TenantId mint = it->second.mint_principal;
-        if (mint == 0)
-            return true; // Soft/legacy row — bits-only
+        if (mint == 0) {
+            // Issue #3998: Soft-era / unset mint cannot authorize production.
+            cross_grants.erase(it);
+            return false;
+        }
         using ::aura::core::capability::Effect;
         using ::aura::core::capability::g_capability_registry;
         using ::aura::core::capability::has_effect;
@@ -410,6 +417,40 @@ struct WorkspaceIsolationPolicy {
         // Sticky post-TA-revoke grant — erase under isolation lock we hold.
         cross_grants.erase(it);
         return false;
+    }
+
+    // Issue #3998: erase every Soft-era row (mint_principal==0) when the
+    // process enters Restricted/Strict. Called from sandbox::set_mode.
+    // Isolation mtx only (no registry lock). Empty table is one lock +
+    // iterate. Soft/Off never calls this.
+    void sweep_soft_era_cross_grants() noexcept {
+        std::vector<CrossTenantKey> doomed;
+        {
+            std::lock_guard<std::mutex> lock(mtx);
+            doomed.reserve(cross_grants.size());
+            for (const auto& kv : cross_grants) {
+                if (kv.second.mint_principal == 0)
+                    doomed.push_back(kv.first);
+            }
+            for (const auto& k : doomed)
+                cross_grants.erase(k);
+        }
+        if (doomed.empty())
+            return;
+        using ::aura::core::current_mutation_epoch;
+        using ::aura::core::security_event::SecurityEventKind;
+        using ::aura::core::security_event_wal::emit_security_event_durable;
+        const auto epoch = current_mutation_epoch();
+        const auto mid =
+            (aura_isolation_deny_se_mid != nullptr) ? aura_isolation_deny_se_mid() : epoch;
+        const auto fid = static_cast<std::int64_t>(::aura::core::capability::effect_fiber_id_or(
+            static_cast<std::uint32_t>(aura_fiber_current_id())));
+        for (const auto& k : doomed) {
+            emit_security_event_durable(SecurityEventKind::IsolationDeny,
+                                        k.from != 0 ? k.from : k.to, mid, epoch, /*effect_bits=*/0,
+                                        "cross-tenant-grant", "soft-era-cross-grant-cleared",
+                                        /*denied=*/true, fid);
+        }
     }
 
     // Issue #3669: single source for the IsolationDeny reason split —

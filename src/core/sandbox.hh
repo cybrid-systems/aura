@@ -15,6 +15,9 @@
 //   5. g_provenance_tracker().set_policy(FailOnStale / AutoRefreshOnBoundary)
 //   6. g_sandbox_mode_authority_set_total counter (process-wide)
 //   7. AURA_SANDBOX_ASSERT=1 → post-condition triple equality check
+//   8. Issue #3998: entering Restricted/Strict sweeps Soft-era
+//      cross_grants (mint_principal==0) so they cannot authorize
+//      production. Off does not sweep (AC5).
 // CapabilityRegistry::sandbox_mode is private (friend == set_mode), so
 // direct writes from TUs / tests fail to compile. The coverage linter
 // `scripts/check_sandbox_mode_authority.py` is the second gate.
@@ -131,6 +134,10 @@ inline void set_mode(SandboxMode m) noexcept {
             std::abort();
         }
     }
+    // 8) Issue #3998: production entry wipes Soft-era cross_grants
+    //    (mint_principal==0). Off skips (zero extra on the Soft face).
+    if (u != static_cast<std::uint8_t>(SandboxMode::Off))
+        g_workspace_isolation().sweep_soft_era_cross_grants();
 }
 
 // Snapshot the authority state for diagnostics / Agent query surface.
