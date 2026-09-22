@@ -1280,6 +1280,103 @@ static void ac3878_3_soft_string_path_and_cite() {
           "3878 AC3: no test_issue_3878.cpp");
 }
 
+// ── Issue #3997: auto-revoke must not strand the string mirror ──────
+// Registry session/single-use/steal revokes leave granted_capabilities_
+// in place; re-grant must consult live by_tenant (not string presence)
+// so security:grant-capability! can land a fresh session row.
+
+static void ac3997_1_session_revoke_regrant_lands() {
+    std::println("\n--- #3997 AC1: session revoke then re-grant lands ---");
+    reset_all();
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_capability_tenant_id(7);
+    ev.grant_capability("tenant-admin"); // Off: durable TA
+    set_mode(SandboxMode::Restricted);
+    aura::core::sandbox::set_mode(SandboxMode::Restricted);
+    ev.set_effect_sandbox_mode(1);
+    ev.note_boundary_audit_mid_for_test(77);
+    ev.grant_capability("mutate");
+    CapabilityGrant g{};
+    CHECK(g_capability_registry().find_grant(7, "mutate", g) && !g.revoked,
+          "3997 AC1: mutate landed");
+    CHECK(ev.has_capability("mutate"), "3997 AC1: has_capability true after grant");
+    const auto n = g_capability_registry().revoke_session_grants_for_mid(77);
+    CHECK(n >= 1, "3997 AC1: session revoke cleared mutate");
+    CHECK(!ev.has_capability("mutate"), "3997 AC1: has_capability false after auto-revoke");
+    ev.note_boundary_audit_mid_for_test(78);
+    ev.grant_capability("mutate");
+    CapabilityGrant g2{};
+    CHECK(g_capability_registry().find_grant(7, "mutate", g2) && !g2.revoked,
+          "3997 AC1: re-grant after session revoke lands");
+    CHECK(ev.has_capability("mutate"), "3997 AC1: has_capability true after re-grant");
+    CHECK(ev.require_effect(kEffectMutate, "test:3997-ac1"),
+          "3997 AC1: require_effect allows on the new mid");
+    reset_all();
+}
+
+static void ac3997_2_regrant_loop_no_wedge() {
+    std::println("\n--- #3997 AC2: re-grant after session revoke loop does not wedge ---");
+    reset_all();
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_capability_tenant_id(8);
+    ev.grant_capability("tenant-admin");
+    set_mode(SandboxMode::Restricted);
+    aura::core::sandbox::set_mode(SandboxMode::Restricted);
+    ev.set_effect_sandbox_mode(1);
+    constexpr int kIters = 128;
+    int landed = 0;
+    int allowed = 0;
+    for (int i = 0; i < kIters; ++i) {
+        const auto mid = static_cast<std::uint64_t>(8000 + i);
+        ev.note_boundary_audit_mid_for_test(mid);
+        ev.grant_capability("mutate");
+        CapabilityGrant g{};
+        if (g_capability_registry().find_grant(8, "mutate", g) && !g.revoked)
+            ++landed;
+        if (ev.require_effect(kEffectMutate, "test:3997-ac2"))
+            ++allowed;
+        (void)g_capability_registry().revoke_session_grants_for_mid(mid);
+    }
+    CHECK(landed == kIters, "3997 AC2: every re-grant landed (no stranded-mirror no-op)");
+    CHECK(allowed == kIters, "3997 AC2: every mutate allow on the fresh mid");
+    reset_all();
+}
+
+static void ac3997_3_soft_string_dedup_unchanged() {
+    std::println("\n--- #3997 AC3: Soft/Off string dedup (zero extra) ---");
+    reset_all();
+    set_mode(SandboxMode::Off);
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_capability_tenant_id(9);
+    ev.grant_capability("mutate");
+    const auto n = ev.granted_capability_count();
+    ev.grant_capability("mutate");
+    CHECK(ev.granted_capability_count() == n, "3997 AC3: Soft re-grant is string-dedup no-op");
+    reset_all();
+}
+
+static void ac3997_4_source_cite() {
+    std::println("\n--- #3997 AC4: source-cite live-registry dedup; no invent ---");
+    const auto sec = read_file("src/compiler/evaluator_security.cpp");
+    CHECK(sec.find("Issue #3997") != std::string::npos, "3997 AC4: grant_capability cites");
+    const auto g4 = sec.find("void Evaluator::grant_capability(std::string cap, bool single_use");
+    CHECK(g4 != std::string::npos, "3997 AC4: 4-arg grant_capability present");
+    const auto win = sec.substr(g4, 2200);
+    CHECK(win.find("by_tenant") != std::string::npos && win.find("!g.revoked") != std::string::npos,
+          "3997 AC4: dedup consults live registry row");
+    CHECK(win.find("granted_capabilities_.erase") != std::string::npos,
+          "3997 AC4: stale mirror erased before re-grant");
+    CHECK(read_file("tests/core/test_issue_3997.cpp").empty(), "3997 AC4: no test_issue_3997.cpp");
+    CHECK(!std::filesystem::exists("docs/design/3997-grant-mirror-dedup.md"),
+          "3997 AC4: no docs/design");
+    CHECK(!std::filesystem::exists("tests/issues/test_issue_3997.cpp"),
+          "3997 AC4: no tests/issues invent");
+    reset_all();
+}
+
 // ── Issue #3279: session_bound orphan fail-closed sweep ─────────────
 // session_bound_orphan_detected_total was metric-only (declared, never
 // bumped). Under production long-run, a lost Guard / abort-without-mid-
@@ -3573,6 +3670,10 @@ int run_test_capability_single_use_consume() {
         ac3878_1_mid_refuse_no_orphan_string();
         ac3878_2_wildcard_refuse_no_orphan();
         ac3878_3_soft_string_path_and_cite();
+        ac3997_1_session_revoke_regrant_lands();
+        ac3997_2_regrant_loop_no_wedge();
+        ac3997_3_soft_string_dedup_unchanged();
+        ac3997_4_source_cite();
         // Issue #3279: session_bound orphan fail-closed sweep.
         ac3279_1_soft_observe_only();
         ac3279_2_production_revoke();
@@ -3657,6 +3758,10 @@ int run_test_inert_session_mid_3723() {
     ac3878_1_mid_refuse_no_orphan_string();
     ac3878_2_wildcard_refuse_no_orphan();
     ac3878_3_soft_string_path_and_cite();
+    ac3997_1_session_revoke_regrant_lands();
+    ac3997_2_regrant_loop_no_wedge();
+    ac3997_3_soft_string_dedup_unchanged();
+    ac3997_4_source_cite();
     ac3902_1_soft_epoch0_consume_honest_unset();
     ac3902_2_hard_face_invent_1();
     ac3902_3_real_epoch_passthrough();
