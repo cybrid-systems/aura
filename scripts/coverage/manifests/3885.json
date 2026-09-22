@@ -7,7 +7,7 @@
       "path": "src/compiler/hot_update_registry.cpp",
       "contains": [
         "Issue #3885",
-        "prev | bit",
+        "prev | covered",
         "maybe_stamp_heal_reason_last_success"
       ]
     },
