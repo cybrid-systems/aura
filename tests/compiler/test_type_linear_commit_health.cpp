@@ -1826,7 +1826,8 @@ static void ac4030_1_source_grant_after_deferred_commit() {
           "4030 AC1: commit returns bool for grant gate");
     const auto persist_fn = emb.find("extern \"C\" void aura_outermost_success_persist_occurrence");
     const auto defer_grant = emb.find("Issue #4030: Prod/Full align grant with deferred-green");
-    const auto soft_grant = emb.find("if (!defer_green) {\n        ev->grant_type_export_authority();");
+    const auto soft_grant =
+        emb.find("if (!defer_green) {\n        ev->grant_type_export_authority();");
     const auto clear_unarmed =
         emb.find("!aura::compiler::typed_audit::deferred_outermost_green_pending()");
     CHECK(persist_fn != std::string::npos && defer_grant != std::string::npos &&

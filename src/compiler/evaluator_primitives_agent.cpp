@@ -3525,12 +3525,9 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                     auto eidx = ev.string_heap_.size();
                     ev.string_heap_.push_back(err);
                     std::vector<std::pair<std::string, EvalValue>> rkv = {
-                        {"ok", make_bool(false)},
-                        {"id", make_int(0)},
-                        {"name", make_string(nidx)},
-                        {"schema", make_int(1588)},
-                        {"schema-2011", make_int(2011)},
-                        {"quota-exceeded", make_bool(false)},
+                        {"ok", make_bool(false)},        {"id", make_int(0)},
+                        {"name", make_string(nidx)},     {"schema", make_int(1588)},
+                        {"schema-2011", make_int(2011)}, {"quota-exceeded", make_bool(false)},
                         {"error", make_string(eidx)},
                     };
                     add_deny_class(rkv, aura::orch::AgentDenyClass::Other, "tenant-spoof", 0,
@@ -4644,8 +4641,8 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 {"restart-denied", make_int(static_cast<std::int64_t>(wr.restart_denied))},
                 {"restart-deny-class",
                  [&] {
-                     const char* nm = aura::orch::agent_deny_class_name(
-                         scope->last_restart_deny_class());
+                     const char* nm =
+                         aura::orch::agent_deny_class_name(scope->last_restart_deny_class());
                      auto s = ev.string_heap_.size();
                      ev.string_heap_.push_back(nm ? nm : "");
                      return make_string(s);

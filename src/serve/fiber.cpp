@@ -213,21 +213,21 @@ thread_local Fiber* g_current_fiber = nullptr;
 // Issue #4031: register owner + lazy-arm hooks for pin_linear_root
 // (lifetime_pin.hh cannot include fiber.h). Runs before main().
 namespace {
-void* linear_root_current_owner_impl() noexcept {
-    return static_cast<void*>(g_current_fiber);
-}
-void linear_root_maybe_lazy_arm_impl(void* owner) noexcept {
-    if (!owner)
-        return;
-    static_cast<Fiber*>(owner)->maybe_lazy_arm_outermost_linear_keep();
-}
-struct LinearRootFiberHooksInit final {
-    LinearRootFiberHooksInit() noexcept {
-        aura::core::lifetime::set_linear_root_fiber_hooks(&linear_root_current_owner_impl,
-                                                          &linear_root_maybe_lazy_arm_impl);
+    void* linear_root_current_owner_impl() noexcept {
+        return static_cast<void*>(g_current_fiber);
     }
-};
-static LinearRootFiberHooksInit g_linear_root_fiber_hooks_init{};
+    void linear_root_maybe_lazy_arm_impl(void* owner) noexcept {
+        if (!owner)
+            return;
+        static_cast<Fiber*>(owner)->maybe_lazy_arm_outermost_linear_keep();
+    }
+    struct LinearRootFiberHooksInit final {
+        LinearRootFiberHooksInit() noexcept {
+            aura::core::lifetime::set_linear_root_fiber_hooks(&linear_root_current_owner_impl,
+                                                              &linear_root_maybe_lazy_arm_impl);
+        }
+    };
+    static LinearRootFiberHooksInit g_linear_root_fiber_hooks_init{};
 } // namespace
 // TLS: current worker's dispatch loop context
 thread_local WorkerContext* g_worker_ctx = nullptr;

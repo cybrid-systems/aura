@@ -79,8 +79,8 @@ std::int64_t href_aud(CompilerService& cs, std::string_view key) {
 }
 
 std::int64_t href_posture(CompilerService& cs, std::string_view key) {
-    auto r = cs.eval(
-        std::format("(hash-ref (engine:metrics \"query:security-posture\") \"{}\")", key));
+    auto r =
+        cs.eval(std::format("(hash-ref (engine:metrics \"query:security-posture\") \"{}\")", key));
     if (!r || !is_int(*r))
         return -1;
     return as_int(*r);

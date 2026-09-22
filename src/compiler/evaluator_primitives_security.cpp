@@ -95,10 +95,9 @@ using types::make_void;
     auto& reg = aura::core::capability::g_capability_registry();
     std::lock_guard<std::mutex> lock(reg.mtx);
     using aura::compiler::security::kEffectTenantAdmin;
-    const bool is_ta =
-        !reg.holds_wildcard_only_locked(requester) &&
-        (static_cast<std::uint16_t>(reg.effects_for_locked(requester)) &
-         static_cast<std::uint16_t>(kEffectTenantAdmin)) != 0;
+    const bool is_ta = !reg.holds_wildcard_only_locked(requester) &&
+                       (static_cast<std::uint16_t>(reg.effects_for_locked(requester)) &
+                        static_cast<std::uint16_t>(kEffectTenantAdmin)) != 0;
     if (filt_tenant) {
         if (want_tenant != requester && !is_ta)
             return false; // deny cross-tenant
@@ -200,10 +199,10 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                                             /*effect_bits=*/0, /*cap_name=*/"<prim>",
                                             "sandbox-downgrade-needs-explicit-tenant-admin",
                                             /*denied=*/true, fid);
-                return make_primitive_error(
-                    ev.string_heap_, ev.error_values_,
-                    "security:set-effect-sandbox-mode!: explicit TenantAdmin required to lower mode",
-                    ev.primitive_error_counter_ptr());
+                return make_primitive_error(ev.string_heap_, ev.error_values_,
+                                            "security:set-effect-sandbox-mode!: explicit "
+                                            "TenantAdmin required to lower mode",
+                                            ev.primitive_error_counter_ptr());
             }
             const auto prev = ev.effect_sandbox_mode();
             ev.set_effect_sandbox_mode(static_cast<std::uint8_t>(new_mode));
@@ -6279,7 +6278,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 const auto tseq = trail_seq();
                 const auto se_total = g_security_event_ring().total.load(std::memory_order_relaxed);
                 wrap_risk = tseq > kTypedMutationAuditTrailSize && se_total > 0;
-                posture_degraded = d.would_arm_degraded;  // #4028: NOT wrap_risk
+                posture_degraded = d.would_arm_degraded; // #4028: NOT wrap_risk
             }
 
             // Issue #3205: optional :durable mid point-query. Join key is join_mid

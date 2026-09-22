@@ -70,21 +70,21 @@ namespace {
 using aura::compiler::CompilerService;
 using aura::compiler::types::as_int;
 using aura::compiler::types::is_int;
+using aura::core::resource_quota::Dimension;
+using aura::core::resource_quota::process_resource_quota;
+using aura::core::resource_quota::reset_process_resource_quota_for_test;
+using aura::orch::AgentDenyClass;
 using aura::orch::AgentFailureAction;
 using aura::orch::AgentFailurePolicy;
 using aura::orch::AgentHandle;
 using aura::orch::AgentScope;
 using aura::orch::AgentSpec;
+using aura::orch::classify_agent_deny;
+using aura::orch::fiber_sleep_ms;
 using aura::orch::g_orch_module_stats;
-using aura::core::resource_quota::Dimension;
-using aura::core::resource_quota::process_resource_quota;
-using aura::core::resource_quota::reset_process_resource_quota_for_test;
 using aura::orch::kJoinFailProductionDefaultIssue;
 using aura::orch::kRestartNSpawnAdmitDenyIssue;
-using aura::orch::AgentDenyClass;
-using aura::orch::classify_agent_deny;
 using aura::orch::note_agent_progress;
-using aura::orch::fiber_sleep_ms;
 using aura::orch::resolve_on_join_fail;
 using aura::orch::agent_scope_compat::stall_to_failure_action;
 using aura::serve::Fiber;
@@ -1450,7 +1450,8 @@ int run_test_agent_failure_policy() {
             spec.attach_mailbox = false;
             spec.keepalive_interval_ms = 50;
             // Exits on cancel so production drain completes, then spawn denies.
-            spec.body = [&] { sleep_no_progress_body(scope.handles_mut().back(), keep); };
+            spec.body = [&] {
+                sleep_no_progress_body(scope.handles_mut().back(), keep); };
             auto& h0 = scope.spawn(spec);
             CHECK(h0.ok && h0.fiber, "4022 AC2: spawn ok");
             const auto used = pq.used(Dimension::Fibers);

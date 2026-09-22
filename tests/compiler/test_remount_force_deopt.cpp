@@ -1122,8 +1122,9 @@ int run_test_remount_force_deopt() {
     ac3887_call_time_dual_fresh_covers_post_steal_defuse();
     if (g_failed)
         return 1;
-    std::println("remount force-deopt #2503/#2894/#3548/#3578/#3612/#3785/#3812/#4029: OK ({} passed)",
-                 g_passed);
+    std::println(
+        "remount force-deopt #2503/#2894/#3548/#3578/#3612/#3785/#3812/#4029: OK ({} passed)",
+        g_passed);
     return 0;
 }
 

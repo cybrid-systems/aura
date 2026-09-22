@@ -415,8 +415,8 @@ void ac4020_remap_misses_orphan_not_nonmatch() {
     // AC1: matching remap with other arena pins present must NOT inflate
     // remap_misses (pre-#4020 bumped once per nonmatch pin in the filter).
     const auto m0 = aura::core::lifetime::g_lifetime_pin_stats.remap_misses;
-    const auto rr_hit = aura::core::lifetime::remap_pins_pointing_to(
-        &a, &neu, /*new_gen=*/2, arena_id);
+    const auto rr_hit =
+        aura::core::lifetime::remap_pins_pointing_to(&a, &neu, /*new_gen=*/2, arena_id);
     CHECK(rr_hit.remapped == 1, "4020 AC1: one pin remapped");
     CHECK(rr_hit.misses == 0, "4020 AC1: RemapResult.misses == 0 on hit");
     CHECK(pin_a.ptr() == &neu, "4020 AC1: pin_a remapped to neu");
@@ -426,8 +426,8 @@ void ac4020_remap_misses_orphan_not_nonmatch() {
 
     // AC2: orphan old_ptr (no pin in registry) bumps miss exactly once.
     const auto m1 = aura::core::lifetime::g_lifetime_pin_stats.remap_misses;
-    const auto rr_miss = aura::core::lifetime::remap_pins_pointing_to(
-        &c, &neu, /*new_gen=*/3, arena_id);
+    const auto rr_miss =
+        aura::core::lifetime::remap_pins_pointing_to(&c, &neu, /*new_gen=*/3, arena_id);
     CHECK(rr_miss.remapped == 0, "4020 AC2: orphan remapped == 0");
     CHECK(rr_miss.misses == 1, "4020 AC2: RemapResult.misses == 1 on orphan");
     CHECK(aura::core::lifetime::g_lifetime_pin_stats.remap_misses == m1 + 1,
@@ -435,8 +435,8 @@ void ac4020_remap_misses_orphan_not_nonmatch() {
 
     // AC3: arena_id_filter == 0 does not count misses (any-arena walk).
     const auto m2 = aura::core::lifetime::g_lifetime_pin_stats.remap_misses;
-    const auto rr_any = aura::core::lifetime::remap_pins_pointing_to(
-        &c, &neu, /*new_gen=*/4, /*arena_id_filter=*/0);
+    const auto rr_any = aura::core::lifetime::remap_pins_pointing_to(&c, &neu, /*new_gen=*/4,
+                                                                     /*arena_id_filter=*/0);
     CHECK(rr_any.remapped == 0 && rr_any.misses == 0, "4020 AC3: filter=0 no miss face");
     CHECK(aura::core::lifetime::g_lifetime_pin_stats.remap_misses == m2,
           "4020 AC3: filter=0 leaves remap_misses unchanged");
@@ -893,7 +893,8 @@ int run_test_moving_compact() {
     ac2375_all_shards_on_arena_zero();
     ac4020_remap_misses_orphan_not_nonmatch();
 
-    std::println("\n=== #2166 + #2342 + #2375 + #4020: {} passed, {} failed ===", g_passed, g_failed);
+    std::println("\n=== #2166 + #2342 + #2375 + #4020: {} passed, {} failed ===", g_passed,
+                 g_failed);
     return g_failed == 0 ? 0 : 1;
 }
 
