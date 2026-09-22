@@ -3095,6 +3095,7 @@ static void ac3976_idle_skips_named_fifo() {
     CHECK(idle != std::string::npos && lock != std::string::npos && idle < lock,
           "3976 AC2: idle skip before table lock");
     ac3607_restore(save);
+    aura_test_reset_residual_remount_state(); // #4025: coverage note arms quiet nudge
 }
 
 static void ac3976_define_active_still_heals() {
@@ -3123,6 +3124,115 @@ static void ac3976_define_active_still_heals() {
     CHECK(aura_closure_get_must_deopt(s) == 1, "3976 AC2b: unrecorded stays MustDeopt");
     ac3607_restore(save);
 }
+
+
+// ── Issue #4025: quiet remount nudge after heal clears define-active ──
+static void ac4025_nudge_after_heal_clear() {
+    std::println("\n--- #4025 AC2: quiet residual tick remounts leftovers after nudge ---");
+    auto& ctr = aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+    const auto save = ctr.production_defaults_active.load(std::memory_order_relaxed);
+    ctr.production_defaults_active.store(1, std::memory_order_relaxed);
+    auto& reg = aura::compiler::hot_update_registry();
+    reg.on_reload_success();
+    aura_test_reset_residual_remount_state();
+    aura_test_set_residual_remount_budget(32);
+    aura_test_reset_reemit_success_sync_covered_state();
+    aura_test_set_reemit_success_sync_covered_cap(64);
+    const auto named = aura_alloc_closure(/*func_id=*/0);
+    const auto peer = aura_alloc_closure(/*func_id=*/0);
+    CHECK(named >= 0 && peer >= 0, "4025 AC2: alloc named/peer");
+    aura_test_set_closure_stable_func_id(named, 11);
+    aura_test_set_closure_stable_func_id(peer, 12);
+    aura_closure_set_must_deopt(named, 1);
+    aura_closure_set_must_deopt(peer, 1);
+    reg.note_relower_success_define(11);
+    CHECK(reg.relower_success_define_active(), "4025 AC2: define side active before heal");
+    const auto env = aot_reload_fail_to_force_jit_mask(AotReloadFail::Env);
+    // Heal/Agent coverage note clears define-active → arms quiet nudge (#4025).
+    reg.note_reemit_success_coverage(env);
+    CHECK(!reg.relower_success_define_active(), "4025 AC2: heal cleared define-active");
+    CHECK(aura_residual_remount_quiet_nudge_pending() != 0,
+          "4025 AC2: quiet remount nudge armed after heal clear");
+    // #3976: sync named FIFO still skipped while define idle.
+    const auto ok0 = aura_reemit_success_sync_covered_ok_total_v_read();
+    aura_sync_remount_covered_named_live_closures(env, /*cap=*/64);
+    CHECK(aura_reemit_success_sync_covered_ok_total_v_read() == ok0,
+          "4025 AC1: Soft/heal — no sync named FIFO while define idle");
+    CHECK(aura_closure_get_must_deopt(named) == 1,
+          "4025 AC1: MustDeopt holds until quiet residual (leave-native)");
+    // Quiet residual tick consumes nudge and remounts leftovers.
+    aura_test_set_residual_remount_cursor(static_cast<std::uint64_t>(named));
+    aura_residual_live_closure_remount_tick(32);
+    CHECK(aura_residual_remount_quiet_nudge_pending() == 0,
+          "4025 AC2: quiet residual tick consumes nudge");
+    CHECK(aura_closure_get_must_deopt(named) == 0,
+          "4025 AC2: quiet residual remounts covered leftover after nudge");
+    ac3607_restore(save);
+    aura_test_reset_residual_remount_state();
+}
+
+static void ac4025_soft_storm_keeps_leave_native() {
+    std::println("\n--- #4025 AC1: Soft Global budget_skip keeps MustDeopt leave-native ---");
+    auto& ctr = aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+    const auto save = ctr.production_defaults_active.load(std::memory_order_relaxed);
+    ctr.production_defaults_active.store(1, std::memory_order_relaxed);
+    auto& reg = aura::compiler::hot_update_registry();
+    reg.on_reload_success();
+    aura_test_reset_residual_remount_state();
+    aura_test_set_residual_remount_budget(32);
+    const auto named = aura_alloc_closure(/*func_id=*/0);
+    CHECK(named >= 0, "4025 AC1: alloc");
+    aura_test_set_closure_stable_func_id(named, 21);
+    aura_closure_set_must_deopt(named, 1);
+    reg.note_relower_success_define(21);
+    const auto env = aot_reload_fail_to_force_jit_mask(AotReloadFail::Env);
+    reg.note_reemit_success_coverage(env);
+    CHECK(aura_residual_remount_quiet_nudge_pending() != 0, "4025 AC1: nudge armed");
+    // Inject storm/throttle skip: residual tick budget_skips; nudge stays; MustDeopt holds.
+    aura_test_set_residual_remount_force_skip(1);
+    const auto skip0 = aura_residual_remount_budget_skip_total_v_read();
+    aura_residual_live_closure_remount_tick(32);
+    CHECK(aura_residual_remount_budget_skip_total_v_read() > skip0,
+          "4025 AC1: Soft Global residual budget_skips");
+    CHECK(aura_residual_remount_quiet_nudge_pending() != 0,
+          "4025 AC1: nudge stays armed across budget_skip");
+    CHECK(aura_closure_get_must_deopt(named) == 1,
+          "4025 AC1: MustDeopt/dual-fresh leave-native under Soft Global");
+    aura_test_set_residual_remount_force_skip(0);
+    // Quiet window: nudge remounts.
+    aura_test_set_residual_remount_cursor(static_cast<std::uint64_t>(named));
+    aura_residual_live_closure_remount_tick(32);
+    CHECK(aura_residual_remount_quiet_nudge_pending() == 0, "4025 AC1: nudge consumed quiet");
+    CHECK(aura_closure_get_must_deopt(named) == 0, "4025 AC1: quiet remount after storm");
+    ac3607_restore(save);
+    aura_test_reset_residual_remount_state();
+}
+
+static void ac4025_source_and_soft_wholesale() {
+    std::println("\n--- #4025 AC3: Soft wholesale remount unchanged + source-cite ---");
+    const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
+    const auto reg = read_file("src/compiler/hot_update_registry.cpp");
+    const auto hdr = read_file("src/compiler/runtime_shared.h");
+    CHECK(rt.find("Issue #4025") != std::string::npos, "4025 AC: runtime cites #4025");
+    CHECK(reg.find("Issue #4025") != std::string::npos, "4025 AC: registry cites #4025");
+    CHECK(hdr.find("Issue #4025") != std::string::npos, "4025 AC: header cites #4025");
+    CHECK(rt.find("aura_residual_remount_quiet_nudge") != std::string::npos,
+          "4025 AC: quiet nudge API in runtime");
+    CHECK(reg.find("aura_residual_remount_quiet_nudge") != std::string::npos,
+          "4025 AC: heal clear arms quiet nudge");
+    CHECK(rt.find("Issue #3976") != std::string::npos, "4025 AC1: #3976 idle skip retained");
+    // Soft wholesale re-promote path unchanged (#3976 AC4 / #2502).
+    auto& r = aura::compiler::hot_update_registry();
+    r.on_reload_success();
+    CHECK(!r.relower_success_define_active(), "4025 AC3: Soft define side idle");
+    CHECK(reg.find("Issue #2502") != std::string::npos ||
+              reg.find("wholesale") != std::string::npos,
+          "4025 AC3: Soft wholesale remount path present");
+    CHECK(read_file("tests/compiler/test_issue_4025.cpp").empty(), "4025 AC: no invent test");
+    CHECK(read_file("docs/design/4025-quiet-remount-nudge.md").empty(),
+          "4025 AC: no docs/design invent");
+}
+
 
 int run_test_anonymous_residual_stable_id_policy() {
     std::println(
@@ -3565,6 +3675,10 @@ int run_test_anonymous_residual_stable_id_policy() {
     std::println("\n=== Issue #3976: idle define-side skips covered named FIFO remount ===");
     ac3976_idle_skips_named_fifo();
     ac3976_define_active_still_heals();
+    std::println("\n=== Issue #4025: quiet remount nudge after heal clears define-active ===");
+    ac4025_nudge_after_heal_clear();
+    ac4025_soft_storm_keeps_leave_native();
+    ac4025_source_and_soft_wholesale();
 
     std::println("\n=== "
                  "#2605+#2637+#2638+#2666+#2691+#2714+#2850+#2893+#2928+#2977+#2978+#2980+#3024+#"

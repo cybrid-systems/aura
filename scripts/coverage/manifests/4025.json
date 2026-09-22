@@ -1,0 +1,44 @@
+{
+  "issue": 4025,
+  "title": "quiet remount nudge after heal clears define-active",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/aura_jit_runtime.cpp",
+      "contains": [
+        "Issue #4025",
+        "Issue #3976",
+        "aura_residual_remount_quiet_nudge",
+        "g_residual_remount_quiet_nudge"
+      ]
+    },
+    {
+      "ac": "AC1-heal",
+      "path": "src/compiler/hot_update_registry.cpp",
+      "contains": [
+        "Issue #4025",
+        "aura_residual_remount_quiet_nudge",
+        "define_was_active",
+        "aura_residual_remount_quiet_nudge_pending"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/compiler/test_anonymous_residual_stable_id_policy.cpp",
+      "contains": [
+        "4025 AC2: quiet remount nudge armed after heal clear",
+        "4025 AC2: quiet residual remounts covered leftover after nudge",
+        "4025 AC1: MustDeopt/dual-fresh leave-native under Soft Global",
+        "ac4025_nudge_after_heal_clear"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "forbid": [
+        "tests/compiler/test_issue_4025.cpp",
+        "docs/design/4025-quiet-remount-nudge.md",
+        "scripts/coverage/checks/check_quiet_remount_nudge_4025.py"
+      ]
+    }
+  ]
+}
