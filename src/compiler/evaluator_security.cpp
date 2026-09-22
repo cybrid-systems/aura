@@ -202,11 +202,38 @@ void Evaluator::grant_capability(std::string cap) {
 // held, and never fresh-grant-resetting the row the wrapper just wrote.
 void Evaluator::grant_capability(std::string cap, bool single_use, bool session_bound,
                                  std::uint64_t provenance_mutation_id) {
-    for (const auto& existing : granted_capabilities_) {
-        if (existing == cap)
-            return;
-    }
     using namespace ::aura::core::capability;
+    // Issue #3997: dedup on live registry state, not string presence.
+    // Auto-revokes (session mid-exit, single-use consume, steal/abort,
+    // TenantScope cascade) clear by_tenant only and strand the mirror;
+    // a string hit then early-returns and re-grant silently no-ops
+    // (`security:grant-capability!` reports "grant did not land").
+    // Soft/Off: string dedup is enough (zero extra lock). String-only
+    // names (no Effect mapping) keep the list as SSOT.
+    {
+        auto it = std::find(granted_capabilities_.begin(), granted_capabilities_.end(), cap);
+        if (it != granted_capabilities_.end()) {
+            const bool force_bind = sandbox_mode_ != 0 || effect_sandbox_mode() != 0;
+            if (!force_bind)
+                return;
+            if (effect_for_cap_name(cap) == Effect::None)
+                return;
+            auto& reg = g_capability_registry();
+            std::lock_guard<std::mutex> lock(reg.mtx);
+            bool live = false;
+            if (auto git = reg.by_tenant.find(capability_tenant_id_); git != reg.by_tenant.end()) {
+                for (const auto& g : git->second) {
+                    if (g.name == cap && !g.revoked && !g.stolen) {
+                        live = true;
+                        break;
+                    }
+                }
+            }
+            if (live)
+                return;
+            granted_capabilities_.erase(it);
+        }
+    }
     const auto eff = effect_for_cap_name(cap);
 
     // Issue #3141: production fence - wildcard-only holder cannot write
