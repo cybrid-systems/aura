@@ -3508,6 +3508,36 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 }
             }
 
+            // Issue #4017: explicit :tenant-id must match capability_tenant_id()
+            // or the caller holds TenantAdmin (#3086 shape). Soft/Off allow.
+            // Deny BEFORE sched/body/spawn — zero fiber/quota side effects.
+            {
+                const auto caller = ev.capability_tenant_id();
+                const auto requested = tenant_id;
+                if (requested != 0 &&
+                    !aura::orch::spawn_tenant_principal_allows(requested, caller)) {
+                    aura::orch::g_orch_module_stats.spawn_failures.fetch_add(
+                        1, std::memory_order_relaxed);
+                    aura::orch::emit_spawn_tenant_spoof_se(requested, caller);
+                    const auto err = aura::orch::spawn_tenant_spoof_error(requested, caller);
+                    auto nidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(name);
+                    auto eidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(err);
+                    std::vector<std::pair<std::string, EvalValue>> rkv = {
+                        {"ok", make_bool(false)},
+                        {"id", make_int(0)},
+                        {"name", make_string(nidx)},
+                        {"schema", make_int(1588)},
+                        {"schema-2011", make_int(2011)},
+                        {"quota-exceeded", make_bool(false)},
+                        {"error", make_string(eidx)},
+                    };
+                    add_deny_class(rkv, aura::orch::AgentDenyClass::Other, "tenant-spoof", 0,
+                                   /*emit_retry=*/false);
+                    return build_orch_hash(rkv);
+                }
+            }
             orch_sched.ensure(2);
             auto body = [&ev, cid, region_key]() {
                 if (!cid)
@@ -3541,6 +3571,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             // inherit the Evaluator capability tenant (production spawn
             // stamps Fiber::assigned_tenant_id so the TenantScope resume
             // mandate arms; Soft/Off / legacy single-tenant stay 0).
+            // Issue #4017: principal fence runs earlier (pre-sched).
             spec.tenant_id = tenant_id != 0 ? tenant_id : ev.capability_tenant_id();
             // Issue #3803 / #3728: stamp AgentSpec.region_key so AgentScope
             // join observe + fiber TLS apply see the same key (0 = Serialized).
@@ -4177,6 +4208,37 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             spec.mailbox_credit = mailbox_credit;
             // Issue #3434: tenant mandate — explicit :tenant-id wins, else
             // inherit the Evaluator capability tenant (mirrors orch:spawn-agent).
+            // Issue #4017: same principal fence as orch:spawn-agent.
+            {
+                const auto caller = ev.capability_tenant_id();
+                const auto requested = tenant_id;
+                if (requested != 0 &&
+                    !aura::orch::spawn_tenant_principal_allows(requested, caller)) {
+                    aura::orch::g_orch_module_stats.spawn_failures.fetch_add(
+                        1, std::memory_order_relaxed);
+                    aura::orch::g_orch_module_stats.scope_spawn_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                    aura::orch::emit_spawn_tenant_spoof_se(requested, caller);
+                    const auto err = aura::orch::spawn_tenant_spoof_error(requested, caller);
+                    auto nidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(name);
+                    auto eidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(err);
+                    std::vector<std::pair<std::string, EvalValue>> rkv = {
+                        {"ok", make_bool(false)},
+                        {"id", make_int(0)},
+                        {"name", make_string(nidx)},
+                        {"schema", make_int(2588)},
+                        {"schema-2083", make_int(2083)},
+                        {"schema-2161", make_int(2161)},
+                        {"quota-exceeded", make_bool(false)},
+                        {"error", make_string(eidx)},
+                    };
+                    add_deny_class(rkv, aura::orch::AgentDenyClass::Other, "tenant-spoof", 0,
+                                   /*emit_retry=*/false);
+                    return build_orch_hash(rkv);
+                }
+            }
             spec.tenant_id = tenant_id != 0 ? tenant_id : ev.capability_tenant_id();
             // Issue #3803: persist :region-key on AgentSpec for join/workflow
             // isolation observe (TLS stamp during apply is #3728).

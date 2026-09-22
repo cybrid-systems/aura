@@ -46,6 +46,10 @@
 #include "orch/agent_scope.h"
 #include "compiler/typed_mutation_audit.h"
 #include "core/sandbox.hh"
+#include "core/capability_model.hh"
+#include "core/security_event.hh"
+#include "core/provenance_tracker.hh"
+#include "core/resource_quota.hh"
 #include "serve/fiber.h"
 #include "serve/multi_fiber_mailbox.h"
 #include "serve/scheduler.h"
@@ -53,6 +57,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <cstring>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -64,6 +69,7 @@
 
 import std;
 import aura.compiler.service;
+import aura.compiler.evaluator;
 import aura.compiler.value;
 
 namespace {
@@ -6625,6 +6631,244 @@ int run_test_join_drain_reclaim() {
             ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
         else
             ::unsetenv("AURA_SANDBOX");
+    }
+
+
+    // ── Issue #4017: spawn :tenant-id must match caller principal ──
+    // Soft/Off: no new force. Production Restricted+MT: non-TA caller A
+    // requesting :tenant-id=B denies with SE + zero fiber/quota side effects.
+    // Same-tenant OK; TenantAdmin cross-tenant OK (#3086 contract).
+    {
+        using aura::core::sandbox::SandboxMode;
+        using aura::core::sandbox::set_mode;
+        using aura::core::capability::Effect;
+        using aura::core::capability::g_capability_registry;
+        using aura::core::capability::make_grant_provenance;
+        using aura::core::security_event::g_security_event_ring;
+        using aura::core::security_event::kSecurityEventRingSize;
+        using aura::orch::AgentSpec;
+        using aura::orch::spawn_agent_with_mailbox;
+        using aura::serve::Fiber;
+        using aura::serve::Scheduler;
+
+        auto grant_ta = [](std::uint64_t tenant) {
+            // Bootstrap under Soft/Off — production grant_locked fences TA mint.
+            const auto prov = make_grant_provenance(/*mid=*/1, /*force_mutation_bind=*/true, 0, 0);
+            g_capability_registry().grant(tenant, "tenant-admin", Effect::TenantAdmin, prov);
+        };
+        auto se_has_spoof = []() -> bool {
+            auto& ring = g_security_event_ring();
+            const auto seq = ring.seq.load(std::memory_order_acquire);
+            if (seq == 0)
+                return false;
+            const auto n = seq < kSecurityEventRingSize ? seq : kSecurityEventRingSize;
+            for (std::uint64_t i = 0; i < n; ++i) {
+                const auto idx = (seq - 1 - i) % kSecurityEventRingSize;
+                const auto& e = ring.ring[idx];
+                const auto rlen = strnlen(e.reason, sizeof(e.reason));
+                if (std::string_view(e.reason, rlen).find("tenant-spoof-denied") !=
+                    std::string_view::npos)
+                    return true;
+            }
+            return false;
+        };
+
+        std::println("\n--- #4017 AC1: non-TA caller A spawn tenant=B → deny, no fiber ---");
+        {
+            const char* prev_sb = std::getenv("AURA_SANDBOX");
+            std::string prev_sb_s = prev_sb ? prev_sb : "";
+            ::setenv("AURA_SANDBOX", "restricted", 1);
+            apply_production_audit_defaults();
+            set_mode(SandboxMode::Restricted);
+            aura::core::provenance::set_multi_tenant_env_active(true);
+            g_capability_registry().clear_for_test();
+
+            Scheduler sched(1);
+            // Bind caller principal A=11 on a parent fiber (quota TLS + fiber).
+            auto parent = std::make_unique<Fiber>([] {});
+            parent->set_assigned_tenant_id(11);
+            aura::serve::g_current_fiber = parent.get();
+            aura::core::resource_quota::set_current_quota_tenant(11);
+
+            const auto fibers_before =
+                aura::core::resource_quota::process_resource_quota().used(
+                    aura::core::resource_quota::Dimension::Fibers);
+            const auto fail_before =
+                g_orch_module_stats.spawn_failures.load(std::memory_order_relaxed);
+
+            AgentSpec spoof;
+            spoof.name = "4017-spoof-B";
+            spoof.body = [] {};
+            spoof.tenant_id = 22; // B ≠ A
+            auto h = spawn_agent_with_mailbox(sched, std::move(spoof));
+            CHECK(!h.ok, "4017 AC1: non-TA cross-tenant spawn denied");
+            CHECK(h.fiber == nullptr, "4017 AC1: no fiber on spoof deny");
+            CHECK(h.error.find("tenant-spoof-denied") != std::string::npos,
+                  "4017 AC1: error carries tenant-spoof-denied");
+            CHECK(h.deny_class == aura::orch::AgentDenyClass::Other,
+                  "4017 AC1: deny-class Other (tenant-spoof)");
+            CHECK(se_has_spoof(), "4017 AC1: SE ring carries tenant-spoof-denied");
+            CHECK(aura::core::resource_quota::process_resource_quota().used(
+                      aura::core::resource_quota::Dimension::Fibers) == fibers_before,
+                  "4017 AC1: fibers quota unchanged (zero side effects)");
+            CHECK(g_orch_module_stats.spawn_failures.load(std::memory_order_relaxed) ==
+                      fail_before + 1,
+                  "4017 AC1: spawn_failures bumps");
+
+            aura::serve::g_current_fiber = nullptr;
+            aura::core::resource_quota::set_current_quota_tenant(0);
+            aura::core::provenance::set_multi_tenant_env_active(false);
+            apply_dev_audit_defaults();
+            set_mode(SandboxMode::Off);
+            g_capability_registry().clear_for_test();
+            if (!prev_sb_s.empty())
+                ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+            else
+                ::unsetenv("AURA_SANDBOX");
+        }
+
+        std::println("\n--- #4017 AC2: same-tenant spawn OK ---");
+        {
+            const char* prev_sb = std::getenv("AURA_SANDBOX");
+            std::string prev_sb_s = prev_sb ? prev_sb : "";
+            ::setenv("AURA_SANDBOX", "restricted", 1);
+            apply_production_audit_defaults();
+            set_mode(SandboxMode::Restricted);
+            aura::core::provenance::set_multi_tenant_env_active(true);
+            g_capability_registry().clear_for_test();
+
+            Scheduler sched(1);
+            auto parent = std::make_unique<Fiber>([] {});
+            parent->set_assigned_tenant_id(11);
+            aura::serve::g_current_fiber = parent.get();
+            aura::core::resource_quota::set_current_quota_tenant(11);
+
+            AgentSpec same;
+            same.name = "4017-same-A";
+            same.body = [] {};
+            same.tenant_id = 11;
+            auto h = spawn_agent_with_mailbox(sched, std::move(same));
+            CHECK(h.ok, "4017 AC2: same-tenant spawn ok");
+            CHECK(h.fiber != nullptr, "4017 AC2: fiber present");
+            if (h.fiber)
+                CHECK(h.fiber->assigned_tenant_id() == 11, "4017 AC2: stamped tenant 11");
+
+            aura::serve::g_current_fiber = nullptr;
+            aura::core::resource_quota::set_current_quota_tenant(0);
+            aura::core::provenance::set_multi_tenant_env_active(false);
+            apply_dev_audit_defaults();
+            set_mode(SandboxMode::Off);
+            g_capability_registry().clear_for_test();
+            if (!prev_sb_s.empty())
+                ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+            else
+                ::unsetenv("AURA_SANDBOX");
+        }
+
+        std::println("\n--- #4017 AC3: TenantAdmin cross-tenant OK ---");
+        {
+            const char* prev_sb = std::getenv("AURA_SANDBOX");
+            std::string prev_sb_s = prev_sb ? prev_sb : "";
+            // Grant TA under Soft first (#3409 bootstrap order).
+            apply_dev_audit_defaults();
+            set_mode(SandboxMode::Off);
+            g_capability_registry().clear_for_test();
+            grant_ta(11);
+
+            ::setenv("AURA_SANDBOX", "restricted", 1);
+            apply_production_audit_defaults();
+            set_mode(SandboxMode::Restricted);
+            aura::core::provenance::set_multi_tenant_env_active(true);
+
+            Scheduler sched(1);
+            auto parent = std::make_unique<Fiber>([] {});
+            parent->set_assigned_tenant_id(11);
+            aura::serve::g_current_fiber = parent.get();
+            aura::core::resource_quota::set_current_quota_tenant(11);
+
+            AgentSpec cross;
+            cross.name = "4017-ta-cross";
+            cross.body = [] {};
+            cross.tenant_id = 22;
+            auto h = spawn_agent_with_mailbox(sched, std::move(cross));
+            CHECK(h.ok, "4017 AC3: TenantAdmin cross-tenant spawn ok");
+            if (h.fiber)
+                CHECK(h.fiber->assigned_tenant_id() == 22, "4017 AC3: stamped requested tenant 22");
+
+            aura::serve::g_current_fiber = nullptr;
+            aura::core::resource_quota::set_current_quota_tenant(0);
+            aura::core::provenance::set_multi_tenant_env_active(false);
+            apply_dev_audit_defaults();
+            set_mode(SandboxMode::Off);
+            g_capability_registry().clear_for_test();
+            if (!prev_sb_s.empty())
+                ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+            else
+                ::unsetenv("AURA_SANDBOX");
+        }
+
+        std::println("\n--- #4017 AC4: Soft/Off zero-force (foreign tenant still admits) ---");
+        {
+            apply_dev_audit_defaults();
+            set_mode(SandboxMode::Off);
+            ::setenv("AURA_SANDBOX", "off", 1);
+            aura::core::provenance::set_multi_tenant_env_active(false);
+            g_capability_registry().clear_for_test();
+
+            Scheduler sched(1);
+            auto parent = std::make_unique<Fiber>([] {});
+            parent->set_assigned_tenant_id(11);
+            aura::serve::g_current_fiber = parent.get();
+            aura::core::resource_quota::set_current_quota_tenant(11);
+
+            AgentSpec soft;
+            soft.name = "4017-soft-cross";
+            soft.body = [] {};
+            soft.tenant_id = 22;
+            auto h = spawn_agent_with_mailbox(sched, std::move(soft));
+            CHECK(h.ok, "4017 AC4: Soft allows cross-tenant (no new force)");
+
+            aura::serve::g_current_fiber = nullptr;
+            aura::core::resource_quota::set_current_quota_tenant(0);
+            g_capability_registry().clear_for_test();
+            ::unsetenv("AURA_SANDBOX");
+        }
+
+        std::println("\n--- #4017 AC5: Aura orch:spawn-agent :tenant-id spoof deny ---");
+        {
+            const char* prev_sb = std::getenv("AURA_SANDBOX");
+            std::string prev_sb_s = prev_sb ? prev_sb : "";
+            apply_dev_audit_defaults();
+            set_mode(SandboxMode::Off);
+            g_capability_registry().clear_for_test();
+
+            ::setenv("AURA_SANDBOX", "restricted", 1);
+            apply_production_audit_defaults();
+            set_mode(SandboxMode::Restricted);
+
+            CompilerService cs;
+            auto& ev = cs.evaluator();
+            ev.set_capability_tenant_id(11);
+            auto okv = cs.eval(
+                R"((hash-ref (orch:spawn-agent "aura-4017-spoof" (lambda () 1) :tenant-id 22) "ok"))");
+            CHECK(okv && is_bool(*okv) && !as_bool(*okv),
+                  "4017 AC5: Aura non-TA :tenant-id=B → ok=#f");
+            auto errv = cs.eval(
+                R"((hash-ref (orch:spawn-agent "aura-4017-spoof-err" (lambda () 1) :tenant-id 22) "error"))");
+            CHECK(errv.has_value(), "4017 AC5: error field present on spoof deny");
+            auto ok_same = cs.eval(
+                R"((hash-ref (orch:spawn-agent "aura-4017-same" (lambda () 1) :tenant-id 11) "ok"))");
+            CHECK(ok_same && is_bool(*ok_same) && as_bool(*ok_same),
+                  "4017 AC5: Aura same-tenant :tenant-id=A → ok=#t");
+
+            apply_dev_audit_defaults();
+            set_mode(SandboxMode::Off);
+            g_capability_registry().clear_for_test();
+            if (!prev_sb_s.empty())
+                ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+            else
+                ::unsetenv("AURA_SANDBOX");
+        }
     }
 
     // ── Issue #3245: C++ long-lived hosts must call ensure_reclaimed_cleanup
