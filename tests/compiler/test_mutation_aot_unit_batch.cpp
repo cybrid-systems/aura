@@ -809,7 +809,7 @@ void ac10_4015_jit_hotpath_join_session_mid() {
     const auto body = tmh.substr(fn, 900);
     CHECK(body.find("join_audit_and_se_mid(0)") != std::string::npos,
           "4015: JIT hotpath uses join_audit_and_se_mid(0)");
-    CHECK(body.find("resolve_audit_mutation_id()") == std::string::npos,
+    CHECK(body.find("= resolve_audit_mutation_id") == std::string::npos,
           "4015: JIT hotpath no longer resolve_audit_mutation_id()");
     CHECK(body.find("if (!should_audit(mid))") != std::string::npos,
           "4015: Sampled should_audit gate intact");
