@@ -77,6 +77,7 @@ using aura::compiler::types::is_bool;
 using aura::compiler::types::is_int;
 using aura::orch::AgentHandle;
 using aura::orch::cancel_and_drain_fiber;
+using aura::orch::ensure_reclaimed_cleanup;
 using aura::orch::g_orch_module_stats;
 using aura::orch::join_agent;
 using aura::orch::JoinPolicy;
@@ -3246,14 +3247,78 @@ static void ac3953_2_fiber_cancel_aborts_wait() {
     auto* prev = aura::serve::g_current_fiber;
     aura::serve::g_current_fiber = joiner.get();
     const auto wr = wait_reclaimed_body(h, /*timeout_ms=*/5000);
-    aura::serve::g_current_fiber = prev;
     CHECK(wr.status == JoinStatus::Cancelled, "3953: cancel aborts wait");
     CHECK(!wr.cleanup_completed, "3953: no cleanup on cancel (#2661)");
     CHECK(h.reserved_memory_bytes == 2048, "3953: reservation held on cancel");
     CHECK(wr.wait_us < 500000, "3953: cancel is prompt (not the 5s deadline)");
+    // Issue #3999: Cancelled second-wait must keep owed cleanup. Keep the
+    // cancelled joiner as current fiber so poll_once still aborts.
+    h.must_wait_reclaimed = true;
+    const auto ens = ensure_reclaimed_cleanup(h);
+    CHECK(ens.status == JoinStatus::Cancelled, "3999: ensure Cancelled (poll abort)");
+    CHECK(h.must_wait_reclaimed, "3999: ensure keeps must_wait on Cancelled");
+    CHECK(h.reserved_memory_bytes == 2048, "3999: ensure does not release reservation");
+    using aura::orch::AbandonReclaimedOpts;
+    using aura::orch::AbandonReclaimedOutcome;
+    AbandonReclaimedOpts opts;
+    opts.max_second_wait_ms = 50;
+    const auto ar = h.abandon_reclaimed(opts);
+    aura::serve::g_current_fiber = prev;
+    CHECK(ar.wait_status == JoinStatus::Cancelled, "3999: abandon wait is Cancelled");
+    CHECK(ar.outcome != AbandonReclaimedOutcome::Cleaned, "3999: abandon ≠ Cleaned");
+    CHECK(ar.outcome != AbandonReclaimedOutcome::Abandoned, "3999: abandon ≠ Timeout Abandoned");
+    CHECK(h.must_wait_reclaimed, "3999: abandon keeps must_wait");
+    CHECK(h.reserved_memory_bytes == 2048, "3999: abandon does not release reservation");
+    CHECK(!ar.mailbox_detached && !ar.name_cleared, "3999: no detach/name clear on Cancelled");
     target->set_state(FiberState::Done);
     target->note_body_exit_if_reclaimed();
     h.finish_reclaimed_cleanup_on_dtor();
+}
+
+static void ac3999_1_soft_cancelled_zero_cost() {
+    std::println("\n--- #3999 AC: Soft !must_wait ensure/abandon stay no-op ---");
+    apply_dev_audit_defaults();
+    auto target = std::make_unique<Fiber>([] {});
+    target->mark_reclaimed();
+    AgentHandle h;
+    h.ok = true;
+    h.fiber = target.get();
+    h.reserved_memory_bytes = 1024;
+    CHECK(!h.must_wait_reclaimed, "3999 Soft: must_wait unset");
+    const auto ens = ensure_reclaimed_cleanup(h);
+    CHECK(ens.status == JoinStatus::Invalid, "3999 Soft: ensure Invalid (zero wait)");
+    CHECK(ens.wait_us == 0, "3999 Soft: ensure zero wait_us");
+    using aura::orch::AbandonReclaimedOpts;
+    using aura::orch::AbandonReclaimedOutcome;
+    AbandonReclaimedOpts opts;
+    opts.max_second_wait_ms = 50;
+    const auto ar = h.abandon_reclaimed(opts);
+    CHECK(ar.outcome == AbandonReclaimedOutcome::Invalid, "3999 Soft: abandon Invalid");
+    CHECK(h.reserved_memory_bytes == 1024, "3999 Soft: reservation held");
+    apply_dev_audit_defaults();
+}
+
+static void ac3999_2_source_cite() {
+    std::println("\n--- #3999 AC: source-cite Cancelled owed cleanup; no invent ---");
+    const auto spawn = read_file("src/orch/agent_spawn.h");
+    CHECK(spawn.find("kCancelledReclaimedMustWaitIssue = 3999") != std::string::npos,
+          "3999: stamp");
+    CHECK(spawn.find("Issue #3999") != std::string::npos, "3999: cite");
+    const auto ens = spawn.find("ensure_reclaimed_cleanup(AgentHandle& h)");
+    CHECK(ens != std::string::npos, "3999: ensure present");
+    const auto ewin = spawn.substr(ens, 2200);
+    CHECK(ewin.find("JoinStatus::Cancelled") != std::string::npos,
+          "3999: ensure treats Cancelled as owed");
+    const auto ab = spawn.find("abandon_reclaimed(AgentHandle& h, AbandonReclaimedOpts opts");
+    CHECK(ab != std::string::npos, "3999: abandon present");
+    const auto awin = spawn.substr(ab, 2200);
+    CHECK(awin.find("wr.status == serve::JoinStatus::Cancelled") != std::string::npos,
+          "3999: abandon Cancelled arm");
+    CHECK(awin.find("wr.status != serve::JoinStatus::Timeout") == std::string::npos,
+          "3999: non-Timeout-as-Cleaned removed");
+    CHECK(spawn.find("schema-3999") == std::string::npos, "3999: no new query key");
+    CHECK(read_file("tests/orch/test_issue_3999.cpp").empty(), "3999: no test_issue_3999.cpp");
+    CHECK(read_file("docs/design/3999-cancelled-reclaimed.md").empty(), "3999: no docs/design");
 }
 
 int run_test_join_drain_reclaim() {
@@ -7614,6 +7679,8 @@ int run_test_join_drain_reclaim() {
     std::println("\n=== Issue #3953: reclaim wait yields on fiber; repeat join short ===");
     ac3953_1_repeat_join_short_budget();
     ac3953_2_fiber_cancel_aborts_wait();
+    ac3999_1_soft_cancelled_zero_cost();
+    ac3999_2_source_cite();
     {
         const auto spawn = read_file("src/orch/agent_spawn.h");
         CHECK(spawn.find("Issue #3953") != std::string::npos, "3953: cite");

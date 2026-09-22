@@ -143,6 +143,10 @@ inline constexpr int kAbandonedLiveNameReuseIssue = 3805;
 // Invalid. Keep must_wait; set quota_recycled_pending for host/stats.
 // Soft / Off: helper stays production-gated (unchanged).
 inline constexpr int kQuotaRecycleMustWaitSsotIssue = 3841;
+// Issue #3999: wait_reclaimed Cancelled (#3953 cooperative poll) is not
+// Done. ensure keeps must_wait; abandon is not Cleaned. Reservation /
+// mailbox stay until Ok or Timeout abandon. Soft !must_wait stays no-op.
+inline constexpr int kCancelledReclaimedMustWaitIssue = 3999;
 
 // Issue #3842: AgentScope::sweep_reclaimed_pending drains Scope-owned
 // Reclaimed-pending handles (reservation/mailbox/name plane) without
@@ -3467,7 +3471,10 @@ struct JoinViaTokenResult {
     // (#2661 no-early-free). Ok path clears the flag (#3110 AC1 — host
     // sees cleanup completed). wait_reclaimed_body does not release /
     // detach on Timeout, so the flag is the only host-visible signal.
-    h.must_wait_reclaimed = (wr.status == serve::JoinStatus::Timeout);
+    // Issue #3999: Cancelled (#3953 cooperative abort) is the same owed
+    // face — must_wait stays so maybe_auto_wait cannot silent-Done.
+    h.must_wait_reclaimed =
+        (wr.status == serve::JoinStatus::Timeout || wr.status == serve::JoinStatus::Cancelled);
     // Issue #3529 / #3564: long-lived host recycle. After auto-wait
     // Timeout, if production + body still alive + reclaim-stuck ≥
     // timeout, release quota (not body-stack). Soft / age < timeout:
@@ -3503,11 +3510,16 @@ struct JoinViaTokenResult {
     const auto t0 = std::chrono::steady_clock::now();
     std::uint64_t waited_us = 0;
     for (;;) {
-        waited_us += ensure_reclaimed_cleanup(h).wait_us;
+        const auto wr = ensure_reclaimed_cleanup(h);
+        waited_us += wr.wait_us;
         // Issue #3841: must_wait stays true after quota-only recycle, so
         // this Done exit means body exit + cleanup — never quota alone.
         if (!h.must_wait_reclaimed)
             return waited_us; // body exited + cleanup landed (AC1)
+        // Issue #3999: Cancelled keeps must_wait; do not spin the 50ms
+        // ensure until drain×8 — poll_once returns immediately on cancel.
+        if (wr.status == serve::JoinStatus::Cancelled)
+            return waited_us;
         const auto elapsed_ms =
             static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
                                            std::chrono::steady_clock::now() - t0)
@@ -3645,11 +3657,17 @@ abandon_reclaimed(AgentHandle& h, AbandonReclaimedOpts opts = {}) noexcept {
     out.still_running = wr.still_running;
     h.wait_reclaimed_used = true;
     h.wait_reclaimed_timeout = (wr.status == serve::JoinStatus::Timeout);
-    if (wr.status != serve::JoinStatus::Timeout) {
+    if (wr.status == serve::JoinStatus::Ok) {
         h.must_wait_reclaimed = false;
         h.quota_recycled_pending = false; // #3841
         out.outcome = AbandonReclaimedOutcome::Cleaned;
         out.reservation_released = (h.reserved_memory_bytes == 0);
+        return out;
+    }
+    if (wr.status == serve::JoinStatus::Cancelled) {
+        // Issue #3999: Cancelled ≠ Cleaned. Keep must_wait / deferred;
+        // reservation+mailbox still held until Ok or Timeout abandon.
+        out.outcome = AbandonReclaimedOutcome::Invalid;
         return out;
     }
     // Timeout: typed abandon. Mailbox attach only — never body-stack.

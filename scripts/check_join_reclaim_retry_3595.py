@@ -53,7 +53,7 @@ REQUIRED: tuple[tuple[str, str, str], ...] = (
     ),
     (
         "src/orch/agent_spawn.h",
-        r"waited_us\s*\+=\s*ensure_reclaimed_cleanup\(h\)\.wait_us;",
+        r"ensure_reclaimed_cleanup\(h\)",
         "3595 AC1: every wait goes through the ensure_reclaimed_cleanup SSOT",
     ),
     (
