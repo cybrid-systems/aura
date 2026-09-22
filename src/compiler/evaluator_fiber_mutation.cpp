@@ -1566,6 +1566,10 @@ extern "C" int aura_evaluator_try_hold_budget_fail_closed_at_safepoint() noexcep
 // Fiber::check_gc_safepoint does, then force_release_hold_budget_inbody
 // (existing ABI). Soft/Off: one reject_enabled load, return 0. Happy
 // path (no force-safepoint / cancel / urgent): a few peeks, no unlock.
+// Issue #4032: host eval_flat / lockless mutate bodies also call this
+// helper (expand poll edges under outermost Guard). Exotic C++ bodies
+// that never hit any poll edge remain unsupported — Ready sticky / join
+// Reclaimed; no second unlock / no foreign unlock.
 extern "C" int aura_jit_poll_hold_budget_safepoint() noexcept {
     using namespace aura::compiler;
     if (!mutation_hold_budget_reject_enabled())

@@ -143,17 +143,16 @@ static std::string closest_match(std::string_view name, std::span<const std::str
     } while (0)
 
 // Issue #3693: production hold-budget consume on the holder thread
-// during eval_flat / lockless mutate bodies. Soft/Off: one load, no
-// check_gc_safepoint. Happy path (cancel not armed): two loads.
+// during eval_flat / lockless mutate bodies. Soft/Off: peek-only.
 // After consume, callers must not keep writing — return the Diagnostic.
+// Issue #4032: expand to the #3988 host/native poll edge — honor
+// is_force_safepoint_requested + cancel + urgent inbody the same way
+// JIT Jump / IR opcode stride / native dispatch do (via
+// aura_jit_poll_hold_budget_safepoint → Fiber::check_gc_safepoint() →
+// force_release_hold_budget_inbody). Soft/Off: helper returns 0.
 [[nodiscard]] static std::optional<Diagnostic> eval_flat_hold_budget_safepoint_poll() noexcept {
-    if (!mutation_hold_budget_reject_enabled())
-        return std::nullopt;
-    if (aura::serve::aura_hold_budget_cancel_armed() == 0)
-        return std::nullopt;
-    const bool held = aura_evaluator_mutation_boundary_depth() > 0;
-    aura::serve::Fiber::check_gc_safepoint();
-    if (held && aura_evaluator_mutation_boundary_depth() == 0) {
+    // Shared #3988 ABI (force-safepoint / cancel / urgent). Soft/Off: 0.
+    if (aura_jit_poll_hold_budget_safepoint() != 0) {
         return Diagnostic{ErrorKind::InternalError, "hold-budget-cancel: outermost force-released"};
     }
     return std::nullopt;

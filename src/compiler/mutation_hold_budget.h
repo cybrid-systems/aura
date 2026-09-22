@@ -551,6 +551,15 @@ inline constexpr int kMutationHoldBudgetNoEdgeQuarantineIssue = 3859;
 // Soft/Off: peek-only (reject_enabled gate). No new query key.
 inline constexpr int kMutationHoldBudgetNoEdgeOpcodePollIssue = 3988;
 inline constexpr std::uint32_t kHoldBudgetOpcodePollStride = 32;
+// Issue #4032: expand #3988/#3693 poll edges for remaining host/native
+// loops under outermost Guard (eval_flat now honors force-safepoint via
+// aura_jit_poll_hold_budget_safepoint). Exotic C++/host bodies that never
+// hit Jump / IR stride / add_mutate / native / eval_flat poll edges (and
+// never yield) remain an unsupported surface — must use add_mutate /
+// yield / aura_jit_poll_hold_budget_safepoint. No second unlock protocol;
+// foreign fiber never unlocks. Fail-closed face: Ready residual sticky +
+// join Reclaimed (#3826 / #3764). Soft/Off: zero force-unlock.
+inline constexpr int kMutationHoldBudgetHostNativePollExpandIssue = 4032;
 inline constexpr std::uint64_t kMutationHoldBudgetNoEdgeQuarantineSloMultiple = 4;
 inline std::atomic<std::uint64_t> g_hold_budget_no_edge_quarantine_total{0};
 // First no-edge sighting of the current window (steady ns; 0 = none).

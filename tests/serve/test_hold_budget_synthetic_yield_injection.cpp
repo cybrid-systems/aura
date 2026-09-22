@@ -1702,6 +1702,9 @@ int run_test_hold_budget_eval_flat_safepoint_3693() {
               "3693 AC1: poll helper in eval_flat");
         CHECK(efl.find("Fiber::check_gc_safepoint()") != std::string::npos,
               "3693 AC1: reuses check_gc_safepoint");
+        CHECK(efl.find("aura_jit_poll_hold_budget_safepoint") != std::string::npos,
+              "3693/#4032 AC1: host poll shares #3988 ABI");
+        CHECK(efl.find("Issue #4032") != std::string::npos, "3693/#4032 AC1: cites expand");
         const auto poll = efl.find("eval_flat_hold_budget_safepoint_poll");
         const auto loop = efl.find("while (true) {");
         CHECK(poll != std::string::npos && loop != std::string::npos, "3693 AC1: hot loop present");
@@ -1744,10 +1747,15 @@ int run_test_hold_budget_eval_flat_safepoint_3693() {
         const auto efl = read_file("src/compiler/evaluator_eval_flat.cpp");
         const auto hp = efl.find("eval_flat_hold_budget_safepoint_poll");
         const auto hwin = hp == std::string::npos ? std::string{} : efl.substr(hp, 900);
-        CHECK(hwin.find("mutation_hold_budget_reject_enabled()") != std::string::npos,
-              "3693 AC3: poll gates on reject_enabled");
-        CHECK(hwin.find("aura_hold_budget_cancel_armed()") != std::string::npos,
-              "3693 AC3: poll gates on cancel_armed");
+        // Issue #4032: Soft/Off gate lives inside aura_jit_poll_hold_budget_
+        // safepoint (reject_enabled); cancel/force peeks are in that helper.
+        CHECK(hwin.find("aura_jit_poll_hold_budget_safepoint") != std::string::npos,
+              "3693/#4032 AC3: Soft gate via shared #3988 poll ABI");
+        const auto efm = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+        const auto jp = efm.find("aura_jit_poll_hold_budget_safepoint");
+        const auto jwin = jp == std::string::npos ? std::string{} : efm.substr(jp, 900);
+        CHECK(jwin.find("mutation_hold_budget_reject_enabled()") != std::string::npos,
+              "3693/#4032 AC3: shared poll Soft-gates on reject_enabled");
         aura::compiler::clear_mutation_hold_budget_forced_unlock_for_test();
         aura::compiler::clear_mutation_hold_budget_inbody_window_for_test();
         CompilerService cs;
@@ -2067,6 +2075,45 @@ int run_test_hold_budget_opcode_poll_3988() {
     return failed == 0 ? 0 : 1;
 }
 
+// Issue #4032: expand host/native Guard poll edges (#3988/#3693 residual).
+// Exotic no-poll C++ bodies under outermost Guard stay unsupported —
+// Ready sticky / join Reclaimed (#3826/#3764); no second unlock / no foreign unlock.
+int run_test_hold_budget_host_native_poll_4032() {
+    std::println("=== Issue #4032: host/native Guard poll expand + exotic fail-closed ===");
+    int saved_failed = aura::test::g_failed;
+    int saved_passed = aura::test::g_passed;
+
+    const auto mh = read_file("src/compiler/mutation_hold_budget.h");
+    const auto efl = read_file("src/compiler/evaluator_eval_flat.cpp");
+    const auto efm = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+    CHECK(mh.find("kMutationHoldBudgetHostNativePollExpandIssue") != std::string::npos,
+          "4032: stamp");
+    CHECK(mh.find("unsupported surface") != std::string::npos ||
+              mh.find("unsupported") != std::string::npos,
+          "4032: documents exotic unsupported surface");
+    CHECK(mh.find("No second unlock") != std::string::npos ||
+              mh.find("No second unlock protocol") != std::string::npos ||
+              mh.find("second unlock") != std::string::npos,
+          "4032: no second unlock protocol");
+    CHECK(mh.find("foreign fiber never unlocks") != std::string::npos ||
+              mh.find("foreign") != std::string::npos,
+          "4032: foreign never unlocks");
+    CHECK(efl.find("Issue #4032") != std::string::npos, "4032: eval_flat cites expand");
+    CHECK(efl.find("aura_jit_poll_hold_budget_safepoint") != std::string::npos,
+          "4032: eval_flat uses shared #3988 poll");
+    CHECK(efm.find("aura_jit_poll_hold_budget_safepoint") != std::string::npos,
+          "4032: shared poll ABI present");
+    CHECK(mh.find("schema-4032") == std::string::npos, "4032: no new query key");
+    CHECK(read_file("tests/serve/test_issue_4032.cpp").empty(), "4032: no invent");
+    CHECK(read_file("docs/design/4032-host-native-poll.md").empty(), "4032: no docs/design");
+
+    int failed = aura::test::g_failed - saved_failed;
+    int passed = aura::test::g_passed - saved_passed;
+    std::println("\n=== #4032 host/native poll expand: {} passed, {} failed ===", passed, failed);
+    return failed == 0 ? 0 : 1;
+}
+
+
 
 // Issue #3859: quarantine-latency SLO (extend #3325) — the no-edge face
 // past 4× the inbody window bound bumps the quarantine counter once per
@@ -2308,6 +2355,9 @@ int main() {
     const int rc14 = run_test_hold_budget_opcode_poll_3988();
     if (rc14 != 0)
         return rc14;
+    const int rc15 = run_test_hold_budget_host_native_poll_4032();
+    if (rc15 != 0)
+        return rc15;
     return rc1 != 0
                ? rc1
                : (rc2 != 0
