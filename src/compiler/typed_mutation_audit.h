@@ -3404,6 +3404,9 @@ inline void reject_stamper_live_goal_linear_root_mismatch(TypeLinearCommitProof&
 // persist-reject) have passed. persist helper stamps epoch/fingerprint
 // with publish_green_face=false; Guard commits the face after those arms.
 inline constexpr int kOutermostGreenAfterPostPersistDenyIssue = 3984;
+// Issue #4030: grant_type_export_authority must align with deferred-green
+// commit (not invent a second proof face). Soft/Off never defers.
+inline constexpr int kTypeExportGrantAlignDeferredGreenIssue = 4030;
 inline thread_local std::uint8_t g_tls_deferred_outermost_green_would_allow{0};
 inline thread_local std::uint8_t g_tls_deferred_outermost_green_linear_ok{0};
 inline std::atomic<std::uint8_t> g_inject_linear_synth_after_persist_for_test{0};
@@ -3413,13 +3416,22 @@ inline void drop_deferred_outermost_green_proof() noexcept {
     g_tls_deferred_outermost_green_linear_ok = 0;
 }
 
-inline void commit_deferred_outermost_green_proof() noexcept {
-    if (g_tls_deferred_outermost_green_would_allow != 0 &&
-        g_tls_deferred_outermost_green_linear_ok != 0) {
+[[nodiscard]] inline bool deferred_outermost_green_pending() noexcept {
+    return g_tls_deferred_outermost_green_would_allow != 0 &&
+           g_tls_deferred_outermost_green_linear_ok != 0;
+}
+
+// Returns true when observer-visible green was published (deferred TLS was
+// armed). Callers that pair grant_type_export_authority with this commit
+// (#4030) must grant only on true.
+[[nodiscard]] inline bool commit_deferred_outermost_green_proof() noexcept {
+    const bool commit = deferred_outermost_green_pending();
+    if (commit) {
         publish_last_proof_face(true, true);
         publish_type_linear_proof_outcome(kTypeLinearProofOutcomeStamped);
     }
     drop_deferred_outermost_green_proof();
+    return commit;
 }
 
 inline TypeLinearCommitProof build_type_linear_commit_proof_from_live(
