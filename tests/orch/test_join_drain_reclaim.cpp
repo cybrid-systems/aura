@@ -244,6 +244,62 @@ static void ac3880_3_source_cite() {
     CHECK(read_file("tests/orch/test_issue_3880.cpp").empty(), "3880 AC3: no test_issue_3880.cpp");
 }
 
+// Issue #4002: production MultiFiberMailbox::close detaches live attachers
+// (defense-in-depth; AgentHandle/reap/abandon still detach first).
+static void ac4002_1_prod_close_detaches() {
+    using aura::serve::Fiber;
+    using aura::serve::mf_mailbox::kMailboxCloseDetachIssue;
+    using aura::serve::mf_mailbox::MultiFiberMailbox;
+    std::println("\n--- #4002 AC1: production close with live attacher detaches ---");
+    CHECK(kMailboxCloseDetachIssue == 4002, "4002: issue stamp");
+    apply_production_audit_defaults();
+    auto fiber_owned = std::make_unique<Fiber>([] {});
+    auto mb = std::make_shared<MultiFiberMailbox>();
+    mb->attach(fiber_owned.get());
+    CHECK(fiber_owned->mailbox() == mb.get(), "4002 AC1: attached before close");
+    CHECK(mb->attacher_count() == 1, "4002 AC1: one attacher");
+    mb->close();
+    CHECK(mb->closed(), "4002 AC1: mailbox closed");
+    CHECK(fiber_owned->mailbox() == nullptr, "4002 AC1: Fiber::mailbox_ cleared");
+    CHECK(mb->attacher_count() == 0, "4002 AC1: attachers empty");
+    CHECK(!fiber_owned->is_done(), "4002 AC1: body-stack untouched (#2661)");
+    apply_dev_audit_defaults();
+}
+
+static void ac4002_2_soft_close_no_detach() {
+    using aura::serve::Fiber;
+    using aura::serve::mf_mailbox::MultiFiberMailbox;
+    std::println("\n--- #4002 AC2: Soft close does not detach (zero extra walk) ---");
+    apply_dev_audit_defaults();
+    auto fiber_owned = std::make_unique<Fiber>([] {});
+    auto mb = std::make_shared<MultiFiberMailbox>();
+    mb->attach(fiber_owned.get());
+    mb->close();
+    CHECK(mb->closed(), "4002 AC2: Soft still closes the queue");
+    CHECK(fiber_owned->mailbox() == mb.get(), "4002 AC2: Soft does not detach");
+    CHECK(mb->attacher_count() == 1, "4002 AC2: attachers remain");
+}
+
+static void ac4002_3_source_cite() {
+    std::println("\n--- #4002 AC3: source-cite + no invent; #3880/#3905 untouched ---");
+    const auto mb = read_file("src/serve/multi_fiber_mailbox.h");
+    const auto spawn = read_file("src/orch/agent_spawn.h");
+    const auto fiber = read_file("src/serve/fiber.h");
+    CHECK(mb.find("kMailboxCloseDetachIssue = 4002") != std::string::npos, "4002 AC3: stamp");
+    CHECK(mb.find("Issue #4002") != std::string::npos, "4002 AC3: close cites #4002");
+    CHECK(mb.find("aura_production_defaults_active_probe") != std::string::npos,
+          "4002 AC3: production-gated close");
+    CHECK(spawn.find("Issue #3880") != std::string::npos, "4002 AC3: dtor detach #3880 kept");
+    CHECK(spawn.find("mailbox->detach(fiber)") != std::string::npos,
+          "4002 AC3: AgentHandle still detaches first");
+    CHECK(fiber.find("Issue #3905") != std::string::npos, "4002 AC3: reap detach #3905 kept");
+    CHECK(mb.find("query:4002") == std::string::npos, "4002 AC3: no new query key");
+    CHECK(spawn.find("class AgentRegistry") == std::string::npos, "4002 AC3: no AgentRegistry");
+    CHECK(read_file("tests/orch/test_issue_4002.cpp").empty(), "4002 AC3: no test_issue_4002.cpp");
+    CHECK(read_file("docs/design/4002-mailbox-close-detach.md").empty(),
+          "4002 AC3: no docs/design/4002-*");
+}
+
 // Issue #3905: orphan hard-reap must not free Fiber while a
 // Reclaimed-pending name-table / AgentHandle still holds fiber*
 // (complement of #3880 — handle drops mailbox while Fiber live).
@@ -7588,6 +7644,9 @@ int run_test_join_drain_reclaim() {
     ac3880_1_live_dtor_detaches_mailbox();
     ac3880_2_soft_no_detach();
     ac3880_3_source_cite();
+    ac4002_1_prod_close_detaches();
+    ac4002_2_soft_close_no_detach();
+    ac4002_3_source_cite();
     ac3334_1_abandon_releases_without_body_stack();
     ac3334_2_forget_path_unchanged();
     ac3334_3_soft_zero_cost();
