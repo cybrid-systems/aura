@@ -2258,8 +2258,12 @@ static void ac3693_eval_flat_hold_budget_edge_cite() {
           "3693: eval_flat cites hold-budget poll");
     CHECK(efl.find("Fiber::check_gc_safepoint()") != std::string::npos,
           "3693: reuses check_gc_safepoint (same-fiber consume)");
-    CHECK(efl.find("mutation_hold_budget_reject_enabled()") != std::string::npos,
-          "3693: Soft/Off skips extra safepoint");
+    // Issue #4032: the Soft/Off gate moved into the shared #3988 poll ABI
+    // (strong def in evaluator_fiber_mutation.cpp checks
+    // mutation_hold_budget_reject_enabled() first; Soft/Off returns 0).
+    CHECK(read_file("src/compiler/evaluator_fiber_mutation.cpp")
+                  .find("mutation_hold_budget_reject_enabled()") != std::string::npos,
+          "3693: Soft/Off skips extra safepoint (gate in shared poll ABI)");
     CHECK(efl.find("EVAL_FLAT_HOLD_BUDGET_POLL()") != std::string::npos,
           "3693: lockless helper / hot loop poll");
     CHECK(read_file("tests/serve/test_issue_3693.cpp").empty(), "3693: no invent test_issue_3693");

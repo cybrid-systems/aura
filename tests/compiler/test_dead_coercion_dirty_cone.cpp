@@ -1262,6 +1262,13 @@ static void ac3986_shape_partial_attributed_and_typechange_soak() {
         apply_production_audit_defaults();
         reset_residual_castop_persist_for_test();
         aura_hot_update_reset_deopt_storm_state_for_test();
+        // #4011 CI heal: remount-heavy members latch the process-global
+        // remount-last-zero strip face; live commit_readiness then denies
+        // this member's cache commits even though it does not test
+        // remount-last-zero. Clear the latch so AC4 exercises the
+        // type-change/impact path it owns.
+        aura::compiler::typed_audit::g_remount_last_zero_strip_face.store(
+            0, std::memory_order_relaxed);
         aura_hot_update_set_shape_storm_active(1);
         CHECK(residual_castop_persist_size() == 0, "3986 AC4: persist empty");
         CompilerService cs;
@@ -1274,11 +1281,21 @@ static void ac3986_shape_partial_attributed_and_typechange_soak() {
                   .has_value(),
               "3986 AC4: set-code");
         CHECK(cs.eval("(eval-current)").has_value(), "3986 AC4: eval");
-        if (!cs.get_define_v2("g"))
+        auto* g_cached = cs.get_define_v2("g");
+        if (!g_cached)
             (void)cs.eval("(compile:cache-define \"g\")");
-        CHECK(cs.get_define_v2("g") != nullptr, "3986 AC4: g cached");
+        g_cached = cs.get_define_v2("g");
+        CHECK(g_cached != nullptr, "3986 AC4: g cached");
+        if (!g_cached) {
+            // Never null-deref the soak: restore state and bail (AC4 is the
+            // last block of this member, so returning skips nothing else).
+            aura_hot_update_set_shape_storm_active(0);
+            apply_dev_audit_defaults();
+            reset_residual_castop_persist_for_test();
+            return;
+        }
         cs.public_record_dependency("g", "f");
-        const auto hash = cs.get_define_v2("g")->source_hash;
+        const auto hash = g_cached->source_hash;
         const auto defuse0 = cs.get_define_v2("g")->version_stamp_.defuse_version;
         const auto skips0 = load_u64(dead_coercion_dirty_cone_skips);
         const auto impact0 =
