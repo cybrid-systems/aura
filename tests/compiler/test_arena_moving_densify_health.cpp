@@ -887,6 +887,79 @@ static void ac3633_health_probe_and_publish() {
           "3633: health publish face consumes the reconciliation flags");
 }
 
+
+// Issue #4019: Soft live_compact gen / remapped_pins must not be read as
+// Moving window_would_allow_mutate green. Additive query key
+// moving-window-green mirrors Moving publish only.
+static void ac4019_soft_gen_not_moving_window_green() {
+    std::println("\n--- #4019: Soft gen bump ≠ Moving window-green ---");
+    CHECK(mdh::kSoftNotMovingWindowGreenIssue == 4019, "4019: issue stamp");
+
+    // AC1: last Moving publish deny → moving-window-green = 0 (and stays
+    // deny even if Soft-face counters conceptually advance — Soft does not
+    // publish a Moving window).
+    mdh::reset_moving_densify_health_for_test();
+    mdh::publish_last_moving_densify_window(/*had*/ true, /*pin*/ true, /*incomplete*/ true,
+                                            /*objects_moved*/ 3, /*untracked_kept*/ 1,
+                                            /*root_fail*/ 0);
+    auto s = mdh::snapshot();
+    CHECK(!s.would_allow_mutate, "4019 AC1: Moving would_allow_mutate=0");
+    CHECK(s.had_moving_densify, "4019 AC1: had_moving_densify from Moving publish");
+    const auto seq_deny = s.window_seq;
+
+    CompilerService cs;
+    CHECK(href(cs, "would-allow-mutate") == 0, "4019 AC1: query would-allow-mutate=0");
+    CHECK(href(cs, "moving-window-green") == 0, "4019 AC1: moving-window-green=0 under deny");
+    CHECK(href(cs, "schema-4019") == 4019, "4019 AC1: schema-4019");
+    CHECK(href(cs, "issue-4019") == 4019, "4019 AC1: issue-4019");
+
+    // Soft live_compact must not rewrite the Moving window. Re-snapshot
+    // without a Moving republish — Soft restamp path (#3677) only restamps
+    // IR/JIT; it leaves had_moving_densify / would_allow as last Moving.
+    s = mdh::snapshot();
+    CHECK(s.window_seq == seq_deny, "4019 AC1: Soft-absent path leaves window_seq");
+    CHECK(!s.would_allow_mutate, "4019 AC1: deny persists without Moving republish");
+    CHECK(href(cs, "moving-window-green") == 0,
+          "4019 AC1: Soft gen bump face → moving-window-green still 0");
+
+    // AC2: healthy Moving publish flips green; Soft counters still not writers.
+    mdh::publish_last_moving_densify_window(true, true, false, 2, 0, 0);
+    s = mdh::snapshot();
+    CHECK(s.would_allow_mutate, "4019 AC2: healthy Moving allows");
+    CHECK(href(cs, "moving-window-green") == 1, "4019 AC2: moving-window-green=1");
+    CHECK(href(cs, "would-allow-mutate") == 1, "4019 AC2: would-allow-mutate unchanged alias");
+
+    // AC3: source-cite — Soft restamp site documents Soft≠Moving green;
+    // Phase-5 / auto-arm remain sole Moving window writers; Soft counters
+    // / old query keys untouched.
+    const auto gc = read_file("src/compiler/evaluator_gc.cpp");
+    const auto q = read_file("src/compiler/evaluator_primitives_obs_jit.cpp");
+    const auto hh = read_file("src/core/moving_densify_health.hh");
+    CHECK(gc.find("#4019") != std::string::npos &&
+              gc.find("moving-window-green") != std::string::npos &&
+              gc.find("NOT publish a Moving window") != std::string::npos,
+          "4019 AC3: Soft restamp site cites Soft≠Moving green");
+    CHECK(q.find("moving-window-green") != std::string::npos &&
+              q.find("schema-4019") != std::string::npos,
+          "4019 AC3: query exposes moving-window-green + schema-4019");
+    CHECK(hh.find("kSoftNotMovingWindowGreenIssue") != std::string::npos &&
+              hh.find("#4019") != std::string::npos,
+          "4019 AC3: health header stamps #4019");
+    // Soft compact still does not call publish_last_moving_densify_window
+    // at the Soft restamp site (writers remain Phase-5 / auto-arm).
+    const auto soft_site = gc.find("Issue #3677 / #4019");
+    CHECK(soft_site != std::string::npos, "4019 AC3: Soft #3677/#4019 restamp site present");
+    const auto soft_fn_end = gc.find("return result;", soft_site);
+    const auto soft_block =
+        soft_fn_end == std::string::npos ? std::string{} : gc.substr(soft_site, soft_fn_end - soft_site);
+    CHECK(soft_block.find("publish_last_moving_densify_window") == std::string::npos,
+          "4019 AC3: Soft restamp site does not publish Moving window");
+    CHECK(soft_block.find("unified_restamp_after_boundary") != std::string::npos,
+          "4019 AC3: Soft restamp still restamps Densify face");
+    CHECK(read_file("tests/compiler/test_issue_4019.cpp").empty(),
+          "4019 AC3: no test_issue_4019.cpp (extend existing)");
+}
+
 // Issue #3739: production auto-arm live_compact(Moving) must publish the
 // densify window and Densify-restamp (same sites as Phase-5). Compact-hook
 // re_pin skips restamp when workspace_flat() is null.
@@ -1121,8 +1194,9 @@ int run_test_arena_moving_densify_health() {
               "3370 AC6: existing test file cites #3370");
     }
     ac3739_auto_arm_publishes_window();
+    ac4019_soft_gen_not_moving_window_green();
     std::println(
-        "\n=== #2619/#2682/#2775/#3123/#3200/#3368/#3370/#3633/#3739: {} passed, {} failed ===",
+        "\n=== #2619/#2682/#2775/#3123/#3200/#3368/#3370/#3633/#3739/#4019: {} passed, {} failed ===",
         g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

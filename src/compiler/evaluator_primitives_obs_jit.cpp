@@ -12319,7 +12319,7 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
             totals.moving_blocked_precondition_total =
                 aura::ast::g_moving_blocked_precondition_total.load(std::memory_order_relaxed);
             const auto s = mdh::snapshot(totals);
-            auto* ht = FlatHashTable::create(query_hash_capacity_for(73));
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(84));
             if (!ht)
                 return make_void();
             bool overflowed = false;
@@ -12364,6 +12364,16 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
                       static_cast<std::int64_t>(s.moving_blocked_precondition_total));
             insert_kv("window-seq", static_cast<std::int64_t>(s.window_seq));
             insert_kv("would-allow-mutate", s.would_allow_mutate ? 1 : 0);
+            // Issue #4019: Agent-facing Moving-window green. Mirrors
+            // window_would_allow_mutate from the last Moving publish only —
+            // Soft live_compact gen / remapped_pins / Soft recycle counters
+            // must NOT be read as this key (Soft≠Moving green). Phase-5 and
+            // production auto-arm Moving remain the sole window writers
+            // (#3739). Additive — would-allow-mutate and Soft counters
+            // unchanged.
+            insert_kv("moving-window-green", s.would_allow_mutate ? 1 : 0);
+            insert_kv("schema-4019", mdh::kSoftNotMovingWindowGreenIssue);
+            insert_kv("issue-4019", mdh::kSoftNotMovingWindowGreenIssue);
             insert_kv("force-reason-code", s.force_reason_code);
             insert_kv("agent-throttle", s.agent_throttle ? 1 : 0);
             insert_kv("agent-throttle-set-total",

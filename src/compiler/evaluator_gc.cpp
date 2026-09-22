@@ -1287,14 +1287,17 @@ Evaluator::CompactSweepResult Evaluator::compact_sweep(void* sweep_buffers) {
     // immediate commit-barrier. Quiet means unknown, not invalid/green.
     (void)typed_audit::rebind_linear_proof_after_root_migration();
 
-    // Issue #3677: a Soft compact that bumped the arena gen / invalidated
+    // Issue #3677 / #4019: a Soft compact that bumped the arena gen / invalidated
     // LifetimePins must restamp the IR/JIT triad immediately — compact_sweep
     // runs at a GC safepoint with no guaranteed following mutate/steal, so
     // pins would sit fail-closed (red) until the next boundary restamp.
     // Same site vocabulary as the Phase-5 Moving densify restamp. Soft does
     // NOT publish a Moving window (had_moving_densify keeps the last Moving
     // publish — Phase-5 and production auto-arm Moving are the window
-    // writers, #3739). Unlock first: the
+    // writers, #3739). Soft gen / remapped_pins / live_compact counters are
+    // Soft-face only: Agents must NOT read them as Moving green — consult
+    // query:arena-moving-densify-health key moving-window-green /
+    // would-allow-mutate (#4019 Soft≠Moving green). Unlock first: the
     // restamp triad does not take heap_mutex and must not run under it.
     // Issue #3679: EnvFrame Guard + mandatory scan_skip_freed + densify
     // ownership-exit scan now run AFTER pair compact + live_compact(Soft) —
