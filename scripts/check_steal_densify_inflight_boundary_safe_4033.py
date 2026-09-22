@@ -92,8 +92,7 @@ def _rows(ss: str, ss_h: str, build: str, allow: str) -> list[str]:
     densify_at = arm.find(DENSIFY_PROBE)
     if snap_at < 0 or densify_at < 0 or densify_at < snap_at:
         fails.append(
-            "AC1: densify_in_flight_for( must appear after "
-            "is_at_mutation_boundary_safe(snap) in BoundarySafe arm"
+            "AC1: densify_in_flight_for( must appear after is_at_mutation_boundary_safe(snap) in BoundarySafe arm"
         )
     must("aura_fiber_evaluator_id_for_steal_safety(stolen)", "AC1 victim-eval id", arm)
     # Composition-only: still OR'd into BoundarySafe fail_bits (no new bit).

@@ -3,7 +3,9 @@
 
 Contract (one row per AC):
   AC1  abort / mutate-fail / fiber reclaim drain leftover linear_roots
-       (live_count==0) via unpin_all_linear_roots. Nested outer roots
+       (live_count==0) via the scoped drain surface (#4031 era:
+       unpin_linear_roots_scoped_for_fiber / owned_by / except;
+       unpin_all_linear_roots is the test-only entry). Nested outer roots
        stay until outermost fail or reclaim.
   AC2  Responsibility is a single audit face: post-join =
        Fiber::release_orphan_roots; post-abort =
@@ -48,9 +50,9 @@ def main() -> int:
     must("unpin_all_linear_roots", "AC1 helper", lp)
     must("kLinearRootAbortReleaseIssue", "AC1 stamp", lp)
     must("g_linear_root_abort_release_total", "AC1 counter", lp)
-    must("unpin_all_linear_roots", "AC1 post-failure", gc)
-    must("unpin_all_linear_roots", "AC1 post-join", fib)
-    must("Issue #3023", "AC1 gc cite", gc)
+    must("unpin_linear_roots_scoped_for_fiber", "AC1 post-failure (scoped era)", gc)
+    must("unpin_linear_roots_scoped_for_fiber(this)", "AC1 post-join", fib)
+    must("Issue #3438 / #4031", "AC1 gc cite (scoped era)", gc)
     must("Issue #3023", "AC1 fiber cite", fib)
     if "AgentRegistry" in lp[lp.find("Issue #3023") : lp.find("Issue #3023") + 2000]:
         fails.append("AC1: must not introduce AgentRegistry")

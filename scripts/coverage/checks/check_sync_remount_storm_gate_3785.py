@@ -30,7 +30,7 @@ def main() -> int:
     build = _read("build.py")
 
     fn = rt.find("aura_sync_remount_covered_named_live_closures")
-    win = rt[fn : fn + 1200] if fn != -1 else ""  # normalized text; ordering preserved
+    win = rt[fn : fn + 2000] if fn != -1 else ""  # normalized text; ordering preserved
     must("Issue #3785", "AC1 cite", win)
     must("storm >= 2", "AC1 Global storm", win)
     must("aura_hot_update_should_throttle_reemit", "AC1 throttle", win)

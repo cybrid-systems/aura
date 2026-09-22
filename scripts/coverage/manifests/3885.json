@@ -6,7 +6,7 @@
       "ac": "AC1",
       "path": "src/compiler/hot_update_registry.cpp",
       "contains": [
-        "Issue #3885",
+        "Issue #3745 / #3885 / #4023",
         "prev | covered",
         "maybe_stamp_heal_reason_last_success"
       ]
