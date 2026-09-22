@@ -650,10 +650,11 @@ static void ac3966_1_stale_proof_does_not_shadow_session() {
           "3966 AC1: leftover proof still visible");
     {
         auto prov = make_grant_provenance(session, /*force_bind=*/true, /*node_id=*/0, /*fiber=*/0);
-        CHECK(g_capability_registry().grant(51, "mut-3966", Effect::Mutate, prov,
-                                            /*single_use=*/false,
-                                            /*session_bound=*/true, 51),
-              "3966 AC1: session grant landed");
+        // Issue #3996: fixture mint is grant_session (caller_principal==0
+        // authorized token). Passing caller_principal=51 would take the
+        // Evaluator-attributed arm and require TenantAdmin.
+        g_capability_registry().grant_session(51, "mut-3966", Effect::Mutate, prov,
+                                              /*single_use=*/false);
     }
     CapabilityGrant row{};
     CHECK(g_capability_registry().find_grant(51, "mut-3966", row), "3966 AC1: grant row");
@@ -694,9 +695,8 @@ static void ac3966_2_nested_abort_keeps_outer_session() {
     {
         auto prov =
             make_grant_provenance(outer_mid, /*force_bind=*/true, /*node_id=*/0, /*fiber=*/0);
-        CHECK(g_capability_registry().grant(52, "mut-3966-outer", Effect::Mutate, prov,
-                                            /*single_use=*/false, /*session_bound=*/true, 52),
-              "3966 AC2: outer session grant landed");
+        g_capability_registry().grant_session(52, "mut-3966-outer", Effect::Mutate, prov,
+                                              /*single_use=*/false);
     }
     CHECK(ev.require_effect(static_cast<std::uint16_t>(kEffectMutate), "test:3966-nested", 0,
                             /*ref_tenant=*/52),

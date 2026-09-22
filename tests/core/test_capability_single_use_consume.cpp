@@ -74,6 +74,7 @@ using aura::core::capability::g_capability_registry;
 using aura::core::capability::has_effect;
 using aura::core::capability::kCapabilityMidRevokeEpochHonestIssue;
 using aura::core::capability::kEffectsEffectiveRetainIssue;
+using aura::core::capability::kSessionHighBitsGrantFenceIssue;
 using aura::core::capability::make_grant_provenance;
 using aura::core::capability::reset_capability_effects_for_test;
 using aura::core::capability::snapshot_capability_effect_stats;
@@ -1843,6 +1844,104 @@ static void ac3561_5_source_cite() {
           "3561 AC5: no docs/design/3561-*");
 }
 
+// ── Issue #3996: session high-bits mint needs TenantAdmin ───────────
+// grant_effect_session same-tenant Mutate without TA denies with SE
+// session-grant-needs-tenant-admin. grant_locked exemption is token-based
+// (grant_session / caller_principal==0), not shape-based session_bound.
+// Soft/Off still short-circuits.
+
+static void ac3996_1_unprivileged_session_mutate_denied() {
+    std::println("\n--- #3996 AC1: unprivileged session Mutate deny + SE ---");
+    reset_all();
+    CHECK(kSessionHighBitsGrantFenceIssue == 3996, "3996 AC1: issue stamp");
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_capability_tenant_id(7);
+    set_mode(SandboxMode::Restricted);
+    aura::core::sandbox::set_mode(SandboxMode::Restricted);
+    ev.set_effect_sandbox_mode(1);
+    aura::core::bump_mutation_epoch(1);
+    const auto mid = aura::core::current_mutation_epoch();
+    CHECK(mid != 0, "3996 AC1: live mid so grant is not mid-refused");
+    const auto seq0 = g_security_event_ring().seq.load(std::memory_order_acquire);
+    ev.grant_effect_session(7, "mut-3996-unpriv", kEffectMutate, mid, /*single_use=*/false);
+    CapabilityGrant g{};
+    CHECK(!g_capability_registry().find_grant(7, "mut-3996-unpriv", g),
+          "3996 AC1: no session Mutate row without TA");
+    CHECK(!ev.require_effect(kEffectMutate, "test:3996-ac1"),
+          "3996 AC1: require_effect denies (zero side effect)");
+    const auto* se = ring_lookup_reason("session-grant-needs-tenant-admin", /*lookback=*/32);
+    CHECK(se != nullptr, "3996 AC1: SE session-grant-needs-tenant-admin");
+    CHECK(se->tenant_id == 7, "3996 AC1: SE tenant is caller");
+    CHECK(g_security_event_ring().seq.load(std::memory_order_acquire) > seq0,
+          "3996 AC1: ring advanced");
+    reset_all();
+}
+
+static void ac3996_2_ta_holder_session_mutate_lands() {
+    std::println("\n--- #3996 AC2: TA holder session Mutate lands ---");
+    reset_all();
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_capability_tenant_id(8);
+    set_mode(SandboxMode::Restricted);
+    aura::core::sandbox::set_mode(SandboxMode::Restricted);
+    ev.set_effect_sandbox_mode(1);
+    seed_tenant_admin(8, 2);
+    ev.grant_effect_session(8, "mut-3996-admin", kEffectMutate, /*mid=*/2, /*single_use=*/false);
+    CapabilityGrant g{};
+    CHECK(g_capability_registry().find_grant(8, "mut-3996-admin", g),
+          "3996 AC2: TA holder session Mutate landed");
+    CHECK(g.session_bound, "3996 AC2: session_bound stamped");
+    EffectProvenance call{};
+    call.mutation_id = 2;
+    call.epoch = 2;
+    CHECK(check_and_record_effect(Effect::Mutate, Effect::Mutate, call, 8, "3996-ac2", false, true),
+          "3996 AC2: require/check allows");
+    reset_all();
+}
+
+static void ac3996_3_soft_unchanged() {
+    std::println("\n--- #3996 AC3: Soft/Off session Mutate still lands without TA ---");
+    reset_all();
+    set_mode(SandboxMode::Off);
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_capability_tenant_id(9);
+    ev.grant_effect_session(9, "mut-3996-soft", kEffectMutate, /*mid=*/3, /*single_use=*/false);
+    CapabilityGrant g{};
+    CHECK(g_capability_registry().find_grant(9, "mut-3996-soft", g),
+          "3996 AC3: Soft session Mutate landed (zero extra fence)");
+    reset_all();
+}
+
+static void ac3996_4_source_cite() {
+    std::println("\n--- #3996 AC4: source-cite locked session fence; no invent ---");
+    const auto cap = read_file("src/core/capability_model.hh");
+    const auto sec = read_file("src/compiler/evaluator_security.cpp");
+    CHECK(cap.find("kSessionHighBitsGrantFenceIssue = 3996") != std::string::npos,
+          "3996 AC4: stamp");
+    CHECK(cap.find("authorized_session_mint") != std::string::npos,
+          "3996 AC4: grant_locked token-based exemption");
+    CHECK(cap.find("high_bits && !session_bound") == std::string::npos,
+          "3996 AC4: shape-based session exemption removed");
+    const auto sess = sec.find("void Evaluator::grant_effect_session(");
+    CHECK(sess != std::string::npos, "3996 AC4: grant_effect_session present");
+    const auto win = sec.substr(sess, 8000);
+    CHECK(win.find("Issue #3996") != std::string::npos, "3996 AC4: session surface cites");
+    CHECK(win.find("session-grant-needs-tenant-admin") != std::string::npos, "3996 AC4: SE reason");
+    CHECK(win.find("is_high_risk && !is_admin") != std::string::npos,
+          "3996 AC4: same-tenant high-risk TA fence");
+    CHECK(win.find("force_bind && (foreign_target || is_high_risk)") != std::string::npos,
+          "3996 AC4: production high-risk joins the locked arm");
+    CHECK(read_file("tests/core/test_issue_3996.cpp").empty(), "3996 AC4: no test_issue_3996.cpp");
+    CHECK(!std::filesystem::exists("docs/design/3996-session-grant-ta.md"),
+          "3996 AC4: no docs/design");
+    CHECK(!std::filesystem::exists("tests/issues/test_issue_3996.cpp"),
+          "3996 AC4: no tests/issues invent");
+    reset_all();
+}
+
 // ── Issue #3839: plain grant_capability(string) production high-risk session_bound ──
 // Align string path with grant_effect_capability (#3561). Soft/Off: no force.
 // String "self-evo" aligns with grant_macro_self_evo (#3721) session_bound.
@@ -3072,21 +3171,25 @@ int run_test_capability_single_use_consume() {
     {
         std::println("\n--- #2944 AC4: durable grants unaffected by session revoke ---");
         reset_all();
-        set_mode(SandboxMode::Restricted);
-        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
-
         CompilerService cs;
         auto& ev = cs.evaluator();
-        ev.set_effect_sandbox_mode(1);
         ev.set_capability_tenant_id(22);
-        // Durable Mutate (sticky) + session Mutate under same mid.
-        ev.grant_effect_durable(22, "mut-2944-dur", kEffectMutate, /*mid=*/30);
-        ev.grant_effect_session(22, "mut-2944-sess2", kEffectMutate, /*mid=*/30,
-                                /*single_use=*/false);
-
+        // Seed TA while Off so Restricted durable+session can land
+        // (#2967 reason + #3996 session high-bits fence).
+        ev.grant_capability("tenant-admin");
+        set_mode(SandboxMode::Restricted);
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+        ev.set_effect_sandbox_mode(1);
         EffectProvenance prov{};
         prov.epoch = 30;
         prov.mutation_id = 30;
+        // Non-session durable Mutate (production grant_effect_durable is
+        // session_bound per #3177 and would die on mid-exit). TA held.
+        CHECK(g_capability_registry().grant(22, "mut-2944-dur", Effect::Mutate, prov,
+                                            /*single_use=*/false, /*session_bound=*/false, 22),
+              "AC4: durable Mutate landed");
+        ev.grant_effect_session(22, "mut-2944-sess2", kEffectMutate, /*mid=*/30,
+                                /*single_use=*/false);
         CHECK(check_and_record_effect(Effect::Mutate, Effect::Mutate, prov, 22, "2944-both", false,
                                       true),
               "AC4: allow with durable+session");
@@ -3514,6 +3617,10 @@ int run_test_grant_effect_capability_session_3561() {
     ac3561_3_soft_and_durable_unchanged();
     ac3561_4_string_mirror_keeps_session();
     ac3561_5_source_cite();
+    ac3996_1_unprivileged_session_mutate_denied();
+    ac3996_2_ta_holder_session_mutate_lands();
+    ac3996_3_soft_unchanged();
+    ac3996_4_source_cite();
     std::println("\n=== #3561 results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
