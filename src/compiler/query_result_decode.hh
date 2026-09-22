@@ -19,6 +19,8 @@
 namespace aura::compiler::query_result_decode {
 
 inline constexpr int kQueryResultHashResolveIssue = 3424;
+// Issue #3991: add_mutate first-arg hash joins require_effect_on_ref.
+inline constexpr int kQueryResultHashAddMutateIsolationIssue = 3991;
 
 // Same validator as evaluator_primitives_query_workspace.cpp (moved here
 // so mutate.cpp can share it). Soft / empty matches → Fresh after epoch.
@@ -122,6 +124,7 @@ enum class HashNodeKind : std::uint8_t { NotHash = 0, Ok = 1, Stale = 2, BadArg 
 struct HashNodeResolve {
     HashNodeKind kind = HashNodeKind::NotHash;
     aura::ast::NodeId node = 0;
+    std::uint64_t tenant_id = 0;
     const char* err_kind = "bad-arg";
     std::string err_msg;
 };
@@ -322,6 +325,7 @@ resolve_query_result_match(types::EvalValue arg, const StringHeap& heap, const P
     }
     r.kind = HashNodeKind::Ok;
     r.node = static_cast<aura::ast::NodeId>(qr.matches[pick].node_id);
+    r.tenant_id = qr.matches[pick].tenant_id;
     return r;
 }
 #endif // AURA_QUERY_RESULT_DECODE_FRESHNESS_ONLY

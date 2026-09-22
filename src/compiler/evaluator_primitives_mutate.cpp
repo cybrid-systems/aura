@@ -1032,6 +1032,33 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                             target_node = static_cast<aura::ast::NodeId>(packed->id);
                             ref_tenant = packed->tenant_id;
                         }
+                    } else if (is_hash(a[0])) {
+                        // Issue #3991: production QueryResult hash joins the
+                        // wrapper isolation gate packed pair already uses.
+                        // Resolve with tenant/fiber 0 so freshness is occupancy
+                        // / wrap; IsolationDeny is require_effect_on_ref (same
+                        // string as packed). Soft/Off: no extra consult
+                        // (sandbox + effect mode both Off).
+                        const bool hash_iso =
+                            aura::compiler::typed_audit::production_defaults_active() ||
+                            ev.effect_sandbox_mode() != 0 || ev.sandbox_mode();
+                        if (hash_iso) {
+                            if (auto* ws = ev.workspace_flat()) {
+                                using aura::compiler::query_result_decode::HashNodeKind;
+                                using aura::compiler::query_result_decode::
+                                    parse_query_result_match_index;
+                                using aura::compiler::query_result_decode::
+                                    resolve_query_result_match;
+                                auto hr = resolve_query_result_match(
+                                    a[0], ev.string_heap_, ev.pairs_, *ws, /*tenant=*/0,
+                                    /*fiber=*/0, op,
+                                    parse_query_result_match_index(a, ev.keyword_table()));
+                                if (hr.kind != HashNodeKind::Ok)
+                                    return mev(hr.err_kind, hr.err_msg);
+                                target_node = hr.node;
+                                ref_tenant = hr.tenant_id;
+                            }
+                        }
                     }
                 }
 

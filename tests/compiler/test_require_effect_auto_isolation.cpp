@@ -2308,6 +2308,11 @@ static void ac3640_gate_single_spine_source_cite() {
           "3640 AC2: resolve_mutate_node_arg still unpacks (#3415 AC7)");
     CHECK(read_file("build.py").find("check_unpack_stable_ref_arg_v2_3396") != std::string::npos,
           "3640 AC2: #3396 v2 linter still wired");
+    CHECK(mut.find("Issue #3991") != std::string::npos,
+          "3991: add_mutate hash consult cites #3991");
+    CHECK(mut.find("is_hash(a[0])") != std::string::npos, "3991: wrapper consults hash");
+    CHECK(mut.find("resolve_query_result_match") != std::string::npos,
+          "3991: reuses resolve_query_result_match");
 }
 
 

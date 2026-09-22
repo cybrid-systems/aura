@@ -31,8 +31,14 @@
 
 #include "compiler/mutation_concurrency_health.hh"
 #include "compiler/typed_mutation_audit.h"
+#include "compiler/observability_metrics.h"
+#include "compiler/security_capabilities.h"
+#include "compiler/grant_test_support.hh"
 #include "core/sandbox.hh"
 #include "core/workspace_epoch.hh"
+#include "core/workspace_isolation.hh"
+#include "core/provenance_tracker.hh"
+#include "core/capability_model.hh"
 
 #include <cstdint>
 #include <cstring>
@@ -1797,6 +1803,111 @@ void test_ac3990_4_source_cite() {
     }
 }
 
+void test_ac3991_1_hash_foreign_tenant_denied_before_write() {
+    std::print("AC3991/AC1 -- production hash tenant A, mutate as B → isolation deny\n");
+    using aura::compiler::security::kCapWildcard;
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::core::capability::Effect;
+    using aura::core::capability::effect_for_cap_name;
+    using aura::core::capability::g_capability_registry;
+    aura::core::workspace_isolation::g_workspace_isolation().set_strict_sandbox_linked(false);
+    aura::core::provenance::clear_last_stamped_node_for_test();
+    aura::core::capability::reset_capability_effects_for_test();
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+    aura::core::provenance::set_multi_tenant_env_active(true);
+    apply_dev_audit_defaults();
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    expect_true("3991 AC1: set-code", cs.eval("(set-code \"(define (t3991 x) 1)\")").has_value());
+    expect_true("3991 AC1: eval", cs.eval("(eval-current)").has_value());
+    auto grant_tenant = [&](std::uint64_t t) {
+        ev.set_capability_tenant_id(t);
+        aura::core::workspace_isolation::g_workspace_isolation().set_current_tenant(t,
+                                                                                    "3991-tenant");
+        g_capability_registry().grant(t, "tenant-admin", Effect::TenantAdmin,
+                                      aura_test_grant_prov());
+        g_capability_registry().grant(t, kCapWildcard, effect_for_cap_name(kCapWildcard),
+                                      aura_test_grant_prov());
+        ev.grant_capability(std::string(kCapWildcard));
+        g_capability_registry().grant(t, "tenant-admin", Effect::TenantAdmin,
+                                      aura_test_grant_prov(), false, false,
+                                      /*caller_principal=*/t);
+        g_capability_registry().grant(t, kCapWildcard, effect_for_cap_name(kCapWildcard),
+                                      aura_test_grant_prov(), false, false,
+                                      /*caller_principal=*/t);
+    };
+    aura::compiler::typed_audit::clear_type_linear_commit_proof_for_test();
+    grant_tenant(99);
+    ev.arm_production_audit_defaults_for_test();
+    expect_true("3991 AC1: bind find hash",
+                cs.eval("(define qr3991 (query :find \"t3991\" :as-query-result #t))").has_value());
+    auto qr = cs.eval("qr3991");
+    expect_true("3991 AC1: production find is hash", qr && is_hash(*qr));
+    auto* ws = ev.workspace_flat();
+    const auto log0 = ws ? ws->mutation_log_size() : 0;
+    grant_tenant(1);
+    ev.set_effect_sandbox_mode(1);
+    auto* m = static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
+    const auto iso0 = m ? m->mutate_force_isolation_denied_total.load() : 0;
+    expect_true("3991 AC1: bind add_mutate hash",
+                cs.eval("(define r3991 (mutate:replace-type qr3991 \"Int\"))").has_value());
+    auto eq = cs.eval("(equal? (car r3991) \"tenant-isolation-denied\")");
+    expect_true("3991 AC1: hash face is tenant-isolation-denied",
+                eq && is_bool(*eq) && as_bool(*eq));
+    expect_true("3991 AC1: mutate_force_isolation_denied_total increments",
+                m && m->mutate_force_isolation_denied_total.load() > iso0);
+    expect_true("3991 AC1: zero topology write", ws && ws->mutation_log_size() == log0);
+    ev.disarm_production_audit_defaults_for_test();
+    aura::core::provenance::set_multi_tenant_env_active(false);
+    apply_dev_audit_defaults();
+}
+
+void test_ac3991_2_soft_no_extra_consult() {
+    std::print("AC3991/AC2 -- Soft hash keeps 2-arg require_effect; no extra consult\n");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    apply_dev_audit_defaults();
+    CompilerService cs;
+    expect_true("3991 AC2: set-code", cs.eval("(set-code \"(define (s3991 x) 1)\")").has_value());
+    expect_true("3991 AC2: eval", cs.eval("(eval-current)").has_value());
+    expect_true(
+        "3991 AC2: bind Soft hash",
+        cs.eval("(define qr3991s (query :find \"s3991\" :as-query-result #t))").has_value());
+    expect_true("3991 AC2: stamp foreign tenant",
+                cs.eval("(hash-set! qr3991s \"tenant-id\" 99)").has_value());
+    expect_true("3991 AC2: Soft mutate hash returns",
+                cs.eval("(define r3991s (mutate:replace-type qr3991s \"Int\"))").has_value());
+    auto eq = cs.eval("(equal? (car r3991s) \"tenant-isolation-denied\")");
+    expect_true("3991 AC2: Soft does not isolation-deny hash tenant",
+                !(eq && is_bool(*eq) && as_bool(*eq)));
+}
+
+void test_ac3991_3_source_cite() {
+    std::print("AC3991/AC3 -- source-cite hash wrapper consult; no invent\n");
+    std::ifstream f_mut("src/compiler/evaluator_primitives_mutate.cpp");
+    std::string mut((std::istreambuf_iterator<char>(f_mut)), std::istreambuf_iterator<char>());
+    std::ifstream f_dec("src/compiler/query_result_decode.hh");
+    std::string dec((std::istreambuf_iterator<char>(f_dec)), std::istreambuf_iterator<char>());
+    expect_true("3991 AC3: stamp",
+                dec.find("kQueryResultHashAddMutateIsolationIssue = 3991") != std::string::npos);
+    expect_true("3991 AC3: add_mutate cites #3991", mut.find("Issue #3991") != std::string::npos);
+    expect_true("3991 AC3: is_hash first-arg", mut.find("is_hash(a[0])") != std::string::npos);
+    expect_true("3991 AC3: reuses resolve_query_result_match",
+                mut.find("resolve_query_result_match") != std::string::npos);
+    expect_true("3991 AC3: production_defaults gate",
+                mut.find("production_defaults_active()") != std::string::npos);
+    expect_true("3991 AC3: tenant-isolation-denied retained",
+                mut.find("tenant-isolation-denied") != std::string::npos);
+    expect_true("3991 AC3: no schema-3991", mut.find("schema-3991") == std::string::npos);
+    {
+        std::ifstream f("tests/compiler/test_issue_3991.cpp");
+        expect_true("3991 AC3: no test_issue_3991.cpp", !f.good());
+    }
+    {
+        std::ifstream f("docs/design/3991-hash-add-mutate-isolation.md");
+        expect_true("3991 AC3: no docs/design", !f.good());
+    }
+}
+
 
 // Issue #3827: query:children / query:parent still finished with plain
 // end_query_epoch and returned bare NodeId lists under Production — Agents
@@ -2205,6 +2316,9 @@ int main() {
     test_ac3990_2_cow_tenant_fail_closed();
     test_ac3990_3_soft_unchanged_shape();
     test_ac3990_4_source_cite();
+    test_ac3991_1_hash_foreign_tenant_denied_before_write();
+    test_ac3991_2_soft_no_extra_consult();
+    test_ac3991_3_source_cite();
     test_ac1_struct_extension();
     test_ac2_push_match_defaults();
     test_ac3_push_match_full_provenance();
@@ -2286,6 +2400,6 @@ int main() {
     test_ac3827_4_soft_and_source();
     std::print("All #3103 + #3137 + #3231 + #3286 + #3311 + #3389 + #3395 + #3424 + "
                "#3449 + #3660 + #3695 + #3696 + #3766 + #3767 + #3827 + #3895 + #3896 + "
-               "#3990 AC tests PASSED\n");
+               "#3990 + #3991 AC tests PASSED\n");
     return 0;
 }
