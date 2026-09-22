@@ -31,6 +31,9 @@ inline constexpr int kMovingDensifyFailClosedIssue = 2495;
 inline constexpr int kProductionAutoArmMovingIssue = 3123;
 // Issue #3200: production pin/EnvFrame Soft-gate must arm sticky + throttle.
 inline constexpr int kMovingPinGuardSoftGateIssue = 3200;
+// Issue #4019: Soft live_compact gen/remapped_pins ≠ Moving window green.
+// Agent admit uses Moving publish + window_would_allow_mutate only.
+inline constexpr int kSoftNotMovingWindowGreenIssue = 4019;
 
 // ── Last densify window (Soft / no densify → healthy defaults) ──
 inline std::atomic<std::uint64_t> g_last_objects_moved{0};
@@ -210,6 +213,9 @@ struct MovingDensifyHealthSnapshot {
 
 // Window is safe for next mutate when: no densify, or densify held pin +
 // no incomplete remap + no untracked kept + no root-remap fails.
+// Issue #4019: this predicate is Moving-publish only. Soft live_compact
+// gen / remapped_pins / Soft recycle counters must never be joined as
+// "Moving green" — Agents use query key moving-window-green (mirrors this).
 [[nodiscard]] inline bool window_would_allow_mutate(bool had_densify, bool pin_held,
                                                     bool incomplete, std::uint64_t untracked_kept,
                                                     std::uint64_t root_fail) noexcept {
