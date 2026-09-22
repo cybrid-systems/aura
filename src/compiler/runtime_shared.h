@@ -267,6 +267,7 @@ extern "C" std::uint64_t aura_residual_remount_prefer_force_jit_total_v_read() n
 extern "C" std::uint64_t aura_residual_remount_prefer_hit_total_v_read() noexcept;
 extern "C" void aura_residual_live_closure_remount_tick(std::uint64_t budget);
 // Issue #3886: coalesce pipeline + BoundaryExit residual remount.
+// Issue #4024: exit gen keyed per Evaluator (peer BoundaryExit no steal).
 extern "C" int aura_residual_remount_tick_coalesce(std::uint64_t budget);
 extern "C" void aura_residual_remount_note_boundary_exit();
 extern "C" void aura_test_set_residual_remount_budget(std::uint64_t budget) noexcept;

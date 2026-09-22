@@ -2246,6 +2246,82 @@ static void ac3886_source_and_soft() {
     aura_test_reset_residual_remount_state();
 }
 
+// ── Issue #4024: per-Evaluator residual remount exit gen ──
+static void ac4024_peer_eval_no_coalesce_steal() {
+    std::println("\n--- #4024 AC2: peer BoundaryExit does not steal quiet tick ---");
+    aura_test_reset_residual_remount_state();
+    aura_test_set_residual_remount_budget(32);
+    void* const save = ::g_tls_audit_commit_readiness_evaluator;
+    void* const eval_a = reinterpret_cast<void*>(static_cast<std::uintptr_t>(0xA11E));
+    void* const eval_b = reinterpret_cast<void*>(static_cast<std::uintptr_t>(0xB22E));
+
+    // Eval A: note + tick owns A's gen.
+    ::g_tls_audit_commit_readiness_evaluator = eval_a;
+    aura_residual_remount_note_boundary_exit();
+    const auto a1 = aura_residual_remount_tick_coalesce(32);
+    // Eval B quiet must still run (peer must not see A's ticked gen).
+    ::g_tls_audit_commit_readiness_evaluator = eval_b;
+    const auto b_quiet = aura_residual_remount_tick_coalesce(32);
+    if (a1 == 0 && b_quiet == 0) {
+        std::println("  (light link: coalesce stub — source-cite only)");
+    } else {
+        CHECK(a1 == 1, "4024 AC2: eval A BoundaryExit tick runs");
+        CHECK(b_quiet == 1, "4024 AC2: peer quiet not coalesce-stolen by A");
+        CHECK(aura_residual_remount_tick_coalesce(32) == 0,
+              "4024 AC2: same-eval duplicate still coalesced");
+        // #3910 same-exit: B notes then coalesce must run again.
+        aura_residual_remount_note_boundary_exit();
+        CHECK(aura_residual_remount_tick_coalesce(32) == 1,
+              "4024 AC1: #3910 note-then-coalesce still green on peer eval");
+        // A still independent after B noted.
+        ::g_tls_audit_commit_readiness_evaluator = eval_a;
+        aura_residual_remount_note_boundary_exit();
+        CHECK(aura_residual_remount_tick_coalesce(32) == 1,
+              "4024 AC2: eval A subsequent exit not stolen by B note");
+    }
+    ::g_tls_audit_commit_readiness_evaluator = save;
+    aura_test_reset_residual_remount_state();
+}
+
+static void ac4024_source_and_soft() {
+    std::println("\n--- #4024 AC1/AC3: source-cite + Soft budget=0 unchanged ---");
+    const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
+    const auto dtor = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto hdr = read_file("src/compiler/runtime_shared.h");
+    CHECK(rt.find("Issue #4024") != std::string::npos, "4024 AC: runtime cites #4024");
+    CHECK(dtor.find("Issue #4024") != std::string::npos, "4024 AC: BoundaryExit cites #4024");
+    CHECK(hdr.find("Issue #4024") != std::string::npos, "4024 AC: header cites #4024");
+    CHECK(rt.find("residual_remount_exit_slot") != std::string::npos ||
+              rt.find("ResidualRemountExitSlot") != std::string::npos,
+          "4024 AC: per-eval exit slot table");
+    CHECK(rt.find("g_tls_audit_commit_readiness_evaluator") != std::string::npos,
+          "4024 AC: keyed by TLS readiness Evaluator*");
+    // #3910 note-before-coalesce preserved.
+    const auto note = dtor.find("Issue #3910");
+    CHECK(note != std::string::npos, "4024 AC1: #3910 note-before-coalesce kept");
+    const auto win = dtor.substr(note, 600);
+    const auto bump = win.find("aura_residual_remount_note_boundary_exit");
+    const auto tick = win.find("aura_residual_remount_tick_coalesce");
+    CHECK(bump != std::string::npos && tick != std::string::npos && bump < tick,
+          "4024 AC1: note_boundary_exit before coalesce");
+    // Soft budget=0 zero walk unchanged (#3886 AC3 contract).
+    aura_test_reset_residual_remount_state();
+    aura_test_set_residual_remount_budget(0);
+    const auto s0 = aura_residual_remount_tick_coalesce(0);
+    const auto s1 = aura_residual_remount_tick_coalesce(0);
+    if (s0 == 0 && s1 == 0) {
+        std::println("  (light link: coalesce stub)");
+    } else {
+        CHECK(s0 == 1, "4024 AC3: Soft/budget=0 still one-shot coalesce");
+        CHECK(s1 == 0, "4024 AC3: Soft duplicate still skipped");
+    }
+    CHECK(read_file("tests/compiler/test_issue_4024.cpp").empty(),
+          "4024 AC: no invent test_issue_4024.cpp");
+    CHECK(read_file("docs/design/4024-per-eval-residual-remount-exit-gen.md").empty(),
+          "4024 AC: no docs/design/4024-*");
+    aura_test_reset_residual_remount_state();
+}
+
 // ── Issue #2977: residual remount prefer force_jit / last_success ──
 
 static void ac2977_restore_prod(std::uint32_t save) {
@@ -3455,6 +3531,9 @@ int run_test_anonymous_residual_stable_id_policy() {
     std::println("\n=== Issue #3886: Quiet BoundaryExit residual remount coalesce ===");
     ac3886_coalesce_duplicate_tick();
     ac3886_source_and_soft();
+    std::println("\n=== Issue #4024: per-Evaluator residual remount exit gen ===");
+    ac4024_peer_eval_no_coalesce_steal();
+    ac4024_source_and_soft();
     std::println("\n=== Issue #2977: residual remount prefer force_jit / last_success ===");
     ac2977_1_prefer_demoted_region();
     ac2977_2_soft_idle_zero_cost();

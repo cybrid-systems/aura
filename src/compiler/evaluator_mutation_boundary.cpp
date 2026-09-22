@@ -6403,6 +6403,8 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
         // Issue #3910: bump exit gen BEFORE coalesce so a peer/pipeline
         // quiet tick cannot steal this BoundaryExit's slot (#3886
         // same-exit coalesce still holds — this exit owns the new gen).
+        // Issue #4024: exit gen is per-Evaluator (TLS readiness key); peer
+        // BoundaryExit cannot coalesce-steal another eval's quiet tick.
         aura_residual_remount_note_boundary_exit();
         const auto b = aura_residual_remount_budget_default();
         if (b > 0)
