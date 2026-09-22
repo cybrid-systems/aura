@@ -1058,8 +1058,7 @@ int run_test_concurrent_clone_hygiene_depth() {
               "4034 AC1: global stamped depth-limit by fiber A");
         CHECK(get_fiber_hygiene_metrics(kFiberA).last_limit_reason == kHygieneLimitReasonDepthLimit,
               "4034 AC1: fiber A holds depth-limit");
-        CHECK(get_fiber_hygiene_metrics(kFiberB).last_limit_reason == 0,
-              "4034 AC1: fiber B clean");
+        CHECK(get_fiber_hygiene_metrics(kFiberB).last_limit_reason == 0, "4034 AC1: fiber B clean");
         // Host thread is typically fiber 0 — peer global must not deny (b).
         CHECK(!inner_expand_production_limit_deny(),
               "4034 AC1: peer-only global depth-limit does not deny this fiber");
@@ -1077,8 +1076,7 @@ int run_test_concurrent_clone_hygiene_depth() {
         CHECK(cloned != NULL_NODE, "4034 AC1: healthy expand on B/host succeeds");
         CHECK(g_macro_hygiene_last_limit_reason.load(std::memory_order_relaxed) == 0,
               "4034 AC1: post-success global reason==0");
-        CHECK(!inner_expand_production_limit_deny(),
-              "4034 AC1: post-success deny clear");
+        CHECK(!inner_expand_production_limit_deny(), "4034 AC1: post-success deny clear");
         // Fiber A keep its own stamp (A/B must not falsely deny each other;
         // A's slot is independent).
         CHECK(get_fiber_hygiene_metrics(kFiberA).last_limit_reason == kHygieneLimitReasonDepthLimit,
@@ -1126,8 +1124,7 @@ int run_test_concurrent_clone_hygiene_depth() {
               "4034 AC2: post-success global reason==0");
         // Own-fiber stamp still denies (fail-closed for this walk's ceiling).
         note_hygiene_last_limit_reason(kHygieneLimitReasonGensymCeiling);
-        CHECK(inner_expand_production_limit_deny(),
-              "4034 AC2: own-fiber ceiling still denies");
+        CHECK(inner_expand_production_limit_deny(), "4034 AC2: own-fiber ceiling still denies");
         aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
         reset_capability_effects_for_test();
         aura_test_reset_macro_hygiene_last_limit_reason_for_test();

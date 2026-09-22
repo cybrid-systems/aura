@@ -1706,9 +1706,8 @@ static aura::ast::NodeId clone_macro_body_at_depth(
     // expand (peer / prior ceiling poison) without clobbering a concurrent
     // rewrite stamped mid-walk. Soft/Off: plain atomic load only (no lock).
     const std::uint8_t reason0 =
-        (hygiene_depth == 0)
-            ? g_macro_hygiene_last_limit_reason.load(std::memory_order_relaxed)
-            : std::uint8_t{0};
+        (hygiene_depth == 0) ? g_macro_hygiene_last_limit_reason.load(std::memory_order_relaxed)
+                             : std::uint8_t{0};
     // Issue #2806: residual TLS mirror for diagnostics only (not authority).
     s_hygiene_depth = hygiene_depth;
     // Issue #2171: capture cross-flat status at top-level entry so the
