@@ -168,6 +168,17 @@ inline std::atomic<std::uint64_t>& wal_overflow_ring_wrap_refuse_total() noexcep
     if (expected >= kWalOverflowRingCapacity &&
         ::aura::core::wal_slo::wal_append_fail_closed_active()) {
         wal_overflow_ring_wrap_refuse_total().fetch_add(1, std::memory_order_relaxed);
+        // Issue #4005: compensating PostureObserve so a refused overflow
+        // mid still joins the 1024 SE ring. Does not re-enter this push
+        // (append_security_event is ring-only).
+        using ::aura::core::security_event::append_security_event;
+        using ::aura::core::security_event::g_security_event_ring;
+        using ::aura::core::security_event::SecurityEventKind;
+        append_security_event(
+            g_security_event_ring(), SecurityEventKind::PostureObserve, rec.tenant_id, rec.mid,
+            rec.epoch, /*effect_bits=*/0,
+            rec.op.empty() ? std::string_view{"overflow-refuse"} : std::string_view{rec.op},
+            "overflow-refuse", /*denied=*/false, static_cast<std::int64_t>(rec.fiber_id));
         return false;
     }
     const auto h = wal_overflow_ring_head().fetch_add(1, std::memory_order_relaxed);

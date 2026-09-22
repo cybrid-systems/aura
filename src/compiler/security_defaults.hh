@@ -293,14 +293,26 @@ inline void apply_production_security_defaults() noexcept {
                 if (se_ok)
                     hydrate_security_event_ring_from_wal_replay(replay);
             }
-            (void)se_ok;
+            // Issue #4005: consume both WAL enable results. force_wal +
+            // pair miss is a posture breach (`wal-enable-failed`) and
+            // schedule-gate deny unless FAIL_OPEN. Soft/dev_off never
+            // reaches this block.
+            const bool wal_ready = mut_ok && se_ok;
             // Issue #3302 / #3965: force_wal means "this deploy is durable".
             // Arm fail-closed even when either WAL enable misses so IsolationDeny
             // / EffectDeny cannot wrap the 1024 ring with a fail-open mutate.
             // Opt-out: AURA_WAL_APPEND_FAIL_OPEN=1. Soft/dev_off never reaches
             // this block.
-            if (force_wal)
+            if (force_wal) {
                 ::aura::core::wal_slo::set_wal_fail_closed_defaulted_by_force_wal(true);
+                if (!wal_ready) {
+                    g_audit_wal_metrics().force_wal_enable_fail_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                    ::aura::core::wal_slo::arm_force_wal_enable_fail();
+                } else {
+                    ::aura::core::wal_slo::disarm_force_wal_enable_fail();
+                }
+            }
             if (mut_ok) {
                 if (force_wal && !has_explicit) {
                     g_audit_wal_metrics().audit_wal_forced_by_multi_tenant_total.fetch_add(
@@ -339,9 +351,11 @@ inline void apply_production_security_defaults() noexcept {
             }
         } else {
             ::aura::core::wal_slo::set_wal_fail_closed_defaulted_by_force_wal(false);
+            ::aura::core::wal_slo::disarm_force_wal_enable_fail();
         }
     } else {
         ::aura::core::wal_slo::set_wal_fail_closed_defaulted_by_force_wal(false);
+        ::aura::core::wal_slo::disarm_force_wal_enable_fail();
     }
 
     // 5) Issue #2136: kernel principal (tenant 0) always holds Render under

@@ -67,6 +67,9 @@ namespace aura::orch {
 inline constexpr int kSecurityScheduleMailboxHoldSloIssue = 2947;
 // Issue #3211: production WAL append-fail SLO → schedule deny.
 inline constexpr int kSecurityScheduleWalAppendFailIssue = 3211;
+// Issue #4005: force_wal pair enable-miss → schedule deny (before
+// posture-degraded so Agents see the more specific reason).
+inline constexpr int kSecurityScheduleWalEnableFailIssue = 4005;
 // Issue #3244: production engine/query hash overflow → posture + schedule
 // observe (no hard admit deny yet; tighten later).
 inline constexpr int kSecurityScheduleMetricsHashOverflowIssue = 3244;
@@ -81,6 +84,7 @@ enum class SecurityScheduleForceReason : std::uint8_t {
     mailbox_hold_slo = 5,             // #2947 under-boundary wait p99 / throttle
     wal_append_fail_breach = 6,       // #3211 production WAL append-fail SLO
     metrics_hash_overflow_breach = 7, // #3244 observe-only (no admit deny)
+    wal_enable_failed = 8,            // #4005 force_wal pair enable-miss
 };
 
 [[nodiscard]] inline std::string_view
@@ -102,6 +106,8 @@ security_schedule_force_reason_name(SecurityScheduleForceReason r) noexcept {
             return "wal-append-fail-breach";
         case SecurityScheduleForceReason::metrics_hash_overflow_breach:
             return "metrics-hash-overflow-breach";
+        case SecurityScheduleForceReason::wal_enable_failed:
+            return "wal-enable-failed";
     }
     return "unknown";
 }
@@ -142,6 +148,9 @@ struct SecurityScheduleInput {
     // Live fill uses existing overflow counters (no extra bus). Soft never
     // arms. Observe+posture first — decide does not hard-deny admit.
     bool metrics_hash_overflow_would_arm = false;
+    // Issue #4005: force_wal pair enable-miss (END). Distinct from
+    // wal_append_fail_would_arm and posture_wal_off_restricted.
+    bool wal_enable_failed = false;
 };
 
 // Issue #2947 / #3002: pure predicate — p99 ≥ SLO (SLO>0) or throttle flag.
@@ -157,10 +166,11 @@ struct SecurityScheduleInput {
 //   1. commit-not-ready   (commit_readiness_hard_reject && production && !soft)
 //   2. deny-storm         (capability_deny_storm && production && !soft)
 //   3. mid-fallback-slo   (mid_fallback_slo_breach && production && !soft)
-//   4. posture-degraded   (posture_wal_off_restricted && production && !soft)
-//   5. wal-append-fail-breach (#3211 would_arm_degraded && production && !soft)
-//   6. mailbox-hold-slo   (p99≥SLO || throttle; #2947 — never masks 1–5)
-//   7. metrics-hash-overflow-breach (#3244 observe; would_allow stays true)
+//   4. wal-enable-failed  (#4005 force_wal pair miss; before posture-degraded)
+//   5. posture-degraded   (posture_wal_off_restricted && production && !soft)
+//   6. wal-append-fail-breach (#3211 would_arm_degraded && production && !soft)
+//   7. mailbox-hold-slo   (p99≥SLO || throttle; #2947 — never masks 1–6)
+//   8. metrics-hash-overflow-breach (#3244 observe; would_allow stays true)
 //   else: ok / allow
 [[nodiscard]] inline SecurityScheduleDecision
 decide_security_schedule(const SecurityScheduleInput& in) noexcept {
@@ -179,6 +189,13 @@ decide_security_schedule(const SecurityScheduleInput& in) noexcept {
     if (enforce && in.mid_fallback_slo_breach) {
         d.would_allow_new_mutate = false;
         d.force_reason = SecurityScheduleForceReason::mid_fallback_slo;
+        return d;
+    }
+    // Issue #4005: more specific than posture-degraded (WAL off under
+    // Restricted). Keep posture < wal_append_fail < mailbox for #3211.
+    if (enforce && in.wal_enable_failed) {
+        d.would_allow_new_mutate = false;
+        d.force_reason = SecurityScheduleForceReason::wal_enable_failed;
         return d;
     }
     if (enforce && in.posture_wal_off_restricted) {
@@ -224,6 +241,8 @@ struct OrchSecurityScheduleCounters {
     std::atomic<std::uint64_t> deny_wal_append_fail_breach_total{0};
     // Issue #3244: observe-only overflow arm (would_allow stays true).
     std::atomic<std::uint64_t> observe_metrics_hash_overflow_total{0};
+    // Issue #4005: production deny face for force_wal pair enable-miss.
+    std::atomic<std::uint64_t> deny_wal_enable_failed_total{0};
     std::atomic<std::int64_t> last_force_reason_code{0};
     std::atomic<std::int64_t> last_would_allow{1}; // 1=allow, 0=deny
 };
@@ -265,6 +284,9 @@ evaluate_security_schedule(const SecurityScheduleInput& in) noexcept {
             case SecurityScheduleForceReason::wal_append_fail_breach:
                 c.deny_wal_append_fail_breach_total.fetch_add(1, std::memory_order_relaxed);
                 break;
+            case SecurityScheduleForceReason::wal_enable_failed:
+                c.deny_wal_enable_failed_total.fetch_add(1, std::memory_order_relaxed);
+                break;
             default:
                 break;
         }
@@ -288,6 +310,7 @@ inline void reset_orch_security_schedule_counters_for_test() noexcept {
     c.deny_mailbox_hold_slo_total.store(0, std::memory_order_relaxed);
     c.deny_wal_append_fail_breach_total.store(0, std::memory_order_relaxed);
     c.observe_metrics_hash_overflow_total.store(0, std::memory_order_relaxed);
+    c.deny_wal_enable_failed_total.store(0, std::memory_order_relaxed);
     c.last_force_reason_code.store(0, std::memory_order_relaxed);
     c.last_would_allow.store(1, std::memory_order_relaxed);
 }
@@ -441,6 +464,17 @@ inline bool wal_append_fail_would_arm_live(bool production_defaults, bool soft_m
     return d.would_arm_degraded;
 }
 
+// Issue #4005: live force_wal pair enable-miss. Quiet / Soft / FAIL_OPEN:
+// one relaxed load then false. Does not walk WAL append SLO counters
+// (those stay on wal_append_fail_would_arm_live).
+inline bool wal_enable_failed_would_arm_live(bool production_defaults, bool soft_mode) noexcept {
+    if (!production_defaults || soft_mode)
+        return false;
+    if (::aura::core::wal_slo::wal_env_flag_truthy("AURA_WAL_APPEND_FAIL_OPEN"))
+        return false;
+    return ::aura::core::wal_slo::force_wal_enable_failed() != 0;
+}
+
 // Issue #3244: live engine:metrics / query:* hash overflow arm.
 // Soft / !production: false with no counter loads (zero extra).
 // Production: two relaxed loads of existing overflow totals (no extra bus).
@@ -472,6 +506,8 @@ make_security_schedule_input_live(std::uint8_t eval_sandbox_mode, bool productio
     // Issue #3244: metrics hash overflow observe (does not deny admit).
     in.metrics_hash_overflow_would_arm =
         metrics_hash_overflow_would_arm_live(production_defaults, soft_mode);
+    // Issue #4005: force_wal pair enable-miss → schedule deny.
+    in.wal_enable_failed = wal_enable_failed_would_arm_live(production_defaults, soft_mode);
     return in;
 }
 

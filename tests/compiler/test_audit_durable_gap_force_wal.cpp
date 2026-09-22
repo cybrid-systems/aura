@@ -30,6 +30,7 @@
 #include "core/security_event_wal.hh"
 #include "core/wal_append_fail_slo.h"
 #include "core/workspace_isolation.hh"
+#include "orch/security_schedule_gate.h"
 
 #include <cstdlib>
 #include <fstream>
@@ -328,6 +329,228 @@ int run_test_audit_durable_gap_force_wal() {
             ::setenv("AURA_WAL_APPEND_FAIL_OPEN", prev_open_s.c_str(), 1);
         else
             ::unsetenv("AURA_WAL_APPEND_FAIL_OPEN");
+    }
+
+    // ── #4005: force_wal pair enable-fail is a posture breach ──
+    {
+        using aura::compiler::CompilerService;
+        using aura::compiler::security::kEffectMutate;
+        using aura::compiler::typed_audit::apply_dev_audit_defaults;
+        using aura::compiler::typed_audit::apply_production_audit_defaults;
+        using aura::core::audit_wal::g_audit_wal_metrics;
+        using aura::core::audit_wal::g_mutation_audit_wal;
+        using aura::core::audit_wal::reset_audit_wal_for_test;
+        using aura::core::security_event::g_security_event_ring;
+        using aura::core::security_event::kSecurityEventRingSize;
+        using aura::core::security_event::SecurityEventKind;
+        using aura::core::security_event_wal::g_security_event_wal;
+        using aura::core::security_event_wal::kWalOverflowRingCapacity;
+        using aura::core::security_event_wal::wal_overflow_ring_clear_for_test;
+        using aura::core::security_event_wal::wal_overflow_ring_push;
+        using aura::core::wal_slo::decide_wal_append_fail_slo;
+        using aura::core::wal_slo::kWalForceWalEnableFailIssue;
+        using aura::core::wal_slo::WalAppendFailSloInput;
+        using aura::orch::admit_security_schedule;
+        using aura::orch::decide_security_schedule;
+        using aura::orch::make_security_schedule_input_live;
+        using aura::orch::reset_orch_security_schedule_counters_for_test;
+        using aura::orch::SecurityScheduleForceReason;
+        using aura::orch::wal_enable_failed_would_arm_live;
+        std::println("\n--- #4005: force_wal enable-fail is a posture breach ---");
+
+        const auto sec = read_file("src/compiler/security_defaults.hh");
+        const auto tma = read_file("src/compiler/typed_mutation_audit.h");
+        const auto slo = read_file("src/core/wal_append_fail_slo.h");
+        const auto gate = read_file("src/orch/security_schedule_gate.h");
+        const auto prim = read_file("src/compiler/evaluator_primitives_security.cpp");
+        const auto sew = read_file("src/core/security_event_wal.hh");
+        CHECK(contains(slo, "kWalForceWalEnableFailIssue = 4005"), "4005: issue stamp");
+        CHECK(contains(slo, "force_wal_enable_failed"), "4005: decide input field");
+        CHECK(contains(slo, "note_wal_enable_failed"), "4005: note_wal_enable_failed");
+        CHECK(contains(slo, "wal-enable-failed"), "4005: distinct posture key");
+        CHECK(contains(tma, "wal_ready = mut_ok && se_ok"), "4005: audit-defaults consumes se_ok");
+        CHECK(contains(sec, "wal_ready = mut_ok && se_ok"),
+              "4005: security-defaults consumes se_ok");
+        CHECK(!contains(tma, "(void)se_ok"), "4005: (void)se_ok gone from audit-defaults");
+        CHECK(!contains(sec, "(void)se_ok"), "4005: (void)se_ok gone from security-defaults");
+        CHECK(contains(gate, "wal_enable_failed"), "4005: schedule input field");
+        CHECK(contains(gate, "wal-enable-failed"), "4005: schedule force_reason string");
+        CHECK(contains(prim, "schema-4005"), "4005: additive schema-4005");
+        CHECK(contains(prim, "force-wal-enable-fail-total"), "4005: additive counter key");
+        CHECK(contains(prim, "insert_kv(\"wal-enable-failed\""), "4005: posture key");
+        CHECK(contains(sew, "overflow-refuse"), "4005: overflow refuse marker");
+        CHECK(contains(prim, "wal-append-fail-breach"),
+              "4005: did not rename wal-append-fail-breach");
+        CHECK(contains(prim, "audit-durable-gap"), "4005: did not rename audit-durable-gap");
+        CHECK(read_file("tests/compiler/test_issue_4005.cpp").empty(),
+              "4005: no test_issue_4005.cpp");
+        CHECK(read_file("docs/design/4005-wal-enable-fail.md").empty(), "4005: no docs/design");
+
+        {
+            WalAppendFailSloInput pin;
+            pin.wal_enabled = false;
+            pin.production_defaults = true;
+            pin.soft_mode = false;
+            const auto hist = decide_wal_append_fail_slo(pin);
+            CHECK(!hist.breached && hist.force_reason == "ok",
+                  "4005: default !wal_enabled stays historical ok (#3056)");
+            pin.force_wal_enable_failed = true;
+            const auto d1 = decide_wal_append_fail_slo(pin);
+            const auto d2 = decide_wal_append_fail_slo(pin);
+            CHECK(d1.would_arm_degraded == d2.would_arm_degraded && d1.breached == d2.breached,
+                  "4005: decide is pure");
+            CHECK(d1.breached && d1.would_arm_degraded, "4005: production enable-fail arms");
+            CHECK(d1.force_reason == "wal-enable-failed", "4005: force_reason wal-enable-failed");
+            CHECK(d1.force_reason_code == 3, "4005: force_reason_code=3");
+            pin.soft_mode = true;
+            const auto ds = decide_wal_append_fail_slo(pin);
+            CHECK(ds.breached && !ds.would_arm_degraded, "4005: Soft observe-only");
+            CHECK(ds.force_reason == "soft-breach-observe", "4005: Soft force_reason");
+        }
+
+        {
+            auto in = aura::orch::SecurityScheduleInput{};
+            in.production_mode = true;
+            in.soft_mode = false;
+            in.wal_enable_failed = true;
+            in.posture_wal_off_restricted = true;
+            const auto d = decide_security_schedule(in);
+            CHECK(!d.would_allow_new_mutate, "4005: schedule denies");
+            CHECK(d.force_reason == SecurityScheduleForceReason::wal_enable_failed,
+                  "4005: wal-enable-failed before posture-degraded");
+            in.wal_enable_failed = false;
+            const auto dp = decide_security_schedule(in);
+            CHECK(dp.force_reason == SecurityScheduleForceReason::posture_degraded,
+                  "4005: posture-degraded still live without enable-fail flag");
+            in.soft_mode = true;
+            in.wal_enable_failed = true;
+            const auto ds = decide_security_schedule(in);
+            CHECK(ds.would_allow_new_mutate, "4005: Soft schedule never denies");
+        }
+
+        const char* prev_sb = std::getenv("AURA_SANDBOX");
+        std::string prev_sb_s = prev_sb ? prev_sb : "";
+        const char* prev_mt = std::getenv("AURA_MULTI_TENANT");
+        std::string prev_mt_s = prev_mt ? prev_mt : "";
+        const char* prev_wal = std::getenv("AURA_MUTATION_AUDIT_WAL");
+        std::string prev_wal_s = prev_wal ? prev_wal : "";
+        const char* prev_persist = std::getenv("AURA_PERSIST_DIR");
+        std::string prev_persist_s = prev_persist ? prev_persist : "";
+        const char* prev_open = std::getenv("AURA_WAL_APPEND_FAIL_OPEN");
+        std::string prev_open_s = prev_open ? prev_open : "";
+
+        auto restore_env = [&]() {
+            if (!prev_sb_s.empty())
+                ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+            else
+                ::unsetenv("AURA_SANDBOX");
+            if (!prev_mt_s.empty())
+                ::setenv("AURA_MULTI_TENANT", prev_mt_s.c_str(), 1);
+            else
+                ::unsetenv("AURA_MULTI_TENANT");
+            if (!prev_wal_s.empty())
+                ::setenv("AURA_MUTATION_AUDIT_WAL", prev_wal_s.c_str(), 1);
+            else
+                ::unsetenv("AURA_MUTATION_AUDIT_WAL");
+            if (!prev_persist_s.empty())
+                ::setenv("AURA_PERSIST_DIR", prev_persist_s.c_str(), 1);
+            else
+                ::unsetenv("AURA_PERSIST_DIR");
+            if (!prev_open_s.empty())
+                ::setenv("AURA_WAL_APPEND_FAIL_OPEN", prev_open_s.c_str(), 1);
+            else
+                ::unsetenv("AURA_WAL_APPEND_FAIL_OPEN");
+        };
+
+        reset_audit_wal_for_test();
+        g_security_event_wal().disable();
+        wal_overflow_ring_clear_for_test();
+        ::aura::core::wal_slo::reset_wal_append_fail_slo_for_test();
+        reset_orch_security_schedule_counters_for_test();
+        ::unsetenv("AURA_SANDBOX");
+        ::unsetenv("AURA_WAL_APPEND_FAIL_OPEN");
+        ::unsetenv("AURA_PERSIST_DIR");
+        ::setenv("AURA_MULTI_TENANT", "1", 1);
+        ::setenv("AURA_MUTATION_AUDIT_WAL", "/proc/nonwritable", 1);
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+        apply_production_audit_defaults();
+        CHECK(g_audit_wal_metrics().force_wal_enable_fail_total.load(std::memory_order_relaxed) ==
+                  1,
+              "4005 live: force_wal_enable_fail_total==1 after one apply");
+        CHECK(::aura::core::wal_slo::force_wal_enable_failed_observed() != 0,
+              "4005 live: observed");
+        CHECK(::aura::core::wal_slo::force_wal_enable_failed() != 0, "4005 live: admission armed");
+        CHECK(!g_mutation_audit_wal().is_enabled(), "4005 live: mutation WAL off");
+        CHECK(wal_enable_failed_would_arm_live(/*prod=*/true, /*soft=*/false),
+              "4005 live: schedule live helper arms");
+        CHECK(!wal_enable_failed_would_arm_live(/*prod=*/true, /*soft=*/true),
+              "4005 live: Soft live helper stays quiet");
+        reset_orch_security_schedule_counters_for_test();
+        const auto live_in =
+            make_security_schedule_input_live(/*Restricted=*/1, /*prod=*/true, /*soft=*/false);
+        CHECK(live_in.wal_enable_failed, "4005 live: live input wal_enable_failed");
+        const auto rej = admit_security_schedule(live_in);
+        CHECK(rej.has_value(), "4005 live: next mutate schedule-denied");
+        CHECK(rej.value_or("").find("wal-enable-failed") != std::string::npos,
+              "4005 live: deny reason wal-enable-failed");
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.set_effect_sandbox_mode(1);
+        CHECK(!ev.require_effect(kEffectMutate, "test:4005-no-mutate", 0),
+              "4005 live: outermost mutate denied");
+
+        wal_overflow_ring_clear_for_test();
+        for (std::uint32_t i = 0; i < kWalOverflowRingCapacity; ++i) {
+            aura::core::security_event_wal::WalOverflowRecord rec{};
+            rec.mid = 4005000u + i;
+            rec.reason = "test:4005-fill";
+            CHECK(wal_overflow_ring_push(rec), "4005: fill overflow ok");
+        }
+        aura::core::security_event_wal::WalOverflowRecord ovr{};
+        ovr.mid = 4005999;
+        ovr.tenant_id = 7;
+        ovr.reason = "test:4005-refuse";
+        ovr.op = "require_effect";
+        CHECK(!wal_overflow_ring_push(ovr), "4005: overflow refuse under fail-closed");
+        {
+            auto& ring = g_security_event_ring();
+            const auto seq = ring.seq.load(std::memory_order_relaxed);
+            CHECK(seq > 0, "4005: SE ring advanced on refuse marker");
+            const auto& slot = ring.ring[(seq - 1) % kSecurityEventRingSize];
+            CHECK(slot.kind == SecurityEventKind::PostureObserve,
+                  "4005: marker kind PostureObserve");
+            CHECK(std::string_view(slot.reason) == "overflow-refuse",
+                  "4005: marker reason overflow-refuse");
+            CHECK(slot.mutation_id == 4005999, "4005: marker preserves mid");
+        }
+
+        reset_audit_wal_for_test();
+        g_security_event_wal().disable();
+        ::aura::core::wal_slo::reset_wal_append_fail_slo_for_test();
+        ::setenv("AURA_WAL_APPEND_FAIL_OPEN", "1", 1);
+        ::unsetenv("AURA_SANDBOX");
+        ::setenv("AURA_MULTI_TENANT", "1", 1);
+        ::setenv("AURA_MUTATION_AUDIT_WAL", "/proc/nonwritable", 1);
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+        apply_production_audit_defaults();
+        CHECK(g_audit_wal_metrics().force_wal_enable_fail_total.load(std::memory_order_relaxed) >=
+                  1,
+              "4005 FAIL_OPEN: counter still bumps");
+        CHECK(::aura::core::wal_slo::force_wal_enable_failed_observed() != 0,
+              "4005 FAIL_OPEN: observed");
+        CHECK(::aura::core::wal_slo::force_wal_enable_failed() == 0,
+              "4005 FAIL_OPEN: admission not armed");
+        CHECK(!wal_enable_failed_would_arm_live(/*prod=*/true, /*soft=*/false),
+              "4005 FAIL_OPEN: live helper observe-only");
+
+        wal_overflow_ring_clear_for_test();
+        apply_dev_audit_defaults();
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+        restore_env();
+        CHECK(!::aura::core::wal_slo::force_wal_enable_failed(),
+              "4005: Soft/dev disarms enable-fail");
+        CHECK(!wal_enable_failed_would_arm_live(/*prod=*/false, /*soft=*/true),
+              "4005: Soft live helper false");
     }
 
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);

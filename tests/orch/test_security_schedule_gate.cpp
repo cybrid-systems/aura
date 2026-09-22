@@ -825,6 +825,70 @@ int run_test_security_schedule_gate() {
         }
     }
 
+    // ─── Issue #4005: force_wal enable-fail → schedule deny ───
+    {
+        std::println("\n--- #4005: wal-enable-failed schedule deny ---");
+        CHECK(aura::orch::kSecurityScheduleWalEnableFailIssue == 4005, "4005: issue stamp");
+        {
+            reset_orch_security_schedule_counters_for_test();
+            auto in = base_input();
+            in.production_mode = true;
+            in.soft_mode = false;
+            in.wal_enable_failed = true;
+            in.posture_wal_off_restricted = true;
+            const auto d1 = decide_security_schedule(in);
+            const auto d2 = decide_security_schedule(in);
+            CHECK(d1.would_allow_new_mutate == d2.would_allow_new_mutate, "4005: pure decide");
+            CHECK(!d1.would_allow_new_mutate, "4005: production + wal_enable_failed → deny");
+            CHECK(d1.force_reason == SecurityScheduleForceReason::wal_enable_failed,
+                  "4005: before posture-degraded");
+            CHECK(std::string(aura::orch::security_schedule_force_reason_name(d1.force_reason)) ==
+                      "wal-enable-failed",
+                  "4005: stable force_reason string");
+            const auto d = evaluate_security_schedule(in);
+            CHECK(g_orch_security_schedule_counters.deny_wal_enable_failed_total.load(
+                      std::memory_order_relaxed) == 1,
+                  "4005: deny_wal_enable_failed_total++");
+            const auto rej = aura::orch::admit_security_schedule(in);
+            CHECK(rej.has_value() &&
+                      rej.value_or("").find("wal-enable-failed") != std::string::npos,
+                  "4005: admit reason wal-enable-failed");
+        }
+        {
+            auto in = base_input();
+            in.production_mode = true;
+            in.soft_mode = true;
+            in.wal_enable_failed = true;
+            const auto d = evaluate_security_schedule(in);
+            CHECK(d.would_allow_new_mutate, "4005: Soft never denies");
+            CHECK(!aura::orch::admit_security_schedule(in).has_value(),
+                  "4005: Soft admit never rejects");
+        }
+        {
+            aura::core::wal_slo::reset_wal_append_fail_slo_for_test();
+            CHECK(!aura::orch::wal_enable_failed_would_arm_live(/*prod=*/true, /*soft=*/false),
+                  "4005: quiet live helper false");
+            aura::core::wal_slo::set_force_wal_enable_failed(true);
+            CHECK(aura::orch::wal_enable_failed_would_arm_live(/*prod=*/true, /*soft=*/false),
+                  "4005: flag → live helper true");
+            CHECK(!aura::orch::wal_enable_failed_would_arm_live(/*prod=*/true, /*soft=*/true),
+                  "4005: Soft live helper never arms");
+            aura::core::wal_slo::reset_wal_append_fail_slo_for_test();
+        }
+        {
+            const auto gate_h = read_file("src/orch/security_schedule_gate.h");
+            CHECK(gate_h.find("wal_enable_failed") != std::string::npos, "4005: input field");
+            CHECK(gate_h.find("wal_enable_failed_would_arm_live") != std::string::npos,
+                  "4005: live helper");
+            const auto prim = read_file("src/compiler/evaluator_primitives_security.cpp");
+            CHECK(prim.find("schema-4005") != std::string::npos, "4005: schema-4005");
+            CHECK(prim.find("deny-wal-enable-failed-total") != std::string::npos,
+                  "4005: query counter");
+            CHECK(read_file("docs/design/4005-wal-enable-fail.md").empty(), "4005: no docs/design");
+            CHECK(read_file("tests/orch/test_issue_4005.cpp").empty(), "4005: no invent");
+        }
+    }
+
     // ─── Issue #3244: production metrics hash overflow → observe+posture ───
     // AC1: input additive + live helper from existing overflow counters
     // AC2: production + would_arm → force_reason, would_allow stays true;

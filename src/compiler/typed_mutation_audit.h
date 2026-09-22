@@ -1154,9 +1154,21 @@ inline void apply_production_audit_defaults() noexcept {
                     if (se_ok)
                         hydrate_security_event_ring_from_wal_replay(replay);
                 }
-                (void)se_ok;
-                if (force_wal)
+                // Issue #4005: consume both WAL enable results. force_wal
+                // + pair miss is a posture breach (`wal-enable-failed`)
+                // and schedule-gate deny unless FAIL_OPEN. Soft/dev_off
+                // never reaches this block.
+                const bool wal_ready = mut_ok && se_ok;
+                if (force_wal) {
                     ::aura::core::wal_slo::set_wal_fail_closed_defaulted_by_force_wal(true);
+                    if (!wal_ready) {
+                        g_audit_wal_metrics().force_wal_enable_fail_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                        ::aura::core::wal_slo::arm_force_wal_enable_fail();
+                    } else {
+                        ::aura::core::wal_slo::disarm_force_wal_enable_fail();
+                    }
+                }
                 if (mut_ok) {
                     if (force_wal && !has_explicit) {
                         g_audit_wal_metrics().audit_wal_forced_by_multi_tenant_total.fetch_add(
@@ -1173,9 +1185,11 @@ inline void apply_production_audit_defaults() noexcept {
                 }
             } else {
                 ::aura::core::wal_slo::set_wal_fail_closed_defaulted_by_force_wal(false);
+                ::aura::core::wal_slo::disarm_force_wal_enable_fail();
             }
         } else {
             ::aura::core::wal_slo::set_wal_fail_closed_defaulted_by_force_wal(false);
+            ::aura::core::wal_slo::disarm_force_wal_enable_fail();
         }
     }
 }
@@ -1206,6 +1220,8 @@ inline void apply_dev_audit_defaults() noexcept {
     ::aura::core::sandbox::set_mode(::aura::core::sandbox::SandboxMode::Off);
     // Issue #3302: Soft / sandbox=off never default-arms fail-closed.
     ::aura::core::wal_slo::set_wal_fail_closed_defaulted_by_force_wal(false);
+    // Issue #4005: Soft never carries a leftover enable-fail arm.
+    ::aura::core::wal_slo::disarm_force_wal_enable_fail();
     // Leftover Full persist / undermark pending from a prior member
     // must not follow apply_dev into Quiet grant (#3294 / #3347).
     aura_reset_residual_castop_persist_for_test();
