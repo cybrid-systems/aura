@@ -164,6 +164,12 @@ inline constexpr int kAgentSendSafePreferenceIssue = 3336;
 // still delivers (#3111 AC3). Reuses handoff_reject_total /
 // held_ref_stale_after_steal_total. No new query key.
 inline constexpr int kRecvHeldRefAfterStealIssue = 3565;
+// Issue #4001: C++ agent_recv_result / agent_recv_safe returns a typed
+// RecvResult under production Guard-live (recv-under-boundary) and
+// production stale held_ref (handoff-required). Raw agent_recv stays
+// payload-or-empty (nullopt) for existing callers. Soft empty quiet.
+// No new query key.
+inline constexpr int kRecvTypedStatusIssue = 4001;
 // Issue #3566: mailbox BP note/decay isolation — named-scope hook must
 // not poison the process bucket or block quiet-tenant decay. Soft empty
 // / "-" stay process bucket. No new query key.
@@ -4349,17 +4355,31 @@ inline bool maybe_clear_producer_throttle(AgentHandle& h) noexcept {
     return st;
 }
 
-// Blocking/non-blocking recv on agent mailbox.
+// Issue #4001: typed C++ recv (AskResult twin). Production Guard-live
+// Policy A and production stale held_ref are non-Ok statuses so hosts
+// do not busy-loop on nullopt. Soft / quiet empty stay status="empty".
+// Raw agent_recv remains payload-or-empty.
+struct RecvResult {
+    bool ok = false;
+    // "ok" | "empty" | "recv-under-boundary" | "handoff-required" | "no-mailbox"
+    const char* status = "empty";
+    std::optional<serve::mf_mailbox::MailMessage> message;
+};
+
+// Blocking/non-blocking recv on agent mailbox — typed status SSOT.
 // Issue #1881: bump empty/timeout path (recv_empty) as well as success.
-[[nodiscard]] inline std::optional<serve::mf_mailbox::MailMessage>
-agent_recv(AgentHandle& h, bool wait = true, int timeout_ms = -1) {
+[[nodiscard]] inline RecvResult agent_recv_result(AgentHandle& h, bool wait = true,
+                                                  int timeout_ms = -1) {
+    RecvResult out;
     if (!h.ok || !h.mailbox) {
         g_orch_module_stats.recv_empty_total.fetch_add(1, std::memory_order_relaxed);
-        return std::nullopt;
+        out.status = "no-mailbox";
+        return out;
     }
     bool stale_handoff = false;
     bool boundary_reject = false;
     auto m = h.mailbox->recv(wait, timeout_ms, h.id, &stale_handoff, &boundary_reject);
+    const bool prod = aura::compiler::typed_audit::production_defaults_active();
     if (stale_handoff) {
         // Issue #3642: stale held_ref is not a successful recv (AC1) — bare
         // C++ hosts see nullopt. The signal rides the handle so the Aura
@@ -4368,26 +4388,58 @@ agent_recv(AgentHandle& h, bool wait = true, int timeout_ms = -1) {
         h.last_recv_stale_handoff = true;
         h.last_recv_boundary_reject = false;
         g_orch_module_stats.recv_empty_total.fetch_add(1, std::memory_order_relaxed);
-        return std::nullopt;
+        out.status = prod ? "handoff-required" : "empty";
+        return out;
     }
     h.last_recv_stale_handoff = false;
     // Issue #3673: the Guard-live Policy A reject rides the handle too
     // (same shape as the #3642 stale flag) so orch:agent-recv can surface
     // a typed deny instead of empty=#t busy-loop bait.
     h.last_recv_boundary_reject = boundary_reject;
+    if (boundary_reject && prod) {
+        // Issue #4001: typed C++ status — Policy A already refused park;
+        // do not look like quiet empty.
+        g_orch_module_stats.recv_empty_total.fetch_add(1, std::memory_order_relaxed);
+        out.status = "recv-under-boundary";
+        return out;
+    }
     if (m) {
         // Issue #3565: production unstamped held_ref is not a successful
         // recv (mailbox already cleared payload). Soft delivers + counts.
         // (#3642: the mailbox consumes stale as nullopt, so this defensive
         // path only fires when the mailbox probe and the typed-audit probe
         // disagree; agents_recv stays honest either way.)
-        const bool stale_held = m->held_ref_token.has_value() && !m->handoff_completed &&
-                                aura::compiler::typed_audit::production_defaults_active();
-        if (!stale_held)
+        const bool stale_held = m->held_ref_token.has_value() && !m->handoff_completed && prod;
+        if (!stale_held) {
             g_orch_module_stats.agents_recv.fetch_add(1, std::memory_order_relaxed);
-    } else
-        g_orch_module_stats.recv_empty_total.fetch_add(1, std::memory_order_relaxed);
-    return m;
+            out.ok = true;
+            out.status = "ok";
+            out.message = std::move(m);
+        } else {
+            // Defensive #3565: keep the message for the Aura flag path;
+            // typed status is still handoff-required.
+            h.last_recv_stale_handoff = true;
+            out.status = "handoff-required";
+            out.message = std::move(m);
+        }
+        return out;
+    }
+    g_orch_module_stats.recv_empty_total.fetch_add(1, std::memory_order_relaxed);
+    out.status = "empty";
+    return out;
+}
+
+// Issue #4001: C++ preference (agent_send_safe twin). Same RecvResult.
+[[nodiscard]] inline RecvResult agent_recv_safe(AgentHandle& h, bool wait = true,
+                                                int timeout_ms = -1) {
+    return agent_recv_result(h, wait, timeout_ms);
+}
+
+// Payload-or-empty wrapper. Production Guard-live / stale still nullopt;
+// check agent_recv_result / last_recv_* flags before wait-retry.
+[[nodiscard]] inline std::optional<serve::mf_mailbox::MailMessage>
+agent_recv(AgentHandle& h, bool wait = true, int timeout_ms = -1) {
+    return agent_recv_result(h, wait, timeout_ms).message;
 }
 
 // Issue #2231 / #2401 / #2538: agent-ask request/response helpers.

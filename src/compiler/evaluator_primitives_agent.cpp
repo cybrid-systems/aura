@@ -5400,13 +5400,17 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             }
             if (!wait && timeout_ms < 0)
                 timeout_ms = 0;
-            auto msg = aura::orch::agent_recv(*hp, wait, timeout_ms);
+            auto rec = aura::orch::agent_recv_result(*hp, wait, timeout_ms);
+            auto msg = rec.message;
             // Issue #3565 + #3642: production unstamped/stale held_ref after
             // steal is not a successful payload (mailbox cleared the stale
             // stable-ref string; #3642 consumes stale as nullopt at the
             // mailbox and rides the handle flag). Typed handoff-required,
             // reuse send-side deny-class. Soft delivers as today.
+            // Issue #4001: RecvResult.status is the C++ SSOT; flag fallback
+            // stays so a leftover handle peek still matches.
             const bool stale_handoff_surface =
+                (std::string_view(rec.status) == "handoff-required") ||
                 (msg && msg->held_ref_token.has_value() && !msg->handoff_completed &&
                  aura::compiler::typed_audit::production_defaults_active()) ||
                 (!msg && hp->last_recv_stale_handoff &&
@@ -5438,8 +5442,9 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             // busy-looping (#2347). Policy A stays (no park); the mailbox
             // bumped its soft/hard counters per face as before. Soft / Off:
             // falls through to empty=#t unchanged (zero extra intern).
-            if (!msg && hp->last_recv_boundary_reject &&
-                aura::compiler::typed_audit::production_defaults_active()) {
+            if (std::string_view(rec.status) == "recv-under-boundary" ||
+                (!msg && hp->last_recv_boundary_reject &&
+                 aura::compiler::typed_audit::production_defaults_active())) {
                 hp->last_recv_boundary_reject = false; // consumed once
                 auto sidx = ev.string_heap_.size();
                 ev.string_heap_.push_back("recv-under-boundary");

@@ -71,6 +71,7 @@ using aura::compiler::CompilerService;
 using aura::compiler::types::as_int;
 using aura::compiler::types::is_hash;
 using aura::compiler::types::is_int;
+using aura::compiler::types::is_string;
 using aura::orch::g_orch_module_stats;
 using aura::serve::parallel_orch::g_parallel_orch_stats;
 using aura::test::g_failed;
@@ -1093,9 +1094,84 @@ int run_test_orch_obs_facade() {
         }
     }
 
-    std::println(
-        "\n=== #2589+#2636+2884+#3013+#3212+#3251+#3336+#3565+#3642+#3733: {}/{} checks passed ===",
-        g_passed, g_passed + g_failed);
+    {
+        std::println("\n--- #4001: Guard-live C++ recv is typed RecvResult, not nullopt wait ---");
+        using aura::orch::agent_recv;
+        using aura::orch::agent_recv_result;
+        using aura::orch::agent_recv_safe;
+        using aura::orch::kRecvTypedStatusIssue;
+        CHECK(kRecvTypedStatusIssue == 4001, "4001: issue stamp");
+        aura::compiler::typed_audit::apply_dev_audit_defaults();
+        CompilerService cs4001;
+        aura::compiler::typed_audit::apply_production_audit_defaults();
+        CHECK(cs4001.eval(R"((orch:spawn-agent "4001-a" (lambda () 0) :attach-mailbox #t))")
+                  .has_value(),
+              "4001 setup: mailbox agent spawned");
+        auto* hp = cs4001.evaluator().agent_names_->find("4001-a");
+        CHECK(hp && hp->ok && hp->mailbox, "4001 setup: handle");
+        auto& ev4001 = cs4001.evaluator();
+        using Ev4001 = std::remove_reference_t<decltype(ev4001)>;
+        bool guard_ok = true;
+        {
+            auto guard_r = Ev4001::MutationBoundaryGuard::try_acquire(ev4001, 1, &guard_ok);
+            CHECK(guard_r.has_value(), "4001 setup: Guard try_acquire");
+            if (guard_r) {
+                auto guard = std::move(*guard_r);
+                auto r = agent_recv_result(*hp, /*wait=*/true, /*timeout_ms=*/1000);
+                CHECK(!r.ok, "4001 AC1: RecvResult not ok");
+                CHECK(std::string_view(r.status) == "recv-under-boundary",
+                      "4001 AC1: status=recv-under-boundary (not empty)");
+                CHECK(!r.message, "4001 AC1: no payload");
+                auto rs = agent_recv_safe(*hp, /*wait=*/true, /*timeout_ms=*/1000);
+                CHECK(std::string_view(rs.status) == "recv-under-boundary",
+                      "4001 AC1: agent_recv_safe same status");
+                auto raw = agent_recv(*hp, /*wait=*/true, /*timeout_ms=*/1000);
+                CHECK(!raw.has_value(), "4001 AC1: raw agent_recv stays nullopt");
+                CHECK(hp->last_recv_boundary_reject, "4001 AC1: flag still rides the handle");
+                const auto aura_st =
+                    cs4001.eval(R"((hash-ref (orch:agent-recv "4001-a" :wait #t) "status"))");
+                CHECK(aura_st && is_string(*aura_st), "4001 AC2: Aura typed deny unchanged");
+            }
+        }
+        aura::compiler::typed_audit::apply_dev_audit_defaults();
+        {
+            auto empty = agent_recv_result(*hp, /*wait=*/false, /*timeout_ms=*/0);
+            CHECK(!empty.ok, "4001 AC3: Soft empty not ok");
+            CHECK(std::string_view(empty.status) == "empty",
+                  "4001 AC3: Soft quiet empty status=empty");
+            bool guard_ok2 = true;
+            auto guard_r2 = Ev4001::MutationBoundaryGuard::try_acquire(ev4001, 1, &guard_ok2);
+            if (guard_r2) {
+                auto guard2 = std::move(*guard_r2);
+                auto soft_g = agent_recv_result(*hp, /*wait=*/true, /*timeout_ms=*/1000);
+                CHECK(std::string_view(soft_g.status) == "empty",
+                      "4001 AC3: Soft Guard-live stays empty (no typed deny)");
+            }
+        }
+        const auto spawn_src = read_file("src/orch/agent_spawn.h");
+        const auto agent_src = read_file("src/compiler/evaluator_primitives_agent.cpp");
+        const auto readme = read_file("src/orch/README.md");
+        CHECK(spawn_src.find("kRecvTypedStatusIssue = 4001") != std::string::npos,
+              "4001 AC5: stamp");
+        CHECK(spawn_src.find("struct RecvResult") != std::string::npos, "4001 AC5: RecvResult");
+        CHECK(spawn_src.find("agent_recv_result") != std::string::npos, "4001 AC5: result helper");
+        CHECK(spawn_src.find("agent_recv_safe") != std::string::npos, "4001 AC5: safe alias");
+        CHECK(agent_src.find("agent_recv_result") != std::string::npos,
+              "4001 AC5: Aura uses RecvResult SSOT");
+        CHECK(agent_src.find("query:4001") == std::string::npos, "4001 AC5: no new query key");
+        CHECK(spawn_src.find("class AgentRegistry") == std::string::npos,
+              "4001 AC5: no AgentRegistry");
+        CHECK(readme.find("#4001") != std::string::npos, "4001 AC5: README cites C++ RecvResult");
+        CHECK(read_file("tests/orch/test_issue_4001.cpp").empty(),
+              "4001 AC5: no test_issue_4001.cpp");
+        CHECK(read_file("docs/design/4001-recv-typed-status.md").empty(),
+              "4001 AC5: no docs/design/4001-*");
+        aura::compiler::typed_audit::apply_dev_audit_defaults();
+    }
+
+    std::println("\n=== #2589+#2636+2884+#3013+#3212+#3251+#3336+#3565+#3642+#3733+#4001: {}/{} "
+                 "checks passed ===",
+                 g_passed, g_passed + g_failed);
     return g_failed == 0 ? 0 : 1;
 }
 
