@@ -1230,7 +1230,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_atomic_batch_rollback_fiber_task1.cpp` (—) [batch_driver, domain_suite, theme_compiler] — test_atomic_batch_rollback_fiber_task1.cpp —
 - `tests/compiler/test_atomic_batch_rollback_metric_noise.cpp` (—) [batch_driver, domain_suite, theme_compiler] — AC1: abort_batch_workspace cites #2796; no enforce_all on abort paths
 - `tests/compiler/test_atomic_batch_snapshot_stable_ref_ai_loops.cpp` (—) [batch_driver, domain_suite, theme_compiler] — - AC1: workspace:snapshot + workspace:rollback-to primitives
-- `tests/compiler/test_audit_durable_gap_force_wal.cpp` (—) [domain_suite, theme_compiler] — AC1: Soft / AURA_SANDBOX=off \u2014 WAL off, no new files,
+- `tests/compiler/test_audit_durable_gap_force_wal.cpp` (—) [large, domain_suite, theme_compiler] — AC1: Soft / AURA_SANDBOX=off \u2014 WAL off, no new files,
 - `tests/compiler/test_audit_mid_fallback_slo.cpp` (—) [large, domain_suite, theme_compiler] — tests/compiler/test_audit_mid_fallback_slo.cpp
 - `tests/compiler/test_audit_mutation_id_unify.cpp` (—) [large, domain_suite, theme_compiler] — AC1: require_effect deny under Restricted → SE.mutation_id matches
 - `tests/core/test_audit_replay_join.cpp` (—) [large, domain_suite, theme_core] — AC1: require_effect mid stamp order: TypedMid

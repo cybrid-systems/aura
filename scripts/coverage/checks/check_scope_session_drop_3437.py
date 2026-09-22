@@ -69,7 +69,7 @@ def main() -> int:
     if ja < 0:
         fails.append("AC4: orch:scope-join-all prim not found")
     else:
-        must("drop_agent_scope", "AC4 drop-if-empty intact", prim[ja : ja + 8000])
+        must("drop_agent_scope(static_cast<void*>(&ev))", "AC4 drop-if-empty intact", prim[ja : ja + 12000])
 
     # AC5: linter wired in build.py AFTER #3434; no test_issue files;
     # no docs/design.

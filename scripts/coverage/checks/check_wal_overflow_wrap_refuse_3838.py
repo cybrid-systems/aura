@@ -8,7 +8,8 @@ fail-closed. Refuse the push instead of silent overwrite.
 Contract (one row per AC):
   AC1  wal_overflow_ring_push returns false when wrap would overwrite AND
        wal_append_fail_closed_active(); bumps wrap_total + wrap_refuse_total;
-       no store (older mids preserved)
+       no store (older mids preserved; #4005 adds a compensating
+       PostureObserve inside the refuse branch)
   AC2  Agent faces: wal-overflow-wrap-refuse-total + schema/issue-3838 on
        security-audit-stats / security-posture / evolution-audit-decision /
        audit-wal-stats; durable mid miss + wrap_total>0 →
@@ -65,15 +66,19 @@ def main() -> int:
     must("security_event_wal_overflow_wrap_refuse_total", "AC1 counter name", sew)
     must("Issue #3838", "AC1 cite in push", sew)
     must("[[nodiscard]] inline bool wal_overflow_ring_push", "AC1 bool return", sew)
-    must(
+    refuse_gate = (
         "if (expected >= kWalOverflowRingCapacity &&\n"
         "        ::aura::core::wal_slo::wal_append_fail_closed_active()) {\n"
-        "        wal_overflow_ring_wrap_refuse_total().fetch_add(1, std::memory_order_relaxed);\n"
-        "        return false;\n"
-        "    }",
-        "AC1 refuse when full+fail-closed",
-        sew,
+        "        wal_overflow_ring_wrap_refuse_total().fetch_add(1, std::memory_order_relaxed);"
     )
+    must(refuse_gate, "AC1 refuse when full+fail-closed", sew)
+    # #4005 era: the refuse branch appends a compensating PostureObserve
+    # before declining — still no store; pin return-false within the branch.
+    rg = sew.find(refuse_gate)
+    if rg < 0:
+        fails.append("AC1: refuse branch not found")
+    elif "return false;" not in sew[rg : rg + 1400]:
+        fails.append("AC1: refuse branch no longer declines the store")
     must(
         "wal_overflow_ring_wrap_refuse_total().store(0, std::memory_order_relaxed);",
         "AC1 clear_for_test resets refuse",

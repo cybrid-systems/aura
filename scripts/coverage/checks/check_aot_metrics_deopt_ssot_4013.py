@@ -153,9 +153,7 @@ def main() -> int:
         must("return aura_deopt_count()", "AC5 source-forward gate", stub)
 
     # AC6 — no forbidden invent paths
-    if _read("tests/compiler/test_issue_4013.cpp") or _read(
-        "tests/issues/test_issue_4013.cpp"
-    ):
+    if _read("tests/compiler/test_issue_4013.cpp") or _read("tests/issues/test_issue_4013.cpp"):
         fails.append("AC6: test_issue_4013.cpp present (forbidden #81967)")
     if _read("docs/design/4013-aot-metrics-deopt-ssot.md"):
         fails.append("AC6: docs/design/ exists — forbidden per #1655")

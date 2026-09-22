@@ -3,8 +3,9 @@
 
 #3023 drains on outermost fail + post-join. Nested abort skipped that
 path, so nested fail + outer success left sticky pins. Production nested
-abort now drains extras vs enter snapshot; outer pins stay. Steal
-hard-fail shares unpin_all with post-join. Densify still never unpins.
+abort now drains extras vs enter snapshot; outer pins stay. Steal hard-fail shares the scoped drain
+with post-join (#4031 era: scoped/owner-scoped, never process-wide
+for a live fiber). Densify still never unpins.
 
 Contract (one row per AC):
   AC1  nested abort drains extras; outer pins remain
@@ -51,9 +52,9 @@ def main() -> int:
     must("nested_linear_keep_armed_", "AC1 nested snapshot arm", bnd)
     must("production_defaults_active()", "AC5 Soft skip snapshot", bnd)
 
-    must("unpin_all_linear_roots", "AC2 outermost still unpin_all", _read("src/compiler/evaluator_gc.cpp"))
-    must("unpin_all_linear_roots", "AC2 post-join", fib)
-    must("unpin_all_linear_roots", "AC2 steal hard-fail", fibm)
+    must("unpin_linear_roots_scoped_for_fiber", "AC2 outermost scoped drain", _read("src/compiler/evaluator_gc.cpp"))
+    must("unpin_linear_roots_scoped_for_fiber(this)", "AC2 post-join", fib)
+    must("unpin_linear_roots_scoped_for_fiber(fiber)", "AC2 steal hard-fail", fibm)
     must("Issue #3249", "AC2 steal cite", fibm)
 
     must("this verify never unpins", "AC3 densify never unpins", lp)

@@ -12,7 +12,8 @@ arm as nested_linear_keep_) snapshots live linear roots onto the Fiber
 (set_outermost_linear_keep). The three drain faces share ONE audit face
 — aura::serve::unpin_linear_roots_scoped_for_fiber(fiber): armed keep
 -> unpin_linear_roots_except(keep) (siblings survive; take+disarm),
-else legacy unpin_all fallback (#3023 standalone / Soft contract). The
+else owner-scoped unarmed fallback (#4031: unpin_linear_roots_owned_by;
+#3023 standalone / Soft contract). The
 successful outermost exit clears the fiber keep (stale-keep guard).
 unpin_all_linear_roots stays for process teardown /
 reset_linear_roots_for_test only.
@@ -83,7 +84,7 @@ def main() -> int:
     must("clear_outermost_linear_keep", "wiring clear", mb)
     b = mb.find("if (outermost && typed_audit::production_defaults_active())")
     if b >= 0:
-        must("Issue #3438", "wiring cite", mb[max(0, b - 600) : b + 900])
+        must("Issue #3438", "wiring cite", mb[max(0, b - 900) : b + 900])
     else:
         fails.append("wiring: outermost production arm not found")
 
@@ -95,7 +96,8 @@ def main() -> int:
     # AC6: src-aligned suite extension, no test_issue file.
     must("ac6_3438_scoped_linear_drain", "AC6 test fn", test)
     must("sibling linear root survives the scoped reclaim drain", "AC6 label", test)
-    must("unarmed fallback still drains", "AC5 fallback label", test)
+    must("unarmed drain removes fiberA-owned roots", "AC5 fallback still drains (#4031 era)", test)
+    must("unarmed fallback leaves sibling/off-fiber roots intact", "AC5 fallback scoped safety (#4031 era)", test)
     for forbidden in ("tests/serve/test_issue_3438.cpp", "tests/issues/test_issue_3438.cpp"):
         if (ROOT / forbidden).is_file():
             fails.append(f"AC6: {forbidden} present")

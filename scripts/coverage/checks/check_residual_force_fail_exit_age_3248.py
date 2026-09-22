@@ -63,7 +63,7 @@ def main() -> int:
     if remount < 0:
         fails.append("AC3: remount tick missing")
     else:
-        rwin = bnd[max(0, remount - 400) : remount]
+        rwin = bnd[max(0, remount - 700) : remount]
         if "if (outermost && success)" not in rwin:
             fails.append("AC3: remount no longer success-only")
         if "aura_pure_anon_bg_remount_drain" not in bnd[remount : remount + 700]:
