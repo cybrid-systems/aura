@@ -230,6 +230,25 @@ static void ac5_soft_off_preserved() {
           "AC5 no new register_stats_impl after #3155 (no new query keys)");
 }
 
+static void ac4008_compact_dense_inplace_cite() {
+    std::println("\n--- #4008: compact remaps dense child_data_ in place ---");
+    auto a = read_file("src/core/ast.ixx");
+    CHECK(!a.empty(), "ast.ixx readable");
+    CHECK(a.find("kCompactDenseRemapIssue = 4008") != std::string::npos, "4008 stamp");
+    const auto cf = a.find("[[nodiscard]] std::size_t compact_nodes()");
+    CHECK(cf != std::string::npos, "compact_nodes() found");
+    const auto end_pos = a.find("return reclaimed;", cf == std::string::npos ? 0 : cf);
+    const auto cfn =
+        (cf != std::string::npos && end_pos > cf) ? a.substr(cf, end_pos - cf) : std::string{};
+    CHECK(cfn.find("Issue #4008") != std::string::npos, "4008 cite in compact_nodes");
+    CHECK(cfn.find("for (auto& cid : child_data_)") != std::string::npos,
+          "4008 in-place child_data_ remap");
+    CHECK(cfn.find("dense_dirty_ = true; // Issue #3402: compact remaps NodeIds") ==
+              std::string::npos,
+          "4008 compact no longer unconditionally dirties");
+    CHECK(a.find("schema-4008") == std::string::npos, "4008 no new query key");
+}
+
 } // namespace
 
 int main() {
@@ -238,6 +257,7 @@ int main() {
     ac3_validator_no_regression();
     ac4_soft_recycle_unchanged();
     ac5_soft_off_preserved();
+    ac4008_compact_dense_inplace_cite();
     if (g_failed)
         return 1;
     std::println("compact_nodes provenance + schema_cache remap (#3155): OK ({} passed)", g_passed);

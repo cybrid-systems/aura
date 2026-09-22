@@ -1110,8 +1110,8 @@ static void ac3665_insert_remove_dense_splice() {
     }
 
     const auto ast = read_file("src/core/ast.ixx");
-    CHECK(ast.find("Issue #3402: compact remaps NodeIds") != std::string::npos,
-          "3665 AC3: compact still full-sync");
+    CHECK(ast.find("kCompactDenseRemapIssue = 4008") != std::string::npos,
+          "3665 AC3 / 4008: compact remaps dense in place");
     CHECK(ast.find("Issue #3402: PCV snapshot is the source of truth") != std::string::npos,
           "3665 AC3: restore still full-sync");
     CHECK(ast.find("Issue #3402: dest keeps its own runtime_resource_") != std::string::npos,
@@ -1157,6 +1157,91 @@ static void ac3665_insert_remove_dense_splice() {
           "3665 AC5: no test_issue_3665.cpp");
     CHECK(read_file("docs/design/3665-insert-remove-dense-splice.md").empty(),
           "3665 AC5: no docs/design/");
+}
+
+static void ac4008_compact_remaps_dense_inplace() {
+    std::println("\n--- #4008: compact remaps dense child_data_ in place, no PCV rebuild ---");
+    using aura::ast::FlatAST;
+    using aura::ast::NodeId;
+    using aura::ast::NodeTag;
+    CHECK(FlatAST::kCompactDenseRemapIssue == 4008, "4008: stamp");
+
+    FlatAST flat;
+    const NodeId p = flat.add_node(NodeTag::Begin);
+    const NodeId a = flat.add_literal(1);
+    const NodeId b = flat.add_literal(2);
+    const NodeId dead = flat.add_literal(99);
+    const NodeId c = flat.add_literal(3);
+    (void)dead;
+    flat.root = p;
+    flat.insert_child(p, 0, a);
+    flat.insert_child(p, 1, b);
+    flat.insert_child(p, 2, c);
+    const auto sync0 = flat.dense_columns_pcv_sync_total();
+    (void)flat.children_columnar(p);
+    CHECK(!flat.dense_children_dirty(), "4008 AC1: synced before compact");
+    CHECK(flat.dense_columns_pcv_sync_total() > sync0, "4008 AC1: first columnar syncs");
+    const auto sz0 = flat.dense_child_data_size();
+    CHECK(sz0 == 3, "4008 AC1: three live children");
+    const auto sync1 = flat.dense_columns_pcv_sync_total();
+
+    const auto reclaimed = flat.compact_nodes();
+    CHECK(reclaimed > 0, "4008 AC1: compact dropped the unreachable literal");
+    CHECK(!flat.dense_children_dirty(), "4008 AC1: compact did not set dense_dirty_");
+    CHECK(flat.dense_child_data_size() == sz0, "4008 AC1: child_data_ size unchanged");
+    CHECK(flat.dense_columns_pcv_sync_total() == sync1, "4008 AC1: compact did not PCV-rebuild");
+
+    std::vector<NodeId> kids;
+    (void)aura::ast::walk_children_hot<NodeId>(flat, flat.root,
+                                               [&](NodeId x) { kids.push_back(x); });
+    CHECK(kids.size() == 3, "4008 AC2: walk_children_hot sees three children");
+    CHECK(!flat.dense_children_dirty(), "4008 AC2: hot walk did not rebuild");
+    CHECK(flat.dense_child_data_size() == sz0, "4008 AC2: size still unchanged");
+    CHECK(flat.dense_columns_pcv_sync_total() == sync1, "4008 AC2: no PCV sync on walk");
+    CHECK(flat.get_child(flat.root, 0) == kids[0] && flat.get_child(flat.root, 1) == kids[1] &&
+              flat.get_child(flat.root, 2) == kids[2],
+          "4008 AC2: dense get_child matches hot walk after remap");
+
+    for (int i = 0; i < 64; ++i) {
+        kids.clear();
+        (void)aura::ast::walk_children_hot<NodeId>(flat, flat.root,
+                                                   [&](NodeId x) { kids.push_back(x); });
+        CHECK(kids.size() == 3, "4008 AC3: repeated query arity stable");
+    }
+    CHECK(flat.dense_columns_pcv_sync_total() == sync1,
+          "4008 AC3: N queries after compact do not rebuild from PCV");
+
+    {
+        FlatAST never;
+        const NodeId rp = never.add_node(NodeTag::Begin);
+        const NodeId ra = never.add_literal(1);
+        const NodeId dead2 = never.add_literal(7);
+        (void)dead2;
+        never.root = rp;
+        never.insert_child(rp, 0, ra);
+        CHECK(never.dense_children_dirty(), "4008 AC4: never-synced stays dirty");
+        CHECK(never.compact_nodes() > 0, "4008 AC4: compact dropped dead");
+        CHECK(never.dense_children_dirty(), "4008 AC4: never-synced compact keeps dirty");
+        (void)never.children_columnar(never.root);
+        CHECK(!never.dense_children_dirty(), "4008 AC4: first columnar still full-syncs");
+    }
+
+    const auto src = read_file("src/core/ast.ixx");
+    const auto cf = src.find("[[nodiscard]] std::size_t compact_nodes()");
+    CHECK(cf != std::string::npos, "4008 AC5: compact_nodes present");
+    const auto cend = src.find("return reclaimed;", cf == std::string::npos ? 0 : cf);
+    const auto cwin = (cf != std::string::npos && cend > cf) ? src.substr(cf, cend - cf) : std::string{};
+    CHECK(cwin.find("Issue #4008") != std::string::npos, "4008 AC5: compact cites #4008");
+    CHECK(cwin.find("for (auto& cid : child_data_)") != std::string::npos,
+          "4008 AC5: in-place child_data_ remap");
+    CHECK(cwin.find("dense_dirty_ = true; // Issue #3402: compact remaps NodeIds") ==
+              std::string::npos,
+          "4008 AC5: compact no longer unconditionally dirties");
+    CHECK(src.find("Issue #3402: PCV snapshot is the source of truth") != std::string::npos,
+          "4008 AC5: restore still dirties (layout unknown)");
+    CHECK(src.find("schema-4008") == std::string::npos, "4008 AC5: no new query key");
+    CHECK(read_file("tests/core/test_issue_4008.cpp").empty(), "4008 AC5: no invent");
+    CHECK(read_file("docs/design/4008-compact-dense-remap.md").empty(), "4008 AC5: no docs/design");
 }
 
 // #3401: eval_flat hot-path intern — production skips the function-scope
@@ -1259,6 +1344,7 @@ int run_test_arena_required_cover_no_value_only() {
     ac3402_dense_children_columns();
     ac3453_equal_length_set_inplace();
     ac3665_insert_remove_dense_splice();
+    ac4008_compact_remaps_dense_inplace();
     ac3403_inline_pass_soa();
     ac3404_arena_auto_arm_soft_fallback();
     ac3405_pure_wrap_dirty_entry();

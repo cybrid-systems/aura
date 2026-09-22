@@ -8,7 +8,7 @@ those splice one dense slot when !dense_dirty_. No new query key.
 Contract:
   AC1 equal-length set on synced tree leaves dense_dirty_ false
   AC2 insert/remove splice when !dense_dirty_ (#3665); fallback dirties
-  AC3 copy/compact/restore still force dirty
+  AC3 copy/restore still force dirty; compact remaps dense in place (#4008)
   AC4 no new query key; exclusive/COW counters unchanged
   AC5 no docs/design/3453-*; no test_issue_3453.cpp
 
@@ -65,8 +65,11 @@ def main() -> int:
     must("ac3665_insert_remove_dense_splice", "AC2 #3665 test", t)
 
     must("Issue #3402: dest keeps its own runtime_resource_", "AC3 copy/move", ast)
-    must("Issue #3402: compact remaps NodeIds", "AC3 compact", ast)
+    must("kCompactDenseRemapIssue = 4008", "AC3 compact stamp", ast)
+    must("Issue #4008", "AC3 compact in-place remap", ast)
     must("Issue #3402: PCV snapshot is the source of truth", "AC3 restore", ast)
+    if "dense_dirty_ = true; // Issue #3402: compact remaps NodeIds" in ast:
+        fails.append("AC3: compact still unconditionally dirties dense columns")
 
     must("flatast_locked_move_out_exclusive_total", "AC4 exclusive counter", swin)
     must("flatast_locked_move_out_cow_total", "AC4 cow counter", swin)

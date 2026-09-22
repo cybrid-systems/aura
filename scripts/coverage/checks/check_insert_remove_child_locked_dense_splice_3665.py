@@ -9,7 +9,8 @@ Contract (one row per AC):
   AC1  synced insert_child_locked: !dense_dirty_; child_count_ +1;
        child_data_.insert; later child_begin_ += 1
   AC2  synced remove_child_locked: erase one slot; no full rebuild
-  AC3  #3453 equal-length set in-place kept; compact/copy/restore still dirty
+  AC3  #3453 equal-length set in-place kept; copy/restore still dirty;
+       compact remaps dense in place (#4008)
   AC4  Soft/Off same control flow; exclusive/COW counters still bump;
        no new query key
   AC5  extend #3402/#3453 suite; linter AFTER #3664; no invent; no docs/design
@@ -82,9 +83,12 @@ def main() -> int:
     swin = ast[set_idx : set_idx + 3600] if set_idx >= 0 else ""
     must("!dense_dirty_", "AC3 #3453 gate", swin)
     must("child_data_[", "AC3 #3453 slot write", swin)
-    must("Issue #3402: compact remaps NodeIds", "AC3 compact", ast)
+    must("kCompactDenseRemapIssue = 4008", "AC3 compact stamp", ast)
+    must("Issue #4008", "AC3 compact in-place remap", ast)
     must("Issue #3402: PCV snapshot is the source of truth", "AC3 restore", ast)
     must("Issue #3402: dest keeps its own runtime_resource_", "AC3 copy/move", ast)
+    if "dense_dirty_ = true; // Issue #3402: compact remaps NodeIds" in ast:
+        fails.append("AC3: compact still unconditionally dirties dense columns")
     must("3665 AC3: #3453 equal-length set still in-place", "AC3 test", t)
 
     must("flatast_locked_move_out_exclusive_total", "AC4 exclusive", iwin)
