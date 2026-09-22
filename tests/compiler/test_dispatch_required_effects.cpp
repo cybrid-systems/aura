@@ -771,6 +771,19 @@ int run_test_dispatch_required_effects() {
               "3720 AC3: strong owner def");
         CHECK(svc.find("owner->require_effect") != std::string::npos,
               "3720 AC3: require_effect via owner");
+        // Issue #4018: aura_cell_set shares the same Mutate choke.
+        const auto cellp = rt.find("void aura_cell_set");
+        CHECK(cellp != std::string::npos, "4018 AC: aura_cell_set");
+        if (cellp != std::string::npos) {
+            const auto cwin = rt.substr(cellp, 700);
+            CHECK(cwin.find("aura_jit_owner_require_effect") != std::string::npos,
+                  "4018 AC: cell_set require before write");
+            CHECK(cwin.find("kEffectMutate") != std::string::npos, "4018 AC: cell Mutate bits");
+            const auto clockp = cwin.find("aura_lock_workspace_write");
+            const auto creqp = cwin.find("aura_jit_owner_require_effect");
+            CHECK(creqp != std::string::npos && (clockp == std::string::npos || creqp < clockp),
+                  "4018 AC: cell choke before write lock");
+        }
     }
 
     {

@@ -81,6 +81,36 @@ using types::make_void;
 // Issue #918: qualify security:: explicitly where needed
 // (was: using namespace security;)
 
+
+// Issue #4018: audit-query tenant auth — requester==tenant || TenantAdmin.
+// Soft/Off (hard_face false): zero cost. Wildcard-only is not TA (#3362).
+// Non-TA unfiltered → scope to requester (block cross-tenant enum).
+// Non-TA explicit foreign tenant → deny (empty). No new counters / keys.
+[[nodiscard]] static bool audit_query_authorize_tenant(Evaluator& ev, bool& filt_tenant,
+                                                       std::uint64_t& want_tenant) noexcept {
+    const bool hard_face = ev.sandbox_mode() || ev.effect_sandbox_mode() != 0;
+    if (!hard_face)
+        return true;
+    const auto requester = ev.capability_tenant_id();
+    auto& reg = aura::core::capability::g_capability_registry();
+    std::lock_guard<std::mutex> lock(reg.mtx);
+    using aura::compiler::security::kEffectTenantAdmin;
+    const bool is_ta =
+        !reg.holds_wildcard_only_locked(requester) &&
+        (static_cast<std::uint16_t>(reg.effects_for_locked(requester)) &
+         static_cast<std::uint16_t>(kEffectTenantAdmin)) != 0;
+    if (filt_tenant) {
+        if (want_tenant != requester && !is_ta)
+            return false; // deny cross-tenant
+        return true;
+    }
+    if (!is_ta) {
+        filt_tenant = true;
+        want_tenant = requester;
+    }
+    return true;
+}
+
 void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
 
     // Issue #1020: capability-gated sandbox admin surface.
@@ -4829,6 +4859,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             return query_hash_finish(ht, ev.string_heap_, overflowed);
         });
 
+
     // Issue #676/#1567: (query:mutation-audit-log [limit] [tenant] [effect] [mutation-id])
     // Filters: tenant>=0, effect!=0, mutation-id!=0 match when provided.
     // Lines include effect/tenant/provenance/epoch for post-mortem.
@@ -4837,12 +4868,16 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             std::size_t limit = 10;
             if (!a.empty() && is_int(a[0]) && as_int(a[0]) > 0)
                 limit = static_cast<std::size_t>(as_int(a[0]));
-            const bool filt_tenant = a.size() >= 2 && is_int(a[1]);
-            const auto want_tenant = filt_tenant ? static_cast<std::uint64_t>(as_int(a[1])) : 0;
+            bool filt_tenant = a.size() >= 2 && is_int(a[1]);
+            auto want_tenant = filt_tenant ? static_cast<std::uint64_t>(as_int(a[1])) : 0;
             const bool filt_effect = a.size() >= 3 && is_int(a[2]) && as_int(a[2]) != 0;
             const auto want_effect = filt_effect ? static_cast<std::uint16_t>(as_int(a[2])) : 0;
             const bool filt_prov = a.size() >= 4 && is_int(a[3]) && as_int(a[3]) != 0;
             const auto want_prov = filt_prov ? static_cast<std::uint64_t>(as_int(a[3])) : 0;
+
+            // Issue #4018: tenant auth before ring scan.
+            if (!audit_query_authorize_tenant(ev, filt_tenant, want_tenant))
+                return make_void();
 
             const auto seq = ev.mutation_audit_seq();
             EvalValue result = make_void();
@@ -4892,6 +4927,11 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 limit = static_cast<std::size_t>(as_int(a[0]));
             if (limit > kSecurityEventRingSize)
                 limit = kSecurityEventRingSize;
+            // Issue #4018: no [tenant] arg — non-TA scoped to requester under hard face.
+            bool filt_tenant = false;
+            std::uint64_t want_tenant = 0;
+            if (!audit_query_authorize_tenant(ev, filt_tenant, want_tenant))
+                return make_void();
             const auto head = ring.seq.load(std::memory_order_relaxed);
             EvalValue result = make_void();
             std::size_t emitted = 0;
@@ -4899,6 +4939,8 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 if (head <= i)
                     break;
                 const auto& e = ring.ring[(head - 1 - i) % kSecurityEventRingSize];
+                if (filt_tenant && e.tenant_id != want_tenant)
+                    continue;
                 const char* kind_str = "EffectDeny";
                 switch (e.kind) {
                     case SecurityEventKind::EffectDeny:
@@ -4981,8 +5023,8 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             if (limit > kSecurityEventRingSize)
                 limit = kSecurityEventRingSize;
 
-            const bool filt_tenant = a.size() >= 2 && is_int(a[1]);
-            const auto want_tenant = filt_tenant ? static_cast<std::uint64_t>(as_int(a[1])) : 0;
+            bool filt_tenant = a.size() >= 2 && is_int(a[1]);
+            auto want_tenant = filt_tenant ? static_cast<std::uint64_t>(as_int(a[1])) : 0;
             const bool filt_fiber = a.size() >= 3 && is_int(a[2]);
             const auto want_fiber = filt_fiber ? as_int(a[2]) : 0;
             const bool filt_since = a.size() >= 4 && is_int(a[3]) && as_int(a[3]) > 0;
@@ -5001,6 +5043,9 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 if (sidx < ev.string_heap_.size())
                     want_reason = ev.string_heap_[sidx];
             }
+            // Issue #4018: tenant auth before ring / WAL scan.
+            if (!audit_query_authorize_tenant(ev, filt_tenant, want_tenant))
+                return make_void();
 
             auto kind_name = [](SecurityEventKind k) -> const char* {
                 switch (k) {
