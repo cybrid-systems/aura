@@ -124,6 +124,10 @@ inline constexpr int kAgentScopeRegionKeyIsolationIssue = 3803;
 // stalled body is not overwritten (same-name twin / uncounted reservation
 // release / silent mailbox drop). Soft keeps historical immediate replace.
 inline constexpr int kRestartNDrainBeforeReplaceIssue = 4003;
+// Issue #4022: RestartN must not count spawn-admit deny as success
+// (quota / mailbox-BP / schedule-gate / tenant-required). Soft/Off get
+// real counts only — no new Soft force/abort.
+inline constexpr int kRestartNSpawnAdmitDenyIssue = 4022;
 
 // Issue #3444: directory_snapshot encodes root as "root" and children
 // as "0" / "0/1". Same rule for orch:scope-child's returned path.
@@ -361,6 +365,9 @@ struct ScopeWatchResult {
     // Issue #3954: body vs helper stall (additive this pass; no query keys).
     std::size_t body_stalled = 0;
     std::size_t helper_stalled = 0;
+    // Issue #4022: RestartN spawn-admit deny (quota/BP/gate/tenant).
+    // Appended at struct END — does not burn max_restarts.
+    std::size_t restart_denied = 0;
 };
 
 // Scoped multi-agent supervision root. Owns its handles via std::vector
@@ -767,6 +774,13 @@ public:
         return last_restart_skipped_no_spec_;
     }
     [[nodiscard]] std::uint32_t last_restart_ok() const noexcept { return last_restart_ok_; }
+    // Issue #4022: last join_all RestartN spawn-admit denials (this call).
+    [[nodiscard]] std::uint32_t last_restart_denied() const noexcept {
+        return last_restart_denied_;
+    }
+    [[nodiscard]] AgentDenyClass last_restart_deny_class() const noexcept {
+        return last_restart_deny_class_;
+    }
 
     // Issue #3803: observe isolation from stored specs_ region_keys.
     // Agents discover "I am Serialized" without scraping process-global
@@ -1541,6 +1555,8 @@ private:
         last_restart_attempted_ = 0;
         last_restart_skipped_no_spec_ = 0;
         last_restart_ok_ = 0;
+        last_restart_denied_ = 0;
+        last_restart_deny_class_ = AgentDenyClass::None;
         AgentFailurePolicy policy{};
         if (explicit_policy)
             policy = *explicit_policy;
@@ -1593,6 +1609,19 @@ private:
             if (try_restart_from_spec_(i, policy)) {
                 ++last_restart_ok_;
                 ++last_join_fail_action_taken_;
+            } else {
+                // Issue #4022: spawn-admit deny — do not burn max_restarts.
+                ++last_restart_denied_;
+                // Production #3250 family: degrade to Cancel (Soft: observe only).
+                if (aura::compiler::typed_audit::production_defaults_active()) {
+                    auto& hh = handles_[i];
+                    if (hh.fiber && !hh.fiber->is_done()) {
+                        hh.fiber->request_cancel();
+                        g_orch_module_stats.agent_join_fail_action_cancel_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                    }
+                    ++last_join_fail_action_taken_;
+                }
             }
         }
     }
@@ -1650,10 +1679,14 @@ private:
             r.restart_mailbox_dropped += h.mailbox->size();
         if (try_restart_from_spec_(i, policy))
             ++r.restart_ok;
+        else
+            ++r.restart_denied; // Issue #4022: spawn-admit deny
     }
 
     // Spawn replacement under stored spec. Caller already checked
     // within max_restarts and spec present. Returns true on re-spawn.
+    // Issue #4022: spawn-admit deny is NOT success — keep husk, do not
+    // burn restart_counts_ / do not reset consecutive_stall_counts_.
     bool try_restart_from_spec_(std::size_t i, const AgentFailurePolicy& policy) noexcept {
         if (!sched_) {
             g_orch_module_stats.agent_scope_scheduler_dangling_total.fetch_add(
@@ -1662,7 +1695,15 @@ private:
         }
         if (policy.restart_backoff_ms > 0)
             fiber_sleep_ms(policy.restart_backoff_ms);
-        handles_[i] = spawn_agent_with_mailbox(*sched_, specs_[i]);
+        auto nh = spawn_agent_with_mailbox(*sched_, specs_[i]);
+        if (!nh.ok) {
+            g_orch_module_stats.agent_restart_spawn_denied_total.fetch_add(
+                1, std::memory_order_relaxed);
+            last_restart_deny_class_ = classify_agent_deny(nh);
+            handles_[i] = std::move(nh); // spawn-failed husk (#3366)
+            return false;
+        }
+        handles_[i] = std::move(nh);
         if (i < consecutive_stall_counts_.size())
             consecutive_stall_counts_[i] = 0;
         ++restart_counts_[i];
@@ -1820,6 +1861,9 @@ private:
     std::uint32_t last_restart_attempted_ = 0;
     std::uint32_t last_restart_skipped_no_spec_ = 0;
     std::uint32_t last_restart_ok_ = 0;
+    // Issue #4022: last join_all RestartN spawn-admit denials + class.
+    std::uint32_t last_restart_denied_ = 0;
+    AgentDenyClass last_restart_deny_class_ = AgentDenyClass::None;
     // Taken only when mode_ == MutexGuarded. recursive so ~AgentScope
     // → cancel_all → join_all same-thread re-entry does not deadlock.
     mutable std::recursive_mutex api_mu_;
