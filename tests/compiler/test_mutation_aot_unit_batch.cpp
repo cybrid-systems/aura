@@ -155,6 +155,7 @@ namespace aura_mut_run_aot_hotupdate_audit_1882 {
 //   AC7: #3676 — production skip/refuse SE rows join fiber + Mutation epoch
 //   AC8: #3971 — skip/refuse tenant joins live Guard/checkpoint principal
 //   AC9: #4014 — boundary/AOT deny SE joins live tenant (not hardcoded 0)
+//   AC10: #4015 — JIT hotpath audit joins session/SE mid (join_audit_and_se_mid)
 
 
 // Declared in aura_jit_bridge.h (C linkage); include path may vary by target.
@@ -166,6 +167,7 @@ namespace {
     using aura::compiler::CompilerService;
     using aura::compiler::typed_audit::AuditStrategy;
     using aura::compiler::typed_audit::capture_aot_hotupdate_audit;
+    using aura::compiler::typed_audit::capture_jit_hotpath_audit;
     using aura::compiler::typed_audit::g_typed_mutation_audit_counters;
     using aura::compiler::typed_audit::reset_for_test;
     using aura::compiler::typed_audit::set_sample_ratio;
@@ -736,6 +738,95 @@ void ac9_4014_boundary_aot_deny_tenant_join() {
     ta::clear_invariant_deny_se_tls();
 }
 
+
+void ac10_4015_jit_hotpath_join_session_mid() {
+    std::println("\n--- AC10 (#4015): JIT hotpath joins session/SE mid ---");
+    namespace ta = aura::compiler::typed_audit;
+    auto read_repo_file = [](const std::string& rel) {
+        for (const auto& p : {rel, std::string("../") + rel, std::string("../../") + rel}) {
+            std::ifstream in(p);
+            if (!in)
+                continue;
+            return std::string((std::istreambuf_iterator<char>(in)),
+                               std::istreambuf_iterator<char>());
+        }
+        return std::string{};
+    };
+    reset_for_test();
+    ta::clear_boundary_audit_mid();
+    g_typed_mutation_audit_counters.production_defaults_active.store(1);
+    set_strategy(AuditStrategy::Full);
+    set_sample_ratio(1);
+
+    // Production Full + live session mid (boundary/Guard stamp): trail mid
+    // == join_audit_and_se_mid(0) == session mid (not shared Mutation epoch).
+    constexpr std::uint64_t kSessionMid = 0x4015'5E55ull;
+    ta::note_boundary_audit_mid(kSessionMid);
+    CHECK(ta::join_audit_and_se_mid(0) == kSessionMid, "4015: join → session mid");
+    const auto jit0 = load_u64(g_typed_mutation_audit_counters.jit_hotpath_audits);
+    const auto tw0 = load_u64(g_typed_mutation_audit_counters.trail_writes);
+    capture_jit_hotpath_audit("jit-hotpath-4015-session");
+    CHECK(load_u64(g_typed_mutation_audit_counters.jit_hotpath_audits) == jit0 + 1,
+          "4015: Full session → jit_hotpath_audits +1");
+    CHECK(load_u64(g_typed_mutation_audit_counters.trail_writes) > tw0,
+          "4015: Full session → trail_writes advanced");
+    ta::TypedMutationAuditEvent row{};
+    CHECK(ta::trail_latest(row), "4015: trail row present");
+    CHECK(row.kind == ta::MutationKind::JitHotpath, "4015: row kind JitHotpath");
+    CHECK(row.mutation_id == kSessionMid, "4015: trail mid == session/SE mid");
+
+    // Composite pin wins join SSOT (same key as mutate SE / grant).
+    ta::clear_boundary_audit_mid();
+    constexpr std::uint64_t kCompositeMid = 0x4015'CAFEull;
+    CHECK(ta::pin_composite_batch_join_mid(kCompositeMid) == kCompositeMid,
+          "4015: composite pin set");
+    CHECK(ta::join_audit_and_se_mid(0) == kCompositeMid, "4015: join → composite pin");
+    capture_jit_hotpath_audit("jit-hotpath-4015-composite");
+    CHECK(ta::trail_latest(row), "4015: composite trail row present");
+    CHECK(row.mutation_id == kCompositeMid, "4015: trail mid == composite pin");
+    ta::clear_boundary_audit_mid();
+
+    // Soft Sampled skip unchanged (never forces Full).
+    g_typed_mutation_audit_counters.production_defaults_active.store(0);
+    set_strategy(AuditStrategy::Sampled);
+    set_sample_ratio(4096);
+    std::uint64_t skip_mid = 1;
+    while (ta::should_audit(skip_mid))
+        ++skip_mid;
+    ta::note_boundary_audit_mid(skip_mid);
+    const auto jit_soft0 = load_u64(g_typed_mutation_audit_counters.jit_hotpath_audits);
+    const auto tw_soft0 = load_u64(g_typed_mutation_audit_counters.trail_writes);
+    capture_jit_hotpath_audit("jit-hotpath-4015-sampled-skip");
+    CHECK(load_u64(g_typed_mutation_audit_counters.jit_hotpath_audits) == jit_soft0,
+          "4015: Soft Sampled skip → no jit audit bump");
+    CHECK(load_u64(g_typed_mutation_audit_counters.trail_writes) == tw_soft0,
+          "4015: Soft Sampled skip → trail unchanged");
+
+    // Source cite: join_audit_and_se_mid(0); should_audit gate; no Full force.
+    const auto tmh = read_repo_file("src/compiler/typed_mutation_audit.h");
+    CHECK(!tmh.empty(), "4015: typed_mutation_audit.h readable");
+    const auto fn = tmh.find("inline void capture_jit_hotpath_audit(std::string_view tag)");
+    CHECK(fn != std::string::npos, "4015: capture_jit_hotpath_audit present");
+    const auto body = tmh.substr(fn, 900);
+    CHECK(body.find("join_audit_and_se_mid(0)") != std::string::npos,
+          "4015: JIT hotpath uses join_audit_and_se_mid(0)");
+    CHECK(body.find("resolve_audit_mutation_id()") == std::string::npos,
+          "4015: JIT hotpath no longer resolve_audit_mutation_id()");
+    CHECK(body.find("if (!should_audit(mid))") != std::string::npos,
+          "4015: Sampled should_audit gate intact");
+    CHECK(body.find("set_strategy(AuditStrategy::Full)") == std::string::npos,
+          "4015: never forces Full");
+    CHECK(tmh.find("Issue #4015") != std::string::npos, "4015: header cites #4015");
+    CHECK(!std::ifstream("tests/issues/test_issue_4015.cpp").good() &&
+              !std::ifstream("tests/compiler/test_issue_4015.cpp").good(),
+          "4015: no standalone test_issue_4015.cpp");
+
+    g_typed_mutation_audit_counters.production_defaults_active.store(0);
+    set_strategy(AuditStrategy::Full);
+    set_sample_ratio(1);
+    ta::clear_boundary_audit_mid();
+}
+
 int run_aot_hotupdate_audit_1882() {
     std::println("=== Issue #1882: TypedMutationAudit AOT/JIT wire-up ===");
     CompilerService cs;
@@ -748,6 +839,7 @@ int run_aot_hotupdate_audit_1882() {
     ac7_3676_skip_refuse_join_context();
     ac8_3971_skip_refuse_tenant_join();
     ac9_4014_boundary_aot_deny_tenant_join();
+    ac10_4015_jit_hotpath_join_session_mid();
     std::println("\n=== #1882: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }

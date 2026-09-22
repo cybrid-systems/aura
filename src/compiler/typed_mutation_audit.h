@@ -4858,8 +4858,12 @@ inline void capture_aot_hotupdate_audit(bool success, std::uint64_t before_epoch
 
 // Issue #1882: lightweight JIT L2 / apply hotpath sample (never forces Full).
 inline void capture_jit_hotpath_audit(std::string_view tag) noexcept {
-    // Issue #2493: same preference order as AOT (Mutation epoch preferred).
-    const std::uint64_t mid = resolve_audit_mutation_id();
+    // Issue #4015: join session/composite/batch pin SSOT (#3066/#3675) so
+    // Full + live Guard session stamps the same mid as grant/SE effect
+    // rows — resolve_audit_mutation_id() alone can fall through to the
+    // shared Mutation epoch when TypedMid is empty. Observe-only; never
+    // forces Full (Sampled gate unchanged).
+    const std::uint64_t mid = join_audit_and_se_mid(0);
     if (!should_audit(mid))
         return;
     g_typed_mutation_audit_counters.jit_hotpath_audits.fetch_add(1, std::memory_order_relaxed);
