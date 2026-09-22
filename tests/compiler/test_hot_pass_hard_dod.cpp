@@ -573,7 +573,50 @@ int run_test_hot_pass_hard_dod() {
         CHECK(cc3870.find("g_3870_") == std::string::npos, "3870 AC4: no g_3870_*");
     }
 
-    std::println("\n=== #2434/#3042/#3234/#3315/#3329/#3870 results: {} passed, {} failed ===",
+    // ── #4007: production named factory is V2 PureWrap pack ──
+    {
+        std::println("\n--- #4007 AC1: named factory is V2 PureWrap pack ---");
+        auto opt = read_file("src/compiler/optimization_passes.ixx");
+        auto core = read_file("src/compiler/pass_pipeline_core.ixx");
+        auto svc = read_file("src/compiler/service.ixx");
+        auto impls = read_file("src/compiler/pass_impls.ixx");
+        CHECK(opt.find("kProductionSoaFactoryIssue = 4007") != std::string::npos,
+              "4007 AC1: stamp");
+        CHECK(opt.find("run_default_optimization_pipeline(::aura::compiler::IRModuleV2&") !=
+                  std::string::npos,
+              "4007 AC1: V2 factory overload");
+        CHECK(opt.find("run_production_soa_pure_wrap_pack") != std::string::npos,
+              "4007 AC1: factory calls PureWrap pack");
+        CHECK(opt.find("#if defined(AURA_PRODUCTION_PACK)") != std::string::npos,
+              "4007 AC1: pack ifdef");
+        const auto pack = opt.find("#if defined(AURA_PRODUCTION_PACK)");
+        const auto pack_end = opt.find("#else", pack == std::string::npos ? 0 : pack);
+        const auto pwin = (pack != std::string::npos && pack_end > pack)
+                              ? opt.substr(pack, pack_end - pack)
+                              : std::string{};
+        CHECK(pwin.find("= delete") != std::string::npos, "4007 AC1: pack deletes AoS factory");
+        CHECK(pwin.find("kDefaultOptPipelineAosDeleted = true") != std::string::npos,
+              "4007 AC1: pack deleted flag");
+        CHECK(core.find("Issue #4007") != std::string::npos, "4007 AC1: PureWrap pack cites factory");
+        CHECK(impls.find("Issue #4007") != std::string::npos, "4007 AC1: dirty-hot cites factory");
+
+        std::println("\n--- #4007 AC2: first-eval residual + incremental consume ---");
+        CHECK(svc.find("Issue #4007") != std::string::npos, "4007 AC2: service residual cited");
+        CHECK(svc.find("run_production_pipeline") != std::string::npos,
+              "4007 AC2: first-eval still AoS production pipeline");
+        CHECK(svc.find("run_production_soa_dirty_hot_pack") != std::string::npos,
+              "4007 AC2: incremental still dirty-hot pack");
+        CHECK(opt.find("run_production_pipeline") != std::string::npos,
+              "4007 AC2: Soft alias still #3329 production pipeline");
+
+        std::println("\n--- #4007 AC3: no new query key / invent ---");
+        CHECK(opt.find("schema-4007") == std::string::npos, "4007 AC3: no schema-4007");
+        CHECK(svc.find("schema-4007") == std::string::npos, "4007 AC3: no service schema key");
+        CHECK(read_file("tests/compiler/test_issue_4007.cpp").empty(), "4007 AC3: no invent");
+        CHECK(read_file("docs/design/4007-soa-factory.md").empty(), "4007 AC3: no docs/design");
+    }
+
+    std::println("\n=== #2434/#3042/#3234/#3315/#3329/#3870/#4007 results: {} passed, {} failed ===",
                  g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

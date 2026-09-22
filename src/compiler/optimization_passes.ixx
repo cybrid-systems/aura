@@ -1146,6 +1146,19 @@ static_assert(aura::compiler::ShapeStableAwarePass<RenderPass>,
               "RenderPass must be ShapeStableAware (#1578)");
 
 // ── Factory + default pipeline (#1576 AC3/AC4 + #1578 Render + #2025 DCE) ──
+// Issue #4007: production named factory is the SoA PureWrap pack on a
+// live IRModuleV2 (CK/CF/TP/Shape DirtyAware peel). Incremental consume
+// still wraps those stages then DCE via run_production_soa_dirty_hot_pack.
+// First-eval interpreter keeps run_production_pipeline on AoS (SoA-only
+// skip of dual-emit leaves no live V2 there). Soft/unit keep the AoS
+// alias below. AURA_PRODUCTION_PACK deletes the AoS overload so default
+// production TUs cannot call it (compile-fail, not a runtime branch).
+inline constexpr int kProductionSoaFactoryIssue = 4007;
+#if defined(AURA_PRODUCTION_PACK)
+inline constexpr bool kDefaultOptPipelineAosDeleted = true;
+inline bool run_default_optimization_pipeline(aura::ir::IRModule&) = delete;
+#else
+inline constexpr bool kDefaultOptPipelineAosDeleted = false;
 // Run core concrete passes via run_production_pipeline (#3329 purity
 // gate; contracts + metrics). Order: ConstantFold → TypePropagation →
 // DeadCoercion → ComputeKind → ShapeAwareFold → Render. DeadCoercion
@@ -1168,6 +1181,20 @@ inline bool run_default_optimization_pipeline(aura::ir::IRModule& mod) {
         rp.set_pipeline_epoch(epoch);
     }
     return aura::compiler::run_production_pipeline(mod, cf, tp, dce, ck, sa, rp);
+}
+#endif
+
+// Issue #4007: production factory SSOT — SoA PureWrap pack. Do not
+// route this through the thinner dirty-hot pack (DCE stays there for
+// incremental). Fully qualify Wrap types: opt_registry::TypePropagationPass
+// is a different adapter.
+inline bool run_default_optimization_pipeline(::aura::compiler::IRModuleV2& mod) {
+    opt_pipeline_factory_runs_total.fetch_add(1, std::memory_order_relaxed);
+    ::aura::compiler::ComputeKindWrap ck;
+    ::aura::compiler::ConstantFoldingWrap cf;
+    ::aura::compiler::TypePropagationPass tp;
+    ::aura::compiler::ShapeWrap sh;
+    return ::aura::compiler::run_production_soa_pure_wrap_pack(mod, ck, cf, tp, sh);
 }
 
 static_assert(aura::compiler::ProductionPipelinePass<ConstantFoldingPass>,

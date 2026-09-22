@@ -99,6 +99,10 @@ static_assert(aura::core::boundary::AllowedDependency<aura::core::boundary::Modu
                                                       aura::core::boundary::ModuleLayer::Parser>);
 static_assert(!aura::core::boundary::layer_may_depend_on(
     aura::core::boundary::ModuleLayer::Core, aura::core::boundary::ModuleLayer::Compiler));
+#if defined(AURA_PRODUCTION_PACK)
+static_assert(aura::compiler::opt_registry::kDefaultOptPipelineAosDeleted,
+              "Issue #4007: production TUs delete the AoS named factory");
+#endif
 
 // ── JIT primitive call dispatcher ────────────────────────
 // Bridges OpPrimCall/OpPrimitive from JIT code to evaluator PrimFn table.
@@ -3346,6 +3350,11 @@ public:
         // Issue #1418: include DCE after ConstantFolding.
         // Issue #1457: type-propagation between TypeSpec and DCE.
         // Issue #3329: production purity / SoA / DirtyPropagator gate.
+        // Issue #4007: first-eval interpreter still folds AoS IRModule
+        // (SoA-only skip of dual-emit leaves no live IRModuleV2 here).
+        // Named production factory is the V2 PureWrap pack; incremental
+        // consume is run_production_soa_dirty_hot_pack. Do not call the
+        // AoS named factory from this TU.
         aura::compiler::run_production_pipeline(ir_mod, ts, tprop, ck, ar, cf, dce);
         accumulate_type_propagation_metrics(tprop);
         accumulate_coercion_pass_metrics(ts, dce);
@@ -3562,6 +3571,8 @@ public:
             // Issue #163: run_pipeline (Pass concept fold) replaces
             // the individual *.run() calls. Issue #1418: include DCE.
             // Issue #3329: production purity / SoA / DirtyPropagator gate.
+            // Issue #4007: exec_jit interpreter AoS — same first-eval
+            // residual as eval_ir (no live V2 under SoA-only).
             aura::compiler::run_production_pipeline(ir_mod, ts, tprop, ck, ar, cf, dce);
             accumulate_type_propagation_metrics(tprop);
             accumulate_coercion_pass_metrics(ts, dce);
@@ -8992,6 +9003,8 @@ public:
         // Issue #163: run_pipeline (Pass concept fold) replaces
         // the individual *.run() calls. Issue #1418: include DCE.
         // Issue #3329: production purity / SoA / DirtyPropagator gate.
+        // Issue #4007: hot-swap still restamps the cached AoS module;
+        // named factory stays the V2 PureWrap pack.
         aura::compiler::run_production_pipeline(*last_ir_mod_, ts, tprop, ck, ar, cf, dce);
         accumulate_type_propagation_metrics(tprop);
         accumulate_coercion_pass_metrics(ts, dce);

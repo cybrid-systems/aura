@@ -507,6 +507,10 @@ consteval void check_production_pure_wrap_pack() {
                   "(AoS-only DirtySoAEntryPass wrap fails to instantiate)");
 }
 
+// Issue #4007: named production factory (opt_registry V2 overload)
+// constructs CK/CF/TP/Shape and calls this pack. Incremental consume
+// is run_production_soa_dirty_hot_pack (this pack + DCE). Soft/unit
+// keep the AoS named-factory alias.
 export template <ProductionPureWrapPass... Passes>
 bool run_production_soa_pure_wrap_pack(IRModuleV2& mod, Passes&... passes) {
     check_production_pure_wrap_pack<Passes...>();

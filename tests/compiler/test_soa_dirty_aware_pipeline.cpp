@@ -570,6 +570,59 @@ int run_test_soa_dirty_aware_pipeline() {
         CHECK(impls.find("schema-3488") == std::string::npos, "3488 AC5: no new query key");
     }
 
+    // ── Issue #4007: production named factory is SoA PureWrap pack ──
+    {
+        std::println("\n=== Issue #4007: production factory is SoA PureWrap pack ===");
+        CHECK(aura::compiler::opt_registry::kProductionSoaFactoryIssue == 4007, "4007 stamp");
+#if defined(AURA_PRODUCTION_PACK)
+        CHECK(aura::compiler::opt_registry::kDefaultOptPipelineAosDeleted,
+              "4007: pack deletes AoS factory");
+#else
+        CHECK(!aura::compiler::opt_registry::kDefaultOptPipelineAosDeleted,
+              "4007: Soft/unit keep AoS alias");
+#endif
+        auto mod = make_sparse_dirty_mod();
+        const auto factory0 = aura::compiler::opt_registry::opt_pipeline_factory_runs_total.load(
+            std::memory_order_relaxed);
+        const auto skips0 = aura::compiler::ir_soa_migration::dirty_block_driven_skips.load(
+            std::memory_order_relaxed);
+        const auto runs0 = aura::compiler::ir_soa_migration::dirty_block_driven_runs.load(
+            std::memory_order_relaxed);
+        CHECK(aura::compiler::opt_registry::run_default_optimization_pipeline(mod),
+              "4007 AC1: V2 factory ok");
+        CHECK(aura::compiler::opt_registry::opt_pipeline_factory_runs_total.load(
+                  std::memory_order_relaxed) > factory0,
+              "4007 AC1: factory runs advanced");
+        CHECK(aura::compiler::ir_soa_migration::dirty_block_driven_skips.load(
+                  std::memory_order_relaxed) > skips0,
+              "4007 AC1: clean blocks skipped");
+        CHECK(aura::compiler::ir_soa_migration::dirty_block_driven_runs.load(
+                  std::memory_order_relaxed) > runs0,
+              "4007 AC1: dirty blocks peeled");
+
+        const auto opt = read_file("src/compiler/optimization_passes.ixx");
+        const auto core = read_file("src/compiler/pass_pipeline_core.ixx");
+        const auto svc = read_file("src/compiler/service.ixx");
+        const auto impls = read_file("src/compiler/pass_impls.ixx");
+        CHECK(opt.find("kProductionSoaFactoryIssue = 4007") != std::string::npos,
+              "4007 AC2: stamp");
+        CHECK(opt.find("IRModuleV2& mod") != std::string::npos, "4007 AC2: V2 overload");
+        CHECK(opt.find("run_production_soa_pure_wrap_pack") != std::string::npos,
+              "4007 AC2: PureWrap pack is the factory");
+        CHECK(opt.find("#if defined(AURA_PRODUCTION_PACK)") != std::string::npos,
+              "4007 AC2: pack ifdef");
+        CHECK(opt.find("= delete") != std::string::npos, "4007 AC2: AoS factory deleted under pack");
+        CHECK(core.find("Issue #4007") != std::string::npos, "4007 AC2: pack cites factory");
+        CHECK(impls.find("Issue #4007") != std::string::npos, "4007 AC2: dirty-hot cites factory");
+        CHECK(svc.find("Issue #4007") != std::string::npos, "4007 AC3: first-eval residual cited");
+        CHECK(svc.find("run_production_soa_dirty_hot_pack") != std::string::npos,
+              "4007 AC3: incremental still dirty-hot pack");
+        CHECK(opt.find("schema-4007") == std::string::npos, "4007 AC4: no new query key");
+        CHECK(svc.find("schema-4007") == std::string::npos, "4007 AC4: no schema key in service");
+        CHECK(read_file("tests/compiler/test_issue_4007.cpp").empty(), "4007 AC4: no invent");
+        CHECK(read_file("docs/design/4007-soa-factory.md").empty(), "4007 AC4: no docs/design");
+    }
+
     // ── Issue #3701: production dirty pack skips AoS EscapeAnalysisWrap ──
     {
         std::println("\n=== Issue #3701: Production SoA dirty escape, no AoS Wrap run ===");
@@ -871,7 +924,7 @@ int run_test_soa_dirty_aware_pipeline() {
     ac3583_4_no_invent_no_mangle();
 
     std::println(
-        "\n=== #2143/#2907/#3488/#3502/#3583/#3689/#3701/#3822 results: {} passed, {} failed ===",
+        "\n=== #2143/#2907/#3488/#3502/#3583/#3689/#3701/#3822/#4007 results: {} passed, {} failed ===",
         g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
