@@ -1539,8 +1539,10 @@ void Evaluator::grant_effect_session(std::uint64_t tenant_id, std::string_view n
     }
     // Issue #2969 AC1: registry write-fence — under production
     // (Restricted/Strict), writing a session grant for a FOREIGN tenant id
-    // requires TenantAdmin. AC3: Soft/Off short-circuits; AC2: same-tenant
-    // self-grant keeps existing policy.
+    // requires TenantAdmin. AC3: Soft/Off short-circuits.
+    // Issue #3996: same-tenant high-risk also requires TenantAdmin
+    // (mirrors grant_effect_capability #3362). Session_bound shape is not
+    // an admin exemption — grant_locked SSOT is token-based.
     // Issue #3126: take the registry mtx + use effects_for_locked so a
     // concurrent revoke of TenantAdmin from another Evaluator / fiber
     // cannot race past this fence. Previous has_capability() (unlocked
@@ -1548,11 +1550,11 @@ void Evaluator::grant_effect_session(std::uint64_t tenant_id, std::string_view n
     const auto self_tenant = static_cast<std::uint64_t>(capability_tenant_id_);
     const bool foreign_target = tenant_id != 0 && tenant_id != self_tenant;
     auto& reg_session = g_capability_registry();
-    if (force_bind && foreign_target) {
+    if (force_bind && (foreign_target || is_high_risk)) {
         std::lock_guard<std::mutex> lock(reg_session.mtx);
         const auto held = reg_session.effects_for_locked(self_tenant);
         const bool is_admin = has_effect(held, Effect::TenantAdmin);
-        if (!is_admin) {
+        if (foreign_target && !is_admin) {
             using ::aura::core::security_event::SecurityEventKind;
             using ::aura::core::security_event_wal::emit_security_event_durable;
             const auto epoch = ::aura::core::current_mutation_epoch();
@@ -1566,6 +1568,20 @@ void Evaluator::grant_effect_session(std::uint64_t tenant_id, std::string_view n
                                         "grant-foreign-tenant-needs-tenant-admin",
                                         /*denied=*/true, fid);
             return; // deny — no registry write, no allow-counter bump (AC4)
+        }
+        if (is_high_risk && !is_admin) {
+            using ::aura::core::security_event::SecurityEventKind;
+            using ::aura::core::security_event_wal::emit_security_event_durable;
+            const auto epoch = ::aura::core::current_mutation_epoch();
+            const auto mid = production_deny_se_mid(provenance_mutation_id); // #3801
+            const auto tenant = tenant_id != 0 ? tenant_id : self_tenant;
+            const auto fid = static_cast<std::int64_t>(fiber);
+            g_capability_effect_metrics().capability_wildcard_write_fence_deny_total.fetch_add(
+                1, std::memory_order_relaxed);
+            emit_security_event_durable(SecurityEventKind::EffectDeny, tenant, mid, epoch,
+                                        effect_bits, name, "session-grant-needs-tenant-admin",
+                                        /*denied=*/true, fid);
+            return; // deny — no registry write
         }
         // Issue #3436: caller_principal = granting Evaluator's tenant.
         reg_session.grant_locked(tenant_id, name, static_cast<Effect>(effect_bits), prov,

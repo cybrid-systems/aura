@@ -74,6 +74,11 @@ inline constexpr int kCapabilityMidRevokeEpochHonestIssue = 3992;
 // Issue #3995: sandbox-downgrade / allow_cross policy gates take mtx +
 // effects_for_locked (TOCTOU vs concurrent TA/wildcard revoke).
 inline constexpr int kPolicyGateLockedCapabilityIssue = 3995;
+// Issue #3996: session high-bits mint is token-based (caller_principal==0
+// = dedicated grant_session / fixture), not shape-based session_bound.
+// Evaluator paths pass capability_tenant_id_ so same-tenant Mutate still
+// needs TenantAdmin at grant_locked SSOT.
+inline constexpr int kSessionHighBitsGrantFenceIssue = 3996;
 // Issue #3844: grant/SE epoch invent residual — Epoch = WorkspaceEpoch
 // Mutation only (never phantom 1 under hard face).
 inline constexpr int kGrantEpochNoPhantomIssue = 3844;
@@ -735,12 +740,10 @@ struct CapabilityRegistry {
             const auto mode = sandbox_mode.load(std::memory_order_acquire);
             if (mode != EffectSandboxMode::Off) {
                 // Session-bound Mutate is the Restricted mutation-session
-                // path (#2944). A same-tenant session grant is not a
-                // high-bits admin act — requiring TA here made every
-                // Restricted session Mutate need TenantAdmin (steal-resume
-                // tests and Agent mutate loops could not grant). Foreign
-                // tenant still needs TA. caller=0 + session_bound uses
-                // the grant tenant as self-principal.
+                // path (#2944). Foreign tenant still needs TA. caller=0
+                // + session_bound uses the grant tenant as self-principal
+                // and is the #3996 authorized mint token (grant_session /
+                // fixture). Evaluator paths pass a non-zero principal.
                 const auto caller = caller_principal != 0
                                         ? caller_principal
                                         : (session_bound && tenant != 0
@@ -753,7 +756,14 @@ struct CapabilityRegistry {
                     static_cast<std::uint16_t>(Effect::Syscall);
                 const bool foreign_tenant = (tenant != 0 && tenant != caller);
                 const bool high_bits = (static_cast<std::uint16_t>(effects) & kHighBits) != 0;
-                if (foreign_tenant || (high_bits && !session_bound)) {
+                // Issue #3996: keep the #2944 same-tenant session path, but
+                // the exemption is token-based (caller_principal==0, the
+                // dedicated grant_session / fixture mint), not shape-based
+                // session_bound. Evaluator grant_effect_session /
+                // grant_capability pass capability_tenant_id_ so a
+                // same-tenant high-bits session row still needs TA.
+                const bool authorized_session_mint = session_bound && caller_principal == 0;
+                if (foreign_tenant || (high_bits && !authorized_session_mint)) {
                     if (!has_effect(effects_for_locked(caller), Effect::TenantAdmin)) {
                         auto& met = g_capability_effect_metrics();
                         met.capability_macro_self_evo_grant_deny_total.fetch_add(
@@ -838,7 +848,8 @@ struct CapabilityRegistry {
 
     // Issue #2944: mutation-session grant sugar — mid-bound + session_bound.
     // Equivalent to grant(..., single_use, /*session_bound=*/true).
-    // Prefer Evaluator::grant_effect_session for production high-risk force.
+    // Issue #3996: this is the authorized session mint (caller_principal
+    // default 0). Evaluator::grant_effect_session is the TA-fenced surface.
     void grant_session(TenantId tenant, std::string_view name, Effect effects,
                        const EffectProvenance& prov = {}, bool single_use = false,
                        TenantId caller_principal = 0) {
