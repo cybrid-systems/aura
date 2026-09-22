@@ -93,6 +93,7 @@ static void ac3495_run_added_tests();
 static void ac3726_run_added_tests();
 static void ac3926_supervise_batch_isolation_honest();
 static void ac3969_run_added_tests();
+static void ac4000_run_added_tests();
 
 int run_test_failure_policy_bridge() {
     std::println("=== Issue #2539: FailurePolicy → AgentFailurePolicy bridge ===");
@@ -421,6 +422,7 @@ int run_test_failure_policy_bridge() {
     ac3726_run_added_tests();
     ac3926_supervise_batch_isolation_honest();
     ac3969_run_added_tests();
+    ac4000_run_added_tests();
 
     // Issue #3052: RetryN projects on_join_fail; explicit policy not overwritten.
     {
@@ -1655,6 +1657,161 @@ static void ac3969_run_added_tests() {
     ac3969_3_restartn_bare_adopt_skips();
     ac3969_4_missing_keys_invalid();
     ac3969_5_source_cite();
+}
+
+// ── Issue #4000: supervise-batch :region-keys → RegionConcurrent ──
+static void ac4000_1_missing_keys_serialized() {
+    std::println("\n--- #4000 AC1: supervise-batch without keys stays Serialized ---");
+    using aura::compiler::CompilerService;
+    using aura::compiler::types::as_int;
+    using aura::compiler::types::is_int;
+    using aura::orch::kSuperviseBatchRegionKeysIssue;
+    using aura::orch::reset_all_agent_scopes_for_test;
+    CHECK(kSuperviseBatchRegionKeysIssue == 4000, "4000: issue stamp");
+    reset_all_agent_scopes_for_test();
+    CompilerService cs;
+    ac3206_set_prod(true);
+    cs.evaluator().set_workspace_region_concurrency_enabled(true);
+    auto r = cs.eval(R"(
+        (let ((pol (orch:compose-workflow 'collect-all))
+              (tasks (list (lambda () 1) (lambda () 2))))
+          (let ((h (orch:supervise-batch tasks pol :watch-scope #t)))
+            (if (and (string=? (hash-ref h "isolation-level") "serialized")
+                     (hash-ref h "eval-serialized")
+                     (= (hash-ref h "schema-4000") 4000))
+                1 0)))
+    )");
+    CHECK(r && is_int(*r) && as_int(*r) == 1,
+          "4000 AC1: no keys → Serialized + eval-serialized=#t + schema-4000");
+    ac3206_set_prod(false);
+    reset_all_agent_scopes_for_test();
+}
+
+static void ac4000_2_overlap_keys_serialized() {
+    std::println("\n--- #4000 AC2: overlap :region-keys stay Serialized (no auto-invent) ---");
+    using aura::compiler::CompilerService;
+    using aura::compiler::types::as_int;
+    using aura::compiler::types::is_int;
+    using aura::orch::reset_all_agent_scopes_for_test;
+    using aura::serve::parallel_orch::decide_isolation;
+    using aura::serve::parallel_orch::IsolationLevel;
+    using aura::serve::parallel_orch::ParallelPolicy;
+    using aura::serve::parallel_orch::TaskSpec;
+    TaskSpec probe[2];
+    probe[0].region_key = 1;
+    probe[1].region_key = 2;
+    const auto rc = decide_isolation(ParallelPolicy{}, probe, /*pure_mode=*/false);
+    CHECK(rc.level == IsolationLevel::RegionConcurrent,
+          "4000 AC2: decide_isolation ≥2 distinct keys → RegionConcurrent (SSOT)");
+    probe[1].region_key = 1;
+    const auto ov = decide_isolation(ParallelPolicy{}, probe, /*pure_mode=*/false);
+    CHECK(ov.level == IsolationLevel::Serialized, "4000 AC2: overlap keys stay Serialized");
+    reset_all_agent_scopes_for_test();
+    CompilerService cs;
+    ac3206_set_prod(true);
+    cs.evaluator().set_workspace_region_concurrency_enabled(true);
+    auto r = cs.eval(R"(
+        (let ((pol (orch:compose-workflow 'collect-all))
+              (tasks (list (lambda () 1) (lambda () 2)))
+              (keys (vector 5 5)))
+          (let ((h (orch:supervise-batch tasks pol :watch-scope #t :region-keys keys)))
+            (if (and (string=? (hash-ref h "isolation-level") "serialized")
+                     (hash-ref h "eval-serialized")
+                     (= (hash-ref h "schema-4000") 4000))
+                1 0)))
+    )");
+    CHECK(r && is_int(*r) && as_int(*r) == 1,
+          "4000 AC2: overlap keys → Serialized + eval-serialized=#t (skip_mu off)");
+    ac3206_set_prod(false);
+    reset_all_agent_scopes_for_test();
+}
+
+static void ac4000_3_skip_mu_matches_3840() {
+    std::println("\n--- #4000 AC3: skip_mu matches parallel-intend #3840; TLS stamped ---");
+    const auto agent = read_file("src/compiler/evaluator_primitives_agent.cpp");
+    const auto intend = agent.find("ash->region_concurrent_skip_eval_mu");
+    CHECK(intend != std::string::npos, "4000 AC3: #3840 skip gate still on parallel-intend");
+    const auto sup = agent.find("add(\"orch:supervise-batch\"");
+    CHECK(sup != std::string::npos, "4000 AC3: supervise-batch prim");
+    const auto slice = agent.substr(sup, 28000);
+    CHECK(slice.find("IsolationLevel::RegionConcurrent") != std::string::npos,
+          "4000 AC3: supervise-batch skip_mu uses RegionConcurrent");
+    CHECK(slice.find("production_defaults_active()") != std::string::npos,
+          "4000 AC3: skip_mu production-gated");
+    CHECK(slice.find("workspace_region_concurrency_enabled()") != std::string::npos,
+          "4000 AC3: skip_mu workspace-gated (same as #3840)");
+    CHECK(slice.find("SuperviseRegionTls") != std::string::npos,
+          "4000 AC3: bodies stamp region TLS");
+    CHECK(slice.find("note_parallel_task_region_key") != std::string::npos,
+          "4000 AC3: TLS uses intend/spawn SSOT");
+    CHECK(slice.find("if (!skip_mu)") != std::string::npos,
+          "4000 AC3: hash keeps RegionConcurrent only when skip_mu");
+    CHECK(slice.find("invent keys when") != std::string::npos, "4000 AC3: do not auto-invent keys");
+}
+
+static void ac4000_4_soft_keys_stay_serialized() {
+    std::println("\n--- #4000 AC4: Soft + :region-keys stays eval-serialized ---");
+    using aura::compiler::CompilerService;
+    using aura::compiler::types::as_int;
+    using aura::compiler::types::is_int;
+    using aura::orch::reset_all_agent_scopes_for_test;
+    ac3206_set_prod(false);
+    reset_all_agent_scopes_for_test();
+    CompilerService cs;
+    ac3206_set_prod(false);
+    cs.evaluator().set_workspace_region_concurrency_enabled(true);
+    auto r = cs.eval(R"(
+        (let ((pol (orch:compose-workflow 'collect-all))
+              (tasks (list (lambda () 1) (lambda () 2)))
+              (keys (vector 1 2)))
+          (let ((h (orch:supervise-batch tasks pol :watch-scope #t :region-keys keys)))
+            (if (and (hash-ref h "eval-serialized")
+                     (string=? (hash-ref h "isolation-level") "serialized"))
+                1 0)))
+    )");
+    CHECK(r && is_int(*r) && as_int(*r) == 1,
+          "4000 AC4: Soft keeps eval-serialized=#t / Serialized (zero extra cost)");
+    reset_all_agent_scopes_for_test();
+}
+
+static void ac4000_5_source_cite() {
+    std::println("\n--- #4000 AC5: source-cite + no AgentRegistry + no new query key ---");
+    const auto agent = read_file("src/compiler/evaluator_primitives_agent.cpp");
+    const auto spawn = read_file("src/orch/agent_spawn.h");
+    const auto readme = read_file("src/orch/README.md");
+    const auto t = read_file("tests/orch/test_failure_policy_bridge.cpp");
+    CHECK(spawn.find("kSuperviseBatchRegionKeysIssue = 4000") != std::string::npos,
+          "4000 AC5: stamp");
+    CHECK(agent.find("Issue #4000") != std::string::npos, "4000 AC5: prim cites #4000");
+    CHECK(agent.find("SuperviseRegionTls") != std::string::npos,
+          "4000 AC5: stamp region TLS on supervise-batch bodies");
+    CHECK(agent.find("note_parallel_task_region_key") != std::string::npos,
+          "4000 AC5: TLS uses spawn/intend SSOT");
+    CHECK(agent.find("[:region-keys vec]") != std::string::npos,
+          "4000 AC5: usage documents :region-keys");
+    CHECK(agent.find("schema-4000") != std::string::npos, "4000 AC5: schema-4000 on hash");
+    CHECK(agent.find("query:4000") == std::string::npos, "4000 AC5: no query:4000");
+    CHECK(agent.find("query:supervise-batch-region") == std::string::npos,
+          "4000 AC5: no new query key");
+    CHECK(spawn.find("class AgentRegistry") == std::string::npos, "4000 AC5: no AgentRegistry");
+    CHECK(readme.find("Issue #4000") != std::string::npos ||
+              readme.find("#4000") != std::string::npos,
+          "4000 AC5: README cites :region-keys");
+    CHECK(t.find("ac4000_2_overlap_keys_serialized") != std::string::npos,
+          "4000 AC5: overlap/Serialized live AC in this file");
+    CHECK(t.find("ac4000_3_skip_mu_matches_3840") != std::string::npos,
+          "4000 AC5: skip_mu/#3840 source-cite in this file");
+    CHECK(read_file("tests/orch/test_issue_4000.cpp").empty(), "4000 AC5: no test_issue_4000.cpp");
+    CHECK(read_file("docs/design/4000-supervise-region-keys.md").empty(),
+          "4000 AC5: no docs/design/4000-*");
+}
+
+static void ac4000_run_added_tests() {
+    ac4000_1_missing_keys_serialized();
+    ac4000_2_overlap_keys_serialized();
+    ac4000_3_skip_mu_matches_3840();
+    ac4000_4_soft_keys_stay_serialized();
+    ac4000_5_source_cite();
 }
 
 #ifndef AURA_ISSUE_BATCH_MEMBER

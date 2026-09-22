@@ -5553,9 +5553,13 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
     // (Phase B, optional) + residual observation (Phase C). Hosts stay in
     // control of fibers / agents / reclaim (#2661) — no AgentRegistry.
     //   (orch:supervise-batch tasks policy [:stall-timeout-ms n]
-    //                                   [:watch-scope bool])
+    //                                   [:watch-scope bool]
+    //                                   [:region-keys vec])
     //     → hash {ok, ok-count, err-count, status, residual-observed,
     //             schema-2852}
+    // Issue #4000: optional :region-keys (same vector as parallel-intend)
+    // forwards into TaskSpec / AgentSpec. Missing → region_key=0 Serialized.
+    // Do not auto-invent keys.
     // Soft / sandbox=off never hard-denies beyond the existing watch_all /
     // parallel_intend gates (AC6). Defaults FailurePolicy surfaces
     // unchanged for non-callers (AC1).
@@ -5710,7 +5714,8 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 return make_primitive_error(
                     ev.string_heap_, ev.error_values_,
                     "orch:supervise-batch: usage "
-                    "(orch:supervise-batch tasks policy [:stall-timeout-ms n] [:watch-scope bool])",
+                    "(orch:supervise-batch tasks policy [:stall-timeout-ms n] "
+                    "[:watch-scope bool] [:region-keys vec])",
                     ev.primitive_error_counter_ptr());
             }
             // Issue #3495: parse kwargs with orch_keyword_key (keywords, not
@@ -5726,7 +5731,9 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 else if (k == "watch-scope" && types::is_bool(a[i + 1]))
                     watch_scope = types::as_bool(a[i + 1]);
                 else if ((k == "region-keys" || k == "region_keys") && types::is_vector(a[i + 1])) {
-                    // Issue #3926: forward :region-keys onto child specs / no-watch intend.
+                    // Issue #3926 / #4000: forward :region-keys onto child
+                    // specs / no-watch intend. Host-supplied only — never
+                    // invent keys when the kwarg is absent.
                     auto rvidx = types::as_vector_idx(a[i + 1]);
                     if (rvidx < ev.vector_heap_.size()) {
                         region_keys.clear();
@@ -5881,6 +5888,16 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             const bool skip_mu =
                 iso_dec.level == aura::serve::parallel_orch::IsolationLevel::RegionConcurrent &&
                 prod && ev.workspace_region_concurrency_enabled();
+            // Issue #4000: same TLS stamp as parallel-intend #3840 so
+            // try_acquire → try_acquire_for_region when keys are live.
+            // Always stamp a non-zero key; skip_mu still batch-gated.
+            struct SuperviseRegionTls {
+                explicit SuperviseRegionTls(std::uint64_t k) {
+                    if (k != 0)
+                        Evaluator::note_parallel_task_region_key(k);
+                }
+                ~SuperviseRegionTls() { Evaluator::clear_parallel_task_region_key(); }
+            };
             if (watch_scope) {
                 // Spawn into the child so watch_all / RestartN have specs_
                 // + handles. Empty Phase A so closures do not run twice.
@@ -5892,6 +5909,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                     spec.region_key = rkey;
                     spec.body = [&ev, cid, rkey, skip_mu]() {
                         try {
+                            SuperviseRegionTls region_tls(rkey);
                             const bool use_lock = !skip_mu || rkey == 0;
                             std::unique_lock<std::mutex> lock(ev.agent_apply_mu_, std::defer_lock);
                             if (use_lock)
@@ -5924,6 +5942,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                     ts.region_key = rkey;
                     ts.body = [&ev, eval_mu, cid, ti, rkey,
                                skip_mu]() -> aura::serve::parallel_orch::TaskResult {
+                        SuperviseRegionTls region_tls(rkey);
                         const bool use_lock = !skip_mu || rkey == 0;
                         std::unique_lock<std::mutex> lock(*eval_mu, std::defer_lock);
                         if (use_lock)
@@ -5999,9 +6018,10 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             };
             const auto apply_total = aura::orch::g_orch_module_stats.workflow_apply_total.load(
                 std::memory_order_relaxed);
-            // Issue #3926: never advertise region-concurrent while apply is
-            // 1-wide (watch empty Phase A / unkeyed / Soft). decide_isolation
-            // remains the only ternary.
+            // Issue #3926 / #4000: never advertise region-concurrent while
+            // apply is 1-wide (watch empty Phase A / unkeyed / Soft).
+            // Production + RegionConcurrent + workspace skip_mu keeps the
+            // decide_isolation level (same face as parallel-intend #3840).
             if (!skip_mu)
                 wf_iso.decision.level = aura::serve::parallel_orch::IsolationLevel::Serialized;
             const char* iso_cstr =
@@ -6034,6 +6054,8 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                  make_int(static_cast<std::int64_t>(wf_iso.decision.distinct_nonzero_region_keys))},
                 {"schema-3803", make_int(aura::orch::kAgentScopeRegionKeyIsolationIssue)},
                 {"issue-3803", make_int(aura::orch::kAgentScopeRegionKeyIsolationIssue)},
+                {"schema-4000", make_int(aura::orch::kSuperviseBatchRegionKeysIssue)},
+                {"issue-4000", make_int(aura::orch::kSuperviseBatchRegionKeysIssue)},
             };
             return build_orch_hash(kv);
         });
