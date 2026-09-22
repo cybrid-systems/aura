@@ -2,8 +2,9 @@
 # scripts/check_type_dynamic_production_3622.py -- Issue #3622 source-cite gate.
 #
 # AC1: Production face — consistent_unify's Dynamic arm fails closed:
-#      under Strict + production_defaults_active the gradual accept arm
-#      bumps dynamic_degrade_with_blame_total (#2064 blame) and returns
+#      production_hard_face_active (Full or production_defaults) OR
+#      Strict ∧ defaults (#4009). Gradual accept arm bumps
+#      dynamic_degrade_with_blame_total (#2064 blame) and returns
 #      false (Dynamic is not a silent success). Soft / Balanced keep the
 #      gradual core; Dynamic ~ Linear stays false (#117).
 # AC2: Production + Strict ground table rejects ANY two concrete non-var
@@ -35,6 +36,7 @@ ALLOW = "scripts/coverage/root_check_allowlist.txt"
 
 LINTER = "check_type_dynamic_production_3622"
 DYN_REJECT = "return false; // Production: Dynamic is not a silent success (#3622)"
+HARD = "production_hard_face_active()"
 GATE = "unify_gradual_mode_ == GradualPermissiveness::Strict &&"
 OLD_PRIM_ROW = "is_prim(a) && is_prim(b) && a != b"
 
@@ -71,9 +73,11 @@ def _rows(impl: str, tir: str, tbi: str, build: str, allow: str) -> list[str]:
         fails.append("AC1: Dynamic production reject missing")
         win = ""
     else:
-        win = impl[dyn : dyn + 1400]
-    must(GATE, "AC1 strict gate precedes", win)
-    must("typed_audit::production_defaults_active()", "AC1 production face gate", win)
+        win = impl[dyn : dyn + 1800]
+    must(HARD, "AC1 hard-face gate", win)
+    must("Issue #4009", "AC1 #4009 cite", win)
+    must(GATE, "AC1 Strict+defaults residual", win)
+    must("typed_audit::production_defaults_active()", "AC1 defaults residual", win)
     must(DYN_REJECT, "AC1 Dynamic not a silent success", win)
     must("dynamic_degrade_with_blame_total", "AC1 #2064 blame note on reject", win)
     must("Dynamic ~ Linear already failed closed above (#117)", "AC1 Linear kept", win)
@@ -126,6 +130,8 @@ def main() -> int:
     if args.self_test:
         sample_impl = (
             "Issue #3622: Production face — Dynamic ~ T is not a silent\n"
+            "production_hard_face_active()\n"
+            "Issue #4009\n"
             "unify_gradual_mode_ == GradualPermissiveness::Strict &&\n"
             "typed_audit::production_defaults_active()\n"
             "dynamic_degrade_with_blame_total\n" + DYN_REJECT + "\n"
