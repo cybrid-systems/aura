@@ -1805,6 +1805,79 @@ static void ac3984_4_soft_unchanged() {
     reset_for_test();
 }
 
+
+// ── Issue #4030: grant_type_export aligns with deferred-green commit ──
+//   AC1: Prod/Full persist — grant only after commit_deferred (or skip when
+//        deferred TLS unarmed / live would_allow=false after recover).
+//   AC2: stamp_last_look_rejected / recover-fail still note_3440 + clear.
+//   AC3: Soft/Off still grants inside persist helper (zero extra).
+
+static void ac4030_1_source_grant_after_deferred_commit() {
+    std::println("\n--- #4030 AC1: Prod/Full grant after deferred commit ---");
+    const auto h = read_file("src/compiler/typed_mutation_audit.h");
+    const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    CHECK(typed_audit::kTypeExportGrantAlignDeferredGreenIssue == 4030, "4030: issue constant");
+    CHECK(h.find("kTypeExportGrantAlignDeferredGreenIssue = 4030") != std::string::npos,
+          "4030 AC1: stamp");
+    CHECK(h.find("deferred_outermost_green_pending") != std::string::npos,
+          "4030 AC1: pending helper");
+    CHECK(h.find("[[nodiscard]] inline bool commit_deferred_outermost_green_proof") !=
+              std::string::npos,
+          "4030 AC1: commit returns bool for grant gate");
+    const auto persist_fn = emb.find("extern \"C\" void aura_outermost_success_persist_occurrence");
+    const auto defer_grant = emb.find("Issue #4030: Prod/Full align grant with deferred-green");
+    const auto soft_grant = emb.find("if (!defer_green) {\n        ev->grant_type_export_authority();");
+    const auto clear_unarmed =
+        emb.find("!aura::compiler::typed_audit::deferred_outermost_green_pending()");
+    CHECK(persist_fn != std::string::npos && defer_grant != std::string::npos &&
+              soft_grant != std::string::npos && clear_unarmed != std::string::npos &&
+              persist_fn < defer_grant && defer_grant < soft_grant && soft_grant < clear_unarmed,
+          "4030 AC1: Soft grants in persist; Prod/Full skips when deferred unarmed");
+    const auto commit_pos = emb.find("commit_deferred_outermost_green_proof()");
+    const auto guard_grant = emb.find("ev_->grant_type_export_authority();",
+                                      commit_pos != std::string::npos ? commit_pos : 0);
+    const auto exit_pos = emb.find("ev_->exit_mutation_boundary(success)");
+    CHECK(commit_pos != std::string::npos && guard_grant != std::string::npos &&
+              exit_pos != std::string::npos && commit_pos < guard_grant && guard_grant < exit_pos,
+          "4030 AC1: Guard grants only after deferred commit succeeds");
+    CHECK(emb.find("schema-4030") == std::string::npos, "4030: no new query key");
+    CHECK(read_file("tests/compiler/test_issue_4030.cpp").empty(), "4030: no invent");
+    CHECK(read_file("docs/design/4030-type-export-deferred-grant.md").empty(),
+          "4030: no docs/design");
+}
+
+static void ac4030_2_last_look_recover_fail_still_note_3440() {
+    std::println("\n--- #4030 AC2: last-look / recover-fail still note_3440 ---");
+    const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto persist_fn = emb.find("extern \"C\" void aura_outermost_success_persist_occurrence");
+    const auto last_look = emb.find("stamp_last_look_rejected()", persist_fn);
+    const auto note_ll = emb.find("note_3440_restore();", last_look);
+    const auto recover = emb.find("ensure_occurrence_commit_or_recover()", last_look);
+    const auto note_rec = emb.find("note_3440_restore();", recover);
+    const auto grant4030 = emb.find("Issue #4030", recover);
+    CHECK(last_look != std::string::npos && note_ll != std::string::npos &&
+              recover != std::string::npos && note_rec != std::string::npos &&
+              grant4030 != std::string::npos && last_look < note_ll && note_ll < recover &&
+              recover < note_rec && note_rec < grant4030,
+          "4030 AC2: last-look + recover-fail note_3440 before #4030 grant gate");
+    CHECK(emb.find("drop_deferred_outermost_green_proof();", last_look) < note_ll,
+          "4030 AC2: last-look drops deferred");
+    CHECK(emb.find("drop_deferred_outermost_green_proof();", recover) < note_rec,
+          "4030 AC2: recover-fail drops deferred");
+}
+
+static void ac4030_3_soft_grant_in_persist() {
+    std::println("\n--- #4030 AC3: Soft/Off grant stays in persist helper ---");
+    const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    CHECK(emb.find("if (!defer_green) {\n        ev->grant_type_export_authority();") !=
+              std::string::npos,
+          "4030 AC3: Soft grant in persist (!defer_green)");
+    // Soft never arms deferred TLS → Guard commit returns false → no second grant.
+    CHECK(emb.find("if (typed_audit::commit_deferred_outermost_green_proof())\n"
+                   "            ev_->grant_type_export_authority();") != std::string::npos,
+          "4030 AC3: Guard grant gated on commit bool");
+}
+
 // ── Issue #3614: outermost persist gated behind linear deny + drain ──
 //   AC1: Production + outermost + linear deny → written_total unchanged,
 //        outcome Reject (not Stamped), persist buffer empty, AST restored.
@@ -2702,6 +2775,10 @@ int run_test_type_linear_commit_health() {
     ac3984_2_source_cite_defer_then_commit();
     ac3984_3_happy_commits_green();
     ac3984_4_soft_unchanged();
+    std::println("\n=== Issue #4030: type export grant aligns with deferred green ===");
+    ac4030_1_source_grant_after_deferred_commit();
+    ac4030_2_last_look_recover_fail_still_note_3440();
+    ac4030_3_soft_grant_in_persist();
     // Issue #3614: outermost persist gated behind linear deny + drain
     // (#3472 residual — order, not a missing restore).
     std::println("\n=== Issue #3614: drain+linear gate before outermost persist ===");

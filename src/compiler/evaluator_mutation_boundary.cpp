@@ -829,8 +829,20 @@ extern "C" void aura_outermost_success_persist_occurrence(void* ev_ptr,
     // Issue #3203: grant_type_export_authority refuses if last infer
     // was TIMEOUT/CONFLICT (persist must not override a half-solved face).
     // Issue #3237: grant also refuses a latched pending_full_solve residual.
-    ev->grant_type_export_authority();
+    // Issue #4030: Prod/Full align grant with deferred-green commit
+    // (#3984 Guard commit helper) rather than granting
+    // after recover while live would_allow may still be false. Soft/Off:
+    // existing grant (zero extra beyond today's Soft path). Live
+    // would_allow=false never arms deferred TLS — clear and skip grant
+    // (AST/Occurrence already committed by #3376 recover-success design;
+    // do not note_3440_restore). Deferred armed → Guard grants after commit.
+    if (!defer_green) {
+        ev->grant_type_export_authority();
+    } else if (!aura::compiler::typed_audit::deferred_outermost_green_pending()) {
+        ev->clear_type_export_authority();
+    }
 }
+
 
 // Issue #3170: clear the occurrence persist buffer C ABI. Called from
 // abort / nested / force-rollback paths and when the outermost-success
@@ -4664,10 +4676,15 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
     }
     // Issue #3984: observer-visible green only after every post-persist
     // deny arm in this Guard has passed. Soft/Off never deferred.
-    if (outermost && success)
-        typed_audit::commit_deferred_outermost_green_proof();
-    else
+    // Issue #4030: grant_type_export_authority only when deferred green
+    // actually commits (live would_allow was true at stamp). Soft/Off
+    // already granted in the persist helper; commit returns false.
+    if (outermost && success) {
+        if (typed_audit::commit_deferred_outermost_green_proof())
+            ev_->grant_type_export_authority();
+    } else {
         typed_audit::drop_deferred_outermost_green_proof();
+    }
     if (!inbody_force_exited_)
         ev_->exit_mutation_boundary(success);
     // Issue #3517: Full/hard-gate force-rollback inside exit already
