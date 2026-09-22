@@ -44,6 +44,7 @@
 #include <print>
 #include <string>
 #include <string_view>
+#include <mutex>
 #include <thread>
 #include <vector>
 
@@ -542,7 +543,8 @@ int run_test_sandbox_mode_authority_2657() {
             const auto& e = ring.ring[s % ring.ring.size()];
             if (e.seq != s)
                 continue;
-            if (std::string_view(e.reason) == "grant-effect-needs-explicit-tenant-admin") {
+            if (std::string_view(e.reason) ==
+                "sandbox-downgrade-needs-explicit-tenant-admin") {
                 se = true;
                 CHECK(e.tenant_id == 7, "3995 AC1: SE tenant is caller");
             }
@@ -614,7 +616,145 @@ int run_test_sandbox_mode_authority_2657() {
         reset_all();
     }
 
-    std::println("\n=== results: {} passed, {} failed ===", g_passed, g_failed);
+    {
+        std::println("\n--- #4012 AC1: wildcard-only downgrade deny + SE reason ---");
+        reset_all();
+        using aura::core::capability::kSandboxDowngradeExplicitTenantAdminIssue;
+        CHECK(kSandboxDowngradeExplicitTenantAdminIssue == 4012, "4012 AC1: issue stamp");
+        aura::core::sandbox::set_mode(SandboxMode::Off);
+        aura::compiler::CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.set_capability_tenant_id(7);
+        ev.grant_capability("*"); // wildcard-only, no explicit TA (#3144 strip)
+        {
+            auto& reg = g_capability_registry();
+            std::lock_guard<std::mutex> lock(reg.mtx);
+            CHECK(reg.holds_wildcard_only_locked(7), "4012 AC1: wildcard-only holder");
+            CHECK((static_cast<std::uint16_t>(reg.effects_for_locked(7)) &
+                   static_cast<std::uint16_t>(Effect::TenantAdmin)) == 0,
+                  "4012 AC1: effects_for_locked strips TA for wildcard-only");
+        }
+        aura::core::sandbox::set_mode(SandboxMode::Restricted);
+        CHECK(ev.effect_sandbox_mode() == 1, "4012 AC1: pre Restricted");
+        const auto auth0 = snapshot_sandbox_authority_stats().authority_set_total;
+        const auto& ring = aura::core::security_event::g_security_event_ring();
+        const auto seq0 = ring.seq.load(std::memory_order_acquire);
+        const auto r = cs.eval("(security:set-effect-sandbox-mode! 0)");
+        CHECK(r && aura::compiler::types::is_error(*r),
+              "4012 AC1: wildcard-only downgrade is primitive error");
+        CHECK(ev.effect_sandbox_mode() == 1, "4012 AC1: mode stays Restricted");
+        CHECK(snapshot_sandbox_authority_stats().authority_set_total == auth0,
+              "4012 AC1: no unauthorized authority write");
+        bool se = false;
+        for (std::uint64_t s = seq0; s < ring.seq.load(std::memory_order_acquire); ++s) {
+            const auto& e = ring.ring[s % ring.ring.size()];
+            if (e.seq != s)
+                continue;
+            if (std::string_view(e.reason) ==
+                "sandbox-downgrade-needs-explicit-tenant-admin") {
+                se = true;
+                CHECK(e.tenant_id == 7, "4012 AC1: SE tenant is caller");
+                CHECK(e.denied, "4012 AC1: SE denied flag");
+            }
+        }
+        CHECK(se, "4012 AC1: SE reason sandbox-downgrade-needs-explicit-tenant-admin");
+        // Upgrade arm stays unprivileged: Strict from Restricted needs no TA.
+        const auto up = cs.eval("(security:set-effect-sandbox-mode! 2)");
+        CHECK(up && aura::compiler::types::is_int(*up),
+              "4012 AC1: upgrade arm unprivileged (Strict ok)");
+        CHECK(ev.effect_sandbox_mode() == 2, "4012 AC1: upgraded to Strict");
+        reset_all();
+    }
+
+    {
+        std::println("\n--- #4012 AC2: explicit TenantAdmin allows downgrade ---");
+        reset_all();
+        aura::core::sandbox::set_mode(SandboxMode::Off);
+        aura::compiler::CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.set_capability_tenant_id(7);
+        using aura::core::capability::make_grant_provenance;
+        g_capability_registry().grant(7, "tenant-admin", Effect::TenantAdmin,
+                                      make_grant_provenance(1, true, 0, 0));
+        aura::core::sandbox::set_mode(SandboxMode::Restricted);
+        CHECK(ev.effect_sandbox_mode() == 1, "4012 AC2: pre Restricted");
+        const auto r = cs.eval("(security:set-effect-sandbox-mode! 0)");
+        CHECK(r && aura::compiler::types::is_int(*r),
+              "4012 AC2: explicit TA downgrade allowed");
+        CHECK(ev.effect_sandbox_mode() == 0, "4012 AC2: mode is Off after TA downgrade");
+        reset_all();
+    }
+
+    {
+        std::println("\n--- #4012 AC3: revoke TA then downgrade denies again ---");
+        reset_all();
+        aura::core::sandbox::set_mode(SandboxMode::Off);
+        aura::compiler::CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.set_capability_tenant_id(7);
+        using aura::core::capability::make_grant_provenance;
+        g_capability_registry().grant(7, "tenant-admin", Effect::TenantAdmin,
+                                      make_grant_provenance(1, true, 0, 0));
+        aura::core::sandbox::set_mode(SandboxMode::Restricted);
+        const auto ok = cs.eval("(security:set-effect-sandbox-mode! 0)");
+        CHECK(ok && aura::compiler::types::is_int(*ok), "4012 AC3: TA downgrade once");
+        // Re-arm Restricted via ungated C++; revoke TA; further prim must deny.
+        ev.set_effect_sandbox_mode(1);
+        g_capability_registry().revoke(7, "tenant-admin");
+        const auto& ring = aura::core::security_event::g_security_event_ring();
+        const auto seq0 = ring.seq.load(std::memory_order_acquire);
+        const auto auth0 = snapshot_sandbox_authority_stats().authority_set_total;
+        const auto r = cs.eval("(security:set-effect-sandbox-mode! 0)");
+        CHECK(r && aura::compiler::types::is_error(*r),
+              "4012 AC3: post-revoke downgrade denied");
+        CHECK(ev.effect_sandbox_mode() == 1, "4012 AC3: stays Restricted after revoke");
+        CHECK(snapshot_sandbox_authority_stats().authority_set_total == auth0,
+              "4012 AC3: no unauthorized authority write");
+        bool se = false;
+        for (std::uint64_t s = seq0; s < ring.seq.load(std::memory_order_acquire); ++s) {
+            const auto& e = ring.ring[s % ring.ring.size()];
+            if (e.seq != s)
+                continue;
+            if (std::string_view(e.reason) ==
+                "sandbox-downgrade-needs-explicit-tenant-admin")
+                se = true;
+        }
+        CHECK(se, "4012 AC3: SE reason after revoke");
+        reset_all();
+    }
+
+    {
+        std::println("\n--- #4012 AC4: source cites #4012 + distinct SE reason ---");
+        const auto prim = read_source("src/compiler/evaluator_primitives_security.cpp");
+        const auto hooks = read_source("src/compiler/typed_mutation_audit_hooks.cpp");
+        const auto cm = read_source("src/core/capability_model.hh");
+        CHECK(prim.find("Issue #4012") != std::string::npos, "4012 AC4: prim cites #4012");
+        CHECK(prim.find("sandbox-downgrade-needs-explicit-tenant-admin") != std::string::npos,
+              "4012 AC4: prim emits sandbox-downgrade SE reason");
+        auto p_eff = prim.find("security:set-effect-sandbox-mode!");
+        CHECK(p_eff != std::string::npos, "4012 AC4: effect-mode prim present");
+        auto win = prim.substr(p_eff, 2400);
+        CHECK(win.find("sandbox-downgrade-needs-explicit-tenant-admin") != std::string::npos,
+              "4012 AC4: effect-mode prim uses sandbox-downgrade reason");
+        CHECK(win.find("grant-effect-needs-explicit-tenant-admin") == std::string::npos,
+              "4012 AC4: effect-mode prim no longer reuses grant-effect reason");
+        auto p_sb = prim.find("security:set-sandbox-mode!");
+        CHECK(p_sb != std::string::npos, "4012 AC4: bool-mode prim present");
+        auto win_sb = prim.substr(p_sb, 2800);
+        CHECK(win_sb.find("sandbox-downgrade-needs-explicit-tenant-admin") != std::string::npos,
+              "4012 AC4: bool-mode prim uses sandbox-downgrade reason");
+        CHECK(hooks.find("sandbox-downgrade-needs-explicit-tenant-admin") != std::string::npos,
+              "4012 AC4: mid0 classifier allowlists sandbox-downgrade reason");
+        CHECK(cm.find("kSandboxDowngradeExplicitTenantAdminIssue = 4012") != std::string::npos,
+              "4012 AC4: stamp");
+        CHECK(!std::filesystem::exists("docs/design/4012-sandbox-downgrade-ta.md"),
+              "4012 AC4: no docs/design");
+        CHECK(!std::filesystem::exists("tests/issues/test_issue_4012.cpp"),
+              "4012 AC4: no tests/issues invent");
+        reset_all();
+    }
+
+        std::println("\n=== results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
 

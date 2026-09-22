@@ -74,6 +74,9 @@ inline constexpr int kCapabilityMidRevokeEpochHonestIssue = 3992;
 // Issue #3995: sandbox-downgrade / allow_cross policy gates take mtx +
 // effects_for_locked (TOCTOU vs concurrent TA/wildcard revoke).
 inline constexpr int kPolicyGateLockedCapabilityIssue = 3995;
+// Issue #4012: sandbox downgrade SE reason is distinct from grant-effect;
+// explicit TenantAdmin required (wildcard-only stripped per #3144/#3362).
+inline constexpr int kSandboxDowngradeExplicitTenantAdminIssue = 4012;
 // Issue #3996: session high-bits mint is token-based (caller_principal==0
 // = dedicated grant_session / fixture), not shape-based session_bound.
 // Evaluator paths pass capability_tenant_id_ so same-tenant Mutate still
