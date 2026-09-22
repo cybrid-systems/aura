@@ -7820,6 +7820,20 @@ def cmd_lint():
             "Issue #3973 native moving canary env-note linter failed — run python3 scripts/check_native_moving_canary_env_note_3973.py"
         )
         return r
+    # Issue #4033 (#3860/#3894 residual): densify-in-flight BoundarySafe is
+    # composition-only — CI must pin densify_in_flight_for AND after
+    # is_at_mutation_boundary_safe(snap) in evaluate_residual_hard_and_bits.
+    # No second StealInvariant enum; Soft LCP Soft≠vuln unchanged.
+    sdib4033_script = ROOT / "scripts" / "check_steal_densify_inflight_boundary_safe_4033.py"
+    if not sdib4033_script.exists():
+        fail(f"missing {sdib4033_script}")
+        return 1
+    r = run([sys.executable, str(sdib4033_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #4033 densify-in-flight BoundarySafe pin linter failed — run python3 scripts/check_steal_densify_inflight_boundary_safe_4033.py"
+        )
+        return r
     # Issue #3679 (#2003/#2340 residual): compact_sweep ran the EnvFrame
     # Guard + densify ownership scan at ENTRY while the helper comment
     # claimed post-remap-table ordering — the scan walked pre-compact
