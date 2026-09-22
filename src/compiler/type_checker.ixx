@@ -503,6 +503,8 @@ export inline constexpr int kTypeExportFullAuditGateIssue = 3237;
 // hard-reject a non-exhaustive (or Dynamic-slide) result; Soft observes;
 // Quiet only when the goal was never dirty.
 inline constexpr int kAdtExhaustDirtyConeIssue = 3005;
+// Issue #4010: via_dynamic match is not exhaustive (struct must not lie).
+export inline constexpr int kMatchExhaustViaDynamicNotClosedIssue = 4010;
 
 // Issue #3045: residual of #3005 — variant add / arm delete under-mark
 // must still force containing match / exhaustiveness sites into the
@@ -3822,7 +3824,7 @@ export std::vector<std::string> analyze_match_exhaustiveness(const aura::ast::Fl
 // + typed_mutate re-check dashboards.
 export struct MatchExhaustivenessResult {
     bool checked = false;          // true if a real ADT subject + match site
-    bool exhaustive = true;        // true if no missing ctors (or N/A)
+    bool exhaustive = true;        // false if missing ctors or via_dynamic (#4010)
     bool via_dynamic = false;      // Issue #3005: subject slid to Dynamic
     std::string subject_type_name; // ADT type name when known
     std::vector<std::string> missing_constructors;
