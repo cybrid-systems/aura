@@ -2931,8 +2931,56 @@ static std::atomic<std::uint64_t> g_residual_remount_cursor{0};
 // Issue #3886: coalesce pipeline quiet tick + BoundaryExit tick in the
 // same outermost exit. Same gen → skip duplicate walk (storm skip still
 // inside the tick). note_boundary_exit bumps gen for the next mutate.
-static std::atomic<std::uint64_t> g_residual_remount_exit_gen{1};
-static std::atomic<std::uint64_t> g_residual_remount_ticked_gen{0};
+// Issue #4024: per-Evaluator exit gen (not process-global). Peer
+// BoundaryExit must not coalesce-steal another eval's quiet/exit tick.
+// Keyed by TLS readiness Evaluator* (outermost MutationBoundary). Null
+// TLS → slot 0 (tests / outside-boundary quiet). Cap full → overflow
+// slot (shared; dual-fresh + MustDeopt still block leave-native). Soft
+// budget=0 zero walk unchanged. #3910 note-before-coalesce kept.
+struct ResidualRemountExitSlot {
+    std::atomic<std::uintptr_t> eval{0};
+    std::atomic<std::uint64_t> exit_gen{1};
+    std::atomic<std::uint64_t> ticked_gen{0};
+};
+static constexpr std::size_t kResidualRemountExitSlotCap = 16;
+static ResidualRemountExitSlot g_residual_remount_exit_slots[kResidualRemountExitSlotCap];
+// Overflow when all keyed slots are live with other evals — shared, rare.
+static ResidualRemountExitSlot g_residual_remount_exit_overflow{};
+
+static std::uintptr_t residual_remount_eval_key() noexcept {
+    // Outermost MutationBoundary publishes readiness Evaluator* (#3379).
+    if (auto* p = ::g_tls_audit_commit_readiness_evaluator)
+        return reinterpret_cast<std::uintptr_t>(p);
+    return 0;
+}
+
+static ResidualRemountExitSlot& residual_remount_exit_slot() noexcept {
+    const auto key = residual_remount_eval_key();
+    // Slot 0 is reserved for null TLS (tests / outside-boundary quiet).
+    if (key == 0)
+        return g_residual_remount_exit_slots[0];
+    int empty = -1;
+    for (std::size_t i = 1; i < kResidualRemountExitSlotCap; ++i) {
+        const auto cur = g_residual_remount_exit_slots[i].eval.load(std::memory_order_relaxed);
+        if (cur == key)
+            return g_residual_remount_exit_slots[i];
+        if (cur == 0 && empty < 0)
+            empty = static_cast<int>(i);
+    }
+    if (empty >= 0) {
+        std::uintptr_t expected = 0;
+        auto& s = g_residual_remount_exit_slots[static_cast<std::size_t>(empty)];
+        if (s.eval.compare_exchange_strong(expected, key, std::memory_order_relaxed) ||
+            expected == key)
+            return s;
+        for (std::size_t i = 1; i < kResidualRemountExitSlotCap; ++i) {
+            if (g_residual_remount_exit_slots[i].eval.load(std::memory_order_relaxed) == key)
+                return g_residual_remount_exit_slots[i];
+        }
+    }
+    // Cap full of other evals — do not steal a peer slot (#4024 residual).
+    return g_residual_remount_exit_overflow;
+}
 // Process-local totals (light-link-safe; metrics bump may be weak stub).
 static std::atomic<std::uint64_t> g_residual_remount_ok_total{0};
 static std::atomic<std::uint64_t> g_residual_remount_budget_skip_total{0};
@@ -3027,24 +3075,33 @@ extern "C" void aura_test_reset_residual_remount_state() noexcept {
     g_residual_remount_budget_override.store(UINT64_MAX, std::memory_order_relaxed);
     g_residual_force_skip.store(0, std::memory_order_relaxed);
     g_residual_budget_skip_streak.store(0, std::memory_order_relaxed);
-    g_residual_remount_exit_gen.store(1, std::memory_order_relaxed);
-    g_residual_remount_ticked_gen.store(0, std::memory_order_relaxed);
+    for (std::size_t i = 0; i < kResidualRemountExitSlotCap; ++i) {
+        g_residual_remount_exit_slots[i].eval.store(0, std::memory_order_relaxed);
+        g_residual_remount_exit_slots[i].exit_gen.store(1, std::memory_order_relaxed);
+        g_residual_remount_exit_slots[i].ticked_gen.store(0, std::memory_order_relaxed);
+    }
+    g_residual_remount_exit_overflow.eval.store(0, std::memory_order_relaxed);
+    g_residual_remount_exit_overflow.exit_gen.store(1, std::memory_order_relaxed);
+    g_residual_remount_exit_overflow.ticked_gen.store(0, std::memory_order_relaxed);
     // Do not zero ok/skip totals — monotonic for Agents; tests delta against snapshot.
 }
 
-// Issue #3886: at most one residual remount walk per outermost exit.
-// Returns 1 if this call ran (or would run) the tick; 0 if duplicate.
+// Issue #3886 / #4024: at most one residual remount walk per outermost
+// exit per Evaluator. Returns 1 if this call ran (or would run) the
+// tick; 0 if duplicate for this eval's current exit gen.
 extern "C" int aura_residual_remount_tick_coalesce(std::uint64_t budget) {
-    const auto gen = g_residual_remount_exit_gen.load(std::memory_order_relaxed);
-    if (g_residual_remount_ticked_gen.load(std::memory_order_relaxed) == gen)
+    auto& slot = residual_remount_exit_slot();
+    const auto gen = slot.exit_gen.load(std::memory_order_relaxed);
+    if (slot.ticked_gen.load(std::memory_order_relaxed) == gen)
         return 0;
     aura_residual_live_closure_remount_tick(budget);
-    g_residual_remount_ticked_gen.store(gen, std::memory_order_relaxed);
+    slot.ticked_gen.store(gen, std::memory_order_relaxed);
     return 1;
 }
 
+// Issue #3910 / #4024: bump this eval's exit gen (peer gens untouched).
 extern "C" void aura_residual_remount_note_boundary_exit() {
-    g_residual_remount_exit_gen.fetch_add(1, std::memory_order_relaxed);
+    residual_remount_exit_slot().exit_gen.fetch_add(1, std::memory_order_relaxed);
 }
 
 // Issue #3607: the sid%64 "region bit" helper is gone. force_jit_regions_mask
