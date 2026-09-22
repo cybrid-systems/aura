@@ -148,10 +148,11 @@ struct LifetimePinStats {
     // Issue #2265 Phase 3: Moving densify remapped ptr_ to a new address
     // while keeping gen/arena intact. Bumps per-pin when remap() succeeds.
     std::uint64_t remaps = 0;
-    // Issue #2265 Phase 3: Moving densify expected a pin remap (old_ptr in
-    // last_object_remap_) but no matching pin was in the registry.
+    // Issue #2265 / #4020: Moving densify expected a pin remap (old_ptr in
+    // last_object_remap_) but no matching pin was in the registry (orphan).
     // Indicates stale ptr_ or pin destroyed between relocate + remap walk.
-    // Agent-visible counter so dashboards can flag orphaned remap entries.
+    // Counted once per orphaned old_ptr post-walk — not per nonmatch pin
+    // (#4020 Soft inflation fix). Agent-visible dashboard counter.
     std::uint64_t remap_misses = 0;
     // Issue #2085: validate() detected gen drift between the pin's stored
     // gen_ and the caller's cur_gen (or arena_id mismatch). Bumps when
@@ -765,15 +766,19 @@ invalidate_pins_not_in_new_addrs(std::uint64_t arena_id,
     return invalidated;
 }
 
-// Issue #2265: Moving densify walks `last_object_remap_` (built by
+// Issue #2265 / #4020: Moving densify walks `last_object_remap_` (built by
 // relocate_tracked_objects_for_moving_) and remaps every live pin whose
-// ptr_ matches the old address. Pins not present in the registry
-// (stale ptr_ or destroyed between relocate + remap walk) bump
-// `remap_misses` so dashboards can flag orphaned remap entries.
-// arena_id_filter (0 = any arena) narrows the walk to one arena.
-// O(pin_count); only called on Moving densify success path (AC3
-// zero-cost guarantee holds for Soft/Force / no-compact).
-// Returns (remapped_count, miss_count).
+// ptr_ matches the old address. An orphaned remap entry (old_ptr in the
+// table but no matching pin in the registry — stale ptr_ or pin destroyed
+// between relocate + remap walk) bumps `remap_misses` once post-walk so
+// dashboards can flag orphans. Non-matching pins in the same arena must
+// NOT inflate the counter (#4020 Soft metric inflation). Moving gate stays
+// on verify_pins_under_moving_compact / pin_contract_held / publish — not
+// remap_misses. arena_id_filter (0 = any arena) narrows the walk; miss
+// accounting applies only when a concrete arena filter is set (Moving
+// densify wire-up). O(pin_count); only called on Moving densify success
+// path (AC3 zero-cost guarantee holds for Soft/Force / no-compact).
+// Returns (remapped_count, miss_count) where miss_count is 0 or 1.
 struct RemapResult {
     std::size_t remapped = 0;
     std::size_t misses = 0;
@@ -795,17 +800,16 @@ inline RemapResult remap_pins_pointing_to(void* old_ptr, void* new_ptr, std::uin
                 continue;
             if (arena_id_filter != 0 && p->arena_id() != arena_id_filter)
                 continue;
-            if (p->ptr() != old_ptr) {
-                // No match: bump miss only if this pin's arena IS the filter
-                // (otherwise the pin belongs to a different arena entirely
-                // and isn't a candidate for this remap).
-                if (arena_id_filter != 0 && p->arena_id() == arena_id_filter)
-                    ++g_lifetime_pin_stats.remap_misses;
-                continue;
-            }
+            if (p->ptr() != old_ptr)
+                continue; // nonmatch pin — not an orphan miss (#4020)
             p->remap(new_ptr, new_gen);
             ++out.remapped;
         }
+    }
+    // Issue #4020 Option A: honest miss = no pin remapped for this old_ptr.
+    if (out.remapped == 0 && arena_id_filter != 0) {
+        ++g_lifetime_pin_stats.remap_misses;
+        out.misses = 1;
     }
     return out;
 }
