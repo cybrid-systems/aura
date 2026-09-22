@@ -150,6 +150,10 @@ static std::string closest_match(std::string_view name, std::span<const std::str
 // JIT Jump / IR opcode stride / native dispatch do (via
 // aura_jit_poll_hold_budget_safepoint → Fiber::check_gc_safepoint() →
 // force_release_hold_budget_inbody). Soft/Off: helper returns 0.
+// Issue #3988 / #4032: fiber.h nests the poll ABI in aura::serve;
+// keep the global extern "C" the same way ir_executor / jit_runtime do.
+extern "C" int aura_jit_poll_hold_budget_safepoint() noexcept;
+
 [[nodiscard]] static std::optional<Diagnostic> eval_flat_hold_budget_safepoint_poll() noexcept {
     // Shared #3988 ABI (force-safepoint / cancel / urgent). Soft/Off: 0.
     if (aura_jit_poll_hold_budget_safepoint() != 0) {

@@ -4740,8 +4740,16 @@ public:
     static constexpr int kSetChildLockedDenseInplaceIssue = 3453;
     // Issue #3665: insert/remove splice one dense slot on a synced tree.
     static constexpr int kInsertRemoveChildLockedDenseSpliceIssue = 3665;
+    // Issue #4008: compact remaps dense child_data_ NodeIds in place;
+    // do not set dense_dirty_ when arity/layout is known.
+    static constexpr int kCompactDenseRemapIssue = 4008;
     [[nodiscard]] bool dense_children_dirty() const noexcept { return dense_dirty_; }
     [[nodiscard]] std::size_t dense_child_data_size() const noexcept { return child_data_.size(); }
+    // Issue #4008: times children_columnar rebuilt dense from PCV
+    // (O(all-children)). Compact in-place remap must not bump this.
+    [[nodiscard]] std::uint64_t dense_columns_pcv_sync_total() const noexcept {
+        return dense_columns_pcv_sync_total_.load(std::memory_order_relaxed);
+    }
 
     // Issue #3402: lazy-sync helper — rebuilds child_data_ /
     // child_begin_ / child_count_ from the legacy children_ PCV
@@ -4749,6 +4757,7 @@ public:
     // set. O(total children); runs once per structural-mutation
     // batch.
     void sync_dense_columns_from_pcv() const {
+        dense_columns_pcv_sync_total_.fetch_add(1, std::memory_order_relaxed);
         child_data_.clear();
         child_begin_.assign(children_.size(), 0);
         child_count_.assign(children_.size(), 0);
@@ -6060,7 +6069,40 @@ public:
         float_val_ = std::move(new_float_val);
         sym_id_ = std::move(new_sym_id);
         children_ = std::move(new_children);
-        dense_dirty_ = true; // Issue #3402: compact remaps NodeIds
+        // Issue #4008: compact remaps dense child_data_ NodeIds in
+        // place (same length) and gathers child_begin_/child_count_
+        // into live order. Arity/layout is known — do not set
+        // dense_dirty_. Already-dirty / never-synced trees stay dirty
+        // (next columnar full-syncs from remapped PCV). Copy/move/
+        // restore still dirty (layout unknown).
+        if (!dense_dirty_) {
+            for (auto& cid : child_data_)
+                cid = remap(cid);
+            std::vector<std::uint32_t> new_begin;
+            std::vector<std::uint32_t> new_count;
+            new_begin.reserve(live_count);
+            new_count.reserve(live_count);
+            bool layout_ok = true;
+            for (NodeId id = 0; id < old_size; ++id) {
+                if (!live[id])
+                    continue;
+                const auto b = id < child_begin_.size() ? child_begin_[id] : 0u;
+                const auto c = id < child_count_.size() ? child_count_[id] : 0u;
+                if (c != 0 && (static_cast<std::size_t>(b) + static_cast<std::size_t>(c) >
+                               child_data_.size())) {
+                    layout_ok = false;
+                    break;
+                }
+                new_begin.push_back(b);
+                new_count.push_back(c);
+            }
+            if (layout_ok) {
+                child_begin_.assign(new_begin.begin(), new_begin.end());
+                child_count_.assign(new_count.begin(), new_count.end());
+            } else {
+                dense_dirty_ = true;
+            }
+        }
         parent_ = std::move(new_parent);
         param_begin_ = std::move(new_param_begin);
         param_count_ = std::move(new_param_count);
@@ -9920,8 +9962,10 @@ public:
     // children_columnar(id) checks this flag and triggers
     // sync_dense_columns_from_pcv() before returning the SafePCVSpan.
     // Issue #3453 / #3665: equal-length set and arity splice may leave
-    // this false on a synced tree.
+    // this false on a synced tree. Issue #4008: compact in-place NodeId
+    // remap also leaves this false when layout is known.
     mutable bool dense_dirty_ = true;
+    mutable std::atomic<std::uint64_t> dense_columns_pcv_sync_total_{0};
 };
 
 // ── StableNodeRef + MutationRecord helpers ───────────────────
