@@ -61,7 +61,9 @@ def main() -> int:
     must("cross_tenant_grant_deny_total", "AC1", iso)
     must("cross_tenant_grant_deny_total", "AC1", sec)
     must("force_bind", "AC1", sec)
-    must("has_capability(kCapTenantAdmin)", "AC1", sec)
+    # #3975-#3988 wave (#3996/#3997): has_capability(kCapTenantAdmin) →
+    # has_effect(Effect::TenantAdmin) under effects_for_locked — same gate.
+    must("Effect::TenantAdmin", "AC1", sec)
     must("kCapTenantAdmin", "AC1", sec_caps)
     must("kCapCapability", "AC1", sec_caps)
     # Deny must precede the policy grant call (use call-site order, not

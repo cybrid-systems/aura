@@ -47,7 +47,9 @@ def main() -> int:
     build = _read("build.py")
 
     lam = mut.find("auto add_mutate = [&](std::string name, auto fn, bool guard_exempt")
-    win = mut[lam : lam + 14000] if lam >= 0 else ""
+    # #3975-#3988 wave (#3999) grew the add_mutate lambda — ordering pins
+    # (workspace_read_only_ → try_acquire → fn(a)) sit past the old edge.
+    win = mut[lam : lam + 18000] if lam >= 0 else ""
     must("kAddMutateReadOnlyFenceIssue", "AC1 stamp", disp)
     must("Issue #3450", "AC1 wrapper cite", win)
     must("workspace_read_only_", "AC1 RO load", win)

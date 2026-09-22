@@ -71,7 +71,10 @@ def main() -> int:
     # Gate must key off production (sandbox/effect mode), matching #2882
     # force_bind semantics (AC3 zero-cost when both off).
     must("force_bind", "AC1", sec)
-    must("has_capability(kCapTenantAdmin)", "AC1", sec)
+    # #3975-#3988 wave (#3996/#3997): gate re-expressed as registry effect
+    # checks — has_capability(kCapTenantAdmin) calls → has_effect(Effect::
+    # TenantAdmin) under effects_for_locked. Same invariant, new form.
+    must("Effect::TenantAdmin", "AC1", sec)
     # TenantAdmin cap name + capability alias must exist.
     must("kCapTenantAdmin", "AC1", sec_caps)
     must("kCapCapability", "AC1", sec_caps)
