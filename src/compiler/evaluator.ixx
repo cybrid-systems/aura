@@ -5481,6 +5481,10 @@ private:
     // existing mutate:* behavior (no behavior change for tests
     // that don't pass :allow-macro? or set the flag).
     bool allow_macro_mutate_ = false;
+    // Issue #4035: window latch for per-call :allow-macro? (MSE-validated)
+    // so MutationBoundary #3637 net ORs recorded allow with the global flag.
+    // Soft/Off never fetch_add (zero cost); outermost Guard dtor clears.
+    std::atomic<std::uint32_t> boundary_macro_allow_latch_{0};
     // Issue #1780: per-Evaluator InlinePass macro-hygiene policy.
     // (*allow-macro-inline* #t) stores false here (allow inlining
     // macro-introduced code); #f stores true (respect hygiene).
@@ -6759,6 +6763,18 @@ public:
     // code can opt in via (hygiene:set-allow-macro-mutate!).
     [[nodiscard]] bool get_allow_macro_mutate() const noexcept { return allow_macro_mutate_; }
     void set_allow_macro_mutate(bool v) noexcept { allow_macro_mutate_ = v; }
+    // Issue #4035: record MSE-validated allow inside the current MutationBoundary
+    // window (hygiene_protected_error / reject_structural allow arms). Net reads
+    // via boundary_macro_allow_latched(); outermost Guard dtor clears.
+    void note_boundary_macro_allow_latch() noexcept {
+        boundary_macro_allow_latch_.fetch_add(1, std::memory_order_relaxed);
+    }
+    [[nodiscard]] bool boundary_macro_allow_latched() const noexcept {
+        return boundary_macro_allow_latch_.load(std::memory_order_relaxed) > 0;
+    }
+    void clear_boundary_macro_allow_latch() noexcept {
+        boundary_macro_allow_latch_.store(0, std::memory_order_relaxed);
+    }
     // Issue #373 / #3213: parse `:allow-macro? #t` from mutate:* args
     // (public prims via thin wrap + lockless atomic-batch). Conservative
     // false if the keyword is missing or the value is not a bool. Callers

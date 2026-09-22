@@ -545,6 +545,9 @@ namespace {
                     continue;
                 if (auto denied = deny_macro_opt_out_without_mse(ev, id, mev))
                     return denied;
+                // Issue #4035: MSE-validated allow — latch for #3637 net
+                // (per-call :allow-macro? does not set the global flag).
+                ev.note_boundary_macro_allow_latch();
                 return std::nullopt;
             }
             return std::nullopt;
@@ -632,6 +635,9 @@ namespace {
             if (auto err = hygiene_protected_error(ev, flat, probe, allow_macro_mutate,
                                                    per_call_opt_out, mev))
                 return err;
+            // Issue #4035: allow arm after MSE gate — hygiene_protected_error
+            // already note_boundary_macro_allow_latch()'d on Restricted success
+            // (Soft/Off early-out stays zero-cost). enforce inherits that latch.
         }
 
         // Allowed path: FailOnStale under Strict sandbox.
@@ -756,7 +762,11 @@ namespace {
         if (allow) {
             if (ev.effect_sandbox_mode() == 0)
                 return std::nullopt;
-            return deny_macro_opt_out_without_mse(ev, id, mev);
+            if (auto denied = deny_macro_opt_out_without_mse(ev, id, mev))
+                return denied;
+            // Issue #4035: MSE-validated allow — latch for #3637 net.
+            ev.note_boundary_macro_allow_latch();
+            return std::nullopt;
         }
         ev.record_hygiene_violation_attempt();
         aura::compiler::macro_exp::note_hygiene_last_limit_reason(

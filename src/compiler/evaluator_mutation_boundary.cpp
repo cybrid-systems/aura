@@ -3836,7 +3836,10 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
         if (macro_delta != 0) {
             aura::reflect::MutationReflectHealth h3637;
             h3637.enforce_macro_hygiene_reject = true;
-            h3637.allow_macro_evolution = ev_->get_allow_macro_mutate();
+            // Issue #4035: OR per-call MSE-validated allow latch so production
+            // :allow-macro? #t is not force-rolled by a global-flag-only net.
+            h3637.allow_macro_evolution =
+                ev_->get_allow_macro_mutate() || ev_->boundary_macro_allow_latched();
             h3637.dirty_macro_nodes = macro_delta;
             std::string backstop_err;
             const bool net_reject =
@@ -3871,6 +3874,10 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
             // Soft / Off: observe only — success unchanged (AC2).
         }
     }
+    // Issue #4035: end of MutationBoundary window — clear the per-call
+    // allow latch (RAII). Nested guards skip; only outermost owns the net.
+    if (is_outermost_ && ev_)
+        ev_->clear_boundary_macro_allow_latch();
     bool success =
         (cancel_forced_fail || macro_hygiene_forced_fail) ? false : success_flag_load(flag_);
     // Issue #3423: nested Guard fail must flip the outermost success
