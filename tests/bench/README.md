@@ -30,7 +30,7 @@ Usage:
 ## Language / pipeline benches (Python harness)
 
 - `benchmark.py` + `benchmark_cases.py` + fixtures under `tests/fixtures/benchmark/`
-- Shootout-style `.aura` ports: `binarytrees_{cons,while,array}.aura`, `pidigits.aura`, `regexredux.aura`, `revcomp.aura`
+- Shootout-style `.aura` ports: `binarytrees_{cons,while,array}.aura`, `fasta.aura`, `pidigits.aura`, `regexredux.aura`, `revcomp.aura`
   - Three `binarytrees` variants are intentional (cons vs while vs array memory/stack ceilings), not duplicates.
 
 ## Unrelated
