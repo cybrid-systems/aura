@@ -693,8 +693,7 @@ void ac9_4014_boundary_aot_deny_tenant_join() {
           "4014: Soft boundary deny emits no SE");
     capture_aot_hotupdate_audit(false, 1, 1, "aot-hotupdate-4014-soft");
     // emit_invariant_deny_se runs after strategy restore → Soft Sampled no-op.
-    CHECK(ring.seq.load(std::memory_order_relaxed) == seq_soft,
-          "4014: Soft AOT deny emits no SE");
+    CHECK(ring.seq.load(std::memory_order_relaxed) == seq_soft, "4014: Soft AOT deny emits no SE");
 
     // Source cite: both sites use audit_se_join_tenant_id; no hardcoded 0.
     auto read_repo_file = [](const std::string& rel) {

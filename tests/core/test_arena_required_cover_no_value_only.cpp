@@ -1230,7 +1230,8 @@ static void ac4008_compact_remaps_dense_inplace() {
     const auto cf = src.find("[[nodiscard]] std::size_t compact_nodes()");
     CHECK(cf != std::string::npos, "4008 AC5: compact_nodes present");
     const auto cend = src.find("return reclaimed;", cf == std::string::npos ? 0 : cf);
-    const auto cwin = (cf != std::string::npos && cend > cf) ? src.substr(cf, cend - cf) : std::string{};
+    const auto cwin =
+        (cf != std::string::npos && cend > cf) ? src.substr(cf, cend - cf) : std::string{};
     CHECK(cwin.find("Issue #4008") != std::string::npos, "4008 AC5: compact cites #4008");
     CHECK(cwin.find("for (auto& cid : child_data_)") != std::string::npos,
           "4008 AC5: in-place child_data_ remap");

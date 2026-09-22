@@ -543,8 +543,7 @@ int run_test_sandbox_mode_authority_2657() {
             const auto& e = ring.ring[s % ring.ring.size()];
             if (e.seq != s)
                 continue;
-            if (std::string_view(e.reason) ==
-                "sandbox-downgrade-needs-explicit-tenant-admin") {
+            if (std::string_view(e.reason) == "sandbox-downgrade-needs-explicit-tenant-admin") {
                 se = true;
                 CHECK(e.tenant_id == 7, "3995 AC1: SE tenant is caller");
             }
@@ -650,8 +649,7 @@ int run_test_sandbox_mode_authority_2657() {
             const auto& e = ring.ring[s % ring.ring.size()];
             if (e.seq != s)
                 continue;
-            if (std::string_view(e.reason) ==
-                "sandbox-downgrade-needs-explicit-tenant-admin") {
+            if (std::string_view(e.reason) == "sandbox-downgrade-needs-explicit-tenant-admin") {
                 se = true;
                 CHECK(e.tenant_id == 7, "4012 AC1: SE tenant is caller");
                 CHECK(e.denied, "4012 AC1: SE denied flag");
@@ -679,8 +677,7 @@ int run_test_sandbox_mode_authority_2657() {
         aura::core::sandbox::set_mode(SandboxMode::Restricted);
         CHECK(ev.effect_sandbox_mode() == 1, "4012 AC2: pre Restricted");
         const auto r = cs.eval("(security:set-effect-sandbox-mode! 0)");
-        CHECK(r && aura::compiler::types::is_int(*r),
-              "4012 AC2: explicit TA downgrade allowed");
+        CHECK(r && aura::compiler::types::is_int(*r), "4012 AC2: explicit TA downgrade allowed");
         CHECK(ev.effect_sandbox_mode() == 0, "4012 AC2: mode is Off after TA downgrade");
         reset_all();
     }
@@ -705,8 +702,7 @@ int run_test_sandbox_mode_authority_2657() {
         const auto seq0 = ring.seq.load(std::memory_order_acquire);
         const auto auth0 = snapshot_sandbox_authority_stats().authority_set_total;
         const auto r = cs.eval("(security:set-effect-sandbox-mode! 0)");
-        CHECK(r && aura::compiler::types::is_error(*r),
-              "4012 AC3: post-revoke downgrade denied");
+        CHECK(r && aura::compiler::types::is_error(*r), "4012 AC3: post-revoke downgrade denied");
         CHECK(ev.effect_sandbox_mode() == 1, "4012 AC3: stays Restricted after revoke");
         CHECK(snapshot_sandbox_authority_stats().authority_set_total == auth0,
               "4012 AC3: no unauthorized authority write");
@@ -715,8 +711,7 @@ int run_test_sandbox_mode_authority_2657() {
             const auto& e = ring.ring[s % ring.ring.size()];
             if (e.seq != s)
                 continue;
-            if (std::string_view(e.reason) ==
-                "sandbox-downgrade-needs-explicit-tenant-admin")
+            if (std::string_view(e.reason) == "sandbox-downgrade-needs-explicit-tenant-admin")
                 se = true;
         }
         CHECK(se, "4012 AC3: SE reason after revoke");
@@ -754,7 +749,7 @@ int run_test_sandbox_mode_authority_2657() {
         reset_all();
     }
 
-        std::println("\n=== results: {} passed, {} failed ===", g_passed, g_failed);
+    std::println("\n=== results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
 

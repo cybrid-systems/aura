@@ -843,7 +843,8 @@ static void ac3885_multi_reason_single_heal_leaves_residual() {
     std::println("\n--- #3885 AC1: multi-reason force + single-bit heal leaves residual ---");
     const auto cpp = read_file("src/compiler/hot_update_registry.cpp");
     CHECK(cpp.find("Issue #3885") != std::string::npos, "3885 AC: cpp cites #3885");
-    CHECK(cpp.find("prev | covered") != std::string::npos, "3885/4023 AC1: heal ORs covered demoted bits");
+    CHECK(cpp.find("prev | covered") != std::string::npos,
+          "3885/4023 AC1: heal ORs covered demoted bits");
     CHECK(cpp.find("emit & demoted") != std::string::npos, "4023 AC: emit ∩ demoted coverage");
     CHECK(cpp.find("Issue #4023") != std::string::npos, "4023 AC: cpp cites #4023");
     CHECK(cpp.find("note_reemit_success_coverage") != std::string::npos,
@@ -999,20 +1000,18 @@ static void ac4023_residual_force_heal_ors_covered_demoted() {
     (void)reg.decide_and_reemit(1, aura::compiler::HotUpdateRegistry::ReemitReason::CoverageVerify);
     if ((reg.last_reemit_success_region_mask() & env) == 0)
         reg.on_reemit_pipeline_call(/*candidates=*/1, /*successes=*/1);
-    CHECK((reg.last_reemit_success_region_mask() & env) != 0,
-          "4023 AC1: partial heal stamps Env");
+    CHECK((reg.last_reemit_success_region_mask() & env) != 0, "4023 AC1: partial heal stamps Env");
     CHECK((reg.residual_force_mask() & defuse) != 0,
           "4023 AC1: multi-reason + partial heal → residual ≠ 0");
     // ResidualForceHeal age-belt multi-heal: OR remaining residual ∩ demoted.
     feed.cursor = 0;
-    (void)reg.decide_and_reemit(1, aura::compiler::HotUpdateRegistry::ReemitReason::ResidualForceHeal);
+    (void)reg.decide_and_reemit(1,
+                                aura::compiler::HotUpdateRegistry::ReemitReason::ResidualForceHeal);
     reg.on_reemit_pipeline_call(/*candidates=*/1, /*successes=*/1);
     CHECK((reg.last_reemit_success_region_mask() & defuse) != 0,
           "4023 AC1: ResidualForceHeal ORs residual Defuse");
-    CHECK((reg.last_reemit_success_region_mask() & env) != 0,
-          "4023 AC1: Env bit retained");
-    CHECK(reg.residual_force_mask() == 0,
-          "4023 AC1: residual empty after belt multi-heal");
+    CHECK((reg.last_reemit_success_region_mask() & env) != 0, "4023 AC1: Env bit retained");
+    CHECK(reg.residual_force_mask() == 0, "4023 AC1: residual empty after belt multi-heal");
     aura_set_aot_emit_fn(nullptr, nullptr);
     aura_set_reemit_candidate_fn(nullptr, nullptr);
     reg.on_reload_success();
@@ -1021,7 +1020,8 @@ static void ac4023_residual_force_heal_ors_covered_demoted() {
 }
 
 static void ac4023_agent_note_and_soft_unchanged() {
-    std::println("\n--- #4023 AC2: Agent coverage note clears residual; Soft wholesale unchanged ---");
+    std::println(
+        "\n--- #4023 AC2: Agent coverage note clears residual; Soft wholesale unchanged ---");
     ac3885_agent_coverage_note_clears_residual();
     ac3745_soft_wholesale_unchanged();
     CHECK(read_file("tests/compiler/test_issue_4023.cpp").empty(),

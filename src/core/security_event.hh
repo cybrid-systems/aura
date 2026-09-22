@@ -121,8 +121,7 @@ inline std::uint64_t append_security_event(SecurityEventRing& ring, SecurityEven
                                            std::uint64_t tenant_id, std::uint64_t mutation_id,
                                            std::uint64_t epoch, std::uint16_t effect_bits,
                                            std::string_view op, std::string_view reason,
-                                           bool denied = true,
-                                           std::int64_t fiber_id = 0) noexcept {
+                                           bool denied = true, std::int64_t fiber_id = 0) noexcept {
     const auto s = ring.seq.fetch_add(1, std::memory_order_relaxed);
     auto& slot = ring.ring[s % kSecurityEventRingSize];
     // Issue #2225: bump wrap counter if this seq overwrites a slot

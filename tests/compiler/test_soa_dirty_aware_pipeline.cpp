@@ -611,7 +611,8 @@ int run_test_soa_dirty_aware_pipeline() {
               "4007 AC2: PureWrap pack is the factory");
         CHECK(opt.find("#if defined(AURA_PRODUCTION_PACK)") != std::string::npos,
               "4007 AC2: pack ifdef");
-        CHECK(opt.find("= delete") != std::string::npos, "4007 AC2: AoS factory deleted under pack");
+        CHECK(opt.find("= delete") != std::string::npos,
+              "4007 AC2: AoS factory deleted under pack");
         CHECK(core.find("Issue #4007") != std::string::npos, "4007 AC2: pack cites factory");
         CHECK(impls.find("Issue #4007") != std::string::npos, "4007 AC2: dirty-hot cites factory");
         CHECK(svc.find("Issue #4007") != std::string::npos, "4007 AC3: first-eval residual cited");
@@ -923,9 +924,9 @@ int run_test_soa_dirty_aware_pipeline() {
     ac3583_3_soft_zero_cost();
     ac3583_4_no_invent_no_mangle();
 
-    std::println(
-        "\n=== #2143/#2907/#3488/#3502/#3583/#3689/#3701/#3822/#4007 results: {} passed, {} failed ===",
-        g_passed, g_failed);
+    std::println("\n=== #2143/#2907/#3488/#3502/#3583/#3689/#3701/#3822/#4007 results: {} passed, "
+                 "{} failed ===",
+                 g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
 

@@ -597,7 +597,8 @@ int run_test_hot_pass_hard_dod() {
         CHECK(pwin.find("= delete") != std::string::npos, "4007 AC1: pack deletes AoS factory");
         CHECK(pwin.find("kDefaultOptPipelineAosDeleted = true") != std::string::npos,
               "4007 AC1: pack deleted flag");
-        CHECK(core.find("Issue #4007") != std::string::npos, "4007 AC1: PureWrap pack cites factory");
+        CHECK(core.find("Issue #4007") != std::string::npos,
+              "4007 AC1: PureWrap pack cites factory");
         CHECK(impls.find("Issue #4007") != std::string::npos, "4007 AC1: dirty-hot cites factory");
 
         std::println("\n--- #4007 AC2: first-eval residual + incremental consume ---");
@@ -616,8 +617,9 @@ int run_test_hot_pass_hard_dod() {
         CHECK(read_file("docs/design/4007-soa-factory.md").empty(), "4007 AC3: no docs/design");
     }
 
-    std::println("\n=== #2434/#3042/#3234/#3315/#3329/#3870/#4007 results: {} passed, {} failed ===",
-                 g_passed, g_failed);
+    std::println(
+        "\n=== #2434/#3042/#3234/#3315/#3329/#3870/#4007 results: {} passed, {} failed ===",
+        g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
 

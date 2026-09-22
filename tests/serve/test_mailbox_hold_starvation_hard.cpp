@@ -3788,8 +3788,8 @@ static void ac3951_1_no_edge_ready_or_owner_poll() {
 // (#3826/#3764); no second unlock protocol / no foreign-fiber unlock.
 // Soft/Off: zero force-unlock.
 static void ac4032_1_exotic_no_poll_ready_or_reclaimed() {
-    std::println(
-        "\n--- #4032 AC1/AC2: exotic no-poll → Ready sticky / join Reclaimed; no peer half-write ---");
+    std::println("\n--- #4032 AC1/AC2: exotic no-poll → Ready sticky / join Reclaimed; no peer "
+                 "half-write ---");
     const auto mh = read_file("src/compiler/mutation_hold_budget.h");
     CHECK(mh.find("kMutationHoldBudgetHostNativePollExpandIssue") != std::string::npos,
           "4032 AC1: stamp");

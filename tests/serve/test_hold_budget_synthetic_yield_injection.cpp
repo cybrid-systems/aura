@@ -2114,7 +2114,6 @@ int run_test_hold_budget_host_native_poll_4032() {
 }
 
 
-
 // Issue #3859: quarantine-latency SLO (extend #3325) — the no-edge face
 // past 4× the inbody window bound bumps the quarantine counter once per
 // window; window end (holder gone / cancel consumed) clears the clock so

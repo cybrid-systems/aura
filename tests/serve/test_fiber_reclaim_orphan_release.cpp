@@ -168,15 +168,15 @@ static void ac4031_owner_scoped_linear_drain() {
     CHECK(after.count(off_fiber_root) == 1, "4031 AC1: off-fiber root survives");
 
     // Moving remap still rewrites surviving sibling roots.
-    void* const newB = reinterpret_cast<void*>(reinterpret_cast<std::uintptr_t>(fiberB_root) + 0x1000);
+    void* const newB =
+        reinterpret_cast<void*>(reinterpret_cast<std::uintptr_t>(fiberB_root) + 0x1000);
     std::unordered_map<void*, void*> remap;
     remap[static_cast<void*>(fiberB_root)] = newB;
     CHECK(aura::core::lifetime::remap_linear_roots_under_moving(remap) == 1,
           "4031 AC2: Moving remap rewrites sibling root");
     aura::core::lifetime::snapshot_linear_roots(after);
     CHECK(after.count(newB) == 1, "4031 AC2: sibling root at new address");
-    CHECK(after.count(static_cast<void*>(fiberB_root)) == 0,
-          "4031 AC2: old sibling address gone");
+    CHECK(after.count(static_cast<void*>(fiberB_root)) == 0, "4031 AC2: old sibling address gone");
     // Owner tag preserved across remap — fiberB-owned drain still finds it.
     fiberB.clear_outermost_linear_keep();
     CHECK(aura::core::lifetime::unpin_linear_roots_owned_by(static_cast<void*>(&fiberB)) == 1,

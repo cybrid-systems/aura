@@ -14266,12 +14266,10 @@ void ObservabilityPrims::register_eval_p85(PrimRegistrar add, Evaluator& ev) {
             const std::int64_t live = static_cast<std::int64_t>(aura_deopt_count());
             const std::int64_t stale =
                 static_cast<std::int64_t>(aura_jit_closure_stale_deopt_total());
-            const std::int64_t safe =
-                static_cast<std::int64_t>(aura_jit_closure_safe_fallbacks());
+            const std::int64_t safe = static_cast<std::int64_t>(aura_jit_closure_safe_fallbacks());
             // Homology flag: under #4013 stub-forward (or production when both
             // advance together) stale/safe match live SSOT. 1 = same source.
-            const std::int64_t ssot_homologous =
-                (stale == live && safe == live) ? 1 : 0;
+            const std::int64_t ssot_homologous = (stale == live && safe == live) ? 1 : 0;
             auto* ht = FlatHashTable::create(query_hash_capacity_for(10));
             if (!ht)
                 return make_void();

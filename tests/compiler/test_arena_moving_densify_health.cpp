@@ -950,8 +950,9 @@ static void ac4019_soft_gen_not_moving_window_green() {
     const auto soft_site = gc.find("Issue #3677 / #4019");
     CHECK(soft_site != std::string::npos, "4019 AC3: Soft #3677/#4019 restamp site present");
     const auto soft_fn_end = gc.find("return result;", soft_site);
-    const auto soft_block =
-        soft_fn_end == std::string::npos ? std::string{} : gc.substr(soft_site, soft_fn_end - soft_site);
+    const auto soft_block = soft_fn_end == std::string::npos
+                                ? std::string{}
+                                : gc.substr(soft_site, soft_fn_end - soft_site);
     CHECK(soft_block.find("publish_last_moving_densify_window") == std::string::npos,
           "4019 AC3: Soft restamp site does not publish Moving window");
     CHECK(soft_block.find("unified_restamp_after_boundary") != std::string::npos,
@@ -1195,9 +1196,9 @@ int run_test_arena_moving_densify_health() {
     }
     ac3739_auto_arm_publishes_window();
     ac4019_soft_gen_not_moving_window_green();
-    std::println(
-        "\n=== #2619/#2682/#2775/#3123/#3200/#3368/#3370/#3633/#3739/#4019: {} passed, {} failed ===",
-        g_passed, g_failed);
+    std::println("\n=== #2619/#2682/#2775/#3123/#3200/#3368/#3370/#3633/#3739/#4019: {} passed, {} "
+                 "failed ===",
+                 g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
 

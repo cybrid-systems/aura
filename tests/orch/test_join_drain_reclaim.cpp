@@ -5567,8 +5567,7 @@ int run_test_join_drain_reclaim() {
             CompilerService cs2;
             auto proxy = agent_import_handoff(std::move(tok), static_cast<void*>(&cs2), sched);
             CHECK(proxy.ok && proxy.import_proxy, std::string(tag) + ": proxy stamped");
-            CHECK(proxy.mailbox.get() == src.mailbox.get(),
-                  std::string(tag) + ": shared mailbox");
+            CHECK(proxy.mailbox.get() == src.mailbox.get(), std::string(tag) + ": shared mailbox");
 
             // Seed a message via source send path (also validates send on
             // source). Then attempt proxy recv — must deny without consuming.
@@ -5579,8 +5578,7 @@ int run_test_join_drain_reclaim() {
 
             const auto denied0 =
                 g_orch_module_stats.recv_proxy_denied_total.load(std::memory_order_relaxed);
-            const auto recv0 =
-                g_orch_module_stats.agents_recv.load(std::memory_order_relaxed);
+            const auto recv0 = g_orch_module_stats.agents_recv.load(std::memory_order_relaxed);
             const auto empty0 =
                 g_orch_module_stats.recv_empty_total.load(std::memory_order_relaxed);
 
@@ -5660,10 +5658,8 @@ int run_test_join_drain_reclaim() {
             CHECK(prim.find("recv-proxy-denied") != std::string::npos,
                   "4026 AC3: Aura orch:agent-recv typed surface");
             CHECK(test_self.find("4026 AC1") != std::string::npos, "4026 AC3: test cites AC1");
-            CHECK(test_self.find("#3089 AC1") != std::string::npos,
-                  "4026 AC3: #3089 AC1 retained");
-            CHECK(test_self.find("#3089 AC4") != std::string::npos,
-                  "4026 AC3: #3089 AC4 retained");
+            CHECK(test_self.find("#3089 AC1") != std::string::npos, "4026 AC3: #3089 AC1 retained");
+            CHECK(test_self.find("#3089 AC4") != std::string::npos, "4026 AC3: #3089 AC4 retained");
             CHECK(kRecvProxyDeniedIssue == 4026, "4026 AC3: stamp == 4026");
             CHECK(spawn.find("class AgentRegistry") == std::string::npos,
                   "4026 AC3: no AgentRegistry");
@@ -6783,11 +6779,11 @@ int run_test_join_drain_reclaim() {
     // requesting :tenant-id=B denies with SE + zero fiber/quota side effects.
     // Same-tenant OK; TenantAdmin cross-tenant OK (#3086 contract).
     {
-        using aura::core::sandbox::SandboxMode;
-        using aura::core::sandbox::set_mode;
         using aura::core::capability::Effect;
         using aura::core::capability::g_capability_registry;
         using aura::core::capability::make_grant_provenance;
+        using aura::core::sandbox::SandboxMode;
+        using aura::core::sandbox::set_mode;
         using aura::core::security_event::g_security_event_ring;
         using aura::core::security_event::kSecurityEventRingSize;
         using aura::orch::AgentSpec;
@@ -6834,9 +6830,8 @@ int run_test_join_drain_reclaim() {
             aura::serve::g_current_fiber = parent.get();
             aura::core::resource_quota::set_current_quota_tenant(11);
 
-            const auto fibers_before =
-                aura::core::resource_quota::process_resource_quota().used(
-                    aura::core::resource_quota::Dimension::Fibers);
+            const auto fibers_before = aura::core::resource_quota::process_resource_quota().used(
+                aura::core::resource_quota::Dimension::Fibers);
             const auto fail_before =
                 g_orch_module_stats.spawn_failures.load(std::memory_order_relaxed);
 
