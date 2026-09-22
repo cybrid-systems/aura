@@ -31,6 +31,7 @@
 #include "compiler/security_defaults.hh"
 #include "core/capability_model.hh"
 #include "core/sandbox.hh"
+#include "core/security_event.hh"
 #include "core/workspace_isolation.hh"
 
 #include <atomic>
@@ -515,6 +516,102 @@ int run_test_sandbox_mode_authority_2657() {
             CHECK(!std::filesystem::exists("docs/design/3562-sandbox-ctor-mirror.md"),
                   "3562 AC5: no docs/design/3562-*");
         }
+    }
+
+    {
+        std::println("\n--- #3995 AC1: unprivileged downgrade stays Restricted + SE ---");
+        reset_all();
+        using aura::core::capability::kPolicyGateLockedCapabilityIssue;
+        CHECK(kPolicyGateLockedCapabilityIssue == 3995, "3995 AC1: issue stamp");
+        aura::core::sandbox::set_mode(SandboxMode::Restricted);
+        aura::compiler::CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.set_capability_tenant_id(7);
+        CHECK(ev.effect_sandbox_mode() == 1, "3995 AC1: pre Restricted");
+        const auto auth0 = snapshot_sandbox_authority_stats().authority_set_total;
+        const auto& ring = aura::core::security_event::g_security_event_ring();
+        const auto seq0 = ring.seq.load(std::memory_order_acquire);
+        const auto r = cs.eval("(security:set-effect-sandbox-mode! 0)");
+        CHECK(r && aura::compiler::types::is_error(*r),
+              "3995 AC1: unprivileged downgrade is primitive error");
+        CHECK(ev.effect_sandbox_mode() == 1, "3995 AC1: mode stays Restricted");
+        CHECK(snapshot_sandbox_authority_stats().authority_set_total == auth0,
+              "3995 AC1: no unauthorized authority write");
+        bool se = false;
+        for (std::uint64_t s = seq0; s < ring.seq.load(std::memory_order_acquire); ++s) {
+            const auto& e = ring.ring[s % ring.ring.size()];
+            if (e.seq != s)
+                continue;
+            if (std::string_view(e.reason) == "grant-effect-needs-explicit-tenant-admin") {
+                se = true;
+                CHECK(e.tenant_id == 7, "3995 AC1: SE tenant is caller");
+            }
+        }
+        CHECK(se, "3995 AC1: SE deny row emitted");
+        reset_all();
+    }
+
+    {
+        std::println(
+            "\n--- #3995 AC2: dual-eval revoke then downgrade cannot leave Restricted ---");
+        reset_all();
+        aura::core::sandbox::set_mode(SandboxMode::Restricted);
+        aura::compiler::CompilerService cs_a;
+        auto& ev_a = cs_a.evaluator();
+        ev_a.set_capability_tenant_id(7);
+        using aura::core::capability::Effect;
+        using aura::core::capability::g_capability_registry;
+        using aura::core::capability::make_grant_provenance;
+        aura::core::sandbox::set_mode(SandboxMode::Off);
+        g_capability_registry().grant(7, "tenant-admin", Effect::TenantAdmin,
+                                      make_grant_provenance(1, true, 0, 0));
+        aura::core::sandbox::set_mode(SandboxMode::Restricted);
+        std::thread t_b([&] { g_capability_registry().revoke(7, "tenant-admin"); });
+        std::thread t_a([&] { (void)cs_a.eval("(security:set-effect-sandbox-mode! 0)"); });
+        t_a.join();
+        t_b.join();
+        // Re-arm Restricted via ungated C++ (authority write is the test
+        // fixture). TA is gone; a further prim downgrade must not write Off.
+        ev_a.set_effect_sandbox_mode(1);
+        const auto auth0 = snapshot_sandbox_authority_stats().authority_set_total;
+        const auto r = cs_a.eval("(security:set-effect-sandbox-mode! 0)");
+        CHECK(r && aura::compiler::types::is_error(*r), "3995 AC2: post-revoke downgrade denied");
+        CHECK(ev_a.effect_sandbox_mode() == 1, "3995 AC2: stays Restricted after revoke");
+        CHECK(snapshot_sandbox_authority_stats().authority_set_total == auth0,
+              "3995 AC2: no unauthorized authority write");
+        reset_all();
+    }
+
+    {
+        std::println("\n--- #3995 AC3: source-cite locked policy gates; no invent ---");
+        const auto prim = read_source("src/compiler/evaluator_primitives_security.cpp");
+        const auto sec = read_source("src/compiler/evaluator_security.cpp");
+        const auto cm = read_source("src/core/capability_model.hh");
+        CHECK(prim.find("Issue #3995") != std::string::npos, "3995 AC3: sandbox prims cite");
+        CHECK(sec.find("Issue #3995") != std::string::npos, "3995 AC3: allow_cross cites");
+        CHECK(cm.find("kPolicyGateLockedCapabilityIssue = 3995") != std::string::npos,
+              "3995 AC3: stamp");
+        auto p_eff = prim.find("security:set-effect-sandbox-mode!");
+        CHECK(p_eff != std::string::npos, "3995 AC3: effect-mode prim present");
+        auto win = prim.substr(p_eff, 2200);
+        CHECK(win.find("lock_guard") != std::string::npos &&
+                  win.find("effects_for_locked") != std::string::npos,
+              "3995 AC3: effect-mode prim locked TA");
+        CHECK(win.find("!ev.has_capability") == std::string::npos,
+              "3995 AC3: effect-mode prim no unlocked has_capability gate");
+        auto p_sb = prim.find("security:set-sandbox-mode!");
+        CHECK(p_sb != std::string::npos, "3995 AC3: bool-mode prim present");
+        auto win_sb = prim.substr(p_sb, 1800);
+        CHECK(win_sb.find("lock_guard") != std::string::npos &&
+                  win_sb.find("effects_for_locked") != std::string::npos,
+              "3995 AC3: bool-mode prim locked TA");
+        CHECK(sec.find("allow_cross_tenant_ = true") != std::string::npos,
+              "3995 AC3: allow_cross store under lock");
+        CHECK(!std::filesystem::exists("docs/design/3995-policy-gate-toctou.md"),
+              "3995 AC3: no docs/design");
+        CHECK(!std::filesystem::exists("tests/issues/test_issue_3995.cpp"),
+              "3995 AC3: no tests/issues invent");
+        reset_all();
     }
 
     std::println("\n=== results: {} passed, {} failed ===", g_passed, g_failed);

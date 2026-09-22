@@ -3703,28 +3703,24 @@ int main() {
 
         std::println("\n--- #3411 AC2: set_tenant_principal drops kCapWildcard privileged arm ---");
         // set_tenant_principal must NOT OR has_capability(kCapWildcard) any
-        // more — the corrected has_capability(kCapTenantAdmin) already
-        // routes through effects_for and returns false for wildcard-only.
+        // more — #3995 takes mtx + effects_for_locked TenantAdmin (kCapCapability
+        // maps to TA bits). Wildcard-only is stripped (#3144).
         const auto set_tp = sec.find("set_tenant_principal(std::uint64_t tenant_id");
         CHECK(set_tp != std::string::npos, "3411 AC2: set_tenant_principal present");
-        // The privileged OR no longer contains kCapWildcard arm.
-        // The #3411 comment names kCapWildcard in prose, so anchor the
-        // wildcard-absence check on the privileged statement itself; widen
-        // the window to cover the deny SE (~2.2k chars below the head).
-        const auto priv_block = sec.substr(set_tp, 2600);
-        CHECK(priv_block.find("has_capability(kCapTenantAdmin)") != std::string::npos &&
-                  priv_block.find("has_capability(kCapCapability)") != std::string::npos,
-              "3411 AC2: privileged = has_capability(TA) || has_capability(Capability)");
-        // Wildcard arm must NOT appear in the privileged OR.
+        const auto priv_block = sec.substr(set_tp, 2800);
+        CHECK(priv_block.find("effects_for_locked") != std::string::npos &&
+                  priv_block.find("lock_guard") != std::string::npos,
+              "3411 AC2: privileged = locked effects_for_locked TenantAdmin (#3995)");
+        CHECK(priv_block.find("has_capability(kCapTenantAdmin)") == std::string::npos &&
+                  priv_block.find("has_capability(kCapCapability)") == std::string::npos,
+              "3411 AC2: unlocked has_capability TA/Capability fence removed");
         const auto priv_stmt_pos = sec.find("const bool privileged =", set_tp);
         CHECK(priv_stmt_pos != std::string::npos, "3411 AC2: privileged statement present");
-        const auto priv_stmt = sec.substr(priv_stmt_pos, 200);
+        const auto priv_stmt = sec.substr(priv_stmt_pos, 400);
         CHECK(priv_stmt.find("kCapWildcard") == std::string::npos,
               "3411 AC2: privileged OR no longer arms has_capability(kCapWildcard)");
-        // Existing SE reason preserved.
         CHECK(priv_block.find("allow-cross-needs-tenant-admin") != std::string::npos,
               "3411 AC2: SE reason 'allow-cross-needs-tenant-admin' preserved");
-        // Soft/Off short-circuit intact (zero extra cost — AC4).
         CHECK(priv_block.find("force_bind = sandbox_mode_") != std::string::npos,
               "3411 AC2: Soft/Off short-circuit via force_bind intact");
 

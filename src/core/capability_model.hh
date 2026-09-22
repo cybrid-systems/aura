@@ -71,6 +71,9 @@ inline constexpr int kCapabilitySessionRevokeFiberZeroIssue = 3799;
 // Issue #3992: mid-revoke grant-row stamp is hard-face invent only
 // (Soft keeps revoke_epoch 0 when Mutation epoch is unset).
 inline constexpr int kCapabilityMidRevokeEpochHonestIssue = 3992;
+// Issue #3995: sandbox-downgrade / allow_cross policy gates take mtx +
+// effects_for_locked (TOCTOU vs concurrent TA/wildcard revoke).
+inline constexpr int kPolicyGateLockedCapabilityIssue = 3995;
 // Issue #3844: grant/SE epoch invent residual — Epoch = WorkspaceEpoch
 // Mutation only (never phantom 1 under hard face).
 inline constexpr int kGrantEpochNoPhantomIssue = 3844;
