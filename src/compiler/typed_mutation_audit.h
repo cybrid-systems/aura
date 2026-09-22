@@ -4847,9 +4847,13 @@ inline void capture_aot_hotupdate_audit(bool success, std::uint64_t before_epoch
     set_strategy(prev);
     // Issue #3319: production/Full always emit joinable SE on AOT deny.
     // Soft/Off: emit_invariant_deny_se no-ops. TLS one-SE-per-mid.
-    if (mid != 0)
-        emit_invariant_deny_se(mid, /*tenant_id=*/0, /*fiber_id=*/0, after_epoch, reason,
+    // Issue #4014: join live Guard/checkpoint tenant (#3971 helper); fiber
+    // via effect_fiber_id_or (audit_se_join_fiber_id) — never hardcode 0.
+    if (mid != 0) {
+        const auto tenant = audit_se_join_tenant_id();
+        emit_invariant_deny_se(mid, tenant, audit_se_join_fiber_id(), after_epoch, reason,
                                "aot-hotupdate");
+    }
 }
 
 // Issue #1882: lightweight JIT L2 / apply hotpath sample (never forces Full).
@@ -4938,7 +4942,10 @@ inline void record_boundary_deny_after_restore(std::uint64_t mutation_id, std::s
     // only; one SE per deny (TLS guard suppresses the second helper run).
     const auto join_mid = join_audit_and_se_mid(mutation_id);
     if (join_mid != 0) {
-        emit_invariant_deny_se(join_mid, /*tenant_id=*/0, fiber_id, after_epoch, op,
+        // Issue #4014: live tenant via audit_se_join_tenant_id() (#3971);
+        // do not hardcode tenant_id=0 on boundary deny SE.
+        const auto tenant = audit_se_join_tenant_id();
+        emit_invariant_deny_se(join_mid, tenant, fiber_id, after_epoch, op,
                                /*deny_kind=*/"boundary");
     }
 }
