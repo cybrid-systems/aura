@@ -68,6 +68,9 @@ inline constexpr int kCapabilitySessionPeerFiberIssue = 3241;
 // (observe via session_bound_orphan_detected_total); Soft/Off + soft-share
 // Restricted retain legacy mid-only (#3241 AC3).
 inline constexpr int kCapabilitySessionRevokeFiberZeroIssue = 3799;
+// Issue #3992: mid-revoke grant-row stamp is hard-face invent only
+// (Soft keeps revoke_epoch 0 when Mutation epoch is unset).
+inline constexpr int kCapabilityMidRevokeEpochHonestIssue = 3992;
 // Issue #3844: grant/SE epoch invent residual — Epoch = WorkspaceEpoch
 // Mutation only (never phantom 1 under hard face).
 inline constexpr int kGrantEpochNoPhantomIssue = 3844;
@@ -880,13 +883,15 @@ struct CapabilityRegistry {
         }
         std::size_t n = 0;
         auto ep = ::aura::core::current_mutation_epoch();
-        if (ep == 0)
+        // Issue #3992 / #3902: hard-face invent only — Soft keeps 0 honest
+        // unset (same vocabulary as #3875 named-revoke / consume). Grants
+        // still revoke. audit_prov.epoch stays hard-honest (#3854).
+        if (ep == 0 && capability_epoch_hard_face())
             ep = 1;
         EffectProvenance audit_prov{};
         audit_prov.mutation_id = mid;
         // Issue #3854: hard face keeps the #3844 contract — Mutation epoch
-        // 0 stays 0 (no phantom 1 in revoke SE/audit provenance); Soft
-        // keeps the observe invent above.
+        // 0 stays 0 (no phantom 1 in revoke SE/audit provenance).
         audit_prov.epoch =
             capability_epoch_hard_face() ? ::aura::core::current_mutation_epoch() : ep;
         // Issue #3854: stamp the caller fiber on revoke SE/audit rows —
