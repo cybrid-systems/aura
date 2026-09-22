@@ -1,0 +1,41 @@
+{
+  "issue": 4023,
+  "title": "heal stamp ORs covered demoted bits (emit \u2229 demoted), not one reason",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/hot_update_registry.cpp",
+      "contains": [
+        "Issue #4023",
+        "emit & demoted",
+        "prev | covered",
+        "ReemitReason::ResidualForceHeal"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/hot_update_registry.hh",
+      "contains": [
+        "Issue #4023",
+        "emit \u2229 demoted"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/compiler/test_hot_update_cascade_dirty_reemit.cpp",
+      "contains": [
+        "4023 AC1: multi-reason + partial heal \u2192 residual \u2260 0",
+        "4023 AC1: residual empty after belt multi-heal",
+        "#4023 AC2: Agent coverage note clears residual; Soft wholesale unchanged"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "forbid": [
+        "tests/compiler/test_issue_4023.cpp",
+        "docs/design/4023-heal-emit-demoted.md",
+        "scripts/coverage/checks/check_heal_stamp_4023.py"
+      ]
+    }
+  ]
+}

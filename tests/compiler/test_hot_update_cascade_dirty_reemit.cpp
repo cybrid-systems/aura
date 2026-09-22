@@ -843,11 +843,11 @@ static void ac3885_multi_reason_single_heal_leaves_residual() {
     std::println("\n--- #3885 AC1: multi-reason force + single-bit heal leaves residual ---");
     const auto cpp = read_file("src/compiler/hot_update_registry.cpp");
     CHECK(cpp.find("Issue #3885") != std::string::npos, "3885 AC: cpp cites #3885");
-    CHECK(cpp.find("prev | bit") != std::string::npos, "3885 AC1: heal ORs one reason bit");
-    CHECK(cpp.find("Issue #3911") != std::string::npos,
-          "3911 AC: heal stamp remains reason-proxy (not per-define)");
+    CHECK(cpp.find("prev | covered") != std::string::npos, "3885/4023 AC1: heal ORs covered demoted bits");
+    CHECK(cpp.find("emit & demoted") != std::string::npos, "4023 AC: emit ∩ demoted coverage");
+    CHECK(cpp.find("Issue #4023") != std::string::npos, "4023 AC: cpp cites #4023");
     CHECK(cpp.find("note_reemit_success_coverage") != std::string::npos,
-          "3911 AC1: Agent coverage note still the multi-reason clear");
+          "4023 AC2: Agent coverage note still the multi-reason clear");
     auto& reg = hot_update_registry();
     aura::compiler::typed_audit::apply_production_audit_defaults();
     reg.on_reload_success();
@@ -962,6 +962,72 @@ static void ac3885_second_heal_ors_other_bit() {
     reg.on_reload_success();
     reg.reset_force_jit_repromote_for_test();
     aura::compiler::typed_audit::apply_dev_audit_defaults();
+}
+
+
+// ── Issue #4023: heal stamp ORs covered demoted bits (emit ∩ demoted) ──
+static void ac4023_residual_force_heal_ors_covered_demoted() {
+    std::println("\n--- #4023 AC1: ResidualForceHeal multi-heal ORs residual ∩ demoted ---");
+    const auto cpp = read_file("src/compiler/hot_update_registry.cpp");
+    CHECK(cpp.find("Issue #4023") != std::string::npos, "4023 AC: cpp cites #4023");
+    CHECK(cpp.find("emit & demoted") != std::string::npos, "4023 AC: emit ∩ demoted");
+    CHECK(cpp.find("prev | covered") != std::string::npos, "4023 AC: ORs covered bits");
+    CHECK(cpp.find("covered = demoted") == std::string::npos,
+          "4023 AC: no wholesale covered = demoted (#3413)");
+    auto& reg = hot_update_registry();
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    reg.on_reload_success();
+    reg.reset_force_jit_repromote_for_test();
+    reg.set_force_jit_repromote_window(1);
+    reg.set_force_jit_repromote_only_covered_bits(true);
+    reg.set_force_jit_repromote_require_pending_idle(false);
+    reg.on_force_jit_for_reason(AotReloadFail::Defuse);
+    reg.on_force_jit_for_reason(AotReloadFail::Env); // last_reason = Env
+    const auto defuse = aot_reload_fail_to_force_jit_mask(AotReloadFail::Defuse);
+    const auto env = aot_reload_fail_to_force_jit_mask(AotReloadFail::Env);
+    CHECK((reg.force_jit_regions_mask() & defuse) != 0, "4023 AC1: Defuse force bit set");
+    CHECK((reg.force_jit_regions_mask() & env) != 0, "4023 AC1: Env force bit set");
+    aura_hot_update_set_reemit_boundary_policy(0);
+    static ReemitFeed feed;
+    feed.names = {"__hu_4023_belt"};
+    feed.regions = {1};
+    feed.cursor = 0;
+    aura_set_reemit_candidate_fn(&reemit_candidate_iter, &feed);
+    aura_set_aot_emit_fn(&emit_ok, nullptr);
+    reg.on_emit_region_mask_set(~0ULL);
+    // Partial CoverageVerify heal: one face only → residual ≠ 0 (AC1).
+    (void)reg.decide_and_reemit(1, aura::compiler::HotUpdateRegistry::ReemitReason::CoverageVerify);
+    if ((reg.last_reemit_success_region_mask() & env) == 0)
+        reg.on_reemit_pipeline_call(/*candidates=*/1, /*successes=*/1);
+    CHECK((reg.last_reemit_success_region_mask() & env) != 0,
+          "4023 AC1: partial heal stamps Env");
+    CHECK((reg.residual_force_mask() & defuse) != 0,
+          "4023 AC1: multi-reason + partial heal → residual ≠ 0");
+    // ResidualForceHeal age-belt multi-heal: OR remaining residual ∩ demoted.
+    feed.cursor = 0;
+    (void)reg.decide_and_reemit(1, aura::compiler::HotUpdateRegistry::ReemitReason::ResidualForceHeal);
+    reg.on_reemit_pipeline_call(/*candidates=*/1, /*successes=*/1);
+    CHECK((reg.last_reemit_success_region_mask() & defuse) != 0,
+          "4023 AC1: ResidualForceHeal ORs residual Defuse");
+    CHECK((reg.last_reemit_success_region_mask() & env) != 0,
+          "4023 AC1: Env bit retained");
+    CHECK(reg.residual_force_mask() == 0,
+          "4023 AC1: residual empty after belt multi-heal");
+    aura_set_aot_emit_fn(nullptr, nullptr);
+    aura_set_reemit_candidate_fn(nullptr, nullptr);
+    reg.on_reload_success();
+    reg.reset_force_jit_repromote_for_test();
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+}
+
+static void ac4023_agent_note_and_soft_unchanged() {
+    std::println("\n--- #4023 AC2: Agent coverage note clears residual; Soft wholesale unchanged ---");
+    ac3885_agent_coverage_note_clears_residual();
+    ac3745_soft_wholesale_unchanged();
+    CHECK(read_file("tests/compiler/test_issue_4023.cpp").empty(),
+          "4023 AC3: no test_issue_4023.cpp");
+    CHECK(read_file("docs/design/4023-heal-emit-demoted.md").empty(),
+          "4023 AC3: no docs/design/4023-*");
 }
 
 // ── Issue #3976: only_covered last_success is a reason-group proxy;
@@ -1333,6 +1399,10 @@ int main() {
     ac3885_agent_coverage_note_clears_residual();
     reset_runtime_after_cs();
     ac3885_second_heal_ors_other_bit();
+    reset_runtime_after_cs();
+    ac4023_residual_force_heal_ors_covered_demoted();
+    reset_runtime_after_cs();
+    ac4023_agent_note_and_soft_unchanged();
     reset_runtime_after_cs();
     ac3976_cascade_does_not_stamp();
     reset_runtime_after_cs();
