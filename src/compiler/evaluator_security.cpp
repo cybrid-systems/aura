@@ -2032,8 +2032,10 @@ bool Evaluator::check_tenant_host_path(std::string_view path, std::string& out_r
     emit_security_event_durable(SecurityEventKind::IsolationDeny, capability_tenant_id_, mid, epoch,
                                 static_cast<std::uint16_t>(kEffectWrite), op,
                                 kTenantPathEscapeReason, /*denied=*/true, fiber);
+    // Issue #3994 / #3903: Typed correlate tenant matches the IsolationDeny
+    // SE (capability_tenant_id_). Default 0 omitted the filter axis.
     typed_audit::capture_security_correlated_audit(mid, op, mid, /*denied=*/true,
-                                                   /*target_node=*/0, fiber);
+                                                   /*target_node=*/0, fiber, capability_tenant_id_);
     return false;
 }
 

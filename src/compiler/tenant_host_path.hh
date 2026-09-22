@@ -29,6 +29,8 @@
 namespace aura::compiler::security {
 
 inline constexpr int kTenantHostPathIsolationIssue = 3802;
+// Issue #3994: check_tenant_host_path Typed correlate stamps tenant_id.
+inline constexpr int kHostPathCorrelateTenantIssue = 3994;
 // Auditable SE reason (IsolationDeny) — keep ≤63 chars for SecurityEvent.
 inline constexpr const char* kTenantPathEscapeReason = "tenant-path-escape";
 inline constexpr const char* kEnvTenantFsRoot = "AURA_TENANT_FS_ROOT";
