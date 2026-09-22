@@ -343,6 +343,22 @@ inline std::pair<bool, bool> commit_readiness_live_signals() noexcept {
                                     kTypeLinearProofOutcomeStamped)
         in.solve_status = 0;
     const auto r = aura::compiler::typed_audit::commit_readiness(in);
+    // Issue #4011-residual: the remount-last-zero strip latch (#3789 /
+    // #4011, force_reason 17) is a self-healing hygiene face — its only
+    // retirement paths are the next mutate's re-proof (live outermost
+    // stamp / green rebind on publish). Feeding reason 17 into this
+    // ADMISSION signal wedged every production-mode mutate behind
+    // `AdmissionRejected: security-schedule:commit-not-ready` — a latch
+    // that only a successful mutate can clear, so one strip event
+    // (remount-last-zero during background hygiene / densify / JIT
+    // residual walks) permanently refused all later admits with
+    // resource-quota-exceeded until a Soft-mode switch. The
+    // commit_readiness surface itself (evolution-snapshot /
+    // commit-health queries) still reports would_allow=false + 17 for
+    // Agent visibility (#4011 AC1); only this admit consumer exempts
+    // the self-healing reason so the re-prove flow can run.
+    if (r.force_reason_code == aura::compiler::typed_audit::kRemountLastZeroForceReasonCode)
+        return {true, false};
     return {r.would_allow_commit, r.force_reason_code != 0};
 }
 
