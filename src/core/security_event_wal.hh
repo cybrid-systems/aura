@@ -27,6 +27,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cerrno>
+#include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -639,11 +640,12 @@ inline SecurityEventWalRecord make_record(const SecurityEvent& ev,
 // enable (security_defaults / apply_production_audit_defaults). Empty
 // replay is a no-op (live ring stays as caller left it). Soft / WAL-off
 // never calls this. Resets the ring then appends oldest→newest.
-// persist_security_event stamps rec.seq=0 (builds a transient event,
-// not a ring read-back), so max(rec.seq)+1 is 1 and must not clobber
-// the append-advanced seq — that made find-by-mid scan one slot.
-// Take max(WAL seq+1, append count) so joinable mids survive restart
-// and later appends still do not collide with a real WAL seq range.
+// Issue #4027: new persists stamp real ring_seq; pre-#4027 WAL segments
+// may still carry rec.seq=0. max(rec.seq)+1 alone would be 1 and must
+// not clobber the append-advanced seq — that made find-by-mid scan one
+// slot. Take max(WAL seq+1, append count) so joinable mids survive
+// restart and later appends still do not collide with a real WAL seq
+// range (no migration — old seq=0 rows keep #3500 continuation).
 inline void hydrate_security_event_ring_from_wal_replay(
     const std::vector<SecurityEventWalRecord>& replayed) noexcept {
     if (replayed.empty())
@@ -673,6 +675,14 @@ inline void hydrate_security_event_ring_from_wal_replay(
     ring.seq.store(next_seq, std::memory_order_relaxed);
 }
 
+// Issue #4027: wall-clock ms for SE WAL forensic timeline. Soft/WAL-off
+// never reaches make_record (persist short-circuits on is_enabled).
+inline std::uint64_t security_event_wal_now_ms() noexcept {
+    return static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                          std::chrono::steady_clock::now().time_since_epoch())
+                                          .count());
+}
+
 // Issue #2225: hot-path persist helper. Called from check_and_record_effect
 // (allow + deny) and check_workspace_isolation (deny) immediately after the
 // ring append. Short-circuits with a single bool load when WAL is disabled
@@ -684,15 +694,21 @@ inline void hydrate_security_event_ring_from_wal_replay(
 // overwrite our slot at seq+size before we read it back, persisting a
 // different event under our seq. The forensic loss is bounded to "WAL
 // record with mismatched event data", not a missing record.
+//
+// Issue #4027: ring_seq + timestamp_ms fill join/sort keys on the WAL
+// record; still no ring read-back. ring_seq defaults to 0 so direct
+// persist helpers/tests and pre-#4027 segments keep #3500 max() hydrate.
 inline bool persist_security_event(SecurityEventKind kind, std::uint64_t tenant_id,
                                    std::uint64_t mutation_id, std::uint64_t epoch,
                                    std::uint16_t effect_bits, std::string_view op,
                                    std::string_view reason, bool denied, std::int64_t fiber_id,
-                                   std::uint64_t timestamp_ms) noexcept {
+                                   std::uint64_t timestamp_ms,
+                                   std::uint64_t ring_seq = 0) noexcept {
     if (!g_security_event_wal().is_enabled())
         return false;
     SecurityEvent ev{};
     ev.kind = kind;
+    ev.seq = ring_seq; // #4027: stamp allocated ring seq (no ring read-back)
     ev.tenant_id = tenant_id;
     ev.mutation_id = mutation_id;
     ev.epoch = epoch;
@@ -740,14 +756,14 @@ inline void emit_security_event_durable(SecurityEventKind kind, std::uint64_t te
         if (const char* c = aura_classify_mid0_se_reason(reason_buf))
             use_reason = c;
     }
-    append_security_event(g_security_event_ring(), kind, tenant_id, mutation_id, epoch, effect_bits,
-                          op, use_reason, denied, fiber_id);
-    // Timestamp optional for forensic ordering; 0 is accepted when clock
-    // not needed (WAL still stores fields). Avoid pulling <chrono> into
-    // every capability include — 0 is fine for durability of content.
+    // Issue #4027: capture allocated ring seq; persist stamps it + real ts
+    // (still builds from local params — no ring read-back / #2225 race).
+    const auto ring_seq =
+        append_security_event(g_security_event_ring(), kind, tenant_id, mutation_id, epoch,
+                              effect_bits, op, use_reason, denied, fiber_id);
     const bool persisted =
         persist_security_event(kind, tenant_id, mutation_id, epoch, effect_bits, op, use_reason,
-                               denied, fiber_id, /*timestamp_ms=*/0);
+                               denied, fiber_id, security_event_wal_now_ms(), ring_seq);
     // Issue #3965: production force_wal + SE sidecar off (enable-fail)
     // still fail-closes IsolationDeny/EffectDeny onto the overflow ring
     // so wrap of the 1024 SE ring is not the only trail. fwrite-miss

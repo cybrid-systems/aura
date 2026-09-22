@@ -115,11 +115,14 @@ struct SecurityEventRing {
 // Issue #2075 / #2054: thread-safe append. Deny paths set denied=true;
 // allow path (#2054) sets denied=false + EffectAllow. Stores op + reason
 // (truncated to buffer size, NUL-terminated). No heap allocation.
-inline void append_security_event(SecurityEventRing& ring, SecurityEventKind kind,
-                                  std::uint64_t tenant_id, std::uint64_t mutation_id,
-                                  std::uint64_t epoch, std::uint16_t effect_bits,
-                                  std::string_view op, std::string_view reason, bool denied = true,
-                                  std::int64_t fiber_id = 0) noexcept {
+// Issue #4027: returns the allocated ring seq so persist_security_event
+// can stamp WAL rec.seq without a ring read-back (#2225 race).
+inline std::uint64_t append_security_event(SecurityEventRing& ring, SecurityEventKind kind,
+                                           std::uint64_t tenant_id, std::uint64_t mutation_id,
+                                           std::uint64_t epoch, std::uint16_t effect_bits,
+                                           std::string_view op, std::string_view reason,
+                                           bool denied = true,
+                                           std::int64_t fiber_id = 0) noexcept {
     const auto s = ring.seq.fetch_add(1, std::memory_order_relaxed);
     auto& slot = ring.ring[s % kSecurityEventRingSize];
     // Issue #2225: bump wrap counter if this seq overwrites a slot
@@ -153,6 +156,7 @@ inline void append_security_event(SecurityEventRing& ring, SecurityEventKind kin
         slot.reason[0] = '\0';
     }
     ring.total.fetch_add(1, std::memory_order_relaxed);
+    return s;
 }
 
 // Issue #2075 / #2054: process-global security event ring. One instance
