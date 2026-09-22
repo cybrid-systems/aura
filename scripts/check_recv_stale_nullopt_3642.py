@@ -86,8 +86,12 @@ def main() -> int:
             fails.append("AC2: agent_recv not passing stale out-param")
         if "h.last_recv_stale_handoff = true;" not in aw:
             fails.append("AC2: handle flag not set on stale")
-        if "return std::nullopt;" not in aw:
-            fails.append("AC2: agent_recv does not return nullopt on stale")
+        # Issue #4001: the C++ host surface is typed RecvResult now — the
+        # stale branch must still return a NON-success (ok=false default,
+        # typed status), never a message. Same invariant as the old
+        # return-std::nullopt pin.
+        if "handoff-required" not in aw or "return out;" not in aw:
+            fails.append("AC2: agent_recv stale path must return typed non-success (RecvResult)")
     must("hp->last_recv_stale_handoff", "AC2 primitive rides flag", prim)
     must("stale_handoff_surface", "AC2 primitive stale condition", prim)
     must("handoff-required", "AC2 typed surface unchanged", prim)
