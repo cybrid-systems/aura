@@ -312,6 +312,7 @@ extern "C" const char* aura_classify_mid0_se_reason(const char* reason) noexcept
     // reason so query:security-audit mid=0 joins it (#3462 contract).
     if (r == "mid-fallback-refused" || r == "grant-mid-refused" ||
         r == "grant-effect-needs-explicit-tenant-admin" || r == "allow-cross-needs-tenant-admin" ||
+        r == "tenant-spoof-denied" || // Issue #4017 spawn :tenant-id principal fence
         r == kAuditMidSsotMissReason)
         return reason ? reason : "";
     // Issue #3735: hygiene deny at join-0 keeps hygiene_limit_reason_string_for

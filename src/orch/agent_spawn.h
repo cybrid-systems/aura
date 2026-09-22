@@ -50,6 +50,7 @@ class AgentScope;
 #include <optional>
 #include <chrono>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <functional>
 #include <memory>
@@ -2400,6 +2401,48 @@ inline void finalize_spawn_quota_reject(AgentHandle& h) noexcept {
     g_orch_module_stats.spawn_quota_reject_no_leak.store(1, std::memory_order_relaxed);
 }
 
+
+// Issue #4017: spawn :tenant-id must match caller principal (or TenantAdmin).
+// Same shape as WorkspaceIsolationPolicy::grant_cross_tenant (#3086) —
+// Soft/Off short-circuits (zero force); production Restricted/Strict
+// requires TenantAdmin on the caller when requested != caller. No new
+// model / counter / query key. SE reason carries the deny code so audit
+// replay can join tenant+fiber+mid without B-named poison from A.
+[[nodiscard]] inline bool spawn_tenant_principal_allows(std::uint64_t requested,
+                                                        std::uint64_t caller) noexcept {
+    if (requested == 0 || requested == caller)
+        return true;
+    // Soft / Off: zero-cost allow (AC Soft — no new force).
+    if (!production_defaults_active() || !aura::core::sandbox::is_sandbox_active())
+        return true;
+    auto& reg = ::aura::core::capability::g_capability_registry();
+    std::lock_guard<std::mutex> lock(reg.mtx);
+    using ::aura::core::capability::Effect;
+    using ::aura::core::capability::has_effect;
+    return has_effect(reg.effects_for_locked(caller), Effect::TenantAdmin);
+}
+
+inline void emit_spawn_tenant_spoof_se(std::uint64_t requested, std::uint64_t caller) noexcept {
+    (void)requested;
+    const auto epoch = ::aura::core::current_mutation_epoch();
+    // mid=0 refuse-class row (#3594 / #3462) — never mint a phantom mid.
+    // Stable SE reason "tenant-spoof-denied" is mid0-classifier allowlisted
+    // (#3532 / #4017) so production mid=0 keeps the deny code. Detail
+    // (tenant=/caller=) lives on AgentHandle::error / Aura hash error.
+    const auto mid = ::aura::compiler::typed_audit::join_audit_and_se_mid(0);
+    const auto fid = static_cast<std::int64_t>(aura_fiber_current_id());
+    using ::aura::core::security_event::SecurityEventKind;
+    using ::aura::core::security_event_wal::emit_security_event_durable;
+    emit_security_event_durable(SecurityEventKind::EffectDeny, caller, mid, epoch,
+                                /*effect_bits=*/0, /*op=*/"spawn", "tenant-spoof-denied",
+                                /*denied=*/true, fid);
+}
+
+inline std::string spawn_tenant_spoof_error(std::uint64_t requested, std::uint64_t caller) {
+    return "tenant-spoof-denied: spawn tenant=" + std::to_string(requested) +
+           " caller=" + std::to_string(caller);
+}
+
 [[nodiscard]] inline AgentHandle spawn_agent_with_mailbox(serve::Scheduler& sched, AgentSpec spec) {
     AgentHandle h;
     h.name = std::move(spec.name);
@@ -2499,6 +2542,29 @@ inline void finalize_spawn_quota_reject(AgentHandle& h) noexcept {
         h.deny_class = AgentDenyClass::Other;
         finalize_spawn_quota_reject(h);
         return h;
+    }
+    // Issue #4017: explicit spec.tenant_id must match the caller principal
+    // (parent fiber assigned_tenant_id / quota TLS) unless the caller holds
+    // TenantAdmin. Soft/Off / unknown caller (0) skip — preserves C++ tests
+    // that stamp tenant_id without a fiber principal (#3672/#3731); Aura
+    // prims gate via capability_tenant_id() before reaching here. Deny
+    // BEFORE fiber/quota consume (zero side effects on spoof).
+    {
+        std::uint64_t caller_principal = 0;
+        if (serve::g_current_fiber)
+            caller_principal = serve::g_current_fiber->assigned_tenant_id();
+        if (caller_principal == 0)
+            caller_principal = orch_tenant;
+        const std::uint64_t requested = spec.tenant_id;
+        if (requested != 0 && caller_principal != 0 &&
+            !spawn_tenant_principal_allows(requested, caller_principal)) {
+            g_orch_module_stats.spawn_failures.fetch_add(1, std::memory_order_relaxed);
+            emit_spawn_tenant_spoof_se(requested, caller_principal);
+            h.error = spawn_tenant_spoof_error(requested, caller_principal);
+            h.deny_class = AgentDenyClass::Other;
+            finalize_spawn_quota_reject(h);
+            return h;
+        }
     }
     if (auto ferr = pq.check_orchestration_fibers(/*amount=*/fiber_preflight, tenant)) {
         g_orch_module_stats.spawn_failures.fetch_add(1, std::memory_order_relaxed);
