@@ -1411,6 +1411,14 @@ __attribute__((weak)) long long aura_jit_deopt_to_interpreter(const char* fn_nam
     return 0;
 }
 
+// Issue #3988: OpJump back-edge hold-budget / force-safepoint poll —
+// return 0 (no safepoint requested, keep running). Standalone AOT is
+// single-threaded with no Fiber scheduler / hold budget to yield to;
+// the strong host def (evaluator_fiber_mutation.cpp) wins when linked.
+__attribute__((weak)) int aura_jit_poll_hold_budget_safepoint(void) {
+    return 0;
+}
+
 // OpApply — return current bridge epoch from the standalone AOT store
 // (mirrors aura_get_current_bridge_epoch; some call sites use the
 // aura_jit_-prefixed variant).
