@@ -1882,14 +1882,16 @@ bool ConstraintSystem::consistent_unify(TypeId t1, TypeId t2) {
     // Any consistent with everything (sound gradual core)
     if (t1 == reg_.dynamic_type() || t2 == reg_.dynamic_type()) {
         // Issue #3622: Production face — Dynamic ~ T is not a silent
-        // success. Under the production hard face (Strict forced by #3430
-        // + production_defaults_active), the gradual accept arm fails
-        // closed: agent self-modify without annotations, Quote and
-        // uncovered inputs can no longer unify as success / insert
-        // CastOp. Soft / Balanced keep the gradual core (#2992 contract);
+        // success. Issue #4009: fail-closed on production_hard_face
+        // (Full strategy or production_defaults) OR (Strict ∧ defaults).
+        // Cold-start Full (#2818) can precede apply_production_audit_defaults
+        // while first-pass infer is still Balanced (#3430). Soft / Balanced
+        // keep the gradual core (#2992 contract);
         // Dynamic ~ Linear already failed closed above (#117).
-        if (unify_gradual_mode_ == GradualPermissiveness::Strict &&
-            aura::compiler::typed_audit::production_defaults_active()) {
+        const bool hard = aura::compiler::typed_audit::production_hard_face_active() ||
+                          (unify_gradual_mode_ == GradualPermissiveness::Strict &&
+                           aura::compiler::typed_audit::production_defaults_active());
+        if (hard) {
             // Issue #3622: ground T ~ Dynamic fail-closed.
             // Issue #3921: a type variable still instantiates against
             // Dynamic (display of an Any-typed cell is ∀a. a → Void).

@@ -4340,6 +4340,65 @@ static void ac3624_5_source_and_linter() {
           "3624 AC5: no docs/design");
 }
 
+static void ac4009_hard_face_dynamic_ground_fail_closed() {
+    std::println("\n--- #4009: production_hard_face fail-closes Dynamic ~ ground ---");
+    using aura::compiler::GradualPermissiveness;
+    using aura::compiler::kProductionHardFaceDynamicUnifyIssue;
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::AuditStrategy;
+    using aura::compiler::typed_audit::get_strategy;
+    using aura::compiler::typed_audit::production_defaults_active;
+    using aura::compiler::typed_audit::production_hard_face_active;
+    using aura::compiler::typed_audit::set_strategy;
+    CHECK(kProductionHardFaceDynamicUnifyIssue == 4009, "4009 stamp");
+
+    apply_dev_audit_defaults();
+    const auto save = get_strategy();
+    set_strategy(AuditStrategy::Full);
+    CHECK(!production_defaults_active(), "4009 AC1: Full without production_defaults");
+    CHECK(production_hard_face_active(), "4009 AC1: Full is hard face");
+    {
+        TypeRegistry reg;
+        ConstraintSystem cs(reg);
+        cs.set_unify_gradual_mode(GradualPermissiveness::Balanced);
+        CHECK(!cs.consistent_unify(reg.int_type(), reg.dynamic_type()),
+              "4009 AC1: Full+!defaults Int~Dynamic false");
+        CHECK(!cs.consistent_unify(reg.dynamic_type(), reg.int_type()),
+              "4009 AC1: Full+!defaults Dynamic~Int false");
+        auto v = cs.fresh_var();
+        CHECK(cs.consistent_unify(v, reg.dynamic_type()), "4009 AC1: var~Dynamic still binds");
+        CHECK(cs.consistent_unify(reg.dynamic_type(), cs.fresh_var()),
+              "4009 AC1: Dynamic~var still binds");
+    }
+    set_strategy(save);
+    apply_dev_audit_defaults();
+
+    {
+        TypeRegistry reg;
+        ConstraintSystem cs(reg);
+        cs.set_unify_gradual_mode(GradualPermissiveness::Balanced);
+        CHECK(!production_hard_face_active(), "4009 AC2: Soft Sampled is not hard face");
+        CHECK(cs.consistent_unify(reg.int_type(), reg.dynamic_type()),
+              "4009 AC2: Soft Balanced Int~Dynamic true");
+        CHECK(cs.consistent_unify(reg.dynamic_type(), reg.int_type()),
+              "4009 AC2: Soft Balanced Dynamic~Int true");
+    }
+
+    const auto impl = read_file("src/compiler/type_checker_impl.cpp");
+    const auto dyn = impl.find("Issue #3622: Production face — Dynamic ~ T is not a silent");
+    CHECK(dyn != std::string::npos, "4009 AC3: Dynamic arm present");
+    const auto win = dyn == std::string::npos ? std::string{} : impl.substr(dyn, 1600);
+    CHECK(win.find("production_hard_face_active()") != std::string::npos,
+          "4009 AC3: hard-face gate");
+    CHECK(win.find("Issue #4009") != std::string::npos, "4009 AC3: cite");
+    CHECK(win.find("unify_gradual_mode_ == GradualPermissiveness::Strict") != std::string::npos,
+          "4009 AC3: Strict+defaults residual kept");
+    CHECK(impl.find("schema-4009") == std::string::npos, "4009 AC3: no new query key");
+    CHECK(read_file("tests/compiler/test_issue_4009.cpp").empty(), "4009 AC3: no invent");
+    CHECK(read_file("docs/design/4009-dynamic-hard-face.md").empty(), "4009 AC3: no docs/design");
+    apply_dev_audit_defaults();
+}
+
 } // namespace
 
 int run_test_solve_delta_unresolved_export() {
@@ -4498,6 +4557,8 @@ int run_test_solve_delta_unresolved_export() {
     ac3624_3_drain_nonsolved_stays_denied();
     ac3624_4_soft_observe_unchanged();
     ac3624_5_source_and_linter();
+    std::println("\n=== Issue #4009: Dynamic ~ ground fail-closes on production_hard_face ===");
+    ac4009_hard_face_dynamic_ground_fail_closed();
     std::println("\n=== Issue #3511: instance-repair clean reverify ===");
     ac3511_instance_repair_clean_reverify();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);

@@ -175,13 +175,18 @@ export inline constexpr std::size_t kTypeDepBucketCap = 256;
 // Issue #3430: production_defaults forces effective Strict without
 // waiting for Hard-gate set_strict so first-pass infer_flat_partial
 // is not Balanced.
+// Issue #4009: Dynamic ~ ground T fail-closes on production_hard_face
+// (Full or production_defaults), not only Strict∧defaults. var~Dynamic
+// still binds Any. Soft / Balanced gradual core unchanged.
 //
-// Int ↔ Float stays silent. Dynamic ~ T stays fully permissive.
+// Int ↔ Float stays silent. Dynamic ~ T stays fully permissive on Soft.
 // Env: AURA_GRADUAL_PERMISSIVENESS=permissive|balanced|strict
 // EDSL: (type:set-gradual-permissiveness ...) + compile:bidirectional-stats
 export inline constexpr int kProductionStrictGroundUnifyIssue = 3202;
 // Issue #3430: production_defaults forces Strict unify without set_strict.
 export inline constexpr int kProductionDefaultsForceStrictUnifyIssue = 3430;
+// Issue #4009: Dynamic ~ ground T fail-closes on production_hard_face.
+export inline constexpr int kProductionHardFaceDynamicUnifyIssue = 4009;
 export enum class GradualPermissiveness : std::uint8_t {
     Permissive = 0,
     Balanced = 1,
