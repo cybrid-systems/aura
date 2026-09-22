@@ -732,6 +732,110 @@ static void ac3789_3_source_cite_no_invent() {
     CHECK(read_file("docs/design/3789-remount-strip.md").empty(), "3789 AC3: no docs/design");
 }
 
+// ── Issue #4011: fold remount_last_zero_strip into commit_readiness_live_policy ──
+static void ac4011_1_live_policy_denies_after_strip() {
+    std::println("\n--- #4011 AC1: after remounted==0, live would_allow_commit==false ---");
+    using namespace aura::compiler::typed_audit;
+    reset_for_test();
+    aura_typed_audit_clear_readiness_evaluator();
+    clear_refined_consistency_drift_for_test();
+    apply_production_audit_defaults();
+    reset_pending_full_solve_residual_for_test();
+    clear_cone_outside_goal_drop_for_test();
+    clear_occurrence_empty_after_fence_for_test();
+    g_remount_last_zero_strip_face.store(0, std::memory_order_relaxed);
+    seed_green_face();
+    stamp_type_linear_commit_proof(1);
+    publish_type_linear_proof_outcome(kTypeLinearProofOutcomeStamped);
+    publish_last_proof_face(true, true);
+    CHECK(kRemountLastZeroLivePolicyIssue == 4011, "4011 AC1: stamp");
+    {
+        const auto cr = commit_readiness(commit_readiness_live_policy());
+        CHECK(cr.would_allow_commit, "4011 AC1: green before strip allows");
+    }
+    strip_green_face_on_remount_last_zero();
+    CHECK(remount_last_zero_strip_face_v_read() == 1, "4011 AC1: strip face latched");
+    CHECK(last_type_linear_proof_outcome_v_read() == kTypeLinearProofOutcomeQuiet,
+          "4011 AC1: outcome stays Quiet (no Reject)");
+    const auto in = commit_readiness_live_policy();
+    CHECK(in.remount_last_zero_strip, "4011 AC1: live_policy folds strip face");
+    const auto cr = commit_readiness(in);
+    CHECK(!cr.would_allow_commit, "4011 AC1: would_allow_commit==false under Full");
+    CHECK(cr.force_reason_code == kRemountLastZeroForceReasonCode, "4011 AC1: force_reason 17");
+    CHECK(!linear_move_drop_elision_ok(), "4011 AC1: linear_move_drop_elision_ok==false");
+    apply_dev_audit_defaults();
+    g_remount_last_zero_strip_face.store(0, std::memory_order_relaxed);
+}
+
+static void ac4011_2_green_rebind_clears() {
+    std::println("\n--- #4011 AC2: next outermost green bind clears face and allows ---");
+    using namespace aura::compiler::typed_audit;
+    reset_for_test();
+    aura_typed_audit_clear_readiness_evaluator();
+    clear_refined_consistency_drift_for_test();
+    apply_production_audit_defaults();
+    reset_pending_full_solve_residual_for_test();
+    clear_cone_outside_goal_drop_for_test();
+    clear_occurrence_empty_after_fence_for_test();
+    g_remount_last_zero_strip_face.store(0, std::memory_order_relaxed);
+    seed_green_face();
+    stamp_type_linear_commit_proof(1);
+    publish_type_linear_proof_outcome(kTypeLinearProofOutcomeStamped);
+    publish_last_proof_face(true, true);
+    strip_green_face_on_remount_last_zero();
+    CHECK(!commit_readiness(commit_readiness_live_policy()).would_allow_commit,
+          "4011 AC2: deny after strip");
+    // Live outermost stamp retires the latch (#4011) then green-binds.
+    (void)build_type_linear_commit_proof_from_live(1);
+    publish_type_linear_proof_outcome(kTypeLinearProofOutcomeStamped);
+    publish_last_proof_face(true, true);
+    CHECK(remount_last_zero_strip_face_v_read() == 0, "4011 AC2: green rebind clears latch");
+    const auto cr = commit_readiness(commit_readiness_live_policy());
+    CHECK(cr.would_allow_commit, "4011 AC2: live would_allow_commit allows again");
+    apply_dev_audit_defaults();
+    g_remount_last_zero_strip_face.store(0, std::memory_order_relaxed);
+}
+
+static void ac4011_3_soft_observe() {
+    std::println("\n--- #4011 AC3: Soft observe only ---");
+    using namespace aura::compiler::typed_audit;
+    apply_dev_audit_defaults();
+    g_typed_mutation_audit_counters.production_defaults_active.store(0, std::memory_order_relaxed);
+    g_remount_last_zero_strip_face.store(0, std::memory_order_relaxed);
+    seed_green_face();
+    stamp_type_linear_commit_proof(1);
+    publish_type_linear_proof_outcome(kTypeLinearProofOutcomeStamped);
+    publish_last_proof_face(true, true);
+    strip_green_face_on_remount_last_zero();
+    CHECK(remount_last_zero_strip_face_v_read() == 0, "4011 AC3: Soft no strip latch");
+    CHECK(!commit_readiness_live_policy().remount_last_zero_strip,
+          "4011 AC3: Soft live_policy does not fold");
+    CHECK(commit_readiness(commit_readiness_live_policy()).would_allow_commit,
+          "4011 AC3: Soft would_allow stays");
+}
+
+static void ac4011_4_source_cite_no_invent() {
+    std::println("\n--- #4011 AC4: source-cite + no invent / no new query ---");
+    const auto tma = read_file("src/compiler/typed_mutation_audit.h");
+    CHECK(tma.find("kRemountLastZeroLivePolicyIssue = 4011") != std::string::npos,
+          "4011 AC4: stamp");
+    CHECK(tma.find("in.remount_last_zero_strip") != std::string::npos,
+          "4011 AC4: live_policy fold");
+    CHECK(tma.find("production_hard_face_active()") != std::string::npos &&
+              tma.find("remount_last_zero_strip_face_v_read()") != std::string::npos,
+          "4011 AC4: hard-face gate");
+    const auto live = tma.find("Issue #4011: remount-last-zero strip is not Quiet-as-ok on live");
+    CHECK(live != std::string::npos, "4011 AC4: live_policy cite");
+    const auto win = live == std::string::npos ? std::string{} : tma.substr(live, 900);
+    CHECK(win.find("in.remount_last_zero_strip = true") != std::string::npos,
+          "4011 AC4: sets input bit");
+    CHECK(tma.find("Issue #4011: a live outermost stamp is the green rebind") != std::string::npos,
+          "4011 AC4: stamper retires latch");
+    CHECK(tma.find("schema-4011") == std::string::npos, "4011 AC4: no new query key");
+    CHECK(read_file("tests/compiler/test_issue_4011.cpp").empty(), "4011 AC4: no invent");
+    CHECK(read_file("docs/design/4011-remount-live-policy.md").empty(), "4011 AC4: no docs/design");
+}
+
 // ── Issue #3578: background rebind/strip observability + Quiet=unknown ──
 // (void) call sites discard the bool; Agent polls evolution-snapshot
 // gauges. Reject is not an immediate commit-barrier. Quiet ≠ invalid/green.
@@ -1102,6 +1206,10 @@ int run_test_remount_force_deopt() {
     ac3789_1_snapshot_deny_not_quiet_as_ok();
     ac3789_2_soft_observe();
     ac3789_3_source_cite_no_invent();
+    ac4011_1_live_policy_denies_after_strip();
+    ac4011_2_green_rebind_clears();
+    ac4011_3_soft_observe();
+    ac4011_4_source_cite_no_invent();
     ac3578_2_last0_green_quiet_unknown();
     ac3578_3_void_call_sites_observability_cite();
     ac3578_4_linter_3448_not_regressed();
@@ -1123,7 +1231,7 @@ int run_test_remount_force_deopt() {
     if (g_failed)
         return 1;
     std::println(
-        "remount force-deopt #2503/#2894/#3548/#3578/#3612/#3785/#3812/#4029: OK ({} passed)",
+        "remount force-deopt #2503/#2894/#3548/#3578/#3612/#3785/#3812/#4029/#4011: OK ({} passed)",
         g_passed);
     return 0;
 }

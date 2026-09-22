@@ -1528,6 +1528,9 @@ struct CommitReadinessInput {
     // production/Full + residual → escalate then hard-reject if still dirty.
     bool pending_full_solve_hard = false;
     bool pending_full_solve_residual = false;
+    // Issue #4011: fold #3789 remount-last-zero strip into live policy.
+    // Existing latch; documented force_reason 17. Do not stamp Reject.
+    bool remount_last_zero_strip = false;
 };
 
 struct CommitReadiness {
@@ -3441,6 +3444,11 @@ inline TypeLinearCommitProof build_type_linear_commit_proof_from_live(
     bool publish_green_face = true) noexcept {
     g_tls_stamp_last_look_rejected = false;
     TypeLinearCommitProof p{};
+    // Issue #4011: a live outermost stamp is the green rebind that
+    // retires remount-last-zero strip. Latch means "do not ride OLD
+    // green"; a new live proof is not that ride.
+    if (g_remount_last_zero_strip_face.load(std::memory_order_relaxed) != 0)
+        g_remount_last_zero_strip_face.store(0, std::memory_order_release);
     const auto ready = commit_readiness_live_policy();
     const auto live_r = commit_readiness(ready);
     p.readiness_bp = live_r.readiness_bp;
@@ -3685,6 +3693,8 @@ inline constexpr int kLinearZeroRootGreenFaceDropIssue = 3448;
 // (no new metric). Soft/Off: observe via rehydrate-miss observe total
 // (existing atomic), no reject.
 inline constexpr int kRemountLastZeroStripIssue = 3548;
+// Issue #4011: live commit_readiness must deny while the strip latch is set.
+inline constexpr int kRemountLastZeroLivePolicyIssue = 4011;
 inline void note_rebind_fail(std::string_view reason) noexcept {
     (void)reason; // "remount_last_zero"
     if (!(production_defaults_active() || get_strategy() == AuditStrategy::Full)) {
@@ -3751,6 +3761,8 @@ inline void strip_green_face_on_remount_last_zero() noexcept {
         return 15; // #2911
     if (r == "pending_full_solve_residual")
         return 16; // #3031
+    if (r == "remount_last_zero")
+        return 17; // #3789 / #4011 (documented overlay code)
     return 0;      // ok
 }
 
@@ -4140,6 +4152,14 @@ inline void clear_occurrence_empty_after_fence_for_test() noexcept;
         // Allow commit under Soft.
     }
 
+    // Issue #4011: remount-last-zero strip is not Quiet-as-ok.
+    // Reuses documented force_reason 17. Do not stamp Reject (#3510).
+    if (in.remount_last_zero_strip) {
+        if (in.pending_full_solve_hard || in.occurrence_face_hard)
+            return (set("remount_last_zero", false, 700), r);
+        return (set("remount_last_zero", true, 7200), r);
+    }
+
     // 6d) Issue #3031: pending_full_solve / locality residual.
     // Production/Full + residual face → hard-reject (escalate already
     // attempted at composite drain). Soft: observe allow.
@@ -4201,6 +4221,10 @@ inline void clear_occurrence_empty_after_fence_for_test() noexcept;
     // pending_full_solve residual reject arm (would_allow_commit=false).
     in.pending_full_solve_residual =
         pending_full_solve_residual_face_hit() || occurrence_partial_drift_grant_refuse_face_hit();
+    // Issue #4011: remount-last-zero strip is not Quiet-as-ok on live
+    // policy. Soft/Off skip (production_hard_face_active false).
+    if (production_hard_face_active() && remount_last_zero_strip_face_v_read() != 0)
+        in.remount_last_zero_strip = true;
     if (face_hard) {
         in.cone_outside_goal_drop_face = (cone_outside_goal_drop_total_v_read() > 0);
         in.occurrence_empty_after_fence_face = (occurrence_empty_after_fence_total_v_read() > 0);
@@ -4244,10 +4268,10 @@ inline void clear_occurrence_empty_after_fence_for_test() noexcept;
         const bool stamped = outcome == kTypeLinearProofOutcomeStamped;
         const bool gen_ok = g_rehydrate_miss_invalidate_gen.load(std::memory_order_acquire) ==
                             g_rehydrate_miss_green_bind_gen.load(std::memory_order_relaxed);
-        const bool faces_clear = !in.pending_full_solve_residual &&
-                                 !in.cone_outside_goal_drop_face &&
-                                 !in.occurrence_empty_after_fence_face &&
-                                 !in.refined_consistency_drift && !in.region_type_cross_talk_face;
+        const bool faces_clear =
+            !in.pending_full_solve_residual && !in.cone_outside_goal_drop_face &&
+            !in.occurrence_empty_after_fence_face && !in.refined_consistency_drift &&
+            !in.region_type_cross_talk_face && !in.remount_last_zero_strip;
         if (faces_clear && !(stamped && gen_ok) && in.solve_status == 0)
             in.solve_status = 2; // TIMEOUT-class → commit_readiness "solve"
     }
