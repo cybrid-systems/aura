@@ -263,7 +263,10 @@ auto& h = scope.spawn({.name = "worker", .body = [] { /* ... */ },
                        .keepalive_interval_ms = 50});
 
 // RestartN: on stall, stop helper → cancel body → join drain
-// (via #2227 hard-reclaim) → optional backoff → spawn replacement
+// (via #2227 hard-reclaim). Production: if the body is still live
+// after drain, defer replace (restart_deferred_body_live) — no
+// same-name twin / uncounted reservation release (#4003). Soft:
+// historical immediate replace. Optional backoff → spawn replacement
 // under the same AgentSpec. Capped at max_restarts; circuit-like
 // consecutive_stall_limit forces Cancel after that.
 aura::orch::AgentFailurePolicy pol;
@@ -676,7 +679,10 @@ Semantics:
    (#2229 sibling) and needs `keepalive-interval-ms > 0` (mailbox keepalive
    or ProgressClock + `orch:agent-touch`); keepalive=0 is Closed and
    production surfaces `restart-skipped-no-spec` rather than a silent
-   restart (#3730 / #3250). Counts: alive / stalled / cancelled / done /
+   restart (#3730 / #3250). Production drain-before-replace: live body
+   after drain defers (`restart-deferred-body-live`); mailbox depth on
+   the Done-path replace is `restart-mailbox-dropped` (#4003). Soft keeps
+   historical immediate replace. Counts: alive / stalled / cancelled / done /
    closed / restart-count (incremental from RestartN bumps on the same
    watch call).
 4. **Hierarchy addressing (#2537 / #2631 / #3444)** — `orch:scope-child`

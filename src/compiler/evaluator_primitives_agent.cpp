@@ -4572,6 +4572,12 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 {"restart-ok", make_int(static_cast<std::int64_t>(wr.restart_ok))},
                 {"schema-3250", make_int(aura::orch::kRestartNSpecBoundaryIssue)},
                 {"issue-3250", make_int(aura::orch::kRestartNSpecBoundaryIssue)},
+                {"restart-deferred-body-live",
+                 make_int(static_cast<std::int64_t>(wr.restart_deferred_body_live))},
+                {"restart-mailbox-dropped",
+                 make_int(static_cast<std::int64_t>(wr.restart_mailbox_dropped))},
+                {"schema-4003", make_int(aura::orch::kRestartNDrainBeforeReplaceIssue)},
+                {"issue-4003", make_int(aura::orch::kRestartNDrainBeforeReplaceIssue)},
             };
             return build_orch_hash(kv);
         });
