@@ -52,7 +52,11 @@ def main() -> int:
         lam_win = ""
     else:
         # Window covering wrapper body through the post-check belt.
-        lam_win = mut[lam : lam + 14000]
+        # #3975-#3988 wave (#3999 hold-budget/cancel work) grew the add_mutate
+        # lambda: later anchors (guard_exempt skip, try_acquire, guard-reject)
+        # now sit at +14353..+14570 — past the old 14000 edge. Grow with the
+        # lambda, assertions unchanged.
+        lam_win = mut[lam : lam + 18000]
 
     must("mutate_dispatch_try_acquire", "AC1 wrapper acquire", lam_win)
     acq = lam_win.find("mutate_dispatch_try_acquire")

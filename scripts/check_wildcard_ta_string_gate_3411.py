@@ -93,14 +93,19 @@ def main() -> int:
     if set_tp_pos < 0:
         fails.append("AC2: evaluator_security.cpp missing set_tenant_principal definition")
     else:
-        # 2400-char window captures the full body (privileged check + SE emit
+        # 4000-char window captures the full body (privileged check + SE emit
         # reason line). Comments stripped so a 'kCapWildcard' mention in the
         # explanatory comment does NOT false-positive the code-search.
-        priv_block = _strip_cpp_comments(sec[set_tp_pos : set_tp_pos + 2400])
-        if "has_capability(kCapTenantAdmin)" not in priv_block:
-            fails.append("AC2: privileged OR missing has_capability(kCapTenantAdmin)")
-        if "has_capability(kCapCapability)" not in priv_block:
-            fails.append("AC2: privileged OR missing has_capability(kCapCapability)")
+        # #3975-#3988 wave (#3996/#3997) grew the body + re-expressed the
+        # gate as registry effect checks (4000 keeps the SE reason in view).
+        priv_block = _strip_cpp_comments(sec[set_tp_pos : set_tp_pos + 4000])
+        # has_capability(kCapTenantAdmin/kCapCapability) calls became
+        # has_effect(Effect::TenantAdmin) under effects_for_locked — same
+        # invariant: wildcard-only holders are NOT privileged.
+        if "Effect::TenantAdmin" not in priv_block:
+            fails.append("AC2: privileged OR missing TenantAdmin effect check (Effect::TenantAdmin)")
+        if "holds_wildcard_only_locked" not in priv_block:
+            fails.append("AC2: wildcard-only exclusion (holds_wildcard_only_locked) missing")
         if "has_capability(kCapWildcard)" in priv_block:
             fails.append("AC2: privileged OR still arms has_capability(kCapWildcard) — wildcard持卡不算 TA per #3144")
         if "allow-cross-needs-tenant-admin" not in priv_block:

@@ -97,7 +97,9 @@ def main() -> int:
     # ── AC4: C++ set_tenant_principal hardens the same gate ────────
     must("Issue #3010", "AC4", sec)
     must("allow-cross-needs-tenant-admin", "AC4", sec)
-    must("has_capability(kCapTenantAdmin)", "AC4", sec)
+    # #3975-#3988 wave (#3996/#3997): has_capability(kCapTenantAdmin) →
+    # has_effect(Effect::TenantAdmin) under effects_for_locked — same gate.
+    must("Effect::TenantAdmin", "AC4", sec)
     must("allow_cross_tenant_deny_total", "AC4", sec)
     must("allow_cross_tenant()", "AC4", ixx)
     deny_cpp = sec.find("allow_cross_tenant_deny_total.fetch_add")
