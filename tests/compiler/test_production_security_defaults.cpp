@@ -78,6 +78,14 @@ std::int64_t href_aud(CompilerService& cs, std::string_view key) {
     return as_int(*r);
 }
 
+std::int64_t href_posture(CompilerService& cs, std::string_view key) {
+    auto r = cs.eval(
+        std::format("(hash-ref (engine:metrics \"query:security-posture\") \"{}\")", key));
+    if (!r || !is_int(*r))
+        return -1;
+    return as_int(*r);
+}
+
 void clear_env(const char* k) {
 #if defined(_WIN32)
     _putenv_s(k, "");
@@ -223,6 +231,12 @@ int run_test_production_security_defaults() {
         CHECK(href_cap(cs, "issue-2053") == 2053, "cap issue-2053");
         CHECK(href_cap(cs, "production-security-wired") == 1, "production-security-wired");
         CHECK(href_cap(cs, "production-defaults-active") == 1, "cap production-defaults-active");
+        // Issue #4016: posture PDA matches production_defaults_active() under latch.
+        CHECK(href_posture(cs, "production-defaults-active") ==
+                  (production_defaults_active() ? 1 : 0),
+              "4016: posture production-defaults-active matches SSOT");
+        CHECK(href_posture(cs, "production-defaults-active") == 1,
+              "4016: posture production-defaults-active=1 under production defaults");
         CHECK(href_cap(cs, "typed-audit-strategy") == 2, "typed-audit-strategy Full=2");
         CHECK(href_cap(cs, "process-sandbox-mode") == 1, "process-sandbox-mode Restricted");
         auto ha = cs.eval("(engine:metrics \"query:typed-mutation-audit-stats\")");

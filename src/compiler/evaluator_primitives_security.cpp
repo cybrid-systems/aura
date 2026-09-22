@@ -5547,6 +5547,8 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             // already present). Issue #3838: +3 refuse/schema/issue.
             // Live ~100; planned 128 still has headroom.
             // Issue #3882: CI fails when live + 8 > planned.
+            // Issue #4016: +1 production-defaults-active. Live ~105;
+            // planned 128 still has headroom (no bump required).
             constexpr std::size_t kSecurityPosturePlannedKeys = 128;
             auto* ht = FlatHashTable::create(query_hash_capacity_for(kSecurityPosturePlannedKeys));
             if (!ht)
@@ -5833,6 +5835,11 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                                   .force_wal_enable_fail_total.load(std::memory_order_relaxed)));
                 insert_kv("schema-4005", ::aura::core::wal_slo::kWalForceWalEnableFailIssue);
                 insert_kv("issue-4005", ::aura::core::wal_slo::kWalForceWalEnableFailIssue);
+                // Issue #4016: production-defaults-active on posture (same
+                // face as capability-effect-stats / evolution-audit-decision).
+                // Soft/Off = 0; additive; do not rename wal-on keys.
+                // Live ~105; planned 128 still has #3339/#3882 headroom.
+                insert_kv("production-defaults-active", prod ? 1 : 0);
             }
             return query_hash_finish(ht, ev.string_heap_, overflowed);
         });

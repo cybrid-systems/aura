@@ -82,6 +82,13 @@ int run_test_security_posture_trail() {
     CHECK(href(cs, "security-posture-wired") == 1, "AC1: wired");
     CHECK(href(cs, "cap-audit-ring-size") == 1024, "AC1: cap ring size");
     CHECK(href(cs, "iso-audit-ring-size") == 1024, "AC1: iso ring size");
+    // Issue #4016: posture exposes production-defaults-active matching SSOT.
+    {
+        using aura::compiler::typed_audit::production_defaults_active;
+        const auto expect = production_defaults_active() ? 1 : 0;
+        CHECK(href(cs, "production-defaults-active") == expect,
+              "4016: posture production-defaults-active matches SSOT");
+    }
 
     CHECK(trail(cs, 0, "match-count") == 0, "AC3: mid=0 empty");
 

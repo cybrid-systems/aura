@@ -179,6 +179,8 @@ def main() -> int:
             must('insert_kv("last-audit-mid"', "AC1 last-audit-mid", block)
         if query == "query:security-posture":
             must('insert_kv("schema-2534"', "AC1 posture schema-2534", block)
+            # Issue #4016: additive PDA on primary posture (capability/evolution parity)
+            must('insert_kv("production-defaults-active"', "AC1/#4016 posture PDA", block)
         if query == "query:reload-recovery-state":
             must("insert_kv_checked", "AC1/#3846 state insert_kv_checked", block)
             must('insert_kv("residual-force-auto-heal-total"', "AC1/#3846/#3847 heal total", block)
