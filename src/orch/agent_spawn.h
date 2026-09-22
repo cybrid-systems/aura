@@ -4854,6 +4854,9 @@ struct AgentFailurePolicy {
     // Optional backoff between cancel + join drain + respawn
     // in RestartN path. 0 = no backoff (immediate respawn).
     std::uint32_t restart_backoff_ms = 0;
+    // Issue #4003: production watch_all RestartN join-drain budget before
+    // replace. 0 → kDefaultJoinDrainMs. Soft ignores (historical replace).
+    std::uint32_t restart_drain_ms = static_cast<std::uint32_t>(kDefaultJoinDrainMs);
 };
 
 // StallPolicy (#2161) is the binary ReportOnly / Cancel subset

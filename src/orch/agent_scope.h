@@ -120,6 +120,10 @@ inline constexpr int kScopeDoneHuskCompactIssue = 3776;
 // (decide_isolation SSOT). Spawning N scope agents without ≥2 distinct
 // non-zero region_keys stays Serialized under production. No AgentRegistry.
 inline constexpr int kAgentScopeRegionKeyIsolationIssue = 3803;
+// Issue #4003: production watch_all RestartN drains before replace so a
+// stalled body is not overwritten (same-name twin / uncounted reservation
+// release / silent mailbox drop). Soft keeps historical immediate replace.
+inline constexpr int kRestartNDrainBeforeReplaceIssue = 4003;
 
 // Issue #3444: directory_snapshot encodes root as "root" and children
 // as "0" / "0/1". Same rule for orch:scope-child's returned path.
@@ -348,6 +352,12 @@ struct ScopeWatchResult {
     std::size_t restart_attempted = 0;
     std::size_t restart_skipped_no_spec = 0;
     std::size_t restart_ok = 0;
+    // Issue #4003: RestartN deferred because the stalled body is still live
+    // after drain (production). Soft never sets this.
+    std::size_t restart_deferred_body_live = 0;
+    // Issue #4003: mailbox depth observed on the old handle before replace
+    // (Done-path only). Not forwarded; not a query key.
+    std::size_t restart_mailbox_dropped = 0;
     // Issue #3954: body vs helper stall (additive this pass; no query keys).
     std::size_t body_stalled = 0;
     std::size_t helper_stalled = 0;
@@ -834,7 +844,9 @@ public:
     // binary StallPolicy with AgentFailureAction (ReportOnly /
     // Cancel / RestartN) and adds a circuit-like consecutive-stall
     // limit + optional restart backoff. RestartN path: stop helper
-    // → cancel body → join drain (via #2227 hard-reclaim) →
+    // → cancel body → join drain (via #2227 hard-reclaim). Issue #4003:
+    // production defers replace while the body is still live (no
+    // same-name twin). Soft: historical immediate replace. Then
     // optional backoff → spawn replacement under the same AgentSpec
     // → replace handle in the scope vector → bump restart count.
     // Once restart_counts_[i] >= max_restarts OR
@@ -884,27 +896,8 @@ public:
                     const bool should_restart = (policy.on_stall == AgentFailureAction::RestartN) &&
                                                 !circuit_open && within_max_restarts;
                     if (should_restart) {
-                        // Re-spawn path: stop helper, cancel body,
-                        // join drain (via #2227 hard-reclaim), optional
-                        // backoff, then spawn replacement under the
-                        // same AgentSpec and replace the handle.
-                        ++r.restart_attempted;
-                        stop_keepalive_helper(h);
-                        if (h.fiber && !h.fiber->is_done()) {
-                            h.fiber->request_cancel();
-                            if (auto* sched = h.fiber->owner_sched()) {
-                                sched->note_orphan_fiber(h.fiber, /*hard_deadline_ms=*/50);
-                            }
-                        }
-                        // Issue #3250: no copyable specs_ body → skip
-                        // (observable); production Cancel already fired
-                        // via cancel_on_stall. Soft: no extra atomic.
-                        if (restart_spec_missing_(i)) {
-                            ++r.restart_skipped_no_spec;
-                            note_restart_skipped_no_spec_(h, /*cancel=*/false);
-                        } else if (try_restart_from_spec_(i, policy)) {
-                            ++r.restart_ok;
-                        }
+                        // Issue #4003: production drain-before-replace.
+                        try_restart_n_watch_arm_(i, h, policy, r);
                     } else if ((policy.on_stall == AgentFailureAction::RestartN) &&
                                (!within_max_restarts || circuit_open)) {
                         // Cancel path: request_cancel already invoked
@@ -1016,13 +1009,7 @@ public:
                         if (policy.on_backpressure == AgentFailureAction::RestartN) {
                             const bool within_max = restart_counts_[i] < policy.max_restarts;
                             if (within_max) {
-                                ++r.restart_attempted;
-                                if (restart_spec_missing_(i)) {
-                                    ++r.restart_skipped_no_spec;
-                                    note_restart_skipped_no_spec_(h, /*cancel=*/false);
-                                } else if (try_restart_from_spec_(i, policy)) {
-                                    ++r.restart_ok;
-                                }
+                                try_restart_n_watch_arm_(i, h, policy, r);
                             } else {
                                 g_orch_module_stats.agent_restart_exhausted_total.fetch_add(
                                     1, std::memory_order_relaxed);
@@ -1628,6 +1615,41 @@ private:
             g_orch_module_stats.agent_join_fail_action_cancel_total.fetch_add(
                 1, std::memory_order_relaxed);
         }
+    }
+
+    // Issue #4003: production drain-before-replace for watch RestartN.
+    // Soft: historical request_cancel + 50ms orphan + immediate spawn.
+    // Body still live after production drain → defer (leave handle).
+    void try_restart_n_watch_arm_(std::size_t i, AgentHandle& h, const AgentFailurePolicy& policy,
+                                  ScopeWatchResult& r) noexcept {
+        ++r.restart_attempted;
+        stop_keepalive_helper(h);
+        const bool prod = aura::compiler::typed_audit::production_defaults_active();
+        if (h.fiber && !h.fiber->is_done()) {
+            if (prod) {
+                const auto drain_ms = policy.restart_drain_ms > 0
+                                          ? static_cast<std::uint64_t>(policy.restart_drain_ms)
+                                          : kDefaultJoinDrainMs;
+                cancel_and_drain_fiber(h.fiber, drain_ms);
+            } else {
+                h.fiber->request_cancel();
+                if (auto* sched = h.fiber->owner_sched())
+                    sched->note_orphan_fiber(h.fiber, /*hard_deadline_ms=*/50);
+            }
+        }
+        if (prod && h.fiber && !h.fiber->is_done()) {
+            ++r.restart_deferred_body_live;
+            return;
+        }
+        if (restart_spec_missing_(i)) {
+            ++r.restart_skipped_no_spec;
+            note_restart_skipped_no_spec_(h, /*cancel=*/false);
+            return;
+        }
+        if (h.mailbox)
+            r.restart_mailbox_dropped += h.mailbox->size();
+        if (try_restart_from_spec_(i, policy))
+            ++r.restart_ok;
     }
 
     // Spawn replacement under stored spec. Caller already checked

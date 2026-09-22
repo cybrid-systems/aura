@@ -43,6 +43,7 @@
 #include "orch/sched_runner_test_helper.h"
 
 #include "compiler/typed_mutation_audit.h"
+#include "core/resource_quota.hh"
 #include "orch/agent_scope.h"
 #include "orch/agent_spawn.h"
 #include "serve/fiber.h"
@@ -52,6 +53,8 @@
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
+#include <fstream>
+#include <iterator>
 #include <optional>
 #include <print>
 #include <string>
@@ -79,6 +82,17 @@ using aura::orch::agent_scope_compat::stall_to_failure_action;
 using aura::serve::Fiber;
 using aura::serve::SchedRunner;
 using aura::serve::Scheduler;
+
+static std::string read_file(const char* path) {
+    for (const auto& p :
+         {std::string(path), std::string("../") + path, std::string("../../") + path}) {
+        std::ifstream in(p);
+        if (!in)
+            continue;
+        return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    }
+    return {};
+}
 
 std::int64_t href(CompilerService& cs, std::string_view key) {
     auto r =
@@ -1199,6 +1213,143 @@ int run_test_agent_failure_policy() {
         CHECK(g_orch_module_stats.agent_restart_total.load(std::memory_order_relaxed) == rst0,
               "3730 AC3: production restart_total unchanged");
         ac3208_set_prod(false);
+    }
+
+    {
+        std::println("\n--- #4003 AC1: production undrainable stall defers RestartN ---");
+        using aura::orch::kRestartNDrainBeforeReplaceIssue;
+        CHECK(kRestartNDrainBeforeReplaceIssue == 4003, "4003: stamp");
+        ac3208_set_prod(true);
+        Scheduler sched(1);
+        SchedRunner runner(sched);
+        std::atomic<bool> keep{true};
+        AgentScope scope(sched);
+        AgentSpec spec;
+        spec.name = "4003-spin";
+        spec.attach_mailbox = true;
+        spec.keepalive_interval_ms = 50;
+        spec.body = [&] {
+            aura::orch::note_agent_progress(scope.handles_mut().back());
+            while (keep.load(std::memory_order_relaxed)) {
+            }
+        };
+        auto& h = scope.spawn(spec);
+        CHECK(h.ok && h.fiber, "4003 AC1: spawn");
+        const auto first_id = h.fiber->id();
+        const auto reserved0 = h.reserved_memory_bytes;
+        std::this_thread::sleep_for(std::chrono::milliseconds(180));
+        AgentFailurePolicy pol;
+        pol.on_stall = AgentFailureAction::RestartN;
+        pol.max_restarts = 2;
+        pol.consecutive_stall_limit = 3;
+        pol.restart_drain_ms = 50;
+        auto wr = scope.watch_all(/*stall_ms=*/100, pol);
+        CHECK(wr.stalled >= 1, "4003 AC1: stall observed");
+        CHECK(wr.restart_attempted >= 1, "4003 AC1: restart attempted");
+        CHECK(wr.restart_deferred_body_live >= 1, "4003 AC1: deferred while body live");
+        CHECK(wr.restart_ok == 0, "4003 AC1: no same-name twin spawn");
+        CHECK(scope.handles()[0].fiber && scope.handles()[0].fiber->id() == first_id,
+              "4003 AC1: old fiber still the handle");
+        CHECK(!scope.handles()[0].fiber->is_done(), "4003 AC1: body still live");
+        CHECK(scope.handles()[0].reserved_memory_bytes == reserved0,
+              "4003 AC1: reservation not released");
+        keep.store(false, std::memory_order_relaxed);
+        ac3208_stop(scope, keep);
+        ac3208_set_prod(false);
+    }
+
+    {
+        std::println("\n--- #4003 AC2: Soft still immediate RestartN ---");
+        ac3208_set_prod(false);
+        Scheduler sched(1);
+        SchedRunner runner(sched);
+        std::atomic<bool> keep{true};
+        AgentScope scope(sched);
+        AgentSpec spec;
+        spec.name = "4003-soft";
+        spec.attach_mailbox = false;
+        spec.keepalive_interval_ms = 50;
+        spec.body = [&] { sleep_no_progress_body(scope.handles_mut().back(), keep); };
+        scope.spawn(spec);
+        const auto first_id = scope.handles()[0].fiber ? scope.handles()[0].fiber->id() : 0;
+        std::this_thread::sleep_for(std::chrono::milliseconds(180));
+        AgentFailurePolicy pol;
+        pol.on_stall = AgentFailureAction::RestartN;
+        pol.max_restarts = 2;
+        pol.consecutive_stall_limit = 3;
+        auto wr = scope.watch_all(100, pol);
+        CHECK(wr.stalled >= 1, "4003 AC2: Soft stall");
+        CHECK(wr.restart_deferred_body_live == 0, "4003 AC2: Soft does not defer");
+        CHECK(wr.restart_ok >= 1, "4003 AC2: Soft historical immediate replace");
+        const auto new_id = scope.handles()[0].fiber ? scope.handles()[0].fiber->id() : 0;
+        CHECK(new_id != first_id, "4003 AC2: Soft replacement fiber");
+        keep.store(false, std::memory_order_relaxed);
+        ac3208_stop(scope, keep);
+    }
+
+    {
+        std::println("\n--- #4003 AC3: production Done-path surfaces mailbox depth ---");
+        ac3208_set_prod(true);
+        Scheduler sched(1);
+        SchedRunner runner(sched);
+        std::atomic<bool> keep{true};
+        AgentScope scope(sched);
+        AgentSpec spec;
+        spec.name = "4003-mail";
+        spec.attach_mailbox = true;
+        spec.mailbox_high_water = 64;
+        spec.keepalive_interval_ms = 50;
+        spec.body = [&] { sleep_no_progress_body(scope.handles_mut().back(), keep); };
+        auto& h = scope.spawn(spec);
+        CHECK(h.ok && h.mailbox, "4003 AC3: mailbox");
+        for (int i = 0; i < 3; ++i) {
+            aura::serve::mf_mailbox::MailMessage m;
+            m.payload = "q";
+            (void)h.mailbox->push(m);
+        }
+        const auto queued = h.mailbox->size();
+        CHECK(queued >= 1, "4003 AC3: queued work");
+        std::this_thread::sleep_for(std::chrono::milliseconds(180));
+        AgentFailurePolicy pol;
+        pol.on_stall = AgentFailureAction::RestartN;
+        pol.max_restarts = 2;
+        pol.consecutive_stall_limit = 3;
+        pol.restart_drain_ms = 200;
+        auto wr = scope.watch_all(100, pol);
+        CHECK(wr.stalled >= 1, "4003 AC3: stall");
+        if (wr.restart_ok >= 1) {
+            CHECK(wr.restart_mailbox_dropped >= queued, "4003 AC3: dropped depth surfaced");
+            CHECK(wr.restart_deferred_body_live == 0, "4003 AC3: body drained then replace");
+        } else {
+            CHECK(wr.restart_deferred_body_live >= 1,
+                  "4003 AC3: drain miss still defers (no twin)");
+        }
+        keep.store(false, std::memory_order_relaxed);
+        ac3208_stop(scope, keep);
+        ac3208_set_prod(false);
+    }
+
+    {
+        std::println("\n--- #4003 AC5: source-cite + no AgentRegistry + no new query key ---");
+        const auto scope_h = read_file("src/orch/agent_scope.h");
+        const auto spawn = read_file("src/orch/agent_spawn.h");
+        const auto agent = read_file("src/compiler/evaluator_primitives_agent.cpp");
+        CHECK(scope_h.find("kRestartNDrainBeforeReplaceIssue = 4003") != std::string::npos,
+              "4003 AC5: stamp");
+        CHECK(scope_h.find("try_restart_n_watch_arm_") != std::string::npos,
+              "4003 AC5: drain-before-replace helper");
+        CHECK(scope_h.find("restart_deferred_body_live") != std::string::npos,
+              "4003 AC5: deferred field");
+        CHECK(spawn.find("restart_drain_ms") != std::string::npos, "4003 AC5: drain budget");
+        CHECK(agent.find("restart-deferred-body-live") != std::string::npos,
+              "4003 AC5: Aura hash field");
+        CHECK(agent.find("query:4003") == std::string::npos, "4003 AC5: no query:4003");
+        CHECK(scope_h.find("class AgentRegistry") == std::string::npos,
+              "4003 AC5: no AgentRegistry");
+        CHECK(read_file("tests/orch/test_issue_4003.cpp").empty(),
+              "4003 AC5: no test_issue_4003.cpp");
+        CHECK(read_file("docs/design/4003-restartn-drain.md").empty(),
+              "4003 AC5: no docs/design/4003-*");
     }
 
     std::println("\n=== Results: {} passed, {} failed ===", aura::test::g_passed,
