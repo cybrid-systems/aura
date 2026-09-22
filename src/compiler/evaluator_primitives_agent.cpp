@@ -7437,7 +7437,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                     st = "cancelled";
                     break;
                 case aura::serve::JoinStatus::Invalid:
-                    st = "invalid";
+                    st = res.source_gone ? "source-gone" : "invalid";
                     break;
                 case aura::serve::JoinStatus::Reclaimed:
                     st = "reclaimed";
@@ -7459,6 +7459,9 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 {"schema", make_int(1588)},
                 {"issue-3148", make_int(3148)},
                 {"handoff-join-via-token-wired", make_int(1)},
+                {"source-gone", make_bool(res.source_gone)},
+                {"schema-4004", make_int(aura::orch::kHandoffSourceLiveIssue)},
+                {"issue-4004", make_int(aura::orch::kHandoffSourceLiveIssue)},
             };
             // Issue #3216: token was staged (not a fourth identity plane).
             add_handoff_token_present(kv, true);

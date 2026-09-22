@@ -170,7 +170,7 @@ Agent-facing schema text. The issue's Phase C probe hardening (sampling
 `total_mutations_` / workspace generation) is a follow-up if the probe
 window proves too loose in production.
 
-MVP scope is single-agent only (`scripts/coverage/checks/check_orch_mvp_scope.py --strict`). C++ entry points: `spawn_agent_with_mailbox`, `join_agent`, `agent_send`/`agent_recv`, `parallel_intend`. Production C++ recv under Guard-live must use `agent_recv_result` / `agent_recv_safe` (`RecvResult.status=recv-under-boundary`) — do not wait-retry on raw `agent_recv` nullopt (#4001). Soft quiet empty unchanged.
+MVP scope is single-agent only (`scripts/coverage/checks/check_orch_mvp_scope.py --strict`). C++ entry points: `spawn_agent_with_mailbox`, `join_agent`, `agent_send`/`agent_recv`, `parallel_intend`. Production C++ recv under Guard-live must use `agent_recv_result` / `agent_recv_safe` (`RecvResult.status=recv-under-boundary`) — do not wait-retry on raw `agent_recv` nullopt (#4001). Soft quiet empty unchanged. `join_via_handoff` / `orch:join-via-token` check the Scheduler `source_live` flag before Fiber deref (`source-gone` when the source session is torn down, #4004).
 
 ### `AgentScope` (Issue #2083, default multi-agent supervision root)
 

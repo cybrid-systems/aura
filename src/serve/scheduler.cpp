@@ -157,6 +157,10 @@ Scheduler::~Scheduler() {
         w->join();
     }
     workers_.clear();
+    // Issue #4004: flip handoff source-live before observers / fiber
+    // destroy so join_via_handoff pollers return Invalid without deref.
+    if (handoff_source_live_)
+        handoff_source_live_->store(false, std::memory_order_release);
     // Issue #2782: invalidate AgentScope (etc.) observers BEFORE fibers
     // are destroyed so holders can null Scheduler* + Fiber* and avoid UAF
     // on session-boundary mis-order (Scheduler dtor before scope dtor).
