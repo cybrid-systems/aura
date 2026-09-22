@@ -72,6 +72,7 @@ using aura::core::capability::EffectSandboxMode;
 using aura::core::capability::g_capability_effect_metrics;
 using aura::core::capability::g_capability_registry;
 using aura::core::capability::has_effect;
+using aura::core::capability::kCapabilityMidRevokeEpochHonestIssue;
 using aura::core::capability::kEffectsEffectiveRetainIssue;
 using aura::core::capability::make_grant_provenance;
 using aura::core::capability::reset_capability_effects_for_test;
@@ -2458,6 +2459,120 @@ static void ac3902_5_source_cite() {
           "3902 AC5: no tests/core invent");
 }
 
+static void ac3992_1_soft_mid_revoke_honest_unset() {
+    std::println(
+        "\n--- #3992 AC1: Soft + epoch=0 mid-revoke keeps revoke_epoch 0, grant revoked ---");
+    reset_all();
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    apply_dev_audit_defaults();
+    reset_mutation_epoch_for_test();
+    CHECK(aura::core::current_mutation_epoch() == 0, "3992 AC1: epoch 0 after test reset");
+    CHECK(kCapabilityMidRevokeEpochHonestIssue == 3992, "3992 AC1: issue stamp");
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    constexpr std::uint64_t tenant = 3992;
+    ev.set_capability_tenant_id(tenant);
+
+    EffectProvenance prov{};
+    prov.epoch = 0;
+    prov.mutation_id = 3992;
+    g_capability_registry().grant(tenant, "mut-3992-soft-mid", Effect::Mutate, prov,
+                                  /*single_use=*/false, /*session_bound=*/true);
+
+    const auto n = g_capability_registry().revoke_session_grants_for_mid(3992, "session-mid-exit");
+    CHECK(n >= 1, "3992 AC1: mid-revoke still revokes");
+
+    bool found = false;
+    bool revoked = false;
+    bool session_bound = true;
+    Effect effects = Effect::Mutate;
+    std::uint64_t revoke_epoch = 1;
+    {
+        std::lock_guard<std::mutex> lock(g_capability_registry().mtx);
+        const auto it = g_capability_registry().by_tenant.find(tenant);
+        if (it != g_capability_registry().by_tenant.end()) {
+            for (const auto& g : it->second) {
+                if (g.name == "mut-3992-soft-mid") {
+                    found = true;
+                    revoked = g.revoked;
+                    session_bound = g.session_bound;
+                    effects = g.effects;
+                    revoke_epoch = g.revoke_epoch;
+                    break;
+                }
+            }
+        }
+    }
+    CHECK(found, "3992 AC1: grant row reachable");
+    CHECK(revoked && !session_bound && effects == Effect::None,
+          "3992 AC1: grant still revoked (privilege closed)");
+    CHECK(revoke_epoch == 0, "3992 AC1: Soft epoch=0 → revoke_epoch 0 (honest unset)");
+    reset_all();
+}
+
+static void ac3992_2_hard_face_mid_revoke_invent_1() {
+    std::println("\n--- #3992 AC2: production + epoch=0 mid-revoke invents 1 ---");
+    reset_all();
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    apply_production_audit_defaults();
+    reset_mutation_epoch_for_test();
+    CHECK(aura::core::current_mutation_epoch() == 0, "3992 AC2: epoch 0 after test reset");
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    constexpr std::uint64_t tenant = 3993;
+    ev.set_capability_tenant_id(tenant);
+
+    EffectProvenance prov{};
+    prov.epoch = 0;
+    prov.mutation_id = 3992;
+    g_capability_registry().grant(tenant, "mut-3992-hard-mid", Effect::Mutate, prov,
+                                  /*single_use=*/false, /*session_bound=*/true);
+
+    const auto n = g_capability_registry().revoke_session_grants_for_mid(3992, "session-mid-exit");
+    CHECK(n >= 1, "3992 AC2: mid-revoke still revokes");
+
+    bool found = false;
+    std::uint64_t revoke_epoch = 0;
+    {
+        std::lock_guard<std::mutex> lock(g_capability_registry().mtx);
+        const auto it = g_capability_registry().by_tenant.find(tenant);
+        if (it != g_capability_registry().by_tenant.end()) {
+            for (const auto& g : it->second) {
+                if (g.name == "mut-3992-hard-mid") {
+                    found = true;
+                    revoke_epoch = g.revoke_epoch;
+                    CHECK(g.revoked && !g.session_bound, "3992 AC2: grant still revoked");
+                    break;
+                }
+            }
+        }
+    }
+    CHECK(found, "3992 AC2: grant row reachable");
+    CHECK(revoke_epoch == 1, "3992 AC2: hard-face invent 1");
+    apply_dev_audit_defaults();
+    reset_all();
+}
+
+static void ac3992_3_source_cite() {
+    std::println("\n--- #3992 AC3: source-cite mid-locked honest stamp; no invent ---");
+    const auto cap = read_file("src/core/capability_model.hh");
+    CHECK(cap.find("kCapabilityMidRevokeEpochHonestIssue = 3992") != std::string::npos,
+          "3992 AC3: issue stamp");
+    CHECK(cap.find("Issue #3992") != std::string::npos, "3992 AC3: mid-locked cites #3992");
+    auto pos = cap.find("revoke_session_grants_for_mid_locked");
+    CHECK(pos != std::string::npos, "3992 AC3: mid-locked present");
+    auto win = pos == std::string::npos ? std::string{} : cap.substr(pos, 2800);
+    CHECK(win.find("capability_epoch_hard_face()") != std::string::npos,
+          "3992 AC3: hard-face invent only");
+    CHECK(win.find("if (ep == 0)\n            ep = 1;") == std::string::npos,
+          "3992 AC3: unconditional invent removed");
+    CHECK(!std::filesystem::exists("docs/design/3992-mid-revoke-epoch-honest.md"),
+          "3992 AC3: no docs/design");
+    CHECK(!std::filesystem::exists("tests/issues/test_issue_3992.cpp"),
+          "3992 AC3: no tests/issues invent");
+}
+
 int run_test_capability_single_use_consume() {
     std::println("=== Issue #2586/#3142/#3144: single-use + SessionBound revoke + kCapWildcard "
                  "effects_for strip ===");
@@ -3440,6 +3555,9 @@ int run_test_inert_session_mid_3723() {
     ac3902_3_real_epoch_passthrough();
     ac3902_4_soft_session_cascade_honest();
     ac3902_5_source_cite();
+    ac3992_1_soft_mid_revoke_honest_unset();
+    ac3992_2_hard_face_mid_revoke_invent_1();
+    ac3992_3_source_cite();
     ac3964_1_dual_eval_distinct_session_mids();
     ac3964_2_source_cite();
     std::println("\n=== #3723 results: {} passed, {} failed ===", g_passed, g_failed);
