@@ -10,7 +10,7 @@ Agent orchestration facade — `orch.h` · `agent_spawn.h` · `orch.ixx` (#1588)
 | `(orch:agent-poll name)` | Issue #2540 coop yield edge | hash `{ok, yielded, schema-2540}` — forces `Fiber::yield` when `max_no_yield_ms` window elapsed |
 | `(orch:agent-join name [:timeout-ms n])` | name as registered at spawn | hash `{ok, status, wait-us, schema}` (`status` = ok/timeout/cancelled/invalid/**reclaimed** — Issue #2743); production adds `identity-plane="name-table"` (#3216). After production auto-wait Timeout, join hash + `orch:scope-resolve` / directory expose `lifecycle=reclaimed-pending` while the reservation is still held (#3220), and `cleanup-pending=#t` (#3272) — host **must** call `ensure_reclaimed_cleanup` (SSOT second-wait, #3087/#3245) or `wait_reclaimed_body` once the body exits; dtor (`~AgentHandle`) is the last resort that always releases the residual reservation (#3012). |
 | `(orch:agent-send name payload)` | payload string/int/bool | hash `{ok, status, schema}` (`status` = ok/backpressure/closed); unknown agent → error. Issue #3442: resolve name-table first, then session-local `AgentScope::find` so `orch:scope-spawn` agents are reachable. Same-name in both planes: **name-table wins**. |
-| `(orch:agent-recv name [:wait bool] [:timeout-ms n])` | default wait `#t` | hash `{ok, empty, payload, schema}` — same #3442 resolve as send |
+| `(orch:agent-recv name [:wait bool] [:timeout-ms n])` | default wait `#t` | hash `{ok, empty, payload, schema}` — same #3442 resolve as send. Production Guard-live → typed `status=recv-under-boundary` (#3673); C++ hosts use `agent_recv_result` / `agent_recv_safe` (RecvResult) instead of polling `agent_recv` nullopt (#4001). Soft quiet empty unchanged. |
 | `(orch:parallel-intend tasks …)` | alias of `(parallel-intend …)` | same as parallel-intend batch hash |
 | `(engine:metrics \"query:orch-module-stats\")` | stats facade | live `OrchModuleStats` (+ mailbox/parallel mirrors) |
 
@@ -170,7 +170,7 @@ Agent-facing schema text. The issue's Phase C probe hardening (sampling
 `total_mutations_` / workspace generation) is a follow-up if the probe
 window proves too loose in production.
 
-MVP scope is single-agent only (`scripts/coverage/checks/check_orch_mvp_scope.py --strict`). C++ entry points: `spawn_agent_with_mailbox`, `join_agent`, `agent_send`/`agent_recv`, `parallel_intend`.
+MVP scope is single-agent only (`scripts/coverage/checks/check_orch_mvp_scope.py --strict`). C++ entry points: `spawn_agent_with_mailbox`, `join_agent`, `agent_send`/`agent_recv`, `parallel_intend`. Production C++ recv under Guard-live must use `agent_recv_result` / `agent_recv_safe` (`RecvResult.status=recv-under-boundary`) — do not wait-retry on raw `agent_recv` nullopt (#4001). Soft quiet empty unchanged.
 
 ### `AgentScope` (Issue #2083, default multi-agent supervision root)
 
