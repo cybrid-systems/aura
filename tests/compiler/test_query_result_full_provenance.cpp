@@ -39,9 +39,11 @@
 #include "core/workspace_isolation.hh"
 #include "core/provenance_tracker.hh"
 #include "core/capability_model.hh"
+#include "core/mutation_audit_wal.hh"
 
 #include <cstdint>
 #include <cstring>
+#include <filesystem>
 #include <print>
 #include <string>
 #include <string_view>
@@ -1908,6 +1910,190 @@ void test_ac3991_3_source_cite() {
     }
 }
 
+void test_ac3993_1_packed_stamped_allows_when_cap_ok() {
+    std::print("AC3993/AC1 -- packed v2 same-tenant mutate Allow (not false stale-ref)\n");
+    using aura::compiler::security::kCapWildcard;
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::core::capability::Effect;
+    using aura::core::capability::effect_for_cap_name;
+    using aura::core::capability::g_capability_registry;
+    aura::core::workspace_isolation::g_workspace_isolation().set_strict_sandbox_linked(false);
+    aura::core::provenance::clear_last_stamped_node_for_test();
+    aura::core::capability::reset_capability_effects_for_test();
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+    aura::core::provenance::set_multi_tenant_env_active(true);
+    apply_dev_audit_defaults();
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    expect_true("3993 AC1: set-code", cs.eval("(set-code \"(define (t3993 x) 1)\")").has_value());
+    expect_true("3993 AC1: eval", cs.eval("(eval-current)").has_value());
+    auto grant_tenant = [&](std::uint64_t t) {
+        ev.set_capability_tenant_id(t);
+        aura::core::workspace_isolation::g_workspace_isolation().set_current_tenant(t,
+                                                                                    "3993-tenant");
+        g_capability_registry().grant(t, "tenant-admin", Effect::TenantAdmin,
+                                      aura_test_grant_prov());
+        g_capability_registry().grant(t, kCapWildcard, effect_for_cap_name(kCapWildcard),
+                                      aura_test_grant_prov());
+        ev.grant_capability(std::string(kCapWildcard));
+        g_capability_registry().grant(t, "tenant-admin", Effect::TenantAdmin,
+                                      aura_test_grant_prov(), false, false,
+                                      /*caller_principal=*/t);
+        g_capability_registry().grant(t, kCapWildcard, effect_for_cap_name(kCapWildcard),
+                                      aura_test_grant_prov(), false, false,
+                                      /*caller_principal=*/t);
+    };
+    aura::compiler::typed_audit::clear_type_linear_commit_proof_for_test();
+    grant_tenant(1);
+    ev.arm_production_audit_defaults_for_test();
+    admit_clean_mutate_for_test();
+    // Restricted + production + WAL-off is security-schedule posture-degraded
+    // (Guard acquire). Pin WAL so the allow path is not schedule-denied.
+    std::filesystem::create_directories("build/test-wal-3993");
+    const bool wal_was = aura::core::audit_wal::g_mutation_audit_wal().is_enabled();
+    if (!wal_was) {
+        expect_true("3993 AC1: mutation WAL enable",
+                    aura::core::audit_wal::g_mutation_audit_wal().enable(
+                        std::string_view("build/test-wal-3993"), nullptr, 0));
+    }
+    expect_true("3993 AC1: bind find hash",
+                cs.eval("(define qr3993 (query :find \"t3993\" :as-query-result #t))").has_value());
+    auto qr = cs.eval("qr3993");
+    expect_true("3993 AC1: production find is hash", qr && is_hash(*qr));
+    expect_true("3993 AC1: bind packed v2",
+                cs.eval("(define sr3993 (query:as-stable-ref qr3993 :index 0))").has_value());
+    auto sr_car = cs.eval("(car sr3993)");
+    expect_true("3993 AC1: packed car is NodeId", sr_car && is_int(*sr_car));
+    auto* ws = ev.workspace_flat();
+    const auto log0 = ws ? ws->mutation_log_size() : 0;
+    ev.set_effect_sandbox_mode(1);
+    grant_tenant(1); // re-grant after Restricted (epoch / high-bits fence)
+    expect_true("3993 AC1: bind add_mutate packed",
+                cs.eval("(define r3993 (mutate:replace-type sr3993 \"Int\"))").has_value());
+    auto eq_ok = cs.eval(
+        "(equal? (if (and (pair? r3993) (string? (car r3993))) (car r3993) \"ok\") \"ok\")");
+    expect_true("3993 AC1: packed same-tenant mutate Allows",
+                eq_ok && is_bool(*eq_ok) && as_bool(*eq_ok));
+    auto eq_stale = cs.eval(
+        "(equal? (if (and (pair? r3993) (string? (car r3993))) (car r3993) \"ok\") \"stale-ref\")");
+    expect_true("3993 AC1: not false stale-ref",
+                eq_stale && is_bool(*eq_stale) && !as_bool(*eq_stale));
+    expect_true("3993 AC1: topology write", ws && ws->mutation_log_size() > log0);
+    if (!wal_was)
+        aura::core::audit_wal::g_mutation_audit_wal().disable();
+    ev.disarm_production_audit_defaults_for_test();
+    aura::core::provenance::set_multi_tenant_env_active(false);
+    aura::ast::clear_restamp_hot_cone_held_for_test();
+    apply_dev_audit_defaults();
+}
+
+void test_ac3993_2_incomplete_gen_still_denies() {
+    std::print("AC3993/AC2 -- packed gen=0 under Restricted still denies (honest #3773)\n");
+    using aura::compiler::security::kCapWildcard;
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::core::capability::Effect;
+    using aura::core::capability::effect_for_cap_name;
+    using aura::core::capability::g_capability_registry;
+    aura::core::workspace_isolation::g_workspace_isolation().set_strict_sandbox_linked(false);
+    aura::core::provenance::clear_last_stamped_node_for_test();
+    aura::core::capability::reset_capability_effects_for_test();
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+    aura::core::provenance::set_multi_tenant_env_active(true);
+    apply_dev_audit_defaults();
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    expect_true("3993 AC2: set-code", cs.eval("(set-code \"(define (u3993 x) 1)\")").has_value());
+    expect_true("3993 AC2: eval", cs.eval("(eval-current)").has_value());
+    auto grant_tenant = [&](std::uint64_t t) {
+        ev.set_capability_tenant_id(t);
+        aura::core::workspace_isolation::g_workspace_isolation().set_current_tenant(t,
+                                                                                    "3993-tenant");
+        g_capability_registry().grant(t, "tenant-admin", Effect::TenantAdmin,
+                                      aura_test_grant_prov());
+        g_capability_registry().grant(t, kCapWildcard, effect_for_cap_name(kCapWildcard),
+                                      aura_test_grant_prov());
+        ev.grant_capability(std::string(kCapWildcard));
+        g_capability_registry().grant(t, "tenant-admin", Effect::TenantAdmin,
+                                      aura_test_grant_prov(), false, false,
+                                      /*caller_principal=*/t);
+        g_capability_registry().grant(t, kCapWildcard, effect_for_cap_name(kCapWildcard),
+                                      aura_test_grant_prov(), false, false,
+                                      /*caller_principal=*/t);
+    };
+    grant_tenant(1);
+    ev.arm_production_audit_defaults_for_test();
+    expect_true(
+        "3993 AC2: bind find hash",
+        cs.eval("(define qr3993b (query :find \"u3993\" :as-query-result #t))").has_value());
+    expect_true("3993 AC2: bind packed v2",
+                cs.eval("(define sr3993b (query:as-stable-ref qr3993b :index 0))").has_value());
+    expect_true("3993 AC2: bind gen=0 twin", cs.eval("(define bad3993 (cons (car sr3993b) "
+                                                     "(cons 0 (cdr (cdr sr3993b)))))")
+                                                 .has_value());
+    auto* ws = ev.workspace_flat();
+    const auto log0 = ws ? ws->mutation_log_size() : 0;
+    ev.set_effect_sandbox_mode(1);
+    expect_true("3993 AC2: bind incomplete mutate",
+                cs.eval("(define r3993b (mutate:replace-type bad3993 \"Int\"))").has_value());
+    auto eq_ok = cs.eval(
+        "(equal? (if (and (pair? r3993b) (string? (car r3993b))) (car r3993b) \"ok\") \"ok\")");
+    expect_true("3993 AC2: incomplete gen still denies",
+                eq_ok && is_bool(*eq_ok) && !as_bool(*eq_ok));
+    expect_true("3993 AC2: zero topology write", ws && ws->mutation_log_size() == log0);
+    ev.disarm_production_audit_defaults_for_test();
+    aura::core::provenance::set_multi_tenant_env_active(false);
+    apply_dev_audit_defaults();
+}
+
+void test_ac3993_3_soft_unchanged() {
+    std::print("AC3993/AC3 -- Soft packed (id gen) unchanged; layout-only still refused\n");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    apply_dev_audit_defaults();
+    CompilerService cs;
+    expect_true("3993 AC3: set-code", cs.eval("(set-code \"(define (s3993 x) 1)\")").has_value());
+    expect_true("3993 AC3: eval", cs.eval("(eval-current)").has_value());
+    expect_true("3993 AC3: bind Soft find",
+                cs.eval("(define id3993s (car (query :find \"s3993\")))").has_value());
+    expect_true(
+        "3993 AC3: Soft list packed mutate returns",
+        cs.eval("(define r3993s (mutate:replace-type (list id3993s 0) \"Int\"))").has_value());
+    auto eq_iso =
+        cs.eval("(equal? (if (and (pair? r3993s) (string? (car r3993s))) (car r3993s) \"ok\") "
+                "\"tenant-isolation-denied\")");
+    expect_true("3993 AC3: Soft does not isolation-deny list packed",
+                eq_iso && is_bool(*eq_iso) && !as_bool(*eq_iso));
+    apply_dev_audit_defaults();
+}
+
+void test_ac3993_4_source_cite() {
+    std::print("AC3993/AC4 -- source-cite gate_ref stamp; no invent\n");
+    std::ifstream f_mut("src/compiler/evaluator_primitives_mutate.cpp");
+    std::string mut((std::istreambuf_iterator<char>(f_mut)), std::istreambuf_iterator<char>());
+    std::ifstream f_dec("src/compiler/query_result_decode.hh");
+    std::string dec((std::istreambuf_iterator<char>(f_dec)), std::istreambuf_iterator<char>());
+    expect_true("3993 AC4: stamp",
+                dec.find("kAddMutateGateRefFreshnessIssue = 3993") != std::string::npos);
+    expect_true("3993 AC4: add_mutate cites #3993", mut.find("Issue #3993") != std::string::npos);
+    auto pos = mut.find("Issue #3993: packed/hash keep captured gen/wrap/cow");
+    expect_true("3993 AC4: gate cites packed/hash stamp", pos != std::string::npos);
+    auto win = pos == std::string::npos ? std::string{} : mut.substr(pos, 1800);
+    expect_true("3993 AC4: arg_ref from packed", win.find("arg_ref") != std::string::npos);
+    expect_true("3993 AC4: occupancy live layout",
+                win.find("make_ref_layout") != std::string::npos);
+    expect_true("3993 AC4: no brace-init id+tenant only",
+                mut.find("gate_ref.id = target_node;\n                        gate_ref.tenant_id = "
+                         "ref_tenant;") == std::string::npos);
+    expect_true("3993 AC4: no schema-3993", mut.find("schema-3993") == std::string::npos);
+    {
+        std::ifstream f("tests/compiler/test_issue_3993.cpp");
+        expect_true("3993 AC4: no test_issue_3993.cpp", !f.good());
+    }
+    {
+        std::ifstream f("docs/design/3993-add-mutate-gate-ref.md");
+        expect_true("3993 AC4: no docs/design", !f.good());
+    }
+}
+
 
 // Issue #3827: query:children / query:parent still finished with plain
 // end_query_epoch and returned bare NodeId lists under Production — Agents
@@ -2398,8 +2584,12 @@ int main() {
     // test_ac3827_2_soft_children_int_fails_prod_as_stable();
     // test_ac3827_3_children_stable_stays_green();
     test_ac3827_4_soft_and_source();
+    test_ac3993_1_packed_stamped_allows_when_cap_ok();
+    test_ac3993_2_incomplete_gen_still_denies();
+    test_ac3993_3_soft_unchanged();
+    test_ac3993_4_source_cite();
     std::print("All #3103 + #3137 + #3231 + #3286 + #3311 + #3389 + #3395 + #3424 + "
                "#3449 + #3660 + #3695 + #3696 + #3766 + #3767 + #3827 + #3895 + #3896 + "
-               "#3990 + #3991 AC tests PASSED\n");
+               "#3990 + #3991 + #3993 AC tests PASSED\n");
     return 0;
 }
