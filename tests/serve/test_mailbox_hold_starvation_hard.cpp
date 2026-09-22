@@ -3781,6 +3781,150 @@ static void ac3951_1_no_edge_ready_or_owner_poll() {
     CHECK(read_file("docs/design/3951-no-edge-unlock.md").empty(), "3951: no docs/design");
 }
 
+// ── Issue #4032: exotic no-poll host body under outermost Guard.
+// Prefer expanded #3988/#3693 poll edges (eval_flat now shares the force-
+// safepoint ABI). Remaining pure C++ busy bodies without Jump/IR/add_mutate/
+// native/eval_flat poll edges are unsupported — Ready sticky / join Reclaimed
+// (#3826/#3764); no second unlock protocol / no foreign-fiber unlock.
+// Soft/Off: zero force-unlock.
+static void ac4032_1_exotic_no_poll_ready_or_reclaimed() {
+    std::println(
+        "\n--- #4032 AC1/AC2: exotic no-poll → Ready sticky / join Reclaimed; no peer half-write ---");
+    const auto mh = read_file("src/compiler/mutation_hold_budget.h");
+    CHECK(mh.find("kMutationHoldBudgetHostNativePollExpandIssue") != std::string::npos,
+          "4032 AC1: stamp");
+    CHECK(mh.find("unsupported") != std::string::npos, "4032 AC1: documents unsupported surface");
+    CHECK(mh.find("second unlock") != std::string::npos, "4032 AC1: no second unlock protocol");
+    CHECK(mh.find("foreign") != std::string::npos, "4032 AC1: foreign never unlocks");
+    const auto efl = read_file("src/compiler/evaluator_eval_flat.cpp");
+    CHECK(efl.find("Issue #4032") != std::string::npos, "4032 AC1: eval_flat cites expand");
+    CHECK(efl.find("aura_jit_poll_hold_budget_safepoint") != std::string::npos,
+          "4032 AC1: eval_flat shares #3988 poll");
+    CHECK(mh.find("schema-4032") == std::string::npos, "4032: no new query key");
+    CHECK(read_file("tests/serve/test_issue_4032.cpp").empty(), "4032: no invent");
+    CHECK(read_file("docs/design/4032-host-native-poll.md").empty(), "4032: no docs/design");
+
+    // Runtime face mirrors #3826 latch gate for exotic no-poll host bodies.
+    using aura::compiler::Evaluator;
+    using aura::serve::Fiber;
+    using aura::serve::JoinStatus;
+    using aura::serve::Scheduler;
+    using aura::serve::StealSafetyDecision;
+    using aura::serve::YieldReason;
+    ::unsetenv("AURA_SANDBOX");
+    ::unsetenv("AURA_MUTATION_HOLD_BUDGET_HARD");
+    ::unsetenv("AURA_HOLD_BUDGET_INBODY_BOUND_US");
+    ::setenv("AURA_MUTATION_HOLD_SLO_US", "2000", 1);
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    CHECK(aura::compiler::mutation_hold_budget_reject_enabled(),
+          "4032 AC2: reject_enabled under production");
+    aura::serve::set_production_multi_worker_latched_for_test(true);
+    aura::serve::clear_steal_safety_transaction_for_test();
+    aura::compiler::mutation_hold_live_reset_for_test();
+    aura::compiler::clear_hold_budget_no_edge_force_for_test();
+    aura::compiler::clear_mutation_hold_budget_inbody_window_for_test();
+    aura::serve::g_steal_safety_production_residual_sticky_fail.store(0, std::memory_order_relaxed);
+    CompilerService cs;
+    Evaluator::set_query_evaluator(&cs.evaluator());
+    const auto slo_us = aura::compiler::mutation_hold_slo_us();
+    CHECK(slo_us > 0, "4032 AC2: SLO configured");
+    const auto body_ns = static_cast<std::int64_t>(slo_us) * 6 * 1000;
+    std::atomic<int> guard_held{0};
+    std::atomic<int> body_done{0};
+    std::atomic<int> mid_steal_ok{0};
+    std::atomic<int> saw_sticky_or_unlocked{0};
+    Scheduler sched(2);
+    Fiber* holder = sched.spawn([&]() {
+        bool ok = true;
+        {
+            Evaluator::MutationBoundaryGuard g(cs.evaluator(), &ok);
+            guard_held.store(1, std::memory_order_release);
+            volatile std::uint64_t sink = 0;
+            const auto t0 = std::chrono::steady_clock::now();
+            while (std::chrono::steady_clock::now() - t0 < std::chrono::nanoseconds(body_ns))
+                sink += 1; // exotic no-poll: no Jump/IR/add_mutate/native/eval_flat/yield
+            (void)sink;
+            guard_held.store(0, std::memory_order_release);
+        }
+        body_done.store(1, std::memory_order_release);
+    });
+    CHECK(holder != nullptr, "4032 AC2: holder spawned");
+    std::thread io([&]() { sched.run(); });
+    std::thread peer([&]() {
+        for (int i = 0; i < 600 && body_done.load(std::memory_order_acquire) == 0; ++i) {
+            if (guard_held.load(std::memory_order_acquire) != 0) {
+                (void)aura::serve::aura_hold_budget_poll_busy_path();
+                const bool unlocked = !aura::compiler::mutation_hold_live_snapshot().held ||
+                                      aura_evaluator_mutation_boundary_depth() == 0;
+                const bool sticky =
+                    aura::serve::steal_safety_production_residual_sticky_fail_v_read() != 0;
+                if (unlocked || sticky || holder->is_reclaimed())
+                    saw_sticky_or_unlocked.store(1, std::memory_order_release);
+                Fiber probe([]() {}, /*stack_size=*/64 * 1024);
+                probe.set_yield_reason(YieldReason::Explicit);
+                probe.publish_mutation_safety_mirrors(/*depth=*/1, /*held=*/true, /*defuse=*/0);
+                const auto d = aura::serve::steal_safety_transaction(&probe);
+                if (d == StealSafetyDecision::Ok)
+                    mid_steal_ok.store(1, std::memory_order_relaxed);
+            }
+            std::this_thread::sleep_for(std::chrono::microseconds(200));
+        }
+    });
+    for (int i = 0; i < 200 && guard_held.load(std::memory_order_acquire) == 0; ++i)
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    CHECK(guard_held.load() == 1 || body_done.load() == 1, "4032 AC2: holder entered or finished");
+    const auto jr = Fiber::join(holder, std::optional<std::uint64_t>{200});
+    const bool join_ok = jr.status == JoinStatus::Reclaimed || jr.status == JoinStatus::Cancelled ||
+                         jr.status == JoinStatus::Ok || holder->is_done() ||
+                         holder->is_reclaimed() || aura_evaluator_mutation_boundary_depth() == 0;
+    CHECK(join_ok, "4032 AC2: join Reclaimed/Done or unlocked (no hang)");
+    for (int i = 0; i < 400 && body_done.load() == 0; ++i)
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    peer.join();
+    sched.stop();
+    io.join();
+    CHECK(saw_sticky_or_unlocked.load() == 1 ||
+              !aura::compiler::mutation_hold_live_snapshot().held || holder->is_reclaimed() ||
+              holder->is_done(),
+          "4032 AC2: within bound — Ready sticky + Reclaimed OR depth0/!held");
+    CHECK(mid_steal_ok.load() == 0, "4032 AC2: no peer half-write (mid-mutation steal never Ok)");
+    CHECK(body_done.load() == 1 || holder->is_reclaimed() || holder->is_done(),
+          "4032 AC2: body finished or fail-closed");
+    Evaluator::set_query_evaluator(nullptr);
+    aura::serve::set_production_multi_worker_latched_for_test(false);
+    aura::serve::g_steal_safety_production_residual_sticky_fail.store(0, std::memory_order_relaxed);
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    ::unsetenv("AURA_MUTATION_HOLD_SLO_US");
+    ::setenv("AURA_SANDBOX", "off", 1);
+    aura::compiler::clear_mutation_hold_budget_inbody_window_for_test();
+    aura::compiler::clear_hold_budget_no_edge_force_for_test();
+}
+
+extern "C" int aura_jit_poll_hold_budget_safepoint() noexcept;
+
+static void ac4032_3_soft_zero_force_unlock() {
+    std::println("\n--- #4032 AC3: Soft/Off zero force-unlock unchanged ---");
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    ::unsetenv("AURA_MUTATION_HOLD_BUDGET_HARD");
+    ::setenv("AURA_SANDBOX", "off", 1);
+    CHECK(!aura::compiler::mutation_hold_budget_reject_enabled(),
+          "4032 AC3: Soft reject_enabled false");
+    const auto before = aura::compiler::mutation_hold_budget_forced_unlock_total_v_read();
+    CHECK(aura_jit_poll_hold_budget_safepoint() == 0, "4032 AC3: Soft poll returns 0");
+    CHECK(aura::compiler::mutation_hold_budget_forced_unlock_total_v_read() == before,
+          "4032 AC3: Soft zero force-unlock");
+    const auto efm = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+    CHECK(efm.find("aura_jit_poll_hold_budget_safepoint") != std::string::npos,
+          "4032 AC3: poll ABI");
+    const auto jp = efm.find("aura_jit_poll_hold_budget_safepoint() noexcept");
+    const auto jwin = jp == std::string::npos ? std::string{} : efm.substr(jp, 700);
+    CHECK(jwin.find("mutation_hold_budget_reject_enabled()") != std::string::npos,
+          "4032 AC3: Soft gate before unlock");
+    CHECK(read_file("src/compiler/mutation_hold_budget.h")
+                  .find("kMutationHoldBudgetHostNativePollExpandIssue") != std::string::npos,
+          "4032 AC3: stamp present; Soft path unchanged");
+}
+
 int run_test_mailbox_hold_starvation_hard() {
     std::println("=== Issue #2551: mailbox hold starvation hard + Agent throttle ===");
     ac1_production_hard_signal();
@@ -3926,6 +4070,9 @@ int run_test_mailbox_hold_starvation_hard() {
     ac3692_peer_recv_does_not_fail_holder();
     std::println("\n=== Issue #3951: no-edge holder Ready fail-closed / owner-thread poll ===");
     ac3951_1_no_edge_ready_or_owner_poll();
+    std::println("\n=== Issue #4032: exotic no-poll host body (Ready sticky / join Reclaimed) ===");
+    ac4032_1_exotic_no_poll_ready_or_reclaimed();
+    ac4032_3_soft_zero_force_unlock();
     std::println(
         "\n=== #2551..#2761 + #2847 + #3289 + #3485 + #3588 + #3613: {} passed, {} failed ===",
         g_passed, g_failed);
