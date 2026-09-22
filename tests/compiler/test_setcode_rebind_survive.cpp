@@ -127,6 +127,10 @@ struct ProdDensifyWindowGuard {
                                                                        std::memory_order_relaxed);
         aura::core::moving_densify_health::g_last_root_remap_fail_total.store(
             root_fail, std::memory_order_relaxed);
+        // Issue #4006: injected window is a new published seq so apply TLS
+        // skip cannot keep a prior quiet sample.
+        aura::core::moving_densify_health::g_last_window_seq.fetch_add(1,
+                                                                       std::memory_order_relaxed);
         // Issue #3634: keep the per-eval slot in sync with the fabricated
         // window — the apply arm consults the evaluator's own slot first
         // now, so `lcp_allow` must speak for that slot too.
@@ -155,6 +159,8 @@ struct ProdDensifyWindowGuard {
                                                                        std::memory_order_relaxed);
         aura::core::moving_densify_health::g_last_root_remap_fail_total.store(
             prev_root_fail, std::memory_order_relaxed);
+        aura::core::moving_densify_health::g_last_window_seq.fetch_add(1,
+                                                                       std::memory_order_relaxed);
         if (eval_id != nullptr)
             aura::core::lifetime_consistency_proof::reset_lifetime_consistency_proof_for_test();
     }
@@ -940,6 +946,76 @@ static void ac17_3849_happy_path_densify_refuse() {
     }
 }
 
+// Issue #4006: green empty-remap apply samples window atomics once per
+// published seq, not per apply. Fail-closed still holds on seq mismatch.
+static void ac22_4006_seq_skip_quiet_apply() {
+    std::println("\n--- #4006: seq-match skip on green empty-remap apply ---");
+    const auto flat = read_file("src/compiler/evaluator_eval_flat.cpp");
+    CHECK(flat.find("Issue #4006") != std::string::npos, "4006: eval_flat cites");
+    CHECK(flat.find("densify_refuse_seq_skip") != std::string::npos, "4006: seq skip helper");
+    CHECK(flat.find("kApplyDensifyWindowSeqSkipIssue") != std::string::npos ||
+              read_file("src/core/moving_densify_health.hh")
+                      .find("kApplyDensifyWindowSeqSkipIssue = 4006") != std::string::npos,
+          "4006: issue stamp");
+    CHECK(flat.find("class DensifyClosurePinRegistry") == std::string::npos,
+          "4006: no second pin registry");
+    CHECK(read_file("tests/compiler/test_issue_4006.cpp").empty(), "4006: no invent");
+    CHECK(read_file("docs/design/4006-densify-seq-skip.md").empty(), "4006: no docs/design");
+
+    std::array<aura::compiler::types::EvalValue, 1> args{make_int(1)};
+    using aura::core::moving_densify_health::g_apply_densify_window_consult_total;
+    aura::core::moving_densify_health::reset_moving_densify_health_for_test();
+
+    {
+        CompilerService cs;
+        auto r = cs.eval("(lambda (x) (+ x 1))");
+        CHECK(r && is_closure(*r), "4006: fresh lambda");
+        const auto cid = as_closure_id(*r);
+        ProdDensifyWindowGuard g(/*prod=*/true, /*moved=*/0, /*lcp_allow=*/true, &cs.evaluator(),
+                                 /*had_moving=*/false);
+        const auto c0 = g_apply_densify_window_consult_total.load(std::memory_order_relaxed);
+        auto first = cs.evaluator().apply_closure(cid, args);
+        CHECK(first && is_int(*first) && as_int(*first) == 2, "4006: first green apply ok");
+        const auto c1 = g_apply_densify_window_consult_total.load(std::memory_order_relaxed);
+        CHECK(c1 == c0 + 1, "4006: first apply samples window atomics once");
+        for (int i = 0; i < 64; ++i) {
+            auto got = cs.evaluator().apply_closure(cid, args);
+            CHECK(got && is_int(*got) && as_int(*got) == 2, "4006: quiet apply ok");
+        }
+        const auto c2 = g_apply_densify_window_consult_total.load(std::memory_order_relaxed);
+        CHECK(c2 == c1, "4006: 64 quiet applies add zero window consults");
+    }
+
+    {
+        CompilerService cs;
+        auto* m = metrics_of(cs);
+        auto r = cs.eval("(lambda (x) (+ x 1))");
+        CHECK(r && is_closure(*r), "4006 red: lambda");
+        const auto cid = as_closure_id(*r);
+        ProdDensifyWindowGuard warm(/*prod=*/true, /*moved=*/0, /*lcp_allow=*/true, &cs.evaluator(),
+                                    /*had_moving=*/false);
+        (void)cs.evaluator().apply_closure(cid, args);
+        const auto stale0 = m->closure_stale_returns.load(std::memory_order_relaxed);
+        ProdDensifyWindowGuard red(/*prod=*/true, /*moved=*/0, /*lcp_allow=*/true, &cs.evaluator(),
+                                   /*had_moving=*/true, /*pin_held=*/true,
+                                   /*incomplete=*/false, /*untracked=*/9, /*root_fail=*/0);
+        auto got = cs.evaluator().apply_closure(cid, args);
+        CHECK(!got.has_value(), "4006: seq mismatch reconsults red window");
+        CHECK(m->closure_stale_returns.load(std::memory_order_relaxed) > stale0,
+              "4006: red window still refuses");
+    }
+
+    {
+        CompilerService cs;
+        auto r = cs.eval("(lambda (x) (+ x 1))");
+        CHECK(r && is_closure(*r), "4006 Soft: lambda");
+        const auto cid = as_closure_id(*r);
+        ProdDensifyWindowGuard g(/*prod=*/false, /*moved=*/1, /*lcp_allow=*/false, &cs.evaluator());
+        auto got = cs.evaluator().apply_closure(cid, args);
+        CHECK(got && is_int(*got) && as_int(*got) == 2, "4006 Soft: no refuse");
+    }
+}
+
 } // namespace
 
 // Issue #3948: JIT native dispatch consults the same densify-stale refuse
@@ -1232,6 +1308,7 @@ int run_test_setcode_rebind_survive() {
     ac12_3648_wiring_and_family();
     ac16_3848_zero_move_publish_still_refuse();
     ac17_3849_happy_path_densify_refuse();
+    ac22_4006_seq_skip_quiet_apply();
     ac13_3678_ffi_pointer_class_refuse();
     // Issue #3681: production refuses MustDeopt/dirty-stale wash onto the
     // pre-reemit body; unimpacted rebinds keep the #2569 recover.

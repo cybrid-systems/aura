@@ -329,10 +329,61 @@ static bool closure_needs_safe_fallback(const Evaluator& ev, const Closure& cl,
 // predicate is unchanged (resolve hit ⇒ refuse).
 inline constexpr int kApplyClosureDensifyHardRefuseIssue = 3421;
 
+// Issue #4006: TLS seq sampled on last full window consult. Happy path
+// (local_seq == published_seq && quiet && remap empty) skips the five
+// process-wide window atomics and the remap walk. Seq mismatch (Moving
+// publish / test inject) reconsults window + LCP + remap. Soft never
+// reaches this — production gate is the caller's first load.
+struct ApplyDensifySeqTls {
+    std::uint64_t sampled_seq = ~std::uint64_t{0};
+    bool window_green = false;
+    bool quiet = false; // green && !moved at sample
+};
+
+static ApplyDensifySeqTls& apply_densify_seq_tls() noexcept {
+    thread_local ApplyDensifySeqTls t{};
+    return t;
+}
+
+enum class DensifySeqSkip : std::int8_t { Miss = 0, Allow = 1, Refuse = 2 };
+
+static DensifySeqSkip densify_refuse_seq_skip(ast::ASTArena* ar) noexcept {
+    const auto pub =
+        aura::core::moving_densify_health::g_last_window_seq.load(std::memory_order_relaxed);
+    auto& t = apply_densify_seq_tls();
+    if (t.sampled_seq != pub)
+        return DensifySeqSkip::Miss;
+    if (!t.window_green)
+        return DensifySeqSkip::Refuse;
+    if (t.quiet && (!ar || ar->object_remap_size() == 0))
+        return DensifySeqSkip::Allow;
+    return DensifySeqSkip::Miss;
+}
+
+static void densify_refuse_seq_note(bool window_green, bool quiet) noexcept {
+    auto& t = apply_densify_seq_tls();
+    t.sampled_seq =
+        aura::core::moving_densify_health::g_last_window_seq.load(std::memory_order_relaxed);
+    t.window_green = window_green;
+    t.quiet = quiet;
+}
+
 static bool production_apply_closure_densify_hard_refuse(ast::ASTArena* arena, const Closure& cl,
                                                          const void* eval_id) noexcept {
     if (!aura::compiler::typed_audit::production_defaults_active())
         return false;
+    ast::ASTArena* ar = arena ? arena : cl.owner_arena;
+    // Issue #4006: seq-match quiet skip — no extra window atomics / remap walk.
+    switch (densify_refuse_seq_skip(ar)) {
+        case DensifySeqSkip::Allow:
+            return false;
+        case DensifySeqSkip::Refuse:
+            return true;
+        case DensifySeqSkip::Miss:
+            break;
+    }
+    aura::core::moving_densify_health::g_apply_densify_window_consult_total.fetch_add(
+        1, std::memory_order_relaxed);
     // Issue #3648: apply must also consult the densify window gate — the
     // same predicate as Phase-5 / #2682. LCP stamp points are outermost
     // densify SUCCESS and steal-complete, so an incomplete window
@@ -352,17 +403,21 @@ static bool production_apply_closure_densify_hard_refuse(ast::ASTArena* arena, c
             aura::core::moving_densify_health::g_last_untracked_kept.load(
                 std::memory_order_relaxed),
             aura::core::moving_densify_health::g_last_root_remap_fail_total.load(
-                std::memory_order_relaxed)))
+                std::memory_order_relaxed))) {
+        densify_refuse_seq_note(/*window_green=*/false, /*quiet=*/false);
         return true;
-    ast::ASTArena* ar = arena ? arena : cl.owner_arena;
+    }
     // Issue #3848 optional fast-path: window green + empty remap table +
     // NOT a densify-old publish → no densify-old tombstone to refuse on.
     // A densify-old publish (#3421 soak / #3602 AC-b / #3634 AC2:
     // moved>0, helper read) skips this and reaches the LCP gate below
     // even with an empty remap table.
     if (ar && ar->object_remap_size() == 0 &&
-        !aura::core::moving_densify_health::last_publish_moved_objects())
+        !aura::core::moving_densify_health::last_publish_moved_objects()) {
+        densify_refuse_seq_note(/*window_green=*/true, /*quiet=*/true);
         return false;
+    }
+    densify_refuse_seq_note(/*window_green=*/true, /*quiet=*/false);
     // Issue #3634: per-eval first (#3617 slots), process-wide fallback.
     // A foreign evaluator's Reject poisons the process-wide bit; an
     // evaluator with a slot of its own consults its own last-window
@@ -454,6 +509,17 @@ static bool production_ffi_apply_densify_hard_refuse(ast::ASTArena* arena, const
                                                      const void* eval_id) noexcept {
     if (!aura::compiler::typed_audit::production_defaults_active())
         return false;
+    // Issue #4006: same seq-match skip as the closure arm.
+    switch (densify_refuse_seq_skip(arena)) {
+        case DensifySeqSkip::Allow:
+            return false;
+        case DensifySeqSkip::Refuse:
+            return true;
+        case DensifySeqSkip::Miss:
+            break;
+    }
+    aura::core::moving_densify_health::g_apply_densify_window_consult_total.fetch_add(
+        1, std::memory_order_relaxed);
     // Issue #3648: same window-gate consult as the #3421 closure arm —
     // the FFI return path must refuse an incomplete window too (untracked
     // opaque args are exactly the escapes the remap table cannot name).
@@ -468,15 +534,20 @@ static bool production_ffi_apply_densify_hard_refuse(ast::ASTArena* arena, const
             aura::core::moving_densify_health::g_last_untracked_kept.load(
                 std::memory_order_relaxed),
             aura::core::moving_densify_health::g_last_root_remap_fail_total.load(
-                std::memory_order_relaxed)))
+                std::memory_order_relaxed))) {
+        densify_refuse_seq_note(/*window_green=*/false, /*quiet=*/false);
         return true;
+    }
     // Issue #3848 optional fast-path: window green + empty remap + NOT a
     // densify-old publish (#3602 AC-b / #3634 AC2: moved>0, helper read
     // skips this and reaches the LCP gate below even when empty) → no
     // refuse.
     if (arena && arena->object_remap_size() == 0 &&
-        !aura::core::moving_densify_health::last_publish_moved_objects())
+        !aura::core::moving_densify_health::last_publish_moved_objects()) {
+        densify_refuse_seq_note(/*window_green=*/true, /*quiet=*/true);
         return false;
+    }
+    densify_refuse_seq_note(/*window_green=*/true, /*quiet=*/false);
     // Issue #3634: per-eval first (#3617 slots), process-wide fallback —
     // same shape as the #3421 closure arm above.
     const bool lcp_ok =

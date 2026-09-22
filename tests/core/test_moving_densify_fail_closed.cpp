@@ -5159,6 +5159,50 @@ static void ac3849_2_wiring_no_invent() {
     }
 }
 
+// Issue #4006: apply densify-stale refuse seq-match skip. Extends this
+// fail-closed suite (source-cite); QPS live cover is in
+// test_setcode_rebind_survive. Do not drop the refuse or invent a second Arena.
+static void ac4006_1_seq_skip_source_cite() {
+    std::println("\n--- #4006 AC1: seq-match skip source-cite ---");
+    const auto flat = read_file("src/compiler/evaluator_eval_flat.cpp");
+    const auto mdh = read_file("src/core/moving_densify_health.hh");
+    CHECK(flat.find("Issue #4006") != std::string::npos, "4006 AC1: eval_flat cites");
+    CHECK(mdh.find("kApplyDensifyWindowSeqSkipIssue = 4006") != std::string::npos,
+          "4006 AC1: stamp");
+    CHECK(flat.find("densify_refuse_seq_skip") != std::string::npos, "4006 AC1: skip helper");
+    CHECK(flat.find("g_last_window_seq") != std::string::npos, "4006 AC1: published seq");
+    const auto begin = flat.find("static bool production_apply_closure_densify_hard_refuse");
+    const auto end = flat.find("static void note_apply_closure_densify_hard_refuse", begin);
+    CHECK(begin != std::string::npos && end > begin, "4006 AC1: closure arm located");
+    const auto arm = flat.substr(begin, end - begin);
+    CHECK(arm.find("densify_refuse_seq_skip") != std::string::npos, "4006 AC1: skip in arm");
+    CHECK(arm.find("window_would_allow_mutate") != std::string::npos,
+          "4006 AC1: window predicate kept");
+    CHECK(arm.find("object_remap_size") != std::string::npos, "4006 AC1: empty-remap kept");
+    const auto skip = arm.find("densify_refuse_seq_skip");
+    const auto gate = arm.find("window_would_allow_mutate");
+    const auto remap_sz = arm.find("object_remap_size");
+    const auto lcp = arm.find("last_lifetime_consistency_would_allow");
+    CHECK(skip != std::string::npos && gate != std::string::npos && skip < gate &&
+              gate < remap_sz && remap_sz < lcp,
+          "4006 AC1: seq skip before window → empty-remap → LCP");
+    CHECK(flat.find("production_ffi_apply_densify_hard_refuse") != std::string::npos,
+          "4006 AC1: FFI arm present");
+    CHECK(flat.find("g_4006_") == std::string::npos, "4006 AC1: no invented g_4006_*");
+    CHECK(flat.find("class DensifyClosurePinRegistry") == std::string::npos,
+          "4006 AC1: no second pin registry");
+}
+
+static void ac4006_2_wiring_no_invent() {
+    std::println("\n--- #4006 AC2: suite wiring; no invent ---");
+    const auto survive = read_file("tests/compiler/test_setcode_rebind_survive.cpp");
+    CHECK(survive.find("ac22_4006_seq_skip_quiet_apply();") != std::string::npos,
+          "4006 AC2: densify-stale suite wired");
+    CHECK(read_file("tests/compiler/test_issue_4006.cpp").empty(), "4006 AC2: no invent");
+    CHECK(read_file("tests/core/test_issue_4006.cpp").empty(), "4006 AC2: no core invent");
+    CHECK(read_file("docs/design/4006-densify-seq-skip.md").empty(), "4006 AC2: no docs/design");
+}
+
 
 // Issue #3850: Moving densify entry OR-gates live PanicCheckpoint probe
 // (align compact_sweep). Soft leftover observe-only; production steal
@@ -6150,6 +6194,11 @@ int run_test_moving_densify_fail_closed() {
                  "(#3421 residual; extends fail_closed per #81967) ===");
     ac3849_1_happy_path_refuse_source_cite();
     ac3849_2_wiring_no_invent();
+
+    std::println("\n=== Issue #4006: apply densify-stale seq-match skip "
+                 "(#3849 residual; extends fail_closed per #81967) ===");
+    ac4006_1_seq_skip_source_cite();
+    ac4006_2_wiring_no_invent();
 
     std::println("\n=== Issue #3850: steal defer × Moving panic CP gate "
                  "(extends fail_closed per #81967) ===");
