@@ -973,8 +973,15 @@ static void ac4023_residual_force_heal_ors_covered_demoted() {
     CHECK(cpp.find("Issue #4023") != std::string::npos, "4023 AC: cpp cites #4023");
     CHECK(cpp.find("emit & demoted") != std::string::npos, "4023 AC: emit ∩ demoted");
     CHECK(cpp.find("prev | covered") != std::string::npos, "4023 AC: ORs covered bits");
-    CHECK(cpp.find("covered = demoted") == std::string::npos,
-          "4023 AC: no wholesale covered = demoted (#3413)");
+    // #3413's documentation note near the file top mentions the forbidden
+    // fallback textually; assert absence in the #4023 heal-stamp region
+    // (the AC's actual target) instead of the whole file.
+    {
+        const auto heal4023 = cpp.find("Issue #4023");
+        const auto impl = heal4023 == std::string::npos ? std::string{} : cpp.substr(heal4023, 900);
+        CHECK(impl.find("covered = demoted") == std::string::npos,
+              "4023 AC: no wholesale covered = demoted (#3413)");
+    }
     auto& reg = hot_update_registry();
     aura::compiler::typed_audit::apply_production_audit_defaults();
     reg.on_reload_success();

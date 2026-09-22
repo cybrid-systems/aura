@@ -555,7 +555,10 @@ static void ac3423_1_acquire_before_fn() {
     CHECK(mut.find("Issue #3423") != std::string::npos, "AC1 cite");
     const auto lam = mut.find("auto add_mutate = [&](std::string name, auto fn, bool guard_exempt");
     CHECK(lam != std::string::npos, "AC1 add_mutate lambda");
-    const auto win = lam == std::string::npos ? std::string{} : mut.substr(lam, 14000);
+    // The morning-wave hold-budget/trail comment blocks inside the lambda
+    // pushed the guard-reject block past the original 14000-char window
+    // (measured: lambda→fn(a) = 14692). Widen.
+    const auto win = lam == std::string::npos ? std::string{} : mut.substr(lam, 20000);
     const auto acq = win.find("mutate_dispatch_try_acquire");
     const auto fn = win.find("auto result = fn(a)");
     CHECK(acq != std::string::npos && fn != std::string::npos && acq < fn,
@@ -583,7 +586,7 @@ static void ac3423_2_production_rebind_and_reject_kind() {
           "AC2 happy path is not naked-mutate");
     const auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
     const auto lam = mut.find("auto add_mutate = [&](std::string name, auto fn, bool guard_exempt");
-    const auto win = lam == std::string::npos ? std::string{} : mut.substr(lam, 14000);
+    const auto win = lam == std::string::npos ? std::string{} : mut.substr(lam, 20000);
     const auto rej = win.find("guard-reject");
     const auto fna = win.find("auto result = fn(a)");
     CHECK(rej != std::string::npos && fna != std::string::npos && rej < fna,

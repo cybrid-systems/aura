@@ -1082,7 +1082,7 @@ void HotUpdateRegistry::maybe_stamp_heal_reason_last_success(std::uint64_t demot
         why != ReemitReason::StormClear && why != ReemitReason::ResidualForceHeal &&
         why != ReemitReason::ExhaustedMinDirty)
         return;
-    // Issue #4023: multi-heal ORs covered demoted bits (emit ∩ demoted),
+    // Issue #3885 / Issue #4023: multi-heal ORs covered demoted bits (emit ∩ demoted),
     // not one last_force_jit_reason proxy alone (#3911). Do not
     // wholesale-store demoted on ordinary heals (#3413). Agent
     // note_reemit_success_coverage still wins (override early-out). Soft
