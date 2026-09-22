@@ -58,8 +58,10 @@ using aura::compiler::macro_exp::hygiene_last_limit_reason_string;
 using aura::compiler::macro_exp::inner_expand_production_limit_deny;
 using aura::compiler::macro_exp::inner_expand_production_limit_deny_all;
 using aura::compiler::macro_exp::kHygieneLimitReasonDepthLimit;
+using aura::compiler::macro_exp::kHygieneLimitReasonGensymCeiling;
 using aura::compiler::macro_exp::kHygieneLimitReasonNameMapShared;
 using aura::compiler::macro_exp::note_hygiene_last_limit_reason;
+using aura::compiler::macro_exp::note_hygiene_last_limit_reason_for_fiber;
 using aura::compiler::macro_exp::reset_hygiene_runtime_caps_for_test;
 using aura::compiler::macro_exp::set_hygiene_depth_cap;
 using aura::test::g_failed;
@@ -1025,6 +1027,121 @@ int run_test_concurrent_clone_hygiene_depth() {
         aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
         reset_capability_effects_for_test();
         aura_test_reset_macro_clone_same_flat_reject_for_test();
+    }
+
+
+    // Issue #4034: sticky 1/2/3/6/7 must not permanently poison production expands.
+    std::println("\n=== Issue #4034: clear production last_limit 1/2/3/6/7 after success ===");
+    {
+        std::println("\n--- #4034 AC1: peer fiber depth-limit does not deny healthy expand ---");
+        using aura::core::capability::Effect;
+        using aura::core::capability::g_capability_registry;
+        using aura::core::capability::MacroSelfEvoPolicy;
+        using aura::core::capability::reset_capability_effects_for_test;
+        reset_capability_effects_for_test();
+        MacroSelfEvoPolicy pol;
+        pol.max_expansion_passes = 8;
+        pol.max_depth = 256;
+        pol.allow_rest_hygiene = true;
+        pol.allow_concurrent_fiber = true;
+        g_capability_registry().grant(0, "tenant-admin", Effect::TenantAdmin,
+                                      aura_test_grant_prov());
+        g_capability_registry().grant_macro_self_evo(0, pol, aura_test_grant_prov());
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+        aura_test_reset_macro_hygiene_last_limit_reason_for_test();
+
+        constexpr std::uint32_t kFiberA = 0x403401u;
+        constexpr std::uint32_t kFiberB = 0x403402u;
+        note_hygiene_last_limit_reason_for_fiber(kFiberA, kHygieneLimitReasonDepthLimit);
+        CHECK(g_macro_hygiene_last_limit_reason.load(std::memory_order_relaxed) ==
+                  kHygieneLimitReasonDepthLimit,
+              "4034 AC1: global stamped depth-limit by fiber A");
+        CHECK(get_fiber_hygiene_metrics(kFiberA).last_limit_reason == kHygieneLimitReasonDepthLimit,
+              "4034 AC1: fiber A holds depth-limit");
+        CHECK(get_fiber_hygiene_metrics(kFiberB).last_limit_reason == 0,
+              "4034 AC1: fiber B clean");
+        // Host thread is typically fiber 0 — peer global must not deny (b).
+        CHECK(!inner_expand_production_limit_deny(),
+              "4034 AC1: peer-only global depth-limit does not deny this fiber");
+
+        aura::ast::ASTArena sa, ta;
+        StringPool sp(sa.allocator());
+        FlatAST src(sa.allocator());
+        auto pr = aura::parser::parse_to_flat("(lambda (x) x)", src, sp);
+        CHECK(pr.success, "4034 AC1: parse");
+        NameMap nm;
+        FlatAST tgt(ta.allocator());
+        StringPool tp(ta.allocator());
+        auto cloned = clone_macro_body(tgt, tp, src, sp, pr.root, nullptr, &nm,
+                                       SyntaxMarker::MacroIntroduced);
+        CHECK(cloned != NULL_NODE, "4034 AC1: healthy expand on B/host succeeds");
+        CHECK(g_macro_hygiene_last_limit_reason.load(std::memory_order_relaxed) == 0,
+              "4034 AC1: post-success global reason==0");
+        CHECK(!inner_expand_production_limit_deny(),
+              "4034 AC1: post-success deny clear");
+        // Fiber A keep its own stamp (A/B must not falsely deny each other;
+        // A's slot is independent).
+        CHECK(get_fiber_hygiene_metrics(kFiberA).last_limit_reason == kHygieneLimitReasonDepthLimit,
+              "4034 AC1: fiber A stamp retained (no cross-clear)");
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+        reset_capability_effects_for_test();
+        aura_test_reset_macro_hygiene_last_limit_reason_for_test();
+    }
+    {
+        std::println("\n--- #4034 AC2: Restricted after ceiling leftover — reset-free success ---");
+        using aura::core::capability::Effect;
+        using aura::core::capability::g_capability_registry;
+        using aura::core::capability::MacroSelfEvoPolicy;
+        using aura::core::capability::reset_capability_effects_for_test;
+        reset_capability_effects_for_test();
+        MacroSelfEvoPolicy pol;
+        pol.max_expansion_passes = 8;
+        pol.max_depth = 256;
+        pol.allow_rest_hygiene = true;
+        pol.allow_concurrent_fiber = true;
+        g_capability_registry().grant(0, "tenant-admin", Effect::TenantAdmin,
+                                      aura_test_grant_prov());
+        g_capability_registry().grant_macro_self_evo(0, pol, aura_test_grant_prov());
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+        // Simulate prior ceiling leftover on the dashboard atomic only (fiber clean).
+        // Pre-#4034: deny() read global → second expand permanently NULL_NODE until
+        // aura_test_reset_macro_hygiene_last_limit_reason_for_test(). Do NOT call it.
+        aura_test_reset_macro_hygiene_last_limit_reason_for_test();
+        g_macro_hygiene_last_limit_reason.store(kHygieneLimitReasonDepthLimit,
+                                                std::memory_order_relaxed);
+        CHECK(!inner_expand_production_limit_deny(),
+              "4034 AC2: global-only sticky does not deny (fiber-first)");
+        aura::ast::ASTArena sa, ta;
+        StringPool sp(sa.allocator());
+        FlatAST src(sa.allocator());
+        auto pr = aura::parser::parse_to_flat("(lambda (x) x)", src, sp);
+        CHECK(pr.success, "4034 AC2: parse");
+        NameMap nm;
+        FlatAST tgt(ta.allocator());
+        StringPool tp(ta.allocator());
+        auto second = clone_macro_body(tgt, tp, src, sp, pr.root, nullptr, &nm,
+                                       SyntaxMarker::MacroIntroduced);
+        CHECK(second != NULL_NODE, "4034 AC2: Restricted expand succeeds reset-free");
+        CHECK(g_macro_hygiene_last_limit_reason.load(std::memory_order_relaxed) == 0,
+              "4034 AC2: post-success global reason==0");
+        // Own-fiber stamp still denies (fail-closed for this walk's ceiling).
+        note_hygiene_last_limit_reason(kHygieneLimitReasonGensymCeiling);
+        CHECK(inner_expand_production_limit_deny(),
+              "4034 AC2: own-fiber ceiling still denies");
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+        reset_capability_effects_for_test();
+        aura_test_reset_macro_hygiene_last_limit_reason_for_test();
+    }
+    {
+        std::println("\n--- #4034 AC3: source-cite + Soft contract + no invent ---");
+        const auto me = read_file("src/compiler/macro_expansion.cpp");
+        CHECK(me.find("Issue #4034") != std::string::npos, "4034 AC3: cites #4034");
+        CHECK(me.find("reason0") != std::string::npos, "4034 AC3: entry reason0 snapshot");
+        CHECK(me.find("get_fiber_hygiene_metrics(fid).last_limit_reason") != std::string::npos,
+              "4034 AC3: deny consults per-fiber reason");
+        CHECK(read_file("tests/compiler/test_issue_4034.cpp").empty(), "4034 AC3: no test_issue");
+        CHECK(read_file("docs/design/4034-sticky-ceiling-clear.md").empty(),
+              "4034 AC3: no docs/design");
     }
 
     std::println("\n=== #2806 + #3028 + #3094 + #3507 + #3544 + #3574 concurrent clone hygiene "
