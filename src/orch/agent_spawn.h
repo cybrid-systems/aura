@@ -4943,6 +4943,13 @@ inline constexpr int kJoinFailProductionDefaultIssue = 3208;
 // stays observe-first; the adapter runs only when the caller sets
 // agent_policy.on_join_fail to something other than ReportOnly.
 inline constexpr int kComposeSupervisedBatchIssue = 3969;
+// Issue #4000: orch:supervise-batch optional :region-keys forwards into
+// TaskSpec / AgentSpec (same decide_isolation SSOT as parallel-intend).
+// Missing keys stay Serialized. Production + ≥2 distinct non-zero keys
+// takes the RegionConcurrent eval_mu skip (#3840) and stamps fiber TLS
+// so try_acquire → try_acquire_for_region (#2724). Do not auto-invent
+// keys. Soft / Off unchanged. No new query key.
+inline constexpr int kSuperviseBatchRegionKeysIssue = 4000;
 
 // Compose from batch FailurePolicy (+ residual preference). Maps agent
 // via the #2539 bridge so FailFast→Cancel, RetryN→RestartN, etc.

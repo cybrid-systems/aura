@@ -73,10 +73,14 @@ without ≥2 distinct non-zero `region_key`s stays **Serialized** (same
 `decide_isolation` / `region_key_missing_serialized` SSOT as parallel-intend).
 Optional `:region-key n` on `orch:scope-spawn` / `orch:spawn-agent` stamps
 `AgentSpec.region_key` + fiber TLS during apply (#3728) so hosts can compose
-with `parallel-intend :region-keys`. Join / supervise-batch workflow hashes
-carry additive `isolation-level` + `region-key-missing` bool (existing
-`region_key_missing_serialized_total` counter; **no new query key**). Soft /
-Off / single-agent / `:pure` unchanged. No AgentRegistry / saga.
+with `parallel-intend :region-keys`. Optional `:region-keys` on
+`orch:supervise-batch` forwards the same vector into TaskSpec / AgentSpec
+(#4000) — missing keys stay **Serialized**; production + ≥2 distinct
+non-zero keys takes the RegionConcurrent eval_mu skip as parallel-intend
+(#3840) and stamps fiber TLS. Do not auto-invent keys. Join / supervise-batch
+workflow hashes carry additive `isolation-level` + `region-key-missing` bool
+(existing `region_key_missing_serialized_total` counter; **no new query key**).
+Soft / Off / single-agent / `:pure` unchanged. No AgentRegistry / saga.
 
 **Pure contract (caller guarantees + best-effort probe):**
 
@@ -456,16 +460,19 @@ auto out = aura::orch::apply_workflow(
 Aura entry point:
 
 ```text
-(orch:supervise-batch tasks policy [:stall-timeout-ms n] [:watch-scope bool])
-   → hash {ok, ok-count, err-count, status, residual-observed, schema-2852}
+(orch:supervise-batch tasks policy [:stall-timeout-ms n] [:watch-scope bool] [:region-keys vec])
+   → hash {ok, ok-count, err-count, status, residual-observed, schema-2852,
+           isolation-level, eval-serialized, region-key-missing, schema-4000}
 ```
 
-Defaults: `stall_timeout_ms=0`, `watch_scope=true`. Soft / sandbox=off
-never hard-denies beyond the existing `watch_all` / `parallel_intend` gates
-(AC6). Issue #3495: the Aura prim calls `apply_workflow` (policy hash is
-not dropped; `residual-action` is the helper string). Regression:
-`tests/orch/test_failure_policy_bridge` (extended in-place per #81967 —
-adds `ac2852_*` / `ac3495_*` tests).
+Defaults: `stall_timeout_ms=0`, `watch_scope=true`. Optional `:region-keys`
+is host-supplied only (#4000); omitting it keeps `region_key=0` Serialized.
+Soft / sandbox=off never hard-denies beyond the existing `watch_all` /
+`parallel_intend` gates (AC6). Issue #3495: the Aura prim calls
+`apply_workflow` (policy hash is not dropped; `residual-action` is the
+helper string). Regression: `tests/orch/test_failure_policy_bridge`
+(extended in-place per #81967 — adds `ac2852_*` / `ac3495_*` / `ac4000_*`
+tests).
 
 | Compose input | Batch (`to_parallel_policy`) | Agent (`to_agent_policy`) |
 |---------------|------------------------------|---------------------------|
