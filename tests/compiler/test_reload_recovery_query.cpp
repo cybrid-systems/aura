@@ -1610,7 +1610,10 @@ static void ac3248_3_source_and_linter() {
     const auto remount = bnd.find("aura_residual_remount_tick_coalesce(b)");
     CHECK(remount != std::string::npos, "3248 AC3: remount still present (coalesce #3886)");
     if (remount != std::string::npos) {
-        const auto rwin = bnd.substr(remount > 500 ? remount - 500 : 0, 600);
+        // #3910/#4024 comment blocks between the success guard and the
+        // coalesce call pushed the guard past the original 500-char
+        // look-back (measured: guard→remount = 542). Widen the window.
+        const auto rwin = bnd.substr(remount > 700 ? remount - 700 : 0, 800);
         CHECK(rwin.find("if (outermost && success)") != std::string::npos,
               "3248 AC3: remount/drain stay success-only");
     }

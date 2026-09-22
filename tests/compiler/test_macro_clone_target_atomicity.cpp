@@ -175,7 +175,10 @@ static void ac1_2_6_clone_at_depth_installs_and_restores() {
     }
 
     // AC2: steal-fail return path calls try_restore() before return NULL_NODE.
-    const auto steal_check_pos = macro_exp.find("if (steal1 > steal0)");
+    // #3981: the steal check also fires on the nested-steal sticky flag
+    // ("if (steal1 > steal0 || nested_steal)") — needle drops the closing
+    // paren so both the pre/post-#3981 forms match.
+    const auto steal_check_pos = macro_exp.find("if (steal1 > steal0");
     CHECK(steal_check_pos != std::string::npos, "AC2: steal check (if (steal1 > steal0)) present");
     if (steal_check_pos != std::string::npos) {
         const auto try_restore_pos = macro_exp.find("expand_ckpt.try_restore", steal_check_pos);
@@ -235,8 +238,10 @@ static void ac4_existing_steal_counters_preserved() {
 
     // Both must be in the steal-fail block.
     if (steal_abort_pos != std::string::npos && reject_reason_pos != std::string::npos) {
-        // Steal-fail block anchor: the closest preceding "if (steal1 > steal0)"
-        const auto anchor = macro_exp.rfind("if (steal1 > steal0)", steal_abort_pos);
+        // Steal-fail block anchor: the closest preceding "if (steal1 > steal0"
+        // (needle without closing paren — #3981 added "|| nested_steal" to
+        // the same line, see AC2).
+        const auto anchor = macro_exp.rfind("if (steal1 > steal0", steal_abort_pos);
         CHECK(anchor != std::string::npos, "AC4: steal-abort counters inside steal-fail block");
         CHECK(anchor < steal_abort_pos && anchor < reject_reason_pos,
               "AC4: both counters fire inside steal-fail block (after the if check)");

@@ -584,7 +584,8 @@ static void ac3283_2_gen_recheck_fail_closed() {
     auto pos = ixx.find("std::size_t relower_dirty_defines_from_workspace()");
     CHECK(pos != std::string::npos, "3283 AC2: relower def");
     auto rel = ixx.substr(
-        pos, 34000); // window covers relower growth through #3491; #3611 pushed cone_hit past 30000
+        pos, 40000); // window covers relower growth through #3491; #3611 pushed cone_hit past
+                     // 30000; the #4024-era comments pushed it past 34000 (measured: +34382)
     must_inline(rel, "gen0 = deferred_hybrid_gen_.load", "3283 AC2: gen0 snapshot under lock");
     must_inline(rel, "deferred_hybrid_gen_.load(std::memory_order_acquire) != gen0",
                 "3283 AC2: pre-peel gen re-check");

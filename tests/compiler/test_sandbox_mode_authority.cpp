@@ -625,6 +625,12 @@ int run_test_sandbox_mode_authority_2657() {
         auto& ev = cs.evaluator();
         ev.set_capability_tenant_id(7);
         ev.grant_capability("*"); // wildcard-only, no explicit TA (#3144 strip)
+        // #3144's wildcard TA strip is a production fence: effects_for_locked
+        // gates it on mode != Off. Assert the strip under Restricted (the
+        // posture the downgrade decision actually consults) — the original
+        // Off-mode placement was red from birth (#4012's own first completed
+        // CI run).
+        aura::core::sandbox::set_mode(SandboxMode::Restricted);
         {
             auto& reg = g_capability_registry();
             std::lock_guard<std::mutex> lock(reg.mtx);

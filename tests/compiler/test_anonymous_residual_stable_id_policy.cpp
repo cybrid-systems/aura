@@ -2221,7 +2221,10 @@ static void ac3886_source_and_soft() {
           "3886 AC1: BoundaryExit bumps gen");
     const auto note = dtor.find("Issue #3910");
     CHECK(note != std::string::npos, "3910 AC: BoundaryExit cites gen-before-coalesce");
-    const auto win = dtor.substr(note, 500);
+    // #4024 appended its per-Evaluator gen note after the #3910 comment,
+    // pushing the coalesce call past the original 500-char window
+    // (measured: cite→tick = 503). Widen the forward window.
+    const auto win = dtor.substr(note, 700);
     const auto bump = win.find("aura_residual_remount_note_boundary_exit");
     const auto tick = win.find("aura_residual_remount_tick_coalesce");
     CHECK(bump != std::string::npos && tick != std::string::npos && bump < tick,
