@@ -6097,7 +6097,8 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             // + 3 additive keys (wrap-refuse-total + schema/issue, #3838)
             // + 4 additive keys (wal-full-scan-hit + wal-segments-scanned +
             //   schema-3970 + issue-3970, #3970)
-            // = 62 live keys. Issue #3339: planned 72 (>= 62+8=70 headroom;
+            // + 1 additive key (typed-trail-wrap-risk, #4028 observe-only)
+            // = 63 live keys. Issue #3339: planned 72 (>= 63+8=71 headroom;
             // +20 dummy keys without a raise must fail the CI headroom
             // gate). Additive insert_kv must raise planned_keys; this
             // Agent facade forbids hash-overflow.
@@ -6252,7 +6253,12 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
 
             const auto densify = ::aura::core::moving_densify_health::snapshot();
 
+            // Issue #4028: typed trail wrap is forensic degrade (forensic-source=3 /
+            // WAL point-query), NOT permanent posture deny. posture_degraded
+            // only reflects WAL SLO would_arm_degraded; wrap stays observe-only
+            // via typed-trail-wrap-risk (kept below). Soft: zero extra cost.
             bool posture_degraded = false;
+            bool wrap_risk = false;
             {
                 using ::aura::core::audit_wal::g_mutation_audit_wal;
                 using ::aura::core::audit_wal::snapshot_audit_wal_stats;
@@ -6272,8 +6278,8 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                     prod, !prod || sandbox_off));
                 const auto tseq = trail_seq();
                 const auto se_total = g_security_event_ring().total.load(std::memory_order_relaxed);
-                const bool wrap_risk = tseq > kTypedMutationAuditTrailSize && se_total > 0;
-                posture_degraded = d.would_arm_degraded || wrap_risk;
+                wrap_risk = tseq > kTypedMutationAuditTrailSize && se_total > 0;
+                posture_degraded = d.would_arm_degraded;  // #4028: NOT wrap_risk
             }
 
             // Issue #3205: optional :durable mid point-query. Join key is join_mid
@@ -6498,6 +6504,9 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             insert_kv("playbook-wired", pb.playbook_wired);
             insert_kv("densify-ok", densify.would_allow_mutate ? 1 : 0);
             insert_kv("posture-degraded", posture_degraded ? 1 : 0);
+            // Issue #4028 / #3113: wrap-risk observe key stays independent of
+            // posture-degraded (no fold into ScheduleDeny).
+            insert_kv("typed-trail-wrap-risk", wrap_risk ? 1 : 0);
             insert_kv("production-defaults-active", production_defaults_active() ? 1 : 0);
             // Issue #3152: additive forensic-source enum + 3 sentinels
             // (forensic-source-trail=1 / -se=2 / -wal=3). Pure load
