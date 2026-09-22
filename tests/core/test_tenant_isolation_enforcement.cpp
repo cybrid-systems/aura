@@ -720,7 +720,11 @@ int main() {
                               /*sandbox_strict=*/false, "3332-no-grant",
                               /*sandbox_restricted=*/true),
               "allow_cross without grant denies");
-        g_workspace_isolation().grant_cross_tenant(1, 99, kEffectMutate);
+        // Issue #3998: mint under Restricted with TA — Soft-era mint_principal=0
+        // rows are swept/fail-closed on the production face.
+        set_mode(SandboxMode::Restricted);
+        grant_tenant_admin_mid(1);
+        g_workspace_isolation().grant_cross_tenant(1, 99, kEffectMutate, /*caller_principal=*/1);
         CHECK(check_boundary(1, 99, nullptr, /*allow_cross=*/true, kEffectMutate,
                              /*sandbox_strict=*/false, "3332-grant",
                              /*sandbox_restricted=*/true),
@@ -4501,6 +4505,81 @@ int main() {
         const auto prim = read_file("src/compiler/evaluator_primitives_security.cpp");
         CHECK(prim.find("schema-3797") == std::string::npos, "AC4: no schema-3797 query key");
         CHECK(prim.find("issue-3797") == std::string::npos, "AC4: no issue-3797 query key");
+    }
+
+    // ── Issue #3998: Soft-era cross_grants die on Soft→production flip ──
+    {
+        std::println("\n--- #3998 AC1: Off mint + set_mode(Restricted) erases + deny ---");
+        reset_all();
+        using aura::core::workspace_isolation::kSoftEraCrossGrantSweepIssue;
+        CHECK(kSoftEraCrossGrantSweepIssue == 3998, "3998 AC1: issue stamp");
+        g_workspace_isolation().grant_cross_tenant(1, 2, kEffectMutate);
+        CHECK(g_workspace_isolation().cross_grant_bits(1, 2) ==
+                  static_cast<std::uint16_t>(kEffectMutate),
+              "3998 AC1: Soft mint lands");
+        CHECK(g_workspace_isolation().cross_grant_mint_principal(1, 2) == 0,
+              "3998 AC1: Soft mint_principal stays 0");
+        CHECK(check_boundary(1, 2, nullptr, false, kEffectMutate),
+              "3998 AC1: Soft check allows (AC5 unchanged)");
+        const auto& ring = g_security_event_ring();
+        const auto seq0 = ring.seq.load(std::memory_order_acquire);
+        set_mode(SandboxMode::Restricted);
+        CHECK(g_workspace_isolation().cross_grant_bits(1, 2) == 0,
+              "3998 AC1: Soft-era row erased on Restricted entry");
+        CHECK(!check_boundary(1, 2, nullptr, false, kEffectMutate, /*sandbox_strict=*/false,
+                              "3998-ac1-post", /*sandbox_restricted=*/true),
+              "3998 AC1: production check_boundary_ex denies");
+        bool se = false;
+        const auto cur = ring.seq.load(std::memory_order_acquire);
+        for (auto s = cur; s > seq0 && s > 0; --s) {
+            const auto& e = ring.ring[(s - 1) % ring.ring.size()];
+            if (std::string_view(e.reason) == "soft-era-cross-grant-cleared") {
+                se = true;
+                CHECK(e.tenant_id == 1, "3998 AC1: SE tenant is from-principal");
+                break;
+            }
+        }
+        CHECK(se, "3998 AC1: SE soft-era-cross-grant-cleared emitted");
+        reset_all();
+    }
+
+    {
+        std::println("\n--- #3998 AC2: Soft allow path unchanged ---");
+        reset_all();
+        g_workspace_isolation().grant_cross_tenant(3, 4, kEffectMutate);
+        CHECK(g_workspace_isolation().cross_grant_mint_principal(3, 4) == 0,
+              "3998 AC2: Soft mint_principal 0");
+        CHECK(check_boundary(3, 4, nullptr, false, kEffectMutate),
+              "3998 AC2: Soft check still allows without TA");
+        CHECK(g_workspace_isolation().cross_grant_bits(3, 4) != 0,
+              "3998 AC2: Soft row not swept while Off");
+        reset_all();
+    }
+
+    {
+        std::println("\n--- #3998 AC3: source-cite; no invent ---");
+        const auto iso = read_file("src/core/workspace_isolation.hh");
+        const auto sb = read_file("src/core/sandbox.hh");
+        CHECK(iso.find("kSoftEraCrossGrantSweepIssue = 3998") != std::string::npos,
+              "3998 AC3: stamp");
+        CHECK(iso.find("sweep_soft_era_cross_grants") != std::string::npos,
+              "3998 AC3: sweep helper");
+        CHECK(iso.find("Issue #3998") != std::string::npos, "3998 AC3: allows_locked cites");
+        const auto allows = iso.find("bool cross_grant_allows_locked");
+        CHECK(allows != std::string::npos, "3998 AC3: allows_locked present");
+        const auto win = iso.substr(allows, 1800);
+        CHECK(win.find("mint == 0") != std::string::npos &&
+                  win.find("cross_grants.erase(it)") != std::string::npos,
+              "3998 AC3: production mint==0 erases");
+        CHECK(win.find("return true; // Soft/legacy row") == std::string::npos,
+              "3998 AC3: bits-only Soft-era allow removed");
+        CHECK(sb.find("sweep_soft_era_cross_grants") != std::string::npos,
+              "3998 AC3: set_mode sweeps on production entry");
+        CHECK(!std::filesystem::exists("docs/design/3998-soft-era-cross-grant.md"),
+              "3998 AC3: no docs/design");
+        CHECK(!std::filesystem::exists("tests/issues/test_issue_3998.cpp"),
+              "3998 AC3: no tests/issues invent");
+        reset_all();
     }
 
     // ── Issue #3800: grant_cross_tenant TA fence is caller-only ──
