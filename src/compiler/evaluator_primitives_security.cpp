@@ -100,6 +100,8 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             // Issue #3995: hold mtx across TA check + set_mode (TOCTOU vs
             // concurrent revoke). Explicit TenantAdmin, not the unlocked
             // wildcard string face (#3362 / #3411).
+            // Issue #4012: SE reason is sandbox-downgrade-specific (not
+            // grant-effect reuse) so audit replay distinguishes the gate.
             auto& reg = aura::core::capability::g_capability_registry();
             std::lock_guard<std::mutex> lock(reg.mtx);
             using aura::compiler::security::kEffectTenantAdmin;
@@ -117,11 +119,11 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 emit_security_event_durable(SecurityEventKind::EffectDeny,
                                             ev.capability_tenant_id(), mid, epoch,
                                             /*effect_bits=*/0, /*cap_name=*/"<prim>",
-                                            "grant-effect-needs-explicit-tenant-admin",
+                                            "sandbox-downgrade-needs-explicit-tenant-admin",
                                             /*denied=*/true, fid);
                 return make_primitive_error(
                     ev.string_heap_, ev.error_values_,
-                    "security:set-sandbox-mode!: wildcard capability required while sandboxed",
+                    "security:set-sandbox-mode!: explicit TenantAdmin required while sandboxed",
                     ev.primitive_error_counter_ptr());
             }
             ev.set_sandbox_mode(want);
@@ -147,6 +149,10 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             // Issue #3995: hold mtx across TA check + set_mode so a
             // concurrent revoke cannot land between the unlocked wildcard
             // string read and the process-wide Off write.
+            // Issue #4012: downgrade arm requires explicit TenantAdmin
+            // (!holds_wildcard_only_locked && effects_for_locked & TA) —
+            // same pattern as security:grant-effect! (#3362). Upgrade arm
+            // stays unprivileged. Soft/Off short-circuit unchanged.
             auto& reg = aura::core::capability::g_capability_registry();
             std::lock_guard<std::mutex> lock(reg.mtx);
             using aura::compiler::security::kEffectTenantAdmin;
@@ -162,11 +168,11 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 emit_security_event_durable(SecurityEventKind::EffectDeny,
                                             ev.capability_tenant_id(), mid, epoch,
                                             /*effect_bits=*/0, /*cap_name=*/"<prim>",
-                                            "grant-effect-needs-explicit-tenant-admin",
+                                            "sandbox-downgrade-needs-explicit-tenant-admin",
                                             /*denied=*/true, fid);
                 return make_primitive_error(
                     ev.string_heap_, ev.error_values_,
-                    "security:set-effect-sandbox-mode!: wildcard required to lower mode",
+                    "security:set-effect-sandbox-mode!: explicit TenantAdmin required to lower mode",
                     ev.primitive_error_counter_ptr());
             }
             const auto prev = ev.effect_sandbox_mode();
