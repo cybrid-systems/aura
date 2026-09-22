@@ -398,6 +398,68 @@ void ac2375_all_shards_on_arena_zero() {
     }
 }
 
+
+// Issue #4020: remap_misses counts orphan remaps (no pin for old_ptr),
+// not every nonmatch pin during the registry walk. Moving gate remains
+// on verify_pins / pin_contract_held / publish — not remap_misses.
+void ac4020_remap_misses_orphan_not_nonmatch() {
+    std::println("\n--- #4020: remap_misses = orphan (not nonmatch pins) ---");
+
+    int a = 1, b = 2, c = 3, neu = 99;
+    const std::uint64_t arena_id = 42;
+    LifetimePin pin_a, pin_b;
+    pin_a.pin(&a, /*gen=*/1, arena_id);
+    pin_b.pin(&b, /*gen=*/1, arena_id);
+    CHECK(pin_a.pinned() && pin_b.pinned(), "4020: pins attached");
+
+    // AC1: matching remap with other arena pins present must NOT inflate
+    // remap_misses (pre-#4020 bumped once per nonmatch pin in the filter).
+    const auto m0 = aura::core::lifetime::g_lifetime_pin_stats.remap_misses;
+    const auto rr_hit = aura::core::lifetime::remap_pins_pointing_to(
+        &a, &neu, /*new_gen=*/2, arena_id);
+    CHECK(rr_hit.remapped == 1, "4020 AC1: one pin remapped");
+    CHECK(rr_hit.misses == 0, "4020 AC1: RemapResult.misses == 0 on hit");
+    CHECK(pin_a.ptr() == &neu, "4020 AC1: pin_a remapped to neu");
+    CHECK(pin_b.ptr() == &b, "4020 AC1: pin_b untouched");
+    CHECK(aura::core::lifetime::g_lifetime_pin_stats.remap_misses == m0,
+          "4020 AC1: nonmatch pins do not bump remap_misses");
+
+    // AC2: orphan old_ptr (no pin in registry) bumps miss exactly once.
+    const auto m1 = aura::core::lifetime::g_lifetime_pin_stats.remap_misses;
+    const auto rr_miss = aura::core::lifetime::remap_pins_pointing_to(
+        &c, &neu, /*new_gen=*/3, arena_id);
+    CHECK(rr_miss.remapped == 0, "4020 AC2: orphan remapped == 0");
+    CHECK(rr_miss.misses == 1, "4020 AC2: RemapResult.misses == 1 on orphan");
+    CHECK(aura::core::lifetime::g_lifetime_pin_stats.remap_misses == m1 + 1,
+          "4020 AC2: orphan bumps remap_misses by 1");
+
+    // AC3: arena_id_filter == 0 does not count misses (any-arena walk).
+    const auto m2 = aura::core::lifetime::g_lifetime_pin_stats.remap_misses;
+    const auto rr_any = aura::core::lifetime::remap_pins_pointing_to(
+        &c, &neu, /*new_gen=*/4, /*arena_id_filter=*/0);
+    CHECK(rr_any.remapped == 0 && rr_any.misses == 0, "4020 AC3: filter=0 no miss face");
+    CHECK(aura::core::lifetime::g_lifetime_pin_stats.remap_misses == m2,
+          "4020 AC3: filter=0 leaves remap_misses unchanged");
+
+    // AC4: Moving gate / Soft soak face unchanged — window_would_allow_mutate
+    // and verify_pins paths do not consult remap_misses; Soft densify still
+    // leaves the counter alone (existing Soft zero-cost).
+    const auto mdh = read_file("src/core/moving_densify_health.hh");
+    const auto pin = read_file("src/core/lifetime_pin.hh");
+    CHECK(mdh.find("bool window_would_allow_mutate") != std::string::npos,
+          "4020 AC4: window_would_allow_mutate predicate present");
+    CHECK(mdh.find("remap_miss") == std::string::npos,
+          "4020 AC4: moving_densify_health ignores remap_misses (gate untouched)");
+    CHECK(pin.find("verify_pins_under_moving_compact") != std::string::npos,
+          "4020 AC4: verify_pins gate retained");
+    CHECK(pin.find("out.remapped == 0 && arena_id_filter != 0") != std::string::npos,
+          "4020 AC4: post-walk orphan miss present");
+    CHECK(pin.find("#4020") != std::string::npos,
+          "4020 AC4: lifetime_pin cites #4020 orphan semantics");
+    CHECK(read_file("tests/core/test_issue_4020.cpp").empty(),
+          "4020 AC4: no standalone test_issue_4020.cpp (extend existing)");
+}
+
 } // namespace
 
 int run_test_moving_compact() {
@@ -829,8 +891,9 @@ int run_test_moving_compact() {
     }
     ac2342_5_source_cite();
     ac2375_all_shards_on_arena_zero();
+    ac4020_remap_misses_orphan_not_nonmatch();
 
-    std::println("\n=== #2166 + #2342 + #2375: {} passed, {} failed ===", g_passed, g_failed);
+    std::println("\n=== #2166 + #2342 + #2375 + #4020: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
 
