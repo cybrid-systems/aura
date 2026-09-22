@@ -1,0 +1,36 @@
+{
+  "issue": 4029,
+  "title": "storm budget_skip also strips remount last-zero green",
+  "ok": "OK: Issue #4029 storm/throttle/force-skip remount budget_skip strips last-zero green face — Soft/Off no-op; quiet #3548 unchanged.",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/aura_jit_runtime.cpp",
+      "contains": [
+        "Issue #4029",
+        "strip_green_face_on_remount_last_zero",
+        "production_defaults_active",
+        "g_residual_force_skip"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/compiler/test_remount_force_deopt.cpp",
+      "contains": [
+        "4029 AC1: storm/force-skip budget_skip strips prior green",
+        "4029 AC2: Soft/Off storm budget_skip strip no-op",
+        "ac4029_1_storm_budget_skip_strips_green",
+        "ac4029_2_soft_storm_no_strip",
+        "ac4029_3_source_cite_no_invent"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "forbid": [
+        "tests/compiler/test_issue_4029.cpp",
+        "docs/design/4029-storm-budget-skip-strip.md",
+        "scripts/coverage/checks/check_storm_budget_skip_strip_4029.py"
+      ]
+    }
+  ]
+}

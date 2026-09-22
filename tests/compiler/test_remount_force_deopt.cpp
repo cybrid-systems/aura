@@ -616,6 +616,66 @@ static void ac3548_5_source_cite_no_invent() {
     CHECK(read_file("docs/design/3548-remount-last-zero.md").empty(), "3548 AC5: no docs/design");
 }
 
+// ── Issue #4029: storm budget_skip also strips remount last-zero green ──
+static void ac4029_1_storm_budget_skip_strips_green() {
+    std::println("\n--- #4029 AC1: storm/force-skip budget_skip strips prior green ---");
+    using namespace aura::compiler::typed_audit;
+    apply_production_audit_defaults();
+    aura_test_reset_residual_remount_state();
+    free_all_live_closures();
+    g_remount_last_zero_strip_face.store(0, std::memory_order_relaxed);
+    seed_green_face();
+    CHECK(last_proof_stamper_bound_v_read() == 1, "4029 AC1: stamper bound before tick");
+    CHECK(last_proof_would_allow_commit_v_read() == 1, "4029 AC1: green before tick");
+    const auto skip0 = aura_residual_remount_budget_skip_total_v_read();
+    aura_test_set_residual_remount_force_skip(1);
+    aura_residual_live_closure_remount_tick(64);
+    aura_test_set_residual_remount_force_skip(0);
+    CHECK(aura_residual_remount_budget_skip_total_v_read() > skip0,
+          "4029 AC1: budget_skip counted");
+    CHECK(last_proof_stamper_bound_v_read() == 0, "4029 AC1: stamper unbound after storm skip");
+    CHECK(last_proof_would_allow_commit_v_read() == 0, "4029 AC1: would_allow dropped");
+    CHECK(remount_last_zero_strip_face_v_read() == 1, "4029 AC1: remount_last_zero_strip face");
+    apply_dev_audit_defaults();
+    aura_test_reset_residual_remount_state();
+}
+
+static void ac4029_2_soft_storm_no_strip() {
+    std::println("\n--- #4029 AC2: Soft/Off storm budget_skip strip no-op ---");
+    using namespace aura::compiler::typed_audit;
+    apply_dev_audit_defaults();
+    g_typed_mutation_audit_counters.production_defaults_active.store(0, std::memory_order_relaxed);
+    aura_test_reset_residual_remount_state();
+    free_all_live_closures();
+    g_remount_last_zero_strip_face.store(0, std::memory_order_relaxed);
+    seed_green_face();
+    aura_test_set_residual_remount_force_skip(1);
+    aura_residual_live_closure_remount_tick(64);
+    aura_test_set_residual_remount_force_skip(0);
+    CHECK(last_proof_stamper_bound_v_read() == 1, "4029 AC2: Soft keeps stamper");
+    CHECK(last_proof_would_allow_commit_v_read() == 1, "4029 AC2: Soft face stays green");
+    CHECK(remount_last_zero_strip_face_v_read() == 0, "4029 AC2: Soft no strip latch");
+    aura_test_reset_residual_remount_state();
+}
+
+static void ac4029_3_source_cite_no_invent() {
+    std::println("\n--- #4029 AC3: source-cite storm strip + quiet #3548 unchanged ---");
+    const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
+    const auto t = read_file("tests/compiler/test_remount_force_deopt.cpp");
+    CHECK(rt.find("Issue #4029") != std::string::npos, "4029 AC3: cite");
+    const auto storm = rt.find("g_residual_force_skip.load");
+    const auto strip4029 = rt.find("Issue #4029");
+    const auto quiet3548 = rt.find("Issue #3548: budget>0 && remounted==0 (incl. nslots==0)");
+    CHECK(storm != std::string::npos && strip4029 != std::string::npos && storm < strip4029,
+          "4029 AC3: strip after storm gate");
+    CHECK(quiet3548 != std::string::npos, "4029 AC3: quiet #3548 path retained");
+    CHECK(t.find("ac4029_1_storm_budget_skip_strips_green") != std::string::npos,
+          "4029 AC3: AC1 present");
+    CHECK(read_file("tests/compiler/test_issue_4029.cpp").empty(), "4029 AC3: no invent");
+    CHECK(read_file("docs/design/4029-storm-budget-skip-strip.md").empty(),
+          "4029 AC3: no docs/design");
+}
+
 
 // ── Issue #3789: remount last==0 Quiet ≠ green for Agents ──
 static void ac3789_1_snapshot_deny_not_quiet_as_ok() {
@@ -1034,6 +1094,10 @@ int run_test_remount_force_deopt() {
     ac3548_3_budget_zero_no_strip();
     ac3548_4_soft_observe_only();
     ac3548_5_source_cite_no_invent();
+    std::println("\n=== Issue #4029: storm budget_skip strips remount last-zero green ===");
+    ac4029_1_storm_budget_skip_strips_green();
+    ac4029_2_soft_storm_no_strip();
+    ac4029_3_source_cite_no_invent();
     ac3578_1_rebind_reject_counter_stamper_unbound();
     ac3789_1_snapshot_deny_not_quiet_as_ok();
     ac3789_2_soft_observe();
@@ -1058,7 +1122,7 @@ int run_test_remount_force_deopt() {
     ac3887_call_time_dual_fresh_covers_post_steal_defuse();
     if (g_failed)
         return 1;
-    std::println("remount force-deopt #2503/#2894/#3548/#3578/#3612/#3785/#3812: OK ({} passed)",
+    std::println("remount force-deopt #2503/#2894/#3548/#3578/#3612/#3785/#3812/#4029: OK ({} passed)",
                  g_passed);
     return 0;
 }

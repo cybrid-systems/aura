@@ -3162,6 +3162,10 @@ extern "C" void aura_residual_live_closure_remount_tick(std::uint64_t budget) {
         } else {
             g_residual_budget_skip_streak.store(0, std::memory_order_relaxed);
         }
+        // Issue #4029: storm/throttle/force-skip still remounted==0 this tick —
+        // align #3548 face hygiene (Soft/Off strip remains no-op).
+        if (aura::compiler::typed_audit::production_defaults_active())
+            aura::compiler::typed_audit::strip_green_face_on_remount_last_zero();
         return;
     }
     g_residual_budget_skip_streak.store(0, std::memory_order_relaxed);
