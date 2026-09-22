@@ -27,6 +27,8 @@ extern "C" void aura_note_reemit_success_sync_covered_budget_skip() noexcept;
 extern "C" std::uint64_t aura_reemit_success_sync_covered_cap_default() noexcept;
 extern "C" void aura_residual_live_closure_remount_tick(std::uint64_t budget);
 extern "C" int aura_residual_remount_tick_coalesce(std::uint64_t budget);
+extern "C" void aura_residual_remount_quiet_nudge() noexcept;
+extern "C" int aura_residual_remount_quiet_nudge_pending() noexcept;
 // Issue #2950: pure-anon bg remount drain (never steal-complete #2715).
 extern "C" void aura_pure_anon_bg_remount_drain(std::uint64_t max_n) noexcept;
 extern "C" std::uint64_t aura_pure_anon_bg_pending() noexcept;
@@ -384,7 +386,11 @@ void HotUpdateRegistry::on_reemit_pipeline_call(std::uint64_t candidates,
     // path — avoids double-remount with the reemit-success sync walk.
     // Issue #3886: coalesce with BoundaryExit so one quiet exit does
     // not walk residual remount twice.
-    if (candidates == 0) {
+    // Issue #4025: quiet-window nudge also forces one residual tick after
+    // heal cleared define-active (even on candidates>0 success path).
+    // Soft Global / throttle still budget_skip inside the tick; MustDeopt
+    // / dual-fresh leave-native hold until a quiet walk succeeds.
+    if (candidates == 0 || aura_residual_remount_quiet_nudge_pending() != 0) {
         const auto b = aura_residual_remount_budget_default();
         if (b > 0)
             (void)aura_residual_remount_tick_coalesce(b);
@@ -627,7 +633,11 @@ void HotUpdateRegistry::on_reload_success() noexcept {
     // Issue #2895: clear sticky coverage override on full recovery.
     reemit_success_coverage_override_.store(0, std::memory_order_relaxed);
     // Issue #3229: reload success is wholesale — drop define-id side set.
+    // Issue #4025: quiet residual nudge if define-active was live.
+    const bool define_was_active = relower_success_define_active();
     clear_relower_success_defines();
+    if (define_was_active)
+        aura_residual_remount_quiet_nudge();
     // Issue #2601: clear retry state (reload succeeded — no more
     // bounded retries needed; the next exhaust will re-seed).
     exhausted_min_dirty_retry_attempts_left_.store(0, std::memory_order_relaxed);
@@ -1205,7 +1215,11 @@ void HotUpdateRegistry::note_reemit_success_coverage(
     // define-id granularity so remount / re-promote stay #2978/#2895.
     // Issue #3976: clearing the precise set idles covered remount (not
     // a full named FIFO); residual tick + call-time MustDeopt own leftover.
+    // Issue #4025: after heal clears define-active, arm quiet residual nudge.
+    const bool define_was_active = relower_success_define_active();
     clear_relower_success_defines();
+    if (define_was_active)
+        aura_residual_remount_quiet_nudge();
 }
 
 // Issue #2949: production default only_covered partial re-promote.

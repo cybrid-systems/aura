@@ -724,6 +724,10 @@ extern "C" __attribute__((weak)) int aura_residual_remount_tick_coalesce(std::ui
     return 0;
 }
 extern "C" __attribute__((weak)) void aura_residual_remount_note_boundary_exit() {}
+extern "C" __attribute__((weak)) void aura_residual_remount_quiet_nudge() noexcept {}
+extern "C" __attribute__((weak)) int aura_residual_remount_quiet_nudge_pending() noexcept {
+    return 0;
+}
 extern "C" __attribute__((weak)) void
 aura_test_set_residual_remount_budget(std::uint64_t /*budget*/) {}
 extern "C" __attribute__((weak)) void

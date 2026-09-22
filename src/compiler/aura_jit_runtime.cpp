@@ -2992,6 +2992,10 @@ static std::atomic<std::uint64_t> g_residual_remount_prefer_hit_total{0};
 static std::atomic<std::uint64_t> g_residual_remount_budget_override{UINT64_MAX};
 // Test: force storm/throttle skip path without spinning deopt storm.
 static std::atomic<std::uint8_t> g_residual_force_skip{0};
+// Issue #4025: quiet-window residual remount nudge. Armed when heal clears
+// define-active (#3976 idle hole); consumed when a residual tick walks past
+// the storm gate. Soft Global budget_skip keeps the nudge armed.
+static std::atomic<std::uint8_t> g_residual_remount_quiet_nudge{0};
 
 extern "C" std::uint64_t aura_residual_remount_budget_default() noexcept {
     const auto ov = g_residual_remount_budget_override.load(std::memory_order_relaxed);
@@ -3075,6 +3079,7 @@ extern "C" void aura_test_reset_residual_remount_state() noexcept {
     g_residual_remount_budget_override.store(UINT64_MAX, std::memory_order_relaxed);
     g_residual_force_skip.store(0, std::memory_order_relaxed);
     g_residual_budget_skip_streak.store(0, std::memory_order_relaxed);
+    g_residual_remount_quiet_nudge.store(0, std::memory_order_relaxed);
     for (std::size_t i = 0; i < kResidualRemountExitSlotCap; ++i) {
         g_residual_remount_exit_slots[i].eval.store(0, std::memory_order_relaxed);
         g_residual_remount_exit_slots[i].exit_gen.store(1, std::memory_order_relaxed);
@@ -3092,11 +3097,25 @@ extern "C" void aura_test_reset_residual_remount_state() noexcept {
 extern "C" int aura_residual_remount_tick_coalesce(std::uint64_t budget) {
     auto& slot = residual_remount_exit_slot();
     const auto gen = slot.exit_gen.load(std::memory_order_relaxed);
-    if (slot.ticked_gen.load(std::memory_order_relaxed) == gen)
+    // Issue #4025: quiet-window nudge bypasses same-exit coalesce skip so a
+    // heal-cleared define-active leftover still gets one residual walk.
+    const bool nudged = g_residual_remount_quiet_nudge.load(std::memory_order_relaxed) != 0;
+    if (!nudged && slot.ticked_gen.load(std::memory_order_relaxed) == gen)
         return 0;
     aura_residual_live_closure_remount_tick(budget);
     slot.ticked_gen.store(gen, std::memory_order_relaxed);
     return 1;
+}
+
+// Issue #4025: arm quiet residual remount nudge (heal cleared define-active).
+// Does not walk here — Soft Global / throttle still budget_skip inside the
+// tick; the next quiet residual coalesce / tick consumes the nudge.
+extern "C" void aura_residual_remount_quiet_nudge() noexcept {
+    g_residual_remount_quiet_nudge.store(1, std::memory_order_relaxed);
+}
+
+extern "C" int aura_residual_remount_quiet_nudge_pending() noexcept {
+    return g_residual_remount_quiet_nudge.load(std::memory_order_relaxed) != 0 ? 1 : 0;
 }
 
 // Issue #3910 / #4024: bump this eval's exit gen (peer gens untouched).
@@ -3146,6 +3165,9 @@ extern "C" void aura_residual_live_closure_remount_tick(std::uint64_t budget) {
         return;
     }
     g_residual_budget_skip_streak.store(0, std::memory_order_relaxed);
+    // Issue #4025: quiet nudge consumed once the tick is past storm/throttle
+    // (a real walk attempt). Soft Global budget_skip above leaves it armed.
+    g_residual_remount_quiet_nudge.store(0, std::memory_order_relaxed);
 
     std::uint64_t ok = 0;
     std::uint64_t prefer_hit = 0;
@@ -3385,6 +3407,9 @@ extern "C" void aura_sync_remount_covered_named_live_closures(std::uint64_t mask
     }
 
     // Issue #3976: idle define-side skips the named FIFO (not covered).
+    // Issue #4025: leftovers stay MustDeopt / dual-fresh leave-native; quiet
+    // residual remount nudge (armed when heal cleared define-active) owns
+    // the remount — do not reopen #3976 as missing leave-native.
     if (aura_hot_update_relower_success_define_active() == 0)
         return;
 
