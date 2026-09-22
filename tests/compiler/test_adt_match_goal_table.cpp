@@ -841,6 +841,77 @@ static void ac3769_2_post_mutate_retained() {
           "3769 AC2: slide-prevented counter retained");
 }
 
+static bool first_match_exh(const char* code, aura::compiler::MatchExhaustivenessResult* out,
+                            aura::diag::DiagnosticCollector* diag_out) {
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    apply_dev_audit_defaults();
+    TypeRegistry reg;
+    aura::diag::DiagnosticCollector diag;
+    aura::compiler::TypeChecker tc(reg);
+    aura::ast::ASTArena arena;
+    auto alloc = arena.allocator();
+    aura::ast::StringPool pool(alloc);
+    aura::ast::FlatAST flat(alloc);
+    auto pr = aura::parser::parse_to_flat(code, flat, pool);
+    if (!pr.success || pr.root == aura::ast::NULL_NODE)
+        return false;
+    flat.root = pr.root;
+    (void)tc.infer_flat(flat, pool, pr.root, diag);
+    if (diag_out)
+        *diag_out = diag;
+    for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
+        if (!flat.has_match_info(id))
+            continue;
+        *out = aura::compiler::check_match_exhaustiveness(flat, pool, reg, id);
+        return true;
+    }
+    return false;
+}
+
+static void ac4010_via_dynamic_not_exhaustive() {
+    std::println("\n--- #4010: via_dynamic match is not exhaustive ---");
+    using aura::compiler::kMatchExhaustViaDynamicNotClosedIssue;
+    CHECK(kMatchExhaustViaDynamicNotClosedIssue == 4010, "4010 stamp");
+
+    aura::compiler::MatchExhaustivenessResult r;
+    aura::diag::DiagnosticCollector soft_diag;
+    CHECK(first_match_exh("(lambda (t) (match t ((Some x) 1) ((None) 2)))", &r, &soft_diag),
+          "4010 AC1: match site present");
+    CHECK(r.via_dynamic, "4010 AC1: Dynamic subject stamps via_dynamic");
+    CHECK(r.checked, "4010 AC1: checked");
+    CHECK(!r.exhaustive, "4010 AC1: exhaustive==false (proof is not closed)");
+
+    bool soft_warn = false;
+    bool soft_typeerror = false;
+    for (const auto& d : soft_diag.diagnostics()) {
+        const bool dyn = d.message.find("Dynamic subject") != std::string::npos ||
+                         d.message.find("exhaustiveness unproven") != std::string::npos;
+        if (!dyn)
+            continue;
+        if (d.kind == aura::diag::ErrorKind::Warning)
+            soft_warn = true;
+        if (d.kind == aura::diag::ErrorKind::TypeError)
+            soft_typeerror = true;
+    }
+    CHECK(soft_warn, "4010 AC3: Soft Warning, not silent");
+    CHECK(!soft_typeerror, "4010 AC3: Soft is not TypeError");
+
+    CHECK(infer_match_dynamic_has_typeerror("(lambda (t) (match t ((Some x) 1) ((None) 2)))", true),
+          "4010 AC2: Production Dynamic-subject TypeError");
+
+    const auto tci = read_file("src/compiler/type_checker_impl.cpp");
+    const auto via = tci.find("Issue #3005: Dynamic (or ctor-less) subject + real ADT arms is not");
+    CHECK(via != std::string::npos, "4010 AC4: via_dynamic arm present");
+    const auto win = via == std::string::npos ? std::string{} : tci.substr(via, 900);
+    CHECK(win.find("r.exhaustive = false") != std::string::npos,
+          "4010 AC4: arm sets exhaustive=false");
+    CHECK(win.find("Issue #4010") != std::string::npos, "4010 AC4: cite");
+    CHECK(tci.find("schema-4010") == std::string::npos, "4010 AC4: no new query key");
+    CHECK(read_file("tests/compiler/test_issue_4010.cpp").empty(), "4010 AC4: no invent");
+    CHECK(read_file("docs/design/4010-via-dynamic-exhaustive.md").empty(),
+          "4010 AC4: no docs/design");
+}
+
 static void ac3769_3_quiet_no_invent() {
     std::println("\n--- #3769 AC3: covered quiet; no invent ---");
     const auto tci = read_file("src/compiler/type_checker_impl.cpp");
@@ -893,8 +964,10 @@ int run_test_adt_match_goal_table() {
     ac3769_1_check_via_dynamic_typeerror();
     ac3769_2_post_mutate_retained();
     ac3769_3_quiet_no_invent();
-    std::println("\n=== #2564/#3005/#3045/#3083/#3236/#3317/#3358/#3769: {} passed, {} failed ===",
-                 g_passed, g_failed);
+    ac4010_via_dynamic_not_exhaustive();
+    std::println(
+        "\n=== #2564/#3005/#3045/#3083/#3236/#3317/#3358/#3769/#4010: {} passed, {} failed ===",
+        g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
 

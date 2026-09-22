@@ -7327,14 +7327,16 @@ MatchExhaustivenessResult check_match_exhaustiveness(const FlatAST& flat, const 
         r.exhaustive = false;
     }
     // Issue #3005: Dynamic (or ctor-less) subject + real ADT arms is not
-    // a proof of exhaustiveness. Soft callers keep exhaustive=true so
-    // legacy observe paths stay quiet; Production / dirty-cone reject
-    // via `via_dynamic` (no "exhaustive via Dynamic" slide-through).
+    // a proof of exhaustiveness. Issue #4010: the struct must not lie —
+    // exhaustive=false so callers that only read exhaustive cannot treat
+    // an unproven match as closed. Soft Warning vs Production TypeError
+    // stays in the callers (strict_ || production_defaults_active()).
     if (!minfo->has_wildcard &&
         (!minfo->used_constructors.empty() || !minfo->candidate_constructors.empty()) &&
         (reg.tag_of(subject) == TypeTag::DYNAMIC || r.all_constructors.empty())) {
         r.via_dynamic = true;
         r.checked = true;
+        r.exhaustive = false; // proof is not closed
     }
     return r;
 }
