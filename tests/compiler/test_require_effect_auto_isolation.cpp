@@ -2284,6 +2284,8 @@ static void ac3630_5_source_cite_and_no_invent() {
 }
 
 
+static void ac3993_source_cite();
+
 // ── Issue #3640: add_mutate gate single spine (wrap_epoch != tenant) ────
 // Source-cite face: the isolation gate parses packed StableNodeRefs
 // through the same unpack_stable_ref_arg as resolve_mutate_node_arg
@@ -2313,6 +2315,25 @@ static void ac3640_gate_single_spine_source_cite() {
     CHECK(mut.find("is_hash(a[0])") != std::string::npos, "3991: wrapper consults hash");
     CHECK(mut.find("resolve_query_result_match") != std::string::npos,
           "3991: reuses resolve_query_result_match");
+    ac3993_source_cite();
+}
+
+static void ac3993_source_cite() {
+    std::println("\n--- #3993: add_mutate gate_ref stamps packed/hash/live gen ---");
+    const auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
+    CHECK(mut.find("Issue #3993") != std::string::npos, "3993: add_mutate gate cites #3993");
+    CHECK(mut.find("arg_ref") != std::string::npos, "3993: packed/hash keep captured stamp");
+    CHECK(mut.find("make_ref_layout(target_node)") != std::string::npos,
+          "3993: occupancy-only uses live layout gen");
+    CHECK(read_file("src/compiler/query_result_decode.hh")
+                  .find("kAddMutateGateRefFreshnessIssue = 3993") != std::string::npos,
+          "3993: issue stamp");
+    CHECK(mut.find("gate_ref.id = target_node;\n                        gate_ref.tenant_id = "
+                   "ref_tenant;") == std::string::npos,
+          "3993: brace-init id+tenant only removed");
+    CHECK(read_file("tests/issues/test_issue_3993.cpp").empty() &&
+              read_file("tests/compiler/test_issue_3993.cpp").empty(),
+          "3993: no test_issue_3993.cpp");
 }
 
 
@@ -2637,6 +2658,7 @@ int run_test_require_effect_on_ref_stale_3773() {
     ac3773_2_fresh_stamped_ref_still_passes();
     ac3773_3_soft_off_skips_freshness_gate();
     ac3773_4_source_cite_and_no_invent();
+    ac3993_source_cite();
     return aura::test::g_failed ? 1 : 0;
 }
 

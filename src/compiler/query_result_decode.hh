@@ -21,6 +21,9 @@ namespace aura::compiler::query_result_decode {
 inline constexpr int kQueryResultHashResolveIssue = 3424;
 // Issue #3991: add_mutate first-arg hash joins require_effect_on_ref.
 inline constexpr int kQueryResultHashAddMutateIsolationIssue = 3991;
+// Issue #3993: add_mutate gate_ref stamps gen from packed / hash / live
+// layout (no brace-init gen=0). Soft/Off unchanged. Do not weaken #3773.
+inline constexpr int kAddMutateGateRefFreshnessIssue = 3993;
 
 // Same validator as evaluator_primitives_query_workspace.cpp (moved here
 // so mutate.cpp can share it). Soft / empty matches → Fresh after epoch.
@@ -125,6 +128,12 @@ struct HashNodeResolve {
     HashNodeKind kind = HashNodeKind::NotHash;
     aura::ast::NodeId node = 0;
     std::uint64_t tenant_id = 0;
+    // Issue #3993: captured match stamp so add_mutate on_ref does not
+    // brace-init gen=0 (false #3773 stale-ref before isolation).
+    std::uint16_t generation = 0;
+    std::uint32_t wrap_epoch = 0;
+    std::uint64_t cow_epoch_at_capture = 0;
+    std::uint32_t fiber_id = 0;
     const char* err_kind = "bad-arg";
     std::string err_msg;
 };
@@ -326,6 +335,10 @@ resolve_query_result_match(types::EvalValue arg, const StringHeap& heap, const P
     r.kind = HashNodeKind::Ok;
     r.node = static_cast<aura::ast::NodeId>(qr.matches[pick].node_id);
     r.tenant_id = qr.matches[pick].tenant_id;
+    r.generation = qr.matches[pick].generation;
+    r.wrap_epoch = qr.matches[pick].wrap_epoch;
+    r.cow_epoch_at_capture = qr.matches[pick].cow_epoch_at_capture;
+    r.fiber_id = qr.matches[pick].fiber_id;
     return r;
 }
 #endif // AURA_QUERY_RESULT_DECODE_FRESHNESS_ONLY

@@ -1003,6 +1003,11 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 // Best-effort target_node from first int / StableNodeRef arg.
                 aura::ast::NodeId target_node = 0;
                 std::uint64_t ref_tenant = 0;
+                // Issue #3993: keep packed/hash captured gen/wrap/cow so
+                // require_effect_on_ref does not brace-init gen=0 (false
+                // #3773 stale-ref before isolation). Occupancy-only fills
+                // live layout below.
+                std::optional<StableNodeRef> arg_ref;
                 if (!a.empty()) {
                     if (is_int(a[0])) {
                         // Issue #3724: Restricted+MT / Strict bare int must
@@ -1031,6 +1036,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                         if (auto packed = unpack_stable_ref_arg(a[0])) {
                             target_node = static_cast<aura::ast::NodeId>(packed->id);
                             ref_tenant = packed->tenant_id;
+                            arg_ref = *packed;
                         }
                     } else if (is_hash(a[0])) {
                         // Issue #3991: production QueryResult hash joins the
@@ -1057,6 +1063,14 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                                     return mev(hr.err_kind, hr.err_msg);
                                 target_node = hr.node;
                                 ref_tenant = hr.tenant_id;
+                                StableNodeRef href{};
+                                href.id = hr.node;
+                                href.gen = hr.generation;
+                                href.wrap_epoch = hr.wrap_epoch;
+                                href.cow_epoch_at_capture = hr.cow_epoch_at_capture;
+                                href.tenant_id = hr.tenant_id;
+                                href.fiber_id = hr.fiber_id;
+                                arg_ref = href;
                             }
                         }
                     }
@@ -1102,9 +1116,23 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 if (target_node != 0) {
                     if (ref_tenant != 0) {
                         // Foreign or arg-stamped tenant — do not re-stamp principal.
+                        // Issue #3993: packed/hash keep captured gen/wrap/cow
+                        // (#3773 honest). Occupancy-only (no arg stamp) uses
+                        // live make_ref_layout then overlays tenant — same as
+                        // require_effect_for_node_id foreign path. Do not
+                        // brace-init gen=0.
                         StableNodeRef gate_ref{};
-                        gate_ref.id = target_node;
-                        gate_ref.tenant_id = ref_tenant;
+                        if (arg_ref.has_value()) {
+                            gate_ref = *arg_ref;
+                            if (gate_ref.tenant_id == 0)
+                                gate_ref.tenant_id = ref_tenant;
+                        } else if (auto* ws = ev.workspace_flat()) {
+                            gate_ref = ws->make_ref_layout(target_node);
+                            gate_ref.tenant_id = ref_tenant;
+                        } else {
+                            gate_ref.id = target_node;
+                            gate_ref.tenant_id = ref_tenant;
+                        }
                         effect_ok = ev.require_effect_on_ref(
                             static_cast<std::uint16_t>(kEffectMutate), op, gate_ref);
                     } else {
