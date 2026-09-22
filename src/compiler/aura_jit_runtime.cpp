@@ -5,7 +5,7 @@
 #include "core/atomic_fence_port.h"
 
 #include "compiler/typed_mutation_audit.h" // #2666 production_defaults_active for residual remount default
-#include "compiler/security_capabilities.h" // #3720 kEffectMutate for JIT hash writes
+#include "compiler/security_capabilities.h" // #3720/#4018 kEffectMutate for JIT hash/cell writes
 #include "core/lifetime_pin.hh" // Issue #2293: aura::core::lifetime::pin_linear_root / unpin_linear_root
 #include "observability_metrics.h" // CompilerMetrics full def (aura_get_aot_metrics returns it)
 
@@ -4635,7 +4635,16 @@ int64_t aura_cell_get(int64_t cell_id) {
     return result;
 }
 
+// Issue #3720 / #4018: JIT cell / hash writes share Evaluator require_effect.
+// Weak stub in aura_jit_prim_dispatch_stub.cpp returns 0 (fail-closed).
+extern "C" int aura_jit_owner_require_effect(std::uint16_t bits, const char* op) noexcept;
+
 void aura_cell_set(int64_t cell_id, int64_t val) {
+    // Issue #4018: require Mutate before any g_cell_heap write (#3720 choke
+    // parity with aura_hash_set). Soft/Off require_effect is a no-op when
+    // owner is wired. Deny → no write (unlock not held yet).
+    if (aura_jit_owner_require_effect(aura::compiler::security::kEffectMutate, "cell-set!") == 0)
+        return;
     // Issue #157 Phase 2: write lock — write g_cell_heap[id].
     aura_lock_workspace_write();
     if (cell_id >= 0 && static_cast<size_t>(cell_id) < g_cell_heap.size())
@@ -4891,10 +4900,8 @@ extern "C" void aura_set_hash_str_convert_callback(int64_t (*fn)(int64_t)) {
     g_hash_str_convert_fn = fn;
     aura_unlock_workspace_write();
 }
-// Issue #3720: JIT hash writes share the Evaluator require_effect choke
-// (same owner as aura_jit_prim_dispatch). Weak stub in
-// aura_jit_prim_dispatch_stub.cpp returns 0 (fail-closed, no silent write).
-extern "C" int aura_jit_owner_require_effect(std::uint16_t bits, const char* op) noexcept;
+// Issue #3720 / #4018: aura_jit_owner_require_effect declared above
+// aura_cell_set (same owner as aura_jit_prim_dispatch).
 
 int64_t aura_hash_set(int64_t hash_val, int64_t pair_val) {
     // Issue #3720: require Mutate before any g_hash_tables write. Soft/Off
