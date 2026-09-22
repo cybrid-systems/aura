@@ -4942,6 +4942,9 @@ static_assert(!ProductionPureWrapPass<pass_soa_detail::AosOnlyPureWrapStub>,
 // to_aos_view / zero set_block_dirty_pred. Call from CompilerService when
 // entry.soa_mod is non-empty after dirty mark. type_reg optional
 // (DCE identity/type rules; nullptr keeps columnar path).
+// Issue #4007: named production factory is the V2 PureWrap pack
+// (CK/CF/TP/Shape only). This incremental consume wraps that pack
+// then DCE — do not fold DCE into the named factory.
 // EscapeAnalysisWrap SoA peel (#3795 / #3701): production incremental suite
 // skips Wrap AoS run when soa_mod nonempty (columnar run_dirty_escape_on_soa).
 // InlinePass::run_on_dirty_blocks_only(IRModuleV2&) remains the #3403

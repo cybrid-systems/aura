@@ -241,6 +241,47 @@ void ac3770_one_contract_per_unbox() {
     CHECK(read_file("docs/design/3770-as-int-one-contract.md").empty(), "3770 AC3: no docs/design");
 }
 
+static std::size_t count_substr(std::string_view s, std::string_view needle) {
+    std::size_t n = 0;
+    for (std::size_t p = 0; (p = s.find(needle, p)) != std::string::npos; ++p)
+        ++n;
+    return n;
+}
+
+void ac4007_pack_deletes_aos_factory() {
+    std::printf("\n--- #4007: pack deletes AoS named factory; residual call sites 0 ---\n");
+    auto opt = read_file("src/compiler/optimization_passes.ixx");
+    CHECK(opt.find("kProductionSoaFactoryIssue = 4007") != std::string::npos, "4007: stamp");
+    const auto pack = opt.find("#if defined(AURA_PRODUCTION_PACK)");
+    CHECK(pack != std::string::npos, "4007: pack ifdef");
+    const auto pack_end = opt.find("#else", pack == std::string::npos ? 0 : pack);
+    const auto pwin = (pack != std::string::npos && pack_end > pack)
+                          ? opt.substr(pack, pack_end - pack)
+                          : std::string{};
+    CHECK(pwin.find("run_default_optimization_pipeline(aura::ir::IRModule&) = delete") !=
+              std::string::npos,
+          "4007: AoS factory = delete under pack");
+    CHECK(opt.find("run_default_optimization_pipeline(::aura::compiler::IRModuleV2&") !=
+              std::string::npos,
+          "4007: V2 factory overload present");
+    CHECK(opt.find("run_production_soa_pure_wrap_pack") != std::string::npos,
+          "4007: factory is PureWrap pack");
+    auto svc = read_file("src/compiler/service.ixx");
+    auto lowering = read_file("src/compiler/lowering_impl.cpp");
+    auto impls = read_file("src/compiler/pass_impls.ixx");
+    CHECK(count_substr(svc, "run_default_optimization_pipeline(") == 0,
+          "4007: service residual AoS factory calls = 0");
+    CHECK(count_substr(lowering, "run_default_optimization_pipeline(") == 0,
+          "4007: lowering residual AoS factory calls = 0");
+    CHECK(count_substr(impls, "run_default_optimization_pipeline(") == 0,
+          "4007: pass_impls residual AoS factory calls = 0");
+    CHECK(svc.find("kDefaultOptPipelineAosDeleted") != std::string::npos,
+          "4007: production TU static_assert");
+    CHECK(opt.find("schema-4007") == std::string::npos, "4007: no new query key");
+    CHECK(read_file("tests/compiler/test_issue_4007.cpp").empty(), "4007: no invent");
+    CHECK(read_file("docs/design/4007-soa-factory.md").empty(), "4007: no docs/design");
+}
+
 } // namespace
 
 int main() {
@@ -252,6 +293,7 @@ int main() {
     ac3666_pack_hot_check_compile_armed();
     ac3702_pack_happy_no_record();
     ac3770_one_contract_per_unbox();
+    ac4007_pack_deletes_aos_factory();
     std::printf("\n=== Results: %d passed, %d failed ===\n", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
