@@ -87,6 +87,9 @@ struct WalAppendFailSloInput {
     bool production_defaults = false;  // production_defaults_active()
     // Soft = !production OR AURA_SANDBOX=off (never arm; AC1).
     bool soft_mode = false;
+    // Issue #4005: force_wal pair enable-miss (mut && se). Default false
+    // so existing #3056 `!wal_enabled → ok` table stays green.
+    bool force_wal_enable_failed = false;
 };
 
 struct WalAppendFailSloDecision {
@@ -96,12 +99,15 @@ struct WalAppendFailSloDecision {
     bool breached = false;
     bool would_arm_degraded = false;
     std::string_view force_reason = "ok";
-    // 0=ok, 1=soft-breach-observe, 2=wal-append-fail-breach
+    // 0=ok, 1=soft-breach-observe, 2=wal-append-fail-breach,
+    // 3=wal-enable-failed (#4005)
     int force_reason_code = 0;
 };
 
 // Pure decision table (AC5 — identical inputs → identical output).
-//   !wal_enabled                         → ok (no residual walk)
+//   force_wal_enable_failed && production → wal-enable-failed (arm)
+//   force_wal_enable_failed && soft       → soft-breach-observe
+//   !wal_enabled && !force_wal_enable_failed → ok (no residual walk)
 //   soft_mode || !production_defaults    → observe only (never arm)
 //   production && (consec >= SLO || rate > SLO_BP) → arm
 [[nodiscard]] inline WalAppendFailSloDecision
@@ -110,6 +116,22 @@ decide_wal_append_fail_slo(const WalAppendFailSloInput& in) noexcept {
     d.slo_bp = wal_append_fail_slo_bp();
     d.slo_consecutive = wal_append_fail_slo_consecutive();
     d.rate_bp = compute_wal_append_fail_rate_bp(in.fail_total, in.persisted_total);
+    // Issue #4005: force_wal pair enable-miss is a distinct posture key.
+    // Checked before the historical `!wal_enabled → ok` arm so a deploy
+    // that never opened WAL is not classified healthy.
+    if (in.force_wal_enable_failed) {
+        d.breached = true;
+        if (in.soft_mode || !in.production_defaults) {
+            d.would_arm_degraded = false;
+            d.force_reason = "soft-breach-observe";
+            d.force_reason_code = 1;
+            return d;
+        }
+        d.would_arm_degraded = true;
+        d.force_reason = "wal-enable-failed";
+        d.force_reason_code = 3;
+        return d;
+    }
     if (!in.wal_enabled) {
         d.breached = false;
         d.would_arm_degraded = false;
@@ -151,8 +173,8 @@ inline WalAppendFailSloCounters g_wal_append_fail_slo_counters{};
 [[nodiscard]] inline WalAppendFailSloInput
 make_wal_append_fail_slo_input(std::uint64_t mutation_fail, std::uint64_t se_fail,
                                std::uint64_t mutation_persisted, std::uint64_t se_persisted,
-                               bool wal_enabled, bool production_defaults,
-                               bool soft_mode) noexcept {
+                               bool wal_enabled, bool production_defaults, bool soft_mode,
+                               bool force_wal_enable_failed = false) noexcept {
     WalAppendFailSloInput in;
     in.fail_total = mutation_fail + se_fail;
     in.persisted_total = mutation_persisted + se_persisted;
@@ -160,6 +182,7 @@ make_wal_append_fail_slo_input(std::uint64_t mutation_fail, std::uint64_t se_fai
     in.wal_enabled = wal_enabled;
     in.production_defaults = production_defaults;
     in.soft_mode = soft_mode;
+    in.force_wal_enable_failed = force_wal_enable_failed;
     return in;
 }
 
@@ -209,6 +232,16 @@ inline std::atomic<int>& wal_fail_closed_defaulted_by_force_wal_flag() noexcept 
     return v;
 }
 
+inline std::atomic<int>& force_wal_enable_failed_flag() noexcept {
+    static std::atomic<int> v{0};
+    return v;
+}
+
+inline std::atomic<int>& force_wal_enable_failed_observed_flag() noexcept {
+    static std::atomic<int> v{0};
+    return v;
+}
+
 inline void set_wal_fail_closed_defaulted_by_force_wal(bool v) noexcept {
     wal_fail_closed_defaulted_by_force_wal_flag().store(v ? 1 : 0, std::memory_order_relaxed);
 }
@@ -230,6 +263,8 @@ inline void reset_wal_append_fail_slo_for_test() noexcept {
     c.last_force_reason_code.store(0, std::memory_order_relaxed);
     c.inject_fail_remaining.store(0, std::memory_order_relaxed);
     set_wal_fail_closed_defaulted_by_force_wal(false);
+    force_wal_enable_failed_flag().store(0, std::memory_order_relaxed);
+    force_wal_enable_failed_observed_flag().store(0, std::memory_order_relaxed);
 }
 
 // Issue #3109: production WAL append fail-closed option (SE + mutation
@@ -244,6 +279,10 @@ inline constexpr int kWalAppendFailClosedForceWalIssue = 3302;
 // Issue #3965: force_wal SE sidecar enable-fail is fail-closed, not the
 // #2225 non-fatal short-circuit. Stamp only (no new query key).
 inline constexpr int kSeWalForceWalEnableFailClosedIssue = 3965;
+// Issue #4005: force_wal pair enable-miss is a posture breach
+// (`wal-enable-failed`) + schedule-gate deny. Distinct from
+// wal-append-fail-breach (#3056/#3211) and audit-durable-gap (#3375).
+inline constexpr int kWalForceWalEnableFailIssue = 4005;
 
 [[nodiscard]] inline bool wal_env_flag_truthy(const char* name) noexcept {
     const char* e = std::getenv(name);
@@ -265,6 +304,34 @@ inline constexpr int kSeWalForceWalEnableFailClosedIssue = 3965;
         return true; // #3109 explicit opt-in (AC4)
     // #3302: force_wal arm sets this process flag in security_defaults.
     return wal_fail_closed_defaulted_by_force_wal() != 0;
+}
+
+inline void set_force_wal_enable_failed(bool v) noexcept {
+    force_wal_enable_failed_flag().store(v ? 1 : 0, std::memory_order_relaxed);
+}
+
+[[nodiscard]] inline int force_wal_enable_failed() noexcept {
+    return force_wal_enable_failed_flag().load(std::memory_order_relaxed);
+}
+
+[[nodiscard]] inline int force_wal_enable_failed_observed() noexcept {
+    return force_wal_enable_failed_observed_flag().load(std::memory_order_relaxed);
+}
+
+inline void note_wal_enable_failed() noexcept {
+    force_wal_enable_failed_observed_flag().store(1, std::memory_order_relaxed);
+}
+
+// Issue #4005: loud posture + fail-closed admission unless FAIL_OPEN.
+inline void arm_force_wal_enable_fail() noexcept {
+    note_wal_enable_failed();
+    if (!wal_env_flag_truthy("AURA_WAL_APPEND_FAIL_OPEN"))
+        set_force_wal_enable_failed(true);
+}
+
+inline void disarm_force_wal_enable_fail() noexcept {
+    set_force_wal_enable_failed(false);
+    force_wal_enable_failed_observed_flag().store(0, std::memory_order_relaxed);
 }
 
 // Issue #3338: mid point-query window + optional segment retention.

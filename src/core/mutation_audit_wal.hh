@@ -116,6 +116,8 @@ struct AuditWalMetrics {
     // Issue #3338: segments unlinked under AURA_WAL_MAX_SEGMENTS
     // (audit-N.wal + typed-summary-N.wal lockstep). Struct END (#2906).
     std::atomic<std::uint64_t> audit_wal_segment_prune_total{0};
+    // Issue #4005: force_wal pair enable-miss (mut && se). Struct END.
+    std::atomic<std::uint64_t> force_wal_enable_fail_total{0};
 };
 
 // Issue #2150 stamp (schema key on query:audit-wal-stats / capability-effect).
@@ -608,6 +610,7 @@ struct MutationAuditWal {
         m.audit_wal_using_default_dir.store(0, std::memory_order_relaxed);
         m.typed_summary_wal_persisted_total.store(0, std::memory_order_relaxed);
         m.audit_wal_segment_prune_total.store(0, std::memory_order_relaxed);
+        m.force_wal_enable_fail_total.store(0, std::memory_order_relaxed);
         ::aura::core::wal_slo::reset_wal_append_fail_slo_for_test();
         last_seq_persisted = 0;
         segment_index = 0;
@@ -667,6 +670,8 @@ struct AuditWalStatsSnapshot {
     std::uint64_t typed_summary_persisted = 0;
     // Issue #3338: prune count (struct end).
     std::uint64_t segment_prune_total = 0;
+    // Issue #4005: force_wal pair enable-miss (struct end).
+    std::uint64_t force_wal_enable_fail_total = 0;
 };
 
 [[nodiscard]] inline AuditWalStatsSnapshot snapshot_audit_wal_stats() noexcept {
@@ -689,6 +694,7 @@ struct AuditWalStatsSnapshot {
         m.audit_wal_using_default_dir.load(std::memory_order_relaxed),
         m.typed_summary_wal_persisted_total.load(std::memory_order_relaxed),
         m.audit_wal_segment_prune_total.load(std::memory_order_relaxed),
+        m.force_wal_enable_fail_total.load(std::memory_order_relaxed),
     };
 }
 

@@ -414,7 +414,8 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
                 // #3244: 25 prior keys + 5 overflow observe keys; 32 overflowed.
-                auto* ht = FlatHashTable::create(query_hash_capacity_for(38));
+                // Issue #4005: +5 wal-enable-failed keys; planned 48.
+                auto* ht = FlatHashTable::create(query_hash_capacity_for(48));
                 if (!ht)
                     return make_void();
                 bool overflowed = false;
@@ -523,6 +524,21 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                                     aura::orch::kSecurityScheduleMetricsHashOverflowIssue))},
                 {"issue-3244", make_int(static_cast<std::int64_t>(
                                    aura::orch::kSecurityScheduleMetricsHashOverflowIssue))},
+                // Issue #4005: force_wal pair enable-miss deny face. Additive
+                // at hash END; do not rename wal-append-fail-breach.
+                {"deny-wal-enable-failed-total",
+                 make_int(static_cast<std::int64_t>(
+                     c.deny_wal_enable_failed_total.load(std::memory_order_relaxed)))},
+                {"wal-enable-failed",
+                 make_int(reason == static_cast<std::int64_t>(
+                                        aura::orch::SecurityScheduleForceReason::wal_enable_failed)
+                              ? 1
+                              : 0)},
+                {"security-schedule-wal-enable-failed-wired", make_int(1)},
+                {"schema-4005", make_int(static_cast<std::int64_t>(
+                                    aura::orch::kSecurityScheduleWalEnableFailIssue))},
+                {"issue-4005", make_int(static_cast<std::int64_t>(
+                                   aura::orch::kSecurityScheduleWalEnableFailIssue))},
             };
             return build_hash(kv);
         });
@@ -4662,7 +4678,8 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             }
             // Capacity 32: pre-#2150 keys + force/schema-2150/flush-every.
             // Issue #3338: +6 mid-lookup / retention keys → planned 48.
-            auto* ht = FlatHashTable::create(query_hash_capacity_for(48));
+            // Issue #4005: +4 enable-fail keys → planned 64 (live + 8).
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(64));
             if (!ht)
                 return make_void();
             bool overflowed = false;
@@ -4732,8 +4749,8 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 const auto d = evaluate_wal_append_fail_slo(make_wal_append_fail_slo_input(
                     snap.append_fail, se.append_fail, snap.persisted, se.persisted,
                     (snap.enabled != 0) || g_security_event_wal().is_enabled(), prod,
-                    !prod || sandbox_off));
-                insert_kv("wal-append-fail-breach", d.would_arm_degraded ? 1 : 0);
+                    !prod || sandbox_off, ::aura::core::wal_slo::force_wal_enable_failed() != 0));
+                insert_kv("wal-append-fail-breach", d.force_reason_code == 2 ? 1 : 0);
                 insert_kv("wal-append-fail-slo-wired", 1);
                 insert_kv("schema-3056", kWalAppendFailSloIssue);
                 insert_kv("issue-3056", kWalAppendFailSloIssue);
@@ -4794,6 +4811,20 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                                       std::memory_order_relaxed)));
                 insert_kv("schema-3338", ::aura::core::wal_slo::kWalMidLookupWindowIssue);
                 insert_kv("issue-3338", ::aura::core::wal_slo::kWalMidLookupWindowIssue);
+                // Issue #4005: force_wal pair enable-miss. Additive at hash
+                // END. Distinct from wal-append-fail-breach / audit-durable-gap.
+                insert_kv("wal-enable-failed",
+                          (d.force_reason_code == 3 ||
+                           (prod && !sandbox_off &&
+                            ::aura::core::wal_slo::force_wal_enable_failed_observed() != 0))
+                              ? 1
+                              : 0);
+                insert_kv("force-wal-enable-fail-total",
+                          static_cast<std::int64_t>(
+                              g_audit_wal_metrics().force_wal_enable_fail_total.load(
+                                  std::memory_order_relaxed)));
+                insert_kv("schema-4005", ::aura::core::wal_slo::kWalForceWalEnableFailIssue);
+                insert_kv("issue-4005", ::aura::core::wal_slo::kWalForceWalEnableFailIssue);
             }
             return query_hash_finish(ht, ev.string_heap_, overflowed);
         });
@@ -5640,8 +5671,9 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 const auto d = evaluate_wal_append_fail_slo(make_wal_append_fail_slo_input(
                     mut.append_fail, se.append_fail, mut.persisted, se.persisted,
                     g_mutation_audit_wal().is_enabled() || g_security_event_wal().is_enabled(),
-                    prod, !prod || sandbox_off));
-                insert_kv("wal-append-fail-breach", d.would_arm_degraded ? 1 : 0);
+                    prod, !prod || sandbox_off,
+                    ::aura::core::wal_slo::force_wal_enable_failed() != 0));
+                insert_kv("wal-append-fail-breach", d.force_reason_code == 2 ? 1 : 0);
                 insert_kv("wal-append-fail-slo-wired", 1);
                 insert_kv("schema-3056", kWalAppendFailSloIssue);
                 insert_kv("issue-3056", kWalAppendFailSloIssue);
@@ -5786,6 +5818,21 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 insert_kv("issue-3375", 3375);
                 insert_kv("schema-3499", 3499);
                 insert_kv("issue-3499", 3499);
+                // Issue #4005: force_wal pair enable-miss. Additive at hash
+                // END. Distinct from wal-append-fail-breach / audit-durable-gap.
+                insert_kv("wal-enable-failed",
+                          static_cast<std::int64_t>(
+                              (prod && !sandbox_off &&
+                               (::aura::core::wal_slo::force_wal_enable_failed() != 0 ||
+                                ::aura::core::wal_slo::force_wal_enable_failed_observed() != 0))
+                                  ? 1
+                                  : 0));
+                insert_kv("force-wal-enable-fail-total",
+                          static_cast<std::int64_t>(
+                              ::aura::core::audit_wal::g_audit_wal_metrics()
+                                  .force_wal_enable_fail_total.load(std::memory_order_relaxed)));
+                insert_kv("schema-4005", ::aura::core::wal_slo::kWalForceWalEnableFailIssue);
+                insert_kv("issue-4005", ::aura::core::wal_slo::kWalForceWalEnableFailIssue);
             }
             return query_hash_finish(ht, ev.string_heap_, overflowed);
         });
