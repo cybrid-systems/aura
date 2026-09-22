@@ -109,6 +109,10 @@ inline constexpr int kIdentityPlaneHandoffBoundaryIssue = 3216;
 // (Session-local Scope + per-Evaluator name table remain SSOT); cross-Eval
 // stays an explicit token pass.
 inline constexpr int kHandoffObservationOnlyIssue = 3273;
+// Issue #4004: HandoffToken carries Scheduler source-live flag so
+// join_via_handoff / import-proxy watch do not deref Fiber* after
+// ~Scheduler. Token stays in the stash (re-observe). No new query key.
+inline constexpr int kHandoffSourceLiveIssue = 4004;
 // Issue #3220: production auto-wait Timeout still holds reservation /
 // name-table until ~AgentHandle. directory / scope-resolve mark
 // lifecycle=reclaimed-pending so Agents do not reuse the name.
@@ -1772,6 +1776,9 @@ struct AgentHandle {
     // zeros it). Appended at END (#2906); move ctor / assign / reset
     // must transfer (#3461).
     bool import_proxy = false;
+    // Issue #4004: Scheduler source-live flag copied at export/import.
+    // Appended at END (#3461). Null on native source handles.
+    std::shared_ptr<std::atomic<bool>> source_live;
 
     AgentHandle() = default;
     AgentHandle(const AgentHandle&) = delete;
@@ -1810,7 +1817,8 @@ struct AgentHandle {
         , deny_class(o.deny_class)
         , bp_scope_id(std::move(o.bp_scope_id))
         , quota_recycled_pending(o.quota_recycled_pending)
-        , import_proxy(o.import_proxy) {
+        , import_proxy(o.import_proxy)
+        , source_live(std::move(o.source_live)) {
         // Issue #3245: hold-path signal when a still-pending handle is
         // stored (vector / another component). Soft: pending=false.
         note_reclaimed_pending_hold(o.must_wait_reclaimed);
@@ -1848,6 +1856,7 @@ struct AgentHandle {
         o.bp_scope_id.clear();
         o.quota_recycled_pending = false; // #3841 / #3461 END field
         o.import_proxy = false;           // #3930 / #3461 END field
+        o.source_live.reset();            // #4004 / #3461 END field
     }
 
     AgentHandle& operator=(AgentHandle&& o) noexcept {
@@ -1892,6 +1901,7 @@ struct AgentHandle {
             bp_scope_id = std::move(o.bp_scope_id);
             quota_recycled_pending = o.quota_recycled_pending;
             import_proxy = o.import_proxy;
+            source_live = std::move(o.source_live);
             note_reclaimed_pending_hold(o.must_wait_reclaimed);
             o.id = 0;
             o.fiber = nullptr;
@@ -1921,6 +1931,7 @@ struct AgentHandle {
             o.bp_scope_id.clear();            // #3461: move is a complete field transfer
             o.quota_recycled_pending = false; // #3841 / #3461 END field
             o.import_proxy = false;           // #3930 / #3461 END field
+            o.source_live.reset();            // #4004 / #3461 END field
         }
         return *this;
     }
@@ -1992,6 +2003,10 @@ struct HandoffToken {
     // observational mirrors, NOT mutators (#2009 / #2661 preserved).
     bool source_reclaimed_deferred = false;  // mirrors src.reclaimed_deferred_cleanup
     bool source_must_wait_reclaimed = false; // mirrors src.must_wait_reclaimed
+    // Issue #4004: Scheduler live flag (shared). Null when the source
+    // fiber has no owner_sched (test / unspawned). Store false in
+    // ~Scheduler before Fiber destroy.
+    std::shared_ptr<std::atomic<bool>> source_live;
 };
 
 // Issue #3089: export a portable handoff token from a source handle.
@@ -2014,6 +2029,12 @@ inline HandoffToken agent_export_handoff(AgentHandle& src) noexcept {
     // Issue #3148: mirror source-side lifecycle flags (read-only observers).
     tok.source_reclaimed_deferred = src.reclaimed_deferred_cleanup;
     tok.source_must_wait_reclaimed = src.must_wait_reclaimed;
+    // Issue #4004: arm source-live from the owner Scheduler (or a
+    // re-exported proxy's copied flag). One store at ~Scheduler.
+    if (src.fiber && src.fiber->owner_sched())
+        tok.source_live = src.fiber->owner_sched()->handoff_source_live();
+    else
+        tok.source_live = src.source_live;
     return tok;
 }
 
@@ -2038,6 +2059,7 @@ inline AgentHandle agent_import_handoff(HandoffToken tok, void* dst_ev,
     h.ok = (tok.fiber != nullptr && tok.mailbox != nullptr);
     h.reserved_quota_tenant = tok.reserved_quota_tenant;
     h.producer_bp_budget = tok.producer_bp_budget;
+    h.source_live = tok.source_live;
     // NO reservation; NO quota bump. The source remains the owner;
     // release_reservation_if_any() on the proxy early-exits (== 0).
     // Issue #3930: join_agent on this handle is Invalid (not a second
@@ -3375,7 +3397,14 @@ struct JoinViaTokenResult {
     // release/detach surface on this type.
     bool observation_only = true;           // always true for join_via_handoff
     bool reservation_held_by_source = true; // source is sole reservation owner
+    // Issue #4004: source Scheduler gone — Invalid without Fiber deref.
+    bool source_gone = false;
 };
+
+[[nodiscard]] inline bool
+handoff_source_gone(const std::shared_ptr<std::atomic<bool>>& live) noexcept {
+    return live && !live->load(std::memory_order_acquire);
+}
 
 [[nodiscard]] inline JoinViaTokenResult join_via_handoff(const HandoffToken& tok,
                                                          JoinViaTokenPolicy jp = {}) noexcept {
@@ -3386,6 +3415,13 @@ struct JoinViaTokenResult {
     // cannot observe a body the source never exported.
     if (!f || !tok.mailbox) {
         out.status = serve::JoinStatus::Invalid;
+        return out;
+    }
+    // Issue #4004: source-gone before any Fiber deref.
+    if (handoff_source_gone(tok.source_live)) {
+        out.status = serve::JoinStatus::Invalid;
+        out.source_gone = true;
+        g_orch_module_stats.handoff_join_via_token_total.fetch_add(1, std::memory_order_relaxed);
         return out;
     }
     // Mirror source-side lifecycle flags from token (read-only observers
@@ -3402,8 +3438,28 @@ struct JoinViaTokenResult {
     const auto deadline = has_deadline ? t0 + std::chrono::milliseconds(*jp.timeout_ms)
                                        : std::chrono::steady_clock::time_point{};
 
-    while (!f->is_done()) {
+    for (;;) {
+        if (handoff_source_gone(tok.source_live)) {
+            out.status = serve::JoinStatus::Invalid;
+            out.source_gone = true;
+            out.wait_us =
+                static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(
+                                               std::chrono::steady_clock::now() - t0)
+                                               .count());
+            return out;
+        }
+        if (f->is_done())
+            break;
         if (has_deadline && std::chrono::steady_clock::now() >= deadline) {
+            if (handoff_source_gone(tok.source_live)) {
+                out.status = serve::JoinStatus::Invalid;
+                out.source_gone = true;
+                out.wait_us = static_cast<std::uint64_t>(
+                    std::chrono::duration_cast<std::chrono::microseconds>(
+                        std::chrono::steady_clock::now() - t0)
+                        .count());
+                return out;
+            }
             out.status = serve::JoinStatus::Timeout;
             out.still_running = f->still_running_after_reclaim_counted() || !f->is_done();
             out.wait_us =
@@ -3416,6 +3472,15 @@ struct JoinViaTokenResult {
         }
         // Issue #3953: same cooperative poll as wait_reclaimed_body.
         if (wait_reclaimed_poll_once()) {
+            if (handoff_source_gone(tok.source_live)) {
+                out.status = serve::JoinStatus::Invalid;
+                out.source_gone = true;
+                out.wait_us = static_cast<std::uint64_t>(
+                    std::chrono::duration_cast<std::chrono::microseconds>(
+                        std::chrono::steady_clock::now() - t0)
+                        .count());
+                return out;
+            }
             out.status = serve::JoinStatus::Cancelled;
             out.still_running = f->still_running_after_reclaim_counted() || !f->is_done();
             out.wait_us =
@@ -3424,6 +3489,15 @@ struct JoinViaTokenResult {
                                                .count());
             return out;
         }
+    }
+    if (handoff_source_gone(tok.source_live)) {
+        out.status = serve::JoinStatus::Invalid;
+        out.source_gone = true;
+        out.wait_us =
+            static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(
+                                           std::chrono::steady_clock::now() - t0)
+                                           .count());
+        return out;
     }
     // Body exited — surface Ok or Reclaimed based on fiber state.
     out.still_running = false;
@@ -5278,6 +5352,11 @@ run_workflow(serve::Scheduler& sched, AgentScope& scope, std::span<const Workflo
         out.status = KeepaliveWatchStatus::Closed;
         return out;
     }
+    // Issue #4004: imported proxy whose source Scheduler is gone.
+    if (handoff_source_gone(h.source_live)) {
+        out.status = KeepaliveWatchStatus::Closed;
+        return out;
+    }
     if (h.keepalive_interval_ms == 0 && !h.liveness && !h.coop) {
         out.status = KeepaliveWatchStatus::Closed;
         return out;
@@ -5363,6 +5442,10 @@ run_workflow(serve::Scheduler& sched, AgentScope& scope, std::span<const Workflo
     out.body_stalled = true;
     g_orch_module_stats.stalled_agents_total.fetch_add(1, std::memory_order_relaxed);
     if (cancel_on_stall) {
+        if (handoff_source_gone(h.source_live)) {
+            out.status = KeepaliveWatchStatus::Closed;
+            return out;
+        }
         if (h.fiber)
             h.fiber->request_cancel();
         stop_keepalive_helper(h);

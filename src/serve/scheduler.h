@@ -208,6 +208,13 @@ public:
     void register_agent_scope_observer(void* cookie, ScopeLifetimeFn fn) noexcept;
     void unregister_agent_scope_observer(void* cookie) noexcept;
 
+    // Issue #4004: HandoffToken / import-proxy lifetime edge. Export copies
+    // this shared flag; ~Scheduler stores false before owned_fibers_.clear
+    // so join_via_handoff does not deref a destroyed Fiber*.
+    [[nodiscard]] std::shared_ptr<std::atomic<bool>> handoff_source_live() const noexcept {
+        return handoff_source_live_;
+    }
+
 private:
     int num_workers_;
     std::vector<std::unique_ptr<WorkerThread>> workers_;
@@ -270,6 +277,9 @@ private:
 
     // Runtime flag
     std::atomic<bool> running_{true};
+    // Issue #4004: true until ~Scheduler (store false before fiber destroy).
+    std::shared_ptr<std::atomic<bool>> handoff_source_live_{
+        std::make_shared<std::atomic<bool>>(true)};
 
     // ── Config ───────────────────────────────────────
     // Use load-aware distribution instead of round-robin

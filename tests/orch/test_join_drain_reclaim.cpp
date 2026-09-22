@@ -1433,9 +1433,9 @@ static void ac3497_scope_spawn_pending_name() {
         AgentSpec a;
         a.name = "3497-clean";
         a.body = [] {};
-        auto& h1 = scope.spawn(a);
-        auto& h2 = scope.spawn(a);
-        CHECK(h1.ok && h2.ok, "3497 AC2: both clean spawns ok");
+        const bool ok1 = scope.spawn(a).ok;
+        const bool ok2 = scope.spawn(a).ok;
+        CHECK(ok1 && ok2, "3497 AC2: both clean spawns ok");
         CHECK(scope.size() == 2, "3497 AC2: appends (no silent delete)");
         apply_dev_audit_defaults();
     }
@@ -7759,6 +7759,127 @@ int run_test_join_drain_reclaim() {
         CHECK(read_file("tests/orch/test_issue_3953.cpp").empty(), "3953: no test_issue_3953.cpp");
         CHECK(read_file("docs/design/3953-wait-reclaimed-yield.md").empty(),
               "3953: no docs/design");
+    }
+
+    {
+        std::println("\n--- #4004 AC1: join_via_handoff source-gone without Fiber deref ---");
+        using aura::orch::agent_export_handoff;
+        using aura::orch::HandoffToken;
+        using aura::orch::join_via_handoff;
+        using aura::orch::JoinViaTokenPolicy;
+        using aura::orch::kHandoffSourceLiveIssue;
+        using aura::serve::Fiber;
+        using aura::serve::JoinStatus;
+        using aura::serve::mf_mailbox::MultiFiberMailbox;
+        CHECK(kHandoffSourceLiveIssue == 4004, "4004: stamp");
+        auto mb = std::make_shared<MultiFiberMailbox>();
+        auto fiber = std::make_unique<Fiber>([] {});
+        auto live = std::make_shared<std::atomic<bool>>(true);
+        HandoffToken tok;
+        tok.mailbox = mb;
+        tok.fiber = fiber.get();
+        tok.source_live = live;
+        JoinViaTokenPolicy jp;
+        jp.timeout_ms = 2000;
+        std::atomic<bool> started{false};
+        aura::orch::JoinViaTokenResult res;
+        std::thread waiter([&] {
+            started.store(true, std::memory_order_release);
+            res = join_via_handoff(tok, jp);
+        });
+        while (!started.load(std::memory_order_acquire))
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        live->store(false, std::memory_order_release);
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        fiber.reset();
+        waiter.join();
+        CHECK(res.status == JoinStatus::Invalid, "4004 AC1: Invalid");
+        CHECK(res.source_gone, "4004 AC1: source_gone");
+        CHECK(res.observation_only, "4004 AC1: observation-only");
+    }
+
+    {
+        std::println("\n--- #4004 AC2: import proxy watch Closed when source-gone ---");
+        using aura::orch::AgentHandle;
+        using aura::orch::AgentLiveness;
+        using aura::orch::KeepaliveWatchStatus;
+        using aura::orch::watch_agent_liveness;
+        using aura::serve::Fiber;
+        auto fiber = std::make_unique<Fiber>([] {});
+        auto live = std::make_shared<std::atomic<bool>>(true);
+        AgentHandle h;
+        h.ok = true;
+        h.fiber = fiber.get();
+        h.keepalive_interval_ms = 50;
+        h.liveness = std::make_shared<AgentLiveness>();
+        h.source_live = live;
+        live->store(false, std::memory_order_release);
+        fiber.reset();
+        auto wr = watch_agent_liveness(h, /*stall_ms=*/50, /*cancel_on_stall=*/true);
+        CHECK(wr.status == KeepaliveWatchStatus::Closed, "4004 AC2: watch Closed, no Fiber deref");
+    }
+
+    {
+        std::println("\n--- #4004 AC3: empty token still Invalid, not source-gone ---");
+        using aura::orch::HandoffToken;
+        using aura::orch::join_via_handoff;
+        using aura::serve::JoinStatus;
+        HandoffToken empty;
+        auto res = join_via_handoff(empty);
+        CHECK(res.status == JoinStatus::Invalid, "4004 AC3: empty Invalid");
+        CHECK(!res.source_gone, "4004 AC3: empty is not source-gone");
+    }
+
+    {
+        std::println("\n--- #4004 AC4: export arms source_live from Scheduler ---");
+        using aura::orch::agent_export_handoff;
+        using aura::orch::AgentSpec;
+        using aura::orch::spawn_agent_with_mailbox;
+        using aura::serve::SchedRunner;
+        using aura::serve::Scheduler;
+        Scheduler sched(1);
+        SchedRunner runner(sched);
+        std::atomic<bool> keep{true};
+        AgentSpec spec;
+        spec.name = "4004-arm";
+        spec.attach_mailbox = true;
+        spec.body = [&] {
+            while (keep.load(std::memory_order_relaxed))
+                aura::orch::fiber_sleep_ms(10);
+        };
+        auto h = spawn_agent_with_mailbox(sched, spec);
+        CHECK(h.ok && h.fiber, "4004 AC4: spawn");
+        auto tok = agent_export_handoff(h);
+        CHECK(tok.source_live, "4004 AC4: export armed source_live");
+        CHECK(tok.source_live->load(std::memory_order_acquire), "4004 AC4: live true");
+        keep.store(false, std::memory_order_relaxed);
+        if (h.fiber) {
+            h.fiber->request_cancel();
+            if (auto* s = h.fiber->owner_sched()) {
+                s->note_orphan_fiber(h.fiber, 50);
+                s->reap_orphans_now();
+            }
+        }
+    }
+
+    {
+        std::println("\n--- #4004 AC5: source-cite + no AgentRegistry + no new query key ---");
+        const auto spawn = read_file("src/orch/agent_spawn.h");
+        const auto sched = read_file("src/serve/scheduler.h");
+        const auto scpp = read_file("src/serve/scheduler.cpp");
+        const auto agent = read_file("src/compiler/evaluator_primitives_agent.cpp");
+        CHECK(spawn.find("kHandoffSourceLiveIssue = 4004") != std::string::npos, "4004 AC5: stamp");
+        CHECK(spawn.find("handoff_source_gone") != std::string::npos, "4004 AC5: poll guard");
+        CHECK(sched.find("handoff_source_live") != std::string::npos, "4004 AC5: Scheduler flag");
+        CHECK(scpp.find("Issue #4004") != std::string::npos, "4004 AC5: dtor store false");
+        CHECK(agent.find("source-gone") != std::string::npos, "4004 AC5: Aura status");
+        CHECK(agent.find("query:4004") == std::string::npos, "4004 AC5: no query:4004");
+        CHECK(spawn.find("class AgentRegistry") == std::string::npos, "4004 AC5: no AgentRegistry");
+        CHECK(read_file("tests/orch/test_issue_4004.cpp").empty(),
+              "4004 AC5: no test_issue_4004.cpp");
+        CHECK(read_file("docs/design/4004-handoff-source-live.md").empty(),
+              "4004 AC5: no docs/design/4004-*");
     }
 
     // #3797-wave CI: restore the WAL-off face for later batch members.
