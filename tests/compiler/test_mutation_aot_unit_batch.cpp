@@ -154,6 +154,7 @@ namespace aura_mut_run_aot_hotupdate_audit_1882 {
 //   AC6: #3675 — AOT audit joins composite/batch pin SSOT (join_audit_and_se_mid)
 //   AC7: #3676 — production skip/refuse SE rows join fiber + Mutation epoch
 //   AC8: #3971 — skip/refuse tenant joins live Guard/checkpoint principal
+//   AC9: #4014 — boundary/AOT deny SE joins live tenant (not hardcoded 0)
 
 
 // Declared in aura_jit_bridge.h (C linkage); include path may vary by target.
@@ -618,6 +619,123 @@ void ac8_3971_skip_refuse_tenant_join() {
     ta::clear_boundary_audit_mid();
 }
 
+
+void ac9_4014_boundary_aot_deny_tenant_join() {
+    std::println("\n--- AC9 (#4014): boundary/AOT deny SE tenant joins live principal ---");
+    namespace ta = aura::compiler::typed_audit;
+    namespace sec = ::aura::core::security_event;
+    reset_for_test();
+    ta::clear_boundary_audit_mid();
+    ta::clear_invariant_deny_se_tls();
+    auto& ring = sec::g_security_event_ring();
+    const auto latest = [&]() {
+        const auto head = ring.seq.load(std::memory_order_relaxed);
+        return ring.ring[(head - 1) % sec::kSecurityEventRingSize];
+    };
+
+    constexpr std::uint64_t kTenant = 0x4014ull;
+    constexpr std::uint64_t kMid = 0x4014'B0DEull;
+    constexpr std::uint32_t kFiber = 0x4014'F1B3u;
+
+    // Production MT: boundary deny SE.tenant_id == live T; mid join green.
+    g_typed_mutation_audit_counters.production_defaults_active.store(1);
+    set_strategy(AuditStrategy::Full);
+    set_sample_ratio(1);
+    ta::note_boundary_audit_mid(kMid);
+    ta::note_boundary_audit_tenant(kTenant);
+    ::aura::core::capability::set_effect_fiber_id_override(kFiber);
+    const auto seq0 = ring.seq.load(std::memory_order_relaxed);
+    ta::record_boundary_deny_after_restore(kMid, "rollback", /*before=*/1, /*after=*/2,
+                                           /*node=*/0, /*nodes_changed=*/0,
+                                           /*fiber=*/static_cast<std::int64_t>(kFiber));
+    CHECK(ring.seq.load(std::memory_order_relaxed) > seq0, "4014: boundary deny advanced SE");
+    const auto bnd = latest();
+    CHECK(bnd.denied == true, "4014: boundary SE denied");
+    CHECK(bnd.mutation_id == kMid, "4014: boundary SE mid join green");
+    CHECK(bnd.tenant_id == kTenant, "4014: boundary SE.tenant_id == live T");
+    CHECK(bnd.fiber_id == static_cast<std::int64_t>(kFiber), "4014: boundary SE fiber intact");
+    CHECK(std::string_view(bnd.reason).find("boundary") != std::string_view::npos,
+          "4014: boundary deny_kind in reason");
+
+    // AOT deny path: same tenant helper; fiber via effect_fiber_id_or.
+    ta::clear_invariant_deny_se_tls();
+    ta::clear_boundary_audit_mid();
+    constexpr std::uint64_t kAotMid = 0x4014A07ull;
+    CHECK(ta::pin_composite_batch_join_mid(kAotMid) == kAotMid, "4014: AOT composite pin");
+    ta::note_boundary_audit_tenant(kTenant);
+    CHECK(ta::join_audit_and_se_mid(0) == kAotMid, "4014: AOT join mid green");
+    const auto seq1 = ring.seq.load(std::memory_order_relaxed);
+    capture_aot_hotupdate_audit(/*success=*/false, /*before_epoch=*/9, /*after_epoch=*/9,
+                                "aot-hotupdate-4014-deny");
+    CHECK(ring.seq.load(std::memory_order_relaxed) > seq1, "4014: AOT deny advanced SE");
+    const auto aot = latest();
+    CHECK(aot.denied == true, "4014: AOT SE denied");
+    CHECK(aot.mutation_id == kAotMid, "4014: AOT SE mid join green");
+    CHECK(aot.tenant_id == kTenant, "4014: AOT SE.tenant_id == live T");
+    CHECK(aot.fiber_id == static_cast<std::int64_t>(kFiber),
+          "4014: AOT SE fiber via effect_fiber_id_or");
+    CHECK(std::string_view(aot.reason).find("aot-hotupdate") != std::string_view::npos,
+          "4014: AOT deny_kind in reason");
+
+    // Soft/Off: emit_invariant_deny_se no-op unchanged.
+    ta::clear_invariant_deny_se_tls();
+    ta::clear_boundary_audit_mid();
+    g_typed_mutation_audit_counters.production_defaults_active.store(0);
+    set_strategy(AuditStrategy::Sampled);
+    set_sample_ratio(4096);
+    ta::note_boundary_audit_mid(0x401450FFull);
+    ta::note_boundary_audit_tenant(kTenant);
+    const auto seq_soft = ring.seq.load(std::memory_order_relaxed);
+    ta::record_boundary_deny_after_restore(0x401450FFull, "rollback", 1, 2);
+    CHECK(ring.seq.load(std::memory_order_relaxed) == seq_soft,
+          "4014: Soft boundary deny emits no SE");
+    capture_aot_hotupdate_audit(false, 1, 1, "aot-hotupdate-4014-soft");
+    // emit_invariant_deny_se runs after strategy restore → Soft Sampled no-op.
+    CHECK(ring.seq.load(std::memory_order_relaxed) == seq_soft,
+          "4014: Soft AOT deny emits no SE");
+
+    // Source cite: both sites use audit_se_join_tenant_id; no hardcoded 0.
+    auto read_repo_file = [](const std::string& rel) {
+        for (const auto& p : {rel, std::string("../") + rel, std::string("../../") + rel}) {
+            std::ifstream in(p);
+            if (!in)
+                continue;
+            return std::string((std::istreambuf_iterator<char>(in)),
+                               std::istreambuf_iterator<char>());
+        }
+        return std::string{};
+    };
+    const auto tmh = read_repo_file("src/compiler/typed_mutation_audit.h");
+    CHECK(!tmh.empty(), "4014: typed_mutation_audit.h readable");
+    const auto bnd_fn = tmh.find("inline void record_boundary_deny_after_restore(");
+    CHECK(bnd_fn != std::string::npos, "4014: boundary deny fn present");
+    const auto bnd_body = tmh.substr(bnd_fn, 1800);
+    CHECK(bnd_body.find("audit_se_join_tenant_id()") != std::string::npos,
+          "4014: boundary deny uses audit_se_join_tenant_id");
+    CHECK(bnd_body.find("/*tenant_id=*/0") == std::string::npos,
+          "4014: boundary deny no hardcoded tenant 0");
+    const auto aot_fn = tmh.find("inline void capture_aot_hotupdate_audit(bool success");
+    CHECK(aot_fn != std::string::npos, "4014: AOT capture fn present");
+    const auto aot_body = tmh.substr(aot_fn, 4000);
+    CHECK(aot_body.find("audit_se_join_tenant_id()") != std::string::npos,
+          "4014: AOT deny uses audit_se_join_tenant_id");
+    CHECK(aot_body.find("audit_se_join_fiber_id()") != std::string::npos,
+          "4014: AOT deny uses audit_se_join_fiber_id (effect_fiber_id_or)");
+    CHECK(aot_body.find("/*tenant_id=*/0") == std::string::npos,
+          "4014: AOT deny no hardcoded tenant 0");
+    CHECK(tmh.find("Issue #4014") != std::string::npos, "4014: header cites #4014");
+    CHECK(!std::ifstream("tests/issues/test_issue_4014.cpp").good() &&
+              !std::ifstream("tests/compiler/test_issue_4014.cpp").good(),
+          "4014: no standalone test_issue_4014.cpp");
+
+    g_typed_mutation_audit_counters.production_defaults_active.store(0);
+    ::aura::core::capability::set_effect_fiber_id_override(0);
+    set_strategy(AuditStrategy::Full);
+    set_sample_ratio(1);
+    ta::clear_boundary_audit_mid();
+    ta::clear_invariant_deny_se_tls();
+}
+
 int run_aot_hotupdate_audit_1882() {
     std::println("=== Issue #1882: TypedMutationAudit AOT/JIT wire-up ===");
     CompilerService cs;
@@ -629,6 +747,7 @@ int run_aot_hotupdate_audit_1882() {
     ac6_3675_composite_pin_join();
     ac7_3676_skip_refuse_join_context();
     ac8_3971_skip_refuse_tenant_join();
+    ac9_4014_boundary_aot_deny_tenant_join();
     std::println("\n=== #1882: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
