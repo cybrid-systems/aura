@@ -99,6 +99,10 @@ inline constexpr int kMultiFiberMailboxIssue = 1881;
 // Issue #2972: per-mailbox inflight credit (complement storm-oriented
 // BP-recent admit #2228/#2535). 0 credit_limit → use high_water.
 inline constexpr int kMailboxCreditInflightIssue = 2972;
+// Issue #4002: production close() detaches live attachers so Fiber::mailbox_
+// cannot dangle after a bare host close. Soft / Off: queue close only.
+// AgentHandle / reap / abandon still detach first (#3880 / #3905).
+inline constexpr int kMailboxCloseDetachIssue = 4002;
 
 // Issue #1595 / #2010: provenance-safety prefix (fiber-stack safe, pure string).
 inline constexpr std::string_view kLinearViolPrefix = "linear-viol:";
@@ -1391,7 +1395,20 @@ public:
             ::aura::compiler::lock_order::Level::Mailbox);
         std::lock_guard lock(mu_);
         drop_queued_unlocked_();
-        notify_all_unlocked();
+        notify_all_unlocked(); // walks attachers_ — before production detach
+        // Issue #4002: production close with live attachers detaches so
+        // Fiber::mailbox_ cannot dangle after the host drops the mailbox.
+        // Soft / Off: queue close only (zero extra walk). Inline under
+        // mu_ — detach() would re-lock. AgentHandle/reap/abandon still
+        // detach first (#3880/#3905); this is defense-in-depth for bare
+        // close().
+        if (aura_production_defaults_active_probe() != 0) {
+            for (auto* f : attachers_) {
+                if (f && f->mailbox() == this)
+                    f->set_mailbox(nullptr);
+            }
+            attachers_.clear();
+        }
     }
 
     // Multi-attach: multiple fibers may wait on this mailbox.
