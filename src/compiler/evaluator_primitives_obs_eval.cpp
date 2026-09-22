@@ -75,6 +75,11 @@ extern "C" std::uint64_t
 aura_residual_sid0_cap_default() noexcept; // Issue #2638: residual sid=0 growth cap (defs in
                                            // aura_jit_runtime.cpp)
 extern "C" int aura_get_require_stable_id_for_aot(void) noexcept;
+// Issue #4013: live deopt SSOT + C ABI readers (defs in aura_jit_runtime /
+// aura_jit_bridge; weak stubs forward to aura_deopt_count).
+extern "C" std::uint64_t aura_deopt_count(void);
+extern "C" std::uint64_t aura_jit_closure_stale_deopt_total(void);
+extern "C" std::uint64_t aura_jit_closure_safe_fallbacks(void);
 // Issue #2241: macro fiber hygiene filter / budget C ABI (macro_expansion.cpp).
 extern "C" std::uint64_t
 aura_macro_self_evo_count_fibers_meeting_filter(std::uint64_t min_violations,
@@ -14249,7 +14254,64 @@ void ObservabilityPrims::register_eval_p84(PrimRegistrar add, Evaluator& ev) {
 }
 
 // Issue #909 part 85 (orig lines 9935-10010)
-void ObservabilityPrims::register_eval_p85(PrimRegistrar add, Evaluator& ev) {}
+void ObservabilityPrims::register_eval_p85(PrimRegistrar add, Evaluator& ev) {
+
+    // Issue #4013: query:jit-deopt-stats — live deopt SSOT surface.
+    // Reads aura_deopt_count() (g_workspace_deopt_count) plus the existing
+    // C ABI aot readers. Additive NEW primitive; do not change old query
+    // keys. register_stats_impl only (SlimSurface freeze: no public add()).
+    // Soft/Off unchanged; observe-only; no new counter family.
+    ObservabilityPrims::register_stats_impl(
+        "query:jit-deopt-stats", [&ev](const auto&) -> EvalValue {
+            const std::int64_t live = static_cast<std::int64_t>(aura_deopt_count());
+            const std::int64_t stale =
+                static_cast<std::int64_t>(aura_jit_closure_stale_deopt_total());
+            const std::int64_t safe =
+                static_cast<std::int64_t>(aura_jit_closure_safe_fallbacks());
+            // Homology flag: under #4013 stub-forward (or production when both
+            // advance together) stale/safe match live SSOT. 1 = same source.
+            const std::int64_t ssot_homologous =
+                (stale == live && safe == live) ? 1 : 0;
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(10));
+            if (!ht)
+                return make_void();
+            bool overflowed = false;
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        std::lock_guard lock(ev.alloc_storage_lock_);
+                        auto kidx = ev.string_heap_.size();
+                        ev.string_heap_.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+                overflowed = true;
+            };
+            insert_kv("aura-deopt-count", live);
+            insert_kv("jit-closure-stale-deopt-total", stale);
+            insert_kv("jit-closure-safe-fallbacks", safe);
+            insert_kv("ssot-homologous", ssot_homologous);
+            insert_kv("live-ssot-wired", 1);
+            insert_kv("schema", 4013);
+            insert_kv("issue", 4013);
+            return query_hash_finish(ht, ev.string_heap_, overflowed);
+        });
+}
 
 // Issue #909 part 86 (orig lines 10011-10096)
 void ObservabilityPrims::register_eval_p86(PrimRegistrar add, Evaluator& ev) {

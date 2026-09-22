@@ -336,11 +336,18 @@ extern "C" __attribute__((weak)) void aura_jit_closure_record_safe_fallback(void
 extern "C" __attribute__((weak)) std::uint64_t aura_jit_closure_dual_check_total(void) {
     return 0;
 }
+// Issue #4013: weak stubs must forward live deopt SSOT (aura_deopt_count /
+// g_workspace_deopt_count). Returning 0 here made fork-isolated / light-link
+// binaries report dead aot_metrics (ELF first-def binds the weak stub when
+// aura_jit_bridge.cpp is not linked or loses link order). Production strong
+// defs in aura_jit_bridge.cpp still win when present; when the stub wins,
+// values match the live signal aura_deopt_inc writes.
+extern "C" std::uint64_t aura_deopt_count(void);
 extern "C" __attribute__((weak)) std::uint64_t aura_jit_closure_stale_deopt_total(void) {
-    return 0;
+    return aura_deopt_count();
 }
 extern "C" __attribute__((weak)) std::uint64_t aura_jit_closure_safe_fallbacks(void) {
-    return 0;
+    return aura_deopt_count();
 }
 extern "C" __attribute__((weak)) void aura_set_jit_batch_deopt_target(void* /*jit*/) {}
 // Light-link counter so remount force-deopt tests (#2503/#2894) can observe
