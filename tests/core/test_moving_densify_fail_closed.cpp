@@ -2055,6 +2055,94 @@ static void ac3326_3_try_allocate_cover_and_soft() {
     }
 }
 
+// Issue #4021: allocate_checked must write *cover_slot + re-register like
+// try_allocate / create_with_cover after success (API parity). No-cover
+// Evaluator path and factory refuse remain unchanged; Soft≠vuln.
+static void ac4021_allocate_checked_writes_cover_slot() {
+    std::println("\n--- #4021: allocate_checked writes cover_slot under Moving ---");
+    {
+        MovingFlagGuard on(1);
+        RequiredPinGuard req(1);
+        aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+        aura::core::lifetime::clear_general_object_pin_required_breach();
+        aura::core::lifetime::reset_general_object_pin_pre_move_block_for_test();
+        aura::ast::g_intermediate_create_uncovered_under_required_total.store(
+            0, std::memory_order_relaxed);
+        const auto uncovered0 =
+            aura::ast::g_intermediate_create_uncovered_under_required_total.load(
+                std::memory_order_relaxed);
+        ASTArena arena(64 * 1024);
+        void* slot = nullptr;
+        auto checked = arena.allocate_checked(32, alignof(std::max_align_t), &slot, nullptr);
+        CHECK(checked.has_value() && *checked != nullptr,
+              "4021 AC1: cover-aware allocate_checked succeeded");
+        CHECK(slot == *checked, "4021 AC1: *cover_slot written to live ptr");
+        CHECK(aura::ast::g_intermediate_create_uncovered_under_required_total.load(
+                  std::memory_order_relaxed) == uncovered0,
+              "4021 AC1: uncovered_under_required did not grow");
+        const void* pre_compact = slot;
+        const auto r = arena.live_compact(LiveCompactMode::Moving);
+        CHECK(r.pin_contract_held, "4021 AC1: pin_contract_held after covered allocate_checked");
+        CHECK(!aura::ast::moving_incomplete_remap_sticky_densify_off(),
+              "4021 AC1: sticky not armed by covered allocate_checked alone");
+        CHECK(slot != nullptr, "4021 AC1: slot remains non-null after Moving");
+        // Slot tracks live ptr: either unchanged (no move) or rewritten by densify.
+        if (r.objects_moved == 0) {
+            CHECK(slot == pre_compact, "4021 AC1: no-move slot unchanged");
+        } else {
+            CHECK(slot != nullptr, "4021 AC1: after move slot still tracks live ptr");
+        }
+        (void)pre_compact;
+        (void)r;
+    }
+    {
+        // Soft / no-cover Evaluator path unchanged: Soft allocate_checked
+        // without cover still succeeds; Soft≠vuln (no inventory / sticky).
+        RequiredPinGuard off(0);
+        aura::ast::g_intermediate_create_uncovered_under_required_total.store(
+            0, std::memory_order_relaxed);
+        ASTArena arena(64 * 1024);
+        auto soft = arena.allocate_checked(16);
+        CHECK(soft.has_value() && *soft != nullptr, "4021 AC2: Soft no-cover allocate_checked ok");
+        CHECK(arena.intermediate_create_auto_wire_count() == 0,
+              "4021 AC2: Soft no-cover does not inventory");
+        CHECK(aura::ast::g_intermediate_create_uncovered_under_required_total.load(
+                  std::memory_order_relaxed) == 0,
+              "4021 AC2: Soft uncovered stays 0");
+        // Soft cover write-back still happens (parity) without required register.
+        void* slot = reinterpret_cast<void*>(static_cast<std::uintptr_t>(0xdead));
+        auto covered = arena.allocate_checked(16, alignof(std::max_align_t), &slot, nullptr);
+        CHECK(covered.has_value() && *covered != nullptr, "4021 AC2: Soft covered allocate ok");
+        CHECK(slot == *covered, "4021 AC2: Soft still writes *cover_slot");
+    }
+    {
+        // Factory refuse still holds under production required + both-null.
+        MovingFlagGuard on(1);
+        RequiredPinGuard req(1);
+        aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+        ASTArena arena(64 * 1024);
+        auto refused = arena.allocate_checked(32);
+        CHECK(!refused.has_value(),
+              "4021 AC3: factory refuse still holds for both-null allocate_checked");
+    }
+    // Source-cite: allocate_checked writes *cover_slot like try_allocate.
+    const auto arena_src = read_file("src/core/arena.ixx");
+    CHECK(arena_src.find("Issue #4021") != std::string::npos, "4021 AC4: arena cites #4021");
+    const auto checked_pos =
+        arena_src.find("allocate_checked(std::size_t size, std::size_t alignment");
+    CHECK(checked_pos != std::string::npos, "4021 AC4: allocate_checked signature present");
+    // Window must cover the post-success write/register (after allocate_raw_impl).
+    const auto after = arena_src.substr(checked_pos, 2400);
+    CHECK(after.find("*cover_slot = ptr") != std::string::npos,
+          "4021 AC4: allocate_checked writes *cover_slot = ptr");
+    CHECK(after.find("register_external_root_slot_for_densify(cover_slot)") != std::string::npos,
+          "4021 AC4: allocate_checked re-registers cover_slot");
+    CHECK(after.find("Issue #4021") != std::string::npos,
+          "4021 AC4: #4021 cite is inside allocate_checked body");
+    CHECK(read_file("tests/core/test_issue_4021.cpp").empty(),
+          "4021 AC4: no standalone test_issue_4021.cpp (extend existing)");
+}
+
 static void ac3326_4_source_cite_no_invent() {
     std::println("\n--- #3326 AC5/AC6: source-cite + linter + no invent ---");
     const auto arena = read_file("src/core/arena.ixx");
@@ -5398,6 +5486,7 @@ int run_test_moving_densify_fail_closed() {
     ac3326_1_create_without_cover_fail_closed();
     ac3326_2_create_with_cover_no_uncovered_sticky();
     ac3326_3_try_allocate_cover_and_soft();
+    ac4021_allocate_checked_writes_cover_slot();
     ac3326_4_source_cite_no_invent();
     // Issue #3420: refuse-at-factory under production required.
     ac3420_1_factory_refuses_both_null();

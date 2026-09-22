@@ -3160,11 +3160,20 @@ public:
         // Issue #3180: forward cover_slot/cover_reason to allocate_raw_impl so
         // hot-path callers (Evaluator / CompilerService) can declare cover at
         // the allocate site and skip the implicit uncovered bump.
+        // Issue #4021: after success, write *cover_slot and re-register like
+        // try_allocate / create_with_cover so mid-window densify sees a live
+        // pointer (API parity; no-cover callers unchanged).
         void* ptr = allocate_raw_impl(size, alignment, cover_slot, cover_reason);
         if (!ptr) {
             return std::unexpected(
                 aura::core::AuraError{aura::core::AuraErrorKind::ArenaOutOfMemory,
                                       std::string("ASTArena::allocate_checked: OOM")});
+        }
+        if (cover_slot != nullptr) {
+            *cover_slot = ptr;
+            if (aura::core::lifetime::general_object_pin_required_active() &&
+                !aura::core::arena_policy::in_render_hotpath())
+                register_external_root_slot_for_densify(cover_slot);
         }
         return ptr;
     }
