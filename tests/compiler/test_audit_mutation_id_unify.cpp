@@ -26,8 +26,10 @@
 #include "test_harness.hpp"
 
 #include "compiler/security_capabilities.h"
+#include "compiler/tenant_host_path.hh"
 #include "compiler/type_linear_commit_health.hh"
 #include "core/capability_model.hh"
+#include "core/provenance_tracker.hh"
 #include "core/resource_quota.hh"
 #include "core/sandbox.hh" // #3599: Strict face for the deny gate
 #include "core/security_event.hh"
@@ -37,6 +39,7 @@
 #include "core/workspace_isolation.hh"
 
 #include <cstdint>
+#include <cstdlib>
 #include <fstream>
 #include <string>
 #include <string_view>
@@ -1376,6 +1379,88 @@ static void ac3903_3_source_cite() {
           "3903 AC3: no tests/issues invent");
 }
 
+static void ac3994_1_host_path_deny_typed_tenant() {
+    std::println("\n--- #3994 AC1: host-path IsolationDeny Typed tenant == capability tenant ---");
+    reset_all();
+    bump_mutation_epoch(1);
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+    ::setenv("AURA_MULTI_TENANT", "1", 1);
+    aura::core::provenance::set_multi_tenant_env_active(true);
+    const char* tmp = std::getenv("TMPDIR");
+    const std::string base = std::string(tmp && tmp[0] ? tmp : "/tmp") + "/aura-3994-ac1";
+    ::setenv("AURA_TENANT_FS_ROOT", base.c_str(), 1);
+    using aura::compiler::security::kHostPathCorrelateTenantIssue;
+    using aura::compiler::security::tenant_host_root_for;
+    CHECK(kHostPathCorrelateTenantIssue == 3994, "3994 AC1: issue stamp");
+    const auto escape = tenant_host_root_for(42) + "/clobber.txt";
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_effect_sandbox_mode(1);
+    ev.set_capability_tenant_id(7);
+    std::string out;
+    CHECK(!ev.check_tenant_host_path(escape, out, "write-file"),
+          "3994 AC1: Evaluator denies A→B path");
+    bool found = false;
+    std::uint32_t seen_tenant = 0;
+    {
+        std::lock_guard<std::mutex> lock(aura::compiler::typed_audit::g_trail().mu);
+        for (const auto& e : aura::compiler::typed_audit::g_trail().ring) {
+            if (std::string_view(e.name) != "write-file")
+                continue;
+            if (e.outcome != aura::compiler::typed_audit::AuditOutcome::Error)
+                continue;
+            found = true;
+            seen_tenant = e.tenant_id;
+            break;
+        }
+    }
+    CHECK(found, "3994 AC1: Typed deny row for write-file reachable");
+    CHECK(seen_tenant == 7, "3994 AC1: Typed tenant_id == capability_tenant_id_");
+    ::unsetenv("AURA_TENANT_FS_ROOT");
+    ::unsetenv("AURA_MULTI_TENANT");
+    aura::core::provenance::set_multi_tenant_env_active(false);
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+    reset_all();
+}
+
+static void ac3994_2_soft_unchanged() {
+    std::println("\n--- #3994 AC2: Soft/Off host-path passthrough (no Typed deny) ---");
+    reset_all();
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+    aura::core::provenance::set_multi_tenant_env_active(false);
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_effect_sandbox_mode(0);
+    ev.set_capability_tenant_id(7);
+    const auto before = g_typed_mutation_audit_counters.audits_considered.load();
+    std::string out;
+    CHECK(ev.check_tenant_host_path("/tmp/anywhere.txt", out, "write-file"),
+          "3994 AC2: Off check_tenant_host_path allows");
+    CHECK(g_typed_mutation_audit_counters.audits_considered.load() == before,
+          "3994 AC2: Soft/Off does not emit Typed correlate");
+    reset_all();
+}
+
+static void ac3994_3_source_cite() {
+    std::println("\n--- #3994 AC3: source-cite host-path correlate tenant; no invent ---");
+    const auto es = read_file("src/compiler/evaluator_security.cpp");
+    CHECK(es.find("Issue #3994") != std::string::npos, "3994 AC3: check_tenant_host_path cites");
+    auto pos = es.find("bool Evaluator::check_tenant_host_path");
+    CHECK(pos != std::string::npos, "3994 AC3: host-path present");
+    auto win = pos == std::string::npos ? std::string{} : es.substr(pos, 2800);
+    CHECK(win.find("capture_security_correlated_audit") != std::string::npos,
+          "3994 AC3: host-path correlates");
+    CHECK(win.find("capability_tenant_id_") != std::string::npos,
+          "3994 AC3: correlate stamps capability tenant");
+    const auto hh = read_file("src/compiler/tenant_host_path.hh");
+    CHECK(hh.find("kHostPathCorrelateTenantIssue = 3994") != std::string::npos,
+          "3994 AC3: issue stamp");
+    CHECK(!std::filesystem::exists("docs/design/3994-host-path-correlate-tenant.md"),
+          "3994 AC3: no docs/design");
+    CHECK(!std::filesystem::exists("tests/issues/test_issue_3994.cpp"),
+          "3994 AC3: no tests/issues invent");
+}
+
 int run_test_audit_mutation_id_unify() {
     std::println("=== Issue #2493: mutation_id source unify (WorkspaceEpoch Mutation) ===");
     ac1_prefers_caller_then_mutation_epoch();
@@ -1387,6 +1472,9 @@ int run_test_audit_mutation_id_unify() {
     ac3903_1_correlate_tenant_passthrough();
     ac3903_2_default_tenant_zero_unchanged();
     ac3903_3_source_cite();
+    ac3994_1_host_path_deny_typed_tenant();
+    ac3994_2_soft_unchanged();
+    ac3994_3_source_cite();
     ac7_boundary_trail_uses_resolve();
     ac3066_1_production_batch_share_mid();
     ac3066_2_sampled_force_joinable();
