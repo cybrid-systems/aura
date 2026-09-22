@@ -826,16 +826,16 @@ Evaluator::enforce_linear_post_failure(std::uint8_t path) noexcept {
     if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
         m->guard_failure_linear_enforce_total.fetch_add(1, std::memory_order_relaxed);
 
-    // Issue #3438: post-abort / mutate-fail drains SCOPED on-fiber —
-    // the outermost Guard's enter keep (published to the fiber) preserves
+    // Issue #3438 / #4031: post-abort / mutate-fail drains SCOPED on-fiber —
+    // the outermost Guard's enter keep (published / lazy-armed) preserves
     // sibling fibers' live linear roots. Off-fiber (standalone/test
-    // callers): legacy unpin_all fallback (Issue #3023; Soft empty = one lock +
-    // empty check). Nested Guard fail does not reach this helper.
-    // post-densify verify never unpins.
+    // callers): owner-scoped nullptr only — never process-wide clear
+    // (Issue #4031; Soft empty = one lock + empty check). Nested Guard
+    // fail does not reach this helper. post-densify verify never unpins.
     if (auto* f3438 = aura::serve::g_current_fiber)
         (void)aura::serve::unpin_linear_roots_scoped_for_fiber(f3438);
     else
-        (void)aura::core::lifetime::unpin_all_linear_roots();
+        (void)aura::core::lifetime::unpin_linear_roots_owned_by(nullptr);
 
     return out;
 }
