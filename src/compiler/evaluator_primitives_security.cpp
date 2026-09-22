@@ -96,14 +96,36 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
         // (sandbox_mode_ bool OR effect_sandbox_mode() != 0) so a drifted
         // bool cannot reopen elevation under Restricted.
         const bool sandboxed = ev.sandbox_mode() || ev.effect_sandbox_mode() != 0;
-        if (sandboxed && !ev.has_capability(aura::compiler::security::kCapWildcard)) {
-            ev.bump_capability_denial();
-            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
-                m->sandbox_admin_denials_total.fetch_add(1, std::memory_order_relaxed);
-            return make_primitive_error(
-                ev.string_heap_, ev.error_values_,
-                "security:set-sandbox-mode!: wildcard capability required while sandboxed",
-                ev.primitive_error_counter_ptr());
+        if (sandboxed) {
+            // Issue #3995: hold mtx across TA check + set_mode (TOCTOU vs
+            // concurrent revoke). Explicit TenantAdmin, not the unlocked
+            // wildcard string face (#3362 / #3411).
+            auto& reg = aura::core::capability::g_capability_registry();
+            std::lock_guard<std::mutex> lock(reg.mtx);
+            using aura::compiler::security::kEffectTenantAdmin;
+            if (reg.holds_wildcard_only_locked(ev.capability_tenant_id()) ||
+                (static_cast<std::uint16_t>(reg.effects_for_locked(ev.capability_tenant_id())) &
+                 static_cast<std::uint16_t>(kEffectTenantAdmin)) == 0) {
+                ev.bump_capability_denial();
+                if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+                    m->sandbox_admin_denials_total.fetch_add(1, std::memory_order_relaxed);
+                using ::aura::core::security_event::SecurityEventKind;
+                using ::aura::core::security_event_wal::emit_security_event_durable;
+                const auto epoch = ::aura::core::current_mutation_epoch();
+                const auto mid = typed_audit::join_audit_and_se_mid(0);
+                const auto fid = static_cast<std::int64_t>(aura_fiber_current_id());
+                emit_security_event_durable(SecurityEventKind::EffectDeny,
+                                            ev.capability_tenant_id(), mid, epoch,
+                                            /*effect_bits=*/0, /*cap_name=*/"<prim>",
+                                            "grant-effect-needs-explicit-tenant-admin",
+                                            /*denied=*/true, fid);
+                return make_primitive_error(
+                    ev.string_heap_, ev.error_values_,
+                    "security:set-sandbox-mode!: wildcard capability required while sandboxed",
+                    ev.primitive_error_counter_ptr());
+            }
+            ev.set_sandbox_mode(want);
+            return make_bool(old);
         }
         // Issue #3088: thin stamp+call to the SSOT adapter — adapter
         // routes through set_effect_sandbox_mode → aura::core::sandbox::set_mode
@@ -119,18 +141,40 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             return make_int(static_cast<std::int64_t>(ev.effect_sandbox_mode()));
         // Issue #3088: gate reads the authority triple (bool OR effect mode != 0)
         // so a drifted bool cannot reopen downgrade under Restricted.
-        if ((ev.sandbox_mode() || ev.effect_sandbox_mode() != 0) &&
-            !ev.has_capability(aura::compiler::security::kCapWildcard) &&
-            as_int(a[0]) < static_cast<std::int64_t>(ev.effect_sandbox_mode())) {
-            // Downgrade while sandboxed requires wildcard
-            ev.bump_capability_denial();
-            return make_primitive_error(
-                ev.string_heap_, ev.error_values_,
-                "security:set-effect-sandbox-mode!: wildcard required to lower mode",
-                ev.primitive_error_counter_ptr());
+        const auto new_mode = as_int(a[0]);
+        const auto cur = static_cast<std::int64_t>(ev.effect_sandbox_mode());
+        if ((ev.sandbox_mode() || ev.effect_sandbox_mode() != 0) && new_mode < cur) {
+            // Issue #3995: hold mtx across TA check + set_mode so a
+            // concurrent revoke cannot land between the unlocked wildcard
+            // string read and the process-wide Off write.
+            auto& reg = aura::core::capability::g_capability_registry();
+            std::lock_guard<std::mutex> lock(reg.mtx);
+            using aura::compiler::security::kEffectTenantAdmin;
+            if (reg.holds_wildcard_only_locked(ev.capability_tenant_id()) ||
+                (static_cast<std::uint16_t>(reg.effects_for_locked(ev.capability_tenant_id())) &
+                 static_cast<std::uint16_t>(kEffectTenantAdmin)) == 0) {
+                ev.bump_capability_denial();
+                using ::aura::core::security_event::SecurityEventKind;
+                using ::aura::core::security_event_wal::emit_security_event_durable;
+                const auto epoch = ::aura::core::current_mutation_epoch();
+                const auto mid = typed_audit::join_audit_and_se_mid(0);
+                const auto fid = static_cast<std::int64_t>(aura_fiber_current_id());
+                emit_security_event_durable(SecurityEventKind::EffectDeny,
+                                            ev.capability_tenant_id(), mid, epoch,
+                                            /*effect_bits=*/0, /*cap_name=*/"<prim>",
+                                            "grant-effect-needs-explicit-tenant-admin",
+                                            /*denied=*/true, fid);
+                return make_primitive_error(
+                    ev.string_heap_, ev.error_values_,
+                    "security:set-effect-sandbox-mode!: wildcard required to lower mode",
+                    ev.primitive_error_counter_ptr());
+            }
+            const auto prev = ev.effect_sandbox_mode();
+            ev.set_effect_sandbox_mode(static_cast<std::uint8_t>(new_mode));
+            return make_int(static_cast<std::int64_t>(prev));
         }
         const auto prev = ev.effect_sandbox_mode();
-        ev.set_effect_sandbox_mode(static_cast<std::uint8_t>(as_int(a[0])));
+        ev.set_effect_sandbox_mode(static_cast<std::uint8_t>(new_mode));
         return make_int(static_cast<std::int64_t>(prev));
     });
 

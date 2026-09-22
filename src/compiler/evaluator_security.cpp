@@ -1761,19 +1761,21 @@ void Evaluator::set_tenant_principal(std::uint64_t tenant_id, std::string_view /
     // bypass flag requires TenantAdmin / wildcard / capability. Soft/Off
     // (sandbox_mode_ == 0 && effect_sandbox_mode() == 0) short-circuits
     // before any privilege lookup (AC3: zero extra cost).
+    bool stored = false;
     if (allow_cross) {
         const bool force_bind = sandbox_mode_ != 0 || effect_sandbox_mode() != 0;
         if (force_bind) {
-            using aura::compiler::security::kCapCapability;
-            using aura::compiler::security::kCapTenantAdmin;
             // Issue #3411: drop the standalone has_capability(kCapWildcard)
             // arm. kCapWildcard持卡不算 TA per #3144 — effects_for strip
-            // removes TA+MSE from a wildcard-only holder, so the corrected
-            // has_capability(kCapTenantAdmin) / has_capability(kCapCapability)
-            // already return false for wildcard-only. Keeping kCapWildcard in
-            // the OR would re-introduce the double-track string/effect gate.
+            // removes TA+MSE from a wildcard-only holder.
+            // Issue #3995: hold mtx across TA check + flag store (TOCTOU vs
+            // concurrent revoke). kCapCapability maps to TenantAdmin bits.
+            auto& reg = ::aura::core::capability::g_capability_registry();
+            std::lock_guard<std::mutex> lock(reg.mtx);
             const bool privileged =
-                has_capability(kCapTenantAdmin) || has_capability(kCapCapability);
+                !reg.holds_wildcard_only_locked(capability_tenant_id_) &&
+                ::aura::core::capability::has_effect(reg.effects_for_locked(capability_tenant_id_),
+                                                     ::aura::core::capability::Effect::TenantAdmin);
             if (!privileged) {
                 using ::aura::core::security_event::SecurityEventKind;
                 using ::aura::core::security_event_wal::emit_security_event_durable;
@@ -1793,10 +1795,15 @@ void Evaluator::set_tenant_principal(std::uint64_t tenant_id, std::string_view /
                 capability_tenant_id_ = tenant_id;
                 return; // refuse the flag — leave allow_cross_tenant_ unchanged
             }
+            capability_tenant_id_ = tenant_id;
+            allow_cross_tenant_ = true;
+            stored = true;
         }
     }
-    capability_tenant_id_ = tenant_id;
-    allow_cross_tenant_ = allow_cross;
+    if (!stored) {
+        capability_tenant_id_ = tenant_id;
+        allow_cross_tenant_ = allow_cross;
+    }
     // Issue #3630: per-Evaluator principal authority is the multi-tenant
     // detection point. A SECOND distinct non-zero principal under
     // Restricted/Strict without AURA_MULTI_TENANT means the deployment is
