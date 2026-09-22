@@ -175,6 +175,10 @@ inline constexpr int kRecvHeldRefAfterStealIssue = 3565;
 // payload-or-empty (nullopt) for existing callers. Soft empty quiet.
 // No new query key.
 inline constexpr int kRecvTypedStatusIssue = 4001;
+// Issue #4026: agent_recv on import_proxy is typed-deny (Soft+prod).
+// Cross-Evaluator proxy shares mailbox with source — recv would dual-
+// consume. send/ask/reply stay allowed (liaison). No new query key.
+inline constexpr int kRecvProxyDeniedIssue = 4026;
 // Issue #3566: mailbox BP note/decay isolation — named-scope hook must
 // not poison the process bucket or block quiet-tenant decay. Soft empty
 // / "-" stay process bucket. No new query key.
@@ -1048,6 +1052,10 @@ struct OrchModuleStats {
     // agent_restart_total and does NOT burn max_restarts. Soft/Off
     // get the real count (correctness). Appended at struct END (#2906).
     std::atomic<std::uint64_t> agent_restart_spawn_denied_total{0};
+    // Issue #4026: agent_recv hit import_proxy (cross-Evaluator dual-
+    // consumer reject). Soft/Off bump too (ownership typed reject).
+    // Appended at struct END (#2906). Reuses query:orch-module-stats.
+    std::atomic<std::uint64_t> recv_proxy_denied_total{0};
 };
 
 // Issue #2636: env opt-in flag for force-safepoint on mark_reclaimed.
@@ -1711,6 +1719,10 @@ struct AgentHandle {
     // last_recv_stale_handoff so orch:agent-recv can surface a typed
     // deny instead of empty=#t busy-loop bait.
     bool last_recv_boundary_reject = false;
+    // Issue #4026: last agent_recv hit import_proxy gate (ownership).
+    // Soft/Off same typed reject. Mirrors #3642/#3673 handle out-arg
+    // shape so orch:agent-recv can surface recv-proxy-denied.
+    bool last_recv_proxy_denied = false;
     // Issue #2159: fiber-native helper (null when disabled / spawn failed).
     // Joined by join_agent after body; cancelled on stop / dtor (no host thread).
     serve::Fiber* keepalive_helper = nullptr;
@@ -4506,7 +4518,8 @@ inline bool maybe_clear_producer_throttle(AgentHandle& h) noexcept {
 // Raw agent_recv remains payload-or-empty.
 struct RecvResult {
     bool ok = false;
-    // "ok" | "empty" | "recv-under-boundary" | "handoff-required" | "no-mailbox"
+    // "ok" | "empty" | "recv-under-boundary" | "handoff-required" |
+    // "no-mailbox" | "recv-proxy-denied" (#4026)
     const char* status = "empty";
     std::optional<serve::mf_mailbox::MailMessage> message;
 };
@@ -4521,6 +4534,19 @@ struct RecvResult {
         out.status = "no-mailbox";
         return out;
     }
+    // Issue #4026: import_proxy is observation+liaison only — recv would
+    // dual-consume the shared mailbox with the source body. Soft/Off same
+    // fail-closed (ownership, not a posture). send/ask/reply stay allowed.
+    // Distinct from empty-recv (no recv_empty_total bump).
+    if (h.import_proxy) {
+        g_orch_module_stats.recv_proxy_denied_total.fetch_add(1, std::memory_order_relaxed);
+        h.last_recv_proxy_denied = true;
+        h.last_recv_stale_handoff = false;
+        h.last_recv_boundary_reject = false;
+        out.status = "recv-proxy-denied";
+        return out;
+    }
+    h.last_recv_proxy_denied = false;
     bool stale_handoff = false;
     bool boundary_reject = false;
     auto m = h.mailbox->recv(wait, timeout_ms, h.id, &stale_handoff, &boundary_reject);

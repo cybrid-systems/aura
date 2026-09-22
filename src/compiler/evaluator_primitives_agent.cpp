@@ -5495,6 +5495,30 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 timeout_ms = 0;
             auto rec = aura::orch::agent_recv_result(*hp, wait, timeout_ms);
             auto msg = rec.message;
+            // Issue #4026: import_proxy recv is typed deny Soft+prod (ownership
+            // dual-consumer). empty=#f so hosts do not busy-loop; distinct
+            // from quiet empty. send/ask/reply on proxy stay allowed.
+            if (std::string_view(rec.status) == "recv-proxy-denied" ||
+                (!msg && hp->last_recv_proxy_denied)) {
+                hp->last_recv_proxy_denied = false; // consumed once
+                auto sidx = ev.string_heap_.size();
+                ev.string_heap_.push_back("recv-proxy-denied");
+                auto pidx = ev.string_heap_.size();
+                ev.string_heap_.push_back("");
+                std::vector<std::pair<std::string, EvalValue>> kv = {
+                    {"ok", make_bool(false)},
+                    {"empty", make_bool(false)},
+                    {"status", make_string(sidx)},
+                    {"payload", make_string(pidx)},
+                    {"schema", make_int(1588)},
+                    {"schema-2011", make_int(2011)},
+                    {"schema-4026", make_int(aura::orch::kRecvProxyDeniedIssue)},
+                    {"issue-4026", make_int(aura::orch::kRecvProxyDeniedIssue)},
+                };
+                add_deny_class(kv, aura::orch::AgentDenyClass::Other, "recv-proxy-denied", 0,
+                               /*emit_retry=*/false);
+                return build_orch_hash(kv);
+            }
             // Issue #3565 + #3642: production unstamped/stale held_ref after
             // steal is not a successful payload (mailbox cleared the stale
             // stable-ref string; #3642 consumes stale as nullopt at the
@@ -7379,6 +7403,14 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             insert_kv("schema-4022", aura::orch::kRestartNSpawnAdmitDenyIssue);
             insert_kv("issue-4022", aura::orch::kRestartNSpawnAdmitDenyIssue);
             insert_kv("restart-n-spawn-admit-deny-wired", 1);
+            // Issue #4026: import_proxy recv deny (additive; append on
+            // existing query:orch-module-stats — no new query:* key).
+            insert_kv("recv-proxy-denied-total",
+                      static_cast<std::int64_t>(
+                          os.recv_proxy_denied_total.load(std::memory_order_relaxed)));
+            insert_kv("schema-4026", aura::orch::kRecvProxyDeniedIssue);
+            insert_kv("issue-4026", aura::orch::kRecvProxyDeniedIssue);
+            insert_kv("recv-proxy-denied-wired", 1);
             return query_hash_finish(ht, ev.string_heap_, overflowed);
         });
 

@@ -5530,6 +5530,150 @@ int run_test_join_drain_reclaim() {
         }
     }
 
+    // ── #4026: import_proxy recv gate — deny dual-consumer Soft+prod ──
+    // Closes the message-face gap left by #3089 / #3273 / #3930: join is
+    // ownership-gated but recv was not. Proxy recv would steal from the
+    // shared mailbox. send/ask/reply stay allowed (liaison). Soft/Off
+    // same typed reject (one bool branch, no new lock/getenv).
+    {
+        using aura::core::sandbox::SandboxMode;
+        using aura::core::sandbox::set_mode;
+        using aura::orch::agent_export_handoff;
+        using aura::orch::agent_import_handoff;
+        using aura::orch::agent_recv;
+        using aura::orch::agent_recv_result;
+        using aura::orch::agent_send;
+        using aura::orch::AgentSpec;
+        using aura::orch::g_orch_module_stats;
+        using aura::orch::kRecvProxyDeniedIssue;
+        using aura::serve::mf_mailbox::MailMessage;
+        using aura::serve::mf_mailbox::PushStatus;
+
+        auto run_proxy_recv_gate = [&](bool production, const char* tag) {
+            if (production) {
+                apply_production_audit_defaults();
+                set_mode(SandboxMode::Strict);
+            } else {
+                apply_dev_audit_defaults();
+                set_mode(SandboxMode::Off);
+            }
+            Scheduler sched(1);
+            AgentSpec spec;
+            spec.name = production ? "src-4026-prod" : "src-4026-soft";
+            spec.body = [] { /* idle */ };
+            auto src = aura::orch::spawn_agent_with_mailbox(sched, std::move(spec));
+            CHECK(src.ok && src.mailbox, std::string(tag) + ": source spawn ok");
+            auto tok = agent_export_handoff(src);
+            CompilerService cs2;
+            auto proxy = agent_import_handoff(std::move(tok), static_cast<void*>(&cs2), sched);
+            CHECK(proxy.ok && proxy.import_proxy, std::string(tag) + ": proxy stamped");
+            CHECK(proxy.mailbox.get() == src.mailbox.get(),
+                  std::string(tag) + ": shared mailbox");
+
+            // Seed a message via source send path (also validates send on
+            // source). Then attempt proxy recv — must deny without consuming.
+            MailMessage seeded;
+            seeded.payload = "liaison-seed";
+            CHECK(agent_send(src, std::move(seeded)) == PushStatus::Ok,
+                  std::string(tag) + ": source send Ok");
+
+            const auto denied0 =
+                g_orch_module_stats.recv_proxy_denied_total.load(std::memory_order_relaxed);
+            const auto recv0 =
+                g_orch_module_stats.agents_recv.load(std::memory_order_relaxed);
+            const auto empty0 =
+                g_orch_module_stats.recv_empty_total.load(std::memory_order_relaxed);
+
+            auto rec = agent_recv_result(proxy, /*wait=*/false, /*timeout_ms=*/0);
+            CHECK(std::string_view(rec.status) == "recv-proxy-denied",
+                  std::string(tag) + ": RecvResult status recv-proxy-denied");
+            CHECK(!rec.ok && !rec.message.has_value(),
+                  std::string(tag) + ": typed deny, no payload");
+            CHECK(proxy.last_recv_proxy_denied,
+                  std::string(tag) + ": last_recv_proxy_denied rides handle");
+            CHECK(g_orch_module_stats.recv_proxy_denied_total.load(std::memory_order_relaxed) ==
+                      denied0 + 1,
+                  std::string(tag) + ": recv_proxy_denied_total +1");
+            CHECK(g_orch_module_stats.agents_recv.load(std::memory_order_relaxed) == recv0,
+                  std::string(tag) + ": agents_recv unchanged");
+            CHECK(g_orch_module_stats.recv_empty_total.load(std::memory_order_relaxed) == empty0,
+                  std::string(tag) + ": not empty-recv semantics");
+
+            auto raw = agent_recv(proxy, /*wait=*/false, /*timeout_ms=*/0);
+            CHECK(!raw.has_value(), std::string(tag) + ": agent_recv nullopt");
+            CHECK(g_orch_module_stats.recv_proxy_denied_total.load(std::memory_order_relaxed) ==
+                      denied0 + 2,
+                  std::string(tag) + ": second deny bumps again");
+
+            // send on proxy STAYS allowed (liaison handoff use case).
+            MailMessage via_proxy;
+            via_proxy.payload = "from-proxy-liaison";
+            CHECK(agent_send(proxy, std::move(via_proxy)) == PushStatus::Ok,
+                  std::string(tag) + ": proxy send still Ok");
+
+            // Source still owns the queue — can recv both messages.
+            auto m1 = agent_recv(src, /*wait=*/false, /*timeout_ms=*/0);
+            auto m2 = agent_recv(src, /*wait=*/false, /*timeout_ms=*/0);
+            CHECK(m1.has_value() && m1->payload == "liaison-seed",
+                  std::string(tag) + ": source still owns seeded msg");
+            CHECK(m2.has_value() && m2->payload == "from-proxy-liaison",
+                  std::string(tag) + ": source recv via proxy-send (liaison)");
+
+            // #3930 join gate must not regress.
+            auto jr = aura::orch::join_agent(proxy, JoinPolicy{.primary_ms = 20, .drain_ms = 20});
+            CHECK(jr.status == JoinStatus::Invalid,
+                  std::string(tag) + ": join_agent(proxy) still Invalid (#3930)");
+            (void)aura::orch::join_agent(src, JoinPolicy{.primary_ms = 200, .drain_ms = 50});
+        };
+
+        std::println("\n--- #4026 AC1: production proxy recv typed deny ---");
+        run_proxy_recv_gate(true, "4026 AC1");
+
+        std::println("\n--- #4026 AC2: Soft proxy recv same typed deny ---");
+        run_proxy_recv_gate(false, "4026 AC2");
+
+        std::println("\n--- #4026 AC3: #3089 AC1-AC4 markers + source-cite ---");
+        {
+            const auto spawn = read_file("src/orch/agent_spawn.h");
+            const auto prim = read_file("src/compiler/evaluator_primitives_agent.cpp");
+            const auto test_self = read_file("tests/orch/test_join_drain_reclaim.cpp");
+            CHECK(spawn.find("kRecvProxyDeniedIssue = 4026") != std::string::npos,
+                  "4026 AC3: issue stamp");
+            CHECK(spawn.find("recv_proxy_denied_total") != std::string::npos,
+                  "4026 AC3: OrchModuleStats counter at END");
+            CHECK(spawn.find("last_recv_proxy_denied") != std::string::npos,
+                  "4026 AC3: handle out-arg flag");
+            CHECK(spawn.find("recv-proxy-denied") != std::string::npos,
+                  "4026 AC3: RecvResult status string");
+            // Gate lives in agent_recv_result (SSOT); agent_recv returns .message.
+            const auto rr = spawn.find("inline RecvResult agent_recv_result");
+            CHECK(rr != std::string::npos, "4026 AC3: agent_recv_result present");
+            const auto snip = spawn.substr(rr, 900);
+            CHECK(snip.find("if (h.import_proxy)") != std::string::npos,
+                  "4026 AC3: agent_recv_result gates import_proxy");
+            CHECK(snip.find("recv_proxy_denied_total") != std::string::npos,
+                  "4026 AC3: gate bumps counter");
+            // send/ask/reply on proxy stay ungated (liaison).
+            CHECK(prim.find("recv-proxy-denied-total") != std::string::npos,
+                  "4026 AC3: query:orch-module-stats exposes counter");
+            CHECK(prim.find("schema-4026") != std::string::npos, "4026 AC3: schema-4026 wired");
+            CHECK(prim.find("recv-proxy-denied") != std::string::npos,
+                  "4026 AC3: Aura orch:agent-recv typed surface");
+            CHECK(test_self.find("4026 AC1") != std::string::npos, "4026 AC3: test cites AC1");
+            CHECK(test_self.find("#3089 AC1") != std::string::npos,
+                  "4026 AC3: #3089 AC1 retained");
+            CHECK(test_self.find("#3089 AC4") != std::string::npos,
+                  "4026 AC3: #3089 AC4 retained");
+            CHECK(kRecvProxyDeniedIssue == 4026, "4026 AC3: stamp == 4026");
+            CHECK(spawn.find("class AgentRegistry") == std::string::npos,
+                  "4026 AC3: no AgentRegistry");
+            std::ifstream invent("tests/orch/test_issue_4026.cpp");
+            if (!invent.good())
+                invent.open("../tests/orch/test_issue_4026.cpp");
+            CHECK(!invent.good(), "4026 AC3: no tests/orch/test_issue_4026.cpp");
+        }
+    }
+
     // ── #3110: Production C++ join auto-wait (close host-forget window) ──
     // Closes the C++ host contract gap: join_agent / join_agents now perform
     // a short ensure_reclaimed_cleanup (50 ms production default) inline
