@@ -43,6 +43,9 @@ inline std::atomic<std::uint8_t> g_last_moving_incomplete_remap{0};
 inline std::atomic<std::uint64_t> g_last_root_remap_fail_total{0};
 inline std::atomic<std::uint8_t> g_last_had_moving_densify{0};
 inline std::atomic<std::uint64_t> g_last_window_seq{0};
+// Issue #4006: full window-atomic consults in apply densify-stale refuse
+// (not the seq-match skip). Test observability; no query key.
+inline std::atomic<std::uint64_t> g_apply_densify_window_consult_total{0};
 
 // Issue #2775: last-window snapshot of external roots registered via
 // ASTArena::register_external_root_for_densify(void*) / batch span that
@@ -332,7 +335,10 @@ inline void reset_moving_densify_health_for_test() noexcept {
     g_last_moving_incomplete_remap.store(0, std::memory_order_relaxed);
     g_last_root_remap_fail_total.store(0, std::memory_order_relaxed);
     g_last_had_moving_densify.store(0, std::memory_order_relaxed);
-    g_last_window_seq.store(0, std::memory_order_relaxed);
+    // Issue #4006: advance seq so apply TLS skip cannot keep a pre-reset
+    // quiet sample. Do not store 0 — that would match a leftover seq=0 hit.
+    g_last_window_seq.fetch_add(1, std::memory_order_relaxed);
+    g_apply_densify_window_consult_total.store(0, std::memory_order_relaxed);
     g_agent_throttle_for_moving_densify.store(0, std::memory_order_relaxed);
     g_last_external_roots_prep_registered.store(0, std::memory_order_relaxed);
     g_production_auto_arm_moving_total.store(0, std::memory_order_relaxed);
@@ -391,6 +397,10 @@ inline std::atomic<std::uint64_t> g_moving_densify_health_wired{1};
 [[nodiscard]] inline std::uint64_t moving_densify_health_wired() noexcept {
     return g_moving_densify_health_wired.load(std::memory_order_acquire);
 }
+
+// Issue #4006: seq-match skip on apply densify-stale refuse. Stamp only
+// (consult counter lives next to g_last_window_seq; no query key).
+inline constexpr int kApplyDensifyWindowSeqSkipIssue = 4006;
 
 } // namespace aura::core::moving_densify_health
 
