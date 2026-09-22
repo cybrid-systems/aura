@@ -76,7 +76,15 @@ using aura::orch::AgentHandle;
 using aura::orch::AgentScope;
 using aura::orch::AgentSpec;
 using aura::orch::g_orch_module_stats;
+using aura::core::resource_quota::Dimension;
+using aura::core::resource_quota::process_resource_quota;
+using aura::core::resource_quota::reset_process_resource_quota_for_test;
 using aura::orch::kJoinFailProductionDefaultIssue;
+using aura::orch::kRestartNSpawnAdmitDenyIssue;
+using aura::orch::AgentDenyClass;
+using aura::orch::classify_agent_deny;
+using aura::orch::note_agent_progress;
+using aura::orch::fiber_sleep_ms;
 using aura::orch::resolve_on_join_fail;
 using aura::orch::agent_scope_compat::stall_to_failure_action;
 using aura::serve::Fiber;
@@ -1350,6 +1358,214 @@ int run_test_agent_failure_policy() {
               "4003 AC5: no test_issue_4003.cpp");
         CHECK(read_file("docs/design/4003-restartn-drain.md").empty(),
               "4003 AC5: no docs/design/4003-*");
+    }
+
+
+    // ── Issue #4022: RestartN spawn-admit deny is not success ──
+    {
+        std::println("
+=== Issue #4022: RestartN spawn-admit deny ===");
+        CHECK(kRestartNSpawnAdmitDenyIssue == 4022, "4022: stamp");
+
+        // AC1: Soft + fiber quota deny → watch RestartN observes deny,
+        // does not burn max_restarts / agent_restart_total, husk remains.
+        {
+            std::println("
+--- #4022 AC1: Soft quota deny → restart_denied, no false ok ---");
+            ac3208_set_prod(false);
+            reset_process_resource_quota_for_test();
+            auto& pq = process_resource_quota();
+            Scheduler sched(1);
+            SchedRunner runner(sched);
+            std::atomic<bool> keep{true};
+            AgentScope scope(sched);
+            AgentSpec spec;
+            spec.name = "4022-soft-quota";
+            spec.attach_mailbox = false;
+            spec.keepalive_interval_ms = 50;
+            // Ignore cancel so Soft's immediate replace races while the
+            // fiber slot is still held (quota deny stays reliable).
+            spec.body = [&] {
+                note_agent_progress(scope.handles_mut().back());
+                while (keep.load(std::memory_order_relaxed))
+                    fiber_sleep_ms(50);
+            };
+            auto& h0 = scope.spawn(spec);
+            CHECK(h0.ok && h0.fiber, "4022 AC1: initial spawn ok");
+            const auto used = pq.used(Dimension::Fibers);
+            CHECK(!pq.check_and_consume(Dimension::Fibers, 1).has_value(),
+                  "4022 AC1: phantom fiber hold");
+            pq.set_limit(Dimension::Fibers, used); // used=used+1 > limit; after exit used==limit
+            std::this_thread::sleep_for(std::chrono::milliseconds(180));
+            const auto rst0 =
+                g_orch_module_stats.agent_restart_total.load(std::memory_order_relaxed);
+            const auto den0 = g_orch_module_stats.agent_restart_spawn_denied_total.load(
+                std::memory_order_relaxed);
+            const auto exh0 =
+                g_orch_module_stats.agent_restart_exhausted_total.load(std::memory_order_relaxed);
+            AgentFailurePolicy pol;
+            pol.on_stall = AgentFailureAction::RestartN;
+            pol.max_restarts = 2;
+            pol.consecutive_stall_limit = 3;
+            pol.restart_backoff_ms = 0;
+            auto wr = scope.watch_all(/*stall_ms=*/100, pol);
+            CHECK(wr.stalled >= 1, "4022 AC1: stall observed");
+            CHECK(wr.restart_attempted >= 1, "4022 AC1: restart attempted");
+            CHECK(wr.restart_ok == 0, "4022 AC1: restart_ok=0 (no false success)");
+            CHECK(wr.restart_denied >= 1, "4022 AC1: restart_denied>=1");
+            CHECK(g_orch_module_stats.agent_restart_total.load(std::memory_order_relaxed) == rst0,
+                  "4022 AC1: agent_restart_total unchanged");
+            CHECK(g_orch_module_stats.agent_restart_spawn_denied_total.load(
+                      std::memory_order_relaxed) == den0 + 1,
+                  "4022 AC1: agent_restart_spawn_denied_total +1");
+            CHECK(g_orch_module_stats.agent_restart_exhausted_total.load(
+                      std::memory_order_relaxed) == exh0,
+                  "4022 AC1: exhausted not burned by deny");
+            CHECK(!scope.handles()[0].ok, "4022 AC1: spawn-failed husk (!ok)");
+            CHECK(classify_agent_deny(scope.handles()[0]) == AgentDenyClass::Quota,
+                  "4022 AC1: deny-class=quota");
+            CHECK(scope.last_restart_deny_class() == AgentDenyClass::Quota,
+                  "4022 AC1: last_restart_deny_class=quota");
+            keep.store(false, std::memory_order_relaxed);
+            ac3208_stop(scope, keep);
+            pq.release(Dimension::Fibers, 1);
+            reset_process_resource_quota_for_test();
+            ac3208_set_prod(false);
+        }
+
+        // AC2: production drainable stall + quota deny → same observe,
+        // max_restarts not burned (exhausted stays flat).
+        {
+            std::println("
+--- #4022 AC2: production quota deny after drain ---");
+            ac3208_set_prod(true);
+            reset_process_resource_quota_for_test();
+            auto& pq = process_resource_quota();
+            Scheduler sched(1);
+            SchedRunner runner(sched);
+            std::atomic<bool> keep{true};
+            AgentScope scope(sched);
+            AgentSpec spec;
+            spec.name = "4022-prod-quota";
+            spec.attach_mailbox = false;
+            spec.keepalive_interval_ms = 50;
+            // Exits on cancel so production drain completes, then spawn denies.
+            spec.body = [&] { sleep_no_progress_body(scope.handles_mut().back(), keep); };
+            auto& h0 = scope.spawn(spec);
+            CHECK(h0.ok && h0.fiber, "4022 AC2: spawn ok");
+            const auto used = pq.used(Dimension::Fibers);
+            CHECK(!pq.check_and_consume(Dimension::Fibers, 1).has_value(),
+                  "4022 AC2: phantom fiber hold");
+            pq.set_limit(Dimension::Fibers, used);
+            std::this_thread::sleep_for(std::chrono::milliseconds(180));
+            const auto rst0 =
+                g_orch_module_stats.agent_restart_total.load(std::memory_order_relaxed);
+            const auto den0 = g_orch_module_stats.agent_restart_spawn_denied_total.load(
+                std::memory_order_relaxed);
+            const auto exh0 =
+                g_orch_module_stats.agent_restart_exhausted_total.load(std::memory_order_relaxed);
+            AgentFailurePolicy pol;
+            pol.on_stall = AgentFailureAction::RestartN;
+            pol.max_restarts = 2;
+            pol.consecutive_stall_limit = 3;
+            pol.restart_drain_ms = 200;
+            pol.restart_backoff_ms = 0;
+            auto wr = scope.watch_all(/*stall_ms=*/100, pol);
+            CHECK(wr.stalled >= 1, "4022 AC2: stall");
+            if (wr.restart_deferred_body_live >= 1) {
+                // Drain miss is still a valid production outcome; deny path
+                // requires drain to finish. Soft AC1 already covers deny.
+                CHECK(wr.restart_ok == 0, "4022 AC2: deferred ⇒ no false ok");
+            } else {
+                CHECK(wr.restart_attempted >= 1, "4022 AC2: restart attempted");
+                CHECK(wr.restart_ok == 0, "4022 AC2: restart_ok=0");
+                CHECK(wr.restart_denied >= 1, "4022 AC2: restart_denied");
+                CHECK(g_orch_module_stats.agent_restart_total.load(std::memory_order_relaxed) ==
+                          rst0,
+                      "4022 AC2: agent_restart_total unchanged");
+                CHECK(g_orch_module_stats.agent_restart_spawn_denied_total.load(
+                          std::memory_order_relaxed) == den0 + 1,
+                      "4022 AC2: spawn_denied +1");
+                CHECK(g_orch_module_stats.agent_restart_exhausted_total.load(
+                          std::memory_order_relaxed) == exh0,
+                      "4022 AC2: exhausted not burned");
+                CHECK(!scope.handles()[0].ok, "4022 AC2: husk !ok");
+            }
+            keep.store(false, std::memory_order_relaxed);
+            ac3208_stop(scope, keep);
+            pq.release(Dimension::Fibers, 1);
+            reset_process_resource_quota_for_test();
+            ac3208_set_prod(false);
+        }
+
+        // Soft zero-force: Soft only gains additive observe fields/counts —
+        // no Soft-only Cancel degrade on the deny arm (that stays production
+        // join-fail family). Soft historical RestartN cancel of the old body
+        // is unchanged (#4003).
+        {
+            std::println("
+--- #4022 Soft zero-force: observe-only on deny ---");
+            ac3208_set_prod(false);
+            reset_process_resource_quota_for_test();
+            auto& pq = process_resource_quota();
+            Scheduler sched(1);
+            SchedRunner runner(sched);
+            std::atomic<bool> keep{true};
+            AgentScope scope(sched);
+            AgentSpec spec;
+            spec.name = "4022-soft-zf";
+            spec.attach_mailbox = false;
+            spec.keepalive_interval_ms = 50;
+            spec.body = [&] {
+                note_agent_progress(scope.handles_mut().back());
+                while (keep.load(std::memory_order_relaxed))
+                    fiber_sleep_ms(50);
+            };
+            CHECK(scope.spawn(spec).ok, "4022 Soft ZF: spawn");
+            const auto used = pq.used(Dimension::Fibers);
+            CHECK(!pq.check_and_consume(Dimension::Fibers, 1).has_value(), "4022 Soft ZF: hold");
+            pq.set_limit(Dimension::Fibers, used);
+            std::this_thread::sleep_for(std::chrono::milliseconds(180));
+            const auto cancel0 = g_orch_module_stats.agent_join_fail_action_cancel_total.load(
+                std::memory_order_relaxed);
+            AgentFailurePolicy pol;
+            pol.on_stall = AgentFailureAction::RestartN;
+            pol.max_restarts = 3;
+            pol.consecutive_stall_limit = 3;
+            auto wr = scope.watch_all(100, pol);
+            CHECK(wr.restart_denied >= 1, "4022 Soft ZF: restart_denied observe");
+            CHECK(wr.restart_ok == 0, "4022 Soft ZF: no false ok");
+            CHECK(wr.restart_deferred_body_live == 0, "4022 Soft ZF: Soft never defers");
+            // Soft watch deny must not take the production join-fail Cancel degrade.
+            CHECK(g_orch_module_stats.agent_join_fail_action_cancel_total.load(
+                      std::memory_order_relaxed) == cancel0,
+                  "4022 Soft ZF: no Soft Cancel-degrade on deny");
+            keep.store(false, std::memory_order_relaxed);
+            ac3208_stop(scope, keep);
+            pq.release(Dimension::Fibers, 1);
+            reset_process_resource_quota_for_test();
+        }
+
+        {
+            std::println("
+--- #4022 AC5: source-cite + append-only + no AgentRegistry ---");
+            const auto scope_h = read_file("src/orch/agent_scope.h");
+            const auto spawn = read_file("src/orch/agent_spawn.h");
+            const auto agent = read_file("src/compiler/evaluator_primitives_agent.cpp");
+            CHECK(scope_h.find("kRestartNSpawnAdmitDenyIssue = 4022") != std::string::npos,
+                  "4022 AC5: stamp");
+            CHECK(spawn.find("agent_restart_spawn_denied_total") != std::string::npos,
+                  "4022 AC5: spawn-denied counter");
+            CHECK(scope_h.find("restart_denied") != std::string::npos, "4022 AC5: restart_denied");
+            CHECK(agent.find("restart-denied") != std::string::npos, "4022 AC5: hash restart-denied");
+            CHECK(agent.find("restart-deny-class") != std::string::npos,
+                  "4022 AC5: hash restart-deny-class");
+            CHECK(agent.find("query:4022") == std::string::npos, "4022 AC5: no query:4022");
+            CHECK(scope_h.find("class AgentRegistry") == std::string::npos,
+                  "4022 AC5: no AgentRegistry");
+            CHECK(read_file("tests/orch/test_issue_4022.cpp").empty(),
+                  "4022 AC5: no test_issue_4022.cpp");
+        }
     }
 
     std::println("\n=== Results: {} passed, {} failed ===", aura::test::g_passed,

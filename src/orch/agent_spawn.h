@@ -1043,6 +1043,11 @@ struct OrchModuleStats {
     // body — it releases the reservation) bumps it too. Appended at
     // struct END (#2906). Reuses query:orch-module-stats.
     std::atomic<std::uint64_t> reclaimed_quota_force_released_total{0};
+    // Issue #4022: RestartN re-spawn hit spawn-admit deny (quota /
+    // mailbox-BP / schedule-gate / tenant-required). Does NOT bump
+    // agent_restart_total and does NOT burn max_restarts. Soft/Off
+    // get the real count (correctness). Appended at struct END (#2906).
+    std::atomic<std::uint64_t> agent_restart_spawn_denied_total{0};
 };
 
 // Issue #2636: env opt-in flag for force-safepoint on mark_reclaimed.

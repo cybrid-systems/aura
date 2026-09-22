@@ -4640,6 +4640,18 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                  make_int(static_cast<std::int64_t>(wr.restart_mailbox_dropped))},
                 {"schema-4003", make_int(aura::orch::kRestartNDrainBeforeReplaceIssue)},
                 {"issue-4003", make_int(aura::orch::kRestartNDrainBeforeReplaceIssue)},
+                // Issue #4022: RestartN spawn-admit deny (additive; append).
+                {"restart-denied", make_int(static_cast<std::int64_t>(wr.restart_denied))},
+                {"restart-deny-class",
+                 [&] {
+                     const char* nm = aura::orch::agent_deny_class_name(
+                         scope->last_restart_deny_class());
+                     auto s = ev.string_heap_.size();
+                     ev.string_heap_.push_back(nm ? nm : "");
+                     return make_string(s);
+                 }()},
+                {"schema-4022", make_int(aura::orch::kRestartNSpawnAdmitDenyIssue)},
+                {"issue-4022", make_int(aura::orch::kRestartNSpawnAdmitDenyIssue)},
             };
             return build_orch_hash(kv);
         });
@@ -4763,6 +4775,8 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             const auto restart_attempted = scope->last_restart_attempted();
             const auto restart_skipped = scope->last_restart_skipped_no_spec();
             const auto restart_ok = scope->last_restart_ok();
+            const auto restart_denied = scope->last_restart_denied();
+            const auto restart_deny_cls = scope->last_restart_deny_class();
             // Issue #3803: observe isolation from specs_ region_keys BEFORE
             // drop (join/workflow hash additive; Soft/single unchanged).
             const auto iso_obs = scope->observe_isolation();
@@ -4877,6 +4891,17 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 // deny-class=other / deny-detail=descendants-live (#3251).
                 {"tree-settled", make_bool(tree_settled_now)},
                 {"descendants-live", make_bool(descendants_live)},
+                // Issue #4022: RestartN spawn-admit deny (additive; append).
+                {"restart-denied", make_int(static_cast<std::int64_t>(restart_denied))},
+                {"restart-deny-class",
+                 [&] {
+                     const char* nm = aura::orch::agent_deny_class_name(restart_deny_cls);
+                     auto s = ev.string_heap_.size();
+                     ev.string_heap_.push_back(nm ? nm : "");
+                     return make_string(s);
+                 }()},
+                {"schema-4022", make_int(aura::orch::kRestartNSpawnAdmitDenyIssue)},
+                {"issue-4022", make_int(aura::orch::kRestartNSpawnAdmitDenyIssue)},
             };
             // Issue #3803: additive isolation-level / region-key-missing
             // on join hash (existing counter OK; no new query key name).
@@ -7346,6 +7371,14 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             insert_kv("schema-3733", 3733);
             insert_kv("issue-3733", 3733);
             insert_kv("orch-module-stats-overflow-wired", 1);
+            // Issue #4022: RestartN spawn-admit deny (additive; append on
+            // existing query:orch-module-stats — no new query:* key).
+            insert_kv("agent-restart-spawn-denied-total",
+                      static_cast<std::int64_t>(
+                          os.agent_restart_spawn_denied_total.load(std::memory_order_relaxed)));
+            insert_kv("schema-4022", aura::orch::kRestartNSpawnAdmitDenyIssue);
+            insert_kv("issue-4022", aura::orch::kRestartNSpawnAdmitDenyIssue);
+            insert_kv("restart-n-spawn-admit-deny-wired", 1);
             return query_hash_finish(ht, ev.string_heap_, overflowed);
         });
 
