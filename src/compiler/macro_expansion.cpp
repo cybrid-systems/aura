@@ -870,6 +870,27 @@ std::size_t fiber_hygiene_stats_map_size() noexcept {
     std::lock_guard<std::mutex> lock(g_fiber_hygiene_mu);
     return g_fiber_hygiene_map.size();
 }
+
+// Issue #4034-residual: retire THIS fiber's pre-walk deny stamps at
+// top-level walk entry. #4034 made the per-fiber last_limit_reason the
+// deny authority for 1/2/3/6/7, but only a SUCCESSFUL top-level exit
+// retires the slot — a walk that denied kept its own stamp armed, so the
+// next walk on the same fiber aborted at the first consult before any
+// fresh ceiling could stamp (hygiene reason ACs #3062 / #3651 / #3608
+// saw restore pass with global=0). Peer fibers are unaffected (per-fiber
+// slots); 4/5 stay Agent-facing sticky (#3888).
+inline void retire_own_fiber_pre_walk_deny() noexcept {
+    const auto fid = static_cast<std::uint32_t>(aura_fiber_current_id());
+    std::lock_guard<std::mutex> lock(g_fiber_hygiene_mu);
+    if (auto it = g_fiber_hygiene_map.find(fid); it != g_fiber_hygiene_map.end()) {
+        const auto fr = it->second.last_limit_reason;
+        if (fr == kHygieneLimitReasonDepthLimit || fr == kHygieneLimitReasonPassLimit ||
+            fr == kHygieneLimitReasonStealAbort || fr == kHygieneLimitReasonCapabilityDeny ||
+            fr == kHygieneLimitReasonGensymCeiling || fr == kHygieneLimitReasonSameFlatReject ||
+            fr == kHygieneLimitReasonNameMapShared || fr == kHygieneLimitReasonConcurrentTopLevel)
+            it->second.last_limit_reason = 0;
+    }
+}
 // Issue #1652: clone_macro_body expand observability counters (paired with
 // #1611 MacroIntroduced hygiene gate). Bumped at the success path +
 // early-return hygiene-violation paths inside clone_macro_body. Exposed via
@@ -1708,6 +1729,10 @@ static aura::ast::NodeId clone_macro_body_at_depth(
     const std::uint8_t reason0 =
         (hygiene_depth == 0) ? g_macro_hygiene_last_limit_reason.load(std::memory_order_relaxed)
                              : std::uint8_t{0};
+    // Issue #4034-residual: a prior walk's own deny stamp must not abort
+    // this walk before its own ceiling can stamp (see helper note).
+    if (hygiene_depth == 0)
+        retire_own_fiber_pre_walk_deny();
     // Issue #2806: residual TLS mirror for diagnostics only (not authority).
     s_hygiene_depth = hygiene_depth;
     // Issue #2171: capture cross-flat status at top-level entry so the
@@ -3485,6 +3510,9 @@ static aura::ast::NodeId macro_expand_all_body(aura::ast::FlatAST& flat,
                                                aura::ast::StringPool& pool, aura::ast::NodeId root,
                                                int max_passes) {
     using namespace aura::ast;
+    // Issue #4034-residual: a prior walk's own deny stamp must not abort
+    // this pass-loop before its own ceiling can stamp (see helper note).
+    retire_own_fiber_pre_walk_deny();
     const auto original_root = root;
     // Issue #3062: Restricted/Strict (sandbox active) refuse partial writes
     // on limit. Soft/Off keeps the historical half-expand return (zero-cost).
