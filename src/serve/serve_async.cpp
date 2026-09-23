@@ -266,9 +266,27 @@ void run_serve_async(int num_workers) {
     // 2. Create scheduler with worker threads
     Scheduler sched(num_workers);
 
-    // Register fiber:spawn callback (captures scheduler for actual fiber creation)
+    // Register fiber:spawn callback (captures scheduler for actual fiber creation).
+    // Issue #4048: denseness fibers share the session Evaluator (complete_fiber
+    // captures &ev). Migrating parent/child across workers under Soft Ready
+    // multi-worker corrupts TLS / heap and hangs the session after join.
+    // Inherit the parent's worker affinity (and default to worker 0) so
+    // spawn+join denseness stays on one worker — same serialization as
+    // --worker-threads 1, which passes acceptance. Steal already skips
+    // other-affinity fibers.
     aura::messaging::g_fiber_spawn = [&sched](std::function<void()> fn) -> int64_t {
-        auto* f = sched.spawn(std::move(fn));
+        int aff = 0;
+        if (aura::serve::g_current_fiber) {
+            const int parent_aff = aura::serve::g_current_fiber->affinity();
+            if (parent_aff >= 0)
+                aff = parent_aff;
+            else {
+                // Pin parent too so subsequent wakes/spawns stay together.
+                aura::serve::g_current_fiber->set_affinity(0);
+                aff = 0;
+            }
+        }
+        auto* f = sched.spawn_with_affinity(std::move(fn), aff);
         return static_cast<int64_t>(f ? f->id() : 0);
     };
 
@@ -713,10 +731,19 @@ void run_serve_async(int num_workers) {
     }
 
     // Helper: spawn a named-session fiber that drains stdin_lines for `nsid`.
-    auto spawn_named_session_fiber = [&sched, &stdin_lines, &stdin_eof, &sessions,
-                                      &line_for_session,
-                                      &cs_for](const std::string& nsid, Session& sess) -> Fiber* {
-        return sched.spawn([nsid, &sess, &stdin_lines, &stdin_eof, &line_for_session, &cs_for]() {
+    // Soft shared graph (#4047 B / #4048): pin named sessions to worker 0 with
+    // the default session so shared Evaluator denseness never migrates.
+    // Production isolation: pin by name hash across workers.
+    auto spawn_named_session_fiber =
+        [&sched, &stdin_lines, &stdin_eof, &sessions, &line_for_session, &cs_for,
+         soft_shared_graph](const std::string& nsid, Session& sess) -> Fiber* {
+        const int aff =
+            soft_shared_graph
+                ? 0
+                : (static_cast<int>(std::hash<std::string>{}(nsid) %
+                                    static_cast<std::size_t>(std::max(1, sched.num_workers()))));
+        return sched.spawn_with_affinity(
+            [nsid, &sess, &stdin_lines, &stdin_eof, &line_for_session, &cs_for]() {
             sess.mailbox.attach(aura::serve::g_current_fiber);
             sess.service.set_wake_eventfd(aura::serve::g_current_fiber->eventfd());
             while (sess.active) {
@@ -755,7 +782,7 @@ void run_serve_async(int num_workers) {
                     }
                 }
             }
-        });
+        }, aff);
     };
 
     // Register / create named session (Soft: alias CS to default).
@@ -796,9 +823,12 @@ void run_serve_async(int num_workers) {
     // For now, spawn one fiber for the default session
     // In the future, spawn as needed
     for (auto& [sid, sess] : sessions) {
-        auto* fiber = sched.spawn([sid = sid, &sess = *sess, &stdin_lines, &stdin_eof, &sessions,
-                                   &sched, &shared_workspace_tree, &line_for_session, &cs_for,
-                                   &emplace_named_session, soft_shared_graph]() {
+        // Issue #4048: pin session fibers (esp. Soft shared default) to worker 0 so
+        // denseness spawn/join inherits affinity and never migrates Evaluators.
+        auto* fiber = sched.spawn_with_affinity(
+            [sid = sid, &sess = *sess, &stdin_lines, &stdin_eof, &sessions, &sched,
+             &shared_workspace_tree, &line_for_session, &cs_for, &emplace_named_session,
+             soft_shared_graph]() {
             // Attach mailbox to this fiber
             sess.mailbox.attach(g_current_fiber);
 
@@ -956,7 +986,7 @@ void run_serve_async(int num_workers) {
                     std::fflush(stdout);
                 }
             }
-        });
+        }, 0);
 
         sess->fiber = fiber;
         (void)soft_shared_graph;
@@ -980,9 +1010,20 @@ void run_serve_async_bench(const std::string& file_path, int num_workers) {
     // 2. Create scheduler with worker threads
     Scheduler sched(num_workers);
 
-    // Register fiber:spawn callback
+    // Register fiber:spawn callback (Issue #4048: affinity inheritance — see
+    // run_serve_async). Bench denseness also shares one Evaluator.
     aura::messaging::g_fiber_spawn = [&sched](std::function<void()> fn) -> int64_t {
-        auto* f = sched.spawn(std::move(fn));
+        int aff = 0;
+        if (aura::serve::g_current_fiber) {
+            const int parent_aff = aura::serve::g_current_fiber->affinity();
+            if (parent_aff >= 0)
+                aff = parent_aff;
+            else {
+                aura::serve::g_current_fiber->set_affinity(0);
+                aff = 0;
+            }
+        }
+        auto* f = sched.spawn_with_affinity(std::move(fn), aff);
         return static_cast<int64_t>(f ? f->id() : 0);
     };
 
@@ -1068,7 +1109,9 @@ void run_serve_async_bench(const std::string& file_path, int num_workers) {
     // 5. Spawn a single fiber that runs the bench code
     // The bench code uses fiber:spawn for parallelism; spawned fibers
     // continue running via the scheduler even after this fiber completes.
-    sched.spawn([&sess, bench_code = std::move(bench_code), &sched]() {
+    // Issue #4048: pin bench fiber to worker 0 so denseness inherits affinity.
+    sched.spawn_with_affinity(
+        [&sess, bench_code = std::move(bench_code), &sched]() {
         // Set wake eventfd for recv/send
         sess->service.set_wake_eventfd(aura::serve::g_current_fiber->eventfd());
 
@@ -1143,7 +1186,7 @@ void run_serve_async_bench(const std::string& file_path, int num_workers) {
     done:
         std::fflush(stdout);
         (void)any_error;
-    });
+    }, 0);
 
     // 6. Run the scheduler
     sched.run();
