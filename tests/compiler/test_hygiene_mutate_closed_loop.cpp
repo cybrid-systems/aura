@@ -5044,7 +5044,7 @@ struct HygieneExempt3576 {
 // must append a row here or AC2 fails them as ungated structural.
 static constexpr HygieneExempt3576 kMutateHygieneExempt3576[] = {
     {"mutate:set-agent-fingerprint", "metadata fingerprint; raw add, not an AST write",
-     "SECURITY_EXEMPT / GUARD_EXEMPT: metadata-only agent fingerprint"},
+     "GUARD_EXEMPT: metadata-only agent identity stamp (#2986)"},
     {"mutate:check-stable-ref", "read-only stable-ref probe; no AST write",
      "GUARD_EXEMPT: read-only stable-ref probe"},
     {"mutate:set-stale-ref-policy", "policy setter; no AST write",

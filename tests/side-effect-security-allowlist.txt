@@ -3,9 +3,9 @@
 # Format: one fully-qualified primitive name per line, with required reason:
 #   name  # SECURITY_EXEMPT: <reason>
 #
-# mutate:set-agent-fingerprint is metadata-only (agent identity stamp), not
-# an AST side effect — registered via bare add() next to add_mutate.
-mutate:set-agent-fingerprint  # SECURITY_EXEMPT: metadata-only agent identity stamp (no AST write)
+# mutate:set-agent-fingerprint LEFT this allowlist in #4037: the author
+# fingerprint is the blame label of the next typed atomic batch, so the
+# non-zero store is a TenantAdmin identity write enforced in body.
 # Diagnostic / metrics-only "mutate:" names (no AST write) — security_exempt.
 mutate:validate-reflected  # SECURITY_EXEMPT: diagnostic reflect counters only
 # #2628: mutate:validate-against-schema demoted (mutate :validate / stats_impl)

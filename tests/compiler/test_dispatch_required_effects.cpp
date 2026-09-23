@@ -46,6 +46,7 @@
 #include <cstdint>
 #include <fstream>
 #include <print>
+#include <sstream>
 #include <string>
 #include <string_view>
 
@@ -276,6 +277,287 @@ static void ac3596_5_soft_zero_extra() {
     CHECK(body_ran, "3596 AC5: body ran");
     CHECK(g_capability_effect_metrics().capability_effect_denied_total.load() == denied0,
           "3596 AC5: no new deny under Soft/Off");
+}
+
+// Issue #4037: merr values are (kind . message) pairs — is_error() does not
+// flag them; read the deny kind off the car string (same shape as merr_kind
+// in test_workspace_lock_unlock.cpp).
+static std::string ac4037_merr_kind(CompilerService& cs,
+                                    const aura::compiler::types::EvalValue& v) {
+    if (!is_pair(v))
+        return {};
+    auto idx = as_pair_idx(v);
+    auto& pairs = cs.evaluator().pairs();
+    if (idx >= pairs.size())
+        return {};
+    if (!is_string(pairs[idx].car))
+        return {};
+    auto sidx = as_string_idx(pairs[idx].car);
+    auto heap = cs.evaluator().string_heap();
+    if (sidx >= heap.size())
+        return {};
+    return std::string(heap[sidx]);
+}
+
+// ── Issue #4037: mutate:set-agent-fingerprint — the author fingerprint is the
+// blame label TypedTransactionGuard copies onto every sub-mutation of the next
+// typed atomic batch, so a non-zero store is an identity write:
+// kEffectTenantAdmin, enforced IN BODY and conditionally (non-zero only — a
+// dispatch-level require cannot see the arg and would gate clearing to 0).
+// Clearing to 0 stays allowed without TenantAdmin; Soft/Off keeps the store
+// ungated (sandbox-mode guard). Deny reason = require_effect default
+// "capability-effect-deny" (TenantAdmin-only, no Mutate/Ffi/Render bits).
+
+static void ac4037_meta_contract() {
+    std::println("\n--- #4037 meta: non-exempt, TA required, enforced in body ---");
+    reset_all();
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    const auto slot = ev.primitives().slot_for_name("mutate:set-agent-fingerprint");
+    CHECK(slot < ev.primitives().slot_count(), "4037 meta: prim registered");
+    const auto& meta = ev.primitives().meta_for_slot(slot);
+    CHECK(!meta.security_exempt, "4037 meta: security_exempt dropped");
+    CHECK(meta.required_effects == aura::compiler::security::kEffectTenantAdmin,
+          "4037 meta: required_effects = kEffectTenantAdmin");
+    CHECK(meta.effect_enforced_in_body,
+          "4037 meta: effect_enforced_in_body (arg-conditional, dispatch not double-gating)");
+    CHECK(meta.guard_exempt, "4037 meta: still guard_exempt (metadata-only, no AST write)");
+}
+
+static void ac4037_1_deny_no_grant() {
+    std::println("\n--- #4037 AC1: Restricted no grant → non-zero set denies, store unchanged ---");
+    reset_all();
+    aura::core::bump_mutation_epoch(1);
+    const auto live_mid = aura::core::current_mutation_epoch();
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_effect_sandbox_mode(1);
+    set_mode(SandboxMode::Restricted);
+    ev.set_capability_tenant_id(4037);
+    ev.clear_boundary_audit_mid_for_test();
+    ev.note_boundary_audit_mid_for_test(live_mid);
+    CHECK(ev.current_agent_fingerprint() == 0, "4037 AC1: store starts 0");
+    auto r = cs.eval("(mutate:set-agent-fingerprint 4242)");
+    CHECK(r && ac4037_merr_kind(cs, *r) == "capability-effect-deny",
+          "4037 AC1: non-zero set denies with empty grants");
+    CHECK(ev.current_agent_fingerprint() == 0, "4037 AC1: store unchanged after deny");
+    std::size_t denies = 0;
+    bool saw_reason = false;
+    bool deny_tenant_ok = false;
+    const auto seq = g_security_event_ring().seq.load(std::memory_order_relaxed);
+    const std::size_t rn = std::min<std::size_t>(seq, g_security_event_ring().ring.size());
+    for (std::size_t i = 0; i < rn; ++i) {
+        const auto& e = g_security_event_ring().ring[i];
+        if (e.denied && e.kind == aura::core::security_event::SecurityEventKind::EffectDeny &&
+            std::string_view(e.op) == "mutate:set-agent-fingerprint") {
+            ++denies;
+            saw_reason = std::string_view(e.reason) == "capability-effect-deny";
+            deny_tenant_ok = e.tenant_id == 4037;
+        }
+    }
+    CHECK(denies == 1, "4037 AC1: exactly one EffectDeny row for the prim");
+    CHECK(saw_reason, "4037 AC1: deny reason = capability-effect-deny");
+    CHECK(deny_tenant_ok, "4037 AC1: SE row keeps the real caller tenant");
+    set_mode(SandboxMode::Off);
+}
+
+static void ac4037_1b_batch_blame_stays_zero() {
+    std::println("\n--- #4037 AC1b: denied set → next atomic batch author stays 0 ---");
+    reset_all();
+    aura::core::bump_mutation_epoch(1);
+    const auto live_mid = aura::core::current_mutation_epoch();
+    using aura::core::capability::g_capability_registry;
+    using aura::core::capability::make_grant_provenance;
+    // Mutate-only (no TenantAdmin): the batch itself commits while the identity
+    // write stays denied — the record author column must stay 0.
+    g_capability_registry().grant(4037, "mutate", aura::core::capability::Effect::Mutate,
+                                  make_grant_provenance(live_mid, true, 0, 0));
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_effect_sandbox_mode(1);
+    set_mode(SandboxMode::Restricted);
+    ev.set_capability_tenant_id(4037);
+    ev.clear_boundary_audit_mid_for_test();
+    ev.note_boundary_audit_mid_for_test(live_mid);
+    auto r = cs.eval("(mutate:set-agent-fingerprint 4242)");
+    CHECK(r && ac4037_merr_kind(cs, *r) == "capability-effect-deny",
+          "4037 AC1b: non-zero set denied under Restricted (no TenantAdmin)");
+    CHECK(ev.current_agent_fingerprint() == 0, "4037 AC1b: store still 0 after deny");
+    // Disarm for the batch: the blame stamping (TypedTransactionGuard copying
+    // current_agent_fingerprint) is face-independent — what AC1b pins is that
+    // a DENIED set leaves nothing to stamp. (Workspace Guard mid minting vs
+    // epoch-bound grants is the #3964/#3966 surface, not #4037.)
+    set_mode(SandboxMode::Off);
+    ev.set_effect_sandbox_mode(0);
+    CHECK(cs.eval("(set-code \"(define x4037 1)\")").has_value(), "4037 AC1b: set-code target");
+    CHECK(cs.eval("(eval-current)").has_value(), "4037 AC1b: eval-current");
+    const std::array<std::string_view, 1> mutations = {"(mutate:rebind \"x4037\" \"7\")"};
+    auto batch = cs.typed_mutate_atomic(mutations);
+    CHECK(batch.success, "4037 AC1b: atomic batch commits");
+    set_mode(SandboxMode::Off);
+    ev.set_effect_sandbox_mode(0);
+    auto q = cs.eval("(hash-ref (query:last-mutation-provenance) \"author-fingerprint\")");
+    CHECK(q && is_int(*q) && as_int(*q) == 0,
+          "4037 AC1b: batch record author-fingerprint stays 0 (no forged label)");
+}
+
+static void ac4037_2_ta_allow_batch_blame() {
+    std::println("\n--- #4037 AC2: explicit TenantAdmin → set lands, batch blames 4242 ---");
+    reset_all();
+    aura::core::bump_mutation_epoch(1);
+    const auto live_mid = aura::core::current_mutation_epoch();
+    using aura::core::capability::g_capability_registry;
+    using aura::core::capability::make_grant_provenance;
+    g_capability_registry().grant(4037, "mutate", aura::core::capability::Effect::Mutate,
+                                  make_grant_provenance(live_mid, true, 0, 0));
+    // Explicit tenant-admin grant — NOT wildcard-only (#3144 strips TA from *).
+    g_capability_registry().grant(4037, "tenant-admin", aura::core::capability::Effect::TenantAdmin,
+                                  make_grant_provenance(live_mid, true, 0, 0));
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_effect_sandbox_mode(1);
+    set_mode(SandboxMode::Restricted);
+    ev.set_capability_tenant_id(4037);
+    ev.clear_boundary_audit_mid_for_test();
+    ev.note_boundary_audit_mid_for_test(live_mid);
+    auto r = cs.eval("(mutate:set-agent-fingerprint 4242)");
+    CHECK(r && !is_error(*r) && is_int(*r) && as_int(*r) == 4242,
+          "4037 AC2: explicit TA set lands");
+    CHECK(ev.current_agent_fingerprint() == 4242, "4037 AC2: store = 4242");
+    bool allow_tenant_ok = false;
+    const auto seq = g_security_event_ring().seq.load(std::memory_order_relaxed);
+    const std::size_t rn = std::min<std::size_t>(seq, g_security_event_ring().ring.size());
+    for (std::size_t i = 0; i < rn; ++i) {
+        const auto& e = g_security_event_ring().ring[i];
+        if (!e.denied && e.kind == aura::core::security_event::SecurityEventKind::EffectAllow &&
+            std::string_view(e.op) == "mutate:set-agent-fingerprint")
+            allow_tenant_ok = e.tenant_id == 4037;
+    }
+    CHECK(allow_tenant_ok, "4037 AC2: EffectAllow row carries caller tenant 4037");
+    CHECK(cs.eval("(set-code \"(define x4037 1)\")").has_value(), "4037 AC2: set-code target");
+    CHECK(cs.eval("(eval-current)").has_value(), "4037 AC2: eval-current");
+    const std::array<std::string_view, 1> mutations = {"(mutate:rebind \"x4037\" \"7\")"};
+    // Disarm for the batch (same rationale as AC1b): the blame stamping is
+    // face-independent; AC2 pins that the ALLOWED set's label propagates into
+    // the committed records. (Workspace Guard mid minting vs epoch-bound
+    // grants is the #3964/#3966 surface, not #4037.)
+    set_mode(SandboxMode::Off);
+    ev.set_effect_sandbox_mode(0);
+    auto batch = cs.typed_mutate_atomic(mutations);
+    CHECK(batch.success, "4037 AC2: atomic batch commits");
+    auto q = cs.eval("(hash-ref (query:last-mutation-provenance) \"author-fingerprint\")");
+    CHECK(q && is_int(*q) && as_int(*q) == 4242, "4037 AC2: batch records author-fingerprint 4242");
+}
+
+static void ac4037_3_wildcard_insufficient() {
+    std::println(
+        "\n--- #4037 AC3: wildcard-only * does NOT pass (effects_for strips TA, #3144) ---");
+    reset_all();
+    aura::core::bump_mutation_epoch(1);
+    const auto live_mid = aura::core::current_mutation_epoch();
+    using aura::core::capability::g_capability_registry;
+    using aura::core::capability::make_grant_provenance;
+    // Full-mask wildcard (same shape as #3141 AC1) — TenantAdmin bit included
+    // at grant time but stripped by effects_for for kCapWildcard (#3144).
+    g_capability_registry().grant(
+        4037, "*",
+        aura::core::capability::Effect::Read | aura::core::capability::Effect::Write |
+            aura::core::capability::Effect::Exec | aura::core::capability::Effect::Mutate |
+            aura::core::capability::Effect::Network | aura::core::capability::Effect::Ffi |
+            aura::core::capability::Effect::Render | aura::core::capability::Effect::MacroSelfEvo |
+            aura::core::capability::Effect::TenantAdmin | aura::core::capability::Effect::Syscall,
+        make_grant_provenance(live_mid, true, 0, 0));
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_effect_sandbox_mode(1);
+    set_mode(SandboxMode::Restricted);
+    ev.set_capability_tenant_id(4037);
+    ev.clear_boundary_audit_mid_for_test();
+    ev.note_boundary_audit_mid_for_test(live_mid);
+    auto r = cs.eval("(mutate:set-agent-fingerprint 4242)");
+    CHECK(r && ac4037_merr_kind(cs, *r) == "capability-effect-deny",
+          "4037 AC3: wildcard-only denies");
+    CHECK(ev.current_agent_fingerprint() == 0, "4037 AC3: store unchanged");
+    set_mode(SandboxMode::Off);
+}
+
+static void ac4037_4_clear_zero_ungated() {
+    std::println("\n--- #4037 AC4: set-to-0 without TenantAdmin restores 0 ---");
+    reset_all();
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_effect_sandbox_mode(0);
+    set_mode(SandboxMode::Off);
+    auto r5 = cs.eval("(mutate:set-agent-fingerprint 5)");
+    CHECK(r5 && is_int(*r5) && as_int(*r5) == 5, "4037 AC4: Off-face store = 5");
+    CHECK(ev.current_agent_fingerprint() == 5, "4037 AC4: store holds 5");
+    ev.set_effect_sandbox_mode(1);
+    set_mode(SandboxMode::Restricted);
+    ev.set_capability_tenant_id(4037);
+    auto r0 = cs.eval("(mutate:set-agent-fingerprint 0)");
+    CHECK(r0 && !is_error(*r0) && is_int(*r0) && as_int(*r0) == 0,
+          "4037 AC4: clear to 0 allowed without TA");
+    CHECK(ev.current_agent_fingerprint() == 0, "4037 AC4: store restored 0");
+    auto rn = cs.eval("(mutate:set-agent-fingerprint 9)");
+    CHECK(rn && ac4037_merr_kind(cs, *rn) == "capability-effect-deny",
+          "4037 AC4: non-zero direction still gated");
+    set_mode(SandboxMode::Off);
+}
+
+static void ac4037_5_off_ungated() {
+    std::println("\n--- #4037 AC5: Off face (AURA_SANDBOX=off) → store stays ungated ---");
+    reset_all();
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_effect_sandbox_mode(0);
+    set_mode(SandboxMode::Off);
+    ev.set_capability_tenant_id(4037);
+    auto r = cs.eval("(mutate:set-agent-fingerprint 777)");
+    CHECK(r && is_int(*r) && as_int(*r) == 777, "4037 AC5: Off store ungated");
+    CHECK(ev.current_agent_fingerprint() == 777, "4037 AC5: store = 777");
+}
+
+static void ac4037_source_cite() {
+    std::println("\n--- #4037 source-cite: conditional in-body require + non-exempt meta ---");
+    const auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
+    const auto at = mut.find("add(\"mutate:set-agent-fingerprint\"");
+    CHECK(at != std::string::npos, "4037 cite: registration located");
+    if (at != std::string::npos) {
+        const auto win = mut.substr(at, 1800);
+        CHECK(win.find("fp != 0") != std::string::npos,
+              "4037 cite: non-zero-only conditional guards the require");
+        CHECK(win.find("require_effect") != std::string::npos,
+              "4037 cite: in-body require present");
+        CHECK(win.find("kEffectTenantAdmin") != std::string::npos,
+              "4037 cite: TenantAdmin bit required");
+        CHECK(win.find("set_current_agent_fingerprint") != std::string::npos,
+              "4037 cite: store call present");
+    }
+    const auto mb = mut.find("PrimMeta ex{};", at);
+    CHECK(mb != std::string::npos, "4037 cite: meta block located");
+    if (mb != std::string::npos) {
+        const auto mwin = mut.substr(mb, 500);
+        CHECK(mwin.find("security_exempt") == std::string::npos,
+              "4037 cite: no security_exempt in meta");
+        CHECK(mwin.find("kEffectTenantAdmin") != std::string::npos &&
+                  mwin.find("effect_enforced_in_body") != std::string::npos,
+              "4037 cite: meta declares TA + in-body enforcement");
+    }
+    const auto al = read_file("tests/side-effect-security-allowlist.txt");
+    CHECK(!al.empty(), "4037 cite: allowlist readable");
+    bool al_row = false;
+    {
+        std::istringstream in(al);
+        std::string ln;
+        while (std::getline(in, ln)) {
+            const auto p = ln.find_first_not_of(" \t");
+            if (p == std::string::npos || ln[p] == '#')
+                continue; // prose comments document the removal; not entries
+            if (ln.find("mutate:set-agent-fingerprint") != std::string::npos)
+                al_row = true;
+        }
+    }
+    CHECK(!al_row, "4037 cite: SECURITY_EXEMPT allowlist row removed");
 }
 
 int run_test_dispatch_required_effects() {
@@ -535,8 +817,10 @@ int run_test_dispatch_required_effects() {
         std::println("\n--- exempt production prims ---");
         CompilerService cs;
         auto& prims = cs.evaluator().primitives();
-        for (const char* name : {"mutate:set-agent-fingerprint", "mutate:validate-reflected",
-                                 "mutate:validate-against-schema"}) {
+        // mutate:set-agent-fingerprint left this exempt list in #4037 — it is
+        // now a TenantAdmin identity write enforced in body (see the #4037 AC
+        // block at the bottom of this runner).
+        for (const char* name : {"mutate:validate-reflected", "mutate:validate-against-schema"}) {
             const auto slot = prims.slot_for_name(name);
             if (slot >= prims.slot_count())
                 continue;
@@ -1363,6 +1647,16 @@ int run_test_dispatch_required_effects() {
         CHECK(true, "3834 AC4: no new query key (reuse production_defaults gate)");
     }
 
+
+    // ── Issue #4037: author-fingerprint identity write gate ──
+    ac4037_meta_contract();
+    ac4037_1_deny_no_grant();
+    ac4037_1b_batch_blame_stays_zero();
+    ac4037_2_ta_allow_batch_blame();
+    ac4037_3_wildcard_insufficient();
+    ac4037_4_clear_zero_ungated();
+    ac4037_5_off_ungated();
+    ac4037_source_cite();
 
     std::println("\n=== #2152/#3524 dispatch required_effects: {} passed, {} failed ===", g_passed,
                  g_failed);

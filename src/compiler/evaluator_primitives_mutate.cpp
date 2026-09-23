@@ -1311,26 +1311,58 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
     // Declares the current AI agent identity for MutationRecord
     // author_fingerprint stamping. 0 = system. Does not require a
     // MutationBoundaryGuard (metadata only — not an AST mutate).
-    // SECURITY_EXEMPT: metadata-only agent identity stamp (#2057/#2152 allowlist).
     // GUARD_EXEMPT: metadata-only agent identity stamp (#2986). PrimMeta.guard_exempt.
+    // Issue #4037: NOT SECURITY_EXEMPT anymore. The author fingerprint is the
+    // blame label every committed MutationRecord of the next typed atomic
+    // batch carries (TypedTransactionGuard copies current_agent_fingerprint
+    // onto each sub-mutation), so a NON-ZERO store is an identity write:
+    // kEffectTenantAdmin — the same bit effect_for_cap_name maps
+    // capability/agent to. The require is IN-BODY and conditional (non-zero
+    // only): a dispatch-level require cannot see the arg and would gate the
+    // set-to-0 clear (#4037 Verify bullet 4). effect_enforced_in_body keeps
+    // dispatch from double-requiring — single-use TenantAdmin consumption
+    // stays with this one body check (same note as c-* in
+    // security_side_effect.hh). Clearing to 0 stays allowed without
+    // TenantAdmin so a denied process cannot pin a forged label forever (same
+    // shape as hygiene:set-allow-macro-mutate! allowing #f ungated). Soft/Off
+    // keeps the store ungated (sandbox-mode guard). Deny = require_effect
+    // default "capability-effect-deny" (TenantAdmin-only, no
+    // Mutate/Ffi/Render bits) and leaves current_agent_fingerprint
+    // unchanged. The integer is NOT a principal — audit blame join stays
+    // mid+tenant+fiber+Mutation-epoch.
     // Issue #3452: MutateRegKind::MetadataGuardExempt — a raw add of
     // mutate:set-agent-fingerprint is only legal for this I4 exempt face
     // (not a structural write).
     constexpr auto kSetAgentFingerprintKind = aura::compiler::MutateRegKind::MetadataGuardExempt;
-    (void)kSetAgentFingerprintKind;
+    (void)kSetAgentFingerprintKind; // GUARD_EXEMPT: raw-add metadata face (#3452/#4037)
     add("mutate:set-agent-fingerprint", [&ev, mev](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !is_int(a[0]))
             return mev("bad-arg", "usage: (mutate:set-agent-fingerprint <int>)");
         const auto fp = static_cast<std::uint64_t>(as_int(a[0]));
+        // Issue #4037: non-zero store = identity write → TenantAdmin; the 0
+        // clear stays ungated (a denied process must not pin a forged label).
+        // Variable op (same shape as the add_mutate no-target fallback): the
+        // require is NodeId-less metadata — no for_node_id/on_ref branch.
+        using aura::compiler::security::kEffectTenantAdmin;
+        const char* op4037 = "mutate:set-agent-fingerprint";
+        if (fp != 0 && ev.effect_sandbox_mode() != 0 &&
+            !ev.require_effect(kEffectTenantAdmin, op4037))
+            return mev("capability-effect-deny",
+                       "(mutate:set-agent-fingerprint) non-zero store requires TenantAdmin");
         ev.set_current_agent_fingerprint(fp);
         return make_int(static_cast<std::int64_t>(fp));
     });
     {
         ::aura::compiler::PrimMeta ex{};
-        ex.security_exempt = true;
         ex.guard_exempt = true;
         ex.pure = false;
-        ex.doc = "SECURITY_EXEMPT / GUARD_EXEMPT: metadata-only agent fingerprint (#2152/#2986)";
+        // Issue #4037: contract surface for dashboards / static gate. Dispatch
+        // does NOT enforce these (effect_enforced_in_body) — the conditional
+        // in-body require above is the single choke.
+        ex.required_effects = ::aura::compiler::security::kEffectTenantAdmin;
+        ex.effect_enforced_in_body = true;
+        ex.doc =
+            "GUARD_EXEMPT metadata + #4037 TenantAdmin identity write (in-body, non-zero only)";
         ev.primitives().set_meta_for_name("mutate:set-agent-fingerprint", std::move(ex));
     }
 
