@@ -1477,7 +1477,9 @@ void register_synthesize_primitives(PrimRegistrar add_raw, Evaluator& ev,
 
 void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
     // Issue #1232 Phase 1: gate intend / strategy primitives with kCapStrategy.
-    auto add = [&ev, add_raw = std::move(add_raw)](std::string name, PrimFn fn) {
+    // Copy (not move) the raw registrar: orch:spawn-agent below registers
+    // through add_raw directly (#4017 — see the registration site).
+    auto add = [&ev, add_raw](std::string name, PrimFn fn) {
         add_raw(std::move(name),
                 PrimFn{[&ev, fn = std::move(fn)](std::span<const EvalValue> a) -> EvalValue {
                     if (ev.sandbox_mode() &&
@@ -3327,7 +3329,19 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
     // via Evaluator::cleanup_orch_agents(). Not a multi-agent coordination
     // API — check_orch_mvp_scope.py --strict still guards the public surface.
 
-    add("orch:spawn-agent",
+    // Issue #4017: orch:spawn-agent registers through add_raw (NOT the
+    // kCapStrategy-gated add above). Under Restricted the strategy gate
+    // refuses the primitive with a primitive-error RefError BEFORE the
+    // tenant principal fence can run — the P0 spoof deny (structured
+    // ok=#f hash) was unreachable on the language surface, and RefError
+    // short-circuits as Call args so AC5's hash-ref reads never executed
+    // (void-miss signature on both deny and allow rows; the #4017 ship's
+    // build-test was cancelled, so the rows never validated). Hosts
+    // calling spawn_agent_with_mailbox directly (AC4) are already ungated
+    // by kCapStrategy, so the wrapper adds no security layer here — the
+    // tenant fence, quota, BP-admit, and production gates govern.
+    add_raw(
+        "orch:spawn-agent",
         [&ev, build_orch_hash, orch_keyword_key, add_deny_class,
          add_reclaimed_pending_lifecycle](std::span<const EvalValue> a) -> EvalValue {
             if (a.empty() || !types::is_string(a[0])) {

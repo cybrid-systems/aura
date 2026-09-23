@@ -6999,6 +6999,12 @@ int run_test_join_drain_reclaim() {
                 R"((hash-ref (orch:spawn-agent "aura-4017-same" (lambda () 1) :tenant-id 11) "ok"))");
             CHECK(ok_same && is_bool(*ok_same) && as_bool(*ok_same),
                   "4017 AC5: Aura same-tenant :tenant-id=A → ok=#t");
+            // #4017 AC5 hygiene: the allow-path spawn actually creates a live
+            // closure-bodied agent (unreachable before the #4017 registration
+            // fix — the strategy gate refused the primitive first). Its body
+            // AST lives in this Evaluator's arena; join before cs teardown so
+            // no dangling arena indices outlive the service.
+            (void)cs.eval(R"((orch:agent-join "aura-4017-same" :timeout-ms 5000))");
 
             apply_dev_audit_defaults();
             set_mode(SandboxMode::Off);
