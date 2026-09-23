@@ -34,6 +34,8 @@ export module aura.compiler.root_remap_pass;
 
 import std;
 
+extern "C" void aura_densify_mirror_retain_live_keys(void);
+
 export namespace aura::compiler {
 
 // Per-invocation rewrite stats (mirrors LiveCompactResult / ArenaStats /
@@ -359,8 +361,9 @@ run_root_remap_pass(const std::unordered_map<void*, void*>& object_remap) noexce
             std::lock_guard<std::mutex> lock(root_remap_detail::registry_mtx());
             return root_remap_detail::extra_densify_candidates().empty();
         }()) {
-        // Issue #2297: clear densify context when densify did not produce a map.
-        aura_clear_densify_object_remap();
+        // Issue #4046: an empty window must not drop tombstones a closure
+        // cell still holds. Test resets keep aura_clear_densify_object_remap.
+        aura_densify_mirror_retain_live_keys();
         aura_clear_densify_candidates();
         return stats;
     }
