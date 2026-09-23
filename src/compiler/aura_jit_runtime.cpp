@@ -7,7 +7,9 @@
 #include "compiler/typed_mutation_audit.h" // #2666 production_defaults_active for residual remount default
 #include "compiler/security_capabilities.h" // #3720/#4018 kEffectMutate for JIT hash/cell writes
 #include "core/lifetime_pin.hh" // Issue #2293: aura::core::lifetime::pin_linear_root / unpin_linear_root
-#include "observability_metrics.h" // CompilerMetrics full def (aura_get_aot_metrics returns it)
+#include "core/provenance_tracker.hh" // Issue #4036: multi_tenant_env_active for closure free arm
+#include "core/sandbox.hh"            // Issue #4036: is_strict for closure free arm
+#include "observability_metrics.h"    // CompilerMetrics full def (aura_get_aot_metrics returns it)
 
 // Forward decls for symbols defined in aura_jit_bridge.cpp (extern "C").
 // Issue #2637 anon / residual sync remount counters.
@@ -1013,6 +1015,11 @@ extern "C" int aura_get_remap_name_fallback_enabled(void) {
 // g_closure_freed[i]==1 means slot i is free (must not call/capture).
 static std::vector<std::uint8_t> g_closure_freed;
 static std::vector<size_t> g_closure_free_list;
+// Issue #4036: owning principal per closure slot — capability_tenant_id_ of
+// the owner Evaluator at alloc (the same principal require_effect records);
+// 0 = legacy unstamped. Parallel to g_closure_func_ids. No new Effect bit,
+// no query key, no second capability model.
+static std::vector<std::uint64_t> g_closure_tenants;
 static std::atomic<std::uint64_t> g_closure_free_total{0};
 static std::atomic<std::uint64_t> g_closure_reuse_total{0};
 // Always-on table lock: workspace write hooks are NO-OPs until
@@ -1666,8 +1673,19 @@ extern "C" std::uint64_t aura_closure_table_vector_desync_prevented_total(void) 
     return g_closure_table_vector_desync_prevented.load(std::memory_order_relaxed);
 }
 
+// Issue #4036: owner-Evaluator principal for closure slot tenant stamps
+// (same wiring as aura_jit_owner_require_effect; strong def in service.ixx,
+// weak stub in aura_jit_prim_dispatch_stub.cpp; unwired → 0 = unstamped).
+extern "C" std::uint64_t aura_jit_owner_capability_tenant(void) noexcept;
+
 // Issue #1361: allocate or reuse a closure slot. Caller holds write lock.
-static int64_t alloc_closure_slot_locked(int64_t func_id, std::uint8_t is_arena) {
+// Issue #4036: tenant parameter — the owning principal to stamp. Production
+// callers pass aura_jit_owner_capability_tenant() (owner Evaluator's
+// capability_tenant_id_, the same principal require_effect records);
+// aura_alloc_closure_tenant exists for test/tooling seams where ELF link
+// order shadows the strong owner hook (light-link weak stub returns 0).
+static int64_t alloc_closure_slot_locked(int64_t func_id, std::uint8_t is_arena,
+                                         std::uint64_t owner_tenant) {
 #ifndef NDEBUG
     assert_closure_vectors_consistent();
 #endif
@@ -1704,6 +1722,12 @@ static int64_t alloc_closure_slot_locked(int64_t func_id, std::uint8_t is_arena)
         stamp_closure_provenance_locked(cid);
         stamp_closure_table_epoch_locked(cid);
         invalidate_closure_cache_for(static_cast<int64_t>(cid));
+        // Issue #4036: restamp the owning principal on reuse (fresh grant
+        // semantics — the previous owner never survives reuse).
+        if (g_closure_tenants.size() < g_closure_func_ids.size())
+            g_closure_tenants.resize(g_closure_func_ids.size(), 0);
+        if (cid < g_closure_tenants.size())
+            g_closure_tenants[cid] = owner_tenant;
         g_closure_reuse_total.fetch_add(1, std::memory_order_relaxed);
         return static_cast<int64_t>(cid);
     }
@@ -1723,6 +1747,9 @@ static int64_t alloc_closure_slot_locked(int64_t func_id, std::uint8_t is_arena)
     g_closure_linear_state.push_back(aura_get_aot_live_linear_state_fingerprint()); // Issue #2129
     g_closure_cow_gens.push_back(aura_get_live_workspace_cow_gen());                // Issue #2547
     g_closure_table_epochs.push_back(aura_aot_func_table_epoch());                  // Issue #3471
+    // Issue #4036: stamp the owning principal at alloc — owner Evaluator's
+    // capability_tenant_id_, the same principal require_effect records.
+    g_closure_tenants.push_back(owner_tenant);
     return id;
 }
 
@@ -1730,7 +1757,8 @@ int64_t aura_alloc_closure(int64_t func_id) {
     // Issue #157 Phase 2 + #1361: table mutex always; workspace write when hooks set.
     std::unique_lock<std::shared_mutex> tlock(g_closure_table_mtx);
     aura_lock_workspace_write();
-    int64_t id = alloc_closure_slot_locked(func_id, /*is_arena=*/0);
+    int64_t id =
+        alloc_closure_slot_locked(func_id, /*is_arena=*/0, aura_jit_owner_capability_tenant());
     aura_unlock_workspace_write();
     return id;
 }
@@ -1738,26 +1766,73 @@ int64_t aura_alloc_closure(int64_t func_id) {
 int64_t aura_alloc_closure_arena(int64_t func_id) {
     std::unique_lock<std::shared_mutex> tlock(g_closure_table_mtx);
     aura_lock_workspace_write();
-    int64_t id = alloc_closure_slot_locked(func_id, /*is_arena=*/1);
+    int64_t id =
+        alloc_closure_slot_locked(func_id, /*is_arena=*/1, aura_jit_owner_capability_tenant());
+    aura_unlock_workspace_write();
+    return id;
+}
+
+// Issue #4036: explicit-tenant alloc seam — same slot stamp point as
+// aura_alloc_closure, for tests/tools whose link order shadows the strong
+// owner hook (light-link weak stub returns 0 → unstamped). Not a second
+// capability model: the same g_closure_tenants field, the same
+// alloc_closure_slot_locked stamp, the same aura_free_closure_checked arms.
+extern "C" int64_t aura_alloc_closure_tenant(int64_t func_id, std::uint64_t owner_tenant) {
+    std::unique_lock<std::shared_mutex> tlock(g_closure_table_mtx);
+    aura_lock_workspace_write();
+    int64_t id = alloc_closure_slot_locked(func_id, /*is_arena=*/0, owner_tenant);
     aura_unlock_workspace_write();
     return id;
 }
 
 // Issue #1361: free one closure's env and mark slot reusable.
+// Issue #4036: caller-facing entry keeps the legacy no-check shape
+// (internal sweeps + JIT internals have no principal/face context and keep
+// today's free); the closure:free! prim routes through
+// aura_free_closure_checked.
 void aura_free_closure(int64_t closure_id) {
+    (void)aura_free_closure_checked(closure_id, /*caller_tenant=*/0, /*sandbox_mode=*/0);
+}
+
+// Issue #4036: isolation-checked free. Production face (sandbox_mode != 0 —
+// Restricted/Strict, not Off): refuse a slot whose recorded principal is
+// non-zero and differs from the caller (IsolationDeny, zero free), and fail
+// closed on a legacy unstamped slot (tenant 0) under Strict / multi-tenant.
+// Soft/Off (mode 0) keeps today's free. Principal is the same
+// capability_tenant_id_ require_effect records (owner wiring). Returns 0 on
+// free, nonzero deny code otherwise (2 = foreign slot, 3 = legacy unstamped
+// under Strict/MT, 1 = bad id / out of range).
+int aura_free_closure_checked(int64_t closure_id, std::uint64_t caller_tenant, int sandbox_mode) {
     if (closure_id < 0)
-        return;
+        return 1;
     std::unique_lock<std::shared_mutex> tlock(g_closure_table_mtx);
     aura_lock_workspace_write();
     size_t cid = static_cast<size_t>(closure_id);
     if (cid >= g_closure_func_ids.size()) {
         aura_unlock_workspace_write();
-        return;
+        return 1;
     }
     // Idempotent: already freed
     if (cid < g_closure_freed.size() && g_closure_freed[cid] != 0) {
         aura_unlock_workspace_write();
-        return;
+        return 0;
+    }
+    // Issue #4036: production isolation arms — BEFORE any slot mutation
+    // (env free, func_id -1, freed stamp all stay untouched on deny).
+    if (sandbox_mode != 0) {
+        const std::uint64_t slot_tenant =
+            (cid < g_closure_tenants.size()) ? g_closure_tenants[cid] : 0;
+        if (slot_tenant != 0 && slot_tenant != caller_tenant) {
+            // IsolationDeny: foreign-stamped slot, zero free.
+            aura_unlock_workspace_write();
+            return 2;
+        }
+        if (slot_tenant == 0 && (::aura::core::sandbox::is_strict() ||
+                                 ::aura::core::provenance::multi_tenant_env_active())) {
+            // Legacy unstamped slot fails closed under Strict / multi-tenant.
+            aura_unlock_workspace_write();
+            return 3;
+        }
     }
     // Free arena-mode env buffer
     if (cid < g_arena_closure_envs.size() && g_arena_closure_envs[cid]) {
@@ -1806,6 +1881,7 @@ void aura_free_closure(int64_t closure_id) {
     invalidate_closure_cache_for(closure_id);
     g_closure_free_total.fetch_add(1, std::memory_order_relaxed);
     aura_unlock_workspace_write();
+    return 0;
 }
 
 std::uint64_t aura_closure_free_total() {

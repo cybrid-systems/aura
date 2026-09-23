@@ -138,3 +138,4 @@ check_orch_residuals_3941.py
 check_jit_densify_remap_3972.py
 check_native_moving_canary_env_note_3973.py
 check_steal_densify_inflight_boundary_safe_4033.py
+check_mutation_choke_4036.py

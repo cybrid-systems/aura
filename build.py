@@ -8048,6 +8048,23 @@ def cmd_lint():
     if r != 0:
         fail("Issue #3856 WAL-miss ring flip linter failed — run python3 scripts/check_wal_miss_ring_flip_3856.py")
         return r
+    # Issue #4036 (security residual): set-car!/set-cdr!/string-fill!/
+    # closure:free! resolved to kEffectNone and skipped the #3720 dispatch
+    # choke — zero-cap write (g_pair_slots cross-Evaluator, string_heap_ in
+    # place) and cross-tenant aura_free_closure. Gate pins: the four names
+    # infer kEffectMutate with no body-level second choke (single-use
+    # double-consume), the prim free routes through aura_free_closure_checked
+    # with the caller principal + face, both isolation deny arms sit BEFORE
+    # any slot mutation, and the owner-Evaluator principal stamp covers fresh
+    # alloc + reuse.
+    choke4036_script = ROOT / "scripts" / "check_mutation_choke_4036.py"
+    if not choke4036_script.exists():
+        fail(f"missing {choke4036_script}")
+        return 1
+    r = run([sys.executable, str(choke4036_script)], cwd=ROOT)
+    if r != 0:
+        fail("Issue #4036 mutation choke linter failed — run python3 scripts/check_mutation_choke_4036.py")
+        return r
     # Issue #3857 (mem residual): #3210 TemporaryMovingLivePtrCanary is
     # observe-only and the Moving entry precondition gate is TLS-only, so
     # a peer fiber's apply_closure window (cl_copy stack copies) cannot

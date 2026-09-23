@@ -1690,8 +1690,13 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
         if (a.empty())
             return make_bool(false);
         if (is_int(a[0])) {
-            aura_free_closure(as_int(a[0]));
-            return make_bool(true);
+            // Issue #4036: isolation-checked free with the calling
+            // Evaluator's principal + face — the same capability_tenant_id_
+            // require_effect just allowed the Mutate effect with. Deny →
+            // bool false, slot untouched (zero free).
+            const int rc = aura_free_closure_checked(as_int(a[0]), ev.capability_tenant_id(),
+                                                     static_cast<int>(ev.effect_sandbox_mode()));
+            return make_bool(rc == 0);
         }
         // Issue #1665: erase TW map entry (was no-op; left dead slots in scan).
         if (is_closure(a[0])) {
