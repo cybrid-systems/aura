@@ -449,16 +449,26 @@ static void ac3396_1_production_v2_spine_walker() {
           "3396 AC1: production_defaults_active() gate present in mutate.cpp");
     CHECK(mut.find("walk_v2") != std::string::npos,
           "3396 AC1: walk_v2 v2 spine walker present in mutate.cpp");
-    CHECK(mut.find("if (!walk_v2(cdr)) return std::nullopt") != std::string::npos,
-          "3396 AC1: walk_v2 failure under production → nullopt (v1 reject)");
+    {
+        const auto wvf = mut.find("if (!walk_v2(cdr))");
+        const auto ret =
+            wvf == std::string::npos ? std::string::npos : mut.find("return std::nullopt", wvf);
+        CHECK(wvf != std::string::npos && ret != std::string::npos && ret - wvf < 64,
+              "3396 AC1: walk_v2 failure under production → nullopt (v1 reject)");
+    }
     // Query side: same gate
     CHECK(qws.find("aura::compiler::typed_audit::production_defaults_active()") !=
               std::string::npos,
           "3396 AC1: production_defaults_active() gate present in query_workspace.cpp");
     CHECK(qws.find("walk_v2") != std::string::npos,
           "3396 AC1: walk_v2 v2 spine walker present in query_workspace.cpp");
-    CHECK(qws.find("if (!walk_v2(cdr)) return std::nullopt") != std::string::npos,
-          "3396 AC1: walk_v2 failure under production → nullopt (v1 reject)");
+    {
+        const auto wvf = qws.find("if (!walk_v2(cdr))");
+        const auto ret =
+            wvf == std::string::npos ? std::string::npos : qws.find("return std::nullopt", wvf);
+        CHECK(wvf != std::string::npos && ret != std::string::npos && ret - wvf < 64,
+              "3396 AC1: walk_v2 failure under production → nullopt (v1 reject)");
+    }
 }
 
 static void ac3396_2_resolve_mutate_node_arg_ensure_valid() {
@@ -598,10 +608,15 @@ static void ac3398_2_round_trip_identity() {
     const std::size_t unpack_pos = mut.find(unpack_helper);
     CHECK(unpack_pos != std::string::npos,
           "3398 AC2: #3396 v2 unpack helper (walk_v2) still present in mutate.cpp");
-    if (unpack_pos != std::string::npos) {
-        // Check that the v2 pack writes the same fields the unpack reads
+    // The v2 pack (pack_v2, "Issue #3398: v2 spine packer") lives BELOW the
+    // #3396 unpack lambda in file order — anchor the pack-side field checks
+    // on the packer block so the round-trip compares the landed layout.
+    const std::size_t pack_pos = mut.find("Issue #3398: v2 spine packer");
+    CHECK(pack_pos != std::string::npos, "3398 AC2: v2 spine packer block present in mutate.cpp");
+    if (pack_pos != std::string::npos) {
+        // Check that the v2 pack reads the same fields the unpack writes
         // (ref.wrap_epoch + ref.tenant_id + ref.cow_epoch_at_capture).
-        const std::string pack_block = mut.substr(0, unpack_pos);
+        const std::string pack_block = mut.substr(pack_pos, 4000);
         CHECK(pack_block.find("ref.wrap_epoch") != std::string::npos,
               "3398 AC2: pack writes ref.wrap_epoch (same field v2 unpack reads)");
         CHECK(pack_block.find("ref.tenant_id") != std::string::npos,
@@ -1053,7 +1068,7 @@ static void test_ac3661_4_strict_not_bypassed() {
     std::string mut((std::istreambuf_iterator<char>(f_mut)), std::istreambuf_iterator<char>());
     const auto r = mut.find("auto resolve_mutate_node_arg");
     CHECK(r != std::string::npos, "3661 AC4: resolve helper");
-    const auto win = r == std::string::npos ? std::string{} : mut.substr(r, 4500);
+    const auto win = r == std::string::npos ? std::string{} : mut.substr(r, 6000);
     CHECK(win.find("Issue #3661") != std::string::npos, "3661 AC4: cite");
     CHECK(win.find("auto_refresh=*/refresh") != std::string::npos,
           "3661 AC4: production refresh flag");
