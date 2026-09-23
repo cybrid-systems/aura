@@ -5259,7 +5259,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             // Encode the structured hash: ok / status / payload /
             // correlation-id / schema-2231 / schema-2538.
             auto st_s =
-                r.status; // "ok" | "timeout" | "no-mailbox" | "malformed" | recv-under-boundary
+                r.status; // ok | timeout | backpressure | handoff-required | no-mailbox | malformed
             auto st_idx = ev.string_heap_.size();
             ev.string_heap_.push_back(st_s);
             auto payload_idx = ev.string_heap_.size();

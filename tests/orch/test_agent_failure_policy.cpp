@@ -1363,15 +1363,13 @@ int run_test_agent_failure_policy() {
 
     // ── Issue #4022: RestartN spawn-admit deny is not success ──
     {
-        std::println("
-=== Issue #4022: RestartN spawn-admit deny ===");
+        std::println("=== Issue #4022: RestartN spawn-admit deny ===");
         CHECK(kRestartNSpawnAdmitDenyIssue == 4022, "4022: stamp");
 
         // AC1: Soft + fiber quota deny → watch RestartN observes deny,
         // does not burn max_restarts / agent_restart_total, husk remains.
         {
-            std::println("
---- #4022 AC1: Soft quota deny → restart_denied, no false ok ---");
+            std::println("--- #4022 AC1: Soft quota deny → restart_denied, no false ok ---");
             ac3208_set_prod(false);
             reset_process_resource_quota_for_test();
             auto& pq = process_resource_quota();
@@ -1436,8 +1434,7 @@ int run_test_agent_failure_policy() {
         // AC2: production drainable stall + quota deny → same observe,
         // max_restarts not burned (exhausted stays flat).
         {
-            std::println("
---- #4022 AC2: production quota deny after drain ---");
+            std::println("--- #4022 AC2: production quota deny after drain ---");
             ac3208_set_prod(true);
             reset_process_resource_quota_for_test();
             auto& pq = process_resource_quota();
@@ -1450,8 +1447,7 @@ int run_test_agent_failure_policy() {
             spec.attach_mailbox = false;
             spec.keepalive_interval_ms = 50;
             // Exits on cancel so production drain completes, then spawn denies.
-            spec.body = [&] {
-                sleep_no_progress_body(scope.handles_mut().back(), keep); };
+            spec.body = [&] { sleep_no_progress_body(scope.handles_mut().back(), keep); };
             auto& h0 = scope.spawn(spec);
             CHECK(h0.ok && h0.fiber, "4022 AC2: spawn ok");
             const auto used = pq.used(Dimension::Fibers);
@@ -1504,8 +1500,7 @@ int run_test_agent_failure_policy() {
         // join-fail family). Soft historical RestartN cancel of the old body
         // is unchanged (#4003).
         {
-            std::println("
---- #4022 Soft zero-force: observe-only on deny ---");
+            std::println("--- #4022 Soft zero-force: observe-only on deny ---");
             ac3208_set_prod(false);
             reset_process_resource_quota_for_test();
             auto& pq = process_resource_quota();
@@ -1548,8 +1543,7 @@ int run_test_agent_failure_policy() {
         }
 
         {
-            std::println("
---- #4022 AC5: source-cite + append-only + no AgentRegistry ---");
+            std::println("--- #4022 AC5: source-cite + append-only + no AgentRegistry ---");
             const auto scope_h = read_file("src/orch/agent_scope.h");
             const auto spawn = read_file("src/orch/agent_spawn.h");
             const auto agent = read_file("src/compiler/evaluator_primitives_agent.cpp");
@@ -1558,7 +1552,8 @@ int run_test_agent_failure_policy() {
             CHECK(spawn.find("agent_restart_spawn_denied_total") != std::string::npos,
                   "4022 AC5: spawn-denied counter");
             CHECK(scope_h.find("restart_denied") != std::string::npos, "4022 AC5: restart_denied");
-            CHECK(agent.find("restart-denied") != std::string::npos, "4022 AC5: hash restart-denied");
+            CHECK(agent.find("restart-denied") != std::string::npos,
+                  "4022 AC5: hash restart-denied");
             CHECK(agent.find("restart-deny-class") != std::string::npos,
                   "4022 AC5: hash restart-deny-class");
             CHECK(agent.find("query:4022") == std::string::npos, "4022 AC5: no query:4022");

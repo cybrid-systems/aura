@@ -212,9 +212,9 @@ int run_test_agent_ask() {
             g_orch_module_stats.agent_ask_timeout_total.load(std::memory_order_relaxed);
         AskResult r = agent_ask(b_handle, "no-reply", /*timeout_ms=*/100);
         CHECK(!r.ok, "AC2: ok=false on timeout");
-        CHECK(r.status == "no-mailbox" || r.status == "timeout", "AC2: status indicates failure");
-        CHECK(g_orch_module_stats.agent_ask_timeout_total.load() >= timeout_before,
-              "AC2: agent_ask_timeout_total exposed");
+        CHECK(r.status == "timeout", "AC2/4040: quiet mailbox deadline is timeout");
+        CHECK(g_orch_module_stats.agent_ask_timeout_total.load() == timeout_before + 1,
+              "4040: deadline bumps agent_ask_timeout_total once");
         cleanup_handle(b_handle);
     }
 
@@ -397,8 +397,13 @@ int run_test_agent_ask() {
         fill.payload = "fill-3940";
         CHECK(h.mailbox->push(std::move(fill)) == PushStatus::Ok, "3940: fill high_water");
         const auto recent0 = load_mailbox_bp_recent("scope-A-3940");
+        const auto to0 =
+            g_orch_module_stats.agent_ask_timeout_total.load(std::memory_order_relaxed);
         auto ask = agent_ask(h, "storm-3940", /*timeout_ms=*/10);
-        CHECK(ask.status == "timeout", "3940: ask BP surfaces timeout (no retry)");
+        CHECK(ask.status == "backpressure", "3940/4040: ask BP is backpressure, not timeout");
+        CHECK(h.mailbox->size() == 1, "4040: BP does not enqueue the ask");
+        CHECK(g_orch_module_stats.agent_ask_timeout_total.load(std::memory_order_relaxed) == to0,
+              "4040: BP does not bump agent_ask_timeout_total");
         CHECK(load_mailbox_bp_recent("scope-A-3940") > recent0,
               "3940: named gauge bumped by ask BP");
         AgentSpec sib;
@@ -416,6 +421,32 @@ int run_test_agent_ask() {
         CHECK(spawn_src.find("agent_send(target, std::move(msg))") != std::string::npos,
               "3940: ask routes through agent_send");
         CHECK(read_file("tests/orch/test_issue_3940.cpp").empty(), "3940: no test_issue_3940");
+    }
+
+    {
+        std::println("\n--- #4040: closed mailbox is no-mailbox ---");
+        Scheduler sched(1);
+        SchedRunner runner(sched);
+        AgentSpec spec;
+        spec.name = "closed-4040";
+        spec.attach_mailbox = true;
+        spec.body = [] {};
+        auto h = spawn_agent_with_mailbox(sched, spec);
+        CHECK(h.ok && h.mailbox, "4040: spawn ok");
+        h.mailbox->close();
+        const auto to0 =
+            g_orch_module_stats.agent_ask_timeout_total.load(std::memory_order_relaxed);
+        auto ask = agent_ask(h, "x", /*timeout_ms=*/50);
+        CHECK(ask.status == "no-mailbox", "4040: Closed push is no-mailbox");
+        CHECK(g_orch_module_stats.agent_ask_timeout_total.load(std::memory_order_relaxed) == to0,
+              "4040: closed does not bump timeout");
+        cleanup_handle(h);
+        const auto spawn_src = read_file("src/orch/agent_spawn.h");
+        CHECK(spawn_src.find("Issue #4040") != std::string::npos, "4040: cite");
+        CHECK(spawn_src.find("out.status = \"backpressure\"") != std::string::npos,
+              "4040: BP status");
+        CHECK(spawn_src.find("out.status = \"handoff-required\"") != std::string::npos,
+              "4040: handoff status");
     }
 
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
