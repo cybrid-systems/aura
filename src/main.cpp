@@ -756,10 +756,9 @@ int main(int argc, char* argv[]) {
             static bool soft_serve_b_logged = false;
             if (!soft_serve_b_logged) {
                 soft_serve_b_logged = true;
-                std::println(std::cerr,
-                             "aura: Soft shared_workspace (#4047 B): sync --serve named "
-                             "sessions share one CompilerService + workspace_tree — "
-                             "orch→project bindings visible. NOT production isolation.");
+                std::println(std::cerr, "aura: Soft shared_workspace (#4047 B): sync --serve named "
+                                        "sessions share one CompilerService + workspace_tree — "
+                                        "orch→project bindings visible. NOT production isolation.");
             }
         }
 
@@ -822,10 +821,8 @@ int main(int argc, char* argv[]) {
                         if (session_names.count(sname)) {
                             aura::compiler::CompilerService::unregister_session(sname);
                             // Issue #955 observability (via active session metrics if present)
-                            resolve_cs()
-                                .metrics()
-                                .session_registry_unregisters_total.fetch_add(
-                                    1, std::memory_order_relaxed);
+                            resolve_cs().metrics().session_registry_unregisters_total.fetch_add(
+                                1, std::memory_order_relaxed);
                             session_names.erase(sname);
                             if (!soft_shared_graph)
                                 sessions.erase(sname);
@@ -859,7 +856,7 @@ int main(int argc, char* argv[]) {
                             it->second.set_session_id(real_name);
                             it->second.set_workspace_tree(shared_workspace_tree);
                             aura::compiler::CompilerService::register_session(real_name,
-                                                                             &it->second);
+                                                                              &it->second);
                         }
                     }
                     if (created)
