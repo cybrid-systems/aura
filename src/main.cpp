@@ -383,6 +383,14 @@ int main(int argc, char* argv[]) {
     // multi-worker entries (--serve-async / --worker-threads /
     // --concurrent-metrics). CLI eval / P0 / Soft sandbox stay on the
     // single-worker ABI check above (returns true under Soft without abort).
+    //
+    // Issue #4047 Soft Ready: when Soft / !production_defaults_active
+    // (production_abi_selfcheck_required() == false), do NOT call
+    // aura_runtime_require_production_multi_worker — that would FATAL with
+    // fail_bits=0x10 only. Enter serve-async under an honest Soft Ready
+    // profile (fiber/epoll unchanged). Production path unchanged: when
+    // selfcheck is required, multi-worker Ready still aborts on Soft.
+    // Do NOT latch g_production_multi_worker_latched on the Soft path.
     bool multi_worker_entry = false;
     for (int i = 1; i < argc; ++i) {
         const std::string_view a(argv[i]);
@@ -392,8 +400,28 @@ int main(int argc, char* argv[]) {
             break;
         }
     }
-    if (multi_worker_entry)
-        aura_runtime_require_production_multi_worker_c();
+    if (multi_worker_entry) {
+        if (aura::serve::production_abi_selfcheck_required()) {
+            aura_runtime_require_production_multi_worker_c();
+        } else {
+            // Soft Ready banner once. Wording avoids aura-build Soft Ready
+            // refuse fingerprints ("production multi-worker Ready self-check
+            // failed", exact "Soft (AURA_SANDBOX=off)", "fail_bits=") so
+            // consumers can stamp serve_mode=async from measurement only.
+            static bool soft_ready_logged = false;
+            if (!soft_ready_logged) {
+                soft_ready_logged = true;
+                std::fprintf(
+                    stderr,
+                    "aura: Soft Ready profile (#4047): multi-worker serve under Soft "
+                    "contracts — NOT production multi-worker Ready. "
+                    "Do not stamp production Ready / production_defaults from this path.\n");
+                std::fflush(stderr);
+            }
+            // Non-aborting ABI observability already ran via
+            // aura_runtime_require_production_abi_c() above.
+        }
+    }
 
     // ── Crash handler: print backtrace on fatal signal ────────────
     // ── Crash handler: print backtrace on fatal signal ────────────
@@ -703,6 +731,11 @@ int main(int argc, char* argv[]) {
     // Messages: ok, error, fix, fixed, fix-fail
     if (argc > 1 && std::string_view(argv[1]) == "--serve") {
         // ── Multi-session ────────────────────────────────────
+        // Issue #4047 B deferred: Soft --serve still uses one CompilerService
+        // per named session (no shared top-level env / FlatAST). Async Soft
+        // Ready (#4047 A) shares workspace_tree across sessions; binding-level
+        // serve_cross_session_shared_ast still needs measured orch→project
+        // proof (do not stamp from workspace_tree alone).
         std::unordered_map<std::string, aura::compiler::CompilerService,
                            aura::core::TransparentStringHash, std::equal_to<>>
             sessions;
