@@ -8,6 +8,7 @@
 #include "mailbox.h"
 #include "thread_pool.h"
 #include "aura_platform.h"
+#include "runtime_production_abi.h"
 
 #include <array>
 #include <atomic>
@@ -525,17 +526,72 @@ void run_serve_async(int num_workers) {
         });
 
     // 3. Shared state between stdin_reader and session fibers
+    // Soft (#4047 B async): named sessions may share one CompilerService
+    // graph (parity with Soft sync --serve). Production keeps isolation.
+    const bool soft_shared_graph = !production_abi_selfcheck_required();
+    if (soft_shared_graph) {
+        static bool soft_async_b_logged = false;
+        if (!soft_async_b_logged) {
+            soft_async_b_logged = true;
+            std::println(std::cerr,
+                         "aura: Soft shared_workspace (#4047 B): --serve-async named "
+                         "sessions share one CompilerService + workspace_tree — "
+                         "orch→project bindings visible. NOT production isolation.");
+        }
+    }
+
+    struct Session {
+        std::string id;
+        Fiber* fiber = nullptr;
+        aura::compiler::CompilerService service;
+        aura::serve::Mailbox mailbox;
+        bool active = true;
+    };
+
     std::deque<std::string> stdin_lines; // complete JSON lines from stdin
     bool stdin_eof = false;
 
+    // Declared before stdin fiber so push path can wake Waiting session fibers
+    // (producer-consumer race: session parks after stdin push+park → hang without wake).
+    std::unordered_map<std::string, std::unique_ptr<Session>, aura::core::TransparentStringHash,
+                       std::equal_to<>>
+        sessions;
+
+    auto wake_waiting_session_fibers = [&sessions]() {
+        for (auto& [id, sess] : sessions) {
+            (void)id;
+            Fiber* f = sess ? sess->fiber : nullptr;
+            if (!f || f->is_done())
+                continue;
+            if (f->state() != FiberState::Waiting)
+                continue;
+            int evfd = f->eventfd();
+            if (evfd < 0)
+                continue;
+            uint64_t one = 1;
+            (void)::write(evfd, &one, sizeof(one));
+        }
+    };
+
+    // Route by JSON "session" field (json_field accepts "k":"v" and "k": "v").
+    // Fragile find("\"session\":\"name\"") missed spaced JSON → default stole lines.
+    auto line_for_session = [](const std::string& line, const std::string& sid) -> bool {
+        auto sess = json_field(line, "session");
+        if (sid == "default")
+            return sess.empty() || sess == "default";
+        return sess == sid;
+    };
+
     // 4. Spawn stdin_reader fiber
 
-    auto* stdin_fiber = sched.spawn([&sched, &stdin_lines, &stdin_eof]() {
+    auto* stdin_fiber = sched.spawn([&sched, &stdin_lines, &stdin_eof,
+                                     &wake_waiting_session_fibers]() {
         std::string buf;
         bool local_eof = false;
         while (!local_eof) {
             // Edge-triggered: read until EAGAIN or EOF
             bool got_data = false;
+            bool pushed = false;
             while (true) {
                 char tmp[4096];
                 ssize_t n = ::read(STDIN_FILENO, tmp, sizeof(tmp));
@@ -571,8 +627,10 @@ void run_serve_async(int num_workers) {
                 auto line = buf.substr(0, nl);
                 // Skip comment, blank, and empty lines
                 auto s = line.find_first_not_of(" \t\r\n");
-                if (s != std::string::npos && line[s] != ';')
+                if (s != std::string::npos && line[s] != ';') {
                     stdin_lines.push_back(std::move(line));
+                    pushed = true;
+                }
                 buf.erase(0, nl + 1);
                 nl = buf.find('\n');
             }
@@ -587,12 +645,17 @@ void run_serve_async(int num_workers) {
                 buf.clear();
             }
 
+            // Wake session fibers that may have parked before seeing the line.
+            if (pushed)
+                wake_waiting_session_fibers();
+
             if (local_eof) {
                 // EOF — remove stdin from epoll so it doesn't keep firing
 #if AURA_HAVE_EPOLL
                 ::epoll_ctl(sched.epoll_fd(), EPOLL_CTL_DEL, STDIN_FILENO, nullptr);
 #endif
                 stdin_eof = true;
+                wake_waiting_session_fibers();
                 break;
             }
 
@@ -608,21 +671,11 @@ void run_serve_async(int num_workers) {
     sched.set_stdin_fiber(stdin_fiber);
 
     // 5. Create default session with compiler service
-    struct Session {
-        std::string id;
-        Fiber* fiber = nullptr;
-        aura::compiler::CompilerService service;
-        aura::serve::Mailbox mailbox;
-        bool active = true;
-    };
 
     // Shared workspace tree: all sessions see the same workspace hierarchy.
     // Created before any sessions so we can inject it into each one.
     void* shared_workspace_tree = aura::compiler::Evaluator::create_workspace_tree();
 
-    std::unordered_map<std::string, std::unique_ptr<Session>, aura::core::TransparentStringHash,
-                       std::equal_to<>>
-        sessions;
     std::string active_session = "default";
     {
         auto& sess = sessions["default"];
@@ -633,80 +686,43 @@ void run_serve_async(int num_workers) {
         aura::compiler::CompilerService::register_session("default", &sess->service);
     }
 
+    // Soft shared graph: named-session exec uses default CompilerService.
+    auto cs_for = [&sessions, soft_shared_graph](Session& sess) -> aura::compiler::CompilerService& {
+        if (soft_shared_graph)
+            return sessions.at("default")->service;
+        return sess.service;
+    };
+
     // ── Multi-session GC root registration (Issue #113) ────
     // Each session has its own Evaluator (and therefore its own
     // string_heap_ / pairs_ / closures_). For the GC to know
     // about ALL live objects, each session's evaluator must be
-    // registered as a separate root source. The GC collector's
-    // `collect_roots` walks the map and calls every source's
-    // flush callback, which appends to a single GCRootSet.
-    //
-    // The worker_id is just a stable index into the root_sources_
-    // map — we use the session name's hash modulo a small prime
-    // to spread them out, but the value doesn't matter as long
-    // as it's unique per session. (The number 0 is the
-    // "default" session; sessions are added on top.)
+    // registered as a separate root source. Soft shared graph
+    // aliases named sessions onto default CS — only register
+    // default's evaluator once under Soft.
     auto gc_collect = sched.gc_collector();
     auto register_session_root = [&](Session& s, int worker_id) {
+        if (!gc_collect)
+            return;
         gc_collect->register_root_source(worker_id, [&s](aura::serve::GCRootSet& out) {
             s.service.evaluator().flush_gc_roots(&out);
         });
     };
-    {
-        // Use 0 for default; the active-session g_gc_flush_root_set
-        // (set below) will override this for the active session.
+    if (gc_collect) {
         register_session_root(*sessions["default"], 0);
     }
 
-    // Register async HTTP handler (Issue #473 §8: in-process libcurl via
-    // dlopen. Auth header is set via CURLOPT_HTTPHEADER and never appears
-    // on any cmdline. libcurl's easy_perform blocks, so we run it on a
-    // worker thread and signal the fiber via eventfd when complete.)
-    aura::messaging::g_http_post_async = [](const std::string& url, const std::string& body,
-                                            const std::string& auth) -> std::string {
-        auto* fiber = aura::serve::g_current_fiber;
-        if (!fiber)
-            return {};
-        auto evfd = fiber->eventfd();
-        if (evfd < 0)
-            return {};
-
-        auto result = std::make_shared<std::string>();
-        std::thread t([evfd, url, body, auth, result]() {
-            *result = http_post_in_process(url, body, auth);
-            uint64_t v = 1;
-            ::write(evfd, &v, sizeof(v));
-        });
-        t.detach();
-
-        aura::serve::g_current_fiber->set_state(aura::serve::FiberState::Waiting);
-        aura::serve::Fiber::yield();
-
-        return std::move(*result);
-    };
-
-    // Register session:create for Aura code (primitive in evaluator)
-    std::function<aura::messaging::SessionCreateFn> sc_fn =
-        [&sessions, &sched, shared_workspace_tree, &stdin_lines,
-         &stdin_eof](const std::string& name) -> bool {
-        if (sessions.count(name) > 0)
-            return false;
-        auto [it, created] = sessions.try_emplace(name, std::make_unique<Session>());
-        if (!created)
-            return false;
-        it->second->id = name;
-        it->second->service.set_session_id(name);
-        it->second->service.set_workspace_tree(shared_workspace_tree);
-        aura::compiler::CompilerService::register_session(name, &it->second->service);
-        // Spawn a fiber so the session can process commands from stdin_lines
-        auto nsid = name;
-        auto* nf = sched.spawn([nsid, &sess = *it->second, &stdin_lines, &stdin_eof]() {
+    // Helper: spawn a named-session fiber that drains stdin_lines for `nsid`.
+    auto spawn_named_session_fiber =
+        [&sched, &stdin_lines, &stdin_eof, &sessions, &line_for_session, &cs_for](
+            const std::string& nsid, Session& sess) -> Fiber* {
+        return sched.spawn([nsid, &sess, &stdin_lines, &stdin_eof, &line_for_session, &cs_for]() {
             sess.mailbox.attach(aura::serve::g_current_fiber);
             sess.service.set_wake_eventfd(aura::serve::g_current_fiber->eventfd());
             while (sess.active) {
                 std::string sl;
                 for (auto sit = stdin_lines.begin(); sit != stdin_lines.end(); ++sit) {
-                    if (sit->find("\"session\":\"" + nsid + "\"") != std::string::npos) {
+                    if (line_for_session(*sit, nsid)) {
                         sl = std::move(*sit);
                         stdin_lines.erase(sit);
                         break;
@@ -723,24 +739,56 @@ void run_serve_async(int num_workers) {
                 if (c == "exec") {
                     auto code = json_field(sl, "code");
                     if (!code.empty()) {
-                        aura::messaging::g_current_compiler_service = &sess.service;
-                        auto r = sess.service.exec_with_cache(code);
+                        auto& cs = cs_for(sess);
+                        aura::messaging::g_current_compiler_service = &cs;
+                        auto r = cs.exec_with_cache(code);
                         if (r) {
                             std::println(
-                                "{{\"session\":\"{}\" ,\"status\":\"ok\",\"value\":\"{}\" }}",
-                                json_escape(nsid), json_escape(fmt_val(*r, sess.service)));
+                                "{{\"session\":\"{}\",\"status\":\"ok\",\"value\":\"{}\"}}",
+                                json_escape(nsid), json_escape(fmt_val(*r, cs)));
                         } else {
                             std::println(
-                                "{{\"session\":\"{}\" ,\"status\":\"error\",\"msg\":\"{}\" }}",
+                                "{{\"session\":\"{}\",\"status\":\"error\",\"msg\":\"{}\"}}",
                                 json_escape(nsid), json_escape(r.error().format()));
                         }
+                        std::fflush(stdout);
                     }
                 }
-                std::fflush(stdout);
             }
         });
-        it->second->fiber = nf;
+    };
+
+    // Register / create named session (Soft: alias CS to default).
+    auto emplace_named_session =
+        [&sessions, &sched, shared_workspace_tree, soft_shared_graph, gc_collect,
+         &register_session_root, &spawn_named_session_fiber](const std::string& name) -> bool {
+        if (sessions.count(name) > 0)
+            return false;
+        auto [it, created] = sessions.try_emplace(name, std::make_unique<Session>());
+        if (!created)
+            return false;
+        it->second->id = name;
+        it->second->service.set_session_id(name);
+        it->second->service.set_workspace_tree(shared_workspace_tree);
+        if (soft_shared_graph) {
+            aura::compiler::CompilerService::register_session(
+                name, &sessions.at("default")->service);
+            // Soft alias — do not register an extra GC root for the unused CS.
+        } else {
+            aura::compiler::CompilerService::register_session(name, &it->second->service);
+            if (gc_collect) {
+                int wid = static_cast<int>(std::hash<std::string>{}(name) % 997) + 1;
+                register_session_root(*it->second, wid);
+            }
+        }
+        it->second->fiber = spawn_named_session_fiber(name, *it->second);
         return true;
+    };
+
+    // Register session:create for Aura code (primitive in evaluator)
+    std::function<aura::messaging::SessionCreateFn> sc_fn =
+        [&emplace_named_session](const std::string& name) -> bool {
+        return emplace_named_session(name);
     };
     aura::messaging::g_session_create = &sc_fn;
 
@@ -749,7 +797,8 @@ void run_serve_async(int num_workers) {
     // In the future, spawn as needed
     for (auto& [sid, sess] : sessions) {
         auto* fiber = sched.spawn([sid = sid, &sess = *sess, &stdin_lines, &stdin_eof, &sessions,
-                                   &sched, &shared_workspace_tree]() {
+                                   &sched, &shared_workspace_tree, &line_for_session, &cs_for,
+                                   &emplace_named_session, soft_shared_graph]() {
             // Attach mailbox to this fiber
             sess.mailbox.attach(g_current_fiber);
 
@@ -761,16 +810,7 @@ void run_serve_async(int num_workers) {
                     // Since we're single-threaded, no actual lock needed
                     line.clear();
                     for (auto it = stdin_lines.begin(); it != stdin_lines.end(); ++it) {
-                        // Check if this line is for our session
-                        // Lines without "session" field go to "default"
-                        bool for_me = false;
-                        if (sid == "default") {
-                            for_me = (it->find("\"session\":\"") == std::string::npos) ||
-                                     (it->find("\"session\":\"default\"") != std::string::npos);
-                        } else {
-                            for_me = (it->find("\"session\":\"" + sid + "\"") != std::string::npos);
-                        }
-                        if (for_me) {
+                        if (line_for_session(*it, sid)) {
                             line = std::move(*it);
                             stdin_lines.erase(it);
                             break;
@@ -785,6 +825,7 @@ void run_serve_async(int num_workers) {
                         // Got a message from another session
                         std::println("{{\"session\":\"{}\",\"status\":\"msg\",\"data\":\"{}\"}}",
                                      json_escape(sid), json_escape(msg));
+                        std::fflush(stdout);
                         continue;
                     }
 
@@ -802,6 +843,7 @@ void run_serve_async(int num_workers) {
                     std::println(
                         "{{\"session\":\"{}\",\"status\":\"error\",\"msg\":\"missing cmd\"}}",
                         json_escape(sid));
+                    std::fflush(stdout);
                     continue;
                 }
 
@@ -811,10 +853,12 @@ void run_serve_async(int num_workers) {
                         std::println(
                             "{{\"session\":\"{}\",\"status\":\"error\",\"msg\":\"missing code\"}}",
                             json_escape(sid));
+                        std::fflush(stdout);
                         continue;
                     }
-                    aura::messaging::g_current_compiler_service = &sess.service;
-                    auto result = sess.service.exec_with_cache(code);
+                    auto& cs = cs_for(sess);
+                    aura::messaging::g_current_compiler_service = &cs;
+                    auto result = cs.exec_with_cache(code);
                     if (result) {
                         try {
                             auto& v = *result;
@@ -826,7 +870,7 @@ void run_serve_async(int num_workers) {
                             } else {
                                 std::println(
                                     "{{\"session\":\"{}\",\"status\":\"ok\",\"value\":\"{}\"}}",
-                                    json_escape(sid), json_escape(fmt_val(v, sess.service)));
+                                    json_escape(sid), json_escape(fmt_val(v, cs)));
                             }
                         } catch (const std::bad_alloc&) {
                             std::println("{{\"session\":\"{}\",\"status\":\"error\",\"msg\":\"out "
@@ -837,100 +881,43 @@ void run_serve_async(int num_workers) {
                         auto& d = result.error();
                         std::println("{{\"session\":\"{}\",\"status\":\"error\",\"msg\":\"{}\"}}",
                                      json_escape(sid), json_escape(d.format()));
-                        std::fflush(stdout);
                     }
+                    std::fflush(stdout);
 
                 } else if (cmd == "session") {
                     auto action = json_field(line, "action");
+                    auto name = json_field(line, "name");
+                    // Soft/sync parity: missing action + name ⇒ create-or-activate.
+                    if (action.empty() && !name.empty())
+                        action = "create";
                     if (action == "create") {
-                        auto name = json_field(line, "name");
                         if (name.empty()) {
-                            std::println("{{\"session\":\"{}\" "
-                                         ",\"status\":\"error\",\"msg\":\"missing name\"}}",
+                            std::println("{{\"session\":\"{}\","
+                                         "\"status\":\"error\",\"msg\":\"missing name\"}}",
                                          json_escape(sid));
+                            std::fflush(stdout);
+                        } else if (sessions.count(name) > 0) {
+                            // Already exists — ok (sync-style activate)
+                            std::println("{{\"session\":\"{}\","
+                                         "\"status\":\"ok\",\"name\":\"{}\"}}",
+                                         json_escape(sid), json_escape(name));
+                            std::fflush(stdout);
+                        } else if (emplace_named_session(name)) {
+                            std::println("{{\"session\":\"{}\","
+                                         "\"status\":\"created\",\"name\":\"{}\"}}",
+                                         json_escape(sid), json_escape(name));
+                            std::fflush(stdout);
                         } else {
-                            auto [it, created] =
-                                sessions.try_emplace(name, std::make_unique<Session>());
-                            if (created) {
-                                it->second->id = name;
-                                it->second->service.set_session_id(name);
-                                it->second->service.set_workspace_tree(shared_workspace_tree);
-                                aura::compiler::CompilerService::register_session(
-                                    name, &it->second->service);
-                                // Register this new session's evaluator as
-                                // a GC root source so the GC walks its
-                                // heaps during collect_roots(). Worker_id
-                                // is the session's hash mod a small prime
-                                // to spread them; the value only needs to
-                                // be unique per session.
-                                int wid =
-                                    static_cast<int>(std::hash<std::string>{}(name) % 997) + 1;
-                                sched.gc_collector()->register_root_source(
-                                    wid, [&sess = *it->second](aura::serve::GCRootSet& out) {
-                                        sess.service.evaluator().flush_gc_roots(&out);
-                                    });
-                                // Spawn fiber for new session
-                                auto nsid = name;
-                                auto* nf = sched.spawn([nsid, &sess = *it->second, &stdin_lines,
-                                                        &stdin_eof, &sessions, &sched]() {
-                                    sess.mailbox.attach(aura::serve::g_current_fiber);
-                                    sess.service.set_wake_eventfd(
-                                        aura::serve::g_current_fiber->eventfd());
-                                    while (sess.active) {
-                                        std::string sl;
-                                        for (auto sit = stdin_lines.begin();
-                                             sit != stdin_lines.end(); ++sit) {
-                                            if (sit->find("\"session\":\"" + nsid + "\"") !=
-                                                std::string::npos) {
-                                                sl = std::move(*sit);
-                                                stdin_lines.erase(sit);
-                                                break;
-                                            }
-                                        }
-                                        if (sl.empty()) {
-                                            if (stdin_eof)
-                                                break;
-                                            aura::serve::g_current_fiber->set_state(
-                                                aura::serve::FiberState::Waiting);
-                                            aura::serve::Fiber::yield();
-                                            continue;
-                                        }
-                                        auto c = json_field(sl, "cmd");
-                                        if (c == "exec") {
-                                            auto code = json_field(sl, "code");
-                                            if (!code.empty()) {
-                                                auto r = sess.service.exec_with_cache(code);
-                                                if (r) {
-                                                    std::println(
-                                                        "{{\"session\":\"{}\" "
-                                                        ",\"status\":\"ok\",\"value\":\"{}\" }}",
-                                                        json_escape(nsid),
-                                                        json_escape(fmt_val(*r, sess.service)));
-                                                } else {
-                                                    std::println(
-                                                        "{{\"session\":\"{}\" "
-                                                        ",\"status\":\"error\",\"msg\":\"{}\" }}",
-                                                        json_escape(nsid),
-                                                        json_escape(r.error().format()));
-                                                }
-                                            }
-                                        }
-                                    }
-                                });
-                                it->second->fiber = nf;
-                                std::println("{{\"session\":\"{}\" "
-                                             ",\"status\":\"created\",\"name\":\"{}\" }}",
-                                             json_escape(sid), json_escape(name));
-                            } else {
-                                std::println("{{\"session\":\"{}\" "
-                                             ",\"status\":\"error\",\"msg\":\"already exists\"}}",
-                                             json_escape(sid));
-                            }
+                            std::println("{{\"session\":\"{}\","
+                                         "\"status\":\"error\",\"msg\":\"already exists\"}}",
+                                         json_escape(sid));
+                            std::fflush(stdout);
                         }
                     } else {
-                        std::println("{{\"session\":\"{}\" ,\"status\":\"error\",\"msg\":\"unknown "
-                                     "action: {}\" }}",
+                        std::println("{{\"session\":\"{}\",\"status\":\"error\",\"msg\":\"unknown "
+                                     "action: {}\"}}",
                                      json_escape(sid), json_escape(action));
+                        std::fflush(stdout);
                     }
 
                 } else if (cmd == "session-send") {
@@ -949,6 +936,7 @@ void run_serve_async(int num_workers) {
                                          json_escape(sid));
                         }
                     }
+                    std::fflush(stdout);
 
                 } else if (cmd == "session-recv") {
                     auto msg = sess.mailbox.pop(true); // blocking pop (yields)
@@ -959,17 +947,21 @@ void run_serve_async(int num_workers) {
                         std::println("{{\"session\":\"{}\",\"status\":\"timeout\"}}",
                                      json_escape(sid));
                     }
+                    std::fflush(stdout);
 
                 } else {
                     std::println(
                         "{{\"session\":\"{}\",\"status\":\"error\",\"msg\":\"unknown cmd: {}\"}}",
                         json_escape(sid), json_escape(cmd));
+                    std::fflush(stdout);
                 }
-                std::fflush(stdout);
             }
         });
 
         sess->fiber = fiber;
+        (void)soft_shared_graph;
+        (void)shared_workspace_tree;
+        (void)sched;
     }
 
     // 7. Run the scheduler
