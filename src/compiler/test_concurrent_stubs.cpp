@@ -167,3 +167,17 @@ aura_hot_update_last_reemit_success_region_mask(void) noexcept {
 extern "C" __attribute__((weak)) int aura_hot_update_relower_success_define_active(void) noexcept {
     return 0; // stub: no relower-success define tracking in light binaries
 }
+
+// Issue #4046: aura_closure_dispatch_native_checked (aura_jit_runtime.cpp)
+// consults the production densify-refuse path via these two C-linkage
+// hooks. Strong defs live in arena.ixx (module unit) and
+// evaluator_mutation_boundary.cpp — test_concurrent compiles neither,
+// so build-test / asan-build fail at link without stubs. Fallback
+// semantics mirror aura_jit_bridge_stub.cpp: no current eval identity,
+// nothing resolves through a live arena → no production refuse.
+extern "C" __attribute__((weak)) void* aura_current_eval_identity(void) noexcept {
+    return nullptr;
+}
+extern "C" __attribute__((weak)) int aura_any_live_arena_resolves_object(void* /*p*/) noexcept {
+    return 0;
+}

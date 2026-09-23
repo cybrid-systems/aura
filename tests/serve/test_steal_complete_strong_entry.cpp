@@ -613,7 +613,7 @@ int run_test_steal_complete_strong_entry() {
             // path must not call multi_worker unconditionally.
             CHECK(main_c.find("production_abi_selfcheck_required()") != std::string::npos,
                   "4047 AC1: main Soft Ready gate uses production_abi_selfcheck_required");
-            CHECK(main_c.find("Soft Ready profile (#4047)") != std::string::npos,
+            CHECK(main_c.find("Soft Ready profile (#4047/#4048)") != std::string::npos,
                   "4047 AC1: Soft Ready banner present");
             CHECK(main_c.find("aura_runtime_require_production_multi_worker_c()") !=
                       std::string::npos,
