@@ -4880,14 +4880,19 @@ agent_reply(AgentHandle& self, std::uint64_t corr_id, std::string_view body,
     // throttle match orch:agent-send (ask storms no longer leave the
     // gauge dark). String payload stays string (no held_ref invent).
     auto st = agent_send(target, std::move(msg)); // orch-raw-send-ok
-    if (st == serve::mf_mailbox::PushStatus::Closed) {
-        out.status = "no-mailbox";
+    // Issue #4040: push status is not a recv deadline. BP / handoff stay
+    // on the send counters (agent_send already notes the scope gauge).
+    // agent_ask_timeout_total bumps only when the reply wait expires.
+    if (st == serve::mf_mailbox::PushStatus::Backpressure) {
+        out.status = "backpressure";
         return out;
     }
-    // Backpressure → surface as timeout (no automatic retry; #2007 / #2228).
+    if (st == serve::mf_mailbox::PushStatus::HandoffRequired) {
+        out.status = "handoff-required";
+        return out;
+    }
     if (st != serve::mf_mailbox::PushStatus::Ok) {
-        out.status = "timeout";
-        g_orch_module_stats.agent_ask_timeout_total.fetch_add(1, std::memory_order_relaxed);
+        out.status = "no-mailbox";
         return out;
     }
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
