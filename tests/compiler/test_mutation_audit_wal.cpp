@@ -32,6 +32,7 @@ using aura::compiler::typed_audit::apply_dev_audit_defaults;
 using aura::compiler::typed_audit::apply_production_audit_defaults;
 using aura::compiler::types::as_bool;
 using aura::compiler::types::as_int;
+using aura::compiler::types::as_pair_idx;
 using aura::compiler::types::as_string_idx;
 using aura::compiler::types::is_bool;
 using aura::compiler::types::is_hash;
@@ -461,6 +462,78 @@ int main() {
                                       true, 0, 0),
               "3465 AC4: persist short-circuits");
         CHECK(snapshot_audit_wal_stats().replay_count == 0, "3465 AC4: no replay");
+    }
+
+    // Issue #4042: explicit mid absent from the 64-slot ring is still
+    // found on the mutation WAL under production/Full. Soft does not open
+    // a segment. Ring lines stay free of the additive wal-* keys.
+    {
+        std::println("\n--- #4042: mutation-audit-log explicit mid falls back to WAL ---");
+        reset_all();
+        apply_dev_audit_defaults();
+        const auto dir4042 = dir + "-4042";
+        fs::remove_all(dir4042);
+        fs::create_directories(dir4042);
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        CHECK(ev.enable_mutation_audit_wal(dir4042), "4042: WAL on");
+        // Soft writes the ring (production emit with mid 0 records nothing).
+        // Slot seq 0 is the empty sentinel, so the first emit is invisible.
+        (void)ev.emit_mutation_audit(1, 0, "ring-skip", 1);
+        CHECK(ev.emit_mutation_audit(1, 0, "ring-hit", 2), "4042: soft emit returned");
+        constexpr std::uint64_t kWalOnlyMid = 4042001;
+        auto rec = make_record(/*seq=*/77, /*timestamp_ms=*/9, /*fiber_id=*/3,
+                               /*nodes_changed=*/2, /*epoch_delta=*/1, /*target_node=*/44, "wal-op",
+                               /*effect_bits=*/kEffectMutate, /*tenant_id=*/7, kWalOnlyMid,
+                               /*epoch=*/5, /*effect_denied=*/true, "wrapped");
+        CHECK(g_mutation_audit_wal().append(rec), "4042: append wal-only mid");
+        auto joined = [&](const aura::compiler::types::EvalValue& root) {
+            std::string out;
+            aura::compiler::types::EvalValue cur = root;
+            for (int n = 0; n < 8 && is_pair(cur); ++n) {
+                const auto& pr = ev.pairs()[as_pair_idx(cur)];
+                if (is_string(pr.car)) {
+                    const auto idx = as_string_idx(pr.car);
+                    if (idx < ev.string_heap().size())
+                        out += ev.string_heap()[idx];
+                    out.push_back('\n');
+                }
+                cur = pr.cdr;
+            }
+            return out;
+        };
+        auto ring_log = cs.eval("(engine:metrics \"query:mutation-audit-log\" 5)");
+        CHECK(ring_log && is_pair(*ring_log), "4042: unfiltered list is the ring");
+        const auto ring_text = (ring_log && is_pair(*ring_log)) ? joined(*ring_log) : std::string{};
+        CHECK(ring_text.find("wal-replay-hint") == std::string::npos,
+              "4042: ring hit keeps the old line");
+        CHECK(ring_text.find("ring-hit") != std::string::npos, "4042: ring op present");
+        apply_production_audit_defaults();
+        auto wal_log = cs.eval("(engine:metrics \"query:mutation-audit-log\" 5 7 0 4042001)");
+        CHECK(wal_log && is_pair(*wal_log), "4042: explicit mid returns a WAL line");
+        const auto wal_text = (wal_log && is_pair(*wal_log)) ? joined(*wal_log) : std::string{};
+        CHECK(wal_text.find("mutation_id=4042001") != std::string::npos, "4042: mid on the line");
+        CHECK(wal_text.find("wal-replay-hint=1") != std::string::npos, "4042: replay hint");
+        CHECK(wal_text.find("wal-lookup-window-miss=0") != std::string::npos,
+              "4042: window hit is not a miss");
+        CHECK(wal_text.find("op=wal-op") != std::string::npos, "4042: WAL op");
+        CHECK(wal_text.find("denied=1") != std::string::npos, "4042: denied bit");
+
+        apply_dev_audit_defaults();
+        auto soft = cs.eval("(engine:metrics \"query:mutation-audit-log\" 5 7 0 4042002)");
+        const auto soft_text = (soft && is_pair(*soft)) ? joined(*soft) : std::string{};
+        CHECK(soft_text.find("4042002") == std::string::npos, "4042: Soft does not scan WAL");
+        const auto src = [] {
+            std::ifstream in("src/compiler/evaluator_primitives_security.cpp");
+            return std::string((std::istreambuf_iterator<char>(in)),
+                               std::istreambuf_iterator<char>());
+        }();
+        CHECK(src.find("Issue #4042") != std::string::npos, "4042: cite");
+        CHECK(src.find("find_by_provenance_mutation_id_scan_all_segments") != std::string::npos,
+              "4042: full scan");
+        ev.disable_mutation_audit_wal();
+        fs::remove_all(dir4042);
+        apply_dev_audit_defaults();
     }
 
     // Cleanup temp

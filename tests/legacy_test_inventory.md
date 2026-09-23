@@ -1363,7 +1363,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_mutate_cross_thread_migration.cpp` (—) [domain_suite, theme_compiler] — test_mutate_cross_thread_migration.cpp — Issue #1373:
 - `tests/serve/test_mutate_mailbox_starvation_throttle.cpp` (—) [domain_suite, theme_serve] — tests/serve/test_mutate_mailbox_starvation_throttle.cpp
 - `tests/compiler/test_mutate_type_gate.cpp` (—) [domain_suite, theme_compiler] — AC1: Soft default / Hard production; schema-2219 query surface
-- `tests/compiler/test_mutation_audit_wal.cpp` (—) [domain_suite, theme_compiler] — append/rotate, full effect/tenant/epoch fields, replay into ring,
+- `tests/compiler/test_mutation_audit_wal.cpp` (—) [large, domain_suite, theme_compiler] — append/rotate, full effect/tenant/epoch fields, replay into ring,
 - `tests/compiler/test_mutation_boundary_batch.cpp` (—) [large, batch_driver, domain_suite, theme_compiler] — test_mutation_boundary_batch.cpp
 - `tests/serve/test_mutation_boundary_guard.cpp` (—) [domain_suite, theme_serve] — Issue #1747/#1897/#1931/#1950 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_mutation_concurrency_health.cpp` (—) [domain_suite, theme_compiler] — AC1: Query returns health-bp + force-reason + components + schema/wired
