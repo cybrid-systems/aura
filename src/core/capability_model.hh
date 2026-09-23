@@ -68,6 +68,14 @@ inline constexpr int kCapabilitySessionPeerFiberIssue = 3241;
 // (observe via session_bound_orphan_detected_total); Soft/Off + soft-share
 // Restricted retain legacy mid-only (#3241 AC3).
 inline constexpr int kCapabilitySessionRevokeFiberZeroIssue = 3799;
+// Issue #4038: fiber_id=0 under production+hard_fiber is the fiberless
+// outermost (host/REPL/compiler thread, g_current_fiber==nullptr). Its
+// Guard exit revokes the HOST cohort — live session rows with
+// bound_mutation_id==mid AND grant_fiber_id==0 (the same key the mint
+// used) — and only orphan-observes peer rows (grant_fiber_id!=0,
+// #3799 preserved). provenance/effects skip stale session rows so a
+// leaked row can neither authorize nor brick later checks.
+inline constexpr int kCapabilitySessionRevokeHostCohortIssue = 4038;
 // Issue #3992: mid-revoke grant-row stamp is hard-face invent only
 // (Soft keeps revoke_epoch 0 when Mutation epoch is unset).
 inline constexpr int kCapabilityMidRevokeEpochHonestIssue = 3992;
@@ -873,29 +881,65 @@ struct CapabilityRegistry {
             reason = "session-mid-exit";
         auto& met = g_capability_effect_metrics();
         // Issue #3799: Restricted/Strict + hard_fiber_isolation (MT profile)
-        // must never mid-only sweep. fiber_id=0 under that regime is refuse
-        // (fail-closed): bump session_bound_orphan_detected_total for each
-        // matching live grant and revoke nothing — peer outermosts sharing
-        // epoch mid must not become collateral. Soft/Off and soft-share
-        // Restricted (hard_fiber=false) keep legacy mid-only (#3241 AC3).
+        // must never mid-only sweep PEER rows. Issue #4038: fiber_id=0 here
+        // is the fiberless outermost (host/REPL/compiler thread) — rows
+        // minted by that same face carry grant_fiber_id==0, so a blanket
+        // refuse strands them forever: the stale bound mid fails every
+        // later production check and the epoch-0 row never cycles the
+        // retain window. The arm splits the cohort: host rows
+        // (grant_fiber_id==0) revoke like the legacy mid-only path; peer
+        // rows (grant_fiber_id!=0) keep the #3799 fail-closed orphan
+        // observe. Soft/Off and soft-share Restricted (hard_fiber=false)
+        // keep legacy mid-only (#3241 AC3).
         {
             const auto mode = sandbox_mode.load(std::memory_order_acquire);
             const bool production =
                 (mode == EffectSandboxMode::Restricted || mode == EffectSandboxMode::Strict);
             if (fiber_id == 0 && production &&
                 hard_fiber_isolation_.load(std::memory_order_acquire)) {
-                for (const auto& [tenant, vec] : by_tenant) {
-                    (void)tenant;
-                    for (const auto& g : vec) {
+                auto ep0 = ::aura::core::current_mutation_epoch();
+                // Same hard-face invent vocabulary as the legacy path below
+                // (#3992/#3902): Soft keeps 0 honest unset.
+                if (ep0 == 0 && capability_epoch_hard_face())
+                    ep0 = 1;
+                EffectProvenance audit_prov{};
+                audit_prov.mutation_id = mid;
+                audit_prov.epoch =
+                    capability_epoch_hard_face() ? ::aura::core::current_mutation_epoch() : ep0;
+                audit_prov.fiber_id = fiber_id;
+                std::size_t host_revoked = 0;
+                for (auto& [tenant, vec] : by_tenant) {
+                    for (auto& g : vec) {
                         if (g.revoked || !g.session_bound)
                             continue;
                         if (g.bound_mutation_id != mid)
                             continue;
-                        met.session_bound_orphan_detected_total.fetch_add(
+                        if (g.grant_fiber_id != 0) {
+                            // #3799 peer: real-fiber row must not be swept
+                            // mid-only — orphan observe only.
+                            met.session_bound_orphan_detected_total.fetch_add(
+                                1, std::memory_order_relaxed);
+                            continue;
+                        }
+                        g.revoked = true;
+                        g.effects = Effect::None;
+                        g.revoke_epoch = ep0;
+                        g.session_bound = false; // no longer live
+                        ++host_revoked;
+                        met.capability_session_revoke_total.fetch_add(1, std::memory_order_relaxed);
+                        met.capability_revoke_total.fetch_add(1, std::memory_order_relaxed);
+                        met.capability_revoke_epoch_bound_total.fetch_add(
                             1, std::memory_order_relaxed);
+                        auto cur =
+                            met.capability_live_session_grants.load(std::memory_order_relaxed);
+                        if (cur > 0)
+                            met.capability_live_session_grants.fetch_sub(1,
+                                                                         std::memory_order_relaxed);
+                        record_audit(Effect::None, Effect::None, tenant, audit_prov,
+                                     /*denied=*/false, reason, reason);
                     }
                 }
-                return 0;
+                return host_revoked;
             }
         }
         std::size_t n = 0;
@@ -1378,7 +1422,7 @@ struct CapabilityRegistry {
     // evaluator_security.cpp (grant_effect_* / revoke_effect_*) that take
     // the lock themselves to fold the admin re-check + act into one
     // critical section.
-    [[nodiscard]] Effect effects_for_locked(TenantId tenant) const {
+    [[nodiscard]] Effect effects_for_locked(TenantId tenant, std::uint64_t join_mid = 0) const {
         Effect acc = Effect::None;
         auto it = by_tenant.find(tenant);
         if (it == by_tenant.end())
@@ -1387,9 +1431,20 @@ struct CapabilityRegistry {
         // MUST hold mtx (per the existing contract). Production fence strips
         // TenantAdmin + MacroSelfEvo from wildcard-only holders.
         const auto mode = sandbox_mode.load(std::memory_order_acquire);
+        // Issue #4038: production posture join — when a caller mid is
+        // provided under Restricted/Strict, a session row bound to a
+        // different (exited) mid contributes nothing (no bit OR, no
+        // wildcard bookkeeping). provenance_ok_locked skips the same rows,
+        // so a stale row can neither authorize nor brick the check.
+        const bool production_join = join_mid != 0 && (mode == EffectSandboxMode::Restricted ||
+                                                       mode == EffectSandboxMode::Strict);
         bool has_wildcard = false;
         bool has_explicit_TenantAdmin = false;
         for (const auto& g : it->second) {
+            // Issue #4038: stale session row (bound mid of an exited
+            // outermost) is not a contributor under the production join.
+            if (production_join && g.session_bound && g.bound_mutation_id != join_mid)
+                continue;
             // Issue #3142: stolen entries excluded (see effects_for above).
             if (!g.revoked && !g.stolen)
                 acc = acc | g.effects;
@@ -1537,6 +1592,14 @@ struct CapabilityRegistry {
                         1, std::memory_order_relaxed);
                     return false;
                 }
+                // Issue #4038: a session row bound to a DIFFERENT (exited)
+                // mid is not a contributor under the production face — skip
+                // it instead of failing the whole check on the first
+                // mismatch. It cannot authorize (mid differs); a matching
+                // fresh grant still allows. Non-session mismatches keep the
+                // hard deny.
+                if (g.session_bound && g.bound_mutation_id != prov.mutation_id)
+                    continue;
                 if (g.bound_mutation_id != prov.mutation_id)
                     return false;
             } else {
@@ -1548,7 +1611,17 @@ struct CapabilityRegistry {
             }
             // Issue #2074 / #2055 / #2154: expired grant — grant_epoch behind
             // min_valid (manual set or sliding retain window).
+            // Issue #4038: hard face (production + hard fiber) — an epoch-0
+            // row can never cycle the retain window (#3844 keeps grant
+            // stamps honest at 0; the K window never passes it), so once
+            // min_valid > 0 it is retain-expired exactly like
+            // grant_epoch < min_valid. Soft/Off keep the epoch-0 skip.
             const auto min_valid = grant_min_valid_epoch_.load(std::memory_order_acquire);
+            if (min_valid != 0 && hard_fiber && fail_closed_mid && g.grant_epoch == 0) {
+                g_capability_effect_metrics().capability_epoch_fence_hit_total.fetch_add(
+                    1, std::memory_order_relaxed);
+                return false;
+            }
             if (g.grant_epoch != 0 && min_valid != 0 && g.grant_epoch < min_valid) {
                 g_capability_effect_metrics().capability_epoch_fence_hit_total.fetch_add(
                     1, std::memory_order_relaxed);
@@ -1602,6 +1675,11 @@ struct CapabilityRegistry {
                         1, std::memory_order_relaxed);
                     return false;
                 }
+                // Issue #4038: stale session row (bound mid of an exited
+                // outermost) is not a contributor — skip, never fail the
+                // whole check (locked twin of the provenance_ok rule).
+                if (g.session_bound && g.bound_mutation_id != prov.mutation_id)
+                    continue;
                 if (g.bound_mutation_id != prov.mutation_id)
                     return false;
             } else {
@@ -1610,7 +1688,14 @@ struct CapabilityRegistry {
                     return false;
                 }
             }
+            // Issue #4038: hard-face epoch-0 retain fence — locked twin of
+            // the provenance_ok rule (see the unlock commentary there).
             const auto min_valid = grant_min_valid_epoch_.load(std::memory_order_acquire);
+            if (min_valid != 0 && hard_fiber && fail_closed_mid && g.grant_epoch == 0) {
+                g_capability_effect_metrics().capability_epoch_fence_hit_total.fetch_add(
+                    1, std::memory_order_relaxed);
+                return false;
+            }
             if (g.grant_epoch != 0 && min_valid != 0 && g.grant_epoch < min_valid) {
                 g_capability_effect_metrics().capability_epoch_fence_hit_total.fetch_add(
                     1, std::memory_order_relaxed);
@@ -2149,7 +2234,10 @@ inline bool check_and_record_effect(Effect required, Effect actual, const Effect
         // retained for backward compat (unused for allow).
         if (need_grant && required != Effect::None) {
             // Issue #3126: locked variant (caller already holds mtx).
-            const Effect held = reg.effects_for_locked(tenant);
+            // Issue #4038: join posture bits on the caller mid so stale
+            // session rows (exited outermost) do not contribute bits that
+            // provenance_ok_locked skips anyway.
+            const Effect held = reg.effects_for_locked(tenant, prov.mutation_id);
             // Require full coverage of required bits (not just any overlap).
             const auto req_u = static_cast<std::uint16_t>(required);
             const auto held_u = static_cast<std::uint16_t>(held);

@@ -3737,8 +3737,249 @@ int run_test_string_grant_session_bound_3839() {
     return g_failed == 0 ? 0 : 1;
 }
 
+// ── Issue #4038: hard-fiber fiber_id=0 session revoke skips host grants;
+// provenance_ok then bricks the tenant (residual of #3799).
+
+// AC1: fiber-0 exit under production+hard_fiber revokes the HOST cohort
+// (grant_fiber_id==0 rows) and orphan-observes only peer rows; the #3799
+// dual-real-fiber oracle is preserved.
+static void ac4038_1_host_cohort_revoke_peer_preserved() {
+    std::println("\n--- #4038 AC1: fiber-0 exit revokes host cohort, peers orphan-only ---");
+    reset_all();
+    ac3241_arm_restricted_multi_tenant();
+    aura::core::bump_mutation_epoch(1);
+    const auto mid = aura::core::current_mutation_epoch();
+    constexpr std::uint64_t tenant = 40381;
+    constexpr std::uint32_t fiber_a = 601;
+    constexpr std::uint32_t fiber_b = 602;
+    ac3241_grant(tenant, "host-mut", mid, /*fiber=*/0); // host cohort row
+    ac3241_grant(tenant, "mut-A", mid, fiber_a);        // peer rows
+    ac3241_grant(tenant, "mut-B", mid, fiber_b);
+    const auto live_before = g_capability_effect_metrics().capability_live_session_grants.load(
+        std::memory_order_relaxed);
+    const auto orphan_before =
+        g_capability_effect_metrics().session_bound_orphan_detected_total.load(
+            std::memory_order_relaxed);
+    const auto n =
+        g_capability_registry().revoke_session_grants_for_mid(mid, "session-mid-exit", 0);
+    CHECK(n == 1, "AC1: fiber-0 exit revokes exactly the host-cohort row");
+    CHECK(!ac3241_grant_live(tenant, "host-mut"), "AC1: host row revoked");
+    CHECK(ac3241_grant_live(tenant, "mut-A") && ac3241_grant_live(tenant, "mut-B"),
+          "AC1: peer rows untouched (no collateral)");
+    const auto live_after = g_capability_effect_metrics().capability_live_session_grants.load(
+        std::memory_order_relaxed);
+    CHECK(live_before - live_after == 1, "AC1: capability_live_session_grants drops by 1");
+    const auto orphan_after =
+        g_capability_effect_metrics().session_bound_orphan_detected_total.load(
+            std::memory_order_relaxed);
+    CHECK(orphan_after - orphan_before == 2, "AC1: orphan bumped exactly for the two peer rows");
+    // #3799 oracle preserved: distinct real fibers, same mid — fiber A's
+    // exit must not revoke fiber B.
+    const auto n_a =
+        g_capability_registry().revoke_session_grants_for_mid(mid, "session-mid-exit", fiber_a);
+    CHECK(n_a == 1, "AC1: fiber A exit revokes its own row");
+    CHECK(ac3241_grant_live(tenant, "mut-B"), "AC1: #3799 oracle — fiber B survives A exit");
+    (void)g_capability_registry().revoke_session_grants_for_mid(mid, "session-mid-exit", fiber_b);
+    CHECK(g_capability_registry().session_bound_entries_alive(tenant) == 0, "AC1: cleanup clears");
+}
+
+// AC2: no-fiber Guard exit revokes the session Mutate row (live counter
+// drops); the NEXT Guard with a fresh same-tenant session grant allows
+// exactly one Mutate (single-use consume retires it).
+static void ac4038_2_host_guard_exit_then_fresh_grant_allows() {
+    std::println("\n--- #4038 AC2: host Guard exit revokes; fresh grant allows one Mutate ---");
+    reset_all();
+    ac3241_arm_restricted_multi_tenant();
+    aura::core::bump_mutation_epoch(1);
+    const auto mid = aura::core::current_mutation_epoch();
+    constexpr std::uint64_t tenant = 40382;
+    ac3241_grant(tenant, "host-mut", mid, /*fiber=*/0);
+    const auto n =
+        g_capability_registry().revoke_session_grants_for_mid(mid, "session-mid-exit", 0);
+    CHECK(n == 1, "AC2: exit revokes the host row");
+    CHECK(g_capability_effect_metrics().capability_live_session_grants.load(
+              std::memory_order_relaxed) == 0,
+          "AC2: capability_live_session_grants drops to 0");
+    // Next Guard: NEW same-tenant session grant (different name, same epoch
+    // key) allows one Mutate — single_use so the consume retires it.
+    EffectProvenance mint{};
+    mint.epoch = mid;
+    mint.mutation_id = mid;
+    mint.fiber_id = 0;
+    g_capability_registry().grant_session(tenant, "fresh-mut", Effect::Mutate, mint,
+                                          /*single_use=*/true);
+    CHECK(ac3241_consume(tenant, mid, 0), "AC2: fresh session grant allows the Mutate");
+    CHECK(!ac3241_consume(tenant, mid, 0), "AC2: second Mutate denied (single-use consumed)");
+    CHECK(g_capability_effect_metrics().capability_live_session_grants.load(
+              std::memory_order_relaxed) == 0,
+          "AC2: consume retires the grant from the live counter");
+    CHECK(!ac3241_grant_live(tenant, "fresh-mut"), "AC2: fresh-mut consumed");
+}
+
+// AC3: stale session row beside a fresh different-name grant — the fresh
+// grant allows the check whose mid it matches; the stale row neither
+// authorizes a different-mid check nor gets consumed on deny.
+static void ac4038_3_stale_row_beside_fresh_grant() {
+    std::println("\n--- #4038 AC3: stale row beside fresh grant — fresh allows, stale cannot ---");
+    reset_all();
+    ac3241_arm_restricted_multi_tenant();
+    aura::core::bump_mutation_epoch(1);
+    const auto mid1 = aura::core::current_mutation_epoch();
+    constexpr std::uint64_t tenant = 40383;
+    constexpr std::uint64_t tenant_b = 40384;
+    // Stale host rows (bound mid1) left live — models the pre-fix leak.
+    ac3241_grant(tenant, "stale-mut", mid1, 0);
+    ac3241_grant(tenant_b, "stale-mut-b", mid1, 0);
+    aura::core::bump_mutation_epoch(1);
+    const auto mid2 = aura::core::current_mutation_epoch();
+    ac3241_grant(tenant, "fresh-mut", mid2, 0);
+    CHECK(ac3241_consume(tenant, mid2, 0),
+          "AC3: fresh grant allows the check whose mid it matches");
+    CHECK(!ac3241_consume(tenant_b, mid2, 0),
+          "AC3: stale row cannot authorize a check whose mid differs");
+    CHECK(ac3241_grant_live(tenant_b, "stale-mut-b"),
+          "AC3: stale row survives (consume only on allow)");
+    (void)g_capability_registry().revoke_session_grants_for_mid(mid1, "session-mid-exit", 0);
+}
+
+// AC4: hard-face retain — after K Mutation epoch bumps an epoch-0
+// non-session grant no longer satisfies require_effect (retain fence);
+// a grant stamped at the current epoch still does. #3844 honest stamp
+// stands (no epoch invention on the row).
+static void ac4038_4_epoch0_retain_fence_hard_face() {
+    std::println("\n--- #4038 AC4: epoch-0 grant expires at min_valid>0; current-epoch allows ---");
+    // Half 1: epoch-0 row minted at Mutation epoch 0 (hard face keeps 0).
+    reset_all();
+    ac3241_arm_restricted_multi_tenant();
+    constexpr std::uint64_t tenant = 0; // default tenant — no foreign fence
+    EffectProvenance prov0{};
+    prov0.mutation_id = 777;
+    prov0.epoch = 0;
+    prov0.fiber_id = 0;
+    CHECK(g_capability_registry().grant(tenant, "old-read", Effect::Read, prov0),
+          "AC4: epoch-0 grant minted");
+    CapabilityGrant stored{};
+    CHECK(g_capability_registry().find_grant(tenant, "old-read", stored), "AC4: grant stored");
+    CHECK(stored.grant_epoch == 0, "AC4: #3844 — grant_epoch stays honest 0 on hard face");
+    const auto e0 = current_mutation_epoch(); // process-global — prior runners may have bumped
+    g_capability_registry().set_grant_epoch_retain_window(2);
+    aura::core::bump_mutation_epoch(3); // new_ep = e0+3 > K=2 → min_valid = e0+1
+    CHECK(g_capability_registry().grant_min_valid_epoch() >= e0 + 1,
+          "AC4: sliding window advanced min_valid past the epoch-0 row");
+    const auto fence_before = g_capability_effect_metrics().capability_epoch_fence_hit_total.load(
+        std::memory_order_relaxed);
+    EffectProvenance call{};
+    call.mutation_id = stored.bound_mutation_id;
+    call.epoch = current_mutation_epoch();
+    call.fiber_id = 0;
+    CHECK(!check_and_record_effect(Effect::Read, Effect::Read, call, tenant, "4038-epoch", false,
+                                   true),
+          "AC4: epoch-0 grant no longer satisfies require_effect");
+    const auto fence_after = g_capability_effect_metrics().capability_epoch_fence_hit_total.load(
+        std::memory_order_relaxed);
+    CHECK(fence_after > fence_before, "AC4: deny rides the existing epoch-fence counter");
+    // Half 2 (fresh registry): a grant stamped at the CURRENT epoch still
+    // satisfies require_effect once min_valid > 0.
+    reset_all();
+    ac3241_arm_restricted_multi_tenant();
+    g_capability_registry().set_grant_epoch_retain_window(2);
+    aura::core::bump_mutation_epoch(4);
+    CHECK(g_capability_registry().grant_min_valid_epoch() > 0,
+          "AC4: retain fence live for the fresh-grant half");
+    EffectProvenance provf{};
+    provf.mutation_id = 778;
+    provf.epoch = current_mutation_epoch();
+    provf.fiber_id = 0;
+    CHECK(g_capability_registry().grant(tenant, "fresh-read", Effect::Read, provf),
+          "AC4: current-epoch grant minted");
+    CHECK(check_and_record_effect(Effect::Read, Effect::Read, provf, tenant, "4038-epoch-fresh",
+                                  false, true),
+          "AC4: current-epoch grant still satisfies require_effect");
+}
+
+// AC5: Soft/Off unchanged — soft-share Restricted (hard_fiber=false) keeps
+// legacy fiber-0 mid-only revoke, and epoch 0 remains a skip for the
+// retain fence on both soft-share and Off (min_valid set manually).
+static void ac4038_5_soft_off_unchanged() {
+    std::println("\n--- #4038 AC5: Soft/Off — fiber-0 mid-only kept; epoch-0 skip kept ---");
+    reset_all();
+    set_mode(SandboxMode::Restricted);
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+    g_capability_registry().set_hard_fiber_isolation(false);
+    aura::core::bump_mutation_epoch(1);
+    const auto mid = aura::core::current_mutation_epoch();
+    constexpr std::uint64_t tenant = 40387;
+    ac3241_grant(tenant, "mut-A", mid, 701);
+    ac3241_grant(tenant, "host-mut", mid, 0);
+    const auto n =
+        g_capability_registry().revoke_session_grants_for_mid(mid, "session-mid-exit", 0);
+    CHECK(n >= 2, "AC5: soft-share fiber-0 still mid-only (peers revoked too)");
+    CHECK(g_capability_registry().session_bound_entries_alive(tenant) == 0,
+          "AC5: soft-share mid-only clears both");
+    // Soft-share Restricted + manual fence: epoch-0 row still satisfies
+    // (hard_fiber=false keeps the epoch-0 skip).
+    g_capability_registry().set_grant_min_valid_epoch(3);
+    EffectProvenance prov_s{};
+    prov_s.mutation_id = 883;
+    prov_s.epoch = 0;
+    CHECK(g_capability_registry().grant(0, "soft-read", Effect::Read, prov_s),
+          "AC5: epoch-0 grant on default tenant");
+    EffectProvenance call_s{};
+    call_s.mutation_id = 883;
+    call_s.epoch = 0;
+    CHECK(g_capability_registry().provenance_ok(0, call_s, Effect::Read),
+          "AC5: soft-share keeps the epoch-0 skip");
+    g_capability_registry().set_grant_min_valid_epoch(0);
+    // Off: epoch-0 remains a skip even with a manual fence.
+    reset_all();
+    set_mode(SandboxMode::Off);
+    g_capability_registry().set_grant_min_valid_epoch(3);
+    EffectProvenance prov_o{};
+    prov_o.mutation_id = 881;
+    prov_o.epoch = 0;
+    CHECK(g_capability_registry().grant(0, "off-read", Effect::Read, prov_o),
+          "AC5: epoch-0 grant under Off");
+    EffectProvenance call_o{};
+    call_o.mutation_id = 881;
+    call_o.epoch = 0;
+    CHECK(g_capability_registry().provenance_ok(0, call_o, Effect::Read),
+          "AC5: Off keeps the epoch-0 skip");
+    g_capability_registry().set_grant_min_valid_epoch(0);
+}
+
+// AC6: source-cite + linter wiring + no invent.
+static void ac4038_6_source_cite() {
+    std::println("\n--- #4038 AC6: source-cite + linter wiring + no invent ---");
+    const auto cap = read_file("src/core/capability_model.hh");
+    const auto build = read_file("build.py");
+    CHECK(cap.find("kCapabilitySessionRevokeHostCohortIssue = 4038") != std::string::npos,
+          "AC6: stamp #4038");
+    CHECK(cap.find("Issue #4038") != std::string::npos, "AC6: registry cites #4038");
+    CHECK(cap.find("if (g.grant_fiber_id != 0)") != std::string::npos &&
+              cap.find("std::size_t host_revoked = 0;") != std::string::npos,
+          "AC6: host-cohort split in the revoke arm");
+    CHECK(cap.find("g.session_bound && g.bound_mutation_id != prov.mutation_id") !=
+              std::string::npos,
+          "AC6: provenance stale-session skip");
+    CHECK(cap.find("effects_for_locked(tenant, prov.mutation_id)") != std::string::npos,
+          "AC6: posture join on caller mid");
+    CHECK(build.find("check_session_revoke_host_cohort_4038") != std::string::npos,
+          "AC6: build.py wires linter");
+    CHECK(!std::filesystem::exists("tests/core/test_issue_4038.cpp"), "AC6: no invent");
+    CHECK(!std::filesystem::exists("docs/design/4038-host-cohort-revoke.md"),
+          "AC6: no docs/design/");
+}
+
 int run_test_inert_session_mid_3723() {
     std::println("=== Issue #3723: inert MutationBoundaryGuard does not publish session mid ===");
+    // Issue #4038: host-cohort revoke + provenance stale-row skip + epoch-0
+    // retain fence + soft/off parity.
+    ac4038_1_host_cohort_revoke_peer_preserved();
+    ac4038_2_host_guard_exit_then_fresh_grant_allows();
+    ac4038_3_stale_row_beside_fresh_grant();
+    ac4038_4_epoch0_retain_fence_hard_face();
+    ac4038_5_soft_off_unchanged();
+    ac4038_6_source_cite();
     ac3723_1_inert_ctor_does_not_publish_mid();
     ac3723_2_prior_session_untouched_inert_mid_unusable();
     ac3723_3_next_live_enter_sweeps_inert_orphan();

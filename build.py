@@ -8084,6 +8084,27 @@ def cmd_lint():
             "Issue #4037 agent-fingerprint gate linter failed — run python3 scripts/check_agent_fingerprint_gate_4037.py"
         )
         return r
+    # Issue #4038 (security residual): #3799's fiber_id=0 fail-closed arm
+    # stranded host-cohort session grants (grant_fiber_id==0 rows minted by
+    # the fiberless outermost Guard), and provenance_ok's first-mismatch
+    # return bricked every later check of those bits — the epoch-0 row can
+    # never cycle the K=64 retain window (#3844 keeps epoch honest at 0).
+    # Gate pins: the revoke arm revokes host-cohort rows and orphan-bumps
+    # only peer rows, the production mid join skips stale session rows
+    # instead of failing the whole check, the hard-face retain fence treats
+    # grant_epoch==0 like grant_epoch < min_valid, and the posture join
+    # filters stale session bits — all inside the existing
+    # revoke/provenance/effects trio (no query key, no second policy).
+    hc4038_script = ROOT / "scripts" / "check_session_revoke_host_cohort_4038.py"
+    if not hc4038_script.exists():
+        fail(f"missing {hc4038_script}")
+        return 1
+    r = run([sys.executable, str(hc4038_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #4038 host-cohort revoke linter failed — run python3 scripts/check_session_revoke_host_cohort_4038.py"
+        )
+        return r
     # Issue #3857 (mem residual): #3210 TemporaryMovingLivePtrCanary is
     # observe-only and the Moving entry precondition gate is TLS-only, so
     # a peer fiber's apply_closure window (cl_copy stack copies) cannot
