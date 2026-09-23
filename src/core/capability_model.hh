@@ -2795,9 +2795,9 @@ check_macro_self_evo(TenantId tenant, bool sandbox_active = false, bool wildcard
 // load + early-out before any scan).
 //
 // Return: true = allow; false = deny (counter bumped + SE emitted).
-inline bool try_grant_capability_string_path_privileged_locked(TenantId caller,
-                                                               std::string_view /*cap_name*/,
-                                                               std::uint16_t eff_bits) noexcept {
+inline bool try_grant_capability_string_path_privileged_locked(
+    TenantId caller, std::string_view /*cap_name*/, std::uint16_t eff_bits,
+    const std::uint64_t* deny_mid = nullptr) noexcept {
     using namespace ::aura::core::capability;
 
     // AC3: Soft / sandbox=off zero-cost (no scan).
@@ -2836,7 +2836,10 @@ inline bool try_grant_capability_string_path_privileged_locked(TenantId caller,
     using ::aura::core::security_event::SecurityEventKind;
     using ::aura::core::security_event_wal::emit_security_event_durable;
     const auto epoch = current_mutation_epoch();
-    const auto mid = (aura_isolation_deny_se_mid != nullptr) ? aura_isolation_deny_se_mid() : epoch;
+    const auto mid =
+        deny_mid != nullptr
+            ? *deny_mid
+            : ((aura_isolation_deny_se_mid != nullptr) ? aura_isolation_deny_se_mid() : epoch);
     const auto fid = static_cast<std::int64_t>(effect_fiber_id_or(0));
     emit_security_event_durable(SecurityEventKind::EffectDeny, caller, mid, epoch, eff_bits,
                                 "grant_capability",
