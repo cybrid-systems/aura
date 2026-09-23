@@ -8065,6 +8065,25 @@ def cmd_lint():
     if r != 0:
         fail("Issue #4036 mutation choke linter failed — run python3 scripts/check_mutation_choke_4036.py")
         return r
+    # Issue #4037 (security residual): mutate:set-agent-fingerprint was
+    # SECURITY_EXEMPT, so the author fingerprint — the blame label
+    # TypedTransactionGuard copies onto every sub-mutation of the next typed
+    # atomic batch — was writable with zero capability. Gate pins: the meta
+    # declares kEffectTenantAdmin + effect_enforced_in_body (no security_exempt),
+    # the body requires TenantAdmin for the NON-ZERO store with the
+    # effect_sandbox_mode guard (clear-to-0 and Soft/Off stay ungated), the deny
+    # precedes the store with the capability-effect-deny string, and the
+    # allowlist row is gone.
+    afp4037_script = ROOT / "scripts" / "check_agent_fingerprint_gate_4037.py"
+    if not afp4037_script.exists():
+        fail(f"missing {afp4037_script}")
+        return 1
+    r = run([sys.executable, str(afp4037_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #4037 agent-fingerprint gate linter failed — run python3 scripts/check_agent_fingerprint_gate_4037.py"
+        )
+        return r
     # Issue #3857 (mem residual): #3210 TemporaryMovingLivePtrCanary is
     # observe-only and the Moving entry precondition gate is TLS-only, so
     # a peer fiber's apply_closure window (cl_copy stack copies) cannot
