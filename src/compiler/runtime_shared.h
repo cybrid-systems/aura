@@ -154,8 +154,20 @@ extern "C" std::uint64_t aura_tl_arena_oom_total();
 
 // Issue #1361: per-closure free + ID reuse
 extern "C" void aura_free_closure(std::int64_t closure_id);
+// Issue #4036: isolation-checked free. Production face (sandbox_mode != 0,
+// i.e. Restricted/Strict, not Off) refuses a foreign-tenant-stamped slot
+// (IsolationDeny, zero free) and a legacy unstamped slot (tenant 0) under
+// Strict / multi-tenant. Returns 0 on free, nonzero deny code otherwise.
+// Legacy aura_free_closure keeps no-check semantics (caller_tenant=0,
+// sandbox_mode=0) for internal sweeps / JIT internals.
+extern "C" int aura_free_closure_checked(std::int64_t closure_id, std::uint64_t caller_tenant,
+                                         int sandbox_mode);
 extern "C" std::int64_t aura_alloc_closure(std::int64_t func_id);
 extern "C" std::int64_t aura_alloc_closure_arena(std::int64_t func_id);
+// Issue #4036: explicit-tenant alloc seam (same stamp point as
+// aura_alloc_closure) for test/tooling links where the strong owner hook is
+// shadowed by the light-link weak stub.
+extern "C" std::int64_t aura_alloc_closure_tenant(std::int64_t func_id, std::uint64_t owner_tenant);
 extern "C" void aura_closure_set_name(std::int64_t closure_id, const char* name);
 extern "C" void aura_closure_capture(std::int64_t closure_id, std::int64_t idx, std::int64_t val);
 extern "C" std::int64_t aura_closure_call(std::int64_t closure_id, std::int64_t* args,

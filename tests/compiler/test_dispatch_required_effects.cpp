@@ -29,6 +29,7 @@
 #include "test_harness.hpp"
 
 #include "compiler/ffi_hot_path.hh"
+#include "compiler/runtime_shared.h" // #4036: aura_alloc_closure / aura_closure_is_freed / aura_free_closure_checked
 #include "compiler/observability_metrics.h"
 #include "compiler/security_capabilities.h"
 #include "compiler/security_side_effect.hh"
@@ -68,8 +69,10 @@ using aura::compiler::kSideEffectInheritIssue;
 using aura::compiler::PrimMeta;
 using aura::compiler::security::kEffectMutate;
 using aura::compiler::security::kEffectNone;
+using aura::compiler::types::as_bool;
 using aura::compiler::types::as_closure_id;
 using aura::compiler::types::as_int;
+using aura::compiler::types::is_bool;
 using aura::compiler::types::is_closure;
 using aura::compiler::types::is_error;
 using aura::compiler::types::is_int;
@@ -828,6 +831,223 @@ int run_test_dispatch_required_effects() {
         CHECK(src.find("hash-set!") != std::string::npos, "3720 AC5: infer names present");
         CHECK(src.find("query:") != std::string::npos || true,
               "3720 AC5: no new query key required");
+    }
+
+    // ── Issue #4036: set-car!/set-cdr!/string-fill!/closure:free! enter the
+    // #3720 Mutate choke + closure-slot tenant isolation. Production face
+    // = Restricted/Strict (sandbox mode != 0); Soft/Off stays a no-op.
+    // No new Effect bit, no query key, no second capability model.
+    {
+        std::println("\n--- #4036 infer: sibling mutators stamp Mutate, no body choke ---");
+        CHECK(infer_required_effects_from_name("set-car!") == kEffectMutate, "4036: set-car!");
+        CHECK(infer_required_effects_from_name("set-cdr!") == kEffectMutate, "4036: set-cdr!");
+        CHECK(infer_required_effects_from_name("string-fill!") == kEffectMutate,
+              "4036: string-fill!");
+        CHECK(infer_required_effects_from_name("closure:free!") == kEffectMutate,
+              "4036: closure:free!");
+        CHECK(infer_required_effects_from_name("hash-ref") == kEffectNone, "4036: read stays None");
+        // Dispatch is the single choke: prim bodies must NOT also call
+        // require_effect (double-consume of single-use, same note as c-*).
+        const auto pair_src = read_file("src/compiler/evaluator_primitives_pair.cpp");
+        const auto sc = pair_src.find("add, ev, \"set-car!\"");
+        CHECK(sc != std::string::npos, "4036: set-car! body located");
+        if (sc != std::string::npos) {
+            const auto win = pair_src.substr(sc, 1500);
+            CHECK(win.find("require_effect") == std::string::npos,
+                  "4036: set-car!/set-cdr! windows stay body-choke-free");
+        }
+        const auto sf = pair_src.find("add, ev, \"string-fill!\"");
+        CHECK(sf != std::string::npos, "4036: string-fill! body located");
+        if (sf != std::string::npos) {
+            const auto win = pair_src.substr(sf, 900);
+            CHECK(win.find("require_effect") == std::string::npos,
+                  "4036: string-fill! window stays body-choke-free");
+        }
+    }
+
+    {
+        std::println(
+            "\n--- #4036 AC1: Restricted+MT no grant → all four deny, heaps unchanged ---");
+        reset_all();
+        aura::core::bump_mutation_epoch(1);
+        aura::core::provenance::set_multi_tenant_env_active(true);
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.set_effect_sandbox_mode(1);
+        set_mode(SandboxMode::Restricted);
+        ev.set_capability_tenant_id(4036);
+        CHECK(cs.eval("(define *p4036* (cons 1 2))").has_value(), "4036 AC1: define pair");
+        CHECK(cs.eval("(define *s4036* \"abc\")").has_value(), "4036 AC1: define string");
+        auto* cm = static_cast<CompilerMetrics*>(ev.compiler_metrics());
+        const auto ddeny0 = cm ? cm->dispatch_required_effects_deny_total.load() : 0;
+        const auto se0 = g_security_event_ring().total.load(std::memory_order_relaxed);
+        auto r1 = cs.eval("(set-car! *p4036* 9)");
+        CHECK(r1 && is_error(*r1), "4036 AC1: set-car! denies with empty grants");
+        auto c1 = cs.eval("(car *p4036*)");
+        CHECK(c1 && is_int(*c1) && as_int(*c1) == 1, "4036 AC1: car unchanged");
+        auto r2 = cs.eval("(set-cdr! *p4036* 9)");
+        CHECK(r2 && is_error(*r2), "4036 AC1: set-cdr! denies");
+        auto c2 = cs.eval("(cdr *p4036*)");
+        CHECK(c2 && is_int(*c2) && as_int(*c2) == 2, "4036 AC1: cdr unchanged");
+        auto r3 = cs.eval("(string-fill! *s4036* 88)");
+        CHECK(r3 && is_error(*r3), "4036 AC1: string-fill! denies");
+        auto c3 = cs.eval("(car (string->list *s4036*))");
+        CHECK(c3 && is_int(*c3) && as_int(*c3) == 97, "4036 AC1: string content unchanged");
+        auto r4 = cs.eval("(closure:free! 0)");
+        CHECK(r4 && is_error(*r4), "4036 AC1: closure:free! denies");
+        if (cm)
+            CHECK(cm->dispatch_required_effects_deny_total.load() > ddeny0,
+                  "4036 AC1: dispatch deny counter advanced");
+        // One deny row per sibling, op == prim name. Under Restricted+MT the
+        // isolation consult (#3365/#3415) preempts the effect check for
+        // NodeId-less dispatches, so the deny row surfaces as IsolationDeny
+        // (kind 1) instead of EffectDeny (kind 0) — same deny class, op still
+        // equals the prim name (the issue's observable).
+        const auto seq = g_security_event_ring().seq.load(std::memory_order_relaxed);
+        const std::size_t rn = std::min<std::size_t>(seq, g_security_event_ring().ring.size());
+        auto saw_op = [&](std::string_view needle) {
+            for (std::size_t i = 0; i < rn; ++i) {
+                const auto& e = g_security_event_ring().ring[i];
+                if (e.denied &&
+                    (e.kind == aura::core::security_event::SecurityEventKind::EffectDeny ||
+                     e.kind == aura::core::security_event::SecurityEventKind::IsolationDeny) &&
+                    std::string_view(e.op).find(needle) != std::string_view::npos)
+                    return true;
+            }
+            return false;
+        };
+        CHECK(saw_op("set-car"), "4036 AC1: deny row op set-car!");
+        CHECK(saw_op("set-cdr"), "4036 AC1: deny row op set-cdr!");
+        CHECK(saw_op("string-fill"), "4036 AC1: deny row op string-fill!");
+        CHECK(saw_op("closure:free"), "4036 AC1: deny row op closure:free!");
+        CHECK(g_security_event_ring().total.load() > se0, "4036 AC1: SE ring advanced");
+        aura::core::provenance::set_multi_tenant_env_active(false);
+    }
+
+    {
+        std::println("\n--- #4036 AC2: single-use Mutate grant — one set-car! consumes once ---");
+        reset_all();
+        aura::core::bump_mutation_epoch(1);
+        const auto live_mid = aura::core::current_mutation_epoch();
+        using aura::core::capability::g_capability_registry;
+        using aura::core::capability::make_grant_provenance;
+        // Seed while Off (same fence-free grant as #3720 AC4). A body-level
+        // second require_effect would consume the single-use grant mid-call
+        // and error the FIRST write — the allow proves dispatch-only choke.
+        g_capability_registry().grant(4036, "mutate",
+                                      static_cast<aura::core::capability::Effect>(kEffectMutate),
+                                      make_grant_provenance(live_mid, true, 0, 0),
+                                      /*single_use=*/true);
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.set_effect_sandbox_mode(1);
+        set_mode(SandboxMode::Restricted);
+        ev.set_capability_tenant_id(4036);
+        ev.clear_boundary_audit_mid_for_test();
+        ev.note_boundary_audit_mid_for_test(live_mid);
+        CHECK(cs.eval("(define *p4036su* (cons 1 2))").has_value(), "4036 AC2: define");
+        auto r = cs.eval("(set-car! *p4036su* 42)");
+        CHECK(r && !is_error(*r), "4036 AC2: single-use grant allows one write");
+        auto got = cs.eval("(car *p4036su*)");
+        CHECK(got && is_int(*got) && as_int(*got) == 42, "4036 AC2: write landed");
+        auto r2 = cs.eval("(set-car! *p4036su* 43)");
+        CHECK(r2 && is_error(*r2), "4036 AC2: grant consumed exactly once");
+        auto got2 = cs.eval("(car *p4036su*)");
+        CHECK(got2 && is_int(*got2) && as_int(*got2) == 42, "4036 AC2: second write denied");
+    }
+
+    {
+        std::println("\n--- #4036 AC3: closure tenant stamp — same-tenant free, cross-tenant "
+                     "IsolationDeny ---");
+        reset_all();
+        aura::core::bump_mutation_epoch(1);
+        // Allow/deny matrix runs under Restricted (no MT), mirroring the
+        // #3720 AC4 allow-path precedent: under MT the NodeId-less dispatch
+        // isolation consult denies unstamped refs before the body runs,
+        // which would make the deny shape vacuous. The legacy-unstamped arm
+        // (strict||MT) is covered by AC4 at the checked-entry level.
+        const auto live_mid = aura::core::current_mutation_epoch();
+        using aura::core::capability::g_capability_registry;
+        using aura::core::capability::make_grant_provenance;
+        g_capability_registry().grant(4036, "mutate",
+                                      static_cast<aura::core::capability::Effect>(kEffectMutate),
+                                      make_grant_provenance(live_mid, true, 0, 0));
+        g_capability_registry().grant(7777, "mutate",
+                                      static_cast<aura::core::capability::Effect>(kEffectMutate),
+                                      make_grant_provenance(live_mid, true, 0, 0));
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.set_effect_sandbox_mode(1);
+        set_mode(SandboxMode::Restricted);
+        ev.set_capability_tenant_id(4036);
+        ev.clear_boundary_audit_mid_for_test();
+        ev.note_boundary_audit_mid_for_test(live_mid);
+        // Explicit-tenant seam: same stamp point as the production owner-hook
+        // path (test binaries shadow the strong hook with the light-link
+        // weak stub, so the seam pins the slot tenant deterministically).
+        const auto sa = aura_alloc_closure_tenant(4036, 4036);
+        const auto sb = aura_alloc_closure_tenant(4036, 4036);
+        CHECK(sa >= 0 && sb >= 0, "4036 AC3: slots allocated");
+        CHECK(aura_closure_is_freed(sa) == 0, "4036 AC3: sa live before free");
+        // Same-tenant: effect allow (grant) → slot tenant == caller → free.
+        auto r = cs.eval(std::format("(closure:free! {})", sa));
+        CHECK(r && is_bool(*r) && as_bool(*r), "4036 AC3: same-tenant free allowed");
+        CHECK(aura_closure_is_freed(sa) == 1, "4036 AC3: sa freed");
+        // Caller switches tenant; sb stays stamped 4036. Bool-false result
+        // proves the deny came from the closure check (dispatch/workspace
+        // denies surface as error values) — non-vacuous.
+        ev.set_capability_tenant_id(7777);
+        auto r2 = cs.eval(std::format("(closure:free! {})", sb));
+        CHECK(r2 && is_bool(*r2) && !as_bool(*r2), "4036 AC3: cross-tenant free denied");
+        CHECK(aura_closure_is_freed(sb) == 0, "4036 AC3: sb NOT freed (zero free)");
+        CHECK(aura_closure_live_count() >= 1, "4036 AC3: foreign slot still live");
+    }
+
+    {
+        std::println(
+            "\n--- #4036 AC4: legacy unstamped slot fails closed under MT/Strict; Off frees ---");
+        reset_all();
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.set_capability_tenant_id(0); // owner stamps 0 → legacy unstamped slot
+        cs.register_jit_primitives();
+        const auto sid = aura_alloc_closure(77);
+        CHECK(sid >= 0, "4036 AC4: slot allocated");
+        CHECK(aura_closure_is_freed(sid) == 0, "4036 AC4: slot live");
+        aura::core::provenance::set_multi_tenant_env_active(true);
+        CHECK(aura_free_closure_checked(sid, /*caller_tenant=*/9, /*sandbox_mode=*/1) != 0,
+              "4036 AC4: legacy slot refuses under Restricted+MT");
+        CHECK(aura_closure_is_freed(sid) == 0, "4036 AC4: zero free under MT");
+        aura::core::provenance::set_multi_tenant_env_active(false);
+        set_mode(SandboxMode::Strict);
+        CHECK(aura_free_closure_checked(sid, 9, 1) != 0,
+              "4036 AC4: legacy slot refuses under Strict");
+        CHECK(aura_closure_is_freed(sid) == 0, "4036 AC4: still zero free under Strict");
+        set_mode(SandboxMode::Off);
+        CHECK(aura_free_closure_checked(sid, 9, 0) == 0, "4036 AC4: Off keeps today's free");
+        CHECK(aura_closure_is_freed(sid) == 1, "4036 AC4: freed under Off");
+    }
+
+    {
+        std::println("\n--- #4036 AC5: Soft/Off — zero grants, all four keep today's behavior ---");
+        reset_all();
+        CompilerService cs;
+        cs.evaluator().set_effect_sandbox_mode(0);
+        set_mode(SandboxMode::Off);
+        cs.register_jit_primitives();
+        CHECK(cs.eval("(define *p4036s* (cons 1 2))").has_value(), "4036 AC5: define pair");
+        auto r1 = cs.eval("(set-car! *p4036s* 5)");
+        CHECK(r1 && !is_error(*r1), "4036 AC5: set-car! works");
+        CHECK(cs.eval("(set-cdr! *p4036s* 6)").has_value(), "4036 AC5: set-cdr! works");
+        CHECK(cs.eval("(car *p4036s*)").has_value(), "4036 AC5: car reads");
+        CHECK(cs.eval("(define *s4036x* \"hi\")").has_value(), "4036 AC5: define string");
+        CHECK(cs.eval("(string-fill! *s4036x* 65)").has_value(), "4036 AC5: string-fill! works");
+        const auto sid = aura_alloc_closure(5);
+        auto r4 = cs.eval(std::format("(closure:free! {})", sid));
+        CHECK(r4 && is_bool(*r4) && as_bool(*r4), "4036 AC5: closure:free! works");
+        CHECK(aura_closure_is_freed(sid) == 1, "4036 AC5: slot freed");
+        const auto src = read_file("src/compiler/security_side_effect.hh");
+        CHECK(src.find("set-car!") != std::string::npos, "4036 AC5: infer names present");
     }
 
 

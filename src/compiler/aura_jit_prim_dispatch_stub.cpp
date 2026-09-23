@@ -36,6 +36,12 @@ extern "C" __attribute__((weak)) int aura_jit_owner_require_effect(std::uint16_t
     return 0;
 }
 
+// Issue #4036: light-link fallback — no owner Evaluator → unstamped slots
+// (tenant 0). Same fail-safe shape as the owner require_effect stub above.
+extern "C" __attribute__((weak)) std::uint64_t aura_jit_owner_capability_tenant(void) noexcept {
+    return 0;
+}
+
 // Do not stub aura_set/get_storm_eval_context here. This TU is in
 // aura_jit_test_objects (DT_NEEDED first for full-JIT tests); a weak
 // no-op in the first DSO wins ELF search over the strong TLS in

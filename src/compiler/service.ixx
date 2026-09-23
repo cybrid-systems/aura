@@ -387,6 +387,18 @@ extern "C" int aura_jit_owner_require_effect(std::uint16_t bits, const char* op)
     return owner->require_effect(bits, op ? std::string_view(op) : "hash-set!") ? 1 : 0;
 }
 
+// Issue #4036: owner-Evaluator principal for closure slot tenant stamps —
+// the same capability_tenant_id_ require_effect records. Same owner wiring
+// as aura_jit_owner_require_effect; unwired owner → 0 (unstamped). Weak
+// stub in aura_jit_prim_dispatch_stub.cpp.
+extern "C" std::uint64_t aura_jit_owner_capability_tenant(void) noexcept {
+    auto* prims = g_jit_prim_ctx.load(std::memory_order_acquire);
+    auto* owner = owner_evaluator(prims);
+    if (!owner)
+        return 0;
+    return owner->capability_tenant_id();
+}
+
 // Issue #3593: test hook — drive the JIT C ABI dispatch entry directly.
 // Light-test links can bind a bare aura_jit_prim_dispatch reference to the
 // weak stub in aura_jit_light_test_objects (.so), silently bypassing the

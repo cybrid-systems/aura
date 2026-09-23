@@ -90,6 +90,18 @@ infer_required_effects_from_name(std::string_view name) noexcept {
     // Hash-ref (read) stays kEffectNone.
     if (name == "hash-set!" || name == "hash-remove!" || name == "vector-set!")
         return kEffectMutate;
+    // Issue #4036: sibling mutators resolved to kEffectNone and skipped the
+    // dispatch choke entirely — zero-cap write. set-car!/set-cdr! reach the
+    // process-global g_pair_slots (cross-Evaluator) in the idx >= pairs_
+    // else-branch; string-fill! overwrites string_heap_[idx] in place;
+    // closure:free! freed any in-range JIT closure id (process-global id
+    // space, cross-tenant free). Same choke, same grant model: infer stamps
+    // Mutate at add(); dispatch require_effect enforces on every call. Do
+    // NOT also body-check (double-consume of single-use, same note as c-*
+    // below). Soft/Off: require_effect is a no-op.
+    if (name == "set-car!" || name == "set-cdr!" || name == "string-fill!" ||
+        name == "closure:free!")
+        return kEffectMutate;
     // Issue #3725: std/ffi installs c-* after a one-shot require_effect;
     // c-load/c-func bodies did not re-enter the choke, so revoke /
     // single-use / session-exit left native dlopen/dlsym live. Infer
