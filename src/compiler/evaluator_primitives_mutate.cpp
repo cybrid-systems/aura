@@ -619,9 +619,11 @@ namespace {
             *was_macro = true;
 
         // Always stamp provenance when we observe MacroIntroduced on mutate.
+        // Issue #4043: same join mid as the SE / trail, not a literal 0.
         aura::core::provenance::record_macro_hygiene_provenance(
             static_cast<std::uint32_t>(id), ev.capability_tenant_id(),
-            /*mutation_id=*/0, static_cast<std::uint32_t>(aura_fiber_current_id()));
+            typed_audit::join_audit_and_se_mid(0),
+            static_cast<std::uint32_t>(aura_fiber_current_id()));
         if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
             m->macro_hygiene_provenance_hits_total.fetch_add(1, std::memory_order_relaxed);
             m->last_hygiene_blame_node = static_cast<std::uint32_t>(id);
@@ -697,14 +699,16 @@ namespace {
             return;
 
         // Cascade: marker + dirty bit + provenance on root + descendants.
+        // Issue #4043: one join mid for the whole cascade, not a literal 0.
+        const auto hygiene_mid = typed_audit::join_audit_and_se_mid(0);
         std::uint64_t stamped_count = 0;
         flat.walk_subtree(new_root, [&](aura::ast::NodeId cur) {
             flat.set_marker(cur, aura::ast::SyntaxMarker::MacroIntroduced);
             flat.apply_macro_dirty_bits(
                 cur,
                 static_cast<std::uint8_t>(aura::ast::FlatAST::MacroDirtyReason::kMacroExpansion));
-            aura::core::provenance::record_macro_hygiene_provenance(static_cast<std::uint32_t>(cur),
-                                                                    ev.capability_tenant_id());
+            aura::core::provenance::record_macro_hygiene_provenance(
+                static_cast<std::uint32_t>(cur), ev.capability_tenant_id(), hygiene_mid);
             ++stamped_count;
         });
 
@@ -775,6 +779,8 @@ namespace {
             m->naked_macro_mutate_attempt.fetch_add(1, std::memory_order_relaxed);
             m->macro_hygiene_provenance_hits_total.fetch_add(1, std::memory_order_relaxed);
             m->last_hygiene_blame_node = static_cast<std::uint32_t>(id);
+            // Issue #4043: same blame mid as hygiene_protected_error.
+            m->last_hygiene_blame_mutation = typed_audit::join_audit_and_se_mid(0);
         }
         typed_audit::capture_macro_hygiene_audit(
             "hygiene-protected", typed_audit::AuditOutcome::Error, static_cast<std::uint32_t>(id),
@@ -6078,6 +6084,9 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                                 m->macro_hygiene_provenance_hits_total.fetch_add(
                                     1, std::memory_order_relaxed);
                                 m->last_hygiene_blame_node = static_cast<std::uint32_t>(node);
+                                // Issue #4043: naked batch deny stores the join mid.
+                                m->last_hygiene_blame_mutation =
+                                    typed_audit::join_audit_and_se_mid(0);
                             }
                             typed_audit::capture_macro_hygiene_audit(
                                 "hygiene-protected", typed_audit::AuditOutcome::Error,

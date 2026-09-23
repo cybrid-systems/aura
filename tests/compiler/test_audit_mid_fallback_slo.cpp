@@ -43,6 +43,7 @@
 
 #include "compiler/audit_mid_fallback_slo.h"
 #include "compiler/typed_mutation_audit.h"
+#include "core/provenance_tracker.hh"
 #include "core/resource_quota.hh"
 #include "core/security_event.hh"
 #include "core/workspace_epoch.hh"
@@ -843,6 +844,39 @@ int run_test_audit_mid_fallback_slo() {
         const auto secq = read_repo_file("src/compiler/evaluator_primitives_security.cpp");
         CHECK(secq.find("explicit mutation-id argument (including 0)") != std::string::npos,
               "3462: query:security-audit explicit mid=0 filter wired");
+    }
+
+    // Issue #4043: hygiene provenance records the joined mid, and the
+    // structural / atomic-batch naked denies store last_hygiene_blame_mutation.
+    {
+        std::println("\n--- #4043: hygiene provenance uses the joined mid ---");
+        using aura::compiler::typed_audit::AuditOutcome;
+        using aura::compiler::typed_audit::capture_macro_hygiene_audit;
+        using aura::compiler::typed_audit::clear_boundary_audit_mid;
+        using aura::compiler::typed_audit::note_boundary_audit_mid;
+        using aura::core::provenance::g_last_hygiene_provenance_stamp;
+        apply_dev_audit_defaults();
+        clear_boundary_audit_mid();
+        note_boundary_audit_mid(4043001);
+        capture_macro_hygiene_audit("hygiene-protected", AuditOutcome::Error,
+                                    /*target_node=*/9, /*fiber_id=*/4, /*tenant_id=*/7,
+                                    /*mutation_id=*/0);
+        const auto& stamp = g_last_hygiene_provenance_stamp();
+        CHECK(stamp.source_mutation_id == 4043001, "4043: tracker mid is the joined session mid");
+        CHECK(stamp.node_id == 9, "4043: node stamped");
+        CHECK(stamp.tenant_id == 7, "4043: tenant stamped");
+        clear_boundary_audit_mid();
+        const auto mut = read_repo_file("src/compiler/evaluator_primitives_mutate.cpp");
+        CHECK(mut.find("Issue #4043: same blame mid") != std::string::npos,
+              "4043: structural deny stores the join mid");
+        CHECK(mut.find("Issue #4043: naked batch deny") != std::string::npos,
+              "4043: atomic-batch naked deny stores the join mid");
+        CHECK(mut.find("Issue #4043: same join mid") != std::string::npos,
+              "4043: hotpath provenance uses the join mid");
+        const auto tma = read_repo_file("src/compiler/typed_mutation_audit.h");
+        CHECK(tma.find("Issue #4043") != std::string::npos,
+              "4043: capture joins before provenance");
+        apply_dev_audit_defaults();
     }
 
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);

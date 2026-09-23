@@ -4917,19 +4917,22 @@ inline void capture_macro_hygiene_audit(std::string_view name, AuditOutcome outc
                                         std::uint64_t tenant_id = 0,
                                         std::uint64_t mutation_id = 0) noexcept {
     g_typed_mutation_audit_counters.macro_hygiene_events.fetch_add(1, std::memory_order_relaxed);
+    // Issue #4043: join before the provenance stamp. The tracker used to
+    // record the caller argument (often 0) while the trail and SE used
+    // the session mid. Production refuse of 0 stays 0 — do not mint 1.
+    const auto join_mid = join_audit_and_se_mid(mutation_id);
     if (outcome == AuditOutcome::Error || outcome == AuditOutcome::Rollback) {
         g_typed_mutation_audit_counters.macro_hygiene_blocked.fetch_add(1,
                                                                         std::memory_order_relaxed);
         // Dual-record: audit trail (below) + provenance tracker (#1877).
         aura::core::provenance::record_macro_hygiene_provenance(
-            target_node, tenant_id, mutation_id, static_cast<std::uint32_t>(fiber_id));
+            target_node, tenant_id, join_mid, static_cast<std::uint32_t>(fiber_id));
     } else {
         g_typed_mutation_audit_counters.macro_hygiene_allowed.fetch_add(1,
                                                                         std::memory_order_relaxed);
     }
     // Issue #3319: join mid so trail + SE share one key. Production refuse
     // of mid=0 leaves join_mid=0 (mid-fallback-refused is the evidence).
-    const auto join_mid = join_audit_and_se_mid(mutation_id);
     const auto trail_mid = join_mid != 0 ? join_mid : mutation_id;
     const auto prev = get_strategy();
     set_strategy(AuditStrategy::Full);
