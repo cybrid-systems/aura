@@ -164,10 +164,21 @@ static void ac3235_3_production_guard() {
         3235, "mutate",
         static_cast<aura::core::capability::Effect>(aura::compiler::security::kEffectMutate),
         aura::core::capability::make_grant_provenance(live_mid, true, 0, 0));
-    aura::compiler::typed_audit::apply_production_audit_defaults();
-    aura::compiler::security::apply_production_security_defaults();
     CompilerService cs;
+    // Issue #3964/#3966: the full production-audit bundle mints a
+    // per-Evaluator session mid at outermost Guard enter (never the shared
+    // epoch), so a pre-seeded epoch-bound grant can never join there —
+    // intentional deny semantics. The grant-allows posture this AC
+    // measures is the production-default Restricted SANDBOX without the
+    // audit-face bundle (same shape as the #3720 AC4 grant-allows row in
+    // test_dispatch_required_effects): arm the sandbox directly, then pin
+    // the TLS boundary mid to the grant's live_mid so require_effect's
+    // mid join lands on the granted mid.
+    cs.evaluator().set_effect_sandbox_mode(1);
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
     cs.evaluator().set_capability_tenant_id(3235);
+    cs.evaluator().clear_boundary_audit_mid_for_test();
+    cs.evaluator().note_boundary_audit_mid_for_test(live_mid);
     auto* m = static_cast<CompilerMetrics*>(cs.evaluator().compiler_metrics());
     CHECK(m != nullptr, "3235 AC3: metrics");
     const auto acq0 = m->mutation_guard_try_acquire_total.load(std::memory_order_relaxed);
