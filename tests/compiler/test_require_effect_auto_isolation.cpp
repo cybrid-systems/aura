@@ -2530,6 +2530,241 @@ static void ac3773_4_source_cite_and_no_invent() {
     CHECK(body.find("query:") == std::string::npos, "3773 AC4: no new query key in on_ref body");
 }
 
+// ── Issue #4039: a borrowed occupancy collision is not ownership, and the
+// compile gate no longer lets principal 0 pass a bare NodeId. ──
+
+// AC1: Restricted+MT — tenant A exact-stamped node 1 (slot 1: 1 & 255 == 1).
+// Node 257 shares slot 1 (257 & 255 == 1) and its live owner B cannot take
+// the slot (note_stamped_node refuse_foreign_owner, #3641 oracle). A's
+// require_effect_for_node_id on 257 borrows occupant tenant 7 == caller:
+// that is a COLLISION, not ownership — deny via the shared unstamped-ref
+// face (old residual: the fall-through caller-stamped the queried id and
+// check_boundary_ex saw ref.tenant == caller → same-tenant allow). One
+// IsolationDeny with the live fiber id; zero write.
+static void ac4039_1_same_tenant_collision_denies() {
+    std::println("\n--- #4039 AC1: same-tenant slot occupant does not authorize node 257 ---");
+    reset_all();
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+    aura::core::provenance::set_multi_tenant_env_active(true);
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_effect_sandbox_mode(1);
+    const auto me = current_mutation_epoch();
+    ev.grant_effect_capability(7, "mut-4039-a", kEffectMutate, me == 0 ? 1 : me);
+    ev.set_capability_tenant_id(7);
+    (void)ev.make_stamped_ref(/*node_id=*/0x1); // A holds slot 1 via node 1
+    CHECK(aura::core::provenance::existing_stamp_for_node(0x1) == 7,
+          "4039 AC1: A stamp occupies node 1 (slot 1)");
+    CHECK(aura::core::provenance::existing_stamp_for_node(257) == 0,
+          "4039 AC1: node 257 has no exact stamp (same-slot occupancy only)");
+    const auto seq0 = current_seq();
+    const bool ok = ev.require_effect_for_node_id(static_cast<std::uint16_t>(kEffectMutate),
+                                                  "4039-ac1-collision", /*node_id=*/257);
+    CHECK(!ok, "4039 AC1: borrowed same-tenant occupant must NOT authorize node 257");
+    const auto& ring = g_security_event_ring();
+    std::size_t denies = 0;
+    bool fiber_join = false;
+    for (std::uint64_t s = seq0; s < ring.seq.load(); ++s) {
+        const auto& e = ring.ring[s % ring.ring.size()];
+        if (static_cast<int>(e.kind) !=
+                static_cast<int>(aura::core::security_event::SecurityEventKind::IsolationDeny) ||
+            e.seq != s)
+            continue;
+        if (std::string{e.op} != "4039-ac1-collision")
+            continue;
+        ++denies;
+        if (e.fiber_id == static_cast<decltype(e.fiber_id)>(aura_fiber_current_id()))
+            fiber_join = true;
+        CHECK(std::string{e.reason}.find("isolation-deny:unstamped-ref") != std::string::npos,
+              "4039 AC1: deny reason is the shared unstamped-ref face");
+    }
+    CHECK(denies >= 1, "4039 AC1: one IsolationDeny SE for the collision deny");
+    CHECK(fiber_join, "4039 AC1: deny row carries the live fiber id");
+    // Zero write: slot ownership + exact stamps unchanged.
+    CHECK(aura::core::provenance::existing_stamp_for_node(0x1) == 7,
+          "4039 AC1: node 1 slot ownership unchanged");
+    CHECK(aura::core::provenance::existing_stamp_for_node(257) == 0,
+          "4039 AC1: node 257 left unstamped (zero write)");
+    aura::core::provenance::set_multi_tenant_env_active(false);
+}
+
+// AC2: exact match — A on its own exact-stamped node still allows when A
+// holds Mutate (the collision deny must not over-deny exact stamps).
+static void ac4039_2_exact_stamp_allows() {
+    std::println("\n--- #4039 AC2: exact existing_stamp_for_node match still allows ---");
+    // Face mirrors ac3773_2: dev audit defaults + provenance-bound grant +
+    // boundary mid proof — the posture an authorized production caller holds.
+    reset_all();
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    bump_mutation_epoch(1);
+    const auto mid = current_mutation_epoch();
+    using aura::core::capability::g_capability_registry;
+    using aura::core::capability::make_grant_provenance;
+    g_capability_registry().grant(7, "mut-4039-a2",
+                                  static_cast<aura::core::capability::Effect>(kEffectMutate),
+                                  make_grant_provenance(mid, true, 0, 0));
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+    aura::core::provenance::set_multi_tenant_env_active(true);
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_effect_sandbox_mode(1);
+    ev.set_capability_tenant_id(7);
+    ev.clear_boundary_audit_mid_for_test();
+    ev.note_boundary_audit_mid_for_test(mid);
+    (void)ev.make_stamped_ref(/*node_id=*/0x1);
+    const bool ok = ev.require_effect_for_node_id(static_cast<std::uint16_t>(kEffectMutate),
+                                                  "4039-ac2-exact", /*node_id=*/0x1);
+    CHECK(ok, "4039 AC2: exact same-tenant stamp allows (A holds Mutate)");
+    aura::core::provenance::set_multi_tenant_env_active(false);
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+}
+
+// AC3: true miss — empty slot (and single-tenant Restricted) keeps the
+// #2056 caller-stamp allow; MT true-miss policy is caller-stamp only when
+// the slot is empty.
+static void ac4039_3_true_miss_caller_stamp_allows() {
+    std::println("\n--- #4039 AC3: true miss (empty slot) caller-stamps and allows ---");
+    // MT: caller-stamp allow when the slot is empty (face mirrors ac3773_2).
+    reset_all();
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    bump_mutation_epoch(1);
+    const auto mid = current_mutation_epoch();
+    using aura::core::capability::g_capability_registry;
+    using aura::core::capability::make_grant_provenance;
+    g_capability_registry().grant(7, "mut-4039-a3",
+                                  static_cast<aura::core::capability::Effect>(kEffectMutate),
+                                  make_grant_provenance(mid, true, 0, 0));
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+    aura::core::provenance::set_multi_tenant_env_active(true);
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_effect_sandbox_mode(1);
+    ev.set_capability_tenant_id(7);
+    ev.clear_boundary_audit_mid_for_test();
+    ev.note_boundary_audit_mid_for_test(mid);
+    const bool ok = ev.require_effect_for_node_id(static_cast<std::uint16_t>(kEffectMutate),
+                                                  "4039-ac3-true-miss", /*node_id=*/0x302);
+    CHECK(ok, "4039 AC3: MT true miss on empty slot caller-stamps and allows");
+    CHECK(aura::core::provenance::existing_stamp_for_node(0x302) == 7,
+          "4039 AC3: occupancy recorded after the true-miss allow");
+    aura::core::provenance::set_multi_tenant_env_active(false);
+    // Single-tenant Restricted (consult off) true miss unchanged.
+    reset_all();
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    bump_mutation_epoch(1);
+    const auto mid2 = current_mutation_epoch();
+    g_capability_registry().grant(7, "mut-4039-a3b",
+                                  static_cast<aura::core::capability::Effect>(kEffectMutate),
+                                  make_grant_provenance(mid2, true, 0, 0));
+    CompilerService cs2;
+    auto& ev2 = cs2.evaluator();
+    ev2.set_effect_sandbox_mode(1);
+    ev2.set_capability_tenant_id(7);
+    ev2.clear_boundary_audit_mid_for_test();
+    ev2.note_boundary_audit_mid_for_test(mid2);
+    const bool ok2 = ev2.require_effect_for_node_id(static_cast<std::uint16_t>(kEffectMutate),
+                                                    "4039-ac3-single", /*node_id=*/0x303);
+    CHECK(ok2, "4039 AC3: single-tenant Restricted true miss still allows");
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+}
+
+// AC4: fresh Restricted Evaluator, principal still 0 — the compile gate's
+// tenant==0 && principal==0 early allow is gone; a bare-id compile write
+// routes into require_effect_for_node_id and denies unset-principal with
+// the column write unchanged (#2385 face; sunk compile:mark-block-dirty!
+// shares this gate — syntax:set-marker is its public gate-bearing probe).
+static void ac4039_4_principal_zero_gate_denies() {
+    std::println("\n--- #4039 AC4: compile gate denies principal-0 bare NodeId ---");
+    reset_all();
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_effect_sandbox_mode(1);
+    ev.set_capability_tenant_id(0); // unset principal (unit default posture)
+    CHECK(cs.eval("(set-code \"(define z4039 1)\")").has_value(), "4039 AC4: set-code");
+    auto r = cs.eval("(car (query :find \"z4039\"))");
+    CHECK(r.has_value() && aura::compiler::types::is_int(*r), "4039 AC4: find probe node");
+    const auto id = aura::compiler::types::as_int(*r);
+    // The gate deny surfaces as the tenant-isolation-denied merr — a pair
+    // whose car is the kind string (Evaluator::make_merr shape; the #3991
+    // face) — not a RefError value. Assert via the house eval-level kind
+    // check, then pin zero write below.
+    auto w = cs.eval(
+        std::format("(equal? (car (syntax:set-marker {} 1)) \"tenant-isolation-denied\")", id));
+    CHECK(w.has_value() && aura::compiler::types::is_bool(*w) && aura::compiler::types::as_bool(*w),
+          "4039 AC4: principal-0 bare-id gate write denies (no early allow)");
+    auto m = cs.eval(std::format("(syntax-marker {})", id));
+    CHECK(m.has_value() && aura::compiler::types::is_int(*m) &&
+              aura::compiler::types::as_int(*m) == 0,
+          "4039 AC4: marker column unchanged (deny precedes the write)");
+    const bool ok =
+        ev.require_effect_for_node_id(static_cast<std::uint16_t>(kEffectMutate),
+                                      "4039-ac4-principal0", static_cast<std::uint32_t>(id));
+    CHECK(!ok, "4039 AC4: require_effect_for_node_id denies unset principal (bits != 0)");
+}
+
+// AC5: AURA_SANDBOX=off posture — the Soft/Off gate short-circuit stays:
+// gate returns true, the write proceeds, no occupancy stamp.
+static void ac4039_5_soft_off_gate_unchanged() {
+    std::println("\n--- #4039 AC5: Soft/Off gate early-allow stays, no stamp ---");
+    reset_all(); // SandboxMode::Off
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_effect_sandbox_mode(0);
+    CHECK(cs.eval("(set-code \"(define z4039b 1)\")").has_value(), "4039 AC5: set-code");
+    auto r = cs.eval("(car (query :find \"z4039b\"))");
+    CHECK(r.has_value() && aura::compiler::types::is_int(*r), "4039 AC5: find probe node");
+    const auto id = aura::compiler::types::as_int(*r);
+    auto w = cs.eval(std::format("(syntax:set-marker {} 1)", id));
+    CHECK(w.has_value() && aura::compiler::types::is_bool(*w) && aura::compiler::types::as_bool(*w),
+          "4039 AC5: Soft gate returns true (write proceeds)");
+    CHECK(aura::core::provenance::existing_stamp_for_node(static_cast<std::uint32_t>(id)) == 0,
+          "4039 AC5: Soft gate wrote no occupancy stamp");
+}
+
+// AC6: source-cite + no invent.
+static void ac4039_6_source_cite_and_no_invent() {
+    std::println("\n--- #4039 AC6: source-cite + no invent ---");
+    const auto sec = read_file("src/compiler/evaluator_security.cpp");
+    CHECK(sec.find("Issue #4039") != std::string::npos, "4039: collision deny cites issue");
+    CHECK(sec.find("collision_borrow") != std::string::npos, "4039: collision borrow tracked");
+    const auto comp = read_file("src/compiler/evaluator_primitives_compile.cpp");
+    CHECK(comp.find("Issue #4039") != std::string::npos, "4039: gate cites issue");
+    CHECK(comp.find("arg.tenant == 0 && ev.capability_tenant_id() == 0") == std::string::npos,
+          "4039: principal-0 gate early allow deleted");
+    CHECK(read_file("scripts/check_nodeid_collision_4039.py").find("4039") != std::string::npos,
+          "4039: ship linter present");
+    CHECK(read_file("tests/compiler/test_issue_4039.cpp").empty() &&
+              read_file("tests/core/test_issue_4039.cpp").empty() &&
+              read_file("tests/issues/test_issue_4039.cpp").empty(),
+          "4039: no invented test_issue_4039.cpp");
+    const std::filesystem::path docs_design = "docs/design";
+    std::error_code ec;
+    if (std::filesystem::is_directory(docs_design, ec)) {
+        for (const auto& entry : std::filesystem::directory_iterator(docs_design, ec)) {
+            const auto name = entry.path().filename().string();
+            CHECK(name.find("4039-") == std::string::npos,
+                  std::string("4039: no docs/design/") + name + " (forbidden per #1655)");
+        }
+    }
+}
+
+// Batch entry point: #4039 collision/gate ACs. The batch driver dispatches
+// this runner (run_test_require_effect_auto_isolation is the standalone-
+// main history runner and is NOT dispatched in batch mode — see
+// test_security_capability_batch.cpp member wiring).
+int run_test_nodeid_collision_4039() {
+    std::println("=== Issue #4039: collision borrow is not ownership; principal-0 gate deny ===");
+    ac4039_1_same_tenant_collision_denies();
+    ac4039_2_exact_stamp_allows();
+    ac4039_3_true_miss_caller_stamp_allows();
+    ac4039_4_principal_zero_gate_denies();
+    ac4039_5_soft_off_gate_unchanged();
+    ac4039_6_source_cite_and_no_invent();
+    std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
+    return g_failed ? 1 : 0;
+}
+
 int run_test_require_effect_auto_isolation() {
     std::println("=== Issue #2490: require_effect auto-enforces isolation ===");
     ac1_restricted_unset_principal_denies();
@@ -2636,6 +2871,13 @@ int run_test_require_effect_auto_isolation() {
     ac3773_2_fresh_stamped_ref_still_passes();
     ac3773_3_soft_off_skips_freshness_gate();
     ac3773_4_source_cite_and_no_invent();
+    std::println("\n=== Issue #4039: collision borrow is not ownership; principal-0 gate deny ===");
+    ac4039_1_same_tenant_collision_denies();
+    ac4039_2_exact_stamp_allows();
+    ac4039_3_true_miss_caller_stamp_allows();
+    ac4039_4_principal_zero_gate_denies();
+    ac4039_5_soft_off_gate_unchanged();
+    ac4039_6_source_cite_and_no_invent();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

@@ -8105,6 +8105,24 @@ def cmd_lint():
             "Issue #4038 host-cohort revoke linter failed — run python3 scripts/check_session_revoke_host_cohort_4038.py"
         )
         return r
+    # Issue #4039 (security residual): a bare NodeId still passed as the
+    # caller on two entries — require_effect_for_node_id's #3641 collision
+    # borrow read "occupant tenant == caller" as ownership of a different
+    # node (same-tenant allow on a foreign-owned id), and the compile gate's
+    # arg.tenant==0 && principal==0 early allow skipped require_effect
+    # entirely on a fresh Restricted Evaluator. Gate pins: the collision
+    # borrow is tracked and denied through the shared unstamped-ref face
+    # before any caller-stamp, the foreign #3641 face + 256-slot ring stay,
+    # the gate early allow is deleted with Soft/Off and the on_ref route
+    # preserved, and the host ACs are wired into the dispatched batch runner.
+    ncc4039_script = ROOT / "scripts" / "check_nodeid_collision_4039.py"
+    if not ncc4039_script.exists():
+        fail(f"missing {ncc4039_script}")
+        return 1
+    r = run([sys.executable, str(ncc4039_script)], cwd=ROOT)
+    if r != 0:
+        fail("Issue #4039 NodeId collision/gate linter failed — run python3 scripts/check_nodeid_collision_4039.py")
+        return r
     # Issue #3857 (mem residual): #3210 TemporaryMovingLivePtrCanary is
     # observe-only and the Moving entry precondition gate is TLS-only, so
     # a peer fiber's apply_closure window (cl_copy stack copies) cannot

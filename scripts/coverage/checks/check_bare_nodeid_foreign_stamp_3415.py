@@ -70,11 +70,26 @@ def main() -> int:
     # Issue #3641: the consult now carries the same-slot collision-borrow
     # block (occupant tenant → foreign deny) before the on_ref call — the
     # window must span the whole function body.
-    fn_body = sec[fn : fn + 3800] if fn >= 0 else ""
+    # Issue #4039: the borrow is tracked (collision_borrow) and a
+    # same-tenant/untenanted occupant collision denies via the shared
+    # unstamped-ref face before any caller-stamp — window extended again.
+    fn_body = sec[fn : fn + 5000] if fn >= 0 else ""
     must("existing_stamp_for_node", "AC1 for_node_id", fn_body)
     must("require_effect_on_ref", "AC1 for_node_id", fn_body)
     must("make_stamped_ref", "AC1 for_node_id same-tenant", fn_body)
     must("Issue #3641", "AC1(#3641) collision borrow cite", fn_body)
+    must("Issue #4039", "AC1(#4039) collision deny cite", fn_body)
+    must("collision_borrow", "AC1(#4039) borrow tracked", fn_body)
+    must(
+        "collision_borrow && (existing == 0 || existing == caller)",
+        "AC1(#4039) same-tenant collision deny branch",
+        fn_body,
+    )
+    must(
+        "check_workspace_isolation(caller, /*ref_tenant=*/0",
+        "AC1(#4039) unstamped-ref deny face",
+        fn_body,
+    )
     must("occupying_stamp_for_node", "AC1(#3641) slot borrow", fn_body)
     if "make_stamped_ref(node_id)" in fn_body.split("existing_stamp_for_node")[0]:
         fails.append("AC1: for_node_id must consult existing stamp before restamping caller")
