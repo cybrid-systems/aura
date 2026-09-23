@@ -283,7 +283,7 @@ int run_test_workspace_lock_unlock() {
         const auto disp = read_file("src/compiler/mutate_dispatch.hh");
         const auto lam =
             mut.find("auto add_mutate = [&](std::string name, auto fn, bool guard_exempt");
-        const auto win = lam == std::string::npos ? std::string{} : mut.substr(lam, 14000);
+        const auto win = lam == std::string::npos ? std::string{} : mut.substr(lam, 18000);
         CHECK(disp.find("kAddMutateReadOnlyFenceIssue") != std::string::npos, "3450 AC5: stamp");
         CHECK(win.find("Issue #3450") != std::string::npos, "3450 AC5: wrapper cite");
         const auto ro = win.find("workspace_read_only_");
