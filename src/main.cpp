@@ -413,9 +413,11 @@ int main(int argc, char* argv[]) {
                 soft_ready_logged = true;
                 std::fprintf(
                     stderr,
-                    "aura: Soft Ready profile (#4047): multi-worker serve under Soft "
-                    "contracts — NOT production multi-worker Ready. "
-                    "Do not stamp production Ready / production_defaults from this path.\n");
+                    "aura: Soft Ready profile (#4047/#4048): Soft serve-async denseness "
+                    "(fiber:spawn/join) under Soft contracts — NOT production multi-worker "
+                    "Ready. Auto workers=1 for shared-Evaluator safety; --worker-threads=N "
+                    "opts into multi-worker. Do not stamp production Ready / "
+                    "production_defaults from this path.\n");
                 std::fflush(stderr);
             }
             // Non-aborting ABI observability already ran via
@@ -661,6 +663,13 @@ int main(int argc, char* argv[]) {
     // Same JSON-line protocol as --serve, but with non-blocking I/O.
     if (argc > 1 && std::string_view(argv[1]) == "--serve-async") {
 #if AURA_HAVE_EPOLL
+        // Issue #4048: Soft Ready auto (num_workers==0) defaults to 1 worker.
+        // Soft shared Evaluator denseness is unsafe across workers even with
+        // affinity pins (parent may still run on the pre-pin worker until the
+        // first join yield). Explicit --worker-threads=N keeps multi-worker;
+        // denseness then relies on affinity inherit + body mutex (#4048).
+        if (num_workers == 0 && !aura::serve::production_abi_selfcheck_required())
+            num_workers = 1;
         aura::serve::run_serve_async(num_workers);
 #else
         std::println(std::cerr, "aura: --serve-async not supported on macOS (requires epoll)");

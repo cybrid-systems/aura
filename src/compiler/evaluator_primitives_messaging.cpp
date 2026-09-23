@@ -782,8 +782,15 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
             // temporarily unlock while waiting for a child (child needs this
             // mutex to run on the thread backend).
             std::unique_lock<std::mutex> body_lock(s_cli_thread_fiber_body_mtx, std::defer_lock);
-            if (!aura::messaging::g_fiber_spawn)
-                body_lock.lock();
+            // Issue #4048: serialize denseness bodies for BOTH backends.
+            // Soft Ready --serve-async denseness fibers share the session
+            // Evaluator (complete_fiber captures &ev). Multi-worker affinity
+            // pins help, but the parent may still run on another worker
+            // until the first join yield — concurrent apply_closure races
+            // TLS/heap and hangs the session. Always take the body mutex;
+            // fiber:join's CliBodyLockJoinGuard unlocks across the wait so
+            // the child can run (same nested-join protocol as #2869).
+            body_lock.lock();
             struct TlsBodyLockScope {
                 std::unique_lock<std::mutex>* prev;
                 explicit TlsBodyLockScope(std::unique_lock<std::mutex>* cur) noexcept
