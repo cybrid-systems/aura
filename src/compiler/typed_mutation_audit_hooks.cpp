@@ -311,9 +311,13 @@ extern "C" const char* aura_classify_mid0_se_reason(const char* reason) noexcept
     // canonical production refuse — its mid=0 row must keep the stable
     // reason so query:security-audit mid=0 joins it (#3462 contract).
     // Issue #4012: sandbox-downgrade deny is the same refuse class.
+    // Issue #3837: the wildcard-write fence deny (Evaluator string path) is
+    // the same refuse class — its AC2 contract is a mid=0 row that KEEPS
+    // the fence reason (no phantom mid, no caller-misuse rewrite).
     if (r == "mid-fallback-refused" || r == "grant-mid-refused" ||
         r == "grant-effect-needs-explicit-tenant-admin" || r == "allow-cross-needs-tenant-admin" ||
         r == "sandbox-downgrade-needs-explicit-tenant-admin" ||
+        r == "wildcard-write-fence-needs-explicit-tenant-admin" ||
         r == "tenant-spoof-denied" || // Issue #4017 spawn :tenant-id principal fence
         r == kAuditMidSsotMissReason)
         return reason ? reason : "";

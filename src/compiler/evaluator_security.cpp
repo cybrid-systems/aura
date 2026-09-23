@@ -243,8 +243,12 @@ void Evaluator::grant_capability(std::string cap, bool single_use, bool session_
     if (eff != Effect::None) {
         auto& reg = g_capability_registry();
         std::lock_guard<std::mutex> lock(reg.mtx);
-        if (!try_grant_capability_string_path_privileged_locked(capability_tenant_id_, cap,
-                                                                static_cast<std::uint16_t>(eff))) {
+        // Deny SE mid joins the audit-TU SSOT (#3801/#3837): compute in THIS
+        // TU — the header-inline fence clone's weak-symbol binding reads
+        // empty TypedMid join state and lands the deny SE on raw epoch.
+        const auto fence_deny_mid = production_deny_se_mid();
+        if (!try_grant_capability_string_path_privileged_locked(
+                capability_tenant_id_, cap, static_cast<std::uint16_t>(eff), &fence_deny_mid)) {
             return; // AC1 deny: skip both push and effect-grant
         }
     }
@@ -1237,8 +1241,13 @@ bool Evaluator::grant_effect_capability(std::uint64_t tenant_id, std::string_vie
             // bits so a deny at the #3141 string-path layer does not leave
             // TA/MSE rows behind in by_tenant (the issue's "fence → string →
             // registry" ordering).
+            // Deny SE mid joins the audit-TU SSOT (#3801/#3837): computed in
+            // THIS TU — the header-inline fence clone's weak-symbol binding
+            // reads empty TypedMid join state and lands the deny SE on raw
+            // epoch.
+            const auto fence_deny_mid = production_deny_se_mid();
             if (!try_grant_capability_string_path_privileged_locked(
-                    self_tenant, name, static_cast<std::uint16_t>(effect_bits))) {
+                    self_tenant, name, static_cast<std::uint16_t>(effect_bits), &fence_deny_mid)) {
                 return false; // string fence denied — no registry write
             }
             // Issue #3436: caller_principal = granting Evaluator's tenant.
@@ -2026,8 +2035,9 @@ bool Evaluator::check_workspace_isolation(std::uint64_t target_tenant, std::uint
     // Evaluator (per-instance) — the process-global `current` is no
     // longer read by check_boundary_ex. Multi-Evaluator co-location no
     // longer races on a single principal.
-    const bool ok = check_boundary(capability_tenant_id_, target, &prov, allow_cross_tenant_,
-                                   required_effects, strict, op, restricted);
+    const bool ok =
+        check_boundary(capability_tenant_id_, target, &prov, allow_cross_tenant_, required_effects,
+                       strict, op, restricted, []() noexcept { return production_deny_se_mid(); });
     if (!ok) {
         bump_capability_denial();
         // Issue #3669: stamp the Agent-visible error with the SAME reason

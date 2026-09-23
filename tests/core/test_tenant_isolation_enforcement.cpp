@@ -375,7 +375,9 @@ static void ac3126_admin_fence_locked() {
         // default_tenant (legacy behavior) and TenantAdmin would not be checked.
         CHECK(contains(es, "g_capability_registry().grant(capability_tenant_id_,"),
               "AC8: Evaluator::grant_capability calls grant with capability_tenant_id_");
-        CHECK(contains(es, "session_bound, capability_tenant_id_);"),
+        // #3878 wrapped the grant call across lines — assert the caller
+        // principal tail via the (unique) closing fragment of the grant call.
+        CHECK(contains(es, "capability_tenant_id_)) {"),
               "AC8: Evaluator::grant_capability passes capability_tenant_id_ as caller_principal");
         // Kernel bootstrap path (security_defaults.hh) keeps tenant=0 Render-only
         // (gate allows: tenant=0 doesn't trigger foreign-tenant, Render doesn't
@@ -3700,9 +3702,10 @@ int main() {
                   sec.find("Effect::MacroSelfEvo") != std::string::npos,
               "3411 AC1: TA + MSE bits routed through effects_for");
         // TA/MSE queries always reach effects_for (#3144 strip path).
-        CHECK(sec.find(
-                  "has_effect(g_capability_registry().effects_for(capability_tenant_id_), eff)") !=
-                  std::string::npos,
+        // #3876 unified has_capability onto effects_effective_for (still the
+        // #3144 effects_for strip — see evaluator_security.cpp:114).
+        CHECK(sec.find("has_effect(g_capability_registry().effects_effective_for("
+                       "capability_tenant_id_)") != std::string::npos,
               "3411 AC1: TA/MSE routed via effects_for (uses #3144 strip)");
 
         std::println("\n--- #3411 AC2: set_tenant_principal drops kCapWildcard privileged arm ---");

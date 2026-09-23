@@ -29,6 +29,16 @@ extern "C" std::uint64_t aura_fiber_current_id();
 // link; null → Mutation epoch (#3594 mid=0).
 extern "C" std::uint64_t aura_isolation_deny_se_mid() noexcept __attribute__((weak));
 
+// Deny SE mid resolver for header-inline emit sites. The bare weak symbol
+// above binds the module/header-unit clones of this header's inline emit
+// code to an instance whose TypedMid join state (boundary-noted mid, proof
+// stamp, production flag) is always empty — the #3971 per-TU-copy disease
+// on the emit side — so IsolationDeny / wildcard-fence SEs landed on raw
+// epoch or production-refuse mids. Audit-TU callers (evaluator_security.cpp)
+// pass a resolver compiled in their own TU instead; the join state and the
+// resolver then share one copy. Null keeps the legacy weak-symbol fallback.
+using AuraIsolationDenyMidResolver = std::uint64_t (*)() noexcept;
+
 namespace aura::core::workspace_isolation {
 
 inline constexpr int kWorkspaceIsolationPhase = 2; // #1566 enforcement
@@ -478,7 +488,8 @@ struct WorkspaceIsolationPolicy {
     // keys entry.current + the SE tenant/reason split.
     void record_audit(TenantId caller, TenantId target, TenantId ref_tenant, bool denied,
                       bool prov_deny, bool cap_deny, std::string_view op,
-                      std::uint16_t required_effects = 0) noexcept {
+                      std::uint16_t required_effects = 0,
+                      AuraIsolationDenyMidResolver deny_mid_resolver = nullptr) noexcept {
         using ::aura::core::current_mutation_epoch;
         const auto epoch = current_mutation_epoch();
         // Issue #3801 / #3594 / Issue #3808: IsolationDeny mid = same resolver
@@ -490,7 +501,9 @@ struct WorkspaceIsolationPolicy {
         // epoch with 0 terminal (#2493 Soft mid=1 is EffectDeny Soft arms).
         // Weak hook → epoch when audit TU not linked.
         const auto mid =
-            (aura_isolation_deny_se_mid != nullptr) ? aura_isolation_deny_se_mid() : epoch;
+            deny_mid_resolver
+                ? deny_mid_resolver()
+                : ((aura_isolation_deny_se_mid != nullptr) ? aura_isolation_deny_se_mid() : epoch);
 
         const auto seq = audit_seq.fetch_add(1, std::memory_order_release);
         IsolationAuditEntry entry{};
@@ -618,11 +631,11 @@ struct WorkspaceIsolationPolicy {
     // The `current` global is no longer written by set_tenant_principal /
     // TenantScope (multi-Evaluator race — see #2659 audit). Cross-grant
     // table remains process-global (shared policy).
-    [[nodiscard]] bool check_boundary_ex(TenantId caller_principal, TenantId target,
-                                         TenantId ref_tenant, bool allow_cross_tenant,
-                                         std::uint16_t required_effects, bool sandbox_strict,
-                                         std::string_view op = "workspace",
-                                         bool sandbox_restricted = false) noexcept {
+    [[nodiscard]] bool
+    check_boundary_ex(TenantId caller_principal, TenantId target, TenantId ref_tenant,
+                      bool allow_cross_tenant, std::uint16_t required_effects, bool sandbox_strict,
+                      std::string_view op = "workspace", bool sandbox_restricted = false,
+                      AuraIsolationDenyMidResolver deny_mid_resolver = nullptr) noexcept {
         auto& met = g_tenant_isolation_metrics();
         met.tenant_boundary_checks_total.fetch_add(1, std::memory_order_relaxed);
 
@@ -646,8 +659,8 @@ struct WorkspaceIsolationPolicy {
             if (cur == 0) {
                 const bool need_principal = strict || (sandbox_restricted && required_effects != 0);
                 if (!need_principal) {
-                    record_audit(cur, target, ref_tenant, false, false, false, op,
-                                 required_effects);
+                    record_audit(cur, target, ref_tenant, false, false, false, op, required_effects,
+                                 deny_mid_resolver);
                     return true;
                 }
                 // Deny: isolation-deny:unset-principal (reason dual-written
@@ -658,7 +671,8 @@ struct WorkspaceIsolationPolicy {
                                                                         std::memory_order_relaxed);
                 if (strict)
                     met.strict_sandbox_isolation_denials.fetch_add(1, std::memory_order_relaxed);
-                record_audit(cur, target, ref_tenant, true, false, false, op, required_effects);
+                record_audit(cur, target, ref_tenant, true, false, false, op, required_effects,
+                             deny_mid_resolver);
                 return false;
             }
             // Issue #3010: *writing* allow_cross_tenant_ is gated at
@@ -669,7 +683,8 @@ struct WorkspaceIsolationPolicy {
             // still cross_grants + ref provenance (#2968 SSOT). Soft/Off keep
             // the zero-cost bypass (AC5; no extra lock/counter).
             if (allow_cross_tenant && !(strict || sandbox_restricted)) {
-                record_audit(cur, target, ref_tenant, false, false, false, op, required_effects);
+                record_audit(cur, target, ref_tenant, false, false, false, op, required_effects,
+                             deny_mid_resolver);
                 return true;
             }
             // Issue #2056 / resolve_stamped AC4: under Strict with a non-zero
@@ -733,7 +748,7 @@ struct WorkspaceIsolationPolicy {
                     met.strict_sandbox_isolation_denials.fetch_add(1, std::memory_order_relaxed);
             }
             record_audit(cur, target, ref_tenant, !allowed, prov_deny, cap_deny, op,
-                         required_effects);
+                         required_effects, deny_mid_resolver);
         }
         return allowed;
     }
@@ -783,11 +798,12 @@ inline WorkspaceIsolationPolicy& g_workspace_isolation() noexcept {
 check_boundary(TenantId caller_principal, TenantId target,
                const IsolationRefProvenance* ref = nullptr, bool allow_cross_tenant = false,
                std::uint16_t required_effects = 0, bool sandbox_strict = false,
-               std::string_view op = "workspace", bool sandbox_restricted = false) noexcept {
+               std::string_view op = "workspace", bool sandbox_restricted = false,
+               AuraIsolationDenyMidResolver deny_mid_resolver = nullptr) noexcept {
     TenantId ref_t = ref ? ref->tenant_id : 0;
-    return g_workspace_isolation().check_boundary_ex(caller_principal, target, ref_t,
-                                                     allow_cross_tenant, required_effects,
-                                                     sandbox_strict, op, sandbox_restricted);
+    return g_workspace_isolation().check_boundary_ex(
+        caller_principal, target, ref_t, allow_cross_tenant, required_effects, sandbox_strict, op,
+        sandbox_restricted, deny_mid_resolver);
 }
 
 inline void reset_tenant_isolation_for_test() noexcept {
