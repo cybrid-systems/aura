@@ -97,6 +97,13 @@ bool aura_runtime_require_production_abi() noexcept;
 // true + bumps ok_total. Caller is responsible for ensuring this is
 // only invoked when multi-worker / Agent denseness is requested (not
 // single-worker tests / light-link).
+//
+// Issue #4047 Soft Ready: main.cpp must NOT call this under Soft /
+// !production_defaults_active (use production_abi_selfcheck_required()
+// as the gate). Soft --serve-async enters an honest Soft Ready profile
+// without claiming production multi-worker Ready. Calling this function
+// directly under Soft still FATAL-aborts (bit4) — production refuse
+// preserved.
 bool aura_runtime_require_production_multi_worker() noexcept;
 
 // Test reset (unit isolation).

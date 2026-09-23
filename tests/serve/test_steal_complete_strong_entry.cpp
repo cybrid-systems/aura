@@ -601,6 +601,59 @@ int run_test_steal_complete_strong_entry() {
             }
         }
 
+        // ── Issue #4047: Soft Ready allows Soft --serve-async without 0x10 abort.
+        // Production multi-worker require still FATAL under Soft when invoked.
+        {
+            std::println("\n=== Issue #4047: Soft Ready --serve-async / multi-worker entry ===");
+            const auto main_c = read_file("src/main.cpp");
+            const auto hh = read_file("src/serve/runtime_production_abi.h");
+            const auto sa = read_file("src/serve/serve_async.h");
+
+            // AC1: Soft entry gated on production_abi_selfcheck_required; Soft
+            // path must not call multi_worker unconditionally.
+            CHECK(main_c.find("production_abi_selfcheck_required()") != std::string::npos,
+                  "4047 AC1: main Soft Ready gate uses production_abi_selfcheck_required");
+            CHECK(main_c.find("Soft Ready profile (#4047)") != std::string::npos,
+                  "4047 AC1: Soft Ready banner present");
+            CHECK(main_c.find("aura_runtime_require_production_multi_worker_c()") !=
+                      std::string::npos,
+                  "4047 AC1: production multi_worker still wired for production path");
+            // Soft branch before / around multi_worker: required() true → call;
+            // else Soft Ready log (no unconditional call after loop).
+            const auto gate_pos = main_c.find("production_abi_selfcheck_required()");
+            const auto multi_pos = main_c.find("aura_runtime_require_production_multi_worker_c()");
+            CHECK(gate_pos != std::string::npos && multi_pos != std::string::npos &&
+                      gate_pos < multi_pos,
+                  "4047 AC1: Soft gate before multi_worker call");
+
+            // AC2: production_abi_selfcheck_required is false under Soft.
+            {
+                std::println("\n--- #4047 AC2: Soft selfcheck not required ---");
+                setenv("AURA_SANDBOX", "off", 1);
+                aura::compiler::typed_audit::g_typed_mutation_audit_counters
+                    .production_defaults_active.store(0, std::memory_order_relaxed);
+                CHECK(!aura::serve::production_abi_selfcheck_required(),
+                      "4047 AC2: Soft + !defaults → selfcheck not required");
+                unsetenv("AURA_SANDBOX");
+            }
+
+            // AC3: header documents Soft Ready must not call multi_worker under Soft.
+            CHECK(hh.find("Issue #4047 Soft Ready") != std::string::npos,
+                  "4047 AC3: header documents Soft Ready entry");
+            CHECK(sa.find("#4047") != std::string::npos,
+                  "4047 AC3: serve_async.h Soft Ready / protocol note");
+
+            // AC4: no invent + production refuse function still Soft-aborts (source).
+            const auto cpp = read_file("src/serve/runtime_production_abi.cpp");
+            CHECK(cpp.find("sandbox_is_off()") != std::string::npos &&
+                      cpp.find("kProductionAbiSelfcheckFailBitDefaults") != std::string::npos,
+                  "4047 AC4: multi_worker still refuses Soft when called");
+            CHECK(read_file("tests/serve/test_issue_4047.cpp").empty(),
+                  "4047 AC4: no invent test file (extend strong_entry lineage)");
+            CHECK(read_file("docs/design/4047-soft-ready-serve-async.md").empty(),
+                  "4047 AC4: no docs/design");
+        }
+
         // ── Issue #3476: Scheduler::run welds Ready before WorkerThread::start.
         {
             std::println("\n=== Issue #3476: Scheduler::run production Ready weld ===");
@@ -828,7 +881,8 @@ int run_test_steal_complete_strong_entry() {
     ac3866_hot_contracts_refuse_source_cite();
     ac3899_single_worker_hot_contracts_source_cite();
     std::println(
-        "\n=== #2377 + #2955 + #3098 + #3195 + #3343 + #3654 results: {} passed, {} failed ===",
+        "\n=== #2377 + #2955 + #3098 + #4047 + #3195 + #3343 + #3654 results: {} passed, {} "
+        "failed ===",
         g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
