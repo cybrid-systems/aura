@@ -22,15 +22,20 @@
 
 #include "test_harness.hpp"
 
+#include "core/resource_quota.hh"
 #include "orch/sched_runner_test_helper.h"
 #include "serve/fiber.h"
+#include "serve/parallel_orch.h"
 #include "serve/scheduler.h"
 
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <fstream>
+#include <iterator>
 #include <mutex>
 #include <print>
+#include <string>
 #include <thread>
 #include <vector>
 
@@ -80,19 +85,14 @@ int main() {
         // Wait past the deadline.
         std::this_thread::sleep_for(std::chrono::milliseconds(kSleepAfterDeadlineMs));
 
-        // Reap. Note: with no-op bodies, most/all fibers are Done
-        // (state_==Done) by the time we reap. Done fibers are
-        // SKIPPED by reap_orphans_now() (they should be cleaned up
-        // by on_fiber_done, not by reap). The conservation
-        // invariant (reaped + remaining == 10) still holds.
+        // Reap. No-op bodies are Done by now. Issue #4041 erases those
+        // entries (quota already released by on_fiber_done) instead of
+        // keeping them for the Scheduler lifetime. Past-deadline live
+        // fibers are reaped and removed. The list is empty either way.
         const auto reaped = sched.reap_orphans_now();
         const auto remaining = sched.orphan_count();
-        std::println("  reaped={} remaining={} total={}", reaped, remaining, reaped + remaining);
-        CHECK(reaped + remaining == 10, "AC5: conservation — reaped + remaining == 10");
-        // No crash + no leak. With no-op bodies, all 10 are likely
-        // Done and reaped=0 (correct — on_fiber_done should clean
-        // them up, not reap). The check just verifies the fix
-        // doesn't break single-threaded behavior.
+        std::println("  reaped={} remaining={}", reaped, remaining);
+        CHECK(remaining == 0, "AC5/4041: done orphans are dropped; nothing remains past deadline");
         CHECK(true, "AC5: no crash on single-threaded reap");
 
         // (Bodies complete on their own — they're `[](){ }` so finish
@@ -212,5 +212,192 @@ int main() {
     }
 
     std::println("\n=== Issue #2469: reap_orphans_now() lock window ACs complete ===");
-    return 0;
+
+    // Issue #4041: hard-reap and ~Scheduler release Fibers with
+    // quota_tenant_id. Done orphan entries are erased. Tenant 0 stays
+    // a single process-counter decrement.
+    {
+        using aura::core::resource_quota::Dimension;
+        using aura::core::resource_quota::process_resource_quota;
+        using aura::core::resource_quota::reset_process_resource_quota_for_test;
+        using aura::core::resource_quota::set_current_quota_tenant;
+        using aura::core::resource_quota::set_quota_per_tenant_enabled_for_test;
+        using aura::serve::parallel_orch::parallel_intend;
+        using aura::serve::parallel_orch::ParallelPolicy;
+        using aura::serve::parallel_orch::TaskSpec;
+
+        std::println("\n=== Issue #4041: orphan reap tenant quota ===");
+        auto& q = process_resource_quota();
+
+        auto wait_parked = [](Fiber* f) {
+            for (int i = 0;
+                 i < 200 && f && !f->is_done() && f->state() != aura::serve::FiberState::Waiting;
+                 ++i) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
+        };
+
+        // Per-tenant on, tenant 7, force reap: both buckets return.
+        // A second spawn at limit 1 succeeds.
+        {
+            std::println("\n--- #4041: tenant 7 reap returns the fiber slot ---");
+            reset_process_resource_quota_for_test();
+            set_quota_per_tenant_enabled_for_test(true);
+            q.set_tenant_limit(7, Dimension::Fibers, 1);
+            set_current_quota_tenant(7);
+            const auto before_p = q.used(Dimension::Fibers);
+            const auto before_t = q.tenant_used(7, Dimension::Fibers);
+            std::atomic<bool> finish{false};
+            {
+                Scheduler sched(1);
+                aura::serve::SchedRunner runner(sched);
+                Fiber* f = sched.spawn([&finish] {
+                    while (!finish.load(std::memory_order_acquire))
+                        Fiber::yield();
+                });
+                CHECK(f != nullptr, "4041: tenant 7 spawn ok");
+                wait_parked(f);
+                CHECK(q.tenant_used(7, Dimension::Fibers) == before_t + 1,
+                      "4041: tenant slot held");
+                CHECK(q.used(Dimension::Fibers) == before_p + 1, "4041: process slot held");
+                sched.note_orphan_fiber(f, /*hard_deadline_ms=*/1);
+                std::this_thread::sleep_for(std::chrono::milliseconds(5));
+                const auto reaped = sched.reap_orphans_now();
+                CHECK(reaped >= 1, "4041: reaped the live orphan");
+                CHECK(q.tenant_used(7, Dimension::Fibers) == before_t,
+                      "4041: tenant fiber used back after reap");
+                CHECK(q.used(Dimension::Fibers) == before_p,
+                      "4041: process fiber used back after reap");
+                Fiber* again = sched.spawn([] {});
+                CHECK(again != nullptr, "4041: second tenant-7 spawn at the same limit");
+                for (int i = 0; i < 200 && again && !again->is_done(); ++i)
+                    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                finish.store(true, std::memory_order_release);
+            }
+            CHECK(q.tenant_used(7, Dimension::Fibers) == before_t,
+                  "4041: tenant slot still baseline after scheduler exit");
+            CHECK(q.used(Dimension::Fibers) == before_p,
+                  "4041: process slot still baseline after scheduler exit");
+        }
+
+        // Timeout then Done before the deadline: orphan_count stays 0
+        // across 100 cycles on one Scheduler.
+        {
+            std::println("\n--- #4041: done-before-deadline orphans do not accumulate ---");
+            reset_process_resource_quota_for_test();
+            set_quota_per_tenant_enabled_for_test(false);
+            set_current_quota_tenant(0);
+            Scheduler sched(1);
+            aura::serve::SchedRunner runner(sched);
+            bool grew = false;
+            for (int i = 0; i < 100; ++i) {
+                Fiber* f = sched.spawn([] {});
+                if (!f) {
+                    grew = true;
+                    break;
+                }
+                sched.note_orphan_fiber(f, /*hard_deadline_ms=*/60'000);
+                for (int w = 0; w < 200 && !f->is_done(); ++w)
+                    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                (void)sched.reap_orphans_now();
+                if (sched.orphan_count() != 0)
+                    grew = true;
+            }
+            CHECK(!grew, "4041: orphan_count stays 0 across 100 done-before-deadline cycles");
+        }
+
+        // Tenant 0 / per-tenant off: one process decrement, not two.
+        {
+            std::println("\n--- #4041: tenant 0 releases the process counter once ---");
+            reset_process_resource_quota_for_test();
+            set_quota_per_tenant_enabled_for_test(false);
+            set_current_quota_tenant(0);
+            const auto before_p = q.used(Dimension::Fibers);
+            {
+                Scheduler sched(1);
+                aura::serve::SchedRunner runner(sched);
+                std::atomic<bool> finish{false};
+                Fiber* live = sched.spawn([&finish] {
+                    while (!finish.load(std::memory_order_acquire))
+                        Fiber::yield();
+                });
+                Fiber* orphan = sched.spawn([&finish] {
+                    while (!finish.load(std::memory_order_acquire))
+                        Fiber::yield();
+                });
+                CHECK(live && orphan, "4041: two tenant-0 spawns");
+                wait_parked(live);
+                wait_parked(orphan);
+                CHECK(q.used(Dimension::Fibers) == before_p + 2, "4041: both process slots held");
+                sched.note_orphan_fiber(orphan, /*hard_deadline_ms=*/1);
+                std::this_thread::sleep_for(std::chrono::milliseconds(5));
+                CHECK(sched.reap_orphans_now() >= 1, "4041: reaped one tenant-0 orphan");
+                CHECK(q.used(Dimension::Fibers) == before_p + 1,
+                      "4041: exactly one process decrement");
+                CHECK(q.tenant_used(7, Dimension::Fibers) == 0, "4041: tenant 7 slot untouched");
+                // Leave `live` parked. ~Scheduler releases it once.
+                // The reaped fiber is is_reclaimed and must not be released again.
+                (void)finish;
+            }
+            CHECK(q.used(Dimension::Fibers) == before_p,
+                  "4041: tenant 0 destroyed scheduler does not double-decrement");
+        }
+
+        // parallel_intend timeout notes a 30s orphan, then the stack
+        // Scheduler is destroyed. Both buckets must match the snapshot.
+        {
+            std::println("\n--- #4041: parallel_intend timeout then ~Scheduler ---");
+            reset_process_resource_quota_for_test();
+            set_quota_per_tenant_enabled_for_test(true);
+            q.set_tenant_limit(7, Dimension::Fibers, 4);
+            set_current_quota_tenant(7);
+            const auto before_p = q.used(Dimension::Fibers);
+            const auto before_t = q.tenant_used(7, Dimension::Fibers);
+            {
+                Scheduler sched(1);
+                aura::serve::SchedRunner runner(sched);
+                std::atomic<bool> finish{false};
+                TaskSpec spec;
+                spec.body = [&finish] {
+                    while (!finish.load(std::memory_order_acquire))
+                        Fiber::yield();
+                    aura::serve::parallel_orch::TaskResult r;
+                    r.ok = true;
+                    return r;
+                };
+                ParallelPolicy policy;
+                policy.max_concurrency = 1;
+                policy.timeout_ms = 40;
+                policy.drain_ms = 0;
+                const TaskSpec tasks[] = {spec};
+                auto batch = parallel_intend(sched, tasks, policy);
+                CHECK(batch.join_status == aura::serve::JoinStatus::Timeout,
+                      "4041: parallel_intend join times out");
+                CHECK(q.tenant_used(7, Dimension::Fibers) == before_t + 1,
+                      "4041: tenant slot still held until scheduler destroy");
+                (void)finish;
+            }
+            CHECK(q.tenant_used(7, Dimension::Fibers) == before_t,
+                  "4041: ~Scheduler returns the tenant fiber slot");
+            CHECK(q.used(Dimension::Fibers) == before_p,
+                  "4041: ~Scheduler returns the process fiber slot");
+        }
+
+        const auto sched_src = [] {
+            std::ifstream in("src/serve/scheduler.cpp");
+            if (!in)
+                in.open("../src/serve/scheduler.cpp");
+            return std::string((std::istreambuf_iterator<char>(in)),
+                               std::istreambuf_iterator<char>());
+        }();
+        CHECK(sched_src.find("Issue #4041") != std::string::npos, "4041: cite");
+        CHECK(sched_src.find("release_owned_fiber_quota") != std::string::npos,
+              "4041: one release helper");
+        CHECK(sched_src.find("f->is_done()") != std::string::npos, "4041: erase done orphans");
+
+        reset_process_resource_quota_for_test();
+    }
+
+    std::println("\nResults: {} passed, {} failed", aura::test::g_passed, aura::test::g_failed);
+    return aura::test::g_failed ? 1 : 0;
 }

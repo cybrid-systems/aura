@@ -149,6 +149,16 @@ Scheduler::Scheduler(int num_workers) {
     aura_scheduler_init_record_ok();
 }
 
+// Issue #4041: one Fibers release, same tenant key as spawn.
+// Tenant 0 / per-tenant off decrements only the process counter.
+// Do not also notify_fiber_done on the reap path (that double-releases).
+static void release_owned_fiber_quota(const Fiber* fiber) noexcept {
+    if (!fiber)
+        return;
+    aura::core::resource_quota::process_resource_quota().release(
+        aura::core::resource_quota::Dimension::Fibers, 1, fiber->quota_tenant_id());
+}
+
 // ── Destructor ───────────────────────────────────────
 
 Scheduler::~Scheduler() {
@@ -177,9 +187,20 @@ Scheduler::~Scheduler() {
     }
     // Issue #707: destroy owned fibers so per-fiber stack vectors
     // return to the bounded pool instead of leaking until process exit.
+    // Issue #4041: workers are already joined. A fiber that never reached
+    // on_fiber_done (yielded body, stack Scheduler destroyed before the
+    // orphan hard deadline — parallel_intend timeout) still holds a Fibers
+    // reservation. Release that once. Done fibers were released in
+    // on_fiber_done; reaped fibers were released in reap_orphans_now.
     {
         ::aura::compiler::lock_order::AuditedMutexLock lock(
             owned_fibers_mutex_, ::aura::compiler::lock_order::Level::OwnedFibers);
+        for (auto& owned : owned_fibers_) {
+            Fiber* f = owned.get();
+            if (!f || f->is_done() || f->is_reclaimed())
+                continue;
+            release_owned_fiber_quota(f);
+        }
         owned_fibers_.clear();
     }
     if (epoll_fd_ >= 0)
@@ -386,9 +407,8 @@ void Scheduler::on_fiber_done(Fiber* fiber) {
     if (!fiber)
         return;
     // Issue #1579: release process fiber quota reserved at spawn.
-    // Issue #3049: same tenant key as reserve (0 = process-global).
-    aura::core::resource_quota::process_resource_quota().release(
-        aura::core::resource_quota::Dimension::Fibers, 1, fiber->quota_tenant_id());
+    // Issue #3049 / #4041: same tenant key as reserve (0 = process-global).
+    release_owned_fiber_quota(fiber);
 
     int evfd = fiber->eventfd();
     if (evfd >= 0) {
@@ -552,10 +572,16 @@ std::size_t Scheduler::reap_orphans_now() noexcept {
                 it = orphan_fibers_.erase(it);
                 continue;
             }
-            if (it->hard_deadline > now || f->is_done() || f->is_reclaimed()) {
-                // Not yet due, or already cleaned up by on_fiber_done.
-                // Keep the entry (will be removed on next pass if still
-                // stale after its deadline).
+            // Issue #4041: a body that finished before the hard deadline
+            // already released quota in on_fiber_done. Drop the Fiber*
+            // so a long-lived Scheduler does not keep one entry per timeout.
+            if (f->is_done()) {
+                it = orphan_fibers_.erase(it);
+                continue;
+            }
+            if (it->hard_deadline > now || f->is_reclaimed()) {
+                // Not yet due, or already reaped (quota released below).
+                // Keep not-yet-due live entries until the deadline.
                 ++it;
                 continue;
             }
@@ -631,8 +657,9 @@ std::size_t Scheduler::reap_orphans_now() noexcept {
         // the fiber is logically reclaimed (maps/joiners cleaned,
         // reclaimed_ set) and the worker never notifies a reclaimed
         // fiber, so this is the single quota release.
-        aura::core::resource_quota::process_resource_quota().release(
-            aura::core::resource_quota::Dimension::Fibers, 1);
+        // Issue #4041: same tenant key as spawn / on_fiber_done.
+        // Tenant 0 skips release_tenant and only drops the process counter.
+        release_owned_fiber_quota(f);
         if (metrics_on_) {
             metrics_.fibers_completed.fetch_add(1, std::memory_order_relaxed);
         }
