@@ -1407,6 +1407,14 @@ using RootRemapCallback = RootRemapHookFn;
 // over-invalidating pins tied to other arenas.
 inline std::atomic<std::uint64_t> g_arena_id_counter{0};
 
+export class ASTArena;
+// Issue #4046: live arenas so native refuse can resolve a cell against
+// every last_object_remap_ (one table per arena, not a second map).
+namespace live_arena_remap_detail {
+    inline void note(ASTArena* arena) noexcept;
+    inline void unnote(ASTArena* arena) noexcept;
+} // namespace live_arena_remap_detail
+
 export class ASTArena {
 public:
     // Default upstream is the system allocator. Tests can pass a
@@ -1421,7 +1429,9 @@ public:
         // LifetimePin::invalidate_all_pins_for_arena(arena_id_) keys pin
         // invalidation to THIS arena (not all arenas).
         , arena_id_(g_arena_id_counter.fetch_add(1, std::memory_order_relaxed) + 1)
-        , generation_(0) {}
+        , generation_(0) {
+        live_arena_remap_detail::note(this);
+    }
 
     // Issue #300 (P1) Phase 3: defrag request flag. Set by
     // (arena:request-defrag) primitive to signal that a defrag is
@@ -1791,6 +1801,7 @@ public:
     }
 
     ~ASTArena() {
+        live_arena_remap_detail::unnote(this);
         // Issue #2382 / #3124: clear installed hooks under their mutexes
         // BEFORE run_destructors() / member teardown. Concurrent invoke_*_
         // paths copy fn/ctx under the same locks and early-return when
@@ -2987,6 +2998,13 @@ public:
     [[nodiscard]] std::size_t object_remap_size() const noexcept {
         return last_object_remap_.size();
     }
+    // Issue #4046 test seam: one tombstone in this arena's existing
+    // last_object_remap_ (the table resolve_object_remap reads).
+    void note_remap_tombstone_for_test(void* old_ptr, void* new_ptr) noexcept {
+        if (!old_ptr)
+            return;
+        last_object_remap_[old_ptr] = new_ptr;
+    }
     [[nodiscard]] std::uint64_t live_compact_moving_count_relaxed() const noexcept {
         return static_cast<std::uint64_t>(stats_.live_compact_moving_count);
     }
@@ -4175,6 +4193,44 @@ public:
     // gen-bump sees this-window delta only (lifetime counter never resets).
     std::size_t live_compact_recycle_hits_baseline_ = 0;
 };
+
+namespace live_arena_remap_detail {
+    struct Live {
+        std::mutex mtx;
+        std::vector<ASTArena*> arenas;
+    };
+    inline Live& live() noexcept {
+        static Live l;
+        return l;
+    }
+    inline void note(ASTArena* arena) noexcept {
+        if (!arena)
+            return;
+        std::lock_guard<std::mutex> lock(live().mtx);
+        live().arenas.push_back(arena);
+    }
+    inline void unnote(ASTArena* arena) noexcept {
+        if (!arena)
+            return;
+        std::lock_guard<std::mutex> lock(live().mtx);
+        std::erase(live().arenas, arena);
+    }
+    inline bool resolves(void* p) noexcept {
+        if (!p)
+            return false;
+        std::lock_guard<std::mutex> lock(live().mtx);
+        for (ASTArena* arena : live().arenas) {
+            if (arena && arena->resolve_object_remap(p) != nullptr)
+                return true;
+        }
+        return false;
+    }
+} // namespace live_arena_remap_detail
+
+// Issue #4046: native dispatch (other TU) asks every live arena.
+extern "C" int aura_any_live_arena_resolves_object(void* p) noexcept {
+    return live_arena_remap_detail::resolves(p) ? 1 : 0;
+}
 
 // Issue #685: aggregate auto-compact policy stats for observability.
 export struct ArenaAutoCompactPolicyStats {

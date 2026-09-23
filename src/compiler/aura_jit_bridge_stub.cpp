@@ -1551,6 +1551,13 @@ extern "C" __attribute__((weak)) void aura_set_densify_object_remap(const void* 
                                                                     const void* const* /*news*/,
                                                                     std::size_t /*n*/) {}
 extern "C" __attribute__((weak)) void aura_clear_densify_object_remap(void) {}
+extern "C" __attribute__((weak)) void aura_densify_mirror_retain_live_keys(void) {}
+extern "C" __attribute__((weak)) int aura_any_live_arena_resolves_object(void*) {
+    return 0;
+}
+extern "C" __attribute__((weak)) void* aura_current_eval_identity(void) noexcept {
+    return nullptr;
+}
 extern "C" __attribute__((weak)) void aura_set_densify_candidates(const void* const* /*cands*/,
                                                                   std::size_t /*n*/) {}
 extern "C" __attribute__((weak)) void aura_clear_densify_candidates(void) {}

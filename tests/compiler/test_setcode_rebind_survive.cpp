@@ -1172,6 +1172,10 @@ static void ac20_3972_native_dispatch_remap_arm() {
     const void* olds[] = {&dummy_old};
     const void* news[] = {&dummy_new};
     aura_set_densify_object_remap(olds, news, 1);
+    // Issue #4046: publish rewrites cells that hit this window. Put the
+    // old bits back so this AC still proves a live tombstone leaves native.
+    aura_closure_capture(cid, 0,
+                         static_cast<std::int64_t>(reinterpret_cast<std::uintptr_t>(&dummy_old)));
     {
         ProdDensifyWindowGuard g(/*prod=*/true, /*moved=*/3, /*lcp_allow=*/true, nullptr,
                                  /*had_moving=*/true, /*pin_held=*/true, /*incomplete=*/false,
@@ -1194,6 +1198,8 @@ static void ac20_3972_native_dispatch_remap_arm() {
               "3972 AC6: cleared mirror — remap arm silent again (key sensitivity)");
     }
     aura_set_densify_object_remap(olds, news, 1);
+    aura_closure_capture(cid, 0,
+                         static_cast<std::int64_t>(reinterpret_cast<std::uintptr_t>(&dummy_old)));
     {
         ProdDensifyWindowGuard g(/*prod=*/false, /*moved=*/0, /*lcp_allow=*/true);
         const auto before = aura_deopt_count();

@@ -934,6 +934,10 @@ void FlatHashTable::rebuild(uint64_t new_cap) {
 }
 
 // ── Runtime state (shared between all JIT functions) ──────────
+// Issue #4046: defined in the evaluator / arena TUs (not this extern "C" block).
+extern "C" void* aura_current_eval_identity(void) noexcept;
+extern "C" int aura_any_live_arena_resolves_object(void* p) noexcept;
+
 extern "C" {
 
 // === Closure runtime ===
@@ -1962,18 +1966,107 @@ namespace densify_remap_detail {
     }
 } // namespace densify_remap_detail
 
+static void* densify_cell_ptr_(int64_t cell) noexcept {
+    if (cell == 0)
+        return nullptr;
+    return reinterpret_cast<void*>(static_cast<std::uintptr_t>(cell));
+}
+
+// Issue #4046: install this window's pairs without dropping a previous
+// tombstone that a closure cell still holds. Rewrite cells that hit the
+// incoming pairs first (table lock held). A cell still equal to an old
+// key afterwards → MustDeopt, and that key stays in the mirror.
+// `incoming` empty keeps only those still-referenced previous keys.
+static void publish_densify_mirror_(const std::unordered_map<void*, void*>& incoming) {
+    std::unique_lock<std::shared_mutex> tlock(g_closure_table_mtx);
+    std::lock_guard<std::mutex> dlock(densify_remap_detail::mtx());
+    const auto nclos = g_closure_func_ids.size();
+    if (g_closure_must_deopt.size() < nclos)
+        g_closure_must_deopt.resize(nclos, 0);
+    std::uint64_t ok_n = 0;
+    for (std::size_t cid = 0; cid < nclos; ++cid) {
+        if (cid < g_closure_freed.size() && g_closure_freed[cid] != 0)
+            continue;
+        auto rewrite = [&](int64_t& cell) {
+            void* p = densify_cell_ptr_(cell);
+            if (!p)
+                return;
+            auto it = incoming.find(p);
+            if (it == incoming.end() || it->second == nullptr)
+                return;
+            cell = static_cast<std::int64_t>(reinterpret_cast<std::uintptr_t>(it->second));
+            ++ok_n;
+        };
+        if (cid < g_closure_envs.size()) {
+            for (int64_t& cell : g_closure_envs[cid])
+                rewrite(cell);
+        }
+        if (cid < g_arena_closure_envs.size() && g_arena_closure_envs[cid]) {
+            const std::size_t asz =
+                cid < g_arena_closure_env_sizes.size() ? g_arena_closure_env_sizes[cid] : 0;
+            int64_t* env = g_arena_closure_envs[cid];
+            for (std::size_t i = 0; i < asz; ++i)
+                rewrite(env[i]);
+        }
+    }
+    if (ok_n)
+        aura_bump_closure_capture_cell_remap_ok_total(ok_n);
+
+    auto published = incoming;
+    const auto& prev = densify_remap_detail::object_remap();
+    for (std::size_t cid = 0; cid < nclos; ++cid) {
+        if (cid < g_closure_freed.size() && g_closure_freed[cid] != 0)
+            continue;
+        auto consider = [&](int64_t cell) {
+            void* p = densify_cell_ptr_(cell);
+            if (!p)
+                return;
+            auto pit = prev.find(p);
+            if (pit != prev.end()) {
+                if (!published.contains(p))
+                    published.emplace(p, pit->second);
+                if (cid < g_closure_must_deopt.size())
+                    g_closure_must_deopt[cid] = 1;
+            }
+            if (incoming.contains(p) && cid < g_closure_must_deopt.size())
+                g_closure_must_deopt[cid] = 1;
+        };
+        if (cid < g_closure_envs.size()) {
+            for (int64_t cell : g_closure_envs[cid])
+                consider(cell);
+        }
+        if (cid < g_arena_closure_envs.size() && g_arena_closure_envs[cid]) {
+            const std::size_t asz =
+                cid < g_arena_closure_env_sizes.size() ? g_arena_closure_env_sizes[cid] : 0;
+            const int64_t* env = g_arena_closure_envs[cid];
+            for (std::size_t i = 0; i < asz; ++i)
+                consider(env[i]);
+        }
+    }
+    densify_remap_detail::object_remap() = std::move(published);
+}
+
 extern "C" void aura_set_densify_object_remap(const void* const* olds, const void* const* news,
                                               std::size_t n) {
-    std::lock_guard<std::mutex> lock(densify_remap_detail::mtx());
-    auto& m = densify_remap_detail::object_remap();
-    m.clear();
-    if (!olds || !news || n == 0)
+    if (!olds || !news || n == 0) {
+        std::lock_guard<std::mutex> lock(densify_remap_detail::mtx());
+        densify_remap_detail::object_remap().clear();
         return;
-    m.reserve(n * 2);
+    }
+    std::unordered_map<void*, void*> incoming;
+    incoming.reserve(n * 2);
     for (std::size_t i = 0; i < n; ++i) {
         if (olds[i])
-            m[const_cast<void*>(olds[i])] = const_cast<void*>(news[i]);
+            incoming[const_cast<void*>(olds[i])] = const_cast<void*>(news[i]);
     }
+    publish_densify_mirror_(incoming);
+}
+
+// Issue #4046: empty RootRemapPass publish. Drop tombstones no live cell
+// still holds; keep the rest and MustDeopt those closures. Not the test
+// hard-clear (aura_clear_densify_object_remap).
+extern "C" void aura_densify_mirror_retain_live_keys(void) {
+    publish_densify_mirror_({});
 }
 
 extern "C" void aura_clear_densify_object_remap(void) {
@@ -2082,6 +2175,34 @@ static int remount_capture_cells_via_densify_(std::size_t cid) {
 // empty mirror is the quiet fast path. Not keyed on JIT table epoch.
 // Issue #4045: same span as remount — arena cells are the tracked keys
 // for non-escaping closures (heap vector at those cids stays empty).
+// Issue #4046: cell address resolves in any live arena's last_object_remap_.
+// Both stores. Null Closure::owner_arena is not an allow. Caller is the
+// production gate (Soft never reaches this).
+static bool closure_env_cells_hit_any_arena_remap_(std::size_t cid) {
+    auto hit = [](int64_t cell) {
+        if (cell == 0)
+            return false;
+        void* p = reinterpret_cast<void*>(static_cast<std::uintptr_t>(cell));
+        return aura_any_live_arena_resolves_object(p) != 0;
+    };
+    if (cid < g_closure_envs.size()) {
+        for (const int64_t cell : g_closure_envs[cid]) {
+            if (hit(cell))
+                return true;
+        }
+    }
+    if (cid < g_arena_closure_envs.size() && g_arena_closure_envs[cid]) {
+        const std::size_t asz =
+            cid < g_arena_closure_env_sizes.size() ? g_arena_closure_env_sizes[cid] : 0;
+        const int64_t* env = g_arena_closure_envs[cid];
+        for (std::size_t i = 0; i < asz; ++i) {
+            if (hit(env[i]))
+                return true;
+        }
+    }
+    return false;
+}
+
 static bool closure_env_cells_hit_window_remap_(std::size_t cid) {
     std::lock_guard<std::mutex> lock(densify_remap_detail::mtx());
     const auto& remap = densify_remap_detail::object_remap();
@@ -4249,7 +4370,10 @@ extern "C" int64_t aura_closure_dispatch_native_checked(int64_t closure_id, int6
         // never calls the helper (no window/remap on the quiet path).
         // Not keyed on JIT table epoch. Weak stub returns 0 when the
         // evaluator TU is not linked.
-        if (aura_production_densify_stale_refuse(nullptr) != 0) {
+        // Issue #4046: pass the fiber's Guard evaluator when one is set
+        // so per-eval LCP is consulted. Null id keeps the process-wide bit.
+        // Soft never reaches this load (production gate above).
+        if (aura_production_densify_stale_refuse(aura_current_eval_identity()) != 0) {
             tlock.unlock();
             aura_unlock_workspace_read();
             aura_jit_closure_record_stale_deopt();
@@ -4265,7 +4389,10 @@ extern "C" int64_t aura_closure_dispatch_native_checked(int64_t closure_id, int6
         // Sits after the #3948 refuse (window → LCP → remap, same order as
         // TW apply_closure) and inside the production gate (Soft never
         // consults); not keyed on JIT table epoch.
-        if (closure_env_cells_hit_window_remap_(static_cast<std::size_t>(closure_id))) {
+        // Issue #4046: or any live arena last_object_remap_ (null owner arena
+        // is not an allow).
+        if (closure_env_cells_hit_window_remap_(static_cast<std::size_t>(closure_id)) ||
+            closure_env_cells_hit_any_arena_remap_(static_cast<std::size_t>(closure_id))) {
             tlock.unlock();
             aura_unlock_workspace_read();
             aura_jit_closure_record_stale_deopt();

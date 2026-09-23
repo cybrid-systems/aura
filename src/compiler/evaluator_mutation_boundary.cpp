@@ -7536,3 +7536,13 @@ Evaluator::recover_moving_sticky_densify_off(bool retry_densify) noexcept {
 }
 
 } // namespace aura::compiler
+
+// Issue #4046: native dispatch reads the Guard identity from this TU.
+// Header TLS is per-TU under module linkage (#3640); the setter above
+// and this getter share the module copy.
+extern "C" void* aura_current_eval_identity(void) noexcept {
+    return aura::gc_hooks::current_eval_identity();
+}
+extern "C" void aura_test_set_current_eval_identity(void* id) noexcept {
+    aura::gc_hooks::set_current_eval_identity(id);
+}

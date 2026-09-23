@@ -43,6 +43,7 @@
 
 extern "C" int aura_get_closure_must_deopt_before_next_call(std::int64_t closure_id);
 extern "C" std::uint64_t aura_deopt_count(void);
+extern "C" void aura_test_set_current_eval_identity(void* id) noexcept;
 
 // Declared in aura_jit_runtime / stubs.
 extern "C" void aura_deopt_inc();
@@ -61,6 +62,7 @@ import std;
 import aura.compiler.evaluator;
 import aura.compiler.service;
 import aura.compiler.value;
+import aura.core.arena;
 
 namespace {
 
@@ -1755,8 +1757,8 @@ static void ac2297_structural_cell_remap(CompilerService& cs) {
                 static_cast<std::int64_t>(reinterpret_cast<std::uintptr_t>(old_addr)));
             const void* olds[] = {old_addr};
             const void* news[] = {new_addr};
-            aura_set_densify_object_remap(olds, news, 1);
             const auto ok0 = m->closure_capture_cell_remap_ok_total.load();
+            aura_set_densify_object_remap(olds, news, 1);
             const int r = aura_remount_closure_captures(cid, live, live_linear);
             CHECK(r == 1, "AC1: remount ok after cell rewrite");
             CHECK(m->closure_capture_cell_remap_ok_total.load() > ok0, "AC1: cell_remap_ok bumped");
@@ -1968,7 +1970,20 @@ static void ac4045_arena_closure_densify_cells(CompilerService& cs) {
         }
         const void* olds[] = {&arena_old};
         const void* news[] = {&arena_new};
+        const auto ok0 = m->closure_capture_cell_remap_ok_total.load();
         aura_set_densify_object_remap(olds, news, 1);
+        CHECK(m->closure_capture_cell_remap_ok_total.load() > ok0,
+              "4045: publish rewrote the arena cell");
+        {
+            ProdDensifyWindowGuard4045 g(/*prod=*/true, /*moved=*/3, /*lcp_allow=*/true);
+            const auto before = aura_deopt_count();
+            (void)aura_closure_dispatch_native_checked(cid, args, 1);
+            CHECK(aura_deopt_count() - before == d_control,
+                  "4045: rewritten arena cell is not a remap hit");
+        }
+        // Stale alias written after the publish walk still leaves native.
+        aura_closure_capture(
+            cid, 0, static_cast<std::int64_t>(reinterpret_cast<std::uintptr_t>(&arena_old)));
         {
             ProdDensifyWindowGuard4045 g(/*prod=*/false, /*moved=*/0, /*lcp_allow=*/true);
             const auto before = aura_deopt_count();
@@ -1983,11 +1998,8 @@ static void ac4045_arena_closure_densify_cells(CompilerService& cs) {
             CHECK(aura_deopt_count() - before == d_control + 1,
                   "4045: arena remap hit took the refuse (fn not reached)");
         }
-        const auto ok0 = m->closure_capture_cell_remap_ok_total.load();
         const int r = aura_remount_closure_captures(cid, stamp, live_linear);
         CHECK(r == 1, "4045: arena remount ok");
-        CHECK(m->closure_capture_cell_remap_ok_total.load() > ok0,
-              "4045: arena cell rewrite bumped cell_remap_ok");
         {
             ProdDensifyWindowGuard4045 g(/*prod=*/true, /*moved=*/3, /*lcp_allow=*/true);
             const auto before = aura_deopt_count();
@@ -2083,6 +2095,141 @@ static void ac4045_arena_closure_densify_cells(CompilerService& cs) {
     aura_set_aot_metrics(nullptr);
 }
 
+// Issue #4046: a later window must not drop a tombstone a closure cell
+// still holds, and native must refuse on any live arena remap or the
+// fiber's per-eval LCP. Soft does not walk the mirror.
+static void ac4046_densify_mirror_retain_and_arena_refuse(CompilerService& cs) {
+    std::println("\n--- AC #4046: JIT densify mirror retains live tombstones ---");
+    (void)cs;
+    const auto jit_rt = read_file("src/compiler/aura_jit_runtime.cpp");
+    CHECK(jit_rt.find("Issue #4046") != std::string::npos, "4046: jit runtime cites");
+    CHECK(jit_rt.find("publish_densify_mirror_") != std::string::npos, "4046: publish retains");
+    CHECK(jit_rt.find("aura_current_eval_identity()") != std::string::npos,
+          "4046: native passes the fiber evaluator");
+    CHECK(jit_rt.find("aura_any_live_arena_resolves_object") != std::string::npos,
+          "4046: native consults live arena remaps");
+    CHECK(jit_rt.find("g_4046_") == std::string::npos, "4046: no invented counter");
+    const auto dispatch = jit_rt.find("int64_t aura_closure_dispatch_native_checked(");
+    const auto prod = jit_rt.find("production_defaults_active()", dispatch);
+    const auto arena_call = jit_rt.find("closure_env_cells_hit_any_arena_remap_(", dispatch);
+    CHECK(dispatch != std::string::npos && prod != std::string::npos &&
+              arena_call != std::string::npos && prod < arena_call,
+          "4046: arena walk sits inside the production gate");
+    CHECK(read_file("docs/design/4046-jit-densify-mirror.md").empty(), "4046: no docs/design");
+    CHECK(read_file("tests/issues/test_issue_4046.cpp").empty(), "4046: no tests/issues file");
+
+    const auto live_env = aura_get_aot_live_env_frame_version();
+    auto align_env = [&](std::int64_t cid) {
+        const auto stamp = live_env != 0 ? live_env : aura_get_closure_defuse_version(cid);
+        aura_closure_set_env_gen(cid, stamp);
+    };
+    std::int64_t args[1] = {1};
+
+    static int a_old = 0;
+    static int a_new = 0;
+    static int b_old = 0;
+    static int b_new = 0;
+    aura_clear_densify_object_remap();
+    const auto kept = aura_alloc_closure(/*func_id=*/0);
+    const auto alias = aura_alloc_closure(/*func_id=*/0);
+    CHECK(kept >= 0 && alias >= 0, "4046: alloc two closures");
+    align_env(kept);
+    align_env(alias);
+    aura_closure_capture(kept, 0,
+                         static_cast<std::int64_t>(reinterpret_cast<std::uintptr_t>(&a_old)));
+    const void* a_olds[] = {&a_old};
+    const void* a_news[] = {&a_new};
+    aura_set_densify_object_remap(a_olds, a_news, 1);
+    // Second alias missed that walk and still holds A's old address.
+    aura_closure_capture(alias, 0,
+                         static_cast<std::int64_t>(reinterpret_cast<std::uintptr_t>(&a_old)));
+    const void* b_olds[] = {&b_old};
+    const void* b_news[] = {&b_new};
+    aura_set_densify_object_remap(b_olds, b_news, 1);
+    CHECK(aura_closure_get_must_deopt(alias) == 1, "4046: unre-written alias is MustDeopt");
+    aura_closure_set_must_deopt(alias, 0);
+    {
+        ProdDensifyWindowGuard4045 g(/*prod=*/false, /*moved=*/0, /*lcp_allow=*/true);
+        const auto before = aura_deopt_count();
+        (void)aura_closure_dispatch_native_checked(alias, args, 1);
+        CHECK(aura_deopt_count() == before, "4046: Soft does not walk the mirror");
+    }
+    {
+        ProdDensifyWindowGuard4045 g(/*prod=*/true, /*moved=*/3, /*lcp_allow=*/true);
+        const auto before = aura_deopt_count();
+        const auto got = aura_closure_dispatch_native_checked(alias, args, 1);
+        CHECK(got == 0, "4046: retained tombstone leaves native");
+        CHECK(aura_deopt_count() == before + 1, "4046: retained key took the refuse");
+        const auto before_ok = aura_deopt_count();
+        (void)aura_closure_dispatch_native_checked(kept, args, 1);
+        CHECK(aura_deopt_count() == before_ok, "4046: rewritten closure is not a remap hit");
+    }
+
+    // Arena tombstone with the JIT mirror cleared. Null owner_arena is
+    // not an allow: the cell resolves in the live arena's own table.
+    {
+        aura::ast::ASTArena local;
+        static int tomb_old = 0;
+        static int tomb_new = 0;
+        local.note_remap_tombstone_for_test(&tomb_old, &tomb_new);
+        const auto cid = aura_alloc_closure(/*func_id=*/0);
+        CHECK(cid >= 0, "4046: alloc for arena tombstone");
+        align_env(cid);
+        aura_closure_capture(
+            cid, 0, static_cast<std::int64_t>(reinterpret_cast<std::uintptr_t>(&tomb_old)));
+        aura_clear_densify_object_remap();
+        aura_closure_set_must_deopt(cid, 0);
+        {
+            ProdDensifyWindowGuard4045 g(/*prod=*/true, /*moved=*/3, /*lcp_allow=*/true);
+            const auto before = aura_deopt_count();
+            const auto got = aura_closure_dispatch_native_checked(cid, args, 1);
+            CHECK(got == 0, "4046: live arena remap leaves native");
+            CHECK(aura_deopt_count() == before + 1, "4046: arena resolve took the refuse");
+        }
+        {
+            ProdDensifyWindowGuard4045 g(/*prod=*/false, /*moved=*/0, /*lcp_allow=*/true);
+            const auto before = aura_deopt_count();
+            (void)aura_closure_dispatch_native_checked(cid, args, 1);
+            CHECK(aura_deopt_count() == before, "4046: Soft does not resolve arena remaps");
+        }
+        aura_free_closure(cid);
+    }
+
+    // Per-eval LCP: process-wide allow, this fiber's evaluator is red.
+    {
+        static char marker;
+        ProdDensifyWindowGuard4045 g(/*prod=*/true, /*moved=*/3, /*lcp_allow=*/true);
+        auto proof = aura::core::lifetime_consistency_proof::LifetimeConsistencyProof{};
+        proof.would_allow_commit = false;
+        aura::core::lifetime_consistency_proof::stamp_lifetime_consistency_proof_for(&marker,
+                                                                                     proof);
+        aura::core::lifetime_consistency_proof::g_lcp_last_would_allow_commit().store(
+            1, std::memory_order_relaxed);
+        const auto quiet = aura_alloc_closure(/*func_id=*/0);
+        align_env(quiet);
+        aura_clear_densify_object_remap();
+        aura_closure_set_must_deopt(quiet, 0);
+        const auto base = aura_deopt_count();
+        (void)aura_closure_dispatch_native_checked(quiet, args, 1);
+        CHECK(aura_deopt_count() == base, "4046: null identity uses the green process LCP");
+        aura_test_set_current_eval_identity(&marker);
+        const auto before = aura_deopt_count();
+        const auto got = aura_closure_dispatch_native_checked(quiet, args, 1);
+        CHECK(got == 0, "4046: owner evaluator's red LCP leaves native");
+        CHECK(aura_deopt_count() == before + 1, "4046: per-eval LCP took the refuse");
+        aura_test_set_current_eval_identity(nullptr);
+        if (auto* slot = aura::core::lifetime_consistency_proof::lcp_eval_slot_find(&marker)) {
+            slot->present.store(0, std::memory_order_relaxed);
+            slot->id.store(nullptr, std::memory_order_relaxed);
+        }
+        aura_free_closure(quiet);
+    }
+
+    aura_clear_densify_object_remap();
+    aura_free_closure(kept);
+    aura_free_closure(alias);
+}
+
 } // namespace
 
 int main() {
@@ -2132,6 +2279,10 @@ int main() {
     {
         CompilerService cs;
         ac4045_arena_closure_densify_cells(cs);
+    }
+    {
+        CompilerService cs;
+        ac4046_densify_mirror_retain_and_arena_refuse(cs);
     }
 
     // ── #3412: aura_closure_call slow path deopt_pending gate.
