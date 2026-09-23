@@ -1338,14 +1338,26 @@ remap_linear_roots_under_moving(const std::unordered_map<void*, void*>& last_obj
         return 0;
     // Issue #4031: rewrite preserves owner tags across address remap so
     // sibling-fiber owner-scoped drain still finds the root post-Moving.
+    // Issue #3350 residual: densify packing reuses vacated slots, so a
+    // to_insert value can equal a LATER to_erase key (chained packing:
+    // p0 lands in p1's old slot → old0→old1 while old1→new1). Interleaved
+    // erase+insert let the (old1) erase destroy the (old0→old1) identity
+    // inserted one iteration earlier — the registry silently lost a live
+    // post-remap identity (ac3350_3). Two-phase apply: erase every old key
+    // first, THEN insert every new value, so a value-equals-later-key
+    // collision cannot eat an identity. Owner tags move with their pair.
+    std::vector<void*> to_owner;
+    to_owner.reserve(to_insert.size());
     for (std::size_t i = 0; i < to_erase.size(); ++i) {
         auto oit = owners.find(to_erase[i]);
-        void* o = (oit != owners.end()) ? oit->second : nullptr;
+        to_owner.push_back((oit != owners.end()) ? oit->second : nullptr);
         if (oit != owners.end())
             owners.erase(oit);
         roots.erase(to_erase[i]);
+    }
+    for (std::size_t i = 0; i < to_insert.size(); ++i) {
         roots.insert(to_insert[i]);
-        owners[to_insert[i]] = o;
+        owners[to_insert[i]] = to_owner[i];
     }
     // Issue #3633: report the covered OLD addresses so the arena's
     // window-exit moved-vs-covered reconciliation counts the linear-roots
