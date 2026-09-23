@@ -161,12 +161,13 @@ bool gate_compile_node_effect(Evaluator& ev, std::string_view op, const CompileN
     // AC3: Soft / Off short-circuit — no stamp, no isolation store.
     if (ev.sandbox_mode() == 0 && ev.effect_sandbox_mode() == 0)
         return true;
-    // Unset principal + bare NodeId: existing compile-dirty / wildcard
-    // string gates stay the body fence (unit CompilerService defaults
-    // Restricted with tenant 0). Stamped foreign tenant or a set
-    // principal must go through on_ref / for_node_id before write.
-    if (arg.tenant == 0 && ev.capability_tenant_id() == 0)
-        return true;
+    // Issue #4039: no principal-0 bare-NodeId early allow. A bare NodeId
+    // (arg.tenant==0) routes through require_effect_for_node_id for every
+    // production-face caller: unset principals deny there (#2385 —
+    // check_boundary_ex requires a principal when required_effects != 0
+    // under Restricted), and the occupancy consult (#3415/#3629/#3641/
+    // #4039) sees the caller before any write. Stamped foreign tenants
+    // keep the on_ref path below.
     using aura::compiler::security::kEffectMutate;
     const auto bits = static_cast<std::uint16_t>(kEffectMutate);
     if (arg.tenant != 0) {

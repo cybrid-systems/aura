@@ -871,6 +871,7 @@ bool Evaluator::require_effect_for_node_id(std::uint16_t req_bits, std::string_v
                     ::aura::core::provenance::multi_tenant_env_active();
     const bool consult = strict || (restricted && mt);
     std::uint64_t existing = 0;
+    bool collision_borrow = false; // #4039: slot occupant is a different node
     if (consult) {
         existing =
             ::aura::core::provenance::existing_stamp_for_node(static_cast<std::uint32_t>(node_id));
@@ -884,17 +885,38 @@ bool Evaluator::require_effect_for_node_id(std::uint16_t req_bits, std::string_v
         // but caller-stamp would false-allow a foreign-occupied NodeId
         // (collisions are inevitable at 256 slots — no special timing).
         // Borrow the occupant's tenant so the existing foreign on_ref deny
-        // fires (same IsolationDeny face, no new query key); a same-tenant
-        // occupant keeps the #2056 caller-stamp allow path.
+        // fires (same IsolationDeny face, no new query key).
+        // Issue #4039: the borrowed tenant is a COLLISION fact, not
+        // ownership — when the occupant's tenant equals the caller (or the
+        // occupant is untenanted), the old fall-through caller-stamped the
+        // queried id and check_boundary_ex saw ref.tenant == caller
+        // (same-tenant allow on a node the caller never owned: A's node 1
+        // holds slot 1, B's live 257 cannot take the slot, A requires 257
+        // → allow). Track the borrow; the branch below denies it.
         if (existing == 0) {
             const auto occ = ::aura::core::provenance::occupying_stamp_for_node(
                 static_cast<std::uint32_t>(node_id));
-            if (occ.node_id != 0 && occ.node_id != static_cast<std::uint32_t>(node_id))
+            if (occ.node_id != 0 && occ.node_id != static_cast<std::uint32_t>(node_id)) {
                 existing = occ.tenant_id;
+                collision_borrow = true;
+            }
         }
     }
     const auto caller = static_cast<std::uint64_t>(capability_tenant_id_);
     const auto fiber = static_cast<std::uint32_t>(aura_fiber_current_id());
+    // Issue #4039: borrowed same-tenant (or untenanted) occupant — a
+    // collision must not read as ownership. Deny through the shared
+    // unstamped-ref face (check_boundary_ex ref_tenant==0 under the
+    // consult face): IsolationDeny SE with fiber id + last_mutate_error_,
+    // zero write, no caller-stamp. Foreign occupants keep the #3641
+    // on_ref deny below; exact stamps and true misses keep #2056/#3415.
+    if (consult && collision_borrow && (existing == 0 || existing == caller)) {
+        (void)check_workspace_isolation(caller, /*ref_tenant=*/0, req_bits, op);
+        using ::aura::core::workspace_isolation::g_tenant_isolation_metrics;
+        g_tenant_isolation_metrics().nodeid_only_entry_prevented_total.fetch_add(
+            1, std::memory_order_relaxed);
+        return false;
+    }
     if (consult && existing != 0 && existing != caller) {
         if (workspace_flat_)
             ref = workspace_flat_->make_ref_layout(node_id);
