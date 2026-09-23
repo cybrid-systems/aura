@@ -4908,6 +4908,61 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 result = make_pair(pid);
                 ++emitted;
             }
+            // Issue #4042: explicit mid missed the 64-slot ring. Production/Full
+            // + mutation WAL looks up the window, then every retained segment.
+            // Same line keys; wal-* flags are additive. A ring hit stays the
+            // old line. An unfiltered list stays the ring. Soft / WAL-off
+            // does not open a segment.
+            if (emitted == 0 && filt_prov && want_prov != 0) {
+                using aura::compiler::typed_audit::AuditStrategy;
+                using aura::compiler::typed_audit::get_strategy;
+                using aura::compiler::typed_audit::production_defaults_active;
+                using aura::core::audit_wal::g_mutation_audit_wal;
+                const bool scan_ok =
+                    production_defaults_active() || get_strategy() == AuditStrategy::Full;
+                auto& wal = g_mutation_audit_wal();
+                if (scan_ok && wal.is_enabled()) {
+                    const auto win = ::aura::core::wal_slo::wal_mid_lookup_segments();
+                    int wal_full_scan_hit = 0;
+                    std::uint32_t wal_segments_scanned = 0;
+                    auto rec = wal.find_recent_by_provenance_mutation_id(want_prov, win);
+                    if (rec) {
+                        wal_segments_scanned = win;
+                    } else {
+                        rec = wal.find_by_provenance_mutation_id_scan_all_segments(want_prov);
+                        wal_segments_scanned = wal.retained_segment_count();
+                        if (rec)
+                            wal_full_scan_hit = 1;
+                    }
+                    auto push_line = [&](std::string line) {
+                        auto sidx = ev.string_heap_.size();
+                        ev.string_heap_.push_back(std::move(line));
+                        auto pid = ev.pairs_.size();
+                        ev.pairs_.push_back({make_string(sidx), result});
+                        result = make_pair(pid);
+                        ++emitted;
+                    };
+                    if (rec && (!filt_tenant || rec->tenant_id == want_tenant) &&
+                        (!filt_effect || (rec->effect_bits & want_effect) == want_effect)) {
+                        push_line(std::format(
+                            "seq={} fiber={} op={} target={} nodes={} epoch_delta={} ts={} "
+                            "effect={} tenant={} mutation_id={} epoch={} denied={} "
+                            "bridge_epoch={} wal-replay-hint=1 wal-lookup-window-miss=0 "
+                            "wal-full-scan-hit={} wal-segments-scanned={}",
+                            rec->seq, rec->fiber_id, rec->op, rec->target_node, rec->nodes_changed,
+                            rec->epoch_delta, rec->timestamp_ms, rec->effect_bits, rec->tenant_id,
+                            rec->provenance_mutation_id, rec->epoch, rec->effect_denied ? 1 : 0, 0,
+                            wal_full_scan_hit, wal_segments_scanned));
+                    } else if (!rec) {
+                        push_line(std::format(
+                            "seq=0 fiber=0 op= target=0 nodes=0 epoch_delta=0 ts=0 "
+                            "effect=0 tenant=0 mutation_id={} epoch=0 denied=0 bridge_epoch=0 "
+                            "wal-replay-hint=1 wal-lookup-window-miss=1 wal-full-scan-hit=0 "
+                            "wal-segments-scanned={}",
+                            want_prov, wal_segments_scanned));
+                    }
+                }
+            }
             return result;
         });
 
