@@ -301,10 +301,20 @@ int run_test_isolation_audit_mid() {
         };
         // query:security-audit is a stats-impl primitive — dispatched via
         // (engine:metrics "query:security-audit" ...), never a direct call.
+        // Issue #4018: audit queries authorize tenants under a hard face;
+        // this AC exercises the explicit mid=0 filter, not the auth gate.
+        // Lift the armed face for the query window (AC2 re-arms it below),
+        // matching the unarmored audit-query pattern of the green members
+        // (e.g. #3738 AC2 in test_audit_replay_join). The refuse row itself
+        // keeps its #3971 honest tenant=0 stamp (no boundary principal was
+        // noted at emit).
+        const auto face_saved = ev.effect_sandbox_mode();
+        ev.set_effect_sandbox_mode(0);
         const auto n_zero =
             eval_int("(length (engine:metrics \"query:security-audit\" 50 0 0 0 0))");
         const auto n_zero_reason = eval_int("(length (engine:metrics \"query:security-audit\" 50 0 "
                                             "0 0 0 \"mid-fallback-refused\"))");
+        ev.set_effect_sandbox_mode(face_saved);
         CHECK(n_zero >= 1, "AC5: explicit mid=0 selects the refuse row(s)");
         // Issue #3594: mid=0 rows now include the deny-surface join evidence
         // (isolation-deny / cross-tenant-grant fence at epoch=0) — the
