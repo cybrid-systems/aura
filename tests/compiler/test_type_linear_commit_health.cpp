@@ -26,11 +26,14 @@
 #include "compiler/type_linear_commit_health.hh"
 #include "core/densify_consistency_report.h"
 #include "compiler/typed_mutation_audit.h"
+#include "core/mutation_audit_wal.hh"
+#include "core/wal_append_fail_slo.h"
 #include "test_harness.hpp"
 
 #include <atomic>
 #include <cctype>
 #include <cstdint>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <print>
@@ -1789,6 +1792,85 @@ static void ac3984_3_happy_commits_green() {
     reset_for_test();
 }
 
+static void ac4044_post_persist_deny_amends_audit() {
+    std::println("\n--- #4044: post-persist deny flips the precommitted row ---");
+    reset_for_test();
+    apply_production_audit_defaults();
+    const char* prev_closed = std::getenv("AURA_WAL_APPEND_FAIL_CLOSED");
+    const std::string prev_closed_s = prev_closed ? prev_closed : "";
+    const char* prev_open = std::getenv("AURA_WAL_APPEND_FAIL_OPEN");
+    const std::string prev_open_s = prev_open ? prev_open : "";
+    ::unsetenv("AURA_WAL_APPEND_FAIL_OPEN");
+    ::setenv("AURA_WAL_APPEND_FAIL_CLOSED", "1", 1);
+    aura::core::wal_slo::set_wal_fail_closed_defaulted_by_force_wal(true);
+    namespace fs = std::filesystem;
+    const auto dir = fs::temp_directory_path() / "aura-4044-audit";
+    fs::remove_all(dir);
+    fs::create_directories(dir);
+    aura::core::audit_wal::reset_audit_wal_for_test();
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    CHECK(ev.enable_mutation_audit_wal(dir.string()), "4044: WAL on");
+    CHECK(aura::core::wal_slo::wal_append_fail_closed_active(), "4044: fail-closed armed");
+    CHECK(cs.eval("(+ 1 1)").has_value(), "4044: warm");
+    ev.clear_boundary_audit_mid_for_test();
+    ev.note_boundary_audit_mid_for_test(4044001);
+    typed_audit::g_inject_linear_synth_after_persist_for_test.store(1, std::memory_order_release);
+    bool ok = true;
+    {
+        Evaluator::MutationBoundaryGuard g(ev, &ok);
+    }
+    CHECK(!ok, "4044: post-persist deny flips success");
+    bool denied = false;
+    int hits = 0;
+    const auto seq = ev.mutation_audit_seq();
+    const auto n = std::min<std::uint64_t>(seq, 64);
+    for (std::uint64_t i = 0; i < n; ++i) {
+        const auto& e = ev.mutation_audit_entry_at(seq - 1 - i);
+        if (e.provenance_mutation_id != 4044001)
+            continue;
+        ++hits;
+        denied = e.effect_denied;
+        break;
+    }
+    CHECK(hits >= 1, "4044: ring has the precommitted mid");
+    CHECK(denied, "4044: ring row for the same mid is effect_denied");
+    auto wal = aura::core::audit_wal::g_mutation_audit_wal().find_recent_by_provenance_mutation_id(
+        4044001, 4);
+    CHECK(wal && wal->effect_denied == 1, "4044: newest WAL record is denied");
+    const auto total_after_deny = ev.mutation_audit_total();
+    bool ok2 = true;
+    {
+        Evaluator::MutationBoundaryGuard g2(ev, &ok2);
+    }
+    CHECK(ok2, "4044: next success stays success");
+    CHECK(ev.mutation_audit_total() == total_after_deny + 1,
+          "4044: cleared latch so the next success emits");
+    const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto cite = emb.find("Issue #4044");
+    const auto undo = emb.rfind("aura_persist_reject_undo", cite);
+    const auto exit_at = emb.find("ev_->exit_mutation_boundary(success)", cite);
+    CHECK(cite != std::string::npos && undo != std::string::npos && exit_at != std::string::npos &&
+              undo < cite && cite < exit_at,
+          "4044: amend sits after structural undo and before exit");
+    CHECK(emb.find("schema-4044") == std::string::npos, "4044: no new query key");
+    ev.disable_mutation_audit_wal();
+    aura::core::audit_wal::reset_audit_wal_for_test();
+    ev.clear_boundary_audit_mid_for_test();
+    fs::remove_all(dir);
+    if (prev_closed)
+        ::setenv("AURA_WAL_APPEND_FAIL_CLOSED", prev_closed_s.c_str(), 1);
+    else
+        ::unsetenv("AURA_WAL_APPEND_FAIL_CLOSED");
+    if (prev_open)
+        ::setenv("AURA_WAL_APPEND_FAIL_OPEN", prev_open_s.c_str(), 1);
+    else
+        ::unsetenv("AURA_WAL_APPEND_FAIL_OPEN");
+    aura::core::wal_slo::set_wal_fail_closed_defaulted_by_force_wal(false);
+    apply_dev_audit_defaults();
+    reset_for_test();
+}
+
 static void ac3984_4_soft_unchanged() {
     std::println("\n--- #3984 AC4: Soft/Off unchanged ---");
     reset_for_test();
@@ -2776,6 +2858,8 @@ int run_test_type_linear_commit_health() {
     ac3984_2_source_cite_defer_then_commit();
     ac3984_3_happy_commits_green();
     ac3984_4_soft_unchanged();
+    std::println("\n=== Issue #4044: post-persist deny amends the precommitted audit ===");
+    ac4044_post_persist_deny_amends_audit();
     std::println("\n=== Issue #4030: type export grant aligns with deferred green ===");
     ac4030_1_source_grant_after_deferred_commit();
     ac4030_2_last_look_recover_fail_still_note_3440();

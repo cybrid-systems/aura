@@ -4692,6 +4692,45 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
     } else {
         typed_audit::drop_deferred_outermost_green_proof();
     }
+    // Issue #4044: pre-persist emit already published effect_denied=false
+    // and latched the post-success skip. A post-persist deny (linear /
+    // density) must amend that same mid before exit, then drop the latch
+    // so the next success still emits. Structural undo already ran;
+    // record_boundary_deny_after_restore stays inside exit (!success).
+    // Soft/Off never sets the latch.
+    if (outermost && !success && g_tls_mutation_audit_wal_precommitted) {
+        std::uint64_t amend_mid = 0;
+        {
+            auto& stk = ev_->active_mutation_stack();
+            if (!stk.empty() && stk.back().audit_mid != 0)
+                amend_mid = stk.back().audit_mid;
+            else if (session_mid_at_enter_ != 0)
+                amend_mid = session_mid_at_enter_;
+            else
+                amend_mid = typed_audit::join_audit_and_se_mid(0);
+        }
+        if (amend_mid != 0) {
+            const auto seq_now = ev_->mutation_audit_seq_.load(std::memory_order_relaxed);
+            const auto n = std::min<std::uint64_t>(seq_now, Evaluator::kMutationAuditRingSize);
+            for (std::uint64_t i = 0; i < n; ++i) {
+                auto& slot = ev_->mutation_audit_ring_[(seq_now - 1 - i) %
+                                                       Evaluator::kMutationAuditRingSize];
+                if (slot.provenance_mutation_id != amend_mid)
+                    continue;
+                slot.effect_denied = true;
+                if (::aura::core::audit_wal::g_mutation_audit_wal().is_enabled()) {
+                    const auto rec = ::aura::core::audit_wal::make_record(
+                        slot.seq, slot.timestamp_ms, slot.fiber_id, slot.nodes_changed,
+                        slot.epoch_delta, slot.target_node, slot.op, slot.effect_bits,
+                        slot.tenant_id, slot.provenance_mutation_id, slot.epoch,
+                        /*effect_denied=*/true);
+                    (void)::aura::core::audit_wal::g_mutation_audit_wal().append(rec);
+                }
+                break;
+            }
+        }
+        g_tls_mutation_audit_wal_precommitted = false;
+    }
     if (!inbody_force_exited_)
         ev_->exit_mutation_boundary(success);
     // Issue #3517: Full/hard-gate force-rollback inside exit already
