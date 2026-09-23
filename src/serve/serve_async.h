@@ -12,10 +12,10 @@ namespace aura::serve {
 // Issue #4047: under Soft (AURA_SANDBOX=off / !production_defaults_active)
 // main enters this path with a Soft Ready profile — same JSON-line
 // protocol as --serve / production async; stderr logs Soft Ready once.
-// Shared workspace_tree across named sessions is unchanged. Soft sync
-// --serve still uses per-session CompilerService maps (cross-session
-// define binding share deferred; do not stamp serve_cross_session_shared_ast
-// from workspace_tree alone).
+// Soft Ready async shares workspace_tree across named sessions.
+// Soft sync --serve (#4047 B) aliases named sessions onto one
+// CompilerService + shared_workspace_tree so orch→project bindings
+// are visible; stamp serve_cross_session_shared_ast only when measured.
 // Reads JSON-line protocol from stdin in non-blocking mode,
 // dispatches to session fibers, returns JSON-line results on stdout.
 // num_workers: number of worker threads (0 = auto-detect).

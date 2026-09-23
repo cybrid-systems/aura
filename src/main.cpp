@@ -730,20 +730,44 @@ int main(int argc, char* argv[]) {
     // Each line of output is JSON. Agent reads with JSON.parse(line).
     // Messages: ok, error, fix, fixed, fix-fail
     if (argc > 1 && std::string_view(argv[1]) == "--serve") {
-        // ── Multi-session ────────────────────────────────────
-        // Issue #4047 B deferred: Soft --serve still uses one CompilerService
-        // per named session (no shared top-level env / FlatAST). Async Soft
-        // Ready (#4047 A) shares workspace_tree across sessions; binding-level
-        // serve_cross_session_shared_ast still needs measured orch→project
-        // proof (do not stamp from workspace_tree alone).
+        // ── Multi-session (#4047 B Soft shared graph) ────────
+        // Soft (!production_abi_selfcheck_required): one CompilerService
+        // aliases all named sessions so orch→project (define)/(resolve) and
+        // FlatAST bindings share one graph. Always inject shared_workspace_tree
+        // (parity with Soft Ready async). Production-defaults keep isolated
+        // per-session CompilerServices; do not stamp shared_ast from tree alone.
+        const bool soft_shared_graph = !aura::serve::production_abi_selfcheck_required();
+        void* shared_workspace_tree = aura::compiler::Evaluator::create_workspace_tree();
+
         std::unordered_map<std::string, aura::compiler::CompilerService,
                            aura::core::TransparentStringHash, std::equal_to<>>
             sessions;
+        std::unordered_set<std::string> session_names;
         std::string active_session = "default";
         sessions.try_emplace(active_session);
-        auto& cs = sessions[active_session];
-        cs.set_session_id(active_session);
-        aura::compiler::CompilerService::register_session(active_session, &cs);
+        session_names.insert(active_session);
+        {
+            auto& default_cs = sessions[active_session];
+            default_cs.set_session_id(active_session);
+            default_cs.set_workspace_tree(shared_workspace_tree);
+            aura::compiler::CompilerService::register_session(active_session, &default_cs);
+        }
+        if (soft_shared_graph) {
+            static bool soft_serve_b_logged = false;
+            if (!soft_serve_b_logged) {
+                soft_serve_b_logged = true;
+                std::println(std::cerr,
+                             "aura: Soft shared_workspace (#4047 B): sync --serve named "
+                             "sessions share one CompilerService + workspace_tree — "
+                             "orch→project bindings visible. NOT production isolation.");
+            }
+        }
+
+        auto resolve_cs = [&]() -> aura::compiler::CompilerService& {
+            if (soft_shared_graph)
+                return sessions.at("default");
+            return sessions[active_session];
+        };
 
         std::string line;
         while (std::getline(std::cin, line)) {
@@ -775,7 +799,7 @@ int main(int argc, char* argv[]) {
                     if (action == "list") {
                         std::println("{{\"status\":\"ok\",\"sessions\":[");
                         bool first = true;
-                        for (auto& [sn, _] : sessions) {
+                        for (const auto& sn : session_names) {
                             if (!first)
                                 std::println(",");
                             first = false;
@@ -795,16 +819,16 @@ int main(int argc, char* argv[]) {
                         auto& sname = name_it->second;
                         // Issue #955: drop process-global registry entry BEFORE
                         // destroying the CompilerService (UAF otherwise).
-                        if (sessions.count(sname)) {
+                        if (session_names.count(sname)) {
                             aura::compiler::CompilerService::unregister_session(sname);
                             // Issue #955 observability (via active session metrics if present)
-                            if (sessions.count(active_session)) {
-                                sessions[active_session]
-                                    .metrics()
-                                    .session_registry_unregisters_total.fetch_add(
-                                        1, std::memory_order_relaxed);
-                            }
-                            sessions.erase(sname);
+                            resolve_cs()
+                                .metrics()
+                                .session_registry_unregisters_total.fetch_add(
+                                    1, std::memory_order_relaxed);
+                            session_names.erase(sname);
+                            if (!soft_shared_graph)
+                                sessions.erase(sname);
                             if (active_session == sname) {
                                 active_session = "default";
                             }
@@ -824,10 +848,19 @@ int main(int argc, char* argv[]) {
                     }
                     auto& sname = name_it->second;
                     auto real_name = (sname.find("new:") == 0) ? sname.substr(4) : sname;
-                    auto [it, created] = sessions.try_emplace(real_name);
+                    bool created = session_names.insert(real_name).second;
                     if (created) {
-                        it->second.set_session_id(real_name);
-                        aura::compiler::CompilerService::register_session(real_name, &it->second);
+                        if (soft_shared_graph) {
+                            // Soft (#4047 B): alias named session → shared default CS
+                            aura::compiler::CompilerService::register_session(
+                                real_name, &sessions.at("default"));
+                        } else {
+                            auto [it, _] = sessions.try_emplace(real_name);
+                            it->second.set_session_id(real_name);
+                            it->second.set_workspace_tree(shared_workspace_tree);
+                            aura::compiler::CompilerService::register_session(real_name,
+                                                                             &it->second);
+                        }
                     }
                     if (created)
                         std::println("{{\"status\":\"created\",\"session\":\"{}\"}}",
@@ -841,6 +874,7 @@ int main(int argc, char* argv[]) {
 
                 // Module management (ArenaGroup)
                 if (type == "module") {
+                    auto& cs = resolve_cs();
                     auto action_it = cmd.find("action");
                     auto name_it = cmd.find("name");
                     if (action_it == cmd.end()) {
@@ -916,7 +950,7 @@ int main(int argc, char* argv[]) {
                 }
 
                 // Look up the current session
-                auto& cs = sessions[active_session];
+                auto& cs = resolve_cs();
                 aura::messaging::g_current_compiler_service = &cs;
 
                 // Commands that don't need a code field
@@ -1267,7 +1301,7 @@ int main(int argc, char* argv[]) {
                 }
             } else {
                 // ── Plain S-expression (backward compatible) ────────
-                auto& cs = sessions[active_session];
+                auto& cs = resolve_cs();
                 aura::messaging::g_current_compiler_service = &cs;
                 auto r = cs.eval(line);
                 if (r) {
@@ -1286,6 +1320,7 @@ int main(int argc, char* argv[]) {
                 }
             }
         }
+        aura::compiler::Evaluator::destroy_workspace_tree(shared_workspace_tree);
         return 0;
     }
 
