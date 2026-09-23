@@ -1999,9 +1999,34 @@ extern "C" void aura_clear_densify_candidates(void) {
     densify_remap_detail::densify_candidates().clear();
 }
 
-// Issue #2297: rewrite g_closure_envs cells through densify object_remap.
+// Issue #4045: one env-cell span for remount and the native refuse.
+// Non-escaping closures (aura_alloc_closure_arena) store captures in
+// g_arena_closure_envs, bounded by g_arena_closure_env_sizes. Heap
+// closures stay on g_closure_envs (#3972). One cid walks one store.
+// Integer cells that are not remap keys never hit the map.
+struct ClosureEnvCellSpan {
+    int64_t* data = nullptr;
+    std::size_t n = 0;
+};
+
+static ClosureEnvCellSpan closure_env_cells_for_densify_(std::size_t cid) noexcept {
+    const bool is_arena = cid < g_closure_is_arena.size() && g_closure_is_arena[cid] != 0;
+    if (is_arena && cid < g_arena_closure_envs.size() && g_arena_closure_envs[cid]) {
+        const std::size_t asz =
+            cid < g_arena_closure_env_sizes.size() ? g_arena_closure_env_sizes[cid] : 0;
+        return {g_arena_closure_envs[cid], asz};
+    }
+    if (cid < g_closure_envs.size()) {
+        auto& env = g_closure_envs[cid];
+        return {env.data(), env.size()};
+    }
+    return {};
+}
+
+// Issue #2297: rewrite capture cells through densify object_remap.
 // Cells are int64_t; raw create-object pointers stored as bit patterns
 // match remap keys exactly. Non-pointer values never hit the map → skip.
+// Issue #4045: arena and heap share closure_env_cells_for_densify_.
 // Returns 1 on success, 0 on fail-closed (unmapped densify candidate).
 static int remount_capture_cells_via_densify_(std::size_t cid) {
     std::unordered_map<void*, void*> remap_copy;
@@ -2019,11 +2044,12 @@ static int remount_capture_cells_via_densify_(std::size_t cid) {
         (void)neu;
         cand_copy.insert(old_ptr);
     }
-    if (cid >= g_closure_envs.size())
-        return 1;
-    auto& env = g_closure_envs[cid];
+    // Caller holds exclusive g_closure_table_mtx, so the span stays stable
+    // while cells are rewritten.
+    const auto cells = closure_env_cells_for_densify_(cid);
     std::uint64_t ok_n = 0;
-    for (auto& cell : env) {
+    for (std::size_t i = 0; i < cells.n; ++i) {
+        int64_t& cell = cells.data[i];
         if (cell == 0)
             continue;
         void* as_ptr = reinterpret_cast<void*>(static_cast<std::uintptr_t>(cell));
@@ -2054,12 +2080,16 @@ static int remount_capture_cells_via_densify_(std::size_t cid) {
 // _densify_ rewrites, same map instance). A tombstone hit leaves native so
 // the TW interpreter side remaps through cl_copy. Production-only callers;
 // empty mirror is the quiet fast path. Not keyed on JIT table epoch.
+// Issue #4045: same span as remount — arena cells are the tracked keys
+// for non-escaping closures (heap vector at those cids stays empty).
 static bool closure_env_cells_hit_window_remap_(std::size_t cid) {
     std::lock_guard<std::mutex> lock(densify_remap_detail::mtx());
     const auto& remap = densify_remap_detail::object_remap();
-    if (remap.empty() || cid >= g_closure_envs.size())
+    if (remap.empty())
         return false;
-    for (const auto cell : g_closure_envs[cid]) {
+    const auto cells = closure_env_cells_for_densify_(cid);
+    for (std::size_t i = 0; i < cells.n; ++i) {
+        const auto cell = cells.data[i];
         if (cell == 0)
             continue;
         if (remap.count(reinterpret_cast<void*>(static_cast<std::uintptr_t>(cell))) != 0)

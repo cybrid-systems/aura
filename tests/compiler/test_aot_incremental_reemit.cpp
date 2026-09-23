@@ -26,6 +26,8 @@
 #include "compiler/observability_metrics.h"
 #include "compiler/runtime_shared.h" // aura_set_aot_metrics + closures
 #include "compiler/typed_mutation_audit.h"
+#include "core/lifetime_consistency_proof.hh"
+#include "core/moving_densify_health.hh"
 #include "test_harness.hpp"
 
 #include <atomic>
@@ -40,6 +42,7 @@
 #include <vector>
 
 extern "C" int aura_get_closure_must_deopt_before_next_call(std::int64_t closure_id);
+extern "C" std::uint64_t aura_deopt_count(void);
 
 // Declared in aura_jit_runtime / stubs.
 extern "C" void aura_deopt_inc();
@@ -1817,6 +1820,269 @@ static void ac2297_structural_cell_remap(CompilerService& cs) {
     aura_set_aot_metrics(nullptr);
 }
 
+// Issue #4045: inject a green Moving window so native refuse reaches the
+// remap arm (window → LCP → remap). Restores the process-wide atomics.
+// Same axes as the #3972 live AC; eval_id stays null (native passes
+// nullptr, so the process-wide LCP bit is the one consulted).
+struct ProdDensifyWindowGuard4045 {
+    std::uint32_t prev_prod;
+    std::uint64_t prev_moved;
+    std::uint8_t prev_lcp;
+    std::uint8_t prev_had;
+    std::uint8_t prev_pin;
+    std::uint8_t prev_incomplete;
+    std::uint64_t prev_untracked;
+    std::uint64_t prev_root_fail;
+    ProdDensifyWindowGuard4045(bool prod, std::uint64_t moved, bool lcp_allow,
+                               bool had_moving = true, bool pin_held = true,
+                               bool incomplete = false, std::uint64_t untracked = 0,
+                               std::uint64_t root_fail = 0) {
+        using aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+        using aura::core::lifetime_consistency_proof::g_lcp_last_would_allow_commit;
+        using aura::core::moving_densify_health::g_last_objects_moved;
+        prev_prod = g_typed_mutation_audit_counters.production_defaults_active.load(
+            std::memory_order_relaxed);
+        prev_moved = g_last_objects_moved.load(std::memory_order_relaxed);
+        prev_lcp = g_lcp_last_would_allow_commit().load(std::memory_order_relaxed);
+        prev_had = aura::core::moving_densify_health::g_last_had_moving_densify.load(
+            std::memory_order_relaxed);
+        prev_pin = aura::core::moving_densify_health::g_last_pin_contract_held.load(
+            std::memory_order_relaxed);
+        prev_incomplete = aura::core::moving_densify_health::g_last_moving_incomplete_remap.load(
+            std::memory_order_relaxed);
+        prev_untracked = aura::core::moving_densify_health::g_last_untracked_kept.load(
+            std::memory_order_relaxed);
+        prev_root_fail = aura::core::moving_densify_health::g_last_root_remap_fail_total.load(
+            std::memory_order_relaxed);
+        g_typed_mutation_audit_counters.production_defaults_active.store(prod ? 1u : 0u,
+                                                                         std::memory_order_relaxed);
+        g_last_objects_moved.store(moved, std::memory_order_relaxed);
+        g_lcp_last_would_allow_commit().store(lcp_allow ? 1 : 0, std::memory_order_relaxed);
+        aura::core::moving_densify_health::g_last_had_moving_densify.store(
+            had_moving ? 1 : 0, std::memory_order_relaxed);
+        aura::core::moving_densify_health::g_last_pin_contract_held.store(
+            pin_held ? 1 : 0, std::memory_order_relaxed);
+        aura::core::moving_densify_health::g_last_moving_incomplete_remap.store(
+            incomplete ? 1 : 0, std::memory_order_relaxed);
+        aura::core::moving_densify_health::g_last_untracked_kept.store(untracked,
+                                                                       std::memory_order_relaxed);
+        aura::core::moving_densify_health::g_last_root_remap_fail_total.store(
+            root_fail, std::memory_order_relaxed);
+        aura::core::moving_densify_health::g_last_window_seq.fetch_add(1,
+                                                                       std::memory_order_relaxed);
+    }
+    ~ProdDensifyWindowGuard4045() {
+        using aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+        using aura::core::lifetime_consistency_proof::g_lcp_last_would_allow_commit;
+        using aura::core::moving_densify_health::g_last_objects_moved;
+        g_typed_mutation_audit_counters.production_defaults_active.store(prev_prod,
+                                                                         std::memory_order_relaxed);
+        g_last_objects_moved.store(prev_moved, std::memory_order_relaxed);
+        g_lcp_last_would_allow_commit().store(prev_lcp, std::memory_order_relaxed);
+        aura::core::moving_densify_health::g_last_had_moving_densify.store(
+            prev_had, std::memory_order_relaxed);
+        aura::core::moving_densify_health::g_last_pin_contract_held.store(
+            prev_pin, std::memory_order_relaxed);
+        aura::core::moving_densify_health::g_last_moving_incomplete_remap.store(
+            prev_incomplete, std::memory_order_relaxed);
+        aura::core::moving_densify_health::g_last_untracked_kept.store(prev_untracked,
+                                                                       std::memory_order_relaxed);
+        aura::core::moving_densify_health::g_last_root_remap_fail_total.store(
+            prev_root_fail, std::memory_order_relaxed);
+        aura::core::moving_densify_health::g_last_window_seq.fetch_add(1,
+                                                                       std::memory_order_relaxed);
+    }
+};
+
+// Issue #4045: arena-mode closure captures live in g_arena_closure_envs.
+// Remount and the native densify-stale refuse share one walk. A remap
+// hit leaves native (return 0, fn not reached — deopt +1 vs the empty
+// mirror). After remount the arena cell holds the new address, so the
+// same mirror no longer hits. Integer non-keys stay untouched. Soft
+// never consults the walk. Heap #2297 AC1 above stays the g_closure_envs
+// arm.
+static void ac4045_arena_closure_densify_cells(CompilerService& cs) {
+    std::println("\n--- AC #4045: arena closure captures follow densify remount and refuse ---");
+    allow_reemit_outside_boundary();
+    const auto jit_rt = read_file("src/compiler/aura_jit_runtime.cpp");
+    CHECK(jit_rt.find("Issue #4045") != std::string::npos, "4045: jit runtime cites");
+    CHECK(jit_rt.find("closure_env_cells_for_densify_") != std::string::npos,
+          "4045: shared env-cell span");
+    const auto helper = jit_rt.find("closure_env_cells_for_densify_(std::size_t cid)");
+    const auto remount_fn = jit_rt.find("static int remount_capture_cells_via_densify_(");
+    const auto hit_fn = jit_rt.find("static bool closure_env_cells_hit_window_remap_(");
+    CHECK(helper != std::string::npos && remount_fn != std::string::npos &&
+              hit_fn != std::string::npos && helper < remount_fn && remount_fn < hit_fn,
+          "4045: span helper precedes both consumers");
+    const auto span = jit_rt.substr(helper, remount_fn - helper);
+    CHECK(span.find("g_arena_closure_envs") != std::string::npos, "4045: arena store");
+    CHECK(span.find("g_arena_closure_env_sizes") != std::string::npos, "4045: arena bound");
+    CHECK(span.find("g_closure_envs") != std::string::npos, "4045: heap store (#3972 arm)");
+    CHECK(span.find("g_closure_table_epochs") == std::string::npos,
+          "4045: walk is not keyed on JIT table epoch");
+    CHECK(jit_rt.substr(remount_fn, hit_fn - remount_fn)
+                  .find("closure_env_cells_for_densify_(cid)") != std::string::npos,
+          "4045: remount uses the shared span");
+    const auto next_fn = jit_rt.find("static int aura_remount_closure_captures_unlocked(", hit_fn);
+    CHECK(next_fn != std::string::npos &&
+              jit_rt.substr(hit_fn, next_fn - hit_fn).find("closure_env_cells_for_densify_(cid)") !=
+                  std::string::npos,
+          "4045: native refuse uses the shared span");
+    CHECK(jit_rt.find("g_4045_") == std::string::npos, "4045: no invented counter");
+    CHECK(read_file("docs/design/4045-arena-closure-densify.md").empty(), "4045: no docs/design");
+    CHECK(read_file("tests/issues/test_issue_4045.cpp").empty(), "4045: no tests/issues file");
+
+    auto& ev = cs.evaluator();
+    auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
+    aura_set_aot_metrics(m);
+    const auto live_linear = aura_get_aot_live_linear_state_fingerprint();
+    const auto live_env = aura_get_aot_live_env_frame_version();
+    std::int64_t args[1] = {1};
+
+    auto align_env = [&](std::int64_t cid) {
+        // Match the live env-frame so #3504 does not mask the remap arm.
+        // Remount PRIMARY treats 0 as unstamped; a non-zero stamp must
+        // equal the live arg we pass below.
+        const auto stamp = live_env != 0 ? live_env : aura_get_closure_defuse_version(cid);
+        aura_closure_set_env_gen(cid, stamp);
+        return stamp;
+    };
+
+    static int arena_old = 0;
+    static int arena_new = 0;
+    const auto cid = static_cast<std::int64_t>(aura_alloc_closure_arena(/*func_id=*/0));
+    CHECK(cid >= 0, "4045: arena alloc");
+    if (cid >= 0) {
+        const auto stamp = align_env(cid);
+        aura_closure_capture(
+            cid, 0, static_cast<std::int64_t>(reinterpret_cast<std::uintptr_t>(&arena_old)));
+        aura_clear_densify_object_remap();
+        aura_clear_densify_candidates();
+        std::uint64_t d_control = 0;
+        {
+            ProdDensifyWindowGuard4045 g(/*prod=*/true, /*moved=*/3, /*lcp_allow=*/true);
+            const auto before = aura_deopt_count();
+            (void)aura_closure_dispatch_native_checked(cid, args, 1);
+            d_control = aura_deopt_count() - before;
+            CHECK(d_control == 0, "4045: empty mirror — arena refuse silent");
+        }
+        const void* olds[] = {&arena_old};
+        const void* news[] = {&arena_new};
+        aura_set_densify_object_remap(olds, news, 1);
+        {
+            ProdDensifyWindowGuard4045 g(/*prod=*/false, /*moved=*/0, /*lcp_allow=*/true);
+            const auto before = aura_deopt_count();
+            (void)aura_closure_dispatch_native_checked(cid, args, 1);
+            CHECK(aura_deopt_count() - before == d_control, "4045: Soft never consults the walk");
+        }
+        {
+            ProdDensifyWindowGuard4045 g(/*prod=*/true, /*moved=*/3, /*lcp_allow=*/true);
+            const auto before = aura_deopt_count();
+            const auto got = aura_closure_dispatch_native_checked(cid, args, 1);
+            CHECK(got == 0, "4045: arena remap hit leaves native");
+            CHECK(aura_deopt_count() - before == d_control + 1,
+                  "4045: arena remap hit took the refuse (fn not reached)");
+        }
+        const auto ok0 = m->closure_capture_cell_remap_ok_total.load();
+        const int r = aura_remount_closure_captures(cid, stamp, live_linear);
+        CHECK(r == 1, "4045: arena remount ok");
+        CHECK(m->closure_capture_cell_remap_ok_total.load() > ok0,
+              "4045: arena cell rewrite bumped cell_remap_ok");
+        {
+            ProdDensifyWindowGuard4045 g(/*prod=*/true, /*moved=*/3, /*lcp_allow=*/true);
+            const auto before = aura_deopt_count();
+            (void)aura_closure_dispatch_native_checked(cid, args, 1);
+            CHECK(aura_deopt_count() - before == d_control,
+                  "4045: remount wrote the new address into the arena cell");
+        }
+        aura_clear_densify_object_remap();
+        aura_free_closure(cid);
+    }
+
+    // Integer non-key: remap of some other pointer must not rewrite 42.
+    {
+        aura_clear_densify_object_remap();
+        aura_clear_densify_candidates();
+        const auto icid = static_cast<std::int64_t>(aura_alloc_closure_arena(/*func_id=*/0));
+        if (icid >= 0) {
+            const auto stamp = align_env(icid);
+            aura_closure_capture(icid, 0, 42);
+            static int other_old = 0;
+            static int other_new = 0;
+            const void* olds[] = {&other_old};
+            const void* news[] = {&other_new};
+            aura_set_densify_object_remap(olds, news, 1);
+            const auto ok0 = m->closure_capture_cell_remap_ok_total.load();
+            const auto fail0 = m->closure_capture_cell_remap_fail_total.load();
+            const int r = aura_remount_closure_captures(icid, stamp, live_linear);
+            CHECK(r == 1, "4045: integer cell remount stays ok");
+            CHECK(m->closure_capture_cell_remap_ok_total.load() == ok0,
+                  "4045: integer non-key does not bump cell_remap_ok");
+            CHECK(m->closure_capture_cell_remap_fail_total.load() == fail0,
+                  "4045: integer non-key does not bump cell_remap_fail");
+            {
+                ProdDensifyWindowGuard4045 g(/*prod=*/true, /*moved=*/3, /*lcp_allow=*/true);
+                const auto before = aura_deopt_count();
+                (void)aura_closure_dispatch_native_checked(icid, args, 1);
+                CHECK(aura_deopt_count() == before, "4045: integer cell is not a remap hit");
+            }
+            aura_clear_densify_object_remap();
+            aura_free_closure(icid);
+        }
+    }
+
+    // Unmapped densify candidate in the arena cell fail-closes.
+    {
+        aura_clear_densify_object_remap();
+        aura_clear_densify_candidates();
+        const auto fcid = static_cast<std::int64_t>(aura_alloc_closure_arena(/*func_id=*/0));
+        if (fcid >= 0) {
+            const auto stamp = align_env(fcid);
+            void* dangling = reinterpret_cast<void*>(static_cast<std::uintptr_t>(0xDEAD));
+            aura_closure_capture(
+                fcid, 0, static_cast<std::int64_t>(reinterpret_cast<std::uintptr_t>(dangling)));
+            void* other_old = reinterpret_cast<void*>(static_cast<std::uintptr_t>(0x11));
+            void* other_neu = reinterpret_cast<void*>(static_cast<std::uintptr_t>(0x22));
+            const void* olds[] = {other_old};
+            const void* news[] = {other_neu};
+            aura_set_densify_object_remap(olds, news, 1);
+            const void* cands[] = {dangling};
+            aura_set_densify_candidates(cands, 1);
+            const auto fail0 = m->closure_capture_cell_remap_fail_total.load();
+            const int r = aura_remount_closure_captures(fcid, stamp, live_linear);
+            CHECK(r == 0, "4045: unmapped arena candidate fail-closes remount");
+            CHECK(m->closure_capture_cell_remap_fail_total.load() > fail0,
+                  "4045: arena candidate bumps cell_remap_fail");
+            aura_clear_densify_object_remap();
+            aura_clear_densify_candidates();
+            aura_free_closure(fcid);
+        }
+    }
+
+    // Empty densify context: arena closure is zero extra work.
+    {
+        aura_clear_densify_object_remap();
+        aura_clear_densify_candidates();
+        const auto ecid = static_cast<std::int64_t>(aura_alloc_closure_arena(/*func_id=*/0));
+        if (ecid >= 0) {
+            const auto stamp = align_env(ecid);
+            aura_closure_capture(
+                ecid, 0, static_cast<std::int64_t>(reinterpret_cast<std::uintptr_t>(&arena_old)));
+            const auto ok0 = m->closure_capture_cell_remap_ok_total.load();
+            const auto fail0 = m->closure_capture_cell_remap_fail_total.load();
+            const int r = aura_remount_closure_captures(ecid, stamp, live_linear);
+            CHECK(r == 1, "4045: empty densify context remounts");
+            CHECK(m->closure_capture_cell_remap_ok_total.load() == ok0,
+                  "4045: empty map does no cell work");
+            CHECK(m->closure_capture_cell_remap_fail_total.load() == fail0,
+                  "4045: empty map does not fail");
+            aura_free_closure(ecid);
+        }
+    }
+
+    aura_set_aot_metrics(nullptr);
+}
+
 } // namespace
 
 int main() {
@@ -1862,6 +2128,10 @@ int main() {
     {
         CompilerService cs;
         ac2297_structural_cell_remap(cs);
+    }
+    {
+        CompilerService cs;
+        ac4045_arena_closure_densify_cells(cs);
     }
 
     // ── #3412: aura_closure_call slow path deopt_pending gate.
