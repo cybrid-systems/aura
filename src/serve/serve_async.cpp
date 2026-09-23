@@ -533,10 +533,9 @@ void run_serve_async(int num_workers) {
         static bool soft_async_b_logged = false;
         if (!soft_async_b_logged) {
             soft_async_b_logged = true;
-            std::println(std::cerr,
-                         "aura: Soft shared_workspace (#4047 B): --serve-async named "
-                         "sessions share one CompilerService + workspace_tree — "
-                         "orch→project bindings visible. NOT production isolation.");
+            std::println(std::cerr, "aura: Soft shared_workspace (#4047 B): --serve-async named "
+                                    "sessions share one CompilerService + workspace_tree — "
+                                    "orch→project bindings visible. NOT production isolation.");
         }
     }
 
@@ -687,7 +686,8 @@ void run_serve_async(int num_workers) {
     }
 
     // Soft shared graph: named-session exec uses default CompilerService.
-    auto cs_for = [&sessions, soft_shared_graph](Session& sess) -> aura::compiler::CompilerService& {
+    auto cs_for = [&sessions,
+                   soft_shared_graph](Session& sess) -> aura::compiler::CompilerService& {
         if (soft_shared_graph)
             return sessions.at("default")->service;
         return sess.service;
@@ -713,9 +713,9 @@ void run_serve_async(int num_workers) {
     }
 
     // Helper: spawn a named-session fiber that drains stdin_lines for `nsid`.
-    auto spawn_named_session_fiber =
-        [&sched, &stdin_lines, &stdin_eof, &sessions, &line_for_session, &cs_for](
-            const std::string& nsid, Session& sess) -> Fiber* {
+    auto spawn_named_session_fiber = [&sched, &stdin_lines, &stdin_eof, &sessions,
+                                      &line_for_session,
+                                      &cs_for](const std::string& nsid, Session& sess) -> Fiber* {
         return sched.spawn([nsid, &sess, &stdin_lines, &stdin_eof, &line_for_session, &cs_for]() {
             sess.mailbox.attach(aura::serve::g_current_fiber);
             sess.service.set_wake_eventfd(aura::serve::g_current_fiber->eventfd());
@@ -759,9 +759,9 @@ void run_serve_async(int num_workers) {
     };
 
     // Register / create named session (Soft: alias CS to default).
-    auto emplace_named_session =
-        [&sessions, &sched, shared_workspace_tree, soft_shared_graph, gc_collect,
-         &register_session_root, &spawn_named_session_fiber](const std::string& name) -> bool {
+    auto emplace_named_session = [&sessions, &sched, shared_workspace_tree, soft_shared_graph,
+                                  gc_collect, &register_session_root,
+                                  &spawn_named_session_fiber](const std::string& name) -> bool {
         if (sessions.count(name) > 0)
             return false;
         auto [it, created] = sessions.try_emplace(name, std::make_unique<Session>());
@@ -771,8 +771,8 @@ void run_serve_async(int num_workers) {
         it->second->service.set_session_id(name);
         it->second->service.set_workspace_tree(shared_workspace_tree);
         if (soft_shared_graph) {
-            aura::compiler::CompilerService::register_session(
-                name, &sessions.at("default")->service);
+            aura::compiler::CompilerService::register_session(name,
+                                                              &sessions.at("default")->service);
             // Soft alias — do not register an extra GC root for the unused CS.
         } else {
             aura::compiler::CompilerService::register_session(name, &it->second->service);
