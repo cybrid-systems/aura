@@ -744,45 +744,46 @@ void run_serve_async(int num_workers) {
                                     static_cast<std::size_t>(std::max(1, sched.num_workers()))));
         return sched.spawn_with_affinity(
             [nsid, &sess, &stdin_lines, &stdin_eof, &line_for_session, &cs_for]() {
-            sess.mailbox.attach(aura::serve::g_current_fiber);
-            sess.service.set_wake_eventfd(aura::serve::g_current_fiber->eventfd());
-            while (sess.active) {
-                std::string sl;
-                for (auto sit = stdin_lines.begin(); sit != stdin_lines.end(); ++sit) {
-                    if (line_for_session(*sit, nsid)) {
-                        sl = std::move(*sit);
-                        stdin_lines.erase(sit);
-                        break;
-                    }
-                }
-                if (sl.empty()) {
-                    if (stdin_eof)
-                        break;
-                    aura::serve::g_current_fiber->set_state(aura::serve::FiberState::Waiting);
-                    aura::serve::Fiber::yield();
-                    continue;
-                }
-                auto c = json_field(sl, "cmd");
-                if (c == "exec") {
-                    auto code = json_field(sl, "code");
-                    if (!code.empty()) {
-                        auto& cs = cs_for(sess);
-                        aura::messaging::g_current_compiler_service = &cs;
-                        auto r = cs.exec_with_cache(code);
-                        if (r) {
-                            std::println(
-                                "{{\"session\":\"{}\",\"status\":\"ok\",\"value\":\"{}\"}}",
-                                json_escape(nsid), json_escape(fmt_val(*r, cs)));
-                        } else {
-                            std::println(
-                                "{{\"session\":\"{}\",\"status\":\"error\",\"msg\":\"{}\"}}",
-                                json_escape(nsid), json_escape(r.error().format()));
+                sess.mailbox.attach(aura::serve::g_current_fiber);
+                sess.service.set_wake_eventfd(aura::serve::g_current_fiber->eventfd());
+                while (sess.active) {
+                    std::string sl;
+                    for (auto sit = stdin_lines.begin(); sit != stdin_lines.end(); ++sit) {
+                        if (line_for_session(*sit, nsid)) {
+                            sl = std::move(*sit);
+                            stdin_lines.erase(sit);
+                            break;
                         }
-                        std::fflush(stdout);
+                    }
+                    if (sl.empty()) {
+                        if (stdin_eof)
+                            break;
+                        aura::serve::g_current_fiber->set_state(aura::serve::FiberState::Waiting);
+                        aura::serve::Fiber::yield();
+                        continue;
+                    }
+                    auto c = json_field(sl, "cmd");
+                    if (c == "exec") {
+                        auto code = json_field(sl, "code");
+                        if (!code.empty()) {
+                            auto& cs = cs_for(sess);
+                            aura::messaging::g_current_compiler_service = &cs;
+                            auto r = cs.exec_with_cache(code);
+                            if (r) {
+                                std::println(
+                                    "{{\"session\":\"{}\",\"status\":\"ok\",\"value\":\"{}\"}}",
+                                    json_escape(nsid), json_escape(fmt_val(*r, cs)));
+                            } else {
+                                std::println(
+                                    "{{\"session\":\"{}\",\"status\":\"error\",\"msg\":\"{}\"}}",
+                                    json_escape(nsid), json_escape(r.error().format()));
+                            }
+                            std::fflush(stdout);
+                        }
                     }
                 }
-            }
-        }, aff);
+            },
+            aff);
     };
 
     // Register / create named session (Soft: alias CS to default).
@@ -829,164 +830,170 @@ void run_serve_async(int num_workers) {
             [sid = sid, &sess = *sess, &stdin_lines, &stdin_eof, &sessions, &sched,
              &shared_workspace_tree, &line_for_session, &cs_for, &emplace_named_session,
              soft_shared_graph]() {
-            // Attach mailbox to this fiber
-            sess.mailbox.attach(g_current_fiber);
+                // Attach mailbox to this fiber
+                sess.mailbox.attach(g_current_fiber);
 
-            while (sess.active) {
-                // Try to pop a line from stdin
-                std::string line;
-                {
-                    // Lock-free: dequeue from shared buffer if available
-                    // Since we're single-threaded, no actual lock needed
-                    line.clear();
-                    for (auto it = stdin_lines.begin(); it != stdin_lines.end(); ++it) {
-                        if (line_for_session(*it, sid)) {
-                            line = std::move(*it);
-                            stdin_lines.erase(it);
-                            break;
+                while (sess.active) {
+                    // Try to pop a line from stdin
+                    std::string line;
+                    {
+                        // Lock-free: dequeue from shared buffer if available
+                        // Since we're single-threaded, no actual lock needed
+                        line.clear();
+                        for (auto it = stdin_lines.begin(); it != stdin_lines.end(); ++it) {
+                            if (line_for_session(*it, sid)) {
+                                line = std::move(*it);
+                                stdin_lines.erase(it);
+                                break;
+                            }
                         }
                     }
-                }
 
-                if (line.empty()) {
-                    // No lines for us — check mailbox
-                    auto msg = sess.mailbox.pop(false);
-                    if (!msg.empty()) {
-                        // Got a message from another session
-                        std::println("{{\"session\":\"{}\",\"status\":\"msg\",\"data\":\"{}\"}}",
-                                     json_escape(sid), json_escape(msg));
-                        std::fflush(stdout);
+                    if (line.empty()) {
+                        // No lines for us — check mailbox
+                        auto msg = sess.mailbox.pop(false);
+                        if (!msg.empty()) {
+                            // Got a message from another session
+                            std::println(
+                                "{{\"session\":\"{}\",\"status\":\"msg\",\"data\":\"{}\"}}",
+                                json_escape(sid), json_escape(msg));
+                            std::fflush(stdout);
+                            continue;
+                        }
+
+                        // Nothing to do
+                        if (stdin_eof)
+                            break;
+                        g_current_fiber->set_state(FiberState::Waiting);
+                        Fiber::yield();
                         continue;
                     }
 
-                    // Nothing to do
-                    if (stdin_eof)
-                        break;
-                    g_current_fiber->set_state(FiberState::Waiting);
-                    Fiber::yield();
-                    continue;
-                }
-
-                // Parse and execute
-                auto cmd = json_field(line, "cmd");
-                if (cmd.empty()) {
-                    std::println(
-                        "{{\"session\":\"{}\",\"status\":\"error\",\"msg\":\"missing cmd\"}}",
-                        json_escape(sid));
-                    std::fflush(stdout);
-                    continue;
-                }
-
-                if (cmd == "exec") {
-                    auto code = json_field(line, "code");
-                    if (code.empty()) {
+                    // Parse and execute
+                    auto cmd = json_field(line, "cmd");
+                    if (cmd.empty()) {
                         std::println(
-                            "{{\"session\":\"{}\",\"status\":\"error\",\"msg\":\"missing code\"}}",
+                            "{{\"session\":\"{}\",\"status\":\"error\",\"msg\":\"missing cmd\"}}",
                             json_escape(sid));
                         std::fflush(stdout);
                         continue;
                     }
-                    auto& cs = cs_for(sess);
-                    aura::messaging::g_current_compiler_service = &cs;
-                    auto result = cs.exec_with_cache(code);
-                    if (result) {
-                        try {
-                            auto& v = *result;
-                            // Check if closure
-                            if (is_closure(v)) {
-                                std::println("{{\"session\":\"{}\",\"status\":\"closure\","
-                                             "\"value\":\"#<procedure>\"}}",
-                                             json_escape(sid));
-                            } else {
-                                std::println(
-                                    "{{\"session\":\"{}\",\"status\":\"ok\",\"value\":\"{}\"}}",
-                                    json_escape(sid), json_escape(fmt_val(v, cs)));
-                            }
-                        } catch (const std::bad_alloc&) {
-                            std::println("{{\"session\":\"{}\",\"status\":\"error\",\"msg\":\"out "
-                                         "of memory\"}}",
-                                         json_escape(sid));
-                        }
-                    } else {
-                        auto& d = result.error();
-                        std::println("{{\"session\":\"{}\",\"status\":\"error\",\"msg\":\"{}\"}}",
-                                     json_escape(sid), json_escape(d.format()));
-                    }
-                    std::fflush(stdout);
 
-                } else if (cmd == "session") {
-                    auto action = json_field(line, "action");
-                    auto name = json_field(line, "name");
-                    // Soft/sync parity: missing action + name ⇒ create-or-activate.
-                    if (action.empty() && !name.empty())
-                        action = "create";
-                    if (action == "create") {
-                        if (name.empty()) {
-                            std::println("{{\"session\":\"{}\","
-                                         "\"status\":\"error\",\"msg\":\"missing name\"}}",
+                    if (cmd == "exec") {
+                        auto code = json_field(line, "code");
+                        if (code.empty()) {
+                            std::println("{{\"session\":\"{}\",\"status\":\"error\",\"msg\":"
+                                         "\"missing code\"}}",
                                          json_escape(sid));
                             std::fflush(stdout);
-                        } else if (sessions.count(name) > 0) {
-                            // Already exists — ok (sync-style activate)
-                            std::println("{{\"session\":\"{}\","
-                                         "\"status\":\"ok\",\"name\":\"{}\"}}",
-                                         json_escape(sid), json_escape(name));
-                            std::fflush(stdout);
-                        } else if (emplace_named_session(name)) {
-                            std::println("{{\"session\":\"{}\","
-                                         "\"status\":\"created\",\"name\":\"{}\"}}",
-                                         json_escape(sid), json_escape(name));
-                            std::fflush(stdout);
+                            continue;
+                        }
+                        auto& cs = cs_for(sess);
+                        aura::messaging::g_current_compiler_service = &cs;
+                        auto result = cs.exec_with_cache(code);
+                        if (result) {
+                            try {
+                                auto& v = *result;
+                                // Check if closure
+                                if (is_closure(v)) {
+                                    std::println("{{\"session\":\"{}\",\"status\":\"closure\","
+                                                 "\"value\":\"#<procedure>\"}}",
+                                                 json_escape(sid));
+                                } else {
+                                    std::println(
+                                        "{{\"session\":\"{}\",\"status\":\"ok\",\"value\":\"{}\"}}",
+                                        json_escape(sid), json_escape(fmt_val(v, cs)));
+                                }
+                            } catch (const std::bad_alloc&) {
+                                std::println(
+                                    "{{\"session\":\"{}\",\"status\":\"error\",\"msg\":\"out "
+                                    "of memory\"}}",
+                                    json_escape(sid));
+                            }
                         } else {
-                            std::println("{{\"session\":\"{}\","
-                                         "\"status\":\"error\",\"msg\":\"already exists\"}}",
-                                         json_escape(sid));
+                            auto& d = result.error();
+                            std::println(
+                                "{{\"session\":\"{}\",\"status\":\"error\",\"msg\":\"{}\"}}",
+                                json_escape(sid), json_escape(d.format()));
+                        }
+                        std::fflush(stdout);
+
+                    } else if (cmd == "session") {
+                        auto action = json_field(line, "action");
+                        auto name = json_field(line, "name");
+                        // Soft/sync parity: missing action + name ⇒ create-or-activate.
+                        if (action.empty() && !name.empty())
+                            action = "create";
+                        if (action == "create") {
+                            if (name.empty()) {
+                                std::println("{{\"session\":\"{}\","
+                                             "\"status\":\"error\",\"msg\":\"missing name\"}}",
+                                             json_escape(sid));
+                                std::fflush(stdout);
+                            } else if (sessions.count(name) > 0) {
+                                // Already exists — ok (sync-style activate)
+                                std::println("{{\"session\":\"{}\","
+                                             "\"status\":\"ok\",\"name\":\"{}\"}}",
+                                             json_escape(sid), json_escape(name));
+                                std::fflush(stdout);
+                            } else if (emplace_named_session(name)) {
+                                std::println("{{\"session\":\"{}\","
+                                             "\"status\":\"created\",\"name\":\"{}\"}}",
+                                             json_escape(sid), json_escape(name));
+                                std::fflush(stdout);
+                            } else {
+                                std::println("{{\"session\":\"{}\","
+                                             "\"status\":\"error\",\"msg\":\"already exists\"}}",
+                                             json_escape(sid));
+                                std::fflush(stdout);
+                            }
+                        } else {
+                            std::println(
+                                "{{\"session\":\"{}\",\"status\":\"error\",\"msg\":\"unknown "
+                                "action: {}\"}}",
+                                json_escape(sid), json_escape(action));
                             std::fflush(stdout);
                         }
+
+                    } else if (cmd == "session-send") {
+                        auto target = json_field(line, "target");
+                        auto data = json_field(line, "data");
+                        if (!target.empty() && !data.empty()) {
+                            auto it = sessions.find(target);
+                            if (it != sessions.end() && it->second->active) {
+                                it->second->mailbox.push(data);
+                                std::println(
+                                    "{{\"session\":\"{}\",\"status\":\"sent\",\"target\":\"{}\"}}",
+                                    json_escape(sid), json_escape(target));
+                            } else {
+                                std::println("{{\"session\":\"{}\",\"status\":\"error\",\"msg\":"
+                                             "\"session not found\"}}",
+                                             json_escape(sid));
+                            }
+                        }
+                        std::fflush(stdout);
+
+                    } else if (cmd == "session-recv") {
+                        auto msg = sess.mailbox.pop(true); // blocking pop (yields)
+                        if (!msg.empty()) {
+                            std::println(
+                                "{{\"session\":\"{}\",\"status\":\"msg\",\"data\":\"{}\"}}",
+                                json_escape(sid), json_escape(msg));
+                        } else {
+                            std::println("{{\"session\":\"{}\",\"status\":\"timeout\"}}",
+                                         json_escape(sid));
+                        }
+                        std::fflush(stdout);
+
                     } else {
                         std::println("{{\"session\":\"{}\",\"status\":\"error\",\"msg\":\"unknown "
-                                     "action: {}\"}}",
-                                     json_escape(sid), json_escape(action));
+                                     "cmd: {}\"}}",
+                                     json_escape(sid), json_escape(cmd));
                         std::fflush(stdout);
                     }
-
-                } else if (cmd == "session-send") {
-                    auto target = json_field(line, "target");
-                    auto data = json_field(line, "data");
-                    if (!target.empty() && !data.empty()) {
-                        auto it = sessions.find(target);
-                        if (it != sessions.end() && it->second->active) {
-                            it->second->mailbox.push(data);
-                            std::println(
-                                "{{\"session\":\"{}\",\"status\":\"sent\",\"target\":\"{}\"}}",
-                                json_escape(sid), json_escape(target));
-                        } else {
-                            std::println("{{\"session\":\"{}\",\"status\":\"error\",\"msg\":"
-                                         "\"session not found\"}}",
-                                         json_escape(sid));
-                        }
-                    }
-                    std::fflush(stdout);
-
-                } else if (cmd == "session-recv") {
-                    auto msg = sess.mailbox.pop(true); // blocking pop (yields)
-                    if (!msg.empty()) {
-                        std::println("{{\"session\":\"{}\",\"status\":\"msg\",\"data\":\"{}\"}}",
-                                     json_escape(sid), json_escape(msg));
-                    } else {
-                        std::println("{{\"session\":\"{}\",\"status\":\"timeout\"}}",
-                                     json_escape(sid));
-                    }
-                    std::fflush(stdout);
-
-                } else {
-                    std::println(
-                        "{{\"session\":\"{}\",\"status\":\"error\",\"msg\":\"unknown cmd: {}\"}}",
-                        json_escape(sid), json_escape(cmd));
-                    std::fflush(stdout);
                 }
-            }
-        }, 0);
+            },
+            0);
 
         sess->fiber = fiber;
         (void)soft_shared_graph;
@@ -1112,81 +1119,82 @@ void run_serve_async_bench(const std::string& file_path, int num_workers) {
     // Issue #4048: pin bench fiber to worker 0 so denseness inherits affinity.
     sched.spawn_with_affinity(
         [&sess, bench_code = std::move(bench_code), &sched]() {
-        // Set wake eventfd for recv/send
-        sess->service.set_wake_eventfd(aura::serve::g_current_fiber->eventfd());
+            // Set wake eventfd for recv/send
+            sess->service.set_wake_eventfd(aura::serve::g_current_fiber->eventfd());
 
-        // Evaluate expressions one at a time (same as stdin pipe mode)
-        // Split by balanced parentheses to evaluate each expression separately.
-        std::string remaining = bench_code;
-        bool any_error = false;
-        while (!remaining.empty()) {
-            // Skip whitespace and comments
-            std::size_t start = 0;
-            while (start < remaining.size()) {
-                auto c = remaining[start];
-                if (c == ' ' || c == '\t' || c == '\n' || c == '\r') {
-                    ++start;
-                } else if (c == ';') {
-                    // Skip comment to end of line
-                    auto nl = remaining.find('\n', start);
-                    if (nl == std::string::npos) {
-                        remaining.clear();
-                        goto done;
+            // Evaluate expressions one at a time (same as stdin pipe mode)
+            // Split by balanced parentheses to evaluate each expression separately.
+            std::string remaining = bench_code;
+            bool any_error = false;
+            while (!remaining.empty()) {
+                // Skip whitespace and comments
+                std::size_t start = 0;
+                while (start < remaining.size()) {
+                    auto c = remaining[start];
+                    if (c == ' ' || c == '\t' || c == '\n' || c == '\r') {
+                        ++start;
+                    } else if (c == ';') {
+                        // Skip comment to end of line
+                        auto nl = remaining.find('\n', start);
+                        if (nl == std::string::npos) {
+                            remaining.clear();
+                            goto done;
+                        }
+                        start = nl + 1;
+                    } else {
+                        break;
                     }
-                    start = nl + 1;
-                } else {
-                    break;
                 }
-            }
-            if (start >= remaining.size())
-                break;
+                if (start >= remaining.size())
+                    break;
 
-            // Find the end of this balanced expression
-            int depth = 0;
-            bool in_str = false;
-            std::size_t end = start;
-            for (; end < remaining.size(); ++end) {
-                auto c = remaining[end];
-                if (in_str) {
-                    if (c == '\\' && end + 1 < remaining.size()) {
-                        ++end; // skip escaped char
+                // Find the end of this balanced expression
+                int depth = 0;
+                bool in_str = false;
+                std::size_t end = start;
+                for (; end < remaining.size(); ++end) {
+                    auto c = remaining[end];
+                    if (in_str) {
+                        if (c == '\\' && end + 1 < remaining.size()) {
+                            ++end; // skip escaped char
+                        } else if (c == '"') {
+                            in_str = false;
+                        }
                     } else if (c == '"') {
-                        in_str = false;
+                        in_str = true;
+                    } else if (c == '(' || c == '[') {
+                        ++depth;
+                    } else if ((c == ')' || c == ']') && depth > 0) {
+                        if (--depth == 0) {
+                            ++end; // include closing paren
+                            break;
+                        }
                     }
-                } else if (c == '"') {
-                    in_str = true;
-                } else if (c == '(' || c == '[') {
-                    ++depth;
-                } else if ((c == ')' || c == ']') && depth > 0) {
-                    if (--depth == 0) {
-                        ++end; // include closing paren
+                }
+                if (depth != 0) {
+                    // Unbalanced — evaluate what we have
+                    end = remaining.size();
+                }
+
+                auto expr = remaining.substr(start, end - start);
+                remaining.erase(0, end);
+
+                if (!expr.empty()) {
+                    auto result = sess->service.eval(expr);
+                    if (!result) {
+                        std::print(std::cerr, "eval error on expr (len={}): {}\n  msg: {}\n",
+                                   expr.size(), expr.substr(0, 120), result.error().format());
+                        std::fflush(stderr);
+                        any_error = true;
                         break;
                     }
                 }
             }
-            if (depth != 0) {
-                // Unbalanced — evaluate what we have
-                end = remaining.size();
-            }
-
-            auto expr = remaining.substr(start, end - start);
-            remaining.erase(0, end);
-
-            if (!expr.empty()) {
-                auto result = sess->service.eval(expr);
-                if (!result) {
-                    std::print(std::cerr, "eval error on expr (len={}): {}\n  msg: {}\n",
-                               expr.size(), expr.substr(0, 120), result.error().format());
-                    std::fflush(stderr);
-                    any_error = true;
-                    break;
-                }
-            }
-        }
-    done:
-        std::fflush(stdout);
-        (void)any_error;
-    }, 0);
+        done:
+            std::fflush(stdout);
+            (void)any_error;
+        },
+        0);
 
     // 6. Run the scheduler
     sched.run();
