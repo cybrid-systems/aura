@@ -2749,6 +2749,188 @@ static void ac4039_6_source_cite_and_no_invent() {
     }
 }
 
+// ── Issue #4051: occupancy seqlock torn read is Uncertain, not Empty ──
+// The third read state: odd-seq (writer in flight) / torn read (seq moved
+// across the load pair) must fail-closed through the existing IsolationDeny
+// face like a same-slot collision — never caller-stamp a foreign-owned
+// NodeId while its slot is mid-write. Read path restamp_read_ref denies the
+// same window; the write path previously read the collapse as "claimable".
+static constexpr std::uint32_t kOccSlotMask4051 = 255;
+static constexpr std::uint32_t kOccNodeX4051 = 0x100;
+static constexpr std::uint32_t kOccNodeZ4051 = 0x300; // 0x300 & 255 == 0 — same slot as X
+
+static void set_occupancy_seq_4051(std::uint32_t node_id, std::uint32_t seq) {
+    auto& ring = aura::core::provenance::g_provenance_tracker().node_occupancy_ring;
+    ring[node_id & kOccSlotMask4051].seq.store(seq, std::memory_order_relaxed);
+}
+
+static std::uint64_t occupant_tenant_4051(std::uint32_t node_id) {
+    auto& ring = aura::core::provenance::g_provenance_tracker().node_occupancy_ring;
+    return ring[node_id & kOccSlotMask4051].tenant_id.load(std::memory_order_relaxed);
+}
+
+static std::uint32_t occupant_node_4051(std::uint32_t node_id) {
+    auto& ring = aura::core::provenance::g_provenance_tracker().node_occupancy_ring;
+    return ring[node_id & kOccSlotMask4051].node_id.load(std::memory_order_relaxed);
+}
+
+// Issue #4051 AC1: the odd-seq / torn window is Uncertain, not Empty — a
+// NodeId-only Mutate on a foreign-owned node denies (IsolationDeny SE +
+// nodeid_only_entry_prevented bump), keeps the occupant, writes nothing.
+static void ac4051_1_torn_read_denies_before_stamp() {
+    std::println("\n--- #4051 AC1: odd-seq torn read denies (no caller-stamp) ---");
+    reset_all();
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+    aura::core::provenance::set_multi_tenant_env_active(true);
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_effect_sandbox_mode(1);
+    const auto me = current_mutation_epoch();
+    ev.grant_effect_capability(99, "mut-4051-b", kEffectMutate, me == 0 ? 1 : me);
+    ev.grant_effect_capability(7, "mut-4051-a", kEffectMutate, me == 0 ? 1 : me);
+    CHECK(cs.eval("(set-code \"(define z4051 1)\")").has_value(), "4051 AC1: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "4051 AC1: eval-current");
+    auto* ws = ev.workspace_flat();
+    CHECK(ws != nullptr, "4051 AC1: workspace");
+    auto r = cs.eval("(car (query :find \"z4051\"))");
+    CHECK(r.has_value() && aura::compiler::types::is_int(*r), "4051 AC1: find live node");
+    const auto live = static_cast<std::uint32_t>(aura::compiler::types::as_int(*r));
+    // Tenant A (7) stably stamps the live node.
+    ev.set_capability_tenant_id(7);
+    (void)ev.make_stamped_ref(live);
+    CHECK(aura::core::provenance::existing_stamp_for_node(live) == 7,
+          "4051 AC1: A occupies the live node (7)");
+    // Simulate the writer-in-flight seqlock window (odd seq).
+    set_occupancy_seq_4051(live, 1);
+    CHECK(aura::core::provenance::occupancy_read_state_for_node(live) ==
+              aura::core::provenance::NodeOccupancyRead::Uncertain,
+          "4051 AC1: odd seq reads Uncertain (not Empty)");
+    CHECK(aura::core::provenance::existing_stamp_for_node(live) == 0,
+          "4051 AC1: collapsed reader still reports 0 (the trap)");
+    const auto bumps_before = ws->subtree_bump_count();
+    const auto prev = aura::core::workspace_isolation::g_tenant_isolation_metrics()
+                          .nodeid_only_entry_prevented_total.load(std::memory_order_relaxed);
+    // Tenant B (99) holds its own Mutate and requires the mid-write node —
+    // pre-#4051 the collapsed 0 was read as claimable and B caller-stamped.
+    ev.set_capability_tenant_id(99);
+    const auto seq0 = current_seq();
+    const bool ok = ev.require_effect_for_node_id(static_cast<std::uint16_t>(kEffectMutate),
+                                                  "4051-ac1-torn", live);
+    CHECK(!ok, "4051 AC1: torn-read NodeId write denies");
+    CHECK(isolation_denies_since(seq0) >= 1, "4051 AC1: IsolationDeny SE emitted (audit join)");
+    const auto after = aura::core::workspace_isolation::g_tenant_isolation_metrics()
+                           .nodeid_only_entry_prevented_total.load(std::memory_order_relaxed);
+    CHECK(after >= prev + 1, "4051 AC1: nodeid_only_entry_prevented bumped");
+    const auto edsl = cs.eval(std::format("(mutate:replace-type {} \"Int\")", live));
+    CHECK(edsl.has_value() && is_error(*edsl), "4051 AC1: EDSL mutate is_error (fail-closed)");
+    CHECK(ws->subtree_bump_count() == bumps_before, "4051 AC1: zero workspace write");
+    // The occupant is still A — the deny wrote no caller stamp.
+    CHECK(occupant_node_4051(live) == live, "4051 AC1: occupant node preserved");
+    CHECK(occupant_tenant_4051(live) == 7, "4051 AC1: occupant tenant still A (7)");
+    set_occupancy_seq_4051(live, 2); // restore the stable (even) state
+    aura::core::provenance::set_multi_tenant_env_active(false);
+}
+
+// Issue #4051 AC2: the third state must not over-deny. A stable foreign hit
+// still denies through the existing #3415/#3641 on_ref face, and a stable
+// empty slot still allows the first caller stamp (#2056).
+static void ac4051_2_stable_reads_unchanged() {
+    std::println("\n--- #4051 AC2: stable foreign hit denies, stable empty slot allows ---");
+    reset_all();
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+    aura::core::provenance::set_multi_tenant_env_active(true);
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_effect_sandbox_mode(1);
+    const auto me = current_mutation_epoch();
+    ev.grant_effect_capability(99, "mut-4051-b2", kEffectMutate, me == 0 ? 1 : me);
+    ev.grant_effect_capability(7, "mut-4051-a2", kEffectMutate, me == 0 ? 1 : me);
+    ev.set_capability_tenant_id(7);
+    (void)ev.make_stamped_ref(kOccNodeX4051); // A owns X (slot 0)
+    CHECK(aura::core::provenance::occupancy_read_state_for_node(kOccNodeX4051) ==
+              aura::core::provenance::NodeOccupancyRead::Stable,
+          "4051 AC2: stable slot reads Stable");
+    ev.set_capability_tenant_id(99);
+    const auto seq0 = current_seq();
+    const bool ok = ev.require_effect_for_node_id(static_cast<std::uint16_t>(kEffectMutate),
+                                                  "4051-ac2-foreign", kOccNodeX4051);
+    CHECK(!ok, "4051 AC2: stable foreign hit still denies (on_ref face)");
+    CHECK(isolation_denies_since(seq0) >= 1, "4051 AC2: IsolationDeny SE emitted");
+    CHECK(occupant_tenant_4051(kOccNodeX4051) == 7, "4051 AC2: occupant tenant still A after deny");
+    // Empty-slot caller stamp still allows — probe the capability path first
+    // (mirrors #3641 AC2) so a grant-broken harness degrades to a SKIP.
+    const auto probe = ev.make_stamped_ref(kOccNodeZ4051);
+    const bool grant_ok = ev.require_effect_on_ref(static_cast<std::uint16_t>(kEffectMutate),
+                                                   "4051-ac2-grantprobe", probe);
+    if (!grant_ok) {
+        std::println(
+            "  SKIP: 4051 AC2 fresh-allow (capability grants not honored in this harness)");
+    } else {
+        const bool ok_fresh = ev.require_effect_for_node_id(
+            static_cast<std::uint16_t>(kEffectMutate), "4051-ac2-fresh", /*node_id=*/0x4F1);
+        CHECK(ok_fresh, "4051 AC2: stable empty-slot NodeId-only allows (caller stamp #2056)");
+    }
+    aura::core::provenance::set_multi_tenant_env_active(false);
+}
+
+// Issue #4051 AC3: Soft/Off does not consult — zero extra branch, no deny,
+// no counter bump even with an odd-seq slot (the predicate gates on consult).
+static void ac4051_3_soft_off_no_extra_branch() {
+    std::println("\n--- #4051 AC3: Soft/Off skips the Uncertain gate ---");
+    reset_all(); // SandboxMode::Off
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_effect_sandbox_mode(0); // Soft
+    const auto me = current_mutation_epoch();
+    ev.grant_effect_capability(7, "mut-4051-a3", kEffectMutate, me == 0 ? 1 : me);
+    ev.set_capability_tenant_id(7);
+    set_occupancy_seq_4051(kOccNodeX4051, 1); // odd — would deny under consult
+    const auto prev = aura::core::workspace_isolation::g_tenant_isolation_metrics()
+                          .nodeid_only_entry_prevented_total.load(std::memory_order_relaxed);
+    const bool ok = ev.require_effect_for_node_id(static_cast<std::uint16_t>(kEffectMutate),
+                                                  "4051-ac3-soft", kOccNodeX4051);
+    CHECK(ok, "4051 AC3: Soft NodeId-only allows (no consult, #2056)");
+    const auto after = aura::core::workspace_isolation::g_tenant_isolation_metrics()
+                           .nodeid_only_entry_prevented_total.load(std::memory_order_relaxed);
+    CHECK(after == prev, "4051 AC3: Soft path does not bump nodeid_only_entry_prevented");
+    // The predicate itself is unconditional/read-only — usable by any caller.
+    CHECK(aura::core::provenance::occupancy_read_state_for_node(kOccNodeX4051) ==
+              aura::core::provenance::NodeOccupancyRead::Uncertain,
+          "4051 AC3: predicate reports the odd window without side effects");
+}
+
+// Issue #4051 AC4: source-cite + no invent.
+static void ac4051_4_source_cite_and_no_invent() {
+    std::println("\n--- #4051 AC4: source-cite + no invent ---");
+    const auto prov = read_file("src/core/provenance_tracker.hh");
+    CHECK(prov.find("Issue #4051") != std::string::npos, "4051: header cites the issue");
+    CHECK(prov.find("enum class NodeOccupancyRead") != std::string::npos,
+          "4051: third read state declared");
+    CHECK(prov.find("occupancy_read_state_for_node") != std::string::npos,
+          "4051: read-state helper declared");
+    const auto sec = read_file("src/compiler/evaluator_security.cpp");
+    CHECK(sec.find("Issue #4051") != std::string::npos, "4051: consult site cites the issue");
+    CHECK(sec.find("NodeOccupancyRead::Uncertain") != std::string::npos,
+          "4051: consult denies on Uncertain");
+    CHECK(read_file("scripts/check_occupancy_torn_read_4051.py").find("4051") != std::string::npos,
+          "4051: ship linter present");
+    CHECK(read_file("build.py").find("check_occupancy_torn_read_4051") != std::string::npos,
+          "4051: build.py wires the linter");
+    CHECK(read_file("tests/compiler/test_issue_4051.cpp").empty() &&
+              read_file("tests/core/test_issue_4051.cpp").empty() &&
+              read_file("tests/issues/test_issue_4051.cpp").empty(),
+          "4051: no invented test_issue_4051.cpp");
+    const std::filesystem::path docs_design = "docs/design";
+    std::error_code ec;
+    if (std::filesystem::is_directory(docs_design, ec)) {
+        for (const auto& entry : std::filesystem::directory_iterator(docs_design, ec)) {
+            const auto name = entry.path().filename().string();
+            CHECK(name.find("4051-") == std::string::npos,
+                  std::string("4051: no docs/design/") + name + " (forbidden per #1655)");
+        }
+    }
+}
+
 // Batch entry point: #4039 collision/gate ACs. The batch driver dispatches
 // this runner (run_test_require_effect_auto_isolation is the standalone-
 // main history runner and is NOT dispatched in batch mode — see
@@ -2762,6 +2944,18 @@ int run_test_nodeid_collision_4039() {
     ac4039_5_soft_off_gate_unchanged();
     ac4039_6_source_cite_and_no_invent();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
+    return g_failed ? 1 : 0;
+}
+
+// Issue #4051: batch member entry (dispatched by
+// test_security_capability_batch.cpp; the standalone main history runner
+// run_test_require_effect_auto_isolation also includes the same ACs).
+int run_test_occupancy_torn_read_4051() {
+    std::println("=== Issue #4051: occupancy seqlock torn read is Uncertain, not Empty ===");
+    ac4051_1_torn_read_denies_before_stamp();
+    ac4051_2_stable_reads_unchanged();
+    ac4051_3_soft_off_no_extra_branch();
+    ac4051_4_source_cite_and_no_invent();
     return g_failed ? 1 : 0;
 }
 
@@ -2878,6 +3072,11 @@ int run_test_require_effect_auto_isolation() {
     ac4039_4_principal_zero_gate_denies();
     ac4039_5_soft_off_gate_unchanged();
     ac4039_6_source_cite_and_no_invent();
+    std::println("\n=== Issue #4051: occupancy seqlock torn read is Uncertain ===\n");
+    ac4051_1_torn_read_denies_before_stamp();
+    ac4051_2_stable_reads_unchanged();
+    ac4051_3_soft_off_no_extra_branch();
+    ac4051_4_source_cite_and_no_invent();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

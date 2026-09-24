@@ -8123,6 +8123,27 @@ def cmd_lint():
     if r != 0:
         fail("Issue #4039 NodeId collision/gate linter failed — run python3 scripts/check_nodeid_collision_4039.py")
         return r
+    # Issue #4051 (security residual): the occupancy ring's seqlock collapse
+    # (odd seq = writer in flight, or seq moved across the load pair = torn)
+    # was read as an EMPTY slot by both existing_stamp_for_node (0) and
+    # occupying_stamp_for_node ({}), so require_effect_for_node_id fell
+    # through to the caller-stamp branch and allowed a cross-tenant NodeId
+    # write while its occupant slot was mid-write — the read path
+    # restamp_read_ref denies the same window. Gate pins: the third read
+    # state (NodeOccupancyRead::Uncertain + occupancy_read_state_for_node)
+    # exists in the ring header, the consult regime fail-closes it through
+    # the existing IsolationDeny face (check_workspace_isolation +
+    # nodeid_only_entry_prevented_total) before any caller stamp, stable
+    # foreign hits / stable empty slots / Soft keep their #3641/#4039/#2056
+    # contracts, and the host ACs are wired into the dispatched batch runner.
+    otr4051_script = ROOT / "scripts" / "check_occupancy_torn_read_4051.py"
+    if not otr4051_script.exists():
+        fail(f"missing {otr4051_script}")
+        return 1
+    r = run([sys.executable, str(otr4051_script)], cwd=ROOT)
+    if r != 0:
+        fail("Issue #4051 occupancy torn-read linter failed — run python3 scripts/check_occupancy_torn_read_4051.py")
+        return r
     # Issue #4049 (orch residual): orch:agent-reply — the only worker RPC
     # back to orch:agent-ask — stringified non-scalar payloads to the
     # literal "payload" and charged reply-mailbox backpressure to the
