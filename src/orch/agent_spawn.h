@@ -4769,8 +4769,8 @@ try_match_reply(const serve::mf_mailbox::MailMessage& m, std::uint64_t expected_
 // (no hang). Optional `from` stamps from_fiber for diagnostics only.
 [[nodiscard]] inline ReplyResult
 agent_reply(std::uint64_t corr_id, std::string_view body,
-            serve::mf_mailbox::MultiFiberMailbox* reply_dest = nullptr,
-            AgentHandle* from = nullptr) noexcept {
+            serve::mf_mailbox::MultiFiberMailbox* reply_dest = nullptr, AgentHandle* from = nullptr,
+            std::optional<std::uint64_t> held_token = std::nullopt) noexcept {
     ReplyResult out;
     std::shared_ptr<serve::mf_mailbox::MultiFiberMailbox> held;
     serve::mf_mailbox::MultiFiberMailbox* dest = reply_dest;
@@ -4804,16 +4804,58 @@ agent_reply(std::uint64_t corr_id, std::string_view body,
     msg.kind = serve::mf_mailbox::MailKind::Reply;
     if (from && from->ok)
         msg.from_fiber = from->id;
+    // Issue #4049: stamped reply (post-handoff held token) rides the same
+    // recv-gate contract as agent-send — handoff_completed set so the
+    // consume-side stale gate never drops a live reply.
+    if (held_token)
+        stamp_mail_message_handoff_completed(msg, *held_token);
     const auto st = dest->push(std::move(msg));
     // Issue #3940: charge the same per-scope BP gauge as agent_send.
-    if (st == serve::mf_mailbox::PushStatus::Backpressure)
-        note_mailbox_bp_recent_event(from ? from->bp_scope_id : std::string_view{},
-                                     from ? from->id : 0);
+    // Issue #4049: the gauge is the REPLYING agent's scope (from), and the
+    // producer-throttle arm mirrors agent_send so reply storms degrade the
+    // replier, not the process. No handle under production_defaults_active:
+    // the process bucket stays clean — the event lands on the at-cap
+    // overflow observability gauge instead (never admit-poison for
+    // unrelated tenants). Soft/Off empty scope keeps the process bucket
+    // (existing contract).
+    if (st == serve::mf_mailbox::PushStatus::Backpressure) {
+        if (from && from->ok) {
+            note_mailbox_bp_recent_event(from->bp_scope_id, from->id);
+            if (from->producer_bp_budget > 0) {
+                ++from->consecutive_bp_count;
+                from->last_producer_bp_us = orch_now_us();
+                if (!from->producer_throttled &&
+                    from->consecutive_bp_count >= from->producer_bp_budget) {
+                    from->producer_throttled = true;
+                    // Throttle semantics (#2887): cooperative helper_stop
+                    // only — no body cancel and no mailbox detach.
+                    if (from->liveness)
+                        from->liveness->helper_stop.store(true, std::memory_order_release);
+                    g_orch_module_stats.agent_producer_throttle_enter_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                }
+            }
+        } else if (production_defaults_active()) {
+            g_scope_bp_overflow.recent.fetch_add(1, std::memory_order_relaxed);
+            g_scope_bp_overflow.last_event_us.store(orch_now_us(), std::memory_order_release);
+        } else {
+            note_mailbox_bp_recent_event(std::string_view{}, 0);
+        }
+    }
     if (st == serve::mf_mailbox::PushStatus::Ok) {
         out.ok = true;
         out.status = "ok";
         g_orch_module_stats.agent_reply_total.fetch_add(1, std::memory_order_relaxed);
         g_orch_module_stats.agent_reply_typed_total.fetch_add(1, std::memory_order_relaxed);
+        // Issue #4049: Ok heals the producer arm, same as agent_send.
+        if (from && from->producer_bp_budget > 0) {
+            from->consecutive_bp_count = 0;
+            if (from->producer_throttled) {
+                from->producer_throttled = false;
+                g_orch_module_stats.agent_producer_throttle_clear_total.fetch_add(
+                    1, std::memory_order_relaxed);
+            }
+        }
         return out;
     }
     if (st == serve::mf_mailbox::PushStatus::Backpressure) {
@@ -4830,8 +4872,9 @@ agent_reply(std::uint64_t corr_id, std::string_view body,
 // Overload: self handle first (issue pseudo-code shape).
 [[nodiscard]] inline ReplyResult
 agent_reply(AgentHandle& self, std::uint64_t corr_id, std::string_view body,
-            serve::mf_mailbox::MultiFiberMailbox* reply_dest = nullptr) noexcept {
-    return agent_reply(corr_id, body, reply_dest, &self);
+            serve::mf_mailbox::MultiFiberMailbox* reply_dest = nullptr,
+            std::optional<std::uint64_t> held_token = std::nullopt) noexcept {
+    return agent_reply(corr_id, body, reply_dest, &self, held_token);
 }
 
 [[nodiscard]] inline AskResult agent_ask(AgentHandle& target, std::string_view body,
@@ -4913,6 +4956,14 @@ agent_reply(AgentHandle& self, std::uint64_t corr_id, std::string_view body,
         // timeout from busy-spin. Soft/Off: no extra intern (continue).
         if (boundary_reject && aura::compiler::typed_audit::production_defaults_active()) {
             out.status = "recv-under-boundary";
+            return out;
+        }
+        // Issue #4049: the reply gate consumed a stale held_ref — typed
+        // handoff-required beats continue-until-timeout (the consumed
+        // message cannot come back; spinning only burns the ask budget and
+        // misreports the failure as timeout).
+        if (stale_handoff) {
+            out.status = "handoff-required";
             return out;
         }
         if (!m)

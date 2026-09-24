@@ -5289,58 +5289,147 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
     // dual-writes reply:<id>: prefix. Looks up the pending-ask reply
     // mailbox (no AgentRegistry). Unknown corr / closed → structured
     // fail, no hang.
-    add("orch:agent-reply", [&ev, build_orch_hash](std::span<const EvalValue> a) -> EvalValue {
-        if (a.size() < 2) {
-            return make_primitive_error(ev.string_heap_, ev.error_values_,
-                                        "orch:agent-reply: usage (orch:agent-reply corr payload)",
-                                        ev.primitive_error_counter_ptr());
-        }
-        std::uint64_t corr_id = 0;
-        if (types::is_int(a[0])) {
-            const auto v = types::as_int(a[0]);
-            if (v < 0) {
+    add("orch:agent-reply",
+        [&ev, build_orch_hash, add_deny_class](std::span<const EvalValue> a) -> EvalValue {
+            if (a.size() < 2) {
+                return make_primitive_error(
+                    ev.string_heap_, ev.error_values_,
+                    "orch:agent-reply: usage (orch:agent-reply corr payload)",
+                    ev.primitive_error_counter_ptr());
+            }
+            std::uint64_t corr_id = 0;
+            if (types::is_int(a[0])) {
+                const auto v = types::as_int(a[0]);
+                if (v < 0) {
+                    return make_primitive_error(ev.string_heap_, ev.error_values_,
+                                                "orch:agent-reply: corr must be non-negative",
+                                                ev.primitive_error_counter_ptr());
+                }
+                corr_id = static_cast<std::uint64_t>(v);
+            } else if (types::is_string(a[0])) {
+                const auto s = heap_str_from(ev.string_heap_, a[0]);
+                try {
+                    corr_id = static_cast<std::uint64_t>(std::stoull(s));
+                } catch (...) {
+                    // [SILENCE-PRIM-#615] corr parse failure is a typed primitive error.
+                    return make_primitive_error(ev.string_heap_, ev.error_values_,
+                                                "orch:agent-reply: corr string not a number",
+                                                ev.primitive_error_counter_ptr());
+                }
+            } else {
                 return make_primitive_error(ev.string_heap_, ev.error_values_,
-                                            "orch:agent-reply: corr must be non-negative",
+                                            "orch:agent-reply: corr must be int or string",
                                             ev.primitive_error_counter_ptr());
             }
-            corr_id = static_cast<std::uint64_t>(v);
-        } else if (types::is_string(a[0])) {
-            const auto s = heap_str_from(ev.string_heap_, a[0]);
-            try {
-                corr_id = static_cast<std::uint64_t>(std::stoull(s));
-            } catch (...) {
-                // [SILENCE-PRIM-#615] corr parse failure is a typed primitive error.
-                return make_primitive_error(ev.string_heap_, ev.error_values_,
-                                            "orch:agent-reply: corr string not a number",
-                                            ev.primitive_error_counter_ptr());
+            // Issue #4049: string / int / bool stay zero-cost (same short-circuit
+            // as orch:agent-send). Non-scalar payloads get the #2848 StableNodeRef
+            // recognition — packed (id . gen) with an in-bounds id auto-runs
+            // stamp_stable_ref + handoff_ref, and the asker receives the
+            // post-handoff stable-ref:id:gen body. Handoff failure returns the
+            // existing structured status (handoff-required / export-stale) and
+            // does NOT push — never a silent literal-"payload" success.
+            std::string payload;
+            std::optional<std::uint64_t> held_token;
+            if (types::is_string(a[1])) {
+                payload = heap_str_from(ev.string_heap_, a[1]);
+            } else if (types::is_int(a[1])) {
+                payload = std::to_string(types::as_int(a[1]));
+            } else if (types::is_bool(a[1])) {
+                payload = types::as_bool(a[1]) ? "#t" : "#f";
+            } else if (types::is_pair(a[1]) && ev.workspace_flat_) {
+                // Issue #2848 AC1 shape: packed StableNodeRef (id . gen).
+                // Require in-bounds id so ordinary cons lists of ints do not
+                // spuriously enter the handoff path.
+                const auto outer = types::as_pair_idx(a[1]);
+                bool is_stable_shape = false;
+                aura::ast::FlatAST::StableNodeRef held{};
+                if (outer < ev.pairs_.size() && types::is_int(ev.pairs_[outer].car)) {
+                    held.id = static_cast<aura::ast::NodeId>(types::as_int(ev.pairs_[outer].car));
+                    const auto cdr = ev.pairs_[outer].cdr;
+                    if (types::is_pair(cdr)) {
+                        const auto inner = types::as_pair_idx(cdr);
+                        if (inner < ev.pairs_.size() && types::is_int(ev.pairs_[inner].car)) {
+                            held.gen =
+                                static_cast<std::uint16_t>(types::as_int(ev.pairs_[inner].car));
+                            is_stable_shape = true;
+                        }
+                    } else if (types::is_int(cdr)) {
+                        held.gen = static_cast<std::uint16_t>(types::as_int(cdr));
+                        is_stable_shape = true;
+                    }
+                }
+                auto* ws = ev.workspace_flat_;
+                if (is_stable_shape && held.id != aura::ast::NULL_NODE && held.id < ws->size()) {
+                    // Soft / production: prefer export path for consistency (AC6).
+                    ev.stamp_stable_ref(held);
+                    auto out = ev.handoff_ref(std::move(held));
+                    if (!out) {
+                        // Structured typed failure — not a silent "payload" body.
+                        aura::orch::g_orch_module_stats.agent_send_handoff_fail_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                        const char* fail_st = "handoff-required";
+                        if (!ev.last_mutate_error().empty() &&
+                            ev.last_mutate_error().find("stale") != std::string::npos)
+                            fail_st = "export-stale";
+                        auto sidx = ev.string_heap_.size();
+                        ev.string_heap_.push_back(fail_st);
+                        std::vector<std::pair<std::string, EvalValue>> fkv = {
+                            {"ok", make_bool(false)},
+                            {"status", make_string(sidx)},
+                            {"schema", make_int(aura::orch::kAgentReplyIssue)},
+                            {"schema-2401", make_int(aura::orch::kAgentReplyIssue)},
+                            {"schema-2231", make_int(aura::orch::kAgentAskIssue)},
+                            {"schema-2538", make_int(aura::orch::kAgentAskTypedCorrIssue)},
+                            {"agent-reply-auto-handoff-wired", make_int(1)},
+                        };
+                        add_deny_class(fkv, aura::orch::AgentDenyClass::Handoff, fail_st, 0,
+                                       /*emit_retry=*/false);
+                        return build_orch_hash(fkv);
+                    }
+                    held_token = static_cast<std::uint64_t>(out->id);
+                    // Encode post-handoff id:gen so the asker can rehydrate.
+                    payload =
+                        "stable-ref:" + std::to_string(out->id) + ":" + std::to_string(out->gen);
+                } else {
+                    payload = "payload";
+                }
+            } else {
+                payload = "payload";
             }
-        } else {
-            return make_primitive_error(ev.string_heap_, ev.error_values_,
-                                        "orch:agent-reply: corr must be int or string",
-                                        ev.primitive_error_counter_ptr());
-        }
-        std::string payload;
-        if (types::is_string(a[1]))
-            payload = heap_str_from(ev.string_heap_, a[1]);
-        else if (types::is_int(a[1]))
-            payload = std::to_string(types::as_int(a[1]));
-        else if (types::is_bool(a[1]))
-            payload = types::as_bool(a[1]) ? "#t" : "#f";
-        else
-            payload = "payload";
-        const auto r = aura::orch::agent_reply(corr_id, payload);
-        auto st_idx = ev.string_heap_.size();
-        ev.string_heap_.push_back(r.status);
-        std::vector<std::pair<std::string, EvalValue>> kv = {
-            {"ok", make_bool(r.ok)},
-            {"status", make_string(st_idx)},
-            {"schema", make_int(aura::orch::kAgentReplyIssue)},
-            {"schema-2401", make_int(aura::orch::kAgentReplyIssue)},
-            {"schema-2231", make_int(aura::orch::kAgentAskIssue)},
-            {"schema-2538", make_int(aura::orch::kAgentAskTypedCorrIssue)},
-        };
-        return build_orch_hash(kv);
-    });
+            // Issue #4049: resolve the replying agent's handle (the current
+            // fiber's name-table / scope handle when one is bound) so BP notes
+            // that handle's bp_scope_id and the producer-throttle arm can run —
+            // reply is a second send, not a process-bucket event. Unbound host
+            // fiber: reply_from stays null and agent_reply routes empty-scope
+            // production events to the overflow gauge.
+            aura::orch::AgentHandle* reply_from = nullptr;
+            if (auto* f = aura::serve::g_current_fiber) {
+                if (ev.agent_names_) {
+                    if (auto* h = ev.agent_names_->find_by_fiber(f->id()))
+                        reply_from = h;
+                }
+                if (!reply_from) {
+                    if (auto* scope = aura::orch::find_agent_scope(static_cast<void*>(&ev))) {
+                        if (auto* h = scope->find_by_fiber(f->id()))
+                            reply_from = h;
+                    }
+                }
+            }
+            const auto r = aura::orch::agent_reply(corr_id, payload, /*reply_dest=*/nullptr,
+                                                   reply_from, held_token);
+            auto st_idx = ev.string_heap_.size();
+            ev.string_heap_.push_back(r.status);
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"ok", make_bool(r.ok)},
+                {"status", make_string(st_idx)},
+                {"schema", make_int(aura::orch::kAgentReplyIssue)},
+                {"schema-2401", make_int(aura::orch::kAgentReplyIssue)},
+                {"schema-2231", make_int(aura::orch::kAgentAskIssue)},
+                {"schema-2538", make_int(aura::orch::kAgentAskTypedCorrIssue)},
+                {"agent-reply-auto-handoff-wired", make_int(1)},
+            };
+            return build_orch_hash(kv);
+        });
 
     // Issue #2011: language surface for agent_send / agent_recv.
     // Issue #3442: resolve_aura_agent (name-table then session-local

@@ -8123,6 +8123,24 @@ def cmd_lint():
     if r != 0:
         fail("Issue #4039 NodeId collision/gate linter failed — run python3 scripts/check_nodeid_collision_4039.py")
         return r
+    # Issue #4049 (orch residual): orch:agent-reply — the only worker RPC
+    # back to orch:agent-ask — stringified non-scalar payloads to the
+    # literal "payload" and charged reply-mailbox backpressure to the
+    # process bucket (empty scope id), starving producer-throttle. Gate
+    # pins: reply prims give non-scalar payloads the #2848 StableNodeRef
+    # recognition (handoff fail = structured handoff-required / export-stale,
+    # no push), agent_reply takes the replying handle + held token (scope
+    # gauge + producer-throttle arm; production no-handle BP lands on the
+    # overflow gauge, Soft keeps the process bucket), and agent_ask honors
+    # stale_handoff as handoff-required instead of spinning to timeout.
+    arp4049_script = ROOT / "scripts" / "check_agent_reply_payload_4049.py"
+    if not arp4049_script.exists():
+        fail(f"missing {arp4049_script}")
+        return 1
+    r = run([sys.executable, str(arp4049_script)], cwd=ROOT)
+    if r != 0:
+        fail("Issue #4049 agent-reply payload/BP linter failed — run python3 scripts/check_agent_reply_payload_4049.py")
+        return r
     # Issue #3857 (mem residual): #3210 TemporaryMovingLivePtrCanary is
     # observe-only and the Moving entry precondition gate is TLS-only, so
     # a peer fiber's apply_closure window (cl_copy stack copies) cannot

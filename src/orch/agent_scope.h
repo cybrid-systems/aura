@@ -1105,6 +1105,34 @@ public:
         return find_unlocked_(name, include_descendants);
     }
 
+    // Issue #4049: resolve the scope-owned handle bound to a running agent
+    // body fiber (orch:agent-reply passes the replying agent's handle so
+    // mailbox BP charges that handle's bp_scope_id and the producer-throttle
+    // arm can run). Mirrors find(): ScopeEnterGuard + handles_ walk +
+    // children descent; reclaimed-clean / abandoned-live husks are not live
+    // reply sources (same predicate as find_unlocked_). nullptr when no
+    // live slot binds fiber_id.
+    [[nodiscard]] AgentHandle* find_by_fiber(std::uint64_t fiber_id) noexcept {
+        ScopeEnterGuard g(this, "find_by_fiber");
+        for (auto& h : handles_) {
+            if (h.id != fiber_id)
+                continue;
+            if (!aura::orch::maybe_force_recycle_reclaimed_slot(h))
+                (void)aura::orch::maybe_force_release_reclaimed_quota(h);
+            if (aura::orch::slot_is_reclaimable_clean(h) || aura::orch::slot_is_abandoned_live(h))
+                continue;
+            return &h;
+        }
+        for (auto& c : children_) {
+            if (!c)
+                continue;
+            ScopeEnterGuard cg(c.get(), "find_by_fiber");
+            if (auto* p = c->find_by_fiber(fiber_id))
+                return p;
+        }
+        return nullptr;
+    }
+
     // Issue #3842: drain Scope-owned Reclaimed-pending handles without
     // requiring the host to remember ensure_reclaimed_cleanup / wait /
     // abandon per handle. Long-lived C++ hosts that keep AgentHandle in

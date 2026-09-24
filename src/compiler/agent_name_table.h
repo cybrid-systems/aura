@@ -167,6 +167,28 @@ struct AgentNameTable {
         return &it->second;
     }
 
+    // Issue #4049: resolve the slot bound to a running agent body fiber
+    // (orch:agent-reply passes the replying agent's handle so mailbox BP
+    // charges that handle's bp_scope_id and the producer-throttle arm can
+    // run). Fiber-id walk first, then find() so slot-health handling
+    // (#3564 recycle / #3598 Done-husk retire / #3805 abandon sweep) stays
+    // in exactly one place. nullptr when no slot binds fiber_id.
+    aura::orch::AgentHandle* find_by_fiber(std::uint64_t fiber_id) {
+        std::string name;
+        {
+            std::lock_guard<std::mutex> lock(impl_->mu_);
+            for (auto& [n, slot] : impl_->agents_) {
+                if (slot.id == fiber_id) {
+                    name = n;
+                    break;
+                }
+            }
+        }
+        if (name.empty())
+            return nullptr;
+        return find(name);
+    }
+
     // Snapshot for cleanup at ~Evaluator. Caller owns the returned vector;
     // AgentHandle destructors release arena reservation. The map is
     // cleared so the destructor doesn't double-release.
