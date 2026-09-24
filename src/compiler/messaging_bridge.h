@@ -129,11 +129,14 @@ using HttpPostAsyncFn = std::string (*)(const std::string& url, const std::strin
                                         const std::string& auth);
 extern HttpPostAsyncFn g_http_post_async;
 
-// Issue #4053 / #2869: denseness body mutex unlock across wait/yield.
+// Issue #4053 / #2869 / #4054: denseness body mutex unlock across wait/yield.
 // Soft Ready (#4048) holds the denseness body mutex for the entire
 // apply_closure. fiber:join (CliBodyLockJoinGuard) and async http-post
 // must release that lock while waiting so sibling denseness fibers can
 // overlap under Soft Ready workers=1, then re-lock before Evaluator touch.
+// Hooks clear/republish TLS across the wait (#4054): Soft workers=1 shares
+// one OS thread across denseness fibers — a prev-chain restore UAF'd the
+// next batch's join and wedged the session after the first success.
 // Hooks are wired by evaluator_primitives_messaging.cpp (anon-ns TLS).
 using DensenessBodyUnlockFn = void (*)(void** lock_out, bool* unlocked_out);
 using DensenessBodyRelockFn = void (*)(void* lock, bool unlocked);
