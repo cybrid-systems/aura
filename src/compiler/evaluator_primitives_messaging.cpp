@@ -850,7 +850,8 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
             // unique_lock*. Clear only if we still own the slot.
             struct TlsBodyLockScope {
                 std::unique_lock<std::mutex>* cur;
-                explicit TlsBodyLockScope(std::unique_lock<std::mutex>* c) noexcept : cur(c) {
+                explicit TlsBodyLockScope(std::unique_lock<std::mutex>* c) noexcept
+                    : cur(c) {
                     if (cur)
                         s_tls_cli_body_lock = cur;
                 }
