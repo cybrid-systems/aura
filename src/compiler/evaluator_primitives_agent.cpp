@@ -6141,6 +6141,13 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                                 return;
                             }
                             (void)ev.apply_closure(cid, {});
+                            // Issue #4050: stamp body progress on this
+                            // one-shot slot (coop registration is
+                            // fiber-local, #2540). Progress at apply_closure
+                            // return is enough: the body then exits, so the
+                            // fiber clock reads Done instead of a stale
+                            // injected coop window.
+                            (void)aura::orch::agent_poll();
                         } catch (...) {
                             // [SILENCE-PRIM-#3726] agent body errors surface
                             // via join/status only (#1669 class B).
@@ -6149,6 +6156,13 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                     spec.attach_mailbox = true;
                     spec.mailbox_high_water = 256;
                     spec.mutation_boundary = false;
+                    // Issue #4050: the closure wrapper never calls
+                    // agent_poll / orch:agent-touch, so the fiber (not the
+                    // #2585 injected coop window) is the body clock on this
+                    // one-shot slot. watch_agent_liveness then reads
+                    // finished → Done / running → Alive instead of
+                    // cancelling a long closure as Stalled.
+                    spec.body_clock_from_fiber = true;
                     spec.tenant_id = ev.capability_tenant_id();
                     (void)child.spawn(std::move(spec));
                 }
@@ -6211,7 +6225,39 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                     .region_key_missing_serialized_total.fetch_add(1, std::memory_order_relaxed);
             }
 
+            // Issue #4050: close the supervise child on the watch-scope path.
+            // Production only: the wait budget is the existing ~AgentScope SSOT
+            // (kDefaultJoinDrainMs) and the post-wait cleanup is the residual
+            // drain budget (kResidualJoinDrainMs) that routes through
+            // complete_agent_join_cleanup / ensure_reclaimed_cleanup — so a
+            // finished closure releases its arena reservation / directory row
+            // before the prim returns instead of waiting for ~Evaluator. A body
+            // still live after the budget keeps the #2661 must-wait / abandon
+            // path (no early free). The explicit ReportOnly join policy keeps
+            // this close from cancelling, restarting or replacing a live body.
+            // Soft keeps the historical no-extra-wait behaviour (#2585 / #2661).
+            if (watch_scope && aura::compiler::typed_audit::production_defaults_active()) {
+                aura::orch::JoinPolicy join_policy{};
+                join_policy.primary_ms = aura::orch::kDefaultJoinDrainMs;
+                join_policy.drain_ms = aura::orch::kResidualJoinDrainMs;
+                aura::orch::AgentFailurePolicy join_observe{};
+                join_observe.on_stall = aura::orch::AgentFailureAction::ReportOnly;
+                join_observe.on_join_fail = aura::orch::AgentFailureAction::ReportOnly;
+                join_observe.max_restarts = 0;
+                (void)child.join_all(join_policy, join_observe);
+            }
+
             using aura::serve::parallel_orch::BatchStatus;
+            // Issue #4050: ok is false when production RestartN cancelled or
+            // skipped a still-live supervise body (drain-deferred replace /
+            // spawn-admit deny / non-restartable-spec skip) or left a slot
+            // stalled (scope_stalled). A green batch status alone must not
+            // hide a dropped, deferred or still-live child body.
+            const bool restart_dirty = r.restart_deferred_body_live > 0 || r.restart_denied > 0 ||
+                                       r.restart_skipped_no_spec > 0 || r.scope_stalled > 0;
+            const bool supervise_ok =
+                (r.batch.status == BatchStatus::Ok) &&
+                !(aura::compiler::typed_audit::production_defaults_active() && restart_dirty);
             const char* status_str = "invalid";
             switch (r.batch.status) {
                 case BatchStatus::Ok:
@@ -6249,7 +6295,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             const char* iso_cstr =
                 aura::serve::parallel_orch::isolation_level_cstr(wf_iso.decision.level);
             std::vector<std::pair<std::string, EvalValue>> kv = {
-                {"ok", make_bool(r.batch.status == BatchStatus::Ok)},
+                {"ok", make_bool(supervise_ok)},
                 {"ok-count", make_int(static_cast<std::int64_t>(r.batch.ok_count))},
                 {"err-count", make_int(static_cast<std::int64_t>(r.batch.err_count))},
                 {"status", push_str(status_str)},
@@ -6278,6 +6324,19 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 {"issue-3803", make_int(aura::orch::kAgentScopeRegionKeyIsolationIssue)},
                 {"schema-4000", make_int(aura::orch::kSuperviseBatchRegionKeysIssue)},
                 {"issue-4000", make_int(aura::orch::kSuperviseBatchRegionKeysIssue)},
+                // Issue #4050: supervision outcome (additive keys, no new
+                // query key). scope-stalled counts one-shot supervise slots
+                // routed through the Closed arm with a live restartable spec;
+                // restart-* mirror the watch-path RestartN outcome.
+                {"scope-stalled", make_int(static_cast<std::int64_t>(r.scope_stalled))},
+                {"restart-ok", make_int(static_cast<std::int64_t>(r.restart_ok))},
+                {"restart-denied", make_int(static_cast<std::int64_t>(r.restart_denied))},
+                {"restart-skipped-no-spec",
+                 make_int(static_cast<std::int64_t>(r.restart_skipped_no_spec))},
+                {"restart-deferred-body-live",
+                 make_int(static_cast<std::int64_t>(r.restart_deferred_body_live))},
+                {"schema-4050", make_int(aura::orch::kSuperviseBatchScopeJoinIssue)},
+                {"issue-4050", make_int(aura::orch::kSuperviseBatchScopeJoinIssue)},
             };
             return build_orch_hash(kv);
         });

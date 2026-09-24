@@ -884,7 +884,12 @@ public:
         const bool cancel_on_stall = (policy.on_stall != AgentFailureAction::ReportOnly);
         for (std::size_t i = 0; i < handles_.size(); ++i) {
             auto& h = handles_[i];
-            auto wr = watch_agent_liveness(h, stall_timeout_ms, cancel_on_stall);
+            // Issue #4050: the spec owns the "fiber is the body clock" bit
+            // (one-shot supervise wrapper). Indexed handles_ / specs_ are
+            // kept aligned by compact_done_husks_unlocked_.
+            const bool body_clock_from_fiber = i < specs_.size() && specs_[i].body_clock_from_fiber;
+            auto wr =
+                watch_agent_liveness(h, stall_timeout_ms, cancel_on_stall, body_clock_from_fiber);
             if (wr.body_stalled)
                 ++r.body_stalled;
             if (wr.helper_stalled)
@@ -937,10 +942,20 @@ public:
                     // sees Stalled. Production surfaces the existing skip
                     // counter rather than a silent Closed. Soft: note_* is
                     // a production_defaults load only (no extra atomic).
+                    // Issue #4050: a one-shot supervise slot whose spec
+                    // carries a restartable body is NOT a "no spec" skip
+                    // (#3250/#3730 keep that arm). Surface it through the
+                    // existing scope_stalled count instead — no cancel, no
+                    // replace; the watch-path join in orch:supervise-batch
+                    // drains and releases the reservation afterwards.
                     if (policy.on_stall == AgentFailureAction::RestartN &&
                         h.keepalive_interval_ms == 0) {
-                        ++r.restart_skipped_no_spec;
-                        note_restart_skipped_no_spec_(h, /*cancel=*/false);
+                        if (body_clock_from_fiber && !restart_spec_missing_(i)) {
+                            ++r.stalled;
+                        } else {
+                            ++r.restart_skipped_no_spec;
+                            note_restart_skipped_no_spec_(h, /*cancel=*/false);
+                        }
                     }
                     break;
             }
@@ -1689,6 +1704,15 @@ private:
                                   ScopeWatchResult& r) noexcept {
         ++r.restart_attempted;
         stop_keepalive_helper(h);
+        // Issue #4050: one-shot supervise slot — the stall signal is the
+        // injected coop window, not a progress contract, and its body was
+        // never cancelled (watch_agent_liveness). Do not cancel/drain or
+        // replace it: report the deferred replace (the caller sets ok=false)
+        // and leave the body to the watch-path join.
+        if (i < specs_.size() && specs_[i].body_clock_from_fiber) {
+            ++r.restart_deferred_body_live;
+            return;
+        }
         const bool prod = aura::compiler::typed_audit::production_defaults_active();
         if (h.fiber && !h.fiber->is_done()) {
             if (prod) {
@@ -2003,6 +2027,20 @@ inline const char* apply_residual_reclaim_action(AgentScope& scope,
     return "observe";
 }
 
+// Issue #4050: single projection of a watch pass onto ApplyWorkflowResult
+// (scope counts + RestartN outcome). Keeps compose_supervised_batch /
+// apply_workflow / run_workflow on one SSOT so the supervise hash cannot
+// drift from ScopeWatchResult.
+inline void project_scope_watch_(ApplyWorkflowResult& out, const ScopeWatchResult& wres) noexcept {
+    out.scope_stalled = static_cast<int>(wres.stalled);
+    out.scope_alive = static_cast<int>(wres.alive);
+    out.scope_done = static_cast<int>(wres.done);
+    out.restart_ok = static_cast<int>(wres.restart_ok);
+    out.restart_denied = static_cast<int>(wres.restart_denied);
+    out.restart_skipped_no_spec = static_cast<int>(wres.restart_skipped_no_spec);
+    out.restart_deferred_body_live = static_cast<int>(wres.restart_deferred_body_live);
+}
+
 // Issue #3969: thin FailFast→Scope adapter. Isolation SSOT is
 // decide_isolation. Production missing-keys uses the #3353 deny face.
 // Batch FailFast/Timeout/QuotaExceeded + explicit on_join_fail !=
@@ -2041,9 +2079,7 @@ compose_supervised_batch(serve::Scheduler& sched, AgentScope& scope,
     } else if (watch_scope) {
         out.scope_watch_called = true;
         auto wres = scope.watch_all(stall_timeout_ms, to_agent_policy(w));
-        out.scope_stalled = static_cast<int>(wres.stalled);
-        out.scope_alive = static_cast<int>(wres.alive);
-        out.scope_done = static_cast<int>(wres.done);
+        project_scope_watch_(out, wres);
     }
     const bool batch_residual = out.batch.status != serve::parallel_orch::BatchStatus::Ok;
     const bool scope_residual = out.scope_stalled > 0;
@@ -2084,9 +2120,7 @@ apply_workflow(serve::Scheduler& sched, AgentScope& scope,
     if (watch_scope) {
         out.scope_watch_called = true;
         auto wres = scope.watch_all(stall_timeout_ms, to_agent_policy(w));
-        out.scope_stalled = static_cast<int>(wres.stalled);
-        out.scope_alive = static_cast<int>(wres.alive);
-        out.scope_done = static_cast<int>(wres.done);
+        project_scope_watch_(out, wres);
     }
     // Phase C — residual observe; production + explicit Cancel/JoinDrain
     // act via cancel_all / short join_all (#3206). Soft/Report observe-only.
@@ -2127,9 +2161,7 @@ apply_workflow(serve::Scheduler& sched, AgentScope& scope,
         if (st.watch_scope) {
             stage.scope_watch_called = true;
             auto wres = scope.watch_all(st.stall_timeout_ms, st.watch);
-            stage.scope_stalled = static_cast<int>(wres.stalled);
-            stage.scope_alive = static_cast<int>(wres.alive);
-            stage.scope_done = static_cast<int>(wres.done);
+            project_scope_watch_(stage, wres);
         }
         // Phase C — residual observe; production + explicit Cancel/JoinDrain
         // act (#3206). Soft/Report still observe-only (#2661).

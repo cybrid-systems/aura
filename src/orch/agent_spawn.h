@@ -2146,6 +2146,15 @@ struct AgentSpec {
     // AgentScope stores this on specs_ for join/workflow isolation observe.
     // No process-global AgentRegistry / saga.
     std::uint64_t region_key = 0;
+    // Issue #4050: one-shot supervise body whose clock is the fiber
+    // itself. `orch:supervise-batch :watch-scope #t` spawns the closure
+    // wrapper (never calls agent_poll / orch:agent-touch), so an opaque
+    // closure longer than the #2585 production coop window was read as
+    // Stalled and cancelled+replaced under RetryN. With this flag the
+    // watch path takes the fiber as the body clock: finished → Done,
+    // running → Alive. Host-declared keepalive / max_no_yield_ms
+    // contracts keep the normal stall path (flag stays false there).
+    bool body_clock_from_fiber = false;
 };
 
 // Issue #3250: RestartN fuel is a copyable AgentSpec body stored by
@@ -5232,6 +5241,12 @@ inline constexpr int kComposeSupervisedBatchIssue = 3969;
 // so try_acquire → try_acquire_for_region (#2724). Do not auto-invent
 // keys. Soft / Off unchanged. No new query key.
 inline constexpr int kSuperviseBatchRegionKeysIssue = 4000;
+// Issue #4050: `orch:supervise-batch` watch-scope path closes its child
+// scope before returning (production drain via kResidualJoinDrainMs), the
+// supervise spec is a one-shot fiber-clock body, and the returned hash
+// carries the supervision outcome (scope-stalled / restart-*) with ok=false
+// when production RestartN cancelled or skipped a still-live body.
+inline constexpr int kSuperviseBatchScopeJoinIssue = 4050;
 
 // Compose from batch FailurePolicy (+ residual preference). Maps agent
 // via the #2539 bridge so FailFast→Cancel, RetryN→RestartN, etc.
@@ -5411,6 +5426,15 @@ struct ApplyWorkflowResult {
     bool residual_observed = false;
     bool residual_acted = false; // Issue #3206
     const char* residual_action = "observe";
+    // Issue #4050: watch-path RestartN outcome projected off ScopeWatchResult
+    // (additive; no new query key). restart_deferred_body_live > 0 means the
+    // production drain-before-replace left a still-live body and the replace
+    // was skipped — the caller must not report ok. Fuel vs skip stays the
+    // #3250/#3730 vocabulary.
+    int restart_ok = 0;
+    int restart_denied = 0;
+    int restart_skipped_no_spec = 0;
+    int restart_deferred_body_live = 0;
 };
 
 // Issue #2852: apply_workflow definition is in agent_scope.h (after the
@@ -5494,7 +5518,8 @@ run_workflow(serve::Scheduler& sched, AgentScope& scope, std::span<const Workflo
 // and bump stalled_agents_total / keepalive_cancels_total.
 [[nodiscard]] inline KeepaliveWatchResult watch_agent_liveness(AgentHandle& h,
                                                                std::uint32_t stall_timeout_ms = 0,
-                                                               bool cancel_on_stall = true) {
+                                                               bool cancel_on_stall = true,
+                                                               bool body_clock_from_fiber = false) {
     KeepaliveWatchResult out;
     // Issue #2080: ProgressClock mode (attach_mailbox=#f + interval > 0) is
     // accepted: the body entry seeded last_keepalive_us / body_progress_us
@@ -5508,6 +5533,17 @@ run_workflow(serve::Scheduler& sched, AgentScope& scope, std::span<const Workflo
     // Issue #4004: imported proxy whose source Scheduler is gone.
     if (handoff_source_gone(h.source_live)) {
         out.status = KeepaliveWatchStatus::Closed;
+        return out;
+    }
+    // Issue #4050: one-shot supervise slot (AgentSpec::body_clock_from_fiber).
+    // The closure wrapper never calls agent_poll / orch:agent-touch, so a
+    // FINISHED closure is Done — never a stall (the #2585 injected coop
+    // window is not a progress contract). A still-running body is still
+    // watched, but it is not cancelled here: see the stall arm below.
+    if (body_clock_from_fiber && h.fiber && h.fiber->is_done()) {
+        out.status = KeepaliveWatchStatus::Done;
+        if (h.liveness)
+            out.last_keepalive_us = h.liveness->last_keepalive_us.load(std::memory_order_relaxed);
         return out;
     }
     if (h.keepalive_interval_ms == 0 && !h.liveness && !h.coop) {
@@ -5594,7 +5630,13 @@ run_workflow(serve::Scheduler& sched, AgentScope& scope, std::span<const Workflo
     out.status = KeepaliveWatchStatus::Stalled;
     out.body_stalled = true;
     g_orch_module_stats.stalled_agents_total.fetch_add(1, std::memory_order_relaxed);
-    if (cancel_on_stall) {
+    // Issue #4050: a one-shot supervise slot (body_clock_from_fiber) has no
+    // agent_poll / keepalive contract, so a stale injected coop window is not
+    // grounds for a kill — the stall is still reported (stalled +
+    // body_stalled) and the scope arm decides (production defers the replace;
+    // max_restarts==0 leaves the body untouched). Every other caller keeps
+    // the historical cancel_on_stall behaviour.
+    if (cancel_on_stall && !body_clock_from_fiber) {
         if (handoff_source_gone(h.source_live)) {
             out.status = KeepaliveWatchStatus::Closed;
             return out;
