@@ -411,12 +411,13 @@ int main(int argc, char* argv[]) {
             static bool soft_ready_logged = false;
             if (!soft_ready_logged) {
                 soft_ready_logged = true;
+                // Keep profile tag (#4047/#4048) for CI AC1 needle; mention #4053 in body.
                 std::fprintf(
                     stderr, "aura: Soft Ready profile (#4047/#4048): Soft serve-async denseness "
-                            "(fiber:spawn/join) under Soft contracts — NOT production multi-worker "
-                            "Ready. Auto workers=1 for shared-Evaluator safety; --worker-threads=N "
-                            "opts into multi-worker. Do not stamp production Ready / "
-                            "production_defaults from this path.\n");
+                            "(fiber:spawn/join + async http-post #4053) under Soft contracts — NOT "
+                            "production multi-worker Ready. Auto workers=1 for shared-Evaluator "
+                            "safety; --worker-threads=N opts into multi-worker. Do not stamp "
+                            "production Ready / production_defaults from this path.\n");
                 std::fflush(stderr);
             }
             // Non-aborting ABI observability already ran via

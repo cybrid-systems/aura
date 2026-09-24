@@ -94,11 +94,13 @@ namespace {
     // a child on the same thread backend — the child needs that mutex to run.
     // Parent holding lock + join wait = classic deadlock (nested join hang).
     // TLS points at the owning unique_lock so join can unlock/relock around
-    // the wait. Serve-async path never sets this (g_fiber_spawn present).
+    // the wait. Issue #4048 also sets this under Soft Ready --serve-async
+    // denseness (shared Evaluator). Issue #4053: http-post unlocks via the
+    // same TLS through DensenessBodyLockWaitGuard (messaging_bridge hooks).
     std::mutex s_cli_thread_fiber_body_mtx;
     thread_local std::unique_lock<std::mutex>* s_tls_cli_body_lock = nullptr;
 
-    // RAII: temporarily release CLI body mutex around nested fiber:join wait.
+    // RAII: temporarily release denseness body mutex around wait/yield.
     struct CliBodyLockJoinGuard {
         std::unique_lock<std::mutex>* lock = nullptr;
         bool unlocked = false;
@@ -117,9 +119,35 @@ namespace {
         CliBodyLockJoinGuard& operator=(const CliBodyLockJoinGuard&) = delete;
     };
 
+    void denseness_body_unlock_hook(void** lock_out, bool* unlocked_out) {
+        *lock_out = nullptr;
+        *unlocked_out = false;
+        if (s_tls_cli_body_lock && s_tls_cli_body_lock->owns_lock()) {
+            *lock_out = s_tls_cli_body_lock;
+            s_tls_cli_body_lock->unlock();
+            *unlocked_out = true;
+        }
+    }
+
+    void denseness_body_relock_hook(void* lock, bool unlocked) {
+        if (unlocked && lock) {
+            auto* l = static_cast<std::unique_lock<std::mutex>*>(lock);
+            if (l && !l->owns_lock())
+                l->lock();
+        }
+    }
+
+    void wire_denseness_body_lock_hooks() {
+        aura::messaging::g_denseness_body_unlock_for_wait = &denseness_body_unlock_hook;
+        aura::messaging::g_denseness_body_relock_after_wait = &denseness_body_relock_hook;
+    }
+
 } // namespace
 
 void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
+    // Issue #4053: ensure denseness body unlock hooks are live for http-post
+    // (module static ctor alone is not reliable across Soft --serve-async).
+    wire_denseness_body_lock_hooks();
 
     // ═══════════════════════════════════════════════════════════════
 
@@ -788,8 +816,8 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
             // pins help, but the parent may still run on another worker
             // until the first join yield — concurrent apply_closure races
             // TLS/heap and hangs the session. Always take the body mutex;
-            // fiber:join's CliBodyLockJoinGuard unlocks across the wait so
-            // the child can run (same nested-join protocol as #2869).
+            // fiber:join / async http-post DensenessBodyLockWaitGuard unlocks
+            // across the wait so siblings can overlap (#2869 / #4053).
             body_lock.lock();
             struct TlsBodyLockScope {
                 std::unique_lock<std::mutex>* prev;
@@ -1010,6 +1038,9 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
                     aura::serve::g_scheduler->add_joiner(static_cast<std::uint64_t>(fid),
                                                          aura::serve::g_current_fiber)) {
                     joiner_target_id = static_cast<std::uint64_t>(fid);
+                    // Issue #2869 / #4053: unlock denseness body mutex across
+                    // the join wait so a nested denseness child can run.
+                    CliBodyLockJoinGuard body_join_guard;
                     // Yield with BlockingIO so the scheduler
                     // doesn't steal this fiber while we wait.
                     aura::serve::Fiber::yield(aura::serve::YieldReason::BlockingIO);

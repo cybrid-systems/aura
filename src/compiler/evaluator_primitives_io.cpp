@@ -559,9 +559,20 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
                 auth = ev.string_heap_[aidx];
         }
 
-        // Async HTTP via thread (fiber-friendly, serve mode only)
+        // Async HTTP via thread (fiber-friendly, serve mode only).
+        // Issue #4053: copy URL/body before unlocking denseness body mutex
+        // (Soft Ready #4048 holds it for the whole denseness apply_closure).
+        // Unlock across the wait/yield so N denseness http-post calls can
+        // overlap under Soft Ready workers=1; re-lock before touching the
+        // Evaluator heap again (same protocol as fiber:join / #2869).
         if (aura::messaging::g_http_post_async) {
-            auto result = aura::messaging::g_http_post_async(curl_url, curl_body, auth);
+            std::string url_copy = curl_url;
+            std::string body_copy = curl_body;
+            std::string result;
+            {
+                aura::messaging::DensenessBodyLockWaitGuard body_http_guard;
+                result = aura::messaging::g_http_post_async(url_copy, body_copy, auth);
+            }
             if (!result.empty()) {
                 auto sidx = ev.string_heap_.size();
                 ev.string_heap_.push_back(std::move(result));

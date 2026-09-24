@@ -384,6 +384,35 @@ void run_serve_async(int num_workers) {
         }
     };
 
+    // Issue #4053 / #956: restore async http-post for long-lived Soft Ready
+    // --serve-async JSON sessions (regression: a373092 / #4047 B dropped the
+    // assignment from run_serve_async; only run_serve_async_bench kept it).
+    // In-process libcurl + detached thread + eventfd wake + Fiber::yield —
+    // same path as bench. Soft denseness bodies take this via
+    // evaluator_primitives_io.cpp; DensenessBodyLockWaitGuard unlocks the
+    // #4048 body mutex across the yield so N denseness HTTP can overlap.
+    aura::messaging::g_http_post_async = [](const std::string& url, const std::string& body,
+                                            const std::string& auth) -> std::string {
+        auto* fiber = aura::serve::g_current_fiber;
+        if (!fiber)
+            return {};
+        auto evfd = fiber->eventfd();
+        if (evfd < 0)
+            return {};
+
+        auto result = std::make_shared<std::string>();
+        std::thread t([evfd, url, body, auth, result]() {
+            *result = http_post_in_process(url, body, auth);
+            uint64_t v = 1;
+            ::write(evfd, &v, sizeof(v));
+        });
+        t.detach();
+
+        aura::serve::g_current_fiber->set_state(aura::serve::FiberState::Waiting);
+        aura::serve::Fiber::yield();
+        return std::move(*result);
+    };
+
     // GC root flush — routes through the current session's Evaluator.
     // The g_gc_flush_root_set callback is called by the GC collector
     // (gc_coordinator.cpp) during the root collection phase. It passes
@@ -1069,7 +1098,7 @@ void run_serve_async_bench(const std::string& file_path, int num_workers) {
         aura::serve::Fiber::yield();
     };
 
-    // Issue #956: same in-process libcurl path as run_serve_async
+    // Issue #956 / #4053: same in-process libcurl path as run_serve_async
     // (no fork/exec curl; auth never on cmdline; shared_ptr result).
     aura::messaging::g_http_post_async = [](const std::string& url, const std::string& body,
                                             const std::string& auth) -> std::string {
