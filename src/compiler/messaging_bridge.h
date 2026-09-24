@@ -129,6 +129,32 @@ using HttpPostAsyncFn = std::string (*)(const std::string& url, const std::strin
                                         const std::string& auth);
 extern HttpPostAsyncFn g_http_post_async;
 
+// Issue #4053 / #2869: denseness body mutex unlock across wait/yield.
+// Soft Ready (#4048) holds the denseness body mutex for the entire
+// apply_closure. fiber:join (CliBodyLockJoinGuard) and async http-post
+// must release that lock while waiting so sibling denseness fibers can
+// overlap under Soft Ready workers=1, then re-lock before Evaluator touch.
+// Hooks are wired by evaluator_primitives_messaging.cpp (anon-ns TLS).
+using DensenessBodyUnlockFn = void (*)(void** lock_out, bool* unlocked_out);
+using DensenessBodyRelockFn = void (*)(void* lock, bool unlocked);
+extern DensenessBodyUnlockFn g_denseness_body_unlock_for_wait;
+extern DensenessBodyRelockFn g_denseness_body_relock_after_wait;
+
+struct DensenessBodyLockWaitGuard {
+    void* lock = nullptr; // opaque std::unique_lock<std::mutex>*
+    bool unlocked = false;
+    DensenessBodyLockWaitGuard() {
+        if (g_denseness_body_unlock_for_wait)
+            g_denseness_body_unlock_for_wait(&lock, &unlocked);
+    }
+    ~DensenessBodyLockWaitGuard() {
+        if (unlocked && g_denseness_body_relock_after_wait)
+            g_denseness_body_relock_after_wait(lock, unlocked);
+    }
+    DensenessBodyLockWaitGuard(const DensenessBodyLockWaitGuard&) = delete;
+    DensenessBodyLockWaitGuard& operator=(const DensenessBodyLockWaitGuard&) = delete;
+};
+
 // Thread pool enqueue — set by serve_async.cpp, used by thread_pool:enqueue primitive.
 // Enqueues a blocking task to the background thread pool.
 // fn runs on a pool thread; wake_evfd receives 1 on completion.
